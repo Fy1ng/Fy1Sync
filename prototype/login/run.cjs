@@ -26,7 +26,9 @@ if (process.argv.length !== 3 || !['youtube', 'douyu'].includes(platform)) {
     delete env.SSLKEYLOGFILE;
     delete env.NODE_OPTIONS;
     const child = spawn(electron, [path.join(__dirname, 'main.cjs'), platform], {
-      cwd: root, env, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'],
+      // windowsHide must stay off: on Windows it starts the child with SW_HIDE, which
+      // Electron applies to its first window and the login window never appears.
+      cwd: root, env, windowsHide: false, stdio: ['ignore', 'pipe', 'ignore'],
     });
     // Forward only the fixed export summary, never Chromium/renderer diagnostics.
     const authKeys = new Set(platform === 'youtube'

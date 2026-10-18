@@ -58,7 +58,10 @@ function verifyPrivate(target, directory, recursive = false) {
         $acl = $item.GetAccessControl()
         $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
         $allows = @($rules | Where-Object { $_.AccessControlType -eq 'Allow' })
-        if (@($rules | Where-Object { $_.IdentityReference.Value -ne $sid }).Count -ne 0) { exit 1 }
+        # Chromium grants its own sandboxed renderer (an AppContainer capability SID,
+        # S-1-15-3-*) access to cache folders on first run. That is the browser's own
+        # lower-privilege sandbox, not another principal, so it does not break privacy.
+        if (@($rules | Where-Object { $_.IdentityReference.Value -ne $sid -and -not $_.IdentityReference.Value.StartsWith('S-1-15-3-') }).Count -ne 0) { exit 1 }
         if (@($allows | Where-Object { ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl }).Count -eq 0) { exit 1 }
       }
       $rootAcl = (Get-Item -Force -LiteralPath $env:P0_PRIVATE_PATH).GetAccessControl()
