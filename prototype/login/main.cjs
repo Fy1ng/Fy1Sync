@@ -186,6 +186,11 @@ function writeCookies(locations, platform, cookies) {
 
 function start() {
   const { app, BrowserWindow, session } = require('electron');
+  // Fixed progress strings only (no URLs, no cookie data); run.cjs relays them so the
+  // user can see which step a stalled login reached.
+  const status = text => console.log(`P0_STATUS ${text}`);
+  status('main-started');
+  app.on('child-process-gone', (_event, details) => status(`child-gone type=${details.type} reason=${details.reason}`));
   const platform = process.argv[2];
   if (process.argv.length !== 3 || !Object.hasOwn(platforms, platform)) {
     console.error('Usage: npm run login -- youtube|douyu');
@@ -249,6 +254,7 @@ function start() {
   app.on('window-all-closed', () => { void finish(); });
 
   app.whenReady().then(() => {
+    status('electron-ready');
     loginSession = session.fromPartition(`persist:${platform}`);
     const os = process.platform === 'win32' ? 'Windows NT 10.0; Win64; x64'
       : process.platform === 'darwin' ? 'Macintosh; Intel Mac OS X 10_15_7' : 'X11; Linux x86_64';
@@ -295,6 +301,19 @@ function start() {
       return window;
     }
     const window = createWindow();
+    status('window-created');
+    window.once('ready-to-show', () => status('window-ready'));
+    window.on('show', () => status('window-shown'));
+    window.webContents.once('did-finish-load', () => {
+      // Force the window to the foreground: on some Windows setups a window created by
+      // a process launched from a console does not take focus and stays behind it.
+      window.show();
+      window.moveTop();
+      window.focus();
+      status(`page-loaded visible=${window.isVisible()} minimized=${window.isMinimized()}`);
+    });
+    window.webContents.on('did-fail-load', (_event, code) => status(`page-failed code=${code}`));
+    window.webContents.on('render-process-gone', (_event, details) => status(`renderer-gone reason=${details.reason}`));
     // Do not print rejected load errors, which may contain an authentication URL.
     window.loadURL(platforms[platform].url, { userAgent }).catch(() => {
       console.error('The platform page did not load. Close all login windows to export the existing session.');
@@ -308,4 +327,6 @@ function start() {
 }
 
 module.exports = { prepareRuntime };
-if (require.main === module) start();
+// `require.main === module` is false for the entry script under Electron 44, so it cannot
+// tell "launched as the app" from "required by run.cjs". Electron's main process is.
+if (process.versions.electron && process.type === 'browser') start();

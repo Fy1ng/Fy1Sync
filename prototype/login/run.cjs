@@ -37,6 +37,8 @@ if (process.argv.length !== 3 || !['youtube', 'douyu'].includes(platform)) {
     let pending = '';
     let reported = false;
     function report(line) {
+      const progress = /^P0_STATUS ([a-z-]+(?: [a-z]+=[A-Za-z0-9_-]+)*)$/.exec(line);
+      if (progress) { console.log(`[login] ${progress[1]}`); return; }
       if (!line.startsWith('P0_LOGIN ')) return;
       try {
         const data = JSON.parse(line.slice(9));
