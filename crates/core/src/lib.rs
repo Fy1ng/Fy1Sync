@@ -2,12 +2,14 @@
 //! Deterministic, I/O-free ports of the TypeScript recognition and sync algorithms.
 
 mod dispatch;
+mod auto;
 mod image;
 mod matching;
 mod profile;
 mod temporal;
 
 pub use dispatch::dispatch;
+pub use auto::*;
 pub use image::*;
 pub use matching::*;
 pub use profile::*;

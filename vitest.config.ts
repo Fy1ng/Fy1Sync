@@ -22,7 +22,7 @@ export default defineConfig(async () => {
             globals: false,
             setupFiles: ['./src/test/setup.ts'],
             include: ['src/**/*.test.{ts,tsx}'],
-            exclude: sharedExclude,
+            exclude: [...sharedExclude, 'src/wasm/auto.test.ts'],
           },
         },
         {
@@ -30,7 +30,7 @@ export default defineConfig(async () => {
             name: 'server',
             environment: 'node',
             globals: false,
-            include: ['server/**/*.test.ts', 'electron/**/*.test.ts'],
+            include: ['server/**/*.test.ts', 'electron/**/*.test.ts', 'src/wasm/auto.test.ts'],
             exclude: sharedExclude,
           },
         },
