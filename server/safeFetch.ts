@@ -52,7 +52,11 @@ function isPrivateIPv4(address: string): boolean {
   if (a === 172 && b >= 16 && b <= 31) return true
   if (a === 192 && b === 168) return true
   if (a === 192 && b === 0) return true // 192.0.0.0/24, 192.0.2.0/24
-  if (a === 198 && (b === 18 || b === 19)) return true // benchmarking
+  // 198.18.0.0/15 (benchmarking) is deliberately NOT blocked. Clash/mihomo-style proxies in
+  // TUN fake-IP mode answer every DNS query with an address from this range and route the
+  // connection by domain, so blocking it rejects every platform request on such machines.
+  // It is safe to allow: the hostname allow-list is checked before DNS, and the range is not
+  // assigned to real hosts on a LAN.
   if (a >= 224) return true // multicast + reserved
   return false
 }
@@ -231,7 +235,11 @@ export async function safeFetch(
     if (!location) return { response, finalUrl: check.url }
     // Drain the redirect body so the socket can be reused.
     await response.body?.cancel().catch(() => {})
-    target = new URL(location, check.url).toString()
+    const next = new URL(location, check.url)
+    // Platform login credentials must never follow a redirect to another origin.
+    const credentials = Object.keys(options.headers ?? {}).some(name => /^(cookie|authorization|proxy-authorization)$/i.test(name))
+    if (credentials && next.origin !== check.url.origin) throw new ProxyError('upstream-failed', '禁止将平台登录信息发送到其他来源', 403)
+    target = next.toString()
   }
 
   throw new ProxyError('too-many-redirects', `跳转次数超过 ${config.maxRedirects} 次`, 502)

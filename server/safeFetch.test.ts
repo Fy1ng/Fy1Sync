@@ -19,8 +19,6 @@ describe('isPrivateAddress', () => {
     '172.31.255.255',
     '192.168.1.1',
     '192.0.0.1',
-    '198.18.0.1',
-    '198.19.255.255',
     '224.0.0.1',
     '255.255.255.255',
     '::',
@@ -53,7 +51,8 @@ describe('isPrivateAddress', () => {
     expect(isPrivateAddress(host)).toBe(true)
   })
 
-  const publicCases = ['1.1.1.1', '8.8.8.8', '93.184.216.34', '172.32.0.1', '2606:4700::1111', '::ffff:808:808']
+  // 198.18.0.0/15 is where fake-IP proxies (Clash/mihomo TUN) map every domain; see safeFetch.ts.
+  const publicCases = ['1.1.1.1', '8.8.8.8', '93.184.216.34', '172.32.0.1', '2606:4700::1111', '::ffff:808:808', '198.18.0.37', '198.19.255.255']
   for (const address of publicCases) {
     it(`allows ${address}`, () => {
       expect(isPrivateAddress(address)).toBe(false)
@@ -155,6 +154,30 @@ describe('checkUrl', () => {
 })
 
 describe('safeFetch', () => {
+  it.each(['Cookie', 'authorization', 'Proxy-Authorization'])('does not forward %s across an origin redirect', async (header) => {
+    let calls = 0
+    await expect(safeFetch('https://usher.ttvnw.net/a', proxyConfig, {
+      resolve: publicResolver, headers: { [header]: 'synthetic-private-value' },
+      fetchImpl: async () => {
+        calls++
+        return new Response(null, { status: 302, headers: { location: 'https://video-weaver.ttvnw.net/b' } })
+      },
+    })).rejects.toBeInstanceOf(ProxyError)
+    expect(calls).toBe(1)
+  })
+
+  it('keeps credentials on a validated same-origin redirect', async () => {
+    let calls = 0
+    const result = await safeFetch('https://usher.ttvnw.net/a', proxyConfig, {
+      resolve: publicResolver, headers: { Cookie: 'synthetic-private-value' },
+      fetchImpl: async (_url, init) => {
+        expect(new Headers(init?.headers).get('cookie')).toBe('synthetic-private-value')
+        return ++calls === 1 ? new Response(null, { status: 302, headers: { location: '/b' } }) : new Response('ok')
+      },
+    })
+    expect(result.finalUrl.pathname).toBe('/b')
+    expect(calls).toBe(2)
+  })
   it('fetches an allowed URL and reports the final URL', async () => {
     const calls: string[] = []
     const { response, finalUrl } = await safeFetch('https://usher.ttvnw.net/a.m3u8', proxyConfig, {

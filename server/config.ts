@@ -12,6 +12,9 @@ export type ProxyConfig = {
 }
 
 export const DEFAULT_PROXY_HOSTS = [
+  // YouTube metadata and resolved live media.
+  'youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be',
+  '*.googlevideo.com', '*.youtube.com',
   // Twitch playlists and segments.
   '*.ttvnw.net',
   'usher.ttvnw.net',
@@ -24,6 +27,11 @@ export const DEFAULT_PROXY_HOSTS = [
   '*.dyscdn.com',
   '*.douyu.com',
   'www.douyu.com',
+  // Douyu's own live-stream edge CDNs. getH5PlayV1 returns stream-*.edgesrv.com hosts;
+  // the other two appear in the same published Douyu domain lists.
+  '*.edgesrv.com',
+  '*.douyuscdn.com',
+  '*.bytefcdnrd.com',
   // Bilibili live.
   '*.bilivideo.com',
   '*.hdslb.com',
