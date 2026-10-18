@@ -394,3 +394,7 @@ that need no PO Token. The `web` client also exposes live adaptive formats up to
 - Playback (`youtube-dash/play/main.cjs`, Electron 44 + hls.js): VP9 and AV1 1440p both use
   D3D11VideoDecoder (hardware) on RX 6750 XT. The last round played 60 fps with 0 dropped frames
   for both. The first rounds of the same files dropped 17-37 frames/s; the cause is not known.
+- Runtime: the whole chain also runs on Electron's own Node (44.9.0 / Node 24.22) with no system
+  Node on PATH: `--js-runtimes node:<electron.exe>` + `ELECTRON_RUN_AS_NODE=1` on the yt-dlp child.
+  bgutil spawns the same exe for token generation; canvas 3.2.3 is N-API and loads unchanged.
+  No separate Node needs to be bundled.

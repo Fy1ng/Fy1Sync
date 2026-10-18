@@ -4,6 +4,7 @@
 //
 // Run: P0_COOKIES=.runtime/cookies/douyu.txt YT_COOKIES=.runtime/cookies/youtube.txt \
 //      YT_ID=<video id> DOUYU_ROOM=<numeric room> SECONDS=480 node record/record-pair.mjs
+// Douyu only: YT_MODE=none P0_COOKIES=.runtime/cookies/douyu.txt DOUYU_ROOM=<room> node record/record-pair.mjs
 
 import { createHash } from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
@@ -22,7 +23,9 @@ const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 const md5 = text => createHash('md5').update(text).digest('hex');
 const seconds = Number(process.env.SECONDS || 480);
 const ytId = process.env.YT_ID, room = process.env.DOUYU_ROOM;
-if (!/^[\w-]{11}$/.test(ytId || '') || !/^\d{1,9}$/.test(room || '') || !(seconds > 0 && seconds <= 3600)) throw new Error('YT_ID, DOUYU_ROOM, SECONDS invalid');
+// YT_MODE=none records only Douyu (YT_ID / YT_COOKIES not needed); any other value keeps both.
+const withYoutube = process.env.YT_MODE !== 'none';
+if ((withYoutube && !/^[\w-]{11}$/.test(ytId || '')) || !/^\d{1,9}$/.test(room || '') || !(seconds > 0 && seconds <= 3600)) throw new Error('YT_ID, DOUYU_ROOM, SECONDS invalid');
 
 const cookies = require('../login/cookies.cjs').createCookieContext();
 const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
@@ -73,12 +76,12 @@ function record(url, file, headers) {
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const out = join(root, '.media', stamp);
 mkdirSync(out, { recursive: true });
-const [yt, dy] = await Promise.all([youtubeUrl(), douyuUrl()]);
+const [yt, dy] = await Promise.all([withYoutube ? youtubeUrl() : null, douyuUrl()]);
 console.log(`resolved; douyu rate ${dy.rate} of [${dy.rates.join(', ')}]; recording ${seconds}s into ${out}`);
 const [ytResult, dyResult] = await Promise.all([
-  record(yt, join(out, 'official-youtube.ts')),
+  withYoutube ? record(yt, join(out, 'official-youtube.ts')) : null,
   record(dy.url, join(out, 'commentary-douyu.ts'), `Referer: https://www.douyu.com/\r\nUser-Agent: ${ua}\r\n`),
 ]);
-const meta = { youtube: { id: ytId, ...ytResult }, douyu: { room, rate: dy.rate, ...dyResult }, seconds };
+const meta = { youtube: withYoutube ? { id: ytId, ...ytResult } : null, douyu: { room, rate: dy.rate, ...dyResult }, seconds };
 writeFileSync(join(out, 'meta.json'), `${JSON.stringify(meta, null, 2)}\n`);
 console.log(JSON.stringify(meta));
