@@ -4,13 +4,14 @@
   "private": true,
   "description": "Throwaway P0 validation; no production code dependencies",
   "scripts": {
-    "login": "node login/run.cjs",
+    "login": "node login/browser.cjs",
     "setup": "node electron-playback/install.cjs",
     "generate": "node electron-playback/generate.cjs",
     "playback": "node electron-playback/run.cjs",
     "runtime": "node ytdlp-js-runtime/run.cjs",
     "youtube": "node ffmpeg-live-buffer/run.mjs",
-    "douyu": "node douyu-quickjs/run.mjs"
+    "douyu": "node douyu-quickjs/run.mjs",
+    "login:electron": "node login/run.cjs"
   },
   "dependencies": {
     "electron": "44.9.0",

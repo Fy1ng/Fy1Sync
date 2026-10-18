@@ -61,7 +61,9 @@ function verifyPrivate(target, directory, recursive = false) {
         # Chromium grants its own sandboxed renderer (an AppContainer capability SID,
         # S-1-15-3-*) access to cache folders on first run. That is the browser's own
         # lower-privilege sandbox, not another principal, so it does not break privacy.
-        if (@($rules | Where-Object { $_.IdentityReference.Value -ne $sid -and -not $_.IdentityReference.Value.StartsWith('S-1-15-3-') }).Count -ne 0) { exit 1 }
+        # Only Allow entries can widen access. Edge stamps some profile files with a Deny
+        # for Everyone (ExecuteFile), which narrows access further and is ignored here.
+        if (@($allows | Where-Object { $_.IdentityReference.Value -ne $sid -and -not $_.IdentityReference.Value.StartsWith('S-1-15-3-') }).Count -ne 0) { exit 1 }
         if (@($allows | Where-Object { ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl }).Count -eq 0) { exit 1 }
       }
       $rootAcl = (Get-Item -Force -LiteralPath $env:P0_PRIVATE_PATH).GetAccessControl()
@@ -326,7 +328,7 @@ function start() {
   });
 }
 
-module.exports = { prepareRuntime };
+module.exports = { prepareRuntime, safeDirectory, protectPrivate, writeCookies, platforms, runtimeRoot };
 // `require.main === module` is false for the entry script under Electron 44, so it cannot
 // tell "launched as the app" from "required by run.cjs". Electron's main process is.
 if (process.versions.electron && process.type === 'browser') start();
