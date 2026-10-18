@@ -1,0 +1,70 @@
+{
+  "observedAt": "2026-10-18T14:50:26.987Z",
+  "command": [
+    "<home>\\Documents\\ChatGPT\\DouyuPlus1\\Stream Syncer Claude\\prototype\\.runtime\\yt-dlp\\yt-dlp.exe",
+    "--ignore-config",
+    "--cache-dir",
+    "<home>\\Documents\\ChatGPT\\DouyuPlus1\\Stream Syncer Claude\\prototype\\.media\\youtube-hls\\ytdlp-cache",
+    "--flat-playlist",
+    "--dump-single-json",
+    "--socket-timeout",
+    "20",
+    "--retries",
+    "1",
+    "ytsearch10:live news 24/7"
+  ],
+  "exitCode": 0,
+  "entries": [
+    {
+      "id": "z0_NKzi57Fo",
+      "title": "LIVE: Dateline 24/7",
+      "liveStatus": "is_live"
+    },
+    {
+      "id": "C96oohpWBGw",
+      "title": "LIVE NEWS: LiveNOW FOX 24/7 LIVE STREAM",
+      "liveStatus": "is_live"
+    },
+    {
+      "id": "HvZt-nh9sGg",
+      "title": "FRANCE 24 English – LIVE – International Breaking News & Top stories - 24/7 stream",
+      "liveStatus": null
+    },
+    {
+      "id": "GotlA1KKWoo",
+      "title": "CNN Headlines: 24/7 Live News",
+      "liveStatus": null
+    },
+    {
+      "id": "-PWMxjBgr0k",
+      "title": "CNA 24/7 LIVE: Breaking news on Asia and award-winning documentaries and shows",
+      "liveStatus": "is_live"
+    },
+    {
+      "id": "zccuUPk7dO0",
+      "title": "LIVE: ABC News Live - Saturday, October 17",
+      "liveStatus": "was_live"
+    },
+    {
+      "id": "egVaFAi74cI",
+      "title": "LIVE NEWS: FOX LOCAL Atlanta 24/7 Live Stream",
+      "liveStatus": null
+    },
+    {
+      "id": "kS8F-GKSRk0",
+      "title": "LIVE: Breaking News and Top Stories on CBS News 24/7",
+      "liveStatus": "was_live"
+    },
+    {
+      "id": "hQJ0JsPojQU",
+      "title": "LIVE: ABC News Live - Thursday, October 15",
+      "liveStatus": "was_live"
+    },
+    {
+      "id": "Jr0VVkRUqE4",
+      "title": "LIVE: Breaking News and Top Stories on CBS News 24/7",
+      "liveStatus": "was_live"
+    }
+  ],
+  "stderr": ""
+}

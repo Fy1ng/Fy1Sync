@@ -1,0 +1,22 @@
+{
+  "item": "douyu-quickjs",
+  "attempts": [
+    {
+      "command": "node -e fetch(known Douyu public URLs)",
+      "result": "Default Node fetch bypassed existing environment proxy and failed immediately",
+      "causeCode": "EACCES",
+      "fix": "Set NODE_USE_ENV_PROXY=1 only in child shell; use existing HTTPS_PROXY/HTTP_PROXY, without changing system configuration"
+    },
+    {
+      "timestamp": "2026-10-18T14:44:19.406Z",
+      "command": "$env:NODE_USE_ENV_PROXY='1'; node prototype/douyu-quickjs/run.mjs",
+      "result": "QuickJS decode/sign and live API succeeded, ffprobe HTTPS failed",
+      "decodeMs": 7.829,
+      "signMs": 1.018,
+      "ffprobeExitCode": 1,
+      "ffprobeElapsedMs": 32.4,
+      "error": "[tls] Unable to acquire security credentials (0x8009030e)",
+      "fix": "Removed reference's automatic HTTP-to-HTTPS URL upgrade; use the API's original HTTP HLS URL. No TLS verification bypass. Fixed run and three quality probes passed."
+    }
+  ]
+}

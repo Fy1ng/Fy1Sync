@@ -1,0 +1,300 @@
+{
+  "item": "douyu-quickjs",
+  "status": "PASS",
+  "startedAt": "2026-10-18T14:45:34.524Z",
+  "nodeVersion": "v24.15.0",
+  "quickjsVersion": "0.32.0",
+  "commands": [
+    "$env:NODE_USE_ENV_PROXY='1'; node prototype/douyu-quickjs/run.mjs",
+    "ffprobe.exe -v error -http_proxy <existing proxy> -rw_timeout 15000000 -read_intervals %+3 -count_packets -show_entries stream=codec_type,codec_name,width,height,r_frame_rate,bit_rate,nb_read_packets:format=format_name,duration -of json <signed returned URL>"
+  ],
+  "limits": {
+    "memoryLimitBytes": 16777216,
+    "deadlineMs": 500,
+    "maxStackBytes": 524288
+  },
+  "network": [
+    {
+      "label": "live-directory",
+      "host": "open.douyucdn.cn",
+      "status": 200,
+      "bytes": 8121,
+      "elapsedMs": 200.2
+    },
+    {
+      "label": "room-status-9999",
+      "host": "open.douyucdn.cn",
+      "status": 200,
+      "bytes": 42795,
+      "elapsedMs": 60.4
+    },
+    {
+      "label": "mobile-room-page",
+      "host": "m.douyu.com",
+      "status": 200,
+      "bytes": 147359,
+      "elapsedMs": 263.3
+    },
+    {
+      "label": "ratestream",
+      "host": "m.douyu.com",
+      "status": 200,
+      "bytes": 484,
+      "elapsedMs": 70.7
+    },
+    {
+      "label": "ratestream-rate-0",
+      "host": "m.douyu.com",
+      "status": 200,
+      "bytes": 484,
+      "elapsedMs": 74.7
+    },
+    {
+      "label": "ratestream-rate-3",
+      "host": "m.douyu.com",
+      "status": 200,
+      "bytes": 484,
+      "elapsedMs": 70.7
+    },
+    {
+      "label": "ratestream-rate-2",
+      "host": "m.douyu.com",
+      "status": 200,
+      "bytes": 484,
+      "elapsedMs": 59.9
+    }
+  ],
+  "sandbox": {
+    "noSystemInterfaces": {
+      "ok": true,
+      "value": [
+        "undefined",
+        "undefined",
+        "undefined",
+        "undefined",
+        "undefined",
+        "undefined"
+      ],
+      "elapsedMs": 5.341,
+      "interrupts": 1
+    },
+    "infiniteLoop": {
+      "ok": false,
+      "error": {
+        "name": "InternalError",
+        "message": "interrupted",
+        "stack": "    at <eval> (deadline-test.js:1:1)\n"
+      },
+      "elapsedMs": 500.672,
+      "interrupts": 17667
+    },
+    "memoryExhaustion": {
+      "ok": false,
+      "error": {
+        "name": "InternalError",
+        "message": "out of memory",
+        "stack": "    at <eval> (memory-test.js:1:16)\n"
+      },
+      "elapsedMs": 0.82,
+      "interrupts": 1
+    },
+    "decode": {
+      "ok": true,
+      "elapsedMs": 9.141,
+      "interrupts": 2,
+      "sourceBytes": 19599,
+      "decodedBytes": 1800
+    },
+    "sign": {
+      "ok": true,
+      "elapsedMs": 0.853,
+      "interrupts": 1,
+      "signedParamsBytes": 103,
+      "version": "250120261018",
+      "md5Mode": "host precomputed from known rid+did+timestamp+version; no host callback",
+      "paramKeys": [
+        "v",
+        "did",
+        "tt",
+        "sign",
+        "ver",
+        "rid",
+        "rate"
+      ]
+    }
+  },
+  "rooms": [
+    {
+      "roomId": "9999",
+      "roomStatus": "1",
+      "apiError": 0
+    }
+  ],
+  "streams": [
+    {
+      "label": "selected",
+      "host": "openhls-hw.douyucdn2.cn",
+      "extension": "m3u8",
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "elapsedMs": 1976.6,
+      "playable": true,
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1280,
+          "height": 720,
+          "r_frame_rate": "30/1",
+          "nb_read_packets": "89"
+        },
+        {
+          "codec_name": "aac",
+          "codec_type": "audio",
+          "r_frame_rate": "0/0",
+          "nb_read_packets": "136"
+        }
+      ],
+      "format": {
+        "format_name": "hls"
+      },
+      "stderr": ""
+    },
+    {
+      "requestedRate": 0,
+      "advertisedName": "原画2K60",
+      "returnedRate": 0,
+      "label": "rate-0",
+      "host": "openhls-hw.douyucdn2.cn",
+      "extension": "m3u8",
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "elapsedMs": 763.5,
+      "playable": true,
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1280,
+          "height": 720,
+          "r_frame_rate": "30/1",
+          "nb_read_packets": "89"
+        },
+        {
+          "codec_name": "aac",
+          "codec_type": "audio",
+          "r_frame_rate": "0/0",
+          "nb_read_packets": "136"
+        }
+      ],
+      "format": {
+        "format_name": "hls"
+      },
+      "stderr": ""
+    },
+    {
+      "requestedRate": 3,
+      "advertisedName": "超清",
+      "returnedRate": 0,
+      "label": "rate-3",
+      "host": "openhls-hw.douyucdn2.cn",
+      "extension": "m3u8",
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "elapsedMs": 760.5,
+      "playable": true,
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1280,
+          "height": 720,
+          "r_frame_rate": "30/1",
+          "nb_read_packets": "89"
+        },
+        {
+          "codec_name": "aac",
+          "codec_type": "audio",
+          "r_frame_rate": "0/0",
+          "nb_read_packets": "136"
+        }
+      ],
+      "format": {
+        "format_name": "hls"
+      },
+      "stderr": ""
+    },
+    {
+      "requestedRate": 2,
+      "advertisedName": "高清",
+      "returnedRate": 0,
+      "label": "rate-2",
+      "host": "openhls-hw.douyucdn2.cn",
+      "extension": "m3u8",
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "elapsedMs": 761.8,
+      "playable": true,
+      "streams": [
+        {
+          "codec_name": "h264",
+          "codec_type": "video",
+          "width": 1280,
+          "height": 720,
+          "r_frame_rate": "30/1",
+          "nb_read_packets": "89"
+        },
+        {
+          "codec_name": "aac",
+          "codec_type": "audio",
+          "r_frame_rate": "0/0",
+          "nb_read_packets": "136"
+        }
+      ],
+      "format": {
+        "format_name": "hls"
+      },
+      "stderr": ""
+    }
+  ],
+  "problems": [],
+  "ratestream": {
+    "code": 0,
+    "dataKeys": [
+      "settings",
+      "url",
+      "rate",
+      "pass",
+      "share_offset_time"
+    ],
+    "rates": {
+      "settings": [
+        {
+          "name": "原画2K60",
+          "rate": 0,
+          "high_bit": 0
+        },
+        {
+          "name": "超清",
+          "rate": 3,
+          "high_bit": 0
+        },
+        {
+          "name": "高清",
+          "rate": 2,
+          "high_bit": 0
+        }
+      ],
+      "rate": 0
+    }
+  },
+  "finishedAt": "2026-10-18T14:45:40.117Z"
+}

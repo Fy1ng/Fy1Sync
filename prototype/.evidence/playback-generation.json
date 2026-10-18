@@ -1,0 +1,165 @@
+{
+  "at": "2026-10-18T14:43:53.206Z",
+  "streams": [
+    {
+      "name": "testsrc2",
+      "command": [
+        "<home>\\Desktop\\ffmpeg\\bin\\ffmpeg.exe",
+        "-hide_banner",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc2=size=1920x1080:rate=60",
+        "-t",
+        "120",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-threads",
+        "4",
+        "-pix_fmt",
+        "yuv420p",
+        "-b:v",
+        "4500k",
+        "-maxrate",
+        "6000k",
+        "-bufsize",
+        "9000k",
+        "-g",
+        "360",
+        "-keyint_min",
+        "360",
+        "-sc_threshold",
+        "0",
+        "-f",
+        "hls",
+        "-hls_time",
+        "6",
+        "-hls_list_size",
+        "0",
+        "-hls_playlist_type",
+        "vod",
+        "-hls_flags",
+        "independent_segments+temp_file",
+        "-hls_segment_filename",
+        "<home>\\Documents\\ChatGPT\\DouyuPlus1\\Stream Syncer Claude\\prototype\\.media\\testsrc2\\segment-%03d.ts",
+        "<home>\\Documents\\ChatGPT\\DouyuPlus1\\Stream Syncer Claude\\prototype\\.media\\testsrc2\\index.m3u8"
+      ],
+      "generationWallSeconds": 5.934,
+      "exitCode": 0,
+      "probeExitCode": 0,
+      "probe": {
+        "programs": [
+          {
+            "streams": [
+              {
+                "codec_name": "h264",
+                "width": 1920,
+                "height": 1080,
+                "r_frame_rate": "60/1",
+                "avg_frame_rate": "60/1"
+              }
+            ]
+          }
+        ],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "width": 1920,
+            "height": 1080,
+            "r_frame_rate": "60/1",
+            "avg_frame_rate": "60/1"
+          }
+        ],
+        "format": {
+          "duration": "120.000000"
+        }
+      },
+      "segments": 20
+    },
+    {
+      "name": "smptehdbars",
+      "command": [
+        "<home>\\Desktop\\ffmpeg\\bin\\ffmpeg.exe",
+        "-hide_banner",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "smptehdbars=size=1920x1080:rate=60",
+        "-t",
+        "120",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-threads",
+        "4",
+        "-pix_fmt",
+        "yuv420p",
+        "-b:v",
+        "4500k",
+        "-maxrate",
+        "6000k",
+        "-bufsize",
+        "9000k",
+        "-g",
+        "360",
+        "-keyint_min",
+        "360",
+        "-sc_threshold",
+        "0",
+        "-f",
+        "hls",
+        "-hls_time",
+        "6",
+        "-hls_list_size",
+        "0",
+        "-hls_playlist_type",
+        "vod",
+        "-hls_flags",
+        "independent_segments+temp_file",
+        "-hls_segment_filename",
+        "<home>\\Documents\\ChatGPT\\DouyuPlus1\\Stream Syncer Claude\\prototype\\.media\\smptehdbars\\segment-%03d.ts",
+        "<home>\\Documents\\ChatGPT\\DouyuPlus1\\Stream Syncer Claude\\prototype\\.media\\smptehdbars\\index.m3u8"
+      ],
+      "generationWallSeconds": 4.362,
+      "exitCode": 0,
+      "probeExitCode": 0,
+      "probe": {
+        "programs": [
+          {
+            "streams": [
+              {
+                "codec_name": "h264",
+                "width": 1920,
+                "height": 1080,
+                "r_frame_rate": "60/1",
+                "avg_frame_rate": "60/1"
+              }
+            ]
+          }
+        ],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "width": 1920,
+            "height": 1080,
+            "r_frame_rate": "60/1",
+            "avg_frame_rate": "60/1"
+          }
+        ],
+        "format": {
+          "duration": "120.000000"
+        }
+      },
+      "segments": 20
+    }
+  ]
+}

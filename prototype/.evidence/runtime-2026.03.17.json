@@ -1,0 +1,82 @@
+{
+  "at": "2026-10-18T14:50:55.788Z",
+  "ytDlpVersion": "2026.03.17",
+  "electronProbe": {
+    "command": [
+      "<home>\\Documents\\ChatGPT\\DouyuPlus1\\Stream Syncer Claude\\prototype\\node_modules\\electron\\dist\\electron.exe",
+      "-p",
+      "JSON.stringify(process.versions)"
+    ],
+    "env": {
+      "ELECTRON_RUN_AS_NODE": "1"
+    },
+    "exitCode": 0,
+    "versions": {
+      "node": "24.22.0",
+      "acorn": "8.18.0",
+      "ada": "4.0.0",
+      "amaro": "1.1.11",
+      "ares": "1.34.8",
+      "brotli": "1.2.0",
+      "cldr": "48.0",
+      "icu": "78.2",
+      "llhttp": "9.4.3",
+      "merve": "1.2.2",
+      "modules": "149",
+      "napi": "10",
+      "nbytes": "0.1.4",
+      "ncrypto": "0.0.1",
+      "nghttp2": "1.70.0",
+      "nghttp3": "",
+      "ngtcp2": "",
+      "openssl": "0.0.0",
+      "simdjson": "4.6.11",
+      "simdutf": "7.7.0",
+      "sqlite": "3.53.4",
+      "tz": "2026d",
+      "undici": "7.29.1",
+      "unicode": "17.0",
+      "uv": "1.52.1",
+      "uvwasi": "0.0.23",
+      "v8": "15.2.124.43-electron.0",
+      "zlib": "1.3.2.1-motley",
+      "zstd": "1.6.0",
+      "electron": "44.9.0",
+      "chrome": "152.0.7977.167"
+    }
+  },
+  "helpExcerpt": "--js-runtimes RUNTIME[:PATH]    Additional JavaScript runtime to enable,\r\n                                    with an optional location for the runtime\r\n                                    (either the path to the binary or its\r\n                                    containing directory). This option can be\r\n                                    used multiple times to enable multiple\r\n                                    runtimes. Supported runtimes are (in order\r\n                                    of priority, from highest to lowest): deno,\r\n                                    node, quickjs, bun. Only \"deno\" is enabled\r\n                                    by default. The highest priority runtime\r\n                                    that is both enabled and available will be\r\n                                    used. In order to use a lower priority\r\n                                    runtime when \"deno\" is available, --no-js-\r\n                                    runtimes needs to be passed before enabling\r\n                                    other runtimes\r\n    --no-js-runtimes                Clear JavaScript runtimes to enable,\r\n                                    including defaults and those provided by\r\n                                    previous --js-runtimes\r\n    --remote-components COMPONENT   Remote components to allow yt-dlp to fetch\r\n                                    when required. This option is currently not\r\n                                    needed if you are using an official\r\n                                    executable or have the requisite version of\r\n                                    the yt-dlp-ejs package installed. You can\r\n                                    use this option multiple times to allow\r\n                                    multiple components. Supported values:\r\n                                    ejs:npm (external JavaScript components from\r\n                                    npm), ejs:github (external JavaScript\r\n                                    components from yt-dlp-ejs GitHub). By\r\n                                    default, no remote components are allowed\r\n    --no-remote-components          Disallow fetching of all remote components,\r\n                                    including any previously allowed by\r\n                                    --remote-components or defaults.\r\n    ",
+  "attempts": [
+    {
+      "command": [
+        "<home>\\AppData\\Local\\Python\\pythoncore-3.14-64\\Scripts\\yt-dlp.exe",
+        "--ignore-config",
+        "--cache-dir",
+        "<home>\\Documents\\ChatGPT\\DouyuPlus1\\Stream Syncer Claude\\prototype\\.cache\\yt-dlp-runtime",
+        "--no-js-runtimes",
+        "--js-runtimes",
+        "node:<home>\\Documents\\ChatGPT\\DouyuPlus1\\Stream Syncer Claude\\prototype\\node_modules\\electron\\dist\\electron.exe",
+        "--no-remote-components",
+        "--no-playlist",
+        "--socket-timeout",
+        "15",
+        "--retries",
+        "0",
+        "--skip-download",
+        "--dump-single-json",
+        "--verbose",
+        "https://www.youtube.com/watch?v=-PWMxjBgr0k"
+      ],
+      "env": {
+        "ELECTRON_RUN_AS_NODE": "1"
+      },
+      "exitCode": 1,
+      "wallSeconds": 2.693,
+      "formats": 0,
+      "runtimeDetected": true,
+      "challengeExecution": false,
+      "stderr": "[debug] Command-line config: ['--ignore-config', '--cache-dir', '<home>\\\\Documents\\\\ChatGPT\\\\DouyuPlus1\\\\Stream Syncer Claude\\\\prototype\\\\.cache\\\\yt-dlp-runtime', '--no-js-runtimes', '--js-runtimes', 'node:<home>\\\\Documents\\\\ChatGPT\\\\DouyuPlus1\\\\Stream Syncer Claude\\\\prototype\\\\node_modules\\\\electron\\\\dist\\\\electron.exe', '--no-remote-components', '--no-playlist', '--socket-timeout', '15', '--retries', '0', '--skip-download', '--dump-single-json', '--verbose', 'https://www.youtube.com/watch?[redacted]']\nWARNING: Your yt-dlp version (2026.03.17) is older than 90 days!\n         It is strongly recommended to always use the latest version.\n         You installed yt-dlp with pip or using the wheel from PyPi; Use that to update.\n         To suppress this warning, add --no-update to your command/config.\n[debug] Encodings: locale cp936, fs utf-8, pref cp936, out gbk (dumb,No ANSI), error gbk (dumb,No ANSI), screen gbk (dumb,No ANSI)\n[debug] yt-dlp version stable@2026.03.17 from yt-dlp/yt-dlp [04d6974f5] (pip)\n[debug] Python 3.14.4 (CPython AMD64 64bit) - Windows-10-10.0.19045-SP0 (OpenSSL 3.0.19 27 Jan 2026)\n[debug] exe versions: ffmpeg N-120072-g11d1b71c31-20250703 (setts), ffprobe N-120072-g11d1b71c31-20250703\n[debug] Optional libraries: Cryptodome-3.23.0, brotli-1.2.0, certifi-2026.04.22, requests-2.33.1, sqlite3-3.50.4, urllib3-2.7.0, websockets-13.1\n[debug] JS runtimes: node-24.22.0\n[debug] Proxy map: [redacted existing environment proxy]\n[debug] Request Handlers: urllib, requests, websockets\n[debug] Plugin directories: none\n[debug] Loaded 1864 extractors\n[debug] [youtube] [pot] PO Token Providers: none\n[debug] [youtube] [pot] PO Token Cache Providers: memory\n[debug] [youtube] [pot] PO Token Cache Spec Providers: webpo\n[debug] [youtube] [jsc] JS Challenge Providers: bun (unavailable), deno (unavailable), node, quickjs (unavailable)\n[youtube] Extracting URL: https://www.youtube.com/watch?[redacted]\n[youtube] -PWMxjBgr0k: Downloading webpage\n[debug] [youtube] Forcing \"main\" player JS variant for player 0229cd64\n        original url = /s/player/0229cd64/player_es6.vflset/en_US/base.js\n[youtube] -PWMxjBgr0k: Downloading android vr player API JSON\n[debug] [youtube] -PWMxjBgr0k: android_vr player response playability status: LOGIN_REQUIRED\n[debug] [youtube] -PWMxjBgr0k: web_safari player response playability status: LOGIN_REQUIRED\nWARNING: [youtube] No title found in player responses; falling back to title from initial data. Other metadata may also be missing\nERROR: [youtube] -PWMxjBgr0k: Sign in to confirm you��re not a bot. Use --cookies-from-browser or --cookies for the authentication. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ  for how to manually pass cookies. Also see  https://github.com/yt-dlp/yt-dlp/wiki/Extractors  for tips on effectively exporting YouTube cookies\n  File \"<home>\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\yt_dlp\\extractor\\common.py\", line 765, in extract\n    ie_result = self._real_extract(url)\n  File \"<home>\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\yt_dlp\\extractor\\youtube\\_video.py\", line 4061, in _real_extract\n    self.raise_no_formats(reason, expected=True)\n    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<home>\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\yt_dlp\\extractor\\common.py\", line 1277, in raise_no_formats\n    raise ExtractorError(msg, expected=expected, video_id=video_id)\n\n"
+    }
+  ],
+  "status": "PARTIAL"
+}

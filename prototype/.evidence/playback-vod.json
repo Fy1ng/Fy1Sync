@@ -1,0 +1,207 @@
+{
+  "at": "2026-10-18T15:04:24.997Z",
+  "versions": {
+    "node": "24.22.0",
+    "acorn": "8.18.0",
+    "ada": "4.0.0",
+    "amaro": "1.1.11",
+    "ares": "1.34.8",
+    "brotli": "1.2.0",
+    "cldr": "48.0",
+    "icu": "78.2",
+    "llhttp": "9.4.3",
+    "merve": "1.2.2",
+    "modules": "149",
+    "napi": "10",
+    "nbytes": "0.1.4",
+    "ncrypto": "0.0.1",
+    "nghttp2": "1.70.0",
+    "nghttp3": "",
+    "ngtcp2": "",
+    "openssl": "0.0.0",
+    "simdjson": "4.6.11",
+    "simdutf": "7.7.0",
+    "sqlite": "3.53.4",
+    "tz": "2026d",
+    "undici": "7.29.1",
+    "unicode": "17.0",
+    "uv": "1.52.1",
+    "uvwasi": "0.0.23",
+    "v8": "15.2.124.43-electron.0",
+    "zlib": "1.3.2.1-motley",
+    "zstd": "1.6.0",
+    "electron": "44.9.0",
+    "chrome": "152.0.7977.167"
+  },
+  "config": {
+    "mode": "vod",
+    "sources": [
+      "testsrc2/index.m3u8",
+      "smptehdbars/index.m3u8"
+    ],
+    "measureSeconds": 30,
+    "seekSeconds": 30
+  },
+  "preferences": {
+    "contextIsolation": true,
+    "sandbox": true,
+    "nodeIntegration": false,
+    "backgroundThrottling": false,
+    "show": true
+  },
+  "softwareFallback": false,
+  "launchFailures": [],
+  "gpu": {
+    "2d_canvas": "enabled",
+    "direct_rendering_display_compositor": "disabled_off_ok",
+    "gpu_compositing": "enabled",
+    "multiple_raster_threads": "enabled_on",
+    "opengl": "enabled_on",
+    "rasterization": "enabled",
+    "raw_draw": "disabled_off_ok",
+    "skia_graphite": "disabled_off",
+    "trees_in_viz": "disabled_off",
+    "video_decode": "enabled",
+    "video_encode": "enabled",
+    "webgl": "enabled",
+    "webgpu": "enabled",
+    "webnn": "disabled_off"
+  },
+  "status": "PASS",
+  "rendererBoundary": {
+    "process": "undefined",
+    "require": "undefined",
+    "isolated": true
+  },
+  "streams": [
+    {
+      "source": "testsrc2/index.m3u8",
+      "errors": [],
+      "callbacks": 1801,
+      "regressions": 0,
+      "firstMediaTime": 46.066666,
+      "lastMediaTime": 76.066666,
+      "maxFrameGap": 0.016667000000012422,
+      "waitingEvents": 0,
+      "qualityBefore": {
+        "total": 73,
+        "dropped": 2,
+        "corrupted": 0
+      },
+      "currentTimeBefore": 46.029591,
+      "canvas": {
+        "success": true,
+        "bytes": 57600,
+        "checksum": 9150123,
+        "dimensions": [
+          1920,
+          1080
+        ]
+      },
+      "qualityAfter": {
+        "total": 1875,
+        "dropped": 2,
+        "corrupted": 0
+      },
+      "frameDelta": 1802,
+      "droppedDelta": 0,
+      "droppedPercent": 0,
+      "currentTimeAfter": 76.066406,
+      "seekableBefore": [
+        [
+          0,
+          120
+        ]
+      ],
+      "seek": {
+        "before": 76.066406,
+        "target": 46.066406,
+        "landed": 46.066406,
+        "errorSeconds": 0,
+        "wallMs": 980.3999999761581,
+        "requestedBackSeconds": 30,
+        "after8Seconds": 54.066852,
+        "progressSeconds": 8.000069999999994,
+        "canvasAfter": {
+          "success": true,
+          "bytes": 57600,
+          "checksum": 9150744,
+          "dimensions": [
+            1920,
+            1080
+          ]
+        },
+        "retained": true,
+        "resumed": true
+      }
+    },
+    {
+      "source": "smptehdbars/index.m3u8",
+      "errors": [
+        {
+          "type": "mediaError",
+          "details": "bufferStalledError",
+          "fatal": false
+        }
+      ],
+      "callbacks": 1800,
+      "regressions": 0,
+      "firstMediaTime": 46.066666,
+      "lastMediaTime": 76.05,
+      "maxFrameGap": 0.016667000000012422,
+      "waitingEvents": 0,
+      "qualityBefore": {
+        "total": 76,
+        "dropped": 5,
+        "corrupted": 0
+      },
+      "currentTimeBefore": 46.050906,
+      "canvas": {
+        "success": true,
+        "bytes": 57600,
+        "checksum": 8087241,
+        "dimensions": [
+          1920,
+          1080
+        ]
+      },
+      "qualityAfter": {
+        "total": 1877,
+        "dropped": 5,
+        "corrupted": 0
+      },
+      "frameDelta": 1801,
+      "droppedDelta": 0,
+      "droppedPercent": 0,
+      "currentTimeAfter": 76.057964,
+      "seekableBefore": [
+        [
+          0,
+          120
+        ]
+      ],
+      "seek": {
+        "before": 85.045513,
+        "target": 55.045513,
+        "landed": 55.045513,
+        "errorSeconds": 0,
+        "wallMs": 151.79999995231628,
+        "requestedBackSeconds": 30,
+        "after8Seconds": 63.04643,
+        "progressSeconds": 8.000697000000002,
+        "canvasAfter": {
+          "success": true,
+          "bytes": 57600,
+          "checksum": 8087241,
+          "dimensions": [
+            1920,
+            1080
+          ]
+        },
+        "retained": true,
+        "resumed": true
+      }
+    }
+  ],
+  "measureWallSeconds": 30.000400000035764
+}

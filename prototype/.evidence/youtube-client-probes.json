@@ -1,0 +1,26 @@
+{
+  "ytdlpVersion": "2026.03.17",
+  "purpose": "Check whether the authentication failure is limited to the default YouTube client.",
+  "probes": [
+    {
+      "publicUrl": "https://www.youtube.com/watch?v=LuKwFajn37U",
+      "extractorArgs": "youtube:player_client=android_vr",
+      "otherArgs": ["--ignore-config", "--no-playlist", "--no-progress", "--socket-timeout", "20", "--retries", "1", "--extractor-retries", "1", "--dump-single-json"],
+      "observedExitCode": 1,
+      "offeredFormats": 0,
+      "classification": "youtube_authentication_required",
+      "observedError": "Sign in to confirm you are not a bot",
+      "privateLog": ".media/youtube-hls/client-vr-private.log"
+    },
+    {
+      "publicUrl": "https://www.youtube.com/watch?v=1-LpQekNa9g",
+      "extractorArgs": "youtube:player_client=web_safari",
+      "otherArgs": ["--ignore-config", "--no-playlist", "--no-progress", "--socket-timeout", "20", "--retries", "1", "--extractor-retries", "1", "--dump-single-json"],
+      "observedExitCode": 1,
+      "offeredFormats": 0,
+      "classification": "youtube_authentication_required",
+      "observedError": "Sign in to confirm you are not a bot",
+      "privateLog": ".media/youtube-hls/client-safari-private.log"
+    }
+  ]
+}

@@ -25,3 +25,5 @@ playwright-report/
 
 # UI 交接打包目录，用 docs/ui-handoff.md 里的命令重建
 /.handoff/
+/.codex-tasks/
+/prototype/.media/

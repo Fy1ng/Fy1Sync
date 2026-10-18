@@ -1,0 +1,12 @@
+const path = require('node:path');
+const fs = require('node:fs');
+const root = path.resolve(__dirname, '..');
+process.env.NODE_USE_ENV_PROXY = '1';
+process.env.electron_config_cache = path.join(root, '.cache', 'electron');
+process.env.TEMP = path.join(root, '.runtime', 'tmp');
+process.env.TMP = process.env.TEMP;
+fs.mkdirSync(process.env.TEMP, { recursive: true });
+const { spawn } = require('node:child_process');
+const child = spawn(process.execPath, [path.join(root, 'node_modules', 'electron', 'install.js')], { env:process.env, windowsHide:true, stdio:'inherit' });
+child.once('error', e => { console.error(e); process.exitCode=1; });
+child.once('exit', code => { process.exitCode=code??1; });
