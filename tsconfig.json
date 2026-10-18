@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    // `node` is here for the tests, not the app: the fixture-frame test shells out to
+    // ffmpeg to decode real frames. Vitest's jsdom environment is hosted inside Node, so
+    // those builtins are genuinely available where that test runs.
+    "types": ["vite/client", "node"]
+  },
+  "include": ["src"],
+  "exclude": ["Stream Sync Player", "Stream Sync Player_Gemini", "dist", "node_modules"]
+}

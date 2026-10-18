@@ -1,0 +1,384 @@
+/**
+ * Automatic sync, end to end, against the V0.4 numeric gates.
+ *
+ * This is the one spec that measures rather than checks: docs/sync-design.md commits to a
+ * detection error within 0.25 s and a post-apply divergence within 0.35 s, and neither is
+ * observable from a rendering. So the assertions are numbers read off the real elements,
+ * compared against the fixture's own ground truth — `scripts/generate-test-sources.mjs`
+ * renders the same countdown into both files with the commentary delayed exactly 5 s.
+ *
+ * Everything on the path is real: a decoded frame, the worker, template matching, the
+ * seeks. What the spec *builds* is the profile, because template bitmaps are machine
+ * specific — a glyph rasterised by this machine's ffmpeg and font stack is the only thing
+ * that will match on this machine, which is why `fixture-profile.json` ships with none.
+ * The templates are taught through the editor, published, then selected in the player, so
+ * the hand-off the deployed page depends on (id in settings → fetch by id) is exercised
+ * too rather than stubbed.
+ */
+
+import { fileURLToPath } from 'node:url'
+import { expect, test, type Page } from '@playwright/test'
+import {
+  ADMIN_TOKEN,
+  FIXTURE_DELAY_SECONDS,
+  MAX_DETECTION_ERROR_SECONDS,
+  MAX_DIVERGENCE_SECONDS,
+  failOnPageError,
+  fixturesReady,
+  loadBothFixtures,
+  mediaTimes,
+  offsetReadout,
+  openPlayer,
+  seekBoth,
+  setPlaying,
+} from './helpers'
+
+const officialPath = fileURLToPath(new URL('../public/test-sources/official.mp4', import.meta.url))
+
+/** The fixture's ROI, from the generator. */
+const ROI = { x: 0.42, y: 0.045, w: 0.16, h: 0.13 }
+
+/** Every character the clock can show, sorted, as the profile stores them. */
+const CLOCK_CHARS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ':']
+
+/**
+ * Where both elements start before a detection run.
+ *
+ * Late enough that the official element has more than the fixture's 5 s of rewind
+ * head-room, since a VOD cannot seek before 0 and the plan would otherwise clamp and
+ * report an offset short of the truth. Early enough that neither clock reaches 0:00
+ * during a 3 s window plus the settle — a held 0:00 emits no jump for the estimator to
+ * anchor on. Official runs 0:08 down here, commentary 0:13.
+ */
+const START_SECONDS = 12
+
+/**
+ * Sample times and the digits visible at each, for teaching templates.
+ *
+ * The fixture's clock is `0:%{eif: max(0, 20 - floor(t)) :d:2}`, so the digit changes on
+ * integer `t`; sampling at `x.5` stays clear of the boundary a frame either side of a seek
+ * could land on. The first eight cover all eleven characters — the tens digit gives 0 and
+ * 1, the units digit sweeps 2..9 — and the rest are second sources for the digits that
+ * appear only once up there, since a lesson whose frame segments badly is skipped.
+ */
+const LESSONS: { at: number; reads: string }[] = [
+  { at: 1.5, reads: '0:19' },
+  { at: 2.5, reads: '0:18' },
+  { at: 3.5, reads: '0:17' },
+  { at: 4.5, reads: '0:16' },
+  { at: 5.5, reads: '0:15' },
+  { at: 6.5, reads: '0:14' },
+  { at: 7.5, reads: '0:13' },
+  { at: 8.5, reads: '0:12' },
+  { at: 11.5, reads: '0:09' },
+  { at: 12.5, reads: '0:08' },
+  { at: 13.5, reads: '0:07' },
+  { at: 14.5, reads: '0:06' },
+  { at: 15.5, reads: '0:05' },
+  { at: 16.5, reads: '0:04' },
+  { at: 17.5, reads: '0:03' },
+  { at: 18.5, reads: '0:02' },
+]
+
+test.describe('自动同步', () => {
+  test.skip(!fixturesReady(), '缺少测试源，先运行 npm run fixtures')
+
+  // Sampling two videos through the worker for a full detection window is genuinely slow;
+  // these are also the only tests that prove the feature works.
+  test.setTimeout(180_000)
+
+  // Both unique per run. `globalSetup` empties the store first, so this is no longer
+  // load-bearing against leftovers — it is kept because the picker can only be driven by
+  // label, and a timestamp makes any duplicate immediately obvious instead of ambiguous.
+  let presetId = ''
+  let presetName = ''
+
+  /**
+   * Teach the profile once for the whole suite.
+   *
+   * In a `beforeAll` rather than a first test because every test below needs it: as a test
+   * it would be a precondition disguised as an assertion, and one bad segmentation would
+   * read as five unrelated failures instead of one setup error.
+   */
+  test.beforeAll(async ({ browser }) => {
+    if (!fixturesReady()) return
+    const stamp = Date.now()
+    presetId = `e2e/autosync-${stamp}`
+    presetName = `自动同步测试场景 ${stamp}`
+    const page = await browser.newPage()
+    try {
+      await teachProfile(page, presetId, presetName)
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('教出的字形发布后能整套读回', async ({ request }) => {
+    // The player fetches by id, so a preset that is not on the server is not usable — and
+    // a missing glyph is a recognition failure much later, with no obvious cause.
+    const fetched = await request.get(`/api/presets/${presetId}`)
+    expect(fetched.status()).toBe(200)
+    const body = (await fetched.json()) as {
+      profile: { templates: Record<string, unknown[]> }
+    }
+    expect(Object.keys(body.profile.templates).sort()).toEqual(CLOCK_CHARS)
+  })
+
+  test('识别出的偏移落在 0.25 s 误差内', async ({ page }) => {
+    await openPlayer(page)
+    await selectPreset(page, presetName)
+    await loadBothFixtures(page)
+
+    // Both at the same position: the only difference between the two pictures is the
+    // fixture's built-in 5 s delay, so that is what detection must find.
+    await seekBoth(page, START_SECONDS, START_SECONDS)
+    await setPlaying(page, true)
+
+    const estimate = await measureOnce(page)
+    expect(
+      Math.abs(estimate - FIXTURE_DELAY_SECONDS),
+      `识别偏移 ${estimate.toFixed(2)} s 应接近真实的 ${FIXTURE_DELAY_SECONDS} s`,
+    ).toBeLessThanOrEqual(MAX_DETECTION_ERROR_SECONDS)
+  })
+
+  test('仅识别不移动播放位置', async ({ page }) => {
+    await openPlayer(page)
+    await selectPreset(page, presetName)
+    await loadBothFixtures(page)
+    await seekBoth(page, START_SECONDS, START_SECONDS)
+    await setPlaying(page, true)
+
+    const before = await mediaTimes(page)
+    await measureOnce(page)
+    const after = await mediaTimes(page)
+
+    // A dry run reports and stops. The playheads advance because it is playing, so the
+    // claim is about their *difference*, which a seek would have changed.
+    expect(Math.abs(after.lag - before.lag)).toBeLessThan(0.2)
+    expect(await offsetReadout(page)).toMatchObject({ requested: 0 })
+  })
+
+  test('立即同步把两路对齐到 0.35 s 残差内', async ({ page }) => {
+    await openPlayer(page)
+    await selectPreset(page, presetName)
+    await loadBothFixtures(page)
+    await seekBoth(page, START_SECONDS, START_SECONDS)
+    await setPlaying(page, true)
+
+    await page.getByRole('button', { name: '立即同步' }).click()
+    await waitForPhase(page, '已完成')
+
+    // The controller's own verification pass, which is what the gate is written against.
+    const divergence = await readResult(page, '校验残差')
+    expect(divergence).not.toBeNull()
+    expect(
+      Math.abs(divergence ?? Number.NaN),
+      `校验残差 ${divergence} s 应在 ${MAX_DIVERGENCE_SECONDS} s 内`,
+    ).toBeLessThanOrEqual(MAX_DIVERGENCE_SECONDS)
+
+    // And independently: the same countdown should now be on both pictures, which means
+    // the official element sits 5 s behind where it was.
+    const times = await mediaTimes(page)
+    expect(Math.abs(times.lag + FIXTURE_DELAY_SECONDS)).toBeLessThanOrEqual(
+      MAX_DIVERGENCE_SECONDS + 0.2,
+    )
+
+    const readout = await offsetReadout(page)
+    expect(Math.abs(readout.applied - FIXTURE_DELAY_SECONDS)).toBeLessThanOrEqual(
+      MAX_DETECTION_ERROR_SECONDS + 0.1,
+    )
+  })
+
+  test('自动对齐后手动一动，定时同步就交回给人', async ({ page }) => {
+    await openPlayer(page)
+    await selectPreset(page, presetName)
+    await loadBothFixtures(page)
+    await seekBoth(page, START_SECONDS, START_SECONDS)
+    await setPlaying(page, true)
+
+    await page.getByRole('button', { name: '立即同步' }).click()
+    await waitForPhase(page, '已完成')
+    const auto = (await offsetReadout(page)).requested
+    expect(Math.abs(auto - FIXTURE_DELAY_SECONDS)).toBeLessThanOrEqual(
+      MAX_DETECTION_ERROR_SECONDS + 0.1,
+    )
+
+    // Nudging is a statement that the user disagrees with the machine, so the scheduler
+    // must stop overwriting the result until they ask for it again.
+    const sidebar = page.locator('.sidebar')
+    await sidebar.getByRole('button', { name: '−0.5s' }).click()
+    // Scoped to the section, not to a hint index: the auto-sync panel carries several
+    // hints and which ones are mounted depends on the run that just finished.
+    await expect(page.locator('.auto-sync')).toContainText('定时同步已暂停')
+    await expect
+      .poll(async () => (await offsetReadout(page)).requested, { timeout: 15_000 })
+      .toBeCloseTo(auto - 0.5, 1)
+  })
+
+  test('没有识别场景时说明原因而不是空转一个识别窗口', async ({ page }) => {
+    await openPlayer(page)
+    await loadBothFixtures(page)
+
+    // With no profile the sampler yields nothing, which looks exactly like a black
+    // screen — the refusal has to name the real cause.
+    await page.getByRole('button', { name: '仅识别' }).click()
+    await waitForPhase(page, '未完成')
+    await expect(page.locator('.auto-failure')).toContainText('识别场景')
+  })
+})
+
+/**
+ * Build a working profile in the editor: ROI, one grabbed frame per lesson, a click per
+ * glyph, then publish.
+ */
+async function teachProfile(page: Page, id: string, name: string): Promise<void> {
+  failOnPageError(page)
+  await page.goto(`/admin?token=${ADMIN_TOKEN}`)
+  await expect(page.locator('.admin-columns')).toBeVisible()
+
+  await setField(page, '标识', id)
+  await setField(page, '名称', name)
+
+  await page.locator('.stage-toolbar input[type=file]').setInputFiles(officialPath)
+  await expect
+    .poll(async () =>
+      page.locator('video.admin-video').evaluate((node: HTMLVideoElement) => node.videoWidth),
+    )
+    .toBeGreaterThan(0)
+  await setRoi(page, ROI)
+
+  const learned = new Set<string>()
+  for (const lesson of LESSONS) {
+    if (CLOCK_CHARS.every((char) => learned.has(char))) break
+    const chars = [...lesson.reads]
+    if (chars.every((char) => learned.has(char))) continue
+
+    await seekSample(page, lesson.at)
+    await page.getByRole('button', { name: '取当前帧' }).click()
+
+    // Segmentation is async, so wait for the boxes rather than for a fixed delay. The count
+    // has to be exactly right before anything is labelled: the pad advances one box per
+    // click and stops at the end, so a frame that segmented into three boxes would take
+    // the fourth label silently onto nothing. A bad frame is skipped, not guessed at —
+    // hence the second sources in LESSONS.
+    const boxes = page.locator('.glyph-box')
+    const segmented = await boxes
+      .nth(chars.length - 1)
+      .waitFor({ state: 'visible', timeout: 30_000 })
+      .then(() => true)
+      .catch(() => false)
+    if (!segmented || (await boxes.count()) !== chars.length) continue
+
+    // Left to right, the boxes are the characters in reading order.
+    await boxes.first().click()
+    for (const char of chars) {
+      await page.locator('.char-pad').getByRole('button', { name: char, exact: true }).click()
+      learned.add(char)
+    }
+  }
+
+  expect([...learned].sort(), '每个时钟字符都应教到至少一个样本').toEqual(CLOCK_CHARS)
+
+  await page.getByRole('button', { name: '发布到服务端' }).click()
+  await expect(page.locator('.admin-message.is-info')).toContainText('已发布')
+}
+
+/** Choose a published preset in the player's 识别场景 drop-up, by the name it was given. */
+async function selectPreset(page: Page, name: string): Promise<void> {
+  const dropup = page.locator('.auto-sync .dropup', {
+    has: page.getByText('识别场景', { exact: true }),
+  })
+  // The list arrives from `/api/presets` on boot, so the trigger is disabled until then.
+  await expect(dropup.locator('.dropup-trigger')).toBeEnabled({ timeout: 20_000 })
+  await dropup.locator('.dropup-trigger').click()
+
+  // The option carries the server's own template count. A preset with none is rendered
+  // disabled, so asserting the hint here turns "recognised nothing" into a clear failure
+  // at selection time instead of a mystery three tests later.
+  const option = dropup.getByRole('option', { name, exact: false })
+  await expect(option.locator('.dropup-hint')).toHaveText('11 字形')
+  await option.click()
+
+  // Selection fetches the preset; the missing-profile hint disappearing is the signal
+  // that both roles now hold it.
+  await expect(page.locator('.auto-sync')).not.toContainText('选择上面的识别场景')
+  await expect(dropup.locator('.dropup-value')).toHaveText(name)
+}
+
+/** Run 仅识别 and return the offset it reported. */
+async function measureOnce(page: Page): Promise<number> {
+  await page.getByRole('button', { name: '仅识别' }).click()
+  await waitForPhase(page, '已完成')
+  const estimate = await readResult(page, '识别偏移')
+  expect(estimate, '应报出一个识别偏移').not.toBeNull()
+  return estimate ?? Number.NaN
+}
+
+/**
+ * Wait for the phase banner, which is the controller's own state machine rendered.
+ *
+ * On a timeout it reports the on-screen reason as well. Without that, a run that ended
+ * `未完成` fails as a bare string mismatch and says nothing about which of the seven
+ * failure kinds happened, which is the only part worth knowing.
+ */
+async function waitForPhase(page: Page, text: string): Promise<void> {
+  try {
+    await expect(page.locator('.auto-phase')).toContainText(text, { timeout: 120_000 })
+  } catch (error) {
+    const reason = await page.locator('.auto-failure').textContent().catch(() => null)
+    if (!reason) throw error
+    throw new Error(`${(error as Error).message}\n\n页面给出的原因：${reason}`)
+  }
+}
+
+/** Read one number out of the auto-sync result grid by its term. */
+async function readResult(page: Page, term: string): Promise<number | null> {
+  const row = page.locator('.auto-sync .status-grid > div', {
+    has: page.getByText(term, { exact: true }),
+  })
+  if ((await row.count()) === 0) return null
+  const text = await row.locator('dd').innerText()
+  const value = Number.parseFloat(text.replace(/[^\d.+-]/g, ''))
+  return Number.isFinite(value) ? value : null
+}
+
+async function setField(page: Page, label: string, value: string): Promise<void> {
+  const field = page
+    .locator('.admin-library-column .field')
+    .filter({ has: page.getByText(label, { exact: true }) })
+    .first()
+  await field.locator('input, textarea').first().fill(value)
+}
+
+async function setRoi(page: Page, roi: { x: number; y: number; w: number; h: number }): Promise<void> {
+  const inputs = page.locator('.roi-field input')
+  for (const [index, value] of [roi.x, roi.y, roi.w, roi.h].entries()) {
+    await inputs.nth(index).fill(String(value))
+  }
+}
+
+/**
+ * Seek the sample element and wait until the editor agrees it got there.
+ *
+ * The readout is fed from the same `seeked` handler that grabs the frame, so a matching
+ * time means the analysis on screen belongs to the position asked for. Waiting on that
+ * rather than on a delay also settles the stale-DOM question: two different frames can
+ * segment into the same number of boxes, so a box count alone cannot tell them apart.
+ */
+async function seekSample(page: Page, seconds: number): Promise<void> {
+  await page.locator('video.admin-video').evaluate((node: HTMLVideoElement, to: number) => {
+    node.currentTime = to
+  }, seconds)
+  // Compared as a number, not as text: a seek lands on the nearest frame, so 1.5 s can
+  // read back as 1.47 s at 30 fps. Half a frame of tolerance is well inside the second
+  // the lesson is about.
+  await expect
+    .poll(
+      async () => {
+        const text = await page.locator('.timeline-readout span').first().innerText()
+        return Number.parseFloat(text)
+      },
+      { timeout: 20_000, message: `样片应停在 ${seconds}s` },
+    )
+    .toBeCloseTo(seconds, 1)
+}

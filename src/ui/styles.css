@@ -1,0 +1,1990 @@
+/*
+ * Single stylesheet for the whole app.
+ *
+ * Dark by default and not themeable: this is a tool used while watching a match in a dark
+ * room, and a light theme would be a second set of contrast decisions to maintain for no
+ * one's benefit. Colours are held in custom properties so the palette is one edit.
+ *
+ * Two layout rules matter more than they look. The stage is a grid whose media elements are
+ * positioned by CSS but *owned* by MediaEngine, so nothing here may assume React put them
+ * there. And the danmaku layer has no background box on items — only a text shadow — because
+ * a translucent box over video reads as dirt on the picture.
+ */
+
+:root {
+  --bg: #0b0d10;
+  --bg-raised: #141821;
+  --bg-sunken: #080a0d;
+  --panel: #1b2029;
+  --panel-hover: #232935;
+  --border: #2b3240;
+  --border-strong: #3a4354;
+  --text: #e8ecf3;
+  --text-dim: #9aa5b7;
+  --text-faint: #6b7688;
+  --accent: #4f9cf9;
+  --accent-dim: #2b5c99;
+  --ok: #47c07f;
+  --warn: #e0a94a;
+  --error: #e56a6a;
+  --radius: 8px;
+  --radius-sm: 5px;
+  --shadow: 0 10px 30px rgb(0 0 0 / 45%);
+  /* Shared by .panel and the notice-strip re-centring that avoids it. */
+  --panel-width: 336px;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+}
+
+h1 {
+  font-size: 18px;
+}
+
+h2 {
+  font-size: 14px;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+}
+
+/*
+ * No top margin: every h3 in the app is the first child of a flex card or header that
+ * already spaces children with gap, so the margin only ever skewed a card's inner
+ * padding (22px above the title vs 10px below) and shoved panel-header titles off the
+ * button they share a row with.
+ */
+h3 {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+p {
+  margin: 0;
+}
+
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+code {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.92em;
+  background: var(--bg-sunken);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+/* Focus is never removed, only replaced: the editor is keyboard-driven. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 11px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+button:hover:not(:disabled) {
+  background: var(--panel-hover);
+  border-color: var(--border-strong);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--accent);
+}
+
+button.ghost,
+a.ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 11px;
+  color: var(--text-dim);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+button.ghost:hover,
+a.ghost:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+button.small {
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.icon-button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  padding: 4px 8px;
+}
+
+.icon-button:hover:not(:disabled) {
+  background: rgb(255 255 255 / 8%);
+  border-color: transparent;
+  color: var(--text);
+}
+
+.icon-button.is-on {
+  color: var(--accent);
+}
+
+/*
+ * `input:not([type])` matters: a bare <input> defaults to text but matches no
+ * `input[type=...]` selector, so five fields in this app used to fall through to the UA
+ * stylesheet — grey box, intrinsic ~170px width, no relation to anything around it.
+ * The list stays explicit rather than becoming a bare `input` because checkbox, radio,
+ * range and file inputs must keep their own appearance.
+ */
+input:not([type]),
+input[type='text'],
+input[type='password'],
+input[type='number'],
+input[type='url'],
+input[type='search'],
+textarea {
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+input.is-invalid {
+  border-color: var(--error);
+}
+
+textarea {
+  resize: vertical;
+}
+
+.hint {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.badge {
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.page-loading {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--text-faint);
+}
+
+/* ---------- player page ---------- */
+
+.player-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  height: 100%;
+  background: var(--bg);
+}
+
+.player-page.no-sidebar {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/*
+ * A container, not just a positioning context. The overlay bar has to reflow against the width
+ * it actually gets, and that is not the viewport width: the sidebar takes 320px, and going
+ * fullscreen gives the same window back to the stage. A viewport media query would reflow the
+ * bar in fullscreen at 1024px, where it has the whole screen and needs no help at all.
+ */
+.stage {
+  position: relative;
+  overflow: hidden;
+  background: #000;
+  min-width: 0;
+  container-type: inline-size;
+  container-name: stage;
+}
+
+/*
+ * The main mount and the video inside it. `MediaEngine` appends the element here, so the
+ * rule targets a child it did not render — sizing lives on the container, fitting on the
+ * element.
+ */
+.stage-main {
+  position: absolute;
+  inset: 0;
+}
+
+.media-element {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  display: block;
+}
+
+/*
+ * `--bar-clearance` is how much room the overlay bar needs underneath the preview. `PlayerPage`
+ * measures the bar and publishes it on `.stage` (`usePublishedHeight`), because the value is not
+ * one the stylesheet can name: the bar folds from one row to three as the stage narrows, and the
+ * row count also moves with the text inside it — 画质 reading `1080p60` is wider than 自动. The
+ * fallback is the single-row height, which is what the first paint gets and all a browser without
+ * `ResizeObserver` would ever get.
+ */
+.preview-slot {
+  position: absolute;
+  right: 16px;
+  bottom: calc(var(--bar-clearance, 68px) + 16px);
+  width: 25%;
+  min-width: 180px;
+  max-width: 340px;
+  aspect-ratio: 16 / 9;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #000;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+
+.preview-slot:hover {
+  border-color: var(--accent);
+}
+
+.preview-mount {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+/* The preview is a click target, not a control surface: its own controls stay off. */
+.preview-mount .media-element {
+  pointer-events: none;
+}
+
+.preview-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 3px 8px;
+  font-size: 12px;
+  background: linear-gradient(transparent, rgb(0 0 0 / 75%));
+  text-align: left;
+}
+
+.stage-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: linear-gradient(rgb(0 0 0 / 65%), transparent);
+  pointer-events: none;
+}
+
+.stage-top .icon-button {
+  pointer-events: auto;
+  background: rgb(0 0 0 / 45%);
+}
+
+.stage-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 600;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 80%);
+}
+
+.stage-subtitle {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* ---------- overlay bar ---------- */
+
+/*
+ * Three columns: playback left, progress middle, picture/danmaku right. The middle track is
+ * the only one allowed to absorb or give up width — `auto` outer tracks would otherwise
+ * shrink to min-content, and min-content for a Chinese label is *one character*, so the
+ * right group used to stack 画 / 质 / 设 / 置 vertically and grow the bar to half the screen.
+ * `min-content` on the outer tracks reads the same as `auto` at desktop width but refuses to
+ * go below the widest un-wrappable child, which combined with the nowrap below is what keeps
+ * the row a row. z-index sits above .panel so 弹幕设置 never buries the button that opened it.
+ */
+.overlay-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: min-content minmax(0, 1fr) min-content;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px 12px;
+  background: linear-gradient(transparent, rgb(0 0 0 / 82%));
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 160ms ease, transform 160ms ease;
+  pointer-events: none;
+}
+
+.overlay-bar.is-visible {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.overlay-left,
+.overlay-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Labels are short and load-bearing; wrapping one mid-word is never the right answer. */
+.overlay-left > *,
+.overlay-right > * {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.overlay-middle {
+  min-width: 0;
+}
+
+/* Placeholder, not content: it holds the progress column's place before anything loads. */
+.overlay-middle.is-empty {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+/*
+ * Below ~940px of stage there is no room left for the progress column: the control groups need
+ * 348 + 334 plus gaps and padding, and a progress bar under ~180px is not worth dragging. So the
+ * progress column takes the top row and the two control groups share the row under it.
+ * Left/middle/right keep their meaning — this is the same bar folded, not a different one, and
+ * sync still lives in the sidebar.
+ */
+@container stage (max-width: 940px) {
+  .overlay-bar {
+    grid-template-columns: min-content 1fr;
+    grid-template-areas:
+      'middle middle'
+      'left   right';
+    gap: 6px 12px;
+    padding-top: 10px;
+  }
+
+  .overlay-middle {
+    grid-area: middle;
+  }
+
+  .overlay-left {
+    grid-area: left;
+  }
+
+  .overlay-right {
+    grid-area: right;
+    justify-content: flex-end;
+  }
+}
+
+/*
+ * Narrower still: the two control groups together need ~726px and cannot share a row. Each gets
+ * its own row and is allowed to wrap internally, so the bar grows a line at a time instead of
+ * clipping or breaking labels apart.
+ */
+@container stage (max-width: 760px) {
+  .overlay-bar {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'middle'
+      'left'
+      'right';
+    gap: 6px;
+  }
+
+  .overlay-left,
+  .overlay-right {
+    flex-wrap: wrap;
+  }
+}
+
+@container stage (max-width: 620px) {
+  .preview-slot {
+    width: 34%;
+    min-width: 132px;
+  }
+}
+
+/* Last resort: mute buttons keep working, the fine control is in the sidebar anyway. */
+@container stage (max-width: 560px) {
+  .volume-control input[type='range'] {
+    display: none;
+  }
+}
+
+.play-button {
+  background: rgb(255 255 255 / 12%);
+  border-color: transparent;
+  min-width: 62px;
+}
+
+.volume-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.volume-icon {
+  background: transparent;
+  border-color: transparent;
+  padding: 4px 6px;
+}
+
+.volume-tag {
+  font-size: 11px;
+  color: var(--text-dim);
+  min-width: 28px;
+}
+
+/*
+ * The volume slider is narrow on purpose; the sidebar holds the precise controls. It has to be
+ * addressed as the bare range input it is — `VolumeControl` does not wrap it in `Slider`, so the
+ * `.volume-control .slider` this rule used to name matched nothing and both sliders sat at the
+ * UA default 129px, which is most of why the bar ran out of room.
+ */
+.volume-control input[type='range'] {
+  width: 72px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* ---------- progress ---------- */
+
+.progress-track {
+  position: relative;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.progress-track input[type='range'] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.progress-buffer,
+.progress-played {
+  position: absolute;
+  left: 0;
+  height: 4px;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.progress-track::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: rgb(255 255 255 / 18%);
+  border-radius: 2px;
+}
+
+.progress-buffer {
+  background: rgb(255 255 255 / 32%);
+}
+
+.progress-played {
+  background: var(--accent);
+}
+
+.progress-played::after {
+  content: '';
+  position: absolute;
+  right: -5px;
+  top: -3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.progress-readout {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.live-button {
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 999px;
+  background: transparent;
+  border-color: var(--border-strong);
+}
+
+.live-button.is-live {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.live-button.is-live::before {
+  content: '● ';
+}
+
+/* ---------- controls ---------- */
+
+.dropup {
+  position: relative;
+}
+
+.dropup-trigger {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  line-height: 1.25;
+  background: rgb(255 255 255 / 8%);
+  border-color: transparent;
+}
+
+.dropup-label {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.dropup-value {
+  font-size: 12px;
+}
+
+/*
+ * Two shapes for one control, split by where the menu opens — which is also where the control
+ * lives. `align="right"` is the overlay bar: a compact stacked chip, sized to its text, sitting
+ * among other chips. `align="left"` is a settings column, where it is one row in a stack of
+ * Slider and Toggle rows; those put their label left and their value right, so a 70px chip with
+ * a 10px caption read as a different kind of control than it is. Same vocabulary, same row width.
+ */
+.dropup-left {
+  display: block;
+}
+
+.dropup-left .dropup-trigger {
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  background: var(--bg-sunken);
+  border-color: var(--border);
+  padding: 5px 9px;
+}
+
+.dropup-left .dropup-trigger:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.dropup-left .dropup-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.dropup-left .dropup-value {
+  color: var(--text);
+  text-align: right;
+}
+
+.dropup-left .dropup-menu {
+  width: 100%;
+}
+
+/*
+ * Opens upward, inside the player. A native select popup is painted by the OS above the
+ * fullscreen surface, which is why this exists at all.
+ */
+.dropup-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  min-width: 168px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  z-index: 30;
+}
+
+.dropup-right .dropup-menu {
+  right: 0;
+}
+
+.dropup-left .dropup-menu {
+  left: 0;
+}
+
+.dropup-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+}
+
+.dropup-option[data-selected='true'] {
+  background: var(--accent-dim);
+}
+
+.dropup-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/*
+ * A caption stacked over an input. Used by the source dialog and the profile editor both, which
+ * is why it sits here with the other controls rather than in either one's section.
+ */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.field > input,
+.field > textarea {
+  font-size: 12px;
+}
+
+.slider {
+  display: block;
+}
+
+.slider-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+
+.slider-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.slider input[type='range'] {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  padding: 3px 0;
+}
+
+.toggle.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-track {
+  flex: none;
+  position: relative;
+  width: 34px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 140ms ease;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform 140ms ease;
+}
+
+.toggle input:checked + .toggle-track {
+  background: var(--accent);
+}
+
+.toggle input:checked + .toggle-track .toggle-thumb {
+  transform: translateX(16px);
+}
+
+.toggle input:focus-visible + .toggle-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.toggle-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.toggle-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* ---------- danmaku ---------- */
+
+.danmaku-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/*
+ * No background box. A translucent plate behind every comment reads as dirt on the
+ * picture; a shadow keeps white text legible over white smoke just as well.
+ */
+.danmaku-item {
+  position: absolute;
+  left: 0;
+  top: 0;
+  white-space: pre;
+  font-weight: 700;
+  text-shadow: 1px 1px 2px rgb(0 0 0 / 90%), 0 0 3px rgb(0 0 0 / 70%);
+  will-change: transform;
+}
+
+/* ---------- notices ---------- */
+
+.notice-strip {
+  position: absolute;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 20;
+  max-width: min(560px, 80%);
+  transition: left 200ms ease, max-width 200ms ease;
+}
+
+/*
+ * When the danmaku panel is open it owns the right side of the stage, and the strip's
+ * strip-of-record centring would slide it underneath the panel (the panel paints above
+ * it). Neither should cover the other: the panel is a surface the user chose to keep
+ * open — its header holds the close button — while a notice is transient feedback that
+ * must stay readable or it might as well not fire. So the strip re-centres on the stage
+ * area the panel leaves visible, and glides there on the panel's own 200ms slide.
+ */
+.stage:has(.panel) .notice-strip {
+  left: calc((100% - var(--panel-width)) / 2);
+  max-width: min(560px, calc(100% - var(--panel-width) - 24px));
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px 7px 12px;
+  border-radius: var(--radius);
+  border-left: 3px solid var(--border-strong);
+  background: rgb(20 24 33 / 94%);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+}
+
+.notice-info {
+  border-left-color: var(--accent);
+}
+
+.notice-warn {
+  border-left-color: var(--warn);
+}
+
+.notice-error {
+  border-left-color: var(--error);
+}
+
+/*
+ * The strip floats over the picture, so its one button stays chrome-less: the default
+ * raised-button look made the dismiss × the loudest thing in the notice.
+ */
+.notice button {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+  padding: 2px 7px;
+}
+
+.notice button:hover {
+  background: rgb(255 255 255 / 8%);
+  color: var(--text);
+}
+
+/* ---------- in-player panel ---------- */
+
+.panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--panel-width);
+  overflow: hidden;
+  background: rgb(17 20 27 / 96%);
+  border-left: 1px solid var(--border);
+  z-index: 25;
+  backdrop-filter: blur(6px);
+}
+
+/*
+ * One container, two positions: the sub-page sits to the right of the main pane and both
+ * slide together. Mounting/unmounting the sub-page instead would lose the transition and
+ * make "返回" feel like a page load.
+ *
+ * Both panes are full height because that is what makes the slide work, so the bottom padding
+ * clears the overlay bar. The panel cannot simply stop above the bar instead: the bar hides on
+ * pointer idle while the panel stays open, which would leave the panel floating over a gap.
+ */
+.panel-pane,
+.panel-subpage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px calc(var(--bar-clearance, 68px) + 12px);
+  overflow-y: auto;
+  transition: transform 200ms ease;
+}
+
+.panel-subpage {
+  transform: translateX(100%);
+  background: rgb(17 20 27 / 98%);
+}
+
+.panel[data-subpage='patterns'] .panel-pane,
+.panel[data-subpage='users'] .panel-pane {
+  transform: translateX(-100%);
+}
+
+.panel[data-subpage='patterns'] .panel-subpage,
+.panel[data-subpage='users'] .panel-subpage {
+  transform: none;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+/*
+ * The sub-page header is back-button + title. The shared space-between layout would push
+ * the title to the far right, away from the button that says where back goes; the auto
+ * margin keeps the pair together on the left, mirroring how the main pane keeps its title
+ * away from the close button.
+ */
+.panel-subpage .panel-header h3 {
+  margin-right: auto;
+}
+
+.panel-links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.panel-links button {
+  display: flex;
+  justify-content: space-between;
+  background: transparent;
+  border-color: var(--border);
+}
+
+.list-add {
+  display: flex;
+  gap: 6px;
+}
+
+/*
+ * The input shrinks (min-width: 0), so without flex:none the button absorbs the squeeze
+ * and collapses to the min-content of its Chinese text — one character — stacking 添 over
+ * 加. The label is the whole affordance; it never wraps.
+ */
+.list-add button {
+  flex: none;
+  white-space: nowrap;
+}
+
+.list-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.list-editor li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  background: var(--bg-sunken);
+  border-radius: var(--radius-sm);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* The empty state is a status, not a rule: no row chrome, no monospace, dim text. */
+.list-editor li.is-empty {
+  background: transparent;
+  font-family: inherit;
+  color: var(--text-faint);
+}
+
+.list-error {
+  color: var(--error);
+  font-size: 11px;
+}
+
+/* ---------- sync sidebar ---------- */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px 14px 20px;
+  overflow-y: auto;
+  background: var(--bg-raised);
+  border-left: 1px solid var(--border);
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sidebar h2 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sidebar h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: none;
+}
+
+.sidebar section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.status-pill {
+  align-self: flex-start;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border-strong);
+}
+
+.status-pill.is-aligned {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+
+.status-pill.is-off {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+/*
+ * `dl`/`dd` carry UA margins (1em around the list, 40px in front of each value) that no
+ * reset above covered — the values sat indented under nothing in particular instead of
+ * under their labels, and the block added phantom vertical space inside its card.
+ */
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+  margin: 0;
+}
+
+.status-grid dt {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.status-grid dd {
+  margin: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.status-warning {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--warn);
+}
+
+.nudge-row {
+  display: flex;
+  gap: 6px;
+}
+
+.nudge-row button {
+  flex: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.sync-headroom ul {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.sync-headroom li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sync-headroom .is-tight {
+  color: var(--warn);
+}
+
+.headroom-applied {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.auto-phase {
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  border-left: 3px solid var(--border-strong);
+  font-size: 12px;
+}
+
+.phase-sampling,
+.phase-estimating,
+.phase-applying,
+.phase-verifying {
+  border-left-color: var(--accent);
+}
+
+.phase-done {
+  border-left-color: var(--ok);
+}
+
+.phase-failed {
+  border-left-color: var(--error);
+}
+
+.auto-failure {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--error);
+}
+
+.auto-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.auto-actions button {
+  flex: 1;
+}
+
+/* ---------- dialogs ---------- */
+
+/*
+ * Dim enough that the sidebar behind it stops competing for attention. At 72% every slider and
+ * readout was still fully legible, so the dialog did not read as modal even though it is.
+ */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(4 6 9 / 84%);
+  backdrop-filter: blur(2px);
+  z-index: 100;
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.source-dialog {
+  width: min(920px, 100%);
+}
+
+.dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dialog-header h2 {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.dialog-error,
+.source-error {
+  color: var(--error);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.dialog-footer .dialog-error {
+  margin-right: auto;
+}
+
+.source-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px 16px;
+  overflow-y: auto;
+}
+
+.source-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.source-panel h3 {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.source-current {
+  font-size: 11px;
+  color: var(--text-dim);
+  word-break: break-all;
+}
+
+.source-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/*
+ * A <label> wrapping a hidden file input, so it has to be given the button appearance by hand —
+ * next to a real 加载 button it otherwise reads as a stray line of text rather than a choice.
+ */
+.file-button {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.file-button:hover {
+  background: var(--panel-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+/* The invisible input covers the label, so the label's own focus ring never shows. */
+.file-button:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The real input stays in the layout so it can receive focus; it is just invisible. */
+.file-button input[type='file'] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.source-tests,
+.source-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.source-tests {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.source-problem {
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+  border-left: 3px solid var(--error);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.source-problem ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  list-style: disc;
+}
+
+.success {
+  color: var(--ok);
+  font-size: 12px;
+}
+
+.danmaku-room {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Labelled fields are `.field` everywhere now; this block used to carry its own copy of it. */
+
+/* ---------- crash screen ---------- */
+
+.crash {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 100vh;
+  padding: 32px;
+  text-align: center;
+}
+
+.crash h1 {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.crash-message {
+  max-width: 640px;
+  padding: 10px 12px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.crash-hint {
+  max-width: 520px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.crash-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ---------- admin: token gate ---------- */
+
+.admin-gate {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.gate-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(420px, 100%);
+  padding: 20px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.gate-card h1 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.gate-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.gate-error {
+  color: var(--error);
+  font-size: 12px;
+}
+
+.gate-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ---------- admin: editor shell ---------- */
+
+.admin-page {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100vh;
+  padding: 10px 12px 12px;
+  overflow: hidden;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-header h1 {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.admin-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.admin-message {
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--border-strong);
+  background: var(--bg-raised);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.admin-message.is-info {
+  border-left-color: var(--accent);
+}
+
+.admin-message.is-warn {
+  border-left-color: var(--warn);
+}
+
+.admin-message.is-error {
+  border-left-color: var(--error);
+}
+
+/*
+ * Three columns: library, sample stage, inspector. The middle one is the only elastic
+ * track — the side panels hold fixed-width controls and shrinking them just clips labels.
+ */
+.admin-columns {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr) 340px;
+  gap: 10px;
+  min-height: 0;
+  flex: 1;
+}
+
+.admin-library-column,
+.admin-stage-column,
+.admin-inspect-column {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.panel-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.panel-block h2,
+.panel-block h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.button-row button,
+.button-row .file-button {
+  flex: 1 1 auto;
+}
+
+.library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.library-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.library-item button:first-child {
+  flex: 1;
+  justify-content: flex-start;
+  text-align: left;
+  background: transparent;
+  border-color: var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-item.is-selected button:first-child {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---------- admin: sample stage ---------- */
+
+.stage-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/*
+ * The ROI window is absolutely positioned against this box, so it must be the containing
+ * block and must not scroll: a scrolled stage would offset every handle.
+ */
+.admin-stage {
+  position: relative;
+  flex: 1;
+  min-height: 240px;
+  overflow: hidden;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.admin-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.stage-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+.stage-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.timeline-readout {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+/* ---------- admin: ROI window ---------- */
+
+.roi-window {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 60%), 0 0 0 9999px rgb(0 0 0 / 35%);
+  cursor: move;
+  touch-action: none;
+}
+
+.roi-window:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.roi-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: var(--accent);
+  border: 1px solid #000;
+  touch-action: none;
+}
+
+.roi-handle-nw {
+  top: -5px;
+  left: -5px;
+  cursor: nwse-resize;
+}
+
+.roi-handle-n {
+  top: -5px;
+  left: calc(50% - 5px);
+  cursor: ns-resize;
+}
+
+.roi-handle-ne {
+  top: -5px;
+  right: -5px;
+  cursor: nesw-resize;
+}
+
+.roi-handle-e {
+  top: calc(50% - 5px);
+  right: -5px;
+  cursor: ew-resize;
+}
+
+.roi-handle-se {
+  bottom: -5px;
+  right: -5px;
+  cursor: nwse-resize;
+}
+
+.roi-handle-s {
+  bottom: -5px;
+  left: calc(50% - 5px);
+  cursor: ns-resize;
+}
+
+.roi-handle-sw {
+  bottom: -5px;
+  left: -5px;
+  cursor: nesw-resize;
+}
+
+.roi-handle-w {
+  top: calc(50% - 5px);
+  left: -5px;
+  cursor: ew-resize;
+}
+
+.roi-size {
+  position: absolute;
+  top: -20px;
+  left: 0;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgb(0 0 0 / 75%);
+  color: var(--text);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.roi-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.roi-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.roi-field input {
+  padding: 4px 5px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- admin: preview + segmentation ---------- */
+
+.preview-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.preview-pair figcaption {
+  margin-top: 3px;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/*
+ * Nearest-neighbour on purpose: this is a magnified binary mask, and smoothing it would
+ * invent grey pixels the matcher never sees.
+ */
+.preview-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* Glyph boxes are positioned in percentages of this box, so it must hug the canvas. */
+.binary-wrap {
+  position: relative;
+  line-height: 0;
+}
+
+.glyph-box {
+  position: absolute;
+  padding: 0;
+  min-width: 0;
+  background: transparent;
+  border: 1px solid var(--warn);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.glyph-box.is-selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.glyph-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.glyph-chip {
+  min-width: 26px;
+  padding: 3px 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.glyph-chip.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.edge-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.edge-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.edge-row span:first-child {
+  width: 36px;
+  flex: none;
+}
+
+.edge-row button {
+  flex: 1;
+  padding: 3px 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.char-pad {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.char-key {
+  padding: 7px 0;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.verify-ok {
+  color: var(--ok);
+}
+
+.verify-bad {
+  color: var(--error);
+}
+
+.match-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+/* ---------- admin: template library ---------- */
+
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 6px;
+}
+
+.template-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 5px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* A character with no samples cannot be recognised, so it reads as unfinished, not empty. */
+.template-cell.is-empty {
+  border-style: dashed;
+  border-color: var(--warn);
+  opacity: 0.75;
+}
+
+.template-cell header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.template-cell strong {
+  font-size: 13px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.template-samples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.template-thumb {
+  padding: 1px;
+  min-width: 0;
+  line-height: 0;
+  background: #000;
+  border-color: var(--border);
+  border-radius: 3px;
+}
+
+.template-thumb:hover {
+  border-color: var(--error);
+}
+
+.thumb-canvas {
+  display: block;
+  width: 18px;
+  height: auto;
+  image-rendering: pixelated;
+}
+
+@media (max-width: 1180px) {
+  .admin-columns {
+    grid-template-columns: 208px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .admin-inspect-column {
+    grid-column: 1 / -1;
+    max-height: 320px;
+  }
+}
+
+/*
+ * Stacked layout. The sidebar row must be told to hold its own height: as plain `auto` it sizes
+ * to content — about 900px of sliders and toggles — which starved the `1fr` stage row to zero and
+ * left the player with no picture at all. Capping the sidebar and letting it scroll keeps the
+ * video the largest thing on screen, which is the whole point of the page.
+ */
+@media (max-width: 900px) {
+  .player-page {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(240px, 1fr) minmax(0, auto);
+  }
+
+  .sidebar {
+    max-height: 45vh;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+
+  .source-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

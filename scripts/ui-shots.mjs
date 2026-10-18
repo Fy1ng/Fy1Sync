@@ -1,0 +1,286 @@
+/**
+ * Screenshot the running app so UI work can be judged by looking at it.
+ *
+ * Not part of the test suite and not a check — it asserts nothing. It exists because
+ * reading CSS is a bad way to find out that two panels disagree about their corner radius.
+ *
+ *   node dist/server/index.mjs &                     # or npm run dev
+ *   node scripts/ui-shots.mjs [--base http://127.0.0.1:4181] [--out .ui-shots]
+ *
+ * Selectors are the ones e2e/helpers.ts already uses to drive this app; keep the two in
+ * step. Every capture is wrapped so a step that cannot reach its state warns and the rest
+ * of the sheet still gets taken — a half-populated sheet is more useful than an exception.
+ */
+
+import { mkdir, rm } from 'node:fs/promises'
+import { chromium } from '@playwright/test'
+
+const argv = process.argv.slice(2)
+const flag = (name, fallback) => {
+  const at = argv.indexOf(`--${name}`)
+  return at >= 0 && argv[at + 1] ? argv[at + 1] : fallback
+}
+
+const base = flag('base', 'http://127.0.0.1:4181').replace(/\/$/, '')
+const outDir = flag('out', '.ui-shots')
+
+/** Desktop is the design target; narrow is where the sidebar and the bar start to fight. */
+const VIEWPORTS = [
+  { name: 'desktop', width: 1440, height: 900 },
+  { name: 'narrow', width: 1024, height: 700 },
+]
+
+const FIXTURES = {
+  official: '/test-sources/official.mp4',
+  commentary: '/test-sources/commentary.mp4',
+}
+
+const DANMAKU = [
+  '这波指挥有问题',
+  '哈哈哈哈哈哈',
+  '解说说得对',
+  '666666',
+  'A队要翻盘了',
+  '前面的挡住了',
+  '这枪法太离谱',
+  '关注主播抽奖',
+]
+
+const sourceDialog = (page) => page.getByRole('dialog', { name: '片源设置' })
+
+async function closeSourceDialog(page) {
+  const dialog = sourceDialog(page)
+  // The cold-start dialog opens from an effect, so it may not be up on the first paint.
+  if (await dialog.isVisible().catch(() => false)) {
+    await dialog.getByRole('button', { name: '完成' }).click()
+    await dialog.waitFor({ state: 'hidden' })
+  }
+}
+
+async function openSourceDialog(page) {
+  const dialog = sourceDialog(page)
+  if (!(await dialog.isVisible().catch(() => false))) {
+    await page.getByRole('button', { name: '片源设置' }).click()
+  }
+  await dialog.waitFor({ state: 'visible' })
+  return dialog
+}
+
+/** The role panel inside the source dialog, addressed by its heading. */
+function rolePanel(dialog, role) {
+  return dialog.locator('.source-panel', {
+    has: dialog.page().getByRole('heading', { name: role === 'official' ? '官方画面' : '解说' }),
+  })
+}
+
+async function loadSource(page, role, url) {
+  const dialog = await openSourceDialog(page)
+  const panel = rolePanel(dialog, role)
+  // By label, not by role alone: the commentary panel also carries the danmaku room field.
+  await panel.getByRole('textbox', { name: '直播间或媒体地址' }).fill(url)
+  await panel.getByRole('button', { name: '加载' }).click()
+  await panel
+    .locator('.source-current')
+    .filter({ hasText: url.split('/').pop() })
+    .waitFor({ timeout: 20_000 })
+}
+
+/** Both elements have a real duration — otherwise the stage screenshots are black. */
+async function waitForBothReady(page) {
+  await page.waitForFunction(
+    () =>
+      Array.from(document.querySelectorAll('video.media-element')).filter(
+        (video) => video.readyState >= 2 && Number.isFinite(video.duration),
+      ).length === 2,
+    undefined,
+    { timeout: 30_000 },
+  )
+}
+
+/** The bar auto-hides and is pointer-events:none while hidden, so reveal before clicking. */
+async function revealOverlay(page) {
+  await page.locator('.stage').hover({ position: { x: 20, y: 20 } })
+  await page.locator('.overlay-bar.is-visible').waitFor()
+}
+
+/** Canned SSE, so the danmaku shot does not depend on a live room. */
+async function stubDanmaku(page) {
+  const body = [
+    'event: state\ndata: {"room":"288016","state":"connected"}\n\n',
+    ...DANMAKU.map((text, index) =>
+      `event: danmaku\ndata: ${JSON.stringify({
+        id: `shot-${index}`,
+        text,
+        user: `观众${index}`,
+        color: ['#ffffff', '#ffd54f', '#7fd4ff', '#ff8a80'][index % 4],
+      })}\n\n`,
+    ),
+  ].join('')
+
+  await page.route('**/api/danmaku/douyu/**', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache' },
+      body,
+    }),
+  )
+}
+
+let taken = 0
+let failed = 0
+
+async function shot(page, name) {
+  const file = `${outDir}/${name}.png`
+  await page.screenshot({ path: file })
+  taken += 1
+  console.log(`  ✓ ${file}`)
+}
+
+/** A capture that cannot reach its state should not take the rest of the sheet with it. */
+async function step(name, run) {
+  try {
+    await run()
+  } catch (error) {
+    failed += 1
+    console.warn(`  ✗ ${name}: ${String(error).split('\n')[0]}`)
+  }
+}
+
+async function captureViewport(browser, viewport) {
+  const prefix = viewport.name
+  console.log(`\n${prefix} ${viewport.width}×${viewport.height}`)
+
+  const context = await browser.newContext({
+    viewport: { width: viewport.width, height: viewport.height },
+    // Retina-density shots: hairline borders and text shadows are exactly what this is for.
+    deviceScaleFactor: 2,
+  })
+  const page = await context.newPage()
+  page.on('pageerror', (error) => console.warn(`  ! 页面异常：${error.message}`))
+  await stubDanmaku(page)
+
+  await page.goto(base, { waitUntil: 'domcontentloaded' })
+  await page.locator('.player-page').waitFor({ timeout: 30_000 })
+
+  // Cold start: the dialog is the first thing anyone sees, so it is the first thing to look at.
+  await step('cold', async () => {
+    await sourceDialog(page).waitFor({ timeout: 10_000 })
+    await page.waitForTimeout(300)
+    await shot(page, `${prefix}-01-cold-dialog`)
+  })
+
+  await step('empty', async () => {
+    await closeSourceDialog(page)
+    await page.waitForTimeout(300)
+    await shot(page, `${prefix}-02-empty-stage`)
+  })
+
+  await step('loaded', async () => {
+    await loadSource(page, 'official', FIXTURES.official)
+    await loadSource(page, 'commentary', FIXTURES.commentary)
+    await shot(page, `${prefix}-03-dialog-loaded`)
+    await closeSourceDialog(page)
+    await waitForBothReady(page)
+    await page.waitForTimeout(500)
+    await shot(page, `${prefix}-04-loaded`)
+  })
+
+  await step('overlay', async () => {
+    await revealOverlay(page)
+    await page.waitForTimeout(200)
+    await shot(page, `${prefix}-05-overlay`)
+  })
+
+  // A DropUp with its menu open. Not 画质: a progressive mp4 exposes one level, so OverlayBar
+  // disables that trigger and it cannot be opened here at all. The sidebar's 精调按键 is the same
+  // component and is always enabled — and it is the sidebar shape of the control, which is the
+  // one that has to sit convincingly among Slider and Toggle rows.
+  // The name is anchored: an accessible name is label + value, so a bare /画质/ matches 摄像头画质 too.
+  await step('dropup menu', async () => {
+    await revealOverlay(page)
+    await page.getByRole('button', { name: /^精调按键/ }).click()
+    await page.waitForTimeout(250)
+    await shot(page, `${prefix}-06-dropup-menu`)
+    await page.keyboard.press('Escape')
+  })
+
+  await step('danmaku panel', async () => {
+    await revealOverlay(page)
+    await page.getByRole('button', { name: '弹幕设置' }).click()
+    await page.locator('.danmaku-panel').waitFor()
+    await page.waitForTimeout(300)
+    await shot(page, `${prefix}-07-danmaku-settings`)
+    await page.getByRole('button', { name: /^屏蔽正则/ }).click()
+    await page.waitForTimeout(500)
+    await shot(page, `${prefix}-08-danmaku-filter`)
+    await page.getByRole('button', { name: '返回' }).click()
+    await page.getByRole('button', { name: '关闭弹幕设置' }).click()
+  })
+
+  await step('danmaku overlay', async () => {
+    const dialog = await openSourceDialog(page)
+    const panel = rolePanel(dialog, 'commentary')
+    await panel.getByRole('textbox', { name: '弹幕房间号' }).fill('288016')
+    await panel.getByRole('button', { name: '连接' }).click()
+    await closeSourceDialog(page)
+    await revealOverlay(page)
+    await page.locator('.play-button').click()
+    // Long enough for the lanes to fill and the first tracks to travel a visible distance.
+    await page.waitForTimeout(2500)
+    await shot(page, `${prefix}-09-danmaku-live`)
+  })
+
+  await step('fullscreen', async () => {
+    await revealOverlay(page)
+    await page.getByRole('button', { name: '全屏' }).click()
+    await page.waitForTimeout(600)
+    await revealOverlay(page)
+    await shot(page, `${prefix}-10-fullscreen`)
+  })
+
+  await context.close()
+}
+
+/** The Profile Editor is its own page and shares only the stylesheet, so it drifts easily. */
+async function captureAdmin(browser) {
+  console.log('\nadmin 1440×900')
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+    deviceScaleFactor: 2,
+  })
+  const page = await context.newPage()
+  page.on('pageerror', (error) => console.warn(`  ! 页面异常：${error.message}`))
+
+  await step('admin', async () => {
+    await page.goto(`${base}/admin`, { waitUntil: 'domcontentloaded' })
+    await page.waitForTimeout(800)
+    await shot(page, 'admin-01-gate')
+  })
+
+  await context.close()
+}
+
+async function main() {
+  await rm(outDir, { recursive: true, force: true })
+  await mkdir(outDir, { recursive: true })
+
+  const health = await fetch(`${base}/api/health`).catch(() => null)
+  if (!health?.ok) {
+    console.error(`${base} 没有响应。先启动服务：node dist/server/index.mjs`)
+    process.exit(1)
+  }
+
+  const browser = await chromium.launch({
+    args: ['--autoplay-policy=no-user-gesture-required', '--mute-audio'],
+  })
+  try {
+    for (const viewport of VIEWPORTS) await captureViewport(browser, viewport)
+    await captureAdmin(browser)
+  } finally {
+    await browser.close()
+  }
+
+  console.log(`\n${taken} 张截图写入 ${outDir}/${failed > 0 ? `，${failed} 步失败` : ''}`)
+}
+
+await main()

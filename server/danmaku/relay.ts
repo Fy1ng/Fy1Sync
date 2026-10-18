@@ -1,0 +1,191 @@
+/**
+ * Danmaku relay: one upstream connection per room, fanned out to browser subscribers
+ * over Server-Sent Events.
+ *
+ * SSE rather than a WebSocket server because the traffic is one-directional and SSE
+ * reconnects on its own. Rooms are reference-counted: the upstream socket opens with the
+ * first subscriber and closes shortly after the last one leaves, so a closed tab does not
+ * leave a connection running forever.
+ */
+
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { DouyuDanmakuClient, type DanmakuClientDeps, type DanmakuState } from './douyuClient'
+import type { ChatMessage } from './douyuProtocol'
+
+/** Grace period before dropping an idle room, so a page reload reuses the connection. */
+const IDLE_CLOSE_MS = 10_000
+/** Bound the replay buffer; danmaku is worthless once it is minutes old. */
+const REPLAY_LIMIT = 50
+export const MAX_ROOMS = 8
+
+type Subscriber = {
+  id: number
+  write: (event: string, data: unknown) => void
+  close: () => void
+}
+
+type Room = {
+  id: string
+  client: DouyuDanmakuClient
+  subscribers: Map<number, Subscriber>
+  recent: ChatMessage[]
+  state: DanmakuState
+  detail?: string
+  idleTimer: unknown
+}
+
+export class DanmakuRelay {
+  private readonly rooms = new Map<string, Room>()
+  private nextSubscriberId = 1
+
+  constructor(private readonly deps: DanmakuClientDeps = {}) {}
+
+  get roomCount(): number {
+    return this.rooms.size
+  }
+
+  stateOf(roomId: string): DanmakuState {
+    return this.rooms.get(roomId)?.state ?? 'idle'
+  }
+
+  subscriberCount(roomId: string): number {
+    return this.rooms.get(roomId)?.subscribers.size ?? 0
+  }
+
+  /** Attach an SSE subscriber. Returns false when the room cap is already reached. */
+  subscribe(roomId: string, subscriber: Omit<Subscriber, 'id'>): (() => void) | null {
+    let room = this.rooms.get(roomId)
+    if (!room && this.rooms.size >= MAX_ROOMS) return null
+
+    if (!room) {
+      room = this.openRoom(roomId)
+    } else if (room.idleTimer !== null) {
+      this.clearTimer(room.idleTimer)
+      room.idleTimer = null
+    }
+
+    const id = this.nextSubscriberId++
+    const entry: Subscriber = { id, ...subscriber }
+    room.subscribers.set(id, entry)
+
+    entry.write('state', { room: roomId, state: room.state, detail: room.detail })
+    // Replay recent messages so a late subscriber's overlay is not empty for 30s.
+    for (const message of room.recent) entry.write('danmaku', message)
+
+    const currentRoom = room
+    return () => {
+      currentRoom.subscribers.delete(id)
+      if (currentRoom.subscribers.size === 0) this.scheduleIdleClose(currentRoom)
+    }
+  }
+
+  closeAll(): void {
+    for (const room of this.rooms.values()) {
+      if (room.idleTimer !== null) this.clearTimer(room.idleTimer)
+      room.client.close()
+      for (const subscriber of room.subscribers.values()) subscriber.close()
+    }
+    this.rooms.clear()
+  }
+
+  private openRoom(roomId: string): Room {
+    const room: Room = {
+      id: roomId,
+      subscribers: new Map(),
+      recent: [],
+      state: 'connecting',
+      idleTimer: null,
+      client: null as unknown as DouyuDanmakuClient,
+    }
+    room.client = new DouyuDanmakuClient(
+      roomId,
+      {
+        onMessage: (message) => {
+          room.recent.push(message)
+          if (room.recent.length > REPLAY_LIMIT) room.recent.shift()
+          this.broadcast(room, 'danmaku', message)
+        },
+        onState: (state, detail) => {
+          room.state = state
+          room.detail = detail
+          this.broadcast(room, 'state', { room: roomId, state, detail })
+        },
+      },
+      this.deps,
+    )
+    this.rooms.set(roomId, room)
+    room.client.connect()
+    return room
+  }
+
+  private broadcast(room: Room, event: string, data: unknown): void {
+    for (const subscriber of room.subscribers.values()) {
+      try {
+        subscriber.write(event, data)
+      } catch {
+        room.subscribers.delete(subscriber.id)
+      }
+    }
+  }
+
+  private scheduleIdleClose(room: Room): void {
+    if (room.idleTimer !== null) this.clearTimer(room.idleTimer)
+    room.idleTimer = this.setTimer(() => {
+      room.idleTimer = null
+      if (room.subscribers.size > 0) return
+      room.client.close()
+      this.rooms.delete(room.id)
+    }, IDLE_CLOSE_MS)
+  }
+
+  private setTimer(fn: () => void, ms: number): unknown {
+    return this.deps.setTimer ? this.deps.setTimer(fn, ms) : setTimeout(fn, ms)
+  }
+
+  private clearTimer(handle: unknown): void {
+    if (this.deps.clearTimer) this.deps.clearTimer(handle)
+    else clearTimeout(handle as never)
+  }
+}
+
+/** Wire an SSE response to a relay room. */
+export function attachSseSubscriber(
+  relay: DanmakuRelay,
+  roomId: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+): boolean {
+  const write = (event: string, data: unknown): void => {
+    if (res.writableEnded) return
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+  }
+
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-store',
+    connection: 'keep-alive',
+    // Without this, a reverse proxy may hold the stream in a buffer and stall it.
+    'x-accel-buffering': 'no',
+  })
+
+  const unsubscribe = relay.subscribe(roomId, { write, close: () => res.end() })
+  if (!unsubscribe) {
+    write('error', { code: 'too-many-rooms', message: `同时连接的房间数已达上限 ${MAX_ROOMS}` })
+    res.end()
+    return false
+  }
+
+  // Comment frames keep intermediaries from closing an otherwise-quiet stream.
+  const heartbeat = setInterval(() => {
+    if (res.writableEnded) return
+    res.write(': ping\n\n')
+  }, 15_000)
+
+  const cleanup = (): void => {
+    clearInterval(heartbeat)
+    unsubscribe()
+  }
+  req.on('close', cleanup)
+  res.on('close', cleanup)
+  return true
+}
