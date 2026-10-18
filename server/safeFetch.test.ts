@@ -31,6 +31,14 @@ describe('isPrivateAddress', () => {
     'ff02::1',
     '::ffff:127.0.0.1',
     '::ffff:10.1.2.3',
+    // The URL parser canonicalises `[::ffff:127.0.0.1]` to this hex form, so the
+    // embedded address has to be decoded, not matched as dotted text.
+    '::ffff:7f00:1',
+    '::ffff:a9fe:a9fe', // cloud metadata, mapped
+    '::7f00:1', // IPv4-compatible loopback
+    '64:ff9b::7f00:1', // NAT64 loopback
+    '0:0:0:0:0:0:0:1', // uncompressed ::1
+    '2001:db8::1', // documentation range
   ]
 
   for (const address of privateCases) {
@@ -39,7 +47,13 @@ describe('isPrivateAddress', () => {
     })
   }
 
-  const publicCases = ['1.1.1.1', '8.8.8.8', '93.184.216.34', '172.32.0.1', '2606:4700::1111']
+  it('rejects the hex form the URL parser produces for a mapped loopback host', () => {
+    const host = new URL('http://[::ffff:127.0.0.1]/').hostname.replace(/^\[|\]$/g, '')
+    expect(host).toBe('::ffff:7f00:1')
+    expect(isPrivateAddress(host)).toBe(true)
+  })
+
+  const publicCases = ['1.1.1.1', '8.8.8.8', '93.184.216.34', '172.32.0.1', '2606:4700::1111', '::ffff:808:808']
   for (const address of publicCases) {
     it(`allows ${address}`, () => {
       expect(isPrivateAddress(address)).toBe(false)

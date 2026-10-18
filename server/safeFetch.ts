@@ -58,15 +58,55 @@ function isPrivateIPv4(address: string): boolean {
 }
 
 function isPrivateIPv6(address: string): boolean {
-  const normalized = address.toLowerCase().replace(/^\[|\]$/g, '')
-  if (normalized === '::' || normalized === '::1') return true
-  if (normalized.startsWith('fe80')) return true // link-local
-  if (/^f[cd]/.test(normalized)) return true // unique local
-  if (normalized.startsWith('ff')) return true // multicast
-  // IPv4-mapped (::ffff:10.0.0.1) inherits the v4 rules.
-  const mapped = /::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(normalized)
-  if (mapped) return isPrivateIPv4(mapped[1]!)
+  const words = parseIPv6(address.toLowerCase().replace(/^\[|\]$/g, '').split('%')[0]!)
+  // Anything that does not parse is refused rather than guessed at.
+  if (!words) return true
+  const [first, second] = words as [number, number]
+  if (words.every((word) => word === 0)) return true // ::
+  if (words.slice(0, 7).every((word) => word === 0) && words[7] === 1) return true // ::1
+  if ((first & 0xffc0) === 0xfe80) return true // link-local
+  if ((first & 0xfe00) === 0xfc00) return true // unique local
+  if ((first & 0xff00) === 0xff00) return true // multicast
+  if (first === 0x2001 && second === 0x0db8) return true // documentation
+  // An IPv4 address carried inside IPv6 inherits the v4 rules. The URL parser rewrites
+  // `[::ffff:127.0.0.1]` to `[::ffff:7f00:1]`, so the hex form must be decoded too —
+  // matching only the dotted form let loopback and cloud metadata through.
+  const embedded = embeddedIPv4(words)
+  if (embedded) return isPrivateIPv4(embedded)
   return false
+}
+
+/** Eight 16-bit words, or null when the text is not a valid IPv6 literal. */
+function parseIPv6(text: string): number[] | null {
+  let normalized = text
+  const dotted = /(\d+\.\d+\.\d+\.\d+)$/.exec(normalized)?.[1]
+  if (dotted) {
+    if (isIP(dotted) !== 4) return null
+    const [a, b, c, d] = dotted.split('.').map(Number) as [number, number, number, number]
+    normalized = `${normalized.slice(0, -dotted.length)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`
+  }
+  if ((normalized.match(/::/g) ?? []).length > 1) return null
+  const [head = '', tail = ''] = normalized.split('::')
+  const headParts = head ? head.split(':') : []
+  const tailParts = tail ? tail.split(':') : []
+  const compressed = normalized.includes('::')
+  const missing = 8 - headParts.length - tailParts.length
+  if ((!compressed && missing !== 0) || (compressed && missing < 1)) return null
+  const parts = compressed ? [...headParts, ...Array<string>(missing).fill('0'), ...tailParts] : headParts
+  if (parts.length !== 8 || parts.some((part) => !/^[0-9a-f]{1,4}$/.test(part))) return null
+  return parts.map((part) => Number.parseInt(part, 16))
+}
+
+/** IPv4-compatible (::a.b.c.d), IPv4-mapped (::ffff:a.b.c.d) and NAT64 (64:ff9b::/96). */
+function embeddedIPv4(words: number[]): string | null {
+  const zeroPrefix = words.slice(0, 5).every((word) => word === 0)
+  const compatible = zeroPrefix && words[5] === 0
+  const mapped = zeroPrefix && words[5] === 0xffff
+  const nat64 = words[0] === 0x0064 && words[1] === 0xff9b && words.slice(2, 6).every((word) => word === 0)
+  if (!compatible && !mapped && !nat64) return null
+  const high = words[6]!
+  const low = words[7]!
+  return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`
 }
 
 export type Resolver = (hostname: string) => Promise<string[]>
