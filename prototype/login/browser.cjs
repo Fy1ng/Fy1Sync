@@ -1,16 +1,22 @@
 'use strict';
 
-// Manual login through the system Edge browser in a dedicated profile.
+// Manual login through the system Chrome browser in a dedicated profile.
 //
 // Google refuses sign-in inside embedded browsers such as Electron ("此浏览器或应用可能
-// 不安全"), so YouTube cannot be logged in from login/main.cjs. Here the real Edge is
+// 不安全"), so YouTube cannot be logged in from login/main.cjs. Here the real Chrome is
 // started with its own --user-data-dir: an independent profile that shares nothing with
 // the user's everyday browser.
 //
+// Chrome rather than Edge: a fresh Edge profile signs itself into the Windows Microsoft
+// account and starts syncing extensions and settings, which no command-line flag turns
+// off (only machine-wide policy, which would also change the user's everyday Edge).
+// Chrome never signs in on its own, and --disable-sync keeps the profile local even if
+// the user signs into the Google account to reach YouTube.
+//
 // Two phases, so that nothing is attached to the browser while the user signs in (Google
 // also flags browsers that are under automation):
-//   1. Plain Edge on the dedicated profile. The user logs in by hand and closes it.
-//   2. Edge headless on the same profile with --remote-debugging-pipe, only long enough
+//   1. Plain Chrome on the dedicated profile. The user logs in by hand and closes it.
+//   2. Chrome headless on the same profile with --remote-debugging-pipe, only long enough
 //      to read the cookie jar. The pipe (fd 3/4) opens no network port, unlike
 //      --remote-debugging-port, so no other process or web page can reach it.
 //
@@ -21,18 +27,20 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { safeDirectory, writeCookies, platforms, runtimeRoot } = require('./main.cjs');
 
-const EDGE_CANDIDATES = [
-  path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-  path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+const BROWSER_CANDIDATES = [
+  path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+  path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+  path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
 ];
 
-// Without these Edge may stay resident after its window closes (background mode,
-// startup boost), and phase 1 would never end.
 const COMMON_FLAGS = [
   '--no-first-run',
   '--no-default-browser-check',
+  // Keep the profile local: no sync of extensions, history or settings, and no prompt to
+  // turn sync on after signing into Google.
+  '--disable-sync',
+  // Without this Chrome may stay resident after its window closes, holding the profile.
   '--disable-background-mode',
-  '--disable-features=msEdgeStartupBoost',
 ];
 
 const status = text => console.log(`[login] ${text}`);
@@ -60,8 +68,8 @@ function hasWindow(pid) {
 /**
  * Wait until the user is done with the login window.
  *
- * Closing Edge's window does not always end the process: Edge can stay resident in the
- * background (it ignores --disable-background-mode on some installs), and the profile
+ * Closing the browser window does not always end the process: Chromium browsers can stay
+ * resident in the background (Edge ignores --disable-background-mode), and the profile
  * stays locked until it does. So the signal is the window disappearing, not the process
  * exiting; once the window has been gone for a few seconds the process tree is ended,
  * which releases the profile for the cookie read.
@@ -75,7 +83,7 @@ async function waitForLoginDone(child) {
     await new Promise(resolve => setTimeout(resolve, 2000));
     if (exited) break;
     if (hasWindow(child.pid)) { sawWindow = true; goneSince = 0; continue; }
-    // Before the first window appears Edge is still starting; give it time.
+    // Before the first window appears the browser is still starting; give it time.
     if (!sawWindow) continue;
     if (!goneSince) { goneSince = Date.now(); continue; }
     if (Date.now() - goneSince >= 4000) {
@@ -89,9 +97,9 @@ async function waitForLoginDone(child) {
 }
 
 /** Phase 2: read every cookie of the profile over the DevTools pipe, then close. */
-function readCookies(edge, profile) {
+function readCookies(executable, profile) {
   return new Promise((resolve, reject) => {
-    const child = spawn(edge, [
+    const child = spawn(executable, [
       `--user-data-dir=${profile}`,
       ...COMMON_FLAGS,
       '--headless=new',
@@ -142,23 +150,23 @@ async function main() {
   const platform = process.argv[2];
   if (process.argv.length !== 3 || !Object.hasOwn(platforms, platform)) fail('Usage: npm run login -- youtube|douyu');
 
-  const edge = process.env.P0_BROWSER || EDGE_CANDIDATES.find(candidate => fs.existsSync(candidate));
-  if (!edge) fail('Microsoft Edge was not found. Set P0_BROWSER to a Chromium browser executable.');
+  const executable = process.env.P0_BROWSER || BROWSER_CANDIDATES.find(candidate => fs.existsSync(candidate));
+  if (!executable) fail('Google Chrome was not found. Set P0_BROWSER to a Chromium browser executable.');
 
   let profile;
   let cookiesDir;
   try {
     // One profile per platform, so a YouTube session and a Douyu session never mix.
-    profile = safeDirectory(path.join(runtimeRoot, 'browser-profile', platform));
+    profile = safeDirectory(path.join(runtimeRoot, 'chrome-profile', platform));
     cookiesDir = safeDirectory(path.join(runtimeRoot, 'cookies'));
   } catch {
     fail('Login could not start: private runtime permission verification failed.');
   }
 
   const name = platform === 'youtube' ? 'YouTube' : '斗鱼';
-  status(`edge-started profile=${platform}`);
-  console.log(`在弹出的 Edge 窗口里登录 ${name}。登录完成后关闭这个 Edge 窗口，cookie 会自动导出。`);
-  const browser = spawn(edge, [
+  status(`chrome-started profile=${platform}`);
+  console.log(`在弹出的 Chrome 窗口里登录 ${name}。登录完成后关闭这个 Chrome 窗口，cookie 会自动导出。`);
+  const browser = spawn(executable, [
     `--user-data-dir=${profile}`,
     ...COMMON_FLAGS,
     '--new-window',
@@ -167,14 +175,14 @@ async function main() {
   let startFailed = false;
   browser.on('error', () => { startFailed = true; });
   await waitForLoginDone(browser);
-  if (startFailed) fail('Edge could not be started.');
+  if (startFailed) fail('Chrome could not be started.');
 
-  status('edge-closed reading-cookies');
+  status('chrome-closed reading-cookies');
   let cookies;
   try {
-    cookies = await readCookies(edge, profile);
+    cookies = await readCookies(executable, profile);
   } catch {
-    fail('Cookie export failed: the profile could not be read. Make sure every window of this login Edge is closed, then run the command again.');
+    fail('Cookie export failed: the profile could not be read. Make sure every window of this login Chrome is closed, then run the command again.');
   }
 
   try {
