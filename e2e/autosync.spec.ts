@@ -126,6 +126,13 @@ test.describe('自动同步', () => {
   })
 
   test('识别出的偏移落在 0.25 s 误差内', async ({ page }) => {
+    // The worker silently falls back to the TypeScript engine when WASM cannot load (CSP,
+    // missing asset), and the offset would still pass. Pin the backend the run really used.
+    const backends: string[] = []
+    page.on('worker', worker => worker.on('console', message => {
+      const match = /\[识别 Worker\] 后端: (\S+)/.exec(message.text())
+      if (match) backends.push(match[1]!)
+    }))
     await openPlayer(page)
     await selectPreset(page, presetName)
     await loadBothFixtures(page)
@@ -140,6 +147,8 @@ test.describe('自动同步', () => {
       Math.abs(estimate - FIXTURE_DELAY_SECONDS),
       `识别偏移 ${estimate.toFixed(2)} s 应接近真实的 ${FIXTURE_DELAY_SECONDS} s`,
     ).toBeLessThanOrEqual(MAX_DETECTION_ERROR_SECONDS)
+    expect(backends.length, '识别 Worker 应报告所用后端').toBeGreaterThan(0)
+    expect(new Set(backends), '每个识别 Worker 都应使用 WASM 后端').toEqual(new Set(['wasm']))
   })
 
   test('仅识别不移动播放位置', async ({ page }) => {
