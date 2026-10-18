@@ -2,6 +2,11 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import cookieTools from '../login/cookies.cjs';
+
+let cookies;
+try { cookies = cookieTools.createCookieContext(); }
+catch { console.error('P0_COOKIES must be a valid Netscape cookie file inside prototype/.runtime/'); process.exit(1); }
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const media = path.join(root, '.media', 'youtube-hls');
@@ -20,8 +25,8 @@ const candidates = process.env.YOUTUBE_LIVE_URL ? [process.env.YOUTUBE_LIVE_URL]
   'https://www.youtube.com/@lofigirl/live',
   'https://www.youtube.com/@DWNews/live',
 ];
-const evidence = { startedAt: new Date().toISOString(), status: 'PARTIAL', ytdlpVersion: null, attempts: [], formats: [], hls: null, dash: null };
-const safe = (s) => String(s).replace(/https?:\/\/[^\s"'<>]+/g, '<remote URL>');
+const evidence = { startedAt: new Date().toISOString(), status: 'PARTIAL', cookiesEnabled: cookies.enabled, ytdlpVersion: null, attempts: [], formats: [], hls: null, dash: null };
+const safe = (s) => cookies.diagnostics(s).replace(/https?:\/\/[^\s"'<>]+/g, '<remote URL>');
 function classify(stderr) {
   if (/not a bot|bot\./i.test(stderr)) return 'youtube_authentication_required';
   if (/recording is not available|not currently live|not live/i.test(stderr)) return 'live_unavailable';
@@ -93,7 +98,7 @@ async function bufferHls(input, directory, duration, prefix, inputArgs = [], map
     if (!exited) child.kill();
   }
   await closed;
-  await writeFile(path.join(directory, 'ffmpeg-private.log'), stderr);
+  await writeFile(path.join(directory, 'ffmpeg-private.log'), safe(stderr));
   const wallSeconds = (Date.now() - started) / 1000;
   const stats = await playlistStats(directory);
   const probe = stats ? await capture(ffprobe, ['-v', 'error', '-analyzeduration', '10000000', '-probesize', '10000000', '-show_entries', 'format=duration:stream=index,codec_name,codec_type,width,height,r_frame_rate,bit_rate', '-of', 'json', playlist], 60_000) : null;
@@ -103,6 +108,7 @@ async function bufferHls(input, directory, duration, prefix, inputArgs = [], map
   return result;
 }
 
+async function main() {
 await Promise.all([mkdir(media, { recursive: true }), mkdir(dashMedia, { recursive: true }), mkdir(path.dirname(evidencePath), { recursive: true })]);
 try { const previous = JSON.parse(await readFile(evidencePath, 'utf8')); evidence.attempts = previous.attempts ?? []; evidence.startedAt = previous.startedAt ?? evidence.startedAt; } catch {}
 const version = await capture(ytdlp, ['--version']);
@@ -113,9 +119,12 @@ for (const url of candidates) {
   const args = ['--ignore-config', '--cache-dir', path.join(media, 'ytdlp-cache'), '--no-playlist', '--no-progress', '--socket-timeout', '20', '--retries', '1', '--extractor-retries', '1', '--no-js-runtimes', '--js-runtimes', `node:${runtime}`, '--dump-single-json', url];
   if (process.env.YTDLP_EXTRACTOR_ARGS) args.splice(-1, 0, '--extractor-args', process.env.YTDLP_EXTRACTOR_ARGS);
   const env = /electron\.exe$/i.test(runtime) ? { ELECTRON_RUN_AS_NODE: '1' } : {};
-  const result = await capture(ytdlp, args, 180_000, env);
-  await writeFile(path.join(media, `resolve-${evidence.attempts.length + 1}-private.log`), result.stderr);
-  evidence.attempts.push({ publicUrl: url, command: [ytdlp, ...args], ytdlpVersion: evidence.ytdlpVersion, exitCode: result.code, timedOut: result.timedOut, classification: result.code === 0 ? 'resolved' : classify(result.stderr), stderr: safe(result.stderr) });
+  const result = await cookies.withYtdlpCookies(async cookieArgs => {
+    try { return await capture(ytdlp, [...cookieArgs, ...args], 180_000, env); }
+    catch { throw new Error('yt-dlp launch or temporary cookie setup failed'); }
+  });
+  await writeFile(path.join(media, `resolve-${evidence.attempts.length + 1}-private.log`), safe(result.stderr));
+  evidence.attempts.push({ publicUrl: url, command: [ytdlp, ...(cookies.enabled ? ['--cookies', '<temporary cookie file under .runtime/cookies>'] : []), ...args], ytdlpVersion: evidence.ytdlpVersion, exitCode: result.code, timedOut: result.timedOut, classification: result.code === 0 ? 'resolved' : classify(result.stderr), stderr: safe(result.stderr) });
   try { info = JSON.parse(result.stdout); } catch { info = null; }
   log(`resolve ${url}: exit=${result.code}, live=${info?.is_live}, formats=${info?.formats?.length ?? 0}, ${safe(result.stderr).trim().slice(0, 1200)}`);
   await persist();
@@ -130,7 +139,9 @@ if (!info) {
   await persist();
   process.exitCode = 1;
 } else {
-  await writeFile(path.join(media, 'metadata-private.json'), JSON.stringify(info));
+  // yt-dlp metadata may include authenticated HTTP headers. Never persist it
+  // outside the runtime cookie directory when using a logged-in session.
+  await writeFile(path.join(media, 'metadata-private.json'), cookies.enabled ? JSON.stringify({ omitted: 'Authenticated metadata is kept in memory only' }) : JSON.stringify(info));
   evidence.live = { id: info.id, title: info.title, channel: info.channel, isLive: info.is_live, liveStatus: info.live_status };
   evidence.formats = info.formats.map(describe);
   const hlsFormats = info.formats.filter(f => /m3u8/.test(f.protocol ?? '') && f.url);
@@ -184,3 +195,9 @@ if (!info) {
   await persist();
   log(`DONE ${evidence.status}; evidence=${evidencePath}; playlist=${evidence.hls?.playlistRelative}`);
 }
+}
+
+main().catch(() => {
+  console.error('Live buffer validation failed. Check executable paths, P0_COOKIES and runtime file permissions.');
+  process.exitCode = 1;
+});

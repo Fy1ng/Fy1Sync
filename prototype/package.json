@@ -4,6 +4,7 @@
   "private": true,
   "description": "Throwaway P0 validation; no production code dependencies",
   "scripts": {
+    "login": "node login/run.cjs",
     "setup": "node electron-playback/install.cjs",
     "generate": "node electron-playback/generate.cjs",
     "playback": "node electron-playback/run.cjs",
