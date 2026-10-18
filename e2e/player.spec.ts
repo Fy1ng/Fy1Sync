@@ -9,7 +9,7 @@
  * Requires `npm run fixtures`.
  */
 
-import { expect, test } from '@playwright/test'
+import { expect, test } from './electron'
 import {
   FIXTURES,
   fixturesReady,
@@ -137,11 +137,11 @@ test.describe('双路播放与手动同步', () => {
 test.describe('弹幕叠加层', () => {
   test.skip(!fixturesReady(), '缺少测试源，先运行 npm run fixtures')
 
-  test('连接房间后弹幕出现在画面上并向左移动', async ({ page }) => {
+  test('连接房间后弹幕出现在画面上并向左移动', async ({ page, electronApp }) => {
     // The relay's upstream is Douyu's socket, which a test must not depend on. Stubbing the
-    // SSE response keeps everything downstream real: EventSource parsing, the timeline's
+    // main-process events keep everything downstream real: preload IPC, the timeline's
     // scheduling against the commentary playhead, lane assignment and the rAF loop.
-    await stubDanmakuStream(page, ['E2E 弹幕 0', 'E2E 弹幕 1', 'E2E 弹幕 2', 'E2E 弹幕 3'])
+    await stubDanmakuStream(electronApp, ['E2E 弹幕 0', 'E2E 弹幕 1', 'E2E 弹幕 2', 'E2E 弹幕 3'])
 
     await openPlayer(page)
     await loadBothFixtures(page)
@@ -167,8 +167,8 @@ test.describe('弹幕叠加层', () => {
     expect(second).toBeLessThan(first)
   })
 
-  test('关闭弹幕后立即清空画面', async ({ page }) => {
-    await stubDanmakuStream(page, ['要被清掉的弹幕', '第二条', '第三条'])
+  test('关闭弹幕后立即清空画面', async ({ page, electronApp }) => {
+    await stubDanmakuStream(electronApp, ['要被清掉的弹幕', '第二条', '第三条'])
     await openPlayer(page)
     await loadBothFixtures(page)
     await seekBoth(page, 3, 3)

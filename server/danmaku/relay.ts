@@ -1,14 +1,12 @@
 /**
- * Danmaku relay: one upstream connection per room, fanned out to browser subscribers
- * over Server-Sent Events.
+ * Danmaku relay: one upstream connection per room, fanned out to local renderer subscribers
+ * through a transport-neutral callback.
  *
- * SSE rather than a WebSocket server because the traffic is one-directional and SSE
- * reconnects on its own. Rooms are reference-counted: the upstream socket opens with the
+ * Rooms are reference-counted: the upstream socket opens with the
  * first subscriber and closes shortly after the last one leaves, so a closed tab does not
  * leave a connection running forever.
  */
 
-import type { IncomingMessage, ServerResponse } from 'node:http'
 import { DouyuDanmakuClient, type DanmakuClientDeps, type DanmakuState } from './douyuClient'
 import type { ChatMessage } from './douyuProtocol'
 
@@ -52,7 +50,7 @@ export class DanmakuRelay {
     return this.rooms.get(roomId)?.subscribers.size ?? 0
   }
 
-  /** Attach an SSE subscriber. Returns false when the room cap is already reached. */
+  /** Attach a transport-neutral subscriber. Returns null when the room cap is already reached. */
   subscribe(roomId: string, subscriber: Omit<Subscriber, 'id'>): (() => void) | null {
     let room = this.rooms.get(roomId)
     if (!room && this.rooms.size >= MAX_ROOMS) return null
@@ -68,24 +66,36 @@ export class DanmakuRelay {
     const entry: Subscriber = { id, ...subscriber }
     room.subscribers.set(id, entry)
 
-    entry.write('state', { room: roomId, state: room.state, detail: room.detail })
-    // Replay recent messages so a late subscriber's overlay is not empty for 30s.
-    for (const message of room.recent) entry.write('danmaku', message)
+    try {
+      entry.write('state', { room: roomId, state: room.state, detail: room.detail })
+      // Replay recent messages so a late subscriber's overlay is not empty for 30s.
+      for (const message of room.recent) entry.write('danmaku', message)
+    } catch {
+      room.subscribers.delete(id)
+      if (room.subscribers.size === 0) this.scheduleIdleClose(room)
+      return () => {}
+    }
 
     const currentRoom = room
     return () => {
-      currentRoom.subscribers.delete(id)
-      if (currentRoom.subscribers.size === 0) this.scheduleIdleClose(currentRoom)
+      if (currentRoom.subscribers.delete(id) && currentRoom.subscribers.size === 0) {
+        this.scheduleIdleClose(currentRoom)
+      }
     }
   }
 
   closeAll(): void {
-    for (const room of this.rooms.values()) {
-      if (room.idleTimer !== null) this.clearTimer(room.idleTimer)
-      room.client.close()
-      for (const subscriber of room.subscribers.values()) subscriber.close()
-    }
+    const rooms = [...this.rooms.values()]
     this.rooms.clear()
+    for (const room of rooms) {
+      if (room.idleTimer !== null) this.clearTimer(room.idleTimer)
+      room.idleTimer = null
+      room.client.close()
+      for (const subscriber of room.subscribers.values()) {
+        try { subscriber.close() } catch { /* A destroyed renderer must not interrupt teardown. */ }
+      }
+      room.subscribers.clear()
+    }
   }
 
   private openRoom(roomId: string): Room {
@@ -119,16 +129,20 @@ export class DanmakuRelay {
   }
 
   private broadcast(room: Room, event: string, data: unknown): void {
+    let dropped = false
     for (const subscriber of room.subscribers.values()) {
       try {
         subscriber.write(event, data)
       } catch {
         room.subscribers.delete(subscriber.id)
+        dropped = true
       }
     }
+    if (dropped && room.subscribers.size === 0) this.scheduleIdleClose(room)
   }
 
   private scheduleIdleClose(room: Room): void {
+    if (this.rooms.get(room.id) !== room) return
     if (room.idleTimer !== null) this.clearTimer(room.idleTimer)
     room.idleTimer = this.setTimer(() => {
       room.idleTimer = null
@@ -146,46 +160,4 @@ export class DanmakuRelay {
     if (this.deps.clearTimer) this.deps.clearTimer(handle)
     else clearTimeout(handle as never)
   }
-}
-
-/** Wire an SSE response to a relay room. */
-export function attachSseSubscriber(
-  relay: DanmakuRelay,
-  roomId: string,
-  req: IncomingMessage,
-  res: ServerResponse,
-): boolean {
-  const write = (event: string, data: unknown): void => {
-    if (res.writableEnded) return
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-  }
-
-  res.writeHead(200, {
-    'content-type': 'text/event-stream; charset=utf-8',
-    'cache-control': 'no-store',
-    connection: 'keep-alive',
-    // Without this, a reverse proxy may hold the stream in a buffer and stall it.
-    'x-accel-buffering': 'no',
-  })
-
-  const unsubscribe = relay.subscribe(roomId, { write, close: () => res.end() })
-  if (!unsubscribe) {
-    write('error', { code: 'too-many-rooms', message: `同时连接的房间数已达上限 ${MAX_ROOMS}` })
-    res.end()
-    return false
-  }
-
-  // Comment frames keep intermediaries from closing an otherwise-quiet stream.
-  const heartbeat = setInterval(() => {
-    if (res.writableEnded) return
-    res.write(': ping\n\n')
-  }, 15_000)
-
-  const cleanup = (): void => {
-    clearInterval(heartbeat)
-    unsubscribe()
-  }
-  req.on('close', cleanup)
-  res.on('close', cleanup)
-  return true
 }

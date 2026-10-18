@@ -2,7 +2,7 @@
  * The session: one object owning everything that outlives a React render.
  *
  * `MediaEngine`, `AutoSyncController`, `RecognitionSampler` and the danmaku timeline all
- * hold real resources (video elements, workers, an SSE connection, timers) and all need
+ * hold real resources (video elements, workers, an IPC subscription, timers) and all need
  * to survive re-renders and route changes. React holds a reference to this, never the
  * reverse: components read a plain snapshot and call methods.
  *
@@ -120,7 +120,8 @@ export class Session {
     dropped: 0,
   }
   private presetList: PresetSummary[] = []
-  private danmakuSource: EventSource | null = null
+  private unsubscribeDanmaku: (() => void) | null = null
+  private danmakuGeneration = 0
   private filter: CompiledDanmakuFilter
   private schedulerDeadline: number | null = null
   private snapshotValue: SessionSnapshot
@@ -609,42 +610,37 @@ export class Session {
   // ----------------------------------------------------------------- danmaku
 
   /**
-   * Subscribe to a Douyu room through this server's SSE relay.
-   *
-   * Messages are scheduled against *commentary media time*, not arrival time, so the
-   * overlay inherits the sync offset for free: rewind the commentary by 5 s and its
-   * danmaku appear 5 s later, still matching what is on screen.
+   * Subscribe through main's shared room relay. Messages are scheduled against
+   * commentary media time so rewinding commentary also delays its danmaku.
    */
   connectDanmaku(room: string): void {
     this.disconnectDanmaku()
-    if (typeof EventSource === 'undefined') {
-      this.danmakuState = { ...this.danmakuState, error: '当前环境不支持 SSE' }
-      this.notify()
-      return
-    }
-    const source = new EventSource(`/api/danmaku/douyu/${encodeURIComponent(room)}`)
-    this.danmakuSource = source
+    const generation = this.danmakuGeneration
     this.danmakuState = { ...this.danmakuState, room, error: null }
-
-    source.addEventListener('open', () => {
-      this.danmakuState = { ...this.danmakuState, connected: true, error: null }
-      this.notify()
-    })
-    // Event name must match `DanmakuRelay.broadcast` on the server; a mismatch here drops
-    // every message silently, because an EventSource ignores events nobody listens for.
-    source.addEventListener('danmaku', (event) => this.ingestDanmaku(event as MessageEvent<string>))
-    source.addEventListener('state', (event) => this.ingestDanmakuState(event as MessageEvent<string>))
-    source.addEventListener('error', () => {
-      // EventSource reconnects on its own; report the gap without tearing it down.
-      this.danmakuState = { ...this.danmakuState, connected: false, error: '弹幕连接中断，正在重试' }
-      this.notify()
-    })
+    try {
+      this.unsubscribeDanmaku = apiClient.subscribeDanmaku(room, ({ event, data }) => {
+        if (generation !== this.danmakuGeneration) return
+        if (event === 'danmaku') this.ingestDanmaku(data)
+        else if (event === 'state') this.ingestDanmakuState(data)
+        else if (event === 'error') {
+          this.danmakuState = { ...this.danmakuState, connected: false, error: '弹幕连接中断，正在重试' }
+          this.notify()
+        }
+      })
+    } catch (error) {
+      this.danmakuState = {
+        ...this.danmakuState,
+        connected: false,
+        error: `弹幕连接失败: ${error instanceof Error ? error.message : String(error)}`,
+      }
+    }
     this.notify()
   }
 
   disconnectDanmaku(): void {
-    this.danmakuSource?.close()
-    this.danmakuSource = null
+    this.danmakuGeneration += 1
+    this.unsubscribeDanmaku?.()
+    this.unsubscribeDanmaku = null
     this.timeline.clear()
     this.danmakuState = { connected: false, room: null, error: null, pending: 0, dropped: 0 }
     this.notify()
@@ -671,13 +667,9 @@ export class Session {
     })
   }
 
-  private ingestDanmaku(event: MessageEvent<string>): void {
-    let payload: { text?: unknown; user?: unknown; color?: unknown }
-    try {
-      payload = JSON.parse(event.data) as typeof payload
-    } catch {
-      return
-    }
+  private ingestDanmaku(data: unknown): void {
+    if (!data || typeof data !== 'object') return
+    const payload = data as { text?: unknown; user?: unknown; color?: unknown }
     if (typeof payload.text !== 'string' || payload.text.length === 0) return
     this.pushDanmaku({
       text: payload.text,
@@ -686,18 +678,10 @@ export class Session {
     })
   }
 
-  /**
-   * The relay's own view of the upstream socket. EventSource's `open` only says the SSE
-   * pipe is up, which happens before the server has reached Douyu at all — so a room that
-   * never connects would otherwise read as 连接成功 with no messages arriving.
-   */
-  private ingestDanmakuState(event: MessageEvent<string>): void {
-    let payload: { state?: unknown; detail?: unknown }
-    try {
-      payload = JSON.parse(event.data) as typeof payload
-    } catch {
-      return
-    }
+  /** Connection status describes the upstream room, not just the local IPC channel. */
+  private ingestDanmakuState(data: unknown): void {
+    if (!data || typeof data !== 'object') return
+    const payload = data as { state?: unknown; detail?: unknown }
     const state = typeof payload.state === 'string' ? payload.state : ''
     const detail = typeof payload.detail === 'string' ? payload.detail : null
     const connected = state === 'connected'

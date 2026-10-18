@@ -1,9 +1,27 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ES2023"],
-    "types": ["node"]
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "node"
+    ]
   },
-  "include": ["server", "scripts", "vite.config.ts", "vitest.config.ts", "playwright.config.ts"],
-  "exclude": ["Stream Sync Player", "Stream Sync Player_Gemini", "dist", "node_modules"]
+  "include": [
+    "server",
+    "scripts",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "playwright.config.ts",
+    "electron"
+  ],
+  "exclude": [
+    "Stream Sync Player",
+    "Stream Sync Player_Gemini",
+    "dist",
+    "node_modules"
+  ]
 }

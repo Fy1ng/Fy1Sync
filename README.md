@@ -1,12 +1,14 @@
 # Stream Syncer
 
-把官方赛事纯净流和国内解说流对到同一个时间点：**官方画面 + 解说声音 + 弹幕叠加**。
+把官方赛事纯净流和国内解说流对到同一个时间点: **官方画面 + 解说声音 + 弹幕叠加**.
 
-同一场比赛，官方源画质好但没有解说，国内直播有解说但画质差、而且比官方慢十几秒。这个工具两路一起放，用官方源的画面配解说源的声音，靠识别双方画面里的**倒计时跳秒**算出延迟差并自动对齐。
+同一场比赛, 官方源画质好但没有解说, 国内直播有解说但通常慢十几秒. 应用同时播放两路视频, 识别画面中的倒计时跳秒, 估算并应用延迟差.
 
-本地运行，单进程，`npm run build && npm start` 就是全部部署过程。
+当前为 P1 Electron 桌面版, 沿用 React 播放器和识别核心. Windows 为主要平台, macOS / Linux 尚待实际验证. P2 的 ffmpeg 循环缓冲, yt-dlp, 登录态和新取流流程尚未接入. 完整阶段计划见 [docs/plan.md](docs/plan.md).
 
 ## 快速开始
+
+需要 Node.js >=22.12 和 npm. 在项目目录执行:
 
 ```bash
 npm install
@@ -14,108 +16,69 @@ npm run build
 npm start
 ```
 
-打开终端里打印的两个地址：
+`npm start` 启动构建后的 Electron 应用, 无需浏览器或常驻 HTTP 服务. 当前不生成安装包, 安装包属于 P7.
 
-```
-  Stream Syncer  http://127.0.0.1:5178
-  Profile Editor http://127.0.0.1:5178/admin?token=stream-sync-admin
-```
+开发时运行 `npm run dev`, 启动 Vite 构建监听与 Electron, 前端变动后重新构建并重载窗口. 修改主进程或 preload 后重启该命令. 开发与正式应用都通过 `app://app/` 读取资源, 不启动 Vite HTTP 服务, 不监听应用网络端口.
 
-端口号照着打印的来，不一定是 5178：5178 被占的话会往后找，实在找不到就让系统随便给一个（Windows 上 Hyper-V 会成片保留端口，一次能吃掉一百个，往后找十几个是走不出去的）。
+## 使用
 
-开发模式改用 `npm run dev`（Vite 热更新，API 路由与生产环境同一套）。
+1. 在片源设置中分别填官方源和解说源, 支持直接媒体地址, 测试源以及当前已有的平台解析.
+2. 使用侧栏按钮或滑条手动调整偏移. 两路已在播放相同赛事 UI 时, 选择识别预设后点立即同步; 仅识别会报告偏移而不移动播放头.
+3. 填解说方的斗鱼房间号连接弹幕. 弹幕按解说视频的媒体时间排队, 跟随同步后的播放位置.
+4. 在配置编辑器中载入本地样片, 框选 ROI, 取帧, 逐个标注时钟字符, 再发布到本机. 具体流程见 [Profile Editor](docs/profile-editor.md).
 
-## 怎么用
+配置编辑器位于应用内部的 `app://app/admin`, 本机窗口可直接进入, 无需管理令牌. 发布保留字段校验和 ETag 并发保护, 其他会话修改过同一预设时会要求重新载入.
 
-1. **加载两路片源**：首页「选择片源」里分别填官方源和解说源。支持直接给 `.m3u8`/`.mp4` 地址，或者交给服务端解析频道名与直播间地址。
-2. **对齐**：如果两路已经在播同一个赛事 UI，点「立即同步」；系统开一个 2–3 秒的识别窗口，读出两边的倒计时并回退较快的一路。也可以拖滑条手动调。
-3. **弹幕**：填解说方的斗鱼房间号，弹幕按对齐后的播放时间显示，不会提前剧透。
+## 数据目录
 
-自动同步需要一份**识别预设**（Profile），描述这场赛事 UI 的倒计时在哪、长什么样。仓库自带的预设未必匹配你的赛事，需要时到 Profile Editor 里教一份，见下。
+已发布预设默认保存在 Electron `app.getPath('userData')/presets`, 每个预设一份 JSON. 编辑器草稿保存在当前应用 Profile 的 IndexedDB, 播放设置保存在本机存储.
 
-## Profile Editor：教一套字形
+以下环境变量供本机开发和隔离验证使用:
 
-`/admin?token=...` 打开。识别用模板匹配而不是通用 OCR——赛事 UI 的字体固定、字号固定、位置固定，模板匹配又快又准，代价是换一套 UI 要重新教一次。
-
-1. 载入一段样片（本地文件即可），拖到有倒计时的一帧。
-2. 框出 **ROI（识别区域）**，只圈倒计时，别把比分圈进来。
-3. 点「取当前帧」，系统二值化并切出字符框。
-4. 点一个字符框，再点字符盘上对应的字符（`0`–`9` 和 `:`），存成模板样本。字符盘会自动往后走，一帧四个字符点四下。
-5. 十一个字符都教过之后「发布到服务端」。
-
-预设写在 `data/presets/` 下，一个 JSON 一份。发布带 ETag 并发保护：别的会话在你编辑期间改过同一份预设，发布会被拒绝并提示重新载入——避免你悄悄覆盖掉对方的工作。
-
-模板按位存（一像素一位），一份预设几百字节，可以直接提交进仓库共享。
-
-## 配置
-
-全部通过环境变量，默认值都偏保守。
-
-| 变量 | 默认值 | 说明 |
+| 变量 | 默认行为 | 用途 |
 | --- | --- | --- |
-| `STREAM_SYNC_HOST` | `127.0.0.1` | 监听地址。改成非回环地址会关掉「仅本机访问」限制，见下方安全说明 |
-| `STREAM_SYNC_PORT` | `5178` | 端口。被占用时往后找十二个，都不行就交给系统分配，除非设了 `STREAM_SYNC_STRICT_PORT` |
-| `STREAM_SYNC_STRICT_PORT` | `false` | 端口不可用时直接失败，而不是换一个。测试用它来确定地址 |
-| `STREAM_SYNC_ADMIN_TOKEN` | `stream-sync-admin` | Profile Editor 的令牌。**非回环部署必须改** |
-| `STREAM_SYNC_DATA_DIR` | `./data` | 预设存放目录 |
-| `STREAM_SYNC_CLIENT_DIR` | `./dist/client` | 构建产物目录 |
-| `STREAM_SYNC_MEDIA_PROXY_ENABLED` | `true` | 媒体代理开关 |
-| `STREAM_SYNC_MEDIA_PROXY_HOSTS` | 见 `server/config.ts` | 代理目标白名单，逗号分隔，支持 `*.example.com` |
-| `STREAM_SYNC_MEDIA_PROXY_ALLOW_NON_LOOPBACK` | `false` | 允许代理到内网地址。**开了等于开放中继** |
-| `STREAM_SYNC_MEDIA_PROXY_ALLOW_NONSTANDARD_PORTS` | `false` | 允许代理到 80/443 之外的端口 |
-| `STREAM_SYNC_MEDIA_PROXY_TIMEOUT_MS` | `15000` | 单次代理请求超时 |
-| `STREAM_SYNC_MEDIA_PROXY_MAX_REDIRECTS` | `4` | 代理跟随重定向的上限 |
+| `STREAM_SYNC_USER_DATA_DIR` | Electron 默认 userData | 隔离 Chromium Profile, 设置和草稿 |
+| `STREAM_SYNC_DATA_DIR` | userData | 覆盖预设数据根目录, 文件仍位于其 `presets/` 子目录 |
 
-放到反向代理后面的话，**别动 range 请求**。这个工具的核心动作是把一路回退最多 60 秒去接另一路，而 `<video>` 跳转就是一个 range 请求：中间层把它吞掉，播放照样能开始，只有跳转会退化成从头缓冲。服务端两条取流路径都是支持的——静态资源回 206，媒体代理把 `range` 透传上游、把 `content-range` 带回来，`npm run smoke` 里有一项就在验这个。
+旧版 HTTP 主机, API 端口和管理令牌配置不再用于启动桌面应用. E2E 每个场景独立使用 `e2e/.data/` 中的临时 userData 和预设目录, 关闭应用后清理, 不接触日常数据.
 
-## 安全说明
+## 安全与媒体
 
-**默认配置只对本机开放，这不是偶然。** 服务端会代理第三方媒体流、保存可写的预设、并把管理令牌打印在终端里。
+Electron 窗口启用 `contextIsolation`, `sandbox`, `webSecurity`, 关闭 `nodeIntegration`. 页面不能直接使用 Node, 只能通过 preload 暴露的 `window.streamSyncer` 白名单接口调用主进程. 主进程校验调用来源和参数; 外部导航, 新窗口和权限请求被拒绝. 编辑器的写入资格来自受信任的本机应用窗口, 不是共享令牌.
 
-- **绑定地址**：默认 `127.0.0.1`，API 另有一道「仅接受本机访问」的检查。这道检查是由绑定地址推导出来的，所以把 `STREAM_SYNC_HOST` 改成 LAN 地址会**同时**关掉它。此时唯一的防线就是管理令牌，而它有默认值——两者叠加就是任何能碰到这个端口的人都能改你的预设。启动时会就此发出警告。
-- **媒体代理是白名单制**，默认拒绝：内网地址、云元数据地址（`169.254.169.254`）、`file:` 之类的协议、非常规端口、以及不在白名单里的公网域名，一律拒绝并给出具体原因。代理存在的意义是替少数几个 CDN 补一个 `Referer`，不是让页面访问宿主机能访问的一切。
-- **令牌只走请求体和请求头**，不进查询串，避免留在日志里。URL 里的 `?token=` 只用一次，随后从地址栏抹掉。
-- **写接口拒绝跨站请求**（`cross-origin`）：回环服务照样能被浏览器里任意页面访问到。
+页面, 本地测试媒体和主进程登记的远程媒体使用同源自定义协议. 媒体地址使用不透明标识, 渲染进程不能通过协议传入任意目标 URL. 主进程远程读取继续使用 SSRF 防护, 校验协议, 端口, 域名, DNS 地址和每次重定向. 媒体路径支持 Range, HLS 播放列表的子资源同样受控. 具体边界见 [媒体路径与安全](docs/media-proxy.md).
 
-关于刻意没有照搬的做法（拉取并执行远端混淆签名函数、客户端指定 Referer 的开放代理、依赖第三方公共 CORS 代理），见 `server/mediaProxy.ts` 的注释。
+安全配置不代表真实平台已可播放. 平台认证, CDN 限制, 远程媒体兼容性和实际直播稳定性仍需单独验证; P1 不包含新的登录或画质取流能力.
 
-## 平台解析
-
-解析走服务端，用公开接口，失败时返回**结构化的失败原因**而不是 5xx——「房间没开播」和「网络不通」是两件不同的事，界面需要分别提示。
-
-需要签名或绕过访问控制才能取到的流，这里不做。这种情况解析会明确失败，并提示你直接填一个可播的媒体地址。
-
-## 开发
+## 开发与验证
 
 ```bash
-npm run dev          # 开发服务器
-npm test             # 单元测试（web + server 两个项目）
-npm run typecheck    # 三个 tsconfig 全过一遍
-npm run fixtures     # 用 ffmpeg 生成测试片源（需要本机有 ffmpeg）
-npm run test:e2e     # Playwright，依赖上面的测试片源
-npm run smoke        # 冒烟测试一个已经跑起来的服务
-npm run shots        # 给跑起来的服务截一套界面图，同样依赖测试片源
+npm run dev          # Vite build watch + Electron
+npm run typecheck    # 应用, 主进程和 E2E 类型检查
+npm test             # Vitest 单元测试
+npm run fixtures     # ffmpeg 生成测试片源
+npm run build        # 构建 renderer, main 和 preload
+npm run test:e2e     # 启动真实 Electron 的 Playwright 场景
 ```
 
-冒烟测试打的是构建产物：`npm run build && npm start` 起一个，另一个终端 `npm run smoke`。地址和令牌的默认值跟服务端一致，同一套 `STREAM_SYNC_PORT` / `STREAM_SYNC_ADMIN_TOKEN` 两边都认，所以改过端口或令牌也不用额外传参；真要指到别处就 `npm run smoke -- --base http://127.0.0.1:4199 --token 别的令牌`。令牌不对的表现是预设那一节整段 403。
+生成测试源需要 ffmpeg 在 PATH 中. 本机可使用 `<home>\Desktop\ffmpeg\bin`. 生成的视频位于 `public/test-sources/`, 不进入版本控制. 两段合成视频内置精确的 5 s 延迟, 自动同步场景验证识别误差 <=0.25 s 和同步残差 <=0.35 s.
 
-`npm run fixtures` 生成两段带倒计时的合成视频，其中解说源刻意比官方源慢 5 秒——识别精度和同步残差的验收就是拿它量的（识别误差 ≤ 0.25 s，对齐后残差 ≤ 0.35 s）。这些视频有几 MB，不进仓库，随时可以重新生成。
+E2E 通过 `_electron.launch` 启动 `dist/electron/main.cjs`, 无 webServer 和外部浏览器. 原有 31 个场景保留, HTTP API 与令牌门禁场景改为 IPC, 本机编辑器和媒体路径安全检查. 弹幕测试只在主进程边缘注入确定消息, preload, 订阅, 时间线和叠加层均使用实际实现.
 
-`npm run shots` 不断言任何事情，它只是把两种宽度下的界面各截一遍到 `.ui-shots/`。断言看不出「两块面板圆角不一样」或者「这条按钮把画面挡了」，看图能。折行、遮挡这类问题就是这么发现的。
+**Codex 当前执行沙箱无法创建 Chromium restricted token.** 在沙箱内只运行类型检查, 单元测试, 构建和 `npx playwright test --list`. 完整 E2E 必须由指挥方在普通用户终端, 先构建后运行 `npx playwright test`. 启动失败会给出明确提示, 不记为验证通过.
 
-### 结构
+## 目录
 
+```text
+electron/          主进程, preload, IPC 白名单与自定义协议
+src/app/           会话, 设置与统一 ApiClient IPC 接口
+src/core/          纯逻辑: 识别, 跳秒, 偏移估计与同步计划
+src/media/         两路 video 元素与 hls.js
+src/recognition/   取帧, 采样与识别 Worker
+src/sync/          自动同步控制器
+src/ui/            播放页与配置编辑器
+server/            主进程复用的平台解析, SSRF 防护, 预设存储与弹幕中继
+e2e/               真实 Electron 场景与测试数据隔离
 ```
-src/core/      识别、时钟跳秒、偏移估计、同步计划——纯逻辑，不碰 DOM
-src/media/     播放引擎，两路 <video> 的所有权和 HLS 接入
-src/recognition/  取帧、采样、Worker
-src/sync/      自动同步控制器
-src/ui/        页面与组件，src/ui/admin 是 Profile Editor
-server/        HTTP 服务：API、静态资源、媒体代理、预设存储、平台解析、弹幕中继
-```
 
-`src/core` 不依赖浏览器，所以识别逻辑可以直接在 Node 里对着真实解码帧测试——`src/recognition/fixtureFrames.test.ts` 就是这么做的，它是唯一一条能发现「模板匹配在真实 H.264 帧上掉分」这类问题的测试。
-
-## 文档
-
-设计说明在 [docs/](docs/index.md)：同步算法、识别流水线、Profile Editor、弹幕、媒体代理、平台解析，以及术语表。
+进一步说明见 [docs/index.md](docs/index.md). P0 原型及其历史证据保留在 `prototype/`, 正式应用不在该目录开发.

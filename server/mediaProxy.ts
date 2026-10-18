@@ -1,202 +1,162 @@
-/**
- * Same-origin media proxy.
- *
- * Purpose: platform CDNs do not send permissive CORS headers, so a cross-origin
- * `<video>`/hls.js load either fails or (for the canvas) taints the frame and blocks
- * countdown recognition. Fetching server-side and re-serving from our own origin fixes
- * both: the browser sees one origin, and `getImageData` stays legal.
- *
- * Deliberately NOT done here (all present in the reference implementation this project
- * only draws ideas from):
- *   - accepting a client-supplied `Referer`/`Origin` to spoof a platform's checks
- *   - forwarding cookies or auth headers to arbitrary targets
- *   - buffering whole responses in memory
- *   - routing through third-party public CORS proxies
- * Each is an SSRF, credential-leak, memory or supply-chain hazard for a service
- * listening on the user's machine.
- */
-
-import type { IncomingMessage, ServerResponse } from 'node:http'
-import { Readable } from 'node:stream'
+/** Opaque, bounded media capabilities. Only main-resolved URLs enter this registry. */
+import { randomUUID } from 'node:crypto'
 import type { ProxyConfig } from './config'
 import { rewritePlaylist, shouldRewrite } from './hlsRewrite'
-import { sendError } from './http'
 import { ProxyError, safeFetch, type Resolver } from './safeFetch'
 
-export const PROXY_PATH = '/api/proxy'
-
-/** Response headers worth passing through; everything else is dropped. */
-const FORWARDED_RESPONSE_HEADERS = [
-  'content-type',
-  'content-length',
-  'content-range',
-  'accept-ranges',
-  'last-modified',
-  'etag',
-]
-
-/** Request headers worth passing upstream. Notably absent: cookie, authorization. */
-const FORWARDED_REQUEST_HEADERS = ['range', 'accept', 'accept-encoding', 'if-none-match']
-
-/** A playlist above this size is not a playlist; refuse rather than buffer it. */
+export const MEDIA_ORIGIN = 'app://app'
 const MAX_PLAYLIST_BYTES = 4 * 1_048_576
-
-export type ProxyDeps = {
+const MAX_RESOURCES = 8192
+const TTL_MS = 10 * 60_000
+const RESPONSE_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag']
+export interface MediaDeps {
   config: ProxyConfig
   resolve?: Resolver
   fetchImpl?: typeof fetch
+  now?: () => number
 }
+type Resource = { url: string; touched: number }
 
-export async function handleProxyRequest(
-  req: IncomingMessage,
-  res: ServerResponse,
-  url: URL,
-  deps: ProxyDeps,
-): Promise<void> {
-  if (!deps.config.enabled) {
-    sendError(res, 503, 'proxy-disabled', '媒体代理已关闭，请设置 STREAM_SYNC_MEDIA_PROXY_ENABLED=1')
-    return
+export class MediaRegistry {
+  private readonly resources = new Map<string, Resource>()
+  private readonly ids = new Map<string, string>()
+  constructor(private readonly deps: MediaDeps) {}
+  register = (raw: string): string => {
+    const url = new URL(raw)
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('不支持的媒体地址')
+    url.hash = ''
+    const value = url.toString()
+    const now = this.now()
+    this.prune(now)
+    const existing = this.ids.get(value)
+    if (existing) {
+      const resource = this.resources.get(existing)!
+      resource.touched = now
+      this.resources.delete(existing)
+      this.resources.set(existing, resource)
+      return `${MEDIA_ORIGIN}/media/${existing}`
+    }
+    while (this.resources.size >= MAX_RESOURCES) this.remove(this.resources.keys().next().value!)
+    const id = randomUUID()
+    this.ids.set(value, id)
+    this.resources.set(id, { url: value, touched: now })
+    return `${MEDIA_ORIGIN}/media/${id}`
   }
+  clear(): void { this.resources.clear(); this.ids.clear() }
 
-  const target = url.searchParams.get('url')
-  if (!target) {
-    sendError(res, 400, 'missing-url', '缺少 url 参数')
-    return
-  }
-
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), deps.config.requestTimeoutMs)
-  // A client that navigates away or seeks again must not leave an upstream request open.
-  const onClose = () => controller.abort()
-  res.on('close', onClose)
-
-  try {
-    const { response, finalUrl } = await safeFetch(target, deps.config, {
-      method: req.method === 'HEAD' ? 'HEAD' : 'GET',
-      headers: pickRequestHeaders(req),
-      signal: controller.signal,
-      resolve: deps.resolve,
-      fetchImpl: deps.fetchImpl,
-    })
-
-    const contentType = response.headers.get('content-type')
-    const contentLength = Number(response.headers.get('content-length') ?? '0')
-
-    // Playlists must be read and rewritten; media is streamed straight through.
-    if (
-      req.method !== 'HEAD' &&
-      response.ok &&
-      contentLength <= MAX_PLAYLIST_BYTES &&
-      looksLikePlaylist(finalUrl, contentType)
-    ) {
-      const body = await response.text()
-      if (shouldRewrite(finalUrl.toString(), contentType, body)) {
-        const rewritten = rewritePlaylist(body, {
-          baseUrl: finalUrl.toString(),
-          proxyPath: PROXY_PATH,
-        })
-        res.writeHead(200, {
-          'content-type': 'application/vnd.apple.mpegurl; charset=utf-8',
-          'content-length': Buffer.byteLength(rewritten),
-          // Live playlists change constantly; a cached one stalls playback.
-          'cache-control': 'no-store',
-          'access-control-allow-origin': 'same-origin',
-        })
-        res.end(rewritten)
-        return
+  async handle(request: Request): Promise<Response> {
+    if (!['GET', 'HEAD'].includes(request.method)) return errorResponse(405, 'bad-method', '仅支持读取媒体')
+    const url = new URL(request.url)
+    if (url.protocol !== 'app:' || url.hostname !== 'app' || url.port || url.search || url.username || url.password) return errorResponse(403, 'unregistered-media', '媒体未登记')
+    this.prune(this.now())
+    const match = /^\/media\/([0-9a-f-]{36})$/.exec(url.pathname)
+    const resource = match ? this.resources.get(match[1]!) : undefined
+    if (!resource) return errorResponse(404, 'unregistered-media', '媒体未登记或已过期')
+    resource.touched = this.now()
+    if (!this.deps.config.enabled) return errorResponse(503, 'media-disabled', '远程媒体读取已关闭')
+    const controller = new AbortController()
+    const abort = () => controller.abort()
+    request.signal.addEventListener('abort', abort, { once: true })
+    if (request.signal.aborted) controller.abort()
+    const timeout = setTimeout(abort, this.deps.config.requestTimeoutMs)
+    const cleanup = () => { clearTimeout(timeout); request.signal.removeEventListener('abort', abort) }
+    let upstream: Response | undefined
+    try {
+      const headers: Record<string, string> = { 'user-agent': 'StreamSyncer/0.1 (+desktop)', 'accept-encoding': 'identity' }
+      for (const name of ['range', 'accept', 'if-none-match']) {
+        const value = request.headers.get(name)
+        if (value) headers[name] = value
       }
-      // Not actually a playlist: hand back what we read.
-      res.writeHead(response.status, forwardedHeaders(response, Buffer.byteLength(body)))
-      res.end(body)
-      return
-    }
-
-    res.writeHead(response.status, forwardedHeaders(response))
-    if (req.method === 'HEAD' || !response.body) {
-      res.end()
-      return
-    }
-    // Stream: a 4 GiB VOD segment run must never accumulate in this process.
-    await pipeBody(response.body, res)
-  } catch (error) {
-    if (controller.signal.aborted && !res.headersSent) {
-      sendError(res, 504, 'upstream-timeout', '上游响应超时')
-      return
-    }
-    if (res.headersSent) {
-      res.destroy()
-      return
-    }
-    if (error instanceof ProxyError) {
-      sendError(res, error.status, error.reason, error.message)
-      return
-    }
-    sendError(
-      res,
-      502,
-      'upstream-failed',
-      `上游请求失败：${error instanceof Error ? error.message : String(error)}`,
-    )
-  } finally {
-    clearTimeout(timeout)
-    res.off('close', onClose)
-  }
-}
-
-async function pipeBody(body: ReadableStream<Uint8Array>, res: ServerResponse): Promise<void> {
-  const stream = Readable.fromWeb(body as Parameters<typeof Readable.fromWeb>[0])
-  try {
-    for await (const chunk of stream) {
-      if (res.writableEnded) break
-      if (!res.write(chunk)) {
-        await new Promise<void>((resolve) => res.once('drain', resolve))
+      const host = new URL(resource.url).hostname
+      if (/(^|\.)(douyucdn[23]?\.cn|dyscdn\.com|douyu\.com)$/.test(host)) headers.referer = 'https://www.douyu.com/'
+      if (/(^|\.)(bilivideo\.com|hdslb\.com)$/.test(host)) headers.referer = 'https://live.bilibili.com/'
+      const result = await safeFetch(resource.url, this.deps.config, {
+        method: request.method, headers, signal: controller.signal, resolve: this.deps.resolve, fetchImpl: this.deps.fetchImpl,
+      })
+      upstream = result.response
+      const outgoing = new Headers({ 'cache-control': 'no-store' })
+      for (const name of RESPONSE_HEADERS) {
+        const value = upstream.headers.get(name)
+        if (value !== null) outgoing.set(name, value)
       }
+      if (upstream.headers.has('content-encoding')) outgoing.delete('content-length')
+      if (request.method === 'HEAD' || !upstream.body || [204, 205, 304].includes(upstream.status)) {
+        await upstream.body?.cancel()
+        cleanup()
+        return new Response(null, { status: upstream.status, headers: outgoing })
+      }
+      const type = upstream.headers.get('content-type') ?? ''
+      const path = result.finalUrl.pathname.toLowerCase()
+      const mediaExtension = /\.(?:ts|m4s|mp4|webm|aac|mp3)$/.test(path)
+      const candidate = shouldRewrite(result.finalUrl, type) || (!mediaExtension && (
+        type.includes('text') || type.includes('octet-stream') || (!path.includes('.') && !/^(video|audio)\//.test(type))
+      ))
+      if (upstream.ok && candidate && upstream.status !== 206) {
+        const bytes = await readBounded(upstream.body, MAX_PLAYLIST_BYTES)
+        const body = new TextDecoder().decode(bytes)
+        cleanup()
+        if (shouldRewrite(result.finalUrl, type, body)) {
+          const rewritten = rewritePlaylist(body, { baseUrl: result.finalUrl, register: this.register })
+          outgoing.set('content-type', 'application/vnd.apple.mpegurl; charset=utf-8')
+          outgoing.set('content-length', String(Buffer.byteLength(rewritten)))
+          outgoing.delete('content-range')
+          outgoing.delete('etag')
+          return new Response(rewritten, { status: 200, headers: outgoing })
+        }
+        outgoing.set('content-length', String(bytes.byteLength))
+        return new Response(bytes, { status: upstream.status, headers: outgoing })
+      }
+      const reader = upstream.body.getReader()
+      const body = new ReadableStream<Uint8Array>({
+        async pull(stream) {
+          try {
+            const chunk = await reader.read()
+            if (chunk.done) { cleanup(); stream.close() }
+            else stream.enqueue(chunk.value)
+          } catch { cleanup(); stream.error(new Error('媒体读取中断')) }
+        },
+        async cancel() { controller.abort(); cleanup(); await reader.cancel().catch(() => {}) },
+      })
+      return new Response(body, { status: upstream.status, headers: outgoing })
+    } catch (error) {
+      const timedOut = controller.signal.aborted
+      controller.abort()
+      await upstream?.body?.cancel().catch(() => {})
+      cleanup()
+      if (error instanceof ProxyError) return errorResponse(error.status, error.reason, '媒体目标被安全策略拒绝')
+      if (error instanceof RangeError) return errorResponse(413, 'too-large', '媒体清单超过大小上限')
+      return errorResponse(timedOut ? 504 : 502, timedOut ? 'upstream-timeout' : 'upstream-failed', '媒体读取失败')
     }
-    res.end()
-  } catch {
-    // Client hung up mid-segment; nothing recoverable, and the socket is already gone.
-    res.destroy()
+  }
+  private now(): number { return this.deps.now?.() ?? Date.now() }
+  private remove(id: string): void {
+    const resource = this.resources.get(id)
+    if (resource) this.ids.delete(resource.url)
+    this.resources.delete(id)
+  }
+  private prune(now: number): void {
+    for (const [id, resource] of this.resources) if (now - resource.touched > TTL_MS) this.remove(id)
   }
 }
 
-/**
- * Cheap pre-filter deciding whether a response is worth buffering to look at. A false
- * positive costs one small read (`shouldRewrite` then sniffs the body and says no); a
- * false negative would stream an unrewritten playlist, so this leans permissive.
- */
-function looksLikePlaylist(url: URL, contentType: string | null): boolean {
-  const type = (contentType ?? '').toLowerCase()
-  if (type.includes('mpegurl') || type.includes('m3u')) return true
-  const path = url.pathname.toLowerCase()
-  if (path.endsWith('.m3u8') || path.endsWith('.m3u')) return true
-  // Segments are the hot path and are never playlists; skip them without reading.
-  if (path.endsWith('.ts') || path.endsWith('.m4s') || path.endsWith('.mp4')) return false
-  if (type.startsWith('video/') || type.startsWith('audio/')) return false
-  // Extensionless or text/plain: worth reading, `shouldRewrite` makes the final call.
-  return type.includes('text') || type.includes('octet-stream') || !path.includes('.')
+async function readBounded(body: ReadableStream<Uint8Array>, limit: number): Promise<Uint8Array<ArrayBuffer>> {
+  const reader = body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const next = await reader.read()
+      if (next.done) break
+      total += next.value.byteLength
+      if (total > limit) throw new RangeError('playlist limit')
+      chunks.push(next.value)
+    }
+  } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
+  return bytes
 }
-
-function pickRequestHeaders(req: IncomingMessage): Record<string, string> {
-  const headers: Record<string, string> = {
-    // A neutral, honest UA. Not a spoofed browser string aimed at bypassing checks.
-    'user-agent': 'StreamSyncPlayer/0.1 (+local)',
-  }
-  for (const name of FORWARDED_REQUEST_HEADERS) {
-    const value = req.headers[name]
-    if (typeof value === 'string') headers[name] = value
-  }
-  return headers
-}
-
-function forwardedHeaders(response: Response, overrideLength?: number): Record<string, string> {
-  const headers: Record<string, string> = {
-    'cache-control': 'no-store',
-    'access-control-allow-origin': 'same-origin',
-  }
-  for (const name of FORWARDED_RESPONSE_HEADERS) {
-    const value = response.headers.get(name)
-    if (value !== null) headers[name] = value
-  }
-  if (overrideLength !== undefined) headers['content-length'] = String(overrideLength)
-  return headers
+function errorResponse(status: number, code: string, message: string): Response {
+  return Response.json({ error: { code, message } }, { status })
 }

@@ -1,14 +1,8 @@
-/**
- * The deployability check: does the built page actually come up and serve its own API?
- *
- * These run without fixtures on purpose. A checkout with no ffmpeg output should still be
- * able to prove the server boots, the bundle loads, the shell renders and the admin
- * surface is closed — which is the difference between "the code compiles" and "the page
- * is deployable".
- */
+/** Built desktop app smoke checks: the real shell, preload IPC and scheme guards. */
 
-import { expect, test } from '@playwright/test'
-import { ADMIN_TOKEN, failOnPageError, openPlayer, sourceDialog } from './helpers'
+import { APP_ORIGIN, expect, test } from './electron'
+import type { RecognitionProfile } from '../src/core/profileSchema'
+import { failOnPageError, invoke, openPlayer, sourceDialog } from './helpers'
 
 test.describe('应用外壳', () => {
   test('冷启动渲染播放页并打开片源对话框', async ({ page }) => {
@@ -18,7 +12,7 @@ test.describe('应用外壳', () => {
       if (message.type() === 'error') consoleErrors.push(message.text())
     })
 
-    await page.goto('/')
+    await page.goto(APP_ORIGIN + '/')
 
     await expect(page.locator('.player-page')).toBeVisible()
     // Nothing is loaded yet, so the dialog is the cold-start entry point.
@@ -54,57 +48,67 @@ test.describe('应用外壳', () => {
   })
 })
 
-test.describe('服务端接口', () => {
-  test('/api/health 报告运行状态', async ({ request }) => {
-    const response = await request.get('/api/health')
-    expect(response.ok()).toBe(true)
-    const body = (await response.json()) as { ok: boolean; version?: string }
-    expect(body.ok).toBe(true)
+test.describe('主进程接口与安全边界', () => {
+  test('health IPC 报告运行状态且渲染进程没有 Node 权限', async ({ page }) => {
+    const response = await invoke(page, 'health', undefined)
+    expect(response.ok).toBe(true)
+    if (!response.ok) throw new Error(response.message)
+    expect(response.value.ok).toBe(true)
+    expect(await page.evaluate(() => ({
+      require: typeof (window as unknown as Record<string, unknown>).require,
+      process: typeof (window as unknown as Record<string, unknown>).process,
+    }))).toEqual({ require: 'undefined', process: 'undefined' })
   })
 
-  test('/api/resolve 对无法解析的输入返回结构化失败而非 5xx', async ({ request }) => {
-    const response = await request.post('/api/resolve', {
-      data: { input: 'not-a-stream-at-all', platform: 'auto' },
+  test('resolve IPC 对无法解析的输入返回结构化失败', async ({ page }) => {
+    const response = await invoke(page, 'resolve', { input: 'not-a-stream-at-all' })
+    expect(response.ok).toBe(true)
+    if (!response.ok) throw new Error(response.message)
+    expect(response.value.ok).toBe(false)
+    if (response.value.ok) throw new Error('Unresolvable input was unexpectedly accepted')
+    expect(response.value.failure.message).toBeTruthy()
+  })
+
+  test('本机写入仍需通过主进程预设校验', async ({ page }) => {
+    const verified = await invoke(page, 'verifyAdmin', { token: '' })
+    expect(verified).toEqual({ ok: true, value: { ok: true } })
+    const rejected = await invoke(page, 'savePreset', {
+      id: 'smoke-should-fail',
+      profile: { schemaVersion: 2, id: 'smoke-should-fail' } as RecognitionProfile,
     })
-    // A failure to resolve is an answer, not a server error: the UI needs the reason and
-    // the hint so it can ask for a direct media URL instead of showing a stack trace.
-    expect(response.status()).toBe(200)
-    const body = (await response.json()) as {
-      ok: boolean
-      failure?: { reason: string; message: string }
-    }
-    expect(body.ok).toBe(false)
-    expect(body.failure?.message).toBeTruthy()
+    expect(rejected.ok).toBe(false)
+    if (rejected.ok) throw new Error('Invalid profile was unexpectedly accepted')
+    expect(rejected.code).toBe('invalid-profile')
+    expect(rejected.detail).toHaveProperty('issues')
+    const stored = await invoke(page, 'getPreset', { id: 'smoke-should-fail' })
+    expect(stored.ok).toBe(false)
   })
 
-  test('预设写入需要管理令牌', async ({ request }) => {
-    const unauthorized = await request.put('/api/presets/smoke-should-fail', {
-      data: { schemaVersion: 2, id: 'smoke-should-fail' },
+  test('媒体路径拒绝内网目标和未登记标识', async ({ page }) => {
+    const response = await invoke(page, 'resolve', {
+      input: 'http://127.0.0.1:9/secret', platform: 'direct',
     })
-    expect(unauthorized.status()).toBe(403)
+    expect(response.ok).toBe(false)
+    if (response.ok) throw new Error('Private media target was unexpectedly accepted')
+    expect(['private-address', 'bad-port', 'host-not-allowed']).toContain(response.code)
+    expect(response.message).toBeTruthy()
 
-    const verified = await request.post('/api/admin/verify', { data: { token: ADMIN_TOKEN } })
-    expect(verified.ok()).toBe(true)
-    expect(((await verified.json()) as { ok: boolean }).ok).toBe(true)
-
-    // A wrong token gets a bare 403 with no hint about the expected length or content.
-    const wrong = await request.post('/api/admin/verify', { data: { token: 'wrong-token' } })
-    expect(wrong.status()).toBe(403)
-    const body = (await wrong.json()) as { error?: { code: string; message: string } }
-    expect(body.error?.code).toBe('bad-token')
-    expect(body.error?.message).not.toContain(ADMIN_TOKEN)
+    const status = await page.evaluate(async () =>
+      (await fetch('app://app/media/unregistered?url=http://127.0.0.1:9/secret')).status,
+    )
+    expect(status).toBeGreaterThanOrEqual(400)
+    expect(status).toBeLessThan(500)
   })
 
-  test('媒体代理拒绝内网目标', async ({ request }) => {
-    // SSRF guard: the proxy exists to add a Referer for a public CDN, not to let the page
-    // reach anything the host itself can reach.
-    const response = await request.get('/api/proxy?url=http://127.0.0.1:9/secret')
-    expect(response.status()).toBeGreaterThanOrEqual(400)
-    expect(response.status()).toBeLessThan(500)
-  })
-
-  test('未知接口返回 404 而不是落到静态资源', async ({ request }) => {
-    const response = await request.get('/api/definitely-not-a-route')
-    expect(response.status()).toBe(404)
+  test('未知 IPC 方法被拒绝且旧 API 地址不会落到页面', async ({ page }) => {
+    const rejected = await page.evaluate(async () => {
+      const invokeUnknown = window.streamSyncer?.invoke as unknown as
+        (method: string, args: undefined) => Promise<{ ok: boolean; code?: string }>
+      return invokeUnknown('definitely-not-a-method', undefined)
+    })
+    expect(rejected.ok).toBe(false)
+    expect(rejected.code).toBe('unknown-method')
+    const status = await page.evaluate(async () => (await fetch('app://app/api/definitely-not-a-route')).status)
+    expect(status).toBe(404)
   })
 })

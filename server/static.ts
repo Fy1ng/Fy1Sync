@@ -1,17 +1,15 @@
 /**
- * Static file serving for the built client, with SPA fallback.
+ * Streaming custom-protocol resources for the desktop client.
  *
- * Deliberately small: this server exists to host one built bundle on loopback, not to be
- * a general web server. The important parts are the path containment check and not
+ * The important parts are the path containment check and not
  * letting `index.html` be cached (a stale shell pointing at deleted hashed assets is the
  * classic "blank page after update" bug).
  */
 
 import { createReadStream } from 'node:fs'
-import { stat } from 'node:fs/promises'
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import { stat, realpath } from 'node:fs/promises'
+import { Readable } from 'node:stream'
 import { join, normalize, resolve, sep } from 'node:path'
-import { requestUrl, sendText } from './http'
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -114,130 +112,61 @@ export function parseRange(
   return { start, end }
 }
 
-export async function serveStatic(
-  req: IncomingMessage,
-  res: ServerResponse,
-  options: StaticOptions,
-): Promise<boolean> {
-  const method = req.method ?? 'GET'
-  if (method !== 'GET' && method !== 'HEAD') return false
-
-  const url = requestUrl(req)
-  const fallback = options.spaFallback ?? 'index.html'
-
+export async function serveStatic(request: Request, options: StaticOptions): Promise<Response | null> {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return null
+  const url = new URL(request.url)
+  if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return null
   const direct = resolveStaticPath(options.root, url.pathname)
-  if (direct) {
-    const hit = await statFile(direct)
-    if (hit === 'file') return sendFile(req, res, direct, false)
-    if (hit === 'dir') {
-      const index = join(direct, 'index.html')
-      if ((await statFile(index)) === 'file') return sendFile(req, res, index, true)
-    }
+  if (!direct) return null
+  const hit = await statFile(direct)
+  if (hit === 'file') return sendFile(request, direct, options.root)
+  if (hit === 'dir') {
+    const index = join(direct, 'index.html')
+    if (await statFile(index) === 'file') return sendFile(request, index, options.root)
   }
-
-  // Unknown path: hand the SPA shell over so the client router can take it. An asset
-  // request that misses must 404 instead, or a bad import silently receives HTML.
-  if (looksLikeAsset(url.pathname)) return false
-
-  const shell = resolveStaticPath(options.root, `/${fallback}`)
-  if (!shell || (await statFile(shell)) !== 'file') return false
-  return sendFile(req, res, shell, true)
-}
-
-function looksLikeAsset(pathname: string): boolean {
-  const last = pathname.slice(pathname.lastIndexOf('/') + 1)
-  return last.includes('.') && !last.endsWith('.html')
+  const last = url.pathname.slice(url.pathname.lastIndexOf('/') + 1)
+  if (last.includes('.') && !last.endsWith('.html')) return null
+  // Reserved resource namespaces must never turn an unknown media ID into HTML.
+  if (url.pathname.startsWith('/media/') || url.pathname.startsWith('/test-sources/')) return null
+  const shell = resolveStaticPath(options.root, `/${options.spaFallback ?? 'index.html'}`)
+  if (!shell || await statFile(shell) !== 'file') return null
+  return sendFile(request, shell, options.root)
 }
 
 async function statFile(path: string): Promise<'file' | 'dir' | null> {
   try {
     const info = await stat(path)
-    if (info.isDirectory()) return 'dir'
-    return info.isFile() ? 'file' : null
-  } catch {
-    return null
-  }
+    return info.isDirectory() ? 'dir' : info.isFile() ? 'file' : null
+  } catch { return null }
 }
 
-async function sendFile(
-  req: IncomingMessage,
-  res: ServerResponse,
-  path: string,
-  isShell: boolean,
-): Promise<boolean> {
-  const info = await stat(path)
+async function sendFile(request: Request, path: string, root: string): Promise<Response | null> {
+  // Lexical containment alone cannot stop a symlink/junction out of the client tree.
+  const [actual, actualRoot] = await Promise.all([realpath(path), realpath(root)])
+  if (!actual.startsWith(actualRoot + sep)) return null
+  const info = await stat(actual)
   const etag = `W/"${info.size.toString(16)}-${info.mtimeMs.toString(16)}"`
-
-  if (req.headers['if-none-match'] === etag) {
-    res.writeHead(304, { etag })
-    res.end()
-    return true
-  }
-
-  // Only ranges the client can trust: the etag above is weak, so it cannot prove the file is
-  // byte-for-byte the one the client already holds. RFC 9110 says to ignore the range when the
-  // validator in `If-Range` is weak, which costs a re-download and never stitches two
-  // different versions of a file together.
-  const range = req.headers['if-range'] ? null : parseRange(req.headers.range, info.size)
-
+  if (request.headers.get('if-none-match') === etag) return new Response(null, { status: 304, headers: { etag } })
+  const range = request.headers.has('if-range') ? null : parseRange(request.headers.get('range') ?? undefined, info.size)
   if (range === 'unsatisfiable') {
-    res.writeHead(416, {
-      'content-range': `bytes */${info.size}`,
-      'accept-ranges': 'bytes',
-      etag,
-    })
-    res.end()
-    return true
+    return new Response(null, { status: 416, headers: { 'content-range': `bytes */${info.size}`, 'accept-ranges': 'bytes', etag } })
   }
-
-  res.writeHead(range ? 206 : 200, {
-    'content-type': contentTypeFor(path),
-    'content-length': range ? range.end - range.start + 1 : info.size,
-    // Advertised on every response, the 200 included: a player only learns it may seek from
-    // the first response, before it has any range to ask about.
-    'accept-ranges': 'bytes',
+  const headers = {
+    'content-type': contentTypeFor(actual),
+    'content-length': String(range ? range.end - range.start + 1 : info.size),
+    'accept-ranges': 'bytes', etag,
+    'cache-control': /-[A-Za-z0-9_]{8,}\.[a-z0-9]+$/.test(actual) ? 'public, max-age=31536000, immutable' : 'no-cache',
     ...(range ? { 'content-range': `bytes ${range.start}-${range.end}/${info.size}` } : {}),
-    etag,
-    // Vite emits content-hashed asset names, so those are safe to cache hard. The
-    // HTML shell must never be, or an update leaves the browser asking for gone files.
-    'cache-control': isShell
-      ? 'no-cache'
-      : /-[A-Za-z0-9_]{8,}\.[a-z0-9]+$/.test(path)
-        ? 'public, max-age=31536000, immutable'
-        : 'no-cache',
-  })
-
-  if ((req.method ?? 'GET') === 'HEAD') {
-    res.end()
-    return true
   }
-
-  await new Promise<void>((resolvePromise) => {
-    const stream = range
-      ? createReadStream(path, { start: range.start, end: range.end })
-      : createReadStream(path)
-    stream.on('error', () => {
-      res.destroy()
-      resolvePromise()
-    })
-    stream.on('end', resolvePromise)
-    res.on('close', () => stream.destroy())
-    stream.pipe(res)
-  })
-  return true
+  if (request.method === 'HEAD' || info.size === 0) return new Response(null, { status: range ? 206 : 200, headers })
+  const stream = range ? createReadStream(actual, { start: range.start, end: range.end }) : createReadStream(actual)
+  const abort = () => stream.destroy()
+  request.signal.addEventListener('abort', abort, { once: true })
+  stream.once('close', () => request.signal.removeEventListener('abort', abort))
+  if (request.signal.aborted) stream.destroy()
+  return new Response(Readable.toWeb(stream) as ReadableStream<Uint8Array>, { status: range ? 206 : 200, headers })
 }
 
-export function sendMissingClient(res: ServerResponse, clientDir: string): void {
-  sendText(
-    res,
-    503,
-    [
-      '前端尚未构建。',
-      '',
-      `期望目录：${clientDir}`,
-      '',
-      '请先运行：npm run build',
-      '开发模式请改用：npm run dev',
-    ].join('\n'),
-  )
+export function missingClientResponse(clientDir: string): Response {
+  return new Response(`前端尚未构建.\n期望目录: ${clientDir}\n请先运行: npm run build\n开发模式: npm run dev`, { status: 503 })
 }

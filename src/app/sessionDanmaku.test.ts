@@ -1,13 +1,4 @@
-/**
- * The session's danmaku and profile plumbing.
- *
- * Two things jsdom does not provide are stubbed here, and only those two: `EventSource`
- * and `fetch`. Everything downstream stays real — the filter, the timeline, the scheduling
- * against commentary media time — because that chain is where the bugs live. In particular
- * the SSE *event names* are asserted, since an EventSource silently ignores events nobody
- * listens for: a mismatch between relay and client drops every message with no error
- * anywhere, which is exactly what happened once.
- */
+/** IPC subscription tests keep filtering, media-time scheduling and profiles real. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -22,46 +13,34 @@ import {
 } from '../core/profileSchema'
 import type { MediaDescriptor } from '../core/types'
 import { Session } from './session'
+import type { StreamSyncerBridge } from '../../electron/contracts'
+import type { DanmakuEvent } from './apiClient'
 import { SETTINGS_KEY, type SettingsStorage } from './settings'
 
-/** A stub EventSource that hands the test its own listener table. */
-class StubEventSource {
-  static instances: StubEventSource[] = []
-  readonly listeners = new Map<string, Set<(event: MessageEvent<string>) => void>>()
+/** The only fake boundary is the typed preload, including its cancellation handle. */
+class StubDanmakuSubscription {
+  static instances: StubDanmakuSubscription[] = []
   closed = false
 
-  constructor(readonly url: string) {
-    StubEventSource.instances.push(this)
+  constructor(readonly room: string, private readonly listener: (event: DanmakuEvent) => void) {
+    StubDanmakuSubscription.instances.push(this)
   }
 
-  addEventListener(type: string, handler: (event: MessageEvent<string>) => void): void {
-    let set = this.listeners.get(type)
-    if (!set) {
-      set = new Set()
-      this.listeners.set(type, set)
-    }
-    set.add(handler)
-  }
+  close(): void { this.closed = true }
 
-  removeEventListener(type: string, handler: (event: MessageEvent<string>) => void): void {
-    this.listeners.get(type)?.delete(handler)
+  emit(event: string, data: unknown): void {
+    // Deliberately allow late delivery: ApiClient must discard queued events on close.
+    this.listener({ event, data })
   }
+}
 
-  close(): void {
-    this.closed = true
-  }
-
-  /** Deliver one server-sent event, as the browser would. */
-  emit(type: string, data: unknown): void {
-    const payload = typeof data === 'string' ? data : JSON.stringify(data)
-    for (const handler of this.listeners.get(type) ?? []) {
-      handler(new MessageEvent(type, { data: payload }))
-    }
-  }
-
-  /** Whether the client is listening for a given event name at all. */
-  listens(type: string): boolean {
-    return (this.listeners.get(type)?.size ?? 0) > 0
+function preload(): StreamSyncerBridge {
+  return {
+    invoke: vi.fn(async () => ({ ok: true, value: { presets: [] } })) as StreamSyncerBridge['invoke'],
+    subscribeDanmaku: (room, listener) => {
+      const subscription = new StubDanmakuSubscription(room, listener)
+      return () => subscription.close()
+    },
   }
 }
 
@@ -117,8 +96,8 @@ async function makeSession(options: { commentaryTime?: number; load?: boolean } 
 }
 
 beforeEach(() => {
-  StubEventSource.instances = []
-  vi.stubGlobal('EventSource', StubEventSource as unknown as typeof EventSource)
+  StubDanmakuSubscription.instances = []
+  vi.stubGlobal('streamSyncer', preload())
 })
 
 afterEach(() => {
@@ -127,34 +106,32 @@ afterEach(() => {
 })
 
 describe('Session danmaku transport', () => {
-  it('subscribes to the relay with the room in the path', async () => {
+  it('subscribes to the relay with a structured room id', async () => {
     const { session } = await makeSession()
     session.connectDanmaku('288016')
-    expect(StubEventSource.instances).toHaveLength(1)
-    expect(StubEventSource.instances[0]?.url).toBe('/api/danmaku/douyu/288016')
+    expect(StubDanmakuSubscription.instances).toHaveLength(1)
+    expect(StubDanmakuSubscription.instances[0]?.room).toBe('288016')
     expect(session.flush().danmaku.room).toBe('288016')
   })
 
-  it('escapes the room id into the path', async () => {
+  it('keeps room data intact without path encoding', async () => {
     const { session } = await makeSession()
     session.connectDanmaku('a b/c')
-    expect(StubEventSource.instances[0]?.url).toBe('/api/danmaku/douyu/a%20b%2Fc')
+    expect(StubDanmakuSubscription.instances[0]?.room).toBe('a b/c')
   })
 
-  it('listens for the event names the relay actually sends', async () => {
-    // Named explicitly: an EventSource drops events with no listener, so a rename on
-    // either side is invisible until nothing shows up on screen.
+  it('ignores unrelated relay event types', async () => {
     const { session } = await makeSession()
     session.connectDanmaku('288016')
-    const source = StubEventSource.instances[0]!
-    expect(source.listens('danmaku')).toBe(true)
-    expect(source.listens('state')).toBe(true)
+    StubDanmakuSubscription.instances[0]!.emit('unexpected', { text: 'ignored' })
+    expect(session.flush().danmaku.pending).toBe(0)
+    expect(session.flush().danmaku.connected).toBe(false)
   })
 
   it('parks a relayed message against commentary media time', async () => {
     const { session } = await makeSession({ commentaryTime: 100 })
     session.connectDanmaku('288016')
-    StubEventSource.instances[0]!.emit('danmaku', { text: '好球', user: '观众', color: '#fff' })
+    StubDanmakuSubscription.instances[0]!.emit('danmaku', { text: '好球', user: '观众', color: '#fff' })
     expect(session.flush().danmaku.pending).toBe(1)
     // Scheduled at the playhead it arrived on, so it is due immediately — the delay only
     // appears once the commentary is rewound behind that point.
@@ -166,7 +143,7 @@ describe('Session danmaku transport', () => {
   it('ignores a message with no usable text', async () => {
     const { session } = await makeSession()
     session.connectDanmaku('288016')
-    const source = StubEventSource.instances[0]!
+    const source = StubDanmakuSubscription.instances[0]!
     source.emit('danmaku', { text: '', user: 'a' })
     source.emit('danmaku', { text: 42, user: 'a' })
     source.emit('danmaku', 'not json at all')
@@ -176,18 +153,18 @@ describe('Session danmaku transport', () => {
   it('fills in a missing user and colour rather than dropping the message', async () => {
     const { session } = await makeSession()
     session.connectDanmaku('288016')
-    StubEventSource.instances[0]!.emit('danmaku', { text: '来了' })
+    StubDanmakuSubscription.instances[0]!.emit('danmaku', { text: '来了' })
     const [message] = session.drainDanmaku()
     expect(message?.user).toBe('匿名')
     expect(message?.color).toBe('#ffffff')
   })
 
-  it('reports the relay state rather than only the SSE pipe', async () => {
+  it('reports the upstream relay state rather than local subscription success', async () => {
     const { session } = await makeSession()
     session.connectDanmaku('288016')
-    const source = StubEventSource.instances[0]!
+    const source = StubDanmakuSubscription.instances[0]!
 
-    // `open` means the pipe is up, which happens before the server has reached Douyu.
+    // A local subscription exists before main has connected to Douyu.
     source.emit('state', { room: '288016', state: 'connecting' })
     expect(session.flush().danmaku.connected).toBe(false)
     expect(session.flush().danmaku.error).toBe('正在连接弹幕服务器')
@@ -204,14 +181,14 @@ describe('Session danmaku transport', () => {
   it('prefers the relay detail over the generic text', async () => {
     const { session } = await makeSession()
     session.connectDanmaku('288016')
-    StubEventSource.instances[0]!.emit('state', { state: 'closed', detail: '房间未开播' })
+    StubDanmakuSubscription.instances[0]!.emit('state', { state: 'closed', detail: '房间未开播' })
     expect(session.flush().danmaku.error).toBe('房间未开播')
   })
 
   it('survives a malformed state frame', async () => {
     const { session } = await makeSession()
     session.connectDanmaku('288016')
-    const source = StubEventSource.instances[0]!
+    const source = StubDanmakuSubscription.instances[0]!
     source.emit('state', { state: 'connected' })
     source.emit('state', '{oops')
     expect(session.flush().danmaku.connected).toBe(true)
@@ -221,14 +198,14 @@ describe('Session danmaku transport', () => {
     const { session } = await makeSession()
     session.connectDanmaku('111')
     session.connectDanmaku('222')
-    expect(StubEventSource.instances[0]?.closed).toBe(true)
+    expect(StubDanmakuSubscription.instances[0]?.closed).toBe(true)
     expect(session.flush().danmaku.room).toBe('222')
   })
 
   it('clears parked messages on disconnect', async () => {
     const { session } = await makeSession()
     session.connectDanmaku('288016')
-    StubEventSource.instances[0]!.emit('danmaku', { text: '一' })
+    StubDanmakuSubscription.instances[0]!.emit('danmaku', { text: '一' })
     session.disconnectDanmaku()
     const { danmaku } = session.flush()
     expect(danmaku.room).toBeNull()
@@ -236,11 +213,26 @@ describe('Session danmaku transport', () => {
     expect(danmaku.pending).toBe(0)
   })
 
-  it('says so when the environment has no SSE', async () => {
-    vi.stubGlobal('EventSource', undefined)
+  it('reports unavailable desktop transport', async () => {
+    vi.stubGlobal('streamSyncer', undefined)
     const { session } = await makeSession()
     session.connectDanmaku('288016')
-    expect(session.flush().danmaku.error).toBe('当前环境不支持 SSE')
+    expect(session.flush().danmaku.error).toContain('弹幕连接失败')
+  })
+
+  it('ignores events queued before a room switch or disconnect', async () => {
+    const { session } = await makeSession()
+    session.connectDanmaku('111')
+    const stale = StubDanmakuSubscription.instances[0]!
+    session.connectDanmaku('222')
+    stale.emit('state', { state: 'connected' })
+    stale.emit('danmaku', { text: 'old room' })
+    expect(session.flush().danmaku.connected).toBe(false)
+    expect(session.flush().danmaku.pending).toBe(0)
+    session.disconnectDanmaku()
+    StubDanmakuSubscription.instances[1]!.emit('state', { state: 'connected' })
+    expect(session.flush().danmaku.room).toBeNull()
+    expect(session.flush().danmaku.connected).toBe(false)
   })
 })
 
@@ -331,35 +323,18 @@ describe('Session profile selection', () => {
     return session
   }
 
-  /**
-   * Answer `/api/presets*` and record what was asked for.
-   *
-   * Hand-rolled rather than `new Response(...)`: `apiClient` only ever reads `ok`, `status`
-   * and `text()`, and jsdom is not obliged to supply a global `Response`.
-   */
-  function stubApi(handlers: { list?: unknown; presets?: Record<string, unknown> }): {
-    calls: string[]
-  } {
+  /** Answer the typed preset methods while leaving the rest of the preload intact. */
+  function stubApi(handlers: { list?: unknown; presets?: Record<string, unknown> }): { calls: string[] } {
     const calls: string[] = []
-    const reply = (payload: unknown, status = 200): Promise<Response> =>
-      Promise.resolve({
-        ok: status >= 200 && status < 300,
-        status,
-        text: () => Promise.resolve(JSON.stringify(payload)),
-      } as unknown as Response)
-
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((input: RequestInfo | URL) => {
-        const url = String(input)
-        calls.push(url)
-        if (url === '/api/presets') return reply(handlers.list ?? { presets: [] })
-        const id = decodeURIComponent(url.replace('/api/presets/', ''))
-        const found = handlers.presets?.[id]
-        if (!found) return reply({ error: { code: 'not-found', message: '预设不存在' } }, 404)
-        return reply(found)
-      }),
-    )
+    const bridge = preload()
+    bridge.invoke = vi.fn(async (method: string, args?: { id: string }) => {
+      calls.push(method === 'getPreset' ? `getPreset:${args?.id}` : method)
+      if (method === 'listPresets') return { ok: true, value: handlers.list ?? { presets: [] } }
+      const found = handlers.presets?.[args?.id ?? '']
+      if (!found) return { ok: false, code: 'not-found', message: 'Preset not found' }
+      return { ok: true, value: found }
+    }) as StreamSyncerBridge['invoke']
+    vi.stubGlobal('streamSyncer', bridge)
     return { calls }
   }
 
@@ -376,11 +351,11 @@ describe('Session profile selection', () => {
     expect(session.settings.profileId).toBe('cs2/iem')
   })
 
-  it('does not escape the slash in a preset id, which is path structure', async () => {
+  it('passes the preset id as IPC data without URL escaping', async () => {
     const { calls } = stubApi({ presets: { 'cs2/iem': { profile: readyProfile(), etag: 'a' } } })
     const { session } = await makeSession({ load: false })
     await session.selectProfile('cs2/iem')
-    expect(calls).toContain('/api/presets/cs2/iem')
+    expect(calls).toContain('getPreset:cs2/iem')
   })
 
   it('reports a failed fetch and keeps the previous profile', async () => {
@@ -449,7 +424,9 @@ describe('Session profile selection', () => {
   })
 
   it('leaves the selection alone when the server is unreachable', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('ECONNREFUSED'))))
+    const bridge = preload()
+    vi.mocked(bridge.invoke).mockRejectedValue(new Error('channel closed'))
+    vi.stubGlobal('streamSyncer', bridge)
     const session = bootedSession('cs2/iem')
 
     await session.boot()

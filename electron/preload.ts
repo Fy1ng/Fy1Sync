@@ -1,0 +1,39 @@
+import { contextBridge, ipcRenderer } from 'electron'
+import type { StreamSyncerBridge, DesktopMethod, DesktopMethods, DanmakuEvent } from './contracts'
+import type { ApiResult } from '../src/app/apiClient'
+
+const methods = new Set<DesktopMethod>([
+  'health', 'verifyAdmin', 'resolve', 'listPresets', 'getPreset', 'savePreset', 'deletePreset',
+])
+let nextSubscription = 0
+
+const bridge: StreamSyncerBridge = {
+  invoke<K extends DesktopMethod>(method: K, args: DesktopMethods[K]['args']) {
+    if (!methods.has(method)) {
+      return Promise.resolve({ ok: false as const, code: 'unknown-method', message: '未知桌面接口' })
+    }
+    return ipcRenderer.invoke('stream-syncer:invoke', method, args) as Promise<ApiResult<DesktopMethods[K]['result']>>
+  },
+  subscribeDanmaku(room, listener) {
+    const subscriptionId = String(++nextSubscription)
+    let active = true
+    const receive = (_event: unknown, payload: DanmakuEvent & { subscriptionId: string }) => {
+      if (active && payload.subscriptionId === subscriptionId) listener({ event: payload.event, data: payload.data })
+    }
+    ipcRenderer.on('stream-syncer:danmaku', receive)
+    // Registration and cancellation use the same ordered invoke channel. A close before
+    // subscribe settles still releases the room instead of leaking a pending subscriber.
+    void ipcRenderer.invoke('stream-syncer:subscribe', room, subscriptionId).then((result: ApiResult<unknown>) => {
+      if (active && !result.ok) listener({ event: 'state', data: { room, state: 'closed', detail: result.message } })
+    }).catch(() => {
+      if (active) listener({ event: 'state', data: { room, state: 'closed', detail: '弹幕订阅失败' } })
+    })
+    return () => {
+      if (!active) return
+      active = false
+      ipcRenderer.removeListener('stream-syncer:danmaku', receive)
+      void ipcRenderer.invoke('stream-syncer:unsubscribe', subscriptionId).catch(() => {})
+    }
+  },
+}
+contextBridge.exposeInMainWorld('streamSyncer', Object.freeze(bridge))

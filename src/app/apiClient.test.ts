@@ -1,168 +1,136 @@
-/**
- * What the UI is allowed to branch on when a call fails.
- *
- * `ApiClient` never throws; it returns `{ ok: false, code, message }`, and the pages key
- * their copy off `code`. That makes the code string a contract between the server's error
- * envelope and the UI, and nothing was holding the two ends together: `AdminPage` tested
- * for `etag-mismatch` while the server has always sent `conflict`, so a stale publish
- * showed the raw server text instead of telling the user to reload first. The branch was
- * dead for as long as it existed and only an E2E assertion on the rendered string caught
- * it.
- *
- * These tests feed the envelopes `server/api.ts` actually sends. Codes asserted here are
- * mirrored by `server/server.test.ts`; if one side is renamed, both fail.
- */
-
-import { describe, expect, it, vi } from 'vitest'
-
-import { ApiClient, issuesFrom } from './apiClient'
+/** The renderer forwards IPC contracts and preserves actionable storage failures. */
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { StreamSyncerBridge } from '../../electron/contracts'
+import { ApiClient, issuesFrom, type ApiResult, type DanmakuEvent } from './apiClient'
 import type { RecognitionProfile } from '../core/profileSchema'
 
-/** Enough of a profile to post; the body is never inspected by these fakes. */
 const PROFILE = { id: 'cs2/iem', name: '测试' } as unknown as RecognitionProfile
 
-/** A fetch that answers every request with one canned response. */
-function respondWith(body: unknown, status: number, contentType = 'application/json'): typeof fetch {
-  return vi.fn(async () =>
-    new Response(body === undefined ? '' : typeof body === 'string' ? body : JSON.stringify(body), {
-      status,
-      headers: { 'content-type': contentType },
-    }),
-  ) as unknown as typeof fetch
+function bridgeWith(result: ApiResult<unknown>): StreamSyncerBridge {
+  return {
+    invoke: vi.fn(async () => result) as StreamSyncerBridge['invoke'],
+    subscribeDanmaku: vi.fn(() => () => {}),
+  }
 }
 
-describe('ApiClient 失败映射', () => {
-  it('把 409 的 conflict 原样交给界面', async () => {
-    const client = new ApiClient({
-      fetchImpl: respondWith(
-        { error: { code: 'conflict', message: '预设已被其他会话修改', currentEtag: 'abc' } },
-        409,
-      ),
-    })
+afterEach(() => vi.unstubAllGlobals())
 
-    const result = await client.savePreset('cs2/iem', PROFILE, 'token', 'stale-etag')
-    expect(result.ok).toBe(false)
-    if (result.ok) return
-    // AdminPage's "reload before republishing" message hangs off exactly this string.
-    expect(result.code).toBe('conflict')
-    expect(result.message).toBe('预设已被其他会话修改')
+describe('ApiClient IPC failures', () => {
+  it('preserves conflict and the current ETag for a stale editor', async () => {
+    const bridge = bridgeWith({
+      ok: false, code: 'conflict', message: '预设已被其他会话修改', detail: { currentEtag: 'abc' },
+    })
+    const result = await new ApiClient({ bridge }).savePreset('cs2/iem', PROFILE, '', 'stale')
+    expect(result).toEqual({
+      ok: false, code: 'conflict', message: '预设已被其他会话修改', detail: { currentEtag: 'abc' },
+    })
   })
 
-  it('把 422 的校验问题带在 detail 上，供 issuesFrom 取出', async () => {
-    const client = new ApiClient({
-      fetchImpl: respondWith(
-        {
-          error: {
-            code: 'invalid-profile',
-            message: '配置校验未通过',
-            issues: [{ path: 'roi.w', message: '必须大于 0' }],
-          },
-        },
-        422,
-      ),
+  it('preserves profile validation detail for issuesFrom', async () => {
+    const bridge = bridgeWith({
+      ok: false, code: 'invalid-profile', message: '配置校验未通过',
+      detail: { issues: [{ path: 'roi.w', message: '必须大于 0' }] },
     })
-
-    const result = await client.savePreset('cs2/iem', PROFILE, 'token')
+    const result = await new ApiClient({ bridge }).savePreset('cs2/iem', PROFILE)
     if (result.ok) throw new Error('expected failure')
     expect(result.code).toBe('invalid-profile')
     expect(issuesFrom(result.detail)).toEqual([{ path: 'roi.w', message: '必须大于 0' }])
   })
 
-  it('令牌不对时报出 bad-token 而不是通用错误', async () => {
-    // 403 + bad-token is what the admin guard sends, for both a missing and a wrong token.
-    const client = new ApiClient({
-      fetchImpl: respondWith({ error: { code: 'bad-token', message: '需要管理令牌' } }, 403),
-    })
-
-    const result = await client.savePreset('cs2/iem', PROFILE, '')
-    if (result.ok) throw new Error('expected failure')
-    expect(result.code).toBe('bad-token')
+  it('keeps caller authorization failures distinct from IPC failures', async () => {
+    const bridge = bridgeWith({ ok: false, code: 'forbidden', message: '调用来源不受信任' })
+    expect(await new ApiClient({ bridge }).savePreset('cs2/iem', PROFILE)).toMatchObject({ ok: false, code: 'forbidden' })
   })
 
-  it('服务不可达时区分成 network-error', async () => {
-    const client = new ApiClient({
-      fetchImpl: vi.fn(async () => {
-        throw new TypeError('Failed to fetch')
-      }) as unknown as typeof fetch,
-    })
-
-    const result = await client.health()
+  it('maps rejected IPC calls into a result instead of throwing', async () => {
+    const bridge = bridgeWith({ ok: true, value: {} })
+    vi.mocked(bridge.invoke).mockRejectedValue(new Error('channel closed'))
+    const result = await new ApiClient({ bridge }).health()
+    expect(result).toMatchObject({ ok: false, code: 'ipc-error' })
     if (result.ok) throw new Error('expected failure')
-    // Not an HTTP status at all — the local server isn't running, which is its own fix.
-    expect(result.code).toBe('network-error')
-    expect(result.message).toContain('无法连接本地服务')
+    expect(result.message).toContain('无法连接应用主进程')
   })
 
-  it('非 JSON 响应归到 bad-response，而不是当成解析失败', async () => {
-    // A dev-server HTML fallback answering an /api path looks like this.
-    const client = new ApiClient({ fetchImpl: respondWith('<!doctype html><title>404</title>', 200, 'text/html') })
-
-    const result = await client.listPresets()
-    if (result.ok) throw new Error('expected failure')
-    expect(result.code).toBe('bad-response')
-  })
-
-  it('错误体没有 code 时退回 http-error', async () => {
-    const client = new ApiClient({ fetchImpl: respondWith({}, 500) })
-
-    const result = await client.getPreset('cs2/iem')
-    if (result.ok) throw new Error('expected failure')
-    expect(result.code).toBe('http-error')
-    expect(result.message).toContain('500')
+  it('reports a missing preload without attempting HTTP', async () => {
+    vi.stubGlobal('streamSyncer', undefined)
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+    expect(await new ApiClient().listPresets()).toMatchObject({ ok: false, code: 'ipc-error' })
+    expect(fetchSpy).not.toHaveBeenCalled()
   })
 })
 
-describe('ApiClient 请求构造', () => {
-  it('把 etag 作为带引号的 If-Match 发出', async () => {
-    const fetchImpl = respondWith({ id: 'cs2/iem', etag: 'new', updatedAt: 1 }, 200)
-    const client = new ApiClient({ fetchImpl })
-
-    await client.savePreset('cs2/iem', PROFILE, 'secret', 'abc123')
-
-    const [, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit]
-    const headers = init.headers as Record<string, string>
-    // Unquoted, the server's `replace(/"/g, '')` still matches, but the header would be
-    // an invalid entity-tag; quoting keeps it a legal If-Match.
-    expect(headers['if-match']).toBe('"abc123"')
-    expect(headers['x-admin-token']).toBe('secret')
+describe('ApiClient IPC arguments', () => {
+  it('forwards the exact profile and ETag as structured values', async () => {
+    const bridge = bridgeWith({ ok: true, value: { id: 'cs2/iem', etag: 'new', updatedAt: 1 } })
+    await new ApiClient({ bridge }).savePreset('cs2/iem', PROFILE, '', 'abc123')
+    expect(bridge.invoke).toHaveBeenCalledWith('savePreset', {
+      id: 'cs2/iem', profile: PROFILE, token: '', etag: 'abc123',
+    })
   })
 
-  it('没有 etag 时不发 If-Match，让首次创建通过', async () => {
-    const fetchImpl = respondWith({ id: 'cs2/iem', etag: 'new', updatedAt: 1 }, 201)
-    const client = new ApiClient({ fetchImpl })
-
-    await client.savePreset('cs2/iem', PROFILE, 'secret')
-
-    const [, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit]
-    expect(init.headers as Record<string, string>).not.toHaveProperty('if-match')
+  it('leaves the ETag absent for a new preset', async () => {
+    const bridge = bridgeWith({ ok: true, value: {} })
+    await new ApiClient({ bridge }).savePreset('cs2/iem', PROFILE)
+    expect(bridge.invoke).toHaveBeenCalledWith('savePreset', {
+      id: 'cs2/iem', profile: PROFILE, token: '', etag: undefined,
+    })
   })
 
-  it('预设 id 里的斜杠保留成路径，其余字符转义', async () => {
-    const fetchImpl = respondWith({ profile: PROFILE, etag: 'e' }, 200)
-    const client = new ApiClient({ fetchImpl })
-
-    await client.getPreset('cs2/iem 决赛')
-
-    const [url] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string]
-    // The slash is route structure the server matches on; the space is data.
-    expect(url).toBe('/api/presets/cs2/iem%20%E5%86%B3%E8%B5%9B')
+  it('passes preset ids as data without URL escaping', async () => {
+    const bridge = bridgeWith({ ok: true, value: {} })
+    await new ApiClient({ bridge }).getPreset('cs2/iem 决赛')
+    expect(bridge.invoke).toHaveBeenCalledWith('getPreset', { id: 'cs2/iem 决赛' })
   })
 
-  it('令牌走请求体而不是查询串，避免留在日志里', async () => {
-    const fetchImpl = respondWith({ ok: true }, 200)
-    const client = new ApiClient({ fetchImpl })
+  it('uses the local editor authorization seam without requiring a token', async () => {
+    const bridge = bridgeWith({ ok: true, value: { ok: true } })
+    await new ApiClient({ bridge }).verifyAdmin()
+    expect(bridge.invoke).toHaveBeenCalledWith('verifyAdmin', { token: '' })
+  })
 
-    await client.verifyAdmin('secret')
+  it('registers a remote URL through main and preserves a platform refusal', async () => {
+    const refusal = { ok: false, failure: { code: 'offline', message: '未开播' } }
+    const bridge = bridgeWith({ ok: true, value: refusal })
+    const result = await new ApiClient({ bridge }).resolve('https://example.com/live.m3u8', 'direct')
+    expect(bridge.invoke).toHaveBeenCalledWith('resolve', {
+      input: 'https://example.com/live.m3u8', platform: 'direct',
+    })
+    expect(result).toEqual({ ok: true, value: refusal })
+  })
 
-    const [url, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('/api/admin/verify')
-    expect(url).not.toContain('secret')
-    expect(JSON.parse(init.body as string)).toEqual({ token: 'secret' })
+  it('finds the preload lazily so importing the singleton needs no window', async () => {
+    const client = new ApiClient()
+    const bridge = bridgeWith({ ok: true, value: { presets: [] } })
+    vi.stubGlobal('streamSyncer', bridge)
+    expect(await client.listPresets()).toEqual({ ok: true, value: { presets: [] } })
+    expect(bridge.invoke).toHaveBeenCalledWith('listPresets', undefined)
+  })
+})
+
+describe('ApiClient danmaku subscriptions', () => {
+  it('unsubscribes once and discards events already queued at cancellation', () => {
+    const bridge = bridgeWith({ ok: true, value: {} })
+    const release = vi.fn()
+    let deliver: ((event: DanmakuEvent) => void) | undefined
+    vi.mocked(bridge.subscribeDanmaku).mockImplementation((_room, listener) => {
+      deliver = listener
+      return release
+    })
+    const listener = vi.fn()
+    const unsubscribe = new ApiClient({ bridge }).subscribeDanmaku('288016', listener)
+    deliver?.({ event: 'state', data: { state: 'connected' } })
+    unsubscribe()
+    unsubscribe()
+    deliver?.({ event: 'danmaku', data: { text: 'late' } })
+    expect(bridge.subscribeDanmaku).toHaveBeenCalledWith('288016', expect.any(Function))
+    expect(release).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledTimes(1)
   })
 })
 
 describe('issuesFrom', () => {
-  it('形状不对时给空数组而不是抛错', () => {
+  it('rejects malformed issue shapes without throwing', () => {
     expect(issuesFrom(undefined)).toEqual([])
     expect(issuesFrom({ issues: 'nope' })).toEqual([])
     expect(issuesFrom({ issues: [{ path: 1 }, null, 'x'] })).toEqual([])

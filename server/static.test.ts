@@ -1,5 +1,4 @@
 import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises'
-import type { IncomingMessage } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -7,10 +6,28 @@ import {
   contentTypeFor,
   parseRange,
   resolveStaticPath,
-  sendMissingClient,
-  serveStatic,
+  missingClientResponse,
+  serveStatic as serveAsset,
+  type StaticOptions,
 } from './static'
-import { asServerResponse, fakeResponse } from './testDoubles'
+
+// Capture Web Responses while preserving the existing resource/range assertions.
+function fakeResponse() { return { status: 0, sentHeaders: {} as Record<string, unknown>, headersSent: false, text: '', body() { return this.text } } }
+const asServerResponse = (response: ReturnType<typeof fakeResponse>) => response
+async function capture(response: Response, target: ReturnType<typeof fakeResponse>) {
+  target.status = response.status
+  target.headersSent = true
+  response.headers.forEach((value, name) => { target.sentHeaders[name] = name === 'content-length' ? Number(value) : value })
+  target.text = await response.text()
+}
+async function serveStatic(request: Request, target: ReturnType<typeof fakeResponse>, options: StaticOptions): Promise<boolean> {
+  const response = await serveAsset(request, options)
+  if (!response) return false
+  await capture(response, target)
+  return true
+}
+async function sendMissingClient(target: ReturnType<typeof fakeResponse>, dir: string) { await capture(missingClientResponse(dir), target) }
+
 
 describe('contentTypeFor', () => {
   it('maps the extensions the built client actually emits', () => {
@@ -167,12 +184,8 @@ describe('parseRange', () => {
   })
 })
 
-function fakeRequest(url: string, headers: Record<string, string> = {}, method = 'GET'): IncomingMessage {
-  return {
-    method,
-    url,
-    headers: { host: '127.0.0.1:5178', ...headers },
-  } as unknown as IncomingMessage
+function fakeRequest(url: string, headers: Record<string, string> = {}, method = 'GET'): Request {
+  return new Request('app://app' + url, { method, headers })
 }
 
 describe('serveStatic', () => {
@@ -450,7 +463,7 @@ describe('serveStatic', () => {
 describe('sendMissingClient', () => {
   it('explains how to build instead of returning a blank 404', async () => {
     const res = fakeResponse()
-    sendMissingClient(asServerResponse(res), '/srv/app/dist/client')
+    await sendMissingClient(asServerResponse(res), '/srv/app/dist/client')
     expect(res.status).toBe(503)
     const body = res.body()
     expect(body).toContain('/srv/app/dist/client')

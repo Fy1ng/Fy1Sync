@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isProxied, parseSourceInput, proxyUrl, toDescriptor } from './mediaSources'
+import { parseSourceInput, toDescriptor } from './mediaSources'
 
 function expectOk(input: string) {
   const result = parseSourceInput(input)
@@ -40,11 +40,11 @@ describe('parseSourceInput', () => {
     expect(result.reason).toBe('unsupported-page')
   })
 
-  it('accepts a direct HLS playlist', () => {
+  it('requires main registration for a direct HLS playlist', () => {
     const result = expectOk('https://cdn.example.com/live/index.m3u8?token=abc')
     expect(result.platform).toBe('direct')
     expect(result.kind).toBe('hls')
-    expect(result.needsResolve).toBe(false)
+    expect(result.needsResolve).toBe(true)
     expect(result.suggestProxy).toBe(true)
   })
 
@@ -93,19 +93,6 @@ describe('parseSourceInput', () => {
   })
 })
 
-describe('proxy helpers', () => {
-  it('encodes the target url', () => {
-    expect(proxyUrl('https://a.example/x.m3u8?t=1&u=2')).toBe(
-      '/api/media?url=https%3A%2F%2Fa.example%2Fx.m3u8%3Ft%3D1%26u%3D2',
-    )
-  })
-
-  it('detects proxied urls', () => {
-    expect(isProxied(proxyUrl('https://a.example/x.m3u8'))).toBe(true)
-    expect(isProxied('https://a.example/x.m3u8')).toBe(false)
-  })
-})
-
 describe('toDescriptor', () => {
   it('passes a direct url through', () => {
     const descriptor = toDescriptor(expectOk('https://cdn.example.com/a.m3u8'))
@@ -113,19 +100,22 @@ describe('toDescriptor', () => {
     expect(descriptor.viaProxy).toBe(false)
   })
 
-  it('wraps in the proxy when asked', () => {
-    const descriptor = toDescriptor(expectOk('https://cdn.example.com/a.m3u8'), { viaProxy: true })
-    expect(descriptor.url).toBe(proxyUrl('https://cdn.example.com/a.m3u8'))
+  it('passes the opaque media registration through without constructing an HTTP proxy', () => {
+    const descriptor = toDescriptor(expectOk('https://cdn.example.com/a.m3u8'), {
+      url: 'app://app/media/opaque-id',
+      viaProxy: false,
+    })
+    expect(descriptor.url).toBe('app://app/media/opaque-id')
     expect(descriptor.input).toBe('https://cdn.example.com/a.m3u8')
   })
 
-  it('does not double-wrap an already proxied url', () => {
-    const already = proxyUrl('https://cdn.example.com/a.m3u8')
+  it('never wraps URLs even when legacy metadata says viaProxy', () => {
     const descriptor = toDescriptor(expectOk('https://cdn.example.com/a.m3u8'), {
-      url: already,
+      url: 'app://app/media/registered-id',
       viaProxy: true,
     })
-    expect(descriptor.url).toBe(already)
+    expect(descriptor.url).toBe('app://app/media/registered-id')
+    expect(descriptor.viaProxy).toBe(true)
   })
 
   it('carries the resolved url for platform sources', () => {

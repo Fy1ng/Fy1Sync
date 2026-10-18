@@ -7,9 +7,9 @@
  * only the element clock is fake (src/test/setup.ts), and the assertions read the
  * elements' `currentTime` where the claim is about position.
  *
- * The recognition worker and `EventSource` are the two things jsdom cannot provide;
+ * The recognition worker and the preload are the two things jsdom cannot provide;
  * `createSampler` is injected and the danmaku tests drive `pushDanmaku`/the private
- * ingest handlers through a stub source.
+ * ingest handlers through a stub subscription.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'

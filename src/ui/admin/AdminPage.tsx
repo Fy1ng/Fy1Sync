@@ -44,7 +44,6 @@ import { Toggle } from '../controls/Toggle'
 import { DropUp, type DropUpOption } from '../controls/DropUp'
 import { analyzeFrame, drawGray, drawMask, sampleFromBox, TEMPLATE_SIZE } from './framePipeline'
 import { RoiWindow } from './RoiWindow'
-import { useAdminToken } from './useAdminToken'
 
 interface Message {
   kind: 'info' | 'warn' | 'error'
@@ -58,62 +57,8 @@ const CLOCK_FORMAT_OPTIONS: DropUpOption<CountdownFormat>[] = [
   { value: 'auto', label: '自动', hint: '按识别结果推断' },
 ]
 
+/** Only the trusted local app frame can invoke preset writes in main. */
 export default function AdminPage(): React.ReactNode {
-  const gate = useAdminToken()
-  if (gate.phase === 'unlocked') return <ProfileEditor token={gate.token} onLock={gate.clear} />
-  return <TokenGate phase={gate.phase} message={gate.message} onSubmit={gate.submit} />
-}
-
-function TokenGate({
-  phase,
-  message,
-  onSubmit,
-}: {
-  phase: 'checking' | 'locked'
-  message: string
-  onSubmit: (token: string) => Promise<void>
-}): React.ReactNode {
-  const [value, setValue] = useState('')
-  return (
-    <div className="admin-gate">
-      <form
-        className="gate-card"
-        onSubmit={(event) => {
-          event.preventDefault()
-          void onSubmit(value)
-        }}
-      >
-        <h1>配置编辑器</h1>
-        <p className="hint">
-          需要管理令牌。开发模式下服务启动时会把带令牌的地址打印在终端里，也可以用
-          <code>STREAM_SYNC_ADMIN_TOKEN</code> 指定。
-        </p>
-        <label className="gate-field">
-          <span>管理令牌</span>
-          <input
-            type="password"
-            value={value}
-            autoFocus
-            autoComplete="off"
-            onChange={(event) => setValue(event.target.value)}
-            placeholder="stream-sync-admin"
-          />
-        </label>
-        {message ? <p className="gate-error">{message}</p> : null}
-        <div className="gate-actions">
-          <a className="ghost" href="/">
-            返回播放器
-          </a>
-          <button type="submit" className="primary" disabled={phase === 'checking'}>
-            {phase === 'checking' ? '验证中…' : '进入'}
-          </button>
-        </div>
-      </form>
-    </div>
-  )
-}
-
-function ProfileEditor({ token, onLock }: { token: string; onLock: () => void }): React.ReactNode {
   const session = useSession()
   const [profile, setProfile] = useState<RecognitionProfile>(() => createEmptyProfile())
   const [etag, setEtag] = useState<string | undefined>(undefined)
@@ -281,11 +226,11 @@ function ProfileEditor({ token, onLock }: { token: string; onLock: () => void })
   }
 
   const publish = async (): Promise<void> => {
-    const result = await apiClient.savePreset(profile.id, profile, token, etag)
+    const result = await apiClient.savePreset(profile.id, profile, '', etag)
     if (result.ok) {
       setEtag(result.value.etag)
       setDirty(false)
-      setMessage({ kind: 'info', text: `已发布为服务端预设 ${profile.id}。` })
+      setMessage({ kind: 'info', text: `已发布为本机预设 ${profile.id}。` })
       void refreshLibrary()
       return
     }
@@ -293,12 +238,12 @@ function ProfileEditor({ token, onLock }: { token: string; onLock: () => void })
     setMessage({
       kind: 'error',
       text:
-        // `conflict` is the server's own code for a failed If-Match (presetStore -> api),
-        // passed through by apiClient untranslated. The server's message only states the
+        // `conflict` is main's code for a stale ETag (presetStore -> IPC),
+        // passed through by apiClient untranslated. The storage message only states the
         // fact; this one says what to do about it, which is the part that needs saying —
         // republishing without reloading would discard the other session's edit.
         result.code === 'conflict'
-          ? '服务端预设已被其他会话改动，请重新载入后再发布。'
+          ? '本机预设已被其他会话改动，请重新载入后再发布。'
           : `发布失败：${result.message}${issues.length ? `（${issues.map((issue) => `${issue.path} ${issue.message}`).join('；')}）` : ''}`,
     })
   }
@@ -376,7 +321,7 @@ function ProfileEditor({ token, onLock }: { token: string; onLock: () => void })
     if (!etag || dirty) {
       setMessage({
         kind: 'warn',
-        text: '播放器按 ID 从服务端取识别场景，请先“发布到服务端”再应用。',
+        text: '播放器按 ID 从本机读取识别场景，请先“发布到本机”再应用。',
       })
       return
     }
@@ -403,9 +348,6 @@ function ProfileEditor({ token, onLock }: { token: string; onLock: () => void })
           <a className="ghost" href="/">
             返回播放器
           </a>
-          <button type="button" className="ghost" onClick={onLock}>
-            退出
-          </button>
         </div>
       </header>
 
@@ -701,7 +643,7 @@ function LibraryColumn({
       <div className="panel-block">
         <h2>预设库</h2>
         {presets.length === 0 ? (
-          <p className="hint">服务端还没有预设。</p>
+          <p className="hint">本机还没有预设。</p>
         ) : (
           <ul className="library-list">
             {presets.map((preset) => (
@@ -768,7 +710,7 @@ function LibraryColumn({
             存为草稿
           </button>
           <button type="button" className="primary" onClick={() => void onPublish()}>
-            发布到服务端
+            发布到本机
           </button>
         </div>
       </div>

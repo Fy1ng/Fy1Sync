@@ -20,6 +20,8 @@ import { Session } from '../app/session'
 import { SessionProvider } from '../app/SessionContext'
 import type { SettingsStorage } from '../app/settings'
 import { PlayerPage } from './PlayerPage'
+import type { StreamSyncerBridge } from '../../electron/contracts'
+import type { DanmakuEvent } from '../app/apiClient'
 
 function memoryStorage(seed: Record<string, string> = {}): SettingsStorage {
   const entries = new Map(Object.entries(seed))
@@ -82,15 +84,10 @@ function offsetReadout(container: HTMLElement): { requested: string; actual: str
 }
 
 beforeEach(() => {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async () =>
-      new Response(JSON.stringify({ presets: [] }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }),
-    ),
-  )
+  vi.stubGlobal('streamSyncer', {
+    invoke: vi.fn(async () => ({ ok: true, value: { presets: [] } })) as StreamSyncerBridge['invoke'],
+    subscribeDanmaku: () => () => {},
+  } satisfies StreamSyncerBridge)
 })
 
 afterEach(() => {
@@ -98,6 +95,7 @@ afterEach(() => {
   // state the app ever reaches, and relying on hook ordering to get it right is fragile.
   cleanup()
   while (sessions.length > 0) sessions.pop()?.dispose()
+  vi.unstubAllGlobals()
 })
 
 describe('PlayerPage mounting', () => {
@@ -308,23 +306,15 @@ describe('sync sidebar', () => {
 })
 
 describe('cache status', () => {
-  /**
-   * Enough of an EventSource for the session to consider itself connected.
-   *
-   * jsdom has none, and without one `connectDanmaku` bails at its `typeof EventSource`
-   * guard and reports 当前环境不支持 SSE instead of connecting.
-   */
-  function stubEventSource(): { open: () => void } {
-    const handlers = new Map<string, (event: Event) => void>()
-    class Stub {
-      addEventListener(type: string, handler: (event: Event) => void): void {
-        handlers.set(type, handler)
-      }
-      removeEventListener(): void {}
-      close(): void {}
+  /** Only a relay connected event can make the cache readout appear. */
+  function stubDanmaku(): { open: () => void } {
+    let listener: ((event: DanmakuEvent) => void) | undefined
+    const bridge = window.streamSyncer!
+    bridge.subscribeDanmaku = (_room, receive) => {
+      listener = receive
+      return () => {}
     }
-    vi.stubGlobal('EventSource', Stub as unknown as typeof EventSource)
-    return { open: () => handlers.get('open')?.(new Event('open')) }
+    return { open: () => listener?.({ event: 'state', data: { state: 'connected' } }) }
   }
 
   it('reports rewind head-room for both sources', () => {
@@ -340,7 +330,7 @@ describe('cache status', () => {
   })
 
   it('adds the danmaku queue to the cache readout once connected', async () => {
-    const source = stubEventSource()
+    const source = stubDanmaku()
     const session = makeSession()
     const { container } = renderPage(session)
 

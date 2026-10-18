@@ -17,9 +17,11 @@
  */
 
 import { fileURLToPath } from 'node:url'
-import { expect, test, type Page } from '@playwright/test'
+import { type Page } from '@playwright/test'
+import type { RecognitionProfile } from '../src/core/profileSchema'
+import { APP_ORIGIN, expect, launchApplication, test } from './electron'
 import {
-  ADMIN_TOKEN,
+  invoke,
   FIXTURE_DELAY_SECONDS,
   MAX_DETECTION_ERROR_SECONDS,
   MAX_DIVERGENCE_SECONDS,
@@ -87,41 +89,40 @@ test.describe('自动同步', () => {
   // these are also the only tests that prove the feature works.
   test.setTimeout(180_000)
 
-  // Both unique per run. `globalSetup` empties the store first, so this is no longer
-  // load-bearing against leftovers — it is kept because the picker can only be driven by
-  // label, and a timestamp makes any duplicate immediately obvious instead of ambiguous.
   let presetId = ''
   let presetName = ''
+  let taughtProfile: RecognitionProfile | undefined
 
-  /**
-   * Teach the profile once for the whole suite.
-   *
-   * In a `beforeAll` rather than a first test because every test below needs it: as a test
-   * it would be a precondition disguised as an assertion, and one bad segmentation would
-   * read as five unrelated failures instead of one setup error.
-   */
-  test.beforeAll(async ({ browser }) => {
+  // Teach once in another disposable Electron app. Every scenario gets its own app and
+  // preset store, seeded with the result of this actual decoded-frame teaching flow.
+  test.beforeAll(async () => {
     if (!fixturesReady()) return
     const stamp = Date.now()
-    presetId = `e2e/autosync-${stamp}`
-    presetName = `自动同步测试场景 ${stamp}`
-    const page = await browser.newPage()
+    presetId = 'e2e/autosync-' + stamp
+    presetName = '自动同步测试场景 ' + stamp
+    const running = await launchApplication('autosync-teaching')
     try {
-      await teachProfile(page, presetId, presetName)
+      await teachProfile(running.page, presetId, presetName)
+      const fetched = await invoke(running.page, 'getPreset', { id: presetId })
+      expect(fetched.ok).toBe(true)
+      if (!fetched.ok) throw new Error(fetched.message)
+      taughtProfile = fetched.value.profile
     } finally {
-      await page.close()
+      await running.close()
     }
   })
 
-  test('教出的字形发布后能整套读回', async ({ request }) => {
-    // The player fetches by id, so a preset that is not on the server is not usable — and
-    // a missing glyph is a recognition failure much later, with no obvious cause.
-    const fetched = await request.get(`/api/presets/${presetId}`)
-    expect(fetched.status()).toBe(200)
-    const body = (await fetched.json()) as {
-      profile: { templates: Record<string, unknown[]> }
-    }
-    expect(Object.keys(body.profile.templates).sort()).toEqual(CLOCK_CHARS)
+  test.beforeEach(async ({ page }) => {
+    if (!taughtProfile) throw new Error('Fixture teaching did not produce a profile')
+    const saved = await invoke(page, 'savePreset', { id: presetId, profile: taughtProfile })
+    expect(saved.ok).toBe(true)
+  })
+
+  test('教出的字形发布后能整套读回', async ({ page }) => {
+    const fetched = await invoke(page, 'getPreset', { id: presetId })
+    expect(fetched.ok).toBe(true)
+    if (!fetched.ok) throw new Error(fetched.message)
+    expect(Object.keys(fetched.value.profile.templates).sort()).toEqual(CLOCK_CHARS)
   })
 
   test('识别出的偏移落在 0.25 s 误差内', async ({ page }) => {
@@ -233,7 +234,7 @@ test.describe('自动同步', () => {
  */
 async function teachProfile(page: Page, id: string, name: string): Promise<void> {
   failOnPageError(page)
-  await page.goto(`/admin?token=${ADMIN_TOKEN}`)
+  await page.goto(APP_ORIGIN + '/admin')
   await expect(page.locator('.admin-columns')).toBeVisible()
 
   await setField(page, '标识', id)
@@ -279,7 +280,7 @@ async function teachProfile(page: Page, id: string, name: string): Promise<void>
 
   expect([...learned].sort(), '每个时钟字符都应教到至少一个样本').toEqual(CLOCK_CHARS)
 
-  await page.getByRole('button', { name: '发布到服务端' }).click()
+  await page.getByRole('button', { name: '发布到本机' }).click()
   await expect(page.locator('.admin-message.is-info')).toContainText('已发布')
 }
 
@@ -288,7 +289,7 @@ async function selectPreset(page: Page, name: string): Promise<void> {
   const dropup = page.locator('.auto-sync .dropup', {
     has: page.getByText('识别场景', { exact: true }),
   })
-  // The list arrives from `/api/presets` on boot, so the trigger is disabled until then.
+  // The list arrives through listPresets IPC on boot; the trigger waits for it.
   await expect(dropup.locator('.dropup-trigger')).toBeEnabled({ timeout: 20_000 })
   await dropup.locator('.dropup-trigger').click()
 

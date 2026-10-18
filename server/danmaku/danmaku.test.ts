@@ -14,8 +14,7 @@ import {
   unescapeStt,
 } from './douyuProtocol'
 import { DouyuDanmakuClient, type WebSocketLike } from './douyuClient'
-import { attachSseSubscriber, DanmakuRelay, MAX_ROOMS } from './relay'
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import { DanmakuRelay, MAX_ROOMS } from './relay'
 
 describe('encodeFrame', () => {
   it('writes the length twice, excluding the length field itself', () => {
@@ -599,6 +598,38 @@ describe('DanmakuRelay', () => {
     expect(relay.roomCount).toBe(0)
   })
 
+  it('releases the upstream after the last renderer fails to receive a message', () => {
+    const { relay, sockets, timers } = relaySetup()
+    relay.subscribe('288016', {
+      write: (event) => { if (event === 'danmaku') throw new Error('Renderer destroyed') },
+      close: () => {},
+    })
+    sockets[0]!.fire('open')
+    sockets[0]!.fire('message', { data: encodeFrame('type@=chatmsg/txt@=x/', SERVER_MESSAGE_TYPE) })
+    expect(relay.subscriberCount('288016')).toBe(0)
+    expect(timers.delays()).toContain(10_000)
+    timers.runAll()
+    expect(relay.roomCount).toBe(0)
+  })
+
+  it('does not retain a renderer that fails during initial state delivery', () => {
+    const { relay, timers } = relaySetup()
+    expect(() => relay.subscribe('288016', { write: () => { throw new Error('Renderer destroyed') }, close: () => {} })).not.toThrow()
+    expect(relay.subscriberCount('288016')).toBe(0)
+    timers.runAll()
+    expect(relay.roomCount).toBe(0)
+  })
+
+  it('keeps teardown idempotent even when a destroyed renderer close throws', () => {
+    const { relay, timers } = relaySetup()
+    const unsubscribe = relay.subscribe('288016', { write: () => {}, close: () => { throw new Error('Renderer destroyed') } })!
+    expect(() => relay.closeAll()).not.toThrow()
+    unsubscribe()
+    unsubscribe()
+    expect(timers.size).toBe(0)
+    expect(relay.roomCount).toBe(0)
+  })
+
   it('cancels the idle close when a subscriber returns in time', () => {
     const { relay, sockets, timers } = relaySetup()
     const unsubscribe = relay.subscribe('288016', recorder())
@@ -637,91 +668,5 @@ describe('DanmakuRelay', () => {
     expect(subscriber.close).toHaveBeenCalled()
     expect(sockets.every((socket) => socket.closed > 0)).toBe(true)
     expect(relay.roomCount).toBe(0)
-  })
-})
-
-/** Minimal SSE response double capturing the wire bytes. */
-function fakeSseResponse() {
-  const chunks: string[] = []
-  const handlers = new Map<string, () => void>()
-  const res = {
-    writableEnded: false,
-    statusCode: 0,
-    headers: {} as Record<string, string>,
-    writeHead(status: number, headers: Record<string, string>) {
-      res.statusCode = status
-      res.headers = headers
-      return res
-    },
-    write(chunk: string) {
-      chunks.push(chunk)
-      return true
-    },
-    end() {
-      res.writableEnded = true
-    },
-    on(event: string, handler: () => void) {
-      handlers.set(event, handler)
-      return res
-    },
-  }
-  return { res: res as unknown as ServerResponse, chunks, handlers }
-}
-
-describe('attachSseSubscriber', () => {
-  function req(): { req: IncomingMessage; fire: (event: string) => void } {
-    const handlers = new Map<string, () => void>()
-    return {
-      req: { on: (event: string, handler: () => void) => handlers.set(event, handler) } as unknown as IncomingMessage,
-      fire: (event) => handlers.get(event)?.(),
-    }
-  }
-
-  it('writes SSE headers and framed events', () => {
-    const relay = new DanmakuRelay({ createSocket: () => fakeSocket() })
-    const { res, chunks } = fakeSseResponse()
-    expect(attachSseSubscriber(relay, '288016', req().req, res)).toBe(true)
-    expect(res.statusCode).toBe(200)
-    expect(res.getHeader?.('content-type') ?? (res as any).headers['content-type']).toContain(
-      'text/event-stream',
-    )
-    expect((res as any).headers['x-accel-buffering']).toBe('no')
-    expect(chunks[0]).toBe(
-      `event: state\ndata: ${JSON.stringify({ room: '288016', state: 'connecting' })}\n\n`,
-    )
-    relay.closeAll()
-  })
-
-  it('rejects with an error event once the room cap is reached', () => {
-    const relay = new DanmakuRelay({ createSocket: () => fakeSocket() })
-    for (let i = 0; i < MAX_ROOMS; i += 1) relay.subscribe(`r${i}`, { write: () => {}, close: () => {} })
-    const { res, chunks } = fakeSseResponse()
-    expect(attachSseSubscriber(relay, 'overflow', req().req, res)).toBe(false)
-    expect(chunks[0]).toContain('event: error')
-    expect(chunks[0]).toContain('too-many-rooms')
-    expect(res.writableEnded).toBe(true)
-    relay.closeAll()
-  })
-
-  it('unsubscribes when the request closes', () => {
-    const relay = new DanmakuRelay({ createSocket: () => fakeSocket() })
-    const { res } = fakeSseResponse()
-    const request = req()
-    attachSseSubscriber(relay, '288016', request.req, res)
-    expect(relay.subscriberCount('288016')).toBe(1)
-    request.fire('close')
-    expect(relay.subscriberCount('288016')).toBe(0)
-    relay.closeAll()
-  })
-
-  it('stops writing after the response ends', () => {
-    const relay = new DanmakuRelay({ createSocket: () => fakeSocket() })
-    const { res, chunks } = fakeSseResponse()
-    attachSseSubscriber(relay, '288016', req().req, res)
-    const before = chunks.length
-    res.end()
-    relay.subscribe('288016', { write: () => {}, close: () => {} })
-    expect(chunks.length).toBe(before)
-    relay.closeAll()
   })
 })

@@ -1,31 +1,11 @@
-/**
- * Server configuration, resolved from the environment once at startup.
- *
- * Every network-facing capability is off or narrowly scoped by default. This tool
- * runs on a developer's own machine and proxies third-party media, so an accidental
- * `0.0.0.0` bind or an unrestricted proxy target would turn it into an open relay.
- */
-
-export type ServerConfig = {
-  host: string
-  port: number
-  strictPort: boolean
-  /** Directory holding built client assets; empty in dev where Vite serves them. */
-  clientDir: string
-  /** Directory for profile presets and other server-side state. */
-  dataDir: string
-  adminToken: string
-  proxy: ProxyConfig
-  /** Bound to a loopback address, which unlocks same-machine-only assumptions. */
-  loopbackOnly: boolean
-}
+/** Outbound media policy for the Electron main process; no listener configuration. */
 
 export type ProxyConfig = {
   enabled: boolean
-  /** Allowed target hostnames; `*` suffix wildcards are supported. */
+  /** Allowed target hostnames; a leading `*.` wildcard matches subdomains. */
   hosts: string[]
   allowNonStandardPorts: boolean
-  /** Allow targets that resolve to private/loopback addresses. Off by default. */
+  /** Low-level test seam; desktop policy always forbids private/loopback targets. */
   allowNonLoopbackTargets: boolean
   maxRedirects: number
   requestTimeoutMs: number
@@ -50,14 +30,6 @@ export const DEFAULT_PROXY_HOSTS = [
   'api.live.bilibili.com',
 ]
 
-/**
- * Token used when `STREAM_SYNC_ADMIN_TOKEN` is unset.
- *
- * Named rather than inlined so the startup banner can recognise it and warn when the
- * default is still in use on a non-loopback bind — see `exposureWarnings`.
- */
-export const DEFAULT_ADMIN_TOKEN = 'stream-sync-admin'
-
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on'])
 const FALSE_VALUES = new Set(['0', 'false', 'no', 'off'])
 
@@ -73,7 +45,7 @@ export function readBooleanEnv(
 }
 
 export function readNumberEnv(value: string | undefined, fallback: number): number {
-  if (value === undefined) return fallback
+  if (value === undefined || !value.trim()) return fallback
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
 }
@@ -87,67 +59,31 @@ export function readHostList(value: string | undefined): string[] {
   return hosts.length > 0 ? hosts : [...DEFAULT_PROXY_HOSTS]
 }
 
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]'])
-
-export function isLoopbackHost(host: string): boolean {
-  return LOOPBACK_HOSTS.has(host.trim().toLowerCase())
-}
-
 export type EnvLike = Record<string, string | undefined>
 
-export function resolveConfig(env: EnvLike = process.env, cwd = process.cwd()): ServerConfig {
-  const host = env.STREAM_SYNC_HOST?.trim() || '127.0.0.1'
+function readBoundedIntegerEnv(
+  value: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const parsed = readNumberEnv(value, fallback)
+  return Number.isInteger(parsed) && parsed >= min && parsed <= max ? parsed : fallback
+}
+
+/** The optional legacy cwd argument is ignored; storage is owned by Electron userData. */
+export function resolveConfig(env: EnvLike = process.env, _cwd?: string): { proxy: ProxyConfig } {
   return {
-    host,
-    port: readNumberEnv(env.STREAM_SYNC_PORT, 5178),
-    strictPort: readBooleanEnv(env.STREAM_SYNC_STRICT_PORT, false),
-    clientDir: env.STREAM_SYNC_CLIENT_DIR?.trim() || `${cwd}/dist/client`,
-    dataDir: env.STREAM_SYNC_DATA_DIR?.trim() || `${cwd}/data`,
-    // Dev default is a fixed well-known token so the editor is reachable without setup;
-    // it only ever guards a loopback listener.
-    adminToken: env.STREAM_SYNC_ADMIN_TOKEN?.trim() || DEFAULT_ADMIN_TOKEN,
-    loopbackOnly: isLoopbackHost(host),
     proxy: {
       enabled: readBooleanEnv(env.STREAM_SYNC_MEDIA_PROXY_ENABLED, true),
       hosts: readHostList(env.STREAM_SYNC_MEDIA_PROXY_HOSTS),
-      allowNonStandardPorts: readBooleanEnv(
-        env.STREAM_SYNC_MEDIA_PROXY_ALLOW_NONSTANDARD_PORTS,
-        false,
-      ),
-      allowNonLoopbackTargets: readBooleanEnv(
-        env.STREAM_SYNC_MEDIA_PROXY_ALLOW_NON_LOOPBACK,
-        false,
-      ),
-      maxRedirects: readNumberEnv(env.STREAM_SYNC_MEDIA_PROXY_MAX_REDIRECTS, 4),
-      requestTimeoutMs: readNumberEnv(env.STREAM_SYNC_MEDIA_PROXY_TIMEOUT_MS, 15_000),
+      // Environment variables cannot relax the desktop media SSRF boundary.
+      allowNonStandardPorts: false,
+      allowNonLoopbackTargets: false,
+      maxRedirects: readBoundedIntegerEnv(env.STREAM_SYNC_MEDIA_PROXY_MAX_REDIRECTS, 4, 0, 8),
+      requestTimeoutMs: readBoundedIntegerEnv(env.STREAM_SYNC_MEDIA_PROXY_TIMEOUT_MS, 15_000, 1, 120_000),
     },
   }
-}
-
-/**
- * Warn about settings that are safe on loopback but not off it.
- *
- * Two defaults lean on the loopback bind: the API's `not-loopback` gate is derived from
- * the bind host, so binding wider switches it off by design, and the admin token falls
- * back to a fixed well-known string. Each is fine alone on 127.0.0.1; together on a LAN
- * address they leave preset writes open to anyone who can reach the port. The startup
- * banner prints the token in a copyable URL, so an operator who deliberately binds wide
- * should be told outright rather than left to infer it from this file.
- */
-export function exposureWarnings(config: ServerConfig): string[] {
-  if (config.loopbackOnly) return []
-  const lines = [`  注意：已绑定 ${config.host}，不再限制为本机访问。`]
-  if (config.adminToken === DEFAULT_ADMIN_TOKEN) {
-    lines.push(
-      '        管理令牌仍是默认值，任何能访问该端口的人都能改预设。',
-      '        请设置 STREAM_SYNC_ADMIN_TOKEN。',
-    )
-  }
-  if (config.proxy.allowNonLoopbackTargets) {
-    lines.push('        媒体代理允许内网目标，形同开放中继。')
-  }
-  lines.push('')
-  return lines
 }
 
 /** Host matching with a single leading `*.` wildcard, which never matches the bare apex. */

@@ -1,26 +1,23 @@
-/**
- * Shared E2E helpers.
- *
- * Two things every spec here needs and neither Playwright nor the app provides:
- *
- *  - **Fixture awareness.** `public/test-sources/` is ffmpeg output and is not committed,
- *    so the media specs must skip rather than fail on a clean checkout. `fixturesReady()`
- *    is checked in a `beforeAll`, not inside a test, so a skip reads as "fixtures missing"
- *    instead of "assertion passed vacuously".
- *
- *  - **Reading real playback state.** Sync correctness is a number, not a rendering. The
- *    sidebar rounds to two decimals and the elements are owned by MediaEngine, so the
- *    assertions read `currentTime` off the actual elements through `mediaTimes()`.
- *
- * The admin token comes from `playwright.config.ts` (`STREAM_SYNC_ADMIN_TOKEN`) and is a
- * test value, not a secret.
- */
+/** Shared fixture media helpers; playback and all app IPC remain real. */
 
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { expect, type Locator, type Page } from '@playwright/test'
+import { type ElectronApplication, type Locator, type Page } from '@playwright/test'
+import type { DesktopMethod, DesktopMethods } from '../electron/contracts'
+import type { ApiResult } from '../src/app/apiClient'
+import { APP_ORIGIN, expect } from './electron'
 
-export const ADMIN_TOKEN = 'e2e-admin-token'
+/** Use the actual preload bridge, retaining the transport result wrapper. */
+export async function invoke<K extends DesktopMethod>(
+  page: Page,
+  method: K,
+  args: DesktopMethods[K]['args'],
+): Promise<ApiResult<DesktopMethods[K]['result']>> {
+  return page.evaluate(({ method, args }) => {
+    if (!window.streamSyncer) throw new Error('Electron preload bridge is missing')
+    return window.streamSyncer.invoke(method, args)
+  }, { method, args })
+}
 
 /** Ground truth from `scripts/generate-test-sources.mjs`: commentary trails official by 5 s. */
 export const FIXTURE_DELAY_SECONDS = 5
@@ -64,7 +61,7 @@ export function failOnPageError(page: Page): void {
 /** Open the player and wait for the shell, dismissing the cold-start source dialog. */
 export async function openPlayer(page: Page): Promise<void> {
   failOnPageError(page)
-  await page.goto('/')
+  await page.goto(APP_ORIGIN + '/')
   await expect(page.locator('.player-page')).toBeVisible()
   await closeSourceDialog(page)
 }
@@ -216,40 +213,31 @@ export async function offsetReadout(page: Page): Promise<{ requested: number; ap
 }
 
 /**
- * Answer `/api/danmaku/douyu/:room` with a canned SSE stream.
- *
- * The relay's upstream is Douyu's own socket, so a test that connected for real would
- * depend on a third party being up and on a room being live. Stubbing at the network edge
- * keeps every layer the overlay depends on real — EventSource framing, the session's
- * ingest, the timeline's scheduling against the commentary playhead, lane allocation.
- *
- * The body ends without closing the connection cleanly, so EventSource will try to
- * reconnect; each retry re-serves the same messages, which is harmless here and keeps the
- * overlay populated for the length of the test.
+ * Inject deterministic events at the main-process relay edge, never in the renderer.
+ * The test-only main hook is absent without STREAM_SYNC_E2E=1. Actual preload event
+ * delivery, subscription cleanup, session ingest and media scheduling stay exercised.
  */
-export async function stubDanmakuStream(page: Page, texts: string[]): Promise<void> {
-  const body = [
-    'event: state\ndata: {"room":"288016","state":"connected"}\n\n',
-    ...texts.map(
-      (text, index) =>
-        `event: danmaku\ndata: ${JSON.stringify({
-          id: `stub-${index}`,
+export async function stubDanmakuStream(application: ElectronApplication, texts: string[]): Promise<void> {
+  await application.evaluate((_electron, messages) => {
+    const main = globalThis as typeof globalThis & {
+      __streamSyncerTest?: { emitDanmaku(room: string, event: string, data: unknown): number }
+    }
+    if (!main.__streamSyncerTest) throw new Error('Main-process E2E relay hook is unavailable')
+    let sequence = 0
+    const emit = () => {
+      main.__streamSyncerTest?.emitDanmaku('288016', 'state', { room: '288016', state: 'connected' })
+      for (const [index, text] of messages.entries()) {
+        main.__streamSyncerTest?.emitDanmaku('288016', 'danmaku', {
+          id: 'stub-' + sequence + '-' + index,
           text,
-          user: `观众${index}`,
+          user: '观众' + index,
           color: '#ffffff',
-        })}\n\n`,
-    ),
-  ].join('')
-
-  await page.route('**/api/danmaku/douyu/**', async (route) => {
-    await route.fulfill({
-      status: 200,
-      headers: {
-        'content-type': 'text/event-stream; charset=utf-8',
-        'cache-control': 'no-cache',
-        connection: 'keep-alive',
-      },
-      body,
-    })
-  })
+        })
+      }
+      sequence += 1
+    }
+    emit()
+    // Continue after the room is connected; the process owns and clears this timer.
+    setInterval(emit, 800)
+  }, texts)
 }

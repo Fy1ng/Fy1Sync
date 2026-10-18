@@ -12,8 +12,6 @@ playwright-report/
 /public/test-sources/
 # Preset store written by the E2E run
 /e2e/.data/
-# Preset store written by `npm run smoke` against a built server
-/.smoke-data/
 # Screenshot sheet from `npm run shots` — regenerate rather than review a binary diff
 /.ui-shots/
 .env.local

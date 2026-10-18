@@ -2,7 +2,7 @@
  * Turn whatever the user pasted into a `MediaDescriptor`.
  *
  * Channel pages (twitch.tv/xxx, douyu.com/123) cannot be played directly; they
- * are marked `needsResolve` so the caller asks the server for a playable URL.
+ * are marked `needsResolve` so the caller asks main for a registered playable URL.
  * Anything else that is a plain web page is rejected with an explanation rather
  * than handed to `<video>`, which would just fail silently.
  */
@@ -18,7 +18,7 @@ export interface SourceClassification {
   /** Channel/room identifier for platform resolution. */
   channel?: string
   needsResolve: boolean
-  /** Cross-origin media needs the local proxy to be playable. */
+  /** Legacy metadata: cross-origin media needs main-process registration. */
   suggestProxy: boolean
   label: string
 }
@@ -145,7 +145,7 @@ function directMedia(url: URL, kind: MediaKind): SourceClassification {
     platform: 'direct',
     kind,
     url: url.href,
-    needsResolve: false,
+    needsResolve: true,
     suggestProxy: isCrossOrigin(url),
     label: url.hostname,
   }
@@ -162,15 +162,6 @@ function isCrossOrigin(url: URL): boolean {
   return url.origin !== location.origin
 }
 
-/** Route a media URL through the local proxy. */
-export function proxyUrl(target: string): string {
-  return `/api/media?url=${encodeURIComponent(target)}`
-}
-
-export function isProxied(url: string): boolean {
-  return url.startsWith('/api/media?')
-}
-
 export function describeSource(descriptor: MediaDescriptor | null): string {
   if (!descriptor) return '未设置'
   return descriptor.label || descriptor.url
@@ -185,7 +176,7 @@ export function toDescriptor(
   const viaProxy = options.viaProxy ?? false
   return {
     kind: classification.kind,
-    url: viaProxy && !isProxied(resolved) ? proxyUrl(resolved) : resolved,
+    url: resolved,
     input: classification.url,
     label: classification.label,
     loop: options.loop ?? false,

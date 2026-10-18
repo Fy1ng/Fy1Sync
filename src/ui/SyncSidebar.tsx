@@ -191,7 +191,7 @@ function AutoSyncSection(): React.ReactNode {
         align="left"
         value={settings.profileId}
         disabled={snapshot.presets.length === 0}
-        title={snapshot.presets.length === 0 ? '服务端还没有已发布的识别场景' : undefined}
+        title={snapshot.presets.length === 0 ? '本机还没有已发布的识别场景' : undefined}
         options={[
           { value: '', label: '不使用' },
           ...snapshot.presets.map((preset) => ({

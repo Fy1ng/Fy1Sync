@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_PROXY_HOSTS,
-  exposureWarnings,
   hostAllowed,
-  isLoopbackHost,
   readBooleanEnv,
   readHostList,
   readNumberEnv,
@@ -37,6 +35,8 @@ describe('readNumberEnv', () => {
     expect(readNumberEnv('abc', 5178)).toBe(5178)
     expect(readNumberEnv('Infinity', 5178)).toBe(5178)
     expect(readNumberEnv('NaN', 5178)).toBe(5178)
+    expect(readNumberEnv('', 5178)).toBe(5178)
+    expect(readNumberEnv('   ', 5178)).toBe(5178)
   })
 })
 
@@ -58,20 +58,6 @@ describe('readHostList', () => {
     const list = readHostList(undefined)
     list.push('evil.example.com')
     expect(readHostList(undefined)).not.toContain('evil.example.com')
-  })
-})
-
-describe('isLoopbackHost', () => {
-  it('recognises the loopback spellings', () => {
-    for (const host of ['127.0.0.1', 'localhost', 'LOCALHOST', '::1', '[::1]', ' 127.0.0.1 ']) {
-      expect(isLoopbackHost(host)).toBe(true)
-    }
-  })
-
-  it('rejects wildcard and LAN binds', () => {
-    for (const host of ['0.0.0.0', '::', '192.168.1.10', 'example.com', '']) {
-      expect(isLoopbackHost(host)).toBe(false)
-    }
   })
 })
 
@@ -126,110 +112,76 @@ describe('hostAllowed', () => {
 })
 
 describe('resolveConfig', () => {
-  it('defaults to a loopback bind with the proxy narrowly scoped', () => {
-    const config = resolveConfig({}, '/app')
-    expect(config.host).toBe('127.0.0.1')
-    expect(config.port).toBe(5178)
-    expect(config.strictPort).toBe(false)
-    expect(config.loopbackOnly).toBe(true)
-    expect(config.clientDir).toBe('/app/dist/client')
-    expect(config.dataDir).toBe('/app/data')
-    expect(config.adminToken).toBe('stream-sync-admin')
-    expect(config.proxy.enabled).toBe(true)
-    expect(config.proxy.hosts).toEqual(DEFAULT_PROXY_HOSTS)
-    // The dangerous switches stay off unless asked for explicitly.
-    expect(config.proxy.allowNonStandardPorts).toBe(false)
-    expect(config.proxy.allowNonLoopbackTargets).toBe(false)
-    expect(config.proxy.maxRedirects).toBe(4)
-    expect(config.proxy.requestTimeoutMs).toBe(15_000)
+  it('returns only a narrowly scoped outbound media policy', () => {
+    expect(resolveConfig({}, '/legacy-cwd')).toEqual({
+      proxy: {
+        enabled: true,
+        hosts: DEFAULT_PROXY_HOSTS,
+        allowNonStandardPorts: false,
+        allowNonLoopbackTargets: false,
+        maxRedirects: 4,
+        requestTimeoutMs: 15_000,
+      },
+    })
   })
 
-  it('reads every override from the environment', () => {
-    const config = resolveConfig(
-      {
-        STREAM_SYNC_HOST: '0.0.0.0',
-        STREAM_SYNC_PORT: '8080',
-        STREAM_SYNC_STRICT_PORT: 'true',
-        STREAM_SYNC_CLIENT_DIR: '/srv/client',
-        STREAM_SYNC_DATA_DIR: '/srv/data',
-        STREAM_SYNC_ADMIN_TOKEN: 's3cret',
-        STREAM_SYNC_MEDIA_PROXY_ENABLED: 'false',
-        STREAM_SYNC_MEDIA_PROXY_HOSTS: 'a.example.com,b.example.com',
-        STREAM_SYNC_MEDIA_PROXY_ALLOW_NONSTANDARD_PORTS: 'yes',
-        STREAM_SYNC_MEDIA_PROXY_ALLOW_NON_LOOPBACK: '1',
-        STREAM_SYNC_MEDIA_PROXY_MAX_REDIRECTS: '2',
-        STREAM_SYNC_MEDIA_PROXY_TIMEOUT_MS: '3000',
-      },
-      '/app',
-    )
-    expect(config).toEqual({
-      host: '0.0.0.0',
-      port: 8080,
-      strictPort: true,
-      clientDir: '/srv/client',
-      dataDir: '/srv/data',
-      adminToken: 's3cret',
-      loopbackOnly: false,
+  it('reads the supported media overrides from the environment', () => {
+    expect(resolveConfig({
+      STREAM_SYNC_MEDIA_PROXY_ENABLED: 'false',
+      STREAM_SYNC_MEDIA_PROXY_HOSTS: 'a.example.com,b.example.com',
+      STREAM_SYNC_MEDIA_PROXY_MAX_REDIRECTS: '2',
+      STREAM_SYNC_MEDIA_PROXY_TIMEOUT_MS: '3000',
+    })).toEqual({
       proxy: {
         enabled: false,
         hosts: ['a.example.com', 'b.example.com'],
-        allowNonStandardPorts: true,
-        allowNonLoopbackTargets: true,
+        allowNonStandardPorts: false,
+        allowNonLoopbackTargets: false,
         maxRedirects: 2,
         requestTimeoutMs: 3_000,
       },
     })
   })
 
-  it('drops loopbackOnly when bound to a non-loopback host', () => {
-    expect(resolveConfig({ STREAM_SYNC_HOST: '192.168.1.5' }, '/app').loopbackOnly).toBe(false)
-    expect(resolveConfig({ STREAM_SYNC_HOST: 'localhost' }, '/app').loopbackOnly).toBe(true)
+  it('ignores removed HTTP listener, asset, storage and admin-token settings', () => {
+    const config = resolveConfig({
+      STREAM_SYNC_HOST: '0.0.0.0',
+      STREAM_SYNC_PORT: '8080',
+      STREAM_SYNC_STRICT_PORT: 'true',
+      STREAM_SYNC_CLIENT_DIR: '/legacy/client',
+      STREAM_SYNC_DATA_DIR: '/legacy/data',
+      STREAM_SYNC_ADMIN_TOKEN: 'obsolete-fixture-value',
+    })
+    expect(Object.keys(config)).toEqual(['proxy'])
+    expect(config).toEqual(resolveConfig({}))
   })
 
-  it('treats a whitespace-only override as unset', () => {
-    const config = resolveConfig(
-      { STREAM_SYNC_HOST: '   ', STREAM_SYNC_ADMIN_TOKEN: '  ', STREAM_SYNC_DATA_DIR: ' ' },
-      '/app',
-    )
-    expect(config.host).toBe('127.0.0.1')
-    expect(config.adminToken).toBe('stream-sync-admin')
-    expect(config.dataDir).toBe('/app/data')
-  })
-})
-
-describe('exposureWarnings', () => {
-  const base = (env: Record<string, string>) => resolveConfig(env, '/app')
-
-  it('在本机绑定时不啰嗦', () => {
-    expect(exposureWarnings(base({}))).toEqual([])
-    expect(exposureWarnings(base({ STREAM_SYNC_HOST: 'localhost' }))).toEqual([])
+  it('cannot enable private targets or non-standard ports through environment flags', () => {
+    const config = resolveConfig({
+      STREAM_SYNC_MEDIA_PROXY_ALLOW_NONSTANDARD_PORTS: 'true',
+      STREAM_SYNC_MEDIA_PROXY_ALLOW_NON_LOOPBACK: '1',
+    })
+    expect(config.proxy.allowNonStandardPorts).toBe(false)
+    expect(config.proxy.allowNonLoopbackTargets).toBe(false)
   })
 
-  it('绑定到外部地址且令牌是默认值时点明后果', () => {
-    const lines = exposureWarnings(base({ STREAM_SYNC_HOST: '0.0.0.0' })).join('\n')
-    expect(lines).toContain('0.0.0.0')
-    // The pairing is what makes it dangerous: the loopback gate is off *and* the token is
-    // the published default, so naming both is the point.
-    expect(lines).toContain('管理令牌仍是默认值')
-    expect(lines).toContain('STREAM_SYNC_ADMIN_TOKEN')
+  it.each(['0', '8'])('accepts redirect boundary %s', (value) => {
+    expect(resolveConfig({ STREAM_SYNC_MEDIA_PROXY_MAX_REDIRECTS: value }).proxy.maxRedirects).toBe(Number(value))
   })
 
-  it('绑定到外部地址但换过令牌时只提绑定', () => {
-    const lines = exposureWarnings(
-      base({ STREAM_SYNC_HOST: '0.0.0.0', STREAM_SYNC_ADMIN_TOKEN: 'chosen-by-operator' }),
-    ).join('\n')
-    expect(lines).toContain('不再限制为本机访问')
-    expect(lines).not.toContain('管理令牌仍是默认值')
+  it.each(['-1', '9', '1.5', 'Infinity', 'NaN', 'abc', '', ' '])(
+    'uses the finite redirect default for invalid value %j', (value) => {
+      expect(resolveConfig({ STREAM_SYNC_MEDIA_PROXY_MAX_REDIRECTS: value }).proxy.maxRedirects).toBe(4)
+    },
+  )
+
+  it.each(['1', '120000'])('accepts timeout boundary %s', (value) => {
+    expect(resolveConfig({ STREAM_SYNC_MEDIA_PROXY_TIMEOUT_MS: value }).proxy.requestTimeoutMs).toBe(Number(value))
   })
 
-  it('代理放开内网目标时单独说一句', () => {
-    const lines = exposureWarnings(
-      base({
-        STREAM_SYNC_HOST: '192.168.1.20',
-        STREAM_SYNC_ADMIN_TOKEN: 'chosen-by-operator',
-        STREAM_SYNC_MEDIA_PROXY_ALLOW_NON_LOOPBACK: 'true',
-      }),
-    ).join('\n')
-    expect(lines).toContain('开放中继')
-  })
+  it.each(['-1', '0', '120001', '1.5', 'Infinity', 'NaN', 'abc', '', ' '])(
+    'uses the finite timeout default for invalid value %j', (value) => {
+      expect(resolveConfig({ STREAM_SYNC_MEDIA_PROXY_TIMEOUT_MS: value }).proxy.requestTimeoutMs).toBe(15_000)
+    },
+  )
 })

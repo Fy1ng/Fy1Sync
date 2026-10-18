@@ -3,7 +3,7 @@
  *
  * Proxying only the top-level playlist is not enough: the browser would read it, then
  * fetch the sub-playlists, segments and AES keys *directly*, hitting CORS again. Every
- * URI inside a playlist therefore has to be rewritten to point back at this proxy,
+ * URI inside a playlist therefore has to be rewritten to point back at the main-owned media registry,
  * absolutised against the playlist's own final URL first (post-redirect), or relative
  * segment names would resolve against the wrong base.
  *
@@ -19,10 +19,8 @@
 export type RewriteOptions = {
   /** Absolute URL the playlist was actually loaded from, after redirects. */
   baseUrl: string | URL
-  /** Proxy endpoint path, e.g. `/api/proxy`. */
-  proxyPath: string
-  /** Extra query params to preserve on every rewritten URL (e.g. platform hints). */
-  extraQuery?: Record<string, string>
+  /** Main-owned capability registration; never returns a renderer-supplied target. */
+  register: (absoluteUrl: string) => string
 }
 
 /** Tags whose `URI="..."` attribute points at something the proxy must also serve. */
@@ -50,13 +48,8 @@ export function isPlaylistContent(body: string): boolean {
   return body.replace(/^﻿/, '').trimStart().startsWith('#EXTM3U')
 }
 
-export function proxyUrlFor(target: string, options: RewriteOptions): string {
-  const absolute = new URL(target, options.baseUrl).toString()
-  const params = new URLSearchParams({ url: absolute })
-  for (const [key, value] of Object.entries(options.extraQuery ?? {})) {
-    params.set(key, value)
-  }
-  return `${options.proxyPath}?${params.toString()}`
+export function registeredUrlFor(target: string, options: RewriteOptions): string {
+  return options.register(new URL(target, options.baseUrl).toString())
 }
 
 /** Rewrite every URI in an HLS playlist to route through the proxy. */
@@ -75,7 +68,7 @@ export function rewritePlaylist(body: string, options: RewriteOptions): string {
       continue
     }
     // A bare line is a segment or a sub-playlist; both go through the proxy.
-    out.push(proxyUrlFor(trimmed, options))
+    out.push(registeredUrlFor(trimmed, options))
   }
 
   return out.join('\n')
@@ -95,7 +88,7 @@ function rewriteTagLine(line: string, options: RewriteOptions): string {
 export function rewriteUriAttribute(line: string, options: RewriteOptions): string {
   return line.replace(/URI="([^"]*)"/g, (_match, uri: string) => {
     if (uri.length === 0) return 'URI=""'
-    return `URI="${escapeAttribute(proxyUrlFor(uri, options))}"`
+    return `URI="${escapeAttribute(registeredUrlFor(uri, options))}"`
   })
 }
 

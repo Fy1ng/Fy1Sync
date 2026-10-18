@@ -1,7 +1,7 @@
 /**
  * Source setup for both roles.
  *
- * Resolution goes through the server, and a platform refusal comes back as a structured
+ * Resolution and remote media registration go through main, and a platform refusal comes back as a structured
  * failure rather than an exception — so "这个房间没在直播" and "网络断了" stay different
  * messages, and a refusal that has a manual workaround says so. See docs/platform-notes.md.
  *
@@ -96,9 +96,9 @@ function RolePanel({ role }: { role: SourceRole }): React.ReactNode {
       return
     }
 
-    // A direct media URL needs no server round trip.
+    // Local object URLs and fixtures need no main-process registration.
     if (!parsed.needsResolve) {
-      await load(toDescriptor(parsed, { viaProxy: parsed.suggestProxy }))
+      await load(toDescriptor(parsed))
       return
     }
 

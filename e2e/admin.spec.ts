@@ -1,59 +1,50 @@
-/**
- * The Profile Editor: token gate, sample → frame → segmentation, and the publish round-trip.
- *
- * The gate tests run without fixtures because they are about the deployed page's access
- * control, not about media. The editor tests need `npm run fixtures`, since a real decoded
- * frame is the only way to exercise grab → segment → template.
- */
+/** The local editor: trusted app access, decoded-frame teaching and preset IPC. */
 
 import { fileURLToPath } from 'node:url'
-import { expect, test, type Page } from '@playwright/test'
-import { ADMIN_TOKEN, failOnPageError, fixturesReady } from './helpers'
+import { type Page } from '@playwright/test'
+import type { RecognitionProfile } from '../src/core/profileSchema'
+import { APP_ORIGIN, expect, test } from './electron'
+import { failOnPageError, fixturesReady, invoke } from './helpers'
 
 const officialPath = fileURLToPath(new URL('../public/test-sources/official.mp4', import.meta.url))
 
-test.describe('管理令牌', () => {
-  test('没有令牌时只显示登录卡片', async ({ page }) => {
+test.describe('本机编辑器访问', () => {
+  test('本机窗口直接显示编辑器而无需令牌', async ({ page }) => {
     failOnPageError(page)
-    await page.goto('/admin')
-    await expect(page.locator('.admin-gate')).toBeVisible()
-    await expect(page.locator('.admin-columns')).toHaveCount(0)
-  })
-
-  test('错误令牌被服务端拒绝并给出提示', async ({ page }) => {
-    failOnPageError(page)
-    await page.goto('/admin')
-    await page.locator('.gate-field input').fill('definitely-not-the-token')
-    await page.getByRole('button', { name: '进入' }).click()
-    await expect(page.locator('.gate-error')).toBeVisible()
-    await expect(page.locator('.admin-columns')).toHaveCount(0)
-  })
-
-  test('URL 中的令牌可用一次，随后从地址栏消失', async ({ page }) => {
-    failOnPageError(page)
-    await page.goto(`/admin?token=${ADMIN_TOKEN}`)
+    await page.goto(APP_ORIGIN + '/admin')
     await expect(page.locator('.admin-columns')).toBeVisible()
+    await expect(page.locator('.admin-gate')).toHaveCount(0)
+  })
 
-    // The query string is where a token leaks from: history, titles, screenshots.
-    await expect.poll(() => new URL(page.url()).searchParams.get('token')).toBeNull()
+  test('本机可信窗口仍拒绝无效预设并给出字段问题', async ({ page }) => {
+    await page.goto(APP_ORIGIN + '/admin')
+    const rejected = await invoke(page, 'savePreset', {
+      id: 'e2e/invalid',
+      profile: { schemaVersion: 2, id: 'e2e/invalid' } as RecognitionProfile,
+    })
+    expect(rejected.ok).toBe(false)
+    if (rejected.ok) throw new Error('Invalid profile was unexpectedly written')
+    expect(rejected.code).toBe('invalid-profile')
+    expect(rejected.detail).toHaveProperty('issues')
+    expect((await invoke(page, 'getPreset', { id: 'e2e/invalid' })).ok).toBe(false)
+  })
 
-    // It survives a reload through sessionStorage, so the editor is usable without
-    // pasting the token again — and without it ever going back into the URL.
+  test('刷新后编辑器仍可用且地址中没有令牌', async ({ page }) => {
+    await page.goto(APP_ORIGIN + '/admin')
+    await expect(page.locator('.admin-columns')).toBeVisible()
+    expect(new URL(page.url()).searchParams.has('token')).toBe(false)
     await page.reload()
     await expect(page.locator('.admin-columns')).toBeVisible()
-    expect(new URL(page.url()).searchParams.get('token')).toBeNull()
+    expect(new URL(page.url()).searchParams.has('token')).toBe(false)
   })
 
-  test('退出后回到登录卡片', async ({ page }) => {
-    failOnPageError(page)
-    await page.goto(`/admin?token=${ADMIN_TOKEN}`)
+  test('返回播放器后仍可在同一本机窗口进入编辑器', async ({ page }) => {
+    await page.goto(APP_ORIGIN + '/admin')
     await expect(page.locator('.admin-columns')).toBeVisible()
-    await page.getByRole('button', { name: '退出' }).click()
-    await expect(page.locator('.admin-gate')).toBeVisible()
-    // And it stays locked across a reload: clearing must wipe the stored token, not just
-    // the component state.
-    await page.reload()
-    await expect(page.locator('.admin-gate')).toBeVisible()
+    await page.getByRole('link', { name: '返回播放器' }).click()
+    await expect(page.locator('.player-page')).toBeVisible()
+    await page.goto(APP_ORIGIN + '/admin')
+    await expect(page.locator('.admin-columns')).toBeVisible()
   })
 })
 
@@ -62,7 +53,7 @@ test.describe('取帧与切分', () => {
 
   test('载入样片后取帧并切出字符框', async ({ page }) => {
     failOnPageError(page)
-    await page.goto(`/admin?token=${ADMIN_TOKEN}`)
+    await page.goto(APP_ORIGIN + '/admin')
     await expect(page.locator('.admin-columns')).toBeVisible()
 
     await page.locator('.stage-toolbar input[type=file]').setInputFiles(officialPath)
@@ -83,7 +74,7 @@ test.describe('取帧与切分', () => {
 
   test('点字符按钮把选中的框存成模板样本', async ({ page }) => {
     failOnPageError(page)
-    await page.goto(`/admin?token=${ADMIN_TOKEN}`)
+    await page.goto(APP_ORIGIN + '/admin')
     await page.locator('.stage-toolbar input[type=file]').setInputFiles(officialPath)
     await expect.poll(async () =>
       page.locator('video.admin-video').evaluate((node: HTMLVideoElement) => node.videoWidth),
@@ -106,66 +97,63 @@ test.describe('取帧与切分', () => {
 })
 
 test.describe('发布预设', () => {
-  test('发布后可以通过接口读回，并带 etag', async ({ page, request }) => {
+  test('发布后可以通过接口读回，并带 etag', async ({ page }) => {
     failOnPageError(page)
-    await page.goto(`/admin?token=${ADMIN_TOKEN}`)
+    await page.goto(APP_ORIGIN + '/admin')
     await expect(page.locator('.admin-columns')).toBeVisible()
 
     const id = `e2e/publish-${Date.now()}`
     await setField(page, '标识', id)
     await setField(page, '名称', 'E2E 发布测试')
-    await page.getByRole('button', { name: '发布到服务端' }).click()
+    await page.getByRole('button', { name: '发布到本机' }).click()
     await expect(page.locator('.admin-message.is-info')).toContainText('已发布')
 
-    const fetched = await request.get(`/api/presets/${id}`)
-    expect(fetched.status()).toBe(200)
-    const body = (await fetched.json()) as { profile: { id: string; name: string }; etag: string }
+    const fetched = await invoke(page, 'getPreset', { id })
+    expect(fetched.ok).toBe(true)
+    if (!fetched.ok) throw new Error(fetched.message)
+    const body = fetched.value
     expect(body.profile.id).toBe(id)
     expect(body.profile.name).toBe('E2E 发布测试')
     expect(body.etag).toBeTruthy()
 
     // It also shows up in the library listing the editor reads on load.
-    const list = await request.get('/api/presets')
-    const listed = (await list.json()) as { presets: { id: string }[] }
-    expect(listed.presets.some((preset) => preset.id === id)).toBe(true)
+    const list = await invoke(page, 'listPresets', undefined)
+    expect(list.ok).toBe(true)
+    if (!list.ok) throw new Error(list.message)
+    expect(list.value.presets.some((preset) => preset.id === id)).toBe(true)
   })
 
-  test('别的会话改动过预设时发布被拒绝', async ({ page, request }) => {
+  test('别的会话改动过预设时发布被拒绝', async ({ page }) => {
     failOnPageError(page)
     const id = `e2e/conflict-${Date.now()}`
 
-    // Seed the preset so the editor picks up an etag when it loads it. The id is fresh,
-    // so this creates (201); the interleaved write below updates the same id (200).
-    const seed = await request.put(`/api/presets/${id}`, {
-      headers: { 'x-admin-token': ADMIN_TOKEN },
-      data: { ...baseProfile(id), name: '初始版本' },
-    })
-    expect(seed.status()).toBe(201)
+    // Seed through the actual preload so the editor loads the stored ETag.
+    const seed = await invoke(page, 'savePreset', { id, profile: { ...baseProfile(id), name: '初始版本' } })
+    expect(seed.ok).toBe(true)
 
-    await page.goto(`/admin?token=${ADMIN_TOKEN}`)
+    await page.goto(APP_ORIGIN + '/admin')
     await page.locator('.library-item').filter({ hasText: id }).first().click()
     await expect(page.locator('.admin-message')).toContainText('已载入预设')
 
     // A third party writes in between, which moves the etag out from under the editor.
-    const interleaved = await request.put(`/api/presets/${id}`, {
-      headers: { 'x-admin-token': ADMIN_TOKEN },
-      data: { ...baseProfile(id), name: '别人的版本' },
-    })
-    expect(interleaved.status()).toBe(200)
+    const interleaved = await invoke(page, 'savePreset', { id, profile: { ...baseProfile(id), name: '别人的版本' } })
+    expect(interleaved.ok).toBe(true)
 
     await setField(page, '名称', '我的版本')
-    await page.getByRole('button', { name: '发布到服务端' }).click()
+    await page.getByRole('button', { name: '发布到本机' }).click()
     // Last-write-wins would silently discard the other session's edit.
     await expect(page.locator('.admin-message.is-error')).toContainText('已被其他会话改动')
 
-    const after = await request.get(`/api/presets/${id}`)
-    const body = (await after.json()) as { profile: { name: string } }
+    const after = await invoke(page, 'getPreset', { id })
+    expect(after.ok).toBe(true)
+    if (!after.ok) throw new Error(after.message)
+    const body = after.value
     expect(body.profile.name).toBe('别人的版本')
   })
 })
 
 /** A minimal valid profile for seeding through the API. */
-function baseProfile(id: string): Record<string, unknown> {
+function baseProfile(id: string): RecognitionProfile {
   return {
     schemaVersion: 2,
     id,

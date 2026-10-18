@@ -3,20 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Local web tool that aligns an official clean esports stream with a Chinese commentary stream, with danmaku overlay and countdown-based automatic sync.",
+  "description": "Electron desktop app for aligned esports video, commentary and danmaku.",
   "license": "MIT",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "dev": "node scripts/start-dev.mjs",
-    "build": "npm run typecheck && vite build && node scripts/build-server.mjs",
-    "start": "node dist/server/index.mjs",
+    "build": "npm run typecheck && vite build && node scripts/build-electron.mjs",
+    "start": "node scripts/start-electron.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "smoke": "node scripts/smoke.mjs",
-  "shots": "node scripts/ui-shots.mjs",
+    "smoke": "playwright test e2e/smoke.spec.ts",
+    "shots": "node scripts/ui-shots.mjs",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json && tsc -p tsconfig.e2e.json",
     "fixtures": "node scripts/generate-test-sources.mjs"
   },
@@ -35,11 +35,12 @@
     "@types/react": "19.2.15",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
-    "esbuild": "0.28.2",
+    "electron": "44.9.0",
     "fake-indexeddb": "6.2.4",
     "jsdom": "29.1.1",
     "typescript": "6.0.3",
     "vite": "8.0.14",
     "vitest": "4.1.7"
-  }
+  },
+  "main": "dist/electron/main.cjs"
 }

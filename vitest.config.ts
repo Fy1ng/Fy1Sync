@@ -27,7 +27,7 @@ export default defineConfig({
           name: 'server',
           environment: 'node',
           globals: false,
-          include: ['server/**/*.test.ts'],
+          include: ['server/**/*.test.ts', 'electron/**/*.test.ts'],
           exclude: sharedExclude,
         },
       },

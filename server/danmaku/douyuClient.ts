@@ -3,7 +3,7 @@
  *
  * Runs server-side rather than in the browser for two reasons: the danmaku endpoint is
  * a raw WebSocket without CORS-friendly headers, and one upstream connection can fan out
- * to any number of browser tabs. The browser subscribes over SSE (see sse.ts), so no
+ * to any number of local IPC subscribers, so no
  * WebSocket server is needed here either.
  *
  * Connects anonymously (`loginreq` with no token). No credentials are sent or stored.

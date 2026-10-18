@@ -1,47 +1,54 @@
 import { describe, expect, it } from 'vitest'
 import {
   isPlaylistContent,
-  proxyUrlFor,
+  registeredUrlFor,
   rewritePlaylist,
   rewriteUriAttribute,
   shouldRewrite,
 } from './hlsRewrite'
 
+const upstreams = new Map<string, string>()
 const options = {
   baseUrl: new URL('https://video-weaver.ttvnw.net/v1/playlist/abc.m3u8'),
-  proxyPath: '/api/proxy',
+  register: (absolute: string): string => {
+    const id = 'app://app/media/' + String(upstreams.size + 1)
+    upstreams.set(id, absolute)
+    return id
+  },
 }
 
-/** Pull the decoded upstream URL back out of a rewritten proxy URL. */
+/** Pull the original upstream URL from the test registration table. */
 function upstreamOf(line: string): string {
-  return decodeURIComponent(new URL(line, 'http://127.0.0.1').searchParams.get('url') ?? '')
+  return upstreams.get(line) ?? ''
 }
 
-describe('proxyUrlFor', () => {
+describe('registeredUrlFor', () => {
   it('absolutises a relative URI against the playlist URL', () => {
-    const url = proxyUrlFor('seg-1.ts', options)
+    const url = registeredUrlFor('seg-1.ts', options)
     expect(upstreamOf(url)).toBe('https://video-weaver.ttvnw.net/v1/playlist/seg-1.ts')
   })
 
   it('keeps an absolute URI intact', () => {
-    const url = proxyUrlFor('https://cdn.ttvnw.net/x/seg-2.ts', options)
+    const url = registeredUrlFor('https://cdn.ttvnw.net/x/seg-2.ts', options)
     expect(upstreamOf(url)).toBe('https://cdn.ttvnw.net/x/seg-2.ts')
   })
 
   it('resolves a root-relative URI against the origin', () => {
-    expect(upstreamOf(proxyUrlFor('/abs/seg.ts', options))).toBe(
+    expect(upstreamOf(registeredUrlFor('/abs/seg.ts', options))).toBe(
       'https://video-weaver.ttvnw.net/abs/seg.ts',
     )
   })
 
-  it('percent-encodes a query string so it is not swallowed by ours', () => {
-    const url = proxyUrlFor('seg.ts?token=a&b=c', options)
+  it('preserves signed query parameters through registration', () => {
+    const url = registeredUrlFor('seg.ts?token=a&b=c', options)
     expect(upstreamOf(url)).toBe('https://video-weaver.ttvnw.net/v1/playlist/seg.ts?token=a&b=c')
   })
 
-  it('appends extra query parameters', () => {
-    const url = proxyUrlFor('seg.ts', { ...options, extraQuery: { role: 'official' } })
-    expect(new URL(url, 'http://x').searchParams.get('role')).toBe('official')
+  it('passes only the resolved target to the main registration callback', () => {
+    const targets: string[] = []
+    const url = registeredUrlFor('seg.ts', { ...options, register: (target) => { targets.push(target); return 'app://app/media/opaque' } })
+    expect(url).toBe('app://app/media/opaque')
+    expect(targets).toEqual(['https://video-weaver.ttvnw.net/v1/playlist/seg.ts'])
   })
 })
 
@@ -61,7 +68,7 @@ describe('rewritePlaylist', () => {
     const lines = rewritePlaylist(input, options).split('\n')
     expect(lines[0]).toBe('#EXTM3U')
     expect(lines[1]).toBe('#EXT-X-VERSION:3')
-    expect(lines[4]).toContain('/api/proxy?url=')
+    expect(lines[4]).toContain('app://app/media/')
     expect(upstreamOf(lines[4]!)).toBe('https://video-weaver.ttvnw.net/v1/playlist/seg-1.ts')
     expect(upstreamOf(lines[6]!)).toBe('https://other.ttvnw.net/seg-2.ts')
   })
@@ -145,7 +152,7 @@ describe('rewritePlaylist', () => {
 
   it('preserves CRLF-terminated playlists without doubling separators', () => {
     const output = rewritePlaylist('#EXTM3U\r\n#EXTINF:2.0,\r\nseg.ts\r\n', options)
-    expect(output.split('\n')[2]).toContain('/api/proxy?url=')
+    expect(output.split('\n')[2]).toContain('app://app/media/')
     expect(output).not.toContain('\r\r')
   })
 

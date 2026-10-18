@@ -1,11 +1,11 @@
 /**
- * Screenshot the running app so UI work can be judged by looking at it.
+ * Launch and screenshot the built Electron app so UI work can be judged by looking at it.
  *
  * Not part of the test suite and not a check — it asserts nothing. It exists because
  * reading CSS is a bad way to find out that two panels disagree about their corner radius.
  *
- *   node dist/server/index.mjs &                     # or npm run dev
- *   node scripts/ui-shots.mjs [--base http://127.0.0.1:4181] [--out .ui-shots]
+ *   npm run build
+ *   node scripts/ui-shots.mjs [--out .ui-shots]
  *
  * Selectors are the ones e2e/helpers.ts already uses to drive this app; keep the two in
  * step. Every capture is wrapped so a step that cannot reach its state warns and the rest
@@ -13,7 +13,10 @@
  */
 
 import { mkdir, rm } from 'node:fs/promises'
-import { chromium } from '@playwright/test'
+import { randomUUID } from 'node:crypto'
+import { resolve, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { _electron } from '@playwright/test'
 
 const argv = process.argv.slice(2)
 const flag = (name, fallback) => {
@@ -21,7 +24,8 @@ const flag = (name, fallback) => {
   return at >= 0 && argv[at + 1] ? argv[at + 1] : fallback
 }
 
-const base = flag('base', 'http://127.0.0.1:4181').replace(/\/$/, '')
+const base = 'app://app'
+const applications = new WeakMap()
 const outDir = flag('out', '.ui-shots')
 
 /** Desktop is the design target; narrow is where the sidebar and the bar start to fight. */
@@ -103,27 +107,19 @@ async function revealOverlay(page) {
   await page.locator('.overlay-bar.is-visible').waitFor()
 }
 
-/** Canned SSE, so the danmaku shot does not depend on a live room. */
+/** Test-mode main injection keeps screenshot danmaku offline. */
 async function stubDanmaku(page) {
-  const body = [
-    'event: state\ndata: {"room":"288016","state":"connected"}\n\n',
-    ...DANMAKU.map((text, index) =>
-      `event: danmaku\ndata: ${JSON.stringify({
-        id: `shot-${index}`,
-        text,
-        user: `观众${index}`,
-        color: ['#ffffff', '#ffd54f', '#7fd4ff', '#ff8a80'][index % 4],
-      })}\n\n`,
-    ),
-  ].join('')
-
-  await page.route('**/api/danmaku/douyu/**', (route) =>
-    route.fulfill({
-      status: 200,
-      headers: { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache' },
-      body,
-    }),
-  )
+  const application = applications.get(page)
+  await application.evaluate((_electron, texts) => {
+    const hook = globalThis.__streamSyncerTest
+    if (!hook) throw new Error('Missing screenshot test hook')
+    let batch = 0
+    setInterval(() => {
+      hook.emitDanmaku('288016', 'state', { room: '288016', state: 'connected' })
+      for (const [index, text] of texts.entries()) hook.emitDanmaku('288016', 'danmaku', { id: 'shot-' + batch + '-' + index, text, user: '观众' + index, color: '#ffffff' })
+      batch++
+    }, 250)
+  }, DANMAKU)
 }
 
 let taken = 0
@@ -261,18 +257,31 @@ async function captureAdmin(browser) {
 }
 
 async function main() {
-  await rm(outDir, { recursive: true, force: true })
   await mkdir(outDir, { recursive: true })
 
-  const health = await fetch(`${base}/api/health`).catch(() => null)
-  if (!health?.ok) {
-    console.error(`${base} 没有响应。先启动服务：node dist/server/index.mjs`)
-    process.exit(1)
+  const root = fileURLToPath(new URL('../', import.meta.url))
+  const runtime = resolve(root, '.ui-shots', 'runtime-' + randomUUID())
+  await mkdir(runtime, { recursive: true })
+  const active = new Set()
+  // Each capture owns a real app and a disposable profile; the adapter preserves the
+  // existing screenshot steps without depending on a separately running server.
+  const browser = {
+    async newContext({ viewport }) {
+      const profile = join(runtime, randomUUID())
+      const env = { ...process.env, STREAM_SYNC_E2E: '1', STREAM_SYNC_USER_DATA_DIR: profile, STREAM_SYNC_DATA_DIR: join(profile, 'data') }
+      delete env.ELECTRON_RUN_AS_NODE
+      const application = await _electron.launch({ args: [join(root, 'dist/electron/main.cjs')], cwd: root, env })
+      active.add(application)
+      await application.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setContentSize(size.width, size.height), viewport)
+      const page = await application.firstWindow()
+      applications.set(page, application)
+      return { newPage: async () => page, close: async () => { await application.close(); active.delete(application) } }
+    },
+    async close() {
+      for (const application of active) await application.close()
+      await rm(runtime, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })
+    },
   }
-
-  const browser = await chromium.launch({
-    args: ['--autoplay-policy=no-user-gesture-required', '--mute-audio'],
-  })
   try {
     for (const viewport of VIEWPORTS) await captureViewport(browser, viewport)
     await captureAdmin(browser)

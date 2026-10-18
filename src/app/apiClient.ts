@@ -1,16 +1,6 @@
-/**
- * Typed client for this app's own server API.
- *
- * Every call answers with a discriminated result rather than throwing, because each of
- * these endpoints has a failure the UI must *show* — an unreachable server, a rejected
- * admin token, a platform that refused to resolve. A thrown error would collapse all of
- * those into one catch block that can only say "something went wrong".
- *
- * `/api/resolve` is the one worth noting: a platform that cannot be resolved answers
- * `200` with `ok: false` and a hint, so a network error and "this room is offline" stay
- * distinguishable. See docs/platform-notes.md.
- */
+/** Typed renderer seam for the allow-listed Electron preload API. */
 
+import type { DesktopMethods, StreamSyncerBridge } from '../../electron/contracts'
 import type { ResolveFailure, ResolvedStream } from '../../server/platforms/types'
 import type { ProfileIssue, RecognitionProfile } from '../core/profileSchema'
 
@@ -44,150 +34,91 @@ export interface SavedPreset {
   updatedAt: number
 }
 
-/** Errors the server sends as `{ error: { code, message } }`. */
-interface ErrorEnvelope {
-  error?: { code?: unknown; message?: unknown; issues?: unknown; currentEtag?: unknown }
+export interface ApiClientOptions {
+  /** Inject the narrow preload contract without exposing Electron to renderer code. */
+  bridge?: StreamSyncerBridge
 }
 
-const NETWORK_FAILURE = 'network-error'
+export type DanmakuEvent = { event: string; data: unknown }
 
-async function request<T>(
-  path: string,
-  init: RequestInit = {},
-  fetchImpl: typeof fetch = fetch,
-): Promise<ApiResult<T>> {
-  let response: Response
-  try {
-    response = await fetchImpl(path, {
-      // Same-origin only: the server rejects cross-site writes, and there is no reason
-      // for this client to ever talk to another origin.
-      credentials: 'same-origin',
-      ...init,
-    })
-  } catch (error) {
-    return {
-      ok: false,
-      code: NETWORK_FAILURE,
-      message: `无法连接本地服务：${error instanceof Error ? error.message : String(error)}`,
-    }
+export class ApiClient {
+  constructor(private readonly options: ApiClientOptions = {}) {}
+
+  private bridge(): StreamSyncerBridge {
+    const bridge = this.options.bridge ?? (typeof window !== 'undefined' ? window.streamSyncer : undefined)
+    if (!bridge) throw new Error('桌面通信接口不可用, 请从 Electron 应用启动')
+    return bridge
   }
 
-  const text = await response.text()
-  let payload: unknown = undefined
-  if (text.length > 0) {
+  private async request<K extends keyof DesktopMethods>(
+    method: K,
+    args: DesktopMethods[K]['args'],
+  ): Promise<ApiResult<DesktopMethods[K]['result']>> {
     try {
-      payload = JSON.parse(text)
-    } catch {
-      // A non-JSON body from our own API means the request was answered by something
-      // else (a dev-server fallback, a proxy). Say so rather than blaming the parse.
+      return await this.bridge().invoke(method, args)
+    } catch (error) {
       return {
         ok: false,
-        code: 'bad-response',
-        message: `服务返回了非 JSON 响应（HTTP ${response.status}）`,
+        code: 'ipc-error',
+        message: `无法连接应用主进程: ${error instanceof Error ? error.message : String(error)}`,
       }
     }
   }
 
-  if (!response.ok) {
-    const envelope = (payload ?? {}) as ErrorEnvelope
-    const code = typeof envelope.error?.code === 'string' ? envelope.error.code : 'http-error'
-    const message =
-      typeof envelope.error?.message === 'string'
-        ? envelope.error.message
-        : `请求失败（HTTP ${response.status}）`
-    return { ok: false, code, message, detail: envelope.error }
-  }
-
-  return { ok: true, value: (payload ?? {}) as T }
-}
-
-function jsonInit(method: string, body: unknown, headers: Record<string, string> = {}): RequestInit {
-  return {
-    method,
-    headers: { 'content-type': 'application/json', ...headers },
-    body: JSON.stringify(body),
-  }
-}
-
-export interface ApiClientOptions {
-  fetchImpl?: typeof fetch
-}
-
-export class ApiClient {
-  private readonly fetchImpl: typeof fetch
-
-  constructor(options: ApiClientOptions = {}) {
-    this.fetchImpl = options.fetchImpl ?? ((...args) => fetch(...args))
-  }
-
   health(): Promise<ApiResult<HealthInfo>> {
-    return request<HealthInfo>('/api/health', {}, this.fetchImpl)
+    return this.request('health', undefined)
   }
 
-  /** Verify an admin token server-side. The editor refuses to render before this passes. */
-  verifyAdmin(token: string): Promise<ApiResult<{ ok: true }>> {
-    return request<{ ok: true }>(
-      '/api/admin/verify',
-      jsonInit('POST', { token }),
-      this.fetchImpl,
-    )
+  /** Compatibility seam; main authorizes the local app frame rather than a token. */
+  verifyAdmin(token = ''): Promise<ApiResult<{ ok: true }>> {
+    return this.request('verifyAdmin', { token })
   }
 
-  /**
-   * Resolve a channel/room/URL into something playable.
-   *
-   * The nested `ok` is the platform's answer, not the transport's: a resolved stream and
-   * a structured refusal both arrive as HTTP 200.
-   */
-  async resolve(
+  /** A platform refusal remains distinct from an IPC transport failure. */
+  resolve(
     input: string,
     platform?: string,
   ): Promise<ApiResult<{ ok: true; stream: ResolvedStream } | { ok: false; failure: ResolveFailure }>> {
-    return request('/api/resolve', jsonInit('POST', { input, platform }), this.fetchImpl)
+    return this.request('resolve', { input, platform })
   }
 
   listPresets(): Promise<ApiResult<{ presets: PresetSummary[] }>> {
-    return request<{ presets: PresetSummary[] }>('/api/presets', {}, this.fetchImpl)
+    return this.request('listPresets', undefined)
   }
 
   getPreset(id: string): Promise<ApiResult<PresetRecord>> {
-    return request<PresetRecord>(`/api/presets/${encodeId(id)}`, {}, this.fetchImpl)
+    return this.request('getPreset', { id })
   }
 
-  /**
-   * Write a preset. `etag` becomes an `If-Match`, so a stale editor gets a `409`
-   * instead of silently overwriting another session's work.
-   */
+  /** Pass the last loaded ETag so stale editors cannot overwrite another edit. */
   savePreset(
     id: string,
     profile: RecognitionProfile,
-    token: string,
+    token = '',
     etag?: string,
   ): Promise<ApiResult<SavedPreset>> {
-    const headers: Record<string, string> = { 'x-admin-token': token }
-    if (etag) headers['if-match'] = `"${etag}"`
-    return request<SavedPreset>(
-      `/api/presets/${encodeId(id)}`,
-      jsonInit('PUT', profile, headers),
-      this.fetchImpl,
-    )
+    return this.request('savePreset', { id, profile, token, etag })
   }
 
-  deletePreset(id: string, token: string): Promise<ApiResult<{ ok: true }>> {
-    return request<{ ok: true }>(
-      `/api/presets/${encodeId(id)}`,
-      { method: 'DELETE', headers: { 'x-admin-token': token } },
-      this.fetchImpl,
-    )
+  deletePreset(id: string, token = ''): Promise<ApiResult<{ ok: true }>> {
+    return this.request('deletePreset', { id, token })
+  }
+
+  /** Stop delivery before releasing the preload subscription, including queued events. */
+  subscribeDanmaku(room: string, listener: (event: DanmakuEvent) => void): () => void {
+    let active = true
+    const unsubscribe = this.bridge().subscribeDanmaku(room, (event) => {
+      if (active) listener(event)
+    })
+    return () => {
+      if (!active) return
+      active = false
+      unsubscribe()
+    }
   }
 }
 
-/** Preset ids contain a slash (`cs2/iem`), which is path structure, not data to escape. */
-function encodeId(id: string): string {
-  return id.split('/').map(encodeURIComponent).join('/')
-}
-
-/** Validation issues ride along on a 422; pull them out without trusting the shape. */
+/** Validation issues travel in the failure detail; verify their shape before display. */
 export function issuesFrom(detail: unknown): ProfileIssue[] {
   const issues = (detail as { issues?: unknown } | undefined)?.issues
   if (!Array.isArray(issues)) return []
