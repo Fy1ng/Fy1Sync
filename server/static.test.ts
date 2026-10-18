@@ -35,6 +35,7 @@ describe('contentTypeFor', () => {
     expect(contentTypeFor('/assets/index-a1b2c3d4.css')).toBe('text/css; charset=utf-8')
     expect(contentTypeFor('/index.html')).toBe('text/html; charset=utf-8')
     expect(contentTypeFor('/worker-x.mjs')).toBe('text/javascript; charset=utf-8')
+    expect(contentTypeFor('/assets/stream_syncer_wasm_bg-a1b2c3d4.wasm')).toBe('application/wasm')
     expect(contentTypeFor('/test-sources/countdown.mp4')).toBe('video/mp4')
     expect(contentTypeFor('/test-sources/stream.m3u8')).toBe('application/vnd.apple.mpegurl')
   })

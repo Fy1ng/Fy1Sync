@@ -25,3 +25,8 @@ playwright-report/
 /.handoff/
 /.codex-tasks/
 /prototype/.media/
+
+# Rust build output and project-local WASM tooling
+/target/
+/.tools/
+/src/wasm/pkg/

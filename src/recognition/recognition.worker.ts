@@ -1,17 +1,19 @@
 /// <reference lib="webworker" />
-/**
- * Worker shell. All logic lives in `RecognitionEngine`; this file only bridges
- * `postMessage` to it so the engine stays unit-testable.
- */
-
-import { RecognitionEngine } from './engine'
+/** Initialization is shared and requests retain their generation and FIFO order. */
+import { createWorkerEngine } from './backend'
 import type { WorkerRequest } from './protocol'
 
-const engine = new RecognitionEngine(() =>
-  typeof performance !== 'undefined' ? performance.now() : Date.now(),
-)
-
+const engine = createWorkerEngine({
+  report: (backend, reason) => console.info('[识别 Worker] 后端:', backend, reason ?? ''),
+})
+let queue = Promise.resolve()
 self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
-  const response = engine.handle(event.data)
-  if (response) self.postMessage(response)
+  const request = event.data
+  queue = queue.then(async () => {
+    const response = (await engine).handle(request)
+    if (response) self.postMessage(response)
+  }).catch((error: unknown) => {
+    self.postMessage({ type: 'error', generation: request.generation,
+      message: error instanceof Error ? error.message : String(error) })
+  })
 })

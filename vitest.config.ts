@@ -1,4 +1,5 @@
 import react from '@vitejs/plugin-react'
+import { buildWasm } from './scripts/build-wasm.mjs'
 import { defineConfig } from 'vitest/config'
 
 const sharedExclude = [
@@ -8,29 +9,32 @@ const sharedExclude = [
   'Stream Sync Player_Gemini/**',
 ]
 
-export default defineConfig({
-  test: {
-    projects: [
-      {
-        plugins: [react()],
-        test: {
-          name: 'web',
-          environment: 'jsdom',
-          globals: false,
-          setupFiles: ['./src/test/setup.ts'],
-          include: ['src/**/*.test.{ts,tsx}'],
-          exclude: sharedExclude,
+export default defineConfig(async () => {
+  await buildWasm()
+  return {
+    test: {
+      projects: [
+        {
+          plugins: [react()],
+          test: {
+            name: 'web',
+            environment: 'jsdom',
+            globals: false,
+            setupFiles: ['./src/test/setup.ts'],
+            include: ['src/**/*.test.{ts,tsx}'],
+            exclude: sharedExclude,
+          },
         },
-      },
-      {
-        test: {
-          name: 'server',
-          environment: 'node',
-          globals: false,
-          include: ['server/**/*.test.ts', 'electron/**/*.test.ts'],
-          exclude: sharedExclude,
+        {
+          test: {
+            name: 'server',
+            environment: 'node',
+            globals: false,
+            include: ['server/**/*.test.ts', 'electron/**/*.test.ts'],
+            exclude: sharedExclude,
+          },
         },
-      },
-    ],
-  },
+      ],
+    },
+  }
 })

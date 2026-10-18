@@ -2,8 +2,10 @@
 import { build } from 'vite'
 import { fileURLToPath } from 'node:url'
 import { buildElectron } from './build-electron.mjs'
+import { buildWasm } from './build-wasm.mjs'
 import { launchElectron } from './start-electron.mjs'
 
+await buildWasm()
 await buildElectron()
 const root = new URL('../', import.meta.url)
 const watcher = await build({ configFile: fileURLToPath(new URL('vite.config.ts', root)), build: { watch: {} } })

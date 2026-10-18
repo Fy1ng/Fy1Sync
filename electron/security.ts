@@ -1,6 +1,6 @@
 export const APP_URL = 'app://app/'
 export const CONTENT_SECURITY_POLICY = [
-  "default-src 'none'", "script-src 'self'", "style-src 'self' 'unsafe-inline'",
+  "default-src 'none'", "script-src 'self' 'wasm-unsafe-eval'", "style-src 'self' 'unsafe-inline'",
   "connect-src 'self' blob:", "media-src 'self' blob: data:", "worker-src 'self' blob:",
   "img-src 'self' data: blob:", "font-src 'self'", "object-src 'none'",
   "base-uri 'none'", "form-action 'none'", "frame-src 'none'", "frame-ancestors 'none'",

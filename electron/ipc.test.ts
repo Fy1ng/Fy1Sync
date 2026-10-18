@@ -39,11 +39,13 @@ describe('app origin and document boundary', () => {
     for (const raw of ['app://app/', 'app://app/index.html', 'app://app/admin', 'app://app/admin/']) expect(isAppDocument(raw)).toBe(true)
     for (const raw of ['app://app/media/id', 'app://app/assets/app.js', 'app://app/api/health', 'https://example.com/']) expect(isAppDocument(raw)).toBe(false)
   })
-  it('uses a CSP without remote scripts, frames, eval or wildcard sources', () => {
+  it('uses a CSP without remote scripts, frames, JS eval or wildcard sources', () => {
     expect(CONTENT_SECURITY_POLICY).toContain("default-src 'none'")
-    expect(CONTENT_SECURITY_POLICY).toContain("script-src 'self'")
+    expect(CONTENT_SECURITY_POLICY).toContain("script-src 'self' 'wasm-unsafe-eval'")
     expect(CONTENT_SECURITY_POLICY).toContain("frame-ancestors 'none'")
-    expect(CONTENT_SECURITY_POLICY).not.toMatch(/unsafe-eval|https?:|\*/)
+    expect(CONTENT_SECURITY_POLICY).not.toMatch(/(?:^|[\s'])unsafe-eval|https?:|\*/)
+    expect(CONTENT_SECURITY_POLICY.split('; ').find((part) => part.startsWith('script-src')))
+      .toBe("script-src 'self' 'wasm-unsafe-eval'")
   })
   it('rejects a different webContents even if it claims the same URL', () => {
     const f = fixture()
