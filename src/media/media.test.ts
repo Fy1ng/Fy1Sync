@@ -257,15 +257,17 @@ describe('translateHlsError', () => {
 
 describe('attachMedia HLS precedence', () => {
   /** Just enough hls.js for `attachMedia` to wire itself up. */
-  function fakeModule(supported: boolean): { module: unknown; instances: number } {
+  function fakeModule(supported: boolean): { module: unknown; instances: number; configs: unknown[] } {
     const counter = { instances: 0 }
+    const configs: unknown[] = []
     class FakeInstance {
       levels: unknown[] = []
       currentLevel = -1
       nextLevel = -1
       liveSyncPosition: number | null = null
-      constructor() {
+      constructor(config?: unknown) {
         counter.instances += 1
+        configs.push(config)
       }
       on(): void {}
       loadSource(): void {}
@@ -282,7 +284,7 @@ describe('attachMedia HLS precedence', () => {
       },
       ErrorTypes: { NETWORK_ERROR: 'networkError', MEDIA_ERROR: 'mediaError' },
     })
-    return { module: { default: Hls }, instances: counter.instances }
+    return { module: { default: Hls }, instances: counter.instances, configs }
   }
 
   /** A video element that claims native HLS, which is what Chromium actually reports. */
@@ -304,6 +306,19 @@ describe('attachMedia HLS precedence', () => {
   const originalLoader = hlsLoader.load
   afterEach(() => {
     hlsLoader.load = originalLoader
+  })
+
+  it('passes a config the real hls.js accepts', async () => {
+    // The fake above accepts anything, so a config hls.js rejects on construction would
+    // pass every other test here and only fail in the app. Feed the captured config to the
+    // real constructor, whose validation runs before any media is attached.
+    const fake = fakeModule(true)
+    hlsLoader.load = () => Promise.resolve(fake.module as Awaited<ReturnType<typeof hlsLoader.load>>)
+    await attachMedia(video(), { ...hlsDescriptor(), url: 'app://app/buffer/s/official/index.m3u8' })
+    expect(fake.configs).toHaveLength(1)
+
+    const { default: RealHls } = await import('hls.js')
+    expect(() => new RealHls(fake.configs[0] as ConstructorParameters<typeof RealHls>[0]).destroy()).not.toThrow()
   })
 
   it('prefers hls.js even when the browser says it can play HLS natively', async () => {

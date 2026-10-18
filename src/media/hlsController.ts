@@ -115,7 +115,14 @@ export async function attachMedia(
     // Low latency is not the goal: a stable, seekable buffer is, because sync
     // rewinds up to 60 s and needs the data to still be there.
     lowLatencyMode: false,
-    backBufferLength: 90,
+    backBufferLength: descriptor.url.includes('/buffer/') ? 180 : 90,
+    // A deliberately rewound local live buffer must never catch up automatically.
+    // hls.js only accepts liveMaxLatencyDurationCount together with an explicit
+    // liveSyncDurationCount below it (it throws on construction otherwise), so the
+    // default of 3 is spelled out.
+    liveSyncDurationCount: 3,
+    liveMaxLatencyDurationCount: Infinity,
+    maxLiveSyncPlaybackRate: 1,
     maxBufferLength: 30,
     enableWorker: true,
   })
