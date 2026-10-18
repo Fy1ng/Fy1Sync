@@ -198,28 +198,40 @@ try {
   const signed = await signedParams(roomId);
   const qualities = [{ rate: 0, name: 'Original' }, { rate: 3, name: 'Super clear' },
     { rate: 2, name: 'High' }, { rate: -1, name: 'Default' }];
-  for (const setting of qualities) {
+  // The mobile ratestream endpoint answers every rate with its own default (observed:
+  // rate=0, 720p30 for all four requests, logged in or not). The PC web player asks
+  // getH5Play instead, which takes the same signed params and honours `rate`. Both are
+  // tried so the evidence shows which endpoint can actually switch quality.
+  const endpoints = [
+    { name: 'mobile-ratestream', url: 'https://m.douyu.com/api/room/ratestream', referer: `https://m.douyu.com/${signed.roomId}` },
+    { name: 'pc-getH5Play', url: `https://www.douyu.com/lapi/live/getH5Play/${signed.roomId}`, referer: `https://www.douyu.com/${signed.roomId}` },
+  ];
+  for (const endpoint of endpoints) for (const setting of qualities) {
     const rateParams = new URLSearchParams(signed.params);
     rateParams.set('rate', String(setting.rate));
-    let observation = { requestedRate: setting.rate, requestedName: setting.name, returnedRate: null };
+    if (endpoint.name === 'pc-getH5Play') { rateParams.set('cdn', ''); rateParams.set('iar', '0'); rateParams.set('ive', '0'); }
+    let observation = { endpoint: endpoint.name, requestedRate: setting.rate, requestedName: setting.name, returnedRate: null };
     try {
-      const rateApi = await fetchJson('https://m.douyu.com/api/room/ratestream', {
-        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Referer: `https://m.douyu.com/${signed.roomId}` }, body: rateParams.toString(),
-      }, `ratestream-rate-${setting.rate}`);
+      const rateApi = await fetchJson(endpoint.url, {
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Referer: endpoint.referer }, body: rateParams.toString(),
+      }, `${endpoint.name}-rate-${setting.rate}`);
+      // getH5Play splits the address into rtmp_url + rtmp_live; ratestream returns url.
+      const data = rateApi.data || {};
+      const url = data.url || (data.rtmp_url && data.rtmp_live ? `${data.rtmp_url}/${data.rtmp_live}` : null);
       observation = { ...observation,
-        returnedRate: rateApi.data?.rate ?? null, error: rateApi.error, code: rateApi.code,
-        rates: summarizeRates(rateApi.data) };
-      if ((rateApi.error === 0 || rateApi.code === 0) && rateApi.data?.url) {
-        result.streams.push({ ...observation, ...await probeUrl(rateApi.data.url, `rate-${setting.rate}`) });
+        returnedRate: data.rate ?? null, error: rateApi.error, code: rateApi.code,
+        rates: summarizeRates({ rate: data.rate, settings: data.settings || data.multirates }) };
+      if ((rateApi.error === 0 || rateApi.code === 0) && url) {
+        result.streams.push({ ...observation, ...await probeUrl(url, `${endpoint.name}-rate-${setting.rate}`) });
       } else {
-        result.streams.push({ ...observation, playable: false, measured: null });
+        result.streams.push({ ...observation, playable: false, measured: null, problem: scrub(String(rateApi.msg || rateApi.message || '')) });
       }
     } catch (error) {
       result.streams.push({ ...observation, playable: false, measured: null, problem: scrub(error.message) });
     }
   }
-  result.qualityObservation = result.streams.map(stream => ({ requestedRate: stream.requestedRate,
-    returnedRate: stream.returnedRate, playable: stream.playable, measured: stream.measured }));
+  result.qualityObservation = result.streams.map(stream => ({ endpoint: stream.endpoint, requestedRate: stream.requestedRate,
+    returnedRate: stream.returnedRate, playable: stream.playable, measured: stream.measured, problem: stream.problem }));
   result.qualityConclusion = 'Compare returned rates and ffprobe measurements; requested labels alone do not prove high quality or effective quality switching.';
   result.status = result.streams.every(stream => stream.playable) ? 'PASS' : 'PARTIAL';
   if (result.status !== 'PASS') result.problems.push('One or more requested rates did not yield measured audio and video packets');

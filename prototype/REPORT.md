@@ -340,3 +340,40 @@ Final status: PASS.
 GPU video decode enabled. One non-fatal hls.js `bufferStalledError` on smptehdbars, recovered.
 
 **YouTube from the user shell:** same `Sign in to confirm you're not a bot` with yt-dlp 2026.08.19 + Electron Node. The block is on the network egress, not the sandbox. Items 2/3 need either browser cookies (`--cookies-from-browser`) or a different egress to proceed.
+
+## P0b re-run with manual logins (2026-10-19, orchestrator, normal user shell)
+
+Logins were done by hand in dedicated Chrome profiles (`npm run login -- youtube|douyu`, `--disable-sync`, no account auto sign-in). Edge was abandoned because a fresh Edge profile signs into the Windows Microsoft account and syncs extensions. Electron was abandoned for login because Google rejects sign-in in embedded browsers. Cookie files are user-only (`icacls` shows only the current user).
+
+All four P0 items now pass.
+
+### 2. ffmpeg-live-buffer: PASS
+
+Source: live CS2 match, YouTube `KvotSW40t7w` (Thunderpick World Championship 2026), resolved with YouTube cookies.
+
+| Check | Result |
+| --- | --- |
+| Formats offered | HLS only, 144p to **1080p60 H.264 at 5.55 Mbps** (format 301). `formats=dashy` returns no DASH either |
+| ffmpeg `-c copy` run | 310 s wall time, stable, 2 s segments |
+| Rolling window | grows to 90 segments = 180 s, then the oldest is dropped (sequence 0 → 66 at 310 s) |
+| Electron playback of the live buffer (second run, 208 s seekable) | 1801 frame callbacks in 30 s, 0 regressions, 0 dropped frames, canvas 1920×1080 readable |
+| Seek back 120 s | error 0 s, 274 ms, +7.92 s progress in the next 8 s, playback resumed, not pulled back to live |
+
+The DASH copy-mux question is moot for this source: YouTube served no DASH for the live stream.
+
+### 3. ytdlp-js-runtime: PASS
+
+yt-dlp 2026.08.19 with `--js-runtimes node:<electron.exe>` and `ELECTRON_RUN_AS_NODE=1` logged `[jsc:node] Solving JS challenges using node` and returned formats. With cookies the bot check no longer triggers.
+
+### 4. Douyu quality: needs the PC `getH5PlayV1` endpoint
+
+The mobile `ratestream` endpoint returns 720p30 for every rate, logged in or not; it cannot switch quality. The PC endpoint `https://www.douyu.com/lapi/live/getH5PlayV1/<rid>` can (`douyu-quickjs/h5play-v1.mjs`). It runs **no remote JavaScript**: `getEncryption` returns a seed and the auth token is iterated MD5 (flow from streamlink PR #6959 and renmu123/biliLive-tools, 2026). Room 9999, H.264 FLV:
+
+| rate | Logged in | Anonymous |
+| --- | --- | --- |
+| 0 原画 (蓝光 8.8M) | **2560×1440@60** | downgraded to rate 4: 1920×1080@30 |
+| 4 蓝光4M | 1920×1080@30 | 1920×1080@30 |
+| 3 超清 | 1280×720@30 | 1280×720@30 |
+| 2 高清 | 960×540@25 | 960×540@25 |
+
+So login is what unlocks the top quality. Streams are FLV, which the plan already routes through ffmpeg into the local HLS buffer.

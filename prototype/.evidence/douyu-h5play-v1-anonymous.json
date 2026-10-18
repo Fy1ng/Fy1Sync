@@ -1,0 +1,111 @@
+{
+  "startedAt": "2026-10-18T18:38:57.066Z",
+  "cookiesEnabled": false,
+  "room": "9999",
+  "did": "default",
+  "multirates": [
+    {
+      "name": "原画2K60",
+      "rate": 0,
+      "bit": 8837,
+      "highBit": 1
+    },
+    {
+      "name": "蓝光4M",
+      "rate": 4,
+      "bit": 4000,
+      "highBit": 1
+    },
+    {
+      "name": "超清",
+      "rate": 3,
+      "bit": 2000,
+      "highBit": 0
+    },
+    {
+      "name": "高清",
+      "rate": 2,
+      "bit": 900,
+      "highBit": 0
+    }
+  ],
+  "observations": [
+    {
+      "requestedRate": 0,
+      "error": 0,
+      "returnedRate": 4,
+      "streamTag": "source",
+      "format": "flv",
+      "probe": {
+        "exit": 0,
+        "codec": "h264",
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "videoPackets": 89
+      }
+    },
+    {
+      "requestedRate": 4,
+      "error": 0,
+      "returnedRate": 4,
+      "streamTag": "source",
+      "format": "flv",
+      "probe": {
+        "exit": 0,
+        "codec": "h264",
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "videoPackets": 88
+      }
+    },
+    {
+      "requestedRate": 3,
+      "error": 0,
+      "returnedRate": 3,
+      "streamTag": "source",
+      "format": "flv",
+      "probe": {
+        "exit": 0,
+        "codec": "h264",
+        "width": 1280,
+        "height": 720,
+        "fps": 30,
+        "videoPackets": 89
+      }
+    },
+    {
+      "requestedRate": 2,
+      "error": 0,
+      "returnedRate": 2,
+      "streamTag": "source",
+      "format": "flv",
+      "probe": {
+        "exit": 0,
+        "codec": "h264",
+        "width": 960,
+        "height": 540,
+        "fps": 25,
+        "videoPackets": 72
+      }
+    },
+    {
+      "requestedRate": 1,
+      "error": 0,
+      "returnedRate": 2,
+      "streamTag": "source",
+      "format": "flv",
+      "probe": {
+        "exit": 0,
+        "codec": "h264",
+        "width": 960,
+        "height": 540,
+        "fps": 25,
+        "videoPackets": 72
+      }
+    }
+  ],
+  "problems": [],
+  "finishedAt": "2026-10-18T18:38:59.151Z"
+}
