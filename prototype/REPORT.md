@@ -377,3 +377,20 @@ The mobile `ratestream` endpoint returns 720p30 for every rate, logged in or not
 | 2 高清 | 960×540@25 | 960×540@25 |
 
 So login is what unlocks the top quality. Streams are FLV, which the plan already routes through ffmpeg into the local HLS buffer.
+
+## P0c: YouTube live 1440p (orchestrator, 2026-10-19)
+
+Corrects the P0 finding "YouTube live is HLS only, max 1080p60". That holds only for formats
+that need no PO Token. The `web` client also exposes live adaptive formats up to 1440p60
+(VP9 308, AV1 400, ~9 Mbps) that require a GVS PO Token.
+
+- Token: bgutil-ytdlp-pot-provider 2.0.2 in script mode (no listener; release zip SHA-256
+  a26b980b...27ef verified), `--extractor-args "youtube:player_client=web;formats=incomplete"`.
+  Logged-in cookies are still required; the token is bound to the video ID.
+- Fetch: `youtube-dash/pull.mjs` reads video + audio by `sq` index (5 s segments). 330 s run:
+  70/70 segments, 141/141 HTTP 200, 0 retries, 0 gaps, at most 2 segments behind the head.
+- Mux: byte-concatenating the segments, then `ffmpeg -c copy` to fMP4 HLS, gives continuous
+  timestamps (350 s, 0 gaps). Using ffmpeg's concat demuxer per segment does NOT: audio PTS jump.
+- Playback (`youtube-dash/play/main.cjs`, Electron 44 + hls.js): VP9 and AV1 1440p both use
+  D3D11VideoDecoder (hardware) on RX 6750 XT. The last round played 60 fps with 0 dropped frames
+  for both. The first rounds of the same files dropped 17-37 frames/s; the cause is not known.
