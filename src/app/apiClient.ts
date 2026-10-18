@@ -3,6 +3,9 @@
 import type { DesktopMethods, StreamSyncerBridge } from '../../electron/contracts'
 import type { ResolveFailure, ResolvedStream } from '../../server/platforms/types'
 import type { ProfileIssue, RecognitionProfile } from '../core/profileSchema'
+import type { SourceRole } from '../core/types'
+import type { BufferState } from '../../electron/bufferManager'
+import type { LoginPlatform } from '../../electron/login'
 
 export type ApiResult<T> =
   | { ok: true; value: T }
@@ -78,8 +81,19 @@ export class ApiClient {
   resolve(
     input: string,
     platform?: string,
+    role?: SourceRole,
+    quality?: string,
   ): Promise<ApiResult<{ ok: true; stream: ResolvedStream } | { ok: false; failure: ResolveFailure }>> {
-    return this.request('resolve', { input, platform })
+    return this.request('resolve', { input, platform, ...(role ? { role } : {}), ...(quality ? { quality } : {}) })
+  }
+
+  switchQuality(role: SourceRole, quality: string) { return this.request('switchQuality', { role, quality }) }
+  stopBuffer(role: SourceRole) { return this.request('stopBuffer', { role }) }
+  login(platform: LoginPlatform) { return this.request('login', { platform }) }
+  loginStatus() { return this.request('loginStatus', undefined) }
+  logout(platform: LoginPlatform) { return this.request('logout', { platform }) }
+  subscribeBuffer(listener: (state: BufferState) => void): () => void {
+    try { return this.bridge().subscribeBuffer?.(listener) ?? (() => {}) } catch { return () => {} }
   }
 
   listPresets(): Promise<ApiResult<{ presets: PresetSummary[] }>> {

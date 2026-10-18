@@ -22,9 +22,12 @@ export type MediaDescriptor = {
   viaProxy: boolean
   /** Platform that produced this descriptor, when it came from an adapter. */
   platform?: PlatformId
+  /** Resolver quality choices restart acquisition; they are not hls.js ABR levels. */
+  sourceQualities?: { id: string; label: string; height?: number; fps?: number }[]
+  sourceQuality?: string
 }
 
-export type PlatformId = 'twitch' | 'douyu' | 'direct' | 'file' | 'test'
+export type PlatformId = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'direct' | 'file' | 'test'
 
 /** Whether a media element behaves as a fixed recording or a moving live edge. */
 export type Timebase =

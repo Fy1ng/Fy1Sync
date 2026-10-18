@@ -1,0 +1,230 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { containedPath, NativePrivatePermissions, privateDirectory } from './privateStorage'
+import type { PrivatePermissions } from './privateStorage'
+
+export type LoginPlatform = 'youtube' | 'douyu'
+export interface LoginResult { cookieCount: number; authKeysPresent: string[] }
+export interface PlatformLoginStatus extends LoginResult {
+  loggedIn: boolean
+  /** Earliest persistent authentication-cookie expiry, as Unix seconds. */
+  expiresAt: number | null
+  hasSessionCookies: boolean
+}
+export type LoginStatus = Record<LoginPlatform, PlatformLoginStatus>
+export interface BrowserCookie {
+  domain: string
+  path?: string
+  secure?: boolean
+  httpOnly?: boolean
+  hostOnly?: boolean
+  session?: boolean
+  expirationDate?: number
+  name: string
+  value: string
+}
+interface StoredCookie extends BrowserCookie { subdomains: boolean; expires: number; path: string }
+
+export const LOGIN_PLATFORMS = {
+  youtube: { url: 'https://www.youtube.com', authKeys: ['SAPISID', '__Secure-3PSID', '__Secure-1PSID', 'SID', 'HSID', 'SSID'] },
+  douyu: { url: 'https://www.douyu.com', authKeys: ['acf_uid', 'acf_auth', 'acf_biz', 'acf_stk'] },
+} as const
+
+const MAX_COOKIE_FILE_BYTES = 4 * 1024 * 1024
+const storageFailure = () => new Error('账号数据读写失败, 未返回任何 cookie 数据.')
+export function isLoginPlatform(value: unknown): value is LoginPlatform { return value === 'youtube' || value === 'douyu' }
+
+export function cookieDomainAllowed(domain: string, platform: LoginPlatform): boolean {
+  const host = domain.replace(/^\./, '').toLowerCase()
+  if (!/^[a-z0-9.-]+$/.test(host)) return false
+  if (platform === 'youtube' && (host === 'google.com' || host === 'accounts.google.com' || host.endsWith('.accounts.google.com'))) return true
+  const base = platform === 'youtube' ? 'youtube.com' : 'douyu.com'
+  return host === base || host.endsWith(`.${base}`)
+}
+
+function parseCookies(text: string, platform: LoginPlatform, now: number): StoredCookie[] {
+  if (Buffer.byteLength(text, 'utf8') > MAX_COOKIE_FILE_BYTES || !/^# Netscape HTTP Cookie File\r?\n/.test(text)) throw storageFailure()
+  const cookies: StoredCookie[] = []
+  for (let line of text.split(/\r?\n/)) {
+    if (line.startsWith('#HttpOnly_')) line = line.slice(10)
+    else if (!line || line.startsWith('#')) continue
+    const fields = line.split('\t')
+    const [domain, subdomains, cookiePath, secure, expiry, name, value] = fields
+    if (fields.length !== 7 || !domain || !cookiePath || !expiry || !name || value === undefined
+      || !cookieDomainAllowed(domain, platform) || !/^(TRUE|FALSE)$/.test(subdomains!)
+      || !cookiePath.startsWith('/') || /[\x00-\x20\x7f]/.test(cookiePath) || !/^(TRUE|FALSE)$/.test(secure!)
+      || !/^\d+$/.test(expiry) || !/^[!#$%&'*+.^_`|~a-z0-9-]+$/i.test(name) || /[\x00-\x20\x7f;]/.test(value)) throw storageFailure()
+    const expires = Number(expiry)
+    if (!Number.isSafeInteger(expires)) throw storageFailure()
+    if (expires && expires <= now) continue
+    cookies.push({ domain: domain.replace(/^\./, '').toLowerCase(), subdomains: subdomains === 'TRUE', path: cookiePath,
+      secure: secure === 'TRUE', name, value, expires })
+  }
+  return cookies
+}
+
+export interface CookieStoreOptions { permissions?: PrivatePermissions; now?: () => number }
+
+/** Cookie values are private to the main process; public methods return fixed metadata only. */
+export class CookieStore {
+  private readonly permissions: PrivatePermissions
+  private readonly now: () => number
+  readonly root: string
+
+  constructor(userDataDirectory: string, options: CookieStoreOptions = {}) {
+    this.root = path.resolve(userDataDirectory)
+    this.permissions = options.permissions ?? new NativePrivatePermissions()
+    this.now = options.now ?? (() => Date.now() / 1000)
+  }
+
+  prepareProfile(platform: LoginPlatform): string {
+    try {
+      if (!isLoginPlatform(platform)) throw storageFailure()
+      return privateDirectory(this.root, path.join(this.root, 'browser-profile', platform), this.permissions, true)
+    } catch { throw storageFailure() }
+  }
+
+  private get directory(): string {
+    return privateDirectory(this.root, path.join(this.root, 'cookies'), this.permissions)
+  }
+
+  private target(platform: LoginPlatform): string {
+    if (!isLoginPlatform(platform)) throw storageFailure()
+    return containedPath(this.root, path.join(this.root, 'cookies', `${platform}.txt`))
+  }
+
+  private read(platform: LoginPlatform): { text: string; cookies: StoredCookie[] } | undefined {
+    try {
+      const file = this.target(platform)
+      if (!fs.existsSync(file)) return undefined
+      this.permissions.verify(path.dirname(file), true)
+      this.permissions.verify(file, false)
+      const stat = fs.lstatSync(file)
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_COOKIE_FILE_BYTES) throw storageFailure()
+      const text = fs.readFileSync(file, 'utf8')
+      return { text, cookies: parseCookies(text, platform, this.now()) }
+    } catch { throw storageFailure() }
+  }
+
+  write(platform: LoginPlatform, cookies: BrowserCookie[]): LoginResult {
+    let temporary: string | undefined
+    let descriptor: number | undefined
+    try {
+      if (!isLoginPlatform(platform) || !Array.isArray(cookies) || cookies.length > 50_000) throw storageFailure()
+      const lines = ['# Netscape HTTP Cookie File', '# Stream Syncer private login data. Do not share this file.', '']
+      for (const cookie of cookies) {
+        if (!cookie || typeof cookie.domain !== 'string' || !cookieDomainAllowed(cookie.domain, platform)) continue
+        const subdomains = cookie.hostOnly === undefined ? cookie.domain.startsWith('.') : !cookie.hostOnly
+        const domain = `${cookie.httpOnly ? '#HttpOnly_' : ''}${subdomains ? '.' : ''}${cookie.domain.replace(/^\./, '').toLowerCase()}`
+        const expiry = cookie.session || !cookie.expirationDate ? 0 : Math.floor(cookie.expirationDate)
+        const fields = [domain, subdomains ? 'TRUE' : 'FALSE', cookie.path || '/', cookie.secure ? 'TRUE' : 'FALSE', String(expiry), cookie.name, cookie.value]
+        if (fields.some(field => typeof field !== 'string' || /[\t\r\n\0]/.test(field))) throw storageFailure()
+        lines.push(fields.join('\t'))
+      }
+      const text = `${lines.join('\n')}\n`
+      const selected = parseCookies(text, platform, this.now())
+      const directory = this.directory
+      const target = this.target(platform)
+      if (fs.existsSync(target)) this.permissions.verify(target, false)
+      temporary = containedPath(this.root, path.join(directory, `.${platform}-${randomUUID()}.tmp`))
+      descriptor = fs.openSync(temporary, 'wx', 0o600)
+      this.permissions.protect(temporary, false)
+      fs.writeFileSync(descriptor, text, 'utf8')
+      fs.fsyncSync(descriptor)
+      fs.closeSync(descriptor)
+      descriptor = undefined
+      this.permissions.verify(temporary, false)
+      fs.renameSync(temporary, target)
+      temporary = undefined
+      this.permissions.verify(target, false)
+      const { cookieCount, authKeysPresent } = this.summary(platform, selected)
+      return { cookieCount, authKeysPresent }
+    } catch { throw storageFailure() }
+    finally {
+      if (descriptor !== undefined) fs.closeSync(descriptor)
+      if (temporary !== undefined) fs.rmSync(temporary, { force: true })
+    }
+  }
+
+  private summary(platform: LoginPlatform, cookies: StoredCookie[]): PlatformLoginStatus {
+    const known: readonly string[] = LOGIN_PLATFORMS[platform].authKeys
+    const auth = cookies.filter(cookie => known.includes(cookie.name))
+    const expiries = auth.map(cookie => cookie.expires).filter(expiry => expiry > 0)
+    const present = new Set(auth.map(cookie => cookie.name))
+    return { cookieCount: cookies.length, authKeysPresent: known.filter(key => present.has(key)), loggedIn: auth.length > 0,
+      expiresAt: expiries.length ? Math.min(...expiries) : null, hasSessionCookies: auth.some(cookie => cookie.expires === 0) }
+  }
+
+  status(): LoginStatus {
+    return Object.fromEntries((['youtube', 'douyu'] as const).map(platform => [platform,
+      this.summary(platform, this.read(platform)?.cookies ?? []),
+    ])) as LoginStatus
+  }
+
+  cookieHeader(platform: 'douyu'): string {
+    if (platform !== 'douyu') throw storageFailure()
+    return (this.read(platform)?.cookies ?? [])
+      .filter(cookie => (cookie.domain === 'www.douyu.com' || (cookie.subdomains && cookie.domain === 'douyu.com'))
+        && (cookie.path === '/' || '/lapi/live/getH5PlayV1/'.startsWith(cookie.path.endsWith('/') ? cookie.path : `${cookie.path}/`)))
+      .sort((a, b) => b.path.length - a.path.length)
+      .map(cookie => `${cookie.name}=${cookie.value}`).join('; ')
+  }
+
+  async withTemporaryCookies<T>(platform: 'youtube', callback: (file?: string) => Promise<T>): Promise<T> {
+    let directory: string | undefined
+    let temporary: string | undefined
+    const cleanup = () => {
+      if (!directory) return
+      try {
+        containedPath(this.root, directory)
+        this.permissions.verify(directory, true, true)
+        fs.rmSync(directory, { recursive: true, force: true })
+        directory = undefined
+      } catch { throw storageFailure() }
+    }
+    // A normal app exit also removes a copy held by an interrupted extraction.
+    const onExit = () => { try { cleanup() } catch { /* Never log cookie-related errors. */ } }
+    try {
+      let loaded: ReturnType<CookieStore['read']>
+      try {
+        if (platform !== 'youtube') throw storageFailure()
+        loaded = this.read(platform)
+        if (loaded?.cookies.length) {
+          const parent = this.directory
+          directory = fs.mkdtempSync(path.join(parent, 'yt-dlp-'))
+          containedPath(this.root, directory)
+          this.permissions.protect(directory, true)
+          temporary = containedPath(this.root, path.join(directory, 'cookies.txt'))
+          const descriptor = fs.openSync(temporary, 'wx', 0o600)
+          try {
+            this.permissions.protect(temporary, false)
+            fs.writeFileSync(descriptor, loaded.text, 'utf8')
+            fs.fsyncSync(descriptor)
+          } finally { fs.closeSync(descriptor) }
+          this.permissions.verify(temporary, false)
+          process.once('exit', onExit)
+        }
+      } catch { throw storageFailure() }
+      return await callback(temporary)
+    } finally {
+      process.removeListener('exit', onExit)
+      cleanup()
+    }
+  }
+
+  logout(platform: LoginPlatform): void {
+    try {
+      const file = this.target(platform)
+      if (fs.existsSync(file)) {
+        this.permissions.verify(file, false)
+        fs.unlinkSync(file)
+      }
+      const profile = containedPath(this.root, path.join(this.root, 'browser-profile', platform))
+      if (fs.existsSync(profile)) {
+        this.permissions.verify(profile, true, true)
+        fs.rmSync(profile, { recursive: true, force: true })
+      }
+    } catch { throw storageFailure() }
+  }
+}

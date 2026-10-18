@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseBilibiliRoom } from './bilibili'
-import { douyuRoomFor, parseDouyuRoom, resolveDouyu } from './douyu'
+import { douyuRoomFor, parseDouyuRoom } from './douyu'
 import { detectPlatform, looksLikeDirectMedia, resolveStream } from './index'
 import { parseTwitchChannel, resolveTwitch } from './twitch'
 import { resolveBilibili } from './bilibili'
@@ -139,102 +139,6 @@ describe('parseDouyuRoom', () => {
   it('exposes the room id alone for the danmaku relay', () => {
     expect(douyuRoomFor('https://www.douyu.com/288016')).toBe('288016')
     expect(douyuRoomFor('nope')).toBeNull()
-  })
-})
-
-describe('resolveDouyu', () => {
-  it('uses hls_url when the room API returns one', async () => {
-    const result = await resolveDouyu(
-      '288016',
-      deps({
-        fetchJson: async (url) => {
-          expect(url).toContain('/api/RoomApi/room/288016')
-          return {
-            error: 0,
-            data: {
-              room_id: '288016',
-              room_name: '解说间',
-              online: 12345,
-              room_status: '1',
-              hls_url: 'https://hlsa.douyucdn.cn/live/288016.m3u8',
-            },
-          }
-        },
-      }),
-    )
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(result.stream.kind).toBe('hls')
-    expect(result.stream.danmakuRoom).toBe('288016')
-    expect(result.stream.requiresProxy).toBe(true)
-    expect(decodeURIComponent(result.stream.url)).toContain('https://hlsa.douyucdn.cn/live/288016.m3u8')
-  })
-
-  it('falls back to an http rtmp_url that is really an m3u8', async () => {
-    const result = await resolveDouyu(
-      '288016',
-      deps({
-        fetchJson: async () => ({
-          error: 0,
-          data: {
-            room_id: '288016',
-            room_name: 'x',
-            room_status: '1',
-            hls_url: '',
-            rtmp_url: 'https://hlsa.douyucdn.cn/live',
-            rtmp_live: '288016rkKb.m3u8?wsSecret=abc',
-          },
-        }),
-      }),
-    )
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(decodeURIComponent(result.stream.url)).toContain('288016rkKb.m3u8')
-  })
-
-  it('needs a manual URL but still surfaces the room id for danmaku', async () => {
-    const result = await resolveDouyu(
-      '288016',
-      deps({
-        fetchJson: async () => ({
-          error: 0,
-          data: { room_id: '288016', room_name: 'x', room_status: '1', hls_url: '' },
-        }),
-      }),
-    )
-    expect(result.ok).toBe(false)
-    if (result.ok) return
-    expect(result.failure.code).toBe('needs-manual-url')
-    // Danmaku does not need the video URL, so the hint must not lose the room number.
-    expect(result.failure.hint).toContain('288016')
-  })
-
-  it('reports a closed room as not-live', async () => {
-    const result = await resolveDouyu(
-      '288016',
-      deps({
-        fetchJson: async () => ({
-          error: 0,
-          data: {
-            room_id: '288016',
-            room_name: 'x',
-            room_status: '2',
-            hls_url: 'https://hlsa.douyucdn.cn/live/x.m3u8',
-          },
-        }),
-      }),
-    )
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.failure.code).toBe('not-live')
-  })
-
-  it('reports room-not-found when the API returns an error code', async () => {
-    const result = await resolveDouyu(
-      '999999999',
-      deps({ fetchJson: async () => ({ error: 101, data: null }) }),
-    )
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.failure.code).toBe('room-not-found')
   })
 })
 

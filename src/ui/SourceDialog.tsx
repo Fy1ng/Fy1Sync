@@ -9,13 +9,15 @@
  * clips with a known offset, so sync can be exercised without a live match.
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { roleName } from '../app/session'
 import { describeSource, parseSourceInput, toDescriptor } from '../core/mediaSources'
 import { SOURCE_ROLES } from '../core/types'
 import type { MediaDescriptor, SourceRole } from '../core/types'
+import type { LoginPlatform, LoginStatus } from '../../electron/login'
+import { bufferStatusText } from './bufferStatus'
 
 /** Looping local fixtures, also used by the E2E specs. */
 /**
@@ -54,9 +56,11 @@ export function SourceDialog({ onClose }: { onClose: () => void }): React.ReactN
           ))}
         </div>
 
+        <Accounts />
+
         <footer className="dialog-footer">
           <span className="hint">
-            官方画面建议用 Twitch 频道，国内解说用斗鱼房间号；直连失败时可粘贴 m3u8 / mp4 地址。
+            官方画面建议用 YouTube 直播, 也支持 Twitch; 解说用斗鱼或 B 站. 可粘贴 m3u8 / mp4 / flv 地址.
           </span>
           <button type="button" className="primary" onClick={onClose}>
             完成
@@ -103,30 +107,28 @@ function RolePanel({ role }: { role: SourceRole }): React.ReactNode {
     }
 
     setBusy(true)
-    const result = await apiClient.resolve(parsed.url, parsed.platform)
-    setBusy(false)
+    const generation = session.beginSourceChange(role)
+    try {
+      const result = await apiClient.resolve(parsed.url, parsed.platform, role)
+      if (generation !== session.sourceRevision(role)) return
+      if (!result.ok) { setProblem({ message: result.message }); return }
+      if (!result.value.ok) {
+        const { failure } = result.value
+        setProblem({ message: failure.message, hint: failure.hint })
+        return
+      }
 
-    if (!result.ok) {
-      setProblem({ message: result.message })
-      return
-    }
-    if (!result.value.ok) {
-      const { failure } = result.value
-      setProblem({ message: failure.message, hint: failure.hint })
-      return
-    }
-
-    const stream = result.value.stream
-    setNotes(stream.notes ?? [])
-    await load(
-      toDescriptor(
-        { ...parsed, kind: stream.kind, label: stream.label },
-        { url: stream.url, viaProxy: stream.requiresProxy },
-      ),
-    )
-    // Douyu resolution also tells us the danmaku room, which is the only way the relay
-    // can subscribe. Only the commentary side carries danmaku.
-    if (role === 'commentary' && stream.danmakuRoom) session.connectDanmaku(stream.danmakuRoom)
+      const stream = result.value.stream
+      setNotes(stream.notes ?? [])
+      await session.loadSource(role, {
+        ...toDescriptor(
+          { ...parsed, kind: stream.kind, label: stream.label },
+          { url: stream.url, viaProxy: stream.requiresProxy },
+        ), sourceQualities: stream.qualities, sourceQuality: stream.quality,
+      })
+      // Only commentary carries the independently resolved danmaku room.
+      if (role === 'commentary' && stream.danmakuRoom) session.connectDanmaku(stream.danmakuRoom)
+    } finally { setBusy(false) }
   }
 
   return (
@@ -138,6 +140,15 @@ function RolePanel({ role }: { role: SourceRole }): React.ReactNode {
           <span className="source-error">（{state.error.message}）</span>
         )}
       </p>
+
+      {snapshot.buffers[role] && <p className="hint" role="status">{bufferStatusText(snapshot.buffers[role]!)}</p>}
+      {(state.descriptor?.sourceQualities?.length ?? 0) > 0 && <label className="field">
+        <span>画质</span>
+        <select value={state.descriptor?.sourceQuality ?? ''} disabled={busy || snapshot.qualityBusy[role]}
+          onChange={(event) => void session.changeSourceQuality(role, event.target.value)}>
+          {state.descriptor!.sourceQualities!.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+        </select>
+      </label>}
 
       <form
         onSubmit={(event) => {
@@ -151,7 +162,7 @@ function RolePanel({ role }: { role: SourceRole }): React.ReactNode {
             value={input}
             onChange={(event) => setInput(event.target.value)}
             placeholder={
-              role === 'official' ? 'twitch.tv/esl_csgo 或 …m3u8' : 'douyu.com/9999 或 …m3u8'
+              role === 'official' ? 'youtube.com/watch?v=... 或 twitch.tv/esl_csgo' : 'douyu.com/9999 或 live.bilibili.com/房间号'
             }
           />
         </label>
@@ -163,6 +174,7 @@ function RolePanel({ role }: { role: SourceRole }): React.ReactNode {
             本地文件
             <input
               type="file"
+              disabled={busy}
               accept="video/*"
               onChange={(event) => {
                 const file = event.target.files?.[0]
@@ -181,7 +193,7 @@ function RolePanel({ role }: { role: SourceRole }): React.ReactNode {
             />
           </label>
           {state.status !== 'empty' && (
-            <button type="button" className="ghost" onClick={() => session.unloadSource(role)}>
+            <button type="button" className="ghost" disabled={busy} onClick={() => session.unloadSource(role)}>
               卸载
             </button>
           )}
@@ -209,6 +221,7 @@ function RolePanel({ role }: { role: SourceRole }): React.ReactNode {
           <button
             key={source.url}
             type="button"
+            disabled={busy}
             onClick={() =>
               void load({
                 kind: 'test',
@@ -230,6 +243,43 @@ function RolePanel({ role }: { role: SourceRole }): React.ReactNode {
       {role === 'commentary' && <DanmakuRoomField />}
     </section>
   )
+}
+
+function Accounts(): React.ReactNode {
+  const [status, setStatus] = useState<LoginStatus | null>(null)
+  const [busy, setBusy] = useState<LoginPlatform | null>(null)
+  const [message, setMessage] = useState('')
+  const refresh = async () => {
+    const result = await apiClient.loginStatus()
+    if (result.ok && result.value?.youtube && result.value?.douyu) setStatus(result.value)
+    else if (!result.ok) setMessage(result.message)
+  }
+  useEffect(() => { void refresh() }, [])
+  const action = async (platform: LoginPlatform, logout = false) => {
+    if (busy) return
+    setBusy(platform)
+    setMessage(logout ? '正在清除登录信息' : '请在打开的 Chrome 窗口中登录, 完成后关闭该窗口')
+    try {
+      const result = logout ? await apiClient.logout(platform) : await apiClient.login(platform)
+      setMessage(result.ok ? (logout ? '已退出登录并删除专用浏览器资料' : '登录信息已保存') : result.message)
+      await refresh()
+    } finally { setBusy(null) }
+  }
+  return <section className="account-section" aria-label="账号">
+    <h3>账号</h3>
+    <p className="hint">登录可选. YouTube 验证和斗鱼原画可能需要登录. 登录完成后请重新加载片源.</p>
+    {(['youtube', 'douyu'] as const).map((platform) => <div key={platform} className="source-actions">
+      <button type="button" disabled={busy !== null} onClick={() => void action(platform)}>
+        {platform === 'youtube' ? '登录 YouTube' : '登录斗鱼'}
+      </button>
+      <span className="hint">{status?.[platform].loggedIn ? '已登录' : '未登录'}
+        {status?.[platform].expiresAt ? `, 到期 ${new Date(status[platform].expiresAt! * 1000).toISOString().slice(0, 10)}` : ''}
+      </span>
+      {status?.[platform].cookieCount ? <button type="button" className="ghost" disabled={busy !== null}
+        onClick={() => void action(platform, true)}>退出登录</button> : null}
+    </div>)}
+    {message && <p role="status" className="hint">{message}</p>}
+  </section>
 }
 
 /** Danmaku can be subscribed independently: the room may differ from the video source. */

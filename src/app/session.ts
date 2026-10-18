@@ -30,6 +30,7 @@ import { AutoSyncController, type AutoSyncPhase, type AutoSyncRunResult } from '
 import { apiClient, type PresetSummary } from './apiClient'
 import type { AppSettings } from './settings'
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from './settings'
+import type { BufferState } from '../../electron/bufferManager'
 
 /** What a component sees. Plain data, replaced wholesale on every change. */
 export interface SessionSnapshot {
@@ -62,6 +63,8 @@ export interface SessionSnapshot {
   /** Presets the server offers, so the player can pick one without opening the editor. */
   presets: PresetSummary[]
   notices: Notice[]
+  buffers: Record<SourceRole, BufferState | null>
+  qualityBusy: Record<SourceRole, boolean>
 }
 
 export interface Notice {
@@ -108,6 +111,11 @@ export class Session {
   private playingValue = false
   private noticeSeq = 0
   private noticeList: Notice[] = []
+  private bufferStates: Record<SourceRole, BufferState | null> = { official: null, commentary: null }
+  private qualityBusy: Record<SourceRole, boolean> = { official: false, commentary: false }
+  private sourceGeneration: Record<SourceRole, number> = { official: 0, commentary: 0 }
+  private releaseBuffer: (() => void) | undefined
+  private readonly pendingQualityWaits = new Set<() => void>()
   private profileMap: Record<SourceRole, RecognitionProfile | null> = {
     official: null,
     commentary: null,
@@ -155,6 +163,11 @@ export class Session {
     )
 
     this.engine.subscribe(() => this.notify())
+    this.releaseBuffer = apiClient.subscribeBuffer((state) => {
+      if (state.role !== 'official' && state.role !== 'commentary') return
+      this.bufferStates = { ...this.bufferStates, [state.role]: state }
+      this.notify()
+    })
     this.autoSync.onPhaseChange(() => this.notify())
     this.snapshotValue = this.buildSnapshot()
     this.applyAudioSettings()
@@ -221,6 +234,8 @@ export class Session {
       profiles: { ...this.profileMap },
       presets: this.presetList,
       notices: this.noticeList,
+      buffers: { ...this.bufferStates },
+      qualityBusy: { ...this.qualityBusy },
     }
   }
 
@@ -389,8 +404,18 @@ export class Session {
 
   // ----------------------------------------------------------------- sources
 
+  beginSourceChange(role: SourceRole): number { return ++this.sourceGeneration[role] }
+  sourceRevision(role: SourceRole): number { return this.sourceGeneration[role] }
+
   async loadSource(role: SourceRole, descriptor: MediaDescriptor): Promise<void> {
+    const generation = ++this.sourceGeneration[role]
+    if (!descriptor.url.includes('/buffer/')) {
+      await apiClient.stopBuffer(role)
+      this.bufferStates = { ...this.bufferStates, [role]: null }
+    }
+    if (generation !== this.sourceGeneration[role] || this.disposed) return
     await this.engine.load(role, descriptor)
+    if (generation !== this.sourceGeneration[role] || this.disposed) return
     const state = this.engine.getState()[role]
     if (state.status === 'error') {
       this.notice('error', `${roleName(role)}加载失败：${state.error?.message ?? '未知错误'}`)
@@ -408,10 +433,82 @@ export class Session {
   }
 
   unloadSource(role: SourceRole): void {
+    ++this.sourceGeneration[role]
+    void apiClient.stopBuffer(role)
+    this.bufferStates = { ...this.bufferStates, [role]: null }
     this.engine.unload(role)
     this.applied = { ...this.applied, [role]: 0 }
     this.requestedOffset = offsetFromRewind(this.applied)
     this.notify()
+  }
+
+  /** Restart just one producer, then make at most one explicit synchronization attempt. */
+  async changeSourceQuality(role: SourceRole, quality: string): Promise<void> {
+    const descriptor = this.engine.getState()[role].descriptor
+    if (this.qualityBusy[role] || !descriptor?.sourceQualities?.some((option) => option.id === quality)
+      || descriptor.sourceQuality === quality) return
+    const generation = ++this.sourceGeneration[role]
+    const wasPlaying = !this.engine.element(role).paused
+    this.qualityBusy = { ...this.qualityBusy, [role]: true }
+    this.notify()
+    try {
+      const response = await apiClient.switchQuality(role, quality)
+      if (generation !== this.sourceGeneration[role] || this.disposed) return
+      if (!response.ok) { this.notice('warn', response.message); return }
+      if (!response.value.ok) {
+        this.notice('warn', response.value.failure.message)
+        return
+      }
+      const stream = response.value.stream
+      const replacement: MediaDescriptor = { ...descriptor, url: stream.url, kind: stream.kind,
+        label: stream.label, sourceQualities: stream.qualities, sourceQuality: stream.quality }
+      await this.loadSource(role, replacement)
+      const loadedGeneration = this.sourceGeneration[role]
+      if (this.engine.getState()[role].descriptor !== replacement || this.disposed) return
+      if (this.engine.getState()[role].status === 'error') {
+        this.notice('warn', '画质切换后播放失败, 请重新加载片源')
+        return
+      }
+      if (wasPlaying) {
+        try { await this.engine.element(role).play() }
+        catch { this.notice('warn', '画质已切换, 请恢复播放后点击立即同步'); return }
+      }
+      const available = await this.waitForQualityFrames(role, loadedGeneration)
+      if (this.disposed || loadedGeneration !== this.sourceGeneration[role]) return
+      if (!available || !SOURCE_ROLES.some((item) => this.profileFor(item))) {
+        this.notice('info', '画质已切换, 两路画面就绪并选择预设后请点击立即同步')
+        return
+      }
+      if (SOURCE_ROLES.some((item) => this.engine.element(item).paused)) {
+        this.notice('info', '画质已切换, 请恢复两路播放后点击立即同步')
+        return
+      }
+      const result = await this.syncNow()
+      if (!result.applied) this.notice('warn', '画质已切换, 自动同步未完成, 请点击立即同步')
+    } finally {
+      this.qualityBusy = { ...this.qualityBusy, [role]: false }
+      this.notify()
+    }
+  }
+
+  private waitForQualityFrames(role: SourceRole, generation: number): Promise<boolean> {
+    const ready = () => SOURCE_ROLES.every((item) => this.engine.getState()[item].status === 'ready'
+      && this.engine.element(item).readyState >= 2)
+    if (ready()) return Promise.resolve(true)
+    // No selected profile or other source means waiting cannot lead to synchronization.
+    if (!SOURCE_ROLES.some((item) => this.profileFor(item))
+      || SOURCE_ROLES.some((item) => this.engine.getState()[item].status === 'empty')) return Promise.resolve(false)
+    return new Promise((resolve) => {
+      const finish = (result: boolean) => { clearTimeout(timer); off(); this.pendingQualityWaits.delete(cancel); resolve(result) }
+      const cancel = () => finish(false)
+      const timer = setTimeout(cancel, 20_000)
+      const off = this.engine.subscribe(() => {
+        if (this.disposed || generation !== this.sourceGeneration[role] || ready()) {
+          finish(!this.disposed && generation === this.sourceGeneration[role] && ready())
+        }
+      })
+      this.pendingQualityWaits.add(cancel)
+    })
   }
 
   swapRoles(): void {
@@ -720,6 +817,12 @@ export class Session {
   /** Tear the session down for good. Only its owner may call this. */
   dispose(): void {
     this.disposed = true
+    this.releaseBuffer?.()
+    for (const cancel of this.pendingQualityWaits) cancel()
+    for (const role of SOURCE_ROLES) {
+      ++this.sourceGeneration[role]
+      if (this.engine.getState()[role].descriptor?.url.includes('/buffer/')) void apiClient.stopBuffer(role)
+    }
     this.stopScheduler()
     this.disconnectDanmaku()
     this.autoSync.dispose()

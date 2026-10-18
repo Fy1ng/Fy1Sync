@@ -1,0 +1,80 @@
+{
+  "_fixture": "Sanitized yt-dlp 2026.08.19 live format subset recorded in prototype/.evidence/youtube-buffer.json on 2026-10-19. URLs, title, channel, headers and identifying metadata replaced or omitted.",
+  "id": "abcdefghijk",
+  "is_live": true,
+  "live_status": "is_live",
+  "formats": [
+    {
+      "format_id": "91",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "width": 256,
+      "height": 144,
+      "fps": 30,
+      "vcodec": "avc1.4D400C",
+      "acodec": "mp4a.40.5",
+      "tbr": 269.034,
+      "url": "https://media.example.invalid/youtube/91.m3u8"
+    },
+    {
+      "format_id": "92",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "width": 426,
+      "height": 240,
+      "fps": 30,
+      "vcodec": "avc1.4D4015",
+      "acodec": "mp4a.40.5",
+      "tbr": 507.418,
+      "url": "https://media.example.invalid/youtube/92.m3u8"
+    },
+    {
+      "format_id": "93",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "width": 640,
+      "height": 360,
+      "fps": 30,
+      "vcodec": "avc1.4D401E",
+      "acodec": "mp4a.40.2",
+      "tbr": 962.461,
+      "url": "https://media.example.invalid/youtube/93.m3u8"
+    },
+    {
+      "format_id": "94",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "width": 854,
+      "height": 480,
+      "fps": 30,
+      "vcodec": "avc1.4D401F",
+      "acodec": "mp4a.40.2",
+      "tbr": 1282.517,
+      "url": "https://media.example.invalid/youtube/94.m3u8"
+    },
+    {
+      "format_id": "300",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "width": 1280,
+      "height": 720,
+      "fps": 60,
+      "vcodec": "avc1.4D4020",
+      "acodec": "mp4a.40.2",
+      "tbr": 2922.155,
+      "url": "https://media.example.invalid/youtube/300.m3u8"
+    },
+    {
+      "format_id": "301",
+      "protocol": "m3u8_native",
+      "ext": "mp4",
+      "width": 1920,
+      "height": 1080,
+      "fps": 60,
+      "vcodec": "avc1.4D402A",
+      "acodec": "mp4a.40.2",
+      "tbr": 5552.61,
+      "url": "https://media.example.invalid/youtube/301.m3u8"
+    }
+  ]
+}

@@ -113,7 +113,7 @@ describe('desktop main-process service', () => {
   })
 
   describe('stream resolution and registration', () => {
-    it.each([undefined, {}, null, [], { input: 'x', extra: true }, { input: 'x', platform: 'youtube' }, { input: 'x'.repeat(8_193) }])('validates resolver arguments: %j', async (args) => {
+    it.each([undefined, {}, null, [], { input: 'x', extra: true }, { input: 'x', platform: 'unsupported' }, { input: 'x'.repeat(8_193) }])('validates resolver arguments: %j', async (args) => {
       expect(await service.invoke('resolve', args)).toMatchObject({ ok: false, code: 'invalid-arguments' })
     })
 
@@ -174,13 +174,16 @@ describe('desktop main-process service', () => {
     })
 
     it('fetches platform metadata with fixed headers and registers the resulting media', async () => {
-      fetchImpl.mockResolvedValue(new Response(JSON.stringify({ error: 0, data: {
-        room_id: '288016', room_status: '1', room_name: 'test room', hls_url: 'https://8.8.8.8/index.m3u8',
+      fetchImpl.mockResolvedValueOnce(new Response(JSON.stringify({ error: 0, data: {
+        rand_str: 'seed', key: 'key', enc_time: 1, is_special: 0, enc_data: 'encrypted',
+      } }), { headers: { 'content-type': 'application/json' } }))
+      fetchImpl.mockResolvedValueOnce(new Response(JSON.stringify({ error: 0, data: {
+        rtmp_url: 'https://8.8.8.8', rtmp_live: 'index.m3u8', rate: 0, multirates: [{ rate: 0, name: '原画' }],
       } }), { headers: { 'content-type': 'application/json' } }))
       const result = value(await service.invoke('resolve', { input: '288016', platform: 'douyu' }))
       expect(result.stream).toMatchObject({ platform: 'douyu', url: 'app://app/media/test-1', danmakuRoom: '288016', requiresProxy: false })
       expect(fetchImpl).toHaveBeenCalledWith(expect.any(URL), expect.objectContaining({
-        redirect: 'manual', method: 'GET', headers: { accept: 'application/json, text/plain, */*' },
+        redirect: 'manual', method: 'POST', headers: expect.objectContaining({ Referer: 'https://www.douyu.com/' }),
       }))
     })
 

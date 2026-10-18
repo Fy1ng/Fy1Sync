@@ -12,6 +12,7 @@ import { seekableRange } from '../core/syncPlan'
 import { DropUp } from './controls/DropUp'
 import type { DropUpOption } from './controls/DropUp'
 import type { SourceRole } from '../core/types'
+import { bufferStatusText } from './bufferStatus'
 
 interface Props {
   visible: boolean
@@ -74,6 +75,19 @@ export function OverlayBar({
       <ProgressBar />
 
       <div className="overlay-right">
+        {(['official', 'commentary'] as const).map((role) => {
+          const descriptor = snapshot.media[role].descriptor
+          if (!descriptor?.sourceQualities?.length) return null
+          return <DropUp key={role} label={role === 'official' ? '官方画质' : '解说画质'}
+            value={descriptor.sourceQuality ?? ''}
+            options={descriptor.sourceQualities.map((option) => ({ value: option.id, label: option.label }))}
+            onChange={(quality) => void session.changeSourceQuality(role, quality)}
+            disabled={snapshot.qualityBusy[role]} />
+        })}
+        {snapshot.buffers[snapshot.mainRole] && <span className="hint" role="status">
+          {bufferStatusText(snapshot.buffers[snapshot.mainRole]!)}
+        </span>}
+        {!main.descriptor?.sourceQualities?.length &&
         <DropUp
           label="画质"
           value={main.level}
@@ -82,6 +96,7 @@ export function OverlayBar({
           disabled={main.quality.length <= 1}
           title={main.quality.length <= 1 ? '当前片源没有可选画质' : undefined}
         />
+        }
         {/*
           Reserved for V0.6, where the commentary stream also supplies a cropped webcam:
           docs/ui-layout.md asks for the entry up front so adding the feature does not move

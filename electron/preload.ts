@@ -1,9 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { StreamSyncerBridge, DesktopMethod, DesktopMethods, DanmakuEvent } from './contracts'
 import type { ApiResult } from '../src/app/apiClient'
+import type { BufferState } from './bufferManager'
 
 const methods = new Set<DesktopMethod>([
   'health', 'verifyAdmin', 'resolve', 'listPresets', 'getPreset', 'savePreset', 'deletePreset',
+  'switchQuality', 'stopBuffer', 'login', 'loginStatus', 'logout',
 ])
 let nextSubscription = 0
 
@@ -34,6 +36,12 @@ const bridge: StreamSyncerBridge = {
       ipcRenderer.removeListener('stream-syncer:danmaku', receive)
       void ipcRenderer.invoke('stream-syncer:unsubscribe', subscriptionId).catch(() => {})
     }
+  },
+  subscribeBuffer(listener) {
+    let active = true
+    const receive = (_event: unknown, state: BufferState) => { if (active) listener(state) }
+    ipcRenderer.on('stream-syncer:buffer', receive)
+    return () => { active = false; ipcRenderer.removeListener('stream-syncer:buffer', receive) }
   },
 }
 contextBridge.exposeInMainWorld('streamSyncer', Object.freeze(bridge))

@@ -4,6 +4,7 @@ import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron'
 import type { DesktopService } from '../server/api'
 import { installIpcHandlers, trustedSender } from './ipc'
 import { CONTENT_SECURITY_POLICY, isAppDocument, isAppOrigin } from './security'
+import type { BufferState } from './bufferManager'
 
 function fixture() {
   const contents = Object.assign(new EventEmitter(), {
@@ -17,9 +18,14 @@ function fixture() {
     subscriber.write('state', { state: 'connecting' })
     return release
   })
-  const service = { invoke: vi.fn(async () => ({ ok: true, value: {} })), relay: { subscribe }, dispose: vi.fn() } as unknown as DesktopService
+  let bufferListener: ((state: BufferState) => void) | undefined
+  const bufferRelease = vi.fn()
+  const service = { invoke: vi.fn(async () => ({ ok: true, value: {} })), relay: { subscribe }, dispose: vi.fn(),
+    subscribeBuffer: (listener: (state: BufferState) => void) => { bufferListener = listener; return bufferRelease },
+  } as unknown as DesktopService
   const installed = installIpcHandlers(ipc, contents, service)
   return { contents, event, handlers, release, subscribe, service, installed,
+    bufferRelease, emitBuffer: (state: BufferState) => bufferListener?.(state),
     call: (channel: string, ...args: unknown[]) => handlers.get('stream-syncer:' + channel)!(event, ...args),
   }
 }
@@ -61,6 +67,18 @@ describe('app origin and document boundary', () => {
 })
 
 describe('IPC routing and subscription lifecycle', () => {
+  it('delivers buffer summaries only to a trusted app document and releases on disposal', () => {
+    const f = fixture()
+    const state: BufferState = { role: 'official', state: 'buffering', seconds: 3.5 }
+    f.emitBuffer(state)
+    expect(f.contents.send).toHaveBeenCalledWith('stream-syncer:buffer', state)
+    f.contents.send = vi.fn()
+    Object.assign(f.contents.mainFrame, { url: 'app://app/buffer/untrusted' })
+    f.emitBuffer(state)
+    expect(f.contents.send).not.toHaveBeenCalled()
+    f.installed.dispose()
+    expect(f.bufferRelease).toHaveBeenCalledOnce()
+  })
   it('forwards only trusted invokes to the validated service', async () => {
     const f = fixture()
     await f.call('invoke', 'health', undefined)

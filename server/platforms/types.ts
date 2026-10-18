@@ -1,6 +1,13 @@
 /** Shared shapes for platform stream resolution. */
 
-export type PlatformKind = 'twitch' | 'douyu' | 'bilibili' | 'direct'
+export type PlatformKind = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'direct'
+
+export type QualityOption = {
+  id: string
+  label: string
+  height?: number
+  fps?: number
+}
 
 export type ResolvedStream = {
   platform: PlatformKind
@@ -16,6 +23,11 @@ export type ResolvedStream = {
   notes?: string[]
   /** Room id for platforms whose danmaku relay needs it. */
   danmakuRoom?: string
+  qualities?: QualityOption[]
+  /** The rendition actually returned, which may differ from the requested quality. */
+  quality?: string
+  /** Main-process-only input headers. Strip these before crossing IPC. */
+  headers?: Record<string, string>
 }
 
 export type ResolveFailureCode =
@@ -42,6 +54,12 @@ export type ResolverDeps = {
   fetchText: (url: string, init?: RequestInit) => Promise<string>
   /** Wraps a URL so the browser loads it from our origin. */
   proxify: (url: string) => string
+  /** Main owns process launching, JS runtime setup and temporary cookie copies. */
+  runYtDlp?: (url: string) => Promise<unknown>
+  /** Main-process-only cookie header read from the private Douyu cookie store. */
+  douyuCookie?: string
+  quality?: string
+  now?: () => number
 }
 
 export function failure(

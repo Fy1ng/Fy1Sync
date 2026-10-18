@@ -8,6 +8,14 @@ function expectOk(input: string) {
 }
 
 describe('parseSourceInput', () => {
+  it('routes YouTube live pages and Bilibili rooms through main acquisition', () => {
+    const youtube = expectOk('https://www.youtube.com/watch?v=abcdefghijk')
+    expect(youtube.platform).toBe('youtube')
+    expect(youtube.needsResolve).toBe(true)
+    const bilibili = expectOk('https://live.bilibili.com/123456')
+    expect(bilibili.platform).toBe('bilibili')
+    expect(bilibili.needsResolve).toBe(true)
+  })
   it('recognises a Twitch channel page and marks it for resolution', () => {
     const result = expectOk('https://www.twitch.tv/esl_csgo')
     expect(result.platform).toBe('twitch')

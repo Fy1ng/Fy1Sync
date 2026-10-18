@@ -83,6 +83,18 @@ export function parseSourceInput(raw: string): SourceParseResult {
 
   const host = url.hostname.toLowerCase().replace(/^www\./u, '').replace(/^m\./u, '')
 
+  if (host === 'youtube.com' || host === 'youtu.be') {
+    return { ok: true, platform: 'youtube', kind: 'hls', url: url.href,
+      needsResolve: true, suggestProxy: false, label: 'YouTube 直播' }
+  }
+
+  if (host === 'live.bilibili.com') {
+    const room = firstPathSegment(url)
+    if (!room || !/^\d+$/.test(room)) return { ok: false, reason: 'unsupported-page', message: 'B 站链接里没有房间号' }
+    return { ok: true, platform: 'bilibili', kind: 'hls', url: `https://live.bilibili.com/${room}`,
+      needsResolve: true, suggestProxy: false, label: `B 站 / ${room}`, channel: room }
+  }
+
   if (host === 'twitch.tv' || host.endsWith('.twitch.tv')) {
     const channel = firstPathSegment(url)
     if (!channel) {
@@ -135,7 +147,7 @@ export function parseSourceInput(raw: string): SourceParseResult {
   return {
     ok: false,
     reason: 'unsupported-page',
-    message: '这看起来是一个普通网页。请填入 Twitch/斗鱼 直播间地址，或直接的 .m3u8 / .mp4 链接',
+    message: '请填入 YouTube / Twitch / 斗鱼 / B 站直播间地址, 或直接的 .m3u8 / .mp4 / .flv 链接',
   }
 }
 

@@ -17,6 +17,9 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
     if (!contents.isDestroyed()) contents.send('stream-syncer:danmaku', { subscriptionId, event, data })
   }
   const clear = () => { for (const entry of subscriptions.values()) entry.release(); subscriptions.clear() }
+  const releaseBuffer = service.subscribeBuffer?.((state) => {
+    if (!contents.isDestroyed() && isAppDocument(contents.mainFrame.url)) contents.send('stream-syncer:buffer', state)
+  })
   ipc.handle('stream-syncer:invoke', (event, method: unknown, args: unknown) => {
     if (!trustedSender(event, contents)) return denied()
     return service.invoke(method, args)
@@ -49,6 +52,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
   contents.once('destroyed', clear)
   return {
     dispose() {
+      releaseBuffer?.()
       clear()
       contents.removeListener('did-start-navigation', navigated)
       contents.removeListener('destroyed', clear)

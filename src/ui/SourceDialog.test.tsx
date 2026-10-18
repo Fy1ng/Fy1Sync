@@ -52,7 +52,7 @@ describe('SourceDialog desktop media registration', () => {
     await waitFor(() => expect(session.engine.getState().official.descriptor?.url).toBe('app://app/media/registered-id'))
     await waitFor(() => expect(panel.getByRole('button', { name: '加载' })).toBeEnabled())
     expect(bridge.invoke).toHaveBeenCalledWith('resolve', {
-      input: 'https://cdn.example.com/live/index.m3u8', platform: 'direct',
+      input: 'https://cdn.example.com/live/index.m3u8', platform: 'direct', role: 'official',
     })
   })
 
@@ -72,6 +72,38 @@ describe('SourceDialog desktop media registration', () => {
     fireEvent.click(panel.getByRole('button', { name: /测试源 · 官方画面/ }))
     await waitFor(() => expect(session.engine.getState().official.descriptor?.url).toBe('/test-sources/official.mp4'))
     await waitFor(() => expect(panel.queryByRole('button', { name: '处理中…' })).not.toBeInTheDocument())
-    expect(bridge.invoke).not.toHaveBeenCalled()
+    expect(bridge.invoke).not.toHaveBeenCalledWith('resolve', expect.anything())
+  })
+
+  it('keeps resolver quality choices available after loading a local buffer', async () => {
+    vi.mocked(bridge.invoke).mockResolvedValue({ ok: true, value: { ok: true, stream: {
+      platform: 'youtube', channel: 'abcdefghijk', label: 'YouTube 直播', kind: 'hls', requiresProxy: false,
+      url: 'app://app/buffer/session/official/generation/index.m3u8', quality: '301',
+      qualities: [{ id: '301', label: '1080p60' }, { id: '300', label: '720p60' }],
+    } } })
+    const panel = within(openDialog())
+    fireEvent.change(panel.getByLabelText('直播间或媒体地址'), { target: { value: 'https://www.youtube.com/watch?v=abcdefghijk' } })
+    fireEvent.click(panel.getByRole('button', { name: '加载' }))
+    expect(await panel.findByRole('combobox', { name: '画质' })).toHaveValue('301')
+    expect(panel.getByRole('option', { name: '720p60' })).toBeInTheDocument()
+  })
+
+  it('shows account status and prevents duplicate login actions until Chrome closes', async () => {
+    let finishLogin!: () => void
+    const empty = { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false }
+    vi.mocked(bridge.invoke).mockImplementation(async (method) => {
+      if (method === 'login') {
+        await new Promise<void>((resolve) => { finishLogin = resolve })
+        return { ok: true, value: { cookieCount: 1, authKeysPresent: ['SID'] } } as any
+      }
+      return { ok: true, value: { youtube: empty, douyu: empty } } as any
+    })
+    openDialog()
+    fireEvent.click(screen.getByRole('button', { name: '登录 YouTube' }))
+    expect(screen.getByRole('button', { name: '登录斗鱼' })).toBeDisabled()
+    expect(await screen.findByText(/请在打开的 Chrome 窗口中登录/)).toBeInTheDocument()
+    finishLogin()
+    await waitFor(() => expect(screen.getByRole('button', { name: '登录斗鱼' })).toBeEnabled())
+    expect(bridge.invoke).toHaveBeenCalledWith('login', { platform: 'youtube' })
   })
 })

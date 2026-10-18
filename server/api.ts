@@ -5,7 +5,20 @@ import type { ProxyConfig } from './config'
 import { DanmakuRelay } from './danmaku/relay'
 import { resolveStream, type PlatformKind, type ResolveResult } from './platforms'
 import { fileNameFor, MAX_PRESET_BYTES, PresetStore } from './presetStore'
-import { checkUrl, safeFetch } from './safeFetch'
+import { checkUrl, ProxyError, safeFetch } from './safeFetch'
+import type { SourceRole } from '../src/core/types'
+import type { BufferState } from '../electron/bufferManager'
+import type { LoginPlatform, LoginResult, LoginStatus } from '../electron/login'
+
+export interface AcquisitionService {
+  resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string): Promise<ResolveResult>
+  switchQuality(role: SourceRole, quality: string): Promise<ResolveResult>
+  stop(role: SourceRole): Promise<void>
+  subscribe(listener: (state: BufferState) => void): () => void
+  login(platform: LoginPlatform): Promise<LoginResult>
+  loginStatus(): Promise<LoginStatus>
+  logout(platform: LoginPlatform): Promise<void>
+}
 
 export type DesktopServiceDeps = {
   dataDir: string
@@ -13,12 +26,14 @@ export type DesktopServiceDeps = {
   relay?: DanmakuRelay
   fetchImpl?: typeof fetch
   registerMedia: (url: string) => string
+  acquisition?: AcquisitionService
 }
 
 export type DesktopService = {
   invoke: (method: unknown, args: unknown) => Promise<ApiResult<unknown>>
   relay: DanmakuRelay
   dispose: () => void
+  subscribeBuffer?: (listener: (state: BufferState) => void) => () => void
 }
 
 const MAX_INPUT_LENGTH = 8_192
@@ -65,15 +80,17 @@ function validId(id: unknown): id is string {
 }
 
 function isPlatform(value: unknown): value is PlatformKind {
-  return value === 'direct' || value === 'twitch' || value === 'douyu' || value === 'bilibili'
+  return value === 'youtube' || value === 'direct' || value === 'twitch' || value === 'douyu' || value === 'bilibili'
 }
+
+function isRole(value: unknown): value is SourceRole { return value === 'official' || value === 'commentary' }
 
 /** Only fixture-relative paths may bypass remote-media registration. */
 function fixturePath(input: string): boolean {
   return /^\/test-sources\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.(?:m3u8|m3u|mp4|webm|mov|mkv|ts)$/.test(input)
 }
 
-function sanitizedFailure(result: ResolveResult): ResolveResult {
+export function sanitizedFailure(result: ResolveResult): ResolveResult {
   if (result.ok) return result
   const messages = {
     'unsupported-url': '无法识别该媒体地址或平台',
@@ -85,7 +102,9 @@ function sanitizedFailure(result: ResolveResult): ResolveResult {
   }
   return { ok: false, failure: {
     code: result.failure.code, message: messages[result.failure.code],
-    hint: '请检查地址和直播状态, 或提供可播放的媒体地址',
+    hint: result.failure.code === 'restricted'
+      ? '请在账号区域登录对应平台后重新加载, 或使用可播放的媒体地址'
+      : '请检查地址和直播状态, 或提供可播放的媒体地址',
   } }
 }
 
@@ -97,6 +116,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
 
   return {
     relay,
+    subscribeBuffer: deps.acquisition ? (listener) => deps.acquisition!.subscribe(listener) : undefined,
     async invoke(method, args) {
       if (disposed) return fail('service-closed', '本地服务已关闭')
       if (typeof method !== 'string') return fail('not-found', '未知本地接口')
@@ -120,14 +140,19 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             return { ok: true, value: { ok: true } }
           }
           case 'resolve': {
-            if (!fields(args, ['input'], ['platform'])) return fail('invalid-arguments', '媒体解析参数无效')
+            if (!fields(args, ['input'], ['platform', 'role', 'quality'])) return fail('invalid-arguments', '媒体解析参数无效')
             if (typeof args.input !== 'string' || args.input.trim().length === 0) {
               return fail('missing-input', '缺少要解析的地址或频道名')
             }
-            if (args.input.length > MAX_INPUT_LENGTH || (args.platform !== undefined && !isPlatform(args.platform))) {
+            if (args.input.length > MAX_INPUT_LENGTH || (args.platform !== undefined && !isPlatform(args.platform))
+              || (args.role !== undefined && !isRole(args.role))
+              || (args.quality !== undefined && (typeof args.quality !== 'string' || args.quality.length > 128))) {
               return fail('invalid-arguments', '媒体地址过长或平台参数无效')
             }
             const input = args.input.trim()
+            if (deps.acquisition) return { ok: true, value: await deps.acquisition.resolve(
+              input, args.platform as PlatformKind | undefined, args.role as SourceRole ?? 'official', args.quality as string | undefined,
+            ) }
             if (fixturePath(input) && (args.platform === undefined || args.platform === 'direct')) {
               return { ok: true, value: { ok: true, stream: {
                 platform: 'direct', url: input, kind: /\.m3u8?$/.test(input) ? 'hls' : 'progressive',
@@ -150,6 +175,32 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             if (target.url.username || target.url.password) return fail('invalid-url', '媒体地址不能包含登录凭据')
             const url = registered.has(result.stream.url) ? result.stream.url : register(rawUrl)
             return { ok: true, value: { ok: true, stream: { ...result.stream, url, requiresProxy: false, notes: ['媒体通过本地主进程安全加载'] } } }
+          }
+          case 'switchQuality': {
+            if (!fields(args, ['role', 'quality']) || !isRole(args.role) || typeof args.quality !== 'string'
+              || args.quality.length === 0 || args.quality.length > 128) return fail('invalid-arguments', '画质参数无效')
+            if (!deps.acquisition) return fail('not-available', '取流服务不可用')
+            return { ok: true, value: await deps.acquisition.switchQuality(args.role, args.quality) }
+          }
+          case 'stopBuffer': {
+            if (!fields(args, ['role']) || !isRole(args.role)) return fail('invalid-arguments', '片源角色无效')
+            await deps.acquisition?.stop(args.role)
+            return { ok: true, value: { ok: true } }
+          }
+          case 'loginStatus': {
+            if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
+            if (!deps.acquisition) return fail('not-available', '账号服务不可用')
+            return { ok: true, value: await deps.acquisition.loginStatus() }
+          }
+          case 'login':
+          case 'logout': {
+            if (!fields(args, ['platform']) || (args.platform !== 'youtube' && args.platform !== 'douyu')) {
+              return fail('invalid-arguments', '不支持的登录平台')
+            }
+            if (!deps.acquisition) return fail('not-available', '账号服务不可用')
+            if (method === 'login') return { ok: true, value: await deps.acquisition.login(args.platform) }
+            await deps.acquisition.logout(args.platform)
+            return { ok: true, value: { ok: true } }
           }
           case 'listPresets': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
@@ -190,7 +241,23 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
           }
           default: return fail('not-found', '未知本地接口')
         }
-      } catch {
+      } catch (error) {
+        if (error instanceof ProxyError) return fail(error.reason, '媒体地址未通过安全检查')
+        // Tool errors contain only stable codes, never executable paths or child output.
+        if (error instanceof Error && 'tool' in error && 'code' in error
+          && ['tool-missing', 'tool-invalid-path', 'tool-not-executable'].includes(String(error.code))) {
+          return fail(String(error.code), `未找到可用的 ${String(error.tool)}, 请检查工具设置或环境变量`)
+        }
+        if (error instanceof Error && error.name === 'LoginError' && 'code' in error) {
+          const messages: Record<string, string> = {
+            'chrome-not-found': '未找到系统 Chrome, 请安装 Chrome 后重试',
+            'login-busy': '登录操作正在进行, 请先完成当前窗口',
+            'login-cancelled': '登录操作已取消',
+            'login-failed': 'Chrome 登录失败, 请关闭专用窗口后重试',
+            'cookie-storage-failed': '登录信息无法安全保存, 请检查本机文件权限',
+          }
+          return fail(String(error.code), messages[String(error.code)] ?? '账号操作失败')
+        }
         // Never expose filesystem paths, signed media URLs, or upstream error bodies.
         return fail('internal-error', '本地服务无法完成此操作')
       }
@@ -203,13 +270,14 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
 }
 
 /** Platform requests keep the existing per-hop SSRF policy and fixed platform headers. */
-function createResolverDeps(proxy: ProxyConfig, registerMedia: (url: string) => string, fetchImpl?: typeof fetch) {
+export function createResolverDeps(proxy: ProxyConfig, registerMedia: (url: string) => string, fetchImpl?: typeof fetch) {
   const request = async (url: string, init?: RequestInit): Promise<Response> => {
     try {
       const { response } = await safeFetch(url, { ...proxy, enabled: true }, {
         method: init?.method ?? 'GET',
         headers: { accept: 'application/json, text/plain, */*', ...(init?.headers as Record<string, string> | undefined) },
         body: typeof init?.body === 'string' ? init.body : undefined,
+        signal: AbortSignal.timeout(proxy.requestTimeoutMs),
         fetchImpl,
       })
       if (!response.ok) throw new Error('Upstream request failed')
