@@ -23,8 +23,13 @@ const platforms = {
 let currentSid;
 
 function powershell(script, env = {}) {
+  // Windows PowerShell 5.1 started from a PowerShell 7 session inherits its PSModulePath
+  // and then cannot autoload its own built-in modules (Get-Acl fails). Let 5.1 rebuild
+  // the default path, and read ACLs through .NET so no module is needed at all.
+  const childEnv = { ...process.env, ...env };
+  delete childEnv.PSModulePath;
   const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-    env: { ...process.env, ...env }, encoding: 'utf8', windowsHide: true,
+    env: childEnv, encoding: 'utf8', windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
   });
   if (result.error || result.status !== 0) throw new Error('Private file permission operation failed.');
@@ -50,13 +55,13 @@ function verifyPrivate(target, directory, recursive = false) {
       }
       foreach ($item in $items) {
         if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { exit 1 }
-        $acl = Get-Acl -LiteralPath $item.FullName
+        $acl = $item.GetAccessControl()
         $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
         $allows = @($rules | Where-Object { $_.AccessControlType -eq 'Allow' })
         if (@($rules | Where-Object { $_.IdentityReference.Value -ne $sid }).Count -ne 0) { exit 1 }
         if (@($allows | Where-Object { ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl }).Count -eq 0) { exit 1 }
       }
-      $rootAcl = Get-Acl -LiteralPath $env:P0_PRIVATE_PATH
+      $rootAcl = (Get-Item -Force -LiteralPath $env:P0_PRIVATE_PATH).GetAccessControl()
       if (-not $rootAcl.AreAccessRulesProtected) { exit 1 }
       Write-Output 'PRIVATE_OK'
     `, { P0_PRIVATE_PATH: target, P0_PRIVATE_RECURSIVE: recursive ? '1' : '0' });
