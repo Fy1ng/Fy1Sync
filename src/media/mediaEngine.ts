@@ -361,6 +361,7 @@ export class MediaEngine {
     runtime.attachment?.destroy()
     runtime.attachment = null
     runtime.element.pause()
+    runtime.element.playbackRate = 1
     runtime.element.removeAttribute('src')
     // Without an explicit load() the old buffer is kept and the next source can
     // briefly show the previous frame.
@@ -523,6 +524,7 @@ export class MediaEngine {
       const runtime = this.runtime.get(role)
       if (!runtime) continue
       this.resolveSeek(role, false)
+      runtime.element.playbackRate = 1
       runtime.attachment?.destroy()
       runtime.detach?.()
       runtime.element.remove()

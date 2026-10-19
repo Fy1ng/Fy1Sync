@@ -39,6 +39,16 @@ export class FrameGrabber {
 
   /** Crop `roi` out of the current video frame. */
   grab(video: HTMLVideoElement, roi: RoiRect, mediaTimeOverride?: number): GrabResult {
+    return this.grabScaled(video, roi, Number.POSITIVE_INFINITY, mediaTimeOverride)
+  }
+
+  /** Crop and downscale a discovery frame without changing the ROI's aspect ratio. */
+  grabScaled(
+    video: HTMLVideoElement,
+    roi: RoiRect,
+    maxWidth: number,
+    mediaTimeOverride?: number,
+  ): GrabResult {
     const width = video.videoWidth
     const height = video.videoHeight
     if (!width || !height || video.readyState < 2) {
@@ -46,7 +56,10 @@ export class FrameGrabber {
     }
 
     const rect = roiToPixels(roi, width, height)
-    const target = this.ensureTarget(rect.width, rect.height)
+    const scale = Math.min(1, Math.max(1, maxWidth) / rect.width)
+    const outputWidth = Math.max(1, Math.round(rect.width * scale))
+    const outputHeight = Math.max(1, Math.round(rect.height * scale))
+    const target = this.ensureTarget(outputWidth, outputHeight)
     if (!target) {
       return { ok: false, reason: 'decode-failed', detail: '无法创建 2D 画布' }
     }
@@ -60,8 +73,8 @@ export class FrameGrabber {
         rect.height,
         0,
         0,
-        rect.width,
-        rect.height,
+        outputWidth,
+        outputHeight,
       )
     } catch (error) {
       return {
@@ -73,7 +86,7 @@ export class FrameGrabber {
 
     let image: ImageData
     try {
-      image = target.context.getImageData(0, 0, rect.width, rect.height)
+      image = target.context.getImageData(0, 0, outputWidth, outputHeight)
     } catch (error) {
       // Cross-origin media without CORS headers taints the canvas. This is the
       // single most common reason recognition cannot run, and it is fixable by
@@ -92,8 +105,8 @@ export class FrameGrabber {
       ok: true,
       frame: {
         pixels: image.data,
-        width: rect.width,
-        height: rect.height,
+        width: outputWidth,
+        height: outputHeight,
         mediaTime: mediaTimeOverride ?? video.currentTime,
         wallTime: this.clock(),
       },

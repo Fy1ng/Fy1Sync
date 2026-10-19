@@ -27,6 +27,7 @@ import { AUTO_SYNC_PHASE_TEXT } from '../sync/autoSync'
 import { DropUp } from './controls/DropUp'
 import { Slider } from './controls/Slider'
 import { Toggle } from './controls/Toggle'
+import { AutoProfileCards } from './AutoProfileCards'
 
 export function SyncSidebar(): React.ReactNode {
   const session = useSession()
@@ -176,7 +177,7 @@ function AutoSyncSection(): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const { autoSync, settings } = snapshot
-  const busy = autoSync.phase !== 'idle' && autoSync.phase !== 'done' && autoSync.phase !== 'failed'
+  const busy = snapshot.autoProfileBusy || (autoSync.phase !== 'idle' && autoSync.phase !== 'done' && autoSync.phase !== 'failed')
   const profileReady = snapshot.profiles.official !== null || snapshot.profiles.commentary !== null
 
   return (
@@ -208,15 +209,11 @@ function AutoSyncSection(): React.ReactNode {
 
       {!profileReady && (
         <p className="hint">
-          {snapshot.presets.length === 0 ? (
-            <>
-              尚未选择识别场景。到 <a href="/admin">场景配置器</a> 建好模板后即可识别倒计时。
-            </>
-          ) : (
-            '选择上面的识别场景后即可识别倒计时。'
-          )}
+          点击立即同步或仅识别, 将为两路分别定位并学习倒计时. 也可选择已有场景或到 <a href="/admin">场景配置器</a> 手动编辑.
         </p>
       )}
+
+      <AutoProfileCards />
 
       {autoSync.lastResult?.failure && (
         // Also posted as a notice, but the notice strip is dismissible and transient —
@@ -292,6 +289,14 @@ function AutoSyncSection(): React.ReactNode {
           { value: 3, label: '3 秒', hint: '更稳' },
         ]}
         onChange={(seconds) => session.setDetectWindow(seconds)}
+      />
+
+      <DropUp
+        label="跳转阈值"
+        align="left"
+        value={settings.seekThresholdSeconds}
+        options={[1, 1.5, 2].map(seconds => ({ value: seconds, label: `${seconds} 秒` }))}
+        onChange={seconds => session.setSeekThreshold(seconds)}
       />
 
       {!autoSync.authorized && (

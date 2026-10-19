@@ -128,6 +128,21 @@ describe('MediaEngine element ownership', () => {
 })
 
 describe('MediaEngine load', () => {
+  it('restores playback rate on source replacement, unload and disposal', async () => {
+    const engine = makeEngine()
+    const official = engine.element('official')
+    const commentary = engine.element('commentary')
+    official.playbackRate = 0.95
+    await engine.load('official', descriptor())
+    expect(official.playbackRate).toBe(1)
+    official.playbackRate = 1.05
+    engine.unload('official')
+    expect(official.playbackRate).toBe(1)
+    commentary.playbackRate = 0.95
+    engine.dispose()
+    expect(commentary.playbackRate).toBe(1)
+  })
+
   it('reports loading, then ready once metadata arrives', async () => {
     const engine = makeEngine()
     await engine.load('official', descriptor())

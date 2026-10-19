@@ -60,7 +60,8 @@ const CLOCK_FORMAT_OPTIONS: DropUpOption<CountdownFormat>[] = [
 /** Only the trusted local app frame can invoke preset writes in main. */
 export default function AdminPage(): React.ReactNode {
   const session = useSession()
-  const [profile, setProfile] = useState<RecognitionProfile>(() => createEmptyProfile())
+  const [profile, setProfile] = useState<RecognitionProfile>(() => session.takeEditingCandidate() ?? createEmptyProfile())
+  useEffect(() => session.clearEditingCandidate(), [session])
   const [etag, setEtag] = useState<string | undefined>(undefined)
   const [dirty, setDirty] = useState(false)
   const [message, setMessage] = useState<Message | null>(null)

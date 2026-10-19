@@ -8,7 +8,7 @@
  * relevant?" checks scattered around the caller.
  */
 
-import type { RecognitionProfile } from '../core/profileSchema'
+import type { RecognitionProfile, RoiRect } from '../core/profileSchema'
 import type { GlyphBox } from '../core/segmentation'
 import type { GlyphMatch } from '../core/templateMatch'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
@@ -17,6 +17,8 @@ export interface ConfigureMessage {
   type: 'configure'
   generation: number
   profile: RecognitionProfile
+  /** Explicit P4a partial-profile path; omitted keeps the P3 parity contract. */
+  automatic?: boolean
 }
 
 export interface FrameMessage {
@@ -39,7 +41,95 @@ export interface CancelMessage {
   generation: number
 }
 
-export type WorkerRequest = ConfigureMessage | FrameMessage | CancelMessage
+/** Discovery uses full-frame windows; these buffers are transferred to the worker. */
+export interface WindowFrame {
+  pixels: ArrayBuffer
+  width: number
+  height: number
+  mediaTime: number
+  wallTime: number
+}
+
+export interface LocateMessage {
+  type: 'locate'
+  generation: number
+  requestId: number
+  frames: WindowFrame[]
+  /** Keep the grayscale WASM window for one subsequent learn request. */
+  retainForLearning?: boolean
+}
+
+export interface LearnMessage {
+  type: 'learn'
+  generation: number
+  requestId: number
+  frames: WindowFrame[]
+  roi: RoiRect
+  /** Reuse a retained source-local window instead of sending its RGBA frames again. */
+  windowId?: number
+}
+
+export type WorkerRequest = ConfigureMessage | FrameMessage | CancelMessage | LocateMessage | LearnMessage
+
+export type RecognitionBackend = 'wasm' | 'typescript'
+
+export interface RoiCandidate {
+  roi: RoiRect
+  score: number
+  eventTimes: number[]
+  period: number
+  jitter: number
+  persistence: number
+  glyphScore: number
+}
+
+export interface LearnReport {
+  profile: RecognitionProfile | null
+  confidence: number
+  learnedChars: string[]
+  missingChars: string[]
+  reason: string | null
+  observations: number
+  consistentOffsets: number
+}
+
+export interface AutoOperationFailure {
+  status: 'unsupported' | 'cancelled' | 'failed'
+  backend?: RecognitionBackend
+  reason: string
+  detail?: string
+}
+
+export type LocateResult =
+  | { status: 'success'; backend: 'wasm'; candidates: RoiCandidate[]; windowId?: number }
+  | AutoOperationFailure
+
+export type LearnResult =
+  | { status: 'success'; backend: 'wasm'; profile: RecognitionProfile | null; report: LearnReport }
+  | AutoOperationFailure
+
+export interface LocateResultMessage {
+  type: 'located'
+  generation: number
+  requestId: number
+  result: LocateResult
+}
+
+export interface LearnResultMessage {
+  type: 'learned'
+  generation: number
+  requestId: number
+  result: LearnResult
+}
+
+/** Pixel-change bracket and midpoint, all in the source's media seconds. */
+export interface TickMoment {
+  lastUnchanged: number
+  firstChanged: number
+  midpoint: number
+  change: number
+  noiseFloor: number
+}
 
 /** Debug payload trimmed to what survives structured cloning cheaply. */
 export interface WorkerDebug {
@@ -69,6 +159,10 @@ export interface ResultMessage {
   debug: WorkerDebug | null
   /** Worker-side processing time in ms, shown in the debug panel. */
   elapsedMs: number
+  backend?: RecognitionBackend
+  tickMoment?: TickMoment
+  /** Explicit capability result when the recognition fallback has no pixel detector. */
+  tickMomentStatus?: 'supported' | 'unsupported'
 }
 
 export interface WorkerErrorMessage {
@@ -77,4 +171,4 @@ export interface WorkerErrorMessage {
   message: string
 }
 
-export type WorkerResponse = ConfiguredMessage | ResultMessage | WorkerErrorMessage
+export type WorkerResponse = ConfiguredMessage | ResultMessage | WorkerErrorMessage | LocateResultMessage | LearnResultMessage

@@ -54,6 +54,49 @@ const CLOCK_CHARS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ':']
  */
 const START_SECONDS = 12
 
+test.describe('无预设自动同步', () => {
+  test.skip(!fixturesReady(), '缺少测试源, 先运行 npm run fixtures')
+  test.setTimeout(180_000)
+
+  test('无预设时两路独立定位学习并在使用后对齐到 0.35 s 内', async ({ page }) => {
+    const backends: string[] = []
+    page.on('worker', worker => worker.on('console', message => {
+      const match = /\[识别 Worker\] 后端: (\S+)/.exec(message.text())
+      if (match) backends.push(match[1]!)
+    }))
+    await openPlayer(page)
+    const before = await invoke(page, 'listPresets', undefined)
+    expect(before.ok).toBe(true)
+    if (!before.ok) throw new Error(before.message)
+    expect(before.value.presets).toEqual([])
+    await expect(page.locator('.dropup', { has: page.getByText('识别场景', { exact: true }) }).locator('.dropup-value')).toHaveText('不使用')
+    await loadBothFixtures(page)
+    // Leave twelve seconds for discovery and enough changing clock for measurement.
+    await seekBoth(page, 0.25, 0.25)
+    await setPlaying(page, true)
+    await page.getByRole('button', { name: '立即同步', exact: true }).click()
+    for (const role of ['official', 'commentary']) {
+      const card = page.locator(`.auto-profile-card[data-role="${role}"]`)
+      await expect(card.locator('.auto-profile-phase')).toContainText('已就绪', { timeout: 60_000 })
+      await expect(card.getByRole('img')).toBeVisible()
+      await expect(card).toContainText('已学字符')
+      await card.getByRole('button', { name: '使用', exact: true }).click()
+      await expect(card.locator('.auto-profile-phase')).toContainText('本次已使用')
+    }
+    await waitForPhase(page, '已完成')
+    const divergence = await readResult(page, '校验残差')
+    expect(divergence).not.toBeNull()
+    expect(Math.abs(divergence ?? Number.NaN)).toBeLessThanOrEqual(MAX_DIVERGENCE_SECONDS)
+    const times = await mediaTimes(page)
+    expect(Math.abs(times.lag + FIXTURE_DELAY_SECONDS)).toBeLessThanOrEqual(MAX_DIVERGENCE_SECONDS)
+    expect(backends.length, '实际识别 Worker 应报告后端').toBeGreaterThan(0)
+    expect(new Set(backends)).toEqual(new Set(['wasm']))
+    const after = await invoke(page, 'listPresets', undefined)
+    expect(after.ok && after.value.presets).toEqual([])
+    expect(await page.locator('video.media-element').evaluateAll(videos => videos.map(video => (video as HTMLVideoElement).playbackRate))).toEqual([1, 1])
+  })
+})
+
 /**
  * Sample times and the digits visible at each, for teaching templates.
  *
@@ -225,15 +268,18 @@ test.describe('自动同步', () => {
       .toBeCloseTo(auto - 0.5, 1)
   })
 
-  test('没有识别场景时说明原因而不是空转一个识别窗口', async ({ page }) => {
+  test('未播放时无预设提示恢复播放且不应用偏移', async ({ page }) => {
     await openPlayer(page)
     await loadBothFixtures(page)
 
-    // With no profile the sampler yields nothing, which looks exactly like a black
-    // screen — the refusal has to name the real cause.
+    // Discovery cannot learn from paused video. Explain this per source.
     await page.getByRole('button', { name: '仅识别' }).click()
     await waitForPhase(page, '未完成')
-    await expect(page.locator('.auto-failure')).toContainText('识别场景')
+    await expect(page.locator('.auto-profile-card')).toHaveCount(2)
+    for (const role of ['official', 'commentary']) {
+      await expect(page.locator(`.auto-profile-card[data-role="${role}"]`)).toContainText('恢复两路播放')
+    }
+    expect(await offsetReadout(page)).toMatchObject({ requested: 0, applied: 0 })
   })
 })
 

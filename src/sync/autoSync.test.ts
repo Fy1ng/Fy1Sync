@@ -332,6 +332,8 @@ describe('AutoSyncController', () => {
     const first = controller.run(applied)
     const second = await controller.run(applied)
     expect(second.failure).toMatchObject({ kind: 'cancelled', message: '已有一次自动同步在进行中' })
+    expect(controller.isRunning).toBe(true)
+    expect((await controller.run(applied)).failure?.kind).toBe('cancelled')
 
     release()
     expect((await first).phase).toBe('done')
@@ -611,5 +613,171 @@ describe('AutoSyncController profile guard', () => {
 
     expect(result.phase).toBe('done')
     expect(seeks).toEqual([{ role: 'official', to: 495 }])
+  })
+})
+
+describe('AutoSyncController rate correction', () => {
+  function rateDeps(residual: number): ReturnType<typeof makeDeps> & {
+    rates: Positions
+    changes: Array<{ role: SourceRole; rate: number }>
+    rewinds: AppliedRewind[]
+  } {
+    const fixture = makeDeps({}, { commentaryWallOffsetMs: residual * 1000 })
+    const rates: Positions = { official: 1, commentary: 1 }
+    const changes: Array<{ role: SourceRole; rate: number }> = []
+    const rewinds: AppliedRewind[] = []
+    fixture.deps.setPlaybackRate = (role, rate) => {
+      rates[role] = rate
+      changes.push({ role, rate })
+    }
+    fixture.deps.onAppliedRewind = (rewind) => rewinds.push(rewind)
+    fixture.deps.sleep = async (ms) => {
+      fixture.positions.official += ms / 1000 * rates.official
+      fixture.positions.commentary += ms / 1000 * rates.commentary
+    }
+    return { ...fixture, rates, changes, rewinds }
+  }
+
+  it.each([1.5, 0.5, -0.5])('converges from %s seconds using actual media progress without seeking', async (residual) => {
+    const fixture = rateDeps(residual)
+    const controller = new AutoSyncController(fixture.deps)
+    const result = await controller.run(applied)
+
+    expect(result.phase).toBe('done')
+    expect(result.divergence).toBeLessThanOrEqual(0.1)
+    expect(fixture.seeks).toEqual([])
+    expect(fixture.rates).toEqual({ official: 1, commentary: 1 })
+    expect(fixture.changes.some((change) => change.rate < 1)).toBe(true)
+    expect(fixture.changes.every((change) => change.rate >= 0.95 && change.rate <= 1.05)).toBe(true)
+    const rewind = result.appliedRewind!
+    expect(rewind.official - rewind.commentary).toBeCloseTo(residual, 0)
+    expect(fixture.rewinds.at(-1)).toEqual(rewind)
+  })
+
+  it('does not nudge a measured residual already inside the deadband', async () => {
+    const fixture = rateDeps(0.09)
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.phase).toBe('done')
+    expect(fixture.changes.every((change) => change.rate === 1)).toBe(true)
+    expect(fixture.seeks).toEqual([])
+    expect(result.appliedRewind).toEqual(applied)
+  })
+
+  it('seeks above the configured threshold and never starts a rate nudge', async () => {
+    const fixture = rateDeps(0.6)
+    const result = await new AutoSyncController(fixture.deps, { seekThresholdSeconds: 0.5 }).run(applied)
+    expect(result.phase).toBe('done')
+    expect(fixture.seeks).toEqual([{ role: 'official', to: 499.4 }])
+    expect(fixture.changes.every((change) => change.rate === 1)).toBe(true)
+  })
+
+  it('keeps both carried rewinds when a small correction changes direction', async () => {
+    const fixture = rateDeps(-0.5)
+    const result = await new AutoSyncController(fixture.deps).run({ official: 5, commentary: 0 })
+    expect(result.phase).toBe('done')
+    expect(result.appliedRewind?.official).toBe(5)
+    expect(result.appliedRewind?.commentary).toBeGreaterThanOrEqual(0.4)
+    expect(fixture.seeks).toEqual([])
+  })
+
+  it('fails a stalled pair instead of inferring convergence from elapsed time', async () => {
+    const fixture = rateDeps(0.5)
+    fixture.deps.sleep = async () => {}
+    const result = await new AutoSyncController(fixture.deps, { rateTimeoutSeconds: 0.2 }).run(applied)
+    expect(result.failure?.kind).toBe('verify-failed')
+    expect(result.divergence).toBe(0.5)
+    expect(result.appliedRewind).toEqual(applied)
+    expect(fixture.rates).toEqual({ official: 1, commentary: 1 })
+    expect(fixture.seeks).toEqual([])
+  })
+
+  it.each(['cancel', 'dispose'] as const)('restores both rates immediately on %s and retains partial progress', async (action) => {
+    const fixture = rateDeps(0.5)
+    const gate = deferred()
+    fixture.deps.sleep = async (ms) => {
+      fixture.positions.official += ms / 1000 * fixture.rates.official
+      fixture.positions.commentary += ms / 1000 * fixture.rates.commentary
+      await gate.promise
+    }
+    const controller = new AutoSyncController(fixture.deps)
+    const pending = controller.run(applied)
+    // Sampling resolves asynchronously before the first nudge poll.
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(fixture.rates.official).toBe(0.95)
+    if (action === 'dispose') controller.dispose()
+    else controller.cancel(false)
+    expect(fixture.rates).toEqual({ official: 1, commentary: 1 })
+    gate.release()
+    const result = await pending
+    expect(result.failure?.kind).toBe('cancelled')
+    expect(result.appliedRewind?.official).toBeCloseTo(0.005, 3)
+    expect(fixture.rewinds.at(-1)).toEqual(result.appliedRewind)
+  })
+
+  it('restores rates when a dependency fails while correcting', async () => {
+    const fixture = rateDeps(0.5)
+    fixture.deps.sleep = async () => { throw new Error('media disconnected') }
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.failure?.message).toBe('media disconnected')
+    expect(fixture.rates).toEqual({ official: 1, commentary: 1 })
+  })
+
+  it('hands over to seek if actual source drift grows above the threshold', async () => {
+    const fixture = rateDeps(0.5)
+    let drifted = false
+    fixture.deps.sleep = async (ms) => {
+      fixture.positions.official += ms / 1000 * fixture.rates.official
+      fixture.positions.commentary += ms / 1000 * fixture.rates.commentary
+      if (!drifted) {
+        fixture.positions.official += 2
+        drifted = true
+      }
+    }
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.phase).toBe('done')
+    expect(fixture.seeks.length).toBeGreaterThan(0)
+    expect(fixture.rates).toEqual({ official: 1, commentary: 1 })
+    expect(result.appliedRewind!.official - result.appliedRewind!.commentary).toBeCloseTo(0.5, 2)
+  })
+
+  it('fails explicitly rather than seeking when rate control is unavailable', async () => {
+    const fixture = makeDeps({}, { commentaryWallOffsetMs: 500 })
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.failure?.kind).toBe('rate-unavailable')
+    expect(fixture.seeks).toEqual([])
+  })
+})
+
+describe('AutoSyncController buffer limits', () => {
+  it('derives the next seek from current media time after an earlier seek buffered', async () => {
+    const fixture = makeDeps({}, { officialWallOffsetMs: 10_000 })
+    fixture.deps.seek = async (role, target) => {
+      fixture.seeks.push({ role, to: target })
+      fixture.positions[role] = target
+      fixture.positions.official += 0.5
+      fixture.positions.commentary += 0.5
+      return true
+    }
+    const result = await new AutoSyncController(fixture.deps).run({ official: 5, commentary: 0 })
+    expect(result.phase).toBe('done')
+    expect(result.divergence).toBe(0)
+    expect(result.appliedRewind).toEqual({ official: 0, commentary: 5 })
+    expect(fixture.seeks).toEqual([{ role: 'official', to: 505 }, { role: 'commentary', to: 495.5 }])
+  })
+
+  it('reports a partial clamped seek as failure and retains its actual rewind', async () => {
+    const fixture = makeDeps({}, { commentaryWallOffsetMs: 5_000, positions: { official: 2, commentary: 2 } })
+    const rewinds: AppliedRewind[] = []
+    fixture.deps.onAppliedRewind = (rewind) => rewinds.push(rewind)
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+
+    expect(result.phase).toBe('failed')
+    expect(result.failure?.kind).toBe('buffer-limit')
+    expect(result.applied).toBe(true)
+    expect(result.plan?.effectiveOffset).toBe(2)
+    expect(result.appliedRewind).toEqual({ official: 2, commentary: 0 })
+    expect(rewinds.at(-1)).toEqual(result.appliedRewind)
+    expect(fixture.positions.official).toBe(0)
   })
 })

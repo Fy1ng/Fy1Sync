@@ -1995,3 +1995,9 @@ textarea {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+/* Source-local candidates remain reviewable until explicitly accepted. */
+.auto-profile-card { margin: 12px 0; padding: 10px; border: 1px solid var(--border, #354052); border-radius: 8px; }
+.auto-profile-card h4 { margin: 0 0 6px; }
+.auto-profile-phase { margin: 6px 0; }
+.auto-profile-preview { display: block; max-width: 100%; background: #0b0e12; border-radius: 4px; }
+.auto-profile-card .auto-actions { flex-wrap: wrap; align-items: center; }

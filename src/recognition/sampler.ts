@@ -18,10 +18,13 @@
  */
 
 import type { RecognitionProfile } from '../core/profileSchema'
+import { ClockJumpDetector, parseCountdown } from '../core/clockJump'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
 import { SOURCE_ROLES } from '../core/types'
 import { RecognitionClient, type WorkerLike } from './client'
 import { FrameGrabber, startFrameLoop } from './frameGrabber'
+import type { ResultMessage } from './protocol'
+import { RhythmSampler } from './rhythm'
 
 export type OutcomeSink = (role: SourceRole, outcome: RecognitionOutcome) => void
 
@@ -57,6 +60,13 @@ interface RoleChannel {
   grabber: FrameGrabber
   /** The profile the worker is currently configured for, by identity. */
   configuredFor: RecognitionProfile | null
+  video: HTMLVideoElement | null
+  source: string
+  rhythm: RhythmSampler
+  jumps: ClockJumpDetector
+  pendingMoment: ResultMessage['tickMoment'] | null
+  lastSeconds: number | null
+  frameAnchor: { mediaTime: number; wallTime: number; playbackRate: number } | null
 }
 
 export class RecognitionSampler {
@@ -156,29 +166,59 @@ export class RecognitionSampler {
 
     const channel = this.channelFor(role)
     const fps = Math.max(1, Math.min(60, profile.sampleFps))
+    let activeLoop = true
+    const invalidate = (): void => {
+      channel.client.cancel()
+      channel.configuredFor = null
+      this.resetTiming(channel)
+    }
+    if (channel.video !== video) invalidate()
+    channel.video = video
+    channel.source = video.currentSrc || video.src || ''
+    for (const event of ['seeking', 'emptied', 'loadstart']) video.addEventListener?.(event, invalidate)
 
-    return this.frameLoop(video, fps, (mediaTime) => {
-      if (signal.aborted || this.disposed) return
+    const stop = this.frameLoop(video, fps, (mediaTime) => {
+      if (!activeLoop || signal.aborted || this.disposed) return
       const active = this.options.profile(role)
       if (!active) return
+      const source = video.currentSrc || video.src || ''
+      if (channel.source !== source) {
+        invalidate()
+        channel.source = source
+      }
       if (channel.configuredFor !== active) {
-        channel.client.configure(active)
+        this.resetTiming(channel)
+        channel.client.configure(active, { automatic: active.id.startsWith('session/') })
         channel.configuredFor = active
       }
+      if (!channel.rhythm.shouldSample(mediaTime)) return
       this.stats.grabbed[role] += 1
       const result = channel.grabber.grab(video, active.roi, mediaTime)
       if (!result.ok) {
         this.stats.grabFailures[role] += 1
+        channel.rhythm.reset()
         this.sink?.(role, { status: 'failed', reason: result.reason, detail: result.detail })
         return
+      }
+      const previousAnchor = channel.frameAnchor
+      channel.frameAnchor = {
+        mediaTime: result.frame.mediaTime,
+        wallTime: result.frame.wallTime,
+        playbackRate: Number.isFinite(video.playbackRate) && video.playbackRate > 0 ? video.playbackRate : 1,
       }
       if (channel.client.submit(role, result.frame)) {
         this.stats.submitted[role] += 1
       } else {
+        channel.frameAnchor = previousAnchor
         // Backpressure, not an error: the worker is still busy with the previous frame.
         this.stats.dropped[role] += 1
       }
     })
+    return () => {
+      activeLoop = false
+      stop()
+      for (const event of ['seeking', 'emptied', 'loadstart']) video.removeEventListener?.(event, invalidate)
+    }
   }
 
   private channelFor(role: SourceRole): RoleChannel {
@@ -187,17 +227,72 @@ export class RecognitionSampler {
     const channel: RoleChannel = {
       grabber: new FrameGrabber(this.clock),
       configuredFor: null,
+      video: null,
+      source: '',
+      rhythm: new RhythmSampler(),
+      jumps: new ClockJumpDetector(role),
+      pendingMoment: null,
+      lastSeconds: null,
+      frameAnchor: null,
       client: new RecognitionClient({
         createWorker: this.options.createWorker,
         now: this.now,
         onError: (message) => this.options.onError?.(role, message),
         onResult: (message) => {
-          this.sink?.(role, message.outcome)
+          const outcome = this.atTickMoment(channel, message)
+          const result = channel.jumps.push(outcome)
+          if (result.event) channel.rhythm.confirmTick(result.event.mediaTime)
+          if (result.dropped === 'not-decrement' || result.dropped === 'abnormal-interval') channel.rhythm.reset()
+          if (outcome.status === 'failed') channel.rhythm.reset()
+          this.sink?.(role, outcome)
         },
       }),
     }
     this.channels.set(role, channel)
     return channel
+  }
+
+  private resetTiming(channel: RoleChannel): void {
+    channel.rhythm.reset()
+    channel.jumps.reset()
+    channel.pendingMoment = null
+    channel.lastSeconds = null
+    channel.frameAnchor = null
+  }
+
+  /** Associate image-change timing only with an actual recognised decrement. */
+  private atTickMoment(channel: RoleChannel, message: ResultMessage): RecognitionOutcome {
+    const moment = message.tickMoment
+    if (moment && Number.isFinite(moment.lastUnchanged) && Number.isFinite(moment.firstChanged)
+      && Number.isFinite(moment.midpoint) && moment.lastUnchanged < moment.firstChanged
+      && moment.midpoint >= moment.lastUnchanged && moment.midpoint <= moment.firstChanged) {
+      channel.pendingMoment = moment
+    }
+    const outcome = message.outcome
+    if (outcome.status !== 'success' || outcome.reading.confidence < 0.82) return outcome
+    const reading = outcome.reading
+    if (parseCountdown(reading.text) !== reading.seconds) return outcome
+    const previousSeconds = channel.lastSeconds
+    channel.lastSeconds = reading.seconds
+    const pending = channel.pendingMoment
+    if (!pending || previousSeconds === null || previousSeconds - reading.seconds !== 1) return outcome
+    channel.pendingMoment = null
+    // The changed frame may be unreadable during animation. The later real reading
+    // supplies its own shared-clock anchor; no countdown value is fabricated.
+    const age = reading.mediaTime - pending.firstChanged
+    if (age < -1e-6 || age > 0.5) return outcome
+    const anchor = channel.frameAnchor
+    const rate = anchor?.playbackRate ?? 1
+    const anchorMedia = anchor?.mediaTime ?? reading.mediaTime
+    const anchorWall = anchor?.wallTime ?? reading.wallTime
+    return {
+      status: 'success',
+      reading: {
+        ...reading,
+        mediaTime: pending.midpoint,
+        wallTime: anchorWall + (pending.midpoint - anchorMedia) * 1000 / rate,
+      },
+    }
   }
 
   /** Wait out the window, polling often enough that cancellation feels immediate. */

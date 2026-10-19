@@ -27,7 +27,9 @@ const ffmpeg = process.env.STREAM_SYNC_FFMPEG?.trim() || 'ffmpeg'
 const ROI = { x: 0.42, y: 0.045, w: 0.16, h: 0.13 }
 const WIDTH = 1280
 const HEIGHT = 720
-const FONT_SIZE = 64
+// Preserve enough stroke detail in 960-wide discovery frames for templates to
+// recognise the later native-resolution ROI; a small font passed learning alone.
+const FONT_SIZE = 88
 const COUNTDOWN_FROM = 20
 const DURATION = 26
 

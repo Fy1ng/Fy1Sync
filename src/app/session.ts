@@ -24,6 +24,7 @@ import {
 } from '../core/syncPlan'
 import { MediaEngine, type EngineState } from '../media/mediaEngine'
 import { RecognitionSampler } from '../recognition/sampler'
+import { OnlineAutoProfiles, initialAutoProfileState, type AutoProfileState } from '../recognition/autoProfile'
 import { createRecognitionWorker } from '../recognition/createWorker'
 import { parseProfile, type RecognitionProfile } from '../core/profileSchema'
 import { AutoSyncController, type AutoSyncPhase, type AutoSyncRunResult } from '../sync/autoSync'
@@ -60,6 +61,8 @@ export interface SessionSnapshot {
     dropped: number
   }
   profiles: Record<SourceRole, RecognitionProfile | null>
+  autoProfiles: Record<SourceRole, AutoProfileState>
+  autoProfileBusy: boolean
   /** Presets the server offers, so the player can pick one without opening the editor. */
   presets: PresetSummary[]
   notices: Notice[]
@@ -79,6 +82,7 @@ export interface SessionOptions {
   storage?: Parameters<typeof loadSettings>[0]
   /** Injected so tests can drive the sampler without a real worker. */
   createSampler?: (session: Session) => RecognitionSampler | null
+  createAutoProfiles?: (options: ConstructorParameters<typeof OnlineAutoProfiles>[0]) => Pick<OnlineAutoProfiles, 'controller' | 'monitor' | 'reset' | 'suspend' | 'dispose'> | null
   now?: () => number
 }
 
@@ -98,6 +102,9 @@ export class Session {
   readonly timeline = new DanmakuTimeline()
 
   private sampler: RecognitionSampler | null = null
+  private autoProfiles: Pick<OnlineAutoProfiles, 'controller' | 'monitor' | 'reset' | 'suspend' | 'dispose'> | null = null
+  private autoRequestRevision = 0
+  private candidateToEdit: RecognitionProfile | null = null
   private samplerFactory: ((session: Session) => RecognitionSampler | null) | null
   private settingsValue: AppSettings
   private readonly storage: SessionOptions['storage']
@@ -143,22 +150,59 @@ export class Session {
     this.settingsValue = loadSettings(this.storage)
     this.filter = compileDanmakuFilter(this.settingsValue.danmaku.filter)
     this.samplerFactory = options.createSampler ?? defaultSamplerFactory
+    if (options.createAutoProfiles || (typeof Worker !== 'undefined' && !options.createSampler)) {
+      const autoOptions: ConstructorParameters<typeof OnlineAutoProfiles>[0] = {
+        createWorker: createRecognitionWorker,
+        video: role => this.engine.element(role),
+        profile: role => this.profileFor(role),
+        use: (role, profile) => {
+          this.profileMap = { ...this.profileMap, [role]: profile }
+          this.notify()
+        },
+        changed: () => this.notify(),
+      }
+      this.autoProfiles = options.createAutoProfiles ? options.createAutoProfiles(autoOptions) : new OnlineAutoProfiles(autoOptions)
+    }
 
     this.autoSync = new AutoSyncController(
       {
-        sample: (windowMs, onOutcome, signal) => {
+        sample: async (windowMs, onOutcome, signal) => {
           const sampler = this.ensureSampler()
-          if (!sampler) return Promise.resolve()
-          return sampler.sample(windowMs, onOutcome, signal)
+          if (!sampler) return
+          if (this.autoProfiles) {
+            const acquired = await allAccepted(SOURCE_ROLES.map(role => this.profileFor(role)
+              ? Promise.resolve(true) : this.autoProfiles!.controller.acquire(role)))
+            if (signal.aborted || !acquired) return
+          }
+          const read = { official: false, commentary: false }
+          const buffered: Array<Parameters<typeof onOutcome>> = []
+          await sampler.sample(windowMs, (role, outcome) => {
+            if (outcome.status === 'success' && outcome.reading.confidence >= 0.82) read[role] = true
+            buffered.push([role, outcome])
+          }, signal)
+          if (signal.aborted) return
+          if (!this.autoProfiles) { for (const outcome of buffered) onOutcome(...outcome); return }
+          const lost = SOURCE_ROLES.filter(role => !read[role])
+          if (lost.length) {
+            const acquired = await allAccepted(lost.map(role => this.autoProfiles!.controller.acquire(role)))
+            if (!signal.aborted && acquired) await sampler.sample(windowMs, onOutcome, signal)
+          } else for (const outcome of buffered) onOutcome(...outcome)
         },
         snapshot: (role) => this.engine.snapshot(role),
-        hasProfile: () => SOURCE_ROLES.some((role) => this.profileMap[role] !== null),
+        hasProfile: () => this.autoProfiles !== null || SOURCE_ROLES.some((role) => this.profileMap[role] !== null),
         seek: (role, target) => this.engine.seek(role, target),
+        setPlaybackRate: (role, rate) => { this.engine.element(role).playbackRate = rate },
+        onAppliedRewind: rewind => {
+          this.applied = { ...rewind }
+          this.requestedOffset = offsetFromRewind(rewind)
+          this.notify()
+        },
         now: this.now,
       },
       {
         detectWindowSeconds: this.settingsValue.detectWindowSeconds,
         schedulerIntervalSeconds: this.settingsValue.autoSyncIntervalSeconds,
+        seekThresholdSeconds: this.settingsValue.seekThresholdSeconds,
       },
     )
 
@@ -168,7 +212,15 @@ export class Session {
       this.bufferStates = { ...this.bufferStates, [state.role]: state }
       this.notify()
     })
-    this.autoSync.onPhaseChange(() => this.notify())
+    this.autoSync.onPhaseChange(phase => {
+      const result = this.autoSync.result
+      if ((phase === 'done' || phase === 'failed') && result?.plan && result.appliedRewind && result.failure?.kind !== 'cancelled') {
+        this.planValue = result.plan
+        this.requestedOffset = result.failure?.kind === 'buffer-limit' && result.estimate
+          ? result.estimate.totalOffsetSeconds : offsetFromRewind(this.applied)
+      }
+      this.notify()
+    })
     this.snapshotValue = this.buildSnapshot()
     this.applyAudioSettings()
   }
@@ -232,6 +284,11 @@ export class Session {
       playing: this.playingValue,
       danmaku: { ...this.danmakuState, pending: stats.pending, dropped: stats.expired },
       profiles: { ...this.profileMap },
+      autoProfiles: {
+        official: this.autoProfiles?.controller.state('official') ?? initialAutoProfileState(),
+        commentary: this.autoProfiles?.controller.state('commentary') ?? initialAutoProfileState(),
+      },
+      autoProfileBusy: this.autoProfiles?.controller.busy ?? false,
       presets: this.presetList,
       notices: this.noticeList,
       buffers: { ...this.bufferStates },
@@ -262,13 +319,21 @@ export class Session {
   }
 
   setProfile(role: SourceRole, profile: RecognitionProfile | null): void {
+    ++this.autoRequestRevision
+    this.autoSync.cancel(false)
+    this.autoProfiles?.reset(role)
     this.profileMap = { ...this.profileMap, [role]: profile }
+    this.autoProfiles?.monitor(role)
     this.notify()
   }
 
   /** Both roles share one countdown profile: it is the same on-screen clock. */
   setProfileForAll(profile: RecognitionProfile | null): void {
+    ++this.autoRequestRevision
+    this.autoSync.cancel(false)
+    for (const role of SOURCE_ROLES) this.autoProfiles?.reset(role)
     this.profileMap = { official: profile, commentary: profile }
+    for (const role of SOURCE_ROLES) this.autoProfiles?.monitor(role)
     this.notify()
   }
 
@@ -337,6 +402,7 @@ export class Session {
    * actually said so, or restarting while it is down would throw the choice away.
    */
   async boot(): Promise<void> {
+    for (const role of SOURCE_ROLES) this.autoProfiles?.monitor(role)
     // Before the first await, so re-entering the page resumes on the spot instead of
     // waiting on the network. This is also what restores a *persisted* toggle: settings
     // reload with `autoSyncEnabled: true`, but only `setAutoSyncEnabled` ever armed the
@@ -345,6 +411,7 @@ export class Session {
     const listed = await this.refreshPresets()
     const id = this.settingsValue.profileId
     if (!id) return
+    if (SOURCE_ROLES.every(role => this.profileFor(role) !== null)) return
     if (listed && !this.presetList.some((preset) => preset.id === id)) {
       this.updateSettings({ profileId: '' })
       return
@@ -404,10 +471,14 @@ export class Session {
 
   // ----------------------------------------------------------------- sources
 
-  beginSourceChange(role: SourceRole): number { return ++this.sourceGeneration[role] }
+  beginSourceChange(role: SourceRole): number {
+    this.invalidateAutomaticWork(role)
+    return ++this.sourceGeneration[role]
+  }
   sourceRevision(role: SourceRole): number { return this.sourceGeneration[role] }
 
   async loadSource(role: SourceRole, descriptor: MediaDescriptor): Promise<void> {
+    this.invalidateAutomaticWork(role)
     const generation = ++this.sourceGeneration[role]
     if (!descriptor.url.includes('/buffer/')) {
       await apiClient.stopBuffer(role)
@@ -429,10 +500,12 @@ export class Session {
     this.autoSync.cancel(false)
     this.notice('info', `${roleName(role)}已载入：${descriptor.label}`)
     this.applyAudioSettings()
+    this.autoProfiles?.monitor(role)
     this.notify()
   }
 
   unloadSource(role: SourceRole): void {
+    this.invalidateAutomaticWork(role)
     ++this.sourceGeneration[role]
     void apiClient.stopBuffer(role)
     this.bufferStates = { ...this.bufferStates, [role]: null }
@@ -447,6 +520,7 @@ export class Session {
     const descriptor = this.engine.getState()[role].descriptor
     if (this.qualityBusy[role] || !descriptor?.sourceQualities?.some((option) => option.id === quality)
       || descriptor.sourceQuality === quality) return
+    this.invalidateAutomaticWork(role)
     const generation = ++this.sourceGeneration[role]
     const wasPlaying = !this.engine.element(role).paused
     this.qualityBusy = { ...this.qualityBusy, [role]: true }
@@ -556,6 +630,8 @@ export class Session {
       // Manual input wins over a scheduled run, and revokes its authorization: after a
       // human moves the slider the scheduler must not quietly overwrite that choice.
       this.autoSync.cancel(true)
+      ++this.autoRequestRevision
+      for (const role of SOURCE_ROLES) if (this.autoProfiles?.controller.busy) this.autoProfiles.controller.cancel(role)
     }
     this.requestedOffset = nextOffset
     const plan = planOffsetChange({
@@ -628,13 +704,16 @@ export class Session {
   }
 
   async syncNow(): Promise<AutoSyncRunResult> {
+    const revision = ++this.autoRequestRevision
     this.autoSync.authorize()
     const result = await this.autoSync.run(this.applied)
-    if (result.applied) {
+    if (revision !== this.autoRequestRevision || this.disposed) return result
+    if (result.appliedRewind || result.applied) {
       // The controller seeked through the engine, so the engine is authoritative for
       // where the sources ended up.
-      this.applied = { ...(result.plan?.rewindAfter ?? this.applied) }
-      this.requestedOffset = offsetFromRewind(this.applied)
+      this.applied = { ...(result.appliedRewind ?? result.plan?.rewindAfter ?? this.applied) }
+      this.requestedOffset = result.failure?.kind === 'buffer-limit' && result.estimate
+        ? result.estimate.totalOffsetSeconds : offsetFromRewind(this.applied)
       this.planValue = result.plan
     }
     this.reportAutoResult(result)
@@ -681,9 +760,54 @@ export class Session {
     this.autoSync.configure({ detectWindowSeconds: seconds })
   }
 
+  setSeekThreshold(seconds: number): void {
+    const threshold = Math.max(0.2, Math.min(5, seconds))
+    this.updateSettings({ seekThresholdSeconds: threshold })
+    this.autoSync.configure({ seekThresholdSeconds: threshold })
+  }
+
+  acceptAutoProfile(role: SourceRole): void { this.autoProfiles?.controller.accept(role) }
+  retryAutoProfile(role: SourceRole): void {
+    this.autoProfiles?.controller.cancel(role)
+    void this.autoProfiles?.controller.acquire(role)
+  }
+  cancelAutoProfile(role: SourceRole): void {
+    this.autoProfiles?.controller.cancel(role)
+    this.autoSync.cancel(false)
+  }
+  editAutoProfile(role: SourceRole): void {
+    this.candidateToEdit = this.autoProfiles?.controller.state(role).candidate ?? this.profileFor(role)
+  }
+  takeEditingCandidate(): RecognitionProfile | null {
+    const candidate = this.candidateToEdit
+    // React StrictMode can invoke a state initializer twice.
+    return candidate ? structuredClone(candidate) : null
+  }
+  clearEditingCandidate(): void { this.candidateToEdit = null }
+  async saveAutoProfile(role: SourceRole): Promise<boolean> {
+    const candidate = this.autoProfiles?.controller.state(role).candidate
+    if (!candidate) return false
+    // A new id on every explicit save prevents silent replacement of an existing preset.
+    const id = `auto/${role}-${this.now()}-${++this.noticeSeq}`
+    const profile = { ...structuredClone(candidate), id, updatedAt: this.now() }
+    const result = await apiClient.savePreset(id, profile)
+    if (!result.ok) { this.notice('warn', `候选保存失败: ${result.message}`); return false }
+    this.notice('info', '候选已另存为新预设')
+    await this.refreshPresets()
+    return true
+  }
+  private invalidateAutomaticWork(role: SourceRole): void {
+    ++this.autoRequestRevision
+    this.autoSync.cancel(false)
+    this.autoProfiles?.reset(role)
+    if (this.profileMap[role]?.id.startsWith('session/')) this.profileMap = { ...this.profileMap, [role]: null }
+  }
+
   /** Abort an in-flight run; the button that calls this is the user's stop control. */
   cancelAutoSync(): void {
+    ++this.autoRequestRevision
     this.autoSync.cancel()
+    for (const role of SOURCE_ROLES) this.autoProfiles?.controller.cancel(role)
     this.notify()
   }
 
@@ -807,6 +931,8 @@ export class Session {
    * here comes back on the next `boot`, so the page can be left and re-entered.
    */
   suspend(): void {
+    ++this.autoRequestRevision
+    this.autoProfiles?.suspend()
     this.stopScheduler()
     // `false`: leaving the page is not the manual intervention that revokes auto-apply,
     // so coming back must not report 「手动调整过偏移」 the user never made.
@@ -826,6 +952,7 @@ export class Session {
     this.stopScheduler()
     this.disconnectDanmaku()
     this.autoSync.dispose()
+    this.autoProfiles?.dispose()
     this.sampler?.dispose()
     this.engine.dispose()
     this.listeners.clear()
@@ -844,12 +971,26 @@ function defaultSamplerFactory(session: Session): RecognitionSampler | null {
     createWorker: createRecognitionWorker,
     video: (role) => session.engine.element(role),
     profile: (role) => session.profileFor(role),
+    clock: () => performance.now(),
     onError: (role, message) => session.notice('warn', `${roleName(role)}识别线程错误：${message}`),
   })
 }
 
 export function roleName(role: SourceRole): string {
   return role === 'official' ? '官方画面' : '国内解说'
+}
+
+/** One cancelled source ends the sync wait without cancelling the other source's candidate. */
+function allAccepted(promises: Array<Promise<boolean>>): Promise<boolean> {
+  if (!promises.length) return Promise.resolve(true)
+  return new Promise(resolve => {
+    let remaining = promises.length
+    for (const promise of promises) void promise.then(accepted => {
+      if (!accepted) resolve(false)
+      remaining -= 1
+      if (!remaining) resolve(true)
+    }, () => resolve(false))
+  })
 }
 
 /** Re-exported so components do not each import from three modules. */

@@ -42,6 +42,7 @@ export interface AppSettings {
   autoSyncEnabled: boolean
   autoSyncIntervalSeconds: number
   detectWindowSeconds: number
+  seekThresholdSeconds: number
   sidebarVisible: boolean
   /**
    * Which recognition preset the player loads on boot, by id. Empty means none.
@@ -72,6 +73,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoSyncEnabled: false,
   autoSyncIntervalSeconds: 30,
   detectWindowSeconds: 3,
+  seekThresholdSeconds: 1.5,
   sidebarVisible: true,
   profileId: '',
 }
@@ -138,6 +140,7 @@ export function mergeSettings(raw: unknown): AppSettings {
     autoSyncIntervalSeconds: clamp(stored.autoSyncIntervalSeconds, 10, 600, 30),
     // Only 2 s and 3 s windows are offered; anything else came from a bad blob.
     detectWindowSeconds: stored.detectWindowSeconds === 2 ? 2 : 3,
+    seekThresholdSeconds: clamp(stored.seekThresholdSeconds, 0.2, 5, 1.5),
     sidebarVisible: boolean(stored.sidebarVisible, defaults.sidebarVisible),
     // Bounded because it goes into a URL path when the preset is fetched.
     profileId: typeof stored.profileId === 'string' ? stored.profileId.slice(0, 200) : '',

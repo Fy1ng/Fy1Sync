@@ -321,6 +321,58 @@ describe('attachMedia HLS precedence', () => {
     expect(() => new RealHls(fake.configs[0] as ConstructorParameters<typeof RealHls>[0]).destroy()).not.toThrow()
   })
 
+  it('keeps a deliberate rewind and rate nudge through real hls.js live-sync controllers', async () => {
+    const fake = fakeModule(true)
+    hlsLoader.load = () => Promise.resolve(fake.module as Awaited<ReturnType<typeof hlsLoader.load>>)
+    await attachMedia(video(), { ...hlsDescriptor(), url: 'app://app/buffer/s/official/index.m3u8' })
+    const { default: RealHls } = await import('hls.js')
+    const real = new RealHls(fake.configs[0] as ConstructorParameters<typeof RealHls>[0])
+    // Exercise the installed hls.js controllers with the exact app constructor
+    // config. A config-only assertion would miss a catch-up or rate reset path.
+    const controllers = real as unknown as {
+      streamController: {
+        media: HTMLVideoElement | null
+        _hasEnoughToStart: boolean
+        synchronizeToLiveEdge(details: unknown): void
+      }
+      latencyController: { media: HTMLVideoElement | null; onTimeupdate(): void }
+    }
+    const element = video()
+    Object.defineProperties(element, {
+      duration: { configurable: true, value: Infinity },
+      readyState: { configurable: true, value: 4 },
+      buffered: { configurable: true, value: ranges([100, 300]) },
+    })
+    const details = {
+      live: true, fragmentStart: 100, edge: 300, targetduration: 2,
+      totalduration: 200, holdBack: 6, partHoldBack: 0, partTarget: 0,
+      age: 0, drift: 1,
+    }
+    Object.defineProperty(real, 'latestLevelDetails', { configurable: true, get: () => details })
+    controllers.streamController.media = element
+    controllers.streamController._hasEnoughToStart = true
+    controllers.latencyController.media = element
+    try {
+      // Sixty seconds behind the live edge remains inside retained media. Both
+      // the normal speed and our bounded nudge must survive playlist updates.
+      for (const rate of [1, 0.95, 1.05]) {
+        element.currentTime = 240
+        element.playbackRate = rate
+        for (let update = 0; update < 3; update += 1) {
+          controllers.streamController.synchronizeToLiveEdge(details)
+          controllers.latencyController.onTimeupdate()
+          expect(element.currentTime).toBe(240)
+          expect(element.playbackRate).toBe(rate)
+        }
+      }
+      expect(real.maxLatency).toBe(Infinity)
+    } finally {
+      controllers.streamController.media = null
+      controllers.latencyController.media = null
+      real.destroy()
+    }
+  })
+
   it('prefers hls.js even when the browser says it can play HLS natively', async () => {
     const fake = fakeModule(true)
     hlsLoader.load = () => Promise.resolve(fake.module as Awaited<ReturnType<typeof hlsLoader.load>>)

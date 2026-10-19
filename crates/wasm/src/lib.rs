@@ -107,6 +107,21 @@ fn gray_image(
     })
 }
 
+/// Explicit P4a partial-profile path; the existing recognition engine stays unchanged.
+#[wasm_bindgen]
+pub fn recognize_auto(
+    pixels: &[u8],
+    width: usize,
+    height: usize,
+    profile_json: &str,
+) -> Result<String, JsValue> {
+    let image = gray_image(pixels, width, height)?;
+    let profile: stream_syncer_core::RecognitionProfile = serde_json::from_str(profile_json)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    serde_json::to_string(&stream_syncer_core::recognize_auto_frame(&image, &profile))
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 #[wasm_bindgen]
 impl AutoClockSession {
     #[wasm_bindgen(constructor)]
