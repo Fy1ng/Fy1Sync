@@ -9,9 +9,11 @@ import { AutoClockSession, RecognitionEngine, TickMomentDetector, initSync } fro
 initSync({ module: readFileSync(join(process.cwd(), 'src/wasm/pkg/stream_syncer_wasm_bg.wasm')) })
 const roi = { x: 70 / 320, y: 99 / 180, w: 54 / 320, h: 22 / 180 }
 
-function clock(seconds: number): Uint8Array {
+function clock(seconds: number, format: 'm:ss' | 'mm:ss' | 'ss' = 'm:ss'): Uint8Array {
   const frame = createFrame(320, 180)
-  drawText(frame, `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`, 74, 103, { scale: 2 })
+  const minutes = String(Math.floor(seconds / 60)).padStart(format === 'mm:ss' ? 2 : 1, '0')
+  const text = format === 'ss' ? String(seconds).padStart(2, '0') : `${minutes}:${String(seconds % 60).padStart(2, '0')}`
+  drawText(frame, text, 74, 103, { scale: 2 })
   return Uint8Array.from({ length: frame.width * frame.height }, (_, i) => frame.data[i * 4]!)
 }
 function crop(data: Uint8Array): Uint8Array {
@@ -19,6 +21,20 @@ function crop(data: Uint8Array): Uint8Array {
 }
 
 describe('automatic clock APIs in the generated WASM module', () => {
+  it.each([[100, 'm:ss'], [600, 'mm:ss'], [5, 'm:ss'], [25, 'ss']] as const)(
+    'localises all glyph positions for %i with %s', (start, format) => {
+      const session = new AutoClockSession()
+      try {
+        for (let i = 0; i < 40; i++) session.push(clock(start - Math.floor(i / 8), format), 320, 180, i / 8)
+        const candidates = JSON.parse(session.locate())
+        expect(candidates.length).toBeGreaterThan(0)
+        expect(candidates[0].roi.x * 320).toBeLessThan(76)
+        expect(candidates[0].roi.x * 320).toBeGreaterThan(69)
+        expect(candidates[0].persistence).toBeGreaterThan(0.9)
+      } finally { session.free() }
+    },
+  )
+
   it('localises a clock away from the scoreboard position and learns a valid candidate profile', () => {
     const session = new AutoClockSession()
     try {

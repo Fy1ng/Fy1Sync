@@ -406,3 +406,155 @@ fn localisation_envelope_contains_variable_width_digits_for_learning() {
         );
     }
 }
+
+// A one-pixel-wide minute at the CLI's 960px analysis scale must not be
+// confused with a colon or require a minimum digit aspect ratio.
+fn shaped_clock(value: usize, format: usize) -> Image {
+    let mut image = Image {
+        data: vec![12; 960 * 540],
+        width: 960,
+        height: 540,
+    };
+    let symbols: Vec<usize> = match format {
+        2 => vec![value / 10, value % 10],
+        5 => vec![
+            value / 600,
+            value / 60 % 10,
+            10,
+            value % 60 / 10,
+            value % 10,
+        ],
+        _ => vec![value / 60, 10, value % 60 / 10, value % 10],
+    };
+    let mut x = 331;
+    for symbol in symbols {
+        let font = if symbol == 1 { ["1"; 7] } else { FONT[symbol] };
+        for (y, row) in font.iter().enumerate() {
+            for (dx, p) in row.bytes().enumerate() {
+                if p == b'1' {
+                    image.data[(217 + y) * 960 + x + dx] = 240;
+                }
+            }
+        }
+        // Fixed digit advance, including the large whitespace after a narrow 1.
+        x += if symbol == 10 { 4 } else { 8 };
+    }
+    image
+}
+
+#[test]
+fn localises_narrow_one_and_all_clock_lengths_at_analysis_scale() {
+    for (start, format) in [(100, 4), (115, 4), (600, 5), (5, 4), (25, 2)]
+        .into_iter()
+        .chain((1..=9).map(|m| (m * 60 + 35, 4)))
+    {
+        let frames: Vec<_> = (0..50)
+            .map(|n| TimedFrame {
+                time: n as f64 / 10.0,
+                image: shaped_clock(start - n / 10, format),
+            })
+            .collect();
+        let candidates = locate_clock(&frames);
+        let top = candidates
+            .first()
+            .unwrap_or_else(|| panic!("no clock for {start}/{format}"));
+        assert!((top.roi.x * 960.0 - 331.0).abs() < 3.0, "{top:?}");
+        assert!((top.roi.y * 540.0 - 217.0).abs() < 3.0, "{top:?}");
+    }
+}
+
+#[test]
+fn clock_entering_after_cutaway_is_found_but_half_window_replay_is_rejected() {
+    let frames: Vec<_> = (0..80)
+        .map(|n| TimedFrame {
+            time: n as f64 / 10.0,
+            image: if n < 30 {
+                Image {
+                    data: vec![12; 960 * 540],
+                    width: 960,
+                    height: 540,
+                }
+            } else {
+                shaped_clock(100 - n / 10, 4)
+            },
+        })
+        .collect();
+    assert!(!locate_clock(&frames).is_empty());
+    let half: Vec<_> = frames
+        .into_iter()
+        .enumerate()
+        .map(|(n, mut f)| {
+            if n < 40 {
+                f.image.data.fill(12);
+            }
+            f
+        })
+        .collect();
+    assert!(locate_clock(&half).is_empty());
+}
+
+#[test]
+fn a_colon_pair_cannot_absorb_a_third_aligned_scoreboard_fragment() {
+    let mut image = shaped_clock(100, 4);
+    for y in 229..233 {
+        image.data[y * 960 + 339] = 240;
+    }
+    assert!(proposals(&image, 190)
+        .iter()
+        .any(|r| r.x >= 329.0 && r.x <= 331.0 && r.y == 216.0 && r.height <= 10.0));
+}
+
+#[test]
+fn team_score_is_not_a_second_minutes_digit() {
+    let frames: Vec<_> = (0..50)
+        .map(|n| {
+            let mut image = shaped_clock(100 - n / 10, 4);
+            // Slightly larger score, close enough to share a component row, but
+            // separated by more than a real digit advance.
+            for y in 0..9 {
+                for x in 0..8 {
+                    if FONT[3][y * 7 / 9].as_bytes()[x * 5 / 8] == b'1' {
+                        image.data[(216 + y) * 960 + 312 + x] = 240;
+                    }
+                }
+            }
+            TimedFrame {
+                time: n as f64 / 10.0,
+                image,
+            }
+        })
+        .collect();
+    let candidates = locate_clock(&frames);
+    let top = candidates.first().expect("clock beside score");
+    assert!(top.roi.x * 960.0 > 325.0, "{top:?}");
+}
+
+#[test]
+fn learns_and_reads_narrow_one_two_minute_digits_and_seconds_only() {
+    for (start, format) in [(100, 4), (625, 5), (25, 2)] {
+        let frames: Vec<_> = (0..220)
+            .map(|n| TimedFrame {
+                time: n as f64 / 10.0,
+                image: shaped_clock(start - n / 10, format),
+            })
+            .collect();
+        let roi = RoiRect {
+            x: 329.0 / 960.0,
+            y: 215.0 / 540.0,
+            w: 42.0 / 960.0,
+            h: 11.0 / 540.0,
+        };
+        let learned = learn_clock(&frames, &roi);
+        assert!(learned.reason.is_none(), "{start}/{format}: {learned:?}");
+        let profile = learned.profile.unwrap();
+        assert!(validate_profile(&serde_json::to_value(&profile).unwrap())["profile"].is_object());
+        for n in 0..22 {
+            let reading = recognize_auto_frame(&shaped_clock(start - n, format), &profile);
+            assert_eq!(
+                reading.value,
+                Some((start - n) as f64),
+                "{start}/{format}/{n}: {reading:?}"
+            );
+        }
+    }
+}

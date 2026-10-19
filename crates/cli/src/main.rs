@@ -12,7 +12,7 @@ use stream_syncer_core::{dispatch, ClockJumpDetector, Engine};
 
 mod auto;
 
-const HELP: &str = "离线录像识别工具\n\nstream-syncer-cli locate --video <file> [--from s] [--duration s]\nstream-syncer-cli learn --video <file> [--roi x,y,w,h] [--from s] [--duration s] --out <new-profile.json>\nstream-syncer-cli recognize (--profile <json> | --auto) --video <file> [--from s] [--to s] [--fps n]\nstream-syncer-cli offset (--profile <json> | --auto) --official <file> --commentary <file> [--from s] [--to s] [--fps n]\n\n所有命令支持 --ffmpeg path. 自动模式支持 --learn-duration s (默认 30, 最长 60).\n--from 默认 0, --duration 默认 30, --to 为不含终点的结束时间.\n旧模式 --fps 默认 30; 自动模式默认 60, 定位/学习采样 10fps.\nffmpeg 来源: --ffmpeg, STREAM_SYNC_FFMPEG, PATH. ffprobe 使用同目录程序.\n输出为 JSONL. 自动模式报告采样边界和容器 start_time, 时间是文件相对秒数.\n两路录像起点不自动对齐, 不推测墙上时钟或录制开始时间差.\n";
+const HELP: &str = "离线录像识别工具\n\nstream-syncer-cli locate --video <file> [--from s] [--duration s]\nstream-syncer-cli learn --video <file> [--roi x,y,w,h] [--from s] [--duration s] --out <new-profile.json>\nstream-syncer-cli recognize (--profile <json> | --auto) --video <file> [--from s] [--to s] [--fps n]\nstream-syncer-cli offset (--profile <json> | --auto) --official <file> --commentary <file> [--from s] [--to s] [--fps n]\n\n所有命令支持 --ffmpeg path. 自动模式支持 --learn-duration s (逐窗扫描长度, 默认 30, 最长 60).\n自动模式在完整文件或指定范围逐窗定位和学习, 报告首个成功窗口, 后续成功窗口补齐缺失字符.\n--from 默认 0, 定位/学习的 --duration 默认 30, --to 为不含终点的结束时间.\n旧模式 --fps 默认 30; 自动模式默认 60, 定位/学习采样 10fps.\nffmpeg 来源: --ffmpeg, STREAM_SYNC_FFMPEG, PATH. ffprobe 使用同目录程序.\n输出为 JSONL. 自动模式报告采样边界和容器 start_time, 时间是文件相对秒数.\n两路录像起点不自动对齐, 不推测墙上时钟或录制开始时间差.\n";
 
 #[derive(Debug, PartialEq)]
 enum Operation {

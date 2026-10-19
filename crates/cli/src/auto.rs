@@ -124,6 +124,10 @@ fn decode(
         width,
         height,
     };
+    // TS segments may not contain a decodable keyframe at the requested seek.
+    // Decode a bounded preroll, then discard it with an output seek. Otherwise
+    // fps=start_time=0 can pad the first missing seconds with a frozen image.
+    let seek = (from - 10.0).max(0.0);
     let mut command = Command::new(&options.ffmpeg);
     command
         .args([
@@ -133,10 +137,11 @@ fn decode(
             "error",
             "-noautorotate",
             "-ss",
-            &from.to_string(),
+            &seek.to_string(),
             "-i",
         ])
-        .arg(video);
+        .arg(video)
+        .args(["-ss", &(from - seek).to_string()]);
     if let Some(end) = to {
         command.args(["-t", &(end - from).to_string()]);
     }
@@ -197,9 +202,6 @@ fn decode(
     if !status.success() {
         return Err(format!("ffmpeg 解码失败 ({status}): {diagnostics}"));
     }
-    if count == 0 {
-        return Err("所选范围没有视频帧".into());
-    }
     Ok(count)
 }
 
@@ -252,11 +254,88 @@ fn crop(info: &VideoInfo, roi: &RoiRect) -> (usize, usize, String) {
 struct Learned {
     profile: Option<RecognitionProfile>,
     roi: RoiRect,
+    windows: Vec<(f64, f64)>,
 }
 
 struct Training {
     learned: Option<Learned>,
-    reason: Option<&'static str>,
+    reason: Option<String>,
+}
+
+// Each decode is bounded independently, even when the requested range is a full file.
+struct TrainingWindows {
+    next: f64,
+    end: Option<f64>,
+    duration: f64,
+}
+
+impl Iterator for TrainingWindows {
+    type Item = (f64, f64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let from = self.next;
+        let to = (from + self.duration).min(self.end.unwrap_or(f64::INFINITY));
+        if !to.is_finite() || to <= from {
+            return None;
+        }
+        self.next = to;
+        Some((from, to))
+    }
+}
+
+fn same_clock_region(a: &RoiRect, b: &RoiRect) -> bool {
+    let intersection = ((a.x + a.w).min(b.x + b.w) - a.x.max(b.x)).max(0.0)
+        * ((a.y + a.h).min(b.y + b.h) - a.y.max(b.y)).max(0.0);
+    intersection / (a.w * a.h).min(b.w * b.h) >= 0.6
+}
+
+fn union_roi(a: &RoiRect, b: &RoiRect) -> RoiRect {
+    let x = a.x.min(b.x);
+    let y = a.y.min(b.y);
+    RoiRect {
+        x,
+        y,
+        w: (a.x + a.w).max(b.x + b.w) - x,
+        h: (a.y + a.h).max(b.y + b.h) - y,
+    }
+}
+
+fn missing_characters(profile: &RecognitionProfile) -> Vec<&'static str> {
+    stream_syncer_core::CLOCK_CHARS
+        .iter()
+        .copied()
+        .filter(|c| profile.templates.get(*c).is_none_or(Vec::is_empty))
+        .collect()
+}
+
+// New windows may fill gaps in a candidate profile, but never replace an existing
+// label. Reject any exact mask that would acquire two different labels.
+fn extend_profile(
+    profile: &mut RecognitionProfile,
+    candidate: &RecognitionProfile,
+) -> Result<Vec<String>, &'static str> {
+    for (label, samples) in &candidate.templates {
+        for (other, existing) in &profile.templates {
+            if label != other
+                && samples
+                    .iter()
+                    .any(|sample| existing.iter().any(|old| old.data == sample.data))
+            {
+                return Err("conflicting-template-labels");
+            }
+        }
+    }
+    let mut added = Vec::new();
+    for (label, samples) in &candidate.templates {
+        if !samples.is_empty() && profile.templates.get(label).is_none_or(Vec::is_empty) {
+            profile.templates.insert(label.clone(), samples.clone());
+            added.push(label.clone());
+        }
+    }
+    // Automatic recognition accepts all supported display lengths. Shape and
+    // template confidence still determine whether an individual frame is usable.
+    profile.clock_format = "auto".into();
+    Ok(added)
 }
 
 // Timing alone cannot establish which of two persistent clocks is live.
@@ -279,46 +358,70 @@ fn train(
     video: &Path,
     source: &str,
     info: &VideoInfo,
+    from: f64,
     to: f64,
+    anchor: Option<&Learned>,
     writer: &mut impl Write,
 ) -> Result<Training, String> {
     let roi = if let Some(roi) = &options.roi {
         roi.clone()
     } else {
-        let frames = collect(options, video, info, options.from, to)?;
+        let frames = collect(options, video, info, from, to)?;
+        if frames.is_empty() {
+            return Ok(Training {
+                learned: None,
+                reason: Some("no-video-frames".into()),
+            });
+        }
         let candidates = locate_clock(&frames);
         emit(
             writer,
-            &json!({"type":"localization", "source":source, "video":video.to_string_lossy(), "from":options.from,"to":to,"sampleFps":DISCOVERY_FPS,"analysisWidth":frames[0].image.width,"candidates":candidates}),
+            &json!({"type":"localization", "source":source, "video":video.to_string_lossy(), "from":from,"to":to,"sampleFps":DISCOVERY_FPS,"analysisWidth":frames[0].image.width,"candidates":candidates}),
         )?;
         if ambiguous_candidates(&candidates) {
             emit(
                 writer,
-                &json!({"type":"learning", "source":source,"profile":null,"reason":"ambiguous-clock-candidates","learnedChars":[]}),
+                &json!({"type":"learning", "source":source,"from":from,"to":to,"profile":null,"reason":"ambiguous-clock-candidates","learnedChars":[]}),
             )?;
             return Ok(Training {
                 learned: None,
-                reason: Some("ambiguous-clock-candidates"),
+                reason: Some("ambiguous-clock-candidates".into()),
             });
         }
         let Some(candidate) = candidates.first() else {
             emit(
                 writer,
-                &json!({"type":"learning", "source":source,"profile":null,"reason":"no-clock-candidate","learnedChars":[],"missingChars":["0","1","2","3","4","5","6","7","8","9",":"]}),
+                &json!({"type":"learning", "source":source,"from":from,"to":to,"profile":null,"reason":"no-clock-candidate","learnedChars":[],"missingChars":["0","1","2","3","4","5","6","7","8","9",":"]}),
             )?;
             return Ok(Training {
                 learned: None,
-                reason: Some("no-clock-candidate"),
+                reason: Some("no-clock-candidate".into()),
             });
         };
-        candidate.roi.clone()
+        if candidate.score < CONFIDENT {
+            return Ok(Training {
+                learned: None,
+                reason: Some("low-localization-confidence".into()),
+            });
+        }
+        if let Some(anchor) = anchor {
+            if !same_clock_region(&anchor.roi, &candidate.roi) {
+                return Ok(Training {
+                    learned: None,
+                    reason: Some("clock-region-changed".into()),
+                });
+            }
+            union_roi(&anchor.roi, &candidate.roi)
+        } else {
+            candidate.roi.clone()
+        }
     };
     let (width, height, transform) = crop(info, &roi);
     let mut frames = Vec::new();
     decode(
         options,
         video,
-        options.from,
+        from,
         Some(to),
         DISCOVERY_FPS,
         width,
@@ -328,10 +431,19 @@ fn train(
             if frames.len().saturating_mul(width * height) >= MAX_DISCOVERY_BYTES {
                 return Err("学习帧预算已用尽".into());
             }
-            frames.push(TimedFrame {
-                time,
-                image: image.clone(),
-            });
+            let mut image = image.clone();
+            if let Some(profile) = anchor.and_then(|learned| learned.profile.as_ref()) {
+                // Learn extension masks under the original preprocessing. On a
+                // binary image every core learning threshold yields that mask.
+                for pixel in &mut image.data {
+                    *pixel = if f64::from(*pixel) >= profile.preprocess.threshold {
+                        255
+                    } else {
+                        0
+                    };
+                }
+            }
+            frames.push(TimedFrame { time, image });
             Ok(())
         },
     )?;
@@ -342,7 +454,26 @@ fn train(
         h: 1.0,
     };
     let mut report = learn_clock(&frames, &local_roi);
-    let profile = report.profile.take();
+    if let (Some(profile), Some(previous)) = (
+        report.profile.as_mut(),
+        anchor.and_then(|learned| learned.profile.as_ref()),
+    ) {
+        profile.preprocess = previous.preprocess.clone();
+    }
+    let accepted = report.profile.is_some()
+        && report.reason.is_none()
+        && report.consistent_offsets == 1
+        && report.confidence >= CONFIDENT;
+    let reason = (!accepted).then(|| {
+        report
+            .reason
+            .clone()
+            .unwrap_or_else(|| "insufficient-learning-confidence".into())
+    });
+    let mut profile = report.profile.take();
+    if let Some(profile) = profile.as_mut() {
+        profile.clock_format = "auto".into();
+    }
     let mut serialized = serde_json::to_value(&report).map_err(|e| e.to_string())?;
     let exported = profile.as_ref().map(|profile| {
         let mut profile = profile.clone();
@@ -352,11 +483,106 @@ fn train(
     serialized["profile"] = serde_json::to_value(&exported).map_err(|e| e.to_string())?;
     emit(
         writer,
-        &json!({"type":"learning","source":source,"roi":roi,"from":options.from,"to":to,"sampleFps":DISCOVERY_FPS,"report":serialized}),
+        &json!({"type":"learning","source":source,"roi":roi,"from":from,"to":to,"sampleFps":DISCOVERY_FPS,"accepted":accepted,"report":serialized}),
     )?;
     Ok(Training {
-        learned: Some(Learned { profile, roi }),
-        reason: None,
+        learned: accepted.then_some(Learned {
+            profile,
+            roi,
+            windows: vec![(from, to)],
+        }),
+        reason,
+    })
+}
+
+fn scan_training(
+    options: &Options,
+    video: &Path,
+    source: &str,
+    info: &VideoInfo,
+    writer: &mut impl Write,
+) -> Result<Training, String> {
+    let end = match (options.to, info.duration) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    };
+    let windows = TrainingWindows {
+        next: options.from,
+        end,
+        duration: options.learn_duration,
+    };
+    select_training(windows, source, writer, |from, to, anchor, writer| {
+        train(options, video, source, info, from, to, anchor, writer)
+    })
+}
+
+fn select_training<W: Write>(
+    windows: TrainingWindows,
+    source: &str,
+    writer: &mut W,
+    mut train_window: impl FnMut(f64, f64, Option<&Learned>, &mut W) -> Result<Training, String>,
+) -> Result<Training, String> {
+    let mut selected: Option<Learned> = None;
+    let mut last_reason = Some("no-usable-learning-window".into());
+    for (from, to) in windows {
+        let training = train_window(from, to, selected.as_ref(), writer)?;
+        let Some(candidate) = training.learned else {
+            let eof = training.reason.as_deref() == Some("no-video-frames");
+            last_reason = training.reason;
+            emit(
+                writer,
+                &json!({"type":"learning-window","source":source,"from":from,"to":to,"status":"rejected","reason":last_reason}),
+            )?;
+            if eof {
+                break;
+            }
+            continue;
+        };
+        if let Some(learned) = selected.as_mut() {
+            let added = extend_profile(
+                learned
+                    .profile
+                    .as_mut()
+                    .expect("accepted training has a profile"),
+                candidate
+                    .profile
+                    .as_ref()
+                    .expect("accepted training has a profile"),
+            );
+            match added {
+                Ok(added) => {
+                    learned.roi = candidate.roi;
+                    if !added.is_empty() {
+                        learned.windows.push((from, to));
+                    }
+                    emit(
+                        writer,
+                        &json!({"type":"learning-window","source":source,"from":from,"to":to,"status":"extended","addedChars":added,"roi":learned.roi,"missingChars":missing_characters(learned.profile.as_ref().unwrap())}),
+                    )?;
+                }
+                Err(reason) => emit(
+                    writer,
+                    &json!({"type":"learning-window","source":source,"from":from,"to":to,"status":"rejected","reason":reason}),
+                )?,
+            }
+        } else {
+            emit(
+                writer,
+                &json!({"type":"learning-window","source":source,"from":from,"to":to,"status":"selected","roi":candidate.roi,"learnedChars":candidate.profile.as_ref().unwrap().templates.keys().collect::<Vec<_>>(),"missingChars":missing_characters(candidate.profile.as_ref().unwrap())}),
+            )?;
+            selected = Some(candidate);
+        }
+        if selected
+            .as_ref()
+            .and_then(|learned| learned.profile.as_ref())
+            .is_some_and(|profile| missing_characters(profile).is_empty())
+        {
+            break;
+        }
+    }
+    Ok(Training {
+        reason: selected.is_none().then_some(last_reason).flatten(),
+        learned: selected,
     })
 }
 
@@ -451,15 +677,15 @@ fn analyze(
         writer,
         &json!({"type":"container","source":source,"video":video.to_string_lossy(),"width":info.width,"height":info.height,"startTime":info.start_time,"duration":info.duration,"nativeFps":info.native_fps,"note":"file-relative timestamps exclude container start_time; no wall-clock alignment inferred"}),
     )?;
-    let training_end = options
+    if options
         .to
         .unwrap_or(f64::INFINITY)
-        .min(options.from + options.learn_duration)
-        .min(info.duration.unwrap_or(f64::INFINITY));
-    if training_end <= options.from {
+        .min(info.duration.unwrap_or(f64::INFINITY))
+        <= options.from
+    {
         return Err("学习窗口为空".into());
     }
-    let training = train(options, video, source, &info, training_end, writer)?;
+    let training = scan_training(options, video, source, &info, writer)?;
     let training_seconds = started.elapsed().as_secs_f64();
     let Some(learned) = training.learned else {
         let width = info.width.min(960);
@@ -573,10 +799,15 @@ fn analyze(
         let in_minute:Vec<_>=ticks.iter().filter(|t|(t.time/60.0).floor() as u64==*minute).collect();
         json!({"minute":minute,"ticks":in_minute.len(),"confidentTicks":in_minute.iter().filter(|t|t.value.is_some()&&t.confidence>=CONFIDENT).count(),"offsetEligibleTicks":in_minute.iter().filter(|t|t.offset_eligible).count()})
     }).collect();
+    let training_windows: Vec<_> = learned
+        .windows
+        .iter()
+        .map(|(from, to)| json!({"from":from,"to":to}))
+        .collect();
     let elapsed = started.elapsed().as_secs_f64();
     emit(
         writer,
-        &json!({"type":"summary","source":source,"video":video.to_string_lossy(),"status":if learned.profile.is_some(){"completed"}else{"rejected"},"reason":if learned.profile.is_some(){Value::Null}else{json!("template-learning-failed")},"roi":learned.roi,"learnedChars":learned.profile.as_ref().map(|p|p.templates.keys().collect::<Vec<_>>()).unwrap_or_default(),"from":options.from,"to":options.to,"sampleFps":options.fps,"frames":frames,"ticks":ticks.len(),"confidentTicks":confident,"confidentFraction":if ticks.is_empty(){0.0}else{confident as f64/ticks.len()as f64},"offsetEligibleTicks":eligible,"offsetRejectionReasons":rejection_reasons,"confidenceThreshold":CONFIDENT,"ticksPerMinute":minutes,"containerStartTime":info.start_time,"trainingSeconds":training_seconds,"recognitionSeconds":recognition_seconds,"decodeAndRecognizeSeconds":elapsed,"processingFramesPerSecond":frames as f64/elapsed,"mediaSecondsPerProcessingSecond":frames as f64/options.fps/elapsed,"samplingUncertaintySeconds":uncertainty,"timebase":"file-relative-sampled"}),
+        &json!({"type":"summary","source":source,"video":video.to_string_lossy(),"status":if learned.profile.is_some(){"completed"}else{"rejected"},"reason":if learned.profile.is_some(){Value::Null}else{json!("template-learning-failed")},"roi":learned.roi,"learnedChars":learned.profile.as_ref().map(|p|p.templates.keys().collect::<Vec<_>>()).unwrap_or_default(),"learningWindow":training_windows.first(),"trainingWindows":training_windows,"from":options.from,"to":options.to,"sampleFps":options.fps,"frames":frames,"ticks":ticks.len(),"confidentTicks":confident,"confidentFraction":if ticks.is_empty(){0.0}else{confident as f64/ticks.len()as f64},"offsetEligibleTicks":eligible,"offsetRejectionReasons":rejection_reasons,"confidenceThreshold":CONFIDENT,"ticksPerMinute":minutes,"containerStartTime":info.start_time,"trainingSeconds":training_seconds,"recognitionSeconds":recognition_seconds,"decodeAndRecognizeSeconds":elapsed,"processingFramesPerSecond":frames as f64/elapsed,"mediaSecondsPerProcessingSecond":frames as f64/options.fps/elapsed,"samplingUncertaintySeconds":uncertainty,"timebase":"file-relative-sampled"}),
     )?;
     Ok(ticks)
 }
@@ -694,6 +925,9 @@ pub(super) fn run(options: &Options, writer: &mut impl Write) -> Result<(), Stri
             let started = Instant::now();
             let to = options.to.unwrap();
             let frames = collect(options, video, &info, options.from, to)?;
+            if frames.is_empty() {
+                return Err("所选范围没有视频帧".into());
+            }
             let candidates = locate_clock(&frames);
             emit(
                 writer,
@@ -705,7 +939,16 @@ pub(super) fn run(options: &Options, writer: &mut impl Write) -> Result<(), Stri
                 return Err("输出文件已存在, 不覆盖用户预设".into());
             }
             let info = info(options, video)?;
-            let training = train(options, video, "video", &info, options.to.unwrap(), writer)?;
+            let training = train(
+                options,
+                video,
+                "video",
+                &info,
+                options.from,
+                options.to.unwrap(),
+                None,
+                writer,
+            )?;
             let Some(learned) = training.learned else {
                 return Err("无法定位倒计时, 未创建预设".into());
             };
@@ -745,6 +988,165 @@ pub(super) fn run(options: &Options, writer: &mut impl Write) -> Result<(), Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn candidate_profile(characters: &str) -> RecognitionProfile {
+        let mut profile: RecognitionProfile =
+            serde_json::from_value(stream_syncer_core::empty_profile("test/countdown", "Test"))
+                .unwrap();
+        for c in characters.chars() {
+            profile.templates.insert(
+                c.to_string(),
+                vec![stream_syncer_core::TemplateSample {
+                    id: format!("test-{c}"),
+                    data: c.to_string().repeat(256),
+                    created_at: 0.0,
+                    origin: None,
+                }],
+            );
+        }
+        profile
+    }
+
+    #[test]
+    fn training_windows_cover_only_the_requested_range_with_bounded_memory() {
+        let windows: Vec<_> = TrainingWindows {
+            next: 17.0,
+            end: Some(82.0),
+            duration: 30.0,
+        }
+        .collect();
+        assert_eq!(windows, vec![(17.0, 47.0), (47.0, 77.0), (77.0, 82.0)]);
+        assert_eq!(
+            TrainingWindows {
+                next: 4.0,
+                end: None,
+                duration: 8.0,
+            }
+            .take(3)
+            .collect::<Vec<_>>(),
+            vec![(4.0, 12.0), (12.0, 20.0), (20.0, 28.0)]
+        );
+    }
+
+    #[test]
+    fn learning_skips_rejected_windows_then_extends_missing_zero_without_replacing_one() {
+        let mut output = Vec::new();
+        let mut attempted = Vec::new();
+        let result = select_training(
+            TrainingWindows {
+                next: 100.0,
+                end: Some(220.0),
+                duration: 30.0,
+            },
+            "official",
+            &mut output,
+            |from, to, anchor, _| {
+                attempted.push(from);
+                if from == 100.0 {
+                    assert!(anchor.is_none());
+                    return Ok(Training {
+                        learned: None,
+                        reason: Some("ambiguous-countdown-labels".into()),
+                    });
+                }
+                let profile = if from == 130.0 {
+                    assert!(anchor.is_none());
+                    candidate_profile("123456789:")
+                } else {
+                    assert!(anchor.is_some());
+                    let mut profile = candidate_profile("0123456789:");
+                    profile.templates.get_mut("1").unwrap()[0].id = "later-one".into();
+                    profile
+                };
+                let roi = profile.roi.clone();
+                Ok(Training {
+                    learned: Some(Learned {
+                        profile: Some(profile),
+                        roi,
+                        windows: vec![(from, to)],
+                    }),
+                    reason: None,
+                })
+            },
+        )
+        .unwrap();
+        let learned = result.learned.unwrap();
+        assert_eq!(attempted, vec![100.0, 130.0, 160.0]);
+        assert_eq!(learned.windows, vec![(130.0, 160.0), (160.0, 190.0)]);
+        let profile = learned.profile.unwrap();
+        assert!(missing_characters(&profile).is_empty());
+        assert_eq!(profile.templates["1"][0].id, "test-1");
+        let events: Vec<Value> = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(events[0]["status"], "rejected");
+        assert_eq!(events[1]["status"], "selected");
+        assert_eq!(events[1]["from"], 130.0);
+        assert_eq!(events[2]["addedChars"], json!(["0"]));
+    }
+
+    #[test]
+    fn extension_rejects_conflicting_labels_before_mutating_a_profile() {
+        let mut profile = candidate_profile("1");
+        let mut later = candidate_profile("02");
+        later.templates.get_mut("2").unwrap()[0].data = profile.templates["1"][0].data.clone();
+        assert_eq!(
+            extend_profile(&mut profile, &later),
+            Err("conflicting-template-labels")
+        );
+        assert!(!profile.templates.contains_key("0"));
+        assert_eq!(profile.templates.len(), 1);
+    }
+
+    #[test]
+    fn eof_stops_unknown_duration_scanning_without_an_unbounded_loop() {
+        let mut attempted = 0;
+        let result = select_training(
+            TrainingWindows {
+                next: 0.0,
+                end: None,
+                duration: 30.0,
+            },
+            "official",
+            &mut Vec::new(),
+            |_, _, _, _| {
+                attempted += 1;
+                Ok(Training {
+                    learned: None,
+                    reason: Some("no-video-frames".into()),
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(attempted, 1);
+        assert!(result.learned.is_none());
+        assert_eq!(result.reason.as_deref(), Some("no-video-frames"));
+    }
+
+    #[test]
+    fn roi_extension_keeps_the_full_wider_minutes_digit() {
+        let first = RoiRect {
+            x: 0.48,
+            y: 0.02,
+            w: 0.03,
+            h: 0.02,
+        };
+        let wider = RoiRect {
+            x: 0.475,
+            y: 0.02,
+            w: 0.04,
+            h: 0.02,
+        };
+        assert!(same_clock_region(&first, &wider));
+        let combined = union_roi(&first, &wider);
+        assert_eq!(combined.x, wider.x);
+        assert!((combined.w - wider.w).abs() < 1e-12);
+        let elsewhere = RoiRect { x: 0.1, ..wider };
+        assert!(!same_clock_region(&first, &elsewhere));
+    }
+
     #[test]
     fn equally_persistent_disjoint_clocks_are_not_selected_automatically() {
         let candidate = |x, score, persistence| RoiCandidate {
