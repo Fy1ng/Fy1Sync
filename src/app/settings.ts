@@ -1,9 +1,9 @@
 /**
  * Persisted UI settings.
  *
- * These are preferences, not state: volumes, danmaku appearance, which key means "fine
- * control". They survive a reload; nothing about the current session (sources, offset,
- * playback position) belongs here.
+ * These are preferences, not state: volumes, danmaku appearance, manual offset step sizes.
+ * They survive a reload; nothing about the current session (sources, offset, playback
+ * position) belongs here.
  *
  * Every read goes through `mergeSettings`, so a stored blob written by an older build —
  * or hand-edited, or truncated — yields defaults for whatever it cannot supply instead
@@ -12,11 +12,9 @@
 
 import type { DanmakuArea } from '../core/danmakuLanes'
 import { DEFAULT_FILTER_SETTINGS, type DanmakuFilterSettings } from '../core/danmakuFilter'
+import { normalizeSteps } from '../ui/controls/manualOffset'
 
 export const SETTINGS_KEY = 'stream-sync.settings.v1'
-
-/** Modifier that switches the manual sync slider to the 0.05 s grid. */
-export type FineKey = 'shift' | 'alt' | 'ctrl'
 
 export interface DanmakuSettings {
   enabled: boolean
@@ -35,9 +33,10 @@ export interface AppSettings {
   muted: Record<'official' | 'commentary', boolean>
   /** Which source's audio is unmuted by default. */
   audioRole: 'official' | 'commentary'
-  fineKey: FineKey
-  /** Fine grid without holding a key, for touchpads and one-handed use. */
-  forceFineStep: boolean
+  /** Step of the inner ◀ / ▶ buttons, seconds. */
+  smallStepSeconds: number
+  /** Step of the outer ◀◀ / ▶▶ buttons, seconds; never below the small step. */
+  largeStepSeconds: number
   danmaku: DanmakuSettings
   autoSyncEnabled: boolean
   autoSyncIntervalSeconds: number
@@ -59,8 +58,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   volume: { official: 0, commentary: 1 },
   muted: { official: true, commentary: false },
   audioRole: 'commentary',
-  fineKey: 'shift',
-  forceFineStep: false,
+  smallStepSeconds: 0.5,
+  largeStepSeconds: 5,
   danmaku: {
     enabled: true,
     fontSize: 24,
@@ -99,8 +98,12 @@ function area(value: unknown): DanmakuArea {
     : DEFAULT_SETTINGS.danmaku.area
 }
 
-function fineKey(value: unknown): FineKey {
-  return value === 'shift' || value === 'alt' || value === 'ctrl' ? value : 'shift'
+function steps(stored: Partial<AppSettings>): Pick<AppSettings, 'smallStepSeconds' | 'largeStepSeconds'> {
+  const { small, large } = normalizeSteps(stored.smallStepSeconds, stored.largeStepSeconds, {
+    small: DEFAULT_SETTINGS.smallStepSeconds,
+    large: DEFAULT_SETTINGS.largeStepSeconds,
+  })
+  return { smallStepSeconds: small, largeStepSeconds: large }
 }
 
 /** Fill in whatever a stored blob does not supply, field by field. */
@@ -120,8 +123,7 @@ export function mergeSettings(raw: unknown): AppSettings {
       commentary: boolean(stored.muted?.commentary, defaults.muted.commentary),
     },
     audioRole: stored.audioRole === 'official' ? 'official' : 'commentary',
-    fineKey: fineKey(stored.fineKey),
-    forceFineStep: boolean(stored.forceFineStep, defaults.forceFineStep),
+    ...steps(stored),
     danmaku: {
       enabled: boolean(danmaku.enabled, defaults.danmaku.enabled),
       fontSize: clamp(danmaku.fontSize, 12, 56, defaults.danmaku.fontSize),

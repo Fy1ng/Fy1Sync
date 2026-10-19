@@ -284,7 +284,7 @@ describe('sync sidebar', () => {
     await flush()
     expect(sidebarText(container)).not.toContain('手动调整过偏移')
 
-    fireEvent.click(screen.getByRole('button', { name: '−0.5s' }))
+    fireEvent.click(screen.getByRole('button', { name: '解说后退 0.5s' }))
     await flush()
 
     // The scheduler must not quietly overwrite a human's choice; the sidebar says so and

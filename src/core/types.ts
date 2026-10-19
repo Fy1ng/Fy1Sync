@@ -49,10 +49,8 @@ export type AppliedRewind = Record<SourceRole, number>
 
 export const NO_REWIND: AppliedRewind = { official: 0, commentary: 0 }
 
-/** Manual sync limits from docs/sync-design.md. */
+/** Manual sync limit from docs/sync-design.md. */
 export const MAX_OFFSET_SECONDS = 60
-export const COARSE_STEP_SECONDS = 0.5
-export const FINE_STEP_SECONDS = 0.05
 /** Below this absolute offset the two sources count as aligned. */
 export const OFFSET_DEADBAND_SECONDS = 0.1
 

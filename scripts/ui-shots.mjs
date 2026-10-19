@@ -155,7 +155,7 @@ async function captureViewport(browser, viewport) {
   page.on('pageerror', (error) => console.warn(`  ! 页面异常：${error.message}`))
   await stubDanmaku(page)
 
-  await page.goto(base, { waitUntil: 'domcontentloaded' })
+  await page.goto(base + '/')
   await page.locator('.player-page').waitFor({ timeout: 30_000 })
 
   // Cold start: the dialog is the first thing anyone sees, so it is the first thing to look at.
@@ -188,13 +188,13 @@ async function captureViewport(browser, viewport) {
   })
 
   // A DropUp with its menu open. Not 画质: a progressive mp4 exposes one level, so OverlayBar
-  // disables that trigger and it cannot be opened here at all. The sidebar's 精调按键 is the same
+  // disables that trigger and it cannot be opened here at all. The sidebar's 小步长 is the same
   // component and is always enabled — and it is the sidebar shape of the control, which is the
-  // one that has to sit convincingly among Slider and Toggle rows.
+  // one that has to sit convincingly among the sidebar's rows.
   // The name is anchored: an accessible name is label + value, so a bare /画质/ matches 摄像头画质 too.
   await step('dropup menu', async () => {
     await revealOverlay(page)
-    await page.getByRole('button', { name: /^精调按键/ }).click()
+    await page.getByRole('button', { name: /^小步长/ }).click()
     await page.waitForTimeout(250)
     await shot(page, `${prefix}-06-dropup-menu`)
     await page.keyboard.press('Escape')
@@ -272,8 +272,12 @@ async function main() {
       delete env.ELECTRON_RUN_AS_NODE
       const application = await _electron.launch({ args: [join(root, 'dist/electron/main.cjs')], cwd: root, env })
       active.add(application)
-      await application.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setContentSize(size.width, size.height), viewport)
+      // The window exists only once the first page is up; resizing before that finds none.
       const page = await application.firstWindow()
+      // Let the app finish its own first navigation, or a later goto aborts against it.
+      await page.waitForURL(base + '/**', { timeout: 30_000 })
+      await page.waitForFunction(() => typeof window.streamSyncer?.invoke === 'function')
+      await application.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setContentSize(size.width, size.height), viewport)
       applications.set(page, application)
       return { newPage: async () => page, close: async () => { await application.close(); active.delete(application) } }
     },

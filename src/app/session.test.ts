@@ -92,11 +92,11 @@ describe('Session snapshot', () => {
     const storage = memoryStorage()
     storage.setItem(
       'stream-sync.settings.v1',
-      JSON.stringify({ fineKey: 'alt', sidebarVisible: false, profileId: 'cs2/iem' }),
+      JSON.stringify({ smallStepSeconds: 0.25, sidebarVisible: false, profileId: 'cs2/iem' }),
     )
     const session = new Session({ engine, storage, createSampler: () => null })
     sessions.push(session)
-    expect(session.settings.fineKey).toBe('alt')
+    expect(session.settings.smallStepSeconds).toBe(0.25)
     expect(session.settings.sidebarVisible).toBe(false)
     expect(session.settings.profileId).toBe('cs2/iem')
   })

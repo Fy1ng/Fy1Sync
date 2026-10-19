@@ -75,9 +75,9 @@ test.describe('双路播放与手动同步', () => {
     const before = await mediaTimes(page)
     const sidebar = page.locator('.sidebar')
 
-    // A negative offset rewinds the commentary side, so official − commentary grows.
-    await sidebar.getByRole('button', { name: '−0.5s' }).click()
-    await sidebar.getByRole('button', { name: '−0.5s' }).click()
+    // ▶ rewinds the commentary side (negative offset), so official − commentary grows.
+    await sidebar.getByRole('button', { name: '解说后退 0.5s' }).click()
+    await sidebar.getByRole('button', { name: '解说后退 0.5s' }).click()
 
     await expect
       .poll(async () => (await offsetReadout(page)).requested, { timeout: 15_000 })

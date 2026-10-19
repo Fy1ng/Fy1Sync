@@ -41,8 +41,8 @@ describe('mergeSettings', () => {
     const merged = mergeSettings({
       volume: { official: 0.4, commentary: 0.8 },
       audioRole: 'official',
-      fineKey: 'alt',
-      forceFineStep: true,
+      smallStepSeconds: 0.25,
+      largeStepSeconds: 10,
       sidebarVisible: false,
       autoSyncEnabled: true,
       autoSyncIntervalSeconds: 60,
@@ -50,8 +50,8 @@ describe('mergeSettings', () => {
     })
     expect(merged.volume).toEqual({ official: 0.4, commentary: 0.8 })
     expect(merged.audioRole).toBe('official')
-    expect(merged.fineKey).toBe('alt')
-    expect(merged.forceFineStep).toBe(true)
+    expect(merged.smallStepSeconds).toBe(0.25)
+    expect(merged.largeStepSeconds).toBe(10)
     expect(merged.sidebarVisible).toBe(false)
     expect(merged.autoSyncEnabled).toBe(true)
     expect(merged.autoSyncIntervalSeconds).toBe(60)
@@ -77,11 +77,11 @@ describe('mergeSettings', () => {
   it('rejects enum values it does not know', () => {
     const merged = mergeSettings({
       audioRole: 'both',
-      fineKey: 'meta',
+      smallStepSeconds: 'tiny',
       danmaku: { area: 'everywhere' },
     } as unknown)
     expect(merged.audioRole).toBe('commentary')
-    expect(merged.fineKey).toBe('shift')
+    expect(merged.smallStepSeconds).toBe(DEFAULT_SETTINGS.smallStepSeconds)
     expect(merged.danmaku.area).toBe(DEFAULT_SETTINGS.danmaku.area)
   })
 
@@ -119,9 +119,9 @@ describe('mergeSettings', () => {
 
 describe('loadSettings', () => {
   it('reads a stored blob through the merge', () => {
-    const storage = fakeStorage(JSON.stringify({ fineKey: 'ctrl', volume: { official: 9 } }))
+    const storage = fakeStorage(JSON.stringify({ largeStepSeconds: 15, volume: { official: 9 } }))
     const settings = loadSettings(storage)
-    expect(settings.fineKey).toBe('ctrl')
+    expect(settings.largeStepSeconds).toBe(15)
     expect(settings.volume.official).toBe(1)
   })
 
@@ -144,10 +144,10 @@ describe('loadSettings', () => {
 
   it('round-trips through save', () => {
     const storage = fakeStorage()
-    saveSettings({ ...DEFAULT_SETTINGS, profileId: 'cs2/iem', forceFineStep: true }, storage)
+    saveSettings({ ...DEFAULT_SETTINGS, profileId: 'cs2/iem', smallStepSeconds: 0.1 }, storage)
     const restored = loadSettings(storage)
     expect(restored.profileId).toBe('cs2/iem')
-    expect(restored.forceFineStep).toBe(true)
+    expect(restored.smallStepSeconds).toBe(0.1)
   })
 })
 

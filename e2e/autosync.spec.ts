@@ -259,7 +259,7 @@ test.describe('自动同步', () => {
     // Nudging is a statement that the user disagrees with the machine, so the scheduler
     // must stop overwriting the result until they ask for it again.
     const sidebar = page.locator('.sidebar')
-    await sidebar.getByRole('button', { name: '−0.5s' }).click()
+    await sidebar.getByRole('button', { name: '解说后退 0.5s' }).click()
     // Scoped to the section, not to a hint index: the auto-sync panel carries several
     // hints and which ones are mounted depends on the run that just finished.
     await expect(page.locator('.auto-sync')).toContainText('定时同步已暂停')

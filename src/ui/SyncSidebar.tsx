@@ -2,30 +2,23 @@
  * The sync sidebar: the only place sync state is shown.
  *
  * docs/ui-layout.md is explicit that the player overlay stays about playback and sync
- * lives here. The manual slider spans -60…+60 s and applies live while dragging; holding
- * the fine-control modifier switches it from 0.5 s to 0.05 s steps. Not every keyboard
- * layout makes a modifier convenient, so a fallback button pins the fine grid on.
+ * lives here. Manual adjustment is a row of step buttons around an editable readout (see
+ * ManualOffsetControls); the step sizes are settings.
  *
- * The two numbers below the slider are different on purpose. "目标" is what the slider
- * asks for; "实际" is what the elements achieved. They diverge when a source runs out of
+ * The two numbers in the status card are different on purpose. "目标" is what the user
+ * asked for; "实际" is what the elements achieved. They diverge when a source runs out of
  * rewind head-room, and hiding that would let the UI claim an alignment that does not
  * exist.
  */
 
-import { useEffect, useState } from 'react'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
-import { useModifierHeld } from '../app/hooks'
 import { roleName } from '../app/session'
-import {
-  COARSE_STEP_SECONDS,
-  FINE_STEP_SECONDS,
-  MAX_OFFSET_SECONDS,
-  SOURCE_ROLES,
-} from '../core/types'
-import { availableRewind, describeOffset, isAligned, snapOffset } from '../core/syncPlan'
+import { SOURCE_ROLES } from '../core/types'
+import { availableRewind, describeOffset, isAligned } from '../core/syncPlan'
 import { AUTO_SYNC_PHASE_TEXT } from '../sync/autoSync'
 import { DropUp } from './controls/DropUp'
-import { Slider } from './controls/Slider'
+import { ManualOffsetControls } from './controls/ManualOffsetControls'
+import { formatStep } from './controls/manualOffset'
 import { Toggle } from './controls/Toggle'
 import { AutoProfileCards } from './AutoProfileCards'
 
@@ -33,15 +26,6 @@ export function SyncSidebar(): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const { settings } = snapshot
-  const modifierHeld = useModifierHeld(settings.fineKey)
-  const fine = modifierHeld || settings.forceFineStep
-  const step = fine ? FINE_STEP_SECONDS : COARSE_STEP_SECONDS
-
-  // Local while dragging: the slider must stay where the pointer is even if a seek is
-  // still settling, otherwise the thumb fights the user.
-  const [draft, setDraft] = useState<number | null>(null)
-  useEffect(() => setDraft(null), [snapshot.requestedOffsetSeconds])
-  const shown = draft ?? snapshot.requestedOffsetSeconds
 
   const aligned = isAligned(snapshot.offsetSeconds)
   const drift = snapshot.requestedOffsetSeconds - snapshot.offsetSeconds
@@ -80,53 +64,39 @@ export function SyncSidebar(): React.ReactNode {
         )}
       </section>
 
-      <section className="sync-manual">
-        <Slider
-          label={`手动偏移${fine ? '（精调 0.05s）' : '（0.5s）'}`}
-          value={shown}
-          min={-MAX_OFFSET_SECONDS}
-          max={MAX_OFFSET_SECONDS}
-          step={step}
-          formatValue={(value) => `${value >= 0 ? '+' : ''}${value.toFixed(2)} s`}
-          onInput={(value) => {
-            const snapped = snapOffset(value, step)
-            setDraft(snapped)
-            // Live application while dragging, per the spec. Each call supersedes the
-            // previous plan, so intermediate values cost a cancelled seek at most.
-            void session.applyOffset(snapped)
-          }}
-          onSettle={(value) => void session.applyOffset(snapOffset(value, step))}
+      <section className="sync-manual" aria-label="手动调整">
+        <ManualOffsetControls
+          value={snapshot.requestedOffsetSeconds}
+          smallStep={settings.smallStepSeconds}
+          largeStep={settings.largeStepSeconds}
+          onChange={(offset) => void session.applyOffset(offset)}
+          onReset={() => void session.resetOffset()}
         />
-        <div className="nudge-row">
-          <button type="button" onClick={() => void session.nudgeOffset(-step)}>
-            −{step}s
-          </button>
-          <button type="button" onClick={() => void session.nudgeOffset(step)}>
-            +{step}s
-          </button>
-          <button type="button" className="ghost" onClick={() => void session.resetOffset()}>
-            归零
-          </button>
+        <div className="step-settings">
+          <DropUp
+            label="小步长"
+            align="left"
+            value={settings.smallStepSeconds}
+            options={stepOptions(SMALL_STEP_CHOICES, settings.smallStepSeconds)}
+            onChange={(seconds) => session.updateSettings({
+              smallStepSeconds: seconds,
+              largeStepSeconds: Math.max(seconds, settings.largeStepSeconds),
+            })}
+          />
+          <DropUp
+            label="大步长"
+            align="left"
+            value={settings.largeStepSeconds}
+            options={stepOptions(LARGE_STEP_CHOICES, settings.largeStepSeconds)
+              .map((option) => ({ ...option, disabled: option.value < settings.smallStepSeconds }))}
+            onChange={(seconds) => session.updateSettings({ largeStepSeconds: seconds })}
+          />
         </div>
-        <Toggle
-          label="始终使用精调步长"
-          hint={`按住 ${FINE_KEY_TEXT[settings.fineKey]} 也可临时精调`}
-          checked={settings.forceFineStep}
-          onChange={(checked) => session.updateSettings({ forceFineStep: checked })}
-        />
-        <DropUp
-          label="精调按键"
-          align="left"
-          value={settings.fineKey}
-          options={[
-            { value: 'shift', label: 'Shift' },
-            { value: 'alt', label: 'Alt' },
-            { value: 'ctrl', label: 'Ctrl' },
-          ]}
-          onChange={(value) => session.updateSettings({ fineKey: value })}
-        />
-        <p className="hint">
-          正值表示官方画面回退，负值表示解说回退。两边都不会快进 —— 直播只能往回走。
+        <p className="hint">按住按钮连续调整，点中间数值可直接输入。</p>
+        <p className="shortcut-row" aria-label="快捷键：方括号左右调整，加 Shift 用大步长，反斜杠归零">
+          <span><kbd>[</kbd><kbd>]</kbd> 小步长</span>
+          <span><kbd>Shift</kbd>+<kbd>[</kbd><kbd>]</kbd> 大步长</span>
+          <span><kbd>\</kbd> 归零</span>
         </p>
       </section>
 
@@ -171,7 +141,14 @@ export function SyncSidebar(): React.ReactNode {
   )
 }
 
-const FINE_KEY_TEXT = { shift: 'Shift', alt: 'Alt', ctrl: 'Ctrl' } as const
+const SMALL_STEP_CHOICES = [0.05, 0.1, 0.25, 0.5, 1]
+const LARGE_STEP_CHOICES = [1, 2, 5, 10, 15, 30]
+
+/** The offered choices, plus the stored value if it came from an older build. */
+function stepOptions(choices: number[], current: number): { value: number; label: string }[] {
+  const values = choices.includes(current) ? choices : [...choices, current].sort((a, b) => a - b)
+  return values.map((seconds) => ({ value: seconds, label: formatStep(seconds) }))
+}
 
 function AutoSyncSection(): React.ReactNode {
   const session = useSession()
