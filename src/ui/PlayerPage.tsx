@@ -19,6 +19,9 @@ import {
 import { roleName } from '../app/session'
 import type { RoleStatus } from '../media/mediaEngine'
 import type { SourceRole } from '../core/types'
+import { useCamera } from '../app/useCamera'
+import { CameraCropDialog } from './CameraCropDialog'
+import { CameraOverlay } from './CameraOverlay'
 import { DanmakuLayer } from './DanmakuLayer'
 import { DanmakuSettingsPanel } from './DanmakuSettingsPanel'
 import { NoticeStrip } from './NoticeStrip'
@@ -42,6 +45,8 @@ export function PlayerPage(): React.ReactNode {
   const overlay = useOverlayVisibility(5000, !snapshot.playing)
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false)
   const [danmakuPanelOpen, setDanmakuPanelOpen] = useState(false)
+  const [cameraDialogOpen, setCameraDialogOpen] = useState(false)
+  const camera = useCamera()
 
   const mainRole = snapshot.mainRole
   const previewRole: SourceRole = mainRole === 'official' ? 'commentary' : 'official'
@@ -78,6 +83,7 @@ export function PlayerPage(): React.ReactNode {
       <div className="stage" ref={stageRef} {...overlay.handlers}>
         <div className="stage-main" ref={mountMain} data-role={mainRole} />
         <DanmakuLayer />
+        {camera.config && <CameraOverlay config={camera.config} onWindow={camera.setWindow} stageRef={stageRef} />}
 
         <button
           type="button"
@@ -109,6 +115,8 @@ export function PlayerPage(): React.ReactNode {
           fullscreenActive={fullscreen.active}
           onToggleFullscreen={fullscreen.toggle}
           onOpenDanmakuSettings={() => setDanmakuPanelOpen(true)}
+          camera={camera}
+          onFrameCamera={() => setCameraDialogOpen(true)}
         />
 
         {danmakuPanelOpen && <DanmakuSettingsPanel onClose={() => setDanmakuPanelOpen(false)} />}
@@ -117,6 +125,15 @@ export function PlayerPage(): React.ReactNode {
       {sidebarVisible && <SyncSidebar />}
 
       {sourceDialogOpen && <SourceDialog onClose={() => setSourceDialogOpen(false)} />}
+
+      {cameraDialogOpen && (
+        <CameraCropDialog
+          initial={camera.config?.crop ?? null}
+          onSave={(crop) => { camera.save(crop); setCameraDialogOpen(false) }}
+          onRemove={camera.config ? () => { camera.remove(); setCameraDialogOpen(false) } : null}
+          onClose={() => setCameraDialogOpen(false)}
+        />
+      )}
     </div>
   )
 }

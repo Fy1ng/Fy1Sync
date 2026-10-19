@@ -3,6 +3,7 @@
 
 mod dispatch;
 mod auto;
+mod camera;
 mod image;
 mod matching;
 mod profile;
@@ -10,6 +11,7 @@ mod temporal;
 
 pub use dispatch::dispatch;
 pub use auto::*;
+pub use camera::*;
 pub use image::*;
 pub use matching::*;
 pub use profile::*;

@@ -13,3 +13,15 @@ export async function loadWasmEngine(): Promise<WasmEngine> {
     createTickDetector: () => new TickMomentDetector(),
   }
 }
+
+let cameraModule: Promise<(frames: Uint8Array, width: number, height: number, rough: string) => string> | null = null
+
+/** The camera crop runs on the main thread: one call over a few small frames, on demand. */
+export function loadCameraTighten(): Promise<(frames: Uint8Array, width: number, height: number, rough: string) => string> {
+  cameraModule ??= (async () => {
+    const module = await import('./pkg/stream_syncer_wasm.js')
+    await module.default({ module_or_path: wasmUrl })
+    return module.tighten_camera
+  })()
+  return cameraModule
+}

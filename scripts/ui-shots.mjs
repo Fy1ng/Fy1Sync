@@ -200,6 +200,24 @@ async function captureViewport(browser, viewport) {
     await page.keyboard.press('Escape')
   })
 
+  // The camera framing dialog after tightening, then the overlay it produces.
+  await step('camera', async () => {
+    await revealOverlay(page)
+    await page.locator('.overlay-bar').getByRole('button', { name: /^摄像头/ }).click()
+    await page.getByRole('option', { name: /框选摄像头|重新取景/ }).click()
+    const dialog = page.getByRole('dialog', { name: '摄像头小窗取景' })
+    await dialog.locator('.roi-window').focus()
+    for (let n = 0; n < 12; n += 1) await page.keyboard.press('Alt+Shift+ArrowRight')
+    for (let n = 0; n < 12; n += 1) await page.keyboard.press('Alt+Shift+ArrowDown')
+    await dialog.getByRole('button', { name: /自动收紧|重新收紧/ }).click()
+    await dialog.getByRole('status').waitFor({ timeout: 15_000 })
+    await shot(page, `${prefix}-11-camera-dialog`)
+    await dialog.getByRole('button', { name: '保存并显示' }).click()
+    await page.locator('.camera-overlay').waitFor()
+    await page.waitForTimeout(400)
+    await shot(page, `${prefix}-12-camera-overlay`)
+  })
+
   await step('danmaku panel', async () => {
     await revealOverlay(page)
     await page.getByRole('button', { name: '弹幕设置' }).click()

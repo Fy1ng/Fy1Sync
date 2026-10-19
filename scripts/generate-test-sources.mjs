@@ -77,7 +77,25 @@ function filterGraph(delay, label) {
     `drawtext=fontfile='${fontPath()}':text='${label}':fontsize=28:fontcolor=0x7A8798:x=32:y=32`,
     // A sweeping bar: visibly different every frame, well away from the ROI.
     `drawbox=x='mod(t*220\\,${WIDTH})':y=${HEIGHT - 60}:w=140:h=14:color=0x3D7EFF@0.9:t=fill`,
+    ...(delay > 0 && label !== 'STILL' ? cameraFilters() : []),
   ].join(',')
+}
+
+/**
+ * A streamer camera on the commentary source: a 16:9 box with a light border and moving
+ * content at a fixed place, so the camera crop has a real rectangle to tighten onto. The
+ * E2E spec checks the tightened crop against these numbers.
+ */
+export const CAMERA = { x: 64, y: 400, w: 256, h: 144, border: 3 }
+
+function cameraFilters() {
+  const { x, y, w, h, border } = CAMERA
+  return [
+    `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=0xE8EDF2@1:t=fill`,
+    `drawbox=x=${x + border}:y=${y + border}:w=${w - border * 2}:h=${h - border * 2}:color=0x2A3340@1:t=fill`,
+    // A "face" moving inside the frame, so the inside differs from frame to frame.
+    `drawbox=x='${x + 40}+mod(t*37\\,${w - 120})':y=${y + 30}:w=60:h=70:color=0xC9946E@1:t=fill`,
+  ]
 }
 
 function run(args) {

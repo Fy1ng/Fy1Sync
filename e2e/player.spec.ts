@@ -192,30 +192,73 @@ test.describe('弹幕叠加层', () => {
 test.describe('底部浮层画质入口', () => {
   test.skip(!fixturesReady(), '缺少测试源，先运行 npm run fixtures')
 
-  test('两个画质入口并存，摄像头画质保持预留', async ({ page }) => {
+  test('框选摄像头后自动收紧、显示小窗并按房间记住', async ({ page }) => {
     await openPlayer(page)
     await loadBothFixtures(page)
+    await seekBoth(page, 3, 3)
+    await setPlaying(page, true)
     await revealOverlay(page)
 
     const bar = page.locator('.overlay-bar')
-    // The anchor matters: a trigger's accessible name is label + current value, so an
-    // unanchored /画质/ also matches 摄像头画质 and the two entries stop being distinguishable.
-    const camera = bar.getByRole('button', { name: /^摄像头画质/ })
-    await expect(bar.getByRole('button', { name: /^画质/ })).toBeVisible()
-    await expect(camera).toBeVisible()
+    // Anchored: an accessible name is label + value, so /画质/ alone would match 摄像头 too.
+    const camera = bar.getByRole('button', { name: /^摄像头/ })
+    await expect(camera).toBeEnabled()
+    await camera.click()
+    await page.getByRole('option', { name: '框选摄像头…' }).click()
 
-    // Reserved for V0.6, so it must not imply the webcam already works: disabled, and its
-    // menu stays shut when clicked. `force` because a disabled button swallows a real click —
-    // the point is that even a delivered press opens nothing.
-    await expect(camera).toBeDisabled()
-    await camera.click({ force: true })
-    await expect(page.getByRole('listbox')).toHaveCount(0)
+    const dialog = page.getByRole('dialog', { name: '摄像头小窗取景' })
+    await expect(dialog).toBeVisible()
+    // The default rough box (x .02 y .4 w .16 h .2) covers the fixture camera at 64,400
+    // 256x144 on 1280x720 only partly; grow it past the camera's right and bottom edges the
+    // way a user would, then check the size label says it is now loose all round.
+    await dialog.locator('.roi-window').focus()
+    for (let n = 0; n < 12; n += 1) await page.keyboard.press('Alt+Shift+ArrowRight')
+    for (let n = 0; n < 12; n += 1) await page.keyboard.press('Alt+Shift+ArrowDown')
+    const [roughW, roughH] = ((await dialog.locator('.roi-size').textContent()) ?? '').split('×').map(Number)
+    expect(roughW).toBeGreaterThan(300)
+    expect(roughH).toBeGreaterThan(270)
+    await dialog.getByRole('button', { name: '自动收紧' }).click()
+    await expect(dialog.getByRole('status')).toContainText('已收紧', { timeout: 15_000 })
 
-    // Progressive MP4 has no ladder, so the main entry has nothing to offer either, and it
-    // says why rather than opening onto an empty menu.
-    const quality = bar.getByRole('button', { name: /^画质/ })
-    await expect(quality).toBeDisabled()
-    await expect(quality).toHaveAttribute('title', '当前片源没有可选画质')
+    // The tightened box, read back off the window's size label (video pixels).
+    const size = await dialog.locator('.roi-size').textContent()
+    const [w, h] = (size ?? '').split('×').map(Number)
+    expect(Math.abs(w! - 256)).toBeLessThanOrEqual(4)
+    expect(Math.abs(h! - 144)).toBeLessThanOrEqual(4)
+
+    await dialog.getByRole('button', { name: '保存并显示' }).click()
+    const overlay = page.locator('.camera-overlay')
+    await expect(overlay).toBeVisible()
+    // The canvas is drawing the commentary picture, not sitting blank.
+    await expect.poll(() => overlay.locator('canvas').evaluate((node: HTMLCanvasElement) => {
+      const data = node.getContext('2d')!.getImageData(0, 0, node.width, node.height).data
+      let lit = 0
+      for (let i = 0; i < data.length; i += 4) if (data[i]! + data[i + 1]! + data[i + 2]! > 60) lit += 1
+      return lit / (data.length / 4)
+    })).toBeGreaterThan(0.2)
+
+    // Drag it somewhere else; the position is saved for this room.
+    const box = (await overlay.boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 + 200, box.y + box.height / 2 + 40, { steps: 6 })
+    await page.mouse.up()
+    const moved = (await overlay.boundingBox())!
+    expect(moved.x - box.x).toBeGreaterThan(150)
+
+    // Reloading the same commentary brings the camera back where it was.
+    await page.reload()
+    await expect(page.locator('.player-page')).toBeVisible()
+    await loadBothFixtures(page)
+    await expect(page.locator('.camera-overlay')).toBeVisible()
+    const restored = (await page.locator('.camera-overlay').boundingBox())!
+    expect(Math.abs(restored.x - moved.x)).toBeLessThan(4)
+
+    // Hidden from the menu, kept in storage.
+    await revealOverlay(page)
+    await bar.getByRole('button', { name: /^摄像头/ }).click()
+    await page.getByRole('option', { name: '隐藏小窗' }).click()
+    await expect(page.locator('.camera-overlay')).toHaveCount(0)
   })
 
   test('HLS 主画面的画质菜单在播放器内向上展开', async ({ page }) => {

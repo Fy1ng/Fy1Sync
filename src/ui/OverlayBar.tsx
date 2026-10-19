@@ -13,6 +13,7 @@ import { DropUp } from './controls/DropUp'
 import type { DropUpOption } from './controls/DropUp'
 import type { SourceRole } from '../core/types'
 import { bufferStatusText } from './bufferStatus'
+import type { CameraControls } from '../app/useCamera'
 
 interface Props {
   visible: boolean
@@ -20,6 +21,8 @@ interface Props {
   fullscreenActive: boolean
   onToggleFullscreen: () => void
   onOpenDanmakuSettings: () => void
+  camera: CameraControls
+  onFrameCamera: () => void
   /**
    * The player measures the bar to work out how much of the stage bottom it covers. A plain
    * prop rather than `forwardRef` — React 19 passes `ref` through to function components on
@@ -34,6 +37,8 @@ export function OverlayBar({
   fullscreenActive,
   onToggleFullscreen,
   onOpenDanmakuSettings,
+  camera,
+  onFrameCamera,
   ref,
 }: Props): React.ReactNode {
   const session = useSession()
@@ -98,24 +103,29 @@ export function OverlayBar({
         />
         }
         {/*
-          Reserved for V0.6, where the commentary stream also supplies a cropped webcam:
-          docs/ui-layout.md asks for the entry up front so adding the feature does not move
-          the controls the user has already learned. Disabled, with its eventual options
-          visible, because a greyed control that shows what it will do reads as "later" —
-          an absent one reads as "never planned".
+          The camera crop comes from the commentary picture, so it follows that stream's
+          quality (解说画质) rather than having one of its own. The menu turns it on or off and
+          opens the framing dialog; the window itself is dragged on the stage.
         */}
         <DropUp
-          label="摄像头画质"
-          value="off"
-          options={[
-            { value: 'off', label: '关闭' },
-            { value: 'low', label: '流畅' },
-            { value: 'high', label: '高清' },
-            { value: 'source', label: '原画' },
-          ]}
-          onChange={() => undefined}
-          disabled
-          title="主播摄像头覆盖尚未实现，后续版本支持"
+          label="摄像头"
+          value={camera.config ? (camera.config.enabled ? 'on' : 'off') : 'none'}
+          options={camera.config
+            ? [
+                { value: 'on', label: '显示小窗' },
+                { value: 'off', label: '隐藏小窗' },
+                { value: 'frame', label: '重新取景…' },
+              ]
+            : [
+                { value: 'none', label: '未设置', disabled: true },
+                { value: 'frame', label: '框选摄像头…' },
+              ]}
+          onChange={(value) => {
+            if (value === 'frame') onFrameCamera()
+            else if (value === 'on' || value === 'off') camera.setEnabled(value === 'on')
+          }}
+          disabled={!camera.available}
+          title={camera.available ? undefined : '加载解说源后可以框选主播摄像头'}
         />
         <button
           type="button"

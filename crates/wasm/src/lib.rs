@@ -247,3 +247,24 @@ mod tests {
         );
     }
 }
+
+/// Tighten a rough camera box. `frames` is `count` grayscale frames of `width`x`height`
+/// back to back (a few seconds sampled at 1 fps is enough); returns `{ roi, found }` JSON.
+#[wasm_bindgen]
+pub fn tighten_camera(frames: &[u8], width: usize, height: usize, rough_json: &str) -> Result<String, JsValue> {
+    let size = width
+        .checked_mul(height)
+        .filter(|&n| n > 0 && n <= 16_777_216)
+        .ok_or_else(|| JsValue::from_str("帧尺寸无效"))?;
+    if frames.is_empty() || frames.len() % size != 0 || frames.len() / size > 32 {
+        return Err(JsValue::from_str("摄像头取景帧数据无效"));
+    }
+    let rough: stream_syncer_core::RoiRect =
+        serde_json::from_str(rough_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let images: Vec<_> = frames
+        .chunks_exact(size)
+        .map(|chunk| stream_syncer_core::Image { data: chunk.to_vec(), width, height })
+        .collect();
+    serde_json::to_string(&stream_syncer_core::tighten_camera_box(&images, &rough))
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}

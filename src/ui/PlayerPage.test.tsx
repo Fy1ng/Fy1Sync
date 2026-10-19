@@ -222,19 +222,15 @@ describe('overlay bar volume', () => {
 })
 
 describe('overlay bar quality controls', () => {
-  it('keeps the two quality entries separate, with the camera one reserved', () => {
+  it('keeps the camera menu separate from quality and disabled until commentary plays', () => {
     renderPage(makeSession())
 
-    // docs/ui-layout.md splits quality in two: 主画面画质 drives the official feed, and
-    // 摄像头画质 is held for the V0.6 webcam overlay. Both entries must exist — the reserved
-    // one so the controls do not shift sideways when V0.6 lands — and they must be two
-    // controls, not one. The trigger's accessible name is label + current value, so the
-    // anchor keeps 画质 from also matching 摄像头画质.
+    // The camera is cropped from the commentary picture, so it has no quality of its own and
+    // nothing to frame before that picture exists. The anchor keeps 画质 from matching 摄像头.
     expect(screen.getByRole('button', { name: /^画质/ })).toBeInTheDocument()
-    const camera = screen.getByRole('button', { name: /^摄像头画质/ })
-
-    // Disabled, so it never implies the webcam already works, and its menu stays shut.
+    const camera = screen.getByRole('button', { name: /^摄像头/ })
     expect(camera).toBeDisabled()
+    expect(camera).toHaveAttribute('title', '加载解说源后可以框选主播摄像头')
     fireEvent.click(camera)
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
   })
