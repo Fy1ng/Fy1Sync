@@ -295,7 +295,7 @@ async function teachProfile(page: Page, id: string, name: string): Promise<void>
   await setField(page, '标识', id)
   await setField(page, '名称', name)
 
-  await page.locator('.stage-toolbar input[type=file]').setInputFiles(officialPath)
+  await page.locator('.stage-toolbar input[accept="video/*"]').setInputFiles(officialPath)
   await expect
     .poll(async () =>
       page.locator('video.admin-video').evaluate((node: HTMLVideoElement) => node.videoWidth),

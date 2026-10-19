@@ -44,10 +44,13 @@ import { Toggle } from '../controls/Toggle'
 import { DropUp, type DropUpOption } from '../controls/DropUp'
 import { analyzeFrame, drawGray, drawMask, sampleFromBox, TEMPLATE_SIZE } from './framePipeline'
 import { RoiWindow } from './RoiWindow'
+import { decodeScreenshot, imageFromClipboard } from './screenshotSample'
 
 interface Message {
   kind: 'info' | 'warn' | 'error'
   text: string
+  /** Set when a publish lost an ETag race; the banner then offers the two ways out. */
+  conflict?: { currentEtag?: string }
 }
 
 const CLOCK_FORMAT_OPTIONS: DropUpOption<CountdownFormat>[] = [
@@ -69,6 +72,8 @@ export default function AdminPage(): React.ReactNode {
   const [drafts, setDrafts] = useState<StoredProfile[]>([])
 
   const [sampleUrl, setSampleUrl] = useState('')
+  /** A still screenshot replaces the video stage; the video controls do not apply to it. */
+  const [sampleKind, setSampleKind] = useState<'video' | 'image'>('video')
   const [sampleName, setSampleName] = useState('')
   const [videoSize, setVideoSize] = useState({ width: 0, height: 0 })
   const [mediaTime, setMediaTime] = useState(0)
@@ -142,15 +147,51 @@ export default function AdminPage(): React.ReactNode {
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
     const url = URL.createObjectURL(file)
     objectUrlRef.current = url
+    setSampleKind('video')
     setSampleUrl(url)
     setSampleName(file.name)
     setFrame(null)
     setMessage({ kind: 'info', text: `已载入样片 ${file.name}，文件没有离开本机。` })
   }
 
+  const openScreenshot = useCallback(async (file: File, origin: 'file' | 'paste'): Promise<void> => {
+    const decoded = await decodeScreenshot(file)
+    if (!decoded.ok) {
+      setMessage({ kind: 'error', text: decoded.message })
+      return
+    }
+    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
+    const url = URL.createObjectURL(file)
+    objectUrlRef.current = url
+    const name = origin === 'paste' ? '粘贴的截图' : file.name
+    setSampleKind('image')
+    setSampleUrl(url)
+    setSampleName(name)
+    setVideoSize({ width: decoded.frame.width, height: decoded.frame.height })
+    setMediaTime(0)
+    setDuration(0)
+    setFrame(decoded.frame)
+    setMessage({ kind: 'info', text: `已载入${name}（${decoded.frame.width}×${decoded.frame.height}），图片没有离开本机。` })
+  }, [])
+
+  // Ctrl+V anywhere on the editor, except into a text field, which keeps its own paste.
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent): void => {
+      const target = event.target
+      if (target instanceof Element && target.closest('input, textarea, [contenteditable="true"]')) return
+      const file = imageFromClipboard(event.clipboardData)
+      if (!file) return
+      event.preventDefault()
+      void openScreenshot(file, 'paste')
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [openScreenshot])
+
   const grab = useCallback(() => {
     const video = videoRef.current
-    if (!video) return
+    // A screenshot is already the frame; there is nothing to grab again.
+    if (!video || sampleKind === 'image') return
     // The whole frame is grabbed, not just the ROI: the editor re-crops on every ROI
     // change, and re-grabbing per pixel of drag would stall on a paused decoder.
     const result = grabberRef.current.grab(video, FULL_FRAME_ROI, video.currentTime)
@@ -163,7 +204,7 @@ export default function AdminPage(): React.ReactNode {
     }
     setFrame(result.frame)
     setMessage(null)
-  }, [])
+  }, [sampleKind])
 
   const step = (delta: number): void => {
     const video = videoRef.current
@@ -226,8 +267,8 @@ export default function AdminPage(): React.ReactNode {
     }
   }
 
-  const publish = async (): Promise<void> => {
-    const result = await apiClient.savePreset(profile.id, profile, '', etag)
+  const publish = async (overwriteEtag?: string): Promise<void> => {
+    const result = await apiClient.savePreset(profile.id, profile, '', overwriteEtag ?? etag)
     if (result.ok) {
       setEtag(result.value.etag)
       setDirty(false)
@@ -236,16 +277,21 @@ export default function AdminPage(): React.ReactNode {
       return
     }
     const issues = issuesFrom(result.detail)
+    // `conflict` is main's code for a stale ETag. Both ways out are offered and named
+    // for what they cost: reloading drops these edits, overwriting drops the other ones.
+    // Overwrite sends the ETag main reported, so it only wins against that exact version.
+    if (result.code === 'conflict') {
+      const currentEtag = (result.detail as { currentEtag?: unknown } | undefined)?.currentEtag
+      setMessage({
+        kind: 'error',
+        text: `预设 ${profile.id} 已在别处被修改。`,
+        conflict: { currentEtag: typeof currentEtag === 'string' ? currentEtag : undefined },
+      })
+      return
+    }
     setMessage({
       kind: 'error',
-      text:
-        // `conflict` is main's code for a stale ETag (presetStore -> IPC),
-        // passed through by apiClient untranslated. The storage message only states the
-        // fact; this one says what to do about it, which is the part that needs saying —
-        // republishing without reloading would discard the other session's edit.
-        result.code === 'conflict'
-          ? '本机预设已被其他会话改动，请重新载入后再发布。'
-          : `发布失败：${result.message}${issues.length ? `（${issues.map((issue) => `${issue.path} ${issue.message}`).join('；')}）` : ''}`,
+      text: `发布失败：${result.message}${issues.length ? `（${issues.map((issue) => `${issue.path} ${issue.message}`).join('；')}）` : ''}`,
     })
   }
 
@@ -353,8 +399,20 @@ export default function AdminPage(): React.ReactNode {
       </header>
 
       {message ? (
-        <div className={`admin-message is-${message.kind}`} role="status">
+        <div className={`admin-message is-${message.kind}`} role={message.conflict ? 'alert' : 'status'}>
           <span>{message.text}</span>
+          {message.conflict ? (
+            <span className="admin-message-actions">
+              <button type="button" className="small" onClick={() => void loadPreset(profile.id)}>
+                载入对方版本（放弃本次修改）
+              </button>
+              {message.conflict.currentEtag ? (
+                <button type="button" className="small danger" onClick={() => void publish(message.conflict?.currentEtag)}>
+                  用我的版本覆盖
+                </button>
+              ) : null}
+            </span>
+          ) : null}
           <button type="button" className="icon-button" onClick={() => setMessage(null)} aria-label="关闭提示">
             ×
           </button>
@@ -382,7 +440,7 @@ export default function AdminPage(): React.ReactNode {
           onImport={importFile}
           onExport={exportFile}
           onSaveDraft={saveDraft}
-          onPublish={publish}
+          onPublish={() => publish()}
         />
 
         <section className="admin-stage-column">
@@ -399,19 +457,44 @@ export default function AdminPage(): React.ReactNode {
                 }}
               />
             </label>
-            <button type="button" onClick={() => step(-1)} disabled={!sampleUrl}>
+            <label className="file-button">
+              选择截图
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  if (file) void openScreenshot(file, 'file')
+                  event.target.value = ''
+                }}
+              />
+            </label>
+            <span className="stage-toolbar-hint">也可直接 Ctrl+V 粘贴截图</span>
+            <span className="stage-toolbar-spacer" />
+            <button type="button" onClick={() => step(-1)} disabled={!sampleUrl || sampleKind === 'image'}>
               上一帧
             </button>
-            <button type="button" onClick={() => step(1)} disabled={!sampleUrl}>
+            <button type="button" onClick={() => step(1)} disabled={!sampleUrl || sampleKind === 'image'}>
               下一帧
             </button>
-            <button type="button" className="primary" onClick={grab} disabled={!sampleUrl}>
+            <button type="button" className="primary" onClick={grab} disabled={!sampleUrl || sampleKind === 'image'}>
               取当前帧
             </button>
           </div>
 
           <div className="admin-stage" ref={stageRef}>
-            {sampleUrl ? (
+            {sampleUrl && sampleKind === 'image' ? (
+              <>
+                <img src={sampleUrl} className="admin-video" alt={sampleName} draggable={false} />
+                <RoiWindow
+                  roi={profile.roi}
+                  onChange={setRoi}
+                  videoWidth={videoSize.width}
+                  videoHeight={videoSize.height}
+                  hostRef={stageRef}
+                />
+              </>
+            ) : sampleUrl ? (
               <>
                 <video
                   ref={videoRef}
@@ -442,7 +525,7 @@ export default function AdminPage(): React.ReactNode {
                 />
               </>
             ) : (
-              <p className="stage-empty">选一段本地录像作为样片。文件只在浏览器里解码，不会上传。</p>
+              <p className="stage-empty">选一段本地录像或一张截图作为样片，也可以直接粘贴截图。文件只在本机解码，不会上传。</p>
             )}
           </div>
 
@@ -453,7 +536,7 @@ export default function AdminPage(): React.ReactNode {
               max={Math.max(0.1, duration)}
               step={0.02}
               value={Math.min(mediaTime, duration || mediaTime)}
-              disabled={!sampleUrl}
+              disabled={!sampleUrl || sampleKind === 'image'}
               onInput={(value) => {
                 setMediaTime(value)
                 const video = videoRef.current
@@ -470,7 +553,7 @@ export default function AdminPage(): React.ReactNode {
                   if (video.paused) void video.play().catch(() => undefined)
                   else video.pause()
                 }}
-                disabled={!sampleUrl}
+                disabled={!sampleUrl || sampleKind === 'image'}
               >
                 播放 / 暂停
               </button>

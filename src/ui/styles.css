@@ -1725,6 +1725,29 @@ kbd {
   border-left-color: var(--error);
 }
 
+.admin-message:has(.admin-message-actions) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.admin-message-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+button.danger {
+  border-color: color-mix(in srgb, var(--error) 55%, var(--border));
+  color: color-mix(in srgb, var(--error) 70%, var(--text));
+}
+
+button.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error) 16%, var(--panel-hover));
+  border-color: var(--error);
+}
+
 /*
  * Three columns: library, sample stage, inspector. The middle one is the only elastic
  * track — the side panels hold fixed-width controls and shrinking them just clips labels.
@@ -1808,7 +1831,17 @@ kbd {
 .stage-toolbar {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
+}
+
+.stage-toolbar-hint {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.stage-toolbar-spacer {
+  flex: 1;
 }
 
 /*

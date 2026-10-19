@@ -7,6 +7,7 @@ import { APP_ORIGIN, expect, test } from './electron'
 import { failOnPageError, fixturesReady, invoke } from './helpers'
 
 const officialPath = fileURLToPath(new URL('../public/test-sources/official.mp4', import.meta.url))
+const framePath = fileURLToPath(new URL('../public/test-sources/frame-0-20.png', import.meta.url))
 
 test.describe('本机编辑器访问', () => {
   test('本机窗口直接显示编辑器而无需令牌', async ({ page }) => {
@@ -56,7 +57,7 @@ test.describe('取帧与切分', () => {
     await page.goto(APP_ORIGIN + '/admin')
     await expect(page.locator('.admin-columns')).toBeVisible()
 
-    await page.locator('.stage-toolbar input[type=file]').setInputFiles(officialPath)
+    await page.locator('.stage-toolbar input[accept="video/*"]').setInputFiles(officialPath)
     const video = page.locator('video.admin-video')
     await expect(video).toBeVisible()
     await expect.poll(async () => video.evaluate((node: HTMLVideoElement) => node.videoWidth)).toBeGreaterThan(0)
@@ -75,7 +76,7 @@ test.describe('取帧与切分', () => {
   test('点字符按钮把选中的框存成模板样本', async ({ page }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
-    await page.locator('.stage-toolbar input[type=file]').setInputFiles(officialPath)
+    await page.locator('.stage-toolbar input[accept="video/*"]').setInputFiles(officialPath)
     await expect.poll(async () =>
       page.locator('video.admin-video').evaluate((node: HTMLVideoElement) => node.videoWidth),
     ).toBeGreaterThan(0)
@@ -142,13 +143,47 @@ test.describe('发布预设', () => {
     await setField(page, '名称', '我的版本')
     await page.getByRole('button', { name: '发布到本机' }).click()
     // Last-write-wins would silently discard the other session's edit.
-    await expect(page.locator('.admin-message.is-error')).toContainText('已被其他会话改动')
+    await expect(page.locator('.admin-message.is-error')).toContainText('已在别处被修改')
 
     const after = await invoke(page, 'getPreset', { id })
     expect(after.ok).toBe(true)
     if (!after.ok) throw new Error(after.message)
     const body = after.value
     expect(body.profile.name).toBe('别人的版本')
+
+    // Overwriting is a deliberate, named choice and then wins against that version.
+    await page.getByRole('button', { name: '用我的版本覆盖' }).click()
+    await expect(page.locator('.admin-message.is-info')).toContainText('已发布为本机预设')
+    const overwritten = await invoke(page, 'getPreset', { id })
+    expect(overwritten.ok && overwritten.value.profile.name).toBe('我的版本')
+  })
+
+  test('截图样片可选择也可粘贴，并切出字符框', async ({ page }) => {
+    test.skip(!fixturesReady(), '需要先运行 npm run fixtures')
+    failOnPageError(page)
+    await page.goto(APP_ORIGIN + '/admin')
+    await expect(page.locator('.admin-columns')).toBeVisible()
+
+    await setRoi(page, { x: 0.42, y: 0.045, w: 0.16, h: 0.13 })
+    await page.locator('.stage-toolbar input[accept^="image/"]').setInputFiles(framePath)
+    await expect(page.locator('img.admin-video')).toBeVisible()
+    await expect(page.locator('.admin-message')).toContainText('1280×720')
+    // The still is the frame: no grabbing, and 0:20 segments into its glyphs.
+    await expect(page.getByRole('button', { name: '取当前帧' })).toBeDisabled()
+    await expect.poll(async () => page.locator('.glyph-box').count(), { timeout: 20_000 }).toBeGreaterThanOrEqual(3)
+
+    // Paste the same picture through a real ClipboardEvent carrying a File.
+    const bytes = [...await (await import('node:fs/promises')).readFile(framePath)]
+    await page.evaluate((data) => {
+      const transfer = new DataTransfer()
+      transfer.items.add(new File([new Uint8Array(data)], 'clip.png', { type: 'image/png' }))
+      window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true }))
+    }, bytes)
+    await expect(page.locator('.admin-message')).toContainText('粘贴的截图')
+
+    // An unsupported image is refused with a reason rather than silently ignored.
+    await page.locator('.stage-toolbar input[accept^="image/"]').setInputFiles({ name: 'a.gif', mimeType: 'image/gif', buffer: Buffer.from('GIF89a') })
+    await expect(page.locator('.admin-message.is-error')).toContainText('只支持 PNG、JPEG 或 WebP')
   })
 })
 

@@ -253,6 +253,15 @@ async function captureAdmin(browser) {
     await shot(page, 'admin-01-gate')
   })
 
+  // A screenshot sample with the fixture's ROI, so the inspector column is populated.
+  await step('admin screenshot', async () => {
+    const frame = fileURLToPath(new URL('../public/test-sources/frame-0-20.png', import.meta.url))
+    await page.locator('.stage-toolbar input[accept^="image/"]').setInputFiles(frame)
+    await page.locator('img.admin-video').waitFor()
+    await page.waitForTimeout(600)
+    await shot(page, 'admin-02-screenshot')
+  })
+
   await context.close()
 }
 

@@ -32,3 +32,35 @@ describe('AdminPage desktop entry', () => {
     expect(vi.mocked(invoke).mock.calls.some(([method]) => method === 'verifyAdmin')).toBe(false)
   })
 })
+
+describe('publish conflicts', () => {
+  it('offers reload and an overwrite that only beats the reported version', async () => {
+    const calls: Array<{ method: string; args: unknown }> = []
+    let attempt = 0
+    const invoke = vi.fn(async (method: string, args: unknown) => {
+      calls.push({ method, args })
+      if (method === 'listPresets') return { ok: true, value: { presets: [] } }
+      if (method === 'savePreset') {
+        attempt += 1
+        return attempt === 1
+          ? { ok: false, code: 'conflict', message: '预设已被其他会话修改', detail: { currentEtag: 'etag-theirs' } }
+          : { ok: true, value: { id: 'x', etag: 'etag-mine', updatedAt: 1 } }
+      }
+      return { ok: false, code: 'not-found', message: '未知' }
+    }) as StreamSyncerBridge['invoke']
+    vi.stubGlobal('streamSyncer', { invoke, subscribeDanmaku: () => () => {} } satisfies StreamSyncerBridge)
+    const session = new Session({ createSampler: () => null })
+    sessions.push(session)
+    render(<SessionProvider session={session}><AdminPage /></SessionProvider>)
+
+    fireEvent.click(screen.getByRole('button', { name: '发布到本机' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('已在别处被修改')
+    expect(screen.getByRole('button', { name: '载入对方版本（放弃本次修改）' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '用我的版本覆盖' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('已发布为本机预设')
+    const saves = calls.filter((call) => call.method === 'savePreset')
+    expect(saves).toHaveLength(2)
+    expect(saves[1]!.args).toEqual(expect.objectContaining({ etag: 'etag-theirs' }))
+  })
+})
