@@ -477,8 +477,8 @@ export class Session {
   }
   sourceRevision(role: SourceRole): number { return this.sourceGeneration[role] }
 
-  async loadSource(role: SourceRole, descriptor: MediaDescriptor): Promise<void> {
-    this.invalidateAutomaticWork(role)
+  async loadSource(role: SourceRole, descriptor: MediaDescriptor, options: { keepSessionProfile?: boolean } = {}): Promise<void> {
+    this.invalidateAutomaticWork(role, options)
     const generation = ++this.sourceGeneration[role]
     if (!descriptor.url.includes('/buffer/')) {
       await apiClient.stopBuffer(role)
@@ -520,7 +520,10 @@ export class Session {
     const descriptor = this.engine.getState()[role].descriptor
     if (this.qualityBusy[role] || !descriptor?.sourceQualities?.some((option) => option.id === quality)
       || descriptor.sourceQuality === quality) return
-    this.invalidateAutomaticWork(role)
+    // Same broadcast, same scoreboard: the ROI is a fraction of the frame and the glyphs a
+    // normalised mask, so a profile the user accepted this session still reads the new
+    // rendition. Dropping it here would make the post-switch re-sync impossible.
+    this.invalidateAutomaticWork(role, { keepSessionProfile: true })
     const generation = ++this.sourceGeneration[role]
     const wasPlaying = !this.engine.element(role).paused
     this.qualityBusy = { ...this.qualityBusy, [role]: true }
@@ -536,7 +539,7 @@ export class Session {
       const stream = response.value.stream
       const replacement: MediaDescriptor = { ...descriptor, url: stream.url, kind: stream.kind,
         label: stream.label, sourceQualities: stream.qualities, sourceQuality: stream.quality }
-      await this.loadSource(role, replacement)
+      await this.loadSource(role, replacement, { keepSessionProfile: true })
       const loadedGeneration = this.sourceGeneration[role]
       if (this.engine.getState()[role].descriptor !== replacement || this.disposed) return
       if (this.engine.getState()[role].status === 'error') {
@@ -796,11 +799,13 @@ export class Session {
     await this.refreshPresets()
     return true
   }
-  private invalidateAutomaticWork(role: SourceRole): void {
+  private invalidateAutomaticWork(role: SourceRole, options: { keepSessionProfile?: boolean } = {}): void {
     ++this.autoRequestRevision
     this.autoSync.cancel(false)
     this.autoProfiles?.reset(role)
-    if (this.profileMap[role]?.id.startsWith('session/')) this.profileMap = { ...this.profileMap, [role]: null }
+    if (!options.keepSessionProfile && this.profileMap[role]?.id.startsWith('session/')) {
+      this.profileMap = { ...this.profileMap, [role]: null }
+    }
   }
 
   /** Abort an in-flight run; the button that calls this is the user's stop control. */

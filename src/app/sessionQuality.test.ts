@@ -37,6 +37,24 @@ describe('quality restart synchronization', () => {
     expect(session.engine.element('official').paused).toBe(false)
   })
 
+  it('keeps a profile accepted this session and re-syncs with it after a switch', async () => {
+    const h = await harness(false)
+    // An auto-learned candidate the user pressed 使用 on carries a `session/` id.
+    const accepted = { ...createEmptyProfile('session/official', '自动学习'), roi: { x: 0.48, y: 0.03, w: 0.03, h: 0.03 } }
+    session.setProfile('official', accepted)
+    await session.changeSourceQuality('official', 'low')
+    expect(session.profileFor('official')).toBe(accepted)
+    expect(h.sync).toHaveBeenCalledTimes(1)
+  })
+
+  it('drops a session profile when a different source is loaded', async () => {
+    await harness(false)
+    session.setProfile('official', createEmptyProfile('session/official', '自动学习'))
+    await session.loadSource('official', { kind: 'progressive', url: 'app://app/media/other', label: '另一场', input: 'x',
+      viaProxy: false, loop: false })
+    expect(session.profileFor('official')).toBeNull()
+  })
+
   it('suggests immediate sync when no profile is selected', async () => {
     const h = await harness(false)
     await session.changeSourceQuality('official', 'low')
