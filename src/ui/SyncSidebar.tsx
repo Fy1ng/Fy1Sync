@@ -21,6 +21,7 @@ import { ManualOffsetControls } from './controls/ManualOffsetControls'
 import { formatStep } from './controls/manualOffset'
 import { Toggle } from './controls/Toggle'
 import { AutoProfileCards } from './AutoProfileCards'
+import { ChatList } from './ChatList'
 
 export function SyncSidebar(): React.ReactNode {
   const session = useSession()
@@ -137,6 +138,8 @@ export function SyncSidebar(): React.ReactNode {
       </section>
 
       <AutoSyncSection />
+
+      {(snapshot.danmaku.connected || snapshot.danmaku.room) && <ChatList connected={snapshot.danmaku.connected} />}
     </aside>
   )
 }

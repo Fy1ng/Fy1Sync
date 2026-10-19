@@ -241,3 +241,38 @@ export async function stubDanmakuStream(application: ElectronApplication, texts:
     setInterval(emit, 800)
   }, texts)
 }
+
+/**
+ * Stress generator: `perSecond` distinct messages a second into the real relay, through the
+ * main-process E2E hook (absent outside the harness, so nothing like this ships). Returns
+ * a stop function. Runs in main so the rate does not depend on the renderer keeping up.
+ */
+export async function stressDanmaku(application: ElectronApplication, perSecond: number): Promise<() => Promise<void>> {
+  await application.evaluate((_electron, rate) => {
+    const main = globalThis as typeof globalThis & {
+      __streamSyncerTest?: { emitDanmaku(room: string, event: string, data: unknown): number }
+      __stressTimer?: ReturnType<typeof setInterval>
+    }
+    if (!main.__streamSyncerTest) throw new Error('Main-process E2E relay hook is unavailable')
+    main.__streamSyncerTest.emitDanmaku('288016', 'state', { room: '288016', state: 'connected' })
+    let sequence = 0
+    const tickMs = 50
+    const perTick = rate * tickMs / 1000
+    let carry = 0
+    main.__stressTimer = setInterval(() => {
+      carry += perTick
+      for (; carry >= 1; carry -= 1) {
+        sequence += 1
+        main.__streamSyncerTest?.emitDanmaku('288016', 'danmaku', {
+          id: 'stress-' + sequence, text: '压测弹幕 #' + sequence, user: '观众' + (sequence % 97), color: '#ffffff',
+        })
+      }
+    }, tickMs)
+  }, perSecond)
+  return async () => {
+    await application.evaluate(() => {
+      const main = globalThis as typeof globalThis & { __stressTimer?: ReturnType<typeof setInterval> }
+      clearInterval(main.__stressTimer)
+    })
+  }
+}

@@ -12,7 +12,7 @@ import {
   type RecognitionProfile,
 } from '../core/profileSchema'
 import type { MediaDescriptor } from '../core/types'
-import { Session } from './session'
+import { CHAT_HISTORY_LIMIT, Session } from './session'
 import type { StreamSyncerBridge } from '../../electron/contracts'
 import type { DanmakuEvent } from './apiClient'
 import { SETTINGS_KEY, type SettingsStorage } from './settings'
@@ -138,6 +138,26 @@ describe('Session danmaku transport', () => {
     const [message] = session.drainDanmaku()
     expect(message?.text).toBe('好球')
     expect(message?.scheduleTime).toBeCloseTo(100, 3)
+  })
+
+  it('records released messages for the chat list, bounded and cleared on disconnect', async () => {
+    const { session } = await makeSession({ commentaryTime: 100 })
+    session.connectDanmaku('288016')
+    let notified = 0
+    const stop = session.subscribeChat(() => { notified += 1 })
+    const source = StubDanmakuSubscription.instances[0]!
+    for (let n = 0; n < CHAT_HISTORY_LIMIT + 5; n += 1) source.emit('danmaku', { text: `m${n}`, user: 'u' })
+    // Parked messages are not chat yet; only released ones are.
+    expect(session.chatHistory()).toHaveLength(0)
+    session.drainDanmaku()
+    expect(notified).toBe(1)
+    const history = session.chatHistory()
+    expect(history.length).toBeLessThanOrEqual(CHAT_HISTORY_LIMIT)
+    expect(history.at(-1)?.text).toBe(`m${CHAT_HISTORY_LIMIT + 4}`)
+    expect(session.chatCount()).toBeGreaterThanOrEqual(history.length)
+    session.disconnectDanmaku()
+    expect(session.chatHistory()).toHaveLength(0)
+    stop()
   })
 
   it('ignores a message with no usable text', async () => {

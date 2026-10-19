@@ -134,10 +134,12 @@ export function DanmakuLayer(): React.ReactNode {
   }, [])
 
   useAnimationFrame((nowMs) => {
-    if (!settingsRef.current.enabled) return
-
     // Pull whatever the timeline has released for the current commentary media time.
-    for (const message of session.drainDanmaku()) spawn(message, nowMs)
+    // Draining continues with the overlay off: the chat list reads the same releases,
+    // and an undrained timeline would expire its backlog as stale instead.
+    const released = session.drainDanmaku()
+    if (!settingsRef.current.enabled) return
+    for (const message of released) spawn(message, nowMs)
 
     const active = activeRef.current
     let writeIndex = 0
@@ -152,7 +154,7 @@ export function DanmakuLayer(): React.ReactNode {
       writeIndex += 1
     }
     active.length = writeIndex
-  }, danmaku.enabled)
+  })
 
   return <div className="danmaku-layer" ref={hostRef} aria-hidden="true" />
 }

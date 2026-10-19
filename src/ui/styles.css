@@ -1337,6 +1337,97 @@ kbd {
   border-radius: 3px;
 }
 
+/*
+ * Chat list. Fixed-height rows (26px, matching CHAT_ROW_HEIGHT) are what make the windowing
+ * exact, so text never wraps: one line, ellipsis, the whole message in the title.
+ */
+/* The sidebar is a scrolling flex column; without flex: none it squeezes the list to 0. */
+.chat-panel {
+  position: relative;
+  flex: none;
+}
+
+.chat-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.chat-count {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-scroller {
+  position: relative;
+  flex: none;
+  height: 260px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.chat-track {
+  position: relative;
+}
+
+.chat-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.chat-user {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--accent);
+}
+
+.chat-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.chat-empty {
+  padding: 18px 12px;
+  font-size: 12px;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+.chat-jump {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  padding: 3px 12px;
+  font-size: 12px;
+  border-radius: 999px;
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  box-shadow: var(--shadow);
+}
+
+.chat-jump:hover:not(:disabled) {
+  background: var(--accent);
+}
+
 .sync-headroom ul {
   display: flex;
   flex-direction: column;

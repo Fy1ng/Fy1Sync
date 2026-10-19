@@ -33,6 +33,9 @@ import type { AppSettings } from './settings'
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from './settings'
 import type { BufferState } from '../../electron/bufferManager'
 
+/** Released danmaku kept for the chat list. */
+export const CHAT_HISTORY_LIMIT = 2000
+
 /** What a component sees. Plain data, replaced wholesale on every change. */
 export interface SessionSnapshot {
   media: EngineState
@@ -127,6 +130,9 @@ export class Session {
     official: null,
     commentary: null,
   }
+  private chatLog: DanmakuMessage[] = []
+  private chatTotal = 0
+  private readonly chatListeners = new Set<() => void>()
   private danmakuState: SessionSnapshot['danmaku'] = {
     connected: false,
     room: null,
@@ -868,6 +874,8 @@ export class Session {
     this.unsubscribeDanmaku?.()
     this.unsubscribeDanmaku = null
     this.timeline.clear()
+    this.chatLog = []
+    for (const listener of this.chatListeners) listener()
     this.danmakuState = { connected: false, room: null, error: null, pending: 0, dropped: 0 }
     this.notify()
   }
@@ -923,7 +931,37 @@ export class Session {
   drainDanmaku(): DanmakuMessage[] {
     const snapshot = this.engine.snapshot('commentary')
     const mediaTime = snapshot?.currentTime ?? this.timeline.playhead
-    return this.timeline.advance(mediaTime)
+    const released = this.timeline.advance(mediaTime)
+    if (released.length > 0) this.recordChat(released)
+    return released
+  }
+
+  /**
+   * Released messages, oldest first, for the chat list. Bounded: at a busy room this is
+   * hundreds of messages a minute, and the list only ever shows the recent ones.
+   *
+   * Kept out of the snapshot on purpose. Snapshot subscribers re-render the whole page;
+   * chat arrives every frame. The chat list subscribes here instead and reads the array.
+   */
+  chatHistory(): readonly DanmakuMessage[] {
+    return this.chatLog
+  }
+
+  subscribeChat(listener: () => void): () => void {
+    this.chatListeners.add(listener)
+    return () => this.chatListeners.delete(listener)
+  }
+
+  private recordChat(messages: DanmakuMessage[]): void {
+    const next = this.chatLog.concat(messages)
+    this.chatLog = next.length > CHAT_HISTORY_LIMIT ? next.slice(next.length - CHAT_HISTORY_LIMIT) : next
+    this.chatTotal += messages.length
+    for (const listener of this.chatListeners) listener()
+  }
+
+  /** Messages ever released, including those that have scrolled out of the history. */
+  chatCount(): number {
+    return this.chatTotal
   }
 
   /**
