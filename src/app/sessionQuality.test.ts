@@ -93,3 +93,16 @@ describe('quality restart synchronization', () => {
     expect(session.flush().notices[0]?.text).toContain('恢复两路播放')
   })
 })
+
+
+it('keeps the confirmed video room and raw input through quality replacement', async () => {
+  const h = await harness(false)
+  const old = session.engine.getState().official.descriptor!
+  await session.loadSource('official', { ...old, platform: 'douyu', input: '6657', sourceRoom: '6979222' })
+  h.switchQuality.mockResolvedValueOnce({ ok: true, value: { ok: true, stream: {
+    platform: 'douyu', channel: '6979222', sourceRoom: '6979222', danmakuRoom: '6979222', kind: 'progressive', label: '斗鱼 6979222',
+    url: 'app://app/media/quality', requiresProxy: false, quality: 'low', qualities: old.sourceQualities,
+  } } })
+  await session.changeSourceQuality('official', 'low')
+  expect(session.engine.getState().official.descriptor).toMatchObject({ input: '6657', sourceRoom: '6979222' })
+})

@@ -39,6 +39,11 @@ export function parseSourceInput(raw: string): SourceParseResult {
   const input = raw.trim()
   if (!input) return { ok: false, reason: 'empty', message: '请输入直播间地址或媒体链接' }
 
+  if (/^[1-9][0-9]{0,11}$/.test(input)) return {
+    ok: true, platform: 'douyu', kind: 'hls', url: input, channel: input,
+    needsResolve: true, suggestProxy: true, label: `斗鱼 / ${input}`,
+  }
+
   // Bare test fixtures and same-origin paths.
   if (input.startsWith('/')) {
     return {
@@ -113,7 +118,7 @@ export function parseSourceInput(raw: string): SourceParseResult {
   }
 
   if (host === 'douyu.com' || host.endsWith('.douyu.com')) {
-    const room = firstPathSegment(url)
+    const room = url.searchParams.get('rid') ?? firstPathSegment(url)
     if (!room) {
       return { ok: false, reason: 'unsupported-page', message: '斗鱼链接里没有房间号' }
     }
@@ -121,7 +126,7 @@ export function parseSourceInput(raw: string): SourceParseResult {
       ok: true,
       platform: 'douyu',
       kind: 'hls',
-      url: `https://www.douyu.com/${room}`,
+      url: url.href,
       channel: room,
       needsResolve: true,
       suggestProxy: true,

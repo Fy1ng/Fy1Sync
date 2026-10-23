@@ -8,7 +8,7 @@ const multirates = [{ name: '原画2K60', rate: 0 }, { name: '蓝光4M', rate: 4
 const play = { error: 0, data: { rtmp_url: 'http://media.douyucdn.invalid/live', rtmp_live: '9999.flv?signature=fixture', rate: 0, multirates } }
 
 function deps(overrides: Partial<ResolverDeps> = {}): ResolverDeps {
-  return { fetchJson: async (url) => url.includes('getEncryption') ? { error: 0, data: encryption } : play, fetchText: vi.fn(), proxify: (url) => url, now: () => 1_792_257_600_000, ...overrides }
+  return { resolveDouyuRoom: async input => ({ ok: true, identity: { room: input, inputRoom: input } }), fetchJson: async (url) => url.includes('getEncryption') ? { error: 0, data: encryption } : play, fetchText: vi.fn(), proxify: (url) => url, now: () => 1_792_257_600_000, ...overrides }
 }
 
 describe('Douyu iterated MD5 auth fixed vectors', () => {
@@ -130,4 +130,31 @@ describe('Douyu multirates and direct FLV', () => {
     const result = await resolveStream(url, deps())
     expect(result.ok && result.stream.kind).toBe('progressive')
   })
+})
+
+
+describe('canonical Douyu acquisition identity', () => {
+  it('uses the confirmed real room for auth, play, display, chat and video source identity', async () => {
+    const fetchJson = vi.fn(async (url: string) => url.includes('getEncryption') ? { error: 0, data: encryption } : play)
+    const result = await resolveDouyu('https://douyu.com/6657', deps({ fetchJson,
+      resolveDouyuRoom: async () => ({ ok: true, identity: { room: '6979222', inputRoom: '6657' } }),
+    }))
+    expect(fetchJson.mock.calls[1]?.[0]).toBe('https://www.douyu.com/lapi/live/getH5PlayV1/6979222')
+    expect(result).toMatchObject({ ok: true, stream: { label: '斗鱼 6979222', channel: '6979222', danmakuRoom: '6979222', sourceRoom: '6979222' } })
+    expect(result.ok && result.stream.notes?.join('')).toContain('6657 已解析为真实房间号 6979222')
+  })
+  it('does not sign or request playback after a failed identity lookup', async () => {
+    const fetchJson = vi.fn()
+    const result = await resolveDouyu('6657', deps({ fetchJson, resolveDouyuRoom: async () => ({ ok: false, failure: { code: 'room-not-found', message: '房间不存在' } }) }))
+    expect(result).toMatchObject({ ok: false, failure: { code: 'room-not-found' } })
+    expect(fetchJson).not.toHaveBeenCalled()
+  })
+})
+
+
+it('requires the main-owned bounded identity resolver before making any Douyu requests', async () => {
+  const fetchJson = vi.fn(), fetchText = vi.fn()
+  expect(await resolveDouyu('6657', deps({ resolveDouyuRoom: undefined, fetchJson, fetchText }))).toMatchObject({ ok: false, failure: { code: 'upstream-error' } })
+  expect(fetchJson).not.toHaveBeenCalled()
+  expect(fetchText).not.toHaveBeenCalled()
 })

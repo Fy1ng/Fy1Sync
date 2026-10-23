@@ -20,26 +20,27 @@ function fixture() {
   })
   let bufferListener: ((state: BufferState) => void) | undefined
   const bufferRelease = vi.fn()
-  const service = { invoke: vi.fn(async () => ({ ok: true, value: {} })), relay: { subscribe }, dispose: vi.fn(),
+  const resolveRoom = vi.fn(async (room: string) => ({ ok: true, identity: { room, inputRoom: room } }))
+  const service = { resolveDouyuRoom: resolveRoom, invoke: vi.fn(async () => ({ ok: true, value: {} })), relay: { subscribe }, dispose: vi.fn(),
     subscribeBuffer: (listener: (state: BufferState) => void) => { bufferListener = listener; return bufferRelease },
   } as unknown as DesktopService
   const installed = installIpcHandlers(ipc, contents, service)
-  return { contents, event, handlers, release, subscribe, service, installed,
+  return { resolveRoom, contents, event, handlers, release, subscribe, service, installed,
     bufferRelease, emitBuffer: (state: BufferState) => bufferListener?.(state),
     call: (channel: string, ...args: unknown[]) => handlers.get('stream-syncer:' + channel)!(event, ...args),
   }
 }
 
-describe('app origin and document boundary', () => {
-  it('trusts only the fixed privileged origin', () => {
+describe('app origin and document boundary', async () => {
+  it('trusts only the fixed privileged origin', async () => {
     expect(isAppOrigin('app://app/assets/app.js')).toBe(true)
     for (const raw of ['https://app/', 'app://evil/', 'app://app.evil/', 'app://app:80/', 'app://user@app/', 'file:///index.html', 'invalid']) expect(isAppOrigin(raw)).toBe(false)
   })
-  it('permits only app document routes to receive IPC', () => {
+  it('permits only app document routes to receive IPC', async () => {
     for (const raw of ['app://app/', 'app://app/index.html', 'app://app/admin', 'app://app/admin/']) expect(isAppDocument(raw)).toBe(true)
     for (const raw of ['app://app/media/id', 'app://app/assets/app.js', 'app://app/api/health', 'https://example.com/']) expect(isAppDocument(raw)).toBe(false)
   })
-  it('uses a CSP without remote scripts, frames, JS eval or wildcard sources', () => {
+  it('uses a CSP without remote scripts, frames, JS eval or wildcard sources', async () => {
     expect(CONTENT_SECURITY_POLICY).toContain("default-src 'none'")
     expect(CONTENT_SECURITY_POLICY).toContain("script-src 'self' 'wasm-unsafe-eval'")
     expect(CONTENT_SECURITY_POLICY).toContain("frame-ancestors 'none'")
@@ -47,20 +48,20 @@ describe('app origin and document boundary', () => {
     expect(CONTENT_SECURITY_POLICY.split('; ').find((part) => part.startsWith('script-src')))
       .toBe("script-src 'self' 'wasm-unsafe-eval'")
   })
-  it('rejects a different webContents even if it claims the same URL', () => {
+  it('rejects a different webContents even if it claims the same URL', async () => {
     const f = fixture()
     expect(trustedSender(f.event, f.contents)).toBe(true)
     expect(trustedSender({ ...f.event, sender: {} } as IpcMainInvokeEvent, f.contents)).toBe(false)
     f.installed.dispose()
   })
-  it('rejects same-origin subframes and stale frames', () => {
+  it('rejects same-origin subframes and stale frames', async () => {
     const f = fixture()
     expect(trustedSender({ ...f.event, senderFrame: { url: 'app://app/' } } as IpcMainInvokeEvent, f.contents)).toBe(false)
     Object.assign(f.contents.mainFrame, { url: 'app://app/media/untrusted' })
     expect(trustedSender(f.event, f.contents)).toBe(false)
     f.installed.dispose()
   })
-  it('rejects destroyed windows', () => {
+  it('rejects destroyed windows', async () => {
     const f = fixture()
     vi.spyOn(f.contents, 'isDestroyed').mockReturnValue(true)
     expect(trustedSender(f.event, f.contents)).toBe(false)
@@ -68,8 +69,8 @@ describe('app origin and document boundary', () => {
   })
 })
 
-describe('IPC routing and subscription lifecycle', () => {
-  it('delivers buffer summaries only to a trusted app document and releases on disposal', () => {
+describe('IPC routing and subscription lifecycle', async () => {
+  it('delivers buffer summaries only to a trusted app document and releases on disposal', async () => {
     const f = fixture()
     const state: BufferState = { role: 'official', state: 'buffering', seconds: 3.5 }
     f.emitBuffer(state)
@@ -100,71 +101,130 @@ describe('IPC routing and subscription lifecycle', () => {
     expect(f.service.invoke).toHaveBeenCalledExactlyOnceWith('setDecoderPreferences', { mode: 'software' })
     f.installed.dispose()
   })
-  it('delivers relay events with isolated subscription identifiers', () => {
+  it('delivers relay events with isolated subscription identifiers', async () => {
     const f = fixture()
-    expect(f.call('subscribe', '288016', '1')).toMatchObject({ ok: true })
+    expect(await f.call('subscribe', '288016', '1')).toMatchObject({ ok: true })
     expect(f.contents.send).toHaveBeenCalledWith('stream-syncer:danmaku', { subscriptionId: '1', event: 'state', data: { state: 'connecting' } })
     expect(f.installed.emitDanmaku('other-room', 'danmaku', {})).toBe(0)
     expect(f.installed.emitDanmaku('288016', 'danmaku', { text: '测试' })).toBe(1)
     f.installed.dispose()
   })
-  it('rejects malformed room IDs and subscription IDs before opening upstream', () => {
+  it('rejects malformed room IDs and subscription IDs before opening upstream', async () => {
     const f = fixture()
-    for (const room of ['', 'abc', 'douyu.com/1', '../1', '1'.repeat(17), null, {}]) expect(f.call('subscribe', room, '1')).toMatchObject({ ok: false })
-    for (const id of ['', '../1', '1'.repeat(13), null]) expect(f.call('subscribe', '288016', id)).toMatchObject({ ok: false })
+    for (const room of ['', 'abc', 'evil.com/1', '../1', '1'.repeat(17), null, {}]) expect(await f.call('subscribe', room, '1')).toMatchObject({ ok: false })
+    for (const id of ['', '../1', '1'.repeat(13), null]) expect(await f.call('subscribe', '288016', id)).toMatchObject({ ok: false })
     expect(f.subscribe).not.toHaveBeenCalled()
     f.installed.dispose()
   })
-  it('rejects duplicate subscription IDs and limits subscriptions', () => {
+  it('rejects duplicate subscription IDs and limits subscriptions', async () => {
     const f = fixture()
-    for (let n = 0; n < 16; n++) expect(f.call('subscribe', '288016', String(n))).toMatchObject({ ok: true })
-    expect(f.call('subscribe', '288016', '0')).toMatchObject({ ok: false, code: 'subscription-limit' })
-    expect(f.call('subscribe', '288016', '99')).toMatchObject({ ok: false, code: 'subscription-limit' })
+    for (let n = 0; n < 16; n++) expect(await f.call('subscribe', '288016', String(n))).toMatchObject({ ok: true })
+    expect(await f.call('subscribe', '288016', '0')).toMatchObject({ ok: false, code: 'subscription-limit' })
+    expect(await f.call('subscribe', '288016', '99')).toMatchObject({ ok: false, code: 'subscription-limit' })
     f.installed.dispose()
     expect(f.release).toHaveBeenCalledTimes(16)
   })
-  it('reports room-cap exhaustion without registering a subscriber', () => {
+  it('reports room-cap exhaustion without registering a subscriber', async () => {
     const f = fixture()
     f.subscribe.mockReturnValueOnce(null as never)
-    expect(f.call('subscribe', '288016', '1')).toMatchObject({ ok: false, code: 'room-limit' })
+    expect(await f.call('subscribe', '288016', '1')).toMatchObject({ ok: false, code: 'room-limit' })
     expect(f.installed.emitDanmaku('288016', 'danmaku', {})).toBe(0)
     f.installed.dispose()
   })
-  it('releases once when unsubscribed repeatedly', () => {
+  it('releases once when unsubscribed repeatedly', async () => {
     const f = fixture()
-    f.call('subscribe', '288016', '1')
+    await f.call('subscribe', '288016', '1')
     f.call('unsubscribe', '1')
     f.call('unsubscribe', '1')
     expect(f.release).toHaveBeenCalledTimes(1)
     expect(f.installed.emitDanmaku('288016', 'danmaku', {})).toBe(0)
     f.installed.dispose()
   })
-  it('cleans subscriptions on document reload and renderer destruction', () => {
+  it('cleans subscriptions on document reload and renderer destruction', async () => {
     const f = fixture()
-    f.call('subscribe', '288016', '1')
+    await f.call('subscribe', '288016', '1')
     f.contents.emit('did-start-navigation', {}, 'app://app/admin', false, true)
     expect(f.release).toHaveBeenCalledTimes(1)
-    f.call('subscribe', '288016', '2')
+    await f.call('subscribe', '288016', '2')
     f.contents.emit('destroyed')
     expect(f.release).toHaveBeenCalledTimes(2)
     f.installed.dispose()
     expect(f.handlers.size).toBe(0)
   })
-  it('does not cancel on hash navigation or a subframe navigation', () => {
+  it('does not cancel on hash navigation or a subframe navigation', async () => {
     const f = fixture()
-    f.call('subscribe', '288016', '1')
+    await f.call('subscribe', '288016', '1')
     f.contents.emit('did-start-navigation', {}, 'app://app/#settings', true, true)
     f.contents.emit('did-start-navigation', {}, 'app://app/', false, false)
     expect(f.release).not.toHaveBeenCalled()
     f.installed.dispose()
   })
-  it('refuses subscription mutation from untrusted frames', () => {
+  it('refuses subscription mutation from untrusted frames', async () => {
     const f = fixture()
-    f.call('subscribe', '288016', '1')
+    await f.call('subscribe', '288016', '1')
     Object.assign(f.contents.mainFrame, { url: 'https://evil.example/' })
-    expect(f.call('subscribe', '288016', '2')).toMatchObject({ ok: false, code: 'forbidden' })
-    expect(f.call('unsubscribe', '1')).toMatchObject({ ok: false, code: 'forbidden' })
+    expect(await f.call('subscribe', '288016', '2')).toMatchObject({ ok: false, code: 'forbidden' })
+    expect(await f.call('unsubscribe', '1')).toMatchObject({ ok: false, code: 'forbidden' })
     expect(f.release).not.toHaveBeenCalled()
+    f.installed.dispose()
+  })
+})
+
+
+describe('pending canonical-room subscription isolation', () => {
+  it.each(['cancel', 'navigation', 'destroy', 'dispose', 'untrusted'])('does not open a ghost relay after %s', async action => {
+    const f = fixture()
+    let settle!: (value: any) => void
+    f.resolveRoom.mockReturnValueOnce(new Promise(resolve => { settle = resolve }))
+    const pending = f.call('subscribe', '6657', '1')
+    if (action === 'cancel') await f.call('unsubscribe', '1')
+    if (action === 'navigation') f.contents.emit('did-start-navigation', {}, 'app://app/admin', false, true)
+    if (action === 'destroy') f.contents.emit('destroyed')
+    if (action === 'dispose') f.installed.dispose()
+    if (action === 'untrusted') Object.assign(f.contents.mainFrame, { url: 'https://evil.invalid/' })
+    settle({ ok: true, identity: { room: '6979222', inputRoom: '6657' } })
+    expect(await pending).toMatchObject({ ok: false, code: 'subscription-cancelled' })
+    expect(f.subscribe).not.toHaveBeenCalled()
+    expect(f.contents.send).not.toHaveBeenCalled()
+    f.installed.dispose()
+  })
+  it('reserves pending IDs and capacity before resolution', async () => {
+    const f = fixture()
+    const waiters: Array<(value: any) => void> = []
+    f.resolveRoom.mockImplementation(() => new Promise(resolve => waiters.push(resolve)))
+    const requests = Array.from({ length: 16 }, (_, n) => f.call('subscribe', '6657', String(n)))
+    expect(await f.call('subscribe', '6657', '0')).toMatchObject({ ok: false, code: 'subscription-limit' })
+    expect(await f.call('subscribe', '6657', '99')).toMatchObject({ ok: false, code: 'subscription-limit' })
+    f.installed.dispose()
+    waiters.forEach(resolve => resolve({ ok: true, identity: { room: '6979222', inputRoom: '6657' } }))
+    await Promise.all(requests)
+    expect(f.subscribe).not.toHaveBeenCalled()
+  })
+  it('does not let a cancelled ID consume a replacement or deliver stale callbacks', async () => {
+    const f = fixture()
+    let settle!: (value: any) => void
+    f.resolveRoom.mockReturnValueOnce(new Promise(resolve => { settle = resolve }))
+    const pending = f.call('subscribe', '6657', '1')
+    await f.call('unsubscribe', '1')
+    f.resolveRoom.mockResolvedValueOnce({ ok: true, identity: { room: '6979222', inputRoom: '6979222' } })
+    await f.call('subscribe', '6979222', '1')
+    settle({ ok: true, identity: { room: '6979222', inputRoom: '6657' } })
+    expect(await pending).toMatchObject({ ok: false })
+    expect(f.subscribe).toHaveBeenCalledTimes(1)
+    expect(f.installed.emitDanmaku('6979222', 'danmaku', {})).toBe(1)
+    const subscriber = f.subscribe.mock.calls[0]![1]
+    await f.call('unsubscribe', '1')
+    vi.mocked(f.contents.send).mockClear()
+    subscriber.write('danmaku', { text: 'late' })
+    expect(f.contents.send).not.toHaveBeenCalled()
+    f.installed.dispose()
+  })
+  it('subscribes alias and canonical inputs to the same room and reports final identity', async () => {
+    const f = fixture()
+    f.resolveRoom.mockImplementation(async inputRoom => ({ ok: true, identity: { room: '6979222', inputRoom } }))
+    for (const [room, id] of [['6657', '1'], ['6979222', '2']]) expect(await f.call('subscribe', room, id)).toMatchObject({ ok: true, value: { room: '6979222' } })
+    expect(f.subscribe.mock.calls.map(call => call[0])).toEqual(['6979222', '6979222'])
+    expect(f.contents.send).toHaveBeenCalledWith('stream-syncer:danmaku', { subscriptionId: '1', event: 'state', data: { room: '6979222', state: 'connecting' } })
     f.installed.dispose()
   })
 })

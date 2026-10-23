@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path'
 import { mkdirSync, watchFile, unwatchFile } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
+import { createDouyuRoomResolver } from '../server/platforms/douyuRoom'
 import { createDesktopService } from '../server/api'
 import { resolveConfig } from '../server/config'
 import { DanmakuRelay } from '../server/danmaku/relay'
@@ -143,7 +144,18 @@ async function start(): Promise<void> {
     } : undefined,
   })
   if (e2e) buffer.subscribe(diagnoseBuffer)
-  const acquisition = new Acquisition({ buffer, logins, runYtDlp: (url, adaptive) => ytdlp.resolve(url, adaptive), proxy,
+  // Default offline tests inject identity metadata only at this main-process boundary.
+  // Packaged/production builds expose no mapping or arbitrary-page injection capability.
+  let roomFixture: ((room: string) => string) | undefined
+  const roomResolver = createDouyuRoomResolver(proxy, async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input)
+    if (!app.isPackaged && offlineE2e && /^https:\/\/m\.douyu\.com\/[1-9][0-9]{0,11}$/.test(url)) {
+      if (!roomFixture) throw new Error('Identity fixture has not been installed')
+      return new Response(roomFixture(new URL(url).pathname.slice(1)))
+    }
+    return globalThis.fetch(input, init)
+  }, offlineE2e ? async () => ['8.8.8.8'] : undefined)
+  const acquisition = new Acquisition({ buffer, logins, runYtDlp: (url, adaptive) => ytdlp.resolve(url, adaptive), proxy, resolveDouyuRoom: roomResolver.resolve,
     ensureTools: async (platform) => {
       if (offlineE2e) throw new Error('默认离线测试禁止真实平台取流')
       await locateTool('ffmpeg', toolSettings, process.env, toolContext)
@@ -154,7 +166,7 @@ async function start(): Promise<void> {
   // Offline E2E drives events through the real IPC subscriptions, without a live room.
   const relay = e2e ? new DanmakuRelay({ createSocket: () => ({ send() {}, close() {}, addEventListener() {} }) }) : new DanmakuRelay()
   const service = createDesktopService({
-    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, registerMedia: media.register, acquisition, decoderPreferences, tools,
+    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, registerMedia: media.register, acquisition, decoderPreferences, tools,
   })
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   session.defaultSession.setPermissionCheckHandler(() => false)
@@ -182,7 +194,13 @@ async function start(): Promise<void> {
   const contents = window.webContents
   const handlers = installIpcHandlers(ipcMain, contents, service)
   if (e2e) Object.assign(globalThis, { __streamSyncerTest: {
-    ...(!app.isPackaged ? { setToolUpdateFixture(bytes: Uint8Array, outcome: 'success' | 'hash-mismatch' | 'network-error') {
+    ...(!app.isPackaged ? { setDouyuRoomFixture(mapping: Record<string, string | null>) {
+      if (!offlineE2e || Object.keys(mapping).length > 128 || Object.entries(mapping).some(([key, value]) => !/^[1-9][0-9]{0,11}$/.test(key) || (value !== null && !/^[1-9][0-9]{0,11}$/.test(value)))) throw new Error('Invalid room fixture')
+      roomFixture = room => {
+        if (!Object.hasOwn(mapping, room)) throw new Error('Missing identity fixture')
+        return '<script id="vike_pageContext" type="application/json">' + JSON.stringify({ pageProps: { room: { roomInfo: { roomInfo: mapping[room] ? { rid: Number(mapping[room]) } : {} } } } }) + '</script>'
+      }
+    }, setToolUpdateFixture(bytes: Uint8Array, outcome: 'success' | 'hash-mismatch' | 'network-error') {
       const content = Buffer.from(bytes)
       if (!content.length || content.length > 64 * 1048576 || !['success', 'hash-mismatch', 'network-error'].includes(outcome)) throw new Error('Invalid update fixture')
       const version = toolsLock.ytdlpVersion

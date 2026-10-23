@@ -1,3 +1,4 @@
+import { createDouyuRoomResolver, type ResolveDouyuRoom } from '../server/platforms/douyuRoom'
 import type { AcquisitionService } from '../server/api'
 import { createResolverDeps, sanitizedFailure } from '../server/api'
 import type { ProxyConfig } from '../server/config'
@@ -15,18 +16,20 @@ export class Acquisition implements AcquisitionService {
   private readonly generations: Record<SourceRole, number> = { official: 0, commentary: 0 }
   private readonly activeGenerations: Partial<Record<SourceRole, number>> = {}
   private disposed = false
+  private readonly resolveRoom: ResolveDouyuRoom
   constructor(private readonly deps: {
     buffer: Pick<BufferManager, 'start' | 'stop' | 'subscribe'>
     logins: Pick<LoginManager, 'login' | 'loginStatus' | 'logout' | 'cookieHeader'>
     runYtDlp: (url: string, adaptive?: boolean) => Promise<unknown>
     proxy: ProxyConfig
     fetchImpl?: typeof fetch
+    resolveDouyuRoom?: ResolveDouyuRoom
     dns?: Resolver
     readyTimeoutMs?: number
     ensureTools?: (platform: PlatformKind | null) => Promise<void>
-  }) {}
+  }) { this.resolveRoom = deps.resolveDouyuRoom ?? createDouyuRoomResolver(deps.proxy, deps.fetchImpl).resolve }
 
-  async resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string, preferAdaptive = false): Promise<ResolveResult> {
+  async resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string, preferAdaptive = false, confirmedRoom?: string): Promise<ResolveResult> {
     const generation = ++this.generations[role]
     if (this.disposed) return refusal('取流服务已关闭')
     // Local fixtures bypass acquisition but still release the previous producer.
@@ -47,7 +50,7 @@ export class Acquisition implements AcquisitionService {
     const sameSource = previous?.input === input && previous.platform === platform ? previous.stream : undefined
     const requestedAdaptive = sameSource?.qualities?.find(option => option.id === quality && option.adaptive)
     let fallbackHeight: number | undefined
-    let first = await this.resolveInput(input, platform, quality, preferAdaptive)
+    let first = await this.resolveInput(input, platform, quality, preferAdaptive, false, confirmedRoom)
     // A previously offered adaptive id can disappear when provider setup falls back
     // to the old extractor mode. Preserve playback instead of rejecting that switch.
     if (!first.ok && first.failure.code === 'unsupported-url' && detected === 'youtube' && requestedAdaptive?.height) {
@@ -61,7 +64,7 @@ export class Acquisition implements AcquisitionService {
     let initial = true
     const selection: Selection = { input, platform, quality, preferAdaptive, stream: retainAdaptiveQualities(sameSource, first.stream) }
     const prepare = async (hlsOnly = false): Promise<BufferInput> => {
-      const resolved = initial && !hlsOnly ? first : await this.resolveInput(input, platform, hlsOnly ? 'auto' : quality, hlsOnly ? false : preferAdaptive, hlsOnly)
+      const resolved = initial && !hlsOnly ? first : await this.resolveInput(input, platform, hlsOnly ? 'auto' : quality, hlsOnly ? false : preferAdaptive, hlsOnly, selection.stream.sourceRoom)
       initial = false
       if (generation !== this.activeGenerations[role] || this.disposed) throw new Error('片源操作已取消')
       if (!resolved.ok) throw new Error('重新解析直播失败')
@@ -103,7 +106,7 @@ export class Acquisition implements AcquisitionService {
     if (!selected || !selected.stream.qualities?.some((option) => option.id === quality)) {
       return { ok: false, failure: { code: 'unsupported-url', message: '该片源没有此画质', hint: '请重新解析片源' } }
     }
-    return this.resolve(selected.input, selected.platform, role, quality, selected.preferAdaptive)
+    return this.resolve(selected.input, selected.platform, role, quality, selected.preferAdaptive, selected.stream.sourceRoom)
   }
 
   async stop(role: SourceRole): Promise<void> {
@@ -126,10 +129,11 @@ export class Acquisition implements AcquisitionService {
     this.selections.clear()
   }
 
-  private async resolveInput(input: string, platform?: PlatformKind, quality?: string, preferAdaptive = false, hlsOnly = false): Promise<ResolveResult> {
+  private async resolveInput(input: string, platform?: PlatformKind, quality?: string, preferAdaptive = false, hlsOnly = false, confirmedRoom?: string): Promise<ResolveResult> {
     const resolver = createResolverDeps(this.deps.proxy, (url) => url, this.deps.fetchImpl)
     const result = await resolveStream(input, {
-      ...resolver, quality, preferAdaptive, runYtDlp: hlsOnly ? url => this.deps.runYtDlp(url, false) : this.deps.runYtDlp,
+      ...resolver, quality, preferAdaptive, resolveDouyuRoom: this.resolveRoom,
+      ...(confirmedRoom ? { douyuRoomIdentity: { room: confirmedRoom, inputRoom: confirmedRoom } } : {}), runYtDlp: hlsOnly ? url => this.deps.runYtDlp(url, false) : this.deps.runYtDlp,
       douyuCookie: detectPlatform(input, platform) === 'douyu' ? await this.deps.logins.cookieHeader('douyu') : undefined,
     }, platform)
     if (!result.ok) return sanitizedFailure(result)

@@ -98,6 +98,7 @@ export class ApiClient {
     })
   }
 
+  resolveDouyuRoom(input: string) { return this.request('resolveDouyuRoom', { input }) }
   switchQuality(role: SourceRole, quality: string) { return this.request('switchQuality', { role, quality }) }
   stopBuffer(role: SourceRole) { return this.request('stopBuffer', { role }) }
   login(platform: LoginPlatform) { return this.request('login', { platform }) }

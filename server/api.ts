@@ -1,5 +1,6 @@
 /** Main-process services without Electron imports or a network listener. */
 
+import { createDouyuRoomResolver, type ResolveDouyuRoom } from './platforms/douyuRoom'
 import type { ApiResult } from '../src/app/apiClient'
 import type { ProxyConfig } from './config'
 import { DanmakuRelay } from './danmaku/relay'
@@ -28,6 +29,7 @@ export type DesktopServiceDeps = {
   relay?: DanmakuRelay
   fetchImpl?: typeof fetch
   registerMedia: (url: string) => string
+  resolveDouyuRoom?: ResolveDouyuRoom
   acquisition?: AcquisitionService
   decoderPreferences?: DecoderPreferencesService
   tools?: ToolsService
@@ -36,6 +38,7 @@ export type DesktopServiceDeps = {
 export type DesktopService = {
   invoke: (method: unknown, args: unknown) => Promise<ApiResult<unknown>>
   relay: DanmakuRelay
+  resolveDouyuRoom: ResolveDouyuRoom
   dispose: () => void
   subscribeBuffer?: (listener: (state: BufferState) => void) => () => void
 }
@@ -117,9 +120,11 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
   const relay = deps.relay ?? new DanmakuRelay()
   const presets = new PresetStore(deps.dataDir)
   let disposed = false
+  const resolveRoom = deps.resolveDouyuRoom ?? createDouyuRoomResolver(deps.proxy, deps.fetchImpl).resolve
 
   return {
     relay,
+    resolveDouyuRoom: input => disposed ? Promise.resolve({ ok: false, failure: { code: 'upstream-error', message: '本地服务已关闭' } }) : resolveRoom(input),
     subscribeBuffer: deps.acquisition ? (listener) => deps.acquisition!.subscribe(listener) : undefined,
     async invoke(method, args) {
       if (disposed) return fail('service-closed', '本地服务已关闭')
@@ -132,6 +137,10 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
         }
 
         switch (method) {
+          case 'resolveDouyuRoom': {
+            if (!fields(args, ['input']) || typeof args.input !== 'string' || args.input.length > MAX_INPUT_LENGTH) return fail('invalid-arguments', '房间身份查询参数无效')
+            return { ok: true, value: await resolveRoom(args.input) }
+          }
           case 'getToolsStatus':
           case 'updateYtdlp': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
@@ -156,7 +165,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
           }
           case 'health': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
-            return { ok: true, value: { ok: true, version: '0.1.1', proxyEnabled: deps.proxy.enabled, danmakuRooms: relay.roomCount } }
+            return { ok: true, value: { ok: true, version: '0.1.2', proxyEnabled: deps.proxy.enabled, danmakuRooms: relay.roomCount } }
           }
           case 'verifyAdmin': {
             if (!fields(args, ['token']) || typeof args.token !== 'string' || args.token.length > MAX_TOKEN_LENGTH) {
@@ -194,7 +203,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
               registered.set(opaque, url)
               return opaque
             }
-            const resolverDeps = createResolverDeps(deps.proxy, register, deps.fetchImpl)
+            const resolverDeps = { ...createResolverDeps(deps.proxy, register, deps.fetchImpl), resolveDouyuRoom: resolveRoom }
             const result = await resolveStream(input, resolverDeps, args.platform as PlatformKind | undefined)
             if (!result.ok) return { ok: true, value: sanitizedFailure(result) }
             const rawUrl = registered.get(result.stream.url) ?? result.stream.url

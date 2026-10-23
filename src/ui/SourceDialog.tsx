@@ -132,7 +132,7 @@ function RolePanel({ role, fixturesAvailable }: { role: SourceRole; fixturesAvai
         ...toDescriptor(
           { ...parsed, kind: stream.kind, label: stream.label },
           { url: stream.url, viaProxy: stream.requiresProxy },
-        ), sourceQualities: stream.qualities, sourceQuality: stream.quality,
+        ), input: input.trim(), sourceQualities: stream.qualities, sourceQuality: stream.quality, sourceRoom: stream.sourceRoom ?? stream.danmakuRoom,
       })
       // Only commentary carries the independently resolved danmaku room.
       if (role === 'commentary' && stream.danmakuRoom) session.connectDanmaku(stream.danmakuRoom)

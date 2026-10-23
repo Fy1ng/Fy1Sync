@@ -47,6 +47,10 @@ export async function launchApplication(label: string, options: { softwareVideo?
     page = await application.firstWindow({ timeout: 30_000 })
     await page.waitForURL(APP_ORIGIN + '/**', { timeout: 30_000 })
     await page.waitForFunction(() => typeof window.streamSyncer?.invoke === 'function')
+    if (env.STREAM_SYNC_OFFLINE_E2E === '1') await application.evaluate(() => {
+      const main = globalThis as typeof globalThis & { __streamSyncerTest?: { setDouyuRoomFixture(mapping: Record<string, string>): void } }
+      main.__streamSyncerTest!.setDouyuRoomFixture({ '288016': '288016' })
+    })
   }
   const cleanup = async () => {
     // Only this invocation's UUID directory under the known fixture root is disposable.

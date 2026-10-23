@@ -25,6 +25,8 @@ export type MediaDescriptor = {
   /** Resolver quality choices restart acquisition; they are not hls.js ABR levels. */
   sourceQualities?: { id: string; label: string; height?: number; fps?: number; adaptive?: boolean }[]
   sourceQuality?: string
+  /** Confirmed room of this video, independent of the danmaku subscription. */
+  sourceRoom?: string
 }
 
 export type PlatformId = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'direct' | 'file' | 'test'

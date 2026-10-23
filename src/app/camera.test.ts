@@ -60,3 +60,20 @@ describe('camera configuration', () => {
     expect((tall.width * stage.width / 0.3) / stage.height).toBeLessThanOrEqual(0.9501)
   })
 })
+
+
+it('remembers canonical deletion across alias/canonical inputs and store reload', () => {
+  const storage = memory()
+  const store = new CameraStore(storage)
+  const config = { crop, window: DEFAULT_CAMERA_WINDOW, enabled: true, updatedAt: 1 }
+  store.set('douyu:6657', config)
+  expect(store.getCompatible('douyu:6979222', ['douyu:6657'])).toEqual(config)
+  // The next source input is the real ID, so its current alias list is empty.
+  store.remove('douyu:6979222')
+  expect(store.getCompatible('douyu:6979222', [])).toBeNull()
+  const reloaded = new CameraStore(storage)
+  expect(reloaded.getCompatible('douyu:6979222', ['douyu:6657'])).toBeNull()
+  expect(reloaded.get('douyu:6657')).toEqual(config)
+  reloaded.set('douyu:6979222', config)
+  expect(reloaded.getCompatible('douyu:6979222', ['douyu:6657'])).toEqual(config)
+})

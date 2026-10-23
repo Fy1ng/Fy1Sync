@@ -1,3 +1,4 @@
+import type { DouyuRoomIdentity, ResolveDouyuRoom } from './douyuRoom'
 /** Shared shapes for platform stream resolution. */
 
 export type PlatformKind = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'direct'
@@ -24,6 +25,8 @@ export type ResolvedStream = {
   notes?: string[]
   /** Room id for platforms whose danmaku relay needs it. */
   danmakuRoom?: string
+  /** Confirmed video-source room identity, independent of the selected chat room. */
+  sourceRoom?: string
   qualities?: QualityOption[]
   /** The rendition actually returned, which may differ from the requested quality. */
   quality?: string
@@ -53,6 +56,9 @@ export type ResolveResult =
   | { ok: false; failure: ResolveFailure }
 
 export type ResolverDeps = {
+  resolveDouyuRoom?: ResolveDouyuRoom
+  /** Internal acquisition pin. Never accepted from renderer arguments. */
+  douyuRoomIdentity?: DouyuRoomIdentity
   fetchJson: (url: string, init?: RequestInit) => Promise<unknown>
   fetchText: (url: string, init?: RequestInit) => Promise<string>
   /** Wraps a URL so the browser loads it from our origin. */

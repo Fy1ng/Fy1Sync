@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseBilibiliRoom } from './bilibili'
-import { douyuRoomFor, parseDouyuRoom } from './douyu'
+import { parseDouyuRoom } from './douyu'
 import { detectPlatform, looksLikeDirectMedia, resolveStream } from './index'
 import { parseTwitchChannel, resolveTwitch } from './twitch'
 import { resolveBilibili } from './bilibili'
@@ -137,8 +137,8 @@ describe('parseDouyuRoom', () => {
   })
 
   it('exposes the room id alone for the danmaku relay', () => {
-    expect(douyuRoomFor('https://www.douyu.com/288016')).toBe('288016')
-    expect(douyuRoomFor('nope')).toBeNull()
+    expect(parseDouyuRoom('https://www.douyu.com/288016')).toBe('288016')
+    expect(parseDouyuRoom('nope')).toBeNull()
   })
 })
 

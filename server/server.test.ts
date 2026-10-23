@@ -62,9 +62,20 @@ describe('desktop main-process service', () => {
     vi.clearAllMocks()
   })
 
+  it('validates the narrow room query and returns canonical identity without media acquisition', async () => {
+    for (const args of [undefined, { input: 6657 }, { input: '6657', url: 'https://evil.invalid' }]) {
+      expect(await service.invoke('resolveDouyuRoom', args)).toMatchObject({ ok: false, code: 'invalid-arguments' })
+    }
+    expect(fetchImpl).not.toHaveBeenCalled()
+    fetchImpl.mockResolvedValueOnce(new Response('<script id="vike_pageContext" type="application/json">' + JSON.stringify({ pageProps: { room: { roomInfo: { roomInfo: { rid: 6979222 } } } } }) + '</script>'))
+    expect(await service.invoke('resolveDouyuRoom', { input: '6657' })).toMatchObject({ ok: true, value: { ok: true, identity: { room: '6979222', inputRoom: '6657' } } })
+    expect(registered).toEqual([])
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
   it('reports readiness, media setting and current relay count', async () => {
     expect(value(await service.invoke('health', undefined))).toEqual({
-      ok: true, version: '0.1.1', proxyEnabled: true, danmakuRooms: 0,
+      ok: true, version: '0.1.2', proxyEnabled: true, danmakuRooms: 0,
     })
   })
 
@@ -174,6 +185,7 @@ describe('desktop main-process service', () => {
     })
 
     it('fetches platform metadata with fixed headers and registers the resulting media', async () => {
+      fetchImpl.mockResolvedValueOnce(new Response('<script id="vike_pageContext" type="application/json">' + JSON.stringify({ pageProps: { room: { roomInfo: { roomInfo: { rid: 288016 } } } } }) + '</script>'))
       fetchImpl.mockResolvedValueOnce(new Response(JSON.stringify({ error: 0, data: {
         rand_str: 'seed', key: 'key', enc_time: 1, is_special: 0, enc_data: 'encrypted',
       } }), { headers: { 'content-type': 'application/json' } }))

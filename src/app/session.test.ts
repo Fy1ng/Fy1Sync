@@ -334,3 +334,20 @@ describe('Session settings writes', () => {
     expect(session.invalidPatterns).toHaveLength(1)
   })
 })
+
+
+it('updates the displayed danmaku room to the final main-process identity and ignores stale subscription events', async () => {
+  const { apiClient } = await import('./apiClient')
+  const listeners: Array<(event: { event: string; data: unknown }) => void> = []
+  const subscribe = vi.spyOn(apiClient, 'subscribeDanmaku').mockImplementation((_room, listener) => { listeners.push(listener); return () => {} })
+  const session = new Session({ createSampler: () => null }); sessions.push(session)
+  session.connectDanmaku('6657')
+  listeners[0]!({ event: 'state', data: { state: 'connecting', room: '6979222' } })
+  expect(session.flush().danmaku.room).toBe('6979222')
+  session.connectDanmaku('1234')
+  listeners[0]!({ event: 'state', data: { state: 'connected', room: '6979222' } })
+  expect(session.flush().danmaku.room).toBe('1234')
+  listeners[1]!({ event: 'state', data: { state: 'connected', room: '5678' } })
+  expect(session.flush().danmaku).toMatchObject({ room: '5678', connected: true })
+  subscribe.mockRestore()
+})

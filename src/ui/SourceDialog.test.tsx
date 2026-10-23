@@ -144,3 +144,15 @@ describe('SourceDialog desktop media registration', () => {
     expect(bridge.invoke).toHaveBeenCalledWith('login', { platform: 'youtube' })
   })
 })
+
+
+it('keeps raw room input for display while carrying the confirmed video room', async () => {
+  vi.mocked(bridge.invoke).mockResolvedValue({ ok: true, value: { ok: true, stream: {
+    platform: 'douyu', channel: '6979222', sourceRoom: '6979222', danmakuRoom: '6979222', kind: 'hls', label: '斗鱼 6979222',
+    url: 'app://app/media/canonical', requiresProxy: false,
+  } } })
+  const panel = within(openDialog())
+  fireEvent.change(panel.getByLabelText('直播间或媒体地址'), { target: { value: '6657' } })
+  fireEvent.click(panel.getByRole('button', { name: '加载' }))
+  await waitFor(() => expect(session.engine.getState().official.descriptor).toMatchObject({ input: '6657', sourceRoom: '6979222', label: '斗鱼 6979222' }))
+})

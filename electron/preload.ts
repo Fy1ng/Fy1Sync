@@ -4,7 +4,7 @@ import type { ApiResult } from '../src/app/apiClient'
 import type { BufferState } from './bufferManager'
 
 const methods = new Set<DesktopMethod>([
-  'health', 'verifyAdmin', 'resolve', 'listPresets', 'getPreset', 'savePreset', 'deletePreset',
+  'resolveDouyuRoom', 'health', 'verifyAdmin', 'resolve', 'listPresets', 'getPreset', 'savePreset', 'deletePreset',
   'switchQuality', 'stopBuffer', 'login', 'loginStatus', 'logout',
   'getDecoderPreferences', 'setDecoderPreferences',
   'getToolsStatus', 'updateYtdlp', 'restoreYtdlp',

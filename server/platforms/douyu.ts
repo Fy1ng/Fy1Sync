@@ -9,22 +9,8 @@ const PLAY_API = 'https://www.douyu.com/lapi/live/getH5PlayV1'
 const ANONYMOUS_DID = '10000000000000000000000000001501'
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36'
 
-export function parseDouyuRoom(input: string): string | null {
-  const trimmed = input.trim()
-  if (trimmed.length === 0) return null
-  if (/^\d{1,12}$/.test(trimmed)) return trimmed
-  let url: URL
-  try { url = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`) }
-  catch { return null }
-  if (!/(^|\.)douyu\.com$/i.test(url.hostname)) return null
-  const rid = url.searchParams.get('rid')
-  if (rid && /^\d{1,12}$/.test(rid)) return rid
-  const segments = url.pathname.split('/').filter(Boolean)
-  for (const segment of segments.reverse()) {
-    if (/^\d{1,12}$/.test(segment)) return segment
-  }
-  return null
-}
+export { parseDouyuRoom } from './douyuRoom'
+import { parseDouyuRoom } from './douyuRoom'
 
 export type DouyuEncryption = {
   rand_str: string
@@ -85,13 +71,19 @@ function playFailure(payload: Record<string, unknown>, roomHint: string): Resolv
 }
 
 export async function resolveDouyu(input: string, deps: ResolverDeps): Promise<ResolveResult> {
-  const room = parseDouyuRoom(input)
-  if (!room) return failure('unsupported-url', '无法从输入中识别斗鱼房间号.', '支持 douyu.com/房间号 或数字房间号. 个性域名请先在浏览器中复制数字房间号.')
-  const roomHint = `${MANUAL_URL_HINT} 弹幕仍可使用房间号 ${room} 单独连接.`
+  const inputRoom = parseDouyuRoom(input)
+  if (!inputRoom) return failure('unsupported-url', '无法从输入中识别斗鱼房间号.', '支持 douyu.com/房间号 或数字房间号. 个性域名请先在浏览器中复制数字房间号.')
+  let roomHint = `${MANUAL_URL_HINT} 弹幕可在房间身份确认后单独连接.`
   const requestedRate = deps.quality ?? '0'
   if (!/^\d{1,4}$/.test(requestedRate)) return failure('unsupported-url', '斗鱼画质编号无效.', roomHint)
   const cookie = deps.douyuCookie ?? ''
   if (/[\r\n\x00]/.test(cookie)) return failure('restricted', '斗鱼登录信息无效, 请重新登录.', roomHint)
+  if (!deps.douyuRoomIdentity && !deps.resolveDouyuRoom) return failure('upstream-error', '斗鱼房间身份查询暂不可用, 请重新加载.', roomHint)
+  const identity = deps.douyuRoomIdentity ? { ok: true as const, identity: deps.douyuRoomIdentity }
+    : await deps.resolveDouyuRoom!(input)
+  if (!identity.ok) return identity
+  const room = identity.identity.room
+  roomHint = `${MANUAL_URL_HINT} 弹幕仍可使用真实房间号 ${room} 单独连接.`
   const did = cookie.match(/(?:^|;\s*)dy_did=([a-f0-9]{32})(?:;|$)/i)?.[1] ?? ANONYMOUS_DID
   const headers: Record<string, string> = { 'User-Agent': USER_AGENT, Referer: REFERER, ...(cookie ? { Cookie: cookie } : {}) }
   let encryption: DouyuEncryption
@@ -133,13 +125,11 @@ export async function resolveDouyu(input: string, deps: ResolverDeps): Promise<R
   const qualities = parseDouyuQualities(data.multirates)
   const returnedRate = typeof data.rate === 'number' && Number.isInteger(data.rate) ? String(data.rate) : requestedRate
   const notes = ['直播地址带时效签名, 断流后将重新解析. 画质标签由斗鱼提供.']
+  if (inputRoom !== room) notes.push(`房间 ${inputRoom} 已解析为真实房间号 ${room}.`)
   if (returnedRate !== requestedRate) notes.push('斗鱼返回了较低或不同的画质档位. 原画可能需要登录后重试.')
   return { ok: true, stream: {
     platform: 'douyu', url: deps.proxify(url.toString()), kind: /\.m3u8?$/i.test(url.pathname) ? 'hls' : 'progressive',
-    label: `斗鱼 ${room}`, channel: room, requiresProxy: true, danmakuRoom: room,
+    label: `斗鱼 ${room}`, channel: room, sourceRoom: room, requiresProxy: true, danmakuRoom: room,
     headers: { Referer: REFERER, 'User-Agent': USER_AGENT }, qualities, quality: returnedRate, notes,
   } }
 }
-
-/** Danmaku resolution stays independent of whether video acquisition succeeds. */
-export function douyuRoomFor(input: string): string | null { return parseDouyuRoom(input) }

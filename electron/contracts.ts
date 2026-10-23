@@ -10,6 +10,7 @@ import type { DecoderMode, DecoderPreferenceState } from './decoderPreferences'
 import type { ToolsStatus } from './toolsService'
 
 export interface DesktopMethods {
+  resolveDouyuRoom: { args: { input: string }; result: import('../server/platforms/douyuRoom').DouyuRoomResult }
   getToolsStatus: { args: undefined; result: ToolsStatus }
   updateYtdlp: { args: undefined; result: ToolsStatus }
   restoreYtdlp: { args: { target: 'previous' | 'bundled' }; result: ToolsStatus }

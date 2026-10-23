@@ -5,7 +5,7 @@
 
 import { useCallback, useMemo, useState } from 'react'
 import { useSessionSnapshot } from './SessionContext'
-import { CameraStore, cameraRoomKey, DEFAULT_CAMERA_WINDOW, type CameraConfig, type CameraWindow } from './camera'
+import { CameraStore, cameraRoomKey, cameraLegacyKeys, DEFAULT_CAMERA_WINDOW, type CameraConfig, type CameraWindow } from './camera'
 import type { RoiRect } from '../core/profileSchema'
 
 let sharedStore: CameraStore | null = null
@@ -39,12 +39,13 @@ export function useCamera(): CameraControls {
   const descriptor = snapshot.media.commentary.descriptor
   const room = cameraRoomKey(descriptor ? {
     platform: descriptor.platform,
+    sourceRoom: descriptor.sourceRoom,
     danmakuRoom: snapshot.danmaku.room,
     label: descriptor.label,
     input: descriptor.input,
   } : null)
   const [revision, setRevision] = useState(0)
-  const config = useMemo(() => store().get(room), [room, revision])
+  const config = useMemo(() => store().getCompatible(room, cameraLegacyKeys(descriptor)), [room, descriptor, revision])
   const available = snapshot.media.commentary.status === 'ready'
 
   const write = useCallback((next: CameraConfig | null) => {
@@ -52,7 +53,7 @@ export function useCamera(): CameraControls {
     if (next) store().set(room, { ...next, updatedAt: Date.now() })
     else store().remove(room)
     setRevision((n) => n + 1)
-  }, [room])
+  }, [room, descriptor])
 
   return {
     room,

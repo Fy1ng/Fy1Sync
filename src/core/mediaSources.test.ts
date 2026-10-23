@@ -136,3 +136,10 @@ describe('toDescriptor', () => {
     expect(descriptor.url).toContain('usher.example')
   })
 })
+
+
+it('classifies numeric Douyu aliases and preserves rid URLs for main-process identity resolution', () => {
+  expect(expectOk('6657')).toMatchObject({ platform: 'douyu', url: '6657', needsResolve: true })
+  const input = 'https://www.douyu.com/topic/x?rid=6657'
+  expect(expectOk(input)).toMatchObject({ platform: 'douyu', url: input, channel: '6657', needsResolve: true })
+})

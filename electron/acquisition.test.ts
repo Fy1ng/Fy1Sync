@@ -4,7 +4,9 @@ import { Acquisition } from './acquisition'
 import { resolveConfig } from '../server/config'
 import { createDesktopService } from '../server/api'
 
-function harness() {
+vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '8.8.8.8', family: 4 }]) }))
+
+function harness(overrides: Partial<ConstructorParameters<typeof Acquisition>[0]> = {}) {
   const listeners = new Set<(state: BufferState) => void>()
   const inputs: BufferInput[] = []
   let resolver: ((hlsOnly?: boolean) => Promise<BufferInput>) | undefined
@@ -32,7 +34,7 @@ function harness() {
     { format_id: '300', protocol: 'm3u8_native', height: 720, fps: 60, vcodec: 'avc1.64002a', acodec: 'mp4a.40.2', url: 'https://media.googlevideo.com/low.m3u8' },
   ] }))
   const proxy = { ...resolveConfig({}).proxy, hosts: ['*'] }
-  const acquisition = new Acquisition({ buffer, logins, runYtDlp, proxy, dns: async () => ['8.8.8.8'] })
+  const acquisition = new Acquisition({ buffer, logins, runYtDlp, proxy, dns: async () => ['8.8.8.8'], ...overrides })
   return { acquisition, buffer, logins, inputs, runYtDlp, proxy, emit, listeners,
     reconnect: async (hlsOnly?: boolean) => resolver!(hlsOnly) }
 }
@@ -225,5 +227,37 @@ describe('main acquisition boundary', () => {
     expect(await service.invoke('resolve', { input: 'http://127.0.0.1:9/secret', platform: 'direct' })).toMatchObject({ ok: false, code: 'bad-port' })
     expect(ensureTools).not.toHaveBeenCalled()
     service.dispose()
+  })
+})
+
+
+describe('confirmed Douyu selection pin', () => {
+  it('retains the original input but pins reconnect and quality changes to the confirmed room', async () => {
+    const room = vi.fn(async () => ({ ok: true as const, identity: { room: '6979222', inputRoom: '6657' } }))
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    const seed = { rand_str: 'seed', key: 'key', enc_time: 1, is_special: 0, enc_data: 'enc' }
+    const h = harness({ resolveDouyuRoom: room, fetchImpl: async (input, init) => {
+      const url = String(input); requests.push({ url, init })
+      return new Response(JSON.stringify(url.includes('getEncryption') ? { error: 0, data: seed } : { error: 0, data: {
+        rtmp_url: 'https://media.edgesrv.com/live', rtmp_live: 'stream.flv', rate: 0, multirates: [{ rate: 0, name: '原画' }, { rate: 4, name: '高清' }],
+      } }))
+    } })
+    const initial = await h.acquisition.resolve('6657', 'douyu', 'commentary')
+    expect(initial).toMatchObject({ ok: true, stream: { channel: '6979222', danmakuRoom: '6979222', sourceRoom: '6979222' } })
+    room.mockResolvedValue({ ok: true, identity: { room: '9999', inputRoom: '6657' } })
+    await h.reconnect()
+    expect(await h.acquisition.switchQuality('commentary', '4')).toMatchObject({ ok: true, stream: { channel: '6979222', sourceRoom: '6979222' } })
+    expect(room).toHaveBeenCalledTimes(1)
+    const play = requests.filter(request => request.url.includes('getH5PlayV1'))
+    expect(play).toHaveLength(3)
+    expect(play.every(request => request.url.endsWith('/6979222'))).toBe(true)
+    const { buildDouyuAuth } = await import('../server/platforms/douyu')
+    for (const request of play) {
+      const body = new URLSearchParams(String(request.init?.body))
+      expect(body.get('auth')).toBe(buildDouyuAuth('6979222', Number(body.get('tt')), seed))
+    }
+    expect(await h.acquisition.resolve('6657', 'douyu', 'commentary')).toMatchObject({ ok: true, stream: { channel: '9999' } })
+    expect(room).toHaveBeenCalledTimes(2)
+    h.acquisition.dispose()
   })
 })

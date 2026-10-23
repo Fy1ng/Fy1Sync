@@ -69,15 +69,16 @@ function normalizeConfig(raw: unknown): CameraConfig | null {
 }
 
 /** Room key from a commentary source: `douyu:6979222`, else the platform plus label. */
-export function cameraRoomKey(source: { platform?: string; danmakuRoom?: string | null; label?: string; input?: string } | null): string | null {
+export function cameraRoomKey(source: { platform?: string; sourceRoom?: string; danmakuRoom?: string | null; label?: string; input?: string } | null): string | null {
   if (!source) return null
+  if (source.sourceRoom) return `${source.platform ?? 'room'}:${source.sourceRoom}`
   if (source.danmakuRoom) return `${source.platform ?? 'room'}:${source.danmakuRoom}`
   const name = (source.input || source.label || '').trim()
   return name ? `${source.platform ?? 'source'}:${name.slice(0, 200)}` : null
 }
 
 export class CameraStore {
-  private rooms: Record<string, CameraConfig>
+  private rooms: Record<string, CameraConfig | null>
 
   constructor(private readonly storage: CameraStorage | null) {
     this.rooms = {}
@@ -85,7 +86,8 @@ export class CameraStore {
       const parsed = JSON.parse(storage?.getItem(CAMERA_STORAGE_KEY) ?? '{}') as Record<string, unknown>
       for (const [key, value] of Object.entries(parsed ?? {})) {
         const config = normalizeConfig(value)
-        if (config && key.length <= 220) this.rooms[key] = config
+        if (key.length <= 220 && config) this.rooms[key] = config
+        else if (value === null && /^douyu:[1-9][0-9]{0,11}$/.test(key)) this.rooms[key] = null
       }
     } catch {
       this.rooms = {}
@@ -96,12 +98,24 @@ export class CameraStore {
     return room ? this.rooms[room] ?? null : null
   }
 
+  /** Copy only a confirmed source's own legacy keys, preserving both records. */
+  getCompatible(room: string | null, aliases: string[]): CameraConfig | null {
+    const current = this.get(room)
+    if (current || !room || Object.hasOwn(this.rooms, room)) return current
+    const legacy = aliases.map(key => this.get(key)).find(Boolean) ?? null
+    if (legacy && Object.values(this.rooms).filter(Boolean).length < MAX_ROOMS) {
+      this.rooms = { ...this.rooms, [room]: legacy }
+      this.persist()
+    }
+    return legacy
+  }
+
   set(room: string, config: CameraConfig): void {
     const normalized = normalizeConfig(config)
     if (!normalized) return
     this.rooms = { ...this.rooms, [room]: normalized }
     // Oldest rooms go first once the map is full; nobody keeps 200 streamers' crops in use.
-    const keys = Object.keys(this.rooms)
+    const keys = Object.keys(this.rooms).filter(key => this.rooms[key] !== null)
     if (keys.length > MAX_ROOMS) {
       keys.sort((a, b) => this.rooms[a]!.updatedAt - this.rooms[b]!.updatedAt)
       for (const key of keys.slice(0, keys.length - MAX_ROOMS)) delete this.rooms[key]
@@ -110,9 +124,14 @@ export class CameraStore {
   }
 
   remove(room: string): void {
-    if (!(room in this.rooms)) return
-    const { [room]: _removed, ...rest } = this.rooms
-    this.rooms = rest
+    if (/^douyu:[1-9][0-9]{0,11}$/.test(room)) {
+      // A V1-compatible null entry records explicit removal across inputs and restarts.
+      // Keep legacy aliases intact, but never resurrect them over this user's decision.
+      this.rooms = { ...this.rooms, [room]: null }
+    } else {
+      const { [room]: _removed, ...rest } = this.rooms
+      this.rooms = rest
+    }
     this.persist()
   }
 
@@ -123,4 +142,16 @@ export class CameraStore {
       // A full quota must not interrupt playback; the crop simply is not remembered.
     }
   }
+}
+
+/** Only the input associated with this confirmed video is eligible for compatibility. */
+export function cameraLegacyKeys(source: { platform?: string; sourceRoom?: string; input: string } | null): string[] {
+  if (source?.platform !== 'douyu' || !source.sourceRoom || !/^[1-9][0-9]{0,11}$/.test(source.sourceRoom)) return []
+  const input = source.input.trim()
+  let alias = /^[1-9][0-9]{0,11}$/.test(input) ? input : null
+  try {
+    const url = new URL(/^https?:/i.test(input) ? input : `https://${input}`)
+    if (/(^|\.)douyu\.com$/i.test(url.hostname)) alias = url.searchParams.get('rid') ?? url.pathname.split('/').filter(Boolean).reverse().find(part => /^[1-9][0-9]{0,11}$/.test(part)) ?? null
+  } catch { /* Not a room URL. */ }
+  return [...new Set([...(alias && alias !== source.sourceRoom ? [`douyu:${alias}`] : []), `douyu:${input.slice(0, 200)}`])].filter(key => key !== `douyu:${source.sourceRoom}`)
 }

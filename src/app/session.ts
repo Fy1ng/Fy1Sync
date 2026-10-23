@@ -568,7 +568,8 @@ export class Session {
       }
       const stream = response.value.stream
       const replacement: MediaDescriptor = { ...descriptor, url: stream.url, kind: stream.kind,
-        label: stream.label, sourceQualities: stream.qualities, sourceQuality: stream.quality }
+        label: stream.label, sourceQualities: stream.qualities, sourceQuality: stream.quality,
+        sourceRoom: stream.sourceRoom ?? descriptor.sourceRoom }
       await this.loadSource(role, replacement, { keepSessionProfile: true })
       const loadedGeneration = this.sourceGeneration[role]
       if (this.engine.getState()[role].descriptor !== replacement || this.disposed) return
@@ -939,13 +940,14 @@ export class Session {
   /** Connection status describes the upstream room, not just the local IPC channel. */
   private ingestDanmakuState(data: unknown): void {
     if (!data || typeof data !== 'object') return
-    const payload = data as { state?: unknown; detail?: unknown }
+    const payload = data as { state?: unknown; detail?: unknown; room?: unknown }
     const state = typeof payload.state === 'string' ? payload.state : ''
     const detail = typeof payload.detail === 'string' ? payload.detail : null
     const connected = state === 'connected'
     this.danmakuState = {
       ...this.danmakuState,
       connected,
+      ...(typeof payload.room === 'string' && /^[1-9][0-9]{0,11}$/.test(payload.room) ? { room: payload.room } : {}),
       error: connected ? null : (detail ?? DANMAKU_STATE_TEXT[state] ?? this.danmakuState.error),
     }
     this.notify()
