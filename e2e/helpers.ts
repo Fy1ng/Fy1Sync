@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import type { DesktopMethod, DesktopMethods } from '../electron/contracts'
 import type { ApiResult } from '../src/app/apiClient'
+import type { ChatMessage } from '../server/danmaku/douyuProtocol'
 import { APP_ORIGIN, expect } from './electron'
 
 /** Use the actual preload bridge, retaining the transport result wrapper. */
@@ -230,9 +231,10 @@ export async function stubDanmakuStream(application: ElectronApplication, texts:
         main.__streamSyncerTest?.emitDanmaku('288016', 'danmaku', {
           id: 'stub-' + sequence + '-' + index,
           text,
-          user: '观众' + index,
-          color: '#ffffff',
-        })
+          username: '观众' + index,
+          color: 0,
+          level: 0, receivedAt: Date.now(), room: '288016', system: false,
+        } satisfies ChatMessage)
       }
       sequence += 1
     }
@@ -264,8 +266,9 @@ export async function stressDanmaku(application: ElectronApplication, perSecond:
       for (; carry >= 1; carry -= 1) {
         sequence += 1
         main.__streamSyncerTest?.emitDanmaku('288016', 'danmaku', {
-          id: 'stress-' + sequence, text: '压测弹幕 #' + sequence, user: '观众' + (sequence % 97), color: '#ffffff',
-        })
+          id: 'stress-' + sequence, text: '压测弹幕 #' + sequence, username: '观众' + (sequence % 97), color: 0,
+          level: 0, receivedAt: Date.now(), room: '288016', system: false,
+        } satisfies ChatMessage)
       }
     }, tickMs)
   }, perSecond)

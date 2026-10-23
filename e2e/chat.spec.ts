@@ -5,7 +5,36 @@
  */
 
 import { expect, test } from './electron'
-import { fixturesReady, loadBothFixtures, openPlayer, seekBoth, setPlaying, stressDanmaku } from './helpers'
+import { fixturesReady, loadBothFixtures, openPlayer, openSourceDialog, seekBoth, setPlaying, stressDanmaku } from './helpers'
+import { parseStt, toChatMessage } from '../server/danmaku/douyuProtocol'
+
+test('斗鱼协议昵称经 IPC 显示, 缺失昵称才显示匿名', async ({ page, electronApp }) => {
+  await openPlayer(page)
+  const dialog = await openSourceDialog(page)
+  await dialog.getByRole('textbox', { name: '弹幕房间号' }).fill('288016')
+  await dialog.getByRole('button', { name: '连接', exact: true }).click()
+  await expect.poll(() => electronApp.evaluate(() => {
+    const main = globalThis as typeof globalThis & { __streamSyncerTest?: { emitDanmaku(room: string, event: string, data: unknown): number } }
+    return main.__streamSyncerTest!.emitDanmaku('288016', 'state', { room: '288016', state: 'connected' })
+  })).toBe(1)
+  await dialog.getByRole('button', { name: '完成' }).click()
+
+  const messages = [
+    'type@=chatmsg/cid@=named/nn@=观众@A甲@S乙/txt@=昵称回归消息/col@=2/',
+    'type@=chatmsg/cid@=unnamed/txt@=缺失昵称消息/',
+  ].map((payload) => toChatMessage(parseStt(payload), '288016', Date.now()))
+  expect(messages.every(Boolean)).toBe(true)
+  await electronApp.evaluate((_electron, payloads) => {
+    const main = globalThis as typeof globalThis & { __streamSyncerTest?: { emitDanmaku(room: string, event: string, data: unknown): number } }
+    for (const payload of payloads) main.__streamSyncerTest!.emitDanmaku('288016', 'danmaku', payload)
+  }, messages)
+
+  const rows = page.locator('.chat-row')
+  await expect(rows).toHaveCount(2)
+  await expect(rows.filter({ hasText: '昵称回归消息' }).locator('.chat-user')).toHaveText('观众@甲/乙')
+  await expect(rows.filter({ hasText: '缺失昵称消息' }).locator('.chat-user')).toHaveText('匿名')
+  await expect(page.locator('.danmaku-item').filter({ hasText: '昵称回归消息' })).toHaveCSS('color', 'rgb(30, 135, 240)')
+})
 
 test.describe('弹幕列表', () => {
   test.skip(!fixturesReady(), '缺少测试源，先运行 npm run fixtures')
@@ -27,6 +56,7 @@ test.describe('弹幕列表', () => {
 
       const list = page.locator('.chat-scroller')
       await expect(list.locator('.chat-row').first()).toBeVisible({ timeout: 20_000 })
+      await expect(list.locator('.chat-user').first()).toHaveText(/^观众\d+$/)
 
       // Let the history outgrow the viewport many times over.
       await expect.poll(async () => list.evaluate((node) => node.scrollHeight / node.clientHeight), { timeout: 20_000 })

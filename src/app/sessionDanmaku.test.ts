@@ -16,6 +16,7 @@ import { CHAT_HISTORY_LIMIT, Session } from './session'
 import type { StreamSyncerBridge } from '../../electron/contracts'
 import type { DanmakuEvent } from './apiClient'
 import { SETTINGS_KEY, type SettingsStorage } from './settings'
+import { parseStt, toChatMessage } from '../../server/danmaku/douyuProtocol'
 
 /** The only fake boundary is the typed preload, including its cancellation handle. */
 class StubDanmakuSubscription {
@@ -131,7 +132,7 @@ describe('Session danmaku transport', () => {
   it('parks a relayed message against commentary media time', async () => {
     const { session } = await makeSession({ commentaryTime: 100 })
     session.connectDanmaku('288016')
-    StubDanmakuSubscription.instances[0]!.emit('danmaku', { text: '好球', user: '观众', color: '#fff' })
+    StubDanmakuSubscription.instances[0]!.emit('danmaku', { text: '好球', username: '观众', color: 0 })
     expect(session.flush().danmaku.pending).toBe(1)
     // Scheduled at the playhead it arrived on, so it is due immediately — the delay only
     // appears once the commentary is rewound behind that point.
@@ -140,13 +141,49 @@ describe('Session danmaku transport', () => {
     expect(message?.scheduleTime).toBeCloseTo(100, 3)
   })
 
+  it('preserves the nickname and colour from a parsed Douyu message through the chat timeline', async () => {
+    const { session } = await makeSession()
+    session.connectDanmaku('288016')
+    const payload = toChatMessage(parseStt(
+      'type@=chatmsg/cid@=nickname-regression/nn@=观众@A甲@S乙/txt@=好球/col@=2/',
+    ), '288016', 123)
+    StubDanmakuSubscription.instances[0]!.emit('danmaku', payload)
+
+    expect(session.drainDanmaku()).toEqual([expect.objectContaining({
+      text: '好球', user: '观众@甲/乙', color: '#1e87f0',
+    })])
+    expect(session.chatHistory()).toEqual([expect.objectContaining({
+      text: '好球', user: '观众@甲/乙',
+    })])
+  })
+
+  it('applies the username blocklist to a parsed Douyu nickname before releasing it', async () => {
+    const { session } = await makeSession()
+    session.updateDanmakuSettings({
+      filter: { blockedPatterns: [], blockedUsers: ['刷屏机'], maxLength: 0 },
+    })
+    session.connectDanmaku('288016')
+    const source = StubDanmakuSubscription.instances[0]!
+    source.emit('danmaku', toChatMessage(parseStt(
+      'type@=chatmsg/nn@=刷屏机/txt@=应屏蔽/',
+    ), '288016', 123))
+    source.emit('danmaku', toChatMessage(parseStt(
+      'type@=chatmsg/nn@=普通观众/txt@=好球/',
+    ), '288016', 124))
+
+    expect(session.drainDanmaku()).toEqual([expect.objectContaining({
+      text: '好球', user: '普通观众',
+    })])
+    expect(session.chatHistory()).toHaveLength(1)
+  })
+
   it('records released messages for the chat list, bounded and cleared on disconnect', async () => {
     const { session } = await makeSession({ commentaryTime: 100 })
     session.connectDanmaku('288016')
     let notified = 0
     const stop = session.subscribeChat(() => { notified += 1 })
     const source = StubDanmakuSubscription.instances[0]!
-    for (let n = 0; n < CHAT_HISTORY_LIMIT + 5; n += 1) source.emit('danmaku', { text: `m${n}`, user: 'u' })
+    for (let n = 0; n < CHAT_HISTORY_LIMIT + 5; n += 1) source.emit('danmaku', { text: `m${n}`, username: 'u', color: 0 })
     // Parked messages are not chat yet; only released ones are.
     expect(session.chatHistory()).toHaveLength(0)
     session.drainDanmaku()
@@ -164,16 +201,16 @@ describe('Session danmaku transport', () => {
     const { session } = await makeSession()
     session.connectDanmaku('288016')
     const source = StubDanmakuSubscription.instances[0]!
-    source.emit('danmaku', { text: '', user: 'a' })
-    source.emit('danmaku', { text: 42, user: 'a' })
+    source.emit('danmaku', { text: '', username: 'a' })
+    source.emit('danmaku', { text: 42, username: 'a' })
     source.emit('danmaku', 'not json at all')
     expect(session.flush().danmaku.pending).toBe(0)
   })
 
-  it('fills in a missing user and colour rather than dropping the message', async () => {
+  it.each([undefined, '', '   ', null, 42])('fills in an unusable nickname (%j) and missing colour', async (username) => {
     const { session } = await makeSession()
     session.connectDanmaku('288016')
-    StubDanmakuSubscription.instances[0]!.emit('danmaku', { text: '来了' })
+    StubDanmakuSubscription.instances[0]!.emit('danmaku', { text: '来了', username })
     const [message] = session.drainDanmaku()
     expect(message?.user).toBe('匿名')
     expect(message?.color).toBe('#ffffff')

@@ -32,6 +32,7 @@ import { apiClient, type PresetSummary } from './apiClient'
 import type { AppSettings } from './settings'
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from './settings'
 import type { BufferState } from '../../electron/bufferManager'
+import { colorForIndex, type ChatMessage } from '../../server/danmaku/douyuProtocol'
 
 /** Released danmaku kept for the chat list. */
 export const CHAT_HISTORY_LIMIT = 2000
@@ -928,12 +929,12 @@ export class Session {
 
   private ingestDanmaku(data: unknown): void {
     if (!data || typeof data !== 'object') return
-    const payload = data as { text?: unknown; user?: unknown; color?: unknown }
+    const payload = data as Partial<ChatMessage>
     if (typeof payload.text !== 'string' || payload.text.length === 0) return
     this.pushDanmaku({
       text: payload.text,
-      user: typeof payload.user === 'string' ? payload.user : '匿名',
-      color: typeof payload.color === 'string' ? payload.color : '#ffffff',
+      user: typeof payload.username === 'string' ? payload.username.trim() || '匿名' : '匿名',
+      color: colorForIndex(typeof payload.color === 'number' ? payload.color : 0),
     })
   }
 
