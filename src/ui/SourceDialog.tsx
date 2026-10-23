@@ -9,17 +9,18 @@
  * clips with a known offset, so sync can be exercised without a live match.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { roleName } from '../app/session'
 import { describeSource, parseSourceInput, toDescriptor } from '../core/mediaSources'
 import { SOURCE_ROLES } from '../core/types'
 import type { MediaDescriptor, SourceRole } from '../core/types'
-import type { LoginPlatform, LoginStatus } from '../../electron/login'
+import type { LoginStatus } from '../../electron/login'
 import { bufferStatusText } from './bufferStatus'
 import { DecoderSettings } from './DecoderSettings'
 import { ToolSettings } from './ToolSettings'
+import { DouyuTools } from './DouyuTools'
 
 /** Looping local fixtures, also used by the E2E specs. */
 /**
@@ -61,7 +62,7 @@ export function SourceDialog({ onClose }: { onClose: () => void }): React.ReactN
 
         <DecoderSettings />
         <ToolSettings onFixturesAvailableChange={setFixturesAvailable} />
-        <Accounts />
+        <Accounts defaultRoom={snapshot.danmaku.room} />
 
         <footer className="dialog-footer">
           <span className="hint">
@@ -253,40 +254,54 @@ function RolePanel({ role, fixturesAvailable }: { role: SourceRole; fixturesAvai
   )
 }
 
-function Accounts(): React.ReactNode {
+function Accounts({ defaultRoom }: { defaultRoom: string | null }): React.ReactNode {
   const [status, setStatus] = useState<LoginStatus | null>(null)
-  const [busy, setBusy] = useState<LoginPlatform | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [douyuBusy, setDouyuBusy] = useState(false)
   const [message, setMessage] = useState('')
+  const mounted = useRef(false)
+  const inFlight = useRef(false)
+  const revision = useRef(0)
   const refresh = async () => {
+    const current = revision.current
     const result = await apiClient.loginStatus()
-    if (result.ok && result.value?.youtube && result.value?.douyu) setStatus(result.value)
+    if (!mounted.current || current !== revision.current) return
+    if (result.ok && result.value?.youtube) setStatus(result.value)
     else if (!result.ok) setMessage(result.message)
   }
-  useEffect(() => { void refresh() }, [])
-  const action = async (platform: LoginPlatform, logout = false) => {
-    if (busy) return
-    setBusy(platform)
+  useEffect(() => {
+    mounted.current = true
+    void refresh()
+    return () => { mounted.current = false; revision.current++ }
+  }, [])
+  const action = async (logout = false) => {
+    if (inFlight.current || douyuBusy) return
+    inFlight.current = true
+    revision.current++
+    setBusy(true)
     setMessage(logout ? '正在清除登录信息' : '请在打开的 Chrome 窗口中登录, 完成后关闭该窗口')
     try {
-      const result = logout ? await apiClient.logout(platform) : await apiClient.login(platform)
+      const result = logout ? await apiClient.logout('youtube') : await apiClient.login('youtube')
+      if (!mounted.current) return
       setMessage(result.ok ? (logout ? '已退出登录并删除专用浏览器资料' : '登录信息已保存') : result.message)
       await refresh()
-    } finally { setBusy(null) }
+    } finally { inFlight.current = false; if (mounted.current) setBusy(false) }
   }
   return <section className="account-section" aria-label="账号">
     <h3>账号</h3>
     <p className="hint">登录可选. YouTube 验证和斗鱼原画可能需要登录. 登录完成后请重新加载片源.</p>
-    {(['youtube', 'douyu'] as const).map((platform) => <div key={platform} className="source-actions">
-      <button type="button" disabled={busy !== null} onClick={() => void action(platform)}>
-        {platform === 'youtube' ? '登录 YouTube' : '登录斗鱼'}
+    <div className="source-actions">
+      <button type="button" disabled={busy || douyuBusy} onClick={() => void action()}>
+        登录 YouTube
       </button>
-      <span className="hint">{status?.[platform].loggedIn ? '已登录' : '未登录'}
-        {status?.[platform].expiresAt ? `, 到期 ${new Date(status[platform].expiresAt! * 1000).toISOString().slice(0, 10)}` : ''}
+      <span className="hint">{status?.youtube.loggedIn ? '已登录' : '未登录'}
+        {status?.youtube.expiresAt ? `, 到期 ${new Date(status.youtube.expiresAt * 1000).toISOString().slice(0, 10)}` : ''}
       </span>
-      {status?.[platform].cookieCount ? <button type="button" className="ghost" disabled={busy !== null}
-        onClick={() => void action(platform, true)}>退出登录</button> : null}
-    </div>)}
+      {status?.youtube.cookieCount ? <button type="button" className="ghost" disabled={busy || douyuBusy}
+        onClick={() => void action(true)}>退出登录</button> : null}
+    </div>
     {message && <p role="status" className="hint">{message}</p>}
+    <DouyuTools defaultRoom={defaultRoom} disabled={busy} onBusyChange={setDouyuBusy} />
   </section>
 }
 

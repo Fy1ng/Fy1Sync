@@ -1,0 +1,304 @@
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { apiClient, type ApiResult } from '../app/apiClient'
+import type { DouyuAccountsSnapshot, DouyuAccountSummary, DouyuTasksSnapshot, DouyuTaskView } from '../../server/douyu/types'
+import { DouyuTools } from './DouyuTools'
+
+const now = Date.UTC(2026, 9, 24, 10)
+const loggedOut = { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false }
+const loggedIn = { ...loggedOut, loggedIn: true, cookieCount: 2, authKeysPresent: ['private-auth-key'], hasSessionCookies: true }
+function account(id = 'daily', label = '日常账号', login = loggedIn): DouyuAccountSummary {
+  return { id, label, login, active: id === 'daily', busy: false }
+}
+function accountSnapshot(list = [account()], activeAccountId: string | null = 'daily'): DouyuAccountsSnapshot {
+  return { activeAccountId, accounts: list.map(item => ({ ...item, active: item.id === activeAccountId })) }
+}
+function task(overrides: Partial<DouyuTaskView> = {}): DouyuTaskView {
+  return {
+    id: 'task-one', accountId: 'daily', room: '9999', kind: 'room-sign', policy: 'foreground',
+    repeatMinutes: null, createdAt: now, status: 'paused', reason: null, lastRunAt: null,
+    nextRunAt: null, lastResult: null, ...overrides,
+  }
+}
+function taskSnapshot(tasks: DouyuTaskView[] = [], retainedRooms: string[] = []): DouyuTasksSnapshot {
+  return { activeAccountId: 'daily', currentRoom: '9999', retainedRooms, runtime: { foreground: true, locked: false, suspended: false }, tasks }
+}
+function ok<T>(value: T): ApiResult<T> { return { ok: true, value } }
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(done => { resolve = done })
+  return { promise, resolve }
+}
+
+let publish: (snapshot: DouyuTasksSnapshot) => void
+let unsubscribe = vi.fn<() => void>()
+
+beforeEach(() => {
+  vi.spyOn(apiClient, 'listDouyuAccounts').mockResolvedValue(ok(accountSnapshot()))
+  vi.spyOn(apiClient, 'getDouyuTasks').mockResolvedValue(ok(taskSnapshot()))
+  unsubscribe = vi.fn()
+  vi.spyOn(apiClient, 'subscribeDouyuTasks').mockImplementation(listener => { publish = listener; return unsubscribe })
+})
+afterEach(() => { cleanup(); vi.restoreAllMocks() })
+
+function openTools(props: React.ComponentProps<typeof DouyuTools> = {}) {
+  const view = render(<DouyuTools defaultRoom="9999" {...props} />)
+  fireEvent.click(screen.getByText(/^管理斗鱼账号/))
+  fireEvent.click(screen.getByText(/^直播间签到任务/))
+  return view
+}
+
+describe('DouyuTools accounts', () => {
+  it('shows the active account and public login state without exposing authentication metadata', async () => {
+    vi.mocked(apiClient.listDouyuAccounts).mockResolvedValue(ok(accountSnapshot([account(), account('second', '备用账号', loggedOut)])))
+    openTools()
+    expect(await screen.findByText('活动账号: 日常账号, 已登录')).toBeVisible()
+    expect(screen.getAllByText('当前活动')).toHaveLength(1)
+    expect(within(screen.getByRole('group', { name: '斗鱼账号 备用账号' })).getByText('未登录')).toBeVisible()
+    expect(screen.queryByText('private-auth-key')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '登录斗鱼' })).toBeEnabled()
+  })
+
+  it('adds a trimmed label once and activates only the selected account', async () => {
+    const second = account('second', '比赛号', loggedOut)
+    const adding = deferred<ApiResult<DouyuAccountsSnapshot>>()
+    const add = vi.spyOn(apiClient, 'addDouyuAccount').mockReturnValue(adding.promise)
+    const activate = vi.spyOn(apiClient, 'activateDouyuAccount').mockResolvedValue(ok(accountSnapshot([account(), second], 'second')))
+    openTools()
+    await screen.findByText('活动账号: 日常账号, 已登录')
+    fireEvent.change(screen.getByLabelText('斗鱼账号标签'), { target: { value: '  比赛号  ' } })
+    const button = screen.getByRole('button', { name: '新增账号' })
+    fireEvent.click(button)
+    fireEvent.click(button)
+    expect(button).toBeDisabled()
+    expect(add).toHaveBeenCalledExactlyOnceWith('比赛号')
+    await act(async () => { adding.resolve(ok(accountSnapshot([account(), second]))) })
+    expect(screen.getByLabelText('斗鱼账号标签')).toHaveValue('')
+    fireEvent.click(within(screen.getByRole('group', { name: '斗鱼账号 比赛号' })).getByRole('button', { name: '激活' }))
+    expect(await screen.findByText('活动账号: 比赛号, 未登录')).toBeVisible()
+    expect(activate).toHaveBeenCalledExactlyOnceWith('second')
+    expect(screen.getAllByText('当前活动')).toHaveLength(1)
+    expect(within(screen.getByRole('group', { name: '斗鱼账号 日常账号' })).getByRole('button', { name: '激活' })).toBeEnabled()
+  })
+
+  it('renames, logs out and removes only the selected account', async () => {
+    const secondary = account('second', '备用账号')
+    const renamed = { ...secondary, label: '赛事账号' }
+    vi.mocked(apiClient.listDouyuAccounts).mockResolvedValue(ok(accountSnapshot([account(), secondary])))
+    const rename = vi.spyOn(apiClient, 'renameDouyuAccount').mockResolvedValue(ok(accountSnapshot([account(), renamed])))
+    const logout = vi.spyOn(apiClient, 'logoutDouyuAccount').mockResolvedValue(ok(accountSnapshot([account(), { ...renamed, login: loggedOut }])))
+    const remove = vi.spyOn(apiClient, 'removeDouyuAccount').mockResolvedValue(ok(accountSnapshot()))
+    openTools()
+    const second = within(await screen.findByRole('group', { name: '斗鱼账号 备用账号' }))
+    fireEvent.click(second.getByRole('button', { name: '改名' }))
+    fireEvent.change(second.getByLabelText('新账号标签'), { target: { value: '  赛事账号  ' } })
+    fireEvent.click(second.getByRole('button', { name: '保存标签' }))
+    const updated = within(await screen.findByRole('group', { name: '斗鱼账号 赛事账号' }))
+    expect(rename).toHaveBeenCalledExactlyOnceWith('second', '赛事账号')
+    fireEvent.click(updated.getByRole('button', { name: '退出' }))
+    await waitFor(() => expect(updated.getByRole('button', { name: '退出' })).toBeDisabled())
+    expect(logout).toHaveBeenCalledExactlyOnceWith('second')
+    await waitFor(() => expect(updated.getByRole('button', { name: '删除' })).toBeEnabled())
+    fireEvent.click(updated.getByRole('button', { name: '删除' }))
+    await waitFor(() => expect(screen.queryByRole('group', { name: '斗鱼账号 赛事账号' })).not.toBeInTheDocument())
+    expect(remove).toHaveBeenCalledExactlyOnceWith('second')
+    expect(screen.getByText('活动账号: 日常账号, 已登录')).toBeVisible()
+  })
+
+  it('keeps Chrome login busy and distinguishes an unverified login from a completed one', async () => {
+    const pending = deferred<ApiResult<DouyuAccountsSnapshot>>()
+    const onBusyChange = vi.fn()
+    const login = vi.spyOn(apiClient, 'loginDouyuAccount').mockReturnValueOnce(pending.promise).mockResolvedValueOnce(ok(accountSnapshot()))
+    vi.mocked(apiClient.listDouyuAccounts).mockResolvedValue(ok(accountSnapshot([account('daily', '日常账号', loggedOut)])))
+    openTools({ onBusyChange })
+    await screen.findByText('活动账号: 日常账号, 未登录')
+    const button = screen.getByRole('button', { name: '登录斗鱼' })
+    fireEvent.click(button)
+    fireEvent.click(button)
+    expect(button).toBeDisabled()
+    expect(screen.getByText(/请在打开的 Chrome 窗口中登录/)).toBeVisible()
+    expect(login).toHaveBeenCalledExactlyOnceWith('daily')
+    expect(onBusyChange).toHaveBeenLastCalledWith(true)
+    await act(async () => { pending.resolve(ok(accountSnapshot([account('daily', '日常账号', loggedOut)]))) })
+    expect(screen.getByText(/日常账号 尚未登录/)).toBeVisible()
+    expect(button).toBeEnabled()
+    expect(onBusyChange).toHaveBeenLastCalledWith(false)
+    fireEvent.click(button)
+    expect(await screen.findByText('日常账号 已登录. 登录完成后请重新加载片源.')).toBeVisible()
+    expect(screen.getByText('活动账号: 日常账号, 已登录')).toBeVisible()
+  })
+
+  it('shows account failures and releases busy state without reporting login success', async () => {
+    vi.spyOn(apiClient, 'loginDouyuAccount').mockResolvedValue({ ok: false, code: 'login-cancelled', message: '登录已取消.' })
+    openTools()
+    const button = screen.getByRole('button', { name: '登录斗鱼' })
+    await waitFor(() => expect(button).toBeEnabled())
+    fireEvent.click(button)
+    expect(await screen.findByRole('alert')).toHaveTextContent('登录已取消.')
+    expect(button).toBeEnabled()
+    expect(screen.queryByText('日常账号 已登录. 登录完成后请重新加载片源.')).not.toBeInTheDocument()
+  })
+})
+
+describe('DouyuTools tasks', () => {
+  it('creates a paused daily task with explicit account, room and policy, then starts and pauses it', async () => {
+    const definition = task({ policy: 'background-locked', repeatMinutes: 1440 })
+    const create = vi.spyOn(apiClient, 'createDouyuTask').mockResolvedValue(ok(taskSnapshot([definition])))
+    const start = vi.spyOn(apiClient, 'startDouyuTask').mockResolvedValue(ok(taskSnapshot([{ ...definition, status: 'queued', nextRunAt: now }])))
+    const pause = vi.spyOn(apiClient, 'pauseDouyuTask').mockResolvedValue(ok(taskSnapshot([definition])))
+    openTools()
+    await waitFor(() => expect(screen.getByRole('button', { name: '创建签到任务' })).toBeEnabled())
+    expect(screen.getByLabelText('签到房间号或地址')).toHaveValue('9999')
+    fireEvent.change(screen.getByRole('combobox', { name: '执行条件' }), { target: { value: 'background-locked' } })
+    fireEvent.change(screen.getByLabelText('执行周期'), { target: { value: 'daily' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建签到任务' }))
+    expect(await screen.findByText('签到任务已创建, 当前为暂停.')).toBeVisible()
+    expect(create).toHaveBeenCalledExactlyOnceWith({ accountId: 'daily', roomInput: '9999', kind: 'room-sign', policy: 'background-locked', repeatMinutes: 1440 })
+    expect(start).not.toHaveBeenCalled()
+    const row = within(screen.getByRole('group', { name: '签到任务 9999 (日常账号)' }))
+    expect(row.getByText('已暂停')).toBeVisible()
+    expect(row.getByRole('button', { name: '暂停' })).toBeDisabled()
+    fireEvent.click(row.getByRole('button', { name: '启动' }))
+    expect(await row.findByText('等待执行')).toBeVisible()
+    expect(start).toHaveBeenCalledExactlyOnceWith('task-one')
+    expect(row.getByRole('button', { name: '启动' })).toBeDisabled()
+    fireEvent.click(row.getByRole('button', { name: '暂停' }))
+    expect(await row.findByText('已暂停')).toBeVisible()
+    expect(pause).toHaveBeenCalledExactlyOnceWith('task-one')
+    expect(screen.getByText(/应用退出后任务停止, 重新打开应用后需手动启动/)).toBeVisible()
+  })
+
+  it.each([null, 'daily'])('allows paused task creation without a logged-in active account (%s) but blocks start', async activeId => {
+    vi.mocked(apiClient.listDouyuAccounts).mockResolvedValue(ok(accountSnapshot([account('daily', '日常账号', loggedOut)], activeId)))
+    const create = vi.spyOn(apiClient, 'createDouyuTask').mockResolvedValue(ok({ ...taskSnapshot([task()]), activeAccountId: activeId }))
+    openTools()
+    await waitFor(() => expect(screen.getByRole('button', { name: '创建签到任务' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: '创建签到任务' }))
+    expect(await screen.findByText('已暂停')).toBeVisible()
+    expect(create).toHaveBeenCalledExactlyOnceWith({ accountId: 'daily', roomInput: '9999', kind: 'room-sign', policy: 'foreground', repeatMinutes: null })
+    expect(screen.getByRole('button', { name: '启动' })).toBeDisabled()
+    expect(screen.getByText(activeId ? '登录该账号后可启动.' : '激活该账号后可启动.')).toBeVisible()
+  })
+
+  it('updates policy and closes only the selected retained room, then removes its task', async () => {
+    const first = task({ status: 'queued', nextRunAt: now })
+    const second = task({ id: 'task-two', room: '8888', status: 'running' })
+    const changed = { ...first, policy: 'background-unlocked' as const }
+    vi.mocked(apiClient.getDouyuTasks).mockResolvedValue(ok(taskSnapshot([first, second])))
+    const setPolicy = vi.spyOn(apiClient, 'setDouyuTaskPolicy').mockResolvedValue(ok(taskSnapshot([changed, second])))
+    const retain = vi.spyOn(apiClient, 'retainDouyuTaskRoom').mockResolvedValue(ok(taskSnapshot([changed, second], ['9999'])))
+    const close = vi.spyOn(apiClient, 'closeDouyuTaskRoom').mockResolvedValue(ok(taskSnapshot([{ ...changed, status: 'stopped', nextRunAt: null }, second])))
+    const remove = vi.spyOn(apiClient, 'removeDouyuTask').mockResolvedValue(ok(taskSnapshot([second])))
+    openTools()
+    const room = within(await screen.findByRole('region', { name: '任务房间 9999' }))
+    await waitFor(() => expect(room.getByRole('combobox')).toBeEnabled())
+    fireEvent.change(room.getByRole('combobox'), { target: { value: 'background-unlocked' } })
+    await waitFor(() => expect(room.getByRole('combobox')).toHaveValue('background-unlocked'))
+    expect(setPolicy).toHaveBeenCalledExactlyOnceWith('task-one', 'background-unlocked')
+    fireEvent.click(room.getByRole('checkbox', { name: '保留房间 9999 的任务' }))
+    await waitFor(() => expect(room.getByRole('checkbox')).toBeChecked())
+    expect(retain).toHaveBeenCalledExactlyOnceWith('9999', true)
+    fireEvent.click(room.getByRole('button', { name: '关闭保留房间' }))
+    expect(await room.findByText('已停止')).toBeVisible()
+    expect(close).toHaveBeenCalledExactlyOnceWith('9999')
+    expect(within(screen.getByRole('region', { name: '任务房间 8888' })).getByText('执行中')).toBeVisible()
+    fireEvent.click(room.getByRole('button', { name: '移除' }))
+    await waitFor(() => expect(room.queryByRole('group')).not.toBeInTheDocument())
+    expect(remove).toHaveBeenCalledExactlyOnceWith('task-one')
+    expect(within(screen.getByRole('region', { name: '任务房间 8888' })).getByText('执行中')).toBeVisible()
+  })
+
+  it('keeps task failures visible and prevents duplicate submissions until the request completes', async () => {
+    const pending = deferred<ApiResult<DouyuTasksSnapshot>>()
+    const create = vi.spyOn(apiClient, 'createDouyuTask').mockReturnValue(pending.promise)
+    openTools()
+    const button = screen.getByRole('button', { name: '创建签到任务' })
+    await waitFor(() => expect(button).toBeEnabled())
+    fireEvent.click(button)
+    fireEvent.click(button)
+    expect(button).toBeDisabled()
+    expect(create).toHaveBeenCalledTimes(1)
+    await act(async () => { pending.resolve({ ok: false, code: 'invalid-room', message: '无法识别该斗鱼房间.' }) })
+    expect(screen.getByRole('alert')).toHaveTextContent('无法识别该斗鱼房间.')
+    expect(button).toBeEnabled()
+    expect(screen.queryByText('签到任务已创建, 当前为暂停.')).not.toBeInTheDocument()
+    expect(screen.getByText('暂无签到任务.')).toBeVisible()
+  })
+
+  it('shows public executor results and keeps task pausing available during a manual login', async () => {
+    const pending = deferred<ApiResult<DouyuAccountsSnapshot>>()
+    vi.spyOn(apiClient, 'loginDouyuAccount').mockReturnValue(pending.promise)
+    vi.mocked(apiClient.getDouyuTasks).mockResolvedValue(ok(taskSnapshot([task({ status: 'waiting-user', lastResult: '需要在 Chrome 中完成验证码.' })])))
+    const pause = vi.spyOn(apiClient, 'pauseDouyuTask').mockResolvedValue(ok(taskSnapshot([task()])))
+    openTools()
+    await screen.findByText('结果: 需要在 Chrome 中完成验证码.')
+    await waitFor(() => expect(screen.getByRole('button', { name: '登录斗鱼' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: '登录斗鱼' }))
+    expect(screen.getByRole('button', { name: '启动' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '暂停' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: '暂停' }))
+    expect(await screen.findByText('已暂停')).toBeVisible()
+    expect(pause).toHaveBeenCalledExactlyOnceWith('task-one')
+    await act(async () => { pending.resolve(ok(accountSnapshot())) })
+  })
+
+  it('does not replace a newer task event with an older initial read and unsubscribes on unmount', async () => {
+    const initial = deferred<ApiResult<DouyuTasksSnapshot>>()
+    vi.mocked(apiClient.getDouyuTasks).mockReturnValue(initial.promise)
+    const view = openTools()
+    act(() => { publish(taskSnapshot([task({ status: 'succeeded', lastResult: '今天已经签到.' })])) })
+    expect(screen.getByText('结果: 今天已经签到.')).toBeVisible()
+    await act(async () => { initial.resolve(ok(taskSnapshot())) })
+    expect(screen.getByText('结果: 今天已经签到.')).toBeVisible()
+    view.unmount()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+    act(() => { publish(taskSnapshot()) })
+  })
+
+  it('keeps a newer execution result when a start response arrives later', async () => {
+    const pending = deferred<ApiResult<DouyuTasksSnapshot>>()
+    vi.mocked(apiClient.getDouyuTasks).mockResolvedValue(ok(taskSnapshot([task()])))
+    vi.spyOn(apiClient, 'startDouyuTask').mockReturnValue(pending.promise)
+    openTools()
+    const button = await screen.findByRole('button', { name: '启动' })
+    await waitFor(() => expect(button).toBeEnabled())
+    fireEvent.click(button)
+    act(() => { publish(taskSnapshot([task({ status: 'succeeded', lastResult: '直播间签到成功.' })])) })
+    await act(async () => { pending.resolve(ok(taskSnapshot([task({ status: 'queued', nextRunAt: now })]))) })
+    expect(screen.getByText('已完成')).toBeVisible()
+    expect(screen.getByText('结果: 直播间签到成功.')).toBeVisible()
+    expect(screen.queryByText('等待执行')).not.toBeInTheDocument()
+  })
+
+  it('reports both initial read errors and lets the user recover without polling', async () => {
+    vi.mocked(apiClient.listDouyuAccounts).mockResolvedValueOnce({ ok: false, code: 'read-error', message: '账号读取失败.' }).mockResolvedValue(ok(accountSnapshot()))
+    vi.mocked(apiClient.getDouyuTasks).mockResolvedValueOnce({ ok: false, code: 'read-error', message: '任务读取失败.' }).mockResolvedValue(ok(taskSnapshot()))
+    openTools()
+    expect(await screen.findByText('账号读取失败.')).toBeVisible()
+    expect(await screen.findByText('任务读取失败.')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '刷新状态' }))
+    expect(await screen.findByText('活动账号: 日常账号, 已登录')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '刷新任务' }))
+    expect(await screen.findByText('任务状态已刷新.')).toBeVisible()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(apiClient.listDouyuAccounts).toHaveBeenCalledTimes(2)
+    expect(apiClient.getDouyuTasks).toHaveBeenCalledTimes(2)
+  })
+
+  it('ignores a login result delivered after the dialog unmounts', async () => {
+    const pending = deferred<ApiResult<DouyuAccountsSnapshot>>()
+    const onBusyChange = vi.fn()
+    vi.spyOn(apiClient, 'loginDouyuAccount').mockReturnValue(pending.promise)
+    const view = openTools({ onBusyChange })
+    const loginButton = screen.getByRole('button', { name: '登录斗鱼' })
+    await waitFor(() => expect(loginButton).toBeEnabled())
+    fireEvent.click(loginButton)
+    expect(onBusyChange).toHaveBeenLastCalledWith(true)
+    view.unmount()
+    expect(onBusyChange).toHaveBeenLastCalledWith(false)
+    const callsAfterUnmount = onBusyChange.mock.calls.length
+    await act(async () => { pending.resolve(ok(accountSnapshot())) })
+    expect(onBusyChange).toHaveBeenCalledTimes(callsAfterUnmount)
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+  })
+})

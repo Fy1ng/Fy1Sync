@@ -1,0 +1,182 @@
+.douyu-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.douyu-tools-summary,
+.douyu-account-heading,
+.douyu-room-heading,
+.douyu-task-heading,
+.douyu-task-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.douyu-tools-summary > .hint {
+  flex: 1 1 180px;
+  overflow-wrap: anywhere;
+}
+
+.douyu-tools-details {
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.douyu-tools-details > summary {
+  padding: 7px 10px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.douyu-tools-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 3px 10px 10px;
+}
+
+.douyu-account-list,
+.douyu-room-list,
+.douyu-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.douyu-account-list {
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.douyu-account,
+.douyu-room,
+.douyu-task {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+}
+
+.douyu-task {
+  background: var(--panel);
+}
+
+.douyu-account-heading strong,
+.douyu-task-result {
+  overflow-wrap: anywhere;
+}
+
+.douyu-account strong,
+.douyu-room strong,
+.douyu-task-result {
+  font-size: 12px;
+}
+
+.douyu-active,
+.douyu-task-status[data-state='succeeded'] {
+  color: var(--ok);
+}
+
+.douyu-account-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.douyu-account-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.douyu-task-create {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 8px;
+}
+
+.douyu-task-create > button {
+  justify-self: start;
+}
+
+.douyu-tools .field {
+  margin: 0;
+}
+
+.douyu-tools select {
+  min-width: 0;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+}
+
+.douyu-retain-room,
+.douyu-task-policy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.douyu-retain-room {
+  margin-left: auto;
+}
+
+.douyu-task-policy {
+  margin-right: auto;
+}
+
+.douyu-task-policy > span {
+  white-space: nowrap;
+}
+
+.douyu-task-status {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.douyu-task-status[data-state='running'],
+.douyu-task-status[data-state='queued'] {
+  color: var(--accent);
+}
+
+.douyu-task-status[data-state='waiting-user'] {
+  color: var(--warn);
+}
+
+.douyu-task-status[data-state='failed'] {
+  color: var(--error);
+}
+
+@media (max-width: 640px) {
+  .douyu-task-create {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .douyu-retain-room {
+    margin-left: 0;
+  }
+
+  .douyu-task-policy {
+    flex-basis: 100%;
+  }
+}

@@ -12,6 +12,9 @@ import type { BufferState } from '../electron/bufferManager'
 import type { LoginPlatform, LoginResult, LoginStatus } from '../electron/login'
 import { isDecoderMode, type DecoderPreferencesService } from '../electron/decoderPreferences'
 import type { ToolsService } from '../electron/toolsService'
+import { DouyuAccountError, isDouyuAccountId, type DouyuAccountManager } from '../electron/douyuAccounts'
+import { DouyuTaskError, type DouyuTaskManager } from '../electron/douyuTasks'
+import { DOUYU_TASK_POLICIES, type DouyuTaskPolicy, type DouyuTasksSnapshot } from './douyu/types'
 
 export interface AcquisitionService {
   resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string, preferAdaptive?: boolean): Promise<ResolveResult>
@@ -33,6 +36,8 @@ export type DesktopServiceDeps = {
   acquisition?: AcquisitionService
   decoderPreferences?: DecoderPreferencesService
   tools?: ToolsService
+  douyuAccounts?: DouyuAccountManager
+  douyuTasks?: DouyuTaskManager
 }
 
 export type DesktopService = {
@@ -41,6 +46,8 @@ export type DesktopService = {
   resolveDouyuRoom: ResolveDouyuRoom
   dispose: () => void
   subscribeBuffer?: (listener: (state: BufferState) => void) => () => void
+  subscribeDouyuTasks?: (listener: (state: DouyuTasksSnapshot) => void) => () => void
+  setDouyuRoom?: (room: string | null) => void
 }
 
 const MAX_INPUT_LENGTH = 8_192
@@ -126,6 +133,8 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
     relay,
     resolveDouyuRoom: input => disposed ? Promise.resolve({ ok: false, failure: { code: 'upstream-error', message: '本地服务已关闭' } }) : resolveRoom(input),
     subscribeBuffer: deps.acquisition ? (listener) => deps.acquisition!.subscribe(listener) : undefined,
+    subscribeDouyuTasks: deps.douyuTasks ? listener => deps.douyuTasks!.subscribe(listener) : undefined,
+    setDouyuRoom: deps.douyuTasks ? room => deps.douyuTasks!.setRoom(room) : undefined,
     async invoke(method, args) {
       if (disposed) return fail('service-closed', '本地服务已关闭')
       if (typeof method !== 'string') return fail('not-found', '未知本地接口')
@@ -137,6 +146,87 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
         }
 
         switch (method) {
+          case 'listDouyuAccounts': {
+            if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
+            if (!deps.douyuAccounts) return fail('not-available', '斗鱼账号配置不可用, 请检查本地配置后重试.')
+            return { ok: true, value: await deps.douyuAccounts.snapshot() }
+          }
+          case 'addDouyuAccount': {
+            if (!fields(args, ['label']) || typeof args.label !== 'string') return fail('invalid-arguments', '账号名称无效')
+            if (!deps.douyuAccounts) return fail('not-available', '斗鱼账号配置不可用')
+            return { ok: true, value: await deps.douyuAccounts.add(args.label) }
+          }
+          case 'renameDouyuAccount': {
+            if (!fields(args, ['id', 'label']) || !isDouyuAccountId(args.id) || typeof args.label !== 'string') return fail('invalid-arguments', '账号参数无效')
+            if (!deps.douyuAccounts) return fail('not-available', '斗鱼账号配置不可用')
+            return { ok: true, value: await deps.douyuAccounts.rename(args.id, args.label) }
+          }
+          case 'loginDouyuAccount':
+          case 'activateDouyuAccount':
+          case 'logoutDouyuAccount':
+          case 'removeDouyuAccount': {
+            if (!fields(args, ['id']) || !isDouyuAccountId(args.id)) return fail('invalid-arguments', '账号参数无效')
+            const accounts = deps.douyuAccounts
+            if (!accounts) return fail('not-available', '斗鱼账号配置不可用')
+            if (!accounts.hasAccount(args.id)) return fail('account-not-found', '斗鱼账号不存在')
+            if (accounts.isBusy(args.id)) return fail('account-busy', '账号正在登录或退出, 请稍后重试.')
+            if (method === 'removeDouyuAccount') {
+              deps.douyuTasks?.removeAccount(args.id)
+              return { ok: true, value: await accounts.remove(args.id) }
+            }
+            const action = method === 'loginDouyuAccount' ? 'login' : method === 'activateDouyuAccount' ? 'activate' : 'logout'
+            return { ok: true, value: await accounts[action](args.id) }
+          }
+          case 'getDouyuTasks': {
+            if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
+            if (!deps.douyuTasks) return fail('not-available', '斗鱼任务配置不可用, 原文件已保留.')
+            return { ok: true, value: deps.douyuTasks.snapshot() }
+          }
+          case 'createDouyuTask': {
+            if (!fields(args, ['accountId', 'roomInput', 'kind', 'policy', 'repeatMinutes']) || !isDouyuAccountId(args.accountId)
+              || typeof args.roomInput !== 'string' || args.roomInput.length > MAX_INPUT_LENGTH || args.kind !== 'room-sign'
+              || !DOUYU_TASK_POLICIES.includes(args.policy as DouyuTaskPolicy)
+              || (args.repeatMinutes !== null && (!Number.isInteger(args.repeatMinutes) || Number(args.repeatMinutes) < 60 || Number(args.repeatMinutes) > 43200))) {
+              return fail('invalid-arguments', '任务参数无效')
+            }
+            if (!deps.douyuTasks || !deps.douyuAccounts) return fail('not-available', '斗鱼任务管理不可用')
+            const resolved = await resolveRoom(args.roomInput)
+            if (!resolved.ok) return fail(resolved.failure.code, resolved.failure.message)
+            if (disposed) return fail('service-closed', '本地服务已关闭')
+            if (!deps.douyuAccounts.hasAccount(args.accountId)) return fail('account-not-found', '斗鱼账号不存在')
+            return { ok: true, value: deps.douyuTasks.create({ accountId: args.accountId, room: resolved.identity.room,
+              kind: args.kind, policy: args.policy as DouyuTaskPolicy, repeatMinutes: args.repeatMinutes as number | null }) }
+          }
+          case 'setDouyuTaskPolicy': {
+            if (!fields(args, ['id', 'policy']) || typeof args.id !== 'string' || args.id.length > 64
+              || !DOUYU_TASK_POLICIES.includes(args.policy as DouyuTaskPolicy)) return fail('invalid-arguments', '任务参数无效')
+            if (!deps.douyuTasks) return fail('not-available', '斗鱼任务管理不可用')
+            return { ok: true, value: deps.douyuTasks.setPolicy(args.id, args.policy as DouyuTaskPolicy) }
+          }
+          case 'startDouyuTask':
+          case 'pauseDouyuTask':
+          case 'removeDouyuTask': {
+            if (!fields(args, ['id']) || typeof args.id !== 'string' || args.id.length > 64) return fail('invalid-arguments', '任务参数无效')
+            if (!deps.douyuTasks || !deps.douyuAccounts) return fail('not-available', '斗鱼任务管理不可用')
+            if (method === 'startDouyuTask') {
+              const task = deps.douyuTasks.snapshot().tasks.find(task => task.id === args.id)
+              if (!task) return fail('task-not-found', '任务不存在')
+              if (task.accountId !== deps.douyuAccounts.activeAccountId) return fail('no-active-account', '请先切换到任务所属账号')
+              if (deps.douyuAccounts.isBusy(task.accountId)) return fail('account-busy', '账号正在登录或退出, 请稍后启动任务.')
+              if (!(await deps.douyuAccounts.activeLoginStatus()).loggedIn) return fail('login-required', '请先登录当前斗鱼账号')
+              if (disposed || task.accountId !== deps.douyuAccounts.activeAccountId || deps.douyuAccounts.isBusy(task.accountId)) return fail('no-active-account', '账号状态已变化, 请重新操作')
+              return { ok: true, value: deps.douyuTasks.start(args.id) }
+            }
+            return { ok: true, value: method === 'pauseDouyuTask' ? deps.douyuTasks.pause(args.id) : deps.douyuTasks.remove(args.id) }
+          }
+          case 'retainDouyuTaskRoom':
+          case 'closeDouyuTaskRoom': {
+            if (!fields(args, method === 'retainDouyuTaskRoom' ? ['room', 'retain'] : ['room'])
+              || typeof args.room !== 'string' || !/^[1-9][0-9]{0,11}$/.test(args.room)
+              || (method === 'retainDouyuTaskRoom' && typeof args.retain !== 'boolean')) return fail('invalid-arguments', '房间参数无效')
+            if (!deps.douyuTasks) return fail('not-available', '斗鱼任务管理不可用')
+            return { ok: true, value: method === 'retainDouyuTaskRoom' ? deps.douyuTasks.retainRoom(args.room, args.retain as boolean) : deps.douyuTasks.closeRoom(args.room) }
+          }
           case 'resolveDouyuRoom': {
             if (!fields(args, ['input']) || typeof args.input !== 'string' || args.input.length > MAX_INPUT_LENGTH) return fail('invalid-arguments', '房间身份查询参数无效')
             return { ok: true, value: await resolveRoom(args.input) }
@@ -279,6 +369,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
           default: return fail('not-found', '未知本地接口')
         }
       } catch (error) {
+        if (error instanceof DouyuAccountError || error instanceof DouyuTaskError) return fail(error.code, error.message)
         if (error instanceof ProxyError) return fail(error.reason, '媒体地址未通过安全检查')
         // Tool errors contain only stable codes, never executable paths or child output.
         if (error instanceof Error && 'tool' in error && 'code' in error

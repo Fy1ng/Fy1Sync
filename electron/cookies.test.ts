@@ -84,6 +84,23 @@ describe('private cookie storage', () => {
     expect(manager.cookieHeader('douyu')).toBe('acf_auth=valid; dy_did=did')
   })
 
+  it('selects host-only, domain and path cookies for the exact official activity URL', () => {
+    const manager = store()
+    manager.write('douyu', [
+      cookie({ domain: '.douyu.com', name: 'ROOT', value: 'root' }),
+      cookie({ domain: 'www.douyu.com', hostOnly: true, name: 'WWW', value: 'www' }),
+      cookie({ domain: 'yuba.douyu.com', hostOnly: true, path: '/ybapi', name: 'YUBA', value: 'yuba' }),
+      cookie({ domain: '.douyu.com', path: '/member', name: 'MEMBER', value: 'member' }),
+    ])
+    expect(manager.cookieHeader('douyu', 'https://www.douyu.com/')).toBe('ROOT=root; WWW=www')
+    expect(manager.cookieHeader('douyu', 'https://yuba.douyu.com/ybapi/topic/sign')).toBe('YUBA=yuba; ROOT=root')
+    expect(manager.cookieHeader('douyu', 'https://yuba.douyu.com/ybapi-other')).toBe('ROOT=root')
+  })
+
+  it.each(['https://apiv2.douyucdn.cn/', 'https://douyu.com.evil.invalid/', 'http://www.douyu.com/', 'https://user@www.douyu.com/', 'https://www.douyu.com:8443/'])('never exports a cookie header to %s', url => {
+    expect(() => store().cookieHeader('douyu', url)).toThrow('账号数据读写失败')
+  })
+
   it('uses a distinct private temp copy and deletes it when the consumer succeeds', async () => {
     const manager = store()
     manager.write('youtube', [cookie()])

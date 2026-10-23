@@ -8,8 +8,24 @@ import type { BufferState } from './bufferManager'
 import type { LoginPlatform, LoginResult, LoginStatus } from './login'
 import type { DecoderMode, DecoderPreferenceState } from './decoderPreferences'
 import type { ToolsStatus } from './toolsService'
+import type { DouyuAccountsSnapshot, DouyuTasksSnapshot, DouyuTaskKind, DouyuTaskPolicy } from '../server/douyu/types'
 
 export interface DesktopMethods {
+  listDouyuAccounts: { args: undefined; result: DouyuAccountsSnapshot }
+  addDouyuAccount: { args: { label: string }; result: DouyuAccountsSnapshot }
+  renameDouyuAccount: { args: { id: string; label: string }; result: DouyuAccountsSnapshot }
+  loginDouyuAccount: { args: { id: string }; result: DouyuAccountsSnapshot }
+  activateDouyuAccount: { args: { id: string }; result: DouyuAccountsSnapshot }
+  logoutDouyuAccount: { args: { id: string }; result: DouyuAccountsSnapshot }
+  removeDouyuAccount: { args: { id: string }; result: DouyuAccountsSnapshot }
+  getDouyuTasks: { args: undefined; result: DouyuTasksSnapshot }
+  createDouyuTask: { args: { accountId: string; roomInput: string; kind: DouyuTaskKind; policy: DouyuTaskPolicy; repeatMinutes: number | null }; result: DouyuTasksSnapshot }
+  setDouyuTaskPolicy: { args: { id: string; policy: DouyuTaskPolicy }; result: DouyuTasksSnapshot }
+  startDouyuTask: { args: { id: string }; result: DouyuTasksSnapshot }
+  pauseDouyuTask: { args: { id: string }; result: DouyuTasksSnapshot }
+  removeDouyuTask: { args: { id: string }; result: DouyuTasksSnapshot }
+  retainDouyuTaskRoom: { args: { room: string; retain: boolean }; result: DouyuTasksSnapshot }
+  closeDouyuTaskRoom: { args: { room: string }; result: DouyuTasksSnapshot }
   resolveDouyuRoom: { args: { input: string }; result: import('../server/platforms/douyuRoom').DouyuRoomResult }
   getToolsStatus: { args: undefined; result: ToolsStatus }
   updateYtdlp: { args: undefined; result: ToolsStatus }
@@ -36,6 +52,7 @@ export interface StreamSyncerBridge {
   invoke<K extends DesktopMethod>(method: K, args: DesktopMethods[K]['args']): Promise<ApiResult<DesktopMethods[K]['result']>>
   subscribeDanmaku(room: string, listener: (event: DanmakuEvent) => void): () => void
   subscribeBuffer?(listener: (state: BufferState) => void): () => void
+  subscribeDouyuTasks?(listener: (state: DouyuTasksSnapshot) => void): () => void
 }
 
 declare global {

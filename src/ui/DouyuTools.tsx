@@ -1,0 +1,345 @@
+import { useEffect, useRef, useState } from 'react'
+import { apiClient, type ApiResult } from '../app/apiClient'
+import type {
+  DouyuAccountsSnapshot, DouyuAccountSummary, DouyuTaskPolicy, DouyuTasksSnapshot, DouyuTaskView,
+} from '../../server/douyu/types'
+import './DouyuTools.css'
+
+const POLICY_LABELS: Record<DouyuTaskPolicy, string> = {
+  foreground: '仅前台',
+  'background-unlocked': '后台未锁屏',
+  'background-locked': '后台含锁屏',
+}
+const STATUS_LABELS: Record<DouyuTaskView['status'], string> = {
+  paused: '已暂停', queued: '等待执行', running: '执行中', 'waiting-user': '等待手动处理',
+  succeeded: '已完成', failed: '失败', stopped: '已停止',
+}
+
+function PolicyOptions(): React.ReactNode {
+  return Object.entries(POLICY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)
+}
+
+function accountStatus(account: DouyuAccountSummary): string {
+  if (account.busy) return '操作中...'
+  if (!account.login.loggedIn) return '未登录'
+  const expiresAt = account.login.expiresAt
+  const expiry = expiresAt ? new Date(expiresAt * 1000) : null
+  return `已登录${expiry && Number.isFinite(expiry.getTime()) ? `, 到期 ${expiry.toISOString().slice(0, 10)}` : ''}`
+}
+
+function scheduled(task: DouyuTaskView): boolean {
+  return task.status === 'queued' || task.status === 'running' || task.nextRunAt !== null
+}
+
+function timeLabel(time: number): string {
+  const date = new Date(time)
+  return Number.isFinite(date.getTime()) ? date.toLocaleString('zh-CN', { hour12: false }) : '未知'
+}
+
+export interface DouyuToolsProps {
+  defaultRoom?: string | null
+  disabled?: boolean
+  onBusyChange?: (busy: boolean) => void
+}
+
+/** Account mutations and task control remain separate so a pending login cannot prevent pausing work. */
+export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange }: DouyuToolsProps): React.ReactNode {
+  const [accounts, setAccounts] = useState<DouyuAccountsSnapshot | null>(null)
+  const [tasks, setTasks] = useState<DouyuTasksSnapshot | null>(null)
+  const [accountsLoading, setAccountsLoading] = useState(true)
+  const [tasksLoading, setTasksLoading] = useState(true)
+  const [accountPending, setAccountPending] = useState('')
+  const [taskPending, setTaskPending] = useState('')
+  const [accountNotice, setAccountNotice] = useState('')
+  const [taskNotice, setTaskNotice] = useState('')
+  const [accountError, setAccountError] = useState('')
+  const [taskError, setTaskError] = useState('')
+  const [newLabel, setNewLabel] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingLabel, setEditingLabel] = useState('')
+  const [chosenAccountId, setChosenAccountId] = useState('')
+  const [roomInput, setRoomInput] = useState<string | null>(null)
+  const [policy, setPolicy] = useState<DouyuTaskPolicy>('foreground')
+  const [repeat, setRepeat] = useState('once')
+  const mounted = useRef(false)
+  const accountInFlight = useRef(false)
+  const taskInFlight = useRef(false)
+  const accountRevision = useRef(0)
+  const taskRevision = useRef(0)
+
+  useEffect(() => {
+    mounted.current = true
+    let current = true
+    const accountVersion = ++accountRevision.current
+    const taskVersion = taskRevision.current
+    const unsubscribe = apiClient.subscribeDouyuTasks(snapshot => {
+      if (!current || !Array.isArray(snapshot?.tasks) || !Array.isArray(snapshot?.retainedRooms)) return
+      taskRevision.current++
+      setTasks(snapshot)
+      setTasksLoading(false)
+    })
+    void apiClient.listDouyuAccounts().then(result => {
+      if (!current || accountVersion !== accountRevision.current) return
+      if (result.ok && Array.isArray(result.value?.accounts)) setAccounts(result.value)
+      else setAccountError(result.ok ? '无法读取斗鱼账号, 请刷新状态.' : result.message)
+    }).catch(() => { if (current) setAccountError('无法读取斗鱼账号, 请刷新状态.') })
+      .finally(() => { if (current) setAccountsLoading(false) })
+    void apiClient.getDouyuTasks().then(result => {
+      // A subscription may deliver a newer state while the initial read is in flight.
+      if (!current || taskVersion !== taskRevision.current) return
+      if (result.ok && Array.isArray(result.value?.tasks) && Array.isArray(result.value?.retainedRooms)) setTasks(result.value)
+      else setTaskError(result.ok ? '无法读取斗鱼任务, 请刷新任务.' : result.message)
+    }).catch(() => {
+      if (current && taskVersion === taskRevision.current) setTaskError('无法读取斗鱼任务, 请刷新任务.')
+    }).finally(() => { if (current) setTasksLoading(false) })
+    return () => { current = false; mounted.current = false; unsubscribe() }
+  }, [])
+
+  const allAccounts = accounts?.accounts ?? []
+  const activeAccount = allAccounts.find(account => account.id === accounts?.activeAccountId)
+  const accountBusy = !!accountPending || allAccounts.some(account => account.busy)
+  const accountLocked = disabled || accountsLoading || accountBusy
+  const taskLocked = tasksLoading || !!taskPending
+  const selectedAccountId = allAccounts.some(account => account.id === chosenAccountId)
+    ? chosenAccountId : activeAccount?.id ?? allAccounts[0]?.id ?? ''
+  const taskRoom = roomInput ?? defaultRoom ?? tasks?.currentRoom ?? ''
+  const rooms = [...new Set([
+    ...(tasks?.currentRoom ? [tasks.currentRoom] : []),
+    ...(tasks?.retainedRooms ?? []),
+    ...(tasks?.tasks.map(task => task.room) ?? []),
+  ])]
+
+  useEffect(() => {
+    onBusyChange?.(accountBusy)
+    return () => { onBusyChange?.(false) }
+  }, [accountBusy, onBusyChange])
+
+  const accountAction = async (
+    pending: string,
+    work: () => Promise<ApiResult<DouyuAccountsSnapshot>>,
+    success: string | ((snapshot: DouyuAccountsSnapshot) => string),
+    refresh = false,
+  ): Promise<boolean> => {
+    if (accountInFlight.current || disabled || (!refresh && accountLocked)) return false
+    accountInFlight.current = true
+    accountRevision.current++
+    setAccountPending(pending)
+    setAccountError('')
+    setAccountNotice('')
+    try {
+      const result = await work()
+      if (!mounted.current) return false
+      if (!result.ok) { setAccountError(result.message); return false }
+      if (!Array.isArray(result.value?.accounts)) { setAccountError('无法读取斗鱼账号, 请刷新状态.'); return false }
+      setAccounts(result.value)
+      setAccountNotice(typeof success === 'function' ? success(result.value) : success)
+      return true
+    } catch {
+      if (mounted.current) setAccountError('斗鱼账号操作失败, 请重试.')
+      return false
+    } finally {
+      accountInFlight.current = false
+      if (mounted.current) setAccountPending('')
+    }
+  }
+
+  const taskAction = async (
+    pending: string,
+    work: () => Promise<ApiResult<DouyuTasksSnapshot>>,
+    success: string,
+  ): Promise<void> => {
+    if (taskInFlight.current || tasksLoading) return
+    taskInFlight.current = true
+    const version = taskRevision.current
+    setTaskPending(pending)
+    setTaskNotice('')
+    setTaskError('')
+    try {
+      const result = await work()
+      if (!mounted.current) return
+      if (!result.ok) { setTaskError(result.message); return }
+      if (!Array.isArray(result.value?.tasks) || !Array.isArray(result.value?.retainedRooms)) {
+        setTaskError('无法读取斗鱼任务, 请刷新任务.')
+        return
+      }
+      // Keep newer executor events instead of replacing them with an older action response.
+      if (version === taskRevision.current) setTasks(result.value)
+      setTaskNotice(success)
+    } catch {
+      if (mounted.current) setTaskError('斗鱼任务操作失败, 请重试.')
+    } finally {
+      taskInFlight.current = false
+      if (mounted.current) setTaskPending('')
+    }
+  }
+
+  const login = (account: DouyuAccountSummary) => accountAction(
+    `正在登录 ${account.label}. 请在打开的 Chrome 窗口中登录, 完成后关闭该窗口.`,
+    () => apiClient.loginDouyuAccount(account.id),
+    snapshot => snapshot.accounts.find(item => item.id === account.id)?.login.loggedIn
+      ? `${account.label} 已登录. 登录完成后请重新加载片源.`
+      : `${account.label} 尚未登录. 请重新登录并完成 Chrome 中的验证.`,
+  )
+
+  return <section className="douyu-tools" aria-label="斗鱼账号和任务">
+    <div className="douyu-tools-summary">
+      <h3>斗鱼</h3>
+      <span className="hint">{accountsLoading ? '正在读取账号...' : activeAccount
+        ? `活动账号: ${activeAccount.label}, ${accountStatus(activeAccount)}` : '当前没有活动账号'}</span>
+      <button type="button" disabled={accountLocked || !activeAccount} onClick={() => { if (activeAccount) void login(activeAccount) }}>
+        登录斗鱼
+      </button>
+    </div>
+    <p className="hint">每个账号独立保存登录资料. 登录时请在 Chrome 中手动完成, 然后关闭窗口.</p>
+    <details className="douyu-tools-details">
+      <summary>管理斗鱼账号 ({allAccounts.length})</summary>
+      <div className="douyu-tools-body">
+        {!accountsLoading && allAccounts.length === 0 && <p className="hint">先新增账号, 再登录并激活.</p>}
+        <ul className="douyu-account-list" aria-label="斗鱼账号列表">
+          {allAccounts.map(account => <li className="douyu-account" key={account.id} role="group" aria-label={`斗鱼账号 ${account.label}`}>
+            <div className="douyu-account-heading">
+              <strong>{account.label}</strong>
+              {account.id === accounts?.activeAccountId && <span className="badge douyu-active">当前活动</span>}
+              <span className="hint">{accountStatus(account)}</span>
+            </div>
+            {editingId === account.id ? <form className="douyu-account-edit" onSubmit={event => {
+              event.preventDefault()
+              const label = editingLabel.trim()
+              if (!label) return
+              void accountAction('正在保存账号标签...', () => apiClient.renameDouyuAccount(account.id, label), '账号标签已保存.')
+                .then(saved => { if (saved && mounted.current) setEditingId(null) })
+            }}>
+              <label className="field"><span>新账号标签</span>
+                <input value={editingLabel} onChange={event => setEditingLabel(event.target.value)} maxLength={40} disabled={accountLocked} autoFocus />
+              </label>
+              <div className="source-actions">
+                <button type="submit" className="small" disabled={accountLocked || !editingLabel.trim()}>保存标签</button>
+                <button type="button" className="ghost small" disabled={!!accountPending} onClick={() => setEditingId(null)}>取消</button>
+              </div>
+            </form> : <div className="source-actions">
+              <button type="button" className="small" disabled={accountLocked} onClick={() => void login(account)}>登录</button>
+              {account.id !== accounts?.activeAccountId && <button type="button" className="small" disabled={accountLocked}
+                onClick={() => void accountAction('正在切换活动账号...', () => apiClient.activateDouyuAccount(account.id), `${account.label} 已设为活动账号.`)}>激活</button>}
+              <button type="button" className="ghost small" disabled={accountLocked} onClick={() => { setEditingId(account.id); setEditingLabel(account.label) }}>改名</button>
+              <button type="button" className="ghost small" disabled={accountLocked || (!account.login.loggedIn && account.login.cookieCount === 0)}
+                onClick={() => void accountAction('正在退出账号...', () => apiClient.logoutDouyuAccount(account.id), `${account.label} 已退出, 登录资料已清除.`)}>退出</button>
+              <button type="button" className="ghost small danger" disabled={accountLocked}
+                onClick={() => void accountAction('正在删除账号...', () => apiClient.removeDouyuAccount(account.id), `${account.label} 已删除.`)}>删除</button>
+            </div>}
+          </li>)}
+        </ul>
+        <form className="douyu-account-add" onSubmit={event => {
+          event.preventDefault()
+          const label = newLabel.trim()
+          if (!label) return
+          void accountAction('正在新增账号...', () => apiClient.addDouyuAccount(label), `${label} 已新增.`)
+            .then(saved => { if (saved && mounted.current) setNewLabel('') })
+        }}>
+          <label className="field"><span>斗鱼账号标签</span>
+            <input placeholder="例如 日常账号" value={newLabel} onChange={event => setNewLabel(event.target.value)} disabled={accountLocked} maxLength={40} />
+          </label>
+          <button type="submit" disabled={accountLocked || !newLabel.trim()}>新增账号</button>
+        </form>
+        <div className="source-actions"><button type="button" className="ghost small" disabled={disabled || accountsLoading || !!accountPending}
+          onClick={() => void accountAction('正在刷新账号...', () => apiClient.listDouyuAccounts(), '账号状态已刷新.', true)}>刷新状态</button></div>
+        <p className="hint">同一时间仅激活一个账号. 退出会清除所选账号的登录资料, 删除会移除该账号及其任务.</p>
+      </div>
+    </details>
+    {(accountPending || accountNotice) && <p role="status" className="hint">{accountPending || accountNotice}</p>}
+    {accountError && <p role="alert" className="dialog-error">{accountError}</p>}
+
+    <details className="douyu-tools-details">
+      <summary>直播间签到任务 ({tasks?.tasks.length ?? 0})</summary>
+      <div className="douyu-tools-body">
+        <p className="hint">新建任务默认为暂停, 点击启动后才会执行. 应用退出后任务停止, 重新打开应用后需手动启动.</p>
+        <p className="hint">签到仍处于接口验证阶段, 当前结果需到官方房间核对, 暂不会自动重复提交. 每日设置仅保存计划.</p>
+        <form className="douyu-task-create" onSubmit={event => {
+          event.preventDefault()
+          if (!selectedAccountId || !taskRoom.trim() || accountLocked) return
+          void taskAction('正在创建签到任务...', () => apiClient.createDouyuTask({
+            accountId: selectedAccountId, roomInput: taskRoom.trim(), kind: 'room-sign', policy,
+            repeatMinutes: repeat === 'daily' ? 1440 : null,
+          }), '签到任务已创建, 当前为暂停.')
+        }}>
+          <label className="field"><span>任务账号</span>
+            <select value={selectedAccountId} disabled={accountLocked || taskLocked || !allAccounts.length} onChange={event => setChosenAccountId(event.target.value)}>
+              {!allAccounts.length && <option value="">请先新增账号</option>}
+              {allAccounts.map(account => <option key={account.id} value={account.id}>{account.label}{account.id === accounts?.activeAccountId ? ' (活动)' : ''}</option>)}
+            </select>
+          </label>
+          <label className="field"><span>签到房间号或地址</span>
+            <input value={taskRoom} placeholder="例如 9999 或 douyu.com/9999" disabled={taskLocked} onChange={event => setRoomInput(event.target.value)} />
+          </label>
+          <label className="field"><span>执行条件</span>
+            <select aria-label="执行条件" value={policy} disabled={taskLocked} onChange={event => setPolicy(event.target.value as DouyuTaskPolicy)}><PolicyOptions /></select>
+          </label>
+          <label className="field"><span>执行周期</span>
+            <select aria-label="执行周期" value={repeat} disabled={taskLocked} onChange={event => setRepeat(event.target.value)}>
+              <option value="once">单次</option><option value="daily">每天</option>
+            </select>
+          </label>
+          <button type="submit" disabled={accountLocked || taskLocked || !selectedAccountId || !taskRoom.trim()}>创建签到任务</button>
+        </form>
+        {!activeAccount?.login.loggedIn && <p className="hint">可以先创建暂停任务. 启动前请登录并激活任务所用的账号.</p>}
+        {tasks && <p className="hint">当前房间: {tasks.currentRoom ?? '未连接'}. 应用状态: {tasks.runtime.suspended ? '已休眠'
+          : tasks.runtime.locked ? '已锁屏' : tasks.runtime.foreground ? '前台' : '后台未锁屏'}.</p>}
+        {tasksLoading && <p className="hint" role="status">正在读取斗鱼任务...</p>}
+        {tasks?.tasks.length === 0 && <p className="hint">暂无签到任务.</p>}
+        <div className="douyu-room-list">
+          {rooms.map(room => <section key={room} className="douyu-room" aria-label={`任务房间 ${room}`}>
+            <div className="douyu-room-heading">
+              <strong>房间 {room}</strong>
+              {room === tasks?.currentRoom && <span className="badge">当前房间</span>}
+              <label className="douyu-retain-room">
+                <input type="checkbox" checked={tasks?.retainedRooms.includes(room) ?? false} disabled={taskLocked}
+                  aria-label={`保留房间 ${room} 的任务`} onChange={event => {
+                    const retain = event.target.checked
+                    void taskAction('正在更新保留房间...', () => apiClient.retainDouyuTaskRoom(room, retain), retain ? `已保留房间 ${room} 的任务.` : `已取消保留房间 ${room}.`)
+                  }} />保留房间任务
+              </label>
+              {tasks?.retainedRooms.includes(room) && <button type="button" className="ghost small" disabled={taskLocked}
+                onClick={() => void taskAction('正在关闭保留房间...', () => apiClient.closeDouyuTaskRoom(room), `已关闭房间 ${room} 的保留任务.`)}>关闭保留房间</button>}
+            </div>
+            <ul className="douyu-task-list">
+              {tasks?.tasks.filter(task => task.room === room).map(task => {
+                const account = allAccounts.find(item => item.id === task.accountId)
+                const startProblem = !account ? '账号不可用' : account.id !== accounts?.activeAccountId ? '激活该账号后可启动'
+                  : !account.login.loggedIn ? '登录该账号后可启动' : ''
+                return <li className="douyu-task" key={task.id} role="group" aria-label={`签到任务 ${room} (${account?.label ?? '账号不可用'})`}>
+                  <div className="douyu-task-heading"><strong>直播间签到</strong>
+                    <span className="hint">{account?.label ?? '账号不可用'} / {task.repeatMinutes === null ? '单次' : task.repeatMinutes === 1440 ? '每天' : `每 ${task.repeatMinutes} 分钟`}</span>
+                    <span className="douyu-task-status" data-state={task.status}>{STATUS_LABELS[task.status]}</span>
+                  </div>
+                  {task.lastResult && <p className="douyu-task-result">结果: {task.lastResult}</p>}
+                  {task.reason && <p className="hint">{task.reason}</p>}
+                  {(task.lastRunAt !== null || task.nextRunAt !== null) && <p className="hint">
+                    {task.lastRunAt !== null ? `上次执行: ${timeLabel(task.lastRunAt)}.` : ''}
+                    {task.nextRunAt !== null ? ` 下次执行: ${timeLabel(task.nextRunAt)}.` : ''}
+                  </p>}
+                  <div className="douyu-task-actions">
+                    <label className="douyu-task-policy"><span>执行条件</span>
+                      <select aria-label={`房间 ${room} 的 ${account?.label ?? '未知账号'} 执行条件`} value={task.policy} disabled={taskLocked}
+                        onChange={event => { const nextPolicy = event.target.value as DouyuTaskPolicy; void taskAction('正在保存执行条件...', () => apiClient.setDouyuTaskPolicy(task.id, nextPolicy), '执行条件已更新.') }}><PolicyOptions /></select>
+                    </label>
+                    <button type="button" className="small" disabled={taskLocked || accountLocked || !!startProblem || scheduled(task)} title={startProblem || undefined}
+                      onClick={() => void taskAction('正在启动任务...', () => apiClient.startDouyuTask(task.id), '已提交启动, 执行结果请查看任务状态.')}>启动</button>
+                    <button type="button" className="ghost small" disabled={taskLocked || (!scheduled(task) && task.status !== 'waiting-user')}
+                      onClick={() => void taskAction('正在暂停任务...', () => apiClient.pauseDouyuTask(task.id), '任务已暂停.')}>暂停</button>
+                    <button type="button" className="ghost small" disabled={taskLocked}
+                      onClick={() => void taskAction('正在移除任务...', () => apiClient.removeDouyuTask(task.id), '任务已移除.')}>移除</button>
+                  </div>
+                  {startProblem && <p className="hint">{startProblem}.</p>}
+                </li>
+              })}
+            </ul>
+          </section>)}
+        </div>
+        <p className="hint">保留房间后可继续执行该房间的任务. 关闭保留房间只停止该房间的任务.</p>
+        <div className="source-actions"><button type="button" className="ghost small" disabled={taskLocked}
+          onClick={() => void taskAction('正在刷新任务...', () => apiClient.getDouyuTasks(), '任务状态已刷新.')}>刷新任务</button></div>
+      </div>
+    </details>
+    {(taskPending || taskNotice) && <p role="status" className="hint">{taskPending || taskNotice}</p>}
+    {taskError && <p role="alert" className="dialog-error">{taskError}</p>}
+  </section>
+}

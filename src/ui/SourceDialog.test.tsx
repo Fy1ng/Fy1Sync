@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { StreamSyncerBridge } from '../../electron/contracts'
 import { Session } from '../app/session'
+import { apiClient } from '../app/apiClient'
 import { SessionProvider } from '../app/SessionContext'
 import { SourceDialog } from './SourceDialog'
 
@@ -11,6 +12,15 @@ let bridge: StreamSyncerBridge
 
 beforeEach(() => {
   session = new Session({ createSampler: () => null })
+  const empty = { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false }
+  vi.spyOn(apiClient, 'listDouyuAccounts').mockResolvedValue({ ok: true, value: {
+    activeAccountId: 'default', accounts: [{ id: 'default', label: '默认账号', active: true, busy: false, login: empty }],
+  } })
+  vi.spyOn(apiClient, 'getDouyuTasks').mockResolvedValue({ ok: true, value: {
+    activeAccountId: 'default', currentRoom: null, retainedRooms: [], tasks: [],
+    runtime: { foreground: true, locked: false, suspended: false },
+  } })
+  vi.spyOn(apiClient, 'subscribeDouyuTasks').mockReturnValue(() => {})
   bridge = {
     invoke: vi.fn(async () => ({
       ok: true,
@@ -30,6 +40,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   session.dispose()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -43,6 +54,16 @@ function openDialog(): HTMLElement {
 }
 
 describe('SourceDialog desktop media registration', () => {
+  it('offers Douyu account management and defaults new tasks to the session danmaku room', async () => {
+    session.connectDanmaku('6657')
+    openDialog()
+    await screen.findByText('活动账号: 默认账号, 未登录')
+    fireEvent.click(screen.getByText(/^直播间签到任务/))
+    expect(screen.getByLabelText('签到房间号或地址')).toHaveValue('6657')
+    expect(screen.getByRole('button', { name: '登录 YouTube' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '登录斗鱼' })).toBeEnabled()
+  })
+
   it('saves decoder settings without reloading or unloading the current media', async () => {
     await session.loadSource('official', { kind: 'test', url: '/test-sources/official.mp4', input: 'fixture', label: 'fixture', loop: true, viaProxy: false, platform: 'test' })
     const descriptor = session.engine.getState().official.descriptor
@@ -136,6 +157,7 @@ describe('SourceDialog desktop media registration', () => {
       return { ok: true, value: { youtube: empty, douyu: empty } } as any
     })
     openDialog()
+    await waitFor(() => expect(screen.getByRole('button', { name: '登录斗鱼' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: '登录 YouTube' }))
     expect(screen.getByRole('button', { name: '登录斗鱼' })).toBeDisabled()
     expect(await screen.findByText(/请在打开的 Chrome 窗口中登录/)).toBeInTheDocument()

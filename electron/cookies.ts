@@ -162,11 +162,15 @@ export class CookieStore {
     ])) as LoginStatus
   }
 
-  cookieHeader(platform: 'douyu'): string {
+  cookieHeader(platform: 'douyu', requestUrl = 'https://www.douyu.com/lapi/live/getH5PlayV1/'): string {
     if (platform !== 'douyu') throw storageFailure()
+    let target: URL
+    try { target = new URL(requestUrl) } catch { throw storageFailure() }
+    if (target.protocol !== 'https:' || target.username || target.password || target.port
+      || (target.hostname !== 'douyu.com' && !target.hostname.endsWith('.douyu.com'))) throw storageFailure()
     return (this.read(platform)?.cookies ?? [])
-      .filter(cookie => (cookie.domain === 'www.douyu.com' || (cookie.subdomains && cookie.domain === 'douyu.com'))
-        && (cookie.path === '/' || '/lapi/live/getH5PlayV1/'.startsWith(cookie.path.endsWith('/') ? cookie.path : `${cookie.path}/`)))
+      .filter(cookie => (target.hostname === cookie.domain || (cookie.subdomains && target.hostname.endsWith(`.${cookie.domain}`)))
+        && (target.pathname === cookie.path || target.pathname.startsWith(cookie.path.endsWith('/') ? cookie.path : `${cookie.path}/`)))
       .sort((a, b) => b.path.length - a.path.length)
       .map(cookie => `${cookie.name}=${cookie.value}`).join('; ')
   }

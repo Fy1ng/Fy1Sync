@@ -7,6 +7,7 @@ import type { SourceRole } from '../core/types'
 import type { BufferState } from '../../electron/bufferManager'
 import type { LoginPlatform } from '../../electron/login'
 import type { DecoderMode } from '../../electron/decoderPreferences'
+import type { DouyuTaskPolicy, DouyuTasksSnapshot } from '../../server/douyu/types'
 
 export type ApiResult<T> =
   | { ok: true; value: T }
@@ -104,6 +105,24 @@ export class ApiClient {
   login(platform: LoginPlatform) { return this.request('login', { platform }) }
   loginStatus() { return this.request('loginStatus', undefined) }
   logout(platform: LoginPlatform) { return this.request('logout', { platform }) }
+  listDouyuAccounts() { return this.request('listDouyuAccounts', undefined) }
+  addDouyuAccount(label: string) { return this.request('addDouyuAccount', { label }) }
+  renameDouyuAccount(id: string, label: string) { return this.request('renameDouyuAccount', { id, label }) }
+  loginDouyuAccount(id: string) { return this.request('loginDouyuAccount', { id }) }
+  activateDouyuAccount(id: string) { return this.request('activateDouyuAccount', { id }) }
+  logoutDouyuAccount(id: string) { return this.request('logoutDouyuAccount', { id }) }
+  removeDouyuAccount(id: string) { return this.request('removeDouyuAccount', { id }) }
+  getDouyuTasks() { return this.request('getDouyuTasks', undefined) }
+  createDouyuTask(input: DesktopMethods['createDouyuTask']['args']) { return this.request('createDouyuTask', input) }
+  setDouyuTaskPolicy(id: string, policy: DouyuTaskPolicy) { return this.request('setDouyuTaskPolicy', { id, policy }) }
+  startDouyuTask(id: string) { return this.request('startDouyuTask', { id }) }
+  pauseDouyuTask(id: string) { return this.request('pauseDouyuTask', { id }) }
+  removeDouyuTask(id: string) { return this.request('removeDouyuTask', { id }) }
+  retainDouyuTaskRoom(room: string, retain: boolean) { return this.request('retainDouyuTaskRoom', { room, retain }) }
+  closeDouyuTaskRoom(room: string) { return this.request('closeDouyuTaskRoom', { room }) }
+  subscribeDouyuTasks(listener: (state: DouyuTasksSnapshot) => void): () => void {
+    try { return this.bridge().subscribeDouyuTasks?.(listener) ?? (() => {}) } catch { return () => {} }
+  }
   subscribeBuffer(listener: (state: BufferState) => void): () => void {
     try { return this.bridge().subscribeBuffer?.(listener) ?? (() => {}) } catch { return () => {} }
   }

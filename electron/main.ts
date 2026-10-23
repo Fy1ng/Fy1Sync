@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol, session } from 'electron'
+import { app, BrowserWindow, ipcMain, powerMonitor, protocol, session } from 'electron'
 import { join, resolve } from 'node:path'
 import { mkdirSync, watchFile, unwatchFile } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -13,7 +13,7 @@ import { APP_URL, CONTENT_SECURITY_POLICY, isAppDocument, isAppOrigin } from './
 import { installIpcHandlers } from './ipc'
 import { BufferManager } from './bufferManager'
 import { pullAdaptive, AdaptivePullError } from './adaptivePuller'
-import { LoginManager } from './login'
+import { ChromeLoginDriver, findSystemChrome, LoginManager } from './login'
 import { Acquisition } from './acquisition'
 import { YtDlpRunner, type YtDlpDiagnostic } from './ytdlp'
 import { locateTool, type ToolSettings } from './toolLocator'
@@ -23,6 +23,11 @@ import { DesktopTools } from './toolsService'
 import toolsLock from '../packaging/tools-lock.json'
 import { NativePrivatePermissions, privateDirectory } from './privateStorage'
 import { createHash } from 'node:crypto'
+import { DouyuAccountError, DouyuAccountManager } from './douyuAccounts'
+import { DouyuTaskManager } from './douyuTasks'
+import { PrivateJsonStore } from './privateJsonStore'
+import { DouyuActions } from '../server/douyu/actions'
+import type { DouyuRuntimeState, DouyuTaskStorage } from '../server/douyu/types'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: {
   standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true,
@@ -57,9 +62,23 @@ async function start(): Promise<void> {
         ffprobePath: typeof value.ffprobePath === 'string' ? value.ffprobePath : undefined,
         ytdlpPath: typeof value.ytdlpPath === 'string' ? value.ytdlpPath : undefined }
     }).catch(() => ({}))
-  const logins = new LoginManager(userDataDir)
   const e2e = process.env.STREAM_SYNC_E2E === '1'
   const offlineE2e = e2e && process.env.STREAM_SYNC_OFFLINE_E2E === '1'
+  let douyuToolsFixture = false
+  const browserLogin = new ChromeLoginDriver()
+  const createLogin = (directory: string) => new LoginManager(directory, {
+    findChrome: () => !app.isPackaged && offlineE2e && douyuToolsFixture ? process.execPath : findSystemChrome(),
+    driver: { async login(executable, profile, platform, signal) {
+      if (!app.isPackaged && offlineE2e && douyuToolsFixture && platform === 'douyu') {
+        if (signal.aborted) throw new Error('Fixture login cancelled')
+        return ['acf_uid', 'acf_biz', 'acf_stk', 'acf_ct', 'acf_ltkid'].map((name, index) => ({
+          domain: '.douyu.com', path: '/', secure: true, session: true, name, value: String(index + 1),
+        }))
+      }
+      return browserLogin.login(executable, profile, platform, signal)
+    } },
+  })
+  const logins = createLogin(userDataDir)
   const nativeFetch = globalThis.fetch
   if (offlineE2e) {
     globalThis.fetch = async (input, init) => {
@@ -73,6 +92,44 @@ async function start(): Promise<void> {
     transport: (url, init) => fixtureRequest ? fixtureRequest(url) : globalThis.fetch(url, init),
   })
   mkdirSync(userDataDir, { recursive: true })
+  let douyuAccounts: DouyuAccountManager | undefined
+  let douyuTasks: DouyuTaskManager | undefined
+  let releaseAccountEvents: (() => void) | undefined
+  try { douyuAccounts = new DouyuAccountManager(userDataDir, { defaultLogin: logins, createLogin }) }
+  catch { console.error('斗鱼账号配置不可用, 原文件已保留.') }
+  if (douyuAccounts) {
+    try {
+      const taskStore = new PrivateJsonStore<DouyuTaskStorage>(userDataDir, 'douyu/tasks.json')
+      const actions = new DouyuActions({ proxy, cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url) })
+      douyuTasks = new DouyuTaskManager({
+        load: () => taskStore.load(), save: value => taskStore.save(value),
+        run: (task, signal) => !app.isPackaged && offlineE2e && douyuToolsFixture
+          ? Promise.resolve({ status: 'succeeded', message: '离线签到测试完成' })
+          : actions.run(task, signal),
+      })
+      douyuTasks.setActiveAccount(douyuAccounts.activeAccountId)
+      releaseAccountEvents = douyuAccounts.subscribe(event => {
+        if (event.type === 'invalidated') douyuTasks!.pauseAccount(event.accountId, '账号登录状态已变化, 请重新启动任务.')
+        douyuTasks!.setActiveAccount(douyuAccounts!.activeAccountId)
+      })
+    } catch {
+      douyuTasks?.dispose()
+      douyuTasks = undefined
+      console.error('斗鱼任务配置不可用, 原文件已保留.')
+    }
+  }
+  const playbackLogins = {
+    login: (platform: 'youtube' | 'douyu') => platform === 'youtube' ? logins.login(platform)
+      : douyuAccounts ? douyuAccounts.loginActive() : Promise.reject(new DouyuAccountError('storage-failed')),
+    logout: (platform: 'youtube' | 'douyu') => platform === 'youtube' ? logins.logout(platform)
+      : douyuAccounts ? douyuAccounts.logoutActive() : Promise.reject(new DouyuAccountError('storage-failed')),
+    async loginStatus() {
+      const status = await logins.loginStatus()
+      return { ...status, douyu: douyuAccounts ? await douyuAccounts.activeLoginStatus()
+        : { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false } }
+    },
+    cookieHeader: (_platform: 'douyu') => douyuAccounts ? douyuAccounts.activeCookieHeader() : Promise.resolve(''),
+  }
   const providerCacheHome = privateDirectory(userDataDir, join(userDataDir, 'provider-cache'), new NativePrivatePermissions())
   const toolContext = {
     ...(app.isPackaged ? { bundledDir: join(process.resourcesPath, 'tools') } : {}),
@@ -155,7 +212,7 @@ async function start(): Promise<void> {
     }
     return globalThis.fetch(input, init)
   }, offlineE2e ? async () => ['8.8.8.8'] : undefined)
-  const acquisition = new Acquisition({ buffer, logins, runYtDlp: (url, adaptive) => ytdlp.resolve(url, adaptive), proxy, resolveDouyuRoom: roomResolver.resolve,
+  const acquisition = new Acquisition({ buffer, logins: playbackLogins, runYtDlp: (url, adaptive) => ytdlp.resolve(url, adaptive), proxy, resolveDouyuRoom: roomResolver.resolve,
     ensureTools: async (platform) => {
       if (offlineE2e) throw new Error('默认离线测试禁止真实平台取流')
       await locateTool('ffmpeg', toolSettings, process.env, toolContext)
@@ -166,7 +223,7 @@ async function start(): Promise<void> {
   // Offline E2E drives events through the real IPC subscriptions, without a live room.
   const relay = e2e ? new DanmakuRelay({ createSocket: () => ({ send() {}, close() {}, addEventListener() {} }) }) : new DanmakuRelay()
   const service = createDesktopService({
-    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, registerMedia: media.register, acquisition, decoderPreferences, tools,
+    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, registerMedia: media.register, acquisition, decoderPreferences, tools, douyuAccounts, douyuTasks,
   })
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   session.defaultSession.setPermissionCheckHandler(() => false)
@@ -192,9 +249,36 @@ async function start(): Promise<void> {
     },
   })
   const contents = window.webContents
+  const mainWindow = window
+  const isLocked = (): boolean => {
+    try { return powerMonitor.getSystemIdleState(1) === 'locked' } catch { return true }
+  }
+  const runtime: DouyuRuntimeState = { foreground: false, locked: isLocked(), suspended: false }
+  const refreshRuntime = () => {
+    runtime.foreground = !mainWindow.isDestroyed() && mainWindow.isFocused() && !mainWindow.isMinimized()
+    douyuTasks?.setRuntime({ ...runtime })
+  }
+  const lock = () => { runtime.locked = true; refreshRuntime() }
+  const unlock = () => { runtime.locked = false; refreshRuntime() }
+  const suspend = () => { runtime.suspended = true; refreshRuntime() }
+  const resume = () => { runtime.suspended = false; runtime.locked = isLocked(); refreshRuntime() }
+  mainWindow.on('focus', refreshRuntime)
+  mainWindow.on('blur', refreshRuntime)
+  mainWindow.on('minimize', refreshRuntime)
+  mainWindow.on('restore', refreshRuntime)
+  mainWindow.on('show', refreshRuntime)
+  mainWindow.on('hide', refreshRuntime)
+  powerMonitor.on('lock-screen', lock)
+  powerMonitor.on('unlock-screen', unlock)
+  powerMonitor.on('suspend', suspend)
+  powerMonitor.on('resume', resume)
+  refreshRuntime()
   const handlers = installIpcHandlers(ipcMain, contents, service)
   if (e2e) Object.assign(globalThis, { __streamSyncerTest: {
-    ...(!app.isPackaged ? { setDouyuRoomFixture(mapping: Record<string, string | null>) {
+    ...(!app.isPackaged ? { setDouyuToolsFixture() {
+      if (!offlineE2e) throw new Error('Douyu tools fixture is offline-only')
+      douyuToolsFixture = true
+    }, setDouyuRoomFixture(mapping: Record<string, string | null>) {
       if (!offlineE2e || Object.keys(mapping).length > 128 || Object.entries(mapping).some(([key, value]) => !/^[1-9][0-9]{0,11}$/.test(key) || (value !== null && !/^[1-9][0-9]{0,11}$/.test(value)))) throw new Error('Invalid room fixture')
       roomFixture = room => {
         if (!Object.hasOwn(mapping, room)) throw new Error('Missing identity fixture')
@@ -238,11 +322,23 @@ async function start(): Promise<void> {
   }
   let cleanup: Promise<void> | undefined
   dispose = () => cleanup ??= (async () => {
+    mainWindow.removeListener('focus', refreshRuntime)
+    mainWindow.removeListener('blur', refreshRuntime)
+    mainWindow.removeListener('minimize', refreshRuntime)
+    mainWindow.removeListener('restore', refreshRuntime)
+    mainWindow.removeListener('show', refreshRuntime)
+    mainWindow.removeListener('hide', refreshRuntime)
+    powerMonitor.removeListener('lock-screen', lock)
+    powerMonitor.removeListener('unlock-screen', unlock)
+    powerMonitor.removeListener('suspend', suspend)
+    powerMonitor.removeListener('resume', resume)
+    releaseAccountEvents?.()
+    douyuTasks?.dispose()
     unwatchFile(index)
     handlers.dispose()
     service.dispose()
     acquisition.dispose()
-    await Promise.all([ytdlp.dispose(), buffer.dispose(), logins.dispose()])
+    await Promise.all([ytdlp.dispose(), buffer.dispose(), logins.dispose(), douyuAccounts?.dispose()])
     media.clear()
     protocol.unhandle('app')
     delete (globalThis as { __streamSyncerTest?: unknown }).__streamSyncerTest

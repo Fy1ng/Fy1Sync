@@ -267,9 +267,9 @@ export class LoginManager {
     try { return this.store.status() } catch { throw new LoginError('cookie-storage-failed') }
   }
 
-  async cookieHeader(platform: 'douyu'): Promise<string> {
+  async cookieHeader(platform: 'douyu', requestUrl?: string): Promise<string> {
     if (this.disposed || this.loggingOut.has(platform)) return ''
-    try { return this.store.cookieHeader(platform) } catch { throw new LoginError('cookie-storage-failed') }
+    try { return this.store.cookieHeader(platform, requestUrl) } catch { throw new LoginError('cookie-storage-failed') }
   }
 
   async withTemporaryCookies<T>(platform: 'youtube', callback: (file?: string) => Promise<T>): Promise<T> {

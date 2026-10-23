@@ -12,14 +12,31 @@ export function trustedSender(event: IpcMainInvokeEvent, contents: WebContents):
 export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'>, contents: WebContents, service: DesktopService) {
   const subscriptions = new Map<string, { room: string | null; release: () => void }>()
   let disposed = false
+  let taskRoom: string | null = null
   const denied = () => ({ ok: false, code: 'forbidden', message: '仅允许本机应用窗口调用' })
   const validId = (id: unknown): id is string => typeof id === 'string' && /^[0-9]{1,12}$/.test(id)
   const send = (subscriptionId: string, event: string, data: unknown) => {
     if (!disposed && !contents.isDestroyed() && isAppDocument(contents.mainFrame.url)) contents.send('stream-syncer:danmaku', { subscriptionId, event, data })
   }
-  const clear = () => { for (const entry of subscriptions.values()) entry.release(); subscriptions.clear() }
+  const syncTaskRoom = () => {
+    // Insertion order reflects user intent even if room lookups finish out of order.
+    let next: string | null = null
+    for (const entry of subscriptions.values()) if (entry.room !== null) next = entry.room
+    if (next === taskRoom) return
+    taskRoom = next
+    service.setDouyuRoom?.(next)
+  }
+  const clear = () => {
+    const previous = [...subscriptions.values()]
+    subscriptions.clear()
+    syncTaskRoom()
+    for (const entry of previous) entry.release()
+  }
   const releaseBuffer = service.subscribeBuffer?.((state) => {
     if (!contents.isDestroyed() && isAppDocument(contents.mainFrame.url)) contents.send('stream-syncer:buffer', state)
+  })
+  const releaseDouyuTasks = service.subscribeDouyuTasks?.((state) => {
+    if (!disposed && !contents.isDestroyed() && isAppDocument(contents.mainFrame.url)) contents.send('stream-syncer:douyu-tasks', state)
   })
   ipc.handle('stream-syncer:invoke', (event, method: unknown, args: unknown) => {
     if (disposed || !trustedSender(event, contents)) return denied()
@@ -46,7 +63,6 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
         return { ok: false, code: result.failure.code, message: result.failure.message }
       }
       const canonical = result.identity.room
-      entry.room = canonical
       send(subscriptionId, 'state', { room: canonical, state: 'connecting' })
       const release = service.relay.subscribe(canonical, {
         write: (event, data) => { if (current()) send(subscriptionId, event, data) },
@@ -57,17 +73,23 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
         return { ok: false, code: 'room-limit', message: '订阅房间数量超过限制' }
       }
       entry.release = release
+      entry.room = canonical
+      syncTaskRoom()
       return { ok: true, value: { ok: true, room: canonical } }
     } catch {
       if (subscriptions.get(subscriptionId) === entry) subscriptions.delete(subscriptionId)
+      syncTaskRoom()
+      entry.release()
       return { ok: false, code: 'upstream-error', message: '弹幕房间身份查询失败, 请重试' }
     }
   })
   ipc.handle('stream-syncer:unsubscribe', (event, subscriptionId: unknown) => {
     if (disposed || !trustedSender(event, contents)) return denied()
     if (!validId(subscriptionId)) return { ok: false, code: 'bad-subscription', message: '订阅标识无效' }
-    subscriptions.get(subscriptionId)?.release()
+    const entry = subscriptions.get(subscriptionId)
     subscriptions.delete(subscriptionId)
+    syncTaskRoom()
+    entry?.release()
     return { ok: true, value: { ok: true } }
   })
   const navigated = (_event: unknown, _url: string, inPlace: boolean, mainFrame: boolean) => {
@@ -79,6 +101,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
     dispose() {
       disposed = true
       releaseBuffer?.()
+      releaseDouyuTasks?.()
       clear()
       contents.removeListener('did-start-navigation', navigated)
       contents.removeListener('destroyed', clear)

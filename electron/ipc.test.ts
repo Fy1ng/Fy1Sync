@@ -5,6 +5,7 @@ import type { DesktopService } from '../server/api'
 import { installIpcHandlers, trustedSender } from './ipc'
 import { CONTENT_SECURITY_POLICY, isAppDocument, isAppOrigin } from './security'
 import type { BufferState } from './bufferManager'
+import type { DouyuTasksSnapshot } from '../server/douyu/types'
 
 function fixture() {
   const contents = Object.assign(new EventEmitter(), {
@@ -20,13 +21,19 @@ function fixture() {
   })
   let bufferListener: ((state: BufferState) => void) | undefined
   const bufferRelease = vi.fn()
+  let taskListener: ((state: DouyuTasksSnapshot) => void) | undefined
+  const taskRelease = vi.fn()
+  const setRoom = vi.fn()
   const resolveRoom = vi.fn(async (room: string) => ({ ok: true, identity: { room, inputRoom: room } }))
   const service = { resolveDouyuRoom: resolveRoom, invoke: vi.fn(async () => ({ ok: true, value: {} })), relay: { subscribe }, dispose: vi.fn(),
     subscribeBuffer: (listener: (state: BufferState) => void) => { bufferListener = listener; return bufferRelease },
+    subscribeDouyuTasks: (listener: (state: DouyuTasksSnapshot) => void) => { taskListener = listener; return taskRelease },
+    setDouyuRoom: setRoom,
   } as unknown as DesktopService
   const installed = installIpcHandlers(ipc, contents, service)
   return { resolveRoom, contents, event, handlers, release, subscribe, service, installed,
     bufferRelease, emitBuffer: (state: BufferState) => bufferListener?.(state),
+    taskRelease, setRoom, emitTasks: (state: DouyuTasksSnapshot) => taskListener?.(state),
     call: (channel: string, ...args: unknown[]) => handlers.get('stream-syncer:' + channel)!(event, ...args),
   }
 }
@@ -70,6 +77,21 @@ describe('app origin and document boundary', async () => {
 })
 
 describe('IPC routing and subscription lifecycle', async () => {
+  it('delivers task summaries only to app documents and unsubscribes on disposal', () => {
+    const f = fixture()
+    const state: DouyuTasksSnapshot = { activeAccountId: 'default', currentRoom: null, retainedRooms: [], tasks: [], runtime: { foreground: true, locked: false, suspended: false } }
+    f.emitTasks(state)
+    expect(f.contents.send).toHaveBeenCalledWith('stream-syncer:douyu-tasks', state)
+    vi.mocked(f.contents.send).mockClear()
+    Object.assign(f.contents.mainFrame, { url: 'https://untrusted.invalid/' })
+    f.emitTasks(state)
+    expect(f.contents.send).not.toHaveBeenCalled()
+    f.installed.dispose()
+    expect(f.taskRelease).toHaveBeenCalledOnce()
+    Object.assign(f.contents.mainFrame, { url: 'app://app/' })
+    f.emitTasks(state)
+    expect(f.contents.send).not.toHaveBeenCalled()
+  })
   it('delivers buffer summaries only to a trusted app document and releases on disposal', async () => {
     const f = fixture()
     const state: BufferState = { role: 'official', state: 'buffering', seconds: 3.5 }
@@ -129,6 +151,7 @@ describe('IPC routing and subscription lifecycle', async () => {
     f.subscribe.mockReturnValueOnce(null as never)
     expect(await f.call('subscribe', '288016', '1')).toMatchObject({ ok: false, code: 'room-limit' })
     expect(f.installed.emitDanmaku('288016', 'danmaku', {})).toBe(0)
+    expect(f.setRoom).not.toHaveBeenCalled()
     f.installed.dispose()
   })
   it('releases once when unsubscribed repeatedly', async () => {
@@ -138,6 +161,7 @@ describe('IPC routing and subscription lifecycle', async () => {
     f.call('unsubscribe', '1')
     expect(f.release).toHaveBeenCalledTimes(1)
     expect(f.installed.emitDanmaku('288016', 'danmaku', {})).toBe(0)
+    expect(f.setRoom.mock.calls).toEqual([['288016'], [null]])
     f.installed.dispose()
   })
   it('cleans subscriptions on document reload and renderer destruction', async () => {
@@ -145,9 +169,11 @@ describe('IPC routing and subscription lifecycle', async () => {
     await f.call('subscribe', '288016', '1')
     f.contents.emit('did-start-navigation', {}, 'app://app/admin', false, true)
     expect(f.release).toHaveBeenCalledTimes(1)
+    expect(f.setRoom).toHaveBeenLastCalledWith(null)
     await f.call('subscribe', '288016', '2')
     f.contents.emit('destroyed')
     expect(f.release).toHaveBeenCalledTimes(2)
+    expect(f.setRoom.mock.calls).toEqual([['288016'], [null], ['288016'], [null]])
     f.installed.dispose()
     expect(f.handlers.size).toBe(0)
   })
@@ -172,6 +198,32 @@ describe('IPC routing and subscription lifecycle', async () => {
 
 
 describe('pending canonical-room subscription isolation', () => {
+  it('keeps the newest connected room when an older lookup finishes or unsubscribes', async () => {
+    const f = fixture()
+    let settle!: (value: any) => void
+    f.resolveRoom.mockReturnValueOnce(new Promise(resolve => { settle = resolve }))
+    const older = f.call('subscribe', '100', '1')
+    await f.call('subscribe', '200', '2')
+    settle({ ok: true, identity: { room: '100', inputRoom: '100' } })
+    expect(await older).toMatchObject({ ok: true })
+    expect(f.setRoom.mock.calls).toEqual([['200']])
+    await f.call('unsubscribe', '1')
+    expect(f.setRoom.mock.calls).toEqual([['200']])
+    await f.call('unsubscribe', '2')
+    expect(f.setRoom.mock.calls).toEqual([['200'], [null]])
+    f.installed.dispose()
+  })
+
+  it('keeps an existing room when a new relay cannot be opened', async () => {
+    const f = fixture()
+    await f.call('subscribe', '100', '1')
+    f.subscribe.mockReturnValueOnce(null as never)
+    expect(await f.call('subscribe', '200', '2')).toMatchObject({ ok: false, code: 'room-limit' })
+    expect(f.setRoom.mock.calls).toEqual([['100']])
+    f.installed.dispose()
+    expect(f.setRoom).toHaveBeenLastCalledWith(null)
+  })
+
   it.each(['cancel', 'navigation', 'destroy', 'dispose', 'untrusted'])('does not open a ghost relay after %s', async action => {
     const f = fixture()
     let settle!: (value: any) => void
@@ -186,6 +238,7 @@ describe('pending canonical-room subscription isolation', () => {
     expect(await pending).toMatchObject({ ok: false, code: 'subscription-cancelled' })
     expect(f.subscribe).not.toHaveBeenCalled()
     expect(f.contents.send).not.toHaveBeenCalled()
+    expect(f.setRoom).not.toHaveBeenCalled()
     f.installed.dispose()
   })
   it('reserves pending IDs and capacity before resolution', async () => {
@@ -224,6 +277,7 @@ describe('pending canonical-room subscription isolation', () => {
     f.resolveRoom.mockImplementation(async inputRoom => ({ ok: true, identity: { room: '6979222', inputRoom } }))
     for (const [room, id] of [['6657', '1'], ['6979222', '2']]) expect(await f.call('subscribe', room, id)).toMatchObject({ ok: true, value: { room: '6979222' } })
     expect(f.subscribe.mock.calls.map(call => call[0])).toEqual(['6979222', '6979222'])
+    expect(f.setRoom.mock.calls).toEqual([['6979222']])
     expect(f.contents.send).toHaveBeenCalledWith('stream-syncer:danmaku', { subscriptionId: '1', event: 'state', data: { room: '6979222', state: 'connecting' } })
     f.installed.dispose()
   })
