@@ -1,6 +1,6 @@
 import { build } from 'vite'
 import { fileURLToPath } from 'node:url'
-import { mkdir, writeFile, rm } from 'node:fs/promises'
+import { mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 const root = new URL('../', import.meta.url)
@@ -22,7 +22,8 @@ export async function buildElectron(write = true) {
   })
   if (write) {
     await mkdir(new URL('dist', root), { recursive: true })
-    await writeFile(new URL('dist/package.json', root), JSON.stringify({ name: 'stream-syncer', version: '0.1.0', main: 'electron/main.cjs' }, null, 2) + '\n')
+    const { name, version } = JSON.parse(await readFile(new URL('package.json', root), 'utf8'))
+    await writeFile(new URL('dist/package.json', root), JSON.stringify({ name, version, main: 'electron/main.cjs' }, null, 2) + '\n')
   }
   return result
 }

@@ -64,7 +64,7 @@ describe('desktop main-process service', () => {
 
   it('reports readiness, media setting and current relay count', async () => {
     expect(value(await service.invoke('health', undefined))).toEqual({
-      ok: true, version: '0.1.0', proxyEnabled: true, danmakuRooms: 0,
+      ok: true, version: '0.1.1', proxyEnabled: true, danmakuRooms: 0,
     })
   })
 

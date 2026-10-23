@@ -1,6 +1,9 @@
+param([string]$EvidenceDirectory = '.runtime-cache\p7-20261023')
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$evidenceRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot '.runtime-cache\p7-20261023'))
+$evidenceRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot $EvidenceDirectory))
+if (-not $evidenceRoot.StartsWith((Join-Path $projectRoot '.runtime-cache') + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Installer evidence must be under the local runtime cache' }
+$packageVersion = (Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Raw | ConvertFrom-Json).version
 $stagingRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot '.packaging'))
 $reportFile = Join-Path $evidenceRoot 'installer-runtime.json'
 $registryKeysBefore = @(Get-ChildItem -LiteralPath 'HKCU:\Software' | Select-Object -ExpandProperty PSChildName)
@@ -58,7 +61,7 @@ try {
     $installed = $true
     $entries = @(Read-UninstallEntries | Where-Object { $_.DisplayName -match '^Stream Syncer(?: |$)' })
     $expectedUninstall = '"' + $uninstaller + '" /currentuser'
-    if ($entries.Count -ne 1 -or $entries[0].PSPath -notmatch 'HKEY_CURRENT_USER' -or $entries[0].UninstallString -ne $expectedUninstall -or $entries[0].DisplayVersion -ne '0.1.0') { throw 'Installer registry is not isolated to current user and target directory' }
+    if ($entries.Count -ne 1 -or $entries[0].PSPath -notmatch 'HKEY_CURRENT_USER' -or $entries[0].UninstallString -ne $expectedUninstall -or $entries[0].DisplayVersion -ne $packageVersion) { throw 'Installer registry is not isolated to current user and target directory' }
     if ((Test-Path -LiteralPath $desktopShortcut) -ne $desktopBefore -or (Test-Path -LiteralPath $menuShortcut) -ne $menuBefore) { throw 'Installer unexpectedly changed a shortcut' }
     $installedRegistryKeys = @(Get-ChildItem -LiteralPath 'HKCU:\Software' | Where-Object { $_.PSChildName -notin $registryKeysBefore } | Where-Object { (Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue).InstallLocation -eq $installDirectory } | Select-Object -ExpandProperty PSPath)
     $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/S' -WindowStyle Hidden -PassThru

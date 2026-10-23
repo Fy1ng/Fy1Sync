@@ -5,7 +5,9 @@ import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-const root = fileURLToPath(new URL('../', import.meta.url)), evidence = path.join(root, '.runtime-cache', 'p7-20261023')
+const root = fileURLToPath(new URL('../', import.meta.url))
+const evidence = path.resolve(root, process.env.STREAM_SYNC_PACKAGE_EVIDENCE ?? '.runtime-cache/p7-20261023')
+if (!evidence.startsWith(path.join(root, '.runtime-cache') + path.sep)) throw new Error('Package evidence must be under the local runtime cache')
 const report = JSON.parse(await readFile(path.join(evidence, 'package-report.json'), 'utf8'))
 const zip = report.artifacts.find(item => item.file.endsWith('.zip')).file
 // Each verification extracts into an empty owned directory, never over a prior build.

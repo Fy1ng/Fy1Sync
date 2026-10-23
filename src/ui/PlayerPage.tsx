@@ -128,6 +128,7 @@ export function PlayerPage(): React.ReactNode {
 
       {cameraDialogOpen && (
         <CameraCropDialog
+          key={camera.room}
           initial={camera.config?.crop ?? null}
           onSave={(crop) => { camera.save(crop); setCameraDialogOpen(false) }}
           onRemove={camera.config ? () => { camera.remove(); setCameraDialogOpen(false) } : null}

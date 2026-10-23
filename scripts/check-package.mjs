@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -8,6 +8,10 @@ import { spawn } from 'node:child_process'
 const require = createRequire(import.meta.url)
 const { listPackage } = require('@electron/asar')
 const root = fileURLToPath(new URL('../', import.meta.url))
+const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
+const evidence = path.resolve(root, process.env.STREAM_SYNC_PACKAGE_EVIDENCE ?? '.runtime-cache/p7-20261023')
+if (!evidence.startsWith(path.join(root, '.runtime-cache') + path.sep)) throw new Error('Package evidence must be under the local runtime cache')
+await mkdir(evidence, { recursive: true })
 const directory = path.join(root, '.release', 'win-unpacked')
 const resources = path.join(directory, 'resources')
 const forbidden = /(?:^|\/)(?:test-sources|cookies|browser-profile|\.runtime-cache|\.tools|\.git|\.env[^/]*)(?:\/|$)/i
@@ -41,7 +45,7 @@ for (const entry of inventory) {
   const file = path.join(resources, 'tools', entry.file)
   if ((await stat(file)).size !== entry.size || await hash(file) !== entry.sha256) throw new Error('Packaged tool hash mismatch: ' + entry.file)
 }
-const releaseFiles = (await readdir(path.join(root, '.release'))).filter(name => /^Stream-Syncer-.+\.(zip|exe)$/.test(name))
+const releaseFiles = (await readdir(path.join(root, '.release'))).filter(name => name.startsWith(`Stream-Syncer-${version}-`) && /\.(zip|exe)$/.test(name))
 if (!releaseFiles.some(name => name.endsWith('.zip')) || !releaseFiles.some(name => name.endsWith('.exe'))) throw new Error('Both ZIP and NSIS artifacts are required')
 const artifacts = []
 for (const name of releaseFiles) {
@@ -60,5 +64,5 @@ for (const name of releaseFiles) {
   }
 }
 const report = { asarEntries: asar, toolFiles: actual.length, artifacts, status: 'local-evaluation-only', licenseGap: 'Exact native dependency license/source mapping remains incomplete; see bundled THIRD-PARTY-NOTICES.md' }
-await writeFile(path.join(root, '.runtime-cache', 'p7-20261023', 'package-report.json'), JSON.stringify(report, null, 2) + '\n')
+await writeFile(path.join(evidence, 'package-report.json'), JSON.stringify(report, null, 2) + '\n')
 console.log(JSON.stringify(report, null, 2))

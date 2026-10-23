@@ -156,7 +156,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
           }
           case 'health': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
-            return { ok: true, value: { ok: true, version: '0.1.0', proxyEnabled: deps.proxy.enabled, danmakuRooms: relay.roomCount } }
+            return { ok: true, value: { ok: true, version: '0.1.1', proxyEnabled: deps.proxy.enabled, danmakuRooms: relay.roomCount } }
           }
           case 'verifyAdmin': {
             if (!fields(args, ['token']) || typeof args.token !== 'string' || args.token.length > MAX_TOKEN_LENGTH) {

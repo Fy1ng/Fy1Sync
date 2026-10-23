@@ -138,6 +138,8 @@ E2E 通过 `_electron.launch` 启动 `dist/electron/main.cjs`, 无 webServer 和
 
 ## 目录
 
+本地评估版 0.1.1 修复摄像头取景预览静止和宽粗框自动收紧不贴边. 取景直接观察既有解说视频帧, 不改变播放状态; 自动收紧需要播放中的连续不同帧, 暂停或卡住时可恢复播放后重试. 无可靠边界时保留手动画框. 用框包住摄像头及附近留白, 全画面中有多个 HUD/广告矩形时仍需人工检查. 本地 NSIS/ZIP 仍未签名, 许可材料边界沿用 P7, 详见 [平台说明](docs/platform-notes.md).
+
 ```text
 electron/          主进程, 缓冲, 工具定位, 登录, preload 与 IPC
 src/app/           会话, 设置与统一 ApiClient IPC 接口
