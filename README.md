@@ -97,9 +97,13 @@ E2E 通过 `_electron.launch` 启动 `dist/electron/main.cjs`, 无 webServer 和
 
 真实1440p场景为 `npx playwright test e2e/youtube-adaptive.spec.ts`, 需同时设置 `STREAM_SYNC_LIVE_TESTS=1`, `STREAM_SYNC_YOUTUBE_ADAPTIVE=1`, 两个provider目录、`STREAM_SYNC_YOUTUBE_LIVE_URL`和显式授权的`STREAM_SYNC_YOUTUBE_ADAPTIVE_COOKIE_FILE`. 只将cookie导入可丢弃profile, 不读取日常浏览器资料. 默认在至少30秒fMP4缓冲后观察30秒实际1440p播放; `STREAM_SYNC_ADAPTIVE_SECONDS=1800`和`STREAM_SYNC_ADAPTIVE_LONG=1`显式启用30分钟持续验收. `STREAM_SYNC_ADAPTIVE_EXPECT_FPS=60`还要求1440p60菜单项和实际增量帧率, 不只检查标签. 测试记录实际高度、CDP解码器属性、帧增量、分片可读性、缓冲间隙、播放速率、页面可见性和重连/回退, HLS回退不会算作1440p通过. 脱敏JSON写入Playwright输出目录.
 
+在上述真实场景中额外设置 `STREAM_SYNC_ADAPTIVE_PERSISTED_SOFTWARE=1`, 即通过生产界面保存软件模式, 关闭并复用同一个可丢弃profile重启, 再运行相同的实时取流与播放验收. 此路径明确不使用测试软件快捷参数, 检查 `forcedByCommandLine=false`, VpxVideoDecoder/platform=false和GPU合成未关闭, 并记录实际送显帧率、掉帧比例及Electron进程CPU/内存样本. 30fps源应设置 `STREAM_SYNC_ADAPTIVE_EXPECT_FPS=30`, 不能当作60fps验收.
+
 系统Chrome手工登录与退出、真实平台画质切换、30分钟直播和上游EOF恢复等项目应按各自实测结果验收, 不从离线回归推断通过. 当前真实状态见 [平台说明](docs/platform-notes.md#验证边界).
 
-当前真实1440p30和1440p60短测通过, 严格长时播放仍未通过: 已观察到取流连续、本地仍有缓冲但播放停顿与丢帧. 同片段本地D3D11回放可间歇复现, 硬解短时复验也可通过, 不能据此认定硬件或驱动根因. 历史失败记录继续保留于[平台说明](docs/platform-notes.md#验证边界).
+真实1440p30和1440p60短测通过; 此前自动硬解严格长时播放失败: 已观察到取流连续、本地仍有缓冲但播放停顿与丢帧. 同片段本地D3D11回放可间歇复现, 硬解短时复验也可通过, 不能据此认定硬件或驱动根因. 历史失败记录继续保留于[平台说明](docs/platform-notes.md#验证边界).
+
+2026-10-23通过正式UI持久化软件模式并重启后, 单路YouTube实时2560x1440 VP9 30fps的30秒短测及一次30分钟长测通过: 实际媒体1800.015706秒、54000帧、丢0帧、送显29.999738fps, 本地366个分片可读, 音视频sq连续, 无重连或回退. CDP为VpxVideoDecoder/platform=false, 源码与生产构建哈希在长测前后保持一致. 当次原60fps链接已结束直播, 因此该结果只覆盖30fps实时软件模式, 不替代60fps实时30分钟、AV1、其他设备或硬解根因验收.
 
 片源设置的 `视频解码` 区域提供可选的 `软件解码兼容模式`, 默认关闭, 继续由 Chromium 自动选择并优先使用可用硬件解码. 开关保存到本机 userData 下的 `decoder-preferences.json`, 手动关闭应用并重新打开后生效, 保存时当前播放会继续. 界面分别显示当前生效模式与已保存的待重启选择. 软件解码可能增加 CPU 占用, 不保证消除所有停顿. 此选项只禁用硬件视频解码, 保留 GPU 合成和现有 VP9/HLS/同步策略. 若通过启动参数强制软件解码, 还需移除该参数才能恢复自动模式.
 

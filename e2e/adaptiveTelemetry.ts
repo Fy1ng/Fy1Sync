@@ -57,7 +57,7 @@ export function playbackObservationSeconds(env = process.env): number {
 }
 
 /** Observe the real player and verify every newly published local fragment is readable. */
-export async function observeAdaptivePlayback(page: Page, localUrl: string, seconds: number, decoder: DecoderInfo, testInfo: TestInfo, expectedFps = 0) {
+export async function observeAdaptivePlayback(page: Page, localUrl: string, seconds: number, decoder: DecoderInfo, testInfo: TestInfo, expectedFps = 0, application?: ElectronApplication) {
   const capture = process.env.STREAM_SYNC_ADAPTIVE_CAPTURE === '1'
   const captureDir = testInfo.outputPath('local-media')
   const captureLines = ['#EXTM3U', '#EXT-X-VERSION:7', '#EXT-X-TARGETDURATION:10', '#EXT-X-MEDIA-SEQUENCE:0', '#EXT-X-PLAYLIST-TYPE:VOD']
@@ -129,6 +129,7 @@ export async function observeAdaptivePlayback(page: Page, localUrl: string, seco
   }, localUrl)
   type Sample = Awaited<ReturnType<typeof sample>>
   const samples: Omit<Sample, 'fragments' | 'inits' | 'durations'>[] = []
+  const resourceSamples: { elapsedSeconds: number; cpuPercentSum: number; workingSetMiB: number }[] = []
   const seenInit = new Set<string>()
   let nextSequence: number | undefined
   let checkedFragments = 0
@@ -142,7 +143,15 @@ export async function observeAdaptivePlayback(page: Page, localUrl: string, seco
       const current = samples.length ? await sample() : first
       const { fragments, inits, durations, ...metrics } = current
       samples.push(metrics)
-      if (current.height !== 1440 || current.error || current.paused) throw new Error('持续播放失去1440p画面或发生视频错误/暂停')
+      if (application) resourceSamples.push({ elapsedSeconds: (current.wallMs - first.wallMs) / 1000,
+        ...await application.evaluate(({ app }) => {
+          const metrics = app.getAppMetrics()
+          return { cpuPercentSum: metrics.reduce((sum, entry) => sum + entry.cpu.percentCPUUsage, 0),
+            workingSetMiB: metrics.reduce((sum, entry) => sum + entry.memory.workingSetSize, 0) / 1024 }
+        }),
+      })
+      if (current.width !== 2560 || current.height !== 1440 || current.error || current.paused) throw new Error('持续播放失去2560x1440画面或发生视频错误/暂停')
+      if (current.playbackRate !== 1) throw new Error('持续播放速率不是1, 不能替代实时验收')
       if (current.state?.notice || ['stalled', 'reconnecting', 'failed', 'stopped'].includes(current.state?.state ?? '')) throw new Error('持续播放发生回退、停滞或重连')
       if (current.telemetry?.observedFallback || current.telemetry?.observedReconnects) throw new Error('持续播放曾发生回退、停滞或重连')
       if (current.maxBufferedGap > 0.15) throw new Error('播放器缓冲存在大于150ms的时间间隙')
@@ -220,8 +229,13 @@ export async function observeAdaptivePlayback(page: Page, localUrl: string, seco
       complete, requestedSeconds: seconds, elapsedSeconds: (last.wallMs - first.wallMs) / 1000,
       mediaSeconds: last.time - first.time, totalFrames: last.total - first.total, droppedFrames: last.dropped - first.dropped,
       expectedFps, observedFps: (last.total - first.total) / (last.time - first.time),
+      deliveredFps: (last.total - first.total - last.dropped + first.dropped) / (last.time - first.time),
+      droppedRatio: last.total > first.total ? (last.dropped - first.dropped) / (last.total - first.total) : 0,
+      wallLagSeconds: (last.wallMs - first.wallMs) / 1000 - (last.time - first.time),
       capturedLocalSeconds: captureDuration, capturedLocalBytes: captureBytes,
-      decoder, checkedFragments, missingFragments, samples,
+      decoder, checkedFragments, missingFragments, samples, resourceSamples,
+      resourceUnits: { cpuPercentSum: 'sum of Electron app.getAppMetrics cpu.percentCPUUsage; exclude first sample from summary',
+        workingSetMiB: 'sum of Electron processes workingSetSize KiB / 1024; shared pages may be counted more than once' },
     }
     await mkdir(testInfo.outputDir, { recursive: true })
     const file = testInfo.outputPath('adaptive-playback-observation.json')
