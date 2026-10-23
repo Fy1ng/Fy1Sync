@@ -30,3 +30,7 @@ playwright-report/
 /target/
 /.tools/
 /src/wasm/pkg/
+
+# Reproducible desktop tool staging and local installers, never source inputs
+/.packaging/
+/.release/

@@ -19,6 +19,7 @@ import type { MediaDescriptor, SourceRole } from '../core/types'
 import type { LoginPlatform, LoginStatus } from '../../electron/login'
 import { bufferStatusText } from './bufferStatus'
 import { DecoderSettings } from './DecoderSettings'
+import { ToolSettings } from './ToolSettings'
 
 /** Looping local fixtures, also used by the E2E specs. */
 /**
@@ -34,6 +35,7 @@ const TEST_SOURCES: { label: string; url: string; note: string }[] = [
 
 export function SourceDialog({ onClose }: { onClose: () => void }): React.ReactNode {
   const snapshot = useSessionSnapshot()
+  const [fixturesAvailable, setFixturesAvailable] = useState(false)
 
   return (
     <div className="dialog-backdrop" onPointerDown={onClose}>
@@ -53,11 +55,12 @@ export function SourceDialog({ onClose }: { onClose: () => void }): React.ReactN
 
         <div className="source-columns">
           {SOURCE_ROLES.map((role) => (
-            <RolePanel key={role} role={role} />
+            <RolePanel key={role} role={role} fixturesAvailable={fixturesAvailable} />
           ))}
         </div>
 
         <DecoderSettings />
+        <ToolSettings onFixturesAvailableChange={setFixturesAvailable} />
         <Accounts />
 
         <footer className="dialog-footer">
@@ -75,7 +78,7 @@ export function SourceDialog({ onClose }: { onClose: () => void }): React.ReactN
   )
 }
 
-function RolePanel({ role }: { role: SourceRole }): React.ReactNode {
+function RolePanel({ role, fixturesAvailable }: { role: SourceRole; fixturesAvailable: boolean }): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const state = snapshot.media[role]
@@ -220,7 +223,7 @@ function RolePanel({ role }: { role: SourceRole }): React.ReactNode {
         </ul>
       )}
 
-      <details className="source-tests">
+      {fixturesAvailable && <details className="source-tests">
         <summary>内置测试源</summary>
         {TEST_SOURCES.map((source) => (
           <button
@@ -243,7 +246,7 @@ function RolePanel({ role }: { role: SourceRole }): React.ReactNode {
             <span className="hint">{source.note}</span>
           </button>
         ))}
-      </details>
+      </details>}
 
       {role === 'commentary' && <DanmakuRoomField />}
     </section>

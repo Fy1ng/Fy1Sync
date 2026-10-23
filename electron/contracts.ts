@@ -7,8 +7,12 @@ import type { SourceRole } from '../src/core/types'
 import type { BufferState } from './bufferManager'
 import type { LoginPlatform, LoginResult, LoginStatus } from './login'
 import type { DecoderMode, DecoderPreferenceState } from './decoderPreferences'
+import type { ToolsStatus } from './toolsService'
 
 export interface DesktopMethods {
+  getToolsStatus: { args: undefined; result: ToolsStatus }
+  updateYtdlp: { args: undefined; result: ToolsStatus }
+  restoreYtdlp: { args: { target: 'previous' | 'bundled' }; result: ToolsStatus }
   health: { args: undefined; result: HealthInfo }
   getDecoderPreferences: { args: undefined; result: DecoderPreferenceState }
   setDecoderPreferences: { args: { mode: DecoderMode }; result: DecoderPreferenceState }

@@ -1,0 +1,34 @@
+# Third-party notices for local Windows x64 evaluation builds
+
+The application package.json retains the original application's MIT license declaration. This does not license the whole distribution as MIT. No copyright owner is invented here. Third-party programs remain separate executables or provider resources, outside app.asar, with their own terms.
+
+## Fixed runtime inputs
+
+| Component | Fixed input | License and source |
+| --- | --- | --- |
+| Electron | 44.9.0 | MIT plus Chromium and other licenses. Keep LICENSE.electron.txt and LICENSES.chromium.html shipped by Electron. Source: https://github.com/electron/electron/tree/v44.9.0 |
+| React, react-dom, scheduler and hls.js | Exact installed production versions matching package-lock.json | Original LICENSE/COPYING/NOTICE files are copied under licenses/application-npm, with exact versions and source/integrity metadata in application-npm-dependencies.json. The MIT declaration of React packages and the Apache-2.0 terms of hls.js retain their original copyright notices. |
+| Rust/WASM dependencies | Exact registry crate versions in Cargo.lock | Original license files are extracted from official crates.io source archives after checking their SHA256 against Cargo.lock. application-rust-dependencies.json records versions and source links. This includes locked build-time crates conservatively; it does not ship Rust tooling. |
+| FFmpeg and ffprobe | BtbN autobuild-2026-10-22-13-06, n8.1.3-23-g5c4f5744cd, win64-lgpl-shared-8.1 | The actual binary's LICENSE.txt is LGPLv3. The preparation script also checks -L and configure flags, rejecting enable-gpl/enable-nonfree and requiring shared libraries. FFmpeg source commit: 5c4f5744cd60943125a78db692b728210102f255. |
+| FFmpeg build recipes | BtbN/FFmpeg-Builds commit 937868360a21d711ec94a33f5591d345ad9b7754 | The exact archive is included with the source bundle. scripts.d contains dependency repositories, pinned revisions, build flags and patches. The original build is an upstream build, not a local rebuild claim. |
+| yt-dlp | Official Windows yt-dlp.exe 2026.10.21 | Official bundled executable is GPLv3+ because it incorporates third-party code. The Python project source alone being Unlicense does not make this executable Unlicense. Preserve source archive, LICENSE and third-party license information. https://github.com/yt-dlp/yt-dlp/tree/2026.10.21 |
+| bgutil-ytdlp-pot-provider | 2.0.2, Python plugin and one-shot JavaScript provider | GPL-3.0-only. Full matching provider source is included. Only script-mode Python files are exposed to yt-dlp at runtime; no HTTP provider server is started. https://github.com/Brainicism/bgutil-ytdlp-pot-provider/tree/2.0.2 |
+| canvas | 3.2.3, official N-API v7 Windows x64 prebuild | canvas itself is MIT; its native Cairo/GTK/text/image dependencies have additional licenses. Native-file inventory and hashes are included. https://github.com/Automattic/node-canvas/tree/v3.2.3 |
+
+`tools-lock.json` records each download URL, exact length and SHA256. The preparation script copies the original LGPLv3/GPLv3 licenses, FFmpeg build/version output, provider source, yt-dlp source, FFmpeg source and build recipes into `resources/tools/licenses/`. `provider-dependencies.json` records the exact npm package versions, SPDX declarations, registry source URLs and integrity values from the effective patched lock described below. Package license files in the provider's production dependencies are retained. No dependency install scripts run during preparation; the separately pinned canvas prebuild is installed explicitly.
+
+The provider source archive remains the unmodified upstream 2.0.2 source. This local build applies two production transitive dependency patches through `provider-dependency-patches.json` and a separately checked-in `provider-package-lock.json`: follow-redirects 1.16.0 -> 1.16.1 and ip-address 10.7.3 -> 10.7.4. These address GHSA-q3jh-wrc6-jgq8, GHSA-8r9p-f939-6h3c and GHSA-rxp7-6hxx-x8q5 without modifying provider implementation. The packaged server contains the effective package.json/lock; the patch manifest and full original source are retained together. The final dependency index describes the patched build, not an unmodified upstream dependency installation.
+
+## Source and availability boundaries
+
+Matching source archives and recipe snapshots are included locally, so their availability does not depend on an upstream floating latest URL. BtbN keeps daily releases for only 14 days and the last build of each month for two years. Preserve the verified local `.packaging/downloads/` cache. A vanished locked asset makes a clean preparation fail; it must never silently select a newer build. FFmpeg source and build-recipe archives are obtainable by the full commit URLs recorded in tools-lock.json; version names are not a byte-for-byte reproducible compiler claim.
+
+The official canvas native archive contains many DLLs but no corresponding per-DLL license/source/version inventory. The npm package and N-API archive hashes identify the artifact, but this does not establish an exact source/version match for each bundled native dependency. Similarly, the FFmpeg build recipe/source archive identifies its main source and dependency build inputs, but this evaluation has not reconstructed the original build environment or independently verified complete corresponding source for every statically linked dependency. These are explicit distribution-material gaps. These unsigned artifacts are local evaluation builds, and this task does not establish readiness for public redistribution. Before public release, complete the native dependency license/source mapping and review all corresponding-source obligations; do not replace the gap with a blanket MIT or LGPL declaration.
+
+## Manual yt-dlp updates
+
+An explicitly requested update uses only the official stable GitHub release, fixed `yt-dlp.exe` and `SHA2-256SUMS` assets, HTTPS and a bounded GitHub/CDN host allowlist. SHA256 checks detect corruption and mismatch; hashes fetched from the same official origin are not an independent publisher signature. New executable versions live in userData and do not overwrite the bundled executable. Keep the corresponding source and license information from the selected official release when redistributing an updated executable. Provider updates require an application package update in this first version.
+
+FFmpeg reference: https://ffmpeg.org/legal.html
+
+Build references: https://github.com/BtbN/FFmpeg-Builds and https://www.electron.build/nsis.html

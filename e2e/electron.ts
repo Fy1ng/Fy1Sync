@@ -20,6 +20,8 @@ export interface RunningApplication {
 export async function launchApplication(label: string, options: { softwareVideo?: boolean } = {}): Promise<RunningApplication> {
   const dataDir = path.join(testDataRoot, label.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 70) + '-' + randomUUID())
   await mkdir(dataDir, { recursive: true })
+  const temporaryDir = path.join(dataDir, 'temp')
+  await mkdir(temporaryDir)
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value
@@ -28,6 +30,8 @@ export async function launchApplication(label: string, options: { softwareVideo?
     STREAM_SYNC_E2E: '1',
     STREAM_SYNC_USER_DATA_DIR: path.join(dataDir, 'userData'),
     STREAM_SYNC_DATA_DIR: path.join(dataDir, 'data'),
+    STREAM_SYNC_OFFLINE_E2E: process.env.STREAM_SYNC_LIVE_TESTS === '1' || process.env.STREAM_SYNC_YOUTUBE_ADAPTIVE === '1' ? '0' : '1',
+    TEMP: temporaryDir, TMP: temporaryDir,
   })
 
   let application: ElectronApplication | undefined

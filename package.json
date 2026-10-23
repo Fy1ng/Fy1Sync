@@ -19,7 +19,11 @@
     "shots": "node scripts/ui-shots.mjs",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json && tsc -p tsconfig.e2e.json",
     "fixtures": "node scripts/generate-test-sources.mjs",
-    "build:wasm": "node scripts/build-wasm.mjs"
+    "build:wasm": "node scripts/build-wasm.mjs",
+    "tools:prepare": "node scripts/prepare-tools.mjs",
+    "package:prepare": "node scripts/prepare-package.mjs",
+    "package:win": "node scripts/package-win.mjs",
+    "package:check": "node scripts/check-package.mjs"
   },
   "dependencies": {
     "hls.js": "1.6.16",
@@ -37,6 +41,7 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
     "electron": "44.9.0",
+    "electron-builder": "26.15.3",
     "fake-indexeddb": "6.2.4",
     "jsdom": "29.1.1",
     "typescript": "6.0.3",

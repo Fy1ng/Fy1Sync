@@ -4,7 +4,7 @@
 
 同一场比赛, 官方源画质好但没有解说, 国内直播有解说但通常慢十几秒. 应用同时播放两路视频, 识别画面中的倒计时跳秒, 估算并应用延迟差.
 
-当前为推进到 P5b 的 Electron + React + Rust/WASM 桌面工作副本, 已接入 ffmpeg 本地循环缓冲, 平台取流, 独立 Chrome 登录, 自动/手动同步和可选 YouTube 自适应高画质. Windows 为主要验证平台, macOS / Linux 和安装包尚未验收. 本地回归与真实平台验收分别记录, P0 原型证据不能替代正式应用验收. 完整阶段计划见 [docs/plan.md](docs/plan.md).
+当前为 Electron + React + Rust/WASM 桌面工作副本, 已接入 ffmpeg 本地循环缓冲, 平台取流, 独立 Chrome 登录, 自动/手动同步和可选 YouTube 自适应高画质. P7 增加 Windows x64 用户级 NSIS/免安装 ZIP 的本地构建和手动 yt-dlp 更新. Windows 为主要验证平台, macOS / Linux 尚未验收. 本地回归与真实平台验收分别记录, P0 原型证据不能替代正式应用验收. 完整阶段计划见 [docs/plan.md](docs/plan.md).
 
 ## 快速开始
 
@@ -16,13 +16,13 @@ npm run build
 npm start
 ```
 
-`npm start` 启动构建后的 Electron 应用, 播放无需浏览器或常驻 HTTP 服务. 可选的账号登录需要系统 Google Chrome. 当前不生成安装包, 也不捆绑 ffmpeg / ffprobe / yt-dlp, 二进制打包属于 P7.
+`npm start` 启动构建后的开发应用, 播放无需浏览器或常驻 HTTP 服务. 可选的账号登录需要系统 Google Chrome. 开发运行仍使用显式工具配置或 PATH; Windows 打包应用另带固定版本 ffmpeg / ffprobe / yt-dlp 和脚本 PO token provider.
 
 开发时运行 `npm run dev`, 启动 Vite 构建监听与 Electron, 前端变动后重新构建并重载窗口. 修改主进程或 preload 后重启该命令. 开发与正式应用都通过 `app://app/` 读取资源, 不启动 Vite HTTP 服务, 不监听应用网络端口.
 
 ## 配置取流工具
 
-远程片源需要 ffmpeg 和 ffprobe, YouTube 另外需要 yt-dlp. 工具查找优先级为 userData 下的 `tools.json`, 对应环境变量, 最后是 PATH. 显式设置必须是工具可执行文件的绝对路径; Windows 仅接受原生 `.exe`, 不通过批处理或 shell 启动.
+远程片源需要 ffmpeg 和 ffprobe, YouTube 另外需要 yt-dlp. 工具查找优先级为 userData 下的 `tools.json`, 对应环境变量, 受控 yt-dlp 更新, 内置工具, 最后是开发环境 PATH. 只有真正的打包应用启用 `process.resourcesPath/tools/` 内置目录; 打包工具损坏时报告错误, 不静默使用任意 PATH 工具. 显式设置必须是工具可执行文件的绝对路径; Windows 仅接受原生 `.exe`, 不通过批处理或 shell 启动.
 
 `tools.json` 示例:
 
@@ -35,6 +35,29 @@ npm start
 ```
 
 不使用该文件时, 可以设置 `STREAM_SYNC_FFMPEG`, `STREAM_SYNC_FFPROBE`, `STREAM_SYNC_YTDLP`. `tools.json` 在主进程启动时读取, 修改配置或启动环境后需重启应用. 缺少工具或路径无效会返回结构化错误, 不自动下载或安装. yt-dlp 使用 Electron 自带 Node 解 JS challenge, `ELECTRON_RUN_AS_NODE=1` 仅设置在该取流子进程的环境中.
+
+在片源设置的 `取流工具` 区域查看实际选中的版本和来源, 点击 `检查并更新 yt-dlp` 才访问官方 GitHub 稳定版. 新版本经过有界下载、SHA256 和 `--version` 校验, 写入独立目录后原子切换记录. 当前播放继续, 下次取流按上述优先级选择. 界面可恢复上一受控版本或内置版本. 显式外部配置保持优先, 下载不会改写用户提供的工具. 启动和定时任务都不检查更新. provider 首版只随应用整包更新, 使用 Electron Node 和 userData 私有 `provider-cache/`, 不启动 HTTP provider 服务.
+
+## Windows 本地打包
+
+```bash
+npm ci
+npm run package:win
+npm run package:check
+node scripts/verify-packaged.mjs
+```
+
+electron-builder 固定为26.15.3, 保持 Electron44.9.0 和既有 React 版本. 构建输出在忽略的 `.release/`, 工具下载缓存与最小应用暂存位于 `.packaging/`. 首次显式执行 `tools:prepare` 或 `package:win` 时下载 [固定清单](packaging/tools-lock.json)中的工具和源码, 校验版本、大小与 SHA256, 使用单独固定的 provider 依赖补丁 lock 和 canvas N-API 包准备依赖. provider 仍为2.0.2原实现, 仅将 follow-redirects 固定到1.16.1, ip-address 固定到10.7.4; [补丁清单](packaging/provider-dependency-patches.json)及有效依赖索引随包保留. 保留已验证缓存; BtbN 日构建仅保留14天, 缺失时脚本应失败, 不自动改用 latest. 本地验证使用默认 Electron 图标, 未复用 Android 图标, 没有签名或外部发布.
+
+应用包只从生成的最小文件白名单和受控资源目录构建. exe、DLL 和 provider 原生依赖位于 ASAR 外. 不包含本工程测试媒体和测试代码、cookie、Profile 或开发工作区; 第三方完整源码归档另作许可材料保留. 开发用测试源入口在发行包中隐藏, 用户仍可通过本地文件入口加载自己的媒体. NSIS 强制当前用户安装, 不建桌面/开始菜单快捷方式, 不自动启动, 卸载保留应用数据; ZIP 解压后运行 `Stream Syncer.exe`.
+
+NSIS 对最终安装目录实施按实际资源最长相对路径计算的长度上限, 当前为100个UTF-16字符, 避免 Windows 传统路径限制导致卸载残留. 静默或交互初始化收到超长 `/D` 时返回2, 目录页也禁止继续超长路径. `package:win` 的局部构建适配只删除固定NSIS模板中早于检查的初始目录创建, 在内存中核验26.15.3及模板SHA256后执行, 不改写依赖文件或默认卸载器生成流程. 不直接调用 electron-builder CLI 绕过该入口. 已有安装会使 `powershell -NoProfile -File scripts/verify-installer.ps1` 跳过, 避免覆盖日常安装.
+
+原应用的 MIT 声明不代表整包 MIT. 实际 FFmpeg 包为 LGPLv3 shared, yt-dlp 官方 Windows exe 为 GPLv3+, provider2.0.2 为 GPL-3.0-only, canvas3.2.3及其原生依赖另有许可. 原始许可、对应主项目源码、FFmpeg 构建信息和依赖索引随包保留. canvas 各原生 DLL 的精确来源/版本与完整对应源码仍有分发材料缺口, 这些产物限定为本地验证包, 不声明已可公开分发. 详见 [第三方说明](packaging/THIRD-PARTY-NOTICES.md).
+
+2026-10-23本地验证: 类型检查和构建通过, Vitest 71文件/2090项通过, 默认离线Electron E2E 38项通过/6项条件跳过. `package:win` 与 `package:check` 通过, ASAR白名单18条, 工具与许可资源5011文件含inventory, 全部清单哈希匹配. unpacked和全新ZIP解压副本清除工具覆盖及开发PATH后, 均选中内置工具, 通过本地720p播放、实际ffmpeg copy/ffprobe、Electron Node provider/canvas和私有缓存ACL检查, 无外部请求或页面错误. NSIS专用短目录安装/卸载均exit0, 目标目录及应用注册表项完全移除; 静默及交互初始化拒绝超长目录exit2, 交互目录页也实测禁用安装按钮. 生产npm审计中应用与补丁后provider均为0个已知漏洞. 官方yt-dlp真实手动下载、SHA256/版本及重启选择smoke通过, 未使用真实cookie. 证据位于本地忽略目录 `.runtime-cache/p7-20261023/`.
+
+旧长目录安装实验曾以exit0结束但各残留89个深路径文件, 完整卸载结论已撤回. 修复后增加路径限制并重新验证, 旧残留清理被自动审批以 `blocked by policy` 在进程启动前拒绝, 已保留清单, 未绕过删除. exe仍为未签名0.1.0本地评估包, 没有公开发布或真实平台长播通过的新增声明.
 
 ## 使用
 
@@ -90,6 +113,8 @@ npm run test:e2e     # 启动真实 Electron 的 Playwright 场景
 生成测试源需要 ffmpeg 在 PATH 中. 生成的视频位于 `public/test-sources/`, 不进入版本控制. 两段合成视频内置精确的 5 s 延迟, 自动同步场景验证识别误差 <=0.25 s 和同步残差 <=0.35 s.
 
 E2E 通过 `_electron.launch` 启动 `dist/electron/main.cjs`, 无 webServer 和外部浏览器. 原有场景继续覆盖 IPC, 本机编辑器和媒体路径安全. 新增场景通过真正的 BufferManager 和 ffmpeg 将本地 HLS 测试源实时写入缓冲, 检查播放与回退; 不依赖真实平台. 弹幕测试只在主进程边缘注入确定消息, preload, 订阅, 时间线和叠加层均使用实际实现. 真实网络平台测试通过 `STREAM_SYNC_LIVE_TESTS=1` 显式启用, 默认不运行.
+
+2026-10-23另一次1440p60实时软件模式验收使用新直播 `1cQoYBb0Xow`, 基线仍为 P7 前的 `a9b2fac`. 30秒短测通过, 一次1800秒长测在墙钟1697.067900秒、实际媒体1696.028394秒时因取流请求失败、缓冲耗尽和重连状态断言失败. 101761帧、丢0帧与约59.999585fps说明失败前的软件解码观察, 不能将这轮记为30分钟连续通过. 没有重跑长测或等待重连成功. 该基线复用既有provider缓存, 不声称缓存完全隔离; P7的私有XDG缓存改动另行验证. 旧硬解失败、30fps通过和本地双路60fps通过记录均保留, 详见平台说明.
 
 2026-10-23 本地构建、2019项Vitest、94项Rust已通过. 离线Electron E2E覆盖IPC、播放、循环缓冲与VP9到H.264的fMP4切换, 早期沙箱无法启动Chromium的记录属于历史限制. 当前结果以本地运行记录为准, 启动失败或跳过的场景不记为通过.
 

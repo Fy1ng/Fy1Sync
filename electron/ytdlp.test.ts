@@ -25,6 +25,7 @@ function harness(diagnostic?: (event: YtDlpDiagnostic) => void) {
   }) }
   const killTree = vi.fn(async () => { child.emit('close', 1) })
   const runner = new YtDlpRunner({ electronPath: '/electron.exe', cookies, spawn: launch,
+    toolContext: { providerCacheHome: '/private/provider-cache' },
     env: { PATH: 'kept', EXAMPLE: 'unchanged' }, timeoutMs: 100, killTree, diagnostic })
   return { child, launch, cleanup, cookies, runner, killTree }
 }
@@ -46,13 +47,15 @@ describe('isolated yt-dlp execution', () => {
   it('uses argument arrays, a temporary cookie path and child-only Electron Node mode', async () => {
     const h = harness()
     const inherited = process.env.ELECTRON_RUN_AS_NODE
+    const inheritedCache = process.env.XDG_CACHE_HOME
     const pending = h.runner.resolve('https://www.youtube.com/watch?v=abcdefghijk')
     await vi.waitFor(() => expect(h.launch).toHaveBeenCalledOnce())
     const [executable, args, options] = vi.mocked(h.launch).mock.calls[0]!
     expect(executable).toBe('/tools/yt-dlp.exe')
     expect(args).toEqual(expect.arrayContaining(['-J', '--cookies', '/private/copy.txt', '--js-runtimes', 'node:/electron.exe', '--ignore-config', '--no-remote-components']))
-    expect(options).toMatchObject({ shell: false, env: { ELECTRON_RUN_AS_NODE: '1', PATH: 'kept' } })
+    expect(options).toMatchObject({ shell: false, env: { ELECTRON_RUN_AS_NODE: '1', XDG_CACHE_HOME: '/private/provider-cache', PATH: 'kept' } })
     expect(process.env.ELECTRON_RUN_AS_NODE).toBe(inherited)
+    expect(process.env.XDG_CACHE_HOME).toBe(inheritedCache)
     h.child.stdout!.emit('data', Buffer.from('{"is_live":true}'))
     h.child.emit('close', 0)
     expect(await pending).toEqual({ is_live: true })

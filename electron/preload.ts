@@ -7,6 +7,7 @@ const methods = new Set<DesktopMethod>([
   'health', 'verifyAdmin', 'resolve', 'listPresets', 'getPreset', 'savePreset', 'deletePreset',
   'switchQuality', 'stopBuffer', 'login', 'loginStatus', 'logout',
   'getDecoderPreferences', 'setDecoderPreferences',
+  'getToolsStatus', 'updateYtdlp', 'restoreYtdlp',
 ])
 let nextSubscription = 0
 

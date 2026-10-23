@@ -20,6 +20,19 @@ describe('tool locator', () => {
     const a = await fixture(), b = await fixture()
     expect(await locateTool('ffmpeg', { ffmpegPath: a.file }, { STREAM_SYNC_FFMPEG: b.file, PATH: b.root })).toBe(a.file)
   })
+  it('prefers settings and environment before managed and bundled tools', async () => {
+    const external = await fixture('yt-dlp'), managed = await fixture('yt-dlp'), bundled = await fixture('yt-dlp')
+    const context = { bundledDir: bundled.root, managedYtdlp: async () => managed.file }
+    expect(await locateTool('yt-dlp', { ytdlpPath: external.file }, {}, context)).toBe(external.file)
+    expect(await locateTool('yt-dlp', {}, { STREAM_SYNC_YTDLP: external.file }, context)).toBe(external.file)
+    expect(await locateTool('yt-dlp', {}, {}, context)).toBe(managed.file)
+    expect(await locateTool('yt-dlp', {}, {}, { ...context, managedYtdlp: async () => undefined })).toBe(bundled.file)
+  })
+  it('does not use PATH when the packaged bundle is damaged', async () => {
+    const fallback = await fixture('yt-dlp')
+    await expect(locateTool('yt-dlp', {}, { PATH: fallback.root }, { bundledDir: path.join(fallback.root, 'missing') })).rejects.toMatchObject({ code: 'tool-not-executable' })
+    expect(await locateTool('yt-dlp', {}, { PATH: fallback.root })).toBe(fallback.file)
+  })
   it.each(['ffmpeg', 'ffprobe', 'yt-dlp'] as const)('uses the dedicated environment variable for %s', async tool => {
     const f = await fixture(tool)
     const key = tool === 'yt-dlp' ? 'STREAM_SYNC_YTDLP' : `STREAM_SYNC_${tool.toUpperCase()}`

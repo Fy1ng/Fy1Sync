@@ -10,6 +10,7 @@ import type { SourceRole } from '../src/core/types'
 import type { BufferState } from '../electron/bufferManager'
 import type { LoginPlatform, LoginResult, LoginStatus } from '../electron/login'
 import { isDecoderMode, type DecoderPreferencesService } from '../electron/decoderPreferences'
+import type { ToolsService } from '../electron/toolsService'
 
 export interface AcquisitionService {
   resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string, preferAdaptive?: boolean): Promise<ResolveResult>
@@ -29,6 +30,7 @@ export type DesktopServiceDeps = {
   registerMedia: (url: string) => string
   acquisition?: AcquisitionService
   decoderPreferences?: DecoderPreferencesService
+  tools?: ToolsService
 }
 
 export type DesktopService = {
@@ -130,6 +132,17 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
         }
 
         switch (method) {
+          case 'getToolsStatus':
+          case 'updateYtdlp': {
+            if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
+            if (!deps.tools) return fail('not-available', '工具管理不可用')
+            return { ok: true, value: await (method === 'getToolsStatus' ? deps.tools.status() : deps.tools.update()) }
+          }
+          case 'restoreYtdlp': {
+            if (!fields(args, ['target']) || (args.target !== 'previous' && args.target !== 'bundled')) return fail('invalid-arguments', '恢复工具参数无效')
+            if (!deps.tools) return fail('not-available', '工具管理不可用')
+            return { ok: true, value: await deps.tools.restore(args.target) }
+          }
           case 'getDecoderPreferences': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
             if (!deps.decoderPreferences) return fail('not-available', '解码设置不可用')

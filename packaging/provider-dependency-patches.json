@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "providerVersion": "2.0.2",
+  "overrides": {
+    "follow-redirects": "1.16.1",
+    "ip-address": "10.7.4"
+  },
+  "advisories": [
+    "https://github.com/advisories/GHSA-q3jh-wrc6-jgq8",
+    "https://github.com/advisories/GHSA-8r9p-f939-6h3c",
+    "https://github.com/advisories/GHSA-rxp7-6hxx-x8q5"
+  ],
+  "reason": "Patch vulnerable production transitive dependencies without changing provider source/version or script-mode behavior. The independent package lock records exact official npm URLs and integrity values."
+}

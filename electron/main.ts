@@ -17,6 +17,11 @@ import { Acquisition } from './acquisition'
 import { YtDlpRunner, type YtDlpDiagnostic } from './ytdlp'
 import { locateTool, type ToolSettings } from './toolLocator'
 import { DecoderPreferences } from './decoderPreferences'
+import { ManagedYtdlp } from './toolUpdater'
+import { DesktopTools } from './toolsService'
+import toolsLock from '../packaging/tools-lock.json'
+import { NativePrivatePermissions, privateDirectory } from './privateStorage'
+import { createHash } from 'node:crypto'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: {
   standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true,
@@ -53,8 +58,29 @@ async function start(): Promise<void> {
     }).catch(() => ({}))
   const logins = new LoginManager(userDataDir)
   const e2e = process.env.STREAM_SYNC_E2E === '1'
+  const offlineE2e = e2e && process.env.STREAM_SYNC_OFFLINE_E2E === '1'
+  const nativeFetch = globalThis.fetch
+  if (offlineE2e) {
+    globalThis.fetch = async (input, init) => {
+      if (/^https?:/i.test(input instanceof Request ? input.url : String(input))) throw new Error('默认离线测试禁止网络请求')
+      return nativeFetch(input, init)
+    }
+    session.defaultSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (_details, callback) => callback({ cancel: true }))
+  }
+  let fixtureRequest: ((url: string) => Promise<Response>) | undefined
+  const managedYtdlp = new ManagedYtdlp(userDataDir, { baselineVersion: app.isPackaged ? toolsLock.ytdlpVersion : undefined,
+    transport: (url, init) => fixtureRequest ? fixtureRequest(url) : globalThis.fetch(url, init),
+  })
+  mkdirSync(userDataDir, { recursive: true })
+  const providerCacheHome = privateDirectory(userDataDir, join(userDataDir, 'provider-cache'), new NativePrivatePermissions())
+  const toolContext = {
+    ...(app.isPackaged ? { bundledDir: join(process.resourcesPath, 'tools') } : {}),
+    managedYtdlp: () => managedYtdlp.activePath(),
+    providerCacheHome,
+  }
+  const tools = new DesktopTools(toolSettings, toolContext, managedYtdlp, process.env, !app.isPackaged)
   const youtubeDiagnostics: YtDlpDiagnostic[] = []
-  const ytdlp = new YtDlpRunner({ electronPath: process.execPath, cookies: logins, settings: toolSettings,
+  const ytdlp = new YtDlpRunner({ electronPath: process.execPath, cookies: logins, settings: toolSettings, toolContext,
     diagnostic: e2e ? event => { youtubeDiagnostics.push(event); if (youtubeDiagnostics.length > 100) youtubeDiagnostics.shift() } : undefined,
   })
   const bufferDiagnostics: unknown[] = []
@@ -88,7 +114,7 @@ async function start(): Promise<void> {
       track.maxHeadLag = Math.max(track.maxHeadLag, entry.head - entry.sq)
     }
   }
-  const buffer = new BufferManager({ userDataDir, ffmpegPath: () => locateTool('ffmpeg', toolSettings),
+  const buffer = new BufferManager({ userDataDir, ffmpegPath: () => locateTool('ffmpeg', toolSettings, process.env, toolContext),
     pullAdaptive: e2e ? async (source, options) => {
       adaptiveStats.rounds++
       try { return await pullAdaptive(source, { ...options,
@@ -119,15 +145,16 @@ async function start(): Promise<void> {
   if (e2e) buffer.subscribe(diagnoseBuffer)
   const acquisition = new Acquisition({ buffer, logins, runYtDlp: (url, adaptive) => ytdlp.resolve(url, adaptive), proxy,
     ensureTools: async (platform) => {
-      await locateTool('ffmpeg', toolSettings)
-      await locateTool('ffprobe', toolSettings)
-      if (platform === 'youtube') await locateTool('yt-dlp', toolSettings)
+      if (offlineE2e) throw new Error('默认离线测试禁止真实平台取流')
+      await locateTool('ffmpeg', toolSettings, process.env, toolContext)
+      await locateTool('ffprobe', toolSettings, process.env, toolContext)
+      if (platform === 'youtube') await locateTool('yt-dlp', toolSettings, process.env, toolContext)
     },
   })
   // Offline E2E drives events through the real IPC subscriptions, without a live room.
   const relay = e2e ? new DanmakuRelay({ createSocket: () => ({ send() {}, close() {}, addEventListener() {} }) }) : new DanmakuRelay()
   const service = createDesktopService({
-    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, registerMedia: media.register, acquisition, decoderPreferences,
+    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, registerMedia: media.register, acquisition, decoderPreferences, tools,
   })
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   session.defaultSession.setPermissionCheckHandler(() => false)
@@ -155,6 +182,22 @@ async function start(): Promise<void> {
   const contents = window.webContents
   const handlers = installIpcHandlers(ipcMain, contents, service)
   if (e2e) Object.assign(globalThis, { __streamSyncerTest: {
+    ...(!app.isPackaged ? { setToolUpdateFixture(bytes: Uint8Array, outcome: 'success' | 'hash-mismatch' | 'network-error') {
+      const content = Buffer.from(bytes)
+      if (!content.length || content.length > 64 * 1048576 || !['success', 'hash-mismatch', 'network-error'].includes(outcome)) throw new Error('Invalid update fixture')
+      const version = toolsLock.ytdlpVersion
+      const base = `https://github.com/yt-dlp/yt-dlp/releases/download/${version}/`
+      fixtureRequest = async url => {
+        if (outcome === 'network-error') throw new Error('Offline fixture network failure')
+        if (url === 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest') return new Response(JSON.stringify({ tag_name: version, draft: false, prerelease: false, assets: [
+          { name: 'yt-dlp.exe', browser_download_url: base + 'yt-dlp.exe', size: content.length },
+          { name: 'SHA2-256SUMS', browser_download_url: base + 'SHA2-256SUMS', size: 77 },
+        ] }))
+        if (url === base + 'SHA2-256SUMS') return new Response(`${outcome === 'hash-mismatch' ? '0'.repeat(64) : createHash('sha256').update(content).digest('hex')}  yt-dlp.exe\n`)
+        if (url === base + 'yt-dlp.exe') return new Response(content)
+        throw new Error('Unknown offline fixture request')
+      }
+    } } : {}),
     emitDanmaku: handlers.emitDanmaku,
     youtubeDiagnostics: () => youtubeDiagnostics,
     bufferDiagnostics: () => bufferDiagnostics,
@@ -185,6 +228,8 @@ async function start(): Promise<void> {
     media.clear()
     protocol.unhandle('app')
     delete (globalThis as { __streamSyncerTest?: unknown }).__streamSyncerTest
+    globalThis.fetch = nativeFetch
+    if (offlineE2e) session.defaultSession.webRequest.onBeforeRequest(null)
     dispose = undefined
   })()
   window.on('closed', () => { window = null; void dispose?.() })

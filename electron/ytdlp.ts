@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { locateTool, locateYouTubePotProvider, type ToolSettings } from './toolLocator'
+import { locateTool, locateYouTubePotProvider, type ToolSettings, type ToolContext } from './toolLocator'
 import { killProcessTree } from './bufferManager'
 import { youtubeAdaptiveFormats, youtubeFormats } from '../server/platforms/youtube'
 import { prepareScriptOnlyPotPlugin, type PrivatePotPlugin } from './potPlugin'
@@ -39,6 +39,7 @@ export class YtDlpRunner {
     electronPath: string
     cookies: YoutubeCookieAccess
     settings?: ToolSettings
+    toolContext?: ToolContext
     env?: NodeJS.ProcessEnv
     spawn?: typeof spawn
     timeoutMs?: number
@@ -54,8 +55,8 @@ export class YtDlpRunner {
 
   private async run(url: string, adaptive: boolean): Promise<unknown> {
     if (this.disposed) throw new Error('取流服务已关闭')
-    const executable = await locateTool('yt-dlp', this.options.settings, this.options.env)
-    const provider = adaptive ? await locateYouTubePotProvider(this.options.env) : undefined
+    const executable = await locateTool('yt-dlp', this.options.settings, this.options.env, this.options.toolContext)
+    const provider = adaptive ? await locateYouTubePotProvider(this.options.env, this.options.toolContext) : undefined
     this.options.diagnostic?.({ stage: 'provider', status: provider ? 'available' : 'unavailable' })
     return this.options.cookies.withTemporaryCookies('youtube', async (cookiePath) => {
       if (this.disposed) throw new Error('取流服务已关闭')
@@ -101,7 +102,8 @@ export class YtDlpRunner {
   private runChild(executable: string, args: string[], stage: 'hls' | 'adaptive'): Promise<unknown> {
     if (this.disposed) return Promise.reject(new Error('yt-dlp 超时或已取消'))
     // Only this child (and its JS runtime) inherits Electron's Node mode.
-    const env = { ...(this.options.env ?? process.env), ELECTRON_RUN_AS_NODE: '1', PYTHONIOENCODING: 'utf-8' }
+    const env = { ...(this.options.env ?? process.env), ELECTRON_RUN_AS_NODE: '1', PYTHONIOENCODING: 'utf-8',
+      ...(this.options.toolContext?.providerCacheHome ? { XDG_CACHE_HOME: this.options.toolContext.providerCacheHome } : {}) }
     return new Promise((resolve, reject) => {
       let stdout = ''
       let stderr = ''

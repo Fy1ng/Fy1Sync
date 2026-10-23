@@ -102,8 +102,9 @@ describe('SourceDialog desktop media registration', () => {
   })
 
   it('loads same-origin fixtures without a remote registration', async () => {
+    vi.mocked(bridge.invoke).mockResolvedValue({ ok: true, value: { fixturesAvailable: true, tools: [], provider: { version: '不可用' }, update: { phase: 'idle', message: 'fixture' } } } as any)
     const panel = within(openDialog())
-    fireEvent.click(panel.getByRole('button', { name: /测试源 · 官方画面/ }))
+    fireEvent.click(await panel.findByRole('button', { name: /测试源 · 官方画面/ }))
     await waitFor(() => expect(session.engine.getState().official.descriptor?.url).toBe('/test-sources/official.mp4'))
     await waitFor(() => expect(panel.queryByRole('button', { name: '处理中…' })).not.toBeInTheDocument())
     expect(bridge.invoke).not.toHaveBeenCalledWith('resolve', expect.anything())

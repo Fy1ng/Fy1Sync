@@ -74,6 +74,9 @@ export class ApiClient {
   }
 
   getDecoderPreferences() { return this.request('getDecoderPreferences', undefined) }
+  getToolsStatus() { return this.request('getToolsStatus', undefined) }
+  updateYtdlp() { return this.request('updateYtdlp', undefined) }
+  restoreYtdlp(target: 'previous' | 'bundled') { return this.request('restoreYtdlp', { target }) }
   setDecoderPreferences(mode: DecoderMode) { return this.request('setDecoderPreferences', { mode }) }
 
   /** Compatibility seam; main authorizes the local app frame rather than a token. */
