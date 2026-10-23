@@ -6,7 +6,7 @@ import { Readable } from 'node:stream'
 export type BufferRole = 'official' | 'commentary'
 interface ActiveRole { generation: string; directory: string }
 const TOKEN = /^[a-zA-Z0-9_-]{1,128}$/
-const FILE = /^(?:index\.m3u8|segment_\d+_\d{9}\.ts)$/
+const FILE = /^(?:index\.m3u8|segment_\d+_\d{9}\.(?:ts|m4s)|init_\d+\.mp4)$/
 
 /** A capability route for published files in the current session only. */
 export class BufferRoute {
@@ -45,7 +45,7 @@ export class BufferRoute {
       const info = await handle.stat()
       if (!info.isFile() || this.roles.get(role) !== active) { await handle.close(); return new Response(null, { status: 404 }) }
       const headers = new Headers({
-        'content-type': parts[5] === 'index.m3u8' ? 'application/vnd.apple.mpegurl' : 'video/mp2t',
+        'content-type': parts[5] === 'index.m3u8' ? 'application/vnd.apple.mpegurl' : parts[5]!.endsWith('.ts') ? 'video/mp2t' : 'video/mp4',
         'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'accept-ranges': 'bytes',
       })
       const range = parseRange(request.headers.get('range'), info.size)

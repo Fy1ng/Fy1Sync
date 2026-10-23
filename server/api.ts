@@ -11,7 +11,7 @@ import type { BufferState } from '../electron/bufferManager'
 import type { LoginPlatform, LoginResult, LoginStatus } from '../electron/login'
 
 export interface AcquisitionService {
-  resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string): Promise<ResolveResult>
+  resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string, preferAdaptive?: boolean): Promise<ResolveResult>
   switchQuality(role: SourceRole, quality: string): Promise<ResolveResult>
   stop(role: SourceRole): Promise<void>
   subscribe(listener: (state: BufferState) => void): () => void
@@ -140,18 +140,20 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             return { ok: true, value: { ok: true } }
           }
           case 'resolve': {
-            if (!fields(args, ['input'], ['platform', 'role', 'quality'])) return fail('invalid-arguments', '媒体解析参数无效')
+            if (!fields(args, ['input'], ['platform', 'role', 'quality', 'preferAdaptive'])) return fail('invalid-arguments', '媒体解析参数无效')
             if (typeof args.input !== 'string' || args.input.trim().length === 0) {
               return fail('missing-input', '缺少要解析的地址或频道名')
             }
             if (args.input.length > MAX_INPUT_LENGTH || (args.platform !== undefined && !isPlatform(args.platform))
               || (args.role !== undefined && !isRole(args.role))
+              || (args.preferAdaptive !== undefined && typeof args.preferAdaptive !== 'boolean')
               || (args.quality !== undefined && (typeof args.quality !== 'string' || args.quality.length > 128))) {
               return fail('invalid-arguments', '媒体地址过长或平台参数无效')
             }
             const input = args.input.trim()
             if (deps.acquisition) return { ok: true, value: await deps.acquisition.resolve(
               input, args.platform as PlatformKind | undefined, args.role as SourceRole ?? 'official', args.quality as string | undefined,
+              ...(args.preferAdaptive === undefined ? [] : [args.preferAdaptive as boolean]),
             ) }
             if (fixturePath(input) && (args.platform === undefined || args.platform === 'direct')) {
               return { ok: true, value: { ok: true, stream: {

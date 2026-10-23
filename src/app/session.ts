@@ -215,6 +215,13 @@ export class Session {
     this.engine.subscribe(() => this.notify())
     this.releaseBuffer = apiClient.subscribeBuffer((state) => {
       if (state.role !== 'official' && state.role !== 'commentary') return
+      const previousNotice = this.bufferStates[state.role]?.notice
+      const notice = state.notice
+      if (notice?.code === 'youtube-adaptive-fallback'
+        && (previousNotice?.code !== notice.code || previousNotice.fromHeight !== notice.fromHeight
+          || previousNotice.toHeight !== notice.toHeight)) {
+        this.notice('warn', `${notice.fromHeight}p 取流失败, 已回退到 ${notice.toHeight}p`)
+      }
       this.bufferStates = { ...this.bufferStates, [state.role]: state }
       this.notify()
     })
@@ -270,8 +277,13 @@ export class Session {
 
   private buildSnapshot(): SessionSnapshot {
     const stats = this.timeline.stats()
+    const media = this.engine.getState()
+    for (const role of SOURCE_ROLES) {
+      const descriptor = this.sourceDescriptor(role)
+      if (descriptor !== media[role].descriptor) media[role] = { ...media[role], descriptor }
+    }
     return {
-      media: this.engine.getState(),
+      media,
       settings: this.settingsValue,
       appliedRewind: { ...this.applied },
       offsetSeconds: offsetFromRewind(this.applied),
@@ -477,6 +489,18 @@ export class Session {
 
   // ----------------------------------------------------------------- sources
 
+  /** Reflect a producer fallback without replacing the attachment or its playhead. */
+  private sourceDescriptor(role: SourceRole): MediaDescriptor | null {
+    const descriptor = this.engine.getState()[role].descriptor
+    const notice = this.bufferStates[role]?.notice
+    if (!descriptor || notice?.code !== 'youtube-adaptive-fallback') return descriptor
+    const selected = descriptor.sourceQualities?.find(option => option.id === descriptor.sourceQuality)
+    if (!selected?.adaptive || selected.height !== notice.fromHeight) return descriptor
+    const actual = descriptor.sourceQualities?.filter(option => !option.adaptive && option.height === notice.toHeight)
+      .sort((a, b) => (b.fps ?? 0) - (a.fps ?? 0))[0]
+    return actual ? { ...descriptor, sourceQuality: actual.id } : descriptor
+  }
+
   beginSourceChange(role: SourceRole): number {
     this.invalidateAutomaticWork(role)
     return ++this.sourceGeneration[role]
@@ -523,7 +547,7 @@ export class Session {
 
   /** Restart just one producer, then make at most one explicit synchronization attempt. */
   async changeSourceQuality(role: SourceRole, quality: string): Promise<void> {
-    const descriptor = this.engine.getState()[role].descriptor
+    const descriptor = this.sourceDescriptor(role)
     if (this.qualityBusy[role] || !descriptor?.sourceQualities?.some((option) => option.id === quality)
       || descriptor.sourceQuality === quality) return
     // Same broadcast, same scoreboard: the ROI is a fraction of the frame and the glyphs a

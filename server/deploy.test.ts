@@ -14,7 +14,9 @@ for (const entry of ['electron/main.ts', 'electron/preload.ts']) {
         for (const chunk of output.output) {
           if (chunk.type !== 'chunk') continue
           expect(chunk.imports.every(name => name === 'electron' || name.startsWith('node:'))).toBe(true)
-          expect(chunk.code).not.toMatch(/createServer|server\.listen\(/)
+          // The Windows mux transport may bind a local named pipe, never HTTP/TCP.
+          // adaptiveTransport's fake-server tests check the exact pipe-only target.
+          expect(chunk.code).not.toMatch(/node:(?:http|https)['"]|server\.listen\(\s*\d/)
         }
       }
     })

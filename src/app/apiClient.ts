@@ -83,8 +83,12 @@ export class ApiClient {
     platform?: string,
     role?: SourceRole,
     quality?: string,
+    preferAdaptive?: boolean,
   ): Promise<ApiResult<{ ok: true; stream: ResolvedStream } | { ok: false; failure: ResolveFailure }>> {
-    return this.request('resolve', { input, platform, ...(role ? { role } : {}), ...(quality ? { quality } : {}) })
+    return this.request('resolve', {
+      input, platform, ...(role ? { role } : {}), ...(quality ? { quality } : {}),
+      ...(preferAdaptive !== undefined ? { preferAdaptive } : {}),
+    })
   }
 
   switchQuality(role: SourceRole, quality: string) { return this.request('switchQuality', { role, quality }) }

@@ -32,7 +32,8 @@ export async function launchApplication(label: string): Promise<RunningApplicati
   let application: ElectronApplication | undefined
   try {
     application = await _electron.launch({
-      args: [path.join(projectRoot, 'dist', 'electron', 'main.cjs'), '--autoplay-policy=no-user-gesture-required', '--mute-audio'],
+      args: [path.join(projectRoot, 'dist', 'electron', 'main.cjs'), '--autoplay-policy=no-user-gesture-required', '--mute-audio',
+        ...(process.env.STREAM_SYNC_E2E_SOFTWARE_VIDEO === '1' ? ['--disable-accelerated-video-decode'] : [])],
       cwd: projectRoot,
       env,
       timeout: 30_000,

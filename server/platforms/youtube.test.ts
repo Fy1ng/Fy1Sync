@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import fixture from './fixtures/youtube-live.json'
+import adaptiveFixture from './fixtures/youtube-adaptive-live.json'
 import { detectPlatform, resolveStream } from './index'
-import { parseYouTubeUrl, resolveYouTube, selectYouTubeFormat, youtubeFormats } from './youtube'
+import { parseYouTubeUrl, resolveYouTube, selectYouTubeFormat, youtubeAdaptiveFormats, youtubeFormats } from './youtube'
 import type { ResolverDeps } from './types'
 
 function deps(overrides: Partial<ResolverDeps> = {}): ResolverDeps {
@@ -32,6 +33,70 @@ describe('YouTube public page validation', () => {
     expect(parseYouTubeUrl(input)).toBeNull()
     expect((await resolveYouTube(input, deps({ runYtDlp: runner }))).ok).toBe(false)
     expect(runner).not.toHaveBeenCalled()
+  })
+})
+
+describe('YouTube optional adaptive formats', () => {
+  const adaptiveDeps = (overrides: Partial<ResolverDeps> = {}) => deps({ runYtDlp: async () => adaptiveFixture, ...overrides })
+
+  it('orders higher adaptive heights with HLS, prefers VP9 per height/fps and defaults to HLS', async () => {
+    const result = await resolveYouTube('youtu.be/abcdefghijk', adaptiveDeps())
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.stream.qualities).toEqual([
+      { id: '313', label: '2160p', height: 2160, fps: 30, adaptive: true },
+      { id: '308', label: '1440p60', height: 1440, fps: 60, adaptive: true },
+      { id: '301', label: '1080p60', height: 1080, fps: 60 },
+      { id: '300', label: '720p60', height: 720, fps: 60 },
+    ])
+    expect(result.stream.quality).toBe('301')
+    expect(result.stream).not.toHaveProperty('adaptive')
+    expect(JSON.stringify(result.stream)).not.toContain('googlevideo')
+  })
+
+  it.each([{ preferAdaptive: true, expected: '313' }, { quality: '1440p60', expected: '308' }, { quality: '308', expected: '308' }])('selects optional adaptive via %j', async ({ expected, ...settings }) => {
+    const proxify = vi.fn((url: string) => `proxied:${url}`)
+    const result = await resolveYouTube('youtu.be/abcdefghijk', adaptiveDeps({ ...settings, proxify }))
+    expect(result.ok && result.stream.quality).toBe(expected)
+    if (!result.ok) return
+    expect(result.stream.adaptive).toMatchObject({ videoContainer: 'webm', audioUrl: expect.stringContaining('itag=140') })
+    expect(result.stream.adaptive?.videoUrl).toContain(`itag=${expected}`)
+    expect(result.stream.url).toBe('proxied:https://media.example.invalid/youtube/301.m3u8')
+    expect(proxify).toHaveBeenCalledExactlyOnceWith('https://media.example.invalid/youtube/301.m3u8')
+  })
+
+  it('falls back to AV1 when VP9 is absent and supports its MP4 input container', async () => {
+    const info = { ...adaptiveFixture, formats: adaptiveFixture.formats.filter(item => item.format_id !== '308') }
+    const result = await resolveYouTube('youtu.be/abcdefghijk', adaptiveDeps({ quality: '1440p60', runYtDlp: async () => info }))
+    expect(result.ok && result.stream.quality).toBe('400')
+    expect(result.ok && result.stream.adaptive?.videoContainer).toBe('mp4')
+  })
+
+  it('keeps HLS usable when audio is missing or adaptive formats are at or below HLS', async () => {
+    const info = { ...adaptiveFixture, formats: adaptiveFixture.formats.filter(item => item.vcodec !== 'none') }
+    expect(youtubeAdaptiveFormats(info, 1080)).toEqual([])
+    expect(youtubeAdaptiveFormats(adaptiveFixture, 2160)).toEqual([])
+    const result = await resolveYouTube('youtu.be/abcdefghijk', adaptiveDeps({ preferAdaptive: true, runYtDlp: async () => info }))
+    expect(result.ok && result.stream.quality).toBe('301')
+  })
+
+  it.each([
+    'http://rr1.googlevideo.com/videoplayback', 'https://googlevideo.com.evil.invalid/videoplayback',
+    'https://user:secret@rr1.googlevideo.com/videoplayback', 'https://rr1.googlevideo.com:444/videoplayback',
+    'https://rr1.googlevideo.com/not-media', 'file:///videoplayback',
+  ])('rejects unsafe signed adaptive inputs: %s', url => {
+    const source = adaptiveFixture.formats.find(item => item.format_id === '308')!
+    const audio = adaptiveFixture.formats.find(item => item.format_id === '140')!
+    expect(youtubeAdaptiveFormats({ formats: [{ ...source, url }, audio] }, 1080)).toEqual([])
+    expect(youtubeAdaptiveFormats({ formats: [source, { ...audio, url }] }, 1080)).toEqual([])
+  })
+
+  it('excludes unsupported codecs, containers and transport protocols', () => {
+    const source = adaptiveFixture.formats.find(item => item.format_id === '308')!
+    const audio = adaptiveFixture.formats.find(item => item.format_id === '140')!
+    for (const patch of [{ vcodec: 'h264' }, { ext: 'mp4' }, { protocol: 'm3u8_native' }, { acodec: 'opus' }]) {
+      expect(youtubeAdaptiveFormats({ formats: [{ ...source, ...patch }, audio] }, 1080)).toEqual([])
+    }
   })
 })
 

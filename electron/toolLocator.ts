@@ -4,6 +4,7 @@ import path from 'node:path'
 
 export type ToolName = 'ffmpeg' | 'ffprobe' | 'yt-dlp'
 export interface ToolSettings { ffmpegPath?: string; ffprobePath?: string; ytdlpPath?: string }
+export interface YouTubePotProvider { pluginDir: string; serverHome: string }
 export type ToolErrorCode = 'tool-missing' | 'tool-invalid-path' | 'tool-not-executable'
 const ENV_KEYS: Record<ToolName, string> = { ffmpeg: 'STREAM_SYNC_FFMPEG', ffprobe: 'STREAM_SYNC_FFPROBE', 'yt-dlp': 'STREAM_SYNC_YTDLP' }
 const SETTING_KEYS = { ffmpeg: 'ffmpegPath', ffprobe: 'ffprobePath', 'yt-dlp': 'ytdlpPath' } as const
@@ -32,6 +33,22 @@ export async function locateTool(tool: ToolName, settings: ToolSettings = {}, en
     try { return await executable(path.join(directory, filename), tool) } catch { /* Continue searching trusted absolute PATH entries. */ }
   }
   throw new ToolError('tool-missing', tool)
+}
+
+/** Optional script provider directories are never discovered from PATH or started here. */
+export async function locateYouTubePotProvider(env: NodeJS.ProcessEnv = process.env): Promise<YouTubePotProvider | undefined> {
+  const pluginDir = env.STREAM_SYNC_POT_PLUGIN_DIR?.trim()
+  const serverHome = env.STREAM_SYNC_POT_SERVER_HOME?.trim()
+  if (!pluginDir || !serverHome) return undefined
+  // yt-dlp parses commas/semicolons inside extractor-args instead of passing them literally.
+  if ([pluginDir, serverHome].some(candidate => !path.isAbsolute(candidate) || /[\0\r\n;,]/.test(candidate))) return undefined
+  try {
+    const [plugin, server] = await Promise.all([realpath(pluginDir), realpath(serverHome)])
+    if (!(await stat(plugin)).isDirectory() || !(await stat(server)).isDirectory()) return undefined
+    if (!(await stat(path.join(server, 'build', 'generate_once.js'))).isFile()) return undefined
+    await Promise.all([access(plugin, constants.R_OK), access(server, constants.R_OK), access(path.join(server, 'build', 'generate_once.js'), constants.R_OK)])
+    return { pluginDir: plugin, serverHome: server }
+  } catch { return undefined }
 }
 
 async function executable(candidate: string, tool: ToolName): Promise<string> {

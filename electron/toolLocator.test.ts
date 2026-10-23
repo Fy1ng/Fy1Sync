@@ -2,7 +2,7 @@ import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { locateTool, ToolError } from './toolLocator'
+import { locateTool, locateYouTubePotProvider, ToolError } from './toolLocator'
 
 const roots: string[] = []
 async function fixture(name = 'ffmpeg'): Promise<{ root: string; file: string }> {
@@ -56,5 +56,35 @@ describe('tool locator', () => {
     const batch = path.join(f.root, 'ffmpeg.cmd')
     await writeFile(batch, 'exit /b 0')
     await expect(locateTool('ffmpeg', { ffmpegPath: batch }, {})).rejects.toMatchObject({ code: 'tool-not-executable' })
+  })
+})
+
+describe('optional YouTube PO token script locator', () => {
+  it('requires both explicit provider paths without PATH discovery', async () => {
+    const f = await fixture()
+    expect(await locateYouTubePotProvider({ PATH: f.root })).toBeUndefined()
+    expect(await locateYouTubePotProvider({ STREAM_SYNC_POT_PLUGIN_DIR: f.root })).toBeUndefined()
+    expect(await locateYouTubePotProvider({ STREAM_SYNC_POT_SERVER_HOME: f.root })).toBeUndefined()
+  })
+
+  it('resolves readable provider directories with the one-shot script', async () => {
+    const f = await fixture()
+    const plugin = path.join(f.root, 'plugins')
+    const server = path.join(f.root, 'server home')
+    await mkdir(plugin)
+    await mkdir(path.join(server, 'build'), { recursive: true })
+    await writeFile(path.join(server, 'build', 'generate_once.js'), '// fixture only')
+    expect(await locateYouTubePotProvider({ STREAM_SYNC_POT_PLUGIN_DIR: plugin, STREAM_SYNC_POT_SERVER_HOME: server }))
+      .toEqual({ pluginDir: plugin, serverHome: server })
+  })
+
+  it('silently leaves HLS available for missing or incomplete provider installations', async () => {
+    const f = await fixture()
+    expect(await locateYouTubePotProvider({ STREAM_SYNC_POT_PLUGIN_DIR: f.root, STREAM_SYNC_POT_SERVER_HOME: f.root })).toBeUndefined()
+    expect(await locateYouTubePotProvider({ STREAM_SYNC_POT_PLUGIN_DIR: f.file, STREAM_SYNC_POT_SERVER_HOME: f.root })).toBeUndefined()
+  })
+
+  it.each(['relative', 'bad\0path', '/unsafe;path', '/unsafe,path', '/unsafe\npath'])('rejects invalid provider argument path %s', async candidate => {
+    expect(await locateYouTubePotProvider({ STREAM_SYNC_POT_PLUGIN_DIR: candidate, STREAM_SYNC_POT_SERVER_HOME: candidate })).toBeUndefined()
   })
 })

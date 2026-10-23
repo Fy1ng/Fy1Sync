@@ -43,6 +43,20 @@ function openDialog(): HTMLElement {
 }
 
 describe('SourceDialog desktop media registration', () => {
+  it.each([false, true])('passes the persisted adaptive preference (%s) through the existing resolve path', async preferAdaptive => {
+    session.updateSettings({ preferAdaptive })
+    const panel = within(openDialog())
+    fireEvent.change(panel.getByLabelText('直播间或媒体地址'), {
+      target: { value: 'https://www.youtube.com/watch?v=abcdefghijk' },
+    })
+    fireEvent.click(panel.getByRole('button', { name: '加载' }))
+    await waitFor(() => expect(bridge.invoke).toHaveBeenCalledWith('resolve', {
+      input: 'https://www.youtube.com/watch?v=abcdefghijk', platform: 'youtube', role: 'official',
+      ...(preferAdaptive ? { preferAdaptive: true } : {}),
+    }))
+    session.updateSettings({ preferAdaptive: false })
+  })
+
   it('registers pasted remote media and loads only the returned opaque URL', async () => {
     const panel = within(openDialog())
     fireEvent.change(panel.getByLabelText('直播间或媒体地址'), {
@@ -79,12 +93,14 @@ describe('SourceDialog desktop media registration', () => {
     vi.mocked(bridge.invoke).mockResolvedValue({ ok: true, value: { ok: true, stream: {
       platform: 'youtube', channel: 'abcdefghijk', label: 'YouTube 直播', kind: 'hls', requiresProxy: false,
       url: 'app://app/buffer/session/official/generation/index.m3u8', quality: '301',
-      qualities: [{ id: '301', label: '1080p60' }, { id: '300', label: '720p60' }],
+      qualities: [{ id: '308', label: '1440p60', height: 1440, fps: 60, adaptive: true }, { id: '301', label: '1080p60' }, { id: '300', label: '720p60' }],
     } } })
     const panel = within(openDialog())
     fireEvent.change(panel.getByLabelText('直播间或媒体地址'), { target: { value: 'https://www.youtube.com/watch?v=abcdefghijk' } })
     fireEvent.click(panel.getByRole('button', { name: '加载' }))
     expect(await panel.findByRole('combobox', { name: '画质' })).toHaveValue('301')
+    expect(panel.getByRole('option', { name: '1440p60' })).toBeInTheDocument()
+    expect(session.engine.getState().official.descriptor?.sourceQualities?.[0]?.adaptive).toBe(true)
     expect(panel.getByRole('option', { name: '720p60' })).toBeInTheDocument()
   })
 

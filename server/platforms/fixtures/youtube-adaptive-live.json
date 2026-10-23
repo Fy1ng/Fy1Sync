@@ -1,0 +1,16 @@
+{
+  "_fixture": "Sanitized P0c yt-dlp live format subset. Identifying metadata and signed tokens removed; googlevideo hosts are syntactically representative only.",
+  "id": "abcdefghijk",
+  "is_live": true,
+  "live_status": "is_live",
+  "formats": [
+    { "format_id": "300", "protocol": "m3u8_native", "ext": "mp4", "height": 720, "fps": 60, "vcodec": "avc1.4D4020", "acodec": "mp4a.40.2", "tbr": 2922, "url": "https://media.example.invalid/youtube/300.m3u8" },
+    { "format_id": "301", "protocol": "m3u8_native", "ext": "mp4", "height": 1080, "fps": 60, "vcodec": "avc1.4D402A", "acodec": "mp4a.40.2", "tbr": 5552, "url": "https://media.example.invalid/youtube/301.m3u8" },
+    { "format_id": "140", "protocol": "https", "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.2", "tbr": 128, "url": "https://rr1---sn-fixture.googlevideo.com/videoplayback?itag=140&source=yt_live_broadcast" },
+    { "format_id": "139", "protocol": "https", "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.5", "tbr": 48, "url": "https://rr1---sn-fixture.googlevideo.com/videoplayback?itag=139&source=yt_live_broadcast" },
+    { "format_id": "248", "protocol": "https", "ext": "webm", "height": 1080, "fps": 60, "vcodec": "vp9", "acodec": "none", "tbr": 3000, "url": "https://rr1---sn-fixture.googlevideo.com/videoplayback?itag=248&source=yt_live_broadcast" },
+    { "format_id": "308", "protocol": "https", "ext": "webm", "height": 1440, "fps": 60, "vcodec": "vp9", "acodec": "none", "tbr": 9000, "url": "https://rr1---sn-fixture.googlevideo.com/videoplayback?itag=308&source=yt_live_broadcast" },
+    { "format_id": "400", "protocol": "https", "ext": "mp4", "height": 1440, "fps": 60, "vcodec": "av01.0.12M.08", "acodec": "none", "tbr": 10000, "url": "https://rr1---sn-fixture.googlevideo.com/videoplayback?itag=400&source=yt_live_broadcast" },
+    { "format_id": "313", "protocol": "https", "ext": "webm", "height": 2160, "fps": 30, "vcodec": "vp09.00.51.08", "acodec": "none", "tbr": 12000, "url": "https://rr1---sn-fixture.googlevideo.com/videoplayback?itag=313&source=yt_live_broadcast" }
+  ]
+}

@@ -4,11 +4,11 @@
 
 同一场比赛, 官方源画质好但没有解说, 国内直播有解说但通常慢十几秒. 应用同时播放两路视频, 识别画面中的倒计时跳秒, 估算并应用延迟差.
 
-当前为 P2 Electron 桌面版, 已接入 ffmpeg 本地循环缓冲, YouTube / 斗鱼取流, 独立 Chrome 登录和画质切换, 沿用 React 播放器和识别核心. Windows 为主要平台, macOS / Linux 尚待实际验证. 正式应用的真实平台与登录验收仍需在沙箱外完成, P0 原型证据不能替代本轮验收. 完整阶段计划见 [docs/plan.md](docs/plan.md).
+当前为推进到 P5b 的 Electron + React + Rust/WASM 桌面工作副本, 已接入 ffmpeg 本地循环缓冲, 平台取流, 独立 Chrome 登录, 自动/手动同步和可选 YouTube 自适应高画质. Windows 为主要验证平台, macOS / Linux 和安装包尚未验收. 本地回归与真实平台验收分别记录, P0 原型证据不能替代正式应用验收. 完整阶段计划见 [docs/plan.md](docs/plan.md).
 
 ## 快速开始
 
-需要 Node.js >=22.12 和 npm. 在项目目录执行:
+需要 Node.js >=22.12, npm, Rust 工具链及 `wasm32-unknown-unknown` target. 构建脚本使用固定版本的 wasm-bindgen, 缺少本地工具时通过 Cargo 安装. 在项目目录执行:
 
 ```bash
 npm install
@@ -43,7 +43,7 @@ npm start
 3. 填解说方的斗鱼房间号连接弹幕. 弹幕按解说视频的媒体时间排队, 跟随同步后的播放位置.
 4. 在配置编辑器中载入本地样片, 框选 ROI, 取帧, 逐个标注时钟字符, 再发布到本机. 具体流程见 [Profile Editor](docs/profile-editor.md).
 
-有可选档位时, 片源设置及底部覆盖条分别显示官方和解说画质. 切画质只重启对应一路的 ffmpeg, 清零该路已应用的回退量. 两路画面就绪且已选择识别预设后, 自动尝试同步一次; 未就绪, 未选预设或同步未成功时会提示点击立即同步. YouTube 当前只支持直播的 H.264/AAC 双轨合一 HLS, 不支持点播, 回放或单独的 DASH 音视频轨. 斗鱼使用 PC `getH5PlayV1`, 原画可能需要登录, 列表标签不等于已经实测的分辨率.
+有可选档位时, 片源设置及底部覆盖条分别显示官方和解说画质. 切画质只重启对应一路的 ffmpeg, 清零该路已应用的回退量. 两路画面就绪且已选择识别预设后, 自动尝试同步一次; 未就绪, 未选预设或同步未成功时会提示点击立即同步. YouTube 默认选择直播的 H.264/AAC HLS; 配置脚本 PO Token provider 后, 可列出高于最高 HLS 的 VP9/AV1 自适应档位, 如1440p60, VP9优先. `preferAdaptive` 默认 false, 自适应失败会自动回退 HLS. 具体配置和边界见 [平台说明](docs/platform-notes.md#youtube-自适应与-po-token). 不支持点播或回放. 斗鱼使用 PC `getH5PlayV1`, 原画可能需要登录, 列表标签不等于已经实测的分辨率.
 
 配置编辑器位于应用内部的 `app://app/admin`, 本机窗口可直接进入, 无需管理令牌. 发布保留字段校验和 ETag 并发保护, 其他会话修改过同一预设时会要求重新载入.
 
@@ -57,7 +57,7 @@ cookie 保存在 userData 的私有目录, 仅当前用户可读写. YouTube 调
 
 已发布预设默认保存在 Electron `app.getPath('userData')/presets`, 每个预设一份 JSON. 编辑器草稿保存在当前应用 Profile 的 IndexedDB, 播放设置保存在本机存储.
 
-P2 在同一 userData 下使用 `browser-profile/<platform>/`, `cookies/<platform>.txt`, `tools.json` 和 `buffer/<session>/<role>/`. 两路各有一个 ffmpeg 子进程, 默认按播放列表 `EXTINF` 累计保留最近约 180 s, 以完整分片为边界, 不把 90 个分片直接视为 180 s. 缓冲量和启动, 停滞, 重连, 失败状态通过 IPC 事件显示. 每次重新加载或切画质生成新的缓冲 URL; 自动重连保留 URL, 追加 discontinuity 并重新解析签名地址. 默认最多连续重试 5 次, 间隔 1 / 2 / 5 / 10 / 15 s, 连续稳定产出 30 s 后重置失败计数. 正常退出会终止 ffmpeg 进程树并删除本次会话目录, 不是永久录像.
+应用在同一 userData 下使用 `browser-profile/<platform>/`, `cookies/<platform>.txt`, `tools.json` 和 `buffer/<session>/<role>/`. 两路各有一个 ffmpeg 子进程, 默认按播放列表 `EXTINF` 累计保留最近约 180 s, 以完整分片为边界, 不把 90 个分片直接视为 180 s. 缓冲量和启动, 停滞, 重连, 失败状态通过 IPC 事件显示. 每次重新加载或切画质生成新的缓冲 URL; 自动重连保留 URL, 追加 discontinuity 并重新解析签名地址. HLS默认最多连续重试 5 次, 间隔 1 / 2 / 5 / 10 / 15 s, 连续稳定产出 30 s 后重置失败计数. 自适应媒体经双管道转为fMP4, 连续失败两轮后切换最佳HLS并保持当前能力URL. 正常退出会终止 ffmpeg 进程树并删除本次会话目录, 不是永久录像.
 
 以下环境变量供本机开发和隔离验证使用:
 
@@ -72,7 +72,7 @@ P2 在同一 userData 下使用 `browser-profile/<platform>/`, `cookies/<platfor
 
 Electron 窗口启用 `contextIsolation`, `sandbox`, `webSecurity`, 关闭 `nodeIntegration`. 页面不能直接使用 Node, 只能通过 preload 暴露的 `window.streamSyncer` 白名单接口调用主进程. 主进程校验调用来源和参数; 外部导航, 新窗口和权限请求被拒绝. 编辑器的写入资格来自受信任的本机应用窗口, 不是共享令牌.
 
-页面, 本地测试媒体和本地缓冲使用同源自定义协议. 缓冲路径只允许读取活动会话, 角色和 generation 对应的播放列表与分片, 不接受任意文件路径. 平台 API 使用 safeFetch 的 SSRF 防护, 解析出的 ffmpeg 输入先通过 checkUrl 校验. 后续媒体网络访问由 ffmpeg 执行, 其重定向和 DNS 不经过 safeFetch 的逐跳检查. 保留的媒体登记路径使用不透明标识, 由主进程 safeFetch 读取, 支持 Range 和受控 HLS 子资源. 具体边界见 [媒体路径与安全](docs/media-proxy.md).
+页面, 本地测试媒体和本地缓冲使用同源自定义协议. 缓冲路径只允许读取活动会话, 角色和 generation 对应的播放列表与分片, 不接受任意文件路径. 平台 API 使用 safeFetch 的 SSRF 防护, 解析出的 ffmpeg URL 输入先通过 checkUrl 校验; 此类输入的后续重定向和DNS由ffmpeg处理. 自适应分片由主进程 safeFetch 逐跳检查 googlevideo HTTPS 域名和DNS后读取, 签名URL不传给ffmpeg或渲染进程. 保留的媒体登记路径使用不透明标识, 由主进程 safeFetch 读取, 支持 Range 和受控 HLS 子资源. 具体边界见 [媒体路径与安全](docs/media-proxy.md).
 
 安全配置和单元测试不代表真实平台已可播放. 平台认证, CDN 限制, 远程媒体兼容性, 登录和实际直播稳定性仍需单独验证.
 
@@ -91,9 +91,13 @@ npm run test:e2e     # 启动真实 Electron 的 Playwright 场景
 
 E2E 通过 `_electron.launch` 启动 `dist/electron/main.cjs`, 无 webServer 和外部浏览器. 原有场景继续覆盖 IPC, 本机编辑器和媒体路径安全. 新增场景通过真正的 BufferManager 和 ffmpeg 将本地 HLS 测试源实时写入缓冲, 检查播放与回退; 不依赖真实平台. 弹幕测试只在主进程边缘注入确定消息, preload, 订阅, 时间线和叠加层均使用实际实现. 真实网络平台测试通过 `STREAM_SYNC_LIVE_TESTS=1` 显式启用, 默认不运行.
 
-**Codex 当前执行沙箱无法创建 Chromium restricted token.** 在沙箱内只运行类型检查, 单元测试, 构建和 `npx playwright test --list`. 完整 E2E 必须由指挥方在普通用户终端, 先构建后运行 `npx playwright test`. 启动失败会给出明确提示, 不记为验证通过.
+2026-10-23 本地构建、2019项Vitest、94项Rust已通过. 离线Electron E2E覆盖IPC、播放、循环缓冲与VP9到H.264的fMP4切换, 早期沙箱无法启动Chromium的记录属于历史限制. 当前结果以本地运行记录为准, 启动失败或跳过的场景不记为通过.
 
-沙箱外还需分别验证系统 Chrome 登录与退出, 真实 YouTube / 斗鱼取流和画质切换, 连续播放超过 300 s 及上游 EOF 后重新解析恢复, 以及回退后不会被拉回直播边缘. 自动化测试结果与这些真实平台验收应分开记录.
+真实1440p场景为 `npx playwright test e2e/youtube-adaptive.spec.ts`, 需同时设置 `STREAM_SYNC_LIVE_TESTS=1`, `STREAM_SYNC_YOUTUBE_ADAPTIVE=1`, 两个provider目录、`STREAM_SYNC_YOUTUBE_LIVE_URL`和显式授权的`STREAM_SYNC_YOUTUBE_ADAPTIVE_COOKIE_FILE`. 只将cookie导入可丢弃profile, 不读取日常浏览器资料. 默认在至少30秒fMP4缓冲后观察30秒实际1440p播放; `STREAM_SYNC_ADAPTIVE_SECONDS=1800`和`STREAM_SYNC_ADAPTIVE_LONG=1`显式启用30分钟持续验收. `STREAM_SYNC_ADAPTIVE_EXPECT_FPS=60`还要求1440p60菜单项和实际增量帧率, 不只检查标签. 测试记录实际高度、CDP解码器属性、帧增量、分片可读性、缓冲间隙、播放速率、页面可见性和重连/回退, HLS回退不会算作1440p通过. 脱敏JSON写入Playwright输出目录.
+
+系统Chrome手工登录与退出、真实平台画质切换、30分钟直播和上游EOF恢复等项目应按各自实测结果验收, 不从离线回归推断通过. 当前真实状态见 [平台说明](docs/platform-notes.md#验证边界).
+
+当前真实1440p30和1440p60短测通过, 严格长时播放仍未通过: 已观察到取流连续、本地仍有缓冲但播放停顿与丢帧. 同片段本地D3D11回放可间歇复现, 软件解码短时对照通过, 尚不足以认定根因或改变默认策略. opt-in本地诊断场景`e2e/adaptive-local.spec.ts`只读本轮隔离媒体, `STREAM_SYNC_E2E_SOFTWARE_VIDEO=1`仅用于测试子进程的对照, 不是生产配置或已验收的兼容方案.
 
 ## 目录
 

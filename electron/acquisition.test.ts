@@ -7,7 +7,7 @@ import { createDesktopService } from '../server/api'
 function harness() {
   const listeners = new Set<(state: BufferState) => void>()
   const inputs: BufferInput[] = []
-  let resolver: (() => Promise<BufferInput>) | undefined
+  let resolver: ((hlsOnly?: boolean) => Promise<BufferInput>) | undefined
   const emit = (state: BufferState) => { for (const listener of listeners) listener(state) }
   const buffer = {
     subscribe: (listener: (state: BufferState) => void) => {
@@ -34,10 +34,68 @@ function harness() {
   const proxy = { ...resolveConfig({}).proxy, hosts: ['*'] }
   const acquisition = new Acquisition({ buffer, logins, runYtDlp, proxy, dns: async () => ['8.8.8.8'] })
   return { acquisition, buffer, logins, inputs, runYtDlp, proxy, emit, listeners,
-    reconnect: async () => resolver!() }
+    reconnect: async (hlsOnly?: boolean) => resolver!(hlsOnly) }
 }
 
 describe('main acquisition boundary', () => {
+  it('keeps adaptive video/audio URLs private while passing the preference and re-resolving the best HLS fallback', async () => {
+    const h = harness()
+    const metadata = await h.runYtDlp()
+    metadata.formats.push(
+      { format_id: '308', protocol: 'https', height: 1440, fps: 60, vcodec: 'vp9', acodec: 'none', ext: 'webm', url: 'https://rr1.googlevideo.com/videoplayback?signature=PRIVATE_VIDEO' } as typeof metadata.formats[number],
+      { format_id: '140', protocol: 'https', height: 0, fps: 0, vcodec: 'none', acodec: 'mp4a.40.2', ext: 'm4a', url: 'https://rr1.googlevideo.com/videoplayback?signature=PRIVATE_AUDIO' } as typeof metadata.formats[number],
+    )
+    h.runYtDlp.mockResolvedValue(metadata)
+    const service = createDesktopService({ dataDir: '.', proxy: h.proxy, registerMedia: () => '', acquisition: h.acquisition })
+    expect(await service.invoke('resolve', { input: 'https://youtu.be/abcdefghijk', platform: 'youtube', role: 'official', preferAdaptive: 'yes' }))
+      .toMatchObject({ ok: false, code: 'invalid-arguments' })
+    const result = await service.invoke('resolve', { input: 'https://youtu.be/abcdefghijk', platform: 'youtube', role: 'official', preferAdaptive: true })
+    expect(result).toMatchObject({ ok: true, value: { ok: true, stream: { quality: '308', url: expect.stringContaining('app://') } } })
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE|videoUrl|audioUrl/)
+    expect(h.inputs[0]!.adaptive).toMatchObject({ height: 1440, videoUrl: expect.stringContaining('PRIVATE_VIDEO') })
+    const fallback = await h.reconnect(true)
+    expect(fallback.adaptive).toBeUndefined()
+    expect(fallback.qualityHeight).toBe(1080)
+    expect(h.runYtDlp).toHaveBeenCalledTimes(3)
+    expect(h.runYtDlp).toHaveBeenLastCalledWith('https://www.youtube.com/watch?v=abcdefghijk', false)
+    service.dispose()
+  })
+
+  it('returns the actual HLS quality when adaptive fails during initial buffer readiness', async () => {
+    const h = harness()
+    const metadata = await h.runYtDlp()
+    metadata.formats.push(
+      { format_id: '308', protocol: 'https', height: 1440, fps: 60, vcodec: 'vp9', acodec: 'none', ext: 'webm', url: 'https://rr1.googlevideo.com/videoplayback?itag=308' } as typeof metadata.formats[number],
+      { format_id: '140', protocol: 'https', height: 0, fps: 0, vcodec: 'none', acodec: 'mp4a.40.2', ext: 'm4a', url: 'https://rr1.googlevideo.com/videoplayback?itag=140' } as typeof metadata.formats[number],
+    )
+    h.runYtDlp.mockResolvedValue(metadata)
+    h.buffer.start.mockImplementationOnce(async (role, prepare) => {
+      await prepare(false)
+      await prepare(true)
+      h.emit({ role, state: 'ready', seconds: 6 })
+      return { url: 'app://app/buffer/fallback/index.m3u8' }
+    })
+    const result = await h.acquisition.resolve('https://youtu.be/abcdefghijk', 'youtube', 'official', undefined, true)
+    expect(result).toMatchObject({ ok: true, stream: { quality: '301' } })
+    expect(JSON.stringify(result)).not.toMatch(/videoUrl|audioUrl/)
+  })
+
+  it('falls back to HLS when a previously advertised adaptive id disappears after token provider failure', async () => {
+    const h = harness()
+    const metadata = await h.runYtDlp()
+    metadata.formats.push(
+      { format_id: '308', protocol: 'https', height: 1440, fps: 60, vcodec: 'vp9', acodec: 'none', ext: 'webm', url: 'https://rr1.googlevideo.com/videoplayback?itag=308' } as typeof metadata.formats[number],
+      { format_id: '140', protocol: 'https', height: 0, fps: 0, vcodec: 'none', acodec: 'mp4a.40.2', ext: 'm4a', url: 'https://rr1.googlevideo.com/videoplayback?itag=140' } as typeof metadata.formats[number],
+    )
+    h.runYtDlp.mockResolvedValueOnce(metadata)
+    await h.acquisition.resolve('https://youtu.be/abcdefghijk', 'youtube', 'official')
+    const switched = await h.acquisition.switchQuality('official', '308')
+    expect(switched).toMatchObject({ ok: true, stream: { quality: '301' } })
+    expect(h.inputs.at(-1)).toMatchObject({ fallbackFromHeight: 1440, qualityHeight: 1080 })
+    expect(h.inputs.at(-1)?.adaptive).toBeUndefined()
+    expect(h.runYtDlp).toHaveBeenLastCalledWith('https://www.youtube.com/watch?v=abcdefghijk', false)
+  })
+
   it('returns only a local playlist and quality metadata, never the signed input', async () => {
     const h = harness()
     const result = await h.acquisition.resolve('https://www.youtube.com/watch?v=abcdefghijk', 'youtube', 'official')
@@ -98,6 +156,43 @@ describe('main acquisition boundary', () => {
     expect(finished).toBe(false)
     h.emit({ role: 'official', state: 'ready', seconds: 6 })
     expect((await operation).ok).toBe(true)
+  })
+
+  it('does not publish a source on a premature ready event with less than four seconds', async () => {
+    const h = harness()
+    let started = false
+    h.buffer.start.mockImplementationOnce(async (_role, prepare) => {
+      await prepare(); started = true
+      h.emit({ role: 'official', state: 'ready', seconds: 0.033333 })
+      return { url: 'app://app/buffer/partial/index.m3u8' }
+    })
+    let finished = false
+    const operation = h.acquisition.resolve('https://8.8.8.8/live.flv', 'direct', 'official').then(value => { finished = true; return value })
+    await vi.waitFor(() => expect(started).toBe(true))
+    expect(finished).toBe(false)
+    h.emit({ role: 'official', state: 'ready', seconds: 4 })
+    expect((await operation).ok).toBe(true)
+  })
+
+  it.each([true, false])('allows a previously offered adaptive option after automatic fallback, provider recovered=%s', async recovered => {
+    const h = harness()
+    const hls = await h.runYtDlp()
+    const metadata = { ...hls, formats: [...hls.formats,
+      { format_id: '308', protocol: 'https', height: 1440, fps: 60, vcodec: 'vp9', acodec: 'none', ext: 'webm', url: 'https://rr1.googlevideo.com/videoplayback?itag=308' },
+      { format_id: '140', protocol: 'https', height: 0, fps: 0, vcodec: 'none', acodec: 'mp4a.40.2', ext: 'm4a', url: 'https://rr1.googlevideo.com/videoplayback?itag=140' },
+    ] }
+    h.runYtDlp.mockResolvedValue(metadata)
+    await h.acquisition.resolve('https://youtu.be/abcdefghijk', 'youtube', 'official', undefined, true)
+    h.runYtDlp.mockResolvedValue(hls)
+    await h.reconnect(true)
+    if (recovered) h.runYtDlp.mockResolvedValue(metadata)
+    const retried = await h.acquisition.switchQuality('official', '308')
+    expect(retried).toMatchObject({ ok: true, stream: { quality: recovered ? '308' : '301',
+      qualities: expect.arrayContaining([expect.objectContaining({ id: '308', adaptive: true })]) } })
+    expect(Boolean(h.inputs.at(-1)?.adaptive)).toBe(recovered)
+    if (!recovered) expect(h.runYtDlp).toHaveBeenLastCalledWith('https://www.youtube.com/watch?v=abcdefghijk', false)
+    expect((await h.acquisition.switchQuality('official', 'unoffered-id')).ok).toBe(false)
+    expect(JSON.stringify(retried)).not.toMatch(/videoUrl|audioUrl|googlevideo/)
   })
 
   it('keeps the previous producer reconnectable when a replacement fails resolution', async () => {

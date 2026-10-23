@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { Loader, LoaderCallbacks, LoaderConfiguration, LoaderContext, LoaderStats } from 'hls.js'
 
 import type { MediaDescriptor, Timebase } from '../core/types'
 import { attachMedia, hlsLoader, translateHlsError, type MediaError } from './hlsController'
@@ -306,6 +307,7 @@ describe('attachMedia HLS precedence', () => {
   const originalLoader = hlsLoader.load
   afterEach(() => {
     hlsLoader.load = originalLoader
+    vi.unstubAllGlobals()
   })
 
   it('passes a config the real hls.js accepts', async () => {
@@ -319,6 +321,71 @@ describe('attachMedia HLS precedence', () => {
 
     const { default: RealHls } = await import('hls.js')
     expect(() => new RealHls(fake.configs[0] as ConstructorParameters<typeof RealHls>[0]).destroy()).not.toThrow()
+  })
+
+  it.each(['vp09.00.51.08', 'av01.0.12M.08'])('accepts a local fMP4 playlist and %s through real hls.js with the app config', async codec => {
+    const fake = fakeModule(true)
+    hlsLoader.load = () => Promise.resolve(fake.module as Awaited<ReturnType<typeof hlsLoader.load>>)
+    const base = 'app://app/buffer/session/official/capability/'
+    await attachMedia(video(), { ...hlsDescriptor(), url: base + 'index.m3u8' })
+    // Only the browser's codec support and playlist IO are faked. The installed
+    // hls.js parses CODECS, EXT-X-MAP, segments and discontinuities itself.
+    const supportedTypes: string[] = []
+    vi.stubGlobal('MediaSource', { isTypeSupported: (type: string) => {
+      supportedTypes.push(type)
+      return type.includes(codec) || type.includes('mp4a.40.2')
+    } })
+    const playlists: Record<string, string> = {
+      [base + 'master.m3u8']: [
+        '#EXTM3U', `#EXT-X-STREAM-INF:BANDWIDTH=9000000,RESOLUTION=2560x1440,FRAME-RATE=60,CODECS="${codec},mp4a.40.2"`,
+        'index.m3u8', '',
+      ].join('\n'),
+      [base + 'index.m3u8']: [
+        '#EXTM3U', '#EXT-X-VERSION:7', '#EXT-X-TARGETDURATION:2', '#EXT-X-MEDIA-SEQUENCE:10',
+        '#EXT-X-MAP:URI="init_0.mp4"', '#EXTINF:2.000,', 'segment_0_000000010.m4s',
+        '#EXT-X-DISCONTINUITY', '#EXT-X-MAP:URI="init_1.mp4"', '#EXTINF:2.000,', 'segment_1_000000011.m4s', '',
+      ].join('\n'),
+    }
+    class PlaylistLoader implements Loader<LoaderContext> {
+      context: LoaderContext | null = null
+      stats: LoaderStats = {
+        aborted: false, loaded: 0, retry: 0, total: 0, chunkCount: 0, bwEstimate: 0,
+        loading: { start: 0, first: 0, end: 0 }, parsing: { start: 0, end: 0 }, buffering: { start: 0, first: 0, end: 0 },
+      }
+      load(context: LoaderContext, _config: LoaderConfiguration, callbacks: LoaderCallbacks<LoaderContext>): void {
+        this.context = context
+        queueMicrotask(() => {
+          if (this.stats.aborted) return
+          const data = playlists[context.url]
+          if (!data) { callbacks.onError({ code: 404, text: 'fixture missing' }, context, null, this.stats); return }
+          this.stats.loaded = this.stats.total = data.length
+          callbacks.onSuccess({ url: context.url, data, code: 200 }, this.stats, context, null)
+        })
+      }
+      abort(): void { this.stats.aborted = true }
+      destroy(): void { this.abort() }
+    }
+    const { default: RealHls } = await import('hls.js')
+    const real = new RealHls({
+      ...fake.configs[0] as ConstructorParameters<typeof RealHls>[0], loader: PlaylistLoader,
+    })
+    try {
+      const details = await new Promise<import('hls.js').LevelDetails>((resolve, reject) => {
+        real.on(RealHls.Events.ERROR, (_event, data) => { if (data.fatal) reject(new Error(data.details)) })
+        real.on(RealHls.Events.LEVEL_LOADED, (_event, data) => resolve(data.details))
+        real.loadSource(base + 'master.m3u8')
+      })
+      expect(real.levels[0]).toMatchObject({ videoCodec: codec, audioCodec: 'mp4a.40.2', width: 2560, height: 1440 })
+      expect(supportedTypes.some(type => type.includes(codec))).toBe(true)
+      expect(details.live).toBe(true)
+      expect(details.totalduration).toBe(4)
+      expect(details.fragments.map(fragment => fragment.url)).toEqual([
+        base + 'segment_0_000000010.m4s', base + 'segment_1_000000011.m4s',
+      ])
+      expect(details.fragments[0]?.initSegment?.url).toBe(base + 'init_0.mp4')
+      expect(details.fragments[1]?.initSegment?.url).toBe(base + 'init_1.mp4')
+      expect(details.fragments[1]?.cc).toBe((details.fragments[0]?.cc ?? 0) + 1)
+    } finally { real.destroy() }
   })
 
   it('keeps a deliberate rewind and rate nudge through real hls.js live-sync controllers', async () => {

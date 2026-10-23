@@ -109,7 +109,10 @@ function RolePanel({ role }: { role: SourceRole }): React.ReactNode {
     setBusy(true)
     const generation = session.beginSourceChange(role)
     try {
-      const result = await apiClient.resolve(parsed.url, parsed.platform, role)
+      const result = await apiClient.resolve(
+        parsed.url, parsed.platform, role, undefined,
+        session.settings.preferAdaptive || undefined,
+      )
       if (generation !== session.sourceRevision(role)) return
       if (!result.ok) { setProblem({ message: result.message }); return }
       if (!result.value.ok) {

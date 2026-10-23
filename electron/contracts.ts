@@ -10,7 +10,7 @@ import type { LoginPlatform, LoginResult, LoginStatus } from './login'
 export interface DesktopMethods {
   health: { args: undefined; result: HealthInfo }
   verifyAdmin: { args: { token: string }; result: { ok: true } }
-  resolve: { args: { input: string; platform?: string; role?: SourceRole; quality?: string }; result: ResolveResult }
+  resolve: { args: { input: string; platform?: string; role?: SourceRole; quality?: string; preferAdaptive?: boolean }; result: ResolveResult }
   switchQuality: { args: { role: SourceRole; quality: string }; result: ResolveResult }
   stopBuffer: { args: { role: SourceRole }; result: { ok: true } }
   login: { args: { platform: LoginPlatform }; result: LoginResult }

@@ -106,6 +106,19 @@ describe('ApiClient IPC arguments', () => {
     expect(await client.listPresets()).toEqual({ ok: true, value: { presets: [] } })
     expect(bridge.invoke).toHaveBeenCalledWith('listPresets', undefined)
   })
+
+  it('only forwards an adaptive preference when the caller supplies it', async () => {
+    const bridge = bridgeWith({ ok: true, value: {} })
+    const client = new ApiClient({ bridge })
+    await client.resolve('https://www.youtube.com/watch?v=example', 'youtube', 'official', undefined, true)
+    expect(bridge.invoke).toHaveBeenLastCalledWith('resolve', {
+      input: 'https://www.youtube.com/watch?v=example', platform: 'youtube', role: 'official', preferAdaptive: true,
+    })
+    await client.resolve('https://www.youtube.com/watch?v=example', 'youtube', 'official')
+    expect(bridge.invoke).toHaveBeenLastCalledWith('resolve', {
+      input: 'https://www.youtube.com/watch?v=example', platform: 'youtube', role: 'official',
+    })
+  })
 })
 
 describe('ApiClient danmaku subscriptions', () => {

@@ -58,6 +58,14 @@ describe('mergeSettings', () => {
     expect(merged.detectWindowSeconds).toBe(2)
   })
 
+  it('keeps optional adaptive acquisition disabled for old and malformed settings', () => {
+    expect(DEFAULT_SETTINGS.preferAdaptive).toBe(false)
+    expect(mergeSettings({}).preferAdaptive).toBe(false)
+    expect(mergeSettings({ preferAdaptive: 'true' }).preferAdaptive).toBe(false)
+    expect(mergeSettings({ preferAdaptive: true }).preferAdaptive).toBe(true)
+    expect(mergeSettings({ preferAdaptive: false }).preferAdaptive).toBe(false)
+  })
+
   it('clamps volumes into 0..1 instead of rejecting the blob', () => {
     const merged = mergeSettings({ volume: { official: 4, commentary: -2 } })
     expect(merged.volume).toEqual({ official: 1, commentary: 0 })
@@ -148,6 +156,12 @@ describe('loadSettings', () => {
     const restored = loadSettings(storage)
     expect(restored.profileId).toBe('cs2/iem')
     expect(restored.smallStepSeconds).toBe(0.1)
+  })
+
+  it('persists an explicitly enabled adaptive preference with the existing settings blob', () => {
+    const storage = fakeStorage()
+    saveSettings({ ...DEFAULT_SETTINGS, preferAdaptive: true }, storage)
+    expect(loadSettings(storage).preferAdaptive).toBe(true)
   })
 })
 

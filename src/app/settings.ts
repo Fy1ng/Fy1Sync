@@ -43,6 +43,8 @@ export interface AppSettings {
   detectWindowSeconds: number
   seekThresholdSeconds: number
   sidebarVisible: boolean
+  /** Prefer optional YouTube adaptive qualities when the token provider is available. */
+  preferAdaptive: boolean
   /**
    * Which recognition preset the player loads on boot, by id. Empty means none.
    *
@@ -74,6 +76,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   detectWindowSeconds: 3,
   seekThresholdSeconds: 1.5,
   sidebarVisible: true,
+  preferAdaptive: false,
   profileId: '',
 }
 
@@ -144,6 +147,7 @@ export function mergeSettings(raw: unknown): AppSettings {
     detectWindowSeconds: stored.detectWindowSeconds === 2 ? 2 : 3,
     seekThresholdSeconds: clamp(stored.seekThresholdSeconds, 0.2, 5, 1.5),
     sidebarVisible: boolean(stored.sidebarVisible, defaults.sidebarVisible),
+    preferAdaptive: boolean(stored.preferAdaptive, defaults.preferAdaptive),
     // Bounded because it goes into a URL path when the preset is fetched.
     profileId: typeof stored.profileId === 'string' ? stored.profileId.slice(0, 200) : '',
   }

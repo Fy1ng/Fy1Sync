@@ -7,6 +7,7 @@ export type QualityOption = {
   label: string
   height?: number
   fps?: number
+  adaptive?: boolean
 }
 
 export type ResolvedStream = {
@@ -28,6 +29,8 @@ export type ResolvedStream = {
   quality?: string
   /** Main-process-only input headers. Strip these before crossing IPC. */
   headers?: Record<string, string>
+  /** Main-process-only signed inputs. Strip these before crossing IPC. */
+  adaptive?: { videoUrl: string; audioUrl: string; videoContainer: 'webm' | 'mp4'; height: number }
 }
 
 export type ResolveFailureCode =
@@ -59,6 +62,7 @@ export type ResolverDeps = {
   /** Main-process-only cookie header read from the private Douyu cookie store. */
   douyuCookie?: string
   quality?: string
+  preferAdaptive?: boolean
   now?: () => number
 }
 

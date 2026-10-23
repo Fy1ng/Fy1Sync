@@ -23,7 +23,7 @@ export type MediaDescriptor = {
   /** Platform that produced this descriptor, when it came from an adapter. */
   platform?: PlatformId
   /** Resolver quality choices restart acquisition; they are not hls.js ABR levels. */
-  sourceQualities?: { id: string; label: string; height?: number; fps?: number }[]
+  sourceQualities?: { id: string; label: string; height?: number; fps?: number; adaptive?: boolean }[]
   sourceQuality?: string
 }
 

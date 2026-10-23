@@ -1,5 +1,6 @@
+import { execFileSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -103,6 +104,23 @@ describe('BufferManager', () => {
     await until(() => f.current().state === 'ready')
     expect(f.current().seconds).toBe(4.5)
     expect(await (await f.manager.handle(new Request(url))).text()).toContain('#EXTINF:3.000000,')
+  })
+  it('keeps a partial retained buffer below the ready threshold while its producer restarts', async () => {
+    const f = await fixture(), { url } = await start(f)
+    await writeManifest(f, 0, [0.033333])
+    await f.clock.advance(100)
+    await until(() => f.current().seconds === 0.033333)
+    f.children[0]!.emit('close', 1)
+    await until(() => f.current().state === 'reconnecting')
+    await f.clock.advance(1000)
+    await until(() => f.children.length === 2)
+    expect(f.current()).toMatchObject({ state: 'buffering', seconds: 0.033333 })
+    expect(f.states.some(state => state.state === 'ready' && state.seconds < 4)).toBe(false)
+    await writeManifest(f, 1, [2, 2])
+    await f.clock.advance(100)
+    await until(() => f.current().state === 'ready')
+    expect(f.current().seconds).toBeCloseTo(4.033333)
+    expect((await f.manager.handle(new Request(url))).status).toBe(200)
   })
   it('retains at least 180 seconds by EXTINF sum even with long irregular segments', async () => {
     const f = await fixture(), { url } = await start(f)
@@ -257,5 +275,48 @@ describe('ffmpeg argument and manifest boundaries', () => {
   })
   it.each(['NaN', '-1', '0', 'Infinity', '99999999'])('rejects invalid EXTINF duration: %s', value => {
     expect(() => parseHlsSegments(`#EXTM3U\n#EXTINF:${value},\nsegment_0_000000000.ts\n`)).toThrow()
+  })
+})
+
+describe('fMP4 output on the real ffmpeg', () => {
+  const ffmpeg = process.env.STREAM_SYNC_FFMPEG || 'ffmpeg'
+  const available = (() => { try { execFileSync(ffmpeg, ['-version'], { stdio: 'ignore' }); return true } catch { return false } })()
+
+  it.skipIf(!available)('remuxes fallback HLS/TS AAC into MP4 instead of failing after its first video frame', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'syncer-fmp4-aac-'))
+    try {
+      const input = path.join(directory, 'input.ts')
+      execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=30',
+        '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '4.5', '-c:v', 'libx264', '-g', '60', '-c:a', 'aac', '-f', 'mpegts', input],
+      { cwd: directory, windowsHide: true, timeout: 15_000, stdio: 'pipe' })
+      const args = buildFfmpegArgs({ url: pathToFileURL(input).href, realtime: true }, directory, 3, 'pipe:3', true).filter(arg => arg !== '-re')
+      execFileSync(ffmpeg, args, { cwd: directory, windowsHide: true, timeout: 15_000, stdio: 'pipe' })
+      const playlist = parseHlsSegments(await readFile(path.join(directory, 'raw_3.m3u8'), 'utf8'))
+      expect(playlist.segments.reduce((sum, segment) => sum + segment.duration, 0)).toBeGreaterThanOrEqual(4)
+      expect(playlist.segments.every(segment => segment.init === 'init_3.mp4')).toBe(true)
+    } finally {
+      if (path.dirname(directory) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith('syncer-fmp4-aac-')) throw new Error('Invalid fixture cleanup path')
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(!available)('writes the init segment next to the playlist, not into the working directory', async () => {
+    // ffmpeg looks for '/' in the playlist path to place init_<n>.mp4; a Windows path with
+    // backslashes made it fall back to the process cwd, so the player could never load it.
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'syncer-fmp4-'))
+    const elsewhere = await mkdtemp(path.join(os.tmpdir(), 'syncer-cwd-'))
+    try {
+      const args = buildFfmpegArgs({ url: 'https://cdn.example/live.m3u8' }, directory, 7, 'pipe:3', true)
+      const output = args.slice(args.indexOf('-c'))
+      execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=30', '-t', '2.5',
+        '-c:v', 'libx264', ...output.slice(2)], { cwd: elsewhere, stdio: 'ignore' })
+      expect(await readdir(elsewhere)).toEqual([])
+      const written = await readdir(directory)
+      expect(written).toContain('init_7.mp4')
+      expect(written).toContain('raw_7.m3u8')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+      await rm(elsewhere, { recursive: true, force: true })
+    }
   })
 })
