@@ -53,6 +53,51 @@ afterEach(async () => {
 })
 const input = { accountId: 'default', roomInput: '6657', kind: 'room-sign', policy: 'foreground', repeatMinutes: null }
 const messageInput: DouyuMessageInput = { accountId: 'default', room: '6979222', text: '加油 @A/原文', color: 0 }
+const schedule = { text: '定时提醒', colors: [0, 2], intervalSeconds: 60, initialDelaySeconds: 0, maxRuns: 1 }
+
+it('creates a paused message task through IPC and routes it to the existing sender only after explicit start', async () => {
+  const f = fixture()
+  const result = await f.service.invoke('createDouyuTask', { ...input, kind: 'message-loop', message: schedule })
+  expect(result).toMatchObject({ ok: true, value: { tasks: [{ room: '6979222', kind: 'message-loop', message: schedule, status: 'paused', completedRuns: 0 }] } })
+  expect(f.sendMessage).not.toHaveBeenCalled()
+  await f.accounts.login('default')
+  const id = f.tasks.snapshot().tasks[0]!.id
+  expect(await f.service.invoke('startDouyuTask', { id })).toMatchObject({ ok: true })
+  await vi.waitFor(() => expect(f.tasks.snapshot().tasks[0]).toMatchObject({ status: 'succeeded', completedRuns: 1, nextRunAt: null }))
+  expect(f.sendMessage).toHaveBeenCalledExactlyOnceWith({ accountId: 'default', room: '6979222', text: schedule.text, color: 0 }, expect.any(AbortSignal))
+  expect(f.run).not.toHaveBeenCalled()
+})
+
+it.each([
+  { ...input, kind: 'message-loop' },
+  { ...input, message: schedule },
+  { ...input, kind: 'message-loop', repeatMinutes: 60, message: schedule },
+  ...[
+    { ...schedule, colors: [] }, { ...schedule, colors: [2, 2] }, { ...schedule, colors: [7] },
+    { ...schedule, intervalSeconds: 0 }, { ...schedule, initialDelaySeconds: -1 },
+    { ...schedule, maxRuns: 0 }, { ...schedule, text: '\n' }, { ...schedule, url: 'https://other.example/' },
+  ].map(message => ({ ...input, kind: 'message-loop', message })),
+])('rejects a malformed schedule before canonical-room lookup or side effects', async args => {
+  const f = fixture()
+  expect(await f.service.invoke('createDouyuTask', args)).toMatchObject({ ok: false, code: 'invalid-arguments' })
+  expect(f.resolveRoom).not.toHaveBeenCalled()
+  expect(f.sendMessage).not.toHaveBeenCalled()
+  expect(f.tasks.snapshot().tasks).toEqual([])
+})
+
+it('captures the message configuration and account before an asynchronous room lookup', async () => {
+  const f = fixture()
+  let finish!: (value: Awaited<ReturnType<typeof f.resolveRoom>>) => void
+  f.resolveRoom.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+  const args = { ...input, kind: 'message-loop', message: structuredClone(schedule) }
+  const pending = f.service.invoke('createDouyuTask', args)
+  args.accountId = accountId
+  args.message.text = 'changed'
+  args.message.colors.reverse()
+  finish({ ok: true, identity: { inputRoom: '6657', room: '6979222' } })
+  expect(await pending).toMatchObject({ ok: true, value: { tasks: [{ accountId: 'default', message: schedule }] } })
+  expect(f.sendMessage).not.toHaveBeenCalled()
+})
 
 it('sends only for a logged-in active account in the current canonical room', async () => {
   const f = fixture()

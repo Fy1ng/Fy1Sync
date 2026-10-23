@@ -423,6 +423,29 @@ describe('manual message validation and privacy', () => {
     expect(await h.manager.sendMessage(INPUT)).toEqual(FAILURE)
   })
 
+  it('returns safe deferral metadata to the manual caller without scheduling an automatic send', async () => {
+    const h = harness()
+    const result: DouyuMessageOutcome = { status: 'waiting-user', message: '尚未发送, 等待已知冷却',
+      nextAllowedAt: Date.now() + 5_000, deferredUntil: Date.now() + 5_000 }
+    h.send.mockResolvedValueOnce(result)
+    expect(await h.manager.sendMessage(INPUT)).toEqual(result)
+    h.manager.setRuntime(BACKGROUND)
+    restore(h.manager)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(h.send).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('refuses an accessor in the optional deferral field', async () => {
+    const h = harness()
+    const getter = vi.fn(() => Date.now() + 5_000)
+    const result = Object.defineProperty({ status: 'waiting-user', message: '尚未发送', nextAllowedAt: Date.now() + 5_000 },
+      'deferredUntil', { enumerable: true, get: getter })
+    h.send.mockResolvedValueOnce(result as DouyuMessageOutcome)
+    expect(await h.manager.sendMessage(INPUT)).toEqual(FAILURE)
+    expect(getter).not.toHaveBeenCalled()
+  })
+
   it('fails safely when no message transport has been configured', async () => {
     const manager = new DouyuTaskManager({ load: () => undefined, save: vi.fn(), run: vi.fn() })
     managers.push(manager)

@@ -9,7 +9,7 @@ import { abortable, cancelBody, cancelled, MAX_TIMEOUT_MS, readPayload } from '.
 import type { DouyuMessageInput, DouyuMessageOutcome, DouyuTaskOutcome } from './types'
 import {
   encodeMessageFrame, gatewayAddress, MAX_BUFFER_BYTES, MAX_COOLDOWN_MS, MAX_TOTAL_BYTES,
-  MessageFrameDecoder, MessageProtocolError, messageChallenge, messageCredentials,
+  MessageFrameDecoder, MessageProtocolError, messageChallenge, messageColorPalette, messageCredentials,
   messageLogin, messageSigningKeys, normalizeMessageText, receiptMatch,
   signMessageGateway, unsigned, type GatewayMessage, type MessageCredentials,
   type MessageSigningKeys,
@@ -119,10 +119,12 @@ export class NativeMessageSocket implements DouyuMessageSocket {
 
 type RoomState = { lastSentAt: number | null; cooldownMs: number | null; nextAllowedAt: number | null }
 type Operation = { dispatched: boolean; closed: boolean; socket: DouyuMessageSocket | null; cleanup: (() => void) | null }
+type MessageStepOutcome = DouyuTaskOutcome & { deferredUntil?: number }
 const failed = (message: string): DouyuTaskOutcome => ({ status: 'failed', message })
 const waiting = (message: string): DouyuTaskOutcome => ({ status: 'waiting-user', message })
 const needLogin = () => waiting('斗鱼登录信息缺失, 已变化或无法核对. 请重新登录该账号后再发送.')
 const cooling = () => waiting('斗鱼发言仍在冷却中. 请等待提示时间后再发送.')
+const deferred = (until: number): MessageStepOutcome => ({ ...cooling(), deferredUntil: until })
 const uncertain = () => waiting('斗鱼发送结果尚无法确认. 请在官方房间核对, 本次不会自动重发.')
 
 const ERROR_MESSAGES: Record<number, string> = {
@@ -169,8 +171,8 @@ export class DouyuMessageSender {
     const current = this.clock()
     if (this.disposed || signal.aborted) return { ...failed('发送已取消. 未发送弹幕.'), nextAllowedAt: state?.nextAllowedAt ?? null }
     if (this.active.has(accountId)) return { ...waiting('该账号已有一条发送正在等待结果.'), nextAllowedAt: state?.nextAllowedAt ?? null }
-    if (state?.nextAllowedAt !== null && state?.nextAllowedAt !== undefined && state.nextAllowedAt > current) return { ...cooling(), nextAllowedAt: state.nextAllowedAt }
     if (!this.deps.proxy.enabled || ![SITE_HOST, SOCKET_HOST].every(host => hostAllowed(host, this.deps.proxy.hosts))) return { ...failed('斗鱼发送目标未获网络策略允许. 未发送弹幕.'), nextAllowedAt: state?.nextAllowedAt ?? null }
+    if (state?.nextAllowedAt !== null && state?.nextAllowedAt !== undefined && state.nextAllowedAt > current) return { ...deferred(state.nextAllowedAt), nextAllowedAt: state.nextAllowedAt }
     if (!state) {
       for (const [key, old] of this.rooms) if ((old.nextAllowedAt ?? 0) <= current && (old.lastSentAt === null || old.lastSentAt < current - MAX_COOLDOWN_MS)) this.rooms.delete(key)
       if (this.rooms.size >= MAX_ROOM_STATES) return { ...failed('暂时无法保存更多房间的发言冷却状态. 未发送弹幕.'), nextAllowedAt: null }
@@ -185,7 +187,7 @@ export class DouyuMessageSender {
     const combined = AbortSignal.any([signal, owner.signal, timeout.signal])
     const context: Operation = { dispatched: false, closed: false, socket: null, cleanup: null }
     this.active.set(accountId, owner)
-    let outcome: DouyuTaskOutcome
+    let outcome: MessageStepOutcome
     try {
       outcome = await abortable(this.perform(target, state, context, combined, deadline), combined)
     } catch {
@@ -202,7 +204,10 @@ export class DouyuMessageSender {
       }
       if (this.active.get(accountId) === owner) this.active.delete(accountId)
     }
-    return { ...outcome, nextAllowedAt: state.nextAllowedAt }
+    const { deferredUntil, ...result } = outcome
+    // Never let a submitted, cancelled or stale result become an automatic retry.
+    const canDefer = !context.dispatched && !combined.aborted && result.status === 'waiting-user' && deferredUntil !== undefined && Number.isSafeInteger(deferredUntil) && deferredUntil > this.clock()
+    return { ...result, nextAllowedAt: state.nextAllowedAt, ...(canDefer ? { deferredUntil } : {}) }
   }
 
   private clock(): number {
@@ -253,7 +258,7 @@ export class DouyuMessageSender {
     return messageCredentials(header)
   }
 
-  private async perform(target: DouyuMessageInput, state: RoomState, context: Operation, signal: AbortSignal, deadline: number): Promise<DouyuTaskOutcome> {
+  private async perform(target: DouyuMessageInput, state: RoomState, context: Operation, signal: AbortSignal, deadline: number): Promise<MessageStepOutcome> {
     let credentials: MessageCredentials | null
     try { credentials = await this.credentials(target.accountId, signal) } catch { this.assertActive(signal); return needLogin() }
     if (!credentials) return needLogin()
@@ -268,7 +273,7 @@ export class DouyuMessageSender {
     return this.exchange(target, credentials, keys, state, context, socket, signal, deadline)
   }
 
-  private exchange(target: DouyuMessageInput, credentials: MessageCredentials, keys: MessageSigningKeys, state: RoomState, context: Operation, socket: DouyuMessageSocket, signal: AbortSignal, deadline: number): Promise<DouyuTaskOutcome> {
+  private exchange(target: DouyuMessageInput, credentials: MessageCredentials, keys: MessageSigningKeys, state: RoomState, context: Operation, socket: DouyuMessageSocket, signal: AbortSignal, deadline: number): Promise<MessageStepOutcome> {
     return new Promise((resolve, reject) => {
       const decoder = new MessageFrameDecoder()
       let done = false
@@ -279,13 +284,14 @@ export class DouyuMessageSender {
       let heartbeatTick: string | null = null
       let cst: string | null = null
       let rules: { maximum: number; cooldown: number } | null = null
+      let colorPalette: ReadonlySet<number> | null = null
       let authorizing = false
       let messageVersion = 0
       let outboundBytes = 0
       let wakeup: ReturnType<typeof setTimeout> | null = null
       let processing = Promise.resolve()
 
-      const finish = (outcome: DouyuTaskOutcome) => { if (!done) { done = true; resolve(outcome) } }
+      const finish = (outcome: MessageStepOutcome) => { if (!done) { done = true; resolve(outcome) } }
       const stop = () => { if (!done) { done = true; reject(cancelled()) } }
       const fail = () => { if (!done) { done = true; reject(new MessageProtocolError()) } }
       const check = () => { this.assertActive(signal, context); if (done) throw cancelled() }
@@ -307,10 +313,14 @@ export class DouyuMessageSender {
         if (done || context.closed || context.dispatched || authorizing || !authenticated || !challengeSigned || !heartbeatReady || !rules) return
         check()
         if (target.text.length > rules.maximum) { finish(failed('弹幕超过斗鱼当前允许的长度. 未发送弹幕.')); return }
+        if (target.color !== 0) {
+          if (!colorPalette) return
+          if (!colorPalette.has(target.color)) { finish(waiting('尚未取得斗鱼对该账号在当前房间使用所选颜色的确认. 未发送弹幕.')); return }
+        }
         const now = this.clock()
         const due = state.nextAllowedAt ?? now
         if (due > now) {
-          if (due >= deadline) { finish(cooling()); return }
+          if (due >= deadline) { finish(deferred(due)); return }
           if (wakeup) clearTimeout(wakeup)
           wakeup = setTimeout(() => { wakeup = null; void dispatch().catch(fail) }, due - now)
           return
@@ -328,7 +338,9 @@ export class DouyuMessageSender {
           if ((state.nextAllowedAt ?? sentAt) > sentAt) { authorizing = false; await dispatch(); return }
           this.lastCst = Math.max(sentAt, this.lastCst + 1)
           cst = String(this.lastCst)
-          const message = { type: 'chatmessage', content: target.text, sender: credentials.uid, dy: credentials.did, col: target.color, pe: 0, ifs: 0, nc: 0, dat: 0, rev: 0, tts: 0, admzq: 0, cst }
+          // pe is the privileged-emoticon category, not the color switch. An
+          // ordinary color explicitly unlocked by fdm uses the fans-color flag.
+          const message = { type: 'chatmessage', content: target.text, sender: credentials.uid, dy: credentials.did, col: target.color, pe: 0, ifs: target.color === 0 ? 0 : 1, nc: 0, dat: 0, rev: 0, tts: 0, admzq: 0, cst }
           // A throw, abort or disconnect after this boundary cannot prove non-delivery.
           context.dispatched = true
           state.lastSentAt = sentAt
@@ -377,6 +389,9 @@ export class DouyuMessageSender {
           state.cooldownMs = cooldown
           if (state.lastSentAt !== null) state.nextAllowedAt = Math.max(state.nextAllowedAt ?? 0, state.lastSentAt + cooldown)
           if (firstDelay > 0) state.nextAllowedAt = Math.max(state.nextAllowedAt ?? 0, this.clock() + firstDelay)
+        } else if (message.type === 'fdm' && target.color !== 0) {
+          if (!authenticated || ['uid', 'userid', 'sender'].some(name => message[name] !== undefined && message[name] !== credentials.uid) || ['rid', 'roomid'].some(name => message[name] !== undefined && message[name] !== target.room)) return
+          if (Object.hasOwn(message, 'list')) colorPalette = messageColorPalette(message.list)
         } else if (message.type === 'chatres' && context.dispatched && cst !== null) {
           const match = receiptMatch(message, { uid: credentials.uid, room: target.room, text: target.text, cst })
           if (match === 'mismatch') return
@@ -390,7 +405,9 @@ export class DouyuMessageSender {
             state.nextAllowedAt = Math.max(state.nextAllowedAt ?? 0, this.clock() + state.cooldownMs)
           }
           if (message.len !== undefined && (unsigned(message.len, 10_000) ?? 0) < 1) throw new MessageProtocolError()
-          if (code === 288 || code === 356) finish({ status: 'succeeded', message: '已收到斗鱼发送回执.' })
+          if ((code === 288 || code === 356) && ((target.color !== 0 && message.col === undefined) || (message.col !== undefined && unsigned(message.col, 6) !== target.color))) {
+            finish(waiting('斗鱼回执未确认所选弹幕颜色. 弹幕可能已发送, 请在官方房间核对, 本次不会自动重发.'))
+          } else if (code === 288 || code === 356) finish({ status: 'succeeded', message: '已收到斗鱼发送回执.' })
           else if (Object.hasOwn(ERROR_MESSAGES, code)) {
             const detail = ERROR_MESSAGES[code]!
             finish(match === 'unassociated'

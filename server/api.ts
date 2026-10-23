@@ -15,6 +15,7 @@ import type { ToolsService } from '../electron/toolsService'
 import { DouyuAccountError, isDouyuAccountId, type DouyuAccountManager } from '../electron/douyuAccounts'
 import { DouyuTaskError, type DouyuTaskManager } from '../electron/douyuTasks'
 import { DOUYU_TASK_KINDS, DOUYU_TASK_POLICIES, type DouyuTaskKind, type DouyuTaskPolicy, type DouyuTasksSnapshot } from './douyu/types'
+import { readMessageSchedule } from './douyu/taskConfig'
 
 export interface AcquisitionService {
   resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string, preferAdaptive?: boolean): Promise<ResolveResult>
@@ -204,19 +205,24 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             return { ok: true, value: await tasks.sendMessage(message) }
           }
           case 'createDouyuTask': {
-            if (!fields(args, ['accountId', 'roomInput', 'kind', 'policy', 'repeatMinutes']) || !isDouyuAccountId(args.accountId)
+            if (!fields(args, ['accountId', 'roomInput', 'kind', 'policy', 'repeatMinutes'], ['message']) || !isDouyuAccountId(args.accountId)
               || typeof args.roomInput !== 'string' || args.roomInput.length > MAX_INPUT_LENGTH || !DOUYU_TASK_KINDS.includes(args.kind as DouyuTaskKind)
-              || !DOUYU_TASK_POLICIES.includes(args.policy as DouyuTaskPolicy)
-              || (args.repeatMinutes !== null && (!Number.isInteger(args.repeatMinutes) || Number(args.repeatMinutes) < 60 || Number(args.repeatMinutes) > 43200))) {
+              || !DOUYU_TASK_POLICIES.includes(args.policy as DouyuTaskPolicy)) {
               return fail('invalid-arguments', '任务参数无效')
             }
+            const message = args.kind === 'message-loop' ? readMessageSchedule(args.message) : null
+            if (args.kind === 'message-loop' ? !message || args.repeatMinutes !== null
+              : Object.hasOwn(args, 'message') || (args.repeatMinutes !== null && (!Number.isInteger(args.repeatMinutes) || Number(args.repeatMinutes) < 60 || Number(args.repeatMinutes) > 43200))) {
+              return fail('invalid-arguments', '任务参数无效')
+            }
+            const input = { accountId: args.accountId, kind: args.kind as DouyuTaskKind, policy: args.policy as DouyuTaskPolicy,
+              repeatMinutes: args.repeatMinutes as number | null, ...(message ? { message } : {}) }
             if (!deps.douyuTasks || !deps.douyuAccounts) return fail('not-available', '斗鱼任务管理不可用')
             const resolved = await resolveRoom(args.roomInput)
             if (!resolved.ok) return fail(resolved.failure.code, resolved.failure.message)
             if (disposed) return fail('service-closed', '本地服务已关闭')
-            if (!deps.douyuAccounts.hasAccount(args.accountId)) return fail('account-not-found', '斗鱼账号不存在')
-            return { ok: true, value: deps.douyuTasks.create({ accountId: args.accountId, room: resolved.identity.room,
-              kind: args.kind as DouyuTaskKind, policy: args.policy as DouyuTaskPolicy, repeatMinutes: args.repeatMinutes as number | null }) }
+            if (!deps.douyuAccounts.hasAccount(input.accountId)) return fail('account-not-found', '斗鱼账号不存在')
+            return { ok: true, value: deps.douyuTasks.create({ ...input, room: resolved.identity.room }) }
           }
           case 'setDouyuTaskPolicy': {
             if (!fields(args, ['id', 'policy']) || typeof args.id !== 'string' || args.id.length > 64

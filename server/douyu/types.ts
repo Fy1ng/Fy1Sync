@@ -15,8 +15,18 @@ export interface DouyuAccountsSnapshot {
 
 export const DOUYU_TASK_POLICIES = ['foreground', 'background-unlocked', 'background-locked'] as const
 export type DouyuTaskPolicy = typeof DOUYU_TASK_POLICIES[number]
-export const DOUYU_TASK_KINDS = ['room-sign', 'yuba-sign'] as const
+export const DOUYU_TASK_KINDS = ['room-sign', 'yuba-sign', 'message-loop'] as const
 export type DouyuTaskKind = typeof DOUYU_TASK_KINDS[number]
+
+export interface DouyuMessageSchedule {
+  text: string
+  /** Official color indices, in the user's rotation order. */
+  colors: number[]
+  intervalSeconds: number
+  initialDelaySeconds: number
+  /** Null continues until paused, cancelled or an unconfirmed result occurs. */
+  maxRuns: number | null
+}
 
 export interface DouyuTaskDefinition {
   id: string
@@ -27,6 +37,8 @@ export interface DouyuTaskDefinition {
   /** Null runs once; recurring work is armed only by an explicit start. */
   repeatMinutes: number | null
   createdAt: number
+  /** Required only for message-loop; all other task kinds must omit it. */
+  message?: DouyuMessageSchedule
 }
 
 export interface DouyuTaskView extends DouyuTaskDefinition {
@@ -35,6 +47,8 @@ export interface DouyuTaskView extends DouyuTaskDefinition {
   lastRunAt: number | null
   nextRunAt: number | null
   lastResult: string | null
+  /** Message tasks only. Resets on an explicit new start and is never persisted. */
+  completedRuns?: number
 }
 
 export interface DouyuRuntimeState {
@@ -75,4 +89,6 @@ export interface DouyuMessageInput {
 export type DouyuMessageOutcome = DouyuTaskOutcome & {
   /** Absolute deadline in milliseconds, if the gateway reports a cooldown. */
   nextAllowedAt: number | null
+  /** Proven not sent, waiting only for a known cooldown. Never set after dispatch. */
+  deferredUntil?: number
 }

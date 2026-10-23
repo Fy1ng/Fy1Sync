@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiClient, type ApiResult } from '../app/apiClient'
 import type {
-  DouyuAccountsSnapshot, DouyuAccountSummary, DouyuTaskKind, DouyuTaskPolicy, DouyuTasksSnapshot, DouyuTaskView,
+  DouyuAccountsSnapshot, DouyuAccountSummary, DouyuMessageSchedule, DouyuTaskKind, DouyuTaskPolicy, DouyuTasksSnapshot, DouyuTaskView,
 } from '../../server/douyu/types'
+import { readMessageSchedule } from '../../server/douyu/taskConfig'
+import { colorForIndex } from '../../server/danmaku/douyuProtocol'
 import './DouyuTools.css'
 
 const POLICY_LABELS: Record<DouyuTaskPolicy, string> = {
@@ -14,7 +16,16 @@ const STATUS_LABELS: Record<DouyuTaskView['status'], string> = {
   paused: '已暂停', queued: '等待执行', running: '执行中', 'waiting-user': '等待手动处理',
   succeeded: '已完成', failed: '失败', stopped: '已停止',
 }
-const TASK_LABELS: Record<DouyuTaskKind, string> = { 'room-sign': '直播间签到', 'yuba-sign': '鱼吧签到' }
+const TASK_LABELS: Record<DouyuTaskKind, string> = { 'room-sign': '直播间签到', 'yuba-sign': '鱼吧签到', 'message-loop': '弹幕发送' }
+const COLOR_LABELS = ['普通', '红色', '蓝色', '绿色', '橙色', '紫色', '粉色']
+const numericValue = (value: number): number | '' => Number.isFinite(value) ? value : ''
+
+function taskScheduleLabel(task: DouyuTaskView): string {
+  if (task.kind === 'message-loop' && task.message) {
+    return task.message.maxRuns === 1 ? '发送 1 次' : `每 ${task.message.intervalSeconds} 秒 / ${task.message.maxRuns === null ? '持续发送' : `共 ${task.message.maxRuns} 次`}`
+  }
+  return task.repeatMinutes === null ? '单次' : task.repeatMinutes === 1440 ? '每天' : `每 ${task.repeatMinutes} 分钟`
+}
 
 function PolicyOptions(): React.ReactNode {
   return Object.entries(POLICY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)
@@ -63,6 +74,10 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
   const [kind, setKind] = useState<DouyuTaskKind>('room-sign')
   const [policy, setPolicy] = useState<DouyuTaskPolicy>('foreground')
   const [repeat, setRepeat] = useState('once')
+  const [messageDraft, setMessageDraft] = useState<DouyuMessageSchedule>({
+    text: '', colors: [0], intervalSeconds: 60, initialDelaySeconds: 0, maxRuns: 10,
+  })
+  const [finiteRuns, setFiniteRuns] = useState(10)
   const mounted = useRef(false)
   const accountInFlight = useRef(false)
   const taskInFlight = useRef(false)
@@ -105,6 +120,8 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
   const selectedAccountId = allAccounts.some(account => account.id === chosenAccountId)
     ? chosenAccountId : activeAccount?.id ?? allAccounts[0]?.id ?? ''
   const taskRoom = roomInput ?? defaultRoom ?? tasks?.currentRoom ?? ''
+  const messageTask = kind === 'message-loop'
+  const messageSchedule = readMessageSchedule(messageDraft)
   const rooms = [...new Set([
     ...(tasks?.currentRoom ? [tasks.currentRoom] : []),
     ...(tasks?.retainedRooms ?? []),
@@ -257,19 +274,22 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
     {accountError && <p role="alert" className="dialog-error">{accountError}</p>}
 
     <details className="douyu-tools-details">
-      <summary>签到任务 ({tasks?.tasks.length ?? 0})</summary>
+      <summary>房间任务 ({tasks?.tasks.length ?? 0})</summary>
       <div className="douyu-tools-body">
         <p className="hint">新建任务默认为暂停, 点击启动后才会执行. 应用退出后任务停止, 重新打开应用后需手动启动.</p>
-        {kind === 'room-sign'
+        {messageTask
+          ? <p className="hint">发送内容随任务配置保存在本机. 每次启动从第 1 次重新计数, 仅在确认成功后继续. 需要验证或结果未知时停止, 不自动重发.</p>
+          : kind === 'room-sign'
           ? <p className="hint">直播间签到仍需到官方房间核对结果, 暂不会自动重复提交. 每日设置仅保存计划.</p>
           : <p className="hint">先在账号管理中登录鱼吧. 仅对已加入的鱼吧签到, 已签到时跳过. 确认完成后才安排下一次, 遇到验证或未知结果会停止并提示.</p>}
         <form className="douyu-task-create" onSubmit={event => {
           event.preventDefault()
-          if (!selectedAccountId || !taskRoom.trim() || accountLocked) return
-          void taskAction('正在创建签到任务...', () => apiClient.createDouyuTask({
+          if (!selectedAccountId || !taskRoom.trim() || accountLocked || (messageTask && !messageSchedule)) return
+          void taskAction(messageTask ? '正在创建发送任务...' : '正在创建签到任务...', () => apiClient.createDouyuTask({
             accountId: selectedAccountId, roomInput: taskRoom.trim(), kind, policy,
-            repeatMinutes: repeat === 'daily' ? 1440 : null,
-          }), '签到任务已创建, 当前为暂停.')
+            repeatMinutes: !messageTask && repeat === 'daily' ? 1440 : null,
+            ...(messageTask && messageSchedule ? { message: messageSchedule } : {}),
+          }), messageTask ? '发送任务已创建, 当前为暂停.' : '签到任务已创建, 当前为暂停.')
         }}>
           <label className="field"><span>任务账号</span>
             <select value={selectedAccountId} disabled={accountLocked || taskLocked || !allAccounts.length} onChange={event => setChosenAccountId(event.target.value)}>
@@ -277,29 +297,62 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
               {allAccounts.map(account => <option key={account.id} value={account.id}>{account.label}{account.id === accounts?.activeAccountId ? ' (活动)' : ''}</option>)}
             </select>
           </label>
-          <label className="field"><span>签到房间号或地址</span>
+          <label className="field"><span>任务房间号或地址</span>
             <input value={taskRoom} placeholder="例如 9999 或 douyu.com/9999" disabled={taskLocked} onChange={event => setRoomInput(event.target.value)} />
           </label>
-          <label className="field"><span>签到类型</span>
-            <select aria-label="签到类型" value={kind} disabled={taskLocked} onChange={event => setKind(event.target.value as DouyuTaskKind)}>
-              <option value="room-sign">直播间签到</option><option value="yuba-sign">鱼吧签到</option>
+          <label className="field"><span>任务类型</span>
+            <select aria-label="任务类型" value={kind} disabled={taskLocked} onChange={event => setKind(event.target.value as DouyuTaskKind)}>
+              <option value="room-sign">直播间签到</option><option value="yuba-sign">鱼吧签到</option><option value="message-loop">延迟/循环发送弹幕</option>
             </select>
           </label>
           <label className="field"><span>执行条件</span>
             <select aria-label="执行条件" value={policy} disabled={taskLocked} onChange={event => setPolicy(event.target.value as DouyuTaskPolicy)}><PolicyOptions /></select>
           </label>
-          <label className="field"><span>执行周期</span>
+          {!messageTask && <label className="field"><span>执行周期</span>
             <select aria-label="执行周期" value={repeat} disabled={taskLocked} onChange={event => setRepeat(event.target.value)}>
               <option value="once">单次</option><option value="daily">每天</option>
             </select>
-          </label>
-          <button type="submit" disabled={accountLocked || taskLocked || !selectedAccountId || !taskRoom.trim()}>创建签到任务</button>
+          </label>}
+          {messageTask && <>
+            <label className="field douyu-message-wide"><span>发送内容</span>
+              <textarea rows={3} value={messageDraft.text} disabled={taskLocked}
+                onChange={event => { const text = event.target.value; setMessageDraft(value => ({ ...value, text })) }} />
+            </label>
+            <label className="field"><span>发送间隔(秒)</span>
+              <input type="number" min={1} max={86400} step={1} required value={numericValue(messageDraft.intervalSeconds)} disabled={taskLocked}
+                onChange={event => { const intervalSeconds = event.target.valueAsNumber; setMessageDraft(value => ({ ...value, intervalSeconds })) }} />
+            </label>
+            <label className="field"><span>启动延迟(秒)</span>
+              <input type="number" min={0} max={86400} step={1} required value={numericValue(messageDraft.initialDelaySeconds)} disabled={taskLocked}
+                onChange={event => { const initialDelaySeconds = event.target.valueAsNumber; setMessageDraft(value => ({ ...value, initialDelaySeconds })) }} />
+            </label>
+            <label className="field"><span>发送次数</span>
+              <input type="number" min={1} max={1000} step={1} required value={numericValue(messageDraft.maxRuns ?? finiteRuns)} disabled={taskLocked || messageDraft.maxRuns === null}
+                onChange={event => { const maxRuns = event.target.valueAsNumber; setFiniteRuns(maxRuns); setMessageDraft(value => ({ ...value, maxRuns })) }} />
+            </label>
+            <label className="douyu-message-unlimited"><input type="checkbox" checked={messageDraft.maxRuns === null} disabled={taskLocked}
+              onChange={event => { const unlimited = event.target.checked; setMessageDraft(value => ({ ...value, maxRuns: unlimited ? null : finiteRuns })) }} />持续发送直到暂停</label>
+            <fieldset className="douyu-message-wide douyu-message-colors" disabled={taskLocked}>
+              <legend>发送颜色(多选自动变色)</legend>
+              <div>{COLOR_LABELS.map((label, color) => <label key={color}>
+                <input type="checkbox" aria-label={`发送颜色 ${label}`} checked={messageDraft.colors.includes(color)}
+                  onChange={event => { const checked = event.target.checked; setMessageDraft(value => ({ ...value,
+                    colors: checked ? [...value.colors, color] : value.colors.filter(item => item !== color),
+                  })) }} />
+                <span className="douyu-color-swatch" style={{ backgroundColor: colorForIndex(color) }} />{label}
+              </label>)}</div>
+              <p className="hint">{messageDraft.colors.length > 1 ? '轮换顺序' : '固定颜色'}: {messageDraft.colors.map(color => COLOR_LABELS[color]).join(' > ') || '请选择颜色'}.</p>
+            </fieldset>
+            <p className="hint douyu-message-wide">间隔会同时遵守服务器冷却. 彩色弹幕需要斗鱼已解锁对应颜色, 不可用时会停止并提示.</p>
+            {!messageSchedule && messageDraft.text.length > 0 && <p className="dialog-error douyu-message-wide" role="alert">请检查内容, 时间和次数, 并至少选择一种颜色. 内容最多 500 个字符, 不支持换行.</p>}
+          </>}
+          <button type="submit" disabled={accountLocked || taskLocked || !selectedAccountId || !taskRoom.trim() || (messageTask && !messageSchedule)}>{messageTask ? '创建发送任务' : '创建签到任务'}</button>
         </form>
         {!activeAccount?.login.loggedIn && <p className="hint">可以先创建暂停任务. 启动前请登录并激活任务所用的账号.</p>}
         {tasks && <p className="hint">当前房间: {tasks.currentRoom ?? '未连接'}. 应用状态: {tasks.runtime.suspended ? '已休眠'
           : tasks.runtime.locked ? '已锁屏' : tasks.runtime.foreground ? '前台' : '后台未锁屏'}.</p>}
         {tasksLoading && <p className="hint" role="status">正在读取斗鱼任务...</p>}
-        {tasks?.tasks.length === 0 && <p className="hint">暂无签到任务.</p>}
+        {tasks?.tasks.length === 0 && <p className="hint">暂无房间任务.</p>}
         <div className="douyu-room-list">
           {rooms.map(room => <section key={room} className="douyu-room" aria-label={`任务房间 ${room}`}>
             <div className="douyu-room-heading">
@@ -320,11 +373,16 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
                 const account = allAccounts.find(item => item.id === task.accountId)
                 const startProblem = !account ? '账号不可用' : account.id !== accounts?.activeAccountId ? '激活该账号后可启动'
                   : !account.login.loggedIn ? '登录该账号后可启动' : ''
-                return <li className="douyu-task" key={task.id} role="group" aria-label={`${task.kind === 'yuba-sign' ? '鱼吧签到任务' : '签到任务'} ${room} (${account?.label ?? '账号不可用'})`}>
+                return <li className="douyu-task" key={task.id} role="group" aria-label={`${task.kind === 'message-loop' ? '发送任务' : task.kind === 'yuba-sign' ? '鱼吧签到任务' : '签到任务'} ${room} (${account?.label ?? '账号不可用'})`}>
                   <div className="douyu-task-heading"><strong>{TASK_LABELS[task.kind]}</strong>
-                    <span className="hint">{account?.label ?? '账号不可用'} / {task.repeatMinutes === null ? '单次' : task.repeatMinutes === 1440 ? '每天' : `每 ${task.repeatMinutes} 分钟`}</span>
+                    <span className="hint">{account?.label ?? '账号不可用'} / {taskScheduleLabel(task)}</span>
                     <span className="douyu-task-status" data-state={task.status}>{STATUS_LABELS[task.status]}</span>
                   </div>
+                  {task.kind === 'message-loop' && task.message && <>
+                    <p className="douyu-message-template">{task.message.text}</p>
+                    <p className="hint">本轮已确认 {task.completedRuns ?? 0} 次{task.message.maxRuns !== null ? ` / 共 ${task.message.maxRuns} 次` : ', 持续发送'}.
+                      {' '}启动延迟 {task.message.initialDelaySeconds} 秒. 颜色: {task.message.colors.map(color => COLOR_LABELS[color]).join(' > ')}.</p>
+                  </>}
                   {task.lastResult && <p className="douyu-task-result">结果: {task.lastResult}</p>}
                   {task.reason && <p className="hint">{task.reason}</p>}
                   {(task.lastRunAt !== null || task.nextRunAt !== null) && <p className="hint">

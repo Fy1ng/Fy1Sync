@@ -163,7 +163,7 @@ function unescape(value: string): string {
   return value.replace(/@S/g, '/').replace(/@A/g, '@')
 }
 
-export function parseMessagePayload(payload: string): GatewayMessage {
+function parseSttFields(payload: string): GatewayMessage {
   if (!payload.endsWith('/') || payload.includes('\0')) return invalid()
   const parts = payload.slice(0, -1).split('/')
   if (parts.length > 1_024) return invalid()
@@ -175,8 +175,37 @@ export function parseMessagePayload(payload: string): GatewayMessage {
     if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name) || Object.hasOwn(fields, name)) return invalid()
     fields[name] = unescape(part.slice(separator + 2))
   }
+  return fields
+}
+
+export function parseMessagePayload(payload: string): GatewayMessage {
+  const fields = parseSttFields(payload)
   if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(fields.type ?? '')) return invalid()
   return fields
+}
+
+/**
+ * Current gateway fdm.list is an STT array of STT records, with col/ul/ubl.
+ * Official ChatToolBarServices (02d75) maps ul to the unlocked status. Only the
+ * ordinary 1..6 palette with an explicit ul=1 is supported here; 0 stays default.
+ */
+export function messageColorPalette(encoded: unknown): ReadonlySet<number> {
+  if (typeof encoded !== 'string' || encoded.length > 8_192) return invalid()
+  const palette = new Set([0])
+  if (!encoded) return palette
+  if (!encoded.endsWith('/')) return invalid()
+  const rows = encoded.slice(0, -1).split('/')
+  if (rows.length > 32) return invalid()
+  const seen = new Set<number>()
+  for (const row of rows) {
+    const fields = parseSttFields(unescape(row))
+    const color = unsigned(fields.col, 255)
+    const unlocked = unsigned(fields.ul, 255)
+    if (color === null || unlocked === null || seen.has(color)) return invalid()
+    seen.add(color)
+    if (color >= 1 && color <= 6 && unlocked === 1) palette.add(color)
+  }
+  return palette
 }
 
 export class MessageFrameDecoder {

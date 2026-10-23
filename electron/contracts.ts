@@ -8,7 +8,7 @@ import type { BufferState } from './bufferManager'
 import type { LoginPlatform, LoginResult, LoginStatus } from './login'
 import type { DecoderMode, DecoderPreferenceState } from './decoderPreferences'
 import type { ToolsStatus } from './toolsService'
-import type { DouyuAccountsSnapshot, DouyuMessageInput, DouyuMessageOutcome, DouyuTasksSnapshot, DouyuTaskKind, DouyuTaskPolicy } from '../server/douyu/types'
+import type { DouyuAccountsSnapshot, DouyuMessageInput, DouyuMessageOutcome, DouyuMessageSchedule, DouyuTasksSnapshot, DouyuTaskKind, DouyuTaskPolicy } from '../server/douyu/types'
 
 export interface DesktopMethods {
   listDouyuAccounts: { args: undefined; result: DouyuAccountsSnapshot }
@@ -21,7 +21,7 @@ export interface DesktopMethods {
   logoutDouyuAccount: { args: { id: string }; result: DouyuAccountsSnapshot }
   removeDouyuAccount: { args: { id: string }; result: DouyuAccountsSnapshot }
   getDouyuTasks: { args: undefined; result: DouyuTasksSnapshot }
-  createDouyuTask: { args: { accountId: string; roomInput: string; kind: DouyuTaskKind; policy: DouyuTaskPolicy; repeatMinutes: number | null }; result: DouyuTasksSnapshot }
+  createDouyuTask: { args: { accountId: string; roomInput: string; kind: DouyuTaskKind; policy: DouyuTaskPolicy; repeatMinutes: number | null; message?: DouyuMessageSchedule }; result: DouyuTasksSnapshot }
   setDouyuTaskPolicy: { args: { id: string; policy: DouyuTaskPolicy }; result: DouyuTasksSnapshot }
   startDouyuTask: { args: { id: string }; result: DouyuTasksSnapshot }
   pauseDouyuTask: { args: { id: string }; result: DouyuTasksSnapshot }

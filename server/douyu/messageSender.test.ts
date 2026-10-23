@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { runInNewContext } from 'node:vm'
 import { resolveConfig } from '../config'
-import { encodeFrame, serializeStt } from '../danmaku/douyuProtocol'
+import { encodeFrame, escapeStt, serializeStt } from '../danmaku/douyuProtocol'
 import {
   DouyuMessageSender, type DouyuMessageSenderDependencies, type DouyuMessageSocket, type MessageSocketEvent,
 } from './messageSender'
@@ -27,6 +27,7 @@ const signal = () => new AbortController().signal
 const senders: DouyuMessageSender[] = []
 type Fields = Record<string, string | number>
 type Listener = (event: MessageSocketEvent) => void
+const paletteList = (rows: Fields[]) => rows.map(row => `${escapeStt(serializeStt(row))}/`).join('')
 
 // Synthetic WS events only. No live endpoint, account or browser profile is used.
 class FakeSocket implements DouyuMessageSocket {
@@ -62,6 +63,8 @@ type Scenario = {
   rules?: Fields | false
   challenge?: Fields
   heartbeat?: Fields
+  palette?: Fields[]
+  paletteMessage?: Fields
   ack?: ((message: GatewayMessage, socket: FakeSocket) => void) | false
   onSend?: (message: GatewayMessage, socket: FakeSocket) => void
 }
@@ -77,11 +80,12 @@ function setup(scenario: Scenario = {}, overrides: Partial<DouyuMessageSenderDep
       if (message.type === 'loginreq') {
         receive({ type: 'loginres', userid: '42', username: 'fixture-user', npv: 0, ...scenario.login })
         if (scenario.rules !== false) receive({ type: 'initcl', uid: '42', cd: 1_000, maxl: 50, ...scenario.rules })
+        if (scenario.palette !== undefined || scenario.paletteMessage !== undefined) receive({ type: 'fdm', list: paletteList(scenario.palette ?? []), ...scenario.paletteMessage })
       } else if (message.type === 'livreq') receive({ type: 'livres', nonce: 'fixture-challenge', its: '0', ...scenario.challenge })
       else if (message.type === 'keeplive') receive({ type: 'keeplive', tick: message.tick!, kd: '', nonce: 'fixture-next-nonce', its: '0', ...scenario.heartbeat })
       else if (message.type === 'chatmessage' && scenario.ack !== false) queueMicrotask(() => {
         if (typeof scenario.ack === 'function') scenario.ack(message, current)
-        else current.receive({ type: 'chatres', res: 288, cst: message.cst!, uid: '42', rid: input.room, txt: message.content!, cd: 1, len: 50 })
+        else current.receive({ type: 'chatres', res: 288, cst: message.cst!, uid: '42', rid: input.room, txt: message.content!, col: message.col!, cd: 1, len: 50 })
       })
       scenario.onSend?.(message, current)
     })
@@ -227,7 +231,7 @@ describe('server length and persistent cooldown', () => {
   it('returns a long first cooldown instead of retaining a connection beyond the operation deadline', async () => {
     fakeClock()
     const { sender, sockets } = setup({ rules: { fcd: 60_000 } })
-    expect(await sender.send(input, signal())).toMatchObject({ status: 'waiting-user', nextAllowedAt: BASE + 60_000 })
+    expect(await sender.send(input, signal())).toMatchObject({ status: 'waiting-user', nextAllowedAt: BASE + 60_000, deferredUntil: BASE + 60_000 })
     expect(sockets[0]!.messages).toEqual([])
     expectClean(sockets[0]!)
   })
@@ -235,7 +239,7 @@ describe('server length and persistent cooldown', () => {
     fakeClock()
     const { sender, sockets, request } = setup({ ack: (message, socket) => socket.receive({ type: 'chatres', res: 288, cst: message.cst!, cd: 3 }) })
     expect(await sender.send(input, signal())).toMatchObject({ status: 'succeeded', nextAllowedAt: BASE + 3_000 })
-    expect(await sender.send(input, signal())).toMatchObject({ status: 'waiting-user', nextAllowedAt: BASE + 3_000 })
+    expect(await sender.send(input, signal())).toMatchObject({ status: 'waiting-user', nextAllowedAt: BASE + 3_000, deferredUntil: BASE + 3_000 })
     expect(request).toHaveBeenCalledTimes(2)
     expect(sockets).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(3_000)
@@ -288,9 +292,10 @@ describe('receipt matching and uncertain outcomes', () => {
     expectClean(sockets[0]!)
   })
   it.each([2, 5, 6, 206, 208, 289, 290, 308, 391, 363, 0, 999])('never promotes failure or unknown code %s to success or leaks its body', async res => {
-    const { sender, sockets } = setup({ ack: (message, socket) => socket.receive({ type: 'chatres', res, cst: message.cst!, cd: 2, msg: 'fixture-private-upstream-text' }) })
+    const { sender, sockets } = setup({ ack: (message, socket) => socket.receive({ type: 'chatres', res, cst: message.cst!, cd: 2, msg: 'fixture-private-upstream-text', deferredUntil: BASE + 60_000 }) })
     const result = await sender.send(input, signal())
     expect(result.status).not.toBe('succeeded')
+    expect(result).not.toHaveProperty('deferredUntil')
     if (res === 391) expect(result.message).toContain('官方账号验证')
     if ([0, 363, 999].includes(res)) expect(result.message).toContain('尚无法确认')
     expect(result.message).not.toContain('fixture-private')
@@ -397,6 +402,7 @@ describe('network policy, input bounds and cancellation', () => {
     expect(result.status).toBe(dispatched ? 'waiting-user' : 'failed')
     expect(result.message).toContain(dispatched ? '尚无法确认' : '未发送')
     expect(result.message).not.toContain('private')
+    expect(result).not.toHaveProperty('deferredUntil')
     socket.receive({ type: 'chatres', res: 288, cst: socket.messages[0]?.cst ?? String(BASE) })
     await flush()
     expectClean(socket)
@@ -477,5 +483,142 @@ describe('default native WebSocket worker bridge', () => {
     expect(worker.terminate).toHaveBeenCalledOnce()
     expect(worker.eventNames()).toEqual([])
     expect(port.eventNames()).toEqual([])
+  })
+})
+
+describe('authorized ordinary message colors', () => {
+  it.each([1, 2, 3, 4, 5, 6])('sends the requested unlocked col=%s with the official fans flag', async color => {
+    const { sender, sockets } = setup({ palette: [{ col: color, ul: 1, ubl: 21 }] })
+    const result = await sender.send({ ...input, color }, signal())
+    expect(result).toMatchObject({ status: 'succeeded' })
+    expect(result).not.toHaveProperty('deferredUntil')
+    expect(sockets[0]!.messages).toHaveLength(1)
+    expect(sockets[0]!.messages[0]).toMatchObject({ col: String(color), pe: '0', ifs: '1', nc: '0', dat: '0' })
+  })
+  it.each([0, 2])('does not infer color availability from an unconfirmed ul=%s', async ul => {
+    const { sender, sockets } = setup({ palette: [{ col: 2, ul, ubl: 0 }] })
+    const result = await sender.send({ ...input, color: 2 }, signal())
+    expect(result).toMatchObject({ status: 'waiting-user', message: expect.stringContaining('颜色') })
+    expect(result).not.toHaveProperty('deferredUntil')
+    expect(sockets[0]!.messages).toEqual([])
+  })
+  it('requires a fresh palette without changing the request to ordinary color zero', async () => {
+    fakeClock()
+    const { sender, sockets } = setup()
+    const pending = sender.send({ ...input, color: 2 }, signal())
+    await vi.advanceTimersByTimeAsync(15_000)
+    const result = await pending
+    expect(result).toMatchObject({ status: 'failed' })
+    expect(result).not.toHaveProperty('deferredUntil')
+    expect(sockets[0]!.messages).toEqual([])
+  })
+  it.each<Fields>([{ uid: '99' }, { userid: '99' }, { rid: '1' }, { roomid: '1' }])('does not borrow another account or room palette %#', async paletteMessage => {
+    fakeClock()
+    const { sender, sockets } = setup({ palette: [{ col: 2, ul: 1 }], paletteMessage })
+    const pending = sender.send({ ...input, color: 2 }, signal())
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(await pending).toMatchObject({ status: 'failed' })
+    expect(sockets[0]!.messages).toEqual([])
+  })
+  it('does not retain an unlocked palette after closing its connection', async () => {
+    fakeClock()
+    const scenario: Scenario = {
+      rules: { cd: 0 }, palette: [{ col: 2, ul: 1 }],
+      ack: (message, socket) => socket.receive({ type: 'chatres', res: 288, cst: message.cst!, col: message.col!, cd: 0 }),
+    }
+    const { sender, sockets } = setup(scenario)
+    expect(await sender.send({ ...input, color: 2 }, signal())).toMatchObject({ status: 'succeeded' })
+    scenario.palette = []
+    expect(await sender.send({ ...input, color: 2 }, signal())).toMatchObject({ status: 'waiting-user' })
+    expect(sockets[0]!.messages).toHaveLength(1)
+    expect(sockets[1]!.messages).toEqual([])
+  })
+  it.each([undefined, '0', '3', '7', 'invalid'])('stops after a receipt that does not confirm the requested color: %s', async col => {
+    const { sender, sockets } = setup({ palette: [{ col: 2, ul: 1 }], ack: (message, socket) => socket.receive({
+      type: 'chatres', res: 288, cst: message.cst!, cd: 2, ...(col === undefined ? {} : { col }),
+    }) })
+    const result = await sender.send({ ...input, color: 2 }, signal())
+    expect(result).toMatchObject({ status: 'waiting-user', message: expect.stringContaining('未确认所选弹幕颜色') })
+    expect(result).not.toHaveProperty('deferredUntil')
+    expect(sockets[0]!.messages).toHaveLength(1)
+    expect(sockets[0]!.messages[0]!.col).toBe('2')
+  })
+  it('stops on an explicit color error without retrying in color zero', async () => {
+    const { sender, sockets } = setup({ palette: [{ col: 2, ul: 1 }], ack: (message, socket) => socket.receive({ type: 'chatres', res: 308, cst: message.cst!, cd: 2 }) })
+    const result = await sender.send({ ...input, color: 2 }, signal())
+    expect(result).toMatchObject({ status: 'failed' })
+    expect(result).not.toHaveProperty('deferredUntil')
+    expect(sockets[0]!.messages.map(message => message.col)).toEqual(['2'])
+  })
+  it('applies a palette revocation received during the final account check', async () => {
+    let calls = 0
+    let release!: (value: string) => void
+    const { sender, sockets } = setup({ palette: [{ col: 2, ul: 1 }] }, {
+      cookieHeader: () => ++calls === 3 ? new Promise<string>(done => { release = done }) : Promise.resolve(cookie),
+    })
+    const pending = sender.send({ ...input, color: 2 }, signal())
+    await flush()
+    expect(calls).toBe(3)
+    sockets[0]!.receive({ type: 'fdm', list: paletteList([{ col: 2, ul: 0 }]) })
+    release(cookie)
+    const result = await pending
+    expect(result).toMatchObject({ status: 'waiting-user' })
+    expect(result).not.toHaveProperty('deferredUntil')
+    expect(sockets[0]!.messages).toEqual([])
+  })
+})
+
+describe('known-unsent deferral is distinct from submitted outcomes', () => {
+  it('does not attach deferral to a network-policy failure despite a recorded cooldown', async () => {
+    fakeClock()
+    const policy = { ...proxy }
+    const { sender, sockets } = setup({}, { proxy: policy })
+    await sender.send(input, signal())
+    policy.enabled = false
+    const result = await sender.send(input, signal())
+    expect(result).toMatchObject({ status: 'failed', nextAllowedAt: BASE + 1_000 })
+    expect(result).not.toHaveProperty('deferredUntil')
+    expect(sockets).toHaveLength(1)
+  })
+  it('does not attach deferral to pre-cancellation despite a recorded cooldown', async () => {
+    fakeClock()
+    const { sender, sockets } = setup()
+    await sender.send(input, signal())
+    const controller = new AbortController()
+    controller.abort()
+    const result = await sender.send(input, controller.signal)
+    expect(result).toMatchObject({ status: 'failed', nextAllowedAt: BASE + 1_000 })
+    expect(result).not.toHaveProperty('deferredUntil')
+    expect(sockets).toHaveLength(1)
+  })
+  it.each(['cancelled', 'expired'])('does not return a %s deferral after resource cleanup', async reason => {
+    fakeClock()
+    let release!: () => void
+    const { sender, sockets } = setup({ rules: { fcd: 60_000 }, onSend: (message, socket) => {
+      if (message.type === 'loginreq') socket.terminate.mockImplementation(() => new Promise<void>(done => { release = done }))
+    } })
+    const controller = new AbortController()
+    const pending = sender.send(input, controller.signal)
+    await flush()
+    expect(sockets[0]!.terminate).toHaveBeenCalledOnce()
+    if (reason === 'cancelled') controller.abort()
+    else vi.setSystemTime(BASE + 60_001)
+    release()
+    expect(await pending).not.toHaveProperty('deferredUntil')
+    expect(sockets[0]!.messages).toEqual([])
+  })
+  it.each(['timeout', 'disconnect', '290'])('never defers an already submitted %s outcome', async reason => {
+    fakeClock()
+    const { sender, sockets } = setup({ ack: reason === 'timeout' ? false : (message, socket) => {
+      if (reason === 'disconnect') socket.emit('close', { code: 1006 })
+      else socket.receive({ type: 'chatres', res: 290, cst: message.cst!, cd: 20 })
+    } })
+    const pending = sender.send(input, signal())
+    if (reason === 'timeout') await vi.advanceTimersByTimeAsync(15_000)
+    const result = await pending
+    expect(result.status).not.toBe('succeeded')
+    expect(result).not.toHaveProperty('deferredUntil')
+    expect(sockets[0]!.messages).toHaveLength(1)
+    if (reason === '290') expect(result.nextAllowedAt).toBe(BASE + 20_000)
   })
 })

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { encodeFrame, serializeStt } from '../danmaku/douyuProtocol'
+import { encodeFrame, escapeStt, serializeStt } from '../danmaku/douyuProtocol'
 import {
   gatewayAddress, MAX_BUFFER_BYTES, MAX_FRAME_BYTES, MAX_TOTAL_BYTES, MessageFrameDecoder,
-  messageChallenge, messageCredentials, messageSigningKeys, normalizeMessageText,
+  messageChallenge, messageColorPalette, messageCredentials, messageSigningKeys, normalizeMessageText,
   parseMessagePayload, receiptMatch, signMessageGateway, type GatewayMessage,
 } from './messageProtocol'
 
@@ -128,4 +128,24 @@ describe('strict server framing and receipt correlation', () => {
     { cst: '1' }, { cst: expected.cst, uid: '99' }, { cst: expected.cst, rid: '1' },
     { cst: expected.cst, txt: 'another-message' }, { uid: '42', rid: '6979222', txt: expected.text, sender: '9' },
   ])('rejects conflicting receipt fields %#', message => { expect(receiptMatch(message, expected)).toBe('mismatch') })
+})
+
+describe('official fdm color permissions', () => {
+  const list = (rows: Record<string, string | number>[]) => rows.map(row => `${escapeStt(serializeStt(row))}/`).join('')
+  it('decodes both STT nesting levels and trusts explicit unlocks, not level numbers', () => {
+    const payload = serializeStt({ type: 'fdm', list: list([{ col: 2, ul: 1, ubl: 6 }, { col: 1, ul: 0, ubl: 0 }, { col: 7, ul: 1, ubl: 66 }]) })
+    expect([...messageColorPalette(parseMessagePayload(payload).list)]).toEqual([0, 2])
+  })
+  it('does not turn empty or unknown permission states into unlocked colors', () => {
+    expect([...messageColorPalette('')]).toEqual([0])
+    expect([...messageColorPalette(list([{ col: 3, ul: 2, ubl: 9 }]))]).toEqual([0])
+  })
+  it.each([
+    list([{ col: 2, ul: 1 }, { col: 2, ul: 0 }]), list([{ col: 2 }]),
+    list([{ col: -1, ul: 1 }]), list([{ col: 2, ul: 'invalid' }]),
+    'col@=2/ul@=1/', 'col@A=2@Sul@A=1@S', 'col@A=2@Sul@A=1@Sul@A=0@S/',
+    'x'.repeat(8_193), Array.from({ length: 33 }, (_, col) => `${escapeStt(serializeStt({ col, ul: 1 }))}/`).join(''),
+  ])('rejects ambiguous, malformed or unbounded palette data %#', encoded => {
+    expect(() => messageColorPalette(encoded)).toThrow('Unsupported')
+  })
 })
