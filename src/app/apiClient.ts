@@ -109,6 +109,8 @@ export class ApiClient {
   addDouyuAccount(label: string) { return this.request('addDouyuAccount', { label }) }
   renameDouyuAccount(id: string, label: string) { return this.request('renameDouyuAccount', { id, label }) }
   loginDouyuAccount(id: string) { return this.request('loginDouyuAccount', { id }) }
+  loginDouyuYubaAccount(id: string) { return this.request('loginDouyuYubaAccount', { id }) }
+  sendDouyuMessage(input: DesktopMethods['sendDouyuMessage']['args']) { return this.request('sendDouyuMessage', input) }
   activateDouyuAccount(id: string) { return this.request('activateDouyuAccount', { id }) }
   logoutDouyuAccount(id: string) { return this.request('logoutDouyuAccount', { id }) }
   removeDouyuAccount(id: string) { return this.request('removeDouyuAccount', { id }) }

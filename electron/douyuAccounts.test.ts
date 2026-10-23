@@ -73,6 +73,23 @@ describe('Douyu account isolation', () => {
     expect(f.stored()).not.toHaveProperty('cookies')
   })
 
+  it('opens Yuba through each existing account manager without changing the active account', async () => {
+    const f = fixture()
+    await f.manager.add('第二个')
+    const login = f.created.get(path.join(f.root, 'douyu', 'account-data', a))!
+    await f.manager.login(a)
+    expect(await f.manager.loginYuba(a)).toMatchObject({ activeAccountId: 'default', accounts: [
+      { id: 'default', active: true }, { id: a, active: false, login: { loggedIn: true } },
+    ] })
+    expect(login.login).toHaveBeenNthCalledWith(1, 'douyu')
+    expect(login.login).toHaveBeenNthCalledWith(2, 'douyu', 'yuba')
+    expect(f.created.size).toBe(1)
+    expect(f.defaultLogin.login).not.toHaveBeenCalled()
+    await f.manager.loginYuba('default')
+    expect(f.defaultLogin.login).toHaveBeenCalledWith('douyu', 'yuba')
+    expect(f.created.size).toBe(1)
+  })
+
   it('invalidates the old account on activation and before replacing login information', async () => {
     const f = fixture()
     await f.manager.add('第二个')
@@ -101,12 +118,58 @@ describe('Douyu account isolation', () => {
     await expect(f.manager.cookieHeader('default')).rejects.toMatchObject({ code: 'no-active-account' })
   })
 
+  it('keeps Yuba login exclusive and rejects credentials read before its revision changes', async () => {
+    const f = fixture()
+    let finishRead!: (header: string) => void
+    f.defaultLogin.cookieHeader.mockImplementationOnce(() => new Promise(resolve => { finishRead = resolve }))
+    const staleRead = f.manager.cookieHeader('default', 'https://yuba.douyu.com/')
+    const rejectedRead = expect(staleRead).rejects.toMatchObject({ code: 'no-active-account' })
+    const events: unknown[] = []
+    f.manager.subscribe(event => events.push(event))
+    let finishLogin!: (result: { cookieCount: number; authKeysPresent: string[] }) => void
+    f.defaultLogin.login.mockImplementationOnce(() => new Promise(resolve => { finishLogin = resolve }))
+    const pending = f.manager.loginYuba('default')
+    expect(f.manager.isBusy('default')).toBe(true)
+    expect(events).toEqual([{ type: 'invalidated', accountId: 'default' }])
+    await expect(f.manager.login('default')).rejects.toMatchObject({ code: 'account-busy' })
+    await expect(f.manager.loginYuba('default')).rejects.toMatchObject({ code: 'account-busy' })
+    await expect(f.manager.logout('default')).rejects.toMatchObject({ code: 'account-busy' })
+    await expect(f.manager.remove('default')).rejects.toMatchObject({ code: 'account-busy' })
+    await expect(f.manager.activate('default')).rejects.toMatchObject({ code: 'account-busy' })
+    await expect(f.manager.cookieHeader('default', 'https://yuba.douyu.com/')).rejects.toMatchObject({ code: 'no-active-account' })
+    finishLogin({ cookieCount: 1, authKeysPresent: ['acf_uid'] })
+    await pending
+    expect(f.manager.isBusy('default')).toBe(false)
+    expect(events).toEqual([
+      { type: 'invalidated', accountId: 'default' }, { type: 'invalidated', accountId: 'default' }, { type: 'changed' },
+    ])
+    finishRead('synthetic=old')
+    await rejectedRead
+    expect(await f.manager.cookieHeader('default', 'https://yuba.douyu.com/')).toBe('synthetic=value')
+    expect(f.defaultLogin.cookieHeader).toHaveBeenLastCalledWith('douyu', 'https://yuba.douyu.com/')
+  })
+
+  it('invalidates credentials and releases the account after Yuba login failure', async () => {
+    const f = fixture()
+    const events: unknown[] = []
+    f.manager.subscribe(event => events.push(event))
+    f.defaultLogin.login.mockRejectedValueOnce(new Error('synthetic-private-browser-detail'))
+    await expect(f.manager.loginYuba('default')).rejects.toMatchObject({ code: 'login-failed' })
+    expect(f.manager.isBusy('default')).toBe(false)
+    expect(events).toEqual([
+      { type: 'invalidated', accountId: 'default' }, { type: 'invalidated', accountId: 'default' }, { type: 'changed' },
+    ])
+    await f.manager.login('default')
+    expect(f.defaultLogin.login).toHaveBeenLastCalledWith('douyu')
+  })
+
   it('keeps removal exclusive until logout and registry replacement finish', async () => {
     const f = fixture()
     let finish!: () => void
     f.defaultLogin.logout.mockImplementation(() => new Promise<void>(resolve => { finish = resolve }))
     const pending = f.manager.remove('default')
     await expect(f.manager.login('default')).rejects.toMatchObject({ code: 'account-busy' })
+    await expect(f.manager.loginYuba('default')).rejects.toMatchObject({ code: 'account-busy' })
     finish()
     expect(await pending).toEqual({ activeAccountId: null, accounts: [] })
     expect(f.defaultLogin.logout).toHaveBeenCalledWith('douyu')
@@ -147,6 +210,7 @@ describe('Douyu account isolation', () => {
       await expect(f.manager.add(label)).rejects.toMatchObject({ code: 'invalid-arguments' })
     }
     await expect(f.manager.login('../outside')).rejects.toMatchObject({ code: 'account-not-found' })
+    await expect(f.manager.loginYuba('../outside')).rejects.toMatchObject({ code: 'account-not-found' })
     expect(f.created.size).toBe(0)
   })
 
@@ -157,5 +221,6 @@ describe('Douyu account isolation', () => {
     expect([...f.created.values()][0]!.dispose).toHaveBeenCalledOnce()
     expect(f.defaultLogin.dispose).not.toHaveBeenCalled()
     await expect(f.manager.add('新的')).rejects.toMatchObject({ code: 'disposed' })
+    await expect(f.manager.loginYuba(a)).rejects.toMatchObject({ code: 'disposed' })
   })
 })

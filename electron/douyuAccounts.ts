@@ -188,6 +188,11 @@ export class DouyuAccountManager {
     return this.snapshot()
   }
 
+  async loginYuba(id: string): Promise<DouyuAccountsSnapshot> {
+    await this.credentialOperation(id, manager => manager.login('douyu', 'yuba'))
+    return this.snapshot()
+  }
+
   async logout(id: string): Promise<DouyuAccountsSnapshot> {
     await this.credentialOperation(id, manager => manager.logout('douyu'))
     return this.snapshot()

@@ -27,7 +27,8 @@ import { DouyuAccountError, DouyuAccountManager } from './douyuAccounts'
 import { DouyuTaskManager } from './douyuTasks'
 import { PrivateJsonStore } from './privateJsonStore'
 import { DouyuActions } from '../server/douyu/actions'
-import type { DouyuRuntimeState, DouyuTaskStorage } from '../server/douyu/types'
+import { DouyuMessageSender, NativeMessageSocket } from '../server/douyu/messageSender'
+import type { DouyuMessageInput, DouyuRuntimeState, DouyuTaskStorage } from '../server/douyu/types'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: {
   standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true,
@@ -65,17 +66,19 @@ async function start(): Promise<void> {
   const e2e = process.env.STREAM_SYNC_E2E === '1'
   const offlineE2e = e2e && process.env.STREAM_SYNC_OFFLINE_E2E === '1'
   let douyuToolsFixture = false
+  const douyuSentFixture: DouyuMessageInput[] = []
+  let douyuSendFixtureOutcome: 'succeeded' | 'waiting-user' = 'succeeded'
   const browserLogin = new ChromeLoginDriver()
   const createLogin = (directory: string) => new LoginManager(directory, {
     findChrome: () => !app.isPackaged && offlineE2e && douyuToolsFixture ? process.execPath : findSystemChrome(),
-    driver: { async login(executable, profile, platform, signal) {
+    driver: { async login(executable, profile, platform, signal, destination) {
       if (!app.isPackaged && offlineE2e && douyuToolsFixture && platform === 'douyu') {
         if (signal.aborted) throw new Error('Fixture login cancelled')
         return ['acf_uid', 'acf_biz', 'acf_stk', 'acf_ct', 'acf_ltkid'].map((name, index) => ({
           domain: '.douyu.com', path: '/', secure: true, session: true, name, value: String(index + 1),
         }))
       }
-      return browserLogin.login(executable, profile, platform, signal)
+      return browserLogin.login(executable, profile, platform, signal, destination)
     } },
   })
   const logins = createLogin(userDataDir)
@@ -94,6 +97,7 @@ async function start(): Promise<void> {
   mkdirSync(userDataDir, { recursive: true })
   let douyuAccounts: DouyuAccountManager | undefined
   let douyuTasks: DouyuTaskManager | undefined
+  let douyuMessageSender: DouyuMessageSender | undefined
   let releaseAccountEvents: (() => void) | undefined
   try { douyuAccounts = new DouyuAccountManager(userDataDir, { defaultLogin: logins, createLogin }) }
   catch { console.error('斗鱼账号配置不可用, 原文件已保留.') }
@@ -101,11 +105,22 @@ async function start(): Promise<void> {
     try {
       const taskStore = new PrivateJsonStore<DouyuTaskStorage>(userDataDir, 'douyu/tasks.json')
       const actions = new DouyuActions({ proxy, cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url) })
+      douyuMessageSender = new DouyuMessageSender({ proxy, cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url) })
       douyuTasks = new DouyuTaskManager({
         load: () => taskStore.load(), save: value => taskStore.save(value),
         run: (task, signal) => !app.isPackaged && offlineE2e && douyuToolsFixture
-          ? Promise.resolve({ status: 'succeeded', message: '离线签到测试完成' })
+          ? Promise.resolve({ status: 'succeeded', message: task.kind === 'yuba-sign' ? '离线鱼吧签到测试完成' : '离线签到测试完成' })
           : actions.run(task, signal),
+        sendMessage: async (input, signal) => {
+          if (!app.isPackaged && offlineE2e && douyuToolsFixture) {
+            if (signal.aborted) throw new DOMException('Fixture send cancelled', 'AbortError')
+            if (douyuSentFixture.length >= 64) throw new Error('Fixture send limit reached')
+            douyuSentFixture.push({ ...input })
+            return { status: douyuSendFixtureOutcome, nextAllowedAt: null,
+              message: douyuSendFixtureOutcome === 'succeeded' ? '离线弹幕发送回执' : '离线发送结果待核对' }
+          }
+          return douyuMessageSender!.send(input, signal)
+        },
       })
       douyuTasks.setActiveAccount(douyuAccounts.activeAccountId)
       releaseAccountEvents = douyuAccounts.subscribe(event => {
@@ -114,6 +129,7 @@ async function start(): Promise<void> {
       })
     } catch {
       douyuTasks?.dispose()
+      douyuMessageSender?.dispose()
       douyuTasks = undefined
       console.error('斗鱼任务配置不可用, 原文件已保留.')
     }
@@ -278,6 +294,15 @@ async function start(): Promise<void> {
     ...(!app.isPackaged ? { setDouyuToolsFixture() {
       if (!offlineE2e) throw new Error('Douyu tools fixture is offline-only')
       douyuToolsFixture = true
+    }, createDouyuSocketFixture(url: string) {
+      if (!offlineE2e || !/^ws:\/\/127\.0\.0\.1:[1-9]\d{0,4}\/$/.test(url)) throw new Error('Invalid local socket fixture')
+      return new NativeMessageSocket(url)
+    }, getDouyuSentFixture() {
+      if (!offlineE2e || !douyuToolsFixture) throw new Error('Douyu send fixture is offline-only')
+      return douyuSentFixture.map(input => ({ ...input }))
+    }, setDouyuSendFixtureOutcome(outcome: 'succeeded' | 'waiting-user') {
+      if (!offlineE2e || !douyuToolsFixture || !['succeeded', 'waiting-user'].includes(outcome)) throw new Error('Invalid send fixture')
+      douyuSendFixtureOutcome = outcome
     }, setDouyuRoomFixture(mapping: Record<string, string | null>) {
       if (!offlineE2e || Object.keys(mapping).length > 128 || Object.entries(mapping).some(([key, value]) => !/^[1-9][0-9]{0,11}$/.test(key) || (value !== null && !/^[1-9][0-9]{0,11}$/.test(value)))) throw new Error('Invalid room fixture')
       roomFixture = room => {
@@ -334,6 +359,7 @@ async function start(): Promise<void> {
     powerMonitor.removeListener('resume', resume)
     releaseAccountEvents?.()
     douyuTasks?.dispose()
+    douyuMessageSender?.dispose()
     unwatchFile(index)
     handlers.dispose()
     service.dispose()

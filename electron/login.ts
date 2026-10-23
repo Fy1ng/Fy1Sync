@@ -21,7 +21,7 @@ export class LoginError extends Error {
 }
 
 export interface BrowserLoginDriver {
-  login(executable: string, profile: string, platform: LoginPlatform, signal: AbortSignal): Promise<BrowserCookie[]>
+  login(executable: string, profile: string, platform: LoginPlatform, signal: AbortSignal, destination?: 'yuba'): Promise<BrowserCookie[]>
 }
 export interface LoginManagerOptions extends CookieStoreOptions {
   driver?: BrowserLoginDriver
@@ -54,6 +54,9 @@ export interface ChromeLoginDriverOptions {
 }
 
 function cancelled(signal: AbortSignal): void { if (signal.aborted) throw new LoginError('login-cancelled') }
+function isLoginDestination(platform: LoginPlatform, destination: unknown): boolean {
+  return destination === undefined || (platform === 'douyu' && destination === 'yuba')
+}
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     cancelled(signal)
@@ -212,9 +215,11 @@ export class ChromeLoginDriver implements BrowserLoginDriver {
     }
   }
 
-  async login(executable: string, profile: string, platform: LoginPlatform, signal: AbortSignal): Promise<BrowserCookie[]> {
+  async login(executable: string, profile: string, platform: LoginPlatform, signal: AbortSignal, destination?: 'yuba'): Promise<BrowserCookie[]> {
     cancelled(signal)
-    const child = this.spawn(executable, [`--user-data-dir=${profile}`, ...CHROME_FLAGS, '--new-window', LOGIN_PLATFORMS[platform].url], {
+    if (!isLoginPlatform(platform) || !isLoginDestination(platform, destination)) throw new LoginError('login-failed')
+    const url = destination === 'yuba' ? 'https://yuba.douyu.com/' : LOGIN_PLATFORMS[platform].url
+    const child = this.spawn(executable, [`--user-data-dir=${profile}`, ...CHROME_FLAGS, '--new-window', url], {
       shell: false, detached: this.platform !== 'win32', windowsHide: false, stdio: 'ignore',
     })
     try { await this.waitForLoginWindow(child, signal) }
@@ -237,8 +242,9 @@ export class LoginManager {
     this.driver = options.driver ?? new ChromeLoginDriver()
   }
 
-  login(platform: LoginPlatform): Promise<LoginResult> {
+  login(platform: LoginPlatform, destination?: 'yuba'): Promise<LoginResult> {
     if (!isLoginPlatform(platform) || this.disposed) return Promise.reject(new LoginError('login-cancelled'))
+    if (!isLoginDestination(platform, destination)) return Promise.reject(new LoginError('login-failed'))
     if (this.operations.has(platform) || this.loggingOut.has(platform)) return Promise.reject(new LoginError('login-busy'))
     const controller = new AbortController()
     const promise = (async () => {
@@ -247,7 +253,7 @@ export class LoginManager {
         if (!executable) throw new LoginError('chrome-not-found')
         let profile: string
         try { profile = this.store.prepareProfile(platform) } catch { throw new LoginError('cookie-storage-failed') }
-        const cookies = await this.driver.login(executable, profile, platform, controller.signal)
+        const cookies = await this.driver.login(executable, profile, platform, controller.signal, destination)
         cancelled(controller.signal)
         try { return this.store.write(platform, cookies) } catch { throw new LoginError('cookie-storage-failed') }
       } catch (error) {

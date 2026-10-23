@@ -62,6 +62,24 @@ afterEach(() => {
 })
 
 describe('Douyu main-process task definitions', () => {
+  it('keeps room and Yuba check-ins independent and restores both paused', async () => {
+    const h = harness()
+    const room = add(h)
+    const yuba = add(h, { kind: 'yuba-sign', repeatMinutes: 1440 })
+    expect(() => add(h, { kind: 'yuba-sign' })).toThrow(expect.objectContaining({ code: 'task-exists' }))
+    h.manager.start(yuba)
+    await flush()
+    expect(h.attempts[0]?.task.kind).toBe('yuba-sign')
+    h.attempts[0]!.resolve(SUCCESS)
+    await flush()
+    expect(status(h, yuba).nextRunAt).toBe(Date.now() + 86_400_000)
+    expect(status(h, room)).toMatchObject({ status: 'paused', lastRunAt: null })
+    const restored = harness(h.saved())
+    expect(restored.manager.snapshot().tasks.map(task => ({ kind: task.kind, status: task.status, nextRunAt: task.nextRunAt })))
+      .toEqual([{ kind: 'room-sign', status: 'paused', nextRunAt: null }, { kind: 'yuba-sign', status: 'paused', nextRunAt: null }])
+    expect(restored.run).not.toHaveBeenCalled()
+  })
+
   it('starts empty and creates paused definitions without persisting execution state', async () => {
     const h = harness(undefined, false)
     expect(h.manager.snapshot()).toEqual({ activeAccountId: null, currentRoom: null, retainedRooms: [], runtime: BACKGROUND, tasks: [] })

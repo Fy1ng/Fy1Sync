@@ -44,7 +44,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks() })
 function openTools(props: React.ComponentProps<typeof DouyuTools> = {}) {
   const view = render(<DouyuTools defaultRoom="9999" {...props} />)
   fireEvent.click(screen.getByText(/^管理斗鱼账号/))
-  fireEvent.click(screen.getByText(/^直播间签到任务/))
+  fireEvent.click(screen.getByText(/^签到任务 \(/))
   return view
 }
 
@@ -138,9 +138,48 @@ describe('DouyuTools accounts', () => {
     expect(button).toBeEnabled()
     expect(screen.queryByText('日常账号 已登录. 登录完成后请重新加载片源.')).not.toBeInTheDocument()
   })
+
+  it('opens Yuba for the selected account and does not claim its session is verified', async () => {
+    const pending = deferred<ApiResult<DouyuAccountsSnapshot>>()
+    const loginYuba = vi.spyOn(apiClient, 'loginDouyuYubaAccount').mockReturnValue(pending.promise)
+    const loginRoom = vi.spyOn(apiClient, 'loginDouyuAccount')
+    vi.mocked(apiClient.listDouyuAccounts).mockResolvedValue(ok(accountSnapshot([account(), account('second', '备用账号')])))
+    openTools()
+    const row = within(await screen.findByRole('group', { name: '斗鱼账号 备用账号' }))
+    const button = row.getByRole('button', { name: '登录鱼吧' })
+    await waitFor(() => expect(button).toBeEnabled())
+    fireEvent.click(button)
+    fireEvent.click(button)
+    expect(loginYuba).toHaveBeenCalledExactlyOnceWith('second')
+    expect(loginRoom).not.toHaveBeenCalled()
+    expect(button).toBeDisabled()
+    await act(async () => { pending.resolve(ok(accountSnapshot([account(), account('second', '备用账号')]))) })
+    expect(screen.getByText('备用账号 的鱼吧登录窗口已关闭. 启动签到任务时会检查登录状态.')).toBeVisible()
+    expect(button).toBeEnabled()
+  })
 })
 
 describe('DouyuTools tasks', () => {
+  it('creates Yuba check-in separately from room check-in without automatically starting it', async () => {
+    const room = task()
+    const yuba = task({ id: 'task-yuba', kind: 'yuba-sign', repeatMinutes: 1440 })
+    vi.mocked(apiClient.getDouyuTasks).mockResolvedValue(ok(taskSnapshot([room])))
+    const create = vi.spyOn(apiClient, 'createDouyuTask').mockResolvedValue(ok(taskSnapshot([room, yuba])))
+    const start = vi.spyOn(apiClient, 'startDouyuTask')
+    openTools()
+    await waitFor(() => expect(screen.getByRole('button', { name: '创建签到任务' })).toBeEnabled())
+    fireEvent.change(screen.getByLabelText('签到类型'), { target: { value: 'yuba-sign' } })
+    fireEvent.change(screen.getByLabelText('执行周期'), { target: { value: 'daily' } })
+    expect(screen.getByText(/仅对已加入的鱼吧签到/)).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '创建签到任务' }))
+    const row = within(await screen.findByRole('group', { name: '鱼吧签到任务 9999 (日常账号)' }))
+    expect(create).toHaveBeenCalledExactlyOnceWith({ accountId: 'daily', roomInput: '9999', kind: 'yuba-sign', policy: 'foreground', repeatMinutes: 1440 })
+    expect(row.getByText('已暂停')).toBeVisible()
+    expect(row.getByText('鱼吧签到')).toBeVisible()
+    expect(screen.getByRole('group', { name: '签到任务 9999 (日常账号)' })).toBeVisible()
+    expect(start).not.toHaveBeenCalled()
+  })
+
   it('creates a paused daily task with explicit account, room and policy, then starts and pauses it', async () => {
     const definition = task({ policy: 'background-locked', repeatMinutes: 1440 })
     const create = vi.spyOn(apiClient, 'createDouyuTask').mockResolvedValue(ok(taskSnapshot([definition])))

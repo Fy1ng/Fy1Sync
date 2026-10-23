@@ -58,7 +58,7 @@ describe('SourceDialog desktop media registration', () => {
     session.connectDanmaku('6657')
     openDialog()
     await screen.findByText('活动账号: 默认账号, 未登录')
-    fireEvent.click(screen.getByText(/^直播间签到任务/))
+    fireEvent.click(screen.getByText(/^签到任务 \(/))
     expect(screen.getByLabelText('签到房间号或地址')).toHaveValue('6657')
     expect(screen.getByRole('button', { name: '登录 YouTube' })).toBeEnabled()
     expect(screen.getByRole('button', { name: '登录斗鱼' })).toBeEnabled()

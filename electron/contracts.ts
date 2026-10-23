@@ -8,13 +8,15 @@ import type { BufferState } from './bufferManager'
 import type { LoginPlatform, LoginResult, LoginStatus } from './login'
 import type { DecoderMode, DecoderPreferenceState } from './decoderPreferences'
 import type { ToolsStatus } from './toolsService'
-import type { DouyuAccountsSnapshot, DouyuTasksSnapshot, DouyuTaskKind, DouyuTaskPolicy } from '../server/douyu/types'
+import type { DouyuAccountsSnapshot, DouyuMessageInput, DouyuMessageOutcome, DouyuTasksSnapshot, DouyuTaskKind, DouyuTaskPolicy } from '../server/douyu/types'
 
 export interface DesktopMethods {
   listDouyuAccounts: { args: undefined; result: DouyuAccountsSnapshot }
   addDouyuAccount: { args: { label: string }; result: DouyuAccountsSnapshot }
   renameDouyuAccount: { args: { id: string; label: string }; result: DouyuAccountsSnapshot }
   loginDouyuAccount: { args: { id: string }; result: DouyuAccountsSnapshot }
+  loginDouyuYubaAccount: { args: { id: string }; result: DouyuAccountsSnapshot }
+  sendDouyuMessage: { args: DouyuMessageInput; result: DouyuMessageOutcome }
   activateDouyuAccount: { args: { id: string }; result: DouyuAccountsSnapshot }
   logoutDouyuAccount: { args: { id: string }; result: DouyuAccountsSnapshot }
   removeDouyuAccount: { args: { id: string }; result: DouyuAccountsSnapshot }

@@ -15,9 +15,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useSession } from '../app/SessionContext'
 import { anchoredScrollTop, chatWindow, CHAT_ROW_HEIGHT, isPinned } from './chatWindow'
+import { DouyuMessageComposer, useDouyuMessageComposer } from './DouyuMessageComposer'
 
-export function ChatList({ connected }: { connected: boolean }): React.ReactNode {
+export function ChatList({ connected, room }: { connected: boolean; room: string | null }): React.ReactNode {
   const session = useSession()
+  const composer = useDouyuMessageComposer({ connected, room })
   const subscribe = useCallback((listener: () => void) => session.subscribeChat(listener), [session])
   const messages = useSyncExternalStore(subscribe, () => session.chatHistory())
   const total = useSyncExternalStore(subscribe, () => session.chatCount())
@@ -77,43 +79,50 @@ export function ChatList({ connected }: { connected: boolean }): React.ReactNode
         <h3>弹幕列表</h3>
         <span className="chat-count">{messages.length > 0 ? `${messages.length} 条` : ''}</span>
       </header>
-      <div
-        className="chat-scroller"
-        ref={scroller}
-        role="log"
-        aria-live="off"
-        aria-label="已显示的弹幕"
-        tabIndex={0}
-        onScroll={(event) => {
-          const node = event.currentTarget
-          pinned.current = isPinned(node.scrollTop, node.clientHeight, node.scrollHeight)
-          if (pinned.current) setUnread(0)
-          setScrollTop(node.scrollTop)
-        }}
-      >
-        {messages.length === 0 ? (
-          <p className="chat-empty">{connected ? '弹幕会随解说画面的进度出现在这里。' : '连接斗鱼房间后，这里会列出弹幕。'}</p>
-        ) : (
-          <div className="chat-track" style={{ height }}>
-            {rows.map((message, offset) => (
-              <div
-                key={message.id}
-                className="chat-row"
-                style={{ transform: `translateY(${(start + offset) * CHAT_ROW_HEIGHT}px)` }}
-                title={`${message.user}：${message.text}`}
-              >
-                <span className="chat-user">{message.user}</span>
-                <span className="chat-text">{message.text}</span>
-              </div>
-            ))}
-          </div>
+      <div className="chat-feed">
+        <div
+          className="chat-scroller"
+          ref={scroller}
+          role="log"
+          aria-live="off"
+          aria-label="已显示的弹幕"
+          tabIndex={0}
+          onScroll={(event) => {
+            const node = event.currentTarget
+            pinned.current = isPinned(node.scrollTop, node.clientHeight, node.scrollHeight)
+            if (pinned.current) setUnread(0)
+            setScrollTop(node.scrollTop)
+          }}
+        >
+          {messages.length === 0 ? (
+            <p className="chat-empty">{connected ? '弹幕会随解说画面的进度出现在这里.' : '连接斗鱼房间后, 这里会列出弹幕.'}</p>
+          ) : (
+            <div className="chat-track" style={{ height }}>
+              {rows.map((message, offset) => (
+                <div
+                  key={message.id}
+                  className="chat-row"
+                  style={{ transform: `translateY(${(start + offset) * CHAT_ROW_HEIGHT}px)` }}
+                  title={`${message.user}: ${message.text}`}
+                >
+                  <span className="chat-user">{message.user}</span>
+                  <span className="chat-text">{message.text}</span>
+                  <button type="button" className="chat-repeat" disabled={!composer.canSendText(message.text)}
+                    aria-label={`+1 复读 ${message.user} 的弹幕`}
+                    title={composer.repeatProblem(message.text) ?? '发送一次这条弹幕'}
+                    onClick={() => { void composer.repeat(message.text) }}>+1</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        {unread > 0 && (
+          <button type="button" className="chat-jump" onClick={jumpToLatest}>
+            {unread > 99 ? '99+' : unread} 条新消息
+          </button>
         )}
       </div>
-      {unread > 0 && (
-        <button type="button" className="chat-jump" onClick={jumpToLatest}>
-          {unread > 99 ? '99+' : unread} 条新消息 ↓
-        </button>
-      )}
+      <DouyuMessageComposer controller={composer} />
     </section>
   )
 }

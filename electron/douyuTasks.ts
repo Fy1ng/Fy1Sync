@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { DOUYU_TASK_POLICIES } from '../server/douyu/types'
+import { DOUYU_TASK_KINDS, DOUYU_TASK_POLICIES } from '../server/douyu/types'
 import type {
-  CreateDouyuTask, DouyuRuntimeState, DouyuTaskDefinition, DouyuTaskOutcome,
-  DouyuTaskPolicy, DouyuTaskStorage, DouyuTasksSnapshot, DouyuTaskView,
+  CreateDouyuTask, DouyuMessageInput, DouyuMessageOutcome, DouyuRuntimeState, DouyuTaskDefinition, DouyuTaskOutcome,
+  DouyuTaskKind, DouyuTaskPolicy, DouyuTaskStorage, DouyuTasksSnapshot, DouyuTaskView,
 } from '../server/douyu/types'
 
 export type DouyuTaskErrorCode = 'invalid-arguments' | 'task-not-found' | 'task-limit'
@@ -26,6 +26,7 @@ export interface DouyuTaskManagerOptions {
   load: () => unknown
   save: (data: DouyuTaskStorage) => void
   run: (task: DouyuTaskDefinition, signal: AbortSignal) => Promise<DouyuTaskOutcome>
+  sendMessage?: (input: DouyuMessageInput, signal: AbortSignal) => Promise<DouyuMessageOutcome>
   now?: () => number
   id?: () => string
   setTimer?: (fn: () => void, ms: number) => unknown
@@ -33,13 +34,23 @@ export interface DouyuTaskManagerOptions {
 }
 
 type TaskRecord = Omit<DouyuTaskView, keyof DouyuTaskDefinition> & { definition: DouyuTaskDefinition }
-type Flight = { task: TaskRecord; controller: AbortController; cancelled: boolean; dispatched: boolean }
+type FlightControl = { controller: AbortController; cancelled: boolean; dispatched: boolean }
+type TaskFlight = FlightControl & { type: 'task'; task: TaskRecord }
+type ImmediateMessage = FlightControl & {
+  type: 'message'
+  input: DouyuMessageInput
+  resolve: ((outcome: DouyuMessageOutcome) => void) | null
+}
+type Flight = TaskFlight | ImmediateMessage
 type Wakeup = { handle: unknown }
 const LIMIT = 64
 const MAX_TIMER_MS = 2_147_483_647
 const DEFINITION_KEYS = ['id', 'accountId', 'room', 'kind', 'policy', 'repeatMinutes', 'createdAt']
 const INPUT_KEYS = ['accountId', 'room', 'kind', 'policy', 'repeatMinutes']
+const MESSAGE_INPUT_KEYS = ['accountId', 'room', 'text', 'color']
 const FAILURE = '任务执行失败, 请检查登录状态后手动重试'
+const MESSAGE_FAILURE = '弹幕发送失败, 请检查当前账号与房间后手动重试'
+const UNSAFE_MESSAGE_TEXT = /[\x00-\x1f\x7f-\x9f\uD800-\uDFFF]/u
 
 /** Main owns the queue, lifecycle gates and cancellation of all account writes. */
 export class DouyuTaskManager {
@@ -51,6 +62,7 @@ export class DouyuTaskManager {
   private currentRoom: string | null = null
   private runtime: DouyuRuntimeState = { foreground: false, locked: false, suspended: false }
   private flight: Flight | null = null
+  private immediate: ImmediateMessage | null = null
   private wakeup: Wakeup | null = null
   private disposed = false
   private readonly now: () => number
@@ -87,6 +99,18 @@ export class DouyuTaskManager {
     if (!this.disposed) this.listeners.add(listener)
     this.notify(listener)
     return () => { this.listeners.delete(listener) }
+  }
+
+  async sendMessage(raw: DouyuMessageInput): Promise<DouyuMessageOutcome> {
+    this.ensureAlive()
+    const input = readMessageInput(raw)
+    if (this.immediate) return failedMessage('已有一条手动弹幕正在发送或等待, 请等待当前请求结束')
+    if (!this.messageAllowed(input)) return failedMessage('手动弹幕仅允许在当前账号和房间处于前台且未锁屏或休眠时发送')
+    if (typeof this.options.sendMessage !== 'function') return failedMessage()
+    return new Promise(resolve => {
+      this.immediate = { type: 'message', input, resolve, controller: new AbortController(), cancelled: false, dispatched: false }
+      this.refresh()
+    })
   }
 
   create(input: CreateDouyuTask): DouyuTasksSnapshot {
@@ -162,6 +186,7 @@ export class DouyuTaskManager {
     const accountId = readId(id)
     const affected = [...this.tasks.values()].filter(task => task.definition.accountId === accountId)
     const remaining = this.definitions().filter(task => task.accountId !== accountId)
+    if (this.immediate?.input.accountId === accountId) this.cancelMessage()
     this.stopBeforeSave(affected, '账号任务已停止')
     if (affected.length) this.persistAfterStop(remaining, this.retainedRooms, affected)
     for (const task of affected) this.tasks.delete(task.definition.id)
@@ -175,6 +200,7 @@ export class DouyuTaskManager {
     if (next === this.currentRoom) return
     const previous = this.currentRoom
     this.currentRoom = next
+    this.cancelMessage()
     if (previous !== null && !this.retainedRooms.has(previous)) this.stopRoom(previous, '已离开房间, 请手动启动', true)
     this.refresh()
   }
@@ -203,6 +229,7 @@ export class DouyuTaskManager {
     this.ensureAlive()
     const target = readRoom(room)
     const affected = [...this.tasks.values()].filter(task => task.definition.room === target)
+    if (this.immediate?.input.room === target) this.cancelMessage()
     this.stopBeforeSave(affected, '房间任务已停止, 请手动启动')
     if (this.retainedRooms.has(target)) {
       const next = new Set(this.retainedRooms)
@@ -228,6 +255,7 @@ export class DouyuTaskManager {
     if (this.disposed) return
     this.disposed = true
     this.clearWakeup()
+    this.cancelMessage()
     for (const task of this.tasks.values()) this.stop(task, 'stopped', '应用已退出, 任务已停止')
     this.publish()
     this.listeners.clear()
@@ -279,6 +307,7 @@ export class DouyuTaskManager {
   }
 
   private pauseMatching(accountId: string, reason: string): void {
+    if (this.immediate?.input.accountId === accountId) this.cancelMessage()
     for (const task of this.tasks.values()) {
       if (task.definition.accountId === accountId && armed(task)) this.stop(task, 'paused', reason)
     }
@@ -291,7 +320,7 @@ export class DouyuTaskManager {
   }
 
   private stop(task: TaskRecord, status: 'paused' | 'stopped', reason: string): void {
-    const flight = this.flight?.task === task && !this.flight.cancelled ? this.flight : null
+    const flight = this.flight?.type === 'task' && this.flight.task === task && !this.flight.cancelled ? this.flight : null
     task.status = status
     task.reason = flight?.dispatched ? `${reason}. 请求可能已处理, 请确认结果后手动启动` : reason
     task.nextRunAt = null
@@ -311,16 +340,48 @@ export class DouyuTaskManager {
     return null
   }
 
+  private messageAllowed(input: DouyuMessageInput): boolean {
+    return input.accountId === this.activeAccountId && input.room === this.currentRoom
+      && this.runtime.foreground && !this.runtime.locked && !this.runtime.suspended
+  }
+
+  private messageMayDispatch(message: ImmediateMessage): boolean {
+    return this.flight === message && this.immediate === message && !message.cancelled && !this.disposed
+      && !message.controller.signal.aborted && this.messageAllowed(message.input)
+  }
+
+  private resolveMessage(message: ImmediateMessage, outcome: DouyuMessageOutcome): void {
+    const resolve = message.resolve
+    message.resolve = null
+    resolve?.(outcome)
+  }
+
+  private cancelMessage(message: ImmediateMessage | null = this.immediate): void {
+    if (!message || message.cancelled) return
+    message.cancelled = true
+    this.resolveMessage(message, message.dispatched
+      ? { status: 'waiting-user', message: '发送已取消, 请求可能已处理, 请核对结果后再手动发送', nextAllowedAt: null }
+      : failedMessage('手动发送已取消, 未发送弹幕'))
+    message.controller.abort()
+    // A dispatched request keeps both the input limit and the execution lane until it settles.
+    if (this.flight !== message && this.immediate === message) this.immediate = null
+  }
+
   private refresh(): void {
     if (this.disposed) return
     this.clearWakeup()
-    if (this.flight && !this.flight.cancelled) {
+    if (this.immediate && !this.messageAllowed(this.immediate.input)) this.cancelMessage()
+    if (this.flight?.type === 'task' && !this.flight.cancelled) {
       const reason = this.gate(this.flight.task)
       if (reason) this.stop(this.flight.task, 'paused', reason)
     }
     const now = this.now()
     let nextAt: number | null = null
     let nextFlight: Flight | null = null
+    if (!this.flight && this.immediate && !this.immediate.cancelled) {
+      nextFlight = this.immediate
+      this.flight = nextFlight
+    }
     for (const id of [...this.queue]) {
       const task = this.tasks.get(id)
       if (!task || task.status !== 'queued') continue
@@ -333,7 +394,7 @@ export class DouyuTaskManager {
         continue
       }
       if (this.flight) continue
-      nextFlight = { task, controller: new AbortController(), cancelled: false, dispatched: false }
+      nextFlight = { type: 'task', task, controller: new AbortController(), cancelled: false, dispatched: false }
       this.flight = nextFlight
       task.status = 'running'
       task.reason = null
@@ -346,6 +407,7 @@ export class DouyuTaskManager {
   }
 
   private dispatch(flight: Flight): void {
+    if (flight.type === 'message') { this.dispatchMessage(flight); return }
     // A microtask lets synchronous lifecycle events cancel before any network dispatch.
     void Promise.resolve().then(() => {
       if (flight.cancelled || this.disposed) return null
@@ -358,7 +420,7 @@ export class DouyuTaskManager {
     }).then(outcome => this.finish(flight, outcome), () => this.finish(flight, { status: 'failed', message: FAILURE }))
   }
 
-  private finish(flight: Flight, outcome: DouyuTaskOutcome | null): void {
+  private finish(flight: TaskFlight, outcome: DouyuTaskOutcome | null): void {
     if (this.flight !== flight) return
     this.flight = null
     if (this.disposed) return
@@ -376,6 +438,32 @@ export class DouyuTaskManager {
         this.queue.push(task.definition.id)
       }
     }
+    this.refresh()
+  }
+
+  private dispatchMessage(message: ImmediateMessage): void {
+    void Promise.resolve().then(() => {
+      if (!this.messageMayDispatch(message)) { this.cancelMessage(message); return null }
+      this.publish()
+      // Publication can synchronously switch accounts, close a room or stop all writes.
+      if (!this.messageMayDispatch(message)) { this.cancelMessage(message); return null }
+      const send = this.options.sendMessage
+      if (typeof send !== 'function') return null
+      message.dispatched = true
+      return send({ ...message.input }, message.controller.signal)
+    }).then(outcome => this.finishMessage(message, outcome), () => this.finishMessage(message, null))
+  }
+
+  private finishMessage(message: ImmediateMessage, outcome: unknown): void {
+    if (this.flight !== message) return
+    if (!message.cancelled) {
+      const result = readMessageOutcome(outcome)
+      if (!this.messageMayDispatch(message)) this.cancelMessage(message)
+      else this.resolveMessage(message, result)
+    }
+    // Cancellation may have already resolved the caller, but never frees a live network request.
+    this.flight = null
+    if (this.immediate === message) this.immediate = null
     this.refresh()
   }
 
@@ -449,11 +537,19 @@ function readPolicy(raw: unknown): DouyuTaskPolicy {
 
 function readInput(raw: unknown): CreateDouyuTask {
   const fields = dataFields(raw, INPUT_KEYS)
-  if (!fields || fields.kind !== 'room-sign' || (fields.repeatMinutes !== null
+  if (!fields || !DOUYU_TASK_KINDS.includes(fields.kind as DouyuTaskKind) || (fields.repeatMinutes !== null
     && (typeof fields.repeatMinutes !== 'number' || !Number.isInteger(fields.repeatMinutes)
       || fields.repeatMinutes < 60 || fields.repeatMinutes > 43_200))) throw new DouyuTaskError('invalid-arguments')
-  return { accountId: readId(fields.accountId), room: readRoom(fields.room), kind: 'room-sign',
+  return { accountId: readId(fields.accountId), room: readRoom(fields.room), kind: fields.kind as DouyuTaskKind,
     policy: readPolicy(fields.policy), repeatMinutes: fields.repeatMinutes as number | null }
+}
+
+function readMessageInput(raw: unknown): DouyuMessageInput {
+  const fields = dataFields(raw, MESSAGE_INPUT_KEYS)
+  if (!fields || typeof fields.text !== 'string' || !fields.text.trim() || fields.text.length > 500
+    || UNSAFE_MESSAGE_TEXT.test(fields.text) || typeof fields.color !== 'number' || !Number.isInteger(fields.color)
+    || fields.color < 0 || fields.color > 6) throw new DouyuTaskError('invalid-arguments')
+  return { accountId: readId(fields.accountId), room: readRoom(fields.room), text: fields.text, color: fields.color }
 }
 
 function readDefinition(raw: unknown): DouyuTaskDefinition {
@@ -507,4 +603,18 @@ function readOutcome(raw: unknown): DouyuTaskOutcome {
     || typeof fields.message !== 'string' || !fields.message.trim() || fields.message.length > 240
     || /[\x00-\x1f\x7f]/.test(fields.message)) return { status: 'failed', message: FAILURE }
   return { status: fields.status as DouyuTaskOutcome['status'], message: fields.message.trim() }
+}
+
+function failedMessage(message = MESSAGE_FAILURE): DouyuMessageOutcome {
+  return { status: 'failed', message, nextAllowedAt: null }
+}
+
+function readMessageOutcome(raw: unknown): DouyuMessageOutcome {
+  const fields = dataFields(raw, ['status', 'message', 'nextAllowedAt'])
+  if (!fields || !['succeeded', 'waiting-user', 'failed'].includes(fields.status as string)
+    || typeof fields.message !== 'string' || !fields.message.trim() || fields.message.length > 240
+    || UNSAFE_MESSAGE_TEXT.test(fields.message) || (fields.nextAllowedAt !== null
+      && (typeof fields.nextAllowedAt !== 'number' || !Number.isSafeInteger(fields.nextAllowedAt)
+        || fields.nextAllowedAt < 0 || fields.nextAllowedAt > 8_640_000_000_000_000))) return failedMessage()
+  return { status: fields.status as DouyuMessageOutcome['status'], message: fields.message.trim(), nextAllowedAt: fields.nextAllowedAt as number | null }
 }

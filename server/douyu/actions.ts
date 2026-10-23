@@ -3,13 +3,13 @@ import { hostAllowed, type ProxyConfig } from '../config'
 import { validDouyuRoom } from '../platforms/douyuRoom'
 import { safeFetch, type Resolver } from '../safeFetch'
 import type { DouyuTaskDefinition, DouyuTaskOutcome } from './types'
+import { abortable, cancelBody, cancelled, readPayload, record, MAX_TIMEOUT_MS } from './actionHttp'
+import { DouyuYubaActions } from './yubaActions'
 
 const COOKIE_SCOPE = 'https://www.douyu.com/'
 const CHECK_IN_URL = 'https://apiv2.douyucdn.cn/japi/roomuserlevel/apinc/checkIn?client_sys=android'
 const CHECK_IN_HOST = 'apiv2.douyucdn.cn'
 const TOKEN_FIELDS = ['acf_uid', 'acf_biz', 'acf_stk', 'acf_ct', 'acf_ltkid'] as const
-const MAX_RESPONSE_BYTES = 65_536
-const MAX_TIMEOUT_MS = 15_000
 
 export interface DouyuActionDependencies {
   /** Returns cookies matching this exact URL from the selected account only. */
@@ -24,8 +24,6 @@ const waiting = (message: string): DouyuTaskOutcome => ({ status: 'waiting-user'
 const failed = (message: string): DouyuTaskOutcome => ({ status: 'failed', message })
 const unknownResult = () => waiting('斗鱼签到结果尚无法确认. 请在官方房间核对后再决定是否重试.')
 const loginRequired = () => waiting('斗鱼登录信息缺失或失效, 请重新登录该账号.')
-const cancelled = () => new DOMException('Douyu action cancelled.', 'AbortError')
-const record = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
 
 /** Reject ambiguity and invalid header bytes instead of inventing token components. */
 function loginToken(header: string): string | null {
@@ -45,60 +43,6 @@ function loginToken(header: string): string | null {
   if (TOKEN_FIELDS.some(name => !parts.has(name)) || !/^[1-9][0-9]{0,19}$/.test(parts.get('acf_uid')!)) return null
   // Verified at qianjiachun/douyuEx f4b0228, src/common.js:115-119.
   return TOKEN_FIELDS.map(name => parts.get(name)!).join('_')
-}
-
-/** Also bounds providers and fake requests that do not themselves observe abort. */
-function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const abort = () => { signal.removeEventListener('abort', abort); reject(cancelled()) }
-    if (signal.aborted) {
-      void operation.catch(() => {})
-      reject(cancelled())
-      return
-    }
-    signal.addEventListener('abort', abort, { once: true })
-    operation.then(value => {
-      signal.removeEventListener('abort', abort)
-      if (signal.aborted) reject(cancelled())
-      else resolve(value)
-    }, error => {
-      signal.removeEventListener('abort', abort)
-      reject(error)
-    })
-  })
-}
-
-function cancelBody(response: Response): void {
-  void response.body?.cancel().catch(() => {})
-}
-
-async function readPayload(response: Response, signal: AbortSignal): Promise<unknown> {
-  if (!response.body) return null
-  const advertised = response.headers.get('content-length')
-  if (advertised && (!/^\d+$/.test(advertised) || Number(advertised) > MAX_RESPONSE_BYTES)) {
-    cancelBody(response)
-    return null
-  }
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let bytes = 0
-  const abort = () => { void reader.cancel().catch(() => {}) }
-  signal.addEventListener('abort', abort, { once: true })
-  try {
-    for (;;) {
-      if (signal.aborted) throw cancelled()
-      const chunk = await abortable(reader.read(), signal)
-      if (chunk.done) break
-      bytes += chunk.value.byteLength
-      if (bytes > MAX_RESPONSE_BYTES) return null
-      chunks.push(chunk.value)
-    }
-    try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown } catch { return null }
-  } finally {
-    signal.removeEventListener('abort', abort)
-    void reader.cancel().catch(() => {})
-    reader.releaseLock()
-  }
 }
 
 /**
@@ -128,6 +72,7 @@ export class DouyuActions {
   /** task.room must already be the canonical room resolved by the main process. */
   async run(task: DouyuTaskDefinition, signal: AbortSignal): Promise<DouyuTaskOutcome> {
     if (signal.aborted) throw cancelled()
+    if (task.kind === 'yuba-sign') return new DouyuYubaActions(this.deps).run(task, signal)
     if (task.kind !== 'room-sign') return failed('该斗鱼任务类型尚未接入.')
     if (!validDouyuRoom(task.room)) return failed('斗鱼真实房间号无效, 请重新确认房间.')
     if (typeof task.accountId !== 'string' || !task.accountId || task.accountId.length > 128 || /[\s\x00-\x1f\x7f]/.test(task.accountId)) return loginRequired()

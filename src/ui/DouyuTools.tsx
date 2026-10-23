@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiClient, type ApiResult } from '../app/apiClient'
 import type {
-  DouyuAccountsSnapshot, DouyuAccountSummary, DouyuTaskPolicy, DouyuTasksSnapshot, DouyuTaskView,
+  DouyuAccountsSnapshot, DouyuAccountSummary, DouyuTaskKind, DouyuTaskPolicy, DouyuTasksSnapshot, DouyuTaskView,
 } from '../../server/douyu/types'
 import './DouyuTools.css'
 
@@ -14,6 +14,7 @@ const STATUS_LABELS: Record<DouyuTaskView['status'], string> = {
   paused: '已暂停', queued: '等待执行', running: '执行中', 'waiting-user': '等待手动处理',
   succeeded: '已完成', failed: '失败', stopped: '已停止',
 }
+const TASK_LABELS: Record<DouyuTaskKind, string> = { 'room-sign': '直播间签到', 'yuba-sign': '鱼吧签到' }
 
 function PolicyOptions(): React.ReactNode {
   return Object.entries(POLICY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)
@@ -59,6 +60,7 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
   const [editingLabel, setEditingLabel] = useState('')
   const [chosenAccountId, setChosenAccountId] = useState('')
   const [roomInput, setRoomInput] = useState<string | null>(null)
+  const [kind, setKind] = useState<DouyuTaskKind>('room-sign')
   const [policy, setPolicy] = useState<DouyuTaskPolicy>('foreground')
   const [repeat, setRepeat] = useState('once')
   const mounted = useRef(false)
@@ -180,6 +182,11 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
       ? `${account.label} 已登录. 登录完成后请重新加载片源.`
       : `${account.label} 尚未登录. 请重新登录并完成 Chrome 中的验证.`,
   )
+  const loginYuba = (account: DouyuAccountSummary) => accountAction(
+    `正在登录 ${account.label} 的鱼吧. 请在打开的 Chrome 窗口中完成登录, 然后关闭窗口.`,
+    () => apiClient.loginDouyuYubaAccount(account.id),
+    `${account.label} 的鱼吧登录窗口已关闭. 启动签到任务时会检查登录状态.`,
+  )
 
   return <section className="douyu-tools" aria-label="斗鱼账号和任务">
     <div className="douyu-tools-summary">
@@ -218,6 +225,7 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
               </div>
             </form> : <div className="source-actions">
               <button type="button" className="small" disabled={accountLocked} onClick={() => void login(account)}>登录</button>
+              <button type="button" className="small" disabled={accountLocked} onClick={() => void loginYuba(account)}>登录鱼吧</button>
               {account.id !== accounts?.activeAccountId && <button type="button" className="small" disabled={accountLocked}
                 onClick={() => void accountAction('正在切换活动账号...', () => apiClient.activateDouyuAccount(account.id), `${account.label} 已设为活动账号.`)}>激活</button>}
               <button type="button" className="ghost small" disabled={accountLocked} onClick={() => { setEditingId(account.id); setEditingLabel(account.label) }}>改名</button>
@@ -249,15 +257,17 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
     {accountError && <p role="alert" className="dialog-error">{accountError}</p>}
 
     <details className="douyu-tools-details">
-      <summary>直播间签到任务 ({tasks?.tasks.length ?? 0})</summary>
+      <summary>签到任务 ({tasks?.tasks.length ?? 0})</summary>
       <div className="douyu-tools-body">
         <p className="hint">新建任务默认为暂停, 点击启动后才会执行. 应用退出后任务停止, 重新打开应用后需手动启动.</p>
-        <p className="hint">签到仍处于接口验证阶段, 当前结果需到官方房间核对, 暂不会自动重复提交. 每日设置仅保存计划.</p>
+        {kind === 'room-sign'
+          ? <p className="hint">直播间签到仍需到官方房间核对结果, 暂不会自动重复提交. 每日设置仅保存计划.</p>
+          : <p className="hint">先在账号管理中登录鱼吧. 仅对已加入的鱼吧签到, 已签到时跳过. 确认完成后才安排下一次, 遇到验证或未知结果会停止并提示.</p>}
         <form className="douyu-task-create" onSubmit={event => {
           event.preventDefault()
           if (!selectedAccountId || !taskRoom.trim() || accountLocked) return
           void taskAction('正在创建签到任务...', () => apiClient.createDouyuTask({
-            accountId: selectedAccountId, roomInput: taskRoom.trim(), kind: 'room-sign', policy,
+            accountId: selectedAccountId, roomInput: taskRoom.trim(), kind, policy,
             repeatMinutes: repeat === 'daily' ? 1440 : null,
           }), '签到任务已创建, 当前为暂停.')
         }}>
@@ -269,6 +279,11 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
           </label>
           <label className="field"><span>签到房间号或地址</span>
             <input value={taskRoom} placeholder="例如 9999 或 douyu.com/9999" disabled={taskLocked} onChange={event => setRoomInput(event.target.value)} />
+          </label>
+          <label className="field"><span>签到类型</span>
+            <select aria-label="签到类型" value={kind} disabled={taskLocked} onChange={event => setKind(event.target.value as DouyuTaskKind)}>
+              <option value="room-sign">直播间签到</option><option value="yuba-sign">鱼吧签到</option>
+            </select>
           </label>
           <label className="field"><span>执行条件</span>
             <select aria-label="执行条件" value={policy} disabled={taskLocked} onChange={event => setPolicy(event.target.value as DouyuTaskPolicy)}><PolicyOptions /></select>
@@ -305,8 +320,8 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
                 const account = allAccounts.find(item => item.id === task.accountId)
                 const startProblem = !account ? '账号不可用' : account.id !== accounts?.activeAccountId ? '激活该账号后可启动'
                   : !account.login.loggedIn ? '登录该账号后可启动' : ''
-                return <li className="douyu-task" key={task.id} role="group" aria-label={`签到任务 ${room} (${account?.label ?? '账号不可用'})`}>
-                  <div className="douyu-task-heading"><strong>直播间签到</strong>
+                return <li className="douyu-task" key={task.id} role="group" aria-label={`${task.kind === 'yuba-sign' ? '鱼吧签到任务' : '签到任务'} ${room} (${account?.label ?? '账号不可用'})`}>
+                  <div className="douyu-task-heading"><strong>{TASK_LABELS[task.kind]}</strong>
                     <span className="hint">{account?.label ?? '账号不可用'} / {task.repeatMinutes === null ? '单次' : task.repeatMinutes === 1440 ? '每天' : `每 ${task.repeatMinutes} 分钟`}</span>
                     <span className="douyu-task-status" data-state={task.status}>{STATUS_LABELS[task.status]}</span>
                   </div>
@@ -318,7 +333,7 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
                   </p>}
                   <div className="douyu-task-actions">
                     <label className="douyu-task-policy"><span>执行条件</span>
-                      <select aria-label={`房间 ${room} 的 ${account?.label ?? '未知账号'} 执行条件`} value={task.policy} disabled={taskLocked}
+                      <select aria-label={`房间 ${room} 的 ${account?.label ?? '未知账号'} ${TASK_LABELS[task.kind]}执行条件`} value={task.policy} disabled={taskLocked}
                         onChange={event => { const nextPolicy = event.target.value as DouyuTaskPolicy; void taskAction('正在保存执行条件...', () => apiClient.setDouyuTaskPolicy(task.id, nextPolicy), '执行条件已更新.') }}><PolicyOptions /></select>
                     </label>
                     <button type="button" className="small" disabled={taskLocked || accountLocked || !!startProblem || scheduled(task)} title={startProblem || undefined}

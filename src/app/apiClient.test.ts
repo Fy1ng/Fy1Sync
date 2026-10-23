@@ -61,6 +61,14 @@ describe('ApiClient IPC failures', () => {
 })
 
 describe('ApiClient IPC arguments', () => {
+  it('forwards an explicit account and room for a single message', async () => {
+    const outcome = { status: 'waiting-user', message: '请到官方房间核对.', nextAllowedAt: null }
+    const bridge = bridgeWith({ ok: true, value: outcome })
+    const input = { accountId: 'default', room: '9999', text: '原文 @/', color: 0 }
+    expect(await new ApiClient({ bridge }).sendDouyuMessage(input)).toEqual({ ok: true, value: outcome })
+    expect(bridge.invoke).toHaveBeenCalledExactlyOnceWith('sendDouyuMessage', input)
+  })
+
   it('forwards typed decoder preferences over the narrow bridge', async () => {
     const state = { mode: 'software', effectiveMode: 'auto', restartRequired: true, forcedByCommandLine: false }
     const bridge = bridgeWith({ ok: true, value: state })

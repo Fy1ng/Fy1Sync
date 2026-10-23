@@ -15,7 +15,8 @@ export interface DouyuAccountsSnapshot {
 
 export const DOUYU_TASK_POLICIES = ['foreground', 'background-unlocked', 'background-locked'] as const
 export type DouyuTaskPolicy = typeof DOUYU_TASK_POLICIES[number]
-export type DouyuTaskKind = 'room-sign'
+export const DOUYU_TASK_KINDS = ['room-sign', 'yuba-sign'] as const
+export type DouyuTaskKind = typeof DOUYU_TASK_KINDS[number]
 
 export interface DouyuTaskDefinition {
   id: string
@@ -62,3 +63,16 @@ export type DouyuTaskOutcome =
   | { status: 'failed'; message: string }
 
 export type CreateDouyuTask = Omit<DouyuTaskDefinition, 'id' | 'createdAt'>
+
+/** One explicit send. Message text is never persisted in task configuration. */
+export interface DouyuMessageInput {
+  accountId: string
+  room: string
+  text: string
+  color: number
+}
+
+export type DouyuMessageOutcome = DouyuTaskOutcome & {
+  /** Absolute deadline in milliseconds, if the gateway reports a cooldown. */
+  nextAllowedAt: number | null
+}
