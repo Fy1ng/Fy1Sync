@@ -6,9 +6,12 @@ import type { ResolveResult } from '../server/platforms/types'
 import type { SourceRole } from '../src/core/types'
 import type { BufferState } from './bufferManager'
 import type { LoginPlatform, LoginResult, LoginStatus } from './login'
+import type { DecoderMode, DecoderPreferenceState } from './decoderPreferences'
 
 export interface DesktopMethods {
   health: { args: undefined; result: HealthInfo }
+  getDecoderPreferences: { args: undefined; result: DecoderPreferenceState }
+  setDecoderPreferences: { args: { mode: DecoderMode }; result: DecoderPreferenceState }
   verifyAdmin: { args: { token: string }; result: { ok: true } }
   resolve: { args: { input: string; platform?: string; role?: SourceRole; quality?: string; preferAdaptive?: boolean }; result: ResolveResult }
   switchQuality: { args: { role: SourceRole; quality: string }; result: ResolveResult }

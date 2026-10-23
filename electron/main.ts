@@ -16,6 +16,7 @@ import { LoginManager } from './login'
 import { Acquisition } from './acquisition'
 import { YtDlpRunner, type YtDlpDiagnostic } from './ytdlp'
 import { locateTool, type ToolSettings } from './toolLocator'
+import { DecoderPreferences } from './decoderPreferences'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: {
   standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true,
@@ -28,6 +29,11 @@ if (process.env.STREAM_SYNC_USER_DATA_DIR) {
   app.setPath('sessionData', path)
 }
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+const decoderPreferences = new DecoderPreferences(app.getPath('userData'),
+  app.commandLine.hasSwitch('disable-accelerated-video-decode'))
+if (decoderPreferences.get().effectiveMode === 'software') {
+  app.commandLine.appendSwitch('disable-accelerated-video-decode')
+}
 let window: BrowserWindow | null = null
 let dispose: (() => Promise<void>) | undefined
 
@@ -121,7 +127,7 @@ async function start(): Promise<void> {
   // Offline E2E drives events through the real IPC subscriptions, without a live room.
   const relay = e2e ? new DanmakuRelay({ createSocket: () => ({ send() {}, close() {}, addEventListener() {} }) }) : new DanmakuRelay()
   const service = createDesktopService({
-    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, registerMedia: media.register, acquisition,
+    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, registerMedia: media.register, acquisition, decoderPreferences,
   })
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   session.defaultSession.setPermissionCheckHandler(() => false)

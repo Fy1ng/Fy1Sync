@@ -6,6 +6,7 @@ import type { ProfileIssue, RecognitionProfile } from '../core/profileSchema'
 import type { SourceRole } from '../core/types'
 import type { BufferState } from '../../electron/bufferManager'
 import type { LoginPlatform } from '../../electron/login'
+import type { DecoderMode } from '../../electron/decoderPreferences'
 
 export type ApiResult<T> =
   | { ok: true; value: T }
@@ -71,6 +72,9 @@ export class ApiClient {
   health(): Promise<ApiResult<HealthInfo>> {
     return this.request('health', undefined)
   }
+
+  getDecoderPreferences() { return this.request('getDecoderPreferences', undefined) }
+  setDecoderPreferences(mode: DecoderMode) { return this.request('setDecoderPreferences', { mode }) }
 
   /** Compatibility seam; main authorizes the local app frame rather than a token. */
   verifyAdmin(token = ''): Promise<ApiResult<{ ok: true }>> {

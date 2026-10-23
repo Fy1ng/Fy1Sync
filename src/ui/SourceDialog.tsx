@@ -18,6 +18,7 @@ import { SOURCE_ROLES } from '../core/types'
 import type { MediaDescriptor, SourceRole } from '../core/types'
 import type { LoginPlatform, LoginStatus } from '../../electron/login'
 import { bufferStatusText } from './bufferStatus'
+import { DecoderSettings } from './DecoderSettings'
 
 /** Looping local fixtures, also used by the E2E specs. */
 /**
@@ -56,6 +57,7 @@ export function SourceDialog({ onClose }: { onClose: () => void }): React.ReactN
           ))}
         </div>
 
+        <DecoderSettings />
         <Accounts />
 
         <footer className="dialog-footer">

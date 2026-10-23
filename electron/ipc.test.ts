@@ -90,6 +90,16 @@ describe('IPC routing and subscription lifecycle', () => {
     expect(f.service.invoke).toHaveBeenCalledTimes(1)
     f.installed.dispose()
   })
+  it('denies decoder writes from untrusted frames before reaching storage', async () => {
+    const f = fixture()
+    const invoke = f.handlers.get('stream-syncer:invoke')!
+    expect(await invoke({ ...f.event, senderFrame: { url: 'app://app/' } }, 'setDecoderPreferences', { mode: 'software' }))
+      .toMatchObject({ ok: false, code: 'forbidden' })
+    expect(f.service.invoke).not.toHaveBeenCalled()
+    expect(await f.call('invoke', 'setDecoderPreferences', { mode: 'software' })).toMatchObject({ ok: true })
+    expect(f.service.invoke).toHaveBeenCalledExactlyOnceWith('setDecoderPreferences', { mode: 'software' })
+    f.installed.dispose()
+  })
   it('delivers relay events with isolated subscription identifiers', () => {
     const f = fixture()
     expect(f.call('subscribe', '288016', '1')).toMatchObject({ ok: true })

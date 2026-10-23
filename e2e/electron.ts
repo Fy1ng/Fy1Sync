@@ -12,11 +12,12 @@ export const APP_ORIGIN = 'app://app'
 export interface RunningApplication {
   application: ElectronApplication
   page: Page
+  restart(): Promise<void>
   close(): Promise<void>
 }
 
 /** Launch the built application with a disposable profile and preset store. */
-export async function launchApplication(label: string): Promise<RunningApplication> {
+export async function launchApplication(label: string, options: { softwareVideo?: boolean } = {}): Promise<RunningApplication> {
   const dataDir = path.join(testDataRoot, label.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 70) + '-' + randomUUID())
   await mkdir(dataDir, { recursive: true })
   const env: Record<string, string> = {}
@@ -30,32 +31,44 @@ export async function launchApplication(label: string): Promise<RunningApplicati
   })
 
   let application: ElectronApplication | undefined
-  try {
+  let page: Page
+  const launch = async () => {
     application = await _electron.launch({
       args: [path.join(projectRoot, 'dist', 'electron', 'main.cjs'), '--autoplay-policy=no-user-gesture-required', '--mute-audio',
-        ...(process.env.STREAM_SYNC_E2E_SOFTWARE_VIDEO === '1' ? ['--disable-accelerated-video-decode'] : [])],
+        ...((options.softwareVideo ?? process.env.STREAM_SYNC_E2E_SOFTWARE_VIDEO === '1') ? ['--disable-accelerated-video-decode'] : [])],
       cwd: projectRoot,
       env,
       timeout: 30_000,
     })
-    const page = await application.firstWindow({ timeout: 30_000 })
+    page = await application.firstWindow({ timeout: 30_000 })
     await page.waitForURL(APP_ORIGIN + '/**', { timeout: 30_000 })
     await page.waitForFunction(() => typeof window.streamSyncer?.invoke === 'function')
-    const running = application
+  }
+  const cleanup = async () => {
+    // Only this invocation's UUID directory under the known fixture root is disposable.
+    if (path.dirname(path.resolve(dataDir)) !== path.resolve(testDataRoot)) throw new Error('Invalid E2E profile cleanup path')
+    await rm(dataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })
+  }
+  try {
+    await launch()
     return {
-      application: running,
-      page,
+      get application() { return application! },
+      get page() { return page },
+      async restart() {
+        await application!.close()
+        await launch()
+      },
       async close() {
         try {
-          await running.close()
+          await application?.close()
         } finally {
-          await rm(dataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })
+          await cleanup()
         }
       },
     }
   } catch (error) {
     await application?.close().catch(() => undefined)
-    await rm(dataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })
+    await cleanup()
     throw new Error('Electron E2E 启动失败. 请先 npm run build, 并在可启动 Chromium restricted token 的沙箱外终端运行 npx playwright test. ' + String(error))
   }
 }

@@ -61,6 +61,15 @@ describe('ApiClient IPC failures', () => {
 })
 
 describe('ApiClient IPC arguments', () => {
+  it('forwards typed decoder preferences over the narrow bridge', async () => {
+    const state = { mode: 'software', effectiveMode: 'auto', restartRequired: true, forcedByCommandLine: false }
+    const bridge = bridgeWith({ ok: true, value: state })
+    const client = new ApiClient({ bridge })
+    expect(await client.getDecoderPreferences()).toEqual({ ok: true, value: state })
+    expect(bridge.invoke).toHaveBeenLastCalledWith('getDecoderPreferences', undefined)
+    expect(await client.setDecoderPreferences('software')).toEqual({ ok: true, value: state })
+    expect(bridge.invoke).toHaveBeenLastCalledWith('setDecoderPreferences', { mode: 'software' })
+  })
   it('forwards the exact profile and ETag as structured values', async () => {
     const bridge = bridgeWith({ ok: true, value: { id: 'cs2/iem', etag: 'new', updatedAt: 1 } })
     await new ApiClient({ bridge }).savePreset('cs2/iem', PROFILE, '', 'abc123')

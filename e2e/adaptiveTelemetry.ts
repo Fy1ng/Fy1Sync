@@ -8,14 +8,16 @@ type DecoderInfo = { codec?: string; decoder?: string; platform?: boolean; event
 /** Select only non-identifying media properties, never CDP URLs or raw events. */
 export async function decoderTelemetry(page: Page, app: ElectronApplication) {
   const info: DecoderInfo = { events: {}, errors: [], buffering: [] }
+  const players: Record<string, DecoderInfo> = {}
   const cdp = await app.context().newCDPSession(page)
-  cdp.on('Media.playerPropertiesChanged', (event: { properties: { name: string; value: string }[] }) => {
+  cdp.on('Media.playerPropertiesChanged', (event: { playerId: string; properties: { name: string; value: string }[] }) => {
+    const player = players[event.playerId] ??= {}
     for (const property of event.properties) {
-      if (property.name === 'kVideoDecoderName' && /^[a-z0-9_. -]{1,100}$/i.test(property.value)) info.decoder = property.value
-      if (property.name === 'kIsPlatformVideoDecoder') info.platform = property.value === 'true'
+      if (property.name === 'kVideoDecoderName' && /^[a-z0-9_. -]{1,100}$/i.test(property.value)) player.decoder = info.decoder = property.value
+      if (property.name === 'kIsPlatformVideoDecoder') player.platform = info.platform = property.value === 'true'
       if (property.name === 'kVideoTracks') {
         const codec = /\b(vp9|vp09|av1|av01|h264)\b/i.exec(property.value)?.[1]
-        if (codec) info.codec = codec.toLowerCase()
+        if (codec) player.codec = info.codec = codec.toLowerCase()
       }
     }
   })
@@ -44,7 +46,7 @@ export async function decoderTelemetry(page: Page, app: ElectronApplication) {
     }
   })
   await cdp.send('Media.enable')
-  return { info, close: () => cdp.detach() }
+  return { info, players, close: () => cdp.detach() }
 }
 
 export function playbackObservationSeconds(env = process.env): number {

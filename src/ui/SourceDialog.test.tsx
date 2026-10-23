@@ -43,6 +43,26 @@ function openDialog(): HTMLElement {
 }
 
 describe('SourceDialog desktop media registration', () => {
+  it('saves decoder settings without reloading or unloading the current media', async () => {
+    await session.loadSource('official', { kind: 'test', url: '/test-sources/official.mp4', input: 'fixture', label: 'fixture', loop: true, viaProxy: false, platform: 'test' })
+    const descriptor = session.engine.getState().official.descriptor
+    vi.mocked(bridge.invoke).mockClear()
+    const load = vi.spyOn(session, 'loadSource')
+    const unload = vi.spyOn(session, 'unloadSource')
+    vi.mocked(bridge.invoke).mockImplementation(async method => {
+      const state = { mode: method === 'setDecoderPreferences' ? 'software' : 'auto', effectiveMode: 'auto', restartRequired: method === 'setDecoderPreferences', forcedByCommandLine: false }
+      return { ok: true, value: state } as any
+    })
+    openDialog()
+    const checkbox = screen.getByRole('checkbox', { name: '软件解码兼容模式' })
+    await waitFor(() => expect(checkbox).toBeEnabled())
+    fireEvent.click(checkbox)
+    await waitFor(() => expect(checkbox).toBeChecked())
+    expect(load).not.toHaveBeenCalled()
+    expect(unload).not.toHaveBeenCalled()
+    expect(session.engine.getState().official.descriptor).toBe(descriptor)
+    expect(bridge.invoke).not.toHaveBeenCalledWith('stopBuffer', expect.anything())
+  })
   it.each([false, true])('passes the persisted adaptive preference (%s) through the existing resolve path', async preferAdaptive => {
     session.updateSettings({ preferAdaptive })
     const panel = within(openDialog())
@@ -77,7 +97,7 @@ describe('SourceDialog desktop media registration', () => {
       target: { value: 'https://127.0.0.1/private.mp4' },
     })
     fireEvent.click(panel.getByRole('button', { name: '加载' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('禁止访问内网媒体地址')
+    expect(await panel.findByRole('alert')).toHaveTextContent('禁止访问内网媒体地址')
     expect(session.engine.getState().official.descriptor).toBeNull()
   })
 

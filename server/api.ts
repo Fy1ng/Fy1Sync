@@ -9,6 +9,7 @@ import { checkUrl, ProxyError, safeFetch } from './safeFetch'
 import type { SourceRole } from '../src/core/types'
 import type { BufferState } from '../electron/bufferManager'
 import type { LoginPlatform, LoginResult, LoginStatus } from '../electron/login'
+import { isDecoderMode, type DecoderPreferencesService } from '../electron/decoderPreferences'
 
 export interface AcquisitionService {
   resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string, preferAdaptive?: boolean): Promise<ResolveResult>
@@ -27,6 +28,7 @@ export type DesktopServiceDeps = {
   fetchImpl?: typeof fetch
   registerMedia: (url: string) => string
   acquisition?: AcquisitionService
+  decoderPreferences?: DecoderPreferencesService
 }
 
 export type DesktopService = {
@@ -128,6 +130,17 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
         }
 
         switch (method) {
+          case 'getDecoderPreferences': {
+            if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
+            if (!deps.decoderPreferences) return fail('not-available', '解码设置不可用')
+            return { ok: true, value: deps.decoderPreferences.get() }
+          }
+          case 'setDecoderPreferences': {
+            if (!fields(args, ['mode']) || !isDecoderMode(args.mode)) return fail('invalid-arguments', '解码设置参数无效')
+            if (!deps.decoderPreferences) return fail('not-available', '解码设置不可用')
+            try { return { ok: true, value: await deps.decoderPreferences.set(args.mode) } }
+            catch { return fail('settings-write-failed', '解码设置保存失败, 请重试') }
+          }
           case 'health': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
             return { ok: true, value: { ok: true, version: '0.1.0', proxyEnabled: deps.proxy.enabled, danmakuRooms: relay.roomCount } }
