@@ -157,7 +157,7 @@ function AutoSyncSection(): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const { autoSync, settings } = snapshot
-  const busy = snapshot.autoProfileBusy || (autoSync.phase !== 'idle' && autoSync.phase !== 'done' && autoSync.phase !== 'failed')
+  const busy = session.offsetBusy || snapshot.autoProfileBusy || (autoSync.phase !== 'idle' && autoSync.phase !== 'done' && autoSync.phase !== 'failed')
   const profileReady = snapshot.profiles.official !== null || snapshot.profiles.commentary !== null
 
   return (

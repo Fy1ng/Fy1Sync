@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DouyuTaskManager } from '../../electron/douyuTasks'
 import { resolveConfig } from '../config'
 import type { DouyuActionDependencies } from './actions'
 import { DouyuBackpackGateway, DouyuRenewalGatewayError } from './backpackGateway'
@@ -113,12 +114,16 @@ describe('strict credentials and account continuity', () => {
     expect(await gateway.donate(donation, signal())).toMatchObject({ status: changeAt === 3 ? 'unknown' : 'not-submitted' })
     expect(request).toHaveBeenCalledTimes(changeAt === 3 ? 1 : 0)
   })
-  it('copies an actual valid XSRF cookie, but puts no username or CSRF field into the form', async () => {
-    const { gateway, request } = setup({ cookieHeader: async () => `${cookie}; XSRF-TOKEN=fixture%2Ftoken%3D` })
+  it('copies the optional XSRF header without injecting the other helper CSRF token into ordinary props', async () => {
+    // Official BackpackEpics passes csrf=false even with a signed-in account.
+    const scopedCookie = `${cookie}; XSRF-TOKEN=fixture%2Ftoken%3D; acf_ccn=fixture-ctn`
+    const { gateway, request } = setup({ cookieHeader: async () => scopedCookie })
     expect(await gateway.donate(donation, signal())).toHaveProperty("status", 'receipt-received')
     const [url, init] = request.mock.calls[0]!
     expect(new Headers(init?.headers).get('X-XSRF-TOKEN')).toBe('fixture/token=')
+    expect(new Headers(init?.headers).get('Cookie')).toBe(scopedCookie)
     expect(String(url) + String(init?.body)).not.toMatch(/fixture-user|username|csrf|ctn|sign/)
+    expect(request).toHaveBeenCalledOnce()
   })
   it('sanitizes provider exceptions and mutated upstream error objects', async () => {
     const { gateway } = setup({ cookieHeader: async () => { throw new Error(cookie) } })
@@ -299,13 +304,15 @@ describe('network isolation, bounded bodies and cancellation', () => {
     expect(cookieHeader).not.toHaveBeenCalled()
     expect(request).not.toHaveBeenCalled()
   })
-  it('bounds a stuck credential provider at 15s even if configuration asks for more', async () => {
+  it.each(['read', 'donate'])('bounds a stuck %s credential provider at 15s even if configuration asks for more', async method => {
     vi.useFakeTimers()
     let release!: (value: string) => void
     const { gateway, request } = setup({ proxy: { ...proxy, requestTimeoutMs: 999_999 }, cookieHeader: () => new Promise<string>(done => { release = done }) })
-    const pending = gateway.readBadges('account-one', signal()).catch(error => error as Error)
+    const pending = method === 'read'
+      ? gateway.readBadges('account-one', signal()).catch(error => error as Error)
+      : gateway.donate(donation, signal())
     await vi.advanceTimersByTimeAsync(15_000)
-    expect(await pending).toMatchObject({ code: 'unavailable' })
+    expect(await pending).toMatchObject(method === 'read' ? { code: 'unavailable' } : { status: 'not-submitted' })
     release(cookie)
     await flush()
     expect(request).not.toHaveBeenCalled()
@@ -323,26 +330,78 @@ describe('network isolation, bounded bodies and cancellation', () => {
     await flush()
     expect(request).not.toHaveBeenCalled()
   })
-  it.each(['timeout', 'cancel'])('never accepts a late donation response after %s', async mode => {
+  it.each(['timeout', 'cancel'])('keeps an uncooperative read abortable after %s and discards its late response', async mode => {
     vi.useFakeTimers()
     let release!: (value: Response) => void
     const request = vi.fn<typeof fetch>(() => new Promise<Response>(done => { release = done }))
     const { gateway } = setup({ request, proxy: { ...proxy, requestTimeoutMs: 25 } })
     const controller = new AbortController()
-    const pending = gateway.donate(donation, controller.signal)
+    const pending = gateway.readBackpack('account-one', '6979222', controller.signal).catch(error => error as Error)
     await flush()
     expect(request).toHaveBeenCalledOnce()
     if (mode === 'cancel') controller.abort(new Error(cookie))
     else await vi.advanceTimersByTimeAsync(25)
-    const result = await pending
-    expect(result.status).toBe('unknown')
-    expect(result.message).not.toMatch(/fixture|acf_/)
+    expect(await pending).toMatchObject(mode === 'cancel' ? { name: 'AbortError' } : { code: 'unavailable' })
     const cancel = vi.fn()
     release(new Response(new ReadableStream({ cancel })))
     await flush()
     expect(cancel).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+  it.each([
+    ['timeout', 'response'], ['cancel', 'response'], ['timeout', 'rejection'], ['cancel', 'rejection'],
+  ])('retains a dispatched donation after %s until the transport settles with %s', async (mode, outcome) => {
+    vi.useFakeTimers()
+    let release!: (value: Response) => void
+    let reject!: (error: unknown) => void
+    const request = vi.fn<typeof fetch>(() => new Promise<Response>((done, failed) => { release = done; reject = failed }))
+    const { gateway } = setup({ request, proxy: { ...proxy, requestTimeoutMs: 25 } })
+    const controller = new AbortController()
+    let settled = false
+    const pending = gateway.donate(donation, controller.signal).finally(() => { settled = true })
+    await flush()
+    expect(request).toHaveBeenCalledOnce()
+    if (mode === 'cancel') controller.abort(new Error(cookie))
+    else await vi.advanceTimersByTimeAsync(25)
+    await flush()
+    expect(request.mock.calls[0]![1]?.signal?.aborted).toBe(true)
+    expect(settled).toBe(false)
+    const cancel = vi.fn()
+    if (outcome === 'response') release(new Response(new ReadableStream({ cancel })))
+    else reject(new Error(cookie))
+    const result = await pending
+    expect(result.status).toBe('unknown')
+    expect(result.message).not.toMatch(/fixture|acf_/)
+    expect(cancel).toHaveBeenCalledTimes(outcome === 'response' ? 1 : 0)
     expect(request).toHaveBeenCalledOnce()
     expect(vi.getTimerCount()).toBe(0)
+  })
+  it('keeps the shared account queue busy after cancellation until the actual POST settles', async () => {
+    let release!: (value: Response) => void
+    const request = vi.fn<typeof fetch>(() => new Promise<Response>(done => { release = done }))
+    const { gateway } = setup({ request })
+    const tasks = new DouyuTaskManager({ load: () => undefined, save: vi.fn(), run: vi.fn() })
+    tasks.setActiveAccount('default')
+    tasks.setRoom('6979222')
+    tasks.setRuntime({ foreground: true, locked: false, suspended: false })
+    const context = { accountId: 'default', originRoom: '6979222', rooms: ['6979222'] }
+    const controller = new AbortController()
+    const next = vi.fn(async () => 'read-only-result')
+    try {
+      const pending = tasks.runAccountOperation(context, active => gateway.donate({ ...donation, accountId: 'default' }, active), controller.signal)
+      await flush()
+      expect(request).toHaveBeenCalledOnce()
+      controller.abort()
+      expect(await pending).toEqual({ status: 'cancelled', started: true })
+      await flush()
+      expect(await tasks.runAccountOperation(context, next, signal())).toEqual({ status: 'busy' })
+      expect(next).not.toHaveBeenCalled()
+      expect(request).toHaveBeenCalledOnce()
+      release(Response.json(receipt))
+      await flush()
+      expect(await tasks.runAccountOperation(context, next, signal())).toEqual({ status: 'completed', value: 'read-only-result' })
+      expect(request).toHaveBeenCalledOnce()
+    } finally { tasks.dispose() }
   })
   it.each(['read', 'donate'])('cancels a hanging response body for %s', async method => {
     vi.useFakeTimers()

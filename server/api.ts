@@ -1,5 +1,6 @@
 /** Main-process services without Electron imports or a network listener. */
 
+import appPackage from '../package.json'
 import { createDouyuRoomResolver, type ResolveDouyuRoom } from './platforms/douyuRoom'
 import type { ApiResult } from '../src/app/apiClient'
 import type { ProxyConfig } from './config'
@@ -16,7 +17,8 @@ import { DouyuAccountError, isDouyuAccountId, type DouyuAccountManager } from '.
 import { DouyuTaskError, type DouyuTaskManager } from '../electron/douyuTasks'
 import { DOUYU_TASK_KINDS, DOUYU_TASK_POLICIES, isDouyuActivityKind, type DouyuTaskKind, type DouyuTaskPolicy, type DouyuTasksSnapshot } from './douyu/types'
 import { readMessageSchedule } from './douyu/taskConfig'
-import { DouyuRenewalError, readRenewalRooms, type DouyuRenewalService } from './douyu/renewalService'
+import { readPlatformText } from './platformResponse'
+import { DouyuRenewalError, readRenewalRooms, readRenewalQuantities, type DouyuRenewalService } from './douyu/renewalService'
 
 export interface AcquisitionService {
   resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string, preferAdaptive?: boolean): Promise<ResolveResult>
@@ -203,10 +205,11 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
           case 'getDouyuRenewalTargets':
           case 'previewDouyuRenewal': {
             const preview = method === 'previewDouyuRenewal'
-            if (!fields(args, preview ? ['accountId', 'rooms', 'quantity'] : ['accountId']) || !isDouyuAccountId(args.accountId)) return fail('invalid-arguments', '续牌赠送参数无效')
+            if (!fields(args, preview ? ['accountId', 'rooms', 'quantity'] : ['accountId'], preview ? ['quantities'] : []) || !isDouyuAccountId(args.accountId)) return fail('invalid-arguments', '续牌赠送参数无效')
             const accountId = args.accountId
             const rooms = preview ? readRenewalRooms(args.rooms) : null
             const quantity = preview ? args.quantity : null
+            const quantities = preview ? readRenewalQuantities(args.quantities, rooms!) : undefined
             if (preview && (typeof quantity !== 'number' || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 1000)) return fail('invalid-arguments', '赠送数量无效')
             const accounts = deps.douyuAccounts
             if (!deps.douyuRenewal || !accounts || !deps.douyuTasks) return fail('not-available', '续牌赠送服务不可用')
@@ -215,7 +218,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             if (!(await accounts.activeLoginStatus()).loggedIn) return fail('login-required', '请先登录当前斗鱼账号')
             if (disposed) return fail('service-closed', '本地服务已关闭')
             if (accounts.activeAccountId !== accountId || accounts.isBusy(accountId) || deps.douyuTasks.snapshot().currentRoom !== originRoom) return fail('account-changed', '账号或房间已变化, 请重新读取')
-            return { ok: true, value: preview ? await deps.douyuRenewal.preview(accountId, rooms!, quantity as number)
+            return { ok: true, value: preview ? await deps.douyuRenewal.preview(accountId, rooms!, quantity as number, quantities)
               : await deps.douyuRenewal.targets(accountId) }
           }
           case 'executeDouyuRenewal':
@@ -322,7 +325,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
           }
           case 'health': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
-            return { ok: true, value: { ok: true, version: '0.1.2', proxyEnabled: deps.proxy.enabled, danmakuRooms: relay.roomCount } }
+            return { ok: true, value: { ok: true, version: appPackage.version, proxyEnabled: deps.proxy.enabled, danmakuRooms: relay.roomCount } }
           }
           case 'verifyAdmin': {
             if (!fields(args, ['token']) || typeof args.token !== 'string' || args.token.length > MAX_TOKEN_LENGTH) {
@@ -466,24 +469,31 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
 
 /** Platform requests keep the existing per-hop SSRF policy and fixed platform headers. */
 export function createResolverDeps(proxy: ProxyConfig, registerMedia: (url: string) => string, fetchImpl?: typeof fetch) {
-  const request = async (url: string, init?: RequestInit): Promise<Response> => {
+  const request = async (url: string, init?: RequestInit): Promise<string> => {
     try {
+      const signal = AbortSignal.timeout(proxy.requestTimeoutMs)
       const { response } = await safeFetch(url, { ...proxy, enabled: true }, {
         method: init?.method ?? 'GET',
         headers: { accept: 'application/json, text/plain, */*', ...(init?.headers as Record<string, string> | undefined) },
         body: typeof init?.body === 'string' ? init.body : undefined,
-        signal: AbortSignal.timeout(proxy.requestTimeoutMs),
+        signal,
         fetchImpl,
       })
-      if (!response.ok) throw new Error('Upstream request failed')
-      return response
+      if (!response.ok) {
+        void response.body?.cancel().catch(() => {})
+        throw new Error('Upstream request failed')
+      }
+      return await readPlatformText(response, signal)
     } catch {
       throw new Error('平台请求失败')
     }
   }
   return {
-    fetchJson: async (url: string, init?: RequestInit): Promise<unknown> => (await request(url, init)).json(),
-    fetchText: async (url: string, init?: RequestInit): Promise<string> => (await request(url, init)).text(),
+    fetchJson: async (url: string, init?: RequestInit): Promise<unknown> => {
+      const text = await request(url, init)
+      try { return JSON.parse(text) as unknown } catch { throw new Error('平台返回的数据格式无效') }
+    },
+    fetchText: request,
     proxify: registerMedia,
   }
 }

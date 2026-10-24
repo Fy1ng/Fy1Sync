@@ -239,6 +239,7 @@ export class LoginManager {
   private readonly driver: BrowserLoginDriver
   private readonly operations = new Map<LoginPlatform, { controller: AbortController; promise: Promise<LoginResult> }>()
   private readonly loggingOut = new Set<LoginPlatform>()
+  private readonly revisions: Record<LoginPlatform, number> = { youtube: 0, douyu: 0 }
   private disposed = false
 
   constructor(userDataDirectory: string, private readonly options: LoginManagerOptions = {}) {
@@ -250,6 +251,7 @@ export class LoginManager {
     if (!isLoginPlatform(platform) || this.disposed) return Promise.reject(new LoginError('login-cancelled'))
     if (!isLoginDestination(platform, destination)) return Promise.reject(new LoginError('login-failed'))
     if (this.operations.has(platform) || this.loggingOut.has(platform)) return Promise.reject(new LoginError('login-busy'))
+    this.revisions[platform]++
     const controller = new AbortController()
     const promise = (async () => {
       try {
@@ -259,7 +261,11 @@ export class LoginManager {
         try { profile = this.store.prepareProfile(platform) } catch { throw new LoginError('cookie-storage-failed') }
         const cookies = await this.driver.login(executable, profile, platform, controller.signal, destination)
         cancelled(controller.signal)
-        try { return this.store.write(platform, cookies) } catch { throw new LoginError('cookie-storage-failed') }
+        try {
+          const result = this.store.write(platform, cookies)
+          this.revisions[platform]++
+          return result
+        } catch { throw new LoginError('cookie-storage-failed') }
       } catch (error) {
         if (controller.signal.aborted) throw new LoginError('login-cancelled')
         throw error instanceof LoginError ? error : new LoginError('login-failed')
@@ -274,21 +280,34 @@ export class LoginManager {
   }
 
   async loginStatus(): Promise<LoginStatus> {
-    try { return this.store.status() } catch { throw new LoginError('cookie-storage-failed') }
+    try { return await this.store.status() } catch { throw new LoginError('cookie-storage-failed') }
   }
 
   async cookieHeader(platform: 'douyu', requestUrl?: string): Promise<string> {
     if (this.disposed || this.loggingOut.has(platform)) return ''
-    try { return this.store.cookieHeader(platform, requestUrl) } catch { throw new LoginError('cookie-storage-failed') }
+    const revision = this.revisions[platform]
+    const current = () => !this.disposed && !this.loggingOut.has(platform) && revision === this.revisions[platform]
+    try {
+      const header = await this.store.cookieHeader(platform, requestUrl)
+      return current() ? header : ''
+    } catch {
+      if (!current()) return ''
+      throw new LoginError('cookie-storage-failed')
+    }
   }
 
   async withTemporaryCookies<T>(platform: 'youtube', callback: (file?: string) => Promise<T>): Promise<T> {
     if (this.disposed || this.loggingOut.has(platform)) throw new LoginError('login-cancelled')
-    return await this.store.withTemporaryCookies(platform, callback)
+    const revision = this.revisions[platform]
+    return await this.store.withTemporaryCookies(platform, async file => {
+      if (this.disposed || this.loggingOut.has(platform) || revision !== this.revisions[platform]) throw new LoginError('login-cancelled')
+      return callback(file)
+    })
   }
 
   async logout(platform: LoginPlatform): Promise<void> {
     if (!isLoginPlatform(platform)) throw new LoginError('login-cancelled')
+    this.revisions[platform]++
     this.loggingOut.add(platform)
     try {
       const operation = this.operations.get(platform)
@@ -300,6 +319,8 @@ export class LoginManager {
 
   async dispose(): Promise<void> {
     this.disposed = true
+    this.revisions.youtube++
+    this.revisions.douyu++
     const operations = [...this.operations.values()]
     for (const operation of operations) operation.controller.abort()
     await Promise.allSettled(operations.map(operation => operation.promise))

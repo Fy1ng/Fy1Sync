@@ -1,7 +1,7 @@
 /** Official Yuba protocol, main process only. No upstream text or cookies escape. */
 import { hostAllowed } from '../config'
 import { validDouyuRoom } from '../platforms/douyuRoom'
-import { safeFetch } from '../safeFetch'
+import { dnsResolver, safeFetch } from '../safeFetch'
 import type { DouyuActionDependencies } from './actions'
 import { abortable, cancelBody, cancelled, MAX_TIMEOUT_MS, readPayload, record } from './actionHttp'
 import type { DouyuTaskDefinition, DouyuTaskOutcome } from './types'
@@ -96,7 +96,8 @@ export class DouyuYubaActions {
     const combined = AbortSignal.any([signal, timeout.signal])
     let dispatched = false
     try {
-      return await abortable(this.perform({ accountId, room }, combined, () => { dispatched = true }), combined)
+      // Do not resolve a submitted write while its transport is still running.
+      return await this.perform({ accountId, room }, combined, () => { dispatched = true })
     } catch {
       if (signal.aborted) throw cancelled()
       if (dispatched) return waiting(timeout.signal.aborted
@@ -171,7 +172,7 @@ export class DouyuYubaActions {
   private async requestJson(accountId: string, url: string, signal: AbortSignal, options: { form?: FormData; dispatch?: () => void; referer?: string } = {}): Promise<HttpResult> {
     if (signal.aborted) throw cancelled()
     let header: string
-    try { header = await this.deps.cookieHeader(accountId, url) } catch {
+    try { header = await abortable(this.deps.cookieHeader(accountId, url), signal) } catch {
       if (signal.aborted) throw cancelled()
       return { outcome: loginRequired() }
     }
@@ -193,15 +194,17 @@ export class DouyuYubaActions {
       allowNonLoopbackTargets: false, allowNonStandardPorts: false,
     }, {
       method: options.form ? 'POST' : 'GET', headers, signal,
-      resolve: this.deps.resolve,
+      resolve: host => abortable((this.deps.resolve ?? dnsResolver)(host), signal),
       fetchImpl: async (checkedUrl, init) => {
         if (signal.aborted) throw cancelled()
         if (options.form) options.dispatch?.()
         // safeFetch's shared media interface accepts string bodies. Preserve its
         // checked URL and headers while passing native FormData to fetch here.
-        const response = await (this.deps.request ?? fetch)(checkedUrl, { ...init, ...(options.form ? { body: options.form } : {}) })
-        if (signal.aborted) { cancelBody(response); throw cancelled() }
-        return response
+        const operation = (this.deps.request ?? fetch)(checkedUrl, { ...init, ...(options.form ? { body: options.form } : {}) }).then(response => {
+          if (signal.aborted) { cancelBody(response); throw cancelled() }
+          return response
+        })
+        return options.form ? await operation : await abortable(operation, signal)
       },
     })
     if (signal.aborted) { cancelBody(response); throw cancelled() }

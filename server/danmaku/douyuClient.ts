@@ -23,6 +23,11 @@ import {
 
 const DANMAKU_ENDPOINT = 'wss://danmuproxy.douyu.com:8506/'
 const KEEPALIVE_INTERVAL_MS = 40_000
+const CONNECT_TIMEOUT_MS = 15_000
+const LOGIN_TIMEOUT_MS = 15_000
+// Quiet rooms still return mrkl/keeplive. Allow two heartbeat periods plus slack.
+const INBOUND_TIMEOUT_MS = 90_000
+const STABLE_CONNECTION_MS = 30_000
 /** Exponential backoff, capped so a dead room does not hammer the endpoint. */
 const RECONNECT_BASE_MS = 1_000
 const RECONNECT_MAX_MS = 30_000
@@ -57,6 +62,9 @@ export class DouyuDanmakuClient {
   private buffer: Buffer = Buffer.alloc(0)
   private keepalive: unknown = null
   private reconnect: unknown = null
+  private watchdog: unknown = null
+  private watchdogRevision = 0
+  private openedAt: number | null = null
   private attempts = 0
   private stateValue: DanmakuState = 'idle'
   private closedByUser = false
@@ -90,6 +98,7 @@ export class DouyuDanmakuClient {
 
   connect(): void {
     if (this.socket) return
+    if (this.reconnect !== null) { this.clearTimer(this.reconnect); this.reconnect = null }
     this.closedByUser = false
     this.setState('connecting')
     let socket: WebSocketLike
@@ -100,6 +109,7 @@ export class DouyuDanmakuClient {
       return
     }
     this.socket = socket
+    this.armWatchdog(socket, CONNECT_TIMEOUT_MS, '弹幕连接超时, 正在重新连接.')
 
     // Every listener is bound to the socket that registered it. `teardown` calls
     // `socket.close()`, which makes the old socket emit `close` after we have already
@@ -109,10 +119,10 @@ export class DouyuDanmakuClient {
 
     socket.addEventListener('open', () => {
       if (!isCurrent()) return
-      this.attempts = 0
-      this.setState('connected')
-      this.send(LOGIN_REQUEST(this.room))
-      this.send(JOIN_GROUP_REQUEST(this.room))
+      this.openedAt = this.now()
+      this.armWatchdog(socket, LOGIN_TIMEOUT_MS, '弹幕登录未收到有效回应, 正在重新连接.')
+      if (!this.send(LOGIN_REQUEST(this.room)) || !isCurrent()) return
+      if (!this.send(JOIN_GROUP_REQUEST(this.room)) || !isCurrent()) return
       this.startKeepalive()
     })
     socket.addEventListener('message', (event: { data: unknown }) => {
@@ -136,21 +146,41 @@ export class DouyuDanmakuClient {
   }
 
   private ingest(data: unknown): void {
+    const socket = this.socket
+    if (!socket || this.openedAt === null) return
     const chunk = toBuffer(data)
     if (!chunk) return
     this.buffer = this.buffer.byteLength === 0 ? chunk : Buffer.concat([this.buffer, chunk])
     const { payloads, rest } = decodeFrames(this.buffer)
     this.buffer = rest
     for (const payload of payloads) {
+      if (this.socket !== socket || this.closedByUser) return
       const parsed = parseStt(payload)
+      if (parsed.type === 'error') {
+        this.scheduleReconnect('斗鱼结束了弹幕连接, 正在重新连接.')
+        return
+      }
+      if (['rid', 'roomid'].some(key => parsed[key] !== undefined && parsed[key] !== this.room)) continue
       const now = this.now()
+      if (['loginres', 'mrkl', 'keeplive'].includes(parsed.type ?? '')) {
+        if (['code', 'error'].some(key => parsed[key] !== undefined && parsed[key] !== '0')) {
+          this.scheduleReconnect('斗鱼未接受弹幕连接, 正在重新连接.')
+          return
+        }
+        this.acceptInbound(socket, now)
+        continue
+      }
       const chat = toChatMessage(parsed, this.room, now)
       if (chat) {
+        this.acceptInbound(socket, now)
+        if (this.socket !== socket) return
         this.events.onMessage(chat)
         continue
       }
       const gift = toGiftMessage(parsed, this.room, now)
       if (!gift) continue
+      this.acceptInbound(socket, now)
+      if (this.socket !== socket) return
       if (now < this.giftWindowStart || now - this.giftWindowStart >= 1_000) {
         this.giftWindowStart = now
         this.giftsInWindow = 0
@@ -161,21 +191,52 @@ export class DouyuDanmakuClient {
     }
   }
 
-  private send(payload: string): void {
+  private send(payload: string): boolean {
+    const socket = this.socket
+    if (!socket) return false
     try {
-      this.socket?.send(encodeFrame(payload))
+      socket.send(encodeFrame(payload))
+      return true
     } catch {
-      // The socket died between the state check and the write; the close handler reconnects.
+      if (this.socket === socket) this.scheduleReconnect('弹幕连接写入失败, 正在重新连接.')
+      return false
     }
   }
 
   private startKeepalive(): void {
     this.stopKeepalive()
+    const socket = this.socket
     this.keepalive = this.setTimer(() => {
-      this.send(KEEPALIVE_REQUEST())
+      if (!socket || this.socket !== socket) return
+      if (!this.send(KEEPALIVE_REQUEST())) return
       // Re-arm; a plain interval would keep firing after teardown on some runtimes.
       if (this.socket) this.startKeepalive()
     }, KEEPALIVE_INTERVAL_MS)
+  }
+
+  private acceptInbound(socket: WebSocketLike, now: number): void {
+    if (this.socket !== socket) return
+    // A connection that repeatedly opens and immediately drops must keep backing
+    // off. Only valid traffic after a stable interval restores the initial delay.
+    if (this.openedAt !== null && now - this.openedAt >= STABLE_CONNECTION_MS) this.attempts = 0
+    this.armWatchdog(socket, INBOUND_TIMEOUT_MS, '弹幕连接长时间未收到回应, 正在重新连接.')
+    if (this.stateValue !== 'connected') this.setState('connected')
+  }
+
+  private armWatchdog(socket: WebSocketLike, delay: number, detail: string): void {
+    this.stopWatchdog()
+    const revision = this.watchdogRevision
+    this.watchdog = this.setTimer(() => {
+      if (revision !== this.watchdogRevision || this.socket !== socket) return
+      this.watchdog = null
+      this.scheduleReconnect(detail)
+    }, delay)
+  }
+
+  private stopWatchdog(): void {
+    this.watchdogRevision++
+    if (this.watchdog !== null) this.clearTimer(this.watchdog)
+    this.watchdog = null
   }
 
   private stopKeepalive(): void {
@@ -188,7 +249,7 @@ export class DouyuDanmakuClient {
   private scheduleReconnect(detail: string): void {
     if (this.closedByUser) return
     this.teardown()
-    this.attempts += 1
+    this.attempts = Math.min(this.attempts + 1, 6)
     const delay = Math.min(RECONNECT_BASE_MS * 2 ** (this.attempts - 1), RECONNECT_MAX_MS)
     this.setState('reconnecting', detail)
     this.reconnect = this.setTimer(() => {
@@ -199,12 +260,14 @@ export class DouyuDanmakuClient {
 
   private teardown(): void {
     this.stopKeepalive()
+    this.stopWatchdog()
     if (this.reconnect !== null) {
       this.clearTimer(this.reconnect)
       this.reconnect = null
     }
     const socket = this.socket
     this.socket = null
+    this.openedAt = null
     this.buffer = Buffer.alloc(0)
     this.giftWindowStart = Number.NEGATIVE_INFINITY
     this.giftsInWindow = 0

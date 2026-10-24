@@ -167,32 +167,36 @@ export function useDismiss(open: boolean, onClose: () => void): React.RefObject<
 export function useFullscreen(target: React.RefObject<HTMLElement | null>): {
   active: boolean
   toggle: () => void
+  error: string | null
 } {
   const [active, setActive] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const mounted = useRef(false)
 
   useEffect(() => {
+    mounted.current = true
     // `Boolean`, not `!== null`: where the unprefixed Fullscreen API is missing the property
     // reads `undefined`, which is not `null`, and the page would come up believing it is
     // already fullscreen — sidebar hidden, button stuck on 退出全屏, nothing to click back.
     const update = (): void => setActive(Boolean(document.fullscreenElement))
     document.addEventListener('fullscreenchange', update)
     update()
-    return () => document.removeEventListener('fullscreenchange', update)
+    return () => { mounted.current = false; document.removeEventListener('fullscreenchange', update) }
   }, [])
 
   const toggle = useCallback(() => {
     const node = target.current
     if (!node) return
-    if (document.fullscreenElement) {
-      void document.exitFullscreen().catch(() => undefined)
-      return
-    }
-    // Rejected when the gesture was not user-initiated. Nothing to recover, and an
-    // unhandled rejection in a click handler is noise.
-    void node.requestFullscreen?.().catch(() => undefined)
+    setError(null)
+    const fail = () => { if (mounted.current) setError('无法切换全屏. 请重试或使用窗口模式.') }
+    try {
+      if (document.fullscreenElement) void document.exitFullscreen().catch(fail)
+      else if (node.requestFullscreen) void node.requestFullscreen().catch(fail)
+      else fail()
+    } catch { fail() }
   }, [target])
 
-  return { active, toggle }
+  return { active, toggle, error }
 }
 
 /** A requestAnimationFrame loop that keeps a stable callback identity. */

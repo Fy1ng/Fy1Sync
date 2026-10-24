@@ -136,6 +136,7 @@ function createElement(role: SourceRole): HTMLVideoElement {
 interface RoleRuntime {
   element: HTMLVideoElement
   attachment: MediaAttachment | null
+  attachmentAbort: AbortController | null
   /** Bumped on every load/unload so a slow attach cannot revive a stale source. */
   generation: number
   liveHint: boolean | undefined
@@ -168,6 +169,7 @@ export class MediaEngine {
       const runtime: RoleRuntime = {
         element,
         attachment: null,
+        attachmentAbort: null,
         generation: 0,
         liveHint: undefined,
         detach: null,
@@ -282,8 +284,10 @@ export class MediaEngine {
   async load(role: SourceRole, descriptor: MediaDescriptor): Promise<void> {
     const runtime = this.runtime.get(role)
     if (!runtime || this.disposed) return
-    this.teardown(role)
     const generation = ++runtime.generation
+    this.teardown(role)
+    const controller = new AbortController()
+    runtime.attachmentAbort = controller
     runtime.liveHint = undefined
 
     this.state[role] = {
@@ -330,7 +334,12 @@ export class MediaEngine {
           runtime.liveHint = isLive
           this.readElement(role)
         },
-      })
+        onRecovered: () => {
+          if (!current() || this.state[role].status !== 'error') return
+          this.state[role] = { ...this.state[role], error: null, status: 'loading' }
+          this.readElement(role)
+        },
+      }, controller.signal)
       if (!current()) {
         attachment.destroy()
         return
@@ -358,6 +367,8 @@ export class MediaEngine {
     const runtime = this.runtime.get(role)
     if (!runtime) return
     this.resolveSeek(role, false)
+    runtime.attachmentAbort?.abort()
+    runtime.attachmentAbort = null
     runtime.attachment?.destroy()
     runtime.attachment = null
     runtime.element.pause()
@@ -525,6 +536,8 @@ export class MediaEngine {
       if (!runtime) continue
       this.resolveSeek(role, false)
       runtime.element.playbackRate = 1
+      runtime.attachmentAbort?.abort()
+      runtime.attachmentAbort = null
       runtime.attachment?.destroy()
       runtime.detach?.()
       runtime.element.remove()

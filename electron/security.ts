@@ -16,3 +16,17 @@ export function isAppDocument(raw: string): boolean {
   if (!isAppOrigin(raw)) return false
   return ['/', '/index.html', '/admin', '/admin/'].includes(new URL(raw).pathname)
 }
+
+/** Fullscreen is the only renderer permission needed by this local player. */
+export function allowsAppPermission(permission: string, context: {
+  trustedWindow: boolean
+  documentUrl: string
+  requestingUrl?: string
+  requestingOrigin?: string
+  isMainFrame?: boolean
+}): boolean {
+  return permission === 'fullscreen' && context.trustedWindow && context.isMainFrame === true
+    && isAppDocument(context.documentUrl)
+    && typeof context.requestingUrl === 'string' && isAppDocument(context.requestingUrl)
+    && (context.requestingOrigin === undefined || isAppOrigin(context.requestingOrigin))
+}

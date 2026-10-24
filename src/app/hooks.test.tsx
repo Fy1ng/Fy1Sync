@@ -9,10 +9,10 @@
  */
 
 import { useRef } from 'react'
-import { render } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
 
-import { usePublishedHeight } from './hooks'
+import { useFullscreen, usePublishedHeight } from './hooks'
 
 /**
  * jsdom lays nothing out, so `offsetHeight` is 0 everywhere. Defining it per element is how a
@@ -68,5 +68,31 @@ describe('usePublishedHeight', () => {
     expect(host.style.getPropertyValue('--bar-clearance')).toBe('142px')
     unmount()
     expect(host.style.getPropertyValue('--bar-clearance')).toBe('')
+  })
+})
+
+function FullscreenHarness() {
+  const target = useRef<HTMLDivElement | null>(null)
+  const fullscreen = useFullscreen(target)
+  return <div ref={target}><button type="button" onClick={fullscreen.toggle}>切换</button>
+    {fullscreen.error && <p role="alert">{fullscreen.error}</p>}</div>
+}
+
+describe('fullscreen errors', () => {
+  it('shows a rejected permission and clears the message on retry', async () => {
+    const request = vi.spyOn(Element.prototype, 'requestFullscreen').mockRejectedValueOnce(new Error('denied')).mockResolvedValue(undefined)
+    render(<FullscreenHarness />)
+    fireEvent.click(screen.getByRole('button', { name: '切换' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('无法切换全屏')
+    fireEvent.click(screen.getByRole('button', { name: '切换' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows synchronous fullscreen failures without throwing from the click handler', () => {
+    vi.spyOn(Element.prototype, 'requestFullscreen').mockImplementation(() => { throw new Error('unavailable') })
+    render(<FullscreenHarness />)
+    fireEvent.click(screen.getByRole('button', { name: '切换' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('无法切换全屏')
   })
 })

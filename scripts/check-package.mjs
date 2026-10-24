@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawn } from 'node:child_process'
+import { fingerprintRelease, verifyPackageArchive } from './package-archive.mjs'
 const require = createRequire(import.meta.url)
-const { listPackage } = require('@electron/asar')
+const { listPackage, statFile } = require('@electron/asar')
 const root = fileURLToPath(new URL('../', import.meta.url))
 const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
 const evidence = path.resolve(root, process.env.STREAM_SYNC_PACKAGE_EVIDENCE ?? '.runtime-cache/p7-20261023')
@@ -34,8 +34,11 @@ async function walk(dir, prefix = '') {
 }
 const asar = listPackage(path.join(resources, 'app.asar')).map(name => name.replaceAll('\\', '/').replace(/^\//, ''))
 for (const name of asar) {
-  if (!/^(?:package\.json|electron(?:\/(?:main|preload)\.cjs)?|client(?:\/assets)?|client\/index\.html|client\/assets\/[A-Za-z0-9_.-]+\.(?:js|css|wasm))$/.test(name)) throw new Error('Unexpected ASAR entry: ' + name)
+  if (!/^(?:package\.json|electron(?:\/(?:main|preload|network-runtime)\.cjs)?|client(?:\/assets)?|client\/index\.html|client\/assets\/[A-Za-z0-9_.-]+\.(?:js|css|wasm))$/.test(name)) throw new Error('Unexpected ASAR entry: ' + name)
 }
+const networkEntry = statFile(path.join(resources, 'app.asar'), 'electron/network-runtime.cjs')
+const networkRuntime = await lstat(path.join(resources, 'app.asar.unpacked', 'electron', 'network-runtime.cjs'))
+if (!networkEntry.unpacked || !networkRuntime.isFile() || networkRuntime.isSymbolicLink() || !networkRuntime.size || networkRuntime.size !== networkEntry.size) throw new Error('The physical network runtime is missing or differs from its ASAR entry')
 const actual = await walk(path.join(resources, 'tools'))
 const inventory = JSON.parse(await readFile(path.join(resources, 'tools', 'inventory.json'), 'utf8'))
 const expected = new Set(inventory.map(e => e.file)); expected.add('inventory.json')
@@ -48,19 +51,13 @@ for (const entry of inventory) {
 const releaseFiles = (await readdir(path.join(root, '.release'))).filter(name => name.startsWith(`Stream-Syncer-${version}-`) && /\.(zip|exe)$/.test(name))
 if (!releaseFiles.some(name => name.endsWith('.zip')) || !releaseFiles.some(name => name.endsWith('.exe'))) throw new Error('Both ZIP and NSIS artifacts are required')
 const artifacts = []
+const unpacked = await fingerprintRelease(directory, { forbiddenPath })
 for (const name of releaseFiles) {
   const file = path.join(root, '.release', name)
-  artifacts.push({ file, size: (await stat(file)).size, sha256: await hash(file) })
+  const artifact = { file, size: (await stat(file)).size, sha256: await hash(file) }
+  artifacts.push(artifact)
   if (name.endsWith('.zip')) {
-    const entries = await new Promise((resolve, reject) => {
-      let output = ''; const child = spawn('tar.exe', ['-tf', file], { shell: false, windowsHide: true })
-      child.stdout.on('data', chunk => { output += chunk })
-      child.once('error', reject); child.once('close', code => code === 0 ? resolve(output.split(/\r?\n/).filter(Boolean)) : reject(new Error('Cannot inspect ZIP')))
-    })
-    if (entries.some(entry => forbiddenPath(entry) || entry.split('/').includes('..') || entry.startsWith('/'))) throw new Error('Forbidden path in ZIP')
-    const unpacked = new Set(await walk(directory))
-    const zipped = new Set(entries.filter(entry => !entry.endsWith('/')))
-    if (zipped.size !== unpacked.size || [...zipped].some(entry => !unpacked.has(entry))) throw new Error('ZIP file list differs from verified unpacked release')
+    artifact.contents = await verifyPackageArchive(file, unpacked, { forbiddenPath })
   }
 }
 const report = { asarEntries: asar, toolFiles: actual.length, artifacts, status: 'local-evaluation-only', licenseGap: 'Exact native dependency license/source mapping remains incomplete; see bundled THIRD-PARTY-NOTICES.md' }

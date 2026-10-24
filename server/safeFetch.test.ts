@@ -130,6 +130,11 @@ describe('checkUrl', () => {
     if (!result.ok) expect(result.reason).toBe('dns-failed')
   })
 
+  it.each([null, {}, [], ['not-an-address'], ['8.8.8.8', 42], Array.from({ length: 65 }, () => '8.8.8.8')])('rejects invalid or unbounded DNS records %#', async addresses => {
+    const result = await checkUrl('https://usher.ttvnw.net/x', proxyConfig, async () => addresses as string[])
+    expect(result).toMatchObject({ ok: false, reason: 'dns-failed' })
+  })
+
   it('allows loopback targets when explicitly enabled (local fixtures)', async () => {
     const result = await checkUrl(
       'http://127.0.0.1:5173/test-sources/clock.m3u8',

@@ -3,6 +3,8 @@
 import { fileURLToPath } from 'node:url'
 import { type Page } from '@playwright/test'
 import type { RecognitionProfile } from '../src/core/profileSchema'
+import { CLOCK_CHARS, TEMPLATE_PIXELS } from '../src/core/profileSchema'
+import { packBitmap } from '../src/core/bitmapCodec'
 import { APP_ORIGIN, expect, test } from './electron'
 import { failOnPageError, fixturesReady, invoke } from './helpers'
 
@@ -10,6 +12,33 @@ const officialPath = fileURLToPath(new URL('../public/test-sources/official.mp4'
 const framePath = fileURLToPath(new URL('../public/test-sources/frame-0-20.png', import.meta.url))
 
 test.describe('本机编辑器访问', () => {
+  test('草稿修改必须发布后才能应用, 返回播放器读取已发布版本', async ({ page }) => {
+    failOnPageError(page)
+    const id = 'e2e/draft-publication'
+    const profile = baseProfile(id)
+    profile.templates = Object.fromEntries(CLOCK_CHARS.map(char => [char, [{
+      id: char, data: packBitmap(new Uint8Array(TEMPLATE_PIXELS).fill(255)), createdAt: 1,
+    }]]))
+    const seeded = await invoke(page, 'savePreset', { id, profile })
+    expect(seeded.ok).toBe(true)
+    await page.goto(APP_ORIGIN + '/admin')
+    await page.getByRole('button', { name: /种子预设/ }).click()
+    await setField(page, '名称', '草稿中的修改')
+    await page.getByRole('button', { name: '存为草稿', exact: true }).click()
+    await expect(page.locator('.admin-message')).toContainText('已保存到本机草稿')
+    await page.getByRole('button', { name: '应用到播放器' }).click()
+    await expect(page.locator('.admin-message')).toContainText('请先')
+    const before = await invoke(page, 'getPreset', { id })
+    expect(before.ok && before.value.profile.name).toBe('种子预设')
+    await page.getByRole('button', { name: '发布到本机', exact: true }).click()
+    await expect(page.locator('.admin-message')).toContainText('已发布为本机预设')
+    await page.getByRole('button', { name: '应用到播放器' }).click()
+    await expect(page.locator('.admin-message')).toContainText('已设为播放器的识别场景')
+    await page.getByRole('link', { name: '返回播放器' }).click()
+    await page.getByRole('dialog', { name: '片源设置' }).getByRole('button', { name: '完成' }).click()
+    await expect(page.locator('.sidebar').getByRole('button', { name: /^识别场景/ })).toContainText('草稿中的修改')
+  })
+
   test('本机窗口直接显示编辑器而无需令牌', async ({ page }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')

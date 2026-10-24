@@ -1,6 +1,7 @@
 /** One explicit message, one account-owned gateway, and an attributable receipt. */
 import { isIP } from 'node:net'
 import { Worker } from 'node:worker_threads'
+import path from 'node:path'
 import { hostAllowed } from '../config'
 import { dnsResolver, isPrivateAddress, safeFetch } from '../safeFetch'
 import { validDouyuRoom } from '../platforms/douyuRoom'
@@ -34,7 +35,8 @@ export interface DouyuMessageSocket {
   terminate?(): void | Promise<unknown>
 }
 export type DouyuMessageSenderDependencies = DouyuActionDependencies & {
-  createSocket?: (url: string) => DouyuMessageSocket
+  createSocket?: (url: string, addresses: readonly string[]) => DouyuMessageSocket
+  networkRuntimePath?: string
   now?: () => number
 }
 
@@ -48,11 +50,13 @@ let incomingBytes = 0;
 let rejected = false;
 function report(type, data) { parentPort.postMessage({ type, ...data }); }
 try {
-  socket = new WebSocket(workerData.url);
+  const { createPinnedDispatcher } = require(workerData.runtimePath);
+  const dispatcher = createPinnedDispatcher(new URL(workerData.url).hostname, workerData.addresses);
+  socket = new WebSocket(workerData.url, { dispatcher });
   socket.binaryType = 'arraybuffer';
   socket.addEventListener('open', () => report('open'));
   socket.addEventListener('error', () => report('error'));
-  socket.addEventListener('close', event => report('close', { code: event.code }));
+  socket.addEventListener('close', event => { void dispatcher.destroy().catch(() => {}); report('close', { code: event.code }); });
   socket.addEventListener('message', event => {
     if (rejected) return;
     if (!(event.data instanceof ArrayBuffer) || event.data.byteLength > workerData.limit || (incomingBytes += event.data.byteLength) > workerData.totalLimit) {
@@ -78,8 +82,9 @@ export class NativeMessageSocket implements DouyuMessageSocket {
   private readonly listeners = new Map<string, Set<MessageSocketListener>>()
   private ending: Promise<unknown> | null = null
 
-  constructor(url: string) {
-    this.worker = new Worker(SOCKET_WORKER, { eval: true, name: 'douyu-message', workerData: { url, limit: MAX_BUFFER_BYTES, totalLimit: MAX_TOTAL_BYTES } })
+  constructor(url: string, runtimePath: string, addresses: readonly string[]) {
+    if (!path.isAbsolute(runtimePath) || !Array.isArray(addresses) || !addresses.length || addresses.length > 64 || addresses.some(address => !isIP(address))) throw new MessageProtocolError()
+    this.worker = new Worker(SOCKET_WORKER, { eval: true, name: 'douyu-message', workerData: { url, runtimePath, addresses: [...addresses], limit: MAX_BUFFER_BYTES, totalLimit: MAX_TOTAL_BYTES } })
     this.worker.on('message', (event: MessageSocketEvent & { type: string }) => {
       if (this.ending) return
       if (event.type === 'open') this.readyState = 1
@@ -141,7 +146,7 @@ const ERROR_MESSAGES: Record<number, string> = {
 
 export class DouyuMessageSender {
   private readonly now: () => number
-  private readonly createSocket: (url: string) => DouyuMessageSocket
+  private readonly createSocket: (url: string, addresses: readonly string[]) => DouyuMessageSocket
   private readonly active = new Map<string, AbortController>()
   private readonly rooms = new Map<string, RoomState>()
   private lastCst = 0
@@ -149,7 +154,10 @@ export class DouyuMessageSender {
 
   constructor(private readonly deps: DouyuMessageSenderDependencies) {
     this.now = deps.now ?? Date.now
-    this.createSocket = deps.createSocket ?? (url => new NativeMessageSocket(url))
+    this.createSocket = deps.createSocket ?? ((url, addresses) => {
+      if (!deps.networkRuntimePath) throw new MessageProtocolError()
+      return new NativeMessageSocket(url, deps.networkRuntimePath, addresses)
+    })
   }
 
   dispose(): void {
@@ -265,9 +273,9 @@ export class DouyuMessageSender {
     const keys = messageSigningKeys(await this.getJson(`${SITE}wgapi/livenc/liveweb/websec/getEncryption?did=${encodeURIComponent(credentials.did)}`, 'GET', signal))
     const endpoint = gatewayAddress(await this.getJson(`${SITE}lapi/live/gateway/web/${target.room}?isH5=1`, 'POST', signal))
     // WebSocket permits exactly the published host/ports, without relaxing HTTP policy.
-    await abortable(this.resolve(SOCKET_HOST), signal)
+    const addresses = await abortable(this.resolve(SOCKET_HOST), signal)
     this.assertActive(signal, context)
-    const socket = this.createSocket(endpoint)
+    const socket = this.createSocket(endpoint, addresses)
     context.socket = socket
     socket.binaryType = 'arraybuffer'
     return this.exchange(target, credentials, keys, state, context, socket, signal, deadline)

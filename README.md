@@ -53,7 +53,7 @@ npm run package:check
 node scripts/verify-packaged.mjs
 ```
 
-electron-builder 固定为26.15.3, 保持 Electron44.9.0 和既有 React 版本. 构建输出在忽略的 `.release/`, 工具下载缓存与最小应用暂存位于 `.packaging/`. 首次显式执行 `tools:prepare` 或 `package:win` 时下载 [固定清单](packaging/tools-lock.json)中的工具和源码, 校验版本、大小与 SHA256, 使用单独固定的 provider 依赖补丁 lock 和 canvas N-API 包准备依赖. provider 仍为2.0.2原实现, 仅将 follow-redirects 固定到1.16.1, ip-address 固定到10.7.4; [补丁清单](packaging/provider-dependency-patches.json)及有效依赖索引随包保留. 保留已验证缓存; BtbN 日构建仅保留14天, 缺失时脚本应失败, 不自动改用 latest. 本地验证使用默认 Electron 图标, 未复用 Android 图标, 没有签名或外部发布.
+electron-builder 固定为 26.15.3, Electron 更新为 44.9.3, React 沿用既有版本. 构建输出在忽略的 `.release/`, 工具下载缓存与最小应用暂存位于 `.packaging/`. 首次显式执行 `tools:prepare` 或 `package:win` 时下载 [固定清单](packaging/tools-lock.json)中的工具和源码, 校验版本, 大小与 SHA256, 使用单独固定的 provider 依赖补丁 lock 和 canvas N-API 包准备依赖. provider 仍为 2.0.2 原实现, 补丁固定 follow-redirects 1.16.1, ip-address 10.7.4, body-parser 2.4.0 和 Undici 7.30.1; [补丁清单](packaging/provider-dependency-patches.json)及有效依赖索引随包保留. 保留已验证缓存; BtbN 日构建仅保留 14 天, 缺失时脚本应失败, 不自动改用 latest. 本地验证使用默认 Electron 图标, 未复用 Android 图标, 没有签名或外部发布.
 
 应用包只从生成的最小文件白名单和受控资源目录构建. exe、DLL 和 provider 原生依赖位于 ASAR 外. 不包含本工程测试媒体和测试代码、cookie、Profile 或开发工作区; 第三方完整源码归档另作许可材料保留. 开发用测试源入口在发行包中隐藏, 用户仍可通过本地文件入口加载自己的媒体. NSIS 强制当前用户安装, 不建桌面/开始菜单快捷方式, 不自动启动, 卸载保留应用数据; ZIP 解压后运行 `Stream Syncer.exe`.
 
@@ -116,7 +116,7 @@ cookie 保存在 userData 的私有目录, 仅当前用户可读写. YouTube 调
 
 ## 续牌赠送助手
 
-在片源设置的 `续牌赠送` 中读取当前返回页的粉丝牌, 选择最多 20 个房间和每个房间的数量, 再生成预览. 预览列出可用的已有背包荧光棒, 数量, 显示到期时间及跳过原因. 点击 `确认赠送` 后才会执行, 不购买, 领取或兑换道具. 预览两分钟过期且只能确认一次, 修改选择或数量需要重新预览.
+在片源设置的 `续牌赠送` 中读取当前返回页的粉丝牌, 可按房间号或已知徽章名筛选并全选筛选结果, 每次最多 20 个房间. 单房间数量留空时使用统一默认值, 填写后只覆盖该房间. 刷新名单保留仍有效的选择和数量, 但需要重新预览. 预览列出可用的已有背包荧光棒, 数量, 显示到期时间及跳过原因. 点击 `确认赠送` 后才会执行, 不购买, 领取或兑换道具. 预览两分钟过期且只能确认一次, 修改选择或数量需要重新预览.
 
 赠送与发弹幕和签到共用执行队列. 执行前重新核对账号, 房间和库存, 收到赠送回执后再核对库存数量. 库存变化, 官方验证, 未知回执或取消都会停止余下项目, 不自动补送. 切账号, 换房, 锁屏, 休眠, 关闭目标房间或离开设置面板也会停止剩余操作; 折叠本节不停止. 操作计划和结果只在当前进程内保留.
 
@@ -124,7 +124,7 @@ cookie 保存在 userData 的私有目录, 仅当前用户可读写. YouTube 调
 
 ## 数据目录
 
-已发布预设默认保存在 Electron `app.getPath('userData')/presets`, 每个预设一份 JSON. 编辑器草稿保存在当前应用 Profile 的 IndexedDB, 播放设置保存在本机存储.
+已发布预设默认保存在 Electron `app.getPath('userData')/presets`, 每个预设一份 JSON. 新预设采用无碰撞的编码文件名, 旧文件核对内部 ID 后继续原位读写; 同一进程内, 指向同一目录的保存和删除串行执行, 旧 ETag 不能覆盖新版本或复活已删除记录. 当前没有跨进程写锁, 多个应用进程共享数据目录的并发写入不在此保证内. 编辑器草稿保存在当前应用 Profile 的 IndexedDB, 保存草稿不等于发布; 修改内容需重新发布后才能应用到播放器. 播放设置保存在本机存储.
 
 应用在同一 userData 下使用 `browser-profile/<platform>/`, `cookies/<platform>.txt`, `tools.json` 和 `buffer/<session>/<role>/`. 两路各有一个 ffmpeg 子进程, 默认按播放列表 `EXTINF` 累计保留最近约 180 s, 以完整分片为边界, 不把 90 个分片直接视为 180 s. 缓冲量和启动, 停滞, 重连, 失败状态通过 IPC 事件显示. 每次重新加载或切画质生成新的缓冲 URL; 自动重连保留 URL, 追加 discontinuity 并重新解析签名地址. HLS默认最多连续重试 5 次, 间隔 1 / 2 / 5 / 10 / 15 s, 连续稳定产出 30 s 后重置失败计数. 自适应媒体经双管道转为fMP4, 连续失败两轮后切换最佳HLS并保持当前能力URL. 正常退出会终止 ffmpeg 进程树并删除本次会话目录, 不是永久录像.
 
@@ -141,7 +141,11 @@ cookie 保存在 userData 的私有目录, 仅当前用户可读写. YouTube 调
 
 ## 安全与媒体
 
-Electron 窗口启用 `contextIsolation`, `sandbox`, `webSecurity`, 关闭 `nodeIntegration`. 页面不能直接使用 Node, 只能通过 preload 暴露的 `window.streamSyncer` 白名单接口调用主进程. 主进程校验调用来源和参数; 外部导航, 新窗口和权限请求被拒绝. 编辑器的写入资格来自受信任的本机应用窗口, 不是共享令牌.
+Electron 窗口启用 `contextIsolation`, `sandbox`, `webSecurity`, 关闭 `nodeIntegration`. 页面不能直接使用 Node, 只能通过 preload 暴露的 `window.streamSyncer` 白名单接口调用主进程. 主进程校验调用来源和参数; 仅允许受信任应用主文档的全屏权限, 外部导航, 新窗口及其他权限请求被拒绝. 编辑器的写入资格来自受信任的本机应用窗口, 不是共享令牌.
+
+侧栏收起后可从画面上方的 `展开侧栏` 恢复. 全屏时片源设置和摄像头取景仍可操作, 请求失败会显示原因. 连续手动调整偏移会按实际 seek 结果串行记账并合并最新目标; 更换片源时停止旧的加载和偏移操作. HLS 自动恢复有重试上限, 原生媒体错误也会显示明确原因.
+
+Windows 凭据读取使用异步 ACL 检查, 每次仍验证目录和文件的私有权限, 不缓存权限成功结果. 登录, 退出或销毁期间返回的旧凭据不会继续使用.
 
 页面, 本地测试媒体和本地缓冲使用同源自定义协议. 缓冲路径只允许读取活动会话, 角色和 generation 对应的播放列表与分片, 不接受任意文件路径. 平台 API 使用 safeFetch 的 SSRF 防护, 解析出的 ffmpeg URL 输入先通过 checkUrl 校验; 此类输入的后续重定向和DNS由ffmpeg处理. 自适应分片由主进程 safeFetch 逐跳检查 googlevideo HTTPS 域名和DNS后读取, 签名URL不传给ffmpeg或渲染进程. 保留的媒体登记路径使用不透明标识, 由主进程 safeFetch 读取, 支持 Range 和受控 HLS 子资源. 具体边界见 [媒体路径与安全](docs/media-proxy.md).
 
@@ -204,3 +208,5 @@ e2e/               真实 Electron 场景与测试数据隔离
 
 
 2026-10-24的0.1.2本地评估包已验证官方匿名数字靓号解析、独立弹幕房间状态与摄像头身份兼容. 最终离线Electron回归40通过/6条件跳过, 两种包形态的无cookie身份查询均确认6657为6979222. 真实直播和真实弹幕WS不由本轮身份短测替代; 详细统计、首轮失败和许可/签名边界见平台说明.
+
+2026-10-25 的 0.1.3 已完成源码审查修复和本地 NSIS/ZIP 评估包验证, 保留 0.1.2 旧包. 最终类型检查和构建通过, Vitest 3922 项通过/1 项本机 IPv6 条件跳过, Electron 52 项通过/6 项条件跳过. ZIP 全部文件的 SHA256/CRC 与解包目录一致; 两种包形态的网络异常响应存活, 本地视频播放, 隔离工具和 NSIS 安装/卸载均通过. 包位于 `.release/`, 运行与安装记录在 `.runtime-cache/source-fix-20261025/`. 真实账号操作, 实际续期和长时间运行仍未验收, 本版保持未签名的本地评估用途. 具体修复与边界见 [验收记录](docs/plan.md).

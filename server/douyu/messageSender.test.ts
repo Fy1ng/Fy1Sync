@@ -440,18 +440,27 @@ describe('default native WebSocket worker bridge', () => {
       return 0
     })
     workerFixture.make.mockImplementation((source, options) => {
-      const settings = options as { workerData: { url: string; limit: number }; eval: boolean }
+      const settings = options as { workerData: { url: string; limit: number; runtimePath: string; addresses: string[] }; eval: boolean }
       expect(settings.eval).toBe(true)
       expect(settings.workerData.url).toBe('wss://wsproxy.douyu.com:6671/')
+      expect(settings.workerData.runtimePath).toBe('/application/network-runtime.cjs')
+      expect(settings.workerData.addresses).toEqual(['8.8.8.8'])
+      const dispatcher = { destroy: vi.fn(async () => {}) }
       runInNewContext(source, {
-        ArrayBuffer, Uint8Array,
+        ArrayBuffer, Uint8Array, URL,
         require: (name: string) => {
-          expect(name).toBe('node:worker_threads')
-          return { parentPort: port, workerData: settings.workerData }
+          if (name === 'node:worker_threads') return { parentPort: port, workerData: settings.workerData }
+          expect(name).toBe(settings.workerData.runtimePath)
+          return { createPinnedDispatcher: (hostname: string, addresses: string[]) => {
+            expect(hostname).toBe('wsproxy.douyu.com')
+            expect(addresses).toEqual(['8.8.8.8'])
+            return dispatcher
+          } }
         },
         WebSocket: class extends FakeSocket {
-          constructor(url: string) {
+          constructor(url: string, init: { dispatcher: unknown }) {
             expect(url).toBe(settings.workerData.url)
+            expect(init.dispatcher).toBe(dispatcher)
             super((message, socket) => {
               const receive = (fields: Fields) => queueMicrotask(() => socket.receive(fields))
               if (message.type === 'loginreq') {
@@ -472,7 +481,7 @@ describe('default native WebSocket worker bridge', () => {
       })
       return worker
     })
-    const { sender } = setup({}, { createSocket: undefined })
+    const { sender } = setup({}, { createSocket: undefined, networkRuntimePath: '/application/network-runtime.cjs' })
     const controller = new AbortController()
     const pending = sender.send(input, controller.signal)
     await flush()

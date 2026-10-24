@@ -62,6 +62,27 @@ function fixture() {
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup()
 })
+
+it('validates and carries per-room quantities through the real desktop service and one-use plan', async () => {
+  const f = fixture()
+  await f.accounts.login('default')
+  const preview = await f.service.invoke('previewDouyuRenewal', { accountId: 'default', rooms: ['6979222'], quantity: 1,
+    quantities: [{ room: '6979222', quantity: 3 }] })
+  expect(preview.ok).toBe(true)
+  if (!preview.ok) throw new Error('Expected a valid synthetic plan')
+  const plan = preview.value as { id: string; totalQuantity: number }
+  expect(plan.totalQuantity).toBe(3)
+  expect(f.donate).not.toHaveBeenCalled()
+  const outcome = await f.service.invoke('executeDouyuRenewal', { planId: plan.id })
+  expect(outcome.ok).toBe(true)
+  expect(f.donate).toHaveBeenCalledOnce()
+  expect(f.donate.mock.calls[0]![0].quantity).toBe(3)
+  expect(await f.service.invoke('executeDouyuRenewal', { planId: plan.id, quantities: [{ room: '6979222', quantity: 4 }] }))
+    .toMatchObject({ ok: false, code: 'invalid-arguments' })
+  const invalid = await f.service.invoke('previewDouyuRenewal', { accountId: 'default', rooms: ['6979222'], quantity: 1,
+    quantities: [{ room: '288016', quantity: 1 }] })
+  expect(invalid).toMatchObject({ ok: false, code: 'invalid-arguments' })
+})
 const input = { accountId: 'default', roomInput: '6657', kind: 'room-sign', policy: 'foreground', repeatMinutes: null }
 const messageInput: DouyuMessageInput = { accountId: 'default', room: '6979222', text: '加油 @A/原文', color: 0 }
 const schedule = { text: '定时提醒', colors: [0, 2], intervalSeconds: 60, initialDelaySeconds: 0, maxRuns: 1 }

@@ -240,19 +240,22 @@ describe('bounded response reads and cancellation', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
-  it('bounds an unresponsive request and discards a late response', async () => {
+  it('keeps a timed-out write pending until its transport settles and discards the late response', async () => {
     vi.useFakeTimers()
     let release!: (response: Response) => void
     const request = vi.fn<typeof fetch>(() => new Promise(done => { release = done }))
     const { actions } = setup({ proxy: { ...proxy, requestTimeoutMs: 25 }, request })
     const running = actions.run(task, freshSignal())
+    let settled = false
+    void running.then(() => { settled = true })
     await vi.advanceTimersByTimeAsync(25)
-    expect(await running).toMatchObject({ status: 'waiting-user', message: expect.stringContaining('超时') })
+    expect(settled).toBe(false)
     expect(request).toHaveBeenCalledOnce()
     expect(request.mock.calls[0]![1]?.signal?.aborted).toBe(true)
     const cancel = vi.fn()
     release(new Response(new ReadableStream({ cancel })))
     await vi.advanceTimersByTimeAsync(1)
+    expect(await running).toMatchObject({ status: 'waiting-user', message: expect.stringContaining('超时') })
     expect(cancel).toHaveBeenCalledOnce()
     expect(request).toHaveBeenCalledOnce()
   })

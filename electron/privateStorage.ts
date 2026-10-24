@@ -1,10 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
+
+export interface PrivatePermissionTarget { target: string; directory: boolean; recursive?: boolean }
 
 export interface PrivatePermissions {
   protect(target: string, directory: boolean, recursive?: boolean): void
   verify(target: string, directory: boolean, recursive?: boolean): void
+  verifyManyAsync?(targets: readonly PrivatePermissionTarget[]): Promise<void>
 }
 
 const permissionFailure = () => new Error('无法验证账号数据的私有文件权限.')
@@ -17,34 +20,85 @@ export function powershellEnvironment(environment: NodeJS.ProcessEnv = process.e
 export const PRIVATE_ACL_SCRIPT = `
 $ErrorActionPreference = 'Stop'
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-$items = @(Get-Item -Force -LiteralPath $env:STREAM_SYNC_PRIVATE_PATH)
-if ($env:STREAM_SYNC_PRIVATE_RECURSIVE -eq '1') {
-  $items += @(Get-ChildItem -Force -Recurse -LiteralPath $env:STREAM_SYNC_PRIVATE_PATH)
+if ($env:STREAM_SYNC_PRIVATE_TARGETS) {
+  $targets = @($env:STREAM_SYNC_PRIVATE_TARGETS | ConvertFrom-Json)
+} else {
+  $targets = @(@{ target = $env:STREAM_SYNC_PRIVATE_PATH; recursive = ($env:STREAM_SYNC_PRIVATE_RECURSIVE -eq '1') })
 }
-foreach ($item in $items) {
-  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { exit 1 }
-  $rules = @($item.GetAccessControl().GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
-  $allows = @($rules | Where-Object { $_.AccessControlType -eq 'Allow' })
-  if (@($allows | Where-Object { $_.IdentityReference.Value -ne $sid -and -not $_.IdentityReference.Value.StartsWith('S-1-15-3-') }).Count -ne 0) { exit 1 }
-  if (@($allows | Where-Object { $_.IdentityReference.Value -eq $sid -and ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl }).Count -eq 0) { exit 1 }
+foreach ($target in $targets) {
+  $items = @(Get-Item -Force -LiteralPath $target.target)
+  if ($target.recursive) { $items += @(Get-ChildItem -Force -Recurse -LiteralPath $target.target) }
+  foreach ($item in $items) {
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { exit 1 }
+    $rules = @($item.GetAccessControl().GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+    $allows = @($rules | Where-Object { $_.AccessControlType -eq 'Allow' })
+    if (@($allows | Where-Object { $_.IdentityReference.Value -ne $sid -and -not $_.IdentityReference.Value.StartsWith('S-1-15-3-') }).Count -ne 0) { exit 1 }
+    if (@($allows | Where-Object { $_.IdentityReference.Value -eq $sid -and ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl }).Count -eq 0) { exit 1 }
+  }
+  if (-not (Get-Item -Force -LiteralPath $target.target).GetAccessControl().AreAccessRulesProtected) { exit 1 }
 }
-if (-not (Get-Item -Force -LiteralPath $env:STREAM_SYNC_PRIVATE_PATH).GetAccessControl().AreAccessRulesProtected) { exit 1 }
 Write-Output 'PRIVATE_OK'
 `
+
+let activeChecks = 0
+const waitingChecks: Array<() => void> = []
+
+/** Multiple account snapshots must not launch an unbounded number of PowerShell hosts. */
+async function permissionCheckSlot<T>(operation: () => Promise<T>): Promise<T> {
+  if (activeChecks < 4) activeChecks++
+  else await new Promise<void>(resolve => waitingChecks.push(resolve))
+  try { return await operation() } finally {
+    const next = waitingChecks.shift()
+    if (next) next()
+    else activeChecks--
+  }
+}
+
+function powershellExecutable(): string {
+  return process.platform === 'win32'
+    ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    : 'powershell.exe'
+}
+
+function permissionEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const inherited = Object.fromEntries(Object.entries(powershellEnvironment()).filter(([name]) => !name.toLowerCase().startsWith('stream_sync_private_')))
+  return { ...inherited, ...environment }
+}
 
 export class NativePrivatePermissions implements PrivatePermissions {
   private sid: string | undefined
 
   private powershell(script: string, environment: NodeJS.ProcessEnv = {}): string {
-    const executable = process.platform === 'win32'
-      ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-      : 'powershell.exe'
-    const result = spawnSync(executable, ['-NoProfile', '-NonInteractive', '-Command', script], {
+    const result = spawnSync(powershellExecutable(), ['-NoProfile', '-NonInteractive', '-Command', script], {
       shell: false, windowsHide: true, encoding: 'utf8', timeout: 30_000,
-      env: { ...powershellEnvironment(), ...environment }, stdio: ['ignore', 'pipe', 'ignore'],
+      env: permissionEnvironment(environment), stdio: ['ignore', 'pipe', 'ignore'],
     })
     if (result.error || result.status !== 0) throw permissionFailure()
     return result.stdout.trim()
+  }
+
+  private async powershellAsync(script: string, environment: NodeJS.ProcessEnv): Promise<string> {
+    return permissionCheckSlot(() => new Promise<string>((resolve, reject) => {
+      const child = spawn(powershellExecutable(), ['-NoProfile', '-NonInteractive', '-Command', script], {
+        shell: false, windowsHide: true, env: permissionEnvironment(environment), stdio: ['ignore', 'pipe', 'ignore'],
+      })
+      let output = '', settled = false
+      const finish = (success: boolean) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        if (success) resolve(output.trim())
+        else reject(permissionFailure())
+      }
+      const timer = setTimeout(() => { child.kill(); finish(false) }, 30_000)
+      child.stdout.on('data', (chunk: Buffer) => {
+        output += chunk.toString('utf8')
+        if (output.length > 16_384) { child.kill(); finish(false) }
+      })
+      child.stdout.once('error', () => { child.kill(); finish(false) })
+      child.once('error', () => finish(false))
+      child.once('close', code => finish(code === 0))
+    }))
   }
 
   protect(target: string, directory: boolean, recursive = false): void {
@@ -74,7 +128,7 @@ export class NativePrivatePermissions implements PrivatePermissions {
     assertRegularPath(target, directory)
     if (process.platform === 'win32') {
       if (this.powershell(PRIVATE_ACL_SCRIPT, {
-        STREAM_SYNC_PRIVATE_PATH: target, STREAM_SYNC_PRIVATE_RECURSIVE: recursive ? '1' : '0',
+        STREAM_SYNC_PRIVATE_PATH: target, STREAM_SYNC_PRIVATE_RECURSIVE: recursive ? '1' : '0', STREAM_SYNC_PRIVATE_TARGETS: '',
       }) !== 'PRIVATE_OK') throw permissionFailure()
     } else {
       const stat = fs.lstatSync(target)
@@ -83,6 +137,21 @@ export class NativePrivatePermissions implements PrivatePermissions {
         this.verify(path.join(target, entry.name), entry.isDirectory(), true)
       }
     }
+  }
+
+  /** Check the same ACL rules once for a complete read, without blocking Electron main. */
+  async verifyManyAsync(targets: readonly PrivatePermissionTarget[]): Promise<void> {
+    try {
+      if (!targets.length || targets.length > 32) throw permissionFailure()
+      const selected = targets.map(target => ({ ...target }))
+      for (const target of selected) assertRegularPath(target.target, target.directory)
+      if (process.platform === 'win32') {
+        if (await this.powershellAsync(PRIVATE_ACL_SCRIPT, { STREAM_SYNC_PRIVATE_TARGETS: JSON.stringify(selected) }) !== 'PRIVATE_OK') throw permissionFailure()
+        for (const target of selected) assertRegularPath(target.target, target.directory)
+      } else {
+        for (const target of selected) this.verify(target.target, target.directory, target.recursive)
+      }
+    } catch { throw permissionFailure() }
   }
 }
 

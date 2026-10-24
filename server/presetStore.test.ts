@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtemp, readFile, readdir, rm, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile, mkdir, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -26,15 +26,15 @@ function sampleData(seed = 0): string {
 }
 
 describe('fileNameFor', () => {
-  it('flattens the id separator instead of honouring it as a path', () => {
-    // A nested path would let an id escape the presets directory; flattening keeps it flat.
-    expect(fileNameFor('cs2/iem')).toBe('cs2__iem.json')
-    expect(fileNameFor('valorant/vct/emea')).toBe('valorant__vct__emea.json')
+  it('encodes separators without colliding with literal underscores', () => {
+    expect(fileNameFor('cs2/iem')).toBe('~6373322f69656d.json')
+    expect(fileNameFor('cs2__iem')).not.toBe(fileNameFor('cs2/iem'))
+    expect(idFromFileName(fileNameFor('valorant/vct/emea')!)).toBe('valorant/vct/emea')
   })
 
   it('accepts plain ids and the allowed punctuation', () => {
-    expect(fileNameFor('cs2')).toBe('cs2.json')
-    expect(fileNameFor('cs2.iem_2024-spring')).toBe('cs2.iem_2024-spring.json')
+    expect(idFromFileName(fileNameFor('cs2')!)).toBe('cs2')
+    expect(idFromFileName(fileNameFor('cs2.iem_2024-spring')!)).toBe('cs2.iem_2024-spring')
   })
 
   it('rejects traversal attempts', () => {
@@ -57,13 +57,18 @@ describe('fileNameFor', () => {
 
   it('accepts an id at the length limit and rejects the one past it', () => {
     // The pattern is one leading character plus up to 64 more, so 65 total is the boundary.
-    expect(fileNameFor(`a${'b'.repeat(64)}`)).toBe(`a${'b'.repeat(64)}.json`)
+    expect(idFromFileName(fileNameFor(`a${'b'.repeat(64)}`)!)).toBe(`a${'b'.repeat(64)}`)
     expect(fileNameFor(`a${'b'.repeat(65)}`)).toBeNull()
   })
 
   it('round-trips through idFromFileName', () => {
     expect(idFromFileName(fileNameFor('cs2/iem')!)).toBe('cs2/iem')
     expect(idFromFileName('plain.json')).toBe('plain')
+  })
+
+  it('keeps IDs consistent with the lowercase profile schema and rejects ambiguous segments', () => {
+    for (const id of ['CS2/iem', 'cs2/IEM', 'a//b', 'a/', 'a/.b', 'a/_b']) expect(fileNameFor(id)).toBeNull()
+    for (const name of ['~zz.json', '~61.bak.json', '~41.json', '~00.json']) expect(idFromFileName(name)).toBe('')
   })
 })
 
@@ -116,9 +121,9 @@ describe('PresetStore', () => {
     expect(loaded?.etag).toBe(outcome.record.etag)
   })
 
-  it('writes to a flattened file name inside a presets subdirectory', async () => {
+  it('writes to an encoded file name inside a presets subdirectory', async () => {
     await store.save('cs2/iem', validProfile())
-    expect(await readdir(join(dataDir, 'presets'))).toContain('cs2__iem.json')
+    expect(await readdir(join(dataDir, 'presets'))).toContain(fileNameFor('cs2/iem'))
   })
 
   it('forces the stored id to match the requested one', async () => {
@@ -232,22 +237,23 @@ describe('PresetStore', () => {
     expect((await store.get('cs2/iem'))?.profile.name).toBe('Someone else')
   })
 
-  it('ignores an expected etag when the preset does not exist yet', async () => {
+  it('rejects an expected etag when the preset no longer exists', async () => {
     const outcome = await store.save('cs2/new', validProfile(), 'whatever')
-    expect(outcome.ok).toBe(true)
+    expect(outcome).toMatchObject({ ok: false, code: 'conflict', currentEtag: '' })
+    expect(await store.get('cs2/new')).toBeNull()
   })
 
   it('keeps one backup generation on overwrite', async () => {
     await store.save('cs2/iem', validProfile({ name: 'First' }))
     await store.save('cs2/iem', validProfile({ name: 'Second' }))
     const backup = JSON.parse(
-      await readFile(join(dataDir, 'presets', 'cs2__iem.bak.json'), 'utf8'),
+      await readFile(join(dataDir, 'presets', fileNameFor('cs2/iem')!.replace('.json', '.bak.json')), 'utf8'),
     ) as { name: string }
     expect(backup.name).toBe('First')
 
     await store.save('cs2/iem', validProfile({ name: 'Third' }))
     const rolled = JSON.parse(
-      await readFile(join(dataDir, 'presets', 'cs2__iem.bak.json'), 'utf8'),
+      await readFile(join(dataDir, 'presets', fileNameFor('cs2/iem')!.replace('.json', '.bak.json')), 'utf8'),
     ) as { name: string }
     expect(rolled.name).toBe('Second')
   })
@@ -298,15 +304,19 @@ describe('PresetStore', () => {
     expect(listed.map((record) => record.id)).toEqual(['cs2/good'])
   })
 
-  it('recovers the id from the file name when the stored profile omits it', async () => {
+  it('does not infer missing or mismatched legacy IDs from ambiguous file names', async () => {
     await mkdir(join(dataDir, 'presets'), { recursive: true })
     const profile = { ...validProfile(), id: '' }
     await writeFile(join(dataDir, 'presets', 'cs2__named.json'), JSON.stringify(profile), 'utf8')
-    // An empty id fails validation, so nothing is listed; a mismatched one is kept as stored.
+    // A valid body in a different ID's filename must not appear as either preset.
     const other = { ...validProfile(), id: 'stored/id' }
     await writeFile(join(dataDir, 'presets', 'cs2__other.json'), JSON.stringify(other), 'utf8')
     const listed = await store.list()
-    expect(listed.map((record) => record.id)).toContain('stored/id')
+    expect(listed).toEqual([])
+    expect(await store.get('cs2/other')).toBeNull()
+    expect(await store.get('stored/id')).toBeNull()
+    expect(await store.remove('cs2/other')).toBe(false)
+    expect(JSON.parse(await readFile(join(dataDir, 'presets', 'cs2__other.json'), 'utf8')).id).toBe('stored/id')
   })
 
   it('removes a preset and reports whether anything was deleted', async () => {
@@ -320,23 +330,164 @@ describe('PresetStore', () => {
   it('takes the backup generation with it', async () => {
     await store.save('cs2/iem', validProfile({ name: 'First' }))
     await store.save('cs2/iem', validProfile({ name: 'Second' }))
-    expect(await readdir(join(dataDir, 'presets'))).toContain('cs2__iem.bak.json')
+    expect(await readdir(join(dataDir, 'presets'))).toContain(fileNameFor('cs2/iem')!.replace('.json', '.bak.json'))
 
     expect(await store.remove('cs2/iem')).toBe(true)
 
-    // `list` hides `.bak.json`, so a surviving backup is a deleted preset's contents kept
-    // where nobody can see them — and it would resurface as the "previous generation" of
-    // the next preset to take that id.
+    // Removing a preset also removes its own previous generation.
     expect(await readdir(join(dataDir, 'presets'))).toEqual([])
   })
 
-  it('survives concurrent writes to the same id', async () => {
-    // Last writer wins, but the file must always be complete JSON.
-    await Promise.all(
-      Array.from({ length: 8 }, (_, i) => store.save('cs2/iem', validProfile({ name: `n${i}` }))),
-    )
-    const loaded = await store.get('cs2/iem')
-    expect(loaded).not.toBeNull()
-    expect(loaded!.profile.name).toMatch(/^n\d$/)
+  it('serializes different-length writes across store instances without mixing JSON', async () => {
+    const other = new PresetStore(join(dataDir, '.'))
+    const names = Array.from({ length: 8 }, (_, i) => `n${i}`.repeat(i * 400 + 1))
+    const results = await Promise.all(names.map((name, i) => (i % 2 ? other : store).save('cs2/iem', validProfile({ name }))))
+    expect(results.every(result => result.ok)).toBe(true)
+    expect((await store.get('cs2/iem'))?.profile.name).toBe(names.at(-1))
+    expect(JSON.parse(await readFile(join(dataDir, 'presets', fileNameFor('cs2/iem')!), 'utf8')).name).toBe(names.at(-1))
+    expect((await readdir(join(dataDir, 'presets'))).some(name => name.endsWith('.tmp'))).toBe(false)
+  })
+
+  it('allows only one writer with the same ETag across store instances', async () => {
+    const initial = await store.save('cs2/iem', validProfile())
+    if (!initial.ok) throw new Error('Fixture failed')
+    const other = new PresetStore(dataDir)
+    const [first, second] = await Promise.all([
+      store.save('cs2/iem', validProfile({ name: 'First' }), initial.record.etag),
+      other.save('cs2/iem', validProfile({ name: 'Second'.repeat(4000) }), initial.record.etag),
+    ])
+    expect(first.ok).toBe(true)
+    if (!first.ok) throw new Error('First write failed')
+    expect(second).toEqual({ ok: false, code: 'conflict', currentEtag: first.record.etag })
+    expect((await store.get('cs2/iem'))?.etag).toBe(first.record.etag)
+  })
+
+  it('orders deletion after a pending write and prevents stale recreation', async () => {
+    const initial = await store.save('cs2/iem', validProfile())
+    if (!initial.ok) throw new Error('Fixture failed')
+    const other = new PresetStore(dataDir)
+    const write = store.save('cs2/iem', validProfile({ name: 'In flight' }), initial.record.etag)
+    const remove = other.remove('cs2/iem')
+    const stale = store.save('cs2/iem', validProfile({ name: 'Stale' }), initial.record.etag)
+    expect((await write).ok).toBe(true)
+    expect(await remove).toBe(true)
+    expect(await stale).toEqual({ ok: false, code: 'conflict', currentEtag: '' })
+    expect(await other.get('cs2/iem')).toBeNull()
+    expect(await readdir(join(dataDir, 'presets'))).toEqual([])
+  })
+
+  it('snapshots the submitted profile before waiting for earlier operations', async () => {
+    const raw = validProfile({ name: 'Submitted' })
+    const pending = store.save('cs2/iem', raw)
+    raw.name = 'Changed after submission'
+    await pending
+    expect((await store.get('cs2/iem'))?.profile.name).toBe('Submitted')
+  })
+
+  it.each(['con', 'nul.txt', 'aux', 'prn', 'com1', 'lpt9'])('stores Windows reserved names as ordinary encoded IDs (%s)', async id => {
+    expect((await store.save(id, validProfile())).ok).toBe(true)
+    expect((await store.get(id))?.id).toBe(id)
+    expect((await store.list()).map(record => record.id)).toContain(id)
+    expect(await store.remove(id)).toBe(true)
+  })
+
+  it('keeps new slash, underscore and backup-looking IDs independent', async () => {
+    for (const id of ['event/one', 'event__one', 'event', 'event.bak']) {
+      expect((await store.save(id, validProfile({ name: id }))).ok).toBe(true)
+    }
+    await store.save('event', validProfile({ name: 'Updated event' }))
+    expect((await store.get('event/one'))?.profile.name).toBe('event/one')
+    expect((await store.get('event__one'))?.profile.name).toBe('event__one')
+    expect((await store.get('event.bak'))?.profile.name).toBe('event.bak')
+    expect(await store.list()).toHaveLength(4)
+    await store.remove('event')
+    await store.remove('event/one')
+    expect((await store.get('event.bak'))?.id).toBe('event.bak')
+    expect((await store.get('event__one'))?.id).toBe('event__one')
+  })
+
+  it('updates a verified legacy file in place without migrating it or reading its alias', async () => {
+    const directory = join(dataDir, 'presets')
+    await mkdir(directory)
+    const legacy = join(directory, 'cs2__iem.json')
+    await writeFile(legacy, JSON.stringify(validProfile({ id: 'cs2/iem', name: 'Legacy' })))
+    const initial = await store.get('cs2/iem')
+    expect(initial?.profile.name).toBe('Legacy')
+    expect(await store.get('cs2__iem')).toBeNull()
+    expect(await store.remove('cs2__iem')).toBe(false)
+    expect((await store.save('cs2__iem', validProfile({ name: 'Underscore' }))).ok).toBe(true)
+    expect((await store.save('cs2/iem', validProfile({ name: 'Updated legacy' }), initial!.etag)).ok).toBe(true)
+    expect(JSON.parse(await readFile(legacy, 'utf8')).name).toBe('Updated legacy')
+    expect((await readdir(directory)).includes(fileNameFor('cs2/iem')!)).toBe(false)
+    expect((await store.get('cs2__iem'))?.profile.name).toBe('Underscore')
+    expect(await store.list()).toHaveLength(2)
+  })
+
+  it('preserves a legitimate legacy .bak ID while saving and removing its base ID', async () => {
+    const directory = join(dataDir, 'presets')
+    await mkdir(directory)
+    await writeFile(join(directory, 'event.json'), JSON.stringify(validProfile({ id: 'event', name: 'Base' })))
+    const independent = JSON.stringify(validProfile({ id: 'event.bak', name: 'Independent' }))
+    await writeFile(join(directory, 'event.bak.json'), independent)
+    expect(await store.list()).toHaveLength(2)
+    expect((await store.save('event', validProfile({ name: 'Updated' }))).ok).toBe(true)
+    expect(await readFile(join(directory, 'event.bak.json'), 'utf8')).toBe(independent)
+    expect(await store.remove('event')).toBe(true)
+    expect((await store.get('event.bak'))?.profile.name).toBe('Independent')
+  })
+
+  it('prefers the encoded primary and removes matching legacy copies without resurrection', async () => {
+    const directory = join(dataDir, 'presets')
+    await store.save('cs2/iem', validProfile({ name: 'Encoded' }))
+    await writeFile(join(directory, 'cs2__iem.json'), JSON.stringify(validProfile({ id: 'cs2/iem', name: 'Legacy' })))
+    await writeFile(join(directory, 'cs2__iem.bak.json'), JSON.stringify(validProfile({ id: 'cs2/iem', name: 'Old backup' })))
+    expect((await store.get('cs2/iem'))?.profile.name).toBe('Encoded')
+    expect((await store.list()).map(record => record.profile.name)).toEqual(['Encoded'])
+    expect(await store.remove('cs2/iem')).toBe(true)
+    expect(await readdir(directory)).toEqual([])
+    expect(await store.get('cs2/iem')).toBeNull()
+  })
+
+  it('refuses to overwrite an encoded path whose stored ID does not match', async () => {
+    const directory = join(dataDir, 'presets')
+    await mkdir(directory)
+    const file = join(directory, fileNameFor('cs2/iem')!)
+    const misplaced = JSON.stringify(validProfile({ id: 'other/id', name: 'Preserve me' }))
+    await writeFile(file, misplaced)
+    expect(await store.get('cs2/iem')).toBeNull()
+    expect(await store.list()).toEqual([])
+    expect(await store.remove('cs2/iem')).toBe(false)
+    expect(await store.save('cs2/iem', validProfile())).toMatchObject({ ok: false, code: 'io-error' })
+    expect(await readFile(file, 'utf8')).toBe(misplaced)
+    await rm(file)
+    expect((await store.save('cs2/iem', validProfile())).ok).toBe(true)
+  })
+
+  it.skipIf(process.platform !== 'win32')('shares ordering for differently cased Windows data-directory paths', async () => {
+    const other = new PresetStore(dataDir.toUpperCase())
+    const initial = await store.save('cs2/iem', validProfile())
+    if (!initial.ok) throw new Error('Fixture failed')
+    const results = await Promise.all([
+      store.save('cs2/iem', validProfile({ name: 'First' }), initial.record.etag),
+      other.save('cs2/iem', validProfile({ name: 'Second' }), initial.record.etag),
+    ])
+    expect(results.filter(result => result.ok)).toHaveLength(1)
+    expect(results.filter(result => !result.ok && result.code === 'conflict')).toHaveLength(1)
+  })
+
+  it('shares ordering when another store reaches the same data directory through an alias', async () => {
+    const actual = join(dataDir, 'actual'), alias = join(dataDir, 'alias')
+    await mkdir(actual)
+    await symlink(actual, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const firstStore = new PresetStore(actual), aliasStore = new PresetStore(alias)
+    const initial = await firstStore.save('cs2/iem', validProfile())
+    if (!initial.ok) throw new Error('Fixture failed')
+    const results = await Promise.all([
+      firstStore.save('cs2/iem', validProfile({ name: 'First' }), initial.record.etag),
+      aliasStore.save('cs2/iem', validProfile({ name: 'Second' }), initial.record.etag),
+    ])
+    expect(results.filter(result => result.ok)).toHaveLength(1)
+    expect(results.filter(result => !result.ok && result.code === 'conflict')).toHaveLength(1)
+    expect((await aliasStore.get('cs2/iem'))?.profile.name).toBe('First')
   })
 })

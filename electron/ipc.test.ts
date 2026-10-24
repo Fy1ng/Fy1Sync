@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron'
 import type { DesktopService } from '../server/api'
 import { installIpcHandlers, trustedSender } from './ipc'
-import { CONTENT_SECURITY_POLICY, isAppDocument, isAppOrigin } from './security'
+import { CONTENT_SECURITY_POLICY, allowsAppPermission, isAppDocument, isAppOrigin } from './security'
 import type { BufferState } from './bufferManager'
 import type { DouyuTasksSnapshot } from '../server/douyu/types'
 
@@ -39,6 +39,19 @@ function fixture() {
 }
 
 describe('app origin and document boundary', async () => {
+  it('allows fullscreen only for the trusted main application document', () => {
+    const context = { trustedWindow: true, documentUrl: 'app://app/', requestingUrl: 'app://app/', requestingOrigin: 'app://app', isMainFrame: true }
+    expect(allowsAppPermission('fullscreen', context)).toBe(true)
+    for (const permission of ['media', 'geolocation', 'notifications', 'clipboard-read', 'automatic-fullscreen', 'unknown']) {
+      expect(allowsAppPermission(permission, context)).toBe(false)
+    }
+    for (const overrides of [
+      { trustedWindow: false }, { isMainFrame: false }, { isMainFrame: undefined },
+      { documentUrl: 'https://example.com/' }, { requestingUrl: 'app://app/media/id' },
+      { requestingUrl: 'https://example.com/' }, { requestingUrl: undefined },
+      { requestingOrigin: 'https://example.com' },
+    ]) expect(allowsAppPermission('fullscreen', { ...context, ...overrides })).toBe(false)
+  })
   it('trusts only the fixed privileged origin', async () => {
     expect(isAppOrigin('app://app/assets/app.js')).toBe(true)
     for (const raw of ['https://app/', 'app://evil/', 'app://app.evil/', 'app://app:80/', 'app://user@app/', 'file:///index.html', 'invalid']) expect(isAppOrigin(raw)).toBe(false)

@@ -192,6 +192,24 @@ test.describe('弹幕叠加层', () => {
 test.describe('底部浮层画质入口', () => {
   test.skip(!fixturesReady(), '缺少测试源，先运行 npm run fixtures')
 
+  test('全屏时摄像头取景对话框仍可打开和关闭', async ({ page }, testInfo) => {
+    await openPlayer(page)
+    await loadBothFixtures(page)
+    await revealOverlay(page)
+    await page.getByRole('button', { name: '全屏', exact: true }).click()
+    await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(true)
+    await page.locator('.overlay-bar').getByRole('button', { name: /^摄像头/ }).click()
+    await page.getByRole('option', { name: '框选摄像头…' }).click()
+    const dialog = page.getByRole('dialog', { name: '摄像头小窗取景' })
+    await expect(dialog).toBeVisible()
+    expect(await dialog.evaluate(node => document.fullscreenElement?.contains(node))).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath('fullscreen-camera-dialog.png') })
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+    await expect(dialog).toBeHidden()
+    await page.getByRole('button', { name: '退出全屏', exact: true }).click()
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement === null)).toBe(true)
+  })
+
   test('框选摄像头后自动收紧、显示小窗并按房间记住', async ({ page }) => {
     await openPlayer(page)
     await loadBothFixtures(page)

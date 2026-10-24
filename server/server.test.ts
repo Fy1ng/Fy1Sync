@@ -4,13 +4,15 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import appPackage from '../package.json'
 import type { ApiResult } from '../src/app/apiClient'
 import { packBitmap } from '../src/core/bitmapCodec'
 import { createEmptyProfile, TEMPLATE_PIXELS } from '../src/core/profileSchema'
-import { createDesktopService, type DesktopService } from './api'
+import { createDesktopService, createResolverDeps, type DesktopService } from './api'
 import { resolveConfig, type ProxyConfig } from './config'
 import { DanmakuRelay } from './danmaku/relay'
 import { MAX_PRESET_BYTES } from './presetStore'
+import { MAX_PLATFORM_RESPONSE_BYTES } from './platformResponse'
 
 // Public platform DNS is deterministic; no test contacts DNS or an upstream service.
 vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]) }))
@@ -32,6 +34,29 @@ function value<T = Record<string, any>>(result: ApiResult<unknown>): T {
   if (!result.ok) throw new Error(result.code)
   return result.value as T
 }
+
+describe('platform metadata request limits', () => {
+  it('cancels an oversized HTTP success body without returning its payload', async () => {
+    const cancel = vi.fn()
+    const response = new Response(new ReadableStream({ start(controller) {
+      controller.enqueue(new Uint8Array(MAX_PLATFORM_RESPONSE_BYTES + 1))
+    }, cancel }))
+    const deps = createResolverDeps(resolveConfig({}).proxy, url => url, vi.fn(async () => response))
+    await expect(deps.fetchText('https://www.douyu.com/api')).rejects.toThrow('平台请求失败')
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('cancels rejected responses and never includes upstream text in JSON parse errors', async () => {
+    const cancel = vi.fn()
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(new ReadableStream({ cancel }), { status: 500 }))
+      .mockResolvedValueOnce(new Response('synthetic-private-upstream-text'))
+    const deps = createResolverDeps(resolveConfig({}).proxy, url => url, fetchImpl)
+    await expect(deps.fetchJson('https://www.douyu.com/api')).rejects.toThrow('平台请求失败')
+    expect(cancel).toHaveBeenCalledOnce()
+    await expect(deps.fetchJson('https://www.douyu.com/api')).rejects.toThrow('平台返回的数据格式无效')
+  })
+})
 
 describe('desktop main-process service', () => {
   let dataDir: string
@@ -75,7 +100,7 @@ describe('desktop main-process service', () => {
 
   it('reports readiness, media setting and current relay count', async () => {
     expect(value(await service.invoke('health', undefined))).toEqual({
-      ok: true, version: '0.1.2', proxyEnabled: true, danmakuRooms: 0,
+      ok: true, version: appPackage.version, proxyEnabled: true, danmakuRooms: 0,
     })
   })
 

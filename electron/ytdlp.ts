@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process'
+import path from 'node:path'
 import { locateTool, locateYouTubePotProvider, type ToolSettings, type ToolContext } from './toolLocator'
 import { killProcessTree } from './bufferManager'
 import { youtubeAdaptiveFormats, youtubeFormats } from '../server/platforms/youtube'
@@ -37,6 +38,7 @@ export class YtDlpRunner {
   private disposed = false
   constructor(private readonly options: {
     electronPath: string
+    networkRuntimePath: string
     cookies: YoutubeCookieAccess
     settings?: ToolSettings
     toolContext?: ToolContext
@@ -102,8 +104,13 @@ export class YtDlpRunner {
   private runChild(executable: string, args: string[], stage: 'hls' | 'adaptive'): Promise<unknown> {
     if (this.disposed) return Promise.reject(new Error('yt-dlp 超时或已取消'))
     // Only this child (and its JS runtime) inherits Electron's Node mode.
-    const env = { ...(this.options.env ?? process.env), ELECTRON_RUN_AS_NODE: '1', PYTHONIOENCODING: 'utf-8',
+    const env: NodeJS.ProcessEnv = { ...(this.options.env ?? process.env), ELECTRON_RUN_AS_NODE: '1', PYTHONIOENCODING: 'utf-8',
       ...(this.options.toolContext?.providerCacheHome ? { XDG_CACHE_HOME: this.options.toolContext.providerCacheHome } : {}) }
+    const runtime = this.options.networkRuntimePath
+    if (!path.isAbsolute(runtime) || /["\r\n\0]/.test(runtime)) return Promise.reject(new Error('取流网络运行时不可用'))
+    // Only this child tree inherits the bootstrap. Forward slashes keep Windows
+    // paths intact in Node's NODE_OPTIONS parser, including paths with spaces.
+    env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --require="${runtime.replace(/\\/g, '/')}"`.trim()
     return new Promise((resolve, reject) => {
       let stdout = ''
       let stderr = ''

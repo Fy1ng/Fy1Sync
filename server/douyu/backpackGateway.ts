@@ -185,6 +185,8 @@ export class DouyuBackpackGateway {
         const httpTarget: HttpTarget = {
           accountId: target.accountId, expectedUid: target.expectedUid, room: target.room,
           method: 'POST', url: DONATE_URL,
+          // BackpackEpics.sendProps explicitly sets csrf=false for ordinary
+          // mainsite props. The interactive endpoint's ctn is not used here.
           body: new URLSearchParams({ propId: target.propId, propCount: String(target.quantity), roomId: target.room, bizExt: '{"yzxq":{}}' }).toString(),
         }
         const credentials = await this.credentials(httpTarget, active)
@@ -208,7 +210,10 @@ export class DouyuBackpackGateway {
     const duration = Number.isFinite(this.deps.proxy.requestTimeoutMs) ? Math.max(1, Math.min(this.deps.proxy.requestTimeoutMs, MAX_TIMEOUT_MS)) : MAX_TIMEOUT_MS
     const timer = setTimeout(() => timeout.abort(), duration)
     const active = AbortSignal.any([signal, timeout.signal])
-    try { return await abortable(operation(active), active) } catch (error) {
+    // Reads and preflight providers are bounded at their await sites. Do not
+    // race a dispatched write: its caller owns the shared serial execution lane
+    // until the transport really settles, even when it ignores cancellation.
+    try { return await operation(active) } catch (error) {
       if (signal.aborted) throw cancelled()
       // Reconstruct even our own error type so no upstream-mutated message escapes.
       throw new DouyuRenewalGatewayError(error instanceof DouyuRenewalGatewayError ? error.code : 'unavailable')
@@ -235,8 +240,9 @@ export class DouyuBackpackGateway {
     return after
   }
 
-  private async resolve(host: string): Promise<string[]> {
-    const addresses = await (this.deps.resolve ?? dnsResolver)(host)
+  private async resolve(host: string, signal: AbortSignal): Promise<string[]> {
+    assertActive(signal)
+    const addresses = await abortable((this.deps.resolve ?? dnsResolver)(host), signal)
     if (!Array.isArray(addresses) || addresses.length < 1 || addresses.length > 64 || addresses.some(address => typeof address !== 'string' || !isIP(address) || isPrivateAddress(address))) throw new DouyuRenewalGatewayError('unavailable')
     return addresses
   }
@@ -250,7 +256,7 @@ export class DouyuBackpackGateway {
       allowNonStandardPorts: false, allowNonLoopbackTargets: false,
     }, {
       method: target.method, body: target.body, signal,
-      resolve: host => this.resolve(host),
+      resolve: host => this.resolve(host, signal),
       fetchImpl: async (url, init) => {
         const latest = await this.confirm(target, credentials, signal)
         assertActive(signal)
@@ -270,8 +276,11 @@ export class DouyuBackpackGateway {
           headers.Origin = ORIGIN
         }
         dispatch?.()
-        const result = await (this.deps.request ?? fetch)(url, { ...init, headers })
-        if (signal.aborted) { cancelBody(result); throw cancelled() }
+        const operation = (this.deps.request ?? fetch)(url, { ...init, headers }).then(result => {
+          if (signal.aborted) { cancelBody(result); throw cancelled() }
+          return result
+        })
+        const result = target.method === 'POST' ? await operation : await abortable(operation, signal)
         let correctUrl = !result.url
         try { if (result.url) correctUrl = new URL(result.url).href === expectedUrl.href } catch { /* Refuse malformed final URLs. */ }
         if (result.redirected || !correctUrl) { cancelBody(result); throw new DouyuRenewalGatewayError('unavailable') }

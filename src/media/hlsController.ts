@@ -25,6 +25,8 @@ export interface AttachHandlers {
   onLevelSwitch?: (level: number, autoLevel: number) => void
   onError?: (error: MediaError) => void
   onLiveHint?: (isLive: boolean) => void
+  /** Fired only after this attachment resumes usable media after a recovery. */
+  onRecovered?: () => void
 }
 
 export interface MediaAttachment {
@@ -39,6 +41,45 @@ export interface MediaAttachment {
 type HlsModule = typeof import('hls.js')
 
 let hlsModulePromise: Promise<HlsModule> | null = null
+const MAX_HLS_RECOVERIES = 3
+const STABLE_PLAYBACK_MS = 30_000
+
+interface AttachmentOwner {
+  current(): boolean
+  destroy(): void
+  cancelled: Promise<null>
+  cleanups: Array<() => void>
+}
+const owners = new WeakMap<HTMLVideoElement, AttachmentOwner>()
+
+/** Supersession releases the previous attachment before the next one touches video. */
+function ownMedia(video: HTMLVideoElement, signal?: AbortSignal): AttachmentOwner {
+  let destroyed = false
+  let cancel = () => {}
+  const cancelled = new Promise<null>(resolve => { cancel = () => resolve(null) })
+  const owner: AttachmentOwner = {
+    cleanups: [],
+    cancelled,
+    current: () => !destroyed && owners.get(video) === owner,
+    destroy: () => {
+      if (destroyed) return
+      destroyed = true
+      cancel()
+      signal?.removeEventListener('abort', owner.destroy)
+      for (const cleanup of owner.cleanups.splice(0).reverse()) cleanup()
+      if (owners.get(video) === owner) owners.delete(video)
+    },
+  }
+  if (signal?.aborted) { owner.destroy(); return owner }
+  owners.get(video)?.destroy()
+  owners.set(video, owner)
+  signal?.addEventListener('abort', owner.destroy, { once: true })
+  return owner
+}
+
+function emptyAttachment(): MediaAttachment {
+  return { mode: 'native', setLevel() {}, seekToLive() {}, destroy() {} }
+}
 
 function loadHls(): Promise<HlsModule> {
   hlsModulePromise ??= import('hls.js')
@@ -59,14 +100,16 @@ export async function attachMedia(
   video: HTMLVideoElement,
   descriptor: MediaDescriptor,
   handlers: AttachHandlers = {},
+  signal?: AbortSignal,
 ): Promise<MediaAttachment> {
+  const owner = ownMedia(video, signal)
+  if (!owner.current()) return emptyAttachment()
   video.loop = descriptor.loop
 
   if (descriptor.kind !== 'hls') {
-    video.src = descriptor.url
-    video.load()
+    const attachment = nativeAttachment(video, descriptor.url, owner, handlers)
     handlers.onLiveHint?.(false)
-    return nativeAttachment(video)
+    return attachment
   }
 
   /**
@@ -81,15 +124,17 @@ export async function attachMedia(
    * where hls.js has no MSE to attach to and the platform's own player is the only option.
    */
   const attachNative = (): MediaAttachment => {
-    video.src = descriptor.url
-    video.load()
-    return nativeAttachment(video)
+    if (!owner.current()) return emptyAttachment()
+    return nativeAttachment(video, descriptor.url, owner, handlers)
   }
 
   let module: HlsModule
   try {
-    module = await hlsLoader.load()
+    const loaded = await Promise.race([hlsLoader.load(), owner.cancelled])
+    if (!loaded) return emptyAttachment()
+    module = loaded
   } catch (error) {
+    if (!owner.current()) return emptyAttachment()
     // A chunk that failed to load is a broken deploy or a dropped network, not an
     // unsupported browser. Native playback may still work, so try it before giving up.
     if (canPlayNativeHls(video)) return attachNative()
@@ -97,9 +142,10 @@ export async function attachMedia(
       fatal: true,
       message: `无法加载 HLS 播放器：${error instanceof Error ? error.message : String(error)}`,
     })
-    return nativeAttachment(video)
+    return { ...emptyAttachment(), destroy: owner.destroy }
   }
 
+  if (!owner.current()) return emptyAttachment()
   const Hls = module.default
   if (!Hls.isSupported()) {
     if (canPlayNativeHls(video)) return attachNative()
@@ -108,7 +154,7 @@ export async function attachMedia(
       message: '当前浏览器不支持 HLS 播放',
       hint: '请使用 Chrome、Edge 或 Firefox 的最新版本。',
     })
-    return nativeAttachment(video)
+    return { ...emptyAttachment(), destroy: owner.destroy }
   }
 
   const hls = new Hls({
@@ -126,64 +172,133 @@ export async function attachMedia(
     maxBufferLength: 30,
     enableWorker: true,
   })
+  owner.cleanups.push(() => hls.destroy())
+  let recovering = false
+  let recoveries = 0
+  let stableSince: number | null = null
+  let lastProgressTime = Number.NaN
+  const onReady = () => {
+    if (!owner.current() || video.error || video.readyState < video.HAVE_FUTURE_DATA) return
+    if (recovering) { recovering = false; handlers.onRecovered?.() }
+  }
+  const resetStability = () => { stableSince = null; lastProgressTime = Number.NaN }
+  const onProgress = () => {
+    if (!owner.current() || recovering || video.error || video.paused || video.seeking
+      || video.readyState < video.HAVE_FUTURE_DATA) { resetStability(); return }
+    if (!Number.isFinite(video.currentTime) || video.currentTime <= lastProgressTime) stableSince = null
+    lastProgressTime = video.currentTime
+    stableSince ??= performance.now()
+    if (performance.now() - stableSince >= STABLE_PLAYBACK_MS) recoveries = 0
+  }
+  for (const event of ['canplay', 'playing']) video.addEventListener(event, onReady)
+  video.addEventListener('timeupdate', onProgress)
+  for (const event of ['waiting', 'stalled', 'pause', 'seeking']) video.addEventListener(event, resetStability)
+  owner.cleanups.push(() => {
+    for (const event of ['canplay', 'playing']) video.removeEventListener(event, onReady)
+    video.removeEventListener('timeupdate', onProgress)
+    for (const event of ['waiting', 'stalled', 'pause', 'seeking']) video.removeEventListener(event, resetStability)
+  })
 
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
+    if (!owner.current()) return
     handlers.onQualityOptions?.(describeLevels(hls.levels as unknown as RawLevel[]))
   })
   hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
+    if (!owner.current()) return
     handlers.onLiveHint?.(Boolean(data.details.live))
   })
   hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+    if (!owner.current()) return
     handlers.onLevelSwitch?.(hls.autoLevelEnabled ? -1 : data.level, data.level)
   })
   hls.on(Hls.Events.ERROR, (_event, data) => {
-    handlers.onError?.(translateHlsError(Hls, data))
-    if (!data.fatal) return
+    if (!owner.current()) return
+    const error = translateHlsError(Hls, data)
+    if (!data.fatal) { handlers.onError?.(error); return }
+    resetStability()
+    const recoverable = data.type === Hls.ErrorTypes.NETWORK_ERROR || data.type === Hls.ErrorTypes.MEDIA_ERROR
+    if (!recoverable || recoveries >= MAX_HLS_RECOVERIES) {
+      handlers.onError?.({ ...error, hint: '自动恢复未成功, 请重新加载片源.' })
+      owner.destroy()
+      return
+    }
+    recoveries++
+    recovering = true
+    handlers.onError?.(error)
+    if (!owner.current()) return
     // Documented recovery ladder: network errors retry the load, media errors
     // recover the buffer, anything else is unrecoverable.
-    if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad()
-    else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError()
-    else hls.destroy()
+    try {
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad()
+      else hls.recoverMediaError()
+    } catch {
+      if (owner.current()) handlers.onError?.({ ...error, hint: '自动恢复未成功, 请重新加载片源.' })
+      owner.destroy()
+    }
   })
 
-  hls.loadSource(descriptor.url)
-  hls.attachMedia(video)
+  try {
+    hls.loadSource(descriptor.url)
+    if (owner.current()) hls.attachMedia(video)
+  } catch (error) { owner.destroy(); throw error }
 
   return {
     mode: 'hlsjs',
     setLevel(level: number) {
+      if (!owner.current()) return
       hls.currentLevel = level
       if (level < 0) hls.nextLevel = -1
     },
     seekToLive() {
+      if (!owner.current()) return
       if (hls.liveSyncPosition !== null && Number.isFinite(hls.liveSyncPosition)) {
         video.currentTime = hls.liveSyncPosition
       } else if (video.seekable.length > 0) {
         video.currentTime = video.seekable.end(video.seekable.length - 1)
       }
     },
-    destroy() {
-      hls.destroy()
-    },
+    destroy: owner.destroy,
   }
 }
 
-function nativeAttachment(video: HTMLVideoElement): MediaAttachment {
+function nativeAttachment(video: HTMLVideoElement, url: string, owner: AttachmentOwner, handlers: AttachHandlers): MediaAttachment {
+  const expected = new URL(url, video.ownerDocument.baseURI).href
+  const onError = () => {
+    // load() clears MediaError. A queued error for the previous resource must not
+    // become an error for the new generation sharing this same element.
+    if (!owner.current() || !video.error || video.src !== expected || (video.currentSrc && video.currentSrc !== expected)) return
+    const error = translateNativeError(video.error.code)
+    if (error) handlers.onError?.(error)
+  }
+  video.addEventListener('error', onError)
+  owner.cleanups.push(() => {
+    video.removeEventListener('error', onError)
+    video.removeAttribute('src')
+    video.load()
+  })
+  video.src = url
+  video.load()
   return {
     mode: 'native',
     setLevel() {
       // Native playback picks its own variant; nothing to switch.
     },
     seekToLive() {
+      if (!owner.current()) return
       if (video.seekable.length > 0) {
         video.currentTime = video.seekable.end(video.seekable.length - 1)
       }
     },
-    destroy() {
-      video.removeAttribute('src')
-      video.load()
-    },
+    destroy: owner.destroy,
   }
+}
+
+function translateNativeError(code: number): MediaError | null {
+  if (code === 1) return null // User/source cancellation is handled by the owner.
+  if (code === 2) return { fatal: true, message: '媒体读取失败.', hint: '检查网络或文件是否仍可访问, 然后重新加载片源.' }
+  if (code === 3) return { fatal: true, message: '媒体解码失败.', hint: '检查文件是否损坏, 或选择受支持的视频编码.' }
+  if (code === 4) return { fatal: true, message: '不支持该媒体格式或编码.', hint: '检查文件或地址, 并选择受支持的媒体格式.' }
+  return { fatal: true, message: '媒体播放失败.', hint: '请重新加载片源.' }
 }
 
 interface HlsErrorData {

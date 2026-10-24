@@ -298,6 +298,45 @@ describe('sync sidebar', () => {
 
     expect(session.snapshot.settings.sidebarVisible).toBe(false)
     expect(container.querySelector('.sidebar')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '展开侧栏' }))
+    await flush()
+    expect(session.snapshot.settings.sidebarVisible).toBe(true)
+    expect(container.querySelector('.sidebar')).not.toBeNull()
+  })
+
+  it('can restore a sidebar hidden in persisted settings', async () => {
+    const storage = memoryStorage({ 'stream-sync.settings.v1': JSON.stringify({ sidebarVisible: false }) })
+    const session = makeSession(storage)
+    const { container } = renderPage(session)
+    expect(container.querySelector('.sidebar')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '展开侧栏' }))
+    await flush()
+    expect(container.querySelector('.sidebar')).not.toBeNull()
+    expect(JSON.parse(storage.getItem('stream-sync.settings.v1')!).sidebarVisible).toBe(true)
+  })
+})
+
+describe('fullscreen subtree', () => {
+  it('requests the player root so dialogs stay in the fullscreen subtree', async () => {
+    let target: Element | undefined
+    vi.spyOn(Element.prototype, 'requestFullscreen').mockImplementation(function (this: Element) {
+      target = this
+      return Promise.resolve()
+    })
+    const { container } = renderPage(makeSession())
+    fireEvent.click(screen.getByRole('button', { name: '完成' }))
+    fireEvent.click(screen.getByRole('button', { name: '全屏' }))
+    expect(target).toBe(container.querySelector('.player-page'))
+    fireEvent.click(screen.getByRole('button', { name: '片源设置' }))
+    expect(target?.contains(screen.getByRole('dialog', { name: '片源设置' }))).toBe(true)
+  })
+
+  it('renders a fullscreen failure message in the player', async () => {
+    vi.spyOn(Element.prototype, 'requestFullscreen').mockRejectedValue(new Error('denied'))
+    renderPage(makeSession())
+    fireEvent.click(screen.getByRole('button', { name: '完成' }))
+    fireEvent.click(screen.getByRole('button', { name: '全屏' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('无法切换全屏')
   })
 })
 

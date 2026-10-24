@@ -32,9 +32,11 @@ import { SyncSidebar } from './SyncSidebar'
 export function PlayerPage(): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
+  const pageRef = useRef<HTMLDivElement | null>(null)
   const stageRef = useRef<HTMLDivElement | null>(null)
   const barRef = useRef<HTMLDivElement | null>(null)
-  const fullscreen = useFullscreen(stageRef)
+  // Dialogs belong to the same fullscreen subtree as the stage.
+  const fullscreen = useFullscreen(pageRef)
   // The preview thumbnail and the danmaku settings panel both have to stay clear of the
   // overlay bar, and the bar's height depends on how many rows it folded into. Measured on
   // the stage so both of them can read it — they are inside it, and it is the element the
@@ -79,7 +81,7 @@ export function PlayerPage(): React.ReactNode {
   const sidebarVisible = snapshot.settings.sidebarVisible && !fullscreen.active
 
   return (
-    <div className={`player-page ${sidebarVisible ? '' : 'no-sidebar'}`.trim()}>
+    <div className={`player-page ${sidebarVisible ? '' : 'no-sidebar'}`.trim()} ref={pageRef}>
       <div className="stage" ref={stageRef} {...overlay.handlers}>
         <div className="stage-main" ref={mountMain} data-role={mainRole} />
         <DanmakuLayer />
@@ -101,12 +103,17 @@ export function PlayerPage(): React.ReactNode {
             {roleName(mainRole)}
             <span className="stage-subtitle">{STATUS_TEXT[snapshot.media[mainRole].status]}</span>
           </span>
-          <button type="button" className="icon-button" onClick={() => setSourceDialogOpen(true)}>
-            片源设置
-          </button>
+          <div className="stage-actions">
+            {!snapshot.settings.sidebarVisible && !fullscreen.active && <button type="button" className="icon-button"
+              onClick={() => session.updateSettings({ sidebarVisible: true })}>展开侧栏</button>}
+            <button type="button" className="icon-button" onClick={() => setSourceDialogOpen(true)}>
+              片源设置
+            </button>
+          </div>
         </div>
 
         <NoticeStrip />
+        {fullscreen.error && <p className="fullscreen-error" role="alert">{fullscreen.error}</p>}
 
         <OverlayBar
           ref={barRef}
@@ -123,7 +130,6 @@ export function PlayerPage(): React.ReactNode {
       </div>
 
       {sidebarVisible && <SyncSidebar />}
-
       {sourceDialogOpen && <SourceDialog onClose={() => setSourceDialogOpen(false)} />}
 
       {cameraDialogOpen && (

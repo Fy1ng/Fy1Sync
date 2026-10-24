@@ -9,7 +9,7 @@ import type { LoginPlatform, LoginResult, LoginStatus } from './login'
 import type { DecoderMode, DecoderPreferenceState } from './decoderPreferences'
 import type { ToolsStatus } from './toolsService'
 import type { DouyuAccountsSnapshot, DouyuMessageInput, DouyuMessageOutcome, DouyuMessageSchedule, DouyuTasksSnapshot, DouyuTaskKind, DouyuTaskPolicy } from '../server/douyu/types'
-import type { DouyuRenewalTargetPage, DouyuRenewalPlan, DouyuRenewalResult } from '../server/douyu/renewalTypes'
+import type { DouyuRenewalTargetPage, DouyuRenewalPlan, DouyuRenewalResult, DouyuRenewalQuantity } from '../server/douyu/renewalTypes'
 
 export interface DesktopMethods {
   listDouyuAccounts: { args: undefined; result: DouyuAccountsSnapshot }
@@ -20,7 +20,7 @@ export interface DesktopMethods {
   openDouyuTaskRoom: { args: { id: string }; result: DouyuAccountsSnapshot }
   sendDouyuMessage: { args: DouyuMessageInput; result: DouyuMessageOutcome }
   getDouyuRenewalTargets: { args: { accountId: string }; result: DouyuRenewalTargetPage }
-  previewDouyuRenewal: { args: { accountId: string; rooms: string[]; quantity: number }; result: DouyuRenewalPlan }
+  previewDouyuRenewal: { args: { accountId: string; rooms: string[]; quantity: number; quantities?: DouyuRenewalQuantity[] }; result: DouyuRenewalPlan }
   executeDouyuRenewal: { args: { planId: string }; result: DouyuRenewalResult }
   cancelDouyuRenewal: { args: { planId: string }; result: { cancelled: boolean } }
   activateDouyuAccount: { args: { id: string }; result: DouyuAccountsSnapshot }

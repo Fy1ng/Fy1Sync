@@ -173,6 +173,9 @@ export function useDouyuMessageComposer({ connected, room }: { connected: boolea
   const blockedReason = problem || (pending ? '正在处理上一条发送...' : remaining > 0 ? `还需等待 ${remaining} 秒后发送.` : null)
   return {
     account, room, draft, setDraft, pending, notice, remaining, blockedReason, refreshAccounts,
+    // Initial identity/room resolution resets the context. Do not accept typing
+    // before that boundary; ordinary same-account refreshes can keep the editor live.
+    canEdit: connected && !!room && /^[1-9]\d{0,11}$/.test(room) && account?.loggedIn === true && !account.busy,
     draftProblem: textProblem(draft),
     canSendText: (text: string) => !blockedReason && !textProblem(text),
     repeatProblem: (text: string) => blockedReason || textProblem(text),
@@ -192,7 +195,7 @@ export function DouyuMessageComposer({ controller }: { controller: ReturnType<ty
     <div className="douyu-message-heading"><strong>发送弹幕</strong><span>普通色</span></div>
     <p className="douyu-message-context">当前账号: {controller.account?.label ?? '未选择'} / 房间: {controller.room ?? '未连接'}</p>
     <label htmlFor={inputId}>弹幕内容</label>
-    <textarea id={inputId} rows={2} value={controller.draft} aria-describedby={hintId}
+    <textarea id={inputId} rows={2} value={controller.draft} aria-describedby={hintId} disabled={!controller.canEdit}
       placeholder="输入一条弹幕" spellCheck={false}
       onChange={event => controller.setDraft(event.target.value)}
       onFocus={() => { void controller.refreshAccounts() }}

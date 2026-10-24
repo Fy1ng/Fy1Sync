@@ -1,3 +1,4 @@
+import './networkRuntime'
 import { app, BrowserWindow, ipcMain, powerMonitor, protocol, session } from 'electron'
 import { join, resolve } from 'node:path'
 import { mkdirSync, watchFile, unwatchFile } from 'node:fs'
@@ -9,7 +10,7 @@ import { resolveConfig } from '../server/config'
 import { DanmakuRelay } from '../server/danmaku/relay'
 import { MediaRegistry } from '../server/mediaProxy'
 import { serveStatic, missingClientResponse } from '../server/static'
-import { APP_URL, CONTENT_SECURITY_POLICY, isAppDocument, isAppOrigin } from './security'
+import { APP_URL, CONTENT_SECURITY_POLICY, allowsAppPermission, isAppDocument, isAppOrigin } from './security'
 import { installIpcHandlers } from './ipc'
 import { BufferManager } from './bufferManager'
 import { pullAdaptive, AdaptivePullError } from './adaptivePuller'
@@ -33,6 +34,10 @@ import { DouyuRenewalService } from '../server/douyu/renewalService'
 import type { DouyuBackpackDonation } from '../server/douyu/renewalTypes'
 import type { DouyuMessageInput, DouyuRuntimeState, DouyuTaskStorage } from '../server/douyu/types'
 import { isDouyuActivityKind } from '../server/douyu/types'
+
+const networkRuntimePath = app.isPackaged
+  ? join(process.resourcesPath, 'app.asar.unpacked', 'electron', 'network-runtime.cjs')
+  : join(__dirname, 'network-runtime.cjs')
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: {
   standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true,
@@ -116,7 +121,7 @@ async function start(): Promise<void> {
     try {
       const taskStore = new PrivateJsonStore<DouyuTaskStorage>(userDataDir, 'douyu/tasks.json')
       const actions = new DouyuActions({ proxy, cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url) })
-      douyuMessageSender = new DouyuMessageSender({ proxy, cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url) })
+      douyuMessageSender = new DouyuMessageSender({ proxy, networkRuntimePath, cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url) })
       douyuTasks = new DouyuTaskManager({
         load: () => taskStore.load(), save: value => taskStore.save(value),
         run: async (task, signal) => {
@@ -178,7 +183,7 @@ async function start(): Promise<void> {
   }
   const tools = new DesktopTools(toolSettings, toolContext, managedYtdlp, process.env, !app.isPackaged)
   const youtubeDiagnostics: YtDlpDiagnostic[] = []
-  const ytdlp = new YtDlpRunner({ electronPath: process.execPath, cookies: logins, settings: toolSettings, toolContext,
+  const ytdlp = new YtDlpRunner({ electronPath: process.execPath, networkRuntimePath, cookies: logins, settings: toolSettings, toolContext,
     diagnostic: e2e ? event => { youtubeDiagnostics.push(event); if (youtubeDiagnostics.length > 100) youtubeDiagnostics.shift() } : undefined,
   })
   const bufferDiagnostics: unknown[] = []
@@ -295,8 +300,20 @@ async function start(): Promise<void> {
   const service = createDesktopService({
     dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, registerMedia: media.register, acquisition, decoderPreferences, tools, douyuAccounts, douyuTasks, douyuRenewal,
   })
-  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-  session.defaultSession.setPermissionCheckHandler(() => false)
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+    callback(allowsAppPermission(permission, {
+      trustedWindow: !!window && !window.isDestroyed() && contents === window.webContents && !contents.isDestroyed(),
+      documentUrl: contents.isDestroyed() ? '' : contents.mainFrame.url,
+      requestingUrl: details.requestingUrl, isMainFrame: details.isMainFrame,
+    }))
+  })
+  session.defaultSession.setPermissionCheckHandler((contents, permission, requestingOrigin, details) => {
+    return allowsAppPermission(permission, {
+      trustedWindow: !!window && !window.isDestroyed() && contents === window.webContents && !contents.isDestroyed(),
+      documentUrl: !contents || contents.isDestroyed() ? '' : contents.mainFrame.url,
+      requestingUrl: details.requestingUrl, requestingOrigin, isMainFrame: details.isMainFrame,
+    })
+  })
   protocol.handle('app', async (request) => {
     try {
       if (!isAppOrigin(request.url)) return new Response(null, { status: 403 })
@@ -363,7 +380,7 @@ async function start(): Promise<void> {
       return renewalDonationsFixture.map(input => ({ ...input }))
     }, createDouyuSocketFixture(url: string) {
       if (!offlineE2e || !/^ws:\/\/127\.0\.0\.1:[1-9]\d{0,4}\/$/.test(url)) throw new Error('Invalid local socket fixture')
-      return new NativeMessageSocket(url)
+      return new NativeMessageSocket(url, networkRuntimePath, [new URL(url).hostname.replace(/^\[|\]$/g, '')])
     }, getDouyuSentFixture() {
       if (!offlineE2e || !douyuToolsFixture) throw new Error('Douyu send fixture is offline-only')
       return douyuSentFixture.map(input => ({ ...input }))

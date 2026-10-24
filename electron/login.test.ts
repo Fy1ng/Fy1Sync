@@ -157,6 +157,54 @@ describe('LoginManager', () => {
     await manager.logout('youtube')
     expect((await manager.loginStatus()).youtube.loggedIn).toBe(false)
   })
+
+  it.each(['logout', 'login', 'dispose'] as const)('discards a cookie read that finishes after %s invalidation', async action => {
+    const oldCookies: BrowserCookie[] = [{ domain: '.douyu.com', name: 'acf_auth', value: 'old-session', session: true }]
+    const newCookies: BrowserCookie[] = [{ domain: '.douyu.com', name: 'acf_auth', value: 'new-session', session: true }]
+    let release!: () => void
+    const ready = new Promise<void>(resolve => { release = resolve })
+    const driver = { login: vi.fn<BrowserLoginDriver['login']>().mockResolvedValue(oldCookies) }
+    const manager = new LoginManager(root, { chromeExecutable: 'test-chrome', driver,
+      permissions: { ...permissions, verifyManyAsync: async () => ready },
+    })
+    await manager.login('douyu')
+    const pending = manager.cookieHeader('douyu')
+    if (action === 'logout') await manager.logout('douyu')
+    else if (action === 'dispose') await manager.dispose()
+    else { driver.login.mockResolvedValue(newCookies); await manager.login('douyu') }
+    release()
+    await expect(pending).resolves.toBe('')
+    if (action === 'login') await expect(manager.cookieHeader('douyu')).resolves.toBe('acf_auth=new-session')
+    await manager.dispose()
+  })
+
+  it('masks asynchronous storage errors at the public login boundary', async () => {
+    const driver = { login: vi.fn<BrowserLoginDriver['login']>().mockResolvedValue([{ domain: '.douyu.com', name: 'acf_auth', value: 'secret', session: true }]) }
+    const manager = new LoginManager(root, { chromeExecutable: 'test-chrome', driver,
+      permissions: { ...permissions, verifyManyAsync: async () => { throw new Error('private filesystem error and cookie data') } },
+    })
+    await manager.login('douyu')
+    await expect(manager.cookieHeader('douyu')).rejects.toMatchObject({ code: 'cookie-storage-failed', message: '账号数据读写或私有权限验证失败.' })
+    await expect(manager.loginStatus()).rejects.toMatchObject({ code: 'cookie-storage-failed', message: '账号数据读写或私有权限验证失败.' })
+    await manager.dispose()
+  })
+
+  it('never delivers a temporary cookie file to a consumer after disposal during ACL verification', async () => {
+    let release!: () => void
+    const ready = new Promise<void>(resolve => { release = resolve })
+    const manager = new LoginManager(root, { chromeExecutable: 'test-chrome', driver: { login: vi.fn(async () => cookies) },
+      permissions: { ...permissions, verifyManyAsync: async () => ready },
+    })
+    await manager.login('youtube')
+    const consumer = vi.fn(async () => 'must not run')
+    const pending = manager.withTemporaryCookies('youtube', consumer)
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'login-cancelled' })
+    await manager.dispose()
+    release()
+    await rejected
+    expect(consumer).not.toHaveBeenCalled()
+    expect(fs.readdirSync(path.join(root, 'cookies'))).toEqual(['youtube.txt'])
+  })
 })
 
 function fakeChild(pid: number) {

@@ -25,7 +25,7 @@ test('续牌赠送先预览再确认, 库存变化与未知回执停止余下操
       main.__streamSyncerTest!.setDouyuToolsFixture()
       main.__streamSyncerTest!.setDouyuRoomFixture({ '6979222': '6979222', '288016': '288016' })
     })
-    await setFixture(2, 'receipt-received')
+    await setFixture(3, 'receipt-received')
     await openPlayer(running.page)
     const dialog = await openSourceDialog(running.page)
     const tools = dialog.getByRole('region', { name: '斗鱼账号和任务' })
@@ -33,10 +33,15 @@ test('续牌赠送先预览再确认, 库存变化与未知回执停止余下操
     await expect(tools).toContainText('活动账号: 默认账号, 已登录')
     await tools.locator('summary').filter({ hasText: '续牌赠送' }).click()
     await tools.getByRole('button', { name: '读取粉丝牌', exact: true }).click()
-    await tools.getByRole('button', { name: '全选本页', exact: true }).click()
+    await tools.getByRole('searchbox', { name: '筛选粉丝牌', exact: true }).fill('6979222')
+    await tools.getByRole('button', { name: '全选筛选结果', exact: true }).click()
+    await expect(tools).toContainText('已选择 1/20 个房间')
+    await tools.getByRole('button', { name: '清除筛选', exact: true }).click()
+    await tools.getByRole('button', { name: '全选筛选结果', exact: true }).click()
+    await tools.getByRole('spinbutton', { name: '房间 6979222 的赠送数量', exact: true }).fill('2')
     await tools.getByRole('button', { name: '生成赠送预览', exact: true }).click()
     const preview = tools.getByRole('region', { name: '赠送预览', exact: true })
-    await expect(preview).toContainText('计划使用 2 个现有背包道具, 赠送至 2 个房间')
+    await expect(preview).toContainText('计划使用 3 个现有背包道具, 赠送至 2 个房间')
     await expect(preview).toContainText('离线测试荧光棒')
     expect(await donations()).toEqual([])
     await preview.scrollIntoViewIfNeeded()
@@ -48,7 +53,7 @@ test('续牌赠送先预览再确认, 库存变化与未知回执停止余下操
     await expect(result.locator('li[data-state="receipt-received"]')).toHaveCount(2)
     await expect(result).not.toContainText('续牌成功')
     expect(await donations()).toEqual([
-      { accountId: 'default', room: '6979222', propId: '268', quantity: 1 },
+      { accountId: 'default', room: '6979222', propId: '268', quantity: 2 },
       { accountId: 'default', room: '288016', propId: '268', quantity: 1 },
     ])
     await expect(preview.getByRole('button', { name: '确认赠送', exact: true })).toBeDisabled()

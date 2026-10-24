@@ -350,6 +350,24 @@ textarea {
   background: rgb(0 0 0 / 45%);
 }
 
+.stage-actions {
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.fullscreen-error {
+  position: absolute;
+  top: 52px;
+  left: 16px;
+  z-index: 35;
+  padding: 8px 12px;
+  color: var(--error);
+  background: var(--bg-raised);
+  border: 1px solid var(--error);
+  border-radius: var(--radius-sm);
+}
+
 .stage-title {
   display: flex;
   align-items: baseline;

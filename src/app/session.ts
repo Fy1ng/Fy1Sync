@@ -126,6 +126,12 @@ export class Session {
   private bufferStates: Record<SourceRole, BufferState | null> = { official: null, commentary: null }
   private qualityBusy: Record<SourceRole, boolean> = { official: false, commentary: false }
   private sourceGeneration: Record<SourceRole, number> = { official: 0, commentary: 0 }
+  private profileRevision = 0
+  private offsetBoundary = 0
+  private offsetDrain: Promise<void> | null = null
+  private pendingOffset: { target: number; boundary: number; finish: Array<(plan: OffsetPlan) => void>; fail: Array<(error: unknown) => void> } | null = null
+  private automaticSeek: { done: Promise<boolean>; capture: () => void } | null = null
+  private interruptedAutomaticSeek: typeof this.automaticSeek = null
   private releaseBuffer: (() => void) | undefined
   private readonly pendingQualityWaits = new Set<() => void>()
   private profileMap: Record<SourceRole, RecognitionProfile | null> = {
@@ -164,6 +170,7 @@ export class Session {
         video: role => this.engine.element(role),
         profile: role => this.profileFor(role),
         use: (role, profile) => {
+          ++this.profileRevision
           this.profileMap = { ...this.profileMap, [role]: profile }
           this.notify()
         },
@@ -198,7 +205,12 @@ export class Session {
         },
         snapshot: (role) => this.engine.snapshot(role),
         hasProfile: () => this.autoProfiles !== null || SOURCE_ROLES.some((role) => this.profileMap[role] !== null),
-        seek: (role, target) => this.engine.seek(role, target),
+        seek: (role, target) => {
+          const capture = this.captureSeekMovement(role)
+          const seek = { done: this.engine.seek(role, target), capture }
+          this.automaticSeek = seek
+          return seek.done.finally(() => { if (this.automaticSeek === seek) this.automaticSeek = null })
+        },
         setPlaybackRate: (role, rate) => { this.engine.element(role).playbackRate = rate },
         onAppliedRewind: rewind => {
           this.applied = { ...rewind }
@@ -339,6 +351,7 @@ export class Session {
   }
 
   setProfile(role: SourceRole, profile: RecognitionProfile | null): void {
+    ++this.profileRevision
     ++this.autoRequestRevision
     this.autoSync.cancel(false)
     this.autoProfiles?.reset(role)
@@ -349,6 +362,7 @@ export class Session {
 
   /** Both roles share one countdown profile: it is the same on-screen clock. */
   setProfileForAll(profile: RecognitionProfile | null): void {
+    ++this.profileRevision
     ++this.autoRequestRevision
     this.autoSync.cancel(false)
     for (const role of SOURCE_ROLES) this.autoProfiles?.reset(role)
@@ -365,13 +379,14 @@ export class Session {
    * come up with no profile every time and automatic sync could never run.
    */
   async selectProfile(id: string): Promise<boolean> {
+    const revision = ++this.profileRevision
     if (!id) {
       this.updateSettings({ profileId: '' })
       this.setProfileForAll(null)
       return true
     }
-    const profile = await this.fetchProfile(id)
-    if (!profile) return false
+    const profile = await this.fetchProfile(id, revision)
+    if (!profile || revision !== this.profileRevision || this.disposed) return false
     this.updateSettings({ profileId: id })
     this.setProfileForAll(profile)
     return true
@@ -384,8 +399,9 @@ export class Session {
    * and now, and a malformed profile would fail inside the recognition worker where there
    * is nowhere useful to report it. `parseProfile` also migrates a v1 file forward.
    */
-  private async fetchProfile(id: string): Promise<RecognitionProfile | null> {
+  private async fetchProfile(id: string, revision: number): Promise<RecognitionProfile | null> {
     const result = await apiClient.getPreset(id)
+    if (revision !== this.profileRevision || this.disposed) return null
     if (!result.ok) {
       this.notice('error', `识别场景 ${id} 载入失败：${result.message}`)
       return null
@@ -422,6 +438,7 @@ export class Session {
    * actually said so, or restarting while it is down would throw the choice away.
    */
   async boot(): Promise<void> {
+    const revision = this.profileRevision
     for (const role of SOURCE_ROLES) this.autoProfiles?.monitor(role)
     // Before the first await, so re-entering the page resumes on the spot instead of
     // waiting on the network. This is also what restores a *persisted* toggle: settings
@@ -429,6 +446,7 @@ export class Session {
     // timer, so without this the switch read on while nothing was scheduled.
     if (this.settingsValue.autoSyncEnabled) this.startScheduler()
     const listed = await this.refreshPresets()
+    if (revision !== this.profileRevision || this.disposed) return
     const id = this.settingsValue.profileId
     if (!id) return
     if (SOURCE_ROLES.every(role => this.profileFor(role) !== null)) return
@@ -436,8 +454,8 @@ export class Session {
       this.updateSettings({ profileId: '' })
       return
     }
-    const profile = await this.fetchProfile(id)
-    if (profile) this.setProfileForAll(profile)
+    const profile = await this.fetchProfile(id, revision)
+    if (profile && revision === this.profileRevision && !this.disposed) this.setProfileForAll(profile)
   }
 
   // ---------------------------------------------------------------- settings
@@ -510,6 +528,7 @@ export class Session {
   sourceRevision(role: SourceRole): number { return this.sourceGeneration[role] }
 
   async loadSource(role: SourceRole, descriptor: MediaDescriptor, options: { keepSessionProfile?: boolean } = {}): Promise<void> {
+    this.invalidateOffsetRequests()
     this.invalidateAutomaticWork(role, options)
     const generation = ++this.sourceGeneration[role]
     if (!descriptor.url.includes('/buffer/')) {
@@ -537,6 +556,7 @@ export class Session {
   }
 
   unloadSource(role: SourceRole): void {
+    this.invalidateOffsetRequests()
     this.invalidateAutomaticWork(role)
     ++this.sourceGeneration[role]
     void apiClient.stopBuffer(role)
@@ -661,15 +681,100 @@ export class Session {
    * source's buffer can actually absorb. What the seeks achieve is written back, so a
    * clamped rewind leaves `appliedRewind` telling the truth rather than the request.
    */
-  async applyOffset(nextOffset: number, options: { fromAuto?: boolean } = {}): Promise<OffsetPlan> {
+  get offsetBusy(): boolean { return this.offsetDrain !== null }
+
+  applyOffset(nextOffset: number, options: { fromAuto?: boolean } = {}): Promise<OffsetPlan> {
     if (!options.fromAuto) {
       // Manual input wins over a scheduled run, and revokes its authorization: after a
       // human moves the slider the scheduler must not quietly overwrite that choice.
       this.autoSync.cancel(true)
+      this.interruptedAutomaticSeek ??= this.automaticSeek
       ++this.autoRequestRevision
       for (const role of SOURCE_ROLES) if (this.autoProfiles?.controller.busy) this.autoProfiles.controller.cancel(role)
     }
     this.requestedOffset = nextOffset
+    const promise = new Promise<OffsetPlan>((finish, fail) => {
+      if (this.pendingOffset) {
+        this.pendingOffset.target = nextOffset
+        this.pendingOffset.finish.push(finish)
+        this.pendingOffset.fail.push(fail)
+      } else this.pendingOffset = { target: nextOffset, boundary: this.offsetBoundary, finish: [finish], fail: [fail] }
+    })
+    this.startOffsetDrain()
+    this.notify()
+    return promise
+  }
+
+  private startOffsetDrain(): void {
+    if (this.offsetDrain || !this.pendingOffset) return
+    // Queue the first step as well, so synchronous inputs coalesce before any seek.
+    this.offsetDrain = Promise.resolve().then(async () => {
+      while (this.pendingOffset) {
+        const request = this.pendingOffset
+        this.pendingOffset = null
+        try {
+          const interrupted = this.interruptedAutomaticSeek
+          if (interrupted) {
+            await interrupted.done
+            if (this.interruptedAutomaticSeek === interrupted) this.interruptedAutomaticSeek = null
+            interrupted.capture()
+          }
+          const plan = await this.applyOffsetRequest(request.target, request.boundary)
+          request.finish.forEach(finish => finish(plan))
+        } catch (error) { request.fail.forEach(fail => fail(error)) }
+      }
+    }).finally(() => {
+      this.offsetDrain = null
+      this.startOffsetDrain()
+      this.notify()
+    })
+  }
+
+  private currentOffsetPlan(target: number): OffsetPlan {
+    return planOffsetChange({ nextOffset: target, applied: this.applied, snapshots: this.disposed ? {} : {
+      official: this.engine.snapshot('official') ?? undefined,
+      commentary: this.engine.snapshot('commentary') ?? undefined,
+    } })
+  }
+
+  private invalidateOffsetRequests(): void {
+    ++this.offsetBoundary
+    const pending = this.pendingOffset
+    this.pendingOffset = null
+    this.interruptedAutomaticSeek = null
+    if (pending) {
+      const plan = this.currentOffsetPlan(offsetFromRewind(this.applied))
+      pending.finish.forEach(finish => finish(plan))
+    }
+  }
+
+  /** Account for the observed move, including the peer's progress during a slow seek. */
+  private captureSeekMovement(role: SourceRole): () => void {
+    const peer: SourceRole = role === 'official' ? 'commentary' : 'official'
+    const before = this.engine.snapshot(role)
+    const peerBefore = this.engine.snapshot(peer)
+    const generation = this.sourceGeneration[role]
+    const peerGeneration = this.sourceGeneration[peer]
+    const carried = this.applied[role]
+    return () => {
+      if (this.disposed || generation !== this.sourceGeneration[role] || !before) return
+      const after = this.engine.snapshot(role)
+      if (!after) return
+      const peerAfter = this.engine.snapshot(peer)
+      const advance = peerGeneration === this.sourceGeneration[peer] && peerBefore && peerAfter
+        ? peerAfter.currentTime - peerBefore.currentTime : 0
+      this.applied = { ...this.applied, [role]: Math.round(Math.max(0, carried + before.currentTime - after.currentTime + advance) * 1000) / 1000 }
+    }
+  }
+
+  private async applyOffsetRequest(nextOffset: number, boundary: number): Promise<OffsetPlan> {
+    const active = () => !this.disposed && boundary === this.offsetBoundary
+    const cancelled = () => {
+      if (!this.pendingOffset) this.requestedOffset = offsetFromRewind(this.applied)
+      this.notify()
+      return this.currentOffsetPlan(offsetFromRewind(this.applied))
+    }
+    if (!active()) return cancelled()
     const plan = planOffsetChange({
       nextOffset,
       applied: this.applied,
@@ -680,31 +785,28 @@ export class Session {
     })
     this.planValue = plan
 
-    for (const seek of plan.seeks) {
-      const ok = await this.engine.seek(seek.role, seek.to)
-      if (!ok) {
-        // The element refused or landed elsewhere. Re-read where it truly is instead of
-        // trusting the plan's arithmetic.
-        const snapshot = this.engine.snapshot(seek.role)
-        if (snapshot) {
-          this.applied = {
-            ...this.applied,
-            [seek.role]: Math.max(0, this.applied[seek.role] + (seek.from - snapshot.currentTime)),
-          }
-        }
-        this.notice('warn', `${roleName(seek.role)}未能跳转到目标位置`)
+    for (const role of SOURCE_ROLES) {
+      if (!active()) return cancelled()
+      const currentPlan = this.currentOffsetPlan(nextOffset)
+      const seek = currentPlan.seeks.find(entry => entry.role === role)
+      if (!seek) {
+        this.applied = { ...this.applied, [role]: currentPlan.rewindAfter[role] }
         continue
       }
-      this.applied = { ...this.applied, [seek.role]: plan.rewindAfter[seek.role] }
+      if (currentPlan.limited) { plan.limited = true; plan.limitReason = currentPlan.limitReason }
+      const capture = this.captureSeekMovement(role)
+      const ok = await this.engine.seek(seek.role, seek.to)
+      capture()
+      if (!active()) return cancelled()
+      if (!ok) {
+        this.notice('warn', `${roleName(seek.role)}未能跳转到目标位置`)
+      }
+      // Finish the native seek, then skip obsolete remaining work for a newer target.
+      if (this.pendingOffset) break
     }
 
-    // Roles the plan did not have to move keep whatever the planner decided for them,
-    // which is how a source with nothing loaded gets reset to zero.
-    for (const role of SOURCE_ROLES) {
-      if (!plan.seeks.some((seek) => seek.role === role)) {
-        this.applied = { ...this.applied, [role]: plan.rewindAfter[role] }
-      }
-    }
+    plan.rewindAfter = { ...this.applied }
+    plan.effectiveOffset = offsetFromRewind(this.applied)
 
     if (plan.limitReason === 'buffer-limit') {
       this.notice('warn', '缓存长度不足，偏移已按可回退范围截断')
@@ -741,6 +843,13 @@ export class Session {
 
   async syncNow(): Promise<AutoSyncRunResult> {
     const revision = ++this.autoRequestRevision
+    if (this.offsetDrain) await this.offsetDrain
+    if (revision !== this.autoRequestRevision || this.disposed) return {
+      phase: 'failed', dryRun: false, estimate: null, plan: null, applied: false,
+      failure: { kind: 'cancelled', message: '自动同步已取消' }, divergence: null,
+      samples: { official: 0, commentary: 0 }, jumps: { official: 0, commentary: 0 },
+      startedAt: this.now(), finishedAt: this.now(),
+    }
     this.autoSync.authorize()
     const result = await this.autoSync.run(this.applied)
     if (revision !== this.autoRequestRevision || this.disposed) return result
@@ -1027,6 +1136,7 @@ export class Session {
 
   /** Tear the session down for good. Only its owner may call this. */
   dispose(): void {
+    this.invalidateOffsetRequests()
     this.disposed = true
     this.releaseBuffer?.()
     for (const cancel of this.pendingQualityWaits) cancel()

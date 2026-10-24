@@ -12,7 +12,8 @@
  */
 
 import { lookup } from 'node:dns/promises'
-import { isIP } from 'node:net'
+import { isIP, type LookupFunction } from 'node:net'
+import { Agent, buildConnector } from 'undici'
 import { hostAllowed, type ProxyConfig } from './config'
 
 export type UrlRejection =
@@ -30,6 +31,7 @@ export type UrlCheck =
 
 const ALLOWED_PROTOCOLS = new Set(['http:', 'https:'])
 const STANDARD_PORTS = new Set(['', '80', '443'])
+const MAX_DNS_ADDRESSES = 64
 
 /**
  * True for addresses that must never be reachable through the proxy: loopback, RFC1918,
@@ -158,10 +160,12 @@ export async function checkUrl(
         detail: `域名解析失败：${error instanceof Error ? error.message : String(error)}`,
       }
     }
-    if (addresses.length === 0) {
-      return { ok: false, reason: 'dns-failed', detail: `域名没有解析结果：${url.hostname}` }
+    if (!validAddresses(addresses)) {
+      return { ok: false, reason: 'dns-failed', detail: '域名没有返回有界且有效的 IP 地址.' }
     }
   }
+  // Retain an immutable snapshot of this lookup, not a resolver-owned array.
+  addresses = [...new Set(addresses)]
 
   if (!config.allowNonLoopbackTargets) {
     const blocked = addresses.find((address) => isPrivateAddress(address))
@@ -203,6 +207,54 @@ export type SafeFetchResult = {
   finalUrl: URL
 }
 
+function validAddresses(addresses: unknown): addresses is string[] {
+  return Array.isArray(addresses) && addresses.length > 0 && addresses.length <= MAX_DNS_ADDRESSES
+    && addresses.every(address => typeof address === 'string' && isIP(address) !== 0)
+}
+
+/** The caller has already applied its HTTP or WebSocket address policy. */
+export function createPinnedDispatcher(hostname: string, addresses: readonly string[], timeoutMs = 15_000): Agent {
+  if (!validAddresses(addresses)) throw new ProxyError('dns-failed', '无法固定已校验的连接地址.', 403)
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  const records = [...new Set(addresses)].map(address => ({ address, family: isIP(address) }))
+  const reject = () => Object.assign(new Error('Unvalidated connection target'), { code: 'ENOTFOUND' })
+  const lookup: LookupFunction = (target, options, callback) => {
+    if (target.toLowerCase().replace(/^\[|\]$/g, '') !== host) { queueMicrotask(() => callback(reject(), '')); return }
+    const family = options.family === 'IPv4' ? 4 : options.family === 'IPv6' ? 6 : options.family
+    const selected = records.filter(record => !family || record.family === family)
+    queueMicrotask(() => {
+      if (!selected.length) callback(reject(), '')
+      else if (options.all) callback(null, selected.map(record => ({ ...record })))
+      else callback(null, selected[0]!.address, selected[0]!.family)
+    })
+  }
+  const connect = buildConnector({ lookup, timeout: timeoutMs, autoSelectFamily: true })
+  return new Agent({
+    connections: 1, maxOrigins: 1,
+    connect: (options, callback) => {
+      // Literal addresses bypass Node's lookup callback, so validate the connect
+      // hostname as well. Preserve the original hostname, Host header and TLS SNI.
+      if (options.hostname.toLowerCase().replace(/^\[|\]$/g, '') !== host) { callback(reject(), null); return }
+      connect(options, callback)
+    },
+  })
+}
+
+async function checkWithSignal(target: string, config: ProxyConfig, resolve: Resolver, signal: AbortSignal): Promise<UrlCheck> {
+  signal.throwIfAborted()
+  let abort = () => {}
+  try {
+    return await Promise.race([
+      checkUrl(target, config, resolve),
+      new Promise<never>((_yes, no) => {
+        abort = () => no(signal.reason)
+        signal.addEventListener('abort', abort, { once: true })
+        if (signal.aborted) abort()
+      }),
+    ])
+  } finally { signal.removeEventListener('abort', abort) }
+}
+
 /**
  * Fetch with per-hop validation. Redirects are resolved here rather than by `fetch`
  * so a redirect to an internal address is rejected instead of silently followed.
@@ -214,19 +266,33 @@ export async function safeFetch(
 ): Promise<SafeFetchResult> {
   const doFetch = options.fetchImpl ?? fetch
   const resolve = options.resolve ?? dnsResolver
+  const signal = options.signal ?? AbortSignal.timeout(config.requestTimeoutMs)
   let target = raw
 
   for (let hop = 0; hop <= config.maxRedirects; hop += 1) {
-    const check = await checkUrl(target, config, resolve)
+    const check = await checkWithSignal(target, config, resolve, signal)
     if (!check.ok) throw new ProxyError(check.reason, check.detail, 403)
-
-    const response = await doFetch(check.url, {
-      method: options.method ?? 'GET',
-      headers: options.headers,
-      body: options.body,
-      redirect: 'manual',
-      signal: options.signal,
-    })
+    signal.throwIfAborted()
+    const dispatcher = createPinnedDispatcher(check.url.hostname, check.addresses, config.requestTimeoutMs)
+    const abort = () => { void dispatcher.destroy().catch(() => {}) }
+    signal.addEventListener('abort', abort, { once: true })
+    let response: Response
+    try {
+      const init: RequestInit & { dispatcher: Agent } = {
+        method: options.method ?? 'GET', headers: options.headers, body: options.body,
+        redirect: 'manual', signal, dispatcher,
+      }
+      response = await doFetch(check.url, init)
+      if (signal.aborted) { await response.body?.cancel().catch(() => {}); signal.throwIfAborted() }
+      // close() drains the in-flight response without aborting it, then releases
+      // its connection. A body cancellation or signal abort also tears it down.
+      void dispatcher.close().catch(() => dispatcher.destroy()).catch(() => {})
+        .finally(() => signal.removeEventListener('abort', abort))
+    } catch (error) {
+      signal.removeEventListener('abort', abort)
+      await dispatcher.destroy().catch(() => {})
+      throw error
+    }
 
     if (!isRedirect(response.status)) {
       return { response, finalUrl: check.url }

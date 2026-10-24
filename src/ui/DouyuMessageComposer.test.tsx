@@ -57,6 +57,23 @@ const repeatButton = () => screen.getByRole('button', { name: '+1 样例' })
 function write(text: string) { fireEvent.change(editor(), { target: { value: text } }) }
 
 describe('DouyuMessageComposer account and room context', () => {
+  it('waits for initial identity before accepting text but preserves typing during a same-account refresh', async () => {
+    const initial = deferred<ApiResult<DouyuAccountsSnapshot>>()
+    const refresh = deferred<ApiResult<DouyuAccountsSnapshot>>()
+    vi.mocked(apiClient.listDouyuAccounts).mockReturnValueOnce(initial.promise).mockReturnValueOnce(refresh.promise)
+    render(<Harness />)
+    expect(editor()).toBeDisabled()
+    await act(async () => { initial.resolve(ok(accounts())) })
+    expect(editor()).toBeEnabled()
+    fireEvent.focus(editor())
+    expect(editor()).toBeEnabled()
+    write('刷新期间的新草稿')
+    expect(sendButton()).toBeDisabled()
+    await act(async () => { refresh.resolve(ok(accounts())) })
+    expect(editor()).toHaveValue('刷新期间的新草稿')
+    expect(sendButton()).toBeEnabled()
+  })
+
   it('shows the selected public account and actual session room without auth metadata', async () => {
     await open()
     expect(screen.getByRole('form', { name: '发送斗鱼弹幕' })).toBeVisible()

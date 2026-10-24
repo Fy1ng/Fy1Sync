@@ -1,7 +1,7 @@
 /** Main-process-only Douyu actions. Never return upstream payloads or credentials. */
 import { hostAllowed, type ProxyConfig } from '../config'
 import { validDouyuRoom } from '../platforms/douyuRoom'
-import { safeFetch, type Resolver } from '../safeFetch'
+import { dnsResolver, safeFetch, type Resolver } from '../safeFetch'
 import type { DouyuTaskDefinition, DouyuTaskOutcome } from './types'
 import { abortable, cancelBody, cancelled, readPayload, record, MAX_TIMEOUT_MS } from './actionHttp'
 import { DouyuYubaActions } from './yubaActions'
@@ -95,7 +95,9 @@ export class DouyuActions {
     let dispatched = false
     const target = { accountId: task.accountId, room: task.room }
     try {
-      return await abortable(this.perform(target, combined, () => { dispatched = true }), combined)
+      // A dispatched write owns the serial lane until its transport settles.
+      // Only credential/DNS reads may finish early when cancellation wins.
+      return await this.perform(target, combined, () => { dispatched = true })
     } catch {
       if (signal.aborted) throw cancelled()
       if (dispatched) return waiting(timeout.signal.aborted
@@ -107,7 +109,7 @@ export class DouyuActions {
 
   private async perform(task: Pick<DouyuTaskDefinition, 'accountId' | 'room'>, signal: AbortSignal, dispatch: () => void): Promise<DouyuTaskOutcome> {
     let header: string
-    try { header = await this.deps.cookieHeader(task.accountId, COOKIE_SCOPE) } catch {
+    try { header = await abortable(this.deps.cookieHeader(task.accountId, COOKIE_SCOPE), signal) } catch {
       if (signal.aborted) throw cancelled()
       return loginRequired()
     }
@@ -121,7 +123,7 @@ export class DouyuActions {
     }, {
       method: 'POST', body: new URLSearchParams({ rid: task.room }).toString(), signal,
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json', token, aid: 'android1' },
-      resolve: this.deps.resolve,
+      resolve: host => abortable((this.deps.resolve ?? dnsResolver)(host), signal),
       fetchImpl: async (url, init) => {
         if (signal.aborted) throw cancelled()
         dispatch()

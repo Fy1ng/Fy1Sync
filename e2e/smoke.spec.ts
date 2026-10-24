@@ -26,7 +26,7 @@ test.describe('应用外壳', () => {
     expect(consoleErrors, `控制台不应有错误：${consoleErrors.join(' | ')}`).toEqual([])
   })
 
-  test('侧栏可收起并保留在设置里', async ({ page }) => {
+  test('侧栏可收起并在重新加载后展开', async ({ page }) => {
     await openPlayer(page)
 
     await expect(page.locator('.sidebar')).toBeVisible()
@@ -38,6 +38,26 @@ test.describe('应用外壳', () => {
     await page.reload()
     await expect(page.locator('.player-page')).toBeVisible()
     await expect(page.locator('.sidebar')).toBeHidden()
+    await sourceDialog(page).getByRole('button', { name: '完成' }).click()
+    await page.getByRole('button', { name: '展开侧栏' }).click()
+    await expect(page.locator('.sidebar')).toBeVisible()
+    await page.reload()
+    await expect(page.locator('.sidebar')).toBeVisible()
+  })
+
+  test('真实全屏保留可操作的片源对话框', async ({ page }, testInfo) => {
+    await openPlayer(page)
+    await page.getByRole('button', { name: '全屏', exact: true }).click()
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement?.classList.contains('player-page') ?? false)).toBe(true)
+    await expect(page.locator('.sidebar')).toBeHidden()
+    await page.getByRole('button', { name: '片源设置', exact: true }).click()
+    await expect(sourceDialog(page)).toBeVisible()
+    expect(await sourceDialog(page).evaluate(node => document.fullscreenElement?.contains(node))).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath('fullscreen-source-dialog.png') })
+    await sourceDialog(page).getByRole('button', { name: '完成' }).click()
+    await page.getByRole('button', { name: '退出全屏', exact: true }).click()
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement === null)).toBe(true)
+    await expect(page.locator('.sidebar')).toBeVisible()
   })
 
   test('未加载片源时同步状态显示为零', async ({ page }) => {

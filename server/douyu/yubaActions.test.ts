@@ -410,7 +410,7 @@ describe('Yuba cancellation, total timeout and late responses', () => {
     expect(request).toHaveBeenCalledTimes(2)
   })
 
-  it.each([0, 2, 3])('bounds a request ignoring abort at stage %s and discards its late body', async pendingStage => {
+  it.each([0, 2, 3])('bounds reads but retains a dispatched write at stage %s until its late transport settles', async pendingStage => {
     vi.useFakeTimers()
     let stage = 0
     let release!: (response: Response) => void
@@ -421,13 +421,16 @@ describe('Yuba cancellation, total timeout and late responses', () => {
     })
     const { actions } = setup({ proxy: { ...proxy, requestTimeoutMs: 25 }, request })
     const running = actions.run(task, signal())
+    let settled = false
+    void running.then(() => { settled = true })
     await vi.advanceTimersByTimeAsync(25)
-    const outcome = await running
-    expect(outcome).toMatchObject({ status: pendingStage === 0 ? 'failed' : 'waiting-user', message: expect.stringContaining(pendingStage === 0 ? '未发送' : '尚无法确认') })
+    expect(settled).toBe(pendingStage !== 2)
     expect(request.mock.calls[pendingStage]![1]?.signal?.aborted).toBe(true)
     const cancel = vi.fn()
     release(new Response(new ReadableStream({ cancel })))
     await vi.advanceTimersByTimeAsync(1)
+    const outcome = await running
+    expect(outcome).toMatchObject({ status: pendingStage === 0 ? 'failed' : 'waiting-user', message: expect.stringContaining(pendingStage === 0 ? '未发送' : '尚无法确认') })
     expect(cancel).toHaveBeenCalledOnce()
     expect(request).toHaveBeenCalledTimes(pendingStage + 1)
     expect(writeCount(request)).toBe(pendingStage === 0 ? 0 : 1)
@@ -468,9 +471,10 @@ describe('Yuba cancellation, total timeout and late responses', () => {
     const running = actions.run(task, controller.signal)
     await vi.waitFor(() => expect(writeCount(request)).toBe(1))
     controller.abort(new Error(`synthetic ${yubaCookie}`))
-    await expect(running).rejects.toMatchObject({ name: 'AbortError', message: 'Douyu action cancelled.' })
+    const assertion = expect(running).rejects.toMatchObject({ name: 'AbortError', message: 'Douyu action cancelled.' })
     const cancel = vi.fn()
     release(new Response(new ReadableStream({ cancel })))
+    await assertion
     await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce())
     expect(request).toHaveBeenCalledTimes(3)
     expect(writeCount(request)).toBe(1)

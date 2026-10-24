@@ -6,9 +6,16 @@ export interface DouyuRenewalTarget {
 export interface DouyuRenewalTargetPage {
   accountId: string
   checkedAt: number
-  coverage: 'returned-page'
+  coverage: 'returned-page' | 'official-snapshot' | 'all-pages'
+  pageCount?: number
   targets: DouyuRenewalTarget[]
   message: string
+}
+
+/** Explicit per-room quantities override the preview's default only for selected rooms. */
+export interface DouyuRenewalQuantity {
+  room: string
+  quantity: number
 }
 
 export interface DouyuRenewalGift {

@@ -2,13 +2,14 @@
 module.exports = {
   appId: 'cn.fy1ng.stream-syncer',
   productName: 'Stream Syncer',
-  electronVersion: '44.9.0',
+  electronVersion: '44.9.3',
   electronDist: 'node_modules/electron/dist',
   directories: { app: '.packaging/app', output: '.release', buildResources: 'packaging' },
   asar: true,
+  asarUnpack: ['electron/network-runtime.cjs'],
   npmRebuild: false,
   files: [
-    'package.json', 'electron/main.cjs', 'electron/preload.cjs', 'client/index.html',
+    'package.json', 'electron/main.cjs', 'electron/preload.cjs', 'electron/network-runtime.cjs', 'client/index.html',
     'client/assets/**/*.js', 'client/assets/**/*.css', 'client/assets/**/*.wasm',
     '!node_modules', '!node_modules/**/*',
   ],

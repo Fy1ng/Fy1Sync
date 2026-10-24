@@ -7,7 +7,7 @@ import { DouyuRenewalGatewayError, type DouyuBackpackGateway } from './backpackG
 import { parseRenewalInventory, parseRenewalTargets } from './renewalInventory'
 import type {
   DouyuBackpackItem, DouyuRenewalPlan, DouyuRenewalPlanRow, DouyuRenewalResult,
-  DouyuRenewalResultRow, DouyuRenewalTarget, DouyuRenewalTargetPage,
+  DouyuRenewalResultRow, DouyuRenewalTarget, DouyuRenewalTargetPage, DouyuRenewalQuantity,
 } from './renewalTypes'
 
 const MESSAGES = {
@@ -61,6 +61,29 @@ export function readRenewalRooms(raw: unknown): string[] {
     rooms.push(room)
   }
   return rooms
+}
+
+export function readRenewalQuantities(raw: unknown, rooms: readonly string[]): DouyuRenewalQuantity[] {
+  if (raw === undefined) return []
+  const invalid = (): never => { throw new DouyuRenewalError('invalid-arguments') }
+  if (!Array.isArray(raw) || Object.getPrototypeOf(raw) !== Array.prototype || raw.length > rooms.length
+    || Reflect.ownKeys(raw).length !== raw.length + 1) return invalid()
+  const seen = new Set<string>()
+  const result: DouyuRenewalQuantity[] = []
+  for (let index = 0; index < raw.length; index++) {
+    const item = Object.getOwnPropertyDescriptor(raw, String(index))
+    if (!item || !('value' in item) || !item.value || typeof item.value !== 'object' || Array.isArray(item.value)) return invalid()
+    const value: unknown = item.value
+    if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return invalid()
+    const room = Object.getOwnPropertyDescriptor(value, 'room')
+    const quantity = Object.getOwnPropertyDescriptor(value, 'quantity')
+    if (Reflect.ownKeys(value as object).length !== 2 || !room || !quantity || !('value' in room) || !('value' in quantity)
+      || typeof room.value !== 'string' || !rooms.includes(room.value) || seen.has(room.value)
+      || typeof quantity.value !== 'number' || !Number.isSafeInteger(quantity.value) || quantity.value < 1 || quantity.value > 1000) return invalid()
+    seen.add(room.value)
+    result.push({ room: room.value, quantity: quantity.value })
+  }
+  return result
 }
 
 function translate(error: unknown): DouyuRenewalError {
@@ -120,9 +143,10 @@ export class DouyuRenewalService {
     })
   }
 
-  async preview(accountId: string, rawRooms: unknown, quantity: number): Promise<DouyuRenewalPlan> {
+  async preview(accountId: string, rawRooms: unknown, quantity: number, rawQuantities?: unknown): Promise<DouyuRenewalPlan> {
     const rooms = readRenewalRooms(rawRooms)
     if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 1000) throw new DouyuRenewalError('invalid-arguments')
+    const quantities = new Map(readRenewalQuantities(rawQuantities, rooms).map(item => [item.room, item.quantity]))
     return this.read(accountId, async (signal, originRoom) => {
       const page = await this.deps.gateway.readBadges(accountId, signal)
       const targets = new Map(parseRenewalTargets(page.html).map(target => [target.room, target]))
@@ -160,15 +184,18 @@ export class DouyuRenewalService {
       const remaining = new Map(stocks)
       const selected = new Map<string, DouyuBackpackItem>()
       const rows: DouyuRenewalPlanRow[] = choices.map(({ target, items, reason }) => {
+        const count = quantities.get(target.room) ?? quantity
         const eligible = PREFERRED_PROPS.flatMap(id => items.filter(item => item.id === id && item.eligible))
-        const item = eligible.find(item => !inconsistent.has(item.id) && (remaining.get(item.id) ?? 0) >= quantity)
+          .sort((a, b) => (a.met === -1 ? Infinity : a.met!) - (b.met === -1 ? Infinity : b.met!)
+            || PREFERRED_PROPS.indexOf(a.id) - PREFERRED_PROPS.indexOf(b.id))
+        const item = eligible.find(item => !inconsistent.has(item.id) && (remaining.get(item.id) ?? 0) >= count)
         if (!item) return { ...target, status: 'skipped', gift: null, reason: reason
           ?? (eligible.some(item => inconsistent.has(item.id)) ? '跨房间的库存信息不一致, 请重新读取.'
             : eligible.length ? '剩余库存不足以完成指定数量, 本次跳过.'
               : items.find(item => PREFERRED_PROPS.includes(item.id))?.reason ?? '没有可核对的普通背包荧光棒, 本次跳过.') }
-        remaining.set(item.id, remaining.get(item.id)! - quantity)
+        remaining.set(item.id, remaining.get(item.id)! - count)
         selected.set(target.room, copy(item))
-        return { ...target, status: 'ready', gift: { propId: item.id, name: item.name, quantity, stock: item.count,
+        return { ...target, status: 'ready', gift: { propId: item.id, name: item.name, quantity: count, stock: item.count,
           expiresAt: item.met === -1 ? null : item.met! * 1000 }, reason: null }
       })
       const id = this.id()

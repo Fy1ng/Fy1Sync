@@ -88,6 +88,43 @@ afterEach(async () => {
 })
 
 describe('renewal target and preview orchestration', () => {
+  it('binds per-room quantities to the reviewed plan and reconciles their shared inventory', async () => {
+    const h = harness(5)
+    const quantities = [{ room: '200', quantity: 3 }]
+    const plan = await h.service.preview('default', ['200', '300'], 2, quantities)
+    expect(plan.rows.map(row => row.gift?.quantity)).toEqual([3, 2])
+    expect(plan.totalQuantity).toBe(5)
+    expect(h.donate).not.toHaveBeenCalled()
+    quantities[0]!.quantity = 1000
+    const result = await h.service.execute(plan.id)
+    expect(result.status).toBe('completed')
+    expect(h.donate.mock.calls.map(([input]) => [input.room, input.quantity])).toEqual([['200', 3], ['300', 2]])
+    expect(h.state.items.get('268')?.count).toBe(0)
+    await expect(h.service.execute(plan.id)).rejects.toMatchObject({ code: 'stale-plan' })
+  })
+
+  it('skips an unaffordable room override without spending inventory allocated to later rooms', async () => {
+    const h = harness(2)
+    const plan = await h.service.preview('default', ['200', '300'], 1, [{ room: '200', quantity: 3 }])
+    expect(plan.rows.map(row => row.status)).toEqual(['skipped', 'ready'])
+    expect(plan.totalQuantity).toBe(1)
+    const result = await h.service.execute(plan.id)
+    expect(result.status).toBe('completed')
+    expect(h.donate.mock.calls.map(([input]) => [input.room, input.quantity])).toEqual([['300', 1]])
+  })
+
+  it.each([
+    [{ room: '999', quantity: 1 }], [{ room: '200', quantity: 0 }], [{ room: '200', quantity: 1001 }],
+    [{ room: '200', quantity: 1.5 }], [{ room: '200', quantity: '1' }],
+    [{ room: '200', quantity: 1 }, { room: '200', quantity: 2 }],
+    [{ room: '200', quantity: 1, propId: '2358' }], null, {}, new Array(1),
+  ])('rejects invalid per-room quantities before reading credentials or inventory %#', async quantities => {
+    const h = harness()
+    await expect(h.service.preview('default', ['200', '300'], 1, quantities)).rejects.toMatchObject({ code: 'invalid-arguments' })
+    expect(h.readBadges).not.toHaveBeenCalled()
+    expect(h.donate).not.toHaveBeenCalled()
+  })
+
   it('reads and previews without donating or exposing private identity and response fields', async () => {
     const h = harness()
     const page = await h.service.targets('default')

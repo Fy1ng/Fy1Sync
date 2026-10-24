@@ -12,7 +12,7 @@ await writeFile(path.join(destination, 'package.json'), JSON.stringify({
   name: pkg.name, version: pkg.version, description: pkg.description, license: pkg.license,
   main: 'electron/main.cjs',
 }, null, 2) + '\n')
-for (const name of ['main.cjs', 'preload.cjs']) await cp(path.join(root, 'dist', 'electron', name), path.join(destination, 'electron', name))
+for (const name of ['main.cjs', 'preload.cjs', 'network-runtime.cjs']) await cp(path.join(root, 'dist', 'electron', name), path.join(destination, 'electron', name))
 await cp(path.join(root, 'dist', 'client', 'index.html'), path.join(destination, 'client', 'index.html'))
 const assets = path.join(root, 'dist', 'client', 'assets')
 for (const entry of await readdir(assets, { withFileTypes: true })) {

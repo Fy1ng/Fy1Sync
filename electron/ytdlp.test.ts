@@ -24,7 +24,7 @@ function harness(diagnostic?: (event: YtDlpDiagnostic) => void) {
     try { return await callback('/private/copy.txt') } finally { cleanup() }
   }) }
   const killTree = vi.fn(async () => { child.emit('close', 1) })
-  const runner = new YtDlpRunner({ electronPath: '/electron.exe', cookies, spawn: launch,
+  const runner = new YtDlpRunner({ electronPath: '/electron.exe', networkRuntimePath: '/application/runtime/network-runtime.cjs', cookies, spawn: launch,
     toolContext: { providerCacheHome: '/private/provider-cache' },
     env: { PATH: 'kept', EXAMPLE: 'unchanged' }, timeoutMs: 100, killTree, diagnostic })
   return { child, launch, cleanup, cookies, runner, killTree }
@@ -48,14 +48,16 @@ describe('isolated yt-dlp execution', () => {
     const h = harness()
     const inherited = process.env.ELECTRON_RUN_AS_NODE
     const inheritedCache = process.env.XDG_CACHE_HOME
+    const inheritedNodeOptions = process.env.NODE_OPTIONS
     const pending = h.runner.resolve('https://www.youtube.com/watch?v=abcdefghijk')
     await vi.waitFor(() => expect(h.launch).toHaveBeenCalledOnce())
     const [executable, args, options] = vi.mocked(h.launch).mock.calls[0]!
     expect(executable).toBe('/tools/yt-dlp.exe')
     expect(args).toEqual(expect.arrayContaining(['-J', '--cookies', '/private/copy.txt', '--js-runtimes', 'node:/electron.exe', '--ignore-config', '--no-remote-components']))
-    expect(options).toMatchObject({ shell: false, env: { ELECTRON_RUN_AS_NODE: '1', XDG_CACHE_HOME: '/private/provider-cache', PATH: 'kept' } })
+    expect(options).toMatchObject({ shell: false, env: { ELECTRON_RUN_AS_NODE: '1', XDG_CACHE_HOME: '/private/provider-cache', PATH: 'kept', NODE_OPTIONS: '--require="/application/runtime/network-runtime.cjs"' } })
     expect(process.env.ELECTRON_RUN_AS_NODE).toBe(inherited)
     expect(process.env.XDG_CACHE_HOME).toBe(inheritedCache)
+    expect(process.env.NODE_OPTIONS).toBe(inheritedNodeOptions)
     h.child.stdout!.emit('data', Buffer.from('{"is_live":true}'))
     h.child.emit('close', 0)
     expect(await pending).toEqual({ is_live: true })
@@ -117,7 +119,7 @@ describe('optional yt-dlp PO token script integration', () => {
       try { return await callback('/private/copy.txt') } finally { cleanup() }
     }) }
     const killTree = vi.fn(async (child: ChildProcess) => { child.emit('close', 1) })
-    const runner = new YtDlpRunner({ electronPath: '/electron.exe', cookies, spawn: launch,
+    const runner = new YtDlpRunner({ electronPath: '/electron.exe', networkRuntimePath: '/application/runtime/network-runtime.cjs', cookies, spawn: launch,
       env: { PATH: 'kept' }, timeoutMs: 1000, killTree })
     const run = (kind: 'hls' | 'adaptive') => children.find(({ args }) => args.includes('--plugin-dirs') === (kind === 'adaptive'))!
     const finish = (kind: 'hls' | 'adaptive', code: number, body?: unknown) => {

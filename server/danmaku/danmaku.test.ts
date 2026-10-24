@@ -218,11 +218,13 @@ function fakeSocket(): WebSocketLike & {
 /** Manual clock so reconnect backoff and keepalive can be driven deterministically. */
 function fakeTimers() {
   let seq = 0
-  const pending = new Map<number, { fn: () => void; ms: number }>()
+  let now = 0
+  const pending = new Map<number, { fn: () => void; at: number }>()
   return {
+    get now() { return now },
     setTimer: (fn: () => void, ms: number) => {
       const handle = ++seq
-      pending.set(handle, { fn, ms })
+      pending.set(handle, { fn, at: now + ms })
       return handle
     },
     clearTimer: (handle: unknown) => {
@@ -231,11 +233,26 @@ function fakeTimers() {
     get size() {
       return pending.size
     },
-    delays: () => [...pending.values()].map((entry) => entry.ms),
+    delays: () => [...pending.values()].map((entry) => entry.at - now),
+    callbacks: () => [...pending.values()].map(entry => entry.fn),
     runAll: () => {
-      const entries = [...pending.entries()]
-      pending.clear()
-      for (const [, entry] of entries) entry.fn()
+      const entries = [...pending.entries()].sort((a, b) => a[1].at - b[1].at)
+      for (const [handle, entry] of entries) {
+        if (!pending.delete(handle)) continue
+        now = Math.max(now, entry.at)
+        entry.fn()
+      }
+    },
+    advance: (ms: number) => {
+      const target = now + ms
+      for (;;) {
+        const next = [...pending.entries()].sort((a, b) => a[1].at - b[1].at)[0]
+        if (!next || next[1].at > target) break
+        now = next[1].at
+        pending.delete(next[0])
+        next[1].fn()
+      }
+      now = target
     },
   }
 }
@@ -263,7 +280,7 @@ describe('DouyuDanmakuClient', () => {
           sockets.push(socket)
           return socket
         },
-        now: () => 5_000,
+        now: () => 5_000 + timers.now,
         setTimer: timers.setTimer,
         clearTimer: timers.clearTimer,
       },
@@ -280,15 +297,17 @@ describe('DouyuDanmakuClient', () => {
     }
   }
 
-  it('logs in and joins the group on open', () => {
+  it('logs in and joins on open but confirms connection only on valid inbound traffic', () => {
     const harness = setup()
     harness.client.connect()
     expect(harness.states.map(([state]) => state)).toEqual(['connecting'])
     harness.socket.fire('open')
-    expect(harness.client.state).toBe('connected')
+    expect(harness.client.state).toBe('connecting')
     expect(harness.socket.sent).toHaveLength(2)
     expect(decodeFrames(harness.socket.sent[0]!).payloads[0]).toContain('type@=loginreq')
     expect(decodeFrames(harness.socket.sent[1]!).payloads[0]).toContain('type@=joingroup')
+    harness.socket.fire('message', { data: encodeFrame('type@=loginres/userid@=0/', SERVER_MESSAGE_TYPE) })
+    expect(harness.client.state).toBe('connected')
   })
 
   it('emits chat messages from received frames', () => {
@@ -337,10 +356,11 @@ describe('DouyuDanmakuClient', () => {
     const harness = setup()
     harness.client.connect()
     harness.socket.fire('open')
-    expect(harness.timers.delays()).toEqual([40_000])
-    harness.timers.runAll()
+    harness.socket.fire('message', { data: encodeFrame('type@=loginres/userid@=0/', SERVER_MESSAGE_TYPE) })
+    expect(harness.timers.delays()).toEqual([40_000, 90_000])
+    harness.timers.advance(40_000)
     expect(decodeFrames(harness.socket.sent[2]!).payloads[0]).toContain('type@=mrkl')
-    expect(harness.timers.delays()).toEqual([40_000])
+    expect(harness.timers.delays().sort((a, b) => a - b)).toEqual([40_000, 50_000])
   })
 
   it('backs off exponentially across reconnects', () => {
@@ -370,7 +390,7 @@ describe('DouyuDanmakuClient', () => {
     expect(harness.timers.delays()).toEqual([30_000])
   })
 
-  it('resets the backoff after a successful open', () => {
+  it('resets the backoff only after valid traffic on a stable connection', () => {
     const harness = setup()
     harness.client.connect()
     harness.socket.fire('close', {})
@@ -379,8 +399,133 @@ describe('DouyuDanmakuClient', () => {
     expect(harness.timers.delays()).toEqual([2_000])
     harness.timers.runAll()
     harness.socket.fire('open')
+    harness.socket.fire('message', { data: encodeFrame('type@=loginres/userid@=0/', SERVER_MESSAGE_TYPE) })
+    harness.timers.advance(30_000)
+    harness.socket.fire('message', { data: encodeFrame('type@=mrkl/', SERVER_MESSAGE_TYPE) })
     harness.socket.fire('close', {})
     expect(harness.timers.delays()).toEqual([1_000])
+  })
+
+  it('keeps increasing backoff when the transport repeatedly opens and promptly closes', () => {
+    const harness = setup()
+    harness.client.connect()
+    for (const delay of [1_000, 2_000, 4_000]) {
+      harness.socket.fire('open')
+      harness.socket.fire('message', { data: encodeFrame('type@=loginres/userid@=0/', SERVER_MESSAGE_TYPE) })
+      harness.socket.fire('close')
+      expect(harness.timers.delays()).toEqual([delay])
+      harness.timers.advance(delay)
+    }
+    harness.client.close()
+  })
+
+  it('times out a socket that never opens and reconnects through the normal backoff', () => {
+    const harness = setup()
+    harness.client.connect()
+    const stalled = harness.socket
+    harness.timers.advance(14_999)
+    expect(harness.client.state).toBe('connecting')
+    harness.timers.advance(1)
+    expect(stalled.closed).toBe(1)
+    expect(harness.client.state).toBe('reconnecting')
+    expect(harness.timers.delays()).toEqual([1_000])
+    harness.timers.advance(1_000)
+    expect(harness.sockets).toHaveLength(2)
+    harness.client.close()
+  })
+
+  it('requires a valid response after open instead of treating junk as login success', () => {
+    const harness = setup()
+    harness.client.connect()
+    harness.socket.fire('open')
+    harness.timers.advance(10_000)
+    harness.socket.fire('message', { data: encodeFrame('type@=unknown/value@=x/', SERVER_MESSAGE_TYPE) })
+    harness.socket.fire('message', { data: Buffer.from([1, 2, 3]) })
+    harness.timers.advance(5_000)
+    expect(harness.client.state).toBe('reconnecting')
+    expect(harness.states.at(-1)?.[1]).toContain('登录')
+    expect(harness.messages).toEqual([])
+    harness.client.close()
+  })
+
+  it('keeps a quiet room alive with the normal mrkl and keeplive replies', () => {
+    const harness = setup()
+    harness.client.connect()
+    harness.socket.fire('open')
+    harness.socket.fire('message', { data: encodeFrame('type@=loginres/userid@=0/', SERVER_MESSAGE_TYPE) })
+    for (let index = 0; index < 6; index++) {
+      harness.timers.advance(40_000)
+      harness.socket.fire('message', { data: encodeFrame(index % 2 ? 'type@=keeplive/tick@=123/' : 'type@=mrkl/', SERVER_MESSAGE_TYPE) })
+      expect(harness.client.state).toBe('connected')
+    }
+    expect(harness.messages).toEqual([])
+    expect(harness.sockets).toHaveLength(1)
+    expect(harness.socket.sent).toHaveLength(8)
+    harness.client.close()
+    expect(harness.timers.size).toBe(0)
+  })
+
+  it('reconnects a half-open socket after two unanswered heartbeat periods', () => {
+    const harness = setup()
+    harness.client.connect()
+    harness.socket.fire('open')
+    harness.socket.fire('message', { data: encodeFrame('type@=loginres/userid@=0/', SERVER_MESSAGE_TYPE) })
+    const inactive = harness.socket
+    harness.timers.advance(89_999)
+    expect(harness.client.state).toBe('connected')
+    expect(inactive.sent).toHaveLength(4)
+    harness.timers.advance(1)
+    expect(inactive.closed).toBe(1)
+    expect(harness.client.state).toBe('reconnecting')
+    expect(harness.states.at(-1)?.[1]).toContain('长时间')
+    expect(harness.timers.delays()).toEqual([1_000])
+    harness.client.close()
+  })
+
+  it('refreshes liveness on actual chat but not unknown or wrong-room frames', () => {
+    const harness = setup()
+    harness.client.connect()
+    harness.socket.fire('open')
+    harness.socket.fire('message', { data: encodeFrame('type@=loginres/userid@=0/', SERVER_MESSAGE_TYPE) })
+    harness.timers.advance(80_000)
+    harness.socket.fire('message', { data: encodeFrame('type@=chatmsg/txt@=still here/', SERVER_MESSAGE_TYPE) })
+    harness.timers.advance(80_000)
+    harness.socket.fire('message', { data: encodeFrame('type@=unknown/value@=x/', SERVER_MESSAGE_TYPE) })
+    harness.socket.fire('message', { data: encodeFrame('type@=chatmsg/rid@=123/txt@=other room/', SERVER_MESSAGE_TYPE) })
+    expect(harness.client.state).toBe('connected')
+    expect(harness.messages).toHaveLength(1)
+    harness.timers.advance(10_000)
+    expect(harness.client.state).toBe('reconnecting')
+    harness.client.close()
+  })
+
+  it.each(['type@=error/code@=59/', 'type@=loginres/code@=1/'])('reconnects an explicit protocol refusal: %s', payload => {
+    const harness = setup()
+    harness.client.connect()
+    harness.socket.fire('open')
+    harness.socket.fire('message', { data: encodeFrame(payload, SERVER_MESSAGE_TYPE) })
+    expect(harness.client.state).toBe('reconnecting')
+    expect(harness.messages).toEqual([])
+    expect(harness.timers.delays()).toEqual([1_000])
+    harness.client.close()
+  })
+
+  it('ignores a cancelled watchdog on the same socket and after replacement', () => {
+    const harness = setup()
+    harness.client.connect()
+    const initialWatchdog = harness.timers.callbacks()[0]!
+    harness.socket.fire('open')
+    harness.socket.fire('message', { data: encodeFrame('type@=loginres/userid@=0/', SERVER_MESSAGE_TYPE) })
+    initialWatchdog()
+    expect(harness.client.state).toBe('connected')
+    const oldCallbacks = harness.timers.callbacks()
+    harness.socket.fire('close')
+    harness.timers.advance(1_000)
+    for (const callback of oldCallbacks) callback()
+    expect(harness.client.state).toBe('connecting')
+    expect(harness.sockets).toHaveLength(2)
+    expect(harness.timers.delays()).toEqual([15_000])
+    harness.client.close()
   })
 
   it('ignores a stale close from a socket it already replaced', () => {
@@ -565,6 +710,7 @@ describe('DanmakuRelay', () => {
     const subscriber = recorder()
     relay.subscribe('288016', subscriber)
     sockets[0]!.fire('open')
+    sockets[0]!.fire('message', { data: encodeFrame('type@=loginres/userid@=0/', SERVER_MESSAGE_TYPE) })
     expect(subscriber.events.at(-1)).toEqual(['state', { room: '288016', state: 'connected', detail: undefined }])
     expect(relay.stateOf('288016')).toBe('connected')
     relay.closeAll()
@@ -635,11 +781,13 @@ describe('DanmakuRelay', () => {
     const { relay, sockets, timers } = relaySetup()
     const unsubscribe = relay.subscribe('288016', recorder())
     sockets[0]!.fire('open')
+    sockets[0]!.fire('message', { data: encodeFrame('type@=loginres/userid@=0/', SERVER_MESSAGE_TYPE) })
     unsubscribe!()
     relay.subscribe('288016', recorder())
-    timers.runAll()
+    timers.advance(40_000)
     expect(relay.roomCount).toBe(1)
     expect(sockets).toHaveLength(1)
+    expect(relay.stateOf('288016')).toBe('connected')
     relay.closeAll()
   })
 

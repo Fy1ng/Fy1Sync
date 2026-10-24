@@ -66,7 +66,17 @@ export default function AdminPage(): React.ReactNode {
   const [profile, setProfile] = useState<RecognitionProfile>(() => session.takeEditingCandidate() ?? createEmptyProfile())
   useEffect(() => session.clearEditingCandidate(), [session])
   const [etag, setEtag] = useState<string | undefined>(undefined)
+  const [publishedProfile, setPublishedProfile] = useState<RecognitionProfile | null>(null)
   const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState<'draft' | 'publish' | null>(null)
+  const saveInFlight = useRef(false)
+  const mounted = useRef(false)
+  const editRevision = useRef(0)
+  const documentRevision = useRef(0)
+  const libraryRevision = useRef(0)
+  const profileRef = useRef(profile)
+  profileRef.current = profile
+  const publishedCurrent = useMemo(() => publishedProfile !== null && JSON.stringify(profile) === JSON.stringify(publishedProfile), [profile, publishedProfile])
   const [message, setMessage] = useState<Message | null>(null)
   const [presets, setPresets] = useState<PresetSummary[]>([])
   const [drafts, setDrafts] = useState<StoredProfile[]>([])
@@ -92,6 +102,10 @@ export default function AdminPage(): React.ReactNode {
   const objectUrlRef = useRef<string>('')
 
   const readiness = useMemo(() => profileReadiness(profile), [profile])
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false; documentRevision.current++; libraryRevision.current++ }
+  }, [])
 
   // Re-derived whenever the frame, the ROI or the thresholds change: that is exactly the
   // set of inputs the preview depends on, and re-segmenting a clock-sized crop is cheap.
@@ -117,7 +131,9 @@ export default function AdminPage(): React.ReactNode {
   }, [analysis])
 
   const refreshLibrary = useCallback(async () => {
+    const revision = ++libraryRevision.current
     const [remote, local] = await Promise.all([apiClient.listPresets(), profileStore.list().catch(() => [])])
+    if (!mounted.current || revision !== libraryRevision.current) return
     if (remote.ok) setPresets(remote.value.presets)
     else setMessage({ kind: 'warn', text: `预设列表读取失败：${remote.message}` })
     setDrafts(local)
@@ -137,6 +153,12 @@ export default function AdminPage(): React.ReactNode {
   )
 
   const patch = useCallback((update: Partial<RecognitionProfile>) => {
+    ++editRevision.current
+    if (update.id !== undefined && update.id !== profileRef.current.id) {
+      ++documentRevision.current
+      setEtag(undefined)
+      setPublishedProfile(null)
+    }
     setProfile((current) => ({ ...current, ...update }))
     setDirty(true)
   }, [])
@@ -257,72 +279,111 @@ export default function AdminPage(): React.ReactNode {
   }
 
   const saveDraft = async (): Promise<void> => {
+    if (saveInFlight.current) return
+    saveInFlight.current = true
+    setSaving('draft')
+    const submitted = profile
+    const revision = editRevision.current
+    const document = documentRevision.current
     try {
-      await profileStore.save(profile)
-      setDirty(false)
-      setMessage({ kind: 'info', text: '已保存到本机草稿（IndexedDB）。' })
+      await profileStore.save(submitted)
+      if (!mounted.current || document !== documentRevision.current) return
+      const unchanged = revision === editRevision.current
+      if (unchanged) setDirty(false)
+      setMessage({ kind: 'info', text: unchanged ? '已保存到本机草稿. 尚未发布的修改仍需发布后才能应用到播放器.'
+        : '已保存提交时的草稿, 当前还有未保存的修改.' })
       void refreshLibrary()
     } catch (error) {
-      setMessage({ kind: 'error', text: `草稿保存失败：${error instanceof Error ? error.message : String(error)}` })
-    }
+      if (mounted.current && document === documentRevision.current && revision === editRevision.current)
+        setMessage({ kind: 'error', text: `草稿保存失败：${error instanceof Error ? error.message : String(error)}` })
+    } finally { saveInFlight.current = false; if (mounted.current) setSaving(null) }
   }
 
   const publish = async (overwriteEtag?: string): Promise<void> => {
-    const result = await apiClient.savePreset(profile.id, profile, '', overwriteEtag ?? etag)
-    if (result.ok) {
-      setEtag(result.value.etag)
-      setDirty(false)
-      setMessage({ kind: 'info', text: `已发布为本机预设 ${profile.id}。` })
-      void refreshLibrary()
-      return
-    }
-    const issues = issuesFrom(result.detail)
-    // `conflict` is main's code for a stale ETag. Both ways out are offered and named
-    // for what they cost: reloading drops these edits, overwriting drops the other ones.
-    // Overwrite sends the ETag main reported, so it only wins against that exact version.
-    if (result.code === 'conflict') {
-      const currentEtag = (result.detail as { currentEtag?: unknown } | undefined)?.currentEtag
+    if (saveInFlight.current) return
+    saveInFlight.current = true
+    setSaving('publish')
+    const submitted = profile
+    const revision = editRevision.current
+    const document = documentRevision.current
+    try {
+      const result = await apiClient.savePreset(submitted.id, submitted, '', overwriteEtag ?? etag)
+      if (!mounted.current || document !== documentRevision.current) return
+      if (result.ok) {
+        setEtag(result.value.etag)
+        setPublishedProfile(submitted)
+        const unchanged = revision === editRevision.current
+        if (unchanged) setDirty(false)
+        setMessage({ kind: 'info', text: unchanged ? `已发布为本机预设 ${submitted.id}。`
+          : `已发布 ${submitted.id} 提交时的版本, 当前还有未发布的修改.` })
+        void refreshLibrary()
+        return
+      }
+      if (revision !== editRevision.current) return
+      const issues = issuesFrom(result.detail)
+      // `conflict` is main's code for a stale ETag. Both ways out are offered and named
+      // for what they cost: reloading drops these edits, overwriting drops the other ones.
+      // Overwrite sends the ETag main reported, so it only wins against that exact version.
+      if (result.code === 'conflict') {
+        const currentEtag = (result.detail as { currentEtag?: unknown } | undefined)?.currentEtag
+        setMessage({
+          kind: 'error',
+          text: `预设 ${profile.id} 已在别处被修改。`,
+          conflict: { currentEtag: typeof currentEtag === 'string' ? currentEtag : undefined },
+        })
+        return
+      }
       setMessage({
         kind: 'error',
-        text: `预设 ${profile.id} 已在别处被修改。`,
-        conflict: { currentEtag: typeof currentEtag === 'string' ? currentEtag : undefined },
+        text: `发布失败：${result.message}${issues.length ? `（${issues.map((issue) => `${issue.path} ${issue.message}`).join('；')}）` : ''}`,
       })
-      return
-    }
-    setMessage({
-      kind: 'error',
-      text: `发布失败：${result.message}${issues.length ? `（${issues.map((issue) => `${issue.path} ${issue.message}`).join('；')}）` : ''}`,
-    })
+    } finally { saveInFlight.current = false; if (mounted.current) setSaving(null) }
   }
 
   const loadPreset = async (id: string): Promise<void> => {
+    const revision = ++editRevision.current
+    const document = ++documentRevision.current
     const result = await apiClient.getPreset(id)
+    if (!mounted.current || revision !== editRevision.current || document !== documentRevision.current) return
     if (!result.ok) {
       setMessage({ kind: 'error', text: `载入失败：${result.message}` })
       return
     }
     setProfile(result.value.profile)
+    setPublishedProfile(result.value.profile)
     setEtag(result.value.etag)
     setDirty(false)
     setMessage({ kind: 'info', text: `已载入预设 ${id}。` })
   }
 
   const loadDraft = async (id: string): Promise<void> => {
-    const found = await profileStore.get(id)
-    if (!found) {
-      setMessage({ kind: 'error', text: '草稿已不存在。' })
-      void refreshLibrary()
-      return
+    const revision = ++editRevision.current
+    const document = ++documentRevision.current
+    try {
+      const found = await profileStore.get(id)
+      if (!mounted.current || revision !== editRevision.current || document !== documentRevision.current) return
+      if (!found) {
+        setMessage({ kind: 'error', text: '草稿已不存在。' })
+        void refreshLibrary()
+        return
+      }
+      setProfile(found)
+      setPublishedProfile(null)
+      setEtag(undefined)
+      setDirty(false)
+      setMessage({ kind: 'info', text: `已载入草稿 ${id}。` })
+    } catch {
+      if (mounted.current && revision === editRevision.current && document === documentRevision.current)
+        setMessage({ kind: 'error', text: '草稿读取失败, 当前编辑内容已保留.' })
     }
-    setProfile(found)
-    setEtag(undefined)
-    setDirty(false)
-    setMessage({ kind: 'info', text: `已载入草稿 ${id}。` })
   }
 
   const importFile = async (file: File): Promise<void> => {
+    const revision = ++editRevision.current
+    const document = ++documentRevision.current
     try {
       const parsed = parseProfile(JSON.parse(await file.text()) as unknown)
+      if (!mounted.current || revision !== editRevision.current || document !== documentRevision.current) return
       if (!parsed.profile) {
         setMessage({
           kind: 'error',
@@ -331,6 +392,7 @@ export default function AdminPage(): React.ReactNode {
         return
       }
       setProfile(parsed.profile)
+      setPublishedProfile(null)
       setEtag(undefined)
       setDirty(true)
       const warnings = parsed.issues.filter((issue) => issue.severity === 'warning')
@@ -339,7 +401,8 @@ export default function AdminPage(): React.ReactNode {
         text: warnings.length ? `已导入，注意：${warnings.map((issue) => issue.message).join('；')}` : '已导入配置。',
       })
     } catch (error) {
-      setMessage({ kind: 'error', text: `导入失败：${error instanceof Error ? error.message : String(error)}` })
+      if (mounted.current && revision === editRevision.current && document === documentRevision.current)
+        setMessage({ kind: 'error', text: `导入失败：${error instanceof Error ? error.message : String(error)}` })
     }
   }
 
@@ -365,7 +428,7 @@ export default function AdminPage(): React.ReactNode {
       setMessage({ kind: 'warn', text: `还缺少字符模板：${readiness.missing.join(' ')}` })
       return
     }
-    if (!etag || dirty) {
+    if (!etag || !publishedCurrent || saving) {
       setMessage({
         kind: 'warn',
         text: '播放器按 ID 从本机读取识别场景，请先“发布到本机”再应用。',
@@ -386,6 +449,7 @@ export default function AdminPage(): React.ReactNode {
             {profile.id} · {readiness.sampleCount} 个样本
             {readiness.ready ? ' · 可用于识别' : ` · 缺 ${readiness.missing.join(' ')}`}
             {dirty ? ' · 未保存' : ''}
+            {!publishedCurrent ? ' · 尚有未发布内容' : ''}
           </p>
         </div>
         <div className="admin-header-actions">
@@ -407,7 +471,7 @@ export default function AdminPage(): React.ReactNode {
                 载入对方版本（放弃本次修改）
               </button>
               {message.conflict.currentEtag ? (
-                <button type="button" className="small danger" onClick={() => void publish(message.conflict?.currentEtag)}>
+                <button type="button" className="small danger" disabled={saving !== null} onClick={() => void publish(message.conflict?.currentEtag)}>
                   用我的版本覆盖
                 </button>
               ) : null}
@@ -432,7 +496,10 @@ export default function AdminPage(): React.ReactNode {
             void refreshLibrary()
           }}
           onNew={() => {
+            ++editRevision.current
+            ++documentRevision.current
             setProfile(createEmptyProfile())
+            setPublishedProfile(null)
             setEtag(undefined)
             setDirty(false)
             setMessage({ kind: 'info', text: '已新建空白配置。' })
@@ -441,6 +508,7 @@ export default function AdminPage(): React.ReactNode {
           onExport={exportFile}
           onSaveDraft={saveDraft}
           onPublish={() => publish()}
+          saving={saving}
         />
 
         <section className="admin-stage-column">
@@ -642,6 +710,7 @@ function LibraryColumn({
   onExport,
   onSaveDraft,
   onPublish,
+  saving,
 }: {
   profile: RecognitionProfile
   presets: PresetSummary[]
@@ -655,6 +724,7 @@ function LibraryColumn({
   onExport: () => void
   onSaveDraft: () => Promise<void>
   onPublish: () => Promise<void>
+  saving: 'draft' | 'publish' | null
 }): React.ReactNode {
   return (
     <section className="admin-library-column">
@@ -790,11 +860,11 @@ function LibraryColumn({
           </button>
         </div>
         <div className="button-row">
-          <button type="button" onClick={() => void onSaveDraft()}>
-            存为草稿
+          <button type="button" disabled={saving !== null} onClick={() => void onSaveDraft()}>
+            {saving === 'draft' ? '正在保存草稿...' : '存为草稿'}
           </button>
-          <button type="button" className="primary" onClick={() => void onPublish()}>
-            发布到本机
+          <button type="button" className="primary" disabled={saving !== null} onClick={() => void onPublish()}>
+            {saving === 'publish' ? '正在发布...' : '发布到本机'}
           </button>
         </div>
       </div>
@@ -876,7 +946,7 @@ function PreprocessPanel({
         checked={profile.preprocess.invert}
         onChange={(invert) => set({ invert })}
         label="反相"
-        hint="深底亮字的计时器需要打开，让笔画变成白色"
+        hint="浅底深字时打开, 深底亮字时保持关闭, 让笔画显示为白色"
       />
       <div className="button-row">
         <button type="button" onClick={() => set({ ...DEFAULT_PREPROCESS })}>

@@ -70,6 +70,7 @@ export interface CookieStoreOptions { permissions?: PrivatePermissions; now?: ()
 export class CookieStore {
   private readonly permissions: PrivatePermissions
   private readonly now: () => number
+  private readonly revisions: Record<LoginPlatform, number> = { youtube: 0, douyu: 0 }
   readonly root: string
 
   constructor(userDataDirectory: string, options: CookieStoreOptions = {}) {
@@ -94,15 +95,38 @@ export class CookieStore {
     return containedPath(this.root, path.join(this.root, 'cookies', `${platform}.txt`))
   }
 
-  private read(platform: LoginPlatform): { text: string; cookies: StoredCookie[] } | undefined {
+  private async read(platform: LoginPlatform): Promise<{ text: string; cookies: StoredCookie[] } | undefined> {
     try {
+      const revision = this.revisions[platform]
       const file = this.target(platform)
       if (!fs.existsSync(file)) return undefined
-      this.permissions.verify(path.dirname(file), true)
-      this.permissions.verify(file, false)
-      const stat = fs.lstatSync(file)
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_COOKIE_FILE_BYTES) throw storageFailure()
-      const text = fs.readFileSync(file, 'utf8')
+      const before = fs.lstatSync(file)
+      if (!before.isFile() || before.isSymbolicLink() || before.size > MAX_COOKIE_FILE_BYTES) throw storageFailure()
+      if (this.permissions.verifyManyAsync) await this.permissions.verifyManyAsync([
+        { target: path.dirname(file), directory: true }, { target: file, directory: false },
+      ])
+      else {
+        this.permissions.verify(path.dirname(file), true)
+        this.permissions.verify(file, false)
+      }
+      if (revision !== this.revisions[platform]) throw storageFailure()
+      containedPath(this.root, file)
+      const handle = await fs.promises.open(file, 'r')
+      let text: string
+      try {
+        const stat = await handle.stat()
+        if (!stat.isFile() || stat.size > MAX_COOKIE_FILE_BYTES) throw storageFailure()
+        const bytes = Buffer.alloc(Math.min(stat.size + 1, MAX_COOKIE_FILE_BYTES + 1))
+        let length = 0
+        while (length < bytes.length) {
+          const { bytesRead } = await handle.read(bytes, length, bytes.length - length, null)
+          if (!bytesRead) break
+          length += bytesRead
+        }
+        if (length > stat.size || length > MAX_COOKIE_FILE_BYTES) throw storageFailure()
+        text = bytes.subarray(0, length).toString('utf8')
+      } finally { await handle.close() }
+      if (revision !== this.revisions[platform]) throw storageFailure()
       return { text, cookies: parseCookies(text, platform, this.now()) }
     } catch { throw storageFailure() }
   }
@@ -112,6 +136,7 @@ export class CookieStore {
     let descriptor: number | undefined
     try {
       if (!isLoginPlatform(platform) || !Array.isArray(cookies) || cookies.length > 50_000) throw storageFailure()
+      this.revisions[platform]++
       const lines = ['# Netscape HTTP Cookie File', '# Stream Syncer private login data. Do not share this file.', '']
       for (const cookie of cookies) {
         if (!cookie || typeof cookie.domain !== 'string' || !cookieDomainAllowed(cookie.domain, platform)) continue
@@ -156,19 +181,22 @@ export class CookieStore {
       expiresAt: expiries.length ? Math.min(...expiries) : null, hasSessionCookies: auth.some(cookie => cookie.expires === 0) }
   }
 
-  status(): LoginStatus {
-    return Object.fromEntries((['youtube', 'douyu'] as const).map(platform => [platform,
-      this.summary(platform, this.read(platform)?.cookies ?? []),
-    ])) as LoginStatus
+  async status(): Promise<LoginStatus> {
+    return Object.fromEntries(await Promise.all((['youtube', 'douyu'] as const).map(async platform => [platform,
+      this.summary(platform, (await this.read(platform))?.cookies ?? []),
+    ]))) as LoginStatus
   }
 
-  cookieHeader(platform: 'douyu', requestUrl = 'https://www.douyu.com/lapi/live/getH5PlayV1/'): string {
+  async cookieHeader(platform: 'douyu', requestUrl = 'https://www.douyu.com/lapi/live/getH5PlayV1/'): Promise<string> {
     if (platform !== 'douyu') throw storageFailure()
     let target: URL
     try { target = new URL(requestUrl) } catch { throw storageFailure() }
     if (target.protocol !== 'https:' || target.username || target.password || target.port
       || (target.hostname !== 'douyu.com' && !target.hostname.endsWith('.douyu.com'))) throw storageFailure()
-    return (this.read(platform)?.cookies ?? [])
+    const revision = this.revisions[platform]
+    const loaded = await this.read(platform)
+    if (revision !== this.revisions[platform]) throw storageFailure()
+    return (loaded?.cookies ?? [])
       .filter(cookie => (target.hostname === cookie.domain || (cookie.subdomains && target.hostname.endsWith(`.${cookie.domain}`)))
         && (target.pathname === cookie.path || target.pathname.startsWith(cookie.path.endsWith('/') ? cookie.path : `${cookie.path}/`)))
       .sort((a, b) => b.path.length - a.path.length)
@@ -176,6 +204,7 @@ export class CookieStore {
   }
 
   async withTemporaryCookies<T>(platform: 'youtube', callback: (file?: string) => Promise<T>): Promise<T> {
+    const revision = this.revisions.youtube
     let directory: string | undefined
     let temporary: string | undefined
     const cleanup = () => {
@@ -190,10 +219,11 @@ export class CookieStore {
     // A normal app exit also removes a copy held by an interrupted extraction.
     const onExit = () => { try { cleanup() } catch { /* Never log cookie-related errors. */ } }
     try {
-      let loaded: ReturnType<CookieStore['read']>
+      let loaded: Awaited<ReturnType<CookieStore['read']>>
       try {
         if (platform !== 'youtube') throw storageFailure()
-        loaded = this.read(platform)
+        loaded = await this.read(platform)
+        if (revision !== this.revisions.youtube) throw storageFailure()
         if (loaded?.cookies.length) {
           const parent = this.directory
           directory = fs.mkdtempSync(path.join(parent, 'yt-dlp-'))
@@ -210,6 +240,7 @@ export class CookieStore {
           process.once('exit', onExit)
         }
       } catch { throw storageFailure() }
+      if (revision !== this.revisions.youtube) throw storageFailure()
       return await callback(temporary)
     } finally {
       process.removeListener('exit', onExit)
@@ -219,6 +250,8 @@ export class CookieStore {
 
   logout(platform: LoginPlatform): void {
     try {
+      if (!isLoginPlatform(platform)) throw storageFailure()
+      this.revisions[platform]++
       const file = this.target(platform)
       if (fs.existsSync(file)) {
         this.permissions.verify(file, false)

@@ -5,16 +5,17 @@
  * reading CSS is a bad way to find out that two panels disagree about their corner radius.
  *
  *   npm run build
- *   node scripts/ui-shots.mjs [--out .ui-shots]
+ *   node scripts/ui-shots.mjs [--out path]
+ *   STREAM_SYNC_SHOTS_DIR also selects an output directory, including outside the repo.
  *
  * Selectors are the ones e2e/helpers.ts already uses to drive this app; keep the two in
  * step. Every capture is wrapped so a step that cannot reach its state warns and the rest
  * of the sheet still gets taken — a half-populated sheet is more useful than an exception.
  */
 
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { resolve, join } from 'node:path'
+import { resolve, join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { _electron } from '@playwright/test'
 
@@ -25,8 +26,9 @@ const flag = (name, fallback) => {
 }
 
 const base = 'app://app'
+const root = fileURLToPath(new URL('../', import.meta.url))
 const applications = new WeakMap()
-const outDir = flag('out', '.ui-shots')
+const outDir = resolve(flag('out', process.env.STREAM_SYNC_SHOTS_DIR || '.ui-shots'))
 
 /** Desktop is the design target; narrow is where the sidebar and the bar start to fight. */
 const VIEWPORTS = [
@@ -116,7 +118,16 @@ async function stubDanmaku(page) {
     let batch = 0
     setInterval(() => {
       hook.emitDanmaku('288016', 'state', { room: '288016', state: 'connected' })
-      for (const [index, text] of texts.entries()) hook.emitDanmaku('288016', 'danmaku', { id: 'shot-' + batch + '-' + index, text, user: '观众' + index, color: '#ffffff' })
+      for (const [index, text] of texts.entries()) hook.emitDanmaku('288016', 'danmaku', {
+        id: 'shot-' + batch + '-' + index, text, username: '测试观众' + index,
+        color: index % 7, level: 20 + index, receivedAt: Date.now(), room: '288016', system: false,
+        sender: { uid: String(1000 + index), level: 20 + index, nobleLevel: 0 },
+      })
+      if (batch % 4 === 0) hook.emitDanmaku('288016', 'danmaku', {
+        id: 'shot-gift-' + batch, text: '粉丝荧光棒 x 3', username: '测试观众1',
+        color: 0, level: 21, receivedAt: Date.now(), room: '288016', system: true,
+        sender: { uid: '1001', level: 21, nobleLevel: 0 }, gift: { kind: 'prop', id: '268', count: 3 },
+      })
       batch++
     }, 250)
   }, DANMAKU)
@@ -126,7 +137,7 @@ let taken = 0
 let failed = 0
 
 async function shot(page, name) {
-  const file = `${outDir}/${name}.png`
+  const file = join(outDir, `${name}.png`)
   await page.screenshot({ path: file })
   taken += 1
   console.log(`  ✓ ${file}`)
@@ -148,11 +159,10 @@ async function captureViewport(browser, viewport) {
 
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
-    // Retina-density shots: hairline borders and text shadows are exactly what this is for.
-    deviceScaleFactor: 2,
+    // The real Electron window retains the host display's native scale.
   })
   const page = await context.newPage()
-  page.on('pageerror', (error) => console.warn(`  ! 页面异常：${error.message}`))
+  page.on('pageerror', (error) => { failed++; console.warn(`  ! 页面异常: ${error.message}`) })
   await stubDanmaku(page)
 
   await page.goto(base + '/')
@@ -260,10 +270,9 @@ async function captureAdmin(browser) {
   console.log('\nadmin 1440×900')
   const context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
-    deviceScaleFactor: 2,
   })
   const page = await context.newPage()
-  page.on('pageerror', (error) => console.warn(`  ! 页面异常：${error.message}`))
+  page.on('pageerror', (error) => { failed++; console.warn(`  ! 页面异常: ${error.message}`) })
 
   await step('admin', async () => {
     await page.goto(`${base}/admin`, { waitUntil: 'domcontentloaded' })
@@ -286,8 +295,8 @@ async function captureAdmin(browser) {
 async function main() {
   await mkdir(outDir, { recursive: true })
 
-  const root = fileURLToPath(new URL('../', import.meta.url))
-  const runtime = resolve(root, '.ui-shots', 'runtime-' + randomUUID())
+  const runtimeRoot = resolve(root, '.runtime-cache', 'ui-shots')
+  const runtime = join(runtimeRoot, 'runtime-' + randomUUID())
   await mkdir(runtime, { recursive: true })
   const active = new Set()
   // Each capture owns a real app and a disposable profile; the adapter preserves the
@@ -295,8 +304,12 @@ async function main() {
   const browser = {
     async newContext({ viewport }) {
       const profile = join(runtime, randomUUID())
-      const env = { ...process.env, STREAM_SYNC_E2E: '1', STREAM_SYNC_USER_DATA_DIR: profile, STREAM_SYNC_DATA_DIR: join(profile, 'data') }
-      delete env.ELECTRON_RUN_AS_NODE
+      const temporary = join(profile, 'temp')
+      await mkdir(temporary, { recursive: true })
+      const env = Object.fromEntries(Object.entries(process.env).filter(([name, value]) => value !== undefined
+        && !/^STREAM_SYNC_/i.test(name) && !/^ELECTRON_RUN_AS_NODE$/i.test(name)))
+      Object.assign(env, { STREAM_SYNC_E2E: '1', STREAM_SYNC_OFFLINE_E2E: '1',
+        STREAM_SYNC_USER_DATA_DIR: profile, STREAM_SYNC_DATA_DIR: join(profile, 'data'), TEMP: temporary, TMP: temporary })
       const application = await _electron.launch({ args: [join(root, 'dist/electron/main.cjs')], cwd: root, env })
       active.add(application)
       // The window exists only once the first page is up; resizing before that finds none.
@@ -304,12 +317,19 @@ async function main() {
       // Let the app finish its own first navigation, or a later goto aborts against it.
       await page.waitForURL(base + '/**', { timeout: 30_000 })
       await page.waitForFunction(() => typeof window.streamSyncer?.invoke === 'function')
+      await application.evaluate(() => {
+        const hook = globalThis.__streamSyncerTest
+        if (!hook?.setDouyuRoomFixture) throw new Error('Offline room identity fixture is unavailable')
+        hook.setDouyuRoomFixture({ '288016': '288016' })
+      })
       await application.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setContentSize(size.width, size.height), viewport)
       applications.set(page, application)
       return { newPage: async () => page, close: async () => { await application.close(); active.delete(application) } }
     },
     async close() {
-      for (const application of active) await application.close()
+      const closed = await Promise.allSettled([...active].map(application => application.close()))
+      if (closed.some(result => result.status === 'rejected')) throw new Error('截图测试应用未能关闭, 临时 Profile 已保留')
+      if (dirname(runtime) !== runtimeRoot || !/^runtime-[a-f0-9-]{36}$/.test(basename(runtime))) throw new Error('Invalid screenshot profile cleanup path')
       await rm(runtime, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })
     },
   }
@@ -320,7 +340,9 @@ async function main() {
     await browser.close()
   }
 
-  console.log(`\n${taken} 张截图写入 ${outDir}/${failed > 0 ? `，${failed} 步失败` : ''}`)
+  await writeFile(join(outDir, 'capture-report.json'), JSON.stringify({ screenshots: taken, failures: failed, offline: true }, null, 2) + '\n')
+  console.log(`\n${taken} 张截图写入 ${outDir}${failed > 0 ? `, ${failed} 项失败` : ''}`)
+  if (failed) process.exitCode = 1
 }
 
 await main()
