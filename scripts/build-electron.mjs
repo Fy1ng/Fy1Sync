@@ -10,6 +10,7 @@ export async function buildElectron(write = true) {
   if (write) await rm(obsolete, { recursive: true, force: true })
   const result = await build({
     configFile: false, root: fileURLToPath(root),
+    ssr: { noExternal: ['parse5', 'entities'] },
     build: {
       ssr: true, outDir: 'dist/electron', emptyOutDir: true, minify: false, sourcemap: true,
       target: 'node24', write,

@@ -28,6 +28,9 @@ import { DouyuTaskManager } from './douyuTasks'
 import { PrivateJsonStore } from './privateJsonStore'
 import { DouyuActions } from '../server/douyu/actions'
 import { DouyuMessageSender, NativeMessageSocket } from '../server/douyu/messageSender'
+import { DouyuBackpackGateway } from '../server/douyu/backpackGateway'
+import { DouyuRenewalService } from '../server/douyu/renewalService'
+import type { DouyuBackpackDonation } from '../server/douyu/renewalTypes'
 import type { DouyuMessageInput, DouyuRuntimeState, DouyuTaskStorage } from '../server/douyu/types'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: {
@@ -68,6 +71,8 @@ async function start(): Promise<void> {
   let douyuToolsFixture = false
   const douyuSentFixture: DouyuMessageInput[] = []
   let douyuSendFixtureOutcome: 'succeeded' | 'waiting-user' = 'succeeded'
+  let renewalFixture: { stock: number; outcome: 'receipt-received' | 'unknown' } | null = null
+  const renewalDonationsFixture: Array<Omit<DouyuBackpackDonation, 'expectedUid'>> = []
   const browserLogin = new ChromeLoginDriver()
   const createLogin = (directory: string) => new LoginManager(directory, {
     findChrome: () => !app.isPackaged && offlineE2e && douyuToolsFixture ? process.execPath : findSystemChrome(),
@@ -98,6 +103,7 @@ async function start(): Promise<void> {
   let douyuAccounts: DouyuAccountManager | undefined
   let douyuTasks: DouyuTaskManager | undefined
   let douyuMessageSender: DouyuMessageSender | undefined
+  let douyuRenewal: DouyuRenewalService | undefined
   let releaseAccountEvents: (() => void) | undefined
   try { douyuAccounts = new DouyuAccountManager(userDataDir, { defaultLogin: logins, createLogin }) }
   catch { console.error('斗鱼账号配置不可用, 原文件已保留.') }
@@ -124,7 +130,10 @@ async function start(): Promise<void> {
       })
       douyuTasks.setActiveAccount(douyuAccounts.activeAccountId)
       releaseAccountEvents = douyuAccounts.subscribe(event => {
-        if (event.type === 'invalidated') douyuTasks!.pauseAccount(event.accountId, '账号登录状态已变化, 请重新启动任务.')
+        if (event.type === 'invalidated') {
+          douyuTasks!.pauseAccount(event.accountId, '账号登录状态已变化, 请重新启动任务.')
+          douyuRenewal?.invalidate(event.accountId)
+        }
         douyuTasks!.setActiveAccount(douyuAccounts!.activeAccountId)
       })
     } catch {
@@ -238,8 +247,38 @@ async function start(): Promise<void> {
   })
   // Offline E2E drives events through the real IPC subscriptions, without a live room.
   const relay = e2e ? new DanmakuRelay({ createSocket: () => ({ send() {}, close() {}, addEventListener() {} }) }) : new DanmakuRelay()
+  if (douyuAccounts && douyuTasks) {
+    const gateway = new DouyuBackpackGateway({ proxy, cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url) })
+    const fixtureEnabled = () => !app.isPackaged && offlineE2e && douyuToolsFixture && renewalFixture !== null
+    douyuRenewal = new DouyuRenewalService({
+      tasks: douyuTasks, resolveRoom: roomResolver.resolve,
+      accountReady: id => douyuAccounts!.activeAccountId === id && !douyuAccounts!.isBusy(id),
+      gateway: {
+        async readBadges(accountId, signal) {
+          if (!fixtureEnabled()) return gateway.readBadges(accountId, signal)
+          if (signal.aborted) throw new DOMException('Fixture read cancelled', 'AbortError')
+          return { uid: '1', html: '<table class="fans-badge-list"><tbody><tr data-fans-room="6979222"><td>测试粉丝牌</td></tr><tr data-fans-room="288016"><td>测试粉丝牌</td></tr></tbody></table>' }
+        },
+        async readBackpack(accountId, room, signal) {
+          if (!fixtureEnabled()) return gateway.readBackpack(accountId, room, signal)
+          if (signal.aborted) throw new DOMException('Fixture read cancelled', 'AbortError')
+          return { uid: '1', payload: { list: renewalFixture!.stock ? [{ id: 268, name: '离线测试荧光棒', count: renewalFixture!.stock,
+            met: -1, propType: 1, isClick: 1, isValuable: 0 }] : [] } }
+        },
+        async donate(input, signal) {
+          if (!fixtureEnabled()) return gateway.donate(input, signal)
+          if (signal.aborted || renewalFixture!.stock < input.quantity) return { status: 'not-submitted', message: '离线赠送未提交' }
+          if (renewalDonationsFixture.length >= 64) throw new Error('Fixture donation limit reached')
+          const { expectedUid: _uid, ...publicInput } = input
+          renewalDonationsFixture.push(publicInput)
+          renewalFixture!.stock -= input.quantity
+          return { status: renewalFixture!.outcome, message: renewalFixture!.outcome === 'receipt-received' ? '离线背包赠送回执' : '离线赠送结果待核对' }
+        },
+      },
+    })
+  }
   const service = createDesktopService({
-    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, registerMedia: media.register, acquisition, decoderPreferences, tools, douyuAccounts, douyuTasks,
+    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, registerMedia: media.register, acquisition, decoderPreferences, tools, douyuAccounts, douyuTasks, douyuRenewal,
   })
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   session.defaultSession.setPermissionCheckHandler(() => false)
@@ -294,6 +333,13 @@ async function start(): Promise<void> {
     ...(!app.isPackaged ? { setDouyuToolsFixture() {
       if (!offlineE2e) throw new Error('Douyu tools fixture is offline-only')
       douyuToolsFixture = true
+    }, setDouyuRenewalFixture(stock: number, outcome: 'receipt-received' | 'unknown' = 'receipt-received') {
+      if (!offlineE2e || !douyuToolsFixture || !Number.isSafeInteger(stock) || stock < 0 || stock > 1000 || !['receipt-received', 'unknown'].includes(outcome)) throw new Error('Invalid renewal fixture')
+      renewalFixture = { stock, outcome }
+      renewalDonationsFixture.length = 0
+    }, getDouyuRenewalDonationsFixture() {
+      if (!offlineE2e || !douyuToolsFixture || !renewalFixture) throw new Error('Renewal fixture unavailable')
+      return renewalDonationsFixture.map(input => ({ ...input }))
     }, createDouyuSocketFixture(url: string) {
       if (!offlineE2e || !/^ws:\/\/127\.0\.0\.1:[1-9]\d{0,4}\/$/.test(url)) throw new Error('Invalid local socket fixture')
       return new NativeMessageSocket(url)
@@ -358,6 +404,7 @@ async function start(): Promise<void> {
     powerMonitor.removeListener('suspend', suspend)
     powerMonitor.removeListener('resume', resume)
     releaseAccountEvents?.()
+    douyuRenewal?.dispose()
     douyuTasks?.dispose()
     douyuMessageSender?.dispose()
     unwatchFile(index)

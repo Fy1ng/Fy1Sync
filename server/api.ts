@@ -16,6 +16,7 @@ import { DouyuAccountError, isDouyuAccountId, type DouyuAccountManager } from '.
 import { DouyuTaskError, type DouyuTaskManager } from '../electron/douyuTasks'
 import { DOUYU_TASK_KINDS, DOUYU_TASK_POLICIES, type DouyuTaskKind, type DouyuTaskPolicy, type DouyuTasksSnapshot } from './douyu/types'
 import { readMessageSchedule } from './douyu/taskConfig'
+import { DouyuRenewalError, readRenewalRooms, type DouyuRenewalService } from './douyu/renewalService'
 
 export interface AcquisitionService {
   resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string, preferAdaptive?: boolean): Promise<ResolveResult>
@@ -39,6 +40,7 @@ export type DesktopServiceDeps = {
   tools?: ToolsService
   douyuAccounts?: DouyuAccountManager
   douyuTasks?: DouyuTaskManager
+  douyuRenewal?: DouyuRenewalService
 }
 
 export type DesktopService = {
@@ -184,6 +186,30 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
             if (!deps.douyuTasks) return fail('not-available', '斗鱼任务配置不可用, 原文件已保留.')
             return { ok: true, value: deps.douyuTasks.snapshot() }
+          }
+          case 'getDouyuRenewalTargets':
+          case 'previewDouyuRenewal': {
+            const preview = method === 'previewDouyuRenewal'
+            if (!fields(args, preview ? ['accountId', 'rooms', 'quantity'] : ['accountId']) || !isDouyuAccountId(args.accountId)) return fail('invalid-arguments', '续牌赠送参数无效')
+            const accountId = args.accountId
+            const rooms = preview ? readRenewalRooms(args.rooms) : null
+            const quantity = preview ? args.quantity : null
+            if (preview && (typeof quantity !== 'number' || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 1000)) return fail('invalid-arguments', '赠送数量无效')
+            const accounts = deps.douyuAccounts
+            if (!deps.douyuRenewal || !accounts || !deps.douyuTasks) return fail('not-available', '续牌赠送服务不可用')
+            if (accounts.activeAccountId !== accountId || accounts.isBusy(accountId)) return fail('account-changed', '请先登录并激活所选账号')
+            const originRoom = deps.douyuTasks.snapshot().currentRoom
+            if (!(await accounts.activeLoginStatus()).loggedIn) return fail('login-required', '请先登录当前斗鱼账号')
+            if (disposed) return fail('service-closed', '本地服务已关闭')
+            if (accounts.activeAccountId !== accountId || accounts.isBusy(accountId) || deps.douyuTasks.snapshot().currentRoom !== originRoom) return fail('account-changed', '账号或房间已变化, 请重新读取')
+            return { ok: true, value: preview ? await deps.douyuRenewal.preview(accountId, rooms!, quantity as number)
+              : await deps.douyuRenewal.targets(accountId) }
+          }
+          case 'executeDouyuRenewal':
+          case 'cancelDouyuRenewal': {
+            if (!fields(args, ['planId']) || typeof args.planId !== 'string' || !/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(args.planId)) return fail('invalid-arguments', '赠送预览标识无效')
+            if (!deps.douyuRenewal) return fail('not-available', '续牌赠送服务不可用')
+            return { ok: true, value: method === 'executeDouyuRenewal' ? await deps.douyuRenewal.execute(args.planId) : deps.douyuRenewal.cancel(args.planId) }
           }
           case 'sendDouyuMessage': {
             if (!fields(args, ['accountId', 'room', 'text', 'color']) || !isDouyuAccountId(args.accountId)
@@ -396,7 +422,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
           default: return fail('not-found', '未知本地接口')
         }
       } catch (error) {
-        if (error instanceof DouyuAccountError || error instanceof DouyuTaskError) return fail(error.code, error.message)
+        if (error instanceof DouyuAccountError || error instanceof DouyuTaskError || error instanceof DouyuRenewalError) return fail(error.code, error.message)
         if (error instanceof ProxyError) return fail(error.reason, '媒体地址未通过安全检查')
         // Tool errors contain only stable codes, never executable paths or child output.
         if (error instanceof Error && 'tool' in error && 'code' in error

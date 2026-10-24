@@ -7,13 +7,13 @@ import { describe, expect, it } from 'vitest'
 for (const entry of ['electron/main.ts', 'electron/preload.ts']) {
   describe(entry + ' bundle', () => {
     it('bundles with only Electron and Node builtins external', async () => {
-      const result = await build({ configFile: false, logLevel: 'silent', build: { ssr: fileURLToPath(new URL('../' + entry, import.meta.url)), write: false, minify: false, rollupOptions: { external: ['electron', /^node:/], output: { format: 'cjs' } } } })
+      const result = await build({ configFile: false, logLevel: 'silent', ssr: { noExternal: ['parse5', 'entities'] }, build: { ssr: fileURLToPath(new URL('../' + entry, import.meta.url)), write: false, minify: false, rollupOptions: { external: ['electron', /^node:/], output: { format: 'cjs' } } } })
       const results = Array.isArray(result) ? result : [result]
       for (const output of results) {
         if (!('output' in output)) throw new Error('Expected bundle output')
         for (const chunk of output.output) {
           if (chunk.type !== 'chunk') continue
-          expect(chunk.imports.every(name => name === 'electron' || name.startsWith('node:'))).toBe(true)
+          expect(chunk.imports.filter(name => name !== 'electron' && !name.startsWith('node:'))).toEqual([])
           // The Windows mux transport may bind a local named pipe, never HTTP/TCP.
           // adaptiveTransport's fake-server tests check the exact pipe-only target.
           expect(chunk.code).not.toMatch(/node:(?:http|https)['"]|server\.listen\(\s*\d/)

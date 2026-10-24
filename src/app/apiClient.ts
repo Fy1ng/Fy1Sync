@@ -111,6 +111,10 @@ export class ApiClient {
   loginDouyuAccount(id: string) { return this.request('loginDouyuAccount', { id }) }
   loginDouyuYubaAccount(id: string) { return this.request('loginDouyuYubaAccount', { id }) }
   sendDouyuMessage(input: DesktopMethods['sendDouyuMessage']['args']) { return this.request('sendDouyuMessage', input) }
+  getDouyuRenewalTargets(accountId: string) { return this.request('getDouyuRenewalTargets', { accountId }) }
+  previewDouyuRenewal(input: DesktopMethods['previewDouyuRenewal']['args']) { return this.request('previewDouyuRenewal', input) }
+  executeDouyuRenewal(planId: string) { return this.request('executeDouyuRenewal', { planId }) }
+  cancelDouyuRenewal(planId: string) { return this.request('cancelDouyuRenewal', { planId }) }
   activateDouyuAccount(id: string) { return this.request('activateDouyuAccount', { id }) }
   logoutDouyuAccount(id: string) { return this.request('logoutDouyuAccount', { id }) }
   removeDouyuAccount(id: string) { return this.request('removeDouyuAccount', { id }) }

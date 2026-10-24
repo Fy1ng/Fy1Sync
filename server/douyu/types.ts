@@ -92,3 +92,15 @@ export type DouyuMessageOutcome = DouyuTaskOutcome & {
   /** Proven not sent, waiting only for a known cooldown. Never set after dispatch. */
   deferredUntil?: number
 }
+
+/** Main-process-only scope for an explicitly confirmed, nonpersistent operation. */
+export interface DouyuAccountOperationContext {
+  accountId: string
+  originRoom: string | null
+  rooms: string[]
+}
+
+export type DouyuAccountOperationOutcome<T> =
+  | { status: 'completed'; value: T }
+  | { status: 'cancelled'; started: boolean }
+  | { status: 'busy' | 'unavailable' | 'failed' }

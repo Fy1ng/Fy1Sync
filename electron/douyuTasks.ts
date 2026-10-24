@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { DOUYU_TASK_KINDS, DOUYU_TASK_POLICIES } from '../server/douyu/types'
 import { readMessageSchedule } from '../server/douyu/taskConfig'
 import type {
-  CreateDouyuTask, DouyuMessageInput, DouyuMessageOutcome, DouyuRuntimeState, DouyuTaskDefinition, DouyuTaskOutcome,
+  CreateDouyuTask, DouyuAccountOperationContext, DouyuAccountOperationOutcome,
+  DouyuMessageInput, DouyuMessageOutcome, DouyuRuntimeState, DouyuTaskDefinition, DouyuTaskOutcome,
   DouyuTaskKind, DouyuTaskPolicy, DouyuTaskStorage, DouyuTasksSnapshot, DouyuTaskView,
 } from '../server/douyu/types'
 
@@ -42,13 +43,22 @@ type ImmediateMessage = FlightControl & {
   input: DouyuMessageInput
   resolve: ((outcome: DouyuMessageOutcome) => void) | null
 }
-type Flight = TaskFlight | ImmediateMessage
+type ImmediateOperation = FlightControl & {
+  type: 'operation'
+  context: DouyuAccountOperationContext
+  run: (signal: AbortSignal) => Promise<unknown>
+  resolve: ((outcome: DouyuAccountOperationOutcome<unknown>) => void) | null
+  releaseAbort: () => void
+}
+type Immediate = ImmediateMessage | ImmediateOperation
+type Flight = TaskFlight | Immediate
 type Wakeup = { handle: unknown }
 const LIMIT = 64
 const MAX_TIMER_MS = 2_147_483_647
 const DEFINITION_KEYS = ['id', 'accountId', 'room', 'kind', 'policy', 'repeatMinutes', 'createdAt']
 const INPUT_KEYS = ['accountId', 'room', 'kind', 'policy', 'repeatMinutes']
 const MESSAGE_INPUT_KEYS = ['accountId', 'room', 'text', 'color']
+const OPERATION_CONTEXT_KEYS = ['accountId', 'originRoom', 'rooms']
 const FAILURE = '任务执行失败, 请检查登录状态后手动重试'
 const MESSAGE_FAILURE = '弹幕发送失败, 请检查当前账号与房间后手动重试'
 const UNSAFE_MESSAGE_TEXT = /[\x00-\x1f\x7f-\x9f\u2028\u2029\uD800-\uDFFF]/u
@@ -63,7 +73,7 @@ export class DouyuTaskManager {
   private currentRoom: string | null = null
   private runtime: DouyuRuntimeState = { foreground: false, locked: false, suspended: false }
   private flight: Flight | null = null
-  private immediate: ImmediateMessage | null = null
+  private immediate: Immediate | null = null
   private wakeup: Wakeup | null = null
   private disposed = false
   private readonly now: () => number
@@ -112,6 +122,33 @@ export class DouyuTaskManager {
     return new Promise(resolve => {
       this.immediate = { type: 'message', input, resolve, controller: new AbortController(), cancelled: false, dispatched: false }
       this.refresh()
+    })
+  }
+
+  /** Main-process-only, nonpersistent work using the same single-write lane. */
+  async runAccountOperation<T>(raw: DouyuAccountOperationContext, run: (signal: AbortSignal) => Promise<T>, signal: AbortSignal): Promise<DouyuAccountOperationOutcome<T>> {
+    this.ensureAlive()
+    const context = readOperationContext(raw)
+    if (typeof run !== 'function' || !(signal instanceof AbortSignal)) throw new DouyuTaskError('invalid-arguments')
+    if (signal.aborted) return { status: 'cancelled', started: false }
+    if (this.immediate) return { status: 'busy' }
+    if (!this.operationAllowed(context)) return { status: 'unavailable' }
+    return new Promise(resolve => {
+      const operation: ImmediateOperation = {
+        type: 'operation', context, run, controller: new AbortController(), cancelled: false, dispatched: false,
+        // The erased value originates only from this call's paired producer. Its
+        // business service, not this queue, owns result validation and DTO privacy.
+        resolve: outcome => resolve(outcome as DouyuAccountOperationOutcome<T>),
+        releaseAbort: () => signal.removeEventListener('abort', abort),
+      }
+      const abort = () => {
+        this.cancelImmediate(operation)
+        this.refresh()
+      }
+      this.immediate = operation
+      signal.addEventListener('abort', abort, { once: true })
+      if (signal.aborted) abort()
+      else this.refresh()
     })
   }
 
@@ -192,7 +229,7 @@ export class DouyuTaskManager {
     const accountId = readId(id)
     const affected = [...this.tasks.values()].filter(task => task.definition.accountId === accountId)
     const remaining = this.definitions().filter(task => task.accountId !== accountId)
-    if (this.immediate?.input.accountId === accountId) this.cancelMessage()
+    if (this.immediate && this.immediateAccount(this.immediate) === accountId) this.cancelImmediate()
     this.stopBeforeSave(affected, '账号任务已停止')
     if (affected.length) this.persistAfterStop(remaining, this.retainedRooms, affected)
     for (const task of affected) this.tasks.delete(task.definition.id)
@@ -206,7 +243,7 @@ export class DouyuTaskManager {
     if (next === this.currentRoom) return
     const previous = this.currentRoom
     this.currentRoom = next
-    this.cancelMessage()
+    this.cancelImmediate()
     if (previous !== null && !this.retainedRooms.has(previous)) this.stopRoom(previous, '已离开房间, 请手动启动', true)
     this.refresh()
   }
@@ -222,6 +259,7 @@ export class DouyuTaskManager {
       next.add(target)
     } else next.delete(target)
     if (!retain && this.currentRoom !== target) {
+      if (this.immediate?.type === 'operation' && this.immediate.context.rooms.includes(target)) this.cancelImmediate()
       const affected = [...this.tasks.values()].filter(task => task.definition.room === target)
       this.stopBeforeSave(affected, '房间任务已停止, 请手动启动')
       this.persistAfterStop(this.definitions(), next, affected)
@@ -235,7 +273,7 @@ export class DouyuTaskManager {
     this.ensureAlive()
     const target = readRoom(room)
     const affected = [...this.tasks.values()].filter(task => task.definition.room === target)
-    if (this.immediate?.input.room === target) this.cancelMessage()
+    if (this.immediate && this.immediateHasRoom(this.immediate, target)) this.cancelImmediate()
     this.stopBeforeSave(affected, '房间任务已停止, 请手动启动')
     if (this.retainedRooms.has(target)) {
       const next = new Set(this.retainedRooms)
@@ -261,7 +299,7 @@ export class DouyuTaskManager {
     if (this.disposed) return
     this.disposed = true
     this.clearWakeup()
-    this.cancelMessage()
+    this.cancelImmediate()
     for (const task of this.tasks.values()) this.stop(task, 'stopped', '应用已退出, 任务已停止')
     this.publish()
     this.listeners.clear()
@@ -313,7 +351,7 @@ export class DouyuTaskManager {
   }
 
   private pauseMatching(accountId: string, reason: string): void {
-    if (this.immediate?.input.accountId === accountId) this.cancelMessage()
+    if (this.immediate && this.immediateAccount(this.immediate) === accountId) this.cancelImmediate()
     for (const task of this.tasks.values()) {
       if (task.definition.accountId === accountId && armed(task)) this.stop(task, 'paused', reason)
     }
@@ -351,9 +389,27 @@ export class DouyuTaskManager {
       && this.runtime.foreground && !this.runtime.locked && !this.runtime.suspended
   }
 
-  private messageMayDispatch(message: ImmediateMessage): boolean {
-    return this.flight === message && this.immediate === message && !message.cancelled && !this.disposed
-      && !message.controller.signal.aborted && this.messageAllowed(message.input)
+  private operationAllowed(context: DouyuAccountOperationContext): boolean {
+    return context.accountId === this.activeAccountId && context.originRoom === this.currentRoom
+      && this.runtime.foreground && !this.runtime.locked && !this.runtime.suspended
+  }
+
+  private immediateAccount(immediate: Immediate): string {
+    return immediate.type === 'message' ? immediate.input.accountId : immediate.context.accountId
+  }
+
+  private immediateHasRoom(immediate: Immediate, room: string): boolean {
+    return immediate.type === 'message' ? immediate.input.room === room
+      : immediate.context.originRoom === room || immediate.context.rooms.includes(room)
+  }
+
+  private immediateAllowed(immediate: Immediate): boolean {
+    return immediate.type === 'message' ? this.messageAllowed(immediate.input) : this.operationAllowed(immediate.context)
+  }
+
+  private immediateMayDispatch(immediate: Immediate): boolean {
+    return this.flight === immediate && this.immediate === immediate && !immediate.cancelled && !this.disposed
+      && !immediate.controller.signal.aborted && this.immediateAllowed(immediate)
   }
 
   private resolveMessage(message: ImmediateMessage, outcome: DouyuMessageOutcome): void {
@@ -362,21 +418,29 @@ export class DouyuTaskManager {
     resolve?.(outcome)
   }
 
-  private cancelMessage(message: ImmediateMessage | null = this.immediate): void {
-    if (!message || message.cancelled) return
-    message.cancelled = true
-    this.resolveMessage(message, message.dispatched
+  private resolveOperation(operation: ImmediateOperation, outcome: DouyuAccountOperationOutcome<unknown>): void {
+    const resolve = operation.resolve
+    operation.resolve = null
+    operation.releaseAbort()
+    resolve?.(outcome)
+  }
+
+  private cancelImmediate(immediate: Immediate | null = this.immediate): void {
+    if (!immediate || immediate.cancelled) return
+    immediate.cancelled = true
+    if (immediate.type === 'message') this.resolveMessage(immediate, immediate.dispatched
       ? { status: 'waiting-user', message: '发送已取消, 请求可能已处理, 请核对结果后再手动发送', nextAllowedAt: null }
       : failedMessage('手动发送已取消, 未发送弹幕'))
-    message.controller.abort()
+    else this.resolveOperation(immediate, { status: 'cancelled', started: immediate.dispatched })
+    immediate.controller.abort()
     // A dispatched request keeps both the input limit and the execution lane until it settles.
-    if (this.flight !== message && this.immediate === message) this.immediate = null
+    if (this.flight !== immediate && this.immediate === immediate) this.immediate = null
   }
 
   private refresh(): void {
     if (this.disposed) return
     this.clearWakeup()
-    if (this.immediate && !this.messageAllowed(this.immediate.input)) this.cancelMessage()
+    if (this.immediate && !this.immediateAllowed(this.immediate)) this.cancelImmediate()
     if (this.flight?.type === 'task' && !this.flight.cancelled) {
       const reason = this.gate(this.flight.task)
       if (reason) this.stop(this.flight.task, 'paused', reason)
@@ -413,7 +477,7 @@ export class DouyuTaskManager {
   }
 
   private dispatch(flight: Flight): void {
-    if (flight.type === 'message') { this.dispatchMessage(flight); return }
+    if (flight.type !== 'task') { this.dispatchImmediate(flight); return }
     // A microtask lets synchronous lifecycle events cancel before any network dispatch.
     void Promise.resolve().then(() => {
       if (flight.cancelled || this.disposed) return null
@@ -474,29 +538,37 @@ export class DouyuTaskManager {
     this.queue.push(task.definition.id)
   }
 
-  private dispatchMessage(message: ImmediateMessage): void {
+  private dispatchImmediate(immediate: Immediate): void {
     void Promise.resolve().then(() => {
-      if (!this.messageMayDispatch(message)) { this.cancelMessage(message); return null }
+      if (!this.immediateMayDispatch(immediate)) { this.cancelImmediate(immediate); return null }
       this.publish()
       // Publication can synchronously switch accounts, close a room or stop all writes.
-      if (!this.messageMayDispatch(message)) { this.cancelMessage(message); return null }
+      if (!this.immediateMayDispatch(immediate)) { this.cancelImmediate(immediate); return null }
+      if (immediate.type === 'operation') {
+        const run = immediate.run
+        immediate.dispatched = true
+        return run(immediate.controller.signal)
+      }
       const send = this.options.sendMessage
       if (typeof send !== 'function') return null
-      message.dispatched = true
-      return send({ ...message.input }, message.controller.signal)
-    }).then(outcome => this.finishMessage(message, outcome), () => this.finishMessage(message, null))
+      immediate.dispatched = true
+      return send({ ...immediate.input }, immediate.controller.signal)
+    }).then(outcome => this.finishImmediate(immediate, outcome), () => this.finishImmediate(immediate, null, true))
   }
 
-  private finishMessage(message: ImmediateMessage, outcome: unknown): void {
-    if (this.flight !== message) return
-    if (!message.cancelled) {
-      const result = readMessageOutcome(outcome, this.now())
-      if (!this.messageMayDispatch(message)) this.cancelMessage(message)
-      else this.resolveMessage(message, result)
+  private finishImmediate(immediate: Immediate, outcome: unknown, failed = false): void {
+    if (this.flight !== immediate) return
+    if (!immediate.cancelled) {
+      if (immediate.type === 'message') {
+        const result = readMessageOutcome(outcome, this.now())
+        if (!this.immediateMayDispatch(immediate)) this.cancelImmediate(immediate)
+        else this.resolveMessage(immediate, result)
+      } else if (!this.immediateMayDispatch(immediate)) this.cancelImmediate(immediate)
+      else this.resolveOperation(immediate, failed ? { status: 'failed' } : { status: 'completed', value: outcome })
     }
     // Cancellation may have already resolved the caller, but never frees a live network request.
     this.flight = null
-    if (this.immediate === message) this.immediate = null
+    if (this.immediate === immediate) this.immediate = null
     this.refresh()
   }
 
@@ -595,6 +667,15 @@ function readMessageInput(raw: unknown): DouyuMessageInput {
     || UNSAFE_MESSAGE_TEXT.test(fields.text) || typeof fields.color !== 'number' || !Number.isInteger(fields.color)
     || fields.color < 0 || fields.color > 6) throw new DouyuTaskError('invalid-arguments')
   return { accountId: readId(fields.accountId), room: readRoom(fields.room), text: fields.text, color: fields.color }
+}
+
+function readOperationContext(raw: unknown): DouyuAccountOperationContext {
+  const fields = dataFields(raw, OPERATION_CONTEXT_KEYS)
+  const items = dataItems(fields?.rooms)
+  if (!fields || !items?.length) throw new DouyuTaskError('invalid-arguments')
+  const rooms = items.map(readRoom)
+  if (new Set(rooms).size !== rooms.length) throw new DouyuTaskError('invalid-arguments')
+  return { accountId: readId(fields.accountId), originRoom: fields.originRoom === null ? null : readRoom(fields.originRoom), rooms }
 }
 
 function readDefinition(raw: unknown): DouyuTaskDefinition {

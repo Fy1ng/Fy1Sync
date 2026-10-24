@@ -1,0 +1,99 @@
+.douyu-renewal-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  font-size: 12px;
+}
+
+.douyu-renewal-panel > summary {
+  padding: 7px 10px;
+  cursor: pointer;
+  color: var(--text-dim);
+}
+
+.douyu-renewal-body {
+  display: grid;
+  gap: 10px;
+  padding: 3px 10px 10px;
+  min-width: 0;
+}
+
+.douyu-renewal-body p,
+.douyu-renewal-body strong,
+.douyu-renewal-body span {
+  overflow-wrap: anywhere;
+}
+
+.douyu-renewal-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.douyu-renewal-error {
+  color: var(--warn);
+}
+
+.douyu-renewal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.douyu-renewal-panel button {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.douyu-renewal-targets {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+}
+
+.douyu-renewal-target-list {
+  display: grid;
+  gap: 6px;
+  max-height: 210px;
+  overflow-y: auto;
+}
+
+.douyu-renewal-target-list label {
+  display: flex;
+  align-items: start;
+  gap: 7px;
+}
+
+.douyu-renewal-target-list input {
+  flex: none;
+}
+
+.douyu-renewal-quantity {
+  display: grid;
+  gap: 4px;
+  max-width: 220px;
+}
+
+.douyu-renewal-plan,
+.douyu-renewal-result,
+.douyu-renewal-plan ul,
+.douyu-renewal-result ul {
+  display: grid;
+  gap: 8px;
+}
+
+.douyu-renewal-plan li,
+.douyu-renewal-result li {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+}
+
+.douyu-renewal-result li[data-state='unknown'] {
+  border-color: var(--warn);
+}

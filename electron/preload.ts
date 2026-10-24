@@ -7,6 +7,7 @@ import type { DouyuTasksSnapshot } from '../server/douyu/types'
 const methods = new Set<DesktopMethod>([
   'listDouyuAccounts', 'addDouyuAccount', 'renameDouyuAccount', 'loginDouyuAccount', 'loginDouyuYubaAccount', 'activateDouyuAccount', 'logoutDouyuAccount', 'removeDouyuAccount',
   'sendDouyuMessage',
+  'getDouyuRenewalTargets', 'previewDouyuRenewal', 'executeDouyuRenewal', 'cancelDouyuRenewal',
   'getDouyuTasks', 'createDouyuTask', 'setDouyuTaskPolicy', 'startDouyuTask', 'pauseDouyuTask', 'removeDouyuTask', 'retainDouyuTaskRoom', 'closeDouyuTaskRoom',
   'resolveDouyuRoom', 'health', 'verifyAdmin', 'resolve', 'listPresets', 'getPreset', 'savePreset', 'deletePreset',
   'switchQuality', 'stopBuffer', 'login', 'loginStatus', 'logout',

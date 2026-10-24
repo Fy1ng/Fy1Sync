@@ -5,6 +5,7 @@ import type {
 } from '../../server/douyu/types'
 import { readMessageSchedule } from '../../server/douyu/taskConfig'
 import { colorForIndex } from '../../server/danmaku/douyuProtocol'
+import { DouyuRenewalPanel } from './DouyuRenewalPanel'
 import './DouyuTools.css'
 
 const POLICY_LABELS: Record<DouyuTaskPolicy, string> = {
@@ -272,6 +273,9 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
     </details>
     {(accountPending || accountNotice) && <p role="status" className="hint">{accountPending || accountNotice}</p>}
     {accountError && <p role="alert" className="dialog-error">{accountError}</p>}
+
+    <DouyuRenewalPanel accountId={activeAccount?.id ?? null} accountLabel={activeAccount?.label ?? '未选择账号'}
+      disabled={accountLocked || !activeAccount?.login.loggedIn} />
 
     <details className="douyu-tools-details">
       <summary>房间任务 ({tasks?.tasks.length ?? 0})</summary>
