@@ -17,6 +17,7 @@ export interface DesktopMethods {
   renameDouyuAccount: { args: { id: string; label: string }; result: DouyuAccountsSnapshot }
   loginDouyuAccount: { args: { id: string }; result: DouyuAccountsSnapshot }
   loginDouyuYubaAccount: { args: { id: string }; result: DouyuAccountsSnapshot }
+  openDouyuTaskRoom: { args: { id: string }; result: DouyuAccountsSnapshot }
   sendDouyuMessage: { args: DouyuMessageInput; result: DouyuMessageOutcome }
   getDouyuRenewalTargets: { args: { accountId: string }; result: DouyuRenewalTargetPage }
   previewDouyuRenewal: { args: { accountId: string; rooms: string[]; quantity: number }; result: DouyuRenewalPlan }

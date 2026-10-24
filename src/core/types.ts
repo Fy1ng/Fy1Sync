@@ -31,6 +31,21 @@ export type MediaDescriptor = {
 
 export type PlatformId = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'direct' | 'file' | 'test'
 
+/** Public sender facts received from Douyu. Local cosmetics never write these fields. */
+export interface DouyuSenderMetadata {
+  uid?: string
+  level?: number
+  nobleLevel?: number
+}
+
+/** One real dgb event. Gift and backpack prop ids belong to separate namespaces. */
+export interface DouyuGiftMetadata {
+  kind: 'gift' | 'prop'
+  id: string
+  /** The event's gfcnt, never multiplied by cumulative hits or batch counters. */
+  count: number
+}
+
 /** Whether a media element behaves as a fixed recording or a moving live edge. */
 export type Timebase =
   | { kind: 'vod'; duration: number }

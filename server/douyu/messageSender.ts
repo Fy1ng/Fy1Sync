@@ -6,7 +6,7 @@ import { dnsResolver, isPrivateAddress, safeFetch } from '../safeFetch'
 import { validDouyuRoom } from '../platforms/douyuRoom'
 import type { DouyuActionDependencies } from './actions'
 import { abortable, cancelBody, cancelled, MAX_TIMEOUT_MS, readPayload } from './actionHttp'
-import type { DouyuMessageInput, DouyuMessageOutcome, DouyuTaskOutcome } from './types'
+import type { DouyuMessageInput, DouyuMessageOutcome, DouyuTerminalOutcome as DouyuTaskOutcome } from './types'
 import {
   encodeMessageFrame, gatewayAddress, MAX_BUFFER_BYTES, MAX_COOLDOWN_MS, MAX_TOTAL_BYTES,
   MessageFrameDecoder, MessageProtocolError, messageChallenge, messageColorPalette, messageCredentials,

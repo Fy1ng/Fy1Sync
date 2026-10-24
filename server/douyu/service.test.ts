@@ -66,6 +66,73 @@ const input = { accountId: 'default', roomInput: '6657', kind: 'room-sign', poli
 const messageInput: DouyuMessageInput = { accountId: 'default', room: '6979222', text: '加油 @A/原文', color: 0 }
 const schedule = { text: '定时提醒', colors: [0, 2], intervalSeconds: 60, initialDelaySeconds: 0, maxRuns: 1 }
 
+it.each(['auto-fish', 'gift-packet', 'treasure-box'])('creates an isolated %s task through IPC and refuses calendar overrides', async kind => {
+  const f = fixture()
+  expect(await f.service.invoke('createDouyuTask', { ...input, kind, repeatMinutes: 1440 }))
+    .toMatchObject({ ok: false, code: 'invalid-arguments' })
+  expect(f.resolveRoom).not.toHaveBeenCalled()
+  expect(await f.service.invoke('createDouyuTask', { ...input, kind }))
+    .toMatchObject({ ok: true, value: { tasks: [{ kind, room: '6979222', status: 'paused', repeatMinutes: null }] } })
+  expect(f.run).not.toHaveBeenCalled()
+})
+
+it('opens the activity task room in the selected profile, pauses account work and never auto-resumes it', async () => {
+  const f = fixture()
+  await f.accounts.login('default')
+  await f.service.invoke('createDouyuTask', { ...input, kind: 'treasure-box' })
+  const task = f.tasks.snapshot().tasks[0]!
+  let finish!: (outcome: DouyuTaskOutcome) => void
+  f.run.mockImplementationOnce((_task, signal) => new Promise(resolve => {
+    finish = resolve
+    signal.addEventListener('abort', () => {}, { once: true })
+  }))
+  await f.service.invoke('startDouyuTask', { id: task.id })
+  await Promise.resolve()
+  f.defaultLogin.login.mockClear()
+  expect(await f.service.invoke('openDouyuTaskRoom', { id: task.id, room: '100' }))
+    .toMatchObject({ ok: false, code: 'invalid-arguments' })
+  expect(f.defaultLogin.login).not.toHaveBeenCalled()
+  expect(await f.service.invoke('openDouyuTaskRoom', { id: task.id })).toMatchObject({ ok: true })
+  expect(f.defaultLogin.login).toHaveBeenCalledExactlyOnceWith('douyu', 'room:6979222')
+  expect(f.tasks.snapshot().tasks[0]).toMatchObject({ status: 'paused', nextRunAt: null })
+  finish({ status: 'scheduled', message: 'stale activity state', nextRunAt: Date.now() + 60_000 })
+  await Promise.resolve(); await Promise.resolve()
+  expect(f.tasks.snapshot().tasks[0]).toMatchObject({ status: 'paused', nextRunAt: null })
+})
+
+it('refuses opening absent, non-activity or inactive-account task rooms', async () => {
+  const f = fixture()
+  expect(await f.service.invoke('openDouyuTaskRoom', { id: 'missing' })).toMatchObject({ ok: false, code: 'task-not-found' })
+  await f.service.invoke('createDouyuTask', input)
+  const sign = f.tasks.snapshot().tasks[0]!
+  expect(await f.service.invoke('openDouyuTaskRoom', { id: sign.id })).toMatchObject({ ok: false, code: 'task-not-found' })
+  await f.accounts.add('另一账号')
+  await f.service.invoke('createDouyuTask', { ...input, accountId, kind: 'gift-packet' })
+  const packet = f.tasks.snapshot().tasks[1]!
+  expect(await f.service.invoke('openDouyuTaskRoom', { id: packet.id })).toMatchObject({ ok: false, code: 'no-active-account' })
+  expect(f.defaultLogin.login).not.toHaveBeenCalled()
+})
+
+it('marks a waiting activity paused while handing it to the official room', async () => {
+  const f = fixture()
+  await f.accounts.login('default')
+  await f.service.invoke('createDouyuTask', { ...input, kind: 'treasure-box' })
+  const id = f.tasks.snapshot().tasks[0]!.id
+  f.run.mockResolvedValue({ status: 'waiting-user', message: '需要人工验证' })
+  await f.service.invoke('startDouyuTask', { id })
+  await vi.waitFor(() => expect(f.tasks.snapshot().tasks[0]!.status).toBe('waiting-user'))
+  await f.service.invoke('openDouyuTaskRoom', { id })
+  expect(f.tasks.snapshot().tasks[0]).toMatchObject({ status: 'paused', nextRunAt: null })
+  expect(f.run).toHaveBeenCalledTimes(1)
+})
+
+it('uses the fixed official fishing page for a fishing task', async () => {
+  const f = fixture()
+  await f.service.invoke('createDouyuTask', { ...input, kind: 'auto-fish' })
+  await f.service.invoke('openDouyuTaskRoom', { id: f.tasks.snapshot().tasks[0]!.id })
+  expect(f.defaultLogin.login).toHaveBeenCalledExactlyOnceWith('douyu', 'fish-act:6979222')
+})
+
 it('requires login, previews without donating, and accepts only the one-use plan identifier for confirmation', async () => {
   const f = fixture()
   expect(await f.service.invoke('getDouyuRenewalTargets', { accountId: 'default' })).toMatchObject({ ok: false, code: 'login-required' })

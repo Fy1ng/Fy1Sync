@@ -17,6 +17,7 @@ import {
   LOGIN_REQUEST,
   parseStt,
   toChatMessage,
+  toGiftMessage,
   type ChatMessage,
 } from './douyuProtocol'
 
@@ -25,6 +26,8 @@ const KEEPALIVE_INTERVAL_MS = 40_000
 /** Exponential backoff, capped so a dead room does not hammer the endpoint. */
 const RECONNECT_BASE_MS = 1_000
 const RECONNECT_MAX_MS = 30_000
+/** Gift visuals cannot use up the chat timeline during a donation burst. */
+export const MAX_GIFT_MESSAGES_PER_SECOND = 12
 
 export type DanmakuState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed'
 
@@ -57,6 +60,8 @@ export class DouyuDanmakuClient {
   private attempts = 0
   private stateValue: DanmakuState = 'idle'
   private closedByUser = false
+  private giftWindowStart = Number.NEGATIVE_INFINITY
+  private giftsInWindow = 0
   private readonly createSocket: (url: string) => WebSocketLike
   private readonly now: () => number
   private readonly setTimer: (fn: () => void, ms: number) => unknown
@@ -137,8 +142,22 @@ export class DouyuDanmakuClient {
     const { payloads, rest } = decodeFrames(this.buffer)
     this.buffer = rest
     for (const payload of payloads) {
-      const message = toChatMessage(parseStt(payload), this.room, this.now())
-      if (message) this.events.onMessage(message)
+      const parsed = parseStt(payload)
+      const now = this.now()
+      const chat = toChatMessage(parsed, this.room, now)
+      if (chat) {
+        this.events.onMessage(chat)
+        continue
+      }
+      const gift = toGiftMessage(parsed, this.room, now)
+      if (!gift) continue
+      if (now < this.giftWindowStart || now - this.giftWindowStart >= 1_000) {
+        this.giftWindowStart = now
+        this.giftsInWindow = 0
+      }
+      if (this.giftsInWindow >= MAX_GIFT_MESSAGES_PER_SECOND) continue
+      this.giftsInWindow += 1
+      this.events.onMessage(gift)
     }
   }
 
@@ -187,6 +206,8 @@ export class DouyuDanmakuClient {
     const socket = this.socket
     this.socket = null
     this.buffer = Buffer.alloc(0)
+    this.giftWindowStart = Number.NEGATIVE_INFINITY
+    this.giftsInWindow = 0
     try {
       socket?.close()
     } catch {

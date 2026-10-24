@@ -15,7 +15,11 @@ export interface DouyuAccountsSnapshot {
 
 export const DOUYU_TASK_POLICIES = ['foreground', 'background-unlocked', 'background-locked'] as const
 export type DouyuTaskPolicy = typeof DOUYU_TASK_POLICIES[number]
-export const DOUYU_TASK_KINDS = ['room-sign', 'yuba-sign', 'message-loop'] as const
+export const DOUYU_ACTIVITY_KINDS = ['auto-fish', 'gift-packet', 'treasure-box'] as const
+export type DouyuActivityKind = typeof DOUYU_ACTIVITY_KINDS[number]
+export const isDouyuActivityKind = (kind: unknown): kind is DouyuActivityKind =>
+  typeof kind === 'string' && (DOUYU_ACTIVITY_KINDS as readonly string[]).includes(kind)
+export const DOUYU_TASK_KINDS = ['room-sign', 'yuba-sign', 'message-loop', ...DOUYU_ACTIVITY_KINDS] as const
 export type DouyuTaskKind = typeof DOUYU_TASK_KINDS[number]
 
 export interface DouyuMessageSchedule {
@@ -34,7 +38,7 @@ export interface DouyuTaskDefinition {
   room: string
   kind: DouyuTaskKind
   policy: DouyuTaskPolicy
-  /** Null runs once; recurring work is armed only by an explicit start. */
+  /** Calendar repeat for check-ins. Activity adapters own their waits and use null. */
   repeatMinutes: number | null
   createdAt: number
   /** Required only for message-loop; all other task kinds must omit it. */
@@ -71,10 +75,14 @@ export interface DouyuTaskStorage {
   retainedRooms: string[]
 }
 
-export type DouyuTaskOutcome =
+export type DouyuTerminalOutcome =
   | { status: 'succeeded'; message: string }
   | { status: 'waiting-user'; message: string }
   | { status: 'failed'; message: string }
+
+/** Only activity adapters may schedule a fresh read after a known wait. */
+export type DouyuTaskOutcome = DouyuTerminalOutcome
+  | { status: 'scheduled'; message: string; nextRunAt: number }
 
 export type CreateDouyuTask = Omit<DouyuTaskDefinition, 'id' | 'createdAt'>
 
@@ -86,7 +94,7 @@ export interface DouyuMessageInput {
   color: number
 }
 
-export type DouyuMessageOutcome = DouyuTaskOutcome & {
+export type DouyuMessageOutcome = DouyuTerminalOutcome & {
   /** Absolute deadline in milliseconds, if the gateway reports a cooldown. */
   nextAllowedAt: number | null
   /** Proven not sent, waiting only for a known cooldown. Never set after dispatch. */

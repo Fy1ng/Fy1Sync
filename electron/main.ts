@@ -32,6 +32,7 @@ import { DouyuBackpackGateway } from '../server/douyu/backpackGateway'
 import { DouyuRenewalService } from '../server/douyu/renewalService'
 import type { DouyuBackpackDonation } from '../server/douyu/renewalTypes'
 import type { DouyuMessageInput, DouyuRuntimeState, DouyuTaskStorage } from '../server/douyu/types'
+import { isDouyuActivityKind } from '../server/douyu/types'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: {
   standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true,
@@ -71,6 +72,9 @@ async function start(): Promise<void> {
   let douyuToolsFixture = false
   const douyuSentFixture: DouyuMessageInput[] = []
   let douyuSendFixtureOutcome: 'succeeded' | 'waiting-user' = 'succeeded'
+  let activityFixtureOutcome: 'scheduled' | 'waiting-user' | 'succeeded' = 'scheduled'
+  const activityRunsFixture: Array<{ accountId: string; room: string; kind: string }> = []
+  const officialRoomFixture: string[] = []
   let renewalFixture: { stock: number; outcome: 'receipt-received' | 'unknown' } | null = null
   const renewalDonationsFixture: Array<Omit<DouyuBackpackDonation, 'expectedUid'>> = []
   const browserLogin = new ChromeLoginDriver()
@@ -79,6 +83,7 @@ async function start(): Promise<void> {
     driver: { async login(executable, profile, platform, signal, destination) {
       if (!app.isPackaged && offlineE2e && douyuToolsFixture && platform === 'douyu') {
         if (signal.aborted) throw new Error('Fixture login cancelled')
+        if (destination?.startsWith('room:') || destination?.startsWith('fish-act:')) officialRoomFixture.push(destination)
         return ['acf_uid', 'acf_biz', 'acf_stk', 'acf_ct', 'acf_ltkid'].map((name, index) => ({
           domain: '.douyu.com', path: '/', secure: true, session: true, name, value: String(index + 1),
         }))
@@ -114,9 +119,19 @@ async function start(): Promise<void> {
       douyuMessageSender = new DouyuMessageSender({ proxy, cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url) })
       douyuTasks = new DouyuTaskManager({
         load: () => taskStore.load(), save: value => taskStore.save(value),
-        run: (task, signal) => !app.isPackaged && offlineE2e && douyuToolsFixture
-          ? Promise.resolve({ status: 'succeeded', message: task.kind === 'yuba-sign' ? '离线鱼吧签到测试完成' : '离线签到测试完成' })
-          : actions.run(task, signal),
+        run: async (task, signal) => {
+          if (!app.isPackaged && offlineE2e && douyuToolsFixture) {
+            if (signal.aborted) throw new DOMException('Fixture activity cancelled', 'AbortError')
+            if (isDouyuActivityKind(task.kind)) {
+              if (activityRunsFixture.length >= 128) throw new Error('Fixture activity limit reached')
+              activityRunsFixture.push({ accountId: task.accountId, room: task.room, kind: task.kind })
+              if (activityFixtureOutcome === 'scheduled') return { status: 'scheduled', message: '离线活动状态: 等待官方时间', nextRunAt: Date.now() + 60_000 }
+              return { status: activityFixtureOutcome, message: activityFixtureOutcome === 'waiting-user' ? '离线活动状态: 请完成人工验证' : '离线活动测试完成' }
+            }
+            return { status: 'succeeded', message: task.kind === 'yuba-sign' ? '离线鱼吧签到测试完成' : '离线签到测试完成' }
+          }
+          return actions.run(task, signal)
+        },
         sendMessage: async (input, signal) => {
           if (!app.isPackaged && offlineE2e && douyuToolsFixture) {
             if (signal.aborted) throw new DOMException('Fixture send cancelled', 'AbortError')
@@ -333,6 +348,12 @@ async function start(): Promise<void> {
     ...(!app.isPackaged ? { setDouyuToolsFixture() {
       if (!offlineE2e) throw new Error('Douyu tools fixture is offline-only')
       douyuToolsFixture = true
+    }, setDouyuActivityFixtureOutcome(outcome: 'scheduled' | 'waiting-user' | 'succeeded') {
+      if (!offlineE2e || !douyuToolsFixture || !['scheduled', 'waiting-user', 'succeeded'].includes(outcome)) throw new Error('Invalid activity fixture')
+      activityFixtureOutcome = outcome
+    }, getDouyuActivitiesFixture() {
+      if (!offlineE2e || !douyuToolsFixture) throw new Error('Activity fixture unavailable')
+      return { attempts: activityRunsFixture.map(item => ({ ...item })), rooms: [...officialRoomFixture] }
     }, setDouyuRenewalFixture(stock: number, outcome: 'receipt-received' | 'unknown' = 'receipt-received') {
       if (!offlineE2e || !douyuToolsFixture || !Number.isSafeInteger(stock) || stock < 0 || stock > 1000 || !['receipt-received', 'unknown'].includes(outcome)) throw new Error('Invalid renewal fixture')
       renewalFixture = { stock, outcome }

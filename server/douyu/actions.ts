@@ -5,6 +5,8 @@ import { safeFetch, type Resolver } from '../safeFetch'
 import type { DouyuTaskDefinition, DouyuTaskOutcome } from './types'
 import { abortable, cancelBody, cancelled, readPayload, record, MAX_TIMEOUT_MS } from './actionHttp'
 import { DouyuYubaActions } from './yubaActions'
+import { DouyuFishingActions } from './fishingActions'
+import { DouyuRewardActions } from './rewardActions'
 
 const COOKIE_SCOPE = 'https://www.douyu.com/'
 const CHECK_IN_URL = 'https://apiv2.douyucdn.cn/japi/roomuserlevel/apinc/checkIn?client_sys=android'
@@ -67,11 +69,19 @@ function classifyResponse(status: number, payload: unknown): DouyuTaskOutcome {
 }
 
 export class DouyuActions {
-  constructor(private readonly deps: DouyuActionDependencies) {}
+  private readonly fishing: DouyuFishingActions
+  private readonly rewards: DouyuRewardActions
+
+  constructor(private readonly deps: DouyuActionDependencies) {
+    this.fishing = new DouyuFishingActions(deps)
+    this.rewards = new DouyuRewardActions(deps)
+  }
 
   /** task.room must already be the canonical room resolved by the main process. */
   async run(task: DouyuTaskDefinition, signal: AbortSignal): Promise<DouyuTaskOutcome> {
     if (signal.aborted) throw cancelled()
+    if (task.kind === 'auto-fish') return this.fishing.run(task, signal)
+    if (task.kind === 'gift-packet' || task.kind === 'treasure-box') return this.rewards.run(task, signal)
     if (task.kind === 'yuba-sign') return new DouyuYubaActions(this.deps).run(task, signal)
     if (task.kind !== 'room-sign') return failed('该斗鱼任务类型尚未接入.')
     if (!validDouyuRoom(task.room)) return failed('斗鱼真实房间号无效, 请重新确认房间.')

@@ -15,6 +15,15 @@
  * unescaping must happen exactly once per nesting level.
  */
 
+import {
+  douyuGiftLabel,
+  MAX_DOUYU_GIFT_COUNT,
+  normalizeDouyuGift,
+  normalizeDouyuSender,
+  normalizeDouyuUid,
+} from '../../src/core/douyuLocalEffects'
+import type { DouyuGiftMetadata, DouyuSenderMetadata } from '../../src/core/types'
+
 export const CLIENT_MESSAGE_TYPE = 689
 export const SERVER_MESSAGE_TYPE = 690
 
@@ -110,6 +119,9 @@ export type ChatMessage = {
   room: string
   /** True for gift/system notices rather than user chat. */
   system: boolean
+  sender?: DouyuSenderMetadata
+  /** Only actual dgb traffic has this field. */
+  gift?: DouyuGiftMetadata
 }
 
 const COLOR_MAP: Record<string, string> = {
@@ -135,6 +147,7 @@ export function toChatMessage(
   if (message.type !== 'chatmsg') return null
   const text = message.txt?.trim()
   if (!text) return null
+  const sender = senderForMessage(message)
   return {
     id: message.cid || message.cet || `${now}-${Math.random().toString(36).slice(2, 8)}`,
     text,
@@ -144,5 +157,55 @@ export function toChatMessage(
     receivedAt: now,
     room,
     system: false,
+    ...(sender ? { sender } : {}),
+  }
+}
+
+function decimal(value: string | undefined, maximum: number): number | undefined {
+  if (value === undefined || !/^(0|[1-9][0-9]{0,11})$/.test(value)) return undefined
+  const number = Number(value)
+  return Number.isSafeInteger(number) && number <= maximum ? number : undefined
+}
+
+function senderForMessage(message: DanmakuMessage): DouyuSenderMetadata | undefined {
+  return normalizeDouyuSender({
+    uid: message.uid,
+    level: decimal(message.level, 1_000),
+    nobleLevel: decimal(message.nl, 1_000),
+  })
+}
+
+/**
+ * Public dgb schema confirmed in Douyu common_17eee4a.js SendGiftServices.listenGiftMsg:
+ * gfid/gfcnt/uid/nn, and gpf=1 selects pid rather than gfid. The source's combo flow
+ * defaults absent gfcnt to one. hits/bcnt are cumulative metadata, not extra gifts.
+ * https://shark2.douyucdn.cn/front-publish/live-next-master/js/room/common_17eee4a.js
+ * Unknown notice types and nested/batch gift protocols are deliberately not reinterpreted.
+ */
+export function toGiftMessage(message: DanmakuMessage, room: string, now: number): ChatMessage | null {
+  if (message.type !== 'dgb' || !normalizeDouyuUid(room)) return null
+  if (message.rid !== undefined && message.rid !== room) return null
+  const flag = message.gpf ?? '0'
+  if (flag !== '0' && flag !== '1') return null
+  const gift = normalizeDouyuGift({
+    kind: flag === '1' ? 'prop' : 'gift',
+    id: flag === '1' ? message.pid : message.gfid,
+    count: message.gfcnt === undefined ? 1 : decimal(message.gfcnt, MAX_DOUYU_GIFT_COUNT),
+  })
+  if (!gift) return null
+  const sender = senderForMessage(message)
+  // One bounded label is rendered per event. No remote HTML, images or extra fields pass through.
+  const username = (message.nn ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, 64) || '匿名'
+  return {
+    id: `gift-${now}-${Math.random().toString(36).slice(2, 8)}`,
+    text: `${douyuGiftLabel(gift)} x ${gift.count}`,
+    username,
+    color: 0,
+    level: sender?.level ?? 0,
+    receivedAt: now,
+    room,
+    system: true,
+    ...(sender ? { sender } : {}),
+    gift,
   }
 }

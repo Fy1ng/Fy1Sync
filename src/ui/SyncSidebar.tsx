@@ -139,7 +139,7 @@ export function SyncSidebar(): React.ReactNode {
 
       <AutoSyncSection />
 
-      {(snapshot.danmaku.connected || snapshot.danmaku.room) && <ChatList connected={snapshot.danmaku.connected} room={snapshot.danmaku.room} />}
+      {(snapshot.danmaku.connected || snapshot.danmaku.room) && <ChatList connected={snapshot.danmaku.connected} room={snapshot.danmaku.room} localIdentity={settings.danmaku} />}
     </aside>
   )
 }

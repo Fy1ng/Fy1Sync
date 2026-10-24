@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { DOUYU_TASK_KINDS, DOUYU_TASK_POLICIES } from '../server/douyu/types'
+import { DOUYU_TASK_KINDS, DOUYU_TASK_POLICIES, isDouyuActivityKind } from '../server/douyu/types'
 import { readMessageSchedule } from '../server/douyu/taskConfig'
 import type {
   CreateDouyuTask, DouyuAccountOperationContext, DouyuAccountOperationOutcome,
   DouyuMessageInput, DouyuMessageOutcome, DouyuRuntimeState, DouyuTaskDefinition, DouyuTaskOutcome,
-  DouyuTaskKind, DouyuTaskPolicy, DouyuTaskStorage, DouyuTasksSnapshot, DouyuTaskView,
+  DouyuTaskKind, DouyuTaskPolicy, DouyuTaskStorage, DouyuTasksSnapshot, DouyuTaskView, DouyuTerminalOutcome,
 } from '../server/douyu/types'
 
 export type DouyuTaskErrorCode = 'invalid-arguments' | 'task-not-found' | 'task-limit'
@@ -504,15 +504,21 @@ export class DouyuTaskManager {
     if (!this.disposed && !flight.cancelled && this.tasks.get(flight.task.definition.id) === flight.task) {
       const task = flight.task
       const now = this.now()
-      const result = task.definition.kind === 'message-loop' ? readMessageOutcome(outcome, now) : readOutcome(outcome)
+      const result = task.definition.kind === 'message-loop' ? readMessageOutcome(outcome, now)
+        : readOutcome(outcome, isDouyuActivityKind(task.definition.kind), now)
       if (!this.disposed && !flight.cancelled && this.tasks.get(task.definition.id) === task) {
-        task.status = result.status
-        task.reason = result.status === 'succeeded' ? null : result.message
         task.lastResult = result.message
         task.nextRunAt = null
-        if (task.definition.kind === 'message-loop') this.finishMessageTask(task, result as DouyuMessageOutcome, now)
-        else if (result.status === 'succeeded' && task.definition.repeatMinutes !== null) {
-          this.enqueueAt(task, now + task.definition.repeatMinutes * 60_000)
+        if (result.status === 'scheduled') {
+          task.reason = null
+          this.enqueueAt(task, result.nextRunAt)
+        } else {
+          task.status = result.status
+          task.reason = result.status === 'succeeded' ? null : result.message
+          if (task.definition.kind === 'message-loop') this.finishMessageTask(task, result as DouyuMessageOutcome, now)
+          else if (result.status === 'succeeded' && task.definition.repeatMinutes !== null) {
+            this.enqueueAt(task, now + task.definition.repeatMinutes * 60_000)
+          }
         }
       }
     }
@@ -658,6 +664,7 @@ function readInput(raw: unknown): CreateDouyuTask {
     return { ...values, message }
   }
   if (Object.hasOwn(fields, 'message')) throw new DouyuTaskError('invalid-arguments')
+  if (isDouyuActivityKind(fields.kind) && fields.repeatMinutes !== null) throw new DouyuTaskError('invalid-arguments')
   return values
 }
 
@@ -724,12 +731,21 @@ function readReason(raw: string | undefined, fallback: string): string {
   return raw.trim()
 }
 
-function readOutcome(raw: unknown): DouyuTaskOutcome {
+function readOutcome(raw: unknown, activity: boolean, now: number): DouyuTaskOutcome {
+  if (activity) {
+    const scheduled = dataFields(raw, ['status', 'message', 'nextRunAt'])
+    if (scheduled?.status === 'scheduled' && typeof scheduled.message === 'string' && scheduled.message.trim()
+      && scheduled.message.length <= 240 && !UNSAFE_MESSAGE_TEXT.test(scheduled.message)
+      && safeTimestamp(scheduled.nextRunAt) && scheduled.nextRunAt > now && scheduled.nextRunAt <= now + 86_400_000) {
+      // Prevent a busy poll loop even when the server deadline passes during a read.
+      return { status: 'scheduled', message: scheduled.message.trim(), nextRunAt: Math.max(now + 5_000, scheduled.nextRunAt) }
+    }
+  }
   const fields = dataFields(raw, ['status', 'message'])
   if (!fields || !['succeeded', 'waiting-user', 'failed'].includes(fields.status as string)
     || typeof fields.message !== 'string' || !fields.message.trim() || fields.message.length > 240
     || /[\x00-\x1f\x7f]/.test(fields.message)) return { status: 'failed', message: FAILURE }
-  return { status: fields.status as DouyuTaskOutcome['status'], message: fields.message.trim() }
+  return { status: fields.status as DouyuTerminalOutcome['status'], message: fields.message.trim() }
 }
 
 function failedMessage(message = MESSAGE_FAILURE): DouyuMessageOutcome {

@@ -33,6 +33,7 @@ import type { AppSettings } from './settings'
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from './settings'
 import type { BufferState } from '../../electron/bufferManager'
 import { colorForIndex, type ChatMessage } from '../../server/danmaku/douyuProtocol'
+import { normalizeDouyuGift, normalizeDouyuSender } from '../core/douyuLocalEffects'
 
 /** Released danmaku kept for the chat list. */
 export const CHAT_HISTORY_LIMIT = 2000
@@ -907,12 +908,19 @@ export class Session {
   }
 
   /** Park one relayed message. Public so tests and the mock generator can feed it. */
-  pushDanmaku(message: Pick<DanmakuMessage, 'text' | 'user' | 'color'>): void {
-    if (this.filter.reject(message)) return
+  pushDanmaku(message: Pick<DanmakuMessage, 'text' | 'user' | 'color' | 'sender' | 'gift'>): void {
+    const sender = normalizeDouyuSender(message.sender)
+    const gift = normalizeDouyuGift(message.gift)
+    if (message.gift !== undefined && !gift) return
+    if (gift) {
+      // Gift notices keep media-time alignment and user blocking, but are not chat text.
+      const user = message.user.trim().toLowerCase()
+      if (this.settingsValue.danmaku.filter.blockedUsers.some(blocked => blocked.trim().toLowerCase() === user)) return
+    } else if (this.filter.reject(message)) return
     const density = this.settingsValue.danmaku.density
     // Sampling on arrival, not on render: a dropped message never occupies a lane, so
     // density behaves as a real load control rather than a visual one.
-    if (density < 1 && Math.random() > density) return
+    if (!gift && density < 1 && Math.random() > density) return
     const snapshot = this.engine.snapshot('commentary')
     const scheduleTime = snapshot
       ? scheduleTimeFor(snapshot)
@@ -922,6 +930,8 @@ export class Session {
       text: message.text,
       user: message.user,
       color: message.color,
+      ...(sender ? { sender } : {}),
+      ...(gift ? { gift } : {}),
       scheduleTime,
       receivedAt: this.now(),
     })
@@ -931,10 +941,15 @@ export class Session {
     if (!data || typeof data !== 'object') return
     const payload = data as Partial<ChatMessage>
     if (typeof payload.text !== 'string' || payload.text.length === 0) return
+    const gift = normalizeDouyuGift(payload.gift)
+    if ((payload.system === true || payload.gift !== undefined) && !gift) return
+    const sender = normalizeDouyuSender(payload.sender)
     this.pushDanmaku({
       text: payload.text,
       user: typeof payload.username === 'string' ? payload.username.trim() || '匿名' : '匿名',
       color: colorForIndex(typeof payload.color === 'number' ? payload.color : 0),
+      ...(sender ? { sender } : {}),
+      ...(gift ? { gift } : {}),
     })
   }
 

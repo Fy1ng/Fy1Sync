@@ -23,6 +23,21 @@ describe('DanmakuTimeline', () => {
     expect(timeline.advance(12).map((m) => m.id)).toEqual(['b'])
   })
 
+  it('releases real gift and sender facts at the same delayed media time without rewriting them', () => {
+    const timeline = new DanmakuTimeline()
+    const gift: DanmakuMessage = Object.freeze({
+      ...message('gift', 100), text: '粉丝荧光棒 x 2',
+      sender: Object.freeze({ uid: '42', level: 28, nobleLevel: 3 }),
+      gift: Object.freeze({ kind: 'prop', id: '268', count: 2 }),
+    })
+    timeline.push(gift)
+    expect(timeline.advance(95)).toEqual([])
+    expect(timeline.advance(100)).toEqual([gift])
+    expect(gift.sender?.nobleLevel).toBe(3)
+    expect(gift.gift).toEqual({ kind: 'prop', id: '268', count: 2 })
+    expect(timeline.advance(101)).toEqual([])
+  })
+
   it('keeps the queue ordered regardless of arrival order', () => {
     const timeline = new DanmakuTimeline({ maxLagSeconds: 60 })
     timeline.push(message('late', 30))

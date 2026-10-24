@@ -193,6 +193,14 @@ export class DouyuAccountManager {
     return this.snapshot()
   }
 
+  async openRoom(id: string, room: string, page: 'room' | 'fish-act' = 'room'): Promise<DouyuAccountsSnapshot> {
+    if (typeof room !== 'string' || !/^[1-9][0-9]{0,11}$/.test(room)) throw new DouyuAccountError('invalid-arguments')
+    if (page !== 'room' && page !== 'fish-act') throw new DouyuAccountError('invalid-arguments')
+    if (this.activeAccountId !== id) throw new DouyuAccountError('no-active-account')
+    await this.credentialOperation(id, manager => manager.login('douyu', `${page}:${room}`))
+    return this.snapshot()
+  }
+
   async logout(id: string): Promise<DouyuAccountsSnapshot> {
     await this.credentialOperation(id, manager => manager.logout('douyu'))
     return this.snapshot()

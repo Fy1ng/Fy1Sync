@@ -4,6 +4,7 @@ import type {
   DouyuAccountsSnapshot, DouyuAccountSummary, DouyuMessageSchedule, DouyuTaskKind, DouyuTaskPolicy, DouyuTasksSnapshot, DouyuTaskView,
 } from '../../server/douyu/types'
 import { readMessageSchedule } from '../../server/douyu/taskConfig'
+import { isDouyuActivityKind } from '../../server/douyu/types'
 import { colorForIndex } from '../../server/danmaku/douyuProtocol'
 import { DouyuRenewalPanel } from './DouyuRenewalPanel'
 import './DouyuTools.css'
@@ -17,11 +18,20 @@ const STATUS_LABELS: Record<DouyuTaskView['status'], string> = {
   paused: '已暂停', queued: '等待执行', running: '执行中', 'waiting-user': '等待手动处理',
   succeeded: '已完成', failed: '失败', stopped: '已停止',
 }
-const TASK_LABELS: Record<DouyuTaskKind, string> = { 'room-sign': '直播间签到', 'yuba-sign': '鱼吧签到', 'message-loop': '弹幕发送' }
+const TASK_LABELS: Record<DouyuTaskKind, string> = {
+  'room-sign': '直播间签到', 'yuba-sign': '鱼吧签到', 'message-loop': '弹幕发送',
+  'auto-fish': '自动钓鱼', 'gift-packet': '礼物红包', 'treasure-box': '半自动宝箱',
+}
+const ACTIVITY_HINTS = {
+  'auto-fish': '按官方状态和等待时间执行钓鱼, 仅使用现有免费机会. 需要验证或结果未知时停止.',
+  'gift-packet': '检查当前房间的礼物红包, 满足官方资格后参与. 红包礼物按平台规则到期自动赠给当前主播. 需要额外操作或验证时交给你处理.',
+  'treasure-box': '检查官方宝箱状态和领取时间. 需要验证时暂停, 请打开官方房间手动完成, 关闭窗口后再启动任务.',
+}
 const COLOR_LABELS = ['普通', '红色', '蓝色', '绿色', '橙色', '紫色', '粉色']
 const numericValue = (value: number): number | '' => Number.isFinite(value) ? value : ''
 
 function taskScheduleLabel(task: DouyuTaskView): string {
+  if (isDouyuActivityKind(task.kind)) return '按官方活动时间'
   if (task.kind === 'message-loop' && task.message) {
     return task.message.maxRuns === 1 ? '发送 1 次' : `每 ${task.message.intervalSeconds} 秒 / ${task.message.maxRuns === null ? '持续发送' : `共 ${task.message.maxRuns} 次`}`
   }
@@ -122,6 +132,7 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
     ? chosenAccountId : activeAccount?.id ?? allAccounts[0]?.id ?? ''
   const taskRoom = roomInput ?? defaultRoom ?? tasks?.currentRoom ?? ''
   const messageTask = kind === 'message-loop'
+  const activityTask = isDouyuActivityKind(kind)
   const messageSchedule = readMessageSchedule(messageDraft)
   const rooms = [...new Set([
     ...(tasks?.currentRoom ? [tasks.currentRoom] : []),
@@ -283,17 +294,19 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
         <p className="hint">新建任务默认为暂停, 点击启动后才会执行. 应用退出后任务停止, 重新打开应用后需手动启动.</p>
         {messageTask
           ? <p className="hint">发送内容随任务配置保存在本机. 每次启动从第 1 次重新计数, 仅在确认成功后继续. 需要验证或结果未知时停止, 不自动重发.</p>
+          : isDouyuActivityKind(kind)
+          ? <p className="hint">{ACTIVITY_HINTS[kind]}</p>
           : kind === 'room-sign'
           ? <p className="hint">直播间签到仍需到官方房间核对结果, 暂不会自动重复提交. 每日设置仅保存计划.</p>
           : <p className="hint">先在账号管理中登录鱼吧. 仅对已加入的鱼吧签到, 已签到时跳过. 确认完成后才安排下一次, 遇到验证或未知结果会停止并提示.</p>}
         <form className="douyu-task-create" onSubmit={event => {
           event.preventDefault()
           if (!selectedAccountId || !taskRoom.trim() || accountLocked || (messageTask && !messageSchedule)) return
-          void taskAction(messageTask ? '正在创建发送任务...' : '正在创建签到任务...', () => apiClient.createDouyuTask({
+          void taskAction(messageTask ? '正在创建发送任务...' : activityTask ? '正在创建活动任务...' : '正在创建签到任务...', () => apiClient.createDouyuTask({
             accountId: selectedAccountId, roomInput: taskRoom.trim(), kind, policy,
-            repeatMinutes: !messageTask && repeat === 'daily' ? 1440 : null,
+            repeatMinutes: !messageTask && !activityTask && repeat === 'daily' ? 1440 : null,
             ...(messageTask && messageSchedule ? { message: messageSchedule } : {}),
-          }), messageTask ? '发送任务已创建, 当前为暂停.' : '签到任务已创建, 当前为暂停.')
+          }), messageTask ? '发送任务已创建, 当前为暂停.' : activityTask ? '活动任务已创建, 当前为暂停.' : '签到任务已创建, 当前为暂停.')
         }}>
           <label className="field"><span>任务账号</span>
             <select value={selectedAccountId} disabled={accountLocked || taskLocked || !allAccounts.length} onChange={event => setChosenAccountId(event.target.value)}>
@@ -307,12 +320,13 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
           <label className="field"><span>任务类型</span>
             <select aria-label="任务类型" value={kind} disabled={taskLocked} onChange={event => setKind(event.target.value as DouyuTaskKind)}>
               <option value="room-sign">直播间签到</option><option value="yuba-sign">鱼吧签到</option><option value="message-loop">延迟/循环发送弹幕</option>
+              <option value="auto-fish">自动钓鱼</option><option value="gift-packet">礼物红包</option><option value="treasure-box">半自动宝箱</option>
             </select>
           </label>
           <label className="field"><span>执行条件</span>
             <select aria-label="执行条件" value={policy} disabled={taskLocked} onChange={event => setPolicy(event.target.value as DouyuTaskPolicy)}><PolicyOptions /></select>
           </label>
-          {!messageTask && <label className="field"><span>执行周期</span>
+          {!messageTask && !activityTask && <label className="field"><span>执行周期</span>
             <select aria-label="执行周期" value={repeat} disabled={taskLocked} onChange={event => setRepeat(event.target.value)}>
               <option value="once">单次</option><option value="daily">每天</option>
             </select>
@@ -350,7 +364,7 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
             <p className="hint douyu-message-wide">间隔会同时遵守服务器冷却. 彩色弹幕需要斗鱼已解锁对应颜色, 不可用时会停止并提示.</p>
             {!messageSchedule && messageDraft.text.length > 0 && <p className="dialog-error douyu-message-wide" role="alert">请检查内容, 时间和次数, 并至少选择一种颜色. 内容最多 500 个字符, 不支持换行.</p>}
           </>}
-          <button type="submit" disabled={accountLocked || taskLocked || !selectedAccountId || !taskRoom.trim() || (messageTask && !messageSchedule)}>{messageTask ? '创建发送任务' : '创建签到任务'}</button>
+          <button type="submit" disabled={accountLocked || taskLocked || !selectedAccountId || !taskRoom.trim() || (messageTask && !messageSchedule)}>{messageTask ? '创建发送任务' : activityTask ? '创建活动任务' : '创建签到任务'}</button>
         </form>
         {!activeAccount?.login.loggedIn && <p className="hint">可以先创建暂停任务. 启动前请登录并激活任务所用的账号.</p>}
         {tasks && <p className="hint">当前房间: {tasks.currentRoom ?? '未连接'}. 应用状态: {tasks.runtime.suspended ? '已休眠'
@@ -377,7 +391,7 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
                 const account = allAccounts.find(item => item.id === task.accountId)
                 const startProblem = !account ? '账号不可用' : account.id !== accounts?.activeAccountId ? '激活该账号后可启动'
                   : !account.login.loggedIn ? '登录该账号后可启动' : ''
-                return <li className="douyu-task" key={task.id} role="group" aria-label={`${task.kind === 'message-loop' ? '发送任务' : task.kind === 'yuba-sign' ? '鱼吧签到任务' : '签到任务'} ${room} (${account?.label ?? '账号不可用'})`}>
+                return <li className="douyu-task" key={task.id} role="group" aria-label={`${task.kind === 'message-loop' ? '发送任务' : task.kind === 'yuba-sign' ? '鱼吧签到任务' : isDouyuActivityKind(task.kind) ? `${TASK_LABELS[task.kind]}任务` : '签到任务'} ${room} (${account?.label ?? '账号不可用'})`}>
                   <div className="douyu-task-heading"><strong>{TASK_LABELS[task.kind]}</strong>
                     <span className="hint">{account?.label ?? '账号不可用'} / {taskScheduleLabel(task)}</span>
                     <span className="douyu-task-status" data-state={task.status}>{STATUS_LABELS[task.status]}</span>
@@ -402,6 +416,9 @@ export function DouyuTools({ defaultRoom = null, disabled = false, onBusyChange 
                       onClick={() => void taskAction('正在启动任务...', () => apiClient.startDouyuTask(task.id), '已提交启动, 执行结果请查看任务状态.')}>启动</button>
                     <button type="button" className="ghost small" disabled={taskLocked || (!scheduled(task) && task.status !== 'waiting-user')}
                       onClick={() => void taskAction('正在暂停任务...', () => apiClient.pauseDouyuTask(task.id), '任务已暂停.')}>暂停</button>
+                    {isDouyuActivityKind(task.kind) && <button type="button" className="small" disabled={accountLocked || taskLocked || task.accountId !== accounts?.activeAccountId}
+                      onClick={() => void accountAction(`正在打开 ${account?.label ?? '任务账号'} 的${task.kind === 'auto-fish' ? '官方钓鱼页面' : '官方房间'} ${room}. 完成操作后请关闭 Chrome 窗口.`,
+                        () => apiClient.openDouyuTaskRoom(task.id), '官方页面窗口已关闭. 核对结果后请手动启动任务, 应用会重新读取活动状态.')}>{task.kind === 'auto-fish' ? '打开官方钓鱼' : '打开官方房间'}</button>}
                     <button type="button" className="ghost small" disabled={taskLocked}
                       onClick={() => void taskAction('正在移除任务...', () => apiClient.removeDouyuTask(task.id), '任务已移除.')}>移除</button>
                   </div>

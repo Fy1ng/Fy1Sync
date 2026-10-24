@@ -18,6 +18,15 @@ const invalidDestinations = [
   { platform: 'douyu', destination: null },
   { platform: 'douyu', destination: { url: 'https://yuba.douyu.com/' } },
   { platform: 'youtube', destination: 'yuba' },
+  { platform: 'youtube', destination: 'room:9999' },
+  { platform: 'douyu', destination: 'room:0' },
+  { platform: 'douyu', destination: 'room:09999' },
+  { platform: 'douyu', destination: 'room:9999?next=https://outside.example/' },
+  { platform: 'douyu', destination: 'room:1234567890123' },
+  { platform: 'douyu', destination: 'room:9999\n' },
+  { platform: 'youtube', destination: 'fish-act:9999' },
+  { platform: 'douyu', destination: 'fish-act:9999&other=1' },
+  { platform: 'douyu', destination: 'fish-act:0' },
 ] as const
 beforeEach(() => { root = fs.mkdtempSync(path.join(process.cwd(), '.cookie-tests-login-')) })
 afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); vi.restoreAllMocks() })
@@ -164,6 +173,8 @@ describe('system Chrome pipe login', () => {
     { platform: 'youtube', destination: undefined, url: 'https://www.youtube.com' },
     { platform: 'douyu', destination: undefined, url: 'https://www.douyu.com' },
     { platform: 'douyu', destination: 'yuba', url: 'https://yuba.douyu.com/' },
+    { platform: 'douyu', destination: 'room:9999', url: 'https://www.douyu.com/9999' },
+    { platform: 'douyu', destination: 'fish-act:9999', url: 'https://www.douyu.com/pages/fish-act?rid=9999' },
   ] as const)('waits for the fixed $url login window to close before exporting from the same profile over a pipe', async ({ platform, destination, url }) => {
     const manual = fakeChild(101)
     const headless = fakeChild(102)

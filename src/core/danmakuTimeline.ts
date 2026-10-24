@@ -13,6 +13,8 @@
  * timeline with the current media time on every frame.
  */
 
+import type { DouyuGiftMetadata, DouyuSenderMetadata } from './types'
+
 export interface DanmakuMessage {
   id: string
   text: string
@@ -22,6 +24,10 @@ export interface DanmakuMessage {
   scheduleTime: number
   /** Wall clock (ms) the message was received, for debugging only. */
   receivedAt: number
+  /** Only public server facts. A local identity badge is a separate render decision. */
+  sender?: DouyuSenderMetadata
+  /** Present only for an actual gift event, never for a chat text that mentions gifts. */
+  gift?: DouyuGiftMetadata
 }
 
 export interface DanmakuTimelineOptions {

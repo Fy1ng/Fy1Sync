@@ -8,6 +8,7 @@ import type { BrowserCookie, CookieStoreOptions, LoginPlatform, LoginResult, Log
 import { powershellEnvironment } from './privateStorage'
 
 export type { LoginPlatform, LoginResult, LoginStatus, PlatformLoginStatus } from './cookies'
+export type LoginDestination = 'yuba' | `room:${string}` | `fish-act:${string}`
 
 export type LoginErrorCode = 'chrome-not-found' | 'login-busy' | 'login-cancelled' | 'login-failed' | 'cookie-storage-failed'
 export class LoginError extends Error {
@@ -21,7 +22,7 @@ export class LoginError extends Error {
 }
 
 export interface BrowserLoginDriver {
-  login(executable: string, profile: string, platform: LoginPlatform, signal: AbortSignal, destination?: 'yuba'): Promise<BrowserCookie[]>
+  login(executable: string, profile: string, platform: LoginPlatform, signal: AbortSignal, destination?: LoginDestination): Promise<BrowserCookie[]>
 }
 export interface LoginManagerOptions extends CookieStoreOptions {
   driver?: BrowserLoginDriver
@@ -55,7 +56,8 @@ export interface ChromeLoginDriverOptions {
 
 function cancelled(signal: AbortSignal): void { if (signal.aborted) throw new LoginError('login-cancelled') }
 function isLoginDestination(platform: LoginPlatform, destination: unknown): boolean {
-  return destination === undefined || (platform === 'douyu' && destination === 'yuba')
+  return destination === undefined || (platform === 'douyu' && (destination === 'yuba'
+    || (typeof destination === 'string' && /^(room|fish-act):[1-9][0-9]{0,11}$/.test(destination))))
 }
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -215,10 +217,12 @@ export class ChromeLoginDriver implements BrowserLoginDriver {
     }
   }
 
-  async login(executable: string, profile: string, platform: LoginPlatform, signal: AbortSignal, destination?: 'yuba'): Promise<BrowserCookie[]> {
+  async login(executable: string, profile: string, platform: LoginPlatform, signal: AbortSignal, destination?: LoginDestination): Promise<BrowserCookie[]> {
     cancelled(signal)
     if (!isLoginPlatform(platform) || !isLoginDestination(platform, destination)) throw new LoginError('login-failed')
-    const url = destination === 'yuba' ? 'https://yuba.douyu.com/' : LOGIN_PLATFORMS[platform].url
+    const url = destination === 'yuba' ? 'https://yuba.douyu.com/'
+      : destination?.startsWith('room:') ? `https://www.douyu.com/${destination.slice(5)}`
+      : destination?.startsWith('fish-act:') ? `https://www.douyu.com/pages/fish-act?rid=${destination.slice(9)}` : LOGIN_PLATFORMS[platform].url
     const child = this.spawn(executable, [`--user-data-dir=${profile}`, ...CHROME_FLAGS, '--new-window', url], {
       shell: false, detached: this.platform !== 'win32', windowsHide: false, stdio: 'ignore',
     })
@@ -242,7 +246,7 @@ export class LoginManager {
     this.driver = options.driver ?? new ChromeLoginDriver()
   }
 
-  login(platform: LoginPlatform, destination?: 'yuba'): Promise<LoginResult> {
+  login(platform: LoginPlatform, destination?: LoginDestination): Promise<LoginResult> {
     if (!isLoginPlatform(platform) || this.disposed) return Promise.reject(new LoginError('login-cancelled'))
     if (!isLoginDestination(platform, destination)) return Promise.reject(new LoginError('login-failed'))
     if (this.operations.has(platform) || this.loggingOut.has(platform)) return Promise.reject(new LoginError('login-busy'))

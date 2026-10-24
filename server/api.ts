@@ -14,7 +14,7 @@ import { isDecoderMode, type DecoderPreferencesService } from '../electron/decod
 import type { ToolsService } from '../electron/toolsService'
 import { DouyuAccountError, isDouyuAccountId, type DouyuAccountManager } from '../electron/douyuAccounts'
 import { DouyuTaskError, type DouyuTaskManager } from '../electron/douyuTasks'
-import { DOUYU_TASK_KINDS, DOUYU_TASK_POLICIES, type DouyuTaskKind, type DouyuTaskPolicy, type DouyuTasksSnapshot } from './douyu/types'
+import { DOUYU_TASK_KINDS, DOUYU_TASK_POLICIES, isDouyuActivityKind, type DouyuTaskKind, type DouyuTaskPolicy, type DouyuTasksSnapshot } from './douyu/types'
 import { readMessageSchedule } from './douyu/taskConfig'
 import { DouyuRenewalError, readRenewalRooms, type DouyuRenewalService } from './douyu/renewalService'
 
@@ -182,6 +182,19 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
               : method === 'activateDouyuAccount' ? 'activate' : 'logout'
             return { ok: true, value: await accounts[action](args.id) }
           }
+          case 'openDouyuTaskRoom': {
+            if (!fields(args, ['id']) || typeof args.id !== 'string' || args.id.length > 64) return fail('invalid-arguments', '任务参数无效')
+            const accounts = deps.douyuAccounts
+            const tasks = deps.douyuTasks
+            if (!accounts || !tasks) return fail('not-available', '斗鱼任务管理不可用')
+            const task = tasks.snapshot().tasks.find(item => item.id === args.id)
+            if (!task || !isDouyuActivityKind(task.kind)) return fail('task-not-found', '活动任务不存在')
+            if (task.accountId !== accounts.activeAccountId) return fail('no-active-account', '请先切换到任务所属账号')
+            if (accounts.isBusy(task.accountId)) return fail('account-busy', '该账号的官方窗口已打开, 请先完成并关闭窗口')
+            tasks.pause(task.id, '官方房间已打开, 完成人工处理后请手动启动任务.')
+            tasks.pauseAccount(task.accountId, '官方房间已打开, 完成人工处理后请手动启动任务.')
+            return { ok: true, value: await accounts.openRoom(task.accountId, task.room, task.kind === 'auto-fish' ? 'fish-act' : 'room') }
+          }
           case 'getDouyuTasks': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
             if (!deps.douyuTasks) return fail('not-available', '斗鱼任务配置不可用, 原文件已保留.')
@@ -237,6 +250,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
               return fail('invalid-arguments', '任务参数无效')
             }
             const message = args.kind === 'message-loop' ? readMessageSchedule(args.message) : null
+            if (isDouyuActivityKind(args.kind) && args.repeatMinutes !== null) return fail('invalid-arguments', '活动任务按官方状态安排时间, 不接受重复周期')
             if (args.kind === 'message-loop' ? !message || args.repeatMinutes !== null
               : Object.hasOwn(args, 'message') || (args.repeatMinutes !== null && (!Number.isInteger(args.repeatMinutes) || Number(args.repeatMinutes) < 60 || Number(args.repeatMinutes) > 43200))) {
               return fail('invalid-arguments', '任务参数无效')

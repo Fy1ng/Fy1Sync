@@ -107,6 +107,45 @@ afterEach(() => {
 })
 
 describe('Session danmaku transport', () => {
+  it('retains real gift and sender facts on the commentary timeline independently of local effects', async () => {
+    const { session } = await makeSession({ commentaryTime: 100 })
+    session.connectDanmaku('288016')
+    const payload = { text: '粉丝荧光棒 x 2', username: '送礼观众', color: 0, system: true,
+      sender: { uid: '42', level: 12, nobleLevel: 0 }, gift: { kind: 'prop', id: '268', count: 2 } }
+    StubDanmakuSubscription.instances[0]!.emit('danmaku', payload)
+    payload.gift.count = 99
+    payload.sender.uid = '100'
+    const [message] = session.drainDanmaku()
+    expect(message).toMatchObject({ text: '粉丝荧光棒 x 2', user: '送礼观众', scheduleTime: 100,
+      sender: { uid: '42', level: 12, nobleLevel: 0 }, gift: { kind: 'prop', id: '268', count: 2 } })
+    session.updateDanmakuSettings({ localGlowstickToRocket: true, localPhantomIdentity: true, localPhantomUid: '42' })
+    expect(session.chatHistory()[0]).toEqual(message)
+    session.updateDanmakuSettings({ localGlowstickToRocket: false, localPhantomIdentity: false })
+    expect(session.chatHistory()[0]).toEqual(message)
+  })
+
+  it('drops malformed gift/system messages instead of converting them into repeatable chat', async () => {
+    const { session } = await makeSession()
+    session.connectDanmaku('288016')
+    const source = StubDanmakuSubscription.instances[0]!
+    source.emit('danmaku', { text: 'system', system: true })
+    source.emit('danmaku', { text: 'broken gift', gift: { kind: 'prop', id: '268', count: -1 } })
+    source.emit('danmaku', { text: '我想送荧光棒', username: '观众' })
+    expect(session.drainDanmaku()).toEqual([expect.objectContaining({ text: '我想送荧光棒' })])
+    expect(session.chatHistory()[0]).not.toHaveProperty('gift')
+  })
+
+  it('applies user blocking to gifts while keeping them independent of chat patterns and density', async () => {
+    const { session } = await makeSession()
+    session.updateDanmakuSettings({ density: 0.1, filter: { blockedPatterns: ['荧光棒'], blockedUsers: ['隐藏观众'], maxLength: 1 } })
+    vi.spyOn(Math, 'random').mockReturnValue(0.99)
+    const gift = { kind: 'prop' as const, id: '268', count: 1 }
+    session.pushDanmaku({ text: '粉丝荧光棒 x 1', user: '隐藏观众', color: '#fff', gift })
+    session.pushDanmaku({ text: '粉丝荧光棒 x 1', user: '普通观众', color: '#fff', gift })
+    expect(session.drainDanmaku()).toEqual([expect.objectContaining({ user: '普通观众', gift })])
+    vi.mocked(Math.random).mockRestore()
+  })
+
   it('subscribes to the relay with a structured room id', async () => {
     const { session } = await makeSession()
     session.connectDanmaku('288016')

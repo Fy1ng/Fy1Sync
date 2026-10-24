@@ -20,6 +20,8 @@ import { AREA_FRACTION, DanmakuLaneAllocator, estimateTextWidth } from '../core/
 import type { DanmakuMessage } from '../core/danmakuTimeline'
 import { useAnimationFrame } from '../app/hooks'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
+import { hasLocalPhantomIdentity, localGiftEffectFor, LocalGiftEffectSlots, LOCAL_GIFT_EFFECT_DURATION_MS } from '../core/douyuLocalEffects'
+import { createLocalGiftEffectNode, createLocalIdentityBadge } from './DouyuLocalEffects'
 
 interface ActiveItem {
   node: HTMLSpanElement
@@ -29,6 +31,14 @@ interface ActiveItem {
   fromX: number
   top: number
   width: number
+  message: DanmakuMessage
+  textWidth: number
+  localIdentity: boolean
+}
+
+interface ActiveGiftItem {
+  node: HTMLDivElement
+  untilMs: number
 }
 
 export function DanmakuLayer(): React.ReactNode {
@@ -37,7 +47,10 @@ export function DanmakuLayer(): React.ReactNode {
   const { danmaku } = snapshot.settings
 
   const hostRef = useRef<HTMLDivElement | null>(null)
+  const giftHostRef = useRef<HTMLDivElement | null>(null)
   const activeRef = useRef<ActiveItem[]>([])
+  const giftRef = useRef<ActiveGiftItem[]>([])
+  const giftSlots = useRef(new LocalGiftEffectSlots())
   const sizeRef = useRef({ width: 0, height: 0 })
   const allocatorRef = useRef<DanmakuLaneAllocator | null>(null)
 
@@ -63,12 +76,19 @@ export function DanmakuLayer(): React.ReactNode {
     }
   }, [])
 
-  /** Clear everything on screen. Used when the overlay is switched off. */
+  const flushGifts = useCallback(() => {
+    for (const item of giftRef.current) item.node.remove()
+    giftRef.current = []
+    giftSlots.current.clear()
+  }, [])
+
+  /** Clear everything on screen. Used when the overlay is switched off or changes room. */
   const flush = useCallback(() => {
     for (const item of activeRef.current) item.node.remove()
     activeRef.current = []
     allocatorRef.current?.reset()
-  }, [])
+    flushGifts()
+  }, [flushGifts])
 
   useEffect(() => {
     const host = hostRef.current
@@ -96,6 +116,24 @@ export function DanmakuLayer(): React.ReactNode {
     if (!danmaku.enabled) flush()
   }, [danmaku.enabled, flush])
 
+  useEffect(() => {
+    if (!danmaku.localGlowstickToRocket) flushGifts()
+  }, [danmaku.localGlowstickToRocket, flushGifts])
+
+  useEffect(() => {
+    // Removing a badge shrinks a moving item safely. Newly enabled badges apply at
+    // spawn, so an already allocated lane never grows into the following comment.
+    for (const item of activeRef.current) {
+      if (item.localIdentity && !hasLocalPhantomIdentity(item.message, danmaku)) {
+        item.node.textContent = item.message.text
+        item.width = item.textWidth
+        item.localIdentity = false
+      }
+    }
+  }, [danmaku.localPhantomIdentity, danmaku.localPhantomUid])
+
+  useEffect(() => { flush() }, [snapshot.danmaku.room, flush])
+
   useEffect(() => flush, [flush])
 
   const spawn = useCallback((message: DanmakuMessage, nowMs: number): void => {
@@ -106,15 +144,20 @@ export function DanmakuLayer(): React.ReactNode {
     const { width } = sizeRef.current
     if (width === 0) return
 
+    if (message.gift) return
+    const localIdentity = hasLocalPhantomIdentity(message, settings)
     const textWidth = estimateTextWidth(message.text, settings.fontSize)
+    // CSS fixes the badge to (6.2 + 0.6) em at 0.6 of the comment font size.
+    const widthWithBadge = textWidth + (localIdentity ? settings.fontSize * 4.08 : 0)
     // The allocator thinks in seconds; the frame clock is in ms.
-    const assignment = allocator.allocateScroll(nowMs / 1000, textWidth)
+    const assignment = allocator.allocateScroll(nowMs / 1000, widthWithBadge)
     // Every lane still busy. Dropping beats stacking one comment on another.
     if (!assignment) return
 
     const node = document.createElement('span')
     node.className = 'danmaku-item'
-    node.textContent = message.text
+    if (localIdentity) node.appendChild(createLocalIdentityBadge())
+    node.appendChild(document.createTextNode(message.text))
     node.style.fontSize = `${settings.fontSize}px`
     node.style.opacity = String(settings.opacity)
     // No background box, per docs/ui-layout.md; the stylesheet's text-shadow carries
@@ -129,8 +172,24 @@ export function DanmakuLayer(): React.ReactNode {
       startMs: nowMs,
       fromX: width,
       top: assignment.top,
-      width: textWidth,
+      width: widthWithBadge,
+      message,
+      textWidth,
+      localIdentity,
     })
+  }, [])
+
+  const spawnGift = useCallback((message: DanmakuMessage, nowMs: number): void => {
+    const host = giftHostRef.current
+    if (!host || sizeRef.current.width === 0) return
+    const effect = localGiftEffectFor(message, settingsRef.current.localGlowstickToRocket)
+    if (!effect) return
+    const slot = giftSlots.current.take(message.id, nowMs)
+    if (slot === null) return
+    const node = createLocalGiftEffectNode(effect)
+    node.style.setProperty('--local-gift-slot', String(slot))
+    host.appendChild(node)
+    giftRef.current.push({ node, untilMs: nowMs + LOCAL_GIFT_EFFECT_DURATION_MS })
   }, [])
 
   useAnimationFrame((nowMs) => {
@@ -139,7 +198,18 @@ export function DanmakuLayer(): React.ReactNode {
     // and an undrained timeline would expire its backlog as stale instead.
     const released = session.drainDanmaku()
     if (!settingsRef.current.enabled) return
-    for (const message of released) spawn(message, nowMs)
+
+    // Expire before admitting new effects, including when playback resumes after a
+    // background tab. Old events never accumulate a visual backlog.
+    giftRef.current = giftRef.current.filter(item => {
+      if (nowMs < item.untilMs) return true
+      item.node.remove()
+      return false
+    })
+    for (const message of released) {
+      if (message.gift) spawnGift(message, nowMs)
+      else spawn(message, nowMs)
+    }
 
     const active = activeRef.current
     let writeIndex = 0
@@ -156,5 +226,7 @@ export function DanmakuLayer(): React.ReactNode {
     active.length = writeIndex
   })
 
-  return <div className="danmaku-layer" ref={hostRef} aria-hidden="true" />
+  return <div className="danmaku-layer" ref={hostRef} aria-hidden="true">
+    <div className="douyu-local-effects-layer" ref={giftHostRef} />
+  </div>
 }

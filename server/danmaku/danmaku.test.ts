@@ -157,6 +157,7 @@ describe('toChatMessage', () => {
       receivedAt: 1_000,
       room: '288016',
       system: false,
+      sender: { level: 30 },
     })
   })
 

@@ -66,6 +66,18 @@ describe('mergeSettings', () => {
     expect(mergeSettings({ preferAdaptive: false }).preferAdaptive).toBe(false)
   })
 
+  it('keeps local identity and gift visuals independently disabled for old or malformed settings', () => {
+    expect(mergeSettings({}).danmaku).toMatchObject({
+      localPhantomIdentity: false, localPhantomUid: '', localGlowstickToRocket: false,
+    })
+    expect(mergeSettings({ danmaku: { localPhantomIdentity: 'true', localGlowstickToRocket: 1, localPhantomUid: 42 } }).danmaku)
+      .toMatchObject({ localPhantomIdentity: false, localGlowstickToRocket: false, localPhantomUid: '' })
+    expect(mergeSettings({ danmaku: { localPhantomIdentity: true, localPhantomUid: '42' } }).danmaku)
+      .toMatchObject({ localPhantomIdentity: true, localPhantomUid: '42', localGlowstickToRocket: false })
+    expect(mergeSettings({ danmaku: { localGlowstickToRocket: true, localPhantomUid: '042' } }).danmaku)
+      .toMatchObject({ localPhantomIdentity: false, localPhantomUid: '', localGlowstickToRocket: true })
+  })
+
   it('clamps volumes into 0..1 instead of rejecting the blob', () => {
     const merged = mergeSettings({ volume: { official: 4, commentary: -2 } })
     expect(merged.volume).toEqual({ official: 1, commentary: 0 })
@@ -162,6 +174,13 @@ describe('loadSettings', () => {
     const storage = fakeStorage()
     saveSettings({ ...DEFAULT_SETTINGS, preferAdaptive: true }, storage)
     expect(loadSettings(storage).preferAdaptive).toBe(true)
+  })
+
+  it('persists each local visual choice and the exact target UID', () => {
+    const storage = fakeStorage()
+    const settings = mergeSettings({ danmaku: { localPhantomIdentity: true, localPhantomUid: '42', localGlowstickToRocket: true } })
+    saveSettings(settings, storage)
+    expect(loadSettings(storage).danmaku).toEqual(settings.danmaku)
   })
 })
 

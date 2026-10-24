@@ -38,11 +38,38 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
-function open(store: ReturnType<typeof feed>, connected = true) {
-  return render(<SessionProvider session={store.session as unknown as Session}><ChatList connected={connected} room="9999" /></SessionProvider>)
+function open(store: ReturnType<typeof feed>, connected = true, localIdentity?: React.ComponentProps<typeof ChatList>['localIdentity']) {
+  return render(<SessionProvider session={store.session as unknown as Session}><ChatList connected={connected} room="9999" localIdentity={localIdentity} /></SessionProvider>)
 }
 
 describe('ChatList manual +1', () => {
+  it('adds a labelled local identity badge without changing the repeat text or real sender', async () => {
+    const chat = { ...makeMessage(1, '原始发言'), sender: { uid: '42', level: 1, nobleLevel: 0 } }
+    const store = feed([chat, { ...makeMessage(2), sender: { uid: '99' } }])
+    open(store, true, { localPhantomIdentity: true, localPhantomUid: '42' })
+    expect(screen.getAllByText('本地幻神')).toHaveLength(1)
+    const repeat = screen.getByRole('button', { name: '+1 复读 观众1 的弹幕' })
+    await waitFor(() => expect(repeat).toBeEnabled())
+    fireEvent.click(repeat)
+    await screen.findByText('服务器确认发送成功.')
+    expect(apiClient.sendDouyuMessage).toHaveBeenCalledExactlyOnceWith({ accountId: 'first', room: '9999', text: '原始发言', color: 0 })
+    expect(store.session.chatHistory()[0]).toEqual(chat)
+  })
+
+  it('shows the original gift notice without offering to repeat it as chat', async () => {
+    const gift = { ...makeMessage(1, '粉丝荧光棒 x 2'), gift: { kind: 'prop' as const, id: '268', count: 2 } }
+    const store = feed([gift, makeMessage(2, '我想送荧光棒')])
+    open(store)
+    expect(screen.getByText('粉丝荧光棒 x 2')).toBeVisible()
+    expect(screen.queryByRole('button', { name: '+1 复读 观众1 的弹幕' })).not.toBeInTheDocument()
+    const repeat = screen.getByRole('button', { name: '+1 复读 观众2 的弹幕' })
+    await waitFor(() => expect(repeat).toBeEnabled())
+    fireEvent.click(repeat)
+    await screen.findByText('服务器确认发送成功.')
+    expect(apiClient.sendDouyuMessage).toHaveBeenCalledExactlyOnceWith({ accountId: 'first', room: '9999', text: '我想送荧光棒', color: 0 })
+    expect(store.session.chatHistory()[0]).toEqual(gift)
+  })
+
   it('sends displayed text verbatim once and never inserts a local success message', async () => {
     const text = '  原始中文内容 😀  '
     const store = feed([makeMessage(1, text)])

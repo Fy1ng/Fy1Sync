@@ -48,6 +48,41 @@ function openTools(props: React.ComponentProps<typeof DouyuTools> = {}) {
   return view
 }
 
+describe('DouyuTools activities', () => {
+  it.each(['auto-fish', 'gift-packet', 'treasure-box'])('creates %s with its own policy and official scheduling', async kind => {
+    const create = vi.spyOn(apiClient, 'createDouyuTask').mockResolvedValue(ok(taskSnapshot()))
+    openTools()
+    await screen.findByText('活动账号: 日常账号, 已登录')
+    fireEvent.change(screen.getByLabelText('执行周期'), { target: { value: 'daily' } })
+    fireEvent.change(screen.getByLabelText('任务类型'), { target: { value: kind } })
+    expect(screen.queryByLabelText('执行周期')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('发送内容')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('执行条件'), { target: { value: 'background-locked' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建活动任务' }))
+    await screen.findByText('活动任务已创建, 当前为暂停.')
+    expect(create).toHaveBeenCalledExactlyOnceWith({ accountId: 'daily', roomInput: '9999', kind,
+      policy: 'background-locked', repeatMinutes: null })
+  })
+
+  it('hands verification to the selected official room and requires an explicit restart afterwards', async () => {
+    const pending = deferred<ApiResult<DouyuAccountsSnapshot>>()
+    const open = vi.spyOn(apiClient, 'openDouyuTaskRoom').mockReturnValue(pending.promise)
+    const start = vi.spyOn(apiClient, 'startDouyuTask').mockResolvedValue(ok(taskSnapshot()))
+    vi.mocked(apiClient.getDouyuTasks).mockResolvedValue(ok(taskSnapshot([task({ kind: 'treasure-box', status: 'waiting-user' })])))
+    openTools()
+    const group = within(await screen.findByRole('group', { name: '半自动宝箱任务 9999 (日常账号)' }))
+    fireEvent.click(group.getByRole('button', { name: '打开官方房间' }))
+    expect(open).toHaveBeenCalledExactlyOnceWith('task-one')
+    expect(group.getByRole('button', { name: '启动' })).toBeDisabled()
+    expect(group.getByRole('button', { name: '暂停' })).toBeEnabled()
+    await act(async () => { pending.resolve(ok(accountSnapshot())); publish(taskSnapshot([task({ kind: 'treasure-box', status: 'paused' })])) })
+    expect(await screen.findByText(/官方页面窗口已关闭/)).toBeVisible()
+    expect(start).not.toHaveBeenCalled()
+    fireEvent.click(group.getByRole('button', { name: '启动' }))
+    await waitFor(() => expect(start).toHaveBeenCalledExactlyOnceWith('task-one'))
+  })
+})
+
 describe('DouyuTools accounts', () => {
   it('shows the active account and public login state without exposing authentication metadata', async () => {
     vi.mocked(apiClient.listDouyuAccounts).mockResolvedValue(ok(accountSnapshot([account(), account('second', '备用账号', loggedOut)])))

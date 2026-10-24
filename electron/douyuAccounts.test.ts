@@ -51,6 +51,20 @@ afterEach(async () => {
 })
 
 describe('Douyu account isolation', () => {
+  it('opens a canonical room only in the active account profile and invalidates pending work', async () => {
+    const f = fixture()
+    await f.manager.add('第二个')
+    const events: string[] = []
+    f.manager.subscribe(event => { if (event.type === 'invalidated') events.push(event.accountId) })
+    await expect(f.manager.openRoom(a, '9999')).rejects.toMatchObject({ code: 'no-active-account' })
+    await expect(f.manager.openRoom('default', '9999?other=1')).rejects.toMatchObject({ code: 'invalid-arguments' })
+    expect(f.defaultLogin.login).not.toHaveBeenCalled()
+    await f.manager.openRoom('default', '9999')
+    expect(f.defaultLogin.login).toHaveBeenCalledExactlyOnceWith('douyu', 'room:9999')
+    expect(events).toEqual(['default', 'default'])
+    expect([...f.created.values()][0]!.login).not.toHaveBeenCalled()
+  })
+
   it('reuses the existing Douyu login in place without initializing or copying credentials', async () => {
     const f = fixture()
     expect(await f.manager.snapshot()).toMatchObject({ activeAccountId: 'default', accounts: [{ id: 'default', active: true, login: { loggedIn: true } }] })
