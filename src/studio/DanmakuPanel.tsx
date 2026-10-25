@@ -61,7 +61,7 @@ function Range({ label, value, min, max, step, unit, format, onChange }: {
         <span>{label}</span>
         <span className="num">{format ? format(value) : `${value}${unit}`}</span>
       </span>
-      <input type="range" min={min} max={max} step={step} value={value}
+      <input type="range" min={min} max={max} step={step} value={value} aria-label={label}
         style={{ '--fill': `${((value - min) / (max - min)) * 100}%` } as React.CSSProperties}
         onChange={(event) => onChange(Number(event.target.value))} />
     </label>
