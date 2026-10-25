@@ -1,6 +1,9 @@
 export interface DouyuRenewalTarget {
   room: string
   badgeName: string
+  /** Present only when acquisition metadata was explicitly requested. */
+  acquiredAt?: number | null
+  heldDays?: number | null
 }
 
 export interface DouyuRenewalTargetPage {
@@ -40,6 +43,7 @@ export interface DouyuRenewalPlan {
   rows: DouyuRenewalPlanRow[]
   totalQuantity: number
   message: string
+  allocation?: { mode: 'equal-per-prop'; leftovers: Array<{ propId: string; quantity: number }> }
 }
 
 export interface DouyuRenewalResultRow extends DouyuRenewalTarget {

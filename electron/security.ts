@@ -14,7 +14,7 @@ export function isAppOrigin(raw: string): boolean {
 }
 export function isAppDocument(raw: string): boolean {
   if (!isAppOrigin(raw)) return false
-  return ['/', '/index.html', '/admin', '/admin/'].includes(new URL(raw).pathname)
+  return ['/', '/index.html', '/admin', '/admin/', '/pip', '/pip/'].includes(new URL(raw).pathname)
 }
 
 /** Fullscreen is the only renderer permission needed by this local player. */

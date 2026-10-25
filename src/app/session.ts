@@ -34,6 +34,9 @@ import { DEFAULT_SETTINGS, loadSettings, saveSettings } from './settings'
 import type { BufferState } from '../../electron/bufferManager'
 import { colorForIndex, type ChatMessage } from '../../server/danmaku/douyuProtocol'
 import { normalizeDouyuGift, normalizeDouyuSender } from '../core/douyuMetadata'
+import { DanmakuProcessor, DEFAULT_DANMAKU_PREFERENCES, readDanmakuPreferences, type DanmakuPreferences } from '../core/danmakuProcessing'
+import { clampSeek } from '../media/timebase'
+import { latestPlayableTime } from '../media/playbackControls'
 
 /** Released danmaku kept for the chat list. */
 export const CHAT_HISTORY_LIMIT = 2000
@@ -42,6 +45,8 @@ export const CHAT_HISTORY_LIMIT = 2000
 export interface SessionSnapshot {
   media: EngineState
   settings: AppSettings
+  danmakuPreferences: DanmakuPreferences
+  pipPresentationReduced: boolean
   appliedRewind: AppliedRewind
   /** Offset the two sources currently carry, derived from `appliedRewind`. */
   offsetSeconds: number
@@ -106,6 +111,7 @@ export class Session {
   readonly autoSync: AutoSyncController
   readonly timeline = new DanmakuTimeline()
   private readonly liveEdge = new LiveEdgeClock()
+  private pausedClock: { media: number; wall: number } | null = null
 
   private sampler: RecognitionSampler | null = null
   private autoProfiles: Pick<OnlineAutoProfiles, 'controller' | 'monitor' | 'reset' | 'suspend' | 'dispose'> | null = null
@@ -134,6 +140,12 @@ export class Session {
   private automaticSeek: { done: Promise<boolean>; capture: () => void } | null = null
   private interruptedAutomaticSeek: typeof this.automaticSeek = null
   private releaseBuffer: (() => void) | undefined
+  private releaseFeatures: (() => void) | undefined
+  private danmakuPreferences: DanmakuPreferences = { ...DEFAULT_DANMAKU_PREFERENCES }
+  private readonly danmakuProcessor = new DanmakuProcessor()
+  private playbackDrain: Promise<unknown> = Promise.resolve()
+  private playbackPending = 0
+  private pipPresentationReduced = false
   private readonly pendingQualityWaits = new Set<() => void>()
   private profileMap: Record<SourceRole, RecognitionProfile | null> = {
     official: null,
@@ -251,6 +263,14 @@ export class Session {
     })
     this.snapshotValue = this.buildSnapshot()
     this.applyAudioSettings()
+    this.releaseFeatures = apiClient.subscribeFeatures(event => {
+      if (event.topic === 'danmaku-preferences' && event.data && typeof event.data === 'object') {
+        this.configureDanmakuProcessing((event.data as { preferences?: unknown }).preferences)
+      } else if (event.topic === 'pip' && event.data && typeof event.data === 'object') {
+        const value = event.data as { phase?: string; options?: { lowPower?: boolean } }
+        this.setPresentationReduced(value.phase === 'ready' && value.options?.lowPower === true)
+      }
+    })
   }
 
   get snapshot(): SessionSnapshot {
@@ -300,6 +320,8 @@ export class Session {
     return {
       media,
       settings: this.settingsValue,
+      danmakuPreferences: { ...this.danmakuPreferences },
+      pipPresentationReduced: this.pipPresentationReduced,
       appliedRewind: { ...this.applied },
       offsetSeconds: offsetFromRewind(this.applied),
       requestedOffsetSeconds: this.requestedOffset,
@@ -439,6 +461,9 @@ export class Session {
    * actually said so, or restarting while it is down would throw the choice away.
    */
   async boot(): Promise<void> {
+    void apiClient.feature('getDanmakuFeatures', undefined).then(result => {
+      if (!this.disposed && result?.ok) this.configureDanmakuProcessing(result.value.preferences)
+    })
     const revision = this.profileRevision
     for (const role of SOURCE_ROLES) this.autoProfiles?.monitor(role)
     // Before the first await, so re-entering the page resumes on the spot instead of
@@ -670,6 +695,58 @@ export class Session {
 
   togglePlaying(): Promise<void> {
     return this.setPlaying(!this.playingValue)
+  }
+
+  /** Manual playback navigation also invalidates automatic sync and updates its bookkeeping. */
+  seekPlayback(role: SourceRole, deltaSeconds: number): Promise<boolean> {
+    if (!Number.isFinite(deltaSeconds) || Math.abs(deltaSeconds) > 86_400) return Promise.resolve(false)
+    return this.navigatePlayback(role, deltaSeconds)
+  }
+  returnPlaybackToLive(role: SourceRole): Promise<boolean> { return this.navigatePlayback(role, 'live') }
+  /** Native PiP owns presentation; stop expensive recognition while the opt-in mode is active. */
+  setPresentationReduced(reduced: boolean): void {
+    if (this.disposed || this.pipPresentationReduced === reduced) return
+    this.pipPresentationReduced = reduced
+    if (reduced) {
+      this.autoProfiles?.suspend()
+      this.stopScheduler()
+      this.autoSync.cancel(false)
+    } else {
+      for (const role of SOURCE_ROLES) this.autoProfiles?.monitor(role)
+      if (this.settingsValue.autoSyncEnabled) this.startScheduler()
+    }
+    this.notify()
+  }
+  private navigatePlayback(role: SourceRole, move: number | 'live'): Promise<boolean> {
+    if (!SOURCE_ROLES.includes(role) || this.disposed || this.playbackPending >= 32) return Promise.resolve(false)
+    const generation = this.sourceGeneration[role]
+    this.autoSync.cancel(true); ++this.autoRequestRevision
+    this.invalidateOffsetRequests()
+    const automatic = this.automaticSeek
+    const offsets = this.offsetDrain
+    ++this.playbackPending
+    const operation = this.playbackDrain.then(async () => {
+      if (automatic) { await automatic.done; automatic.capture() }
+      if (offsets) await offsets
+      if (this.disposed || generation !== this.sourceGeneration[role]) return false
+      const before = this.engine.snapshot(role)
+      if (!before?.ready) return false
+      const requested = move === 'live' ? latestPlayableTime(before.timebase) : before.currentTime + move
+      if (requested === null) return false
+      const target = clampSeek(requested, before.timebase).target
+      const capture = this.captureSeekMovement(role)
+      const reached = await this.engine.seek(role, target)
+      if (this.disposed || generation !== this.sourceGeneration[role]) return false
+      capture()
+      this.requestedOffset = offsetFromRewind(this.applied)
+      const commentary = this.engine.snapshot('commentary')
+      if (commentary) this.timeline.handleSeek(commentary.currentTime)
+      this.danmakuProcessor.reset()
+      this.notify()
+      return reached
+    }).finally(() => { this.playbackPending-- })
+    this.playbackDrain = operation.catch(() => {})
+    return operation
   }
 
   // -------------------------------------------------------------------- sync
@@ -1012,6 +1089,8 @@ export class Session {
     this.unsubscribeDanmaku = null
     this.timeline.clear()
     this.liveEdge.reset()
+    this.danmakuProcessor.reset()
+    this.pausedClock = null
     this.chatLog = []
     for (const listener of this.chatListeners) listener()
     this.danmakuState = { connected: false, room: null, error: null, pending: 0, dropped: 0 }
@@ -1019,7 +1098,7 @@ export class Session {
   }
 
   /** Park one relayed message. Public so tests and the mock generator can feed it. */
-  pushDanmaku(message: Pick<DanmakuMessage, 'text' | 'user' | 'color' | 'sender' | 'gift'>): void {
+  pushDanmaku(message: Pick<DanmakuMessage, 'text' | 'user' | 'color' | 'sender' | 'gift' | 'dms'>): void {
     const sender = normalizeDouyuSender(message.sender)
     const gift = normalizeDouyuGift(message.gift)
     if (message.gift !== undefined && !gift) return
@@ -1044,6 +1123,7 @@ export class Session {
       color: message.color,
       ...(sender ? { sender } : {}),
       ...(gift ? { gift } : {}),
+      ...(typeof message.dms === 'number' && Number.isFinite(message.dms) ? { dms: message.dms } : {}),
       scheduleTime,
       receivedAt: this.now(),
     })
@@ -1062,6 +1142,7 @@ export class Session {
       color: colorForIndex(typeof payload.color === 'number' ? payload.color : 0),
       ...(sender ? { sender } : {}),
       ...(gift ? { gift } : {}),
+      ...(typeof payload.dms === 'number' && Number.isFinite(payload.dms) ? { dms: payload.dms } : {}),
     })
   }
 
@@ -1088,11 +1169,37 @@ export class Session {
   drainDanmaku(): DanmakuMessage[] {
     const snapshot = this.engine.snapshot('commentary')
     const paused = snapshot !== null && this.engine.getState().commentary.paused
-    const released = paused
-      ? this.timeline.releaseAll()
-      : this.timeline.advance(snapshot?.currentTime ?? this.timeline.playhead)
-    if (released.length > 0) this.recordChat(released)
-    return released
+    // While paused, media time stands still; the duplicate window keeps counting on the wall
+    // clock from where playback stopped, or one merge group would swallow the whole pause.
+    let mediaTime = snapshot?.currentTime ?? this.timeline.playhead
+    if (paused) {
+      this.pausedClock ??= { media: mediaTime, wall: this.now() }
+      mediaTime = this.pausedClock.media + (this.now() - this.pausedClock.wall) / 1000
+    } else this.pausedClock = null
+    const released = paused ? this.timeline.releaseAll() : this.timeline.advance(mediaTime)
+    const visible: DanmakuMessage[] = []
+    let merged = false
+    for (const message of released) {
+      const result = this.danmakuProcessor.process({ ...message, room: this.danmakuState.room ?? undefined }, mediaTime)
+      if (result.kind === 'hide') continue
+      if (result.kind === 'merge') {
+        const update = (value: DanmakuMessage) => value.duplicateGroupId === result.groupId ? { ...value, duplicateCount: result.count } : value
+        for (let i = 0; i < visible.length; i++) visible[i] = update(visible[i]!)
+        this.chatLog = this.chatLog.map(update)
+        merged = true
+      } else visible.push(result.groupId ? { ...message, duplicateGroupId: result.groupId, duplicateCount: result.count } : message)
+    }
+    if (visible.length > 0) this.recordChat(visible)
+    else if (merged) for (const listener of this.chatListeners) listener()
+    return visible
+  }
+
+  configureDanmakuProcessing(raw: unknown): void {
+    const parsed = readDanmakuPreferences(raw)
+    if (!parsed) return
+    this.danmakuPreferences = parsed
+    this.danmakuProcessor.configure(parsed)
+    this.notify()
   }
 
   /**
@@ -1144,6 +1251,7 @@ export class Session {
 
   /** Tear the session down for good. Only its owner may call this. */
   dispose(): void {
+    this.releaseFeatures?.()
     this.invalidateOffsetRequests()
     this.disposed = true
     this.releaseBuffer?.()

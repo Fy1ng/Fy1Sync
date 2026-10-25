@@ -40,7 +40,16 @@ type Credentials = { uid: string; header: string; ccn: string | null; xsrf: stri
 type Target = Pick<DouyuTaskDefinition, 'accountId' | 'room'>
 type Context = Target & { credentials?: Credentials }
 type Bait = { id: number; count: number; inUse: number }
-type Home = { state: number; serverNow: number; start: number | null; end: number | null; autoEnd: number | null; role: number; baits: Bait[] }
+type Home = { state: number; serverNow: number; start: number | null; end: number | null; autoEnd: number | null; role: number; baits: Bait[]; match?: unknown }
+export interface DouyuFishingOptions { mode?: 'all' | 'contest' }
+
+export function readFishingOptions(raw: unknown = {}): DouyuFishingOptions {
+  if (!raw || typeof raw !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(raw) as object | null)
+    || !Reflect.ownKeys(raw).every(key => key === 'mode' && Object.hasOwn(Object.getOwnPropertyDescriptor(raw, key)!, 'value'))) throw new Error('钓鱼设置无效.')
+  const mode = (raw as DouyuFishingOptions).mode
+  if (mode !== undefined && mode !== 'all' && mode !== 'contest') throw new Error('钓鱼设置无效.')
+  return { mode: mode ?? 'all' }
+}
 
 function integer(value: unknown, maximum = Number.MAX_SAFE_INTEGER): number | null {
   if (typeof value !== 'number' && !(typeof value === 'string' && /^(0|[1-9]\d{0,15})$/.test(value))) return null
@@ -154,7 +163,7 @@ function homeFrom(value: unknown, context: Context): Home {
   if ([1, 2, 20].includes(state) && (start === null || end === null || start > serverNow || end <= start)) return invalid()
   if (state === 2 && end! > serverNow) return invalid()
   if (state === 10 && autoEnd === null) return invalid()
-  return { state, serverNow, start, end, autoEnd, role, baits }
+  return { state, serverNow, start, end, autoEnd, role, baits, match: data.matchInfo }
 }
 
 /** Current official baitLv=1 has no gift charge; all price fields stay explicit. */
@@ -181,15 +190,23 @@ function freeBaitCost(text: string, room: string): number {
 }
 
 export class DouyuFishingActions {
+  private readonly uncertain = new Set<string>()
+  private running = false
   constructor(private readonly deps: DouyuActionDependencies & { now?: () => number }) {}
 
-  async run(task: DouyuTaskDefinition, signal: AbortSignal): Promise<DouyuTaskOutcome> {
+  async run(task: DouyuTaskDefinition, signal: AbortSignal, rawOptions: DouyuFishingOptions = {}): Promise<DouyuTaskOutcome> {
     active(signal)
+    let options: DouyuFishingOptions
+    try { options = readFishingOptions(rawOptions) } catch { return failed('钓鱼时段设置无效.') }
     const { accountId, room, kind } = task
     if (kind !== 'auto-fish') return failed('该钓鱼任务类型尚未接入.')
     if (typeof room !== 'string' || !validDouyuRoom(room)) return failed('斗鱼真实房间号无效, 请重新确认房间.')
     if (typeof accountId !== 'string' || !accountId || accountId.length > 128 || /[\s\x00-\x1f\x7f]/.test(accountId)) return waiting(FAULT_MESSAGES.login)
     if (!this.deps.proxy.enabled || !['www.douyu.com', 'webconf.douyucdn.cn'].every(host => hostAllowed(host, this.deps.proxy.hosts))) return failed('钓鱼请求未启用或目标域名未获允许.')
+    const scope = JSON.stringify([accountId, room])
+    if (this.uncertain.has(scope)) return unconfirmed()
+    if (this.running) return waiting('上一轮钓鱼请求尚未结束, 请稍后恢复.')
+    this.running = true
     const timeout = new AbortController()
     const duration = Number.isFinite(this.deps.proxy.requestTimeoutMs) ? Math.max(1, Math.min(this.deps.proxy.requestTimeoutMs, MAX_TIMEOUT_MS)) : MAX_TIMEOUT_MS
     const timer = setTimeout(() => timeout.abort(), duration)
@@ -198,12 +215,18 @@ export class DouyuFishingActions {
     try {
       // Await the actual transport/reader. Racing it against abort would release
       // the account's serial slot while an uncooperative request still runs.
-      return await this.perform({ accountId, room }, combined, () => { dispatched = true })
+      const result = await this.perform({ accountId, room }, combined, () => {
+        if (this.uncertain.size >= 2_048) return invalid()
+        this.uncertain.add(scope)
+        dispatched = true
+      }, options.mode!)
+      if (dispatched && result.status === 'scheduled') this.uncertain.delete(scope)
+      return result
     } catch (error) {
       if (signal.aborted) throw cancelled()
       if (dispatched) return unconfirmed()
       return waiting(FAULT_MESSAGES[error instanceof FishingFault ? error.code : 'data'])
-    } finally { clearTimeout(timer) }
+    } finally { clearTimeout(timer); this.running = false }
   }
 
   private schedule(message: string, delay = EMPTY_WAIT): DouyuTaskOutcome {
@@ -212,8 +235,9 @@ export class DouyuFishingActions {
     return { status: 'scheduled', message, nextRunAt: now + Math.max(MIN_WAIT, Math.min(MAX_WAIT, Math.ceil(delay))) }
   }
 
-  private async perform(context: Context, signal: AbortSignal, dispatch: () => void): Promise<DouyuTaskOutcome> {
+  private async perform(context: Context, signal: AbortSignal, dispatch: () => void, mode: 'all' | 'contest'): Promise<DouyuTaskOutcome> {
     const before = await this.readHome(context, signal)
+    const sampledAt = (this.deps.now ?? Date.now)()
     if (!before.role) return waiting('请先在官方钓鱼页面设置鱼娘形象, 本次未发送操作请求.')
     if (before.state === 11 || before.state === 21) return waiting('官方自动钓鱼正在等待鱼饵. 请在官方页面处理后再启动任务.')
     if (before.state === 10) {
@@ -222,6 +246,27 @@ export class DouyuFishingActions {
     }
     if (before.state === 1 || before.state === 20) return this.schedule('钓鱼进行中, 等待官方状态更新.', before.end! - before.serverNow + 2_000)
 
+    // Contest mode gates new casts. A cast already running is always allowed to
+    // finish; leaving its caught fish unclaimed does not save another bait.
+    let contestEnd: number | null = null
+    if (mode === 'contest' && before.state === 0) {
+      const match = before.match === undefined
+        ? boundData(envelope(parseJson(await this.request(context, `${API}/matchInfo?rid=${context.room}`, signal)), context).data, context)
+        : boundData(before.match, context)
+      const stat = match.stat === -1 || match.stat === '-1' ? -1 : integer(match.stat, 1)
+      const start = positive(match.st), end = positive(match.et), left = integer(match.left, MAX_WAIT / 1_000)
+      if (stat === null || start === null || end === null || left === null || start >= end
+        || start < 1_577_836_800 || end > 4_102_444_800) return invalid()
+      const now = (this.deps.now ?? Date.now)()
+      const serverNow = before.serverNow + Math.max(0, now - sampledAt)
+      if (stat !== 0) {
+        if (start * 1_000 <= serverNow) return this.schedule('比赛尚未开放, 等待官方公布下一场时段.')
+        return this.schedule('等待官方比赛时段开始后再使用免费鱼饵.', Math.min(start * 1_000 - serverNow, left > 0 ? left * 1_000 : MAX_WAIT))
+      }
+      if (start * 1_000 > serverNow || end * 1_000 <= serverNow || left === 0) return this.schedule('官方比赛时段已更新, 稍后重新检查.')
+      if (Math.abs(end * 1_000 - serverNow - left * 1_000) > 5_000) return invalid()
+      contestEnd = now + Math.min(end * 1_000 - serverNow, left * 1_000)
+    }
     const cost = freeBaitCost(await this.request(context, CONFIG_URL, signal), context.room)
     let selected: Bait | undefined
     if (before.state === 0) {
@@ -230,7 +275,12 @@ export class DouyuFishingActions {
       if (selected.count < cost) return waiting('可用入门鱼饵不足, 钓鱼任务已暂停. 请在官方页面核对免费获取条件.')
     }
     const isStart = before.state === 0
-    const result = envelope(parseJson(await this.request(context, isStart ? START_URL : REEL_URL, signal, { dispatch, ...(isStart ? { baitId: '1', ver: '1.1' } : {}) })), context)
+    const result = envelope(parseJson(await this.request(context, isStart ? START_URL : REEL_URL, signal, {
+      dispatch: () => {
+        if (contestEnd !== null && contestEnd <= (this.deps.now ?? Date.now)()) throw new FishingFault('eligibility')
+        dispatch()
+      }, ...(isStart ? { baitId: '1', ver: '1.1' } : {}),
+    })), context)
     // The official start callback refreshes homePage and does not rely on a
     // particular POST data shape. Never accept its error=0 as the final proof.
     if (result.data !== undefined && result.data !== null && result.data !== '') {

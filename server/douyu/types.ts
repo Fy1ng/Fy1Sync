@@ -1,4 +1,5 @@
 import type { PlatformLoginStatus } from '../../electron/login'
+import type { MessageAffixes, MessageSelection } from '../../src/core/messageComposition'
 
 export interface DouyuAccountSummary {
   id: string
@@ -30,6 +31,10 @@ export interface DouyuMessageSchedule {
   initialDelaySeconds: number
   /** Null continues until paused, cancelled or an unconfirmed result occurs. */
   maxRuns: number | null
+  /** Wall-clock budget from explicit start, including the initial delay. */
+  maxDurationSeconds?: number | null
+  selection?: MessageSelection
+  affixes?: MessageAffixes
 }
 
 export interface DouyuTaskDefinition {
@@ -53,6 +58,9 @@ export interface DouyuTaskView extends DouyuTaskDefinition {
   lastResult: string | null
   /** Message tasks only. Resets on an explicit new start and is never persisted. */
   completedRuns?: number
+  deadlineAt?: number
+  /** Actual cross-room activity target used only by the official manual-verification action. */
+  officialRoom?: string
 }
 
 export interface DouyuRuntimeState {
@@ -81,8 +89,8 @@ export type DouyuTerminalOutcome =
   | { status: 'failed'; message: string }
 
 /** Only activity adapters may schedule a fresh read after a known wait. */
-export type DouyuTaskOutcome = DouyuTerminalOutcome
-  | { status: 'scheduled'; message: string; nextRunAt: number }
+export type DouyuTaskOutcome = (DouyuTerminalOutcome
+  | { status: 'scheduled'; message: string; nextRunAt: number }) & { officialRoom?: string }
 
 export type CreateDouyuTask = Omit<DouyuTaskDefinition, 'id' | 'createdAt'>
 
@@ -99,6 +107,9 @@ export type DouyuMessageOutcome = DouyuTerminalOutcome & {
   nextAllowedAt: number | null
   /** Proven not sent, waiting only for a known cooldown. Never set after dispatch. */
   deferredUntil?: number
+  messageLimit?: { localMaximumUnits: number; serverMaximumUnits: number | null; effectiveMaximumUnits: number; receivedUnits: number }
+  deliveryId?: string
+  gatewayAccepted?: boolean
 }
 
 /** Main-process-only scope for an explicitly confirmed, nonpersistent operation. */
@@ -106,6 +117,9 @@ export interface DouyuAccountOperationContext {
   accountId: string
   originRoom: string | null
   rooms: string[]
+  /** Main-only account/batch work. Legacy confirmed gifts remain foreground/room-bound. */
+  scope?: 'account'
+  policy?: DouyuTaskPolicy
 }
 
 export type DouyuAccountOperationOutcome<T> =

@@ -32,10 +32,21 @@ export async function buildElectron(write = true) {
       ssr: true, outDir: 'dist/electron', emptyOutDir: true, minify: false, sourcemap: true,
       target: 'node24', write,
       rollupOptions: {
-        input: { main: fileURLToPath(new URL('electron/main.ts', root)), preload: fileURLToPath(new URL('electron/preload.ts', root)) },
+        input: { main: fileURLToPath(new URL('electron/main.ts', root)) },
         external: ['electron', /^node:/],
         output: { format: 'cjs', entryFileNames: '[name].cjs' },
       },
+    },
+  })
+  // Sandboxed preload can require Electron, but cannot load a shared relative chunk.
+  // A separate single-entry build keeps its whitelist self-contained.
+  const preload = await build({
+    configFile: false, root: fileURLToPath(root), ssr: { noExternal },
+    build: {
+      ssr: fileURLToPath(new URL('electron/preload.ts', root)), outDir: 'dist/electron', emptyOutDir: false,
+      minify: false, sourcemap: true, target: 'node24', write,
+      rollupOptions: { external: ['electron', /^node:/],
+        output: { format: 'cjs', entryFileNames: 'preload.cjs', codeSplitting: false } },
     },
   })
   const runtime = await buildNetworkRuntime(write)
@@ -44,6 +55,6 @@ export async function buildElectron(write = true) {
     const { name, version } = JSON.parse(await readFile(new URL('package.json', root), 'utf8'))
     await writeFile(new URL('dist/package.json', root), JSON.stringify({ name, version, main: 'electron/main.cjs' }, null, 2) + '\n')
   }
-  return [...(Array.isArray(result) ? result : [result]), ...(Array.isArray(runtime) ? runtime : [runtime])]
+  return [...(Array.isArray(result) ? result : [result]), ...(Array.isArray(preload) ? preload : [preload]), ...(Array.isArray(runtime) ? runtime : [runtime])]
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) await buildElectron()

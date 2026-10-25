@@ -33,4 +33,15 @@ describe('Douyu public message metadata', () => {
     expect(normalizeDouyuUid(uid)).toBe(uid)
     expect(normalizeDouyuUid(`${uid}9`)).toBe('')
   })
+
+  it('retains bounded public fans-badge facts without guessing missing badges', () => {
+    const badge = { room: '288016', name: '粉丝牌', level: 12 }
+    const value = normalizeDouyuSender({ uid: '42', fansBadge: { ...badge, icon: 'https://untrusted.invalid/' } })!
+    expect(value).toEqual({ uid: '42', fansBadge: badge })
+    value.fansBadge!.name = 'changed'
+    expect(badge.name).toBe('粉丝牌')
+    for (const invalid of [{ ...badge, room: '01' }, { ...badge, level: 0 }, { ...badge, level: '2' }, { ...badge, name: 'bad\nname' }, { ...badge, name: 'x'.repeat(65) }]) {
+      expect(normalizeDouyuSender({ uid: '42', fansBadge: invalid })).toEqual({ uid: '42' })
+    }
+  })
 })

@@ -28,6 +28,9 @@ export interface DanmakuMessage {
   sender?: DouyuSenderMetadata
   /** Present only for an actual gift event, never for a chat text that mentions gifts. */
   gift?: DouyuGiftMetadata
+  dms?: number
+  duplicateGroupId?: string
+  duplicateCount?: number
 }
 
 export interface DanmakuTimelineOptions {

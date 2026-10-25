@@ -57,6 +57,56 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1_800_000_000_000) })
 afterEach(() => { for (const manager of managers.splice(0)) manager.dispose(); vi.useRealTimers() })
 
 describe('message loop definitions and scheduling', () => {
+  it('includes initial delay in the duration budget and stops without dispatch after expiry', async () => {
+    const h = harness()
+    const id = add(h, { initialDelaySeconds: 20, maxDurationSeconds: 10 })
+    h.manager.start(id)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(view(h, id)).toMatchObject({ status: 'stopped', completedRuns: 0, nextRunAt: null })
+    expect(h.send).not.toHaveBeenCalled()
+  })
+
+  it('cancels an in-flight send at the duration deadline without releasing its write lane', async () => {
+    const h = harness()
+    const id = add(h, { maxDurationSeconds: 2 })
+    h.manager.start(id)
+    await flush()
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(h.messages[0]!.signal.aborted).toBe(true)
+    const sign = h.manager.create(SIGN).tasks.find(task => task.kind === 'room-sign')!.id
+    h.manager.start(sign)
+    await flush()
+    expect(h.run).not.toHaveBeenCalled()
+    h.messages[0]!.resolve(SUCCESS)
+    await flush()
+    expect(view(h, id).completedRuns).toBe(0)
+    expect(h.run).toHaveBeenCalledTimes(1)
+  })
+
+  it('selects the next text only after success and composes configured affixes', async () => {
+    const h = harness()
+    const id = add(h, { maxRuns: 2, intervalSeconds: 1,
+      selection: { mode: 'sequential', texts: ['first', 'second'], template: 'cheer' },
+      affixes: { enabled: true, prefix: '[', suffix: ']' } })
+    h.manager.start(id)
+    await flush()
+    expect(h.messages[0]!.input.text).toBe('[first]')
+    h.messages[0]!.resolve({ status: 'waiting-user', message: '等待冷却', nextAllowedAt: Date.now() + 1_000, deferredUntil: Date.now() + 1_000 })
+    await flush()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(h.messages[1]!.input.text).toBe('[first]')
+    h.messages[1]!.resolve(SUCCESS)
+    await flush()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(h.messages[2]!.input.text).toBe('[second]')
+    h.messages[2]!.resolve(SUCCESS)
+    await flush()
+    expect(view(h, id)).toMatchObject({ status: 'succeeded', completedRuns: 2 })
+    const saved = h.saved().tasks.find(task => task.id === id)!
+    saved.message!.selection!.texts[0] = 'changed'
+    expect(view(h, id).message!.selection!.texts[0]).toBe('first')
+  })
+
   it('stores version 1 definitions with no runtime counters and keeps old sign tasks compatible', async () => {
     const h = harness()
     const sign = h.manager.create(SIGN).tasks[0]!.id

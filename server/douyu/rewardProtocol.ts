@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto'
 import { abortable, cancelBody, cancelled, record } from './actionHttp'
 
-const AUTH_FIELDS = ['acf_auth', 'acf_auth_wl', 'acf_dmjwt_token', 'acf_stk', 'acf_ltkid', 'acf_biz'] as const
+const AUTH_FIELDS = ['acf_auth', 'acf_auth_wl', 'acf_dmjwt_token', 'acf_stk', 'acf_ltkid', 'acf_biz', 'acf_ct'] as const
 const CREDENTIAL_FIELDS = new Set(['acf_uid', 'acf_username', 'acf_ccn', 'dy_did', 'XSRF-TOKEN', ...AUTH_FIELDS])
 
 export type RewardProblemCode = 'login' | 'verification' | 'phone' | 'eligibility' | 'invalid' | 'unavailable' | 'capacity'

@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveConfig } from '../config'
-import type { DouyuActionDependencies } from './actions'
 import type { DouyuTaskDefinition } from './types'
-import { DouyuRewardActions } from './rewardActions'
+import { DouyuRewardActions, readRewardOptions, type DouyuRewardDependencies, type DouyuFanEligibility } from './rewardActions'
 
 // Synthetic account data only. No test fetches a real room or claims a real reward.
 const NOW = Date.parse('2026-10-24T01:00:00Z')
@@ -35,7 +34,7 @@ function scripted(...responses: unknown[]) {
   })
 }
 
-function setup(responses: unknown[] = [], overrides: Partial<DouyuActionDependencies & { now: () => number }> = {}) {
+function setup(responses: unknown[] = [], overrides: Partial<DouyuRewardDependencies> = {}) {
   const request = scripted(...responses)
   const cookieHeader = vi.fn(async (_accountId: string, _url: string) => cookie)
   const resolve = vi.fn(async () => ['8.8.8.8'])
@@ -47,6 +46,131 @@ const writeCount = (request: ReturnType<typeof scripted>) => request.mock.calls.
 const expectPrivate = (value: unknown) => expect(JSON.stringify(value)).not.toMatch(/synthetic|private|acf_|dy_did|doctype|evil\.test/)
 
 afterEach(() => vi.useRealTimers())
+
+describe('authenticated fan qualification', () => {
+  const proof = (patch: Partial<DouyuFanEligibility> = {}): DouyuFanEligibility => ({ accountId: 'account-one', uid: '42', room: '6979222',
+    checkedAt: NOW, source: 'authenticated-blst-gbi', eligible: true, ...patch })
+
+  it.each([2, 3])('requires the selected account proof for fan packet condition %s', async joinc => {
+    const readFanEligibility = vi.fn(async () => proof())
+    const responses = joinc === 3 ? [packets(packet({ joinc })), envelope({ '6979222': 1 }), owner(), packetReceipt()]
+      : [packets(packet({ joinc })), owner(), packetReceipt()]
+    const { actions, request } = setup(responses, { readFanEligibility })
+    expect(await actions.run(task(), signal())).toMatchObject({ status: 'scheduled', message: expect.stringContaining('等待官方结果') })
+    expect(readFanEligibility).toHaveBeenCalledWith('account-one', '6979222', expect.any(AbortSignal))
+    expect(writeCount(request)).toBe(1)
+    expect(request.mock.calls.some(([url]) => String(url).includes('getFansBadgeList'))).toBe(false)
+  })
+
+  it.each([
+    { eligible: null }, { eligible: false }, { accountId: 'another-account' }, { uid: '77' }, { room: '123' },
+    { checkedAt: NOW - 30001 }, { checkedAt: NOW + 5001 }, { source: 'historic-badge-html' },
+  ])('does not substitute stale, mismatched or negative fan membership %#', async patch => {
+    const { actions, request } = setup([packets(packet({ joinc: 2 }))], { readFanEligibility: async () => proof(patch as Partial<DouyuFanEligibility>) })
+    expect(await actions.run(task(), signal())).toMatchObject({ status: 'waiting-user' })
+    expect(writeCount(request)).toBe(0)
+  })
+
+  it('requires following as well as fans status for joinc=3', async () => {
+    const { actions, request } = setup([packets(packet({ joinc: 3 })), envelope({ '6979222': 0 })], { readFanEligibility: async () => proof() })
+    expect(await actions.run(task(), signal())).toMatchObject({ status: 'waiting-user' })
+    expect(writeCount(request)).toBe(0)
+  })
+
+  it('does not block an open public packet on an unrelated missing fan proof', async () => {
+    const readFanEligibility = vi.fn(async () => proof({ eligible: null }))
+    const { actions, request } = setup([packets(packet({ activityid: '67890', joinc: 2 }), packet()), owner(), packetReceipt()], { readFanEligibility })
+    expect(await actions.run(task(), signal())).toMatchObject({ status: 'scheduled' })
+    expect(readFanEligibility).not.toHaveBeenCalled()
+    expect(writeCount(request)).toBe(1)
+  })
+
+  it('does not dispatch after qualification lookup changes the account session', async () => {
+    let header = cookie
+    const { actions, request } = setup([packets(packet({ joinc: 2 }))], { cookieHeader: async () => header,
+      readFanEligibility: async () => { header = cookie.replace('acf_uid=42', 'acf_uid=77'); return proof() } })
+    expect(await actions.run(task(), signal())).toMatchObject({ status: 'waiting-user' })
+    expect(writeCount(request)).toBe(0)
+  })
+})
+
+describe('cross-room ordinary treasure boxes', () => {
+  const target = '123456'
+  const radar = (overrides: Record<string, unknown> = {}) => envelope({ list: [], otherList: [box({ rid: target, ...overrides })] })
+  const targetPanel = (overrides: Record<string, unknown> = {}) => boxes(box({ rid: target, ...overrides }))
+  const options = { crossRoom: true, claimDelayMs: 1000 }
+
+  it('uses radar only for discovery and freshly verifies the exact target before one claim', async () => {
+    const { actions, request, cookieHeader } = setup([radar(), targetPanel(), boxReceipt()])
+    expect(await actions.run(task('treasure-box'), signal(), options)).toMatchObject({ status: 'scheduled', officialRoom: target })
+    expect(request.mock.calls.map(([url]) => String(url))).toEqual([boxPanel, `https://www.douyu.com/mgapi/activitync/box/panel?rid=${target}`, boxGrab])
+    const post = request.mock.calls[2]![1]!
+    expect(JSON.parse(post.body as string).room_id).toBe(Number(target))
+    expect(new Headers(post.headers).get('referer')).toBe(`https://www.douyu.com/${target}`)
+    expect(cookieHeader.mock.calls.every(([account]) => account === 'account-one')).toBe(true)
+    expect(writeCount(request)).toBe(1)
+  })
+
+  it('remembers a future radar target, waits the configured delay, and reads its local panel on the next turn', async () => {
+    const openTime = NOW / 1000 + 20
+    const { actions, request, clock } = setup([radar({ openTime }), targetPanel({ openTime }), boxReceipt()])
+    expect(await actions.run(task('treasure-box'), signal(), options)).toMatchObject({ status: 'scheduled', nextRunAt: NOW + 21000, officialRoom: target })
+    expect(writeCount(request)).toBe(0)
+    clock.now += 21000
+    expect(await actions.run(task('treasure-box'), signal(), options)).toMatchObject({ status: 'scheduled', officialRoom: target })
+    expect(String(request.mock.calls[1]![0])).toBe(`https://www.douyu.com/mgapi/activitync/box/panel?rid=${target}`)
+    expect(writeCount(request)).toBe(1)
+  })
+
+  it.each([boxes(), boxes(box({ rid: target, treasureId: 777 })), envelope({ room_id: 'another-room', list: [box({ rid: target })] })])('does not claim a missing or differently scoped target event %#', async panel => {
+    const { actions, request } = setup([radar(), panel])
+    expect((await actions.run(task('treasure-box'), signal(), options)).status).not.toBe('succeeded')
+    expect(writeCount(request)).toBe(0)
+  })
+
+  it('never automatically solves a challenge and resumes only at the selected account target room', async () => {
+    const { actions, request } = setup([radar(), targetPanel(), { error: 1020440010, msg: 'fixture challenge', data: { geeData: 'untrusted' } }, targetPanel(), boxReceipt()])
+    const paused = await actions.run(task('treasure-box'), signal(), options)
+    expect(paused).toMatchObject({ status: 'waiting-user', officialRoom: target, message: expect.stringContaining('手动') })
+    expect(request).toHaveBeenCalledTimes(3)
+    expect(await actions.run(task('treasure-box'), signal(), options)).toMatchObject({ status: 'scheduled', officialRoom: target })
+    expect(String(request.mock.calls[3]![0])).toBe(`https://www.douyu.com/mgapi/activitync/box/panel?rid=${target}`)
+    expect(postsWithoutChallenge(request)).toBe(true)
+  })
+
+  it('retains unknown cross-room submissions across resumes and a different origin room', async () => {
+    const { actions, request } = setup([radar(), targetPanel(), new Error('lost'), targetPanel(), radar(), targetPanel()])
+    expect(await actions.run(task('treasure-box'), signal(), options)).toMatchObject({ status: 'waiting-user', officialRoom: target })
+    expect(await actions.run(task('treasure-box'), signal(), options)).toMatchObject({ status: 'waiting-user', officialRoom: target })
+    expect(await actions.run({ ...task('treasure-box'), room: '777' }, signal(), options)).toMatchObject({ status: 'waiting-user', officialRoom: target })
+    expect(writeCount(request)).toBe(1)
+  })
+
+  it('refuses a stored radar target after the account identity changes', async () => {
+    let header = cookie
+    const { actions, request, clock } = setup([radar({ openTime: NOW / 1000 + 20 }), targetPanel()], { cookieHeader: async () => header })
+    expect(await actions.run(task('treasure-box'), signal(), options)).toMatchObject({ status: 'scheduled' })
+    header = cookie.replace('acf_uid=42', 'acf_uid=77')
+    clock.now += 21000
+    expect(await actions.run(task('treasure-box'), signal(), options)).toMatchObject({ status: 'waiting-user' })
+    expect(writeCount(request)).toBe(0)
+  })
+
+  it('keeps cross-room targets isolated across local account slots', async () => {
+    const { actions, request } = setup([radar({ openTime: NOW / 1000 + 20 }), boxes()])
+    await actions.run(task('treasure-box'), signal(), options)
+    await actions.run({ ...task('treasure-box'), accountId: 'account-two' }, signal(), options)
+    expect(String(request.mock.calls[1]![0])).toBe(boxPanel)
+  })
+
+  it.each([null, [], { crossRoom: 'yes' }, { claimDelayMs: -1 }, { claimDelayMs: 60001 }, { url: 'https://evil.test/' }, { captcha: 'answer' }])('rejects invalid box configuration %#', raw => {
+    expect(() => readRewardOptions(raw)).toThrow()
+  })
+})
+
+function postsWithoutChallenge(request: ReturnType<typeof scripted>): boolean {
+  return request.mock.calls.filter(([, init]) => init?.method === 'POST').every(([, init]) => !/geeData|geetest|challenge|validate|captcha|useJiYan/.test(String(init?.body)))
+}
 
 describe('gift packet official protocol', () => {
   it('submits once with the exact scoped CSRF and confirms the later official result by GET', async () => {

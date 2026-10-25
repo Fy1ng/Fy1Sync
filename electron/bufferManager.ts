@@ -8,6 +8,7 @@ import { BufferRoute, type BufferRole } from './bufferRoute'
 import { locateTool, ToolError } from './toolLocator'
 import { pullAdaptive, type AdaptiveSource } from './adaptivePuller'
 import { adaptiveTransport, type AdaptiveTransport } from './adaptiveTransport'
+import { isStreamId } from './streamIdentity'
 
 export type Role = BufferRole
 export interface BufferInput { url: string; headers?: Record<string, string>; realtime?: boolean; adaptive?: AdaptiveSource; qualityHeight?: number; fallbackFromHeight?: number }
@@ -71,7 +72,7 @@ export class BufferManager {
   private readonly listeners = new Set<(state: BufferState) => void>()
   private readonly kills = new WeakMap<BufferChild, Promise<void>>()
   private readonly states = new Map<Role, BufferState>()
-  private readonly transitions: Record<Role, Promise<unknown>> = { official: Promise.resolve(), commentary: Promise.resolve() }
+  private readonly transitions = new Map<Role, Promise<unknown>>()
   private readonly clock: BufferClock
   private readonly retention: number
   private readonly ready: number
@@ -145,7 +146,7 @@ export class BufferManager {
     if (this.disposal) return this.disposal
     this.disposed = true
     this.disposal = (async () => {
-      await Promise.all(ROLES.map(role => this.stop(role)))
+      await Promise.all([...new Set([...ROLES, ...this.roles.keys(), ...this.transitions.keys()])].map(role => this.stop(role)))
       this.route.clear()
       await rm(this.sessionRoot, { recursive: true, force: true })
       this.listeners.clear()
@@ -160,8 +161,13 @@ export class BufferManager {
   handle(request: Request): Promise<Response> { return this.route.handle(request) }
 
   private transition<T>(role: Role, operation: () => Promise<T>): Promise<T> {
-    const result = this.transitions[role].then(operation)
-    this.transitions[role] = result.catch(() => {})
+    const result = (this.transitions.get(role) ?? Promise.resolve()).then(operation)
+    const tail = result.then(() => {}, () => {})
+    this.transitions.set(role, tail)
+    void tail.then(() => {
+      if (this.transitions.get(role) === tail) this.transitions.delete(role)
+      if (!this.roles.has(role) && !ROLES.includes(role)) this.states.delete(role)
+    })
     return result
   }
   private current(session: RoleSession, run?: Run): boolean {
@@ -469,7 +475,7 @@ function hlsOutput(directory: string, runId: number, fmp4: boolean): string[] {
 }
 function duration(segments: HlsSegment[]): number { return Math.round(segments.reduce((total, segment) => total + segment.duration, 0) * 1_000_000) / 1_000_000 }
 function positive(value: number): number { if (!Number.isFinite(value) || value <= 0) throw new Error('invalid buffer timing'); return value }
-function assertRole(role: Role): void { if (!ROLES.includes(role)) throw new Error('无效的播放角色') }
+function assertRole(role: Role): void { if (!isStreamId(role)) throw new Error('无效的播放会话') }
 
 /** ffmpeg is detached on POSIX, so the process group is the whole child tree. */
 export async function killProcessTree(child: BufferChild): Promise<void> {

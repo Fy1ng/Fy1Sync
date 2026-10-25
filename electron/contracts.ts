@@ -10,8 +10,9 @@ import type { DecoderMode, DecoderPreferenceState } from './decoderPreferences'
 import type { ToolsStatus } from './toolsService'
 import type { DouyuAccountsSnapshot, DouyuMessageInput, DouyuMessageOutcome, DouyuMessageSchedule, DouyuTasksSnapshot, DouyuTaskKind, DouyuTaskPolicy } from '../server/douyu/types'
 import type { DouyuRenewalTargetPage, DouyuRenewalPlan, DouyuRenewalResult, DouyuRenewalQuantity } from '../server/douyu/renewalTypes'
+import type { FeatureMethods, FeatureEvent } from './featureContracts'
 
-export interface DesktopMethods {
+export interface DesktopMethods extends FeatureMethods {
   listDouyuAccounts: { args: undefined; result: DouyuAccountsSnapshot }
   addDouyuAccount: { args: { label: string }; result: DouyuAccountsSnapshot }
   renameDouyuAccount: { args: { id: string; label: string }; result: DouyuAccountsSnapshot }
@@ -61,6 +62,7 @@ export interface StreamSyncerBridge {
   subscribeDanmaku(room: string, listener: (event: DanmakuEvent) => void): () => void
   subscribeBuffer?(listener: (state: BufferState) => void): () => void
   subscribeDouyuTasks?(listener: (state: DouyuTasksSnapshot) => void): () => void
+  subscribeFeatures?(listener: (event: FeatureEvent) => void): () => void
 }
 
 declare global {

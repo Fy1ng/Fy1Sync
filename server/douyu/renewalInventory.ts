@@ -73,8 +73,9 @@ function inHeaderOrFooter(row: HtmlElement, table: HtmlElement): boolean {
 }
 
 /** Returns only rows on this page; it neither establishes pagination nor renewal state. */
-export function parseRenewalTargets(html: string): DouyuRenewalTarget[] {
+export function parseRenewalTargets(html: string, acquisition?: { now: number }): DouyuRenewalTarget[] {
   try {
+    if (acquisition && (!Number.isSafeInteger(acquisition.now) || acquisition.now < 0)) fail()
     if (typeof html !== 'string' || !html.trim() || Buffer.byteLength(html, 'utf8') > MAX_HTML_BYTES) fail()
     const errors: ParserError[] = []
     const document = parse(html, { scriptingEnabled: true, sourceCodeLocationInfo: true, onParseError: error => {
@@ -126,7 +127,16 @@ export function parseRenewalTargets(html: string): DouyuRenewalTarget[] {
           const previous = found.get(room)
           if (previous && previous.fingerprint !== fingerprint) fail()
           // The pinned reference proves the room attribute, but no reliable badge-name field.
-          if (!previous) found.set(room, { target: { room, badgeName: `房间 ${room}` }, fingerprint })
+          if (!previous) {
+            const target: DouyuRenewalTarget = { room, badgeName: `房间 ${room}` }
+            if (acquisition) {
+              const raw = attr(node, 'data-fans-gbdgts')
+              const seconds = raw && /^[1-9][0-9]{0,11}$/.test(raw) ? Number(raw) : null
+              target.acquiredAt = seconds !== null && seconds <= MAX_UNIX_SECONDS && seconds * 1000 <= acquisition.now ? seconds * 1000 : null
+              target.heldDays = target.acquiredAt === null ? null : Math.floor((acquisition.now - target.acquiredAt) / 86_400_000)
+            }
+            found.set(room, { target, fingerprint })
+          }
         } else {
           if (node.attrs.some(attribute => attribute.name.startsWith('data-fans-'))) fail()
           if (inHeaderOrFooter(node, table) || cells.some(cell => cell.tagName === 'th')) return false

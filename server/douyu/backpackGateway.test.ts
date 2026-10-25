@@ -4,6 +4,8 @@ import { resolveConfig } from '../config'
 import type { DouyuActionDependencies } from './actions'
 import { DouyuBackpackGateway, DouyuRenewalGatewayError } from './backpackGateway'
 import type { DouyuBackpackDonation } from './renewalTypes'
+import { parseDouyuInventory } from './inventoryService'
+import type { DouyuInventoryDonation } from './inventoryTypes'
 
 // Synthetic credentials, stock and responses only. No real request is permitted.
 const cookie = 'acf_uid=42; acf_auth=fixture-private-auth; acf_username=fixture-user; other=fixture-scoped-cookie'
@@ -30,6 +32,58 @@ function setup(overrides: Partial<DouyuActionDependencies> = {}) {
 }
 async function flush(): Promise<void> { for (let count = 0; count < 100; count++) await Promise.resolve() }
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
+
+describe('separate general inventory route', () => {
+  const existingGift = (extra: Record<string, unknown> = {}) => ({ id: 777, name: '合成已有有价道具', count: 5,
+    met: -1, propType: 1, isClick: 1, isValuable: 1, batchInfo: { '2': { batchNum: 2 } }, ...extra })
+  const target = (item = existingGift(), quantity = 2): DouyuInventoryDonation => ({ ...donation, propId: '777', quantity,
+    expectedInventory: parseDouyuInventory({ list: [item] }, Date.now())[0]! })
+
+  it('supports confirmed ordinary stock while leaving the renewal prop allowlist unchanged', async () => {
+    const request = vi.fn<typeof fetch>(async url => {
+      if (String(url) === backpackUrl) return Response.json({ error: 0, data: { list: [existingGift()] } })
+      if (String(url) === donateUrl) return Response.json({ error: 0, data: { usedProp: { propType: 1, id: 777 }, list: [{ id: 777, count: 3 }] } })
+      throw new Error('Unexpected fixture URL')
+    })
+    const h = setup({ request })
+    expect((await h.gateway.donate({ ...donation, propId: '777', quantity: 2 }, signal())).status).toBe('not-submitted')
+    expect(request).not.toHaveBeenCalled()
+    expect((await h.gateway.donateInventory(target(), signal())).status).toBe('receipt-received')
+    const post = request.mock.calls.find(([, init]) => init?.method === 'POST')!
+    expect(String(post[0])).toBe(donateUrl)
+    expect(Object.fromEntries(new URLSearchParams(String(post[1]?.body)))).toEqual({ propId: '777', propCount: '2', roomId: donation.room, bizExt: '{"yzxq":{}}' })
+    expect(request.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1)
+  })
+
+  it.each([{ count: 4 }, { count: 6 }, { propType: 7 }, { propType: 5 }, { isValuable: 0 }, { isClick: 0 }, { met: 1 }])('rechecks the exact inventory proof immediately before submission %#', change => {
+    const request = vi.fn<typeof fetch>(async () => Response.json({ error: 0, data: { list: [existingGift(change)] } }))
+    const h = setup({ request })
+    return h.gateway.donateInventory(target(), signal()).then(result => {
+      expect(result.status).toBe('not-submitted')
+      expect(request.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0)
+    })
+  })
+
+  it('does not invent bulk support when batch metadata is absent', async () => {
+    const item = existingGift({ batchInfo: {} })
+    const request = vi.fn<typeof fetch>(async () => Response.json({ error: 0, data: { list: [item] } }))
+    const h = setup({ request })
+    expect((await h.gateway.donateInventory(target(item, 2), signal())).status).toBe('not-submitted')
+    expect(request.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0)
+  })
+
+  it('treats a conflicting used-prop type as unknown after one submission', async () => {
+    let posts = 0
+    const request = vi.fn<typeof fetch>(async url => {
+      if (String(url) === backpackUrl) return Response.json({ error: 0, data: { list: [existingGift()] } })
+      posts++
+      return Response.json({ error: 0, data: { usedProp: { propType: 7 }, list: [] } })
+    })
+    const h = setup({ request })
+    expect((await h.gateway.donateInventory(target(), signal())).status).toBe('unknown')
+    expect(posts).toBe(1)
+  })
+})
 
 describe('fixed read endpoints and private return contracts', () => {
   it('reads only the returned badge page with exact URL-scoped account credentials', async () => {

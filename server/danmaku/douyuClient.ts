@@ -20,6 +20,8 @@ import {
   toGiftMessage,
   type ChatMessage,
 } from './douyuProtocol'
+import { parseDouyuRoomSignal } from './roomSignals'
+import type { DouyuRoomSignal } from '../douyu/insightsTypes'
 
 const DANMAKU_ENDPOINT = 'wss://danmuproxy.douyu.com:8506/'
 const KEEPALIVE_INTERVAL_MS = 40_000
@@ -39,6 +41,9 @@ export type DanmakuState = 'idle' | 'connecting' | 'connected' | 'reconnecting' 
 export type DanmakuClientEvents = {
   onMessage: (message: ChatMessage) => void
   onState: (state: DanmakuState, detail?: string) => void
+  /** Runs once per upstream event, before presentation throttles and subscriber replay. */
+  onObservedMessage?: (message: ChatMessage) => void
+  onSignal?: (signal: DouyuRoomSignal) => void
 }
 
 export type WebSocketLike = {
@@ -174,13 +179,21 @@ export class DouyuDanmakuClient {
       if (chat) {
         this.acceptInbound(socket, now)
         if (this.socket !== socket) return
+        this.events.onObservedMessage?.(chat)
         this.events.onMessage(chat)
+        continue
+      }
+      const signal = parseDouyuRoomSignal(parsed, this.room, now)
+      if (signal) {
+        this.acceptInbound(socket, now)
+        if (this.socket === socket) this.events.onSignal?.(signal)
         continue
       }
       const gift = toGiftMessage(parsed, this.room, now)
       if (!gift) continue
       this.acceptInbound(socket, now)
       if (this.socket !== socket) return
+      this.events.onObservedMessage?.(gift)
       if (now < this.giftWindowStart || now - this.giftWindowStart >= 1_000) {
         this.giftWindowStart = now
         this.giftsInWindow = 0

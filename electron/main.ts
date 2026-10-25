@@ -1,5 +1,5 @@
 import './networkRuntime'
-import { app, BrowserWindow, ipcMain, powerMonitor, protocol, session } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, powerMonitor, protocol, session, shell } from 'electron'
 import { join, resolve } from 'node:path'
 import { mkdirSync, watchFile, unwatchFile } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -34,6 +34,10 @@ import { DouyuRenewalService } from '../server/douyu/renewalService'
 import type { DouyuBackpackDonation } from '../server/douyu/renewalTypes'
 import type { DouyuMessageInput, DouyuRuntimeState, DouyuTaskStorage } from '../server/douyu/types'
 import { isDouyuActivityKind } from '../server/douyu/types'
+import { DanmakuFeatures, type DanmakuFeaturesStorage } from './danmakuFeatures'
+import { ActivityPreferencesStore, type ActivityPreferences } from './activityPreferences'
+import { createBackendRuntime } from './backendRuntime'
+import { parseAppUpdateSource, type AppUpdateSource } from './appUpdateService'
 
 const networkRuntimePath = app.isPackaged
   ? join(process.resourcesPath, 'app.asar.unpacked', 'electron', 'network-runtime.cjs')
@@ -65,6 +69,26 @@ async function start(): Promise<void> {
   const proxy = { ...config.proxy, allowNonLoopbackTargets: false, allowNonStandardPorts: false }
   const media = new MediaRegistry({ config: proxy })
   const userDataDir = app.getPath('userData')
+  let danmakuFeatures: DanmakuFeatures | undefined
+  let activityPreferences: ActivityPreferencesStore | undefined
+  let backend: ReturnType<typeof createBackendRuntime> | undefined
+  let pipWindow: BrowserWindow | null = null
+  let handlers: ReturnType<typeof installIpcHandlers> | undefined
+  let backendConfig: { maxExtraStreams: number; updateSource: AppUpdateSource | null } = { maxExtraStreams: 16, updateSource: null }
+  try {
+    const danmakuStore = new PrivateJsonStore<DanmakuFeaturesStorage>(userDataDir, 'douyu/danmaku-features.json')
+    danmakuFeatures = new DanmakuFeatures({ load: () => danmakuStore.load(), save: value => danmakuStore.save(value) })
+    activityPreferences = new ActivityPreferencesStore(new PrivateJsonStore<ActivityPreferences>(userDataDir, 'douyu/activity-preferences.json'))
+    const raw = new PrivateJsonStore<{ version: 1; maxExtraStreams?: number; updateSource?: unknown }>(userDataDir, 'backend.json').load()
+    if (raw !== undefined) {
+      if (!raw || typeof raw !== 'object' || (raw as { version?: unknown }).version !== 1
+        || Object.keys(raw).some(key => !['version', 'maxExtraStreams', 'updateSource'].includes(key))) throw new Error('Invalid backend configuration')
+      const value = raw as { maxExtraStreams?: number; updateSource?: unknown }
+      const maxExtraStreams = value.maxExtraStreams ?? 16
+      if (!Number.isSafeInteger(maxExtraStreams) || maxExtraStreams < 1 || maxExtraStreams > 256) throw new Error('Invalid stream limit')
+      backendConfig = { maxExtraStreams, updateSource: value.updateSource == null ? null : parseAppUpdateSource(value.updateSource) }
+    }
+  } catch { console.error('扩展功能本地配置不可用, 原文件已保留.'); danmakuFeatures = undefined; activityPreferences = undefined }
   const toolSettings: ToolSettings = await readFile(join(userDataDir, 'tools.json'), 'utf8')
     .then((text) => {
       const value = JSON.parse(text) as ToolSettings
@@ -120,8 +144,13 @@ async function start(): Promise<void> {
   if (douyuAccounts) {
     try {
       const taskStore = new PrivateJsonStore<DouyuTaskStorage>(userDataDir, 'douyu/tasks.json')
-      const actions = new DouyuActions({ proxy, cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url) })
-      douyuMessageSender = new DouyuMessageSender({ proxy, networkRuntimePath, cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url) })
+      const actions = new DouyuActions({ proxy, cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url),
+        readFanEligibility: async (id, room, signal) => {
+          const state = await douyuMessageSender!.inspect(id, room, signal, 'fan')
+          return { accountId: id, uid: state.uid, room, checkedAt: state.checkedAt, source: state.source, eligible: state.fanEligible }
+        },
+      })
+      douyuMessageSender = new DouyuMessageSender({ proxy, networkRuntimePath, cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url), deliveryTracker: danmakuFeatures?.deliveries })
       douyuTasks = new DouyuTaskManager({
         load: () => taskStore.load(), save: value => taskStore.save(value),
         run: async (task, signal) => {
@@ -135,7 +164,7 @@ async function start(): Promise<void> {
             }
             return { status: 'succeeded', message: task.kind === 'yuba-sign' ? '离线鱼吧签到测试完成' : '离线签到测试完成' }
           }
-          return actions.run(task, signal)
+          return actions.run(task, signal, { fishing: activityPreferences?.get().fishing, treasure: activityPreferences?.get().treasure })
         },
         sendMessage: async (input, signal) => {
           if (!app.isPackaged && offlineE2e && douyuToolsFixture) {
@@ -297,19 +326,59 @@ async function start(): Promise<void> {
       },
     })
   }
+  if (danmakuFeatures && activityPreferences) backend = createBackendRuntime({
+    userDataDir, proxy, acquisition, relay, danmaku: danmakuFeatures, accounts: douyuAccounts, tasks: douyuTasks,
+    sender: douyuMessageSender, renewal: douyuRenewal, resolveRoom: roomResolver.resolve, activityPreferences, ...backendConfig,
+    ffmpegPath: () => locateTool('ffmpeg', toolSettings, process.env, toolContext),
+    validatePng: bytes => { const value = nativeImage.createFromBuffer(bytes); return !value.isEmpty() },
+    chooseCaptureDestination: async kind => {
+      const result = await dialog.showSaveDialog({ title: kind === 'png' ? '保存播放截图' : '保存 GIF',
+        defaultPath: `Stream-Syncer-${Date.now()}.${kind}`, filters: [{ name: kind.toUpperCase(), extensions: [kind] }] })
+      return result.canceled || !result.filePath ? null : result.filePath
+    },
+    openExternal: url => shell.openExternal(url),
+    notifyLive: event => {
+      if (Notification.isSupported()) new Notification({ title: '斗鱼开播提醒', body: `关注的直播间 ${event.room} 已开播` }).show()
+    },
+    createPipWindow: () => {
+      const created = new BrowserWindow({ show: false, width: 480, height: 270, minWidth: 240, minHeight: 135,
+        autoHideMenuBar: true, alwaysOnTop: true, title: 'Stream Syncer - 画中画',
+        webPreferences: { preload: join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true,
+          nodeIntegration: false, webSecurity: true, backgroundThrottling: false } })
+      pipWindow = created
+      const contents = created.webContents
+      contents.setAudioMuted(true)
+      const unregister = handlers?.registerWindow(contents)
+      contents.setWindowOpenHandler(() => ({ action: 'deny' }))
+      const pipDocument = (url: string) => isAppOrigin(url) && ['/pip', '/pip/'].includes(new URL(url).pathname)
+      contents.on('will-navigate', (event, url) => { if (!pipDocument(url)) event.preventDefault() })
+      contents.on('will-redirect', (event, url) => { if (!pipDocument(url)) event.preventDefault() })
+      contents.on('will-attach-webview', event => event.preventDefault())
+      created.on('focus', () => refreshRuntime())
+      created.on('blur', () => refreshRuntime())
+      created.on('closed', () => { unregister?.(); if (pipWindow === created) pipWindow = null; refreshRuntime() })
+      return { id: contents.id, load: () => created.loadURL('app://app/pip'), show: () => created.show(),
+        close: () => { if (!created.isDestroyed()) created.close() },
+        resize: (width, height) => { if (!created.isDestroyed()) created.setSize(width, height) },
+        onClosed: listener => { created.on('closed', listener); return () => created.removeListener('closed', listener) } }
+    },
+  })
   const service = createDesktopService({
     dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, registerMedia: media.register, acquisition, decoderPreferences, tools, douyuAccounts, douyuTasks, douyuRenewal,
+    features: backend?.api,
   })
   session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
     callback(allowsAppPermission(permission, {
-      trustedWindow: !!window && !window.isDestroyed() && contents === window.webContents && !contents.isDestroyed(),
+      trustedWindow: !contents.isDestroyed() && ((!!window && !window.isDestroyed() && contents === window.webContents)
+        || (!!pipWindow && !pipWindow.isDestroyed() && contents === pipWindow.webContents)),
       documentUrl: contents.isDestroyed() ? '' : contents.mainFrame.url,
       requestingUrl: details.requestingUrl, isMainFrame: details.isMainFrame,
     }))
   })
   session.defaultSession.setPermissionCheckHandler((contents, permission, requestingOrigin, details) => {
     return allowsAppPermission(permission, {
-      trustedWindow: !!window && !window.isDestroyed() && contents === window.webContents && !contents.isDestroyed(),
+      trustedWindow: !!contents && !contents.isDestroyed() && ((!!window && !window.isDestroyed() && contents === window.webContents)
+        || (!!pipWindow && !pipWindow.isDestroyed() && contents === pipWindow.webContents)),
       documentUrl: !contents || contents.isDestroyed() ? '' : contents.mainFrame.url,
       requestingUrl: details.requestingUrl, requestingOrigin, isMainFrame: details.isMainFrame,
     })
@@ -321,6 +390,7 @@ async function start(): Promise<void> {
       let response: Response | null
       if (url.pathname.startsWith('/media/')) response = await media.handle(request)
       else if (url.pathname.startsWith('/buffer/')) response = await buffer.handle(request)
+      else if (url.pathname === '/pip' || url.pathname === '/pip/') response = await serveStatic(new Request(APP_URL, { method: request.method }), { root: clientDir })
       else response = await serveStatic(request, { root: clientDir })
       if (!response) response = url.pathname === '/' ? missingClientResponse(clientDir) : new Response(null, { status: 404 })
       response.headers.set('Content-Security-Policy', CONTENT_SECURITY_POLICY)
@@ -337,12 +407,20 @@ async function start(): Promise<void> {
   })
   const contents = window.webContents
   const mainWindow = window
+  const releasePipPresentation = backend?.pip.subscribe(state => {
+    if (!mainWindow.isDestroyed()) {
+      contents.setAudioMuted(state.audioOwner === 'pip')
+      contents.backgroundThrottling = state.phase === 'ready' && state.options.lowPower
+    }
+    if (pipWindow && !pipWindow.isDestroyed()) pipWindow.webContents.setAudioMuted(state.audioOwner !== 'pip')
+  })
   const isLocked = (): boolean => {
     try { return powerMonitor.getSystemIdleState(1) === 'locked' } catch { return true }
   }
   const runtime: DouyuRuntimeState = { foreground: false, locked: isLocked(), suspended: false }
   const refreshRuntime = () => {
-    runtime.foreground = !mainWindow.isDestroyed() && mainWindow.isFocused() && !mainWindow.isMinimized()
+    runtime.foreground = (!mainWindow.isDestroyed() && mainWindow.isFocused() && !mainWindow.isMinimized())
+      || (!!pipWindow && !pipWindow.isDestroyed() && pipWindow.isFocused() && !pipWindow.isMinimized())
     douyuTasks?.setRuntime({ ...runtime })
   }
   const lock = () => { runtime.locked = true; refreshRuntime() }
@@ -360,7 +438,17 @@ async function start(): Promise<void> {
   powerMonitor.on('suspend', suspend)
   powerMonitor.on('resume', resume)
   refreshRuntime()
-  const handlers = installIpcHandlers(ipcMain, contents, service)
+  handlers = installIpcHandlers(ipcMain, contents, service, {
+    allowMethod: (id, method, args) => backend?.pip.permits(id, method, args) === true,
+    allowRoom: (id, room) => backend?.pip.permitsRoom(id, room) === true,
+    allowEvent: (id, event) => {
+      if (id !== backend?.pip.windowId()) return false
+      if (event.topic === 'pip' || event.topic === 'danmaku-preferences') return true
+      const value = event.data && typeof event.data === 'object' ? event.data as Record<string, unknown> : {}
+      if (event.topic === 'buffer') return value.role === backend.pip.state().streamId
+      return event.topic === 'insights' && value.room === backend.pip.state().source?.sourceRoom
+    },
+  })
   if (e2e) Object.assign(globalThis, { __streamSyncerTest: {
     ...(!app.isPackaged ? { setDouyuToolsFixture() {
       if (!offlineE2e) throw new Error('Douyu tools fixture is offline-only')
@@ -409,7 +497,10 @@ async function start(): Promise<void> {
         throw new Error('Unknown offline fixture request')
       }
     } } : {}),
-    emitDanmaku: handlers.emitDanmaku,
+    emitDanmaku: (room: string, event: string, data: unknown) => {
+      if (offlineE2e && event === 'danmaku') backend?.observeFixture(data as Parameters<DanmakuFeatures['observe']>[0])
+      return handlers!.emitDanmaku(room, event, data)
+    },
     youtubeDiagnostics: () => youtubeDiagnostics,
     bufferDiagnostics: () => bufferDiagnostics,
     adaptiveStats: () => adaptiveStats,
@@ -442,11 +533,14 @@ async function start(): Promise<void> {
     powerMonitor.removeListener('suspend', suspend)
     powerMonitor.removeListener('resume', resume)
     releaseAccountEvents?.()
+    releasePipPresentation?.()
+    await backend?.dispose()
+    danmakuFeatures?.dispose()
     douyuRenewal?.dispose()
     douyuTasks?.dispose()
     douyuMessageSender?.dispose()
     unwatchFile(index)
-    handlers.dispose()
+    handlers?.dispose()
     service.dispose()
     acquisition.dispose()
     await Promise.all([ytdlp.dispose(), buffer.dispose(), logins.dispose(), douyuAccounts?.dispose()])

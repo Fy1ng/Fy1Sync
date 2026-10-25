@@ -8,6 +8,7 @@ import type { BufferState } from '../../electron/bufferManager'
 import type { LoginPlatform } from '../../electron/login'
 import type { DecoderMode } from '../../electron/decoderPreferences'
 import type { DouyuTaskPolicy, DouyuTasksSnapshot } from '../../server/douyu/types'
+import type { FeatureMethod, FeatureMethods, FeatureEvent } from '../../electron/featureContracts'
 
 export type ApiResult<T> =
   | { ok: true; value: T }
@@ -75,6 +76,10 @@ export class ApiClient {
   }
 
   getDecoderPreferences() { return this.request('getDecoderPreferences', undefined) }
+  feature<K extends FeatureMethod>(method: K, args: FeatureMethods[K]['args']) { return this.request(method, args) }
+  subscribeFeatures(listener: (event: FeatureEvent) => void): () => void {
+    try { return this.bridge().subscribeFeatures?.(listener) ?? (() => {}) } catch { return () => {} }
+  }
   getToolsStatus() { return this.request('getToolsStatus', undefined) }
   updateYtdlp() { return this.request('updateYtdlp', undefined) }
   restoreYtdlp(target: 'previous' | 'bundled') { return this.request('restoreYtdlp', { target }) }

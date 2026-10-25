@@ -120,6 +120,8 @@ export type ChatMessage = {
   /** True for gift/system notices rather than user chat. */
   system: boolean
   sender?: DouyuSenderMetadata
+  /** Public intelligent-filter score. Absence is not proof of a bot. */
+  dms?: number
   /** Only actual dgb traffic has this field. */
   gift?: DouyuGiftMetadata
 }
@@ -148,6 +150,7 @@ export function toChatMessage(
   const text = message.txt?.trim()
   if (!text) return null
   const sender = senderForMessage(message)
+  const dms = decimal(message.dms, 1_000_000_000)
   return {
     id: message.cid || message.cet || `${now}-${Math.random().toString(36).slice(2, 8)}`,
     text,
@@ -158,6 +161,7 @@ export function toChatMessage(
     room,
     system: false,
     ...(sender ? { sender } : {}),
+    ...(dms === undefined ? {} : { dms }),
   }
 }
 
@@ -172,6 +176,8 @@ function senderForMessage(message: DanmakuMessage): DouyuSenderMetadata | undefi
     uid: message.uid,
     level: decimal(message.level, 1_000),
     nobleLevel: decimal(message.nl, 1_000),
+    // Official BarrageGroup_c8d2c66_5f8df24 maps bnn/bl/brid to fansMedal.
+    fansBadge: { room: message.brid, name: message.bnn, level: decimal(message.bl, 1_000) },
   })
 }
 
