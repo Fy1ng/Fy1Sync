@@ -22,16 +22,16 @@ const KIND: Record<DouyuTaskKind, string> = {
   'auto-fish': '钓鱼', 'gift-packet': '抢红包', 'treasure-box': '开宝箱',
 }
 const KIND_NOTE: Partial<Record<DouyuTaskKind, string>> = {
-  'yuba-sign': '先在账号里登录鱼吧。只签已经加入的鱼吧。',
-  'auto-fish': '只用现有的免费次数，遇到验证会停。',
-  'gift-packet': '抢到的红包礼物，会按平台规则到期自动送给这个主播。',
-  'treasure-box': '遇到验证会停，到官方房间手动完成后再启动。',
+  'yuba-sign': '请先在账号中登录鱼吧。仅签到已加入的鱼吧。',
+  'auto-fish': '仅使用现有免费次数，遇到验证时停止。',
+  'gift-packet': '抢到的红包礼物将按平台规则在到期时自动赠送给该主播。',
+  'treasure-box': '遇到验证时停止，请在官方直播间手动完成后重新启动。',
 }
 const POLICY: Record<DouyuTaskPolicy, string> = {
-  foreground: '窗口在前台时', 'background-unlocked': '没锁屏就跑', 'background-locked': '锁屏也跑',
+  foreground: '仅窗口在前台时', 'background-unlocked': '未锁屏时', 'background-locked': '锁屏时也运行',
 }
 const STATUS: Record<DouyuTaskView['status'], string> = {
-  paused: '暂停', queued: '排队', running: '进行中', 'waiting-user': '等你处理', succeeded: '完成', failed: '失败', stopped: '已停',
+  paused: '暂停', queued: '排队', running: '进行中', 'waiting-user': '待处理', succeeded: '完成', failed: '失败', stopped: '已停止',
 }
 const COLORS = ['白', '红', '蓝', '绿', '橙', '紫', '粉']
 
@@ -55,19 +55,19 @@ export function Tasks({ data, defaultRoom }: { data: DouyuData; defaultRoom: str
       {creating
         ? <NewTask data={data} defaultRoom={defaultRoom ?? tasks?.currentRoom ?? ''} onDone={() => setCreating(false)} />
         : <button type="button" className="btn-solid new-task" disabled={all.length === 0} onClick={() => setCreating(true)}>新任务</button>}
-      {all.length === 0 && !loading && <p className="muted">先去「账号」里添加一个斗鱼账号。</p>}
+      {all.length === 0 && !loading && <p className="muted">请先在「账号」中添加斗鱼账号。</p>}
 
       {!loading && rooms.length === 0 && !creating && (
-        <p className="desk-empty">没有任务。任务新建后先暂停，点启动才会跑；关掉应用就全部停止。</p>
+        <p className="desk-empty">暂无任务。新建的任务默认暂停，点击「启动」后运行；关闭应用后全部停止。</p>
       )}
 
       {rooms.map((room) => (
         <section key={room} className="room" aria-label={`任务房间 ${room}`}>
           <header className="room-head">
             <h3>房间 {room}</h3>
-            {room === tasks?.currentRoom && <span className="tag">正在看</span>}
+            {room === tasks?.currentRoom && <span className="tag">正在观看</span>}
             <span className="room-keep">
-              <Switch label="不看这个房间也继续" checked={tasks?.retainedRooms.includes(room) ?? false}
+              <Switch label="离开该房间后继续" checked={tasks?.retainedRooms.includes(room) ?? false}
                 disabled={!!taskLane.pending}
                 onChange={(retain) => void data.taskAction('正在保存', () => apiClient.retainDouyuTaskRoom(room, retain),
                   retain ? `离开房间 ${room} 后任务继续` : `离开房间 ${room} 后任务停止`)} />
@@ -83,8 +83,8 @@ export function Tasks({ data, defaultRoom }: { data: DouyuData; defaultRoom: str
 
       {tasks && (
         <p className="muted desk-runtime">
-          应用现在{tasks.runtime.suspended ? '休眠中' : tasks.runtime.locked ? '在锁屏' : tasks.runtime.foreground ? '在前台' : '在后台'}，
-          「窗口在前台时」的任务只在前台跑。
+          应用当前{tasks.runtime.suspended ? '休眠中' : tasks.runtime.locked ? '处于锁屏' : tasks.runtime.foreground ? '在前台运行' : '在后台运行'}，
+          「仅窗口在前台时」的任务只在前台运行。
         </p>
       )}
       <LaneLine lane={taskLane} />
@@ -95,8 +95,8 @@ export function Tasks({ data, defaultRoom }: { data: DouyuData; defaultRoom: str
 function TaskRow({ task, data, activeId }: { task: DouyuTaskView; data: DouyuData; activeId: string | null }): React.ReactNode {
   const { all, taskAction, accountAction, accountsBusy, taskLane } = data
   const account = all.find((item) => item.id === task.accountId)
-  const blocked = !account ? '账号已不在' : account.id !== activeId ? `先在账号里把 ${account.label} 设为在用`
-    : !account.login.loggedIn ? `先登录 ${account.label}` : ''
+  const blocked = !account ? '账号已删除' : account.id !== activeId ? `请先在账号中将 ${account.label} 设为当前账号`
+    : !account.login.loggedIn ? `请先登录 ${account.label}` : ''
   const locked = !!taskLane.pending
   const running = scheduled(task)
   const kind = isDouyuActivityKind(task.kind) ? `${KIND[task.kind]}任务` : task.kind === 'message-loop' ? '发送任务'
@@ -110,7 +110,7 @@ function TaskRow({ task, data, activeId }: { task: DouyuTaskView; data: DouyuDat
         <span className="task-status" data-status={task.status}>{STATUS[task.status]}</span>
         <span className="muted">
           {account?.label ?? '账号不可用'} · {message
-            ? `${message.maxRuns === 1 ? '发 1 次' : `每 ${message.intervalSeconds} 秒，${message.maxRuns === null ? '不限次' : `共 ${message.maxRuns} 次`}`}`
+            ? `${message.maxRuns === 1 ? '发送 1 次' : `每 ${message.intervalSeconds} 秒，${message.maxRuns === null ? '不限次' : `共 ${message.maxRuns} 次`}`}`
             : isDouyuActivityKind(task.kind) ? '按活动时间' : task.repeatMinutes === 1440 ? '每天' : '一次'}
         </span>
       </div>
@@ -118,7 +118,7 @@ function TaskRow({ task, data, activeId }: { task: DouyuTaskView; data: DouyuDat
         <p className="task-text">
           <span className="swatches" aria-hidden="true">{message.colors.map((color) => <i key={color} style={{ background: colorForIndex(color) }} />)}</span>
           {message.text}
-          {task.completedRuns !== undefined && <span className="num muted"> · 已发 {task.completedRuns}</span>}
+          {task.completedRuns !== undefined && <span className="num muted"> · 已发送 {task.completedRuns}</span>}
         </p>
       )}
       {(task.lastResult || task.reason) && <p className="task-result">{task.reason ?? task.lastResult}</p>}
@@ -143,7 +143,7 @@ function TaskRow({ task, data, activeId }: { task: DouyuTaskView; data: DouyuDat
           </button>
         )}
         <select className="task-policy" value={task.policy} disabled={locked}
-          aria-label={`房间 ${task.room} 的 ${account?.label ?? '未知账号'} ${KIND[task.kind]}什么时候跑`}
+          aria-label={`房间 ${task.room} 的 ${account?.label ?? '未知账号'} ${KIND[task.kind]}运行条件`}
           onChange={(event) => void taskAction('正在保存', () => apiClient.setDouyuTaskPolicy(task.id, event.target.value as DouyuTaskPolicy), '已保存')}>
           {Object.entries(POLICY).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
@@ -178,10 +178,10 @@ function NewTask({ data, defaultRoom, onDone }: { data: DouyuData; defaultRoom: 
         accountId, roomInput: room.trim(), kind, policy,
         repeatMinutes: !isMessage && !isActivity && daily ? 1440 : null,
         ...(isMessage && schedule ? { message: schedule } : {}),
-      }), '已添加，点启动开始').then((ok) => { if (ok) onDone() })
+      }), '已添加，点击「启动」开始运行').then((ok) => { if (ok) onDone() })
     }}>
       <div className="field-stack">
-        <span className="field-label">做什么</span>
+        <span className="field-label">任务类型</span>
         <Segmented label="任务类型" value={kind} onChange={setKind}
           options={(Object.keys(KIND) as DouyuTaskKind[]).map((value) => ({ value, label: KIND[value] }))} />
         {KIND_NOTE[kind] && <p className="muted">{KIND_NOTE[kind]}</p>}
@@ -195,47 +195,47 @@ function NewTask({ data, defaultRoom, onDone }: { data: DouyuData; defaultRoom: 
         <label className="field-stack">
           <span className="field-label">账号</span>
           <select value={accountId} aria-label="任务账号" onChange={(event) => setAccountId(event.target.value)}>
-            {all.map((account) => <option key={account.id} value={account.id}>{account.label}{account.id === active?.id ? '（在用）' : ''}</option>)}
+            {all.map((account) => <option key={account.id} value={account.id}>{account.label}{account.id === active?.id ? '（当前）' : ''}</option>)}
           </select>
         </label>
       </div>
 
       <div className="field-stack">
-        <span className="field-label">什么时候跑</span>
+        <span className="field-label">运行条件</span>
         <Segmented label="执行条件" value={policy} onChange={setPolicy}
           options={(Object.keys(POLICY) as DouyuTaskPolicy[]).map((value) => ({ value, label: POLICY[value] }))} />
       </div>
 
       {!isMessage && !isActivity && (
-        <Switch label="每天签一次" checked={daily} onChange={setDaily} />
+        <Switch label="每天签到一次" checked={daily} onChange={setDaily} />
       )}
 
       {isMessage && (
         <>
           <label className="field-stack">
-            <span className="field-label">发什么</span>
+            <span className="field-label">发送内容</span>
             <textarea className="text-input" rows={2} maxLength={500} value={draft.text} aria-label="发送内容"
               onChange={(event) => { const text = event.target.value; setDraft((value) => ({ ...value, text })) }} />
           </label>
           <div className="new-grid is-three">
             <label className="field-stack">
-              <span className="field-label">每隔（秒）</span>
+              <span className="field-label">发送间隔（秒）</span>
               <input className="text-input num" type="number" min={1} max={86400} value={num(draft.intervalSeconds)} aria-label="发送间隔(秒)"
                 onChange={(event) => { const intervalSeconds = event.target.valueAsNumber; setDraft((value) => ({ ...value, intervalSeconds })) }} />
             </label>
             <label className="field-stack">
-              <span className="field-label">启动后等（秒）</span>
+              <span className="field-label">启动延迟（秒）</span>
               <input className="text-input num" type="number" min={0} max={86400} value={num(draft.initialDelaySeconds)} aria-label="启动延迟(秒)"
                 onChange={(event) => { const initialDelaySeconds = event.target.valueAsNumber; setDraft((value) => ({ ...value, initialDelaySeconds })) }} />
             </label>
             <label className="field-stack">
-              <span className="field-label">发几次</span>
+              <span className="field-label">发送次数</span>
               <input className="text-input num" type="number" min={1} max={1000} disabled={draft.maxRuns === null} aria-label="发送次数"
                 value={num(draft.maxRuns ?? lastRuns)}
                 onChange={(event) => { const maxRuns = event.target.valueAsNumber; setLastRuns(maxRuns); setDraft((value) => ({ ...value, maxRuns })) }} />
             </label>
           </div>
-          <Switch label="一直发，直到暂停" checked={draft.maxRuns === null}
+          <Switch label="持续发送，直至暂停" checked={draft.maxRuns === null}
             onChange={(forever) => setDraft((value) => ({ ...value, maxRuns: forever ? null : lastRuns }))} />
           <div className="field-stack">
             <span className="field-label">颜色{draft.colors.length > 1 ? '（按顺序轮换）' : ''}</span>
@@ -255,9 +255,9 @@ function NewTask({ data, defaultRoom, onDone }: { data: DouyuData; defaultRoom: 
                 )
               })}
             </div>
-            <p className="muted">彩色需要账号已经解锁对应颜色。</p>
+            <p className="muted">彩色弹幕需要账号已解锁对应颜色。</p>
           </div>
-          {!schedule && draft.text.length > 0 && <p className="form-error">检查一下内容、时间和次数，至少选一种颜色；内容不能换行。</p>}
+          {!schedule && draft.text.length > 0 && <p className="form-error">请检查内容、时间与次数，并至少选择一种颜色；内容不能包含换行。</p>}
         </>
       )}
 

@@ -13,8 +13,8 @@ import { apiClient } from '../../app/apiClient'
 import type { DouyuRenewalPlan, DouyuRenewalResult, DouyuRenewalTargetPage } from '../../../server/douyu/renewalTypes'
 
 const MAX_ROOMS = 20
-const ROW_STATE = { 'receipt-received': '已收到回执', unknown: '需要核对', 'not-submitted': '没有送出', skipped: '跳过' } as const
-const RESULT = { completed: '处理完了', 'waiting-user': '有结果需要你核对', cancelled: '剩下的已停止', failed: '没有完成' } as const
+const ROW_STATE = { 'receipt-received': '已收到回执', unknown: '需要核对', 'not-submitted': '未送出', skipped: '跳过' } as const
+const RESULT = { completed: '处理完成', 'waiting-user': '部分结果需要核对', cancelled: '其余已停止', failed: '未完成' } as const
 
 const amountOf = (text: string): number | null => {
   const value = Number(text)
@@ -102,7 +102,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
       setPicked((current) => current.filter((room) => rooms.has(room)))
       setOverrides((current) => Object.fromEntries(Object.entries(current).filter(([room]) => rooms.has(room))))
     } catch {
-      if (mounted.current && mine === generation.current) setError('读不到粉丝牌，稍后再试')
+      if (mounted.current && mine === generation.current) setError('无法读取粉丝牌，请稍后重试')
     } finally {
       if (mounted.current && mine === generation.current) setBusy(null)
     }
@@ -149,7 +149,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
       setPlan(value)
       setNow(Date.now())
     } catch {
-      if (mounted.current && mine === generation.current) setError('核对单没有生成，稍后再试')
+      if (mounted.current && mine === generation.current) setError('核对单生成失败，请稍后重试')
     } finally {
       if (mounted.current && mine === generation.current) setBusy(null)
     }
@@ -172,7 +172,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
       if (!value || value.planId !== plan.id || !(value.status in RESULT) || !Array.isArray(value.rows)) throw new Error('bad result')
       setResult(value)
     } catch {
-      if (mounted.current && mine === generation.current) setError('结果确认不了。去官方背包和房间核对一下，这里不会重试。')
+      if (mounted.current && mine === generation.current) setError('无法确认结果。请在官方背包和直播间中核对，此处不会自动重试。')
     } finally {
       if (running.current === plan.id) running.current = null
       if (mounted.current && mine === generation.current) { setBusy(null); setStopping(false) }
@@ -187,7 +187,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
       const response = await apiClient.cancelDouyuRenewal(id)
       if (mounted.current && running.current === id && !response.ok) { setError(response.message); setStopping(false) }
     } catch {
-      if (mounted.current && running.current === id) { setError('停止没有确认，等结果出来再核对'); setStopping(false) }
+      if (mounted.current && running.current === id) { setError('停止请求未确认，请在结果返回后核对'); setStopping(false) }
     }
   }
 
@@ -198,28 +198,28 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
   const readyRows = plan?.rows.filter((row) => row.status === 'ready') ?? []
   const canGive = ready && !!plan && !livePlan.current?.used && !expired && plan.accountId === accountId && plan.totalQuantity > 0 && !busy
 
-  if (!accountId) return <div className="desk-pane"><p className="desk-empty">先在「账号」里登录并设一个在用的账号。</p></div>
+  if (!accountId) return <div className="desk-pane"><p className="desk-empty">请先在「账号」中登录并设置当前账号。</p></div>
 
   return (
     <div className="desk-pane renewal">
-      <p className="muted">只送背包里已有的荧光棒，不买、不领。送多少自己定，1 个不一定够续上。</p>
+      <p className="muted">仅赠送背包中已有的荧光棒，不会购买或领取。赠送数量自行设定，1 个不一定足以续期。</p>
 
       <ol className="steps">
         <li className="step" data-done={page !== null}>
           <div className="step-head">
-            <h3>读粉丝牌</h3>
+            <h3>读取粉丝牌</h3>
             <button type="button" className={page ? 'btn-quiet small' : 'btn-solid small'} disabled={!ready || !!busy} onClick={() => void read()}>
-              {busy === 'read' ? '读取中…' : page ? '重新读' : `读 ${accountLabel} 的粉丝牌`}
+              {busy === 'read' ? '读取中…' : page ? '重新读取' : `读取 ${accountLabel} 的粉丝牌`}
             </button>
           </div>
-          {!ready && !busy && <p className="muted">先登录 {accountLabel}，登好后就能读。</p>}
-          {page && page.coverage !== 'all-pages' && <p className="muted">这只是{page.coverage === 'official-snapshot' ? '官方当前的快照' : '返回的这一页'}，不一定是全部粉丝牌。</p>}
+          {!ready && !busy && <p className="muted">请先登录 {accountLabel}，登录后即可读取。</p>}
+          {page && page.coverage !== 'all-pages' && <p className="muted">以上为{page.coverage === 'official-snapshot' ? '官方当前快照' : '本次返回的一页'}，可能不包含全部粉丝牌。</p>}
         </li>
 
         {page && (
           <li className="step" data-done={picked.length > 0}>
             <div className="step-head">
-              <h3>选房间</h3>
+              <h3>选择房间</h3>
               <span className="num muted">{picked.length}/{MAX_ROOMS}</span>
             </div>
             {page.targets.length === 0 ? <p className="muted">没有可选的粉丝牌。</p> : (
@@ -228,14 +228,14 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
                   <input type="search" className="text-input" value={filter} placeholder="房间号或牌子名" aria-label="筛选粉丝牌"
                     onChange={(event) => setFilter(event.target.value)} />
                   <label className="renew-amount">
-                    <span>每个房间送</span>
+                    <span>每个房间赠送</span>
                     <input className="text-input num" type="number" min={1} max={1000} value={amount} disabled={locked}
                       aria-label="每个房间赠送数量" aria-invalid={base === null}
                       onChange={(event) => { invalidate(); setAmount(event.target.value) }} />
                     <span>个</span>
                   </label>
                 </div>
-                {base === null && <p className="form-error">填 1 到 1000 的整数</p>}
+                {base === null && <p className="form-error">请填写 1 到 1000 的整数</p>}
                 <ul className="badges">
                   {shown.map((target) => {
                     const on = picked.includes(target.room)
@@ -269,7 +269,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
                   })}
                   {shown.length === 0 && <li className="muted">没有匹配的牌子</li>}
                 </ul>
-                {badOverride && <p className="form-error">有房间的数量不对，填 1 到 1000 或留空</p>}
+                {badOverride && <p className="form-error">部分房间数量无效，请填写 1 到 1000 或留空</p>}
               </>
             )}
           </li>
@@ -293,12 +293,12 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
                       <span>{nameOf(row)}</span>
                       {row.status === 'ready' && row.gift
                         ? <span className="num">{row.gift.name} × {row.gift.quantity}<span className="muted">（库存 {row.gift.stock}，{time(row.gift.expiresAt)}）</span></span>
-                        : <span className="muted">跳过：{row.reason ?? '现在送不了'}</span>}
+                        : <span className="muted">跳过：{row.reason ?? '当前无法赠送'}</span>}
                     </li>
                   ))}
                 </ul>
                 {!livePlan.current?.used && (expired
-                  ? <p className="form-error">核对单过期了，重新生成</p>
+                  ? <p className="form-error">核对单已过期，请重新生成</p>
                   : <p className="muted">核对单 {Math.max(0, Math.ceil((plan.expiresAt - now) / 1000))} 秒后过期</p>)}
               </section>
             )}
@@ -310,12 +310,12 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
             <div className="step-head">
               <h3>赠送</h3>
               {busy === 'give'
-                ? <button type="button" className="btn-quiet small" disabled={stopping} onClick={() => void stop()}>{stopping ? '正在停…' : '停下剩下的'}</button>
+                ? <button type="button" className="btn-quiet small" disabled={stopping} onClick={() => void stop()}>{stopping ? '正在停止…' : '停止剩余赠送'}</button>
                 : <button type="button" className="btn-solid small" disabled={!canGive} onClick={() => void give()}>确认赠送</button>}
             </div>
             {result && (
               <section aria-label="赠送处理结果" className="plan">
-                <p><b>{RESULT[result.status]}</b><span className="muted">　回执不代表续期一定成功</span></p>
+                <p><b>{RESULT[result.status]}</b><span className="muted">　收到回执不代表续期成功</span></p>
                 <ul className="plan-rows">
                   {result.rows.map((row) => (
                     <li key={row.room} data-state={row.status}>

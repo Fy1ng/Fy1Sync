@@ -10,7 +10,7 @@ import type { CameraControls } from '../app/useCamera'
 import type { SourceRole } from '../core/types'
 import { bufferStatusText } from '../ui/bufferStatus'
 import { Icon, Popover, Segmented, usePopover } from './kit'
-import { PLATFORM_LABEL, ROLE_LABEL, useSourceLoader } from './sources'
+import { PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
 
 export function SourceChip({ role, onEmpty, camera, onFrameCamera }: {
   role: SourceRole
@@ -24,7 +24,7 @@ export function SourceChip({ role, onEmpty, camera, onFrameCamera }: {
   const state = snapshot.media[role]
   const descriptor = state.descriptor
   const status = loader.state[role].busy ? 'loading' : state.status
-  const where = descriptor ? `${descriptor.platform ? PLATFORM_LABEL[descriptor.platform] : ''} ${descriptor.label}`.trim() : '还没有'
+  const where = descriptor ? sourceTitle(descriptor) : '未载入'
 
   return (
     <div className="chip-wrap">
@@ -34,7 +34,7 @@ export function SourceChip({ role, onEmpty, camera, onFrameCamera }: {
         <span className="chip-dot" aria-hidden="true" />
         <span className="chip-role">{ROLE_LABEL[role]}</span>
         <span className="chip-where">{where}</span>
-        {snapshot.mainRole === role && state.status !== 'empty' && <span className="chip-main" title="正在大屏显示">大屏</span>}
+        {snapshot.mainRole === role && state.status !== 'empty' && <span className="chip-main" title="当前为主画面">主画面</span>}
       </button>
       <Popover open={panel.open} onClose={panel.close} className="source-pop" label={`${ROLE_LABEL[role]}片源`}>
         <SourcePanel role={role} camera={camera} onFrameCamera={() => { panel.close(); onFrameCamera() }} onDone={panel.close} />
@@ -55,6 +55,8 @@ function SourcePanel({ role, camera, onFrameCamera, onDone }: {
   const state = snapshot.media[role]
   const load = loader.state[role]
   const [input, setInput] = useState(state.descriptor?.input ?? '')
+  const [roomPlatform, setRoomPlatform] = useState<RoomPlatform>(state.descriptor?.platform === 'bilibili' ? 'bilibili' : 'douyu')
+  const bareRoom = parseRoomInput(input)?.platform === null
   const qualities = state.descriptor?.sourceQualities ?? []
   const buffer = snapshot.buffers[role]
 
@@ -62,14 +64,18 @@ function SourcePanel({ role, camera, onFrameCamera, onDone }: {
     <div className="source-panel">
       <form className="link-row" onSubmit={(event) => {
         event.preventDefault()
-        void loader.loadInput(role, input).then((ok) => { if (ok) onDone() })
+        void loader.loadInput(role, input, bareRoom ? roomPlatform : undefined).then((ok) => { if (ok) onDone() })
       }}>
         <input value={input} onChange={(event) => setInput(event.target.value)} aria-label={`${ROLE_LABEL[role]}链接`}
-          placeholder={role === 'official' ? 'YouTube 或 Twitch 直播间' : '斗鱼或 B 站直播间'} spellCheck={false} />
+          placeholder={role === 'official' ? 'YouTube 或 Twitch 直播间链接' : '斗鱼或哔哩哔哩直播间链接、房间号'} spellCheck={false} />
         <button type="submit" className="btn-solid" disabled={load.busy || input.trim() === ''}>
-          {load.busy ? '载入中' : '换源'}
+          {load.busy ? '载入中' : '载入'}
         </button>
       </form>
+      {bareRoom && (
+        <Segmented label="房间号所属平台" value={roomPlatform} onChange={setRoomPlatform}
+          options={[{ value: 'douyu', label: PLATFORM_LABEL.douyu }, { value: 'bilibili', label: PLATFORM_LABEL.bilibili }]} />
+      )}
       {load.problem && (
         <p className="form-error" role="alert">{load.problem.message}{load.problem.hint ? ` ${load.problem.hint}` : ''}</p>
       )}
@@ -132,8 +138,8 @@ function SourcePanel({ role, camera, onFrameCamera, onDone }: {
 
 /** The voice's danmaku usually come with its room; this is for watching one room's chat with another's video. */
 function DanmakuRoom(): React.ReactNode {
-  const session = useSession()
   const { danmaku } = useSessionSnapshot()
+  const { roomName, connectRoom, disconnectRoom } = useSourceLoader()
   const [editing, setEditing] = useState(false)
   const [room, setRoom] = useState('')
 
@@ -141,10 +147,10 @@ function DanmakuRoom(): React.ReactNode {
     return (
       <div className="row-split">
         <span className="muted">
-          弹幕 {danmaku.connected ? `来自房间 ${danmaku.room}` : danmaku.room ? `正在连接 ${danmaku.room}` : '未连接'}
+          弹幕：{danmaku.connected ? `房间 ${roomName}` : danmaku.room ? `正在连接房间 ${roomName}` : '未连接'}
         </span>
         <button type="button" className="btn-quiet small" onClick={() => setEditing(true)}>
-          {danmaku.room ? '换房间' : '连接'}
+          {danmaku.room ? '更换房间' : '连接'}
         </button>
       </div>
     )
@@ -153,12 +159,12 @@ function DanmakuRoom(): React.ReactNode {
     <form className="link-row" onSubmit={(event) => {
       event.preventDefault()
       const value = room.trim()
-      if (value) { session.connectDanmaku(value); setEditing(false) }
+      if (value) { connectRoom(value); setEditing(false) }
     }}>
       <input value={room} autoFocus onChange={(event) => setRoom(event.target.value)} aria-label="弹幕房间号" placeholder="斗鱼房间号" />
       <button type="submit" className="btn-solid" disabled={room.trim() === ''}>连接</button>
       {danmaku.room && (
-        <button type="button" className="btn-quiet" onClick={() => { session.disconnectDanmaku(); setEditing(false) }}>断开</button>
+        <button type="button" className="btn-quiet" onClick={() => { disconnectRoom(); setEditing(false) }}>断开</button>
       )}
     </form>
   )

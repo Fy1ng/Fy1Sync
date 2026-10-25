@@ -50,7 +50,7 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
         canvas.getContext('2d')?.drawImage(video, 0, 0, w, h)
         lastPaint = performance.now()
         if (changed) { lastWidth = width; lastHeight = height; setSize({ width, height }); setMessage(null) }
-      } catch { setMessage('解说画面暂时读不到，等画面恢复再试') }
+      } catch { setMessage('暂时无法读取解说画面，请在画面恢复后重试') }
     })
     const reset = (): void => {
       pending.current?.abort()
@@ -86,7 +86,7 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
       if (mounted.current && pending.current === controller) {
         pending.current = null
         setWorking(false)
-        setMessage('画面变了，等稳定后再贴边')
+        setMessage('画面已变化，请在稳定后重新贴边')
       }
     }
     const events = ['pause', 'seeking', 'resize', 'emptied', 'loadstart', 'error', 'ended'] as const
@@ -104,9 +104,9 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
         && after[2]! <= before[2]! + 0.01 && after[3]! <= before[3]! + 0.01 && after[2]! > after[0]! && after[3]! > after[1]!
       const moved = inside ? result.found.filter((value, i) => value && Math.abs(after[i]! - before[i]!) >= 0.5).length : 0
       if (moved > 0) setRoi(result.roi)
-      setMessage(moved === 0 ? '没找到清楚的边框，框保持原样，可以手动拖' : moved < 4 ? `贴好了 ${moved} 条边，其余的手动调一下` : '四条边都贴好了')
+      setMessage(moved === 0 ? '未识别到清晰的边框，选框未改动，可手动调整' : moved < 4 ? `已贴合 ${moved} 条边，其余请手动调整` : '四条边均已贴合')
     } catch {
-      if (mounted.current && !controller.signal.aborted) setMessage('贴边没成功，框保持原样')
+      if (mounted.current && !controller.signal.aborted) setMessage('贴边失败，选框未改动')
     } finally {
       events.forEach((event) => video.removeEventListener(event, interrupt))
       if (mounted.current && pending.current === controller) { pending.current = null; setWorking(false) }
@@ -116,14 +116,14 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
   return (
     <Sheet title="摄像头小窗" onClose={onClose} wide>
       <div className="framing">
-        <p className="muted">在解说画面上框住主播摄像头，框大一点没关系。</p>
+        <p className="muted">在解说画面上框选主播摄像头区域，选框可略大于实际范围。</p>
         <div className="framing-stage" ref={stage}>
           <canvas ref={still} className="framing-still" />
           {size.width > 0 && <RoiWindow roi={roi} onChange={change} videoWidth={size.width} videoHeight={size.height} hostRef={stage} />}
         </div>
         {message && <p className="muted" role="status">{message}</p>}
         <div className="row-split">
-          {onRemove ? <button type="button" className="btn-quiet is-danger" onClick={onRemove}>不再显示这个房间的小窗</button> : <span />}
+          {onRemove ? <button type="button" className="btn-quiet is-danger" onClick={onRemove}>不再显示此房间的小窗</button> : <span />}
           <span className="row-end">
             <button type="button" className="btn-quiet" disabled={size.width === 0 || working} onClick={() => void snap()}>
               {working ? '正在贴边…' : '贴边'}

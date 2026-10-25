@@ -81,7 +81,7 @@ describe('badge renewal', () => {
 
   it('says what to do when the account is not signed in', () => {
     render(<Renewal accountId="a1" accountLabel="主号" ready={false} />)
-    expect(screen.getByText('先登录 主号，登好后就能读。')).toBeInTheDocument()
+    expect(screen.getByText('请先登录 主号，登录后即可读取。')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /粉丝牌/ })).toBeDisabled()
   })
 })

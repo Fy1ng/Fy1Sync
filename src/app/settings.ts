@@ -26,6 +26,8 @@ export interface DanmakuSettings {
   /** Fraction of incoming messages to keep, 0..1. */
   density: number
   filter: DanmakuFilterSettings
+  /** Viewers' gift notices in the chat list. Off by default: in a busy room they bury the chat. */
+  showGifts: boolean
 }
 
 export interface AppSettings {
@@ -70,6 +72,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     area: 'half',
     density: 1,
     filter: { ...DEFAULT_FILTER_SETTINGS },
+    showGifts: false,
   },
   autoSyncEnabled: false,
   autoSyncIntervalSeconds: 30,
@@ -139,6 +142,7 @@ export function mergeSettings(raw: unknown): AppSettings {
         blockedUsers: strings(filter.blockedUsers),
         maxLength: clamp(filter.maxLength, 0, 500, 0),
       },
+      showGifts: boolean(danmaku.showGifts, defaults.danmaku.showGifts),
     },
     autoSyncEnabled: boolean(stored.autoSyncEnabled, defaults.autoSyncEnabled),
     // docs/sync-design.md fixes the interval choices at 15/30/60 s.

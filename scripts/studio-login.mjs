@@ -14,7 +14,7 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process'
-import { cp, mkdir, readdir, rm, stat } from 'node:fs/promises'
+import { cp, mkdir, readdir, readFile, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -59,6 +59,40 @@ const env = Object.fromEntries(Object.entries(process.env).filter(([name, value]
   && !/^STREAM_SYNC_/i.test(name) && !/^ELECTRON_RUN_AS_NODE$/i.test(name)))
 env.STREAM_SYNC_USER_DATA_DIR = profile
 
+// A dev build has no bundled tools and falls back to whatever yt-dlp is on PATH, without the
+// PO-token provider YouTube now needs. Borrow the packaged build's yt-dlp and provider: copied,
+// so a repackage elsewhere never finds its files held open by this app.
+const packagedTools = option('tools') ?? await findPackagedTools()
+if (packagedTools) {
+  const tools = join(root, '.runtime-cache', 'tools')
+  const lock = async (dir) => readFile(join(dir, 'tools-lock.json'), 'utf8').catch(() => '')
+  if (await lock(packagedTools) !== await lock(tools)) {
+    await rm(tools, { recursive: true, force: true })
+    for (const entry of ['yt-dlp.exe', 'provider', 'tools-lock.json']) await cp(join(packagedTools, entry), join(tools, entry), { recursive: true })
+    console.log(`已从 ${packagedTools} 复制 yt-dlp 和 YouTube 令牌组件。`)
+  }
+  env.STREAM_SYNC_YTDLP = join(tools, 'yt-dlp.exe')
+  env.STREAM_SYNC_POT_PLUGIN_DIR = join(tools, 'provider', 'plugin')
+  env.STREAM_SYNC_POT_SERVER_HOME = join(tools, 'provider', 'server')
+} else {
+  console.log('没有找到打包版的工具目录（.release/win-unpacked/resources/tools），YouTube 可能无法解析。可用 --tools 指定。')
+}
+
+/** The packaged tools of this checkout or of any other worktree of the same repository. */
+async function findPackagedTools() {
+  const inside = join('.release', 'win-unpacked', 'resources', 'tools')
+  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
+  const candidates = [join(root, inside)]
+  try {
+    const prefix = git('rev-parse', '--show-prefix')
+    for (const line of git('worktree', 'list', '--porcelain').split('\n')) {
+      if (line.startsWith('worktree ')) candidates.push(join(line.slice('worktree '.length), prefix, inside))
+    }
+  } catch { /* not a git checkout: only this folder */ }
+  for (const candidate of candidates) if (await exists(join(candidate, 'yt-dlp.exe'))) return candidate
+  return null
+}
+
 if (flag('check')) {
   const { _electron } = await import('@playwright/test')
   const app = await _electron.launch({ args: [join(root, 'dist/electron/main.cjs')], cwd: root, env })
@@ -67,6 +101,7 @@ if (flag('check')) {
   const seen = await page.evaluate(async () => ({
     platforms: await window.streamSyncer.invoke('loginStatus', undefined),
     douyu: await window.streamSyncer.invoke('listDouyuAccounts', undefined),
+    tools: await window.streamSyncer.invoke('getToolsStatus', undefined),
   }))
   console.log(JSON.stringify(seen, null, 2))
   await app.close()

@@ -36,7 +36,7 @@ export function DouyuDesk({ onClose }: { onClose: () => void }): React.ReactNode
             </button>
           ))}
           <span className="desk-who">
-            {active ? <>在用 <b>{active.label}</b>{active.login.loggedIn ? '' : '（未登录）'}</> : '没有在用的账号'}
+            {active ? <>当前账号 <b>{active.label}</b>{active.login.loggedIn ? '' : '（未登录）'}</> : '未设置当前账号'}
           </span>
         </nav>
         <div className="desk-content" role="tabpanel">

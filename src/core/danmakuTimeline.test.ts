@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DanmakuTimeline, scheduleTimeFor, type DanmakuMessage } from './danmakuTimeline'
+import { DanmakuTimeline, LiveEdgeClock, scheduleTimeFor, type DanmakuMessage } from './danmakuTimeline'
 import {
   DanmakuLaneAllocator,
   PinnedSlotAllocator,
@@ -122,6 +122,40 @@ describe('DanmakuTimeline', () => {
     timeline.reset()
     expect(timeline.stats()).toEqual({ pending: 0, released: 0, expired: 0, overflowed: 0 })
     expect(timeline.playhead).toBe(0)
+  })
+})
+
+describe('LiveEdgeClock', () => {
+  it('carries the edge forward between segment readings instead of stepping', () => {
+    const clock = new LiveEdgeClock()
+    // seekableEnd reads 100 for four seconds, then jumps to 104.
+    const times = [0, 1000, 2000, 3000].map((ms) => clock.estimate(100, ms))
+    expect(times).toEqual([100, 101, 102, 103])
+    expect(clock.estimate(104, 4000)).toBe(104)
+    expect(clock.estimate(104, 4500)).toBe(104.5)
+  })
+
+  it('never goes backwards on a short segment, but restarts on a new stream', () => {
+    const clock = new LiveEdgeClock()
+    clock.estimate(100, 0)
+    expect(clock.estimate(100, 3000)).toBe(103)
+    // The next segment was only two seconds long.
+    expect(clock.estimate(102, 3100)).toBe(103)
+    // A reload starts the playlist over near zero.
+    expect(clock.estimate(6, 4000)).toBe(6)
+  })
+
+  it('stops carrying the edge when readings stop', () => {
+    const clock = new LiveEdgeClock()
+    clock.estimate(100, 0)
+    expect(clock.estimate(100, 60_000)).toBe(115)
+  })
+
+  it('spreads live messages arriving within one segment across distinct schedule times', () => {
+    const clock = new LiveEdgeClock()
+    const live = { currentTime: 90, timebase: { kind: 'live' as const, seekableEnd: 100 } }
+    const scheduled = [0, 400, 800, 1200].map((ms) => scheduleTimeFor(live, { clock, nowMs: ms }))
+    expect(new Set(scheduled).size).toBe(4)
   })
 })
 

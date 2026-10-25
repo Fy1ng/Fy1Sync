@@ -12,9 +12,9 @@ import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { parseSourceInput } from '../core/mediaSources'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
-import { FIXTURES, PLATFORM_LABEL, ROLE_LABEL, routeFor, useSourceLoader } from './sources'
+import { FIXTURES, PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, routeFor, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
 
-type Pending = { kind: 'text'; value: string } | { kind: 'file'; file: File }
+type Pending = { kind: 'text'; value: string } | { kind: 'file'; file: File } | { kind: 'room'; value: string; room: string }
 
 export function Intake({ onClose, pendingFile }: { onClose: () => void; pendingFile: File | null }): React.ReactNode {
   const session = useSession()
@@ -30,6 +30,12 @@ export function Intake({ onClose, pendingFile }: { onClose: () => void; pendingF
   const anyLoaded = SOURCE_ROLES.some((role) => media[role].status !== 'empty')
 
   useEffect(() => { field.current?.focus() }, [])
+  // Escape leaves from anywhere: after a choice button disappears, focus is no longer inside.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
   useEffect(() => {
     let live = true
     void apiClient.getToolsStatus().then((result) => { if (live && result.ok) setFixtures(result.value.fixturesAvailable) })
@@ -45,16 +51,22 @@ export function Intake({ onClose, pendingFile }: { onClose: () => void; pendingF
   const freeSlot = (): SourceRole | null =>
     SOURCE_ROLES.find((role) => media[role].status === 'empty' && !loader.state[role].busy) ?? null
 
-  const place = (pending: Pending, role: SourceRole): void => {
+  const place = (pending: Pending, role: SourceRole, platform?: RoomPlatform): void => {
     setAsk(null)
     setError(null)
+    // Back to the field, ready for the other side's link.
+    field.current?.focus()
     if (pending.kind === 'file') void loader.loadFile(role, pending.file)
-    else void loader.loadInput(role, pending.value)
+    else void loader.loadInput(role, pending.value, platform)
   }
 
   const route = (pending: Pending): void => {
     setError(null)
     if (pending.kind === 'text') {
+      // A bare number could be either platform's room; the viewer knows which.
+      const typed = parseRoomInput(pending.value)
+      if (typed?.platform === null) { setAsk({ kind: 'room', value: pending.value, room: typed.room }); return }
+      if (typed) { place(pending, 'commentary', typed.platform ?? undefined); return }
       const parsed = parseSourceInput(pending.value)
       if (!parsed.ok) { setError(parsed.message); return }
       const role = routeFor(parsed.platform)
@@ -70,10 +82,9 @@ export function Intake({ onClose, pendingFile }: { onClose: () => void; pendingF
   useEffect(() => { if (pendingFile) route({ kind: 'file', file: pendingFile }) }, [pendingFile])
 
   return (
-    <div className="intake" role="dialog" aria-modal="true" aria-label="添加直播间"
-      onKeyDown={(event) => { if (event.key === 'Escape') onClose() }}>
+    <div className="intake" role="dialog" aria-modal="true" aria-label="添加直播间">
       <div className="intake-body">
-        <h1 className="intake-title">贴入两个直播间</h1>
+        <h1 className="intake-title">添加直播间</h1>
         <form className="intake-field" onSubmit={(event) => {
           event.preventDefault()
           const value = text.trim()
@@ -82,14 +93,22 @@ export function Intake({ onClose, pendingFile }: { onClose: () => void; pendingF
           setText('')
         }}>
           <input ref={field} value={text} onChange={(event) => { setText(event.target.value); setError(null) }}
-            aria-label="直播间链接" placeholder="粘贴链接，回车" spellCheck={false} autoComplete="off" />
+            aria-label="直播间链接" placeholder="粘贴直播间链接或输入房间号，按回车添加" spellCheck={false} autoComplete="off" />
         </form>
         {error && <p className="intake-error" role="alert">{error}</p>}
 
-        {ask && (
-          <div className="intake-ask" role="group" aria-label="选择放在哪一路">
+        {ask?.kind === 'room' ? (
+          <div className="intake-ask" role="group" aria-label="选择房间号所属平台">
+            <span>房间号 {ask.room}</span>
+            <span className="intake-ask-q">属于</span>
+            {/* Focused, so a second Enter takes the common case. */}
+            <button type="button" className="btn-solid small" autoFocus onClick={() => place(ask, 'commentary', 'douyu')}>{PLATFORM_LABEL.douyu}</button>
+            <button type="button" className="btn-solid small" onClick={() => place(ask, 'commentary', 'bilibili')}>{PLATFORM_LABEL.bilibili}</button>
+          </div>
+        ) : ask && (
+          <div className="intake-ask" role="group" aria-label="选择添加位置">
             <span>{ask.kind === 'file' ? ask.file.name : ask.value}</span>
-            <span className="intake-ask-q">放在</span>
+            <span className="intake-ask-q">添加到</span>
             <button type="button" className="btn-solid small" onClick={() => place(ask, 'official')}>画面</button>
             <button type="button" className="btn-solid small" onClick={() => place(ask, 'commentary')}>解说</button>
           </div>
@@ -100,14 +119,14 @@ export function Intake({ onClose, pendingFile }: { onClose: () => void; pendingF
         </ul>
 
         <p className="intake-foot">
-          <span>视频文件可以直接拖进窗口</span>
+          <span>支持将视频文件拖入窗口</span>
           {fixtures && freeSlot() && (
             <button type="button" className="link-btn" onClick={() => {
               for (const role of SOURCE_ROLES) if (media[role].status === 'empty') void loader.loadDescriptor(role, FIXTURES[role])
-            }}>用测试片源</button>
+            }}>载入测试片源</button>
           )}
           {!bothReady && (
-            <button type="button" className="link-btn intake-skip" onClick={onClose}>{anyLoaded ? '先看着' : '跳过'}</button>
+            <button type="button" className="link-btn intake-skip" onClick={onClose}>{anyLoaded ? '开始观看' : '跳过'}</button>
           )}
         </p>
       </div>
@@ -127,8 +146,8 @@ function Slot({ role }: { role: SourceRole }): React.ReactNode {
       <span className="slot-role">{ROLE_LABEL[role]}</span>
       <span className="slot-what">
         {status === 'loading' ? '载入中…'
-          : descriptor ? `${descriptor.platform ? PLATFORM_LABEL[descriptor.platform] + ' · ' : ''}${descriptor.label}`
-            : role === 'official' ? 'YouTube、Twitch' : '斗鱼、B 站'}
+          : descriptor ? sourceTitle(descriptor)
+            : role === 'official' ? 'YouTube、Twitch' : '斗鱼、哔哩哔哩'}
       </span>
       {(load.problem || (state.status === 'error' && state.error)) && (
         <span className="slot-error" role="alert">{load.problem?.message ?? state.error?.message}</span>

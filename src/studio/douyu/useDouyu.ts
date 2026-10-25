@@ -48,12 +48,12 @@ export function useDouyu() {
       apiClient.listDouyuAccounts().then((result) => {
         if (!live) return
         if (result.ok && validAccounts(result.value)) setAccounts(result.value)
-        else setAccountLane({ ...IDLE, error: result.ok ? '读不到斗鱼账号' : result.message })
+        else setAccountLane({ ...IDLE, error: result.ok ? '无法读取斗鱼账号' : result.message })
       }),
       apiClient.getDouyuTasks().then((result) => {
         if (!live || firstTasks !== taskRevision.current) return
         if (result.ok && validTasks(result.value)) setTasks(result.value)
-        else setTaskLane({ ...IDLE, error: result.ok ? '读不到任务' : result.message })
+        else setTaskLane({ ...IDLE, error: result.ok ? '无法读取任务' : result.message })
       }),
     ]).catch(() => {}).finally(() => { if (live) setLoading(false) })
     return () => { live = false; mounted.current = false; unsubscribe() }
@@ -71,12 +71,12 @@ export function useDouyu() {
       const result = await work()
       if (!mounted.current) return false
       if (!result.ok) { setAccountLane({ ...IDLE, error: result.message }); return false }
-      if (!validAccounts(result.value)) { setAccountLane({ ...IDLE, error: '读不到斗鱼账号' }); return false }
+      if (!validAccounts(result.value)) { setAccountLane({ ...IDLE, error: '无法读取斗鱼账号' }); return false }
       setAccounts(result.value)
       setAccountLane({ ...IDLE, notice: typeof done === 'function' ? done(result.value) : done })
       return true
     } catch {
-      if (mounted.current) setAccountLane({ ...IDLE, error: '操作没有完成，再试一次' })
+      if (mounted.current) setAccountLane({ ...IDLE, error: '操作未完成，请重试' })
       return false
     } finally {
       accountBusy.current = false
@@ -96,12 +96,12 @@ export function useDouyu() {
       const result = await work()
       if (!mounted.current) return false
       if (!result.ok) { setTaskLane({ ...IDLE, error: result.message }); return false }
-      if (!validTasks(result.value)) { setTaskLane({ ...IDLE, error: '读不到任务' }); return false }
+      if (!validTasks(result.value)) { setTaskLane({ ...IDLE, error: '无法读取任务' }); return false }
       if (revision === taskRevision.current) setTasks(result.value)
       setTaskLane({ ...IDLE, notice: done })
       return true
     } catch {
-      if (mounted.current) setTaskLane({ ...IDLE, error: '操作没有完成，再试一次' })
+      if (mounted.current) setTaskLane({ ...IDLE, error: '操作未完成，请重试' })
       return false
     } finally {
       taskBusy.current = false

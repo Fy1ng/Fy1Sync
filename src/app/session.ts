@@ -14,7 +14,7 @@
  */
 
 import { compileDanmakuFilter, type CompiledDanmakuFilter } from '../core/danmakuFilter'
-import { DanmakuTimeline, scheduleTimeFor, type DanmakuMessage } from '../core/danmakuTimeline'
+import { DanmakuTimeline, LiveEdgeClock, scheduleTimeFor, type DanmakuMessage } from '../core/danmakuTimeline'
 import type { MediaDescriptor } from '../core/types'
 import { NO_REWIND, SOURCE_ROLES, type AppliedRewind, type SourceRole } from '../core/types'
 import {
@@ -105,6 +105,7 @@ export class Session {
   readonly engine: MediaEngine
   readonly autoSync: AutoSyncController
   readonly timeline = new DanmakuTimeline()
+  private readonly liveEdge = new LiveEdgeClock()
 
   private sampler: RecognitionSampler | null = null
   private autoProfiles: Pick<OnlineAutoProfiles, 'controller' | 'monitor' | 'reset' | 'suspend' | 'dispose'> | null = null
@@ -1010,6 +1011,7 @@ export class Session {
     this.unsubscribeDanmaku?.()
     this.unsubscribeDanmaku = null
     this.timeline.clear()
+    this.liveEdge.reset()
     this.chatLog = []
     for (const listener of this.chatListeners) listener()
     this.danmakuState = { connected: false, room: null, error: null, pending: 0, dropped: 0 }
@@ -1022,6 +1024,7 @@ export class Session {
     const gift = normalizeDouyuGift(message.gift)
     if (message.gift !== undefined && !gift) return
     if (gift) {
+      if (!this.settingsValue.danmaku.showGifts) return
       // Gift notices keep media-time alignment and user blocking, but are not chat text.
       const user = message.user.trim().toLowerCase()
       if (this.settingsValue.danmaku.filter.blockedUsers.some(blocked => blocked.trim().toLowerCase() === user)) return
@@ -1032,7 +1035,7 @@ export class Session {
     if (!gift && density < 1 && Math.random() > density) return
     const snapshot = this.engine.snapshot('commentary')
     const scheduleTime = snapshot
-      ? scheduleTimeFor(snapshot)
+      ? scheduleTimeFor(snapshot, { clock: this.liveEdge, nowMs: this.now() })
       : this.timeline.playhead
     this.timeline.push({
       id: `d${++this.noticeSeq}`,
@@ -1078,11 +1081,16 @@ export class Session {
     this.notify()
   }
 
-  /** Release everything due at the commentary playhead. Called once per animation frame. */
+  /**
+   * Release everything due at the commentary playhead. Called once per animation frame.
+   * A paused commentary does not hold chat back: messages show as they arrive.
+   */
   drainDanmaku(): DanmakuMessage[] {
     const snapshot = this.engine.snapshot('commentary')
-    const mediaTime = snapshot?.currentTime ?? this.timeline.playhead
-    const released = this.timeline.advance(mediaTime)
+    const paused = snapshot !== null && this.engine.getState().commentary.paused
+    const released = paused
+      ? this.timeline.releaseAll()
+      : this.timeline.advance(snapshot?.currentTime ?? this.timeline.playhead)
     if (released.length > 0) this.recordChat(released)
     return released
   }

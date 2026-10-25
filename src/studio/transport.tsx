@@ -41,12 +41,12 @@ export function Balance(): React.ReactNode {
 
   return (
     <div className="balance" style={{ '--pos': `${(value + 100) / 2}%` } as React.CSSProperties}>
-      <button type="button" className="balance-end" onClick={() => set(-100)} title="只听画面原声">画面</button>
+      <button type="button" className="balance-end" onClick={() => set(-100)} title="仅播放画面声音">画面</button>
       <input type="range" min={-100} max={100} step={1} value={value} aria-label="画面与解说的音量比例"
-        aria-valuetext={value === 0 ? '两边一样大' : value > 0 ? `解说为主，画面 ${Math.round(official * 100)}%` : `画面为主，解说 ${Math.round(commentary * 100)}%`}
+        aria-valuetext={value === 0 ? '两路音量相同' : value > 0 ? `解说为主，画面 ${Math.round(official * 100)}%` : `画面为主，解说 ${Math.round(commentary * 100)}%`}
         onChange={(event) => set(Number(event.target.value))}
         onDoubleClick={() => set(0)} />
-      <button type="button" className="balance-end" onClick={() => set(100)} title="只听解说">解说</button>
+      <button type="button" className="balance-end" onClick={() => set(100)} title="仅播放解说声音">解说</button>
     </div>
   )
 }
@@ -86,7 +86,7 @@ export function Timeline(): React.ReactNode {
           behind < 2
             ? <span className="live-tag">直播</span>
             : <button type="button" className="live-tag is-behind" onClick={() => session.engine.seekToLive(role)}>
-                晚了 {behind.toFixed(0)} 秒 · 回到直播
+                落后 {behind.toFixed(0)} 秒 · 回到直播
               </button>
         ) : <span className="num">{clock(end - start)}</span>}
       </div>

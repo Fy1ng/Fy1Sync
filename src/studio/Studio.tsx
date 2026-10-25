@@ -13,10 +13,11 @@ import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { useCamera } from '../app/useCamera'
 import type { SourceRole } from '../core/types'
 import { CameraOverlay } from '../ui/CameraOverlay'
-import { DanmakuLayer } from '../ui/DanmakuLayer'
 import { CameraFraming } from './CameraFraming'
 import { ChatDrawer } from './ChatDrawer'
+import { ComposerProvider } from './composer'
 import { DanmakuPanel } from './DanmakuPanel'
+import { DanmakuStage } from './DanmakuStage'
 import { DouyuDesk } from './douyu/DouyuDesk'
 import { Intake } from './Intake'
 import { Icon, Popover, usePopover } from './kit'
@@ -33,7 +34,9 @@ type Desk = 'douyu' | 'settings' | null
 export function Studio(): React.ReactNode {
   return (
     <SourceLoaderProvider>
-      <StudioView />
+      <ComposerProvider>
+        <StudioView />
+      </ComposerProvider>
     </SourceLoaderProvider>
   )
 }
@@ -117,13 +120,13 @@ function StudioView(): React.ReactNode {
     >
       <main className="theater" ref={theater} data-chrome={chrome.visible ? 'on' : 'off'} {...chrome.handlers}>
         <div className="theater-main" ref={mountMain} data-role={mainRole} />
-        <DanmakuLayer />
+        <DanmakuStage onReply={() => setChat(true)} />
         {camera.config && <CameraOverlay config={camera.config} onWindow={camera.setWindow} stageRef={theater} />}
 
         {snapshot.media[otherRole].status !== 'empty' && !previewHidden ? (
           <div className="pip" data-role={otherRole}>
             <button type="button" className="pip-swap" onClick={() => session.swapRoles()}
-              aria-label={`把${ROLE_LABEL[otherRole]}换到大屏`} title="换到大屏">
+              aria-label={`将${ROLE_LABEL[otherRole]}切换为主画面`} title="切换为主画面">
               <span className="pip-mount" ref={mountOther} />
               <span className="pip-label">{ROLE_LABEL[otherRole]}</span>
             </button>

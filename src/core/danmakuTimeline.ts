@@ -112,6 +112,17 @@ export class DanmakuTimeline {
     this.cursor = mediaTime
   }
 
+  /**
+   * Release everything parked, due or not. While the commentary is paused its media time
+   * stands still, so holding chat for it would only pile messages up until they expire.
+   */
+  releaseAll(): DanmakuMessage[] {
+    const ready = this.pending
+    this.pending = []
+    this.released += ready.length
+    return ready
+  }
+
   clear(): void {
     this.pending = []
   }
@@ -150,6 +161,41 @@ export class DanmakuTimeline {
   }
 }
 
+/** Longest stretch the live edge is carried forward without a fresh reading. */
+const MAX_EDGE_EXTRAPOLATION_SECONDS = 15
+
+/**
+ * The live edge between readings.
+ *
+ * `seekableEnd` only moves when a new segment lands, so it steps forward a few seconds at a
+ * time. Scheduling against those steps gives every message of one step the same media time:
+ * they are released in the same frame and enter the overlay as a column. The real edge moves
+ * at one second per second, so between readings it is carried forward by the wall clock.
+ */
+export class LiveEdgeClock {
+  private reading = Number.NaN
+  private readAt = 0
+  private last = Number.NEGATIVE_INFINITY
+
+  estimate(seekableEnd: number, nowMs: number): number {
+    // A large step back is a new stream, not a late reading.
+    if (seekableEnd < this.reading - MAX_EDGE_EXTRAPOLATION_SECONDS) this.last = Number.NEGATIVE_INFINITY
+    if (seekableEnd !== this.reading) {
+      this.reading = seekableEnd
+      this.readAt = nowMs
+    }
+    const elapsed = Math.min(MAX_EDGE_EXTRAPOLATION_SECONDS, Math.max(0, (nowMs - this.readAt) / 1000))
+    // Never backwards: a segment shorter than the time since the last one must not reorder chat.
+    this.last = Math.max(this.last, seekableEnd + elapsed)
+    return this.last
+  }
+
+  reset(): void {
+    this.reading = Number.NaN
+    this.last = Number.NEGATIVE_INFINITY
+  }
+}
+
 /**
  * Map a just-arrived danmaku to a commentary media time.
  *
@@ -164,9 +210,10 @@ export class DanmakuTimeline {
 export function scheduleTimeFor(snapshot: {
   currentTime: number
   timebase: { kind: 'vod' | 'live'; seekableEnd?: number }
-}): number {
+}, edge?: { clock: LiveEdgeClock; nowMs: number }): number {
   if (snapshot.timebase.kind === 'live' && Number.isFinite(snapshot.timebase.seekableEnd ?? NaN)) {
-    return snapshot.timebase.seekableEnd as number
+    const seekableEnd = snapshot.timebase.seekableEnd as number
+    return edge ? edge.clock.estimate(seekableEnd, edge.nowMs) : seekableEnd
   }
   return snapshot.currentTime
 }

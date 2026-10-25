@@ -73,13 +73,13 @@ export function SyncCapsule(): React.ReactNode {
       <span className="capsule-strip" aria-hidden="true" />
       <HoldButton
         className="capsule-nudge"
-        label="解说早了"
-        title={`解说早了：让解说往后 ${settings.smallStepSeconds} 秒（← ，按住加速）`}
+        label="解说延后"
+        title={`解说延后 ${settings.smallStepSeconds} 秒（←，长按连续调整）`}
         disabled={!paired || requested <= -MAX_OFFSET_SECONDS}
         onStep={(held) => nudge('early', stepFor(held, settings.smallStepSeconds, settings.largeStepSeconds))}
       >
         <Icon name="back" />
-        <span>解说早了</span>
+        <span>解说延后</span>
       </HoldButton>
 
       <div className="capsule-readout-wrap">
@@ -87,7 +87,7 @@ export function SyncCapsule(): React.ReactNode {
           aria-label={`${caption} ${magnitude.toFixed(1)} 秒，点击输入`} aria-expanded={editor.open}>
           <span className="capsule-value">{magnitude.toFixed(1)}</span>
           <span className="capsule-caption">
-            {state === 'short' ? `缓冲不够，差 ${Math.abs(shortfall).toFixed(1)}s` : state === 'locked' ? '已对齐' : caption}
+            {state === 'short' ? `缓冲不足，相差 ${Math.abs(shortfall).toFixed(1)}s` : state === 'locked' ? '已对齐' : caption}
           </span>
         </button>
         <Popover open={editor.open} onClose={editor.close} className="offset-editor" label="输入延后时间">
@@ -97,12 +97,12 @@ export function SyncCapsule(): React.ReactNode {
 
       <HoldButton
         className="capsule-nudge"
-        label="解说晚了"
-        title={`解说晚了：让画面往后 ${settings.smallStepSeconds} 秒（→ ，按住加速）`}
+        label="画面延后"
+        title={`画面延后 ${settings.smallStepSeconds} 秒（→，长按连续调整）`}
         disabled={!paired || requested >= MAX_OFFSET_SECONDS}
         onStep={(held) => nudge('late', stepFor(held, settings.smallStepSeconds, settings.largeStepSeconds))}
       >
-        <span>解说晚了</span>
+        <span>画面延后</span>
         <Icon name="forward" />
       </HoldButton>
     </div>
@@ -127,14 +127,14 @@ function OffsetEditor({ value, onDone }: { value: number; onDone: () => void }):
 
   return (
     <form onSubmit={(event) => { event.preventDefault(); apply() }} className="offset-form">
-      <Segmented label="哪一路往后" value={side} onChange={setSide}
+      <Segmented label="延后哪一路" value={side} onChange={setSide}
         options={[{ value: 'official', label: '画面延后' }, { value: 'commentary', label: '解说延后' }]} />
       <label className="offset-seconds">
         <input ref={input} inputMode="decimal" value={text} aria-label="秒数" aria-invalid={!valid}
           placeholder="0" onChange={(event) => setText(event.target.value)} />
         <span>秒</span>
       </label>
-      {!valid && <p className="form-error">填 0 到 {MAX_OFFSET_SECONDS} 之间的数字</p>}
+      {!valid && <p className="form-error">请输入 0 到 {MAX_OFFSET_SECONDS} 之间的数值</p>}
       <div className="row-end">
         <button type="button" className="btn-quiet" onClick={() => { void session.resetOffset(); onDone() }}>清零</button>
         <button type="submit" className="btn-solid" disabled={!valid}>应用</button>
@@ -163,7 +163,7 @@ export function AutoAlign(): React.ReactNode {
         </button>
       ) : (
         <button type="button" className="align-main" disabled={busy || !bothReady} onClick={() => void session.syncNow()}
-          title={bothReady ? '读取两边的比赛倒计时，自动对齐（A）' : '两路都加载后才能对齐'}>
+          title={bothReady ? '识别两路画面中的比赛倒计时并自动对齐（A）' : '两路均载入后才能对齐'}>
           自动对齐
         </button>
       )}
@@ -172,7 +172,7 @@ export function AutoAlign(): React.ReactNode {
         <Icon name="chevron" />
       </button>
       <Popover open={menu.open} onClose={menu.close} className="align-menu" label="对齐选项">
-        <Switch label="比赛中保持对齐" detail={autoSync.nextRunInSeconds !== null ? `${Math.max(0, Math.round(autoSync.nextRunInSeconds))} 秒后再对一次` : undefined}
+        <Switch label="比赛中保持对齐" detail={autoSync.nextRunInSeconds !== null ? `${Math.max(0, Math.round(autoSync.nextRunInSeconds))} 秒后再次对齐` : undefined}
           checked={settings.autoSyncEnabled} onChange={(checked) => session.setAutoSyncEnabled(checked)} />
         {settings.autoSyncEnabled && (
           <Segmented label="间隔" value={settings.autoSyncIntervalSeconds}
@@ -180,7 +180,7 @@ export function AutoAlign(): React.ReactNode {
             options={[15, 30, 60, 120].map((seconds) => ({ value: seconds, label: seconds < 60 ? `${seconds} 秒` : `${seconds / 60} 分` }))} />
         )}
         {settings.autoSyncEnabled && !autoSync.authorized && (
-          <p className="note-warn">你手动调过，自动对齐先停下了。点「自动对齐」恢复。</p>
+          <p className="note-warn">已手动调整，自动对齐已暂停。点击「自动对齐」恢复。</p>
         )}
 
         <div className="menu-rule" />
@@ -196,7 +196,7 @@ export function AutoAlign(): React.ReactNode {
         </label>
         <div className="row-split">
           <button type="button" className="btn-quiet" disabled={busy || !bothReady} onClick={() => void session.measureOnce()}>
-            只测量
+            仅测量
           </button>
           <a className="btn-quiet" href="/admin">编辑倒计时样式</a>
         </div>
@@ -204,8 +204,8 @@ export function AutoAlign(): React.ReactNode {
         {result && (
           <p className="menu-meta">
             {result.failure ? result.failure.message
-              : result.estimate ? `上次测得差 ${result.estimate.totalOffsetSeconds.toFixed(2)} 秒${result.divergence !== null ? `，复核误差 ${result.divergence.toFixed(2)} 秒` : ''}`
-                : '上次没有测到'}
+              : result.estimate ? `上次测得偏差 ${result.estimate.totalOffsetSeconds.toFixed(2)} 秒${result.divergence !== null ? `，复核误差 ${result.divergence.toFixed(2)} 秒` : ''}`
+                : '上次未能测得'}
           </p>
         )}
       </Popover>
@@ -214,7 +214,7 @@ export function AutoAlign(): React.ReactNode {
 }
 
 const PHASE: Record<string, string> = {
-  sampling: '读倒计时…',
+  sampling: '识别倒计时…',
   estimating: '计算中…',
   applying: '调整中…',
   verifying: '复核中…',
@@ -242,10 +242,10 @@ export function CountdownPrompt(): React.ReactNode {
           <div key={role} className="prompt" data-role={role}>
             <span className="prompt-text">
               <b>{ROLE_LABEL[role]}</b>
-              {state.phase === 'ready' ? '找到了比赛倒计时' : working ? `正在找比赛倒计时（${AUTO_PROFILE_TEXT[state.phase]}）` : state.reason ?? AUTO_PROFILE_TEXT[state.phase]}
+              {state.phase === 'ready' ? '已识别比赛倒计时' : working ? `正在识别比赛倒计时（${AUTO_PROFILE_TEXT[state.phase]}）` : state.reason ?? AUTO_PROFILE_TEXT[state.phase]}
             </span>
             {state.phase === 'ready' && <button type="button" className="btn-solid small" onClick={() => session.acceptAutoProfile(role)}>使用</button>}
-            {!working && <button type="button" className="btn-quiet small" onClick={() => session.retryAutoProfile(role)}>重新找</button>}
+            {!working && <button type="button" className="btn-quiet small" onClick={() => session.retryAutoProfile(role)}>重新识别</button>}
             {working && <button type="button" className="btn-quiet small" onClick={() => session.cancelAutoProfile(role)}>取消</button>}
             {!working && (
               <button type="button" className="btn-quiet small" onClick={() => {

@@ -23,26 +23,28 @@ export function DanmakuPanel({ onClose }: { onClose: () => void }): React.ReactN
       </header>
       <div className="float-body">
         <Switch label="显示弹幕" checked={danmaku.enabled} onChange={(enabled) => set({ enabled })} />
+        <Switch label="显示礼物消息" detail="在弹幕列表中显示观众赠送的礼物" checked={danmaku.showGifts}
+          onChange={(showGifts) => set({ showGifts })} />
 
         <Range label="字号" value={danmaku.fontSize} min={14} max={48} step={1} unit="px" onChange={(fontSize) => set({ fontSize })} />
         <Range label="速度" value={danmaku.speed} min={60} max={360} step={10} unit="" format={(v) => v < 130 ? '慢' : v > 220 ? '快' : '中'}
           onChange={(speed) => set({ speed })} />
-        <Range label="透明" value={Math.round((1 - danmaku.opacity) * 100)} min={0} max={80} step={5} unit="%"
+        <Range label="透明度" value={Math.round((1 - danmaku.opacity) * 100)} min={0} max={80} step={5} unit="%"
           onChange={(value) => set({ opacity: 1 - value / 100 })} />
-        <Range label="数量" value={Math.round(danmaku.density * 100)} min={10} max={100} step={10} unit="%"
+        <Range label="密度" value={Math.round(danmaku.density * 100)} min={10} max={100} step={10} unit="%"
           onChange={(value) => set({ density: value / 100 })} />
         <div className="field-stack">
           <span className="field-label">占用画面</span>
           <Segmented label="占用画面" value={danmaku.area} onChange={(area) => set({ area })}
-            options={[{ value: 'quarter', label: '顶部一条' }, { value: 'half', label: '上半屏' }, { value: 'full', label: '全屏' }]} />
+            options={[{ value: 'quarter', label: '顶部' }, { value: 'half', label: '上半屏' }, { value: 'full', label: '全屏' }]} />
         </div>
 
-        <h3 className="float-sub">不想看到的</h3>
-        <Chips label="关键词" placeholder="输入后回车，可以用正则" values={danmaku.filter.blockedPatterns} invalid={invalid}
+        <h3 className="float-sub">屏蔽</h3>
+        <Chips label="关键词" placeholder="回车添加，支持正则表达式" values={danmaku.filter.blockedPatterns} invalid={invalid}
           onChange={(blockedPatterns) => set({ filter: { ...danmaku.filter, blockedPatterns } })} />
-        <Chips label="用户" placeholder="用户名，回车" values={danmaku.filter.blockedUsers}
+        <Chips label="用户" placeholder="回车添加用户名" values={danmaku.filter.blockedUsers}
           onChange={(blockedUsers) => set({ filter: { ...danmaku.filter, blockedUsers } })} />
-        <Range label="超过多少字不显示" value={danmaku.filter.maxLength} min={0} max={80} step={5} unit="字"
+        <Range label="长度上限" value={danmaku.filter.maxLength} min={0} max={80} step={5} unit="字"
           format={(v) => v === 0 ? '不限' : `${v} 字`}
           onChange={(maxLength) => set({ filter: { ...danmaku.filter, maxLength } })} />
       </div>

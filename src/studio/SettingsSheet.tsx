@@ -57,7 +57,7 @@ function YouTubeAccount(): React.ReactNode {
   const act = async (logout: boolean): Promise<void> => {
     if (busy) return
     setBusy(true)
-    setMessage(logout ? '' : '在打开的 Chrome 窗口里登录，登好后关掉那个窗口')
+    setMessage(logout ? '' : '请在弹出的 Chrome 窗口中登录，完成后关闭该窗口')
     try {
       const result = logout ? await apiClient.logout('youtube') : await apiClient.login('youtube')
       if (!mounted.current) return
@@ -79,9 +79,9 @@ function YouTubeAccount(): React.ReactNode {
           <button type="button" className="btn-solid small" disabled={busy} onClick={() => void act(false)}>{youtube?.loggedIn ? '重新登录' : '登录'}</button>
         </span>
       </div>
-      <p className="muted">遇到「请确认你不是机器人」或会员直播时需要登录。</p>
+      <p className="muted">出现「请确认你不是机器人」提示或观看会员直播时需要登录。</p>
       {message && <p className="muted" role="status">{message}</p>}
-      <Switch label="优先用高清自适应流" detail="可用时提供 1440p 等更多清晰度"
+      <Switch label="优先使用高清自适应流" detail="可用时提供 1440p 等更多清晰度"
         checked={settings.preferAdaptive} onChange={(preferAdaptive) => session.updateSettings({ preferAdaptive })} />
     </Group>
   )
@@ -93,25 +93,25 @@ function AlignPrefs(): React.ReactNode {
   return (
     <Group title="对齐">
       <div className="field-stack">
-        <span className="field-label">点一下调多少</span>
-        <Segmented label="点一下调多少" value={settings.smallStepSeconds}
+        <span className="field-label">单击步长</span>
+        <Segmented label="单击步长" value={settings.smallStepSeconds}
           onChange={(seconds) => session.updateSettings({ smallStepSeconds: seconds, largeStepSeconds: Math.max(seconds, settings.largeStepSeconds) })}
           options={[0.1, 0.25, 0.5, 1].map((value) => ({ value, label: `${value} 秒` }))} />
       </div>
       <div className="field-stack">
-        <span className="field-label">按住或 Shift 时调多少</span>
-        <Segmented label="按住时调多少" value={settings.largeStepSeconds}
+        <span className="field-label">长按或 Shift 步长</span>
+        <Segmented label="长按步长" value={settings.largeStepSeconds}
           onChange={(seconds) => session.updateSettings({ largeStepSeconds: Math.max(seconds, settings.smallStepSeconds) })}
           options={[2, 5, 10].map((value) => ({ value, label: `${value} 秒` }))} />
       </div>
       <div className="field-stack">
-        <span className="field-label">每次读倒计时多久</span>
-        <Segmented label="每次读倒计时多久" value={settings.detectWindowSeconds} onChange={(seconds) => session.setDetectWindow(seconds)}
-          options={[{ value: 2, label: '2 秒，快' }, { value: 3, label: '3 秒，稳' }]} />
+        <span className="field-label">倒计时识别时长</span>
+        <Segmented label="倒计时识别时长" value={settings.detectWindowSeconds} onChange={(seconds) => session.setDetectWindow(seconds)}
+          options={[{ value: 2, label: '2 秒（较快）' }, { value: 3, label: '3 秒（较稳）' }]} />
       </div>
       <div className="field-stack">
-        <span className="field-label">差多少才跳转</span>
-        <Segmented label="差多少才跳转" value={settings.seekThresholdSeconds} onChange={(seconds) => session.setSeekThreshold(seconds)}
+        <span className="field-label">跳转阈值</span>
+        <Segmented label="跳转阈值" value={settings.seekThresholdSeconds} onChange={(seconds) => session.setSeekThreshold(seconds)}
           options={[1, 1.5, 2].map((value) => ({ value, label: `${value} 秒` }))} />
       </div>
     </Group>
@@ -148,7 +148,7 @@ function Decoding(): React.ReactNode {
   }
   return (
     <Group title="解码">
-      <Switch label="软件解码" detail="画面花屏、绿屏或黑屏时打开，重启应用后生效"
+      <Switch label="软件解码" detail="画面出现花屏、绿屏或黑屏时启用，重启应用后生效"
         checked={state?.mode === 'software'} disabled={pending || !state} onChange={(on) => void save(on)} />
       {state?.restartRequired && <p className="note-warn">重启后改为{modeName(state.mode)}，当前仍是{modeName(state.effectiveMode)}</p>}
       {state?.forcedByCommandLine && <p className="muted">启动参数强制了软件解码</p>}
@@ -200,10 +200,10 @@ function Tools(): React.ReactNode {
           <div key={tool.name}><dt>{tool.name}</dt><dd className="num">{tool.version}<span className="muted"> · {SOURCE_NAME[tool.source]}</span></dd></div>
         ))}
       </dl>
-      <p className="muted">YouTube 打不开时，先更新 yt-dlp 再试。</p>
+      <p className="muted">YouTube 无法打开直播时，可先更新 yt-dlp 后重试。</p>
       <div className="row-end">
-        <button type="button" className="btn-quiet small" disabled={running || !update?.previousVersion} onClick={() => void act('previous')}>换回上一版</button>
-        <button type="button" className="btn-quiet small" disabled={running || !update?.activeVersion} onClick={() => void act('bundled')}>换回内置版</button>
+        <button type="button" className="btn-quiet small" disabled={running || !update?.previousVersion} onClick={() => void act('previous')}>恢复上一版本</button>
+        <button type="button" className="btn-quiet small" disabled={running || !update?.activeVersion} onClick={() => void act('bundled')}>恢复内置版本</button>
         <button type="button" className="btn-solid small" disabled={running || !status} onClick={() => void act()}>更新 yt-dlp</button>
       </div>
       {update && update.phase !== 'idle' && (

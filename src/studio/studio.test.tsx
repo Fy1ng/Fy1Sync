@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Session } from '../app/session'
 import { SessionProvider } from '../app/SessionContext'
 import type { StreamSyncerBridge } from '../../electron/contracts'
-import { routeFor } from './sources'
+import { parseRoomInput, roomFromInput, routeFor, sourceTitle } from './sources'
 import { Studio } from './Studio'
 import { balanceOf, volumesFor } from './transport'
 
@@ -59,6 +59,28 @@ describe('routing a pasted link', () => {
   })
 })
 
+describe('typed rooms', () => {
+  it('leaves a bare number to the viewer and reads a platform prefix', () => {
+    expect(parseRoomInput('6979222')).toEqual({ room: '6979222', platform: null })
+    expect(parseRoomInput('b 21452505')).toEqual({ room: '21452505', platform: 'bilibili' })
+    expect(parseRoomInput('斗鱼9999')).toEqual({ room: '9999', platform: 'douyu' })
+    expect(parseRoomInput('https://www.douyu.com/9999')).toBeNull()
+  })
+
+  it('names a room by what was typed, not by the id it resolved to', () => {
+    expect(roomFromInput('https://www.douyu.com/9999')).toBe('9999')
+    expect(roomFromInput('https://www.douyu.com/topic/xyz?rid=288016')).toBe('288016')
+    expect(roomFromInput('https://live.bilibili.com/21452505?spm=1')).toBe('21452505')
+    const douyu = { kind: 'hls' as const, url: 'x', input: 'douyu.com/9999', label: '斗鱼 6979222', loop: false, viaProxy: true, platform: 'douyu' as const, sourceRoom: '6979222' }
+    expect(sourceTitle(douyu)).toBe('斗鱼 9999')
+  })
+
+  it('does not say the platform twice', () => {
+    expect(sourceTitle({ kind: 'hls', url: 'x', input: 'https://www.youtube.com/watch?v=a', label: 'YouTube 直播', loop: false, viaProxy: false, platform: 'youtube' }))
+      .toBe('YouTube 直播')
+  })
+})
+
 describe('the balance slider', () => {
   it('plays both at full in the middle and silences the far side at each end', () => {
     expect(volumesFor(0)).toEqual({ official: 1, commentary: 1 })
@@ -96,9 +118,21 @@ describe('the studio', () => {
     fireEvent.click(screen.getByRole('button', { name: '跳过' }))
     expect(screen.queryByRole('dialog', { name: '添加直播间' })).toBeNull()
     // Nothing to align yet, so the nudges are off rather than silently doing nothing.
-    expect(screen.getByRole('button', { name: '解说早了' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '解说延后' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: '添加直播间' }))
     expect(screen.getByRole('dialog', { name: '添加直播间' })).toBeInTheDocument()
+  })
+
+  it('asks which platform a bare room number belongs to', async () => {
+    renderStudio(makeSession())
+    await flush()
+    const field = screen.getByLabelText('直播间链接')
+    fireEvent.change(field, { target: { value: '6979222' } })
+    fireEvent.submit(field.closest('form')!)
+    const ask = screen.getByRole('group', { name: '选择房间号所属平台' })
+    expect(ask).toHaveTextContent('6979222')
+    expect(screen.getByRole('button', { name: '斗鱼' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '哔哩哔哩' })).toBeInTheDocument()
   })
 
   it('closes the paste screen on Escape even with nothing loaded', async () => {
@@ -108,7 +142,7 @@ describe('the studio', () => {
     expect(screen.queryByRole('dialog', { name: '添加直播间' })).toBeNull()
   })
 
-  it('holds the voice back for 解说早了 and the picture back for 解说晚了', async () => {
+  it('holds the voice back for 解说延后 and the picture back for 画面延后', async () => {
     const session = makeSession()
     // Both sides present: an offset only means something between two sources.
     for (const role of ['official', 'commentary'] as const) {
@@ -118,14 +152,14 @@ describe('the studio', () => {
     renderStudio(session)
     await flush()
 
-    fireEvent.click(screen.getByRole('button', { name: '解说早了' }))
+    fireEvent.click(screen.getByRole('button', { name: '解说延后' }))
     await waitFor(() => expect(apply).toHaveBeenCalled())
     expect(apply.mock.calls.at(-1)![0]).toBeLessThan(0)
 
     apply.mockClear()
     await flush()
-    fireEvent.click(screen.getByRole('button', { name: '解说晚了' }))
-    fireEvent.click(screen.getByRole('button', { name: '解说晚了' }))
+    fireEvent.click(screen.getByRole('button', { name: '画面延后' }))
+    fireEvent.click(screen.getByRole('button', { name: '画面延后' }))
     await waitFor(() => expect(apply).toHaveBeenCalledTimes(2))
     expect(apply.mock.calls.at(-1)![0]).toBeGreaterThan(apply.mock.calls[0]![0] as number)
   })

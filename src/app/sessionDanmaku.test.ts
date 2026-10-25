@@ -92,8 +92,15 @@ async function makeSession(options: { commentaryTime?: number; load?: boolean } 
       duration: 600,
       currentTime: options.commentaryTime ?? 100,
     })
+    // Playing, as the scheduling tests assume: a paused commentary releases chat at once.
+    setPaused(engine.element('commentary'), false)
   }
   return { session, engine }
+}
+
+function setPaused(element: HTMLMediaElement, paused: boolean): void {
+  Object.defineProperty(element, 'paused', { configurable: true, value: paused })
+  element.dispatchEvent(new Event(paused ? 'pause' : 'play'))
 }
 
 beforeEach(() => {
@@ -107,8 +114,18 @@ afterEach(() => {
 })
 
 describe('Session danmaku transport', () => {
+  it('drops gift notices unless they are switched on', async () => {
+    const { session, engine } = await makeSession({ commentaryTime: 100 })
+    const gift = { kind: 'prop' as const, id: '268', count: 1 }
+    session.pushDanmaku({ text: '粉丝荧光棒 x 1', user: '观众', color: '#fff', gift })
+    session.pushDanmaku({ text: '普通弹幕', user: '观众', color: '#fff' })
+    engine.element('commentary').currentTime = 101
+    expect(session.drainDanmaku().map((message) => message.text)).toEqual(['普通弹幕'])
+  })
+
   it('retains copied gift and sender facts on the commentary timeline', async () => {
     const { session } = await makeSession({ commentaryTime: 100 })
+    session.updateDanmakuSettings({ showGifts: true })
     session.connectDanmaku('288016')
     const payload = { text: '粉丝荧光棒 x 2', username: '送礼观众', color: 0, system: true,
       sender: { uid: '42', level: 12, nobleLevel: 0 }, gift: { kind: 'prop', id: '268', count: 2 } }
@@ -134,7 +151,7 @@ describe('Session danmaku transport', () => {
 
   it('applies user blocking to gifts while keeping them independent of chat patterns and density', async () => {
     const { session } = await makeSession()
-    session.updateDanmakuSettings({ density: 0.1, filter: { blockedPatterns: ['荧光棒'], blockedUsers: ['隐藏观众'], maxLength: 1 } })
+    session.updateDanmakuSettings({ showGifts: true, density: 0.1, filter: { blockedPatterns: ['荧光棒'], blockedUsers: ['隐藏观众'], maxLength: 1 } })
     vi.spyOn(Math, 'random').mockReturnValue(0.99)
     const gift = { kind: 'prop' as const, id: '268', count: 1 }
     session.pushDanmaku({ text: '粉丝荧光棒 x 1', user: '隐藏观众', color: '#fff', gift })
@@ -390,6 +407,15 @@ describe('Session danmaku and sync', () => {
     // Playing back up to 100 releases it, in step with the picture it belongs to.
     engine.element('commentary').currentTime = 100
     expect(session.drainDanmaku().map((message) => message.text)).toEqual(['现在'])
+  })
+
+  it('shows chat as it arrives while the commentary is paused', async () => {
+    const { session, engine } = await makeSession({ commentaryTime: 100 })
+    await session.applyOffset(-5)
+    setPaused(engine.element('commentary'), true)
+    // Held back by the offset while playing; paused, it would never come and then expire.
+    session.pushDanmaku({ text: '暂停时', user: 'a', color: '#fff' })
+    expect(session.drainDanmaku().map((message) => message.text)).toEqual(['暂停时'])
   })
 
   it('expires danmaku left far behind a forward seek', async () => {

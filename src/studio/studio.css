@@ -1701,6 +1701,8 @@ body,
   inset: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* The list keeps its own place; browser scroll anchoring would fight it. */
+  overflow-anchor: none;
   outline-offset: -2px;
 }
 
@@ -2477,4 +2479,72 @@ body,
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
   }
+}
+
+/* ---------- hover menu on a danmaku over the picture ---------- */
+
+.studio .danmaku-stage .danmaku-item {
+  pointer-events: auto;
+  cursor: default;
+}
+
+.studio .danmaku-stage .danmaku-item.is-held {
+  z-index: 1;
+}
+
+.studio .danmaku-stage .danmaku-item:hover {
+  outline: 1px solid rgb(255 255 255 / 55%);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.studio .dm-menu {
+  position: absolute;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 36px;
+  padding: 0 6px 0 12px;
+  background: rgb(18 18 20 / 90%);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+  animation: pop-in 120ms var(--ease);
+}
+
+.studio .dm-menu-user {
+  max-width: 7em;
+  margin-right: 4px;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--ash);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio .dm-menu button {
+  height: 26px;
+  padding: 0 10px;
+  font: 500 13px/1 var(--cjk);
+  color: var(--chalk);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.studio .dm-menu button:hover:not(:disabled) {
+  background: rgb(255 255 255 / 12%);
+}
+
+.studio .dm-menu button:disabled {
+  color: var(--ash-2);
+  cursor: not-allowed;
+}
+
+.studio .dm-menu button:focus-visible {
+  outline: 2px solid var(--chalk);
+  outline-offset: 1px;
 }
