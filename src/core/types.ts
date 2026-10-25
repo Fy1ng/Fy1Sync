@@ -31,7 +31,7 @@ export type MediaDescriptor = {
 
 export type PlatformId = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'direct' | 'file' | 'test'
 
-/** Public sender facts received from Douyu. Local cosmetics never write these fields. */
+/** Public sender facts received from Douyu. */
 export interface DouyuSenderMetadata {
   uid?: string
   level?: number

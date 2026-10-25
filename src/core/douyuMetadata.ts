@@ -1,9 +1,6 @@
 import type { DouyuGiftMetadata, DouyuSenderMetadata } from './types'
 
 export const MAX_DOUYU_GIFT_COUNT = 1_000_000
-export const DOUYU_UID_MAX_LENGTH = 20
-export const LOCAL_GIFT_EFFECT_DURATION_MS = 4_000
-export const MAX_LOCAL_GIFT_EFFECTS = 3
 
 /** Decimal identifiers remain strings, avoiding rounding or permissive numeric coercion. */
 export function normalizeDouyuUid(value: unknown): string {
@@ -77,59 +74,4 @@ function knownGlowstickName(gift: DouyuGiftMetadata): string | undefined {
 
 export function douyuGiftLabel(gift: DouyuGiftMetadata): string {
   return knownGlowstickName(gift) ?? `${gift.kind === 'prop' ? '道具' : '礼物'} #${gift.id}`
-}
-
-export interface DouyuLocalIdentitySettings {
-  localPhantomIdentity: boolean
-  localPhantomUid: string
-}
-
-export function hasLocalPhantomIdentity(
-  message: { sender?: DouyuSenderMetadata; gift?: DouyuGiftMetadata },
-  settings: DouyuLocalIdentitySettings,
-): boolean {
-  const target = normalizeDouyuUid(settings.localPhantomUid)
-  return settings.localPhantomIdentity && target !== '' && !message.gift && message.sender?.uid === target
-}
-
-export interface LocalGiftEffect {
-  messageId: string
-  senderName: string
-  originalGift: string
-  count: number
-}
-
-/** A presentation-only projection. The input and its sender/gift facts are never changed. */
-export function localGiftEffectFor(
-  message: { id: string; user: string; gift?: DouyuGiftMetadata },
-  enabled: boolean,
-): LocalGiftEffect | null {
-  if (!enabled) return null
-  const gift = normalizeDouyuGift(message.gift)
-  if (!gift || !knownGlowstickName(gift)) return null
-  return {
-    messageId: message.id,
-    senderName: message.user,
-    originalGift: douyuGiftLabel(gift),
-    count: gift.count,
-  }
-}
-
-/** Fixed occupancy, with no backlog: a busy room cannot queue minutes of stale effects. */
-export class LocalGiftEffectSlots {
-  private readonly slots: Array<{ messageId: string; until: number } | null> =
-    Array.from({ length: MAX_LOCAL_GIFT_EFFECTS }, () => null)
-
-  take(messageId: string, nowMs: number): number | null {
-    if (!Number.isFinite(nowMs)) return null
-    if (this.slots.some(slot => slot?.messageId === messageId && slot.until > nowMs)) return null
-    const index = this.slots.findIndex(slot => !slot || slot.until <= nowMs)
-    if (index < 0) return null
-    this.slots[index] = { messageId, until: nowMs + LOCAL_GIFT_EFFECT_DURATION_MS }
-    return index
-  }
-
-  clear(): void {
-    this.slots.fill(null)
-  }
 }

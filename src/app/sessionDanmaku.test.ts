@@ -107,7 +107,7 @@ afterEach(() => {
 })
 
 describe('Session danmaku transport', () => {
-  it('retains real gift and sender facts on the commentary timeline independently of local effects', async () => {
+  it('retains copied gift and sender facts on the commentary timeline', async () => {
     const { session } = await makeSession({ commentaryTime: 100 })
     session.connectDanmaku('288016')
     const payload = { text: '粉丝荧光棒 x 2', username: '送礼观众', color: 0, system: true,
@@ -118,9 +118,6 @@ describe('Session danmaku transport', () => {
     const [message] = session.drainDanmaku()
     expect(message).toMatchObject({ text: '粉丝荧光棒 x 2', user: '送礼观众', scheduleTime: 100,
       sender: { uid: '42', level: 12, nobleLevel: 0 }, gift: { kind: 'prop', id: '268', count: 2 } })
-    session.updateDanmakuSettings({ localGlowstickToRocket: true, localPhantomIdentity: true, localPhantomUid: '42' })
-    expect(session.chatHistory()[0]).toEqual(message)
-    session.updateDanmakuSettings({ localGlowstickToRocket: false, localPhantomIdentity: false })
     expect(session.chatHistory()[0]).toEqual(message)
   })
 

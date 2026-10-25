@@ -21,7 +21,7 @@ import {
   normalizeDouyuGift,
   normalizeDouyuSender,
   normalizeDouyuUid,
-} from '../../src/core/douyuLocalEffects'
+} from '../../src/core/douyuMetadata'
 import type { DouyuGiftMetadata, DouyuSenderMetadata } from '../../src/core/types'
 
 export const CLIENT_MESSAGE_TYPE = 689

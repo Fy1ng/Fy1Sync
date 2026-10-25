@@ -13,7 +13,6 @@
 import type { DanmakuArea } from '../core/danmakuLanes'
 import { DEFAULT_FILTER_SETTINGS, type DanmakuFilterSettings } from '../core/danmakuFilter'
 import { normalizeSteps } from '../ui/controls/manualOffset'
-import { normalizeDouyuUid } from '../core/douyuLocalEffects'
 
 export const SETTINGS_KEY = 'stream-sync.settings.v1'
 
@@ -27,10 +26,6 @@ export interface DanmakuSettings {
   /** Fraction of incoming messages to keep, 0..1. */
   density: number
   filter: DanmakuFilterSettings
-  /** Local render preferences. They never alter a Douyu account or sent message. */
-  localPhantomIdentity: boolean
-  localPhantomUid: string
-  localGlowstickToRocket: boolean
 }
 
 export interface AppSettings {
@@ -75,9 +70,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     area: 'half',
     density: 1,
     filter: { ...DEFAULT_FILTER_SETTINGS },
-    localPhantomIdentity: false,
-    localPhantomUid: '',
-    localGlowstickToRocket: false,
   },
   autoSyncEnabled: false,
   autoSyncIntervalSeconds: 30,
@@ -147,9 +139,6 @@ export function mergeSettings(raw: unknown): AppSettings {
         blockedUsers: strings(filter.blockedUsers),
         maxLength: clamp(filter.maxLength, 0, 500, 0),
       },
-      localPhantomIdentity: boolean(danmaku.localPhantomIdentity, false),
-      localPhantomUid: normalizeDouyuUid(danmaku.localPhantomUid),
-      localGlowstickToRocket: boolean(danmaku.localGlowstickToRocket, false),
     },
     autoSyncEnabled: boolean(stored.autoSyncEnabled, defaults.autoSyncEnabled),
     // docs/sync-design.md fixes the interval choices at 15/30/60 s.

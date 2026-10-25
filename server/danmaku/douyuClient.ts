@@ -31,7 +31,7 @@ const STABLE_CONNECTION_MS = 30_000
 /** Exponential backoff, capped so a dead room does not hammer the endpoint. */
 const RECONNECT_BASE_MS = 1_000
 const RECONNECT_MAX_MS = 30_000
-/** Gift visuals cannot use up the chat timeline during a donation burst. */
+/** Gift notifications cannot use up the chat timeline during a donation burst. */
 export const MAX_GIFT_MESSAGES_PER_SECOND = 12
 
 export type DanmakuState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed'

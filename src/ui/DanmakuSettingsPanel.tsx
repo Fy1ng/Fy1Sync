@@ -12,10 +12,8 @@ import type { DanmakuArea } from '../core/danmakuLanes'
 import { DropUp } from './controls/DropUp'
 import { Slider } from './controls/Slider'
 import { Toggle } from './controls/Toggle'
-import { DouyuLocalGiftPreview } from './DouyuLocalEffects'
-import { DOUYU_UID_MAX_LENGTH } from '../core/douyuLocalEffects'
 
-type SubPage = 'none' | 'patterns' | 'users' | 'localEffects'
+type SubPage = 'none' | 'patterns' | 'users'
 
 export function DanmakuSettingsPanel({ onClose }: { onClose: () => void }): React.ReactNode {
   const session = useSession()
@@ -101,10 +99,6 @@ export function DanmakuSettingsPanel({ onClose }: { onClose: () => void }): Reac
         />
 
         <div className="panel-links">
-          <button type="button" onClick={() => setSubPage('localEffects')}>
-            斗鱼本地视觉
-            <span className="badge">{danmaku.localPhantomIdentity || danmaku.localGlowstickToRocket ? '已开启' : '关闭'}</span>
-          </button>
           <button type="button" onClick={() => setSubPage('patterns')}>
             屏蔽正则
             <span className="badge">{danmaku.filter.blockedPatterns.length}</span>
@@ -116,7 +110,6 @@ export function DanmakuSettingsPanel({ onClose }: { onClose: () => void }): Reac
         </div>
       </div>
 
-      {subPage === 'localEffects' && <LocalEffectsEditor onBack={() => setSubPage('none')} />}
       {(subPage === 'patterns' || subPage === 'users') && (
         <ListEditor
           kind={subPage}
@@ -137,35 +130,6 @@ export function DanmakuSettingsPanel({ onClose }: { onClose: () => void }): Reac
       )}
     </div>
   )
-}
-
-function LocalEffectsEditor({ onBack }: { onBack: () => void }): React.ReactNode {
-  const session = useSession()
-  const { settings: { danmaku } } = useSessionSnapshot()
-  return <div className="panel-pane panel-subpage douyu-local-settings">
-    <header className="panel-header">
-      <button type="button" className="ghost small" onClick={onBack} aria-label="返回">{'<'}</button>
-      <h3>斗鱼本地视觉</h3>
-    </header>
-    <p className="hint">只改变本应用的显示, 不改变真实身份, 斗鱼权益或实际礼物.</p>
-    <Toggle label="本地幻神装扮" checked={danmaku.localPhantomIdentity}
-      onChange={checked => session.updateDanmakuSettings({ localPhantomIdentity: checked })} />
-    <label className="douyu-local-uid">
-      要装饰的斗鱼用户 ID
-      <input type="text" inputMode="numeric" autoComplete="off" maxLength={DOUYU_UID_MAX_LENGTH}
-        value={danmaku.localPhantomUid} placeholder="例如 12345678" disabled={!danmaku.localPhantomIdentity}
-        onChange={event => session.updateDanmakuSettings({ localPhantomUid: event.target.value })} />
-    </label>
-    <p className="hint">填写用户 UID, 与收到消息的真实 UID 精确匹配. 不填写时不会装饰任何用户.</p>
-    {danmaku.localPhantomIdentity && <div className="douyu-local-identity-preview">
-      <span className="douyu-local-identity">本地幻神</span><span>样式预览</span>
-    </div>}
-    <Toggle label="荧光棒显示本地超火特效" checked={danmaku.localGlowstickToRocket}
-      onChange={checked => session.updateDanmakuSettings({ localGlowstickToRocket: checked })} />
-    <p className="hint">真实荧光棒消息到达播放时间后显示, 始终保留原礼物和数量. 关闭即清除特效.</p>
-    {danmaku.localGlowstickToRocket && <DouyuLocalGiftPreview />}
-    {!danmaku.enabled && <p className="hint">画面弹幕当前已关闭. 开启显示弹幕后, 礼物特效才会出现在画面中.</p>}
-  </div>
 }
 
 interface ListEditorProps {

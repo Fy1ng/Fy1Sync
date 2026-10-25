@@ -38,16 +38,16 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
-function open(store: ReturnType<typeof feed>, connected = true, localIdentity?: React.ComponentProps<typeof ChatList>['localIdentity']) {
-  return render(<SessionProvider session={store.session as unknown as Session}><ChatList connected={connected} room="9999" localIdentity={localIdentity} /></SessionProvider>)
+function open(store: ReturnType<typeof feed>, connected = true) {
+  return render(<SessionProvider session={store.session as unknown as Session}><ChatList connected={connected} room="9999" /></SessionProvider>)
 }
 
 describe('ChatList manual +1', () => {
-  it('adds a labelled local identity badge without changing the repeat text or real sender', async () => {
+  it('preserves the original text and sender when repeating a message', async () => {
     const chat = { ...makeMessage(1, '原始发言'), sender: { uid: '42', level: 1, nobleLevel: 0 } }
     const store = feed([chat, { ...makeMessage(2), sender: { uid: '99' } }])
-    open(store, true, { localPhantomIdentity: true, localPhantomUid: '42' })
-    expect(screen.getAllByText('本地幻神')).toHaveLength(1)
+    open(store)
+    expect(screen.getByText('原始发言')).toBeVisible()
     const repeat = screen.getByRole('button', { name: '+1 复读 观众1 的弹幕' })
     await waitFor(() => expect(repeat).toBeEnabled())
     fireEvent.click(repeat)

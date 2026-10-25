@@ -66,16 +66,14 @@ describe('mergeSettings', () => {
     expect(mergeSettings({ preferAdaptive: false }).preferAdaptive).toBe(false)
   })
 
-  it('keeps local identity and gift visuals independently disabled for old or malformed settings', () => {
-    expect(mergeSettings({}).danmaku).toMatchObject({
-      localPhantomIdentity: false, localPhantomUid: '', localGlowstickToRocket: false,
+  it('drops removed visual preferences while preserving existing danmaku settings', () => {
+    expect(mergeSettings({ danmaku: {
+      localPhantomIdentity: true, localPhantomUid: '42', localGlowstickToRocket: true,
+      fontSize: 30, filter: { blockedUsers: ['旧用户'] },
+    } }).danmaku).toEqual({
+      ...DEFAULT_SETTINGS.danmaku, fontSize: 30,
+      filter: { ...DEFAULT_SETTINGS.danmaku.filter, blockedUsers: ['旧用户'] },
     })
-    expect(mergeSettings({ danmaku: { localPhantomIdentity: 'true', localGlowstickToRocket: 1, localPhantomUid: 42 } }).danmaku)
-      .toMatchObject({ localPhantomIdentity: false, localGlowstickToRocket: false, localPhantomUid: '' })
-    expect(mergeSettings({ danmaku: { localPhantomIdentity: true, localPhantomUid: '42' } }).danmaku)
-      .toMatchObject({ localPhantomIdentity: true, localPhantomUid: '42', localGlowstickToRocket: false })
-    expect(mergeSettings({ danmaku: { localGlowstickToRocket: true, localPhantomUid: '042' } }).danmaku)
-      .toMatchObject({ localPhantomIdentity: false, localPhantomUid: '', localGlowstickToRocket: true })
   })
 
   it('clamps volumes into 0..1 instead of rejecting the blob', () => {
@@ -176,11 +174,13 @@ describe('loadSettings', () => {
     expect(loadSettings(storage).preferAdaptive).toBe(true)
   })
 
-  it('persists each local visual choice and the exact target UID', () => {
-    const storage = fakeStorage()
-    const settings = mergeSettings({ danmaku: { localPhantomIdentity: true, localPhantomUid: '42', localGlowstickToRocket: true } })
+  it('does not persist removed preferences when saving settings from an older version', () => {
+    const storage = fakeStorage(JSON.stringify({ danmaku: {
+      localPhantomIdentity: true, localPhantomUid: '42', localGlowstickToRocket: true, opacity: 0.5,
+    } }))
+    const settings = loadSettings(storage)
     saveSettings(settings, storage)
-    expect(loadSettings(storage).danmaku).toEqual(settings.danmaku)
+    expect(JSON.parse(storage.value!).danmaku).toEqual({ ...DEFAULT_SETTINGS.danmaku, opacity: 0.5 })
   })
 })
 

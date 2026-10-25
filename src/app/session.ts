@@ -33,7 +33,7 @@ import type { AppSettings } from './settings'
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from './settings'
 import type { BufferState } from '../../electron/bufferManager'
 import { colorForIndex, type ChatMessage } from '../../server/danmaku/douyuProtocol'
-import { normalizeDouyuGift, normalizeDouyuSender } from '../core/douyuLocalEffects'
+import { normalizeDouyuGift, normalizeDouyuSender } from '../core/douyuMetadata'
 
 /** Released danmaku kept for the chat list. */
 export const CHAT_HISTORY_LIMIT = 2000

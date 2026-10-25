@@ -16,11 +16,9 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExter
 import { useSession } from '../app/SessionContext'
 import { anchoredScrollTop, chatWindow, CHAT_ROW_HEIGHT, isPinned } from './chatWindow'
 import { DouyuMessageComposer, useDouyuMessageComposer } from './DouyuMessageComposer'
-import { DouyuLocalIdentityBadge } from './DouyuLocalEffects'
-import type { DouyuLocalIdentitySettings } from '../core/douyuLocalEffects'
 
-export function ChatList({ connected, room, localIdentity }: {
-  connected: boolean; room: string | null; localIdentity?: DouyuLocalIdentitySettings
+export function ChatList({ connected, room }: {
+  connected: boolean; room: string | null
 }): React.ReactNode {
   const session = useSession()
   const composer = useDouyuMessageComposer({ connected, room })
@@ -110,7 +108,7 @@ export function ChatList({ connected, room, localIdentity }: {
                   title={`${message.user}: ${message.text}`}
                 >
                   <span className="chat-user">{message.user}</span>
-                  <span className="chat-text">{localIdentity && <DouyuLocalIdentityBadge message={message} settings={localIdentity} />}{message.text}</span>
+                  <span className="chat-text">{message.text}</span>
                   {!message.gift && <button type="button" className="chat-repeat" disabled={!composer.canSendText(message.text)}
                     aria-label={`+1 复读 ${message.user} 的弹幕`}
                     title={composer.repeatProblem(message.text) ?? '发送一次这条弹幕'}

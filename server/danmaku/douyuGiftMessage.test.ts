@@ -7,7 +7,7 @@ const gift = {
   gfid: '824', gfcnt: '2', gpf: '0', hits: '99', bcnt: '999',
 }
 
-describe('Douyu real gift traffic for optional local visuals', () => {
+describe('Douyu real gift notifications', () => {
   it('retains the real sender and per-event count, without treating gifts as chat', () => {
     const raw = Object.freeze({ ...gift })
     expect(toChatMessage(raw, '1234', 100)).toBeNull()

@@ -4,9 +4,68 @@
  * and that a reader scrolled up is not moved by arriving messages.
  */
 
-import { expect, test } from './electron'
+import { APP_ORIGIN, expect, test } from './electron'
 import { fixturesReady, loadBothFixtures, openPlayer, openSourceDialog, seekBoth, setPlaying, stressDanmaku } from './helpers'
-import { parseStt, toChatMessage } from '../server/danmaku/douyuProtocol'
+import { parseStt, serializeStt, toChatMessage, toGiftMessage } from '../server/danmaku/douyuProtocol'
+import { SETTINGS_KEY } from '../src/app/settings'
+
+test('旧配置不恢复已移除的本地视觉, 普通弹幕设置和真实礼物通知仍正常', async ({ page, electronApp }, testInfo) => {
+  const consoleErrors: string[] = []
+  page.on('console', message => {
+    if (message.type() === 'error') consoleErrors.push(message.text())
+  })
+  await page.evaluate(key => localStorage.setItem(key, JSON.stringify({ danmaku: {
+    localPhantomIdentity: true, localPhantomUid: '42', localGlowstickToRocket: true,
+    fontSize: 30, opacity: 0.5,
+  } })), SETTINGS_KEY)
+  await openPlayer(page)
+  await expect(page).toHaveURL(APP_ORIGIN + '/')
+  await expect(page).toHaveTitle('Stream Sync Player')
+  await page.getByRole('button', { name: '弹幕设置', exact: true }).click()
+  const panel = page.locator('.danmaku-panel')
+  await expect(panel.getByRole('heading', { name: '弹幕设置', exact: true })).toBeVisible()
+  await expect(panel.getByRole('button', { name: /斗鱼本地视觉/ })).toHaveCount(0)
+  await expect(panel.getByRole('checkbox')).toHaveCount(1)
+  const fontSize = panel.getByRole('slider', { name: '字号', exact: true })
+  await expect(fontSize).toHaveValue('30')
+  await fontSize.focus()
+  await fontSize.press('ArrowRight')
+  await expect(fontSize).toHaveValue('31')
+  const persisted = await page.evaluate(key => JSON.parse(localStorage.getItem(key)!).danmaku, SETTINGS_KEY)
+  expect(persisted).toMatchObject({ fontSize: 31, opacity: 0.5 })
+  expect(persisted).not.toHaveProperty('localPhantomIdentity')
+  expect(persisted).not.toHaveProperty('localPhantomUid')
+  expect(persisted).not.toHaveProperty('localGlowstickToRocket')
+  await page.screenshot({ path: testInfo.outputPath('danmaku-settings.png') })
+  await page.getByRole('button', { name: '关闭弹幕设置', exact: true }).click()
+
+  const dialog = await openSourceDialog(page)
+  await dialog.getByRole('textbox', { name: '弹幕房间号' }).fill('288016')
+  await dialog.getByRole('button', { name: '连接', exact: true }).click()
+  await expect.poll(() => electronApp.evaluate(() =>
+    (globalThis as typeof globalThis & { __streamSyncerTest: { emitDanmaku(room: string, event: string, data: unknown): number } })
+      .__streamSyncerTest.emitDanmaku('288016', 'state', { room: '288016', state: 'connected' }))).toBe(1)
+  await dialog.getByRole('button', { name: '完成' }).click()
+  const messages = [
+    toChatMessage(parseStt(serializeStt({ type: 'chatmsg', uid: '42', nn: '原始观众', txt: '保留原始弹幕' })), '288016', Date.now()),
+    toGiftMessage(parseStt(serializeStt({ type: 'dgb', rid: '288016', uid: '42', nn: '原始观众', gpf: 1, pid: '268', gfcnt: 2 })), '288016', Date.now()),
+  ]
+  expect(messages.every(Boolean)).toBe(true)
+  await electronApp.evaluate((_electron, payloads) => {
+    const main = globalThis as typeof globalThis & { __streamSyncerTest: { emitDanmaku(room: string, event: string, data: unknown): number } }
+    for (const payload of payloads) main.__streamSyncerTest.emitDanmaku('288016', 'danmaku', payload)
+  }, messages)
+  await expect(page.locator('.chat-row')).toHaveCount(2)
+  const giftRow = page.locator('.chat-row').filter({ hasText: '粉丝荧光棒 x 2' })
+  await expect(giftRow).toBeVisible()
+  await expect(giftRow.getByRole('button')).toHaveCount(0)
+  const overlay = page.locator('.danmaku-layer')
+  await expect(overlay.locator(':scope > *')).toHaveCount(1)
+  await expect(overlay.locator('.danmaku-item')).toHaveText('保留原始弹幕')
+  await expect(overlay.locator('.danmaku-item > *')).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('chat-and-gift-notification.png') })
+  expect(consoleErrors).toEqual([])
+})
 
 test('斗鱼协议昵称经 IPC 显示, 缺失昵称才显示匿名', async ({ page, electronApp }) => {
   await openPlayer(page)
