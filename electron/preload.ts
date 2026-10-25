@@ -3,8 +3,10 @@ import type { StreamSyncerBridge, DesktopMethod, DesktopMethods, DanmakuEvent } 
 import type { ApiResult } from '../src/app/apiClient'
 import type { BufferState } from './bufferManager'
 import type { DouyuTasksSnapshot } from '../server/douyu/types'
+import { FEATURE_METHODS, type FeatureEvent } from './featureContracts'
 
 const methods = new Set<DesktopMethod>([
+  ...FEATURE_METHODS,
   'listDouyuAccounts', 'addDouyuAccount', 'renameDouyuAccount', 'loginDouyuAccount', 'loginDouyuYubaAccount', 'activateDouyuAccount', 'logoutDouyuAccount', 'removeDouyuAccount',
   'sendDouyuMessage', 'openDouyuTaskRoom',
   'getDouyuRenewalTargets', 'previewDouyuRenewal', 'executeDouyuRenewal', 'cancelDouyuRenewal',
@@ -55,6 +57,14 @@ const bridge: StreamSyncerBridge = {
     const receive = (_event: unknown, state: DouyuTasksSnapshot) => { if (active) listener(state) }
     ipcRenderer.on('stream-syncer:douyu-tasks', receive)
     return () => { active = false; ipcRenderer.removeListener('stream-syncer:douyu-tasks', receive) }
+  },
+  subscribeFeatures(listener) {
+    let active = true
+    const receive = (_event: unknown, event: FeatureEvent) => {
+      if (active && event && typeof event.topic === 'string') listener(event)
+    }
+    ipcRenderer.on('stream-syncer:features', receive)
+    return () => { active = false; ipcRenderer.removeListener('stream-syncer:features', receive) }
   },
 }
 contextBridge.exposeInMainWorld('streamSyncer', Object.freeze(bridge))

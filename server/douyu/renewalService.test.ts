@@ -88,6 +88,28 @@ afterEach(async () => {
 })
 
 describe('renewal target and preview orchestration', () => {
+  it('divides shared inventory equally and leaves the indivisible remainder in the backpack', async () => {
+    const h = harness(5)
+    const plan = await h.service.previewEqual('default', ['200', '300'])
+    expect(plan.rows.map(row => row.gift?.quantity)).toEqual([2, 2])
+    expect(plan.totalQuantity).toBe(4)
+    expect(plan.allocation).toEqual({ mode: 'equal-per-prop', leftovers: [{ propId: '268', quantity: 1 }] })
+    expect((await h.service.execute(plan.id)).status).toBe('completed')
+    expect(h.state.items.get('268')?.count).toBe(1)
+  })
+  it('does not favor the first room when equal inventory cannot cover every recipient', async () => {
+    const h = harness(1)
+    const plan = await h.service.previewEqual('default', ['200', '300'])
+    expect(plan.rows.every(row => row.status === 'skipped')).toBe(true)
+    expect(plan.totalQuantity).toBe(0)
+    expect(h.donate).not.toHaveBeenCalled()
+  })
+  it('retains excess stock beyond the existing per-room quantity safety bound', async () => {
+    const h = harness(2005)
+    const plan = await h.service.previewEqual('default', ['200', '300'])
+    expect(plan.rows.map(row => row.gift?.quantity)).toEqual([1000, 1000])
+    expect(plan.allocation?.leftovers).toEqual([{ propId: '268', quantity: 5 }])
+  })
   it('binds per-room quantities to the reviewed plan and reconciles their shared inventory', async () => {
     const h = harness(5)
     const quantities = [{ room: '200', quantity: 3 }]

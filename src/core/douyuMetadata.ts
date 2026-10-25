@@ -26,11 +26,19 @@ export function normalizeDouyuSender(value: unknown): DouyuSenderMetadata | unde
   const uid = normalizeDouyuUid(raw.uid)
   const userLevel = level(raw.level)
   const nobleLevel = level(raw.nobleLevel)
-  if (!uid && userLevel === undefined && nobleLevel === undefined) return undefined
+  const badge = record(raw.fansBadge)
+  const badgeRoom = normalizeDouyuUid(badge?.room)
+  const badgeLevel = level(badge?.level)
+  const badgeName = badge?.name
+  const fansBadge = badgeRoom && badgeLevel !== undefined && badgeLevel > 0 && typeof badgeName === 'string'
+    && badgeName.trim() && badgeName.length <= 64 && !/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/.test(badgeName)
+    ? { room: badgeRoom, name: badgeName, level: badgeLevel } : undefined
+  if (!uid && userLevel === undefined && nobleLevel === undefined && !fansBadge) return undefined
   return {
     ...(uid ? { uid } : {}),
     ...(userLevel === undefined ? {} : { level: userLevel }),
     ...(nobleLevel === undefined ? {} : { nobleLevel }),
+    ...(fansBadge ? { fansBadge } : {}),
   }
 }
 

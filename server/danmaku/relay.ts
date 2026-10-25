@@ -9,12 +9,16 @@
 
 import { DouyuDanmakuClient, type DanmakuClientDeps, type DanmakuState } from './douyuClient'
 import type { ChatMessage } from './douyuProtocol'
+import type { DouyuRoomSignal } from '../douyu/insightsTypes'
 
 /** Grace period before dropping an idle room, so a page reload reuses the connection. */
 const IDLE_CLOSE_MS = 10_000
 /** Bound the replay buffer; danmaku is worthless once it is minutes old. */
 const REPLAY_LIMIT = 50
-export const MAX_ROOMS = 8
+export const MAX_ROOMS = 64
+export type RawDanmakuEvent = { type: 'message'; message: ChatMessage }
+  | { type: 'signal'; signal: DouyuRoomSignal }
+  | { type: 'state'; room: string; state: DanmakuState }
 
 type Subscriber = {
   id: number
@@ -35,8 +39,14 @@ type Room = {
 export class DanmakuRelay {
   private readonly rooms = new Map<string, Room>()
   private nextSubscriberId = 1
+  private readonly observers = new Set<(event: RawDanmakuEvent) => void>()
 
   constructor(private readonly deps: DanmakuClientDeps = {}) {}
+
+  observe(listener: (event: RawDanmakuEvent) => void): () => void {
+    this.observers.add(listener)
+    return () => { this.observers.delete(listener) }
+  }
 
   get roomCount(): number {
     return this.rooms.size
@@ -115,9 +125,15 @@ export class DanmakuRelay {
           if (room.recent.length > REPLAY_LIMIT) room.recent.shift()
           this.broadcast(room, 'danmaku', message)
         },
+        onObservedMessage: message => this.observeRaw({ type: 'message', message }),
+        onSignal: signal => {
+          this.observeRaw({ type: 'signal', signal })
+          this.broadcast(room, 'room-signal', signal)
+        },
         onState: (state, detail) => {
           room.state = state
           room.detail = detail
+          this.observeRaw({ type: 'state', room: roomId, state })
           this.broadcast(room, 'state', { room: roomId, state, detail })
         },
       },
@@ -139,6 +155,10 @@ export class DanmakuRelay {
       }
     }
     if (dropped && room.subscribers.size === 0) this.scheduleIdleClose(room)
+  }
+
+  private observeRaw(event: RawDanmakuEvent): void {
+    for (const observer of this.observers) { try { observer(event) } catch { /* Observers cannot tear down the shared socket. */ } }
   }
 
   private scheduleIdleClose(room: Room): void {

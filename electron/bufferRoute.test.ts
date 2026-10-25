@@ -16,9 +16,26 @@ async function fixture() {
   const url = route.activate('official', 'generation-1', directory)
   return { root, sessionRoot, directory, route, url, segment: url.replace('index.m3u8', 'segment_0_000000000.ts') }
 }
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => {
+  if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('syncer-route-')) throw new Error('Invalid fixture cleanup path')
+  return rm(root, { recursive: true, force: true })
+})) })
 
 describe('active buffer capability route', () => {
+  it('serves a registered independent stream without granting access to sibling streams', async () => {
+    const f = await fixture()
+    const id = `stream-${'a'.repeat(32)}` as const
+    const directory = path.join(f.sessionRoot, id)
+    await mkdir(directory)
+    await writeFile(path.join(directory, 'index.m3u8'), '#EXTM3U\n')
+    const url = f.route.activate(id, 'extra-generation', directory)
+    expect((await f.route.handle(new Request(url))).status).toBe(200)
+    const sibling = url.replace(id, `stream-${'b'.repeat(32)}`)
+    expect((await f.route.handle(new Request(sibling))).status).toBe(404)
+    f.route.deactivate(id)
+    expect((await f.route.handle(new Request(url))).status).toBe(404)
+    expect((await f.route.handle(new Request(f.url))).status).toBe(200)
+  })
   it('serves only published HLS files with no caching', async () => {
     const f = await fixture(), response = await f.route.handle(new Request(f.url))
     expect(response.status).toBe(200)

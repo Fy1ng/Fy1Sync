@@ -5,6 +5,8 @@ import { dnsResolver, isPrivateAddress, safeFetch } from '../safeFetch'
 import { validDouyuRoom } from '../platforms/douyuRoom'
 import type { DouyuActionDependencies } from './actions'
 import { abortable, cancelBody, cancelled, MAX_TIMEOUT_MS, record } from './actionHttp'
+import { parseDouyuInventory } from './inventoryService'
+import type { DouyuInventoryDonation } from './inventoryTypes'
 import type { DouyuBackpackDonation, DouyuBackpackRead, DouyuBackpackReceipt, DouyuBadgePageRead } from './renewalTypes'
 
 const HOST = 'www.douyu.com'
@@ -126,7 +128,7 @@ function conflicts(value: Record<string, unknown>, expected: DouyuBackpackDonati
 const unknownReceipt = (message = '背包赠送结果尚无法确认. 请在官方页面核对, 本次不会自动重试.'): DouyuBackpackReceipt => ({ status: 'unknown', message })
 const notSubmitted = (message: string): DouyuBackpackReceipt => ({ status: 'not-submitted', message })
 
-function donationReceipt(payload: unknown, target: DouyuBackpackDonation): DouyuBackpackReceipt {
+function donationReceipt(payload: unknown, target: DouyuBackpackDonation, expectedPropType?: number): DouyuBackpackReceipt {
   const envelope = record(payload)
   if (envelope?.result === 170001 || envelope?.result === '170001') return unknownReceipt('斗鱼要求官方账号验证. 请在官方页面核对本次赠送, 本次不会自动重试.')
   if (envelope?.error === 16 || envelope?.error === '16') return unknownReceipt('斗鱼要求绑定手机号. 请在官方页面核对本次赠送, 本次不会自动重试.')
@@ -136,13 +138,14 @@ function donationReceipt(payload: unknown, target: DouyuBackpackDonation): Douyu
   const data = dataObject(envelope.data)
   const used = record(data.usedProp)
   if (!used || !Array.isArray(data.list)) return unknownReceipt()
+  if (expectedPropType !== undefined && Object.hasOwn(used, 'propType') && bindingValue(used.propType) !== String(expectedPropType)) return unknownReceipt()
   if (data.messages !== undefined && (!Array.isArray(data.messages) || data.messages.some(item => typeof item !== 'string'))) return unknownReceipt()
   if ([envelope, data, used].some(value => conflicts(value, target))) return unknownReceipt()
   return { status: 'receipt-received', message: '已收到斗鱼背包赠送回执. 这不代表续牌状态已确认.' }
 }
 
 export class DouyuBackpackGateway {
-  constructor(private readonly deps: DouyuActionDependencies) {}
+  constructor(protected readonly deps: DouyuActionDependencies) {}
 
   async readBadges(accountId: string, signal: AbortSignal): Promise<DouyuBadgePageRead> {
     return this.bounded(signal, async active => {
@@ -174,10 +177,32 @@ export class DouyuBackpackGateway {
   }
 
   async donate(input: DouyuBackpackDonation, signal: AbortSignal): Promise<DouyuBackpackReceipt> {
+    return this.donateTarget(input, signal, true)
+  }
+
+  /** Separate confirmed inventory path. The renewal allowlist remains unchanged. */
+  async donateInventory(input: DouyuInventoryDonation, signal: AbortSignal): Promise<DouyuBackpackReceipt> {
+    try {
+      const target = { accountId: input.accountId, expectedUid: input.expectedUid, room: input.room, propId: input.propId, quantity: input.quantity }
+      const expected = structuredClone(input.expectedInventory)
+      if (!validAccount(target.accountId) || !validUid(target.expectedUid) || !validDouyuRoom(target.room)
+        || !/^[1-9][0-9]{0,15}$/.test(target.propId) || !Number.isSafeInteger(target.quantity) || target.quantity < 1) return notSubmitted('赠送参数无效. 未提交背包赠送.')
+      const before = await this.readBackpack(target.accountId, target.room, signal)
+      if (before.uid !== target.expectedUid) return notSubmitted('所选账号已变化. 未提交背包赠送.')
+      const item = parseDouyuInventory(before.payload, Date.now()).find(candidate => candidate.propId === target.propId)
+      if (!item?.canGift || JSON.stringify(item) !== JSON.stringify(expected) || item.quantity < target.quantity
+        || (!item.batchSupported && target.quantity !== 1)) return notSubmitted('可赠库存或数量已变化. 未提交背包赠送.')
+      return await this.donateTarget(target, signal, false, item.propType!)
+    } catch { return notSubmitted(signal.aborted ? '赠送已取消. 未提交背包赠送.' : '无法确认可赠库存. 未提交背包赠送.') }
+  }
+
+  private async donateTarget(input: DouyuBackpackDonation, signal: AbortSignal, renewal: boolean, expectedPropType?: number): Promise<DouyuBackpackReceipt> {
     let target: DouyuBackpackDonation
     try {
       target = { accountId: input.accountId, expectedUid: input.expectedUid, room: input.room, propId: input.propId, quantity: input.quantity }
-      if (!validAccount(target.accountId) || !validUid(target.expectedUid) || typeof target.room !== 'string' || !validDouyuRoom(target.room) || !PROP_IDS.has(target.propId) || !Number.isInteger(target.quantity) || target.quantity < 1 || target.quantity > 1_000) return notSubmitted('赠送参数无效. 未提交背包赠送.')
+      if (!validAccount(target.accountId) || !validUid(target.expectedUid) || typeof target.room !== 'string' || !validDouyuRoom(target.room)
+        || (renewal ? !PROP_IDS.has(target.propId) : !/^[1-9][0-9]{0,15}$/.test(target.propId))
+        || !Number.isSafeInteger(target.quantity) || target.quantity < 1 || (renewal && target.quantity > 1_000)) return notSubmitted('赠送参数无效. 未提交背包赠送.')
     } catch { return notSubmitted('赠送参数无效. 未提交背包赠送.') }
     let dispatched = false
     try {
@@ -193,7 +218,7 @@ export class DouyuBackpackGateway {
         const response = await this.request(httpTarget, credentials, active, () => { dispatched = true })
         const payload = parseJson(await this.readText(response, active))
         await this.confirm(httpTarget, credentials, active)
-        return donationReceipt(payload, target)
+        return donationReceipt(payload, target, expectedPropType)
       })
     } catch (error) {
       if (dispatched) return unknownReceipt()
@@ -203,7 +228,7 @@ export class DouyuBackpackGateway {
     }
   }
 
-  private async bounded<T>(signal: AbortSignal, operation: (active: AbortSignal) => Promise<T>): Promise<T> {
+  protected async bounded<T>(signal: AbortSignal, operation: (active: AbortSignal) => Promise<T>): Promise<T> {
     assertActive(signal)
     if (!this.deps.proxy.enabled || !hostAllowed(HOST, this.deps.proxy.hosts)) throw new DouyuRenewalGatewayError('unavailable')
     const timeout = new AbortController()
@@ -220,7 +245,7 @@ export class DouyuBackpackGateway {
     } finally { clearTimeout(timer) }
   }
 
-  private async credentials(target: HttpTarget, signal: AbortSignal): Promise<Credentials> {
+  protected async credentials(target: HttpTarget, signal: AbortSignal): Promise<Credentials> {
     assertActive(signal)
     if (!validAccount(target.accountId)) throw new DouyuRenewalGatewayError('login-required')
     let header: string
@@ -234,20 +259,20 @@ export class DouyuBackpackGateway {
     return credentials
   }
 
-  private async confirm(target: HttpTarget, before: Credentials, signal: AbortSignal): Promise<Credentials> {
+  protected async confirm(target: HttpTarget, before: Credentials, signal: AbortSignal): Promise<Credentials> {
     const after = await this.credentials(target, signal)
     if (after.fingerprint !== before.fingerprint) throw new DouyuRenewalGatewayError('login-required')
     return after
   }
 
-  private async resolve(host: string, signal: AbortSignal): Promise<string[]> {
+  protected async resolve(host: string, signal: AbortSignal): Promise<string[]> {
     assertActive(signal)
     const addresses = await abortable((this.deps.resolve ?? dnsResolver)(host), signal)
     if (!Array.isArray(addresses) || addresses.length < 1 || addresses.length > 64 || addresses.some(address => typeof address !== 'string' || !isIP(address) || isPrivateAddress(address))) throw new DouyuRenewalGatewayError('unavailable')
     return addresses
   }
 
-  private async request(target: HttpTarget, credentials: Credentials, signal: AbortSignal, dispatch?: () => void): Promise<Response> {
+  protected async request(target: HttpTarget, credentials: Credentials, signal: AbortSignal, dispatch?: () => void): Promise<Response> {
     const expectedUrl = new URL(target.url)
     if (expectedUrl.origin !== ORIGIN || expectedUrl.protocol !== 'https:' || expectedUrl.username || expectedUrl.password || expectedUrl.port || expectedUrl.hash) throw new DouyuRenewalGatewayError('unavailable')
     assertActive(signal)
@@ -293,7 +318,7 @@ export class DouyuBackpackGateway {
     return response
   }
 
-  private async readText(response: Response, signal: AbortSignal): Promise<string> {
+  protected async readText(response: Response, signal: AbortSignal): Promise<string> {
     const advertised = response.headers.get('content-length')
     if (advertised !== null && (!/^\d+$/.test(advertised) || Number(advertised) > MAX_BODY_BYTES)) { cancelBody(response); return invalidData() }
     if (!response.body) return invalidData()
@@ -322,3 +347,5 @@ export class DouyuBackpackGateway {
     }
   }
 }
+
+export { parseJson as parseDouyuGatewayJson }

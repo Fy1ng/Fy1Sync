@@ -185,6 +185,13 @@ describe('toChatMessage', () => {
     expect(colorForIndex(1)).toBe('#ff0000')
     expect(colorForIndex(99)).toBe('#ffffff')
   })
+
+  it('maps official fans-medal fields and retains dms=0 without inventing absent metadata', () => {
+    const message = toChatMessage({ ...chat, uid: '42', nl: '3', bnn: '粉丝牌', bl: '12', brid: '288016', dms: '0' }, '288016', 1_000)
+    expect(message).toMatchObject({ dms: 0, sender: { uid: '42', nobleLevel: 3, fansBadge: { room: '288016', name: '粉丝牌', level: 12 } } })
+    expect(toChatMessage({ ...chat, bnn: 'incomplete', dms: 'NaN' }, '288016', 1_000)).not.toHaveProperty('dms')
+    expect(toChatMessage({ ...chat, bnn: 'incomplete' }, '288016', 1_000)?.sender).not.toHaveProperty('fansBadge')
+  })
 })
 
 /** A socket whose listeners can be fired by hand, recording everything sent. */

@@ -143,7 +143,11 @@ export class DouyuRenewalService {
     })
   }
 
-  async preview(accountId: string, rawRooms: unknown, quantity: number, rawQuantities?: unknown): Promise<DouyuRenewalPlan> {
+  async previewEqual(accountId: string, rawRooms: unknown): Promise<DouyuRenewalPlan> {
+    return this.preview(accountId, rawRooms, 1, undefined, true)
+  }
+
+  async preview(accountId: string, rawRooms: unknown, quantity: number, rawQuantities?: unknown, equal = false): Promise<DouyuRenewalPlan> {
     const rooms = readRenewalRooms(rawRooms)
     if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 1000) throw new DouyuRenewalError('invalid-arguments')
     const quantities = new Map(readRenewalQuantities(rawQuantities, rooms).map(item => [item.room, item.quantity]))
@@ -183,15 +187,23 @@ export class DouyuRenewalService {
       this.scope(accountId, originRoom)
       const remaining = new Map(stocks)
       const selected = new Map<string, DouyuBackpackItem>()
+      const eligibleItems = (items: DouyuBackpackItem[]) => PREFERRED_PROPS.flatMap(id => items.filter(item => item.id === id && item.eligible))
+        .sort((a, b) => (a.met === -1 ? Infinity : a.met!) - (b.met === -1 ? Infinity : b.met!)
+          || PREFERRED_PROPS.indexOf(a.id) - PREFERRED_PROPS.indexOf(b.id))
+      const equalItems = new Map<string, DouyuBackpackItem>()
+      const recipients = new Map<string, number>()
+      if (equal) for (const choice of choices) {
+        const item = eligibleItems(choice.items).find(item => !inconsistent.has(item.id))
+        if (item) { equalItems.set(choice.target.room, item); recipients.set(item.id, (recipients.get(item.id) ?? 0) + 1) }
+      }
       const rows: DouyuRenewalPlanRow[] = choices.map(({ target, items, reason }) => {
-        const count = quantities.get(target.room) ?? quantity
-        const eligible = PREFERRED_PROPS.flatMap(id => items.filter(item => item.id === id && item.eligible))
-          .sort((a, b) => (a.met === -1 ? Infinity : a.met!) - (b.met === -1 ? Infinity : b.met!)
-            || PREFERRED_PROPS.indexOf(a.id) - PREFERRED_PROPS.indexOf(b.id))
-        const item = eligible.find(item => !inconsistent.has(item.id) && (remaining.get(item.id) ?? 0) >= count)
+        const preferred = equalItems.get(target.room)
+        const count = equal ? preferred ? Math.min(1000, Math.floor((stocks.get(preferred.id) ?? 0) / (recipients.get(preferred.id) ?? 1))) : 0 : quantities.get(target.room) ?? quantity
+        const eligible = eligibleItems(items)
+        const item = equal ? count > 0 ? preferred : undefined : eligible.find(item => !inconsistent.has(item.id) && (remaining.get(item.id) ?? 0) >= count)
         if (!item) return { ...target, status: 'skipped', gift: null, reason: reason
           ?? (eligible.some(item => inconsistent.has(item.id)) ? '跨房间的库存信息不一致, 请重新读取.'
-            : eligible.length ? '剩余库存不足以完成指定数量, 本次跳过.'
+            : eligible.length ? equal ? '库存不足以向每个同类道具目标平均分配至少一个, 本次跳过.' : '剩余库存不足以完成指定数量, 本次跳过.'
               : items.find(item => PREFERRED_PROPS.includes(item.id))?.reason ?? '没有可核对的普通背包荧光棒, 本次跳过.') }
         remaining.set(item.id, remaining.get(item.id)! - count)
         selected.set(target.room, copy(item))
@@ -203,7 +215,9 @@ export class DouyuRenewalService {
       const createdAt = this.now()
       const plan: DouyuRenewalPlan = { id, accountId, createdAt, expiresAt: createdAt + PLAN_TTL_MS, rows,
         totalQuantity: rows.reduce((total, row) => total + (row.gift?.quantity ?? 0), 0),
-        message: '仅使用下列已有背包库存, 不购买或领取. 数量由你确认, 赠送回执不等于续期效果已验证.' }
+        message: equal ? '按同类道具可用库存平均分配, 余数和超过单房上限的部分留在背包. 赠送回执不等于续期效果已验证.'
+          : '仅使用下列已有背包库存, 不购买或领取. 数量由你确认, 赠送回执不等于续期效果已验证.',
+        ...(equal ? { allocation: { mode: 'equal-per-prop' as const, leftovers: [...remaining].map(([propId, quantity]) => ({ propId, quantity })) } } : {}) }
       this.plan = { public: copy(plan), uid: page.uid, originRoom, selected, stocks }
       return copy(plan)
     })

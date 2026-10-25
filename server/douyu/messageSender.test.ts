@@ -8,6 +8,7 @@ import {
 } from './messageSender'
 import { parseMessagePayload, type GatewayMessage, MAX_BUFFER_BYTES } from './messageProtocol'
 import type { DouyuMessageInput } from './types'
+import { DeliveryTracker } from '../danmaku/deliveryTracker'
 
 // Exercise the default worker bridge without permitting a real network worker.
 const workerFixture = vi.hoisted(() => ({ make: vi.fn<(source: string, options: unknown) => object>() }))
@@ -114,6 +115,29 @@ afterEach(async () => {
 })
 
 describe('one-shot authenticated gateway handshake', () => {
+  it('reads an authenticated balance without ever sending a chat message', async () => {
+    fakeClock()
+    const f = setup({ onSend: (message, socket) => {
+      if (message.type === 'lsigreq') queueMicrotask(() => socket.receive({ type: 'memberinfores', uid: '42', gold: '600', silver: '20' }))
+    } })
+    const result = await f.sender.inspect('account-one', input.room, signal(), 'balance')
+    expect(result).toMatchObject({ uid: '42', balance: { gold: 600, silver: 20 }, checkedAt: BASE })
+    expect(f.sockets[0]!.messages).toHaveLength(0)
+    expectClean(f.sockets[0]!)
+    expect(JSON.stringify(result)).not.toMatch(/fixture-auth|fixture-user|private/)
+  })
+
+  it('uses only the authenticated target room badge for fan eligibility', async () => {
+    fakeClock()
+    const f = setup({ onSend: (message, socket) => {
+      if (message.type === 'lsigreq') queueMicrotask(() => socket.receive({ type: 'blst', uid: '42', list: paletteList([{ rid: input.room, bl: 3 }]) }))
+    } })
+    const result = await f.sender.inspect('account-one', input.room, signal(), 'fan')
+    expect(result).toMatchObject({ uid: '42', room: input.room, fanEligible: true, source: 'authenticated-blst-gbi' })
+    expect(f.sockets[0]!.messages).toHaveLength(0)
+    expectClean(f.sockets[0]!)
+  })
+
   it('sends one normalized message only after identity, challenge, heartbeat and rules', async () => {
     fakeClock()
     const { sender, sockets, cookieHeader, request } = setup()
@@ -206,6 +230,37 @@ describe('one-shot authenticated gateway handshake', () => {
     } })
     expect(await sender.send(input, signal())).toMatchObject({ status: 'waiting-user', message: expect.stringContaining('其它位置') })
     expect(sockets[0]!.messages).toEqual([])
+  })
+})
+
+describe('structured limits and separately observed delivery', () => {
+  it('returns the current server maximum without dispatching an overlong message', async () => {
+    const { sender, sockets } = setup({ rules: { maxl: 3 } })
+    expect(await sender.send(input, signal())).toMatchObject({ status: 'failed', messageLimit: {
+      localMaximumUnits: 500, serverMaximumUnits: 3, effectiveMaximumUnits: 3, receivedUnits: input.text.length,
+    } })
+    expect(sockets[0]!.messages).toHaveLength(0)
+  })
+
+  it('tracks a real send by UID and normalized text but never fabricates the room echo', async () => {
+    fakeClock()
+    const tracker = new DeliveryTracker({ now: () => Date.now(), id: () => 'delivery-fixture' })
+    const { sender } = setup({}, { deliveryTracker: tracker })
+    const result = await sender.send(input, signal())
+    expect(result).toMatchObject({ status: 'succeeded', deliveryId: 'delivery-fixture', gatewayAccepted: true })
+    expect(tracker.get(result.deliveryId!)!).toMatchObject({ gateway: 'accepted', roomEcho: 'pending' })
+    tracker.observe({ id: 'broadcast-1', text: input.text, room: input.room, color: 0, level: 1,
+      username: 'fixture', receivedAt: BASE + 1, system: false, sender: { uid: '42' } })
+    expect(tracker.get(result.deliveryId!)!).toMatchObject({ gateway: 'accepted', roomEcho: 'observed' })
+  })
+
+  it('retains uncertainty after a dispatched connection is lost without creating another attempt', async () => {
+    const tracker = new DeliveryTracker()
+    const { sender, sockets } = setup({ ack: (_message, socket) => socket.emit('close', {}) }, { deliveryTracker: tracker })
+    const result = await sender.send(input, signal())
+    expect(result).toMatchObject({ status: 'waiting-user', gatewayAccepted: false })
+    expect(tracker.get(result.deliveryId!)!).toMatchObject({ gateway: 'unknown', roomEcho: 'pending' })
+    expect(sockets[0]!.messages).toHaveLength(1)
   })
 })
 

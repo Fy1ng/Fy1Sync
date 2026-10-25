@@ -36,6 +36,7 @@ export interface DouyuSenderMetadata {
   uid?: string
   level?: number
   nobleLevel?: number
+  fansBadge?: { room: string; name: string; level: number }
 }
 
 /** One real dgb event. Gift and backpack prop ids belong to separate namespaces. */

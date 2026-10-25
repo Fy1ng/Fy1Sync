@@ -19,6 +19,8 @@ import { DOUYU_TASK_KINDS, DOUYU_TASK_POLICIES, isDouyuActivityKind, type DouyuT
 import { readMessageSchedule } from './douyu/taskConfig'
 import { readPlatformText } from './platformResponse'
 import { DouyuRenewalError, readRenewalRooms, readRenewalQuantities, type DouyuRenewalService } from './douyu/renewalService'
+import type { FeatureApi } from './featureApi'
+import type { FeatureCallContext, FeatureEvent } from '../electron/featureContracts'
 
 export interface AcquisitionService {
   resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string, preferAdaptive?: boolean): Promise<ResolveResult>
@@ -43,15 +45,17 @@ export type DesktopServiceDeps = {
   douyuAccounts?: DouyuAccountManager
   douyuTasks?: DouyuTaskManager
   douyuRenewal?: DouyuRenewalService
+  features?: FeatureApi
 }
 
 export type DesktopService = {
-  invoke: (method: unknown, args: unknown) => Promise<ApiResult<unknown>>
+  invoke: (method: unknown, args: unknown, context?: FeatureCallContext) => Promise<ApiResult<unknown>>
   relay: DanmakuRelay
   resolveDouyuRoom: ResolveDouyuRoom
   dispose: () => void
   subscribeBuffer?: (listener: (state: BufferState) => void) => () => void
   subscribeDouyuTasks?: (listener: (state: DouyuTasksSnapshot) => void) => () => void
+  subscribeFeatures?: (listener: (event: FeatureEvent) => void) => () => void
   setDouyuRoom?: (room: string | null) => void
 }
 
@@ -139,16 +143,19 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
     resolveDouyuRoom: input => disposed ? Promise.resolve({ ok: false, failure: { code: 'upstream-error', message: '本地服务已关闭' } }) : resolveRoom(input),
     subscribeBuffer: deps.acquisition ? (listener) => deps.acquisition!.subscribe(listener) : undefined,
     subscribeDouyuTasks: deps.douyuTasks ? listener => deps.douyuTasks!.subscribe(listener) : undefined,
+    subscribeFeatures: deps.features ? listener => deps.features!.subscribe(listener) : undefined,
     setDouyuRoom: deps.douyuTasks ? room => deps.douyuTasks!.setRoom(room) : undefined,
-    async invoke(method, args) {
+    async invoke(method, args, context) {
       if (disposed) return fail('service-closed', '本地服务已关闭')
       if (typeof method !== 'string') return fail('not-found', '未知本地接口')
       try {
         if (!jsonData(args)) return fail('invalid-arguments', '接口参数必须是有效的数据对象')
         const serialized = JSON.stringify(args)
-        if (serialized !== undefined && Buffer.byteLength(serialized) > MAX_ARGS_BYTES) {
+        const argumentLimit = method === 'savePlaybackScreenshot' || method === 'appendGifFrame' ? 12 * 1_048_576 : MAX_ARGS_BYTES
+        if (serialized !== undefined && Buffer.byteLength(serialized) > argumentLimit) {
           return fail('too-large', '接口参数超过大小上限')
         }
+        if (deps.features?.has(method)) return deps.features.invoke(method, args, context)
 
         switch (method) {
           case 'listDouyuAccounts': {
@@ -195,7 +202,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             if (accounts.isBusy(task.accountId)) return fail('account-busy', '该账号的官方窗口已打开, 请先完成并关闭窗口')
             tasks.pause(task.id, '官方房间已打开, 完成人工处理后请手动启动任务.')
             tasks.pauseAccount(task.accountId, '官方房间已打开, 完成人工处理后请手动启动任务.')
-            return { ok: true, value: await accounts.openRoom(task.accountId, task.room, task.kind === 'auto-fish' ? 'fish-act' : 'room') }
+            return { ok: true, value: await accounts.openRoom(task.accountId, task.officialRoom ?? task.room, task.kind === 'auto-fish' ? 'fish-act' : 'room') }
           }
           case 'getDouyuTasks': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
@@ -462,6 +469,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
     },
     dispose() {
       disposed = true
+      deps.features?.dispose()
       relay.closeAll()
     },
   }

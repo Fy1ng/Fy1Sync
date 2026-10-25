@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveConfig } from '../config'
 import type { DouyuActionDependencies } from './actions'
-import { DouyuFishingActions } from './fishingActions'
+import { DouyuFishingActions, readFishingOptions } from './fishingActions'
 import type { DouyuTaskDefinition } from './types'
 
 // Synthetic protocol fixtures only. No account data or live activity requests.
@@ -62,6 +62,73 @@ const expectPrivate = (value: unknown) => expect(JSON.stringify(value)).not.toMa
 const flush = async () => { for (let count = 0; count < 30; count++) await Promise.resolve() }
 
 afterEach(() => { vi.useRealTimers() })
+
+describe('official contest timing', () => {
+  const match = (stat: number, st = NOW / 1000 - 60, et = NOW / 1000 + 600, left = 600) => ({ stat, st, et, left })
+
+  it('starts during a server-confirmed contest without a hard-coded time of day', async () => {
+    const request = scripted(home(0, { matchInfo: match(0) }), jsonp(), { error: 0, data: {} }, started())
+    const { actions } = setup({ request })
+    expect(await actions.run(task, signal(), { mode: 'contest' })).toMatchObject({ status: 'scheduled' })
+    expect(writes(request)).toHaveLength(1)
+  })
+
+  it.each([-1, 1])('waits for official start when match state is %s', async stat => {
+    const request = scripted(home(0, { matchInfo: match(stat, NOW / 1000 + 90, NOW / 1000 + 690, 90) }))
+    const { actions } = setup({ request })
+    expect(await actions.run(task, signal(), { mode: 'contest' })).toMatchObject({ status: 'scheduled', nextRunAt: NOW + 90000 })
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(writes(request)).toHaveLength(0)
+  })
+
+  it('can obtain the schedule from the official separate matchInfo read endpoint', async () => {
+    const request = scripted(home(), { error: 0, data: match(0) }, jsonp(), { error: 0, data: {} }, started())
+    const { actions } = setup({ request })
+    expect(await actions.run(task, signal(), { mode: 'contest' })).toMatchObject({ status: 'scheduled' })
+    expect(String(request.mock.calls[1]![0])).toBe('https://www.douyu.com/japi/revenuenc/web/actfans/fishing/matchInfo?rid=6979222')
+    expect(request.mock.calls[1]![1]?.method).toBe('GET')
+  })
+
+  it.each([null, {}, match(2), match(0, NOW / 1000 - 60, NOW / 1000 + 600, 1), match(0, 0)])('does not cast from unknown or conflicting contest data %#', async matchInfo => {
+    const request = scripted(home(0, { matchInfo }))
+    const { actions } = setup({ request })
+    expect(await actions.run(task, signal(), { mode: 'contest' })).toMatchObject({ status: 'waiting-user' })
+    expect(writes(request)).toHaveLength(0)
+  })
+
+  it('rechecks contest expiry immediately before dispatch', async () => {
+    let now = NOW
+    const fixtures = [home(0, { matchInfo: match(0, NOW / 1000 - 60, NOW / 1000 + 5, 5) }), jsonp()]
+    const request = vi.fn<typeof fetch>(async () => {
+      const value = fixtures.shift()
+      if (!value) throw new Error('No fixture')
+      if (value instanceof Response) { now += 6000; return value }
+      return Response.json(value)
+    })
+    const { actions } = setup({ request, now: () => now })
+    expect(await actions.run(task, signal(), { mode: 'contest' })).toMatchObject({ status: 'waiting-user' })
+    expect(writes(request)).toHaveLength(0)
+  })
+
+  it('finishes a cast already made, even when no contest is currently active', async () => {
+    const request = scripted(home(2), jsonp(), receipt(), home())
+    const { actions } = setup({ request })
+    expect(await actions.run(task, signal(), { mode: 'contest' })).toMatchObject({ status: 'scheduled' })
+    expect(writes(request).map(([url]) => String(url))).toEqual([REEL_URL])
+  })
+
+  it('retains an uncertain cast across explicit resumes and mode changes', async () => {
+    const request = scripted(home(), jsonp(), { error: 0, data: {} }, home())
+    const { actions } = setup({ request })
+    expect(await actions.run(task, signal(), { mode: 'all' })).toMatchObject({ status: 'waiting-user' })
+    expect(await actions.run(task, signal(), { mode: 'contest' })).toMatchObject({ status: 'waiting-user' })
+    expect(writes(request)).toHaveLength(1)
+  })
+
+  it.each([null, [], { mode: 'noon' }, { mode: 'all', baitId: '3' }])('rejects unknown fishing options %#', options => {
+    expect(() => readFishingOptions(options)).toThrow()
+  })
+})
 
 describe('official free fishing flow', () => {
   it('scopes credentials per endpoint, starts once and confirms the inventory and active state', async () => {

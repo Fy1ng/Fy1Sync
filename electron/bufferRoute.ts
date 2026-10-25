@@ -2,8 +2,9 @@ import { constants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { Readable } from 'node:stream'
+import { isStreamId, type StreamId } from './streamIdentity'
 
-export type BufferRole = 'official' | 'commentary'
+export type BufferRole = StreamId
 interface ActiveRole { generation: string; directory: string }
 const TOKEN = /^[a-zA-Z0-9_-]{1,128}$/
 const FILE = /^(?:index\.m3u8|segment_\d+_\d{9}\.(?:ts|m4s)|init_\d+\.mp4)$/
@@ -15,7 +16,7 @@ export class BufferRoute {
     if (!TOKEN.test(sessionId)) throw new Error('invalid buffer session')
   }
   activate(role: BufferRole, generation: string, directory: string): string {
-    if (!TOKEN.test(generation) || path.resolve(directory) !== path.resolve(this.sessionRoot, role)) throw new Error('invalid buffer directory')
+    if (!isStreamId(role) || !TOKEN.test(generation) || path.resolve(directory) !== path.resolve(this.sessionRoot, role)) throw new Error('invalid buffer directory')
     this.roles.set(role, { generation, directory: path.resolve(directory) })
     return `app://app/buffer/${this.sessionId}/${role}/${generation}/index.m3u8`
   }
@@ -28,7 +29,7 @@ export class BufferRoute {
     try { url = new URL(request.url) } catch { return new Response(null, { status: 403 }) }
     if (url.protocol !== 'app:' || url.hostname !== 'app' || url.port || url.username || url.password || url.search || url.hash) return new Response(null, { status: 403 })
     const parts = url.pathname.split('/')
-    if (parts.length !== 6 || parts[1] !== 'buffer' || parts[2] !== this.sessionId || !['official', 'commentary'].includes(parts[3]!) || !FILE.test(parts[5]!)) return new Response(null, { status: 404 })
+    if (parts.length !== 6 || parts[1] !== 'buffer' || parts[2] !== this.sessionId || !isStreamId(parts[3]) || !FILE.test(parts[5]!)) return new Response(null, { status: 404 })
     const role = parts[3] as BufferRole
     const active = this.roles.get(role)
     if (!active || parts[4] !== active.generation) return new Response(null, { status: 404 })

@@ -86,6 +86,33 @@ afterEach(() => {
   while (sessions.length > 0) sessions.pop()?.dispose()
 })
 
+describe('backend playback navigation and danmaku processing', () => {
+  it('serializes relative playback seeks and accounts for the actual resulting rewind', async () => {
+    const h = await harness()
+    const video = h.engine.element('official')
+    expect(await Promise.all([h.session.seekPlayback('official', -5), h.session.seekPlayback('official', -10)])).toEqual([true, true])
+    expect(h.engine.element('official')).toBe(video)
+    expect(video.currentTime).toBe(85)
+    expect(h.session.flush().appliedRewind.official).toBe(15)
+    expect(await h.session.returnPlaybackToLive('official')).toBe(false)
+    expect(h.session.flush().autoSync.authorized).toBe(false)
+  })
+
+  it('applies media-time duplicate merging without changing the original message text', async () => {
+    const h = await harness()
+    h.session.configureDanmakuProcessing({ duplicateMode: 'combo', filterSuspectedBots: true })
+    h.session.pushDanmaku({ text: 'same', user: 'one', color: '#fff', dms: 1 })
+    h.session.pushDanmaku({ text: 'same', user: 'two', color: '#fff', dms: 1 })
+    h.session.pushDanmaku({ text: 'suspected', user: 'three', color: '#fff' })
+    const released = h.session.drainDanmaku()
+    expect(released).toHaveLength(1)
+    expect(released[0]).toMatchObject({ text: 'same', duplicateCount: 2 })
+    h.session.pushDanmaku({ text: 'same', user: 'four', color: '#fff', dms: 1 })
+    expect(h.session.drainDanmaku()).toHaveLength(0)
+    expect(h.session.chatHistory()[0]).toMatchObject({ text: 'same', duplicateCount: 3 })
+  })
+})
+
 describe('Session snapshot', () => {
   it('starts from stored settings', async () => {
     const engine = new MediaEngine()

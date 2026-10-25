@@ -4,7 +4,7 @@ import { createResolverDeps, sanitizedFailure } from '../server/api'
 import type { ProxyConfig } from '../server/config'
 import { detectPlatform, resolveStream, type PlatformKind, type ResolveResult, type ResolvedStream } from '../server/platforms'
 import { checkUrl, ProxyError, type Resolver } from '../server/safeFetch'
-import type { SourceRole } from '../src/core/types'
+import { isStreamId, type StreamId } from './streamIdentity'
 import type { BufferInput, BufferManager, BufferState } from './bufferManager'
 import type { LoginManager } from './login'
 
@@ -12,9 +12,11 @@ type Selection = { input: string; platform?: PlatformKind; quality?: string; pre
 
 /** Only main-produced, checked inputs can reach the buffer's ffmpeg spawner. */
 export class Acquisition implements AcquisitionService {
-  private readonly selections = new Map<SourceRole, Selection>()
-  private readonly generations: Record<SourceRole, number> = { official: 0, commentary: 0 }
-  private readonly activeGenerations: Partial<Record<SourceRole, number>> = {}
+  private readonly selections = new Map<StreamId, Selection>()
+  private readonly generations = new Map<StreamId, number>()
+  private readonly activeGenerations = new Map<StreamId, number>()
+  private readonly publicStreams = new Map<StreamId, ResolvedStream>()
+  private generationSequence = 0
   private disposed = false
   private readonly resolveRoom: ResolveDouyuRoom
   constructor(private readonly deps: {
@@ -29,19 +31,23 @@ export class Acquisition implements AcquisitionService {
     ensureTools?: (platform: PlatformKind | null) => Promise<void>
   }) { this.resolveRoom = deps.resolveDouyuRoom ?? createDouyuRoomResolver(deps.proxy, deps.fetchImpl).resolve }
 
-  async resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string, preferAdaptive = false, confirmedRoom?: string): Promise<ResolveResult> {
-    const generation = ++this.generations[role]
+  async resolve(input: string, platform: PlatformKind | undefined, role: StreamId, quality?: string, preferAdaptive = false, confirmedRoom?: string): Promise<ResolveResult> {
+    if (!isStreamId(role)) return refusal('播放会话无效')
+    const generation = ++this.generationSequence
+    this.generations.set(role, generation)
     if (this.disposed) return refusal('取流服务已关闭')
     // Local fixtures bypass acquisition but still release the previous producer.
     if (/^\/test-sources\/(?:[\w-]+\/)*[\w-]+\.(?:m3u8|mp4|webm|mov|mkv|ts)$/.test(input)
       && (platform === undefined || platform === 'direct')) {
       await this.deps.buffer.stop(role)
-      if (generation !== this.generations[role]) return refusal('片源操作已被替换')
+      if (generation !== this.generations.get(role) || this.disposed) return refusal('片源操作已被替换')
       this.selections.delete(role)
-      return { ok: true, stream: {
+      const stream: ResolvedStream = {
         platform: 'direct', channel: 'fixture', kind: input.endsWith('.m3u8') ? 'hls' : 'progressive',
         url: input, label: '本地测试源', requiresProxy: false,
-      } }
+      }
+      this.publicStreams.set(role, stream)
+      return { ok: true, stream }
     }
     if (!this.deps.proxy.enabled) return refusal('远程媒体读取已关闭')
     const detected = detectPlatform(input, platform)
@@ -57,16 +63,16 @@ export class Acquisition implements AcquisitionService {
       fallbackHeight = requestedAdaptive.height
       first = await this.resolveInput(input, platform, 'auto', false, true)
     }
-    if (generation !== this.generations[role] || this.disposed) return refusal('片源操作已被替换')
+    if (generation !== this.generations.get(role) || this.disposed) return refusal('片源操作已被替换')
     if (!first.ok) return first
     if (detected !== 'youtube') await this.deps.ensureTools?.(detected)
-    if (generation !== this.generations[role] || this.disposed) return refusal('片源操作已被替换')
+    if (generation !== this.generations.get(role) || this.disposed) return refusal('片源操作已被替换')
     let initial = true
     const selection: Selection = { input, platform, quality, preferAdaptive, stream: retainAdaptiveQualities(sameSource, first.stream) }
     const prepare = async (hlsOnly = false): Promise<BufferInput> => {
       const resolved = initial && !hlsOnly ? first : await this.resolveInput(input, platform, hlsOnly ? 'auto' : quality, hlsOnly ? false : preferAdaptive, hlsOnly, selection.stream.sourceRoom)
       initial = false
-      if (generation !== this.activeGenerations[role] || this.disposed) throw new Error('片源操作已取消')
+      if (generation !== this.activeGenerations.get(role) || this.disposed) throw new Error('片源操作已取消')
       if (!resolved.ok) throw new Error('重新解析直播失败')
       selection.stream = retainAdaptiveQualities(selection.stream, resolved.stream)
       return { url: resolved.stream.url, headers: resolved.stream.headers
@@ -80,19 +86,22 @@ export class Acquisition implements AcquisitionService {
     const readiness = this.waitUntilPlayable(role, generation, Boolean(first.stream.adaptive))
     try {
       readiness.activate()
-      this.activeGenerations[role] = generation
+      this.activeGenerations.set(role, generation)
       const local = await this.deps.buffer.start(role, prepare)
       await readiness.promise
-      if (generation !== this.generations[role] || this.disposed) return refusal('片源操作已被替换')
+      if (generation !== this.generations.get(role) || this.disposed) return refusal('片源操作已被替换')
       this.selections.set(role, selection)
       const { headers: _headers, adaptive: _adaptive, ...publicStream } = selection.stream
-      return { ok: true, stream: {
+      const publicSelection: ResolvedStream = {
         ...publicStream, url: local.url, kind: 'hls', requiresProxy: false,
         notes: ['主进程转封装为本地 HLS, 默认保留最近 180 秒', ...(selection.stream.notes ?? [])],
-      } }
+      }
+      this.publicStreams.set(role, publicSelection)
+      return { ok: true, stream: publicSelection }
     } catch (error) {
-      if (generation === this.generations[role]) {
+      if (generation === this.generations.get(role)) {
         this.selections.delete(role)
+        this.publicStreams.delete(role)
         await this.deps.buffer.stop(role)
       }
       // Preserve structured locator errors without passing subprocess diagnostics.
@@ -101,7 +110,7 @@ export class Acquisition implements AcquisitionService {
     } finally { readiness.cancel() }
   }
 
-  async switchQuality(role: SourceRole, quality: string): Promise<ResolveResult> {
+  async switchQuality(role: StreamId, quality: string): Promise<ResolveResult> {
     const selected = this.selections.get(role)
     if (!selected || !selected.stream.qualities?.some((option) => option.id === quality)) {
       return { ok: false, failure: { code: 'unsupported-url', message: '该片源没有此画质', hint: '请重新解析片源' } }
@@ -109,11 +118,15 @@ export class Acquisition implements AcquisitionService {
     return this.resolve(selected.input, selected.platform, role, quality, selected.preferAdaptive, selected.stream.sourceRoom)
   }
 
-  async stop(role: SourceRole): Promise<void> {
-    ++this.generations[role]
-    delete this.activeGenerations[role]
+  async stop(role: StreamId): Promise<void> {
+    if (!isStreamId(role)) return
+    const stoppedGeneration = ++this.generationSequence
+    this.generations.set(role, stoppedGeneration)
+    this.activeGenerations.delete(role)
     this.selections.delete(role)
-    await this.deps.buffer.stop(role)
+    this.publicStreams.delete(role)
+    try { await this.deps.buffer.stop(role) }
+    finally { if (this.generations.get(role) === stoppedGeneration) this.generations.delete(role) }
   }
   subscribe(listener: (state: BufferState) => void): () => void { return this.deps.buffer.subscribe(listener) }
   login: AcquisitionService['login'] = (platform) => this.deps.logins.login(platform)
@@ -122,11 +135,21 @@ export class Acquisition implements AcquisitionService {
 
   dispose(): void {
     this.disposed = true
-    this.generations.official++
-    this.generations.commentary++
-    delete this.activeGenerations.official
-    delete this.activeGenerations.commentary
+    this.generations.clear()
+    this.activeGenerations.clear()
     this.selections.clear()
+    this.publicStreams.clear()
+  }
+
+  describe(role: StreamId): ResolvedStream | null {
+    const value = this.publicStreams.get(role)
+    return value ? structuredClone(value) : null
+  }
+
+  async restart(role: StreamId): Promise<ResolveResult> {
+    const selected = this.selections.get(role)
+    if (!selected) return refusal('播放会话尚未就绪')
+    return this.resolve(selected.input, selected.platform, role, selected.quality, selected.preferAdaptive, selected.stream.sourceRoom)
   }
 
   private async resolveInput(input: string, platform?: PlatformKind, quality?: string, preferAdaptive = false, hlsOnly = false, confirmedRoom?: string): Promise<ResolveResult> {
@@ -151,7 +174,7 @@ export class Acquisition implements AcquisitionService {
     return result
   }
 
-  private waitUntilPlayable(role: SourceRole, generation: number, adaptive = false) {
+  private waitUntilPlayable(role: StreamId, generation: number, adaptive = false) {
     let cancel = () => {}
     let active = false
     const promise = new Promise<void>((resolve, reject) => {
@@ -161,7 +184,7 @@ export class Acquisition implements AcquisitionService {
       const timer = setTimeout(() => { release(); reject(new Error('缓冲超时')) }, this.deps.readyTimeoutMs ?? (adaptive ? 480_000 : 60_000))
       release = this.deps.buffer.subscribe((state) => {
         if (!active || state.role !== role) return
-        if (generation !== this.generations[role] || this.disposed) { clearTimeout(timer); release(); reject(new Error('片源已替换')); return }
+        if (generation !== this.generations.get(role) || this.disposed) { clearTimeout(timer); release(); reject(new Error('片源已替换')); return }
         if (state.state === 'failed') { clearTimeout(timer); release(); reject(new Error('缓冲失败')) }
         else if ((state.state === 'ready' || state.state === 'buffering') && state.seconds >= 4) {
           clearTimeout(timer); release(); resolve()

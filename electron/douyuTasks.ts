@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { DOUYU_TASK_KINDS, DOUYU_TASK_POLICIES, isDouyuActivityKind } from '../server/douyu/types'
 import { readMessageSchedule } from '../server/douyu/taskConfig'
+import { composeMessage, selectMessageText } from '../src/core/messageComposition'
 import type {
   CreateDouyuTask, DouyuAccountOperationContext, DouyuAccountOperationOutcome,
   DouyuMessageInput, DouyuMessageOutcome, DouyuRuntimeState, DouyuTaskDefinition, DouyuTaskOutcome,
@@ -33,9 +34,10 @@ export interface DouyuTaskManagerOptions {
   id?: () => string
   setTimer?: (fn: () => void, ms: number) => unknown
   clearTimer?: (handle: unknown) => void
+  random?: () => number
 }
 
-type TaskRecord = Omit<DouyuTaskView, keyof DouyuTaskDefinition> & { definition: DouyuTaskDefinition }
+type TaskRecord = Omit<DouyuTaskView, keyof DouyuTaskDefinition> & { definition: DouyuTaskDefinition; selectedText?: string }
 type FlightControl = { controller: AbortController; cancelled: boolean; dispatched: boolean }
 type TaskFlight = FlightControl & { type: 'task'; task: TaskRecord }
 type ImmediateMessage = FlightControl & {
@@ -103,6 +105,8 @@ export class DouyuTaskManager {
         ...copyDefinition(task.definition), status: task.status, reason: task.reason,
         lastRunAt: task.lastRunAt, nextRunAt: task.nextRunAt, lastResult: task.lastResult,
         ...(task.definition.kind === 'message-loop' ? { completedRuns: task.completedRuns ?? 0 } : {}),
+        ...(task.deadlineAt !== undefined ? { deadlineAt: task.deadlineAt } : {}),
+        ...(task.officialRoom !== undefined ? { officialRoom: task.officialRoom } : {}),
       })),
     }
   }
@@ -186,6 +190,9 @@ export class DouyuTaskManager {
     if (task.definition.kind === 'message-loop') {
       task.completedRuns = 0
       task.nextRunAt = this.now() + task.definition.message!.initialDelaySeconds * 1_000
+      const duration = task.definition.message!.maxDurationSeconds
+      task.deadlineAt = duration == null ? undefined : this.now() + duration * 1_000
+      task.selectedText = undefined
     }
     this.queue.push(task.definition.id)
     this.refresh()
@@ -390,6 +397,12 @@ export class DouyuTaskManager {
   }
 
   private operationAllowed(context: DouyuAccountOperationContext): boolean {
+    if (context.scope === 'account') {
+      const policy = context.policy ?? 'foreground'
+      return context.accountId === this.activeAccountId && !this.runtime.suspended
+        && (!this.runtime.locked || policy === 'background-locked')
+        && (this.runtime.foreground || policy !== 'foreground')
+    }
     return context.accountId === this.activeAccountId && context.originRoom === this.currentRoom
       && this.runtime.foreground && !this.runtime.locked && !this.runtime.suspended
   }
@@ -446,6 +459,12 @@ export class DouyuTaskManager {
       if (reason) this.stop(this.flight.task, 'paused', reason)
     }
     const now = this.now()
+    let expiryAt: number | null = null
+    for (const task of this.tasks.values()) {
+      if (!armed(task) || task.deadlineAt === undefined) continue
+      if (now >= task.deadlineAt) this.stop(task, 'stopped', '已达到配置的发送时长')
+      else expiryAt = Math.min(expiryAt ?? Infinity, task.deadlineAt)
+    }
     let nextAt: number | null = null
     let nextFlight: Flight | null = null
     if (!this.flight && this.immediate && !this.immediate.cancelled) {
@@ -471,7 +490,8 @@ export class DouyuTaskManager {
       task.nextRunAt = null
       this.queue = this.queue.filter(queuedId => queuedId !== id)
     }
-    if (nextAt !== null && !this.flight) this.schedule(nextAt, now)
+    const wakeAt = this.flight ? expiryAt : Math.min(nextAt ?? Infinity, expiryAt ?? Infinity)
+    if (wakeAt !== null && Number.isFinite(wakeAt)) this.schedule(wakeAt, now)
     this.publish()
     if (nextFlight) this.dispatch(nextFlight)
   }
@@ -491,7 +511,14 @@ export class DouyuTaskManager {
         const message = definition.message!
         const send = this.options.sendMessage
         if (typeof send !== 'function') return failedMessage()
-        return send({ accountId: definition.accountId, room: definition.room, text: message.text,
+        if (flight.task.deadlineAt !== undefined && this.now() >= flight.task.deadlineAt) {
+          this.stop(flight.task, 'stopped', '已达到配置的发送时长')
+          return null
+        }
+        flight.task.selectedText ??= composeMessage(message.selection
+          ? selectMessageText(message.selection, flight.task.completedRuns ?? 0, { random: this.options.random }).text
+          : message.text, { affixes: message.affixes })
+        return send({ accountId: definition.accountId, room: definition.room, text: flight.task.selectedText,
           color: message.colors[(flight.task.completedRuns ?? 0) % message.colors.length]! }, flight.controller.signal)
       }
       return this.options.run(definition, flight.controller.signal)
@@ -508,6 +535,7 @@ export class DouyuTaskManager {
         : readOutcome(outcome, isDouyuActivityKind(task.definition.kind), now)
       if (!this.disposed && !flight.cancelled && this.tasks.get(task.definition.id) === task) {
         task.lastResult = result.message
+        if ('officialRoom' in result) task.officialRoom = result.officialRoom
         task.nextRunAt = null
         if (result.status === 'scheduled') {
           task.reason = null
@@ -530,6 +558,7 @@ export class DouyuTaskManager {
     const schedule = task.definition.message!
     if (result.status === 'succeeded') {
       task.completedRuns = (task.completedRuns ?? 0) + 1
+      task.selectedText = undefined
       if (schedule.maxRuns === null || task.completedRuns < schedule.maxRuns) {
         this.enqueueAt(task, Math.max(now + schedule.intervalSeconds * 1_000, result.nextAllowedAt ?? 0))
       }
@@ -604,7 +633,7 @@ export class DouyuTaskManager {
 }
 
 function copyDefinition(definition: DouyuTaskDefinition): DouyuTaskDefinition {
-  return { ...definition, ...(definition.message ? { message: { ...definition.message, colors: [...definition.message.colors] } } : {}) }
+  return structuredClone(definition)
 }
 
 function record(definition: DouyuTaskDefinition, reason: string): TaskRecord {
@@ -678,11 +707,14 @@ function readMessageInput(raw: unknown): DouyuMessageInput {
 
 function readOperationContext(raw: unknown): DouyuAccountOperationContext {
   const fields = dataFields(raw, OPERATION_CONTEXT_KEYS)
+    ?? dataFields(raw, [...OPERATION_CONTEXT_KEYS, 'scope', 'policy'])
   const items = dataItems(fields?.rooms)
-  if (!fields || !items?.length) throw new DouyuTaskError('invalid-arguments')
+  if (!fields || !items || (!items.length && fields.scope !== 'account')) throw new DouyuTaskError('invalid-arguments')
+  if (Object.hasOwn(fields, 'scope') && fields.scope !== 'account') throw new DouyuTaskError('invalid-arguments')
   const rooms = items.map(readRoom)
   if (new Set(rooms).size !== rooms.length) throw new DouyuTaskError('invalid-arguments')
-  return { accountId: readId(fields.accountId), originRoom: fields.originRoom === null ? null : readRoom(fields.originRoom), rooms }
+  return { accountId: readId(fields.accountId), originRoom: fields.originRoom === null ? null : readRoom(fields.originRoom), rooms,
+    ...(fields.scope === 'account' ? { scope: 'account', policy: readPolicy(fields.policy) } : {}) }
 }
 
 function readDefinition(raw: unknown): DouyuTaskDefinition {
@@ -732,20 +764,27 @@ function readReason(raw: string | undefined, fallback: string): string {
 }
 
 function readOutcome(raw: unknown, activity: boolean, now: number): DouyuTaskOutcome {
+  let officialRoom: string | undefined
+  if (activity && raw !== null && typeof raw === 'object' && Object.hasOwn(raw, 'officialRoom')) {
+    const value = Object.getOwnPropertyDescriptor(raw, 'officialRoom')
+    if (!value || !('value' in value) || typeof value.value !== 'string' || !/^[1-9][0-9]{0,11}$/.test(value.value)) return { status: 'failed', message: FAILURE }
+    officialRoom = value.value
+  }
+  const extraKeys = officialRoom === undefined ? [] : ['officialRoom']
   if (activity) {
-    const scheduled = dataFields(raw, ['status', 'message', 'nextRunAt'])
+    const scheduled = dataFields(raw, ['status', 'message', 'nextRunAt', ...extraKeys])
     if (scheduled?.status === 'scheduled' && typeof scheduled.message === 'string' && scheduled.message.trim()
       && scheduled.message.length <= 240 && !UNSAFE_MESSAGE_TEXT.test(scheduled.message)
       && safeTimestamp(scheduled.nextRunAt) && scheduled.nextRunAt > now && scheduled.nextRunAt <= now + 86_400_000) {
       // Prevent a busy poll loop even when the server deadline passes during a read.
-      return { status: 'scheduled', message: scheduled.message.trim(), nextRunAt: Math.max(now + 5_000, scheduled.nextRunAt) }
+      return { status: 'scheduled', message: scheduled.message.trim(), nextRunAt: Math.max(now + 5_000, scheduled.nextRunAt), ...(officialRoom ? { officialRoom } : {}) }
     }
   }
-  const fields = dataFields(raw, ['status', 'message'])
+  const fields = dataFields(raw, ['status', 'message', ...extraKeys])
   if (!fields || !['succeeded', 'waiting-user', 'failed'].includes(fields.status as string)
     || typeof fields.message !== 'string' || !fields.message.trim() || fields.message.length > 240
     || /[\x00-\x1f\x7f]/.test(fields.message)) return { status: 'failed', message: FAILURE }
-  return { status: fields.status as DouyuTerminalOutcome['status'], message: fields.message.trim() }
+  return { status: fields.status as DouyuTerminalOutcome['status'], message: fields.message.trim(), ...(officialRoom ? { officialRoom } : {}) }
 }
 
 function failedMessage(message = MESSAGE_FAILURE): DouyuMessageOutcome {
@@ -753,16 +792,27 @@ function failedMessage(message = MESSAGE_FAILURE): DouyuMessageOutcome {
 }
 
 function readMessageOutcome(raw: unknown, now: number): DouyuMessageOutcome {
-  const fields = dataFields(raw, ['status', 'message', 'nextAllowedAt'])
-    ?? dataFields(raw, ['status', 'message', 'nextAllowedAt', 'deferredUntil'])
+  const optional = ['deferredUntil', 'messageLimit', 'deliveryId', 'gatewayAccepted'].filter(key => raw !== null && typeof raw === 'object' && Object.hasOwn(raw, key))
+  const fields = dataFields(raw, ['status', 'message', 'nextAllowedAt', ...optional])
   if (!fields || !['succeeded', 'waiting-user', 'failed'].includes(fields.status as string)
     || typeof fields.message !== 'string' || !fields.message.trim() || fields.message.length > 240
     || UNSAFE_MESSAGE_TEXT.test(fields.message) || (fields.nextAllowedAt !== null && !safeTimestamp(fields.nextAllowedAt))) return failedMessage()
   const deferred = Object.hasOwn(fields, 'deferredUntil')
   if (deferred && (fields.status !== 'waiting-user' || !safeTimestamp(fields.deferredUntil) || fields.deferredUntil <= now
     || !safeTimestamp(fields.nextAllowedAt) || fields.deferredUntil > fields.nextAllowedAt)) return failedMessage()
+  const limit = fields.messageLimit === undefined ? undefined : dataFields(fields.messageLimit,
+    ['localMaximumUnits', 'serverMaximumUnits', 'effectiveMaximumUnits', 'receivedUnits'])
+  if (limit !== undefined && (!limit || ['localMaximumUnits', 'effectiveMaximumUnits', 'receivedUnits'].some(k =>
+    typeof limit[k] !== 'number' || !Number.isSafeInteger(limit[k]) || (limit[k] as number) < 0 || (limit[k] as number) > 100_000)
+    || (limit.serverMaximumUnits !== null && (typeof limit.serverMaximumUnits !== 'number' || !Number.isSafeInteger(limit.serverMaximumUnits) || limit.serverMaximumUnits < 0 || limit.serverMaximumUnits > 100_000)))) return failedMessage()
+  if (fields.deliveryId !== undefined && (typeof fields.deliveryId !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(fields.deliveryId))) return failedMessage()
+  if (fields.gatewayAccepted !== undefined && (typeof fields.gatewayAccepted !== 'boolean'
+    || (fields.gatewayAccepted && fields.status !== 'succeeded'))) return failedMessage()
   return { status: fields.status as DouyuMessageOutcome['status'], message: fields.message.trim(), nextAllowedAt: fields.nextAllowedAt as number | null,
-    ...(deferred ? { deferredUntil: fields.deferredUntil as number } : {}) }
+    ...(deferred ? { deferredUntil: fields.deferredUntil as number } : {}),
+    ...(limit ? { messageLimit: limit as unknown as NonNullable<DouyuMessageOutcome['messageLimit']> } : {}),
+    ...(fields.deliveryId !== undefined ? { deliveryId: fields.deliveryId as string } : {}),
+    ...(fields.gatewayAccepted !== undefined ? { gatewayAccepted: fields.gatewayAccepted as boolean } : {}) }
 }
 
 function safeTimestamp(raw: unknown): raw is number {

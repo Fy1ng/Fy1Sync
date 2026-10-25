@@ -8,6 +8,8 @@ import { validDouyuRoom } from '../platforms/douyuRoom'
 import type { DouyuActionDependencies } from './actions'
 import { abortable, cancelBody, cancelled, MAX_TIMEOUT_MS, readPayload } from './actionHttp'
 import type { DouyuMessageInput, DouyuMessageOutcome, DouyuTerminalOutcome as DouyuTaskOutcome } from './types'
+import type { DeliveryTracker } from '../danmaku/deliveryTracker'
+import { observeAccountRoom, type AccountInspection, type DouyuAccountRoomState } from './accountRoomState'
 import {
   encodeMessageFrame, gatewayAddress, MAX_BUFFER_BYTES, MAX_COOLDOWN_MS, MAX_TOTAL_BYTES,
   MessageFrameDecoder, MessageProtocolError, messageChallenge, messageColorPalette, messageCredentials,
@@ -38,6 +40,7 @@ export type DouyuMessageSenderDependencies = DouyuActionDependencies & {
   createSocket?: (url: string, addresses: readonly string[]) => DouyuMessageSocket
   networkRuntimePath?: string
   now?: () => number
+  deliveryTracker?: DeliveryTracker
 }
 
 // Local, static application code only. Native WebSocket has no public terminate()
@@ -123,8 +126,19 @@ export class NativeMessageSocket implements DouyuMessageSocket {
 }
 
 type RoomState = { lastSentAt: number | null; cooldownMs: number | null; nextAllowedAt: number | null }
-type Operation = { dispatched: boolean; closed: boolean; socket: DouyuMessageSocket | null; cleanup: (() => void) | null }
-type MessageStepOutcome = DouyuTaskOutcome & { deferredUntil?: number }
+type Operation = { dispatched: boolean; closed: boolean; socket: DouyuMessageSocket | null; cleanup: (() => void) | null; deliveryId?: string }
+export interface DouyuMessageLimit {
+  localMaximumUnits: number
+  serverMaximumUnits: number
+  effectiveMaximumUnits: number
+  receivedUnits: number
+}
+export type DouyuExtendedMessageOutcome = DouyuMessageOutcome & {
+  messageLimit?: DouyuMessageLimit
+  deliveryId?: string
+  gatewayAccepted?: boolean
+}
+type MessageStepOutcome = DouyuTaskOutcome & { deferredUntil?: number; messageLimit?: DouyuMessageLimit }
 const failed = (message: string): DouyuTaskOutcome => ({ status: 'failed', message })
 const waiting = (message: string): DouyuTaskOutcome => ({ status: 'waiting-user', message })
 const needLogin = () => waiting('斗鱼登录信息缺失, 已变化或无法核对. 请重新登录该账号后再发送.')
@@ -165,7 +179,37 @@ export class DouyuMessageSender {
     for (const operation of this.active.values()) operation.abort()
   }
 
-  async send(input: DouyuMessageInput, signal: AbortSignal): Promise<DouyuMessageOutcome> {
+  /** Read-only authenticated gateway inspection; its exchange can never dispatch chatmessage. */
+  async inspect(accountId: string, room: string, signal: AbortSignal, want: 'balance' | 'fan'): Promise<DouyuAccountRoomState> {
+    if (this.disposed || signal.aborted || !validDouyuRoom(room) || typeof accountId !== 'string'
+      || !accountId || accountId.length > 128 || /[\s\x00-\x1f\x7f]/.test(accountId)
+      || (want !== 'balance' && want !== 'fan') || this.active.has(accountId)
+      || !this.deps.proxy.enabled || ![SITE_HOST, SOCKET_HOST].every(host => hostAllowed(host, this.deps.proxy.hosts))) throw new MessageProtocolError()
+    const owner = new AbortController()
+    const timeout = new AbortController()
+    const timer = setTimeout(() => timeout.abort(), MAX_TIMEOUT_MS)
+    const combined = AbortSignal.any([signal, owner.signal, timeout.signal])
+    const context: Operation = { dispatched: false, closed: false, socket: null, cleanup: null }
+    const inspection: AccountInspection = { want, complete: false, receivedBalance: false, receivedFan: false,
+      value: { accountId, room, uid: '', checkedAt: this.clock(), balance: { gold: null, silver: null }, fanEligible: null, source: 'authenticated-blst-gbi' } }
+    this.active.set(accountId, owner)
+    try {
+      const state: RoomState = { lastSentAt: null, cooldownMs: null, nextAllowedAt: null }
+      const outcome = await abortable(this.perform({ accountId, room, text: '', color: 0 }, state, context, combined, this.clock() + MAX_TIMEOUT_MS, inspection), combined)
+      if (!inspection.complete || outcome.status !== 'succeeded' || combined.aborted) throw new MessageProtocolError()
+      inspection.value.checkedAt = this.clock()
+      return structuredClone(inspection.value)
+    } finally {
+      context.closed = true; context.cleanup?.(); clearTimeout(timer)
+      if (context.socket) {
+        try { context.socket.close(1000, 'Account inspection finished') } catch { /* No account writes were made. */ }
+        try { await context.socket.terminate?.() } catch { /* Do not expose transport data. */ }
+      }
+      if (this.active.get(accountId) === owner) this.active.delete(accountId)
+    }
+  }
+
+  async send(input: DouyuMessageInput, signal: AbortSignal): Promise<DouyuExtendedMessageOutcome> {
     const text = normalizeMessageText(input?.text)
     const accountId = input?.accountId
     const room = input?.room
@@ -213,9 +257,15 @@ export class DouyuMessageSender {
       if (this.active.get(accountId) === owner) this.active.delete(accountId)
     }
     const { deferredUntil, ...result } = outcome
+    if (context.deliveryId && this.deps.deliveryTracker) {
+      if (result.status === 'succeeded') this.deps.deliveryTracker.accept(context.deliveryId)
+      else if (result.status === 'failed') this.deps.deliveryTracker.reject(context.deliveryId)
+      else this.deps.deliveryTracker.uncertain(context.deliveryId)
+    }
     // Never let a submitted, cancelled or stale result become an automatic retry.
     const canDefer = !context.dispatched && !combined.aborted && result.status === 'waiting-user' && deferredUntil !== undefined && Number.isSafeInteger(deferredUntil) && deferredUntil > this.clock()
-    return { ...result, nextAllowedAt: state.nextAllowedAt, ...(canDefer ? { deferredUntil } : {}) }
+    return { ...result, nextAllowedAt: state.nextAllowedAt, ...(canDefer ? { deferredUntil } : {}),
+      ...(context.deliveryId ? { deliveryId: context.deliveryId, gatewayAccepted: result.status === 'succeeded' } : {}) }
   }
 
   private clock(): number {
@@ -266,10 +316,11 @@ export class DouyuMessageSender {
     return messageCredentials(header)
   }
 
-  private async perform(target: DouyuMessageInput, state: RoomState, context: Operation, signal: AbortSignal, deadline: number): Promise<MessageStepOutcome> {
+  private async perform(target: DouyuMessageInput, state: RoomState, context: Operation, signal: AbortSignal, deadline: number, inspection?: AccountInspection): Promise<MessageStepOutcome> {
     let credentials: MessageCredentials | null
     try { credentials = await this.credentials(target.accountId, signal) } catch { this.assertActive(signal); return needLogin() }
     if (!credentials) return needLogin()
+    if (inspection) inspection.value.uid = credentials.uid
     const keys = messageSigningKeys(await this.getJson(`${SITE}wgapi/livenc/liveweb/websec/getEncryption?did=${encodeURIComponent(credentials.did)}`, 'GET', signal))
     const endpoint = gatewayAddress(await this.getJson(`${SITE}lapi/live/gateway/web/${target.room}?isH5=1`, 'POST', signal))
     // WebSocket permits exactly the published host/ports, without relaxing HTTP policy.
@@ -278,10 +329,10 @@ export class DouyuMessageSender {
     const socket = this.createSocket(endpoint, addresses)
     context.socket = socket
     socket.binaryType = 'arraybuffer'
-    return this.exchange(target, credentials, keys, state, context, socket, signal, deadline)
+    return this.exchange(target, credentials, keys, state, context, socket, signal, deadline, inspection)
   }
 
-  private exchange(target: DouyuMessageInput, credentials: MessageCredentials, keys: MessageSigningKeys, state: RoomState, context: Operation, socket: DouyuMessageSocket, signal: AbortSignal, deadline: number): Promise<MessageStepOutcome> {
+  private exchange(target: DouyuMessageInput, credentials: MessageCredentials, keys: MessageSigningKeys, state: RoomState, context: Operation, socket: DouyuMessageSocket, signal: AbortSignal, deadline: number, inspection?: AccountInspection): Promise<MessageStepOutcome> {
     return new Promise((resolve, reject) => {
       const decoder = new MessageFrameDecoder()
       let done = false
@@ -299,7 +350,16 @@ export class DouyuMessageSender {
       let wakeup: ReturnType<typeof setTimeout> | null = null
       let processing = Promise.resolve()
 
-      const finish = (outcome: MessageStepOutcome) => { if (!done) { done = true; resolve(outcome) } }
+      const finish = (outcome: MessageStepOutcome) => {
+        if (done) return
+        done = true
+        if (context.deliveryId && this.deps.deliveryTracker) {
+          if (outcome.status === 'succeeded') this.deps.deliveryTracker.accept(context.deliveryId)
+          else if (outcome.status === 'failed') this.deps.deliveryTracker.reject(context.deliveryId)
+          else this.deps.deliveryTracker.uncertain(context.deliveryId)
+        }
+        resolve(outcome)
+      }
       const stop = () => { if (!done) { done = true; reject(cancelled()) } }
       const fail = () => { if (!done) { done = true; reject(new MessageProtocolError()) } }
       const check = () => { this.assertActive(signal, context); if (done) throw cancelled() }
@@ -317,10 +377,27 @@ export class DouyuMessageSender {
         check()
         return current !== null && Object.keys(credentials).every(name => current[name as keyof MessageCredentials] === credentials[name as keyof MessageCredentials])
       }
+      const tooLong = (maximum: number): MessageStepOutcome => ({
+        ...failed('弹幕超过斗鱼当前允许的长度. 未发送弹幕.'),
+        messageLimit: { localMaximumUnits: 500, serverMaximumUnits: maximum,
+          effectiveMaximumUnits: Math.min(500, maximum), receivedUnits: target.text.length },
+      })
       const dispatch = async (): Promise<void> => {
+        if (inspection) {
+          if (done || context.closed || authorizing || !authenticated || !challengeSigned || !heartbeatReady
+            || !(inspection.want === 'balance' ? inspection.receivedBalance : inspection.receivedFan)) return
+          authorizing = true
+          try {
+            if (!await confirmAccount()) { finish(needLogin()); return }
+            check()
+            inspection.complete = true
+            finish({ status: 'succeeded', message: '已读取官方账号状态' })
+          } finally { authorizing = false }
+          return
+        }
         if (done || context.closed || context.dispatched || authorizing || !authenticated || !challengeSigned || !heartbeatReady || !rules) return
         check()
-        if (target.text.length > rules.maximum) { finish(failed('弹幕超过斗鱼当前允许的长度. 未发送弹幕.')); return }
+        if (target.text.length > rules.maximum) { finish(tooLong(rules.maximum)); return }
         if (target.color !== 0) {
           if (!colorPalette) return
           if (!colorPalette.has(target.color)) { finish(waiting('尚未取得斗鱼对该账号在当前房间使用所选颜色的确认. 未发送弹幕.')); return }
@@ -341,7 +418,7 @@ export class DouyuMessageSender {
           // Drain messages that arrived while credentials were being rechecked.
           // A newer initcl or terminal error must take effect before this write.
           if (messageVersion !== confirmingVersion) return
-          if (target.text.length > rules.maximum) { finish(failed('弹幕超过斗鱼当前允许的长度. 未发送弹幕.')); return }
+          if (target.text.length > rules.maximum) { finish(tooLong(rules.maximum)); return }
           const sentAt = this.clock()
           if ((state.nextAllowedAt ?? sentAt) > sentAt) { authorizing = false; await dispatch(); return }
           this.lastCst = Math.max(sentAt, this.lastCst + 1)
@@ -349,6 +426,9 @@ export class DouyuMessageSender {
           // pe is the privileged-emoticon category, not the color switch. An
           // ordinary color explicitly unlocked by fdm uses the fans-color flag.
           const message = { type: 'chatmessage', content: target.text, sender: credentials.uid, dy: credentials.did, col: target.color, pe: 0, ifs: target.color === 0 ? 0 : 1, nc: 0, dat: 0, rev: 0, tts: 0, admzq: 0, cst }
+          if (this.deps.deliveryTracker) context.deliveryId = this.deps.deliveryTracker.begin({
+            accountId: target.accountId, room: target.room, uid: credentials.uid, text: target.text, color: target.color, sentAt,
+          })
           // A throw, abort or disconnect after this boundary cannot prove non-delivery.
           context.dispatched = true
           state.lastSentAt = sentAt
@@ -360,6 +440,7 @@ export class DouyuMessageSender {
       const handle = async (message: GatewayMessage) => {
         if (done || context.closed) return
         check()
+        if (inspection && authenticated) observeAccountRoom(inspection, message)
         if (message.type === 'error') {
           const code = unsigned(message.code, 1_000_000)
           const detail = code === 59 ? '斗鱼提示该账号在其它位置登录, 连接已结束.' : code === 267 ? '斗鱼要求停止当前连接.' : '斗鱼拒绝或结束了当前登录连接.'
