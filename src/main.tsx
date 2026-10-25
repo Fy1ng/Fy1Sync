@@ -11,10 +11,9 @@ import { createRoot } from 'react-dom/client'
 import { ErrorBoundary } from './ui/ErrorBoundary'
 import { Session } from './app/session'
 import { SessionProvider } from './app/SessionContext'
-import { PlayerPage } from './ui/PlayerPage'
-import './ui/styles.css'
+import { Studio } from './studio/Studio'
 
-const AdminPage = lazy(() => import('./ui/admin/AdminPage'))
+const AdminPage = lazy(() => import('./ui/admin/entry'))
 
 /** The session outlives every render, so it is created once here, not in a component. */
 const session = new Session()
@@ -40,7 +39,7 @@ function App(): React.ReactNode {
       </Suspense>
     )
   }
-  return <PlayerPage />
+  return <Studio />
 }
 
 const container = document.getElementById('root')

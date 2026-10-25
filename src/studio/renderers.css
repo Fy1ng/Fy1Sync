@@ -1,0 +1,167 @@
+/* Renderer mechanics carried over unchanged: positioning, handles, the danmaku shadow. */
+
+.danmaku-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.camera-overlay {
+  position: absolute;
+  z-index: 8;
+  box-sizing: border-box;
+  border: 2px solid color-mix(in srgb, var(--warn) 55%, rgb(255 255 255 / 70%));
+  background: #000;
+  box-shadow: 0 6px 22px rgb(0 0 0 / 55%);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.camera-overlay:active {
+  cursor: grabbing;
+}
+
+.camera-overlay:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.camera-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.camera-resize {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  background: linear-gradient(135deg, transparent 50%, rgb(255 255 255 / 85%) 50% 60%, transparent 60% 70%, rgb(255 255 255 / 85%) 70% 80%, transparent 80%);
+}
+
+.camera-overlay:hover .camera-resize,
+.camera-overlay:focus-visible .camera-resize {
+  opacity: 1;
+}
+
+.danmaku-item {
+  position: absolute;
+  left: 0;
+  top: 0;
+  white-space: pre;
+  font-weight: 700;
+  text-shadow: 1px 1px 2px rgb(0 0 0 / 90%), 0 0 3px rgb(0 0 0 / 70%);
+  will-change: transform;
+}
+
+.roi-window {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 60%), 0 0 0 9999px rgb(0 0 0 / 35%);
+  cursor: move;
+  touch-action: none;
+}
+
+.roi-window:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.roi-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: var(--accent);
+  border: 1px solid #000;
+  touch-action: none;
+}
+
+.roi-handle-nw {
+  top: -5px;
+  left: -5px;
+  cursor: nwse-resize;
+}
+
+.roi-handle-n {
+  top: -5px;
+  left: calc(50% - 5px);
+  cursor: ns-resize;
+}
+
+.roi-handle-ne {
+  top: -5px;
+  right: -5px;
+  cursor: nesw-resize;
+}
+
+.roi-handle-e {
+  top: calc(50% - 5px);
+  right: -5px;
+  cursor: ew-resize;
+}
+
+.roi-handle-se {
+  bottom: -5px;
+  right: -5px;
+  cursor: nwse-resize;
+}
+
+.roi-handle-s {
+  bottom: -5px;
+  left: calc(50% - 5px);
+  cursor: ns-resize;
+}
+
+.roi-handle-sw {
+  bottom: -5px;
+  left: -5px;
+  cursor: nesw-resize;
+}
+
+.roi-handle-w {
+  top: calc(50% - 5px);
+  left: -5px;
+  cursor: ew-resize;
+}
+
+.roi-size {
+  position: absolute;
+  top: -20px;
+  left: 0;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgb(0 0 0 / 75%);
+  color: var(--text);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.roi-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.roi-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.roi-field input {
+  padding: 4px 5px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
