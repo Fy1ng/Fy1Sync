@@ -155,8 +155,20 @@ for (const [label, folder] of [['unpacked', path.join(root, '.release', 'win-unp
     await expect.poll(() => video.evaluate(v => v.currentTime), { timeout: 12_000 }).toBeGreaterThan(first + 2)
     const playback = await video.evaluate(v => ({ width: v.videoWidth, height: v.videoHeight, currentTime: v.currentTime, paused: v.paused }))
     await page.screenshot({ path: path.join(evidence, `${label}-playback.png`) })
-    if (requests || errors.length) throw new Error('Packaged offline playback emitted external requests or page errors')
-    result = { label, executable: exe, packageArtifacts: report.artifacts, nodeNetworks, mainNetwork, status: status.value, canvas: JSON.parse(canvas), provider, providerCachePrivate: cachePrivate, remuxProbe: probe, playback, externalRequests: requests, pageErrors: errors }
+    // Exercise the lazy editor entry and its bundled assets in both release forms.
+    await page.goto('app://app/admin')
+    await expect(page.locator('.studio.editor')).toBeVisible()
+    await expect(page.getByRole('textbox', { name: '名称', exact: true })).toBeEditable()
+    await page.locator('main input[accept^="image/"]').setInputFiles(path.join(root, 'public', 'test-sources', 'frame-0-20.png'))
+    const sample = page.locator('img.editor-media')
+    await expect(sample).toBeVisible()
+    await expect.poll(() => sample.evaluate(image => image.naturalWidth)).toBeGreaterThan(0)
+    await expect(page.locator('.crop-canvas').first()).toBeVisible()
+    await expect(page.getByRole('button', { name: '取当前帧', exact: true })).toHaveCount(0)
+    const editor = await sample.evaluate(image => ({ width: image.naturalWidth, height: image.naturalHeight }))
+    await page.screenshot({ path: path.join(evidence, `${label}-editor.png`) })
+    if (requests || errors.length) throw new Error('Packaged offline playback/editor emitted external requests or page errors')
+    result = { label, executable: exe, packageArtifacts: report.artifacts, nodeNetworks, mainNetwork, status: status.value, canvas: JSON.parse(canvas), provider, providerCachePrivate: cachePrivate, remuxProbe: probe, playback, editor, externalRequests: requests, pageErrors: errors }
     results.push(result)
   } finally {
     if (application) {

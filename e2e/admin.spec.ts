@@ -46,7 +46,7 @@ test.describe('本机编辑器访问', () => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
     await expect(page.locator('.editor-main')).toBeVisible()
-    await expect(page.locator('.admin-gate')).toHaveCount(0)
+    await expect(page.getByRole('textbox', { name: '名称', exact: true })).toBeEditable()
   })
 
   test('本机可信窗口仍拒绝无效预设并给出字段问题', async ({ page }) => {

@@ -170,6 +170,8 @@ test('截图与 GIF 仅在启用后出现, 取消后清理录制且不保存', a
   await revealOverlay(page)
   await page.getByRole('button', { name: '截图', exact: true }).click()
   await expect(page.getByRole('status').filter({ hasText: '已取消保存' })).toBeVisible()
+  // Saving the screenshot can outlast the dock's idle timer.
+  await revealOverlay(page)
   await page.getByRole('button', { name: 'GIF 录制', exact: true }).click()
   const gif = page.getByRole('dialog', { name: 'GIF 录制', exact: true })
   await gif.getByRole('spinbutton', { name: '帧率', exact: true }).fill('2')
@@ -359,6 +361,14 @@ test('禁言先检查权限, 明确确认后仅向固定房间提交一次', asy
 test('赠礼编辑作废预览, 确认按有效 planId 执行且未知结果不重试', async ({ page, electronApp }, testInfo) => {
   await installHttpFixture(electronApp)
   await prepareChat(page, electronApp)
+  await page.evaluate(() => {
+    const diagnostic = window as typeof window & { __giftRuntime?: unknown[] }
+    diagnostic.__giftRuntime = []
+    window.streamSyncer!.subscribeDouyuTasks!(snapshot => {
+      diagnostic.__giftRuntime!.push({ at: Date.now(), room: snapshot.currentRoom, runtime: snapshot.runtime })
+      if (diagnostic.__giftRuntime!.length > 100) diagnostic.__giftRuntime!.shift()
+    })
+  })
   await page.setViewportSize({ width: 1024, height: 700 })
   const desk = await openDouyuDesk(page)
   await desk.getByRole('tab', { name: '背包', exact: true }).click()
@@ -368,13 +378,21 @@ test('赠礼编辑作废预览, 确认按有效 planId 执行且未知结果不�
   await desk.getByRole('textbox', { name: /赠送间隔/ }).fill('0')
   await desk.getByRole('button', { name: '生成预览', exact: true }).click()
   const plan = desk.getByRole('region', { name: '赠送确认单', exact: true })
+  const confirmGift = async () => {
+    // The real queue cancels account writes when its window loses foreground ownership.
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.focus())
+    await expect.poll(() => invoke(page, 'getDouyuTasks', undefined)).toMatchObject({
+      ok: true, value: { currentRoom: '288016', runtime: { foreground: true, locked: false, suspended: false } },
+    })
+    await plan.getByRole('button', { name: '确认赠送', exact: true }).click()
+  }
   await expect(plan).toBeVisible()
   expect((await httpState(electronApp)).writes).toEqual([])
   await quantity.fill('2')
   await expect(plan).toHaveCount(0)
   await desk.getByRole('button', { name: '生成预览', exact: true }).click()
   await expect(plan).toBeVisible()
-  await plan.getByRole('button', { name: '确认赠送', exact: true }).click()
+  await confirmGift()
   const result = desk.getByRole('region', { name: '赠送结果', exact: true })
   await expect(result).toContainText('已收到回执 2')
   await expect(plan.getByRole('button', { name: '确认赠送', exact: true })).toBeDisabled()
@@ -385,10 +403,13 @@ test('赠礼编辑作废预览, 确认按有效 planId 执行且未知结果不�
   await electronApp.evaluate(() => { (globalThis as typeof globalThis & { __studioHttpFixture: StudioHttpFixture }).__studioHttpFixture.unknownGift = true })
   await quantity.fill('1')
   await desk.getByRole('button', { name: '生成预览', exact: true }).click()
-  await plan.getByRole('button', { name: '确认赠送', exact: true }).click()
+  await confirmGift()
   await expect(result).toContainText('结果未知')
   await expect(plan.getByRole('button', { name: '确认赠送', exact: true })).toBeDisabled()
   await page.waitForTimeout(1200)
+  await testInfo.attach('gift-runtime.json', { contentType: 'application/json', body: JSON.stringify(await page.evaluate(() =>
+    (window as typeof window & { __giftRuntime?: unknown[] }).__giftRuntime)) })
+  await expect(result).toContainText('部分结果需要核对')
   expect((await httpState(electronApp)).writes).toHaveLength(2)
   await result.scrollIntoViewIfNeeded()
   await page.screenshot({ path: testInfo.outputPath('gift-unknown.png') })
