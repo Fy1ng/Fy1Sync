@@ -1,0 +1,94 @@
+/* Screenshot and GIF controls in the player dock. */
+
+.studio .capture-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.studio .capture-control .icon-btn.is-recording {
+  color: var(--tally);
+}
+
+.studio .capture-live {
+  height: 26px;
+  margin: 0 4px;
+  padding: 0 9px;
+  font-size: 11px;
+  color: var(--chalk);
+  white-space: nowrap;
+  background: rgb(255 77 77 / 16%);
+  border: 1px solid rgb(255 77 77 / 40%);
+  border-radius: 13px;
+}
+
+.studio .capture-note {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  z-index: 55;
+  padding: 6px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+  background: var(--smoke-deep);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  animation: pop-in 140ms var(--ease);
+}
+
+.studio :is(.capture-note, .capture-note-inline).is-ok {
+  color: var(--lock);
+}
+
+.studio :is(.capture-note, .capture-note-inline).is-error {
+  color: #ff8a80;
+}
+
+.studio :is(.capture-note, .capture-note-inline).is-plain {
+  color: var(--ash);
+}
+
+.studio .capture-note-inline {
+  font-size: 12px;
+}
+
+.studio .capture-pop {
+  right: 0;
+  bottom: calc(100% + 10px);
+  width: 260px;
+}
+
+.studio .capture-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.studio .capture-form .field-row {
+  grid-template-columns: 40px minmax(0, 1fr);
+}
+
+.studio .capture-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px;
+  align-items: center;
+  gap: 8px;
+}
+
+.studio .capture-field .text-input {
+  height: 30px;
+}
+
+.studio .capture-meter {
+  height: 4px;
+  overflow: hidden;
+  background: var(--line);
+  border-radius: 2px;
+}
+
+.studio .capture-meter span {
+  display: block;
+  height: 100%;
+  background: var(--tally);
+  transition: width 200ms var(--ease);
+}

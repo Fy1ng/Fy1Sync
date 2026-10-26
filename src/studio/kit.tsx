@@ -174,6 +174,17 @@ const PATHS = {
   file: <path d="M7 3.5h6.5L18.5 8.5V19a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5ZM13.5 3.5v5h5" />,
   back: <path d="m14.5 6-6 6 6 6" />,
   forward: <path d="m9.5 6 6 6-6 6" />,
+  pip: <><rect x="3.5" y="5" width="17" height="14" rx="1.5" /><rect x="12" y="11.5" width="6.5" height="5" rx="0.8" fill="currentColor" stroke="none" /></>,
+  camera: <><path d="M4.5 8h3l1.5-2.5h6L16.5 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z" /><circle cx="12" cy="13.2" r="3.3" /></>,
+  record: <><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="3.6" fill="currentColor" stroke="none" /></>,
+  plus: <path d="M12 5v14M5 12h14" />,
+  star: <path d="m12 4.5 2.3 4.7 5.2.8-3.8 3.6.9 5.1L12 16.3l-4.6 2.4.9-5.1L4.5 10l5.2-.8L12 4.5Z" />,
+  history: <><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3L4.5 9" /><path d="M4.5 4.5V9H9M12 8v4.3l3 1.8" /></>,
+  stats: <path d="M5 19.5V11M10 19.5V5M15 19.5v-6M20 19.5V8.5" />,
+  refresh: <path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3L19.5 9M19.5 4.5V9H15" />,
+  volume: <path d="M4.5 9.5h3l4.5-4v13l-4.5-4h-3ZM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" />,
+  mute: <path d="M4.5 9.5h3l4.5-4v13l-4.5-4h-3ZM16 9.5l5 5m0-5-5 5" />,
+  user: <><circle cx="12" cy="8.5" r="3.5" /><path d="M5 19.5c1-3.5 3.7-5 7-5s6 1.5 7 5" /></>,
 } as const
 
 export type IconName = keyof typeof PATHS

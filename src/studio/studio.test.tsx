@@ -5,7 +5,7 @@
  */
 
 import { StrictMode } from 'react'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Session } from '../app/session'
@@ -162,6 +162,41 @@ describe('the studio', () => {
     fireEvent.click(screen.getByRole('button', { name: '画面延后' }))
     await waitFor(() => expect(apply).toHaveBeenCalledTimes(2))
     expect(apply.mock.calls.at(-1)![0]).toBeGreaterThan(apply.mock.calls[0]![0] as number)
+  })
+
+  it('moves both sides together on ←/→ and nudges the alignment on , and .', async () => {
+    const session = makeSession()
+    for (const role of ['official', 'commentary'] as const) {
+      void session.loadSource(role, { kind: 'test', url: `/test-sources/${role}.mp4`, input: role, label: role, loop: true, viaProxy: false, platform: 'test' })
+    }
+    const seek = vi.spyOn(session, 'seekPlayback').mockResolvedValue(true)
+    const apply = vi.spyOn(session, 'applyOffset')
+    renderStudio(session)
+    await flush()
+
+    fireEvent.keyDown(window, { code: 'ArrowLeft' })
+    expect(seek.mock.calls.map(([role, delta]) => [role, delta]).sort()).toEqual([['commentary', -5], ['official', -5]])
+    fireEvent.keyDown(window, { code: 'ArrowRight', shiftKey: true })
+    expect(seek).toHaveBeenLastCalledWith(expect.any(String), 30)
+    expect(apply).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(window, { code: 'Comma' })
+    await waitFor(() => expect(apply).toHaveBeenCalled())
+    expect(apply.mock.calls.at(-1)![0]).toBeLessThan(0)
+  })
+
+  it('puts a lone commentary on the big screen and gives it back when the picture arrives', async () => {
+    const session = makeSession()
+    renderStudio(session)
+    await flush()
+    await act(async () => {
+      await session.loadSource('commentary', { kind: 'test', url: '/test-sources/commentary.mp4', input: 'c', label: 'c', loop: true, viaProxy: false, platform: 'test' })
+    })
+    await waitFor(() => expect(session.snapshot.mainRole).toBe('commentary'))
+    await act(async () => {
+      await session.loadSource('official', { kind: 'test', url: '/test-sources/official.mp4', input: 'o', label: 'o', loop: true, viaProxy: false, platform: 'test' })
+    })
+    await waitFor(() => expect(session.snapshot.mainRole).toBe('official'))
   })
 
   it('says which side waits, not a signed number', async () => {

@@ -6,15 +6,26 @@
  * reviewed plan is ever executed — the inputs are not resent — and a plan dies the moment
  * anything it was built from changes: the selection, an amount, the account, its expiry,
  * or this page closing. Nothing here buys, claims or retries.
+ *
+ * Amounts come one of three ways: one number for every room, a number per room, or an
+ * equal split of each kind of eligible item the main process finds (the remainder stays in
+ * the backpack and is shown as such).
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { apiClient } from '../../app/apiClient'
 import type { DouyuRenewalPlan, DouyuRenewalResult, DouyuRenewalTargetPage } from '../../../server/douyu/renewalTypes'
+import { Segmented } from '../kit'
+import { BadgeAges } from './BadgeAges'
+import './backpack.css'
 
 const MAX_ROOMS = 20
 const ROW_STATE = { 'receipt-received': '已收到回执', unknown: '需要核对', 'not-submitted': '未送出', skipped: '跳过' } as const
 const RESULT = { completed: '处理完成', 'waiting-user': '部分结果需要核对', cancelled: '其余已停止', failed: '未完成' } as const
+type Allocation = 'uniform' | 'per-room' | 'equal'
+const ALLOCATIONS: { value: Allocation; label: string }[] = [
+  { value: 'uniform', label: '统一数量' }, { value: 'per-room', label: '逐房数量' }, { value: 'equal', label: '同类库存均分' },
+]
 
 const amountOf = (text: string): number | null => {
   const value = Number(text)
@@ -32,6 +43,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
   const [page, setPage] = useState<DouyuRenewalTargetPage | null>(null)
   const [picked, setPicked] = useState<string[]>([])
   const [amount, setAmount] = useState('1')
+  const [allocation, setAllocation] = useState<Allocation>('uniform')
   const [overrides, setOverrides] = useState<Record<string, string>>({})
   const [filter, setFilter] = useState('')
   const [plan, setPlan] = useState<DouyuRenewalPlan | null>(null)
@@ -65,7 +77,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
     if (owner.current === accountId) return
     abandon()
     owner.current = accountId
-    setPage(null); setPicked([]); setAmount('1'); setOverrides({}); setFilter('')
+    setPage(null); setPicked([]); setAmount('1'); setAllocation('uniform'); setOverrides({}); setFilter('')
     setPlan(null); setResult(null); setBusy(null); setStopping(false); setError('')
   }, [accountId, abandon])
 
@@ -117,10 +129,11 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
   }
 
   const preview = async (): Promise<void> => {
-    const base = amountOf(amount)
+    const equal = allocation === 'equal'
+    const base = equal ? 1 : amountOf(amount)
     if (!accountId || busy || base === null || picked.length === 0) return
     const quantities: { room: string; quantity: number }[] = []
-    for (const room of picked) {
+    if (allocation === 'per-room') for (const room of picked) {
       const text = overrides[room]
       if (text === undefined || text === '') continue
       const value = amountOf(text)
@@ -132,7 +145,9 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
     const rooms = [...picked]
     setBusy('plan'); setError('')
     try {
-      const response = await apiClient.previewDouyuRenewal({ accountId, rooms, quantity: base, ...(quantities.length ? { quantities } : {}) })
+      const response = equal
+        ? await apiClient.feature('previewDouyuRenewalEqual', { accountId, rooms })
+        : await apiClient.previewDouyuRenewal({ accountId, rooms, quantity: base, ...(quantities.length ? { quantities } : {}) })
       if (!mounted.current || mine !== generation.current) {
         if (response.ok && typeof response.value?.id === 'string') retire(response.value.id)
         return
@@ -141,7 +156,8 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
       const value = response.value
       const total = value?.rows?.reduce((sum, row) => sum + (row.status === 'ready' && row.gift ? row.gift.quantity : 0), 0)
       if (!value || value.accountId !== accountId || typeof value.id !== 'string' || !Array.isArray(value.rows)
-        || value.rows.length !== rooms.length || value.rows.some((row) => !rooms.includes(row.room)) || total !== value.totalQuantity) {
+        || value.rows.length !== rooms.length || value.rows.some((row) => !rooms.includes(row.room)) || total !== value.totalQuantity
+        || (equal && (value.allocation?.mode !== 'equal-per-prop' || !Array.isArray(value.allocation.leftovers)))) {
         if (typeof value?.id === 'string') retire(value.id)
         throw new Error('bad plan')
       }
@@ -193,10 +209,13 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
 
   const query = filter.trim().toLocaleLowerCase()
   const shown = page?.targets.filter((target) => target.room.includes(query) || target.badgeName.toLocaleLowerCase().includes(query)) ?? []
-  const base = amountOf(amount)
-  const badOverride = picked.some((room) => overrides[room] !== undefined && overrides[room] !== '' && amountOf(overrides[room]!) === null)
+  const base = allocation === 'equal' ? 1 : amountOf(amount)
+  const badOverride = allocation === 'per-room'
+    && picked.some((room) => overrides[room] !== undefined && overrides[room] !== '' && amountOf(overrides[room]!) === null)
   const readyRows = plan?.rows.filter((row) => row.status === 'ready') ?? []
   const canGive = ready && !!plan && !livePlan.current?.used && !expired && plan.accountId === accountId && plan.totalQuantity > 0 && !busy
+  const propName = (propId: string): string => plan?.rows.find((row) => row.gift?.propId === propId)?.gift?.name ?? `道具 ${propId}`
+  const leftovers = plan?.allocation?.leftovers.filter((item) => item.quantity > 0) ?? []
 
   if (!accountId) return <div className="desk-pane"><p className="desk-empty">请先在「账号」中登录并设置当前账号。</p></div>
 
@@ -224,18 +243,24 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
             </div>
             {page.targets.length === 0 ? <p className="muted">没有可选的粉丝牌。</p> : (
               <>
+                <div className="renew-mode">
+                  <Segmented<Allocation> label="数量分配方式" value={allocation} options={ALLOCATIONS} disabled={locked}
+                    onChange={(value) => { if (locked) return; invalidate(); setError(''); setAllocation(value) }} />
+                </div>
+                {allocation === 'equal' && <p className="muted">将背包中每种合格道具平均分给使用该道具的所选房间，单房最多 1000 个，余数留在背包。</p>}
                 <div className="renew-tools">
                   <input type="search" className="text-input" value={filter} placeholder="房间号或牌子名" aria-label="筛选粉丝牌"
                     onChange={(event) => setFilter(event.target.value)} />
-                  <label className="renew-amount">
-                    <span>每个房间赠送</span>
+                  {allocation !== 'equal' && <label className="renew-amount">
+                    <span>{allocation === 'per-room' ? '未填写的房间赠送' : '每个房间赠送'}</span>
                     <input className="text-input num" type="number" min={1} max={1000} value={amount} disabled={locked}
                       aria-label="每个房间赠送数量" aria-invalid={base === null}
                       onChange={(event) => { invalidate(); setAmount(event.target.value) }} />
                     <span>个</span>
-                  </label>
+                  </label>}
                 </div>
                 {base === null && <p className="form-error">请填写 1 到 1000 的整数</p>}
+                {allocation === 'per-room' && <p className="muted">为所选房间分别填写数量，留空的房间按上方数量赠送。</p>}
                 <ul className="badges">
                   {shown.map((target) => {
                     const on = picked.includes(target.room)
@@ -250,7 +275,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
                           <span className="badge-name">{nameOf(target)}</span>
                           <span className="num muted">{target.room}</span>
                         </label>
-                        {on && (
+                        {on && allocation === 'per-room' && (
                           <input className="text-input num badge-qty" type="number" min={1} max={1000} value={text} disabled={locked}
                             placeholder={base === null ? '—' : String(base)} aria-label={`房间 ${target.room} 的赠送数量`} aria-invalid={bad}
                             onChange={(event) => {
@@ -297,6 +322,11 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
                     </li>
                   ))}
                 </ul>
+                {plan.allocation && (
+                  <p className="renew-leftovers">
+                    留在背包：{leftovers.length ? leftovers.map((item) => `${propName(item.propId)} × ${item.quantity}`).join('，') : '无'}
+                  </p>
+                )}
                 {!livePlan.current?.used && (expired
                   ? <p className="form-error">核对单已过期，请重新生成</p>
                   : <p className="muted">核对单 {Math.max(0, Math.ceil((plan.expiresAt - now) / 1000))} 秒后过期</p>)}
@@ -309,9 +339,14 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
           <li className="step" data-done={result !== null}>
             <div className="step-head">
               <h3>赠送</h3>
-              {busy === 'give'
-                ? <button type="button" className="btn-quiet small" disabled={stopping} onClick={() => void stop()}>{stopping ? '正在停止…' : '停止剩余赠送'}</button>
-                : <button type="button" className="btn-solid small" disabled={!canGive} onClick={() => void give()}>确认赠送</button>}
+              {/* Confirm stays mounted (disabled) while giving, so a double click's second
+                  press cannot land on the stop button that would otherwise take its place. */}
+              <button key="give" type="button" className="btn-solid small" disabled={!canGive} onClick={() => void give()}>确认赠送</button>
+              {busy === 'give' && (
+                <button key="stop" type="button" className="btn-quiet small" disabled={stopping} onClick={() => void stop()}>
+                  {stopping ? '正在停止…' : '停止剩余赠送'}
+                </button>
+              )}
             </div>
             {result && (
               <section aria-label="赠送处理结果" className="plan">
@@ -330,6 +365,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
         )}
       </ol>
       {error && <p className="form-error" role="alert">{error}</p>}
+      <BadgeAges accountId={accountId} ready={ready} />
     </div>
   )
 }

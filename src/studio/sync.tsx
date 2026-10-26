@@ -74,7 +74,7 @@ export function SyncCapsule(): React.ReactNode {
       <HoldButton
         className="capsule-nudge"
         label="解说延后"
-        title={`解说延后 ${settings.smallStepSeconds} 秒（←，长按连续调整）`}
+        title={`解说延后 ${settings.smallStepSeconds} 秒（, 键，长按连续调整）`}
         disabled={!paired || requested <= -MAX_OFFSET_SECONDS}
         onStep={(held) => nudge('early', stepFor(held, settings.smallStepSeconds, settings.largeStepSeconds))}
       >
@@ -98,7 +98,7 @@ export function SyncCapsule(): React.ReactNode {
       <HoldButton
         className="capsule-nudge"
         label="画面延后"
-        title={`画面延后 ${settings.smallStepSeconds} 秒（→，长按连续调整）`}
+        title={`画面延后 ${settings.smallStepSeconds} 秒（. 键，长按连续调整）`}
         disabled={!paired || requested >= MAX_OFFSET_SECONDS}
         onStep={(held) => nudge('late', stepFor(held, settings.smallStepSeconds, settings.largeStepSeconds))}
       >

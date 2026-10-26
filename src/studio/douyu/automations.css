@@ -1,0 +1,70 @@
+/* Batch automations: rows reuse .task / .task-*; only what they add is here. */
+
+.studio .automation-form optgroup {
+  color: var(--ash);
+  background: var(--panel);
+}
+
+.studio .automation-note {
+  margin-top: -6px;
+}
+
+.studio .automation-fixed {
+  font-size: 13px;
+  color: var(--chalk);
+}
+
+.studio .automation-short {
+  max-width: 160px;
+}
+
+.studio .automation-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.studio .automation-progress progress {
+  width: 100%;
+  max-width: 320px;
+  height: 4px;
+  appearance: none;
+  border: 0;
+  border-radius: 2px;
+  background: var(--line-2);
+  overflow: hidden;
+}
+
+.studio .automation-progress progress::-webkit-progress-bar {
+  background: var(--line-2);
+}
+
+.studio .automation-progress progress::-webkit-progress-value {
+  background: var(--lock);
+  transition: width 200ms var(--ease);
+}
+
+.studio .automation .task-result[data-status='waiting-user'] {
+  color: var(--drift);
+}
+
+.studio .automation .task-result[data-status='failed'] {
+  color: #ff8a80;
+}
+
+.studio .automation-review {
+  font-size: 12px;
+  color: var(--drift);
+}
+
+.studio .automation-confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.studio .automation-foot {
+  font-size: 12px;
+}

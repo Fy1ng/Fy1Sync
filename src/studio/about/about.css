@@ -1,0 +1,54 @@
+/* About group in settings: version and update check. */
+
+.studio .about-status {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.studio .about-status .muted {
+  font-weight: 400;
+}
+
+.studio .about-status.is-current {
+  color: var(--lock);
+}
+
+.studio .about-status.is-available {
+  color: var(--drift);
+}
+
+.studio .about-status.is-error {
+  color: #ff8a80;
+}
+
+.studio .about-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: rgb(0 0 0 / 25%);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.studio .about-notes h4 {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ash);
+}
+
+.studio .about-notes pre {
+  max-height: 220px;
+  margin: 0;
+  overflow-y: auto;
+  font-family: var(--cjk);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--chalk);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -85,7 +85,7 @@ export function Timeline(): React.ReactNode {
         {state.isLive ? (
           behind < 2
             ? <span className="live-tag">直播</span>
-            : <button type="button" className="live-tag is-behind" onClick={() => session.engine.seekToLive(role)}>
+            : <button type="button" className="live-tag is-behind" onClick={() => void session.returnPlaybackToLive(role)}>
                 落后 {behind.toFixed(0)} 秒 · 回到直播
               </button>
         ) : <span className="num">{clock(end - start)}</span>}

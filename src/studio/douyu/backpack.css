@@ -1,0 +1,249 @@
+/* Backpack, gift plans and badge ages. Scoped under .studio, built on the shared tokens. */
+
+.studio .pack-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.studio .pack-stock,
+.studio .pack-give {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.studio .pack-give {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.studio .pack-scroll {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.studio .pack-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.studio .pack-table th {
+  position: sticky;
+  top: 0;
+  padding: 7px 10px;
+  font-weight: 700;
+  text-align: left;
+  color: var(--ash);
+  white-space: nowrap;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line-2);
+}
+
+.studio .pack-table td {
+  padding: 7px 10px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+}
+
+.studio .pack-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.studio .pack-table tr[data-off='true'] td:first-child {
+  color: var(--ash);
+}
+
+.studio .pack-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  font-size: 12px;
+}
+
+.studio .pack-totals div {
+  display: flex;
+  gap: 6px;
+}
+
+.studio .pack-totals dt {
+  color: var(--ash);
+}
+
+/* Forms */
+
+.studio .gift-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.studio .gift-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+}
+
+.studio .gift-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ash);
+  white-space: nowrap;
+}
+
+.studio .gift-field .text-input {
+  width: 96px;
+}
+
+.studio .gift-field .pack-room {
+  width: 140px;
+}
+
+.studio .gift-picks,
+.studio .gift-catalog {
+  display: flex;
+  flex-direction: column;
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.studio .gift-picks li,
+.studio .gift-catalog label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.studio .gift-catalog label {
+  cursor: pointer;
+}
+
+.studio .gift-catalog li[data-off='true'] label {
+  cursor: default;
+  color: var(--ash);
+}
+
+.studio .gift-picks li + li,
+.studio .gift-catalog li + li {
+  border-top: 1px solid var(--line);
+}
+
+.studio .gift-picks li[data-on='true'],
+.studio .gift-catalog li[data-on='true'] {
+  background: rgb(255 255 255 / 5%);
+}
+
+.studio .gift-catalog input {
+  accent-color: var(--chalk);
+}
+
+.studio .gift-pick-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio .gift-qty {
+  width: 84px;
+  height: 28px;
+}
+
+.studio .gift-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Confirmation and result */
+
+.studio .gift-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.studio .gift-plan {
+  padding: 14px 16px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  background: var(--smoke-deep);
+}
+
+.studio .gift-plan h4 {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.studio .gift-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 16px;
+  font-size: 12px;
+}
+
+.studio .gift-facts dt {
+  color: var(--ash);
+}
+
+.studio .gift-basis {
+  margin-left: 4px;
+}
+
+.studio .gift-excluded {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.studio .gift-result {
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+
+.studio .plan-rows li[data-state='not-submitted'] > span:last-child {
+  color: var(--ash);
+}
+
+/* Renewal allocation and badge ages */
+
+.studio .renew-mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.studio .renew-leftovers {
+  font-size: 12px;
+  color: var(--ash);
+}
+
+.studio .badge-ages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.studio .badge-ages h3 {
+  font-size: 14px;
+  font-weight: 800;
+}

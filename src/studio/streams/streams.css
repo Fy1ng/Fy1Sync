@@ -1,0 +1,258 @@
+/*
+ * Extra live rooms as floating windows over the theater (handoff item 01).
+ *
+ * The layer covers the theater but takes no pointer events itself, so the main picture and
+ * the danmaku underneath stay reachable between windows. It sits above the danmaku (5) and
+ * below the small picture (20) and the top bar and dock (40); its own stacking context keeps
+ * the raised-window order from leaking into the rest of the theater.
+ */
+
+.studio .extra-streams {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  pointer-events: none;
+}
+
+.studio .extra-streams > * {
+  pointer-events: auto;
+}
+
+/* ---------- the add form ---------- */
+
+.studio .xs-add {
+  top: 64px;
+  left: 16px;
+  width: 380px;
+  max-width: calc(100% - 32px);
+}
+
+.studio .xs-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.studio .xs-add-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* ---------- a window ---------- */
+
+.studio .xs-window {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--smoke-deep);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: 0 14px 40px rgb(0 0 0 / 55%);
+  outline: none;
+  transition: box-shadow 140ms var(--ease), border-color 140ms var(--ease);
+}
+
+.studio .xs-window.is-selected {
+  border-color: var(--chalk);
+  box-shadow: 0 0 0 1px var(--chalk), 0 14px 40px rgb(0 0 0 / 55%);
+}
+
+.studio .xs-window:focus-visible {
+  box-shadow: 0 0 0 2px var(--chalk), 0 14px 40px rgb(0 0 0 / 55%);
+}
+
+.studio .xs-window.is-moving {
+  transition: none;
+  user-select: none;
+}
+
+.studio .xs-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 2px 0 10px;
+  flex: none;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.studio .xs-window.is-moving .xs-head {
+  cursor: grabbing;
+}
+
+.studio .xs-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ash-2);
+}
+
+.studio .xs-dot[data-tone='ok'] {
+  background: var(--lock);
+}
+
+.studio .xs-dot[data-tone='wait'] {
+  background: var(--drift);
+}
+
+.studio .xs-dot[data-tone='bad'] {
+  background: var(--tally);
+}
+
+.studio .xs-platform {
+  flex: none;
+  font-size: 11px;
+  color: var(--ash);
+}
+
+.studio .xs-room {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio .xs-status {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ash);
+}
+
+.studio .xs-head .icon-btn,
+.studio .xs-controls .icon-btn {
+  width: 28px;
+  height: 28px;
+}
+
+.studio .xs-head .icon,
+.studio .xs-controls .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.studio .xs-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #000;
+}
+
+.studio .xs-mount {
+  position: absolute;
+  inset: 0;
+}
+
+.studio .xs-mount .media-element {
+  pointer-events: none;
+}
+
+.studio .xs-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px;
+  text-align: center;
+  background: rgb(0 0 0 / 55%);
+}
+
+.studio .xs-notice {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  padding: 3px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+  background: var(--smoke);
+  backdrop-filter: blur(14px);
+  border-radius: 999px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.studio .xs-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  /* Clear of the corner grip. */
+  padding: 0 14px 0 6px;
+  flex: none;
+}
+
+.studio .xs-controls .icon-btn.is-on,
+.studio .xs-controls .btn-quiet.is-on {
+  background: var(--chalk);
+  color: var(--ink);
+}
+
+.studio .xs-controls .btn-quiet.small {
+  height: 26px;
+  padding: 0 8px;
+}
+
+.studio .xs-volume {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 64px;
+  height: 16px;
+  margin: 0;
+  background: linear-gradient(90deg, var(--chalk) var(--fill, 0%), rgb(255 255 255 / 16%) var(--fill, 0%)) center / 100% 3px no-repeat;
+  cursor: pointer;
+}
+
+.studio .xs-volume::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--chalk);
+}
+
+.studio .xs-controls select.xs-quality {
+  width: auto;
+  max-width: 96px;
+  height: 26px;
+  padding: 0 24px 0 8px;
+  font-size: 12px;
+  background-position: calc(100% - 13px) 11px, calc(100% - 8px) 11px;
+}
+
+.studio .xs-spacer {
+  flex: 1;
+}
+
+.studio .xs-problem {
+  padding: 0 10px 8px;
+  flex: none;
+}
+
+/* The corner grip: two short strokes, drawn rather than an icon so it stays crisp when small. */
+.studio .xs-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background:
+    linear-gradient(135deg, transparent 55%, var(--ash-2) 55%, var(--ash-2) 62%, transparent 62%,
+      transparent 75%, var(--ash-2) 75%, var(--ash-2) 82%, transparent 82%);
+}
+
+.studio .xs-resize:hover {
+  background:
+    linear-gradient(135deg, transparent 55%, var(--chalk) 55%, var(--chalk) 62%, transparent 62%,
+      transparent 75%, var(--chalk) 75%, var(--chalk) 82%, transparent 82%);
+}

@@ -1,24 +1,32 @@
 /**
- * Everything Douyu that is not watching: accounts, room tasks, badge renewal. It lives off
- * the player on purpose — none of it is touched mid-match.
+ * Everything Douyu that is not watching: accounts, followed rooms, room tasks, batch
+ * check-ins, the backpack and badges. It lives off the player on purpose — none of it is
+ * touched mid-match.
  */
 
 import { useState } from 'react'
 import { useSessionSnapshot } from '../../app/SessionContext'
 import { Sheet } from '../kit'
 import { Accounts } from './Accounts'
+import { Automations } from './Automations'
+import { Backpack } from './Backpack'
+import { Following } from './Following'
 import { Renewal } from './Renewal'
+import { Spending } from './Spending'
 import { Tasks } from './Tasks'
 import { useDouyu, type Lane } from './useDouyu'
 
-type Tab = 'accounts' | 'tasks' | 'renewal'
+type Tab = 'accounts' | 'following' | 'tasks' | 'automations' | 'backpack' | 'renewal'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'accounts', label: '账号' },
+  { id: 'following', label: '关注' },
   { id: 'tasks', label: '房间任务' },
-  { id: 'renewal', label: '续粉丝牌' },
+  { id: 'automations', label: '批量任务' },
+  { id: 'backpack', label: '背包' },
+  { id: 'renewal', label: '粉丝牌' },
 ]
 
-export function DouyuDesk({ onClose }: { onClose: () => void }): React.ReactNode {
+export function DouyuDesk({ onClose, onWatch }: { onClose: () => void; onWatch: (room: string) => void }): React.ReactNode {
   const data = useDouyu()
   const { danmaku } = useSessionSnapshot()
   const [tab, setTab] = useState<Tab>(data.all.length === 0 ? 'accounts' : 'tasks')
@@ -40,8 +48,11 @@ export function DouyuDesk({ onClose }: { onClose: () => void }): React.ReactNode
           </span>
         </nav>
         <div className="desk-content" role="tabpanel">
-          {tab === 'accounts' && <Accounts data={data} />}
+          {tab === 'accounts' && <><Accounts data={data} /><Spending data={data} /></>}
+          {tab === 'following' && <Following data={data} onWatch={(room) => { onWatch(room); onClose() }} />}
           {tab === 'tasks' && <Tasks data={data} defaultRoom={danmaku.room} />}
+          {tab === 'automations' && <Automations data={data} />}
+          {tab === 'backpack' && <Backpack data={data} room={danmaku.room} />}
           {tab === 'renewal' && (
             <Renewal accountId={active?.id ?? null} accountLabel={active?.label ?? ''}
               ready={!!active?.login.loggedIn && !data.accountsBusy} />

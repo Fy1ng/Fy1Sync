@@ -1,0 +1,257 @@
+/*
+ * The enhanced picture-in-picture window, and its block in the settings sheet.
+ *
+ * The window is not inside .studio, so it carries its own copy of the tokens. Chrome stays
+ * out of the picture until the pointer is over the window or focus is inside it.
+ */
+
+.pip-page {
+  --ink: #0d0d0f;
+  --smoke: rgb(22 22 25 / 78%);
+  --smoke-deep: rgb(16 16 18 / 94%);
+  --panel: #18181b;
+  --line: rgb(255 255 255 / 8%);
+  --chalk: #f3f0ea;
+  --ash: #9a9893;
+  --ash-2: #64635f;
+  --lock: #6fd3a8;
+  --drift: #f0b03f;
+  --tally: #ff4d4d;
+  --cjk: 'Noto Sans SC', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
+  --mono: 'Cascadia Code', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  --r: 10px;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #000;
+  color: var(--chalk);
+  font-family: var(--cjk);
+  font-size: 12px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+.pip-page *,
+.pip-page *::before,
+.pip-page *::after {
+  box-sizing: border-box;
+}
+
+.pip-page .pip-video,
+.pip-page .pip-danmaku {
+  position: absolute;
+  inset: 0;
+}
+
+.pip-page .pip-video video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+/* ---------- danmaku ---------- */
+
+.pip-page .pip-danmaku {
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.pip-page .pip-dm {
+  position: absolute;
+  top: 6px;
+  left: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: pre;
+  color: #fff;
+  text-shadow: 0 0 2px rgb(0 0 0 / 90%), 0 1px 2px rgb(0 0 0 / 80%);
+  will-change: transform;
+}
+
+/* ---------- status ---------- */
+
+.pip-page .pip-status {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  max-width: calc(100% - 32px);
+  margin: 0;
+  padding: 6px 12px;
+  transform: translate(-50%, -50%);
+  border-radius: var(--r);
+  background: var(--smoke-deep);
+  color: var(--chalk);
+  text-align: center;
+  pointer-events: none;
+}
+
+.pip-page[data-phase='failed'] .pip-status {
+  color: var(--drift);
+}
+
+/* ---------- chrome ---------- */
+
+.pip-page .pip-controls,
+.pip-page .pip-send {
+  position: absolute;
+  left: 0;
+  right: 0;
+  opacity: 0;
+  transition: opacity 160ms var(--ease);
+}
+
+.pip-page:hover :is(.pip-controls, .pip-send),
+.pip-page:focus-within :is(.pip-controls, .pip-send),
+.pip-page .pip-send[data-outcome='shown'] {
+  opacity: 1;
+}
+
+.pip-page .pip-controls {
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 14px;
+  background: linear-gradient(rgb(0 0 0 / 62%), transparent);
+}
+
+.pip-page .pip-send {
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 8px 8px;
+  background: linear-gradient(transparent, rgb(0 0 0 / 62%));
+}
+
+.pip-page button,
+.pip-page input {
+  font: inherit;
+  color: inherit;
+}
+
+.pip-page button {
+  border: 0;
+  cursor: pointer;
+}
+
+.pip-page button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.pip-page button:focus-visible,
+.pip-page input:focus-visible {
+  outline: 2px solid var(--chalk);
+  outline-offset: 1px;
+}
+
+.pip-page .icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+
+.pip-page .pip-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 7px;
+  background: transparent;
+}
+
+.pip-page .pip-icon:hover:not(:disabled),
+.pip-page .pip-text-btn:hover:not(:disabled) {
+  background: rgb(255 255 255 / 13%);
+}
+
+.pip-page .pip-text-btn {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  background: rgb(255 255 255 / 9%);
+  white-space: nowrap;
+}
+
+.pip-page .pip-volume {
+  width: 72px;
+  accent-color: var(--chalk);
+}
+
+.pip-page .pip-spacer {
+  flex: 1;
+}
+
+.pip-page .pip-control-note {
+  overflow: hidden;
+  color: var(--drift);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pip-page .pip-send-row {
+  display: flex;
+  gap: 6px;
+}
+
+.pip-page .pip-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--smoke);
+  backdrop-filter: blur(12px);
+  user-select: text;
+}
+
+.pip-page .pip-input::placeholder {
+  color: var(--ash);
+}
+
+.pip-page .pip-input:disabled {
+  opacity: 0.7;
+}
+
+.pip-page .pip-send-btn {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 7px;
+  background: var(--chalk);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.pip-page .pip-outcome {
+  align-self: flex-start;
+  max-width: 100%;
+  margin: 0;
+  padding: 2px 8px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--smoke-deep);
+  color: var(--lock);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pip-page .pip-outcome.is-bad {
+  color: var(--drift);
+}
+
+/* ---------- settings sheet ---------- */
+
+.studio .pip-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}

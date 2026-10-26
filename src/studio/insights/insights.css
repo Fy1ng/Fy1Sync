@@ -1,0 +1,117 @@
+/* Room statistics sheet (RoomInsights.tsx). */
+
+.studio .insights {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.studio .insights .desk-tabs {
+  gap: 8px;
+}
+
+.studio .insights-room {
+  margin-left: auto;
+}
+
+.studio .insights .btn-quiet .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.studio .insights-body {
+  gap: 22px;
+  padding-top: 18px;
+}
+
+.studio .insights-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.studio .insights-section h3 {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ash);
+  letter-spacing: 0.04em;
+}
+
+.studio .insights-warn {
+  font-size: 12px;
+  color: var(--drift);
+}
+
+.studio .stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+
+.studio .stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--panel);
+}
+
+.studio .stat dt {
+  font-size: 12px;
+  color: var(--ash);
+}
+
+.studio .stat dd {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+
+.studio .stat dd > span {
+  font-size: 17px;
+  color: var(--chalk);
+}
+
+.studio .stat dd > .stat-unknown,
+.studio .rank-table .stat-unknown {
+  color: var(--ash-2);
+}
+
+.studio .stat small {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ash-2);
+}
+
+.studio .rank-table {
+  width: 100%;
+  font-size: 13px;
+  border-collapse: collapse;
+}
+
+.studio .rank-table th {
+  padding: 6px 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ash);
+  text-align: left;
+}
+
+.studio .rank-table td {
+  padding: 7px 0;
+  border-top: 1px solid var(--line);
+}
+
+.studio .rank-table :is(th, td):first-child {
+  width: 52px;
+}
+
+.studio .rank-table :is(th, td):last-child {
+  text-align: right;
+}

@@ -9,7 +9,10 @@ import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { DecoderPreferenceState } from '../../electron/decoderPreferences'
 import type { LoginStatus } from '../../electron/login'
 import type { ToolsStatus } from '../../electron/toolsService'
+import { AppUpdateSettings } from './about/AppUpdate'
+import { CaptureSettings } from './capture/Capture'
 import { Segmented, Sheet, Switch } from './kit'
+import { PipSettings } from './pip/PipSettings'
 
 export function SettingsSheet({ onClose }: { onClose: () => void }): React.ReactNode {
   return (
@@ -18,7 +21,10 @@ export function SettingsSheet({ onClose }: { onClose: () => void }): React.React
         <YouTubeAccount />
         <AlignPrefs />
         <Decoding />
+        <Group title="画中画"><PipSettings /></Group>
+        <Group title="截图与 GIF"><CaptureSettings /></Group>
         <Tools />
+        <Group title="关于"><AppUpdateSettings /></Group>
       </div>
     </Sheet>
   )

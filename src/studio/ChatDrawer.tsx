@@ -9,18 +9,32 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { anchoredScrollTop, chatWindow, isPinned } from '../ui/chatWindow'
+import type { DanmakuMessage } from '../core/danmakuTimeline'
 import { useComposer } from './composer'
-import { Icon } from './kit'
+import { useDanmakuActions } from './danmakuActions'
+import { useDanmakuRate } from './insights/RoomInsights'
+import type { RecordsTab } from './records/DanmakuRecords'
+import { Icon, Popover } from './kit'
 import { useSourceLoader } from './sources'
+import { deliveryText } from './useStudioComposer'
 
 const ROW = 30
 
-export function ChatDrawer({ onClose, onOpenDouyu }: { onClose: () => void; onOpenDouyu: () => void }): React.ReactNode {
+export function ChatDrawer({ onClose, onOpenDouyu, onOpenRecords, onOpenInsights }: {
+  onClose: () => void
+  onOpenDouyu: () => void
+  onOpenRecords: (tab: RecordsTab, uid?: string) => void
+  onOpenInsights: () => void
+}): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const { danmaku } = snapshot
   const composer = useComposer()
   const { roomName } = useSourceLoader()
+  const rate = useDanmakuRate(danmaku.room)
+  // One menu for the whole list, placed beside the row it was opened from.
+  const [rowMenu, setRowMenu] = useState<{ message: DanmakuMessage; top: number } | null>(null)
+  const [rowNote, setRowNote] = useState<string | null>(null)
   const box = useRef<HTMLTextAreaElement | null>(null)
   const subscribe = useCallback((listener: () => void) => session.subscribeChat(listener), [session])
   const messages = useSyncExternalStore(subscribe, () => session.chatHistory())
@@ -93,7 +107,17 @@ export function ChatDrawer({ onClose, onOpenDouyu }: { onClose: () => void; onOp
           <span className="drawer-dot" data-on={danmaku.connected} aria-hidden="true" />
           {roomName ? `房间 ${roomName}` : '弹幕'}
         </span>
-        <span className="num muted">{messages.length > 0 ? messages.length : ''}</span>
+        {rate !== null && <span className="num muted" title="每分钟收到的弹幕数">{Math.round(rate)} 条/分</span>}
+        <span className="drawer-tools">
+          <button type="button" className="icon-btn" onClick={() => onOpenRecords('history')} aria-label="弹幕记录与收藏" title="弹幕记录与收藏">
+            <Icon name="history" />
+          </button>
+          {danmaku.room && (
+            <button type="button" className="icon-btn" onClick={onOpenInsights} aria-label="房间数据" title="房间数据">
+              <Icon name="stats" />
+            </button>
+          )}
+        </span>
         <button type="button" className="icon-btn" onClick={onClose} aria-label="收起弹幕" title="收起（C）">
           <Icon name="close" />
         </button>
@@ -108,6 +132,7 @@ export function ChatDrawer({ onClose, onOpenDouyu }: { onClose: () => void; onOp
             if (!ours) pinned.current = isPinned(node.scrollTop, node.clientHeight, node.scrollHeight, ROW)
             if (pinned.current) setUnread(0)
             setScrollTop(node.scrollTop)
+            setRowMenu(null)
           }}>
           {messages.length === 0 ? (
             <p className="drawer-empty">
@@ -120,16 +145,33 @@ export function ChatDrawer({ onClose, onOpenDouyu }: { onClose: () => void; onOp
                   style={{ transform: `translateY(${(start + offset) * ROW}px)` }} title={`${message.user}：${message.text}`}>
                   <span className="msg-user">{message.user}</span>
                   <span className="msg-text">{message.text}</span>
+                  {message.duplicateCount !== undefined && message.duplicateCount > 1 && (
+                    <span className="msg-count num" title="相同弹幕的合并次数">×{message.duplicateCount}</span>
+                  )}
                   {!message.gift && (
-                    <button type="button" className="msg-plus" disabled={!composer.canSendText(message.text)}
-                      aria-label={`+1：${message.text}`} title={composer.repeatProblem(message.text) ?? '发送相同内容'}
-                      onClick={() => void composer.repeat(message.text)}>+1</button>
+                    <span className="msg-actions">
+                      <button type="button" className="msg-plus" disabled={!composer.canSendText(message.text)}
+                        aria-label={`+1：${message.text}`} title={composer.repeatProblem(message.text) ?? '发送相同内容'}
+                        onClick={() => void composer.repeat(message.text)}>+1</button>
+                      <button type="button" className="msg-more" aria-label={`更多操作：${message.text}`} title="更多操作"
+                        onClick={() => { setRowNote(null); setRowMenu({ message, top: (start + offset + 1) * ROW - scrollTop }) }}>
+                        <Icon name="more" />
+                      </button>
+                    </span>
                   )}
                 </div>
               ))}
             </div>
           )}
         </div>
+        {rowMenu && (
+          <div className="row-menu-anchor" style={{ top: rowMenu.top }}>
+            <Popover open onClose={() => setRowMenu(null)} className="row-menu" label={`弹幕操作：${rowMenu.message.text}`}>
+              <RowActions message={rowMenu.message} note={rowNote} setNote={setRowNote} close={() => setRowMenu(null)}
+                onReply={() => { composer.reply(rowMenu.message.user); setRowMenu(null) }} />
+            </Popover>
+          </div>
+        )}
         {unread > 0 && (
           <button type="button" className="drawer-jump" onClick={() => {
             const node = scroller.current
@@ -155,17 +197,47 @@ export function ChatDrawer({ onClose, onOpenDouyu }: { onClose: () => void; onOp
             event.preventDefault()
             void composer.sendDraft()
           }} />
-        <button type="submit" className="say-send" disabled={!composer.canSendText(composer.draft)}>发送</button>
+        <button type="submit" className="say-send" disabled={!!composer.blockedReason || !!composer.draftProblem}>发送</button>
         <p className="say-meta">
           {composer.account?.loggedIn
             ? <span>以 {composer.account.label} 发送</span>
             : <button type="button" className="link-btn" onClick={onOpenDouyu}>登录斗鱼</button>}
           {composer.remaining > 0 && <span className="num">{composer.remaining}s</span>}
-          {composer.draft.length > 400 && <span className="num">{composer.draft.length}/500</span>}
+          {composer.affixes.enabled && composer.draft.length > 0 && <span title="在弹幕设置中修改">含前后缀</span>}
+          {composer.composedLength > composer.lengthLimit * 0.8 && <span className="num">{composer.composedLength}/{composer.lengthLimit}</span>}
         </p>
         {composer.draft.length > 0 && composer.draftProblem && <p className="say-note is-warn">{composer.draftProblem}</p>}
         {composer.notice && <p className="say-note" data-state={composer.notice.status} role="status">{composer.notice.message}</p>}
+        {deliveryText(composer.delivery) && <p className="say-note">{deliveryText(composer.delivery)}</p>}
       </form>
     </aside>
+  )
+}
+
+/** The actions behind a row's "更多操作": the same ones the hover menu over the picture offers. */
+function RowActions({ message, note, setNote, close, onReply }: {
+  message: DanmakuMessage
+  note: string | null
+  setNote: (note: string | null) => void
+  close: () => void
+  onReply: () => void
+}): React.ReactNode {
+  const composer = useComposer()
+  const actions = useDanmakuActions()
+  const uid = message.sender?.uid
+  return (
+    <>
+      <span className="row-menu-user">{message.user}{uid && <span className="num muted"> {uid}</span>}</span>
+      <button type="button" className="menu-item" disabled={!composer.canEdit} onClick={onReply}>回复</button>
+      <button type="button" className="menu-item" onClick={() => { void actions.favorite(message).then(setNote) }}>收藏</button>
+      <button type="button" className="menu-item" onClick={() => { actions.copy(message.text); close() }}>复制</button>
+      {uid && actions.showDetails && (
+        <button type="button" className="menu-item" onClick={() => { actions.showDetails?.(message); close() }}>用户详情</button>
+      )}
+      {uid && <button type="button" className="menu-item" onClick={() => { actions.history(uid); close() }}>历史弹幕</button>}
+      {uid && <button type="button" className="menu-item" onClick={() => { actions.mute(message); close() }}>禁言</button>}
+      <button type="button" className="menu-item is-danger" onClick={() => { actions.block(message.user); close() }}>屏蔽此用户</button>
+      {note && <p className="lane" role="status">{note}</p>}
+    </>
   )
 }

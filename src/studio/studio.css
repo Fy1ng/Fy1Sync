@@ -2454,6 +2454,172 @@ body,
   color: var(--drift);
 }
 
+/* ---------- picture-in-picture button in the dock ---------- */
+
+.studio .pip-control {
+  position: relative;
+}
+
+.studio .icon-btn.is-on {
+  color: var(--lock);
+}
+
+.studio .pip-menu {
+  right: 0;
+  bottom: calc(100% + 10px);
+  width: 220px;
+  gap: 2px;
+  padding: 6px;
+}
+
+.studio .menu-item:disabled {
+  color: var(--ash-2);
+  cursor: default;
+}
+
+.studio .menu-item:disabled:hover {
+  background: none;
+}
+
+.studio .menu-note {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--ash);
+}
+
+/* ---------- merged duplicates and the hover menu's extras ---------- */
+
+.studio .danmaku-count {
+  margin-left: 0.4em;
+  font-family: var(--mono);
+  font-size: 0.72em;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.studio .dm-menu-note {
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--lock);
+  white-space: nowrap;
+}
+
+/* ---------- chat list: header tools, counts, row menu ---------- */
+
+.studio .drawer-tools {
+  display: flex;
+  align-items: center;
+}
+
+.studio .msg-count {
+  flex: none;
+  font-size: 11px;
+  color: var(--drift);
+}
+
+.studio .msg-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.studio .msg-more {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--ash);
+  border-radius: 11px;
+  opacity: 0;
+}
+
+.studio .msg-more .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.studio .msg:hover .msg-more,
+.studio .msg-more:focus-visible {
+  opacity: 1;
+}
+
+.studio .msg-more:hover {
+  color: var(--chalk);
+  background: rgb(255 255 255 / 12%);
+}
+
+.studio .row-menu-anchor {
+  position: absolute;
+  right: 12px;
+  z-index: 30;
+}
+
+.studio .row-menu {
+  top: 0;
+  right: 0;
+  width: 180px;
+  gap: 0;
+  padding: 6px;
+}
+
+.studio .row-menu-user {
+  padding: 4px 10px 8px;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+
+.studio .menu-item.is-danger {
+  color: #ff8a80;
+}
+
+/* ---------- small fact lists (sender details, mute confirmation) ---------- */
+
+.studio .facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.studio .facts dt {
+  color: var(--ash);
+}
+
+.studio .facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.studio .btn-solid.is-danger {
+  color: #1a0b0a;
+  background: #ff8a80;
+}
+
+/* ---------- prefix / suffix ---------- */
+
+.studio .affixes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.studio .affixes-preview {
+  grid-column: 1 / -1;
+  margin: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- crash and loading screens (outside .studio) ---------- */
 
 .crash,

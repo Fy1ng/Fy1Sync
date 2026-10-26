@@ -102,15 +102,15 @@ await app.evaluate((_electron, { room, rate }) => {
 // Drive the screen to a ready state, then hand it over.
 await page.getByRole('dialog', { name: '添加直播间' }).waitFor({ timeout: 10_000 }).catch(() => {})
 if (!flag('no-video')) {
-  const fixtures = page.getByRole('button', { name: '用测试片源' })
+  const fixtures = page.getByRole('button', { name: '载入测试片源' })
   if (await fixtures.isVisible().catch(() => false)) await fixtures.click()
   else console.log('没有测试片源（先运行 npm run fixtures），只演示弹幕。')
 }
-const skip = page.getByRole('button', { name: /^(跳过|先看着)$/ })
+const skip = page.getByRole('button', { name: /^(跳过|开始观看)$/ })
 await page.waitForTimeout(1500)
 if (await skip.isVisible().catch(() => false)) await skip.click()
 await page.getByRole('button', { name: /^解说：/ }).click()
-await page.getByRole('button', { name: /^(连接|换房间)$/ }).click()
+await page.getByRole('button', { name: /^(连接|更换房间)$/ }).click()
 await page.getByLabel('弹幕房间号').fill(ROOM)
 await page.getByRole('button', { name: '连接', exact: true }).click()
 await page.keyboard.press('Escape')

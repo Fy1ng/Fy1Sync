@@ -1,0 +1,125 @@
+/* Danmaku history search and favorites sheet. */
+
+.studio .records {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.studio .records-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.studio .records-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 24px 28px;
+}
+
+.studio .records-filters {
+  display: grid;
+  grid-template-columns: 140px 120px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.studio .records-filters.is-single {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.studio .records-filters .btn-solid.small {
+  height: 34px;
+  padding: 0 16px;
+}
+
+.studio .records-note {
+  align-items: center;
+}
+
+.studio .records-third {
+  margin-left: 6px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 16px;
+  color: var(--drift);
+  border: 1px solid rgb(240 176 63 / 45%);
+  border-radius: 3px;
+}
+
+.studio .records-empty {
+  padding: 28px 0;
+  color: var(--ash);
+  text-align: center;
+}
+
+.studio .records-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.studio .records-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.studio .records-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  font-size: 12px;
+  color: var(--ash);
+}
+
+.studio .records-meta .num.muted {
+  font-size: 11px;
+  color: var(--ash-2);
+}
+
+.studio .records-user {
+  font-weight: 600;
+  color: var(--chalk);
+}
+
+.studio .records-text {
+  font-family: var(--cjk);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--chalk);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.studio .records-edit {
+  font-family: var(--cjk);
+  font-size: 14px;
+}
+
+.studio .records-actions {
+  margin-top: 2px;
+}
+
+.studio .records-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+@media (max-width: 640px) {
+  .studio .records-filters {
+    grid-template-columns: 1fr 1fr;
+  }
+}

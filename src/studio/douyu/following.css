@@ -1,0 +1,124 @@
+/* Followed rooms and live notifications (Following.tsx). */
+
+.studio .follow-notify {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--smoke-deep);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+
+.studio .follow-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.studio .follow-partial {
+  font-size: 12px;
+  color: var(--drift);
+}
+
+.studio .follow-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.studio .follow-notices li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 14px;
+  border-left: 2px solid var(--tally);
+  background: var(--smoke);
+  border-radius: 0 var(--r) var(--r) 0;
+}
+
+.studio .follow-notices li > span:first-child {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.studio .follow-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.studio .follow-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.studio .follow-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.studio .follow-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.studio .follow-name {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.studio .follow-state {
+  flex: none;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  color: var(--ash);
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+}
+
+.studio .follow-state[data-tone='live'] {
+  color: var(--ink);
+  background: var(--tally);
+  border-color: var(--tally);
+}
+
+.studio .follow-state[data-tone='replay'] {
+  color: var(--drift);
+  border-color: var(--drift);
+}
+
+.studio .follow-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.studio .follow-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 6px;
+  font-size: 12px;
+  color: var(--ash);
+  cursor: pointer;
+}
+
+.studio .following .btn-quiet .icon {
+  width: 16px;
+  height: 16px;
+}
