@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSession } from '../app/SessionContext'
 import type { RoiRect } from '../core/profileSchema'
-import { RoiWindow } from '../ui/admin/RoiWindow'
+import { RoiWindow } from './editor/RoiWindow'
 import { sampleCameraFrames, watchCameraFrames } from '../ui/cameraFrames'
 import { Sheet } from './kit'
 

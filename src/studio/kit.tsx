@@ -74,6 +74,26 @@ export function Segmented<T extends string | number>({ value, options, onChange,
   )
 }
 
+/** A labelled slider with its value on the right; `--fill` paints the travelled part. */
+export function Range({ label, value, min, max, step, unit = '', format, onChange, disabled = false }: {
+  label: string; value: number; min: number; max: number; step: number; unit?: string
+  format?: (value: number) => string
+  onChange: (value: number) => void
+  disabled?: boolean
+}): React.ReactNode {
+  return (
+    <label className="range">
+      <span className="range-head">
+        <span>{label}</span>
+        <span className="num">{format ? format(value) : `${value}${unit}`}</span>
+      </span>
+      <input type="range" min={min} max={max} step={step} value={value} aria-label={label} disabled={disabled}
+        style={{ '--fill': `${((value - min) / (max - min)) * 100}%` } as React.CSSProperties}
+        onChange={(event) => onChange(Number(event.target.value))} />
+    </label>
+  )
+}
+
 /**
  * A button that repeats while held, and speeds up the longer it is held: taps make small
  * corrections, a held press crosses tens of seconds without a separate "big step" control.

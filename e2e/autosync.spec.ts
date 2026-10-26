@@ -296,15 +296,15 @@ test.describe('自动同步', () => {
 async function teachProfile(page: Page, id: string, name: string): Promise<void> {
   failOnPageError(page)
   await page.goto(APP_ORIGIN + '/admin')
-  await expect(page.locator('.admin-columns')).toBeVisible()
+  await expect(page.locator('.editor-main')).toBeVisible()
 
   await setField(page, '标识', id)
   await setField(page, '名称', name)
 
-  await page.locator('.stage-toolbar input[accept="video/*"]').setInputFiles(officialPath)
+  await page.locator('main input[accept="video/*"]').setInputFiles(officialPath)
   await expect
     .poll(async () =>
-      page.locator('video.admin-video').evaluate((node: HTMLVideoElement) => node.videoWidth),
+      page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.videoWidth),
     )
     .toBeGreaterThan(0)
   await setRoi(page, ROI)
@@ -342,7 +342,7 @@ async function teachProfile(page: Page, id: string, name: string): Promise<void>
   expect([...learned].sort(), '每个时钟字符都应教到至少一个样本').toEqual(CLOCK_CHARS)
 
   await page.getByRole('button', { name: '发布到本机' }).click()
-  await expect(page.locator('.admin-message.is-info')).toContainText('已发布')
+  await expect(page.locator('.editor-note.is-info')).toContainText('已发布')
 }
 
 /** Choose a published preset in the studio's alignment options. */
@@ -400,11 +400,7 @@ async function readResult(page: Page, term: string): Promise<number | null> {
 }
 
 async function setField(page: Page, label: string, value: string): Promise<void> {
-  const field = page
-    .locator('.admin-library-column .field')
-    .filter({ has: page.getByText(label, { exact: true }) })
-    .first()
-  await field.locator('input, textarea').first().fill(value)
+  await page.getByRole('textbox', { name: label, exact: true }).fill(value)
 }
 
 async function setRoi(page: Page, roi: { x: number; y: number; w: number; h: number }): Promise<void> {
@@ -423,7 +419,7 @@ async function setRoi(page: Page, roi: { x: number; y: number; w: number; h: num
  * segment into the same number of boxes, so a box count alone cannot tell them apart.
  */
 async function seekSample(page: Page, seconds: number): Promise<void> {
-  await page.locator('video.admin-video').evaluate((node: HTMLVideoElement, to: number) => {
+  await page.locator('video.editor-media').evaluate((node: HTMLVideoElement, to: number) => {
     node.currentTime = to
   }, seconds)
   // Compared as a number, not as text: a seek lands on the nearest frame, so 1.5 s can
@@ -432,7 +428,7 @@ async function seekSample(page: Page, seconds: number): Promise<void> {
   await expect
     .poll(
       async () => {
-        const text = await page.locator('.timeline-readout span').first().innerText()
+        const text = await page.locator('.editor-time span').first().innerText()
         return Number.parseFloat(text)
       },
       { timeout: 20_000, message: `样片应停在 ${seconds}s` },

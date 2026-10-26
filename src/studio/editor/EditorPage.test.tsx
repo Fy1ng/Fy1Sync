@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import type { StreamSyncerBridge } from '../../../electron/contracts'
 import { Session } from '../../app/session'
 import { SessionProvider } from '../../app/SessionContext'
-import AdminPage from './AdminPage'
+import EditorPage from './EditorPage'
 import { apiClient } from '../../app/apiClient'
 import { profileStore } from '../../core/profileStore'
 import { CLOCK_CHARS, createEmptyProfile, TEMPLATE_PIXELS } from '../../core/profileSchema'
@@ -18,7 +18,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('AdminPage desktop entry', () => {
+describe('EditorPage desktop entry', () => {
   it('opens directly and shows main-process write validation without a token gate', async () => {
     const invoke = vi.fn(async (method: string) => method === 'listPresets'
       ? { ok: true, value: { presets: [] } }
@@ -27,8 +27,8 @@ describe('AdminPage desktop entry', () => {
     vi.stubGlobal('streamSyncer', { invoke, subscribeDanmaku: () => () => {} } satisfies StreamSyncerBridge)
     const session = new Session({ createSampler: () => null })
     sessions.push(session)
-    render(<SessionProvider session={session}><AdminPage /></SessionProvider>)
-    expect(screen.getByRole('heading', { name: '配置编辑器' })).toBeInTheDocument()
+    render(<SessionProvider session={session}><EditorPage /></SessionProvider>)
+    expect(screen.getByLabelText('名称')).toHaveValue('未命名场景')
     expect(screen.queryByLabelText('管理令牌')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '发布到本机' }))
     expect(await screen.findByRole('status')).toHaveTextContent('roi.w 必须大于 0')
@@ -55,7 +55,7 @@ describe('publish conflicts', () => {
     vi.stubGlobal('streamSyncer', { invoke, subscribeDanmaku: () => () => {} } satisfies StreamSyncerBridge)
     const session = new Session({ createSampler: () => null })
     sessions.push(session)
-    render(<SessionProvider session={session}><AdminPage /></SessionProvider>)
+    render(<SessionProvider session={session}><EditorPage /></SessionProvider>)
 
     fireEvent.click(screen.getByRole('button', { name: '发布到本机' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('已在别处被修改')
@@ -84,7 +84,8 @@ async function editingPublishedProfile() {
   const publish = vi.spyOn(apiClient, 'savePreset').mockResolvedValue({ ok: true, value: { id: profile.id, etag: 'new-etag', updatedAt: 3 } })
   const session = new Session({ createSampler: () => null })
   sessions.push(session)
-  render(<SessionProvider session={session}><AdminPage /></SessionProvider>)
+  render(<SessionProvider session={session}><EditorPage /></SessionProvider>)
+  await openPreset()
   fireEvent.click(await screen.findByRole('button', { name: /Original/ }))
   await waitFor(() => expect(screen.getByLabelText('名称')).toHaveValue('Original'))
   return { profile, session, draft, publish, read }
@@ -120,7 +121,7 @@ describe('editor saved and published state', () => {
     await act(async () => finish({ ok: true, value: { id: profile.id, etag: 'submitted-etag', updatedAt: 4 } }))
     expect(screen.getByLabelText('名称')).toHaveValue('New edits')
     expect(screen.getByRole('status')).toHaveTextContent('当前还有未发布的修改')
-    expect(screen.getByRole('heading', { name: '配置编辑器' }).closest('header')).toHaveTextContent('未保存')
+    expect(screen.getByRole('banner')).toHaveTextContent('未保存')
     fireEvent.click(screen.getByRole('button', { name: '应用到播放器' }))
     expect(session.profileFor('official')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '发布到本机' }))
@@ -138,7 +139,7 @@ describe('editor saved and published state', () => {
     await act(async () => finish({ id: profile.id, profile: draft.mock.calls[0]![0], updatedAt: 4 }))
     expect(screen.getByLabelText('名称')).toHaveValue('Unsaved changes')
     expect(screen.getByRole('status')).toHaveTextContent('当前还有未保存的修改')
-    expect(screen.getByRole('heading', { name: '配置编辑器' }).closest('header')).toHaveTextContent('未保存')
+    expect(screen.getByRole('banner')).toHaveTextContent('未保存')
   })
 
   it('does not apply late publication metadata to a newly created document', async () => {
@@ -146,7 +147,8 @@ describe('editor saved and published state', () => {
     let finish!: (value: Awaited<ReturnType<typeof apiClient.savePreset>>) => void
     publish.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
     fireEvent.click(screen.getByRole('button', { name: '发布到本机' }))
-    fireEvent.click(screen.getByRole('button', { name: '新建' }))
+    fireEvent.click(screen.getByRole('button', { name: '更多' }))
+    fireEvent.click(screen.getByRole('button', { name: '新建空白样式' }))
     await act(async () => finish({ ok: true, value: { id: profile.id, etag: 'obsolete-etag', updatedAt: 4 } }))
     expect(screen.getByLabelText('标识')).toHaveValue('custom/untitled')
     fireEvent.click(screen.getByRole('button', { name: '发布到本机' }))
@@ -158,9 +160,18 @@ describe('editor saved and published state', () => {
     const { read, profile } = await editingPublishedProfile()
     let finish!: (value: Awaited<ReturnType<typeof apiClient.getPreset>>) => void
     read.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    await openPreset()
     fireEvent.click(screen.getByRole('button', { name: /Original/ }))
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Kept edits' } })
     await act(async () => finish({ ok: true, value: { profile, etag: 'old' } }))
     expect(screen.getByLabelText('名称')).toHaveValue('Kept edits')
   })
 })
+
+/** The menu ignores a reopen right after it closed, so retry until it is open. */
+async function openPreset(): Promise<void> {
+  await waitFor(() => {
+    if (!screen.queryByRole('dialog', { name: '打开' })) fireEvent.click(screen.getByRole('button', { name: '打开' }))
+    expect(screen.getByRole('dialog', { name: '打开' })).toBeInTheDocument()
+  })
+}

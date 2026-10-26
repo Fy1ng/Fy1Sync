@@ -15,7 +15,7 @@ import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { DanmakuPreferences } from '../core/danmakuProcessing'
 import type { MessageAffixes } from '../core/messageComposition'
 import { useComposer } from './composer'
-import { Icon, Segmented, Switch } from './kit'
+import { Icon, Range, Segmented, Switch } from './kit'
 
 export function DanmakuPanel({ onClose }: { onClose: () => void }): React.ReactNode {
   const session = useSession()
@@ -89,24 +89,6 @@ export function DanmakuPanel({ onClose }: { onClose: () => void }): React.ReactN
         {problem && <p className="form-error" role="alert">{problem}</p>}
       </div>
     </aside>
-  )
-}
-
-function Range({ label, value, min, max, step, unit, format, onChange }: {
-  label: string; value: number; min: number; max: number; step: number; unit: string
-  format?: (value: number) => string
-  onChange: (value: number) => void
-}): React.ReactNode {
-  return (
-    <label className="range">
-      <span className="range-head">
-        <span>{label}</span>
-        <span className="num">{format ? format(value) : `${value}${unit}`}</span>
-      </span>
-      <input type="range" min={min} max={max} step={step} value={value} aria-label={label}
-        style={{ '--fill': `${((value - min) / (max - min)) * 100}%` } as React.CSSProperties}
-        onChange={(event) => onChange(Number(event.target.value))} />
-    </label>
   )
 }
 

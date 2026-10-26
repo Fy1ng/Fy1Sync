@@ -1,7 +1,7 @@
 /**
  * Application entry point.
  *
- * Three routes, no router library: the pages never nest. `/admin` is the Profile Editor,
+ * Three routes, no router library: the pages never nest. `/admin` is the countdown style editor,
  * `/pip` is the enhanced picture-in-picture window, everything else is the player. The
  * editor and the PiP page are lazy so the player's first paint carries neither.
  *
@@ -17,7 +17,7 @@ import { Session } from './app/session'
 import { SessionProvider } from './app/SessionContext'
 import { Studio } from './studio/Studio'
 
-const AdminPage = lazy(() => import('./ui/admin/entry'))
+const EditorPage = lazy(() => import('./studio/editor/EditorPage'))
 const PipPage = lazy(() => import('./studio/pip/PipPage'))
 
 type Route = 'player' | 'admin' | 'pip'
@@ -55,8 +55,8 @@ function App(): React.ReactNode {
   return (
     <SessionProvider session={sharedSession()}>
       {route === 'admin' ? (
-        <Suspense fallback={<div className="page-loading">正在加载场景配置器…</div>}>
-          <AdminPage />
+        <Suspense fallback={<div className="page-loading">正在加载倒计时样式编辑器…</div>}>
+          <EditorPage />
         </Suspense>
       ) : <Studio />}
     </SessionProvider>

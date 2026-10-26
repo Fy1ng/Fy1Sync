@@ -22,18 +22,19 @@ test.describe('本机编辑器访问', () => {
     const seeded = await invoke(page, 'savePreset', { id, profile })
     expect(seeded.ok).toBe(true)
     await page.goto(APP_ORIGIN + '/admin')
+    await openLibrary(page)
     await page.getByRole('button', { name: /种子预设/ }).click()
     await setField(page, '名称', '草稿中的修改')
     await page.getByRole('button', { name: '存为草稿', exact: true }).click()
-    await expect(page.locator('.admin-message')).toContainText('已保存到本机草稿')
+    await expect(page.locator('.editor-note')).toContainText('已保存到本机草稿')
     await page.getByRole('button', { name: '应用到播放器' }).click()
-    await expect(page.locator('.admin-message')).toContainText('请先')
+    await expect(page.locator('.editor-note')).toContainText('请先')
     const before = await invoke(page, 'getPreset', { id })
     expect(before.ok && before.value.profile.name).toBe('种子预设')
     await page.getByRole('button', { name: '发布到本机', exact: true }).click()
-    await expect(page.locator('.admin-message')).toContainText('已发布为本机预设')
+    await expect(page.locator('.editor-note')).toContainText('已发布为本机预设')
     await page.getByRole('button', { name: '应用到播放器' }).click()
-    await expect(page.locator('.admin-message')).toContainText('已设为播放器的识别场景')
+    await expect(page.locator('.editor-note')).toContainText('已设为播放器的倒计时样式')
     await page.getByRole('link', { name: '返回播放器' }).click()
     await expect(sourceDialog(page)).toBeVisible()
     await closeSourceDialog(page)
@@ -44,7 +45,7 @@ test.describe('本机编辑器访问', () => {
   test('本机窗口直接显示编辑器而无需令牌', async ({ page }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
-    await expect(page.locator('.admin-columns')).toBeVisible()
+    await expect(page.locator('.editor-main')).toBeVisible()
     await expect(page.locator('.admin-gate')).toHaveCount(0)
   })
 
@@ -63,20 +64,20 @@ test.describe('本机编辑器访问', () => {
 
   test('刷新后编辑器仍可用且地址中没有令牌', async ({ page }) => {
     await page.goto(APP_ORIGIN + '/admin')
-    await expect(page.locator('.admin-columns')).toBeVisible()
+    await expect(page.locator('.editor-main')).toBeVisible()
     expect(new URL(page.url()).searchParams.has('token')).toBe(false)
     await page.reload()
-    await expect(page.locator('.admin-columns')).toBeVisible()
+    await expect(page.locator('.editor-main')).toBeVisible()
     expect(new URL(page.url()).searchParams.has('token')).toBe(false)
   })
 
   test('返回播放器后仍可在同一本机窗口进入编辑器', async ({ page }) => {
     await page.goto(APP_ORIGIN + '/admin')
-    await expect(page.locator('.admin-columns')).toBeVisible()
+    await expect(page.locator('.editor-main')).toBeVisible()
     await page.getByRole('link', { name: '返回播放器' }).click()
     await expect(page.locator('.studio')).toBeVisible()
     await page.goto(APP_ORIGIN + '/admin')
-    await expect(page.locator('.admin-columns')).toBeVisible()
+    await expect(page.locator('.editor-main')).toBeVisible()
   })
 })
 
@@ -86,10 +87,10 @@ test.describe('取帧与切分', () => {
   test('载入样片后取帧并切出字符框', async ({ page }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
-    await expect(page.locator('.admin-columns')).toBeVisible()
+    await expect(page.locator('.editor-main')).toBeVisible()
 
-    await page.locator('.stage-toolbar input[accept="video/*"]').setInputFiles(officialPath)
-    const video = page.locator('video.admin-video')
+    await page.locator('main input[accept="video/*"]').setInputFiles(officialPath)
+    const video = page.locator('video.editor-media')
     await expect(video).toBeVisible()
     await expect.poll(async () => video.evaluate((node: HTMLVideoElement) => node.videoWidth)).toBeGreaterThan(0)
 
@@ -99,7 +100,7 @@ test.describe('取帧与切分', () => {
     await page.getByRole('button', { name: '取当前帧' }).click()
 
     // Both previews come from the same analysis, so a mask means segmentation ran.
-    await expect(page.locator('.preview-canvas').first()).toBeVisible()
+    await expect(page.locator('.crop-canvas').first()).toBeVisible()
     // 0:19 at t=1s — four glyphs.
     await expect.poll(async () => page.locator('.glyph-box').count(), { timeout: 20_000 }).toBeGreaterThanOrEqual(3)
   })
@@ -107,9 +108,9 @@ test.describe('取帧与切分', () => {
   test('点字符按钮把选中的框存成模板样本', async ({ page }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
-    await page.locator('.stage-toolbar input[accept="video/*"]').setInputFiles(officialPath)
+    await page.locator('main input[accept="video/*"]').setInputFiles(officialPath)
     await expect.poll(async () =>
-      page.locator('video.admin-video').evaluate((node: HTMLVideoElement) => node.videoWidth),
+      page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.videoWidth),
     ).toBeGreaterThan(0)
     await setRoi(page, { x: 0.42, y: 0.045, w: 0.16, h: 0.13 })
     await seekSample(page, 1)
@@ -123,7 +124,7 @@ test.describe('取帧与切分', () => {
       await page.locator('.char-pad').getByRole('button', { name: char, exact: true }).click()
     }
 
-    await expect(page.locator('.admin-header .hint')).toContainText('4 个样本')
+    await expect(page.locator('.editor-rail')).toContainText('4 个样本')
     expect(await page.locator('.template-cell.is-empty').count()).toBeLessThan(emptyBefore)
   })
 })
@@ -132,13 +133,13 @@ test.describe('发布预设', () => {
   test('发布后可以通过接口读回，并带 etag', async ({ page }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
-    await expect(page.locator('.admin-columns')).toBeVisible()
+    await expect(page.locator('.editor-main')).toBeVisible()
 
     const id = `e2e/publish-${Date.now()}`
     await setField(page, '标识', id)
     await setField(page, '名称', 'E2E 发布测试')
     await page.getByRole('button', { name: '发布到本机' }).click()
-    await expect(page.locator('.admin-message.is-info')).toContainText('已发布')
+    await expect(page.locator('.editor-note.is-info')).toContainText('已发布')
 
     const fetched = await invoke(page, 'getPreset', { id })
     expect(fetched.ok).toBe(true)
@@ -164,8 +165,9 @@ test.describe('发布预设', () => {
     expect(seed.ok).toBe(true)
 
     await page.goto(APP_ORIGIN + '/admin')
+    await openLibrary(page)
     await page.locator('.library-item').filter({ hasText: id }).first().click()
-    await expect(page.locator('.admin-message')).toContainText('已载入预设')
+    await expect(page.locator('.editor-note')).toContainText('已载入预设')
 
     // A third party writes in between, which moves the etag out from under the editor.
     const interleaved = await invoke(page, 'savePreset', { id, profile: { ...baseProfile(id), name: '别人的版本' } })
@@ -174,7 +176,7 @@ test.describe('发布预设', () => {
     await setField(page, '名称', '我的版本')
     await page.getByRole('button', { name: '发布到本机' }).click()
     // Last-write-wins would silently discard the other session's edit.
-    await expect(page.locator('.admin-message.is-error')).toContainText('已在别处被修改')
+    await expect(page.locator('.editor-note.is-error')).toContainText('已在别处被修改')
 
     const after = await invoke(page, 'getPreset', { id })
     expect(after.ok).toBe(true)
@@ -184,7 +186,7 @@ test.describe('发布预设', () => {
 
     // Overwriting is a deliberate, named choice and then wins against that version.
     await page.getByRole('button', { name: '用我的版本覆盖' }).click()
-    await expect(page.locator('.admin-message.is-info')).toContainText('已发布为本机预设')
+    await expect(page.locator('.editor-note.is-info')).toContainText('已发布为本机预设')
     const overwritten = await invoke(page, 'getPreset', { id })
     expect(overwritten.ok && overwritten.value.profile.name).toBe('我的版本')
   })
@@ -193,14 +195,14 @@ test.describe('发布预设', () => {
     test.skip(!fixturesReady(), '需要先运行 npm run fixtures')
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
-    await expect(page.locator('.admin-columns')).toBeVisible()
+    await expect(page.locator('.editor-main')).toBeVisible()
 
     await setRoi(page, { x: 0.42, y: 0.045, w: 0.16, h: 0.13 })
-    await page.locator('.stage-toolbar input[accept^="image/"]').setInputFiles(framePath)
-    await expect(page.locator('img.admin-video')).toBeVisible()
-    await expect(page.locator('.admin-message')).toContainText('1280×720')
+    await page.locator('main input[accept^="image/"]').setInputFiles(framePath)
+    await expect(page.locator('img.editor-media')).toBeVisible()
+    await expect(page.locator('.editor-note')).toContainText('1280×720')
     // The still is the frame: no grabbing, and 0:20 segments into its glyphs.
-    await expect(page.getByRole('button', { name: '取当前帧' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: '取当前帧' })).toHaveCount(0)
     await expect.poll(async () => page.locator('.glyph-box').count(), { timeout: 20_000 }).toBeGreaterThanOrEqual(3)
 
     // Paste the same picture through a real ClipboardEvent carrying a File.
@@ -210,11 +212,11 @@ test.describe('发布预设', () => {
       transfer.items.add(new File([new Uint8Array(data)], 'clip.png', { type: 'image/png' }))
       window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true }))
     }, bytes)
-    await expect(page.locator('.admin-message')).toContainText('粘贴的截图')
+    await expect(page.locator('.editor-note')).toContainText('粘贴的截图')
 
     // An unsupported image is refused with a reason rather than silently ignored.
-    await page.locator('.stage-toolbar input[accept^="image/"]').setInputFiles({ name: 'a.gif', mimeType: 'image/gif', buffer: Buffer.from('GIF89a') })
-    await expect(page.locator('.admin-message.is-error')).toContainText('只支持 PNG、JPEG 或 WebP')
+    await page.locator('main input[accept^="image/"]').setInputFiles({ name: 'a.gif', mimeType: 'image/gif', buffer: Buffer.from('GIF89a') })
+    await expect(page.locator('.editor-note.is-error')).toContainText('只支持 PNG、JPEG 或 WebP')
   })
 })
 
@@ -235,19 +237,15 @@ function baseProfile(id: string): RecognitionProfile {
   }
 }
 
-/**
- * Fill a labelled field in the library column.
- *
- * Matched on the label's own text node rather than with `hasText` on the row: `hasText` is
- * case-insensitive and matches substrings, so a one-character label would also match the
- * pixel hint rendered beside it.
- */
+/** Fill one of the top bar's two fields, named 名称 and 标识. */
 async function setField(page: Page, label: string, value: string): Promise<void> {
-  const field = page
-    .locator('.admin-library-column .field')
-    .filter({ has: page.getByText(label, { exact: true }) })
-    .first()
-  await field.locator('input, textarea').first().fill(value)
+  await page.getByRole('textbox', { name: label, exact: true }).fill(value)
+}
+
+/** Open the top bar's 打开 menu, where presets and drafts are listed. */
+async function openLibrary(page: Page): Promise<void> {
+  await page.getByRole('button', { name: '打开', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: '打开' })).toBeVisible()
 }
 
 /** The four ROI inputs render in a fixed order: x, y, w, h. */
@@ -260,7 +258,7 @@ async function setRoi(page: Page, roi: { x: number; y: number; w: number; h: num
 
 /** Seek the sample element directly; the editor grabs on `seeked`. */
 async function seekSample(page: Page, seconds: number): Promise<void> {
-  await page.locator('video.admin-video').evaluate((node: HTMLVideoElement, to: number) => {
+  await page.locator('video.editor-media').evaluate((node: HTMLVideoElement, to: number) => {
     node.currentTime = to
   }, seconds)
   await page.waitForTimeout(500)

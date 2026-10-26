@@ -306,12 +306,12 @@ async function captureAdmin() {
   try {
     await step(page, 'admin-01-editor', async () => {
       await page.goto('app://app/admin')
-      await page.locator('.admin-page').waitFor()
+      await page.locator('.editor').waitFor()
     })
     await step(page, 'admin-02-screenshot-sample', async () => {
       const frame = join(root, 'public', 'test-sources', 'frame-0-20.png')
-      await page.locator('.stage-toolbar input[accept^="image/"]').setInputFiles(frame)
-      await page.locator('img.admin-video').waitFor()
+      await page.locator('main input[accept^="image/"]').setInputFiles(frame)
+      await page.locator('img.editor-media').waitFor()
     })
   } finally {
     await application.close()

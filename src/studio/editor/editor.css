@@ -1,0 +1,671 @@
+/*
+ * The countdown style editor. It shares the studio's tokens and controls; this file only
+ * lays out the page: one bar on top, the sample filling the left, a single rail on the right.
+ * Colour still only says state: the selected glyph, a taught character, a passing check.
+ */
+
+.studio.editor {
+  display: flex;
+  flex-direction: column;
+  grid-template-columns: none;
+}
+
+/* ---------- top bar ---------- */
+
+.editor-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+  padding: 0 14px 0 10px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+
+.editor-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.editor-title input {
+  min-width: 0;
+  padding: 3px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  outline: none;
+  transition: border-color 140ms var(--ease), background 140ms var(--ease);
+}
+
+.editor-title input:hover {
+  background: rgb(255 255 255 / 5%);
+}
+
+.editor-title input:focus {
+  border-color: var(--line-2);
+  background: rgb(0 0 0 / 35%);
+}
+
+.editor-title input {
+  field-sizing: content;
+  max-width: 22em;
+}
+
+.editor-name {
+  min-width: 4em;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.editor-id {
+  min-width: 6em;
+  font-size: 12px;
+  color: var(--ash);
+}
+
+.editor-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ash);
+  white-space: nowrap;
+}
+
+.editor-state::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ash-2);
+}
+
+.editor-state[data-state='dirty']::before {
+  background: var(--drift);
+}
+
+.editor-state[data-state='published']::before {
+  background: var(--lock);
+}
+
+.editor-spacer {
+  flex: 1;
+}
+
+.editor-divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--line-2);
+}
+
+.editor-bar .btn-quiet .icon {
+  width: 16px;
+  height: 16px;
+  margin-right: -4px;
+  color: var(--ash);
+}
+
+.studio .editor-menu {
+  top: calc(100% + 8px);
+  right: 0;
+  gap: 0;
+  padding: 6px;
+}
+
+.studio .library-menu {
+  width: 320px;
+  max-height: min(520px, 70vh);
+  overflow-y: auto;
+}
+
+.studio .file-menu {
+  width: 180px;
+}
+
+.studio .menu-heading {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ash);
+}
+
+.studio .menu-empty {
+  padding: 2px 10px 8px;
+}
+
+.studio .library-menu .menu-rule {
+  margin: 6px 0;
+}
+
+.studio .library-row {
+  display: flex;
+  align-items: center;
+}
+
+.studio .library-row .library-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.studio .library-name,
+.studio .library-item .menu-note {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio .library-delete {
+  width: 28px;
+  height: 28px;
+  color: var(--ash);
+}
+
+.studio .library-delete .icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* ---------- notice ---------- */
+
+.editor-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 14px 0;
+  padding: 6px 6px 6px 14px;
+  font-size: 13px;
+  background: var(--panel-2);
+  border-radius: var(--r);
+  flex: none;
+  animation: pop-in 160ms var(--ease);
+}
+
+.editor-note::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--chalk);
+}
+
+.editor-note.is-warn::before {
+  background: var(--drift);
+}
+
+.editor-note.is-error::before {
+  background: var(--tally);
+}
+
+.editor-note-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.studio .editor-note-close {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  color: var(--ash);
+  border-radius: 50%;
+}
+
+.studio .editor-note-close:hover {
+  color: var(--chalk);
+  background: rgb(255 255 255 / 10%);
+}
+
+.editor-note-close .icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* ---------- layout ---------- */
+
+.editor-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+  padding: 14px;
+}
+
+.editor-stage-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.editor-stage {
+  position: relative;
+  flex: 1;
+  min-height: 200px;
+  overflow: hidden;
+  background: #000;
+  border-radius: var(--r);
+}
+
+.editor-media {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+}
+
+.editor-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 100%;
+  text-align: center;
+  font-size: 15px;
+}
+
+.editor-transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  flex: none;
+}
+
+.editor-transport-group {
+  display: flex;
+  gap: 2px;
+  margin-left: 6px;
+}
+
+.editor-transport .icon-btn {
+  width: 32px;
+  height: 32px;
+}
+
+.editor-transport .icon-btn .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.studio .editor-scrub {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  min-width: 80px;
+  height: 16px;
+  margin: 0 4px;
+  background: linear-gradient(90deg, var(--chalk) var(--fill), rgb(255 255 255 / 16%) var(--fill)) center / 100% 3px no-repeat;
+  cursor: pointer;
+}
+
+.studio .editor-scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--chalk);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 50%);
+}
+
+.editor-time {
+  font-size: 12px;
+  color: var(--ash);
+  white-space: nowrap;
+}
+
+.editor-time span {
+  color: var(--chalk);
+}
+
+.editor-transport-meta {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- rail ---------- */
+
+.editor-rail {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-2) transparent;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+
+.rail-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 0;
+}
+
+.rail-group + .rail-group {
+  border-top: 1px solid var(--line);
+}
+
+.rail-group h2 {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.rail-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.rail-meta {
+  font-size: 11px;
+  color: var(--ash);
+}
+
+.studio .rail-link {
+  font-size: 12px;
+}
+
+.studio .rail-link:disabled {
+  color: var(--ash-2);
+  text-decoration: none;
+}
+
+.rail-more summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  list-style: none;
+  border-radius: 4px;
+}
+
+.rail-more summary::-webkit-details-marker {
+  display: none;
+}
+
+.rail-more summary::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  border-right: 1.5px solid var(--ash);
+  border-bottom: 1.5px solid var(--ash);
+  transform: rotate(45deg);
+  transition: transform 160ms var(--ease);
+}
+
+.rail-more[open] summary::after {
+  transform: rotate(-135deg);
+}
+
+.rail-more:not([open]) {
+  gap: 0;
+}
+
+/* The crop is a few dozen pixels tall; pixelated keeps every pixel readable when scaled. */
+.crop-pair {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  background: #000;
+  border-radius: 6px;
+}
+
+/* Fixed heights keep the char pad on screen; a crop wider than the rail is squeezed, which
+   the glyph boxes follow because they are percentages of the same element. */
+.crop-canvas {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: 48px;
+  image-rendering: pixelated;
+}
+
+.crop-binary {
+  position: relative;
+  max-width: 100%;
+  line-height: 0;
+}
+
+.crop-binary .crop-canvas {
+  height: 72px;
+}
+
+.studio .glyph-box {
+  position: absolute;
+  border: 1px solid rgb(240 176 63 / 70%);
+  border-radius: 0;
+}
+
+.studio .glyph-box:hover {
+  border-color: var(--drift);
+}
+
+.studio .glyph-box.is-selected {
+  border: 2px solid var(--lock);
+  background: rgb(111 211 168 / 18%);
+}
+
+.roi-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.roi-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--ash);
+}
+
+.studio .roi-field input {
+  width: 100%;
+  height: 28px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--chalk);
+  background: rgb(0 0 0 / 35%);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  outline: none;
+  -moz-appearance: textfield;
+}
+
+.studio .roi-field input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+}
+
+.studio .roi-field input:focus {
+  border-color: var(--chalk);
+}
+
+.roi-field em {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--ash-2);
+  min-height: 15px;
+}
+
+.glyph-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.glyph-tools .row-end {
+  justify-content: flex-start;
+}
+
+.edge-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 12px;
+}
+
+.edge-row {
+  display: grid;
+  grid-template-columns: 1fr 26px 26px;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--ash);
+}
+
+.studio .edge-row button {
+  height: 24px;
+  background: rgb(255 255 255 / 7%);
+}
+
+.studio .edge-row button:hover {
+  background: rgb(255 255 255 / 13%);
+}
+
+.char-pad {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.studio .char-key {
+  position: relative;
+  height: 36px;
+  font-size: 16px;
+  background: rgb(255 255 255 / 7%);
+}
+
+.studio .char-key:hover:not(:disabled) {
+  background: rgb(255 255 255 / 14%);
+}
+
+.studio .char-key.is-taught::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--lock);
+}
+
+.verify-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.verify-result {
+  font-size: 12px;
+}
+
+.verify-result.is-ok {
+  color: var(--lock);
+}
+
+.verify-result.is-bad {
+  color: var(--drift);
+}
+
+.match-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.match-list li {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 8px;
+  background: rgb(255 255 255 / 5%);
+  border-radius: 5px;
+}
+
+.match-list b {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.template-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 4px 6px;
+  background: rgb(255 255 255 / 4%);
+  border-radius: 6px;
+}
+
+.template-cell.is-empty .template-char {
+  color: var(--ash-2);
+}
+
+.template-char {
+  width: 12px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.template-samples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.studio .template-thumb {
+  padding: 1px;
+  border-radius: 3px;
+  outline-offset: 0;
+}
+
+.studio .template-thumb:hover {
+  background: rgb(255 77 77 / 50%);
+}
+
+.thumb-canvas {
+  display: block;
+  width: 14px;
+  height: auto;
+  image-rendering: pixelated;
+}
+
+@media (max-width: 1100px) {
+  .editor-main {
+    grid-template-columns: minmax(0, 1fr) 300px;
+  }
+
+  .editor-name {
+    width: 10em;
+  }
+
+  .editor-id {
+    display: none;
+  }
+}
