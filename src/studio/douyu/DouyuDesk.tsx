@@ -1,12 +1,12 @@
 /**
  * Everything Douyu that is not watching: accounts, followed rooms, room tasks, batch
- * check-ins, the backpack and badges. It lives off the player on purpose — none of it is
- * touched mid-match.
+ * check-ins, the backpack and badges. It lives in 设置, off the player, on purpose: none of
+ * it is touched mid-match.
  */
 
 import { useState } from 'react'
 import { useSessionSnapshot } from '../../app/SessionContext'
-import { Sheet } from '../kit'
+import { SideTabs } from '../kit'
 import { Accounts } from './Accounts'
 import { Automations } from './Automations'
 import { Backpack } from './Backpack'
@@ -26,30 +26,26 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'renewal', label: '粉丝牌' },
 ]
 
-export function DouyuDesk({ onClose, onWatch }: { onClose: () => void; onWatch: (room: string) => void }): React.ReactNode {
+/** The Douyu section of 设置. `onWatch` loads a followed room as the commentary. */
+export function DouyuDesk({ onWatch }: { onWatch: (room: string) => void }): React.ReactNode {
   const data = useDouyu()
   const { danmaku } = useSessionSnapshot()
   const [tab, setTab] = useState<Tab>(data.all.length === 0 ? 'accounts' : 'tasks')
   const active = data.active
 
   return (
-    <Sheet title="斗鱼" onClose={onClose} wide>
-      <div className="desk">
-        <nav className="desk-tabs" role="tablist" aria-label="斗鱼">
-          {TABS.map((item) => (
-            <button key={item.id} type="button" role="tab" aria-selected={tab === item.id}
-              className={tab === item.id ? 'is-on' : undefined} onClick={() => setTab(item.id)}>
-              {item.label}
-              {item.id === 'tasks' && data.tasks && data.tasks.tasks.length > 0 && <span className="num tab-count">{data.tasks.tasks.length}</span>}
-            </button>
-          ))}
-          <span className="desk-who">
-            {active ? <>当前账号 <b>{active.label}</b>{active.login.loggedIn ? '' : '（未登录）'}</> : '未设置当前账号'}
-          </span>
-        </nav>
-        <div className="desk-content" role="tabpanel">
+    <SideTabs label="斗鱼" value={tab} onChange={setTab}
+      tabs={TABS.map((item) => ({
+        ...item,
+        badge: item.id === 'tasks' && data.tasks && data.tasks.tasks.length > 0
+          ? <span className="num tab-count">{data.tasks.tasks.length}</span> : undefined,
+      }))}
+      aside={<span className="desk-who">
+        {active ? <>当前账号<b>{active.label}</b>{active.login.loggedIn ? '' : '（未登录）'}</> : '未设置当前账号'}
+      </span>}>
+        <div className="desk-content">
           {tab === 'accounts' && <><Accounts data={data} /><Spending data={data} /></>}
-          {tab === 'following' && <Following data={data} onWatch={(room) => { onWatch(room); onClose() }} />}
+          {tab === 'following' && <Following data={data} onWatch={onWatch} />}
           {tab === 'tasks' && <Tasks data={data} defaultRoom={danmaku.room} />}
           {tab === 'automations' && <Automations data={data} />}
           {tab === 'backpack' && <Backpack data={data} room={danmaku.room} />}
@@ -58,8 +54,7 @@ export function DouyuDesk({ onClose, onWatch }: { onClose: () => void; onWatch: 
               ready={!!active?.login.loggedIn && !data.accountsBusy} />
           )}
         </div>
-      </div>
-    </Sheet>
+    </SideTabs>
   )
 }
 

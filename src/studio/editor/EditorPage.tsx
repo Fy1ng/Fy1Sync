@@ -31,6 +31,7 @@ import { profileStore, type StoredProfile } from '../../core/profileStore'
 import { apiClient, issuesFrom, type PresetSummary } from '../../app/apiClient'
 import { FrameGrabber, FULL_FRAME_ROI, type GrabbedFrame } from '../../recognition/frameGrabber'
 import { useSession } from '../../app/SessionContext'
+import { routeLink } from '../../app/navigate'
 import { Icon } from '../kit'
 import { analyzeFrame, drawGray, drawMask, sampleFromBox } from './framePipeline'
 import { RoiWindow } from './RoiWindow'
@@ -441,9 +442,9 @@ export default function EditorPage(): React.ReactNode {
   /**
    * Hand the current profile to the player.
    *
-   * 返回播放器 is a real navigation, so an in-memory hand-off would not survive it. What
-   * survives is the id in settings, and the player fetches the preset by that id, which
-   * only works if this profile is on the main process and unmodified since.
+   * The id is also persisted, so the choice survives a restart or a reload of the page; the
+   * player fetches the preset by that id, which only works if this profile is on the main
+   * process and unmodified since.
    */
   const applyToPlayer = (): void => {
     if (!readiness.ready) {
@@ -465,7 +466,7 @@ export default function EditorPage(): React.ReactNode {
   return (
     <div className="studio editor">
       <header className="editor-bar">
-        <a className="icon-btn" href="/" aria-label="返回播放器" title="返回播放器"><Icon name="back" /></a>
+        <a className="icon-btn" {...routeLink('/')} aria-label="返回播放器" title="返回播放器"><Icon name="back" /></a>
         <div className="editor-title">
           <input className="editor-name" value={profile.name} aria-label="名称" spellCheck={false}
             onChange={(event) => patch({ name: event.target.value })} />

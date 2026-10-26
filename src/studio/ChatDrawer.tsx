@@ -14,17 +14,17 @@ import { useComposer } from './composer'
 import { useDanmakuActions } from './danmakuActions'
 import { useDanmakuRate } from './insights/RoomInsights'
 import type { RecordsTab } from './records/DanmakuRecords'
+import type { SettingsSection } from './SettingsSheet'
 import { Icon, Popover } from './kit'
 import { useSourceLoader } from './sources'
 import { deliveryText } from './useStudioComposer'
 
 const ROW = 30
 
-export function ChatDrawer({ onClose, onOpenDouyu, onOpenRecords, onOpenInsights }: {
+export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   onClose: () => void
-  onOpenDouyu: () => void
+  onOpenSettings: (section: SettingsSection) => void
   onOpenRecords: (tab: RecordsTab, uid?: string) => void
-  onOpenInsights: () => void
 }): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
@@ -116,10 +116,13 @@ export function ChatDrawer({ onClose, onOpenDouyu, onOpenRecords, onOpenInsights
             <Icon name="history" />
           </button>
           {danmaku.room && (
-            <button type="button" className="icon-btn" onClick={onOpenInsights} aria-label="房间数据" title="房间数据">
+            <button type="button" className="icon-btn" onClick={() => onOpenSettings('insights')} aria-label="房间数据" title="房间数据">
               <Icon name="stats" />
             </button>
           )}
+          <button type="button" className="icon-btn" onClick={() => onOpenSettings('general')} aria-label="设置" title="设置">
+            <Icon name="gear" />
+          </button>
         </span>
         <button type="button" className="icon-btn" onClick={onClose} aria-label="收起弹幕" title="收起（C）">
           <Icon name="close" />
@@ -205,12 +208,16 @@ export function ChatDrawer({ onClose, onOpenDouyu, onOpenRecords, onOpenInsights
         <p className="say-meta">
           {composer.account?.loggedIn
             ? <span>以 {composer.account.label} 发送</span>
-            : <button type="button" className="link-btn" onClick={onOpenDouyu}>登录斗鱼</button>}
+            : <button type="button" className="link-btn" onClick={() => onOpenSettings('douyu')}>登录斗鱼</button>}
           {composer.remaining > 0 && <span className="num">{composer.remaining}s</span>}
           {composer.affixes.enabled && composer.draft.length > 0 && <span title="在弹幕设置中修改">含前后缀</span>}
           {composer.composedLength > composer.lengthLimit * 0.8 && <span className="num">{composer.composedLength}/{composer.lengthLimit}</span>}
         </p>
         {composer.draft.length > 0 && composer.draftProblem && <p className="say-note is-warn">{composer.draftProblem}</p>}
+        {/* A send that cannot go out says why, instead of Enter silently doing nothing. */}
+        {composer.draft.length > 0 && !composer.draftProblem && !composer.notice && composer.blockedReason && composer.remaining === 0 && (
+          <p className="say-note is-warn" role="status">{composer.blockedReason}</p>
+        )}
         {composer.notice && <p className="say-note" data-state={composer.notice.status} role="status">{composer.notice.message}</p>}
         {deliveryText(composer.delivery) && <p className="say-note">{deliveryText(composer.delivery)}</p>}
       </form>

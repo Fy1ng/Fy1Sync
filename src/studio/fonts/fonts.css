@@ -1,0 +1,12 @@
+/*
+ * Bundled typefaces, so every machine renders the same letters whatever is installed.
+ * The CSP only allows fonts from the app itself, which is why none is loaded from a CDN.
+ *
+ *   Studio Sans     Noto Sans SC, variable 100-900, split by unicode-range so only the
+ *                   characters on screen are fetched.
+ *   Studio Figures  Barlow Semi Condensed, for numbers that are read as data.
+ *   Studio Display  得意黑 Smiley Sans, for headings only.
+ */
+@import './noto-sans-sc/noto-sans-sc.css';
+@import './barlow-semi-condensed/barlow-semi-condensed.css';
+@import './smiley-sans/smiley-sans.css';

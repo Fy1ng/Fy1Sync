@@ -13,6 +13,7 @@ import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { useCamera } from '../app/useCamera'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { CameraOverlay } from '../ui/CameraOverlay'
+import { CameraButton } from './CameraButton'
 import { CameraFraming } from './CameraFraming'
 import { CaptureControls } from './capture/Capture'
 import { ChatDrawer } from './ChatDrawer'
@@ -20,23 +21,21 @@ import { ComposerProvider } from './composer'
 import { DanmakuActionsProvider } from './danmakuActions'
 import { DanmakuPanel } from './DanmakuPanel'
 import { DanmakuStage } from './DanmakuStage'
-import { DouyuDesk } from './douyu/DouyuDesk'
-import { RoomInsightsSheet, usePlaybackHeartbeat } from './insights/RoomInsights'
+import { usePlaybackHeartbeat } from './insights/RoomInsights'
 import { Intake } from './Intake'
-import { Icon, Popover, usePopover } from './kit'
+import { Icon } from './kit'
 import { PipButton } from './PipButton'
-import { DanmakuRecordsSheet, type RecordsTab } from './records/DanmakuRecords'
-import { SettingsSheet } from './SettingsSheet'
+import type { RecordsTab } from './records/DanmakuRecords'
+import { SettingsSheet, type SettingsSection, type SettingsTarget } from './SettingsSheet'
 import { SourceChip } from './SourceChip'
 import { SourceLoaderProvider, ROLE_LABEL, useSourceLoader } from './sources'
 import { ExtraStreams } from './streams/ExtraStreams'
 import { AutoAlign, CountdownPrompt, SyncCapsule, useNudge } from './sync'
 import { useComposer } from './composer'
 import { Toasts } from './Toasts'
-import { Balance, DanmakuSwitch, PlayButton, Timeline } from './transport'
+import { QualityMenu } from './QualityMenu'
+import { DanmakuSwitch, PlayButton, Timeline, Volumes } from './transport'
 import './studio.css'
-
-type Desk = 'douyu' | 'settings' | null
 
 /** Seconds per ←/→ press, and with Shift. */
 const SEEK_SMALL = 5
@@ -61,14 +60,13 @@ function StudioView(): React.ReactNode {
   const nudge = useNudge()
   const [intake, setIntake] = useState(false)
   const [droppedFile, setDroppedFile] = useState<File | null>(null)
-  const [desk, setDesk] = useState<Desk>(null)
+  const [settingsAt, setSettingsAt] = useState<SettingsTarget | null>(null)
+  const openSettings = useCallback((section: SettingsSection) => setSettingsAt({ section }), [])
   const [tuning, setTuning] = useState(false)
   const [framing, setFraming] = useState(false)
   const [previewHidden, setPreviewHidden] = useState(false)
   const [addingStream, setAddingStream] = useState(false)
-  const [records, setRecords] = useState<{ tab: RecordsTab; uid?: string } | null>(null)
-  const openRecords = useCallback((tab: RecordsTab, uid?: string) => setRecords({ tab, uid }), [])
-  const [insights, setInsights] = useState(false)
+  const openRecords = useCallback((tab: RecordsTab, uid?: string) => setSettingsAt({ section: 'records', records: { tab, uid } }), [])
   const loader = useSourceLoader()
   const composer = useComposer()
   usePlaybackHeartbeat()
@@ -78,7 +76,7 @@ function StudioView(): React.ReactNode {
   // the dock, whose height changes as it folds into two rows on a narrow window.
   usePublishedHeight(dock, theater, '--bar-clearance')
 
-  const busyChrome = intake || tuning || desk !== null || addingStream
+  const busyChrome = intake || tuning || settingsAt !== null || addingStream
   const chrome = useOverlayVisibility(3200, !snapshot.playing || busyChrome)
   // The drawer is the room's chat; with no room there is nothing to hold it open for.
   const hasRoom = snapshot.danmaku.connected || snapshot.danmaku.room !== null
@@ -131,8 +129,9 @@ function StudioView(): React.ReactNode {
         case 'Space': event.preventDefault(); void session.togglePlaying(); break
         case 'ArrowLeft': event.preventDefault(); seek(event.shiftKey ? -SEEK_LARGE : -SEEK_SMALL); break
         case 'ArrowRight': event.preventDefault(); seek(event.shiftKey ? SEEK_LARGE : SEEK_SMALL); break
-        case 'Comma': event.preventDefault(); nudge('early', step); break
-        case 'Period': event.preventDefault(); nudge('late', step); break
+        // , and . sit under < and >: picture back, picture forward, like the two buttons.
+        case 'Comma': event.preventDefault(); nudge('late', step); break
+        case 'Period': event.preventDefault(); nudge('early', step); break
         case 'KeyA': void session.syncNow(); break
         case 'KeyD': session.updateDanmakuSettings({ enabled: !session.settings.danmaku.enabled }); break
         case 'KeyC': setChat(!session.settings.sidebarVisible); break
@@ -183,25 +182,29 @@ function StudioView(): React.ReactNode {
 
           <header className="topbar">
             <div className="topbar-sources">
-              <SourceChip role="official" camera={camera} onEmpty={() => setIntake(true)} onFrameCamera={() => setFraming(true)} />
-              <SourceChip role="commentary" camera={camera} onEmpty={() => setIntake(true)} onFrameCamera={() => setFraming(true)} />
-              {previewHidden && snapshot.media[otherRole].status !== 'empty' && (
-                <button type="button" className="btn-glass small" onClick={() => setPreviewHidden(false)}>显示小画面</button>
-              )}
-              <button type="button" className="icon-btn glass small" onClick={() => setAddingStream(true)}
-                aria-label="同屏观看其他直播间" title="同屏观看其他直播间">
+              {SOURCE_ROLES.map((role) => (
+                <SourceChip key={role} role={role} onEmpty={() => setIntake(true)}
+                  onShowPreview={previewHidden && role === otherRole && snapshot.media[role].status !== 'empty'
+                    ? () => setPreviewHidden(false) : null} />
+              ))}
+              <button type="button" className="icon-btn glass small" onClick={() => setAddingStream((open) => !open)}
+                aria-label="同屏观看其他直播间" title="同屏观看其他直播间" aria-expanded={addingStream}>
                 <Icon name="plus" />
               </button>
             </div>
-            <div className="topbar-tools">
-              {!chatOpen && hasRoom && (
-                <button type="button" className="icon-btn glass" onClick={() => setChat(true)} aria-label="展开弹幕" title="弹幕列表（C）">
-                  <Icon name="chat" />
+            {/* With the chat open, 设置 lives in its header; without it, here. */}
+            {!chatOpen && (
+              <div className="topbar-tools">
+                {hasRoom && (
+                  <button type="button" className="icon-btn glass" onClick={() => setChat(true)} aria-label="展开弹幕" title="弹幕列表（C）">
+                    <Icon name="chat" />
+                  </button>
+                )}
+                <button type="button" className="icon-btn glass" onClick={() => openSettings('general')} aria-label="设置" title="设置">
+                  <Icon name="gear" />
                 </button>
-              )}
-              <MoreMenu onDesk={setDesk} onRecords={() => setRecords({ tab: 'history' })}
-                onInsights={snapshot.danmaku.room ? () => setInsights(true) : null} />
-            </div>
+              </div>
+            )}
           </header>
 
           <Toasts />
@@ -213,13 +216,15 @@ function StudioView(): React.ReactNode {
             <div className="dock-row">
               <div className="dock-left">
                 <PlayButton />
-                <Balance />
+                <Volumes />
               </div>
               <div className="dock-center">
                 <SyncCapsule />
                 <AutoAlign />
               </div>
               <div className="dock-right">
+                <QualityMenu />
+                <CameraButton camera={camera} onFrame={() => setFraming(true)} />
                 <CaptureControls source={() => session.engine.element(session.snapshot.mainRole)} />
                 <PipButton />
                 <DanmakuSwitch onTune={() => setTuning((open) => !open)} />
@@ -242,17 +247,14 @@ function StudioView(): React.ReactNode {
         </main>
 
         {chatOpen && (
-          <ChatDrawer onClose={() => setChat(false)} onOpenDouyu={() => setDesk('douyu')}
-            onOpenRecords={(tab, uid) => setRecords({ tab, uid })} onOpenInsights={() => setInsights(true)} />
+          <ChatDrawer onClose={() => setChat(false)} onOpenSettings={openSettings} onOpenRecords={openRecords} />
         )}
 
-        {desk === 'douyu' && <DouyuDesk onClose={() => setDesk(null)} onWatch={(room) => void loader.loadInput('commentary', room, 'douyu')} />}
-        {records && (
-          <DanmakuRecordsSheet initialTab={records.tab} initialUid={records.uid} room={snapshot.danmaku.room}
-            onClose={() => setRecords(null)} onFill={(text) => { composer.fill(text); setChat(true); setRecords(null) }} />
+        {settingsAt && (
+          <SettingsSheet target={settingsAt} room={snapshot.danmaku.room} onClose={() => setSettingsAt(null)}
+            onWatch={(room) => void loader.loadInput('commentary', room, 'douyu')}
+            onFill={(text) => { composer.fill(text); setChat(true) }} />
         )}
-        {insights && snapshot.danmaku.room && <RoomInsightsSheet room={snapshot.danmaku.room} onClose={() => setInsights(false)} />}
-        {desk === 'settings' && <SettingsSheet onClose={() => setDesk(null)} />}
         {framing && (
           <CameraFraming
             key={camera.room}
@@ -263,30 +265,6 @@ function StudioView(): React.ReactNode {
           />
         )}
       </DanmakuActionsProvider>
-    </div>
-  )
-}
-
-function MoreMenu({ onDesk, onRecords, onInsights }: {
-  onDesk: (desk: Desk) => void
-  onRecords: () => void
-  /** Null while no danmaku room is connected: there is no room to report on. */
-  onInsights: (() => void) | null
-}): React.ReactNode {
-  const menu = usePopover()
-  const go = (desk: Desk): void => { menu.close(); onDesk(desk) }
-  return (
-    <div className="more">
-      <button type="button" className="icon-btn glass" onClick={menu.toggle} aria-label="更多" aria-expanded={menu.open}>
-        <Icon name="more" />
-      </button>
-      <Popover open={menu.open} onClose={menu.close} className="more-menu" label="更多">
-        <button type="button" className="menu-item" onClick={() => go('douyu')}>斗鱼账号与任务</button>
-        <button type="button" className="menu-item" onClick={() => { menu.close(); onRecords() }}>弹幕记录与收藏</button>
-        {onInsights && <button type="button" className="menu-item" onClick={() => { menu.close(); onInsights() }}>房间数据</button>}
-        <a className="menu-item" href="/admin">倒计时样式编辑器</a>
-        <button type="button" className="menu-item" onClick={() => go('settings')}>设置</button>
-      </Popover>
     </div>
   )
 }

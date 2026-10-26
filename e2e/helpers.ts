@@ -144,33 +144,34 @@ export async function loadSource(
   await closeSourceDialog(page)
 }
 
-export async function openSettings(page: Page): Promise<Locator> {
+/** 设置 opens from its gear: in the top bar while the chat is closed, in the chat header otherwise. */
+export async function openSettingsSection(page: Page, section: '通用' | '斗鱼' | '弹幕记录' | '房间数据' | '倒计时样式'): Promise<Locator> {
   const settings = page.getByRole('dialog', { name: '设置', exact: true })
   if (!(await settings.isVisible())) {
     await closeSourceDialog(page)
     await revealOverlay(page)
-    await openPopoverTrigger(page.getByRole('button', { name: '更多', exact: true }))
-    await page.getByRole('button', { name: '设置', exact: true }).click()
+    await page.getByRole('button', { name: '设置', exact: true }).first().click()
   }
   await expect(settings).toBeVisible()
+  await settings.getByRole('tablist', { name: '设置分区' }).getByRole('tab', { name: section, exact: true }).click()
   return settings
 }
 
+/** 通用 in 设置, on one of its pages (YouTube, 对齐, 解码, 画中画, 截图与 GIF, 取流工具, 关于). */
+export async function openSettings(page: Page, pageName = 'YouTube'): Promise<Locator> {
+  const settings = await openSettingsSection(page, '通用')
+  await settings.getByRole('tablist', { name: '通用' }).getByRole('tab', { name: pageName, exact: true }).click()
+  return settings
+}
+
+/** The 斗鱼 section of 设置; its pages are vertical tabs down the left. */
 export async function openDouyuDesk(page: Page): Promise<Locator> {
-  const desk = page.getByRole('dialog', { name: '斗鱼', exact: true })
-  if (!(await desk.isVisible())) {
-    await closeSourceDialog(page)
-    await revealOverlay(page)
-    await openPopoverTrigger(page.getByRole('button', { name: '更多', exact: true }))
-    await page.getByRole('button', { name: '斗鱼账号与任务', exact: true }).click()
-  }
-  await expect(desk).toBeVisible()
-  return desk
+  return openSettingsSection(page, '斗鱼')
 }
 
 export async function openDouyuTab(page: Page, tab: string): Promise<Locator> {
   const desk = await openDouyuDesk(page)
-  await desk.getByRole('tab', { name: new RegExp('^' + tab) }).click()
+  await desk.getByRole('tablist', { name: '斗鱼' }).getByRole('tab', { name: new RegExp('^' + tab) }).click()
   return desk
 }
 
@@ -240,9 +241,16 @@ export async function openAlignOptions(page: Page): Promise<Locator> {
   return panel
 }
 
+/** The camera lives in the dock: one press frames it, then a menu offers re-framing. */
 export async function openCameraFraming(page: Page): Promise<Locator> {
-  const source = await openSourcePanel(page, 'commentary')
-  await source.getByRole('button', { name: /^(框选|重新框选)$/ }).click()
+  await closeSourceDialog(page)
+  await revealOverlay(page)
+  const first = page.locator('.dock').getByRole('button', { name: '框选主播摄像头', exact: true })
+  if (await first.isVisible()) await first.click()
+  else {
+    await openPopoverTrigger(page.locator('.dock').getByRole('button', { name: '主播摄像头', exact: true }))
+    await page.getByRole('dialog', { name: '主播摄像头', exact: true }).getByRole('button', { name: '重新框选', exact: true }).click()
+  }
   const dialog = page.getByRole('dialog', { name: '摄像头小窗', exact: true })
   await expect(dialog).toBeVisible()
   return dialog

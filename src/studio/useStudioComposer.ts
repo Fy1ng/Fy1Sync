@@ -68,7 +68,10 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
   const refreshAccounts = useCallback(async () => {
     if (!mounted.current) return
     const version = ++accountRevision.current
-    setLoading(true)
+    // Only the first read blocks sending. Later refreshes (focus, task events) re-check the
+    // same account in the background; holding Enter hostage to a cookie read for a second or
+    // two each time the box is focused made sending look broken.
+    if (displayedAccount.current === null) setLoading(true)
     try {
       const result = await apiClient.listDouyuAccounts()
       if (!mounted.current || version !== accountRevision.current) return

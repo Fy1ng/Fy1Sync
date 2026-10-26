@@ -3,13 +3,16 @@
  *
  * The picture is the only thing with colour. Chrome is smoked glass and chalk white; colour
  * appears only to say a state — aligned, off, live — so when something lights up it means
- * something. Chinese text is set in Noto Sans SC across its weight range, numbers in
- * Cascadia's mono cut so seconds never jitter as they count.
+ * something. Text is set in Noto Sans SC across its weight range; numbers read as data in
+ * Barlow Semi Condensed, a narrow scoreboard face whose tabular figures never jitter as
+ * they count; the few large headings in 得意黑, whose lean is borrowed from match graphics.
+ * All three are bundled (fonts/fonts.css).
  *
  * Everything is scoped under .studio. The scene editor still loads the older global
  * stylesheet in its own chunk, and nothing here may depend on it being absent.
  */
 
+@import './fonts/fonts.css';
 @import './renderers.css';
 
 :root {
@@ -38,8 +41,9 @@ body,
   --lock: #6fd3a8;
   --drift: #f0b03f;
   --tally: #ff4d4d;
-  --cjk: 'Noto Sans SC', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
-  --mono: 'Cascadia Code', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  --cjk: 'Studio Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
+  --mono: 'Studio Figures', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  --display: 'Studio Display', 'Studio Sans', 'Microsoft YaHei UI', sans-serif;
   --r: 10px;
   --r-sm: 7px;
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
@@ -114,7 +118,15 @@ body,
 .studio .num {
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
-  font-weight: 350;
+  font-weight: 400;
+}
+
+/* One weight, and the lean is drawn: never let the browser fake a bold or a slant. */
+.studio .display {
+  font-family: var(--display);
+  font-weight: 400;
+  font-synthesis: none;
+  letter-spacing: 0.01em;
 }
 
 .studio .muted {
@@ -598,6 +610,40 @@ body,
   border-radius: 4px;
 }
 
+/* A hidden small picture is brought back from its chip: the button drops below it while
+   the pointer is on the chip, or keyboard focus is inside. The padding bridges the gap so
+   moving down onto the button keeps the hover. */
+.studio .chip-drop {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 61;
+  padding-top: 6px;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: opacity 140ms var(--ease), transform 140ms var(--ease), visibility 0s linear 140ms;
+}
+
+.studio .chip-wrap.has-drop:is(:hover, :focus-within) .chip-drop {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: opacity 140ms var(--ease), transform 140ms var(--ease), visibility 0s;
+}
+
+.studio .chip-drop .btn-glass {
+  white-space: nowrap;
+  background: var(--smoke-deep);
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+}
+
+.studio .chip-drop .btn-glass:hover {
+  background: rgb(40 40 44 / 95%);
+}
+
 .studio .source-pop {
   top: calc(100% + 8px);
   left: 0;
@@ -914,41 +960,66 @@ body,
 }
 
 /* Balance: a crossfader between picture sound and the voice. */
-.studio .balance {
+.studio .volumes {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 14px;
   min-width: 0;
 }
 
-.studio .balance-end {
+.studio .volume {
+  display: flex;
   flex: none;
-  padding: 3px 4px;
-  font-size: 12px;
+  align-items: center;
+  gap: 4px;
+}
+
+.studio .volume[data-empty] {
+  opacity: 0.45;
+}
+
+.studio .volume-mute {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 4px;
   color: var(--ash);
 }
 
-.studio .balance-end:hover {
+.studio .volume-mute:hover {
   color: var(--chalk);
 }
 
-.studio .balance input {
+.studio .volume-mute[aria-pressed='true'] {
+  color: var(--drift);
+}
+
+.studio .volume-mute .icon {
+  width: 17px;
+  height: 17px;
+}
+
+.studio .volume-name {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.studio .volume input {
   -webkit-appearance: none;
   appearance: none;
-  width: 116px;
-  height: 22px;
+  width: 76px;
+  height: 18px;
   margin: 0;
-  background:
-    linear-gradient(var(--line-2), var(--line-2)) center / 1px 10px no-repeat,
-    linear-gradient(rgb(255 255 255 / 22%), rgb(255 255 255 / 22%)) center / 100% 2px no-repeat;
+  background: linear-gradient(90deg, var(--chalk) var(--fill), rgb(255 255 255 / 20%) var(--fill)) center / 100% 3px no-repeat;
   cursor: pointer;
 }
 
-.studio .balance input::-webkit-slider-thumb {
+.studio .volume input::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 10px;
-  height: 18px;
-  border-radius: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
   background: var(--chalk);
   box-shadow: 0 1px 4px rgb(0 0 0 / 50%);
 }
@@ -1104,8 +1175,9 @@ body,
 
 .studio .capsule-value {
   font-family: var(--mono);
-  font-size: 22px;
-  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  font-size: 26px;
+  font-weight: 500;
   line-height: 1;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
@@ -1149,8 +1221,9 @@ body,
 .studio .offset-seconds input {
   height: 44px;
   font-family: var(--mono);
-  font-size: 24px;
-  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  font-size: 28px;
+  font-weight: 500;
   text-align: center;
 }
 
@@ -1358,10 +1431,12 @@ body,
 }
 
 .studio .intake-title {
-  font-size: clamp(34px, 6cqi, 60px);
-  font-weight: 900;
-  line-height: 1.05;
-  letter-spacing: -0.02em;
+  font-family: var(--display);
+  font-size: clamp(40px, 7cqi, 72px);
+  font-weight: 400;
+  font-synthesis: none;
+  line-height: 1;
+  letter-spacing: 0.01em;
 }
 
 .studio .intake-field input {
@@ -1533,8 +1608,7 @@ body,
   padding: 8px 8px 4px 16px;
 }
 
-.studio .float-head h2,
-.studio .sheet-head h2 {
+.studio .float-head h2 {
   font-size: 15px;
   font-weight: 800;
 }
@@ -1756,6 +1830,7 @@ body,
   height: 22px;
   padding: 0 7px;
   font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: 11px;
   color: var(--chalk);
   background: rgb(255 255 255 / 10%);
@@ -1881,7 +1956,7 @@ body,
 }
 
 .studio .sheet.is-wide {
-  width: min(880px, 100%);
+  width: min(1040px, 100%);
   height: min(820px, 100%);
 }
 
@@ -1893,9 +1968,11 @@ body,
 }
 
 .studio .sheet-head h2 {
-  font-size: 20px;
-  font-weight: 900;
-  letter-spacing: -0.01em;
+  font-family: var(--display);
+  font-size: 24px;
+  font-weight: 400;
+  font-synthesis: none;
+  letter-spacing: 0.01em;
 }
 
 .studio .sheet-body {
@@ -2315,6 +2392,7 @@ body,
   width: 26px;
   height: 26px;
   font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: 12px;
   color: var(--ash);
   border: 1.5px solid var(--ash-2);
@@ -2455,6 +2533,98 @@ body,
   color: var(--drift);
 }
 
+/* ---------- quality, in the dock's right corner ---------- */
+
+.studio .menu-heading {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ash);
+}
+
+
+.studio .quality-pair {
+  display: flex;
+  gap: 4px;
+  margin-right: 4px;
+}
+
+.studio .quality-control {
+  position: relative;
+}
+
+.studio .quality-btn {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  transition: background 140ms var(--ease), border-color 140ms var(--ease);
+}
+
+.studio .quality-btn:hover,
+.studio .quality-btn[aria-expanded='true'] {
+  background: rgb(255 255 255 / 10%);
+  border-color: rgb(255 255 255 / 28%);
+}
+
+.studio .quality-menu {
+  right: 0;
+  bottom: calc(100% + 10px);
+  width: 168px;
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  gap: 0;
+  padding: 6px;
+}
+
+.studio .quality-side-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ash);
+}
+
+.studio .quality-btn[data-main] .quality-side-name {
+  color: var(--chalk);
+}
+
+.studio .quality-item {
+  position: relative;
+  padding-left: 26px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+
+.studio .quality-item.is-on::before {
+  content: '';
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: var(--chalk);
+}
+
+.studio .camera-control {
+  position: relative;
+}
+
+.studio .camera-menu {
+  right: 0;
+  bottom: calc(100% + 10px);
+  width: 180px;
+  gap: 0;
+  padding: 6px;
+}
+
 /* ---------- picture-in-picture button in the dock ---------- */
 
 .studio .pip-control {
@@ -2494,6 +2664,7 @@ body,
 .studio .danmaku-count {
   margin-left: 0.4em;
   font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: 0.72em;
   font-weight: 600;
   opacity: 0.85;
@@ -2645,7 +2816,7 @@ body,
   padding: 32px;
   color: #f3f0ea;
   background: #0d0d0f;
-  font-family: 'Noto Sans SC', 'Microsoft YaHei UI', sans-serif;
+  font-family: 'Studio Sans', 'Microsoft YaHei UI', sans-serif;
   text-align: center;
 }
 
@@ -2725,4 +2896,212 @@ body,
 .studio .dm-menu button:focus-visible {
   outline: 2px solid var(--chalk);
   outline-offset: 1px;
+}
+
+/* ---------- 设置: sections across the top, pages down the left ---------- */
+
+.studio .settings {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.studio .settings-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.studio .settings-tabs [role='tab'] {
+  position: relative;
+  height: 42px;
+  padding: 0 14px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ash);
+  border-radius: 0;
+}
+
+.studio .settings-tabs [role='tab']:hover {
+  color: var(--chalk);
+}
+
+.studio .settings-tabs [role='tab'].is-on {
+  color: var(--chalk);
+  font-weight: 700;
+}
+
+.studio .settings-tabs [role='tab'].is-on::after {
+  content: '';
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: -1px;
+  height: 2px;
+  background: var(--chalk);
+}
+
+.studio .settings-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.studio .side-tabs {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+
+.studio .side-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  padding: 14px 10px;
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+
+.studio .side-nav [role='tablist'] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.studio .side-nav [role='tab'] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  text-align: left;
+  color: var(--ash);
+  border-radius: 6px;
+}
+
+.studio .side-nav [role='tab']:hover {
+  color: var(--chalk);
+  background: rgb(255 255 255 / 5%);
+}
+
+.studio .side-nav [role='tab'].is-on {
+  color: var(--chalk);
+  font-weight: 600;
+  background: rgb(255 255 255 / 9%);
+}
+
+.studio .side-aside {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: auto;
+  padding: 10px;
+  font-size: 12px;
+  color: var(--ash);
+  border-top: 1px solid var(--line);
+}
+
+.studio .side-aside .desk-who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+
+.studio .side-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.studio .side-panel > .desk-content,
+.studio .side-panel > .records-content {
+  overflow: visible;
+}
+
+.studio .settings-page {
+  padding: 0 24px 24px;
+}
+
+.studio .settings-page > .group:first-child {
+  border-top: 0;
+}
+
+.studio .side-panel > .insights-body {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 18px 24px 24px;
+}
+
+.studio .settings-empty {
+  margin: auto;
+  color: var(--ash);
+}
+
+.studio .settings-door {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  max-width: 480px;
+  margin: 40px auto;
+  padding: 0 24px;
+  line-height: 1.7;
+}
+
+.studio .settings-door .btn-solid .icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* One tap for the official broadcast of the CS2 event on now. */
+.studio .intake-find {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 2px;
+  width: 100%;
+  padding: 12px 16px;
+  text-align: left;
+  background: rgb(255 255 255 / 6%);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  transition: background 140ms var(--ease), border-color 140ms var(--ease);
+}
+
+.studio .intake-find:hover:not(:disabled) {
+  background: rgb(255 255 255 / 10%);
+  border-color: rgb(255 255 255 / 28%);
+}
+
+.studio .intake-find:disabled {
+  opacity: 1;
+}
+
+.studio .intake-find .icon {
+  grid-row: span 2;
+  width: 22px;
+  height: 22px;
+  color: var(--drift);
+}
+
+.studio .intake-find span {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.studio .intake-find small {
+  font-size: 12px;
+  color: var(--ash);
 }

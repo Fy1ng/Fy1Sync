@@ -312,6 +312,13 @@ export class MediaEngine {
         onQualityOptions: (options) => {
           if (!current()) return
           this.state[role] = { ...this.state[role], quality: options }
+          // Official YouTube/Twitch streams play their top rendition from the start. The list
+          // is highest-first after 自动, so options[1] is it. Commentary keeps ABR: a
+          // streamer's restream is what a slow connection should give up first.
+          const top = options[1]
+          if (top && (descriptor.platform === 'youtube' || descriptor.platform === 'twitch')) {
+            queueMicrotask(() => { if (current()) this.setLevel(role, top.level) })
+          }
           this.notify()
         },
         onLevelSwitch: (level, autoLevel) => {

@@ -163,7 +163,7 @@ test('截图与 GIF 仅在启用后出现, 取消后清理录制且不保存', a
     state.__studioSaveDialogs = 0
     dialog.showSaveDialog = async () => { state.__studioSaveDialogs!++; return { canceled: true, filePath: '' } }
   })
-  const settings = await openSettings(page)
+  const settings = await openSettings(page, '截图与 GIF')
   await setCheckedByLabel(settings.getByRole('switch', { name: '启用截图与 GIF', exact: true }))
   await expect(settings.getByRole('switch', { name: '启用截图与 GIF', exact: true })).toBeEnabled()
   await settings.getByRole('button', { name: '关闭', exact: true }).click()

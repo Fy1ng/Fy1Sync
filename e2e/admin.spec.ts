@@ -6,7 +6,7 @@ import type { RecognitionProfile } from '../src/core/profileSchema'
 import { CLOCK_CHARS, TEMPLATE_PIXELS } from '../src/core/profileSchema'
 import { packBitmap } from '../src/core/bitmapCodec'
 import { APP_ORIGIN, expect, test } from './electron'
-import { closeSourceDialog, failOnPageError, fixturesReady, invoke, openAlignOptions, sourceDialog } from './helpers'
+import { closeSourceDialog, failOnPageError, fixturesReady, invoke, loadBothFixtures, mediaTimes, openAlignOptions, openPlayer, openSettingsSection, setPlaying, sourceDialog } from './helpers'
 
 const officialPath = fileURLToPath(new URL('../public/test-sources/official.mp4', import.meta.url))
 const framePath = fileURLToPath(new URL('../public/test-sources/frame-0-20.png', import.meta.url))
@@ -69,6 +69,30 @@ test.describe('本机编辑器访问', () => {
     await page.reload()
     await expect(page.locator('.editor-main')).toBeVisible()
     expect(new URL(page.url()).searchParams.has('token')).toBe(false)
+  })
+
+  test('进入编辑器再返回, 已载入的两路片源和播放状态保留', async ({ page }) => {
+    test.skip(!fixturesReady(), '缺少测试源，先运行 npm run fixtures')
+    failOnPageError(page)
+    await openPlayer(page)
+    await loadBothFixtures(page)
+    await setPlaying(page, true)
+    const before = await mediaTimes(page)
+
+    const settings = await openSettingsSection(page, '倒计时样式')
+    await settings.getByRole('link', { name: '打开倒计时样式编辑器' }).click()
+    await expect(page.locator('.editor-main')).toBeVisible()
+    await page.getByRole('link', { name: '返回播放器' }).click()
+
+    await expect(page.locator('.studio:not(.editor)')).toBeVisible()
+    await expect(sourceDialog(page)).toBeHidden()
+    for (const role of ['official', 'commentary'] as const) {
+      await expect(page.locator(`.chip[data-role="${role}"]`)).toHaveAttribute('data-status', 'ready')
+    }
+    await expect.poll(async () => (await mediaTimes(page)).paused, { timeout: 15_000 }).toBe(false)
+    const after = await mediaTimes(page)
+    // The same elements kept playing their sources: no reload restarted them from zero.
+    expect(after.official).toBeGreaterThanOrEqual(before.official)
   })
 
   test('返回播放器后仍可在同一本机窗口进入编辑器', async ({ page }) => {

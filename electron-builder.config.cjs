@@ -10,7 +10,7 @@ module.exports = {
   npmRebuild: false,
   files: [
     'package.json', 'electron/main.cjs', 'electron/preload.cjs', 'electron/network-runtime.cjs', 'client/index.html',
-    'client/assets/**/*.js', 'client/assets/**/*.css', 'client/assets/**/*.wasm',
+    'client/assets/**/*.js', 'client/assets/**/*.css', 'client/assets/**/*.wasm', 'client/assets/**/*.woff2',
     '!node_modules', '!node_modules/**/*',
   ],
   extraResources: [

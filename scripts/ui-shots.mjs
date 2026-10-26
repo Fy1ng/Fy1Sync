@@ -96,12 +96,15 @@ async function sourcePanel(page, role) {
   return panel
 }
 
-async function workspace(page, name, title = name) {
-  await reveal(page)
-  await page.getByRole('button', { name: '更多', exact: true }).click()
-  await page.getByRole('dialog', { name: '更多', exact: true }).getByRole('button', { name, exact: true }).click()
-  const sheet = page.getByRole('dialog', { name: title, exact: true })
-  await sheet.waitFor()
+/** A section of 设置, opened from its gear. */
+async function workspace(page, section) {
+  const sheet = page.getByRole('dialog', { name: '设置', exact: true })
+  if (!(await sheet.isVisible())) {
+    await reveal(page)
+    await page.getByRole('button', { name: '设置', exact: true }).first().click()
+    await sheet.waitFor()
+  }
+  await sheet.getByRole('tablist', { name: '设置分区' }).getByRole('tab', { name: section, exact: true }).click()
   return sheet
 }
 
@@ -206,8 +209,8 @@ async function captureViewport(viewport) {
       await page.getByRole('dialog', { name: '输入延后时间', exact: true }).waitFor()
     })
     const camera = await step(page, prefix + '-08-camera-framing', async () => {
-      const panel = await sourcePanel(page, 'commentary')
-      await panel.getByRole('button', { name: '框选', exact: true }).click()
+      await reveal(page)
+      await page.locator('.dock').getByRole('button', { name: '框选主播摄像头', exact: true }).click()
       const framing = page.getByRole('dialog', { name: '摄像头小窗', exact: true })
       await framing.locator('.roi-window').waitFor()
       await framing.locator('.roi-window').focus()
@@ -265,9 +268,10 @@ async function captureViewport(viewport) {
       await page.getByRole('log', { name: '弹幕列表', exact: true }).getByRole('button', { name: /^更多操作/ }).last().click()
       await page.getByRole('dialog', { name: /^弹幕操作/ }).waitFor()
     })
-    await step(page, prefix + '-15-settings', async () => { await workspace(page, '设置') })
+    await step(page, prefix + '-15-settings', async () => { await workspace(page, '通用') })
     await step(page, prefix + '-16-capture-settings', async () => {
-      const settings = await workspace(page, '设置')
+      const settings = await workspace(page, '通用')
+      await settings.getByRole('tablist', { name: '通用' }).getByRole('tab', { name: '截图与 GIF', exact: true }).click()
       const enabled = settings.getByRole('switch', { name: '启用截图与 GIF', exact: true })
       await selectChoice(enabled)
       await enabled.scrollIntoViewIfNeeded()
@@ -277,7 +281,7 @@ async function captureViewport(viewport) {
       await page.getByRole('button', { name: 'GIF 录制', exact: true }).click()
       await page.getByRole('dialog', { name: 'GIF 录制', exact: true }).waitFor()
     })
-    await step(page, prefix + '-18-douyu-workspace', async () => { await workspace(page, '斗鱼账号与任务', '斗鱼') })
+    await step(page, prefix + '-18-douyu-workspace', async () => { await workspace(page, '斗鱼') })
     await step(page, prefix + '-19-extra-stream-form', async () => {
       await reveal(page)
       await page.getByRole('button', { name: '同屏观看其他直播间', exact: true }).click()

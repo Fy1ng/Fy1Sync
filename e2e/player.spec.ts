@@ -22,7 +22,6 @@ import {
   offsetReadout,
   openCameraFraming,
   openPlayer,
-  openSourcePanel,
   revealOverlay,
   seekBoth,
   setPlaying,
@@ -79,9 +78,9 @@ test.describe('双路播放与手动同步', () => {
     const before = await mediaTimes(page)
     const alignment = page.getByRole('group', { name: '对齐', exact: true })
 
-    // ▶ rewinds the commentary side (negative offset), so official − commentary grows.
-    await alignment.getByRole('button', { name: '解说延后', exact: true }).click()
-    await alignment.getByRole('button', { name: '解说延后', exact: true }).click()
+    // 快进画面 rewinds the commentary side (negative offset), so official − commentary grows.
+    await alignment.getByRole('button', { name: '快进画面', exact: true }).click()
+    await alignment.getByRole('button', { name: '快进画面', exact: true }).click()
 
     await expect
       .poll(async () => (await offsetReadout(page)).requested, { timeout: 15_000 })
@@ -258,12 +257,12 @@ test.describe('片源画质和摄像头入口', () => {
 
     // Hidden from the menu, kept in storage.
     await revealOverlay(page)
-    const source = await openSourcePanel(page, 'commentary')
-    await source.getByRole('button', { name: '隐藏', exact: true }).click()
+    await page.locator('.dock').getByRole('button', { name: '主播摄像头', exact: true }).click()
+    await page.getByRole('dialog', { name: '主播摄像头', exact: true }).getByRole('button', { name: '隐藏摄像头小窗', exact: true }).click()
     await expect(page.locator('.camera-overlay')).toHaveCount(0)
   })
 
-  test('HLS 主画面的清晰度在播放器内的片源面板切换', async ({ page }) => {
+  test('HLS 主画面的清晰度在底栏右下角切换', async ({ page }) => {
     test.skip(!hlsFixtureReady(), '缺少 HLS 测试源')
     await openPlayer(page)
     await loadBothFixtures(page, FIXTURES.commentaryHls)
@@ -273,15 +272,41 @@ test.describe('片源画质和摄像头入口', () => {
     await page.locator('.pip-swap').click()
     await expect(page.locator('.theater-main')).toHaveAttribute('data-role', 'commentary')
 
-    const panel = await openSourcePanel(page, 'commentary')
-    const quality = panel.getByRole('combobox', { name: '清晰度' })
     // Levels arrive on MANIFEST_PARSED, which is not ordered against the readiness wait.
-    await expect(quality).toBeEnabled({ timeout: 20_000 })
-    const automatic = quality.getByRole('option', { name: /自动/ })
-    await expect(automatic).toHaveCount(1)
-    await quality.selectOption(await automatic.getAttribute('value') ?? '-1')
+    // Each side has its own button; the commentary's is the one with a ladder here.
+    const button = page.locator('.dock').getByRole('button', { name: '解说清晰度', exact: true })
+    await revealOverlay(page)
+    await expect(button).toBeVisible({ timeout: 20_000 })
+    const dock = await page.locator('.dock-right').boundingBox()
+    const at = await button.boundingBox()
+    if (!dock || !at) throw new Error('清晰度按钮应位于底栏右侧')
+    expect(at.x).toBeGreaterThan(dock.x)
+    const panel = page.getByRole('dialog', { name: '解说清晰度', exact: true })
+    // usePopover ignores a reopen within 120 ms of closing, as the helpers' triggers allow for.
+    const open = async (): Promise<void> => {
+      await page.waitForTimeout(150)
+      await revealOverlay(page)
+      await button.click()
+      await expect(panel).toBeVisible()
+    }
+    await open()
+    // A second press on the same button closes it.
+    await button.click()
+    await expect(panel).toBeHidden()
+    await open()
+    const levels = panel.getByRole('menuitemradio')
+    expect(await levels.count()).toBeGreaterThan(1)
+    // Pick a fixed level, then back to 自动; the button shows its side's choice.
+    await levels.nth(1).click()
+    await expect(panel).toBeHidden()
+    await expect(button).not.toContainText('自动')
+    await open()
+    await expect(levels.nth(1)).toHaveAttribute('aria-checked', 'true')
+    await panel.getByRole('menuitemradio', { name: '自动' }).click()
+    await expect(button).toContainText('自动')
+    await open()
 
-    // The studio keeps quality controls in the source popover, within the player surface.
+    // The menu stays within the player surface.
     const box = await panel.boundingBox()
     const stage = await page.locator('main.theater').boundingBox()
     expect(box).not.toBeNull()

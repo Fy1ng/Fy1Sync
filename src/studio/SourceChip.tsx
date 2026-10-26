@@ -1,22 +1,22 @@
 /**
  * One source, as a tag in the top bar: which side, where from, whether it plays. Clicking it
- * opens what can be changed about that side — the link, the quality, and for the voice its
- * danmaku room and the streamer camera window.
+ * opens what can be changed about that side — the link, and for the voice its danmaku room.
+ * Quality (QualityMenu) and the streamer camera (CameraButton) are in the dock.
  */
 
 import { useState } from 'react'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
-import type { CameraControls } from '../app/useCamera'
 import type { SourceRole } from '../core/types'
 import { bufferStatusText } from '../ui/bufferStatus'
 import { Icon, Popover, Segmented, usePopover } from './kit'
+import { findLiveOfficial } from './officialLive'
 import { PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
 
-export function SourceChip({ role, onEmpty, camera, onFrameCamera }: {
+export function SourceChip({ role, onEmpty, onShowPreview = null }: {
   role: SourceRole
   onEmpty: () => void
-  camera: CameraControls
-  onFrameCamera: () => void
+  /** Set while this side's small picture is hidden; offered when the pointer rests on the chip. */
+  onShowPreview?: (() => void) | null
 }): React.ReactNode {
   const snapshot = useSessionSnapshot()
   const loader = useSourceLoader()
@@ -27,7 +27,7 @@ export function SourceChip({ role, onEmpty, camera, onFrameCamera }: {
   const where = descriptor ? sourceTitle(descriptor) : '未载入'
 
   return (
-    <div className="chip-wrap">
+    <div className={`chip-wrap${onShowPreview && !panel.open ? ' has-drop' : ''}`}>
       <button type="button" className="chip" data-role={role} data-status={status}
         onClick={state.status === 'empty' && !loader.state[role].busy ? onEmpty : panel.toggle}
         aria-expanded={panel.open} aria-label={`${ROLE_LABEL[role]}：${where}`}>
@@ -36,17 +36,20 @@ export function SourceChip({ role, onEmpty, camera, onFrameCamera }: {
         <span className="chip-where">{where}</span>
         {snapshot.mainRole === role && state.status !== 'empty' && <span className="chip-main" title="当前为主画面">主画面</span>}
       </button>
+      {onShowPreview && !panel.open && (
+        <div className="chip-drop">
+          <button type="button" className="btn-glass small" onClick={onShowPreview}>显示小画面</button>
+        </div>
+      )}
       <Popover open={panel.open} onClose={panel.close} className="source-pop" label={`${ROLE_LABEL[role]}片源`}>
-        <SourcePanel role={role} camera={camera} onFrameCamera={() => { panel.close(); onFrameCamera() }} onDone={panel.close} />
+        <SourcePanel role={role} onDone={panel.close} />
       </Popover>
     </div>
   )
 }
 
-function SourcePanel({ role, camera, onFrameCamera, onDone }: {
+function SourcePanel({ role, onDone }: {
   role: SourceRole
-  camera: CameraControls
-  onFrameCamera: () => void
   onDone: () => void
 }): React.ReactNode {
   const session = useSession()
@@ -57,7 +60,6 @@ function SourcePanel({ role, camera, onFrameCamera, onDone }: {
   const [input, setInput] = useState(state.descriptor?.input ?? '')
   const [roomPlatform, setRoomPlatform] = useState<RoomPlatform>(state.descriptor?.platform === 'bilibili' ? 'bilibili' : 'douyu')
   const bareRoom = parseRoomInput(input)?.platform === null
-  const qualities = state.descriptor?.sourceQualities ?? []
   const buffer = snapshot.buffers[role]
 
   return (
@@ -72,6 +74,7 @@ function SourcePanel({ role, camera, onFrameCamera, onDone }: {
           {load.busy ? '载入中' : '载入'}
         </button>
       </form>
+      {role === 'official' && <FindOfficial onDone={onDone} />}
       {bareRoom && (
         <Segmented label="房间号所属平台" value={roomPlatform} onChange={setRoomPlatform}
           options={[{ value: 'douyu', label: PLATFORM_LABEL.douyu }, { value: 'bilibili', label: PLATFORM_LABEL.bilibili }]} />
@@ -82,42 +85,9 @@ function SourcePanel({ role, camera, onFrameCamera, onDone }: {
       {state.status === 'error' && state.error && <p className="form-error">{state.error.message}</p>}
       {load.notes.map((note) => <p key={note} className="muted">{note}</p>)}
 
-      {qualities.length > 0 && (
-        qualities.length <= 5
-          ? <Segmented label="清晰度" value={state.descriptor?.sourceQuality ?? ''} disabled={snapshot.qualityBusy[role]}
-              onChange={(quality) => void session.changeSourceQuality(role, quality)}
-              options={qualities.map((option) => ({ value: option.id, label: option.label }))} />
-          : <label className="field-row"><span>清晰度</span>
-              <select value={state.descriptor?.sourceQuality ?? ''} disabled={snapshot.qualityBusy[role]}
-                onChange={(event) => void session.changeSourceQuality(role, event.target.value)}>
-                {qualities.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-              </select>
-            </label>
-      )}
-      {qualities.length === 0 && state.quality.length > 1 && (
-        <label className="field-row"><span>清晰度</span>
-          <select value={state.level} onChange={(event) => session.engine.setLevel(role, Number(event.target.value))}>
-            {state.quality.map((option) => <option key={option.level} value={option.level}>{option.label}</option>)}
-          </select>
-        </label>
-      )}
       {buffer && <p className="muted">{bufferStatusText(buffer)}</p>}
 
       {role === 'commentary' && <DanmakuRoom />}
-      {role === 'commentary' && camera.available && (
-        <div className="row-split">
-          <span className="muted">主播摄像头小窗</span>
-          <span className="row-end">
-            {camera.config && (
-              <button type="button" className="btn-quiet small" onClick={() => camera.setEnabled(!camera.config!.enabled)}>
-                {camera.config.enabled ? '隐藏' : '显示'}
-              </button>
-            )}
-            <button type="button" className="btn-quiet small" onClick={onFrameCamera}>{camera.config ? '重新框选' : '框选'}</button>
-          </span>
-        </div>
-      )}
-
       <div className="row-split panel-foot">
         <label className="btn-quiet small file-pick">
           <Icon name="file" /> 本地文件
@@ -167,5 +137,23 @@ function DanmakuRoom(): React.ReactNode {
         <button type="button" className="btn-quiet" onClick={() => { disconnectRoom(); setEditing(false) }}>断开</button>
       )}
     </form>
+  )
+}
+
+/** Replace the picture with whichever CS2 event channel is live now. */
+function FindOfficial({ onDone }: { onDone: () => void }): React.ReactNode {
+  const loader = useSourceLoader()
+  const [status, setStatus] = useState<string | null>(null)
+  const [missed, setMissed] = useState(false)
+  return (
+    <div className="row-split">
+      <span className="muted">{status ?? (missed ? '目前没有正在直播的 CS2 赛事官方频道' : 'CS2 赛事官方直播')}</span>
+      <button type="button" className="btn-quiet small" disabled={status !== null} onClick={() => {
+        setMissed(false)
+        setStatus('正在查找')
+        void findLiveOfficial((url) => loader.loadInput('official', url), (channel) => setStatus(`正在查找 ${channel.name}`))
+          .then((found) => { setStatus(null); if (found) onDone(); else setMissed(true) })
+      }}>查找正在直播的</button>
+    </div>
   )
 }

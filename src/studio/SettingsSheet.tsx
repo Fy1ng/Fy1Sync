@@ -1,6 +1,9 @@
 /**
- * Things set once per machine. Nothing here is needed to start watching; it is where the
- * answer lives when something does not play.
+ * 设置: everything that is not watching, in one window. Sections run across the top; each
+ * keeps its own pages down the left. Nothing here is needed to start watching.
+ *
+ * The 倒计时样式 section is a doorway rather than a page: the editor needs the whole window,
+ * so it opens in place of the player (an in-page route that keeps both streams loaded).
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -11,22 +14,98 @@ import type { LoginStatus } from '../../electron/login'
 import type { ToolsStatus } from '../../electron/toolsService'
 import { AppUpdateSettings } from './about/AppUpdate'
 import { CaptureSettings } from './capture/Capture'
-import { Segmented, Sheet, Switch } from './kit'
+import { routeLink } from '../app/navigate'
+import { DouyuDesk } from './douyu/DouyuDesk'
+import { RoomInsights } from './insights/RoomInsights'
+import { DanmakuRecords, type RecordsTab } from './records/DanmakuRecords'
+import { Icon, Segmented, Sheet, SideTabs, Switch } from './kit'
 import { PipSettings } from './pip/PipSettings'
 
-export function SettingsSheet({ onClose }: { onClose: () => void }): React.ReactNode {
+export type SettingsSection = 'douyu' | 'records' | 'insights' | 'editor' | 'general'
+
+/** Where 设置 opens, and for 弹幕记录 which page and user. */
+export interface SettingsTarget { section: SettingsSection; records?: { tab: RecordsTab; uid?: string } }
+
+const SECTIONS: { id: SettingsSection; label: string }[] = [
+  { id: 'general', label: '通用' },
+  { id: 'douyu', label: '斗鱼' },
+  { id: 'records', label: '弹幕记录' },
+  { id: 'insights', label: '房间数据' },
+  { id: 'editor', label: '倒计时样式' },
+]
+
+export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
+  target: SettingsTarget
+  /** The connected danmaku room; 房间数据 and 弹幕记录 are about it. */
+  room: string | null
+  onClose: () => void
+  onWatch: (room: string) => void
+  onFill: (text: string) => void
+}): React.ReactNode {
+  const [section, setSection] = useState<SettingsSection>(target.section)
+  useEffect(() => setSection(target.section), [target])
   return (
-    <Sheet title="设置" onClose={onClose}>
-      <div className="sheet-body">
-        <YouTubeAccount />
-        <AlignPrefs />
-        <Decoding />
-        <Group title="画中画"><PipSettings /></Group>
-        <Group title="截图与 GIF"><CaptureSettings /></Group>
-        <Tools />
-        <Group title="关于"><AppUpdateSettings /></Group>
+    <Sheet title="设置" onClose={onClose} wide>
+      <div className="settings">
+        <nav className="settings-tabs" role="tablist" aria-label="设置分区">
+          {SECTIONS.map((item) => (
+            <button key={item.id} type="button" role="tab" aria-selected={section === item.id}
+              className={section === item.id ? 'is-on' : undefined} onClick={() => setSection(item.id)}>
+              {item.label}
+            </button>
+          ))}
+        </nav>
+        <div className="settings-body" role="tabpanel" aria-label={SECTIONS.find((item) => item.id === section)?.label}>
+          {section === 'general' && <General />}
+          {section === 'douyu' && <DouyuDesk onWatch={(next) => { onWatch(next); onClose() }} />}
+          {section === 'records' && (
+            <DanmakuRecords initialTab={target.records?.tab ?? 'history'} initialUid={target.records?.uid} room={room}
+              onFill={(text) => { onFill(text); onClose() }} />
+          )}
+          {section === 'insights' && (room
+            ? <RoomInsights room={room} />
+            : <p className="settings-empty">连接斗鱼弹幕房间后显示房间数据</p>)}
+          {section === 'editor' && <EditorDoor onClose={onClose} />}
+        </div>
       </div>
     </Sheet>
+  )
+}
+
+type GeneralPage = 'youtube' | 'align' | 'decoding' | 'pip' | 'capture' | 'tools' | 'about'
+const GENERAL: { id: GeneralPage; label: string }[] = [
+  { id: 'youtube', label: 'YouTube' },
+  { id: 'align', label: '对齐' },
+  { id: 'decoding', label: '解码' },
+  { id: 'pip', label: '画中画' },
+  { id: 'capture', label: '截图与 GIF' },
+  { id: 'tools', label: '取流工具' },
+  { id: 'about', label: '关于' },
+]
+
+function General(): React.ReactNode {
+  const [page, setPage] = useState<GeneralPage>('youtube')
+  return (
+    <SideTabs label="通用" value={page} onChange={setPage} tabs={GENERAL}>
+      <div className="settings-page">
+        {page === 'youtube' && <YouTubeAccount />}
+        {page === 'align' && <AlignPrefs />}
+        {page === 'decoding' && <Decoding />}
+        {page === 'pip' && <Group title="画中画"><PipSettings /></Group>}
+        {page === 'capture' && <Group title="截图与 GIF"><CaptureSettings /></Group>}
+        {page === 'tools' && <Tools />}
+        {page === 'about' && <Group title="关于"><AppUpdateSettings /></Group>}
+      </div>
+    </SideTabs>
+  )
+}
+
+function EditorDoor({ onClose }: { onClose: () => void }): React.ReactNode {
+  return (
+    <div className="settings-door">
+      <p>倒计时样式告诉自动对齐比赛倒计时在画面的哪个位置、长什么样。打开编辑器后可从录像或截图教会每个数字，两路直播保持载入。</p>
+      <a className="btn-solid" {...routeLink('/admin', onClose)}><Icon name="tune" />打开倒计时样式编辑器</a>
+    </div>
   )
 }
 
@@ -87,7 +166,7 @@ function YouTubeAccount(): React.ReactNode {
       </div>
       <p className="muted">出现「请确认你不是机器人」提示或观看会员直播时需要登录。</p>
       {message && <p className="muted" role="status">{message}</p>}
-      <Switch label="优先使用高清自适应流" detail="可用时提供 1440p 等更多清晰度"
+      <Switch label="自动使用最高画质" detail="可用时直接载入 1440p、4K 等最高清晰度，网络较慢时可关闭"
         checked={settings.preferAdaptive} onChange={(preferAdaptive) => session.updateSettings({ preferAdaptive })} />
     </Group>
   )
