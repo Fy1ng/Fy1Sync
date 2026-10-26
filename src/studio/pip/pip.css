@@ -5,6 +5,8 @@
  * out of the picture until the pointer is over the window or focus is inside it.
  */
 
+@import '../fonts/fonts.css';
+
 .pip-page {
   --ink: #0d0d0f;
   --smoke: rgb(22 22 25 / 78%);
@@ -17,8 +19,8 @@
   --lock: #6fd3a8;
   --drift: #f0b03f;
   --tally: #ff4d4d;
-  --cjk: 'Noto Sans SC', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
-  --mono: 'Cascadia Code', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  --cjk: 'Studio Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
+  --mono: 'Studio Figures', 'Cascadia Mono', Consolas, ui-monospace, monospace;
   --r: 10px;
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 

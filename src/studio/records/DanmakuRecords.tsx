@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiClient } from '../../app/apiClient'
 import type { MessageHistoryPage, MessageHistoryQuery } from '../../../server/danmaku/messageHistory'
 import type { FavoriteDanmaku, FavoriteDanmakuPage } from '../../../electron/danmakuFeatures'
-import { Sheet } from '../kit'
+import { Sheet, SideTabs } from '../kit'
 import './records.css'
 
 export type RecordsTab = 'history' | 'favorites'
@@ -307,24 +307,30 @@ export function DanmakuRecordsSheet({ initialTab, initialUid, room, onClose, onF
   /** Put a favorite into the send box. Never sends. */
   onFill: (text: string) => void
 }): React.ReactNode {
-  const [tab, setTab] = useState<RecordsTab>(initialTab)
-  // Both panes stay mounted so switching tabs keeps each one's filters and page.
   return (
     <Sheet title="弹幕记录" onClose={onClose} wide>
-      <div className="records">
-        <nav className="desk-tabs" role="tablist" aria-label="弹幕记录">
-          {TABS.map((item) => (
-            <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} id={`records-tab-${item.id}`}
-              className={tab === item.id ? 'is-on' : undefined} onClick={() => setTab(item.id)}>
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <div className="records-content" role="tabpanel" aria-labelledby={`records-tab-${tab}`}>
-          <div hidden={tab !== 'history'}><HistoryTab initialUid={initialUid} room={room} /></div>
-          <div hidden={tab !== 'favorites'}><FavoritesTab onFill={onFill} /></div>
-        </div>
-      </div>
+      <DanmakuRecords initialTab={initialTab} initialUid={initialUid} room={room} onFill={onFill} />
     </Sheet>
+  )
+}
+
+/** The 弹幕记录 section of 设置; the standalone sheet above wraps the same body. */
+export function DanmakuRecords({ initialTab, initialUid, room, onFill }: {
+  initialTab: RecordsTab
+  initialUid?: string
+  room: string | null
+  onFill: (text: string) => void
+}): React.ReactNode {
+  const [tab, setTab] = useState<RecordsTab>(initialTab)
+  // A chat row's 历史弹幕 can open this again for another user while it is showing.
+  useEffect(() => setTab(initialTab), [initialTab, initialUid])
+  // Both panes stay mounted so switching tabs keeps each one's filters and page.
+  return (
+    <SideTabs label="弹幕记录" value={tab} onChange={setTab} tabs={TABS}>
+      <div className="records-content">
+        <div hidden={tab !== 'history'}><HistoryTab key={initialUid ?? ''} initialUid={initialUid} room={room} /></div>
+        <div hidden={tab !== 'favorites'}><FavoritesTab onFill={onFill} /></div>
+      </div>
+    </SideTabs>
   )
 }

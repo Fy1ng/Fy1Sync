@@ -118,7 +118,7 @@ describe('the studio', () => {
     fireEvent.click(screen.getByRole('button', { name: '跳过' }))
     expect(screen.queryByRole('dialog', { name: '添加直播间' })).toBeNull()
     // Nothing to align yet, so the nudges are off rather than silently doing nothing.
-    expect(screen.getByRole('button', { name: '解说延后' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '回退画面' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: '添加直播间' }))
     expect(screen.getByRole('dialog', { name: '添加直播间' })).toBeInTheDocument()
   })
@@ -142,7 +142,7 @@ describe('the studio', () => {
     expect(screen.queryByRole('dialog', { name: '添加直播间' })).toBeNull()
   })
 
-  it('holds the voice back for 解说延后 and the picture back for 画面延后', async () => {
+  it('快进画面 holds the voice back and 回退画面 holds the picture back', async () => {
     const session = makeSession()
     // Both sides present: an offset only means something between two sources.
     for (const role of ['official', 'commentary'] as const) {
@@ -152,14 +152,14 @@ describe('the studio', () => {
     renderStudio(session)
     await flush()
 
-    fireEvent.click(screen.getByRole('button', { name: '解说延后' }))
+    fireEvent.click(screen.getByRole('button', { name: '快进画面' }))
     await waitFor(() => expect(apply).toHaveBeenCalled())
     expect(apply.mock.calls.at(-1)![0]).toBeLessThan(0)
 
     apply.mockClear()
     await flush()
-    fireEvent.click(screen.getByRole('button', { name: '画面延后' }))
-    fireEvent.click(screen.getByRole('button', { name: '画面延后' }))
+    fireEvent.click(screen.getByRole('button', { name: '回退画面' }))
+    fireEvent.click(screen.getByRole('button', { name: '回退画面' }))
     await waitFor(() => expect(apply).toHaveBeenCalledTimes(2))
     expect(apply.mock.calls.at(-1)![0]).toBeGreaterThan(apply.mock.calls[0]![0] as number)
   })
@@ -180,9 +180,10 @@ describe('the studio', () => {
     expect(seek).toHaveBeenLastCalledWith(expect.any(String), 30)
     expect(apply).not.toHaveBeenCalled()
 
+    // , is 回退画面: the picture is held back, a positive offset.
     fireEvent.keyDown(window, { code: 'Comma' })
     await waitFor(() => expect(apply).toHaveBeenCalled())
-    expect(apply.mock.calls.at(-1)![0]).toBeLessThan(0)
+    expect(apply.mock.calls.at(-1)![0]).toBeGreaterThan(0)
   })
 
   it('puts a lone commentary on the big screen and gives it back when the picture arrives', async () => {

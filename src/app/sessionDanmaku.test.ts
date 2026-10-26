@@ -160,6 +160,27 @@ describe('Session danmaku transport', () => {
     vi.mocked(Math.random).mockRestore()
   })
 
+  it('reconnects the room that suspend parked when the player boots again', async () => {
+    const { session } = await makeSession()
+    session.connectDanmaku('288016')
+    session.suspend()
+    expect(session.flush().danmaku.room).toBeNull()
+    await session.boot()
+    expect(StubDanmakuSubscription.instances.at(-1)?.room).toBe('288016')
+    expect(session.flush().danmaku.room).toBe('288016')
+  })
+
+  it('does not bring back a room that was disconnected before leaving', async () => {
+    const { session } = await makeSession()
+    session.connectDanmaku('288016')
+    session.disconnectDanmaku()
+    session.suspend()
+    const before = StubDanmakuSubscription.instances.length
+    await session.boot()
+    expect(StubDanmakuSubscription.instances).toHaveLength(before)
+    expect(session.flush().danmaku.room).toBeNull()
+  })
+
   it('subscribes to the relay with a structured room id', async () => {
     const { session } = await makeSession()
     session.connectDanmaku('288016')

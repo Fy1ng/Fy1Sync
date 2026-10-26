@@ -16,6 +16,8 @@ import { ErrorBoundary } from './ui/ErrorBoundary'
 import { Session } from './app/session'
 import { SessionProvider } from './app/SessionContext'
 import { Studio } from './studio/Studio'
+import { TitleBar } from './studio/TitleBar'
+import './studio/titlebar.css'
 
 const EditorPage = lazy(() => import('./studio/editor/EditorPage'))
 const PipPage = lazy(() => import('./studio/pip/PipPage'))
@@ -54,6 +56,7 @@ function App(): React.ReactNode {
   }
   return (
     <SessionProvider session={sharedSession()}>
+      <TitleBar detail={route === 'admin' ? '倒计时样式编辑器' : undefined} />
       {route === 'admin' ? (
         <Suspense fallback={<div className="page-loading">正在加载倒计时样式编辑器…</div>}>
           <EditorPage />

@@ -150,6 +150,51 @@ export function HoldButton({ onStep, className, children, label, disabled = fals
   )
 }
 
+/**
+ * Tabs down the left with the chosen pane beside them. Up/Down move between tabs the way a
+ * vertical tab list should; `aside` sits under the list for facts about the whole section.
+ */
+export function SideTabs<T extends string>({ label, tabs, value, onChange, aside, children }: {
+  label: string
+  tabs: { id: T; label: string; badge?: React.ReactNode }[]
+  value: T
+  onChange: (id: T) => void
+  aside?: React.ReactNode
+  children: React.ReactNode
+}): React.ReactNode {
+  const base = useId()
+  const current = tabs.find((tab) => tab.id === value) ?? tabs[0]
+  const move = (event: React.KeyboardEvent<HTMLElement>): void => {
+    const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0
+    if (!step) return
+    event.preventDefault()
+    const index = tabs.findIndex((tab) => tab.id === value)
+    const next = tabs[(index + step + tabs.length) % tabs.length]!
+    onChange(next.id)
+    document.getElementById(`${base}-${next.id}`)?.focus()
+  }
+  return (
+    <div className="side-tabs">
+      <div className="side-nav">
+        <div role="tablist" aria-orientation="vertical" aria-label={label} onKeyDown={move}>
+          {tabs.map((tab) => (
+            <button key={tab.id} id={`${base}-${tab.id}`} type="button" role="tab" aria-selected={tab.id === value}
+              tabIndex={tab.id === value ? 0 : -1} aria-controls={`${base}-panel`}
+              className={tab.id === value ? 'is-on' : undefined} onClick={() => onChange(tab.id)}>
+              <span>{tab.label}</span>
+              {tab.badge}
+            </button>
+          ))}
+        </div>
+        {aside && <div className="side-aside">{aside}</div>}
+      </div>
+      <div className="side-panel" id={`${base}-panel`} role="tabpanel" aria-labelledby={current ? `${base}-${current.id}` : undefined}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
 /** A full-window workspace with a title, for the screens that are not about watching. */
 export function Sheet({ title, onClose, children, wide = false }: {
   title: string
@@ -205,6 +250,8 @@ const PATHS = {
   volume: <path d="M4.5 9.5h3l4.5-4v13l-4.5-4h-3ZM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" />,
   mute: <path d="M4.5 9.5h3l4.5-4v13l-4.5-4h-3ZM16 9.5l5 5m0-5-5 5" />,
   user: <><circle cx="12" cy="8.5" r="3.5" /><path d="M5 19.5c1-3.5 3.7-5 7-5s6 1.5 7 5" /></>,
+  gear: <><circle cx="12" cy="12" r="3" /><path d="M12 3.5v2.2M12 18.3v2.2M20.5 12h-2.2M5.7 12H3.5M18 6l-1.6 1.6M7.6 16.4 6 18M18 18l-1.6-1.6M7.6 7.6 6 6" /></>,
+  trophy: <path d="M8 4.5h8v4.2a4 4 0 0 1-8 0V4.5ZM8 6H4.8a3 3 0 0 0 3.3 4M16 6h3.2a3 3 0 0 1-3.3 4M12 12.7V16M8.5 19.5h7M10 16h4v3.5h-4Z" />,
 } as const
 
 export type IconName = keyof typeof PATHS

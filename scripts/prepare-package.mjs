@@ -16,7 +16,7 @@ for (const name of ['main.cjs', 'preload.cjs', 'network-runtime.cjs']) await cp(
 await cp(path.join(root, 'dist', 'client', 'index.html'), path.join(destination, 'client', 'index.html'))
 const assets = path.join(root, 'dist', 'client', 'assets')
 for (const entry of await readdir(assets, { withFileTypes: true })) {
-  if (!entry.isFile() || !/^[A-Za-z0-9_.-]+\.(js|css|wasm)$/.test(entry.name)) continue
+  if (!entry.isFile() || !/^[A-Za-z0-9_.-]+\.(js|css|wasm|woff2)$/.test(entry.name)) continue
   await cp(path.join(assets, entry.name), path.join(destination, 'client', 'assets', entry.name))
 }
 const toolInventory = JSON.parse(await readFile(path.join(root, '.packaging', 'tools', 'inventory.json'), 'utf8'))

@@ -1,0 +1,12 @@
+/*
+ * 得意黑 Smiley Sans, a leaning display face. Only for the few large headings; it has one
+ * weight and its slant is part of the design, so it is never synthesised bold or italic.
+ * SIL OFL 1.1.
+ */
+@font-face {
+  font-family: 'Studio Display';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(./SmileySans-Oblique.woff2) format('woff2');
+}

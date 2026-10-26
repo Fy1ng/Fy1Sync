@@ -53,10 +53,13 @@
   max-width: 22em;
 }
 
-.editor-name {
+.studio .editor-title .editor-name {
   min-width: 4em;
-  font-size: 16px;
-  font-weight: 800;
+  font-family: var(--display);
+  font-size: 20px;
+  font-weight: 400;
+  font-synthesis: none;
+  letter-spacing: 0.01em;
 }
 
 .editor-id {
@@ -123,13 +126,6 @@
 
 .studio .file-menu {
   width: 180px;
-}
-
-.studio .menu-heading {
-  padding: 6px 10px 4px;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--ash);
 }
 
 .studio .menu-empty {

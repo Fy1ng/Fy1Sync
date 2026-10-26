@@ -105,10 +105,14 @@ interface Loader {
 
 const LoaderContext = createContext<Loader | null>(null)
 
+/** The room name as typed, kept across player mounts like the session that holds the room. */
+let rememberedAlias: string | null = null
+
 export function SourceLoaderProvider({ children }: { children: React.ReactNode }): React.ReactNode {
   const session = useSession()
   const [state, setState] = useState<Record<SourceRole, RoleLoad>>({ official: IDLE, commentary: IDLE })
-  const [roomAlias, setRoomAlias] = useState<string | null>(null)
+  const [roomAlias, setAlias] = useState<string | null>(() => rememberedAlias)
+  const setRoomAlias = useCallback((alias: string | null) => { rememberedAlias = alias; setAlias(alias) }, [])
   const room = useSessionSnapshot().danmaku.room
   const live = useRef(state)
   const patch = useCallback((role: SourceRole, next: Partial<RoleLoad>) => {
@@ -120,8 +124,8 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     // Set before connecting: the relay may swap the typed number for the real id.
     setRoomAlias(name ?? next)
     session.connectDanmaku(next)
-  }, [session])
-  const disconnectRoom = useCallback(() => { setRoomAlias(null); session.disconnectDanmaku() }, [session])
+  }, [session, setRoomAlias])
+  const disconnectRoom = useCallback(() => { setRoomAlias(null); session.disconnectDanmaku() }, [session, setRoomAlias])
 
   // Loading is a request to watch: start playback rather than leave a loaded, still picture.
   const play = useCallback(() => { void session.setPlaying(true) }, [session])

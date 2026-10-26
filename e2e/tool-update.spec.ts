@@ -19,7 +19,7 @@ test('工具更新离线回归并保留播放', async ({ page, electronApp }) =>
   await loadBothFixtures(page)
   await setPlaying(page, true)
   const mediaBefore = await mediaTimes(page)
-  const dialog = await openSettings(page)
+  const dialog = await openSettings(page, '取流工具')
   await expect(dialog).toBeVisible()
   const section = dialog.getByRole('region', { name: '取流工具' })
   const update = section.getByRole('button', { name: '更新 yt-dlp', exact: true })

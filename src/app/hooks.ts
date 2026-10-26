@@ -44,6 +44,9 @@ export function useOverlayVisibility(
   handlers: {
     onPointerEnter: () => void
     onPointerMove: () => void
+    onPointerDown: () => void
+    onWheel: () => void
+    onKeyDown: () => void
     onPointerLeave: () => void
   }
 } {
@@ -53,6 +56,7 @@ export function useOverlayVisibility(
   const [visible, setVisible] = useState(true)
   const [pinned, setPinned] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pressed = useRef(false)
 
   const clear = useCallback(() => {
     if (timer.current !== null) {
@@ -65,8 +69,24 @@ export function useOverlayVisibility(
     clear()
     setVisible(true)
     if (pinned) return
-    timer.current = setTimeout(() => setVisible(false), idleMs)
+    const arm = (): void => {
+      timer.current = setTimeout(() => { if (pressed.current) arm(); else setVisible(false) }, idleMs)
+    }
+    arm()
   }, [clear, idleMs, pinned])
+
+  const press = useCallback(() => {
+    pressed.current = true
+    show()
+    const release = (): void => {
+      pressed.current = false
+      window.removeEventListener('pointerup', release, true)
+      window.removeEventListener('pointercancel', release, true)
+      show()
+    }
+    window.addEventListener('pointerup', release, true)
+    window.addEventListener('pointercancel', release, true)
+  }, [show])
 
   // Arms the hide on mount, and again whenever `keepVisible` is released, so a bar held
   // open by a pause fades once playback resumes. Reuses `timer.current` rather than a
@@ -86,6 +106,11 @@ export function useOverlayVisibility(
     handlers: {
       onPointerEnter: show,
       onPointerMove: show,
+      // A click is activity too: pressing 回退画面 five times must not let the bar fade
+      // mid-adjustment just because the pointer did not travel between presses.
+      onPointerDown: press,
+      onWheel: show,
+      onKeyDown: show,
       onPointerLeave: () => {
         clear()
         if (!pinned) setVisible(false)
@@ -142,7 +167,12 @@ export function useDismiss(open: boolean, onClose: () => void): React.RefObject<
     if (!open) return
     const onPointerDown = (event: PointerEvent): void => {
       const node = ref.current
-      if (node && event.target instanceof Node && !node.contains(event.target)) onClose()
+      if (!node || !(event.target instanceof Node) || node.contains(event.target)) return
+      // The trigger that opened this panel toggles it closed on its own click. Closing here
+      // as well would race that toggle: a press held longer than the guard below reopened it.
+      const trigger = event.target instanceof Element ? event.target.closest('[aria-expanded="true"]') : null
+      if (trigger && !trigger.closest('.pop')) return
+      onClose()
     }
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {

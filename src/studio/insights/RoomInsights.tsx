@@ -12,7 +12,7 @@ import { apiClient, type ApiResult } from '../../app/apiClient'
 import { useSessionSnapshot } from '../../app/SessionContext'
 import type { SessionSnapshot } from '../../app/session'
 import type { DouyuInsightsEvent, DouyuRankEntry, DouyuRoomInsights, DouyuWatchTime } from '../../../server/douyu/insightsTypes'
-import { Icon, Segmented, Sheet } from '../kit'
+import { Icon, Segmented, Sheet, SideTabs } from '../kit'
 import { formatCount, formatDuration, formatMinor, formatTime, UNKNOWN } from './format'
 import './insights.css'
 
@@ -45,6 +45,11 @@ function liveState(insights: DouyuRoomInsights): string {
 }
 
 export function RoomInsightsSheet({ room, onClose }: { room: string; onClose: () => void }): React.ReactNode {
+  return <Sheet title="房间数据" onClose={onClose}><RoomInsights room={room} /></Sheet>
+}
+
+/** The 房间数据 section of 设置: statistics for the connected danmaku room. */
+export function RoomInsights({ room }: { room: string }): React.ReactNode {
   const [tab, setTab] = useState<Tab>('overview')
   const [insights, setInsights] = useState<DouyuRoomInsights | null>(null)
   const [error, setError] = useState('')
@@ -125,26 +130,21 @@ export function RoomInsightsSheet({ room, onClose }: { room: string; onClose: ()
   }
 
   return (
-    <Sheet title="房间数据" onClose={onClose}>
-      <div className="insights">
-        <nav className="desk-tabs" role="tablist" aria-label="房间数据">
-          {([['overview', '概况'], ['ranks', '榜单']] as const).map(([id, label]) => (
-            <button key={id} type="button" role="tab" aria-selected={tab === id}
-              className={tab === id ? 'is-on' : undefined} onClick={() => setTab(id)}>{label}</button>
-          ))}
-          <span className="insights-room muted">房间 <span className="num">{room}</span></span>
-          <button type="button" className="btn-quiet small" disabled={refreshing} onClick={refresh}>
-            <Icon name="refresh" />{refreshing ? '正在刷新' : '刷新'}
-          </button>
-        </nav>
-        <div className="sheet-body insights-body" role="tabpanel">
-          {error && <p className="form-error" role="alert">{error}</p>}
-          {!insights && !error && <p className="lane" role="status">正在读取房间数据</p>}
-          {insights && tab === 'overview' && <Overview insights={insights} watch={watch} />}
-          {insights && tab === 'ranks' && <Ranks insights={insights} />}
-        </div>
+    <SideTabs label="房间数据" value={tab} onChange={setTab}
+      tabs={[{ id: 'overview', label: '概况' }, { id: 'ranks', label: '榜单' }]}
+      aside={<>
+        <span className="insights-room muted">房间 <span className="num">{room}</span></span>
+        <button type="button" className="btn-quiet small" disabled={refreshing} onClick={refresh}>
+          <Icon name="refresh" />{refreshing ? '正在刷新' : '刷新'}
+        </button>
+      </>}>
+      <div className="insights-body">
+        {error && <p className="form-error" role="alert">{error}</p>}
+        {!insights && !error && <p className="lane" role="status">正在读取房间数据</p>}
+        {insights && tab === 'overview' && <Overview insights={insights} watch={watch} />}
+        {insights && tab === 'ranks' && <Ranks insights={insights} />}
       </div>
-    </Sheet>
+    </SideTabs>
   )
 }
 

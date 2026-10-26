@@ -13,6 +13,8 @@ export default defineConfig(({ command }) => ({
     emptyOutDir: true,
     sourcemap: command === 'build' ? 'hidden' : false,
     chunkSizeWarningLimit: 700,
+    // The CSP allows fonts from the app only, not data: URLs, so no font may be inlined.
+    assetsInlineLimit: (file) => (/\.woff2?$/.test(file) ? false : undefined),
     rollupOptions: {
       output: {
         manualChunks(id) {

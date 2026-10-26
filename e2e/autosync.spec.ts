@@ -266,7 +266,7 @@ test.describe('自动同步', () => {
     // must stop overwriting the result until they ask for it again.
     await page.keyboard.press('Escape')
     await revealOverlay(page)
-    await page.getByRole('group', { name: '对齐', exact: true }).getByRole('button', { name: '解说延后', exact: true }).click()
+    await page.getByRole('group', { name: '对齐', exact: true }).getByRole('button', { name: '快进画面', exact: true }).click()
     await expect(await openAlignOptions(page)).toContainText('自动对齐已暂停')
     await expect
       .poll(async () => (await offsetReadout(page)).requested, { timeout: 15_000 })

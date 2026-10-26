@@ -128,6 +128,8 @@ export class Session {
   private planValue: OffsetPlan | null = null
   private mainRoleValue: SourceRole = 'official'
   private playingValue = false
+  /** The danmaku room `suspend` disconnected, for `boot` to reconnect. */
+  private parkedDanmakuRoom: string | null = null
   private noticeSeq = 0
   private noticeList: Notice[] = []
   private bufferStates: Record<SourceRole, BufferState | null> = { official: null, commentary: null }
@@ -471,6 +473,12 @@ export class Session {
     // reload with `autoSyncEnabled: true`, but only `setAutoSyncEnabled` ever armed the
     // timer, so without this the switch read on while nothing was scheduled.
     if (this.settingsValue.autoSyncEnabled) this.startScheduler()
+    const parked = this.parkedDanmakuRoom
+    this.parkedDanmakuRoom = null
+    if (parked && !this.danmakuState.room) this.connectDanmaku(parked)
+    // Removing a media element from the document pauses it, so coming back from the
+    // editor finds both sides stopped although the session still means to play.
+    if (this.playingValue && SOURCE_ROLES.some((role) => this.engine.getState()[role].status === 'ready')) void this.setPlaying(true)
     const listed = await this.refreshPresets()
     if (revision !== this.profileRevision || this.disposed) return
     const id = this.settingsValue.profileId
@@ -1240,6 +1248,8 @@ export class Session {
    * here comes back on the next `boot`, so the page can be left and re-entered.
    */
   suspend(): void {
+    // Remembered so the next boot reconnects it: the room is part of what was loaded.
+    this.parkedDanmakuRoom = this.danmakuState.room ?? this.parkedDanmakuRoom
     ++this.autoRequestRevision
     this.autoProfiles?.suspend()
     this.stopScheduler()

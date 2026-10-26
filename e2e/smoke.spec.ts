@@ -77,8 +77,8 @@ test.describe('应用外壳', () => {
   test('未加载片源时同步状态显示为零', async ({ page }) => {
     await openPlayer(page)
     expect(await offsetReadout(page)).toEqual({ requested: 0, applied: 0 })
-    await expect(page.getByRole('button', { name: '解说延后', exact: true })).toBeDisabled()
-    await expect(page.getByRole('button', { name: '画面延后', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: '回退画面', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: '快进画面', exact: true })).toBeDisabled()
     await expect(page.getByRole('button', { name: '自动对齐', exact: true })).toBeDisabled()
   })
 })

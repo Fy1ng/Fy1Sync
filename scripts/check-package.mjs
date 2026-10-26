@@ -34,7 +34,7 @@ async function walk(dir, prefix = '') {
 }
 const asar = listPackage(path.join(resources, 'app.asar')).map(name => name.replaceAll('\\', '/').replace(/^\//, ''))
 for (const name of asar) {
-  if (!/^(?:package\.json|electron(?:\/(?:main|preload|network-runtime)\.cjs)?|client(?:\/assets)?|client\/index\.html|client\/assets\/[A-Za-z0-9_.-]+\.(?:js|css|wasm))$/.test(name)) throw new Error('Unexpected ASAR entry: ' + name)
+  if (!/^(?:package\.json|electron(?:\/(?:main|preload|network-runtime)\.cjs)?|client(?:\/assets)?|client\/index\.html|client\/assets\/[A-Za-z0-9_.-]+\.(?:js|css|wasm|woff2))$/.test(name)) throw new Error('Unexpected ASAR entry: ' + name)
 }
 const networkEntry = statFile(path.join(resources, 'app.asar'), 'electron/network-runtime.cjs')
 const networkRuntime = await lstat(path.join(resources, 'app.asar.unpacked', 'electron', 'network-runtime.cjs'))

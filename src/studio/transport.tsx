@@ -1,12 +1,14 @@
 /**
- * Playback controls along the bottom edge: play, the time line, the picture/voice balance,
+ * Playback controls along the bottom edge: play, the time line, the two volumes,
  * danmaku and fullscreen. Alignment sits in the middle of the same bar (see sync.tsx).
  */
 
 import { useEffect, useState } from 'react'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { seekableRange } from '../core/syncPlan'
+import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { Icon } from './kit'
+import { ROLE_LABEL } from './sources'
 
 /**
  * One slider for two volumes, like a crossfader: the middle plays both at full, each end
@@ -26,27 +28,41 @@ export function volumesFor(balance: number): { official: number; commentary: num
   }
 }
 
-export function Balance(): React.ReactNode {
+/**
+ * Two volumes, one per side, each with its own mute. The crossfader math above is kept for
+ * what it was tested for; the dock now sets each level directly, because "how loud is the
+ * arena" and "how loud is the commentator" are separate questions while watching.
+ */
+export function Volumes(): React.ReactNode {
+  return (
+    <div className="volumes">
+      {SOURCE_ROLES.map((role) => <Volume key={role} role={role} />)}
+    </div>
+  )
+}
+
+function Volume({ role }: { role: SourceRole }): React.ReactNode {
   const session = useSession()
   const { media } = useSessionSnapshot()
-  const official = media.official.muted ? 0 : media.official.volume
-  const commentary = media.commentary.muted ? 0 : media.commentary.volume
-  const value = Math.round(balanceOf(official, commentary) * 100)
-
-  const set = (next: number): void => {
-    const volumes = volumesFor(next / 100)
-    session.setVolume('official', volumes.official)
-    session.setVolume('commentary', volumes.commentary)
+  const state = media[role]
+  const level = state.muted ? 0 : state.volume
+  const percent = Math.round(level * 100)
+  const label = ROLE_LABEL[role]
+  // Unmuting at zero would be silent; bring it back to a usable level instead.
+  const toggle = (): void => {
+    if (level > 0) session.setMuted(role, true)
+    else session.setVolume(role, state.volume > 0 ? state.volume : 0.6)
   }
-
   return (
-    <div className="balance" style={{ '--pos': `${(value + 100) / 2}%` } as React.CSSProperties}>
-      <button type="button" className="balance-end" onClick={() => set(-100)} title="仅播放画面声音">画面</button>
-      <input type="range" min={-100} max={100} step={1} value={value} aria-label="画面与解说的音量比例"
-        aria-valuetext={value === 0 ? '两路音量相同' : value > 0 ? `解说为主，画面 ${Math.round(official * 100)}%` : `画面为主，解说 ${Math.round(commentary * 100)}%`}
-        onChange={(event) => set(Number(event.target.value))}
-        onDoubleClick={() => set(0)} />
-      <button type="button" className="balance-end" onClick={() => set(100)} title="仅播放解说声音">解说</button>
+    <div className="volume" data-role={role} data-empty={state.status === 'empty' || undefined}>
+      <button type="button" className="volume-mute" onClick={toggle} aria-pressed={level === 0}
+        aria-label={level === 0 ? `取消${label}静音` : `${label}静音`} title={level === 0 ? `取消${label}静音` : `${label}静音`}>
+        <Icon name={level === 0 ? 'mute' : 'volume'} />
+        <span className="volume-name">{label}</span>
+      </button>
+      <input type="range" min={0} max={100} step={1} value={percent} aria-label={`${label}音量`}
+        aria-valuetext={`${percent}%`} style={{ '--fill': `${percent}%` } as React.CSSProperties}
+        onChange={(event) => session.setVolume(role, Number(event.target.value) / 100)} />
     </div>
   )
 }

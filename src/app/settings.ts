@@ -79,7 +79,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   detectWindowSeconds: 3,
   seekThresholdSeconds: 1.5,
   sidebarVisible: true,
-  preferAdaptive: false,
+  // On: YouTube's adaptive formats are where 1440p and up live; the HLS ladder stops lower.
+  preferAdaptive: true,
   profileId: '',
 }
 

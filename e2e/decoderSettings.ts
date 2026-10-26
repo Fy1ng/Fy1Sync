@@ -3,7 +3,7 @@ import { invoke, openSettings, setCheckedByLabel } from './helpers'
 
 /** The production UI/IPC is the only writer; restart retains one disposable profile. */
 export async function selectSoftwareDecoding(running: RunningApplication, enabled: boolean) {
-  const dialog = await openSettings(running.page)
+  const dialog = await openSettings(running.page, '解码')
   const checkbox = dialog.getByRole('switch', { name: /^软件解码/ })
   await expect(checkbox).toBeEnabled()
   await setCheckedByLabel(checkbox, enabled)

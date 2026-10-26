@@ -14,6 +14,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { navigate, routeLink } from '../app/navigate'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { MAX_OFFSET_SECONDS, SOURCE_ROLES, type SourceRole } from '../core/types'
 import { AUTO_PROFILE_TEXT } from '../recognition/autoProfile'
@@ -73,13 +74,13 @@ export function SyncCapsule(): React.ReactNode {
       <span className="capsule-strip" aria-hidden="true" />
       <HoldButton
         className="capsule-nudge"
-        label="解说延后"
-        title={`解说延后 ${settings.smallStepSeconds} 秒（, 键，长按连续调整）`}
-        disabled={!paired || requested <= -MAX_OFFSET_SECONDS}
-        onStep={(held) => nudge('early', stepFor(held, settings.smallStepSeconds, settings.largeStepSeconds))}
+        label="回退画面"
+        title={`画面相对解说回退 ${settings.smallStepSeconds} 秒（, 键，长按连续调整）`}
+        disabled={!paired || requested >= MAX_OFFSET_SECONDS}
+        onStep={(held) => nudge('late', stepFor(held, settings.smallStepSeconds, settings.largeStepSeconds))}
       >
         <Icon name="back" />
-        <span>解说延后</span>
+        <span>回退画面</span>
       </HoldButton>
 
       <div className="capsule-readout-wrap">
@@ -97,12 +98,12 @@ export function SyncCapsule(): React.ReactNode {
 
       <HoldButton
         className="capsule-nudge"
-        label="画面延后"
-        title={`画面延后 ${settings.smallStepSeconds} 秒（. 键，长按连续调整）`}
-        disabled={!paired || requested >= MAX_OFFSET_SECONDS}
-        onStep={(held) => nudge('late', stepFor(held, settings.smallStepSeconds, settings.largeStepSeconds))}
+        label="快进画面"
+        title={`画面相对解说快进 ${settings.smallStepSeconds} 秒（. 键，长按连续调整）`}
+        disabled={!paired || requested <= -MAX_OFFSET_SECONDS}
+        onStep={(held) => nudge('early', stepFor(held, settings.smallStepSeconds, settings.largeStepSeconds))}
       >
-        <span>画面延后</span>
+        <span>快进画面</span>
         <Icon name="forward" />
       </HoldButton>
     </div>
@@ -198,7 +199,7 @@ export function AutoAlign(): React.ReactNode {
           <button type="button" className="btn-quiet" disabled={busy || !bothReady} onClick={() => void session.measureOnce()}>
             仅测量
           </button>
-          <a className="btn-quiet" href="/admin">编辑倒计时样式</a>
+          <a className="btn-quiet" {...routeLink('/admin')}>编辑倒计时样式</a>
         </div>
 
         {result && (
@@ -250,8 +251,7 @@ export function CountdownPrompt(): React.ReactNode {
             {!working && (
               <button type="button" className="btn-quiet small" onClick={() => {
                 session.editAutoProfile(role)
-                window.history.pushState(null, '', '/admin')
-                window.dispatchEvent(new PopStateEvent('popstate'))
+                navigate('/admin')
               }}>手动框选</button>
             )}
           </div>

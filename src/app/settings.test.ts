@@ -59,9 +59,9 @@ describe('mergeSettings', () => {
   })
 
   it('keeps optional adaptive acquisition disabled for old and malformed settings', () => {
-    expect(DEFAULT_SETTINGS.preferAdaptive).toBe(false)
-    expect(mergeSettings({}).preferAdaptive).toBe(false)
-    expect(mergeSettings({ preferAdaptive: 'true' }).preferAdaptive).toBe(false)
+    expect(DEFAULT_SETTINGS.preferAdaptive).toBe(true)
+    expect(mergeSettings({}).preferAdaptive).toBe(true)
+    expect(mergeSettings({ preferAdaptive: 'true' }).preferAdaptive).toBe(true)
     expect(mergeSettings({ preferAdaptive: true }).preferAdaptive).toBe(true)
     expect(mergeSettings({ preferAdaptive: false }).preferAdaptive).toBe(false)
   })

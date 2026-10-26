@@ -145,6 +145,8 @@ export class AutoProfileController {
       'insufficient-decrements': '倒计时递减次数不足, 请在正常比赛画面重试',
       'no-consistent-countdown': '字形与倒计时顺序不一致, 请重新识别',
       'ambiguous-labels': '字形标签存在歧义, 请重新识别或手动编辑',
+      // The WASM core's own spelling (crates/core/src/auto.rs); the short one is kept for the TS path.
+      'ambiguous-countdown-labels': '字形标签存在歧义, 请重新识别或手动编辑',
       'auto-profile-unsupported': '当前识别后端不支持自动学习, 请使用手动预设',
       'worker-timeout': '自动识别超时, 请重新识别或使用手动预设',
       'invalid-window': '采集窗口无效, 请恢复播放后重新识别',
