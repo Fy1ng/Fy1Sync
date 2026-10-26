@@ -6,7 +6,7 @@ import { parseHlsSegments } from '../electron/bufferManager'
 import { expect, launchApplication } from './electron'
 import { decodingStartup, selectSoftwareDecoding } from './decoderSettings'
 import { decoderTelemetry } from './adaptiveTelemetry'
-import { closeSourceDialog, loadSource, openPlayer, revealOverlay } from './helpers'
+import { closeSourceDialog, loadSource, openPlayer, setPlaying } from './helpers'
 
 test.describe('opt-in persisted software decoding', () => {
   test.skip(process.env.STREAM_SYNC_SOFTWARE_DECODE_TESTS !== '1', '真实片段诊断需显式启用, 默认跳过.')
@@ -60,8 +60,7 @@ test.describe('opt-in persisted software decoding', () => {
       for (const role of (routes === 1 ? ['official'] : ['official', 'commentary']) as ('official' | 'commentary')[]) await loadSource(running.page, role, url)
       await closeSourceDialog(running.page)
       await expect.poll(() => running.page.locator('video').evaluateAll(nodes => nodes.filter(node => (node as HTMLVideoElement).readyState >= 2).length)).toBe(routes)
-      await revealOverlay(running.page)
-      await running.page.locator('.play-button').click()
+      await setPlaying(running.page, true)
       const sample = async () => ({
         playback: await running.page.evaluate(() => ({
           wall: performance.now(), visibility: document.visibilityState, focused: document.hasFocus(),

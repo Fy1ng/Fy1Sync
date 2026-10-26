@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from './electron'
-import { fixturesReady, invoke, loadBothFixtures, mediaTimes, openSourceDialog, setPlaying, sourceDialog } from './helpers'
+import { fixturesReady, invoke, loadBothFixtures, mediaTimes, openSettings, setPlaying } from './helpers'
 const fixture = fileURLToPath(new URL('../.packaging/tools/yt-dlp.exe', import.meta.url))
 test('工具更新离线回归并保留播放', async ({ page, electronApp }) => {
   test.skip(!existsSync(fixture), 'Run npm run tools:prepare to create the pinned offline executable fixture')
@@ -19,11 +19,10 @@ test('工具更新离线回归并保留播放', async ({ page, electronApp }) =>
   await loadBothFixtures(page)
   await setPlaying(page, true)
   const mediaBefore = await mediaTimes(page)
-  await openSourceDialog(page)
-  const dialog = sourceDialog(page)
+  const dialog = await openSettings(page)
   await expect(dialog).toBeVisible()
   const section = dialog.getByRole('region', { name: '取流工具' })
-  const update = section.getByRole('button', { name: '检查并更新 yt-dlp' })
+  const update = section.getByRole('button', { name: '更新 yt-dlp', exact: true })
   await expect(update).toBeEnabled()
   await configure('hash-mismatch')
   await update.click()
@@ -36,7 +35,7 @@ test('工具更新离线回归并保留播放', async ({ page, electronApp }) =>
   await expect(update).toBeEnabled()
   const after = await invoke(page, 'getToolsStatus', undefined)
   expect(after.ok && after.value.update.activeVersion).toBe('2026.10.21')
-  await section.getByRole('button', { name: '恢复默认工具' }).click()
+  await section.getByRole('button', { name: '恢复内置版本' }).click()
   await expect(section.getByRole('status')).toContainText('已恢复选择')
   await configure('network-error')
   await update.click()

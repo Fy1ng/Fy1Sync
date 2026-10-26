@@ -12,13 +12,17 @@
 import { expect, test } from './electron'
 import {
   FIXTURES,
+  closeSourceDialog,
+  connectDanmaku,
   fixturesReady,
   hlsFixtureReady,
   loadBothFixtures,
   loadSource,
   mediaTimes,
   offsetReadout,
+  openCameraFraming,
   openPlayer,
+  openSourcePanel,
   revealOverlay,
   seekBoth,
   setPlaying,
@@ -35,9 +39,9 @@ test.describe('双路播放与手动同步', () => {
 
     // One element in the stage, one in the preview slot — and they are the same two
     // elements that existed before loading.
-    await expect(page.locator('.stage-main video.media-element')).toHaveCount(1)
-    await expect(page.locator('.preview-mount video.media-element')).toHaveCount(1)
-    await expect(page.locator('.stage-main')).toHaveAttribute('data-role', 'official')
+    await expect(page.locator('.theater-main video.media-element')).toHaveCount(1)
+    await expect(page.locator('.pip-mount video.media-element')).toHaveCount(1)
+    await expect(page.locator('.theater-main')).toHaveAttribute('data-role', 'official')
 
     const times = await mediaTimes(page)
     expect(Number.isFinite(times.official)).toBe(true)
@@ -51,17 +55,17 @@ test.describe('双路播放与手动同步', () => {
     // Mark the element, swap, and look for the mark: a remount would lose it, and with it
     // the buffer and the playhead that sync depends on.
     await page.evaluate(() => {
-      const video = document.querySelector<HTMLVideoElement>('.stage-main video')
+      const video = document.querySelector<HTMLVideoElement>('.theater-main video')
       if (video) video.dataset.e2eMark = 'original-main'
     })
 
-    await page.locator('.preview-slot').click()
-    await expect(page.locator('.stage-main')).toHaveAttribute('data-role', 'commentary')
-    await expect(page.locator('.preview-mount video')).toHaveAttribute(
+    await page.locator('.pip-swap').click()
+    await expect(page.locator('.theater-main')).toHaveAttribute('data-role', 'commentary')
+    await expect(page.locator('.pip-mount video')).toHaveAttribute(
       'data-e2e-mark',
       'original-main',
     )
-    await expect(page.locator('.preview-mount video')).toHaveAttribute('data-role', 'official')
+    await expect(page.locator('.pip-mount video')).toHaveAttribute('data-role', 'official')
   })
 
   test('手动偏移把解说回退到指定位置', async ({ page }) => {
@@ -73,11 +77,11 @@ test.describe('双路播放与手动同步', () => {
     await setPlaying(page, false)
 
     const before = await mediaTimes(page)
-    const sidebar = page.locator('.sidebar')
+    const alignment = page.getByRole('group', { name: '对齐', exact: true })
 
     // ▶ rewinds the commentary side (negative offset), so official − commentary grows.
-    await sidebar.getByRole('button', { name: '解说后退 0.5s' }).click()
-    await sidebar.getByRole('button', { name: '解说后退 0.5s' }).click()
+    await alignment.getByRole('button', { name: '解说延后', exact: true }).click()
+    await alignment.getByRole('button', { name: '解说延后', exact: true }).click()
 
     await expect
       .poll(async () => (await offsetReadout(page)).requested, { timeout: 15_000 })
@@ -89,9 +93,10 @@ test.describe('双路播放与手动同步', () => {
     // 目标 and 实际 agree here: a VOD fixture at t=12 has the head-room to absorb it.
     const readout = await offsetReadout(page)
     expect(readout.applied).toBeCloseTo(-1, 1)
-    await expect(sidebar.locator('.status-warning')).toHaveCount(0)
+    await expect(alignment).not.toHaveAttribute('data-state', 'short')
 
-    await sidebar.getByRole('button', { name: '归零' }).click()
+    await alignment.locator('.capsule-readout').click()
+    await page.getByRole('dialog', { name: '输入延后时间' }).getByRole('button', { name: '清零', exact: true }).click()
     await expect
       .poll(async () => (await offsetReadout(page)).requested, { timeout: 15_000 })
       .toBeCloseTo(0, 2)
@@ -126,7 +131,7 @@ test.describe('双路播放与手动同步', () => {
     await openPlayer(page)
     await loadSource(page, 'official', FIXTURES.official)
     await loadSource(page, 'commentary', FIXTURES.commentaryHls)
-    await page.getByRole('button', { name: '完成' }).click()
+    await closeSourceDialog(page)
     await waitForBothReady(page)
 
     const times = await mediaTimes(page)
@@ -148,12 +153,7 @@ test.describe('弹幕叠加层', () => {
     await seekBoth(page, 3, 3)
     await setPlaying(page, true)
 
-    const dialog = page.getByRole('dialog', { name: '片源设置' })
-    await page.locator('.stage-top').getByRole('button', { name: '片源设置' }).click()
-    const room = dialog.locator('.danmaku-room')
-    await room.getByRole('textbox').fill('288016')
-    await room.getByRole('button', { name: '连接' }).click()
-    await dialog.getByRole('button', { name: '完成' }).click()
+    await connectDanmaku(page)
 
     const item = page.locator('.danmaku-item').first()
     await expect(item).toBeVisible({ timeout: 20_000 })
@@ -174,22 +174,17 @@ test.describe('弹幕叠加层', () => {
     await seekBoth(page, 3, 3)
     await setPlaying(page, true)
 
-    const dialog = page.getByRole('dialog', { name: '片源设置' })
-    await page.locator('.stage-top').getByRole('button', { name: '片源设置' }).click()
-    const room = dialog.locator('.danmaku-room')
-    await room.getByRole('textbox').fill('288016')
-    await room.getByRole('button', { name: '连接' }).click()
-    await dialog.getByRole('button', { name: '完成' }).click()
+    await connectDanmaku(page)
     await expect(page.locator('.danmaku-item').first()).toBeVisible({ timeout: 20_000 })
 
     // The wait above outlasts the overlay's idle timeout, so bring the bar back first.
     await revealOverlay(page)
-    await page.locator('.overlay-bar').getByRole('button', { name: /^弹幕[开关]$/ }).click()
+    await page.locator('.dock').getByRole('button', { name: '弹', exact: true }).click()
     await expect(page.locator('.danmaku-item')).toHaveCount(0)
   })
 })
 
-test.describe('底部浮层画质入口', () => {
+test.describe('片源画质和摄像头入口', () => {
   test.skip(!fixturesReady(), '缺少测试源，先运行 npm run fixtures')
 
   test('全屏时摄像头取景对话框仍可打开和关闭', async ({ page }, testInfo) => {
@@ -198,10 +193,7 @@ test.describe('底部浮层画质入口', () => {
     await revealOverlay(page)
     await page.getByRole('button', { name: '全屏', exact: true }).click()
     await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(true)
-    await page.locator('.overlay-bar').getByRole('button', { name: /^摄像头/ }).click()
-    await page.getByRole('option', { name: '框选摄像头…' }).click()
-    const dialog = page.getByRole('dialog', { name: '摄像头小窗取景' })
-    await expect(dialog).toBeVisible()
+    const dialog = await openCameraFraming(page)
     expect(await dialog.evaluate(node => document.fullscreenElement?.contains(node))).toBe(true)
     await page.screenshot({ path: testInfo.outputPath('fullscreen-camera-dialog.png') })
     await dialog.getByRole('button', { name: '关闭', exact: true }).click()
@@ -217,15 +209,7 @@ test.describe('底部浮层画质入口', () => {
     await setPlaying(page, true)
     await revealOverlay(page)
 
-    const bar = page.locator('.overlay-bar')
-    // Anchored: an accessible name is label + value, so /画质/ alone would match 摄像头 too.
-    const camera = bar.getByRole('button', { name: /^摄像头/ })
-    await expect(camera).toBeEnabled()
-    await camera.click()
-    await page.getByRole('option', { name: '框选摄像头…' }).click()
-
-    const dialog = page.getByRole('dialog', { name: '摄像头小窗取景' })
-    await expect(dialog).toBeVisible()
+    const dialog = await openCameraFraming(page)
     // The default rough box (x .02 y .4 w .16 h .2) covers the fixture camera at 64,400
     // 256x144 on 1280x720 only partly; grow it past the camera's right and bottom edges the
     // way a user would, then check the size label says it is now loose all round.
@@ -235,8 +219,8 @@ test.describe('底部浮层画质入口', () => {
     const [roughW, roughH] = ((await dialog.locator('.roi-size').textContent()) ?? '').split('×').map(Number)
     expect(roughW).toBeGreaterThan(300)
     expect(roughH).toBeGreaterThan(270)
-    await dialog.getByRole('button', { name: '自动收紧' }).click()
-    await expect(dialog.getByRole('status')).toContainText('已收紧', { timeout: 15_000 })
+    await dialog.getByRole('button', { name: '贴边', exact: true }).click()
+    await expect(dialog.getByRole('status')).toContainText('四条边均已贴合', { timeout: 15_000 })
 
     // The tightened box, read back off the window's size label (video pixels).
     const size = await dialog.locator('.roi-size').textContent()
@@ -244,7 +228,7 @@ test.describe('底部浮层画质入口', () => {
     expect(Math.abs(w! - 256)).toBeLessThanOrEqual(4)
     expect(Math.abs(h! - 144)).toBeLessThanOrEqual(4)
 
-    await dialog.getByRole('button', { name: '保存并显示' }).click()
+    await dialog.getByRole('button', { name: '保存', exact: true }).click()
     const overlay = page.locator('.camera-overlay')
     await expect(overlay).toBeVisible()
     // The canvas is drawing the commentary picture, not sitting blank.
@@ -266,7 +250,7 @@ test.describe('底部浮层画质入口', () => {
 
     // Reloading the same commentary brings the camera back where it was.
     await page.reload()
-    await expect(page.locator('.player-page')).toBeVisible()
+    await expect(page.locator('.studio')).toBeVisible()
     await loadBothFixtures(page)
     await expect(page.locator('.camera-overlay')).toBeVisible()
     const restored = (await page.locator('.camera-overlay').boundingBox())!
@@ -274,48 +258,41 @@ test.describe('底部浮层画质入口', () => {
 
     // Hidden from the menu, kept in storage.
     await revealOverlay(page)
-    await bar.getByRole('button', { name: /^摄像头/ }).click()
-    await page.getByRole('option', { name: '隐藏小窗' }).click()
+    const source = await openSourcePanel(page, 'commentary')
+    await source.getByRole('button', { name: '隐藏', exact: true }).click()
     await expect(page.locator('.camera-overlay')).toHaveCount(0)
   })
 
-  test('HLS 主画面的画质菜单在播放器内向上展开', async ({ page }) => {
+  test('HLS 主画面的清晰度在播放器内的片源面板切换', async ({ page }) => {
     test.skip(!hlsFixtureReady(), '缺少 HLS 测试源')
     await openPlayer(page)
     await loadBothFixtures(page, FIXTURES.commentaryHls)
 
     // The ladder belongs to the HLS source, so make it the main picture — 画质 always drives
     // whatever is on stage.
-    await page.locator('.preview-slot').click()
-    await expect(page.locator('.stage-main')).toHaveAttribute('data-role', 'commentary')
+    await page.locator('.pip-swap').click()
+    await expect(page.locator('.theater-main')).toHaveAttribute('data-role', 'commentary')
 
-    await revealOverlay(page)
-    const quality = page.locator('.overlay-bar').getByRole('button', { name: /^画质/ })
+    const panel = await openSourcePanel(page, 'commentary')
+    const quality = panel.getByRole('combobox', { name: '清晰度' })
     // Levels arrive on MANIFEST_PARSED, which is not ordered against the readiness wait.
     await expect(quality).toBeEnabled({ timeout: 20_000 })
-    await quality.click()
+    const automatic = quality.getByRole('option', { name: /自动/ })
+    await expect(automatic).toHaveCount(1)
+    await quality.selectOption(await automatic.getAttribute('value') ?? '-1')
 
-    const menu = page.getByRole('listbox', { name: '画质' })
-    await expect(menu).toBeVisible()
-    await expect(menu.getByRole('option', { name: /自动/ })).toBeVisible()
-
-    // Why this control exists instead of a native `<select>`: docs/ui-layout.md wants menus
-    // that open upward inside the player, because an OS popup is painted above the
-    // fullscreen surface and cannot be positioned. Only a real browser can confirm it.
-    const trigger = await quality.boundingBox()
-    const box = await menu.boundingBox()
-    const stage = await page.locator('.stage').boundingBox()
-    expect(trigger).not.toBeNull()
+    // The studio keeps quality controls in the source popover, within the player surface.
+    const box = await panel.boundingBox()
+    const stage = await page.locator('main.theater').boundingBox()
     expect(box).not.toBeNull()
     expect(stage).not.toBeNull()
-    if (!trigger || !box || !stage) return
+    if (!box || !stage) throw new Error('片源面板应具有可见尺寸')
 
-    expect(box.y + box.height).toBeLessThanOrEqual(trigger.y)
     expect(box.y).toBeGreaterThanOrEqual(stage.y)
     expect(box.y + box.height).toBeLessThanOrEqual(stage.y + stage.height)
 
     // Escape dismisses it, so the menu never traps a keyboard user inside the overlay.
     await page.keyboard.press('Escape')
-    await expect(menu).toHaveCount(0)
+    await expect(panel).toHaveCount(0)
   })
 })

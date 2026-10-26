@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { locateTool } from '../electron/toolLocator'
 import { APP_ORIGIN, expect, test } from './electron'
-import { closeSourceDialog, hlsFixtureReady, loadSource, openPlayer, revealOverlay } from './helpers'
+import { closeSourceDialog, hlsFixtureReady, loadSource, openPlayer, setPlaying } from './helpers'
 
 const builtFixture = fileURLToPath(new URL('../dist/client/test-sources/commentary-hls/index.m3u8', import.meta.url))
 
@@ -42,14 +42,12 @@ test.describe('main-process local rolling HLS buffer', () => {
       return node.seekable.length ? node.seekable.end(node.seekable.length - 1) - node.seekable.start(0) : 0
     }), { timeout: 20_000 }).toBeGreaterThan(10)
 
-    await revealOverlay(page)
-    await page.locator('.play-button').click()
+    await setPlaying(page, true)
     await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.paused)).toBe(false)
     const startedAt = await video.evaluate((node: HTMLVideoElement) => node.currentTime)
     await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime), { timeout: 15_000 }).toBeGreaterThan(startedAt + 0.6)
 
-    await revealOverlay(page)
-    await page.locator('.play-button').click()
+    await setPlaying(page, false)
     await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.paused)).toBe(true)
     const seek = await video.evaluate((node: HTMLVideoElement) => {
       const before = node.currentTime
@@ -64,8 +62,7 @@ test.describe('main-process local rolling HLS buffer', () => {
     expect(Math.abs(landedAt - seek.target)).toBeLessThanOrEqual(0.35)
     expect(seek.before - landedAt).toBeGreaterThanOrEqual(4.65)
 
-    await revealOverlay(page)
-    await page.locator('.play-button').click()
+    await setPlaying(page, true)
     const resumed = await video.evaluate((node: HTMLVideoElement) => ({ time: node.currentTime, wall: performance.now() }))
     await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime), { timeout: 15_000 }).toBeGreaterThan(resumed.time + 1.5)
     const later = await video.evaluate((node: HTMLVideoElement) => ({

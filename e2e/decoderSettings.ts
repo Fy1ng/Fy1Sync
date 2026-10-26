@@ -1,12 +1,12 @@
 import { expect, type RunningApplication } from './electron'
-import { invoke, openSourceDialog } from './helpers'
+import { invoke, openSettings, setCheckedByLabel } from './helpers'
 
 /** The production UI/IPC is the only writer; restart retains one disposable profile. */
 export async function selectSoftwareDecoding(running: RunningApplication, enabled: boolean) {
-  const dialog = await openSourceDialog(running.page)
-  const checkbox = dialog.getByRole('checkbox', { name: '软件解码兼容模式' })
+  const dialog = await openSettings(running.page)
+  const checkbox = dialog.getByRole('switch', { name: /^软件解码/ })
   await expect(checkbox).toBeEnabled()
-  if (await checkbox.isChecked() !== enabled) await dialog.getByText('软件解码兼容模式', { exact: true }).click()
+  await setCheckedByLabel(checkbox, enabled)
   await expect(checkbox).toBeEnabled()
   await expect.poll(async () => {
     const state = await invoke(running.page, 'getDecoderPreferences', undefined)

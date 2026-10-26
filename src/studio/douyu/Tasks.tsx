@@ -154,7 +154,8 @@ function TaskRow({ task, data, activeId }: { task: DouyuTaskView; data: DouyuDat
           {task.deadlineAt !== undefined && `截止 ${when(task.deadlineAt)}`}
         </p>
       )}
-      {(task.lastResult || task.reason) && <p className="task-result">{task.reason ?? task.lastResult}</p>}
+      {task.reason && <p className="task-result">{task.reason}</p>}
+      {task.lastResult && task.lastResult !== task.reason && <p className="task-result">{task.lastResult}</p>}
       {activity && (waiting || (task.officialRoom !== undefined && task.officialRoom !== task.room)) && (
         <p className="task-official">
           {waiting ? `需在官方页面处理：房间 ${officialRoom}` : `实际目标房间 ${officialRoom}`}

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { buildFfmpegArgs, parseHlsSegments } from '../electron/bufferManager'
 import { locateTool } from '../electron/toolLocator'
 import { expect, test } from './electron'
-import { closeSourceDialog, loadSource, openPlayer, revealOverlay } from './helpers'
+import { closeSourceDialog, loadSource, openPlayer, setPlaying } from './helpers'
 
 const fixtureBase = fileURLToPath(new URL('../dist/client/test-sources/', import.meta.url))
 
@@ -50,8 +50,7 @@ test('decodes a VP9 to H264 fMP4 discontinuity without replacing the video eleme
     const original = await video.elementHandle()
     await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.readyState)).toBeGreaterThanOrEqual(2)
     expect(await video.evaluate((node: HTMLVideoElement) => node.videoHeight)).toBe(180)
-    await revealOverlay(page)
-    await page.locator('.play-button').click()
+    await setPlaying(page, true)
     await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime), { timeout: 25_000 }).toBeGreaterThan(12)
     expect(await video.evaluate((node: HTMLVideoElement) => node.error?.code ?? null)).toBeNull()
     expect(await video.evaluate((node: HTMLVideoElement) => node.videoHeight)).toBe(270)

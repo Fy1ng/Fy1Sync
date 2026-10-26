@@ -40,6 +40,12 @@ describe('read-only followed room gateway', () => {
     expect((await setup([envelope({ pageCount: 0, total: 0, list: [] })]).gateway.readFollowedRooms('a', idle())).coverage).toBe('all-pages')
     expect((await setup([envelope({ list: [] })]).gateway.readFollowedRooms('a', idle())).coverage).toBe('partial')
   })
+  it('normalizes safe numeric room IDs without hiding numeric/string duplicates', async () => {
+    const f = setup([envelope({ pageCount: 1, total: 1, list: [{ ...followed('100'), room_id: 100 }] })])
+    expect((await f.gateway.readFollowedRooms('a', idle())).rooms[0]?.room).toBe('100')
+    const duplicate = setup([envelope({ pageCount: 1, total: 2, list: [followed('100'), { ...followed('100'), room_id: 100 }] })])
+    expect(await duplicate.gateway.readFollowedRooms('a', idle())).toMatchObject({ coverage: 'partial', rooms: [] })
+  })
   it.each([
     envelope({ pageCount: 2, total: 2, list: [followed('100')] }),
     envelope({ pageCount: 3, total: 3, list: [followed('200')] }),
@@ -56,6 +62,23 @@ describe('read-only followed room gateway', () => {
     f.request.mockImplementationOnce(async () => { f.setCookie('acf_uid=43; acf_auth=other'); return Response.json(envelope({ pageCount: 1, total: 1, list: [followed('100')] })) })
     await expect(f.gateway.readFollowedRooms('a', idle())).rejects.toMatchObject({ code: 'login-required' })
     await expect(setup([envelope({ uid: '43', pageCount: 0, total: 0, list: [] })]).gateway.readFollowedRooms('a', idle())).rejects.toMatchObject({ code: 'login-required' })
+  })
+  it('accepts equal host and domain device cookies for read-only account queries', async () => {
+    const f = setup([envelope({ pageCount: 0, total: 0, list: [] }), envelope({ todayWatch: '123', rid: '100' })])
+    f.setCookie(`${COOKIE}; dy_did=synthetic-device-123; dy_did=synthetic-device-123`)
+    expect(await f.gateway.readFollowedRooms('a', idle())).toMatchObject({ coverage: 'all-pages', rooms: [] })
+    expect(await f.gateway.readWatchTime('a', '100', idle())).toMatchObject({ seconds: 123 })
+    expect(f.request).toHaveBeenCalledTimes(2)
+  })
+  it.each([
+    `${COOKIE}; dy_did=synthetic-device-123; dy_did=other-device-456`,
+    `${COOKIE}; acf_auth=synthetic-account-secret`,
+    `${COOKIE}; acf_uid=42`,
+  ])('still rejects ambiguous devices or repeated authentication cookies before network access', async cookie => {
+    const f = setup([])
+    f.setCookie(cookie)
+    await expect(f.gateway.readFollowedRooms('a', idle())).rejects.toMatchObject({ code: 'login-required' })
+    expect(f.request).not.toHaveBeenCalled()
   })
   it.each([301, 302, 401, 403, 429, 500])('rejects HTTP %s and follows no redirect', async status => {
     const f = setup([new Response('sensitive', { status, headers: { location: 'https://evil.example/' } })])
@@ -105,6 +128,15 @@ describe('room metadata, badge age and platform watch time', () => {
   it('checks the official per-account watch value and never replaces missing data with zero', async () => {
     expect(await setup([envelope({ todayWatch: '123', rid: '100' })]).gateway.readWatchTime('a', '100', idle())).toMatchObject({ seconds: 123 })
     expect(await setup([envelope({})]).gateway.readWatchTime('a', '100', idle())).toMatchObject({ seconds: null })
+    expect(await setup([envelope({ todayWatch: 0, rid: 0 })]).gateway.readWatchTime('a', '100', idle())).toMatchObject({ seconds: null })
+    expect(await setup([envelope({ todayWatch: 123, rid: '0' })]).gateway.readWatchTime('a', '100', idle())).toMatchObject({ seconds: null })
+  })
+  it('accepts the official numeric room binding while rejecting mismatches and invalid IDs', async () => {
+    expect(await setup([envelope({ todayWatch: 123, rid: 100 })]).gateway.readWatchTime('a', '100', idle())).toMatchObject({ seconds: 123 })
+    expect(await setup([envelope({ room_id: 100, show_status: '1' })]).gateway.readRoom('100', idle())).toMatchObject({ room: '100' })
+    for (const rid of [200, 100.5, -100, Number.MAX_SAFE_INTEGER + 1, '0100']) {
+      await expect(setup([envelope({ todayWatch: 123, rid })]).gateway.readWatchTime('a', '100', idle())).rejects.toMatchObject({ code: 'invalid-data' })
+    }
   })
 })
 

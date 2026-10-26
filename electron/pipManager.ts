@@ -89,7 +89,7 @@ export class PipManager {
     this.arm()
     try { await window.load() }
     catch {
-      if (this.window === window) this.fail('画中画页面尚未就绪, 请完成 Claude 前端接入后重试')
+      if (this.window === window) this.fail('画中画页面加载失败, 请关闭后重试')
     }
     return this.state()
   }
@@ -151,13 +151,20 @@ export class PipManager {
       this.timer = null
       if (!this.window || this.disposed || this.value.phase === 'failed') return
       const now = this.now()
-      if (this.value.phase === 'opening' && now - this.openedAt >= 20_000) this.fail('画中画页面未报告就绪, 请完成 Claude 前端接入')
+      if (this.value.phase === 'opening' && now - this.openedAt >= 20_000) this.fail('画中画未能及时开始播放, 请关闭后重试')
       else if (this.value.phase === 'ready' && now - this.reportAt >= 20_000) this.fail('画中画窗口已失去响应')
       else if (this.playing && this.value.options.recoverStalls && now - this.progressAt >= 12_000) this.recover()
       if (this.state().phase !== 'failed') this.arm()
     }, 1_000)
   }
   private fail(message: string): void {
+    const hiddenWindow = this.value.phase === 'opening' ? this.window : null
+    if (hiddenWindow) {
+      // Keep the failure visible to the main window, but release an unusable hidden shell.
+      this.detachWindow?.(); this.detachWindow = null
+      this.window = null
+      try { hiddenWindow.close() } catch { /* The native shell may already be destroyed. */ }
+    }
     this.value.phase = 'failed'; this.value.audioOwner = 'main'; this.value.message = message
     if (this.timer !== null) this.clearTimer(this.timer)
     this.timer = null

@@ -1,6 +1,6 @@
 import { test } from '@playwright/test'
 import { expect, launchApplication } from './electron'
-import { invoke, openPlayer, openSourceDialog } from './helpers'
+import { invoke, openDouyuDesk, openPlayer, openTaskForm, setCheckedByLabel } from './helpers'
 import type { DouyuMessageInput, DouyuTaskView } from '../server/douyu/types'
 
 test('延迟循环发送按次数和颜色执行, 未知结果停止, 重启保留配置并暂停', async ({}, testInfo) => {
@@ -26,27 +26,23 @@ test('延迟循环发送按次数和颜色执行, 未知结果停止, 重启保�
     })
     await openPlayer(running.page)
     expect(await invoke(running.page, 'loginDouyuAccount', { id: 'default' })).toMatchObject({ ok: true })
-    const dialog = await openSourceDialog(running.page)
-    const tools = dialog.getByRole('region', { name: '斗鱼账号和任务' })
-    await tools.locator('summary').filter({ hasText: '房间任务' }).click()
-    await tools.getByLabel('任务房间号或地址', { exact: true }).fill('6657')
-    await tools.getByLabel('任务类型', { exact: true }).selectOption('message-loop')
-    await tools.getByLabel('执行条件', { exact: true }).selectOption('background-locked')
+    const form = await openTaskForm(running.page, 'message-loop', '6657')
+    const tools = await openDouyuDesk(running.page)
     await tools.getByLabel('发送内容', { exact: true }).fill('离线循环提醒 @/')
     await tools.getByLabel('发送间隔(秒)', { exact: true }).fill('1')
     await tools.getByLabel('启动延迟(秒)', { exact: true }).fill('1')
     await tools.getByLabel('发送次数', { exact: true }).fill('3')
-    await tools.getByLabel('发送颜色 蓝色', { exact: true }).check()
-    await tools.getByRole('button', { name: '创建发送任务', exact: true }).click()
+    await setCheckedByLabel(tools.getByLabel('发送颜色 蓝', { exact: true }))
+    await form.getByRole('button', { name: '添加', exact: true }).click()
     const row = tools.getByRole('group', { name: '发送任务 6979222 (默认账号)', exact: true })
-    await expect(row).toContainText('已暂停')
+    await expect(row).toHaveAttribute('data-status', 'paused')
     expect(await current()).toMatchObject({ kind: 'message-loop', completedRuns: 0, lastRunAt: null,
       message: { text: '离线循环提醒 @/', colors: [0, 2], intervalSeconds: 1, initialDelaySeconds: 1, maxRuns: 3 } })
     expect(await sent()).toHaveLength(0)
-    await tools.getByRole('checkbox', { name: '保留房间 6979222 的任务', exact: true }).check()
+    await setCheckedByLabel(tools.getByRole('region', { name: '任务房间 6979222', exact: true }).getByRole('switch', { name: '离开该房间后继续', exact: true }))
     await row.getByRole('button', { name: '启动', exact: true }).click()
     await expect.poll(async () => (await current())?.status).toBe('succeeded')
-    await expect(row).toContainText('本轮已确认 3 次 / 共 3 次')
+    await expect(row).toContainText('已发送 3 / 3')
     expect((await sent()).map(value => ({ room: value.room, color: value.color, text: value.text }))).toEqual([
       { room: '6979222', color: 0, text: '离线循环提醒 @/' },
       { room: '6979222', color: 2, text: '离线循环提醒 @/' },

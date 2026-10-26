@@ -2,11 +2,13 @@
 
 import { APP_ORIGIN, expect, test } from './electron'
 import type { RecognitionProfile } from '../src/core/profileSchema'
-import { failOnPageError, invoke, openPlayer, sourceDialog } from './helpers'
+import { closeSourceDialog, connectDanmaku, failOnPageError, invoke, loadBothFixtures, offsetReadout, openPlayer, openSourceDialog, revealOverlay, sourceDialog } from './helpers'
 
 test.describe('应用外壳', () => {
-  test('冷启动渲染播放页并打开片源对话框', async ({ page }) => {
+  test('冷启动渲染播放页和添加直播间且没有 pageerror', async ({ page }) => {
     failOnPageError(page)
+    const pageErrors: string[] = []
+    page.on('pageerror', error => pageErrors.push(error.message))
     const consoleErrors: string[] = []
     page.on('console', (message) => {
       if (message.type() === 'error') consoleErrors.push(message.text())
@@ -14,57 +16,70 @@ test.describe('应用外壳', () => {
 
     await page.goto(APP_ORIGIN + '/')
 
-    await expect(page.locator('.player-page')).toBeVisible()
+    await expect(page).toHaveURL(APP_ORIGIN + '/')
+    await expect(page).toHaveTitle('Stream Sync Player')
+    await expect(page.locator('.studio')).toBeVisible()
     // Nothing is loaded yet, so the dialog is the cold-start entry point.
     await expect(sourceDialog(page)).toBeVisible()
-    await expect(page.locator('.stage-main')).toHaveAttribute('data-role', 'official')
+    await expect(page.locator('.theater-main')).toHaveAttribute('data-role', 'official')
 
     // Both elements exist before any source is chosen: they are owned by MediaEngine, not
     // created per load. That is what lets a swap keep the buffer.
     await expect(page.locator('video.media-element')).toHaveCount(2)
-
+    await expect(page.locator('vite-error-overlay')).toHaveCount(0)
+    await closeSourceDialog(page)
+    await expect(page.getByRole('button', { name: '添加直播间', exact: true })).toBeVisible()
+    expect(pageErrors).toEqual([])
     expect(consoleErrors, `控制台不应有错误：${consoleErrors.join(' | ')}`).toEqual([])
   })
 
-  test('侧栏可收起并在重新加载后展开', async ({ page }) => {
+  test('弹幕列表的收起和展开状态在重新加载后保留', async ({ page }) => {
     await openPlayer(page)
-
-    await expect(page.locator('.sidebar')).toBeVisible()
-    await page.locator('.sidebar').getByRole('button', { name: '收起' }).click()
-    await expect(page.locator('.sidebar')).toBeHidden()
-    await expect(page.locator('.player-page')).toHaveClass(/no-sidebar/)
+    await loadBothFixtures(page)
+    await connectDanmaku(page)
+    await expect(page.locator('.drawer')).toBeVisible()
+    await page.getByRole('button', { name: '收起弹幕' }).click()
+    await expect(page.locator('.drawer')).toBeHidden()
+    await expect(page.locator('.studio')).toHaveAttribute('data-chat', 'closed')
 
     // Settings are persisted, so a reload must not bring it back.
     await page.reload()
-    await expect(page.locator('.player-page')).toBeVisible()
-    await expect(page.locator('.sidebar')).toBeHidden()
-    await sourceDialog(page).getByRole('button', { name: '完成' }).click()
-    await page.getByRole('button', { name: '展开侧栏' }).click()
-    await expect(page.locator('.sidebar')).toBeVisible()
+    await expect(sourceDialog(page)).toBeVisible()
+    await closeSourceDialog(page)
+    await loadBothFixtures(page)
+    await connectDanmaku(page)
+    await expect(page.locator('.drawer')).toBeHidden()
+    await revealOverlay(page)
+    await page.getByRole('button', { name: '展开弹幕' }).click()
+    await expect(page.locator('.drawer')).toBeVisible()
     await page.reload()
-    await expect(page.locator('.sidebar')).toBeVisible()
+    await expect(sourceDialog(page)).toBeVisible()
+    await closeSourceDialog(page)
+    await loadBothFixtures(page)
+    await connectDanmaku(page)
+    await expect(page.locator('.drawer')).toBeVisible()
   })
 
   test('真实全屏保留可操作的片源对话框', async ({ page }, testInfo) => {
     await openPlayer(page)
     await page.getByRole('button', { name: '全屏', exact: true }).click()
-    await expect.poll(() => page.evaluate(() => document.fullscreenElement?.classList.contains('player-page') ?? false)).toBe(true)
-    await expect(page.locator('.sidebar')).toBeHidden()
-    await page.getByRole('button', { name: '片源设置', exact: true }).click()
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement?.classList.contains('studio') ?? false)).toBe(true)
+    await openSourceDialog(page)
     await expect(sourceDialog(page)).toBeVisible()
     expect(await sourceDialog(page).evaluate(node => document.fullscreenElement?.contains(node))).toBe(true)
     await page.screenshot({ path: testInfo.outputPath('fullscreen-source-dialog.png') })
-    await sourceDialog(page).getByRole('button', { name: '完成' }).click()
+    await closeSourceDialog(page)
     await page.getByRole('button', { name: '退出全屏', exact: true }).click()
     await expect.poll(() => page.evaluate(() => document.fullscreenElement === null)).toBe(true)
-    await expect(page.locator('.sidebar')).toBeVisible()
+    await expect(page.locator('.studio')).toBeVisible()
   })
 
   test('未加载片源时同步状态显示为零', async ({ page }) => {
     await openPlayer(page)
-    const sidebar = page.locator('.sidebar')
-    await expect(sidebar.locator('.status-pill')).toBeVisible()
-    await expect(sidebar.locator('.sync-headroom')).toContainText('未加载')
+    expect(await offsetReadout(page)).toEqual({ requested: 0, applied: 0 })
+    await expect(page.getByRole('button', { name: '解说延后', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: '画面延后', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: '自动对齐', exact: true })).toBeDisabled()
   })
 })
 

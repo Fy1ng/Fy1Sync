@@ -182,7 +182,7 @@ function SendBar({ context, apply }: {
       const current = fresh.value.sendContext
       const reason = sendBlock(current)
       if (reason || !current.accountId || !current.room) { show(reason ?? '当前不可发送', false); return }
-      // The send goes to the operation room; make it this window's room first.
+      // Main verifies this window still matches its operation room without switching it.
       const activated = await apiClient.feature('activateDouyuRoom', { room: current.room })
       if (!mounted.current) return
       if (!activated.ok) { show(activated.message, false); return }

@@ -1,16 +1,13 @@
 import { expect, test } from './electron'
-import { fixturesReady, loadBothFixtures, openPlayer, revealOverlay, seekBoth, setPlaying } from './helpers'
+import { fixturesReady, loadBothFixtures, openCameraFraming, openPlayer, seekBoth, setPlaying } from './helpers'
 import type { Page } from '@playwright/test'
 
 async function openCamera(page: Page): Promise<void> {
-  await revealOverlay(page)
-  await page.locator('.overlay-bar').getByRole('button', { name: /^摄像头/ }).click()
-  await page.getByRole('option', { name: '框选摄像头…' }).click()
-  await expect(page.getByRole('dialog', { name: '摄像头小窗取景' })).toBeVisible()
+  await openCameraFraming(page)
 }
 
 async function picture(page: Page) {
-  return page.locator('.camera-dialog-still').evaluate((canvas: HTMLCanvasElement) => {
+  return page.locator('.framing-still').evaluate((canvas: HTMLCanvasElement) => {
     const rgba = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data
     let hash = 2166136261
     for (let i = 0; i < rgba.length; i += 16) hash = Math.imul(hash ^ rgba[i]!, 16777619)
@@ -42,10 +39,10 @@ test.describe('摄像头取景实时帧', () => {
     await seekBoth(page, 10, 10)
     await expect.poll(async () => (await picture(page)).hash).not.toBe(paused.hash)
     expect((await picture(page)).paused).toBe(true)
-    const dialog = page.getByRole('dialog', { name: '摄像头小窗取景' })
-    await dialog.getByRole('button', { name: '自动收紧', exact: true }).click()
-    await expect(dialog.getByRole('status')).toContainText('暂停')
-    await expect(dialog.getByRole('button', { name: '保存并显示' })).toBeEnabled()
+    const dialog = page.getByRole('dialog', { name: '摄像头小窗' })
+    await dialog.getByRole('button', { name: '贴边', exact: true }).click()
+    await expect(dialog.getByRole('status')).toBeVisible()
+    await expect(dialog.getByRole('button', { name: '保存', exact: true })).toBeEnabled()
     expect((await picture(page)).paused).toBe(true)
     await dialog.getByRole('button', { name: '关闭', exact: true }).click()
     await openCamera(page)

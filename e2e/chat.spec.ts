@@ -5,7 +5,7 @@
  */
 
 import { APP_ORIGIN, expect, test } from './electron'
-import { fixturesReady, loadBothFixtures, openPlayer, openSourceDialog, seekBoth, setPlaying, stressDanmaku } from './helpers'
+import { connectDanmaku, fixturesReady, loadBothFixtures, openPlayer, seekBoth, setCheckedByLabel, setPlaying, stressDanmaku } from './helpers'
 import { parseStt, serializeStt, toChatMessage, toGiftMessage } from '../server/danmaku/douyuProtocol'
 import { SETTINGS_KEY } from '../src/app/settings'
 
@@ -22,10 +22,13 @@ test('旧配置不恢复已移除的本地视觉, 普通弹幕设置和真实礼
   await expect(page).toHaveURL(APP_ORIGIN + '/')
   await expect(page).toHaveTitle('Stream Sync Player')
   await page.getByRole('button', { name: '弹幕设置', exact: true }).click()
-  const panel = page.locator('.danmaku-panel')
-  await expect(panel.getByRole('heading', { name: '弹幕设置', exact: true })).toBeVisible()
+  const panel = page.locator('.float-panel')
+  await expect(panel.getByRole('heading', { name: '弹幕', exact: true })).toBeVisible()
   await expect(panel.getByRole('button', { name: /斗鱼本地视觉/ })).toHaveCount(0)
-  await expect(panel.getByRole('checkbox')).toHaveCount(1)
+  await expect(panel.getByRole('switch', { name: '显示弹幕', exact: true })).toBeChecked()
+  const gifts = panel.getByRole('switch', { name: /^显示礼物消息/ })
+  await expect(gifts).not.toBeChecked()
+  await setCheckedByLabel(gifts)
   const fontSize = panel.getByRole('slider', { name: '字号', exact: true })
   await expect(fontSize).toHaveValue('30')
   await fontSize.focus()
@@ -39,13 +42,11 @@ test('旧配置不恢复已移除的本地视觉, 普通弹幕设置和真实礼
   await page.screenshot({ path: testInfo.outputPath('danmaku-settings.png') })
   await page.getByRole('button', { name: '关闭弹幕设置', exact: true }).click()
 
-  const dialog = await openSourceDialog(page)
-  await dialog.getByRole('textbox', { name: '弹幕房间号' }).fill('288016')
-  await dialog.getByRole('button', { name: '连接', exact: true }).click()
+  await connectDanmaku(page)
+  await setPlaying(page, false)
   await expect.poll(() => electronApp.evaluate(() =>
     (globalThis as typeof globalThis & { __streamSyncerTest: { emitDanmaku(room: string, event: string, data: unknown): number } })
       .__streamSyncerTest.emitDanmaku('288016', 'state', { room: '288016', state: 'connected' }))).toBe(1)
-  await dialog.getByRole('button', { name: '完成' }).click()
   const messages = [
     toChatMessage(parseStt(serializeStt({ type: 'chatmsg', uid: '42', nn: '原始观众', txt: '保留原始弹幕' })), '288016', Date.now()),
     toGiftMessage(parseStt(serializeStt({ type: 'dgb', rid: '288016', uid: '42', nn: '原始观众', gpf: 1, pid: '268', gfcnt: 2 })), '288016', Date.now()),
@@ -55,11 +56,11 @@ test('旧配置不恢复已移除的本地视觉, 普通弹幕设置和真实礼
     const main = globalThis as typeof globalThis & { __streamSyncerTest: { emitDanmaku(room: string, event: string, data: unknown): number } }
     for (const payload of payloads) main.__streamSyncerTest.emitDanmaku('288016', 'danmaku', payload)
   }, messages)
-  await expect(page.locator('.chat-row')).toHaveCount(2)
-  const giftRow = page.locator('.chat-row').filter({ hasText: '粉丝荧光棒 x 2' })
+  await expect(page.locator('.msg')).toHaveCount(2)
+  const giftRow = page.locator('.msg').filter({ hasText: '粉丝荧光棒 x 2' })
   await expect(giftRow).toBeVisible()
   await expect(giftRow.getByRole('button')).toHaveCount(0)
-  const overlay = page.locator('.danmaku-layer')
+  const overlay = page.locator('.danmaku-stage')
   await expect(overlay.locator(':scope > *')).toHaveCount(1)
   await expect(overlay.locator('.danmaku-item')).toHaveText('保留原始弹幕')
   await expect(overlay.locator('.danmaku-item > *')).toHaveCount(0)
@@ -69,14 +70,12 @@ test('旧配置不恢复已移除的本地视觉, 普通弹幕设置和真实礼
 
 test('斗鱼协议昵称经 IPC 显示, 缺失昵称才显示匿名', async ({ page, electronApp }) => {
   await openPlayer(page)
-  const dialog = await openSourceDialog(page)
-  await dialog.getByRole('textbox', { name: '弹幕房间号' }).fill('288016')
-  await dialog.getByRole('button', { name: '连接', exact: true }).click()
+  await connectDanmaku(page)
+  await setPlaying(page, false)
   await expect.poll(() => electronApp.evaluate(() => {
     const main = globalThis as typeof globalThis & { __streamSyncerTest?: { emitDanmaku(room: string, event: string, data: unknown): number } }
     return main.__streamSyncerTest!.emitDanmaku('288016', 'state', { room: '288016', state: 'connected' })
   })).toBe(1)
-  await dialog.getByRole('button', { name: '完成' }).click()
 
   const messages = [
     'type@=chatmsg/cid@=named/nn@=观众@A甲@S乙/txt@=昵称回归消息/col@=2/',
@@ -88,10 +87,10 @@ test('斗鱼协议昵称经 IPC 显示, 缺失昵称才显示匿名', async ({ p
     for (const payload of payloads) main.__streamSyncerTest!.emitDanmaku('288016', 'danmaku', payload)
   }, messages)
 
-  const rows = page.locator('.chat-row')
+  const rows = page.locator('.msg')
   await expect(rows).toHaveCount(2)
-  await expect(rows.filter({ hasText: '昵称回归消息' }).locator('.chat-user')).toHaveText('观众@甲/乙')
-  await expect(rows.filter({ hasText: '缺失昵称消息' }).locator('.chat-user')).toHaveText('匿名')
+  await expect(rows.filter({ hasText: '昵称回归消息' }).locator('.msg-user')).toHaveText('观众@甲/乙')
+  await expect(rows.filter({ hasText: '缺失昵称消息' }).locator('.msg-user')).toHaveText('匿名')
   await expect(page.locator('.danmaku-item').filter({ hasText: '昵称回归消息' })).toHaveCSS('color', 'rgb(30, 135, 240)')
 })
 
@@ -106,26 +105,25 @@ test.describe('弹幕列表', () => {
       await seekBoth(page, 3, 3)
       await setPlaying(page, true)
 
-      const dialog = page.getByRole('dialog', { name: '片源设置' })
-      await page.locator('.stage-top').getByRole('button', { name: '片源设置' }).click()
-      const room = dialog.locator('.danmaku-room')
-      await room.getByRole('textbox').fill('288016')
-      await room.getByRole('button', { name: '连接' }).click()
-      await dialog.getByRole('button', { name: '完成' }).click()
+      await connectDanmaku(page)
 
-      const list = page.locator('.chat-scroller')
-      await expect(list.locator('.chat-row').first()).toBeVisible({ timeout: 20_000 })
-      await expect(list.locator('.chat-user').first()).toHaveText(/^观众\d+$/)
+      const list = page.locator('.drawer-scroll')
+      await expect(list.locator('.msg').first()).toBeVisible({ timeout: 20_000 })
+      await expect(list.locator('.msg-user').first()).toHaveText(/^观众\d+$/)
 
       // Let the history outgrow the viewport many times over.
       await expect.poll(async () => list.evaluate((node) => node.scrollHeight / node.clientHeight), { timeout: 20_000 })
         .toBeGreaterThan(20)
-      const rows = await list.locator('.chat-row').count()
+      const rows = await list.locator('.msg').count()
       // A real viewport, or windowing is measuring nothing.
       expect(await list.evaluate((node) => node.clientHeight)).toBeGreaterThan(200)
-      // 260px viewport / 26px rows = 10 visible, plus 6 overscan either side.
+      // Bound the DOM by this actual viewport, not by the old sidebar's fixed height.
+      const rowLimit = await list.evaluate(node => {
+        const row = node.querySelector('.msg')!
+        return Math.ceil(node.clientHeight / row.getBoundingClientRect().height) + 13
+      })
       expect(rows).toBeGreaterThan(0)
-      expect(rows).toBeLessThanOrEqual(30)
+      expect(rows).toBeLessThanOrEqual(rowLimit)
 
       // Following the bottom while pinned.
       expect(await list.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThan(30)
@@ -133,17 +131,17 @@ test.describe('弹幕列表', () => {
       // Scroll up and remember a row; it must stay put as messages keep arriving.
       await list.evaluate((node) => { node.scrollTop = node.scrollHeight / 2 })
       await page.waitForTimeout(300)
-      const anchor = list.locator('.chat-row').nth(8)
-      const text = await anchor.locator('.chat-text').textContent()
-      const before = await page.getByText(text!, { exact: true }).boundingBox()
+      const anchor = list.locator('.msg').nth(8)
+      const text = await anchor.locator('.msg-text').textContent()
+      const before = await list.getByText(text!, { exact: true }).boundingBox()
       await page.waitForTimeout(1500)
-      const after = await page.getByText(text!, { exact: true }).boundingBox()
+      const after = await list.getByText(text!, { exact: true }).boundingBox()
       expect(after).not.toBeNull()
       expect(Math.abs((after?.y ?? 0) - (before?.y ?? 0))).toBeLessThanOrEqual(2)
-      expect(await list.locator('.chat-row').count()).toBeLessThanOrEqual(30)
+      expect(await list.locator('.msg').count()).toBeLessThanOrEqual(rowLimit)
 
-      const jump = page.locator('.chat-jump')
-      await expect(jump).toContainText('条新消息')
+      const jump = page.locator('.drawer-jump')
+      await expect(jump).toContainText('条新弹幕')
       await jump.click()
       await expect(jump).toHaveCount(0)
       await expect.poll(async () => list.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThan(30)

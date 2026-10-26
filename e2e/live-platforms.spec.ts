@@ -1,6 +1,6 @@
 import { locateTool } from '../electron/toolLocator'
 import { APP_ORIGIN, expect, test } from './electron'
-import { closeSourceDialog, invoke, loadSource, openPlayer, revealOverlay } from './helpers'
+import { closeSourceDialog, invoke, loadSource, openPlayer, setPlaying } from './helpers'
 
 const platforms = [
   { platform: 'youtube', role: 'official', variable: 'STREAM_SYNC_YOUTUBE_LIVE_URL' },
@@ -47,8 +47,7 @@ for (const { platform, role, variable } of platforms) {
       await closeSourceDialog(page)
       const video = page.locator(`video[data-role="${role}"]`)
       await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.readyState), { timeout: 30_000 }).toBeGreaterThanOrEqual(2)
-      await revealOverlay(page)
-      await page.locator('.play-button').click()
+      await setPlaying(page, true)
       await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.paused)).toBe(false)
       const startedAt = await video.evaluate((node: HTMLVideoElement) => node.currentTime)
       await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime), { timeout: 20_000 }).toBeGreaterThan(startedAt + 1)

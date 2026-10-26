@@ -6,6 +6,7 @@ import { type ElectronApplication, type Locator, type Page } from '@playwright/t
 import type { DesktopMethod, DesktopMethods } from '../electron/contracts'
 import type { ApiResult } from '../src/app/apiClient'
 import type { ChatMessage } from '../server/danmaku/douyuProtocol'
+import type { DouyuTaskKind } from '../server/douyu/types'
 import { APP_ORIGIN, expect } from './electron'
 
 /** Use the actual preload bridge, retaining the transport result wrapper. */
@@ -63,18 +64,22 @@ export function failOnPageError(page: Page): void {
 export async function openPlayer(page: Page): Promise<void> {
   failOnPageError(page)
   await page.goto(APP_ORIGIN + '/')
-  await expect(page.locator('.player-page')).toBeVisible()
+  await expect(page.locator('.studio')).toBeVisible()
+  await expect(sourceDialog(page)).toBeVisible()
   await closeSourceDialog(page)
 }
 
 export function sourceDialog(page: Page): Locator {
-  return page.getByRole('dialog', { name: '片源设置' })
+  return page.getByRole('dialog', { name: '添加直播间' })
 }
 
 export async function openSourceDialog(page: Page): Promise<Locator> {
   const dialog = sourceDialog(page)
   if (!(await dialog.isVisible())) {
-    await page.getByRole('button', { name: '片源设置' }).click()
+    await revealOverlay(page)
+    const emptyChip = page.locator('.chip[data-status="empty"]').first()
+    await expect(emptyChip).toBeVisible()
+    await emptyChip.click()
   }
   await expect(dialog).toBeVisible()
   return dialog
@@ -84,33 +89,163 @@ export async function closeSourceDialog(page: Page): Promise<void> {
   const dialog = sourceDialog(page)
   // The cold-start dialog opens from an effect, so it may not be up on the first paint.
   if (await dialog.isVisible().catch(() => false)) {
-    await dialog.getByRole('button', { name: '完成' }).click()
+    const dismiss = dialog.getByRole('button', { name: /^(跳过|开始观看)$/ })
+    if (await dismiss.isVisible()) await dismiss.click()
     await expect(dialog).toBeHidden()
   }
 }
 
-/** The role panel inside the source dialog, addressed by its heading. */
+/** A loaded source is edited from its top-bar popover. */
 export function rolePanel(dialog: Locator, role: 'official' | 'commentary'): Locator {
-  return dialog.locator('.source-panel', {
-    has: dialog.page().getByRole('heading', { name: role === 'official' ? '官方画面' : '解说' }),
-  })
+  return dialog.page().getByRole('dialog', { name: role === 'official' ? '画面片源' : '解说片源', exact: true })
 }
 
-/** Load a URL into one role through the dialog's address field. */
+/** Respect usePopover's 120 ms outside-dismiss suppression before a new trigger click. */
+async function openPopoverTrigger(trigger: Locator): Promise<void> {
+  await trigger.page().waitForTimeout(150)
+  await trigger.click()
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+}
+
+export async function openSourcePanel(page: Page, role: 'official' | 'commentary'): Promise<Locator> {
+  await closeSourceDialog(page)
+  const panel = rolePanel(sourceDialog(page), role)
+  if (!(await panel.isVisible())) {
+    await revealOverlay(page)
+    await openPopoverTrigger(page.locator(`.chip[data-role="${role}"]`))
+  }
+  await expect(panel).toBeVisible()
+  return panel
+}
+
+/** Add an empty source through intake, or edit a loaded source in its popover. */
 export async function loadSource(
   page: Page,
   role: 'official' | 'commentary',
   url: string,
+  timeout = 45_000,
 ): Promise<void> {
-  const dialog = await openSourceDialog(page)
-  const panel = rolePanel(dialog, role)
-  // By label, not by role alone: the commentary panel also carries the danmaku room field,
-  // so a bare `getByRole('textbox')` matches two inputs there.
-  await panel.getByRole('textbox', { name: '直播间或媒体地址' }).fill(url)
-  await panel.getByRole('button', { name: '加载' }).click()
-  await expect(panel.locator('.source-current')).toContainText(url.split('/').pop() ?? url, {
-    timeout: 20_000,
-  })
+  const chip = page.locator(`.chip[data-role="${role}"]`)
+  if (await chip.getAttribute('data-status') === 'empty') {
+    const dialog = await openSourceDialog(page)
+    await dialog.getByRole('textbox', { name: '直播间链接' }).fill(url)
+    await dialog.getByRole('textbox', { name: '直播间链接' }).press('Enter')
+    const platform = dialog.getByRole('group', { name: '选择房间号所属平台' })
+    if (await platform.isVisible()) await platform.getByRole('button', { name: '斗鱼', exact: true }).click()
+    const placement = dialog.getByRole('group', { name: '选择添加位置' })
+    if (await placement.isVisible()) await placement.getByRole('button', { name: role === 'official' ? '画面' : '解说', exact: true }).click()
+  } else {
+    const panel = await openSourcePanel(page, role)
+    await panel.getByRole('textbox', { name: role === 'official' ? '画面链接' : '解说链接' }).fill(url)
+    await panel.getByRole('button', { name: '载入', exact: true }).click()
+    await expect(panel).toBeHidden({ timeout })
+  }
+  await expect(chip).not.toHaveAttribute('data-status', /^(empty|loading)$/, { timeout })
+  await closeSourceDialog(page)
+}
+
+export async function openSettings(page: Page): Promise<Locator> {
+  const settings = page.getByRole('dialog', { name: '设置', exact: true })
+  if (!(await settings.isVisible())) {
+    await closeSourceDialog(page)
+    await revealOverlay(page)
+    await openPopoverTrigger(page.getByRole('button', { name: '更多', exact: true }))
+    await page.getByRole('button', { name: '设置', exact: true }).click()
+  }
+  await expect(settings).toBeVisible()
+  return settings
+}
+
+export async function openDouyuDesk(page: Page): Promise<Locator> {
+  const desk = page.getByRole('dialog', { name: '斗鱼', exact: true })
+  if (!(await desk.isVisible())) {
+    await closeSourceDialog(page)
+    await revealOverlay(page)
+    await openPopoverTrigger(page.getByRole('button', { name: '更多', exact: true }))
+    await page.getByRole('button', { name: '斗鱼账号与任务', exact: true }).click()
+  }
+  await expect(desk).toBeVisible()
+  return desk
+}
+
+export async function openDouyuTab(page: Page, tab: string): Promise<Locator> {
+  const desk = await openDouyuDesk(page)
+  await desk.getByRole('tab', { name: new RegExp('^' + tab) }).click()
+  return desk
+}
+
+/** Studio switches and segmented radios are clicked through their visible labels. */
+export async function setCheckedByLabel(input: Locator, checked = true): Promise<void> {
+  await expect(input).toBeEnabled()
+  if (await input.isChecked() !== checked) await input.locator('..').click()
+  await expect(input).toBeChecked({ checked })
+}
+
+/** Open the ordinary task form; creating remains a separate explicit UI action. */
+export async function openTaskForm(page: Page, kind: DouyuTaskKind, room: string, daily = false): Promise<Locator> {
+  const desk = await openDouyuTab(page, '房间任务')
+  await desk.getByRole('button', { name: '新任务', exact: true }).click()
+  const form = desk.locator('.new-form')
+  const names: Record<DouyuTaskKind, string> = {
+    'room-sign': '直播间签到', 'yuba-sign': '鱼吧签到', 'message-loop': '定时弹幕',
+    'auto-fish': '钓鱼', 'gift-packet': '抢红包', 'treasure-box': '开宝箱',
+  }
+  await setCheckedByLabel(form.getByRole('radiogroup', { name: '任务类型', exact: true }).getByRole('radio', { name: names[kind], exact: true }))
+  await form.getByRole('textbox', { name: '任务房间号或地址', exact: true }).fill(room)
+  await setCheckedByLabel(form.getByRole('radiogroup', { name: '执行条件', exact: true }).getByRole('radio', { name: '锁屏时也运行', exact: true }))
+  if (daily) await setCheckedByLabel(form.getByRole('switch', { name: '每天签到一次', exact: true }))
+  return form
+}
+
+export async function openDanmakuSettings(page: Page): Promise<Locator> {
+  const panel = page.getByRole('complementary', { name: '弹幕设置' })
+  if (!(await panel.isVisible())) {
+    await revealOverlay(page)
+    await page.getByRole('button', { name: '弹幕设置', exact: true }).click()
+  }
+  await expect(panel).toBeVisible()
+  return panel
+}
+
+export async function connectDanmaku(page: Page, room = '288016'): Promise<void> {
+  // Chat settings live on a loaded commentary source in the studio.
+  if (await page.locator('.chip[data-role="commentary"]').getAttribute('data-status') === 'empty') {
+    await loadSource(page, 'commentary', FIXTURES.commentary)
+  }
+  const panel = await openSourcePanel(page, 'commentary')
+  await panel.getByRole('button', { name: /^(连接|更换房间)$/ }).click()
+  await panel.getByRole('textbox', { name: '弹幕房间号' }).fill(room)
+  await panel.getByRole('button', { name: '连接', exact: true }).click()
+  await expect(panel.getByText(new RegExp('房间 ' + room))).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(panel).toBeHidden()
+}
+
+export async function disconnectDanmaku(page: Page): Promise<void> {
+  const panel = await openSourcePanel(page, 'commentary')
+  await panel.getByRole('button', { name: '更换房间', exact: true }).click()
+  await panel.getByRole('button', { name: '断开', exact: true }).click()
+  await expect(panel).toContainText('未连接')
+  await page.keyboard.press('Escape')
+  await expect(panel).toBeHidden()
+}
+
+export async function openAlignOptions(page: Page): Promise<Locator> {
+  const panel = page.getByRole('dialog', { name: '对齐选项', exact: true })
+  if (!(await panel.isVisible())) {
+    await revealOverlay(page)
+    await openPopoverTrigger(page.getByRole('button', { name: '对齐选项', exact: true }))
+  }
+  await expect(panel).toBeVisible()
+  return panel
+}
+
+export async function openCameraFraming(page: Page): Promise<Locator> {
+  const source = await openSourcePanel(page, 'commentary')
+  await source.getByRole('button', { name: /^(框选|重新框选)$/ }).click()
+  const dialog = page.getByRole('dialog', { name: '摄像头小窗', exact: true })
+  await expect(dialog).toBeVisible()
+  return dialog
 }
 
 /** Load both fixtures and wait until each element actually has a duration. */
@@ -154,6 +289,7 @@ export interface MediaTimes {
 export async function mediaTimes(page: Page): Promise<MediaTimes> {
   return page.evaluate(() => {
     const videos = Array.from(document.querySelectorAll<HTMLVideoElement>('video.media-element'))
+      .filter(video => video.currentSrc || video.getAttribute('src'))
     const find = (role: string): HTMLVideoElement | undefined =>
       videos.find((video) => video.dataset.role === role)
     const official = find('official')
@@ -164,7 +300,7 @@ export async function mediaTimes(page: Page): Promise<MediaTimes> {
       official: a,
       commentary: b,
       lag: a - b,
-      paused: Boolean(official?.paused || commentary?.paused),
+      paused: videos.length === 0 || videos.some(video => video.paused),
     }
   })
 }
@@ -186,12 +322,12 @@ export async function seekBoth(page: Page, official: number, commentary: number)
 
 /** Move the pointer onto the stage and wait for the overlay bar to become interactive. */
 export async function revealOverlay(page: Page): Promise<void> {
-  await page.locator('.stage').hover({ position: { x: 20, y: 20 } })
-  await expect(page.locator('.overlay-bar')).toHaveClass(/is-visible/)
+  await page.locator('main.theater').hover({ position: { x: 20, y: 80 } })
+  await expect(page.locator('main.theater')).toHaveAttribute('data-chrome', 'on')
 }
 
 export async function setPlaying(page: Page, playing: boolean): Promise<void> {
-  const button = page.locator('.play-button')
+  const button = page.locator('.dock .play')
   const paused = (await mediaTimes(page)).paused
   if (paused === !playing) return
   // Reveal the overlay bar first. It auto-hides during playback and is `pointer-events:
@@ -203,14 +339,16 @@ export async function setPlaying(page: Page, playing: boolean): Promise<void> {
 }
 
 /**
- * The sidebar's two offset numbers, parsed. 目标 is what was asked for and 实际 is what the
- * seeks achieved; reading them separately is the point of the layout, because a clamped
- * rewind is only visible as a gap between the two.
+ * The capsule names the delayed side and reports any unfulfilled part of the request.
+ * These are display-precision values; mediaTimes is the independent playback evidence.
  */
 export async function offsetReadout(page: Page): Promise<{ requested: number; applied: number }> {
-  const values = await page.locator('.sync-status .status-grid dd').allInnerTexts()
-  const parse = (text: string | undefined): number => Number.parseFloat((text ?? '').replace(/[^\d.+-]/g, ''))
-  return { requested: parse(values[0]), applied: parse(values[1]) }
+  const label = await page.locator('.capsule-readout').getAttribute('aria-label') ?? ''
+  const magnitude = Number.parseFloat(label.match(/[\d.]+/)?.[0] ?? '0')
+  const direction = label.startsWith('解说延后') ? -1 : 1
+  const caption = await page.locator('.capsule-caption').innerText()
+  const shortfall = Number.parseFloat(caption.match(/相差 ([\d.]+)s/)?.[1] ?? '0')
+  return { requested: direction * magnitude || 0, applied: direction * (magnitude - shortfall) || 0 }
 }
 
 /**

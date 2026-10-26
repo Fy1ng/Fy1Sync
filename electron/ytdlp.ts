@@ -5,6 +5,11 @@ import { killProcessTree } from './bufferManager'
 import { youtubeAdaptiveFormats, youtubeFormats } from '../server/platforms/youtube'
 import { prepareScriptOnlyPotPlugin, type PrivatePotPlugin } from './potPlugin'
 
+// Keep the fields consumed by the selectors, without huge fragment/subtitle histories.
+// yt-dlp's dictionary projection runs before the data reaches the bounded parent pipe.
+export const YOUTUBE_METADATA_TEMPLATE = '{"metadata":%(.{id,is_live,live_status})j,"formats":%(formats.:.{format_id,url,protocol,height,fps,tbr,vcodec,acodec,ext})j}'
+const MAX_METADATA_BYTES = 16 * 1_048_576
+
 export interface YoutubeCookieAccess {
   withTemporaryCookies<T>(platform: 'youtube', callback: (path?: string) => Promise<T>): Promise<T>
 }
@@ -14,6 +19,7 @@ export interface YtDlpDiagnostic {
   status: 'available' | 'unavailable' | 'prepared' | 'failed' | 'resolved'
   exitCode?: number | null
   stopped?: boolean
+  stopReason?: 'timeout' | 'output-limit'
   warnings?: string[]
   heights?: number[]
   adaptiveHeights?: number[]
@@ -35,6 +41,7 @@ function warningCodes(stderr: string): string[] {
 export class YtDlpRunner {
   private readonly children = new Set<ChildProcess>()
   private readonly pending = new Set<Promise<unknown>>()
+  private readonly terminations = new WeakMap<ChildProcess, Promise<void>>()
   private disposed = false
   constructor(private readonly options: {
     electronPath: string
@@ -66,7 +73,7 @@ export class YtDlpRunner {
         '--ignore-config', '--no-cache-dir', '--no-playlist', '--no-progress',
         '--socket-timeout', '20', '--retries', '1', '--extractor-retries', '1',
         '--no-js-runtimes', '--js-runtimes', `node:${this.options.electronPath}`,
-        '--no-remote-components', '--skip-download', '-J',
+        '--no-remote-components', '--skip-download', '--print', YOUTUBE_METADATA_TEMPLATE,
         ...(cookiePath ? ['--cookies', cookiePath] : []), '--', url,
       ]
       if (provider) {
@@ -113,26 +120,35 @@ export class YtDlpRunner {
     env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --require="${runtime.replace(/\\/g, '/')}"`.trim()
     return new Promise((resolve, reject) => {
       let stdout = ''
+      let stdoutBytes = 0
       let stderr = ''
-      let stopped = false
+      let stopReason: YtDlpDiagnostic['stopReason']
       const child = (this.options.spawn ?? spawn)(executable, args, {
         env, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'],
       })
       this.children.add(child)
-      const terminate = () => { void (this.options.killTree ?? killProcessTree)(child).catch(() => { child.kill() }) }
-      const timer = setTimeout(() => { stopped = true; terminate() }, this.options.timeoutMs ?? 120_000)
+      const stop = (reason: NonNullable<YtDlpDiagnostic['stopReason']>) => {
+        if (stopReason) return
+        stopReason = reason
+        stdout = ''
+        void this.terminate(child)
+      }
+      const timer = setTimeout(() => stop('timeout'), this.options.timeoutMs ?? 120_000)
       const finish = () => { clearTimeout(timer); this.children.delete(child) }
       child.stdout?.on('data', (chunk: Buffer) => {
-        if (stdout.length + chunk.length > 16 * 1_048_576) { stopped = true; terminate(); return }
+        if (stopReason || this.disposed) return
+        stdoutBytes += chunk.length
+        if (stdoutBytes > MAX_METADATA_BYTES) { stop('output-limit'); return }
         stdout += chunk.toString('utf8')
       })
       child.stderr?.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString('utf8')).slice(-32_768) })
       child.once('error', () => { finish(); reject(new Error('无法启动 yt-dlp, 请检查工具路径')) })
       child.once('close', (code) => {
         finish()
-        this.options.diagnostic?.({ stage, status: code === 0 && !stopped ? 'resolved' : 'failed', exitCode: code,
-          stopped, warnings: warningCodes(stderr) })
-        if (stopped || this.disposed) { reject(new Error('yt-dlp 超时或已取消')); return }
+        this.options.diagnostic?.({ stage, status: code === 0 && !stopReason ? 'resolved' : 'failed', exitCode: code,
+          stopped: Boolean(stopReason), ...(stopReason ? { stopReason } : {}), warnings: warningCodes(stderr) })
+        if (stopReason === 'output-limit') { reject(new Error('yt-dlp 媒体信息超过大小限制')); return }
+        if (stopReason || this.disposed) { reject(new Error('yt-dlp 超时或已取消')); return }
         if (code !== 0) {
           reject(new Error(/sign in|not a bot|login|required|members.only|private video/i.test(stderr)
             ? 'YouTube sign in required' : /not (?:currently )?live|recording is not available|live (?:event|stream) (?:has ended|will begin)/i.test(stderr)
@@ -140,8 +156,12 @@ export class YtDlpRunner {
           return
         }
         try {
-          const info: unknown = JSON.parse(stdout)
-          const formats = info && typeof info === 'object' && 'formats' in info && Array.isArray(info.formats) ? info.formats : []
+          const result: unknown = JSON.parse(stdout)
+          if (!result || typeof result !== 'object' || !('metadata' in result) || !result.metadata
+            || typeof result.metadata !== 'object' || Array.isArray(result.metadata)
+            || !('formats' in result) || !Array.isArray(result.formats)) throw new Error('invalid metadata envelope')
+          const formats = result.formats
+          const info = { ...result.metadata, formats }
           this.options.diagnostic?.({ stage, status: 'resolved',
             heights: [...new Set(formats.map(format => format?.height).filter((height): height is number => Number.isSafeInteger(height) && height > 0))].sort((a, b) => b - a),
             adaptiveHeights: youtubeAdaptiveFormats(info, 0).map(format => format.height),
@@ -152,9 +172,20 @@ export class YtDlpRunner {
     })
   }
 
+  private terminate(child: ChildProcess): Promise<void> {
+    let pending = this.terminations.get(child)
+    if (!pending) {
+      // stdout, timeout and disposal can race while the native child is still closing.
+      pending = Promise.resolve().then(() => (this.options.killTree ?? killProcessTree)(child))
+        .catch(() => { try { child.kill() } catch { /* Already closed. */ } })
+      this.terminations.set(child, pending)
+    }
+    return pending
+  }
+
   async dispose(): Promise<void> {
     this.disposed = true
-    await Promise.allSettled([...this.children].map((child) => (this.options.killTree ?? killProcessTree)(child)))
+    await Promise.allSettled([...this.children].map((child) => this.terminate(child)))
     await Promise.allSettled([...this.pending])
   }
 }

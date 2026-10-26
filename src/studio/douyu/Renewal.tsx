@@ -351,6 +351,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
             {result && (
               <section aria-label="赠送处理结果" className="plan">
                 <p><b>{RESULT[result.status]}</b><span className="muted">　收到回执不代表续期成功</span></p>
+                {result.message && <p className="muted">{result.message}</p>}
                 <ul className="plan-rows">
                   {result.rows.map((row) => (
                     <li key={row.room} data-state={row.status}>

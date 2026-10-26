@@ -6,7 +6,7 @@ import type { RecognitionProfile } from '../src/core/profileSchema'
 import { CLOCK_CHARS, TEMPLATE_PIXELS } from '../src/core/profileSchema'
 import { packBitmap } from '../src/core/bitmapCodec'
 import { APP_ORIGIN, expect, test } from './electron'
-import { failOnPageError, fixturesReady, invoke } from './helpers'
+import { closeSourceDialog, failOnPageError, fixturesReady, invoke, openAlignOptions, sourceDialog } from './helpers'
 
 const officialPath = fileURLToPath(new URL('../public/test-sources/official.mp4', import.meta.url))
 const framePath = fileURLToPath(new URL('../public/test-sources/frame-0-20.png', import.meta.url))
@@ -35,8 +35,10 @@ test.describe('本机编辑器访问', () => {
     await page.getByRole('button', { name: '应用到播放器' }).click()
     await expect(page.locator('.admin-message')).toContainText('已设为播放器的识别场景')
     await page.getByRole('link', { name: '返回播放器' }).click()
-    await page.getByRole('dialog', { name: '片源设置' }).getByRole('button', { name: '完成' }).click()
-    await expect(page.locator('.sidebar').getByRole('button', { name: /^识别场景/ })).toContainText('草稿中的修改')
+    await expect(sourceDialog(page)).toBeVisible()
+    await closeSourceDialog(page)
+    const options = await openAlignOptions(page)
+    await expect(options.getByRole('combobox', { name: '倒计时样式' }).locator('option:checked')).toHaveText('草稿中的修改')
   })
 
   test('本机窗口直接显示编辑器而无需令牌', async ({ page }) => {
@@ -72,7 +74,7 @@ test.describe('本机编辑器访问', () => {
     await page.goto(APP_ORIGIN + '/admin')
     await expect(page.locator('.admin-columns')).toBeVisible()
     await page.getByRole('link', { name: '返回播放器' }).click()
-    await expect(page.locator('.player-page')).toBeVisible()
+    await expect(page.locator('.studio')).toBeVisible()
     await page.goto(APP_ORIGIN + '/admin')
     await expect(page.locator('.admin-columns')).toBeVisible()
   })

@@ -67,8 +67,9 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
   }
   const syncTaskRoom = () => {
     // Insertion order records subscription/activation intent even when lookups finish out of order.
+    // Additional playback windows can observe other rooms without changing the main task context.
     let next: string | null = null
-    if (!disposed) for (const entry of subscriptions.values()) if (entry.room !== null) next = entry.room
+    if (!disposed) for (const entry of subscriptions.values()) if (entry.owner.contents === contents && entry.room !== null) next = entry.room
     if (next === taskRoom) return
     service.setDouyuRoom?.(next)
     taskRoom = next
@@ -133,6 +134,11 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
       const selected = [...subscriptions.entries()].find(([, entry]) => entry.owner === owner && entry.room === room)
       if (!selected) return { ok: false, code: 'room-not-subscribed', message: '请先在当前窗口完成该房间的弹幕订阅' }
       if (!service.setDouyuRoom) return { ok: false, code: 'not-available', message: '房间任务服务尚不可用' }
+      if (owner.contents !== contents) {
+        // PiP may send in the main window's current room, but cannot switch that room implicitly.
+        return taskRoom === room && current() ? { ok: true, value: { room } }
+          : { ok: false, code: 'room-changed', message: '请先在主窗口选择相同的操作房间' }
+      }
       subscriptions.delete(selected[0])
       subscriptions.set(selected[0], selected[1])
       try { syncTaskRoom() } catch { return { ok: false, code: 'internal-error', message: '无法切换当前操作房间' } }

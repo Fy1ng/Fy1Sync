@@ -1,6 +1,6 @@
 import { test } from '@playwright/test'
 import { expect, launchApplication } from './electron'
-import { invoke, openPlayer, openSourceDialog } from './helpers'
+import { invoke, openDouyuTab, openPlayer, openTaskForm, setCheckedByLabel } from './helpers'
 
 test('钓鱼, 红包和宝箱共享任务调度, 人工验证入口及重启暂停', async ({}, testInfo) => {
   test.setTimeout(90_000)
@@ -15,37 +15,37 @@ test('钓鱼, 红包和宝箱共享任务调度, 人工验证入口及重启暂�
       fixture.setDouyuRoomFixture({ '9999': '9999' })
     })
     await openPlayer(app.page)
-    const tools = (await openSourceDialog(app.page)).getByRole('region', { name: '斗鱼账号和任务' })
-    await tools.getByRole('button', { name: '登录斗鱼', exact: true }).click()
+    const tools = await openDouyuTab(app.page, '账号')
+    await tools.getByRole('group', { name: '斗鱼账号 默认账号', exact: true }).getByRole('button', { name: '登录', exact: true }).click()
     await expect(tools).toContainText('默认账号 已登录')
-    await tools.locator('summary').filter({ hasText: '房间任务' }).click()
-    await tools.getByLabel('任务房间号或地址', { exact: true }).fill('9999')
-    await tools.getByLabel('执行条件', { exact: true }).selectOption('background-locked')
-    for (const kind of ['auto-fish', 'gift-packet', 'treasure-box']) {
-      await tools.getByLabel('任务类型', { exact: true }).selectOption(kind)
-      await expect(tools.getByLabel('执行周期', { exact: true })).toHaveCount(0)
-      await tools.getByRole('button', { name: '创建活动任务', exact: true }).click()
-      await expect(tools).toContainText('活动任务已创建, 当前为暂停.')
+    for (const kind of ['auto-fish', 'gift-packet', 'treasure-box'] as const) {
+      const form = await openTaskForm(app.page, kind, '9999')
+      await expect(form.getByRole('switch', { name: '每天签到一次', exact: true })).toHaveCount(0)
+      await form.getByRole('button', { name: '添加', exact: true }).click()
+      await expect(tools).toContainText('已添加，点击「启动」开始运行')
     }
-    const fishing = tools.getByRole('group', { name: '自动钓鱼任务 9999 (默认账号)', exact: true })
-    const packet = tools.getByRole('group', { name: '礼物红包任务 9999 (默认账号)', exact: true })
-    const chest = tools.getByRole('group', { name: '半自动宝箱任务 9999 (默认账号)', exact: true })
-    await expect(fishing).toContainText('已暂停')
-    await tools.getByRole('checkbox', { name: '保留房间 9999 的任务' }).check()
+    const fishing = tools.getByRole('group', { name: '钓鱼任务 9999 (默认账号)', exact: true })
+    const packet = tools.getByRole('group', { name: '抢红包任务 9999 (默认账号)', exact: true })
+    const chest = tools.getByRole('group', { name: '开宝箱任务 9999 (默认账号)', exact: true })
+    await expect(fishing).toHaveAttribute('data-status', 'paused')
+    await setCheckedByLabel(tools.getByRole('region', { name: '任务房间 9999', exact: true }).getByRole('switch', { name: '离开该房间后继续', exact: true }))
     await fishing.getByRole('button', { name: '启动', exact: true }).click()
-    await expect(fishing).toContainText('等待官方时间')
+    await expect(fishing).toHaveAttribute('data-status', 'queued')
     await packet.getByRole('button', { name: '启动', exact: true }).click()
-    await expect(packet).toContainText('等待官方时间')
+    await expect(packet).toHaveAttribute('data-status', 'queued')
+    await expect.poll(async () => {
+      const state = await invoke(app.page, 'getDouyuTasks', undefined)
+      return state.ok ? state.value.tasks.slice(0, 2).map(task => task.lastResult) : []
+    }).toEqual(['离线活动状态: 等待官方时间', '离线活动状态: 等待官方时间'])
     await app.application.evaluate(() => {
       (globalThis as typeof globalThis & { __streamSyncerTest: { setDouyuActivityFixtureOutcome(value: string): void } })
         .__streamSyncerTest.setDouyuActivityFixtureOutcome('waiting-user')
     })
     await chest.getByRole('button', { name: '启动', exact: true }).click()
     await expect(chest).toContainText('请完成人工验证')
-    await expect(chest).toContainText('等待手动处理')
-    await chest.getByRole('button', { name: '打开官方房间', exact: true }).click()
-    await expect(tools).toContainText('官方页面窗口已关闭')
-    for (const row of [fishing, packet, chest]) await expect(row).toContainText('已暂停')
+    await expect(chest).toHaveAttribute('data-status', 'waiting-user')
+    await chest.getByRole('button', { name: '打开官方页面', exact: true }).click()
+    for (const row of [fishing, packet, chest]) await expect(row).toHaveAttribute('data-status', 'paused')
     const fixture = await app.application.evaluate(() =>
       (globalThis as typeof globalThis & { __streamSyncerTest: { getDouyuActivitiesFixture(): { attempts: unknown[]; rooms: string[] } } })
         .__streamSyncerTest.getDouyuActivitiesFixture())
@@ -56,7 +56,9 @@ test('钓鱼, 红包和宝箱共享任务调度, 人工验证入口及重启暂�
     ])
     expect(fixture.rooms).toEqual(['room:9999'])
     await fishing.getByRole('button', { name: '打开官方钓鱼', exact: true }).click()
-    await expect(tools).toContainText('官方页面窗口已关闭')
+    await expect.poll(async () => (await invoke(app.page, 'getDouyuTasks', undefined))).toMatchObject({ ok: true, value: { tasks: [
+      { status: 'paused' }, { status: 'paused' }, { status: 'paused' },
+    ] } })
     const afterFishPage = await app.application.evaluate(() =>
       (globalThis as typeof globalThis & { __streamSyncerTest: { getDouyuActivitiesFixture(): { rooms: string[] } } })
         .__streamSyncerTest.getDouyuActivitiesFixture())

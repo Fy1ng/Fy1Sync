@@ -3,7 +3,7 @@ import { test } from '@playwright/test'
 import { CookieStore } from '../electron/cookies'
 import { locateTool } from '../electron/toolLocator'
 import { APP_ORIGIN, expect, launchApplication } from './electron'
-import { closeSourceDialog, invoke, openPlayer, openSourceDialog, revealOverlay, rolePanel } from './helpers'
+import { invoke, loadSource, openPlayer, openSourcePanel, setCheckedByLabel, setPlaying } from './helpers'
 import { decoderTelemetry, observeAdaptivePlayback, playbackObservationSeconds } from './adaptiveTelemetry'
 import { decodingStartup, selectSoftwareDecoding } from './decoderSettings'
 import { fixtureCookies } from './youtubeCookies'
@@ -67,25 +67,29 @@ test.describe('opt-in real YouTube adaptive acquisition', () => {
         const url = request.url()
         if (url.startsWith(APP_ORIGIN + '/buffer/') && url.endsWith('/index.m3u8')) localBuffer = url
       })
-      const panel = rolePanel(await openSourceDialog(page), 'official')
-      await panel.getByRole('textbox', { name: '直播间或媒体地址' }).fill(process.env.STREAM_SYNC_YOUTUBE_LIVE_URL!)
-      await panel.getByRole('button', { name: '加载' }).click()
-      const quality = panel.getByRole('combobox', { name: '画质' })
-      await expect(quality).toBeEnabled({ timeout: 240_000 })
+      await loadSource(page, 'official', process.env.STREAM_SYNC_YOUTUBE_LIVE_URL!, 240_000)
+      const panel = await openSourcePanel(page, 'official')
+      const quality = panel.getByRole('combobox', { name: '清晰度' })
+      const choices = panel.getByRole('radiogroup', { name: '清晰度' })
+      await expect.poll(async () => await quality.count() + await choices.count(), { timeout: 30_000 }).toBe(1)
+      const nativeSelect = await quality.count() > 0
       const qualityFile = test.info().outputPath('available-qualities.json')
       await mkdir(test.info().outputDir, { recursive: true })
-      await writeFile(qualityFile, JSON.stringify(await quality.locator('option').allTextContents()))
+      await writeFile(qualityFile, JSON.stringify(await (nativeSelect ? quality.locator('option') : choices.locator('label')).allTextContents()))
       await test.info().attach('available-qualities', { path: qualityFile, contentType: 'application/json' })
-      const target = quality.getByRole('option', { name: expectedFps ? new RegExp(`^1440p${expectedFps > 30 ? expectedFps : ''}$`) : /^1440p(?:60)?$/ })
+      const targetName = expectedFps ? new RegExp(`^1440p${expectedFps > 30 ? expectedFps : ''}$`) : /^1440p(?:60)?$/
+      const target = nativeSelect ? quality.getByRole('option', { name: targetName }) : choices.getByRole('radio', { name: targetName })
       await expect(target, '测试直播必须提供 1440p 档位, HLS 回退不能算作通过.').toHaveCount(1)
-      const targetId = await target.getAttribute('value')
-      if (!targetId) throw new Error('当前直播未提供 1440p 自适应档位')
-      if (await quality.inputValue() !== targetId) {
+      const targetId = nativeSelect ? await target.getAttribute('value') : null
+      if (nativeSelect && !targetId) throw new Error('当前直播未提供 1440p 自适应档位')
+      if (nativeSelect ? await quality.inputValue() !== targetId : !(await target.isChecked())) {
         localBuffer = ''
-        await quality.selectOption(targetId)
-        await expect(quality).toBeEnabled({ timeout: 90_000 })
+        if (nativeSelect) await quality.selectOption(targetId!)
+        else await setCheckedByLabel(target)
+        await expect(nativeSelect ? quality : target).toBeEnabled({ timeout: 90_000 })
       }
-      await expect(quality).toHaveValue(targetId)
+      if (nativeSelect) await expect(quality).toHaveValue(targetId!)
+      else await expect(target).toBeChecked()
       await expect.poll(() => localBuffer, { timeout: 30_000 }).toMatch(/^app:\/\/app\/buffer\//)
       const url = localBuffer
 
@@ -97,14 +101,14 @@ test.describe('opt-in real YouTube adaptive acquisition', () => {
         if (!/^#EXT-X-MAP:/m.test(playlist) || !segments.length || segments.some(segment => !segment.endsWith('.m4s'))) return 0
         return [...playlist.matchAll(/^#EXTINF:([\d.]+)/gm)].reduce((sum, match) => sum + Number(match[1]), 0)
       }, url), { timeout: 120_000, intervals: [500, 1_000, 2_000], message: '1440p 应形成至少 30 秒含 EXT-X-MAP 的 fMP4 本地缓冲.' }).toBeGreaterThanOrEqual(30)
-      await expect(quality, '缓冲期间不能降档后仍算作 1440p 通过.').toHaveValue(targetId)
+      if (nativeSelect) await expect(quality, '缓冲期间不能降档后仍算作 1440p 通过.').toHaveValue(targetId!)
+      else await expect(target, '缓冲期间不能降档后仍算作 1440p 通过.').toBeChecked()
 
-      await closeSourceDialog(page)
+      await page.keyboard.press('Escape')
       const video = page.locator('video[data-role="official"]')
       await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.readyState), { timeout: 30_000 }).toBeGreaterThanOrEqual(2)
       await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.videoHeight), { timeout: 30_000 }).toBeGreaterThanOrEqual(1440)
-      await revealOverlay(page)
-      await page.locator('.play-button').click()
+      await setPlaying(page, true)
       await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.paused)).toBe(false)
       const before = await video.evaluate((node: HTMLVideoElement) => ({
         time: node.currentTime, quality: node.getVideoPlaybackQuality().totalVideoFrames,

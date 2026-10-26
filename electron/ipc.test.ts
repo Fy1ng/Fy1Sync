@@ -509,6 +509,36 @@ describe('explicit multi-window IPC authority', () => {
 })
 
 describe('canonical room activation ownership', () => {
+  it('keeps PiP subscriptions and activation from switching the main task room', async () => {
+    const pip = windowFixture(2, 'app://app/pip')
+    const f = fixture({ extraContents: [pip], allowMethod: () => true, allowRoom: () => true })
+    await f.call('subscribe', '100', '1')
+    await f.callFrom(pip, 'subscribe', '200', '1')
+    expect(f.setRoom).toHaveBeenCalledExactlyOnceWith('100')
+    expect(await f.callFrom(pip, 'invoke', 'activateDouyuRoom', { room: '200' })).toMatchObject({ code: 'room-changed' })
+    expect(f.setRoom).toHaveBeenCalledTimes(1)
+    expect(f.installed.emitDanmaku('200', 'danmaku', { text: 'PiP room' })).toBe(1)
+    await f.call('unsubscribe', '1')
+    expect(f.setRoom).toHaveBeenLastCalledWith(null)
+    expect(await f.callFrom(pip, 'invoke', 'activateDouyuRoom', { room: '200' })).toMatchObject({ code: 'room-changed' })
+    f.installed.dispose()
+  })
+
+  it('allows same-room PiP activation without changing main selection order', async () => {
+    const pip = windowFixture(2, 'app://app/pip')
+    const f = fixture({ extraContents: [pip], allowMethod: () => true, allowRoom: () => true })
+    await f.call('subscribe', '100', '1')
+    await f.call('subscribe', '200', '2')
+    await f.callFrom(pip, 'subscribe', '200', '1')
+    expect(await f.callFrom(pip, 'invoke', 'activateDouyuRoom', { room: '200' })).toEqual({ ok: true, value: { room: '200' } })
+    expect(f.setRoom).toHaveBeenCalledTimes(2)
+    await f.call('unsubscribe', '2')
+    expect(f.setRoom).toHaveBeenLastCalledWith('100')
+    expect(await f.callFrom(pip, 'invoke', 'activateDouyuRoom', { room: '200' })).toMatchObject({ code: 'room-changed' })
+    expect(f.service.invoke).not.toHaveBeenCalled()
+    f.installed.dispose()
+  })
+
   it('activates only established canonical subscriptions and remembers explicit selection', async () => {
     const f = fixture()
     f.resolveRoom.mockResolvedValueOnce({ ok: true, identity: { room: '6979222', inputRoom: '6657' } })

@@ -35,11 +35,13 @@ export function rewardCredentials(header: unknown): RewardCredentials {
     const raw = part.slice(separator + 1).trim()
     if (!/^[!#$%&'*+.^_`|~A-Za-z0-9-]+$/.test(name) || /[\s\x00-\x1f\x7f"\\,;]/.test(raw)) return invalid()
     if (!CREDENTIAL_FIELDS.has(name)) continue
-    if (fields.has(name)) return invalid()
     let value: string
     try { value = decodeURIComponent(raw) } catch { return invalid() }
     if (value.length > 8_192 || /[\x00-\x1f\x7f-\x9f]/.test(value) || /^(null|undefined)$/i.test(value)) return invalid()
     if (name !== 'acf_username' && value && !/^[A-Za-z0-9._~+\/=:-]+$/.test(value)) return invalid()
+    // Douyu can set the same device ID on both the parent domain and the exact host.
+    // Equal device values are unambiguous; conflicting devices and duplicate auth stay rejected.
+    if (fields.has(name) && (name !== 'dy_did' || fields.get(name) !== value)) return invalid()
     fields.set(name, value)
   }
   const uid = fields.get('acf_uid')

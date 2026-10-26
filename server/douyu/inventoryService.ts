@@ -122,7 +122,7 @@ export function parseDouyuInventory(payload: unknown, now: number): DouyuInvento
               : isClick !== 1 ? '当前可用状态未确认, 不可赠送.'
                 : isValuable === null ? '价值属性未知, 不可赠送.'
                   : quantity < 1 ? '没有可用库存.'
-                    : expiration.kind === 'unknown' ? '精确有效期未知, 不使用日桶推算.'
+                    : expiration.kind === 'unknown' ? '无法确认准确到期时间, 暂不可赠送.'
                       : expiration.expiresAt !== null && expiration.expiresAt <= now + 5000 ? '已过期或即将过期, 不可赠送.' : null
     return {
       propId: String(id), name: inventoryName(item.name), quantity, propType, isValuable, expiration,
@@ -146,7 +146,7 @@ export function inventorySnapshot(accountId: string, room: string, checkedAt: nu
     quantity, knownValue: [...values].map(([currency, amount]) => giftMoney(currency, amount)),
     unvaluedItems: items.filter(item => item.totalValue === null && item.quantity > 0).length,
     knownIntimacy, unknownIntimacyItems: items.filter(item => item.intimacyTotal === null && item.quantity > 0).length,
-  }, message: '保留未知价值和亲密度. 日桶仅供显示, 不推算到期时刻. 亲密度是道具标称值, 不代表实际到账; 未换算人民币.' }
+  }, message: '未提供的价值和亲密度显示为未知. 剩余天数仅供参考, 具体到期时间以斗鱼显示为准. 亲密度按道具标注显示, 实际到账以斗鱼为准; 金额未折算成人民币.' }
 }
 
 export interface DouyuInventoryDependencies {

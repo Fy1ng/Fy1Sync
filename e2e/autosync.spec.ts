@@ -30,8 +30,11 @@ import {
   loadBothFixtures,
   mediaTimes,
   offsetReadout,
+  openAlignOptions,
   openPlayer,
+  revealOverlay,
   seekBoth,
+  setCheckedByLabel,
   setPlaying,
 } from './helpers'
 
@@ -69,19 +72,20 @@ test.describe('无预设自动同步', () => {
     expect(before.ok).toBe(true)
     if (!before.ok) throw new Error(before.message)
     expect(before.value.presets).toEqual([])
-    await expect(page.locator('.dropup', { has: page.getByText('识别场景', { exact: true }) }).locator('.dropup-value')).toHaveText('不使用')
+    const options = await openAlignOptions(page)
+    await expect(options.getByRole('combobox', { name: '倒计时样式' }).locator('option:checked')).toHaveText('自动识别')
+    await page.keyboard.press('Escape')
     await loadBothFixtures(page)
     // Leave twelve seconds for discovery and enough changing clock for measurement.
     await seekBoth(page, 0.25, 0.25)
     await setPlaying(page, true)
-    await page.getByRole('button', { name: '立即同步', exact: true }).click()
+    await page.getByRole('button', { name: '自动对齐', exact: true }).click()
     for (const role of ['official', 'commentary']) {
-      const card = page.locator(`.auto-profile-card[data-role="${role}"]`)
-      await expect(card.locator('.auto-profile-phase')).toContainText('已就绪', { timeout: 60_000 })
-      await expect(card.getByRole('img')).toBeVisible()
-      await expect(card).toContainText('已学字符')
+      const card = page.locator(`.prompt[data-role="${role}"]`)
+      await expect(card).toContainText('已识别比赛倒计时', { timeout: 60_000 })
+      await revealOverlay(page)
       await card.getByRole('button', { name: '使用', exact: true }).click()
-      await expect(card.locator('.auto-profile-phase')).toContainText('本次已使用')
+      await expect(card).toHaveCount(0)
     }
     await waitForPhase(page, '已完成')
     const divergence = await readResult(page, '校验残差')
@@ -218,7 +222,7 @@ test.describe('自动同步', () => {
     await seekBoth(page, START_SECONDS, START_SECONDS)
     await setPlaying(page, true)
 
-    await page.getByRole('button', { name: '立即同步' }).click()
+    await page.getByRole('button', { name: '自动对齐', exact: true }).click()
     await waitForPhase(page, '已完成')
 
     // The controller's own verification pass, which is what the gate is written against.
@@ -244,12 +248,14 @@ test.describe('自动同步', () => {
 
   test('自动对齐后手动一动，定时同步就交回给人', async ({ page }) => {
     await openPlayer(page)
+    const options = await openAlignOptions(page)
+    await setCheckedByLabel(options.getByRole('switch', { name: /^比赛中保持对齐/ }))
     await selectPreset(page, presetName)
     await loadBothFixtures(page)
     await seekBoth(page, START_SECONDS, START_SECONDS)
     await setPlaying(page, true)
 
-    await page.getByRole('button', { name: '立即同步' }).click()
+    await page.getByRole('button', { name: '自动对齐', exact: true }).click()
     await waitForPhase(page, '已完成')
     const auto = (await offsetReadout(page)).requested
     expect(Math.abs(auto - FIXTURE_DELAY_SECONDS)).toBeLessThanOrEqual(
@@ -258,11 +264,10 @@ test.describe('自动同步', () => {
 
     // Nudging is a statement that the user disagrees with the machine, so the scheduler
     // must stop overwriting the result until they ask for it again.
-    const sidebar = page.locator('.sidebar')
-    await sidebar.getByRole('button', { name: '解说后退 0.5s' }).click()
-    // Scoped to the section, not to a hint index: the auto-sync panel carries several
-    // hints and which ones are mounted depends on the run that just finished.
-    await expect(page.locator('.auto-sync')).toContainText('定时同步已暂停')
+    await page.keyboard.press('Escape')
+    await revealOverlay(page)
+    await page.getByRole('group', { name: '对齐', exact: true }).getByRole('button', { name: '解说延后', exact: true }).click()
+    await expect(await openAlignOptions(page)).toContainText('自动对齐已暂停')
     await expect
       .poll(async () => (await offsetReadout(page)).requested, { timeout: 15_000 })
       .toBeCloseTo(auto - 0.5, 1)
@@ -271,13 +276,14 @@ test.describe('自动同步', () => {
   test('未播放时无预设提示恢复播放且不应用偏移', async ({ page }) => {
     await openPlayer(page)
     await loadBothFixtures(page)
+    await setPlaying(page, false)
 
     // Discovery cannot learn from paused video. Explain this per source.
-    await page.getByRole('button', { name: '仅识别' }).click()
+    await (await openAlignOptions(page)).getByRole('button', { name: '仅测量', exact: true }).click()
     await waitForPhase(page, '未完成')
-    await expect(page.locator('.auto-profile-card')).toHaveCount(2)
+    await expect(page.locator('.prompt')).toHaveCount(2)
     for (const role of ['official', 'commentary']) {
-      await expect(page.locator(`.auto-profile-card[data-role="${role}"]`)).toContainText('恢复两路播放')
+      await expect(page.locator(`.prompt[data-role="${role}"]`)).toContainText('恢复两路播放')
     }
     expect(await offsetReadout(page)).toMatchObject({ requested: 0, applied: 0 })
   })
@@ -339,31 +345,25 @@ async function teachProfile(page: Page, id: string, name: string): Promise<void>
   await expect(page.locator('.admin-message.is-info')).toContainText('已发布')
 }
 
-/** Choose a published preset in the player's 识别场景 drop-up, by the name it was given. */
+/** Choose a published preset in the studio's alignment options. */
 async function selectPreset(page: Page, name: string): Promise<void> {
-  const dropup = page.locator('.auto-sync .dropup', {
-    has: page.getByText('识别场景', { exact: true }),
-  })
-  // The list arrives through listPresets IPC on boot; the trigger waits for it.
-  await expect(dropup.locator('.dropup-trigger')).toBeEnabled({ timeout: 20_000 })
-  await dropup.locator('.dropup-trigger').click()
-
-  // The option carries the server's own template count. A preset with none is rendered
-  // disabled, so asserting the hint here turns "recognised nothing" into a clear failure
-  // at selection time instead of a mystery three tests later.
-  const option = dropup.getByRole('option', { name, exact: false })
-  await expect(option.locator('.dropup-hint')).toHaveText('11 字形')
-  await option.click()
-
-  // Selection fetches the preset; the missing-profile hint disappearing is the signal
-  // that both roles now hold it.
-  await expect(page.locator('.auto-sync')).not.toContainText('选择上面的识别场景')
-  await expect(dropup.locator('.dropup-value')).toHaveText(name)
+  const options = await openAlignOptions(page)
+  const select = options.getByRole('combobox', { name: '倒计时样式' })
+  await expect(select).toBeEnabled({ timeout: 20_000 })
+  const option = select.getByRole('option', { name, exact: true })
+  await expect(option).toBeEnabled()
+  const id = await option.getAttribute('value')
+  if (!id) throw new Error('倒计时样式必须对应已发布预设')
+  const published = await invoke(page, 'getPreset', { id })
+  expect(published.ok && Object.keys(published.value.profile.templates).sort()).toEqual(CLOCK_CHARS)
+  await select.selectOption(id)
+  await expect(select.locator('option:checked')).toHaveText(name)
+  await page.keyboard.press('Escape')
 }
 
-/** Run 仅识别 and return the offset it reported. */
+/** Run the measurement-only action and return its reported offset. */
 async function measureOnce(page: Page): Promise<number> {
-  await page.getByRole('button', { name: '仅识别' }).click()
+  await (await openAlignOptions(page)).getByRole('button', { name: '仅测量', exact: true }).click()
   await waitForPhase(page, '已完成')
   const estimate = await readResult(page, '识别偏移')
   expect(estimate, '应报出一个识别偏移').not.toBeNull()
@@ -379,22 +379,23 @@ async function measureOnce(page: Page): Promise<number> {
  */
 async function waitForPhase(page: Page, text: string): Promise<void> {
   try {
-    await expect(page.locator('.auto-phase')).toContainText(text, { timeout: 120_000 })
+    const options = await openAlignOptions(page)
+    await expect(page.locator('.align-main.is-running')).toHaveCount(0, { timeout: 120_000 })
+    if (text === '已完成') await expect(options.locator('.menu-meta')).toContainText('上次测得偏差', { timeout: 120_000 })
+    else await expect(page.getByRole('group', { name: '对齐', exact: true })).toHaveAttribute('data-state', 'failed', { timeout: 120_000 })
   } catch (error) {
-    const reason = await page.locator('.auto-failure').textContent().catch(() => null)
+    const reason = await page.locator('.align-menu .menu-meta').textContent().catch(() => null)
     if (!reason) throw error
     throw new Error(`${(error as Error).message}\n\n页面给出的原因：${reason}`)
   }
 }
 
-/** Read one number out of the auto-sync result grid by its term. */
+/** Read the controller's estimate and verification values from the displayed result. */
 async function readResult(page: Page, term: string): Promise<number | null> {
-  const row = page.locator('.auto-sync .status-grid > div', {
-    has: page.getByText(term, { exact: true }),
-  })
-  if ((await row.count()) === 0) return null
-  const text = await row.locator('dd').innerText()
-  const value = Number.parseFloat(text.replace(/[^\d.+-]/g, ''))
+  const options = await openAlignOptions(page)
+  const text = await options.locator('.menu-meta').innerText()
+  const pattern = term === '校验残差' ? /复核误差\s+([\d.+-]+)/ : /上次测得偏差\s+([\d.+-]+)/
+  const value = Number.parseFloat(pattern.exec(text)?.[1] ?? '')
   return Number.isFinite(value) ? value : null
 }
 

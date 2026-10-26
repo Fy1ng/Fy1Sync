@@ -99,6 +99,9 @@ export function ChatDrawer({ onClose, onOpenDouyu, onOpenRecords, onOpenInsights
   const { start, end } = chatWindow(messages.length, scrollTop, viewport, ROW)
   const rows = messages.slice(start, end)
   const composing = useRef(false)
+  // Keep the menu in the feed's available half, including when its content grows.
+  const menuAbove = rowMenu !== null && rowMenu.top > viewport / 2
+  const menuEdge = rowMenu ? Math.max(8, Math.min(viewport - 8, rowMenu.top - (menuAbove ? ROW : 0))) : 8
 
   return (
     <aside className="drawer" aria-label="弹幕">
@@ -165,7 +168,8 @@ export function ChatDrawer({ onClose, onOpenDouyu, onOpenRecords, onOpenInsights
           )}
         </div>
         {rowMenu && (
-          <div className="row-menu-anchor" style={{ top: rowMenu.top }}>
+          <div className={`row-menu-anchor ${menuAbove ? 'is-above' : ''}`.trim()}
+            style={{ top: menuAbove ? 8 : menuEdge, bottom: menuAbove ? Math.max(8, viewport - menuEdge) : 8 }}>
             <Popover open onClose={() => setRowMenu(null)} className="row-menu" label={`弹幕操作：${rowMenu.message.text}`}>
               <RowActions message={rowMenu.message} note={rowNote} setNote={setRowNote} close={() => setRowMenu(null)}
                 onReply={() => { composer.reply(rowMenu.message.user); setRowMenu(null) }} />

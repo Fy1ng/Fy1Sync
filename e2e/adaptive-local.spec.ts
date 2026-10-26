@@ -6,7 +6,7 @@ import { buildFfmpegArgs, parseHlsSegments } from '../electron/bufferManager'
 import { locateTool } from '../electron/toolLocator'
 import { decoderTelemetry } from './adaptiveTelemetry'
 import { expect, test } from './electron'
-import { closeSourceDialog, loadSource, openPlayer, revealOverlay } from './helpers'
+import { closeSourceDialog, loadSource, openPlayer, setPlaying } from './helpers'
 
 test.describe('opt-in local adaptive decode comparison', () => {
   test.skip(process.env.STREAM_SYNC_ADAPTIVE_LOCAL_TESTS !== '1', '本地解码诊断需显式启用, 默认跳过.')
@@ -56,8 +56,7 @@ test.describe('opt-in local adaptive decode comparison', () => {
       await closeSourceDialog(page)
       const video = page.locator('video[data-role="official"]')
       await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.readyState)).toBeGreaterThanOrEqual(2)
-      await revealOverlay(page)
-      await page.locator('.play-button').click()
+      await setPlaying(page, true)
       const sample = () => video.evaluate((node: HTMLVideoElement) => {
         const quality = node.getVideoPlaybackQuality()
         const bufferedEnd = node.buffered.length ? node.buffered.end(node.buffered.length - 1) : 0

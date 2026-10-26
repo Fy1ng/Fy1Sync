@@ -27,6 +27,7 @@ const integer = (value: unknown): number | null => {
 }
 const identity = (value: unknown): string | null => typeof value === 'string' && /^[1-9][0-9]{0,19}$/.test(value) ? value
   : typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? String(value) : null
+const roomIdentity = (value: unknown): string | null => validDouyuRoom(identity(value))
 const text = (value: unknown, fallback = ''): string => typeof value === 'string'
   ? value.replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/gu, '').trim().slice(0, 160) : fallback
 const binary = (value: unknown): boolean | null => value === 1 || value === '1' ? true : value === 0 || value === '0' ? false : null
@@ -167,7 +168,7 @@ export class DouyuInsightsGateway {
         let invalid = false
         const next: DouyuFollowedRoom[] = []
         for (const raw of data.list) {
-          const item = record(raw), room = validDouyuRoom(item?.room_id)
+          const item = record(raw), room = roomIdentity(item?.room_id)
           if (!item || !room || rooms.has(room) || next.some(value => value.room === room)) { invalid = true; break }
           next.push({ room, roomName: text(item.room_name, `房间 ${room}`), nickname: text(item.nickname),
             live: liveState(item.show_status), replay: binary(item.videoLoop), startedAt: epoch(item.show_time, this.now()),
@@ -192,7 +193,7 @@ export class DouyuInsightsGateway {
     if (!validDouyuRoom(room)) throw new DouyuInsightsError('invalid-arguments')
     return this.scope(undefined, signal, async context => {
       const data = record(await this.json(`${ORIGIN}/swf_api/h5room/${room}`, context))
-      if (!data || validDouyuRoom(data.room_id) !== room) throw new DouyuInsightsError('invalid-data')
+      if (!data || roomIdentity(data.room_id) !== room) throw new DouyuInsightsError('invalid-data')
       const now = this.now(), live = liveState(data.show_status), started = epoch(data.show_time, now)
       return { room, checkedAt: now, roomName: text(data.room_name, `房间 ${room}`), nickname: text(data.nickname),
         ownerUid: identity(data.owner_uid), live, replay: binary(data.videoLoop ?? data.is_loop),
@@ -216,8 +217,11 @@ export class DouyuInsightsGateway {
     if (!validDouyuRoom(room)) throw new DouyuInsightsError('invalid-arguments')
     return this.scope(accountId, signal, async context => {
       const data = record(await this.json(`${ORIGIN}/japi/interactnc/web/fsjk/getCardTaskInfo?rid=${room}`, context))
-      if (!data || (data.rid !== undefined && validDouyuRoom(data.rid) !== room)) throw new DouyuInsightsError('invalid-data')
-      const seconds = integer(data.todayWatch)
+      // A successful empty card response uses rid=0 and todayWatch=0. That cannot
+      // confirm this room's watch time, so preserve unknown rather than claiming zero.
+      const unbound = data?.rid === 0 || data?.rid === '0'
+      if (!data || (data.rid !== undefined && !unbound && roomIdentity(data.rid) !== room)) throw new DouyuInsightsError('invalid-data')
+      const seconds = unbound ? null : integer(data.todayWatch)
       return { accountId, room, checkedAt: this.now(), seconds: seconds !== null && seconds <= 86_400 ? seconds : null, source: 'douyu-today-watch' }
     })
   }
