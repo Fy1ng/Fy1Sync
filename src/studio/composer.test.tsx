@@ -13,7 +13,7 @@ import type { StreamSyncerBridge } from '../../electron/contracts'
 import { ComposerProvider, useComposer } from './composer'
 import { DOUYU_MUTE_MINUTES } from '../../server/douyu/moderation'
 import { DanmakuActionsProvider, MUTE_MINUTES, useDanmakuActions } from './danmakuActions'
-import { deliveryText } from './useStudioComposer'
+import { credentialProblem, deliveryText } from './useStudioComposer'
 
 type Handler = (args: unknown) => unknown
 let handlers: Record<string, Handler>
@@ -70,6 +70,8 @@ function Probe(): React.ReactNode {
   return (
     <>
       <span data-testid="state">{composer.canEdit ? 'ready' : 'not-ready'}</span>
+      <span data-testid="blocked">{composer.blockedReason ?? ''}</span>
+      <span data-testid="relogin">{composer.needsRelogin ? 'relogin' : ''}</span>
       <span data-testid="delivery">{deliveryText(composer.delivery) ?? ''}</span>
       <button type="button" onClick={() => composer.setDraft('你好')}>draft</button>
       <button type="button" onClick={() => void composer.sendDraft()}>send</button>
@@ -107,6 +109,31 @@ describe('the studio send box', () => {
     fireEvent.click(screen.getByText('repeat'))
     await waitFor(() => expect(calls.filter((call) => call.method === 'sendComposedDouyuMessage')).toHaveLength(2))
     expect(calls.filter((call) => call.method === 'sendComposedDouyuMessage')[1]!.args).toMatchObject({ text: '原文', mode: 'repeat' })
+  })
+
+  it('blocks a logged-in account that lacks send credentials and says what to do', async () => {
+    handlers.listDouyuAccounts = () => ({ activeAccountId: 'default', accounts: [{ id: 'default', label: '主号', active: true, busy: false,
+      login: { loggedIn: true, canSend: false, missingCredentialFields: ['acf_did', 'dy_did', 'did'] } }] })
+    renderProbe(await connectedSession())
+    await waitFor(() => expect(screen.getByTestId('relogin')).toHaveTextContent('relogin'))
+    expect(screen.getByTestId('state')).toHaveTextContent('not-ready')
+    expect(screen.getByTestId('blocked')).toHaveTextContent('缺少发送弹幕所需的设备标识')
+    fireEvent.click(screen.getByText('repeat'))
+    await act(async () => { await Promise.resolve() })
+    expect(calls.some((call) => call.method === 'sendComposedDouyuMessage')).toBe(false)
+  })
+
+  it('treats an absent canSend as able to try, for an older main process', async () => {
+    renderProbe(await connectedSession())
+    await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('ready'))
+    expect(screen.getByTestId('relogin')).toHaveTextContent('')
+  })
+
+  it("names missing credentials in the viewer's words, never as cookie names", () => {
+    expect(credentialProblem(['acf_uid', 'acf_username'])).toBe('当前账号缺少发送弹幕所需的用户编号、用户名，请在斗鱼账号中重新登录。')
+    expect(credentialProblem(['acf_auth_wl', 'acf_dmjwt_token'])).toContain('登录凭证')
+    expect(credentialProblem([])).toContain('登录信息')
+    expect(credentialProblem(['acf_did', 'dy_did'])).not.toMatch(/acf_|dy_/)
   })
 
   it('says a missing room echo is not proof of being blocked', () => {

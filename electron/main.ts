@@ -114,9 +114,12 @@ async function start(): Promise<void> {
       if (!app.isPackaged && offlineE2e && douyuToolsFixture && platform === 'douyu') {
         if (signal.aborted) throw new Error('Fixture login cancelled')
         if (destination?.startsWith('room:') || destination?.startsWith('fish-act:')) officialRoomFixture.push(destination)
-        return ['acf_uid', 'acf_biz', 'acf_stk', 'acf_ct', 'acf_ltkid'].map((name, index) => ({
-          domain: '.douyu.com', path: '/', secure: true, session: true, name, value: String(index + 1),
-        }))
+        // A complete fixture login: the send path checks a device id and a username as well,
+        // so a login lacking them would read as 已登录 but 不能发送.
+        return [
+          ...['acf_uid', 'acf_biz', 'acf_stk', 'acf_ct', 'acf_ltkid'].map((name, index) => ({ name, value: String(index + 1) })),
+          { name: 'dy_did', value: 'f'.repeat(32) }, { name: 'acf_username', value: 'fixture-user' },
+        ].map(({ name, value }) => ({ domain: '.douyu.com', path: '/', secure: true, session: true, name, value }))
       }
       return browserLogin.login(executable, profile, platform, signal, destination)
     } },

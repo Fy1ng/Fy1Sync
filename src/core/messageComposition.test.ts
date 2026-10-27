@@ -17,6 +17,13 @@ describe('outgoing text composition', () => {
     for (const value of ['\ud800', 'line\nline', 'a\u2028b', '\0', '  ']) expect(() => composeMessage(value)).toThrow()
   })
 
+  it('refuses bidi overrides the main process would reject, before any send', () => {
+    for (const mark of ['‪', '‮', '⁦', '⁩']) {
+      expect(() => composeMessage(`前${mark}后`, { mode: 'repeat' })).toThrow('弹幕包含不支持的字符')
+    }
+    expect(composeMessage('普通文字 +1', { mode: 'repeat' })).toBe('普通文字 +1')
+  })
+
   it('rejects malformed preferences and an accessor without invoking it', () => {
     const getter = vi.fn(() => 'secret')
     expect(readMessageAffixes(Object.defineProperty({}, 'prefix', { get: getter }))).toBeNull()

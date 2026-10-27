@@ -117,9 +117,10 @@ export function useDouyu() {
 
 export type DouyuData = ReturnType<typeof useDouyu>
 
-export function accountState(account: { busy: boolean; login: { loggedIn: boolean; expiresAt?: number | null } }): string {
+export function accountState(account: { busy: boolean; login: { loggedIn: boolean; canSend?: boolean; expiresAt?: number | null } }): string {
   if (account.busy) return '处理中'
   if (!account.login.loggedIn) return '未登录'
+  if (account.login.canSend === false) return '已登录 · 不能发送弹幕，请重新登录'
   const at = account.login.expiresAt ? new Date(account.login.expiresAt * 1000) : null
   return at && Number.isFinite(at.getTime()) ? `已登录 · ${at.toLocaleDateString('zh-CN')} 到期` : '已登录'
 }

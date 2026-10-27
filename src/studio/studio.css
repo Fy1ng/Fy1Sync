@@ -1955,6 +1955,10 @@ body,
   animation: pop-in 200ms var(--ease);
 }
 
+.studio .sheet:focus {
+  outline: none;
+}
+
 .studio .sheet.is-wide {
   width: min(1040px, 100%);
   height: min(820px, 100%);

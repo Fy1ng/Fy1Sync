@@ -193,7 +193,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
 
       <form className="say" onSubmit={(event) => { event.preventDefault(); if (!composing.current) void composer.sendDraft() }}>
         <textarea ref={box} rows={1} value={composer.draft} disabled={!composer.canEdit} aria-label="弹幕内容"
-          placeholder={composer.canEdit ? '发送弹幕' : !composer.account?.loggedIn ? '登录斗鱼后可发送' : danmaku.connected ? '正在准备…' : '连接弹幕后可发送'}
+          placeholder={composer.canEdit ? '发送弹幕' : !composer.account?.loggedIn ? '登录斗鱼后可发送' : composer.needsRelogin ? '需要重新登录斗鱼' : danmaku.connected ? '正在准备…' : '连接弹幕后可发送'}
           spellCheck={false}
           onChange={(event) => composer.setDraft(event.target.value)}
           onFocus={() => { void composer.refreshAccounts() }}
@@ -206,16 +206,19 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
           }} />
         <button type="submit" className="say-send" disabled={!!composer.blockedReason || !!composer.draftProblem}>发送</button>
         <p className="say-meta">
-          {composer.account?.loggedIn
-            ? <span>以 {composer.account.label} 发送</span>
-            : <button type="button" className="link-btn" onClick={() => onOpenSettings('douyu')}>登录斗鱼</button>}
+          {composer.needsRelogin
+            ? <button type="button" className="link-btn" onClick={() => onOpenSettings('douyu')}>重新登录 {composer.account?.label}</button>
+            : composer.account?.loggedIn
+              ? <span>以 {composer.account.label} 发送</span>
+              : <button type="button" className="link-btn" onClick={() => onOpenSettings('douyu')}>登录斗鱼</button>}
           {composer.remaining > 0 && <span className="num">{composer.remaining}s</span>}
           {composer.affixes.enabled && composer.draft.length > 0 && <span title="在弹幕设置中修改">含前后缀</span>}
           {composer.composedLength > composer.lengthLimit * 0.8 && <span className="num">{composer.composedLength}/{composer.lengthLimit}</span>}
         </p>
         {composer.draft.length > 0 && composer.draftProblem && <p className="say-note is-warn">{composer.draftProblem}</p>}
+        {composer.needsRelogin && composer.blockedReason && <p className="say-note is-warn" role="status">{composer.blockedReason}</p>}
         {/* A send that cannot go out says why, instead of Enter silently doing nothing. */}
-        {composer.draft.length > 0 && !composer.draftProblem && !composer.notice && composer.blockedReason && composer.remaining === 0 && (
+        {composer.draft.length > 0 && !composer.needsRelogin && !composer.draftProblem && !composer.notice && composer.blockedReason && composer.remaining === 0 && (
           <p className="say-note is-warn" role="status">{composer.blockedReason}</p>
         )}
         {composer.notice && <p className="say-note" data-state={composer.notice.status} role="status">{composer.notice.message}</p>}

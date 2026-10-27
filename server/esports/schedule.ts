@@ -6,6 +6,7 @@ import { metadataConfig } from '../config'
 import { FeatureApiError } from '../featureApi'
 import { PinnedDispatcherPool, safeFetch, type Resolver } from '../safeFetch'
 import { currentMatches, parseSchedule, ScheduleFormatError, validChannel } from './parser'
+import { lookupTier, parseTierPage, TIER_PAGES, TierFormatError, type TournamentTier } from './tiers'
 import type { Cs2Match, Cs2Schedule, StreamTitle, StreamTitleInput } from './types'
 
 export const SCHEDULE_URL = 'https://liquipedia.net/counterstrike/api.php?action=parse&page=Liquipedia:Matches&format=json&prop=text'
@@ -13,11 +14,15 @@ export const ATTRIBUTION = '赛程数据来自 Liquipedia (CC-BY-SA 3.0)'
 export const SCHEDULE_TTL_MS = 300_000
 export const PARSE_INTERVAL_MS = 30_000
 export const TITLE_TTL_MS = 120_000
+export const TIER_TTL_MS = 24 * 60 * 60_000
 const MAX_BODY_BYTES = 2_000_000
 const UNAVAILABLE = '赛程暂时无法读取, 请稍后重试'
 class RateLimited extends Error {}
 
 interface CachedSchedule { fetchedAt: number; matches: Cs2Match[] }
+interface CachedTierPage { fetchedAt: number | null; attemptedAt: number; paths: string[]; failedSelector?: string }
+interface CachedTiers { schema: 1; nextPage: number; pages: Partial<Record<string, CachedTierPage>> }
+const emptyTiers = (): CachedTiers => ({ schema: 1, nextPage: 0, pages: {} })
 interface Dependencies {
   userDataDir: string
   version: string
@@ -52,6 +57,41 @@ class ScheduleDisk {
     } catch { return null }
   }
   save(payload: unknown, fetchedAt: number): void { atomicJson(this.directory, 'liquipedia.json', { schema: 1, fetchedAt, payload }) }
+  loadTiers(): CachedTiers {
+    const result = emptyTiers()
+    try {
+      const value = JSON.parse(readBounded(join(this.directory, 'tiers.json'))) as CachedTiers
+      if (value.schema !== 1 || !Number.isInteger(value.nextPage) || value.nextPage < 0 || value.nextPage >= TIER_PAGES.length
+        || !value.pages || typeof value.pages !== 'object') return result
+      result.nextPage = value.nextPage
+      for (const name of TIER_PAGES) {
+        const page = value.pages[name]
+        // A malformed page must not discard the other three cached levels.
+        if (!page || !Number.isSafeInteger(page.attemptedAt) || page.attemptedAt < 0
+          || (page.fetchedAt !== null && (!Number.isSafeInteger(page.fetchedAt) || page.fetchedAt < 0))
+          || !Array.isArray(page.paths) || page.paths.length > 10_000
+          || !page.paths.every(path => typeof path === 'string' && path.length > 0 && path.length <= 2_000 && !/[\x00-\x1f\x7f\\#?]/.test(path))
+          || (page.failedSelector !== undefined && (typeof page.failedSelector !== 'string' || page.failedSelector.length > 500))) continue
+        result.pages[name] = page
+      }
+    } catch { /* A missing or damaged cache is rebuilt in the background. */ }
+    return result
+  }
+  saveTier(index: number, page: CachedTierPage): void {
+    // Reload before writing so another service's completed level is retained.
+    const value = this.loadTiers()
+    value.pages[TIER_PAGES[index]!] = page
+    value.nextPage = (index + 1) % TIER_PAGES.length
+    mkdirSync(this.directory, { recursive: true })
+    atomicJson(this.directory, 'tiers.json', value)
+  }
+  parseDelay(now: number): number {
+    try {
+      const last = JSON.parse(readBounded(join(this.directory, 'liquipedia-attempt.json'))) as { at?: unknown }
+      if (!Number.isSafeInteger(last.at) || Number(last.at) < 0) return PARSE_INTERVAL_MS
+      return Math.max(0, Math.min(TIER_TTL_MS, Number(last.at) + PARSE_INTERVAL_MS - now))
+    } catch { return 0 }
+  }
   reserve(now: number): boolean {
     mkdirSync(this.directory, { recursive: true })
     const lock = join(this.directory, 'liquipedia.lock')
@@ -157,6 +197,8 @@ export class EsportsService {
   private readonly lifetime = new AbortController()
   private cache: CachedSchedule | null = null
   private flight: Promise<Cs2Schedule> | undefined
+  private tierFlight: Promise<void> | undefined
+  private tierTimer: ReturnType<typeof setTimeout> | undefined
   private booted = false
   private readonly titles = new Map<string, { at: number; value: StreamTitle }>()
   private readonly titleFlights = new Map<string, Promise<StreamTitle>>()
@@ -166,9 +208,16 @@ export class EsportsService {
   }
   private snapshot(error?: string): Cs2Schedule {
     const now = this.now()
+    const tiers = new Map<string, TournamentTier>()
+    const cached = this.disk.loadTiers()
+    TIER_PAGES.forEach((name, index) => {
+      for (const path of cached.pages[name]?.paths ?? []) if (!tiers.has(path)) tiers.set(path, (index + 1) as TournamentTier)
+    })
+    const matches = structuredClone(currentMatches(this.cache?.matches ?? [], now))
+    for (const match of matches) match.tournament.tier = lookupTier(match.tournament.url, tiers) ?? match.tournament.tier
     return { fetchedAt: this.cache?.fetchedAt ?? 0, source: 'liquipedia', attribution: ATTRIBUTION,
       stale: !!error || !this.cache || now - this.cache.fetchedAt >= SCHEDULE_TTL_MS || now < this.cache.fetchedAt,
-      ...(error ? { error } : {}), matches: structuredClone(currentMatches(this.cache?.matches ?? [], now)) }
+      ...(error ? { error } : {}), matches }
   }
   getCs2Schedule(raw?: { refresh?: boolean }): Promise<Cs2Schedule> {
     const args = scheduleArguments(raw)
@@ -178,26 +227,73 @@ export class EsportsService {
     if (fromDisk && (!this.cache || fromDisk.fetchedAt > this.cache.fetchedAt)) this.cache = fromDisk
     const first = !this.booted
     this.booted = true
-    if (!args?.refresh && this.cache && !this.snapshot().stale) return Promise.resolve(this.snapshot())
-    const work = this.refresh().finally(() => { if (this.flight === work) this.flight = undefined })
+    if (!args?.refresh && this.cache && !this.snapshot().stale) { this.scheduleTierRefresh(); return Promise.resolve(this.snapshot()) }
+    const work = this.refresh().finally(() => { if (this.flight === work) this.flight = undefined; this.scheduleTierRefresh() })
     this.flight = work
     // Cold starts can paint old data immediately. A later read joins the same refresh.
     if (first && this.cache && !args?.refresh) { void work; return Promise.resolve(this.snapshot()) }
     return work.then(value => structuredClone(value))
   }
+  private tierDelay(page: CachedTierPage | undefined, now: number): number {
+    if (!page) return 0
+    if (page.fetchedAt !== null && now >= page.fetchedAt && now - page.fetchedAt < TIER_TTL_MS) return page.fetchedAt + TIER_TTL_MS - now
+    // Failed pages retry independently, without preventing the next level from loading.
+    return page.attemptedAt <= now ? Math.max(0, page.attemptedAt + SCHEDULE_TTL_MS - now) : 0
+  }
+  private scheduleTierRefresh(): void {
+    if (this.lifetime.signal.aborted || this.tierTimer || this.tierFlight) return
+    const now = this.now(), cached = this.disk.loadTiers()
+    const due = Math.min(...TIER_PAGES.map(name => this.tierDelay(cached.pages[name], now)))
+    // Always yield to the schedule. A cold schedule never waits for tier requests.
+    const delay = Math.max(PARSE_INTERVAL_MS, this.disk.parseDelay(now), due)
+    this.tierTimer = setTimeout(() => {
+      this.tierTimer = undefined
+      if (this.flight) { this.scheduleTierRefresh(); return }
+      const work = this.refreshOneTier().finally(() => {
+        this.tierFlight = undefined
+        this.scheduleTierRefresh()
+      })
+      this.tierFlight = work
+    }, delay)
+    this.tierTimer.unref?.()
+  }
+  private async fetchParse(url: string): Promise<unknown> {
+    const signal = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(15_000)])
+    const result = await safeFetch(url, metadataConfig(), {
+      signal, resolve: this.options.resolve, dispatcherPool: this.pool,
+      headers: { 'User-Agent': metadataUserAgent(this.options.version), 'Accept-Encoding': 'gzip', Accept: 'application/json' },
+      fetchImpl: (input, init) => {
+        // All five parse pages reserve the same durable quota immediately before dispatch.
+        if (!this.disk.reserve(this.now())) throw new RateLimited()
+        return (this.options.request ?? fetch)(input, init)
+      },
+    })
+    return readJson(result.response)
+  }
+  private async refreshOneTier(): Promise<void> {
+    const cached = this.disk.loadTiers(), now = this.now()
+    const index = Array.from({ length: TIER_PAGES.length }, (_, offset) => (cached.nextPage + offset) % TIER_PAGES.length)
+      .find(index => this.tierDelay(cached.pages[TIER_PAGES[index]!], now) === 0)
+    if (index === undefined) return
+    const name = TIER_PAGES[index]!
+    try {
+      const payload = await this.fetchParse(`https://liquipedia.net/counterstrike/api.php?action=parse&page=${name}&format=json&prop=text`)
+      const paths = parseTierPage(payload), fetchedAt = this.now()
+      this.disk.saveTier(index, { paths, fetchedAt, attemptedAt: fetchedAt })
+    } catch (error) {
+      if (this.lifetime.signal.aborted || error instanceof RateLimited) return
+      const selector = error instanceof TierFormatError ? error.selector : undefined
+      ;(this.options.log ?? console.warn)(selector ? `Liquipedia ${name} selector failed: ${selector}` : `Liquipedia ${name} refresh failed`)
+      const previous = this.disk.loadTiers().pages[name]
+      try {
+        this.disk.saveTier(index, { paths: previous?.paths ?? [], fetchedAt: previous?.fetchedAt ?? null,
+          attemptedAt: this.now(), ...(selector ? { failedSelector: selector } : {}) })
+      } catch { /* Disk failure must not reject an unobserved background task. */ }
+    }
+  }
   private async refresh(): Promise<Cs2Schedule> {
     try {
-      const signal = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(15_000)])
-      const result = await safeFetch(SCHEDULE_URL, metadataConfig(), {
-        signal, resolve: this.options.resolve, dispatcherPool: this.pool,
-        headers: { 'User-Agent': metadataUserAgent(this.options.version), 'Accept-Encoding': 'gzip', Accept: 'application/json' },
-        fetchImpl: (input, init) => {
-          // Reserve after DNS validation, immediately before the only actual request.
-          if (!this.disk.reserve(this.now())) throw new RateLimited()
-          return (this.options.request ?? fetch)(input, init)
-        },
-      })
-      const payload = await readJson(result.response)
+      const payload = await this.fetchParse(SCHEDULE_URL)
       const matches = parseSchedule(payload), fetchedAt = this.now()
       this.disk.save(payload, fetchedAt)
       this.cache = { fetchedAt, matches }
@@ -262,8 +358,9 @@ export class EsportsService {
   }
   async dispose(): Promise<void> {
     this.lifetime.abort()
+    clearTimeout(this.tierTimer)
     await this.pool.dispose()
-    await Promise.allSettled([this.flight, ...this.titleFlights.values()])
+    await Promise.allSettled([this.flight, this.tierFlight, ...this.titleFlights.values()])
     this.titles.clear()
   }
 }
