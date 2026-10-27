@@ -83,6 +83,18 @@ test.describe('应用外壳', () => {
     await expect(page.locator('.drawer')).toBeVisible()
   })
 
+  test('纯房间号的平台选择包含虎牙', async ({ page }) => {
+    await page.goto(APP_ORIGIN + '/')
+    const dialog = sourceDialog(page)
+    await dialog.getByRole('textbox', { name: '直播间链接' }).fill('660000')
+    await dialog.getByRole('textbox', { name: '直播间链接' }).press('Enter')
+    const platforms = dialog.getByRole('group', { name: '选择房间号所属平台' })
+    await expect(platforms.getByRole('button', { name: '虎牙', exact: true })).toBeVisible()
+    await expect(platforms.getByRole('button', { name: '斗鱼', exact: true })).toBeVisible()
+    await expect(platforms.getByRole('button', { name: '哔哩哔哩', exact: true })).toBeVisible()
+    await closeSourceDialog(page)
+  })
+
   test('真实全屏保留可操作的片源对话框', async ({ page }, testInfo) => {
     await openPlayer(page)
     await page.getByRole('button', { name: '全屏', exact: true }).click()
@@ -125,6 +137,13 @@ test.describe('主进程接口与安全边界', () => {
     expect(response.value.ok).toBe(false)
     if (response.value.ok) throw new Error('Unresolvable input was unexpectedly accepted')
     expect(response.value.failure.message).toBeTruthy()
+  })
+
+  test('虎牙平台通过 IPC 参数校验且无效房间不会发起取流', async ({ page }) => {
+    const response = await invoke(page, 'resolve', { input: 'not/a/huya-room', platform: 'huya', role: 'commentary' })
+    expect(response.ok).toBe(true)
+    if (!response.ok) throw new Error(response.message)
+    expect(response.value).toMatchObject({ ok: false, failure: { code: 'unsupported-url' } })
   })
 
   test('本机写入仍需通过主进程预设校验', async ({ page }) => {

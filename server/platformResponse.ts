@@ -4,7 +4,7 @@ const MAX_CHUNKS = 16_384
 const cancelled = () => new DOMException('Platform response cancelled.', 'AbortError')
 const invalid = () => new Error('Platform response could not be read safely.')
 
-export async function readPlatformText(response: Response, signal: AbortSignal): Promise<string> {
+export async function readPlatformBytes(response: Response, signal: AbortSignal): Promise<Uint8Array<ArrayBuffer>> {
   const cancelBody = () => { void response.body?.cancel().catch(() => {}) }
   if (signal.aborted) { cancelBody(); throw cancelled() }
   const advertised = response.headers.get('content-length')
@@ -12,7 +12,7 @@ export async function readPlatformText(response: Response, signal: AbortSignal):
     cancelBody()
     throw invalid()
   }
-  if (!response.body) return ''
+  if (!response.body) return new Uint8Array()
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
   let size = 0
@@ -37,11 +37,16 @@ export async function readPlatformText(response: Response, signal: AbortSignal):
       chunks.push(chunk.value)
     }
     if (signal.aborted) throw cancelled()
-    try { return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)) }
-    catch { throw invalid() }
+    return new Uint8Array(Buffer.concat(chunks))
   } finally {
     signal.removeEventListener('abort', cancel)
     cancel()
     reader.releaseLock()
   }
+}
+
+export async function readPlatformText(response: Response, signal: AbortSignal): Promise<string> {
+  const bytes = await readPlatformBytes(response, signal)
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
+  catch { throw invalid() }
 }

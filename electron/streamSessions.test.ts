@@ -21,6 +21,13 @@ function fixture() {
   return { manager, port, source }
 }
 describe('independent stream sessions', () => {
+  it('accepts Huya room selections at the main-process session boundary', async () => {
+    const f = fixture()
+    const view = await f.manager.open({ input: '  huya.com/660000  ', platform: 'huya', quality: '8000' })
+    expect(view.phase).toBe('ready')
+    expect(f.port.resolve).toHaveBeenCalledWith('huya.com/660000', 'huya', view.id, '8000', undefined)
+    await f.manager.dispose()
+  })
   it('opens more than two streams and closes only the selected producer', async () => {
     const f = fixture()
     const streams = await Promise.all(['one', 'two', 'three'].map(input => f.manager.open({ input })))

@@ -228,6 +228,15 @@ describe('detectPlatform', () => {
     expect(detectPlatform('https://live.bilibili.com/21470454')).toBe('bilibili')
   })
 
+  it('recognises Huya hosts and keeps deceptive hostnames out', () => {
+    for (const input of ['huya.com/12345', 'https://www.huya.com/example_room', 'https://m.huya.com/12345']) {
+      expect(detectPlatform(input)).toBe('huya')
+    }
+    expect(detectPlatform('https://huya.com.evil.invalid/12345')).toBeNull()
+    expect(detectPlatform('https://fakehuya.com/12345')).toBeNull()
+    expect(detectPlatform('example_room', 'huya')).toBe('huya')
+  })
+
   it('recognises direct media URLs', () => {
     expect(detectPlatform('https://cdn.example.com/live/index.m3u8')).toBe('direct')
     expect(detectPlatform('http://127.0.0.1:5173/test-sources/clock.mp4')).toBe('direct')
@@ -256,6 +265,10 @@ describe('looksLikeDirectMedia', () => {
 })
 
 describe('resolveStream', () => {
+  it('dispatches explicit Huya rooms and returns the classified failure', async () => {
+    expect(await resolveStream('12345', deps({ fetchText: async () => '找不到这个主播' }), 'huya'))
+      .toMatchObject({ ok: false, failure: { code: 'room-not-found' } })
+  })
   it('returns a direct progressive source unproxied', async () => {
     const result = await resolveStream('https://cdn.example.com/clip.mp4', deps())
     expect(result.ok).toBe(true)

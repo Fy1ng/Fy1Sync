@@ -449,6 +449,8 @@ export function buildFfmpegArgs(input: BufferInput, directory: string, runId: nu
   // `httpproxy` protocol. Leaving it off the whitelist fails every remote input at open on
   // any machine with a system proxy, which is the common setup for reaching YouTube.
   args.push('-protocol_whitelist', local ? 'file,crypto' : 'http,https,tcp,tls,crypto,httpproxy')
+  // Do not enable ffmpeg HTTP reconnect options: a signed Huya FLV URL is single-use.
+  // EOF and stalls return to launch(), which asks acquisition for a newly signed URL.
   if (!local) args.push('-rw_timeout', '20000000')
   if (input.headers) {
     const headers = Object.entries(input.headers).map(([name, value]) => {

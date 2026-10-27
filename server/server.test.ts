@@ -36,6 +36,16 @@ function value<T = Record<string, any>>(result: ApiResult<unknown>): T {
 }
 
 describe('platform metadata request limits', () => {
+  it('posts binary WUP metadata and preserves binary responses without UTF-8 decoding', async () => {
+    const body = new Uint8Array([0, 0x80, 0xff])
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(body))
+    const deps = createResolverDeps(resolveConfig({}).proxy, url => url, fetchImpl)
+    expect(await deps.fetchBytes('https://wup.huya.com', { method: 'POST', body,
+      headers: { Referer: 'https://www.huya.com/', 'Content-Type': 'application/octet-stream' } })).toEqual(body)
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    expect(fetchImpl.mock.calls[0]![1]).toMatchObject({ method: 'POST', body,
+      headers: { Referer: 'https://www.huya.com/', 'Content-Type': 'application/octet-stream' } })
+  })
   it('cancels an oversized HTTP success body without returning its payload', async () => {
     const cancel = vi.fn()
     const response = new Response(new ReadableStream({ start(controller) {
@@ -102,6 +112,14 @@ describe('desktop main-process service', () => {
     expect(value(await service.invoke('health', undefined))).toEqual({
       ok: true, version: appPackage.version, proxyEnabled: true, danmakuRooms: 0,
     })
+  })
+
+  it('accepts Huya at the resolve IPC boundary without starting a Douyu relay', async () => {
+    fetchImpl.mockResolvedValueOnce(new Response('找不到这个主播'))
+    expect(await service.invoke('resolve', { input: '12345', platform: 'huya', role: 'commentary' }))
+      .toMatchObject({ ok: true, value: { ok: false, failure: { code: 'room-not-found' } } })
+    expect(service.relay.roomCount).toBe(0)
+    expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
   it('uses the injected relay and closes its rooms when disposed', () => {

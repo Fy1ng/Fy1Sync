@@ -4,6 +4,8 @@ CS2 schedule metadata is by [Liquipedia contributors](https://liquipedia.net/cou
 
 The application package.json retains the original application's MIT license declaration. This does not license the whole distribution as MIT. No copyright owner is invented here. Third-party programs remain separate executables or provider resources, outside app.asar, with their own terms.
 
+Huya's minimal TarsV3 protocol implementation and golden request/response fixtures reference [biliup/biliup commit 48a0d234794bb918e211076b357823438e8c109d](https://github.com/biliup/biliup/tree/48a0d234794bb918e211076b357823438e8c109d), MIT, Copyright (c) 2019 ForgQi. The full notice is retained in `server/platforms/fixtures/huya-biliup-LICENSE.txt`; preserve it with redistributed implementations or fixture copies. No Simple Live code is included.
+
 ## Fixed runtime inputs
 
 | Component | Fixed input | License and source |

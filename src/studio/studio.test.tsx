@@ -51,6 +51,7 @@ describe('routing a pasted link', () => {
     expect(routeFor('twitch')).toBe('official')
     expect(routeFor('douyu')).toBe('commentary')
     expect(routeFor('bilibili')).toBe('commentary')
+    expect(routeFor('huya')).toBe('commentary')
   })
 
   it('leaves links that cannot say to the viewer', () => {
@@ -64,6 +65,15 @@ describe('typed rooms', () => {
     expect(parseRoomInput('6979222')).toEqual({ room: '6979222', platform: null })
     expect(parseRoomInput('b 21452505')).toEqual({ room: '21452505', platform: 'bilibili' })
     expect(parseRoomInput('斗鱼9999')).toEqual({ room: '9999', platform: 'douyu' })
+    expect(parseRoomInput('虎牙 660000')).toEqual({ room: '660000', platform: 'huya' })
+    expect(parseRoomInput('huya:kpl')).toEqual({ room: 'kpl', platform: 'huya' })
+    expect(parseRoomInput('hy lpl')).toEqual({ room: 'lpl', platform: 'huya' })
+    expect(parseRoomInput('kpl')).toEqual({ room: 'kpl', platform: null })
+    expect(parseRoomInput('huya:room-name')).toEqual({ room: 'room-name', platform: 'huya' })
+    expect(parseRoomInput('huya-room')).toEqual({ room: 'huya-room', platform: null })
+    expect(parseRoomInput('room-name')).toEqual({ room: 'room-name', platform: null })
+    expect(parseRoomInput('huya ' + 'a'.repeat(65))).toBeNull()
+    expect(parseRoomInput('https://www.huya.com/kpl')).toBeNull()
     expect(parseRoomInput('https://www.douyu.com/9999')).toBeNull()
   })
 
@@ -71,6 +81,9 @@ describe('typed rooms', () => {
     expect(roomFromInput('https://www.douyu.com/9999')).toBe('9999')
     expect(roomFromInput('https://www.douyu.com/topic/xyz?rid=288016')).toBe('288016')
     expect(roomFromInput('https://live.bilibili.com/21452505?spm=1')).toBe('21452505')
+    expect(roomFromInput('https://m.huya.com/kpl?from=share')).toBe('kpl')
+    expect(roomFromInput('https://www.huya.com/room-name')).toBe('room-name')
+    expect(sourceTitle({ kind: 'hls', url: 'x', input: 'huya.com/kpl', label: '虎牙 660000', loop: false, viaProxy: false, platform: 'huya', sourceRoom: '660000' })).toBe('虎牙 kpl')
     const douyu = { kind: 'hls' as const, url: 'x', input: 'douyu.com/9999', label: '斗鱼 6979222', loop: false, viaProxy: true, platform: 'douyu' as const, sourceRoom: '6979222' }
     expect(sourceTitle(douyu)).toBe('斗鱼 9999')
   })
@@ -133,6 +146,7 @@ describe('the studio', () => {
     expect(ask).toHaveTextContent('6979222')
     expect(screen.getByRole('button', { name: '斗鱼' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '哔哩哔哩' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '虎牙' })).toBeInTheDocument()
   })
 
   it('closes the paste screen on Escape even with nothing loaded', async () => {

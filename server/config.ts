@@ -36,6 +36,9 @@ export const DEFAULT_PROXY_HOSTS = [
   '*.bilivideo.com',
   '*.hdslb.com',
   'api.live.bilibili.com',
+  // Huya room metadata, WUP signing tokens and platform-owned FLV CDNs.
+  'huya.com',
+  '*.huya.com',
 ]
 
 /** Metadata only. These hosts do not grant renderer/media-proxy access. */

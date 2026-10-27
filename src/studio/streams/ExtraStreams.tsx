@@ -200,14 +200,14 @@ function AddStreamForm({ full, onOpened }: {
       <p className="xs-add-title">同屏观看</p>
       <div className="link-row">
         <input value={text} autoFocus spellCheck={false} onChange={(event) => setText(event.target.value)}
-          aria-label="直播间房间号或链接" placeholder="房间号，或斗鱼、哔哩哔哩、YouTube、Twitch 链接" />
+          aria-label="直播间房间号或链接" placeholder="房间号，或斗鱼、哔哩哔哩、虎牙、YouTube、Twitch 链接" />
         <button type="submit" className="btn-solid" disabled={busy || full || text.trim() === ''}>
           {busy ? '打开中' : '打开'}
         </button>
       </div>
       {bareRoom && (
         <Segmented label="房间号所属平台" value={roomPlatform} onChange={setRoomPlatform}
-          options={[{ value: 'douyu', label: PLATFORM_LABEL.douyu }, { value: 'bilibili', label: PLATFORM_LABEL.bilibili }]} />
+          options={[{ value: 'douyu', label: PLATFORM_LABEL.douyu }, { value: 'bilibili', label: PLATFORM_LABEL.bilibili }, { value: 'huya', label: PLATFORM_LABEL.huya }]} />
       )}
       {full && <p className="muted">已达到同屏数量上限</p>}
       {problem && <p className="form-error" role="alert">{problem}</p>}

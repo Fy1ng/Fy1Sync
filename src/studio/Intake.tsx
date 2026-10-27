@@ -67,7 +67,7 @@ export function Intake({ onClose, pendingFile }: { onClose: () => void; pendingF
   const route = (pending: Pending): void => {
     setError(null)
     if (pending.kind === 'text') {
-      // A bare number could be either platform's room; the viewer knows which.
+      // A bare identifier could be a room on more than one platform; the viewer knows which.
       const typed = parseRoomInput(pending.value)
       if (typed?.platform === null) { setAsk({ kind: 'room', value: pending.value, room: typed.room }); return }
       if (typed) { place(pending, 'commentary', typed.platform ?? undefined); return }
@@ -108,6 +108,7 @@ export function Intake({ onClose, pendingFile }: { onClose: () => void; pendingF
             {/* Focused, so a second Enter takes the common case. */}
             <button type="button" className="btn-solid small" autoFocus onClick={() => place(ask, 'commentary', 'douyu')}>{PLATFORM_LABEL.douyu}</button>
             <button type="button" className="btn-solid small" onClick={() => place(ask, 'commentary', 'bilibili')}>{PLATFORM_LABEL.bilibili}</button>
+            <button type="button" className="btn-solid small" onClick={() => place(ask, 'commentary', 'huya')}>{PLATFORM_LABEL.huya}</button>
           </div>
         ) : ask && (
           <div className="intake-ask" role="group" aria-label="选择添加位置">
@@ -173,7 +174,7 @@ function Slot({ role }: { role: SourceRole }): React.ReactNode {
       <span className="slot-what">
         {status === 'loading' ? '载入中…'
           : descriptor ? sourceTitle(descriptor)
-            : role === 'official' ? 'YouTube、Twitch' : '斗鱼、哔哩哔哩'}
+            : role === 'official' ? 'YouTube、Twitch' : '斗鱼、哔哩哔哩、虎牙'}
       </span>
       {(load.problem || (state.status === 'error' && state.error)) && (
         <span className="slot-error" role="alert">{load.problem?.message ?? state.error?.message}</span>

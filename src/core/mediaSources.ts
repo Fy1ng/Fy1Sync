@@ -100,6 +100,17 @@ export function parseSourceInput(raw: string): SourceParseResult {
       needsResolve: true, suggestProxy: false, label: `B 站 / ${room}`, channel: room }
   }
 
+  if (host === 'huya.com') {
+    const room = /^\/([A-Za-z0-9_-]{1,64})\/?$/.exec(url.pathname)?.[1]
+    if (!room || raw.length > 8192 || /[\x00-\x1f\x7f]/.test(raw)
+      || url.username || url.password || url.port
+      || !['huya.com', 'www.huya.com', 'm.huya.com'].includes(url.hostname.toLowerCase())) {
+      return { ok: false, reason: 'unsupported-page', message: '虎牙链接里没有有效房间号' }
+    }
+    return { ok: true, platform: 'huya', kind: 'hls', url: `https://www.huya.com/${room}`, channel: room,
+      needsResolve: true, suggestProxy: true, label: `虎牙 / ${room}` }
+  }
+
   if (host === 'twitch.tv' || host.endsWith('.twitch.tv')) {
     const channel = firstPathSegment(url)
     if (!channel) {
@@ -152,7 +163,7 @@ export function parseSourceInput(raw: string): SourceParseResult {
   return {
     ok: false,
     reason: 'unsupported-page',
-    message: '请填入 YouTube / Twitch / 斗鱼 / B 站直播间地址, 或直接的 .m3u8 / .mp4 / .flv 链接',
+    message: '请填入 YouTube / Twitch / 斗鱼 / B 站 / 虎牙直播间地址, 或直接的 .m3u8 / .mp4 / .flv 链接',
   }
 }
 

@@ -27,28 +27,30 @@ const IDLE: RoleLoad = { busy: false, problem: null, notes: [] }
 /** Which side a platform belongs to, or null when the link itself cannot say. */
 export function routeFor(platform: PlatformId): SourceRole | null {
   if (platform === 'youtube' || platform === 'twitch') return 'official'
-  if (platform === 'douyu' || platform === 'bilibili') return 'commentary'
+  if (platform === 'douyu' || platform === 'bilibili' || platform === 'huya') return 'commentary'
   return null
 }
 
 export const ROLE_LABEL: Record<SourceRole, string> = { official: '画面', commentary: '解说' }
 
 export const PLATFORM_LABEL: Record<PlatformId, string> = {
-  youtube: 'YouTube', twitch: 'Twitch', douyu: '斗鱼', bilibili: '哔哩哔哩',
+  youtube: 'YouTube', twitch: 'Twitch', douyu: '斗鱼', bilibili: '哔哩哔哩', huya: '虎牙',
   direct: '直链', file: '本地文件', test: '测试片源',
 }
 
-export type RoomPlatform = 'douyu' | 'bilibili'
+export type RoomPlatform = 'douyu' | 'bilibili' | 'huya'
 
 /**
  * A room typed on its own rather than as a link: `6979222`, or with a platform in front,
- * `b 21452505` / `斗鱼9999`. A bare number does not say which platform it is (`platform: null`).
+ * `b 21452505` / `斗鱼9999` / `虎牙 kpl`. Bare identifiers need a platform (`platform: null`).
  */
 export function parseRoomInput(text: string): { room: string; platform: RoomPlatform | null } | null {
   const value = text.trim()
   if (/^[1-9]\d{0,11}$/.test(value)) return { room: value, platform: null }
+  const huya = /^(?:(?:hy|huya)(?:\s*[:：]\s*|\s+)|虎牙\s*[:：]?\s*)([A-Za-z0-9_-]{1,64})$/i.exec(value)
+  if (huya) return { room: huya[1]!, platform: 'huya' }
   const prefixed = /^(dy|douyu|斗鱼|b|bili|bilibili|b站|哔哩哔哩)\s*[:：]?\s*([1-9]\d{0,11})$/i.exec(value)
-  if (!prefixed) return null
+  if (!prefixed) return /^(?=.*[A-Za-z_-])[A-Za-z0-9_-]{1,64}$/.test(value) ? { room: value, platform: null } : null
   return { room: prefixed[2]!, platform: /^(dy|douyu|斗鱼)$/i.test(prefixed[1]!) ? 'douyu' : 'bilibili' }
 }
 
@@ -66,8 +68,11 @@ export function roomFromInput(input: string | undefined): string | null {
     const rid = url.searchParams.get('rid')
     if (rid && /^\d{1,12}$/.test(rid)) return rid
     const segments = url.pathname.split('/').filter(Boolean).reverse()
-    return segments.find((part) => /^\d{1,12}$/.test(part))
-      ?? (/(^|\.)douyu\.com$/i.test(url.hostname) ? segments.find((part) => /^[A-Za-z0-9_]{1,32}$/.test(part)) ?? null : null)
+    const numeric = segments.find((part) => /^\d{1,12}$/.test(part))
+    if (numeric) return numeric
+    if (/(^|\.)douyu\.com$/i.test(url.hostname)) return segments.find((part) => /^[A-Za-z0-9_]{1,32}$/.test(part)) ?? null
+    if (/(^|\.)huya\.com$/i.test(url.hostname)) return segments.find((part) => /^[A-Za-z0-9_-]{1,64}$/.test(part)) ?? null
+    return null
   } catch {
     return null
   }
@@ -76,7 +81,7 @@ export function roomFromInput(input: string | undefined): string | null {
 /** How a loaded source is named in the top bar and on the intake screen. */
 export function sourceTitle(descriptor: MediaDescriptor): string {
   const platform = descriptor.platform ? PLATFORM_LABEL[descriptor.platform] : ''
-  if (descriptor.platform === 'douyu' || descriptor.platform === 'bilibili') {
+  if (descriptor.platform === 'douyu' || descriptor.platform === 'bilibili' || descriptor.platform === 'huya') {
     const room = roomFromInput(descriptor.input) ?? descriptor.sourceRoom
     if (room) return `${platform} ${room}`
   }
@@ -132,15 +137,19 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
 
   const loadDescriptor = useCallback(async (role: SourceRole, descriptor: MediaDescriptor) => {
     patch(role, { busy: true, problem: null, notes: [] })
-    try { await session.loadSource(role, descriptor) } finally { patch(role, { busy: false }) }
+    try {
+      await session.loadSource(role, descriptor)
+      if (role === 'commentary' && descriptor.platform === 'huya') disconnectRoom()
+    } finally { patch(role, { busy: false }) }
     if (session.snapshot.media[role].status !== 'empty') play()
-  }, [patch, play, session])
+  }, [disconnectRoom, patch, play, session])
 
   const loadInput = useCallback(async (role: SourceRole, input: string, platform?: RoomPlatform): Promise<boolean> => {
     const typed = parseRoomInput(input)
-    let parsed = parseSourceInput(typed ? typed.room : input)
+    const roomPlatform = typed?.platform ?? platform
+    let parsed = parseSourceInput(typed && roomPlatform === 'huya' ? `https://www.huya.com/${typed.room}` : typed ? typed.room : input)
     if (!parsed.ok) { patch(role, { problem: { message: parsed.message } }); return false }
-    if (typed && (platform ?? typed.platform) === 'bilibili') {
+    if (typed && roomPlatform === 'bilibili') {
       parsed = { ...parsed, platform: 'bilibili', label: `${PLATFORM_LABEL.bilibili} ${typed.room}` }
     }
     if (!parsed.needsResolve) { await loadDescriptor(role, toDescriptor(parsed)); return true }
@@ -172,13 +181,16 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         sourceRoom: stream.sourceRoom ?? stream.danmakuRoom,
       })
       // The commentary room's danmaku come along with it; nothing to set up separately.
-      if (role === 'commentary' && stream.danmakuRoom) connectRoom(stream.danmakuRoom, roomFromInput(input) ?? stream.danmakuRoom)
+      if (role === 'commentary') {
+        if (parsed.platform === 'huya' || stream.platform === 'huya') disconnectRoom()
+        else if (stream.danmakuRoom) connectRoom(stream.danmakuRoom, roomFromInput(input) ?? stream.danmakuRoom)
+      }
       play()
       return true
     } finally {
       patch(role, { busy: false })
     }
-  }, [connectRoom, loadDescriptor, patch, play, session])
+  }, [connectRoom, disconnectRoom, loadDescriptor, patch, play, session])
 
   const loadFile = useCallback((role: SourceRole, file: File) => loadDescriptor(role, {
     // An object URL keeps the file local; nothing is uploaded.

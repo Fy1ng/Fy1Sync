@@ -36,6 +36,69 @@ function metadataOutput(info: Record<string, unknown>): Buffer {
 }
 
 describe('isolated yt-dlp execution', () => {
+  it.each([true, false])('extracts canonical Huya rooms anonymously without YouTube state, adaptive=%s', async adaptive => {
+    vi.mocked(locateYouTubePotProvider).mockRejectedValue(new Error('YouTube provider must not be inspected'))
+    const events: YtDlpDiagnostic[] = []
+    const h = harness(event => events.push(event))
+    h.cookies.withTemporaryCookies.mockRejectedValue(new Error('YouTube cookies must not be read'))
+    const url = 'https://www.huya.com/123456'
+    const pending = h.runner.resolve(url, adaptive)
+    await vi.waitFor(() => expect(h.launch).toHaveBeenCalledOnce())
+    const [executable, args, options] = vi.mocked(h.launch).mock.calls[0]!
+    expect(executable).toBe('/tools/yt-dlp.exe')
+    expect(args).toEqual([
+      '--ignore-config', '--no-cache-dir', '--no-playlist', '--no-progress',
+      '--socket-timeout', '20', '--retries', '1', '--extractor-retries', '1',
+      '--no-plugin-dirs', '--no-js-runtimes', '--no-remote-components',
+      '--skip-download', '--print', YOUTUBE_METADATA_TEMPLATE, '--', url,
+    ])
+    expect(options).toMatchObject({ shell: false, windowsHide: true })
+    expect(h.cookies.withTemporaryCookies).not.toHaveBeenCalled()
+    expect(locateYouTubePotProvider).not.toHaveBeenCalled()
+    expect(prepareScriptOnlyPotPlugin).not.toHaveBeenCalled()
+    const metadata = { id: '123456', is_live: true, live_status: 'is_live', formats: [
+      { format_id: 'TX-8000', protocol: 'https', vcodec: 'h264', ext: 'flv', url: 'https://example.flv.huya.com/live.flv?wsSecret=PRIVATE&ratio=8000' },
+    ] }
+    h.child.stdout!.emit('data', metadataOutput(metadata))
+    h.child.emit('close', 0)
+    expect(await pending).toEqual(metadata)
+    expect(events).toContainEqual(expect.objectContaining({ stage: 'huya', status: 'resolved', adaptiveHeights: [] }))
+    expect(events.some(event => event.stage === 'provider')).toBe(false)
+    expect(JSON.stringify(events)).not.toMatch(/PRIVATE|wsSecret|https|Cookie/)
+    expect(h.cleanup).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['HTTP Error 403: Forbidden', '虎牙访问受限, 当前暂不支持登录'],
+    ['Room is not currently live', '虎牙房间当前未开播'],
+    ['Unable to download room', '虎牙取流失败, 请检查直播状态和网络'],
+  ])('returns only a static Huya error after %s', async (stderr, message) => {
+    const events: YtDlpDiagnostic[] = []
+    const h = harness(event => events.push(event))
+    const pending = h.runner.resolve('https://www.huya.com/123456')
+    const rejected = expect(pending).rejects.toThrow(message)
+    await vi.waitFor(() => expect(h.launch).toHaveBeenCalledOnce())
+    h.child.stderr!.emit('data', Buffer.from(`${stderr}: https://signed.huya.com/live.flv?wsSecret=PRIVATE Cookie=SECRET`))
+    h.child.emit('close', 1)
+    await rejected
+    expect(JSON.stringify(events)).not.toMatch(/PRIVATE|SECRET|signed\.huya|Cookie|wsSecret/)
+    expect(h.cookies.withTemporaryCookies).not.toHaveBeenCalled()
+    expect(locateYouTubePotProvider).not.toHaveBeenCalled()
+    expect(prepareScriptOnlyPotPlugin).not.toHaveBeenCalled()
+  })
+
+  it('retains the bounded timeout and child termination for anonymous Huya extraction', async () => {
+    vi.useFakeTimers()
+    const h = harness()
+    const pending = h.runner.resolve('https://www.huya.com/123456')
+    const rejected = expect(pending).rejects.toThrow(/^yt-dlp 超时或已取消$/)
+    await vi.waitFor(() => expect(h.launch).toHaveBeenCalledOnce())
+    await vi.advanceTimersByTimeAsync(200)
+    await rejected
+    expect(h.killTree).toHaveBeenCalledExactlyOnceWith(h.child)
+    expect(h.cookies.withTemporaryCookies).not.toHaveBeenCalled()
+  })
+
   it('emits only fixed classifications and numeric format data to optional diagnostics', async () => {
     const events: YtDlpDiagnostic[] = []
     const h = harness(event => events.push(event))

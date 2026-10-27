@@ -121,7 +121,7 @@ export function readOpenStream(raw: unknown): OpenStreamInput {
   const value = raw as Record<string, unknown>
   if (Object.keys(value).some(k => !['input', 'platform', 'quality', 'preferAdaptive'].includes(k))
     || typeof value.input !== 'string' || !value.input.trim() || value.input.length > 8192
-    || (value.platform !== undefined && !['youtube', 'twitch', 'douyu', 'bilibili', 'direct'].includes(String(value.platform)))
+    || (value.platform !== undefined && !['youtube', 'twitch', 'douyu', 'bilibili', 'huya', 'direct'].includes(String(value.platform)))
     || (value.quality !== undefined && (typeof value.quality !== 'string' || !value.quality || value.quality.length > 128))
     || (value.preferAdaptive !== undefined && typeof value.preferAdaptive !== 'boolean')) throw new StreamSessionError('invalid-arguments')
   return { input: value.input.trim(), ...(value.platform ? { platform: value.platform as PlatformKind } : {}),

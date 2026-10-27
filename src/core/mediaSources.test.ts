@@ -41,6 +41,22 @@ describe('parseSourceInput', () => {
     expect(expectOk('douyu.com/dyshow').channel).toBe('dyshow')
   })
 
+  it.each(['huya.com/660000', 'https://www.huya.com/kpl', 'https://m.huya.com/lpl?from=share', 'https://huya.com/room-name/'])(
+    'recognises a Huya room and keeps its identity for acquisition: %s', (input) => {
+      const result = expectOk(input)
+      expect(result).toMatchObject({ platform: 'huya', needsResolve: true, suggestProxy: true })
+      expect(result.url).toBe(`https://www.huya.com/${result.channel}`)
+    },
+  )
+
+  it.each([
+    'https://huya.com/', `https://huya.com/${'x'.repeat(65)}`, 'https://huya.com/bad%2Froom',
+    'https://huya.com/video/play', 'https://huya.com/660000/extra', 'https://huya.com:8443/kpl',
+    'https://user:password@huya.com/kpl', 'https://huya.com/kp\nl', 'https://www.m.huya.com/kpl',
+  ])('rejects an invalid Huya room: %s', (input) => {
+    expect(parseSourceInput(input)).toMatchObject({ ok: false, reason: 'unsupported-page' })
+  })
+
   it('rejects a platform link with no channel', () => {
     const result = parseSourceInput('https://www.twitch.tv/')
     expect(result.ok).toBe(false)

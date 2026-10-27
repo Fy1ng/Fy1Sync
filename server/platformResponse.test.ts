@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
-import { MAX_PLATFORM_RESPONSE_BYTES, readPlatformText } from './platformResponse'
+import { MAX_PLATFORM_RESPONSE_BYTES, readPlatformBytes, readPlatformText } from './platformResponse'
 
 const active = () => new AbortController().signal
 
 describe('bounded platform metadata', () => {
+  it('preserves non-UTF-8 WUP bytes while enforcing the same response limit', async () => {
+    const bytes = new Uint8Array([0, 0xff, 0x80, 0x0d])
+    expect(await readPlatformBytes(new Response(bytes), active())).toEqual(bytes)
+    await expect(readPlatformBytes(new Response(new Uint8Array(MAX_PLATFORM_RESPONSE_BYTES + 1)), active())).rejects.toThrow('could not be read safely')
+  })
   it('reads valid UTF-8 across chunk boundaries', async () => {
     const bytes = new TextEncoder().encode('斗鱼 metadata')
     const response = new Response(new ReadableStream({ start(controller) {

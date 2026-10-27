@@ -17,7 +17,7 @@ import { DouyuAccountError, isDouyuAccountId, type DouyuAccountManager } from '.
 import { DouyuTaskError, type DouyuTaskManager } from '../electron/douyuTasks'
 import { DOUYU_TASK_KINDS, DOUYU_TASK_POLICIES, isDouyuActivityKind, type DouyuTaskKind, type DouyuTaskPolicy, type DouyuTasksSnapshot } from './douyu/types'
 import { readMessageSchedule } from './douyu/taskConfig'
-import { readPlatformText } from './platformResponse'
+import { readPlatformBytes, readPlatformText } from './platformResponse'
 import { DouyuRenewalError, readRenewalRooms, readRenewalQuantities, type DouyuRenewalService } from './douyu/renewalService'
 import type { FeatureApi } from './featureApi'
 import type { FeatureCallContext, FeatureEvent } from '../electron/featureContracts'
@@ -103,7 +103,7 @@ function validId(id: unknown): id is string {
 }
 
 function isPlatform(value: unknown): value is PlatformKind {
-  return value === 'youtube' || value === 'direct' || value === 'twitch' || value === 'douyu' || value === 'bilibili'
+  return value === 'youtube' || value === 'direct' || value === 'twitch' || value === 'douyu' || value === 'bilibili' || value === 'huya'
 }
 
 function isRole(value: unknown): value is SourceRole { return value === 'official' || value === 'commentary' }
@@ -477,13 +477,13 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
 
 /** Platform requests keep the existing per-hop SSRF policy and fixed platform headers. */
 export function createResolverDeps(proxy: ProxyConfig, registerMedia: (url: string) => string, fetchImpl?: typeof fetch) {
-  const request = async (url: string, init?: RequestInit): Promise<string> => {
+  const request = async (url: string, init?: RequestInit, binary = false) => {
     try {
       const signal = AbortSignal.timeout(proxy.requestTimeoutMs)
       const { response } = await safeFetch(url, { ...proxy, enabled: true }, {
         method: init?.method ?? 'GET',
         headers: { accept: 'application/json, text/plain, */*', ...(init?.headers as Record<string, string> | undefined) },
-        body: typeof init?.body === 'string' ? init.body : undefined,
+        body: typeof init?.body === 'string' ? init.body : init?.body instanceof Uint8Array ? new Uint8Array(init.body) : undefined,
         signal,
         fetchImpl,
       })
@@ -491,17 +491,18 @@ export function createResolverDeps(proxy: ProxyConfig, registerMedia: (url: stri
         void response.body?.cancel().catch(() => {})
         throw new Error('Upstream request failed')
       }
-      return await readPlatformText(response, signal)
+      return binary ? await readPlatformBytes(response, signal) : await readPlatformText(response, signal)
     } catch {
       throw new Error('平台请求失败')
     }
   }
   return {
     fetchJson: async (url: string, init?: RequestInit): Promise<unknown> => {
-      const text = await request(url, init)
+      const text = await request(url, init) as string
       try { return JSON.parse(text) as unknown } catch { throw new Error('平台返回的数据格式无效') }
     },
-    fetchText: request,
+    fetchText: async (url: string, init?: RequestInit) => await request(url, init) as string,
+    fetchBytes: async (url: string, init?: RequestInit) => await request(url, init, true) as Uint8Array,
     proxify: registerMedia,
   }
 }

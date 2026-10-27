@@ -58,7 +58,7 @@ function SourcePanel({ role, onDone }: {
   const state = snapshot.media[role]
   const load = loader.state[role]
   const [input, setInput] = useState(state.descriptor?.input ?? '')
-  const [roomPlatform, setRoomPlatform] = useState<RoomPlatform>(state.descriptor?.platform === 'bilibili' ? 'bilibili' : 'douyu')
+  const [roomPlatform, setRoomPlatform] = useState<RoomPlatform>(state.descriptor?.platform === 'huya' ? 'huya' : state.descriptor?.platform === 'bilibili' ? 'bilibili' : 'douyu')
   const bareRoom = parseRoomInput(input)?.platform === null
   const buffer = snapshot.buffers[role]
 
@@ -69,7 +69,7 @@ function SourcePanel({ role, onDone }: {
         void loader.loadInput(role, input, bareRoom ? roomPlatform : undefined).then((ok) => { if (ok) onDone() })
       }}>
         <input value={input} onChange={(event) => setInput(event.target.value)} aria-label={`${ROLE_LABEL[role]}链接`}
-          placeholder={role === 'official' ? 'YouTube 或 Twitch 直播间链接' : '斗鱼或哔哩哔哩直播间链接、房间号'} spellCheck={false} />
+          placeholder={role === 'official' ? 'YouTube 或 Twitch 直播间链接' : '斗鱼、哔哩哔哩或虎牙直播间链接、房间号'} spellCheck={false} />
         <button type="submit" className="btn-solid" disabled={load.busy || input.trim() === ''}>
           {load.busy ? '载入中' : '载入'}
         </button>
@@ -77,7 +77,7 @@ function SourcePanel({ role, onDone }: {
       {role === 'official' && <FindOfficial onDone={onDone} />}
       {bareRoom && (
         <Segmented label="房间号所属平台" value={roomPlatform} onChange={setRoomPlatform}
-          options={[{ value: 'douyu', label: PLATFORM_LABEL.douyu }, { value: 'bilibili', label: PLATFORM_LABEL.bilibili }]} />
+          options={[{ value: 'douyu', label: PLATFORM_LABEL.douyu }, { value: 'bilibili', label: PLATFORM_LABEL.bilibili }, { value: 'huya', label: PLATFORM_LABEL.huya }]} />
       )}
       {load.problem && (
         <p className="form-error" role="alert">{load.problem.message}{load.problem.hint ? ` ${load.problem.hint}` : ''}</p>
@@ -87,7 +87,9 @@ function SourcePanel({ role, onDone }: {
 
       {buffer && <p className="muted">{bufferStatusText(buffer)}</p>}
 
-      {role === 'commentary' && <DanmakuRoom />}
+      {role === 'commentary' && (state.descriptor?.platform === 'huya'
+        ? <p className="muted">虎牙弹幕暂未支持</p>
+        : <DanmakuRoom />)}
       <div className="row-split panel-foot">
         <label className="btn-quiet small file-pick">
           <Icon name="file" /> 本地文件

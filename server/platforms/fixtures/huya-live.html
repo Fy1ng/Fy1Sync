@@ -1,0 +1,26 @@
+<!doctype html>
+<!-- Synthetic, anonymized Huya page shape. No production room, UID or signed media URL. -->
+<html><head><meta charset="utf-8"><title>Example live room</title></head><body>
+<script>
+var TT_ROOM_DATA = {"state":"ON","profileRoom":123456,"introduction":"示例直播 {比赛} \"欢迎\""};
+var hyPlayerConfig = {
+  stream: {
+    "data": [{
+      "gameLiveInfo": {"introduction":"示例比赛直播","roomName":"示例直播间"},
+      "gameStreamInfoList": [
+        {"sCdnType":"AL","iWebPriorityRate":10,"sStreamName":"example-stream","sFlvUrl":"http://low.flv.huya.com/src","sFlvUrlSuffix":"flv","lPresenterUid":"12345678","sFlvAntiCode":"wsTime=6ad3bc50&fm=Zml4dHVyZV9zdHJlYW0%3D&ctype=huya_live&t=100&fs=bgct"},
+        {"sCdnType":"HY","iWebPriorityRate":1000,"sStreamName":"example-stream","sFlvUrl":"https://excluded.flv.huya.com/src","sFlvUrlSuffix":"flv","lPresenterUid":"12345678","sFlvAntiCode":"fixture"},
+        {"sCdnType":"TX","iWebPriorityRate":100,"sStreamName":"example-stream","sFlvUrl":"http://high.flv.huya.com/src","sFlvUrlSuffix":"flv","lPresenterUid":"12345678","sFlvAntiCode":"wsTime=6ad3bc50&fm=Zml4dHVyZV9zdHJlYW0%3D&ctype=huya_live&t=100&fs=bgct"},
+        {"sCdnType":"HUYA","iWebPriorityRate":999,"sStreamName":"example-stream","sFlvUrl":"https://excluded.flv.huya.com/src","sFlvUrlSuffix":"flv","lPresenterUid":"12345678","sFlvAntiCode":"fixture"},
+        {"sCdnType":"HYZJ","iWebPriorityRate":998,"sStreamName":"example-stream","sFlvUrl":"https://excluded.flv.huya.com/src","sFlvUrlSuffix":"flv","lPresenterUid":"12345678","sFlvAntiCode":"fixture"}
+      ]
+    }],
+    "vMultiStreamInfo": [
+      {"iBitRate":0,"sDisplayName":"原画","iCodecType":0},
+      {"iBitRate":8000,"sDisplayName":"蓝光 8M","iCodecType":0},
+      {"iBitRate":4000,"sDisplayName":"超清 4M","iCodecType":0}
+    ]
+  },
+  notExecuted: function () { throw new Error('Remote player code must never execute'); }
+};
+</script></body></html>

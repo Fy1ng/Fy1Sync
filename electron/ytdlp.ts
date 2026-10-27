@@ -15,7 +15,7 @@ export interface YoutubeCookieAccess {
 }
 
 export interface YtDlpDiagnostic {
-  stage: 'provider' | 'hls' | 'adaptive'
+  stage: 'provider' | 'hls' | 'adaptive' | 'huya'
   status: 'available' | 'unavailable' | 'prepared' | 'failed' | 'resolved'
   exitCode?: number | null
   stopped?: boolean
@@ -65,6 +65,16 @@ export class YtDlpRunner {
   private async run(url: string, adaptive: boolean): Promise<unknown> {
     if (this.disposed) throw new Error('取流服务已关闭')
     const executable = await locateTool('yt-dlp', this.options.settings, this.options.env, this.options.toolContext)
+    if (/^https:\/\/www\.huya\.com\/[1-9]\d{0,15}$/.test(url)) {
+      // Huya's last-resort extractor is anonymous and never loads YouTube cookies,
+      // PO providers, external plugins or JavaScript runtimes. Reuse the bounded pipe.
+      return this.runChild(executable, [
+        '--ignore-config', '--no-cache-dir', '--no-playlist', '--no-progress',
+        '--socket-timeout', '20', '--retries', '1', '--extractor-retries', '1',
+        '--no-plugin-dirs', '--no-js-runtimes', '--no-remote-components',
+        '--skip-download', '--print', YOUTUBE_METADATA_TEMPLATE, '--', url,
+      ], 'huya')
+    }
     const provider = adaptive ? await locateYouTubePotProvider(this.options.env, this.options.toolContext) : undefined
     this.options.diagnostic?.({ stage: 'provider', status: provider ? 'available' : 'unavailable' })
     return this.options.cookies.withTemporaryCookies('youtube', async (cookiePath) => {
@@ -108,7 +118,7 @@ export class YtDlpRunner {
     })
   }
 
-  private runChild(executable: string, args: string[], stage: 'hls' | 'adaptive'): Promise<unknown> {
+  private runChild(executable: string, args: string[], stage: 'hls' | 'adaptive' | 'huya'): Promise<unknown> {
     if (this.disposed) return Promise.reject(new Error('yt-dlp 超时或已取消'))
     // Only this child (and its JS runtime) inherits Electron's Node mode.
     const env: NodeJS.ProcessEnv = { ...(this.options.env ?? process.env), ELECTRON_RUN_AS_NODE: '1', PYTHONIOENCODING: 'utf-8',
@@ -150,6 +160,12 @@ export class YtDlpRunner {
         if (stopReason === 'output-limit') { reject(new Error('yt-dlp 媒体信息超过大小限制')); return }
         if (stopReason || this.disposed) { reject(new Error('yt-dlp 超时或已取消')); return }
         if (code !== 0) {
+          if (stage === 'huya') {
+            reject(new Error(/sign in|login|required|forbidden|restricted|geo.restrict|登录|封禁|整改/i.test(stderr)
+              ? '虎牙访问受限, 当前暂不支持登录' : /not (?:currently )?live|offline|未开播/i.test(stderr)
+                ? '虎牙房间当前未开播' : '虎牙取流失败, 请检查直播状态和网络'))
+            return
+          }
           reject(new Error(/sign in|not a bot|login|required|members.only|private video/i.test(stderr)
             ? 'YouTube sign in required' : /not (?:currently )?live|recording is not available|live (?:event|stream) (?:has ended|will begin)/i.test(stderr)
               ? 'YouTube not currently live' : 'YouTube 取流失败, 请检查直播状态和网络'))
@@ -164,7 +180,7 @@ export class YtDlpRunner {
           const info = { ...result.metadata, formats }
           this.options.diagnostic?.({ stage, status: 'resolved',
             heights: [...new Set(formats.map(format => format?.height).filter((height): height is number => Number.isSafeInteger(height) && height > 0))].sort((a, b) => b - a),
-            adaptiveHeights: youtubeAdaptiveFormats(info, 0).map(format => format.height),
+            adaptiveHeights: stage === 'huya' ? [] : youtubeAdaptiveFormats(info, 0).map(format => format.height),
           })
           resolve(info)
         } catch { reject(new Error('yt-dlp 返回无效的媒体信息')) }

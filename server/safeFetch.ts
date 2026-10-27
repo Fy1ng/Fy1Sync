@@ -195,7 +195,7 @@ export class ProxyError extends Error {
 export type SafeFetchOptions = {
   headers?: Record<string, string>
   method?: string
-  body?: string
+  body?: string | Uint8Array<ArrayBuffer>
   signal?: AbortSignal
   resolve?: Resolver
   fetchImpl?: typeof fetch

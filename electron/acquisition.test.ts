@@ -3,6 +3,7 @@ import type { BufferInput, BufferState } from './bufferManager'
 import { Acquisition } from './acquisition'
 import { resolveConfig } from '../server/config'
 import { createDesktopService } from '../server/api'
+import * as platformResolvers from '../server/platforms'
 
 vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '8.8.8.8', family: 4 }]) }))
 
@@ -40,6 +41,40 @@ function harness(overrides: Partial<ConstructorParameters<typeof Acquisition>[0]
 }
 
 describe('main acquisition boundary', () => {
+  it('passes Huya headers without probing signed media and re-resolves every reconnect, quality switch and restart', async () => {
+    const fetchImpl = vi.fn(async () => { throw new Error('Signed media must not be preconnected') })
+    const h = harness({ fetchImpl })
+    let sequence = 0
+    const resolve = vi.spyOn(platformResolvers, 'resolveStream').mockImplementation(async (_input, deps, platform) => {
+      expect(platform).toBe('huya')
+      sequence++
+      return { ok: true, stream: { platform: 'huya', channel: '660000', sourceRoom: '660000', kind: 'progressive',
+        url: `https://cdn-${sequence}.example/live.flv?wsSecret=PRIVATE_${sequence}&codec=264&ratio=${deps.quality ?? '0'}`,
+        headers: { Referer: 'https://www.huya.com/', 'User-Agent': 'Huya test player' },
+        quality: deps.quality ?? '0', qualities: [{ id: '0', label: '原画' }, { id: '8000', label: '蓝光' }],
+        label: '虎牙 660000', requiresProxy: true } }
+    })
+    try {
+      const first = await h.acquisition.resolve('huya.com/alias', 'huya', 'official')
+      expect(first).toMatchObject({ ok: true, stream: { platform: 'huya', kind: 'hls', quality: '0' } })
+      expect(JSON.stringify(first)).not.toMatch(/PRIVATE|cdn-|Referer|User-Agent|danmakuRoom/)
+      expect(h.inputs[0]).toMatchObject({ url: expect.stringContaining('PRIVATE_1'),
+        headers: { Referer: 'https://www.huya.com/', 'User-Agent': 'Huya test player' } })
+      const second = await h.reconnect()
+      expect(second.url).toContain('PRIVATE_2')
+      expect(second.url).not.toBe(h.inputs[0]!.url)
+      expect(second.headers).toMatchObject({ Referer: 'https://www.huya.com/' })
+      expect(await h.acquisition.switchQuality('official', '8000')).toMatchObject({ ok: true, stream: { quality: '8000' } })
+      expect(h.inputs.at(-1)?.url).toContain('PRIVATE_3&codec=264&ratio=8000')
+      expect(await h.acquisition.restart('official')).toMatchObject({ ok: true, stream: { quality: '8000' } })
+      expect(h.inputs.at(-1)?.url).toContain('PRIVATE_4&codec=264&ratio=8000')
+      expect(resolve).toHaveBeenCalledTimes(4)
+      expect(fetchImpl).not.toHaveBeenCalled()
+      expect(h.logins.cookieHeader).not.toHaveBeenCalled()
+      expect(h.runYtDlp).not.toHaveBeenCalled()
+    } finally { resolve.mockRestore(); h.acquisition.dispose() }
+  })
+
   it('buffers the highest Twitch rendition from a low-first master and selects again after reconnect', async () => {
     const requests: string[] = []
     let second = false

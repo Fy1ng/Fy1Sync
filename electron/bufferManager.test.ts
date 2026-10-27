@@ -162,6 +162,35 @@ describe('BufferManager', () => {
     expect(body.match(/#EXT-X-DISCONTINUITY\n/g)).toHaveLength(1)
     expect(body).toContain('segment_1_000000000.ts')
   })
+  it('opens each Huya FLV signature once and obtains a new line and signature after EOF or a stall', async () => {
+    const f = await fixture({ stallTimeoutMs: 200 })
+    let sequence = 0
+    const resolve = vi.fn(async () => ({
+      url: `https://line-${++sequence}.example/live.flv?wsSecret=PRIVATE_${sequence}&codec=264&ratio=0`,
+      headers: { Referer: 'https://www.huya.com/' },
+    }))
+    const { url } = await start(f, resolve)
+    f.children[0]!.emit('close', 0)
+    await until(() => f.current().state === 'reconnecting')
+    await f.clock.advance(1000)
+    await until(() => f.children.length === 2)
+    await f.clock.advance(200)
+    await until(() => f.current().state === 'reconnecting')
+    expect(f.killTree).toHaveBeenCalledWith(f.children[1])
+    await f.clock.advance(2000)
+    await until(() => f.children.length === 3)
+    expect(resolve).toHaveBeenCalledTimes(3)
+    const inputs = f.commands.map(command => command.args[command.args.indexOf('-i') + 1])
+    expect(inputs).toEqual([1, 2, 3].map(index => `https://line-${index}.example/live.flv?wsSecret=PRIVATE_${index}&codec=264&ratio=0`))
+    for (const command of f.commands) {
+      expect(command.args.filter(arg => arg === '-i')).toHaveLength(1)
+      expect(command.args.some(arg => arg.startsWith('-reconnect'))).toBe(false)
+      expect(command.args).toContain('Referer: https://www.huya.com/\r\n')
+      expect(command.args).toContain('copy')
+    }
+    expect((await f.manager.handle(new Request(url))).status).toBe(200)
+    expect(JSON.stringify(f.states)).not.toMatch(/PRIVATE|line-[123]\.example/)
+  })
   it('stops retrying after the bounded consecutive failure budget', async () => {
     const f = await fixture(), { resolve } = await start(f)
     f.children[0]!.emit('close', 1)

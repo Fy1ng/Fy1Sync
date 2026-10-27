@@ -250,6 +250,17 @@ describe('the add form', () => {
     expect(windowFor(ID_2)).not.toBeNull()
   })
 
+  it('opens a Huya vanity room using the selected platform', async () => {
+    renderStreams(true)
+    await flush()
+    const field = screen.getByLabelText('直播间房间号或链接')
+    fireEvent.change(field, { target: { value: 'kpl' } })
+    fireEvent.click(screen.getByRole('radio', { name: '虎牙' }))
+    fireEvent.submit(field.closest('form')!)
+    await flush()
+    expect(invoke).toHaveBeenCalledWith('openStreamSession', { input: 'kpl', platform: 'huya' })
+  })
+
   it('shows the backend refusal and stays open', async () => {
     invoke.mockImplementation(async (method: string) => method === 'openStreamSession'
       ? { ok: false, code: 'stream-limit', message: '已达到当前直播会话资源上限' }
@@ -275,6 +286,9 @@ describe('the add form', () => {
   it('reads a prefixed room and leaves links to the backend', () => {
     expect(openInputFor('b 21452505', 'douyu')).toEqual({ input: '21452505', platform: 'bilibili' })
     expect(openInputFor(' 9999 ', 'douyu')).toEqual({ input: '9999', platform: 'douyu' })
+    expect(openInputFor(' 660000 ', 'huya')).toEqual({ input: '660000', platform: 'huya' })
+    expect(openInputFor('虎牙 kpl', 'douyu')).toEqual({ input: 'kpl', platform: 'huya' })
+    expect(openInputFor('https://m.huya.com/lpl', 'douyu')).toEqual({ input: 'https://m.huya.com/lpl' })
     expect(openInputFor(' https://www.youtube.com/watch?v=x ', 'douyu')).toEqual({ input: 'https://www.youtube.com/watch?v=x' })
   })
 })

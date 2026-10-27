@@ -32,7 +32,7 @@ export type MediaDescriptor = {
   sourceRoom?: string
 }
 
-export type PlatformId = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'direct' | 'file' | 'test'
+export type PlatformId = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'huya' | 'direct' | 'file' | 'test'
 
 /** Public sender facts received from Douyu. */
 export interface DouyuSenderMetadata {

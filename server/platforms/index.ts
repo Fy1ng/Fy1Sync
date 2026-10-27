@@ -2,12 +2,13 @@
 
 import { resolveBilibili, parseBilibiliRoom } from './bilibili'
 import { resolveDouyu, parseDouyuRoom } from './douyu'
+import { resolveHuya, parseHuyaRoom } from './huya'
 import { resolveTwitch, parseTwitchChannel } from './twitch'
 import { resolveYouTube, parseYouTubeUrl } from './youtube'
 import { failure, type PlatformKind, type ResolveResult, type ResolverDeps } from './types'
 
 export type { PlatformKind, QualityOption, ResolveResult, ResolvedStream, ResolverDeps } from './types'
-export { parseBilibiliRoom, parseDouyuRoom, parseTwitchChannel, parseYouTubeUrl }
+export { parseBilibiliRoom, parseDouyuRoom, parseHuyaRoom, parseTwitchChannel, parseYouTubeUrl }
 
 const MEDIA_EXTENSIONS = ['.m3u8', '.m3u', '.mp4', '.flv', '.webm', '.mov', '.mkv', '.ts']
 
@@ -28,6 +29,7 @@ export function detectPlatform(input: string, explicit?: PlatformKind): Platform
   if (/(^|\.)twitch\.tv$/.test(host)) return 'twitch'
   if (/(^|\.)douyu\.com$/.test(host)) return 'douyu'
   if (/(^|\.)bilibili\.com$/.test(host)) return 'bilibili'
+  if (/(^|\.)huya\.com$/.test(host)) return 'huya'
   if (['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be', 'www.youtu.be'].includes(host)) return 'youtube'
   return looksLikeDirectMedia(trimmed) ? 'direct' : null
 }
@@ -59,13 +61,15 @@ export async function resolveStream(
       return resolveDouyu(input, deps)
     case 'bilibili':
       return resolveBilibili(input, deps)
+    case 'huya':
+      return resolveHuya(input, deps)
     case 'direct':
       return resolveDirect(input)
     default:
       return failure(
         'unsupported-url',
         '无法识别该输入属于哪个平台',
-        '支持 YouTube 直播, Twitch 频道, 斗鱼房间, B 站直播间, 或直接粘贴 m3u8 / mp4 / flv 地址.',
+        '支持 YouTube 直播, Twitch 频道, 斗鱼房间, 虎牙房间, B 站直播间, 或直接粘贴 m3u8 / mp4 / flv 地址.',
       )
   }
 }

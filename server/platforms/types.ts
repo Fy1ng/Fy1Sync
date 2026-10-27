@@ -1,7 +1,7 @@
 import type { DouyuRoomIdentity, ResolveDouyuRoom } from './douyuRoom'
 /** Shared shapes for platform stream resolution. */
 
-export type PlatformKind = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'direct'
+export type PlatformKind = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'huya' | 'direct'
 
 export type QualityOption = {
   id: string
@@ -61,6 +61,8 @@ export type ResolverDeps = {
   douyuRoomIdentity?: DouyuRoomIdentity
   fetchJson: (url: string, init?: RequestInit) => Promise<unknown>
   fetchText: (url: string, init?: RequestInit) => Promise<string>
+  /** Bounded binary metadata (Huya WUP), never a media preflight. */
+  fetchBytes?: (url: string, init?: RequestInit) => Promise<Uint8Array>
   /** Wraps a URL so the browser loads it from our origin. */
   proxify: (url: string) => string
   /** Main owns process launching, JS runtime setup and temporary cookie copies. */
@@ -76,7 +78,7 @@ export function failure(
   code: ResolveFailureCode,
   message: string,
   hint?: string,
-): ResolveResult {
+): Extract<ResolveResult, { ok: false }> {
   return { ok: false, failure: { code, message, hint } }
 }
 
