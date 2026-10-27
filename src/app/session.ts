@@ -32,7 +32,8 @@ import { apiClient, type PresetSummary } from './apiClient'
 import type { AppSettings } from './settings'
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from './settings'
 import type { BufferState } from '../../electron/bufferManager'
-import { colorForIndex, type ChatMessage } from '../../server/danmaku/douyuProtocol'
+import { colorForIndex } from '../../server/danmaku/douyuProtocol'
+import type { ChatMessage } from '../../server/danmaku/types'
 import { normalizeDouyuGift, normalizeDouyuSender } from '../core/douyuMetadata'
 import { DanmakuProcessor, DEFAULT_DANMAKU_PREFERENCES, readDanmakuPreferences, type DanmakuPreferences } from '../core/danmakuProcessing'
 import { clampSeek } from '../media/timebase'
@@ -1106,11 +1107,19 @@ export class Session {
   }
 
   /** Park one relayed message. Public so tests and the mock generator can feed it. */
-  pushDanmaku(message: Pick<DanmakuMessage, 'text' | 'user' | 'color' | 'sender' | 'gift' | 'dms'>): void {
-    const sender = normalizeDouyuSender(message.sender)
-    const gift = normalizeDouyuGift(message.gift)
+  pushDanmaku(message: Pick<DanmakuMessage, 'text' | 'user' | 'color' | 'sender' | 'gift' | 'dms' | 'platform' | 'huyaGift' | 'system'>): void {
+    const huya = message.platform === 'huya'
+    const sender = huya ? null : normalizeDouyuSender(message.sender)
+    const gift = huya ? null : normalizeDouyuGift(message.gift)
+    const huyaGift = huya && message.huyaGift && /^[0-9]{1,20}$/.test(message.huyaGift.id)
+      && Number.isSafeInteger(message.huyaGift.count) && message.huyaGift.count > 0
+      ? { id: message.huyaGift.id, count: message.huyaGift.count,
+        ...(typeof message.huyaGift.name === 'string' && message.huyaGift.name.length <= 256 ? { name: message.huyaGift.name } : {}) } : null
     if (message.gift !== undefined && !gift) return
-    if (gift) {
+    if (message.huyaGift !== undefined && !huyaGift) return
+    if (message.system && !gift && !huyaGift) return
+    const isGift = !!gift || !!huyaGift
+    if (isGift) {
       if (!this.settingsValue.danmaku.showGifts) return
       // Gift notices keep media-time alignment and user blocking, but are not chat text.
       const user = message.user.trim().toLowerCase()
@@ -1119,7 +1128,7 @@ export class Session {
     const density = this.settingsValue.danmaku.density
     // Sampling on arrival, not on render: a dropped message never occupies a lane, so
     // density behaves as a real load control rather than a visual one.
-    if (!gift && density < 1 && Math.random() > density) return
+    if (!isGift && density < 1 && Math.random() > density) return
     const snapshot = this.engine.snapshot('commentary')
     const scheduleTime = snapshot
       ? scheduleTimeFor(snapshot, { clock: this.liveEdge, nowMs: this.now() })
@@ -1129,9 +1138,12 @@ export class Session {
       text: message.text,
       user: message.user,
       color: message.color,
+      ...(message.platform ? { platform: message.platform } : {}),
+      ...(isGift ? { system: true } : {}),
       ...(sender ? { sender } : {}),
       ...(gift ? { gift } : {}),
-      ...(typeof message.dms === 'number' && Number.isFinite(message.dms) ? { dms: message.dms } : {}),
+      ...(huyaGift ? { huyaGift } : {}),
+      ...(!huya && typeof message.dms === 'number' && Number.isFinite(message.dms) ? { dms: message.dms } : {}),
       scheduleTime,
       receivedAt: this.now(),
     })
@@ -1141,6 +1153,18 @@ export class Session {
     if (!data || typeof data !== 'object') return
     const payload = data as Partial<ChatMessage>
     if (typeof payload.text !== 'string' || payload.text.length === 0) return
+    const platform = payload.platform === 'huya' ? 'huya' : 'douyu'
+    if ((platform === 'huya') !== (this.danmakuState.room?.startsWith('huya:') === true)) return
+    if (platform === 'huya') {
+      this.pushDanmaku({
+        text: payload.text,
+        user: typeof payload.username === 'string' ? payload.username.trim() || '匿名' : '匿名',
+        color: colorForIndex(0), platform,
+        ...(payload.system === true ? { system: true } : {}),
+        ...(payload.huyaGift !== undefined ? { huyaGift: payload.huyaGift } : {}),
+      })
+      return
+    }
     const gift = normalizeDouyuGift(payload.gift)
     if ((payload.system === true || payload.gift !== undefined) && !gift) return
     const sender = normalizeDouyuSender(payload.sender)
@@ -1148,6 +1172,7 @@ export class Session {
       text: payload.text,
       user: typeof payload.username === 'string' ? payload.username.trim() || '匿名' : '匿名',
       color: colorForIndex(typeof payload.color === 'number' ? payload.color : 0),
+      platform,
       ...(sender ? { sender } : {}),
       ...(gift ? { gift } : {}),
       ...(typeof payload.dms === 'number' && Number.isFinite(payload.dms) ? { dms: payload.dms } : {}),
@@ -1164,7 +1189,9 @@ export class Session {
     this.danmakuState = {
       ...this.danmakuState,
       connected,
-      ...(typeof payload.room === 'string' && /^[1-9][0-9]{0,11}$/.test(payload.room) ? { room: payload.room } : {}),
+      ...(typeof payload.room === 'string'
+        && (this.danmakuState.room?.startsWith('huya:') ? /^huya:[1-9][0-9]{0,15}$/ : /^[1-9][0-9]{0,11}$/).test(payload.room)
+        ? { room: payload.room } : {}),
       error: connected ? null : (detail ?? DANMAKU_STATE_TEXT[state] ?? this.danmakuState.error),
     }
     this.notify()

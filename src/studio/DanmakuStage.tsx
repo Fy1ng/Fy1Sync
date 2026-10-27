@@ -147,7 +147,7 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
     const allocator = allocatorRef.current
     const settings = settingsRef.current
     const { width } = sizeRef.current
-    if (!host || !allocator || width === 0 || message.gift) return
+    if (!host || !allocator || width === 0 || message.gift || message.huyaGift) return
     const textWidth = estimateTextWidth(message.text, settings.fontSize)
     const assignment = allocator.allocateScroll(nowMs / 1000, textWidth)
     // Every lane still busy. Dropping beats stacking one comment on another.
@@ -226,6 +226,7 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
   }
 
   const message = menu?.item.message
+  const readOnly = message?.platform === 'huya' || snapshot.danmaku.room?.startsWith('huya:') === true
   const repeatProblem = message ? composer.repeatProblem(message.text) : null
   const uid = message?.sender?.uid
 
@@ -238,21 +239,21 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
           style={{ left: menu.left, top: menu.top }}
           onPointerEnter={cancelLeave} onPointerLeave={scheduleLeave}>
           <span className="dm-menu-user" title={message.user}>{message.user}</span>
-          <button type="button" disabled={!!repeatProblem} title={repeatProblem ?? '发送相同内容'}
-            onClick={() => { void composer.repeat(message.text); release() }}>+1</button>
-          <button type="button" disabled={!composer.canEdit} title={composer.canEdit ? `回复 ${message.user}` : '连接弹幕并登录斗鱼后可回复'}
-            onClick={() => { composer.reply(message.user); onReply(); release() }}>回复</button>
-          <button type="button" title="收藏到本机"
-            onClick={() => { void actions.favorite(message).then(setNote) }}>收藏</button>
+          {!readOnly && <button type="button" disabled={!!repeatProblem} title={repeatProblem ?? '发送相同内容'}
+            onClick={() => { void composer.repeat(message.text); release() }}>+1</button>}
+          {!readOnly && <button type="button" disabled={!composer.canEdit} title={composer.canEdit ? `回复 ${message.user}` : '连接弹幕并登录斗鱼后可回复'}
+            onClick={() => { composer.reply(message.user); onReply(); release() }}>回复</button>}
+          {!readOnly && <button type="button" title="收藏到本机"
+            onClick={() => { void actions.favorite(message).then(setNote) }}>收藏</button>}
           <button type="button" title="复制弹幕内容"
             onClick={() => { actions.copy(message.text); release() }}>复制</button>
           <button type="button" title={`不再显示 ${message.user} 的弹幕`}
             onClick={() => { blockUser(message.user); release() }}>屏蔽</button>
-          {uid && actions.showDetails && (
+          {!readOnly && uid && actions.showDetails && (
             <button type="button" title="查看用户详情" onClick={() => { actions.showDetails?.(message); release() }}>详情</button>
           )}
-          {uid && <button type="button" title="查询该用户的历史弹幕" onClick={() => { actions.history(uid); release() }}>历史</button>}
-          {uid && <button type="button" title="在当前房间禁言该用户" onClick={() => { actions.mute(message); release() }}>禁言</button>}
+          {!readOnly && uid && <button type="button" title="查询该用户的历史弹幕" onClick={() => { actions.history(uid); release() }}>历史</button>}
+          {!readOnly && uid && <button type="button" title="在当前房间禁言该用户" onClick={() => { actions.mute(message); release() }}>禁言</button>}
           {note && <span className="dm-menu-note" role="status">{note}</span>}
         </div>
       )}

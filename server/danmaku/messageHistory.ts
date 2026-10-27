@@ -1,5 +1,5 @@
 import { normalizeDouyuGift, normalizeDouyuSender, normalizeDouyuUid } from '../../src/core/douyuMetadata'
-import type { ChatMessage } from './douyuProtocol'
+import type { ChatMessage } from './types'
 
 export interface MessageHistoryQuery { room?: string; uid?: string; query?: string; page?: number; pageSize?: number }
 export interface MessageHistoryPage {
@@ -81,6 +81,7 @@ export class MessageHistory {
   }
 
   observe(raw: ChatMessage): boolean {
+    if (raw?.platform === 'huya' || (typeof raw?.room === 'string' && raw.room.startsWith('huya:'))) return false
     const message = copyHistoryMessage(raw)
     if (!message) return false
     const key = JSON.stringify([message.room, message.id])

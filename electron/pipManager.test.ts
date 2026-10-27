@@ -10,6 +10,23 @@ function fixture() {
   return { manager, window }
 }
 describe('restricted enhanced PiP shell', () => {
+  it('grants only namespaced read-only room access to Huya even when a Douyu ID matches', async () => {
+    const f = fixture()
+    const sender = vi.fn(() => ({ accountId: 'default', canAttempt: true }))
+    const manager = new PipManager({ createWindow: () => f.window, sendContext: sender, source: () => ({
+      url: 'app://app/buffer/a/commentary/b/index.m3u8', label: 'Huya', platform: 'huya', channel: '100', sourceRoom: '100', kind: 'hls', requiresProxy: false,
+    }) })
+    await manager.open('commentary')
+    expect(manager.permitsRoom(2, 'huya:100')).toBe(true)
+    expect(manager.permitsRoom(2, '100')).toBe(false)
+    expect(manager.permitsRoom(3, 'huya:100')).toBe(false)
+    expect(manager.state().sendContext.room).toBeNull()
+    expect(manager.state().sendContext.canAttempt).toBe(false)
+    for (const method of ['activateDouyuRoom', 'sendComposedDouyuMessage', 'getDouyuRoomInsights', 'reportDouyuPlayback', 'getDanmakuRate', 'getDanmakuUserDetails']) {
+      expect(manager.permits(2, method, { room: '100' })).toBe(false)
+    }
+    manager.dispose(); f.manager.dispose()
+  })
   it('waits for its renderer and shares the existing buffer before transferring audio', async () => {
     const f = fixture()
     expect((await f.manager.open('official')).phase).toBe('opening')

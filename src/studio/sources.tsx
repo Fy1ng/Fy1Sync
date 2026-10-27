@@ -139,10 +139,14 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     patch(role, { busy: true, problem: null, notes: [] })
     try {
       await session.loadSource(role, descriptor)
-      if (role === 'commentary' && descriptor.platform === 'huya') disconnectRoom()
+      if (role === 'commentary' && descriptor.platform === 'huya') {
+        const sourceRoom = descriptor.sourceRoom ?? roomFromInput(descriptor.input)
+        if (sourceRoom) connectRoom(`huya:${sourceRoom}`, roomFromInput(descriptor.input) ?? sourceRoom)
+        else disconnectRoom()
+      }
     } finally { patch(role, { busy: false }) }
     if (session.snapshot.media[role].status !== 'empty') play()
-  }, [disconnectRoom, patch, play, session])
+  }, [connectRoom, disconnectRoom, patch, play, session])
 
   const loadInput = useCallback(async (role: SourceRole, input: string, platform?: RoomPlatform): Promise<boolean> => {
     const typed = parseRoomInput(input)
@@ -182,7 +186,11 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       })
       // The commentary room's danmaku come along with it; nothing to set up separately.
       if (role === 'commentary') {
-        if (parsed.platform === 'huya' || stream.platform === 'huya') disconnectRoom()
+        if (parsed.platform === 'huya' || stream.platform === 'huya') {
+          const sourceRoom = stream.sourceRoom ?? stream.danmakuRoom ?? roomFromInput(input)
+          if (sourceRoom) connectRoom(`huya:${sourceRoom}`, roomFromInput(input) ?? sourceRoom)
+          else disconnectRoom()
+        }
         else if (stream.danmakuRoom) connectRoom(stream.danmakuRoom, roomFromInput(input) ?? stream.danmakuRoom)
       }
       play()

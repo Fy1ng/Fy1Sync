@@ -119,9 +119,9 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
     }
     function ingest(data: unknown): void {
       if (!drawingRef.current || !video || !data || typeof data !== 'object') return
-      const payload = data as { text?: unknown; username?: unknown; color?: unknown; system?: unknown; gift?: unknown; dms?: unknown }
+      const payload = data as { text?: unknown; username?: unknown; color?: unknown; system?: unknown; gift?: unknown; huyaGift?: unknown; dms?: unknown; platform?: unknown }
       // Gift and system notices are the main stage's business; this overlay is chat only.
-      if (typeof payload.text !== 'string' || !payload.text.trim() || payload.system === true || payload.gift !== undefined) return
+      if (typeof payload.text !== 'string' || !payload.text.trim() || payload.system === true || payload.gift !== undefined || payload.huyaGift !== undefined) return
       const timebase = readTimebase(video)
       const scheduleTime = timebase
         ? scheduleTimeFor({ currentTime: video.currentTime, timebase }, { clock: clock.current, nowMs: Date.now() })
@@ -131,6 +131,7 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
         text: payload.text,
         user: typeof payload.username === 'string' ? payload.username : '',
         color: colorForIndex(typeof payload.color === 'number' ? payload.color : 0),
+        ...(payload.platform === 'huya' ? { platform: 'huya' as const } : {}),
         ...(typeof payload.dms === 'number' && Number.isFinite(payload.dms) ? { dms: payload.dms } : {}),
         scheduleTime,
         receivedAt: Date.now(),
@@ -176,7 +177,7 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
       } else pausedClock.current = null
       const released = video.paused ? timeline.current.releaseAll() : timeline.current.advance(mediaTime)
       for (const message of released) {
-        const result = processor.current.process({ text: message.text, room: room ?? undefined, ...(message.dms !== undefined ? { dms: message.dms } : {}) }, mediaTime)
+        const result = processor.current.process({ text: message.text, room: room ?? undefined, platform: message.platform, ...(message.dms !== undefined ? { dms: message.dms } : {}) }, mediaTime)
         if (result.kind === 'hide') continue
         if (result.kind === 'merge') {
           for (const item of active.current) if (item.groupId === result.groupId) item.node.textContent = `${message.text} ×${result.count}`

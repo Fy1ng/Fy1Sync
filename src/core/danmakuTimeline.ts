@@ -20,6 +20,9 @@ export interface DanmakuMessage {
   text: string
   user: string
   color: string
+  platform?: 'douyu' | 'huya'
+  system?: boolean
+  huyaGift?: { id: string; count: number; name?: string }
   /** Commentary media time (seconds) at which this message should appear. */
   scheduleTime: number
   /** Wall clock (ms) the message was received, for debugging only. */

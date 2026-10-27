@@ -125,6 +125,13 @@ describe('room insights sheet', () => {
 })
 
 describe('danmaku rate', () => {
+  it('does not query Douyu rates for a Huya room', () => {
+    vi.useFakeTimers()
+    const { result } = renderHook(() => useDanmakuRate('huya:660000'))
+    vi.advanceTimersByTime(30_000)
+    expect(result.current).toBeNull()
+    expect(named('getDanmakuRate')).toEqual([])
+  })
   it('is null until something was received, then follows the room', async () => {
     const { result, rerender } = renderHook(({ room }) => useDanmakuRate(room), { initialProps: { room: '100' as string | null } })
     await waitFor(() => expect(named('getDanmakuRate')).toHaveLength(1))
@@ -141,6 +148,17 @@ describe('danmaku rate', () => {
 
 describe('playback heartbeat', () => {
   const reports = (): unknown[] => named('reportDouyuPlayback').map((call) => call.args)
+
+  it('never reports Huya playback to Douyu statistics, including after changing rooms', () => {
+    vi.useFakeTimers()
+    const { rerender, unmount } = renderHook(() => usePlaybackHeartbeat())
+    media.snapshot = { ...media.snapshot, danmaku: { room: 'huya:660000' } }
+    rerender()
+    vi.advanceTimersByTime(15_000)
+    window.dispatchEvent(new Event('pagehide'))
+    unmount()
+    expect(reports()).toEqual([{ room: '100', playing: false }, { room: '100', playing: false }])
+  })
 
   it('reports the playing flag on change and every 5 s, and false on unmount', () => {
     vi.useFakeTimers()

@@ -1,0 +1,430 @@
+{
+  "formatVersion": 1,
+  "capturedOn": "2026-10-27",
+  "placeholderPresenterUid": "12345",
+  "audit": [
+    {
+      "file": "raw-117736-group.json",
+      "frames": 163,
+      "nonempty": 125,
+      "empty": 38,
+      "previouslyMalformed": 38
+    },
+    {
+      "file": "raw-117736-userInfo.json",
+      "frames": 33,
+      "nonempty": 32,
+      "empty": 1,
+      "previouslyMalformed": 1
+    },
+    {
+      "file": "raw-a16789-group.json",
+      "frames": 208,
+      "nonempty": 153,
+      "empty": 55,
+      "previouslyMalformed": 55
+    },
+    {
+      "file": "raw-a16789-userInfo.json",
+      "frames": 34,
+      "nonempty": 32,
+      "empty": 2,
+      "previouslyMalformed": 2
+    },
+    {
+      "file": "raw-kpl-group.json",
+      "frames": 130,
+      "nonempty": 99,
+      "empty": 31,
+      "previouslyMalformed": 31
+    },
+    {
+      "file": "raw-kpl-userInfo.json",
+      "frames": 10,
+      "nonempty": 10,
+      "empty": 0,
+      "previouslyMalformed": 0
+    }
+  ],
+  "samples": [
+    {
+      "name": "registeredGroup",
+      "kind": "real-anonymized",
+      "source": {
+        "file": "raw-117736-group.json",
+        "index": 0,
+        "capturedOn": "2026-10-27",
+        "durationSeconds": 120
+      },
+      "hex": "00111d0000100c190001060a636861743a31323334352c36004c5c6600",
+      "expected": {
+        "command": 17,
+        "registered": true,
+        "emptyFrame": false,
+        "malformed": false,
+        "messages": [],
+        "viewers": [],
+        "unknownUriCounts": {}
+      }
+    },
+    {
+      "name": "cmd7Chat",
+      "kind": "real-anonymized",
+      "source": {
+        "file": "raw-117736-group.json",
+        "index": 16,
+        "capturedOn": "2026-10-27",
+        "durationSeconds": 120
+      },
+      "hex": "00071d000100ec00051105782d000100ca0a0300000000000030391c26127669657765722d706c616365686f6c6465723001460b706c616365686f6c6465725c6a0c1c0b760b706c616365686f6c64657286009c0b12000030392200003039360e73616e6974697a656420636861744c5a000110012c3001400150010b6a000110012c30014c5a0c1c20013001400150016600700180010b69000102000030397c80010b7001890c990ca90cb200003039c90cd600ecf90f0cf9100cfa110c1c2c0bfa120c16002d000c0bfc13f6140b706c616365686f6c6465723002460a636861743a31323334355300000000000030396c2c36004c5c6600",
+      "expected": {
+        "command": 7,
+        "registered": false,
+        "emptyFrame": false,
+        "malformed": false,
+        "messages": [
+          {
+            "username": "viewer-placeholder",
+            "text": "sanitized chat",
+            "system": false
+          }
+        ],
+        "viewers": [],
+        "unknownUriCounts": {}
+      }
+    },
+    {
+      "name": "cmd22Chat",
+      "kind": "real-anonymized",
+      "source": {
+        "file": "raw-a16789-group.json",
+        "index": 57,
+        "capturedOn": "2026-10-27",
+        "durationSeconds": 120
+      },
+      "hex": "00161d000100c3060a6c6976653a31323334351900010a0105781d000100a10a00011c26127669657765722d706c616365686f6c6465723c46005c6a0c1c0b760086009c0b10012001360e73616e6974697a6564206368617440015a000110012c3001400150010b6a000110012c30014c5a0c1c20013001400150016600700180010b690c7c80010b7c890c990ca90cb200003039c90cd600e001f90f0cf9100cfa110c1c2c0bfa120c16002d000c0bfc13f6140b706c616365686f6c6465722300000000000030390b2c36004c5c6600",
+      "expected": {
+        "command": 22,
+        "registered": false,
+        "emptyFrame": false,
+        "malformed": false,
+        "messages": [
+          {
+            "username": "viewer-placeholder",
+            "text": "sanitized chat",
+            "system": false
+          }
+        ],
+        "viewers": [],
+        "unknownUriCounts": {}
+      }
+    },
+    {
+      "name": "cmd7Gift4",
+      "kind": "real-anonymized",
+      "source": {
+        "file": "raw-117736-group.json",
+        "index": 19,
+        "capturedOn": "2026-10-27",
+        "durationSeconds": 120
+      },
+      "hex": "00071d000100ff00051119652d000100de0004160020193200003039430000000000003039561570726573656e7465722d706c616365686f6c64657266127669657765722d706c616365686f6c646572760080019001acbcc001dce62268747470733a2f2f6578616d706c652e696e76616c69642f6176617461722e706e67f60f00f01001f61100fc12fc13f61406e8998ee7b2aefc15fc16fa17090c190c0bf21800003039f21900003039fa1a00011c20010bfc1bfc1cfa1d0c1c0bfa1e0c10012c3c0bf91f0cfc20fc21fc22fc23fc24f62500fa2606001600260036000bf3270000000000003039fc29f92a0c3c460a636861743a31323334355300000000000030396c2c36004c5c6600",
+      "expected": {
+        "command": 7,
+        "registered": false,
+        "emptyFrame": false,
+        "malformed": false,
+        "messages": [
+          {
+            "username": "viewer-placeholder",
+            "text": "赠送虎粮 x25",
+            "system": true,
+            "huyaGift": {
+              "id": "4",
+              "count": 25,
+              "name": "虎粮"
+            }
+          }
+        ],
+        "viewers": [],
+        "unknownUriCounts": {}
+      }
+    },
+    {
+      "name": "cmd7Gift20699",
+      "kind": "real-anonymized",
+      "source": {
+        "file": "raw-a16789-group.json",
+        "index": 56,
+        "capturedOn": "2026-10-27",
+        "durationSeconds": 120
+      },
+      "hex": "00071d0001010100051119652d000100e00150db1600203232000030394200003039561570726573656e7465722d706c616365686f6c64657266127669657765722d706c616365686f6c646572760080019001acbcc001dce62268747470733a2f2f6578616d706c652e696e76616c69642f6176617461722e706e67f60f00f01001f61100fc12fc13f6140ce8b685e7b289e8998ee7b2aefc15fc16fa17090c190c0bf21800003039f21900003039fa1a00011c2c0bfc1bfc1cfa1d0c1c0bfa1e0c10012c3c0bf91f0cfc20fc21fc22fc23fc24f62500fa2606001600260036000bf3270000000000003039fc29f92a0c3c460a636861743a31323334355300000000000030396c2c36004c5c6600",
+      "expected": {
+        "command": 7,
+        "registered": false,
+        "emptyFrame": false,
+        "malformed": false,
+        "messages": [
+          {
+            "username": "viewer-placeholder",
+            "text": "赠送超粉虎粮 x50",
+            "system": true,
+            "huyaGift": {
+              "id": "20699",
+              "count": 50,
+              "name": "超粉虎粮"
+            }
+          }
+        ],
+        "viewers": [],
+        "unknownUriCounts": {}
+      }
+    },
+    {
+      "name": "cmd7Gift20865",
+      "kind": "real-anonymized",
+      "source": {
+        "file": "raw-a16789-group.json",
+        "index": 181,
+        "capturedOn": "2026-10-27",
+        "durationSeconds": 120
+      },
+      "hex": "00071d0001010100051119652d000100e00151811600200a3200003039430000000000003039561570726573656e7465722d706c616365686f6c64657266127669657765722d706c616365686f6c646572760080019001acbcc001dce62268747470733a2f2f6578616d706c652e696e76616c69642f6176617461722e706e67f60f00f01001f61100fc12fc13f61406e783ade781abfc15fc16fa17090c190c0bf21800003039f21900003039fa1a00011c2c0bfc1bf01c01fa1d00011c0bfa1e0c10012c3c0bf91f0cfc20fc21fc22fc23fc24f62500fa2606001600260036000bf3270000000000003039fc29f92a0c3c460a636861743a31323334355300000000000030396c2c36004c5c6600",
+      "expected": {
+        "command": 7,
+        "registered": false,
+        "emptyFrame": false,
+        "malformed": false,
+        "messages": [
+          {
+            "username": "viewer-placeholder",
+            "text": "赠送热火 x10",
+            "system": true,
+            "huyaGift": {
+              "id": "20865",
+              "count": 10,
+              "name": "热火"
+            }
+          }
+        ],
+        "viewers": [],
+        "unknownUriCounts": {}
+      }
+    },
+    {
+      "name": "cmd7Gift22003",
+      "kind": "real-anonymized",
+      "source": {
+        "file": "raw-a16789-group.json",
+        "index": 163,
+        "capturedOn": "2026-10-27",
+        "durationSeconds": 120
+      },
+      "hex": "00071d0001010700051119652d000100e60155f3160020013200003039430000000000003039561570726573656e7465722d706c616365686f6c64657266127669657765722d706c616365686f6c646572760080019001acbcc001dce62268747470733a2f2f6578616d706c652e696e76616c69642f6176617461722e706e67f60f00f01001f61100fc12fc13f6140c33e5808de4bab2e5af863132fc15fc16fa17090c190c0bf21800003039f21900003039fa1a00011c2c0bfc1bf01c01fa1d00011c0bfa1e0c10012c3c0bf91f0cfc20fc21fc22fc23fc24f62500fa2606001600260036000bf3270000000000003039fc29f92a0c3c460a636861743a31323334355300000000000030396c2c36004c5c6600",
+      "expected": {
+        "command": 7,
+        "registered": false,
+        "emptyFrame": false,
+        "malformed": false,
+        "messages": [
+          {
+            "username": "viewer-placeholder",
+            "text": "赠送3倍亲密12 x1",
+            "system": true,
+            "huyaGift": {
+              "id": "22003",
+              "count": 1,
+              "name": "3倍亲密12"
+            }
+          }
+        ],
+        "viewers": [],
+        "unknownUriCounts": {}
+      }
+    },
+    {
+      "name": "cmd22Viewers",
+      "kind": "real-anonymized",
+      "source": {
+        "file": "raw-117736-group.json",
+        "index": 20,
+        "capturedOn": "2026-10-27",
+        "durationSeconds": 120
+      },
+      "hex": "00161d000026060a6c6976653a31323334351900010a011f461d000005020003710b2300000000000030390b2c36004c5c6600",
+      "expected": {
+        "command": 22,
+        "registered": false,
+        "emptyFrame": false,
+        "malformed": false,
+        "messages": [],
+        "viewers": [
+          225547
+        ],
+        "unknownUriCounts": {}
+      }
+    },
+    {
+      "name": "cmd22MixedViewersUnknown",
+      "kind": "real-anonymized",
+      "source": {
+        "file": "raw-a16789-group.json",
+        "index": 72,
+        "capturedOn": "2026-10-27",
+        "durationSeconds": 120
+      },
+      "hex": "00161d000100b5060a6c6976653a31323334351900020a011f461d000005020009d97c2300000000000030390b0a0117df1d00007d030000000000003039160b706c616365686f6c6465722c350000000000000000460052000030396a090c190c2a000110012c3001400150010b3a000110012c30014c5a0c1c20013001400150016600700180010b690c7c80010b490c5c690c7a0c1c26003c46005c6a0c1c0b760086009c0b890c0b76008a0c1d000c0b2300000000000030390b2c36004c5c6600",
+      "expected": {
+        "command": 22,
+        "registered": false,
+        "emptyFrame": false,
+        "malformed": false,
+        "messages": [],
+        "viewers": [
+          645500
+        ],
+        "unknownUriCounts": {
+          "6111": 1
+        }
+      }
+    },
+    {
+      "name": "cmd22UnknownDouble",
+      "kind": "real-anonymized",
+      "source": {
+        "file": "raw-117736-group.json",
+        "index": 24,
+        "capturedOn": "2026-10-27",
+        "durationSeconds": 120
+      },
+      "hex": "00161d00010125060a6c6976653a31323334351900020a0117df1d0000750c160b706c616365686f6c6465722c350000000000000000460052000030396a090c190c2a000110012c3001400150010b3a000110012c30014c5a0c1c20013001400150016600700180010b690c7c80010b490c5c690c7a0c1c26003c46005c6a0c1c0b760086009c0b890c0b76008a0c1d000c0b2300000000000030390b0a0117df1d00007d030000000000003039160b706c616365686f6c6465722c350000000000000000460052000030396a090c190c2a000110012c3001400150010b3a000110012c30014c5a0c1c20013001400150016600700180010b690c7c80010b490c5c690c7a0c1c26003c46005c6a0c1c0b760086009c0b890c0b76008a0c1d000c0b2300000000000030390b2c36004c5c6600",
+      "expected": {
+        "command": 22,
+        "registered": false,
+        "emptyFrame": false,
+        "malformed": false,
+        "messages": [],
+        "viewers": [],
+        "unknownUriCounts": {
+          "6111": 2
+        }
+      }
+    },
+    {
+      "name": "cmd7UnknownOpaque",
+      "kind": "real-anonymized",
+      "source": {
+        "file": "raw-a16789-group.json",
+        "index": 130,
+        "capturedOn": "2026-10-27",
+        "durationSeconds": 120
+      },
+      "hex": "00071d0000200004110c1e2d000c3002460a6c6976653a31323334355300000000000030396c2c36004c5c6600",
+      "expected": {
+        "command": 7,
+        "registered": false,
+        "emptyFrame": false,
+        "malformed": false,
+        "messages": [],
+        "viewers": [],
+        "unknownUriCounts": {
+          "3102": 1
+        }
+      }
+    },
+    {
+      "name": "cmd22Unknown1300000",
+      "kind": "real-anonymized",
+      "source": {
+        "file": "raw-kpl-group.json",
+        "index": 77,
+        "capturedOn": "2026-10-27",
+        "durationSeconds": 120
+      },
+      "hex": "00161d00007a060a6c6976653a31323334351900010a020013d6201d0000570001120000303922000030393200003039430000000000003039560b706c616365686f6c646572700182000030399001a60b706c616365686f6c646572b60b706c616365686f6c646572c60b706c616365686f6c6465722300000000000030390b2c36004c5c6600",
+      "expected": {
+        "command": 22,
+        "registered": false,
+        "emptyFrame": false,
+        "malformed": false,
+        "messages": [],
+        "viewers": [],
+        "unknownUriCounts": {
+          "1300000": 1
+        }
+      }
+    },
+    {
+      "name": "derivedBatchChatGiftViewers",
+      "kind": "derived-recombined",
+      "source": [
+        {
+          "file": "raw-a16789-group.json",
+          "index": 57,
+          "capturedOn": "2026-10-27",
+          "durationSeconds": 120
+        },
+        {
+          "file": "raw-117736-group.json",
+          "index": 19,
+          "capturedOn": "2026-10-27",
+          "durationSeconds": 120
+        },
+        {
+          "file": "raw-117736-group.json",
+          "index": 20,
+          "capturedOn": "2026-10-27",
+          "durationSeconds": 120
+        }
+      ],
+      "hex": "00161d000101cb060a6c6976653a31323334351900030a0105781d000100a10a00011c26127669657765722d706c616365686f6c6465723c46005c6a0c1c0b760086009c0b10012001360e73616e6974697a6564206368617440015a000110012c3001400150010b6a000110012c30014c5a0c1c20013001400150016600700180010b690c7c80010b7c890c990ca90cb200003039c90cd600e001f90f0cf9100cfa110c1c2c0bfa120c16002d000c0bfc13f6140b706c616365686f6c6465722300000000000030390b0a0119651d000100de0004160020193200003039430000000000003039561570726573656e7465722d706c616365686f6c64657266127669657765722d706c616365686f6c646572760080019001acbcc001dce62268747470733a2f2f6578616d706c652e696e76616c69642f6176617461722e706e67f60f00f01001f61100fc12fc13f61406e8998ee7b2aefc15fc16fa17090c190c0bf21800003039f21900003039fa1a00011c20010bfc1bfc1cfa1d0c1c0bfa1e0c10012c3c0bf91f0cfc20fc21fc22fc23fc24f62500fa2606001600260036000bf3270000000000003039fc29f92a0c2300000000000030390b0a011f461d000005020003710b2300000000000030390b2c36004c5c6600",
+      "expected": {
+        "command": 22,
+        "registered": false,
+        "emptyFrame": false,
+        "malformed": false,
+        "messages": [
+          {
+            "username": "viewer-placeholder",
+            "text": "sanitized chat",
+            "system": false
+          },
+          {
+            "username": "viewer-placeholder",
+            "text": "赠送虎粮 x25",
+            "system": true,
+            "huyaGift": {
+              "id": "4",
+              "count": 25,
+              "name": "虎粮"
+            }
+          }
+        ],
+        "viewers": [
+          225547
+        ],
+        "unknownUriCounts": {}
+      }
+    },
+    {
+      "name": "emptyBinaryFrame",
+      "kind": "captured-empty-binary",
+      "source": {
+        "file": "raw-117736-group.json",
+        "index": 5,
+        "capturedOn": "2026-10-27"
+      },
+      "hex": "",
+      "expected": {
+        "command": null,
+        "registered": false,
+        "emptyFrame": true,
+        "malformed": false,
+        "messages": [],
+        "viewers": [],
+        "unknownUriCounts": {}
+      }
+    }
+  ]
+}

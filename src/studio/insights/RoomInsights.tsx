@@ -282,7 +282,7 @@ function Ranks({ insights }: { insights: DouyuRoomInsights }): React.ReactNode {
 export function useDanmakuRate(room: string | null): number | null {
   const [rate, setRate] = useState<{ room: string; value: number | null } | null>(null)
   useEffect(() => {
-    if (!room) return
+    if (!room || !/^[1-9]\d{0,11}$/.test(room)) return
     let live = true
     const read = (): void => {
       void apiClient.feature('getDanmakuRate', { room }).then((result) => {
@@ -315,7 +315,8 @@ const HEARTBEAT_MS = 5_000
  */
 export function usePlaybackHeartbeat(): void {
   const snapshot = useSessionSnapshot()
-  const room = snapshot.danmaku.room
+  const selected = snapshot.danmaku.room
+  const room = selected && /^[1-9]\d{0,11}$/.test(selected) ? selected : null
   const playing = isPlaying(snapshot.media)
   const playingRef = useRef(playing)
   playingRef.current = playing

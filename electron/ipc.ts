@@ -1,6 +1,7 @@
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron'
 import type { DesktopService } from '../server/api'
 import { parseDouyuRoom } from '../server/platforms'
+import { danmakuRoom } from '../server/danmaku/types'
 import type { FeatureEvent } from './featureContracts'
 import { isAppDocument } from './security'
 
@@ -69,7 +70,10 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
     // Insertion order records subscription/activation intent even when lookups finish out of order.
     // Additional playback windows can observe other rooms without changing the main task context.
     let next: string | null = null
-    if (!disposed) for (const entry of subscriptions.values()) if (entry.owner.contents === contents && entry.room !== null) next = entry.room
+    if (!disposed) for (const entry of subscriptions.values()) if (entry.owner.contents === contents && entry.room !== null) {
+      // The last selected subscription controls intent. Huya clears the Douyu operation room.
+      next = entry.room.startsWith('huya:') ? null : entry.room
+    }
     if (next === taskRoom) return
     service.setDouyuRoom?.(next)
     taskRoom = next
@@ -152,10 +156,13 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
   ipc.handle('stream-syncer:subscribe', async (event, room: unknown, subscriptionId: unknown) => {
     const owner = sender(event)
     if (!owner) return denied()
-    if (!validId(subscriptionId) || typeof room !== 'string' || room.length > 8192 || !parseDouyuRoom(room)) {
+    const huya = typeof room === 'string' && room.startsWith('huya:')
+    const input = typeof room === 'string' ? (huya || room.startsWith('douyu:') ? room.slice(room.indexOf(':') + 1) : room) : ''
+    const parsed = huya ? (/^[A-Za-z0-9_-]{1,64}$/.test(input) ? `huya:${input}` : null) : parseDouyuRoom(input)
+    if (!validId(subscriptionId) || typeof room !== 'string' || room.length > 8192 || !parsed) {
       return { ok: false, code: 'bad-room', message: '房间号或订阅标识无效' }
     }
-    if (!allowRoom(owner, parseDouyuRoom(room)!)) return denied()
+    if (!allowRoom(owner, parsed)) return denied()
     const key = keyFor(owner, subscriptionId)
     const ownedCount = [...subscriptions.values()].filter(entry => entry.owner === owner).length
     if (subscriptions.has(key) || ownedCount >= 16) return { ok: false, code: 'subscription-limit', message: '订阅数量超过限制' }
@@ -170,13 +177,21 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
       safeRelease(syncTaskRoom)
     }
     try {
-      const result = await service.resolveDouyuRoom(room)
-      if (!current()) { discard(); return cancelled() }
-      if (!result.ok) {
-        discard()
-        return { ok: false, code: result.failure.code, message: result.failure.message }
+      let canonical: string
+      if (huya) {
+        const identity = await service.resolveHuyaRoom(input)
+        if (!/^[1-9][0-9]{0,15}$/.test(identity.room)) throw new Error('虎牙房间身份无效')
+        canonical = `huya:${identity.room}`
+      } else {
+        const result = await service.resolveDouyuRoom(input)
+        if (!current()) { discard(); return cancelled() }
+        if (!result.ok) {
+          discard()
+          return { ok: false, code: result.failure.code, message: result.failure.message }
+        }
+        canonical = result.identity.room
       }
-      const canonical = result.identity.room
+      if (!current()) { discard(); return cancelled() }
       if (!allowRoom(owner, canonical)) { discard(); return denied() }
       sendDanmaku(entry, canonical, 'state', { room: canonical, state: 'connecting' })
       const release = service.relay.subscribe(canonical, {
@@ -220,6 +235,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
       for (const channel of ['stream-syncer:invoke', 'stream-syncer:subscribe', 'stream-syncer:unsubscribe']) ipc.removeHandler(channel)
     },
     emitDanmaku(room: string, event: string, data: unknown): number {
+      room = danmakuRoom(room).external
       let delivered = 0
       for (const entry of subscriptions.values()) if (entry.room === room && sendDanmaku(entry, room, event, data)) delivered++
       return delivered

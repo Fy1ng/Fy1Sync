@@ -2,6 +2,7 @@
 
 import appPackage from '../package.json'
 import { createDouyuRoomResolver, type ResolveDouyuRoom } from './platforms/douyuRoom'
+import { resolveHuyaDanmakuRoom, type HuyaDanmakuRoom } from './platforms/huyaDanmaku'
 import type { ApiResult } from '../src/app/apiClient'
 import type { ProxyConfig } from './config'
 import { DanmakuRelay } from './danmaku/relay'
@@ -39,6 +40,7 @@ export type DesktopServiceDeps = {
   fetchImpl?: typeof fetch
   registerMedia: (url: string) => string
   resolveDouyuRoom?: ResolveDouyuRoom
+  resolveHuyaRoom?: (input: string) => Promise<HuyaDanmakuRoom>
   acquisition?: AcquisitionService
   decoderPreferences?: DecoderPreferencesService
   tools?: ToolsService
@@ -52,6 +54,7 @@ export type DesktopService = {
   invoke: (method: unknown, args: unknown, context?: FeatureCallContext) => Promise<ApiResult<unknown>>
   relay: DanmakuRelay
   resolveDouyuRoom: ResolveDouyuRoom
+  resolveHuyaRoom: (input: string) => Promise<HuyaDanmakuRoom>
   dispose: () => void
   subscribeBuffer?: (listener: (state: BufferState) => void) => () => void
   subscribeDouyuTasks?: (listener: (state: DouyuTasksSnapshot) => void) => () => void
@@ -133,13 +136,15 @@ export function sanitizedFailure(result: ResolveResult): ResolveResult {
 
 /** The Electron IPC boundary checks the sender before calling any service method. */
 export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
-  const relay = deps.relay ?? new DanmakuRelay()
+  const resolveHuyaRoom = deps.resolveHuyaRoom ?? (input => resolveHuyaDanmakuRoom(input, createResolverDeps(deps.proxy, deps.registerMedia, deps.fetchImpl).fetchText))
+  const relay = deps.relay ?? new DanmakuRelay({ huya: { resolveRoom: resolveHuyaRoom } })
   const presets = new PresetStore(deps.dataDir)
   let disposed = false
   const resolveRoom = deps.resolveDouyuRoom ?? createDouyuRoomResolver(deps.proxy, deps.fetchImpl).resolve
 
   return {
     relay,
+    resolveHuyaRoom: input => disposed ? Promise.reject(new Error('本地服务已关闭')) : resolveHuyaRoom(input),
     resolveDouyuRoom: input => disposed ? Promise.resolve({ ok: false, failure: { code: 'upstream-error', message: '本地服务已关闭' } }) : resolveRoom(input),
     subscribeBuffer: deps.acquisition ? (listener) => deps.acquisition!.subscribe(listener) : undefined,
     subscribeDouyuTasks: deps.douyuTasks ? listener => deps.douyuTasks!.subscribe(listener) : undefined,

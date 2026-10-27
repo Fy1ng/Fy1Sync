@@ -33,7 +33,7 @@ export function parseHuyaRoom(input: string): string | null {
 }
 
 /** Scan one bounded JSON value, rather than evaluating the surrounding player script. */
-function jsonAfter(page: string, marker: RegExp, max: number): unknown {
+export function jsonAfter(page: string, marker: RegExp, max: number): unknown {
   const match = marker.exec(page)
   if (!match) return undefined
   const start = match.index + match[0].length
@@ -183,7 +183,7 @@ function resolved(room: string, url: URL, qualities: QualityOption[], quality: s
   return { ok: true, stream: {
     platform: 'huya', url: deps.proxify(url.href), kind: 'progressive', label: `虎牙 ${room}`, channel: room, sourceRoom: room,
     requiresProxy: true, headers: { ...HEADERS }, qualities, quality,
-    notes: [`线路: ${cdn}. 令牌来源: ${source}.`, '画质名称和码率由虎牙提供. 断流后重新解析并签名. 虎牙弹幕暂未支持.'],
+    notes: [`线路: ${cdn}. 令牌来源: ${source}.`, '画质名称和码率由虎牙提供. 断流后重新解析并签名.'],
   } }
 }
 

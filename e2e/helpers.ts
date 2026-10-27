@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import type { DesktopMethod, DesktopMethods } from '../electron/contracts'
 import type { ApiResult } from '../src/app/apiClient'
-import type { ChatMessage } from '../server/danmaku/douyuProtocol'
+import type { ChatMessage } from '../server/danmaku/types'
 import type { DouyuTaskKind } from '../server/douyu/types'
 import { APP_ORIGIN, expect } from './electron'
 

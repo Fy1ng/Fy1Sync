@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DeliveryTracker } from './deliveryTracker'
-import type { ChatMessage } from './douyuProtocol'
+import type { ChatMessage } from './types'
 
 const input = { accountId: 'a', room: '1', uid: '42', text: 'hello', color: 0 }
 const echo = (changes: Partial<ChatMessage> = {}): ChatMessage => ({ id: 'c1', room: '1', text: 'hello', username: 'viewer',

@@ -22,7 +22,8 @@ import {
   normalizeDouyuSender,
   normalizeDouyuUid,
 } from '../../src/core/douyuMetadata'
-import type { DouyuGiftMetadata, DouyuSenderMetadata } from '../../src/core/types'
+import type { DouyuSenderMetadata } from '../../src/core/types'
+import type { ChatMessage } from './types'
 
 export const CLIENT_MESSAGE_TYPE = 689
 export const SERVER_MESSAGE_TYPE = 690
@@ -103,28 +104,6 @@ export const JOIN_GROUP_REQUEST = (roomId: string): string =>
 
 export const KEEPALIVE_REQUEST = (): string =>
   serializeStt({ type: 'mrkl', tick: Math.floor(Date.now() / 1000) })
-
-export type ChatMessage = {
-  id: string
-  /** Danmaku text. */
-  text: string
-  username: string
-  /** Douyu colour index; 0 means default white. */
-  color: number
-  /** User level, useful for filtering. */
-  level: number
-  /** Server-side receive time in ms; the client parks it on its own timeline. */
-  receivedAt: number
-  /** Room the message came from. */
-  room: string
-  /** True for gift/system notices rather than user chat. */
-  system: boolean
-  sender?: DouyuSenderMetadata
-  /** Public intelligent-filter score. Absence is not proof of a bot. */
-  dms?: number
-  /** Only actual dgb traffic has this field. */
-  gift?: DouyuGiftMetadata
-}
 
 const COLOR_MAP: Record<string, string> = {
   '0': '#ffffff',

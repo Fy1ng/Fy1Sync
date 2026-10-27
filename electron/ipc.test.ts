@@ -30,14 +30,15 @@ function fixture(options: IpcHandlerOptions = {}) {
   const featureRelease = vi.fn()
   const setRoom = vi.fn()
   const resolveRoom = vi.fn(async (room: string) => ({ ok: true, identity: { room, inputRoom: room } }))
-  const service = { resolveDouyuRoom: resolveRoom, invoke: vi.fn(async () => ({ ok: true, value: {} })), relay: { subscribe }, dispose: vi.fn(),
+  const resolveHuyaRoom = vi.fn(async (room: string) => ({ room: room === 'kpl' ? '660002' : room, presenterUid: 42n, topSid: 43n, subSid: 44n }))
+  const service = { resolveDouyuRoom: resolveRoom, resolveHuyaRoom, invoke: vi.fn(async () => ({ ok: true, value: {} })), relay: { subscribe }, dispose: vi.fn(),
     subscribeBuffer: (listener: (state: BufferState) => void) => { bufferListener = listener; return bufferRelease },
     subscribeDouyuTasks: (listener: (state: DouyuTasksSnapshot) => void) => { taskListener = listener; return taskRelease },
     subscribeFeatures: (listener: (event: FeatureEvent) => void) => { featureListener = listener; return featureRelease },
     setDouyuRoom: setRoom,
   } as unknown as DesktopService
   const installed = installIpcHandlers(ipc, contents, service, options)
-  return { resolveRoom, contents, event, handlers, release, subscribe, service, installed,
+  return { resolveRoom, resolveHuyaRoom, contents, event, handlers, release, subscribe, service, installed,
     bufferRelease, emitBuffer: (state: BufferState) => bufferListener?.(state),
     taskRelease, setRoom, emitTasks: (state: DouyuTasksSnapshot) => taskListener?.(state),
     featureRelease, emitFeatures: (event: FeatureEvent) => featureListener?.(event),
@@ -93,6 +94,84 @@ describe('app origin and document boundary', async () => {
     const f = fixture()
     vi.spyOn(f.contents, 'isDestroyed').mockReturnValue(true)
     expect(trustedSender(f.event, f.contents)).toBe(false)
+    f.installed.dispose()
+  })
+})
+
+describe('Huya read-only subscription boundary', () => {
+  it('canonicalizes aliases and never assigns a Huya room to Douyu tasks or activation', async () => {
+    const f = fixture()
+    await f.call('subscribe', '100', '1')
+    expect(f.setRoom).toHaveBeenLastCalledWith('100')
+    expect(await f.call('subscribe', 'huya:kpl', '2')).toEqual({ ok: true, value: { ok: true, room: 'huya:660002' } })
+    expect(f.resolveHuyaRoom).toHaveBeenCalledWith('kpl')
+    expect(f.resolveRoom).toHaveBeenCalledTimes(1)
+    expect(f.subscribe).toHaveBeenLastCalledWith('huya:660002', expect.any(Object))
+    expect(f.setRoom.mock.calls).toEqual([['100'], [null]])
+    expect(await f.call('invoke', 'activateDouyuRoom', { room: '660002' })).toMatchObject({ code: 'room-not-subscribed' })
+    expect(await f.call('invoke', 'activateDouyuRoom', { room: 'huya:660002' })).toMatchObject({ code: 'invalid-arguments' })
+    expect(f.installed.emitDanmaku('660002', 'danmaku', {})).toBe(0)
+    expect(f.installed.emitDanmaku('huya:660002', 'danmaku', {})).toBe(1)
+    await f.call('unsubscribe', '2')
+    expect(f.setRoom).toHaveBeenLastCalledWith('100')
+    f.installed.dispose()
+  })
+
+  it('preserves bare numeric Douyu IDs and accepts explicit Douyu room keys', async () => {
+    const f = fixture()
+    await f.call('subscribe', 'douyu:100', '1')
+    await f.call('subscribe', '100', '2')
+    expect(f.resolveRoom.mock.calls).toEqual([['100'], ['100']])
+    expect(f.subscribe.mock.calls.map(call => call[0])).toEqual(['100', '100'])
+    expect(f.resolveHuyaRoom).not.toHaveBeenCalled()
+    expect(f.setRoom).toHaveBeenCalledExactlyOnceWith('100')
+    f.installed.dispose()
+  })
+
+  it.each(['huya:', 'huya:a/b', 'huya:a?token=x', 'huya:https://huya.com/kpl', 'huya:中文', 'huya:a\n', 'huya:' + 'a'.repeat(65), 'twitch:123'])('rejects invalid platform room input %j before lookup', async room => {
+    const f = fixture()
+    expect(await f.call('subscribe', room, '1')).toMatchObject({ code: 'bad-room' })
+    expect(f.resolveHuyaRoom).not.toHaveBeenCalled()
+    expect(f.resolveRoom).not.toHaveBeenCalled()
+    expect(f.subscribe).not.toHaveBeenCalled()
+    f.installed.dispose()
+  })
+
+  it('checks grants both before and after alias lookup using namespaced identities', async () => {
+    const extra = windowFixture(2)
+    const f = fixture({ extraContents: [extra], allowRoom: (_id, room) => room === 'huya:kpl' })
+    expect(await f.callFrom(extra, 'subscribe', 'huya:kpl', '1')).toMatchObject({ code: 'forbidden' })
+    expect(f.resolveHuyaRoom).toHaveBeenCalledOnce()
+    expect(f.subscribe).not.toHaveBeenCalled()
+    expect(await f.callFrom(extra, 'subscribe', 'huya:117736', '2')).toMatchObject({ code: 'forbidden' })
+    expect(f.resolveHuyaRoom).toHaveBeenCalledOnce()
+    f.installed.dispose()
+  })
+
+  it('keeps the per-window cap across platforms and reserves pending subscriptions', async () => {
+    const f = fixture()
+    for (let i = 1; i <= 15; i++) await f.call('subscribe', String(i), String(i))
+    let settle!: (value: Awaited<ReturnType<typeof f.resolveHuyaRoom>>) => void
+    f.resolveHuyaRoom.mockReturnValueOnce(new Promise(resolve => { settle = resolve }))
+    const pending = f.call('subscribe', 'huya:kpl', '16')
+    expect(await f.call('subscribe', 'huya:117736', '17')).toMatchObject({ code: 'subscription-limit' })
+    expect(await f.call('subscribe', 'huya:117736', '16')).toMatchObject({ code: 'subscription-limit' })
+    await f.call('unsubscribe', '16')
+    settle({ room: '660002', presenterUid: 42n, topSid: 43n, subSid: 44n })
+    expect(await pending).toMatchObject({ code: 'subscription-cancelled' })
+    expect(f.subscribe).toHaveBeenCalledTimes(15)
+    f.installed.dispose()
+  })
+
+  it('sanitizes upstream failures and rejects invalid canonical Huya identities', async () => {
+    const f = fixture()
+    f.resolveHuyaRoom.mockRejectedValueOnce(new Error('Cookie=secret token=secret raw-frame'))
+    const failed = await f.call('subscribe', 'huya:kpl', '1')
+    expect(failed).toMatchObject({ code: 'upstream-error' })
+    expect(JSON.stringify(failed)).not.toMatch(/Cookie|secret|raw-frame/)
+    f.resolveHuyaRoom.mockResolvedValueOnce({ room: 'douyu:100', presenterUid: 1n, topSid: 1n, subSid: 1n })
+    expect(await f.call('subscribe', 'huya:kpl', '1')).toMatchObject({ code: 'upstream-error' })
+    expect(f.subscribe).not.toHaveBeenCalled()
     f.installed.dispose()
   })
 })

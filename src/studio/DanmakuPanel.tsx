@@ -19,7 +19,8 @@ import { Icon, Range, Segmented, Switch } from './kit'
 
 export function DanmakuPanel({ onClose }: { onClose: () => void }): React.ReactNode {
   const session = useSession()
-  const { settings, danmakuPreferences: prefs } = useSessionSnapshot()
+  const { settings, danmakuPreferences: prefs, danmaku: connection } = useSessionSnapshot()
+  const readOnly = connection.room?.startsWith('huya:') === true
   const danmaku = settings.danmaku
   const composer = useComposer()
   const [problem, setProblem] = useState<string | null>(null)
@@ -79,13 +80,14 @@ export function DanmakuPanel({ onClose }: { onClose: () => void }): React.ReactN
           <Range label="合并窗口" value={prefs.duplicateWindowSeconds} min={1} max={30} step={1} unit=" 秒"
             onChange={(duplicateWindowSeconds) => setPrefs({ duplicateWindowSeconds })} />
         )}
-        <Switch label="过滤疑似机器人弹幕" detail="依据弹幕是否缺少平台评分字段判断，可能误过滤正常弹幕"
-          checked={prefs.filterSuspectedBots} onChange={(filterSuspectedBots) => setPrefs({ filterSuspectedBots })} />
-        <Switch label="用户详情" detail="在弹幕菜单中查看等级、贵族与粉丝牌"
-          checked={prefs.showUserDetails} onChange={(showUserDetails) => setPrefs({ showUserDetails })} />
-
-        <h3 className="float-sub">发送</h3>
-        <Affixes value={composer.affixes} onProblem={setProblem} />
+        {!readOnly && <>
+          <Switch label="过滤疑似机器人弹幕" detail="依据弹幕是否缺少平台评分字段判断，可能误过滤正常弹幕"
+            checked={prefs.filterSuspectedBots} onChange={(filterSuspectedBots) => setPrefs({ filterSuspectedBots })} />
+          <Switch label="用户详情" detail="在弹幕菜单中查看等级、贵族与粉丝牌"
+            checked={prefs.showUserDetails} onChange={(showUserDetails) => setPrefs({ showUserDetails })} />
+          <h3 className="float-sub">发送</h3>
+          <Affixes value={composer.affixes} onProblem={setProblem} />
+        </>}
         {problem && <p className="form-error" role="alert">{problem}</p>}
       </div>
     </aside>

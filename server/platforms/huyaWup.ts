@@ -6,15 +6,24 @@ const MAX_PACKET = 65_536
 const MAX_STRING = 16_384
 const invalid = () => new Error('Invalid Huya WUP packet')
 
-class Writer {
+export class HuyaTarsWriter {
   private parts: Buffer[] = []
   head(tag: number, type: number) { this.parts.push(Buffer.from(tag < 15 ? [(tag << 4) | type] : [0xf0 | type, tag])) }
   int(tag: number, value: number) {
+    if (!Number.isInteger(value) || value < -2147483648 || value > 2147483647) throw invalid()
     if (value === 0) { this.head(tag, 12); return }
     const size = value >= -128 && value <= 127 ? 1 : value >= -32768 && value <= 32767 ? 2 : 4
     this.head(tag, size === 1 ? 0 : size === 2 ? 1 : 2)
     const bytes = Buffer.alloc(size)
     bytes.writeIntBE(value, 0, size)
+    this.parts.push(bytes)
+  }
+  int64(tag: number, value: bigint) {
+    if (value < -0x8000_0000_0000_0000n || value > 0x7fff_ffff_ffff_ffffn) throw invalid()
+    if (value >= -2147483648n && value <= 2147483647n) { this.int(tag, Number(value)); return }
+    this.head(tag, 3)
+    const bytes = Buffer.alloc(8)
+    bytes.writeBigInt64BE(value)
     this.parts.push(bytes)
   }
   string(tag: number, value: string) {
@@ -26,6 +35,7 @@ class Writer {
     this.parts.push(size, bytes)
   }
   bytes(tag: number, bytes: Uint8Array) {
+    if (bytes.length > 1_048_576) throw invalid()
     this.head(tag, 13)
     this.head(0, 0)
     this.int(0, bytes.length)
@@ -33,6 +43,8 @@ class Writer {
   }
   finish() { return Buffer.concat(this.parts) }
 }
+
+const Writer = HuyaTarsWriter
 
 /** Anonymous HUYA.UserId only; no login token, cookie or device identity is sent. */
 export function encodeHuyaTokenRequest(streamName: string, huyaUA = 'pc_exe&7000000&official'): Uint8Array<ArrayBuffer> {
@@ -76,9 +88,11 @@ export function encodeHuyaTokenRequest(streamName: string, huyaUA = 'pc_exe&7000
 }
 
 /** Every read/skip is bounded, including unknown fields in a future upstream packet. */
-class Reader {
+export class HuyaTarsReader {
   private pos = 0
-  constructor(private data: Uint8Array) {}
+  constructor(private data: Uint8Array, private maxPacket = MAX_PACKET) {
+    if (data.length > maxPacket || maxPacket > 1_048_576) throw invalid()
+  }
   get done() { return this.pos === this.data.length }
   take(size: number) {
     if (!Number.isInteger(size) || size < 0 || this.pos + size > this.data.length) throw invalid()
@@ -96,10 +110,10 @@ class Reader {
     const bytes = Buffer.from(this.take(2 ** type))
     return type === 3 ? bytes.readBigInt64BE() : BigInt(bytes.readIntBE(0, bytes.length))
   }
-  size() {
+  size(max = this.maxPacket) {
     const [tag, type] = this.head()
     const value = this.int(type)
-    if (tag !== 0 || value < 0n || value > BigInt(MAX_PACKET)) throw invalid()
+    if (tag !== 0 || value < 0n || value > BigInt(max)) throw invalid()
     return Number(value)
   }
   string(type: number) {
@@ -134,6 +148,8 @@ class Reader {
     throw invalid()
   }
 }
+
+const Reader = HuyaTarsReader
 
 /** Returns only sFlvToken; packet contents and errors never reach logs or the UI. */
 export function decodeHuyaTokenResponse(bytes: Uint8Array): string | null {

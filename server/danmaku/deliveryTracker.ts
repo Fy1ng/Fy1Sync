@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { normalizeDouyuUid } from '../../src/core/douyuMetadata'
-import type { ChatMessage } from './douyuProtocol'
+import type { ChatMessage } from './types'
 
 export type GatewayEvidence = 'pending' | 'accepted' | 'rejected' | 'unknown'
 export type RoomEchoEvidence = 'pending' | 'observed' | 'not-observed'
@@ -61,6 +61,7 @@ export class DeliveryTracker {
   uncertain(id: string): void { this.markGateway(id, 'unknown') }
 
   observe(message: ChatMessage): string | null {
+    if (message?.platform === 'huya' || (typeof message?.room === 'string' && message.room.startsWith('huya:'))) return null
     this.expire()
     if (!message || message.system || message.gift || !message.sender?.uid || !message.id
       || !Number.isSafeInteger(message.receivedAt)) return null

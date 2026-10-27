@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MessageHistory, doseeingHistoryUrl } from './messageHistory'
-import type { ChatMessage } from './douyuProtocol'
+import type { ChatMessage } from './types'
 
 const chat = (id: string, changes: Partial<ChatMessage> = {}): ChatMessage => ({ id, room: '1', text: '原始弹幕 ' + id,
   username: 'viewer', color: 0, level: 30, receivedAt: 1_000, system: false, sender: { uid: '42', level: 30 }, ...changes })

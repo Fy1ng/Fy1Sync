@@ -1,5 +1,5 @@
 /**
- * Danmaku relay: one upstream connection per room, fanned out to local renderer subscribers
+ * Danmaku relay: one upstream client per room, fanned out to local renderer subscribers
  * through a transport-neutral callback.
  *
  * Rooms are reference-counted: the upstream socket opens with the
@@ -7,18 +7,24 @@
  * leave a connection running forever.
  */
 
-import { DouyuDanmakuClient, type DanmakuClientDeps, type DanmakuState } from './douyuClient'
-import type { ChatMessage } from './douyuProtocol'
-import type { DouyuRoomSignal } from '../douyu/insightsTypes'
+import { DouyuDanmakuClient } from './douyuClient'
+import { HuyaRoomClient, type HuyaRoomClientDeps } from './huyaRoomClient'
+import { danmakuRoom, type ChatMessage, type DanmakuClient, type DanmakuClientDeps,
+  type DanmakuClientEvents, type DanmakuPlatform, type DanmakuState, type RoomSignal } from './types'
 
 /** Grace period before dropping an idle room, so a page reload reuses the connection. */
 const IDLE_CLOSE_MS = 10_000
 /** Bound the replay buffer; danmaku is worthless once it is minutes old. */
 const REPLAY_LIMIT = 50
 export const MAX_ROOMS = 64
-export type RawDanmakuEvent = { type: 'message'; message: ChatMessage }
-  | { type: 'signal'; signal: DouyuRoomSignal }
-  | { type: 'state'; room: string; state: DanmakuState }
+export type RawDanmakuEvent = { platform: DanmakuPlatform } & ({ type: 'message'; message: ChatMessage }
+  | { type: 'signal'; signal: RoomSignal }
+  | { type: 'state'; room: string; state: DanmakuState })
+
+export type DanmakuRelayDeps = DanmakuClientDeps & {
+  huya?: HuyaRoomClientDeps
+  createClient?: (platform: DanmakuPlatform, room: string, events: DanmakuClientEvents) => DanmakuClient
+}
 
 type Subscriber = {
   id: number
@@ -27,8 +33,8 @@ type Subscriber = {
 }
 
 type Room = {
-  id: string
-  client: DouyuDanmakuClient
+  key: string
+  client: DanmakuClient
   subscribers: Map<number, Subscriber>
   recent: ChatMessage[]
   state: DanmakuState
@@ -41,7 +47,7 @@ export class DanmakuRelay {
   private nextSubscriberId = 1
   private readonly observers = new Set<(event: RawDanmakuEvent) => void>()
 
-  constructor(private readonly deps: DanmakuClientDeps = {}) {}
+  constructor(private readonly deps: DanmakuRelayDeps = {}) {}
 
   observe(listener: (event: RawDanmakuEvent) => void): () => void {
     this.observers.add(listener)
@@ -53,16 +59,17 @@ export class DanmakuRelay {
   }
 
   stateOf(roomId: string): DanmakuState {
-    return this.rooms.get(roomId)?.state ?? 'idle'
+    return this.rooms.get(danmakuRoom(roomId).key)?.state ?? 'idle'
   }
 
   subscriberCount(roomId: string): number {
-    return this.rooms.get(roomId)?.subscribers.size ?? 0
+    return this.rooms.get(danmakuRoom(roomId).key)?.subscribers.size ?? 0
   }
 
   /** Attach a transport-neutral subscriber. Returns null when the room cap is already reached. */
   subscribe(roomId: string, subscriber: Omit<Subscriber, 'id'>): (() => void) | null {
-    let room = this.rooms.get(roomId)
+    const identity = danmakuRoom(roomId)
+    let room = this.rooms.get(identity.key)
     if (!room && this.rooms.size >= MAX_ROOMS) return null
 
     if (!room) {
@@ -77,7 +84,7 @@ export class DanmakuRelay {
     room.subscribers.set(id, entry)
 
     try {
-      entry.write('state', { room: roomId, state: room.state, detail: room.detail })
+      entry.write('state', { room: identity.external, state: room.state, detail: room.detail })
       // Replay recent messages so a late subscriber's overlay is not empty for 30s.
       for (const message of room.recent) entry.write('danmaku', message)
     } catch {
@@ -109,37 +116,41 @@ export class DanmakuRelay {
   }
 
   private openRoom(roomId: string): Room {
+    const identity = danmakuRoom(roomId)
     const room: Room = {
-      id: roomId,
+      key: identity.key,
       subscribers: new Map(),
       recent: [],
       state: 'connecting',
       idleTimer: null,
-      client: null as unknown as DouyuDanmakuClient,
+      client: null as unknown as DanmakuClient,
     }
-    room.client = new DouyuDanmakuClient(
-      roomId,
-      {
-        onMessage: (message) => {
-          room.recent.push(message)
-          if (room.recent.length > REPLAY_LIMIT) room.recent.shift()
-          this.broadcast(room, 'danmaku', message)
-        },
-        onObservedMessage: message => this.observeRaw({ type: 'message', message }),
-        onSignal: signal => {
-          this.observeRaw({ type: 'signal', signal })
-          this.broadcast(room, 'room-signal', signal)
-        },
-        onState: (state, detail) => {
-          room.state = state
-          room.detail = detail
-          this.observeRaw({ type: 'state', room: roomId, state })
-          this.broadcast(room, 'state', { room: roomId, state, detail })
-        },
+    const normalize = (message: ChatMessage): ChatMessage => ({ ...message, platform: identity.platform, room: identity.external })
+    const events: DanmakuClientEvents = {
+      onMessage: (message) => {
+        message = normalize(message)
+        room.recent.push(message)
+        if (room.recent.length > REPLAY_LIMIT) room.recent.shift()
+        this.broadcast(room, 'danmaku', message)
       },
-      this.deps,
-    )
-    this.rooms.set(roomId, room)
+      onObservedMessage: message => this.observeRaw({ platform: identity.platform, type: 'message', message: normalize(message) }),
+      onSignal: signal => {
+        signal = { ...signal, platform: identity.platform, room: identity.external } as RoomSignal
+        this.observeRaw({ platform: identity.platform, type: 'signal', signal })
+        this.broadcast(room, 'room-signal', signal)
+      },
+      onState: (state, detail) => {
+        room.state = state
+        room.detail = detail
+        this.observeRaw({ platform: identity.platform, type: 'state', room: identity.external, state })
+        this.broadcast(room, 'state', { room: identity.external, state, detail })
+      },
+    }
+    room.client = this.deps.createClient?.(identity.platform, identity.room, events)
+      ?? (identity.platform === 'huya'
+        ? new HuyaRoomClient(identity.room, events, { ...this.deps, ...this.deps.huya })
+        : new DouyuDanmakuClient(identity.room, events, this.deps))
+    this.rooms.set(identity.key, room)
     room.client.connect()
     return room
   }
@@ -162,13 +173,13 @@ export class DanmakuRelay {
   }
 
   private scheduleIdleClose(room: Room): void {
-    if (this.rooms.get(room.id) !== room) return
+    if (this.rooms.get(room.key) !== room) return
     if (room.idleTimer !== null) this.clearTimer(room.idleTimer)
     room.idleTimer = this.setTimer(() => {
       room.idleTimer = null
       if (room.subscribers.size > 0) return
       room.client.close()
-      this.rooms.delete(room.id)
+      this.rooms.delete(room.key)
     }, IDLE_CLOSE_MS)
   }
 

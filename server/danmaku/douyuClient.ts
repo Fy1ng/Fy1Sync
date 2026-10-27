@@ -18,10 +18,10 @@ import {
   parseStt,
   toChatMessage,
   toGiftMessage,
-  type ChatMessage,
 } from './douyuProtocol'
 import { parseDouyuRoomSignal } from './roomSignals'
-import type { DouyuRoomSignal } from '../douyu/insightsTypes'
+import type { DanmakuClientDeps, DanmakuClientEvents, DanmakuState, WebSocketLike } from './types'
+export type { DanmakuClientDeps, DanmakuClientEvents, DanmakuState, WebSocketLike } from './types'
 
 const DANMAKU_ENDPOINT = 'wss://danmuproxy.douyu.com:8506/'
 const KEEPALIVE_INTERVAL_MS = 40_000
@@ -35,30 +35,6 @@ const RECONNECT_BASE_MS = 1_000
 const RECONNECT_MAX_MS = 30_000
 /** Gift notifications cannot use up the chat timeline during a donation burst. */
 export const MAX_GIFT_MESSAGES_PER_SECOND = 12
-
-export type DanmakuState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed'
-
-export type DanmakuClientEvents = {
-  onMessage: (message: ChatMessage) => void
-  onState: (state: DanmakuState, detail?: string) => void
-  /** Runs once per upstream event, before presentation throttles and subscriber replay. */
-  onObservedMessage?: (message: ChatMessage) => void
-  onSignal?: (signal: DouyuRoomSignal) => void
-}
-
-export type WebSocketLike = {
-  send: (data: ArrayBufferView | ArrayBuffer) => void
-  close: () => void
-  addEventListener: (type: string, listener: (event: any) => void) => void
-  binaryType?: string
-}
-
-export type DanmakuClientDeps = {
-  createSocket?: (url: string) => WebSocketLike
-  now?: () => number
-  setTimer?: (fn: () => void, ms: number) => unknown
-  clearTimer?: (handle: unknown) => void
-}
 
 export class DouyuDanmakuClient {
   private socket: WebSocketLike | null = null
@@ -177,6 +153,7 @@ export class DouyuDanmakuClient {
       }
       const chat = toChatMessage(parsed, this.room, now)
       if (chat) {
+        chat.platform = 'douyu'
         this.acceptInbound(socket, now)
         if (this.socket !== socket) return
         this.events.onObservedMessage?.(chat)
@@ -191,6 +168,7 @@ export class DouyuDanmakuClient {
       }
       const gift = toGiftMessage(parsed, this.room, now)
       if (!gift) continue
+      gift.platform = 'douyu'
       this.acceptInbound(socket, now)
       if (this.socket !== socket) return
       this.events.onObservedMessage?.(gift)

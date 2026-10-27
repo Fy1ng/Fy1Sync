@@ -87,8 +87,9 @@ function SourcePanel({ role, onDone }: {
 
       {buffer && <p className="muted">{bufferStatusText(buffer)}</p>}
 
-      {role === 'commentary' && (state.descriptor?.platform === 'huya'
-        ? <p className="muted">虎牙弹幕暂未支持</p>
+      {role === 'commentary' && (state.descriptor?.platform === 'huya' || snapshot.danmaku.room?.startsWith('huya:')
+        ? <p className="muted" role="status">虎牙弹幕: {snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
+          : snapshot.danmaku.room ? snapshot.danmaku.error ?? `正在连接房间 ${loader.roomName}` : '未连接'}</p>
         : <DanmakuRoom />)}
       <div className="row-split panel-foot">
         <label className="btn-quiet small file-pick">

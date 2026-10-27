@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ChatMessage } from '../danmaku/douyuProtocol'
+import type { ChatMessage } from '../danmaku/types'
 import { DouyuInsightsService } from './insightsService'
 import type { DouyuFollowedRooms, DouyuRoomInfo } from './insightsTypes'
 

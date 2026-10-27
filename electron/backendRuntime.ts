@@ -201,8 +201,15 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     insights.subscribe(data => api.publish({ topic: 'insights', data })))
   if (automations) releases.push(automations.subscribe(data => api.publish({ topic: 'automations', data })))
   releases.push(options.relay.observe(event => {
+    // Huya is receive-only: no delivery tracking, history, catalog fetch or Douyu statistics.
+    if (event.platform === 'huya') return
+    if (event.type === 'message' && (event.message.platform === 'huya' || event.message.room.startsWith('huya:'))) return
+    if (event.type === 'signal' && event.signal.platform === 'huya') return
+    if (event.type === 'state' && event.room.startsWith('huya:')) return
     if (event.type === 'message') { options.danmaku.observe(event.message); insights.observe(event.message) }
-    else if (event.type === 'signal') insights.signal(event.signal)
+    else if (event.type === 'signal') {
+      if (event.signal.kind !== 'viewers') insights.signal(event.signal)
+    }
     else {
       insights.connection(event.room, event.state)
       if (event.state === 'connected' && Date.now() - (catalogAttempts.get(event.room) ?? 0) >= 60_000 && catalogFlights.size < 4) {
@@ -233,7 +240,10 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
   }
   return {
     api, streams, pip, capture, automations, insights,
-    observeFixture: (message: Parameters<DanmakuFeatures['observe']>[0]) => { options.danmaku.observe(message); insights.observe(message) },
+    observeFixture: (message: Parameters<DanmakuFeatures['observe']>[0]) => {
+      if (message.platform === 'huya' || message.room.startsWith('huya:')) return
+      options.danmaku.observe(message); insights.observe(message)
+    },
     async dispose() {
       lifetime.abort()
       for (const release of releases) release()

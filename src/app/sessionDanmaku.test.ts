@@ -114,6 +114,65 @@ afterEach(() => {
 })
 
 describe('Session danmaku transport', () => {
+  it('normalizes a Huya alias through state without turning the room into a Douyu room', async () => {
+    const { session } = await makeSession()
+    session.connectDanmaku('huya:kpl')
+    const source = StubDanmakuSubscription.instances[0]!
+    expect(source.room).toBe('huya:kpl')
+    source.emit('state', { state: 'connected', room: 'huya:660000' })
+    expect(session.flush().danmaku).toMatchObject({ room: 'huya:660000', connected: true })
+    source.emit('state', { state: 'connected', room: '288016' })
+    expect(session.flush().danmaku.room).toBe('huya:660000')
+    source.emit('danmaku', { platform: 'douyu', text: 'wrong platform', username: '观众' })
+    expect(session.drainDanmaku()).toEqual([])
+    source.emit('state', { state: 'connected', room: 'huya:1234567890123456' })
+    expect(session.flush().danmaku.room).toBe('huya:1234567890123456')
+  })
+
+  it('schedules Huya chat against commentary media time and ignores Douyu sender metadata and scores', async () => {
+    const { session, engine } = await makeSession({ commentaryTime: 100 })
+    session.configureDanmakuProcessing({ filterSuspectedBots: true })
+    session.connectDanmaku('huya:660000')
+    StubDanmakuSubscription.instances[0]!.emit('danmaku', { platform: 'huya', text: '虎牙加油', username: '观众',
+      sender: { uid: '42', level: 12 }, dms: 12 })
+    engine.element('commentary').currentTime = 95
+    expect(session.drainDanmaku()).toEqual([])
+    engine.element('commentary').currentTime = 100
+    const [message] = session.drainDanmaku()
+    expect(message).toMatchObject({ text: '虎牙加油', user: '观众', platform: 'huya', scheduleTime: 100 })
+    expect(message).not.toHaveProperty('sender')
+    expect(message).not.toHaveProperty('dms')
+    expect(session.chatHistory()).toEqual([message])
+  })
+
+  it('hides Huya gifts by default and uses the existing visibility and blocked-user settings', async () => {
+    const { session } = await makeSession()
+    session.connectDanmaku('huya:660000')
+    const source = StubDanmakuSubscription.instances[0]!
+    const payload = { platform: 'huya', text: '赠送虎粮 x2', username: '观众', system: true,
+      huyaGift: { id: '1', count: 2, name: '虎粮' } }
+    source.emit('danmaku', payload)
+    expect(session.drainDanmaku()).toEqual([])
+    session.updateDanmakuSettings({ showGifts: true, density: 0.1, filter: { blockedPatterns: ['礼物'], blockedUsers: ['屏蔽观众'], maxLength: 1 } })
+    source.emit('danmaku', { ...payload, username: '屏蔽观众' })
+    source.emit('danmaku', { ...payload, huyaGift: { id: '1', count: -1 } })
+    source.emit('danmaku', { ...payload, huyaGift: undefined })
+    source.emit('danmaku', payload)
+    payload.huyaGift.count = 999
+    expect(session.drainDanmaku()).toEqual([expect.objectContaining({ platform: 'huya', system: true, text: '赠送虎粮 x2', huyaGift: { id: '1', count: 2, name: '虎粮' } })])
+  })
+
+  it('does not accept Huya metadata into a legacy numeric Douyu subscription', async () => {
+    const { session } = await makeSession()
+    session.connectDanmaku('288016')
+    const source = StubDanmakuSubscription.instances[0]!
+    source.emit('state', { state: 'connected', room: 'huya:288016' })
+    source.emit('danmaku', { platform: 'huya', text: 'wrong platform', username: '观众' })
+    source.emit('danmaku', { text: 'legacy Douyu', username: '观众' })
+    expect(session.flush().danmaku.room).toBe('288016')
+    expect(session.drainDanmaku()).toEqual([expect.objectContaining({ text: 'legacy Douyu', platform: 'douyu' })])
+  })
+
   it('drops gift notices unless they are switched on', async () => {
     const { session, engine } = await makeSession({ commentaryTime: 100 })
     const gift = { kind: 'prop' as const, id: '268', count: 1 }

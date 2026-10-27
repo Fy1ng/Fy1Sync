@@ -43,6 +43,7 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
   onFill: (text: string) => void
 }): React.ReactNode {
   const [section, setSection] = useState<SettingsSection>(target.section)
+  const huya = room?.startsWith('huya:') === true
   useEffect(() => setSection(target.section), [target])
   return (
     <Sheet title="设置" onClose={onClose} wide>
@@ -57,12 +58,15 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
         </nav>
         <div className="settings-body" role="tabpanel" aria-label={SECTIONS.find((item) => item.id === section)?.label}>
           {section === 'general' && <General />}
-          {section === 'douyu' && <DouyuDesk onWatch={(next) => { onWatch(next); onClose() }} />}
-          {section === 'records' && (
+          {huya && ['douyu', 'records', 'insights'].includes(section) && (
+            <p className="settings-empty">当前虎牙房间仅支持只读弹幕, 斗鱼操作与统计暂不可用</p>
+          )}
+          {section === 'douyu' && !huya && <DouyuDesk onWatch={(next) => { onWatch(next); onClose() }} />}
+          {section === 'records' && !huya && (
             <DanmakuRecords initialTab={target.records?.tab ?? 'history'} initialUid={target.records?.uid} room={room}
               onFill={(text) => { onFill(text); onClose() }} />
           )}
-          {section === 'insights' && (room
+          {section === 'insights' && !huya && (room
             ? <RoomInsights room={room} />
             : <p className="settings-empty">连接斗鱼弹幕房间后显示房间数据</p>)}
           {section === 'editor' && <EditorDoor onClose={onClose} />}

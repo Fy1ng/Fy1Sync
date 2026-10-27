@@ -1,0 +1,155 @@
+{
+  "version": 1,
+  "samples": [
+    {
+      "name": "singleChat",
+      "kind": "real-anonymized-reencoded",
+      "source": {
+        "file": "slice-5.bin",
+        "packetIndices": [
+          12
+        ],
+        "capturedOn": "2026-10-27",
+        "room": "a16789"
+      },
+      "hex": "0100000001000000f500eb00000023da0700c80003a00f0100640000003000c100789c63601564add065606438c6c5c4c0606029a3265496995a9e5aa45b9093989c9a919f93925a64c0e8c68dc48dc9e291e12e4316696398c32d04d2ae0422ccf88a13f3324b32ab5253149233124b7ca218180518750c181d180318b9b3a01c9f281e19054688601a430163032377260323d811350d8cdc058c9d3c337956f26c02099ce4b9c6f0e6273fcf4f019e5f823c323adcbf8478c418741978b8ff087f1341768901931b17c84e2b43236313d360ce6dcfbcfa8e3130e60000eeed3d300300000003010000000e010000000f01000000",
+      "expected": [
+        {
+          "uri": "1400",
+          "messageId": "700000000000000001",
+          "username": "viewer-placeholder",
+          "text": "sanitized chat"
+        }
+      ]
+    },
+    {
+      "name": "singleGift",
+      "kind": "real-anonymized-reencoded",
+      "source": {
+        "file": "slice-5.bin",
+        "packetIndices": [
+          295
+        ],
+        "capturedOn": "2026-10-27",
+        "room": "a16789"
+      },
+      "hex": "01000000010000002b012101000023da0700c80003a00f0100650000003000f700789c636015944cd5656064f8c6e8f74e8cbb2027313935233f2725b54881d18881c1c0d299010c0c2cc3440b8a528b53f34a528b749194a5099565a696a38a953134304e605cb3e700e39d674a19252505c556fafaa91589b90539a97a99796589399929fa8965892589457a0579e9dff8193e08307e1364f823f447f89b88407a665a09b2717f44ff88fd12e7e491e4e1fe240172ca274910f94b8a81514687fb8334e31f995fb23c32dcbfe4780418756cb87fcaf37c5060fca3f847e98ff21f956faa0cbfd4d818c418d418cc18b83fabc3fcf34193f1a7168f8d1b577246628995a191b1896930e7b6675e7dc718987200b5f75a4f0300000003010000000e010000000f01000000",
+      "expected": [
+        {
+          "uri": "6501",
+          "messageId": "700000000000000002",
+          "username": "viewer-placeholder",
+          "presenter": "presenter-placeholder",
+          "giftId": "20206",
+          "count": 1,
+          "name": "gift-placeholder"
+        }
+      ]
+    },
+    {
+      "name": "merged",
+      "kind": "real-anonymized-reencoded",
+      "source": {
+        "file": "slice-5.bin",
+        "packetIndices": [
+          307
+        ],
+        "capturedOn": "2026-10-27",
+        "room": "a16789"
+      },
+      "hex": "010000000100000044013a01000023da0700c80003a00f00000000000030001001789c1364646038c1c0c0c0c02a2899aacbc0c8f08281458c4181d18881c1c0d299010c0c2cc3440b8a528b53f34a528b740b7212935333f27352528bd284ca3253cb51c5ca181a182730aed97380f1ce33a58c929282622b7dfdd48ac4dc829c54bdccbcb2c49ccc14fdc4b2c492c422bd82bcf46ffc0c1f0418bf0932fc11fa23fc4d44203d33ad04d9b83fa27fc47e8973f248f2707f920039e5932488fc25c5c028a3c0c8fd47fa8fcc2f591e19ee5f723c028c3a36dc3fe579fe28fc51fca3f447f98fca3755865f6a6c0c620c6a0c660cdc9fd561def9a3f9538bc7c68d2b3923b1c4cad0c8d8c4349873db33afbe630ccc39828c0c0c2747030416202ce00039351a20b00061cd0100734700540300000003010000000e010000000f01000000",
+      "expected": [
+        {
+          "uri": "6501",
+          "messageId": "700000000000000003",
+          "username": "viewer-placeholder",
+          "presenter": "presenter-placeholder",
+          "giftId": "4",
+          "count": 1,
+          "name": "gift-placeholder"
+        },
+        {
+          "uri": "6501",
+          "messageId": "700000000000000004",
+          "username": "viewer-placeholder",
+          "presenter": "presenter-placeholder",
+          "giftId": "4",
+          "count": 1,
+          "name": "gift-placeholder"
+        },
+        {
+          "uri": "6501",
+          "messageId": "700000000000000005",
+          "username": "viewer-placeholder",
+          "presenter": "presenter-placeholder",
+          "giftId": "4",
+          "count": 1,
+          "name": "gift-placeholder"
+        }
+      ]
+    },
+    {
+      "name": "fragmented",
+      "kind": "real-anonymized-reencoded",
+      "source": {
+        "file": "slice-5.bin",
+        "packetIndices": [
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49
+        ],
+        "capturedOn": "2026-10-27",
+        "room": "a16789"
+      },
+      "hex": "01000000010000007f007500000023da0700c80003a00f09002c01000030004b00789ced9c31481b7114c6dfb35430ff1ba2d558f00aba388408da6aa0e2103a08956c0527878a0a0e278a38b66ba7e258682767c9d2c5a15327a70e9d9c3a67ee54306428b1a9dc09b51e890300000003010000000e010000000f01000000020000000100000080007600000023da0700c80003a80f09002c01000030004c0097effdefcb120ec2fd7f7cef7defbd7b079187a38f5fcc89eebd2dea8c9417a4fc52e573e1815c7de69f17b55c7507d1e6d6ceee7eb4bd7358d34f813b0d4a322b2bce2d87957589dcda58e70300000003010000000e010000000f01000000030000000100000080007600000023da0700c80003b00f09002c01000030004c00a7d35adf78ad6fde7f90c6976129eab456c57dfbae6e3d7e8377f18b13bd885f36e317ad625012f76b545a8f3aa7b8d67810ce8a6b4d5c1d5e15775992a182e813095cf7ab3df9734a5d5af80300000003010000000e010000000f01000000040000000100000080007600000023da0700c80003b80f09002c01000030004c00b052df88fe6287950ef48ffb630eda93ed2932e6897128b5916a1aa3fce3233829af3d9f21a9e8b5d3ad04df02638a04251ff3917a5ad1f3a67fa48e34bd69726cbb1b654d33c60cd2e265df0300000003010000000e010000000f01000000050000000100000080007600000023da0700c80003c00f09002c01000030004c00b93d8b2faa80c068838e6da20a429302873a8d88a889082f1c72f3205defcec5b54697ec4461d120456363eb8f79997c242319c9f07b564f35f7ab6651744147f5dbf6673894d00300f64c0c0300000003010000000e010000000f01000000060000000100000080007600000023da0700c80003c80f09002c01000030004c009e7f7e553d92f94486dbc3c085e32ac74063e8e5b995f947327f6b1d361d6635011f334d3de690ce573a3f2a322b4b1ff28e7b750bedccbe6e06ac40dd2c9410ecb062d36117393fb463cef90300000003010000000e010000000f01000000070000000100000080007600000023da0700c80003d00f09002c01000030004c004a67672f86ef5f12e681909b156bbd04f8c514ae684c369a9564761c413a0ecc9674241de9d83306ffe8033c1c63279d3f746c69798832cb3275f3978c2ff8bca5034c3aee7af2605a5ce1ec0300000003010000000e010000000f01000000080000000100000080007600000023da0700c80003d80f09002c01000030004c00931978d881d4cd8049b1e9322a21363a84494a9f3616c00d0d4eb981fef9e17fa4239bb178c2f1ddcda28ca5a158c271a1eb66a0ae413121eb4536bf6a07f3dfbe5e64f2c283705cc6e60af20300000003010000000e010000000f01000000090000000100000080007600000023da0700c80003e00f09002c01000030004c00e5842fc4c0bb695b2cac7f55deee3628717c7ac6c68534a57fad7ca050b7e53dd5b200953cf4b04392b8ebc7a07126e7b2b25ad8dadd3c5a5e78fa6c71e9d5c85973edf85c86a3dfc9823c160300000003010000000e010000000f01000000",
+      "expected": [
+        {
+          "uri": "6210",
+          "messageId": "700000000000000006"
+        }
+      ],
+      "fragmentCount": 9
+    },
+    {
+      "name": "padding",
+      "kind": "real-anonymized-reencoded",
+      "source": {
+        "file": "slice-5.bin",
+        "packetIndices": [
+          0
+        ],
+        "capturedOn": "2026-10-27",
+        "room": "a16789"
+      },
+      "hex": "01000000010000009a039003000023a20f00c8008403ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "expected": []
+    },
+    {
+      "name": "crossPacketBlock",
+      "kind": "real-anonymized-repacketized",
+      "source": {
+        "file": "slice-5.bin",
+        "packetIndices": [
+          12
+        ],
+        "capturedOn": "2026-10-27",
+        "room": "a16789"
+      },
+      "hex": "010000000100000019000f00000023da0700c80003a00f0100010000000100000022001800000023da0700900100003000c100789c63601564add00100000001000000de00d400000023da070065606438c6c5c4c0606029a3265496995a9e5aa45b9093989c9a919f93925a64c0e8c68dc48dc9e291e12e4316696398c32d04d2ae0422ccf88a13f3324b32ab5253149233124b7ca218180518750c181d180318b9b3a01c9f281e19054688601a430163032377260323d811350d8cdc058c9d3c337956f26c02099ce4b9c6f0e6273fcf4f019e5f823c323adcbf8478c418741978b8ff087f1341768901931b17c84e2b43236313d360ce6dcfbcfa8e31b0e70000eef93d360300000003010000000e010000000f01000000",
+      "expected": [
+        {
+          "uri": "1400",
+          "messageId": "700000000000000007",
+          "username": "viewer-placeholder",
+          "text": "sanitized chat"
+        }
+      ]
+    }
+  ]
+}

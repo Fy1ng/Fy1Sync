@@ -45,6 +45,8 @@ describe('danmaku appearance and duplicate processing', () => {
     expect(processor.process({ text: 'a' }, 1)).toMatchObject({ kind: 'hide', reason: 'missing-dms' })
     expect(processor.process({ text: 'a', dms: 0 }, 2).kind).toBe('show')
     expect(processor.process({ text: 'gift', system: true }, 2).kind).toBe('show')
+    expect(processor.process({ text: 'Huya chat', platform: 'huya' }, 3).kind).toBe('show')
+    expect(processor.process({ text: 'Douyu chat', platform: 'douyu' }, 3)).toMatchObject({ kind: 'hide', reason: 'missing-dms' })
   })
 
   it('bounds room/text groups under a burst', () => {

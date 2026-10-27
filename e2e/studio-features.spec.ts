@@ -1,5 +1,5 @@
 import type { ElectronApplication, Page } from '@playwright/test'
-import type { ChatMessage } from '../server/danmaku/douyuProtocol'
+import type { ChatMessage } from '../server/danmaku/types'
 import { expect, test } from './electron'
 import {
   connectDanmaku, fixturesReady, FIXTURES, invoke, loadBothFixtures, mediaTimes,

@@ -5,7 +5,8 @@ import { mkdirSync, watchFile, unwatchFile } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { createDouyuRoomResolver } from '../server/platforms/douyuRoom'
-import { createDesktopService } from '../server/api'
+import { createDesktopService, createResolverDeps } from '../server/api'
+import { resolveHuyaDanmakuRoom } from '../server/platforms/huyaDanmaku'
 import { resolveConfig } from '../server/config'
 import { DanmakuRelay } from '../server/danmaku/relay'
 import { MediaRegistry } from '../server/mediaProxy'
@@ -296,7 +297,12 @@ async function start(): Promise<void> {
     },
   })
   // Offline E2E drives events through the real IPC subscriptions, without a live room.
-  const relay = e2e ? new DanmakuRelay({ createSocket: () => ({ send() {}, close() {}, addEventListener() {} }) }) : new DanmakuRelay()
+  const resolveHuyaRoom = (room: string) => {
+    if (offlineE2e) return Promise.reject(new Error('默认离线测试禁止真实虎牙房间查询'))
+    return resolveHuyaDanmakuRoom(room, createResolverDeps(proxy, media.register).fetchText)
+  }
+  const relay = new DanmakuRelay({ huya: { resolveRoom: resolveHuyaRoom },
+    ...(e2e ? { createSocket: () => ({ send() {}, close() {}, addEventListener() {} }) } : {}) })
   if (douyuAccounts && douyuTasks) {
     const gateway = new DouyuBackpackGateway({ proxy, cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url) })
     const fixtureEnabled = () => !app.isPackaged && offlineE2e && douyuToolsFixture && renewalFixture !== null
@@ -365,7 +371,7 @@ async function start(): Promise<void> {
     },
   })
   const service = createDesktopService({
-    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, registerMedia: media.register, acquisition, decoderPreferences, tools, douyuAccounts, douyuTasks, douyuRenewal,
+    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, resolveHuyaRoom, registerMedia: media.register, acquisition, decoderPreferences, tools, douyuAccounts, douyuTasks, douyuRenewal,
     features: backend?.api,
   })
   session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {

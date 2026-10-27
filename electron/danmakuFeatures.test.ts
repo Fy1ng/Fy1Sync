@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DanmakuFeatures, type DanmakuFeaturesStorage } from './danmakuFeatures'
-import type { ChatMessage } from '../server/danmaku/douyuProtocol'
+import type { ChatMessage } from '../server/danmaku/types'
 
 function fixture(stored?: unknown) {
   let sequence = 0

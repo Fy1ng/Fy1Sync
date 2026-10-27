@@ -4,7 +4,7 @@ import { DEFAULT_MESSAGE_AFFIXES, readMessageAffixes, type MessageAffixes } from
 import { normalizeDouyuUid } from '../src/core/douyuMetadata'
 import { MessageHistory, doseeingHistoryUrl, readHistoryQuery, type MessageHistoryQuery } from '../server/danmaku/messageHistory'
 import { DeliveryTracker } from '../server/danmaku/deliveryTracker'
-import type { ChatMessage } from '../server/danmaku/douyuProtocol'
+import type { ChatMessage } from '../server/danmaku/types'
 
 export interface FavoriteDanmaku {
   id: string
@@ -145,6 +145,7 @@ export class DanmakuFeatures {
   }
 
   observe(message: ChatMessage): boolean {
+    if (message?.platform === 'huya' || (typeof message?.room === 'string' && message.room.startsWith('huya:'))) return false
     if (!this.history.observe(message)) return false
     this.deliveries.observe(message)
     return true
