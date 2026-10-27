@@ -9,12 +9,13 @@ import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { SourceRole } from '../core/types'
 import { bufferStatusText } from '../ui/bufferStatus'
 import { Icon, Popover, Segmented, usePopover } from './kit'
-import { findLiveOfficial } from './officialLive'
 import { PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
 
-export function SourceChip({ role, onEmpty, onShowPreview = null }: {
+export function SourceChip({ role, onEmpty, onSchedule, onShowPreview = null }: {
   role: SourceRole
   onEmpty: () => void
+  /** Open 赛程; offered on the picture's panel. */
+  onSchedule?: () => void
   /** Set while this side's small picture is hidden; offered when the pointer rests on the chip. */
   onShowPreview?: (() => void) | null
 }): React.ReactNode {
@@ -42,14 +43,15 @@ export function SourceChip({ role, onEmpty, onShowPreview = null }: {
         </div>
       )}
       <Popover open={panel.open} onClose={panel.close} className="source-pop" label={`${ROLE_LABEL[role]}片源`}>
-        <SourcePanel role={role} onDone={panel.close} />
+        <SourcePanel role={role} onDone={panel.close} onSchedule={onSchedule} />
       </Popover>
     </div>
   )
 }
 
-function SourcePanel({ role, onDone }: {
+function SourcePanel({ role, onDone, onSchedule }: {
   role: SourceRole
+  onSchedule?: () => void
   onDone: () => void
 }): React.ReactNode {
   const session = useSession()
@@ -74,7 +76,12 @@ function SourcePanel({ role, onDone }: {
           {load.busy ? '载入中' : '载入'}
         </button>
       </form>
-      {role === 'official' && <FindOfficial onDone={onDone} />}
+      {role === 'official' && onSchedule && (
+        <div className="row-split">
+          <span className="muted">CS2 赛事官方直播</span>
+          <button type="button" className="btn-quiet small" onClick={() => { onDone(); onSchedule() }}>打开赛程</button>
+        </div>
+      )}
       {bareRoom && (
         <Segmented label="房间号所属平台" value={roomPlatform} onChange={setRoomPlatform}
           options={[{ value: 'douyu', label: PLATFORM_LABEL.douyu }, { value: 'bilibili', label: PLATFORM_LABEL.bilibili }, { value: 'huya', label: PLATFORM_LABEL.huya }]} />
@@ -140,23 +147,5 @@ function DanmakuRoom(): React.ReactNode {
         <button type="button" className="btn-quiet" onClick={() => { disconnectRoom(); setEditing(false) }}>断开</button>
       )}
     </form>
-  )
-}
-
-/** Replace the picture with whichever CS2 event channel is live now. */
-function FindOfficial({ onDone }: { onDone: () => void }): React.ReactNode {
-  const loader = useSourceLoader()
-  const [status, setStatus] = useState<string | null>(null)
-  const [missed, setMissed] = useState(false)
-  return (
-    <div className="row-split">
-      <span className="muted">{status ?? (missed ? '目前没有正在直播的 CS2 赛事官方频道' : 'CS2 赛事官方直播')}</span>
-      <button type="button" className="btn-quiet small" disabled={status !== null} onClick={() => {
-        setMissed(false)
-        setStatus('正在查找')
-        void findLiveOfficial((url) => loader.loadInput('official', url), (channel) => setStatus(`正在查找 ${channel.name}`))
-          .then((found) => { setStatus(null); if (found) onDone(); else setMissed(true) })
-      }}>查找正在直播的</button>
-    </div>
   )
 }

@@ -1,0 +1,306 @@
+/*
+ * 赛程. Rows read like a broadcast lower third: when, the two teams around the score, then
+ * what is known about the broadcast. The tally red is the one colour, and only for 直播中.
+ */
+
+.studio .sched {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.studio .sched .side-tabs {
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+
+.studio .sched .side-nav [role='tab'] {
+  min-height: 40px;
+  padding-block: 6px;
+  line-height: 1.35;
+}
+
+/* Event names are long and distinguish themselves at the end (2026, Season 13); wrap to two lines. */
+.studio .sched .side-nav [role='tab'] span:first-child {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.studio .sched-live-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tally);
+  box-shadow: 0 0 0 3px rgb(255 77 77 / 18%);
+}
+
+.studio .sched-empty {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  color: var(--ash);
+}
+
+.studio .sched-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 18px 24px 24px;
+}
+
+.studio .sched-event {
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.studio .sched-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.studio .sched-section h4 {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ash);
+}
+
+.studio .sched-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.studio .match {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) auto;
+  grid-template-areas:
+    'when teams watch'
+    'when meta  watch';
+  align-items: center;
+  column-gap: 16px;
+  row-gap: 4px;
+  padding: 12px 14px;
+  background: rgb(255 255 255 / 4%);
+  border: 1px solid transparent;
+  border-radius: var(--r);
+}
+
+.studio .match[data-state='live'] {
+  background: rgb(255 255 255 / 7%);
+  border-color: var(--line-2);
+}
+
+.studio .match[data-state='finished'] {
+  opacity: 0.72;
+}
+
+.studio .match-when {
+  grid-area: when;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--ash);
+}
+
+.studio .match-when .num {
+  font-size: 15px;
+  color: var(--chalk);
+}
+
+.studio .match-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--chalk);
+}
+
+.studio .match-live::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tally);
+  animation: blink 1400ms ease-in-out infinite;
+}
+
+.studio .match-bo {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.studio .match-teams {
+  grid-area: teams;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 14px;
+  min-width: 0;
+}
+
+.studio .match-team {
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 700;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio .match-team.is-right {
+  text-align: left;
+}
+
+.studio .match[data-state='finished'] .match-team:not(.is-win) {
+  color: var(--ash);
+  font-weight: 500;
+}
+
+.studio .match-score {
+  min-width: 52px;
+  font-size: 20px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--ash);
+}
+
+.studio .match[data-state='live'] .match-score {
+  color: var(--chalk);
+}
+
+.studio .match-score i {
+  padding: 0 3px;
+  font-style: normal;
+  color: var(--ash-2);
+}
+
+.studio .match-meta {
+  grid-area: meta;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ash);
+}
+
+.studio .match-stage {
+  flex: none;
+  padding: 0 6px;
+  font-weight: 700;
+  line-height: 18px;
+  color: var(--ink);
+  background: var(--chalk);
+  border-radius: 4px;
+}
+
+/* A channel is a hint about the stage, not the stage: outlined, not filled. */
+.studio .match-stage[data-from='channel'] {
+  font-weight: 500;
+  color: var(--ash);
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+
+.studio .match-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio .match-watch {
+  grid-area: watch;
+  display: flex;
+  gap: 6px;
+}
+
+.studio .sched-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 20px 14px;
+  border-top: 1px solid var(--line);
+}
+
+.studio .sched-foot > p {
+  flex-basis: 100%;
+}
+
+.studio .sched-source {
+  flex: 1;
+  font-size: 12px;
+  color: var(--ash);
+}
+
+.studio .sched-foot .btn-quiet .icon {
+  width: 15px;
+  height: 15px;
+}
+
+@media (max-width: 1100px) {
+  .studio .sched .side-tabs {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+
+  .studio .match {
+    grid-template-columns: 76px minmax(0, 1fr);
+    grid-template-areas:
+      'when teams'
+      'when meta'
+      'watch watch';
+  }
+}
+
+/* Tier: S filled, A outlined, the rest quiet. Read as a label, not a state, so no colour. */
+.studio .sched-badges {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.studio .sched-tier {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ash);
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+
+.studio .sched-tier[data-tier='1'] {
+  color: var(--ink);
+  background: var(--chalk);
+  box-shadow: none;
+}
+
+.studio .sched-tier[data-tier='2'] {
+  color: var(--chalk);
+  box-shadow: inset 0 0 0 1px var(--chalk);
+}
+
+.studio .sched-event {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.studio .sched-event .sched-tier {
+  font-family: var(--cjk);
+  height: 22px;
+  font-size: 12px;
+}

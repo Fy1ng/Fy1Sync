@@ -24,3 +24,48 @@ test('赛程和直播标题只读接口通过真实 IPC 读取离线缓存并校
   expect(result.titles).toMatchObject({ ok: true, value: [{ title: null, stage: null, live: null }] })
   expect(result.bad).toMatchObject({ ok: false, code: 'invalid-arguments' })
 })
+
+test('赛程页按赛事列出对阵, 点击直播流载入为画面, 失败时留在页面并说明', async ({ electronApp, page }) => {
+  await electronApp.evaluate(async ({ app }, payload) => {
+    const { mkdir, writeFile } = process.getBuiltinModule('node:fs/promises')
+    const { join } = process.getBuiltinModule('node:path')
+    const directory = join(app.getPath('userData'), 'events')
+    await mkdir(directory, { recursive: true })
+    const delta = Math.floor(Date.now() / 1000) - 1793032200
+    const html = payload.parse.text['*'].replace(/data-timestamp="(\d+)"/g, (_all, seconds: string) => `data-timestamp="${Number(seconds) + delta}"`)
+    await writeFile(join(directory, 'liquipedia.json'), JSON.stringify({ schema: 1, fetchedAt: Date.now(), payload: { parse: { text: { '*': html } } } }))
+  }, fixture)
+  await page.goto('app://app/')
+  const intake = page.getByRole('dialog', { name: '添加直播间' })
+  await expect(intake).toBeVisible()
+  await intake.getByRole('button', { name: /^CS2 赛程/ }).click()
+  await expect(intake).toBeHidden()
+
+  const sheet = page.getByRole('dialog', { name: '赛程', exact: true })
+  await expect(sheet).toBeVisible()
+  // The event with matches on now leads; both of its live matches are listed under 进行中.
+  const events = sheet.getByRole('tablist', { name: '赛事' })
+  await expect(events.getByRole('tab').first()).toHaveAttribute('aria-selected', 'true')
+  await expect(events.getByRole('tab').first()).toContainText('PGL Masters Bucharest 2026')
+  const live = sheet.getByRole('region', { name: '进行中' })
+  await expect(live.getByRole('listitem', { name: 'G2 Esports 对 DENDELE CS' })).toBeVisible()
+  await expect(live.getByRole('listitem', { name: 'BetBoom Team 对 Natus Vincere' })).toBeVisible()
+  await expect(sheet).toContainText('赛程数据来自 Liquipedia (CC-BY-SA 3.0)')
+
+  // Offline E2E refuses real platform acquisition, which stands in for a stream that will not play.
+  const match = live.getByRole('listitem', { name: 'G2 Esports 对 DENDELE CS' })
+  await match.getByRole('button', { name: /^在YouTube观看 G2 Esports 对 DENDELE CS/ }).click()
+  await expect(sheet.getByRole('alert')).toContainText('该直播流未能载入')
+  await expect(sheet).toBeVisible()
+  await expect(page.locator('.chip[data-role="official"]')).toHaveAttribute('data-status', 'empty')
+
+  // Opened from 添加直播间, closing goes back there rather than to the bare player.
+  await sheet.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(sheet).toBeHidden()
+  await expect(intake).toBeVisible()
+  await intake.getByRole('button', { name: /^CS2 赛程/ }).click()
+  await expect(sheet).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(sheet).toBeHidden()
+  await expect(intake).toBeVisible()
+})

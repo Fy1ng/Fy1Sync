@@ -59,7 +59,7 @@ describe('Huya sources', () => {
       platform: 'huya', kind: 'hls', url: 'app://app/media/huya-session', label: '虎牙 660000',
       channel: '660000', sourceRoom: '660000', requiresProxy: false,
     } } })
-    mount(session, <Intake onClose={() => {}} pendingFile={null} />)
+    mount(session, <Intake onClose={() => {}} onSchedule={() => {}} pendingFile={null} />)
     const field = screen.getByLabelText('直播间链接')
     fireEvent.change(field, { target: { value: room } })
     fireEvent.submit(field.closest('form')!)

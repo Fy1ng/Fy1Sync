@@ -1,6 +1,8 @@
 export const MAX_COMPOSED_MESSAGE_UNITS = 500
 export const MAX_COMPOSED_MESSAGE_BYTES = 2_000
-const UNSAFE_TEXT = /[\x00-\x1f\x7f-\x9f\u2028\u2029]/
+// Same set the main process rejects (server/featureApi.ts boundedText), bidi overrides included:
+// they reorder what the room sees and would only come back as 扩展接口参数无效.
+const UNSAFE_TEXT = /[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]/
 const BROKEN_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/
 
 export type CompositionErrorCode = 'empty' | 'too-long' | 'invalid-text' | 'invalid-options'

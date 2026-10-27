@@ -26,6 +26,7 @@ import { Intake } from './Intake'
 import { Icon } from './kit'
 import { PipButton } from './PipButton'
 import type { RecordsTab } from './records/DanmakuRecords'
+import { ScheduleSheet } from './schedule/ScheduleSheet'
 import { SettingsSheet, type SettingsSection, type SettingsTarget } from './SettingsSheet'
 import { SourceChip } from './SourceChip'
 import { SourceLoaderProvider, ROLE_LABEL, useSourceLoader } from './sources'
@@ -66,6 +67,9 @@ function StudioView(): React.ReactNode {
   const [framing, setFraming] = useState(false)
   const [previewHidden, setPreviewHidden] = useState(false)
   const [addingStream, setAddingStream] = useState(false)
+  // Where 赛程 was opened from: closing it, by choice or after a pick, goes back there.
+  const [scheduleFrom, setScheduleFrom] = useState<'intake' | 'source' | null>(null)
+  const scheduleOpen = scheduleFrom !== null
   const openRecords = useCallback((tab: RecordsTab, uid?: string) => setSettingsAt({ section: 'records', records: { tab, uid } }), [])
   const loader = useSourceLoader()
   const composer = useComposer()
@@ -76,7 +80,7 @@ function StudioView(): React.ReactNode {
   // the dock, whose height changes as it folds into two rows on a narrow window.
   usePublishedHeight(dock, theater, '--bar-clearance')
 
-  const busyChrome = intake || tuning || settingsAt !== null || addingStream
+  const busyChrome = intake || tuning || settingsAt !== null || addingStream || scheduleOpen
   const chrome = useOverlayVisibility(3200, !snapshot.playing || busyChrome)
   // The drawer is the room's chat; with no room there is nothing to hold it open for.
   const hasRoom = snapshot.danmaku.connected || snapshot.danmaku.room !== null
@@ -184,6 +188,7 @@ function StudioView(): React.ReactNode {
             <div className="topbar-sources">
               {SOURCE_ROLES.map((role) => (
                 <SourceChip key={role} role={role} onEmpty={() => setIntake(true)}
+                  onSchedule={role === 'official' ? () => setScheduleFrom('source') : undefined}
                   onShowPreview={previewHidden && role === otherRole && snapshot.media[role].status !== 'empty'
                     ? () => setPreviewHidden(false) : null} />
               ))}
@@ -243,13 +248,19 @@ function StudioView(): React.ReactNode {
           )}
 
           {tuning && <DanmakuPanel onClose={() => setTuning(false)} />}
-          {(intake || (empty && droppedFile)) && <Intake onClose={closeIntake} pendingFile={droppedFile} />}
+          {(intake || (empty && droppedFile)) && <Intake onClose={closeIntake} pendingFile={droppedFile} onSchedule={() => { closeIntake(); setScheduleFrom('intake') }} />}
         </main>
 
         {chatOpen && (
           <ChatDrawer onClose={() => setChat(false)} onOpenSettings={openSettings} onOpenRecords={openRecords} />
         )}
 
+        {scheduleOpen && (
+          <ScheduleSheet onWatch={(url) => loader.loadInput('official', url)} onClose={() => {
+            if (scheduleFrom === 'intake') setIntake(true)
+            setScheduleFrom(null)
+          }} />
+        )}
         {settingsAt && (
           <SettingsSheet target={settingsAt} room={snapshot.danmaku.room} onClose={() => setSettingsAt(null)}
             onWatch={(room) => void loader.loadInput('commentary', room, 'douyu')}

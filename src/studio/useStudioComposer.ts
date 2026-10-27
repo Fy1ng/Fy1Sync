@@ -22,12 +22,31 @@ import type { DanmakuFeaturesSnapshot } from '../../electron/danmakuFeatures'
 import type { DeliveryEvidence } from '../../server/danmaku/deliveryTracker'
 import type { DouyuMessageOutcome, DouyuTasksSnapshot } from '../../server/douyu/types'
 
-type ActiveAccount = { id: string; label: string; loggedIn: boolean; busy: boolean }
+/**
+ * `canSend` is main's own check of the send credentials, which is stricter than the website
+ * login `loggedIn` reports. Absent (an older main) means unknown, treated as able to try.
+ */
+type ActiveAccount = { id: string; label: string; loggedIn: boolean; busy: boolean; canSend: boolean | null; missing: string[] }
 type SendMode = 'message' | 'repeat'
 type SendOperation = { context: number; draftVersion: number | null }
 
 const UNCERTAIN = '发送结果无法确认。请在官方直播间核对后再决定是否重发。'
 const DELIVERY_POLL_MS = 1500
+
+/**
+ * Why a logged-in account still cannot send, in the viewer's words. The field names are
+ * main's fixed list (never values); they are kept so a report can say exactly what is gone.
+ */
+export function credentialProblem(missing: readonly string[]): string {
+  const device = missing.some((name) => ['acf_did', 'dy_did', 'did'].includes(name))
+  const parts = [
+    missing.includes('acf_uid') ? '用户编号' : null,
+    missing.includes('acf_username') ? '用户名' : null,
+    device ? '设备标识' : null,
+    missing.some((name) => ['acf_auth_wl', 'acf_dmjwt_token', 'acf_ltkid', 'acf_biz', 'acf_stk'].includes(name)) ? '登录凭证' : null,
+  ].filter(Boolean)
+  return `当前账号缺少发送弹幕所需的${parts.length ? parts.join('、') : '登录信息'}，请在斗鱼账号中重新登录。`
+}
 
 export function useStudioComposer({ connected, room }: { connected: boolean; room: string | null }) {
   const [account, setAccount] = useState<ActiveAccount | null>(null)
@@ -78,7 +97,11 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
       if (!result.ok || !Array.isArray(result.value?.accounts)) throw new Error('Unavailable account snapshot')
       const selected = result.value.accounts.find((item) => item.id === result.value.activeAccountId)
       const current = selected && typeof selected.id === 'string' && typeof selected.label === 'string'
-        ? { id: selected.id, label: selected.label, loggedIn: selected.login?.loggedIn === true, busy: selected.busy === true }
+        ? { id: selected.id, label: selected.label, loggedIn: selected.login?.loggedIn === true, busy: selected.busy === true,
+          canSend: typeof selected.login?.canSend === 'boolean' ? selected.login.canSend : null,
+          missing: Array.isArray(selected.login?.missingCredentialFields)
+            ? selected.login.missingCredentialFields.filter((name: unknown): name is string => typeof name === 'string' && /^[A-Za-z_]{1,32}$/.test(name))
+            : [] }
         : null
       displayedAccount.current = current
       setAccount(current)
@@ -153,8 +176,10 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
 
   const problem = !connected || !room || !/^[1-9]\d{0,11}$/.test(room) ? '连接斗鱼弹幕后才能发送。'
     : loading ? '正在读取当前斗鱼账号…'
-      : accountError || (!account?.loggedIn ? '请在斗鱼账号中登录并设为当前账号。' : account.busy ? '账号正在处理登录操作，请稍后发送。' : null)
-  const key = JSON.stringify([connected, room, account?.id, account?.loggedIn, account?.busy])
+      : accountError || (!account?.loggedIn ? '请在斗鱼账号中登录并设为当前账号。'
+        : account.busy ? '账号正在处理登录操作，请稍后发送。'
+          : account.canSend === false ? credentialProblem(account.missing) : null)
+  const key = JSON.stringify([connected, room, account?.id, account?.loggedIn, account?.busy, account?.canSend])
   const currentContext = useRef({ key, account, room, problem })
   useLayoutEffect(() => {
     if (currentContext.current.key !== key) resetContext()
@@ -242,7 +267,9 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
     account, room, draft, setDraft, pending, notice, delivery, remaining, blockedReason, refreshAccounts, affixes,
     // Initial identity/room resolution resets the context. Do not accept typing before
     // that boundary; ordinary same-account refreshes keep the editor live.
-    canEdit: connected && !!room && /^[1-9]\d{0,11}$/.test(room) && account?.loggedIn === true && !account.busy,
+    canEdit: connected && !!room && /^[1-9]\d{0,11}$/.test(room) && account?.loggedIn === true && !account.busy && account.canSend !== false,
+    /** Logged in on the website, but missing what the danmaku gateway needs: a relogin fixes it. */
+    needsRelogin: account?.loggedIn === true && account.canSend === false,
     draftProblem: draftComposition.problem,
     /** Length of what will actually be sent, prefix and suffix included. */
     composedLength: draftComposition.text?.length ?? draft.length,
