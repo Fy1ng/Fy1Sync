@@ -12,13 +12,17 @@ import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { parseSourceInput } from '../core/mediaSources'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
-import { findLiveOfficial } from './officialLive'
 import { Icon } from './kit'
 import { FIXTURES, PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, routeFor, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
 
 type Pending = { kind: 'text'; value: string } | { kind: 'file'; file: File } | { kind: 'room'; value: string; room: string }
 
-export function Intake({ onClose, pendingFile }: { onClose: () => void; pendingFile: File | null }): React.ReactNode {
+export function Intake({ onClose, pendingFile, onSchedule }: {
+  onClose: () => void
+  pendingFile: File | null
+  /** Open 赛程, to pick the official broadcast by match. */
+  onSchedule: () => void
+}): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const loader = useSourceLoader()
@@ -26,8 +30,6 @@ export function Intake({ onClose, pendingFile }: { onClose: () => void; pendingF
   const [ask, setAsk] = useState<Pending | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [fixtures, setFixtures] = useState(false)
-  const [finding, setFinding] = useState<string | null>(null)
-  const findRun = useRef(0)
   const field = useRef<HTMLInputElement | null>(null)
   const media = snapshot.media
   const bothReady = media.official.status === 'ready' && media.commentary.status === 'ready'
@@ -120,24 +122,10 @@ export function Intake({ onClose, pendingFile }: { onClose: () => void; pendingF
         )}
 
         {media.official.status === 'empty' && !loader.state.official.busy && (
-          <button type="button" className="intake-find" disabled={finding !== null} onClick={() => {
-            const run = ++findRun.current
-            setError(null)
-            setFinding('正在查找')
-            void findLiveOfficial(
-              (url) => loader.loadInput('official', url),
-              (channel) => { if (findRun.current === run) setFinding(`正在查找 ${channel.name}`) },
-              undefined,
-              () => findRun.current !== run,
-            ).then((found) => {
-              if (findRun.current !== run) return
-              setFinding(null)
-              if (!found) setError('目前没有正在直播的 CS2 赛事官方频道')
-            })
-          }}>
+          <button type="button" className="intake-find" onClick={onSchedule}>
             <Icon name="trophy" />
-            <span>{finding ?? '正在进行的 CS2 赛事'}</span>
-            <small>自动查找 YouTube 官方直播间并载入为画面</small>
+            <span>CS2 赛程</span>
+            <small>按对阵选择官方直播，载入为画面</small>
           </button>
         )}
 

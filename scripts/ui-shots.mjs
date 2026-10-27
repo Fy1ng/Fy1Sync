@@ -3,7 +3,7 @@
  * Run npm run build first, then npm run shots -- --out <directory>.
  * Each state is reported separately; failed states produce a non-zero exit code.
  */
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { resolve, join, dirname, basename } from 'node:path'
@@ -184,6 +184,23 @@ async function captureViewport(viewport) {
       await dialog.getByRole('textbox', { name: '直播间链接', exact: true }).fill('6657')
       await dialog.getByRole('textbox', { name: '直播间链接', exact: true }).press('Enter')
       await dialog.getByRole('group', { name: '选择房间号所属平台', exact: true }).waitFor()
+    })
+    await step(page, prefix + '-02b-schedule', async () => {
+      // The checked-in Liquipedia fixture, shifted so its live matches are live now.
+      const fixture = JSON.parse(await readFile(join(root, 'server', 'esports', 'fixtures', 'liquipedia-matches.json'), 'utf8'))
+      await application.evaluate(async ({ app }, payload) => {
+        const { mkdir: makeDir, writeFile: write } = process.getBuiltinModule('node:fs/promises')
+        const { join: joinPath } = process.getBuiltinModule('node:path')
+        const directory = joinPath(app.getPath('userData'), 'events')
+        await makeDir(directory, { recursive: true })
+        const delta = Math.floor(Date.now() / 1000) - 1793032200
+        const html = payload.parse.text['*'].replace(/data-timestamp="(\d+)"/g, (_all, seconds) => `data-timestamp="${Number(seconds) + delta}"`)
+        await write(joinPath(directory, 'liquipedia.json'), JSON.stringify({ schema: 1, fetchedAt: Date.now(), payload: { parse: { text: { '*': html } } } }))
+      }, fixture)
+      const dialog = await intake(page)
+      await dialog.getByRole('button', { name: /^CS2 赛程/ }).click()
+      const sheet = page.getByRole('dialog', { name: '赛程', exact: true })
+      await sheet.getByRole('region', { name: '进行中' }).waitFor()
     })
     await step(page, prefix + '-03-empty-stage', async () => {
       await page.getByRole('button', { name: '添加直播间', exact: true }).waitFor()

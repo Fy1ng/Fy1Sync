@@ -202,9 +202,18 @@ export function Sheet({ title, onClose, children, wide = false }: {
   children: React.ReactNode
   wide?: boolean
 }): React.ReactNode {
+  // Focus moves into the sheet when it opens, so Escape (handled on the sheet) closes it even
+  // when it was opened by a button that has since gone away, such as one in 添加直播间.
+  const ref = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    const node = ref.current
+    if (node && !node.contains(document.activeElement)) node.focus({ preventScroll: true })
+  }, [])
   return (
     <div className="sheet-scrim" onPointerDown={onClose}>
       <section
+        ref={ref}
+        tabIndex={-1}
         className={`sheet ${wide ? 'is-wide' : ''}`.trim()}
         role="dialog"
         aria-modal="true"
