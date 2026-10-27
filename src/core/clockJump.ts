@@ -1,4 +1,4 @@
-import type { ClockJumpEvent, ClockReading, RecognitionOutcome, SourceRole } from './types'
+import { MIN_SYNC_CONFIDENCE, type ClockJumpEvent, type ClockReading, type RecognitionOutcome, type SourceRole } from './types'
 
 /**
  * Turns a stream of per-frame countdown readings into confirmed `n -> n-1` jump events.
@@ -81,7 +81,7 @@ export class ClockJumpDetector {
     private readonly source: SourceRole,
     options: ClockJumpOptions = {},
   ) {
-    this.minConfidence = options.minConfidence ?? 0.82
+    this.minConfidence = options.minConfidence ?? MIN_SYNC_CONFIDENCE
     this.stableFrames = Math.max(1, options.stableFrames ?? 2)
     this.jumpIntervalRange = options.jumpIntervalRange ?? [0.4, 2.5]
     this.format = options.format ?? 'auto'

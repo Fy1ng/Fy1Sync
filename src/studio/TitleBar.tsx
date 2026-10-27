@@ -32,7 +32,7 @@ export function TitleBar({ detail }: { detail?: string }): React.ReactNode {
   return (
     <header className="titlebar">
       <span className="titlebar-mark" aria-hidden="true" />
-      <span className="titlebar-name">Stream Syncer</span>
+      <span className="titlebar-name">Fy1Sync</span>
       {detail && <span className="titlebar-detail">{detail}</span>}
     </header>
   )

@@ -8,6 +8,8 @@ import type { DouyuMuteInput, DouyuModerationTarget, DouyuModerationOutcome, Dou
 import type { DouyuRoomInsights, DouyuFollowedRooms, DouyuBadgeAges, DouyuMonthlySpending, DouyuWatchTime } from '../server/douyu/insightsTypes'
 import type { AppUpdateState } from './appUpdateService'
 import { BACKEND_METHODS, type BackendMethods } from './backendContracts'
+import type { Cs2Schedule, StreamTitle, StreamTitleInput } from '../server/esports/types'
+export type { Cs2Schedule, Cs2Match, Cs2Team, Cs2Stream, StreamTitle, StreamTitleInput } from '../server/esports/types'
 
 /** This context is constructed by trusted IPC, never read from renderer arguments. */
 export interface FeatureCallContext { readonly senderId?: number }
@@ -16,6 +18,8 @@ export interface DouyuLiveNotificationSettings { enabled: boolean; rooms?: strin
 export interface DouyuLiveNotificationState { enabled: boolean; rooms: string[]; followedAccountId: string | null }
 
 export interface FeatureMethods extends BackendMethods {
+  getCs2Schedule: { args: { refresh?: boolean } | undefined; result: Cs2Schedule }
+  getStreamTitles: { args: { streams: StreamTitleInput[] }; result: StreamTitle[] }
   /** Implemented by IPC after checking this window's established room subscriptions. */
   activateDouyuRoom: { args: { room: string }; result: { room: string } }
   getDanmakuFeatures: { args: undefined; result: DanmakuFeaturesSnapshot }
@@ -49,6 +53,7 @@ export type FeatureMethod = keyof FeatureMethods
 /** One whitelist shared by preload and the feature dispatcher. */
 export const FEATURE_METHODS = [
   ...BACKEND_METHODS,
+  'getCs2Schedule', 'getStreamTitles',
   'activateDouyuRoom', 'getDanmakuFeatures', 'setDanmakuPreferences', 'setMessageAffixes',
   'queryDanmakuHistory', 'queryDanmakuFavorites', 'addDanmakuFavorite', 'updateDanmakuFavorite', 'removeDanmakuFavorite',
   'getDanmakuRate', 'getDanmakuUserDetails', 'openDanmakuHistory', 'getDouyuDelivery', 'sendComposedDouyuMessage',

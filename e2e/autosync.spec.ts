@@ -28,6 +28,7 @@ import {
   failOnPageError,
   fixturesReady,
   loadBothFixtures,
+  loadSource,
   mediaTimes,
   offsetReadout,
   openAlignOptions,
@@ -75,10 +76,12 @@ test.describe('无预设自动同步', () => {
     const options = await openAlignOptions(page)
     await expect(options.getByRole('combobox', { name: '倒计时样式' }).locator('option:checked')).toHaveText('自动识别')
     await page.keyboard.press('Escape')
-    await loadBothFixtures(page)
-    // Leave twelve seconds for discovery and enough changing clock for measurement.
+    await loadSource(page, 'official', '/test-sources/auto-official.mp4')
+    await loadSource(page, 'commentary', '/test-sources/auto-commentary.mp4')
+    // Leave separate live windows for discovery and native ROI learning, then measurement.
     await seekBoth(page, 0.25, 0.25)
     await setPlaying(page, true)
+    await revealOverlay(page)
     await page.getByRole('button', { name: '自动对齐', exact: true }).click()
     for (const role of ['official', 'commentary']) {
       const card = page.locator(`.prompt[data-role="${role}"]`)
@@ -222,6 +225,7 @@ test.describe('自动同步', () => {
     await seekBoth(page, START_SECONDS, START_SECONDS)
     await setPlaying(page, true)
 
+    await revealOverlay(page)
     await page.getByRole('button', { name: '自动对齐', exact: true }).click()
     await waitForPhase(page, '已完成')
 
@@ -255,6 +259,7 @@ test.describe('自动同步', () => {
     await seekBoth(page, START_SECONDS, START_SECONDS)
     await setPlaying(page, true)
 
+    await revealOverlay(page)
     await page.getByRole('button', { name: '自动对齐', exact: true }).click()
     await waitForPhase(page, '已完成')
     const auto = (await offsetReadout(page)).requested

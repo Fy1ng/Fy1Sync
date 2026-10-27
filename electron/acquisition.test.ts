@@ -40,6 +40,40 @@ function harness(overrides: Partial<ConstructorParameters<typeof Acquisition>[0]
 }
 
 describe('main acquisition boundary', () => {
+  it('buffers the highest Twitch rendition from a low-first master and selects again after reconnect', async () => {
+    const requests: string[] = []
+    let second = false
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input); requests.push(url)
+      if (url === 'https://gql.twitch.tv/gql') return Response.json({ data: { streamPlaybackAccessToken: { value: 'PRIVATE_TOKEN', signature: 'PRIVATE_SIG' } } })
+      if (url.startsWith('https://usher.ttvnw.net/')) return new Response(null, { status: 302, headers: { Location: 'https://video.ttvnw.net/redirected/master.m3u8' } })
+      const variants = [
+        '#EXT-X-STREAM-INF:BANDWIDTH=10000000,CODECS="mp4a.40.2"\naudio.m3u8',
+        '#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=854x480,FRAME-RATE=30,CODECS="avc1.4D401E,mp4a.40.2"\nlow.m3u8',
+        '#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,FRAME-RATE=60,CODECS="avc1.64002A,mp4a.40.2"\nhigh.m3u8?signature=PRIVATE_' + (second ? 'NEW' : 'FIRST'),
+      ]
+      return new Response('#EXTM3U\n' + (second ? variants.reverse() : variants).join('\n'))
+    })
+    const h = harness({ fetchImpl })
+    const result = await h.acquisition.resolve('twitch.tv/pgl', 'twitch', 'official', undefined, true)
+    expect(result).toMatchObject({ ok: true, stream: { platform: 'twitch', url: expect.stringContaining('app://app/buffer/') } })
+    expect(h.inputs[0]?.url).toBe('https://video.ttvnw.net/redirected/high.m3u8?signature=PRIVATE_FIRST')
+    expect(requests.some(url => new URL(url).searchParams.get('allow_source') === 'true')).toBe(true)
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE|ttvnw/)
+    second = true
+    expect((await h.reconnect()).url).toBe('https://video.ttvnw.net/redirected/high.m3u8?signature=PRIVATE_NEW')
+    expect(h.runYtDlp).not.toHaveBeenCalled()
+  })
+
+  it.each(['https://127.0.0.1/private.m3u8', 'https://169.254.169.254/private.m3u8'])('rejects an unsafe highest Twitch rendition before buffering: %s', async uri => {
+    const h = harness({ fetchImpl: async input => String(input).includes('gql.twitch.tv')
+      ? Response.json({ data: { streamPlaybackAccessToken: { value: 'PRIVATE', signature: 'PRIVATE' } } })
+      : new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,FRAME-RATE=60\n' + uri),
+    })
+    await expect(h.acquisition.resolve('twitch.tv/pgl', 'twitch', 'official', undefined, true)).rejects.toHaveProperty('reason', 'private-address')
+    expect(h.buffer.start).not.toHaveBeenCalled()
+  })
+
   it('keeps adaptive video/audio URLs private while passing the preference and re-resolving the best HLS fallback', async () => {
     const h = harness()
     const metadata = await h.runYtDlp()

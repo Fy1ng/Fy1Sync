@@ -1,4 +1,6 @@
-# Stream Syncer
+# Fy1Sync
+
+原名 Stream Syncer. 当前仍处于开发阶段, 暂未实现旧版用户数据迁移.
 
 把官方赛事纯净流和国内解说流对到同一个时间点: **官方画面 + 解说声音 + 弹幕叠加**.
 
@@ -63,7 +65,7 @@ node scripts/verify-packaged.mjs
 
 electron-builder 固定为 26.15.3, Electron 更新为 44.9.3, React 沿用既有版本. 构建输出在忽略的 `.release/`, 工具下载缓存与最小应用暂存位于 `.packaging/`. 首次显式执行 `tools:prepare` 或 `package:win` 时下载 [固定清单](packaging/tools-lock.json)中的工具和源码, 校验版本, 大小与 SHA256, 使用单独固定的 provider 依赖补丁 lock 和 canvas N-API 包准备依赖. provider 仍为 2.0.2 原实现, 补丁固定 follow-redirects 1.16.1, ip-address 10.7.4, body-parser 2.4.0 和 Undici 7.30.1; [补丁清单](packaging/provider-dependency-patches.json)及有效依赖索引随包保留. 保留已验证缓存; BtbN 日构建仅保留 14 天, 缺失时脚本应失败, 不自动改用 latest. 本地验证使用默认 Electron 图标, 未复用 Android 图标, 没有签名或外部发布.
 
-应用包只从生成的最小文件白名单和受控资源目录构建. exe、DLL 和 provider 原生依赖位于 ASAR 外. 不包含本工程测试媒体和测试代码、cookie、Profile 或开发工作区; 第三方完整源码归档另作许可材料保留. 开发用测试源入口在发行包中隐藏, 用户仍可通过本地文件入口加载自己的媒体. NSIS 强制当前用户安装, 不建桌面/开始菜单快捷方式, 不自动启动, 卸载保留应用数据; ZIP 解压后运行 `Stream Syncer.exe`.
+应用包只从生成的最小文件白名单和受控资源目录构建. exe、DLL 和 provider 原生依赖位于 ASAR 外. 不包含本工程测试媒体和测试代码、cookie、Profile 或开发工作区; 第三方完整源码归档另作许可材料保留. 开发用测试源入口在发行包中隐藏, 用户仍可通过本地文件入口加载自己的媒体. NSIS 强制当前用户安装, 不建桌面/开始菜单快捷方式, 不自动启动, 卸载保留应用数据; 默认安装目录为 `%LOCALAPPDATA%\Programs\Fy1Sync`; ZIP 解压后运行 `Fy1Sync.exe`.
 
 NSIS 对最终安装目录实施按实际资源最长相对路径计算的长度上限, 当前为100个UTF-16字符, 避免 Windows 传统路径限制导致卸载残留. 静默或交互初始化收到超长 `/D` 时返回2, 目录页也禁止继续超长路径. `package:win` 的局部构建适配只删除固定NSIS模板中早于检查的初始目录创建, 在内存中核验26.15.3及模板SHA256后执行, 不改写依赖文件或默认卸载器生成流程. 不直接调用 electron-builder CLI 绕过该入口. 已有安装会使 `powershell -NoProfile -File scripts/verify-installer.ps1` 跳过, 避免覆盖日常安装.
 

@@ -71,7 +71,7 @@ export async function officialDownload(url: string, limit: number, consume: (byt
       const parsed = new URL(current)
       if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port || parsed.hash || !hosts.has(parsed.hostname)) throw new UpdateError('network')
       const response = await transport(current, { redirect: 'manual', signal: controller.signal,
-        headers: { 'User-Agent': 'Stream-Syncer-Manual-Updater', 'Accept-Encoding': 'identity', Accept: parsed.hostname === 'api.github.com' ? 'application/vnd.github+json' : 'application/octet-stream' } })
+        headers: { 'User-Agent': 'Fy1Sync-Manual-Updater', 'Accept-Encoding': 'identity', Accept: parsed.hostname === 'api.github.com' ? 'application/vnd.github+json' : 'application/octet-stream' } })
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         await response.body?.cancel()
         const location = response.headers.get('location')

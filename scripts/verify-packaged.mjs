@@ -85,7 +85,7 @@ for (const [label, folder] of [['unpacked', path.join(root, '.release', 'win-unp
   await mkdir(path.join(profile, 'temp'))
   let application, result
   try {
-    const exe = path.join(folder, 'Stream Syncer.exe'), tools = path.join(folder, 'resources', 'tools')
+    const exe = path.join(folder, 'Fy1Sync.exe'), tools = path.join(folder, 'resources', 'tools')
     const runtimePath = path.join(folder, 'resources', 'app.asar.unpacked', 'electron', 'network-runtime.cjs')
     const runtimeEnv = { ...cleanEnv, TEMP: path.join(profile, 'temp'), TMP: path.join(profile, 'temp') }
     const env = { ...runtimeEnv, STREAM_SYNC_E2E: '1', STREAM_SYNC_OFFLINE_E2E: '1', STREAM_SYNC_USER_DATA_DIR: profile, STREAM_SYNC_DATA_DIR: path.join(profile, 'data') }
@@ -126,7 +126,7 @@ for (const [label, folder] of [['unpacked', path.join(root, '.release', 'win-unp
       let output = ''; child.stdout.on('data', b => output += b)
       child.once('error', reject); child.once('close', code => code === 0 && output.trim() === 'PRIVATE_OK' ? resolve(true) : reject(new Error('Provider cache is not private')))
     }), path.join(profile, 'provider-cache'))
-    await expect(page).toHaveTitle('Stream Sync Player')
+    await expect(page).toHaveTitle('Fy1Sync')
     const intake = page.getByRole('dialog', { name: '添加直播间', exact: true })
     await expect(intake).toBeVisible()
     await expect(page.getByRole('button', { name: '载入测试片源', exact: true })).toHaveCount(0)

@@ -20,7 +20,7 @@
 import type { RecognitionProfile } from '../core/profileSchema'
 import { ClockJumpDetector, parseCountdown } from '../core/clockJump'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
-import { SOURCE_ROLES } from '../core/types'
+import { MIN_SYNC_CONFIDENCE, SOURCE_ROLES } from '../core/types'
 import { RecognitionClient, type WorkerLike } from './client'
 import { FrameGrabber, startFrameLoop } from './frameGrabber'
 import type { ResultMessage } from './protocol'
@@ -269,7 +269,7 @@ export class RecognitionSampler {
       channel.pendingMoment = moment
     }
     const outcome = message.outcome
-    if (outcome.status !== 'success' || outcome.reading.confidence < 0.82) return outcome
+    if (outcome.status !== 'success' || outcome.reading.confidence < MIN_SYNC_CONFIDENCE) return outcome
     const reading = outcome.reading
     if (parseCountdown(reading.text) !== reading.seconds) return outcome
     const previousSeconds = channel.lastSeconds

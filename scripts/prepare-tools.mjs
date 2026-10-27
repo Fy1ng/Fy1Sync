@@ -39,7 +39,7 @@ async function download(asset, destination) {
     for (let count = 0; count <= 4; count++) {
       const url = new URL(current)
       if (url.protocol !== 'https:' || url.username || url.password || url.port || !allowedHosts.has(url.hostname)) throw new Error('Untrusted build download destination')
-      const response = await fetch(current, { signal, redirect: 'manual', headers: { 'User-Agent': 'Stream-Syncer-Reproducible-Build', 'Accept-Encoding': 'identity' } })
+      const response = await fetch(current, { signal, redirect: 'manual', headers: { 'User-Agent': 'Fy1Sync-Reproducible-Build', 'Accept-Encoding': 'identity' } })
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         await response.body?.cancel()
         const location = response.headers.get('location')

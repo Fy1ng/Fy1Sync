@@ -38,6 +38,13 @@ export const DEFAULT_PROXY_HOSTS = [
   'api.live.bilibili.com',
 ]
 
+/** Metadata only. These hosts do not grant renderer/media-proxy access. */
+export const METADATA_HOSTS = ['liquipedia.net', 'www.youtube.com', 'gql.twitch.tv'] as const
+export function metadataConfig(): ProxyConfig {
+  return { enabled: true, hosts: [...METADATA_HOSTS], allowNonStandardPorts: false,
+    allowNonLoopbackTargets: false, maxRedirects: 0, requestTimeoutMs: 15_000 }
+}
+
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on'])
 const FALSE_VALUES = new Set(['0', 'false', 'no', 'off'])
 

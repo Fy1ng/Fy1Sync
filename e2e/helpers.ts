@@ -332,6 +332,11 @@ export async function seekBoth(page: Page, official: number, commentary: number)
 export async function revealOverlay(page: Page): Promise<void> {
   await page.locator('main.theater').hover({ position: { x: 20, y: 80 } })
   await expect(page.locator('main.theater')).toHaveAttribute('data-chrome', 'on')
+  // The state changes before the 220 ms fade/translation finishes. A mouse click
+  // must wait for the real dock to finish moving, not just for its state flag.
+  await expect(page.locator('.dock')).toHaveCSS('opacity', '1')
+  await expect(page.locator('.dock')).toHaveCSS('pointer-events', 'auto')
+  await expect(page.locator('.dock')).toHaveCSS('transform', 'none')
 }
 
 export async function setPlaying(page: Page, playing: boolean): Promise<void> {

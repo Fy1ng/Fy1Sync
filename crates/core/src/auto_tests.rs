@@ -205,6 +205,7 @@ fn self_learning_recovers_exact_labels_and_valid_v2_profile() {
     assert!(report.reason.is_none(), "{:?}", report);
     assert_eq!(report.consistent_offsets, 1);
     let profile = report.profile.unwrap();
+    assert_eq!(profile.match_threshold, 0.82);
     assert!(validate_profile(&serde_json::to_value(&profile).unwrap())["profile"].is_object());
     assert_eq!(report.learned_chars.len(), 11);
     for n in 0..30 {

@@ -40,9 +40,9 @@ const DURATION = 26
  * countdown value later — exactly what a commentary stream running behind looks like. The
  * value is clamped at 0 so the clock holds at 0:00 instead of going negative.
  */
-function countdownText(delay) {
+function countdownText(delay, countdownFrom = COUNTDOWN_FROM) {
   const elapsed = `(t-${delay})`
-  const remaining = `max(0,${COUNTDOWN_FROM}-floor(${elapsed}))`
+  const remaining = `max(0,${countdownFrom}-floor(${elapsed}))`
   // %{eif:...} formats an expression; :d:2 pads the seconds to two digits.
   return `0\\:%{eif\\:${remaining}\\:d\\:2}`
 }
@@ -64,14 +64,14 @@ function escapeForFilter(path) {
  * a moving element so the frame is not static (a still image would let a decoder hold one
  * frame forever and hide timing bugs).
  */
-function filterGraph(delay, label) {
+function filterGraph(delay, label, countdownFrom = COUNTDOWN_FROM) {
   const plateX = Math.round(ROI.x * WIDTH)
   const plateY = Math.round(ROI.y * HEIGHT)
   const plateW = Math.round(ROI.w * WIDTH)
   const plateH = Math.round(ROI.h * HEIGHT)
   return [
     `drawbox=x=${plateX}:y=${plateY}:w=${plateW}:h=${plateH}:color=0x0B0E12@1:t=fill`,
-    `drawtext=fontfile='${fontPath()}':text='${countdownText(delay)}'` +
+    `drawtext=fontfile='${fontPath()}':text='${countdownText(delay, countdownFrom)}'` +
       `:fontsize=${FONT_SIZE}:fontcolor=0xF2F5F7` +
       `:x=${plateX}+(${plateW}-text_w)/2:y=${plateY}+(${plateH}-text_h)/2`,
     `drawtext=fontfile='${fontPath()}':text='${label}':fontsize=28:fontcolor=0x7A8798:x=32:y=32`,
@@ -123,7 +123,7 @@ function run(args) {
 }
 
 /** An MP4 with a countdown, `delay` seconds behind the reference render. */
-async function renderVideo(name, delay, label) {
+async function renderVideo(name, delay, label, countdownFrom = COUNTDOWN_FROM, duration = DURATION) {
   const target = join(outDir, name)
   await run([
     '-hide_banner',
@@ -133,15 +133,15 @@ async function renderVideo(name, delay, label) {
     '-f',
     'lavfi',
     '-i',
-    `color=c=0x141A21:s=${WIDTH}x${HEIGHT}:d=${DURATION}:r=30`,
+    `color=c=0x141A21:s=${WIDTH}x${HEIGHT}:d=${duration}:r=30`,
     // A tone rather than silence: the commentary source is selected for audio, and a muted
     // track would not prove the audio path works.
     '-f',
     'lavfi',
     '-i',
-    `sine=frequency=${delay > 0 ? 320 : 480}:duration=${DURATION}:sample_rate=48000`,
+    `sine=frequency=${delay > 0 ? 320 : 480}:duration=${duration}:sample_rate=48000`,
     '-vf',
-    filterGraph(delay, label),
+    filterGraph(delay, label, countdownFrom),
     '-c:v',
     'libx264',
     '-preset',
@@ -166,7 +166,7 @@ async function renderVideo(name, delay, label) {
     '+faststart',
     target,
   ])
-  process.stdout.write(`  ${name}  countdown 0:${COUNTDOWN_FROM} → 0:00, 延迟 ${delay}s\n`)
+  process.stdout.write(`  ${name}  countdown 0:${countdownFrom} → 0:00, 延迟 ${delay}s\n`)
 }
 
 /** A single frame, for the Profile Editor's template capture flow. */
@@ -264,6 +264,10 @@ async function main() {
   // official is the reference; commentary trails it by 5 s, the delay every sync test asserts.
   await renderVideo('official.mp4', 0, 'OFFICIAL / clean feed')
   await renderVideo('commentary.mp4', 5, 'COMMENTARY / +5s')
+  // Discovery and native ROI learning use separate live windows (12 seconds each).
+  // Keep the editor's original 20-second lessons unchanged, with longer media for this flow.
+  await renderVideo('auto-official.mp4', 0, 'OFFICIAL / native learning', 50, 56)
+  await renderVideo('auto-commentary.mp4', 5, 'COMMENTARY / +5s', 50, 56)
   await renderStill('frame-0-20.png', 20)
   await renderStill('frame-0-05.png', 5)
   await renderHls('commentary-hls', 'commentary.mp4')

@@ -30,6 +30,7 @@ import { DouyuGiftPurchaseGateway } from '../server/douyu/giftPurchaseGateway'
 import { DouyuGiftPlanService } from '../server/douyu/giftPlanService'
 import type { ResolveDouyuRoom } from '../server/platforms/douyuRoom'
 import appPackage from '../package.json'
+import { EsportsService } from '../server/esports/schedule'
 
 export interface BackendRuntimeOptions {
   userDataDir: string
@@ -56,6 +57,7 @@ export interface BackendRuntimeOptions {
 export function createBackendRuntime(options: BackendRuntimeOptions) {
   const lifetime = new AbortController()
   const api = new FeatureApi()
+  const esports = new EsportsService({ userDataDir: options.userDataDir, version: appPackage.version })
   const releases: (() => void)[] = []
   const required = <T>(service: T | undefined): T => { if (!service) throw new FeatureApiError('not-available'); return service }
   const accounts = () => required(options.accounts)
@@ -119,6 +121,8 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     try { return await run() } finally { api.publish({ topic: 'capture', data: capture.state() }) }
   }
   const operations: FeatureHandlers = {
+    getCs2Schedule: args => esports.getCs2Schedule(args),
+    getStreamTitles: args => esports.getStreamTitles(args),
     openAppReleasePage: async args => {
       noArgs(args)
       const url = update.state().releaseUrl
@@ -235,7 +239,7 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
       for (const release of releases) release()
       pip.dispose(); automations?.dispose(); gifts?.dispose(); inventory?.dispose(); insights.dispose(); update.dispose()
       api.dispose()
-      await Promise.all([capture.dispose(), streams.dispose()])
+      await Promise.all([capture.dispose(), streams.dispose(), esports.dispose()])
     },
   }
 }

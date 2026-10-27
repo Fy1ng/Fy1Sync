@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { encodeFrame, escapeStt, serializeStt } from '../danmaku/douyuProtocol'
 import {
   gatewayAddress, MAX_BUFFER_BYTES, MAX_FRAME_BYTES, MAX_TOTAL_BYTES, MessageFrameDecoder,
-  messageChallenge, messageColorPalette, messageCredentials, messageSigningKeys, normalizeMessageText,
+  messageChallenge, messageColorPalette, messageCredentials, messageCredentialStatus, messageSigningKeys, normalizeMessageText,
   parseMessagePayload, receiptMatch, signMessageGateway, type GatewayMessage,
 } from './messageProtocol'
 
@@ -32,7 +32,7 @@ describe('message text and credential boundaries', () => {
     expect(JSON.stringify(parsed)).not.toContain('private-value')
   })
   it.each([
-    '', `${cookie}; acf_uid=42`, `${cookie}; acf_auth_wl=other`, `${cookie}; did=${'1'.repeat(32)}`,
+    '',
     cookie.replace('42', '0'), cookie.replace('42', '042'), cookie.replace('fixture-auth', '%zz'),
     cookie.replace('fixture-auth', '%0d%0aInjected'), cookie.replace('fixture-auth', 'null'),
     cookie.replace('fixture-user', ''), cookie.replace('1'.repeat(32), 'short-device'),
@@ -40,6 +40,19 @@ describe('message text and credential boundaries', () => {
   ])('rejects missing, ambiguous or malformed credentials %#', value => { expect(messageCredentials(value)).toBeNull() })
   it.each(['acf_uid', 'acf_did', 'acf_username', 'acf_auth_wl'])('does not invent missing %s', name => {
     expect(messageCredentials(cookie.split('; ').filter(part => !part.startsWith(`${name}=`)).join('; '))).toBeNull()
+  })
+  it('uses the first domain-prioritized duplicate and accepts dy_did and redundant device aliases', () => {
+    expect(messageCredentials(`${cookie}; acf_uid=99; acf_auth_wl=other`)?.uid).toBe('42')
+    expect(messageCredentials(cookie.replace('acf_did=', 'dy_did='))?.did).toBe('1'.repeat(32))
+    expect(messageCredentials(`${cookie}; did=${'2'.repeat(32)}; dy_did=${'3'.repeat(32)}`)?.did).toBe('1'.repeat(32))
+    expect(messageCredentials(cookie.replace('acf_did=', 'did='))?.did).toBe('1'.repeat(32))
+  })
+  it('exports readiness and fixed missing field names without credential values', () => {
+    expect(messageCredentialStatus(cookie)).toEqual({ canSend: true, missingCredentialFields: [] })
+    expect(messageCredentialStatus(cookie.replace(/acf_did=[^;]+;/, ''))).toEqual({ canSend: false, missingCredentialFields: ['acf_did', 'dy_did', 'did'] })
+    const failed = messageCredentialStatus(cookie.replace('fixture-user', 'private%20name'))
+    expect(failed).toEqual({ canSend: false, missingCredentialFields: ['acf_username'] })
+    expect(JSON.stringify(failed)).not.toContain('private')
   })
   it('accepts only identifiable protocol authentication material', () => {
     const base = cookie.split('; ').filter(part => !part.startsWith('acf_auth_wl=')).join('; ')

@@ -1,6 +1,7 @@
 /** Source-local discovery and consent. Saved profiles are never mutated here. */
 import type { RecognitionProfile, RoiRect } from '../core/profileSchema'
-import { SOURCE_ROLES, type RecognitionOutcome, type SourceRole } from '../core/types'
+import { MIN_SYNC_CONFIDENCE, SOURCE_ROLES, type RecognitionOutcome, type SourceRole } from '../core/types'
+import { roiToPixels } from '../core/imageOps'
 import { RecognitionClient, type WorkerLike } from './client'
 import { FrameGrabber, FULL_FRAME_ROI, startFrameLoop, type GrabbedFrame } from './frameGrabber'
 import type { LearnResult, LocateResult } from './protocol'
@@ -20,6 +21,9 @@ export const AUTO_PROFILE_TEXT: Record<AutoProfilePhase, string> = {
 }
 export const CLOCK_LOST_MS = 3000
 export const AUTO_PROFILE_WINDOW_MS = 12_000
+export const AUTO_PROFILE_MAX_FRAMES = 100
+export const AUTO_PROFILE_NATIVE_BYTES = 32 * 1024 * 1024
+const AUTO_PROFILE_DISCOVERY_BYTES = 256 * 1024 * 1024
 
 interface DiscoveryClient {
   locate(frames: GrabbedFrame[], options?: { retainForLearning?: boolean }): Promise<LocateResult>
@@ -29,7 +33,9 @@ interface DiscoveryClient {
 }
 export interface AutoProfileDeps {
   client: (role: SourceRole) => DiscoveryClient
-  capture: (role: SourceRole, signal: { aborted: boolean }) => Promise<GrabbedFrame[]>
+  /** Omitted ROI captures scaled discovery frames; an ROI captures a new native crop window. */
+  capture: (role: SourceRole, signal: { aborted: boolean }, roi?: RoiRect) => Promise<GrabbedFrame[]>
+  current?: (role: SourceRole, signal: { aborted: boolean }) => boolean
   use: (role: SourceRole, profile: RecognitionProfile) => void
   changed?: () => void
   now?: () => number
@@ -63,6 +69,8 @@ export class AutoProfileController {
   accept(role: SourceRole): void {
     const state = this.states[role]
     if (state.phase !== 'ready' || !state.candidate) return
+    const run = this.runs.get(role)
+    if (!run || run.signal.aborted || this.deps.current?.(role, run.signal) === false) { this.cancel(role); return }
     this.deps.use(role, state.candidate)
     this.patch(role, { accepted: true })
     delete this.lostSince[role]
@@ -90,7 +98,7 @@ export class AutoProfileController {
 
   observe(role: SourceRole, outcome: RecognitionOutcome): void {
     if (this.disposed || this.runs.has(role)) return
-    if (outcome.status === 'success' && outcome.reading.confidence >= 0.82) { delete this.lostSince[role]; return }
+    if (outcome.status === 'success' && outcome.reading.confidence >= MIN_SYNC_CONFIDENCE) { delete this.lostSince[role]; return }
     const now = this.now()
     this.lostSince[role] ??= now
     if (now - this.lostSince[role]! < CLOCK_LOST_MS || now < (this.retryAfter[role] ?? 0)) return
@@ -105,30 +113,38 @@ export class AutoProfileController {
   }
 
   private async discover(role: SourceRole, run: Run): Promise<void> {
-    const active = () => !this.disposed && !run.signal.aborted && this.runs.get(role) === run
+    const active = () => {
+      if (this.disposed || run.signal.aborted || this.runs.get(role) !== run) return false
+      if (this.deps.current?.(role, run.signal) === false) { this.cancel(role); return false }
+      return true
+    }
     try {
       const frames = await this.deps.capture(role, run.signal)
       if (!active()) return
       if (frames.length < 24) { this.fail(role, '视频没有提供足够的连续画面, 请恢复两路播放后重新识别'); return }
       const client = this.deps.client(role)
-      // The worker retains its bounded gray window, so learning transfers no second copy.
-      const located = await client.locate(frames, { retainForLearning: true })
+      // Discovery releases its worker-owned window before we collect native ROI pixels.
+      const located = await client.locate(frames)
       if (!active()) return
       if (located.status !== 'success') { this.fail(role, located.reason, located.status === 'unsupported'); return }
       const [best, second] = located.candidates
-      if (!best || best.score < 0.82) { this.fail(role, '未发现持续变化的倒计时, 请在比赛画面重试或手动编辑'); return }
+      if (!best || best.score < MIN_SYNC_CONFIDENCE) { this.fail(role, '未发现持续变化的倒计时, 请在比赛画面重试或手动编辑'); return }
       if (second && second.score >= best.score - 0.05) { this.fail(role, '发现多个相近的倒计时, 请手动选择识别区域'); return }
       this.patch(role, { phase: 'learning' })
-      if (located.windowId === undefined) { this.fail(role, '当前识别引擎无法保留学习窗口, 请使用手动预设'); return }
-      const learned = await client.learn([], best.roi, { windowId: located.windowId })
+      const nativeFrames = await this.deps.capture(role, run.signal, best.roi)
+      if (!active()) return
+      if (nativeFrames.length < 24) { this.fail(role, '视频没有提供足够的连续画面, 请恢复两路播放后重新识别'); return }
+      const learned = await client.learn(nativeFrames, FULL_FRAME_ROI)
       if (!active()) return
       if (learned.status !== 'success') { this.fail(role, learned.reason, learned.status === 'unsupported'); return }
-      if (!learned.profile || learned.report.confidence < 0.82) {
+      if (!learned.profile || learned.report.confidence < MIN_SYNC_CONFIDENCE) {
         this.fail(role, learned.report.reason ?? '字形证据不足, 请重新识别或手动编辑')
         return
       }
       const accepted = this.states[role].accepted
-      const candidate = { ...learned.profile, id: `session/${role}`, name: role === 'official' ? '官方自动候选' : '解说自动候选' }
+      // The learned profile sees the crop as its full image. Playback crops the original ROI.
+      const candidate = { ...learned.profile, roi: { ...best.roi }, matchThreshold: MIN_SYNC_CONFIDENCE,
+        id: `session/${role}`, name: role === 'official' ? '官方自动候选' : '解说自动候选' }
       this.patch(role, { phase: 'ready', candidate, confidence: learned.report.confidence,
         learnedChars: learned.report.learnedChars, reason: null })
       if (accepted) this.accept(role)
@@ -179,6 +195,10 @@ export class OnlineAutoProfiles {
   private clients = new Map<SourceRole, RecognitionClient>()
   private monitors = new Map<SourceRole, () => void>()
   private disposed = false
+  private readonly sources = new WeakMap<{ aborted: boolean }, {
+    video: HTMLVideoElement; src: string; currentSrc: string; srcObject: HTMLVideoElement['srcObject']
+    width: number; height: number; invalid: boolean
+  }>()
   constructor(private readonly options: {
     createWorker: () => WorkerLike
     video: (role: SourceRole) => HTMLVideoElement | null
@@ -187,7 +207,8 @@ export class OnlineAutoProfiles {
     changed: () => void
   }) {
     this.controller = new AutoProfileController({
-      client: role => this.client(role), capture: (role, signal) => this.capture(role, signal),
+      client: role => this.client(role), capture: (role, signal, roi) => this.capture(role, signal, roi),
+      current: (role, signal) => this.current(role, signal),
       use: (role, profile) => { options.use(role, profile); this.monitor(role) }, changed: options.changed,
     })
   }
@@ -238,24 +259,44 @@ export class OnlineAutoProfiles {
     }
     return client
   }
-  private capture(role: SourceRole, signal: { aborted: boolean }): Promise<GrabbedFrame[]> {
+  private current(role: SourceRole, signal: { aborted: boolean }): boolean {
+    const source = this.sources.get(signal)
+    if (!source) return true
+    const video = this.options.video(role)
+    if (video !== source.video || video.src !== source.src || video.currentSrc !== source.currentSrc
+      || video.srcObject !== source.srcObject || video.videoWidth !== source.width || video.videoHeight !== source.height
+      || video.paused || video.seeking || video.readyState < 2) source.invalid = true
+    return !source.invalid
+  }
+  private capture(role: SourceRole, signal: { aborted: boolean }, roi?: RoiRect): Promise<GrabbedFrame[]> {
     const video = this.options.video(role)
     if (!video || video.paused || video.readyState < 2) return Promise.resolve([])
+    if (!this.sources.has(signal)) this.sources.set(signal, { video, src: video.src, currentSrc: video.currentSrc,
+      srcObject: video.srcObject, width: video.videoWidth, height: video.videoHeight, invalid: false })
+    if (!this.current(role, signal)) return Promise.resolve([])
+    const rect = roiToPixels(roi ?? FULL_FRAME_ROI, video.videoWidth, video.videoHeight)
+    const scale = roi ? 1 : Math.min(1, 960 / rect.width)
+    const frameBytes = Math.max(1, Math.round(rect.width * scale)) * Math.max(1, Math.round(rect.height * scale)) * 4
+    const limit = roi ? AUTO_PROFILE_NATIVE_BYTES : AUTO_PROFILE_DISCOVERY_BYTES
+    // Reject oversized native crops before creating any canvas or retaining pixel buffers.
+    if (!Number.isFinite(frameBytes) || frameBytes * AUTO_PROFILE_MAX_FRAMES > limit) return Promise.reject(new Error('invalid-window'))
     return new Promise(resolve => {
       const frames: GrabbedFrame[] = []
       const grabber = new FrameGrabber(() => performance.now())
       let last = -Infinity
       const deadline = performance.now() + AUTO_PROFILE_WINDOW_MS
       const stop = startFrameLoop(video, 8, mediaTime => {
-        if (signal.aborted || video.seeking || mediaTime <= last || mediaTime - last < 0.125) return
+        if (signal.aborted || !this.current(role, signal) || mediaTime <= last || mediaTime - last < 0.125) return
         last = mediaTime
-        const result = grabber.grabScaled(video, FULL_FRAME_ROI, 960, mediaTime)
-        if (result.ok && frames.length < 100) frames.push(result.frame)
+        if (frames.length >= AUTO_PROFILE_MAX_FRAMES) return
+        const result = roi ? grabber.grab(video, roi, mediaTime) : grabber.grabScaled(video, FULL_FRAME_ROI, 960, mediaTime)
+        if (result.ok) frames.push(result.frame)
       })
       const timer = setInterval(() => {
-        if (!signal.aborted && !this.disposed && performance.now() < deadline) return
+        const valid = this.current(role, signal)
+        if (!signal.aborted && !this.disposed && valid && performance.now() < deadline) return
         clearInterval(timer); stop(); grabber.dispose()
-        resolve(signal.aborted || this.disposed ? [] : frames)
+        resolve(signal.aborted || this.disposed || !valid ? [] : frames)
       }, 50)
     })
   }

@@ -1,7 +1,7 @@
 /**
  * Open this build with the login state of the installed / unpacked app, without sharing it.
  *
- * The packaged app keeps its logins in %APPDATA%\Stream Syncer (YouTube and Douyu cookie
+ * The packaged app keeps its logins in %APPDATA%\Fy1Sync (YouTube and Douyu cookie
  * files, the login windows' browser profiles, extra Douyu accounts). This copies those into a
  * profile of its own under .runtime-cache and starts the built app there, online and in
  * normal mode, so logging out or switching accounts here never touches the original.
@@ -23,7 +23,7 @@ const flag = (name) => argv.includes(`--${name}`)
 const option = (name) => { const at = argv.indexOf(`--${name}`); return at >= 0 ? argv[at + 1] : undefined }
 
 const root = fileURLToPath(new URL('../', import.meta.url))
-const source = option('from') ?? join(process.env.APPDATA ?? '', 'Stream Syncer')
+const source = option('from') ?? join(process.env.APPDATA ?? '', 'Fy1Sync')
 const profile = join(root, '.runtime-cache', 'login-profile')
 const exists = (path) => stat(path).then(() => true, () => false)
 

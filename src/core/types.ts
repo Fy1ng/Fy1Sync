@@ -5,6 +5,9 @@ export type SourceRole = 'official' | 'commentary'
 
 export const SOURCE_ROLES: readonly SourceRole[] = ['official', 'commentary']
 
+/** Shared floor for automatic clock recognition and every sync consumer. */
+export const MIN_SYNC_CONFIDENCE = 0.82
+
 /** How a media URL should be handed to the player. */
 export type MediaKind = 'progressive' | 'hls' | 'file' | 'test'
 

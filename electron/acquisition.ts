@@ -3,7 +3,9 @@ import type { AcquisitionService } from '../server/api'
 import { createResolverDeps, sanitizedFailure } from '../server/api'
 import type { ProxyConfig } from '../server/config'
 import { detectPlatform, resolveStream, type PlatformKind, type ResolveResult, type ResolvedStream } from '../server/platforms'
-import { checkUrl, ProxyError, type Resolver } from '../server/safeFetch'
+import { checkUrl, ProxyError, safeFetch, type Resolver } from '../server/safeFetch'
+import { readPlatformText } from '../server/platformResponse'
+import { highestHlsVariant } from '../server/platforms/hlsVariant'
 import { isStreamId, type StreamId } from './streamIdentity'
 import type { BufferInput, BufferManager, BufferState } from './bufferManager'
 import type { LoginManager } from './login'
@@ -163,6 +165,21 @@ export class Acquisition implements AcquisitionService {
     const checked = await checkUrl(result.stream.url, this.deps.proxy, this.deps.dns)
     if (!checked.ok) throw new ProxyError(checked.reason, '媒体地址未通过安全检查')
     if (checked.url.username || checked.url.password) throw new ProxyError('invalid-url', '媒体地址不能包含登录凭据')
+    if (result.stream.platform === 'twitch' && result.stream.kind === 'hls') {
+      // FFmpeg maps one video track into the local rolling buffer. Select the best
+      // rendition here; renderer HLS selection cannot recover a discarded variant.
+      const signal = AbortSignal.timeout(this.deps.proxy.requestTimeoutMs)
+      const { response, finalUrl } = await safeFetch(checked.url.href, this.deps.proxy, {
+        signal, fetchImpl: this.deps.fetchImpl, resolve: this.deps.dns,
+        headers: { Accept: 'application/vnd.apple.mpegurl, application/x-mpegURL, text/plain' },
+      })
+      if (!response.ok) { void response.body?.cancel().catch(() => {}); throw new Error('Twitch playlist request failed') }
+      const variant = highestHlsVariant(await readPlatformText(response, signal), finalUrl)
+      const selected = await checkUrl(variant?.url ?? finalUrl.href, this.deps.proxy, this.deps.dns)
+      if (!selected.ok) throw new ProxyError(selected.reason, '媒体地址未通过安全检查')
+      if (selected.url.username || selected.url.password) throw new ProxyError('invalid-url', '媒体地址不能包含登录凭据')
+      result.stream = { ...result.stream, url: selected.url.href }
+    }
     if (result.stream.adaptive) {
       for (const raw of [result.stream.adaptive.videoUrl, result.stream.adaptive.audioUrl]) {
         const target = await checkUrl(raw, { ...this.deps.proxy, hosts: ['*.googlevideo.com'], allowNonLoopbackTargets: false, allowNonStandardPorts: false }, this.deps.dns)

@@ -16,7 +16,7 @@
 import { compileDanmakuFilter, type CompiledDanmakuFilter } from '../core/danmakuFilter'
 import { DanmakuTimeline, LiveEdgeClock, scheduleTimeFor, type DanmakuMessage } from '../core/danmakuTimeline'
 import type { MediaDescriptor } from '../core/types'
-import { NO_REWIND, SOURCE_ROLES, type AppliedRewind, type SourceRole } from '../core/types'
+import { MIN_SYNC_CONFIDENCE, NO_REWIND, SOURCE_ROLES, type AppliedRewind, type SourceRole } from '../core/types'
 import {
   offsetFromRewind,
   planOffsetChange,
@@ -207,7 +207,7 @@ export class Session {
           const read = { official: false, commentary: false }
           const buffered: Array<Parameters<typeof onOutcome>> = []
           await sampler.sample(windowMs, (role, outcome) => {
-            if (outcome.status === 'success' && outcome.reading.confidence >= 0.82) read[role] = true
+            if (outcome.status === 'success' && outcome.reading.confidence >= MIN_SYNC_CONFIDENCE) read[role] = true
             buffered.push([role, outcome])
           }, signal)
           if (signal.aborted) return

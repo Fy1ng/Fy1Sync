@@ -5,6 +5,29 @@ import type { RecognitionProfile } from '../src/core/profileSchema'
 import { closeSourceDialog, connectDanmaku, failOnPageError, invoke, loadBothFixtures, offsetReadout, openPlayer, openSourceDialog, revealOverlay, sourceDialog } from './helpers'
 
 test.describe('应用外壳', () => {
+  test('Fy1Sync 标题栏覆盖与原生窗口控制可用, 全屏隐藏标题栏', async ({ page, electronApp }, testInfo) => {
+    await openPlayer(page)
+    await expect(page.locator('.titlebar-name')).toHaveText('Fy1Sync')
+    expect(await page.locator('.titlebar').evaluate(node => getComputedStyle(node).getPropertyValue('-webkit-app-region'))).toBe('drag')
+    expect(await electronApp.evaluate(({ app, Menu }) => ({ name: app.getName(), menu: Menu.getApplicationMenu() === null }))).toEqual({ name: 'Fy1Sync', menu: true })
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.maximize())
+    await expect.poll(() => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isMaximized())).toBe(true)
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.unmaximize())
+    await expect.poll(() => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isMaximized())).toBe(false)
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.minimize())
+    await expect.poll(() => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isMinimized())).toBe(true)
+    await electronApp.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]!; win.restore(); win.focus() })
+    await page.keyboard.press('f')
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement !== null)).toBe(true)
+    // HTML fullscreen's top layer covers the outside header even when Chromium
+    // still reports the overlay geometry. Verify the actual visible hit target.
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement?.contains(document.elementFromPoint(12, 12)) ?? false)).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath('fullscreen-titlebar.png') })
+    await page.keyboard.press('f')
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement === null)).toBe(true)
+    await expect(page.locator('.titlebar-name')).toBeVisible()
+  })
+
   test('冷启动渲染播放页和添加直播间且没有 pageerror', async ({ page }) => {
     failOnPageError(page)
     const pageErrors: string[] = []
@@ -17,7 +40,7 @@ test.describe('应用外壳', () => {
     await page.goto(APP_ORIGIN + '/')
 
     await expect(page).toHaveURL(APP_ORIGIN + '/')
-    await expect(page).toHaveTitle('Stream Sync Player')
+    await expect(page).toHaveTitle('Fy1Sync')
     await expect(page.locator('.studio')).toBeVisible()
     // Nothing is loaded yet, so the dialog is the cold-start entry point.
     await expect(sourceDialog(page)).toBeVisible()

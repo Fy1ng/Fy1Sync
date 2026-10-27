@@ -147,7 +147,7 @@ export class AppUpdateService {
         signal, resolve: this.options.resolve,
         fetchImpl: async (input, init) => {
           const result = await bounded((this.options.request ?? fetch)(input, { ...init,
-            headers: { Accept: 'application/json', 'User-Agent': 'Stream-Syncer-Version-Check' },
+            headers: { Accept: 'application/json', 'User-Agent': 'Fy1Sync-Version-Check' },
           }).then(result => { if (signal.aborted) { void result.body?.cancel(); throw new Error('Cancelled') }; return result }), signal)
           if (result.status !== 200 || result.redirected || (result.url && result.url !== url.href)) { void result.body?.cancel(); throw new Error('Unexpected release response') }
           return result

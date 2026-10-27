@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
-import { createEmptyProfile } from '../core/profileSchema'
-import type { RecognitionOutcome, SourceRole } from '../core/types'
-import type { GrabbedFrame } from './frameGrabber'
-import { AutoProfileController, CLOCK_LOST_MS } from './autoProfile'
-import type { LearnResult, LocateResult } from './protocol'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createEmptyProfile, type RoiRect } from '../core/profileSchema'
+import { MIN_SYNC_CONFIDENCE, type RecognitionOutcome, type SourceRole } from '../core/types'
+import { FULL_FRAME_ROI, type GrabbedFrame } from './frameGrabber'
+import { AutoProfileController, AUTO_PROFILE_MAX_FRAMES, AUTO_PROFILE_NATIVE_BYTES, AUTO_PROFILE_WINDOW_MS, CLOCK_LOST_MS, OnlineAutoProfiles } from './autoProfile'
+import type { WorkerLike } from './client'
+import type { LearnResult, LocateResult, WorkerRequest, WorkerResponse } from './protocol'
 
 const profile = createEmptyProfile('saved/example', '原预设')
 const candidate = { roi: profile.roi, score: 0.96, eventTimes: [1, 2, 3], period: 1, jitter: 0, persistence: 1, glyphScore: 1 }
@@ -20,13 +21,14 @@ function frame(time: number): GrabbedFrame {
 function harness() {
   let now = 0
   const clients = {
-    official: { locate: vi.fn(async (): Promise<LocateResult> => located), learn: vi.fn(async (): Promise<LearnResult> => learned), cancel: vi.fn(), dispose: vi.fn() },
-    commentary: { locate: vi.fn(async (): Promise<LocateResult> => located), learn: vi.fn(async (): Promise<LearnResult> => learned), cancel: vi.fn(), dispose: vi.fn() },
+    official: { locate: vi.fn(async (_frames: GrabbedFrame[]): Promise<LocateResult> => located), learn: vi.fn(async (_frames: GrabbedFrame[], _roi: RoiRect): Promise<LearnResult> => learned), cancel: vi.fn(), dispose: vi.fn() },
+    commentary: { locate: vi.fn(async (_frames: GrabbedFrame[]): Promise<LocateResult> => located), learn: vi.fn(async (_frames: GrabbedFrame[], _roi: RoiRect): Promise<LearnResult> => learned), cancel: vi.fn(), dispose: vi.fn() },
   }
-  const capture = vi.fn(async (_role: SourceRole, _signal: { aborted: boolean }) => Array.from({ length: 30 }, (_, i) => frame(i / 8)))
+  const capture = vi.fn(async (_role: SourceRole, _signal: { aborted: boolean }, roi?: RoiRect) => Array.from({ length: 30 }, (_, i) => frame((roi ? 12 : 0) + i / 8)))
+  const current = vi.fn(() => true)
   const use = vi.fn()
-  const controller = new AutoProfileController({ client: role => clients[role], capture, use, now: () => now })
-  return { controller, clients, capture, use, time: (value: number) => { now = value } }
+  const controller = new AutoProfileController({ client: role => clients[role], capture, current, use, now: () => now })
+  return { controller, clients, capture, current, use, time: (value: number) => { now = value } }
 }
 async function settle() { for (let i = 0; i < 8; i++) await Promise.resolve() }
 
@@ -50,12 +52,17 @@ describe('source-local automatic profiles', () => {
     expect(profile).toEqual(before)
   })
 
-  it('reuses the worker-owned window without copying or retransferring pixels', async () => {
+  it('learns a fresh native crop and maps its full-frame profile back to the source ROI', async () => {
     const h = harness()
     const run = h.controller.acquire('official')
     await settle()
-    expect(h.clients.official.locate).toHaveBeenCalledWith(expect.any(Array), { retainForLearning: true })
-    expect(h.clients.official.learn).toHaveBeenCalledWith([], candidate.roi, { windowId: 1 })
+    expect(h.clients.official.locate).toHaveBeenCalledWith(expect.any(Array))
+    expect(h.capture.mock.calls[0]).toHaveLength(2)
+    expect(h.capture.mock.calls[1]?.[2]).toEqual(candidate.roi)
+    expect(h.clients.official.learn).toHaveBeenCalledWith(expect.any(Array), FULL_FRAME_ROI)
+    const nativeFrames = h.clients.official.learn.mock.calls[0]?.[0] as GrabbedFrame[] | undefined
+    expect(nativeFrames?.[0]?.mediaTime).toBe(12)
+    expect(h.controller.state('official').candidate).toMatchObject({ roi: candidate.roi, matchThreshold: MIN_SYNC_CONFIDENCE })
     h.controller.cancel('official')
     expect(await run).toBe(false)
   })
@@ -129,10 +136,10 @@ describe('source-local automatic profiles', () => {
     await settle(); h.controller.accept('official'); await run
     h.controller.observe('official', failed)
     h.time(CLOCK_LOST_MS - 1); h.controller.observe('official', failed)
-    expect(h.capture).toHaveBeenCalledTimes(1)
+    expect(h.capture).toHaveBeenCalledTimes(2)
     h.time(CLOCK_LOST_MS); h.controller.observe('official', failed)
     await settle()
-    expect(h.capture).toHaveBeenCalledTimes(2)
+    expect(h.capture).toHaveBeenCalledTimes(4)
     expect(h.use).toHaveBeenCalledTimes(2)
     expect(h.controller.state('official')).toMatchObject({ phase: 'ready', accepted: true })
     expect(h.clients.commentary.locate).not.toHaveBeenCalled()
@@ -148,7 +155,7 @@ describe('source-local automatic profiles', () => {
     h.controller.observe('official', failed)
     h.time(100_000); h.controller.observe('official', failed)
     await settle()
-    expect(h.capture).toHaveBeenCalledTimes(1)
+    expect(h.capture).toHaveBeenCalledTimes(2)
   })
 
   it('does not let low-confidence readings hide a continuously lost clock', async () => {
@@ -161,7 +168,7 @@ describe('source-local automatic profiles', () => {
     h.controller.observe('official', low)
     h.time(CLOCK_LOST_MS); h.controller.observe('official', low)
     await settle()
-    expect(h.capture).toHaveBeenCalledTimes(2)
+    expect(h.capture).toHaveBeenCalledTimes(4)
     expect(h.use).toHaveBeenCalledTimes(2)
   })
 
@@ -174,5 +181,132 @@ describe('source-local automatic profiles', () => {
     expect(await a).toBe(false)
     expect(await b).toBe(false)
     expect(await h.controller.acquire('official')).toBe(false)
+  })
+
+  it('discards a late native capture after cancellation', async () => {
+    const h = harness()
+    let finish!: (frames: GrabbedFrame[]) => void
+    h.capture.mockImplementationOnce(async () => Array.from({ length: 30 }, (_, i) => frame(i / 8)))
+      .mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const run = h.controller.acquire('official')
+    await settle()
+    expect(h.controller.state('official').phase).toBe('learning')
+    h.controller.cancel('official')
+    finish(Array.from({ length: 30 }, (_, i) => frame(12 + i / 8)))
+    await settle()
+    expect(await run).toBe(false)
+    expect(h.clients.official.learn).not.toHaveBeenCalled()
+    expect(h.use).not.toHaveBeenCalled()
+  })
+
+  it('discards a late learned profile if the captured source stopped or changed', async () => {
+    const h = harness()
+    let finish!: (result: LearnResult) => void
+    h.clients.official.learn.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const run = h.controller.acquire('official')
+    await settle()
+    h.current.mockReturnValue(false)
+    finish(learned)
+    await settle()
+    expect(await run).toBe(false)
+    expect(h.controller.state('official').phase).toBe('cancelled')
+    expect(h.use).not.toHaveBeenCalled()
+  })
+
+  it('does not accept a ready candidate from a stopped or changed source', async () => {
+    const h = harness()
+    const run = h.controller.acquire('official')
+    await settle()
+    h.current.mockReturnValue(false)
+    h.controller.accept('official')
+    expect(await run).toBe(false)
+    expect(h.use).not.toHaveBeenCalled()
+  })
+})
+
+afterEach(() => vi.useRealTimers())
+
+function onlineHarness(roi = { x: .48, y: .03, w: .03, h: .025 }) {
+  vi.useFakeTimers()
+  const video = document.createElement('video')
+  video.src = 'https://example.test/first'
+  let paused = false
+  Object.defineProperties(video, {
+    videoWidth: { configurable: true, value: 2560 }, videoHeight: { configurable: true, value: 1440 },
+    readyState: { value: 4 }, paused: { get: () => paused }, seeking: { value: false },
+    currentTime: { get: () => performance.now() / 1000 }, currentSrc: { get: () => video.src },
+  })
+  const drawImage = vi.fn()
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage,
+    // Worker transport is stubbed; verify dimensions without retaining full fake video buffers.
+    getImageData: () => ({ data: new Uint8ClampedArray(4) }),
+  } as unknown as CanvasRenderingContext2D)
+  const messages: WorkerRequest[] = []
+  const listeners = new Set<(event: MessageEvent<WorkerResponse>) => void>()
+  const worker: WorkerLike = {
+    postMessage: message => {
+      messages.push(message)
+      const reply: WorkerResponse | null = message.type === 'locate'
+        ? { type: 'located', generation: message.generation, requestId: message.requestId,
+          result: { status: 'success', backend: 'wasm', candidates: [{ ...candidate, roi }] } }
+        : message.type === 'learn' ? { type: 'learned', generation: message.generation, requestId: message.requestId, result: learned } : null
+      if (reply) for (const listener of listeners) listener({ data: reply } as MessageEvent<WorkerResponse>)
+    },
+    terminate: vi.fn(),
+    addEventListener: (type, listener) => { if (type === 'message') listeners.add(listener as (event: MessageEvent<WorkerResponse>) => void) },
+    removeEventListener: (type, listener) => { if (type === 'message') listeners.delete(listener as (event: MessageEvent<WorkerResponse>) => void) },
+  }
+  const use = vi.fn()
+  const online = new OnlineAutoProfiles({ createWorker: () => worker, video: () => video, profile: () => null, use, changed: vi.fn() })
+  return { online, video, drawImage, messages, use, pause: () => { paused = true } }
+}
+
+describe('bounded native learning acquisition', () => {
+  it('keeps discovery at 960 and learns only a bounded crop at native 1440p resolution', async () => {
+    const h = onlineHarness()
+    const run = h.online.controller.acquire('official')
+    await vi.advanceTimersByTimeAsync(AUTO_PROFILE_WINDOW_MS)
+    expect(h.online.controller.state('official').phase).toBe('learning')
+    const locate = h.messages.find(m => m.type === 'locate')
+    expect(locate).not.toHaveProperty('retainForLearning')
+    expect(locate?.frames[0]).toMatchObject({ width: 960, height: 540 })
+    await vi.advanceTimersByTimeAsync(AUTO_PROFILE_WINDOW_MS)
+    const learn = h.messages.find(m => m.type === 'learn')
+    expect(learn?.roi).toEqual(FULL_FRAME_ROI)
+    expect(learn?.frames[0]).toMatchObject({ width: 77, height: 36 })
+    expect(learn?.frames.length).toBeLessThanOrEqual(AUTO_PROFILE_MAX_FRAMES)
+    expect((learn?.frames.length ?? 0) * 77 * 36 * 4).toBeLessThan(AUTO_PROFILE_NATIVE_BYTES)
+    expect(learn?.frames[0]?.mediaTime).toBeGreaterThan(locate?.frames.at(-1)?.mediaTime ?? Infinity)
+    expect(h.drawImage).toHaveBeenCalledWith(h.video, 1229, 43, 77, 36, 0, 0, 77, 36)
+    h.online.controller.accept('official')
+    expect(await run).toBe(true)
+    expect(h.use).toHaveBeenCalledWith('official', expect.objectContaining({ roi: { x: .48, y: .03, w: .03, h: .025 } }))
+    h.online.dispose()
+  })
+
+  it('rejects oversized native windows before allocating their pixel buffers', async () => {
+    const h = onlineHarness(FULL_FRAME_ROI)
+    const run = h.online.controller.acquire('official')
+    await vi.advanceTimersByTimeAsync(AUTO_PROFILE_WINDOW_MS)
+    expect(await run).toBe(false)
+    expect(h.messages.some(m => m.type === 'learn')).toBe(false)
+    expect(h.drawImage.mock.calls.every(call => call[7] === 960 && call[8] === 540)).toBe(true)
+    h.online.dispose()
+  })
+
+  it.each(['source', 'dimensions', 'pause', 'suspend'] as const)('aborts a native window after %s changes', async kind => {
+    const h = onlineHarness()
+    const run = h.online.controller.acquire('official')
+    await vi.advanceTimersByTimeAsync(AUTO_PROFILE_WINDOW_MS)
+    if (kind === 'source') h.video.src = 'https://example.test/second'
+    if (kind === 'dimensions') Object.defineProperty(h.video, 'videoWidth', { value: 1920 })
+    if (kind === 'pause') h.pause()
+    if (kind === 'suspend') h.online.suspend()
+    await vi.advanceTimersByTimeAsync(50)
+    expect(await run).toBe(false)
+    expect(h.messages.some(m => m.type === 'learn')).toBe(false)
+    expect(h.use).not.toHaveBeenCalled()
+    expect(h.online.controller.state('official').phase).toBe('cancelled')
+    h.online.dispose()
   })
 })

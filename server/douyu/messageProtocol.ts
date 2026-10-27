@@ -53,37 +53,53 @@ export interface MessageCredentials {
   jwt: string
 }
 
-const COOKIE_NAMES = new Set(['acf_uid', 'acf_did', 'did', 'acf_username', 'acf_auth_wl', 'acf_ltkid', 'acf_biz', 'acf_stk', 'acf_dmjwt_token'])
+const COOKIE_NAMES = new Set(['acf_uid', 'acf_did', 'dy_did', 'did', 'acf_username', 'acf_auth_wl', 'acf_ltkid', 'acf_biz', 'acf_stk', 'acf_dmjwt_token'])
 
-/** Only known gateway fields leave this parser. Duplicate material is ambiguous. */
-export function messageCredentials(header: unknown): MessageCredentials | null {
-  if (typeof header !== 'string' || header.length > 32_768 || /[\x00-\x1f\x7f]/.test(header)) return null
+/** CookieStore orders/selects duplicates while domain information is still available. */
+function inspectMessageCredentials(header: unknown): { credentials: MessageCredentials | null; missingFields: string[] } {
+  const invalid = (...missingFields: string[]) => ({ credentials: null, missingFields })
+  if (typeof header !== 'string' || header.length > 32_768 || /[\x00-\x1f\x7f]/.test(header)) return invalid('Cookie')
   const fields = new Map<string, string>()
   for (const part of header.split(';')) {
     if (!part.trim()) continue
     const separator = part.indexOf('=')
-    if (separator <= 0) return null
+    if (separator <= 0) return invalid('Cookie')
     const name = part.slice(0, separator).trim()
     if (!COOKIE_NAMES.has(name)) continue
-    if (fields.has(name)) return null
+    if (fields.has(name)) continue
     let value: string
-    try { value = decodeURIComponent(part.slice(separator + 1).trim()) } catch { return null }
-    if (value.length > 4_096 || /[\s\x00-\x1f\x7f-\x9f]/.test(value) || !wellFormed(value) || /^(null|undefined)$/i.test(value)) return null
+    try { value = decodeURIComponent(part.slice(separator + 1).trim()) } catch { return invalid(name) }
+    if (value.length > 4_096 || /[\s\x00-\x1f\x7f-\x9f]/.test(value) || !wellFormed(value) || /^(null|undefined)$/i.test(value)) return invalid(name)
     fields.set(name, value)
   }
-  if (fields.has('acf_did') && fields.has('did')) return null
   const uid = fields.get('acf_uid') ?? ''
-  const did = fields.get('acf_did') ?? fields.get('did') ?? ''
+  const did = ['acf_did', 'dy_did', 'did'].map(name => fields.get(name)).find(value => /^[a-fA-F0-9]{32}$/.test(value ?? '')) ?? ''
   const username = fields.get('acf_username') ?? ''
-  if (!/^[1-9][0-9]{0,19}$/.test(uid) || !/^[a-fA-F0-9]{32}$/.test(did) || !username || username.length > 256) return null
+  const missingFields: string[] = []
+  if (!/^[1-9][0-9]{0,19}$/.test(uid)) missingFields.push('acf_uid')
+  if (!did) missingFields.push('acf_did', 'dy_did', 'did')
+  if (!username || username.length > 256) missingFields.push('acf_username')
   const password = fields.get('acf_auth_wl') ?? ''
   const jwt = fields.get('acf_dmjwt_token') ?? ''
   const ltkid = fields.get('acf_ltkid') ?? ''
   const biz = fields.get('acf_biz') ?? ''
   const stk = fields.get('acf_stk') ?? ''
-  if (![password, jwt, ltkid, biz, stk].every(value => !value || /^[A-Za-z0-9._~+\/=:-]+$/.test(value))) return null
-  if (!password && !jwt && !(ltkid && biz && stk)) return null
-  return { uid, did, username, password, ltkid, biz, stk, jwt }
+  for (const name of ['acf_auth_wl', 'acf_dmjwt_token', 'acf_ltkid', 'acf_biz', 'acf_stk']) {
+    const value = fields.get(name)
+    if (value && !/^[A-Za-z0-9._~+\/=:-]+$/.test(value)) missingFields.push(name)
+  }
+  if (!password && !jwt && !(ltkid && biz && stk)) {
+    for (const name of ['acf_auth_wl', 'acf_dmjwt_token', 'acf_ltkid', 'acf_biz', 'acf_stk']) if (!fields.get(name)) missingFields.push(name)
+  }
+  return missingFields.length ? invalid(...missingFields) : { credentials: { uid, did, username, password, ltkid, biz, stk, jwt }, missingFields }
+}
+
+export function messageCredentials(header: unknown): MessageCredentials | null { return inspectMessageCredentials(header).credentials }
+
+/** Public diagnostic: fixed field names only, never credential values or raw errors. */
+export function messageCredentialStatus(header: unknown): { canSend: boolean; missingCredentialFields: string[] } {
+  const result = inspectMessageCredentials(header)
+  return { canSend: result.credentials !== null, missingCredentialFields: result.missingFields }
 }
 
 type SigningKey = { key: string; version: string }

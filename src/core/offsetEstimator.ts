@@ -1,4 +1,4 @@
-import { MAX_OFFSET_SECONDS, OFFSET_DEADBAND_SECONDS, type ClockJumpEvent } from './types'
+import { MAX_OFFSET_SECONDS, MIN_SYNC_CONFIDENCE, OFFSET_DEADBAND_SECONDS, type ClockJumpEvent } from './types'
 
 /**
  * Converts countdown jumps from both sources into a signed delay estimate.
@@ -82,7 +82,7 @@ export function estimateOffset(
 ): OffsetResult {
   const applied = options.appliedOffsetSeconds ?? 0
   const maxSpread = options.maxAnchorSpreadSeconds ?? 0.35
-  const minConfidence = options.minConfidence ?? 0.82
+  const minConfidence = options.minConfidence ?? MIN_SYNC_CONFIDENCE
   const maxOffset = options.maxOffsetSeconds ?? MAX_OFFSET_SECONDS
   const deadband = options.deadbandSeconds ?? OFFSET_DEADBAND_SECONDS
 

@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { messageCredentialStatus } from '../server/douyu/messageProtocol'
 import { containedPath, NativePrivatePermissions, privateDirectory } from './privateStorage'
 import type { PrivatePermissions } from './privateStorage'
 
@@ -8,6 +9,9 @@ export type LoginPlatform = 'youtube' | 'douyu'
 export interface LoginResult { cookieCount: number; authKeysPresent: string[] }
 export interface PlatformLoginStatus extends LoginResult {
   loggedIn: boolean
+  /** Douyu gateway readiness, distinct from website authentication. No values leave main. */
+  canSend?: boolean
+  missingCredentialFields?: string[]
   /** Earliest persistent authentication-cookie expiry, as Unix seconds. */
   expiresAt: number | null
   hasSessionCookies: boolean
@@ -25,6 +29,20 @@ export interface BrowserCookie {
   value: string
 }
 interface StoredCookie extends BrowserCookie { subdomains: boolean; expires: number; path: string }
+
+function douyuHeader(cookies: StoredCookie[], target: URL): string {
+  const selected = new Map<string, StoredCookie>()
+  for (const cookie of cookies.filter(cookie => (target.hostname === cookie.domain || (cookie.subdomains && target.hostname.endsWith(`.${cookie.domain}`)))
+    && (target.pathname === cookie.path || target.pathname.startsWith(cookie.path.endsWith('/') ? cookie.path : `${cookie.path}/`)))
+    .sort((a, b) => b.path.length - a.path.length)) {
+    const previous = selected.get(cookie.name)
+    // Prefer the exact host (www.douyu.com for sending) before parent-domain material.
+    if (!previous || cookie.domain.length > previous.domain.length
+      || (cookie.domain === previous.domain && cookie.path.length > previous.path.length)
+      || (cookie.domain === previous.domain && cookie.path === previous.path && !cookie.subdomains && previous.subdomains)) selected.set(cookie.name, cookie)
+  }
+  return [...selected.values()].map(cookie => `${cookie.name}=${cookie.value}`).join('; ')
+}
 
 export const LOGIN_PLATFORMS = {
   youtube: { url: 'https://www.youtube.com', authKeys: ['SAPISID', '__Secure-3PSID', '__Secure-1PSID', 'SID', 'HSID', 'SSID'] },
@@ -178,7 +196,8 @@ export class CookieStore {
     const expiries = auth.map(cookie => cookie.expires).filter(expiry => expiry > 0)
     const present = new Set(auth.map(cookie => cookie.name))
     return { cookieCount: cookies.length, authKeysPresent: known.filter(key => present.has(key)), loggedIn: auth.length > 0,
-      expiresAt: expiries.length ? Math.min(...expiries) : null, hasSessionCookies: auth.some(cookie => cookie.expires === 0) }
+      expiresAt: expiries.length ? Math.min(...expiries) : null, hasSessionCookies: auth.some(cookie => cookie.expires === 0),
+      ...(platform === 'douyu' ? messageCredentialStatus(douyuHeader(cookies, new URL('https://www.douyu.com/'))) : {}) }
   }
 
   async status(): Promise<LoginStatus> {
@@ -196,11 +215,7 @@ export class CookieStore {
     const revision = this.revisions[platform]
     const loaded = await this.read(platform)
     if (revision !== this.revisions[platform]) throw storageFailure()
-    return (loaded?.cookies ?? [])
-      .filter(cookie => (target.hostname === cookie.domain || (cookie.subdomains && target.hostname.endsWith(`.${cookie.domain}`)))
-        && (target.pathname === cookie.path || target.pathname.startsWith(cookie.path.endsWith('/') ? cookie.path : `${cookie.path}/`)))
-      .sort((a, b) => b.path.length - a.path.length)
-      .map(cookie => `${cookie.name}=${cookie.value}`).join('; ')
+    return douyuHeader(loaded?.cookies ?? [], target)
   }
 
   async withTemporaryCookies<T>(platform: 'youtube', callback: (file?: string) => Promise<T>): Promise<T> {

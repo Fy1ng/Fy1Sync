@@ -199,6 +199,8 @@ export type SafeFetchOptions = {
   signal?: AbortSignal
   resolve?: Resolver
   fetchImpl?: typeof fetch
+  /** Owned by a trusted service, never renderer input. Every reuse still validates DNS. */
+  dispatcherPool?: PinnedDispatcherPool
 }
 
 export type SafeFetchResult = {
@@ -213,7 +215,7 @@ function validAddresses(addresses: unknown): addresses is string[] {
 }
 
 /** The caller has already applied its HTTP or WebSocket address policy. */
-export function createPinnedDispatcher(hostname: string, addresses: readonly string[], timeoutMs = 15_000): Agent {
+export function createPinnedDispatcher(hostname: string, addresses: readonly string[], timeoutMs = 15_000, keepAliveTimeout = 4_000): Agent {
   if (!validAddresses(addresses)) throw new ProxyError('dns-failed', '无法固定已校验的连接地址.', 403)
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
   const records = [...new Set(addresses)].map(address => ({ address, family: isIP(address) }))
@@ -231,6 +233,7 @@ export function createPinnedDispatcher(hostname: string, addresses: readonly str
   const connect = buildConnector({ lookup, timeout: timeoutMs, autoSelectFamily: true })
   return new Agent({
     connections: 1, maxOrigins: 1,
+    keepAliveTimeout, keepAliveMaxTimeout: Math.max(keepAliveTimeout, 60_000),
     connect: (options, callback) => {
       // Literal addresses bypass Node's lookup callback, so validate the connect
       // hostname as well. Preserve the original hostname, Host header and TLS SNI.
@@ -238,6 +241,32 @@ export function createPinnedDispatcher(hostname: string, addresses: readonly str
       connect(options, callback)
     },
   })
+}
+
+/** Small service-owned pool; changed DNS answers never reuse a differently pinned socket. */
+export class PinnedDispatcherPool {
+  private readonly agents = new Map<string, Agent>()
+  private closed = false
+  get(url: URL, addresses: string[], timeoutMs: number): Agent {
+    if (this.closed) throw new Error('Network service closed')
+    const key = JSON.stringify([url.origin, [...addresses].sort(), timeoutMs])
+    let agent = this.agents.get(key)
+    if (!agent) {
+      if (this.agents.size >= 8) {
+        const first = this.agents.keys().next().value!
+        void this.agents.get(first)!.close().catch(() => {})
+        this.agents.delete(first)
+      }
+      agent = createPinnedDispatcher(url.hostname, addresses, timeoutMs, 60_000)
+      this.agents.set(key, agent)
+    }
+    return agent
+  }
+  async dispose(): Promise<void> {
+    this.closed = true
+    await Promise.all([...this.agents.values()].map(agent => agent.destroy().catch(() => {})))
+    this.agents.clear()
+  }
 }
 
 async function checkWithSignal(target: string, config: ProxyConfig, resolve: Resolver, signal: AbortSignal): Promise<UrlCheck> {
@@ -273,9 +302,11 @@ export async function safeFetch(
     const check = await checkWithSignal(target, config, resolve, signal)
     if (!check.ok) throw new ProxyError(check.reason, check.detail, 403)
     signal.throwIfAborted()
-    const dispatcher = createPinnedDispatcher(check.url.hostname, check.addresses, config.requestTimeoutMs)
+    const pooled = options.dispatcherPool !== undefined
+    const dispatcher = options.dispatcherPool?.get(check.url, check.addresses, config.requestTimeoutMs)
+      ?? createPinnedDispatcher(check.url.hostname, check.addresses, config.requestTimeoutMs)
     const abort = () => { void dispatcher.destroy().catch(() => {}) }
-    signal.addEventListener('abort', abort, { once: true })
+    if (!pooled) signal.addEventListener('abort', abort, { once: true })
     let response: Response
     try {
       const init: RequestInit & { dispatcher: Agent } = {
@@ -286,11 +317,11 @@ export async function safeFetch(
       if (signal.aborted) { await response.body?.cancel().catch(() => {}); signal.throwIfAborted() }
       // close() drains the in-flight response without aborting it, then releases
       // its connection. A body cancellation or signal abort also tears it down.
-      void dispatcher.close().catch(() => dispatcher.destroy()).catch(() => {})
+      if (!pooled) void dispatcher.close().catch(() => dispatcher.destroy()).catch(() => {})
         .finally(() => signal.removeEventListener('abort', abort))
     } catch (error) {
       signal.removeEventListener('abort', abort)
-      await dispatcher.destroy().catch(() => {})
+      if (!pooled) await dispatcher.destroy().catch(() => {})
       throw error
     }
 

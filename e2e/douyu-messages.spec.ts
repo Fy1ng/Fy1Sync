@@ -4,6 +4,24 @@ import { connectDanmaku, disconnectDanmaku, invoke, openPlayer, setPlaying } fro
 import { parseStt, serializeStt, toChatMessage } from '../server/danmaku/douyuProtocol'
 import type { DouyuMessageInput } from '../server/douyu/types'
 
+test('同名 cookie 与 dy_did 在主进程共享发送就绪检查, 仅返回缺失字段名', async () => {
+  const running = await launchApplication('douyu-credentials')
+  try {
+    const seed = (missing: boolean) => running.application.evaluate((_electron, missingUsername) => {
+      const main = globalThis as typeof globalThis & { __streamSyncerTest?: { setDouyuCredentialsFixture(missingUsername: boolean): void } }
+      main.__streamSyncerTest!.setDouyuCredentialsFixture(missingUsername)
+    }, missing)
+    await seed(false)
+    const ready = await invoke(running.page, 'listDouyuAccounts', undefined)
+    expect(ready).toMatchObject({ ok: true, value: { accounts: [{ login: { loggedIn: true, canSend: true, missingCredentialFields: [] } }] } })
+    expect(JSON.stringify(ready)).not.toContain('fixture-auth')
+    await seed(true)
+    expect(await invoke(running.page, 'listDouyuAccounts', undefined)).toMatchObject({
+      ok: true, value: { accounts: [{ login: { loggedIn: true, canSend: false, missingCredentialFields: ['acf_username'] } }] },
+    })
+  } finally { await running.close() }
+})
+
 test('手动发送和 +1 使用当前账号及真实房间, 未知结果保留草稿且不重发', async ({}, testInfo) => {
   test.setTimeout(90_000)
   const running = await launchApplication('douyu-messages')

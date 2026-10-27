@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createFrame, drawText } from '../test/glyphFont'
 import { validateProfile } from '../core/profileSchema'
-import { AutoClockSession, RecognitionEngine, TickMomentDetector, initSync } from './pkg/stream_syncer_wasm.js'
+import { MIN_SYNC_CONFIDENCE } from '../core/types'
+import { AutoClockSession, TickMomentDetector, initSync, recognize_auto } from './pkg/stream_syncer_wasm.js'
 
 initSync({ module: readFileSync(join(process.cwd(), 'src/wasm/pkg/stream_syncer_wasm_bg.wasm')) })
 const roi = { x: 70 / 320, y: 99 / 180, w: 54 / 320, h: 22 / 180 }
@@ -49,20 +50,18 @@ describe('automatic clock APIs in the generated WASM module', () => {
       expect(top.eventTimes.length).toBeGreaterThanOrEqual(8)
       const learned = JSON.parse(session.learn(JSON.stringify(top.roi)))
       expect(learned.profile).not.toBeNull()
+      expect(learned.profile.matchThreshold).toBe(MIN_SYNC_CONFIDENCE)
       expect(learned.learnedChars.slice().sort()).toEqual('0123456789:'.split(''))
       expect(learned.missingChars).toEqual([])
       expect(validateProfile(learned.profile).profile).not.toBeNull()
-      const engine = new RecognitionEngine()
-      try {
-        engine.configure(JSON.stringify(learned.profile))
-        for (let second = 0; second < 18; second++) {
-          const gray = clock(82 - second)
-          const rgba = Uint8Array.from({ length: gray.length * 4 }, (_, i) => i % 4 === 3 ? 255 : gray[Math.floor(i / 4)]!)
-          const result = JSON.parse(engine.recognize(rgba, 320, 180, second, second * 1000, second, false))
-          expect(result.outcome.status).toBe('success')
-          expect(result.outcome.reading.seconds).toBe(82 - second)
-        }
-      } finally { engine.free() }
+      // Automatic profiles use the same glyph normalization for learning and reading.
+      // The manual RecognitionEngine has a different preprocessing contract.
+      for (let second = 0; second < 18; second++) {
+        const result = JSON.parse(recognize_auto(clock(82 - second), 320, 180, JSON.stringify(learned.profile)))
+        expect(result.reason).toBeNull()
+        expect(result.value).toBe(82 - second)
+        expect(result.confidence).toBeGreaterThanOrEqual(MIN_SYNC_CONFIDENCE)
+      }
       session.reset()
       expect(JSON.parse(session.locate())).toEqual([])
     } finally { session.free() }

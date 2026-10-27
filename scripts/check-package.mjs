@@ -6,7 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { fingerprintRelease, verifyPackageArchive } from './package-archive.mjs'
 const require = createRequire(import.meta.url)
-const { listPackage, statFile } = require('@electron/asar')
+const { extractFile, listPackage, statFile } = require('@electron/asar')
 const root = fileURLToPath(new URL('../', import.meta.url))
 const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
 const evidence = path.resolve(root, process.env.STREAM_SYNC_PACKAGE_EVIDENCE ?? '.runtime-cache/p7-20261023')
@@ -33,6 +33,9 @@ async function walk(dir, prefix = '') {
   return result
 }
 const asar = listPackage(path.join(resources, 'app.asar')).map(name => name.replaceAll('\\', '/').replace(/^\//, ''))
+const applicationMetadata = JSON.parse(extractFile(path.join(resources, 'app.asar'), 'package.json').toString('utf8'))
+if (applicationMetadata.name !== 'fy1sync' || applicationMetadata.version !== version) throw new Error('Unexpected Fy1Sync application metadata')
+if (!(await stat(path.join(directory, 'Fy1Sync.exe'))).isFile()) throw new Error('Fy1Sync executable is missing')
 for (const name of asar) {
   if (!/^(?:package\.json|electron(?:\/(?:main|preload|network-runtime)\.cjs)?|client(?:\/assets)?|client\/index\.html|client\/assets\/[A-Za-z0-9_.-]+\.(?:js|css|wasm|woff2))$/.test(name)) throw new Error('Unexpected ASAR entry: ' + name)
 }
@@ -48,8 +51,9 @@ for (const entry of inventory) {
   const file = path.join(resources, 'tools', entry.file)
   if ((await stat(file)).size !== entry.size || await hash(file) !== entry.sha256) throw new Error('Packaged tool hash mismatch: ' + entry.file)
 }
-const releaseFiles = (await readdir(path.join(root, '.release'))).filter(name => name.startsWith(`Stream-Syncer-${version}-`) && /\.(zip|exe)$/.test(name))
-if (!releaseFiles.some(name => name.endsWith('.zip')) || !releaseFiles.some(name => name.endsWith('.exe'))) throw new Error('Both ZIP and NSIS artifacts are required')
+const releaseFiles = (await readdir(path.join(root, '.release'))).filter(name => name.startsWith(`Fy1Sync-${version}-`) && /\.(zip|exe)$/.test(name))
+const expectedArtifacts = new Set([`Fy1Sync-${version}-win-x64-portable.zip`, `Fy1Sync-${version}-win-x64-nsis.exe`])
+if (releaseFiles.length !== expectedArtifacts.size || releaseFiles.some(name => !expectedArtifacts.has(name))) throw new Error('The named Fy1Sync ZIP and NSIS artifacts are required')
 const artifacts = []
 const unpacked = await fingerprintRelease(directory, { forbiddenPath })
 for (const name of releaseFiles) {

@@ -775,7 +775,8 @@ fn learn_at_threshold(frames: &[TimedFrame], roi: &RoiRect, threshold: f64) -> L
             .into(),
             detect_window_seconds: 3.0,
             sample_fps: 30.0,
-            match_threshold: 0.78,
+            // Keep the generated profile aligned with the desktop sync confidence floor.
+            match_threshold: 0.82,
             preprocess: PreprocessSettings {
                 scale: 1.0,
                 threshold,

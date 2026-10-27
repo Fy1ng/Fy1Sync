@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CookieStore, cookieDomainAllowed } from './cookies'
+import { messageCredentials } from '../server/douyu/messageProtocol'
 import type { BrowserCookie } from './cookies'
 import { containedPath, powershellEnvironment, PRIVATE_ACL_SCRIPT, privateDirectory } from './privateStorage'
 import type { PrivatePermissions } from './privateStorage'
@@ -39,7 +40,8 @@ describe('private cookie storage', () => {
     manager.write('youtube', [cookie(), cookie({ name: 'SID', expirationDate: now + 20 }), cookie({ name: 'HSID', session: true }), cookie({ name: 'SSID', expirationDate: now - 1 })])
     expect(await manager.status()).toEqual({
       youtube: { loggedIn: true, cookieCount: 3, authKeysPresent: ['SAPISID', 'SID', 'HSID'], expiresAt: now + 20, hasSessionCookies: true },
-      douyu: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false },
+      douyu: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false,
+        canSend: false, missingCredentialFields: ['acf_uid', 'acf_did', 'dy_did', 'did', 'acf_username', 'acf_auth_wl', 'acf_dmjwt_token', 'acf_ltkid', 'acf_biz', 'acf_stk'] },
     })
     expect(JSON.stringify(await manager.status())).not.toContain('test-private-value')
   })
@@ -48,6 +50,20 @@ describe('private cookie storage', () => {
     const manager = store()
     manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'dy_did' })])
     expect((await manager.status()).douyu).toMatchObject({ loggedIn: false, cookieCount: 1, authKeysPresent: [] })
+  })
+  it.each([false, true])('selects www credentials before parent-domain duplicates, independent of file order %s', async reverse => {
+    const manager = store()
+    const values = { acf_uid: '42', dy_did: '1'.repeat(32), acf_username: 'fixture-name', acf_auth_wl: 'fixture-auth' }
+    const cookies = Object.entries(values).flatMap(([name, value]) => [
+      cookie({ domain: '.douyu.com', name, value: name === 'acf_uid' ? '99' : value }),
+      cookie({ domain: 'www.douyu.com', hostOnly: true, name, value }),
+    ])
+    manager.write('douyu', reverse ? cookies.reverse() : cookies)
+    const header = await manager.cookieHeader('douyu', 'https://www.douyu.com/')
+    expect(header.split('; ')).toHaveLength(4)
+    expect(messageCredentials(header)).toMatchObject({ uid: '42', did: '1'.repeat(32) })
+    expect((await manager.status()).douyu).toMatchObject({ loggedIn: true, canSend: true, missingCredentialFields: [] })
+    expect(JSON.stringify(await manager.status())).not.toContain('fixture-auth')
   })
 
   it.each(['\nsecret', '\tsecret', '\0secret', 'a;b', 'a b'])('rejects unsafe cookie fields with a fixed error', value => {

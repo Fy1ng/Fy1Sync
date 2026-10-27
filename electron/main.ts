@@ -1,5 +1,5 @@
 import './networkRuntime'
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification, powerMonitor, protocol, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, protocol, session, shell } from 'electron'
 import { join, resolve } from 'node:path'
 import { mkdirSync, watchFile, unwatchFile } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -15,6 +15,7 @@ import { installIpcHandlers } from './ipc'
 import { BufferManager } from './bufferManager'
 import { pullAdaptive, AdaptivePullError } from './adaptivePuller'
 import { ChromeLoginDriver, findSystemChrome, LoginManager } from './login'
+import { CookieStore } from './cookies'
 import { Acquisition } from './acquisition'
 import { YtDlpRunner, type YtDlpDiagnostic } from './ytdlp'
 import { locateTool, type ToolSettings } from './toolLocator'
@@ -46,7 +47,7 @@ const networkRuntimePath = app.isPackaged
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: {
   standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true,
 } }])
-app.setName('Stream Syncer')
+app.setName('Fy1Sync')
 if (process.env.STREAM_SYNC_USER_DATA_DIR) {
   const path = resolve(process.env.STREAM_SYNC_USER_DATA_DIR)
   mkdirSync(path, { recursive: true })
@@ -333,7 +334,7 @@ async function start(): Promise<void> {
     validatePng: bytes => { const value = nativeImage.createFromBuffer(bytes); return !value.isEmpty() },
     chooseCaptureDestination: async kind => {
       const result = await dialog.showSaveDialog({ title: kind === 'png' ? '保存播放截图' : '保存 GIF',
-        defaultPath: `Stream-Syncer-${Date.now()}.${kind}`, filters: [{ name: kind.toUpperCase(), extensions: [kind] }] })
+        defaultPath: `Fy1Sync-${Date.now()}.${kind}`, filters: [{ name: kind.toUpperCase(), extensions: [kind] }] })
       return result.canceled || !result.filePath ? null : result.filePath
     },
     openExternal: url => shell.openExternal(url),
@@ -342,7 +343,7 @@ async function start(): Promise<void> {
     },
     createPipWindow: () => {
       const created = new BrowserWindow({ show: false, width: 480, height: 270, minWidth: 240, minHeight: 135,
-        autoHideMenuBar: true, alwaysOnTop: true, title: 'Stream Syncer - 画中画',
+        autoHideMenuBar: true, alwaysOnTop: true, title: 'Fy1Sync - 画中画',
         webPreferences: { preload: join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true,
           nodeIntegration: false, webSecurity: true, backgroundThrottling: false } })
       pipWindow = created
@@ -398,8 +399,12 @@ async function start(): Promise<void> {
       return response
     } catch { return new Response('资源读取失败', { status: 500 }) }
   })
+  Menu.setApplicationMenu(null)
   window = new BrowserWindow({
     width: 1440, height: 900, minWidth: 800, minHeight: 600,
+    title: 'Fy1Sync', titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#0d0d0f', symbolColor: '#f3f0ea', height: 32 },
+    backgroundColor: '#0d0d0f',
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true,
       nodeIntegration: false, webSecurity: true, backgroundThrottling: false,
@@ -453,6 +458,13 @@ async function start(): Promise<void> {
     ...(!app.isPackaged ? { setDouyuToolsFixture() {
       if (!offlineE2e) throw new Error('Douyu tools fixture is offline-only')
       douyuToolsFixture = true
+    }, setDouyuCredentialsFixture(missingUsername: boolean) {
+      if (!offlineE2e) throw new Error('Credential fixture is offline-only')
+      const fields = { acf_uid: '42', dy_did: '1'.repeat(32), acf_username: 'fixture-user', acf_auth_wl: 'fixture-auth' }
+      new CookieStore(userDataDir).write('douyu', Object.entries(fields).filter(([name]) => !missingUsername || name !== 'acf_username').flatMap(([name, value]) => [
+        { domain: '.douyu.com', path: '/', secure: true, session: true, name, value: name === 'acf_uid' ? '99' : value },
+        { domain: 'www.douyu.com', hostOnly: true, path: '/', secure: true, session: true, name, value },
+      ]))
     }, setDouyuActivityFixtureOutcome(outcome: 'scheduled' | 'waiting-user' | 'succeeded') {
       if (!offlineE2e || !douyuToolsFixture || !['scheduled', 'waiting-user', 'succeeded'].includes(outcome)) throw new Error('Invalid activity fixture')
       activityFixtureOutcome = outcome

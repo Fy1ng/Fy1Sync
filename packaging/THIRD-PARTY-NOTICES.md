@@ -1,4 +1,6 @@
-# Third-party notices for local Windows x64 evaluation builds
+# Third-party notices for Fy1Sync local Windows x64 evaluation builds
+
+CS2 schedule metadata is by [Liquipedia contributors](https://liquipedia.net/counterstrike/Liquipedia:Matches), under [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/). Fy1Sync extracts match, team, tournament and stream fields from the MediaWiki API and supplies attribution with every schedule response. Cached metadata retains the same license. The offline fixture is a trimmed API response; its source and modifications are recorded in `server/esports/fixtures/README.md`.
 
 The application package.json retains the original application's MIT license declaration. This does not license the whole distribution as MIT. No copyright owner is invented here. Third-party programs remain separate executables or provider resources, outside app.asar, with their own terms.
 

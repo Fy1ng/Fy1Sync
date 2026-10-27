@@ -20,7 +20,7 @@ test('旧配置不恢复已移除的本地视觉, 普通弹幕设置和真实礼
   } })), SETTINGS_KEY)
   await openPlayer(page)
   await expect(page).toHaveURL(APP_ORIGIN + '/')
-  await expect(page).toHaveTitle('Stream Sync Player')
+  await expect(page).toHaveTitle('Fy1Sync')
   await page.getByRole('button', { name: '弹幕设置', exact: true }).click()
   const panel = page.locator('.float-panel')
   await expect(panel.getByRole('heading', { name: '弹幕', exact: true })).toBeVisible()
