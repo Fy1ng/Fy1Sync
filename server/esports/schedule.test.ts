@@ -49,8 +49,27 @@ describe('Liquipedia fixture parsing', () => {
   it.each([
     ['match-info-header-opponent', 'removed-opponent'], ['match-info-header-scoreholder-upper', 'removed-score'],
     ['data-timestamp="1793032200"', 'data-timestamp="wrong"'], ['PGL/sx5tneE-ILg', 'PGL/bad'],
-  ])('rejects the whole response when a required selector or value changes: %s', (from, to) => {
-    expect(() => parseSchedule(change(from, to))).toThrow(ScheduleFormatError)
+  ])('skips just the one match whose required selector or value changes, and says so: %s', (from, to) => {
+    const skipped: string[] = []
+    const matches = parseSchedule(change(from, to), undefined, (selector) => skipped.push(selector))
+    expect(matches).toHaveLength(8)
+    expect(matches.map(m => m.id)).toEqual(parseSchedule(fixture).slice(1).map(m => m.id))
+    expect(skipped).toHaveLength(1)
+  })
+  it.each([['match-info-header-scoreholder-upper', 'removed-score'], ['timer-object', 'removed-timer']])(
+    'rejects the whole response when every match changes (selector drift): %s', (from, to) => {
+      const drifted = { parse: { text: { '*': fixture.parse.text['*'].replaceAll(from, to) } } }
+      expect(() => parseSchedule(drifted)).toThrow(ScheduleFormatError)
+    })
+  it('reads an empty scoreboard (both cells blank, the divider left) as no score yet', () => {
+    const blank = change(
+      /<span class="match-info-header-scoreholder-upper">.*?<\/span><span class="match-info-header-scoreholder-lower">/s.exec(fixture.parse.text['*'])![0],
+      '<span class="match-info-header-scoreholder-upper"><span class="match-info-header-scoreholder-score"></span>'
+        + '<span class="match-info-header-scoreholder-divider">:</span><span class="match-info-header-scoreholder-score"></span>'
+        + '</span><span class="match-info-header-scoreholder-lower">')
+    const matches = parseSchedule(blank)
+    expect(matches).toHaveLength(9)
+    expect(matches[0]).toMatchObject({ score: null, bestOf: 3 })
   })
   it('rejects non-API data and an empty unknown layout', () => {
     expect(() => parseSchedule('<html>error</html>')).toThrow('赛程格式已变化, 暂时无法读取')
@@ -149,11 +168,22 @@ describe('shared schedule service', () => {
     await service.getCs2Schedule({ refresh: true })
     expect(request).toHaveBeenCalledTimes(1)
   })
-  it('returns the required format error and never publishes partial matches', async () => {
-    const request = vi.fn<typeof fetch>().mockImplementation(async () => response(change('match-info-header-opponent', 'wrong')))
+  it('returns the format error and no matches when the layout has drifted', async () => {
+    const drifted = { parse: { text: { '*': fixture.parse.text['*'].replaceAll('match-info-header-opponent', 'wrong') } } }
+    const request = vi.fn<typeof fetch>().mockImplementation(async () => response(drifted))
     const { service } = create(request)
     const result = await service.getCs2Schedule()
     expect(result).toMatchObject({ stale: true, error: '赛程格式已变化, 暂时无法读取', matches: [] })
+  })
+  it('keeps the other matches and logs the one it skipped', async () => {
+    const log = vi.fn()
+    const request = vi.fn<typeof fetch>().mockImplementation(async () => response(change('match-info-header-opponent', 'wrong')))
+    const service = new EsportsService({ userDataDir: directory, version: '0.1.3', logos: null, request, now: () => now, resolve: async () => ['93.184.216.34'], log })
+    services.push(service)
+    const result = await service.getCs2Schedule()
+    expect(result.error).toBeUndefined()
+    expect(result.matches.length).toBeGreaterThan(0)
+    expect(log).toHaveBeenCalledWith('Liquipedia match skipped: .match-info-header-opponent')
   })
   it('uses the identified User-Agent, gzip and metadata-only allowlist', async () => {
     const { service, request } = create()

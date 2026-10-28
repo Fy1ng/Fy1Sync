@@ -108,48 +108,74 @@ export function validChannel(platform: 'youtube' | 'twitch', channel: unknown): 
     : /^@?[\p{L}\p{N}_.-]{1,100}$/u.test(channel))
 }
 
-/** Parse the whole payload before exposing any matches, so selector drift cannot leak partial results. */
-export function parseSchedule(payload: unknown, logoPaths?: Map<string, string>): Cs2Match[] {
+/**
+ * Parse the whole payload before exposing any matches.
+ *
+ * One odd match (a scoreboard Liquipedia left half-filled, say) is skipped and reported through
+ * `onSkip`, so it cannot take the other ninety down with it. Selector drift breaks every match,
+ * not one, so the response is still refused when nothing parses or most matches fail.
+ */
+export function parseSchedule(payload: unknown, logoPaths?: Map<string, string>,
+  onSkip?: (selector: string) => void): Cs2Match[] {
   const html = (payload as { parse?: { text?: { '*'?: unknown } } } | null)?.parse?.text?.['*']
   if (typeof html !== 'string' || html.length > 2_000_000) return fail('parse.text.*')
   const nodes = byClass(parse(html), 'match-info')
   if (!nodes.length || nodes.length > 500) return fail('.match-info')
-  const matches = nodes.map(node => {
-    const timer = one(byClass(node, 'timer-object'), '.timer-object[data-timestamp]')
-    const rawTime = attr(timer, 'data-timestamp') ?? ''
-    const startsAt = Number(rawTime) * 1000
-    if (!/^\d{9,11}$/.test(rawTime) || !Number.isSafeInteger(startsAt)) return fail('.timer-object[data-timestamp]')
-    const opponents = byClass(node, 'match-info-header-opponent')
-    if (opponents.length !== 2) return fail('.match-info-header-opponent')
-    const teams: [Cs2Team, Cs2Team] = [team(opponents[0]!), team(opponents[1]!)]
-    const scoreText = text(one(byClass(node, 'match-info-header-scoreholder-upper'), '.match-info-header-scoreholder-upper')).replace(/\s/g, '')
-    const parsedScore = /^(\d{1,2}):(\d{1,2})$/.exec(scoreText)
-    if (scoreText !== 'vs' && !parsedScore) return fail('.match-info-header-scoreholder-upper score')
-    const score: [number, number] | null = parsedScore ? [Number(parsedScore[1]), Number(parsedScore[2])] : null
-    const lower = byClass(node, 'match-info-header-scoreholder-lower')
-    if (lower.length > 1) return fail('.match-info-header-scoreholder-lower')
-    const bestOfText = lower.length ? text(lower[0]!) : ''
-    const bo = /^\(Bo(\d{1,2})\)$/i.exec(bestOfText)
-    if (bestOfText && !bo) return fail('.match-info-header-scoreholder-lower bestOf')
-    const bestOf = bo ? Number(bo[1]) : null
-    const tournamentNode = one(byClass(node, 'match-info-tournament-name'), '.match-info-tournament-name')
-    const tournamentLink = one(all(tournamentNode, n => element(n) && n.tagName === 'a' && attr(n, 'href') !== undefined), '.match-info-tournament-name a[href]')
-    const titleNode = one(all(tournamentLink, n => element(n) && n.tagName === 'span'), '.match-info-tournament-name span')
-    const fullName = bounded(text(titleNode), '.match-info-tournament-name span')
-    const href = attr(tournamentLink, 'href') ?? ''
-    if (!href.startsWith('/counterstrike/') || /[\x00-\x20\\]/.test(href)) return fail('.match-info-tournament-name a[href]')
-    const url = new URL(href, 'https://liquipedia.net').href
-    const split = fullName.lastIndexOf(' - ')
-    const name = split < 0 ? fullName : fullName.slice(0, split)
-    const stage = split < 0 ? null : fullName.slice(split + 3) || null
-    const finished = attr(timer, 'data-finished') === 'finished' || byClass(node, 'match-info-header-winner').length > 0
-    const state: Cs2Match['state'] = finished ? 'finished' : score ? 'live' : 'upcoming'
-    const id = createHash('sha256').update(JSON.stringify([url, startsAt, ...teams.map(t => t.name)])).digest('hex').slice(0, 24)
-    opponents.forEach((opponent, index) => { const path = teamLogoPath(opponent); if (path) logoPaths?.set(`${id}:${index}`, path) })
-    return { id, startsAt, state, teams, score, bestOf, tournament: { name, stage, tier: tier(node), url }, streams: streams(node) }
+  const skipped: string[] = []
+  const matches = nodes.flatMap((node): Cs2Match[] => {
+    const pending = new Map<string, string>()
+    try {
+      const match = parseMatch(node, pending)
+      for (const [key, path] of pending) logoPaths?.set(key, path)
+      return [match]
+    } catch (error) {
+      if (!(error instanceof ScheduleFormatError)) throw error
+      skipped.push(error.selector)
+      return []
+    }
   })
+  // Drift fails everywhere; a few bad matches is the page, not the parser.
+  if (!matches.length || skipped.length * 2 > nodes.length) return fail(skipped[0] ?? '.match-info')
+  for (const selector of skipped) onSkip?.(selector)
   if (new Set(matches.map(match => match.id)).size !== matches.length) return fail('.match-info duplicate identity')
   return matches
+}
+
+function parseMatch(node: Node, logoPaths: Map<string, string>): Cs2Match {
+  const timer = one(byClass(node, 'timer-object'), '.timer-object[data-timestamp]')
+  const rawTime = attr(timer, 'data-timestamp') ?? ''
+  const startsAt = Number(rawTime) * 1000
+  if (!/^\d{9,11}$/.test(rawTime) || !Number.isSafeInteger(startsAt)) return fail('.timer-object[data-timestamp]')
+  const opponents = byClass(node, 'match-info-header-opponent')
+  if (opponents.length !== 2) return fail('.match-info-header-opponent')
+  const teams: [Cs2Team, Cs2Team] = [team(opponents[0]!), team(opponents[1]!)]
+  const scoreText = text(one(byClass(node, 'match-info-header-scoreholder-upper'), '.match-info-header-scoreholder-upper')).replace(/\s/g, '')
+  const parsedScore = /^(\d{1,2}):(\d{1,2})$/.exec(scoreText)
+  // A bare divider (both score cells empty) is a match without a score yet, like 'vs'.
+  if (scoreText !== 'vs' && scoreText !== ':' && !parsedScore) return fail('.match-info-header-scoreholder-upper score')
+  const score: [number, number] | null = parsedScore ? [Number(parsedScore[1]), Number(parsedScore[2])] : null
+  const lower = byClass(node, 'match-info-header-scoreholder-lower')
+  if (lower.length > 1) return fail('.match-info-header-scoreholder-lower')
+  const bestOfText = lower.length ? text(lower[0]!) : ''
+  const bo = /^\(Bo(\d{1,2})\)$/i.exec(bestOfText)
+  if (bestOfText && !bo) return fail('.match-info-header-scoreholder-lower bestOf')
+  const bestOf = bo ? Number(bo[1]) : null
+  const tournamentNode = one(byClass(node, 'match-info-tournament-name'), '.match-info-tournament-name')
+  const tournamentLink = one(all(tournamentNode, n => element(n) && n.tagName === 'a' && attr(n, 'href') !== undefined), '.match-info-tournament-name a[href]')
+  const titleNode = one(all(tournamentLink, n => element(n) && n.tagName === 'span'), '.match-info-tournament-name span')
+  const fullName = bounded(text(titleNode), '.match-info-tournament-name span')
+  const href = attr(tournamentLink, 'href') ?? ''
+  if (!href.startsWith('/counterstrike/') || /[\x00-\x20\\]/.test(href)) return fail('.match-info-tournament-name a[href]')
+  const url = new URL(href, 'https://liquipedia.net').href
+  const split = fullName.lastIndexOf(' - ')
+  const name = split < 0 ? fullName : fullName.slice(0, split)
+  const stage = split < 0 ? null : fullName.slice(split + 3) || null
+  const finished = attr(timer, 'data-finished') === 'finished' || byClass(node, 'match-info-header-winner').length > 0
+  const state: Cs2Match['state'] = finished ? 'finished' : score ? 'live' : 'upcoming'
+  const id = createHash('sha256').update(JSON.stringify([url, startsAt, ...teams.map(t => t.name)])).digest('hex').slice(0, 24)
+  const result: Cs2Match = { id, startsAt, state, teams, score, bestOf, tournament: { name, stage, tier: tier(node), url }, streams: streams(node) }
+  opponents.forEach((opponent, index) => { const path = teamLogoPath(opponent); if (path) logoPaths.set(`${id}:${index}`, path) })
+  return result
 }
 
 export function currentMatches(matches: Cs2Match[], now: number): Cs2Match[] {

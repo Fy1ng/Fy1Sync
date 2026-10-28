@@ -304,7 +304,8 @@ export class EsportsService {
     try {
       const payload = await this.fetchMetadata(SCHEDULE_URL, true)
       const logoPaths = new Map<string, string>()
-      const matches = parseSchedule(payload, logoPaths), fetchedAt = this.now()
+      const matches = parseSchedule(payload, logoPaths,
+        selector => (this.options.log ?? console.warn)(`Liquipedia match skipped: ${selector}`)), fetchedAt = this.now()
       this.disk.save(payload, fetchedAt)
       this.cache = { fetchedAt, matches, logoPaths }
       return this.snapshot()
