@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { _electron, expect, test as baseTest, type ElectronApplication, type Page } from '@playwright/test'
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
-const testDataRoot = path.join(projectRoot, 'e2e', '.data')
+const testDataRoot = process.env.STREAM_SYNC_E2E_DATA_ROOT || path.join(projectRoot, 'e2e', '.data')
 
 export const APP_ORIGIN = 'app://app'
 
@@ -18,7 +18,8 @@ export interface RunningApplication {
 
 /** Launch the built application with a disposable profile and preset store. */
 export async function launchApplication(label: string, options: { softwareVideo?: boolean } = {}): Promise<RunningApplication> {
-  const dataDir = path.join(testDataRoot, label.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 70) + '-' + randomUUID())
+  // Cookie-store ACL checks spawn native Windows tools with a 260-character path limit.
+  const dataDir = path.join(testDataRoot, randomUUID().slice(0, 12))
   await mkdir(dataDir, { recursive: true })
   const temporaryDir = path.join(dataDir, 'temp')
   await mkdir(temporaryDir)
@@ -77,7 +78,7 @@ export async function launchApplication(label: string, options: { softwareVideo?
   } catch (error) {
     await application?.close().catch(() => undefined)
     await cleanup()
-    throw new Error('Electron E2E 启动失败. 请先 npm run build, 并在可启动 Chromium restricted token 的沙箱外终端运行 npx playwright test. ' + String(error))
+    throw new Error(`Electron E2E 启动失败 (${label}). 请先 npm run build, 并在可启动 Chromium restricted token 的沙箱外终端运行 npx playwright test. ` + String(error))
   }
 }
 

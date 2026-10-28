@@ -13,6 +13,7 @@ import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { useCamera } from '../app/useCamera'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { CameraOverlay } from '../ui/CameraOverlay'
+import { INITIAL_UPSCALE_STATE } from '../ui/useCameraUpscale'
 import { CameraButton } from './CameraButton'
 import { CameraFraming } from './CameraFraming'
 import { CaptureControls } from './capture/Capture'
@@ -58,6 +59,7 @@ function StudioView(): React.ReactNode {
   const root = useRef<HTMLDivElement | null>(null)
   const fullscreen = useFullscreen(root)
   const camera = useCamera()
+  const [cameraUpscale, setCameraUpscale] = useState(INITIAL_UPSCALE_STATE)
   const nudge = useNudge()
   const [intake, setIntake] = useState(false)
   const [droppedFile, setDroppedFile] = useState<File | null>(null)
@@ -166,7 +168,7 @@ function StudioView(): React.ReactNode {
           <div className="theater-main" ref={mountMain} data-role={mainRole} />
           <DanmakuStage onReply={() => setChat(true)} />
           <ExtraStreams adding={addingStream} onAddingChange={setAddingStream} />
-          {camera.config && <CameraOverlay config={camera.config} onWindow={camera.setWindow} stageRef={theater} />}
+          {camera.config && <CameraOverlay config={camera.config} onWindow={camera.setWindow} stageRef={theater} onUpscaleState={setCameraUpscale} />}
 
           {snapshot.media[otherRole].status !== 'empty' && !previewHidden ? (
             <div className="pip" data-role={otherRole}>
@@ -229,7 +231,7 @@ function StudioView(): React.ReactNode {
               </div>
               <div className="dock-right">
                 <QualityMenu />
-                <CameraButton camera={camera} onFrame={() => setFraming(true)} />
+                <CameraButton camera={camera} onFrame={() => setFraming(true)} upscale={cameraUpscale} />
                 <CaptureControls source={() => session.engine.element(session.snapshot.mainRole)} />
                 <PipButton />
                 <DanmakuSwitch onTune={() => setTuning((open) => !open)} />

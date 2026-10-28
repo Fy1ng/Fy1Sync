@@ -3,7 +3,8 @@
  *
  * Canvas, not a second <video>: the commentary element is the one MediaEngine owns and
  * syncs, and a second element would decode the stream twice and drift. Drawing a sub-rect
- * of the existing element costs one drawImage per frame and is frame-exact with it.
+ * of the existing element preserves the original video for sync and recognition.
+ * WebGPU optionally upscales that crop; the fallback retains the original 2D drawing.
  *
  * Dragging the body moves the window; the corner handle resizes it (height follows the
  * crop's aspect). Arrow keys move it, Shift+arrows by more. Position and size are stored as
@@ -15,15 +16,17 @@ import { useSession } from '../app/SessionContext'
 import { useAnimationFrame } from '../app/hooks'
 import type { CameraConfig, CameraWindow } from '../app/camera'
 import { normalizeWindow } from '../app/camera'
+import { useCameraUpscale, type CameraUpscaleState } from './useCameraUpscale'
 
 interface Props {
   config: CameraConfig
   onWindow: (window: CameraWindow) => void
   /** The stage the overlay is placed in; positions are fractions of its box. */
   stageRef: React.RefObject<HTMLDivElement | null>
+  onUpscaleState?: (state: CameraUpscaleState) => void
 }
 
-export function CameraOverlay({ config, onWindow, stageRef }: Props): React.ReactNode {
+export function CameraOverlay({ config, onWindow, stageRef, onUpscaleState }: Props): React.ReactNode {
   const session = useSession()
   const canvas = useRef<HTMLCanvasElement | null>(null)
   const [stage, setStage] = useState({ width: 0, height: 0 })
@@ -42,26 +45,6 @@ export function CameraOverlay({ config, onWindow, stageRef }: Props): React.Reac
     return () => observer.disconnect()
   }, [stageRef])
 
-  useAnimationFrame(() => {
-    const target = canvas.current
-    const video = session.engine.element('commentary')
-    if (!target || !video || video.readyState < 2 || !video.videoWidth) return
-    const { crop } = config
-    const sx = crop.x * video.videoWidth
-    const sy = crop.y * video.videoHeight
-    const sw = Math.max(1, crop.w * video.videoWidth)
-    const sh = Math.max(1, crop.h * video.videoHeight)
-    // Backing store at the crop's native size, capped: the window is small and upscaling the
-    // canvas beyond the source pixels adds nothing.
-    const width = Math.round(Math.min(sw, 960))
-    const height = Math.round(width * (sh / sw))
-    if (target.width !== width || target.height !== height) {
-      target.width = width
-      target.height = height
-    }
-    target.getContext('2d')?.drawImage(video, sx, sy, sw, sh, 0, 0, width, height)
-  }, config.enabled)
-
   const aspect = config.crop.h > 0 ? (config.crop.w / config.crop.h) : 16 / 9
   const videoAspect = (() => {
     const video = session.engine.element('commentary')
@@ -71,6 +54,30 @@ export function CameraOverlay({ config, onWindow, stageRef }: Props): React.Reac
   const screenAspect = aspect * videoAspect
   const widthPx = win.width * stage.width
   const heightPx = widthPx / screenAspect
+  const upscale = useCameraUpscale(config, widthPx, heightPx)
+  const { mode, tier, reason, supported } = upscale.state
+  useEffect(() => {
+    onUpscaleState?.({ mode, tier, reason, supported })
+  }, [onUpscaleState, mode, tier, reason, supported])
+
+  useAnimationFrame(() => {
+    const target = canvas.current
+    const video = session.engine.element('commentary')
+    if (!target || !video || video.readyState < 2 || !video.videoWidth) return
+    const { crop } = config
+    const sx = crop.x * video.videoWidth
+    const sy = crop.y * video.videoHeight
+    const sw = Math.max(1, crop.w * video.videoWidth)
+    const sh = Math.max(1, crop.h * video.videoHeight)
+    // Preserve the legacy backing store and cap whenever GPU presentation is inactive.
+    const width = Math.round(Math.min(sw, 960))
+    const height = Math.round(width * (sh / sw))
+    if (target.width !== width || target.height !== height) {
+      target.width = width
+      target.height = height
+    }
+    target.getContext('2d')?.drawImage(video, sx, sy, sw, sh, 0, 0, width, height)
+  }, config.enabled && mode !== 'webgpu')
 
   const begin = (mode: 'move' | 'resize') => (event: React.PointerEvent<HTMLElement>): void => {
     if (event.button !== 0) return
@@ -111,6 +118,9 @@ export function CameraOverlay({ config, onWindow, stageRef }: Props): React.Reac
   return (
     <div
       className="camera-overlay"
+      data-upscale-mode={mode}
+      data-upscale-tier={tier}
+      data-upscale-reason={reason}
       role="group"
       aria-label="主播摄像头小窗，拖动移动，右下角缩放，方向键微调"
       tabIndex={0}
@@ -128,7 +138,9 @@ export function CameraOverlay({ config, onWindow, stageRef }: Props): React.Reac
       onPointerCancel={end}
       onKeyDown={onKeyDown}
     >
-      <canvas ref={canvas} className="camera-canvas" style={{ borderRadius: `${Math.max(0, win.radius - win.border)}px` }} />
+      <canvas ref={canvas} className="camera-canvas" style={{ visibility: mode === 'webgpu' ? 'hidden' : undefined, borderRadius: `${Math.max(0, win.radius - win.border)}px` }} />
+      {upscale.active && <canvas key={upscale.canvasKey} ref={upscale.canvas} className="camera-canvas camera-canvas-gpu"
+        style={{ visibility: mode === 'webgpu' ? undefined : 'hidden', borderRadius: `${Math.max(0, win.radius - win.border)}px` }} />}
       <span
         className="camera-resize"
         aria-hidden="true"

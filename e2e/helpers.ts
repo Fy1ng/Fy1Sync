@@ -142,6 +142,18 @@ export async function loadSource(
   }
   await expect(chip).not.toHaveAttribute('data-status', /^(empty|loading)$/, { timeout })
   await closeSourceDialog(page)
+  if (role === 'commentary' && process.env.STREAM_SYNC_S2_RECOGNITION) {
+    await openCameraFraming(page)
+    await page.getByRole('dialog', { name: '摄像头小窗', exact: true }).getByRole('button', { name: '保存', exact: true }).click()
+    if (process.env.STREAM_SYNC_S2_RECOGNITION === 'quality') {
+      await revealOverlay(page)
+      await openPopoverTrigger(page.locator('.dock').getByRole('button', { name: '主播摄像头', exact: true }))
+      await setCheckedByLabel(page.getByRole('radiogroup', { name: '摄像头超分' }).getByRole('radio', { name: '画质', exact: true }))
+      await page.keyboard.press('Escape')
+      await expect(page.locator('.camera-overlay')).toHaveAttribute('data-upscale-tier', 'quality')
+    }
+    await expect(page.locator('.camera-overlay')).toHaveAttribute('data-upscale-mode', 'webgpu')
+  }
 }
 
 /** 设置 opens from its gear: in the top bar while the chat is closed, in the chat header otherwise. */

@@ -16,6 +16,8 @@ import { normalizeSteps } from '../ui/controls/manualOffset'
 
 export const SETTINGS_KEY = 'stream-sync.settings.v1'
 
+export type CameraUpscaleTier = 'off' | 'performance' | 'quality'
+
 export interface DanmakuSettings {
   enabled: boolean
   fontSize: number
@@ -47,6 +49,7 @@ export interface AppSettings {
   sidebarVisible: boolean
   /** Prefer optional YouTube adaptive qualities when the token provider is available. */
   preferAdaptive: boolean
+  cameraUpscale: CameraUpscaleTier
   /**
    * Which recognition preset the player loads on boot, by id. Empty means none.
    *
@@ -81,6 +84,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sidebarVisible: true,
   // On: YouTube's adaptive formats are where 1440p and up live; the HLS ladder stops lower.
   preferAdaptive: true,
+  cameraUpscale: 'performance',
   profileId: '',
 }
 
@@ -153,6 +157,8 @@ export function mergeSettings(raw: unknown): AppSettings {
     seekThresholdSeconds: clamp(stored.seekThresholdSeconds, 0.2, 5, 1.5),
     sidebarVisible: boolean(stored.sidebarVisible, defaults.sidebarVisible),
     preferAdaptive: boolean(stored.preferAdaptive, defaults.preferAdaptive),
+    cameraUpscale: stored.cameraUpscale === 'off' || stored.cameraUpscale === 'performance' || stored.cameraUpscale === 'quality'
+      ? stored.cameraUpscale : defaults.cameraUpscale,
     // Bounded because it goes into a URL path when the preset is fetched.
     profileId: typeof stored.profileId === 'string' ? stored.profileId.slice(0, 200) : '',
   }

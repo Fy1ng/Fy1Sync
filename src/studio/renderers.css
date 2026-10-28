@@ -35,6 +35,11 @@
   height: 100%;
 }
 
+.camera-canvas-gpu {
+  position: absolute;
+  inset: 0;
+}
+
 .camera-resize {
   position: absolute;
   right: -2px;

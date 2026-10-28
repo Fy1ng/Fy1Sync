@@ -2629,6 +2629,17 @@ body,
   padding: 6px;
 }
 
+.studio .camera-upscale {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.studio .camera-upscale small {
+  color: var(--muted);
+}
+
 /* ---------- picture-in-picture button in the dock ---------- */
 
 .studio .pip-control {

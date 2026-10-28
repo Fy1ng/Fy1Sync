@@ -31,6 +31,16 @@ function fakeStorage(initial?: string): SettingsStorage & { value: string | null
 }
 
 describe('mergeSettings', () => {
+  it('normalizes the camera upscaler without breaking older settings', () => {
+    expect(mergeSettings({ volume: { commentary: 0.4 } }).cameraUpscale).toBe('performance')
+    for (const tier of ['off', 'performance', 'quality'] as const) {
+      expect(mergeSettings({ cameraUpscale: tier }).cameraUpscale).toBe(tier)
+    }
+    for (const value of [null, true, 4, 'auto', {}, []]) {
+      expect(mergeSettings({ cameraUpscale: value }).cameraUpscale).toBe('performance')
+    }
+  })
+
   it('returns defaults for an empty or absent blob', () => {
     expect(mergeSettings({})).toEqual(DEFAULT_SETTINGS)
     expect(mergeSettings(null)).toEqual(DEFAULT_SETTINGS)
