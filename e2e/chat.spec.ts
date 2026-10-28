@@ -94,6 +94,40 @@ test('斗鱼协议昵称经 IPC 显示, 缺失昵称才显示匿名', async ({ p
   await expect(page.locator('.danmaku-item').filter({ hasText: '昵称回归消息' })).toHaveCSS('color', 'rgb(30, 135, 240)')
 })
 
+test('弹幕列表的长消息完整换行显示, 前后行不重叠', async ({ page, electronApp }) => {
+  await openPlayer(page)
+  await connectDanmaku(page)
+  await setPlaying(page, false)
+  await expect.poll(() => electronApp.evaluate(() => {
+    const main = globalThis as typeof globalThis & { __streamSyncerTest?: { emitDanmaku(room: string, event: string, data: unknown): number } }
+    return main.__streamSyncerTest!.emitDanmaku('288016', 'state', { room: '288016', state: 'connected' })
+  })).toBe(1)
+  const long = '这是一条很长的弹幕，用来检查列表会不会把它截断成省略号；它应该在侧栏里完整地换行显示，' +
+    '并且下一条弹幕要排在它的下面而不是压在上面。WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW'
+  await electronApp.evaluate((_electron, text) => {
+    const main = globalThis as typeof globalThis & { __streamSyncerTest?: { emitDanmaku(room: string, event: string, data: unknown): number } }
+    for (const [index, content] of ['上一条', text, '下一条'].entries()) {
+      main.__streamSyncerTest!.emitDanmaku('288016', 'danmaku', {
+        id: 'wrap-' + index, text: content, username: '观众' + index, color: 0, level: 0,
+        receivedAt: Date.now(), room: '288016', system: false,
+      })
+    }
+  }, long)
+  const list = page.getByRole('log', { name: '弹幕列表' })
+  const row = list.locator('.msg').filter({ hasText: '这是一条很长的弹幕' })
+  await expect(row.locator('.msg-text')).toHaveText(long)
+  // Whole text on screen: no clipping, several lines tall.
+  const text = row.locator('.msg-text')
+  expect(await text.evaluate((node) => node.scrollWidth <= node.clientWidth + 1 && node.scrollHeight <= node.clientHeight + 1)).toBe(true)
+  const box = (await row.boundingBox())!
+  expect(box.height).toBeGreaterThan(50)
+  const rowWith = (exact: string) => list.locator('.msg').filter({ has: page.locator('.msg-text', { hasText: new RegExp(`^${exact}$`) }) })
+  const before = (await rowWith('上一条').boundingBox())!
+  const after = (await rowWith('下一条').boundingBox())!
+  expect(before.y + before.height).toBeLessThanOrEqual(box.y + 1)
+  expect(box.y + box.height).toBeLessThanOrEqual(after.y + 1)
+})
+
 test.describe('弹幕列表', () => {
   test.skip(!fixturesReady(), '缺少测试源，先运行 npm run fixtures')
 

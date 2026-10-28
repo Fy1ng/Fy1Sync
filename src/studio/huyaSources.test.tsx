@@ -108,6 +108,9 @@ describe('Huya sources', () => {
   })
 
   it('keeps Huya chat read-only in the drawer and its row menu while retaining copy and local blocking', async () => {
+    // The list draws only the rows that fit; jsdom lays nothing out, so give it a viewport.
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600)
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(320)
     const session = makeSession()
     session.connectDanmaku('huya:660000')
     relay?.({ event: 'state', data: { state: 'connected', room: 'huya:660000' } })
