@@ -1,10 +1,8 @@
 /**
  * Danmaku over the picture, with a menu on the one under the pointer.
  *
- * Each message's speed is fixed when it spawns and lanes come from the allocator. The run
- * across the picture is one linear Web Animation, so the compositor moves it and a busy
- * main thread (the chat list, React, the sync engine) no longer makes every message hitch
- * at once. The rAF loop only releases new messages and drops finished ones.
+ * Motion, measuring and lanes live in `ScrollingLayer` (shared with the PiP window); this
+ * file adds what only the main stage has: settings, merged counts and the hover menu.
  *
  * Hover stops the message under the pointer where it is and opens a small menu beneath
  * the pointer, the way it does on Douyu. Moving off both the message and its menu lets it
@@ -17,21 +15,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useAnimationFrame } from '../app/hooks'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
-import { AREA_FRACTION, DanmakuLaneAllocator, estimateTextWidth } from '../core/danmakuLanes'
+import { AREA_FRACTION } from '../core/danmakuLanes'
 import { danmakuLaneHeight } from '../core/danmakuProcessing'
 import type { DanmakuMessage } from '../core/danmakuTimeline'
 import { useComposer } from './composer'
 import { useDanmakuActions } from './danmakuActions'
+import { ScrollingLayer, type LayerEntry, type LayerItem } from './danmakuLayer'
 
-interface ActiveItem {
-  node: HTMLSpanElement
-  message: DanmakuMessage
-  /** The run across the picture; null where the platform has no Web Animations (jsdom). */
-  run: Animation | null
-  top: number
-  held: boolean
-  done: boolean
-}
+type ActiveItem = LayerItem<DanmakuMessage>
 
 /** `x` is the pointer, where the menu wants to start; a layout effect keeps it inside. */
 interface Menu { item: ActiveItem; x: number; top: number }
@@ -59,9 +50,8 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
   gapRef.current = snapshot.danmakuPreferences.verticalGapPx
 
   const hostRef = useRef<HTMLDivElement | null>(null)
-  const activeRef = useRef<ActiveItem[]>([])
+  const layerRef = useRef<ScrollingLayer<DanmakuMessage> | null>(null)
   const sizeRef = useRef({ width: 0, height: 0 })
-  const allocatorRef = useRef<DanmakuLaneAllocator | null>(null)
   const settingsRef = useRef(danmaku)
   settingsRef.current = danmaku
   const [menu, setMenu] = useState<Menu | null>(null)
@@ -87,8 +77,7 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
     cancelLeave()
     const held = menuRef.current?.item
     if (held?.held) {
-      held.held = false
-      held.run?.play()
+      layerRef.current?.resume(held)
       held.node.classList.remove('is-held')
     }
     setMenu(null)
@@ -101,9 +90,7 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
   }
 
   const flush = useCallback(() => {
-    for (const item of activeRef.current) { item.run?.cancel(); item.node.remove() }
-    activeRef.current = []
-    allocatorRef.current?.reset()
+    layerRef.current?.clear()
     cancelLeave()
     setMenu(null)
   }, [])
@@ -113,32 +100,33 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
     if (!host) return
     const measure = (): void => {
       sizeRef.current = { width: host.clientWidth, height: host.clientHeight }
-      allocatorRef.current?.setLayout(layoutFor())
+      layerRef.current?.setLayout(layoutFor(), performance.now())
     }
     measure()
-    allocatorRef.current ??= new DanmakuLaneAllocator(layoutFor())
+    layerRef.current ??= new ScrollingLayer(host, layoutFor())
     if (typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(measure)
     observer.observe(host)
     return () => observer.disconnect()
   }, [layoutFor])
 
-  useEffect(() => { allocatorRef.current?.setLayout(layoutFor()) },
+  useEffect(() => { layerRef.current?.setLayout(layoutFor(), performance.now()) },
     [danmaku.fontSize, danmaku.area, danmaku.speed, snapshot.danmakuPreferences.verticalGapPx, layoutFor])
 
   // "合并计数" raises the count of a message already on screen; follow it there.
   useEffect(() => session.subscribeChat(() => {
     const onScreen = new Map<string, ActiveItem>()
-    for (const item of activeRef.current) if (item.message.duplicateGroupId) onScreen.set(item.message.duplicateGroupId, item)
+    for (const item of layerRef.current?.items ?? []) if (item.data.duplicateGroupId) onScreen.set(item.data.duplicateGroupId, item)
     if (onScreen.size === 0) return
     const history = session.chatHistory()
     for (let i = history.length - 1, seen = 0; i >= 0 && seen < 300; i--, seen++) {
       const latest = history[i]!
       const item = latest.duplicateGroupId ? onScreen.get(latest.duplicateGroupId) : undefined
-      if (!item || item.message.duplicateCount === latest.duplicateCount) continue
-      item.message = latest
+      if (!item || item.data.duplicateCount === latest.duplicateCount) continue
+      item.data = latest
       const badge = item.node.querySelector('.danmaku-count')
       if (badge) badge.textContent = countLabel(latest)
+      layerRef.current?.refit(item)
       onScreen.delete(latest.duplicateGroupId!)
     }
   }), [session])
@@ -146,58 +134,41 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
   useEffect(() => { flush() }, [snapshot.danmaku.room, flush])
   useEffect(() => flush, [flush])
 
-  const spawn = useCallback((message: DanmakuMessage, nowMs: number): void => {
-    const host = hostRef.current
-    const allocator = allocatorRef.current
+  const entryFor = (message: DanmakuMessage): LayerEntry<DanmakuMessage> => {
     const settings = settingsRef.current
-    const { width } = sizeRef.current
-    if (!host || !allocator || width === 0 || message.gift || message.huyaGift) return
-    const textWidth = estimateTextWidth(message.text, settings.fontSize)
-    const assignment = allocator.allocateScroll(nowMs / 1000, textWidth)
-    // Every lane still busy. Dropping beats stacking one comment on another.
-    if (!assignment) return
-
-    const node = document.createElement('span')
-    node.className = 'danmaku-item'
-    node.textContent = message.text
-    if (message.duplicateGroupId) {
-      const badge = document.createElement('span')
-      badge.className = 'danmaku-count'
-      badge.textContent = countLabel(message)
-      node.appendChild(badge)
+    return {
+      data: message, text: message.text, fontSize: settings.fontSize,
+      build: () => {
+        const node = document.createElement('span')
+        node.className = 'danmaku-item'
+        node.textContent = message.text
+        if (message.duplicateGroupId) {
+          const badge = document.createElement('span')
+          badge.className = 'danmaku-count'
+          badge.textContent = countLabel(message)
+          node.appendChild(badge)
+        }
+        node.style.fontSize = `${settings.fontSize}px`
+        node.style.opacity = String(settings.opacity)
+        if (message.color) node.style.color = message.color
+        return node
+      },
     }
-    node.style.fontSize = `${settings.fontSize}px`
-    node.style.opacity = String(settings.opacity)
-    if (message.color) node.style.color = message.color
-    const from = `translate3d(${width}px, ${assignment.top}px, 0)`
-    node.style.transform = from
-    host.appendChild(node)
-    const item: ActiveItem = { node, message, run: null, top: assignment.top, held: false, done: false }
-    if (typeof node.animate === 'function') {
-      const duration = ((width + textWidth) / settings.speed) * 1000
-      const run = node.animate([{ transform: from }, { transform: `translate3d(${-textWidth}px, ${assignment.top}px, 0)` }],
-        { duration, easing: 'linear', fill: 'forwards' })
-      // Timed from the frame that released it, so lanes stay as far apart as allocated.
-      run.startTime = nowMs
-      run.onfinish = () => { item.done = true; node.remove() }
-      item.run = run
-    }
-    activeRef.current.push(item)
-  }, [])
+  }
 
   useAnimationFrame((nowMs) => {
     // Draining continues with the overlay off: the chat list reads the same releases.
     const released = session.drainDanmaku()
-    if (!settingsRef.current.enabled) return
-    for (const message of released) spawn(message, nowMs)
-
-    const active = activeRef.current
-    if (active.some((item) => item.done)) activeRef.current = active.filter((item) => !item.done)
+    const layer = layerRef.current
+    if (!settingsRef.current.enabled || !layer) return
+    const scrolling = released.filter((message) => !message.gift && !message.huyaGift)
+    if (scrolling.length > 0) layer.spawn(scrolling.map(entryFor), nowMs)
+    layer.sweep()
   })
 
   const itemAt = (target: EventTarget | null): ActiveItem | undefined => {
     const node = target instanceof Element ? target.closest('.danmaku-item') : null
-    return node ? activeRef.current.find((item) => item.node === node) : undefined
+    return node ? layerRef.current?.itemFor(node) : undefined
   }
 
   const pointerX = (event: React.PointerEvent): number =>
@@ -209,8 +180,7 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
     cancelLeave()
     if (menuRef.current?.item === item) return
     release()
-    item.held = true
-    item.run?.pause()
+    layerRef.current?.hold(item)
     // On top, so later messages in the same lane pass beneath it instead of taking the pointer.
     item.node.classList.add('is-held')
     const { height } = sizeRef.current
@@ -242,11 +212,10 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
 
   const blockUser = (user: string): void => {
     actions.block(user)
-    for (const item of activeRef.current) if (item.message.user === user) { item.run?.cancel(); item.node.remove() }
-    activeRef.current = activeRef.current.filter((item) => item.message.user !== user)
+    layerRef.current?.remove((item) => item.data.user === user)
   }
 
-  const message = menu?.item.message
+  const message = menu?.item.data
   const readOnly = message?.platform === 'huya' || snapshot.danmaku.room?.startsWith('huya:') === true
   const writes = snapshot.settings.douyuWrites
   const repeatProblem = message ? composer.repeatProblem(message.text) : null

@@ -7,30 +7,23 @@
  * configured from the shared display preferences.
  *
  * Deliberately lighter than the main stage: no hover menu, no gift notices, text only.
- * Nodes are positioned straight from the frame loop, like the main stage.
+ * Motion, measuring and lanes are the main stage's `ScrollingLayer`.
  */
 
 import { useEffect, useRef } from 'react'
 import { apiClient } from '../../app/apiClient'
-import { AREA_FRACTION, DanmakuLaneAllocator, estimateTextWidth, type LaneLayout } from '../../core/danmakuLanes'
+import { AREA_FRACTION, type LaneLayout } from '../../core/danmakuLanes'
 import { DanmakuProcessor, danmakuLaneHeight, type DanmakuPreferences } from '../../core/danmakuProcessing'
 import { DanmakuTimeline, LiveEdgeClock, scheduleTimeFor, type DanmakuMessage } from '../../core/danmakuTimeline'
 import { readTimebase } from '../../media/timebase'
 import { colorForIndex } from '../../../server/danmaku/douyuProtocol'
+import { ScrollingLayer, type LayerEntry } from '../danmakuLayer'
 
 const FONT_SIZE = 15
 /** Seconds a message takes to cross the window, whatever its width. */
 const CROSS_SECONDS = 7
 
-interface Active {
-  node: HTMLSpanElement
-  groupId: string | null
-  startMs: number
-  fromX: number
-  speed: number
-  width: number
-  top: number
-}
+interface Shown { groupId: string | null; text: string }
 
 export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProblem }: {
   video: HTMLVideoElement | null
@@ -47,8 +40,7 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
   const timeline = useRef(new DanmakuTimeline())
   const clock = useRef(new LiveEdgeClock())
   const processor = useRef(new DanmakuProcessor())
-  const active = useRef<Active[]>([])
-  const allocator = useRef<DanmakuLaneAllocator | null>(null)
+  const layer = useRef<ScrollingLayer<Shown> | null>(null)
   const size = useRef({ width: 0, height: 0 })
   const sequence = useRef(0)
   const pausedClock = useRef<{ media: number; wall: number } | null>(null)
@@ -65,11 +57,7 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
     return { laneHeight, areaHeight: Math.max(laneHeight, height * AREA_FRACTION.half), width, speed: Math.max(60, width / CROSS_SECONDS) }
   }
 
-  const flush = (): void => {
-    for (const item of active.current) item.node.remove()
-    active.current = []
-    allocator.current?.reset()
-  }
+  const flush = (): void => { layer.current?.clear() }
   const resetQueue = (): void => {
     timeline.current.clear()
     clock.current.reset()
@@ -82,17 +70,17 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
     if (!host) return
     const measure = (): void => {
       size.current = { width: host.clientWidth, height: host.clientHeight }
-      allocator.current?.setLayout(layout())
+      layer.current?.setLayout(layout(), performance.now())
     }
     measure()
-    allocator.current ??= new DanmakuLaneAllocator(layout())
+    layer.current ??= new ScrollingLayer(host, layout())
     if (typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(measure)
     observer.observe(host)
     return () => observer.disconnect()
   }, [])
 
-  useEffect(() => { allocator.current?.setLayout(layout()) }, [preferences.verticalGapPx])
+  useEffect(() => { layer.current?.setLayout(layout(), performance.now()) }, [preferences.verticalGapPx])
   // A new configuration resets the processor's duplicate groups by design.
   useEffect(() => { processor.current.configure(preferences) }, [preferences])
   useEffect(() => { resetQueue(); flush() }, [resetKey])
@@ -149,24 +137,16 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
     const onSeeking = (): void => { if (video.currentTime < timeline.current.playhead) timeline.current.handleSeek(video.currentTime) }
     video.addEventListener('seeking', onSeeking)
 
-    const spawn = (message: DanmakuMessage, groupId: string | null, nowMs: number): void => {
-      const host = hostRef.current
-      const lanes = allocator.current
-      const { width } = size.current
-      if (!host || !lanes || width === 0) return
-      const { speed } = layout()
-      const textWidth = estimateTextWidth(message.text, FONT_SIZE)
-      const lane = lanes.allocateScroll(nowMs / 1000, textWidth)
-      // Every lane is still busy: drop rather than overlap.
-      if (!lane) return
-      const node = document.createElement('span')
-      node.className = 'pip-dm'
-      node.textContent = message.text
-      if (message.color) node.style.color = message.color
-      node.style.transform = `translate3d(${width}px, ${lane.top}px, 0)`
-      host.appendChild(node)
-      active.current.push({ node, groupId, startMs: nowMs, fromX: width, speed, width: textWidth, top: lane.top })
-    }
+    const entryFor = (message: DanmakuMessage, groupId: string | null): LayerEntry<Shown> => ({
+      data: { groupId, text: message.text }, text: message.text, fontSize: FONT_SIZE,
+      build: () => {
+        const node = document.createElement('span')
+        node.className = 'pip-dm'
+        node.textContent = message.text
+        if (message.color) node.style.color = message.color
+        return node
+      },
+    })
 
     let frame = requestAnimationFrame(function tick(nowMs: number) {
       // A paused picture does not hold chat back; the duplicate window keeps time on the wall clock.
@@ -176,23 +156,22 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
         mediaTime = pausedClock.current.media + (Date.now() - pausedClock.current.wall) / 1000
       } else pausedClock.current = null
       const released = video.paused ? timeline.current.releaseAll() : timeline.current.advance(mediaTime)
+      const fresh: LayerEntry<Shown>[] = []
       for (const message of released) {
         const result = processor.current.process({ text: message.text, room: room ?? undefined, platform: message.platform, ...(message.dms !== undefined ? { dms: message.dms } : {}) }, mediaTime)
         if (result.kind === 'hide') continue
         if (result.kind === 'merge') {
-          for (const item of active.current) if (item.groupId === result.groupId) item.node.textContent = `${message.text} ×${result.count}`
+          for (const item of layer.current?.items ?? []) {
+            if (item.data.groupId !== result.groupId) continue
+            item.node.textContent = `${item.data.text} ×${result.count}`
+            layer.current?.refit(item)
+          }
           continue
         }
-        spawn(message, result.groupId, nowMs)
+        fresh.push(entryFor(message, result.groupId))
       }
-      let write = 0
-      for (const item of active.current) {
-        const x = item.fromX - ((nowMs - item.startMs) / 1000) * item.speed
-        if (x < -item.width) { item.node.remove(); continue }
-        item.node.style.transform = `translate3d(${x}px, ${item.top}px, 0)`
-        active.current[write++] = item
-      }
-      active.current.length = write
+      layer.current?.spawn(fresh, nowMs)
+      layer.current?.sweep()
       frame = requestAnimationFrame(tick)
     })
     return () => {
