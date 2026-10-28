@@ -1,6 +1,6 @@
 import { test } from '@playwright/test'
 import { expect, launchApplication } from './electron'
-import { invoke, openDouyuTab, openPlayer, openTaskForm, setCheckedByLabel } from './helpers'
+import { invoke, openDouyuTab, openPlayerWithDouyuWrites, openTaskForm, setCheckedByLabel } from './helpers'
 
 test('钓鱼, 红包和宝箱共享任务调度, 人工验证入口及重启暂停', async ({}, testInfo) => {
   test.setTimeout(90_000)
@@ -14,7 +14,7 @@ test('钓鱼, 红包和宝箱共享任务调度, 人工验证入口及重启暂�
       fixture.setDouyuToolsFixture()
       fixture.setDouyuRoomFixture({ '9999': '9999' })
     })
-    await openPlayer(app.page)
+    await openPlayerWithDouyuWrites(app.page)
     const tools = await openDouyuTab(app.page, '账号')
     await tools.getByRole('group', { name: '斗鱼账号 默认账号', exact: true }).getByRole('button', { name: '登录', exact: true }).click()
     await expect(tools).toContainText('默认账号 已登录')

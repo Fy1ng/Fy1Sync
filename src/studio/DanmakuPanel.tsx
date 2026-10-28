@@ -22,6 +22,7 @@ export function DanmakuPanel({ onClose }: { onClose: () => void }): React.ReactN
   const { settings, danmakuPreferences: prefs, danmaku: connection } = useSessionSnapshot()
   const readOnly = connection.room?.startsWith('huya:') === true
   const danmaku = settings.danmaku
+  const writes = settings.douyuWrites
   const composer = useComposer()
   const [problem, setProblem] = useState<string | null>(null)
   const setPrefs = (patch: Partial<DanmakuPreferences>): void => {
@@ -85,8 +86,10 @@ export function DanmakuPanel({ onClose }: { onClose: () => void }): React.ReactN
             checked={prefs.filterSuspectedBots} onChange={(filterSuspectedBots) => setPrefs({ filterSuspectedBots })} />
           <Switch label="用户详情" detail="在弹幕菜单中查看等级、贵族与粉丝牌"
             checked={prefs.showUserDetails} onChange={(showUserDetails) => setPrefs({ showUserDetails })} />
-          <h3 className="float-sub">发送</h3>
-          <Affixes value={composer.affixes} onProblem={setProblem} />
+          {writes && <>
+            <h3 className="float-sub">发送</h3>
+            <Affixes value={composer.affixes} onProblem={setProblem} />
+          </>}
         </>}
         {problem && <p className="form-error" role="alert">{problem}</p>}
       </div>

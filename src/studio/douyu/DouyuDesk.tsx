@@ -15,8 +15,11 @@ import { Spending } from './Spending'
 import { Tasks } from './Tasks'
 import { useDouyu, type Lane } from './useDouyu'
 import { useRemembered } from '../../app/remembered'
+import { DouyuWritesPane, useDouyuWrites } from '../douyuWrites'
 
-type Tab = 'accounts' | 'following' | 'tasks' | 'automations' | 'backpack' | 'renewal'
+type Tab = 'accounts' | 'following' | 'tasks' | 'automations' | 'backpack' | 'renewal' | 'experimental'
+/** Pages that only write to Douyu; hidden until 斗鱼写操作 is on. */
+const WRITE_TABS: ReadonlySet<Tab> = new Set(['tasks', 'automations', 'renewal'])
 const TABS: { id: Tab; label: string }[] = [
   { id: 'accounts', label: '账号' },
   { id: 'following', label: '关注' },
@@ -24,6 +27,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'automations', label: '批量任务' },
   { id: 'backpack', label: '背包' },
   { id: 'renewal', label: '粉丝牌' },
+  { id: 'experimental', label: '实验性' },
 ]
 
 /** The Douyu section of 设置. `onWatch` loads a followed room as the commentary. */
@@ -31,12 +35,14 @@ export function DouyuDesk({ onWatch }: { onWatch: (room: string) => void }): Rea
   const data = useDouyu()
   const { danmaku } = useSessionSnapshot()
   // Back on the page last open; a first visit starts on 账号, as before.
-  const [shown, setTab] = useRemembered<Tab>('douyu:tab', 'accounts')
+  const [remembered, setTab] = useRemembered<Tab>('douyu:tab', 'accounts')
+  const writes = useDouyuWrites()
+  const shown = !writes && WRITE_TABS.has(remembered) ? 'accounts' : remembered
   const active = data.active
 
   return (
     <SideTabs label="斗鱼" value={shown} onChange={setTab}
-      tabs={TABS.map((item) => ({
+      tabs={TABS.filter((item) => writes || !WRITE_TABS.has(item.id)).map((item) => ({
         ...item,
         badge: item.id === 'tasks' && data.tasks && data.tasks.tasks.length > 0
           ? <span className="num tab-count">{data.tasks.tasks.length}</span> : undefined,
@@ -49,11 +55,12 @@ export function DouyuDesk({ onWatch }: { onWatch: (room: string) => void }): Rea
           {shown === 'following' && <Following data={data} onWatch={onWatch} />}
           {shown === 'tasks' && <Tasks data={data} defaultRoom={danmaku.room} />}
           {shown === 'automations' && <Automations data={data} />}
-          {shown === 'backpack' && <Backpack data={data} room={danmaku.room} />}
+          {shown === 'backpack' && <Backpack data={data} room={danmaku.room} canGive={writes} />}
           {shown === 'renewal' && (
             <Renewal accountId={active?.id ?? null} accountLabel={active?.label ?? ''}
               ready={!!active?.login.loggedIn && !data.accountsBusy} />
           )}
+          {shown === 'experimental' && <DouyuWritesPane />}
         </div>
     </SideTabs>
   )

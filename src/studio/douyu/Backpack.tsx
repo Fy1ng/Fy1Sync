@@ -29,7 +29,7 @@ const snapshotOk = (value: unknown, accountId: string): value is DouyuInventoryS
     && !!snapshot.totals && Array.isArray(snapshot.totals.knownValue)
 }
 
-export function Backpack({ data, room }: { data: DouyuData; room: string | null }): React.ReactNode {
+export function Backpack({ data, room, canGive = true }: { data: DouyuData; room: string | null; canGive?: boolean }): React.ReactNode {
   const active = data.active
   const accountId = active?.id ?? null
   const loggedIn = !!active?.login.loggedIn
@@ -179,7 +179,7 @@ export function Backpack({ data, room }: { data: DouyuData; room: string | null 
         )}
       </section>
 
-      <section aria-label="赠送" className="pack-give">
+      {canGive && <section aria-label="赠送" className="pack-give">
         <div className="step-head">
           <h3>赠送</h3>
           <Segmented<Mode> label="赠送方式" value={mode} disabled={locked}
@@ -190,7 +190,7 @@ export function Backpack({ data, room }: { data: DouyuData; room: string | null 
           ? <BackpackGift key={accountId} accountId={active.id} room={roomText} inventory={inventory} gift={gift} locked={locked} />
           : <GiftPurchase key={`${accountId}:${roomText}`} accountId={active.id} room={roomText} gift={gift} locked={locked} ready={ready} />}
         <GiftPlanView gift={gift} accountLabel={active.label} currentRoom={currentRoom} ready={ready} inventory={inventory?.items ?? null} />
-      </section>
+      </section>}
     </div>
   )
 }

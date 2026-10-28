@@ -1,6 +1,6 @@
 import { test } from '@playwright/test'
 import { expect, launchApplication } from './electron'
-import { connectDanmaku, disconnectDanmaku, invoke, openPlayer, setPlaying } from './helpers'
+import { connectDanmaku, disconnectDanmaku, invoke, openPlayerWithDouyuWrites, setPlaying } from './helpers'
 import { parseStt, serializeStt, toChatMessage } from '../server/danmaku/douyuProtocol'
 import type { DouyuMessageInput } from '../server/douyu/types'
 
@@ -35,7 +35,7 @@ test('网站已登录但缺少发送凭据时, 发送框说明原因并引导重
       main.__streamSyncerTest!.setDouyuRoomFixture({ '6657': '6979222' })
       main.__streamSyncerTest!.setDouyuCredentialsFixture(true)
     })
-    await openPlayer(running.page)
+    await openPlayerWithDouyuWrites(running.page)
     await connectDanmaku(running.page, '6657')
     await expect.poll(() => running.application.evaluate(() => {
       const main = globalThis as typeof globalThis & { __streamSyncerTest?: { emitDanmaku(room: string, event: string, data: unknown): number } }
@@ -76,7 +76,7 @@ test('手动发送和 +1 使用当前账号及真实房间, 未知结果保留�
       main.__streamSyncerTest!.setDouyuToolsFixture()
       main.__streamSyncerTest!.setDouyuRoomFixture({ '6657': '6979222' })
     })
-    await openPlayer(running.page)
+    await openPlayerWithDouyuWrites(running.page)
     expect(await invoke(running.page, 'loginDouyuAccount', { id: 'default' })).toMatchObject({ ok: true })
     await connectDanmaku(running.page, '6657')
     await setPlaying(running.page, false)

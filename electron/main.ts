@@ -78,7 +78,10 @@ async function start(): Promise<void> {
   let backend: ReturnType<typeof createBackendRuntime> | undefined
   let pipWindow: BrowserWindow | null = null
   let handlers: ReturnType<typeof installIpcHandlers> | undefined
-  let backendConfig: { maxExtraStreams: number; updateSource: AppUpdateSource | null } = { maxExtraStreams: 16, updateSource: null }
+  // Releases are published on GitHub. Checks stay manual; E2E runs keep the unconfigured
+  // state so no scenario reaches the network. backend.json may still point elsewhere.
+  const defaultUpdateSource: AppUpdateSource | null = process.env.STREAM_SYNC_E2E === '1' ? null : { kind: 'github', owner: 'Fy1ng', repository: 'Fy1Sync' }
+  let backendConfig: { maxExtraStreams: number; updateSource: AppUpdateSource | null } = { maxExtraStreams: 16, updateSource: defaultUpdateSource }
   try {
     const danmakuStore = new PrivateJsonStore<DanmakuFeaturesStorage>(userDataDir, 'douyu/danmaku-features.json')
     danmakuFeatures = new DanmakuFeatures({ load: () => danmakuStore.load(), save: value => danmakuStore.save(value) })
@@ -90,7 +93,7 @@ async function start(): Promise<void> {
       const value = raw as { maxExtraStreams?: number; updateSource?: unknown }
       const maxExtraStreams = value.maxExtraStreams ?? 16
       if (!Number.isSafeInteger(maxExtraStreams) || maxExtraStreams < 1 || maxExtraStreams > 256) throw new Error('Invalid stream limit')
-      backendConfig = { maxExtraStreams, updateSource: value.updateSource == null ? null : parseAppUpdateSource(value.updateSource) }
+      backendConfig = { maxExtraStreams, updateSource: value.updateSource === undefined ? defaultUpdateSource : value.updateSource === null ? null : parseAppUpdateSource(value.updateSource) }
     }
   } catch { console.error('扩展功能本地配置不可用, 原文件已保留.'); danmakuFeatures = undefined; activityPreferences = undefined }
   const toolSettings: ToolSettings = await readFile(join(userDataDir, 'tools.json'), 'utf8')
