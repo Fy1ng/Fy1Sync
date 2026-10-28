@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Electron desktop app for aligned esports video, commentary and danmaku.",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "engines": {
     "node": ">=22.12.0"
   },

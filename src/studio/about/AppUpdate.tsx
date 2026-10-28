@@ -73,6 +73,7 @@ export function AppUpdateSettings(): React.ReactNode {
         <div><dt>当前版本</dt><dd className="num">{state?.currentVersion ?? '—'}</dd></div>
         {available && state.latestVersion && <div><dt>最新版本</dt><dd className="num">{state.latestVersion}</dd></div>}
         {state?.checkedAt != null && <div><dt>上次检查</dt><dd className="num">{formatTime(state.checkedAt)}</dd></div>}
+        <div><dt>许可</dt><dd>GPL-3.0-or-later</dd></div>
       </dl>
       <div className="row-split">
         <p className={`about-status is-${phase ?? 'idle'}`} role="status">

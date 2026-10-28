@@ -2,7 +2,7 @@
 
 CS2 schedule metadata is by [Liquipedia contributors](https://liquipedia.net/counterstrike/Liquipedia:Matches), under [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/). Fy1Sync extracts match, team, tournament and stream fields from the MediaWiki API and supplies attribution with every schedule response. Cached metadata retains the same license. The offline fixture is a trimmed API response; its source and modifications are recorded in `server/esports/fixtures/README.md`.
 
-The application package.json retains the original application's MIT license declaration. This does not license the whole distribution as MIT. No copyright owner is invented here. Third-party programs remain separate executables or provider resources, outside app.asar, with their own terms.
+Fy1Sync itself is Copyright (C) 2026 Fy1ng and is licensed under the GNU General Public License, version 3 or (at your option) any later version (`GPL-3.0-or-later`). The full text is `LICENSE` in the source repository and `licenses/Fy1Sync-LICENSE.txt` in the package. Third-party programs remain separate executables or provider resources, outside app.asar, with their own terms listed below.
 
 Huya's minimal TarsV3 protocol implementation and golden request/response fixtures reference [biliup/biliup commit 48a0d234794bb918e211076b357823438e8c109d](https://github.com/biliup/biliup/tree/48a0d234794bb918e211076b357823438e8c109d), MIT, Copyright (c) 2019 ForgQi. The full notice is retained in `server/platforms/fixtures/huya-biliup-LICENSE.txt`; preserve it with redistributed implementations or fixture copies. No Simple Live code is included.
 

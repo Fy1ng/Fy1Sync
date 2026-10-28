@@ -207,6 +207,7 @@ await cp(path.join(ffmpeg, 'LICENSE.txt'), path.join(licenses, 'FFmpeg-LGPLv3.tx
 for (const [from, to] of [['COPYING.GPLv3', 'GPLv3.txt'], ['COPYING.LGPLv2.1', 'LGPLv2.1.txt']]) await cp(path.join(ffmpegSource, from), path.join(licenses, to))
 await cp(path.join(provider, 'LICENSE'), path.join(licenses, 'provider-GPLv3.txt'))
 await cp(path.join(ytSource, 'LICENSE'), path.join(licenses, 'yt-dlp-LICENSE.txt'))
+await cp(path.join(root, 'LICENSE'), path.join(licenses, 'Fy1Sync-LICENSE.txt'))
 await cp(path.join(root, 'packaging', 'THIRD-PARTY-NOTICES.md'), path.join(licenses, 'THIRD-PARTY-NOTICES.md'))
 await cp(path.join(root, 'packaging', 'tools-lock.json'), path.join(output, 'tools-lock.json'))
 await cp(path.join(root, 'packaging', 'provider-dependency-patches.json'), path.join(licenses, 'provider-dependency-patches.json'))

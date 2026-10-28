@@ -69,7 +69,7 @@ electron-builder 固定为 26.15.3, Electron 更新为 44.9.3, React 沿用既�
 
 NSIS 对最终安装目录实施按实际资源最长相对路径计算的长度上限, 当前为100个UTF-16字符, 避免 Windows 传统路径限制导致卸载残留. 静默或交互初始化收到超长 `/D` 时返回2, 目录页也禁止继续超长路径. `package:win` 的局部构建适配只删除固定NSIS模板中早于检查的初始目录创建, 在内存中核验26.15.3及模板SHA256后执行, 不改写依赖文件或默认卸载器生成流程. 不直接调用 electron-builder CLI 绕过该入口. 已有安装会使 `powershell -NoProfile -File scripts/verify-installer.ps1` 跳过, 避免覆盖日常安装.
 
-原应用的 MIT 声明不代表整包 MIT. 实际 FFmpeg 包为 LGPLv3 shared, yt-dlp 官方 Windows exe 为 GPLv3+, provider2.0.2 为 GPL-3.0-only, canvas3.2.3及其原生依赖另有许可. 原始许可、对应主项目源码、FFmpeg 构建信息和依赖索引随包保留. canvas 各原生 DLL 的精确来源/版本与完整对应源码仍有分发材料缺口, 这些产物限定为本地验证包, 不声明已可公开分发. 详见 [第三方说明](packaging/THIRD-PARTY-NOTICES.md).
+Fy1Sync 本身以 GPL-3.0-or-later 发布, 全文见 [LICENSE](LICENSE), 版权所有 (C) 2026 Fy1ng. 随包的第三方程序各自适用原许可: FFmpeg 包为 LGPLv3 shared, yt-dlp 官方 Windows exe 为 GPLv3+, provider2.0.2 为 GPL-3.0-only, canvas3.2.3及其原生依赖另有许可. 原始许可、对应主项目源码、FFmpeg 构建信息和依赖索引随包保留. canvas 各原生 DLL 的精确来源/版本与完整对应源码仍有分发材料缺口, 这些产物限定为本地验证包, 不声明已可公开分发. 详见 [第三方说明](packaging/THIRD-PARTY-NOTICES.md).
 
 2026-10-23本地验证: 类型检查和构建通过, Vitest 71文件/2090项通过, 默认离线Electron E2E 38项通过/6项条件跳过. `package:win` 与 `package:check` 通过, ASAR白名单18条, 工具与许可资源5011文件含inventory, 全部清单哈希匹配. unpacked和全新ZIP解压副本清除工具覆盖及开发PATH后, 均选中内置工具, 通过本地720p播放、实际ffmpeg copy/ffprobe、Electron Node provider/canvas和私有缓存ACL检查, 无外部请求或页面错误. NSIS专用短目录安装/卸载均exit0, 目标目录及应用注册表项完全移除; 静默及交互初始化拒绝超长目录exit2, 交互目录页也实测禁用安装按钮. 生产npm审计中应用与补丁后provider均为0个已知漏洞. 官方yt-dlp真实手动下载、SHA256/版本及重启选择smoke通过, 未使用真实cookie. 证据位于本地忽略目录 `.runtime-cache/p7-20261023/`.
 
