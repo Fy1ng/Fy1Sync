@@ -21,6 +21,7 @@
     "fixtures": "node scripts/generate-test-sources.mjs",
     "build:wasm": "node scripts/build-wasm.mjs",
     "tools:prepare": "node scripts/prepare-tools.mjs",
+    "ffmpeg:build": "node scripts/build-ffmpeg.mjs",
     "package:prepare": "node scripts/prepare-package.mjs",
     "package:win": "node scripts/package-win.mjs",
     "package:check": "node scripts/check-package.mjs"

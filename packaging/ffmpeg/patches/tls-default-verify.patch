@@ -1,0 +1,11 @@
+--- a/libavformat/tls.h
++++ b/libavformat/tls.h
+@@ -69,7 +69,7 @@
+ #define TLS_OPTFL (AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_ENCODING_PARAM)
+ 
+ #if FF_API_NO_DEFAULT_TLS_VERIFY
+-#define TLS_VERIFY_DEFAULT 0
++#define TLS_VERIFY_DEFAULT 1
+ #else
+ #define TLS_VERIFY_DEFAULT 1
+ #endif

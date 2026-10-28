@@ -1,0 +1,2 @@
+/scripts/build-ffmpeg.mjs text eol=lf
+/scripts/ffmpeg-smoke/* text eol=lf

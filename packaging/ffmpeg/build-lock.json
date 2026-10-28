@@ -1,0 +1,270 @@
+{
+  "schemaVersion": 1,
+  "buildId": "8.1.3-5c4f5744cd-fy1sync.1",
+  "revision": "n8.1.3-23-g5c4f5744cd",
+  "extraVersion": "fy1sync.1",
+  "commit": "5c4f5744cd60943125a78db692b728210102f255",
+  "sourceDateEpoch": 1783296000,
+  "locale": "C",
+  "timezone": "UTC",
+  "jobs": 8,
+  "defaultBuildParent": "C:/fy1-ffmpeg-release",
+  "assets": [
+    {
+      "id": "ffmpeg",
+      "file": "ffmpeg-5c4f5744cd60943125a78db692b728210102f255.tar.gz",
+      "url": "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/5c4f5744cd60943125a78db692b728210102f255",
+      "size": 16922668,
+      "sha256": "a34b707c67140a37ddd11c5475fa09135301a7c667f1d78c5702d544bba6ce77"
+    },
+    {
+      "id": "zlib",
+      "file": "zlib-1.3.2.tar.gz",
+      "url": "https://zlib.net/zlib-1.3.2.tar.gz",
+      "size": 1502830,
+      "sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16"
+    },
+    {
+      "id": "winlibs",
+      "file": "winlibs-x86_64-posix-seh-gcc-14.2.0-llvm-19.1.1-mingw-w64ucrt-12.0.0-r2.zip",
+      "url": "https://github.com/brechtsanders/winlibs_mingw/releases/download/14.2.0posix-19.1.1-12.0.0-ucrt-r2/winlibs-x86_64-posix-seh-gcc-14.2.0-llvm-19.1.1-mingw-w64ucrt-12.0.0-r2.zip",
+      "size": 378094664,
+      "sha256": "12fa72d2566e641c3bf0213a946d33d8bef2e0757af2fb3ed60a995e05d74606"
+    },
+    {
+      "id": "portableGit",
+      "file": "PortableGit-2.50.1-64-bit.7z.exe",
+      "url": "https://github.com/git-for-windows/git/releases/download/v2.50.1.windows.1/PortableGit-2.50.1-64-bit.7z.exe",
+      "size": 64802008,
+      "sha256": "c45a7dfa2bde34059f6dbd85f49a95d73d5aea29305f51b79595e56e4f323a3d"
+    },
+    {
+      "id": "make",
+      "file": "make-4.4.1-2-x86_64.pkg.tar.zst",
+      "url": "https://repo.msys2.org/msys/x86_64/make-4.4.1-2-x86_64.pkg.tar.zst",
+      "size": 519783,
+      "sha256": "2408af61717dae87b00c855b132769a125c708907fc94a46bb16dae076113e5c"
+    },
+    {
+      "id": "mingwSource",
+      "file": "mingw-w64-v12.0.0.tar.gz",
+      "url": "https://codeload.github.com/mingw-w64/mingw-w64/tar.gz/refs/tags/v12.0.0",
+      "size": 14460064,
+      "sha256": "fa41d462041ed72e29a5101049e5991d4aea5c552fd75f7ac0074989fc54ceb7"
+    },
+    {
+      "id": "gccLicense",
+      "file": "gcc-COPYING3",
+      "url": "https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-14.2.0/COPYING3",
+      "size": 35147,
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+    },
+    {
+      "id": "gccRuntimeException",
+      "file": "gcc-COPYING.RUNTIME",
+      "url": "https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-14.2.0/COPYING.RUNTIME",
+      "size": 3324,
+      "sha256": "9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74"
+    }
+  ],
+  "patches": [
+    {
+      "file": "patches/tls-default-verify.patch",
+      "url": "repo:packaging/ffmpeg/patches/tls-default-verify.patch",
+      "size": 295,
+      "sha256": "3a7a285b13b2b6b1c860f5a4318148d2784c1282486c36f8be07e70518086009"
+    }
+  ],
+  "configure": [
+    "--target-os=mingw32",
+    "--arch=x86_64",
+    "--cc=gcc",
+    "--enable-shared",
+    "--disable-static",
+    "--disable-autodetect",
+    "--disable-everything",
+    "--disable-doc",
+    "--disable-debug",
+    "--disable-ffplay",
+    "--enable-ffmpeg",
+    "--enable-ffprobe",
+    "--enable-avfilter",
+    "--enable-network",
+    "--enable-schannel",
+    "--disable-pthreads",
+    "--enable-w32threads",
+    "--disable-os2threads",
+    "--disable-iconv",
+    "--disable-bzlib",
+    "--disable-lzma",
+    "--disable-gpl",
+    "--disable-version3",
+    "--disable-nonfree",
+    "--enable-protocol=file,pipe,http,https,tcp,tls,crypto,httpproxy",
+    "--enable-demuxer=hls,mpegts,mov,matroska,flv,image2",
+    "--enable-muxer=hls,mpegts,mp4,gif,rawvideo",
+    "--enable-decoder=h264,hevc,vp9,av1,aac,png",
+    "--enable-encoder=gif,rawvideo",
+    "--enable-parser=h264,hevc,vp9,av1,aac",
+    "--enable-bsf=aac_adtstoasc,h264_mp4toannexb,hevc_mp4toannexb,extract_extradata,vp9_superframe",
+    "--enable-filter=scale,split,palettegen,paletteuse,fps,format,crop,trim,atrim,null,anull,aformat",
+    "--disable-avdevice",
+    "--disable-swresample",
+    "--enable-zlib",
+    "--cpu=x86-64",
+    "--extra-cflags=-I../zlib-prefix/include",
+    "--extra-ldflags=-static-libgcc -L../zlib-prefix/lib -Wl,--no-insert-timestamp",
+    "--extra-libs=-Wl,-Bstatic -lwinpthread -Wl,-Bdynamic",
+    "--extra-version=fy1sync.1",
+    "--prefix=../install"
+  ],
+  "capabilities": {
+    "protocol": [
+      "crypto",
+      "dtls",
+      "file",
+      "http",
+      "httpproxy",
+      "https",
+      "pipe",
+      "tcp",
+      "tls",
+      "udp"
+    ],
+    "demuxer": [
+      "aac",
+      "ac3",
+      "eac3",
+      "flv",
+      "hls",
+      "image2",
+      "matroska",
+      "mov",
+      "mpegts"
+    ],
+    "muxer": [
+      "adts",
+      "gif",
+      "hls",
+      "latm",
+      "mov",
+      "mp4",
+      "mpegts",
+      "rawvideo",
+      "webvtt"
+    ],
+    "decoder": [
+      "aac",
+      "av1",
+      "h264",
+      "hevc",
+      "png",
+      "vp9"
+    ],
+    "encoder": [
+      "gif",
+      "rawvideo"
+    ],
+    "parser": [
+      "aac",
+      "ac3",
+      "av1",
+      "h264",
+      "hevc",
+      "vp9"
+    ],
+    "bsf": [
+      "aac_adtstoasc",
+      "extract_extradata",
+      "h264_mp4toannexb",
+      "hevc_mp4toannexb",
+      "vp9_superframe",
+      "vp9_superframe_split",
+      "vvc_mp4toannexb"
+    ],
+    "filter": [
+      "aformat",
+      "anull",
+      "atrim",
+      "crop",
+      "format",
+      "fps",
+      "hflip",
+      "null",
+      "palettegen",
+      "paletteuse",
+      "rotate",
+      "scale",
+      "split",
+      "transpose",
+      "trim",
+      "vflip"
+    ]
+  },
+  "externalLibraries": [
+    "schannel",
+    "zlib"
+  ],
+  "configAssertions": {
+    "SCHANNEL": 1,
+    "ZLIB": 1,
+    "PNG_DECODER": 1,
+    "SHARED": 1,
+    "STATIC": 0,
+    "GPL": 0,
+    "NONFREE": 0,
+    "VERSION3": 0
+  },
+  "runtimeFiles": [
+    "avcodec-62.dll",
+    "avfilter-11.dll",
+    "avformat-62.dll",
+    "avutil-60.dll",
+    "ffmpeg.exe",
+    "ffprobe.exe",
+    "swscale-9.dll"
+  ],
+  "systemImports": [
+    "bcrypt.dll",
+    "crypt32.dll",
+    "kernel32.dll",
+    "ncrypt.dll",
+    "secur32.dll",
+    "shell32.dll",
+    "ws2_32.dll",
+    "api-ms-win-crt-conio-l1-1-0.dll",
+    "api-ms-win-crt-convert-l1-1-0.dll",
+    "api-ms-win-crt-environment-l1-1-0.dll",
+    "api-ms-win-crt-filesystem-l1-1-0.dll",
+    "api-ms-win-crt-heap-l1-1-0.dll",
+    "api-ms-win-crt-locale-l1-1-0.dll",
+    "api-ms-win-crt-math-l1-1-0.dll",
+    "api-ms-win-crt-private-l1-1-0.dll",
+    "api-ms-win-crt-runtime-l1-1-0.dll",
+    "api-ms-win-crt-stdio-l1-1-0.dll",
+    "api-ms-win-crt-string-l1-1-0.dll",
+    "api-ms-win-crt-time-l1-1-0.dll",
+    "api-ms-win-crt-utility-l1-1-0.dll"
+  ],
+  "abi": {
+    "avutil": "60.26.103",
+    "avcodec": "62.28.103",
+    "avformat": "62.12.103",
+    "avfilter": "11.14.103",
+    "swscale": "9.5.103"
+  },
+  "toolchain": {
+    "node": "24.15.0",
+    "target": "x86_64-w64-mingw32",
+    "gcc": "14.2.0",
+    "gccBanner": "gcc.exe (MinGW-W64 x86_64-ucrt-posix-seh, built by Brecht Sanders, r2) 14.2.0",
+    "mingw": "12.0.0",
+    "binutils": "2.43.1",
+    "nasm": "2.16.01",
+    "cmake": "3.30.4",
+    "ninja": "1.12.1",
+    "make": "4.4.1",
+    "git": "2.50.1.windows.1",
+    "bash": "5.2.37"
+  }
+}
