@@ -234,9 +234,16 @@ test('画面和列表弹幕菜单共用收藏, 回复仅填草稿', async ({ pag
   await expect.poll(async () => (await item.boundingBox())!.x).toBeLessThan(600)
   const itemBox = await item.boundingBox()
   if (!itemBox) throw new Error('画面弹幕位置不可用')
-  await page.mouse.move(itemBox.x + itemBox.width / 2, itemBox.y + itemBox.height / 2)
+  const pointer = { x: itemBox.x + itemBox.width * 0.75, y: itemBox.y + itemBox.height / 2 }
+  await page.mouse.move(pointer.x, pointer.y)
   const toolbar = page.getByRole('toolbar', { name: /^弹幕操作/ })
   await expect(toolbar.getByRole('button', { name: '收藏', exact: true })).toBeVisible()
+  // The menu opens under the pointer, not at the start of the message.
+  const toolbarBox = await toolbar.boundingBox()
+  if (!toolbarBox) throw new Error('画面弹幕菜单位置不可用')
+  expect(toolbarBox.x).toBeLessThan(pointer.x)
+  expect(toolbarBox.x + toolbarBox.width).toBeGreaterThan(pointer.x)
+  expect(toolbarBox.x).toBeGreaterThan(itemBox.x + 4)
   await toolbar.getByRole('button', { name: '收藏', exact: true }).click()
   expect(await invoke(page, 'queryDanmakuFavorites', { query: '离线画面悬停验收' })).toMatchObject({ ok: true, value: { total: 1 } })
   await page.screenshot({ path: testInfo.outputPath('danmaku-menu.png') })

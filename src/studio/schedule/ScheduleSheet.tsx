@@ -25,8 +25,8 @@ const POLL_MS = 60_000
 
 export function ScheduleSheet({ onClose, onWatch }: {
   onClose: () => void
-  /** Load this stream as 画面. Resolves true when it played. */
-  onWatch: (url: string) => Promise<boolean>
+  /** Load this stream as 画面. Progress and failure show behind the sheet, on the 画面 slot. */
+  onWatch: (url: string) => void
 }): React.ReactNode {
   // Open on what the start-up read found; the read below only brings it up to date.
   const [schedule, setSchedule] = useState<Cs2Schedule | null>(lastSchedule)
@@ -35,8 +35,6 @@ export function ScheduleSheet({ onClose, onWatch }: {
   // The chosen event and the titles read so far survive closing the sheet.
   const [eventKey, setEventKey] = useRemembered<string | null>('schedule:event', null)
   const [titles, setTitles] = useRemembered<Map<string, StreamTitle>>('schedule:titles', new Map())
-  const [loading, setLoading] = useState<string | null>(null)
-  const [loadProblem, setLoadProblem] = useState<string | null>(null)
   const [now, setNow] = useState(Date.now)
   const alive = useRef(true)
   const titleRun = useRef(0)
@@ -84,15 +82,10 @@ export function ScheduleSheet({ onClose, onWatch }: {
     })
   }, [requestKey])
 
-  const watch = async (stream: Cs2Stream): Promise<void> => {
-    if (loading) return
-    setLoading(streamKey(stream))
-    setLoadProblem(null)
-    const ok = await onWatch(stream.url)
-    if (!alive.current) return
-    setLoading(null)
-    if (ok) onClose()
-    else setLoadProblem('该直播流未能载入，可能尚未开播或已结束，可换另一个平台重试')
+  // The pick closes the sheet at once; 添加直播间 or the source chip behind it shows the load.
+  const watch = (stream: Cs2Stream): void => {
+    onWatch(stream.url)
+    onClose()
   }
 
   const tabs = events.map((group) => {
@@ -119,12 +112,11 @@ export function ScheduleSheet({ onClose, onWatch }: {
         ) : (
           <SideTabs label="赛事" value={current?.key ?? ''} onChange={setEventKey} tabs={tabs}>
             {current && (
-              <EventPane group={current} titles={titles} now={now} loading={loading} onWatch={(stream) => void watch(stream)} />
+              <EventPane group={current} titles={titles} now={now} onWatch={watch} />
             )}
           </SideTabs>
         )}
         <footer className="sched-foot">
-          {loadProblem && <p className="form-error" role="alert">{loadProblem}</p>}
           {schedule?.stale && <p className="note-warn">{schedule.error ?? '赛程暂时无法更新，显示的是上次读取的结果'}</p>}
           <span className="sched-source">
             {schedule ? `${schedule.attribution} · 更新于 ${formatStart(schedule.fetchedAt, now)}` : '赛程数据来自 Liquipedia (CC-BY-SA 3.0)'}
@@ -138,11 +130,10 @@ export function ScheduleSheet({ onClose, onWatch }: {
   )
 }
 
-function EventPane({ group, titles, now, loading, onWatch }: {
+function EventPane({ group, titles, now, onWatch }: {
   group: EventGroup
   titles: ReadonlyMap<string, StreamTitle>
   now: number
-  loading: string | null
   onWatch: (stream: Cs2Stream) => void
 }): React.ReactNode {
   const sections: { id: keyof Pick<EventGroup, 'live' | 'upcoming' | 'finished'>; label: string }[] = [
@@ -161,7 +152,7 @@ function EventPane({ group, titles, now, loading, onWatch }: {
           <h4>{section.label}</h4>
           <ul className="sched-list">
             {group[section.id].map((match) => (
-              <MatchRow key={match.id} match={match} titles={titles} now={now} loading={loading}
+              <MatchRow key={match.id} match={match} titles={titles} now={now}
                 siblingsLive={group.live.length} onWatch={onWatch} />
             ))}
           </ul>
@@ -171,11 +162,10 @@ function EventPane({ group, titles, now, loading, onWatch }: {
   )
 }
 
-function MatchRow({ match, titles, now, loading, siblingsLive, onWatch }: {
+function MatchRow({ match, titles, now, siblingsLive, onWatch }: {
   match: Cs2Match
   titles: ReadonlyMap<string, StreamTitle>
   now: number
-  loading: string | null
   siblingsLive: number
   onWatch: (stream: Cs2Stream) => void
 }): React.ReactNode {
@@ -216,10 +206,10 @@ function MatchRow({ match, titles, now, loading, siblingsLive, onWatch }: {
             const primary = match.state === 'live' && !off && index === streams.findIndex((item) => titles.get(streamKey(item))?.live !== false)
             return (
               <button key={key} type="button" className={primary ? 'btn-solid small' : 'btn-quiet small'}
-                disabled={loading !== null} onClick={() => onWatch(stream)}
+                onClick={() => onWatch(stream)}
                 aria-label={`在${PLATFORM_NAME[stream.platform]}观看 ${label}（${stream.channel}）`}
                 title={`${PLATFORM_NAME[stream.platform]} · ${stream.channel}${off ? ' · 未在直播' : ''}`}>
-                {loading === key ? '正在载入' : PLATFORM_NAME[stream.platform]}
+                {PLATFORM_NAME[stream.platform]}
               </button>
             )
           })}

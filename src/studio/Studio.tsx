@@ -73,7 +73,7 @@ function StudioView(): React.ReactNode {
   const [framing, setFraming] = useState(false)
   const [previewHidden, setPreviewHidden] = useState(false)
   const [addingStream, setAddingStream] = useState(false)
-  // Where 赛程 was opened from: closing it, by choice or after a pick, goes back there.
+  // 赛程 opens over 添加直播间 or the player and closes back to whichever is behind it.
   const [scheduleFrom, setScheduleFrom] = useState<'intake' | 'source' | null>(null)
   const scheduleOpen = scheduleFrom !== null
   const openRecords = useCallback((tab: RecordsTab, uid?: string) => setSettingsAt({ section: 'records', records: { tab, uid } }), [])
@@ -262,7 +262,7 @@ function StudioView(): React.ReactNode {
           )}
 
           {tuning && <DanmakuPanel onClose={() => setTuning(false)} />}
-          {intake && <Intake onClose={closeIntake} pendingFile={droppedFile} onSchedule={() => { closeIntake(); setScheduleFrom('intake') }} />}
+          {intake && <Intake onClose={closeIntake} pendingFile={droppedFile} onSchedule={() => setScheduleFrom('intake')} />}
         </main>
 
         {chatOpen && (
@@ -270,10 +270,7 @@ function StudioView(): React.ReactNode {
         )}
 
         {scheduleOpen && (
-          <ScheduleSheet onWatch={(url) => loader.loadInput('official', url)} onClose={() => {
-            if (scheduleFrom === 'intake') setIntake(true)
-            setScheduleFrom(null)
-          }} />
+          <ScheduleSheet onWatch={(url) => void loader.loadInput('official', url)} onClose={() => setScheduleFrom(null)} />
         )}
         {settingsAt && (
           <SettingsSheet target={settingsAt} room={snapshot.danmaku.room} onClose={() => setSettingsAt(null)}
