@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useFullscreen, useMediaMount, useOverlayVisibility, usePublishedHeight } from '../app/hooks'
+import { useDockFold, useFullscreen, useMediaMount, useOverlayVisibility, usePublishedHeight } from '../app/hooks'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { useCamera } from '../app/useCamera'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
@@ -85,8 +85,13 @@ function StudioView(): React.ReactNode {
   // The picture-in-picture, the danmaku panel and the local gift effects all keep clear of
   // the dock, whose height changes as it folds into two rows on a narrow window.
   usePublishedHeight(dock, theater, '--bar-clearance')
+  const dockRow = useRef<HTMLDivElement | null>(null)
+  const dockFold = useDockFold(dockRow)
+  // The bars stay while the pointer rests on them, still or not.
+  const [onChrome, setOnChrome] = useState(false)
+  const chromeHover = { onPointerEnter: () => setOnChrome(true), onPointerLeave: () => setOnChrome(false) }
 
-  const busyChrome = intake || tuning || settingsAt !== null || addingStream || scheduleOpen
+  const busyChrome = intake || tuning || settingsAt !== null || addingStream || scheduleOpen || onChrome
   const chrome = useOverlayVisibility(3200, !snapshot.playing || busyChrome)
   // The drawer is the room's chat; with no room there is nothing to hold it open for.
   const hasRoom = snapshot.danmaku.connected || snapshot.danmaku.room !== null
@@ -198,7 +203,7 @@ function StudioView(): React.ReactNode {
             <span className="pip-parked" ref={mountOther} aria-hidden="true" />
           )}
 
-          <header className="topbar">
+          <header className="topbar" {...chromeHover}>
             <div className="topbar-sources">
               {SOURCE_ROLES.map((role) => (
                 <SourceChip key={role} role={role}
@@ -229,10 +234,10 @@ function StudioView(): React.ReactNode {
           <Toasts />
           {fullscreen.error && <p className="toast is-error floating-error" role="alert">{fullscreen.error}</p>}
 
-          <footer className="dock" ref={dock}>
+          <footer className="dock" ref={dock} {...chromeHover}>
             <CountdownPrompt />
             <Timeline />
-            <div className="dock-row">
+            <div className="dock-row" ref={dockRow} data-fold={dockFold}>
               <div className="dock-left">
                 <PlayButton />
                 <Volumes />

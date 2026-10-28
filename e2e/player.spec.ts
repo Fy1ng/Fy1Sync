@@ -166,6 +166,39 @@ test.describe('弹幕叠加层', () => {
     expect(second).toBeLessThan(first)
   })
 
+  test('指针停在底栏上时底栏不隐藏, 离开后照常隐藏', async ({ page }) => {
+    await openPlayer(page)
+    await loadBothFixtures(page)
+    await seekBoth(page, 3, 3)
+    await setPlaying(page, true)
+    await revealOverlay(page)
+    const row = (await page.locator('.dock-row').boundingBox())!
+    // Still on the bar for longer than the 3.2 s idle timeout.
+    await page.mouse.move(row.x + row.width / 2, row.y + 4)
+    await page.waitForTimeout(4500)
+    await expect(page.locator('.theater')).toHaveAttribute('data-chrome', 'on')
+    await page.mouse.move(row.x + row.width / 2, 200)
+    await expect(page.locator('.theater')).toHaveAttribute('data-chrome', 'off', { timeout: 6000 })
+  })
+
+  test('窄窗口下底栏各组不重叠', async ({ page }) => {
+    await openPlayer(page)
+    await loadBothFixtures(page)
+    for (const width of [1440, 1100, 960, 800]) {
+      await page.setViewportSize({ width, height: 700 })
+      await revealOverlay(page)
+      const groups = await page.evaluate(() => ['.dock-left', '.dock-center', '.dock-right'].map((selector) => {
+        const items = [...document.querySelectorAll(`${selector} > *`)].map((node) => node.getBoundingClientRect())
+        return { l: Math.min(...items.map((r) => r.left)), r: Math.max(...items.map((r) => r.right)),
+          t: Math.min(...items.map((r) => r.top)), b: Math.max(...items.map((r) => r.bottom)) }
+      }))
+      for (let i = 0; i < groups.length; i++) for (let j = i + 1; j < groups.length; j++) {
+        const [a, b] = [groups[i]!, groups[j]!]
+        expect(a.l < b.r - 1 && b.l < a.r - 1 && a.t < b.b - 1 && b.t < a.b - 1, `宽 ${width} 时第 ${i + 1}、${j + 1} 组重叠`).toBe(false)
+      }
+    }
+  })
+
   test('关闭弹幕后立即清空画面', async ({ page, electronApp }) => {
     await stubDanmakuStream(electronApp, ['要被清掉的弹幕', '第二条', '第三条'])
     await openPlayer(page)

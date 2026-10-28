@@ -159,6 +159,57 @@ export function usePublishedHeight(
   }, [source, host, property])
 }
 
+export type DockFold = 'none' | 'two' | 'three'
+
+/**
+ * How many rows the dock needs, from what its three groups actually hold.
+ *
+ * A fixed breakpoint cannot know this: 画质 reading `2160p60` on both sides, the test badge
+ * on 自动对齐 or an open chat drawer each change the width the row needs. Each group is
+ * measured by its children (a group's own box is its grid column, not its content), so the
+ * answer does not depend on the layout it picks and cannot flip back and forth.
+ *
+ * - none: one row, the centre group truly centred, so both sides get the wider one's width.
+ * - two: the centre on its own row, playback and the rest share the one below.
+ * - three: each group on its own row.
+ */
+export function useDockFold(row: React.RefObject<HTMLElement | null>, gap = 16): DockFold {
+  const [fold, setFold] = useState<DockFold>('none')
+  useEffect(() => {
+    const node = row.current
+    if (!node || typeof ResizeObserver === 'undefined') return
+    const groups = Array.from(node.children) as HTMLElement[]
+    const contentWidth = (group: HTMLElement): number => {
+      const items = Array.from(group.children) as HTMLElement[]
+      const spacing = Number.parseFloat(getComputedStyle(group).columnGap) || 0
+      // scrollWidth: a child allowed to shrink (min-width: 0) reports its squeezed box, not
+      // what it holds, and the squeezed box is exactly what overlaps.
+      return items.reduce((sum, item) => sum + Math.max(item.offsetWidth, item.scrollWidth), 0)
+        + spacing * Math.max(0, items.length - 1)
+    }
+    const measure = (): void => {
+      const available = node.clientWidth
+      if (available <= 0 || groups.length < 3) return
+      const [left, center, right] = groups.map(contentWidth) as [number, number, number]
+      setFold(2 * Math.max(left, right) + center + 2 * gap <= available ? 'none'
+        : left + right + gap <= available ? 'two' : 'three')
+    }
+    const resize = new ResizeObserver(measure)
+    const watch = (): void => {
+      resize.disconnect()
+      resize.observe(node)
+      for (const group of groups) for (const item of Array.from(group.children)) resize.observe(item)
+    }
+    // Controls come and go (画质 only with a ladder); watch the new ones as well.
+    const mutations = new MutationObserver(() => { watch(); measure() })
+    for (const group of groups) mutations.observe(group, { childList: true })
+    watch()
+    measure()
+    return () => { resize.disconnect(); mutations.disconnect() }
+  }, [row, gap])
+  return fold
+}
+
 /** Close a popover on outside click or Escape. */
 export function useDismiss(open: boolean, onClose: () => void): React.RefObject<HTMLDivElement | null> {
   const ref = useRef<HTMLDivElement | null>(null)

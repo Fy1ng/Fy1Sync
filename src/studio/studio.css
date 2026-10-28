@@ -818,26 +818,30 @@ body,
   gap: 8px;
 }
 
-/* Narrow theater: alignment gets its own row, playback and the rest share the one below. */
-@container theater (max-width: 860px) {
-  .studio .dock-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas: 'center center' 'left right';
-    row-gap: 10px;
-  }
+/* When one row cannot hold all three groups (see useDockFold), alignment gets its own row
+   and playback and the rest share the one below; narrower still, each group gets a row. */
+.studio .dock-row:not([data-fold='none']) {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: 'center center' 'left right';
+  row-gap: 10px;
+}
 
-  .studio .dock-center {
-    grid-area: center;
-    justify-content: center;
-  }
+.studio .dock-row[data-fold='three'] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: 'center' 'left' 'right';
+}
 
-  .studio .dock-left {
-    grid-area: left;
-  }
+.studio .dock-row:not([data-fold='none']) .dock-center {
+  grid-area: center;
+  justify-content: center;
+}
 
-  .studio .dock-right {
-    grid-area: right;
-  }
+.studio .dock-row:not([data-fold='none']) .dock-left {
+  grid-area: left;
+}
+
+.studio .dock-row:not([data-fold='none']) .dock-right {
+  grid-area: right;
 }
 
 .studio .play {
