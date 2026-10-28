@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { packagedNodeProbeProgram, probePackagedNetwork } from './packaged-network-probe.mjs'
+import { assertProviderDependencies } from './provider-dependencies.mjs'
 const root = fileURLToPath(new URL('../', import.meta.url))
 const packageMetadata = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
 const networkOnly = process.argv.includes('--network-only')
@@ -104,7 +105,7 @@ for (const [label, folder] of [['unpacked', path.join(root, '.release', 'win-unp
       continue
     }
     const mainNetwork = await verifyMainNetwork(exe, runtimePath, label)
-    const canvas = await run(exe, ['-e', `const c=require(${JSON.stringify(path.join(tools, 'provider', 'server', 'node_modules', 'canvas'))});const b=c.createCanvas(8,8).toBuffer('image/png');console.log(JSON.stringify({canvas:c.version,bytes:b.length}))`], childEnv)
+    await assertProviderDependencies(path.join(tools, 'provider', 'server', 'node_modules'))
     application = await _electron.launch({ executablePath: exe, env, args: ['--mute-audio'], timeout: 30_000 })
     const page = await application.firstWindow({ timeout: 30_000 })
     await page.waitForURL('app://app/**')
@@ -115,7 +116,7 @@ for (const [label, folder] of [['unpacked', path.join(root, '.release', 'win-unp
     const status = await page.evaluate(() => window.streamSyncer.invoke('getToolsStatus', undefined))
     if (!status.ok || status.value.tools.some(tool => tool.source !== 'bundled' || !tool.available || /失败|不可用/.test(tool.version)) || !status.value.provider.available || status.value.provider.source !== 'bundled' || status.value.fixturesAvailable) throw new Error('Packaged tools were not selected from bundled resources')
     const provider = await run(exe, [path.join(tools, 'provider', 'server', 'build', 'generate_once.js'), '--version'], childEnv)
-    if (provider !== '2.0.2' || JSON.parse(canvas).canvas !== '3.2.3') throw new Error('Unexpected packaged provider/native version')
+    if (provider !== '2.0.2') throw new Error('Unexpected packaged provider version')
     const cachePrivate = await application.evaluate((_electron, cache) => new Promise((resolve, reject) => {
       const { spawn } = process.getBuiltinModule('node:child_process')
       const systemRoot = process.env.SystemRoot ?? 'C:\\Windows'
@@ -168,7 +169,7 @@ for (const [label, folder] of [['unpacked', path.join(root, '.release', 'win-unp
     const editor = await sample.evaluate(image => ({ width: image.naturalWidth, height: image.naturalHeight }))
     await page.screenshot({ path: path.join(evidence, `${label}-editor.png`) })
     if (requests || errors.length) throw new Error('Packaged offline playback/editor emitted external requests or page errors')
-    result = { label, executable: exe, packageArtifacts: report.artifacts, nodeNetworks, mainNetwork, status: status.value, canvas: JSON.parse(canvas), provider, providerCachePrivate: cachePrivate, remuxProbe: probe, playback, editor, externalRequests: requests, pageErrors: errors }
+    result = { label, executable: exe, packageArtifacts: report.artifacts, nodeNetworks, mainNetwork, status: status.value, providerDependencies: { canvas: false, nativeFiles: 0 }, provider, providerCachePrivate: cachePrivate, remuxProbe: probe, playback, editor, externalRequests: requests, pageErrors: errors }
     results.push(result)
   } finally {
     if (application) {

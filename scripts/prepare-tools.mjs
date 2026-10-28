@@ -5,6 +5,7 @@ import { cp, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile 
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { assertProviderDependencies } from './provider-dependencies.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const lock = JSON.parse(await readFile(path.join(root, 'packaging', 'tools-lock.json'), 'utf8'))
@@ -177,32 +178,28 @@ const dependencyPatch = JSON.parse(await readFile(path.join(root, 'packaging', '
 if (dependencyPatch.schema !== 1 || dependencyPatch.providerVersion !== lock.providerVersion) throw new Error('Invalid provider dependency patch')
 const providerPackage = JSON.parse(await readFile(path.join(server, 'package.json'), 'utf8'))
 providerPackage.overrides = { ...providerPackage.overrides, ...dependencyPatch.overrides }
+for (const name of dependencyPatch.removedDependencies) delete providerPackage.dependencies[name]
+for (const name of dependencyPatch.removedAllowScripts) delete providerPackage.allowScripts[name]
 await writeFile(path.join(server, 'package.json'), JSON.stringify(providerPackage, null, 2) + '\n')
 await cp(path.join(root, 'packaging', 'provider-package-lock.json'), path.join(server, 'package-lock.json'))
 const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
 const npmEnvironment = { ...process.env, npm_config_cache: path.join(staging, 'npm-cache'), npm_config_audit: 'false', npm_config_fund: 'false' }
 // The checked-in patched lock fixes every registry tarball and integrity. Do not run install scripts.
 await run(process.execPath, [npmCli, 'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], server, npmEnvironment)
+await assertProviderDependencies(path.join(server, 'node_modules'))
 await run(process.execPath, [path.join(root, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', path.join(server, 'tsconfig.json'), '--noCheck', '--incremental', 'false', '--sourceMap', 'false'])
-const native = path.join(server, 'node_modules', 'canvas')
-if (JSON.parse(await readFile(path.join(native, 'package.json'), 'utf8')).version !== lock.canvasVersion) throw new Error('Unexpected canvas version')
-await extract('canvas-native.tar.gz', native, 'build')
 const providerOut = path.join(output, 'provider')
 await mkdir(path.join(providerOut, 'plugin'), { recursive: true })
 await cp(path.join(downloads, 'provider-plugin.zip'), path.join(providerOut, 'plugin', 'bgutil-ytdlp-pot-provider.zip'))
 await mkdir(path.join(providerOut, 'server'), { recursive: true })
 for (const name of ['build', 'node_modules', 'package.json', 'package-lock.json']) await cp(path.join(server, name), path.join(providerOut, 'server', name), { recursive: true })
-// These are install-time helpers only; native binaries are pre-verified and already installed.
-for (const name of ['.bin', 'prebuild-install', 'node-addon-api']) await rm(path.join(providerOut, 'server', 'node_modules', name), { recursive: true, force: true })
-const canvasOut = path.join(providerOut, 'server', 'node_modules', 'canvas')
-for (const name of ['src', 'util', 'binding.gyp']) await rm(path.join(canvasOut, name), { recursive: true, force: true })
-for (const name of await readdir(path.join(canvasOut, 'build'))) {
-  if (name !== 'Release') await rm(path.join(canvasOut, 'build', name), { recursive: true, force: true })
-}
+// Executable links are not needed by the provider's script-mode runtime.
+await rm(path.join(providerOut, 'server', 'node_modules', '.bin'), { recursive: true, force: true })
 await pruneRuntime(path.join(providerOut, 'server'))
+await assertProviderDependencies(path.join(providerOut, 'server', 'node_modules'))
 const licenses = path.join(output, 'licenses')
 await mkdir(path.join(licenses, 'sources'), { recursive: true })
-for (const name of ['ffmpeg-source.tar.gz', 'ffmpeg-build-recipes.tar.gz', 'provider-source.tar.gz', 'yt-dlp-source.tar.gz', 'canvas-source.tar.gz']) await cp(path.join(downloads, name), path.join(licenses, 'sources', name))
+for (const name of ['ffmpeg-source.tar.gz', 'ffmpeg-build-recipes.tar.gz', 'provider-source.tar.gz', 'yt-dlp-source.tar.gz']) await cp(path.join(downloads, name), path.join(licenses, 'sources', name))
 await cp(path.join(ffmpeg, 'LICENSE.txt'), path.join(licenses, 'FFmpeg-LGPLv3.txt'))
 for (const [from, to] of [['COPYING.GPLv3', 'GPLv3.txt'], ['COPYING.LGPLv2.1', 'LGPLv2.1.txt']]) await cp(path.join(ffmpegSource, from), path.join(licenses, to))
 await cp(path.join(provider, 'LICENSE'), path.join(licenses, 'provider-GPLv3.txt'))
@@ -220,8 +217,6 @@ for (const [name, value] of Object.entries(dependencyLock.packages)) {
   dependencies.push({ package: name.replace(/^node_modules\//, ''), version: value.version, license: value.license ?? 'See package license', source: value.resolved, integrity: value.integrity })
 }
 await writeFile(path.join(licenses, 'provider-dependencies.json'), JSON.stringify(dependencies, null, 2) + '\n')
-const nativeFiles = (await files(path.join(providerOut, 'server', 'node_modules', 'canvas', 'build', 'Release'))).filter(name => /\.(node|dll)$/.test(name))
-await writeFile(path.join(licenses, 'canvas-native-files.json'), JSON.stringify(await Promise.all(nativeFiles.map(async name => ({ file: name, sha256: await hash(path.join(providerOut, 'server', 'node_modules', 'canvas', 'build', 'Release', name)) }))), null, 2) + '\n')
 const inventory = await files(output)
 await writeFile(path.join(output, 'inventory.json'), JSON.stringify(await Promise.all(inventory.map(async name => ({ file: name, size: (await stat(path.join(output, name))).size, sha256: await hash(path.join(output, name)) }))), null, 2) + '\n')
 console.log(`Prepared ${inventory.length} verified runtime/license files under .packaging/tools. No network is needed at app startup.`)

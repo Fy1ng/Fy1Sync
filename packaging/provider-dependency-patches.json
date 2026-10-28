@@ -1,6 +1,8 @@
 {
   "schema": 1,
   "providerVersion": "2.0.2",
+  "removedDependencies": ["canvas"],
+  "removedAllowScripts": ["canvas@3.2.3"],
   "overrides": {
     "follow-redirects": "1.16.1",
     "ip-address": "10.7.4",
@@ -14,5 +16,5 @@
     "https://github.com/advisories/GHSA-xjj6-f33q-929c",
     "https://github.com/advisories/GHSA-27r3-jxmh-p828"
   ],
-  "reason": "Patch vulnerable production transitive dependencies without changing provider source/version or script-mode behavior. The independent package lock records exact official npm URLs and integrity values."
+  "reason": "Patch vulnerable production transitive dependencies and drop the canvas dependency, whose native DLLs lack a verifiable source and license mapping, without changing provider source/version or script-mode behavior. The independent package lock records exact official npm URLs and integrity values."
 }
