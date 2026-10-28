@@ -228,6 +228,22 @@ describe('DanmakuLaneAllocator', () => {
     expect(allocator.allocateScroll(1, 200)?.lane).toBe(0)
   })
 
+  it('counts free lanes and stretches or delays the waits on busy ones', () => {
+    const allocator = new DanmakuLaneAllocator({ ...layout, areaHeight: 60 })
+    allocator.allocateScroll(0, 200) // lane 0 busy until 1s
+    expect(allocator.freeLanes(0)).toBe(1)
+    // Twice as fast: the remaining second halves.
+    allocator.rescale(0, 0.5)
+    expect(allocator.allocateScroll(0.49, 10)?.lane).toBe(1)
+    expect(allocator.allocateScroll(0.5, 10)?.lane).toBe(0)
+    allocator.reset()
+    allocator.allocateScroll(0, 200)
+    allocator.delay(0.5)
+    allocator.extend(0, 0.25)
+    expect(allocator.freeLanes(1.7)).toBe(1)
+    expect(allocator.freeLanes(1.75)).toBe(2)
+  })
+
   it('recomputes lanes when the layout changes', () => {
     const allocator = new DanmakuLaneAllocator(layout)
     allocator.setLayout({ ...layout, areaHeight: 60 })

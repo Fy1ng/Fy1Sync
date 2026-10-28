@@ -103,8 +103,6 @@ test('系统画中画由真实点击打开并可关闭', async ({ page }) => {
   await expect.poll(() => page.evaluate(() => (document.pictureInPictureElement as HTMLVideoElement | null)?.dataset.role)).toBe('official')
   await expect(page.locator('.pip-control > button')).toHaveClass(/is-on/)
   await expect(menu).toBeHidden()
-  // Popover triggers intentionally ignore clicks within 120 ms of dismissal.
-  await page.waitForTimeout(150)
   const reopened = await openPipMenu(page)
   await reopened.getByRole('button', { name: /^关闭系统画中画/ }).click()
   await expect.poll(() => page.evaluate(() => document.pictureInPictureElement === null)).toBe(true)
@@ -234,9 +232,16 @@ test('画面和列表弹幕菜单共用收藏, 回复仅填草稿', async ({ pag
   await expect.poll(async () => (await item.boundingBox())!.x).toBeLessThan(600)
   const itemBox = await item.boundingBox()
   if (!itemBox) throw new Error('画面弹幕位置不可用')
-  await page.mouse.move(itemBox.x + itemBox.width / 2, itemBox.y + itemBox.height / 2)
+  const pointer = { x: itemBox.x + itemBox.width * 0.75, y: itemBox.y + itemBox.height / 2 }
+  await page.mouse.move(pointer.x, pointer.y)
   const toolbar = page.getByRole('toolbar', { name: /^弹幕操作/ })
   await expect(toolbar.getByRole('button', { name: '收藏', exact: true })).toBeVisible()
+  // The menu opens under the pointer, not at the start of the message.
+  const toolbarBox = await toolbar.boundingBox()
+  if (!toolbarBox) throw new Error('画面弹幕菜单位置不可用')
+  expect(toolbarBox.x).toBeLessThan(pointer.x)
+  expect(toolbarBox.x + toolbarBox.width).toBeGreaterThan(pointer.x)
+  expect(toolbarBox.x).toBeGreaterThan(itemBox.x + 4)
   await toolbar.getByRole('button', { name: '收藏', exact: true }).click()
   expect(await invoke(page, 'queryDanmakuFavorites', { query: '离线画面悬停验收' })).toMatchObject({ ok: true, value: { total: 1 } })
   await page.screenshot({ path: testInfo.outputPath('danmaku-menu.png') })

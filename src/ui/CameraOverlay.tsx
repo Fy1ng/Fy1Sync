@@ -7,7 +7,9 @@
  * WebGPU optionally upscales that crop; the fallback retains the original 2D drawing.
  *
  * Dragging the body moves the window; the corner handle resizes it (height follows the
- * crop's aspect). Arrow keys move it, Shift+arrows by more. Position and size are stored as
+ * crop's aspect). A move is a transform written straight to the node, so the compositor
+ * carries it and React renders once, on release; a resize changes the canvas size and goes
+ * through React, at most once a frame. Arrow keys move it, Shift+arrows by more. Position and size are stored as
  * fractions of the stage so fullscreen and window resizes keep it in the same place.
  */
 
@@ -31,7 +33,13 @@ export function CameraOverlay({ config, onWindow, stageRef, onUpscaleState }: Pr
   const canvas = useRef<HTMLCanvasElement | null>(null)
   const [stage, setStage] = useState({ width: 0, height: 0 })
   const [draft, setDraft] = useState<CameraWindow | null>(null)
-  const drag = useRef<{ mode: 'move' | 'resize'; x: number; y: number; origin: CameraWindow } | null>(null)
+  const box = useRef<HTMLDivElement | null>(null)
+  const drag = useRef<{
+    mode: 'move' | 'resize'; x: number; y: number; origin: CameraWindow
+    /** Where the window would land now; committed on release. */
+    next: CameraWindow | null
+    frame: number | null
+  } | null>(null)
   const win = draft ?? config.window
 
   useEffect(() => {
@@ -84,24 +92,36 @@ export function CameraOverlay({ config, onWindow, stageRef, onUpscaleState }: Pr
     event.preventDefault()
     event.stopPropagation()
     event.currentTarget.setPointerCapture?.(event.pointerId)
-    drag.current = { mode, x: event.clientX, y: event.clientY, origin: win }
+    drag.current = { mode, x: event.clientX, y: event.clientY, origin: win, next: null, frame: null }
   }
   const move = (event: React.PointerEvent<HTMLElement>): void => {
     const state = drag.current
     if (!state || stage.width <= 0) return
     const dx = (event.clientX - state.x) / stage.width
     const dy = (event.clientY - state.y) / stage.height
-    setDraft(clampWindow(state.mode === 'move'
+    const next = clampWindow(state.mode === 'move'
       ? { ...state.origin, x: state.origin.x + dx, y: state.origin.y + dy }
-      : { ...state.origin, width: state.origin.width + dx }, stage, screenAspect))
+      : { ...state.origin, width: state.origin.width + dx }, stage, screenAspect)
+    state.next = next
+    if (state.mode === 'move') {
+      const node = box.current
+      if (node) node.style.transform = `translate(${(next.x - state.origin.x) * stage.width}px, ${(next.y - state.origin.y) * stage.height}px)`
+      return
+    }
+    state.frame ??= requestAnimationFrame(() => {
+      state.frame = null
+      if (drag.current === state && state.next) setDraft(state.next)
+    })
   }
   const end = useCallback((): void => {
-    if (!drag.current) return
+    const state = drag.current
+    if (!state) return
     drag.current = null
-    setDraft((current) => {
-      if (current) onWindow(current)
-      return null
-    })
+    if (state.frame !== null) cancelAnimationFrame(state.frame)
+    // Left and top take over from the transform before the next paint, so nothing jumps.
+    if (box.current) box.current.style.transform = ''
+    setDraft(null)
+    if (state.next) onWindow(state.next)
   }, [onWindow])
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -117,6 +137,7 @@ export function CameraOverlay({ config, onWindow, stageRef, onUpscaleState }: Pr
   if (!config.enabled || stage.width <= 0) return null
   return (
     <div
+      ref={box}
       className="camera-overlay"
       data-upscale-mode={mode}
       data-upscale-tier={tier}

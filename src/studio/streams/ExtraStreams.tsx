@@ -25,6 +25,9 @@ const isSnapshot = (value: unknown): value is StreamSessionsSnapshot =>
 const isPipState = (value: unknown): value is PipState =>
   !!value && typeof value === 'object' && typeof (value as PipState).phase === 'string'
 
+/** The 同屏观看 panel's id, which the top bar's + button names as its popover target. */
+export const ADD_STREAM_POPOVER = 'add-stream'
+
 export function ExtraStreams({ adding, onAddingChange }: {
   /** The "同屏观看" form is open. */
   adding: boolean
@@ -154,7 +157,7 @@ export function ExtraStreams({ adding, onAddingChange }: {
           />
         )
       })}
-      <Popover open={adding} onClose={() => onAddingChange(false)} className="xs-add" label="同屏观看">
+      <Popover id={ADD_STREAM_POPOVER} open={adding} onOpen={() => onAddingChange(true)} onClose={() => onAddingChange(false)} className="xs-add" label="同屏观看">
         <AddStreamForm
           full={full}
           onOpened={(view) => {

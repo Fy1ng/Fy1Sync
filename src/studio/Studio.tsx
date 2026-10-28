@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useFullscreen, useMediaMount, useOverlayVisibility, usePublishedHeight } from '../app/hooks'
+import { useDockFold, useFullscreen, useMediaMount, useOverlayVisibility, usePublishedHeight } from '../app/hooks'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { useCamera } from '../app/useCamera'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
@@ -24,7 +24,7 @@ import { DanmakuPanel } from './DanmakuPanel'
 import { DanmakuStage } from './DanmakuStage'
 import { usePlaybackHeartbeat } from './insights/RoomInsights'
 import { Intake } from './Intake'
-import { Icon } from './kit'
+import { Icon, popoverTrigger } from './kit'
 import { PipButton } from './PipButton'
 import type { RecordsTab } from './records/DanmakuRecords'
 import { ScheduleSheet } from './schedule/ScheduleSheet'
@@ -32,8 +32,8 @@ import { prefetchSchedule } from './schedule/store'
 import { SettingsSheet, type SettingsSection, type SettingsTarget } from './SettingsSheet'
 import { SourceChip } from './SourceChip'
 import { SourceLoaderProvider, ROLE_LABEL, useSourceLoader } from './sources'
-import { ExtraStreams } from './streams/ExtraStreams'
-import { AutoAlign, CountdownPrompt, SyncCapsule, useNudge } from './sync'
+import { ADD_STREAM_POPOVER, ExtraStreams } from './streams/ExtraStreams'
+import { AutoAlign, CountdownPrompt, startAutoAlign, SyncCapsule, useNudge } from './sync'
 import { useComposer } from './composer'
 import { Toasts } from './Toasts'
 import { QualityMenu } from './QualityMenu'
@@ -73,7 +73,7 @@ function StudioView(): React.ReactNode {
   const [framing, setFraming] = useState(false)
   const [previewHidden, setPreviewHidden] = useState(false)
   const [addingStream, setAddingStream] = useState(false)
-  // Where 赛程 was opened from: closing it, by choice or after a pick, goes back there.
+  // 赛程 opens over 添加直播间 or the player and closes back to whichever is behind it.
   const [scheduleFrom, setScheduleFrom] = useState<'intake' | 'source' | null>(null)
   const scheduleOpen = scheduleFrom !== null
   const openRecords = useCallback((tab: RecordsTab, uid?: string) => setSettingsAt({ section: 'records', records: { tab, uid } }), [])
@@ -85,8 +85,13 @@ function StudioView(): React.ReactNode {
   // The picture-in-picture, the danmaku panel and the local gift effects all keep clear of
   // the dock, whose height changes as it folds into two rows on a narrow window.
   usePublishedHeight(dock, theater, '--bar-clearance')
+  const dockRow = useRef<HTMLDivElement | null>(null)
+  const dockFold = useDockFold(dockRow)
+  // The bars stay while the pointer rests on them, still or not.
+  const [onChrome, setOnChrome] = useState(false)
+  const chromeHover = { onPointerEnter: () => setOnChrome(true), onPointerLeave: () => setOnChrome(false) }
 
-  const busyChrome = intake || tuning || settingsAt !== null || addingStream || scheduleOpen
+  const busyChrome = intake || tuning || settingsAt !== null || addingStream || scheduleOpen || onChrome
   const chrome = useOverlayVisibility(3200, !snapshot.playing || busyChrome)
   // The drawer is the room's chat; with no room there is nothing to hold it open for.
   const hasRoom = snapshot.danmaku.connected || snapshot.danmaku.room !== null
@@ -147,7 +152,7 @@ function StudioView(): React.ReactNode {
         // , and . sit under < and >: picture back, picture forward, like the two buttons.
         case 'Comma': event.preventDefault(); nudge('late', step); break
         case 'Period': event.preventDefault(); nudge('early', step); break
-        case 'KeyA': void session.syncNow(); break
+        case 'KeyA': startAutoAlign(session); break
         case 'KeyD': session.updateDanmakuSettings({ enabled: !session.settings.danmaku.enabled }); break
         case 'KeyC': setChat(!session.settings.sidebarVisible); break
         case 'KeyF': fullscreen.toggle(); break
@@ -198,7 +203,7 @@ function StudioView(): React.ReactNode {
             <span className="pip-parked" ref={mountOther} aria-hidden="true" />
           )}
 
-          <header className="topbar">
+          <header className="topbar" {...chromeHover}>
             <div className="topbar-sources">
               {SOURCE_ROLES.map((role) => (
                 <SourceChip key={role} role={role}
@@ -206,8 +211,9 @@ function StudioView(): React.ReactNode {
                   onShowPreview={previewHidden && role === otherRole && snapshot.media[role].status !== 'empty'
                     ? () => setPreviewHidden(false) : null} />
               ))}
-              <button type="button" className="icon-btn glass small" onClick={() => setAddingStream((open) => !open)}
-                aria-label="同屏观看其他直播间" title="同屏观看其他直播间" aria-expanded={addingStream}>
+              <button type="button" className="icon-btn glass small"
+                {...popoverTrigger(ADD_STREAM_POPOVER, addingStream, () => setAddingStream((open) => !open))}
+                aria-label="同屏观看其他直播间" title="同屏观看其他直播间">
                 <Icon name="plus" />
               </button>
             </div>
@@ -229,10 +235,10 @@ function StudioView(): React.ReactNode {
           <Toasts />
           {fullscreen.error && <p className="toast is-error floating-error" role="alert">{fullscreen.error}</p>}
 
-          <footer className="dock" ref={dock}>
+          <footer className="dock" ref={dock} {...chromeHover}>
             <CountdownPrompt />
             <Timeline />
-            <div className="dock-row">
+            <div className="dock-row" ref={dockRow} data-fold={dockFold}>
               <div className="dock-left">
                 <PlayButton />
                 <Volumes />
@@ -262,7 +268,7 @@ function StudioView(): React.ReactNode {
           )}
 
           {tuning && <DanmakuPanel onClose={() => setTuning(false)} />}
-          {intake && <Intake onClose={closeIntake} pendingFile={droppedFile} onSchedule={() => { closeIntake(); setScheduleFrom('intake') }} />}
+          {intake && <Intake onClose={closeIntake} pendingFile={droppedFile} onSchedule={() => setScheduleFrom('intake')} />}
         </main>
 
         {chatOpen && (
@@ -270,10 +276,7 @@ function StudioView(): React.ReactNode {
         )}
 
         {scheduleOpen && (
-          <ScheduleSheet onWatch={(url) => loader.loadInput('official', url)} onClose={() => {
-            if (scheduleFrom === 'intake') setIntake(true)
-            setScheduleFrom(null)
-          }} />
+          <ScheduleSheet onWatch={(url) => void loader.loadInput('official', url)} onClose={() => setScheduleFrom(null)} />
         )}
         {settingsAt && (
           <SettingsSheet target={settingsAt} room={snapshot.danmaku.room} onClose={() => setSettingsAt(null)}

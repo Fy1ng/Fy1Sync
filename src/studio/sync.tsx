@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { navigate, routeLink } from '../app/navigate'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
+import type { Session } from '../app/session'
 import { MAX_OFFSET_SECONDS, SOURCE_ROLES, type SourceRole } from '../core/types'
 import { AUTO_PROFILE_TEXT } from '../recognition/autoProfile'
 import { HoldButton, Icon, Popover, Segmented, Switch, usePopover } from './kit'
@@ -84,14 +85,14 @@ export function SyncCapsule(): React.ReactNode {
       </HoldButton>
 
       <div className="capsule-readout-wrap">
-        <button type="button" className="capsule-readout" onClick={editor.toggle} disabled={!paired}
-          aria-label={`${caption} ${magnitude.toFixed(1)} 秒，点击输入`} aria-expanded={editor.open}>
+        <button type="button" className="capsule-readout" {...editor.trigger} disabled={!paired}
+          aria-label={`${caption} ${magnitude.toFixed(1)} 秒，点击输入`}>
           <span className="capsule-value">{magnitude.toFixed(1)}</span>
           <span className="capsule-caption">
             {state === 'short' ? `缓冲不足，相差 ${Math.abs(shortfall).toFixed(1)}s` : state === 'locked' ? '已对齐' : caption}
           </span>
         </button>
-        <Popover open={editor.open} onClose={editor.close} className="offset-editor" label="输入延后时间">
+        <Popover {...editor.popover} className="offset-editor" label="输入延后时间">
           <OffsetEditor value={requested} onDone={editor.close} />
         </Popover>
       </div>
@@ -149,6 +150,14 @@ function OffsetEditor({ value, onDone }: { value: number; onDone: () => void }):
  * release labels automatic alignment as testing and points at the manual controls.
  */
 const AUTO_ALIGN_TESTING = true
+/** Said over the picture on each run while recognition only works in the easy case. */
+const AUTO_ALIGN_LIMITS = '目前自动同步条件较苛刻，必须在同一比分的非回放/冷却时间内同步才可能同步成功，正在优化中'
+
+/** 自动对齐 from its button or the A key. */
+export function startAutoAlign(session: Session): void {
+  if (AUTO_ALIGN_TESTING) session.notice('warn', AUTO_ALIGN_LIMITS)
+  void session.syncNow()
+}
 
 export function AutoAlign(): React.ReactNode {
   const session = useSession()
@@ -169,17 +178,17 @@ export function AutoAlign(): React.ReactNode {
           <Icon name="close" />
         </button>
       ) : (
-        <button type="button" className="align-main" disabled={busy || !bothReady} onClick={() => void session.syncNow()}
+        <button type="button" className="align-main" disabled={busy || !bothReady} onClick={() => startAutoAlign(session)}
           title={bothReady ? '识别两路画面中的比赛倒计时并自动对齐（A）' : '两路均载入后才能对齐'}>
           自动对齐
           {AUTO_ALIGN_TESTING && <span className="align-beta" aria-hidden="true">测试中</span>}
         </button>
       )}
-      <button type="button" className="align-more" onClick={menu.toggle} aria-label="对齐选项" aria-expanded={menu.open}
+      <button type="button" className="align-more" {...menu.trigger} aria-label="对齐选项"
         data-attention={!autoSync.authorized && settings.autoSyncEnabled ? 'true' : undefined}>
         <Icon name="chevron" />
       </button>
-      <Popover open={menu.open} onClose={menu.close} className="align-menu" label="对齐选项">
+      <Popover {...menu.popover} className="align-menu" label="对齐选项">
         {AUTO_ALIGN_TESTING && (
           <p className="align-testing"><span className="tag">测试中</span>
             自动对齐还没在足够多的真实比赛上验证。对不上时用「回退画面」「快进画面」微调，或点中间的秒数直接输入。</p>
@@ -237,16 +246,15 @@ const PHASE: Record<string, string> = {
 }
 
 /**
- * When a run had to find the countdown on its own, the found region waits for a yes. One
- * line per side, only while there is something to decide.
+ * While a run finds the countdown on its own, and when it could not. A found countdown is
+ * used straight away, so nothing here waits for a yes.
  */
 export function CountdownPrompt(): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const rows = SOURCE_ROLES.filter((role) => {
     const state = snapshot.autoProfiles[role]
-    return (state.phase === 'ready' && !state.accepted) || state.phase === 'not-found' || state.phase === 'unsupported'
-      || state.phase === 'locating' || state.phase === 'learning'
+    return state.phase === 'not-found' || state.phase === 'unsupported' || state.phase === 'locating' || state.phase === 'learning'
   })
   if (rows.length === 0) return null
   return (
@@ -258,9 +266,8 @@ export function CountdownPrompt(): React.ReactNode {
           <div key={role} className="prompt" data-role={role}>
             <span className="prompt-text">
               <b>{ROLE_LABEL[role]}</b>
-              {state.phase === 'ready' ? '已识别比赛倒计时' : working ? `正在识别比赛倒计时（${AUTO_PROFILE_TEXT[state.phase]}）` : state.reason ?? AUTO_PROFILE_TEXT[state.phase]}
+              {working ? `正在识别比赛倒计时（${AUTO_PROFILE_TEXT[state.phase]}）` : state.reason ?? AUTO_PROFILE_TEXT[state.phase]}
             </span>
-            {state.phase === 'ready' && <button type="button" className="btn-solid small" onClick={() => session.acceptAutoProfile(role)}>使用</button>}
             {!working && <button type="button" className="btn-quiet small" onClick={() => session.retryAutoProfile(role)}>重新识别</button>}
             {working && <button type="button" className="btn-quiet small" onClick={() => session.cancelAutoProfile(role)}>取消</button>}
             {!working && (

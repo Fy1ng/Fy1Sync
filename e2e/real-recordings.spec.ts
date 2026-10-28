@@ -95,10 +95,8 @@ test.describe('opt-in real recording acceptance', () => {
       await running.page.getByRole('button', { name: '自动对齐', exact: true }).click()
       for (const role of ['official', 'commentary'] as const) {
         const card = running.page.locator(`.prompt[data-role="${role}"]`)
-        await expect(card).toContainText('已识别比赛倒计时', { timeout: 65_000 })
-        prompts[role] = await card.innerText()
-        await revealOverlay(running.page)
-        await card.getByRole('button', { name: '使用', exact: true }).click()
+        prompts[role] = await card.innerText().catch(() => '')
+        await expect(card).toHaveCount(0, { timeout: 65_000 })
       }
       const options = await openAlignOptions(running.page)
       await expect(running.page.locator('.align-main.is-running')).toHaveCount(0, { timeout: 45_000 })

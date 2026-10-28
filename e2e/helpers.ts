@@ -112,9 +112,8 @@ export function rolePanel(dialog: Locator, role: 'official' | 'commentary'): Loc
   return dialog.page().getByRole('dialog', { name: role === 'official' ? '画面片源' : '解说片源', exact: true })
 }
 
-/** Respect usePopover's 120 ms outside-dismiss suppression before a new trigger click. */
+/** Open a native popover from its trigger. */
 async function openPopoverTrigger(trigger: Locator): Promise<void> {
-  await trigger.page().waitForTimeout(150)
   await trigger.click()
   await expect(trigger).toHaveAttribute('aria-expanded', 'true')
 }

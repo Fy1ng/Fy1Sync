@@ -141,13 +141,14 @@ export class AutoProfileController {
         this.fail(role, learned.report.reason ?? '字形证据不足, 请重新识别或手动编辑')
         return
       }
-      const accepted = this.states[role].accepted
       // The learned profile sees the crop as its full image. Playback crops the original ROI.
       const candidate = { ...learned.profile, roi: { ...best.roi }, matchThreshold: MIN_SYNC_CONFIDENCE,
         id: `session/${role}`, name: role === 'official' ? '官方自动候选' : '解说自动候选' }
       this.patch(role, { phase: 'ready', candidate, confidence: learned.report.confidence,
         learnedChars: learned.report.learnedChars, reason: null })
-      if (accepted) this.accept(role)
+      // A candidate that passed the learning gate is used at once: asking first only
+      // stalled the run, and it stays a session profile that is never saved on its own.
+      this.accept(role)
     } catch (error) {
       if (active()) this.fail(role, error instanceof Error ? error.message : String(error))
     }

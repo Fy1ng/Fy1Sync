@@ -33,19 +33,14 @@ function harness() {
 async function settle() { for (let i = 0; i < 8; i++) await Promise.resolve() }
 
 describe('source-local automatic profiles', () => {
-  it('waits for explicit acceptance and keeps two independent candidates without modifying a saved profile', async () => {
+  it('uses each learned candidate at once, per source, without modifying a saved profile', async () => {
     const h = harness()
     const before = structuredClone(profile)
     const official = h.controller.acquire('official')
     const commentary = h.controller.acquire('commentary')
-    await settle()
-    expect(h.controller.state('official').phase).toBe('ready')
-    expect(h.use).not.toHaveBeenCalled()
-    h.controller.accept('official')
     expect(await official).toBe(true)
-    expect(h.controller.state('commentary').accepted).toBe(false)
-    h.controller.accept('commentary')
     expect(await commentary).toBe(true)
+    expect(h.controller.state('official')).toMatchObject({ phase: 'ready', accepted: true })
     expect(h.use.mock.calls.map(call => [call[0], call[1].id])).toEqual([
       ['official', 'session/official'], ['commentary', 'session/commentary'],
     ])
@@ -63,8 +58,7 @@ describe('source-local automatic profiles', () => {
     const nativeFrames = h.clients.official.learn.mock.calls[0]?.[0] as GrabbedFrame[] | undefined
     expect(nativeFrames?.[0]?.mediaTime).toBe(12)
     expect(h.controller.state('official').candidate).toMatchObject({ roi: candidate.roi, matchThreshold: MIN_SYNC_CONFIDENCE })
-    h.controller.cancel('official')
-    expect(await run).toBe(false)
+    expect(await run).toBe(true)
   })
 
   it('cancels during capture and ignores a late window', async () => {
@@ -94,7 +88,6 @@ describe('source-local automatic profiles', () => {
     finish({ status: 'failed', reason: 'old failure' })
     await settle()
     expect(h.controller.state('official').phase).toBe('ready')
-    h.controller.accept('official')
     expect(await fresh).toBe(true)
   })
 
@@ -130,10 +123,9 @@ describe('source-local automatic profiles', () => {
     expect(h.controller.state('official')).toMatchObject({ phase: 'not-found', reason: '字形标签存在歧义, 请重新识别或手动编辑' })
   })
 
-  it('re-acquires accepted candidates after continuous loss and reuses session consent', async () => {
+  it('re-acquires a candidate after continuous loss', async () => {
     const h = harness()
-    const run = h.controller.acquire('official')
-    await settle(); h.controller.accept('official'); await run
+    await h.controller.acquire('official')
     h.controller.observe('official', failed)
     h.time(CLOCK_LOST_MS - 1); h.controller.observe('official', failed)
     expect(h.capture).toHaveBeenCalledTimes(2)
@@ -145,10 +137,9 @@ describe('source-local automatic profiles', () => {
     expect(h.clients.commentary.locate).not.toHaveBeenCalled()
   })
 
-  it('requires fresh consent after a source replacement and suppresses cancelled retries', async () => {
+  it('forgets the candidate after a source replacement and suppresses cancelled retries', async () => {
     const h = harness()
-    const run = h.controller.acquire('official')
-    await settle(); h.controller.accept('official'); await run
+    await h.controller.acquire('official')
     h.controller.reset('official')
     expect(h.controller.state('official').accepted).toBe(false)
     h.controller.cancel('official')
@@ -160,8 +151,7 @@ describe('source-local automatic profiles', () => {
 
   it('does not let low-confidence readings hide a continuously lost clock', async () => {
     const h = harness()
-    const run = h.controller.acquire('official')
-    await settle(); h.controller.accept('official'); await run
+    await h.controller.acquire('official')
     const low: RecognitionOutcome = { status: 'success', reading: {
       text: '0:20', seconds: 20, scores: [0.7], confidence: 0.7, mediaTime: 1, wallTime: 1000, frameIndex: 1,
     } }
@@ -172,8 +162,9 @@ describe('source-local automatic profiles', () => {
     expect(h.use).toHaveBeenCalledTimes(2)
   })
 
-  it('resolves all pending consent on disposal', async () => {
+  it('resolves runs still in progress on disposal', async () => {
     const h = harness()
+    h.capture.mockImplementation(() => new Promise(() => {}))
     const a = h.controller.acquire('official')
     const b = h.controller.acquire('commentary')
     await settle()
@@ -213,13 +204,11 @@ describe('source-local automatic profiles', () => {
     expect(h.use).not.toHaveBeenCalled()
   })
 
-  it('does not accept a ready candidate from a stopped or changed source', async () => {
+  it('does not use a candidate learned from a source that stopped or changed meanwhile', async () => {
     const h = harness()
-    const run = h.controller.acquire('official')
-    await settle()
-    h.current.mockReturnValue(false)
-    h.controller.accept('official')
-    expect(await run).toBe(false)
+    // Still current while learning; gone by the time the result would be used.
+    h.current.mockReturnValueOnce(true).mockReturnValueOnce(true).mockReturnValueOnce(true).mockReturnValue(false)
+    expect(await h.controller.acquire('official')).toBe(false)
     expect(h.use).not.toHaveBeenCalled()
   })
 })

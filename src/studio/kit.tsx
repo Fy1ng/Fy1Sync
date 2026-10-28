@@ -4,34 +4,81 @@
  * real thing; only the drawing is ours.
  */
 
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { useDismiss } from '../app/hooks'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 
-/** An anchored panel that closes on outside click or Escape. */
-export function Popover({ open, onClose, className = '', children, label }: {
+/** Chromium has native popovers; jsdom (the unit tests) does not, and gets plain toggling. */
+const NATIVE_POPOVER = typeof HTMLElement !== 'undefined' && 'showPopover' in HTMLElement.prototype
+
+/**
+ * An anchored panel on the browser's own popover: it sits in the top layer, closes on an
+ * outside click or Escape (the innermost one first), and is placed against its trigger with
+ * CSS anchor positioning, flipping to stay on screen. It replaces a hand-rolled outside-click
+ * hook whose trigger had to dodge a close-and-reopen race with a 120 ms timer.
+ *
+ * Its content mounts only while open. `anchor` places a panel opened from code (no trigger
+ * pointing at it) against that element.
+ */
+export function Popover({ id, open, onOpen, onClose, anchor = null, className = '', children, label }: {
+  id?: string
   open: boolean
+  /** The browser opened it, from a trigger whose `popoverTarget` names this `id`. */
+  onOpen?: () => void
   onClose: () => void
+  anchor?: HTMLElement | null
   className?: string
   label: string
   children: React.ReactNode
 }): React.ReactNode {
-  const ref = useDismiss(open, onClose)
-  if (!open) return null
-  return <div ref={ref} className={`pop ${className}`.trim()} role="dialog" aria-label={label}>{children}</div>
+  const ref = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    const node = ref.current
+    if (!node || !NATIVE_POPOVER) return
+    const shown = node.matches(':popover-open')
+    if (open && !shown) node.showPopover(anchor ? { source: anchor } : undefined)
+    else if (!open && shown) node.hidePopover()
+  }, [open, anchor])
+  return (
+    // Without native popovers (jsdom) the attribute alone would hide the panel for good.
+    <div ref={ref} id={id} popover={NATIVE_POPOVER ? 'auto' : undefined} className={`pop ${className}`.trim()} role="dialog" aria-label={label}
+      data-open={open || undefined}
+      onToggle={(event) => {
+        const shown = event.newState === 'open'
+        if (shown && !open) onOpen?.()
+        else if (!shown && open) onClose()
+      }}
+      onKeyDown={NATIVE_POPOVER ? undefined : (event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose() } }}>
+      {open && children}
+    </div>
+  )
 }
 
-/** Open/close state plus the trigger wiring, so every popover behaves the same. */
-export function usePopover(): { open: boolean; toggle: () => void; close: () => void } {
+/**
+ * Open state plus the wiring for one trigger and its `Popover`: spread `trigger` on the
+ * button and `popover` on the panel. The trigger names the panel (`popoverTarget`), so the
+ * browser toggles it and knows a click on it is not an outside click.
+ */
+export function usePopover(): {
+  open: boolean
+  close: () => void
+  trigger: { popoverTarget?: string; onClick?: () => void; 'aria-expanded': boolean }
+  popover: { id: string; open: boolean; onOpen: () => void; onClose: () => void }
+} {
+  const id = useId()
   const [open, setOpen] = useState(false)
-  // The trigger sits outside the panel, so the panel's outside-click close fires first on a
-  // click on the trigger; remembering when lets the toggle that follows not reopen it.
-  const closedAt = useRef(0)
-  const close = useCallback(() => { closedAt.current = performance.now(); setOpen(false) }, [])
-  const toggle = useCallback(() => {
-    if (performance.now() - closedAt.current < 120) return
-    setOpen(value => !value)
-  }, [])
-  return { open, toggle, close }
+  const close = useCallback(() => setOpen(false), [])
+  const show = useCallback(() => setOpen(true), [])
+  const toggle = useCallback(() => setOpen((value) => !value), [])
+  return {
+    open,
+    close,
+    trigger: NATIVE_POPOVER ? { popoverTarget: id, 'aria-expanded': open } : { onClick: toggle, 'aria-expanded': open },
+    popover: { id, open, onOpen: show, onClose: close },
+  }
+}
+
+/** Trigger props for a popover whose open state lives elsewhere (see `usePopover`). */
+export function popoverTrigger(id: string, open: boolean, toggle: () => void): { popoverTarget?: string; onClick?: () => void; 'aria-expanded': boolean } {
+  return NATIVE_POPOVER ? { popoverTarget: id, 'aria-expanded': open } : { onClick: toggle, 'aria-expanded': open }
 }
 
 export function Switch({ checked, onChange, label, disabled = false, detail }: {
@@ -195,41 +242,57 @@ export function SideTabs<T extends string>({ label, tabs, value, onChange, aside
   )
 }
 
-/** A full-window workspace with a title, for the screens that are not about watching. */
+/**
+ * A full-window workspace with a title, for the screens that are not about watching.
+ *
+ * A modal `<dialog>`: the browser traps focus inside it, makes the page behind inert, closes
+ * it on Escape or a click on the backdrop, and puts focus back where it was when it closes.
+ */
 export function Sheet({ title, onClose, children, wide = false }: {
   title: string
   onClose: () => void
   children: React.ReactNode
   wide?: boolean
 }): React.ReactNode {
-  // Focus moves into the sheet when it opens, so Escape (handled on the sheet) closes it even
-  // when it was opened by a button that has since gone away, such as one in 添加直播间.
-  const ref = useRef<HTMLElement | null>(null)
-  useEffect(() => {
+  const ref = useRef<HTMLDialogElement | null>(null)
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  // The content mounts once the dialog is open, so an autoFocus inside it lands.
+  const [shown, setShown] = useState(false)
+  useLayoutEffect(() => {
     const node = ref.current
-    if (node && !node.contains(document.activeElement)) node.focus({ preventScroll: true })
+    if (!node) return
+    if (typeof node.showModal === 'function') {
+      if (!node.open) node.showModal()
+      // Start on the sheet itself rather than on its close button.
+      node.focus({ preventScroll: true })
+    } else node.setAttribute('open', '')
+    setShown(true)
   }, [])
   return (
-    <div className="sheet-scrim" onPointerDown={onClose}>
-      <section
-        ref={ref}
-        tabIndex={-1}
-        className={`sheet ${wide ? 'is-wide' : ''}`.trim()}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        onPointerDown={(event) => event.stopPropagation()}
-        onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose() } }}
-      >
-        <header className="sheet-head">
-          <h2>{title}</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="关闭">
-            <Icon name="close" />
-          </button>
-        </header>
-        {children}
-      </section>
-    </div>
+    <dialog
+      ref={ref}
+      tabIndex={-1}
+      className={`sheet ${wide ? 'is-wide' : ''}`.trim()}
+      role="dialog"
+      aria-label={title}
+      closedby="any"
+      onClose={() => closeRef.current()}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape') return
+        // The browser closes the dialog; the page behind must not also act on this Escape.
+        event.stopPropagation()
+        if (typeof ref.current?.showModal !== 'function') onClose()
+      }}
+    >
+      <header className="sheet-head">
+        <h2>{title}</h2>
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="关闭">
+          <Icon name="close" />
+        </button>
+      </header>
+      {shown && children}
+    </dialog>
   )
 }
 

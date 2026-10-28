@@ -1,14 +1,16 @@
 /**
  * The room's chat, released in step with the voice, and a line to send into it.
  *
- * Windowed: a busy room releases hundreds of messages a minute and only the visible rows are
- * in the DOM. It follows the bottom until the reader scrolls up, then holds still and
- * offers a way back down.
+ * Windowed with TanStack Virtual: a busy room releases hundreds of messages a minute and
+ * only the visible rows are in the DOM. Rows wrap, so each is measured as it renders. The
+ * list is anchored to its end: it follows new messages while at the bottom, and once the
+ * reader scrolls up it holds the row they are reading still, also while the oldest
+ * messages are dropped from the front. A way back down is offered meanwhile.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
-import { anchoredScrollTop, chatWindow, isPinned } from '../ui/chatWindow'
 import type { DanmakuMessage } from '../core/danmakuTimeline'
 import { useComposer } from './composer'
 import { useDouyuWrites } from './douyuWrites'
@@ -21,7 +23,10 @@ import { useSourceLoader } from './sources'
 import { deliveryText } from './useStudioComposer'
 import { remember } from '../app/remembered'
 
+/** A one-line row; longer messages wrap and are measured. */
 const ROW = 30
+/** How close to the end still counts as following it. */
+const END_SLACK = ROW
 
 export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   onClose: () => void
@@ -36,8 +41,8 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   const composer = useComposer()
   const { roomName } = useSourceLoader()
   const rate = useDanmakuRate(readOnly ? null : danmaku.room)
-  // One menu for the whole list, placed beside the row it was opened from.
-  const [rowMenu, setRowMenu] = useState<{ message: DanmakuMessage; top: number } | null>(null)
+  // One menu for the whole list, anchored to the button it was opened from.
+  const [rowMenu, setRowMenu] = useState<{ message: DanmakuMessage; anchor: HTMLElement } | null>(null)
   const [rowNote, setRowNote] = useState<string | null>(null)
   const box = useRef<HTMLTextAreaElement | null>(null)
   const subscribe = useCallback((listener: () => void) => session.subscribeChat(listener), [session])
@@ -45,16 +50,21 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   const total = useSyncExternalStore(subscribe, () => session.chatCount())
 
   const scroller = useRef<HTMLDivElement | null>(null)
-  const [scrollTop, setScrollTop] = useState(0)
   const [viewport, setViewport] = useState(0)
-  const pinned = useRef(true)
-  // Where this component last scrolled to. The scroll event that assignment fires must not
-  // be read as the reader's own scroll: during a burst it can report a position short of a
-  // bottom that has already moved on, which used to unpin the list for good.
-  const placed = useRef<number | null>(null)
-  const seen = useRef({ total, length: messages.length })
+  const seen = useRef(total)
   const [unread, setUnread] = useState(0)
-  const height = messages.length * ROW
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scroller.current,
+    estimateSize: () => ROW,
+    getItemKey: (index) => messages[index]!.id,
+    overscan: 6,
+    anchorTo: 'end',
+    followOnAppend: true,
+    scrollEndThreshold: END_SLACK,
+    initialOffset: () => Number.MAX_SAFE_INTEGER,
+  })
+  const atEnd = useRef(true)
 
   useEffect(() => {
     const node = scroller.current
@@ -68,27 +78,15 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   }, [])
 
   useLayoutEffect(() => {
-    const node = scroller.current
-    const previous = seen.current
-    seen.current = { total, length: messages.length }
-    if (!node) return
-    const arrived = Math.max(0, total - previous.total)
-    const droppedFromFront = arrived === 0 && messages.length < previous.length
-      ? previous.length
-      : Math.max(0, previous.length + arrived - messages.length)
-    const next = anchoredScrollTop({ pinned: pinned.current, scrollTop: node.scrollTop, viewport: node.clientHeight, height, droppedFromFront, row: ROW })
-    if (Math.abs(next - node.scrollTop) >= 1) { node.scrollTop = next; placed.current = node.scrollTop }
-    setScrollTop(node.scrollTop)
-    if (!pinned.current && arrived > 0) setUnread((count) => count + arrived)
+    const arrived = Math.max(0, total - seen.current)
+    seen.current = total
+    if (!atEnd.current && arrived > 0) setUnread((count) => count + arrived)
     if (messages.length === 0) setUnread(0)
-  }, [total, messages.length, height])
+  }, [total, messages.length])
 
-  // A smaller viewport (the window, or the send box growing) keeps a pinned list at the bottom.
+  // A smaller viewport (the window, or the send box growing) keeps a followed list at the end.
   useLayoutEffect(() => {
-    const node = scroller.current
-    if (!node || !pinned.current) return
-    node.scrollTop = node.scrollHeight
-    placed.current = node.scrollTop
+    if (atEnd.current && messages.length > 0) virtualizer.scrollToIndex(messages.length - 1, { align: 'end' })
   }, [viewport])
 
   // "回复" from the picture writes into the box; follow it there.
@@ -100,12 +98,8 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
     node.setSelectionRange(node.value.length, node.value.length)
   }, [composer.focusRequest])
 
-  const { start, end } = chatWindow(messages.length, scrollTop, viewport, ROW)
-  const rows = messages.slice(start, end)
+  const rows = virtualizer.getVirtualItems()
   const composing = useRef(false)
-  // Keep the menu in the feed's available half, including when its content grows.
-  const menuAbove = rowMenu !== null && rowMenu.top > viewport / 2
-  const menuEdge = rowMenu ? Math.max(8, Math.min(viewport - 8, rowMenu.top - (menuAbove ? ROW : 0))) : 8
 
   return (
     <aside className="drawer" aria-label="弹幕">
@@ -136,12 +130,10 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
       <div className="drawer-feed">
         <div className="drawer-scroll" ref={scroller} role="log" aria-live="off" aria-label="弹幕列表" tabIndex={0}
           onScroll={(event) => {
+            // Read the element itself: the virtualizer's own scroll listener may not have run yet.
             const node = event.currentTarget
-            const ours = placed.current !== null && Math.abs(node.scrollTop - placed.current) < 2
-            placed.current = null
-            if (!ours) pinned.current = isPinned(node.scrollTop, node.clientHeight, node.scrollHeight, ROW)
-            if (pinned.current) setUnread(0)
-            setScrollTop(node.scrollTop)
+            atEnd.current = node.scrollHeight - node.scrollTop - node.clientHeight <= END_SLACK
+            if (atEnd.current) setUnread(0)
             setRowMenu(null)
           }}>
           {messages.length === 0 ? (
@@ -149,10 +141,11 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
               {danmaku.connected ? '弹幕将随解说进度显示' : danmaku.room ? '正在连接…' : '载入斗鱼或虎牙解说后显示弹幕'}
             </p>
           ) : (
-            <div style={{ height, position: 'relative' }}>
-              {rows.map((message, offset) => (
-                <div key={message.id} className={`msg ${message.gift || message.huyaGift ? 'is-gift' : ''}`.trim()}
-                  style={{ transform: `translateY(${(start + offset) * ROW}px)` }} title={`${message.user}：${message.text}`}>
+            <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+              {rows.map((row) => { const message = messages[row.index]!; return (
+                <div key={row.key} data-index={row.index} ref={virtualizer.measureElement}
+                  className={`msg ${message.gift || message.huyaGift ? 'is-gift' : ''}`.trim()}
+                  style={{ transform: `translateY(${row.start}px)` }}>
                   <span className="msg-user">{message.user}</span>
                   <span className="msg-text">{message.text}</span>
                   {message.duplicateCount !== undefined && message.duplicateCount > 1 && (
@@ -164,33 +157,27 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
                         aria-label={`+1：${message.text}`} title={composer.repeatProblem(message.text) ?? '发送相同内容'}
                         onClick={() => void composer.repeat(message.text)}>+1</button>}
                       <button type="button" className="msg-more" aria-label={`更多操作：${message.text}`} title="更多操作"
-                        onClick={() => { setRowNote(null); setRowMenu({ message, top: (start + offset + 1) * ROW - scrollTop }) }}>
+                        onClick={(event) => { setRowNote(null); setRowMenu({ message, anchor: event.currentTarget }) }}>
                         <Icon name="more" />
                       </button>
                     </span>
                   )}
                 </div>
-              ))}
+              ) })}
             </div>
           )}
         </div>
         {rowMenu && (
-          <div className={`row-menu-anchor ${menuAbove ? 'is-above' : ''}`.trim()}
-            style={{ top: menuAbove ? 8 : menuEdge, bottom: menuAbove ? Math.max(8, viewport - menuEdge) : 8 }}>
-            <Popover open onClose={() => setRowMenu(null)} className="row-menu" label={`弹幕操作：${rowMenu.message.text}`}>
-              <RowActions message={rowMenu.message} note={rowNote} setNote={setRowNote} close={() => setRowMenu(null)}
-                onReply={() => { composer.reply(rowMenu.message.user); setRowMenu(null) }} />
-            </Popover>
-          </div>
+          <Popover key={rowMenu.message.id} open anchor={rowMenu.anchor} onClose={() => setRowMenu(null)} className="row-menu" label={`弹幕操作：${rowMenu.message.text}`}>
+            <RowActions message={rowMenu.message} note={rowNote} setNote={setRowNote} close={() => setRowMenu(null)}
+              onReply={() => { composer.reply(rowMenu.message.user); setRowMenu(null) }} />
+          </Popover>
         )}
         {unread > 0 && (
           <button type="button" className="drawer-jump" onClick={() => {
-            const node = scroller.current
-            if (!node) return
-            pinned.current = true
+            atEnd.current = true
             setUnread(0)
-            node.scrollTop = node.scrollHeight
-            placed.current = node.scrollTop
+            if (messages.length > 0) virtualizer.scrollToIndex(messages.length - 1, { align: 'end' })
           }}>{unread > 99 ? '99+' : unread} 条新弹幕</button>
         )}
       </div>

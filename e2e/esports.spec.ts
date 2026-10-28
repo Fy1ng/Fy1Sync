@@ -25,7 +25,7 @@ test('赛程和直播标题只读接口通过真实 IPC 读取离线缓存并校
   expect(result.bad).toMatchObject({ ok: false, code: 'invalid-arguments' })
 })
 
-test('赛程页按赛事列出对阵, 点击直播流载入为画面, 失败时留在页面并说明', async ({ electronApp, page }) => {
+test('赛程页按赛事列出对阵, 点击直播流即关闭并在背后的画面位载入, 失败时在那里说明', async ({ electronApp, page }) => {
   await electronApp.evaluate(async ({ app }, payload) => {
     const { mkdir, writeFile } = process.getBuiltinModule('node:fs/promises')
     const { join } = process.getBuiltinModule('node:path')
@@ -48,7 +48,8 @@ test('赛程页按赛事列出对阵, 点击直播流载入为画面, 失败时�
   })
   expect(firstFrame).toContain('PGL Masters Bucharest 2026')
   expect(firstFrame).not.toContain('正在读取赛程')
-  await expect(intake).toBeHidden()
+  // 赛程 opens over 添加直播间, which stays behind it.
+  await expect(intake).toBeVisible()
 
   const sheet = page.getByRole('dialog', { name: '赛程', exact: true })
   await expect(sheet).toBeVisible()
@@ -64,11 +65,15 @@ test('赛程页按赛事列出对阵, 点击直播流载入为画面, 失败时�
   // Offline E2E refuses real platform acquisition, which stands in for a stream that will not play.
   const match = live.getByRole('listitem', { name: 'G2 Esports 对 DENDELE CS' })
   await match.getByRole('button', { name: /^在YouTube观看 G2 Esports 对 DENDELE CS/ }).click()
-  await expect(sheet.getByRole('alert')).toContainText('该直播流未能载入')
-  await expect(sheet).toBeVisible()
+  // The pick closes the sheet at once and the load, here failing, shows on the 画面 slot behind.
+  await expect(sheet).toBeHidden()
+  await expect(intake).toBeVisible()
+  await expect(intake.locator('.slot[data-role="official"] .slot-error')).toBeVisible()
   await expect(page.locator('.chip[data-role="official"]')).toHaveAttribute('data-status', 'empty')
 
-  // Opened from 添加直播间, closing goes back there rather than to the bare player.
+  // Closing without a pick goes back to 添加直播间 as well.
+  await intake.getByRole('button', { name: /^CS2 赛程/ }).click()
+  await expect(sheet).toBeVisible()
   await sheet.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(sheet).toBeHidden()
   await expect(intake).toBeVisible()

@@ -52,8 +52,9 @@ html[data-titlebar='custom'] :is(.studio, .page-loading, .crash) {
   top: var(--titlebar-h);
 }
 
-html[data-titlebar='custom'] .studio .sheet-scrim {
-  top: var(--titlebar-h);
+/* A modal sheet is centred in the area below the strip, which stays draggable above it. */
+html[data-titlebar='custom'] .studio {
+  --sheet-top: var(--titlebar-h);
 }
 
 .titlebar[data-focused='false'] :is(.titlebar-name, .titlebar-mark, .titlebar-btn) {

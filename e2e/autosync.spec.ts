@@ -85,12 +85,12 @@ test.describe('无预设自动同步', () => {
     await setPlaying(page, true)
     await revealOverlay(page)
     await page.getByRole('button', { name: '自动对齐', exact: true }).click()
+    // The limits are said over the picture; a found countdown is used without asking.
+    await expect(page.locator('.toast').filter({ hasText: '目前自动同步条件较苛刻' })).toBeVisible()
     for (const role of ['official', 'commentary']) {
       const card = page.locator(`.prompt[data-role="${role}"]`)
-      await expect(card).toContainText('已识别比赛倒计时', { timeout: 60_000 })
-      await revealOverlay(page)
-      await card.getByRole('button', { name: '使用', exact: true }).click()
-      await expect(card).toHaveCount(0)
+      await expect(card).toHaveCount(0, { timeout: 60_000 })
+      await expect(card.getByRole('button', { name: '使用', exact: true })).toHaveCount(0)
     }
     await waitForPhase(page, '未完成')
     await expect((await openAlignOptions(page)).locator('.menu-meta')).toContainText('没读到比分')

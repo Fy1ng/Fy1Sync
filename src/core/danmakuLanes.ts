@@ -93,6 +93,32 @@ export class DanmakuLaneAllocator {
     return { lane: chosen, top: chosen * laneHeight, durationSeconds }
   }
 
+  /** Lanes a message could take right now. */
+  freeLanes(now: number): number {
+    let free = 0
+    for (const at of this.freeAt) if (at <= now) free += 1
+    return free
+  }
+
+  /**
+   * Messages on screen changed speed by `1 / factor`: what is left of each lane's wait
+   * scales with them (their remaining distance is the same).
+   */
+  rescale(now: number, factor: number): void {
+    this.freeAt = this.freeAt.map((at) => (at > now ? now + (at - now) * factor : at))
+  }
+
+  /** Push every busy lane back, e.g. by the width a narrower picture lost. */
+  delay(seconds: number): void {
+    if (seconds > 0) this.freeAt = this.freeAt.map((at) => (at > 0 ? at + seconds : at))
+  }
+
+  /** The message in `lane` grew; its tail clears the edge `seconds` later. */
+  extend(lane: number, seconds: number): void {
+    const at = this.freeAt[lane]
+    if (at !== undefined && seconds > 0) this.freeAt[lane] = at + seconds
+  }
+
   private resizeLanes(): void {
     const { areaHeight, laneHeight } = this.layout
     const count = laneHeight > 0 ? Math.max(1, Math.floor(areaHeight / laneHeight)) : 1
@@ -141,7 +167,7 @@ export class PinnedSlotAllocator {
   }
 }
 
-/** Rough text width estimate; CJK glyphs are ~1em wide, latin ~0.55em. */
+/** Rough text width for where nothing is laid out (tests); the overlays measure the node. */
 export function estimateTextWidth(text: string, fontSize: number): number {
   let units = 0
   for (const char of text) {

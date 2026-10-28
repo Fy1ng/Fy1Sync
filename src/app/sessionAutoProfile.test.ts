@@ -86,18 +86,10 @@ describe('automatic profile session integration', () => {
     for (const role of ['official', 'commentary'] as const) expect(session.engine.element(role).paused).toBe(true)
   })
 
-  it('holds sync until both candidates are accepted, aligns and never saves implicitly', async () => {
-    const h = await harness()
+  it('uses both learned candidates without asking, aligns and never saves implicitly', async () => {
+    await harness()
     const save = vi.spyOn(apiClient, 'savePreset')
-    const pending = session.syncNow()
-    await settle()
-    expect(session.flush().autoProfiles.official.phase).toBe('ready')
-    expect(h.sample).not.toHaveBeenCalled()
-    session.acceptAutoProfile('official')
-    await settle()
-    expect(h.sample).not.toHaveBeenCalled()
-    session.acceptAutoProfile('commentary')
-    const result = await pending
+    const result = await session.syncNow()
     expect(result.phase).toBe('done')
     expect(session.flush().profiles.official?.id).toBe('session/official')
     expect(session.flush().profiles.commentary?.id).toBe('session/commentary')
@@ -105,11 +97,10 @@ describe('automatic profile session integration', () => {
     expect(save).not.toHaveBeenCalled()
   })
 
-  it('cancel during candidate confirmation ends the run without seeking', async () => {
+  it('cancel while the countdown is being found ends the run without seeking', async () => {
     await harness()
     const seek = vi.spyOn(session.engine, 'seek')
     const pending = session.syncNow()
-    await settle()
     session.cancelAutoSync()
     const result = await pending
     expect(result.failure?.kind).toBe('cancelled')
@@ -117,14 +108,12 @@ describe('automatic profile session integration', () => {
     for (const role of ['official', 'commentary'] as const) expect(session.engine.element(role).playbackRate).toBe(1)
   })
 
-  it('cancels one source without waiting for or discarding the other candidate', async () => {
+  it('cancelling one source ends the run and keeps the other source as it was', async () => {
     await harness()
     const pending = session.syncNow()
-    await settle()
     session.cancelAutoProfile('official')
     expect((await pending).failure?.kind).toBe('cancelled')
-    expect(session.flush().autoProfiles.commentary.phase).toBe('ready')
-    session.acceptAutoProfile('commentary')
+    expect(session.flush().autoProfiles.official.phase).toBe('cancelled')
     expect(session.flush().profiles.commentary?.id).toBe('session/commentary')
   })
 
@@ -169,10 +158,7 @@ describe('automatic profile session integration', () => {
 
   it('only explicit save writes a fresh preset id, leaving the original preset intact', async () => {
     await harness()
-    const pending = session.measureOnce()
-    await settle()
-    session.acceptAutoProfile('official'); session.acceptAutoProfile('commentary')
-    await pending
+    await session.measureOnce()
     const save = vi.spyOn(apiClient, 'savePreset').mockResolvedValue({ ok: true, value: { id: 'new', etag: 'new', updatedAt: 1 } })
     expect(await session.saveAutoProfile('official')).toBe(true)
     expect(save.mock.calls[0]?.[0]).toMatch(/^auto\/official-/u)

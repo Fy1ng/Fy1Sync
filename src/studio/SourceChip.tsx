@@ -31,8 +31,7 @@ export function SourceChip({ role, onSchedule, onShowPreview = null }: {
   return (
     <div className={`chip-wrap${onShowPreview && !panel.open ? ' has-drop' : ''}`}>
       <button type="button" className="chip" data-role={role} data-status={status}
-        onClick={panel.toggle}
-        aria-expanded={panel.open} aria-label={`${ROLE_LABEL[role]}：${where}`}>
+        {...panel.trigger} aria-label={`${ROLE_LABEL[role]}：${where}`}>
         <span className="chip-dot" aria-hidden="true" />
         <span className="chip-role">{ROLE_LABEL[role]}</span>
         <span className="chip-where">{where}</span>
@@ -43,7 +42,7 @@ export function SourceChip({ role, onSchedule, onShowPreview = null }: {
           <button type="button" className="btn-glass small" onClick={onShowPreview}>显示小画面</button>
         </div>
       )}
-      <Popover open={panel.open} onClose={panel.close} className="source-pop" label={`${ROLE_LABEL[role]}片源`}>
+      <Popover {...panel.popover} className="source-pop" label={`${ROLE_LABEL[role]}片源`}>
         <SourcePanel role={role} onDone={panel.close} onSchedule={onSchedule} />
       </Popover>
     </div>

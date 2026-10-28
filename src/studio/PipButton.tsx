@@ -79,11 +79,11 @@ export function PipButton(): React.ReactNode {
 
   return (
     <div className="pip-control">
-      <button type="button" className={`icon-btn ${native || enhancedOpen ? 'is-on' : ''}`.trim()} onClick={menu.toggle}
-        aria-label="画中画" aria-expanded={menu.open} title="画中画">
+      <button type="button" className={`icon-btn ${native || enhancedOpen ? 'is-on' : ''}`.trim()} {...menu.trigger}
+        aria-label="画中画" title="画中画">
         <Icon name="pip" />
       </button>
-      <Popover open={menu.open} onClose={menu.close} className="pip-menu" label="画中画">
+      <Popover {...menu.popover} className="pip-menu" label="画中画">
         <button type="button" className="menu-item" onClick={toggleNative}>
           {native ? '关闭系统画中画' : '系统画中画'}
           <span className="menu-note">仅画面</span>

@@ -21,10 +21,9 @@
 /* ---------- the add form ---------- */
 
 .studio .xs-add {
-  top: 64px;
-  left: 16px;
+  margin: 8px 0;
+  position-area: bottom span-right;
   width: 380px;
-  max-width: calc(100% - 32px);
 }
 
 .studio .xs-add-form {

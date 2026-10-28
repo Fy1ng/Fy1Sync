@@ -27,6 +27,7 @@
     "package:check": "node scripts/check-package.mjs"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "3.14.23",
     "hls.js": "1.6.16",
     "ipaddr.js": "2.5.0",
     "parse5": "8.0.1",
