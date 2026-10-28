@@ -225,6 +225,31 @@ describe('RecognitionSampler', () => {
       expect(bench.sampler.scoreReadings('official')).toHaveLength(0)
     } finally { bench.sampler.dispose(); bench.restore() }
   })
+  it('keeps score evidence through a short buffering stall on a continuous timeline', async () => {
+    const video = fakeVideo()
+    const listeners = new Map<string, Array<() => void>>()
+    Object.assign(video, {
+      addEventListener: (type: string, listener: () => void) => listeners.set(type, [...(listeners.get(type) ?? []), listener]),
+      removeEventListener: () => {},
+    })
+    const bench = harness({ video: role => role === 'official' ? video : null,
+      metadata: frame => frame.score ? { score: {
+        ...frame.score, left: 9, right: 8, leftQuality: .95, rightQuality: .95, reason: null,
+        mediaTime: frame.mediaTime, wallTime: frame.wallTime, frameIndex: frame.frameIndex,
+      } } : {},
+    })
+    try {
+      const run = bench.sampler.sample(20, () => {}, { aborted: false })
+      await bench.loop.tick(10)
+      await run
+      expect(bench.sampler.scoreReadings('official')).toHaveLength(1)
+      const before = bench.sampler.scoreGeneration()
+      for (const type of ['waiting', 'stalled']) for (const listener of listeners.get(type) ?? []) listener()
+      Object.assign(video, { readyState: 2 })
+      expect(bench.sampler.scoreGeneration()).toBe(before)
+      expect(bench.sampler.scoreReadings('official')).toHaveLength(1)
+    } finally { bench.sampler.dispose(); bench.restore() }
+  })
   it('gives each role its own worker, so neither invalidates the other', async () => {
     const bench = harness()
     try {

@@ -226,7 +226,9 @@ export class RecognitionSampler {
       this.invalidateScores(role, channel)
     }
     this.reconcile(role)
-    const events = ['seeking', 'emptied', 'loadstart', 'pause', 'waiting', 'stalled', 'ratechange', 'resize']
+    // Buffering ('waiting', 'stalled') keeps the timeline continuous, so it only pauses
+    // collection. The media/wall-time check on the next score frame still catches a gap.
+    const events = ['seeking', 'emptied', 'loadstart', 'pause', 'ratechange', 'resize']
     channel.lifecycleStop?.()
     for (const event of events) video.addEventListener?.(event, invalidate)
     channel.lifecycleStop = () => {
@@ -352,7 +354,7 @@ export class RecognitionSampler {
     const height = video?.videoHeight ?? 0
     const srcObject = video?.srcObject ?? null
     const profileSignature = profile ? `${profile.updatedAt}/${JSON.stringify(profile.roi)}` : ''
-    const blocked = !video || video.paused === true || video.seeking === true || video.readyState < 2
+    const blocked = !video || video.paused === true || video.seeking === true
       || (Number.isFinite(video.playbackRate) && Math.abs(video.playbackRate - 1) > 1e-6)
     if (channel.video !== video || channel.source !== source || channel.width !== width || channel.height !== height
       || channel.profileIdentity !== profile || channel.profileSignature !== profileSignature
