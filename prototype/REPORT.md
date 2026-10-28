@@ -9,7 +9,7 @@
 | ytdlp-js-runtime | PARTIAL | Electron bundled Node 24.22.0 实际运行并被 yt-dlp 识别; 直播解析被认证拦截 |
 | douyu-quickjs | PASS | QuickJS 实际解签, API code 0, 四次真实流 ffprobe exit 0 |
 
-P0 的四项全通过门槛尚未满足, 不进入 P1. 所有本轮文件写入都在 `prototype/` 内, 未提交, 未推送, 未改 `docs/plan.md` 或生产代码. 开始时父仓库已在 `stream-syncer` 分支, `Stream Syncer Claude/.gitignore` 已有修改, 本轮保留该修改.
+P0 的四项全通过门槛尚未满足, 不进入 P1. 所有本轮文件写入都在 `prototype/` 内, 未提交, 未推送, 未改开发计划或生产代码. 开始时父仓库已在 `stream-syncer` 分支, `Stream Syncer Claude/.gitignore` 已有修改, 本轮保留该修改.
 
 运行环境: Windows 10 build 19045, 宿主 Node 24.15.0, npm 11.12.1. 本地直接依赖精确固定为 `electron@44.9.0`, `hls.js@1.7.3`, `quickjs-emscripten@0.32.0`, 传递依赖由 `package-lock.json` 固定. Electron 内含 Chromium 152.0.7977.167 和 Node 24.22.0. 使用任务给定的 ffmpeg/ffprobe, 版本 `N-120072-g11d1b71c31-20250703`.
 

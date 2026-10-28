@@ -61,7 +61,7 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  // The common watching mode from docs/ui-layout.md: official picture, commentary audio.
+  // The common watching mode in the player layout: official picture, commentary audio.
   volume: { official: 0, commentary: 1 },
   muted: { official: true, commentary: false },
   audioRole: 'commentary',
@@ -150,7 +150,7 @@ export function mergeSettings(raw: unknown): AppSettings {
       showGifts: boolean(danmaku.showGifts, defaults.danmaku.showGifts),
     },
     autoSyncEnabled: boolean(stored.autoSyncEnabled, defaults.autoSyncEnabled),
-    // docs/sync-design.md fixes the interval choices at 15/30/60 s.
+    // The sync design fixes the interval choices at 15/30/60 s.
     autoSyncIntervalSeconds: clamp(stored.autoSyncIntervalSeconds, 10, 600, 30),
     // Only 2 s and 3 s windows are offered; anything else came from a bad blob.
     detectWindowSeconds: stored.detectWindowSeconds === 2 ? 2 : 3,

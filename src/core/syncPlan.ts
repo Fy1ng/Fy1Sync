@@ -9,7 +9,7 @@ import {
 } from './types'
 
 /**
- * Offset semantics (docs/sync-design.md):
+ * Offset semantics (sync design):
  *
  *   offset > 0  official is ahead -> rewind the official source by `offset`
  *   offset < 0  commentary is ahead -> rewind the commentary source by `abs(offset)`
@@ -159,7 +159,7 @@ export function isAligned(offset: number, deadband = OFFSET_DEADBAND_SECONDS): b
   return Math.abs(offset) <= deadband
 }
 
-/** UI copy that avoids exposing the algorithm, per docs/sync-design.md. */
+/** UI copy that avoids exposing the algorithm, per the sync design. */
 export function describeOffset(offset: number, deadband = OFFSET_DEADBAND_SECONDS): string {
   if (isAligned(offset, deadband)) return '两路已对齐'
   const seconds = Math.abs(offset).toFixed(2)

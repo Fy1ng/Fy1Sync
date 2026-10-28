@@ -986,7 +986,7 @@ export class Session {
     if (this.settingsValue.autoSyncEnabled) this.startScheduler()
   }
 
-  /** 2 s or 3 s, per docs/sync-design.md: long enough to catch a tick, short enough to feel live. */
+  /** 2 s or 3 s, per the sync design: long enough to catch a tick, short enough to feel live. */
   setDetectWindow(seconds: number): void {
     this.updateSettings({ detectWindowSeconds: seconds })
     this.autoSync.configure({ detectWindowSeconds: seconds })

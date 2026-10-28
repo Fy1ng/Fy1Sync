@@ -114,7 +114,7 @@ describe('mergeSettings', () => {
   })
 
   it('only accepts the two offered detection windows', () => {
-    // docs/sync-design.md offers 2 s and 3 s; 5 came from a bad blob, not from the UI.
+    // The sync design offers 2 s and 3 s; 5 came from a bad blob, not from the UI.
     expect(mergeSettings({ detectWindowSeconds: 2 }).detectWindowSeconds).toBe(2)
     expect(mergeSettings({ detectWindowSeconds: 5 }).detectWindowSeconds).toBe(3)
     expect(mergeSettings({ detectWindowSeconds: 'fast' } as unknown).detectWindowSeconds).toBe(3)

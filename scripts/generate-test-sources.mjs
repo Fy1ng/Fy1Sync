@@ -5,7 +5,7 @@
  * at a time nobody controls, and the run would be unrepeatable. These fixtures are the
  * substitute — a synthetic scoreboard with a real countdown, rendered twice with a known
  * delay between them. The delay is the ground truth every sync assertion compares against,
- * so the `docs/sync-design.md` gates (detection error ≤ 0.25 s, post-apply divergence ≤ 0.35 s) become
+ * so the sync design gates (detection error ≤ 0.25 s, post-apply divergence ≤ 0.35 s) become
  * checkable numbers rather than eyeballing.
  *
  * ffmpeg is required and is not a dependency of this project. Point `STREAM_SYNC_FFMPEG`

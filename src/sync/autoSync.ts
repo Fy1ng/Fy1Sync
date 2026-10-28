@@ -97,7 +97,7 @@ export interface AutoSyncDeps {
 
 export interface AutoSyncOptions {
   detectWindowSeconds?: number
-  /** Verification tolerance; docs/sync-design.md sets 0.35 s. */
+  /** Verification tolerance; the sync design sets 0.35 s. */
   maxDivergenceSeconds?: number
   /** Seconds to settle before measuring the applied result. */
   settleSeconds?: number
@@ -616,7 +616,7 @@ export class AutoSyncController {
 
   /**
    * How far the two sources ended up from the gap the plan asked for — the "两路差值"
-   * of docs/sync-design.md, not each source's distance from its own target.
+   * of the sync design, not each source's distance from its own target.
    *
    * The difference matters because verification happens after a settle delay, and
    * during it playing sources keep advancing. Measured per source, both would read

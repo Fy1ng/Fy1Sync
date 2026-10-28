@@ -3,7 +3,7 @@
  *
  * A still image is a valid sample source as long as it is a real capture of the broadcast:
  * a screenshot from the player keeps the encoder's anti-aliasing, which is what the
- * "samples come from decoded frames" rule in docs/profile-editor.md is about. Images are
+ * "samples come from decoded frames" rule of the profile editor is about. Images are
  * decoded in the renderer from a Blob — no URL, no upload, no main-process involvement.
  */
 

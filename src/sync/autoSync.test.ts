@@ -224,7 +224,7 @@ describe('AutoSyncController', () => {
     expect(result.divergence).toBeCloseTo(1.2, 2)
   })
 
-  it('accepts a landing inside the 0.35s gate from docs/sync-design.md', async () => {
+  it('accepts a landing inside the 0.35s gate of the sync design', async () => {
     const { deps } = makeDeps({}, { commentaryWallOffsetMs: 5_000, seekShortfall: 0.3 })
     const controller = new AutoSyncController(deps)
 

@@ -24,7 +24,7 @@ export async function invoke<K extends DesktopMethod>(
 /** Ground truth from `scripts/generate-test-sources.mjs`: commentary trails official by 5 s. */
 export const FIXTURE_DELAY_SECONDS = 5
 
-/** docs/v0.4 gates. Detection is the estimate, divergence is what verification measured. */
+/** v0.4 sync gates. Detection is the estimate, divergence is what verification measured. */
 export const MAX_DETECTION_ERROR_SECONDS = 0.25
 export const MAX_DIVERGENCE_SECONDS = 0.35
 

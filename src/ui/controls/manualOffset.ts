@@ -2,7 +2,7 @@
  * Pure logic behind the manual offset buttons, kept out of the component so it can be
  * tested without a DOM.
  *
- * Direction follows docs/sync-design.md: a positive offset rewinds the official source, a
+ * Direction follows the sync design: a positive offset rewinds the official source, a
  * negative one rewinds the commentary. The buttons are named for what the user sees move:
  * ◀ sends the official picture back (offset grows), ▶ sends the commentary back (offset
  * shrinks). Nothing ever plays forward; live media can only go back.

@@ -1,7 +1,7 @@
 /**
  * Automatic sync, end to end, against the V0.4 numeric gates.
  *
- * This is the one spec that measures rather than checks: docs/sync-design.md commits to a
+ * This is the one spec that measures rather than checks: the sync design commits to a
  * detection error within 0.25 s and a post-apply divergence within 0.35 s, and neither is
  * observable from a rendering. So the assertions are numbers read off the real elements,
  * compared against the fixture's own ground truth — `scripts/generate-test-sources.mjs`

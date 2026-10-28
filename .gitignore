@@ -21,7 +21,7 @@ playwright-report/
 /Stream Sync Player/
 /Stream Sync Player_Gemini/
 
-# UI 交接打包目录，用 docs/ui-handoff.md 里的命令重建
+# UI 交接打包目录
 /.handoff/
 /.codex-tasks/
 /prototype/.media/
@@ -34,3 +34,10 @@ playwright-report/
 # Reproducible desktop tool staging and local installers, never source inputs
 /.packaging/
 /.release/
+
+# Development notes and handoffs stay local; they are not published with the code
+/docs/
+/.local-handoff/
+
+# Environment files of every flavour (secrets); add an explicit exception for a public sample
+.env.*
