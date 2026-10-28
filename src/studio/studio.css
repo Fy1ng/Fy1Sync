@@ -427,9 +427,20 @@ body,
 
 /* ---------- popovers ---------- */
 
+/* Native popovers in the top layer, placed against their trigger (anchor positioning) and
+   flipped when the preferred side has no room. Each panel names its side with
+   `position-area`; the margin is the gap to the trigger. */
 .studio .pop {
-  position: absolute;
-  z-index: 60;
+  position: fixed;
+  inset: auto;
+  margin: 10px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  position-area: top span-left;
+  position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
+  color: inherit;
+  font: inherit;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -444,6 +455,12 @@ body,
 
 @keyframes pop-in {
   from { opacity: 0; transform: translateY(4px); }
+}
+
+/* After the base rule, which sets display, so a closed panel stays out of the layout. Keyed
+   on the component's own state: a browser without popovers (jsdom) never matches :popover-open. */
+.studio .pop:not([data-open]) {
+  display: none;
 }
 
 .studio .menu-rule {
@@ -467,7 +484,7 @@ body,
   container-name: theater;
 }
 
-.studio .theater[data-chrome='off']:not(:has(.pop)) {
+.studio .theater[data-chrome='off']:not(:has(.pop[data-open])) {
   cursor: none;
 }
 
@@ -493,16 +510,16 @@ body,
   transition: opacity 220ms var(--ease), transform 220ms var(--ease);
 }
 
-.studio .theater[data-chrome='off']:not(:has(.pop)) :is(.topbar, .dock) {
+.studio .theater[data-chrome='off']:not(:has(.pop[data-open])) :is(.topbar, .dock) {
   opacity: 0;
   pointer-events: none;
 }
 
-.studio .theater[data-chrome='off']:not(:has(.pop)) .topbar {
+.studio .theater[data-chrome='off']:not(:has(.pop[data-open])) .topbar {
   transform: translateY(-6px);
 }
 
-.studio .theater[data-chrome='off']:not(:has(.pop)) .dock {
+.studio .theater[data-chrome='off']:not(:has(.pop[data-open])) .dock {
   transform: translateY(8px);
 }
 
@@ -646,8 +663,8 @@ body,
 }
 
 .studio .source-pop {
-  top: calc(100% + 8px);
-  left: 0;
+  margin: 8px 0;
+  position-area: bottom span-right;
   width: 380px;
 }
 
@@ -720,7 +737,7 @@ body,
   transition: bottom 220ms var(--ease);
 }
 
-.studio .theater[data-chrome='off']:not(:has(.pop)) .pip {
+.studio .theater[data-chrome='off']:not(:has(.pop[data-open])) .pip {
   bottom: 16px;
 }
 
@@ -1204,10 +1221,9 @@ body,
 }
 
 .studio .offset-editor {
-  bottom: calc(100% + 12px);
-  left: 50%;
+  margin: 12px 0;
+  position-area: top;
   width: 260px;
-  transform: translateX(-50%);
   animation: none;
 }
 
@@ -1307,8 +1323,7 @@ body,
 }
 
 .studio .align-menu {
-  bottom: calc(100% + 12px);
-  right: 0;
+  margin: 12px 0;
   width: 300px;
 }
 
@@ -1933,14 +1948,8 @@ body,
 
 /* ---------- sheets: settings, Douyu ---------- */
 
-.studio .sheet-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
-  place-items: center;
-  padding: 28px;
+/* A modal <dialog>; ::backdrop is the dimmed page behind it. */
+.studio .sheet::backdrop {
   background: rgb(0 0 0 / 62%);
   backdrop-filter: blur(6px);
   animation: fade-in 160ms var(--ease);
@@ -1953,8 +1962,14 @@ body,
 .studio .sheet {
   display: flex;
   flex-direction: column;
-  width: min(620px, 100%);
-  max-height: min(820px, 100%);
+  width: min(620px, calc(100vw - 56px));
+  max-width: none;
+  max-height: min(820px, calc(100vh - 56px - var(--sheet-top, 0px)));
+  margin: auto;
+  inset: var(--sheet-top, 0px) 0 0 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -1966,9 +1981,13 @@ body,
   outline: none;
 }
 
+.studio .sheet:not([open]) {
+  display: none;
+}
+
 .studio .sheet.is-wide {
-  width: min(1040px, 100%);
-  height: min(820px, 100%);
+  width: min(1040px, calc(100vw - 56px));
+  height: min(820px, calc(100vh - 56px - var(--sheet-top, 0px)));
 }
 
 .studio .sheet-head {
@@ -2585,8 +2604,7 @@ body,
 }
 
 .studio .quality-menu {
-  right: 0;
-  bottom: calc(100% + 10px);
+  margin: 10px 0;
   width: 168px;
   max-height: min(60vh, 420px);
   overflow-y: auto;
@@ -2629,8 +2647,7 @@ body,
 }
 
 .studio .camera-menu {
-  right: 0;
-  bottom: calc(100% + 10px);
+  margin: 10px 0;
   width: 180px;
   gap: 0;
   padding: 6px;
@@ -2658,8 +2675,7 @@ body,
 }
 
 .studio .pip-menu {
-  right: 0;
-  bottom: calc(100% + 10px);
+  margin: 10px 0;
   width: 220px;
   gap: 2px;
   padding: 6px;
@@ -2746,25 +2762,14 @@ body,
   background: rgb(255 255 255 / 12%);
 }
 
-.studio .row-menu-anchor {
-  position: absolute;
-  right: 12px;
-  z-index: 30;
-}
-
+/* Under the row's 更多操作, flipping above it near the bottom of the list. */
 .studio .row-menu {
-  top: 0;
-  right: 0;
+  margin: 4px 0;
+  position-area: bottom span-left;
   width: 180px;
-  max-height: 100%;
   overflow-y: auto;
   gap: 0;
   padding: 6px;
-}
-
-.studio .row-menu-anchor.is-above .row-menu {
-  top: auto;
-  bottom: 0;
 }
 
 .studio .row-menu > * {

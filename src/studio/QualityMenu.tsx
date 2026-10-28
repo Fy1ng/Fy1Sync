@@ -67,12 +67,12 @@ function SideQuality({ side, main }: { side: Side; main: boolean }): React.React
   const label = `${ROLE_LABEL[side.role]}清晰度`
   return (
     <div className="quality-control" data-role={side.role}>
-      <button type="button" className="quality-btn" data-main={main || undefined} onClick={menu.toggle} aria-expanded={menu.open}
+      <button type="button" className="quality-btn" data-main={main || undefined} {...menu.trigger}
         aria-label={label} title={`${label}${main ? '（主画面）' : ''}`}>
         <span className="quality-side-name">{ROLE_LABEL[side.role]}</span>
         <span className="num">{side.busy ? '切换中' : side.current}</span>
       </button>
-      <Popover open={menu.open} onClose={menu.close} className="quality-menu" label={label}>
+      <Popover {...menu.popover} className="quality-menu" label={label}>
         <p className="menu-heading">{label}</p>
         {side.choices.map((choice) => (
           <button type="button" key={choice.key} role="menuitemradio" aria-checked={choice.on}

@@ -85,14 +85,14 @@ export function SyncCapsule(): React.ReactNode {
       </HoldButton>
 
       <div className="capsule-readout-wrap">
-        <button type="button" className="capsule-readout" onClick={editor.toggle} disabled={!paired}
-          aria-label={`${caption} ${magnitude.toFixed(1)} 秒，点击输入`} aria-expanded={editor.open}>
+        <button type="button" className="capsule-readout" {...editor.trigger} disabled={!paired}
+          aria-label={`${caption} ${magnitude.toFixed(1)} 秒，点击输入`}>
           <span className="capsule-value">{magnitude.toFixed(1)}</span>
           <span className="capsule-caption">
             {state === 'short' ? `缓冲不足，相差 ${Math.abs(shortfall).toFixed(1)}s` : state === 'locked' ? '已对齐' : caption}
           </span>
         </button>
-        <Popover open={editor.open} onClose={editor.close} className="offset-editor" label="输入延后时间">
+        <Popover {...editor.popover} className="offset-editor" label="输入延后时间">
           <OffsetEditor value={requested} onDone={editor.close} />
         </Popover>
       </div>
@@ -184,11 +184,11 @@ export function AutoAlign(): React.ReactNode {
           {AUTO_ALIGN_TESTING && <span className="align-beta" aria-hidden="true">测试中</span>}
         </button>
       )}
-      <button type="button" className="align-more" onClick={menu.toggle} aria-label="对齐选项" aria-expanded={menu.open}
+      <button type="button" className="align-more" {...menu.trigger} aria-label="对齐选项"
         data-attention={!autoSync.authorized && settings.autoSyncEnabled ? 'true' : undefined}>
         <Icon name="chevron" />
       </button>
-      <Popover open={menu.open} onClose={menu.close} className="align-menu" label="对齐选项">
+      <Popover {...menu.popover} className="align-menu" label="对齐选项">
         {AUTO_ALIGN_TESTING && (
           <p className="align-testing"><span className="tag">测试中</span>
             自动对齐还没在足够多的真实比赛上验证。对不上时用「回退画面」「快进画面」微调，或点中间的秒数直接输入。</p>

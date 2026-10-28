@@ -243,13 +243,13 @@ export function CaptureControls({ source }: {
         aria-label="截图" title="截取当前画面">
         <Icon name="camera" />
       </button>
-      <button type="button" className={`icon-btn ${live ? 'is-recording' : ''}`.trim()} onClick={menu.toggle}
-        aria-label="GIF 录制" aria-expanded={menu.open} title="GIF 录制">
+      <button type="button" className={`icon-btn ${live ? 'is-recording' : ''}`.trim()} {...menu.trigger}
+        aria-label="GIF 录制" title="GIF 录制">
         <Icon name="record" />
       </button>
-      {live && <button type="button" className="capture-live num" onClick={menu.toggle}>{progress}</button>}
+      {live && <button type="button" className="capture-live num" {...menu.trigger}>{progress}</button>}
       {note && !menu.open && <p className={`capture-note is-${note.tone}`} role="status">{note.text}</p>}
-      <Popover open={menu.open} onClose={menu.close} className="capture-pop" label="GIF 录制">
+      <Popover {...menu.popover} className="capture-pop" label="GIF 录制">
         {live ? (
           <>
             <div className="row-split">

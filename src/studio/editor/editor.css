@@ -112,8 +112,8 @@
 }
 
 .studio .editor-menu {
-  top: calc(100% + 8px);
-  right: 0;
+  margin: 8px 0;
+  position-area: bottom span-left;
   gap: 0;
   padding: 6px;
 }

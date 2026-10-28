@@ -18,10 +18,10 @@ export function LibraryMenu({ presets, drafts, onLoadPreset, onLoadDraft, onDele
   const menu = usePopover()
   return (
     <div className="more">
-      <button type="button" className="btn-quiet" onClick={menu.toggle} aria-expanded={menu.open}>
+      <button type="button" className="btn-quiet" {...menu.trigger}>
         打开<Icon name="chevron" />
       </button>
-      <Popover open={menu.open} onClose={menu.close} className="editor-menu library-menu" label="打开">
+      <Popover {...menu.popover} className="editor-menu library-menu" label="打开">
         <p className="menu-heading">本机预设</p>
         {presets.length === 0 ? <p className="menu-meta menu-empty">暂无已发布的预设</p> : presets.map((preset) => (
           <button type="button" key={preset.id} className="menu-item library-item"
@@ -57,7 +57,7 @@ export function FileMenu({ onNew, onImport, onExport }: {
   const input = useRef<HTMLInputElement | null>(null)
   return (
     <div className="more">
-      <button type="button" className="icon-btn" onClick={menu.toggle} aria-label="更多" aria-expanded={menu.open}>
+      <button type="button" className="icon-btn" {...menu.trigger} aria-label="更多">
         <Icon name="more" />
       </button>
       {/* Outside the popover so the picker survives the menu closing behind it. */}
@@ -67,7 +67,7 @@ export function FileMenu({ onNew, onImport, onExport }: {
           if (file) void onImport(file)
           event.target.value = ''
         }} />
-      <Popover open={menu.open} onClose={menu.close} className="editor-menu file-menu" label="更多">
+      <Popover {...menu.popover} className="editor-menu file-menu" label="更多">
         <button type="button" className="menu-item" onClick={() => { menu.close(); onNew() }}>新建空白样式</button>
         <button type="button" className="menu-item" onClick={() => { menu.close(); input.current?.click() }}>导入 JSON</button>
         <button type="button" className="menu-item" onClick={() => { menu.close(); onExport() }}>导出 JSON</button>

@@ -315,9 +315,7 @@ test.describe('片源画质和摄像头入口', () => {
     if (!dock || !at) throw new Error('清晰度按钮应位于底栏右侧')
     expect(at.x).toBeGreaterThan(dock.x)
     const panel = page.getByRole('dialog', { name: '解说清晰度', exact: true })
-    // usePopover ignores a reopen within 120 ms of closing, as the helpers' triggers allow for.
     const open = async (): Promise<void> => {
-      await page.waitForTimeout(150)
       await revealOverlay(page)
       await button.click()
       await expect(panel).toBeVisible()

@@ -168,10 +168,9 @@ describe('editor saved and published state', () => {
   })
 })
 
-/** The menu ignores a reopen right after it closed, so retry until it is open. */
+/** Open the 打开 menu; its panel stays in the document closed, so check the trigger. */
 async function openPreset(): Promise<void> {
-  await waitFor(() => {
-    if (!screen.queryByRole('dialog', { name: '打开' })) fireEvent.click(screen.getByRole('button', { name: '打开' }))
-    expect(screen.getByRole('dialog', { name: '打开' })).toBeInTheDocument()
-  })
+  const trigger = screen.getByRole('button', { name: '打开' })
+  if (trigger.getAttribute('aria-expanded') !== 'true') fireEvent.click(trigger)
+  await waitFor(() => expect(screen.getByRole('dialog', { name: '打开' })).toHaveAttribute('data-open', 'true'))
 }

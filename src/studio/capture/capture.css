@@ -53,8 +53,7 @@
 }
 
 .studio .capture-pop {
-  right: 0;
-  bottom: calc(100% + 10px);
+  margin: 10px 0;
   width: 260px;
 }
 

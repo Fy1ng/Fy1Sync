@@ -24,11 +24,11 @@ export function CameraButton({ camera, onFrame, upscale }: { camera: CameraContr
   }
   return (
     <div className="camera-control">
-      <button type="button" className={`icon-btn ${config.enabled ? 'is-on' : ''}`.trim()} onClick={menu.toggle}
-        aria-label="主播摄像头" aria-expanded={menu.open} title="主播摄像头">
+      <button type="button" className={`icon-btn ${config.enabled ? 'is-on' : ''}`.trim()} {...menu.trigger}
+        aria-label="主播摄像头" title="主播摄像头">
         <Icon name="user" />
       </button>
-      <Popover open={menu.open} onClose={menu.close} className="camera-menu" label="主播摄像头">
+      <Popover {...menu.popover} className="camera-menu" label="主播摄像头">
         <button type="button" className="menu-item" onClick={() => { menu.close(); camera.setEnabled(!config.enabled) }}>
           {config.enabled ? '隐藏摄像头小窗' : '显示摄像头小窗'}
         </button>

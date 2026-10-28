@@ -41,8 +41,8 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   const composer = useComposer()
   const { roomName } = useSourceLoader()
   const rate = useDanmakuRate(readOnly ? null : danmaku.room)
-  // One menu for the whole list, placed beside the row it was opened from.
-  const [rowMenu, setRowMenu] = useState<{ message: DanmakuMessage; top: number } | null>(null)
+  // One menu for the whole list, anchored to the button it was opened from.
+  const [rowMenu, setRowMenu] = useState<{ message: DanmakuMessage; anchor: HTMLElement } | null>(null)
   const [rowNote, setRowNote] = useState<string | null>(null)
   const box = useRef<HTMLTextAreaElement | null>(null)
   const subscribe = useCallback((listener: () => void) => session.subscribeChat(listener), [session])
@@ -99,11 +99,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   }, [composer.focusRequest])
 
   const rows = virtualizer.getVirtualItems()
-  const scrollTop = virtualizer.scrollOffset ?? 0
   const composing = useRef(false)
-  // Keep the menu in the feed's available half, including when its content grows.
-  const menuAbove = rowMenu !== null && rowMenu.top > viewport / 2
-  const menuEdge = rowMenu ? Math.max(8, Math.min(viewport - 8, rowMenu.top - (menuAbove ? ROW : 0))) : 8
 
   return (
     <aside className="drawer" aria-label="弹幕">
@@ -161,7 +157,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
                         aria-label={`+1：${message.text}`} title={composer.repeatProblem(message.text) ?? '发送相同内容'}
                         onClick={() => void composer.repeat(message.text)}>+1</button>}
                       <button type="button" className="msg-more" aria-label={`更多操作：${message.text}`} title="更多操作"
-                        onClick={() => { setRowNote(null); setRowMenu({ message, top: row.end - scrollTop }) }}>
+                        onClick={(event) => { setRowNote(null); setRowMenu({ message, anchor: event.currentTarget }) }}>
                         <Icon name="more" />
                       </button>
                     </span>
@@ -172,13 +168,10 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
           )}
         </div>
         {rowMenu && (
-          <div className={`row-menu-anchor ${menuAbove ? 'is-above' : ''}`.trim()}
-            style={{ top: menuAbove ? 8 : menuEdge, bottom: menuAbove ? Math.max(8, viewport - menuEdge) : 8 }}>
-            <Popover open onClose={() => setRowMenu(null)} className="row-menu" label={`弹幕操作：${rowMenu.message.text}`}>
-              <RowActions message={rowMenu.message} note={rowNote} setNote={setRowNote} close={() => setRowMenu(null)}
-                onReply={() => { composer.reply(rowMenu.message.user); setRowMenu(null) }} />
-            </Popover>
-          </div>
+          <Popover key={rowMenu.message.id} open anchor={rowMenu.anchor} onClose={() => setRowMenu(null)} className="row-menu" label={`弹幕操作：${rowMenu.message.text}`}>
+            <RowActions message={rowMenu.message} note={rowNote} setNote={setRowNote} close={() => setRowMenu(null)}
+              onReply={() => { composer.reply(rowMenu.message.user); setRowMenu(null) }} />
+          </Popover>
         )}
         {unread > 0 && (
           <button type="button" className="drawer-jump" onClick={() => {

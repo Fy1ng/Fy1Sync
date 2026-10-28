@@ -24,7 +24,7 @@ import { DanmakuPanel } from './DanmakuPanel'
 import { DanmakuStage } from './DanmakuStage'
 import { usePlaybackHeartbeat } from './insights/RoomInsights'
 import { Intake } from './Intake'
-import { Icon } from './kit'
+import { Icon, popoverTrigger } from './kit'
 import { PipButton } from './PipButton'
 import type { RecordsTab } from './records/DanmakuRecords'
 import { ScheduleSheet } from './schedule/ScheduleSheet'
@@ -32,7 +32,7 @@ import { prefetchSchedule } from './schedule/store'
 import { SettingsSheet, type SettingsSection, type SettingsTarget } from './SettingsSheet'
 import { SourceChip } from './SourceChip'
 import { SourceLoaderProvider, ROLE_LABEL, useSourceLoader } from './sources'
-import { ExtraStreams } from './streams/ExtraStreams'
+import { ADD_STREAM_POPOVER, ExtraStreams } from './streams/ExtraStreams'
 import { AutoAlign, CountdownPrompt, startAutoAlign, SyncCapsule, useNudge } from './sync'
 import { useComposer } from './composer'
 import { Toasts } from './Toasts'
@@ -211,8 +211,9 @@ function StudioView(): React.ReactNode {
                   onShowPreview={previewHidden && role === otherRole && snapshot.media[role].status !== 'empty'
                     ? () => setPreviewHidden(false) : null} />
               ))}
-              <button type="button" className="icon-btn glass small" onClick={() => setAddingStream((open) => !open)}
-                aria-label="同屏观看其他直播间" title="同屏观看其他直播间" aria-expanded={addingStream}>
+              <button type="button" className="icon-btn glass small"
+                {...popoverTrigger(ADD_STREAM_POPOVER, addingStream, () => setAddingStream((open) => !open))}
+                aria-label="同屏观看其他直播间" title="同屏观看其他直播间">
                 <Icon name="plus" />
               </button>
             </div>

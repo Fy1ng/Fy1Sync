@@ -15,7 +15,6 @@ async function frameCamera(page: Page): Promise<void> {
 
 async function selectTier(page: Page, label: string): Promise<void> {
   await revealOverlay(page)
-  await page.waitForTimeout(150)
   const trigger = page.locator('.dock').getByRole('button', { name: '主播摄像头', exact: true })
   await trigger.focus()
   await trigger.press('Enter')

@@ -103,8 +103,6 @@ test('系统画中画由真实点击打开并可关闭', async ({ page }) => {
   await expect.poll(() => page.evaluate(() => (document.pictureInPictureElement as HTMLVideoElement | null)?.dataset.role)).toBe('official')
   await expect(page.locator('.pip-control > button')).toHaveClass(/is-on/)
   await expect(menu).toBeHidden()
-  // Popover triggers intentionally ignore clicks within 120 ms of dismissal.
-  await page.waitForTimeout(150)
   const reopened = await openPipMenu(page)
   await reopened.getByRole('button', { name: /^关闭系统画中画/ }).click()
   await expect.poll(() => page.evaluate(() => document.pictureInPictureElement === null)).toBe(true)

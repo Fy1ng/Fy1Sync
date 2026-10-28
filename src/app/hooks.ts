@@ -210,40 +210,6 @@ export function useDockFold(row: React.RefObject<HTMLElement | null>, gap = 16):
   return fold
 }
 
-/** Close a popover on outside click or Escape. */
-export function useDismiss(open: boolean, onClose: () => void): React.RefObject<HTMLDivElement | null> {
-  const ref = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const onPointerDown = (event: PointerEvent): void => {
-      const node = ref.current
-      if (!node || !(event.target instanceof Node) || node.contains(event.target)) return
-      // The trigger that opened this panel toggles it closed on its own click. Closing here
-      // as well would race that toggle: a press held longer than the guard below reopened it.
-      const trigger = event.target instanceof Element ? event.target.closest('[aria-expanded="true"]') : null
-      if (trigger && !trigger.closest('.pop')) return
-      onClose()
-    }
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.stopPropagation()
-        onClose()
-      }
-    }
-    // Capture phase, so a click on a button that also opens a popover does not close it
-    // and reopen it in the same gesture.
-    document.addEventListener('pointerdown', onPointerDown, true)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown, true)
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [open, onClose])
-
-  return ref
-}
-
 /** Element-level fullscreen with the state the browser actually reports. */
 export function useFullscreen(target: React.RefObject<HTMLElement | null>): {
   active: boolean
