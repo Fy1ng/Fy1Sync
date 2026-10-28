@@ -4,7 +4,7 @@ import { mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 const root = new URL('../', import.meta.url)
-const noExternal = ['parse5', 'entities', 'undici']
+const noExternal = ['parse5', 'entities', 'undici', 'ipaddr.js']
 
 /** A physical, self-contained Node preload, also used inside WebSocket workers. */
 export async function buildNetworkRuntime(write = true, outDir = 'dist/electron') {

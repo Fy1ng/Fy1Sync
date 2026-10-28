@@ -14,7 +14,7 @@ beforeAll(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), 'stream-syncer-network-runtime-'))
   runtimePath = path.join(directory, 'network-runtime.cjs')
   await build({
-    configFile: false, logLevel: 'silent', ssr: { noExternal: ['undici'] },
+    configFile: false, logLevel: 'silent', ssr: { noExternal: ['undici', 'ipaddr.js'] },
     build: {
       ssr: path.resolve('electron/networkRuntime.ts'), target: 'node24', outDir: directory,
       emptyOutDir: false, minify: false,

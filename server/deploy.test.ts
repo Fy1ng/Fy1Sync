@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 for (const entry of ['electron/main.ts', 'electron/preload.ts', 'electron/networkRuntime.ts']) {
   describe(entry + ' bundle', () => {
     it('bundles with only Electron and Node builtins external', async () => {
-      const result = await build({ configFile: false, logLevel: 'silent', ssr: { noExternal: ['parse5', 'entities', 'undici'] }, build: { ssr: fileURLToPath(new URL('../' + entry, import.meta.url)), target: 'node24', write: false, minify: false, rollupOptions: { external: ['electron', /^node:/], output: { format: 'cjs', codeSplitting: false } } } })
+      const result = await build({ configFile: false, logLevel: 'silent', ssr: { noExternal: ['parse5', 'entities', 'undici', 'ipaddr.js'] }, build: { ssr: fileURLToPath(new URL('../' + entry, import.meta.url)), target: 'node24', write: false, minify: false, rollupOptions: { external: ['electron', /^node:/], output: { format: 'cjs', codeSplitting: false } } } })
       const results = Array.isArray(result) ? result : [result]
       for (const output of results) {
         if (!('output' in output)) throw new Error('Expected bundle output')
