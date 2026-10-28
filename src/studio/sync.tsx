@@ -144,6 +144,12 @@ function OffsetEditor({ value, onDone }: { value: number; onDone: () => void }):
   )
 }
 
+/**
+ * Real-recording acceptance has not yet passed 0.35 s on two different events, so the first
+ * release labels automatic alignment as testing and points at the manual controls.
+ */
+const AUTO_ALIGN_TESTING = true
+
 export function AutoAlign(): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
@@ -166,6 +172,7 @@ export function AutoAlign(): React.ReactNode {
         <button type="button" className="align-main" disabled={busy || !bothReady} onClick={() => void session.syncNow()}
           title={bothReady ? '识别两路画面中的比赛倒计时并自动对齐（A）' : '两路均载入后才能对齐'}>
           自动对齐
+          {AUTO_ALIGN_TESTING && <span className="align-beta" aria-hidden="true">测试中</span>}
         </button>
       )}
       <button type="button" className="align-more" onClick={menu.toggle} aria-label="对齐选项" aria-expanded={menu.open}
@@ -173,6 +180,10 @@ export function AutoAlign(): React.ReactNode {
         <Icon name="chevron" />
       </button>
       <Popover open={menu.open} onClose={menu.close} className="align-menu" label="对齐选项">
+        {AUTO_ALIGN_TESTING && (
+          <p className="align-testing"><span className="tag">测试中</span>
+            自动对齐还没在足够多的真实比赛上验证。对不上时用「回退画面」「快进画面」微调，或点中间的秒数直接输入。</p>
+        )}
         <Switch label="比赛中保持对齐" detail={autoSync.nextRunInSeconds !== null ? `${Math.max(0, Math.round(autoSync.nextRunInSeconds))} 秒后再次对齐` : undefined}
           checked={settings.autoSyncEnabled} onChange={(checked) => session.setAutoSyncEnabled(checked)} />
         {settings.autoSyncEnabled && (

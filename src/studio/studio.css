@@ -3191,3 +3191,24 @@ body,
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
 }
+
+/* 测试中 note at the top of the alignment menu. */
+.studio .align-testing {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ash);
+}
+
+.studio .align-testing .tag {
+  margin-right: 6px;
+}
+
+.studio .align-beta {
+  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  color: var(--ash);
+  border: 1px solid currentColor;
+  border-radius: 3px;
+}
