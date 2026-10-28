@@ -33,7 +33,7 @@ import { SettingsSheet, type SettingsSection, type SettingsTarget } from './Sett
 import { SourceChip } from './SourceChip'
 import { SourceLoaderProvider, ROLE_LABEL, useSourceLoader } from './sources'
 import { ExtraStreams } from './streams/ExtraStreams'
-import { AutoAlign, CountdownPrompt, SyncCapsule, useNudge } from './sync'
+import { AutoAlign, CountdownPrompt, startAutoAlign, SyncCapsule, useNudge } from './sync'
 import { useComposer } from './composer'
 import { Toasts } from './Toasts'
 import { QualityMenu } from './QualityMenu'
@@ -152,7 +152,7 @@ function StudioView(): React.ReactNode {
         // , and . sit under < and >: picture back, picture forward, like the two buttons.
         case 'Comma': event.preventDefault(); nudge('late', step); break
         case 'Period': event.preventDefault(); nudge('early', step); break
-        case 'KeyA': void session.syncNow(); break
+        case 'KeyA': startAutoAlign(session); break
         case 'KeyD': session.updateDanmakuSettings({ enabled: !session.settings.danmaku.enabled }); break
         case 'KeyC': setChat(!session.settings.sidebarVisible); break
         case 'KeyF': fullscreen.toggle(); break
