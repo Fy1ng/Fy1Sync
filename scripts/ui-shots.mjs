@@ -207,7 +207,14 @@ async function captureViewport(viewport) {
     })
     const loaded = await step(page, prefix + '-04-loaded', async () => {
       const dialog = await intake(page)
-      await dialog.getByRole('button', { name: '载入测试片源', exact: true }).click()
+      // Paste both fixture paths, as a viewer would paste two links.
+      for (const path of ['/test-sources/official.mp4', '/test-sources/commentary.mp4']) {
+        const field = dialog.getByRole('textbox', { name: '直播间链接' })
+        await field.fill(path)
+        await field.press('Enter')
+        const place = dialog.getByRole('group', { name: '选择添加位置' })
+        if (await place.isVisible().catch(() => false)) await place.getByRole('button', { name: path.includes('official') ? '画面' : '解说', exact: true }).click()
+      }
       await dialog.waitFor({ state: 'hidden', timeout: 30_000 })
       await page.waitForFunction(() => Array.from(document.querySelectorAll('video.media-element'))
         .filter(video => video.readyState >= 2 && Number.isFinite(video.duration) && !video.paused).length === 2)

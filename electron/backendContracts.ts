@@ -37,7 +37,7 @@ export interface BackendMethods {
   getDouyuActivityOptions: { args: undefined; result: ActivityPreferences }
   setDouyuActivityOptions: { args: ActivityPreferences; result: ActivityPreferences }
   previewDouyuRenewalEqual: { args: { accountId: string; rooms: string[] }; result: DouyuRenewalPlan }
-  getDouyuInventory: { args: { accountId: string; room?: string }; result: DouyuInventorySnapshot }
+  getDouyuInventory: { args: { accountId: string; room?: string; refresh?: boolean }; result: DouyuInventorySnapshot }
   getDouyuGiftCatalog: { args: { room: string }; result: DouyuGiftCatalog }
   previewDouyuInventoryGift: { args: { accountId: string; input: DouyuInventoryGiftInput }; result: DouyuGiftPlan }
   previewDouyuPurchaseGift: { args: { accountId: string; input: DouyuPurchaseGiftInput }; result: DouyuGiftPlan }

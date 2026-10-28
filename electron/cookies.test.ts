@@ -17,7 +17,9 @@ const cookie = (overrides: Partial<BrowserCookie> = {}): BrowserCookie => ({
 const store = () => new CookieStore(root, { permissions, now: () => now })
 
 beforeEach(() => {
-  root = fs.mkdtempSync(path.join(process.cwd(), '.cookie-tests-'))
+  const runtime = path.join(process.cwd(), '.runtime-cache')
+  fs.mkdirSync(runtime, { recursive: true })
+  root = fs.mkdtempSync(path.join(runtime, 'cookie-tests-'))
   permissions = { protect: vi.fn(), verify: vi.fn() }
 })
 afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); vi.restoreAllMocks() })
@@ -200,6 +202,34 @@ describe('private cookie storage', () => {
     await expect(manager.status()).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
   })
 
+  it('invalidates the file and its directory before and after cookie writes and before logout', () => {
+    const invalidate = vi.fn()
+    permissions.invalidate = invalidate
+    const manager = store()
+    manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_auth' })])
+    const file = path.join(root, 'cookies', 'douyu.txt')
+    const directory = path.join(root, 'cookies')
+    expect(invalidate.mock.calls).toEqual([[file], [directory], [file], [directory]])
+    invalidate.mockClear()
+    manager.logout('douyu')
+    expect(invalidate.mock.calls).toEqual([[file], [directory]])
+  })
+
+  it('rejects a regular cookie file replaced while the permission check is pending', async () => {
+    const manager = store()
+    manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_auth', value: 'old' })])
+    let release!: () => void
+    permissions.verifyManyAsync = async () => new Promise(resolve => { release = resolve })
+    const pending = manager.cookieHeader('douyu')
+    const rejected = expect(pending).rejects.toThrow('账号数据读写失败')
+    const file = path.join(root, 'cookies', 'douyu.txt')
+    const replacement = path.join(root, 'cookies', 'replacement.txt')
+    fs.writeFileSync(replacement, fs.readFileSync(file, 'utf8').replace('old', 'new'))
+    fs.renameSync(replacement, file)
+    release()
+    await rejected
+  })
+
   it.each(['write', 'logout'] as const)('invalidates a read waiting for permissions when %s changes credentials', async action => {
     const manager = store()
     manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_auth', value: 'old' })])
@@ -234,7 +264,7 @@ describe('cookie path and permission boundary', () => {
     expect(() => containedPath(root, path.resolve(root, suffix))).toThrow()
   })
   it('rejects a junction/symlink before a cookie directory can escape the root', () => {
-    const outside = fs.mkdtempSync(path.join(process.cwd(), '.cookie-tests-outside-'))
+    const outside = fs.mkdtempSync(path.join(process.cwd(), '.runtime-cache', 'cookie-tests-outside-'))
     try {
       fs.symlinkSync(outside, path.join(root, 'cookies'), process.platform === 'win32' ? 'junction' : 'dir')
       expect(() => store().write('youtube', [cookie()])).toThrow('账号数据读写失败, 未返回任何 cookie 数据.')

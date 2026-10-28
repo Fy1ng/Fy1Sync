@@ -38,7 +38,16 @@ test('赛程页按赛事列出对阵, 点击直播流载入为画面, 失败时�
   await page.goto('app://app/')
   const intake = page.getByRole('dialog', { name: '添加直播间' })
   await expect(intake).toBeVisible()
-  await intake.getByRole('button', { name: /^CS2 赛程/ }).click()
+  // The studio read the schedule at start-up, so the sheet's first frame already lists events.
+  await page.waitForTimeout(500)
+  const firstFrame = await page.evaluate(async () => {
+    const open = [...document.querySelectorAll('button')].find((button) => button.textContent?.startsWith('CS2 赛程'))
+    open!.click()
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    return document.querySelector('[role="dialog"][aria-label="赛程"]')?.textContent ?? ''
+  })
+  expect(firstFrame).toContain('PGL Masters Bucharest 2026')
+  expect(firstFrame).not.toContain('正在读取赛程')
   await expect(intake).toBeHidden()
 
   const sheet = page.getByRole('dialog', { name: '赛程', exact: true })

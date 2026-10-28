@@ -220,14 +220,3 @@ export function useSourceLoader(): Loader {
   return loader
 }
 
-/** The fixtures from `npm run fixtures`; offered only when they exist on this machine. */
-export const FIXTURES: Record<SourceRole, MediaDescriptor> = {
-  official: {
-    kind: 'test', url: '/test-sources/official.mp4', input: '/test-sources/official.mp4',
-    label: '测试画面', loop: true, viaProxy: false, platform: 'test',
-  },
-  commentary: {
-    kind: 'test', url: '/test-sources/commentary.mp4', input: '/test-sources/commentary.mp4',
-    label: '测试解说（延迟 5 秒）', loop: true, viaProxy: false, platform: 'test',
-  },
-}

@@ -20,6 +20,7 @@ import { RoomInsights } from './insights/RoomInsights'
 import { DanmakuRecords, type RecordsTab } from './records/DanmakuRecords'
 import { Icon, Segmented, Sheet, SideTabs, Switch } from './kit'
 import { PipSettings } from './pip/PipSettings'
+import { remember, useRemembered } from '../app/remembered'
 
 export type SettingsSection = 'douyu' | 'records' | 'insights' | 'editor' | 'general'
 
@@ -45,6 +46,7 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
   const [section, setSection] = useState<SettingsSection>(target.section)
   const huya = room?.startsWith('huya:') === true
   useEffect(() => setSection(target.section), [target])
+  useEffect(() => { remember('settings:section', section) }, [section])
   return (
     <Sheet title="设置" onClose={onClose} wide>
       <div className="settings">
@@ -88,7 +90,7 @@ const GENERAL: { id: GeneralPage; label: string }[] = [
 ]
 
 function General(): React.ReactNode {
-  const [page, setPage] = useState<GeneralPage>('youtube')
+  const [page, setPage] = useRemembered<GeneralPage>('settings:general', 'youtube')
   return (
     <SideTabs label="通用" value={page} onChange={setPage} tabs={GENERAL}>
       <div className="settings-page">
@@ -132,7 +134,8 @@ function YouTubeAccount(): React.ReactNode {
   const session = useSession()
   const { settings } = useSessionSnapshot()
   const mounted = useMounted()
-  const [status, setStatus] = useState<LoginStatus | null>(null)
+  // Shown from the last read at once; the read on open only brings it up to date.
+  const [status, setStatus] = useRemembered<LoginStatus | null>('login-status', null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const refresh = async (): Promise<void> => {
@@ -160,12 +163,12 @@ function YouTubeAccount(): React.ReactNode {
     <Group title="YouTube">
       <div className="row-split">
         <span>
-          {youtube?.loggedIn ? '已登录' : '未登录'}
+          {status === null ? '正在检查登录状态' : youtube?.loggedIn ? '已登录' : '未登录'}
           {youtube?.expiresAt ? <span className="muted">，{new Date(youtube.expiresAt * 1000).toLocaleDateString('zh-CN')} 到期</span> : null}
         </span>
         <span className="row-end">
           {youtube?.cookieCount ? <button type="button" className="btn-quiet small" disabled={busy} onClick={() => void act(true)}>退出</button> : null}
-          <button type="button" className="btn-solid small" disabled={busy} onClick={() => void act(false)}>{youtube?.loggedIn ? '重新登录' : '登录'}</button>
+          <button type="button" className="btn-solid small" disabled={busy || status === null} onClick={() => void act(false)}>{youtube?.loggedIn ? '重新登录' : '登录'}</button>
         </span>
       </div>
       <p className="muted">出现「请确认你不是机器人」提示或观看会员直播时需要登录。</p>
@@ -211,8 +214,8 @@ const modeName = (mode: DecoderPreferenceState['mode']): string => mode === 'sof
 
 function Decoding(): React.ReactNode {
   const mounted = useMounted()
-  const [state, setState] = useState<DecoderPreferenceState | null>(null)
-  const [pending, setPending] = useState(true)
+  const [state, setState] = useRemembered<DecoderPreferenceState | null>('decoder', null)
+  const [pending, setPending] = useState(() => state === null)
   const [error, setError] = useState('')
   useEffect(() => {
     let live = true
@@ -250,7 +253,7 @@ const SOURCE_NAME = { external: '自定义', managed: '已更新', bundled: '内
 
 function Tools(): React.ReactNode {
   const mounted = useMounted()
-  const [status, setStatus] = useState<ToolsStatus | null>(null)
+  const [status, setStatus] = useRemembered<ToolsStatus | null>('tools-status', null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const running = busy || (!!status && ['checking', 'downloading', 'verifying'].includes(status.update.phase))

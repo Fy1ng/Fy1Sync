@@ -13,6 +13,7 @@ import { MediaRegistry } from '../server/mediaProxy'
 import { serveStatic, missingClientResponse } from '../server/static'
 import { APP_URL, CONTENT_SECURITY_POLICY, allowsAppPermission, isAppDocument, isAppOrigin } from './security'
 import { installIpcHandlers } from './ipc'
+import { getWindowState, subscribeWindowState } from './windowControls'
 import { BufferManager } from './bufferManager'
 import { pullAdaptive, AdaptivePullError } from './adaptivePuller'
 import { ChromeLoginDriver, findSystemChrome, LoginManager } from './login'
@@ -39,6 +40,7 @@ import { isDouyuActivityKind } from '../server/douyu/types'
 import { DanmakuFeatures, type DanmakuFeaturesStorage } from './danmakuFeatures'
 import { ActivityPreferencesStore, type ActivityPreferences } from './activityPreferences'
 import { createBackendRuntime } from './backendRuntime'
+import { teamLogoResponse } from './teamLogoRoute'
 import { parseAppUpdateSource, type AppUpdateSource } from './appUpdateService'
 
 const networkRuntimePath = app.isPackaged
@@ -400,6 +402,7 @@ async function start(): Promise<void> {
       let response: Response | null
       if (url.pathname.startsWith('/media/')) response = await media.handle(request)
       else if (url.pathname.startsWith('/buffer/')) response = await buffer.handle(request)
+      else if (url.pathname.startsWith('/team-logo/')) response = teamLogoResponse(request, userDataDir)
       else if (url.pathname === '/pip' || url.pathname === '/pip/') response = await serveStatic(new Request(APP_URL, { method: request.method }), { root: clientDir })
       else response = await serveStatic(request, { root: clientDir })
       if (!response) response = url.pathname === '/' ? missingClientResponse(clientDir) : new Response(null, { status: 404 })
@@ -412,7 +415,8 @@ async function start(): Promise<void> {
   window = new BrowserWindow({
     width: 1440, height: 900, minWidth: 800, minHeight: 600,
     title: 'Fy1Sync', titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#0d0d0f', symbolColor: '#f3f0ea', height: 32 },
+    // Keep native resizing and snapping while the renderer owns the caption buttons.
+    frame: true, ...(process.platform === 'win32' ? { thickFrame: true } : {}),
     backgroundColor: '#0d0d0f',
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true,
@@ -421,6 +425,7 @@ async function start(): Promise<void> {
   })
   const contents = window.webContents
   const mainWindow = window
+  const releaseWindowState = subscribeWindowState(mainWindow)
   const releasePipPresentation = backend?.pip.subscribe(state => {
     if (!mainWindow.isDestroyed()) {
       contents.setAudioMuted(state.audioOwner === 'pip')
@@ -453,6 +458,7 @@ async function start(): Promise<void> {
   powerMonitor.on('resume', resume)
   refreshRuntime()
   handlers = installIpcHandlers(ipcMain, contents, service, {
+    windowForContents: sender => BrowserWindow.fromWebContents(sender),
     allowMethod: (id, method, args) => backend?.pip.permits(id, method, args) === true,
     allowRoom: (id, room) => backend?.pip.permitsRoom(id, room) === true,
     allowEvent: (id, event) => {
@@ -464,6 +470,7 @@ async function start(): Promise<void> {
     },
   })
   if (e2e) Object.assign(globalThis, { __streamSyncerTest: {
+    getWindowState: () => mainWindow.isDestroyed() ? null : getWindowState(mainWindow),
     ...(!app.isPackaged ? { setDouyuToolsFixture() {
       if (!offlineE2e) throw new Error('Douyu tools fixture is offline-only')
       douyuToolsFixture = true
@@ -543,6 +550,7 @@ async function start(): Promise<void> {
   }
   let cleanup: Promise<void> | undefined
   dispose = () => cleanup ??= (async () => {
+    releaseWindowState()
     mainWindow.removeListener('focus', refreshRuntime)
     mainWindow.removeListener('blur', refreshRuntime)
     mainWindow.removeListener('minimize', refreshRuntime)

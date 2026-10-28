@@ -19,6 +19,7 @@ import {
 } from './followingNotices'
 import type { DouyuData } from './useDouyu'
 import './following.css'
+import { useRemembered } from '../../app/remembered'
 
 const SCOPES: { value: NotifyScope; label: string }[] = [
   { value: 'selected', label: '所选房间' },
@@ -49,7 +50,8 @@ export function Following({ data, onWatch }: {
   const ready = !!account?.login.loggedIn
   const notify = useLiveNotices()
 
-  const [list, setList] = useState<DouyuFollowedRooms | null>(null)
+  // Per account: reopening shows the last list at once and reads it again quietly.
+  const [list, setList] = useRemembered<DouyuFollowedRooms | null>(accountId ? `douyu:following:${accountId}` : null, null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [notes, setNotes] = useState<Record<string, RowNote>>({})
@@ -88,7 +90,6 @@ export function Following({ data, onWatch }: {
   }, [accountId, ready])
 
   useEffect(() => {
-    setList(null)
     setNotes({})
     load()
   }, [load])
@@ -174,7 +175,7 @@ export function Following({ data, onWatch }: {
 
       {!account && <p className="desk-empty">未设置当前账号，无法读取关注列表。</p>}
       {account && !ready && <p className="desk-empty">当前账号未登录，无法读取关注列表。</p>}
-      {loading && <p className="lane" role="status">正在读取关注列表</p>}
+      {loading && <p className="lane" role="status">{list ? '正在更新关注列表' : '正在读取关注列表'}</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
 
       {list && (

@@ -73,6 +73,7 @@ function Probe(): React.ReactNode {
       <span data-testid="blocked">{composer.blockedReason ?? ''}</span>
       <span data-testid="relogin">{composer.needsRelogin ? 'relogin' : ''}</span>
       <span data-testid="delivery">{deliveryText(composer.delivery) ?? ''}</span>
+      <span data-testid="draft">{composer.draft}</span>
       <button type="button" onClick={() => composer.setDraft('你好')}>draft</button>
       <button type="button" onClick={() => void composer.sendDraft()}>send</button>
       <button type="button" onClick={() => void composer.repeat('原文')}>repeat</button>
@@ -121,6 +122,40 @@ describe('the studio send box', () => {
     fireEvent.click(screen.getByText('repeat'))
     await act(async () => { await Promise.resolve() })
     expect(calls.some((call) => call.method === 'sendComposedDouyuMessage')).toBe(false)
+  })
+
+  it('keeps a draft typed while the first account read is still out', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const invoke = vi.mocked(window.streamSyncer!.invoke) as unknown as {
+      getMockImplementation(): (method: string, args: unknown) => Promise<unknown>
+      mockImplementation(next: (method: string, args: unknown) => Promise<unknown>): void
+    }
+    const original = invoke.getMockImplementation()
+    invoke.mockImplementation(async (method: string, args: unknown) => {
+      if (method === 'listDouyuAccounts') await held
+      return original(method, args)
+    })
+    renderProbe(await connectedSession())
+    fireEvent.click(screen.getByText('draft'))
+    expect(screen.getByTestId('draft')).toHaveTextContent('你好')
+    await act(async () => { release(); await held })
+    await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('ready'))
+    expect(screen.getByTestId('draft')).toHaveTextContent('你好')
+    fireEvent.click(screen.getByText('send'))
+    await waitFor(() => expect(calls.find((call) => call.method === 'sendComposedDouyuMessage')?.args).toMatchObject({ text: '你好' }))
+  })
+
+  it('still clears the draft when the active account changes', async () => {
+    let push!: (snapshot: unknown) => void
+    const bridge = window.streamSyncer as unknown as { subscribeDouyuTasks: (listener: (snapshot: unknown) => void) => () => void }
+    bridge.subscribeDouyuTasks = (listener) => { push = listener; return () => {} }
+    renderProbe(await connectedSession())
+    await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('ready'))
+    fireEvent.click(screen.getByText('draft'))
+    handlers.listDouyuAccounts = () => ({ activeAccountId: 'second', accounts: [{ id: 'second', label: '小号', active: true, busy: false, login: { loggedIn: true } }] })
+    await act(async () => { push({ activeAccountId: 'second', tasks: [], retainedRooms: [] }) })
+    await waitFor(() => expect(screen.getByTestId('draft')).toHaveTextContent(''))
   })
 
   it('treats an absent canSend as able to try, for an older main process', async () => {

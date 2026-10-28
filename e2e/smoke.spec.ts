@@ -5,16 +5,34 @@ import type { RecognitionProfile } from '../src/core/profileSchema'
 import { closeSourceDialog, connectDanmaku, failOnPageError, invoke, loadBothFixtures, offsetReadout, openPlayer, openSourceDialog, revealOverlay, sourceDialog } from './helpers'
 
 test.describe('应用外壳', () => {
-  test('Fy1Sync 标题栏覆盖与原生窗口控制可用, 全屏隐藏标题栏', async ({ page, electronApp }, testInfo) => {
+  test('Fy1Sync 自绘标题栏的窗口按钮可用, 悬浮变色, 全屏隐藏标题栏', async ({ page, electronApp }, testInfo) => {
     await openPlayer(page)
     await expect(page.locator('.titlebar-name')).toHaveText('Fy1Sync')
     expect(await page.locator('.titlebar').evaluate(node => getComputedStyle(node).getPropertyValue('-webkit-app-region'))).toBe('drag')
     expect(await electronApp.evaluate(({ app, Menu }) => ({ name: app.getName(), menu: Menu.getApplicationMenu() === null }))).toEqual({ name: 'Fy1Sync', menu: true })
-    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.maximize())
-    await expect.poll(() => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isMaximized())).toBe(true)
-    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.unmaximize())
-    await expect.poll(() => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isMaximized())).toBe(false)
-    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.minimize())
+    const bar = page.locator('.titlebar')
+    const controls = bar.locator('.titlebar-controls')
+    expect(await controls.evaluate(node => getComputedStyle(node).getPropertyValue('-webkit-app-region'))).toBe('no-drag')
+    // The system no longer draws caption buttons over the page.
+    expect(await page.evaluate(() => (navigator as Navigator & { windowControlsOverlay?: { visible: boolean } }).windowControlsOverlay?.visible ?? false)).toBe(false)
+    const isMaximized = () => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isMaximized())
+    const tint = (name: string) => bar.getByRole('button', { name, exact: true }).evaluate(node => getComputedStyle(node).backgroundColor)
+
+    const maximize = bar.getByRole('button', { name: '最大化', exact: true })
+    const idle = await tint('最大化')
+    await maximize.hover()
+    await expect.poll(() => tint('最大化')).not.toBe(idle)
+    await maximize.click()
+    await expect.poll(isMaximized).toBe(true)
+    // The glyph follows the window, reported by main.
+    await bar.getByRole('button', { name: '向下还原', exact: true }).click()
+    await expect.poll(isMaximized).toBe(false)
+    await expect(maximize).toBeVisible()
+
+    await bar.getByRole('button', { name: '关闭', exact: true }).hover()
+    await expect.poll(() => tint('关闭')).toBe('rgb(196, 43, 28)')
+
+    await bar.getByRole('button', { name: '最小化', exact: true }).click()
     await expect.poll(() => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isMinimized())).toBe(true)
     await electronApp.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]!; win.restore(); win.focus() })
     await page.keyboard.press('f')
@@ -26,6 +44,15 @@ test.describe('应用外壳', () => {
     await page.keyboard.press('f')
     await expect.poll(() => page.evaluate(() => document.fullscreenElement === null)).toBe(true)
     await expect(page.locator('.titlebar-name')).toBeVisible()
+  })
+
+  test('自绘标题栏的关闭按钮走正常关闭流程', async ({ page, electronApp }) => {
+    await openPlayer(page)
+    const closed = electronApp.evaluate(({ BrowserWindow }) => new Promise<boolean>((resolve) => {
+      BrowserWindow.getAllWindows()[0]!.once('close', (event) => { event.preventDefault(); resolve(true) })
+    }))
+    await page.locator('.titlebar').getByRole('button', { name: '关闭', exact: true }).click()
+    expect(await closed).toBe(true)
   })
 
   test('冷启动渲染播放页和添加直播间且没有 pageerror', async ({ page }) => {
@@ -54,6 +81,28 @@ test.describe('应用外壳', () => {
     await expect(page.getByRole('button', { name: '添加直播间', exact: true })).toBeVisible()
     expect(pageErrors).toEqual([])
     expect(consoleErrors, `控制台不应有错误：${consoleErrors.join(' | ')}`).toEqual([])
+  })
+
+  test('进入播放器后只有「添加直播间」按钮会回到添加直播间, 空片源打开自己的面板', async ({ page }) => {
+    await openPlayer(page)
+    await revealOverlay(page)
+    const commentary = page.locator('.chip[data-role="commentary"]')
+    await expect(commentary).toHaveAttribute('data-status', 'empty')
+    await page.waitForTimeout(150)
+    await commentary.click()
+    const panel = page.getByRole('dialog', { name: '解说片源', exact: true })
+    await expect(panel).toBeVisible()
+    await expect(panel.getByRole('textbox', { name: '解说链接' })).toBeVisible()
+    await expect(sourceDialog(page)).toBeHidden()
+    await page.keyboard.press('Escape')
+    // Leaving for the editor and coming back is not a fresh start either.
+    await page.evaluate(() => { history.pushState(null, '', '/admin'); dispatchEvent(new PopStateEvent('popstate')) })
+    await page.evaluate(() => { history.pushState(null, '', '/'); dispatchEvent(new PopStateEvent('popstate')) })
+    await expect(page.locator('.studio')).toBeVisible()
+    await page.waitForTimeout(300)
+    await expect(sourceDialog(page)).toBeHidden()
+    await page.getByRole('button', { name: '添加直播间', exact: true }).click()
+    await expect(sourceDialog(page)).toBeVisible()
   })
 
   test('弹幕列表的收起和展开状态在重新加载后保留', async ({ page }) => {

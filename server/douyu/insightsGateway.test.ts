@@ -34,7 +34,7 @@ describe('read-only followed room gateway', () => {
       'https://www.douyu.com/wgapi/livenc/liveweb/follow/list?page=1', 'https://www.douyu.com/wgapi/livenc/liveweb/follow/list?page=2',
     ])
     expect(JSON.stringify(result)).not.toMatch(/never-return|synthetic-account-secret/)
-    expect(f.cookieHeader.mock.calls).toHaveLength(6)
+    expect(f.cookieHeader.mock.calls).toHaveLength(2)
   })
   it('requires explicit empty completeness, not just an empty list', async () => {
     expect((await setup([envelope({ pageCount: 0, total: 0, list: [] })]).gateway.readFollowedRooms('a', idle())).coverage).toBe('all-pages')
@@ -59,8 +59,9 @@ describe('read-only followed room gateway', () => {
   })
   it('refuses a login mismatch and never exposes a partial account snapshot after invalidation', async () => {
     const f = setup([envelope({ pageCount: 1, total: 1, list: [followed('100')] })])
-    f.request.mockImplementationOnce(async () => { f.setCookie('acf_uid=43; acf_auth=other'); return Response.json(envelope({ pageCount: 1, total: 1, list: [followed('100')] })) })
-    await expect(f.gateway.readFollowedRooms('a', idle())).rejects.toMatchObject({ code: 'login-required' })
+    const controller = new AbortController()
+    f.request.mockImplementationOnce(async () => { controller.abort(); return Response.json(envelope({ pageCount: 1, total: 1, list: [followed('100')] })) })
+    await expect(f.gateway.readFollowedRooms('a', controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
     await expect(setup([envelope({ uid: '43', pageCount: 0, total: 0, list: [] })]).gateway.readFollowedRooms('a', idle())).rejects.toMatchObject({ code: 'login-required' })
   })
   it('accepts equal host and domain device cookies for read-only account queries', async () => {
@@ -69,6 +70,16 @@ describe('read-only followed room gateway', () => {
     expect(await f.gateway.readFollowedRooms('a', idle())).toMatchObject({ coverage: 'all-pages', rooms: [] })
     expect(await f.gateway.readWatchTime('a', '100', idle())).toMatchObject({ seconds: 123 })
     expect(f.request).toHaveBeenCalledTimes(2)
+  })
+  it('still checks credential continuity between distinct pagination requests', async () => {
+    const f = setup([envelope({ pageCount: 2, total: 2, list: [followed('100')] })])
+    f.request.mockImplementationOnce(async () => {
+      f.setCookie('acf_uid=43; acf_auth=other')
+      return Response.json(envelope({ pageCount: 2, total: 2, list: [followed('100')] }))
+    })
+    await expect(f.gateway.readFollowedRooms('a', idle())).rejects.toMatchObject({ code: 'login-required' })
+    expect(f.request).toHaveBeenCalledTimes(1)
+    expect(f.cookieHeader).toHaveBeenCalledTimes(2)
   })
   it.each([
     `${COOKIE}; dy_did=synthetic-device-123; dy_did=other-device-456`,

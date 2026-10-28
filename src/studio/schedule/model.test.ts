@@ -7,7 +7,7 @@ const at = Date.parse('2026-10-27T10:00:00Z')
 function match(id: string, over: Partial<Cs2Match> & { event?: string; tier?: Cs2Match['tournament']['tier'] } = {}): Cs2Match {
   const { event = 'PGL/2026/Masters', tier = null, ...rest } = over
   return {
-    id, startsAt: at, state: 'upcoming', teams: [{ name: 'A', short: null }, { name: 'B', short: null }], score: null, bestOf: 3,
+    id, startsAt: at, state: 'upcoming', teams: [{ name: 'A', short: null, logo: null }, { name: 'B', short: null, logo: null }], score: null, bestOf: 3,
     tournament: { name: event.replace(/\//g, ' '), stage: 'Round 3', tier, url: `https://liquipedia.net/counterstrike/${event}#Round_3` },
     streams: [], ...rest,
   }

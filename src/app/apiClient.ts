@@ -1,6 +1,6 @@
 /** Typed renderer seam for the allow-listed Electron preload API. */
 
-import type { DesktopMethods, StreamSyncerBridge } from '../../electron/contracts'
+import type { DesktopMethods, StreamSyncerBridge, WindowState } from '../../electron/contracts'
 import type { ResolveFailure, ResolvedStream } from '../../server/platforms/types'
 import type { ProfileIssue, RecognitionProfile } from '../core/profileSchema'
 import type { SourceRole } from '../core/types'
@@ -137,6 +137,13 @@ export class ApiClient {
   }
   subscribeBuffer(listener: (state: BufferState) => void): () => void {
     try { return this.bridge().subscribeBuffer?.(listener) ?? (() => {}) } catch { return () => {} }
+  }
+
+  // The page-drawn title bar's window controls; each acts on the window that asks.
+  getWindowState() { return this.request('getWindowState', undefined) }
+  windowControl(action: DesktopMethods['windowControl']['args']['action']) { return this.request('windowControl', { action }) }
+  subscribeWindowState(listener: (state: WindowState) => void): () => void {
+    try { return this.bridge().subscribeWindowState?.(listener) ?? (() => {}) } catch { return () => {} }
   }
 
   listPresets(): Promise<ApiResult<{ presets: PresetSummary[] }>> {

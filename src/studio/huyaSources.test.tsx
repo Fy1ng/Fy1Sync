@@ -84,7 +84,7 @@ describe('Huya sources', () => {
     session.connectDanmaku('huya:660000')
     relay?.({ event: 'state', data: { state: 'connected', room: 'huya:660000' } })
     session.flush()
-    mount(session, <SourceChip role="commentary" onEmpty={() => {}} />)
+    mount(session, <SourceChip role="commentary" />)
     fireEvent.click(screen.getByRole('button', { name: /解说.*虎牙 660000/ }))
     expect(screen.getByRole('radio', { name: '虎牙' })).toBeChecked()
     expect(screen.getByText(/虎牙弹幕: 已连接房间/)).toBeInTheDocument()

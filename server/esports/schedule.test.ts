@@ -1,11 +1,13 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fixture from './fixtures/liquipedia-matches.json'
 import { currentMatches, parseSchedule, ScheduleFormatError } from './parser'
-import { EsportsService, PARSE_INTERVAL_MS, SCHEDULE_TTL_MS, TITLE_TTL_MS, TIER_TTL_MS, scheduleArguments, streamTitleArguments, titleStage } from './schedule'
-import { TIER_PAGES } from './tiers'
+import { EsportsService, PARSE_INTERVAL_MS, SCHEDULE_TTL_MS, TITLE_TTL_MS, TIER_TTL_MS, TIER_NULL_TTL_MS, TIER_RETRY_MS, scheduleArguments, streamTitleArguments, titleStage } from './schedule'
+import { normalizeTournamentPath } from './tiers'
+import { LIQUIPEDIA_INTERVAL_MS } from './liquipediaRateLimit'
+import type { TeamLogoCache } from './teamLogos'
 import { DEFAULT_PROXY_HOSTS, hostAllowed, metadataConfig } from '../config'
 import type { StreamTitleInput } from './types'
 
@@ -29,8 +31,8 @@ describe('Liquipedia fixture parsing', () => {
     expect(matches[2]).toMatchObject({ state: 'upcoming', score: null, teams: [{ name: 'FlyQuest' }, { name: 'StaQued', short: null }] })
     expect(matches[4]).toMatchObject({ teams: [{ name: 'TBD', short: null }, { name: 'TBD', short: null }] })
     expect(matches[6]).toMatchObject({ state: 'finished', score: [0, 2] })
-    expect(matches[7]!.teams[0]).toEqual({ name: 'Group B 2nd Place', short: null })
-    expect(matches[8]!.teams[1]).toEqual({ name: 'TBD', short: null })
+    expect(matches[7]!.teams[0]).toEqual({ name: 'Group B 2nd Place', short: null, logo: null })
+    expect(matches[8]!.teams[1]).toEqual({ name: 'TBD', short: null, logo: null })
     expect(parseSchedule(fixture).map(m => m.id)).toEqual(matches.map(m => m.id))
   })
   it('does not invent tiers from page-wide filter buttons, but reads per-match attributes', () => {
@@ -71,7 +73,7 @@ describe('shared schedule service', () => {
   let directory: string, now: number
   const services: EsportsService[] = []
   function create(request = vi.fn<typeof fetch>().mockImplementation(async () => response())) {
-    const service = new EsportsService({ userDataDir: directory, version: '0.1.3', request, now: () => now, resolve: async () => ['93.184.216.34'], log: () => {} })
+    const service = new EsportsService({ userDataDir: directory, version: '0.1.3', logos: null, request, now: () => now, resolve: async () => ['93.184.216.34'], log: () => {} })
     services.push(service); return { service, request }
   }
   beforeEach(async () => { directory = await mkdtemp(join(tmpdir(), 'fy1sync-esports-')); now = NOW })
@@ -214,138 +216,220 @@ describe('shared schedule service', () => {
   })
 })
 
-describe('background tournament tiers', () => {
+describe('background tournament query cache', () => {
   let directory: string
   const services: EsportsService[] = []
-  const tierPayload = (path: string) => ({ parse: { text: { '*': `<div class="tournaments-listing"><table class="table2__table"><tbody><tr class="table2__row--body"><td class="column__tournament"><a href="/counterstrike/${path}">Event</a></td></tr></tbody></table></div>` } } })
-  const paths = ['PGL/2026/Masters', 'Stake_Ranked/Episode_5', 'Tesla_Cup/2026', 'Local_Cup/2026']
-  const calls: Array<{ page: string; at: number }> = []
-  const logs: string[] = []
-  function create(override?: (page: string) => unknown) {
-    const request = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
-      const page = new URL(String(input)).searchParams.get('page')!
-      calls.push({ page, at: Date.now() })
-      expect(init?.headers).toMatchObject({ 'User-Agent': 'Fy1Sync/0.1.3 (local desktop app; sync@fy1ng.cn)' })
-      return response(override?.(page) ?? (page === 'Liquipedia:Matches' ? fixture : tierPayload(paths[TIER_PAGES.indexOf(page as typeof TIER_PAGES[number])]!)))
+  const calls: Array<{ action: string; at: number; titles: string[] }> = []
+  const events: Array<{ topic: string; data: { type: string }; at: number }> = []
+  let resolveTier: (title: string) => number | null
+  let broken: boolean
+  function create(logos: TeamLogoCache | null = null, payload: unknown = fixture) {
+    const request = vi.fn<typeof fetch>().mockImplementation(async input => {
+      const params = new URL(String(input)).searchParams
+      const action = params.get('action')!, titles = params.get('titles')?.split('|') ?? []
+      calls.push({ action, at: Date.now(), titles })
+      if (action === 'parse') return response(payload)
+      if (broken) throw new Error('offline')
+      return response({ query: { pages: titles.map(title => {
+        const tier = resolveTier(title)
+        return { title, ...(tier === null ? {} : { categories: [{ title: `Category:${'SABC'[tier - 1]}-Tier Tournaments` }] }) }
+      }) } })
     })
-    const service = new EsportsService({ userDataDir: directory, version: '0.1.3', request,
-      resolve: async () => ['93.184.216.34'], log: message => logs.push(message) })
+    const service = new EsportsService({ userDataDir: directory, version: '0.1.3', request, logos,
+      resolve: async () => ['93.184.216.34'], log: () => {}, onEvent: event => events.push({ ...event, at: Date.now() }) })
     services.push(service)
-    return service
+    return { service, request }
   }
   const stored = async () => JSON.parse(await readFile(join(directory, 'events', 'tiers.json'), 'utf8'))
+  const tierPaths = () => [...new Set(currentMatches(parseSchedule(fixture), NOW).map(match => normalizeTournamentPath(match.tournament.url)!))]
+  const seed = async (tier: number | null, fetchedAt = Date.now()) => {
+    const { mkdir } = await import('node:fs/promises')
+    await mkdir(join(directory, 'events'), { recursive: true })
+    await writeFile(join(directory, 'events', 'tiers.json'), JSON.stringify({ schema: 2,
+      entries: Object.fromEntries([...new Set(parseSchedule(fixture).map(match => normalizeTournamentPath(match.tournament.url)!))].map(path => [path, { tier, fetchedAt }])) }))
+  }
   beforeEach(async () => {
-    directory = await mkdtemp(join(tmpdir(), 'fy1sync-tiers-'))
+    directory = await mkdtemp(join(tmpdir(), 'fy1sync-tq-'))
     vi.useFakeTimers(); vi.setSystemTime(NOW)
-    calls.length = 0; logs.length = 0
+    calls.length = 0; events.length = 0; broken = false; resolveTier = () => 1
   })
   afterEach(async () => {
     await Promise.all(services.splice(0).map(service => service.dispose()))
     vi.useRealTimers()
     await rm(directory, { recursive: true, force: true })
   })
-  it('returns a cold schedule immediately, then enriches the cached schedule without refetching it', async () => {
-    const service = create()
+  it('returns before enrichment, queries at two seconds and emits the changed schedule event', async () => {
+    const { service } = create()
     const first = await service.getCs2Schedule()
     expect(first.matches.every(match => match.tournament.tier === null)).toBe(true)
-    expect(calls.map(call => call.page)).toEqual(['Liquipedia:Matches'])
-    await vi.advanceTimersByTimeAsync(PARSE_INTERVAL_MS - 1)
+    expect(calls.map(call => call.action)).toEqual(['parse'])
+    await vi.advanceTimersByTimeAsync(LIQUIPEDIA_INTERVAL_MS - 1)
     expect(calls).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(1)
-    expect(calls.map(call => call.page)).toEqual(['Liquipedia:Matches', TIER_PAGES[0]])
+    expect(calls.map(call => call.action)).toEqual(['parse', 'query'])
+    expect(calls[1]!.titles.sort()).toEqual(tierPaths().sort())
     const enriched = await service.getCs2Schedule()
-    expect(enriched.matches[0]!.tournament.tier).toBe(1)
+    expect(enriched.matches.every(match => match.tournament.tier === 1)).toBe(true)
     expect(enriched.fetchedAt).toBe(first.fetchedAt)
     expect(first.matches[0]!.tournament.tier).toBeNull()
-    expect(calls).toHaveLength(2)
+    expect(events).toEqual([{ topic: 'cs2-schedule', data: { type: 'tiers-updated' }, at: NOW + 2_000 }])
+    expect((await stored()).schema).toBe(2)
   })
-  it('refreshes one page per turn in S/A/B/C order with a shared 30-second schedule budget', async () => {
-    const service = create()
+  it.each([[1, TIER_TTL_MS], [null, TIER_NULL_TTL_MS]] as const)('expires %s results at their exact TTL and keeps fresh entries across restarts', async (tier, ttl) => {
+    await seed(tier)
+    resolveTier = () => tier
+    const { service } = create()
     await service.getCs2Schedule()
-    await vi.advanceTimersByTimeAsync(45_000)
-    await service.getCs2Schedule({ refresh: true })
-    expect(calls).toHaveLength(2)
-    await vi.advanceTimersByTimeAsync(75_000)
-    expect(calls.map(call => call.page)).toEqual(['Liquipedia:Matches', ...TIER_PAGES])
-    expect(calls.slice(1).map((call, index) => call.at - calls[index]!.at)).toEqual([30_000, 30_000, 30_000, 30_000])
-    await service.getCs2Schedule({ refresh: true })
-    expect(calls).toHaveLength(5)
-    await vi.advanceTimersByTimeAsync(30_000)
-    await service.getCs2Schedule({ refresh: true })
-    expect(calls.at(-1)).toEqual({ page: 'Liquipedia:Matches', at: NOW + 150_000 })
-    expect((await stored()).nextPage).toBe(0)
+    await vi.advanceTimersByTimeAsync(ttl - 1)
+    expect(calls.map(call => call.action)).toEqual(['parse'])
+    await service.dispose()
+    const next = create()
+    await next.service.getCs2Schedule()
+    // A stale schedule may refresh independently; no tier query until its own TTL.
+    expect(calls.filter(call => call.action === 'query')).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(2_001)
+    expect(calls.filter(call => call.action === 'query')).toHaveLength(1)
+    expect(events).toHaveLength(0)
   })
-  it('round-trips decoded Unicode and spaces in tournament path keys through the disk cache', async () => {
-    const url = '/counterstrike/Regional_Cup/2026/Krak%C3%B3w%20Final'
-    const service = create(page => page === TIER_PAGES[0] ? tierPayload(url.slice('/counterstrike/'.length))
-      : page === 'Liquipedia:Matches' ? { parse: { text: { '*': fixture.parse.text['*'].replaceAll('/counterstrike/PGL/2026/Masters#Round_3', `${url}#Round_3`) } } } : undefined)
-    await service.getCs2Schedule()
-    await vi.advanceTimersByTimeAsync(PARSE_INTERVAL_MS)
-    expect((await stored()).pages[TIER_PAGES[0]].paths).toEqual(['Regional_Cup/2026/Kraków Final'])
-    expect((await service.getCs2Schedule()).matches[0]!.tournament.tier).toBe(1)
-  })
-  it('persists each page for 24 hours across restart and refreshes only the expired page', async () => {
+  it('makes no tier request when all current paths are fresh and replaces schema 1', async () => {
+    await seed(3)
     const first = create()
-    await first.getCs2Schedule()
-    await vi.advanceTimersByTimeAsync(120_000)
-    await first.dispose()
-    const second = create()
-    expect((await second.getCs2Schedule()).matches[0]!.tournament.tier).toBe(1)
-    expect(calls).toHaveLength(5)
-    await vi.advanceTimersByTimeAsync(TIER_TTL_MS - 90_000 - 1)
-    expect(calls).toHaveLength(5)
-    await vi.advanceTimersByTimeAsync(1)
-    expect(calls.at(-1)).toEqual({ page: TIER_PAGES[0], at: NOW + 30_000 + TIER_TTL_MS })
-    const cache = await stored()
-    expect(cache.pages[TIER_PAGES[0]].fetchedAt).toBe(Date.now())
-    expect(cache.pages[TIER_PAGES[1]].fetchedAt).toBe(NOW + 60_000)
+    expect((await first.service.getCs2Schedule()).matches.every(match => match.tournament.tier === 3)).toBe(true)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(calls).toHaveLength(1)
+    await first.service.dispose()
+    await writeFile(join(directory, 'events', 'tiers.json'), JSON.stringify({ schema: 1, nextPage: 0, pages: {} }))
+    const next = create()
+    expect((await next.service.getCs2Schedule()).matches.every(match => match.tournament.tier === null)).toBe(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect((await stored()).schema).toBe(2)
+    expect(calls.filter(call => call.action === 'query')).toHaveLength(1)
   })
-  it('isolates a broken page, records its selector and continues loading the other levels', async () => {
-    const service = create(page => page === TIER_PAGES[1] ? { parse: { text: { '*': '<p>Layout changed</p>' } } } : undefined)
-    await service.getCs2Schedule()
-    await vi.advanceTimersByTimeAsync(120_000)
-    expect(calls.map(call => call.page)).toEqual(['Liquipedia:Matches', ...TIER_PAGES])
-    const cache = await stored()
-    expect(cache.pages[TIER_PAGES[0]].paths).toEqual([paths[0]])
-    expect(cache.pages[TIER_PAGES[1]]).toMatchObject({ fetchedAt: null, paths: [], failedSelector: expect.any(String) })
-    expect(cache.pages[TIER_PAGES[2]].paths).toEqual([paths[2]])
-    expect(cache.pages[TIER_PAGES[3]].paths).toEqual([paths[3]])
-    expect(logs).toEqual([expect.stringContaining(`Liquipedia ${TIER_PAGES[1]} selector failed:`)])
-    expect((await service.getCs2Schedule()).matches[0]!.tournament.tier).toBe(1)
-    await vi.advanceTimersByTimeAsync(239_999)
-    expect(calls).toHaveLength(5)
-    await vi.advanceTimersByTimeAsync(1)
-    expect(calls.at(-1)!.page).toBe(TIER_PAGES[1])
-  })
-  it('retains the last successful page on refresh failure and does not clear other levels', async () => {
-    let broken = false
-    const service = create(page => broken && page === TIER_PAGES[0] ? { error: { code: 'failed' } } : undefined)
-    await service.getCs2Schedule()
-    await vi.advanceTimersByTimeAsync(120_000)
+  it('retains old values on failure and retries the same paths only after five minutes', async () => {
+    await seed(2, NOW - TIER_TTL_MS)
     broken = true
-    await vi.advanceTimersByTimeAsync(TIER_TTL_MS - 90_000)
-    const cache = await stored()
-    expect(cache.pages[TIER_PAGES[0]]).toMatchObject({ paths: [paths[0]], fetchedAt: NOW + 30_000, failedSelector: expect.any(String) })
-    expect(cache.pages[TIER_PAGES[2]].paths).toEqual([paths[2]])
-  })
-  it('shares tier reservations across services and cancels pending background work on dispose', async () => {
-    const first = create(), second = create()
-    await Promise.all([first.getCs2Schedule(), second.getCs2Schedule()])
-    await vi.advanceTimersByTimeAsync(120_000)
-    expect(calls.map(call => call.page)).toEqual(['Liquipedia:Matches', ...TIER_PAGES])
-    expect(calls.slice(1).every((call, index) => call.at - calls[index]!.at >= PARSE_INTERVAL_MS)).toBe(true)
-    await Promise.all([first.dispose(), second.dispose()])
-    await vi.advanceTimersByTimeAsync(TIER_TTL_MS * 2)
-    expect(calls).toHaveLength(5)
-  })
-  it('ignores a damaged cached level without losing the other persisted pages', async () => {
-    const service = create()
+    const { service } = create()
     await service.getCs2Schedule()
-    await vi.advanceTimersByTimeAsync(120_000)
-    const cache = await stored()
-    cache.pages[TIER_PAGES[1]].paths = 42
-    await writeFile(join(directory, 'events', 'tiers.json'), JSON.stringify(cache))
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect((await service.getCs2Schedule()).matches.every(match => match.tournament.tier === 2)).toBe(true)
+    const value = await stored()
+    expect(value.entries[tierPaths()[0]!]).toMatchObject({ tier: 2, fetchedAt: NOW - TIER_TTL_MS, retryAt: NOW + 2_000 + TIER_RETRY_MS })
+    await vi.advanceTimersByTimeAsync(TIER_RETRY_MS - 1)
+    expect(calls.filter(call => call.action === 'query')).toHaveLength(1)
+    broken = false; resolveTier = () => 4
+    await vi.advanceTimersByTimeAsync(1)
+    expect(calls.filter(call => call.action === 'query')).toHaveLength(2)
+    expect((await stored()).entries[tierPaths()[0]!]).toMatchObject({ tier: 4, fetchedAt: Date.now() })
+    expect(events).toHaveLength(1)
+  })
+  it('negative-caches a first failure without inventing a successful null lookup', async () => {
+    broken = true
+    const { service } = create()
+    await service.getCs2Schedule()
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect((await stored()).entries[tierPaths()[0]!]).toMatchObject({ tier: null, fetchedAt: null, retryAt: NOW + 2_000 + TIER_RETRY_MS })
+    expect(events).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(TIER_RETRY_MS)
+    expect(calls.filter(call => call.action === 'query')).toHaveLength(2)
+  })
+  it('does not emit unchanged results and does emit a known tier becoming unknown', async () => {
+    await seed(1, NOW - TIER_TTL_MS)
+    const { service } = create()
+    await service.getCs2Schedule()
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(events).toHaveLength(0)
+    await seed(1, Date.now() - TIER_TTL_MS)
+    resolveTier = () => null
+    await service.getCs2Schedule()
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(events.map(event => event.data.type)).toEqual(['tiers-updated'])
+    expect((await service.getCs2Schedule()).matches[0]!.tournament.tier).toBeNull()
+  })
+  it('queries only expired paths and preserves unrelated cached entries', async () => {
+    await seed(4)
+    const value = await stored(), paths = tierPaths()
+    value.entries[paths[0]!].fetchedAt = NOW - TIER_TTL_MS
+    value.entries['Unrelated/2026'] = { tier: 3, fetchedAt: NOW }
+    value.entries[paths[1]!] = { invalid: true }
+    await writeFile(join(directory, 'events', 'tiers.json'), JSON.stringify(value))
+    const { service } = create()
+    await service.getCs2Schedule()
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(calls[1]!.titles.sort()).toEqual(paths.slice(0, 2).sort())
+    expect((await stored()).entries['Unrelated/2026']).toEqual({ tier: 3, fetchedAt: NOW })
+  })
+  it('round-trips decoded Unicode with complete subpage paths', async () => {
+    const path = 'Regional_Cup/2026/Kraków Final'
+    const payload = { parse: { text: { '*': fixture.parse.text['*'].replaceAll('/counterstrike/PGL/2026/Masters#Round_3', '/counterstrike/Regional_Cup/2026/Krak%C3%B3w%20Final#Final') } } }
+    const { service } = create(null, payload)
+    await service.getCs2Schedule()
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect((await stored()).entries[path]).toMatchObject({ tier: 1 })
     expect((await service.getCs2Schedule()).matches[0]!.tournament.tier).toBe(1)
+  })
+  it('enqueues logos after query completion and keeps snapshots nonblocking and read-only', async () => {
+    let complete!: () => void
+    const ready = new Promise<void>(resolve => { complete = resolve })
+    let cached = false
+    const images = { get: vi.fn((_path: string | undefined, download = true) => {
+      if (download) void ready.then(() => { cached = true })
+      return cached ? 'app://app/team-logo/abc' : null
+    }), dispose: vi.fn(async () => {}) } as unknown as TeamLogoCache
+    const { service } = create(images)
+    const first = await service.getCs2Schedule()
+    expect(first.matches[0]!.teams[0]!.logo).toBeNull()
+    expect(vi.mocked(images.get).mock.calls.every(call => call[1] === false)).toBe(true)
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(calls.map(call => call.action)).toEqual(['parse', 'query'])
+    expect(vi.mocked(images.get).mock.calls.some(call => call[1] !== false)).toBe(true)
+    complete(); await ready
+    expect((await service.getCs2Schedule()).matches[0]!.teams[0]!.logo).toContain('app://app/team-logo/')
+    expect(calls).toHaveLength(2)
+  })
+  it('shares parse/query/logo dispatch slots and throttles both event types without losing updates', async () => {
+    const starts: Array<{ action: string; at: number }> = []
+    const request = vi.fn<typeof fetch>(async input => {
+      const url = new URL(String(input)), action = url.searchParams.get('action') ?? 'logo'
+      starts.push({ action, at: Date.now() })
+      if (action === 'logo') return new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0]), { headers: { 'content-type': 'image/png' } })
+      if (action === 'parse') return response(fixture)
+      return response({ query: { pages: url.searchParams.get('titles')!.split('|').map(title => ({ title, categories: [{ title: 'Category:S-Tier Tournaments' }] })) } })
+    })
+    const service = new EsportsService({ userDataDir: directory, version: '0.1.3', request, resolve: async () => ['93.184.216.34'],
+      onEvent: event => events.push({ ...event, at: Date.now() }) })
+    services.push(service)
+    const first = await service.getCs2Schedule()
+    expect(first.matches[0]!.teams[0]!.logo).toBeNull()
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(starts.map(value => value.action)).toEqual(['parse', 'query'])
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(starts.slice(0, 3).map(value => value.action)).toEqual(['parse', 'query', 'logo'])
+    expect(starts.slice(1).every((value, index) => value.at - starts[index]!.at >= 2_000)).toBe(true)
+    expect(events.map(event => event.data.type)).toContain('logos-updated')
+    expect(events.slice(1).every((event, index) => event.at - events[index]!.at >= 2_000)).toBe(true)
+    for (const file of await readdir(join(directory, 'events', 'logos'))) {
+      if (file.endsWith('.png')) await utimes(join(directory, 'events', 'logos', file), Date.now() / 1_000, Date.now() / 1_000)
+    }
+    expect((await service.getCs2Schedule()).matches[0]!.teams[0]!.logo).toContain('app://app/team-logo/')
+    await service.getCs2Schedule({ refresh: true })
+    expect(starts.filter(value => value.action === 'parse')).toHaveLength(1)
+  })
+  it('normalizes parser tier hints including -1 to unknown until the query proves a category', async () => {
+    const payload = { parse: { text: { '*': fixture.parse.text['*'].replaceAll('class="match-info"', 'class="match-info" data-liquipediatier="-1"') } } }
+    const { service } = create(null, payload)
+    expect((await service.getCs2Schedule()).matches.every(match => match.tournament.tier === null)).toBe(true)
+    resolveTier = () => null
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect((await service.getCs2Schedule()).matches.every(match => match.tournament.tier === null)).toBe(true)
+    expect(events).toHaveLength(0)
+  })
+  it('stops pending tier and event timers on disposal', async () => {
+    const { service } = create()
+    await service.getCs2Schedule()
+    await service.dispose()
+    await vi.advanceTimersByTimeAsync(TIER_TTL_MS * 2)
+    expect(calls).toHaveLength(1)
+    expect(events).toHaveLength(0)
   })
 })
 

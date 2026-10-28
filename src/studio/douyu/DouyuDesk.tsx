@@ -4,7 +4,6 @@
  * it is touched mid-match.
  */
 
-import { useState } from 'react'
 import { useSessionSnapshot } from '../../app/SessionContext'
 import { SideTabs } from '../kit'
 import { Accounts } from './Accounts'
@@ -15,6 +14,7 @@ import { Renewal } from './Renewal'
 import { Spending } from './Spending'
 import { Tasks } from './Tasks'
 import { useDouyu, type Lane } from './useDouyu'
+import { useRemembered } from '../../app/remembered'
 
 type Tab = 'accounts' | 'following' | 'tasks' | 'automations' | 'backpack' | 'renewal'
 const TABS: { id: Tab; label: string }[] = [
@@ -30,11 +30,12 @@ const TABS: { id: Tab; label: string }[] = [
 export function DouyuDesk({ onWatch }: { onWatch: (room: string) => void }): React.ReactNode {
   const data = useDouyu()
   const { danmaku } = useSessionSnapshot()
-  const [tab, setTab] = useState<Tab>(data.all.length === 0 ? 'accounts' : 'tasks')
+  // Back on the page last open; a first visit starts on 账号, as before.
+  const [shown, setTab] = useRemembered<Tab>('douyu:tab', 'accounts')
   const active = data.active
 
   return (
-    <SideTabs label="斗鱼" value={tab} onChange={setTab}
+    <SideTabs label="斗鱼" value={shown} onChange={setTab}
       tabs={TABS.map((item) => ({
         ...item,
         badge: item.id === 'tasks' && data.tasks && data.tasks.tasks.length > 0
@@ -44,12 +45,12 @@ export function DouyuDesk({ onWatch }: { onWatch: (room: string) => void }): Rea
         {active ? <>当前账号<b>{active.label}</b>{active.login.loggedIn ? '' : '（未登录）'}</> : '未设置当前账号'}
       </span>}>
         <div className="desk-content">
-          {tab === 'accounts' && <><Accounts data={data} /><Spending data={data} /></>}
-          {tab === 'following' && <Following data={data} onWatch={onWatch} />}
-          {tab === 'tasks' && <Tasks data={data} defaultRoom={danmaku.room} />}
-          {tab === 'automations' && <Automations data={data} />}
-          {tab === 'backpack' && <Backpack data={data} room={danmaku.room} />}
-          {tab === 'renewal' && (
+          {shown === 'accounts' && <><Accounts data={data} /><Spending data={data} /></>}
+          {shown === 'following' && <Following data={data} onWatch={onWatch} />}
+          {shown === 'tasks' && <Tasks data={data} defaultRoom={danmaku.room} />}
+          {shown === 'automations' && <Automations data={data} />}
+          {shown === 'backpack' && <Backpack data={data} room={danmaku.room} />}
+          {shown === 'renewal' && (
             <Renewal accountId={active?.id ?? null} accountLabel={active?.label ?? ''}
               ready={!!active?.login.loggedIn && !data.accountsBusy} />
           )}

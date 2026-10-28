@@ -12,7 +12,11 @@ import type { DouyuAccountsSnapshot, DouyuMessageInput, DouyuMessageOutcome, Dou
 import type { DouyuRenewalTargetPage, DouyuRenewalPlan, DouyuRenewalResult, DouyuRenewalQuantity } from '../server/douyu/renewalTypes'
 import type { FeatureMethods, FeatureEvent } from './featureContracts'
 
+export interface WindowState { maximized: boolean; fullscreen: boolean; focused: boolean }
+
 export interface DesktopMethods extends FeatureMethods {
+  windowControl: { args: { action: 'minimize' | 'toggle-maximize' | 'close' }; result: WindowState }
+  getWindowState: { args: undefined; result: WindowState }
   listDouyuAccounts: { args: undefined; result: DouyuAccountsSnapshot }
   addDouyuAccount: { args: { label: string }; result: DouyuAccountsSnapshot }
   renameDouyuAccount: { args: { id: string; label: string }; result: DouyuAccountsSnapshot }
@@ -61,6 +65,7 @@ export interface StreamSyncerBridge {
   invoke<K extends DesktopMethod>(method: K, args: DesktopMethods[K]['args']): Promise<ApiResult<DesktopMethods[K]['result']>>
   subscribeDanmaku(room: string, listener: (event: DanmakuEvent) => void): () => void
   subscribeBuffer?(listener: (state: BufferState) => void): () => void
+  subscribeWindowState?(listener: (state: WindowState) => void): () => void
   subscribeDouyuTasks?(listener: (state: DouyuTasksSnapshot) => void): () => void
   subscribeFeatures?(listener: (event: FeatureEvent) => void): () => void
 }

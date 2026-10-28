@@ -17,6 +17,7 @@
  * Close the window to stop. The profile is temporary and is deleted afterwards.
  */
 
+import { existsSync } from 'node:fs'
 import { mkdir, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
@@ -102,9 +103,15 @@ await app.evaluate((_electron, { room, rate }) => {
 // Drive the screen to a ready state, then hand it over.
 await page.getByRole('dialog', { name: '添加直播间' }).waitFor({ timeout: 10_000 }).catch(() => {})
 if (!flag('no-video')) {
-  const fixtures = page.getByRole('button', { name: '载入测试片源' })
-  if (await fixtures.isVisible().catch(() => false)) await fixtures.click()
-  else console.log('没有测试片源（先运行 npm run fixtures），只演示弹幕。')
+  const field = page.getByRole('textbox', { name: '直播间链接' })
+  if (existsSync(new URL('../public/test-sources/official.mp4', import.meta.url))) {
+    for (const path of ['/test-sources/official.mp4', '/test-sources/commentary.mp4']) {
+      await field.fill(path)
+      await field.press('Enter')
+      const place = page.getByRole('group', { name: '选择添加位置' })
+      if (await place.isVisible().catch(() => false)) await place.getByRole('button', { name: path.includes('official') ? '画面' : '解说', exact: true }).click()
+    }
+  } else console.log('没有测试片源（先运行 npm run fixtures），只演示弹幕。')
 }
 const skip = page.getByRole('button', { name: /^(跳过|开始观看)$/ })
 await page.waitForTimeout(1500)

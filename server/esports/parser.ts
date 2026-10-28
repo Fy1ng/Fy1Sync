@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { parse, type DefaultTreeAdapterMap } from 'parse5'
 import type { Cs2Match, Cs2Stream, Cs2Team } from './types'
+import { normalizeLogoPath } from './teamLogos'
 
 type Node = DefaultTreeAdapterMap['node']
 type Element = DefaultTreeAdapterMap['element']
@@ -36,15 +37,35 @@ function team(node: Node): Cs2Team {
   if (!names.length) {
     const literal = one(byClass(node, 'brkts-opponent-block-literal'), '.match-info-header-opponent .name or .brkts-opponent-block-literal')
     const label = text(literal).replace(/[\u200b\ufeff]/g, '').trim()
-    return { name: label ? bounded(label, '.brkts-opponent-block-literal') : 'TBD', short: null }
+    return { name: label ? bounded(label, '.brkts-opponent-block-literal') : 'TBD', short: null, logo: null }
   }
   const name = one(names, '.match-info-header-opponent .name')
   const anchors = children(name).filter(n => element(n) && n.tagName === 'a' && attr(n, 'title') !== undefined)
-  if (anchors.length === 0 && text(name) === 'TBD') return { name: 'TBD', short: null }
+  if (anchors.length === 0 && text(name) === 'TBD') return { name: 'TBD', short: null, logo: null }
   const anchor = one(anchors, '.name > a[title]')
   const full = bounded((attr(anchor, 'title') ?? '').replace(/ \(page does not exist\)$/, ''), '.name > a[title]')
   const short = bounded(text(anchor), '.name > a[title] text')
-  return { name: full, short: short === full ? null : short }
+  return { name: full, short: short === full ? null : short, logo: null }
+}
+
+/** Scope the icon search to the opponent's team block, never the tournament container. */
+export function teamLogoPath(node: Node): string | null {
+  const candidates: Array<{ path: string; priority: number }> = []
+  for (const block of byClass(node, 'block-team')) for (const icon of byClass(block, 'team-template-image-icon')) {
+    for (const image of all(icon, value => element(value) && value.tagName === 'img')) {
+      // Tournament icons carry wiki paths in alt; team icons use an empty alt.
+      if ((attr(image, 'alt') ?? '').includes('/')) continue
+      const source = normalizeLogoPath(attr(image, 'src'))
+      if (!source) continue
+      const twoX = (attr(image, 'srcset') ?? '').split(',').map(value => /^\s*(\S+)\s+2x\s*$/.exec(value)?.[1])
+        .map(value => normalizeLogoPath(value)).find(value => value !== null)
+      const path = twoX ?? source
+      const marker = `${attr(icon, 'class') ?? ''} ${path}`.toLowerCase()
+      const priority = marker.includes('darkmode') ? 3 : marker.includes('allmode') ? 2 : marker.includes('lightmode') ? 1 : 2
+      candidates.push({ path, priority })
+    }
+  }
+  return candidates.sort((a, b) => b.priority - a.priority)[0]?.path ?? null
 }
 
 function tier(node: Node): Cs2Match['tournament']['tier'] {
@@ -88,7 +109,7 @@ export function validChannel(platform: 'youtube' | 'twitch', channel: unknown): 
 }
 
 /** Parse the whole payload before exposing any matches, so selector drift cannot leak partial results. */
-export function parseSchedule(payload: unknown): Cs2Match[] {
+export function parseSchedule(payload: unknown, logoPaths?: Map<string, string>): Cs2Match[] {
   const html = (payload as { parse?: { text?: { '*'?: unknown } } } | null)?.parse?.text?.['*']
   if (typeof html !== 'string' || html.length > 2_000_000) return fail('parse.text.*')
   const nodes = byClass(parse(html), 'match-info')
@@ -124,6 +145,7 @@ export function parseSchedule(payload: unknown): Cs2Match[] {
     const finished = attr(timer, 'data-finished') === 'finished' || byClass(node, 'match-info-header-winner').length > 0
     const state: Cs2Match['state'] = finished ? 'finished' : score ? 'live' : 'upcoming'
     const id = createHash('sha256').update(JSON.stringify([url, startsAt, ...teams.map(t => t.name)])).digest('hex').slice(0, 24)
+    opponents.forEach((opponent, index) => { const path = teamLogoPath(opponent); if (path) logoPaths?.set(`${id}:${index}`, path) })
     return { id, startsAt, state, teams, score, bestOf, tournament: { name, stage, tier: tier(node), url }, streams: streams(node) }
   })
   if (new Set(matches.map(match => match.id)).size !== matches.length) return fail('.match-info duplicate identity')

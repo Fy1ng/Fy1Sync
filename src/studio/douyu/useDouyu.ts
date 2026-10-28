@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiClient, type ApiResult } from '../../app/apiClient'
 import type { DouyuAccountsSnapshot, DouyuTasksSnapshot } from '../../../server/douyu/types'
+import { remembered, useRemembered } from '../../app/remembered'
 
 export interface Lane {
   pending: string
@@ -25,11 +26,13 @@ const validTasks = (value: unknown): value is DouyuTasksSnapshot =>
   !!value && Array.isArray((value as DouyuTasksSnapshot).tasks) && Array.isArray((value as DouyuTasksSnapshot).retainedRooms)
 
 export function useDouyu() {
-  const [accounts, setAccounts] = useState<DouyuAccountsSnapshot | null>(null)
-  const [tasks, setTasks] = useState<DouyuTasksSnapshot | null>(null)
+  // Last read first, so reopening the desk shows accounts and tasks at once; the reads below
+  // and the pushed snapshots bring them up to date.
+  const [accounts, setAccounts] = useRemembered<DouyuAccountsSnapshot | null>('douyu:accounts', null)
+  const [tasks, setTasks] = useRemembered<DouyuTasksSnapshot | null>('douyu:tasks', null)
   const [accountLane, setAccountLane] = useState<Lane>(IDLE)
   const [taskLane, setTaskLane] = useState<Lane>(IDLE)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(() => remembered('douyu:accounts') === undefined)
   const mounted = useRef(false)
   const accountBusy = useRef(false)
   const taskBusy = useRef(false)

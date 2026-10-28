@@ -140,22 +140,42 @@
   grid-area: teams;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: baseline;
+  align-items: center;
   gap: 14px;
   min-width: 0;
 }
 
 .studio .match-team {
-  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
   font-size: 16px;
   font-weight: 700;
-  text-align: right;
+}
+
+.studio .match-team.is-right {
+  justify-content: flex-start;
+}
+
+.studio .match-team-name {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.studio .match-team.is-right {
-  text-align: left;
+/* Crests sit on the dark row as they are drawn; a fixed box keeps every name in line. */
+.studio .match-logo {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.studio .match[data-state='finished'] .match-team:not(.is-win) .match-logo {
+  opacity: 0.6;
 }
 
 .studio .match[data-state='finished'] .match-team:not(.is-win) {
