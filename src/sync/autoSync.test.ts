@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { AutoSyncController, type AutoSyncDeps } from './autoSync'
 import type { AppliedRewind, MediaSnapshot, RecognitionOutcome, SourceRole } from '../core/types'
 import { NO_REWIND } from '../core/types'
+import type { ScoreGuardRequest, ScoreGuardResult, ScoreReading } from '../recognition/score'
 
 /**
  * A promise the test releases by hand, to hold a run open at a chosen point.
@@ -92,12 +93,381 @@ function makeDeps(
     },
     now: () => 1_000,
     sleep: async () => {},
+    checkScore: async () => ({ status: 'pass', checkedAt: 1_000, generation: 'fixture' }),
+    scoreGeneration: () => 'fixture',
     ...overrides,
   }
   return { deps, positions, seeks }
 }
 
 const applied: AppliedRewind = { ...NO_REWIND }
+
+function scoreReading(left: number, right: number): ScoreReading {
+  return {
+    left, right, leftQuality: 0.95, rightQuality: 0.95, reason: null,
+    mediaTime: 500, wallTime: 1_000, source: 'fixture', generation: 1,
+    width: 1920, height: 1080, segment: 1, frameIndex: 1,
+  }
+}
+
+function scoreResult(status: ScoreGuardResult['status'], reason?: string): ScoreGuardResult {
+  return {
+    status, reason, checkedAt: 1_000, generation: 'fixture',
+    official: scoreReading(9, 8), commentary: scoreReading(status === 'mismatch' ? 7 : 9, status === 'mismatch' ? 7 : 8),
+  }
+}
+
+describe('AutoSyncController score guard', () => {
+  it.each([
+    ['mismatch', 'score-mismatch'], ['unknown', 'score-unknown'], ['transition', 'score-transition'],
+  ] as const)('blocks %s before either seek or rate adjustment, including dry runs', async (status, kind) => {
+    for (const residual of [5, 0.5]) {
+      for (const dryRun of [false, true]) {
+        const rates: Positions = { official: 1, commentary: 1 }
+        const setRate = vi.fn((role: SourceRole, rate: number) => { rates[role] = rate })
+        const onAppliedRewind = vi.fn()
+        const fixture = makeDeps({
+          checkScore: async () => scoreResult(status), setPlaybackRate: setRate, onAppliedRewind,
+        }, { commentaryWallOffsetMs: residual * 1000 })
+        const controller = new AutoSyncController(fixture.deps, { scoreWaitSeconds: 0 })
+        const result = await (dryRun ? controller.dryRun(applied) : controller.run(applied))
+        expect(result.failure?.kind).toBe(kind)
+        expect(result.scoreCheck?.status).toBe(status)
+        expect(result.applied).toBe(false)
+        expect(fixture.seeks).toHaveLength(0)
+        expect(fixture.positions).toEqual({ official: 500, commentary: 500 })
+        expect(rates).toEqual({ official: 1, commentary: 1 })
+        expect(setRate).not.toHaveBeenCalled()
+        expect(onAppliedRewind).not.toHaveBeenCalled()
+      }
+    }
+  })
+
+  it('includes both numeric scores when they disagree', async () => {
+    const fixture = makeDeps({ checkScore: async () => scoreResult('mismatch') }, { commentaryWallOffsetMs: 5_000 })
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.failure?.message).toBe('两路比分不同（官方 9:8，解说 7:7），未调整')
+  })
+
+  it('does not silently bypass an unsupported score backend', async () => {
+    const fixture = makeDeps({ checkScore: undefined }, { commentaryWallOffsetMs: 5_000 })
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.failure?.kind).toBe('score-unknown')
+    expect(result.scoreCheck?.reason).toBe('unsupported')
+    expect(fixture.seeks).toEqual([])
+  })
+
+  it('waits a finite number of times for history and never applies on timeout', async () => {
+    const check = vi.fn(async () => scoreResult('unknown', 'history-insufficient'))
+    const fixture = makeDeps({ checkScore: check }, { commentaryWallOffsetMs: 18_000 })
+    const result = await new AutoSyncController(fixture.deps, { scoreWaitSeconds: 0.5 }).run(applied)
+    expect(check).toHaveBeenCalledTimes(3)
+    expect(result.failure?.kind).toBe('score-unknown')
+    expect(fixture.seeks).toEqual([])
+  })
+
+  it('replans from the current playheads after waiting for the boundary to settle', async () => {
+    const fixture = makeDeps({}, { commentaryWallOffsetMs: 5_000 })
+    let checks = 0
+    fixture.deps.checkScore = async request => {
+      expect(request.residualSeconds).toBe(5)
+      checks += 1
+      fixture.positions.official += 1
+      fixture.positions.commentary += 1
+      return scoreResult(checks === 1 ? 'transition' : 'pass')
+    }
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(checks).toBe(2)
+    expect(result.phase).toBe('done')
+    expect(fixture.seeks).toEqual([{ role: 'official', to: 497 }])
+  })
+
+  it('uses residual rather than the total carried rewind for score comparison', async () => {
+    const check = vi.fn(async (_request: ScoreGuardRequest) => scoreResult('pass'))
+    const fixture = makeDeps({ checkScore: check }, { commentaryWallOffsetMs: 5_000 })
+    const result = await new AutoSyncController(fixture.deps).dryRun({ official: 8, commentary: 2 })
+    expect(result.estimate?.totalOffsetSeconds).toBe(11)
+    expect(check.mock.calls[0]?.[0]).toMatchObject({ residualSeconds: 5 })
+  })
+
+  it('rejects a source generation change while score evidence is awaited', async () => {
+    let generation = 'fixture'
+    const fixture = makeDeps({
+      scoreGeneration: () => generation,
+      checkScore: async () => { generation = 'replacement'; return scoreResult('pass') },
+    }, { commentaryWallOffsetMs: 5_000 })
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.scoreCheck?.reason).toBe('generation-changed')
+    expect(result.applied).toBe(false)
+    expect(fixture.seeks).toEqual([])
+  })
+
+  it('rejects a measurement if relative playback progress changes during score waiting', async () => {
+    const fixture = makeDeps({}, { commentaryWallOffsetMs: 5_000 })
+    fixture.deps.checkScore = async () => {
+      fixture.positions.official += 1
+      return scoreResult('pass')
+    }
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.scoreCheck?.reason).toBe('measurement-stale')
+    expect(fixture.seeks).toEqual([])
+  })
+
+  it('rechecks cancellation after awaiting score evidence', async () => {
+    const gate = deferred()
+    const entered = deferred()
+    const fixture = makeDeps({ checkScore: async () => { entered.release(); await gate.promise; return scoreResult('pass') } },
+      { commentaryWallOffsetMs: 5_000 })
+    const controller = new AutoSyncController(fixture.deps)
+    const pending = controller.run(applied)
+    await entered.promise
+    controller.cancel()
+    gate.release()
+    expect((await pending).failure?.kind).toBe('cancelled')
+    expect(fixture.seeks).toEqual([])
+  })
+})
+
+describe('AutoSyncController failed adjustment rollback', () => {
+  it('restores both starting playheads and carried offsets when a seek partially fails', async () => {
+    const initial = { official: 5, commentary: 1 }
+    const published: AppliedRewind[] = []
+    const fixture = makeDeps({ onAppliedRewind: value => published.push(value) }, { commentaryWallOffsetMs: 5_000 })
+    let calls = 0
+    fixture.deps.seek = async (role, target) => {
+      fixture.seeks.push({ role, to: target })
+      fixture.positions[role] = target
+      calls += 1
+      return calls > 1
+    }
+    const result = await new AutoSyncController(fixture.deps).run(initial)
+    expect(result.failure?.kind).toBe('seek-failed')
+    expect(result.rollback?.status).toBe('restored')
+    expect(result.applied).toBe(false)
+    expect(fixture.positions).toEqual({ official: 500, commentary: 500 })
+    expect(result.appliedRewind).toEqual(initial)
+    expect(published.at(-1)).toEqual(initial)
+    expect(fixture.seeks).toEqual([{ role: 'official', to: 496 }, { role: 'official', to: 500 }])
+  })
+
+  it('restores both playheads and offsets after post-seek verification fails', async () => {
+    const fixture = makeDeps({}, { commentaryWallOffsetMs: 5_000 })
+    const published: AppliedRewind[] = []
+    fixture.deps.onAppliedRewind = value => published.push(value)
+    fixture.deps.sleep = async () => { fixture.positions.commentary += 1 }
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.failure?.kind).toBe('verify-failed')
+    expect(result.rollback?.status).toBe('restored')
+    expect(fixture.positions).toEqual({ official: 500, commentary: 500 })
+    expect(result.appliedRewind).toEqual(applied)
+    expect(published.at(-1)).toEqual(applied)
+    expect(result.applied).toBe(false)
+  })
+
+  it('keeps natural playback progress when restoring a playing pair', async () => {
+    let now = 1_000
+    const fixture = makeDeps({
+      now: () => now,
+      playbackState: role => ({ paused: false, playbackRate: 1, source: role }),
+    }, { commentaryWallOffsetMs: 5_000 })
+    fixture.deps.sleep = async ms => {
+      now += ms
+      fixture.positions.official += ms / 1000
+      fixture.positions.commentary += ms / 1000 + 1
+    }
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.rollback?.status).toBe('restored')
+    expect(fixture.positions).toEqual({ official: 500.4, commentary: 500.4 })
+    expect(result.appliedRewind).toEqual(applied)
+  })
+
+  it('freezes both sources at one restoration instant across slow recovery seeks', async () => {
+    let now = 1_000
+    const paused: Record<SourceRole, boolean> = { official: false, commentary: false }
+    const pauseChanges: Array<{ role: SourceRole; paused: boolean }> = []
+    const fixture = makeDeps({
+      now: () => now,
+      playbackState: role => ({ paused: paused[role], playbackRate: 1, source: role }),
+      setPaused: async (role, value) => { paused[role] = value; pauseChanges.push({ role, paused: value }) },
+    }, { commentaryWallOffsetMs: 5_000 })
+    let calls = 0
+    fixture.deps.seek = async (role, target) => {
+      fixture.seeks.push({ role, to: target })
+      fixture.positions[role] = target
+      calls += 1
+      if (calls === 1) {
+        now += 3_000
+        fixture.positions.commentary += 4
+        return false
+      }
+      expect(paused).toEqual({ official: true, commentary: true })
+      now += 4_000
+      return true
+    }
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.rollback?.status).toBe('restored')
+    expect(result.appliedRewind).toEqual(applied)
+    expect(fixture.positions).toEqual({ official: 503, commentary: 503 })
+    expect(fixture.seeks).toEqual([
+      { role: 'official', to: 495 }, { role: 'official', to: 503 }, { role: 'commentary', to: 503 },
+    ])
+    expect(pauseChanges).toEqual([
+      { role: 'official', paused: true }, { role: 'commentary', paused: true },
+      { role: 'official', paused: false }, { role: 'commentary', paused: false },
+    ])
+    expect(paused).toEqual({ official: false, commentary: false })
+  })
+
+  it('reports a failed restore instead of claiming the error was withdrawn', async () => {
+    const fixture = makeDeps({}, { commentaryWallOffsetMs: 5_000 })
+    let calls = 0
+    fixture.deps.seek = async (role, target) => {
+      calls += 1
+      if (calls === 1) fixture.positions[role] = target
+      return calls === 1
+    }
+    fixture.deps.sleep = async () => { fixture.positions.commentary += 1 }
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.rollback?.status).toBe('failed')
+    expect(result.applied).toBe(true)
+    expect(result.failure?.message).toContain('撤回未完成')
+    expect(result.appliedRewind).toEqual({ official: 5, commentary: 0 })
+  })
+
+  it('does not seek a replacement source while unwinding a failed application', async () => {
+    let source = 'original'
+    const fixture = makeDeps({ playbackState: () => ({ paused: true, playbackRate: 1, source }) },
+      { commentaryWallOffsetMs: 5_000 })
+    fixture.deps.seek = async (role, target) => {
+      fixture.seeks.push({ role, to: target })
+      fixture.positions[role] = target
+      source = 'replacement'
+      return false
+    }
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.rollback?.status).toBe('skipped')
+    expect(fixture.seeks).toHaveLength(1)
+  })
+})
+
+describe('AutoSyncController seek playback freeze', () => {
+  function freezeFixture() {
+    let now = 1_000
+    const paused: Record<SourceRole, boolean> = { official: false, commentary: false }
+    const source: Record<SourceRole, string> = { official: 'official', commentary: 'commentary' }
+    const pauseChanges: Array<{ role: SourceRole; paused: boolean }> = []
+    const fixture = makeDeps({
+      now: () => now,
+      playbackState: role => ({ paused: paused[role], playbackRate: 1, source: source[role] }),
+      setPaused: async (role, value) => { paused[role] = value; pauseChanges.push({ role, paused: value }) },
+    }, { commentaryWallOffsetMs: 5_000 })
+    const advance = (ms: number): void => {
+      now += ms
+      for (const role of ['official', 'commentary'] as const) {
+        if (!paused[role]) fixture.positions[role] += ms / 1000
+      }
+    }
+    fixture.deps.sleep = async ms => { advance(ms) }
+    return { ...fixture, paused, source, pauseChanges, advance }
+  }
+
+  it('keeps the peer frozen while a slow official seek decodes, then resumes both', async () => {
+    const fixture = freezeFixture()
+    fixture.deps.seek = async (role, target) => {
+      fixture.seeks.push({ role, to: target })
+      expect(fixture.paused).toEqual({ official: true, commentary: true })
+      fixture.advance(3_000)
+      fixture.positions[role] = target
+      return true
+    }
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.phase).toBe('done')
+    expect(result.divergence).toBe(0)
+    expect(result.appliedRewind).toEqual({ official: 5, commentary: 0 })
+    expect(fixture.positions).toEqual({ official: 495.4, commentary: 500.4 })
+    expect(fixture.paused).toEqual({ official: false, commentary: false })
+    expect(fixture.pauseChanges).toEqual([
+      { role: 'official', paused: true }, { role: 'commentary', paused: true },
+      { role: 'official', paused: false }, { role: 'commentary', paused: false },
+    ])
+  })
+
+  it('keeps a source that was already paused in its original state', async () => {
+    const fixture = freezeFixture()
+    fixture.paused.official = true
+    fixture.paused.commentary = true
+    fixture.deps.seek = async (role, target) => {
+      fixture.seeks.push({ role, to: target })
+      fixture.advance(3_000)
+      fixture.positions[role] = target
+      return true
+    }
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.phase).toBe('done')
+    expect(fixture.paused).toEqual({ official: true, commentary: true })
+    expect(fixture.pauseChanges).toEqual([])
+  })
+
+  it('releases owned pauses during cancel and does not overwrite the subsequent manual action', async () => {
+    const gate = deferred()
+    const entered = deferred()
+    const fixture = freezeFixture()
+    fixture.deps.seek = async () => { entered.release(); await gate.promise; return true }
+    const controller = new AutoSyncController(fixture.deps)
+    const pending = controller.run(applied)
+    await entered.promise
+    expect(fixture.paused).toEqual({ official: true, commentary: true })
+    controller.cancel()
+    expect(fixture.paused).toEqual({ official: false, commentary: false })
+    fixture.paused.official = true
+    gate.release()
+    expect((await pending).failure?.kind).toBe('cancelled')
+    expect(fixture.paused).toEqual({ official: true, commentary: false })
+    expect(fixture.pauseChanges).toHaveLength(4)
+  })
+
+  it('never restores the playback state of a replacement source on cancel', async () => {
+    const gate = deferred()
+    const entered = deferred()
+    const fixture = freezeFixture()
+    fixture.deps.seek = async () => { entered.release(); await gate.promise; return true }
+    const controller = new AutoSyncController(fixture.deps)
+    const pending = controller.run(applied)
+    await entered.promise
+    fixture.source.official = 'replacement'
+    fixture.paused.official = true
+    controller.cancel()
+    gate.release()
+    expect((await pending).failure?.kind).toBe('cancelled')
+    expect(fixture.paused).toEqual({ official: true, commentary: false })
+    expect(fixture.pauseChanges).toEqual([
+      { role: 'official', paused: true }, { role: 'commentary', paused: true },
+      { role: 'commentary', paused: false },
+    ])
+  })
+
+  it('releases the unaffected peer when rollback is skipped for a replacement source', async () => {
+    const fixture = freezeFixture()
+    fixture.deps.seek = async () => { fixture.source.official = 'replacement'; return false }
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.rollback?.status).toBe('skipped')
+    expect(fixture.paused).toEqual({ official: true, commentary: false })
+    expect(fixture.pauseChanges).toEqual([
+      { role: 'official', paused: true }, { role: 'commentary', paused: true },
+      { role: 'commentary', paused: false },
+    ])
+  })
+
+  it('does not freeze playback until the score guard has passed', async () => {
+    const fixture = freezeFixture()
+    fixture.deps.checkScore = async () => scoreResult('mismatch')
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.failure?.kind).toBe('score-mismatch')
+    expect(fixture.pauseChanges).toEqual([])
+    expect(fixture.seeks).toEqual([])
+    expect(fixture.paused).toEqual({ official: false, commentary: false })
+  })
+})
 
 describe('AutoSyncController', () => {
   it('estimates and applies a rewind when the commentary source lags', async () => {
@@ -209,7 +579,7 @@ describe('AutoSyncController', () => {
 
     const result = await controller.run(applied)
 
-    expect(result.failure).toMatchObject({ kind: 'seek-failed', message: '官方源跳转未生效' })
+    expect(result.failure).toMatchObject({ kind: 'seek-failed', message: '官方源跳转未生效，已撤回调整' })
     expect(result.plan).not.toBeNull()
   })
 
@@ -360,7 +730,7 @@ describe('AutoSyncController', () => {
 
     await controller.run(applied)
 
-    expect(phases).toEqual(['sampling', 'estimating', 'applying', 'verifying', 'done'])
+    expect(phases).toEqual(['sampling', 'estimating', 'checking-content', 'applying', 'verifying', 'done'])
   })
 
   it('reports a failed phase to subscribers', async () => {
@@ -704,6 +1074,8 @@ describe('AutoSyncController rate correction', () => {
     // Sampling resolves asynchronously before the first nudge poll.
     await Promise.resolve()
     await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
     expect(fixture.rates.official).toBe(0.95)
     if (action === 'dispose') controller.dispose()
     else controller.cancel(false)
@@ -719,7 +1091,7 @@ describe('AutoSyncController rate correction', () => {
     const fixture = rateDeps(0.5)
     fixture.deps.sleep = async () => { throw new Error('media disconnected') }
     const result = await new AutoSyncController(fixture.deps).run(applied)
-    expect(result.failure?.message).toBe('media disconnected')
+    expect(result.failure?.message).toBe('media disconnected，已撤回调整')
     expect(fixture.rates).toEqual({ official: 1, commentary: 1 })
   })
 
@@ -766,7 +1138,7 @@ describe('AutoSyncController buffer limits', () => {
     expect(fixture.seeks).toEqual([{ role: 'official', to: 505 }, { role: 'commentary', to: 495.5 }])
   })
 
-  it('reports a partial clamped seek as failure and retains its actual rewind', async () => {
+  it('withdraws a partial clamped seek and restores the previous rewind', async () => {
     const fixture = makeDeps({}, { commentaryWallOffsetMs: 5_000, positions: { official: 2, commentary: 2 } })
     const rewinds: AppliedRewind[] = []
     fixture.deps.onAppliedRewind = (rewind) => rewinds.push(rewind)
@@ -774,10 +1146,11 @@ describe('AutoSyncController buffer limits', () => {
 
     expect(result.phase).toBe('failed')
     expect(result.failure?.kind).toBe('buffer-limit')
-    expect(result.applied).toBe(true)
+    expect(result.applied).toBe(false)
     expect(result.plan?.effectiveOffset).toBe(2)
-    expect(result.appliedRewind).toEqual({ official: 2, commentary: 0 })
+    expect(result.appliedRewind).toEqual(applied)
+    expect(result.rollback?.status).toBe('restored')
     expect(rewinds.at(-1)).toEqual(result.appliedRewind)
-    expect(fixture.positions.official).toBe(0)
+    expect(fixture.positions).toEqual({ official: 2, commentary: 2 })
   })
 })

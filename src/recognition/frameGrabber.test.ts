@@ -2,6 +2,22 @@ import { describe, expect, it, vi } from 'vitest'
 import { FrameGrabber, FULL_FRAME_ROI, startFrameLoop } from './frameGrabber'
 
 describe('discovery frame acquisition', () => {
+  it('captures one native strip with the original clock pixel rectangle unchanged', () => {
+    const video = document.createElement('video')
+    Object.defineProperties(video, { videoWidth: { value: 3840 }, videoHeight: { value: 2160 }, readyState: { value: 4 } })
+    const drawImage = vi.fn()
+    const getImageData = vi.fn((_x: number, _y: number, width: number, height: number) => ({
+      data: new Uint8ClampedArray(width * height * 4), width, height,
+    }))
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage, getImageData } as unknown as CanvasRenderingContext2D)
+    const result = new FrameGrabber(() => 123).grabStrip(video, { x: 1856 / 3840, y: 100 / 2160, w: 112 / 3840, h: 60 / 2160 }, 7)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.frame).toMatchObject({ width: 606, height: 174, mediaTime: 7, wallTime: 123,
+      clockRect: { x: 247, y: 48, width: 112, height: 60 } })
+    expect(drawImage).toHaveBeenCalledWith(video, 1609, 52, 606, 174, 0, 0, 606, 174)
+    expect(getImageData).toHaveBeenCalledTimes(1)
+  })
   it('downscales the full frame without changing its aspect ratio or media timestamp', () => {
     const video = document.createElement('video')
     Object.defineProperties(video, {

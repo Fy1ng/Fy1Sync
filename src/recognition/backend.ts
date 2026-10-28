@@ -3,6 +3,8 @@ import { toGrayscale } from '../core/imageOps'
 import type { RecognitionProfile } from '../core/profileSchema'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
 import { RecognitionEngine } from './engine'
+import { UNKNOWN_SCORE, type ScorePixels, type ScoreReading } from './score'
+import { clockPixels, scoreReading } from './scoreFrame'
 import type {
   LearnReport, RecognitionBackend, RoiCandidate, TickMoment, WindowFrame,
   WorkerDebug, WorkerRequest, WorkerResponse,
@@ -31,6 +33,7 @@ export interface WasmEngine {
   createAutoSession?(): WasmAutoSession
   createTickDetector?(): WasmTickDetector
   recognizeAuto?(gray: Uint8Array, width: number, height: number, profileJson: string): string
+  recognizeScore?(rgba: Uint8Array, width: number, height: number, clockRoiJson: string): string
 }
 type JsonDebug = Omit<WorkerDebug, 'binary' | 'normalized'> & {
   binary: { data: number[]; width: number; height: number }
@@ -93,15 +96,29 @@ export class WasmWorkerEngine implements WorkerEngine {
         let outcome: RecognitionOutcome
         let debug: WorkerDebug | null = null
         let tickMoment: TickMoment | undefined
+        let score: ScoreReading | undefined
         try {
-          const pixels = validPixels(request)
-          const gray = toGrayscale(pixels, request.width, request.height).data
-          tickMoment = this.detectTick(request.role, gray, request.width, request.height, request.mediaTime)
+          validPixels(request)
+          if (request.score) {
+            let value = UNKNOWN_SCORE
+            if (this.wasm.recognizeScore) {
+              try {
+                const rect = request.score.clockRect
+                value = JSON.parse(this.wasm.recognizeScore(new Uint8Array(request.pixels), request.width, request.height,
+                  JSON.stringify({ x: rect.x / request.width, y: rect.y / request.height,
+                    w: rect.width / request.width, h: rect.height / request.height }))) as ScorePixels
+              } catch { value = { ...UNKNOWN_SCORE, reason: 'score-decode-failed' } }
+            }
+            score = scoreReading(request, value)
+          }
+          const { pixels, width, height } = clockPixels(request)
+          const gray = toGrayscale(pixels, width, height).data
+          tickMoment = this.detectTick(request.role, gray, width, height, request.mediaTime)
           if (this.automatic) {
             if (!this.wasm.recognizeAuto || !this.profile) {
               outcome = { status: 'failed', reason: 'insufficient-templates', detail: '当前后端不支持自动学习预设' }
             } else {
-              const reading = JSON.parse(this.wasm.recognizeAuto(gray, request.width, request.height, JSON.stringify(this.profile))) as {
+              const reading = JSON.parse(this.wasm.recognizeAuto(gray, width, height, JSON.stringify(this.profile))) as {
                 text: string | null; value: number | null; confidence: number; reason: string | null
               }
               if (reading.text !== null && reading.value !== null) {
@@ -117,7 +134,7 @@ export class WasmWorkerEngine implements WorkerEngine {
               }
             }
           } else {
-            const result = JSON.parse(this.wasm.recognize(pixels, request.width, request.height, request.mediaTime, request.wallTime, request.frameIndex, request.wantDebug)) as { outcome: RecognitionOutcome; debug: JsonDebug | null }
+            const result = JSON.parse(this.wasm.recognize(pixels, width, height, request.mediaTime, request.wallTime, request.frameIndex, request.wantDebug)) as { outcome: RecognitionOutcome; debug: JsonDebug | null }
             outcome = result.outcome
             debug = request.wantDebug ? debugFromJson(result.debug) : null
           }
@@ -126,7 +143,7 @@ export class WasmWorkerEngine implements WorkerEngine {
         }
         return annotate({ type: 'result', generation: request.generation, role: request.role,
           frameIndex: request.frameIndex, outcome, debug, elapsedMs: this.now() - started,
-          ...(tickMoment ? { tickMoment } : {}) }, this.backend)
+          ...(tickMoment ? { tickMoment } : {}), ...(score ? { score } : {}) }, this.backend)
       }
       default: return null
     }

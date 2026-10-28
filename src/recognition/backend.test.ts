@@ -9,6 +9,29 @@ const frame: FrameMessage = { type: 'frame', generation: 2, role: 'official', fr
   width: 2, height: 2, pixels: new ArrayBuffer(16), mediaTime: 1, wallTime: 2000, wantDebug: true }
 
 describe('Worker backend selection', () => {
+  it('reads one strip and restores the exact native clock pixels before recognition', () => {
+    const pixels = Uint8Array.from({ length: 10 * 6 * 4 }, (_, index) => index % 255)
+    const recognize = vi.fn(() => JSON.stringify({ outcome: { status: 'failed', reason: 'blank-frame' }, debug: null }))
+    const recognizeScore = vi.fn(() => JSON.stringify({ left: 9, right: 10, leftQuality: .96, rightQuality: .94, reason: null }))
+    const engine = new WasmWorkerEngine({ configure: () => '{}', recognize, recognizeScore }, () => 0)
+    engine.handle({ type: 'configure', generation: 2, profile })
+    const result = engine.handle({ ...frame, width: 10, height: 6, pixels: pixels.buffer,
+      score: { clockRect: { x: 4, y: 2, width: 2, height: 2 }, source: 'local',
+        generation: 17, width: 3840, height: 2160, segment: 4 } }) as ResultMessage
+    const nativeClock = new Uint8Array([...pixels.slice(96, 104), ...pixels.slice(136, 144)])
+    expect(recognize).toHaveBeenCalledWith(nativeClock, 2, 2, 1, 2000, 7, true)
+    expect(recognizeScore).toHaveBeenCalledWith(pixels, 10, 6, JSON.stringify({ x: .4, y: 1 / 3, w: .2, h: 1 / 3 }))
+    expect(result.score).toMatchObject({ left: 9, right: 10, mediaTime: 1, wallTime: 2000,
+      source: 'local', generation: 17, width: 3840, height: 2160, segment: 4, frameIndex: 7 })
+  })
+  it('marks scores unsupported on a fallback backend while preserving clock recognition', () => {
+    const engine = new RecognitionEngine(() => 0)
+    engine.handle({ type: 'configure', generation: 2, profile })
+    const result = engine.handle({ ...frame, score: { clockRect: { x: 0, y: 0, width: 2, height: 2 },
+      source: 'local', generation: 1, width: 2, height: 2, segment: 1 } }) as ResultMessage
+    expect(result.score).toMatchObject({ left: null, right: null, reason: 'score-unsupported' })
+    expect(result.outcome.status).toBe('failed')
+  })
   it('exercises the real TS recognition path after WASM instantiation fails', async () => {
     const report = vi.fn()
     const engine = await createWorkerEngine({ load: async () => { throw new Error('CSP denied') }, now: () => 0, report })

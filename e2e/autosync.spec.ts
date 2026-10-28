@@ -1,14 +1,17 @@
 /**
- * Automatic sync, end to end, against the V0.4 numeric gates.
+ * Countdown measurement and strict score rejection, end to end.
  *
- * This is the one spec that measures rather than checks: the sync design commits to a
- * detection error within 0.25 s and a post-apply divergence within 0.35 s, and neither is
- * observable from a rendering. So the assertions are numbers read off the real elements,
+ * The sync design commits to a detection error within 0.25 s. The assertions compare
+ * numeric results and positions read off the real elements,
  * compared against the fixture's own ground truth — `scripts/generate-test-sources.mjs`
  * renders the same countdown into both files with the commentary delayed exactly 5 s.
  *
- * Everything on the path is real: a decoded frame, the worker, template matching, the
- * seeks. What the spec *builds* is the profile, because template bitmaps are machine
+ * These fixtures have no team scores. Automatic application must therefore fail without
+ * moving the pair or changing playback rates, even after a valid countdown estimate.
+ * Successful content alignment is covered separately by the local-recording acceptance.
+ *
+ * Everything on the path is real: a decoded frame, the worker and template matching.
+ * What the spec *builds* is the profile, because template bitmaps are machine
  * specific — a glyph rasterised by this machine's ffmpeg and font stack is the only thing
  * that will match on this machine, which is why `fixture-profile.json` ships with none.
  * The templates are taught through the editor, published, then selected in the player, so
@@ -24,7 +27,6 @@ import {
   invoke,
   FIXTURE_DELAY_SECONDS,
   MAX_DETECTION_ERROR_SECONDS,
-  MAX_DIVERGENCE_SECONDS,
   failOnPageError,
   fixturesReady,
   loadBothFixtures,
@@ -62,7 +64,7 @@ test.describe('无预设自动同步', () => {
   test.skip(!fixturesReady(), '缺少测试源, 先运行 npm run fixtures')
   test.setTimeout(180_000)
 
-  test('无预设时两路独立定位学习并在使用后对齐到 0.35 s 内', async ({ page }) => {
+  test('无预设时独立学习倒计时, 无比分时保持位置与速率', async ({ page }) => {
     const backends: string[] = []
     page.on('worker', worker => worker.on('console', message => {
       const match = /\[识别 Worker\] 后端: (\S+)/.exec(message.text())
@@ -90,12 +92,11 @@ test.describe('无预设自动同步', () => {
       await card.getByRole('button', { name: '使用', exact: true }).click()
       await expect(card).toHaveCount(0)
     }
-    await waitForPhase(page, '已完成')
-    const divergence = await readResult(page, '校验残差')
-    expect(divergence).not.toBeNull()
-    expect(Math.abs(divergence ?? Number.NaN)).toBeLessThanOrEqual(MAX_DIVERGENCE_SECONDS)
+    await waitForPhase(page, '未完成')
+    await expect((await openAlignOptions(page)).locator('.menu-meta')).toContainText('没读到比分')
     const times = await mediaTimes(page)
-    expect(Math.abs(times.lag + FIXTURE_DELAY_SECONDS)).toBeLessThanOrEqual(MAX_DIVERGENCE_SECONDS)
+    expect(Math.abs(times.lag)).toBeLessThanOrEqual(0.2)
+    expect(await offsetReadout(page)).toMatchObject({ requested: 0, applied: 0 })
     expect(backends.length, '实际识别 Worker 应报告后端').toBeGreaterThan(0)
     expect(new Set(backends)).toEqual(new Set(['wasm']))
     const after = await invoke(page, 'listPresets', undefined)
@@ -218,7 +219,7 @@ test.describe('自动同步', () => {
     expect(await offsetReadout(page)).toMatchObject({ requested: 0 })
   })
 
-  test('立即同步把两路对齐到 0.35 s 残差内', async ({ page }) => {
+  test('倒计时可读但没有比分时不自动跳转', async ({ page }) => {
     await openPlayer(page)
     await selectPreset(page, presetName)
     await loadBothFixtures(page)
@@ -227,30 +228,14 @@ test.describe('自动同步', () => {
 
     await revealOverlay(page)
     await page.getByRole('button', { name: '自动对齐', exact: true }).click()
-    await waitForPhase(page, '已完成')
-
-    // The controller's own verification pass, which is what the gate is written against.
-    const divergence = await readResult(page, '校验残差')
-    expect(divergence).not.toBeNull()
-    expect(
-      Math.abs(divergence ?? Number.NaN),
-      `校验残差 ${divergence} s 应在 ${MAX_DIVERGENCE_SECONDS} s 内`,
-    ).toBeLessThanOrEqual(MAX_DIVERGENCE_SECONDS)
-
-    // And independently: the same countdown should now be on both pictures, which means
-    // the official element sits 5 s behind where it was.
-    const times = await mediaTimes(page)
-    expect(Math.abs(times.lag + FIXTURE_DELAY_SECONDS)).toBeLessThanOrEqual(
-      MAX_DIVERGENCE_SECONDS + 0.2,
-    )
-
-    const readout = await offsetReadout(page)
-    expect(Math.abs(readout.applied - FIXTURE_DELAY_SECONDS)).toBeLessThanOrEqual(
-      MAX_DETECTION_ERROR_SECONDS + 0.1,
-    )
+    await waitForPhase(page, '未完成')
+    await expect((await openAlignOptions(page)).locator('.menu-meta')).toContainText('没读到比分')
+    expect(Math.abs((await mediaTimes(page)).lag)).toBeLessThan(0.2)
+    expect(await offsetReadout(page)).toMatchObject({ requested: 0, applied: 0 })
+    expect(await page.locator('video.media-element').evaluateAll(nodes => nodes.map(node => (node as HTMLVideoElement).playbackRate))).toEqual([1, 1])
   })
 
-  test('自动对齐后手动一动，定时同步就交回给人', async ({ page }) => {
+  test('比分拒绝后手动一动, 定时同步交回给人', async ({ page }) => {
     await openPlayer(page)
     const options = await openAlignOptions(page)
     await setCheckedByLabel(options.getByRole('switch', { name: /^比赛中保持对齐/ }))
@@ -261,11 +246,9 @@ test.describe('自动同步', () => {
 
     await revealOverlay(page)
     await page.getByRole('button', { name: '自动对齐', exact: true }).click()
-    await waitForPhase(page, '已完成')
+    await waitForPhase(page, '未完成')
     const auto = (await offsetReadout(page)).requested
-    expect(Math.abs(auto - FIXTURE_DELAY_SECONDS)).toBeLessThanOrEqual(
-      MAX_DETECTION_ERROR_SECONDS + 0.1,
-    )
+    expect(auto).toBe(0)
 
     // Nudging is a statement that the user disagrees with the machine, so the scheduler
     // must stop overwriting the result until they ask for it again.
@@ -369,7 +352,8 @@ async function selectPreset(page: Page, name: string): Promise<void> {
 /** Run the measurement-only action and return its reported offset. */
 async function measureOnce(page: Page): Promise<number> {
   await (await openAlignOptions(page)).getByRole('button', { name: '仅测量', exact: true }).click()
-  await waitForPhase(page, '已完成')
+  await waitForPhase(page, '未完成')
+  await expect((await openAlignOptions(page)).locator('.menu-meta')).toContainText('没读到比分')
   const estimate = await readResult(page, '识别偏移')
   expect(estimate, '应报出一个识别偏移').not.toBeNull()
   return estimate ?? Number.NaN
@@ -386,7 +370,10 @@ async function waitForPhase(page: Page, text: string): Promise<void> {
   try {
     const options = await openAlignOptions(page)
     await expect(page.locator('.align-main.is-running')).toHaveCount(0, { timeout: 120_000 })
-    if (text === '已完成') await expect(options.locator('.menu-meta')).toContainText('上次测得偏差', { timeout: 120_000 })
+    if (text === '已完成') {
+      await expect(page.getByRole('group', { name: '对齐', exact: true })).toHaveAttribute('data-state', 'locked', { timeout: 120_000 })
+      await expect(options.locator('.menu-meta')).toContainText('上次测得偏差')
+    }
     else await expect(page.getByRole('group', { name: '对齐', exact: true })).toHaveAttribute('data-state', 'failed', { timeout: 120_000 })
   } catch (error) {
     const reason = await page.locator('.align-menu .menu-meta').textContent().catch(() => null)

@@ -25,6 +25,7 @@ import { RecognitionClient, type WorkerLike } from './client'
 import { FrameGrabber, startFrameLoop } from './frameGrabber'
 import type { ResultMessage } from './protocol'
 import { RhythmSampler } from './rhythm'
+import { ScoreHistory, type ScoreGuardRequest, type ScoreGuardResult, type ScoreReading } from './score'
 
 export type OutcomeSink = (role: SourceRole, outcome: RecognitionOutcome) => void
 
@@ -41,6 +42,8 @@ export interface SamplerOptions {
   /** Overridable for tests; defaults to the real frame loop. */
   frameLoop?: typeof startFrameLoop
   onError?: (role: SourceRole, message: string) => void
+  /** Keep the existing scene monitor informed while reusing the same pixel readback. */
+  onOutcome?: OutcomeSink
 }
 
 export interface SamplerStats {
@@ -67,6 +70,17 @@ interface RoleChannel {
   pendingMoment: ResultMessage['tickMoment'] | null
   lastSeconds: number | null
   frameAnchor: { mediaTime: number; wallTime: number; playbackRate: number } | null
+  profileIdentity: RecognitionProfile | null
+  width: number
+  height: number
+  segment: number
+  blocked: boolean
+  lastScoreTime: number
+  scoreAnchor: { mediaTime: number; wallTime: number } | null
+  monitorStop: (() => void) | null
+  srcObject: HTMLVideoElement['srcObject'] | null
+  profileSignature: string
+  lifecycleStop: (() => void) | null
 }
 
 export class RecognitionSampler {
@@ -83,6 +97,7 @@ export class RecognitionSampler {
   private sink: OutcomeSink | null = null
   private sampling = false
   private disposed = false
+  private readonly scores = new ScoreHistory()
 
   constructor(private readonly options: SamplerOptions) {
     this.now = options.now ?? (() => Date.now())
@@ -102,6 +117,39 @@ export class RecognitionSampler {
   /** Worker-side throughput per role, for the debug panel. */
   workerStats(role: SourceRole) {
     return this.channels.get(role)?.client.getStats() ?? null
+  }
+
+  /** Begin a shared, sparse scoreboard/scene monitor after a profile is accepted. */
+  monitor(role: SourceRole): () => void {
+    if (this.disposed) return () => {}
+    const channel = this.channelFor(role)
+    channel.monitorStop?.()
+    const stop = this.startRole(role, { aborted: false })
+    channel.monitorStop = stop
+    return () => {
+      stop?.()
+      if (channel.monitorStop === stop) channel.monitorStop = null
+    }
+  }
+
+  /** The token concerns media evidence, independent of worker request cancellation. */
+  scoreGeneration(): string {
+    for (const role of SOURCE_ROLES) this.reconcile(role)
+    return SOURCE_ROLES.map(role => `${role}:${this.channelFor(role).segment}`).join('/')
+  }
+
+  scoreReadings(role: SourceRole): readonly ScoreReading[] { return this.scores.readings(role) }
+
+  async checkScore(request: ScoreGuardRequest): Promise<ScoreGuardResult> {
+    const generation = this.scoreGeneration()
+    let result = this.scores.evaluate(request.residualSeconds, this.clock(), generation)
+    if (request.signal.aborted || this.disposed) return { ...result, status: 'unknown', reason: 'cancelled' }
+    if (result.status === 'pass' || result.status === 'mismatch') return result
+    await this.sample(1500, () => {}, request.signal)
+    const current = this.scoreGeneration()
+    result = this.scores.evaluate(request.residualSeconds, this.clock(), current)
+    if (request.signal.aborted || current !== generation) return { ...result, status: 'unknown', reason: 'stale-generation' }
+    return result
   }
 
   /**
@@ -130,10 +178,11 @@ export class RecognitionSampler {
     const stops: Array<() => void> = []
     try {
       for (const role of SOURCE_ROLES) {
+        if (this.channelFor(role).monitorStop) continue
         const stop = this.startRole(role, signal)
         if (stop) stops.push(stop)
       }
-      if (stops.length === 0) return
+      if (stops.length === 0 && ![...this.channels.values()].some(channel => channel.monitorStop)) return
       await this.waitForWindow(windowMs, signal)
     } finally {
       for (const stop of stops) stop()
@@ -142,6 +191,7 @@ export class RecognitionSampler {
       // A frame still in flight would otherwise land during the next window and be
       // counted as one of its readings.
       for (const channel of this.channels.values()) {
+        if (channel.monitorStop) continue
         channel.client.cancel()
         channel.configuredFor = null
       }
@@ -152,6 +202,8 @@ export class RecognitionSampler {
     this.disposed = true
     this.sink = null
     for (const channel of this.channels.values()) {
+      channel.monitorStop?.()
+      channel.lifecycleStop?.()
       channel.client.dispose()
       channel.grabber.dispose()
     }
@@ -171,29 +223,35 @@ export class RecognitionSampler {
       channel.client.cancel()
       channel.configuredFor = null
       this.resetTiming(channel)
+      this.invalidateScores(role, channel)
     }
-    if (channel.video !== video) invalidate()
-    channel.video = video
-    channel.source = video.currentSrc || video.src || ''
-    for (const event of ['seeking', 'emptied', 'loadstart']) video.addEventListener?.(event, invalidate)
+    this.reconcile(role)
+    const events = ['seeking', 'emptied', 'loadstart', 'pause', 'waiting', 'stalled', 'ratechange', 'resize']
+    channel.lifecycleStop?.()
+    for (const event of events) video.addEventListener?.(event, invalidate)
+    channel.lifecycleStop = () => {
+      for (const event of events) video.removeEventListener?.(event, invalidate)
+      channel.lifecycleStop = null
+    }
 
     const stop = this.frameLoop(video, fps, (mediaTime) => {
       if (!activeLoop || signal.aborted || this.disposed) return
       const active = this.options.profile(role)
       if (!active) return
-      const source = video.currentSrc || video.src || ''
-      if (channel.source !== source) {
-        invalidate()
-        channel.source = source
-      }
+      this.reconcile(role)
+      if (channel.video !== video) return
       if (channel.configuredFor !== active) {
         this.resetTiming(channel)
         channel.client.configure(active, { automatic: active.id.startsWith('session/') })
         channel.configuredFor = active
       }
-      if (!channel.rhythm.shouldSample(mediaTime)) return
+      const wantClock = this.sampling && channel.rhythm.shouldSample(mediaTime)
+      const wantScore = !channel.blocked && (wantClock || !this.sampling)
+        && mediaTime - channel.lastScoreTime >= 0.5 - 1e-6
+      if (!wantScore && !wantClock) return
       this.stats.grabbed[role] += 1
-      const result = channel.grabber.grab(video, active.roi, mediaTime)
+      const result = wantScore ? channel.grabber.grabStrip(video, active.roi, mediaTime)
+        : channel.grabber.grab(video, active.roi, mediaTime)
       if (!result.ok) {
         this.stats.grabFailures[role] += 1
         channel.rhythm.reset()
@@ -201,12 +259,25 @@ export class RecognitionSampler {
         return
       }
       const previousAnchor = channel.frameAnchor
+      if (wantScore) {
+        const anchor = channel.scoreAnchor
+        const wallTime = result.frame.wallTime
+        if (anchor && (mediaTime <= anchor.mediaTime || wallTime - anchor.wallTime > 1500
+          || Math.abs((mediaTime - anchor.mediaTime) * 1000 - (wallTime - anchor.wallTime)) > 500)) {
+          this.invalidateScores(role, channel)
+        }
+        channel.lastScoreTime = mediaTime
+        channel.scoreAnchor = { mediaTime, wallTime }
+      }
       channel.frameAnchor = {
         mediaTime: result.frame.mediaTime,
         wallTime: result.frame.wallTime,
         playbackRate: Number.isFinite(video.playbackRate) && video.playbackRate > 0 ? video.playbackRate : 1,
       }
-      if (channel.client.submit(role, result.frame)) {
+      if (channel.client.submit(role, result.frame, false, wantScore ? {
+        source: channel.source, generation: channel.segment, width: channel.width,
+        height: channel.height, segment: channel.segment,
+      } : undefined)) {
         this.stats.submitted[role] += 1
       } else {
         channel.frameAnchor = previousAnchor
@@ -217,7 +288,6 @@ export class RecognitionSampler {
     return () => {
       activeLoop = false
       stop()
-      for (const event of ['seeking', 'emptied', 'loadstart']) video.removeEventListener?.(event, invalidate)
     }
   }
 
@@ -234,22 +304,72 @@ export class RecognitionSampler {
       pendingMoment: null,
       lastSeconds: null,
       frameAnchor: null,
+      profileIdentity: null, width: 0, height: 0, segment: 0, blocked: false,
+      lastScoreTime: -Infinity, scoreAnchor: null, monitorStop: null,
+      srcObject: null, profileSignature: '',
+      lifecycleStop: null,
       client: new RecognitionClient({
         createWorker: this.options.createWorker,
         now: this.now,
         onError: (message) => this.options.onError?.(role, message),
         onResult: (message) => {
+          this.reconcile(role)
+          if (message.score && message.score.segment === channel.segment && !channel.blocked) {
+            const previous = this.scores.readings(role).at(-1)
+            if (previous?.left !== null && previous?.right !== null && message.score.left !== null && message.score.right !== null
+              && previous && message.score.left + message.score.right < previous.left! + previous.right!) {
+              // A replay/map reset cannot inherit the live segment's identity evidence.
+              this.invalidateScores(role, channel)
+            } else this.scores.push(role, message.score)
+          }
           const outcome = this.atTickMoment(channel, message)
           const result = channel.jumps.push(outcome)
           if (result.event) channel.rhythm.confirmTick(result.event.mediaTime)
           if (result.dropped === 'not-decrement' || result.dropped === 'abnormal-interval') channel.rhythm.reset()
           if (outcome.status === 'failed') channel.rhythm.reset()
           this.sink?.(role, outcome)
+          this.options.onOutcome?.(role, outcome)
         },
       }),
     }
     this.channels.set(role, channel)
     return channel
+  }
+
+  private invalidateScores(role: SourceRole, channel: RoleChannel): void {
+    channel.segment += 1
+    channel.lastScoreTime = -Infinity
+    channel.scoreAnchor = null
+    this.scores.clear(role)
+  }
+
+  private reconcile(role: SourceRole): void {
+    const channel = this.channelFor(role)
+    const video = this.options.video(role)
+    const profile = this.options.profile(role)
+    const source = video ? `${video.currentSrc || video.src || ''}` : ''
+    const width = video?.videoWidth ?? 0
+    const height = video?.videoHeight ?? 0
+    const srcObject = video?.srcObject ?? null
+    const profileSignature = profile ? `${profile.updatedAt}/${JSON.stringify(profile.roi)}` : ''
+    const blocked = !video || video.paused === true || video.seeking === true || video.readyState < 2
+      || (Number.isFinite(video.playbackRate) && Math.abs(video.playbackRate - 1) > 1e-6)
+    if (channel.video !== video || channel.source !== source || channel.width !== width || channel.height !== height
+      || channel.profileIdentity !== profile || channel.profileSignature !== profileSignature
+      || channel.srcObject !== srcObject || blocked !== channel.blocked) {
+      this.invalidateScores(role, channel)
+      channel.video = video
+      channel.source = source
+      channel.width = width
+      channel.height = height
+      channel.profileIdentity = profile
+      channel.profileSignature = profileSignature
+      channel.srcObject = srcObject
+      channel.blocked = blocked
+      channel.configuredFor = null
+      channel.client.cancel()
+      this.resetTiming(channel)
+    }
   }
 
   private resetTiming(channel: RoleChannel): void {

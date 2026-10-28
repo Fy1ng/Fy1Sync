@@ -23,7 +23,7 @@ import {
   type OffsetPlan,
 } from '../core/syncPlan'
 import { MediaEngine, type EngineState } from '../media/mediaEngine'
-import { RecognitionSampler } from '../recognition/sampler'
+import { RecognitionSampler, type OutcomeSink } from '../recognition/sampler'
 import { OnlineAutoProfiles, initialAutoProfileState, type AutoProfileState } from '../recognition/autoProfile'
 import { createRecognitionWorker } from '../recognition/createWorker'
 import { parseProfile, type RecognitionProfile } from '../core/profileSchema'
@@ -179,7 +179,8 @@ export class Session {
     this.now = options.now ?? (() => Date.now())
     this.settingsValue = loadSettings(this.storage)
     this.filter = compileDanmakuFilter(this.settingsValue.danmaku.filter)
-    this.samplerFactory = options.createSampler ?? defaultSamplerFactory
+    this.samplerFactory = options.createSampler ?? (session => defaultSamplerFactory(session,
+      (role, outcome) => this.autoProfiles?.controller.observe(role, outcome)))
     if (options.createAutoProfiles || (typeof Worker !== 'undefined' && !options.createSampler)) {
       const autoOptions: ConstructorParameters<typeof OnlineAutoProfiles>[0] = {
         createWorker: createRecognitionWorker,
@@ -191,6 +192,7 @@ export class Session {
           this.notify()
         },
         changed: () => this.notify(),
+        monitor: role => this.ensureSampler()?.monitor?.(role),
       }
       this.autoProfiles = options.createAutoProfiles ? options.createAutoProfiles(autoOptions) : new OnlineAutoProfiles(autoOptions)
     }
@@ -220,6 +222,18 @@ export class Session {
           } else for (const outcome of buffered) onOutcome(...outcome)
         },
         snapshot: (role) => this.engine.snapshot(role),
+        checkScore: (request) => {
+          const sampler = this.ensureSampler()
+          return sampler?.checkScore?.(request) ?? Promise.resolve({
+            status: 'unknown' as const, reason: 'score-unavailable',
+            checkedAt: performance.now(), generation: '',
+          })
+        },
+        scoreGeneration: () => this.ensureSampler()?.scoreGeneration?.() ?? '',
+        playbackState: (role) => {
+          const video = this.engine.element(role)
+          return { paused: video.paused, playbackRate: video.playbackRate, source: video.currentSrc || video.src }
+        },
         hasProfile: () => this.autoProfiles !== null || SOURCE_ROLES.some((role) => this.profileMap[role] !== null),
         seek: (role, target) => {
           const capture = this.captureSeekMovement(role)
@@ -228,6 +242,11 @@ export class Session {
           return seek.done.finally(() => { if (this.automaticSeek === seek) this.automaticSeek = null })
         },
         setPlaybackRate: (role, rate) => { this.engine.element(role).playbackRate = rate },
+        setPaused: async (role, paused) => {
+          const video = this.engine.element(role)
+          if (paused) video.pause()
+          else await video.play()
+        },
         onAppliedRewind: rewind => {
           this.applied = { ...rewind }
           this.requestedOffset = offsetFromRewind(rewind)
@@ -259,7 +278,7 @@ export class Session {
       const result = this.autoSync.result
       if ((phase === 'done' || phase === 'failed') && result?.plan && result.appliedRewind && result.failure?.kind !== 'cancelled') {
         this.planValue = result.plan
-        this.requestedOffset = result.failure?.kind === 'buffer-limit' && result.estimate
+        this.requestedOffset = result.failure?.kind === 'buffer-limit' && result.rollback?.status !== 'restored' && result.estimate
           ? result.estimate.totalOffsetSeconds : offsetFromRewind(this.applied)
       }
       this.notify()
@@ -690,6 +709,8 @@ export class Session {
   // ---------------------------------------------------------------- playback
 
   async setPlaying(playing: boolean): Promise<void> {
+    // A manual playback decision takes ownership before restoring any temporary freeze.
+    if (this.autoSync.isRunning) this.cancelAutoSync()
     this.playingValue = playing
     await this.engine.setPlaying(playing)
     const state = this.engine.getState()
@@ -944,7 +965,7 @@ export class Session {
       // The controller seeked through the engine, so the engine is authoritative for
       // where the sources ended up.
       this.applied = { ...(result.appliedRewind ?? result.plan?.rewindAfter ?? this.applied) }
-      this.requestedOffset = result.failure?.kind === 'buffer-limit' && result.estimate
+      this.requestedOffset = result.failure?.kind === 'buffer-limit' && result.rollback?.status !== 'restored' && result.estimate
         ? result.estimate.totalOffsetSeconds : offsetFromRewind(this.applied)
       this.planValue = result.plan
     }
@@ -1313,13 +1334,14 @@ export class Session {
  * `video` resolves at sample time rather than being captured, so a source swapped
  * between runs is picked up without rebuilding the sampler.
  */
-function defaultSamplerFactory(session: Session): RecognitionSampler | null {
+function defaultSamplerFactory(session: Session, onOutcome: OutcomeSink): RecognitionSampler | null {
   if (typeof Worker === 'undefined') return null
   return new RecognitionSampler({
     createWorker: createRecognitionWorker,
     video: (role) => session.engine.element(role),
     profile: (role) => session.profileFor(role),
     clock: () => performance.now(),
+    onOutcome,
     onError: (role, message) => session.notice('warn', `${roleName(role)}识别线程错误：${message}`),
   })
 }

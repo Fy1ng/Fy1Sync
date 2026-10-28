@@ -216,8 +216,10 @@ export function AutoAlign(): React.ReactNode {
         {result && (
           <p className="menu-meta">
             {result.failure ? result.failure.message
-              : result.estimate ? `上次测得偏差 ${result.estimate.totalOffsetSeconds.toFixed(2)} 秒${result.divergence !== null ? `，复核误差 ${result.divergence.toFixed(2)} 秒` : ''}`
+              : result.estimate ? `上次测得偏差 ${result.estimate.totalOffsetSeconds.toFixed(2)} 秒${result.scoreCheck?.status === 'pass' ? '，比分一致' : ''}${result.divergence !== null ? `，复核误差 ${result.divergence.toFixed(2)} 秒` : ''}`
                 : '上次未能测得'}
+            {result.failure && result.estimate ? `；上次测得偏差 ${result.estimate.totalOffsetSeconds.toFixed(2)} 秒` : ''}
+            {result.rollback?.playbackRestored === false ? '，播放未恢复，请手动继续播放' : ''}
           </p>
         )}
       </Popover>
@@ -228,7 +230,9 @@ export function AutoAlign(): React.ReactNode {
 const PHASE: Record<string, string> = {
   sampling: '识别倒计时…',
   estimating: '计算中…',
+  'checking-content': '核对比分…',
   applying: '调整中…',
+  'rolling-back': '撤回调整…',
   verifying: '复核中…',
 }
 

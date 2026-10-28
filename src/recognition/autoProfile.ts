@@ -205,6 +205,8 @@ export class OnlineAutoProfiles {
     profile: (role: SourceRole) => RecognitionProfile | null
     use: AutoProfileDeps['use']
     changed: () => void
+    /** Reuse the sampler's scoreboard strip instead of starting another clock readback. */
+    monitor?: (role: SourceRole) => (() => void) | void
   }) {
     this.controller = new AutoProfileController({
       client: role => this.client(role), capture: (role, signal, roi) => this.capture(role, signal, roi),
@@ -214,6 +216,11 @@ export class OnlineAutoProfiles {
   }
   monitor(role: SourceRole): void {
     this.monitors.get(role)?.()
+    if (this.options.monitor) {
+      const stop = this.options.monitor(role)
+      if (stop) this.monitors.set(role, stop)
+      return
+    }
     const video = this.options.video(role)
     const profile = this.options.profile(role)
     if (!video || !profile || this.disposed) return

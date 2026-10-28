@@ -12,6 +12,8 @@ import type { RecognitionProfile, RoiRect } from '../core/profileSchema'
 import type { GlyphBox } from '../core/segmentation'
 import type { GlyphMatch } from '../core/templateMatch'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
+import type { Rect } from '../core/imageOps'
+import type { ScoreReading } from './score'
 
 export interface ConfigureMessage {
   type: 'configure'
@@ -34,6 +36,15 @@ export interface FrameMessage {
   pixels: ArrayBuffer
   /** Debug payloads are large; the editor asks for them, auto sync does not. */
   wantDebug: boolean
+  /** Present only when this is one native clock-and-scores readback. */
+  score?: {
+    clockRect: Rect
+    source: string
+    generation: number
+    width: number
+    height: number
+    segment: number
+  }
 }
 
 export interface CancelMessage {
@@ -163,6 +174,7 @@ export interface ResultMessage {
   tickMoment?: TickMoment
   /** Explicit capability result when the recognition fallback has no pixel detector. */
   tickMomentStatus?: 'supported' | 'unsupported'
+  score?: ScoreReading
 }
 
 export interface WorkerErrorMessage {

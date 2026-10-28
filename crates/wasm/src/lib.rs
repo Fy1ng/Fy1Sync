@@ -122,6 +122,17 @@ pub fn recognize_auto(
         .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
+/// Read labeled score integers from the shared native clock/score strip.
+#[wasm_bindgen]
+pub fn recognize_score(
+    pixels: &[u8], width: usize, height: usize, clock_roi_json: &str,
+) -> Result<String, JsValue> {
+    let roi: stream_syncer_core::RoiRect = serde_json::from_str(clock_roi_json)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    serde_json::to_string(&stream_syncer_core::recognize_score(pixels, width, height, &roi))
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 #[wasm_bindgen]
 impl AutoClockSession {
     #[wasm_bindgen(constructor)]
@@ -245,6 +256,15 @@ mod tests {
             super::dispatch("parseCountdown", "[\"1:05\"]").unwrap(),
             "65.0"
         );
+    }
+    #[test]
+    fn score_json_keeps_unknown_sides_nullable() {
+        let result = super::recognize_score(&vec![0; 480 * 140 * 4], 480, 140,
+            r#"{"x":0.4166666667,"y":0.25,"w":0.1666666667,"h":0.3142857143}"#).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(value["left"].is_null());
+        assert!(value["right"].is_null());
+        assert_eq!(value["reason"], "score-unreadable");
     }
 }
 

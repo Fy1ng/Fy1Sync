@@ -29,13 +29,16 @@ import type {
 } from '../core/types'
 import { SOURCE_ROLES } from '../core/types'
 import { rateNudgeAction } from './rateNudge'
+import type { ScoreGuardRequest, ScoreGuardResult } from '../recognition/score'
 
 export type AutoSyncPhase =
   | 'idle'
   | 'sampling'
   | 'estimating'
+  | 'checking-content'
   | 'applying'
   | 'verifying'
+  | 'rolling-back'
   | 'done'
   | 'failed'
 
@@ -49,6 +52,21 @@ export type AutoSyncFailure =
   | { kind: 'rate-unavailable'; message: string }
   | { kind: 'cancelled'; message: string }
   | { kind: 'unauthorized'; message: string }
+  | { kind: 'score-mismatch' | 'score-unknown' | 'score-transition'; message: string }
+
+export interface AutoSyncRollback {
+  status: 'restored' | 'failed' | 'skipped'
+  positions: Partial<Record<SourceRole, { target: number; actual: number | null; restored: boolean }>>
+  reason?: string
+  playbackRestored?: boolean
+}
+
+export interface AutoSyncPlaybackState {
+  paused: boolean
+  playbackRate: number
+  /** Source identity, used to avoid seeking a replacement source during rollback. */
+  source: string
+}
 
 export interface AutoSyncRunResult {
   phase: 'done' | 'failed'
@@ -59,6 +77,8 @@ export interface AutoSyncRunResult {
   applied: boolean
   /** Actual rewind carried after any full or partial application. */
   appliedRewind?: AppliedRewind
+  scoreCheck?: ScoreGuardResult
+  rollback?: AutoSyncRollback
   failure: AutoSyncFailure | null
   /** Divergence measured after applying, in seconds. */
   divergence: number | null
@@ -66,6 +86,18 @@ export interface AutoSyncRunResult {
   jumps: Record<SourceRole, number>
   startedAt: number
   finishedAt: number
+}
+
+interface RunFailureExtra {
+  samples?: Record<SourceRole, number>
+  jumps?: Record<SourceRole, ClockJumpEvent[]>
+  estimate?: OffsetEstimate
+  plan?: OffsetPlan
+  applied?: boolean
+  appliedRewind?: AppliedRewind
+  divergence?: number
+  scoreCheck?: ScoreGuardResult
+  rollback?: AutoSyncRollback
 }
 
 export interface AutoSyncDeps {
@@ -90,6 +122,11 @@ export interface AutoSyncDeps {
   setPlaybackRate?: (role: SourceRole, rate: number) => void
   /** Keep session bookkeeping current even for scheduled or interrupted runs. */
   onAppliedRewind?: (rewind: AppliedRewind) => void
+  checkScore?: (request: ScoreGuardRequest) => Promise<ScoreGuardResult>
+  scoreGeneration?: () => string
+  playbackState?: (role: SourceRole) => AutoSyncPlaybackState | null
+  /** Freeze both sources while a failed adjustment is restored, then resume their old state. */
+  setPaused?: (role: SourceRole, paused: boolean) => void | Promise<void>
   now?: () => number
   sleep?: (ms: number) => Promise<void>
   estimateOptions?: EstimateOptions
@@ -107,6 +144,8 @@ export interface AutoSyncOptions {
   rateDeadbandSeconds?: number
   /** A stalled/paused pair must fail rather than claim elapsed time corrected it. */
   rateTimeoutSeconds?: number
+  /** A finite budget for score stability/history; defaults to the residual plus margin. */
+  scoreWaitSeconds?: number
   jumpOptions?: ClockJumpOptions
 }
 
@@ -133,6 +172,8 @@ export class AutoSyncController {
   private readonly now: () => number
   private readonly sleep: (ms: number) => Promise<void>
   private captureRateProgress: (() => void) | null = null
+  private readonly alteredRates = new Map<SourceRole, number>()
+  private readonly ownedPauses = new Map<SourceRole, AutoSyncPlaybackState>()
 
   constructor(
     private readonly deps: AutoSyncDeps,
@@ -187,6 +228,9 @@ export class AutoSyncController {
       this.runToken += 1
       if (revokeAuthorization) this.authorized = false
       this.restorePlaybackRates()
+      // Release only our own pauses immediately. A caller's manual playback action
+      // runs after cancel() returns and must keep the final say over playback.
+      void this.restorePausedPlayback()
       if (this.running) this.setPhase('idle')
     }
   }
@@ -272,10 +316,56 @@ export class AutoSyncController {
     let planValue: OffsetPlan | undefined
     let appliedValue: AppliedRewind | undefined
     let applicationStarted = false
+    let scoreCheck: ScoreGuardResult | undefined
+    let initialSnapshots: Partial<Record<SourceRole, MediaSnapshot>> = {}
+    const initialStates: Partial<Record<SourceRole, AutoSyncPlaybackState>> = {}
+    const fail = async (
+      _startedAt: number,
+      _dryRun: boolean,
+      failure: AutoSyncFailure,
+      extra: RunFailureExtra = {},
+    ): Promise<AutoSyncRunResult> => {
+      if (applicationStarted && !this.stale(token) && failure.kind !== 'cancelled') {
+        // Keep pause ownership until rollback finishes. If a source is replaced,
+        // cleanup must still release our pause on the unaffected peer.
+        const ratesRestored = this.restorePlaybackRates()
+        const restored = await this.rollback(initialSnapshots, initialStates, startedAt, applied, token)
+        if (!ratesRestored && restored.rollback.status === 'restored') {
+          restored.rollback.status = 'failed'
+          restored.rollback.reason = 'rate-restore-failed'
+        }
+        extra.rollback = restored.rollback
+        if (restored.rewind) {
+          appliedValue = restored.rewind
+          extra.appliedRewind = restored.rewind
+          try {
+            this.deps.onAppliedRewind?.({ ...restored.rewind })
+          } catch {
+            restored.rollback.status = 'failed'
+            restored.rollback.reason = 'bookkeeping-failed'
+          }
+        }
+        if (restored.rollback.status === 'restored') {
+          extra.applied = false
+          failure = { ...failure, message: `${failure.message}，已撤回调整` }
+        } else {
+          failure = { ...failure, message: `${failure.message}，撤回未完成，请手动对齐` }
+        }
+      }
+      if (!this.stale(token)) await this.restorePausedPlayback()
+      return this.fail(startedAt, dryRun, failure, { ...extra, ...(scoreCheck ? { scoreCheck } : {}) })
+    }
 
     try {
+      initialSnapshots = this.collectSnapshots()
+      for (const role of SOURCE_ROLES) {
+        const snapshot = initialSnapshots[role]
+        if (snapshot) initialSnapshots[role] = { ...snapshot, timebase: { ...snapshot.timebase } }
+        const state = this.deps.playbackState?.(role)
+        if (state) initialStates[role] = { ...state }
+      }
       if (this.deps.hasProfile && !this.deps.hasProfile()) {
-        return this.fail(startedAt, dryRun, {
+        return await fail(startedAt, dryRun, {
           kind: 'not-ready',
           message: '还没有选择识别场景，先在侧栏选一个再识别倒计时',
         })
@@ -285,7 +375,7 @@ export class AutoSyncController {
       for (const role of SOURCE_ROLES) {
         const snapshot = this.deps.snapshot(role)
         if (!snapshot?.ready) {
-          return this.fail(startedAt, dryRun, {
+          return await fail(startedAt, dryRun, {
             kind: 'not-ready',
             message: role === 'official' ? '官方源尚未就绪' : '解说源尚未就绪',
           })
@@ -310,14 +400,14 @@ export class AutoSyncController {
         abortView,
       )
       if (this.stale(token)) {
-        return this.fail(startedAt, dryRun, { kind: 'cancelled', message: '自动同步已取消' }, {
+        return await fail(startedAt, dryRun, { kind: 'cancelled', message: '自动同步已取消' }, {
           samples,
           jumps,
         })
       }
 
       if (samples.official === 0 || samples.commentary === 0) {
-        return this.fail(
+        return await fail(
           startedAt,
           dryRun,
           { kind: 'no-samples', message: '识别窗口内没有取到画面' },
@@ -331,7 +421,7 @@ export class AutoSyncController {
         appliedOffsetSeconds: offsetFromRewind(applied),
       })
       if (estimate.status === 'rejected') {
-        return this.fail(
+        return await fail(
           startedAt,
           dryRun,
           {
@@ -352,6 +442,22 @@ export class AutoSyncController {
       })
       planValue = plan
 
+      this.setPhase('checking-content')
+      scoreCheck = await this.checkContent(estimate.residualSeconds, token, abortView)
+      if (this.stale(token)) {
+        return await fail(startedAt, dryRun, { kind: 'cancelled', message: '自动同步已取消' }, {
+          samples, jumps, estimate, plan,
+        })
+      }
+      if (scoreCheck.status !== 'pass') {
+        return await fail(startedAt, dryRun, scoreFailure(scoreCheck), { samples, jumps, estimate, plan })
+      }
+      // Waiting for the lagging source can take seconds. Only the current playheads
+      // may determine the targets of the adjustment that follows.
+      snapshots = this.collectSnapshots()
+      plan = planOffsetChange({ nextOffset: estimate.totalOffsetSeconds, applied, snapshots })
+      planValue = plan
+
       if (dryRun) {
         return this.finish({
           phase: 'done',
@@ -359,6 +465,7 @@ export class AutoSyncController {
           estimate,
           plan,
           applied: false,
+          scoreCheck,
           failure: null,
           divergence: null,
           samples,
@@ -369,7 +476,11 @@ export class AutoSyncController {
       }
 
       this.setPhase('applying')
-      applicationStarted = true
+      if (this.stale(token) || (this.deps.scoreGeneration && this.deps.scoreGeneration() !== scoreCheck.generation)) {
+        return await fail(startedAt, dryRun, { kind: 'cancelled', message: '画面已变化，请重新对齐' }, {
+          samples, jumps, estimate, plan,
+        })
+      }
       appliedValue = { ...applied }
       const publishRewind = (rewind: AppliedRewind): void => {
         appliedValue = rewind
@@ -381,19 +492,20 @@ export class AutoSyncController {
       let needsSeek = Math.abs(residual) > threshold
       if (!needsSeek && Math.abs(residual) > deadband) {
         if (!this.deps.setPlaybackRate) {
-          return this.fail(startedAt, dryRun, {
+          return await fail(startedAt, dryRun, {
             kind: 'rate-unavailable',
             message: '播放器暂不支持小幅速率校正',
           }, { samples, jumps, estimate, plan })
         }
+        applicationStarted = true
         const nudge = await this.applyRateNudge(residual, snapshots, applied, token, publishRewind)
         if (this.stale(token)) {
-          return this.fail(startedAt, dryRun, { kind: 'cancelled', message: '自动同步已取消' }, {
+          return await fail(startedAt, dryRun, { kind: 'cancelled', message: '自动同步已取消' }, {
             samples, jumps, estimate, plan, applied: true, appliedRewind: appliedValue,
           })
         }
         if (nudge.kind === 'failed') {
-          return this.fail(startedAt, dryRun, {
+          return await fail(startedAt, dryRun, {
             kind: 'verify-failed',
             message: '播放进度未能收敛, 请检查暂停或缓冲状态',
             divergence: Math.abs(nudge.error),
@@ -403,6 +515,33 @@ export class AutoSyncController {
         if (needsSeek) {
           // Drift can grow while nudging. Re-plan from the observed media positions
           // and actual rewind, so handing over to seek never re-applies old work.
+          snapshots = this.collectSnapshots()
+          plan = planOffsetChange({ nextOffset: estimate.totalOffsetSeconds, applied: appliedValue, snapshots })
+          planValue = plan
+        }
+      }
+      if (needsSeek && this.deps.setPaused && this.deps.playbackState) {
+        const states = this.playbackStates()
+        if (SOURCE_ROLES.every(role => states[role])) {
+          for (const role of SOURCE_ROLES) {
+            const state = states[role]!
+            if (this.stale(token) || SOURCE_ROLES.some(entry => this.deps.playbackState?.(entry)?.source !== states[entry]?.source)) {
+              return await fail(startedAt, dryRun, { kind: 'cancelled', message: '画面已变化，请重新对齐' }, {
+                samples, jumps, estimate, plan, applied: applicationStarted, appliedRewind: appliedValue,
+              })
+            }
+            if (!state.paused) {
+              this.ownedPauses.set(role, state)
+              await this.deps.setPaused(role, true)
+            }
+          }
+          if (this.stale(token) || SOURCE_ROLES.some(role => this.deps.playbackState?.(role)?.source !== states[role]?.source)) {
+            return await fail(startedAt, dryRun, { kind: 'cancelled', message: '画面已变化，请重新对齐' }, {
+              samples, jumps, estimate, plan, applied: applicationStarted, appliedRewind: appliedValue,
+            })
+          }
+          // A 4K seek can spend seconds decoding. Freeze both sources first so the
+          // untouched peer does not advance while the moved source waits for a frame.
           snapshots = this.collectSnapshots()
           plan = planOffsetChange({ nextOffset: estimate.totalOffsetSeconds, applied: appliedValue, snapshots })
           planValue = plan
@@ -423,9 +562,10 @@ export class AutoSyncController {
           plan.limited = true
           plan.limitReason = currentPlan.limitReason
         }
+        applicationStarted = true
         const confirmed = await this.deps.seek(seek.role, currentSeek.to)
         if (this.stale(token)) {
-          return this.fail(startedAt, dryRun, { kind: 'cancelled', message: '自动同步已取消' }, {
+          return await fail(startedAt, dryRun, { kind: 'cancelled', message: '自动同步已取消' }, {
             samples, jumps, estimate, plan, applied: true, appliedRewind: appliedValue,
           })
         }
@@ -443,7 +583,7 @@ export class AutoSyncController {
           })
         }
         if (!confirmed) {
-          return this.fail(
+          return await fail(
             startedAt,
             dryRun,
             {
@@ -457,16 +597,32 @@ export class AutoSyncController {
       // A confirmed clamped seek only proves that the reachable part was applied.
       // It must not pass verification against that shortened target as success.
       if (needsSeek && plan.limited) {
-        return this.fail(startedAt, dryRun, {
+        return await fail(startedAt, dryRun, {
           kind: plan.limitReason === 'buffer-limit' ? 'buffer-limit' : 'not-ready',
           message: plan.limitReason === 'buffer-limit' ? '缓存长度不足, 偏移未完全应用' : '有源尚未就绪, 偏移未完全应用',
         }, { samples, jumps, estimate, plan, applied: true, appliedRewind: appliedValue })
       }
 
+      if (!this.restorePlaybackRates()) {
+        return await fail(startedAt, dryRun, {
+          kind: 'verify-failed', message: '播放速率未能恢复', divergence: Number.POSITIVE_INFINITY,
+        }, { samples, jumps, estimate, plan, applied: applicationStarted, appliedRewind: appliedValue })
+      }
+      const playbackRestored = await this.restorePausedPlayback()
+      if (this.stale(token)) {
+        return await fail(startedAt, dryRun, { kind: 'cancelled', message: '自动同步已取消' }, {
+          samples, jumps, estimate, plan, applied: applicationStarted, appliedRewind: appliedValue,
+        })
+      }
+      if (!playbackRestored) {
+        return await fail(startedAt, dryRun, {
+          kind: 'verify-failed', message: '播放状态未能恢复', divergence: Number.POSITIVE_INFINITY,
+        }, { samples, jumps, estimate, plan, applied: applicationStarted, appliedRewind: appliedValue })
+      }
       this.setPhase('verifying')
       await this.sleep((this.options.settleSeconds ?? DEFAULTS.settleSeconds) * 1000)
       if (this.stale(token)) {
-        return this.fail(startedAt, dryRun, { kind: 'cancelled', message: '自动同步已取消' }, {
+        return await fail(startedAt, dryRun, { kind: 'cancelled', message: '自动同步已取消' }, {
           samples,
           jumps,
           estimate,
@@ -481,7 +637,7 @@ export class AutoSyncController {
         : this.measureRateDivergence(residual, snapshots)
       const tolerance = this.options.maxDivergenceSeconds ?? DEFAULTS.maxDivergenceSeconds
       if (divergence > tolerance) {
-        return this.fail(
+        return await fail(
           startedAt,
           dryRun,
           {
@@ -500,6 +656,7 @@ export class AutoSyncController {
         plan,
         applied: true,
         appliedRewind: appliedValue,
+        scoreCheck,
         failure: null,
         divergence,
         samples,
@@ -508,7 +665,7 @@ export class AutoSyncController {
         finishedAt: this.now(),
       })
     } catch (error) {
-      return this.fail(
+      return await fail(
         startedAt,
         dryRun,
         {
@@ -519,18 +676,188 @@ export class AutoSyncController {
       )
     } finally {
       this.restorePlaybackRates()
+      if (!this.stale(token)) await this.restorePausedPlayback()
+      this.alteredRates.clear()
       this.running = false
     }
   }
 
-  private restorePlaybackRates(): void {
+  private playbackStates(): Partial<Record<SourceRole, AutoSyncPlaybackState>> {
+    const states: Partial<Record<SourceRole, AutoSyncPlaybackState>> = {}
     for (const role of SOURCE_ROLES) {
+      const state = this.deps.playbackState?.(role)
+      if (state) states[role] = { ...state }
+    }
+    return states
+  }
+
+  private async restorePausedPlayback(): Promise<boolean> {
+    const pending: Array<Promise<unknown>> = []
+    let restored = true
+    // Invoke every release before awaiting any play() promise. Cancellation callers
+    // can then immediately apply a new manual pause without a delayed second write.
+    for (const [role, state] of this.ownedPauses) {
+      this.ownedPauses.delete(role)
+      const current = this.deps.playbackState?.(role)
+      if (!current || current.source !== state.source || current.paused === state.paused) continue
       try {
-        this.deps.setPlaybackRate?.(role, 1)
+        pending.push(Promise.resolve(this.deps.setPaused?.(role, state.paused)))
       } catch {
-        // A removed media element must not prevent restoring the other source.
+        restored = false
       }
     }
+    const results = await Promise.allSettled(pending)
+    return restored && results.every(result => result.status === 'fulfilled')
+  }
+
+  private async checkContent(
+    residualSeconds: number,
+    token: number,
+    signal: { aborted: boolean },
+  ): Promise<ScoreGuardResult> {
+    const generation = this.deps.scoreGeneration?.() ?? ''
+    const unknown = (reason: string): ScoreGuardResult => ({
+      status: 'unknown', reason, checkedAt: this.now(), generation,
+    })
+    if (!this.deps.checkScore) return unknown('unsupported')
+    const before = this.collectSnapshots()
+    const startedAt = this.now()
+    const budgetMs = Math.max(0, this.options.scoreWaitSeconds ?? Math.min(65, Math.max(8, Math.abs(residualSeconds) + 5))) * 1000
+    const retryMs = 250
+    const maxAttempts = Math.max(1, Math.ceil(budgetMs / retryMs) + 1)
+    let result = unknown('history-insufficient')
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      result = await this.deps.checkScore({ residualSeconds, signal })
+      if (this.stale(token)) return unknown('cancelled')
+      if (this.deps.scoreGeneration && (this.deps.scoreGeneration() !== generation || result.generation !== generation)) {
+        return unknown('generation-changed')
+      }
+      const after = this.collectSnapshots()
+      if (!before.official || !before.commentary || !after.official?.ready || !after.commentary?.ready) {
+        return unknown('not-ready')
+      }
+      const drift = (after.official.currentTime - before.official.currentTime) -
+        (after.commentary.currentTime - before.commentary.currentTime)
+      if (Math.abs(drift) > (this.options.maxDivergenceSeconds ?? DEFAULTS.maxDivergenceSeconds)) {
+        return unknown('measurement-stale')
+      }
+      if (result.status === 'pass' || result.status === 'mismatch') return result
+      const canWait = result.status === 'transition' || result.reason === 'history-insufficient'
+      if (!canWait || this.now() - startedAt >= budgetMs || attempt === maxAttempts - 1) return result
+      await this.sleep(Math.min(retryMs, Math.max(0, budgetMs - (this.now() - startedAt))))
+      if (this.stale(token)) return unknown('cancelled')
+    }
+    return result
+  }
+
+  private async rollback(
+    initial: Partial<Record<SourceRole, MediaSnapshot>>,
+    states: Partial<Record<SourceRole, AutoSyncPlaybackState>>,
+    startedAt: number,
+    applied: AppliedRewind,
+    token: number,
+  ): Promise<{ rollback: AutoSyncRollback; rewind?: AppliedRewind }> {
+    const positions: AutoSyncRollback['positions'] = {}
+    for (const role of SOURCE_ROLES) {
+      const state = states[role]
+      if (this.stale(token) || (state && this.deps.playbackState?.(role)?.source !== state.source)) {
+        return { rollback: { status: 'skipped', positions, reason: 'source-changed-or-cancelled' } }
+      }
+    }
+    this.setPhase('rolling-back')
+    const pausedRoles: SourceRole[] = []
+    const restoreAt = this.now()
+    let completion: AutoSyncRollback | undefined
+    try {
+      if (this.deps.setPaused && SOURCE_ROLES.every(role => states[role])) {
+        for (const role of SOURCE_ROLES) {
+          if (this.stale(token) || this.deps.playbackState?.(role)?.source !== states[role]?.source) {
+            return { rollback: { status: 'skipped', positions, reason: 'source-changed-or-cancelled' } }
+          }
+          // Remember the role before invoking a dependency that may pause and throw.
+          pausedRoles.push(role)
+          if (!this.deps.playbackState?.(role)?.paused) await this.deps.setPaused(role, true)
+        }
+      }
+      for (const role of SOURCE_ROLES) {
+        if (this.stale(token)) return { rollback: { status: 'skipped', positions, reason: 'cancelled' } }
+        const anchor = initial[role]
+        const state = states[role]
+        const snapshot = this.deps.snapshot(role)
+        if (!anchor || !snapshot?.ready || (state && this.deps.playbackState?.(role)?.source !== state.source)) {
+          positions[role] = { target: anchor?.currentTime ?? 0, actual: snapshot?.currentTime ?? null, restored: false }
+          continue
+        }
+        // Both sources share one frozen restoration instant. A slow first seek must
+        // not leave the peer playing and create a second, unintended adjustment.
+        const targetAt = pausedRoles.length === SOURCE_ROLES.length ? restoreAt : this.now()
+        const elapsed = state && !state.paused ? Math.max(0, targetAt - startedAt) / 1000 * state.playbackRate : 0
+        const target = round(anchor.currentTime + elapsed)
+        let confirmed = Math.abs(snapshot.currentTime - target) <= 0.05
+        if (!confirmed) {
+          try {
+            confirmed = await this.deps.seek(role, target)
+          } catch {
+            confirmed = false
+          }
+        }
+        if (this.stale(token) || (state && this.deps.playbackState?.(role)?.source !== state.source)) {
+          return { rollback: { status: 'skipped', positions, reason: 'source-changed-or-cancelled' } }
+        }
+        const actual = this.deps.snapshot(role)?.currentTime ?? null
+        positions[role] = { target, actual, restored: confirmed && actual !== null && Math.abs(actual - target) <= 0.05 }
+      }
+      if (pausedRoles.length === SOURCE_ROLES.length) {
+        for (const role of SOURCE_ROLES) {
+          const position = positions[role]
+          if (!position) continue
+          position.actual = this.deps.snapshot(role)?.currentTime ?? null
+          position.restored = position.restored && position.actual !== null && Math.abs(position.actual - position.target) <= 0.05
+        }
+      }
+      const restored = SOURCE_ROLES.every(role => positions[role]?.restored)
+      const rewind = { ...applied }
+      if (!restored) {
+        for (const role of SOURCE_ROLES) {
+          const position = positions[role]
+          if (position?.actual !== null && position?.actual !== undefined) {
+            rewind[role] = round(Math.max(0, applied[role] + position.target - position.actual))
+          }
+        }
+      }
+      completion = { status: restored ? 'restored' : 'failed', positions, playbackRestored: true }
+      return { rollback: completion, rewind }
+    } catch {
+      return { rollback: { status: 'failed', positions, reason: 'pause-failed' } }
+    } finally {
+      for (const role of pausedRoles) {
+        const state = states[role]
+        if (state && !this.stale(token) && this.deps.playbackState?.(role)?.source === state.source) {
+          try {
+            await this.deps.setPaused?.(role, state.paused)
+          } catch {
+            if (completion) {
+              completion.playbackRestored = false
+              completion.reason = 'playback-resume-failed'
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private restorePlaybackRates(): boolean {
+    let restored = true
+    for (const [role, rate] of this.alteredRates) {
+      try {
+        this.deps.setPlaybackRate?.(role, rate)
+        this.alteredRates.delete(role)
+      } catch {
+        // A removed media element must not prevent restoring the other source.
+        restored = false
+      }
+    }
+    return restored
   }
 
   private async applyRateNudge(
@@ -578,6 +905,9 @@ export class AutoSyncController {
         })
         if (action.kind !== 'rate') return { kind: action.kind, error }
         if (poll === maxPolls) return { kind: 'failed', error }
+        if (!this.alteredRates.has(action.role)) {
+          this.alteredRates.set(action.role, this.deps.playbackState?.(action.role)?.playbackRate ?? 1)
+        }
         this.deps.setPlaybackRate?.(action.role, action.rate)
         await this.sleep(pollMs)
       }
@@ -654,15 +984,7 @@ export class AutoSyncController {
     startedAt: number,
     dryRun: boolean,
     failure: AutoSyncFailure,
-    extra: {
-      samples?: Record<SourceRole, number>
-      jumps?: Record<SourceRole, ClockJumpEvent[]>
-      estimate?: OffsetEstimate
-      plan?: OffsetPlan
-      applied?: boolean
-      appliedRewind?: AppliedRewind
-      divergence?: number
-    } = {},
+    extra: RunFailureExtra = {},
   ): AutoSyncRunResult {
     return this.finish({
       phase: 'failed',
@@ -671,6 +993,8 @@ export class AutoSyncController {
       plan: extra.plan ?? null,
       applied: extra.applied ?? false,
       ...(extra.appliedRewind ? { appliedRewind: extra.appliedRewind } : {}),
+      ...(extra.scoreCheck ? { scoreCheck: extra.scoreCheck } : {}),
+      ...(extra.rollback ? { rollback: extra.rollback } : {}),
       failure,
       divergence: extra.divergence ?? null,
       samples: extra.samples ?? { official: 0, commentary: 0 },
@@ -696,12 +1020,26 @@ function round(value: number): number {
   return Math.round(value * 1000) / 1000
 }
 
+function scoreFailure(result: ScoreGuardResult): AutoSyncFailure {
+  if (result.status === 'mismatch') {
+    const pair = (reading: ScoreGuardResult['official']): string => `${reading?.left ?? '?'}:${reading?.right ?? '?'}`
+    return {
+      kind: 'score-mismatch',
+      message: `两路比分不同（官方 ${pair(result.official)}，解说 ${pair(result.commentary)}），未调整`,
+    }
+  }
+  if (result.status === 'transition') return { kind: 'score-transition', message: '正处在回合交界，稍后再试' }
+  return { kind: 'score-unknown', message: '没读到比分，未调整，请手动对齐' }
+}
+
 export const AUTO_SYNC_PHASE_TEXT: Record<AutoSyncPhase, string> = {
   idle: '待机',
   sampling: '正在读取双方倒计时',
   estimating: '正在计算延迟差',
+  'checking-content': '正在核对两路比分',
   applying: '正在调整播放位置',
   verifying: '正在校验结果',
+  'rolling-back': '正在撤回调整',
   done: '已完成',
   failed: '未完成',
 }

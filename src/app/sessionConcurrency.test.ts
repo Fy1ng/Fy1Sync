@@ -102,7 +102,9 @@ describe('serialized manual offsets', () => {
   })
 
   it('accounts for a cancelled automatic seek before starting manual adjustment', async () => {
-    const sampler = { dispose() {}, async sample(_window: number, emit: (role: SourceRole, outcome: RecognitionOutcome) => void) {
+    const sampler = { dispose() {}, scoreGeneration: () => 'test',
+      async checkScore() { return { status: 'pass', checkedAt: 0, generation: 'test' } },
+      async sample(_window: number, emit: (role: SourceRole, outcome: RecognitionOutcome) => void) {
       for (const role of ['official', 'commentary'] as const) for (let index = 0; index < 3; index++) for (let stable = 0; stable < 2; stable++) {
         emit(role, { status: 'success', reading: { text: `0:${59 - index}`, seconds: 59 - index,
           scores: [0.95], confidence: 0.95, mediaTime: 100 + index + stable / 30,

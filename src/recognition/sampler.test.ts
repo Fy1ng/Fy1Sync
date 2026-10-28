@@ -180,6 +180,7 @@ function harness(options: {
   const loop = manualLoop()
   const workers: Array<ReturnType<typeof fakeWorker>> = []
   const shared = profileFor()
+  const videos = { official: fakeVideo(), commentary: fakeVideo() }
   const outcomes: Array<{ role: SourceRole; outcome: RecognitionOutcome }> = []
 
   const sampler = new RecognitionSampler({
@@ -191,7 +192,7 @@ function harness(options: {
       workers.push(created)
       return created.worker
     },
-    video: options.video ?? (() => fakeVideo()),
+    video: options.video ?? (role => videos[role]),
     profile: options.profile ?? (() => shared),
     frameLoop: loop.frameLoop,
     now: () => Date.now(),
@@ -201,6 +202,29 @@ function harness(options: {
 }
 
 describe('RecognitionSampler', () => {
+  it.each(['pause', 'seek', 'rate', 'source', 'dimensions'] as const)('invalidates numeric score evidence after %s', async kind => {
+    const video = fakeVideo()
+    const bench = harness({ video: role => role === 'official' ? video : null,
+      metadata: frame => frame.score ? { score: {
+        ...frame.score, left: 9, right: 8, leftQuality: .95, rightQuality: .95, reason: null,
+        mediaTime: frame.mediaTime, wallTime: frame.wallTime, frameIndex: frame.frameIndex,
+      } } : {},
+    })
+    try {
+      const run = bench.sampler.sample(20, () => {}, { aborted: false })
+      await bench.loop.tick(10)
+      await run
+      expect(bench.sampler.scoreReadings('official')).toHaveLength(1)
+      const before = bench.sampler.scoreGeneration()
+      if (kind === 'pause') Object.assign(video, { paused: true })
+      if (kind === 'seek') Object.assign(video, { seeking: true })
+      if (kind === 'rate') video.playbackRate = 1.03
+      if (kind === 'source') video.src = 'replacement.mp4'
+      if (kind === 'dimensions') Object.assign(video, { videoWidth: 3840, videoHeight: 2160 })
+      expect(bench.sampler.scoreGeneration()).not.toBe(before)
+      expect(bench.sampler.scoreReadings('official')).toHaveLength(0)
+    } finally { bench.sampler.dispose(); bench.restore() }
+  })
   it('gives each role its own worker, so neither invalidates the other', async () => {
     const bench = harness()
     try {
@@ -247,13 +271,14 @@ describe('RecognitionSampler', () => {
     const loop = manualLoop()
     const workers: Array<ReturnType<typeof fakeWorker>> = []
     let current = profileFor({ name: 'first' })
+    const video = fakeVideo()
     const sampler = new RecognitionSampler({
       createWorker: () => {
         const created = fakeWorker((frame) => success(30, frame.mediaTime, frame.wallTime))
         workers.push(created)
         return created.worker
       },
-      video: (role) => (role === 'official' ? fakeVideo() : null),
+      video: (role) => (role === 'official' ? video : null),
       profile: (role) => (role === 'official' ? current : null),
       frameLoop: loop.frameLoop as never,
     })
@@ -272,8 +297,9 @@ describe('RecognitionSampler', () => {
   })
 
   it('samples only the roles that have both a video and a profile', async () => {
+    const video = fakeVideo()
     const bench = harness({
-      video: (role) => (role === 'commentary' ? fakeVideo() : null),
+      video: (role) => (role === 'commentary' ? video : null),
     })
     try {
       const signal = { aborted: false }
@@ -537,6 +563,8 @@ describe('RecognitionSampler', () => {
     const loop = manualLoop()
     const errors: Array<{ role: SourceRole; message: string }> = []
     const listeners = new Set<(event: MessageEvent<WorkerResponse>) => void>()
+    const video = fakeVideo()
+    const profile = profileFor()
     const sampler = new RecognitionSampler({
       createWorker: () => ({
         postMessage(message) {
@@ -558,8 +586,8 @@ describe('RecognitionSampler', () => {
           if (type === 'message') listeners.delete(listener as (event: MessageEvent<WorkerResponse>) => void)
         },
       }),
-      video: (role) => (role === 'official' ? fakeVideo() : null),
-      profile: (role) => (role === 'official' ? profileFor() : null),
+      video: (role) => (role === 'official' ? video : null),
+      profile: (role) => (role === 'official' ? profile : null),
       frameLoop: loop.frameLoop as never,
       onError: (role, message) => errors.push({ role, message }),
     })
@@ -644,6 +672,7 @@ describe('RecognitionSampler as AutoSyncDeps.sample', () => {
     const restore = stubGrabber()
     const loop = manualLoop()
     const shared = profileFor()
+    const videos = { official: fakeVideo(), commentary: fakeVideo() }
     const sampler = new RecognitionSampler({
       createWorker: () =>
         fakeWorker((frame) => {
@@ -651,7 +680,7 @@ describe('RecognitionSampler as AutoSyncDeps.sample', () => {
           const seconds = Math.max(0, 30 - Math.floor(frame.mediaTime - offset))
           return success(seconds, frame.mediaTime, frame.wallTime)
         }).worker,
-      video: () => fakeVideo(),
+      video: role => videos[role],
       profile: () => shared,
       frameLoop: loop.frameLoop as never,
     })
