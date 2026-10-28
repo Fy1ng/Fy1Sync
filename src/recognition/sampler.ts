@@ -96,6 +96,7 @@ export class RecognitionSampler {
   }
   private sink: OutcomeSink | null = null
   private sampling = false
+  private sampleGeneration = 0
   private disposed = false
   private readonly scores = new ScoreHistory()
 
@@ -167,6 +168,13 @@ export class RecognitionSampler {
   ): Promise<void> {
     if (this.disposed || this.sampling) return
     this.sampling = true
+    this.sampleGeneration += 1
+    // A persistent monitor must not carry its previous frame into a new measurement.
+    for (const channel of this.channels.values()) {
+      channel.grabber.cancel()
+      channel.client.cancel()
+      channel.configuredFor = null
+    }
     this.stats = {
       grabbed: zeroPerRole(),
       submitted: zeroPerRole(),
@@ -188,10 +196,11 @@ export class RecognitionSampler {
       for (const stop of stops) stop()
       this.sink = null
       this.sampling = false
+      this.sampleGeneration += 1
       // A frame still in flight would otherwise land during the next window and be
       // counted as one of its readings.
       for (const channel of this.channels.values()) {
-        if (channel.monitorStop) continue
+        channel.grabber.cancel()
         channel.client.cancel()
         channel.configuredFor = null
       }
@@ -220,6 +229,7 @@ export class RecognitionSampler {
     const fps = Math.max(1, Math.min(60, profile.sampleFps))
     let activeLoop = true
     const invalidate = (): void => {
+      channel.grabber.cancel()
       channel.client.cancel()
       channel.configuredFor = null
       this.resetTiming(channel)
@@ -236,7 +246,7 @@ export class RecognitionSampler {
       channel.lifecycleStop = null
     }
 
-    const stop = this.frameLoop(video, fps, (mediaTime) => {
+    const stop = this.frameLoop(video, fps, async (mediaTime) => {
       if (!activeLoop || signal.aborted || this.disposed) return
       const active = this.options.profile(role)
       if (!active) return
@@ -252,9 +262,22 @@ export class RecognitionSampler {
         && mediaTime - channel.lastScoreTime >= 0.5 - 1e-6
       if (!wantScore && !wantClock) return
       this.stats.grabbed[role] += 1
-      const result = wantScore ? channel.grabber.grabStrip(video, active.roi, mediaTime)
-        : channel.grabber.grab(video, active.roi, mediaTime)
+      if (channel.client.busy) {
+        this.stats.dropped[role] += 1
+        return
+      }
+      const segment = channel.segment
+      const sampleGeneration = this.sampleGeneration
+      const result = await (wantScore ? channel.grabber.grabStripAsync(video, active.roi, mediaTime)
+        : channel.grabber.grabAsync(video, active.roi, mediaTime))
+      if (!activeLoop || signal.aborted || this.disposed || this.sampleGeneration !== sampleGeneration) return
+      this.reconcile(role)
+      if (channel.segment !== segment || channel.video !== video) return
       if (!result.ok) {
+        if ('skipped' in result) {
+          if (result.reason === 'backpressure') this.stats.dropped[role] += 1
+          return
+        }
         this.stats.grabFailures[role] += 1
         channel.rhythm.reset()
         this.sink?.(role, { status: 'failed', reason: result.reason, detail: result.detail })
@@ -290,6 +313,7 @@ export class RecognitionSampler {
     return () => {
       activeLoop = false
       stop()
+      channel.grabber.cancel()
     }
   }
 
@@ -315,7 +339,9 @@ export class RecognitionSampler {
         now: this.now,
         onError: (message) => this.options.onError?.(role, message),
         onResult: (message) => {
+          const segment = channel.segment
           this.reconcile(role)
+          if (channel.segment !== segment) return
           if (message.score && message.score.segment === channel.segment && !channel.blocked) {
             const previous = this.scores.readings(role).at(-1)
             if (previous?.left !== null && previous?.right !== null && message.score.left !== null && message.score.right !== null
@@ -369,6 +395,7 @@ export class RecognitionSampler {
       channel.srcObject = srcObject
       channel.blocked = blocked
       channel.configuredFor = null
+      channel.grabber.cancel()
       channel.client.cancel()
       this.resetTiming(channel)
     }

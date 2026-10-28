@@ -194,6 +194,7 @@ export class OnlineAutoProfiles {
   readonly controller: AutoProfileController
   private clients = new Map<SourceRole, RecognitionClient>()
   private monitors = new Map<SourceRole, () => void>()
+  private sourceStops = new Map<SourceRole, () => void>()
   private disposed = false
   private readonly sources = new WeakMap<{ aborted: boolean }, {
     video: HTMLVideoElement; src: string; currentSrc: string; srcObject: HTMLVideoElement['srcObject']
@@ -211,7 +212,13 @@ export class OnlineAutoProfiles {
     this.controller = new AutoProfileController({
       client: role => this.client(role), capture: (role, signal, roi) => this.capture(role, signal, roi),
       current: (role, signal) => this.current(role, signal),
-      use: (role, profile) => { options.use(role, profile); this.monitor(role) }, changed: options.changed,
+      use: (role, profile) => { options.use(role, profile); this.monitor(role) }, changed: () => {
+        if (!this.controller.busy) {
+          for (const stop of this.sourceStops.values()) stop()
+          this.sourceStops.clear()
+        }
+        options.changed()
+      },
     })
   }
   monitor(role: SourceRole): void {
@@ -228,15 +235,30 @@ export class OnlineAutoProfiles {
     client.configure(profile, { automatic: profile.id.startsWith('session/') })
     const grabber = new FrameGrabber(() => performance.now())
     let last = -Infinity
-    const stop = startFrameLoop(video, 4, mediaTime => {
+    let active = true
+    let generation = 0
+    const invalidate = () => { generation += 1; grabber.cancel() }
+    const events = ['seeking', 'emptied', 'loadstart', 'pause', 'ratechange', 'resize']
+    for (const event of events) video.addEventListener(event, invalidate)
+    const stop = startFrameLoop(video, 4, async mediaTime => {
       if (video.paused || video.seeking || this.controller.busy) return
       if (mediaTime < last) last = -Infinity
       if (mediaTime - last < 0.25 || client.busy) return
       last = mediaTime
-      const frame = grabber.grab(video, this.options.profile(role)?.roi ?? profile.roi, mediaTime)
+      const segment = generation
+      const source = [video.src, video.currentSrc, video.srcObject, video.videoWidth, video.videoHeight]
+      const currentProfile = this.options.profile(role) ?? profile
+      const frame = await grabber.grabAsync(video, currentProfile.roi, mediaTime)
+      if (!active || this.disposed || segment !== generation || video.paused || video.seeking || this.controller.busy
+        || this.options.video(role) !== video || (this.options.profile(role) ?? profile) !== currentProfile
+        || source.some((value, index) => value !== [video.src, video.currentSrc, video.srcObject, video.videoWidth, video.videoHeight][index])) return
       if (frame.ok) client.submit(role, frame.frame)
     })
-    this.monitors.set(role, () => { stop(); grabber.dispose(); client.cancel() })
+    this.monitors.set(role, () => {
+      active = false
+      for (const event of events) video.removeEventListener(event, invalidate)
+      stop(); grabber.dispose(); client.cancel()
+    })
   }
   reset(role: SourceRole): void {
     this.monitors.get(role)?.()
@@ -278,8 +300,19 @@ export class OnlineAutoProfiles {
   private capture(role: SourceRole, signal: { aborted: boolean }, roi?: RoiRect): Promise<GrabbedFrame[]> {
     const video = this.options.video(role)
     if (!video || video.paused || video.readyState < 2) return Promise.resolve([])
-    if (!this.sources.has(signal)) this.sources.set(signal, { video, src: video.src, currentSrc: video.currentSrc,
-      srcObject: video.srcObject, width: video.videoWidth, height: video.videoHeight, invalid: false })
+    if (!this.sources.has(signal)) {
+      const source = { video, src: video.src, currentSrc: video.currentSrc,
+        srcObject: video.srcObject, width: video.videoWidth, height: video.videoHeight, invalid: false }
+      this.sources.set(signal, source)
+      // A seek can start and finish while a readback or recognition request is pending.
+      const invalidate = () => { source.invalid = true }
+      const events = ['seeking', 'emptied', 'loadstart', 'pause', 'ratechange', 'resize']
+      this.sourceStops.get(role)?.()
+      for (const event of events) video.addEventListener(event, invalidate)
+      this.sourceStops.set(role, () => {
+        for (const event of events) video.removeEventListener(event, invalidate)
+      })
+    }
     if (!this.current(role, signal)) return Promise.resolve([])
     const rect = roiToPixels(roi ?? FULL_FRAME_ROI, video.videoWidth, video.videoHeight)
     const scale = roi ? 1 : Math.min(1, 960 / rect.width)
@@ -287,21 +320,29 @@ export class OnlineAutoProfiles {
     const limit = roi ? AUTO_PROFILE_NATIVE_BYTES : AUTO_PROFILE_DISCOVERY_BYTES
     // Reject oversized native crops before creating any canvas or retaining pixel buffers.
     if (!Number.isFinite(frameBytes) || frameBytes * AUTO_PROFILE_MAX_FRAMES > limit) return Promise.reject(new Error('invalid-window'))
-    return new Promise(resolve => {
+    return new Promise((resolve, reject) => {
       const frames: GrabbedFrame[] = []
       const grabber = new FrameGrabber(() => performance.now())
       let last = -Infinity
+      let finished = false
       const deadline = performance.now() + AUTO_PROFILE_WINDOW_MS
-      const stop = startFrameLoop(video, 8, mediaTime => {
-        if (signal.aborted || !this.current(role, signal) || mediaTime <= last || mediaTime - last < 0.125) return
+      const stop = startFrameLoop(video, 8, async mediaTime => {
+        if (finished || signal.aborted || this.disposed || !this.current(role, signal) || mediaTime <= last || mediaTime - last < 0.125) return
         last = mediaTime
         if (frames.length >= AUTO_PROFILE_MAX_FRAMES) return
-        const result = roi ? grabber.grab(video, roi, mediaTime) : grabber.grabScaled(video, FULL_FRAME_ROI, 960, mediaTime)
+        const result = await (roi ? grabber.grabAsync(video, roi, mediaTime) : grabber.grabScaledAsync(video, FULL_FRAME_ROI, 960, mediaTime))
+        if (finished || signal.aborted || this.disposed || !this.current(role, signal)) return
         if (result.ok) frames.push(result.frame)
+        else if (!('skipped' in result) && result.reason === 'canvas-tainted') {
+          finished = true
+          clearInterval(timer); stop(); grabber.dispose()
+          reject(new Error(result.detail ?? '画布被跨域视频污染，无法读取像素。请通过本地代理加载该源。'))
+        }
       })
       const timer = setInterval(() => {
         const valid = this.current(role, signal)
         if (!signal.aborted && !this.disposed && valid && performance.now() < deadline) return
+        finished = true
         clearInterval(timer); stop(); grabber.dispose()
         resolve(signal.aborted || this.disposed || !valid ? [] : frames)
       }, 50)

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createEmptyProfile, type RoiRect } from '../core/profileSchema'
 import { MIN_SYNC_CONFIDENCE, type RecognitionOutcome, type SourceRole } from '../core/types'
-import { FULL_FRAME_ROI, type GrabbedFrame } from './frameGrabber'
+import { FrameGrabber, FULL_FRAME_ROI, type AsyncGrabResult, type GrabbedFrame } from './frameGrabber'
 import { AutoProfileController, AUTO_PROFILE_MAX_FRAMES, AUTO_PROFILE_NATIVE_BYTES, AUTO_PROFILE_WINDOW_MS, CLOCK_LOST_MS, OnlineAutoProfiles } from './autoProfile'
 import type { WorkerLike } from './client'
 import type { LearnResult, LocateResult, WorkerRequest, WorkerResponse } from './protocol'
@@ -226,7 +226,7 @@ describe('source-local automatic profiles', () => {
 
 afterEach(() => vi.useRealTimers())
 
-function onlineHarness(roi = { x: .48, y: .03, w: .03, h: .025 }) {
+function onlineHarness(roi = { x: .48, y: .03, w: .03, h: .025 }, monitoring = false) {
   vi.useFakeTimers()
   const video = document.createElement('video')
   video.src = 'https://example.test/first'
@@ -257,7 +257,7 @@ function onlineHarness(roi = { x: .48, y: .03, w: .03, h: .025 }) {
     removeEventListener: (type, listener) => { if (type === 'message') listeners.delete(listener as (event: MessageEvent<WorkerResponse>) => void) },
   }
   const use = vi.fn()
-  const online = new OnlineAutoProfiles({ createWorker: () => worker, video: () => video, profile: () => null, use, changed: vi.fn() })
+  const online = new OnlineAutoProfiles({ createWorker: () => worker, video: () => video, profile: () => monitoring ? profile : null, use, changed: vi.fn() })
   return { online, video, drawImage, messages, use, pause: () => { paused = true } }
 }
 
@@ -307,6 +307,147 @@ describe('bounded native learning acquisition', () => {
     expect(h.messages.some(m => m.type === 'learn')).toBe(false)
     expect(h.use).not.toHaveBeenCalled()
     expect(h.online.controller.state('official').phase).toBe('cancelled')
+    h.online.dispose()
+  })
+})
+
+function presentationLoop(video: HTMLVideoElement) {
+  let callback: VideoFrameRequestCallback | undefined
+  let handle = 0
+  const cancel = vi.fn()
+  Object.assign(video, {
+    requestVideoFrameCallback: (next: VideoFrameRequestCallback) => { callback = next; return ++handle },
+    cancelVideoFrameCallback: cancel,
+  })
+  return {
+    cancel,
+    present: (mediaTime: number) => callback?.(performance.now(), { mediaTime } as VideoFrameCallbackMetadata),
+  }
+}
+
+describe('asynchronous automatic-profile capture', () => {
+  it('keeps the actionable Chinese canvas-tainted error from an asynchronous readback', async () => {
+    const h = onlineHarness()
+    const loop = presentationLoop(h.video)
+    const detail = '画布被跨域视频污染，无法读取像素。请通过本地代理加载该源。'
+    vi.spyOn(FrameGrabber.prototype, 'grabScaledAsync').mockResolvedValue({ ok: false, reason: 'canvas-tainted', detail })
+    const run = h.online.controller.acquire('official')
+    loop.present(10)
+    await settle()
+    expect(await run).toBe(false)
+    expect(h.online.controller.state('official')).toMatchObject({ phase: 'not-found', reason: detail })
+    expect(h.messages.some(message => message.type === 'locate')).toBe(false)
+    h.online.dispose()
+  })
+
+  it('preserves rVFC mediaTime, the sample wall clock, and the 125 ms discovery cadence', async () => {
+    const h = onlineHarness()
+    const loop = presentationLoop(h.video)
+    const samples: Array<{ time: number; sampledAt: number }> = []
+    const grab = vi.spyOn(FrameGrabber.prototype, 'grabScaledAsync').mockImplementation(async (_video, _roi, _maxWidth, mediaTime) => {
+      const sampledAt = performance.now()
+      samples.push({ time: mediaTime!, sampledAt })
+      await Promise.resolve()
+      return { ok: true, frame: { ...frame(mediaTime!), width: 960, height: 540, wallTime: sampledAt } }
+    })
+    const run = h.online.controller.acquire('official')
+    for (const mediaTime of [10, 10.05, 10.124, 10.125, 10.20, 10.25]) {
+      loop.present(mediaTime)
+      await settle()
+    }
+    expect(grab.mock.calls.map(call => call[3])).toEqual([10, 10.125, 10.25])
+    // Finish enough samples for locate, without relying on the video's currentTime.
+    for (let index = 3; index < 30; index++) { loop.present(10 + index * .125); await settle() }
+    await vi.advanceTimersByTimeAsync(AUTO_PROFILE_WINDOW_MS)
+    const locate = h.messages.find(message => message.type === 'locate')
+    expect(locate?.frames.map(value => value.mediaTime)).toEqual(samples.map(sample => sample.time))
+    expect(locate?.frames.map(value => value.wallTime)).toEqual(samples.map(sample => sample.sampledAt))
+    expect(locate?.frames[0]?.mediaTime).toBe(10)
+    h.online.controller.cancel('official')
+    expect(await run).toBe(false)
+    h.online.dispose()
+  })
+
+  it.each(['cancel', 'seek', 'source', 'window', 'dispose'] as const)(
+    'does not append an in-flight frame after %s ends or invalidates discovery', async kind => {
+      const h = onlineHarness()
+      const loop = presentationLoop(h.video)
+      let finish!: (value: AsyncGrabResult) => void
+      const grab = vi.spyOn(FrameGrabber.prototype, 'grabScaledAsync')
+        .mockImplementation((_video, _roi, _maxWidth, mediaTime) => {
+          if (mediaTime === 13.75) return new Promise(resolve => { finish = resolve })
+          return Promise.resolve({ ok: true, frame: { ...frame(mediaTime!), width: 960, height: 540 } })
+        })
+      const run = h.online.controller.acquire('official')
+      for (let index = 0; index <= 30; index++) { loop.present(10 + index * .125); await settle() }
+      expect(grab).toHaveBeenCalledTimes(31)
+      if (kind === 'cancel') h.online.controller.cancel('official')
+      if (kind === 'seek') h.video.dispatchEvent(new Event('seeking'))
+      if (kind === 'source') h.video.src = 'https://example.test/replacement'
+      if (kind === 'window') await vi.advanceTimersByTimeAsync(AUTO_PROFILE_WINDOW_MS)
+      if (kind === 'dispose') h.online.dispose()
+      finish({ ok: true, frame: { ...frame(13.75), width: 960, height: 540 } })
+      await settle()
+      await vi.advanceTimersByTimeAsync(50)
+      const locate = h.messages.find(message => message.type === 'locate')
+      if (kind === 'window') {
+        expect(locate?.frames).toHaveLength(30)
+        expect(locate?.frames.some(value => value.mediaTime === 13.75)).toBe(false)
+        h.online.controller.cancel('official')
+      } else {
+        expect(locate).toBeUndefined()
+      }
+      expect(await run).toBe(false)
+      expect(h.use).not.toHaveBeenCalled()
+      h.online.dispose()
+    },
+  )
+
+  it('excludes backpressure skips from discovery and only transfers completed frames', async () => {
+    const h = onlineHarness()
+    const loop = presentationLoop(h.video)
+    let finish!: (result: AsyncGrabResult) => void
+    let busy = false
+    const grab = vi.spyOn(FrameGrabber.prototype, 'grabScaledAsync').mockImplementation((_video, _roi, _maxWidth, mediaTime) => {
+      if (busy) return Promise.resolve({ ok: false, skipped: true, reason: 'backpressure' })
+      if (mediaTime === 10) {
+        busy = true
+        return new Promise(resolve => { finish = value => { busy = false; resolve(value) } })
+      }
+      return Promise.resolve({ ok: true, frame: { ...frame(mediaTime!), width: 960, height: 540 } })
+    })
+    const run = h.online.controller.acquire('official')
+    loop.present(10); await settle()
+    loop.present(10.125); await settle()
+    loop.present(10.25); await settle()
+    finish({ ok: true, frame: { ...frame(10), width: 960, height: 540 } })
+    await settle()
+    for (let index = 3; index < 32; index++) { loop.present(10 + index * .125); await settle() }
+    await vi.advanceTimersByTimeAsync(AUTO_PROFILE_WINDOW_MS)
+    const locate = h.messages.find(message => message.type === 'locate')
+    expect(grab).toHaveBeenCalledTimes(32)
+    expect(locate?.frames).toHaveLength(30)
+    expect(locate?.frames.slice(0, 2).map(value => value.mediaTime)).toEqual([10, 10.375])
+    h.online.controller.cancel('official')
+    expect(await run).toBe(false)
+    h.online.dispose()
+  })
+
+  it.each(['seek', 'source', 'reset', 'suspend'] as const)('discards a sparse-monitor readback after %s', async kind => {
+    const h = onlineHarness(undefined, true)
+    const loop = presentationLoop(h.video)
+    let finish!: (value: AsyncGrabResult) => void
+    vi.spyOn(FrameGrabber.prototype, 'grabAsync').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    h.online.monitor('official')
+    loop.present(10)
+    await settle()
+    if (kind === 'seek') h.video.dispatchEvent(new Event('seeking'))
+    if (kind === 'source') h.video.src = 'https://example.test/replacement'
+    if (kind === 'reset') h.online.reset('official')
+    if (kind === 'suspend') h.online.suspend()
+    finish({ ok: true, frame: frame(10) })
+    await settle()
+    expect(h.messages.some(message => message.type === 'frame')).toBe(false)
     h.online.dispose()
   })
 })

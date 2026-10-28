@@ -6,11 +6,11 @@
  * is reported rather than swallowed, and that cancellation is prompt.
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createEmptyProfile, type RecognitionProfile } from '../core/profileSchema'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
 import type { WorkerLike } from './client'
-import { FrameGrabber } from './frameGrabber'
+import { FrameGrabber, type AsyncGrabResult } from './frameGrabber'
 import type { ResultMessage, WorkerRequest, WorkerResponse } from './protocol'
 import { RecognitionSampler } from './sampler'
 
@@ -129,8 +129,7 @@ function manualLoop() {
       for (const entry of roles) {
         if (!entry.stopped) entry.onFrame(mediaTime)
       }
-      await Promise.resolve()
-      await Promise.resolve()
+      for (let i = 0; i < 8; i++) await Promise.resolve()
     },
   }
 }
@@ -140,8 +139,10 @@ function manualLoop() {
  * grabber cannot run here; the prototype is patched because the sampler builds its own
  * `FrameGrabber` instances internally.
  */
-function stubGrabber(): () => void {
+function stubGrabber(capture?: FrameGrabber['grabAsync']): () => void {
   const original = FrameGrabber.prototype.grab
+  const originalAsync = FrameGrabber.prototype.grabAsync
+  const originalStripAsync = FrameGrabber.prototype.grabStripAsync
   FrameGrabber.prototype.grab = function grab(video, _roi, mediaTime) {
     if (video.readyState < 2) {
       return { ok: false, reason: 'no-video-frame', detail: '视频尚未解码出画面' }
@@ -157,8 +158,16 @@ function stubGrabber(): () => void {
       },
     }
   }
+  FrameGrabber.prototype.grabAsync = capture ?? async function grabAsync(this: FrameGrabber, video, roi, mediaTime) {
+    return this.grab(video, roi, mediaTime)
+  }
+  FrameGrabber.prototype.grabStripAsync = capture ?? async function grabStripAsync(this: FrameGrabber, video, roi, mediaTime) {
+    return this.grabStrip(video, roi, mediaTime)
+  }
   return () => {
     FrameGrabber.prototype.grab = original
+    FrameGrabber.prototype.grabAsync = originalAsync
+    FrameGrabber.prototype.grabStripAsync = originalStripAsync
   }
 }
 
@@ -175,8 +184,9 @@ function harness(options: {
   video?: (role: SourceRole) => HTMLVideoElement | null
   reply?: (frame: Extract<WorkerRequest, { type: 'frame' }>) => RecognitionOutcome
   metadata?: (frame: Extract<WorkerRequest, { type: 'frame' }>) => Partial<ResultMessage>
+  capture?: FrameGrabber['grabAsync']
 } = {}): Harness {
-  const restore = stubGrabber()
+  const restore = stubGrabber(options.capture)
   const loop = manualLoop()
   const workers: Array<ReturnType<typeof fakeWorker>> = []
   const shared = profileFor()
@@ -735,5 +745,155 @@ describe('RecognitionSampler as AutoSyncDeps.sample', () => {
       sampler.dispose()
       restore()
     }
+  })
+})
+
+/** A real event target catches seeks that finish before the readback promise settles. */
+function eventfulVideo(): HTMLVideoElement {
+  const video = document.createElement('video')
+  Object.defineProperties(video, {
+    videoWidth: { configurable: true, value: 640 }, videoHeight: { configurable: true, value: 360 },
+    readyState: { value: 4 }, paused: { value: false }, seeking: { value: false },
+    currentTime: { writable: true, value: 10 },
+  })
+  return video
+}
+
+function captured(mediaTime = 10, wallTime = 1000): AsyncGrabResult {
+  return { ok: true, frame: { pixels: new Uint8ClampedArray(8 * 8 * 4), width: 8, height: 8,
+    mediaTime, wallTime } }
+}
+
+describe('asynchronous sampling acquisition', () => {
+  it('does not carry a persistent monitor readback across measurement windows', async () => {
+    vi.useFakeTimers()
+    let finish!: (result: AsyncGrabResult) => void
+    const video = eventfulVideo()
+    const bench = harness({ video: role => role === 'official' ? video : null,
+      capture: () => new Promise(resolve => { finish = resolve }) })
+    const stopMonitor = bench.sampler.monitor('official')
+    try {
+      const first = bench.sampler.sample(100, () => {}, { aborted: false })
+      await bench.loop.tick(10)
+      await vi.advanceTimersByTimeAsync(100)
+      await first
+      expect(bench.loop.roles[0]!.stopped).toBe(false)
+      const next = bench.sampler.sample(100, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
+      finish(captured(10))
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+      expect(bench.workers[0]!.frames()).toHaveLength(0)
+      expect(bench.outcomes).toHaveLength(0)
+      await vi.advanceTimersByTimeAsync(100)
+      await next
+    } finally { stopMonitor(); bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('counts a busy readback as a dropped frame while the other role continues', async () => {
+    vi.useFakeTimers()
+    const official = eventfulVideo()
+    const commentary = eventfulVideo()
+    let finish!: (result: AsyncGrabResult) => void
+    let pending = false
+    let officialRequests = 0
+    const bench = harness({
+      video: role => role === 'official' ? official : commentary,
+      capture: (video, _roi, mediaTime) => {
+        if (video === commentary) return Promise.resolve(captured(mediaTime))
+        officialRequests++
+        if (pending) return Promise.resolve({ ok: false, skipped: true, reason: 'backpressure' })
+        pending = true
+        return new Promise(resolve => { finish = resolve })
+      },
+    })
+    try {
+      const run = bench.sampler.sample(100, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
+      await bench.loop.tick(10)
+      await bench.loop.tick(11)
+      expect(bench.outcomes.filter(entry => entry.role === 'commentary')).toHaveLength(2)
+      expect(bench.outcomes.filter(entry => entry.role === 'official')).toHaveLength(0)
+      expect(bench.sampler.getStats().dropped.official).toBe(1)
+      expect(bench.sampler.getStats().grabFailures.official).toBe(0)
+      expect(officialRequests).toBeLessThanOrEqual(2)
+      finish(captured(10))
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(100)
+      await run
+      expect(bench.workers[0]!.frames()).toHaveLength(1)
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it.each(['seek', 'source', 'dimensions', 'profile', 'window', 'abort'] as const)(
+    'discards late successful and failed readbacks after %s invalidates the sample', async kind => {
+      vi.useFakeTimers()
+      try {
+        for (const result of [captured(), { ok: false, reason: 'canvas-tainted', detail: '迟到错误' } as const]) {
+          const video = eventfulVideo()
+          let current = profileFor()
+          let finish!: (result: AsyncGrabResult) => void
+          const signal = { aborted: false }
+          const bench = harness({ video: role => role === 'official' ? video : null,
+            profile: () => current, capture: () => new Promise(resolve => { finish = resolve }) })
+          try {
+            const run = bench.sampler.sample(100, (role, outcome) => bench.outcomes.push({ role, outcome }), signal)
+            await bench.loop.tick(10)
+            if (kind === 'seek') video.dispatchEvent(new Event('seeking'))
+            if (kind === 'source') video.src = 'replacement.mp4'
+            if (kind === 'dimensions') Object.defineProperty(video, 'videoWidth', { value: 1280 })
+            if (kind === 'profile') current = profileFor({ name: 'replacement' })
+            if (kind === 'abort') signal.aborted = true
+            if (kind === 'window') await vi.advanceTimersByTimeAsync(100)
+            finish(result)
+            for (let i = 0; i < 8; i++) await Promise.resolve()
+            expect(bench.workers[0]!.frames()).toHaveLength(0)
+            expect(bench.outcomes).toHaveLength(0)
+            expect(bench.sampler.getStats().grabFailures.official).toBe(0)
+            await vi.advanceTimersByTimeAsync(100)
+            await run
+          } finally { bench.sampler.dispose(); bench.restore() }
+        }
+      } finally { vi.useRealTimers() }
+    },
+  )
+
+  it('does not attribute an old readback to a new sampling window', async () => {
+    vi.useFakeTimers()
+    let finish!: (result: AsyncGrabResult) => void
+    const video = fakeVideo()
+    const bench = harness({ video: role => role === 'official' ? video : null,
+      capture: () => new Promise(resolve => { finish = resolve }) })
+    try {
+      const first = bench.sampler.sample(100, () => {}, { aborted: false })
+      await bench.loop.tick(10)
+      await vi.advanceTimersByTimeAsync(100)
+      await first
+      const fresh = bench.sampler.sample(100, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
+      finish(captured(10))
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+      expect(bench.workers[0]!.frames()).toHaveLength(0)
+      expect(bench.outcomes).toHaveLength(0)
+      await vi.advanceTimersByTimeAsync(100)
+      await fresh
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('submits the triggering frame timestamp and sample wall clock after a delayed readback', async () => {
+    vi.useFakeTimers()
+    const video = eventfulVideo()
+    let sampledTime: number | undefined
+    let finish!: (result: AsyncGrabResult) => void
+    const bench = harness({ video: role => role === 'official' ? video : null,
+      capture: (_video, _roi, mediaTime) => { sampledTime = mediaTime; return new Promise(resolve => { finish = resolve }) } })
+    try {
+      const run = bench.sampler.sample(100, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
+      await bench.loop.tick(42.5)
+      video.currentTime = 999
+      await vi.advanceTimersByTimeAsync(25)
+      finish(captured(sampledTime, 1234))
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+      expect(bench.workers[0]!.frames()[0]).toMatchObject({ mediaTime: 42.5, wallTime: 1234 })
+      expect(bench.outcomes[0]?.outcome).toMatchObject({ status: 'success', reading: { mediaTime: 42.5, wallTime: 1234 } })
+      await vi.advanceTimersByTimeAsync(75)
+      await run
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
   })
 })
