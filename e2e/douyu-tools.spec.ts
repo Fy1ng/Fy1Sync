@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises'
 import { test } from '@playwright/test'
 import { expect, launchApplication } from './electron'
-import { connectDanmaku, disconnectDanmaku, invoke, openDouyuTab, openPlayer, openTaskForm, setCheckedByLabel } from './helpers'
+import { connectDanmaku, disconnectDanmaku, invoke, openDouyuTab, openPlayerWithDouyuWrites, openTaskForm, setCheckedByLabel } from './helpers'
 import type { DouyuTasksSnapshot } from '../server/douyu/types'
 import type { Page } from '@playwright/test'
 
@@ -23,7 +23,7 @@ test('斗鱼账号隔离, 任务控制和重启暂停经过实际 Electron 界�
       main.__streamSyncerTest!.setDouyuToolsFixture()
       main.__streamSyncerTest!.setDouyuRoomFixture({ '6657': '6979222', '6979222': '6979222', '288016': '288016' })
     })
-    await openPlayer(running.page)
+    await openPlayerWithDouyuWrites(running.page)
     const tools = await openDouyuTab(running.page, '账号')
     await expect(tools.locator('.desk-who')).toContainText('默认账号')
     await tools.getByLabel('新账号名称', { exact: true }).fill('测试账号')
@@ -96,7 +96,7 @@ test('斗鱼账号隔离, 任务控制和重启暂停经过实际 Electron 界�
     await running.page.screenshot({ path: testInfo.outputPath('douyu-task.png'), fullPage: true })
 
     await running.restart()
-    await openPlayer(running.page)
+    await openPlayerWithDouyuWrites(running.page)
     const reopened = await openDouyuTab(running.page, '账号')
     await expect(reopened.locator('.desk-who')).toContainText('测试账号')
     const restored = await tasks(running.page)

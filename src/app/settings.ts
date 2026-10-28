@@ -58,6 +58,11 @@ export interface AppSettings {
    * player fetches the preset at startup instead.
    */
   profileId: string
+  /**
+   * Experimental: anything that writes to Douyu as the viewer (sending, +1, mute, gifts, room
+   * and batch tasks, badge renewal). Off by default; read-only Douyu features never depend on it.
+   */
+  douyuWrites: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -86,6 +91,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   preferAdaptive: true,
   cameraUpscale: 'performance',
   profileId: '',
+  douyuWrites: false,
 }
 
 function clamp(value: unknown, min: number, max: number, fallback: number): number {
@@ -161,6 +167,7 @@ export function mergeSettings(raw: unknown): AppSettings {
       ? stored.cameraUpscale : defaults.cameraUpscale,
     // Bounded because it goes into a URL path when the preset is fetched.
     profileId: typeof stored.profileId === 'string' ? stored.profileId.slice(0, 200) : '',
+    douyuWrites: boolean(stored.douyuWrites, defaults.douyuWrites),
   }
 }
 

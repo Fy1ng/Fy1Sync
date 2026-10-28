@@ -1,6 +1,6 @@
 import { test } from '@playwright/test'
 import { expect, launchApplication } from './electron'
-import { invoke, openDouyuTab, openPlayer, openTaskForm, setCheckedByLabel } from './helpers'
+import { invoke, openDouyuTab, openPlayerWithDouyuWrites, openTaskForm, setCheckedByLabel } from './helpers'
 
 test('鱼吧登录入口和签到任务通过受限 IPC, 重启后保持暂停', async ({}, testInfo) => {
   test.setTimeout(90_000)
@@ -14,7 +14,7 @@ test('鱼吧登录入口和签到任务通过受限 IPC, 重启后保持暂停',
       main.__streamSyncerTest!.setDouyuToolsFixture()
       main.__streamSyncerTest!.setDouyuRoomFixture({ '9999': '9999' })
     })
-    await openPlayer(running.page)
+    await openPlayerWithDouyuWrites(running.page)
     const tools = await openDouyuTab(running.page, '账号')
     const account = tools.getByRole('group', { name: '斗鱼账号 默认账号', exact: true })
     await account.getByRole('button', { name: '登录鱼吧', exact: true }).click()

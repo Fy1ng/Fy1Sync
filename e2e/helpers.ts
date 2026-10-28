@@ -7,6 +7,7 @@ import type { DesktopMethod, DesktopMethods } from '../electron/contracts'
 import type { ApiResult } from '../src/app/apiClient'
 import type { ChatMessage } from '../server/danmaku/types'
 import type { DouyuTaskKind } from '../server/douyu/types'
+import { SETTINGS_KEY } from '../src/app/settings'
 import { APP_ORIGIN, expect } from './electron'
 
 /** Use the actual preload bridge, retaining the transport result wrapper. */
@@ -67,6 +68,19 @@ export async function openPlayer(page: Page): Promise<void> {
   await expect(page.locator('.studio')).toBeVisible()
   await expect(sourceDialog(page)).toBeVisible()
   await closeSourceDialog(page)
+}
+
+/**
+ * The player with 斗鱼写操作 already on, for scenarios that exercise sending, mute, gifts or
+ * tasks against the offline fixtures. The switch itself is covered through the UI elsewhere.
+ */
+export async function openPlayerWithDouyuWrites(page: Page): Promise<void> {
+  await page.goto(APP_ORIGIN + '/')
+  await page.evaluate(key => {
+    const stored = JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, unknown>
+    localStorage.setItem(key, JSON.stringify({ ...stored, douyuWrites: true }))
+  }, SETTINGS_KEY)
+  await openPlayer(page)
 }
 
 export function sourceDialog(page: Page): Locator {

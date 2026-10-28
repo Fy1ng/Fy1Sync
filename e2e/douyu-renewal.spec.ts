@@ -1,6 +1,6 @@
 import { test } from '@playwright/test'
 import { expect, launchApplication } from './electron'
-import { openDouyuTab, openPlayer, setCheckedByLabel } from './helpers'
+import { openDouyuTab, openPlayerWithDouyuWrites, setCheckedByLabel } from './helpers'
 
 test('续牌赠送先预览再确认, 库存变化与未知回执停止余下操作', async ({}, testInfo) => {
   test.setTimeout(90_000)
@@ -26,7 +26,7 @@ test('续牌赠送先预览再确认, 库存变化与未知回执停止余下操
       main.__streamSyncerTest!.setDouyuRoomFixture({ '6979222': '6979222', '288016': '288016' })
     })
     await setFixture(3, 'receipt-received')
-    await openPlayer(running.page)
+    await openPlayerWithDouyuWrites(running.page)
     const tools = await openDouyuTab(running.page, '账号')
     const account = tools.getByRole('group', { name: '斗鱼账号 默认账号', exact: true })
     await account.getByRole('button', { name: '登录', exact: true }).click()

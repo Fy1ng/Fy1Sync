@@ -11,6 +11,7 @@ import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { anchoredScrollTop, chatWindow, isPinned } from '../ui/chatWindow'
 import type { DanmakuMessage } from '../core/danmakuTimeline'
 import { useComposer } from './composer'
+import { useDouyuWrites } from './douyuWrites'
 import { useDanmakuActions } from './danmakuActions'
 import { useDanmakuRate } from './insights/RoomInsights'
 import type { RecordsTab } from './records/DanmakuRecords'
@@ -31,6 +32,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   const snapshot = useSessionSnapshot()
   const { danmaku } = snapshot
   const readOnly = danmaku.room?.startsWith('huya:') === true
+  const writes = useDouyuWrites()
   const composer = useComposer()
   const { roomName } = useSourceLoader()
   const rate = useDanmakuRate(readOnly ? null : danmaku.room)
@@ -158,7 +160,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
                   )}
                   {!message.gift && !message.huyaGift && (
                     <span className="msg-actions">
-                      {!readOnly && message.platform !== 'huya' && <button type="button" className="msg-plus" disabled={!composer.canSendText(message.text)}
+                      {writes && !readOnly && message.platform !== 'huya' && <button type="button" className="msg-plus" disabled={!composer.canSendText(message.text)}
                         aria-label={`+1：${message.text}`} title={composer.repeatProblem(message.text) ?? '发送相同内容'}
                         onClick={() => void composer.repeat(message.text)}>+1</button>}
                       <button type="button" className="msg-more" aria-label={`更多操作：${message.text}`} title="更多操作"
@@ -193,7 +195,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
         )}
       </div>
 
-      {!readOnly && <form className="say" onSubmit={(event) => { event.preventDefault(); if (!composing.current) void composer.sendDraft() }}>
+      {writes && !readOnly && <form className="say" onSubmit={(event) => { event.preventDefault(); if (!composing.current) void composer.sendDraft() }}>
         <textarea ref={box} rows={1} value={composer.draft} disabled={!composer.canEdit} aria-label="弹幕内容"
           placeholder={composer.canEdit ? '发送弹幕' : !composer.account?.loggedIn ? '登录斗鱼后可发送' : composer.needsRelogin ? '需要重新登录斗鱼' : danmaku.connected ? '正在准备…' : '连接弹幕后可发送'}
           spellCheck={false}
@@ -242,18 +244,19 @@ function RowActions({ message, note, setNote, close, onReply }: {
   const actions = useDanmakuActions()
   const { danmaku } = useSessionSnapshot()
   const readOnly = message.platform === 'huya' || danmaku.room?.startsWith('huya:') === true
+  const writes = useDouyuWrites()
   const uid = message.sender?.uid
   return (
     <>
       <span className="row-menu-user">{message.user}{uid && <span className="num muted"> {uid}</span>}</span>
-      {!readOnly && <button type="button" className="menu-item" disabled={!composer.canEdit} onClick={onReply}>回复</button>}
+      {writes && !readOnly && <button type="button" className="menu-item" disabled={!composer.canEdit} onClick={onReply}>回复</button>}
       {!readOnly && <button type="button" className="menu-item" onClick={() => { void actions.favorite(message).then(setNote) }}>收藏</button>}
       <button type="button" className="menu-item" onClick={() => { actions.copy(message.text); close() }}>复制</button>
       {!readOnly && uid && actions.showDetails && (
         <button type="button" className="menu-item" onClick={() => { actions.showDetails?.(message); close() }}>用户详情</button>
       )}
       {!readOnly && uid && <button type="button" className="menu-item" onClick={() => { actions.history(uid); close() }}>历史弹幕</button>}
-      {!readOnly && uid && <button type="button" className="menu-item" onClick={() => { actions.mute(message); close() }}>禁言</button>}
+      {writes && !readOnly && uid && <button type="button" className="menu-item" onClick={() => { actions.mute(message); close() }}>禁言</button>}
       <button type="button" className="menu-item is-danger" onClick={() => { actions.block(message.user); close() }}>屏蔽此用户</button>
       {note && <p className="lane" role="status">{note}</p>}
     </>

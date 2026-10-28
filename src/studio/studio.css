@@ -3181,3 +3181,13 @@ body,
   font-weight: 700;
   color: var(--ash);
 }
+
+/* 斗鱼写操作 confirmation, under its switch. */
+.studio .writes-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}

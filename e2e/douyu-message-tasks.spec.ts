@@ -1,6 +1,6 @@
 import { test } from '@playwright/test'
 import { expect, launchApplication } from './electron'
-import { invoke, openDouyuDesk, openPlayer, openTaskForm, setCheckedByLabel } from './helpers'
+import { invoke, openDouyuDesk, openPlayerWithDouyuWrites, openTaskForm, setCheckedByLabel } from './helpers'
 import type { DouyuMessageInput, DouyuTaskView } from '../server/douyu/types'
 
 test('延迟循环发送按次数和颜色执行, 未知结果停止, 重启保留配置并暂停', async ({}, testInfo) => {
@@ -24,7 +24,7 @@ test('延迟循环发送按次数和颜色执行, 未知结果停止, 重启保�
       main.__streamSyncerTest!.setDouyuToolsFixture()
       main.__streamSyncerTest!.setDouyuRoomFixture({ '6657': '6979222' })
     })
-    await openPlayer(running.page)
+    await openPlayerWithDouyuWrites(running.page)
     expect(await invoke(running.page, 'loginDouyuAccount', { id: 'default' })).toMatchObject({ ok: true })
     const form = await openTaskForm(running.page, 'message-loop', '6657')
     const tools = await openDouyuDesk(running.page)

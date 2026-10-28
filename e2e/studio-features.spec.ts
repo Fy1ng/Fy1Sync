@@ -3,7 +3,7 @@ import type { ChatMessage } from '../server/danmaku/types'
 import { expect, test } from './electron'
 import {
   connectDanmaku, fixturesReady, FIXTURES, invoke, loadBothFixtures, mediaTimes,
-  openDanmakuSettings, openDouyuDesk, openPlayer, openSettings, revealOverlay, setCheckedByLabel, setPlaying,
+  openDanmakuSettings, openDouyuDesk, openPlayer, openPlayerWithDouyuWrites, openSettings, revealOverlay, setCheckedByLabel, setPlaying,
 } from './helpers'
 
 test.skip(!fixturesReady(), '需要先运行 npm run fixtures')
@@ -19,7 +19,7 @@ async function prepareChat(page: Page, application: ElectronApplication): Promis
     const main = globalThis as typeof globalThis & { __streamSyncerTest: { setDouyuToolsFixture(): void } }
     main.__streamSyncerTest.setDouyuToolsFixture()
   })
-  await openPlayer(page)
+  await openPlayerWithDouyuWrites(page)
   expect(await invoke(page, 'loginDouyuAccount', { id: 'default' })).toMatchObject({ ok: true })
   await loadBothFixtures(page)
   await setPlaying(page, false)
