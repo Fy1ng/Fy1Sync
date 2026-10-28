@@ -29,7 +29,7 @@ test.describe('opt-in local adaptive decode comparison', () => {
         if (!candidate.startsWith(allowed + path.sep)) throw new Error('捕获片段必须位于本轮隔离诊断目录')
         source = candidate
       } else {
-        const ffmpeg = await locateTool('ffmpeg')
+        const ffmpeg = await locateTool('ffmpeg', { ffmpegPath: process.env.STREAM_SYNC_FIXTURE_FFMPEG })
         const args = buildFfmpegArgs({ url: 'https://fixture.invalid/live.m3u8' }, media, 0, 'pipe:3', true)
         execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-f', 'lavfi', '-i', 'testsrc2=size=2560x1440:rate=60',
           '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '12', '-map', '0:v:0', '-map', '1:a:0',

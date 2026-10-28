@@ -168,8 +168,9 @@ describe('adaptive mux boundaries', () => {
 
 describe('adaptive mux with local generated media', () => {
   const ffmpeg = process.env.STREAM_SYNC_FFMPEG || 'ffmpeg'
+  const fixtureFfmpeg = process.env.STREAM_SYNC_FIXTURE_FFMPEG || ffmpeg
   const ffprobe = process.env.STREAM_SYNC_FFPROBE || 'ffprobe'
-  const available = [ffmpeg, ffprobe].every(tool => {
+  const available = [fixtureFfmpeg, ffmpeg, ffprobe].every(tool => {
     try { execFileSync(tool, ['-version'], { stdio: 'ignore', windowsHide: true, timeout: 10_000 }); return true }
     catch { return false }
   })
@@ -179,9 +180,9 @@ describe('adaptive mux with local generated media', () => {
     let manager: BufferManager | undefined
     const run = (tool: string, args: string[]) => execFileSync(tool, args, { cwd: root, windowsHide: true, timeout: 15_000, stdio: ['ignore', 'pipe', 'pipe'] })
     try {
-      run(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=30',
+      run(fixtureFfmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=30',
         '-t', '4.5', '-an', '-c:v', 'libvpx-vp9', '-deadline', 'realtime', '-cpu-used', '8', '-g', '60', 'video.webm'])
-      run(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
+      run(fixtureFfmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
         '-t', '4.5', '-vn', '-c:a', 'aac', '-movflags', 'frag_keyframe+empty_moov+default_base_moof', 'audio.mp4'])
       const [videoBytes, audioBytes] = await Promise.all([readFile(path.join(root, 'video.webm')), readFile(path.join(root, 'audio.mp4'))])
       const states: BufferState[] = []

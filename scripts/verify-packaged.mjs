@@ -7,6 +7,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { packagedNodeProbeProgram, probePackagedNetwork } from './packaged-network-probe.mjs'
 import { assertProviderDependencies } from './provider-dependencies.mjs'
+import { probePackagedFfmpeg } from './packaged-ffmpeg-probe.mjs'
 const root = fileURLToPath(new URL('../', import.meta.url))
 const packageMetadata = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
 const networkOnly = process.argv.includes('--network-only')
@@ -27,7 +28,7 @@ function run(exe, args, env, timeout = 30_000) {
     child.once('close', code => { clearTimeout(timer); code === 0 ? resolve(out.trim()) : reject(new Error(`${path.basename(exe)} failed, exit=${code}: ${err}`)) })
   })
 }
-await run('tar.exe', ['-xf', zip, '-C', extracted], process.env, 180_000)
+await run(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe'), ['-xf', zip, '-C', extracted], process.env, 180_000)
 const cleanEnv = Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined && !/^STREAM_SYNC_/i.test(key) && !/^(?:ELECTRON_RUN_AS_NODE|NODE_OPTIONS|NODE_PATH|PATH)$/i.test(key)))
 cleanEnv.PATH = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32') + ';' + (process.env.SystemRoot ?? 'C:\\Windows')
 
@@ -138,6 +139,7 @@ for (const [label, folder] of [['unpacked', path.join(root, '.release', 'win-unp
     await run(path.join(tools, 'ffmpeg', 'ffmpeg.exe'), ['-hide_banner', '-loglevel', 'error', '-nostdin', '-i', media, '-t', '2', '-c', 'copy', copiedMedia], cleanEnv)
     const probe = JSON.parse(await run(path.join(tools, 'ffmpeg', 'ffprobe.exe'), ['-v', 'error', '-show_entries', 'stream=codec_name,width,height', '-of', 'json', copiedMedia], cleanEnv))
     if (!probe.streams?.some(stream => stream.width === 1280 && stream.height === 720)) throw new Error('Packaged ffmpeg/ffprobe remux failed')
+    const ffmpegChecks = await probePackagedFfmpeg({ ffmpeg: path.join(tools, 'ffmpeg', 'ffmpeg.exe'), directory: path.join(evidence, `ffmpeg-${label}-${randomUUID()}`), env: runtimeEnv })
     await page.locator('.studio').evaluate((element, base64) => {
       const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0))
       const transfer = new DataTransfer()
@@ -169,7 +171,7 @@ for (const [label, folder] of [['unpacked', path.join(root, '.release', 'win-unp
     const editor = await sample.evaluate(image => ({ width: image.naturalWidth, height: image.naturalHeight }))
     await page.screenshot({ path: path.join(evidence, `${label}-editor.png`) })
     if (requests || errors.length) throw new Error('Packaged offline playback/editor emitted external requests or page errors')
-    result = { label, executable: exe, packageArtifacts: report.artifacts, nodeNetworks, mainNetwork, status: status.value, providerDependencies: { canvas: false, nativeFiles: 0 }, provider, providerCachePrivate: cachePrivate, remuxProbe: probe, playback, editor, externalRequests: requests, pageErrors: errors }
+    result = { label, executable: exe, packageArtifacts: report.artifacts, nodeNetworks, mainNetwork, status: status.value, providerDependencies: { canvas: false, nativeFiles: 0 }, provider, providerCachePrivate: cachePrivate, remuxProbe: probe, ffmpegChecks, playback, editor, externalRequests: requests, pageErrors: errors }
     results.push(result)
   } finally {
     if (application) {

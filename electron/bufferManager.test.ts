@@ -309,13 +309,16 @@ describe('ffmpeg argument and manifest boundaries', () => {
 
 describe('fMP4 output on the real ffmpeg', () => {
   const ffmpeg = process.env.STREAM_SYNC_FFMPEG || 'ffmpeg'
-  const available = (() => { try { execFileSync(ffmpeg, ['-version'], { stdio: 'ignore' }); return true } catch { return false } })()
+  const fixtureFfmpeg = process.env.STREAM_SYNC_FIXTURE_FFMPEG || ffmpeg
+  const available = [fixtureFfmpeg, ffmpeg].every(tool => {
+    try { execFileSync(tool, ['-version'], { stdio: 'ignore' }); return true } catch { return false }
+  })
 
   it.skipIf(!available)('remuxes fallback HLS/TS AAC into MP4 instead of failing after its first video frame', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'syncer-fmp4-aac-'))
     try {
       const input = path.join(directory, 'input.ts')
-      execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=30',
+      execFileSync(fixtureFfmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=30',
         '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '4.5', '-c:v', 'libx264', '-g', '60', '-c:a', 'aac', '-f', 'mpegts', input],
       { cwd: directory, windowsHide: true, timeout: 15_000, stdio: 'pipe' })
       const args = buildFfmpegArgs({ url: pathToFileURL(input).href, realtime: true }, directory, 3, 'pipe:3', true).filter(arg => arg !== '-re')
@@ -335,10 +338,13 @@ describe('fMP4 output on the real ffmpeg', () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'syncer-fmp4-'))
     const elsewhere = await mkdtemp(path.join(os.tmpdir(), 'syncer-cwd-'))
     try {
+      const input = path.join(directory, 'input.mp4')
+      execFileSync(fixtureFfmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=30', '-t', '2.5',
+        '-c:v', 'libx264', input], { cwd: directory, windowsHide: true, timeout: 15_000, stdio: 'pipe' })
       const args = buildFfmpegArgs({ url: 'https://cdn.example/live.m3u8' }, directory, 7, 'pipe:3', true)
       const output = args.slice(args.indexOf('-c'))
-      execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=30', '-t', '2.5',
-        '-c:v', 'libx264', ...output.slice(2)], { cwd: elsewhere, stdio: 'ignore' })
+      execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-i', input, ...output],
+        { cwd: elsewhere, windowsHide: true, timeout: 15_000, stdio: 'pipe' })
       expect(await readdir(elsewhere)).toEqual([])
       const written = await readdir(directory)
       expect(written).toContain('init_7.mp4')

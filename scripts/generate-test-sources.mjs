@@ -8,8 +8,9 @@
  * so the sync design gates (detection error ≤ 0.25 s, post-apply divergence ≤ 0.35 s) become
  * checkable numbers rather than eyeballing.
  *
- * ffmpeg is required and is not a dependency of this project. Point `STREAM_SYNC_FFMPEG`
- * at the binary, or have `ffmpeg` on PATH.
+ * A full ffmpeg is required and is not a dependency of this project. Set
+ * `STREAM_SYNC_FIXTURE_FFMPEG` to select it independently from the application.
+ * Otherwise `STREAM_SYNC_FFMPEG` and then `ffmpeg` on PATH retain their precedence.
  *
  * Outputs are not committed: `public/test-sources/` is git-ignored, and the E2E suite skips
  * the media specs when they are absent.
@@ -21,7 +22,7 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 
 const outDir = fileURLToPath(new URL('../public/test-sources/', import.meta.url))
-const ffmpeg = process.env.STREAM_SYNC_FFMPEG?.trim() || 'ffmpeg'
+const ffmpeg = process.env.STREAM_SYNC_FIXTURE_FFMPEG?.trim() || process.env.STREAM_SYNC_FFMPEG?.trim() || 'ffmpeg'
 
 /** The ROI the fixture profile expects, as fractions of the frame. Keep in sync with the JSON below. */
 const ROI = { x: 0.42, y: 0.045, w: 0.16, h: 0.13 }
@@ -110,7 +111,7 @@ function run(args) {
       reject(
         new Error(
           error.code === 'ENOENT'
-            ? `找不到 ffmpeg（${ffmpeg}）。请安装 ffmpeg 或设置 STREAM_SYNC_FFMPEG。`
+            ? `找不到 ffmpeg (${ffmpeg}). 请安装完整版 ffmpeg 或设置 STREAM_SYNC_FIXTURE_FFMPEG.`
             : error.message,
         ),
       ),

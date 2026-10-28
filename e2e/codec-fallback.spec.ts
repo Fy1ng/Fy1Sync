@@ -11,7 +11,7 @@ const fixtureBase = fileURLToPath(new URL('../dist/client/test-sources/', import
 
 test('decodes a VP9 to H264 fMP4 discontinuity without replacing the video element', async ({ page, electronApp }) => {
   let ffmpeg: string
-  try { ffmpeg = await locateTool('ffmpeg') }
+  try { ffmpeg = await locateTool('ffmpeg', { ffmpegPath: process.env.STREAM_SYNC_FIXTURE_FFMPEG }) }
   catch { test.skip(true, '缺少ffmpeg, 无法生成codec切换fixture.'); return }
   const directory = await mkdtemp(path.join(fixtureBase, 'codec-switch-'))
   const codecs = new Set<string>()

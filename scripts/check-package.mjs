@@ -64,6 +64,6 @@ for (const name of releaseFiles) {
     artifact.contents = await verifyPackageArchive(file, unpacked, { forbiddenPath })
   }
 }
-const report = { asarEntries: asar, toolFiles: actual.length, artifacts, status: 'local-evaluation-only', licenseGap: 'Exact native dependency license/source mapping remains incomplete; see bundled THIRD-PARTY-NOTICES.md' }
+const report = { asarEntries: asar, toolFiles: actual.length, artifacts, status: 'local-evaluation-only', ffmpegBuildId: JSON.parse(await readFile(path.join(resources, 'tools', 'tools-lock.json'), 'utf8')).ffmpegBuildId }
 await writeFile(path.join(evidence, 'package-report.json'), JSON.stringify(report, null, 2) + '\n')
 console.log(JSON.stringify(report, null, 2))
