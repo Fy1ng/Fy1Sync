@@ -1,4 +1,4 @@
-export interface Cs2Team { name: string; short: string | null }
+export interface Cs2Team { name: string; short: string | null; logo: string | null }
 export interface Cs2Stream {
   platform: 'youtube' | 'twitch'
   channel: string

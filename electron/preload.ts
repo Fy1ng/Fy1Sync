@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { StreamSyncerBridge, DesktopMethod, DesktopMethods, DanmakuEvent } from './contracts'
+import type { StreamSyncerBridge, DesktopMethod, DesktopMethods, DanmakuEvent, WindowState } from './contracts'
 import type { ApiResult } from '../src/app/apiClient'
 import type { BufferState } from './bufferManager'
 import type { DouyuTasksSnapshot } from '../server/douyu/types'
@@ -7,6 +7,7 @@ import { FEATURE_METHODS, type FeatureEvent } from './featureContracts'
 
 const methods = new Set<DesktopMethod>([
   ...FEATURE_METHODS,
+  'windowControl', 'getWindowState',
   'listDouyuAccounts', 'addDouyuAccount', 'renameDouyuAccount', 'loginDouyuAccount', 'loginDouyuYubaAccount', 'activateDouyuAccount', 'logoutDouyuAccount', 'removeDouyuAccount',
   'sendDouyuMessage', 'openDouyuTaskRoom',
   'getDouyuRenewalTargets', 'previewDouyuRenewal', 'executeDouyuRenewal', 'cancelDouyuRenewal',
@@ -51,6 +52,12 @@ const bridge: StreamSyncerBridge = {
     const receive = (_event: unknown, state: BufferState) => { if (active) listener(state) }
     ipcRenderer.on('stream-syncer:buffer', receive)
     return () => { active = false; ipcRenderer.removeListener('stream-syncer:buffer', receive) }
+  },
+  subscribeWindowState(listener) {
+    let active = true
+    const receive = (_event: unknown, state: WindowState) => { if (active) listener(state) }
+    ipcRenderer.on('stream-syncer:window-state', receive)
+    return () => { active = false; ipcRenderer.removeListener('stream-syncer:window-state', receive) }
   },
   subscribeDouyuTasks(listener) {
     let active = true

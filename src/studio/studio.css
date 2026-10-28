@@ -596,8 +596,9 @@ body,
   white-space: nowrap;
 }
 
-.studio .chip[data-status='empty'] .chip-where {
-  color: var(--ash-2);
+/* An empty side reads and clicks like a loaded one: same chip, its panel takes the link. */
+.studio .chip[aria-expanded='true'] {
+  background: rgb(40 40 44 / 85%);
 }
 
 .studio .chip-main {
@@ -3107,5 +3108,65 @@ body,
 
 .studio .intake-find small {
   font-size: 12px;
+  color: var(--ash);
+}
+
+/* 收藏. A short shelf of links, read as names; the one already playing is plain text. */
+.studio .saved {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.studio .saved-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.studio .saved-room {
+  max-width: 220px;
+  overflow: hidden;
+  padding: 4px 10px;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: rgb(255 255 255 / 6%);
+  border-radius: 12px;
+  transition: background 140ms var(--ease);
+}
+
+.studio .saved-room:hover:not(:disabled) {
+  background: rgb(255 255 255 / 12%);
+}
+
+.studio .saved-room[aria-current] {
+  color: var(--ash);
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+
+.studio .panel-foot [aria-pressed='true'] .icon {
+  fill: currentColor;
+}
+
+.studio .intake-saved {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.studio .intake-saved-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.studio .intake-saved-role {
+  width: 36px;
+  font-size: 12px;
+  font-weight: 700;
   color: var(--ash);
 }

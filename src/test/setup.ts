@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest'
 import { afterEach, vi } from 'vitest'
 import { cleanup } from '@testing-library/react'
 import 'fake-indexeddb/auto'
+import { forgetAll } from '../app/remembered'
 
 // jsdom ships no media pipeline: <video> never loads, never plays, and reports
 // readyState 0 forever. The player is built around HTMLMediaElement, so give
@@ -170,4 +171,6 @@ afterEach(() => {
   vi.restoreAllMocks()
   window.localStorage.clear()
   window.sessionStorage.clear()
+  // Panels remember their last read for the window; each test starts with none.
+  forgetAll()
 })

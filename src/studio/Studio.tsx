@@ -27,6 +27,7 @@ import { Icon } from './kit'
 import { PipButton } from './PipButton'
 import type { RecordsTab } from './records/DanmakuRecords'
 import { ScheduleSheet } from './schedule/ScheduleSheet'
+import { prefetchSchedule } from './schedule/store'
 import { SettingsSheet, type SettingsSection, type SettingsTarget } from './SettingsSheet'
 import { SourceChip } from './SourceChip'
 import { SourceLoaderProvider, ROLE_LABEL, useSourceLoader } from './sources'
@@ -37,6 +38,7 @@ import { Toasts } from './Toasts'
 import { QualityMenu } from './QualityMenu'
 import { DanmakuSwitch, PlayButton, Timeline, Volumes } from './transport'
 import './studio.css'
+import { remember, remembered } from '../app/remembered'
 
 /** Seconds per ←/→ press, and with Shift. */
 const SEEK_SMALL = 5
@@ -62,7 +64,9 @@ function StudioView(): React.ReactNode {
   const [intake, setIntake] = useState(false)
   const [droppedFile, setDroppedFile] = useState<File | null>(null)
   const [settingsAt, setSettingsAt] = useState<SettingsTarget | null>(null)
-  const openSettings = useCallback((section: SettingsSection) => setSettingsAt({ section }), [])
+  // The gear reopens 设置 where it was left; links that name a section go there.
+  const openSettings = useCallback((section?: SettingsSection) =>
+    setSettingsAt({ section: section ?? remembered<SettingsSection>('settings:section') ?? 'general' }), [])
   const [tuning, setTuning] = useState(false)
   const [framing, setFraming] = useState(false)
   const [previewHidden, setPreviewHidden] = useState(false)
@@ -94,14 +98,19 @@ function StudioView(): React.ReactNode {
   const empty = snapshot.media.official.status === 'empty' && snapshot.media.commentary.status === 'empty'
 
   useEffect(() => { void session.boot() }, [session])
+  // Read the schedule now so 赛程 opens on data instead of waiting for Liquipedia.
+  useEffect(() => { prefetchSchedule() }, [])
   // Suspend, never dispose: the session is shared with the scene editor route.
   useEffect(() => () => session.suspend(), [session])
   useEffect(() => {
     const media = session.snapshot.media
-    if (media.official.status === 'empty' && media.commentary.status === 'empty') setIntake(true)
+    // 添加直播间 greets a fresh start only; once the viewer is in the player, only its button
+    // brings it back (not an empty side, a dropped file or a return from the editor).
+    // `studio:entered` lives for the window, so it survives the editor round trip, not a reload.
+    if (!remembered('studio:entered') && media.official.status === 'empty' && media.commentary.status === 'empty') setIntake(true)
   }, [session])
 
-  const closeIntake = useCallback(() => { setIntake(false); setDroppedFile(null) }, [])
+  const closeIntake = useCallback(() => { remember('studio:entered', true); setIntake(false); setDroppedFile(null) }, [])
 
   // One side alone belongs on the big screen, not in the corner over an empty picture. The
   // swap made for that is undone once the empty side arrives; a swap the viewer made is kept.
@@ -157,8 +166,11 @@ function StudioView(): React.ReactNode {
         const file = event.dataTransfer.files[0]
         if (!file) return
         event.preventDefault()
-        setDroppedFile(file)
-        setIntake(true)
+        if (intake) { setDroppedFile(file); return }
+        // In the player a file goes straight to a side: an empty one, else the big picture.
+        const media = session.snapshot.media
+        const target = SOURCE_ROLES.find((role) => media[role].status === 'empty' && !loader.state[role].busy) ?? mainRole
+        void loader.loadFile(target, file)
       }}
     >
       <DanmakuActionsProvider onOpenRecords={openRecords}>
@@ -187,7 +199,7 @@ function StudioView(): React.ReactNode {
           <header className="topbar">
             <div className="topbar-sources">
               {SOURCE_ROLES.map((role) => (
-                <SourceChip key={role} role={role} onEmpty={() => setIntake(true)}
+                <SourceChip key={role} role={role}
                   onSchedule={role === 'official' ? () => setScheduleFrom('source') : undefined}
                   onShowPreview={previewHidden && role === otherRole && snapshot.media[role].status !== 'empty'
                     ? () => setPreviewHidden(false) : null} />
@@ -205,7 +217,7 @@ function StudioView(): React.ReactNode {
                     <Icon name="chat" />
                   </button>
                 )}
-                <button type="button" className="icon-btn glass" onClick={() => openSettings('general')} aria-label="设置" title="设置">
+                <button type="button" className="icon-btn glass" onClick={() => openSettings()} aria-label="设置" title="设置">
                   <Icon name="gear" />
                 </button>
               </div>
@@ -248,7 +260,7 @@ function StudioView(): React.ReactNode {
           )}
 
           {tuning && <DanmakuPanel onClose={() => setTuning(false)} />}
-          {(intake || (empty && droppedFile)) && <Intake onClose={closeIntake} pendingFile={droppedFile} onSchedule={() => { closeIntake(); setScheduleFrom('intake') }} />}
+          {intake && <Intake onClose={closeIntake} pendingFile={droppedFile} onSchedule={() => { closeIntake(); setScheduleFrom('intake') }} />}
         </main>
 
         {chatOpen && (

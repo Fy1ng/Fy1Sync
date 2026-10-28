@@ -51,6 +51,8 @@ export const LOGIN_PLATFORMS = {
 
 const MAX_COOKIE_FILE_BYTES = 4 * 1024 * 1024
 const storageFailure = () => new Error('账号数据读写失败, 未返回任何 cookie 数据.')
+const sameFile = (before: fs.Stats, after: fs.Stats): boolean => after.isFile() && !after.isSymbolicLink()
+  && before.ino === after.ino && before.dev === after.dev && before.size === after.size && before.mtimeMs === after.mtimeMs
 export function isLoginPlatform(value: unknown): value is LoginPlatform { return value === 'youtube' || value === 'douyu' }
 
 export function cookieDomainAllowed(domain: string, platform: LoginPlatform): boolean {
@@ -113,6 +115,11 @@ export class CookieStore {
     return containedPath(this.root, path.join(this.root, 'cookies', `${platform}.txt`))
   }
 
+  private invalidatePermissions(platform: LoginPlatform): void {
+    this.permissions.invalidate?.(path.join(this.root, 'cookies', `${platform}.txt`))
+    this.permissions.invalidate?.(path.join(this.root, 'cookies'))
+  }
+
   private async read(platform: LoginPlatform): Promise<{ text: string; cookies: StoredCookie[] } | undefined> {
     try {
       const revision = this.revisions[platform]
@@ -133,7 +140,7 @@ export class CookieStore {
       let text: string
       try {
         const stat = await handle.stat()
-        if (!stat.isFile() || stat.size > MAX_COOKIE_FILE_BYTES) throw storageFailure()
+        if (!sameFile(before, stat) || stat.size > MAX_COOKIE_FILE_BYTES) throw storageFailure()
         const bytes = Buffer.alloc(Math.min(stat.size + 1, MAX_COOKIE_FILE_BYTES + 1))
         let length = 0
         while (length < bytes.length) {
@@ -142,9 +149,12 @@ export class CookieStore {
           length += bytesRead
         }
         if (length > stat.size || length > MAX_COOKIE_FILE_BYTES) throw storageFailure()
+        if (!sameFile(before, await handle.stat())) throw storageFailure()
         text = bytes.subarray(0, length).toString('utf8')
       } finally { await handle.close() }
       if (revision !== this.revisions[platform]) throw storageFailure()
+      containedPath(this.root, file)
+      if (!sameFile(before, fs.lstatSync(file))) throw storageFailure()
       return { text, cookies: parseCookies(text, platform, this.now()) }
     } catch { throw storageFailure() }
   }
@@ -155,6 +165,7 @@ export class CookieStore {
     try {
       if (!isLoginPlatform(platform) || !Array.isArray(cookies) || cookies.length > 50_000) throw storageFailure()
       this.revisions[platform]++
+      this.invalidatePermissions(platform)
       const lines = ['# Netscape HTTP Cookie File', '# Stream Syncer private login data. Do not share this file.', '']
       for (const cookie of cookies) {
         if (!cookie || typeof cookie.domain !== 'string' || !cookieDomainAllowed(cookie.domain, platform)) continue
@@ -185,6 +196,7 @@ export class CookieStore {
       return { cookieCount, authKeysPresent }
     } catch { throw storageFailure() }
     finally {
+      if (isLoginPlatform(platform)) this.invalidatePermissions(platform)
       if (descriptor !== undefined) fs.closeSync(descriptor)
       if (temporary !== undefined) fs.rmSync(temporary, { force: true })
     }
@@ -267,6 +279,7 @@ export class CookieStore {
     try {
       if (!isLoginPlatform(platform)) throw storageFailure()
       this.revisions[platform]++
+      this.invalidatePermissions(platform)
       const file = this.target(platform)
       if (fs.existsSync(file)) {
         this.permissions.verify(file, false)

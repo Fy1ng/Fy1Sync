@@ -76,10 +76,8 @@ export function sourceDialog(page: Page): Locator {
 export async function openSourceDialog(page: Page): Promise<Locator> {
   const dialog = sourceDialog(page)
   if (!(await dialog.isVisible())) {
-    await revealOverlay(page)
-    const emptyChip = page.locator('.chip[data-status="empty"]').first()
-    await expect(emptyChip).toBeVisible()
-    await emptyChip.click()
+    // In the player 添加直播间 comes back only from its own button, shown while both sides are empty.
+    await page.getByRole('button', { name: '添加直播间', exact: true }).click()
   }
   await expect(dialog).toBeVisible()
   return dialog
@@ -118,7 +116,7 @@ export async function openSourcePanel(page: Page, role: 'official' | 'commentary
   return panel
 }
 
-/** Add an empty source through intake, or edit a loaded source in its popover. */
+/** Add a source through intake while it is up, otherwise in that side's popover. */
 export async function loadSource(
   page: Page,
   role: 'official' | 'commentary',
@@ -126,8 +124,8 @@ export async function loadSource(
   timeout = 45_000,
 ): Promise<void> {
   const chip = page.locator(`.chip[data-role="${role}"]`)
-  if (await chip.getAttribute('data-status') === 'empty') {
-    const dialog = await openSourceDialog(page)
+  if (await sourceDialog(page).isVisible()) {
+    const dialog = sourceDialog(page)
     await dialog.getByRole('textbox', { name: '直播间链接' }).fill(url)
     await dialog.getByRole('textbox', { name: '直播间链接' }).press('Enter')
     const platform = dialog.getByRole('group', { name: '选择房间号所属平台' })
@@ -135,7 +133,12 @@ export async function loadSource(
     const placement = dialog.getByRole('group', { name: '选择添加位置' })
     if (await placement.isVisible()) await placement.getByRole('button', { name: role === 'official' ? '画面' : '解说', exact: true }).click()
   } else {
-    const panel = await openSourcePanel(page, role)
+    const panel = rolePanel(sourceDialog(page), role)
+    if (!(await panel.isVisible())) {
+      await revealOverlay(page)
+      await openPopoverTrigger(chip)
+    }
+    await expect(panel).toBeVisible()
     await panel.getByRole('textbox', { name: role === 'official' ? '画面链接' : '解说链接' }).fill(url)
     await panel.getByRole('button', { name: '载入', exact: true }).click()
     await expect(panel).toBeHidden({ timeout })

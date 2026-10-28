@@ -31,6 +31,8 @@ import { DouyuGiftPlanService } from '../server/douyu/giftPlanService'
 import type { ResolveDouyuRoom } from '../server/platforms/douyuRoom'
 import appPackage from '../package.json'
 import { EsportsService } from '../server/esports/schedule'
+import { DouyuReadCache } from '../server/douyu/readCache'
+import { SavedRoomsStore } from './savedRooms'
 
 export interface BackendRuntimeOptions {
   userDataDir: string
@@ -57,7 +59,9 @@ export interface BackendRuntimeOptions {
 export function createBackendRuntime(options: BackendRuntimeOptions) {
   const lifetime = new AbortController()
   const api = new FeatureApi()
-  const esports = new EsportsService({ userDataDir: options.userDataDir, version: appPackage.version })
+  const esports = new EsportsService({ userDataDir: options.userDataDir, version: appPackage.version, onEvent: event => api.publish(event) })
+  const savedRooms = new SavedRoomsStore(options.userDataDir)
+  const readCache = new DouyuReadCache()
   const releases: (() => void)[] = []
   const required = <T>(service: T | undefined): T => { if (!service) throw new FeatureApiError('not-available'); return service }
   const accounts = () => required(options.accounts)
@@ -116,11 +120,14 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
   const inventory = options.tasks ? new DouyuInventoryService({ gateway: backpack, tasks: options.tasks, accountReady, resolveRoom: options.resolveRoom }) : undefined
   const gifts = options.tasks ? new DouyuGiftPlanService({ gateway: backpack, purchase, tasks: options.tasks, accountReady, resolveRoom: options.resolveRoom }) : undefined
   api.register(createDanmakuHandlers({ features: options.danmaku, moderation, tasks: options.tasks, withAccount, openExternal: options.openExternal }))
-  api.register(createInsightsHandlers({ insights, gateway: insightsGateway, update, withAccount, lifetime: lifetime.signal }))
+  api.register(createInsightsHandlers({ insights, gateway: insightsGateway, update, withAccount, lifetime: lifetime.signal, readCache }))
   const captureChanged = async <T>(run: () => T | Promise<T>): Promise<T> => {
     try { return await run() } finally { api.publish({ topic: 'capture', data: capture.state() }) }
   }
   const operations: FeatureHandlers = {
+    listSavedRooms: args => { noArgs(args); return savedRooms.list() },
+    saveRoom: args => savedRooms.save(args),
+    removeSavedRoom: args => savedRooms.remove(args),
     getCs2Schedule: args => esports.getCs2Schedule(args),
     getStreamTitles: args => esports.getStreamTitles(args),
     openAppReleasePage: async args => {
@@ -176,8 +183,11 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
       return withAccount(id, () => required(options.renewal).previewEqual(id, args.rooms))
     },
     getDouyuInventory: args => {
-      fields(args, ['accountId'], ['room']); const id = account(args.accountId)
-      return withAccount(id, () => required(inventory).read(id, args.room))
+      fields(args, ['accountId'], ['room', 'refresh']); const id = account(args.accountId)
+      if (args.refresh !== undefined && typeof args.refresh !== 'boolean') throw new FeatureApiError('invalid-arguments')
+      const target = args.room === undefined ? queue().snapshot().currentRoom : room(args.room)
+      if (!target) throw new FeatureApiError('invalid-arguments')
+      return withAccount(id, () => readCache.read('inventory', id, target, args.refresh, () => required(inventory).read(id, target)))
     },
     getDouyuGiftCatalog: async args => {
       const catalog = await readCatalog(room(fields(args, ['room']).room))
@@ -223,11 +233,15 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     if (pip.state().streamId === state.role && (state.state === 'starting' || state.state === 'stopped')) pip.close()
   }))
   if (options.tasks) releases.push(options.tasks.subscribe(() => {
+    // Includes scheduled/manual writes and late settlement after cancellation. Clearing on
+    // other queue transitions is intentionally conservative; no write outcomes are cached.
+    readCache.invalidate()
     if (pip.windowId() !== null) api.publish({ topic: 'pip', data: pip.state() })
   }))
   if (options.accounts) {
     let previous = options.accounts.activeAccountId
     releases.push(options.accounts.subscribe(event => {
+      readCache.invalidate()
       const next = options.accounts!.activeAccountId
       const invalidated = event.type === 'invalidated' ? event.accountId : previous !== next ? previous : null
       if (invalidated) {
@@ -246,6 +260,7 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     },
     async dispose() {
       lifetime.abort()
+      readCache.invalidate()
       for (const release of releases) release()
       pip.dispose(); automations?.dispose(); gifts?.dispose(); inventory?.dispose(); insights.dispose(); update.dispose()
       api.dispose()

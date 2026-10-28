@@ -182,7 +182,11 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
   const key = JSON.stringify([connected, room, account?.id, account?.loggedIn, account?.busy, account?.canSend])
   const currentContext = useRef({ key, account, room, problem })
   useLayoutEffect(() => {
-    if (currentContext.current.key !== key) resetContext()
+    // The first account read finishing is not an account switch: a draft typed while it was
+    // being read stays. A switch, sign-out or another room still starts over.
+    const previous = currentContext.current
+    const firstRead = previous.account === null && previous.room === room && account !== null
+    if (previous.key !== key && !firstRead) resetContext()
     currentContext.current = { key, account, room, problem }
   }, [key, account, room, problem, resetContext])
 

@@ -1,9 +1,10 @@
-import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron'
+import type { BrowserWindow, IpcMain, IpcMainInvokeEvent, WebContents } from 'electron'
 import type { DesktopService } from '../server/api'
 import { parseDouyuRoom } from '../server/platforms'
 import { danmakuRoom } from '../server/danmaku/types'
 import type { FeatureEvent } from './featureContracts'
 import { isAppDocument } from './security'
+import { invokeWindowMethod } from './windowControls'
 
 /** Trust both the concrete app window and its top frame, never just a claimed URL or ID. */
 export function trustedSender(event: IpcMainInvokeEvent, contents: WebContents): boolean {
@@ -14,6 +15,7 @@ export function trustedSender(event: IpcMainInvokeEvent, contents: WebContents):
 }
 
 export interface IpcHandlerOptions {
+  windowForContents?: (contents: WebContents) => BrowserWindow | null
   extraContents?: readonly WebContents[]
   /** Additional windows need an explicit grant; the primary window remains trusted. */
   allowMethod?: (senderId: number, method: string, args: unknown) => boolean
@@ -126,6 +128,10 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
   ipc.handle('stream-syncer:invoke', async (event, method: unknown, args: unknown) => {
     const owner = sender(event)
     if (!owner || !allowMethod(owner, method, args)) return denied()
+    if (method === 'windowControl' || method === 'getWindowState') {
+      try { return invokeWindowMethod(options.windowForContents?.(event.sender) ?? null, method, args) }
+      catch { return { ok: false, code: 'internal-error', message: '无法完成窗口操作' } }
+    }
     const generation = owner.generation
     const current = () => sender(event) === owner && owner.generation === generation && allowMethod(owner, method, args)
     if (method === 'activateDouyuRoom') {

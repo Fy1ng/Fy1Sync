@@ -1,32 +1,13 @@
-import { parse, type DefaultTreeAdapterMap } from 'parse5'
-
 export type TournamentTier = 1 | 2 | 3 | 4
-export const TIER_PAGES = ['S-Tier_Tournaments', 'A-Tier_Tournaments', 'B-Tier_Tournaments', 'C-Tier_Tournaments'] as const
 
-type Node = DefaultTreeAdapterMap['node']
-type Element = DefaultTreeAdapterMap['element']
-const isElement = (node: Node): node is Element => 'tagName' in node
-const children = (node: Node): Node[] => 'childNodes' in node ? node.childNodes : []
-const attr = (node: Node, name: string): string | undefined => isElement(node) ? node.attrs.find(value => value.name === name)?.value : undefined
-const hasClass = (node: Node, name: string): boolean => (attr(node, 'class') ?? '').split(/\s+/).includes(name)
-function all(node: Node, predicate: (value: Node) => boolean): Node[] {
-  const result: Node[] = [], stack = [node]
-  while (stack.length) {
-    const value = stack.pop()!
-    if (predicate(value)) result.push(value)
-    stack.push(...children(value).toReversed())
-  }
-  return result
-}
-
-const TABLE_SELECTOR = '.tournaments-listing table.table2__table'
-const ROW_SELECTOR = `${TABLE_SELECTOR} > tbody > tr.table2__row--body`
-const LINK_SELECTOR = `${ROW_SELECTOR} > td.column__tournament > a[href]`
-
-export class TierFormatError extends Error {
-  constructor(readonly selector: string) { super('赛事级别格式已变化, 暂时无法读取'); this.name = 'TierFormatError' }
-}
-const fail = (selector: string): never => { throw new TierFormatError(selector) }
+const CATEGORY_TIERS = { S: 1, A: 2, B: 3, C: 4 } as const
+const CATEGORIES = Object.keys(CATEGORY_TIERS).map(tier => `Category:${tier}-Tier Tournaments`).join('|')
+const API_URL = 'https://liquipedia.net/counterstrike/api.php'
+const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
+const titleKey = (title: string): string => title.replaceAll('_', ' ')
+const validTitle = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 2_000
+  && !/[\x00-\x1f\x7f\\|#?]/.test(value) && !value.split('/').some(segment => !segment || segment === '.' || segment === '..')
+  && !value.split('/')[0]!.includes(':')
 
 /** A wiki path is an identity, not a tournament name. Never accept another origin or namespace. */
 export function normalizeTournamentPath(value: string): string | null {
@@ -37,47 +18,106 @@ export function normalizeTournamentPath(value: string): string | null {
     const url = new URL(value, 'https://liquipedia.net')
     if (url.origin !== 'https://liquipedia.net' || url.username || url.password || url.search || !url.pathname.startsWith('/counterstrike/')) return null
     const segments = url.pathname.slice('/counterstrike/'.length).split('/').map(segment => decodeURIComponent(segment))
-    if (segments.some(segment => !segment || segment === '.' || segment === '..' || /[\x00-\x1f\x7f\\/?#]/.test(segment))
+    if (segments.some(segment => !segment || segment === '.' || segment === '..' || /[\x00-\x1f\x7f\\/?#|]/.test(segment))
       || segments[0]!.includes(':')) return null
     return segments.join('/')
   } catch { return null }
 }
 
-/** Only the named tournament column in genuine listing body rows establishes membership. */
-export function parseTierPage(payload: unknown): string[] {
-  const html = (payload as { parse?: { text?: { '*'?: unknown } } } | null)?.parse?.text?.['*']
-  if (typeof html !== 'string' || html.length > 2_000_000) return fail('parse.text.*')
-  const root = parse(html)
-  const listings = all(root, node => hasClass(node, 'tournaments-listing'))
-  const tables = new Set(listings.flatMap(listing => all(listing, node => isElement(node) && node.tagName === 'table' && hasClass(node, 'table2__table'))))
-  if (!tables.size) return fail(TABLE_SELECTOR)
-  const result = new Set<string>()
-  for (const table of tables) {
-    const rows = children(table).filter(node => isElement(node) && node.tagName === 'tbody')
-      .flatMap(body => children(body).filter(node => isElement(node) && node.tagName === 'tr' && hasClass(node, 'table2__row--body')))
-    if (!rows.length) return fail(ROW_SELECTOR)
-    for (const row of rows) {
-      const cells = children(row).filter(node => isElement(node) && node.tagName === 'td' && hasClass(node, 'column__tournament'))
-      if (cells.length !== 1) return fail(`${ROW_SELECTOR} > td.column__tournament`)
-      const anchors = children(cells[0]!).filter(node => isElement(node) && node.tagName === 'a' && attr(node, 'href') !== undefined)
-      if (anchors.length !== 1) return fail(LINK_SELECTOR)
-      const path = normalizeTournamentPath(attr(anchors[0]!, 'href')!)
-      if (path === null) return fail(LINK_SELECTOR)
-      result.add(path)
+interface PageCategories { missing: boolean; tiers: Set<TournamentTier> }
+interface TierPage { missing: boolean; tier: TournamentTier | null }
+
+/** Consume every category continuation before deciding whether a page is unclassified or conflicting. */
+async function queryBatch(paths: readonly string[], request: (url: string) => Promise<unknown>): Promise<Map<string, TierPage>> {
+  const aliases = new Map<string, string>(), pages = new Map<string, PageCategories>()
+  const seen = new Set<string>()
+  let continuation: Record<string, string> = {}
+  for (let turn = 0; ; turn++) {
+    if (turn >= 100) throw new Error('Too many tier query continuations')
+    const params = new URLSearchParams({ action: 'query', format: 'json', formatversion: '2', prop: 'categories',
+      redirects: '1', cllimit: 'max', clcategories: CATEGORIES, titles: paths.join('|'), ...continuation })
+    const payload = await request(`${API_URL}?${params}`)
+    if (!object(payload) || payload.error !== undefined || !object(payload.query) || !Array.isArray(payload.query.pages)) {
+      throw new Error('Invalid tier query response')
     }
+    for (const name of ['normalized', 'redirects']) {
+      const entries = payload.query[name]
+      if (entries === undefined) continue
+      if (!Array.isArray(entries)) throw new Error('Invalid tier title mappings')
+      for (const entry of entries) {
+        if (!object(entry) || !validTitle(entry.from) || !validTitle(entry.to)) throw new Error('Invalid tier title mapping')
+        const from = titleKey(entry.from), to = titleKey(entry.to)
+        if (from === to) continue
+        if (aliases.has(from) && aliases.get(from) !== to) throw new Error('Conflicting tier title mappings')
+        aliases.set(from, to)
+      }
+    }
+    for (const page of payload.query.pages) {
+      if (!object(page) || !validTitle(page.title) || page.invalid !== undefined
+        || (page.missing !== undefined && typeof page.missing !== 'boolean')
+        || (page.categories !== undefined && !Array.isArray(page.categories))) throw new Error('Invalid tier query page')
+      const key = titleKey(page.title), missing = page.missing === true
+      let current = pages.get(key)
+      if (current && current.missing !== missing) throw new Error('Inconsistent tier query page')
+      if (!current) { current = { missing, tiers: new Set() }; pages.set(key, current) }
+      for (const category of page.categories ?? []) {
+        if (!object(category) || typeof category.title !== 'string') throw new Error('Invalid tier query category')
+        const match = /^Category:([SABC])-Tier Tournaments$/.exec(category.title)
+        if (match) current.tiers.add(CATEGORY_TIERS[match[1] as keyof typeof CATEGORY_TIERS])
+      }
+    }
+    if (payload.continue === undefined) break
+    if (!object(payload.continue) || !Object.keys(payload.continue).length
+      || Object.entries(payload.continue).some(([key, value]) => !/^(?:continue|[a-z]+continue)$/.test(key) || typeof value !== 'string')) {
+      throw new Error('Invalid tier query continuation')
+    }
+    continuation = payload.continue as Record<string, string>
+    const token = JSON.stringify(Object.entries(continuation).sort(([left], [right]) => left.localeCompare(right)))
+    if (seen.has(token)) throw new Error('Repeated tier query continuation')
+    seen.add(token)
   }
-  return [...result]
+  const result = new Map<string, TierPage>()
+  for (const path of paths) {
+    let key = titleKey(path)
+    const visited = new Set<string>()
+    while (aliases.has(key)) {
+      if (visited.has(key)) throw new Error('Cyclic tier title mappings')
+      visited.add(key); key = aliases.get(key)!
+    }
+    const page = pages.get(key)
+    if (!page) throw new Error('Missing requested tier query page')
+    result.set(titleKey(path), { missing: page.missing, tier: page.tiers.size === 1 ? [...page.tiers][0]! : null })
+  }
+  return result
 }
 
-export function lookupTier(url: string, tiers: ReadonlyMap<string, TournamentTier>): TournamentTier | null {
-  let path = normalizeTournamentPath(url)
-  if (path === null) return null
-  for (let removed = 0; removed <= 2; removed++) {
-    const tier = tiers.get(path)
-    if (tier !== undefined) return tier
-    const slash = path.lastIndexOf('/')
-    if (slash < 0) break
-    path = path.slice(0, slash)
+/** Only a genuinely missing page can inherit a parent, at most two segments above the original path. */
+export async function queryTournamentTiers(paths: readonly string[], request: (url: string) => Promise<unknown>): Promise<{
+  tiers: Map<string, TournamentTier | null>; failed: string[]
+}> {
+  const tiers = new Map<string, TournamentTier | null>(), failed = new Set<string>()
+  const pending = new Map<string, { path: string; depth: number }>()
+  const known = new Map<string, TierPage | null>()
+  for (const path of new Set(paths)) {
+    if (!validTitle(path)) { failed.add(path); continue }
+    pending.set(path, { path, depth: 0 })
   }
-  return null
+  while (pending.size) {
+    const titles = [...new Map([...pending.values()].filter(value => !known.has(titleKey(value.path)))
+      .map(value => [titleKey(value.path), value.path])).values()]
+    for (let start = 0; start < titles.length; start += 50) {
+      const batch = titles.slice(start, start + 50)
+      try { for (const [key, page] of await queryBatch(batch, request)) known.set(key, page) }
+      catch { for (const path of batch) known.set(titleKey(path), null) }
+    }
+    for (const [original, state] of pending) {
+      const page = known.get(titleKey(state.path))
+      if (!page) { failed.add(original); pending.delete(original); continue }
+      if (!page.missing) { tiers.set(original, page.tier); pending.delete(original); continue }
+      const slash = state.path.lastIndexOf('/')
+      if (state.depth >= 2 || slash < 0) { tiers.set(original, null); pending.delete(original); continue }
+      pending.set(original, { path: state.path.slice(0, slash), depth: state.depth + 1 })
+    }
+  }
+  return { tiers, failed: [...failed] }
 }

@@ -8,12 +8,12 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { parseSourceInput } from '../core/mediaSources'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { Icon } from './kit'
-import { FIXTURES, PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, routeFor, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
+import { PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, routeFor, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
+import { useSavedRooms, type SavedRoom } from './savedRooms'
 
 type Pending = { kind: 'text'; value: string } | { kind: 'file'; file: File } | { kind: 'room'; value: string; room: string }
 
@@ -29,7 +29,6 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
   const [text, setText] = useState('')
   const [ask, setAsk] = useState<Pending | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [fixtures, setFixtures] = useState(false)
   const field = useRef<HTMLInputElement | null>(null)
   const media = snapshot.media
   const bothReady = media.official.status === 'ready' && media.commentary.status === 'ready'
@@ -42,20 +41,12 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
-  useEffect(() => {
-    let live = true
-    void apiClient.getToolsStatus().then((result) => { if (live && result.ok) setFixtures(result.value.fixturesAvailable) })
-    return () => { live = false }
-  }, [])
   // Both playing is the whole point of this screen; leave without making them click.
   useEffect(() => {
     if (!bothReady) return
     const timer = setTimeout(() => { void session.setPlaying(true); onClose() }, 700)
     return () => clearTimeout(timer)
   }, [bothReady, onClose, session])
-
-  const freeSlot = (): SourceRole | null =>
-    SOURCE_ROLES.find((role) => media[role].status === 'empty' && !loader.state[role].busy) ?? null
 
   const place = (pending: Pending, role: SourceRole, platform?: RoomPlatform): void => {
     setAsk(null)
@@ -129,17 +120,15 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
           </button>
         )}
 
+        <SavedRooms onPick={(room) => place({ kind: 'text', value: room.input }, room.role,
+          room.platform === 'douyu' || room.platform === 'bilibili' || room.platform === 'huya' ? room.platform : undefined)} />
+
         <ul className="intake-slots">
           {SOURCE_ROLES.map((role) => <Slot key={role} role={role} />)}
         </ul>
 
         <p className="intake-foot">
           <span>支持将视频文件拖入窗口</span>
-          {fixtures && freeSlot() && (
-            <button type="button" className="link-btn" onClick={() => {
-              for (const role of SOURCE_ROLES) if (media[role].status === 'empty') void loader.loadDescriptor(role, FIXTURES[role])
-            }}>载入测试片源</button>
-          )}
           {!bothReady && (
             <button type="button" className="link-btn intake-skip" onClick={onClose}>{anyLoaded ? '开始观看' : '跳过'}</button>
           )}
@@ -168,5 +157,29 @@ function Slot({ role }: { role: SourceRole }): React.ReactNode {
         <span className="slot-error" role="alert">{load.problem?.message ?? state.error?.message}</span>
       )}
     </li>
+  )
+}
+
+/** Saved rooms, by side, for a side that is still empty: one click fills it. */
+function SavedRooms({ onPick }: { onPick: (room: SavedRoom) => void }): React.ReactNode {
+  const snapshot = useSessionSnapshot()
+  const loader = useSourceLoader()
+  const rooms = (useSavedRooms() ?? []).filter((room) => snapshot.media[room.role].status === 'empty' && !loader.state[room.role].busy)
+  if (rooms.length === 0) return null
+  return (
+    <div className="intake-saved" role="group" aria-label="收藏的直播间">
+      {SOURCE_ROLES.map((role) => {
+        const mine = rooms.filter((room) => room.role === role)
+        if (mine.length === 0) return null
+        return (
+          <div key={role} className="intake-saved-row">
+            <span className="intake-saved-role">{ROLE_LABEL[role]}</span>
+            {mine.map((room) => (
+              <button key={room.id} type="button" className="btn-glass small" onClick={() => onPick(room)}>{room.label}</button>
+            ))}
+          </div>
+        )
+      })}
+    </div>
   )
 }

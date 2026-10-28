@@ -111,7 +111,7 @@ export class DouyuInsightsGateway {
     const timer = setTimeout(() => timeout.abort(), Math.max(1, Math.min(this.deps.proxy.requestTimeoutMs || 15_000, 15_000)))
     const context: Session = { ...parent, signal: AbortSignal.any([parent.signal, timeout.signal]) }
     try {
-      await this.credentials(context, url)
+      const credentials = await this.credentials(context, url)
       const { response } = await safeFetch(url, {
         ...this.deps.proxy, hosts: [HOST], maxRedirects: 0, allowNonLoopbackTargets: false, allowNonStandardPorts: false,
       }, {
@@ -122,7 +122,6 @@ export class DouyuInsightsGateway {
           return addresses
         },
         fetchImpl: async (input, init) => {
-          const credentials = await this.credentials(context, url)
           active(context.signal)
           const headers: Record<string, string> = { Accept: 'application/json', Referer: `${ORIGIN}/`, 'Cache-Control': 'no-cache' }
           if (credentials) { headers.Cookie = credentials.header; if (credentials.xsrf) headers['X-XSRF-TOKEN'] = credentials.xsrf }
@@ -139,7 +138,7 @@ export class DouyuInsightsGateway {
         },
       })
       const value = await readRewardJson(response, context.signal, MAX_BODY)
-      await this.credentials(context, url)
+      active(context.signal)
       parent.credentials = context.credentials
       const payload = envelope(value)
       const owner = record(payload)?.uid

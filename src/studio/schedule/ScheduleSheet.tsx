@@ -16,7 +16,9 @@ import { apiClient } from '../../app/apiClient'
 import type { Cs2Match, Cs2Schedule, Cs2Stream, StreamTitle } from '../../../electron/featureContracts'
 import { Icon, Sheet, SideTabs } from '../kit'
 import { formatStart, groupEvents, matchStage, orderedStreams, PLATFORM_NAME, streamKey, tierLabel, titleRequests, type EventGroup } from './model'
+import { lastSchedule, readSchedule } from './store'
 import './schedule.css'
+import { useRemembered } from '../../app/remembered'
 
 /** How often the open sheet asks again. Main serves its cache in between, so this is cheap. */
 const POLL_MS = 60_000
@@ -26,11 +28,13 @@ export function ScheduleSheet({ onClose, onWatch }: {
   /** Load this stream as 画面. Resolves true when it played. */
   onWatch: (url: string) => Promise<boolean>
 }): React.ReactNode {
-  const [schedule, setSchedule] = useState<Cs2Schedule | null>(null)
+  // Open on what the start-up read found; the read below only brings it up to date.
+  const [schedule, setSchedule] = useState<Cs2Schedule | null>(lastSchedule)
   const [failure, setFailure] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
-  const [eventKey, setEventKey] = useState<string | null>(null)
-  const [titles, setTitles] = useState<Map<string, StreamTitle>>(() => new Map())
+  // The chosen event and the titles read so far survive closing the sheet.
+  const [eventKey, setEventKey] = useRemembered<string | null>('schedule:event', null)
+  const [titles, setTitles] = useRemembered<Map<string, StreamTitle>>('schedule:titles', new Map())
   const [loading, setLoading] = useState<string | null>(null)
   const [loadProblem, setLoadProblem] = useState<string | null>(null)
   const [now, setNow] = useState(Date.now)
@@ -39,7 +43,7 @@ export function ScheduleSheet({ onClose, onWatch }: {
 
   const read = async (refresh: boolean): Promise<void> => {
     if (refresh) setRefreshing(true)
-    const result = await apiClient.feature('getCs2Schedule', refresh ? { refresh: true } : undefined)
+    const result = await readSchedule(refresh)
     if (!alive.current) return
     if (refresh) setRefreshing(false)
     setNow(Date.now())
@@ -52,7 +56,12 @@ export function ScheduleSheet({ onClose, onWatch }: {
     alive.current = true
     void read(false)
     const timer = window.setInterval(() => void read(false), POLL_MS)
-    return () => { alive.current = false; window.clearInterval(timer) }
+    // Main reads tiers and crests right after the schedule and says when they land; read
+    // again then rather than waiting for the next poll.
+    const off = apiClient.subscribeFeatures((event) => {
+      if (event.topic === 'cs2-schedule') void read(false)
+    })
+    return () => { alive.current = false; window.clearInterval(timer); off() }
   }, [])
 
   const events = useMemo(() => groupEvents(schedule), [schedule])
@@ -185,11 +194,11 @@ function MatchRow({ match, titles, now, loading, siblingsLive, onWatch }: {
         {match.bestOf && <span className="match-bo">BO{match.bestOf}</span>}
       </div>
       <div className="match-teams">
-        <span className={`match-team${winner === 0 ? ' is-win' : ''}`}>{left.name}</span>
+        <span className={`match-team${winner === 0 ? ' is-win' : ''}`}><TeamName team={left} /></span>
         <span className="match-score num">
           {match.score ? <>{match.score[0]}<i>:</i>{match.score[1]}</> : 'vs'}
         </span>
-        <span className={`match-team is-right${winner === 1 ? ' is-win' : ''}`}>{right.name}</span>
+        <span className={`match-team is-right${winner === 1 ? ' is-win' : ''}`}><TeamName team={right} logoFirst /></span>
       </div>
       <div className="match-meta">
         {stage && <span className="match-stage" data-from={stage.from}>{stage.label}</span>}
@@ -217,4 +226,18 @@ function MatchRow({ match, titles, now, loading, siblingsLive, onWatch }: {
       </div>
     </li>
   )
+}
+
+/**
+ * A team as the broadcast shows it: crest beside the name, facing the score. The crest is
+ * main's cached copy (`app://app/team-logo/…`); a team without one, or a crest that fails to
+ * load, keeps an empty slot of the same width so the names stay in line.
+ */
+function TeamName({ team, logoFirst = false }: { team: Cs2Match['teams'][number]; logoFirst?: boolean }): React.ReactNode {
+  const [failed, setFailed] = useState(false)
+  const logo = team.logo
+  const crest = logo && !failed
+    ? <img className="match-logo" src={logo} alt="" draggable={false} onError={() => setFailed(true)} />
+    : <span className="match-logo is-empty" aria-hidden="true" />
+  return <>{logoFirst && crest}<span className="match-team-name">{team.name}</span>{!logoFirst && crest}</>
 }

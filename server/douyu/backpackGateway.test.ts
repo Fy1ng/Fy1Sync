@@ -92,7 +92,7 @@ describe('fixed read endpoints and private return contracts', () => {
     expect(request).toHaveBeenCalledOnce()
     expect(String(request.mock.calls[0]![0])).toBe(badgesUrl)
     expect(request.mock.calls[0]![1]?.method).toBe('GET')
-    expect(cookieHeader).toHaveBeenCalledTimes(3)
+    expect(cookieHeader).toHaveBeenCalledTimes(1)
     for (const call of cookieHeader.mock.calls) expect(call).toEqual(['account-one', badgesUrl])
     expect(request.mock.calls[0]![1]?.redirect).toBe('manual')
     expect(new Headers(request.mock.calls[0]![1]?.headers).get('cookie')).toBe(cookie)
@@ -156,11 +156,16 @@ describe('strict credentials and account continuity', () => {
     const { gateway } = setup({ cookieHeader: async () => header })
     expect(await gateway.readBadges('account-one', signal())).toEqual({ uid: '42', html })
   })
-  it.each([2, 3])('discards a read if account credentials change at check %s', async changeAt => {
-    let calls = 0
-    const { gateway, request } = setup({ cookieHeader: async () => ++calls >= changeAt ? cookie.replace('fixture-private-auth', 'changed-auth') : cookie })
-    await expect(gateway.readBackpack('account-one', '6979222', signal())).rejects.toMatchObject({ code: 'login-required' })
-    expect(request).toHaveBeenCalledTimes(changeAt === 2 ? 0 : 1)
+  it('uses one credential snapshot and discards reads when the account lifetime is invalidated', async () => {
+    const controller = new AbortController()
+    const request = vi.fn<typeof fetch>(async () => {
+      controller.abort()
+      return Response.json({ error: 0, data: backpack })
+    })
+    const { gateway, cookieHeader } = setup({ request })
+    await expect(gateway.readBackpack('account-one', '6979222', controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+    expect(cookieHeader).toHaveBeenCalledTimes(1)
+    expect(request).toHaveBeenCalledTimes(1)
   })
   it.each([1, 2, 3])('does not confirm a donation across an expected UID change at check %s', async changeAt => {
     let calls = 0

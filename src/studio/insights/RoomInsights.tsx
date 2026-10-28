@@ -15,6 +15,7 @@ import type { DouyuInsightsEvent, DouyuRankEntry, DouyuRoomInsights, DouyuWatchT
 import { Icon, Segmented, Sheet, SideTabs } from '../kit'
 import { formatCount, formatDuration, formatMinor, formatTime, UNKNOWN } from './format'
 import './insights.css'
+import { useRemembered } from '../../app/remembered'
 
 type Tab = 'overview' | 'ranks'
 type RankKey = 'day' | 'week' | 'all'
@@ -50,11 +51,12 @@ export function RoomInsightsSheet({ room, onClose }: { room: string; onClose: ()
 
 /** The 房间数据 section of 设置: statistics for the connected danmaku room. */
 export function RoomInsights({ room }: { room: string }): React.ReactNode {
-  const [tab, setTab] = useState<Tab>('overview')
-  const [insights, setInsights] = useState<DouyuRoomInsights | null>(null)
+  // Per room: reopening shows the last figures at once; the reads below bring them up to date.
+  const [tab, setTab] = useRemembered<Tab>('insights:tab', 'overview')
+  const [insights, setInsights] = useRemembered<DouyuRoomInsights | null>(`insights:${room}`, null)
   const [error, setError] = useState('')
   const [refreshing, setRefreshing] = useState(false)
-  const [watch, setWatch] = useState<Watch>({ kind: 'loading' })
+  const [watch, setWatch] = useRemembered<Watch>(`insights:watch:${room}`, { kind: 'loading' })
   const sequence = useRef(0)
   const applied = useRef(0)
   const alive = useRef(true)
@@ -76,7 +78,6 @@ export function RoomInsights({ room }: { room: string }): React.ReactNode {
     let live = true
     let reading = false
     let dirty = false
-    setInsights(null)
     setError('')
     // A busy room changes many times a second; one read at a time, plus one trailing read.
     const read = (): void => {
@@ -105,7 +106,8 @@ export function RoomInsights({ room }: { room: string }): React.ReactNode {
   const current = (target: string): boolean => alive.current && roomRef.current === target
 
   async function readWatch(target: string): Promise<void> {
-    setWatch({ kind: 'loading' })
+    // A remembered figure stays up while it is read again; only a first read shows 正在读取.
+    setWatch((previous) => previous.kind === 'value' ? previous : { kind: 'loading' })
     const accounts = await apiClient.listDouyuAccounts()
     if (!current(target)) return
     if (!accounts.ok) { setWatch({ kind: 'missing', reason: accounts.message }); return }

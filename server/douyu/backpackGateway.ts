@@ -154,7 +154,7 @@ export class DouyuBackpackGateway {
       const response = await this.request(target, credentials, active)
       const html = await this.readText(response, active)
       if (!html.trim()) return invalidData()
-      await this.confirm(target, credentials, active)
+      assertActive(active)
       return { uid: credentials.uid, html }
     })
   }
@@ -171,7 +171,7 @@ export class DouyuBackpackGateway {
       if (!zero(envelope.error)) throw new DouyuRenewalGatewayError('unavailable')
       if (['result', 'code'].some(name => Object.hasOwn(envelope, name) && !zero(envelope[name]))) throw new DouyuRenewalGatewayError('unavailable')
       const payload = dataObject(envelope.data)
-      await this.confirm(target, credentials, active)
+      assertActive(active)
       return { uid: credentials.uid, payload }
     })
   }
@@ -283,7 +283,9 @@ export class DouyuBackpackGateway {
       method: target.method, body: target.body, signal,
       resolve: host => this.resolve(host, signal),
       fetchImpl: async (url, init) => {
-        const latest = await this.confirm(target, credentials, signal)
+        // Read requests use one snapshot; account lifetime signals invalidate their result.
+        // POST retains all existing credential rechecks before/after dispatch.
+        const latest = target.method === 'GET' ? credentials : await this.confirm(target, credentials, signal)
         assertActive(signal)
         const headers: Record<string, string> = {
           Cookie: latest.header,

@@ -8,6 +8,7 @@ export interface PrivatePermissions {
   protect(target: string, directory: boolean, recursive?: boolean): void
   verify(target: string, directory: boolean, recursive?: boolean): void
   verifyManyAsync?(targets: readonly PrivatePermissionTarget[]): Promise<void>
+  invalidate?(target: string, recursive?: boolean): void
 }
 
 const permissionFailure = () => new Error('无法验证账号数据的私有文件权限.')
@@ -67,6 +68,24 @@ function permissionEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEn
 
 export class NativePrivatePermissions implements PrivatePermissions {
   private sid: string | undefined
+  private readonly verified = new Map<string, { fingerprint: string; checkedAt: number }>()
+  private readonly checking = new Set<{ paths: Set<string>; invalidated: boolean }>()
+
+  constructor(private readonly now: () => number = Date.now) {}
+
+  /** Only read checks use this cache; write-side verify/protect remain unconditional. */
+  invalidate(target: string, recursive = false): void {
+    const selected = path.resolve(target)
+    const matches = (candidate: string) => candidate === selected || (recursive && candidate.startsWith(`${selected}${path.sep}`))
+    for (const candidate of this.verified.keys()) if (matches(candidate)) this.verified.delete(candidate)
+    for (const pending of this.checking) if ([...pending.paths].some(matches)) pending.invalidated = true
+  }
+
+  private fingerprint(target: PrivatePermissionTarget): string {
+    assertRegularPath(target.target, target.directory)
+    const stat = fs.lstatSync(target.target)
+    return JSON.stringify([stat.mtimeMs, stat.size, stat.ino, stat.dev, target.directory])
+  }
 
   private powershell(script: string, environment: NodeJS.ProcessEnv = {}): string {
     const result = spawnSync(powershellExecutable(), ['-NoProfile', '-NonInteractive', '-Command', script], {
@@ -102,6 +121,7 @@ export class NativePrivatePermissions implements PrivatePermissions {
   }
 
   protect(target: string, directory: boolean, recursive = false): void {
+    this.invalidate(target, recursive)
     assertRegularPath(target, directory)
     if (process.platform === 'win32') {
       this.sid ??= this.powershell('[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value')
@@ -125,6 +145,7 @@ export class NativePrivatePermissions implements PrivatePermissions {
   }
 
   verify(target: string, directory: boolean, recursive = false): void {
+    this.invalidate(target, recursive)
     assertRegularPath(target, directory)
     if (process.platform === 'win32') {
       if (this.powershell(PRIVATE_ACL_SCRIPT, {
@@ -143,15 +164,47 @@ export class NativePrivatePermissions implements PrivatePermissions {
   async verifyManyAsync(targets: readonly PrivatePermissionTarget[]): Promise<void> {
     try {
       if (!targets.length || targets.length > 32) throw permissionFailure()
-      const selected = targets.map(target => ({ ...target }))
-      for (const target of selected) assertRegularPath(target.target, target.directory)
-      if (process.platform === 'win32') {
-        if (await this.powershellAsync(PRIVATE_ACL_SCRIPT, { STREAM_SYNC_PRIVATE_TARGETS: JSON.stringify(selected) }) !== 'PRIVATE_OK') throw permissionFailure()
-        for (const target of selected) assertRegularPath(target.target, target.directory)
-      } else {
-        for (const target of selected) this.verify(target.target, target.directory, target.recursive)
+      const selected = targets.map(target => ({ ...target, target: path.resolve(target.target) }))
+      const checkedAt = this.now()
+      for (const [target, result] of this.verified) {
+        if (checkedAt < result.checkedAt || checkedAt - result.checkedAt >= 600_000) this.verified.delete(target)
       }
-    } catch { throw permissionFailure() }
+      const snapshots = selected.map(target => ({ target, fingerprint: this.fingerprint(target) }))
+      const missing = snapshots.filter(({ target, fingerprint }) => target.recursive || this.verified.get(target.target)?.fingerprint !== fingerprint)
+      if (!missing.length) return
+      const pending = { paths: new Set(selected.map(target => target.target)), invalidated: false }
+      this.checking.add(pending)
+      try {
+        await this.verifyManyUncachedAsync(missing.map(item => item.target))
+        for (const item of snapshots) {
+          if (this.fingerprint(item.target) !== item.fingerprint) throw permissionFailure()
+        }
+        if (pending.invalidated) throw permissionFailure()
+      } catch (error) {
+        for (const item of missing) this.verified.delete(item.target.target)
+        throw error
+      } finally { this.checking.delete(pending) }
+      // An invalidation during the asynchronous check must not resurrect old success.
+      for (const item of missing) if (!item.target.recursive) {
+        if (this.verified.size >= 1024) this.verified.delete(this.verified.keys().next().value!)
+        this.verified.set(item.target.target, { fingerprint: item.fingerprint, checkedAt })
+      }
+    } catch {
+      // A failed read only evicts cached success. It must not invalidate newer
+      // checks started after a cookie write, or stale failures cascade into them.
+      for (const target of targets) this.verified.delete(path.resolve(target.target))
+      throw permissionFailure()
+    }
+  }
+
+  protected async verifyManyUncachedAsync(targets: readonly PrivatePermissionTarget[]): Promise<void> {
+    if (process.platform === 'win32') {
+      if (await this.powershellAsync(PRIVATE_ACL_SCRIPT, { STREAM_SYNC_PRIVATE_TARGETS: JSON.stringify(targets) }) !== 'PRIVATE_OK') throw permissionFailure()
+    } else {
+      // Use a separate verifier so synchronous verification cannot invalidate this batch.
+      const uncached = new NativePrivatePermissions(this.now)
+      for (const target of targets) uncached.verify(target.target, target.directory, target.recursive)
+    }
   }
 }
 

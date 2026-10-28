@@ -19,6 +19,7 @@ import { useGiftPlan } from './giftPlan'
 import { UNKNOWN, dateTime, expiry, money, roomOk } from './giftFormat'
 import type { DouyuData } from './useDouyu'
 import './backpack.css'
+import { useRemembered } from '../../app/remembered'
 
 type Mode = 'inventory' | 'purchase'
 
@@ -37,7 +38,8 @@ export function Backpack({ data, room }: { data: DouyuData; room: string | null 
 
   const gift = useGiftPlan(accountId)
   const [roomText, setRoomText] = useState(room ?? '')
-  const [inventory, setInventory] = useState<DouyuInventorySnapshot | null>(null)
+  // Per account: reopening shows the last backpack at once; it is read again on open as before.
+  const [inventory, setInventory] = useRemembered<DouyuInventorySnapshot | null>(accountId ? `douyu:inventory:${accountId}` : null, null)
   const [reading, setReading] = useState(false)
   const [readError, setReadError] = useState('')
   const [mode, setMode] = useState<Mode>('inventory')
@@ -61,7 +63,7 @@ export function Backpack({ data, room }: { data: DouyuData; room: string | null 
     owner.current = accountId
     generation.current++
     autoRead.current = null
-    setInventory(null); setReading(false); setReadError('')
+    setReading(false); setReadError('')
   }, [accountId])
 
   // Signing out invalidates any plan made while signed in.

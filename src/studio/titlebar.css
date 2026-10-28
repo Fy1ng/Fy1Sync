@@ -1,20 +1,19 @@
 /*
- * The page-drawn title bar. It lives outside .studio, so it carries the two tokens it needs.
- * `env(titlebar-area-*)` is the strip left of the system's window buttons; it is zero while
- * the native title bar is in use, which is what keeps every route correct either way.
+ * The page-drawn title bar, caption buttons included. It lives outside .studio, so it carries
+ * the tokens it needs. Pages sit below it only while it is drawn (`data-titlebar='custom'`).
  */
 
 .titlebar {
   position: fixed;
-  top: env(titlebar-area-y, 0);
-  left: env(titlebar-area-x, 0);
-  width: env(titlebar-area-width, 100%);
-  height: env(titlebar-area-height, 0);
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--titlebar-h);
   z-index: 1000;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 12px;
+  padding: 0 0 0 12px;
   color: #9a9893;
   background: #0d0d0f;
   font: 500 12px/1 'Studio Sans', 'Microsoft YaHei UI', sans-serif;
@@ -45,14 +44,78 @@
 }
 
 /* Every page sits below the strip while it is drawn. */
-html[data-titlebar='custom'] body {
-  --titlebar-h: env(titlebar-area-height, 0px);
+html {
+  --titlebar-h: 32px;
 }
 
 html[data-titlebar='custom'] :is(.studio, .page-loading, .crash) {
-  top: env(titlebar-area-height, 0px);
+  top: var(--titlebar-h);
 }
 
 html[data-titlebar='custom'] .studio .sheet-scrim {
-  top: env(titlebar-area-height, 0px);
+  top: var(--titlebar-h);
+}
+
+.titlebar[data-focused='false'] :is(.titlebar-name, .titlebar-mark, .titlebar-btn) {
+  opacity: 0.5;
+}
+
+/* Caption buttons, sized and tinted like Windows' own: grey wash on hover, red for close. */
+.titlebar-controls {
+  display: flex;
+  margin-left: auto;
+  height: 100%;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-btn {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 100%;
+  padding: 0;
+  color: #f3f0ea;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  transition: background 90ms linear;
+}
+
+.titlebar-btn svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.titlebar-btn.is-close svg {
+  shape-rendering: geometricPrecision;
+}
+
+.titlebar-btn:hover {
+  background: rgb(255 255 255 / 10%);
+}
+
+.titlebar-btn:active {
+  background: rgb(255 255 255 / 18%);
+}
+
+.titlebar-btn.is-close:hover {
+  color: #fff;
+  background: #c42b1c;
+}
+
+.titlebar-btn.is-close:active {
+  background: #b22a1d;
+}
+
+.titlebar-btn:focus-visible {
+  outline: 1px solid #f3f0ea;
+  outline-offset: -3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .titlebar-btn { transition: none; }
 }

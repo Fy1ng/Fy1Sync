@@ -11,6 +11,7 @@ import type { DouyuInsightsGateway } from './douyu/insightsGateway'
 import { DOUYU_MUTE_MINUTES, type DouyuModeration } from './douyu/moderation'
 import type { DouyuInsightsService } from './douyu/insightsService'
 import type { AppUpdateService } from '../electron/appUpdateService'
+import { DouyuReadCache } from './douyu/readCache'
 
 export type { FeatureCallContext, FeatureEvent } from '../electron/featureContracts'
 export type FeatureHandler<K extends FeatureMethod> = (args: FeatureMethods[K]['args'], context: FeatureCallContext) => FeatureMethods[K]['result'] | Promise<FeatureMethods[K]['result']>
@@ -22,6 +23,7 @@ const ERROR_TEXT = {
   'login-required': '请先登录当前斗鱼账号.', 'room-changed': '当前操作房间已变化, 请重新选择.',
   forbidden: '当前窗口无权执行该操作.', cancelled: '操作已取消.', 'service-closed': '本地扩展服务已关闭.',
   'favorite-limit': '本地弹幕收藏已达到容量上限, 请先删除部分收藏.',
+  'room-limit': '最多收藏100个直播间, 请先删除部分收藏.',
   'storage-failed': '本地设置读取或保存失败, 请检查配置后重试.',
   'account-not-found': '斗鱼账号不存在.', 'account-limit': '斗鱼账号数量已达到上限.',
   'no-active-account': '请先选择当前斗鱼账号.', disposed: '本地服务已关闭.',
@@ -249,17 +251,21 @@ export interface InsightsHandlerDependencies {
   update?: Pick<AppUpdateService, 'check' | 'state'>
   withAccount: WithFeatureAccount
   lifetime?: AbortSignal
+  readCache?: DouyuReadCache
 }
 export function createInsightsHandlers(deps: InsightsHandlerDependencies): FeatureHandlers {
   const insights = () => requiredService(deps.insights)
   const gateway = () => requiredService(deps.gateway)
   const lifetime = deps.lifetime ?? new AbortController().signal
+  const cache = deps.readCache ?? new DouyuReadCache()
   return {
     getDouyuRoomInsights: args => insights().snapshot(room(fields(args, ['room']).room)),
     refreshDouyuRoomInsights: args => insights().refreshRoom(room(fields(args, ['room']).room), lifetime),
     getDouyuFollowedRooms: args => {
-      const id = account(fields(args, ['accountId']).accountId)
-      return deps.withAccount(id, signal => gateway().readFollowedRooms(id, signal))
+      const value = fields(args, ['accountId'], ['refresh'])
+      const id = account(value.accountId)
+      if (value.refresh !== undefined && typeof value.refresh !== 'boolean') return invalid()
+      return deps.withAccount(id, signal => cache.read('followed', id, '', value.refresh as boolean | undefined, () => gateway().readFollowedRooms(id, signal)))
     },
     getDouyuBadgeAges: args => {
       const id = account(fields(args, ['accountId']).accountId)
@@ -270,9 +276,10 @@ export function createInsightsHandlers(deps: InsightsHandlerDependencies): Featu
       return deps.withAccount(id, signal => gateway().readMonthlySpending(id, signal))
     },
     getDouyuWatchTime: args => {
-      const value = fields(args, ['accountId', 'room'])
+      const value = fields(args, ['accountId', 'room'], ['refresh'])
       const id = account(value.accountId), target = room(value.room)
-      return deps.withAccount(id, signal => gateway().readWatchTime(id, target, signal))
+      if (value.refresh !== undefined && typeof value.refresh !== 'boolean') return invalid()
+      return deps.withAccount(id, signal => cache.read('watch', id, target, value.refresh as boolean | undefined, () => gateway().readWatchTime(id, target, signal)))
     },
     reportDouyuPlayback: (args, context) => {
       const value = fields(args, ['room', 'playing'])

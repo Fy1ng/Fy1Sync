@@ -14,12 +14,27 @@ export type { Cs2Schedule, Cs2Match, Cs2Team, Cs2Stream, StreamTitle, StreamTitl
 /** This context is constructed by trusted IPC, never read from renderer arguments. */
 export interface FeatureCallContext { readonly senderId?: number }
 export interface FeatureEvent { topic: string; data: unknown }
+export interface Cs2ScheduleEvent extends FeatureEvent {
+  topic: 'cs2-schedule'
+  data: { type: 'tiers-updated' | 'logos-updated' }
+}
 export interface DouyuLiveNotificationSettings { enabled: boolean; rooms?: string[]; accountId?: string }
 export interface DouyuLiveNotificationState { enabled: boolean; rooms: string[]; followedAccountId: string | null }
+export interface SavedRoom {
+  id: string
+  role: 'official' | 'commentary'
+  input: string
+  platform: string
+  label: string
+  savedAt: number
+}
 
 export interface FeatureMethods extends BackendMethods {
   getCs2Schedule: { args: { refresh?: boolean } | undefined; result: Cs2Schedule }
   getStreamTitles: { args: { streams: StreamTitleInput[] }; result: StreamTitle[] }
+  listSavedRooms: { args: undefined; result: SavedRoom[] }
+  saveRoom: { args: Omit<SavedRoom, 'id' | 'savedAt'>; result: SavedRoom }
+  removeSavedRoom: { args: { id: string }; result: { removed: boolean } }
   /** Implemented by IPC after checking this window's established room subscriptions. */
   activateDouyuRoom: { args: { room: string }; result: { room: string } }
   getDanmakuFeatures: { args: undefined; result: DanmakuFeaturesSnapshot }
@@ -39,10 +54,10 @@ export interface FeatureMethods extends BackendMethods {
   muteDouyuUser: { args: DouyuMuteInput; result: DouyuModerationOutcome }
   getDouyuRoomInsights: { args: { room: string }; result: DouyuRoomInsights }
   refreshDouyuRoomInsights: { args: { room: string }; result: DouyuRoomInsights }
-  getDouyuFollowedRooms: { args: { accountId: string }; result: DouyuFollowedRooms }
+  getDouyuFollowedRooms: { args: { accountId: string; refresh?: boolean }; result: DouyuFollowedRooms }
   getDouyuBadgeAges: { args: { accountId: string }; result: DouyuBadgeAges }
   getDouyuMonthlySpending: { args: { accountId: string }; result: DouyuMonthlySpending }
-  getDouyuWatchTime: { args: { accountId: string; room: string }; result: DouyuWatchTime }
+  getDouyuWatchTime: { args: { accountId: string; room: string; refresh?: boolean }; result: DouyuWatchTime }
   reportDouyuPlayback: { args: { room: string; playing: boolean }; result: DouyuRoomInsights }
   setDouyuLiveNotifications: { args: DouyuLiveNotificationSettings; result: DouyuLiveNotificationState }
   checkAppUpdate: { args: undefined; result: AppUpdateState }
@@ -54,6 +69,7 @@ export type FeatureMethod = keyof FeatureMethods
 export const FEATURE_METHODS = [
   ...BACKEND_METHODS,
   'getCs2Schedule', 'getStreamTitles',
+  'listSavedRooms', 'saveRoom', 'removeSavedRoom',
   'activateDouyuRoom', 'getDanmakuFeatures', 'setDanmakuPreferences', 'setMessageAffixes',
   'queryDanmakuHistory', 'queryDanmakuFavorites', 'addDanmakuFavorite', 'updateDanmakuFavorite', 'removeDanmakuFavorite',
   'getDanmakuRate', 'getDanmakuUserDetails', 'openDanmakuHistory', 'getDouyuDelivery', 'sendComposedDouyuMessage',

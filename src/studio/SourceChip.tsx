@@ -1,6 +1,7 @@
 /**
  * One source, as a tag in the top bar: which side, where from, whether it plays. Clicking it
  * opens what can be changed about that side — the link, and for the voice its danmaku room.
+ * An empty side opens the same panel, to add its link there rather than in 添加直播间.
  * Quality (QualityMenu) and the streamer camera (CameraButton) are in the dock.
  */
 
@@ -10,10 +11,10 @@ import type { SourceRole } from '../core/types'
 import { bufferStatusText } from '../ui/bufferStatus'
 import { Icon, Popover, Segmented, usePopover } from './kit'
 import { PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
+import { canSave, removeSavedRoom, saveRoom, savedFor, useSavedRooms, type SavedRoom } from './savedRooms'
 
-export function SourceChip({ role, onEmpty, onSchedule, onShowPreview = null }: {
+export function SourceChip({ role, onSchedule, onShowPreview = null }: {
   role: SourceRole
-  onEmpty: () => void
   /** Open 赛程; offered on the picture's panel. */
   onSchedule?: () => void
   /** Set while this side's small picture is hidden; offered when the pointer rests on the chip. */
@@ -30,7 +31,7 @@ export function SourceChip({ role, onEmpty, onSchedule, onShowPreview = null }: 
   return (
     <div className={`chip-wrap${onShowPreview && !panel.open ? ' has-drop' : ''}`}>
       <button type="button" className="chip" data-role={role} data-status={status}
-        onClick={state.status === 'empty' && !loader.state[role].busy ? onEmpty : panel.toggle}
+        onClick={panel.toggle}
         aria-expanded={panel.open} aria-label={`${ROLE_LABEL[role]}：${where}`}>
         <span className="chip-dot" aria-hidden="true" />
         <span className="chip-role">{ROLE_LABEL[role]}</span>
@@ -76,6 +77,10 @@ function SourcePanel({ role, onDone, onSchedule }: {
           {load.busy ? '载入中' : '载入'}
         </button>
       </form>
+      <SavedList role={role} onPick={(room) => {
+        void loader.loadInput(role, room.input, room.platform === 'douyu' || room.platform === 'bilibili' || room.platform === 'huya' ? room.platform : undefined)
+          .then((ok) => { if (ok) onDone() })
+      }} />
       {role === 'official' && onSchedule && (
         <div className="row-split">
           <span className="muted">CS2 赛事官方直播</span>
@@ -106,6 +111,7 @@ function SourcePanel({ role, onDone, onSchedule }: {
             if (file) void loader.loadFile(role, file).then(onDone)
           }} />
         </label>
+        <SaveButton role={role} />
         {state.status !== 'empty' && (
           <button type="button" className="btn-quiet small is-danger" onClick={() => { session.unloadSource(role); onDone() }}>
             移除
@@ -147,5 +153,51 @@ function DanmakuRoom(): React.ReactNode {
         <button type="button" className="btn-quiet" onClick={() => { disconnectRoom(); setEditing(false) }}>断开</button>
       )}
     </form>
+  )
+}
+
+/** Keep this side's link, or let it go; offered once the link is one that can be loaded again. */
+function SaveButton({ role }: { role: SourceRole }): React.ReactNode {
+  const snapshot = useSessionSnapshot()
+  const rooms = useSavedRooms()
+  const [busy, setBusy] = useState(false)
+  const descriptor = snapshot.media[role].descriptor
+  if (!canSave(descriptor) || snapshot.media[role].status === 'empty') return null
+  const saved = savedFor(rooms, role, descriptor)
+  return (
+    <button type="button" className="btn-quiet small" aria-pressed={saved !== null} disabled={busy || rooms === null}
+      onClick={() => {
+        setBusy(true)
+        void (saved ? removeSavedRoom(saved.id) : saveRoom(role, descriptor)).finally(() => setBusy(false))
+      }}>
+      <Icon name="star" />{saved ? '已收藏' : '收藏'}
+    </button>
+  )
+}
+
+/** This side's saved rooms, one click to load; the one already playing is marked. */
+function SavedList({ role, onPick }: { role: SourceRole; onPick: (room: SavedRoom) => void }): React.ReactNode {
+  const snapshot = useSessionSnapshot()
+  const loader = useSourceLoader()
+  const rooms = (useSavedRooms() ?? []).filter((room) => room.role === role)
+  if (rooms.length === 0) return null
+  const current = snapshot.media[role].descriptor
+  return (
+    <div className="saved" role="group" aria-label="收藏的直播间">
+      <span className="muted">收藏</span>
+      <ul className="saved-list">
+        {rooms.map((room) => {
+          const playing = current?.platform === room.platform && current?.input === room.input
+          return (
+            <li key={room.id}>
+              <button type="button" className="saved-room" disabled={playing || loader.state[role].busy}
+                aria-current={playing || undefined} onClick={() => onPick(room)}>
+                {room.label}
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
   )
 }
