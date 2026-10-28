@@ -251,7 +251,7 @@ function Decoding(): React.ReactNode {
 
 const SOURCE_NAME = { external: '自定义', managed: '已更新', bundled: '内置', PATH: '系统' } as const
 
-function Tools(): React.ReactNode {
+export function Tools(): React.ReactNode {
   const mounted = useMounted()
   const [status, setStatus] = useRemembered<ToolsStatus | null>('tools-status', null)
   const [busy, setBusy] = useState(false)
@@ -293,6 +293,9 @@ function Tools(): React.ReactNode {
         ))}
       </dl>
       <p className="muted">YouTube 无法打开直播时，可先更新 yt-dlp 后重试。</p>
+      {status?.tools.some((tool) => tool.name === 'ffmpeg' && tool.source !== 'bundled') && (
+        <p className="note-warn">正在使用非内置的 ffmpeg。内置版本会校验直播地址的 HTTPS 证书，其他版本需要你自己确认这一点。</p>
+      )}
       <div className="row-end">
         <button type="button" className="btn-quiet small" disabled={running || !update?.previousVersion} onClick={() => void act('previous')}>恢复上一版本</button>
         <button type="button" className="btn-quiet small" disabled={running || !update?.activeVersion} onClick={() => void act('bundled')}>恢复内置版本</button>
