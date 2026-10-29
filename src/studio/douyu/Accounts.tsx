@@ -8,7 +8,7 @@ import { useState } from 'react'
 import { apiClient } from '../../app/apiClient'
 import type { DouyuAccountSummary } from '../../../server/douyu/types'
 import { LaneLine } from './DouyuDesk'
-import { accountState, type DouyuData } from './useDouyu'
+import { accountName, accountState, type DouyuData } from './useDouyu'
 
 export function Accounts({ data }: { data: DouyuData }): React.ReactNode {
   const { all, accounts, loading, accountLane, accountsBusy, accountAction } = data
@@ -49,12 +49,15 @@ function AccountRow({ account, active, locked, data }: {
   const { accountAction } = data
   const [mode, setMode] = useState<'idle' | 'rename' | 'remove'>('idle')
   const [name, setName] = useState(account.label)
+  const shown = accountName(account)
+  // Spoken in notices; an unnamed account is just 斗鱼账号.
+  const who = shown || '斗鱼账号'
 
   const login = (): void => {
-    void accountAction(`请在弹出的 Chrome 窗口中登录 ${account.label}，完成后关闭该窗口`,
+    void accountAction(`请在弹出的 Chrome 窗口中登录 ${who}，完成后关闭该窗口`,
       () => apiClient.loginDouyuAccount(account.id),
       (snapshot) => snapshot.accounts.find((item) => item.id === account.id)?.login.loggedIn
-        ? `${account.label} 已登录` : `${account.label} 登录未完成，请重试`)
+        ? `${who} 已登录` : `${who} 登录未完成，请重试`)
   }
 
   return (
@@ -73,7 +76,7 @@ function AccountRow({ account, active, locked, data }: {
           </form>
         ) : (
           <>
-            <span className="account-name">{account.label}</span>
+            {shown && <span className="account-name">{shown}</span>}
             {active && <span className="tag">当前使用</span>}
             <span className="muted">{accountState(account)}</span>
           </>
@@ -84,14 +87,14 @@ function AccountRow({ account, active, locked, data }: {
         <div className="account-actions">
           <span className="note-warn">删除该账号及其任务？</span>
           <button type="button" className="btn-quiet small is-danger" disabled={locked}
-            onClick={() => void accountAction('正在删除', () => apiClient.removeDouyuAccount(account.id), `已删除 ${account.label}`)}>删除</button>
+            onClick={() => void accountAction('正在删除', () => apiClient.removeDouyuAccount(account.id), `已删除 ${who}`)}>删除</button>
           <button type="button" className="btn-quiet small" onClick={() => setMode('idle')}>取消</button>
         </div>
       ) : mode === 'idle' && (
         <div className="account-actions">
           {!active && (
             <button type="button" className="btn-quiet small" disabled={locked}
-              onClick={() => void accountAction('正在切换', () => apiClient.activateDouyuAccount(account.id), `已切换到 ${account.label}`)}>
+              onClick={() => void accountAction('正在切换', () => apiClient.activateDouyuAccount(account.id), `已切换到 ${who}`)}>
               设为当前
             </button>
           )}
@@ -99,13 +102,13 @@ function AccountRow({ account, active, locked, data }: {
             {account.login.loggedIn ? '重新登录' : '登录'}
           </button>
           <button type="button" className="btn-quiet small" disabled={locked}
-            onClick={() => void accountAction(`请在弹出的 Chrome 窗口中登录 ${account.label} 的鱼吧，完成后关闭该窗口`,
+            onClick={() => void accountAction(`请在弹出的 Chrome 窗口中登录 ${who} 的鱼吧，完成后关闭该窗口`,
               () => apiClient.loginDouyuYubaAccount(account.id), '鱼吧登录窗口已关闭')}>
             登录鱼吧
           </button>
           <button type="button" className="btn-quiet small" disabled={locked} onClick={() => { setName(account.label); setMode('rename') }}>重命名</button>
           <button type="button" className="btn-quiet small" disabled={locked || (!account.login.loggedIn && account.login.cookieCount === 0)}
-            onClick={() => void accountAction('正在退出', () => apiClient.logoutDouyuAccount(account.id), `${account.label} 已退出`)}>
+            onClick={() => void accountAction('正在退出', () => apiClient.logoutDouyuAccount(account.id), `${who} 已退出`)}>
             退出
           </button>
           <button type="button" className="btn-quiet small is-danger" disabled={locked} onClick={() => setMode('remove')}>删除</button>

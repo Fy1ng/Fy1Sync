@@ -104,6 +104,31 @@ describe('media fetch and HLS', () => {
     expect(response.headers.get('content-length')).toBe(String(Buffer.byteLength(text)))
     expect(response.headers.get('cache-control')).toBe('no-store')
   })
+  it('removes FFmpeg probe ranges from known playlists before rewriting their complete body', async () => {
+    const f = fixture()
+    const response = await f.registry.handle(request(f.url, { range: 'bytes=0-' }))
+    expect(f.calls[0]!.init.headers).not.toHaveProperty('range')
+    expect(response.status).toBe(200)
+    const text = await response.text()
+    expect(text).toContain('/media/')
+    expect(text).not.toContain('\nseg.ts')
+  })
+  it('retries a ranged opaque playlist without Range and rewrites the full response', async () => {
+    const calls: RequestInit[] = []
+    const upstream = vi.fn(async (_input, init: RequestInit = {}) => {
+      calls.push({ ...init, headers: { ...init.headers } })
+      return new Response(PLAYLIST, { status: calls.length === 1 ? 206 : 200,
+        headers: { 'content-type': 'application/vnd.apple.mpegurl' } })
+    }) as typeof fetch
+    const f = fixture(PLAYLIST, { fetchImpl: upstream })
+    const opaque = f.registry.register('https://video-weaver.ttvnw.net/opaque?synthetic-signature=value')
+    const response = await f.registry.handle(request(opaque, { range: 'bytes=0-' }))
+    expect(calls).toHaveLength(2)
+    expect(calls[0]!.headers).toHaveProperty('range', 'bytes=0-')
+    expect(calls[1]!.headers).not.toHaveProperty('range')
+    expect(response.status).toBe(200)
+    expect(await response.text()).toContain('/media/')
+  })
   it('uses the final redirect URL when registering relative segments', async () => {
     const f = fixture(PLAYLIST, { fetchImpl: (async (url) => String(url) === TARGET ? new Response(null, { status: 302, headers: { location: '/redirect/index.m3u8' } }) : new Response(PLAYLIST, { headers: { 'content-type': 'text/plain' } })) as typeof fetch })
     const text = await (await f.registry.handle(request(f.url))).text()

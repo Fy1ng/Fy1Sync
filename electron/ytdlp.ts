@@ -1,3 +1,5 @@
+import { cleanProxyEnvironment, networkContext, type NetworkContext } from '../server/networkPolicy'
+import { StreamFailureError, classifyFfmpegStderr, classifyNetworkFailure } from '../server/networkFailure'
 import { spawn, type ChildProcess } from 'node:child_process'
 import path from 'node:path'
 import { locateTool, locateYouTubePotProvider, type ToolSettings, type ToolContext } from './toolLocator'
@@ -56,14 +58,16 @@ export class YtDlpRunner {
     diagnostic?: (event: YtDlpDiagnostic) => void
   }) {}
 
-  async resolve(url: string, adaptive = true): Promise<unknown> {
-    const operation = this.run(url, adaptive)
+  async resolve(url: string, adaptive = true, network: NetworkContext = networkContext(/huya\.com/.test(url) ? 'huya' : 'youtube')): Promise<unknown> {
+    const operation = this.run(url, adaptive, network)
     this.pending.add(operation)
     try { return await operation } finally { this.pending.delete(operation) }
   }
 
-  private async run(url: string, adaptive: boolean): Promise<unknown> {
+  private async run(url: string, adaptive: boolean, network: NetworkContext): Promise<unknown> {
     if (this.disposed) throw new Error('取流服务已关闭')
+    const route = await network.route(url)
+    const proxyUrl = route.proxyUrl ?? ''
     const executable = await locateTool('yt-dlp', this.options.settings, this.options.env, this.options.toolContext)
     if (/^https:\/\/www\.huya\.com\/[1-9]\d{0,15}$/.test(url)) {
       // Huya's last-resort extractor is anonymous and never loads YouTube cookies,
@@ -73,7 +77,7 @@ export class YtDlpRunner {
         '--socket-timeout', '20', '--retries', '1', '--extractor-retries', '1',
         '--no-plugin-dirs', '--no-js-runtimes', '--no-remote-components',
         '--skip-download', '--print', YOUTUBE_METADATA_TEMPLATE, '--', url,
-      ], 'huya')
+      ], 'huya', proxyUrl)
     }
     const provider = adaptive ? await locateYouTubePotProvider(this.options.env, this.options.toolContext) : undefined
     this.options.diagnostic?.({ stage: 'provider', status: provider ? 'available' : 'unavailable' })
@@ -89,7 +93,7 @@ export class YtDlpRunner {
       if (provider) {
         // Client-specific extractions may expose disjoint HLS and adaptive formats.
         // Keep the existing HLS run unchanged and merge eligible adaptive additions.
-        const hlsRun = this.runChild(executable, args, 'hls')
+        const hlsRun = this.runChild(executable, args, 'hls', proxyUrl)
         let plugin: PrivatePotPlugin | undefined
         const adaptiveRun = (async (): Promise<unknown> => {
           try {
@@ -101,7 +105,7 @@ export class YtDlpRunner {
               '--extractor-args', 'youtube:player_client=web;formats=incomplete',
             ]
             // generate_once.js is spawned by the plugin; never start the HTTP server.
-            return await this.runChild(executable, [...args.slice(0, -2), ...providerArgs, ...args.slice(-2)], 'adaptive')
+            return await this.runChild(executable, [...args.slice(0, -2), ...providerArgs, ...args.slice(-2)], 'adaptive', proxyUrl)
           } catch {
             // A provider failure must not remove the existing cookie-aware HLS path.
             return undefined
@@ -114,15 +118,17 @@ export class YtDlpRunner {
         if (hlsResult.status === 'rejected') throw hlsResult.reason
         return mergeAdaptiveFormats(hlsResult.value, adaptiveInfo.status === 'fulfilled' ? adaptiveInfo.value : undefined)
       }
-      return this.runChild(executable, args, 'hls')
+      return this.runChild(executable, args, 'hls', proxyUrl)
     })
   }
 
-  private runChild(executable: string, args: string[], stage: 'hls' | 'adaptive' | 'huya'): Promise<unknown> {
+  private runChild(executable: string, args: string[], stage: 'hls' | 'adaptive' | 'huya', proxyUrl = ''): Promise<unknown> {
     if (this.disposed) return Promise.reject(new Error('yt-dlp 超时或已取消'))
     // Only this child (and its JS runtime) inherits Electron's Node mode.
-    const env: NodeJS.ProcessEnv = { ...(this.options.env ?? process.env), ELECTRON_RUN_AS_NODE: '1', PYTHONIOENCODING: 'utf-8',
+    const env: NodeJS.ProcessEnv = { ...cleanProxyEnvironment(this.options.env ?? process.env), ELECTRON_RUN_AS_NODE: '1', PYTHONIOENCODING: 'utf-8',
       ...(this.options.toolContext?.providerCacheHome ? { XDG_CACHE_HOME: this.options.toolContext.providerCacheHome } : {}) }
+    // The script provider forwards yt-dlp's proxy; its empty-proxy environment fallback is also cleared.
+    if (proxyUrl) { env.HTTP_PROXY = proxyUrl; env.HTTPS_PROXY = proxyUrl; env.ALL_PROXY = proxyUrl }
     const runtime = this.options.networkRuntimePath
     if (!path.isAbsolute(runtime) || /["\r\n\0]/.test(runtime)) return Promise.reject(new Error('取流网络运行时不可用'))
     // Only this child tree inherits the bootstrap. Forward slashes keep Windows
@@ -133,7 +139,7 @@ export class YtDlpRunner {
       let stdoutBytes = 0
       let stderr = ''
       let stopReason: YtDlpDiagnostic['stopReason']
-      const child = (this.options.spawn ?? spawn)(executable, args, {
+      const child = (this.options.spawn ?? spawn)(executable, ['--proxy', proxyUrl, ...args], {
         env, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'],
       })
       this.children.add(child)
@@ -160,6 +166,8 @@ export class YtDlpRunner {
         if (stopReason === 'output-limit') { reject(new Error('yt-dlp 媒体信息超过大小限制')); return }
         if (stopReason || this.disposed) { reject(new Error('yt-dlp 超时或已取消')); return }
         if (code !== 0) {
+          const classified = classifyFfmpegStderr(stderr)
+          if (classified) { reject(new StreamFailureError(proxyUrl ? classifyNetworkFailure(new Error(stderr), 'proxy') : classified)); return }
           if (stage === 'huya') {
             reject(new Error(/sign in|login|required|forbidden|restricted|geo.restrict|登录|封禁|整改/i.test(stderr)
               ? '虎牙访问受限, 当前暂不支持登录' : /not (?:currently )?live|offline|未开播/i.test(stderr)

@@ -10,6 +10,8 @@ export interface DouyuAccountSummary {
 }
 
 export interface DouyuAccountsSnapshot {
+  /** Monotonic within the running main-process account manager. */
+  revision: number
   activeAccountId: string | null
   accounts: DouyuAccountSummary[]
 }

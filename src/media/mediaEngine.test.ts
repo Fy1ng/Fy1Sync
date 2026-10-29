@@ -154,6 +154,26 @@ describe('MediaEngine load', () => {
     expect(engine.getState().official.timebase).toEqual({ kind: 'vod', duration: 600 })
   })
 
+  it('marks the first presented frame, and only for the source that showed it', async () => {
+    const engine = makeEngine()
+    const element = engine.element('official')
+    const callbacks: (() => void)[] = []
+    Object.defineProperty(element, 'requestVideoFrameCallback', {
+      configurable: true, value: (callback: () => void) => { callbacks.push(callback); return callbacks.length },
+    })
+    await engine.load('official', descriptor())
+    primeMediaElement(element, { duration: 600 })
+    // Metadata is not a picture.
+    expect(engine.getState().official.status).toBe('ready')
+    expect(engine.getState().official.firstFrame).toBe(false)
+    // A frame from the first source arriving after a second load does not count for it.
+    await engine.load('official', descriptor({ url: 'https://example.test/other.mp4' }))
+    callbacks[0]!()
+    expect(engine.getState().official.firstFrame).toBe(false)
+    callbacks[1]!()
+    expect(engine.getState().official.firstFrame).toBe(true)
+  })
+
   it('applies the descriptor loop flag', async () => {
     const engine = makeEngine()
     await engine.load('official', descriptor({ kind: 'test', loop: true }))

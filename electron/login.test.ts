@@ -28,7 +28,11 @@ const invalidDestinations = [
   { platform: 'douyu', destination: 'fish-act:9999&other=1' },
   { platform: 'douyu', destination: 'fish-act:0' },
 ] as const
-beforeEach(() => { root = fs.mkdtempSync(path.join(process.cwd(), '.cookie-tests-login-')) })
+beforeEach(() => {
+  const temporary = path.join(process.cwd(), '.runtime-cache', 'codex-network-impl-20261030')
+  fs.mkdirSync(temporary, { recursive: true })
+  root = fs.mkdtempSync(path.join(temporary, 'login-'))
+})
 afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); vi.restoreAllMocks() })
 
 function fixture(driver: BrowserLoginDriver = { login: vi.fn(async () => cookies) }) {
@@ -91,6 +95,31 @@ describe('LoginManager', () => {
   it('masks browser exceptions that may contain credentials', async () => {
     const { manager } = fixture({ login: async () => { throw new Error('cookie=never-leak-this-value') } })
     await expect(manager.login('youtube')).rejects.toMatchObject({ code: 'login-failed', message: 'Chrome 登录或账号导出失败, 请关闭此平台的登录窗口后重试.' })
+  })
+
+  it.each([
+    [],
+    [{ domain: '.youtube.com', name: 'PREF', value: 'synthetic-pref' }],
+    [{ domain: '.outside.example', name: 'SAPISID', value: 'synthetic-wrong-domain' }],
+    [{ domain: '.youtube.com', name: 'SAPISID', value: 'synthetic-expired', expirationDate: 1 }],
+    [{ domain: '.youtube.com', name: 'SAPISID', value: '' }],
+  ].map(missing => ({ missing })))('preserves an existing cookie file when export lacks valid authentication (%j)', async ({ missing }) => {
+    const driver = { login: vi.fn<BrowserLoginDriver['login']>().mockResolvedValueOnce(cookies).mockResolvedValueOnce(missing) }
+    const { manager } = fixture(driver)
+    await manager.login('youtube')
+    const target = path.join(root, 'cookies', 'youtube.txt')
+    const previous = fs.readFileSync(target)
+    await expect(manager.login('youtube')).rejects.toMatchObject({ code: 'login-incomplete', message: expect.stringContaining('登录未完成') })
+    expect(fs.readFileSync(target)).toEqual(previous)
+    expect((await manager.loginStatus()).youtube.loggedIn).toBe(true)
+    await manager.dispose()
+  })
+
+  it('does not create an empty cookie file after an incomplete first login', async () => {
+    const { manager } = fixture({ login: async () => [] })
+    await expect(manager.login('douyu')).rejects.toMatchObject({ code: 'login-incomplete' })
+    expect(fs.existsSync(path.join(root, 'cookies', 'douyu.txt'))).toBe(false)
+    await manager.dispose()
   })
 
   it('rejects duplicate login and aborts the current profile owner before logout', async () => {
@@ -232,6 +261,7 @@ describe('system Chrome pipe login', () => {
     headless.writer.on('data', (chunk: Buffer) => {
       const command = JSON.parse(chunk.toString('utf8').replace(/\0$/, '')) as { id: number; method: string }
       commands.push(command)
+      if (command.method === 'Browser.close') { Object.assign(headless, { exitCode: 0 }); headless.emit('exit', 0, null) }
       if (command.id === 1) queueMicrotask(() => headless.reader.write(JSON.stringify({ id: 1, result: { cookies: [
         { domain, path: '/', name, value: 'secret', expires: 2_000_000_000, secure: true },
       ] } }) + '\0'))
@@ -285,13 +315,115 @@ describe('system Chrome pipe login', () => {
     expect(killTree).toHaveBeenCalledWith(headless)
   })
 
+  it.each([[], [{ domain: '.youtube.com', name: 'PREF', value: 'synthetic' }]].map(missing => ({ missing })))
+    ('bounds cookie polling and rejects an incomplete export (%j)', async ({ missing }) => {
+      vi.useFakeTimers()
+      try {
+        const manual = fakeChild(101)
+        const headless = fakeChild(102)
+        const commands: string[] = []
+        headless.writer.on('data', (chunk: Buffer) => {
+          const command = JSON.parse(chunk.toString().replace(/\0$/, '')) as { id: number; method: string }
+          commands.push(command.method)
+          if (command.method === 'Storage.getCookies') queueMicrotask(() => headless.reader.write(JSON.stringify({ id: command.id, result: { cookies: missing } }) + '\0'))
+          else { Object.assign(headless, { exitCode: 0 }); headless.emit('exit', 0, null) }
+        })
+        const spawn = vi.fn((_executable: string, args: string[]) => {
+          if (args.includes('--headless=new')) return headless
+          queueMicrotask(() => { Object.assign(manual, { exitCode: 0 }); manual.emit('exit', 0, null) })
+          return manual
+        })
+        const driver = new ChromeLoginDriver({ spawn, killTree: async () => {}, platform: 'win32', windowPollMs: 1, releaseDelayMs: 0, cookieRetryMs: 100 })
+        const pending = expect(driver.login('chrome', '/private/profile', 'youtube', new AbortController().signal)).rejects.toMatchObject({ code: 'login-incomplete' })
+        await vi.advanceTimersByTimeAsync(500)
+        await pending
+        expect(commands).toEqual(['Storage.getCookies', 'Storage.getCookies', 'Storage.getCookies', 'Storage.getCookies', 'Browser.close'])
+        expect(spawn).toHaveBeenCalledTimes(2)
+      } finally { vi.useRealTimers() }
+    })
+
+  it('accepts authentication that appears during bounded polling without restarting Chrome', async () => {
+    const manual = fakeChild(101)
+    const headless = fakeChild(102)
+    const ids: number[] = []
+    headless.writer.on('data', (chunk: Buffer) => {
+      const command = JSON.parse(chunk.toString().replace(/\0$/, '')) as { id: number; method: string }
+      if (command.method === 'Browser.close') { Object.assign(headless, { exitCode: 0 }); headless.emit('exit', 0, null); return }
+      ids.push(command.id)
+      queueMicrotask(() => headless.reader.write(JSON.stringify({ id: command.id, result: { cookies: command.id < 3 ? [] : [
+        { domain: '.youtube.com', name: 'SAPISID', value: 'synthetic', session: true },
+      ] } }) + '\0'))
+    })
+    const spawn = vi.fn((_executable: string, args: string[]) => {
+      if (args.includes('--headless=new')) return headless
+      queueMicrotask(() => { Object.assign(manual, { exitCode: 0 }); manual.emit('exit', 0, null) })
+      return manual
+    })
+    const driver = new ChromeLoginDriver({ spawn, killTree: async () => {}, platform: 'win32', windowPollMs: 1, releaseDelayMs: 0, cookieRetryMs: 1 })
+    await expect(driver.login('chrome', '/private/profile', 'youtube', new AbortController().signal)).resolves.toMatchObject([{ name: 'SAPISID' }])
+    expect(ids).toEqual([1, 2, 3])
+    expect(spawn).toHaveBeenCalledTimes(2)
+  })
+
+  it('waits for Browser.close to exit before forcing the headless reader', async () => {
+    vi.useFakeTimers()
+    try {
+      const manual = fakeChild(101)
+      const headless = fakeChild(102)
+      headless.writer.on('data', (chunk: Buffer) => {
+        if (chunk.toString().includes('Storage.getCookies')) queueMicrotask(() => headless.reader.write('{"id":1,"result":{"cookies":[{"domain":".youtube.com","name":"SAPISID","value":"synthetic"}]}}\0'))
+      })
+      const killTree = vi.fn(async (child: ChildProcess) => { Object.assign(child, { exitCode: 0 }); child.emit('exit', 0, null) })
+      const spawn = vi.fn((_executable: string, args: string[]) => {
+        if (args.includes('--headless=new')) return headless
+        queueMicrotask(() => { Object.assign(manual, { exitCode: 0 }); manual.emit('exit', 0, null) })
+        return manual
+      })
+      const driver = new ChromeLoginDriver({ spawn, killTree, platform: 'win32', windowPollMs: 1, releaseDelayMs: 0, gracefulExitTimeoutMs: 500 })
+      const pending = driver.login('chrome', '/private/profile', 'youtube', new AbortController().signal)
+      await vi.advanceTimersByTimeAsync(100)
+      expect(killTree).not.toHaveBeenCalledWith(headless)
+      await vi.advanceTimersByTimeAsync(500)
+      await expect(pending).resolves.toMatchObject([{ name: 'SAPISID' }])
+      expect(killTree).toHaveBeenCalledWith(headless)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('queries Windows window ownership asynchronously with a hidden PowerShell child', async () => {
+    const manual = fakeChild(101)
+    const headless = fakeChild(102)
+    const query = Object.assign(fakeChild(103), { stdout: new PassThrough() })
+    headless.writer.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('Storage.getCookies')) queueMicrotask(() => headless.reader.write('{"id":1,"result":{"cookies":[{"domain":".youtube.com","name":"SAPISID","value":"synthetic"}]}}\0'))
+      else { Object.assign(headless, { exitCode: 0 }); headless.emit('exit', 0, null) }
+    })
+    let queryStarted!: () => void
+    const started = new Promise<void>(resolve => { queryStarted = resolve })
+    const spawn = vi.fn((executable: string, args: string[], _options: SpawnOptions) => {
+      if (executable.endsWith('powershell.exe')) { queryStarted(); return query }
+      return args.includes('--headless=new') ? headless : manual
+    })
+    const driver = new ChromeLoginDriver({ spawn, killTree: async () => {}, platform: 'win32', windowPollMs: 1, releaseDelayMs: 0 })
+    const pending = driver.login('chrome', '/private/profile', 'youtube', new AbortController().signal)
+    await started
+    // The query remains pending while the main event loop can process other work.
+    await new Promise<void>(resolve => setTimeout(resolve, 1))
+    expect(spawn.mock.calls[1]![2]).toMatchObject({ windowsHide: true, shell: false })
+    query.stdout.write('no\r\n')
+    Object.assign(manual, { exitCode: 0 })
+    manual.emit('exit', 0, null)
+    query.emit('close', 0, null)
+    await expect(pending).resolves.toMatchObject([{ name: 'SAPISID' }])
+  })
+
   it('allows a resident Chrome tree to be terminated after its window closes', async () => {
     vi.useFakeTimers()
     try {
       const manual = fakeChild(101)
       const headless = fakeChild(102)
       headless.writer.on('data', (chunk: Buffer) => {
-        if (chunk.toString().includes('Storage.getCookies')) headless.reader.write('{"id":1,"result":{"cookies":[]}}\0')
+        if (chunk.toString().includes('Storage.getCookies')) headless.reader.write('{"id":1,"result":{"cookies":[{"domain":".youtube.com","name":"SAPISID","value":"synthetic"}]}}\0')
+        else { Object.assign(headless, { exitCode: 0 }); headless.emit('exit', 0, null) }
       })
       const hasWindow = vi.fn().mockReturnValueOnce(true).mockReturnValue(false)
       const killTree = vi.fn(async (child: ChildProcess) => {
@@ -302,7 +434,9 @@ describe('system Chrome pipe login', () => {
       const driver = new ChromeLoginDriver({ spawn, killTree, hasWindow, platform: 'win32', windowPollMs: 1000, releaseDelayMs: 0 })
       const pending = driver.login('chrome', '/private/profile', 'youtube', new AbortController().signal)
       await vi.advanceTimersByTimeAsync(8_000)
-      await expect(pending).resolves.toEqual([])
+      expect(killTree).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(10_000)
+      await expect(pending).resolves.toMatchObject([{ name: 'SAPISID' }])
       expect(spawn).toHaveBeenCalledTimes(2)
       expect(killTree).toHaveBeenCalledWith(manual)
     } finally { vi.useRealTimers() }

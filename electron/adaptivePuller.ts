@@ -1,3 +1,5 @@
+import type { NetworkContext } from '../server/networkPolicy'
+import { StreamFailureError } from '../server/networkFailure'
 import type { Writable } from 'node:stream'
 import { safeFetch, type Resolver } from '../server/safeFetch'
 import type { ProxyConfig } from '../server/config'
@@ -25,6 +27,7 @@ export interface AdaptivePullOptions {
   video: Writable
   audio: Writable
   signal: AbortSignal
+  network?: NetworkContext
   fetchImpl?: typeof fetch
   resolve?: Resolver
   now?: () => number
@@ -162,7 +165,7 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
       try {
         const operation = (async () => {
           const { response } = await safeFetch(url.toString(), policy, {
-            fetchImpl: checkedFetch, resolve: options.resolve, signal: requestSignal,
+            fetchImpl: checkedFetch, network: options.network, resolve: options.resolve, signal: requestSignal,
             headers: { Accept: '*/*' },
           })
           if (response.status === 403 || response.status === 410) {
@@ -190,6 +193,7 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
         })()
         return await abortable(operation, requestSignal)
       } catch (error) {
+        if (error instanceof StreamFailureError && attempt === MAX_ATTEMPTS - 1) throw error
         if (signal.aborted) throw abortError()
         const safe = error instanceof AdaptivePullError ? error : new AdaptivePullError(
           error && typeof error === 'object' && 'reason' in error ? 'adaptive-unsafe-url' : 'adaptive-request-failed',

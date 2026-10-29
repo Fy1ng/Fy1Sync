@@ -1,3 +1,4 @@
+import { StreamFailureError } from '../networkFailure'
 /** Douyu's PC player seed + iterated MD5 flow. No remote JavaScript is executed. */
 
 import { createHash } from 'node:crypto'
@@ -92,7 +93,8 @@ export async function resolveDouyu(input: string, deps: ResolverDeps): Promise<R
     const parsed = encryptionData(seed.data)
     if (seed.error !== 0 || !parsed) return failure('upstream-error', '斗鱼签名参数暂时不可用.', roomHint)
     encryption = parsed
-  } catch {
+  } catch (error) {
+    if (error instanceof StreamFailureError) throw error
     return failure('upstream-error', '请求斗鱼签名参数失败.', roomHint)
   }
   // Generate tt immediately before each play request. The auth must use that same tt.
@@ -107,7 +109,8 @@ export async function resolveDouyu(input: string, deps: ResolverDeps): Promise<R
     payload = record(await deps.fetchJson(`${PLAY_API}/${room}`, {
       method: 'POST', headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString(),
     }))
-  } catch {
+  } catch (error) {
+    if (error instanceof StreamFailureError) throw error
     // The upstream error may contain the request Cookie header or a signed media URL.
     return failure('upstream-error', '请求斗鱼播放地址失败.', roomHint)
   }

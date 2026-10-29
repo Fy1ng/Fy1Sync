@@ -7,7 +7,8 @@ import type { SourceRole } from '../core/types'
 import type { BufferState } from '../../electron/bufferManager'
 import type { LoginPlatform } from '../../electron/login'
 import type { DecoderMode } from '../../electron/decoderPreferences'
-import type { DouyuTaskPolicy, DouyuTasksSnapshot } from '../../server/douyu/types'
+import type { DouyuAccountsSnapshot, DouyuTaskPolicy, DouyuTasksSnapshot } from '../../server/douyu/types'
+import type { DomesticRouting } from '../../server/networkPolicy'
 import type { FeatureMethod, FeatureMethods, FeatureEvent } from '../../electron/featureContracts'
 
 export type ApiResult<T> =
@@ -132,6 +133,11 @@ export class ApiClient {
   removeDouyuTask(id: string) { return this.request('removeDouyuTask', { id }) }
   retainDouyuTaskRoom(room: string, retain: boolean) { return this.request('retainDouyuTaskRoom', { room, retain }) }
   closeDouyuTaskRoom(room: string) { return this.request('closeDouyuTaskRoom', { room }) }
+  subscribeDouyuAccounts(listener: (state: DouyuAccountsSnapshot) => void): () => void {
+    try { return this.bridge().subscribeDouyuAccounts?.(listener) ?? (() => {}) } catch { return () => {} }
+  }
+  getNetworkPreferences() { return this.request('getNetworkPreferences', undefined) }
+  setNetworkPreferences(domesticRouting: DomesticRouting) { return this.request('setNetworkPreferences', { domesticRouting }) }
   subscribeDouyuTasks(listener: (state: DouyuTasksSnapshot) => void): () => void {
     try { return this.bridge().subscribeDouyuTasks?.(listener) ?? (() => {}) } catch { return () => {} }
   }

@@ -45,6 +45,9 @@ export type ResolveFailureCode =
   | 'needs-manual-url'
 
 export type ResolveFailure = {
+  stage?: import('../networkFailure').StreamFailureStage
+  reason?: string
+  status?: number
   code: ResolveFailureCode
   message: string
   /** Actionable next step, shown verbatim in the UI. */
@@ -61,6 +64,8 @@ export type ResolverDeps = {
   douyuRoomIdentity?: DouyuRoomIdentity
   fetchJson: (url: string, init?: RequestInit) => Promise<unknown>
   fetchText: (url: string, init?: RequestInit) => Promise<string>
+  /** Playlist text and its final redirect URL for relative rendition references. */
+  fetchPlaylist?: (url: string) => Promise<{ text: string; finalUrl: string }>
   /** Bounded binary metadata (Huya WUP), never a media preflight. */
   fetchBytes?: (url: string, init?: RequestInit) => Promise<Uint8Array>
   /** Wraps a URL so the browser loads it from our origin. */

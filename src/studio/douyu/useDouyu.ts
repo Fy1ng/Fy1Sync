@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiClient, type ApiResult } from '../../app/apiClient'
 import type { DouyuAccountsSnapshot, DouyuTasksSnapshot } from '../../../server/douyu/types'
-import { remembered, useRemembered } from '../../app/remembered'
+import { remember, remembered, useRemembered } from '../../app/remembered'
 
 export interface Lane {
   pending: string
@@ -37,10 +37,26 @@ export function useDouyu() {
   const accountBusy = useRef(false)
   const taskBusy = useRef(false)
   const taskRevision = useRef(0)
+  // Main's snapshot revision: a snapshot older than the one shown is dropped, so a slow first
+  // read cannot overwrite a pushed one. -1 until anything has landed.
+  const accountRevision = useRef(-1)
+  const takeAccounts = useCallback((next: DouyuAccountsSnapshot): boolean => {
+    const revision = typeof next.revision === 'number' ? next.revision : accountRevision.current + 1
+    if (revision < accountRevision.current) return false
+    accountRevision.current = revision
+    // An unmounted view's setState is dropped, so the remembered copy is written directly too.
+    remember('douyu:accounts', next)
+    if (mounted.current) setAccounts(next)
+    return true
+  }, [setAccounts])
 
   useEffect(() => {
     mounted.current = true
     let live = true
+    // Subscribe before the first read, so a change in between is not missed.
+    const unsubscribeAccounts = apiClient.subscribeDouyuAccounts((snapshot) => {
+      if (live && validAccounts(snapshot)) takeAccounts(snapshot)
+    })
     const unsubscribe = apiClient.subscribeDouyuTasks((snapshot) => {
       if (!live || !validTasks(snapshot)) return
       taskRevision.current++
@@ -50,7 +66,7 @@ export function useDouyu() {
     void Promise.all([
       apiClient.listDouyuAccounts().then((result) => {
         if (!live) return
-        if (result.ok && validAccounts(result.value)) setAccounts(result.value)
+        if (result.ok && validAccounts(result.value)) takeAccounts(result.value)
         else setAccountLane({ ...IDLE, error: result.ok ? '无法读取斗鱼账号' : result.message })
       }),
       apiClient.getDouyuTasks().then((result) => {
@@ -59,7 +75,7 @@ export function useDouyu() {
         else setTaskLane({ ...IDLE, error: result.ok ? '无法读取任务' : result.message })
       }),
     ]).catch(() => {}).finally(() => { if (live) setLoading(false) })
-    return () => { live = false; mounted.current = false; unsubscribe() }
+    return () => { live = false; mounted.current = false; unsubscribe(); unsubscribeAccounts() }
   }, [])
 
   const accountAction = useCallback(async (
@@ -72,10 +88,12 @@ export function useDouyu() {
     setAccountLane({ pending, notice: '', error: '' })
     try {
       const result = await work()
+      // Kept even when this view has gone: a login that finishes after the viewer left
+      // 斗鱼 must not leave the remembered snapshot reading 处理中 for the next view.
+      if (result.ok && validAccounts(result.value)) takeAccounts(result.value)
       if (!mounted.current) return false
       if (!result.ok) { setAccountLane({ ...IDLE, error: result.message }); return false }
       if (!validAccounts(result.value)) { setAccountLane({ ...IDLE, error: '无法读取斗鱼账号' }); return false }
-      setAccounts(result.value)
       setAccountLane({ ...IDLE, notice: typeof done === 'function' ? done(result.value) : done })
       return true
     } catch {
@@ -84,7 +102,7 @@ export function useDouyu() {
     } finally {
       accountBusy.current = false
     }
-  }, [])
+  }, [takeAccounts])
 
   const taskAction = useCallback(async (
     pending: string,
@@ -119,6 +137,16 @@ export function useDouyu() {
 }
 
 export type DouyuData = ReturnType<typeof useDouyu>
+
+/**
+ * What an account is called on screen: its Douyu name once signed in. The built-in first
+ * account's placeholder label is not a name, so before login it shows only its state; a
+ * label the viewer gave is kept.
+ */
+export function accountName(account: { id: string; label: string; login: { loggedIn: boolean; nickname?: string } }): string {
+  if (account.login.loggedIn && account.login.nickname) return account.login.nickname
+  return account.id === 'default' && account.label === '默认账号' ? '' : account.label
+}
 
 export function accountState(account: { busy: boolean; login: { loggedIn: boolean; canSend?: boolean; expiresAt?: number | null } }): string {
   if (account.busy) return '处理中'

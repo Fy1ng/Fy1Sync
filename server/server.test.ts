@@ -52,7 +52,7 @@ describe('platform metadata request limits', () => {
       controller.enqueue(new Uint8Array(MAX_PLATFORM_RESPONSE_BYTES + 1))
     }, cancel }))
     const deps = createResolverDeps(resolveConfig({}).proxy, url => url, vi.fn(async () => response))
-    await expect(deps.fetchText('https://www.douyu.com/api')).rejects.toThrow('平台请求失败')
+    await expect(deps.fetchText('https://www.douyu.com/api')).rejects.toHaveProperty('name', 'StreamFailureError')
     expect(cancel).toHaveBeenCalledOnce()
   })
 
@@ -62,7 +62,7 @@ describe('platform metadata request limits', () => {
       .mockResolvedValueOnce(new Response(new ReadableStream({ cancel }), { status: 500 }))
       .mockResolvedValueOnce(new Response('synthetic-private-upstream-text'))
     const deps = createResolverDeps(resolveConfig({}).proxy, url => url, fetchImpl)
-    await expect(deps.fetchJson('https://www.douyu.com/api')).rejects.toThrow('平台请求失败')
+    await expect(deps.fetchJson('https://www.douyu.com/api')).rejects.toHaveProperty('name', 'StreamFailureError')
     expect(cancel).toHaveBeenCalledOnce()
     await expect(deps.fetchJson('https://www.douyu.com/api')).rejects.toThrow('平台返回的数据格式无效')
   })

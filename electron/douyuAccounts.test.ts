@@ -1,9 +1,9 @@
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DouyuAccountManager } from './douyuAccounts'
 import type { LoginStatus } from './login'
+import type { DouyuAccountsSnapshot } from '../server/douyu/types'
 
 const roots: string[] = []
 const managers: DouyuAccountManager[] = []
@@ -11,7 +11,9 @@ const a = '11111111-1111-4111-8111-111111111111'
 const b = '22222222-2222-4222-8222-222222222222'
 const permissions = { protect: vi.fn(), verify: vi.fn() }
 function tempRoot(): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'stream-syncer-accounts-test-'))
+  const temporary = path.join(process.cwd(), '.runtime-cache', 'codex-network-impl-20261030')
+  fs.mkdirSync(temporary, { recursive: true })
+  const root = fs.mkdtempSync(path.join(temporary, 'accounts-'))
   roots.push(root)
   return root
 }
@@ -44,7 +46,7 @@ function fixture(initial?: unknown) {
 afterEach(async () => {
   await Promise.all(managers.splice(0).map(manager => manager.dispose()))
   for (const root of roots.splice(0)) {
-    if (path.dirname(path.resolve(root)) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('stream-syncer-accounts-test-')) throw new Error('Unexpected test directory')
+    if (path.dirname(path.resolve(root)) !== path.resolve('.runtime-cache', 'codex-network-impl-20261030') || !path.basename(root).startsWith('accounts-')) throw new Error('Unexpected test directory')
     fs.rmSync(root, { recursive: true, force: true })
   }
   vi.clearAllMocks()
@@ -71,6 +73,93 @@ describe('Douyu account isolation', () => {
     expect(f.created.size).toBe(0)
     expect(f.store.save).not.toHaveBeenCalled()
     expect(f.defaultLogin.login).not.toHaveBeenCalled()
+  })
+
+  it('pushes initial state and account, busy, login and logout changes with increasing revisions', async () => {
+    const f = fixture()
+    const received: DouyuAccountsSnapshot[] = []
+    const release = f.manager.subscribeSnapshots(snapshot => received.push(snapshot))
+    await vi.waitFor(() => expect(received).toHaveLength(1))
+    expect(received[0]).toMatchObject({ revision: 0, accounts: [{ busy: false, login: { loggedIn: true } }] })
+    await f.manager.rename('default', '新名称')
+    await vi.waitFor(() => expect(received.at(-1)).toMatchObject({ revision: 1, accounts: [{ label: '新名称' }] }))
+    let finish!: (value: { cookieCount: number; authKeysPresent: string[] }) => void
+    f.defaultLogin.login.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const login = f.manager.login('default')
+    await vi.waitFor(() => expect(received.at(-1)).toMatchObject({ revision: 2, accounts: [{ busy: true }] }))
+    finish({ cookieCount: 1, authKeysPresent: ['acf_uid'] })
+    await login
+    await vi.waitFor(() => expect(received.at(-1)).toMatchObject({ revision: 4, accounts: [{ busy: false, login: { loggedIn: true } }] }))
+    await f.manager.logout('default')
+    await vi.waitFor(() => expect(received.at(-1)).toMatchObject({ revision: 7, accounts: [{ busy: false, login: { loggedIn: false } }] }))
+    expect(received.every((snapshot, i) => i === 0 || snapshot.revision > received[i - 1]!.revision)).toBe(true)
+    release()
+    const count = received.length
+    await f.manager.add('独立账号')
+    await new Promise<void>(resolve => setImmediate(resolve))
+    expect(received).toHaveLength(count)
+  })
+
+  it('pushes failed login completion so a departed settings view cannot leave busy stuck', async () => {
+    const f = fixture()
+    const received: DouyuAccountsSnapshot[] = []
+    f.manager.subscribeSnapshots(snapshot => received.push(snapshot))
+    await vi.waitFor(() => expect(received).toHaveLength(1))
+    f.defaultLogin.login.mockRejectedValueOnce(new Error('synthetic private cookie details'))
+    await expect(f.manager.login('default')).rejects.toMatchObject({ code: 'login-failed' })
+    await vi.waitFor(() => expect(received.at(-1)).toMatchObject({ revision: 3, accounts: [{ busy: false }] }))
+    expect(JSON.stringify(received)).not.toContain('synthetic private')
+  })
+
+  it('retries status reads after a revision change and never publishes late old state as new', async () => {
+    const f = fixture()
+    const original = await f.defaultLogin.loginStatus()
+    let finish!: (value: LoginStatus) => void
+    f.defaultLogin.loginStatus.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const pending = f.manager.snapshot()
+    await f.manager.rename('default', '最新名称')
+    await f.manager.logout('default')
+    finish(original)
+    await expect(pending).resolves.toMatchObject({ revision: 4, accounts: [{ label: '最新名称', busy: false, login: { loggedIn: false } }] })
+
+    let finishInitial!: (value: LoginStatus) => void
+    f.defaultLogin.loginStatus.mockImplementationOnce(() => new Promise(resolve => { finishInitial = resolve }))
+    const received: DouyuAccountsSnapshot[] = []
+    f.manager.subscribeSnapshots(snapshot => received.push(snapshot))
+    await f.manager.rename('default', '再次更新')
+    finishInitial(original)
+    await vi.waitFor(() => expect(received).toHaveLength(1))
+    expect(received[0]).toMatchObject({ revision: 5, accounts: [{ label: '再次更新', login: { loggedIn: false } }] })
+  })
+
+  it('guards unsubscribe and disposal while an initial snapshot is pending', async () => {
+    const f = fixture()
+    const original = await f.defaultLogin.loginStatus()
+    let finish!: (value: LoginStatus) => void
+    f.defaultLogin.loginStatus.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const listener = vi.fn()
+    const release = f.manager.subscribeSnapshots(listener)
+    release()
+    await f.manager.dispose()
+    finish(original)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    expect(listener).not.toHaveBeenCalled()
+    f.manager.subscribeSnapshots(listener)
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('isolates listener mutations and exceptions while retaining credential invalidation events', async () => {
+    const f = fixture()
+    const received: DouyuAccountsSnapshot[] = []
+    const invalidated: string[] = []
+    f.manager.subscribe(event => { if (event.type === 'invalidated') invalidated.push(event.accountId) })
+    f.manager.subscribeSnapshots(snapshot => { snapshot.accounts[0]!.label = 'observer mutation'; throw new Error('closed view') })
+    f.manager.subscribeSnapshots(snapshot => received.push(snapshot))
+    await vi.waitFor(() => expect(received).toHaveLength(1))
+    expect(received[0]!.accounts[0]!.label).toBe('默认账号')
+    await f.manager.logout('default')
+    await vi.waitFor(() => expect(received.at(-1)?.revision).toBe(3))
+    expect(invalidated).toEqual(['default', 'default'])
   })
 
   it('uses distinct private roots, activates one account and never copies the old login', async () => {
@@ -185,12 +274,12 @@ describe('Douyu account isolation', () => {
     await expect(f.manager.login('default')).rejects.toMatchObject({ code: 'account-busy' })
     await expect(f.manager.loginYuba('default')).rejects.toMatchObject({ code: 'account-busy' })
     finish()
-    expect(await pending).toEqual({ activeAccountId: null, accounts: [] })
+    expect(await pending).toEqual({ revision: 4, activeAccountId: null, accounts: [] })
     expect(f.defaultLogin.logout).toHaveBeenCalledWith('douyu')
     expect(f.defaultLogin.dispose).not.toHaveBeenCalled()
     const restored = new DouyuAccountManager(f.root, f.options)
     managers.push(restored)
-    expect(await restored.snapshot()).toEqual({ activeAccountId: null, accounts: [] })
+    expect(await restored.snapshot()).toEqual({ revision: 0, activeAccountId: null, accounts: [] })
     expect(await restored.activeCookieHeader()).toBe('')
   })
 

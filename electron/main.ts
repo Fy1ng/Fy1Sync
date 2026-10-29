@@ -1,3 +1,7 @@
+import { systemProxyMode } from './systemProxy'
+import { NetworkPolicy, installNetworkPolicy } from '../server/networkPolicy'
+import { NetworkPreferences } from './networkPreferences'
+import { MediaGateway } from './mediaGateway'
 import './networkRuntime'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, protocol, session, shell } from 'electron'
 import { join, resolve } from 'node:path'
@@ -69,9 +73,14 @@ let dispose: (() => Promise<void>) | undefined
 async function start(): Promise<void> {
   const clientDir = resolve(__dirname, '../client')
   const config = resolveConfig(process.env, resolve(__dirname, '../..'))
-  // Desktop callers cannot opt out of private-address or port validation.
+  // DIRECT callers retain private-address checks; all routes retain port validation.
   const proxy = { ...config.proxy, allowNonLoopbackTargets: false, allowNonStandardPorts: false }
+  const preferences = new NetworkPreferences(app.getPath('userData'))
+  const network = new NetworkPolicy(url => session.defaultSession.resolveProxy(url), preferences.domesticRouting, Date.now, 15_000, systemProxyMode)
+  preferences.attach(network)
+  installNetworkPolicy(network)
   const media = new MediaRegistry({ config: proxy })
+  const gateway = new MediaGateway(proxy)
   const userDataDir = app.getPath('userData')
   const bundledLogoDir = app.isPackaged ? join(process.resourcesPath, 'team-logos') : undefined
   let danmakuFeatures: DanmakuFeatures | undefined
@@ -297,7 +306,8 @@ async function start(): Promise<void> {
     }
     return globalThis.fetch(input, init)
   }, offlineE2e ? async () => ['8.8.8.8'] : undefined)
-  const acquisition = new Acquisition({ buffer, logins: playbackLogins, runYtDlp: (url, adaptive) => ytdlp.resolve(url, adaptive), proxy, resolveDouyuRoom: roomResolver.resolve,
+  const acquisition = new Acquisition({ buffer, logins: playbackLogins, runYtDlp: (url, adaptive, context) => ytdlp.resolve(url, adaptive, context), network: platform => network.context(platform),
+    mediaInput: (url, headers, context) => gateway.register(url, headers, context), proxy, resolveDouyuRoom: offlineE2e ? roomResolver.resolve : undefined,
     ensureTools: async (platform) => {
       if (offlineE2e) throw new Error('默认离线测试禁止真实平台取流')
       await locateTool('ffmpeg', toolSettings, process.env, toolContext)
@@ -380,7 +390,7 @@ async function start(): Promise<void> {
     },
   })
   const service = createDesktopService({
-    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, resolveHuyaRoom, registerMedia: media.register, acquisition, decoderPreferences, tools, douyuAccounts, douyuTasks, douyuRenewal,
+    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, resolveHuyaRoom, registerMedia: media.register, acquisition, decoderPreferences, networkPreferences: preferences, tools, douyuAccounts, douyuTasks, douyuRenewal,
     features: backend?.api,
   })
   session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
@@ -576,7 +586,7 @@ async function start(): Promise<void> {
     handlers?.dispose()
     service.dispose()
     acquisition.dispose()
-    await Promise.all([ytdlp.dispose(), buffer.dispose(), logins.dispose(), douyuAccounts?.dispose()])
+    await Promise.all([gateway.dispose(), ytdlp.dispose(), buffer.dispose(), logins.dispose(), douyuAccounts?.dispose()])
     media.clear()
     protocol.unhandle('app')
     delete (globalThis as { __streamSyncerTest?: unknown }).__streamSyncerTest

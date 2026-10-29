@@ -9,18 +9,22 @@ import { locateTool, ToolError } from './toolLocator'
 import { pullAdaptive, type AdaptiveSource } from './adaptivePuller'
 import { adaptiveTransport, type AdaptiveTransport } from './adaptiveTransport'
 import { isStreamId } from './streamIdentity'
+import { classifyFfmpegStderr, classifyNetworkFailure, type StreamFailure } from '../server/networkFailure'
+import { cleanProxyEnvironment, type NetworkContext } from '../server/networkPolicy'
+export { cleanProxyEnvironment } from '../server/networkPolicy'
 
 export type Role = BufferRole
-export interface BufferInput { url: string; headers?: Record<string, string>; realtime?: boolean; adaptive?: AdaptiveSource; qualityHeight?: number; fallbackFromHeight?: number }
+export interface BufferInput { url: string; headers?: Record<string, string>; realtime?: boolean; adaptive?: AdaptiveSource; qualityHeight?: number; fallbackFromHeight?: number; proxyUrl?: string; network?: NetworkContext; readFailure?: () => StreamFailure | undefined; gatewayHls?: boolean }
 export interface BufferNotice { code: 'youtube-adaptive-fallback'; fromHeight: number; toHeight: number }
 export type BufferPhase = 'starting' | 'buffering' | 'ready' | 'stalled' | 'reconnecting' | 'failed' | 'stopped'
-export interface BufferState { role: Role; state: BufferPhase; seconds: number; attempt?: number; retryInMs?: number; reason?: string; notice?: BufferNotice }
+export interface BufferState { role: Role; state: BufferPhase; seconds: number; attempt?: number; retryInMs?: number; reason?: string; notice?: BufferNotice; failure?: StreamFailure; retriesRemaining?: number; hasVideo?: boolean; completeSegments?: number }
 export interface BufferChild {
   pid?: number
   once(event: 'error', listener: (error: Error) => void): unknown
   once(event: 'close', listener: (code: number | null, signal?: NodeJS.Signals | null) => void): unknown
   kill(signal?: NodeJS.Signals): boolean
-  stderr?: { resume(): unknown } | null
+  stderr?: { resume(): unknown; on?(event: 'data', listener: (data: Buffer | string) => void): unknown } | null
+  stdout?: { on(event: 'data', listener: (data: Buffer | string) => void): unknown } | null
   stdin?: Writable | null
   stdio?: (unknown | null)[]
 }
@@ -35,6 +39,7 @@ export interface BufferManagerOptions {
   readySeconds?: number
   pollIntervalMs?: number
   stallTimeoutMs?: number
+  firstSegmentTimeoutMs?: number
   backoffMs?: number[]
   maxReconnects?: number
   deleteGraceMs?: number
@@ -48,6 +53,8 @@ interface Run {
   id: number; child?: BufferChild; exited: boolean; finishing: boolean; lastSequence: number
   poll?: unknown; refresh?: Promise<void>; finishTask?: Promise<void>; lastProgress: number; firstProgress?: number
   abort?: AbortController; transport?: AdaptiveTransport; pulling?: Promise<void>
+  startedAt: number; lastPacketProgress: number; frame: number; outputTime: number; hasVideo: boolean; failure?: StreamFailure; proxy: boolean
+  readFailure?: () => StreamFailure | undefined
 }
 interface RoleSession {
   role: Role; generation: string; directory: string; resolve: (hlsOnly?: boolean) => Promise<BufferInput>; cancelled: boolean
@@ -78,6 +85,7 @@ export class BufferManager {
   private readonly ready: number
   private readonly pollMs: number
   private readonly stallMs: number
+  private readonly firstSegmentMs: number
   private readonly backoff: number[]
   private readonly maxReconnects: number
   private readonly deleteGraceMs: number
@@ -93,6 +101,7 @@ export class BufferManager {
     this.ready = positive(options.readySeconds ?? 4)
     this.pollMs = positive(options.pollIntervalMs ?? 500)
     this.stallMs = positive(options.stallTimeoutMs ?? 25_000)
+    this.firstSegmentMs = positive(options.firstSegmentTimeoutMs ?? 120_000)
     this.backoff = [...(options.backoffMs ?? [1000, 2000, 5000, 10_000, 15_000])]
     if (!this.backoff.length || this.backoff.some(ms => !Number.isFinite(ms) || ms < 0)) throw new Error('invalid buffer backoff')
     this.maxReconnects = options.maxReconnects ?? this.backoff.length
@@ -175,7 +184,11 @@ export class BufferManager {
   }
   private emit(session: RoleSession, state: BufferPhase, extra: Partial<BufferState> = {}): void {
     if (!this.current(session)) return
-    this.notify({ role: session.role, state, seconds: duration(session.segments), ...(session.notice ? { notice: session.notice } : {}), ...extra })
+    this.notify({ role: session.role, state, seconds: duration(session.segments),
+      hasVideo: session.run?.hasVideo ?? false, completeSegments: session.segments.length,
+      retriesRemaining: Math.max(0, this.maxReconnects - session.attempts)
+        + (session.adaptiveHeight && !session.hlsOnly ? Math.max(0, this.adaptiveFailures - session.adaptiveAttempts) : 0),
+      ...(session.notice ? { notice: session.notice } : {}), ...extra })
   }
   private notify(state: BufferState): void {
     if (JSON.stringify(this.states.get(state.role)) === JSON.stringify(state)) return
@@ -193,13 +206,18 @@ export class BufferManager {
 
   private async launch(session: RoleSession): Promise<void> {
     if (!this.current(session)) return
-    const run: Run = { id: session.nextRun++, exited: false, finishing: false, lastSequence: -1, lastProgress: this.clock.now() }
+    const now = this.clock.now()
+    const run: Run = { id: session.nextRun++, exited: false, finishing: false, lastSequence: -1, lastProgress: now,
+      startedAt: now, lastPacketProgress: now, frame: 0, outputTime: -1, hasVideo: false, proxy: false }
     session.run = run
     try {
       const tool = typeof this.options.ffmpegPath === 'function' ? await this.options.ffmpegPath() : this.options.ffmpegPath ?? await locateTool('ffmpeg')
       if (!this.current(session, run)) return
       let input: BufferInput
-      try { input = await session.resolve(session.hlsOnly) } catch { await this.finish(session, run, 'source-resolve-failed'); return }
+      try { input = await session.resolve(session.hlsOnly) } catch (error) {
+        run.failure = classifyNetworkFailure(error, 'resolve')
+        await this.finish(session, run, 'source-resolve-failed'); return
+      }
       if (!this.current(session, run)) return
       session.adaptiveHeight ??= input.fallbackFromHeight
       if (session.adaptiveHeight && !input.adaptive && !session.notice) {
@@ -220,16 +238,42 @@ export class BufferManager {
         return
       }
       run.lastProgress = this.clock.now()
+      run.startedAt = run.lastPacketProgress = run.lastProgress
+      run.proxy = Boolean(input.proxyUrl)
+      run.readFailure = input.readFailure
       const child: BufferChild = (this.options.spawn ?? spawn)(tool, args, {
         shell: false, windowsHide: true, detached: process.platform !== 'win32',
-        stdio: input.adaptive ? ['pipe', 'ignore', 'pipe', ...(run.transport?.extraPipe ? ['pipe' as const] : [])] : ['ignore', 'ignore', 'pipe'],
+        env: cleanProxyEnvironment(process.env),
+        stdio: input.adaptive ? ['pipe', 'pipe', 'pipe', ...(run.transport?.extraPipe ? ['pipe' as const] : [])] : ['ignore', 'pipe', 'pipe'],
       })
       run.child = child
-      child.once('error', () => { void this.finish(session, run, 'ffmpeg-launch-failed') })
+      child.once('error', error => { run.failure = classifyNetworkFailure(error); void this.finish(session, run, 'ffmpeg-launch-failed') })
       child.once('close', () => { run.exited = true; void this.finish(session, run, 'upstream-ended') })
-      // ffmpeg diagnostics can contain signed URLs, cookies and headers. Drain
-      // them without keeping or forwarding any bytes to logs or the renderer.
+      // Raw diagnostics may contain credentials. Only whitelist classifications survive this callback.
+      child.stderr?.on?.('data', data => {
+        if (!this.current(session, run) || run.finishing) return
+        const failure = classifyFfmpegStderr(String(data))
+        if (failure) run.failure = run.proxy && failure.stage === 'connect' && failure.code !== 'tls-certificate'
+          ? classifyNetworkFailure(undefined, 'proxy') : failure
+      })
       child.stderr?.resume()
+      let progress = ''
+      child.stdout?.on('data', data => {
+        if (!this.current(session, run) || run.finishing) return
+        // FFmpeg's progress pipe contains generated keys and numbers, never upstream URLs.
+        progress = (progress + String(data)).slice(-4096)
+        const lines = progress.split(/\r?\n/)
+        progress = lines.pop() ?? ''
+        for (const line of lines) {
+          const match = /^(frame|out_time_us)=(\d{1,16})$/.exec(line)
+          if (!match) continue
+          const value = Number(match[2])
+          if (!Number.isSafeInteger(value)) continue
+          if (match[1] === 'frame' && value > run.frame) { run.frame = value; run.hasVideo = true; run.lastPacketProgress = this.clock.now() }
+          else if (match[1] === 'out_time_us' && value > run.outputTime) { run.outputTime = value; run.lastPacketProgress = this.clock.now() }
+        }
+        this.emit(session, this.isReady(session, run) ? 'ready' : 'buffering')
+      })
       if (input.adaptive) {
         const video = child.stdin
         const audio = run.transport?.audio ?? child.stdio?.[3] as Writable | undefined
@@ -237,16 +281,23 @@ export class BufferManager {
         // Pending OS writes can report EPIPE after cancellation has released the puller.
         video.on('error', () => {})
         audio.on('error', () => {})
-        run.pulling = (this.options.pullAdaptive ?? pullAdaptive)(input.adaptive, { video, audio, signal: run.abort!.signal })
-          .then(() => this.finish(session, run, 'adaptive-ended'), () => this.finish(session, run, 'adaptive-pull-failed'))
+        run.pulling = (this.options.pullAdaptive ?? pullAdaptive)(input.adaptive, { video, audio, signal: run.abort!.signal, network: input.network })
+          .then(() => this.finish(session, run, 'adaptive-ended'), error => {
+            run.failure = classifyNetworkFailure(error)
+            return this.finish(session, run, 'adaptive-pull-failed')
+          })
       }
-      this.emit(session, duration(session.segments) >= this.ready ? 'ready' : 'buffering')
+      this.emit(session, this.isReady(session, run) ? 'ready' : 'buffering')
       this.schedulePoll(session, run)
     } catch (error) {
       if (!this.current(session, run)) return
       if (error instanceof ToolError) this.fail(session, error.code)
       else await this.finish(session, run, 'ffmpeg-launch-failed')
     }
+  }
+
+  private isReady(session: RoleSession, run: Run): boolean {
+    return run.hasVideo && run.lastSequence >= 0 && session.segments.length > 0 && duration(session.segments) >= this.ready
   }
 
   private schedulePoll(session: RoleSession, run: Run): void {
@@ -258,9 +309,18 @@ export class BufferManager {
     try {
       await this.refresh(session, run)
       if (!this.current(session, run) || run.finishing) return
-      if (this.clock.now() - run.lastProgress >= this.stallMs) {
-        this.emit(session, 'stalled')
-        await this.finish(session, run, 'upstream-stalled')
+      const now = this.clock.now()
+      // Copy mode closes a segment only at the next keyframe. Active packet progress
+      // protects long GOPs, while a separate sealing deadline bounds broken muxers.
+      const lastDuration = session.segments.at(-1)?.duration ?? 0
+      const sealBudget = run.lastSequence < 0 ? this.firstSegmentMs : Math.max(this.stallMs, lastDuration * 2000 + 10_000)
+      const idle = now - Math.max(run.lastProgress, run.lastPacketProgress) >= this.stallMs
+      const unsealed = now - (run.lastSequence < 0 ? run.startedAt : run.lastProgress) >= sealBudget
+      if (idle || unsealed) {
+        const readyBefore = run.hasVideo && run.lastSequence >= 0
+        run.failure ??= classifyNetworkFailure(undefined, readyBefore ? 'stall' : 'playback-not-ready')
+        this.emit(session, 'stalled', { failure: run.failure })
+        await this.finish(session, run, readyBefore ? 'upstream-stalled' : 'playback-not-ready')
       } else this.schedulePoll(session, run)
     } catch { this.fail(session, 'buffer-write-failed') }
   }
@@ -289,6 +349,9 @@ export class BufferManager {
       const segment = parsed.segments[index]!
       if (!segment.uri.startsWith(`segment_${run.id}_`)) throw new Error('unexpected segment generation')
       if (segment.init && segment.init !== `init_${run.id}.mp4`) throw new Error('unexpected init generation')
+      // A published EXTINF must refer to a real, nonempty file closed by temp_file.
+      const sealed = await stat(path.join(session.directory, segment.uri))
+      if (!sealed.isFile() || sealed.size === 0) throw new Error('empty or missing sealed segment')
       session.segments.push({ ...segment, sequence: session.nextSequence++, discontinuity: segment.discontinuity || (run.lastSequence < 0 && session.nextSequence > 1) })
       run.lastSequence = sourceSequence
       added = true
@@ -312,7 +375,7 @@ export class BufferManager {
         }
       }
       await this.publish(session)
-      if (!run.finishing) this.emit(session, seconds >= this.ready ? 'ready' : 'buffering')
+      if (!run.finishing) this.emit(session, this.isReady(session, run) ? 'ready' : 'buffering')
     }
     const discarded = session.discarded.filter(item => item.deleteAfter <= this.clock.now())
     session.discarded = session.discarded.filter(item => item.deleteAfter > this.clock.now())
@@ -345,6 +408,7 @@ export class BufferManager {
     return run.finishTask
   }
   private async finishRun(session: RoleSession, run: Run, reason: string): Promise<void> {
+    run.failure = run.readFailure?.() ?? run.failure
     try {
       await this.refresh(session, run)
       if (run.child && !run.exited) await this.kill(run.child)
@@ -352,20 +416,23 @@ export class BufferManager {
       await rm(path.join(session.directory, `raw_${run.id}.m3u8`), { force: true })
     } catch { this.fail(session, 'buffer-write-failed'); return }
     if (!this.current(session, run)) return
+    const failure = run.failure ?? classifyNetworkFailure(undefined,
+      reason === 'source-resolve-failed' ? 'resolve' : reason === 'upstream-stalled' ? 'stall'
+        : !run.hasVideo || run.lastSequence < 0 ? 'playback-not-ready' : 'connect')
     if (session.adaptiveHeight && !session.hlsOnly) {
       session.adaptiveAttempts++
       if (session.adaptiveAttempts >= this.adaptiveFailures) {
         session.hlsOnly = true
         session.attempts = 0
-        this.emit(session, 'reconnecting', { attempt: 0, retryInMs: 0 })
+        this.emit(session, 'reconnecting', { attempt: 0, retryInMs: 0, reason, failure })
         session.retry = this.clock.setTimeout(() => { session.retry = undefined; void this.launch(session) }, 0)
         return
       }
     }
-    if ((!session.adaptiveHeight || session.hlsOnly) && session.attempts >= this.maxReconnects) { this.emit(session, 'failed', { reason }); return }
+    if ((!session.adaptiveHeight || session.hlsOnly) && session.attempts >= this.maxReconnects) { this.emit(session, 'failed', { reason, failure, retriesRemaining: 0 }); return }
     const delay = this.backoff[Math.min(session.attempts, this.backoff.length - 1)]!
     session.attempts++
-    this.emit(session, 'reconnecting', { attempt: session.attempts, retryInMs: delay })
+    this.emit(session, 'reconnecting', { attempt: session.attempts, retryInMs: delay, reason, failure })
     session.retry = this.clock.setTimeout(() => { session.retry = undefined; void this.launch(session) }, delay)
   }
   private fail(session: RoleSession, reason: string): void {
@@ -375,7 +442,7 @@ export class BufferManager {
     if (session.run) session.run.finishing = true
     session.run?.abort?.abort()
     session.run?.transport?.close()
-    this.emit(session, 'failed', { reason })
+    this.emit(session, 'failed', { reason, failure: session.run?.failure ?? classifyNetworkFailure(undefined, 'playback-not-ready'), retriesRemaining: 0 })
     if (session.run?.child && !session.run.exited) void this.kill(session.run.child).catch(() => {})
   }
   private kill(child: BufferChild): Promise<void> {
@@ -433,7 +500,7 @@ export function buildFfmpegArgs(input: BufferInput, directory: string, runId: nu
   if (input.adaptive) {
     if (!['webm', 'mp4'].includes(input.adaptive.videoContainer)) throw new Error('invalid adaptive input')
     if (audioInput !== 'pipe:3' && !/^\\\\\.\\pipe\\stream-syncer-[a-f0-9-]+$/.test(audioInput)) throw new Error('invalid audio pipe')
-    return ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+    return ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-progress', 'pipe:1', '-stats_period', '0.5',
       '-protocol_whitelist', 'pipe', '-thread_queue_size', '512', '-analyzeduration', '1000000', '-probesize', '1048576',
       '-f', input.adaptive.videoContainer === 'webm' ? 'matroska' : 'mov', '-i', 'pipe:0',
       '-protocol_whitelist', audioInput === 'pipe:3' ? 'pipe' : 'file', '-thread_queue_size', '512',
@@ -443,15 +510,23 @@ export function buildFfmpegArgs(input: BufferInput, directory: string, runId: nu
   const url = new URL(input.url)
   const local = url.protocol === 'file:' && input.realtime === true
   if ((!local && !['http:', 'https:'].includes(url.protocol)) || url.username || url.password || /[\r\n\0]/.test(input.url)) throw new Error('invalid input')
-  const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y']
+  const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-progress', 'pipe:1', '-stats_period', '0.5']
   if (input.realtime) args.push('-re')
-  // ffmpeg honours http_proxy/https_proxy from the environment and then tunnels through its
-  // `httpproxy` protocol. Leaving it off the whitelist fails every remote input at open on
-  // any machine with a system proxy, which is the common setup for reaching YouTube.
+  // This build reads http_proxy only. Explicit input options and a cleaned child
+  // environment keep the selected route independent from inherited proxy variables.
   args.push('-protocol_whitelist', local ? 'file,crypto' : 'http,https,tcp,tls,crypto,httpproxy')
   // Do not enable ffmpeg HTTP reconnect options: a signed Huya FLV URL is single-use.
   // EOF and stalls return to launch(), which asks acquisition for a newly signed URL.
-  if (!local) args.push('-rw_timeout', '20000000')
+  if (!local) {
+    const proxy = input.proxyUrl ?? ''
+    if (proxy) {
+      const parsed = new URL(proxy)
+      if (!['http:', 'https:'].includes(parsed.protocol) || /[\r\n\0]/.test(proxy)) throw new Error('invalid input proxy')
+    }
+    args.push('-http_proxy', proxy, '-rw_timeout', '20000000')
+    // HTTP inputs do not consume TLS protocol options and reject tls_verify as unused.
+    if (url.protocol === 'https:') args.push('-tls_verify', '1')
+  }
   if (input.headers) {
     const headers = Object.entries(input.headers).map(([name, value]) => {
       if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/i.test(name) || /[\r\n\0]/.test(value)) throw new Error('invalid input header')
@@ -460,9 +535,17 @@ export function buildFfmpegArgs(input: BufferInput, directory: string, runId: nu
     if (headers.length > 65_536 || local) throw new Error('invalid input headers')
     if (headers) args.push('-headers', headers)
   }
+  if (input.gatewayHls) {
+    if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.search || url.hash
+      || !/^\/media\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(url.pathname)) throw new Error('invalid gateway HLS input')
+    // Opaque segment capabilities have no extension. Only the guarded Node gateway
+    // may relax the HLS demuxer's filename heuristic; remote inputs retain it.
+    args.push('-f', 'hls', '-extension_picky', '0')
+  }
   args.push('-i', local ? fileURLToPath(url) : input.url, '-map', '0:v:0?', '-map', '0:a:0?', ...hlsOutput(directory, runId, forceFmp4))
   return args
 }
+
 function hlsOutput(directory: string, runId: number, fmp4: boolean): string[] {
   // ffmpeg's hls muxer finds the directory of the init segment by searching the playlist path
   // for '/' only. With Windows backslashes it finds none and writes init_<n>.mp4 into the

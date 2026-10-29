@@ -60,10 +60,11 @@ describe('Huya sources', () => {
       channel: '660000', sourceRoom: '660000', requiresProxy: false,
     } } })
     mount(session, <Intake onClose={() => {}} onSchedule={() => {}} pendingFile={null} />)
+    fireEvent.click(screen.getByRole('radio', { name: /解说/ }))
     const field = screen.getByLabelText('直播间链接')
     fireEvent.change(field, { target: { value: room } })
+    fireEvent.click(screen.getByRole('radio', { name: '虎牙' }))
     fireEvent.submit(field.closest('form')!)
-    fireEvent.click(screen.getByRole('button', { name: '虎牙' }))
     await waitFor(() => expect(load).toHaveBeenCalledWith('commentary', expect.objectContaining({
       platform: 'huya', input: room, sourceRoom: '660000',
     })))

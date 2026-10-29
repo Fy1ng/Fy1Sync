@@ -6,12 +6,13 @@
 
 import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { apiClient } from '../app/apiClient'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Session } from '../app/session'
 import { SessionProvider } from '../app/SessionContext'
 import type { StreamSyncerBridge } from '../../electron/contracts'
-import { parseRoomInput, roomFromInput, routeFor, sourceTitle } from './sources'
+import { parseRoomInput, roomFromInput, sourceTitle } from './sources'
 import { Studio } from './Studio'
 import { balanceOf, volumesFor } from './transport'
 
@@ -43,21 +44,6 @@ afterEach(() => {
   cleanup()
   while (sessions.length > 0) sessions.pop()?.dispose()
   vi.unstubAllGlobals()
-})
-
-describe('routing a pasted link', () => {
-  it('sends match platforms to the picture and Chinese platforms to the voice', () => {
-    expect(routeFor('youtube')).toBe('official')
-    expect(routeFor('twitch')).toBe('official')
-    expect(routeFor('douyu')).toBe('commentary')
-    expect(routeFor('bilibili')).toBe('commentary')
-    expect(routeFor('huya')).toBe('commentary')
-  })
-
-  it('leaves links that cannot say to the viewer', () => {
-    expect(routeFor('direct')).toBeNull()
-    expect(routeFor('file')).toBeNull()
-  })
 })
 
 describe('typed rooms', () => {
@@ -136,17 +122,40 @@ describe('the studio', () => {
     expect(screen.getByRole('dialog', { name: '添加直播间' })).toBeInTheDocument()
   })
 
-  it('asks which platform a bare room number belongs to', async () => {
+  it('asks which platform a bare room number belongs to as soon as it is typed', async () => {
     renderStudio(makeSession())
     await flush()
     const field = screen.getByLabelText('直播间链接')
+    const add = screen.getByRole('button', { name: '添加' })
+    // Nothing to type into until a side is picked.
+    expect(field).toBeDisabled()
+    fireEvent.click(screen.getByRole('radio', { name: /解说/ }))
+    expect(field).toBeEnabled()
     fireEvent.change(field, { target: { value: '6979222' } })
-    fireEvent.submit(field.closest('form')!)
-    const ask = screen.getByRole('group', { name: '选择房间号所属平台' })
+    const ask = screen.getByRole('radiogroup', { name: '选择房间号所属平台' })
     expect(ask).toHaveTextContent('6979222')
-    expect(screen.getByRole('button', { name: '斗鱼' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '哔哩哔哩' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '虎牙' })).toBeInTheDocument()
+    // No platform yet: nothing to add.
+    expect(add).toBeDisabled()
+    fireEvent.click(screen.getByRole('radio', { name: '哔哩哔哩' }))
+    expect(screen.getByRole('radio', { name: '哔哩哔哩' })).toHaveAttribute('aria-checked', 'true')
+    expect(add).toBeEnabled()
+    expect(screen.getByRole('radio', { name: '斗鱼' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: '虎牙' })).toBeInTheDocument()
+  })
+
+  it('fills the side the viewer picked, not the side the link suggests', async () => {
+    const session = makeSession()
+    renderStudio(session)
+    await flush()
+    const resolve = vi.spyOn(apiClient, 'resolve').mockResolvedValue({ ok: true, value: { ok: false, failure: { code: 'not-live', message: '未开播' } } })
+    // 画面 is picked first; a YouTube link would once have gone there anyway, so use 解说.
+    fireEvent.click(screen.getByRole('radio', { name: /解说/ }))
+    expect(screen.getByRole('radio', { name: /解说/ })).toHaveAttribute('aria-checked', 'true')
+    const field = screen.getByLabelText('直播间链接')
+    fireEvent.change(field, { target: { value: 'https://www.youtube.com/watch?v=abcdefghijk' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加' }))
+    await waitFor(() => expect(resolve).toHaveBeenCalled())
+    expect(resolve.mock.calls[0]![2]).toBe('commentary')
   })
 
   it('closes the paste screen on Escape even with nothing loaded', async () => {

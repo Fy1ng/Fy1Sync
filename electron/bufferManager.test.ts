@@ -1,17 +1,18 @@
 import { execFileSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { BufferManager, buildFfmpegArgs, parseHlsSegments, type BufferClock, type BufferState, type BufferManagerOptions } from './bufferManager'
+import { BufferManager, buildFfmpegArgs, cleanProxyEnvironment, parseHlsSegments, type BufferClock, type BufferState, type BufferManagerOptions } from './bufferManager'
 import { ToolError } from './toolLocator'
 
 class FakeChild extends EventEmitter {
   pid = 12345
   stderr = new PassThrough()
+  stdout = new PassThrough()
   kill = vi.fn(() => { this.emit('close', null, 'SIGKILL'); return true })
 }
 class FakeClock implements BufferClock {
@@ -72,6 +73,7 @@ async function writeManifest(f: Awaited<ReturnType<typeof fixture>>, commandInde
     lines.push(`#EXTINF:${durations[index]},`, filename)
   }
   await writeFile(manifest, lines.join('\n') + '\n')
+  f.children[commandIndex]!.stdout.write('frame=120\nout_time_us=4000000\nprogress=continue\n')
   return directory
 }
 async function start(f: Awaited<ReturnType<typeof fixture>>, resolve = vi.fn(async () => ({ url: 'https://cdn.example/live.m3u8?private-token=hidden' }))) {
@@ -104,6 +106,79 @@ describe('BufferManager', () => {
     await until(() => f.current().state === 'ready')
     expect(f.current().seconds).toBe(4.5)
     expect(await (await f.manager.handle(new Request(url))).text()).toContain('#EXTINF:3.000000,')
+  })
+  it('requires video packet progress even when sealed audio-only segments exist', async () => {
+    const f = await fixture()
+    await start(f)
+    const command = f.commands[0]!, manifest = command.args.at(-1)!, directory = path.dirname(manifest)
+    await writeFile(path.join(directory, 'segment_0_000000000.ts'), 'audio-only')
+    await writeFile(manifest, '#EXTM3U\n#EXTINF:4,\nsegment_0_000000000.ts\n')
+    await f.clock.advance(100)
+    await until(() => f.current().seconds === 4)
+    expect(f.current()).toMatchObject({ state: 'buffering', hasVideo: false, completeSegments: 1 })
+    f.children[0]!.stdout.write('frame=1\n')
+    expect(f.current()).toMatchObject({ state: 'ready', hasVideo: true })
+  })
+  it('lets video progress reach a long GOP boundary beyond the old 25 second stall limit', async () => {
+    const f = await fixture({ stallTimeoutMs: 25_000, firstSegmentTimeoutMs: 120_000 })
+    await start(f)
+    for (let second = 1; second <= 30; second++) {
+      f.children[0]!.stdout.write(`frame=${second * 10}\nout_time_us=${second * 1000000}\n`)
+      await f.clock.advance(1000)
+    }
+    expect(f.killTree).not.toHaveBeenCalled()
+    expect(f.children).toHaveLength(1)
+    await writeManifest(f, 0, [30])
+    await f.clock.advance(100)
+    await until(() => f.current().state === 'ready')
+    expect(f.current()).toMatchObject({ completeSegments: 1, hasVideo: true })
+    for (let second = 31; second <= 60; second++) {
+      f.children[0]!.stdout.write(`frame=${second * 10}\nout_time_us=${second * 1000000}\n`)
+      await f.clock.advance(1000)
+    }
+    expect(f.killTree).not.toHaveBeenCalled()
+  })
+  it('bounds the first sealing deadline even while packet counters keep advancing', async () => {
+    const f = await fixture({ stallTimeoutMs: 25_000, firstSegmentTimeoutMs: 30_000, maxReconnects: 0 })
+    await start(f)
+    for (let second = 1; second <= 30; second++) {
+      f.children[0]!.stdout.write(`frame=${second * 10}\n`)
+      await f.clock.advance(1000)
+    }
+    await until(() => f.current().state === 'failed')
+    expect(f.current()).toMatchObject({ failure: { stage: 'playback-not-ready' }, retriesRemaining: 0 })
+  })
+  it('prefers the gateway network failure over FFmpeg generic HTTP 502', async () => {
+    const f = await fixture({ maxReconnects: 0 })
+    const networkFailure = { stage: 'connect' as const, code: 'tls-certificate', message: '服务器证书校验失败.' }
+    await start(f, vi.fn(async () => ({ url: 'https://cdn.example/live.m3u8', readFailure: () => networkFailure })))
+    f.children[0]!.stderr.write('Server returned 502 Bad Gateway')
+    f.children[0]!.emit('close', 1)
+    await until(() => f.current().state === 'failed')
+    expect(f.current().failure).toEqual(networkFailure)
+  })
+  it.each([
+    ['Server returned 403 Forbidden', 'http', 'http-403'],
+    ['Connection refused', 'connect', 'connection-refused'],
+    ['certificate verify failed', 'connect', 'tls-certificate'],
+    ['proxy connection rejected with 407', 'proxy', 'proxy-rejected'],
+  ])('classifies %s without retaining signed URLs or cookies', async (text, stage, code) => {
+    const f = await fixture({ maxReconnects: 0 })
+    await start(f)
+    f.children[0]!.stderr.write(`${text} https://private.invalid/?sig=PRIVATE Cookie=PRIVATE`)
+    f.children[0]!.emit('close', 1)
+    await until(() => f.current().state === 'failed')
+    expect(f.current().failure).toMatchObject({ stage, code })
+    expect(JSON.stringify(f.states)).not.toMatch(/PRIVATE|private\.invalid|sig=/)
+  })
+  it('passes an explicit proxy and removes inherited proxy environment variables on spawn', async () => {
+    const f = await fixture()
+    await start(f, vi.fn(async () => ({ url: 'https://cdn.example/live.m3u8', proxyUrl: 'http://127.0.0.1:3128' })))
+    const command = f.commands[0]!
+    expect(command.args[command.args.indexOf('-http_proxy') + 1]).toBe('http://127.0.0.1:3128')
+    const environment = (command.options as { env: NodeJS.ProcessEnv }).env
+    expect(Object.keys(environment).filter(name => /^(http|https|all|no)_proxy$/i.test(name))).toEqual([])
+    expect(cleanProxyEnvironment({ http_proxy: 'private', HTTPS_PROXY: 'private', All_Proxy: 'private', no_proxy: '*', PATH: 'keep' })).toEqual({ PATH: 'keep' })
   })
   it('keeps a partial retained buffer below the ready threshold while its producer restarts', async () => {
     const f = await fixture(), { url } = await start(f)
@@ -284,6 +359,11 @@ describe('ffmpeg argument and manifest boundaries', () => {
     // ffmpeg tunnels through a system http_proxy with its `httpproxy` protocol; without it on
     // the whitelist every remote input fails to open on a machine that has a proxy set.
     expect(remote[remote.indexOf('-protocol_whitelist') + 1]!.split(',')).toContain('httpproxy')
+    expect(remote[remote.indexOf('-http_proxy') + 1]).toBe('')
+    expect(remote[remote.indexOf('-tls_verify') + 1]).toBe('1')
+    const http = buildFfmpegArgs({ url: 'http://127.0.0.1:12345/media/opaque' }, directory, 0)
+    expect(http).not.toContain('-tls_verify')
+    expect(http[http.indexOf('-http_proxy') + 1]).toBe('')
     expect(() => buildFfmpegArgs({ url: input }, directory, 0)).toThrow()
     const local = buildFfmpegArgs({ url: input, realtime: true }, directory, 0)
     expect(local).toContain('-re')
@@ -291,6 +371,25 @@ describe('ffmpeg argument and manifest boundaries', () => {
   })
   it.each(['ftp://example.com/a', 'http://user:password@example.com/a', 'https://example.com/a\n-bad'])('rejects an unsafe input: %s', url => {
     expect(() => buildFfmpegArgs({ url }, '/buffer', 0)).toThrow()
+  })
+  it('relaxes segment extension checks only for an explicitly marked local HLS capability', () => {
+    const capability = 'http://127.0.0.1:12345/media/11111111-1111-4111-8111-111111111111'
+    const args = buildFfmpegArgs({ url: capability, gatewayHls: true, proxyUrl: '' }, '/buffer', 0)
+    expect(args.slice(args.indexOf('-f'), args.indexOf('-i'))).toEqual(['-f', 'hls', '-extension_picky', '0'])
+    expect(args[args.indexOf('-protocol_whitelist') + 1]).not.toContain('file')
+    expect(buildFfmpegArgs({ url: capability }, '/buffer', 0)).not.toContain('-extension_picky')
+    expect(buildFfmpegArgs({ url: 'https://cdn.example/live.m3u8' }, '/buffer', 0)).not.toContain('-extension_picky')
+  })
+  it.each([
+    'https://cdn.example/media/11111111-1111-4111-8111-111111111111',
+    'http://localhost:12345/media/11111111-1111-4111-8111-111111111111',
+    'http://127.0.0.1/media/11111111-1111-4111-8111-111111111111',
+    'http://127.0.0.1:12345/media/opaque',
+    'http://127.0.0.1:12345/other/11111111-1111-4111-8111-111111111111',
+    'http://127.0.0.1:12345/media/11111111-1111-4111-8111-111111111111?upstream=invalid',
+    'http://127.0.0.1:12345/media/11111111-1111-4111-8111-111111111111#fragment',
+  ])('rejects a non-capability input claiming the local HLS relaxation: %s', url => {
+    expect(() => buildFfmpegArgs({ url, gatewayHls: true }, '/buffer', 0)).toThrow('invalid gateway HLS input')
   })
   it('rejects header injection', () => {
     expect(() => buildFfmpegArgs({ url: 'https://cdn.example/live', headers: { Referer: 'https://example.com/\r\nCookie: injected' } }, '/buffer', 0)).toThrow()
@@ -354,4 +453,35 @@ describe('fMP4 output on the real ffmpeg', () => {
       await rm(elsewhere, { recursive: true, force: true })
     }
   })
+})
+
+describe('opt-in real long GOP readiness', () => {
+  it.skipIf(process.env.STREAM_SYNC_LONG_GOP !== '1')('waits for a 30 second keyframe interval without restarting before its first sealed video segment', async () => {
+    const base = path.resolve('.runtime-cache', 'codex-network-impl-20261030')
+    await mkdir(base, { recursive: true })
+    const root = await mkdtemp(path.join(base, 'long-gop-'))
+    const input = path.join(root, 'long-gop.mp4')
+    const fixtureFfmpeg = process.env.STREAM_SYNC_FIXTURE_FFMPEG || 'ffmpeg'
+    const ffmpeg = process.env.STREAM_SYNC_FFMPEG || path.resolve('.packaging/tools/ffmpeg/ffmpeg.exe')
+    execFileSync(fixtureFfmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=10',
+      '-t', '36', '-an', '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '300', '-keyint_min', '300', '-sc_threshold', '0', input],
+    { windowsHide: true, timeout: 15_000, stdio: 'pipe' })
+    const states: BufferState[] = []
+    const began = Date.now()
+    const manager = new BufferManager({ userDataDir: root, ffmpegPath: ffmpeg, maxReconnects: 0, pollIntervalMs: 100,
+      stallTimeoutMs: 25_000, firstSegmentTimeoutMs: 120_000 })
+    const observed: { elapsedMs: number; state: BufferState }[] = []
+    manager.subscribe(state => { if (state.role === 'official') { states.push(state); observed.push({ elapsedMs: Date.now() - began, state }) } })
+    try {
+      await manager.start('official', async () => ({ url: pathToFileURL(input).href, realtime: true }))
+      await vi.waitFor(() => expect(states.some(state => state.state === 'ready')).toBe(true), { timeout: 40_000, interval: 100 })
+      const ready = observed.find(item => item.state.state === 'ready')!
+      expect(ready.elapsedMs).toBeGreaterThanOrEqual(28_000)
+      expect(ready.state).toMatchObject({ hasVideo: true, completeSegments: 1 })
+      expect(states.some(state => ['stalled', 'reconnecting', 'failed'].includes(state.state))).toBe(false)
+      await writeFile(path.join(root, 'result.json'), JSON.stringify({ firstReadyMs: ready.elapsedMs, states: observed }, null, 2))
+    } finally {
+      await manager.dispose()
+    }
+  }, 50_000)
 })

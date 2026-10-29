@@ -1,21 +1,22 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import type { Readable, Writable } from 'node:stream'
-import { CookieStore, isLoginPlatform, LOGIN_PLATFORMS } from './cookies'
+import { CookieStore, cookieDomainAllowed, isLoginPlatform, LOGIN_PLATFORMS } from './cookies'
 import type { BrowserCookie, CookieStoreOptions, LoginPlatform, LoginResult, LoginStatus } from './cookies'
 import { powershellEnvironment } from './privateStorage'
 
 export type { LoginPlatform, LoginResult, LoginStatus, PlatformLoginStatus } from './cookies'
 export type LoginDestination = 'yuba' | `room:${string}` | `fish-act:${string}`
 
-export type LoginErrorCode = 'chrome-not-found' | 'login-busy' | 'login-cancelled' | 'login-failed' | 'cookie-storage-failed'
+export type LoginErrorCode = 'chrome-not-found' | 'login-busy' | 'login-cancelled' | 'login-failed' | 'login-incomplete' | 'cookie-storage-failed'
 export class LoginError extends Error {
   constructor(readonly code: LoginErrorCode) {
     super({ 'chrome-not-found': '未找到系统 Google Chrome, 请先安装 Chrome 后重试.',
       'login-busy': '该平台正在登录, 请先关闭已有的登录窗口.', 'login-cancelled': '登录已取消.',
       'login-failed': 'Chrome 登录或账号导出失败, 请关闭此平台的登录窗口后重试.',
+      'login-incomplete': '登录未完成, 未读取到平台认证 Cookie, 已保留原有登录数据.',
       'cookie-storage-failed': '账号数据读写或私有权限验证失败.' }[code])
     this.name = 'LoginError'
   }
@@ -46,12 +47,22 @@ type SpawnChrome = (executable: string, args: string[], options: SpawnOptions) =
 export interface ChromeLoginDriverOptions {
   spawn?: SpawnChrome
   platform?: NodeJS.Platform
-  hasWindow?: (pid: number) => boolean
+  hasWindow?: (pid: number) => boolean | Promise<boolean>
   killTree?: (child: ChildProcess) => Promise<void>
   loginTimeoutMs?: number
   cookieTimeoutMs?: number
   windowPollMs?: number
   releaseDelayMs?: number
+  windowCloseGraceMs?: number
+  gracefulExitTimeoutMs?: number
+  cookieReadAttempts?: number
+  cookieRetryMs?: number
+}
+
+function hasAuthenticationCookies(cookies: BrowserCookie[], platform: LoginPlatform, now = Date.now() / 1000): boolean {
+  const keys: readonly string[] = LOGIN_PLATFORMS[platform].authKeys
+  return cookies.some(cookie => cookieDomainAllowed(cookie.domain, platform) && keys.includes(cookie.name) && !!cookie.value
+    && (cookie.session || !cookie.expirationDate || cookie.expirationDate > now))
 }
 
 function cancelled(signal: AbortSignal): void { if (signal.aborted) throw new LoginError('login-cancelled') }
@@ -76,15 +87,40 @@ export class ChromeLoginDriver implements BrowserLoginDriver {
     this.platform = options.platform ?? process.platform
   }
 
-  private hasWindow(pid: number): boolean {
+  private async hasWindow(pid: number): Promise<boolean> {
     if (this.options.hasWindow) return this.options.hasWindow(pid)
     const executable = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-    const result = spawnSync(executable, ['-NoProfile', '-NonInteractive', '-Command',
-      `$p = Get-Process -Id ${Number(pid)} -ErrorAction SilentlyContinue; if ($p -and $p.MainWindowHandle -ne 0) { 'yes' } else { 'no' }`], {
-      shell: false, windowsHide: true, encoding: 'utf8', timeout: 15_000, env: powershellEnvironment(), stdio: ['ignore', 'pipe', 'ignore'],
+    return await new Promise<boolean>((resolve, reject) => {
+      const child = this.spawn(executable, ['-NoProfile', '-NonInteractive', '-Command',
+        `$p = Get-Process -Id ${Number(pid)} -ErrorAction SilentlyContinue; if ($p -and $p.MainWindowHandle -ne 0) { 'yes' } else { 'no' }`], {
+        shell: false, windowsHide: true, env: powershellEnvironment(), stdio: ['ignore', 'pipe', 'ignore'],
+      })
+      let output = ''
+      let settled = false
+      const finish = (error?: LoginError, value = false) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        if (error) reject(error)
+        else resolve(value)
+      }
+      const timer = setTimeout(() => { child.kill(); finish(new LoginError('login-failed')) }, 15_000)
+      child.stdout?.on('data', (chunk: Buffer) => {
+        output += chunk.toString('utf8')
+        if (output.length > 1024) { child.kill(); finish(new LoginError('login-failed')) }
+      })
+      child.once('error', () => finish(new LoginError('login-failed')))
+      child.once('close', code => finish(code === 0 ? undefined : new LoginError('login-failed'), output.trim() === 'yes'))
     })
-    if (result.error || result.status !== 0) throw new LoginError('login-failed')
-    return result.stdout.trim() === 'yes'
+  }
+
+  private async allowNormalExit(child: ChildProcess): Promise<void> {
+    if (child.exitCode !== null || child.signalCode !== null) return
+    await new Promise<void>(resolve => {
+      const finish = () => { clearTimeout(timer); child.removeListener('exit', finish); resolve() }
+      const timer = setTimeout(finish, this.options.gracefulExitTimeoutMs ?? 5_000)
+      child.once('exit', finish)
+    })
   }
 
   private async killTree(child: ChildProcess): Promise<void> {
@@ -132,10 +168,14 @@ export class ChromeLoginDriver implements BrowserLoginDriver {
         if (exited) break
         if (this.platform !== 'win32') continue
         if (!child.pid) throw new LoginError('login-failed')
-        if (this.hasWindow(child.pid)) { sawWindow = true; disappearedAt = 0; continue }
+        const visible = await this.hasWindow(child.pid)
+        cancelled(signal)
+        if (exited) break
+        if (visible) { sawWindow = true; disappearedAt = 0; continue }
         if (!sawWindow) continue
         if (!disappearedAt) { disappearedAt = Date.now(); continue }
-        if (Date.now() - disappearedAt >= 4_000) {
+        // Give Chrome time to persist profile data after its final visible window closes.
+        if (Date.now() - disappearedAt >= (this.options.windowCloseGraceMs ?? 15_000)) {
           stoppingAfterClose = true
           await this.killTree(child)
           break
@@ -149,21 +189,26 @@ export class ChromeLoginDriver implements BrowserLoginDriver {
     }
   }
 
-  private async readCookies(executable: string, profile: string, signal: AbortSignal): Promise<BrowserCookie[]> {
+  private async readCookies(executable: string, profile: string, platform: LoginPlatform, signal: AbortSignal): Promise<BrowserCookie[]> {
     cancelled(signal)
     const child = this.spawn(executable, [`--user-data-dir=${profile}`, ...CHROME_FLAGS, '--headless=new', '--remote-debugging-pipe', 'about:blank'], {
       shell: false, detached: this.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'],
     })
+    let closeRequested = false
     try {
       return await new Promise<BrowserCookie[]>((resolve, reject) => {
         const writer = child.stdio[3] as Writable | null
         const reader = child.stdio[4] as Readable | null
         let buffered = Buffer.alloc(0)
         let settled = false
+        let requestId = 1
+        let retryTimer: ReturnType<typeof setTimeout> | undefined
+        const attempts = Math.max(1, Math.min(10, this.options.cookieReadAttempts ?? 4))
         const finish = (error?: LoginError, value?: BrowserCookie[]) => {
           if (settled) return
           settled = true
           clearTimeout(timer)
+          clearTimeout(retryTimer)
           signal.removeEventListener('abort', onAbort)
           child.removeListener('error', onFailure)
           child.removeListener('exit', onFailure)
@@ -186,7 +231,7 @@ export class ChromeLoginDriver implements BrowserLoginDriver {
             let message: { id?: number; error?: unknown; result?: { cookies?: Array<Record<string, unknown>> } }
             try { message = JSON.parse(raw) as typeof message } catch { onFailure(); return }
             if (!message || typeof message !== 'object') { onFailure(); return }
-            if (message.id !== 1) continue
+            if (message.id !== requestId) continue
             const cookies = message.result?.cookies
             if (message.error || !Array.isArray(cookies) || cookies.length > 50_000
               || cookies.some(cookie => !cookie || typeof cookie !== 'object' || typeof cookie.domain !== 'string'
@@ -198,8 +243,18 @@ export class ChromeLoginDriver implements BrowserLoginDriver {
               session: cookie.session === true || !(typeof cookie.expires === 'number' && cookie.expires > 0),
               expirationDate: typeof cookie.expires === 'number' && cookie.expires > 0 ? cookie.expires : undefined,
             }))
-            writer?.write(`${JSON.stringify({ id: 2, method: 'Browser.close' })}\0`)
-            finish(undefined, selected)
+            if (!hasAuthenticationCookies(selected, platform) && requestId < attempts) {
+              // Poll the same profile owner instead of relaunching another reader.
+              retryTimer = setTimeout(() => {
+                if (settled) return
+                requestId++
+                writer?.write(`${JSON.stringify({ id: requestId, method: 'Storage.getCookies' })}\0`)
+              }, this.options.cookieRetryMs ?? 750)
+              continue
+            }
+            closeRequested = true
+            finish(hasAuthenticationCookies(selected, platform) ? undefined : new LoginError('login-incomplete'), selected)
+            writer?.write(`${JSON.stringify({ id: attempts + 1, method: 'Browser.close' })}\0`)
           }
         }
         const timer = setTimeout(onFailure, this.options.cookieTimeoutMs ?? 20_000)
@@ -213,6 +268,7 @@ export class ChromeLoginDriver implements BrowserLoginDriver {
         writer.write(`${JSON.stringify({ id: 1, method: 'Storage.getCookies' })}\0`)
       })
     } finally {
+      if (closeRequested) await this.allowNormalExit(child)
       await this.killTree(child)
     }
   }
@@ -229,7 +285,7 @@ export class ChromeLoginDriver implements BrowserLoginDriver {
     try { await this.waitForLoginWindow(child, signal) }
     finally { await this.killTree(child) }
     await delay(this.options.releaseDelayMs ?? 1_500, signal)
-    return await this.readCookies(executable, profile, signal)
+    return await this.readCookies(executable, profile, platform, signal)
   }
 }
 
@@ -261,6 +317,7 @@ export class LoginManager {
         try { profile = this.store.prepareProfile(platform) } catch { throw new LoginError('cookie-storage-failed') }
         const cookies = await this.driver.login(executable, profile, platform, controller.signal, destination)
         cancelled(controller.signal)
+        if (!hasAuthenticationCookies(cookies, platform, this.options.now?.())) throw new LoginError('login-incomplete')
         try {
           const result = this.store.write(platform, cookies)
           this.revisions[platform]++

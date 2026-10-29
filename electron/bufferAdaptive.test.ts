@@ -13,7 +13,8 @@ const input: BufferInput = { url: 'https://rr1.googlevideo.com/hls?sig=PRIVATE_H
 class Child extends EventEmitter {
   stdin = new PassThrough()
   stderr = new PassThrough()
-  stdio = [this.stdin, null, this.stderr, new PassThrough()]
+  stdout = new PassThrough()
+  stdio = [this.stdin, this.stdout, this.stderr, new PassThrough()]
   kill() { this.emit('close', 1); return true }
 }
 async function settle(test: () => boolean) { await vi.waitFor(() => expect(test()).toBe(true), { timeout: 2000, interval: 5 }) }
@@ -56,6 +57,7 @@ async function manifest(f: Awaited<ReturnType<typeof fixture>>, run: number, dur
     lines.push(`#EXTINF:${durations[n]},`, uri)
   }
   await writeFile(path.join(directory, `raw_${run}.m3u8`), lines.join('\n') + '\n')
+  f.children[run]!.stdout.write('frame=120\nout_time_us=4000000\n')
   return directory
 }
 

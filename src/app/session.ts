@@ -98,6 +98,8 @@ export interface SessionOptions {
 }
 
 const MAX_NOTICES = 6
+/** How long a loaded source may play without presenting a frame before it is reported. */
+const PICTURE_TIMEOUT_MS = 15_000
 
 /** Relay states worth surfacing. `connected` is the absence of a problem, so it has no text. */
 const DANMAKU_STATE_TEXT: Record<string, string> = {
@@ -131,6 +133,7 @@ export class Session {
   private playingValue = false
   /** The danmaku room `suspend` disconnected, for `boot` to reconnect. */
   private parkedDanmakuRoom: string | null = null
+  private readonly pictureTimers = new Set<ReturnType<typeof setTimeout>>()
   private noticeSeq = 0
   private noticeList: Notice[] = []
   private bufferStates: Record<SourceRole, BufferState | null> = { official: null, commentary: null }
@@ -604,9 +607,28 @@ export class Session {
     this.requestedOffset = offsetFromRewind(this.applied)
     this.autoSync.cancel(false)
     this.notice('info', `${roleName(role)}已载入：${descriptor.label}`)
+    this.watchPicture(role, generation)
     this.applyAudioSettings()
     this.autoProfiles?.monitor(role)
     this.notify()
+  }
+
+  /**
+   * A buffer that has segments can still give a black picture (codec, a broken init
+   * segment). Say so once the source has had time to show a frame, rather than leave a
+   * loaded-looking side that never moves.
+   */
+  private watchPicture(role: SourceRole, generation: number): void {
+    const timer = setTimeout(() => {
+      if (generation !== this.sourceGeneration[role] || this.disposed) return
+      const state = this.engine.getState()[role]
+      if (state.status === 'empty' || state.status === 'error' || state.firstFrame) return
+      // Waiting for the user to press play is not a broken picture.
+      if (state.paused && !this.playingValue) return
+      this.notice('warn', `${roleName(role)}已载入但没有画面，可在片源面板换一个画质或重新载入`)
+    }, PICTURE_TIMEOUT_MS)
+    this.pictureTimers.add(timer)
+    setTimeout(() => this.pictureTimers.delete(timer), PICTURE_TIMEOUT_MS + 1)
   }
 
   unloadSource(role: SourceRole): void {
@@ -1313,6 +1335,7 @@ export class Session {
     this.invalidateOffsetRequests()
     this.disposed = true
     this.releaseBuffer?.()
+    for (const timer of this.pictureTimers) clearTimeout(timer)
     for (const cancel of this.pendingQualityWaits) cancel()
     for (const role of SOURCE_ROLES) {
       ++this.sourceGeneration[role]

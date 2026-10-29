@@ -12,6 +12,8 @@ export interface PlatformLoginStatus extends LoginResult {
   /** Douyu gateway readiness, distinct from website authentication. No values leave main. */
   canSend?: boolean
   missingCredentialFields?: string[]
+  /** Douyu display name from `acf_nickname`, shown in place of the account's local label. */
+  nickname?: string
   /** Earliest persistent authentication-cookie expiry, as Unix seconds. */
   expiresAt: number | null
   hasSessionCookies: boolean
@@ -29,6 +31,16 @@ export interface BrowserCookie {
   value: string
 }
 interface StoredCookie extends BrowserCookie { subdomains: boolean; expires: number; path: string }
+
+/** The one cookie value allowed out of main: a display name, decoded and bounded. */
+function douyuNickname(cookies: StoredCookie[]): { nickname?: string } {
+  const raw = cookies.find(cookie => cookie.name === 'acf_nickname')?.value
+  if (!raw) return {}
+  let name: string
+  try { name = decodeURIComponent(raw.replace(/\+/g, ' ')) } catch { return {} }
+  name = name.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 40)
+  return name ? { nickname: name } : {}
+}
 
 function douyuHeader(cookies: StoredCookie[], target: URL): string {
   const selected = new Map<string, StoredCookie>()
@@ -209,7 +221,8 @@ export class CookieStore {
     const present = new Set(auth.map(cookie => cookie.name))
     return { cookieCount: cookies.length, authKeysPresent: known.filter(key => present.has(key)), loggedIn: auth.length > 0,
       expiresAt: expiries.length ? Math.min(...expiries) : null, hasSessionCookies: auth.some(cookie => cookie.expires === 0),
-      ...(platform === 'douyu' ? messageCredentialStatus(douyuHeader(cookies, new URL('https://www.douyu.com/'))) : {}) }
+      ...(platform === 'douyu' ? messageCredentialStatus(douyuHeader(cookies, new URL('https://www.douyu.com/'))) : {}),
+      ...(platform === 'douyu' && auth.length > 0 ? douyuNickname(cookies) : {}) }
   }
 
   async status(): Promise<LoginStatus> {

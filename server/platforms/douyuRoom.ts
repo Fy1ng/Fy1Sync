@@ -1,3 +1,5 @@
+import type { NetworkContext } from '../networkPolicy'
+import { StreamFailureError, httpFailure } from '../networkFailure'
 /** Anonymous, bounded identity lookup. Only static JSON is read; scripts never run. */
 import { hostAllowed, type ProxyConfig } from '../config'
 import { safeFetch, type Resolver } from '../safeFetch'
@@ -79,21 +81,21 @@ export class DouyuRoomResolver {
           this.cache.set(id, { room: result.identity.room, expires: (this.options.now ?? Date.now)() + (this.options.ttlMs ?? 60_000) })
         }
         return result
-      } catch { return fail('upstream-error', '请求斗鱼房间身份失败, 请检查网络后重试.') }
+      } catch (error) { if (error instanceof StreamFailureError) throw error; return fail('upstream-error', '请求斗鱼房间身份失败, 请检查网络后重试.') }
     })()
     this.pending.set(id, lookup)
     try { return await lookup } finally { if (this.pending.get(id) === lookup) this.pending.delete(id) }
   }
 }
 
-export function createDouyuRoomResolver(proxy: ProxyConfig, fetchImpl?: typeof fetch, dns?: Resolver): DouyuRoomResolver {
+export function createDouyuRoomResolver(proxy: ProxyConfig, fetchImpl?: typeof fetch, dns?: Resolver, network?: NetworkContext): DouyuRoomResolver {
   return new DouyuRoomResolver(async room => {
     if (!proxy.enabled || !hostAllowed('m.douyu.com', proxy.hosts)) throw new Error('Remote metadata disabled')
     const signal = AbortSignal.timeout(Math.min(proxy.requestTimeoutMs, 15_000))
     const { response } = await safeFetch(`https://m.douyu.com/${room}`, {
       ...proxy, hosts: ['m.douyu.com'], maxRedirects: 0, allowNonLoopbackTargets: false, allowNonStandardPorts: false,
-    }, { signal, fetchImpl, resolve: dns, headers: { Accept: 'text/html', 'User-Agent': 'Mozilla/5.0', Referer: 'https://m.douyu.com/' } })
-    if (!response.ok || !response.body) { await response.body?.cancel(); throw new Error('Metadata unavailable') }
+    }, { signal, fetchImpl, resolve: dns, network, headers: { Accept: 'text/html', 'User-Agent': 'Mozilla/5.0', Referer: 'https://m.douyu.com/' } })
+    if (!response.ok || !response.body) { await response.body?.cancel(); throw new StreamFailureError(httpFailure(response.status)) }
     const reader = response.body.getReader()
     const chunks: Uint8Array[] = []
     let bytes = 0

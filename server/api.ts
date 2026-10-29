@@ -1,5 +1,8 @@
 /** Main-process services without Electron imports or a network listener. */
 
+import { isDomesticRouting, type NetworkPreferencesService } from '../electron/networkPreferences'
+import { type NetworkContext } from './networkPolicy'
+import { StreamFailureError, classifyNetworkFailure, httpFailure } from './networkFailure'
 import appPackage from '../package.json'
 import { createDouyuRoomResolver, type ResolveDouyuRoom } from './platforms/douyuRoom'
 import { resolveHuyaDanmakuRoom, type HuyaDanmakuRoom } from './platforms/huyaDanmaku'
@@ -43,6 +46,7 @@ export type DesktopServiceDeps = {
   resolveHuyaRoom?: (input: string) => Promise<HuyaDanmakuRoom>
   acquisition?: AcquisitionService
   decoderPreferences?: DecoderPreferencesService
+  networkPreferences?: NetworkPreferencesService
   tools?: ToolsService
   douyuAccounts?: DouyuAccountManager
   douyuTasks?: DouyuTaskManager
@@ -57,6 +61,7 @@ export type DesktopService = {
   resolveHuyaRoom: (input: string) => Promise<HuyaDanmakuRoom>
   dispose: () => void
   subscribeBuffer?: (listener: (state: BufferState) => void) => () => void
+  subscribeDouyuAccounts?: (listener: (state: import('./douyu/types').DouyuAccountsSnapshot) => void) => () => void
   subscribeDouyuTasks?: (listener: (state: DouyuTasksSnapshot) => void) => () => void
   subscribeFeatures?: (listener: (event: FeatureEvent) => void) => () => void
   setDouyuRoom?: (room: string | null) => void
@@ -147,6 +152,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
     resolveHuyaRoom: input => disposed ? Promise.reject(new Error('本地服务已关闭')) : resolveHuyaRoom(input),
     resolveDouyuRoom: input => disposed ? Promise.resolve({ ok: false, failure: { code: 'upstream-error', message: '本地服务已关闭' } }) : resolveRoom(input),
     subscribeBuffer: deps.acquisition ? (listener) => deps.acquisition!.subscribe(listener) : undefined,
+    subscribeDouyuAccounts: deps.douyuAccounts ? listener => deps.douyuAccounts!.subscribeSnapshots(listener) : undefined,
     subscribeDouyuTasks: deps.douyuTasks ? listener => deps.douyuTasks!.subscribe(listener) : undefined,
     subscribeFeatures: deps.features ? listener => deps.features!.subscribe(listener) : undefined,
     setDouyuRoom: deps.douyuTasks ? room => deps.douyuTasks!.setRoom(room) : undefined,
@@ -324,6 +330,14 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             if (!deps.tools) return fail('not-available', '工具管理不可用')
             return { ok: true, value: await deps.tools.restore(args.target) }
           }
+          case 'getNetworkPreferences': {
+            if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
+            return deps.networkPreferences ? { ok: true, value: await deps.networkPreferences.get() } : fail('not-available', '网络设置不可用')
+          }
+          case 'setNetworkPreferences': {
+            if (!fields(args, ['domesticRouting']) || !isDomesticRouting(args.domesticRouting)) return fail('invalid-arguments', '国内平台出网设置无效')
+            return deps.networkPreferences ? { ok: true, value: await deps.networkPreferences.set(args.domesticRouting) } : fail('not-available', '网络设置不可用')
+          }
           case 'getDecoderPreferences': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
             if (!deps.decoderPreferences) return fail('not-available', '解码设置不可用')
@@ -463,6 +477,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             'chrome-not-found': '未找到系统 Chrome, 请安装 Chrome 后重试',
             'login-busy': '登录操作正在进行, 请先完成当前窗口',
             'login-cancelled': '登录操作已取消',
+            'login-incomplete': '登录未完成, 未读取到平台认证 Cookie, 已保留原有登录数据.',
             'login-failed': 'Chrome 登录失败, 请关闭专用窗口后重试',
             'cookie-storage-failed': '登录信息无法安全保存, 请检查本机文件权限',
           }
@@ -481,7 +496,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
 }
 
 /** Platform requests keep the existing per-hop SSRF policy and fixed platform headers. */
-export function createResolverDeps(proxy: ProxyConfig, registerMedia: (url: string) => string, fetchImpl?: typeof fetch) {
+export function createResolverDeps(proxy: ProxyConfig, registerMedia: (url: string) => string, fetchImpl?: typeof fetch, network?: NetworkContext) {
   const request = async (url: string, init?: RequestInit, binary = false) => {
     try {
       const signal = AbortSignal.timeout(proxy.requestTimeoutMs)
@@ -490,15 +505,15 @@ export function createResolverDeps(proxy: ProxyConfig, registerMedia: (url: stri
         headers: { accept: 'application/json, text/plain, */*', ...(init?.headers as Record<string, string> | undefined) },
         body: typeof init?.body === 'string' ? init.body : init?.body instanceof Uint8Array ? new Uint8Array(init.body) : undefined,
         signal,
-        fetchImpl,
+        fetchImpl, network,
       })
       if (!response.ok) {
         void response.body?.cancel().catch(() => {})
-        throw new Error('Upstream request failed')
+        throw new StreamFailureError(httpFailure(response.status))
       }
       return binary ? await readPlatformBytes(response, signal) : await readPlatformText(response, signal)
-    } catch {
-      throw new Error('平台请求失败')
+    } catch (error) {
+      throw new StreamFailureError(classifyNetworkFailure(error))
     }
   }
   return {
@@ -508,6 +523,12 @@ export function createResolverDeps(proxy: ProxyConfig, registerMedia: (url: stri
     },
     fetchText: async (url: string, init?: RequestInit) => await request(url, init) as string,
     fetchBytes: async (url: string, init?: RequestInit) => await request(url, init, true) as Uint8Array,
+    fetchPlaylist: async (url: string) => {
+      const signal = AbortSignal.timeout(proxy.requestTimeoutMs)
+      const { response, finalUrl } = await safeFetch(url, proxy, { signal, fetchImpl, network })
+      if (!response.ok) { await response.body?.cancel(); throw new StreamFailureError(httpFailure(response.status)) }
+      return { text: await readPlatformText(response, signal), finalUrl: finalUrl.href }
+    },
     proxify: registerMedia,
   }
 }

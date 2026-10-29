@@ -71,7 +71,7 @@ function SourcePanel({ role, onDone, onSchedule }: {
         void loader.loadInput(role, input, bareRoom ? roomPlatform : undefined).then((ok) => { if (ok) onDone() })
       }}>
         <input value={input} onChange={(event) => setInput(event.target.value)} aria-label={`${ROLE_LABEL[role]}链接`}
-          placeholder={role === 'official' ? 'YouTube 或 Twitch 直播间链接' : '斗鱼、哔哩哔哩或虎牙直播间链接、房间号'} spellCheck={false} />
+          placeholder={role === 'official' ? 'YouTube、Twitch 或虎牙直播间链接' : '斗鱼、哔哩哔哩或虎牙直播间链接、房间号'} spellCheck={false} />
         <button type="submit" className="btn-solid" disabled={load.busy || input.trim() === ''}>
           {load.busy ? '载入中' : '载入'}
         </button>

@@ -7,6 +7,7 @@
  */
 
 import { failure, MANUAL_URL_HINT, type ResolveResult, type ResolverDeps } from './types'
+import { StreamFailureError } from '../networkFailure'
 
 const PLAY_INFO_API =
   'https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo'
@@ -40,11 +41,15 @@ type PlayInfoResponse = {
     live_status?: number
     playurl_info?: {
       playurl?: {
+        g_qn_desc?: Array<{ qn?: number; desc?: string }>
         stream?: Array<{
           protocol_name?: string
           format?: Array<{
             format_name?: string
             codec?: Array<{
+              codec_name?: string
+              current_qn?: number
+              accept_qn?: number[]
               base_url?: string
               url_info?: Array<{ host?: string; extra?: string }>
             }>
@@ -76,7 +81,7 @@ export async function resolveBilibili(
     protocol: '0,1',
     format: '0,1,2',
     codec: '0,1',
-    qn: '10000',
+    qn: deps.quality && /^[1-9]\d{0,5}$/.test(deps.quality) ? deps.quality : '10000',
     platform: 'web',
     ptype: '8',
   })
@@ -85,9 +90,10 @@ export async function resolveBilibili(
   try {
     payload = (await deps.fetchJson(`${PLAY_INFO_API}?${params.toString()}`)) as PlayInfoResponse
   } catch (error) {
+    if (error instanceof StreamFailureError) throw error
     return failure(
       'upstream-error',
-      `请求 B 站直播间信息失败：${error instanceof Error ? error.message : String(error)}`,
+      '请求 B 站直播间信息失败',
       MANUAL_URL_HINT,
     )
   }
@@ -110,8 +116,8 @@ export async function resolveBilibili(
     return failure('not-live', `直播间 ${room} 当前未开播`, MANUAL_URL_HINT)
   }
 
-  const url = pickHlsUrl(payload)
-  if (!url) {
+  const selected = pickHlsUrl(payload)
+  if (!selected) {
     return failure(
       'needs-manual-url',
       `直播间 ${room} 未返回可用的 HLS 地址`,
@@ -119,22 +125,36 @@ export async function resolveBilibili(
     )
   }
 
+  const descriptions = new Map((payload.data?.playurl_info?.playurl?.g_qn_desc ?? [])
+    .filter(item => validQn(item.qn) && typeof item.desc === 'string' && item.desc.trim())
+    .map(item => [item.qn!, item.desc!.trim().slice(0, 64)]))
+  const label = (qn: number) => descriptions.get(qn) ?? QUALITY_LABELS[qn] ?? `档位 ${qn}`
+  const current = validQn(selected.codec.current_qn) ? selected.codec.current_qn : undefined
+  const accepted = selected.codec.accept_qn?.filter(validQn) ?? []
+  const available = [...new Set([...accepted, ...(current ? [current] : [])])].sort((a, b) => b - a)
+  const notes = ['播放地址带时效签名, 长时间后需要重新解析.']
+  if (current !== undefined && current !== Number(params.get('qn'))) {
+    notes.push(`当前未登录, 请求${label(Number(params.get('qn')))}, 实际为${label(current)}. 可用画质由直播间返回.`)
+  }
+
   return {
     ok: true,
     stream: {
       platform: 'bilibili',
-      url: deps.proxify(url),
+      url: deps.proxify(selected.url),
       kind: 'hls',
       label: `B 站直播 · ${room}`,
       channel: room,
       requiresProxy: true,
-      notes: ['播放地址带时效签名，长时间后需要重新解析。'],
+      qualities: available.length ? available.map(qn => ({ id: String(qn), label: label(qn) })) : undefined,
+      quality: current === undefined ? undefined : String(current),
+      notes,
     },
   }
 }
 
 /** Prefer HLS (`http_hls`) over FLV, and fMP4 over TS for seekability. */
-function pickHlsUrl(payload: PlayInfoResponse): string | null {
+function pickHlsUrl(payload: PlayInfoResponse) {
   const streams = payload.data?.playurl_info?.playurl?.stream ?? []
   const hls = streams.find((stream) => stream.protocol_name === 'http_hls') ?? streams[0]
   if (!hls) return null
@@ -144,8 +164,16 @@ function pickHlsUrl(payload: PlayInfoResponse): string | null {
     formats.find((format) => format.format_name === 'fmp4') ??
     formats.find((format) => format.format_name === 'ts') ??
     formats[0]
-  const codec = preferred?.codec?.[0]
+  const codec = preferred?.codec?.find(item => item.codec_name === 'avc') ?? preferred?.codec?.[0]
   const info = codec?.url_info?.[0]
   if (!codec?.base_url || !info?.host) return null
-  return `${info.host}${codec.base_url}${info.extra ?? ''}`
+  return { url: `${info.host}${codec.base_url}${info.extra ?? ''}`, codec }
+}
+
+function validQn(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 999_999
+}
+
+const QUALITY_LABELS: Record<number, string> = {
+  80: '流畅', 150: '高清', 250: '超清', 400: '蓝光', 10000: '原画', 20000: '4K', 30000: '杜比',
 }

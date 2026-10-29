@@ -5,7 +5,8 @@
  * URI found inside a playlist). Without checks that is a confused-deputy hole: the
  * server would happily fetch `http://169.254.169.254/` or a host on the user's LAN and
  * hand the body back. So every hop is validated: scheme, port, allow-listed hostname,
- * and the resolved IP literals.
+ * and, on DIRECT routes, the resolved IP literals. HTTP proxy routes trust the
+ * configured proxy's DNS while retaining URL checks and certificate validation.
  *
  * Redirects are followed manually, one validated hop at a time, because `fetch`'s own
  * redirect handling would skip the checks on hops 2..n.
@@ -14,7 +15,9 @@
 import { lookup } from 'node:dns/promises'
 import { isIP, type LookupFunction } from 'node:net'
 import ipaddr from 'ipaddr.js'
-import { Agent, buildConnector } from 'undici'
+import { Agent, ProxyAgent, buildConnector, type Dispatcher } from 'undici'
+import { networkContext, type NetworkContext, type NetworkRoute } from './networkPolicy'
+import { StreamFailureError, classifyNetworkFailure } from './networkFailure'
 import { hostAllowed, type ProxyConfig } from './config'
 
 export type UrlRejection =
@@ -73,7 +76,7 @@ const EMBEDDED_IPV4_CIDRS = ['::/96', '::ffff:0:0/96', '64:ff9b::/96']
   .map(cidr => ipaddr.IPv6.parseCIDR(cidr))
 
 /**
- * True for addresses that must never be reachable through the proxy: loopback, RFC1918,
+ * True for addresses that must never be reachable through DIRECT connections: loopback, RFC1918,
  * link-local, CGNAT, multicast and the explicit reserved/local-use prefixes above.
  * Other addresses stay eligible; library range labels are not the proxy's policy.
  */
@@ -113,6 +116,7 @@ export async function checkUrl(
   raw: string,
   config: ProxyConfig,
   resolve: Resolver = dnsResolver,
+  proxied = false,
 ): Promise<UrlCheck> {
   let url: URL
   try {
@@ -121,6 +125,7 @@ export async function checkUrl(
     return { ok: false, reason: 'invalid-url', detail: '目标地址无法解析为 URL' }
   }
 
+  if (url.username || url.password) return { ok: false, reason: 'invalid-url', detail: '目标地址不能包含登录凭据' }
   if (!ALLOWED_PROTOCOLS.has(url.protocol)) {
     return { ok: false, reason: 'bad-scheme', detail: `仅支持 http/https，收到 ${url.protocol}` }
   }
@@ -130,6 +135,8 @@ export async function checkUrl(
   if (!hostAllowed(url.hostname, config.hosts)) {
     return { ok: false, reason: 'host-not-allowed', detail: `域名未在白名单内：${url.hostname}` }
   }
+
+  if (proxied) return { ok: true, url, addresses: [] }
 
   // A hostname is only as safe as what it resolves to; DNS can point anywhere.
   let addresses: string[]
@@ -187,6 +194,7 @@ export type SafeFetchOptions = {
   fetchImpl?: typeof fetch
   /** Owned by a trusted service, never renderer input. Every reuse still validates DNS. */
   dispatcherPool?: PinnedDispatcherPool
+  network?: NetworkContext
 }
 
 export type SafeFetchResult = {
@@ -231,11 +239,11 @@ export function createPinnedDispatcher(hostname: string, addresses: readonly str
 
 /** Small service-owned pool; changed DNS answers never reuse a differently pinned socket. */
 export class PinnedDispatcherPool {
-  private readonly agents = new Map<string, Agent>()
+  private readonly agents = new Map<string, Dispatcher>()
   private closed = false
-  get(url: URL, addresses: string[], timeoutMs: number): Agent {
+  get(url: URL, addresses: string[], timeoutMs: number, route?: NetworkRoute): Dispatcher {
     if (this.closed) throw new Error('Network service closed')
-    const key = JSON.stringify([url.origin, [...addresses].sort(), timeoutMs])
+    const key = JSON.stringify([url.origin, [...addresses].sort(), timeoutMs, route?.proxyUrl ?? 'DIRECT'])
     let agent = this.agents.get(key)
     if (!agent) {
       if (this.agents.size >= 8) {
@@ -243,7 +251,7 @@ export class PinnedDispatcherPool {
         void this.agents.get(first)!.close().catch(() => {})
         this.agents.delete(first)
       }
-      agent = createPinnedDispatcher(url.hostname, addresses, timeoutMs, 60_000)
+      agent = route?.kind === 'http' ? new ProxyAgent({ uri: route.proxyUrl!, requestTls: { rejectUnauthorized: true }, proxyTls: { rejectUnauthorized: true } }) : createPinnedDispatcher(url.hostname, addresses, timeoutMs, 60_000)
       this.agents.set(key, agent)
     }
     return agent
@@ -255,12 +263,12 @@ export class PinnedDispatcherPool {
   }
 }
 
-async function checkWithSignal(target: string, config: ProxyConfig, resolve: Resolver, signal: AbortSignal): Promise<UrlCheck> {
+async function checkWithSignal(target: string, config: ProxyConfig, resolve: Resolver, signal: AbortSignal, proxied = false): Promise<UrlCheck> {
   signal.throwIfAborted()
   let abort = () => {}
   try {
     return await Promise.race([
-      checkUrl(target, config, resolve),
+      checkUrl(target, config, resolve, proxied),
       new Promise<never>((_yes, no) => {
         abort = () => no(signal.reason)
         signal.addEventListener('abort', abort, { once: true })
@@ -283,19 +291,23 @@ export async function safeFetch(
   const resolve = options.resolve ?? dnsResolver
   const signal = options.signal ?? AbortSignal.timeout(config.requestTimeoutMs)
   let target = raw
+  const network = options.network ?? networkContext()
 
   for (let hop = 0; hop <= config.maxRedirects; hop += 1) {
-    const check = await checkWithSignal(target, config, resolve, signal)
+    const syntax = await checkWithSignal(target, config, resolve, signal, true)
+    if (!syntax.ok) throw new ProxyError(syntax.reason, syntax.detail, 403)
+    const route = await network.route(target)
+    const check = await checkWithSignal(target, config, resolve, signal, route.kind === 'http')
     if (!check.ok) throw new ProxyError(check.reason, check.detail, 403)
     signal.throwIfAborted()
     const pooled = options.dispatcherPool !== undefined
-    const dispatcher = options.dispatcherPool?.get(check.url, check.addresses, config.requestTimeoutMs)
-      ?? createPinnedDispatcher(check.url.hostname, check.addresses, config.requestTimeoutMs)
+    const dispatcher = options.dispatcherPool?.get(check.url, check.addresses, config.requestTimeoutMs, route)
+      ?? (route.kind === 'http' ? new ProxyAgent({ uri: route.proxyUrl!, requestTls: { rejectUnauthorized: true }, proxyTls: { rejectUnauthorized: true } }) : createPinnedDispatcher(check.url.hostname, check.addresses, config.requestTimeoutMs))
     const abort = () => { void dispatcher.destroy().catch(() => {}) }
     if (!pooled) signal.addEventListener('abort', abort, { once: true })
     let response: Response
     try {
-      const init: RequestInit & { dispatcher: Agent } = {
+      const init: RequestInit & { dispatcher: Dispatcher } = {
         method: options.method ?? 'GET', headers: options.headers, body: options.body,
         redirect: 'manual', signal, dispatcher,
       }
@@ -308,7 +320,9 @@ export async function safeFetch(
     } catch (error) {
       signal.removeEventListener('abort', abort)
       if (!pooled) await dispatcher.destroy().catch(() => {})
-      throw error
+      if (route.kind === 'direct' || error instanceof Error && error.name === 'AdaptivePullError') throw error
+      const failure = classifyNetworkFailure(error, 'proxy')
+      throw new StreamFailureError(failure)
     }
 
     if (!isRedirect(response.status)) {

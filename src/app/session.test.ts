@@ -378,3 +378,34 @@ it('updates the displayed danmaku room to the final main-process identity and ig
   expect(session.flush().danmaku).toMatchObject({ room: '5678', connected: true })
   subscribe.mockRestore()
 })
+
+describe('a loaded source that never shows a picture', () => {
+  it('is reported once the picture has had time to appear, and not when it did', async () => {
+    vi.useFakeTimers()
+    try {
+      const engine = new MediaEngine()
+      const session = new Session({ engine, storage: memoryStorage(), createSampler: () => null })
+      sessions.push(session)
+      const callbacks: (() => void)[] = []
+      for (const role of ['official', 'commentary'] as const) {
+        Object.defineProperty(engine.element(role), 'requestVideoFrameCallback', {
+          configurable: true, value: (callback: () => void) => { callbacks.push(callback); return callbacks.length },
+        })
+      }
+      await session.loadSource('official', descriptor())
+      await session.loadSource('commentary', descriptor({ label: '解说直播' }))
+      primeMediaElement(engine.element('official'), { duration: 600, currentTime: 0 })
+      primeMediaElement(engine.element('commentary'), { duration: 600, currentTime: 0 })
+      await session.setPlaying(true)
+      // 解说 presents a frame; 画面 never does.
+      callbacks[1]!()
+      await vi.advanceTimersByTimeAsync(14_000)
+      expect(session.snapshot.notices.some((notice) => notice.text.includes('没有画面'))).toBe(false)
+      await vi.advanceTimersByTimeAsync(2_000)
+      const warned = session.snapshot.notices.filter((notice) => notice.text.includes('没有画面'))
+      expect(warned.map((notice) => notice.text)).toEqual([`${roleName('official')}已载入但没有画面，可在片源面板换一个画质或重新载入`])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

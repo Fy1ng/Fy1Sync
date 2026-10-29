@@ -1,13 +1,9 @@
 /**
  * Loading sources, shared by the intake screen and the source popovers.
  *
- * Per-role state (busy, last problem, resolver notes) lives in one provider rather than in
- * whichever component started the load, so closing a popover mid-resolve does not lose the
- * error that comes back.
- *
- * `routeFor` is what lets the intake screen have a single paste field: the platform of a
- * link already says which side it belongs to. Only links that carry no such hint — a bare
- * m3u8, a local file — have to be asked about.
+ * Per-role state (busy, last problem, resolver notes, a login that would lift the quality)
+ * lives in one provider rather than in whichever component started the load, so closing a
+ * popover mid-resolve does not lose what comes back.
  */
 
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react'
@@ -15,21 +11,21 @@ import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { parseSourceInput, toDescriptor } from '../core/mediaSources'
 import type { MediaDescriptor, PlatformId, SourceRole } from '../core/types'
+import type { LoginPlatform } from '../../electron/login'
 
 export interface RoleLoad {
   busy: boolean
   problem: { message: string; hint?: string } | null
   notes: string[]
+  /** Signing in to this platform would get the stream, or its top quality; null otherwise. */
+  login: LoginPlatform | null
+  /** A login window is open for `login`. */
+  loggingIn: boolean
 }
 
-const IDLE: RoleLoad = { busy: false, problem: null, notes: [] }
+const IDLE: RoleLoad = { busy: false, problem: null, notes: [], login: null, loggingIn: false }
 
-/** Which side a platform belongs to, or null when the link itself cannot say. */
-export function routeFor(platform: PlatformId): SourceRole | null {
-  if (platform === 'youtube' || platform === 'twitch') return 'official'
-  if (platform === 'douyu' || platform === 'bilibili' || platform === 'huya') return 'commentary'
-  return null
-}
+export const LOGIN_LABEL: Record<LoginPlatform, string> = { douyu: '斗鱼', youtube: 'YouTube' }
 
 export const ROLE_LABEL: Record<SourceRole, string> = { official: '画面', commentary: '解说' }
 
@@ -102,6 +98,8 @@ interface Loader {
   loadFile: (role: SourceRole, file: File) => Promise<void>
   loadDescriptor: (role: SourceRole, descriptor: MediaDescriptor) => Promise<void>
   clearProblem: (role: SourceRole) => void
+  /** Sign in for `state[role].login`, then load the same input again. */
+  login: (role: SourceRole) => Promise<void>
   /** The danmaku room as the viewer knows it, while one is connected. */
   roomName: string | null
   connectRoom: (room: string, name?: string) => void
@@ -120,6 +118,8 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
   const setRoomAlias = useCallback((alias: string | null) => { rememberedAlias = alias; setAlias(alias) }, [])
   const room = useSessionSnapshot().danmaku.room
   const live = useRef(state)
+  // What each side last asked for, so a login can retry it as typed.
+  const asked = useRef<Partial<Record<SourceRole, { input: string; platform?: RoomPlatform }>>>({})
   const patch = useCallback((role: SourceRole, next: Partial<RoleLoad>) => {
     live.current = { ...live.current, [role]: { ...live.current[role], ...next } }
     setState(live.current)
@@ -148,18 +148,28 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     if (session.snapshot.media[role].status !== 'empty') play()
   }, [connectRoom, disconnectRoom, patch, play, session])
 
+  /** Show the login offer only to someone not signed in, and only for the load that asked. */
+  const offerLogin = useCallback(async (role: SourceRole, platform: LoginPlatform, generation: number) => {
+    const status = await apiClient.loginStatus()
+    if (generation !== session.sourceRevision(role)) return
+    if (status.ok && status.value[platform]?.loggedIn) return
+    patch(role, { login: platform })
+  }, [patch, session])
+
   const loadInput = useCallback(async (role: SourceRole, input: string, platform?: RoomPlatform): Promise<boolean> => {
     const typed = parseRoomInput(input)
     const roomPlatform = typed?.platform ?? platform
     let parsed = parseSourceInput(typed && roomPlatform === 'huya' ? `https://www.huya.com/${typed.room}` : typed ? typed.room : input)
-    if (!parsed.ok) { patch(role, { problem: { message: parsed.message } }); return false }
+    if (!parsed.ok) { patch(role, { problem: { message: parsed.message }, login: null }); return false }
+    asked.current[role] = { input, platform }
     if (typed && roomPlatform === 'bilibili') {
       parsed = { ...parsed, platform: 'bilibili', label: `${PLATFORM_LABEL.bilibili} ${typed.room}` }
     }
     if (!parsed.needsResolve) { await loadDescriptor(role, toDescriptor(parsed)); return true }
 
-    patch(role, { busy: true, problem: null, notes: [] })
+    patch(role, { busy: true, problem: null, notes: [], login: null })
     const generation = session.beginSourceChange(role)
+    const platformOf = parsed.platform
     try {
       const result = await apiClient.resolve(
         parsed.url, parsed.platform, role, undefined,
@@ -169,11 +179,16 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       if (!result.ok) { patch(role, { problem: { message: result.message } }); return false }
       if (!result.value.ok) {
         const { failure } = result.value
-        patch(role, { problem: { message: failure.message, hint: failure.hint } })
+        // A proxy that cannot be reached is not the platform's fault; say which to check.
+        const hint = failure.stage === 'proxy' ? '请确认代理软件已开启，可在 设置 › 网络 查看系统代理' : failure.hint
+        patch(role, { problem: { message: failure.message, hint } })
+        if (failure.code === 'restricted' && (platformOf === 'douyu' || platformOf === 'youtube')) void offerLogin(role, platformOf, generation)
         return false
       }
       const stream = result.value.stream
       patch(role, { notes: stream.notes ?? [] })
+      // Douyu is asked for 原画 (rate 0); another rate back is the anonymous step-down.
+      if (stream.platform === 'douyu' && stream.quality !== undefined && stream.quality !== '0') void offerLogin(role, 'douyu', generation)
       await session.loadSource(role, {
         ...toDescriptor(
           { ...parsed, kind: stream.kind, label: stream.label },
@@ -198,7 +213,19 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     } finally {
       patch(role, { busy: false })
     }
-  }, [connectRoom, disconnectRoom, loadDescriptor, patch, play, session])
+  }, [connectRoom, disconnectRoom, loadDescriptor, offerLogin, patch, play, session])
+
+  const login = useCallback(async (role: SourceRole) => {
+    const platform = live.current[role].login
+    const again = asked.current[role]
+    if (!platform || live.current[role].loggingIn) return
+    patch(role, { loggingIn: true, problem: null })
+    try {
+      const result = await apiClient.login(platform)
+      if (!result.ok) { patch(role, { problem: { message: result.message } }); return }
+    } finally { patch(role, { loggingIn: false }) }
+    if (again) await loadInput(role, again.input, again.platform)
+  }, [loadInput, patch])
 
   const loadFile = useCallback((role: SourceRole, file: File) => loadDescriptor(role, {
     // An object URL keeps the file local; nothing is uploaded.
@@ -209,8 +236,8 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
   const clearProblem = useCallback((role: SourceRole) => patch(role, { problem: null }), [patch])
 
   const roomName = room ? roomAlias ?? room : null
-  const value = useMemo(() => ({ state, loadInput, loadFile, loadDescriptor, clearProblem, roomName, connectRoom, disconnectRoom }),
-    [state, loadInput, loadFile, loadDescriptor, clearProblem, roomName, connectRoom, disconnectRoom])
+  const value = useMemo(() => ({ state, loadInput, loadFile, loadDescriptor, clearProblem, login, roomName, connectRoom, disconnectRoom }),
+    [state, loadInput, loadFile, loadDescriptor, clearProblem, login, roomName, connectRoom, disconnectRoom])
   return <LoaderContext.Provider value={value}>{children}</LoaderContext.Provider>
 }
 

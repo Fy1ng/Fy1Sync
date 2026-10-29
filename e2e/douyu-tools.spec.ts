@@ -25,7 +25,7 @@ test('斗鱼账号隔离, 任务控制和重启暂停经过实际 Electron 界�
     })
     await openPlayerWithDouyuWrites(running.page)
     const tools = await openDouyuTab(running.page, '账号')
-    await expect(tools.locator('.desk-who')).toContainText('默认账号')
+    await expect(tools.locator('.desk-who')).toHaveText('未登录')
     await tools.getByLabel('新账号名称', { exact: true }).fill('测试账号')
     await tools.getByRole('button', { name: '添加账号', exact: true }).click()
     const added = tools.getByRole('group', { name: '斗鱼账号 测试账号', exact: true })
