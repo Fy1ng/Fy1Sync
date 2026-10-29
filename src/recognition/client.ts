@@ -175,8 +175,7 @@ export class RecognitionClient {
    * (no profile, or one already in flight) — callers use it for a drop counter,
    * not as an error.
    */
-  submit(role: SourceRole, frame: GrabbedFrame, wantDebug = false,
-    score?: Omit<NonNullable<Extract<WorkerRequest, { type: 'frame' }>['score']>, 'clockRect'>): boolean {
+  submit(role: SourceRole, frame: GrabbedFrame, wantDebug = false): boolean {
     if (this.disposed || !this.profile) return false
     if (this.inFlight) {
       if (this.now() - this.inFlight.at < this.stallTimeoutMs) {
@@ -205,7 +204,6 @@ export class RecognitionClient {
         height: frame.height,
         pixels: buffer,
         wantDebug,
-        ...(frame.clockRect && score ? { score: { ...score, clockRect: frame.clockRect } } : {}),
       },
       [buffer],
     )

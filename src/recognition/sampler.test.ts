@@ -142,7 +142,6 @@ function manualLoop() {
 function stubGrabber(capture?: FrameGrabber['grabAsync']): () => void {
   const original = FrameGrabber.prototype.grab
   const originalAsync = FrameGrabber.prototype.grabAsync
-  const originalStripAsync = FrameGrabber.prototype.grabStripAsync
   FrameGrabber.prototype.grab = function grab(video, _roi, mediaTime) {
     if (video.readyState < 2) {
       return { ok: false, reason: 'no-video-frame', detail: '视频尚未解码出画面' }
@@ -161,13 +160,9 @@ function stubGrabber(capture?: FrameGrabber['grabAsync']): () => void {
   FrameGrabber.prototype.grabAsync = capture ?? async function grabAsync(this: FrameGrabber, video, roi, mediaTime) {
     return this.grab(video, roi, mediaTime)
   }
-  FrameGrabber.prototype.grabStripAsync = capture ?? async function grabStripAsync(this: FrameGrabber, video, roi, mediaTime) {
-    return this.grabStrip(video, roi, mediaTime)
-  }
   return () => {
     FrameGrabber.prototype.grab = original
     FrameGrabber.prototype.grabAsync = originalAsync
-    FrameGrabber.prototype.grabStripAsync = originalStripAsync
   }
 }
 
@@ -190,7 +185,6 @@ function harness(options: {
   const loop = manualLoop()
   const workers: Array<ReturnType<typeof fakeWorker>> = []
   const shared = profileFor()
-  const videos = { official: fakeVideo(), commentary: fakeVideo() }
   const outcomes: Array<{ role: SourceRole; outcome: RecognitionOutcome }> = []
 
   const sampler = new RecognitionSampler({
@@ -202,7 +196,7 @@ function harness(options: {
       workers.push(created)
       return created.worker
     },
-    video: options.video ?? (role => videos[role]),
+    video: options.video ?? (() => fakeVideo()),
     profile: options.profile ?? (() => shared),
     frameLoop: loop.frameLoop,
     now: () => Date.now(),
@@ -212,54 +206,6 @@ function harness(options: {
 }
 
 describe('RecognitionSampler', () => {
-  it.each(['pause', 'seek', 'rate', 'source', 'dimensions'] as const)('invalidates numeric score evidence after %s', async kind => {
-    const video = fakeVideo()
-    const bench = harness({ video: role => role === 'official' ? video : null,
-      metadata: frame => frame.score ? { score: {
-        ...frame.score, left: 9, right: 8, leftQuality: .95, rightQuality: .95, reason: null,
-        mediaTime: frame.mediaTime, wallTime: frame.wallTime, frameIndex: frame.frameIndex,
-      } } : {},
-    })
-    try {
-      const run = bench.sampler.sample(20, () => {}, { aborted: false })
-      await bench.loop.tick(10)
-      await run
-      expect(bench.sampler.scoreReadings('official')).toHaveLength(1)
-      const before = bench.sampler.scoreGeneration()
-      if (kind === 'pause') Object.assign(video, { paused: true })
-      if (kind === 'seek') Object.assign(video, { seeking: true })
-      if (kind === 'rate') video.playbackRate = 1.03
-      if (kind === 'source') video.src = 'replacement.mp4'
-      if (kind === 'dimensions') Object.assign(video, { videoWidth: 3840, videoHeight: 2160 })
-      expect(bench.sampler.scoreGeneration()).not.toBe(before)
-      expect(bench.sampler.scoreReadings('official')).toHaveLength(0)
-    } finally { bench.sampler.dispose(); bench.restore() }
-  })
-  it('keeps score evidence through a short buffering stall on a continuous timeline', async () => {
-    const video = fakeVideo()
-    const listeners = new Map<string, Array<() => void>>()
-    Object.assign(video, {
-      addEventListener: (type: string, listener: () => void) => listeners.set(type, [...(listeners.get(type) ?? []), listener]),
-      removeEventListener: () => {},
-    })
-    const bench = harness({ video: role => role === 'official' ? video : null,
-      metadata: frame => frame.score ? { score: {
-        ...frame.score, left: 9, right: 8, leftQuality: .95, rightQuality: .95, reason: null,
-        mediaTime: frame.mediaTime, wallTime: frame.wallTime, frameIndex: frame.frameIndex,
-      } } : {},
-    })
-    try {
-      const run = bench.sampler.sample(20, () => {}, { aborted: false })
-      await bench.loop.tick(10)
-      await run
-      expect(bench.sampler.scoreReadings('official')).toHaveLength(1)
-      const before = bench.sampler.scoreGeneration()
-      for (const type of ['waiting', 'stalled']) for (const listener of listeners.get(type) ?? []) listener()
-      Object.assign(video, { readyState: 2 })
-      expect(bench.sampler.scoreGeneration()).toBe(before)
-      expect(bench.sampler.scoreReadings('official')).toHaveLength(1)
-    } finally { bench.sampler.dispose(); bench.restore() }
-  })
   it('gives each role its own worker, so neither invalidates the other', async () => {
     const bench = harness()
     try {
@@ -306,14 +252,13 @@ describe('RecognitionSampler', () => {
     const loop = manualLoop()
     const workers: Array<ReturnType<typeof fakeWorker>> = []
     let current = profileFor({ name: 'first' })
-    const video = fakeVideo()
     const sampler = new RecognitionSampler({
       createWorker: () => {
         const created = fakeWorker((frame) => success(30, frame.mediaTime, frame.wallTime))
         workers.push(created)
         return created.worker
       },
-      video: (role) => (role === 'official' ? video : null),
+      video: (role) => (role === 'official' ? fakeVideo() : null),
       profile: (role) => (role === 'official' ? current : null),
       frameLoop: loop.frameLoop as never,
     })
@@ -332,9 +277,8 @@ describe('RecognitionSampler', () => {
   })
 
   it('samples only the roles that have both a video and a profile', async () => {
-    const video = fakeVideo()
     const bench = harness({
-      video: (role) => (role === 'commentary' ? video : null),
+      video: (role) => (role === 'commentary' ? fakeVideo() : null),
     })
     try {
       const signal = { aborted: false }
@@ -598,8 +542,6 @@ describe('RecognitionSampler', () => {
     const loop = manualLoop()
     const errors: Array<{ role: SourceRole; message: string }> = []
     const listeners = new Set<(event: MessageEvent<WorkerResponse>) => void>()
-    const video = fakeVideo()
-    const profile = profileFor()
     const sampler = new RecognitionSampler({
       createWorker: () => ({
         postMessage(message) {
@@ -621,8 +563,8 @@ describe('RecognitionSampler', () => {
           if (type === 'message') listeners.delete(listener as (event: MessageEvent<WorkerResponse>) => void)
         },
       }),
-      video: (role) => (role === 'official' ? video : null),
-      profile: (role) => (role === 'official' ? profile : null),
+      video: (role) => (role === 'official' ? fakeVideo() : null),
+      profile: (role) => (role === 'official' ? profileFor() : null),
       frameLoop: loop.frameLoop as never,
       onError: (role, message) => errors.push({ role, message }),
     })
@@ -707,7 +649,6 @@ describe('RecognitionSampler as AutoSyncDeps.sample', () => {
     const restore = stubGrabber()
     const loop = manualLoop()
     const shared = profileFor()
-    const videos = { official: fakeVideo(), commentary: fakeVideo() }
     const sampler = new RecognitionSampler({
       createWorker: () =>
         fakeWorker((frame) => {
@@ -715,7 +656,7 @@ describe('RecognitionSampler as AutoSyncDeps.sample', () => {
           const seconds = Math.max(0, 30 - Math.floor(frame.mediaTime - offset))
           return success(seconds, frame.mediaTime, frame.wallTime)
         }).worker,
-      video: role => videos[role],
+      video: () => fakeVideo(),
       profile: () => shared,
       frameLoop: loop.frameLoop as never,
     })
@@ -765,19 +706,18 @@ function captured(mediaTime = 10, wallTime = 1000): AsyncGrabResult {
 }
 
 describe('asynchronous sampling acquisition', () => {
-  it('does not carry a persistent monitor readback across measurement windows', async () => {
+  it('drops a readback still in flight when its measurement window closes', async () => {
     vi.useFakeTimers()
     let finish!: (result: AsyncGrabResult) => void
     const video = eventfulVideo()
     const bench = harness({ video: role => role === 'official' ? video : null,
       capture: () => new Promise(resolve => { finish = resolve }) })
-    const stopMonitor = bench.sampler.monitor('official')
     try {
       const first = bench.sampler.sample(100, () => {}, { aborted: false })
       await bench.loop.tick(10)
       await vi.advanceTimersByTimeAsync(100)
       await first
-      expect(bench.loop.roles[0]!.stopped).toBe(false)
+      // The first window's frame answers only after the next window has opened.
       const next = bench.sampler.sample(100, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
       finish(captured(10))
       for (let i = 0; i < 8; i++) await Promise.resolve()
@@ -785,7 +725,7 @@ describe('asynchronous sampling acquisition', () => {
       expect(bench.outcomes).toHaveLength(0)
       await vi.advanceTimersByTimeAsync(100)
       await next
-    } finally { stopMonitor(); bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
   })
 
   it('counts a busy readback as a dropped frame while the other role continues', async () => {

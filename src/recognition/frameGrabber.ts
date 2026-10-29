@@ -10,7 +10,6 @@
 import { roiToPixels } from '../core/imageOps'
 import type { RoiRect } from '../core/profileSchema'
 import type { RecognitionFailure } from '../core/types'
-import type { Rect } from '../core/imageOps'
 import { readbackFailure, type ReadbackResponse } from './frameReadback'
 
 export const FULL_FRAME_ROI: RoiRect = { x: 0, y: 0, w: 1, h: 1 }
@@ -23,8 +22,6 @@ export interface GrabbedFrame {
   mediaTime: number
   /** Wall clock (ms) the frame was presented/sampled. */
   wallTime: number
-  /** Exact native clock pixels inside a combined scoreboard strip. */
-  clockRect?: Rect
 }
 
 export type GrabResult =
@@ -61,7 +58,6 @@ interface CanvasTarget {
 
 export class FrameGrabber {
   private target: CanvasTarget | null = null
-  private readonly targets = new Map<string, CanvasTarget>()
   private worker: Worker | null = null
   private pending: PendingReadback | null = null
   private requestId = 0
@@ -75,21 +71,6 @@ export class FrameGrabber {
 
   grabAsync(video: HTMLVideoElement, roi: RoiRect, mediaTimeOverride?: number): Promise<AsyncGrabResult> {
     return this.grabScaledAsync(video, roi, Number.POSITIVE_INFINITY, mediaTimeOverride)
-  }
-
-  async grabStripAsync(video: HTMLVideoElement, clock: RoiRect, mediaTimeOverride?: number): Promise<AsyncGrabResult> {
-    const width = video.videoWidth
-    const height = video.videoHeight
-    if (!width || !height) return this.grabAsync(video, clock, mediaTimeOverride)
-    const rect = roiToPixels(clock, width, height)
-    const x = Math.max(0, rect.x - Math.ceil(rect.width * 2.2))
-    const y = Math.max(0, rect.y - Math.ceil(rect.height * 0.8))
-    const right = Math.min(width, rect.x + rect.width + Math.ceil(rect.width * 2.2))
-    const bottom = Math.min(height, rect.y + rect.height + Math.ceil(rect.height * 1.1))
-    const result = await this.grabAsync(video, { x: x / width, y: y / height,
-      w: (right - x) / width, h: (bottom - y) / height }, mediaTimeOverride)
-    if (result.ok) result.frame.clockRect = { x: rect.x - x, y: rect.y - y, width: rect.width, height: rect.height }
-    return result
   }
 
   grabScaledAsync(video: HTMLVideoElement, roi: RoiRect, maxWidth: number, mediaTimeOverride?: number): Promise<AsyncGrabResult> {
@@ -222,22 +203,6 @@ export class FrameGrabber {
     return this.grabScaled(video, roi, Number.POSITIVE_INFINITY, mediaTimeOverride)
   }
 
-  /** One GPU readback for clock and both scores, preserving every original clock pixel. */
-  grabStrip(video: HTMLVideoElement, clock: RoiRect, mediaTimeOverride?: number): GrabResult {
-    const width = video.videoWidth
-    const height = video.videoHeight
-    if (!width || !height) return this.grab(video, clock, mediaTimeOverride)
-    const rect = roiToPixels(clock, width, height)
-    const x = Math.max(0, rect.x - Math.ceil(rect.width * 2.2))
-    const y = Math.max(0, rect.y - Math.ceil(rect.height * 0.8))
-    const right = Math.min(width, rect.x + rect.width + Math.ceil(rect.width * 2.2))
-    const bottom = Math.min(height, rect.y + rect.height + Math.ceil(rect.height * 1.1))
-    const result = this.grab(video, { x: x / width, y: y / height,
-      w: (right - x) / width, h: (bottom - y) / height }, mediaTimeOverride)
-    if (result.ok) result.frame.clockRect = { x: rect.x - x, y: rect.y - y, width: rect.width, height: rect.height }
-    return result
-  }
-
   /** Crop and downscale a discovery frame without changing the ROI's aspect ratio. */
   grabScaled(
     video: HTMLVideoElement,
@@ -313,13 +278,9 @@ export class FrameGrabber {
     this.disposed = true
     this.cancel()
     this.target = null
-    this.targets.clear()
   }
 
   private ensureTarget(width: number, height: number): CanvasTarget | null {
-    const key = `${width}x${height}`
-    const cached = this.targets.get(key)
-    if (cached) { this.target = cached; return cached }
     const existing = this.target
     if (existing && existing.canvas.width === width && existing.canvas.height === height) {
       return existing
@@ -329,8 +290,6 @@ export class FrameGrabber {
       const context = canvas.getContext('2d', { willReadFrequently: true })
       if (context) {
         this.target = { canvas, context }
-        this.targets.set(key, this.target)
-        if (this.targets.size > 4) this.targets.delete(this.targets.keys().next().value!)
         return this.target
       }
     }
@@ -341,8 +300,6 @@ export class FrameGrabber {
     const context = canvas.getContext('2d', { willReadFrequently: true })
     if (!context) return null
     this.target = { canvas, context }
-    this.targets.set(key, this.target)
-    if (this.targets.size > 4) this.targets.delete(this.targets.keys().next().value!)
     return this.target
   }
 }

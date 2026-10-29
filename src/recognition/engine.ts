@@ -13,8 +13,6 @@ import type {
   WorkerRequest,
   WorkerResponse,
 } from './protocol'
-import { UNKNOWN_SCORE } from './score'
-import { clockPixels, scoreReading } from './scoreFrame'
 
 export class RecognitionEngine {
   private generation = -1
@@ -38,7 +36,6 @@ export class RecognitionEngine {
         if (response?.type === 'result') {
           response.backend = 'typescript'
           response.tickMomentStatus = 'unsupported'
-          if (request.score) response.score = scoreReading(request, UNKNOWN_SCORE)
         }
         return response
       }
@@ -77,8 +74,8 @@ export class RecognitionEngine {
     }
     const started = this.now()
     try {
-      const { pixels, width, height } = clockPixels(request)
-      const expected = width * height * 4
+      const pixels = new Uint8Array(request.pixels)
+      const expected = request.width * request.height * 4
       if (pixels.length < expected) {
         return {
           type: 'result',
@@ -91,7 +88,7 @@ export class RecognitionEngine {
         }
       }
       const result = recognizeFrame(
-        { data: pixels, width, height },
+        { data: pixels, width: request.width, height: request.height },
         this.profile,
         this.templates,
         {

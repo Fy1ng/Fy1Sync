@@ -8,7 +8,6 @@ mod image;
 mod matching;
 mod profile;
 mod temporal;
-mod score;
 
 pub use dispatch::dispatch;
 pub use auto::*;
@@ -18,7 +17,6 @@ pub use matching::*;
 pub use profile::*;
 use serde_json::{json, Value};
 pub use temporal::*;
-pub use score::*;
 
 /// JavaScript Math.round: ties go toward positive infinity, including negative zero.
 pub fn js_round(value: f64) -> f64 {

@@ -3,22 +3,6 @@ import { FrameGrabber, FULL_FRAME_ROI, startFrameLoop } from './frameGrabber'
 import { FrameReadback, type ReadbackRequest } from './frameReadback'
 
 describe('discovery frame acquisition', () => {
-  it('captures one native strip with the original clock pixel rectangle unchanged', () => {
-    const video = document.createElement('video')
-    Object.defineProperties(video, { videoWidth: { value: 3840 }, videoHeight: { value: 2160 }, readyState: { value: 4 } })
-    const drawImage = vi.fn()
-    const getImageData = vi.fn((_x: number, _y: number, width: number, height: number) => ({
-      data: new Uint8ClampedArray(width * height * 4), width, height,
-    }))
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage, getImageData } as unknown as CanvasRenderingContext2D)
-    const result = new FrameGrabber(() => 123).grabStrip(video, { x: 1856 / 3840, y: 100 / 2160, w: 112 / 3840, h: 60 / 2160 }, 7)
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(result.frame).toMatchObject({ width: 606, height: 174, mediaTime: 7, wallTime: 123,
-      clockRect: { x: 247, y: 48, width: 112, height: 60 } })
-    expect(drawImage).toHaveBeenCalledWith(video, 1609, 52, 606, 174, 0, 0, 606, 174)
-    expect(getImageData).toHaveBeenCalledTimes(1)
-  })
   it('downscales the full frame without changing its aspect ratio or media timestamp', () => {
     const video = document.createElement('video')
     Object.defineProperties(video, {
@@ -155,10 +139,10 @@ describe('asynchronous frame acquisition', () => {
     return { video, bitmap, capture, postMessage, terminate, worker, clock, grabber, reply }
   }
 
-  it('transfers a cropped bitmap and preserves triggering clocks and the exact native clockRect', async () => {
+  it('transfers a cropped bitmap and preserves the triggering clocks', async () => {
     const h = harness()
     try {
-      const run = h.grabber.grabStripAsync(h.video, { x: 1856 / 3840, y: 100 / 2160, w: 112 / 3840, h: 60 / 2160 }, 7.25)
+      const run = h.grabber.grabAsync(h.video, { x: 1609 / 3840, y: 52 / 2160, w: 606 / 3840, h: 174 / 2160 }, 7.25)
       h.video.currentTime = 1000
       h.clock.mockReturnValue(9999)
       await Promise.resolve()
@@ -169,7 +153,7 @@ describe('asynchronous frame acquisition', () => {
       expect(h.bitmap.close).toHaveBeenCalledOnce()
       h.reply()
       expect(await run).toMatchObject({ ok: true, frame: { width: 606, height: 174, mediaTime: 7.25, wallTime: 123,
-        pixels: new Uint8ClampedArray([5, 6, 7, 255]), clockRect: { x: 247, y: 48, width: 112, height: 60 } } })
+        pixels: new Uint8ClampedArray([5, 6, 7, 255]) } })
     } finally { h.grabber.dispose(); vi.unstubAllGlobals() }
   })
 
