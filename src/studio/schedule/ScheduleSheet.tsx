@@ -16,7 +16,7 @@ import { apiClient } from '../../app/apiClient'
 import type { Cs2Match, Cs2Schedule, Cs2Stream, StreamTitle } from '../../../electron/featureContracts'
 import { Icon, Sheet, SideTabs } from '../kit'
 import { formatStart, groupEvents, matchStage, orderedStreams, PLATFORM_NAME, streamKey, tierLabel, titleRequests, type EventGroup } from './model'
-import { lastSchedule, readSchedule } from './store'
+import { lastSchedule, onSchedule, readSchedule, scheduleChanged } from './store'
 import './schedule.css'
 import { useRemembered } from '../../app/remembered'
 
@@ -54,12 +54,11 @@ export function ScheduleSheet({ onClose, onWatch }: {
     alive.current = true
     void read(false)
     const timer = window.setInterval(() => void read(false), POLL_MS)
-    // Main reads tiers and crests right after the schedule and says when they land; read
-    // again then rather than waiting for the next poll.
-    const off = apiClient.subscribeFeatures((event) => {
-      if (event.topic === 'cs2-schedule') void read(false)
-    })
-    return () => { alive.current = false; window.clearInterval(timer); off() }
+    // Main says when tiers and crests land and the store reads again (once more if a read was
+    // in flight); take every schedule it keeps rather than waiting for the next poll.
+    const offRead = onSchedule((value) => { if (alive.current) { setFailure(null); setSchedule(value) } })
+    const off = apiClient.subscribeFeatures((event) => { if (event.topic === 'cs2-schedule') scheduleChanged() })
+    return () => { alive.current = false; window.clearInterval(timer); off(); offRead() }
   }, [])
 
   const events = useMemo(() => groupEvents(schedule), [schedule])
@@ -221,13 +220,14 @@ function MatchRow({ match, titles, now, siblingsLive, onWatch }: {
 /**
  * A team as the broadcast shows it: crest beside the name, facing the score. The crest is
  * main's cached copy (`app://app/team-logo/…`); a team without one, or a crest that fails to
- * load, keeps an empty slot of the same width so the names stay in line.
+ * load, keeps an empty slot of the same width so the names stay in line. A failure belongs to
+ * that address: a new one (the crest replaced, or arriving later) is tried again.
  */
-function TeamName({ team, logoFirst = false }: { team: Cs2Match['teams'][number]; logoFirst?: boolean }): React.ReactNode {
-  const [failed, setFailed] = useState(false)
+export function TeamName({ team, logoFirst = false }: { team: Cs2Match['teams'][number]; logoFirst?: boolean }): React.ReactNode {
+  const [failed, setFailed] = useState<string | null>(null)
   const logo = team.logo
-  const crest = logo && !failed
-    ? <img className="match-logo" src={logo} alt="" draggable={false} onError={() => setFailed(true)} />
+  const crest = logo && failed !== logo
+    ? <img className="match-logo" src={logo} alt="" draggable={false} onError={() => setFailed(logo)} />
     : <span className="match-logo is-empty" aria-hidden="true" />
   return <>{logoFirst && crest}<span className="match-team-name">{team.name}</span>{!logoFirst && crest}</>
 }
