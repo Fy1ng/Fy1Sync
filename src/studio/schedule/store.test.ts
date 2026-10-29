@@ -46,6 +46,43 @@ describe('schedule store', () => {
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(2))
   })
 
+  it('reads once more for a change that arrived while a read was in flight', async () => {
+    const later = { ...schedule, fetchedAt: 2 }
+    let release!: () => void
+    let calls = 0
+    const { invoke, emit, store } = await fresh(() => {
+      calls += 1
+      if (calls === 1) return new Promise((resolve) => { release = () => resolve({ ok: true, value: schedule }) })
+      return { ok: true, value: later }
+    })
+    const seen: number[] = []
+    store.onSchedule((value) => seen.push(value.fetchedAt))
+    store.prefetchSchedule()
+    // The crest lands while the first read is still out: that read predates it.
+    emit('cs2-schedule')
+    emit('cs2-schedule')
+    expect(invoke).toHaveBeenCalledTimes(1)
+    release()
+    await vi.waitFor(() => expect(store.lastSchedule()?.fetchedAt).toBe(2))
+    // Two events while in flight still make just one trailing read.
+    expect(invoke).toHaveBeenCalledTimes(2)
+    expect(seen).toEqual([1, 2])
+  })
+
+  it('does not let an older reply replace a newer one', async () => {
+    const releases: Array<() => void> = []
+    const { store } = await fresh((args) => new Promise((resolve) => {
+      releases.push(() => resolve({ ok: true, value: { ...schedule, fetchedAt: args ? 2 : 1 } }))
+    }))
+    const plain = store.readSchedule()
+    const refresh = store.readSchedule(true)
+    releases[1]!()
+    await refresh
+    releases[0]!()
+    await plain
+    expect(store.lastSchedule()?.fetchedAt).toBe(2)
+  })
+
   it('keeps the last good schedule when a later read fails', async () => {
     let fail = false
     const { store } = await fresh(() => fail ? { ok: false, code: 'unavailable', message: '赛程暂时无法读取' } : { ok: true, value: schedule })
