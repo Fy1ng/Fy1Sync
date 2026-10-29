@@ -17,7 +17,7 @@ test('钓鱼, 红包和宝箱共享任务调度, 人工验证入口及重启暂�
     await openPlayerWithDouyuWrites(app.page)
     const tools = await openDouyuTab(app.page, '账号')
     await tools.getByRole('group', { name: '斗鱼账号 默认账号', exact: true }).getByRole('button', { name: '登录', exact: true }).click()
-    await expect(tools).toContainText('默认账号 已登录')
+    await expect(tools).toContainText('斗鱼账号 已登录')
     for (const kind of ['auto-fish', 'gift-packet', 'treasure-box'] as const) {
       const form = await openTaskForm(app.page, kind, '9999')
       await expect(form.getByRole('switch', { name: '每天签到一次', exact: true })).toHaveCount(0)

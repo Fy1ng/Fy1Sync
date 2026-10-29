@@ -9,6 +9,8 @@
  */
 
 import { failure, MANUAL_URL_HINT, type ResolveResult, type ResolverDeps } from './types'
+import { hlsVariants } from './hlsVariant'
+import { StreamFailureError } from '../networkFailure'
 
 /** Public client id used by Twitch's own web player; required by their GQL gateway. */
 const WEB_CLIENT_ID = 'kimne78kx3ncx6brgo4mv6wki5h1ko'
@@ -102,19 +104,19 @@ export async function resolveTwitch(
       }),
     })) as TokenResponse
   } catch (error) {
+    if (error instanceof StreamFailureError) throw error
     return failure(
       'upstream-error',
-      `请求 Twitch 播放令牌失败：${error instanceof Error ? error.message : String(error)}`,
+      '请求 Twitch 播放令牌失败',
       MANUAL_URL_HINT,
     )
   }
 
   const access = token.data?.streamPlaybackAccessToken
   if (!access?.value || !access.signature) {
-    const detail = token.errors?.[0]?.message
     return failure(
       'not-live',
-      detail ? `Twitch 未返回播放令牌：${detail}` : `频道 ${channel} 当前不在直播，或该频道受限`,
+      `频道 ${channel} 当前不在直播, 或该频道受限`,
       MANUAL_URL_HINT,
     )
   }
@@ -136,20 +138,45 @@ export async function resolveTwitch(
     player_version: '1.32.0',
   })
   const playlistUrl = `${USHER_BASE}/${channel}.m3u8?${params.toString()}`
+  let variants
+  let finalPlaylistUrl = playlistUrl
+  try {
+    const playlist = deps.fetchPlaylist ? await deps.fetchPlaylist(playlistUrl) : { text: await deps.fetchText(playlistUrl), finalUrl: playlistUrl }
+    finalPlaylistUrl = playlist.finalUrl
+    variants = hlsVariants(playlist.text, finalPlaylistUrl)
+  } catch (error) {
+    if (error instanceof StreamFailureError) throw error
+    return failure('upstream-error', '读取 Twitch 画质清单失败', MANUAL_URL_HINT)
+  }
+  // A media playlist can still be used when the server exposes no variants.
+  // IDs come from VIDEO groups, so renewed signatures never change a selection.
+  const options = variants?.filter((variant, index, all) => all.findIndex(item => item.id === variant.id) === index)
+  const selected = options?.find(variant => variant.id === deps.quality) ?? options?.[0]
+  const notes = [
+    '通过本地代理加载, 避免跨域并允许读取画面像素用于倒计时识别.',
+    '播放地址带签名且会过期, 长时间挂机后如报 403 请重新解析.',
+  ]
+  if (deps.quality && deps.quality !== 'auto' && selected?.id !== deps.quality) {
+    notes.push('请求的 Twitch 画质当前不可用, 已选择最高可用档位.')
+  }
 
   return {
     ok: true,
     stream: {
       platform: 'twitch',
-      url: deps.proxify(playlistUrl),
+      url: deps.proxify(selected?.url ?? finalPlaylistUrl),
       kind: 'hls',
       label: `Twitch · ${channel}`,
       channel,
       requiresProxy: true,
-      notes: [
-        '通过本地代理加载，避免跨域并允许读取画面像素用于倒计时识别。',
-        '播放地址带签名且会过期，长时间挂机后如报 403 请重新解析。',
-      ],
+      qualities: options?.map(variant => ({
+        id: variant.id,
+        label: variant.height ? `${variant.height}p${variant.fps || ''}${variant.id === 'chunked' ? ' (原画)' : ''}` : '原画',
+        ...(variant.height ? { height: variant.height } : {}),
+        ...(variant.fps ? { fps: variant.fps } : {}),
+      })),
+      quality: selected?.id,
+      notes,
     },
   }
 }

@@ -1,3 +1,4 @@
+import { StreamFailureError } from '../networkFailure'
 /** Huya room metadata, anonymous WUP token and local MD5 signing. No remote JS runs.
  * Protocol reference: biliup/biliup (MIT), pinned in fixtures/huya-README.md.
  */
@@ -193,6 +194,7 @@ async function fallback(room: string, qualities: QualityOption[], deps: Resolver
   let data: Record<string, unknown>
   try { data = record(await deps.runYtDlp(`${REFERER}${room}`)) }
   catch (error) {
+    if (error instanceof StreamFailureError) throw error
     const message = error instanceof Error ? error.message : ''
     if (/offline|not.live|未开播/i.test(message)) return failure('not-live', '虎牙房间当前未开播.', '请等待主播开播后重新加载.')
     if (/login|sign.in|forbidden|restricted|geo.restrict|登录|封禁|整改/i.test(message)) return failure('restricted', '虎牙限制了该房间或画质的访问.', '请在虎牙官网确认可播放状态. 当前暂不支持虎牙登录.')
@@ -225,7 +227,7 @@ export async function resolveHuya(input: string, deps: ResolverDeps): Promise<Re
   try {
     page = parseHuyaPage(await deps.fetchText(`${REFERER}${inputRoom}`, { headers: HEADERS }), inputRoom)
     if (page.ok && !/^\d+$/.test(inputRoom)) page = parseHuyaPage(await deps.fetchText(`${REFERER}${page.room}`, { headers: HEADERS }), page.room)
-  } catch { return failure('upstream-error', '请求虎牙房间页面失败.', MANUAL_URL_HINT) }
+  } catch (error) { if (error instanceof StreamFailureError) throw error; return failure('upstream-error', '请求虎牙房间页面失败.', MANUAL_URL_HINT) }
   if (!page.ok) return page
   const quality = deps.quality ?? page.qualities[0]?.id ?? '0'
   if (page.qualities.length && !page.qualities.some(option => option.id === quality)) return failure('unsupported-url', '虎牙当前不提供所选画质.', '请重新解析并选择列表中的画质.')

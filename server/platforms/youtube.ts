@@ -1,3 +1,4 @@
+import { StreamFailureError } from '../networkFailure'
 /** YouTube live metadata is acquired by the main process's isolated yt-dlp runner. */
 
 import { failure, MANUAL_URL_HINT, type QualityOption, type ResolvedStream, type ResolveResult, type ResolverDeps } from './types'
@@ -126,6 +127,7 @@ export async function resolveYouTube(input: string, deps: ResolverDeps): Promise
   let info: unknown
   try { info = await deps.runYtDlp(url) }
   catch (error) {
+    if (error instanceof StreamFailureError) throw error
     // Extractor errors can contain cookies, headers or signed URLs. Classify but never echo them.
     const message = error instanceof Error ? error.message : ''
     if (/not a bot|sign.?in|private video|members.only|age.restricted|geo.restricted|not available in your country/i.test(message)) {

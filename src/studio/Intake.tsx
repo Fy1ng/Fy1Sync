@@ -1,21 +1,24 @@
 /**
- * The first screen: one field. A link names its own side (see `routeFor`), so the viewer
- * pastes the match and the commentator in either order and never picks a slot. Only a link
- * that cannot say — a bare stream URL, a dropped file — asks.
+ * The first screen: one field, and under it the two sides. The viewer picks 画面 or 解说
+ * first, then types into the field for that side; nothing is sorted by guessing from the
+ * link. A bare room number asks for its platform as soon as it is typed, without waiting
+ * for Enter.
  *
  * It steps aside by itself once both sides play, and can always be skipped: settings, the
  * Douyu desk and a single source are all reachable from the player without both links.
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { useSession, useSessionSnapshot } from '../app/SessionContext'
-import { parseSourceInput } from '../core/mediaSources'
+import { useSessionSnapshot, useSession } from '../app/SessionContext'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { Icon } from './kit'
-import { PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, routeFor, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
+import { LOGIN_LABEL, PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
 import { useSavedRooms, type SavedRoom } from './savedRooms'
 
-type Pending = { kind: 'text'; value: string } | { kind: 'file'; file: File } | { kind: 'room'; value: string; room: string }
+const ROOM_PLATFORMS: RoomPlatform[] = ['douyu', 'bilibili', 'huya']
+
+/** A Latin name sits in Chinese with a space either side, as elsewhere: 登录 YouTube 后重试. */
+const spaced = (name: string): string => /^[A-Za-z]/.test(name) ? ` ${name} ` : name
 
 export function Intake({ onClose, pendingFile, onSchedule }: {
   onClose: () => void
@@ -26,15 +29,18 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const loader = useSourceLoader()
-  const [text, setText] = useState('')
-  const [ask, setAsk] = useState<Pending | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const field = useRef<HTMLInputElement | null>(null)
   const media = snapshot.media
+  // The side being filled. None until the viewer picks; the field waits for that.
+  const [role, setRole] = useState<SourceRole | null>(null)
+  const [text, setText] = useState('')
+  const [roomPlatform, setRoomPlatform] = useState<RoomPlatform | null>(null)
+  const field = useRef<HTMLInputElement | null>(null)
   const bothReady = media.official.status === 'ready' && media.commentary.status === 'ready'
-  const anyLoaded = SOURCE_ROLES.some((role) => media[role].status !== 'empty')
+  const anyLoaded = SOURCE_ROLES.some((side) => media[side].status !== 'empty')
+  const bare = parseRoomInput(text)?.platform === null ? parseRoomInput(text)!.room : null
+  const canSubmit = role !== null && text.trim() !== '' && (bare === null || roomPlatform !== null) && !loader.state[role].busy
 
-  useEffect(() => { field.current?.focus() }, [])
+  useEffect(() => { if (role) field.current?.focus() }, [role])
   // Escape leaves from anywhere: after a choice button disappears, focus is no longer inside.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') onClose() }
@@ -48,69 +54,63 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
     return () => clearTimeout(timer)
   }, [bothReady, onClose, session])
 
-  const place = (pending: Pending, role: SourceRole, platform?: RoomPlatform): void => {
-    setAsk(null)
-    setError(null)
-    // Back to the field, ready for the other side's link.
-    field.current?.focus()
-    if (pending.kind === 'file') void loader.loadFile(role, pending.file)
-    else void loader.loadInput(role, pending.value, platform)
+  const pick = (next: SourceRole): void => {
+    setRole(next)
+    loader.clearProblem(next)
+  }
+  const submit = (): void => {
+    if (!canSubmit || !role) return
+    const side = role
+    void loader.loadInput(side, text.trim(), bare !== null ? roomPlatform! : undefined).then((ok) => {
+      if (!ok) return
+      // Ready for the other side, if it is still empty.
+      const other = SOURCE_ROLES.find((next) => next !== side && media[next].status === 'empty')
+      if (other) setRole(other)
+    })
+    setText('')
+    setRoomPlatform(null)
   }
 
-  const route = (pending: Pending): void => {
-    setError(null)
-    if (pending.kind === 'text') {
-      // A bare identifier could be a room on more than one platform; the viewer knows which.
-      const typed = parseRoomInput(pending.value)
-      if (typed?.platform === null) { setAsk({ kind: 'room', value: pending.value, room: typed.room }); return }
-      if (typed) { place(pending, 'commentary', typed.platform ?? undefined); return }
-      const parsed = parseSourceInput(pending.value)
-      if (!parsed.ok) { setError(parsed.message); return }
-      const role = routeFor(parsed.platform)
-      if (role) { place(pending, role); return }
-    }
-    // No hint in the link itself: fill the only empty side, otherwise ask.
-    const empty = SOURCE_ROLES.filter((role) => media[role].status === 'empty' && !loader.state[role].busy)
-    if (empty.length === 1) place(pending, empty[0]!)
-    else setAsk(pending)
-  }
+  // A file dropped on the window goes to the side being filled, or the only empty one.
+  useEffect(() => {
+    if (!pendingFile) return
+    const empty = SOURCE_ROLES.filter((side) => media[side].status === 'empty')
+    const side = role ?? (empty.length === 1 ? empty[0]! : null)
+    if (side) void loader.loadFile(side, pendingFile)
+  }, [pendingFile])
 
-  // A file dropped on the window while this screen is up is routed like a paste.
-  useEffect(() => { if (pendingFile) route({ kind: 'file', file: pendingFile }) }, [pendingFile])
+  const load = role ? loader.state[role] : null
 
   return (
     <div className="intake" role="dialog" aria-modal="true" aria-label="添加直播间">
       <div className="intake-body">
         <h1 className="intake-title">添加直播间</h1>
-        <form className="intake-field" onSubmit={(event) => {
-          event.preventDefault()
-          const value = text.trim()
-          if (!value) return
-          route({ kind: 'text', value })
-          setText('')
-        }}>
-          <input ref={field} value={text} onChange={(event) => { setText(event.target.value); setError(null) }}
-            aria-label="直播间链接" placeholder="粘贴直播间链接或输入房间号，按回车添加" spellCheck={false} autoComplete="off" />
+        <form className="intake-field" data-disabled={role === null} onSubmit={(event) => { event.preventDefault(); submit() }}>
+          <input ref={field} value={text} disabled={role === null}
+            onChange={(event) => { setText(event.target.value); if (role) loader.clearProblem(role) }}
+            aria-label="直播间链接" spellCheck={false} autoComplete="off"
+            placeholder={role === null ? '先选择画面或解说' : role === 'official' ? 'YouTube、Twitch 或虎牙链接' : '斗鱼、哔哩哔哩或虎牙链接、房间号'} />
+          <button type="submit" className="intake-go" disabled={!canSubmit} aria-label="添加" title="添加（回车）">
+            <Icon name="enter" />
+          </button>
         </form>
-        {error && <p className="intake-error" role="alert">{error}</p>}
 
-        {ask?.kind === 'room' ? (
-          <div className="intake-ask" role="group" aria-label="选择房间号所属平台">
-            <span>房间号 {ask.room}</span>
-            <span className="intake-ask-q">属于</span>
-            {/* Focused, so a second Enter takes the common case. */}
-            <button type="button" className="btn-solid small" autoFocus onClick={() => place(ask, 'commentary', 'douyu')}>{PLATFORM_LABEL.douyu}</button>
-            <button type="button" className="btn-solid small" onClick={() => place(ask, 'commentary', 'bilibili')}>{PLATFORM_LABEL.bilibili}</button>
-            <button type="button" className="btn-solid small" onClick={() => place(ask, 'commentary', 'huya')}>{PLATFORM_LABEL.huya}</button>
-          </div>
-        ) : ask && (
-          <div className="intake-ask" role="group" aria-label="选择添加位置">
-            <span>{ask.kind === 'file' ? ask.file.name : ask.value}</span>
-            <span className="intake-ask-q">添加到</span>
-            <button type="button" className="btn-solid small" onClick={() => place(ask, 'official')}>画面</button>
-            <button type="button" className="btn-solid small" onClick={() => place(ask, 'commentary')}>解说</button>
+        {bare !== null && role !== null && (
+          <div className="intake-ask" role="radiogroup" aria-label="选择房间号所属平台">
+            <span className="intake-ask-q">房间 {bare} 属于</span>
+            {ROOM_PLATFORMS.map((platform) => (
+              <button key={platform} type="button" role="radio" aria-checked={roomPlatform === platform}
+                className={roomPlatform === platform ? 'btn-solid small' : 'btn-glass small'}
+                onClick={() => { setRoomPlatform(platform); field.current?.focus() }}>{PLATFORM_LABEL[platform]}</button>
+            ))}
           </div>
         )}
+
+        {load?.problem && <p className="intake-error" role="alert">{load.problem.message}{load.problem.hint ? ` ${load.problem.hint}` : ''}</p>}
+
+        <div className="intake-slots" role="radiogroup" aria-label="添加到">
+          {SOURCE_ROLES.map((side) => <Slot key={side} role={side} selected={side === role} onPick={() => pick(side)} />)}
+        </div>
 
         {media.official.status === 'empty' && !loader.state.official.busy && (
           <button type="button" className="intake-find" onClick={onSchedule}>
@@ -120,12 +120,8 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
           </button>
         )}
 
-        <SavedRooms onPick={(room) => place({ kind: 'text', value: room.input }, room.role,
+        <SavedRooms onPick={(room) => void loader.loadInput(room.role, room.input,
           room.platform === 'douyu' || room.platform === 'bilibili' || room.platform === 'huya' ? room.platform : undefined)} />
-
-        <ul className="intake-slots">
-          {SOURCE_ROLES.map((role) => <Slot key={role} role={role} />)}
-        </ul>
 
         <p className="intake-foot">
           <span>支持将视频文件拖入窗口</span>
@@ -138,7 +134,7 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
   )
 }
 
-function Slot({ role }: { role: SourceRole }): React.ReactNode {
+function Slot({ role, selected, onPick }: { role: SourceRole; selected: boolean; onPick: () => void }): React.ReactNode {
   const snapshot = useSessionSnapshot()
   const loader = useSourceLoader()
   const state = snapshot.media[role]
@@ -146,17 +142,29 @@ function Slot({ role }: { role: SourceRole }): React.ReactNode {
   const status = load.busy ? 'loading' : state.status
   const descriptor = state.descriptor
   return (
-    <li className="slot" data-role={role} data-status={status}>
-      <span className="slot-role">{ROLE_LABEL[role]}</span>
-      <span className="slot-what">
-        {status === 'loading' ? '载入中…'
-          : descriptor ? sourceTitle(descriptor)
-            : role === 'official' ? 'YouTube、Twitch' : '斗鱼、哔哩哔哩、虎牙'}
-      </span>
-      {(load.problem || (state.status === 'error' && state.error)) && (
+    <div className="slot" data-role={role} data-status={status} data-selected={selected}>
+      <button type="button" className="slot-pick" role="radio" aria-checked={selected} onClick={onPick}>
+        <span className="slot-role">{ROLE_LABEL[role]}</span>
+        <span className="slot-what">
+          {load.loggingIn ? `在登录窗口中登录${load.login ? spaced(LOGIN_LABEL[load.login]) : ''}，完成后关闭窗口`
+            : status === 'loading' ? '载入中…'
+              : descriptor ? sourceTitle(descriptor)
+                : role === 'official' ? 'YouTube、Twitch、虎牙' : '斗鱼、哔哩哔哩、虎牙'}
+        </span>
+      </button>
+      {/* The side being filled shows its problem under the field instead. */}
+      {!selected && (load.problem || (state.status === 'error' && state.error)) && (
         <span className="slot-error" role="alert">{load.problem?.message ?? state.error?.message}</span>
       )}
-    </li>
+      {selected && !load.problem && state.status === 'error' && state.error && <span className="slot-error" role="alert">{state.error.message}</span>}
+      {load.login && !load.busy && !load.loggingIn && (
+        <span className="slot-login">
+          {/* A refusal needs the login to play at all; a step-down only to get the top quality. */}
+          <span>{load.problem ? `登录${spaced(LOGIN_LABEL[load.login])}后重试` : `登录${spaced(LOGIN_LABEL[load.login])}可看最高画质`}</span>
+          <button type="button" className="btn-solid small" onClick={() => void loader.login(role)}>登录</button>
+        </span>
+      )}
+    </div>
   )
 }
 

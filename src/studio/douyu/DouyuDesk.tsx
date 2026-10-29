@@ -13,7 +13,7 @@ import { Following } from './Following'
 import { Renewal } from './Renewal'
 import { Spending } from './Spending'
 import { Tasks } from './Tasks'
-import { useDouyu, type Lane } from './useDouyu'
+import { accountName, useDouyu, type Lane } from './useDouyu'
 import { useRemembered } from '../../app/remembered'
 import { DouyuWritesPane, useDouyuWrites } from '../douyuWrites'
 
@@ -48,7 +48,9 @@ export function DouyuDesk({ onWatch }: { onWatch: (room: string) => void }): Rea
           ? <span className="num tab-count">{data.tasks.tasks.length}</span> : undefined,
       }))}
       aside={<span className="desk-who">
-        {active ? <>当前账号<b>{active.label}</b>{active.login.loggedIn ? '' : '（未登录）'}</> : '未设置当前账号'}
+        {!active ? '未设置当前账号' : accountName(active)
+          ? <>当前账号<b>{accountName(active)}</b>{active.login.loggedIn ? '' : '（未登录）'}</>
+          : active.login.loggedIn ? '已登录' : '未登录'}
       </span>}>
         <div className="desk-content">
           {shown === 'accounts' && <><Accounts data={data} /><Spending data={data} /></>}

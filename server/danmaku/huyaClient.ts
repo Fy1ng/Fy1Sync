@@ -3,6 +3,7 @@ import { readPlatformText } from '../platformResponse'
 import { safeFetch } from '../safeFetch'
 import { resolveHuyaDanmakuRoom, type HuyaDanmakuRoom } from '../platforms/huyaDanmaku'
 import { decodeHuyaFrame, encodeHuyaHeartbeat, encodeHuyaRegistration, MAX_HUYA_FRAME } from './huyaProtocol'
+import { createNetworkSocket } from './networkSocket'
 import type { DanmakuClientDeps, DanmakuClientEvents, DanmakuState, WebSocketLike } from './types'
 
 const ENDPOINT = 'wss://cdnws.api.huya.com'
@@ -56,7 +57,7 @@ export class HuyaDanmakuClient {
   private readonly clearTimer: (handle: unknown) => void
 
   constructor(readonly room: string, private readonly events: DanmakuClientEvents, deps: HuyaDanmakuClientDeps = {}) {
-    this.createSocket = deps.createSocket ?? (url => new WebSocket(url) as unknown as WebSocketLike)
+    this.createSocket = deps.createSocket ?? (url => createNetworkSocket(url, 'huya'))
     this.resolveRoom = deps.resolveRoom ?? defaultResolveHuyaDanmakuRoom
     this.now = deps.now ?? Date.now
     this.setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms))

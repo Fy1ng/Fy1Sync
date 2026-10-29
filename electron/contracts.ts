@@ -1,3 +1,5 @@
+import type { DomesticRouting } from '../server/networkPolicy'
+import type { NetworkPreferenceState } from './networkPreferences'
 import type {
   ApiResult, HealthInfo, PresetRecord, PresetSummary, SavedPreset,
 } from '../src/app/apiClient'
@@ -44,6 +46,8 @@ export interface DesktopMethods extends FeatureMethods {
   updateYtdlp: { args: undefined; result: ToolsStatus }
   restoreYtdlp: { args: { target: 'previous' | 'bundled' }; result: ToolsStatus }
   health: { args: undefined; result: HealthInfo }
+  getNetworkPreferences: { args: undefined; result: NetworkPreferenceState }
+  setNetworkPreferences: { args: { domesticRouting: DomesticRouting }; result: NetworkPreferenceState }
   getDecoderPreferences: { args: undefined; result: DecoderPreferenceState }
   setDecoderPreferences: { args: { mode: DecoderMode }; result: DecoderPreferenceState }
   verifyAdmin: { args: { token: string }; result: { ok: true } }
@@ -66,6 +70,7 @@ export interface StreamSyncerBridge {
   subscribeDanmaku(room: string, listener: (event: DanmakuEvent) => void): () => void
   subscribeBuffer?(listener: (state: BufferState) => void): () => void
   subscribeWindowState?(listener: (state: WindowState) => void): () => void
+  subscribeDouyuAccounts?(listener: (state: DouyuAccountsSnapshot) => void): () => void
   subscribeDouyuTasks?(listener: (state: DouyuTasksSnapshot) => void): () => void
   subscribeFeatures?(listener: (event: FeatureEvent) => void): () => void
 }

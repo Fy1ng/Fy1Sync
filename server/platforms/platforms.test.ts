@@ -64,6 +64,7 @@ describe('resolveTwitch', () => {
   it('builds a signed usher URL from the playback access token', async () => {
     let requested = ''
     let payload = ''
+    let master = ''
     const result = await resolveTwitch(
       'https://www.twitch.tv/esl_csgo',
       deps({
@@ -71,6 +72,10 @@ describe('resolveTwitch', () => {
           requested = url
           payload = String(init?.body ?? '')
           return tokenResponse
+        },
+        fetchText: async url => {
+          master = url
+          return '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,FRAME-RATE=60,VIDEO="chunked"\nhttps://video.ttvnw.net/source.m3u8'
         },
       }),
     )
@@ -80,8 +85,7 @@ describe('resolveTwitch', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
 
-    const proxied = new URL(result.stream.url, 'http://127.0.0.1')
-    const usher = new URL(decodeURIComponent(proxied.searchParams.get('url')!))
+    const usher = new URL(master)
     expect(usher.origin + usher.pathname).toBe('https://usher.ttvnw.net/api/channel/hls/esl_csgo.m3u8')
     expect(usher.searchParams.get('sig')).toBe('deadbeef')
     expect(usher.searchParams.get('token')).toBe('{"channel":"esl_csgo"}')
@@ -89,6 +93,8 @@ describe('resolveTwitch', () => {
     expect(result.stream.kind).toBe('hls')
     expect(result.stream.requiresProxy).toBe(true)
     expect(result.stream.channel).toBe('esl_csgo')
+    expect(decodeURIComponent(result.stream.url)).toContain('https://video.ttvnw.net/source.m3u8')
+    expect(result.stream.quality).toBe('chunked')
   })
 
   it('reports not-live with a manual-URL hint when no token comes back', async () => {

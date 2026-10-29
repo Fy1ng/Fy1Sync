@@ -48,6 +48,17 @@ describe('private cookie storage', () => {
     expect(JSON.stringify(await manager.status())).not.toContain('test-private-value')
   })
 
+  it('names a signed-in Douyu account from acf_nickname and never for an anonymous one', async () => {
+    const manager = store()
+    manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_nickname', value: encodeURIComponent('解说甲') })])
+    expect((await manager.status()).douyu.nickname).toBeUndefined()
+    manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_uid', value: '42' }),
+      cookie({ domain: '.douyu.com', name: 'acf_nickname', value: encodeURIComponent('解说甲') })])
+    expect((await manager.status()).douyu).toMatchObject({ loggedIn: true, nickname: '解说甲' })
+    manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_uid', value: '42' }), cookie({ domain: '.douyu.com', name: 'acf_nickname', value: '%E0%A4%A' })])
+    expect((await manager.status()).douyu.nickname).toBeUndefined()
+  })
+
   it('does not call anonymous cookies a login', async () => {
     const manager = store()
     manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'dy_did' })])

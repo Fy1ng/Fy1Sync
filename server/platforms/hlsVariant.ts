@@ -1,5 +1,6 @@
 /** Select a video rendition before a copy-only buffer discards the master playlist. */
 export interface HlsVariant { url: string; height: number; width: number; fps: number; bandwidth: number }
+export interface HlsRendition extends HlsVariant { id: string }
 
 const invalid = () => new Error('Invalid HLS variant playlist')
 
@@ -23,10 +24,10 @@ function numeric(value: string | undefined): number {
 }
 
 /** Null means a media playlist. URLs still require the caller's DNS/host policy. */
-export function highestHlsVariant(body: string, baseUrl: string | URL): HlsVariant | null {
+export function hlsVariants(body: string, baseUrl: string | URL): HlsRendition[] | null {
   const lines = body.replace(/^\uFEFF/, '').trim().split(/\r?\n/).map(line => line.trim())
   if (lines[0] !== '#EXTM3U') throw invalid()
-  const variants: HlsVariant[] = []
+  const variants: HlsRendition[] = []
   let streams = 0
   for (let index = 1; index < lines.length; index++) {
     const line = lines[index]!
@@ -47,13 +48,24 @@ export function highestHlsVariant(body: string, baseUrl: string | URL): HlsVaria
     // Twitch includes an audio-only rendition in the same master. Never buffer it
     // as video, even when the server lists it first or gives it a large bandwidth.
     if (!size && !/(?:^|,)(?:avc1|avc3|hvc1|hev1|vp09|vp9|av01)(?:\.|,|$)/i.test(codecs)) continue
-    variants.push({ url: url.href, width: size ? Number(size[1]) : 0, height: size ? Number(size[2]) : 0,
-      fps: numeric(data.get('FRAME-RATE')), bandwidth: numeric(data.get('BANDWIDTH')) })
+    const height = size ? Number(size[2]) : 0
+    const fps = numeric(data.get('FRAME-RATE'))
+    const video = data.get('VIDEO')
+    const id = video && /^[A-Za-z0-9_.-]{1,64}$/.test(video) ? video : `video-${height}p${fps}`
+    variants.push({ id, url: url.href, width: size ? Number(size[1]) : 0, height,
+      fps, bandwidth: numeric(data.get('BANDWIDTH')) })
   }
   if (!streams) {
     if (!lines.some(line => line.startsWith('#EXT-X-TARGETDURATION:'))) throw invalid()
     return null
   }
   if (!variants.length) throw invalid()
-  return variants.sort((a, b) => b.height - a.height || b.fps - a.fps || b.width - a.width || b.bandwidth - a.bandwidth)[0]!
+  return variants.sort((a, b) => b.height - a.height || b.fps - a.fps || b.width - a.width || b.bandwidth - a.bandwidth)
+}
+
+export function highestHlsVariant(body: string, baseUrl: string | URL): HlsVariant | null {
+  const selected = hlsVariants(body, baseUrl)?.[0]
+  if (!selected) return null
+  const { id: _id, ...variant } = selected
+  return variant
 }

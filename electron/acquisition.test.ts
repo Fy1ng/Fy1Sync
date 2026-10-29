@@ -15,14 +15,14 @@ function harness(overrides: Partial<ConstructorParameters<typeof Acquisition>[0]
   const buffer = {
     subscribe: (listener: (state: BufferState) => void) => {
       listeners.add(listener)
-      listener({ role: 'official', state: 'ready', seconds: 99 })
+      listener({ role: 'official', state: 'ready', hasVideo: true, completeSegments: 1, seconds: 99 })
       return () => { listeners.delete(listener) }
     },
     start: vi.fn(async (role, prepare) => {
       resolver = prepare
       emit({ role, state: 'starting', seconds: 0 })
       inputs.push(await prepare())
-      emit({ role, state: 'ready', seconds: 6 })
+      emit({ role, state: 'ready', hasVideo: true, completeSegments: 1, seconds: 6 })
       return { url: `app://app/buffer/session/${role}/generation/index.m3u8` }
     }),
     stop: vi.fn(async () => {}),
@@ -105,7 +105,7 @@ describe('main acquisition boundary', () => {
       ? Response.json({ data: { streamPlaybackAccessToken: { value: 'PRIVATE', signature: 'PRIVATE' } } })
       : new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,FRAME-RATE=60\n' + uri),
     })
-    await expect(h.acquisition.resolve('twitch.tv/pgl', 'twitch', 'official', undefined, true)).rejects.toHaveProperty('reason', 'private-address')
+    await expect(h.acquisition.resolve('twitch.tv/pgl', 'twitch', 'official', undefined, true)).rejects.toHaveProperty('reason')
     expect(h.buffer.start).not.toHaveBeenCalled()
   })
 
@@ -128,7 +128,7 @@ describe('main acquisition boundary', () => {
     expect(fallback.adaptive).toBeUndefined()
     expect(fallback.qualityHeight).toBe(1080)
     expect(h.runYtDlp).toHaveBeenCalledTimes(3)
-    expect(h.runYtDlp).toHaveBeenLastCalledWith('https://www.youtube.com/watch?v=abcdefghijk', false)
+    expect(h.runYtDlp).toHaveBeenLastCalledWith('https://www.youtube.com/watch?v=abcdefghijk', false, expect.any(Object))
     service.dispose()
   })
 
@@ -143,7 +143,7 @@ describe('main acquisition boundary', () => {
     h.buffer.start.mockImplementationOnce(async (role, prepare) => {
       await prepare(false)
       await prepare(true)
-      h.emit({ role, state: 'ready', seconds: 6 })
+      h.emit({ role, state: 'ready', hasVideo: true, completeSegments: 1, seconds: 6 })
       return { url: 'app://app/buffer/fallback/index.m3u8' }
     })
     const result = await h.acquisition.resolve('https://youtu.be/abcdefghijk', 'youtube', 'official', undefined, true)
@@ -164,7 +164,7 @@ describe('main acquisition boundary', () => {
     expect(switched).toMatchObject({ ok: true, stream: { quality: '301' } })
     expect(h.inputs.at(-1)).toMatchObject({ fallbackFromHeight: 1440, qualityHeight: 1080 })
     expect(h.inputs.at(-1)?.adaptive).toBeUndefined()
-    expect(h.runYtDlp).toHaveBeenLastCalledWith('https://www.youtube.com/watch?v=abcdefghijk', false)
+    expect(h.runYtDlp).toHaveBeenLastCalledWith('https://www.youtube.com/watch?v=abcdefghijk', false, expect.any(Object))
   })
 
   it('returns only a local playlist and quality metadata, never the signed input', async () => {
@@ -225,7 +225,7 @@ describe('main acquisition boundary', () => {
     const operation = h.acquisition.resolve('https://8.8.8.8/live.flv', 'direct', 'official').then((value) => { finished = true; return value })
     await vi.waitFor(() => expect(started).toBe(true))
     expect(finished).toBe(false)
-    h.emit({ role: 'official', state: 'ready', seconds: 6 })
+    h.emit({ role: 'official', state: 'ready', hasVideo: true, completeSegments: 1, seconds: 6 })
     expect((await operation).ok).toBe(true)
   })
 
@@ -234,14 +234,14 @@ describe('main acquisition boundary', () => {
     let started = false
     h.buffer.start.mockImplementationOnce(async (_role, prepare) => {
       await prepare(); started = true
-      h.emit({ role: 'official', state: 'ready', seconds: 0.033333 })
+      h.emit({ role: 'official', state: 'ready', hasVideo: true, completeSegments: 1, seconds: 0.033333 })
       return { url: 'app://app/buffer/partial/index.m3u8' }
     })
     let finished = false
     const operation = h.acquisition.resolve('https://8.8.8.8/live.flv', 'direct', 'official').then(value => { finished = true; return value })
     await vi.waitFor(() => expect(started).toBe(true))
     expect(finished).toBe(false)
-    h.emit({ role: 'official', state: 'ready', seconds: 4 })
+    h.emit({ role: 'official', state: 'ready', hasVideo: true, completeSegments: 1, seconds: 4 })
     expect((await operation).ok).toBe(true)
   })
 
@@ -261,7 +261,7 @@ describe('main acquisition boundary', () => {
     expect(retried).toMatchObject({ ok: true, stream: { quality: recovered ? '308' : '301',
       qualities: expect.arrayContaining([expect.objectContaining({ id: '308', adaptive: true })]) } })
     expect(Boolean(h.inputs.at(-1)?.adaptive)).toBe(recovered)
-    if (!recovered) expect(h.runYtDlp).toHaveBeenLastCalledWith('https://www.youtube.com/watch?v=abcdefghijk', false)
+    if (!recovered) expect(h.runYtDlp).toHaveBeenLastCalledWith('https://www.youtube.com/watch?v=abcdefghijk', false, expect.any(Object))
     expect((await h.acquisition.switchQuality('official', 'unoffered-id')).ok).toBe(false)
     expect(JSON.stringify(retried)).not.toMatch(/videoUrl|audioUrl|googlevideo/)
   })

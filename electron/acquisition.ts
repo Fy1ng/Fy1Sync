@@ -3,9 +3,9 @@ import type { AcquisitionService } from '../server/api'
 import { createResolverDeps, sanitizedFailure } from '../server/api'
 import type { ProxyConfig } from '../server/config'
 import { detectPlatform, resolveStream, type PlatformKind, type ResolveResult, type ResolvedStream } from '../server/platforms'
-import { checkUrl, ProxyError, safeFetch, type Resolver } from '../server/safeFetch'
-import { readPlatformText } from '../server/platformResponse'
-import { highestHlsVariant } from '../server/platforms/hlsVariant'
+import { checkUrl, ProxyError, type Resolver } from '../server/safeFetch'
+import { networkContext, type NetworkContext } from '../server/networkPolicy'
+import { StreamFailureError, classifyNetworkFailure, type StreamFailure } from '../server/networkFailure'
 import { isStreamId, type StreamId } from './streamIdentity'
 import type { BufferInput, BufferManager, BufferState } from './bufferManager'
 import type { LoginManager } from './login'
@@ -20,18 +20,19 @@ export class Acquisition implements AcquisitionService {
   private readonly publicStreams = new Map<StreamId, ResolvedStream>()
   private generationSequence = 0
   private disposed = false
-  private readonly resolveRoom: ResolveDouyuRoom
   constructor(private readonly deps: {
     buffer: Pick<BufferManager, 'start' | 'stop' | 'subscribe'>
     logins: Pick<LoginManager, 'login' | 'loginStatus' | 'logout' | 'cookieHeader'>
-    runYtDlp: (url: string, adaptive?: boolean) => Promise<unknown>
+    runYtDlp: (url: string, adaptive?: boolean, network?: NetworkContext) => Promise<unknown>
     proxy: ProxyConfig
+    network?: (platform: PlatformKind | null) => NetworkContext
+    mediaInput?: (url: string, headers: Record<string,string> | undefined, network: NetworkContext) => Promise<{url:string;proxyUrl:string;readFailure?:()=>StreamFailure|undefined}>
     fetchImpl?: typeof fetch
     resolveDouyuRoom?: ResolveDouyuRoom
     dns?: Resolver
     readyTimeoutMs?: number
     ensureTools?: (platform: PlatformKind | null) => Promise<void>
-  }) { this.resolveRoom = deps.resolveDouyuRoom ?? createDouyuRoomResolver(deps.proxy, deps.fetchImpl).resolve }
+  }) {}
 
   async resolve(input: string, platform: PlatformKind | undefined, role: StreamId, quality?: string, preferAdaptive = false, confirmedRoom?: string): Promise<ResolveResult> {
     if (!isStreamId(role)) return refusal('播放会话无效')
@@ -58,27 +59,34 @@ export class Acquisition implements AcquisitionService {
     const sameSource = previous?.input === input && previous.platform === platform ? previous.stream : undefined
     const requestedAdaptive = sameSource?.qualities?.find(option => option.id === quality && option.adaptive)
     let fallbackHeight: number | undefined
-    let first = await this.resolveInput(input, platform, quality, preferAdaptive, false, confirmedRoom)
+    const network = this.deps.network?.(detected) ?? networkContext(detected)
+    let first: ResolveResult
+    try { first = await this.resolveInput(input, platform, quality, preferAdaptive, false, confirmedRoom, network) }
+    catch (error) { if (error instanceof ProxyError && error.reason !== 'dns-failed') throw error; return failedResult(classifyNetworkFailure(error, 'resolve')) }
     // A previously offered adaptive id can disappear when provider setup falls back
     // to the old extractor mode. Preserve playback instead of rejecting that switch.
     if (!first.ok && first.failure.code === 'unsupported-url' && detected === 'youtube' && requestedAdaptive?.height) {
       fallbackHeight = requestedAdaptive.height
-      first = await this.resolveInput(input, platform, 'auto', false, true)
+      first = await this.resolveInput(input, platform, 'auto', false, true, undefined, network)
     }
     if (generation !== this.generations.get(role) || this.disposed) return refusal('片源操作已被替换')
-    if (!first.ok) return first
+    if (!first.ok) return { ...first, failure: { ...first.failure, stage: first.failure.stage ?? 'resolve', reason: first.failure.reason ?? first.failure.code } }
     if (detected !== 'youtube') await this.deps.ensureTools?.(detected)
     if (generation !== this.generations.get(role) || this.disposed) return refusal('片源操作已被替换')
     let initial = true
     const selection: Selection = { input, platform, quality, preferAdaptive, stream: retainAdaptiveQualities(sameSource, first.stream) }
     const prepare = async (hlsOnly = false): Promise<BufferInput> => {
-      const resolved = initial && !hlsOnly ? first : await this.resolveInput(input, platform, hlsOnly ? 'auto' : quality, hlsOnly ? false : preferAdaptive, hlsOnly, selection.stream.sourceRoom)
+      const resolved = initial && !hlsOnly ? first : await this.resolveInput(input, platform, hlsOnly ? 'auto' : quality, hlsOnly ? false : preferAdaptive, hlsOnly, selection.stream.sourceRoom, network)
       initial = false
       if (generation !== this.activeGenerations.get(role) || this.disposed) throw new Error('片源操作已取消')
-      if (!resolved.ok) throw new Error('重新解析直播失败')
+      if (!resolved.ok) throw new StreamFailureError({ stage: 'resolve', code: resolved.failure.code, message: resolved.failure.message })
       selection.stream = retainAdaptiveQualities(selection.stream, resolved.stream)
-      return { url: resolved.stream.url, headers: resolved.stream.headers
-        ?? (resolved.stream.platform === 'bilibili' ? { Referer: 'https://live.bilibili.com/' } : undefined),
+      const headers = resolved.stream.headers
+        ?? (resolved.stream.platform === 'bilibili' ? { Referer: 'https://live.bilibili.com/' } : undefined)
+      const media = !resolved.stream.adaptive && this.deps.mediaInput ? await this.deps.mediaInput(resolved.stream.url, headers, network) : undefined
+      const route = media ? undefined : await network.route(resolved.stream.url)
+      return { url: media?.url ?? resolved.stream.url, gatewayHls: Boolean(media && resolved.stream.kind === 'hls'), network, proxyUrl: media?.proxyUrl ?? route?.proxyUrl ?? '', readFailure: media?.readFailure, headers: media ? undefined : resolved.stream.headers
+        ?? (!media && resolved.stream.platform === 'bilibili' ? { Referer: 'https://live.bilibili.com/' } : undefined),
         ...(resolved.stream.adaptive ? { adaptive: resolved.stream.adaptive } : {}),
         qualityHeight: resolved.stream.qualities?.find(option => option.id === resolved.stream.quality)?.height,
         ...(fallbackHeight ? { fallbackFromHeight: fallbackHeight } : {}),
@@ -108,7 +116,7 @@ export class Acquisition implements AcquisitionService {
       }
       // Preserve structured locator errors without passing subprocess diagnostics.
       if (error instanceof Error && 'tool' in error && 'code' in error) throw error
-      return refusal('本地缓冲未能就绪, 请检查工具和直播状态')
+      return failedResult(classifyNetworkFailure(error, 'playback-not-ready'))
     } finally { readiness.cancel() }
   }
 
@@ -154,35 +162,20 @@ export class Acquisition implements AcquisitionService {
     return this.resolve(selected.input, selected.platform, role, selected.quality, selected.preferAdaptive, selected.stream.sourceRoom)
   }
 
-  private async resolveInput(input: string, platform?: PlatformKind, quality?: string, preferAdaptive = false, hlsOnly = false, confirmedRoom?: string): Promise<ResolveResult> {
-    const resolver = createResolverDeps(this.deps.proxy, (url) => url, this.deps.fetchImpl)
+  private async resolveInput(input: string, platform?: PlatformKind, quality?: string, preferAdaptive = false, hlsOnly = false, confirmedRoom?: string, network: NetworkContext = networkContext(detectPlatform(input, platform))): Promise<ResolveResult> {
+    const resolver = createResolverDeps(this.deps.proxy, (url) => url, this.deps.fetchImpl, network)
     const result = await resolveStream(input, {
-      ...resolver, quality, preferAdaptive, resolveDouyuRoom: this.resolveRoom,
-      ...(confirmedRoom ? { douyuRoomIdentity: { room: confirmedRoom, inputRoom: confirmedRoom } } : {}), runYtDlp: hlsOnly ? url => this.deps.runYtDlp(url, false) : this.deps.runYtDlp,
+      ...resolver, quality, preferAdaptive, resolveDouyuRoom: this.deps.resolveDouyuRoom ?? createDouyuRoomResolver(this.deps.proxy, this.deps.fetchImpl, this.deps.dns, network).resolve,
+      ...(confirmedRoom ? { douyuRoomIdentity: { room: confirmedRoom, inputRoom: confirmedRoom } } : {}), runYtDlp: url => this.deps.runYtDlp(url, !hlsOnly, network),
       douyuCookie: detectPlatform(input, platform) === 'douyu' ? await this.deps.logins.cookieHeader('douyu') : undefined,
     }, platform)
     if (!result.ok) return sanitizedFailure(result)
-    const checked = await checkUrl(result.stream.url, this.deps.proxy, this.deps.dns)
+    const checked = await checkUrl(result.stream.url, this.deps.proxy, this.deps.dns, (await network.route(result.stream.url)).kind === 'http')
     if (!checked.ok) throw new ProxyError(checked.reason, '媒体地址未通过安全检查')
     if (checked.url.username || checked.url.password) throw new ProxyError('invalid-url', '媒体地址不能包含登录凭据')
-    if (result.stream.platform === 'twitch' && result.stream.kind === 'hls') {
-      // FFmpeg maps one video track into the local rolling buffer. Select the best
-      // rendition here; renderer HLS selection cannot recover a discarded variant.
-      const signal = AbortSignal.timeout(this.deps.proxy.requestTimeoutMs)
-      const { response, finalUrl } = await safeFetch(checked.url.href, this.deps.proxy, {
-        signal, fetchImpl: this.deps.fetchImpl, resolve: this.deps.dns,
-        headers: { Accept: 'application/vnd.apple.mpegurl, application/x-mpegURL, text/plain' },
-      })
-      if (!response.ok) { void response.body?.cancel().catch(() => {}); throw new Error('Twitch playlist request failed') }
-      const variant = highestHlsVariant(await readPlatformText(response, signal), finalUrl)
-      const selected = await checkUrl(variant?.url ?? finalUrl.href, this.deps.proxy, this.deps.dns)
-      if (!selected.ok) throw new ProxyError(selected.reason, '媒体地址未通过安全检查')
-      if (selected.url.username || selected.url.password) throw new ProxyError('invalid-url', '媒体地址不能包含登录凭据')
-      result.stream = { ...result.stream, url: selected.url.href }
-    }
     if (result.stream.adaptive) {
       for (const raw of [result.stream.adaptive.videoUrl, result.stream.adaptive.audioUrl]) {
-        const target = await checkUrl(raw, { ...this.deps.proxy, hosts: ['*.googlevideo.com'], allowNonLoopbackTargets: false, allowNonStandardPorts: false }, this.deps.dns)
+        const target = await checkUrl(raw, { ...this.deps.proxy, hosts: ['*.googlevideo.com'], allowNonLoopbackTargets: false, allowNonStandardPorts: false }, this.deps.dns, (await network.route(raw)).kind === 'http')
         if (!target.ok || target.url.protocol !== 'https:' || target.url.port || target.url.username || target.url.password) {
           throw new ProxyError('host-not-allowed', '自适应媒体地址未通过安全检查')
         }
@@ -198,12 +191,12 @@ export class Acquisition implements AcquisitionService {
       let release = () => {}
       // The adaptive budget includes segment retries, token refresh and HLS fallback.
       // Keep the established HLS timeout unchanged.
-      const timer = setTimeout(() => { release(); reject(new Error('缓冲超时')) }, this.deps.readyTimeoutMs ?? (adaptive ? 480_000 : 60_000))
+      const timer = setTimeout(() => { release(); reject(new StreamFailureError({ stage: 'playback-not-ready', code: 'first-video-timeout', message: '解析成功, 但视频片段尚未就绪' })) }, this.deps.readyTimeoutMs ?? (adaptive ? 480_000 : 60_000))
       release = this.deps.buffer.subscribe((state) => {
         if (!active || state.role !== role) return
         if (generation !== this.generations.get(role) || this.disposed) { clearTimeout(timer); release(); reject(new Error('片源已替换')); return }
-        if (state.state === 'failed') { clearTimeout(timer); release(); reject(new Error('缓冲失败')) }
-        else if ((state.state === 'ready' || state.state === 'buffering') && state.seconds >= 4) {
+        if (state.state === 'failed') { clearTimeout(timer); release(); reject(new StreamFailureError(state.failure ?? { stage: 'playback-not-ready', code: state.reason ?? 'buffer-failed', message: '解析成功, 但拉流未能就绪' })) }
+        else if (state.state === 'ready' && state.hasVideo === true && (state.completeSegments ?? 0) > 0 && state.seconds >= 4) {
           clearTimeout(timer); release(); resolve()
         }
       })
@@ -227,4 +220,8 @@ function retainAdaptiveQualities(previous: ResolvedStream | undefined, current: 
 
 function refusal(message: string): ResolveResult {
   return { ok: false, failure: { code: 'upstream-error', message, hint: '检查后重新加载, 或使用本地文件' } }
+}
+
+function failedResult(failure: StreamFailure): ResolveResult {
+  return { ok: false, failure: { code: 'upstream-error', message: failure.message, stage: failure.stage, reason: failure.code, ...(failure.status ? { status: failure.status } : {}) } }
 }

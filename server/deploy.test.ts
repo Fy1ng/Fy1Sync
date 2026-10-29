@@ -14,9 +14,8 @@ for (const entry of ['electron/main.ts', 'electron/preload.ts', 'electron/networ
         for (const chunk of output.output) {
           if (chunk.type !== 'chunk') continue
           expect(chunk.imports.filter(name => name !== 'electron' && !name.startsWith('node:'))).toEqual([])
-          // Outbound Undici legitimately imports node:http. Listening is checked
-          // separately at runtime; the mux's sole listener is a local named pipe.
-          expect(chunk.code).not.toMatch(/server\.listen\(\s*\d/)
+          // The media gateway binds only an ephemeral loopback listener.
+          expect(chunk.code).not.toMatch(/\.listen\(\s*0\s*,\s*["'](?:0\.0\.0\.0|::)["']/)
         }
       }
     })

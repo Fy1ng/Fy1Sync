@@ -47,7 +47,7 @@ describe('isolated yt-dlp execution', () => {
     const [executable, args, options] = vi.mocked(h.launch).mock.calls[0]!
     expect(executable).toBe('/tools/yt-dlp.exe')
     expect(args).toEqual([
-      '--ignore-config', '--no-cache-dir', '--no-playlist', '--no-progress',
+      '--proxy', '', '--ignore-config', '--no-cache-dir', '--no-playlist', '--no-progress',
       '--socket-timeout', '20', '--retries', '1', '--extractor-retries', '1',
       '--no-plugin-dirs', '--no-js-runtimes', '--no-remote-components',
       '--skip-download', '--print', YOUTUBE_METADATA_TEMPLATE, '--', url,
@@ -69,7 +69,7 @@ describe('isolated yt-dlp execution', () => {
   })
 
   it.each([
-    ['HTTP Error 403: Forbidden', '虎牙访问受限, 当前暂不支持登录'],
+    ['HTTP Error 403: Forbidden', '服务器返回 HTTP 403.'],
     ['Room is not currently live', '虎牙房间当前未开播'],
     ['Unable to download room', '虎牙取流失败, 请检查直播状态和网络'],
   ])('returns only a static Huya error after %s', async (stderr, message) => {
@@ -217,7 +217,7 @@ describe('optional yt-dlp PO token script integration', () => {
     const pending = h.runner.resolve(url)
     await vi.waitFor(() => expect(h.launch).toHaveBeenCalledOnce())
     expect(vi.mocked(h.launch).mock.calls[0]![1]).toEqual([
-      '--ignore-config', '--no-cache-dir', '--no-playlist', '--no-progress',
+      '--proxy', '', '--ignore-config', '--no-cache-dir', '--no-playlist', '--no-progress',
       '--socket-timeout', '20', '--retries', '1', '--extractor-retries', '1',
       '--no-js-runtimes', '--js-runtimes', 'node:/electron.exe',
       '--no-remote-components', '--skip-download', '--print', YOUTUBE_METADATA_TEMPLATE, '--cookies', '/private/copy.txt', '--', url,

@@ -5,7 +5,7 @@ export type ProxyConfig = {
   /** Allowed target hostnames; a leading `*.` wildcard matches subdomains. */
   hosts: string[]
   allowNonStandardPorts: boolean
-  /** Low-level test seam; desktop policy always forbids private/loopback targets. */
+  /** Low-level test seam; desktop DIRECT policy always forbids private/loopback targets. */
   allowNonLoopbackTargets: boolean
   maxRedirects: number
   requestTimeoutMs: number

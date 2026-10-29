@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react'
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { DecoderPreferenceState } from '../../electron/decoderPreferences'
+import type { NetworkPreferenceState } from '../../electron/networkPreferences'
 import type { LoginStatus } from '../../electron/login'
 import type { ToolsStatus } from '../../electron/toolsService'
 import { AppUpdateSettings } from './about/AppUpdate'
@@ -78,10 +79,11 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
   )
 }
 
-type GeneralPage = 'youtube' | 'align' | 'decoding' | 'pip' | 'capture' | 'tools' | 'about'
+type GeneralPage = 'youtube' | 'align' | 'network' | 'decoding' | 'pip' | 'capture' | 'tools' | 'about'
 const GENERAL: { id: GeneralPage; label: string }[] = [
   { id: 'youtube', label: 'YouTube' },
   { id: 'align', label: '对齐' },
+  { id: 'network', label: '网络' },
   { id: 'decoding', label: '解码' },
   { id: 'pip', label: '画中画' },
   { id: 'capture', label: '截图与 GIF' },
@@ -96,6 +98,7 @@ function General(): React.ReactNode {
       <div className="settings-page">
         {page === 'youtube' && <YouTubeAccount />}
         {page === 'align' && <AlignPrefs />}
+        {page === 'network' && <Network />}
         {page === 'decoding' && <Decoding />}
         {page === 'pip' && <Group title="画中画"><PipSettings /></Group>}
         {page === 'capture' && <Group title="截图与 GIF"><CaptureSettings /></Group>}
@@ -211,6 +214,55 @@ function AlignPrefs(): React.ReactNode {
 }
 
 const modeName = (mode: DecoderPreferenceState['mode']): string => mode === 'software' ? '软件解码' : '硬件解码'
+
+/** What the system proxy is, in the words a proxy app uses. */
+const PROXY_NAME: Record<NetworkPreferenceState['systemProxy']['type'], string> = {
+  direct: '未设置，直接连接', HTTP: 'HTTP 代理', SOCKS: 'SOCKS 代理', PAC: '自动配置脚本（PAC）',
+}
+
+function Network(): React.ReactNode {
+  const mounted = useMounted()
+  const [state, setState] = useRemembered<NetworkPreferenceState | null>('network', null)
+  const [pending, setPending] = useState(() => state === null)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let live = true
+    void apiClient.getNetworkPreferences().then((result) => {
+      if (!live) return
+      if (result.ok) setState(result.value)
+      else setError(result.message)
+      setPending(false)
+    })
+    return () => { live = false }
+  }, [])
+  const save = async (direct: boolean): Promise<void> => {
+    if (pending || !state) return
+    setPending(true)
+    setError('')
+    try {
+      const result = await apiClient.setNetworkPreferences(direct ? 'direct' : 'system')
+      if (!mounted.current) return
+      if (result.ok) setState(result.value)
+      else setError(result.message)
+    } finally { if (mounted.current) setPending(false) }
+  }
+  const proxy = state?.systemProxy
+  return (
+    <Group title="网络">
+      <div className="row-split">
+        <span>系统代理</span>
+        <span className="muted">{proxy ? PROXY_NAME[proxy.type] : '正在读取'}</span>
+      </div>
+      {proxy?.fallbackReason === 'socks-unsupported' && (
+        <p className="note-warn">暂不支持 SOCKS 代理，YouTube 和 Twitch 会直接连接。可在代理软件里改用 HTTP 代理端口，或开启虚拟网卡（TUN）模式。</p>
+      )}
+      <p className="muted">YouTube 和 Twitch 使用系统代理。</p>
+      <Switch label="斗鱼、哔哩哔哩、虎牙直接连接" detail="开着代理时也不经过代理，避免被分到海外线路。下次载入直播间时生效"
+        checked={state?.domesticRouting === 'direct'} disabled={pending || !state} onChange={(on) => void save(on)} />
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </Group>
+  )
+}
 
 function Decoding(): React.ReactNode {
   const mounted = useMounted()

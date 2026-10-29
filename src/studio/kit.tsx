@@ -324,6 +324,8 @@ const PATHS = {
   user: <><circle cx="12" cy="8.5" r="3.5" /><path d="M5 19.5c1-3.5 3.7-5 7-5s6 1.5 7 5" /></>,
   // A toothed cog: the teeth are what read as 设置, so they are solid, not spokes.
   gear: <><path strokeLinejoin="round" d="M18.31 10.05 20.48 10.55 20.48 13.45 18.31 13.95 17.84 15.08 19.02 16.96 16.96 19.02 15.08 17.84 13.95 18.31 13.45 20.48 10.55 20.48 10.05 18.31 8.92 17.84 7.04 19.02 4.98 16.96 6.16 15.08 5.69 13.95 3.52 13.45 3.52 10.55 5.69 10.05 6.16 8.92 4.98 7.04 7.04 4.98 8.92 6.16 10.05 5.69 10.55 3.52 13.45 3.52 13.95 5.69 15.08 6.16 16.96 4.98 19.02 7.04 17.84 8.92Z" /><circle cx="12" cy="12" r="2.6" /></>,
+  // Lucide `corner-down-left` (ISC): the key the field submits with.
+  enter: <path d="M20 4v7a4 4 0 0 1-4 4H4M9 10l-5 5 5 5" />,
   trophy: <path d="M8 4.5h8v4.2a4 4 0 0 1-8 0V4.5ZM8 6H4.8a3 3 0 0 0 3.3 4M16 6h3.2a3 3 0 0 1-3.3 4M12 12.7V16M8.5 19.5h7M10 16h4v3.5h-4Z" />,
 } as const
 

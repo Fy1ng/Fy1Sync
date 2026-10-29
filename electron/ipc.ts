@@ -122,6 +122,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
   for (const window of options.extraContents ?? []) registerWindow(window)
 
   const releaseBuffer = service.subscribeBuffer?.(state => broadcast('stream-syncer:buffer', { topic: 'buffer', data: state }, state))
+  const releaseDouyuAccounts = service.subscribeDouyuAccounts?.(state => broadcast('stream-syncer:douyu-accounts', { topic: 'douyu-accounts', data: state }, state))
   const releaseDouyuTasks = service.subscribeDouyuTasks?.(state => broadcast('stream-syncer:douyu-tasks', { topic: 'douyu-tasks', data: state }, state))
   const releaseFeatures = service.subscribeFeatures?.(event => broadcast('stream-syncer:features', event, event))
 
@@ -233,6 +234,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
       if (disposed) return
       disposed = true
       safeRelease(releaseBuffer)
+      safeRelease(releaseDouyuAccounts)
       safeRelease(releaseDouyuTasks)
       safeRelease(releaseFeatures)
       for (const owner of windows.values()) { owner.generation++; owner.detach() }

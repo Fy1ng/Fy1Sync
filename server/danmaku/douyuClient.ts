@@ -20,6 +20,7 @@ import {
   toGiftMessage,
 } from './douyuProtocol'
 import { parseDouyuRoomSignal } from './roomSignals'
+import { createNetworkSocket } from './networkSocket'
 import type { DanmakuClientDeps, DanmakuClientEvents, DanmakuState, WebSocketLike } from './types'
 export type { DanmakuClientDeps, DanmakuClientEvents, DanmakuState, WebSocketLike } from './types'
 
@@ -61,13 +62,7 @@ export class DouyuDanmakuClient {
     private readonly events: DanmakuClientEvents,
     deps: DanmakuClientDeps = {},
   ) {
-    this.createSocket =
-      deps.createSocket ??
-      ((url) => {
-        const socket = new WebSocket(url) as unknown as WebSocketLike
-        socket.binaryType = 'arraybuffer'
-        return socket
-      })
+    this.createSocket = deps.createSocket ?? (url => createNetworkSocket(url, 'douyu'))
     this.now = deps.now ?? (() => Date.now())
     this.setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
     this.clearTimer = deps.clearTimer ?? ((handle) => clearTimeout(handle as never))

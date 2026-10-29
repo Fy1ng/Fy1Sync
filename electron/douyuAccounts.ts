@@ -76,6 +76,10 @@ export class DouyuAccountManager {
   private readonly busy = new Set<string>()
   private readonly revisions = new Map<string, number>()
   private readonly listeners = new Set<(event: AccountEvent) => void>()
+  private readonly snapshotListeners = new Set<{ listener: (snapshot: DouyuAccountsSnapshot) => void; revision: number }>()
+  private snapshotRevision = 0
+  private publishingSnapshot = false
+  private snapshotRequested = false
   private disposed = false
 
   constructor(private readonly root: string, private readonly options: DouyuAccountManagerOptions) {
@@ -94,10 +98,44 @@ export class DouyuAccountManager {
     return () => { this.listeners.delete(listener) }
   }
 
+  subscribeSnapshots(listener: (snapshot: DouyuAccountsSnapshot) => void): () => void {
+    if (this.disposed) return () => {}
+    const entry = { listener, revision: -1 }
+    this.snapshotListeners.add(entry)
+    this.publishSnapshots()
+    return () => { this.snapshotListeners.delete(entry) }
+  }
+
+  private publishSnapshots(): void {
+    if (this.disposed || !this.snapshotListeners.size) return
+    this.snapshotRequested = true
+    if (this.publishingSnapshot) return
+    this.publishingSnapshot = true
+    void (async () => {
+      try {
+        while (this.snapshotRequested && !this.disposed && this.snapshotListeners.size) {
+          this.snapshotRequested = false
+          const snapshot = await this.snapshot()
+          if (this.disposed) break
+          for (const entry of this.snapshotListeners) {
+            // A listener can synchronously change accounts; publish a fresh view afterwards.
+            if (snapshot.revision !== this.snapshotRevision) { this.snapshotRequested = true; break }
+            if (entry.revision >= snapshot.revision) continue
+            entry.revision = snapshot.revision
+            try { entry.listener(structuredClone(snapshot)) } catch { /* One view cannot interrupt other account observers. */ }
+          }
+        }
+      } catch { /* Storage errors remain available through the explicit snapshot request. */ }
+      finally { this.publishingSnapshot = false }
+    })()
+  }
+
   private emit(event: AccountEvent): void {
+    this.snapshotRevision++
     for (const listener of this.listeners) {
       try { listener(event) } catch { /* A closed view cannot interrupt credential invalidation. */ }
     }
+    this.publishSnapshots()
   }
 
   private invalidate(id: string): void {
@@ -134,13 +172,24 @@ export class DouyuAccountManager {
   }
 
   async snapshot(): Promise<DouyuAccountsSnapshot> {
-    this.check()
-    const current = this.registry
-    const accounts = await Promise.all(current.accounts.map(async account => ({
-      id: account.id, label: account.label, active: account.id === current.activeAccountId,
-      busy: this.busy.has(account.id), login: (await this.manager(account.id).loginStatus()).douyu,
-    })))
-    return { activeAccountId: current.activeAccountId, accounts }
+    while (true) {
+      this.check()
+      const revision = this.snapshotRevision
+      const current = this.registry
+      try {
+        const accounts = await Promise.all(current.accounts.map(async account => ({
+          id: account.id, label: account.label, active: account.id === current.activeAccountId,
+          busy: this.busy.has(account.id), login: (await this.manager(account.id).loginStatus()).douyu,
+        })))
+        this.check()
+        if (revision !== this.snapshotRevision) continue
+        return { revision, activeAccountId: current.activeAccountId, accounts }
+      } catch (error) {
+        this.check()
+        if (revision !== this.snapshotRevision) continue
+        throw error
+      }
+    }
   }
 
   async add(label: string): Promise<DouyuAccountsSnapshot> {
@@ -258,6 +307,7 @@ export class DouyuAccountManager {
     this.disposed = true
     for (const account of this.registry.accounts) this.invalidate(account.id)
     this.listeners.clear()
+    this.snapshotListeners.clear()
     await Promise.allSettled([...this.managers.values()].map(manager => manager.dispose()))
     this.managers.clear()
   }

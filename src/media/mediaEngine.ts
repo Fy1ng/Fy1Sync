@@ -48,6 +48,11 @@ export interface RoleState {
   autoLevel: number
   isLive: boolean
   attachMode: AttachMode | null
+  /**
+   * A frame of this source has been presented. Metadata alone (`ready`) can arrive for a
+   * stream whose video never decodes, so "is the picture actually there" is asked here.
+   */
+  firstFrame: boolean
 }
 
 export type EngineState = Record<SourceRole, RoleState>
@@ -101,6 +106,7 @@ function initialRoleState(role: SourceRole): RoleState {
     autoLevel: -1,
     isLive: false,
     attachMode: null,
+    firstFrame: false,
   }
 }
 
@@ -301,11 +307,13 @@ export class MediaEngine {
       level: -1,
       autoLevel: -1,
       attachMode: null,
+      firstFrame: false,
     }
     this.notify()
 
     /** A source swapped during `await attachMedia` must not be written back. */
     const current = () => runtime.generation === generation && !this.disposed
+    this.watchFirstFrame(role, current)
 
     try {
       const attachment = await attachMedia(runtime.element, descriptor, {
@@ -367,6 +375,30 @@ export class MediaEngine {
       }
       this.notify()
     }
+  }
+
+  /** Mark `firstFrame` once the element presents one; a newer load supersedes the watch. */
+  private watchFirstFrame(role: SourceRole, current: () => boolean): void {
+    const element = this.runtime.get(role)?.element
+    if (!element) return
+    const mark = (): void => {
+      if (!current() || this.state[role].firstFrame) return
+      this.state[role] = { ...this.state[role], firstFrame: true }
+      this.notify()
+    }
+    if (typeof element.requestVideoFrameCallback === 'function') {
+      element.requestVideoFrameCallback(() => mark())
+      return
+    }
+    // Without the callback, decoded data at the playhead is the closest signal.
+    const onData = (): void => {
+      if (!current()) { element.removeEventListener('loadeddata', onData); return }
+      if (element.readyState >= element.HAVE_CURRENT_DATA && element.videoWidth > 0) {
+        element.removeEventListener('loadeddata', onData)
+        mark()
+      }
+    }
+    element.addEventListener('loadeddata', onData)
   }
 
   /** Release the attachment and the element's buffer, keeping the element itself. */

@@ -139,12 +139,11 @@ export async function loadSource(
   const chip = page.locator(`.chip[data-role="${role}"]`)
   if (await sourceDialog(page).isVisible()) {
     const dialog = sourceDialog(page)
+    await dialog.getByRole('radiogroup', { name: '添加到' }).getByRole('radio', { name: new RegExp(`^${role === 'official' ? '画面' : '解说'}`) }).click()
     await dialog.getByRole('textbox', { name: '直播间链接' }).fill(url)
+    const platform = dialog.getByRole('radiogroup', { name: '选择房间号所属平台' })
+    if (await platform.isVisible()) await platform.getByRole('radio', { name: '斗鱼', exact: true }).click()
     await dialog.getByRole('textbox', { name: '直播间链接' }).press('Enter')
-    const platform = dialog.getByRole('group', { name: '选择房间号所属平台' })
-    if (await platform.isVisible()) await platform.getByRole('button', { name: '斗鱼', exact: true }).click()
-    const placement = dialog.getByRole('group', { name: '选择添加位置' })
-    if (await placement.isVisible()) await placement.getByRole('button', { name: role === 'official' ? '画面' : '解说', exact: true }).click()
   } else {
     const panel = rolePanel(sourceDialog(page), role)
     if (!(await panel.isVisible())) {
