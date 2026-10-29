@@ -14,6 +14,7 @@ module.exports = {
     '!node_modules', '!node_modules/**/*',
   ],
   extraResources: [
+    { from: '.packaging/team-logos', to: 'team-logos', filter: ['manifest.json', 'events/logos/*.png', 'events/logos/*.jpg', 'events/logos/*.webp'] },
     { from: '.packaging/tools', to: 'tools', filter: ['**/*', '!**/*.map', '!**/test/**', '!**/tests/**', '!**/.cache/**', '!**/*.tsbuildinfo'] },
   ],
   copyright: '',

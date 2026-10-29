@@ -1,0 +1,333 @@
+{
+  "schema": 1,
+  "source": {
+    "url": "https://liquipedia.net/counterstrike/Valve_Regional_Standings",
+    "revision": 3389136,
+    "ranking": "Unofficial Global VRS",
+    "rankingDate": "2026-10-26",
+    "retrievedAt": "2026-10-29T17:25:18.181Z"
+  },
+  "selection": "固定选取 Liquipedia Global VRS 前 64 队, 覆盖常见国际及区域赛事, 控制下载请求和包体增量. 队标按现有赛程解析器规则选择 darkmode 优先的 2x 路径.",
+  "teams": [
+    {
+      "rank": 1,
+      "team": "Team Vitality",
+      "path": "/commons/images/thumb/9/96/Team_Vitality_2023_darkmode.png/82px-Team_Vitality_2023_darkmode.png"
+    },
+    {
+      "rank": 2,
+      "team": "MOUZ",
+      "path": "/commons/images/thumb/c/c2/MOUZ_2021_allmode.png/94px-MOUZ_2021_allmode.png"
+    },
+    {
+      "rank": 3,
+      "team": "Team Spirit",
+      "path": "/commons/images/thumb/8/80/Team_Spirit_2022_darkmode.png/86px-Team_Spirit_2022_darkmode.png"
+    },
+    {
+      "rank": 4,
+      "team": "FURIA",
+      "path": "/commons/images/thumb/a/aa/FURIA_Esports_allmode.png/103px-FURIA_Esports_allmode.png"
+    },
+    {
+      "rank": 5,
+      "team": "Aurora Gaming",
+      "path": "/commons/images/thumb/1/1c/Aurora_Gaming_2025_allmode.png/100px-Aurora_Gaming_2025_allmode.png"
+    },
+    {
+      "rank": 6,
+      "team": "Team Falcons",
+      "path": "/commons/images/thumb/8/83/Team_Falcons_2022_allmode.png/83px-Team_Falcons_2022_allmode.png"
+    },
+    {
+      "rank": 7,
+      "team": "Legacy",
+      "path": "/commons/images/thumb/3/34/Legacy_allmode.png/99px-Legacy_allmode.png"
+    },
+    {
+      "rank": 8,
+      "team": "BetBoom Team",
+      "path": "/commons/images/thumb/5/5b/BetBoom_Team_2024_allmode.png/112px-BetBoom_Team_2024_allmode.png"
+    },
+    {
+      "rank": 9,
+      "team": "G2 Esports",
+      "path": "/commons/images/thumb/c/cd/G2_Esports_2019_darkmode.png/88px-G2_Esports_2019_darkmode.png"
+    },
+    {
+      "rank": 10,
+      "team": "FUT Esports",
+      "path": "/commons/images/thumb/0/08/Futbolist_2021_darkmode.png/53px-Futbolist_2021_darkmode.png"
+    },
+    {
+      "rank": 11,
+      "team": "Astralis",
+      "path": "/commons/images/thumb/3/3d/Astralis_2020_allmode.png/82px-Astralis_2020_allmode.png"
+    },
+    {
+      "rank": 12,
+      "team": "PARIVISION",
+      "path": "/commons/images/thumb/9/9d/PARIVISION_allmode.png/113px-PARIVISION_allmode.png"
+    },
+    {
+      "rank": 13,
+      "team": "MIBR",
+      "path": "/commons/images/thumb/7/72/MIBR_2018_darkmode.png/200px-MIBR_2018_darkmode.png"
+    },
+    {
+      "rank": 14,
+      "team": "Ninjas in Pyjamas",
+      "path": "/commons/images/thumb/b/b7/Ninjas_in_Pyjamas_2021_darkmode.png/100px-Ninjas_in_Pyjamas_2021_darkmode.png"
+    },
+    {
+      "rank": 15,
+      "team": "HEROIC",
+      "path": "/commons/images/thumb/0/0d/HEROIC_2024_allmode.png/114px-HEROIC_2024_allmode.png"
+    },
+    {
+      "rank": 16,
+      "team": "9z Team",
+      "path": "/commons/images/thumb/9/9b/9z_Team_2024_darkmode.png/119px-9z_Team_2024_darkmode.png"
+    },
+    {
+      "rank": 17,
+      "team": "FaZe Clan",
+      "path": "/commons/images/thumb/c/c5/FaZe_Esports_2026_darkmode.png/117px-FaZe_Esports_2026_darkmode.png"
+    },
+    {
+      "rank": 18,
+      "team": "1w Team",
+      "path": "/commons/images/thumb/5/5c/1win_Team_2024_allmode.png/199px-1win_Team_2024_allmode.png"
+    },
+    {
+      "rank": 19,
+      "team": "M80",
+      "path": "/commons/images/thumb/5/55/M80_2023_allmode.png/87px-M80_2023_allmode.png"
+    },
+    {
+      "rank": 20,
+      "team": "100 Thieves",
+      "path": "/commons/images/thumb/7/78/100_Thieves_darkmode.png/127px-100_Thieves_darkmode.png"
+    },
+    {
+      "rank": 21,
+      "team": "Nemiga Gaming",
+      "path": "/commons/images/thumb/b/bb/Nemiga_Gaming_2020_temporary.png/100px-Nemiga_Gaming_2020_temporary.png"
+    },
+    {
+      "rank": 22,
+      "team": "B8",
+      "path": "/commons/images/thumb/a/a6/B8_darkmode.png/83px-B8_darkmode.png"
+    },
+    {
+      "rank": 23,
+      "team": "JiJieHao",
+      "path": "/commons/images/thumb/3/30/JiJieHao_International_allmode.png/117px-JiJieHao_International_allmode.png"
+    },
+    {
+      "rank": 24,
+      "team": "The MongolZ",
+      "path": "/commons/images/thumb/2/2b/The_MongolZ_2024_03_allmode.png/78px-The_MongolZ_2024_03_allmode.png"
+    },
+    {
+      "rank": 25,
+      "team": "Team Liquid",
+      "path": "/commons/images/thumb/5/59/Team_Liquid_2024_darkmode.png/88px-Team_Liquid_2024_darkmode.png"
+    },
+    {
+      "rank": 26,
+      "team": "Virtus.pro",
+      "path": "/commons/images/thumb/c/c0/Virtus.pro_2019_allmode.png/102px-Virtus.pro_2019_allmode.png"
+    },
+    {
+      "rank": 27,
+      "team": "Luminosity Gaming",
+      "path": "/commons/images/thumb/a/a2/Luminosity_Gaming_2018_allmode.png/100px-Luminosity_Gaming_2018_allmode.png"
+    },
+    {
+      "rank": 28,
+      "team": "Eternal Fire",
+      "path": "/commons/images/thumb/e/ec/Eternal_Fire_2023_allmode.png/189px-Eternal_Fire_2023_allmode.png"
+    },
+    {
+      "rank": 29,
+      "team": "IC Esports",
+      "path": "/commons/images/thumb/c/c6/Inner_Circle_2025_allmode.png/86px-Inner_Circle_2025_allmode.png"
+    },
+    {
+      "rank": 30,
+      "team": "Fnatic",
+      "path": "/commons/images/thumb/f/f9/Fnatic_2020_allmode.png/155px-Fnatic_2020_allmode.png"
+    },
+    {
+      "rank": 31,
+      "team": "BIG",
+      "path": "/commons/images/thumb/6/69/BIG_2020_darkmode.png/70px-BIG_2020_darkmode.png"
+    },
+    {
+      "rank": 32,
+      "team": "magic",
+      "path": "/commons/images/thumb/c/ce/Magic_%28Russian_team%29_allmode.png/172px-Magic_%28Russian_team%29_allmode.png"
+    },
+    {
+      "rank": 33,
+      "team": "BC.Game Esports",
+      "path": "/commons/images/thumb/6/6d/BC.Game_2025_allmode.png/85px-BC.Game_2025_allmode.png"
+    },
+    {
+      "rank": 34,
+      "team": "SINNERS Esports",
+      "path": "/commons/images/thumb/4/4f/SINNERS_Esports_allmode.png/78px-SINNERS_Esports_allmode.png"
+    },
+    {
+      "rank": 35,
+      "team": "Natus Vincere",
+      "path": "/commons/images/thumb/9/95/Natus_Vincere_2021_allmode.png/114px-Natus_Vincere_2021_allmode.png"
+    },
+    {
+      "rank": 36,
+      "team": "K27",
+      "path": "/commons/images/thumb/c/c0/K27_allmode.png/200px-K27_allmode.png"
+    },
+    {
+      "rank": 37,
+      "team": "HOTU",
+      "path": "/commons/images/thumb/2/27/HOTU_2022_darkmode.png/100px-HOTU_2022_darkmode.png"
+    },
+    {
+      "rank": 38,
+      "team": "Team Nemesis",
+      "path": "/commons/images/thumb/5/5a/Team_Nem_darkmode.png/113px-Team_Nem_darkmode.png"
+    },
+    {
+      "rank": 39,
+      "team": "ENVY",
+      "path": "/commons/images/thumb/7/7f/Team_Envy_2018_darkmode.png/100px-Team_Envy_2018_darkmode.png"
+    },
+    {
+      "rank": 40,
+      "team": "Imperial Esports",
+      "path": "/commons/images/thumb/8/82/Imperial_Esports_2025_allmode.png/79px-Imperial_Esports_2025_allmode.png"
+    },
+    {
+      "rank": 41,
+      "team": "BBL Esports",
+      "path": "/commons/images/thumb/6/60/BBL_Esports_2022_darkmode.png/125px-BBL_Esports_2022_darkmode.png"
+    },
+    {
+      "rank": 42,
+      "team": "Sangal Esports",
+      "path": "/commons/images/thumb/7/7a/Sangal_Esports_2020_allmode.png/85px-Sangal_Esports_2020_allmode.png"
+    },
+    {
+      "rank": 43,
+      "team": "DENDELE CS",
+      "path": "/commons/images/thumb/8/87/DENDELE_CS_allmode.png/76px-DENDELE_CS_allmode.png"
+    },
+    {
+      "rank": 44,
+      "team": "GamerLegion",
+      "path": "/commons/images/thumb/2/21/GamerLegion_2026_allmode.png/99px-GamerLegion_2026_allmode.png"
+    },
+    {
+      "rank": 45,
+      "team": "Wildcard",
+      "path": "/commons/images/thumb/7/77/Wildcard_2024_darkmode.png/84px-Wildcard_2024_darkmode.png"
+    },
+    {
+      "rank": 46,
+      "team": "Alliance",
+      "path": "/commons/images/thumb/3/3a/Alliance_2024_allmode.png/141px-Alliance_2024_allmode.png"
+    },
+    {
+      "rank": 47,
+      "team": "paiN Gaming",
+      "path": "/commons/images/thumb/d/d3/PaiN_Gaming_2023_darkmode.png/151px-PaiN_Gaming_2023_darkmode.png"
+    },
+    {
+      "rank": 48,
+      "team": "NRG",
+      "path": "/commons/images/thumb/1/16/NRG_2024_allmode.png/200px-NRG_2024_allmode.png"
+    },
+    {
+      "rank": 49,
+      "team": "Chinggis Warriors",
+      "path": "/commons/images/thumb/3/39/Chinggis_Warriors_allmode.png/100px-Chinggis_Warriors_allmode.png"
+    },
+    {
+      "rank": 50,
+      "team": "Lynn Vision Gaming",
+      "path": "/commons/images/thumb/e/e7/Lynn_Vision_Gaming_2024_allmode.png/148px-Lynn_Vision_Gaming_2024_allmode.png"
+    },
+    {
+      "rank": 51,
+      "team": "Nuclear TigeRES",
+      "path": "/commons/images/thumb/2/2c/Nuclear_TigeRES_darkmode.png/140px-Nuclear_TigeRES_darkmode.png"
+    },
+    {
+      "rank": 52,
+      "team": "Betclic Apogee Esports",
+      "path": "/commons/images/thumb/9/9d/Betclic_Apogee_Esports_darkmode.png/106px-Betclic_Apogee_Esports_darkmode.png"
+    },
+    {
+      "rank": 53,
+      "team": "FOKUS",
+      "path": "/commons/images/thumb/1/12/FOKUS_allmode.png/74px-FOKUS_allmode.png"
+    },
+    {
+      "rank": 54,
+      "team": "FlyQuest",
+      "path": "/commons/images/thumb/b/b2/FlyQuest_2021_allmode.png/102px-FlyQuest_2021_allmode.png"
+    },
+    {
+      "rank": 55,
+      "team": "EYEBALLERS",
+      "path": "/commons/images/thumb/6/68/EYEBALLERS_2023_allmode.png/71px-EYEBALLERS_2023_allmode.png"
+    },
+    {
+      "rank": 56,
+      "team": "BESTIA",
+      "path": "/commons/images/thumb/f/f4/BESTIA_darkmode.png/84px-BESTIA_darkmode.png"
+    },
+    {
+      "rank": 57,
+      "team": "SAW",
+      "path": "/commons/images/thumb/f/fa/SAW_2021_allmode.png/121px-SAW_2021_allmode.png"
+    },
+    {
+      "rank": 58,
+      "team": "Fluxo W7M",
+      "path": "/commons/images/thumb/7/7d/Fluxo_W7M_Dec_2025_darkmode.png/100px-Fluxo_W7M_Dec_2025_darkmode.png"
+    },
+    {
+      "rank": 59,
+      "team": "Iberian Soul",
+      "path": "/commons/images/thumb/b/bf/Iberian_Soul_allmode.png/74px-Iberian_Soul_allmode.png"
+    },
+    {
+      "rank": 60,
+      "team": "PRIVATE",
+      "path": "/commons/images/thumb/c/c0/PRIVATE_allmode.png/107px-PRIVATE_allmode.png"
+    },
+    {
+      "rank": 61,
+      "team": "TYLOO",
+      "path": "/commons/images/thumb/5/5f/TyLoo_2016_allmode.png/111px-TyLoo_2016_allmode.png"
+    },
+    {
+      "rank": 62,
+      "team": "Phantom Esports",
+      "path": "/commons/images/thumb/c/c6/Phantom_Esports_darkmode.png/83px-Phantom_Esports_darkmode.png"
+    },
+    {
+      "rank": 63,
+      "team": "5star eSports",
+      "path": "/commons/images/thumb/7/71/5star_eSports_darkmode.png/113px-5star_eSports_darkmode.png"
+    },
+    {
+      "rank": 64,
+      "team": "PURE",
+      "path": "/commons/images/thumb/e/ea/PURE_allmode.png/125px-PURE_allmode.png"
+    }
+  ]
+}

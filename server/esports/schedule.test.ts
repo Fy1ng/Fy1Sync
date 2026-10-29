@@ -404,7 +404,7 @@ describe('background tournament query cache', () => {
     const images = { get: vi.fn((_path: string | undefined, download = true) => {
       if (download) void ready.then(() => { cached = true })
       return cached ? 'app://app/team-logo/abc' : null
-    }), dispose: vi.fn(async () => {}) } as unknown as TeamLogoCache
+    }), setActivePaths: vi.fn(), dispose: vi.fn(async () => {}) } as unknown as TeamLogoCache
     const { service } = create(images)
     const first = await service.getCs2Schedule()
     expect(first.matches[0]!.teams[0]!.logo).toBeNull()
@@ -443,6 +443,24 @@ describe('background tournament query cache', () => {
     expect((await service.getCs2Schedule()).matches[0]!.teams[0]!.logo).toContain('app://app/team-logo/')
     await service.getCs2Schedule({ refresh: true })
     expect(starts.filter(value => value.action === 'parse')).toHaveLength(1)
+  })
+  it('keeps logo refresh scope inside the current schedule window and stops updating it on disposal', async () => {
+    const images = { get: vi.fn(() => null), setActivePaths: vi.fn(), dispose: vi.fn(async () => {}) } as unknown as TeamLogoCache
+    const { service } = create(images)
+    const paths = new Map<string, string>()
+    const matches = parseSchedule(fixture, paths)
+    const visiblePaths = (at: number) => currentMatches(matches, at).flatMap(match =>
+      match.teams.map((_team, index) => paths.get(`${match.id}:${index}`)).filter((path): path is string => !!path))
+    await service.getCs2Schedule()
+    expect(images.setActivePaths).toHaveBeenLastCalledWith(visiblePaths(NOW))
+    vi.setSystemTime(NOW + 5 * 24 * 3600_000)
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(images.setActivePaths).toHaveBeenLastCalledWith([])
+    expect(visiblePaths(Date.now())).toEqual([])
+    await service.dispose()
+    const count = vi.mocked(images.setActivePaths).mock.calls.length
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(images.setActivePaths).toHaveBeenCalledTimes(count)
   })
   it('normalizes parser tier hints including -1 to unknown until the query proves a category', async () => {
     const payload = { parse: { text: { '*': fixture.parse.text['*'].replaceAll('class="match-info"', 'class="match-info" data-liquipediatier="-1"') } } }

@@ -36,6 +36,7 @@ import { SavedRoomsStore } from './savedRooms'
 
 export interface BackendRuntimeOptions {
   userDataDir: string
+  bundledLogoDir?: string
   proxy: ProxyConfig
   acquisition: Acquisition
   relay: DanmakuRelay
@@ -59,7 +60,8 @@ export interface BackendRuntimeOptions {
 export function createBackendRuntime(options: BackendRuntimeOptions) {
   const lifetime = new AbortController()
   const api = new FeatureApi()
-  const esports = new EsportsService({ userDataDir: options.userDataDir, version: appPackage.version, onEvent: event => api.publish(event) })
+  const esports = new EsportsService({ userDataDir: options.userDataDir, bundledLogoDir: options.bundledLogoDir,
+    version: appPackage.version, onEvent: event => api.publish(event) })
   const savedRooms = new SavedRoomsStore(options.userDataDir)
   const readCache = new DouyuReadCache()
   const releases: (() => void)[] = []

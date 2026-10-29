@@ -31,6 +31,7 @@ interface CachedTiers { schema: 2; entries: Record<string, CachedTier> }
 const emptyTiers = (): CachedTiers => ({ schema: 2, entries: Object.create(null) as Record<string, CachedTier> })
 interface Dependencies {
   userDataDir: string
+  bundledLogoDir?: string
   version: string
   now?: () => number
   request?: typeof fetch
@@ -168,6 +169,7 @@ export class EsportsService {
   private flight: Promise<Cs2Schedule> | undefined
   private tierFlight: Promise<void> | undefined
   private tierTimer: ReturnType<typeof setTimeout> | undefined
+  private logoTimer: ReturnType<typeof setInterval> | undefined
   private eventTimer: ReturnType<typeof setTimeout> | undefined
   private lastEventAt = -Infinity
   private readonly pendingEvents = new Set<Cs2ScheduleEvent['data']['type']>()
@@ -180,11 +182,17 @@ export class EsportsService {
     this.rateLimit = new LiquipediaRateLimit(options.userDataDir, this.now)
     this.logos = options.logos === undefined ? new TeamLogoCache({ ...options, rateLimit: this.rateLimit,
       onUpdated: () => this.notify('logos-updated') }) : options.logos
+    if (this.logos) {
+      // Recompute the visible time window even while no renderer is reading snapshots.
+      this.logoTimer = setInterval(() => this.enqueueLogos(), 30_000)
+      this.logoTimer.unref?.()
+    }
   }
   private snapshot(error?: string): Cs2Schedule {
     const now = this.now()
     const cached = this.disk.loadTiers()
     const matches = structuredClone(currentMatches(this.cache?.matches ?? [], now))
+    this.updateActiveLogos(matches)
     for (const match of matches) {
       const path = normalizeTournamentPath(match.tournament.url)
       match.tournament.tier = path === null ? null : cached.entries[path]?.tier ?? null
@@ -221,9 +229,16 @@ export class EsportsService {
   }
   private enqueueLogos(): void {
     if (this.lifetime.signal.aborted) return
-    for (const match of currentMatches(this.cache?.matches ?? [], this.now())) {
+    const matches = currentMatches(this.cache?.matches ?? [], this.now())
+    this.updateActiveLogos(matches)
+    for (const match of matches) {
       match.teams.forEach((_team, index) => this.logos?.get(this.cache?.logoPaths.get(`${match.id}:${index}`)))
     }
+  }
+  private updateActiveLogos(matches: Cs2Match[]): void {
+    const paths = matches.flatMap(match => match.teams.map((_team, index) => this.cache?.logoPaths.get(`${match.id}:${index}`)))
+      .filter((path): path is string => path !== undefined)
+    this.logos?.setActivePaths(paths)
   }
   private scheduleTierRefresh(): void {
     if (this.lifetime.signal.aborted || this.tierFlight) return
@@ -370,6 +385,7 @@ export class EsportsService {
   async dispose(): Promise<void> {
     this.lifetime.abort()
     clearTimeout(this.tierTimer)
+    clearInterval(this.logoTimer)
     clearTimeout(this.eventTimer)
     this.pendingEvents.clear()
     await this.logos?.dispose()

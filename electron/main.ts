@@ -73,6 +73,7 @@ async function start(): Promise<void> {
   const proxy = { ...config.proxy, allowNonLoopbackTargets: false, allowNonStandardPorts: false }
   const media = new MediaRegistry({ config: proxy })
   const userDataDir = app.getPath('userData')
+  const bundledLogoDir = app.isPackaged ? join(process.resourcesPath, 'team-logos') : undefined
   let danmakuFeatures: DanmakuFeatures | undefined
   let activityPreferences: ActivityPreferencesStore | undefined
   let backend: ReturnType<typeof createBackendRuntime> | undefined
@@ -342,7 +343,7 @@ async function start(): Promise<void> {
     })
   }
   if (danmakuFeatures && activityPreferences) backend = createBackendRuntime({
-    userDataDir, proxy, acquisition, relay, danmaku: danmakuFeatures, accounts: douyuAccounts, tasks: douyuTasks,
+    userDataDir, bundledLogoDir, proxy, acquisition, relay, danmaku: danmakuFeatures, accounts: douyuAccounts, tasks: douyuTasks,
     sender: douyuMessageSender, renewal: douyuRenewal, resolveRoom: roomResolver.resolve, activityPreferences, ...backendConfig,
     ffmpegPath: () => locateTool('ffmpeg', toolSettings, process.env, toolContext),
     validatePng: bytes => { const value = nativeImage.createFromBuffer(bytes); return !value.isEmpty() },
@@ -405,7 +406,7 @@ async function start(): Promise<void> {
       let response: Response | null
       if (url.pathname.startsWith('/media/')) response = await media.handle(request)
       else if (url.pathname.startsWith('/buffer/')) response = await buffer.handle(request)
-      else if (url.pathname.startsWith('/team-logo/')) response = teamLogoResponse(request, userDataDir)
+      else if (url.pathname.startsWith('/team-logo/')) response = teamLogoResponse(request, userDataDir, bundledLogoDir)
       else if (url.pathname === '/pip' || url.pathname === '/pip/') response = await serveStatic(new Request(APP_URL, { method: request.method }), { root: clientDir })
       else response = await serveStatic(request, { root: clientDir })
       if (!response) response = url.pathname === '/' ? missingClientResponse(clientDir) : new Response(null, { status: 404 })

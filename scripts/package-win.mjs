@@ -18,6 +18,7 @@ function run(file, args = []) {
   })
 }
 await run(path.join(root, 'scripts', 'prepare-tools.mjs'))
+await run(path.join(root, 'scripts', 'prepare-team-logos.mjs'))
 const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
 await run(npmCli, ['run', 'build'])
 await run(path.join(root, 'scripts', 'prepare-package.mjs'))
