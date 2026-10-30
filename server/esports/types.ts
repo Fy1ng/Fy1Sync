@@ -21,6 +21,8 @@ export interface Cs2Schedule {
   attribution: string
   stale: boolean
   error?: string
+  /** Set when a refresh was refused for Liquipedia's 30-second parse limit: when one may run again. */
+  refreshAt?: number
   matches: Cs2Match[]
 }
 export type StreamTitleInput = Pick<Cs2Stream, 'platform' | 'channel' | 'videoId'>

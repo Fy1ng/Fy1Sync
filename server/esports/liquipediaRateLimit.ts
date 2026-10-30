@@ -33,7 +33,7 @@ function atomicJson(directory: string, name: string, value: unknown): void {
   } finally { try { unlinkSync(temporary) } catch { /* Already renamed. */ } }
 }
 
-function pause(ms: number, signal: AbortSignal): Promise<void> {
+export function pause(ms: number, signal: AbortSignal): Promise<void> {
   signal.throwIfAborted()
   return new Promise((resolve, reject) => {
     const finish = () => { signal.removeEventListener('abort', abort); resolve() }

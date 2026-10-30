@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -125,6 +125,57 @@ describe('shared schedule service', () => {
     now++
     await second.service.getCs2Schedule({ refresh: true })
     expect(second.request).toHaveBeenCalledTimes(1)
+  })
+  it('renders the ticker from text, so a stale page cache is not what comes back', async () => {
+    const { service, request } = create()
+    await service.getCs2Schedule()
+    const url = new URL(String(request.mock.calls[0]![0]))
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      action: 'parse', format: 'json', prop: 'text', title: 'Liquipedia:Matches', text: '{{Liquipedia:Matches}}',
+    })
+    expect(url.searchParams.has('page')).toBe(false)
+  })
+  it('says when a refresh held back by the 30-second parse limit may run, without failing', async () => {
+    const { service, request } = create()
+    await service.getCs2Schedule({ refresh: true })
+    now += 10_000
+    const refused = await service.getCs2Schedule({ refresh: true })
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(refused).toMatchObject({ refreshAt: NOW + PARSE_INTERVAL_MS, stale: false })
+    expect(refused.error).toBeUndefined()
+    expect(refused.matches.length).toBeGreaterThan(0)
+    now = NOW + PARSE_INTERVAL_MS
+    const fresh = await service.getCs2Schedule({ refresh: true })
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(fresh.refreshAt).toBeUndefined()
+  })
+  it('a refused refresh with nothing cached still says when to try again', async () => {
+    const first = create()
+    await first.service.getCs2Schedule({ refresh: true })
+    await rm(join(directory, 'events', 'liquipedia.json'))
+    const second = create()
+    now += 5_000
+    expect(await second.service.getCs2Schedule({ refresh: true })).toMatchObject({
+      matches: [], stale: true, error: expect.any(String), refreshAt: NOW + PARSE_INTERVAL_MS,
+    })
+    expect(second.request).not.toHaveBeenCalled()
+  })
+  it('waits out the shared 2-second slot instead of refusing the parse', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const { service, request } = create()
+      // Another Liquipedia request (a crest, a tier query) took the shared slot just now.
+      await mkdir(join(directory, 'events'), { recursive: true })
+      await writeFile(join(directory, 'events', 'liquipedia-http-attempt.json'), JSON.stringify({ at: now }))
+      const pending = service.getCs2Schedule({ refresh: true })
+      await vi.advanceTimersByTimeAsync(LIQUIPEDIA_INTERVAL_MS - 1)
+      expect(request).not.toHaveBeenCalled()
+      now += LIQUIPEDIA_INTERVAL_MS
+      await vi.advanceTimersByTimeAsync(1)
+      const result = await pending
+      expect(request).toHaveBeenCalledTimes(1)
+      expect(result.refreshAt).toBeUndefined()
+    } finally { vi.useRealTimers() }
   })
   it('only dispatches once when two services race on the same empty directory', async () => {
     const first = create(), second = create()
