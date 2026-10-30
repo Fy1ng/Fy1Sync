@@ -255,6 +255,11 @@
   flex-basis: 100%;
 }
 
+.studio .sched-wait {
+  font-size: 12px;
+  color: var(--ash);
+}
+
 .studio .sched-source {
   flex: 1;
   font-size: 12px;

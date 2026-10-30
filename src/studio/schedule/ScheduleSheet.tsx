@@ -32,6 +32,8 @@ export function ScheduleSheet({ onClose, onWatch }: {
   const [schedule, setSchedule] = useState<Cs2Schedule | null>(lastSchedule)
   const [failure, setFailure] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  // When Liquipedia's 30-second parse limit lets the next refresh run; null when it may now.
+  const [refreshAt, setRefreshAt] = useState<number | null>(null)
   // The chosen event and the titles read so far survive closing the sheet.
   const [eventKey, setEventKey] = useRemembered<string | null>('schedule:event', null)
   const [titles, setTitles] = useRemembered<Map<string, StreamTitle>>('schedule:titles', new Map())
@@ -48,7 +50,19 @@ export function ScheduleSheet({ onClose, onWatch }: {
     if (!result.ok) { setFailure(result.message); return }
     setFailure(null)
     setSchedule(result.value)
+    // Only a refresh says whether the limit turned it away; the minute's plain read, served
+    // from cache, must not end a countdown that still holds.
+    if (refresh) setRefreshAt(result.value.refreshAt ?? null)
   }
+
+  // Count down once a second while held back, and free the button when the time comes.
+  const waitSeconds = refreshAt === null ? 0 : Math.max(0, Math.ceil((refreshAt - now) / 1000))
+  useEffect(() => {
+    if (refreshAt === null) return
+    if (refreshAt <= Date.now()) { setRefreshAt(null); return }
+    const timer = window.setTimeout(() => setNow(Date.now()), 1000 - (Date.now() % 1000) || 1000)
+    return () => window.clearTimeout(timer)
+  }, [refreshAt, now])
 
   useEffect(() => {
     alive.current = true
@@ -117,11 +131,12 @@ export function ScheduleSheet({ onClose, onWatch }: {
         )}
         <footer className="sched-foot">
           {schedule?.stale && <p className="note-warn">{schedule.error ?? '赛程暂时无法更新，显示的是上次读取的结果'}</p>}
+          {waitSeconds > 0 && <p className="sched-wait" role="status">Liquipedia 限制每 30 秒刷新一次，还需 {waitSeconds} 秒</p>}
           <span className="sched-source">
             {schedule ? `${schedule.attribution} · 更新于 ${formatStart(schedule.fetchedAt, now)}` : '赛程数据来自 Liquipedia (CC-BY-SA 3.0)'}
           </span>
-          <button type="button" className="btn-quiet small" disabled={refreshing} onClick={() => void read(true)}>
-            <Icon name="refresh" />{refreshing ? '正在刷新' : '刷新'}
+          <button type="button" className="btn-quiet small" disabled={refreshing || waitSeconds > 0} onClick={() => void read(true)}>
+            <Icon name="refresh" />{refreshing ? '正在刷新' : waitSeconds > 0 ? `${waitSeconds} 秒后可刷新` : '刷新'}
           </button>
         </footer>
       </div>

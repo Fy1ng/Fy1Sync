@@ -7,14 +7,19 @@ import { FeatureApiError } from '../featureApi'
 import { PinnedDispatcherPool, safeFetch, type Resolver } from '../safeFetch'
 import { currentMatches, parseSchedule, ScheduleFormatError, validChannel } from './parser'
 import { normalizeTournamentPath, queryTournamentTiers, type TournamentTier } from './tiers'
-import { LiquipediaRateLimit } from './liquipediaRateLimit'
+import { LiquipediaRateLimit, pause } from './liquipediaRateLimit'
 import type { Cs2ScheduleEvent } from '../../electron/featureContracts'
 import type { Cs2Match, Cs2Schedule, StreamTitle, StreamTitleInput } from './types'
 import { TeamLogoCache } from './teamLogos'
 
 export { PARSE_INTERVAL_MS } from './liquipediaRateLimit'
 
-export const SCHEDULE_URL = 'https://liquipedia.net/counterstrike/api.php?action=parse&page=Liquipedia:Matches&format=json&prop=text'
+// Rendered from `text`, not `page`: the page's own parser cache is not invalidated when a match
+// page records a score, and was seen serving an 11-hour-old copy. Parsing the transclusion
+// runs the ticker against LPDB now and leaves the shared page cache alone.
+export const SCHEDULE_URL = 'https://liquipedia.net/counterstrike/api.php?' + new URLSearchParams({
+  action: 'parse', format: 'json', prop: 'text', title: 'Liquipedia:Matches', text: '{{Liquipedia:Matches}}',
+})
 export const ATTRIBUTION = '赛程数据来自 Liquipedia (CC-BY-SA 3.0)'
 export const SCHEDULE_TTL_MS = 300_000
 export const TITLE_TTL_MS = 120_000
@@ -23,7 +28,8 @@ export const TIER_NULL_TTL_MS = 6 * 60 * 60_000
 export const TIER_RETRY_MS = 300_000
 const MAX_BODY_BYTES = 2_000_000
 const UNAVAILABLE = '赛程暂时无法读取, 请稍后重试'
-class RateLimited extends Error {}
+/** Refused for the 30-second parse quota; `at` is when the quota frees. */
+class RateLimited extends Error { constructor(readonly at: number) { super('Liquipedia parse quota') } }
 
 interface CachedSchedule { fetchedAt: number; matches: Cs2Match[]; logoPaths: Map<string, string> }
 interface CachedTier { tier: TournamentTier | null; fetchedAt: number | null; retryAt?: number }
@@ -188,7 +194,7 @@ export class EsportsService {
       this.logoTimer.unref?.()
     }
   }
-  private snapshot(error?: string): Cs2Schedule {
+  private snapshot(error?: string, refreshAt?: number): Cs2Schedule {
     const now = this.now()
     const cached = this.disk.loadTiers()
     const matches = structuredClone(currentMatches(this.cache?.matches ?? [], now))
@@ -200,7 +206,7 @@ export class EsportsService {
     }
     return { fetchedAt: this.cache?.fetchedAt ?? 0, source: 'liquipedia', attribution: ATTRIBUTION,
       stale: !!error || !this.cache || now - this.cache.fetchedAt >= SCHEDULE_TTL_MS || now < this.cache.fetchedAt,
-      ...(error ? { error } : {}), matches }
+      ...(error ? { error } : {}), ...(refreshAt !== undefined ? { refreshAt } : {}), matches }
   }
   getCs2Schedule(raw?: { refresh?: boolean }): Promise<Cs2Schedule> {
     const args = scheduleArguments(raw)
@@ -281,14 +287,31 @@ export class EsportsService {
     if (!delay) emit()
     else { this.eventTimer = setTimeout(emit, delay); this.eventTimer.unref?.() }
   }
+  /**
+   * A parse that only waits for the shared 2-second slot (a crest or tier query just used it)
+   * waits it out; one held back by the 30-second parse quota is refused with the time it frees,
+   * before any request starts, so the refusal is never mistaken for a network failure.
+   */
+  private async parseSlot(): Promise<void> {
+    for (;;) {
+      this.lifetime.signal.throwIfAborted()
+      // `delay()` is the shared 2-second slot alone; `delay(true)` adds the parse quota.
+      const slot = this.rateLimit.delay(), quota = this.rateLimit.delay(true)
+      if (quota > slot) throw new RateLimited(this.now() + quota)
+      if (slot > 0) { await pause(slot, this.lifetime.signal); continue }
+      if (this.rateLimit.reserve(true)) return
+      // Lost the slot to another window or process: look again rather than spin.
+      await pause(25, this.lifetime.signal)
+    }
+  }
   private async fetchMetadata(url: string, parse: boolean): Promise<unknown> {
+    if (parse) await this.parseSlot()
     const signal = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(15_000)])
     const result = await safeFetch(url, metadataConfig(), {
       signal, resolve: this.options.resolve, dispatcherPool: this.pool,
       headers: { 'User-Agent': metadataUserAgent(this.options.version), 'Accept-Encoding': 'gzip', Accept: 'application/json' },
       fetchImpl: async (input, init) => {
-        if (parse) { if (!this.rateLimit.reserve(true)) throw new RateLimited() }
-        else await this.rateLimit.wait(signal)
+        if (!parse) await this.rateLimit.wait(signal)
         return (this.options.request ?? fetch)(input, init)
       },
     })
@@ -330,7 +353,7 @@ export class EsportsService {
         ;(this.options.log ?? console.warn)(`Liquipedia selector failed: ${error.selector}`)
         return this.snapshot(error.message)
       }
-      if (error instanceof RateLimited && this.cache) return this.snapshot()
+      if (error instanceof RateLimited) return this.snapshot(this.cache ? undefined : UNAVAILABLE, error.at)
       return this.snapshot(UNAVAILABLE)
     }
   }
