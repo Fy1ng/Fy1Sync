@@ -74,13 +74,23 @@ if (packagedTools) {
   env.STREAM_SYNC_YTDLP = join(tools, 'yt-dlp.exe')
   env.STREAM_SYNC_POT_PLUGIN_DIR = join(tools, 'provider', 'plugin')
   env.STREAM_SYNC_POT_SERVER_HOME = join(tools, 'provider', 'server')
+  // Clip downloads merge and verify with FFmpeg; a dev build has none of its own.
+  const ffmpeg = await findBundledFfmpeg()
+  if (ffmpeg) {
+    env.STREAM_SYNC_FFMPEG = join(ffmpeg, 'ffmpeg.exe')
+    env.STREAM_SYNC_FFPROBE = join(ffmpeg, 'ffprobe.exe')
+  } else console.log('没有找到内置 FFmpeg（.packaging/tools/ffmpeg），YouTube 片段下载会失败。先运行 npm run tools:prepare。')
 } else {
   console.log('没有找到打包版的工具目录（.release/win-unpacked/resources/tools），YouTube 可能无法解析。可用 --tools 指定。')
 }
 
-/** The packaged tools of this checkout or of any other worktree of the same repository. */
-async function findPackagedTools() {
-  const inside = join('.release', 'win-unpacked', 'resources', 'tools')
+/** The bundled FFmpeg of this checkout or of any other worktree of the same repository. */
+async function findBundledFfmpeg() {
+  for (const candidate of await worktrees(join('.packaging', 'tools', 'ffmpeg'))) if (await exists(join(candidate, 'ffprobe.exe'))) return candidate
+  return null
+}
+
+async function worktrees(inside) {
   const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
   const candidates = [join(root, inside)]
   try {
@@ -89,7 +99,12 @@ async function findPackagedTools() {
       if (line.startsWith('worktree ')) candidates.push(join(line.slice('worktree '.length), prefix, inside))
     }
   } catch { /* not a git checkout: only this folder */ }
-  for (const candidate of candidates) if (await exists(join(candidate, 'yt-dlp.exe'))) return candidate
+  return candidates
+}
+
+/** The packaged tools of this checkout or of any other worktree of the same repository. */
+async function findPackagedTools() {
+  for (const candidate of await worktrees(join('.release', 'win-unpacked', 'resources', 'tools'))) if (await exists(join(candidate, 'yt-dlp.exe'))) return candidate
   return null
 }
 
@@ -109,6 +124,7 @@ if (flag('check')) {
 }
 
 const electron = join(root, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron')
-const child = spawn(electron, [join(root, 'dist/electron/main.cjs')], { cwd: root, env, stdio: 'ignore', detached: true })
+// This machine's GPU drops half the frames of 4K60 VP9 in hardware; debug runs decode in software.
+const child = spawn(electron, [join(root, 'dist/electron/main.cjs'), '--disable-accelerated-video-decode'], { cwd: root, env, stdio: 'ignore', detached: true })
 child.unref()
 console.log(`已用复制的登录信息打开（${profile}）。`)

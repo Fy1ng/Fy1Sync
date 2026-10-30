@@ -4,6 +4,9 @@ import { randomUUID } from 'node:crypto'
 import { messageCredentialStatus } from '../server/douyu/messageProtocol'
 import { containedPath, NativePrivatePermissions, privateDirectory } from './privateStorage'
 import type { PrivatePermissions } from './privateStorage'
+import type { CookiesSetDetails } from 'electron'
+
+export interface YoutubeCookieSession { cookies: { set(details: CookiesSetDetails): Promise<void> } }
 
 export type LoginPlatform = 'youtube' | 'douyu'
 export interface LoginResult { cookieCount: number; authKeysPresent: string[] }
@@ -79,7 +82,8 @@ function parseCookies(text: string, platform: LoginPlatform, now: number): Store
   if (Buffer.byteLength(text, 'utf8') > MAX_COOKIE_FILE_BYTES || !/^# Netscape HTTP Cookie File\r?\n/.test(text)) throw storageFailure()
   const cookies: StoredCookie[] = []
   for (let line of text.split(/\r?\n/)) {
-    if (line.startsWith('#HttpOnly_')) line = line.slice(10)
+    const httpOnly = line.startsWith('#HttpOnly_')
+    if (httpOnly) line = line.slice(10)
     else if (!line || line.startsWith('#')) continue
     const fields = line.split('\t')
     const [domain, subdomains, cookiePath, secure, expiry, name, value] = fields
@@ -91,6 +95,7 @@ function parseCookies(text: string, platform: LoginPlatform, now: number): Store
     if (!Number.isSafeInteger(expires)) throw storageFailure()
     if (expires && expires <= now) continue
     cookies.push({ domain: domain.replace(/^\./, '').toLowerCase(), subdomains: subdomains === 'TRUE', path: cookiePath,
+      httpOnly, hostOnly: subdomains !== 'TRUE', session: expires === 0, expirationDate: expires || undefined,
       secure: secure === 'TRUE', name, value, expires })
   }
   return cookies
@@ -229,6 +234,26 @@ export class CookieStore {
     return Object.fromEntries(await Promise.all((['youtube', 'douyu'] as const).map(async platform => [platform,
       this.summary(platform, (await this.read(platform))?.cookies ?? []),
     ]))) as LoginStatus
+  }
+
+  /** Inject only into an isolated main-owned session; no credential values are returned. */
+  async injectYoutubeCookies(target: YoutubeCookieSession): Promise<void> {
+    try {
+      const revision = this.revisions.youtube
+      const loaded = await this.read('youtube')
+      const keys: readonly string[] = LOGIN_PLATFORMS.youtube.authKeys
+      if (!loaded || !loaded.cookies.some(cookie => keys.includes(cookie.name) && cookie.value.length > 0)) throw storageFailure()
+      for (const cookie of loaded.cookies) {
+        if (revision !== this.revisions.youtube) throw storageFailure()
+        await target.cookies.set({
+          url: `${cookie.secure ? 'https' : 'http'}://${cookie.domain}${cookie.path}`,
+          ...(cookie.subdomains ? { domain: `.${cookie.domain}` } : {}),
+          path: cookie.path, name: cookie.name, value: cookie.value, secure: cookie.secure,
+          httpOnly: cookie.httpOnly, ...(cookie.expires ? { expirationDate: cookie.expires } : {}),
+        })
+      }
+      if (revision !== this.revisions.youtube) throw storageFailure()
+    } catch { throw storageFailure() }
   }
 
   async cookieHeader(platform: 'douyu', requestUrl = 'https://www.douyu.com/lapi/live/getH5PlayV1/'): Promise<string> {

@@ -25,6 +25,34 @@ beforeEach(() => {
 afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); vi.restoreAllMocks() })
 
 describe('private cookie storage', () => {
+  it('round-trips HttpOnly and injects host, path, secure, expiry and session semantics in main only', async () => {
+    const manager = store()
+    manager.write('youtube', [
+      cookie({ httpOnly: true, path: '/watch' }),
+      cookie({ domain: 'www.youtube.com', hostOnly: true, name: 'SID', session: true, httpOnly: true, secure: false }),
+      cookie({ domain: '.google.com', name: 'HSID', secure: true, httpOnly: false }),
+    ])
+    const set = vi.fn(async () => {})
+    const logs = [vi.spyOn(console, 'log'), vi.spyOn(console, 'warn'), vi.spyOn(console, 'error')]
+    await expect(manager.injectYoutubeCookies({ cookies: { set } })).resolves.toBeUndefined()
+    expect(set.mock.calls).toEqual([
+      [{ url: 'https://youtube.com/watch', domain: '.youtube.com', path: '/watch', name: 'SAPISID', value: 'test-private-value', secure: true, httpOnly: true, expirationDate: now + 60 }],
+      [{ url: 'http://www.youtube.com/', path: '/', name: 'SID', value: 'test-private-value', secure: false, httpOnly: true }],
+      [{ url: 'https://google.com/', domain: '.google.com', path: '/', name: 'HSID', value: 'test-private-value', secure: true, httpOnly: false, expirationDate: now + 60 }],
+    ])
+    expect(fs.readFileSync(path.join(root, 'cookies', 'youtube.txt'), 'utf8')).toContain('#HttpOnly_.youtube.com')
+    expect(JSON.stringify(await manager.status())).not.toContain('test-private-value')
+    for (const log of logs) expect(log).not.toHaveBeenCalled()
+  })
+
+  it('rejects anonymous session injection and masks Electron cookie errors', async () => {
+    const manager = store(), set = vi.fn(async () => { throw new Error('secret-cookie-value') })
+    await expect(manager.injectYoutubeCookies({ cookies: { set } })).rejects.toThrow('未返回任何 cookie 数据')
+    expect(set).not.toHaveBeenCalled()
+    manager.write('youtube', [cookie({ httpOnly: true })])
+    await expect(manager.injectYoutubeCookies({ cookies: { set } })).rejects.toThrow('未返回任何 cookie 数据')
+  })
+
   it('atomically writes a platform-filtered Netscape file and returns metadata only', () => {
     const result = store().write('youtube', [cookie(), cookie({ domain: '.mail.google.com', name: 'MAIL' }), cookie({ domain: '.google.com', name: 'SID' })])
     expect(result).toEqual({ cookieCount: 2, authKeysPresent: ['SAPISID', 'SID'] })

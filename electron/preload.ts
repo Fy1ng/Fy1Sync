@@ -4,9 +4,13 @@ import type { ApiResult } from '../src/app/apiClient'
 import type { BufferState } from './bufferManager'
 import type { DouyuAccountsSnapshot, DouyuTasksSnapshot } from '../server/douyu/types'
 import { FEATURE_METHODS, type FeatureEvent } from './featureContracts'
+import { YOUTUBE_ADMIN_METHODS, type YtBrowseState, type YtImportJob } from './ytAdminContracts'
+
+const youtubeMethods = new Set<string>(YOUTUBE_ADMIN_METHODS)
 
 const methods = new Set<DesktopMethod>([
   ...FEATURE_METHODS,
+  ...YOUTUBE_ADMIN_METHODS,
   'windowControl', 'getWindowState',
   'listDouyuAccounts', 'addDouyuAccount', 'renameDouyuAccount', 'loginDouyuAccount', 'loginDouyuYubaAccount', 'activateDouyuAccount', 'logoutDouyuAccount', 'removeDouyuAccount',
   'sendDouyuMessage', 'openDouyuTaskRoom',
@@ -25,7 +29,7 @@ const bridge: StreamSyncerBridge = {
     if (!methods.has(method)) {
       return Promise.resolve({ ok: false as const, code: 'unknown-method', message: '未知桌面接口' })
     }
-    return ipcRenderer.invoke('stream-syncer:invoke', method, args) as Promise<ApiResult<DesktopMethods[K]['result']>>
+    return ipcRenderer.invoke(youtubeMethods.has(method) ? 'stream-syncer:yt-invoke' : 'stream-syncer:invoke', method, args) as Promise<ApiResult<DesktopMethods[K]['result']>>
   },
   subscribeDanmaku(room, listener) {
     const subscriptionId = String(++nextSubscription)
@@ -79,6 +83,18 @@ const bridge: StreamSyncerBridge = {
     }
     ipcRenderer.on('stream-syncer:features', receive)
     return () => { active = false; ipcRenderer.removeListener('stream-syncer:features', receive) }
+  },
+  subscribeYtBrowseState(listener) {
+    let active = true
+    const receive = (_event: unknown, state: YtBrowseState) => { if (active) listener(state) }
+    ipcRenderer.on('stream-syncer:yt-browse-state', receive)
+    return () => { active = false; ipcRenderer.removeListener('stream-syncer:yt-browse-state', receive) }
+  },
+  subscribeYtImportProgress(listener) {
+    let active = true
+    const receive = (_event: unknown, job: YtImportJob) => { if (active) listener(job) }
+    ipcRenderer.on('stream-syncer:yt-import-progress', receive)
+    return () => { active = false; ipcRenderer.removeListener('stream-syncer:yt-import-progress', receive) }
   },
 }
 contextBridge.exposeInMainWorld('streamSyncer', Object.freeze(bridge))

@@ -244,6 +244,34 @@ test.describe('发布预设', () => {
   })
 })
 
+test.describe('YouTube 录像素材', () => {
+  test('编辑器能切到 YouTube 录像并经主进程打开链接, 离线时说明原因', async ({ page }) => {
+    failOnPageError(page)
+    await page.goto(APP_ORIGIN + '/admin')
+    await page.getByRole('radiogroup', { name: '素材来源' }).getByText('YouTube 录像').click()
+    const panel = page.getByRole('region', { name: 'YouTube 录像' })
+    await expect(panel).toBeVisible()
+    await panel.getByRole('textbox', { name: 'YouTube 录像链接' }).fill('https://youtu.be/swMquqtyh-A')
+    await panel.getByRole('button', { name: '打开', exact: true }).click()
+    // Offline e2e refuses network in main, so this proves the request reached main and came back.
+    await expect(panel.getByRole('alert')).toContainText('连不上 YouTube')
+    // Clip downloads are listed through main as well; none have run here.
+    await expect(panel.getByRole('list', { name: '下载' })).toHaveCount(0)
+    await page.getByRole('radiogroup', { name: '素材来源' }).getByText('本地文件').click()
+    await expect(panel).toBeHidden()
+  })
+
+  test('播放器位置接口只收严格参数', async ({ page }) => {
+    failOnPageError(page)
+    await page.goto(APP_ORIGIN + '/admin')
+    const call = (args: unknown) => page.evaluate((value) => window.streamSyncer!.invoke('ytBrowseSetViewport', value as never), args)
+    expect(await call({ rect: { x: 10, y: 20, width: 640, height: 360 }, visible: true })).toMatchObject({ ok: true })
+    expect(await call({ rect: { x: 10, y: 20, width: 640, height: 360 }, visible: true, extra: 1 })).toMatchObject({ ok: false, code: 'invalid-arguments' })
+    expect(await call({ rect: { x: 10, y: 20, width: -1, height: 360 }, visible: true })).toMatchObject({ ok: false, code: 'invalid-arguments' })
+    expect(await call({ rect: { x: 10, y: 20, width: 640, height: 360 }, visible: 'yes' })).toMatchObject({ ok: false, code: 'invalid-arguments' })
+  })
+})
+
 /** A minimal valid profile for seeding through the API. */
 function baseProfile(id: string): RecognitionProfile {
   return {

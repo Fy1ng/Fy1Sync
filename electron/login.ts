@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import type { Readable, Writable } from 'node:stream'
 import { CookieStore, cookieDomainAllowed, isLoginPlatform, LOGIN_PLATFORMS } from './cookies'
-import type { BrowserCookie, CookieStoreOptions, LoginPlatform, LoginResult, LoginStatus } from './cookies'
+import type { BrowserCookie, CookieStoreOptions, LoginPlatform, LoginResult, LoginStatus, YoutubeCookieSession } from './cookies'
 import { powershellEnvironment } from './privateStorage'
 
 export type { LoginPlatform, LoginResult, LoginStatus, PlatformLoginStatus } from './cookies'
@@ -360,6 +360,16 @@ export class LoginManager {
       if (this.disposed || this.loggingOut.has(platform) || revision !== this.revisions[platform]) throw new LoginError('login-cancelled')
       return callback(file)
     })
+  }
+
+  /** Session cookies stay entirely in main and are invalidated by login changes. */
+  async injectYoutubeCookies(target: YoutubeCookieSession): Promise<void> {
+    const revision = this.revisions.youtube
+    if (this.disposed || this.loggingOut.has('youtube')) throw new LoginError('login-cancelled')
+    try {
+      await this.store.injectYoutubeCookies(target)
+      if (this.disposed || this.loggingOut.has('youtube') || revision !== this.revisions.youtube) throw new LoginError('login-cancelled')
+    } catch { throw new LoginError('login-incomplete') }
   }
 
   async logout(platform: LoginPlatform): Promise<void> {

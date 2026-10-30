@@ -665,3 +665,108 @@
     display: none;
   }
 }
+
+/* ---------- YouTube footage ---------- */
+
+.editor-stage-col > .seg {
+  flex: none;
+}
+
+.editor-yt {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.editor-yt[hidden],
+.editor-stage[hidden],
+.editor-transport[hidden] {
+  display: none;
+}
+
+.yt-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.yt-link {
+  display: flex;
+  gap: 8px;
+}
+
+.yt-link .text-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Main's player view sits exactly over this box; the box shows only until it is up. */
+.yt-player {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 200px;
+  background: #000;
+  border-radius: var(--r);
+}
+
+.yt-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  font-size: 12px;
+}
+
+.yt-status [data-native='false'] {
+  color: var(--drift);
+}
+
+.yt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.yt-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--line-2);
+}
+
+.yt-jobs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: none;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.yt-job {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: rgb(255 255 255 / 4%);
+  border-radius: var(--r-sm);
+}
+
+.yt-job-what {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.yt-job[data-state='failed'] > .muted {
+  color: #ff8a80;
+}

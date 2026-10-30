@@ -32,12 +32,14 @@ import { apiClient, issuesFrom, type PresetSummary } from '../../app/apiClient'
 import { FrameGrabber, FULL_FRAME_ROI, type GrabbedFrame } from '../../recognition/frameGrabber'
 import { useSession } from '../../app/SessionContext'
 import { routeLink } from '../../app/navigate'
-import { Icon } from '../kit'
+import { Icon, Segmented } from '../kit'
 import { analyzeFrame, drawGray, drawMask, sampleFromBox } from './framePipeline'
 import { RoiWindow } from './RoiWindow'
 import { decodeScreenshot, imageFromClipboard } from './screenshotSample'
 import { FileMenu, LibraryMenu } from './library'
 import { BinarizeSection, GlyphSection, ParamsSection, RegionSection, SampleSection } from './rail'
+import { YouTubePanel, type YouTubeClipJob, type YouTubeSource, type YouTubeStill } from './YouTubePanel'
+import { youtubeSource } from './youtubeSource'
 import '../studio.css'
 import './editor.css'
 
@@ -75,6 +77,9 @@ export default function EditorPage(): React.ReactNode {
   /** A still screenshot replaces the video; the video controls do not apply to it. */
   const [sampleKind, setSampleKind] = useState<'video' | 'image'>('video')
   const [sampleName, setSampleName] = useState('')
+  /** Where footage comes from: local files, or a YouTube recording browsed through main. */
+  const [footage, setFootage] = useState<'local' | 'youtube'>('local')
+  const ytSource = useMemo<YouTubeSource | null>(() => youtubeSource(), [])
   const [videoSize, setVideoSize] = useState({ width: 0, height: 0 })
   const [mediaTime, setMediaTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -187,6 +192,47 @@ export default function EditorPage(): React.ReactNode {
     setPlaying(false)
     setFrame(decoded.frame)
     setMessage({ kind: 'info', text: `已载入${name}（${decoded.frame.width}×${decoded.frame.height}）` })
+  }, [])
+
+  /** A YouTube still is a screenshot like any other: the frame to sample from. */
+  const openStill = useCallback(async (still: YouTubeStill): Promise<void> => {
+    const canvas = document.createElement('canvas')
+    canvas.width = still.frame.width
+    canvas.height = still.frame.height
+    canvas.getContext('2d')?.putImageData(new ImageData(still.frame.pixels as Uint8ClampedArray<ArrayBuffer>, still.frame.width, still.frame.height), 0, 0)
+    // A blob, not a data URL: a 4K PNG as a data URL is a 13 MB string, twice as slow to show.
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+    if (!blob) return
+    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
+    const url = URL.createObjectURL(blob)
+    objectUrlRef.current = url
+    const name = `YouTube ${still.videoId} @ ${Math.round(still.approxTime)}s`
+    setSampleKind('image')
+    setSampleUrl(url)
+    setSampleName(name)
+    setVideoSize({ width: still.frame.width, height: still.frame.height })
+    setMediaTime(still.approxTime)
+    setDuration(0)
+    setPlaying(false)
+    setFrame(still.frame)
+    setFootage('local')
+    setMessage(still.native
+      ? { kind: 'info', text: `已截取 ${still.frame.width}×${still.frame.height} 原尺寸画面` }
+      : { kind: 'warn', text: `截到的画面不是原尺寸（${still.frame.width}×${still.frame.height}），不建议当样本` })
+  }, [])
+
+  /** A downloaded stretch opens as footage, the same as a chosen file. */
+  const openClip = useCallback((job: YouTubeClipJob): void => {
+    if (!job.mediaUrl) return
+    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
+    objectUrlRef.current = ''
+    setSampleKind('video')
+    setSampleUrl(job.mediaUrl)
+    setSampleName(`${job.title || job.videoId} ${Math.round(job.startSeconds)}–${Math.round(job.endSeconds)}s`)
+    setFrame(null)
+    setPlaying(false)
+    setFootage('local')
+    setMessage({ kind: 'info', text: '已打开下载的片段' })
   }, [])
 
   // Ctrl+V anywhere on the editor, except into a text field, which keeps its own paste.
@@ -510,7 +556,17 @@ export default function EditorPage(): React.ReactNode {
 
       <main className="editor-main">
         <section className="editor-stage-col" aria-label="样片">
-          <div className="editor-stage" ref={stageRef}>
+          {ytSource && (
+            <Segmented label="素材来源" value={footage} onChange={setFootage}
+              options={[{ value: 'local', label: '本地文件' }, { value: 'youtube', label: 'YouTube 录像' }]} />
+          )}
+          {/* Kept mounted while hidden, so the page and a running download survive a switch. */}
+          {ytSource && (
+            <div className="editor-yt" hidden={footage !== 'youtube'}>
+              <YouTubePanel source={ytSource} onStill={openStill} onClipReady={openClip} />
+            </div>
+          )}
+          <div className="editor-stage" ref={stageRef} hidden={footage === 'youtube'}>
             {sampleUrl && sampleKind === 'image' ? (
               <img src={sampleUrl} className="editor-media" alt={sampleName} draggable={false} />
             ) : sampleUrl ? (
@@ -547,7 +603,7 @@ export default function EditorPage(): React.ReactNode {
             )}
           </div>
 
-          <div className="editor-transport">
+          <div className="editor-transport" hidden={footage === 'youtube'}>
             <label className="btn-quiet small file-pick">
               选择录像
               <input type="file" accept="video/*" onChange={(event) => {
