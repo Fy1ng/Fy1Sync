@@ -35,6 +35,10 @@ import { routeLink } from '../../app/navigate'
 import { Icon, Segmented } from '../kit'
 import { analyzeFrame, drawGray, drawMask, sampleFromBox } from './framePipeline'
 import { RoiWindow } from './RoiWindow'
+import { FrameStepper, presentAt } from './frameStep'
+import { pairReading } from './reading'
+import { StretchSection } from './StretchSection'
+import type { StretchSample } from './stretch'
 import { decodeScreenshot, imageFromClipboard } from './screenshotSample'
 import { FileMenu, LibraryMenu } from './library'
 import { BinarizeSection, GlyphSection, ParamsSection, RegionSection, SampleSection } from './rail'
@@ -93,6 +97,14 @@ export default function EditorPage(): React.ReactNode {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const stageRef = useRef<HTMLDivElement | null>(null)
   const grabberRef = useRef(new FrameGrabber())
+  /** Steps by the file's real frames; reset whenever a different file is opened. */
+  const stepperRef = useRef<FrameStepper | null>(null)
+  const stepping = useRef(false)
+  /**
+   * The media time of the frame on screen after the last step. `currentTime` stays where the
+   * seek asked, which can sit anywhere inside that frame, so the next step starts from here.
+   */
+  const shownFrame = useRef<{ at: number; requested: number } | null>(null)
   const grayCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const binaryCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const objectUrlRef = useRef<string>('')
@@ -264,12 +276,19 @@ export default function EditorPage(): React.ReactNode {
     setMessage(null)
   }, [sampleKind])
 
-  const step = (delta: number): void => {
+  const step = (delta: -1 | 1): void => {
     const video = videoRef.current
-    if (!video) return
+    // A held arrow key repeats faster than a seek lands; each press waits for the last.
+    if (!video || stepping.current) return
     video.pause()
-    const fps = profile.sampleFps > 0 ? profile.sampleFps : 30
-    video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + delta / fps))
+    stepperRef.current ??= new FrameStepper(presentAt(video))
+    stepping.current = true
+    // Still on the frame the last step reached (nothing else moved the video): start from it.
+    const last = shownFrame.current
+    const from = last && Math.abs(video.currentTime - last.requested) < 1e-6 ? last.at : video.currentTime
+    void stepperRef.current.step(from, delta, video.duration)
+      .then((at) => { shownFrame.current = { at, requested: video.currentTime } })
+      .finally(() => { stepping.current = false })
   }
 
   const togglePlay = (): void => {
@@ -288,6 +307,36 @@ export default function EditorPage(): React.ReactNode {
     patch({ templates: { ...profile.templates, [char]: [...existing, sample] } })
     // Advance the selection so teaching a whole clock is one keystroke per glyph.
     setSelected(selected + 1 < boxes.length ? selected + 1 : -1)
+  }
+
+  /** The whole reading typed at once: one sample per box, left to right. */
+  const assignReading = (text: string): string | null => {
+    if (!analysis) return '先取一帧'
+    const paired = pairReading(text, boxes.length)
+    if (!paired.ok) return paired.reason
+    const origin = `${sampleName || '样片'} @ ${mediaTime.toFixed(2)}s`
+    const templates = { ...profile.templates }
+    paired.chars.forEach((char, index) => {
+      templates[char] = [...(templates[char] ?? []), sampleFromBox(analysis.binary, boxes[index]!, char, origin)]
+    })
+    patch({ templates })
+    setSelected(-1)
+    setMessage({ kind: 'info', text: `已把 ${paired.chars.join('')} 的 ${paired.chars.length} 个字符存为样本` })
+    return null
+  }
+
+  /** Reviewed samples from a scanned stretch, each glyph once. */
+  const saveStretch = (samples: StretchSample[]): void => {
+    const templates = { ...profile.templates }
+    const stamp = Date.now()
+    samples.forEach((sample, index) => {
+      templates[sample.char] = [...(templates[sample.char] ?? []), {
+        id: `${sample.char}-${stamp.toString(36)}-${index.toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        data: sample.data, createdAt: stamp, origin: `${sampleName || '样片'} @ ${sample.at.toFixed(2)}s`,
+      }]
+    })
+    patch({ templates })
+    setMessage({ kind: 'info', text: `已从这一段存入 ${samples.length} 个字符样本（相同的字形只存一次）` })
   }
 
   const removeSample = (char: ClockChar, id: string): void => {
@@ -579,6 +628,8 @@ export default function EditorPage(): React.ReactNode {
                 muted
                 onLoadedMetadata={(event) => {
                   const node = event.currentTarget
+                  stepperRef.current = new FrameStepper(presentAt(node))
+                  shownFrame.current = null
                   setVideoSize({ width: node.videoWidth, height: node.videoHeight })
                   setDuration(Number.isFinite(node.duration) ? node.duration : 0)
                 }}
@@ -656,7 +707,8 @@ export default function EditorPage(): React.ReactNode {
           <BinarizeSection profile={profile} onPatch={patch} />
           <GlyphSection profile={profile} readiness={readiness} boxes={boxes} selected={selected}
             bounds={analysis ? { width: analysis.binary.width, height: analysis.binary.height } : null}
-            onBoxes={setBoxes} onAssign={assign} onVerify={frame ? verifyFrame : null} recognized={recognized} />
+            onBoxes={setBoxes} onAssign={assign} onAssignReading={assignReading} onVerify={frame ? verifyFrame : null} recognized={recognized} />
+          <StretchSection video={video ? videoRef.current : null} profile={profile} onSave={saveStretch} />
           <SampleSection profile={profile} onRemove={removeSample} />
           <ParamsSection profile={profile} onPatch={patch} />
         </aside>

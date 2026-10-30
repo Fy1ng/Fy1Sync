@@ -4,7 +4,7 @@
  * are set once per broadcast.
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   CLOCK_CHARS,
   DEFAULT_PREPROCESS,
@@ -121,7 +121,7 @@ export function BinarizeSection({ profile, onPatch }: { profile: RecognitionProf
  * box of its own. Rather than adding heuristics for each case, the user fixes the boxes
  * directly (merge, split, drop, nudge an edge) and then teaches from those.
  */
-export function GlyphSection({ profile, readiness, boxes, selected, bounds, onBoxes, onAssign, onVerify, recognized }: {
+export function GlyphSection({ profile, readiness, boxes, selected, bounds, onBoxes, onAssign, onAssignReading, onVerify, recognized }: {
   profile: RecognitionProfile
   readiness: { ready: boolean; missing: ClockChar[]; sampleCount: number }
   boxes: GlyphBox[]
@@ -129,10 +129,19 @@ export function GlyphSection({ profile, readiness, boxes, selected, bounds, onBo
   bounds: { width: number; height: number } | null
   onBoxes: (boxes: GlyphBox[]) => void
   onAssign: (char: ClockChar) => void
+  /** Teach every box from one typed reading; returns why it was refused, or null. */
+  onAssignReading: (text: string) => string | null
   onVerify: (() => void) | null
   recognized: RecognizeResult | null
 }): React.ReactNode {
   const active = selected >= 0 ? boxes[selected] : undefined
+  const [reading, setReading] = useState('')
+  const [readingProblem, setReadingProblem] = useState<string | null>(null)
+  const saveReading = (): void => {
+    const problem = onAssignReading(reading)
+    setReadingProblem(problem)
+    if (!problem) setReading('')
+  }
   return (
     <section className="rail-group">
       <div className="rail-head">
@@ -172,6 +181,15 @@ export function GlyphSection({ profile, readiness, boxes, selected, bounds, onBo
       ) : (
         <p className="muted">点选裁切图中的字符框</p>
       )}
+      {bounds && boxes.length > 0 && (
+        <form className="reading-row" onSubmit={(event) => { event.preventDefault(); saveReading() }}>
+          <input className="text-input num" value={reading} aria-label="整帧读数" placeholder={`整帧读数，${boxes.length} 个字符`}
+            spellCheck={false} autoComplete="off" inputMode="numeric"
+            onChange={(event) => { setReading(event.target.value); setReadingProblem(null) }} />
+          <button type="submit" className="btn-solid small" disabled={reading.trim() === ''}>存为样本</button>
+        </form>
+      )}
+      {readingProblem && <p className="form-error" role="alert">{readingProblem}</p>}
       <div className="char-pad" role="group" aria-label="存为字符样本">
         {CLOCK_CHARS.map((char) => (
           <button type="button" key={char} className={`char-key num${(profile.templates[char]?.length ?? 0) > 0 ? ' is-taught' : ''}`}

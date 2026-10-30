@@ -770,3 +770,61 @@
 .yt-job[data-state='failed'] > .muted {
   color: #ff8a80;
 }
+
+/* One reading typed for the whole frame, saved as one sample per glyph box. */
+.reading-row {
+  display: flex;
+  gap: 8px;
+}
+
+.reading-row .text-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 整段标注: one row per run of identical frames, with its picture and reading. */
+.stretch-marks,
+.stretch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.stretch-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.stretch-group {
+  display: grid;
+  grid-template-columns: auto 64px 72px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  font-size: 12px;
+  border-radius: var(--r-sm);
+}
+
+.stretch-group[data-state='box-mismatch'],
+.stretch-group[data-state='unsure'] {
+  background: rgb(255 255 255 / 4%);
+}
+
+.stretch-pic {
+  width: 64px;
+  height: auto;
+  image-rendering: pixelated;
+  background: #121212;
+}
+
+.stretch-text {
+  height: 26px;
+  font-size: 13px;
+}
+
+.stretch-note {
+  color: var(--drift);
+}

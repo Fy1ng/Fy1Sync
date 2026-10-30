@@ -108,6 +108,44 @@ test.describe('本机编辑器访问', () => {
 test.describe('取帧与切分', () => {
   test.skip(!fixturesReady(), '缺少测试源，先运行 npm run fixtures')
 
+  test('前后一帧按文件真实的帧走, 不看采样帧率', async ({ page }) => {
+    failOnPageError(page)
+    await page.goto(APP_ORIGIN + '/admin')
+    await page.locator('main input[accept="video/*"]').setInputFiles(officialPath)
+    const video = page.locator('video.editor-media')
+    await expect.poll(async () => video.evaluate((node: HTMLVideoElement) => node.videoWidth)).toBeGreaterThan(0)
+    // The fixture is 30 fps; 采样帧率 at 60 would make the old fixed step land on every
+    // frame twice. Stepping must ignore it.
+    await page.locator('details.rail-more > summary').click()
+    await page.getByRole('slider', { name: '采样帧率' }).fill('60')
+    await expect(page.getByRole('slider', { name: '采样帧率' })).toHaveValue('60')
+    await seekSample(page, 1)
+    // Every frame the page presents, in order: what each click actually lands on.
+    await video.evaluate((node: HTMLVideoElement) => {
+      const seen: number[] = []
+      ;(window as unknown as { __frames: number[] }).__frames = seen
+      const watch = () => node.requestVideoFrameCallback((_now, meta) => { seen.push(meta.mediaTime); watch() })
+      watch()
+    })
+    const landed = async (press: () => Promise<void>): Promise<number> => {
+      const count = await page.evaluate(() => (window as unknown as { __frames: number[] }).__frames.length)
+      await press()
+      await expect.poll(async () => page.evaluate(() => (window as unknown as { __frames: number[] }).__frames.length)).toBeGreaterThan(count)
+      // A step may nudge more than once; wait for it to settle on the frame it keeps.
+      await page.waitForTimeout(400)
+      return page.evaluate(() => { const f = (window as unknown as { __frames: number[] }).__frames; return f[f.length - 1]! })
+    }
+    const nudge = await landed(async () => { await video.evaluate((node: HTMLVideoElement) => { node.currentTime = 1.01 }) })
+    const visits: number[] = [nudge]
+    for (let i = 0; i < 10; i++) visits.push(await landed(() => page.getByRole('button', { name: '下一帧' }).click()))
+    for (let i = 0; i < 4; i++) visits.push(await landed(() => page.getByRole('button', { name: '上一帧' }).click()))
+    const frame = (time: number) => Math.round(time * 30)
+    const indices = visits.map(frame)
+    // One real frame per press, forward then back, never a repeat or a skip.
+    expect(indices.slice(1, 11).map((index, i) => index - indices[i]!)).toEqual(Array(10).fill(1))
+    expect(indices.slice(11).map((index, i) => index - indices[10 + i]!)).toEqual(Array(4).fill(-1))
+  })
+
   test('载入样片后取帧并切出字符框', async ({ page }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
@@ -150,6 +188,71 @@ test.describe('取帧与切分', () => {
 
     await expect(page.locator('.editor-rail')).toContainText('4 个样本')
     expect(await page.locator('.template-cell.is-empty').count()).toBeLessThan(emptyBefore)
+  })
+
+  test('整段扫描按每秒减 1 提议读数, 勾选后一次存入, 相同字形只存一次', async ({ page }) => {
+    test.setTimeout(120_000)
+    failOnPageError(page)
+    await page.goto(APP_ORIGIN + '/admin')
+    await page.locator('main input[accept="video/*"]').setInputFiles(officialPath)
+    const video = page.locator('video.editor-media')
+    await expect.poll(async () => video.evaluate((node: HTMLVideoElement) => node.videoWidth)).toBeGreaterThan(0)
+    await setRoi(page, { x: 0.42, y: 0.045, w: 0.16, h: 0.13 })
+    const section = page.getByRole('region', { name: '整段标注' })
+
+    // 1.0 s shows 0:19 (see the single-frame test); mark 1.0 to 4.2 s.
+    await seekSample(page, 1)
+    await section.getByRole('button', { name: /设为入点/ }).click()
+    await seekSample(page, 4.2)
+    await section.getByRole('button', { name: /设为出点/ }).click()
+    await section.getByRole('textbox', { name: '入点读数' }).fill('0:19')
+    await section.getByRole('button', { name: '扫描这一段' }).click()
+
+    const results = section.getByRole('list', { name: '扫描结果' })
+    await expect(results).toBeVisible({ timeout: 60_000 })
+    const readings = await results.getByRole('textbox').evaluateAll((nodes) => nodes.map((node) => (node as HTMLInputElement).value))
+    // Counted down one per change; every whole second in the stretch is there.
+    expect(readings.filter(Boolean).slice(0, 4)).toEqual(['0:19', '0:18', '0:17', '0:16'])
+    const save = section.getByRole('button', { name: /存入勾选的/ })
+    await save.click()
+    await expect(results).toBeHidden()
+    await expect(page.locator('.editor-message, .editor-note').first()).toContainText('相同的字形只存一次')
+    // 0:19..0:15 uses 0 : 1 9 8 7 6 5: each character at least once, far fewer samples than frames.
+    for (const char of ['0', ':', '1', '9', '8', '7', '6']) {
+      await expect(page.locator('.template-cell').filter({ has: page.locator('.template-char', { hasText: new RegExp(`^${char}$`) }) })
+        .locator('.template-thumb').first()).toBeVisible()
+    }
+    const total = await page.locator('.template-thumb').count()
+    expect(total).toBeLessThan(40)
+  })
+
+  test('整帧读数一次存下全部字符, 位数和字符框对不上时说明', async ({ page }) => {
+    failOnPageError(page)
+    await page.goto(APP_ORIGIN + '/admin')
+    await page.locator('main input[accept="video/*"]').setInputFiles(officialPath)
+    await expect.poll(async () =>
+      page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.videoWidth),
+    ).toBeGreaterThan(0)
+    await setRoi(page, { x: 0.42, y: 0.045, w: 0.16, h: 0.13 })
+    await seekSample(page, 1)
+    await page.getByRole('button', { name: '取当前帧' }).click()
+    await expect.poll(async () => page.locator('.glyph-box').count(), { timeout: 20_000 }).toBe(4)
+
+    const field = page.getByRole('textbox', { name: '整帧读数' })
+    // Three characters for four boxes: refused, nothing stored.
+    await field.fill('019')
+    await page.getByRole('button', { name: '存为样本' }).click()
+    await expect(page.locator('.editor-rail [role="alert"]')).toContainText('3 个字符，切出了 4 个字符框')
+    await expect(page.locator('.editor-rail')).toContainText('0 个样本')
+
+    await field.fill('0:19')
+    await page.getByRole('button', { name: '存为样本' }).click()
+    await expect(page.locator('.editor-rail')).toContainText('4 个样本')
+    await expect(field).toHaveValue('')
+    for (const char of ['0', ':', '1', '9']) {
+      await expect(page.locator('.template-cell').filter({ has: page.locator('.template-char', { hasText: new RegExp(`^${char}$`) }) })
+        .locator('.template-thumb')).toHaveCount(1)
+    }
   })
 })
 
