@@ -13,10 +13,11 @@ import type { ToolsStatus } from './toolsService'
 import type { DouyuAccountsSnapshot, DouyuMessageInput, DouyuMessageOutcome, DouyuMessageSchedule, DouyuTasksSnapshot, DouyuTaskKind, DouyuTaskPolicy } from '../server/douyu/types'
 import type { DouyuRenewalTargetPage, DouyuRenewalPlan, DouyuRenewalResult, DouyuRenewalQuantity } from '../server/douyu/renewalTypes'
 import type { FeatureMethods, FeatureEvent } from './featureContracts'
+import type { YouTubeAdminMethods, YtBrowseState, YtImportJob } from './ytAdminContracts'
 
 export interface WindowState { maximized: boolean; fullscreen: boolean; focused: boolean }
 
-export interface DesktopMethods extends FeatureMethods {
+export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods {
   windowControl: { args: { action: 'minimize' | 'toggle-maximize' | 'close' }; result: WindowState }
   getWindowState: { args: undefined; result: WindowState }
   listDouyuAccounts: { args: undefined; result: DouyuAccountsSnapshot }
@@ -73,6 +74,8 @@ export interface StreamSyncerBridge {
   subscribeDouyuAccounts?(listener: (state: DouyuAccountsSnapshot) => void): () => void
   subscribeDouyuTasks?(listener: (state: DouyuTasksSnapshot) => void): () => void
   subscribeFeatures?(listener: (event: FeatureEvent) => void): () => void
+  subscribeYtBrowseState?(listener: (state: YtBrowseState) => void): () => void
+  subscribeYtImportProgress?(listener: (job: YtImportJob) => void): () => void
 }
 
 declare global {

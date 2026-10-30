@@ -46,6 +46,10 @@ import { ActivityPreferencesStore, type ActivityPreferences } from './activityPr
 import { createBackendRuntime } from './backendRuntime'
 import { teamLogoResponse } from './teamLogoRoute'
 import { parseAppUpdateSource, type AppUpdateSource } from './appUpdateService'
+import { AdminMediaRoute } from './adminMediaRoute'
+import { YouTubeBrowseManager } from './ytBrowse'
+import { YouTubeImportJobManager } from './ytImport'
+import { installYouTubeAdminIpc } from './ytImportIpc'
 
 const networkRuntimePath = app.isPackaged
   ? join(process.resourcesPath, 'app.asar.unpacked', 'electron', 'network-runtime.cjs')
@@ -88,6 +92,15 @@ async function start(): Promise<void> {
   let backend: ReturnType<typeof createBackendRuntime> | undefined
   let pipWindow: BrowserWindow | null = null
   let handlers: ReturnType<typeof installIpcHandlers> | undefined
+  let youtubeAdmin: ReturnType<typeof installYouTubeAdminIpc> | undefined
+  let youtubeBrowse: YouTubeBrowseManager | undefined
+  let youtubeImports: YouTubeImportJobManager | undefined
+  let youtubeLoginTransitions = 0
+  const adminMedia = new AdminMediaRoute(join(userDataDir, 'admin-media'))
+  const resetYouTubeAdmin = async () => {
+    if (youtubeAdmin) await youtubeAdmin.reset()
+    else await Promise.all([youtubeBrowse?.close(), youtubeImports?.cancelAll()])
+  }
   // Releases are published on GitHub. Checks stay manual; E2E runs keep the unconfigured
   // state so no scenario reaches the network. backend.json may still point elsewhere.
   const defaultUpdateSource: AppUpdateSource | null = process.env.STREAM_SYNC_E2E === '1' ? null : { kind: 'github', owner: 'Fy1ng', repository: 'Fy1Sync' }
@@ -213,10 +226,18 @@ async function start(): Promise<void> {
     }
   }
   const playbackLogins = {
-    login: (platform: 'youtube' | 'douyu') => platform === 'youtube' ? logins.login(platform)
-      : douyuAccounts ? douyuAccounts.loginActive() : Promise.reject(new DouyuAccountError('storage-failed')),
-    logout: (platform: 'youtube' | 'douyu') => platform === 'youtube' ? logins.logout(platform)
-      : douyuAccounts ? douyuAccounts.logoutActive() : Promise.reject(new DouyuAccountError('storage-failed')),
+    async login(platform: 'youtube' | 'douyu') {
+      if (platform !== 'youtube') return douyuAccounts ? douyuAccounts.loginActive() : Promise.reject(new DouyuAccountError('storage-failed'))
+      youtubeLoginTransitions++
+      try { await resetYouTubeAdmin(); return await logins.login(platform) }
+      finally { youtubeLoginTransitions-- }
+    },
+    async logout(platform: 'youtube' | 'douyu') {
+      if (platform !== 'youtube') return douyuAccounts ? douyuAccounts.logoutActive() : Promise.reject(new DouyuAccountError('storage-failed'))
+      youtubeLoginTransitions++
+      try { await resetYouTubeAdmin(); await logins.logout(platform) }
+      finally { youtubeLoginTransitions-- }
+    },
     async loginStatus() {
       const status = await logins.loginStatus()
       return { ...status, douyu: douyuAccounts ? await douyuAccounts.activeLoginStatus()
@@ -235,6 +256,17 @@ async function start(): Promise<void> {
   const ytdlp = new YtDlpRunner({ electronPath: process.execPath, networkRuntimePath, cookies: logins, settings: toolSettings, toolContext,
     diagnostic: e2e ? event => { youtubeDiagnostics.push(event); if (youtubeDiagnostics.length > 100) youtubeDiagnostics.shift() } : undefined,
   })
+  youtubeBrowse = new YouTubeBrowseManager({
+    injectCookies: target => logins.injectYoutubeCookies(target),
+    changed: (ownerId, state) => { youtubeAdmin?.emit('yt-browse-state', state, ownerId) },
+  })
+  youtubeImports = new YouTubeImportJobManager({ userDataDirectory: userDataDir, electronPath: process.execPath,
+    networkRuntimePath, cookies: logins, settings: toolSettings, toolContext, network: () => network.context('youtube'),
+    publish: (assetId, file) => adminMedia.register(assetId, file),
+    event: job => { youtubeAdmin?.emit('yt-import-progress', job) },
+  })
+  // Restoring hashes every saved clip; it must not hold up the first window.
+  void youtubeImports.initialize().catch(() => { console.error('admin 素材目录不可用, 已保留原文件.') })
   const bufferDiagnostics: unknown[] = []
   const trackStats = () => ({ segments: 0, bytes: 0, firstSq: null as number | null, lastSq: null as number | null, gaps: 0, repeated: 0, maxHeadLag: 0 })
   const adaptiveStats = { rounds: 0, statuses: {} as Record<string, number>, httpErrors: 0, probes: 0, reconnects: 0, fallback: false,
@@ -416,6 +448,7 @@ async function start(): Promise<void> {
       let response: Response | null
       if (url.pathname.startsWith('/media/')) response = await media.handle(request)
       else if (url.pathname.startsWith('/buffer/')) response = await buffer.handle(request)
+      else if (url.pathname.startsWith('/admin-media/')) response = await adminMedia.handle(request)
       else if (url.pathname.startsWith('/team-logo/')) response = teamLogoResponse(request, userDataDir, bundledLogoDir)
       else if (url.pathname === '/pip' || url.pathname === '/pip/') response = await serveStatic(new Request(APP_URL, { method: request.method }), { root: clientDir })
       else response = await serveStatic(request, { root: clientDir })
@@ -483,6 +516,8 @@ async function start(): Promise<void> {
       return event.topic === 'insights' && value.room === backend.pip.state().source?.sourceRoom
     },
   })
+  youtubeAdmin = installYouTubeAdminIpc(ipcMain, contents, { ownerWindow: mainWindow, browse: youtubeBrowse, imports: youtubeImports,
+    offline: offlineE2e, blocked: () => youtubeLoginTransitions > 0 })
   if (e2e) Object.assign(globalThis, { __streamSyncerTest: {
     getWindowState: () => mainWindow.isDestroyed() ? null : getWindowState(mainWindow),
     ...(!app.isPackaged ? { setDouyuToolsFixture() {
@@ -583,6 +618,10 @@ async function start(): Promise<void> {
     douyuTasks?.dispose()
     douyuMessageSender?.dispose()
     unwatchFile(index)
+    await youtubeAdmin?.dispose()
+    await youtubeImports?.dispose()
+    await youtubeBrowse?.close()
+    adminMedia.clear()
     handlers?.dispose()
     service.dispose()
     acquisition.dispose()
