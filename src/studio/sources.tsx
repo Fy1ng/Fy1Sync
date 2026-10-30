@@ -36,6 +36,10 @@ export const PLATFORM_LABEL: Record<PlatformId, string> = {
 
 export type RoomPlatform = 'douyu' | 'bilibili' | 'huya'
 
+/** What either side accepts: any side may play any source, so both say the same. */
+export const SOURCE_HINT = '斗鱼、哔哩哔哩、虎牙、YouTube、Twitch 链接或房间号'
+export const SOURCE_KINDS = '斗鱼、哔哩哔哩、虎牙、YouTube、Twitch'
+
 /**
  * A room typed on its own rather than as a link: `6979222`, or with a platform in front,
  * `b 21452505` / `斗鱼9999` / `虎牙 kpl`. Bare identifiers need a platform (`platform: null`).

@@ -10,7 +10,7 @@ import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { SourceRole } from '../core/types'
 import { bufferStatusText } from '../ui/bufferStatus'
 import { Icon, Popover, Segmented, usePopover } from './kit'
-import { PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
+import { PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform, SOURCE_HINT } from './sources'
 import { canSave, removeSavedRoom, saveRoom, savedFor, useSavedRooms, type SavedRoom } from './savedRooms'
 
 export function SourceChip({ role, onSchedule, onShowPreview = null }: {
@@ -71,7 +71,7 @@ function SourcePanel({ role, onDone, onSchedule }: {
         void loader.loadInput(role, input, bareRoom ? roomPlatform : undefined).then((ok) => { if (ok) onDone() })
       }}>
         <input value={input} onChange={(event) => setInput(event.target.value)} aria-label={`${ROLE_LABEL[role]}链接`}
-          placeholder={role === 'official' ? 'YouTube、Twitch 或虎牙直播间链接' : '斗鱼、哔哩哔哩或虎牙直播间链接、房间号'} spellCheck={false} />
+          placeholder={SOURCE_HINT} spellCheck={false} />
         <button type="submit" className="btn-solid" disabled={load.busy || input.trim() === ''}>
           {load.busy ? '载入中' : '载入'}
         </button>
