@@ -8,7 +8,7 @@ import { createEmptyHudStylePack, type HudStylePack } from '../src/core/hudStyle
 import { CLOCK_CHARS, TEMPLATE_PIXELS } from '../src/core/profileSchema'
 import { packBitmap } from '../src/core/bitmapCodec'
 import { APP_ORIGIN, expect, test } from './electron'
-import { closeSourceDialog, failOnPageError, fixturesReady, invoke, loadBothFixtures, mediaTimes, openAlignOptions, openPlayer, openSettingsSection, setPlaying, sourceDialog } from './helpers'
+import { chooseEditorVideo, closeSourceDialog, failOnPageError, fixturesReady, invoke, loadBothFixtures, mediaTimes, openAlignOptions, openPlayer, openSettingsSection, setPlaying, sourceDialog } from './helpers'
 
 const officialPath = fileURLToPath(new URL('../public/test-sources/official.mp4', import.meta.url))
 const framePath = fileURLToPath(new URL('../public/test-sources/frame-0-20.png', import.meta.url))
@@ -113,10 +113,10 @@ test.describe('本机编辑器访问', () => {
 test.describe('取帧与切分', () => {
   test.skip(!fixturesReady(), '缺少测试源，先运行 npm run fixtures')
 
-  test('前后一帧按文件真实的帧走', async ({ page }) => {
+  test('前后一帧按文件真实的帧走', async ({ page, electronApp }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
-    await page.locator('main input[accept="video/*"]').setInputFiles(officialPath)
+    await chooseEditorVideo(electronApp, page, officialPath)
     const video = page.locator('video.editor-media')
     await expect.poll(async () => video.evaluate((node: HTMLVideoElement) => node.videoWidth)).toBeGreaterThan(0)
     // Sampling cadence is owned by the player now; file stepping still follows all 30 fps.
@@ -149,12 +149,12 @@ test.describe('取帧与切分', () => {
     expect(indices.slice(11).map((index, i) => index - indices[10 + i]!)).toEqual(Array(4).fill(-1))
   })
 
-  test('载入样片后取帧并切出字符框', async ({ page }) => {
+  test('载入样片后取帧并切出字符框', async ({ page, electronApp }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
     await expect(page.locator('.editor-main')).toBeVisible()
 
-    await page.locator('main input[accept="video/*"]').setInputFiles(officialPath)
+    await chooseEditorVideo(electronApp, page, officialPath)
     const video = page.locator('video.editor-media')
     await expect(video).toBeVisible()
     await expect.poll(async () => video.evaluate((node: HTMLVideoElement) => node.videoWidth)).toBeGreaterThan(0)
@@ -170,10 +170,10 @@ test.describe('取帧与切分', () => {
     await expect.poll(async () => page.locator('.glyph-box').count(), { timeout: 20_000 }).toBeGreaterThanOrEqual(3)
   })
 
-  test('点字符按钮把选中的框存成模板样本', async ({ page }) => {
+  test('点字符按钮把选中的框存成模板样本', async ({ page, electronApp }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
-    await page.locator('main input[accept="video/*"]').setInputFiles(officialPath)
+    await chooseEditorVideo(electronApp, page, officialPath)
     await expect.poll(async () =>
       page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.videoWidth),
     ).toBeGreaterThan(0)
@@ -193,11 +193,11 @@ test.describe('取帧与切分', () => {
     expect(await page.locator('.template-cell.is-empty').count()).toBeLessThan(emptyBefore)
   })
 
-  test('整段扫描按每秒减 1 提议读数, 勾选后一次存入, 相同字形只存一次', async ({ page }) => {
+  test('整段扫描按每秒减 1 提议读数, 勾选后一次存入, 相同字形只存一次', async ({ page, electronApp }) => {
     test.setTimeout(120_000)
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
-    await page.locator('main input[accept="video/*"]').setInputFiles(officialPath)
+    await chooseEditorVideo(electronApp, page, officialPath)
     const video = page.locator('video.editor-media')
     await expect.poll(async () => video.evaluate((node: HTMLVideoElement) => node.videoWidth)).toBeGreaterThan(0)
     await setRoi(page, { x: 0.42, y: 0.045, w: 0.16, h: 0.13 })
@@ -229,10 +229,10 @@ test.describe('取帧与切分', () => {
     expect(total).toBeLessThan(40)
   })
 
-  test('整帧读数一次存下全部字符, 位数和字符框对不上时说明', async ({ page }) => {
+  test('整帧读数一次存下全部字符, 位数和字符框对不上时说明', async ({ page, electronApp }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
-    await page.locator('main input[accept="video/*"]').setInputFiles(officialPath)
+    await chooseEditorVideo(electronApp, page, officialPath)
     await expect.poll(async () =>
       page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.videoWidth),
     ).toBeGreaterThan(0)

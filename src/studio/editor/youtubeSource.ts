@@ -33,6 +33,7 @@ function clipJob(job: YtImportJob): YouTubeClipJob {
     state: job.state, progress: typeof percent === 'number' ? percent / 100 : null,
     width: job.format?.width, height: job.format?.height, targetHeight: job.targetHeight,
     error: job.error ? errorOf(job.error.code) : undefined, mediaUrl: job.mediaUrl,
+    assetId: job.assetId,
   }
 }
 

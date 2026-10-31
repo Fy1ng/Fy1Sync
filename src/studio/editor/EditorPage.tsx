@@ -23,7 +23,7 @@ import { prepareHudCue, prepareHudGlyphs, recognizeHudFrame, type HudAnalysis, t
 import { FIELD_LABELS, fieldModel, fieldReadiness, patchField, sizeEmptyClock, type EditorClockModel } from './editorModel'
 import { CUE_LABELS, cueModel, editorCue, isCueTarget, patchCue, type EditorTarget } from './cueModel'
 import { CueSection, FrameStatePreview, StateRules } from './CueSection'
-import { addLayout, editorVariant, removeLayout, renameLayout } from './layoutModel'
+import { addLayout, editorVariant, generateScaledLayout, removeLayout, renameLayout } from './layoutModel'
 import { LayoutSection } from './LayoutSection'
 import type { GlyphBox } from '../../core/segmentation'
 import { profileStore, type StoredProfile } from '../../core/profileStore'
@@ -43,6 +43,7 @@ import { FileMenu, LibraryMenu } from './library'
 import { BinarizeSection, GlyphSection, ParamsSection, RegionSection, SampleSection } from './rail'
 import { YouTubePanel, type YouTubeClipJob, type YouTubeSource, type YouTubeStill } from './YouTubePanel'
 import { youtubeSource } from './youtubeSource'
+import { useEditorProject } from './useEditorProject'
 import '../studio.css'
 import './editor.css'
 
@@ -124,6 +125,29 @@ export default function EditorPage(): React.ReactNode {
   const grayCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const binaryCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const objectUrlRef = useRef<string>('')
+
+  const openVideo = useCallback((url: string, name: string): void => {
+    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
+    objectUrlRef.current = ''
+    stepperRef.current = null
+    shownFrame.current = null
+    setSampleKind('video')
+    setSampleUrl(url)
+    setSampleName(name)
+    setFrame(null)
+    setMediaTime(0)
+    setDuration(0)
+    setPlaying(false)
+    setFootage('local')
+    setMessage(null)
+  }, [])
+  const project = useEditorProject({ pack, variantId, hasCandidate: candidate !== null, open: openVideo,
+    restorePack: (saved, id) => {
+      adoptFootageSize.current = false
+      setPack(saved)
+      setSelectedVariantId(id)
+      setDirty(true)
+    } })
 
   const readiness = useMemo(() => fieldReadiness(pack, numericId, variantId), [pack, numericId, variantId])
   const clockReadiness = useMemo(() => hudPackReadiness(pack, variantId), [pack, variantId])
@@ -251,6 +275,16 @@ export default function EditorPage(): React.ReactNode {
     setDirty(true)
   }
 
+  const generateLayout = (height: 1440 | 1080): void => {
+    try {
+      const added = generateScaledLayout(pack, variantId, height)
+      adoptFootageSize.current = false
+      setPack(added.pack)
+      changeLayout(added.id)
+      setDirty(true)
+    } catch (error) { setMessage({ kind: 'error', text: String(error) }) }
+  }
+
   const editLayoutId = (id: string): string | null => {
     const renamed = renameLayout(pack, variantId, id)
     if (renamed.error) return renamed.error
@@ -270,24 +304,13 @@ export default function EditorPage(): React.ReactNode {
 
   const setRoi = useCallback((roi: RoiRect) => patch({ roi }), [patch])
 
-  const openSample = (file: File): void => {
-    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
-    const url = URL.createObjectURL(file)
-    objectUrlRef.current = url
-    setSampleKind('video')
-    setSampleUrl(url)
-    setSampleName(file.name)
-    setFrame(null)
-    setPlaying(false)
-    setMessage(null)
-  }
-
   const openScreenshot = useCallback(async (file: File, origin: 'file' | 'paste'): Promise<void> => {
     const decoded = await decodeScreenshot(file)
     if (!decoded.ok) {
       setMessage({ kind: 'error', text: decoded.message })
       return
     }
+    project.clear()
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
     const url = URL.createObjectURL(file)
     objectUrlRef.current = url
@@ -301,7 +324,7 @@ export default function EditorPage(): React.ReactNode {
     setPlaying(false)
     setFrame(decoded.frame)
     setMessage({ kind: 'info', text: `已载入${name}（${decoded.frame.width}×${decoded.frame.height}）` })
-  }, [])
+  }, [project.clear])
 
   /** A YouTube still is a screenshot like any other: the frame to sample from. */
   const openStill = useCallback(async (still: YouTubeStill): Promise<void> => {
@@ -312,6 +335,7 @@ export default function EditorPage(): React.ReactNode {
     // A blob, not a data URL: a 4K PNG as a data URL is a 13 MB string, twice as slow to show.
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
     if (!blob) return
+    project.clear()
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
     const url = URL.createObjectURL(blob)
     objectUrlRef.current = url
@@ -328,21 +352,16 @@ export default function EditorPage(): React.ReactNode {
     setMessage(still.native
       ? { kind: 'info', text: `已截取 ${still.frame.width}×${still.frame.height} 原尺寸画面` }
       : { kind: 'warn', text: `截到的画面不是原尺寸（${still.frame.width}×${still.frame.height}），不建议当样本` })
-  }, [])
+  }, [project.clear])
 
   /** A downloaded stretch opens as footage, the same as a chosen file. */
   const openClip = useCallback((job: YouTubeClipJob): void => {
-    if (!job.mediaUrl) return
-    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
-    objectUrlRef.current = ''
-    setSampleKind('video')
-    setSampleUrl(job.mediaUrl)
-    setSampleName(`${job.title || job.videoId} ${Math.round(job.startSeconds)}–${Math.round(job.endSeconds)}s`)
-    setFrame(null)
-    setPlaying(false)
-    setFootage('local')
+    if (!job.mediaUrl || !job.assetId) return
+    const name = `${job.title || job.videoId} ${Math.round(job.startSeconds)}-${Math.round(job.endSeconds)}s`
+    project.remember({ id: `youtube-${job.assetId}`, kind: 'youtube', assetId: job.assetId, name, match: '', purpose: 'making' })
+    openVideo(job.mediaUrl, name)
     setMessage({ kind: 'info', text: '已打开下载的片段' })
-  }, [])
+  }, [openVideo, project.remember])
 
   // Ctrl+V anywhere on the editor, except into a text field, which keeps its own paste.
   useEffect(() => {
@@ -692,7 +711,7 @@ export default function EditorPage(): React.ReactNode {
   const video = sampleUrl !== '' && sampleKind === 'video'
 
   return (
-    <div className="studio editor">
+    <div className="studio editor" inert={!project.ready}>
       <header className="editor-bar">
         <a className="icon-btn" {...routeLink('/')} aria-label="返回播放器" title="返回播放器"><Icon name="back" /></a>
         <div className="editor-title">
@@ -735,6 +754,11 @@ export default function EditorPage(): React.ReactNode {
           </button>
         </div>
       )}
+
+      {(project.error || project.needsRelink) && <div className="editor-note is-warn" aria-live="polite" data-testid="project-note">
+        <span>{project.error || '素材文件不可用或大小已改变, 请重新选择原文件并核对 SHA-256.'}</span>
+        {project.needsRelink && <button type="button" className="btn-quiet small" onClick={() => void project.choose(true)}>重新选择原素材</button>}
+      </div>}
 
       <main className="editor-main">
         <section className="editor-stage-col" aria-label="样片">
@@ -795,14 +819,7 @@ export default function EditorPage(): React.ReactNode {
           </div>
 
           <div className="editor-transport" hidden={footage === 'youtube'}>
-            <label className="btn-quiet small file-pick">
-              选择录像
-              <input type="file" accept="video/*" onChange={(event) => {
-                const file = event.target.files?.[0]
-                if (file) openSample(file)
-                event.target.value = ''
-              }} />
-            </label>
+            <button type="button" className="btn-quiet small" onClick={() => void project.choose()}>选择录像</button>
             <label className="btn-quiet small file-pick">
               选择截图
               <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => {
@@ -838,11 +855,24 @@ export default function EditorPage(): React.ReactNode {
               </span>
             )}
           </div>
+          {project.current && <div className="editor-media-info">
+            <span className="muted">{project.current.name}</span>
+            <label className="field-stack"><span className="field-label">比赛</span>
+              <input className="text-input" aria-label="素材比赛" value={project.current.match}
+                onChange={event => project.annotate({ match: event.target.value })} />
+            </label>
+            <label className="field-stack"><span className="field-label">用途</span>
+              <select className="text-input" aria-label="素材用途" value={project.current.purpose}
+                onChange={event => project.annotate({ purpose: event.target.value as 'making' | 'validation' })}>
+                <option value="making">制作</option><option value="validation">验收</option>
+              </select>
+            </label>
+          </div>}
         </section>
 
         <aside className="editor-rail" aria-label="识别设置">
           <LayoutSection key={variantId} pack={pack} variant={variant} canCreate={!!frame}
-            onSelect={changeLayout} onCreate={createLayout} onRename={editLayoutId} onDelete={deleteLayout} />
+            onSelect={changeLayout} onCreate={createLayout} onGenerate={generateLayout} onRename={editLayoutId} onDelete={deleteLayout} />
           <section className="rail-group">
             <label className="field-stack">
               <span className="field-label">当前字段</span>

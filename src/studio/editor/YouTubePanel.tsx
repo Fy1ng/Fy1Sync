@@ -49,6 +49,7 @@ export interface YouTubeStill {
 }
 
 export interface YouTubeClipJob {
+  assetId?: string
   jobId: string
   videoId: string
   title: string

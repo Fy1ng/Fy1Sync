@@ -50,6 +50,7 @@ import { AdminMediaRoute } from './adminMediaRoute'
 import { YouTubeBrowseManager } from './ytBrowse'
 import { YouTubeImportJobManager } from './ytImport'
 import { installYouTubeAdminIpc } from './ytImportIpc'
+import { EditorProjectManager, installEditorProjectIpc } from './editorProject'
 
 const networkRuntimePath = app.isPackaged
   ? join(process.resourcesPath, 'app.asar.unpacked', 'electron', 'network-runtime.cjs')
@@ -93,10 +94,18 @@ async function start(): Promise<void> {
   let pipWindow: BrowserWindow | null = null
   let handlers: ReturnType<typeof installIpcHandlers> | undefined
   let youtubeAdmin: ReturnType<typeof installYouTubeAdminIpc> | undefined
+  let editorProjectIpc: ReturnType<typeof installEditorProjectIpc> | undefined
   let youtubeBrowse: YouTubeBrowseManager | undefined
   let youtubeImports: YouTubeImportJobManager | undefined
+  let youtubeImportsReady: Promise<void> = Promise.resolve()
   let youtubeLoginTransitions = 0
   const adminMedia = new AdminMediaRoute(join(userDataDir, 'admin-media'))
+  const editorProject = new EditorProjectManager({ userDataDirectory: userDataDir, beforeLoad: () => youtubeImportsReady, chooseFile: async () => {
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { title: '选择比赛录像', properties: ['openFile'],
+      filters: [{ name: '视频', extensions: ['mp4', 'm4v', 'webm', 'mkv', 'mov'] }] })
+    return result.canceled ? null : result.filePaths[0] ?? null
+  } })
   const resetYouTubeAdmin = async () => {
     if (youtubeAdmin) await youtubeAdmin.reset()
     else await Promise.all([youtubeBrowse?.close(), youtubeImports?.cancelAll()])
@@ -265,8 +274,8 @@ async function start(): Promise<void> {
     publish: (assetId, file) => adminMedia.register(assetId, file),
     event: job => { youtubeAdmin?.emit('yt-import-progress', job) },
   })
-  // Restoring hashes every saved clip; it must not hold up the first window.
-  void youtubeImports.initialize().catch(() => { console.error('admin 素材目录不可用, 已保留原文件.') })
+  // Restore saved clips without holding up the first window.
+  youtubeImportsReady = youtubeImports.initialize().catch(() => { console.error('admin 素材目录不可用, 已保留原文件.') })
   const bufferDiagnostics: unknown[] = []
   const trackStats = () => ({ segments: 0, bytes: 0, firstSq: null as number | null, lastSq: null as number | null, gaps: 0, repeated: 0, maxHeadLag: 0 })
   const adaptiveStats = { rounds: 0, statuses: {} as Record<string, number>, httpErrors: 0, probes: 0, reconnects: 0, fallback: false,
@@ -449,6 +458,7 @@ async function start(): Promise<void> {
       if (url.pathname.startsWith('/media/')) response = await media.handle(request)
       else if (url.pathname.startsWith('/buffer/')) response = await buffer.handle(request)
       else if (url.pathname.startsWith('/admin-media/')) response = await adminMedia.handle(request)
+      else if (url.pathname.startsWith('/editor-media/')) response = await editorProject.handle(request)
       else if (url.pathname.startsWith('/team-logo/')) response = teamLogoResponse(request, userDataDir, bundledLogoDir)
       else if (url.pathname === '/pip' || url.pathname === '/pip/') response = await serveStatic(new Request(APP_URL, { method: request.method }), { root: clientDir })
       else response = await serveStatic(request, { root: clientDir })
@@ -518,6 +528,7 @@ async function start(): Promise<void> {
   })
   youtubeAdmin = installYouTubeAdminIpc(ipcMain, contents, { ownerWindow: mainWindow, browse: youtubeBrowse, imports: youtubeImports,
     offline: offlineE2e, blocked: () => youtubeLoginTransitions > 0 })
+  editorProjectIpc = installEditorProjectIpc(ipcMain, contents, editorProject)
   if (e2e) Object.assign(globalThis, { __streamSyncerTest: {
     getWindowState: () => mainWindow.isDestroyed() ? null : getWindowState(mainWindow),
     ...(!app.isPackaged ? { setDouyuToolsFixture() {
@@ -619,6 +630,7 @@ async function start(): Promise<void> {
     douyuMessageSender?.dispose()
     unwatchFile(index)
     await youtubeAdmin?.dispose()
+    editorProjectIpc?.dispose()
     await youtubeImports?.dispose()
     await youtubeBrowse?.close()
     adminMedia.clear()

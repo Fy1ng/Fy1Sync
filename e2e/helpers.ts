@@ -10,6 +10,14 @@ import type { DouyuTaskKind } from '../server/douyu/types'
 import { SETTINGS_KEY } from '../src/app/settings'
 import { APP_ORIGIN, expect } from './electron'
 
+/** Only the native file dialog is stubbed; authorization, hashing, IPC and streaming stay real. */
+export async function chooseEditorVideo(application: ElectronApplication, page: Page, file: string, button = '选择录像'): Promise<void> {
+  await application.evaluate(({ dialog }, selected) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] })
+  }, file)
+  await page.getByRole('button', { name: button, exact: true }).click()
+}
+
 /** Use the actual preload bridge, retaining the transport result wrapper. */
 export async function invoke<K extends DesktopMethod>(
   page: Page,

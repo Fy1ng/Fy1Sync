@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import type { HudStylePack, HudVariant } from '../../core/hudStylePack'
 
-export function LayoutSection({ pack, variant, canCreate, onSelect, onCreate, onRename, onDelete }: {
+export function LayoutSection({ pack, variant, canCreate, onSelect, onCreate, onGenerate, onRename, onDelete }: {
   pack: HudStylePack; variant: HudVariant; canCreate: boolean; onSelect: (id: string) => void; onCreate: () => void
-  onRename: (id: string) => string | null; onDelete: () => void
+  onGenerate: (height: 1440 | 1080) => void; onRename: (id: string) => string | null; onDelete: () => void
 }): React.ReactNode {
   const [id, setId] = useState(variant.id)
   const [error, setError] = useState<string | null>(null)
@@ -24,6 +24,10 @@ export function LayoutSection({ pack, variant, canCreate, onSelect, onCreate, on
       <button type="button" className="btn-quiet small" disabled={!canCreate} onClick={onCreate}>新建布局</button>
       <button type="button" className="btn-quiet small is-danger" disabled={pack.variants.length <= 1} onClick={onDelete}>删除布局</button>
     </div>
+    {variant.nativeSize.width === 3840 && variant.nativeSize.height === 2160 && <div className="layout-actions">
+      <button type="button" className="btn-quiet small" onClick={() => onGenerate(1440)}>生成 1440p</button>
+      <button type="button" className="btn-quiet small" onClick={() => onGenerate(1080)}>生成 1080p</button>
+    </div>}
     {multiple && !variant.organizer && <p className="note-warn" data-testid="layout-organizer-warning">同一尺寸有多个布局, 当前布局没有主办方区域, 这个布局不会被播放器选中.</p>}
   </section>
 }

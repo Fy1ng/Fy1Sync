@@ -5,12 +5,15 @@ import type { BufferState } from './bufferManager'
 import type { DouyuAccountsSnapshot, DouyuTasksSnapshot } from '../server/douyu/types'
 import { FEATURE_METHODS, type FeatureEvent } from './featureContracts'
 import { YOUTUBE_ADMIN_METHODS, type YtBrowseState, type YtImportJob } from './ytAdminContracts'
+import { EDITOR_PROJECT_METHODS } from './editorProjectContracts'
 
 const youtubeMethods = new Set<string>(YOUTUBE_ADMIN_METHODS)
+const editorMethods = new Set<string>(EDITOR_PROJECT_METHODS)
 
 const methods = new Set<DesktopMethod>([
   ...FEATURE_METHODS,
   ...YOUTUBE_ADMIN_METHODS,
+  ...EDITOR_PROJECT_METHODS,
   'windowControl', 'getWindowState',
   'listDouyuAccounts', 'addDouyuAccount', 'renameDouyuAccount', 'loginDouyuAccount', 'loginDouyuYubaAccount', 'activateDouyuAccount', 'logoutDouyuAccount', 'removeDouyuAccount',
   'sendDouyuMessage', 'openDouyuTaskRoom',
@@ -29,7 +32,8 @@ const bridge: StreamSyncerBridge = {
     if (!methods.has(method)) {
       return Promise.resolve({ ok: false as const, code: 'unknown-method', message: '未知桌面接口' })
     }
-    return ipcRenderer.invoke(youtubeMethods.has(method) ? 'stream-syncer:yt-invoke' : 'stream-syncer:invoke', method, args) as Promise<ApiResult<DesktopMethods[K]['result']>>
+    const channel = editorMethods.has(method) ? 'stream-syncer:editor-invoke' : youtubeMethods.has(method) ? 'stream-syncer:yt-invoke' : 'stream-syncer:invoke'
+    return ipcRenderer.invoke(channel, method, args) as Promise<ApiResult<DesktopMethods[K]['result']>>
   },
   subscribeDanmaku(room, listener) {
     const subscriptionId = String(++nextSubscription)

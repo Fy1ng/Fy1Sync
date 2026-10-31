@@ -17,10 +17,11 @@
  */
 
 import { fileURLToPath } from 'node:url'
-import { type Page } from '@playwright/test'
+import { type ElectronApplication, type Page } from '@playwright/test'
 import type { HudStylePack } from '../src/core/hudStylePack'
 import { APP_ORIGIN, expect, launchApplication, test } from './electron'
 import {
+  chooseEditorVideo,
   invoke,
   FIXTURE_DELAY_SECONDS,
   MAX_DETECTION_ERROR_SECONDS,
@@ -152,7 +153,7 @@ test.describe('自动同步', () => {
     presetName = '自动同步测试场景 ' + stamp
     const running = await launchApplication('autosync-teaching')
     try {
-      await teachProfile(running.page, presetId, presetName)
+      await teachProfile(running.application, running.page, presetId, presetName)
       const fetched = await invoke(running.page, 'getPreset', { id: presetId })
       expect(fetched.ok).toBe(true)
       if (!fetched.ok) throw new Error(fetched.message)
@@ -297,7 +298,7 @@ test.describe('自动同步', () => {
  * Build a working profile in the editor: ROI, one grabbed frame per lesson, a click per
  * glyph, then publish.
  */
-async function teachProfile(page: Page, id: string, name: string): Promise<void> {
+async function teachProfile(application: ElectronApplication, page: Page, id: string, name: string): Promise<void> {
   failOnPageError(page)
   await page.goto(APP_ORIGIN + '/admin')
   await expect(page.locator('.editor-main')).toBeVisible()
@@ -305,7 +306,7 @@ async function teachProfile(page: Page, id: string, name: string): Promise<void>
   await setField(page, '标识', id)
   await setField(page, '名称', name)
 
-  await page.locator('main input[accept="video/*"]').setInputFiles(officialPath)
+  await chooseEditorVideo(application, page, officialPath)
   await expect
     .poll(async () =>
       page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.videoWidth),

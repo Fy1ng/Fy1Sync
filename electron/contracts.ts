@@ -14,10 +14,11 @@ import type { DouyuAccountsSnapshot, DouyuMessageInput, DouyuMessageOutcome, Dou
 import type { DouyuRenewalTargetPage, DouyuRenewalPlan, DouyuRenewalResult, DouyuRenewalQuantity } from '../server/douyu/renewalTypes'
 import type { FeatureMethods, FeatureEvent } from './featureContracts'
 import type { YouTubeAdminMethods, YtBrowseState, YtImportJob } from './ytAdminContracts'
+import type { EditorProjectMethods } from './editorProjectContracts'
 
 export interface WindowState { maximized: boolean; fullscreen: boolean; focused: boolean }
 
-export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods {
+export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods, EditorProjectMethods {
   windowControl: { args: { action: 'minimize' | 'toggle-maximize' | 'close' }; result: WindowState }
   getWindowState: { args: undefined; result: WindowState }
   listDouyuAccounts: { args: undefined; result: DouyuAccountsSnapshot }
