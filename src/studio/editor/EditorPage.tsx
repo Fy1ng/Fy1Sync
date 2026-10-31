@@ -23,6 +23,8 @@ import { prepareHudCue, prepareHudGlyphs, recognizeHudFrame, type HudAnalysis, t
 import { FIELD_LABELS, fieldModel, fieldReadiness, patchField, sizeEmptyClock, type EditorClockModel } from './editorModel'
 import { CUE_LABELS, cueModel, editorCue, isCueTarget, patchCue, type EditorTarget } from './cueModel'
 import { CueSection, FrameStatePreview, StateRules } from './CueSection'
+import { addLayout, editorVariant, removeLayout, renameLayout } from './layoutModel'
+import { LayoutSection } from './LayoutSection'
 import type { GlyphBox } from '../../core/segmentation'
 import { profileStore, type StoredProfile } from '../../core/profileStore'
 import { apiClient, issuesFrom, type PresetSummary } from '../../app/apiClient'
@@ -58,13 +60,16 @@ export default function EditorPage(): React.ReactNode {
   const session = useSession()
   const [candidate] = useState(() => session.takeEditingCandidate())
   const [pack, setPack] = useState<HudStylePack>(() => candidate ?? createEmptyHudStylePack())
+  const [selectedVariantId, setSelectedVariantId] = useState<string | undefined>(undefined)
+  const variant = editorVariant(pack, selectedVariantId)
+  const variantId = variant.id
   const adoptFootageSize = useRef(candidate === null)
   const [fieldId, setFieldId] = useState<EditorTarget>('clock')
   const cueId = isCueTarget(fieldId) ? fieldId : null
   const numericId = isCueTarget(fieldId) ? 'clock' : fieldId
-  const profile = useMemo(() => isCueTarget(fieldId) ? cueModel(pack, fieldId) : fieldModel(pack, fieldId), [pack, fieldId])
-  const activePack = useMemo(() => isCueTarget(fieldId) ? patchCue(pack, fieldId, {})
-    : pack.variants[0]!.fields[fieldId] ? pack : patchField(pack, fieldId, {}), [pack, fieldId])
+  const profile = useMemo(() => isCueTarget(fieldId) ? cueModel(pack, fieldId, variantId) : fieldModel(pack, fieldId, variantId), [pack, fieldId, variantId])
+  const activePack = useMemo(() => isCueTarget(fieldId) ? patchCue(pack, fieldId, {}, undefined, variantId)
+    : variant.fields[fieldId] ? pack : patchField(pack, fieldId, {}, variantId), [pack, fieldId, variant, variantId])
   useEffect(() => session.clearEditingCandidate(), [session])
   const [etag, setEtag] = useState<string | undefined>(undefined)
   const [publishedProfile, setPublishedProfile] = useState<HudStylePack | null>(null)
@@ -99,6 +104,7 @@ export default function EditorPage(): React.ReactNode {
   const [selected, setSelected] = useState(-1)
   const [recognized, setRecognized] = useState<HudFieldResult | null>(null)
   const [frameResult, setFrameResult] = useState<HudFrameResult | null>(null)
+  const [playerFrameResult, setPlayerFrameResult] = useState<HudFrameResult | null>(null)
   const frameRef = useRef(frame)
   frameRef.current = frame
   const boxesRef = useRef(boxes)
@@ -119,15 +125,15 @@ export default function EditorPage(): React.ReactNode {
   const binaryCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const objectUrlRef = useRef<string>('')
 
-  const readiness = useMemo(() => fieldReadiness(pack, numericId), [pack, numericId])
-  const clockReadiness = useMemo(() => hudPackReadiness(pack), [pack])
+  const readiness = useMemo(() => fieldReadiness(pack, numericId, variantId), [pack, numericId, variantId])
+  const clockReadiness = useMemo(() => hudPackReadiness(pack, variantId), [pack, variantId])
   useEffect(() => {
     mounted.current = true
     return () => { mounted.current = false; documentRevision.current++; libraryRevision.current++ }
   }, [])
 
   const [analysis, setAnalysis] = useState<HudAnalysis | null>(null)
-  const analysisKey = JSON.stringify([fieldId, pack.variants[0]!.nativeSize, profile.roi, profile.preprocess, profile.segment])
+  const analysisKey = JSON.stringify([variantId, fieldId, variant.nativeSize, profile.roi, profile.preprocess, profile.segment])
   useEffect(() => {
     if (!adoptFootageSize.current || !videoSize.width || !videoSize.height) return
     setPack(current => sizeEmptyClock(current, videoSize.width, videoSize.height))
@@ -135,27 +141,38 @@ export default function EditorPage(): React.ReactNode {
   useEffect(() => {
     let active = true
     setAnalysis(null)
-    const prepared = !frame ? null : cueId ? prepareHudCue(frame, profileRef.current, cueId).then(result => ({ ...result,
+    const prepared = !frame ? null : cueId ? prepareHudCue(frame, profileRef.current, cueId, variantId).then(result => ({ ...result,
       boxes: [], projection: [], normalized: [], bitmaps: [], inkRatio: 0 }))
-      : prepareHudGlyphs(frame, profileRef.current, undefined, undefined, numericId)
+      : prepareHudGlyphs(frame, profileRef.current, variantId, undefined, numericId)
     if (prepared) void prepared.then(result => {
       if (active) setAnalysis(result)
     }).catch(error => {
       if (active) setMessage({ kind: 'error', text: `画面处理失败: ${error instanceof Error ? error.message : String(error)}` })
     })
     return () => { active = false }
-  }, [frame, analysisKey, cueId, numericId])
+  }, [frame, analysisKey, cueId, numericId, variantId])
 
   useEffect(() => {
     let active = true
     setFrameResult(null)
-    if (frame) void recognizeHudFrame(frame, activePack).then(result => {
+    if (frame) void recognizeHudFrame(frame, activePack, variantId).then(result => {
       if (active) setFrameResult(result)
     }).catch(error => {
       if (active) setMessage({ kind: 'error', text: `状态预览失败: ${String(error)}` })
     })
     return () => { active = false }
-  }, [frame, activePack])
+  }, [frame, activePack, variantId])
+
+  useEffect(() => {
+    let active = true
+    setPlayerFrameResult(null)
+    if (frame) void recognizeHudFrame(frame, pack).then(result => {
+      if (active) setPlayerFrameResult(result)
+    }).catch(error => {
+      if (active) setMessage({ kind: 'error', text: `布局预览失败: ${String(error)}` })
+    })
+    return () => { active = false }
+  }, [frame, pack])
 
   // Manual box edits live in their own state so they survive a re-render, but a fresh
   // analysis replaces them: the old boxes indexed into a different image.
@@ -202,9 +219,9 @@ export default function EditorPage(): React.ReactNode {
       setEtag(undefined)
       setPublishedProfile(null)
     }
-    setPack(current => isCueTarget(fieldId) ? patchCue(current, fieldId, update) : patchField(current, fieldId, update))
+    setPack(current => isCueTarget(fieldId) ? patchCue(current, fieldId, update, undefined, variantId) : patchField(current, fieldId, update, variantId))
     setDirty(true)
-  }, [fieldId])
+  }, [fieldId, variantId])
 
   const changeField = (next: EditorTarget): void => {
     ++editRevision.current
@@ -213,6 +230,42 @@ export default function EditorPage(): React.ReactNode {
     setBoxes([])
     setSelected(-1)
     setFieldId(next)
+  }
+
+  const changeLayout = (id: string): void => {
+    ++editRevision.current
+    setAnalysis(null)
+    setFrameResult(null)
+    setRecognized(null)
+    setBoxes([])
+    setSelected(-1)
+    setSelectedVariantId(id)
+  }
+
+  const createLayout = (): void => {
+    if (!frame) return
+    const added = addLayout(pack, variantId, frame)
+    adoptFootageSize.current = false
+    setPack(added.pack)
+    changeLayout(added.id)
+    setDirty(true)
+  }
+
+  const editLayoutId = (id: string): string | null => {
+    const renamed = renameLayout(pack, variantId, id)
+    if (renamed.error) return renamed.error
+    setPack(renamed.pack)
+    changeLayout(id)
+    setDirty(true)
+    return null
+  }
+
+  const deleteLayout = (): void => {
+    const updated = removeLayout(pack, variantId)
+    if (updated === pack) return
+    setPack(updated)
+    changeLayout(updated.variants[0]!.id)
+    setDirty(true)
   }
 
   const setRoi = useCallback((roi: RoiRect) => patch({ roi }), [patch])
@@ -344,7 +397,7 @@ export default function EditorPage(): React.ReactNode {
 
   const preparedSamples = async (): Promise<string[]> => {
     if (!frame) throw new Error('先取一帧')
-    return (await prepareHudGlyphs(frame, activePack, pack.variants[0]!.id, boxes, numericId)).bitmaps
+    return (await prepareHudGlyphs(frame, activePack, variantId, boxes, numericId)).bitmaps
   }
   const assign = async (char: ClockChar): Promise<void> => {
     if (cueId || !analysis || selected < 0 || !boxes[selected] || (fieldId !== 'clock' && char === ':')) return
@@ -405,7 +458,7 @@ export default function EditorPage(): React.ReactNode {
     if (!frame) return
     const revision = editRevision.current
     try {
-      const result = await recognizeHudFrame(frame, activePack)
+      const result = await recognizeHudFrame(frame, activePack, variantId)
       if (mounted.current && revision === editRevision.current && frameRef.current === frame) {
         setRecognized(result.fields[numericId])
         setFrameResult(result)
@@ -417,9 +470,9 @@ export default function EditorPage(): React.ReactNode {
     if (!frame || !cueId) return
     const revision = editRevision.current
     try {
-      const sample = await prepareHudCue(frame, activePack, cueId)
+      const sample = await prepareHudCue(frame, activePack, cueId, variantId)
       if (!mounted.current || revision !== editRevision.current || frameRef.current !== frame) return
-      const updated = patchCue(pack, cueId, {}, sample)
+      const updated = patchCue(pack, cueId, {}, sample, variantId)
       const validated = parseHudStylePack(updated)
       if (!validated.pack) {
         setMessage({ kind: 'error', text: `模板无法保存: ${validated.issues.map(issue => issue.message).join('; ')}` })
@@ -534,6 +587,7 @@ export default function EditorPage(): React.ReactNode {
     }
     adoptFootageSize.current = false
     setPack(result.value.profile)
+    setSelectedVariantId(undefined)
     setFieldId('clock')
     setPublishedProfile(result.value.profile)
     setEtag(result.value.etag)
@@ -554,6 +608,7 @@ export default function EditorPage(): React.ReactNode {
       }
       adoptFootageSize.current = false
       setPack(found)
+      setSelectedVariantId(undefined)
       setFieldId('clock')
       setPublishedProfile(null)
       setEtag(undefined)
@@ -570,6 +625,7 @@ export default function EditorPage(): React.ReactNode {
     ++documentRevision.current
     adoptFootageSize.current = true
     setPack(createEmptyHudStylePack(undefined, undefined, videoSize.width && videoSize.height ? videoSize : undefined))
+    setSelectedVariantId(undefined)
     setFieldId('clock')
     setPublishedProfile(null)
     setEtag(undefined)
@@ -589,6 +645,7 @@ export default function EditorPage(): React.ReactNode {
       }
       adoptFootageSize.current = false
       setPack(parsed.pack)
+      setSelectedVariantId(undefined)
       setFieldId('clock')
       setPublishedProfile(null)
       setEtag(undefined)
@@ -727,11 +784,11 @@ export default function EditorPage(): React.ReactNode {
             )}
             {sampleUrl && (
               <>{HUD_FIELD_IDS.map(id => (
-                <RoiWindow key={id} roi={fieldModel(pack, id).roi} onChange={setRoi}
+                <RoiWindow key={id} roi={fieldModel(pack, id, variantId).roi} onChange={setRoi}
                   readOnly={id !== fieldId} label={FIELD_LABELS[id]}
                   videoWidth={videoSize.width} videoHeight={videoSize.height} hostRef={stageRef} />
-              ))}{[...HUD_CUE_IDS, 'organizer' as const].filter(id => id === fieldId || (id === 'organizer' ? pack.variants[0]!.organizer : pack.variants[0]!.cues[id])).map(id => (
-                <RoiWindow key={id} roi={cueModel(pack, id).roi} onChange={setRoi} readOnly={id !== fieldId} label={CUE_LABELS[id]}
+              ))}{[...HUD_CUE_IDS, 'organizer' as const].filter(id => id === fieldId || (id === 'organizer' ? variant.organizer : variant.cues[id])).map(id => (
+                <RoiWindow key={id} roi={cueModel(pack, id, variantId).roi} onChange={setRoi} readOnly={id !== fieldId} label={CUE_LABELS[id]}
                   videoWidth={videoSize.width} videoHeight={videoSize.height} hostRef={stageRef} />
               ))}</>
             )}
@@ -784,6 +841,8 @@ export default function EditorPage(): React.ReactNode {
         </section>
 
         <aside className="editor-rail" aria-label="识别设置">
+          <LayoutSection key={variantId} pack={pack} variant={variant} canCreate={!!frame}
+            onSelect={changeLayout} onCreate={createLayout} onRename={editLayoutId} onDelete={deleteLayout} />
           <section className="rail-group">
             <label className="field-stack">
               <span className="field-label">当前字段</span>
@@ -798,30 +857,30 @@ export default function EditorPage(): React.ReactNode {
             boxes={boxes} selected={selected} onSelect={setSelected}
             grayRef={grayCanvasRef} binaryRef={binaryCanvasRef} />
           <BinarizeSection profile={profile} onPatch={patch} />
-          {cueId ? <CueSection id={cueId} pack={activePack} result={cueId === 'organizer' ? frameResult?.organizer : frameResult?.cues[cueId]}
+          {cueId ? <CueSection id={cueId} pack={activePack} variantId={variantId} result={cueId === 'organizer' ? frameResult?.organizer : frameResult?.cues[cueId]}
             onSave={frame ? () => void saveCue() : null} onThreshold={matchThreshold => patch({ matchThreshold })}
             onRemove={bitmapId => {
               ++editRevision.current
               setPack(current => {
-                const variant = current.variants[0]!
-                const cue = { ...editorCue(current, cueId), templates: editorCue(current, cueId).templates.filter(id => id !== bitmapId) }
-                return { ...current, revision: current.revision + 1, variants: [{ ...variant,
-                  ...(cueId === 'organizer' ? { organizer: cue } : { cues: { ...variant.cues, [cueId]: cue } }) }, ...current.variants.slice(1)] }
+                const selectedVariant = editorVariant(current, variantId)
+                const cue = { ...editorCue(current, cueId, variantId), templates: editorCue(current, cueId, variantId).templates.filter(id => id !== bitmapId) }
+                return { ...current, revision: current.revision + 1, variants: current.variants.map(item => item.id !== variantId ? item : { ...selectedVariant,
+                  ...(cueId === 'organizer' ? { organizer: cue } : { cues: { ...selectedVariant.cues, [cueId]: cue } }) }) }
               })
               setDirty(true)
             }} /> : <>
-          <GlyphSection key={`glyph-${fieldId}`} fieldId={numericId} profile={profile} readiness={readiness} boxes={boxes} selected={selected}
+          <GlyphSection key={`glyph-${variantId}-${fieldId}`} fieldId={numericId} profile={profile} readiness={readiness} boxes={boxes} selected={selected}
             bounds={analysis ? { width: analysis.binary.width, height: analysis.binary.height } : null}
             onBoxes={setBoxes} onAssign={assign} onAssignReading={assignReading} onVerify={frame ? verifyFrame : null} recognized={recognized} />
-          <StretchSection key={`stretch-${fieldId}`} fieldId={numericId} video={video ? videoRef.current : null} pack={activePack} onSave={saveStretch} />
+          <StretchSection key={`stretch-${variantId}-${fieldId}`} fieldId={numericId} variantId={variantId} video={video ? videoRef.current : null} pack={activePack} onSave={saveStretch} />
           <SampleSection fieldId={numericId} profile={profile} onRemove={removeSample} />
           <ParamsSection fieldId={numericId} profile={profile} onPatch={patch} />
           </>}
-          <FrameStatePreview result={frameResult} />
-          <StateRules pack={pack} onChange={states => {
+          <FrameStatePreview result={frameResult} playerResult={playerFrameResult} />
+          <StateRules pack={pack} variantId={variantId} onChange={states => {
             ++editRevision.current
             setPack(current => ({ ...current, revision: current.revision + 1,
-              variants: current.variants.map((variant, index) => index ? variant : { ...variant, states }) }))
+              variants: current.variants.map(item => item.id !== variantId ? item : { ...item, states }) }))
             setDirty(true)
           }} />
         </aside>

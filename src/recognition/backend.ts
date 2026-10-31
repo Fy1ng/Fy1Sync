@@ -1,7 +1,7 @@
 /** HUD style packs always run through the shared Rust/WASM entry. */
 import { toGrayscale } from '../core/imageOps'
 import { profileReadiness } from '../core/profileSchema'
-import { isHudPack, variantForSize, type ActiveProfile } from '../core/activeProfile'
+import { isHudPack, type ActiveProfile } from '../core/activeProfile'
 import { hudFrameFromJson, type HudFrameResult } from '../core/hudWasm'
 import { hudClockOutcome } from './hudResult'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
@@ -44,14 +44,13 @@ function annotate(response: WorkerResponse | null, backend: RecognitionBackend):
   return response
 }
 
-type DetectorState = { detector: WasmTickDetector; width: number; height: number; time: number }
+type DetectorState = { detector: WasmTickDetector; width: number; height: number; time: number; variantId?: string | null }
 
 export class WasmWorkerEngine implements WorkerEngine {
   readonly backend = 'wasm' as const
   private generation = -1
   private configured = false
   private profile: ActiveProfile | null = null
-  private variantId: string | undefined
   private automatic = false
   private readonly detectors = new Map<SourceRole, DetectorState>()
   private retainedWindow: { session: WasmAutoSession; generation: number; id: number } | null = null
@@ -69,7 +68,6 @@ export class WasmWorkerEngine implements WorkerEngine {
         const readiness = isHudPack(request.profile)
           ? JSON.parse(this.wasm.configure(JSON.stringify(request.profile))) as { ready: boolean; missing: string[]; sampleCount: number }
           : profileReadiness(request.profile)
-        this.variantId = request.variantId
         this.resetDetectors()
         this.generation = request.generation
         this.configured = true
@@ -99,10 +97,14 @@ export class WasmWorkerEngine implements WorkerEngine {
           if (gray) tickMoment = this.detectTick(request.role, gray, request.width, request.height, request.mediaTime)
           if (this.profile && isHudPack(this.profile)) {
             if (!this.wasm.recognizeHud) throw new Error('WASM 不支持样式包识别, 请重新构建应用')
-            const variantId = this.variantId ?? variantForSize(this.profile, { width: request.width, height: request.height })
-            hud = hudFrameFromJson(this.wasm.recognizeHud(pixels, request.width, request.height, JSON.stringify(this.profile), variantId))
+            hud = hudFrameFromJson(this.wasm.recognizeHud(pixels, request.width, request.height, JSON.stringify(this.profile), ''))
+            const detector = this.detectors.get(request.role)
+            if (detector && detector.variantId !== hud.variantId) {
+              detector.detector.reset()
+              detector.variantId = hud.variantId
+            }
             const crop = hud.fields.clock.debug?.gray
-            if (crop) tickMoment = this.detectTick(request.role, crop.data, crop.width, crop.height, request.mediaTime)
+            if (crop) tickMoment = this.detectTick(request.role, crop.data, crop.width, crop.height, request.mediaTime, hud.variantId)
             outcome = hudClockOutcome(hud, request)
             debug = request.wantDebug ? hud.fields.clock.debug : null
           } else if (this.automatic) {
@@ -199,11 +201,11 @@ export class WasmWorkerEngine implements WorkerEngine {
     }
   }
 
-  private detectTick(role: SourceRole, gray: Uint8Array, width: number, height: number, time: number): TickMoment | undefined {
+  private detectTick(role: SourceRole, gray: Uint8Array, width: number, height: number, time: number, variantId?: string | null): TickMoment | undefined {
     if (!this.wasm.createTickDetector) return undefined
     let state = this.detectors.get(role)
     if (!state) {
-      state = { detector: this.wasm.createTickDetector(), width, height, time: -Infinity }
+      state = { detector: this.wasm.createTickDetector(), width, height, time: -Infinity, variantId }
       this.detectors.set(role, state)
     }
     if (state.width !== width || state.height !== height || time <= state.time) state.detector.reset()

@@ -59,10 +59,10 @@ describe('HUD full-frame Rust/WASM recognition', () => {
     const recognizeHud = vi.spyOn(wasm, 'recognizeHud')
     const oldRecognition = vi.spyOn(wasm, 'recognize')
     try {
-      expect(engine.handle({ type: 'configure', generation: 2, profile: pack, variantId: variant.id }))
+      expect(engine.handle({ type: 'configure', generation: 2, profile: pack }))
         .toMatchObject({ type: 'configured', ready: true, missing: [], sampleCount: 11 })
       const editor = await recognizeHudFrame({ pixels: frame.data, width: frame.width, height: frame.height }, pack, variant.id)
-      const direct = hudFrameFromJson(recognize_hud_frame(new Uint8Array(request.pixels), frame.width, frame.height, JSON.stringify(pack), variant.id))
+      const direct = hudFrameFromJson(recognize_hud_frame(new Uint8Array(request.pixels), frame.width, frame.height, JSON.stringify(pack), ''))
       expect(editor).toEqual(direct)
       expect(editor.fields.clock).toMatchObject({ status: 'read', reading: { text: '1:37', value: 97 } })
       const player = engine.handle(request) as ResultMessage
@@ -84,7 +84,7 @@ describe('HUD full-frame Rust/WASM recognition', () => {
       expect(player.hud?.cues.replay?.debug?.binary.data).toBeInstanceOf(Uint8Array)
       expect(player.hud?.organizer.debug?.gray.data).toBeInstanceOf(Uint8Array)
       expect(recognizeHud).toHaveBeenCalledOnce()
-      expect(recognizeHud).toHaveBeenCalledWith(new Uint8Array(request.pixels), 640, 360, JSON.stringify(pack), variant.id)
+      expect(recognizeHud).toHaveBeenCalledWith(new Uint8Array(request.pixels), 640, 360, JSON.stringify(pack), '')
       expect(oldRecognition).not.toHaveBeenCalled()
     } finally { recognition.free() }
   })
@@ -100,7 +100,7 @@ describe('HUD full-frame Rust/WASM recognition', () => {
     request.pixels = frame.data.slice().buffer as ArrayBuffer
     const { recognition, engine } = realEngine()
     try {
-      engine.handle({ type: 'configure', generation: 2, profile: pack, variantId: variant.id })
+      engine.handle({ type: 'configure', generation: 2, profile: pack })
       const editor = await recognizeHudFrame({ pixels: frame.data, width: frame.width, height: frame.height }, pack, variant.id)
       expect(editor.fields.scoreLeft).toMatchObject({ status: 'read', reading: { value: 18, source: 'recognized' } })
       expect(editor.fields.scoreRight).toMatchObject({ status: 'read', reading: { value: 7, source: 'recognized' } })
@@ -119,11 +119,61 @@ describe('HUD full-frame Rust/WASM recognition', () => {
     variant.organizer = null
     const { recognition, engine } = realEngine()
     try {
-      engine.handle({ type: 'configure', generation: 2, profile: pack, variantId: variant.id })
+      engine.handle({ type: 'configure', generation: 2, profile: pack })
       const editor = await recognizeHudFrame({ pixels: frame.data, width: frame.width, height: frame.height }, pack, variant.id)
       expect(editor).toMatchObject({ content: 'live', phase: 'unconfigured' })
       const player = engine.handle(request) as ResultMessage
       expect(player.outcome).toMatchObject({ status: 'success', reading: { text: '1:37', seconds: 97 } })
+    } finally { recognition.free() }
+  })
+
+  it('selects a layout for every player frame through real WASM and excludes unresolved layouts from sync', async () => {
+    const { pack, variant: top, request } = fixture()
+    top.cues = {}
+    top.states = {}
+    top.organizer!.roi.x = 10
+    const bottom = structuredClone(top)
+    bottom.id = 'bottom'
+    bottom.fields.clock!.roi.y = 214
+    bottom.organizer!.roi.x = 20
+    pack.variants.push(bottom)
+    const makeFrame = (layout: 'top' | 'bottom' | 'both' | 'none') => {
+      const frame = createFrame(640, 360)
+      drawText(frame, layout === 'bottom' ? '1:36' : '1:37', 280, layout === 'bottom' ? 220 : 20, { scale: 6 })
+      const marks = layout === 'both' ? [10, 20] : layout === 'top' ? [10] : layout === 'bottom' ? [20] : []
+      for (const x of marks) for (let pixel = 0; pixel < 9; pixel++) {
+        if (pixel % 2) continue
+        const offset = (Math.floor(pixel / 3) * frame.width + x + pixel % 3) * 4
+        frame.data.set([255, 255, 255, 255], offset)
+      }
+      return frame
+    }
+    expect(parseHudStylePack(pack).issues).toEqual([])
+    const { recognition, wasm, engine } = realEngine()
+    const recognize = vi.spyOn(wasm, 'recognizeHud')
+    try {
+      engine.handle({ type: 'configure', generation: 2, profile: pack })
+      for (const [index, layout] of (['top', 'bottom', 'none', 'both', 'top'] as const).entries()) {
+        const frame = makeFrame(layout)
+        const pixels = frame.data.slice().buffer as ArrayBuffer
+        const player = engine.handle({ ...request, frameIndex: index, mediaTime: index,
+          pixels }) as ResultMessage
+        const editor = await recognizeHudFrame({ pixels: frame.data, width: 640, height: 360 }, pack)
+        expect(player.hud).toEqual(editor)
+        if (layout === 'top' || layout === 'bottom') {
+          expect(player.hud).toMatchObject({ variantId: layout === 'top' ? top.id : bottom.id,
+            selectionReason: null, content: 'live', phase: 'unconfigured' })
+          expect(player.outcome).toMatchObject({ status: 'success', reading: { seconds: layout === 'top' ? 97 : 96 } })
+        } else {
+          expect(player.hud).toMatchObject({ variantId: null,
+            selectionReason: layout === 'both' ? 'multiple-matches' : 'no-match', content: 'indeterminate', phase: 'indeterminate' })
+          expect(Object.values(player.hud!.fields).every(field => field.status === 'indeterminate')).toBe(true)
+          expect(player.outcome.status).toBe('indeterminate')
+        }
+        expect(recognize.mock.lastCall?.[0].buffer).toBe(pixels)
+        expect(recognize.mock.lastCall?.slice(1)).toEqual([640, 360, JSON.stringify(pack), ''])
+      }
+      expect(recognize).toHaveBeenCalledTimes(5)
     } finally { recognition.free() }
   })
 
@@ -194,6 +244,7 @@ describe('HUD full-frame Rust/WASM recognition', () => {
       expect(grab).toHaveBeenCalledOnce()
       expect(grab).toHaveBeenCalledWith(video, FULL_FRAME_ROI, 12.5)
       const frames = sent.filter((request): request is FrameMessage => request.type === 'frame')
+      expect(sent.find(request => request.type === 'configure')).not.toHaveProperty('variantId')
       expect(frames).toHaveLength(1)
       expect(frames[0]).toMatchObject({ width: 640, height: 360 })
       expect(frames[0]!.pixels.byteLength).toBe(640 * 360 * 4)

@@ -645,6 +645,108 @@ fn hud_cues_organizer_and_preparation_share_the_whole_region() {
     assert_eq!(result.content,"indeterminate");
 }
 
+fn layout_pack() -> (Vec<u8>, HudStylePack) {
+    let (frame, roi) = clock("1:37", 6);
+    let mut value = hud_pack(&profile(6, roi), 640, 360);
+    let mask = [255, 0, 255, 0, 255, 0, 255, 0, 255];
+    value["bitmaps"]["organizer"] = json!({"width":3,"height":3,"data":pack_bitmap(&mask)});
+    value["variants"][0]["organizer"] = json!({
+        "roi":{"x":7,"y":11,"w":3,"h":3},
+        "preprocess":{"scale":1.0,"threshold":150,"invert":false},
+        "templates":["organizer"],"minScore":1.0
+    });
+    let mut bottom = value["variants"][0].clone();
+    bottom["id"] = json!("official-bottom-360");
+    bottom["organizer"]["roi"]["x"] = json!(21);
+    value["variants"].as_array_mut().unwrap().push(bottom);
+    (frame, parse_hud_style_pack(&value).unwrap())
+}
+
+fn paint_layout_mark(frame: &mut [u8], x: usize) {
+    for (i, pixel) in [255, 0, 255, 0, 255, 0, 255, 0, 255].iter().enumerate() {
+        let offset = ((11 + i / 3) * 640 + x + i % 3) * 4;
+        frame[offset..offset + 3].fill(*pixel);
+    }
+}
+
+fn assert_indeterminate_layout(result: &HudFrameResult, reason: &str) {
+    assert_eq!(result.variant_id, None);
+    assert_eq!(result.selection_reason.as_deref(), Some(reason));
+    assert_eq!(result.content, "indeterminate");
+    assert_eq!(result.phase, "indeterminate");
+    for field in [&result.fields.clock, &result.fields.score_left, &result.fields.score_right, &result.fields.round] {
+        assert!(matches!(field, HudFieldResult::Indeterminate { reason: value, debug: None } if value == reason));
+    }
+}
+
+#[test]
+fn hud_auto_layout_selects_each_same_size_variant_by_its_organizer() {
+    let (frame, pack) = layout_pack();
+    for (x, id) in [(7, "official-top-360"), (21, "official-bottom-360")] {
+        let mut marked = frame.clone();
+        paint_layout_mark(&mut marked, x);
+        let result = recognize_hud_frame(&marked, 640, 360, &pack, "").unwrap();
+        assert_eq!(result.variant_id.as_deref(), Some(id));
+        assert_eq!(result.selection_reason, None);
+        assert!(matches!(result.organizer, HudPresenceResult::Matched { score: Some(1.0), .. }));
+        assert!(matches!(result.fields.clock, HudFieldResult::Read { reading, .. } if reading.value == 97.0));
+    }
+}
+
+#[test]
+fn hud_auto_layout_no_matches_is_indeterminate_and_has_no_readings() {
+    let (frame, pack) = layout_pack();
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    assert_indeterminate_layout(&result, "no-match");
+    let no_size = recognize_hud_frame(&[0; 16], 2, 2, &pack, "").unwrap();
+    assert_indeterminate_layout(&no_size, "no-match");
+    assert!(recognize_hud_frame(&frame[..frame.len() - 1], 640, 360, &pack, "").is_err());
+}
+
+#[test]
+fn hud_auto_layout_multiple_matches_is_indeterminate_and_explicit_inspection_still_works() {
+    let (mut frame, pack) = layout_pack();
+    paint_layout_mark(&mut frame, 7);
+    paint_layout_mark(&mut frame, 21);
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    assert_indeterminate_layout(&result, "multiple-matches");
+    let explicit = recognize_hud_frame(&frame, 640, 360, &pack, "official-bottom-360").unwrap();
+    assert_eq!(explicit.variant_id.as_deref(), Some("official-bottom-360"));
+    assert_eq!(explicit.selection_reason, None);
+}
+
+#[test]
+fn hud_auto_layout_single_same_size_variant_does_not_require_organizer_match() {
+    let (frame, mut pack) = layout_pack();
+    // A different resolution does not turn a single native layout into a multi-layout choice.
+    pack.variants[1].native_size.height = 720;
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    assert_eq!(result.variant_id.as_deref(), Some("official-top-360"));
+    assert!(matches!(result.organizer, HudPresenceResult::NotMatched { .. }));
+    assert!(matches!(result.fields.clock, HudFieldResult::Read { .. }));
+    pack.variants[0].organizer = None;
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    assert_eq!(result.variant_id.as_deref(), Some("official-top-360"));
+    assert_eq!(result.content, "live");
+    assert_eq!(result.phase, "unconfigured");
+    assert!(matches!(result.fields.clock, HudFieldResult::Read { .. }));
+}
+
+#[test]
+fn hud_auto_layout_never_selects_a_variant_without_organizer_among_multiple_layouts() {
+    let (mut frame, mut pack) = layout_pack();
+    paint_layout_mark(&mut frame, 7);
+    pack.variants[0].organizer = None;
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    assert_indeterminate_layout(&result, "no-match");
+    paint_layout_mark(&mut frame, 21);
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    assert_eq!(result.variant_id.as_deref(), Some("official-bottom-360"));
+    pack.variants[1].organizer.as_mut().unwrap().templates.clear();
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    assert_indeterminate_layout(&result, "no-match");
+}
+
 #[test]
 fn bomb_and_statistics_provide_positive_evidence_of_missing_fields() {
     let (frame,roi)=clock("1:37",6);

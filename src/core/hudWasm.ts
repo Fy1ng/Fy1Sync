@@ -31,7 +31,8 @@ export type HudContent = 'live' | 'replay' | 'indeterminate'
 export type HudPhase = 'active' | 'planted' | 'paused' | 'roundOver' | 'statistics' | 'indeterminate' | 'unconfigured'
 export interface HudCueAnalysis extends HudCueDebug { bitmap: string }
 export interface HudFrameResult {
-  variantId: string
+  variantId: string | null
+  selectionReason: 'no-match' | 'multiple-matches' | null
   content: HudContent
   phase: HudPhase
   fields: Record<HudResultFieldId, HudFieldResult>
@@ -84,7 +85,7 @@ async function loadHudWasm(): Promise<HudModule> {
   return modulePromise
 }
 const pixels = (frame: HudFrame): Uint8Array => new Uint8Array(frame.pixels.buffer, frame.pixels.byteOffset, frame.pixels.byteLength)
-export async function recognizeHudFrame(frame: HudFrame, pack: HudStylePack, variantId = pack.variants[0]!.id): Promise<HudFrameResult> {
+export async function recognizeHudFrame(frame: HudFrame, pack: HudStylePack, variantId = ''): Promise<HudFrameResult> {
   const wasm = await loadHudWasm()
   return hudFrameFromJson(wasm.recognize_hud_frame(pixels(frame), frame.width, frame.height, JSON.stringify(pack), variantId))
 }

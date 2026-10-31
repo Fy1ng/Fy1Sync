@@ -13,6 +13,7 @@ export class HudReplaySession {
   }
 
   observe(result: HudFrameResult): HudFrameResult {
+    if (result.variantId === null) return result
     const round = result.fields.round.status === 'read' ? result.fields.round.reading.value : null
     if (result.content === 'replay') {
       this.replay = true

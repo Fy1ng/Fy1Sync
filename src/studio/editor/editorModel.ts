@@ -1,6 +1,7 @@
 /** A field-specific rail view; the full pack remains the authoritative document. */
 import { CLOCK_CHARS, type ClockChar, type PreprocessSettings, type RoiRect, type TemplateSample } from '../../core/profileSchema'
 import { createEmptyHudStylePack, type HudField, type HudFieldId, type HudSegment, type HudStylePack } from '../../core/hudStylePack'
+import { editorVariant } from './layoutModel'
 
 export interface EditorClockModel {
   id: string
@@ -16,8 +17,8 @@ export interface EditorClockModel {
 export const FIELD_LABELS: Record<HudFieldId, string> = { clock: '倒计时', scoreLeft: '左比分', scoreRight: '右比分' }
 
 /** Unconfigured fields get an editable empty view, without changing an imported document. */
-export function editorField(pack: HudStylePack, fieldId: HudFieldId): HudField {
-  const variant = pack.variants[0]!
+export function editorField(pack: HudStylePack, fieldId: HudFieldId, variantId?: string): HudField {
+  const variant = editorVariant(pack, variantId)
   const configured = variant.fields[fieldId]
   if (configured) return configured
   const fallback = createEmptyHudStylePack(pack.id, pack.name, variant.nativeSize).variants[0]!.fields.clock!
@@ -28,9 +29,9 @@ export function editorField(pack: HudStylePack, fieldId: HudFieldId): HudField {
   grammar: { kind: 'integer', min: 0, max: 99 }, match: { ...fallback.match, minScore: 0.9 } }
 }
 
-export function fieldModel(pack: HudStylePack, fieldId: HudFieldId): EditorClockModel {
-  const variant = pack.variants[0]!
-  const field = editorField(pack, fieldId)
+export function fieldModel(pack: HudStylePack, fieldId: HudFieldId, variantId?: string): EditorClockModel {
+  const variant = editorVariant(pack, variantId)
+  const field = editorField(pack, fieldId, variant.id)
   const { width, height } = variant.nativeSize
   return { id: pack.id, name: pack.name, roi: { x: field.roi.x / width, y: field.roi.y / height,
     w: field.roi.w / width, h: field.roi.h / height }, preprocess: field.preprocess, segment: field.segment,
@@ -41,8 +42,8 @@ export function fieldModel(pack: HudStylePack, fieldId: HudFieldId): EditorClock
     })) }
 }
 
-export function fieldReadiness(pack: HudStylePack, fieldId: HudFieldId): { ready: boolean; missing: ClockChar[]; sampleCount: number } {
-  const field = editorField(pack, fieldId)
+export function fieldReadiness(pack: HudStylePack, fieldId: HudFieldId, variantId?: string): { ready: boolean; missing: ClockChar[]; sampleCount: number } {
+  const field = editorField(pack, fieldId, variantId)
   const needed = fieldId === 'clock' && field.grammar.kind === 'countdown' && field.grammar.format !== 'ss'
     ? CLOCK_CHARS : CLOCK_CHARS.filter(char => char !== ':')
   const missing = needed.filter(char => !field.glyphs[char]?.length)
@@ -50,9 +51,9 @@ export function fieldReadiness(pack: HudStylePack, fieldId: HudFieldId): { ready
     sampleCount: Object.values(field.glyphs).reduce((count, refs) => count + refs.length, 0) }
 }
 
-export function patchField(pack: HudStylePack, fieldId: HudFieldId, patch: Partial<EditorClockModel>): HudStylePack {
-  const variant = pack.variants[0]!
-  const field = editorField(pack, fieldId)
+export function patchField(pack: HudStylePack, fieldId: HudFieldId, patch: Partial<EditorClockModel>, variantId?: string): HudStylePack {
+  const variant = editorVariant(pack, variantId)
+  const field = editorField(pack, fieldId, variant.id)
   const { width, height } = variant.nativeSize
   const bitmaps = { ...pack.bitmaps }
   const glyphs = patch.templates ? Object.fromEntries(Object.entries(patch.templates).map(([char, samples]) => [char, samples!.map(sample => {
@@ -67,15 +68,15 @@ export function patchField(pack: HudStylePack, fieldId: HudFieldId, patch: Parti
   const roi = patch.roi ? { x, y, w: Math.max(1, Math.min(width - x, Math.round(patch.roi.w * width))),
     h: Math.max(1, Math.min(height - y, Math.round(patch.roi.h * height))) } : field.roi
   return { ...pack, id: patch.id ?? pack.id, name: patch.name ?? pack.name, revision: pack.revision + 1, bitmaps,
-    variants: pack.variants.map((item, index) => index ? item : { ...item, fields: { ...item.fields, [fieldId]: {
+    variants: pack.variants.map(item => item.id !== variant.id ? item : { ...item, fields: { ...item.fields, [fieldId]: {
       ...field, roi, preprocess: patch.preprocess ?? field.preprocess, segment: patch.segment ?? field.segment, glyphs,
       grammar: fieldId === 'clock' && patch.clockFormat ? { kind: 'countdown', format: patch.clockFormat } : field.grammar,
       match: { ...field.match, minScore: patch.matchThreshold ?? field.match.minScore },
     } } }) }
 }
 
-export function clockModel(pack: HudStylePack): EditorClockModel { return fieldModel(pack, 'clock') }
-export function patchClock(pack: HudStylePack, patch: Partial<EditorClockModel>): HudStylePack { return patchField(pack, 'clock', patch) }
+export function clockModel(pack: HudStylePack, variantId?: string): EditorClockModel { return fieldModel(pack, 'clock', variantId) }
+export function patchClock(pack: HudStylePack, patch: Partial<EditorClockModel>, variantId?: string): HudStylePack { return patchField(pack, 'clock', patch, variantId) }
 export function sizeEmptyClock(pack: HudStylePack, width: number, height: number): HudStylePack {
   const variant = pack.variants[0]!
   if (variant.nativeSize.width === width && variant.nativeSize.height === height) return pack

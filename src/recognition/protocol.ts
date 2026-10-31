@@ -19,7 +19,6 @@ export interface ConfigureMessage {
   type: 'configure'
   generation: number
   profile: ActiveProfile
-  variantId?: string
   /** Explicit P4a partial-profile path; omitted keeps the P3 parity contract. */
   automatic?: boolean
 }

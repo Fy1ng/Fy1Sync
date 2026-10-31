@@ -17,7 +17,7 @@
  * the duplicated cost is a few kilobytes of template masks.
  */
 
-import { captureRoi, isHudPack, variantForSize, type ActiveProfile } from '../core/activeProfile'
+import { assertLayoutForSize, captureRoi, isHudPack, type ActiveProfile } from '../core/activeProfile'
 import type { RecognitionProfile } from '../core/profileSchema'
 import { ClockJumpDetector, parseCountdown } from '../core/clockJump'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
@@ -69,6 +69,7 @@ interface RoleChannel {
   height: number
   stopObserving: (() => void) | null
   replay: HudReplaySession
+  variantId: string | null | undefined
   rhythm: RhythmSampler
   jumps: ClockJumpDetector
   pendingMoment: ResultMessage['tickMoment'] | null
@@ -223,9 +224,8 @@ export class RecognitionSampler {
       if (channel.configuredFor !== active) {
         this.resetTiming(channel)
         try {
-          channel.client.configure(active, isHudPack(active)
-            ? { variantId: variantForSize(active, { width: video.videoWidth, height: video.videoHeight }) }
-            : { automatic: active.id.startsWith('session/') })
+          if (isHudPack(active)) assertLayoutForSize(active, { width: video.videoWidth, height: video.videoHeight })
+          channel.client.configure(active, isHudPack(active) ? {} : { automatic: active.id.startsWith('session/') })
         } catch (error) { this.options.onError?.(role, String(error)); return }
         channel.configuredFor = active
       }
@@ -294,6 +294,7 @@ export class RecognitionSampler {
       height: 0,
       stopObserving: null,
       replay: new HudReplaySession(),
+      variantId: undefined,
       rhythm: new RhythmSampler(),
       jumps: new ClockJumpDetector(role),
       pendingMoment: null,
@@ -309,6 +310,12 @@ export class RecognitionSampler {
           if (!video || this.options.video(role) !== video || !this.sameSource(channel, video)) {
             this.invalidateSource(channel)
             return
+          }
+          if (message.hud && channel.variantId !== message.hud.variantId) {
+            const anchor = channel.frameAnchor
+            this.resetTiming(channel)
+            channel.frameAnchor = anchor
+            channel.variantId = message.hud.variantId
           }
           const hud = message.hud ? channel.replay.observe(message.hud) : undefined
           const current = hud ? { ...message, hud, outcome: hudSyncOutcome(hud, message.outcome) } : message
@@ -336,6 +343,7 @@ export class RecognitionSampler {
     channel.client.cancel()
     channel.configuredFor = null
     channel.replay.reset()
+    channel.variantId = undefined
     this.resetTiming(channel)
   }
 

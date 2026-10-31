@@ -797,7 +797,8 @@ pub enum HudPresenceResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HudFrameResult {
-    pub variant_id: String,
+    pub variant_id: Option<String>,
+    pub selection_reason: Option<String>,
     pub fields: HudFieldResults,
     pub cues: BTreeMap<String, HudPresenceResult>,
     pub states: BTreeMap<String, HudPresenceResult>,
@@ -1181,6 +1182,20 @@ fn derive_round(left: &HudFieldResult, right: &HudFieldResult) -> HudFieldResult
         _ => HudFieldResult::Indeterminate { reason: "score-indeterminate".into(), debug: None },
     }
 }
+fn indeterminate_layout(reason: &str) -> HudFrameResult {
+    let field = || HudFieldResult::Indeterminate { reason: reason.into(), debug: None };
+    HudFrameResult {
+        variant_id: None,
+        selection_reason: Some(reason.into()),
+        fields: HudFieldResults { clock: field(), score_left: field(), score_right: field(), round: field() },
+        cues: BTreeMap::new(),
+        states: BTreeMap::new(),
+        organizer: HudPresenceResult::Indeterminate { reason: reason.into(), score: None, debug: None },
+        content: "indeterminate".into(),
+        phase: "indeterminate".into(),
+    }
+}
+/// An empty ID selects this frame's layout; explicit IDs let the editor inspect its current layout.
 pub fn recognize_hud_frame(
     rgba: &[u8],
     width: usize,
@@ -1188,7 +1203,37 @@ pub fn recognize_hud_frame(
     pack: &HudStylePack,
     id: &str,
 ) -> Result<HudFrameResult, String> {
-    let variant = frame_variant(rgba, width, height, pack, id)?;
+    let (variant, selected_organizer) = if id.is_empty() {
+        if width.checked_mul(height).and_then(|n| n.checked_mul(4)) != Some(rgba.len()) {
+            return Err("RGBA 帧数据长度不匹配".into());
+        }
+        let candidates: Vec<_> = pack.variants.iter().filter(|variant| {
+            variant.native_size.width == width && variant.native_size.height == height
+        }).collect();
+        match candidates.as_slice() {
+            [] => return Ok(indeterminate_layout("no-match")),
+            [variant] => (*variant, None),
+            _ => {
+                let mut selected = None;
+                for variant in candidates {
+                    let Some(cue) = &variant.organizer else { continue };
+                    let organizer = recognize_hud_cue(rgba, width, pack, cue);
+                    if presence_matched(Some(&organizer)) {
+                        if selected.is_some() {
+                            return Ok(indeterminate_layout("multiple-matches"));
+                        }
+                        selected = Some((variant, Some(organizer)));
+                    }
+                }
+                match selected {
+                    Some(selected) => selected,
+                    None => return Ok(indeterminate_layout("no-match")),
+                }
+            }
+        }
+    } else {
+        (frame_variant(rgba, width, height, pack, id)?, None)
+    };
     let cues: BTreeMap<_, _> = variant.cues.iter().map(|(key, cue)| {
         (key.clone(), recognize_hud_cue(rgba, width, pack, cue))
     }).collect();
@@ -1198,7 +1243,7 @@ pub fn recognize_hud_frame(
         if absent && field.is_some() {
             HudFieldResult::Absent { debug: None }
         } else {
-            recognize_hud_field(rgba, width, pack, id, field)
+            recognize_hud_field(rgba, width, pack, &variant.id, field)
         }
     };
     let clock = read_field(variant.fields.clock.as_ref(), statistics || planted);
@@ -1211,12 +1256,13 @@ pub fn recognize_hud_frame(
     }).collect();
     let content = hud_content(&cues, &states);
     let phase = hud_phase(&states);
-    let organizer = variant.organizer.as_ref().map_or_else(
+    let organizer = selected_organizer.unwrap_or_else(|| variant.organizer.as_ref().map_or_else(
         || presence_failed("not-configured", None),
         |cue| recognize_hud_cue(rgba, width, pack, cue),
-    );
+    ));
     Ok(HudFrameResult {
-        variant_id: id.into(),
+        variant_id: Some(variant.id.clone()),
+        selection_reason: None,
         fields,
         cues,
         states,

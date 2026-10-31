@@ -5,6 +5,7 @@ import { unpackBitmap } from '../../core/bitmapCodec'
 import { Range } from '../kit'
 import { drawMask } from './framePipeline'
 import { CUE_LABELS, STATE_LABELS, editorCue, type CueTarget } from './cueModel'
+import { editorVariant } from './layoutModel'
 
 export function presenceText(result: HudPresenceResult | undefined, organizer = false): string {
   if (!result) return '尚未预览'
@@ -13,11 +14,12 @@ export function presenceText(result: HudPresenceResult | undefined, organizer = 
       : result.status === 'failed' ? `识别失败: ${result.reason}` : `无法判断: ${result.reason}`
   return `${text}${result.score === null ? '' : ` / 得分 ${result.score.toFixed(3)}`}`
 }
-export function CueSection({ id, pack, result, onSave, onThreshold, onRemove }: {
+export function CueSection({ id, pack, variantId, result, onSave, onThreshold, onRemove }: {
   id: CueTarget; pack: HudStylePack; result: HudPresenceResult | undefined; onSave: (() => void) | null
+  variantId?: string
   onThreshold: (value: number) => void; onRemove: (bitmapId: string) => void
 }): React.ReactNode {
-  const cue = editorCue(pack, id)
+  const cue = editorCue(pack, id, variantId)
   return <section className="rail-group">
     <div className="rail-head"><h2>固定图形模板</h2><span className="rail-meta">{cue.templates.length} 个模板</span></div>
     <Range label="匹配阈值" min={0} max={1} step={0.01} value={cue.minScore} format={value => value.toFixed(2)} onChange={onThreshold} />
@@ -40,8 +42,8 @@ function CueThumb({ pack, bitmapId }: { pack: HudStylePack; bitmapId: string }):
 }
 
 /** Each row edits cue requirements; imported OR groups and field clauses remain intact. */
-export function StateRules({ pack, onChange }: { pack: HudStylePack; onChange: (states: Record<string, HudCondition[][]>) => void }): React.ReactNode {
-  const variant = pack.variants[0]!
+export function StateRules({ pack, variantId, onChange }: { pack: HudStylePack; variantId?: string; onChange: (states: Record<string, HudCondition[][]>) => void }): React.ReactNode {
+  const variant = editorVariant(pack, variantId)
   const states = variant.states
   const ids = [...new Set([...Object.keys(STATE_LABELS), ...Object.keys(states)])]
   const change = (id: string, groupIndex: number, cue: typeof HUD_CUE_IDS[number], value: string): void => {
@@ -76,11 +78,13 @@ export function StateRules({ pack, onChange }: { pack: HudStylePack; onChange: (
 }
 const CONTENT = { live: '直播', replay: '回放', indeterminate: '无法判断' }
 const PHASE = { active: '进行中', planted: '下包', paused: '暂停', roundOver: '回合结束', statistics: '统计页', indeterminate: '无法判断', unconfigured: '未配置' }
-export function FrameStatePreview({ result }: { result: HudFrameResult | null }): React.ReactNode {
+export function FrameStatePreview({ result, playerResult }: { result: HudFrameResult | null; playerResult?: HudFrameResult | null }): React.ReactNode {
   return <section className="rail-group frame-state-preview" aria-label="当前帧状态">
     <h2>当前帧状态</h2>
     <p>内容: <span data-testid="hud-content">{result ? CONTENT[result.content] : '尚未预览'}</span></p>
     <p>阶段: <span data-testid="hud-phase">{result ? PHASE[result.phase] : '尚未预览'}</span></p>
     <p>主办方: <span data-testid="hud-organizer">{presenceText(result?.organizer, true)}</span></p>
+    <p>播放器布局: <span data-testid="hud-player-layout">{!playerResult ? '尚未预览' : playerResult.variantId
+      ?? (playerResult.selectionReason === 'multiple-matches' ? '无法判断: 多个布局匹配' : '无法判断: 没有布局匹配')}</span></p>
   </section>
 }

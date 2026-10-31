@@ -138,7 +138,7 @@ describe('score stretch review', () => {
     const check = await screen.findByRole('checkbox', { name: '存入 8' })
     expect(check).not.toBeChecked()
     expect(screen.getByText('待确认')).toBeInTheDocument()
-    expect(mocks.prepare).toHaveBeenCalledWith(expect.anything(), expect.anything(), undefined, undefined, 'scoreLeft')
+    expect(mocks.prepare).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'official-top-1080', undefined, 'scoreLeft')
     fireEvent.change(screen.getByRole('textbox', { name: '0.50s 起的读数' }), { target: { value: '9' } })
     expect(screen.getByRole('checkbox', { name: '存入 9' })).toBeChecked()
     fireEvent.click(screen.getByRole('button', { name: '存入勾选的 1 组' }))

@@ -7,7 +7,7 @@ const read = (value: number, text = String(value)): HudFieldResult => ({ status:
 
 function hudResult(content: HudFrameResult['content'] = 'live', round: number | null = 17,
   phase: HudFrameResult['phase'] = 'active'): HudFrameResult {
-  return { variantId: 'test', content, phase,
+  return { variantId: 'test', selectionReason: null, content, phase,
     fields: { clock: read(97, '1:37'), scoreLeft: read(8), scoreRight: read(8),
       round: round === null ? { status: 'failed', reason: 'score-failed', debug: null } : read(round) },
     cues: {}, states: {}, organizer: { status: 'not-matched', score: 0, debug: null } }
@@ -32,6 +32,15 @@ describe('source-local replay continuity', () => {
     const session = new HudReplaySession()
     session.observe(hudResult('live', 17))
     session.observe(hudResult('replay', null))
+    expect(session.observe(hudResult('live', 18)).content).toBe('live')
+  })
+
+  it('preserves an unresolved layout while retaining replay memory for the next selected frame', () => {
+    const session = new HudReplaySession()
+    session.observe(hudResult('replay', 17))
+    const unresolved = { ...hudResult('indeterminate', null, 'indeterminate'), variantId: null, selectionReason: 'no-match' as const }
+    expect(session.observe(unresolved)).toBe(unresolved)
+    expect(session.observe(hudResult('live', 17)).content).toBe('replay')
     expect(session.observe(hudResult('live', 18)).content).toBe('live')
   })
 

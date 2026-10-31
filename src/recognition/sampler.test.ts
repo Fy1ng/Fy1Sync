@@ -8,6 +8,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { createEmptyProfile, type RecognitionProfile } from '../core/profileSchema'
+import { createEmptyHudStylePack } from '../core/hudStylePack'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
 import type { WorkerLike } from './client'
 import { FrameGrabber, type AsyncGrabResult } from './frameGrabber'
@@ -473,6 +474,25 @@ describe('RecognitionSampler', () => {
     }
   })
 
+  it('discards a pending image-change midpoint when the HUD layout changes', async () => {
+    const video = fakeVideo()
+    const bench = harness({
+      video: role => role === 'official' ? video : null,
+      reply: frame => frame.mediaTime === 10.06 ? { status: 'failed', reason: 'low-confidence' }
+        : success(frame.mediaTime < 10.06 ? 30 : 29, frame.mediaTime, frame.wallTime),
+      metadata: frame => ({ hud: { ...replayHud('live'), variantId: frame.mediaTime < 10.09 ? 'top' : 'bottom' },
+        ...(frame.mediaTime === 10.06 ? {
+          tickMoment: { lastUnchanged: 10.03, firstChanged: 10.06, midpoint: 10.045, change: .2, noiseFloor: .01 },
+        } : {}) }),
+    })
+    try {
+      const run = bench.sampler.sample(30, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
+      for (const time of [10, 10.03, 10.06, 10.09]) await bench.loop.tick(time)
+      await run
+      expect(bench.outcomes.at(-1)?.outcome).toMatchObject({ status: 'success', reading: { seconds: 29, mediaTime: 10.09, wallTime: 1000 } })
+    } finally { bench.sampler.dispose(); bench.restore() }
+  })
+
   it('reduces recognition work between predicted ticks after two confirmed decrements', async () => {
     const bench = harness({
       reply: (frame) => success(30 - Math.floor(frame.mediaTime + 1e-9), frame.mediaTime, frame.wallTime),
@@ -578,6 +598,36 @@ describe('RecognitionSampler', () => {
       await loop.tick(10)
       await run
       expect(errors).toEqual([{ role: 'official', message: '模板缺失' }])
+    } finally {
+      sampler.dispose()
+      restore()
+    }
+  })
+
+  it('names a style pack with no layout at the video size instead of reading every frame as unresolved', async () => {
+    const restore = stubGrabber()
+    const loop = manualLoop()
+    const errors: Array<{ role: SourceRole; message: string }> = []
+    const posted: WorkerRequest['type'][] = []
+    const video = fakeVideo()
+    const sampler = new RecognitionSampler({
+      createWorker: () => ({
+        postMessage(message) { posted.push(message.type) },
+        terminate() {},
+        addEventListener() {},
+        removeEventListener() {},
+      }),
+      video: (role) => (role === 'official' ? video : null),
+      profile: (role) => (role === 'official' ? createEmptyHudStylePack('custom/hd', 'HD', { width: 1920, height: 1080 }) : null),
+      frameLoop: loop.frameLoop as never,
+      onError: (role, message) => errors.push({ role, message }),
+    })
+    try {
+      const run = sampler.sample(30, () => {}, { aborted: false })
+      await loop.tick(3)
+      await run
+      expect(errors[0]).toEqual({ role: 'official', message: expect.stringContaining('640x360 的布局档') })
+      expect(posted).not.toContain('frame')
     } finally {
       sampler.dispose()
       restore()
@@ -714,17 +764,18 @@ function captured(mediaTime = 10, wallTime = 1000): AsyncGrabResult {
 function replayHud(content: HudFrameResult['content'], round = 17): HudFrameResult {
   const read = (value: number) => ({ status: 'read' as const,
     reading: { value, text: String(value), confidence: 1, scores: [1], source: 'derived' as const }, debug: null })
-  return { variantId: 'test', content, phase: 'active', fields: {
+  return { variantId: 'test', selectionReason: null, content, phase: 'active', fields: {
     clock: read(30), scoreLeft: read(8), scoreRight: read(8), round: read(round),
   }, cues: {}, states: {}, organizer: { status: 'not-matched', score: 0, debug: null } }
 }
 
 describe('HUD replay session wiring', () => {
-  it('retains replay across sampling windows and releases it after the round changes', async () => {
+  it('retains replay across sampling windows and layout changes, releasing it after the round changes', async () => {
     vi.useFakeTimers()
     const video = eventfulVideo()
     const bench = harness({ video: role => role === 'official' ? video : null,
-      metadata: frame => ({ hud: replayHud(frame.mediaTime === 10 ? 'replay' : 'live', frame.mediaTime === 13 ? 18 : 17) }) })
+      metadata: frame => ({ hud: { ...replayHud(frame.mediaTime === 10 ? 'replay' : 'live', frame.mediaTime === 13 ? 18 : 17),
+        variantId: frame.mediaTime < 12 ? 'top' : 'bottom' } }) })
     const sample = async (time: number) => {
       const run = bench.sampler.sample(100, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
       await bench.loop.tick(time)

@@ -5,7 +5,7 @@ import { RecognitionEngine } from './engine'
 import type { FrameMessage, ResultMessage } from './protocol'
 
 const profile = createEmptyHudStylePack(undefined, undefined, { width: 2, height: 2 })
-const failedHud = (debug: unknown = null) => ({ variantId: profile.variants[0]!.id, content: 'indeterminate', phase: 'indeterminate',
+const failedHud = (debug: unknown = null) => ({ variantId: profile.variants[0]!.id, selectionReason: null, content: 'indeterminate', phase: 'indeterminate',
   fields: Object.fromEntries(['clock','scoreLeft','scoreRight','round'].map(id => [id,{status:'failed',reason:'blank-frame',debug: id === 'clock' ? debug : null}])),
   cues: {}, states: {}, organizer: { status: 'failed', reason: 'not-configured', score: null, debug: null } })
 const frame: FrameMessage = { type: 'frame', generation: 2, role: 'official', frameIndex: 7,
@@ -38,7 +38,7 @@ describe('Worker backend selection', () => {
     engine.handle({ type: 'configure', generation: 2, profile })
     const result = engine.handle(frame) as ResultMessage
     expect(result.elapsedMs).toBe(3)
-    expect(wasm.recognizeHud).toHaveBeenCalledWith(new Uint8Array(16), 2, 2, JSON.stringify(profile), profile.variants[0]!.id)
+    expect(wasm.recognizeHud).toHaveBeenCalledWith(new Uint8Array(16), 2, 2, JSON.stringify(profile), '')
     engine.handle({ type: 'cancel', generation: 3 })
     expect(engine.handle(frame)).toBeNull()
     expect(wasm.recognizeHud).toHaveBeenCalledTimes(1)
@@ -64,5 +64,36 @@ describe('Worker backend selection', () => {
       .toEqual({ status: 'failed', reason: 'decode-failed', detail: '帧数据长度不足' })
     expect(recognize).not.toHaveBeenCalled()
     expect((engine.handle(frame) as ResultMessage).outcome).toEqual({ status: 'failed', reason: 'decode-failed', detail: 'bad frame' })
+  })
+
+  it('resets image-change timing between equal-sized layouts and across unresolved frames', () => {
+    const debug = { gray: { data: [0, 255, 0, 0], width: 2, height: 2 },
+      binary: { data: [0, 255, 0, 0], width: 2, height: 2 }, roiPixels: { x: 0, y: 0, width: 2, height: 2 },
+      boxes: [], projection: [], inkRatio: .25, matches: [], normalized: [] }
+    let layout: string | null = 'top'
+    let fresh = true
+    const detector = {
+      push: vi.fn((_gray: Uint8Array, _width: number, _height: number, time: number) => {
+        const result = fresh ? null : { lastUnchanged: time - .1, firstChanged: time, tickTime: time - .05, change: .5, noiseFloor: 0 }
+        fresh = false
+        return JSON.stringify(result)
+      }),
+      reset: vi.fn(() => { fresh = true }), free: vi.fn(),
+    }
+    const engine = new WasmWorkerEngine({ configure: () => '{}', recognize: () => '',
+      recognizeHud: () => JSON.stringify({ ...failedHud(layout === null ? null : debug), variantId: layout }),
+      createTickDetector: () => detector }, () => 0)
+    engine.handle({ type: 'configure', generation: 2, profile })
+    const push = (id: string | null, time: number) => {
+      layout = id
+      return engine.handle({ ...frame, mediaTime: time }) as ResultMessage
+    }
+    expect(push('top', 1).tickMoment).toBeUndefined()
+    expect(push('top', 2).tickMoment).toBeDefined()
+    expect(push('bottom', 3).tickMoment).toBeUndefined()
+    expect(push(null, 4).tickMoment).toBeUndefined()
+    expect(push('bottom', 5).tickMoment).toBeUndefined()
+    expect(push('bottom', 6).tickMoment).toBeDefined()
+    expect(detector.reset).toHaveBeenCalledTimes(3)
   })
 })

@@ -22,3 +22,18 @@ it('editing cue requirements preserves imported OR groups, field conditions and 
     [{ kind: 'cue', cue: 'bomb', present: true }]], planted: variant.states.planted })
   expect(screen.getByLabelText('回放 1 Timeout')).toBeDisabled()
 })
+
+it('shows and edits the selected layout state rules', () => {
+  const pack = createEmptyHudStylePack()
+  const second = { ...structuredClone(pack.variants[0]!), id: 'second' }
+  second.cues.bomb = editorCue(pack, 'bomb')
+  second.states.planted = [[{ kind: 'cue', cue: 'bomb', present: true }]]
+  pack.variants.push(second)
+  const change = vi.fn()
+  render(<StateRules pack={pack} variantId="second" onChange={change} />)
+  fireEvent.click(screen.getByText('状态规则'))
+  expect(screen.getByLabelText('下包 1 炸弹')).toHaveValue('present')
+  fireEvent.change(screen.getByLabelText('下包 1 炸弹'), { target: { value: 'absent' } })
+  expect(change).toHaveBeenCalledWith({ planted: [[{ kind: 'cue', cue: 'bomb', present: false }]] })
+  expect(pack.variants[0]!.states).toEqual({})
+})

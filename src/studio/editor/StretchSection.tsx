@@ -7,6 +7,7 @@ import { FrameGrabber, FULL_FRAME_ROI } from '../../recognition/frameGrabber'
 import { pairReading } from './reading'
 import { drawMask } from './framePipeline'
 import { proposeStretch, stretchSamples, type StretchFrame, type StretchGroup, type StretchSample } from './stretch'
+import { editorVariant } from './layoutModel'
 
 /** Slow enough that the page presents nearly every frame while each is grabbed. */
 const SCAN_RATE = 0.25
@@ -19,8 +20,9 @@ function GroupPicture({ frame }: { frame: StretchFrame }): React.ReactNode {
   return <canvas className="stretch-pic" ref={(node) => drawMask(node, frame.binary)} />
 }
 
-export function StretchSection({ video, pack, onSave, fieldId = 'clock' }: {
+export function StretchSection({ video, pack, variantId, onSave, fieldId = 'clock' }: {
   fieldId?: HudFieldId
+  variantId?: string
   /** The loaded recording, or null while none is (a screenshot, or nothing). */
   video: HTMLVideoElement | null
   pack: HudStylePack
@@ -35,9 +37,10 @@ export function StretchSection({ video, pack, onSave, fieldId = 'clock' }: {
   const [kept, setKept] = useState<boolean[]>([])
   const [problem, setProblem] = useState<string | null>(null)
   const cancel = useRef<(() => void) | null>(null)
-  const grammar = pack.variants[0]!.fields[fieldId]?.grammar
+  const currentVariant = editorVariant(pack, variantId)
+  const grammar = currentVariant.fields[fieldId]?.grammar
   const format = grammar?.kind === 'countdown' ? grammar.format : 'm:ss'
-  useEffect(() => () => cancel.current?.(), [video, pack, fieldId])
+  useEffect(() => () => cancel.current?.(), [video, pack, fieldId, variantId])
 
   const length = mark.in !== null && mark.out !== null ? mark.out - mark.in : null
   const markProblem = length === null ? null : length <= 0 ? '出点要在入点之后'
@@ -107,7 +110,7 @@ export function StretchSection({ video, pack, onSave, fieldId = 'clock' }: {
             try {
               const grabbed = grabber.grab(video, FULL_FRAME_ROI, meta.mediaTime)
               if (!grabbed.ok) throw new Error(`取帧失败: ${grabbed.reason}`)
-              const prepared = await prepareHudGlyphs(grabbed.frame, pack, undefined, undefined, fieldId)
+              const prepared = await prepareHudGlyphs(grabbed.frame, pack, currentVariant.id, undefined, fieldId)
               if (completed) return
               if (collected.length === 0 || meta.mediaTime > collected[collected.length - 1]!.at + 1e-4) {
                 collected.push({ at: meta.mediaTime, binary: prepared.binary, boxes: prepared.boxes, bitmaps: prepared.bitmaps })

@@ -842,3 +842,6 @@
 .state-rule-cues label { display: flex; align-items: center; gap: 4px; font-size: 11px; }
 .state-rule-cues select { max-width: 74px; background: var(--panel); color: inherit; border: 1px solid var(--line); border-radius: 4px; }
 .frame-state-preview p { margin: 5px 0; font-size: 12px; }
+.layout-id-row, .layout-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.layout-id-row .text-input { min-width: 0; flex: 1; }
+.layout-section .note-warn { margin-bottom: 0; }

@@ -152,7 +152,7 @@ export class RecognitionClient {
   }
 
   /** Install a profile. Always starts a new generation. */
-  configure(profile: ActiveProfile, options: { automatic?: boolean; variantId?: string } = {}): number {
+  configure(profile: ActiveProfile, options: { automatic?: boolean } = {}): number {
     if (this.disposed) return this.generationValue
     this.finishPending({ status: 'cancelled', reason: 'reconfigured' })
     this.retainedWindowId = null
@@ -165,7 +165,6 @@ export class RecognitionClient {
       type: 'configure',
       generation: this.generationValue,
       profile: isHudPack(profile) ? profile : { ...profile, roi: { ...FULL_FRAME_ROI } },
-      ...(options.variantId ? { variantId: options.variantId } : {}),
       ...(options.automatic ? { automatic: true } : {}),
     })
     return this.generationValue
