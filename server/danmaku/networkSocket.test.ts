@@ -83,9 +83,9 @@ describe('platform danmaku network transport', () => {
     expect(mocks.websocket).not.toHaveBeenCalled()
   })
 
-  it('rejects direct private DNS results before transport creation', async () => {
+  it('rejects invalid direct DNS results before transport creation', async () => {
     const error = vi.fn()
-    const socket = createNetworkSocket(douyu, 'douyu', { network: direct, resolve: async () => ['127.0.0.1'] })
+    const socket = createNetworkSocket(douyu, 'douyu', { network: direct, resolve: async () => ['not-an-ip'] })
     socket.addEventListener('error', error)
     await flush()
     expect(error).toHaveBeenCalledWith({ message: '弹幕网络连接失败, 请检查出网设置.' })

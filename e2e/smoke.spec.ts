@@ -211,13 +211,13 @@ test.describe('主进程接口与安全边界', () => {
     expect(stored.ok).toBe(false)
   })
 
-  test('媒体路径拒绝内网目标和未登记标识', async ({ page }) => {
+  test('媒体路径拒绝非标准端口和未登记标识', async ({ page }) => {
     const response = await invoke(page, 'resolve', {
       input: 'http://127.0.0.1:9/secret', platform: 'direct',
     })
     expect(response.ok).toBe(false)
-    if (response.ok) throw new Error('Private media target was unexpectedly accepted')
-    expect(['private-address', 'bad-port', 'host-not-allowed']).toContain(response.code)
+    if (response.ok) throw new Error('Non-standard media port was unexpectedly accepted')
+    expect(response.code).toBe('bad-port')
     expect(response.message).toBeTruthy()
 
     const status = await page.evaluate(async () =>

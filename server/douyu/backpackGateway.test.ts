@@ -307,8 +307,8 @@ describe('one fixed backpack donation and receipt-only success', () => {
 })
 
 describe('network isolation, bounded bodies and cancellation', () => {
-  it.each(['127.0.0.1', '10.0.0.1', '169.254.169.254', '::1', '::ffff:7f00:1', 'not-an-ip'])('keeps DNS/IP guards with permissive caller settings: %s', async address => {
-    const { gateway, request } = setup({ proxy: { ...proxy, hosts: ['*'], allowNonStandardPorts: true, allowNonLoopbackTargets: true, maxRedirects: 9 }, resolve: async () => [address] })
+  it.each(['not-an-ip', '127.1', '1.2.3.256'])('rejects invalid DNS/IP answers with permissive caller settings: %s', async address => {
+    const { gateway, request } = setup({ proxy: { ...proxy, hosts: ['*'], allowNonStandardPorts: true, maxRedirects: 9 }, resolve: async () => [address] })
     await expect(gateway.readBadges('account-one', signal())).rejects.toMatchObject({ code: 'unavailable' })
     expect(await gateway.donate(donation, signal())).toHaveProperty("status", 'not-submitted')
     expect(request).not.toHaveBeenCalled()

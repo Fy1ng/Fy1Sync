@@ -18,7 +18,6 @@ export interface RunningApplication {
 
 /** Launch the built application with a disposable profile and preset store. */
 export async function launchApplication(label: string, options: { softwareVideo?: boolean } = {}): Promise<RunningApplication> {
-  // Cookie-store ACL checks spawn native Windows tools with a 260-character path limit.
   const dataDir = path.join(testDataRoot, randomUUID().slice(0, 12))
   await mkdir(dataDir, { recursive: true })
   const temporaryDir = path.join(dataDir, 'temp')

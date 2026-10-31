@@ -113,8 +113,8 @@ describe('Douyu room-sign request boundary', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
-  it('keeps the DNS guard even if a caller provides permissive test proxy settings', async () => {
-    const { actions, request } = setup({ proxy: { ...proxy, hosts: ['*'], allowNonLoopbackTargets: true }, resolve: async () => ['127.0.0.1'] })
+  it('rejects invalid DNS even if a caller provides permissive test proxy settings', async () => {
+    const { actions, request } = setup({ proxy: { ...proxy, hosts: ['*'], }, resolve: async () => ['not-an-ip'] })
     expect(await actions.run(task, freshSignal())).toMatchObject({ status: 'failed', message: expect.stringContaining('未发送') })
     expect(request).not.toHaveBeenCalled()
   })

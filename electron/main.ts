@@ -29,7 +29,7 @@ import { DecoderPreferences } from './decoderPreferences'
 import { ManagedYtdlp } from './toolUpdater'
 import { DesktopTools } from './toolsService'
 import toolsLock from '../packaging/tools-lock.json'
-import { NativePrivatePermissions, privateDirectory } from './privateStorage'
+import { privateDirectory } from './privateStorage'
 import { createHash } from 'node:crypto'
 import { DouyuAccountError, DouyuAccountManager } from './douyuAccounts'
 import { DouyuTaskManager } from './douyuTasks'
@@ -78,8 +78,8 @@ let dispose: (() => Promise<void>) | undefined
 async function start(): Promise<void> {
   const clientDir = resolve(__dirname, '../client')
   const config = resolveConfig(process.env, resolve(__dirname, '../..'))
-  // DIRECT callers retain private-address checks; all routes retain port validation.
-  const proxy = { ...config.proxy, allowNonLoopbackTargets: false, allowNonStandardPorts: false }
+  // All routes retain domain, protocol and port validation.
+  const proxy = { ...config.proxy, allowNonStandardPorts: false }
   const preferences = new NetworkPreferences(app.getPath('userData'))
   const network = new NetworkPolicy(url => session.defaultSession.resolveProxy(url), preferences.domesticRouting, Date.now, 15_000, systemProxyMode)
   preferences.attach(network)
@@ -254,7 +254,7 @@ async function start(): Promise<void> {
     },
     cookieHeader: (_platform: 'douyu') => douyuAccounts ? douyuAccounts.activeCookieHeader() : Promise.resolve(''),
   }
-  const providerCacheHome = privateDirectory(userDataDir, join(userDataDir, 'provider-cache'), new NativePrivatePermissions())
+  const providerCacheHome = privateDirectory(userDataDir, join(userDataDir, 'provider-cache'))
   const toolContext = {
     ...(app.isPackaged ? { bundledDir: join(process.resourcesPath, 'tools') } : {}),
     managedYtdlp: () => managedYtdlp.activePath(),

@@ -34,7 +34,7 @@ function serviceFixture(available = true) {
   const relay = { closeAll: vi.fn(), roomCount: 0, subscribe: vi.fn() } as unknown as DesktopServiceDeps['relay']
   const service = createDesktopService({
     dataDir: path.join(process.cwd(), '.runtime-cache', 'codex-network-impl-20261030', 'network-ipc-no-io'),
-    proxy: { enabled: true, hosts: [], allowNonStandardPorts: false, allowNonLoopbackTargets: false, maxRedirects: 0, requestTimeoutMs: 100 },
+    proxy: { enabled: true, hosts: [], allowNonStandardPorts: false, maxRedirects: 0, requestTimeoutMs: 100 },
     registerMedia: () => { throw new Error('Network access is forbidden in this fixture') },
     fetchImpl: vi.fn(async () => { throw new Error('Network access is forbidden in this fixture') }) as unknown as typeof fetch,
     relay, douyuAccounts: accounts, networkPreferences: available ? { get, set } : undefined,

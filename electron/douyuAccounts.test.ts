@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DouyuAccountManager } from './douyuAccounts'
 import type { LoginStatus } from './login'
@@ -9,9 +10,8 @@ const roots: string[] = []
 const managers: DouyuAccountManager[] = []
 const a = '11111111-1111-4111-8111-111111111111'
 const b = '22222222-2222-4222-8222-222222222222'
-const permissions = { protect: vi.fn(), verify: vi.fn() }
 function tempRoot(): string {
-  const temporary = path.join(process.cwd(), '.runtime-cache', 'codex-network-impl-20261030')
+  const temporary = os.tmpdir()
   fs.mkdirSync(temporary, { recursive: true })
   const root = fs.mkdtempSync(path.join(temporary, 'accounts-'))
   roots.push(root)
@@ -36,7 +36,7 @@ function fixture(initial?: unknown) {
   const ids = [a, b]
   const store = { load: () => structuredClone(stored), save: vi.fn((value: unknown) => { stored = structuredClone(value) }) }
   const options = {
-    defaultLogin, permissions, store, now: () => 100, id: () => ids.shift()!,
+    defaultLogin, store, now: () => 100, id: () => ids.shift()!,
     createLogin: (directory: string) => { const login = fakeLogin(); created.set(directory, login); return login },
   }
   const manager = new DouyuAccountManager(root, options)
@@ -46,7 +46,7 @@ function fixture(initial?: unknown) {
 afterEach(async () => {
   await Promise.all(managers.splice(0).map(manager => manager.dispose()))
   for (const root of roots.splice(0)) {
-    if (path.dirname(path.resolve(root)) !== path.resolve('.runtime-cache', 'codex-network-impl-20261030') || !path.basename(root).startsWith('accounts-')) throw new Error('Unexpected test directory')
+    if (path.dirname(path.resolve(root)) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('accounts-')) throw new Error('Unexpected test directory')
     fs.rmSync(root, { recursive: true, force: true })
   }
   vi.clearAllMocks()
@@ -303,7 +303,7 @@ describe('Douyu account isolation', () => {
 
   it.each([null, {}, { version: 2, accounts: [], activeAccountId: null }, { version: 1, accounts: [], activeAccountId: 'default' }])('preserves malformed stored data (%j) by refusing to load', raw => {
     const store = { load: () => raw, save: vi.fn() }
-    expect(() => new DouyuAccountManager(tempRoot(), { defaultLogin: fakeLogin(), permissions, store })).toThrow('斗鱼账号配置读写失败')
+    expect(() => new DouyuAccountManager(tempRoot(), { defaultLogin: fakeLogin(), store })).toThrow('斗鱼账号配置读写失败')
     expect(store.save).not.toHaveBeenCalled()
   })
 

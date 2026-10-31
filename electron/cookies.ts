@@ -2,8 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { messageCredentialStatus } from '../server/douyu/messageProtocol'
-import { containedPath, NativePrivatePermissions, privateDirectory } from './privateStorage'
-import type { PrivatePermissions } from './privateStorage'
+import { assertRegularPath, containedPath, privateDirectory } from './privateStorage'
 import type { CookiesSetDetails } from 'electron'
 
 export interface YoutubeCookieSession { cookies: { set(details: CookiesSetDetails): Promise<void> } }
@@ -101,40 +100,33 @@ function parseCookies(text: string, platform: LoginPlatform, now: number): Store
   return cookies
 }
 
-export interface CookieStoreOptions { permissions?: PrivatePermissions; now?: () => number }
+export interface CookieStoreOptions { now?: () => number }
 
 /** Cookie values are private to the main process; public methods return fixed metadata only. */
 export class CookieStore {
-  private readonly permissions: PrivatePermissions
   private readonly now: () => number
   private readonly revisions: Record<LoginPlatform, number> = { youtube: 0, douyu: 0 }
   readonly root: string
 
   constructor(userDataDirectory: string, options: CookieStoreOptions = {}) {
     this.root = path.resolve(userDataDirectory)
-    this.permissions = options.permissions ?? new NativePrivatePermissions()
     this.now = options.now ?? (() => Date.now() / 1000)
   }
 
   prepareProfile(platform: LoginPlatform): string {
     try {
       if (!isLoginPlatform(platform)) throw storageFailure()
-      return privateDirectory(this.root, path.join(this.root, 'browser-profile', platform), this.permissions, true)
+      return privateDirectory(this.root, path.join(this.root, 'browser-profile', platform))
     } catch { throw storageFailure() }
   }
 
   private get directory(): string {
-    return privateDirectory(this.root, path.join(this.root, 'cookies'), this.permissions)
+    return privateDirectory(this.root, path.join(this.root, 'cookies'))
   }
 
   private target(platform: LoginPlatform): string {
     if (!isLoginPlatform(platform)) throw storageFailure()
     return containedPath(this.root, path.join(this.root, 'cookies', `${platform}.txt`))
-  }
-
-  private invalidatePermissions(platform: LoginPlatform): void {
-    this.permissions.invalidate?.(path.join(this.root, 'cookies', `${platform}.txt`))
-    this.permissions.invalidate?.(path.join(this.root, 'cookies'))
   }
 
   private async read(platform: LoginPlatform): Promise<{ text: string; cookies: StoredCookie[] } | undefined> {
@@ -144,13 +136,6 @@ export class CookieStore {
       if (!fs.existsSync(file)) return undefined
       const before = fs.lstatSync(file)
       if (!before.isFile() || before.isSymbolicLink() || before.size > MAX_COOKIE_FILE_BYTES) throw storageFailure()
-      if (this.permissions.verifyManyAsync) await this.permissions.verifyManyAsync([
-        { target: path.dirname(file), directory: true }, { target: file, directory: false },
-      ])
-      else {
-        this.permissions.verify(path.dirname(file), true)
-        this.permissions.verify(file, false)
-      }
       if (revision !== this.revisions[platform]) throw storageFailure()
       containedPath(this.root, file)
       const handle = await fs.promises.open(file, 'r')
@@ -182,7 +167,6 @@ export class CookieStore {
     try {
       if (!isLoginPlatform(platform) || !Array.isArray(cookies) || cookies.length > 50_000) throw storageFailure()
       this.revisions[platform]++
-      this.invalidatePermissions(platform)
       const lines = ['# Netscape HTTP Cookie File', '# Stream Syncer private login data. Do not share this file.', '']
       for (const cookie of cookies) {
         if (!cookie || typeof cookie.domain !== 'string' || !cookieDomainAllowed(cookie.domain, platform)) continue
@@ -197,23 +181,22 @@ export class CookieStore {
       const selected = parseCookies(text, platform, this.now())
       const directory = this.directory
       const target = this.target(platform)
-      if (fs.existsSync(target)) this.permissions.verify(target, false)
+      if (fs.existsSync(target)) assertRegularPath(target, false)
       temporary = containedPath(this.root, path.join(directory, `.${platform}-${randomUUID()}.tmp`))
       descriptor = fs.openSync(temporary, 'wx', 0o600)
-      this.permissions.protect(temporary, false)
+      assertRegularPath(temporary, false)
       fs.writeFileSync(descriptor, text, 'utf8')
       fs.fsyncSync(descriptor)
       fs.closeSync(descriptor)
       descriptor = undefined
-      this.permissions.verify(temporary, false)
+      assertRegularPath(temporary, false)
       fs.renameSync(temporary, target)
       temporary = undefined
-      this.permissions.verify(target, false)
+      assertRegularPath(target, false)
       const { cookieCount, authKeysPresent } = this.summary(platform, selected)
       return { cookieCount, authKeysPresent }
     } catch { throw storageFailure() }
     finally {
-      if (isLoginPlatform(platform)) this.invalidatePermissions(platform)
       if (descriptor !== undefined) fs.closeSync(descriptor)
       if (temporary !== undefined) fs.rmSync(temporary, { force: true })
     }
@@ -276,7 +259,7 @@ export class CookieStore {
       if (!directory) return
       try {
         containedPath(this.root, directory)
-        this.permissions.verify(directory, true, true)
+        assertRegularPath(directory, true)
         fs.rmSync(directory, { recursive: true, force: true })
         directory = undefined
       } catch { throw storageFailure() }
@@ -293,15 +276,15 @@ export class CookieStore {
           const parent = this.directory
           directory = fs.mkdtempSync(path.join(parent, 'yt-dlp-'))
           containedPath(this.root, directory)
-          this.permissions.protect(directory, true)
+          assertRegularPath(directory, true)
           temporary = containedPath(this.root, path.join(directory, 'cookies.txt'))
           const descriptor = fs.openSync(temporary, 'wx', 0o600)
           try {
-            this.permissions.protect(temporary, false)
+            assertRegularPath(temporary, false)
             fs.writeFileSync(descriptor, loaded.text, 'utf8')
             fs.fsyncSync(descriptor)
           } finally { fs.closeSync(descriptor) }
-          this.permissions.verify(temporary, false)
+          assertRegularPath(temporary, false)
           process.once('exit', onExit)
         }
       } catch { throw storageFailure() }
@@ -317,15 +300,14 @@ export class CookieStore {
     try {
       if (!isLoginPlatform(platform)) throw storageFailure()
       this.revisions[platform]++
-      this.invalidatePermissions(platform)
       const file = this.target(platform)
       if (fs.existsSync(file)) {
-        this.permissions.verify(file, false)
+        assertRegularPath(file, false)
         fs.unlinkSync(file)
       }
       const profile = containedPath(this.root, path.join(this.root, 'browser-profile', platform))
       if (fs.existsSync(profile)) {
-        this.permissions.verify(profile, true, true)
+        assertRegularPath(profile, true)
         fs.rmSync(profile, { recursive: true, force: true })
       }
     } catch { throw storageFailure() }

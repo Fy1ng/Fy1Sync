@@ -1,7 +1,7 @@
 /** Account-scoped, bounded HTTP access. Only the renewal service sees private reads. */
 import { isIP } from 'node:net'
 import { hostAllowed } from '../config'
-import { dnsResolver, isPrivateAddress, safeFetch } from '../safeFetch'
+import { dnsResolver, safeFetch } from '../safeFetch'
 import { validDouyuRoom } from '../platforms/douyuRoom'
 import type { DouyuActionDependencies } from './actions'
 import { abortable, cancelBody, cancelled, MAX_TIMEOUT_MS, record } from './actionHttp'
@@ -268,7 +268,7 @@ export class DouyuBackpackGateway {
   protected async resolve(host: string, signal: AbortSignal): Promise<string[]> {
     assertActive(signal)
     const addresses = await abortable((this.deps.resolve ?? dnsResolver)(host), signal)
-    if (!Array.isArray(addresses) || addresses.length < 1 || addresses.length > 64 || addresses.some(address => typeof address !== 'string' || !isIP(address) || isPrivateAddress(address))) throw new DouyuRenewalGatewayError('unavailable')
+    if (!Array.isArray(addresses) || addresses.length < 1 || addresses.length > 64 || addresses.some(address => typeof address !== 'string' || !isIP(address))) throw new DouyuRenewalGatewayError('unavailable')
     return addresses
   }
 
@@ -278,7 +278,7 @@ export class DouyuBackpackGateway {
     assertActive(signal)
     const { response } = await safeFetch(target.url, {
       ...this.deps.proxy, hosts: [HOST], maxRedirects: 0,
-      allowNonStandardPorts: false, allowNonLoopbackTargets: false,
+      allowNonStandardPorts: false,
     }, {
       method: target.method, body: target.body, signal,
       resolve: host => this.resolve(host, signal),

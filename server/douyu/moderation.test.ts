@@ -85,8 +85,8 @@ describe('permission-checked serial moderation', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
-  it('forbids private DNS addresses even under a permissive caller network policy', async () => {
-    const { moderation, request } = fixture({ overrides: { proxy: { ...proxy, hosts: ['*'], allowNonLoopbackTargets: true, allowNonStandardPorts: true }, resolve: async () => ['127.0.0.1'] } })
+  it('rejects invalid DNS addresses even under a permissive caller network policy', async () => {
+    const { moderation, request } = fixture({ overrides: { proxy: { ...proxy, hosts: ['*'], allowNonStandardPorts: true }, resolve: async () => ['not-an-ip'] } })
     expect(await moderation.mute(input, signal())).toMatchObject({ code: 'request-failed', submitted: false })
     expect(request).not.toHaveBeenCalled()
   })

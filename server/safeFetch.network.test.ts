@@ -10,7 +10,7 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 const config = {
   ...resolveConfig({}).proxy, hosts: ['localhost', 'fixture.invalid'],
   // Local fixtures exercise the transport without exposing a production opt-out.
-  allowNonStandardPorts: true, allowNonLoopbackTargets: true, requestTimeoutMs: 3_000,
+  allowNonStandardPorts: true, requestTimeoutMs: 3_000,
 }
 
 async function listen(host: string, handler: RequestListener, port = 0) {

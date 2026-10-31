@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { isIP } from 'node:net'
 import { hostAllowed } from '../config'
 import { validDouyuRoom } from '../platforms/douyuRoom'
-import { dnsResolver, isPrivateAddress, safeFetch } from '../safeFetch'
+import { dnsResolver, safeFetch } from '../safeFetch'
 import type { DouyuActionDependencies } from './actions'
 import { abortable, cancelBody, cancelled, MAX_TIMEOUT_MS, record } from './actionHttp'
 import {
@@ -412,12 +412,12 @@ export class DouyuRewardActions {
     if (expected.origin !== ORIGIN || expected.username || expected.password || expected.hash || expected.port) throw new RewardProblem('unavailable')
     await this.credentials(context, url)
     const { response } = await safeFetch(url, {
-      ...this.deps.proxy, hosts: [HOST], maxRedirects: 0, allowNonLoopbackTargets: false, allowNonStandardPorts: false,
+      ...this.deps.proxy, hosts: [HOST], maxRedirects: 0, allowNonStandardPorts: false,
     }, {
       method: write ? 'POST' : 'GET', signal: context.signal,
       resolve: async host => {
         const addresses = await abortable((this.deps.resolve ?? dnsResolver)(host), context.signal)
-        if (!Array.isArray(addresses) || addresses.length < 1 || addresses.length > 64 || addresses.some(value => typeof value !== 'string' || !isIP(value) || isPrivateAddress(value))) throw new RewardProblem('unavailable')
+        if (!Array.isArray(addresses) || addresses.length < 1 || addresses.length > 64 || addresses.some(value => typeof value !== 'string' || !isIP(value))) throw new RewardProblem('unavailable')
         return addresses
       },
       fetchImpl: async (checkedUrl, init) => {

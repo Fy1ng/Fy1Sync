@@ -85,8 +85,8 @@ describe('automation transport boundary', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
-  it('refuses private DNS targets and duplicate response keys', async () => {
-    const first = setup([], { resolve: async () => ['8.8.8.8', '127.0.0.1'] })
+  it('refuses invalid DNS targets and duplicate response keys', async () => {
+    const first = setup([], { resolve: async () => ['8.8.8.8', 'not-an-ip'] })
     await expect(first.http.request(context(), 'https://www.douyu.com/test')).rejects.toMatchObject({ reason: 'dns-failed' })
     expect(first.request).not.toHaveBeenCalled()
     const second = setup([new Response('{"error":1,"error":0,"data":{}}')])

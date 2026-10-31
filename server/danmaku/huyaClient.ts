@@ -24,7 +24,7 @@ export async function defaultResolveHuyaDanmakuRoom(room: string): Promise<HuyaD
   return resolveHuyaDanmakuRoom(room, async (url, init) => {
     const signal = AbortSignal.timeout(CONNECT_TIMEOUT_MS)
     const { response } = await safeFetch(url, { enabled: true, hosts: ['www.huya.com'], allowNonStandardPorts: false,
-      allowNonLoopbackTargets: false, maxRedirects: 0, requestTimeoutMs: CONNECT_TIMEOUT_MS }, {
+      maxRedirects: 0, requestTimeoutMs: CONNECT_TIMEOUT_MS }, {
       headers: init?.headers as Record<string, string>, signal,
     })
     if (!response.ok) { void response.body?.cancel().catch(() => {}); throw new Error('请求虎牙弹幕房间失败.') }

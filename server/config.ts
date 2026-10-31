@@ -5,8 +5,6 @@ export type ProxyConfig = {
   /** Allowed target hostnames; a leading `*.` wildcard matches subdomains. */
   hosts: string[]
   allowNonStandardPorts: boolean
-  /** Low-level test seam; desktop DIRECT policy always forbids private/loopback targets. */
-  allowNonLoopbackTargets: boolean
   maxRedirects: number
   requestTimeoutMs: number
 }
@@ -45,7 +43,7 @@ export const DEFAULT_PROXY_HOSTS = [
 export const METADATA_HOSTS = ['liquipedia.net', 'www.youtube.com', 'gql.twitch.tv'] as const
 export function metadataConfig(): ProxyConfig {
   return { enabled: true, hosts: [...METADATA_HOSTS], allowNonStandardPorts: false,
-    allowNonLoopbackTargets: false, maxRedirects: 0, requestTimeoutMs: 15_000 }
+    maxRedirects: 0, requestTimeoutMs: 15_000 }
 }
 
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on'])
@@ -95,9 +93,8 @@ export function resolveConfig(env: EnvLike = process.env, _cwd?: string): { prox
     proxy: {
       enabled: readBooleanEnv(env.STREAM_SYNC_MEDIA_PROXY_ENABLED, true),
       hosts: readHostList(env.STREAM_SYNC_MEDIA_PROXY_HOSTS),
-      // Environment variables cannot relax the desktop media SSRF boundary.
+      // Environment variables cannot relax the desktop media port policy.
       allowNonStandardPorts: false,
-      allowNonLoopbackTargets: false,
       maxRedirects: readBoundedIntegerEnv(env.STREAM_SYNC_MEDIA_PROXY_MAX_REDIRECTS, 4, 0, 8),
       requestTimeoutMs: readBoundedIntegerEnv(env.STREAM_SYNC_MEDIA_PROXY_TIMEOUT_MS, 15_000, 1, 120_000),
     },

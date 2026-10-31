@@ -175,7 +175,7 @@ export class Acquisition implements AcquisitionService {
     if (checked.url.username || checked.url.password) throw new ProxyError('invalid-url', '媒体地址不能包含登录凭据')
     if (result.stream.adaptive) {
       for (const raw of [result.stream.adaptive.videoUrl, result.stream.adaptive.audioUrl]) {
-        const target = await checkUrl(raw, { ...this.deps.proxy, hosts: ['*.googlevideo.com'], allowNonLoopbackTargets: false, allowNonStandardPorts: false }, this.deps.dns, (await network.route(raw)).kind === 'http')
+        const target = await checkUrl(raw, { ...this.deps.proxy, hosts: ['*.googlevideo.com'], allowNonStandardPorts: false }, this.deps.dns, (await network.route(raw)).kind === 'http')
         if (!target.ok || target.url.protocol !== 'https:' || target.url.port || target.url.username || target.url.password) {
           throw new ProxyError('host-not-allowed', '自适应媒体地址未通过安全检查')
         }

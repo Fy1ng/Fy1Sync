@@ -62,8 +62,7 @@ async function regularFile(file: string) {
 /**
  * One current project; local file grants originate only from the native picker or its saved manifest.
  * The file holds a draft pack, media paths and match notes, no credentials, so it is written like
- * the preset files rather than through the private-ACL store: that store runs icacls and
- * PowerShell synchronously, about 0.75 s per write here, and the editor saves on every edit.
+ * the preset files with asynchronous writes, since the editor saves on every edit.
  */
 export class EditorProjectManager {
   private readonly file: string

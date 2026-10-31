@@ -104,7 +104,7 @@ export class HuyaSliceClient implements DanmakuClient {
       let openedAt = this.now()
       const baselinePackets = this.parser.diagnostics.packets
       await this.stream(signature.url, { enabled: true, hosts: ['*.huya.com'], allowNonStandardPorts: false,
-        allowNonLoopbackTargets: false, maxRedirects: 0, requestTimeoutMs: CONNECT_TIMEOUT_MS }, {
+        maxRedirects: 0, requestTimeoutMs: CONNECT_TIMEOUT_MS }, {
         signal: controller.signal, connectTimeoutMs: CONNECT_TIMEOUT_MS, readTimeoutMs: READ_TIMEOUT_MS,
         idleTimeoutMs: IDLE_TIMEOUT_MS, maxBufferedBytes: MAX_CHUNK_BYTES,
         onOpen: () => {

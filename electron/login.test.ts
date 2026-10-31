@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
@@ -10,7 +11,6 @@ import type { BrowserCookie } from './cookies'
 
 let root: string
 const cookies: BrowserCookie[] = [{ domain: '.youtube.com', path: '/', name: 'SAPISID', value: 'never-leak-this-value', session: true }]
-const permissions = { protect: () => {}, verify: () => {} }
 const invalidDestinations = [
   { platform: 'douyu', destination: 'https://outside.example/' },
   { platform: 'douyu', destination: 'https://yuba.douyu.com/' },
@@ -29,14 +29,23 @@ const invalidDestinations = [
   { platform: 'douyu', destination: 'fish-act:0' },
 ] as const
 beforeEach(() => {
-  const temporary = path.join(process.cwd(), '.runtime-cache', 'codex-network-impl-20261030')
+  const temporary = os.tmpdir()
   fs.mkdirSync(temporary, { recursive: true })
   root = fs.mkdtempSync(path.join(temporary, 'login-'))
 })
 afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); vi.restoreAllMocks() })
 
 function fixture(driver: BrowserLoginDriver = { login: vi.fn(async () => cookies) }) {
-  return { driver, manager: new LoginManager(root, { driver, chromeExecutable: 'test-chrome', permissions }) }
+  return { driver, manager: new LoginManager(root, { driver, chromeExecutable: 'test-chrome' }) }
+}
+
+
+function pauseOpen(): () => void {
+  let release!: () => void
+  const ready = new Promise<void>(resolve => { release = resolve })
+  const open = fs.promises.open
+  vi.spyOn(fs.promises, 'open').mockImplementationOnce(async (...args) => { await ready; return open(...args) })
+  return () => release()
 }
 
 describe('LoginManager', () => {
@@ -76,7 +85,7 @@ describe('LoginManager', () => {
   it.each(invalidDestinations)('rejects unsupported destinations before finding Chrome or preparing a profile (%j)', async ({ platform, destination }) => {
     const findChrome = vi.fn(() => 'test-chrome')
     const driver = { login: vi.fn(async () => cookies) }
-    const manager = new LoginManager(root, { driver, findChrome, permissions })
+    const manager = new LoginManager(root, { driver, findChrome })
     await expect(manager.login(platform, destination as unknown as 'yuba')).rejects.toMatchObject({ code: 'login-failed' })
     expect(findChrome).not.toHaveBeenCalled()
     expect(driver.login).not.toHaveBeenCalled()
@@ -86,7 +95,7 @@ describe('LoginManager', () => {
 
   it('classifies missing Chrome and can retry without a stale operation', async () => {
     const driver = { login: vi.fn(async () => cookies) }
-    const manager = new LoginManager(root, { driver, findChrome: () => undefined, permissions })
+    const manager = new LoginManager(root, { driver, findChrome: () => undefined })
     await expect(manager.login('youtube')).rejects.toMatchObject({ code: 'chrome-not-found' })
     await expect(manager.login('youtube')).rejects.toMatchObject({ code: 'chrome-not-found' })
     expect(driver.login).not.toHaveBeenCalled()
@@ -190,12 +199,9 @@ describe('LoginManager', () => {
   it.each(['logout', 'login', 'dispose'] as const)('discards a cookie read that finishes after %s invalidation', async action => {
     const oldCookies: BrowserCookie[] = [{ domain: '.douyu.com', name: 'acf_auth', value: 'old-session', session: true }]
     const newCookies: BrowserCookie[] = [{ domain: '.douyu.com', name: 'acf_auth', value: 'new-session', session: true }]
-    let release!: () => void
-    const ready = new Promise<void>(resolve => { release = resolve })
+    const release = pauseOpen()
     const driver = { login: vi.fn<BrowserLoginDriver['login']>().mockResolvedValue(oldCookies) }
-    const manager = new LoginManager(root, { chromeExecutable: 'test-chrome', driver,
-      permissions: { ...permissions, verifyManyAsync: async () => ready },
-    })
+    const manager = new LoginManager(root, { chromeExecutable: 'test-chrome', driver })
     await manager.login('douyu')
     const pending = manager.cookieHeader('douyu')
     if (action === 'logout') await manager.logout('douyu')
@@ -209,21 +215,17 @@ describe('LoginManager', () => {
 
   it('masks asynchronous storage errors at the public login boundary', async () => {
     const driver = { login: vi.fn<BrowserLoginDriver['login']>().mockResolvedValue([{ domain: '.douyu.com', name: 'acf_auth', value: 'secret', session: true }]) }
-    const manager = new LoginManager(root, { chromeExecutable: 'test-chrome', driver,
-      permissions: { ...permissions, verifyManyAsync: async () => { throw new Error('private filesystem error and cookie data') } },
-    })
+    const manager = new LoginManager(root, { chromeExecutable: 'test-chrome', driver })
     await manager.login('douyu')
-    await expect(manager.cookieHeader('douyu')).rejects.toMatchObject({ code: 'cookie-storage-failed', message: '账号数据读写或私有权限验证失败.' })
-    await expect(manager.loginStatus()).rejects.toMatchObject({ code: 'cookie-storage-failed', message: '账号数据读写或私有权限验证失败.' })
+    vi.spyOn(fs.promises, 'open').mockRejectedValue(new Error('private filesystem error and cookie data'))
+    await expect(manager.cookieHeader('douyu')).rejects.toMatchObject({ code: 'cookie-storage-failed', message: '登录信息保存失败, 请重试.' })
+    await expect(manager.loginStatus()).rejects.toMatchObject({ code: 'cookie-storage-failed', message: '登录信息保存失败, 请重试.' })
     await manager.dispose()
   })
 
-  it('never delivers a temporary cookie file to a consumer after disposal during ACL verification', async () => {
-    let release!: () => void
-    const ready = new Promise<void>(resolve => { release = resolve })
-    const manager = new LoginManager(root, { chromeExecutable: 'test-chrome', driver: { login: vi.fn(async () => cookies) },
-      permissions: { ...permissions, verifyManyAsync: async () => ready },
-    })
+  it('never delivers a temporary cookie file to a consumer after disposal during a pending file read', async () => {
+    const release = pauseOpen()
+    const manager = new LoginManager(root, { chromeExecutable: 'test-chrome', driver: { login: vi.fn(async () => cookies) } })
     await manager.login('youtube')
     const consumer = vi.fn(async () => 'must not run')
     const pending = manager.withTemporaryCookies('youtube', consumer)

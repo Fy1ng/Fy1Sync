@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto'
 import { isIP } from 'node:net'
 import { hostAllowed } from '../config'
-import { dnsResolver, isPrivateAddress, safeFetch } from '../safeFetch'
+import { dnsResolver, safeFetch } from '../safeFetch'
 import { abortable, cancelled, MAX_TIMEOUT_MS, record } from './actionHttp'
 import { parseRewardJson, rewardCredentials, rewardInteger } from './rewardProtocol'
 import type { DouyuAutomationDependencies, DouyuAutomationOutcome, DouyuAutomationRequest } from './automationTypes'
@@ -165,11 +165,11 @@ export class DouyuAutomationHttp {
     if (publicRequest && (method !== 'GET' || !['webconf.douyucdn.cn', 'www.douyu.com'].includes(url.hostname))) throw new AutomationFault('unavailable')
     if (!publicRequest) await this.identity(context)
     const { response } = await safeFetch(url.href, { ...this.deps.proxy, hosts: [url.hostname], maxRedirects: 0,
-      allowNonLoopbackTargets: false, allowNonStandardPorts: false }, {
+      allowNonStandardPorts: false }, {
       method, signal: context.signal,
       resolve: async host => {
         const addresses = await abortable((this.deps.resolve ?? dnsResolver)(host), context.signal)
-        if (!Array.isArray(addresses) || !addresses.length || addresses.length > 64 || addresses.some(value => !isIP(value) || isPrivateAddress(value))) throw new AutomationFault('unavailable')
+        if (!Array.isArray(addresses) || !addresses.length || addresses.length > 64 || addresses.some(value => !isIP(value))) throw new AutomationFault('unavailable')
         return addresses
       },
       fetchImpl: async (checked, init) => {

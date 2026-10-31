@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { containedPath, NativePrivatePermissions, privateDirectory, type PrivatePermissions } from './privateStorage'
+import { containedPath, privateDirectory } from './privateStorage'
 
 export interface CaptureSettings { version: 1; enabled: boolean }
 export interface GifOptions { fps: number; seconds: number; width: number }
@@ -23,18 +23,15 @@ export interface MediaCaptureOptions {
   chooseDestination: (kind: 'png' | 'gif') => Promise<string | null>
   encode: (input: GifEncoderInput, signal: AbortSignal) => Promise<void>
   validatePng?: (bytes: Buffer) => boolean
-  permissions?: PrivatePermissions
 }
 
 /** Frames originate from the actual playhead. No screen, arbitrary URL or path can be read. */
 export class MediaCapture {
   private settings: CaptureSettings = { version: 1, enabled: false }
   private readonly jobs = new Map<string, Job>()
-  private readonly permissions: PrivatePermissions
   private disposed = false
   private screenshotBusy = false
   constructor(private readonly options: MediaCaptureOptions) {
-    this.permissions = options.permissions ?? new NativePrivatePermissions()
     const raw = options.load()
     if (raw !== undefined) {
       if (!raw || typeof raw !== 'object' || Object.keys(raw).sort().join(',') !== 'enabled,version'
@@ -76,7 +73,7 @@ export class MediaCapture {
       || !Number.isInteger(raw.seconds) || raw.seconds < 1 || raw.seconds > 30
       || !Number.isInteger(raw.width) || raw.width < 160 || raw.width > 1280) throw new CaptureError('invalid-arguments')
     const id = randomUUID()
-    const directory = privateDirectory(this.options.root, path.join(this.options.root, 'capture-jobs', id), this.permissions)
+    const directory = privateDirectory(this.options.root, path.join(this.options.root, 'capture-jobs', id))
     const view: GifRecording = { id, frames: 0, maxFrames: raw.fps * raw.seconds, options: { ...raw }, phase: 'recording' }
     this.jobs.set(id, { view, directory, controller: new AbortController(), accepted: 0, bytes: 0, work: Promise.resolve() })
     return structuredClone(view)

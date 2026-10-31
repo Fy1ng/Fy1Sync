@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
 import { connect, type Socket } from 'node:net'
 import path from 'node:path'
+import os from 'node:os'
 import { fetch as undiciFetch } from 'undici'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProxyConfig } from './config'
@@ -11,7 +12,7 @@ import { directNetwork, type NetworkContext } from './networkPolicy'
 import { PinnedDispatcherPool, safeFetch } from './safeFetch'
 
 const policy: ProxyConfig = { enabled: true, hosts: ['fixture.invalid', 'cdn.fixture.invalid'],
-  allowNonStandardPorts: false, allowNonLoopbackTargets: false, maxRedirects: 3, requestTimeoutMs: 3000 }
+  allowNonStandardPorts: false, maxRedirects: 3, requestTimeoutMs: 3000 }
 const proxy: NetworkContext = { route: async () => ({ kind: 'http', proxyUrl: 'http://127.0.0.1:3128' }) }
 const responses = (...values: Response[]) => vi.fn(async () => values.shift()!) as unknown as typeof fetch
 const releases: (() => Promise<void>)[] = []
@@ -49,7 +50,7 @@ async function tunnel(target: Server) {
 }
 
 describe('safeFetch trusted proxy branch', () => {
-  it('does not query local DNS or apply direct-path private address rejection while using a proxy', async () => {
+  it('does not query local target DNS while using a proxy', async () => {
     const dns = vi.fn(async () => ['10.0.0.1'])
     const fetchImpl = responses(new Response('fixture'))
     const result = await safeFetch('https://fixture.invalid/live?fixture=1', policy, { resolve: dns, network: proxy, fetchImpl })
@@ -108,11 +109,11 @@ describe('safeFetch trusted proxy branch', () => {
     expect(route).toHaveBeenCalledTimes(2)
   })
 
-  it('keeps the existing direct DNS/private target boundary unchanged', async () => {
-    const dns = vi.fn(async () => ['10.0.0.1'])
+  it('rejects invalid direct DNS answers before connecting', async () => {
+    const dns = vi.fn(async () => ['not-an-ip'])
     const fetchImpl = responses(new Response('must not connect'))
     await expect(safeFetch('https://fixture.invalid/live', policy, { network: directNetwork, resolve: dns, fetchImpl }))
-      .rejects.toMatchObject({ reason: 'private-address' })
+      .rejects.toMatchObject({ reason: 'dns-failed' })
     expect(dns).toHaveBeenCalledWith('fixture.invalid')
     expect(fetchImpl).not.toHaveBeenCalled()
   })
@@ -142,7 +143,7 @@ describe('safeFetch trusted proxy branch', () => {
 
   const opensslAvailable = (() => { try { execFileSync('openssl', ['version'], { stdio: 'ignore', windowsHide: true }); return true } catch { return false } })()
   it.skipIf(!opensslAvailable)('rejects a real self-signed TLS certificate behind a local CONNECT proxy', async () => {
-    const root = path.resolve('.runtime-cache/codex-network-impl-20261030-implementation')
+    const root = os.tmpdir()
     await mkdir(root, { recursive: true })
     const directory = await mkdtemp(path.join(root, 'proxy-tls-'))
     execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=fixture.invalid',

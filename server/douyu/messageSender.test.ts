@@ -379,14 +379,14 @@ describe('network policy, input bounds and cancellation', () => {
     expect(cookieHeader).not.toHaveBeenCalled()
     expect(request).not.toHaveBeenCalled()
   })
-  it.each(['127.0.0.1', '10.0.0.1', '169.254.169.254', '::1', '::ffff:7f00:1', 'not-an-ip'])('enforces guarded HTTP DNS despite permissive caller config: %s', async address => {
-    const { sender, request, createSocket } = setup({}, { proxy: { ...proxy, hosts: ['*'], allowNonStandardPorts: true, allowNonLoopbackTargets: true }, resolve: async () => [address] })
+  it.each(['not-an-ip', '127.1', '1.2.3.256'])('rejects invalid HTTP DNS despite permissive caller config: %s', async address => {
+    const { sender, request, createSocket } = setup({}, { proxy: { ...proxy, hosts: ['*'], allowNonStandardPorts: true, }, resolve: async () => [address] })
     expect(await sender.send(input, signal())).toMatchObject({ status: 'failed' })
     expect(request).not.toHaveBeenCalled()
     expect(createSocket).not.toHaveBeenCalled()
   })
   it('validates WS DNS separately before any login credentials enter the socket', async () => {
-    const { sender, request, createSocket } = setup({}, { resolve: async host => host === 'wsproxy.douyu.com' ? ['127.0.0.1'] : ['8.8.8.8'] })
+    const { sender, request, createSocket } = setup({}, { resolve: async host => host === 'wsproxy.douyu.com' ? ['not-an-ip'] : ['8.8.8.8'] })
     expect(await sender.send(input, signal())).toMatchObject({ status: 'failed' })
     expect(request).toHaveBeenCalledTimes(2)
     expect(createSocket).not.toHaveBeenCalled()

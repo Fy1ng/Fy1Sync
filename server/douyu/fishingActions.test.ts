@@ -398,7 +398,7 @@ describe('fishing credentials and bounded transport', () => {
     expect(new URLSearchParams(String(writes(request)[0]![1]?.body)).get('rid')).toBe('6979222')
   })
 
-  it.each([['127.0.0.1'], ['10.0.0.1'], ['::1'], ['not-an-ip'], [], ['8.8.8.8', '192.168.1.1']].map(addresses => ({ addresses })))('rejects unsafe DNS answers %#', async ({ addresses }) => {
+  it.each([['not-an-ip'], [], ['8.8.8.8', '1.2.3.256'], Array.from({ length: 65 }, () => '8.8.8.8')].map(addresses => ({ addresses })))('rejects unsafe DNS answers %#', async ({ addresses }) => {
     const { actions, request } = setup({ resolve: async () => addresses })
     expect((await actions.run(task, signal())).status).toBe('waiting-user')
     expect(request).not.toHaveBeenCalled()

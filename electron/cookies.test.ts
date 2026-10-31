@@ -1,28 +1,35 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CookieStore, cookieDomainAllowed } from './cookies'
 import { messageCredentials } from '../server/douyu/messageProtocol'
 import type { BrowserCookie } from './cookies'
-import { containedPath, powershellEnvironment, PRIVATE_ACL_SCRIPT, privateDirectory } from './privateStorage'
-import type { PrivatePermissions } from './privateStorage'
+import { containedPath, powershellEnvironment, privateDirectory } from './privateStorage'
 
 let root: string
-let permissions: PrivatePermissions
 const now = 2_000_000_000
 const cookie = (overrides: Partial<BrowserCookie> = {}): BrowserCookie => ({
   domain: '.youtube.com', path: '/', name: 'SAPISID', value: 'test-private-value', secure: true,
   expirationDate: now + 60, ...overrides,
 })
-const store = () => new CookieStore(root, { permissions, now: () => now })
+const store = () => new CookieStore(root, { now: () => now })
 
 beforeEach(() => {
-  const runtime = path.join(process.cwd(), '.runtime-cache')
+  const runtime = os.tmpdir()
   fs.mkdirSync(runtime, { recursive: true })
   root = fs.mkdtempSync(path.join(runtime, 'cookie-tests-'))
-  permissions = { protect: vi.fn(), verify: vi.fn() }
 })
 afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); vi.restoreAllMocks() })
+
+
+function pauseOpen(): () => void {
+  let release!: () => void
+  const ready = new Promise<void>(resolve => { release = resolve })
+  const open = fs.promises.open
+  vi.spyOn(fs.promises, 'open').mockImplementationOnce(async (...args) => { await ready; return open(...args) })
+  return () => release()
+}
 
 describe('private cookie storage', () => {
   it('round-trips HttpOnly and injects host, path, secure, expiry and session semantics in main only', async () => {
@@ -60,8 +67,6 @@ describe('private cookie storage', () => {
     const text = fs.readFileSync(file, 'utf8')
     expect(text).toContain('# Netscape HTTP Cookie File\n')
     expect(text).not.toContain('MAIL')
-    expect(permissions.protect).toHaveBeenCalledWith(expect.stringMatching(/\.youtube-.+\.tmp$/), false)
-    expect(permissions.verify).toHaveBeenCalledWith(file, false)
     expect(fs.readdirSync(path.dirname(file))).toEqual(['youtube.txt'])
   })
 
@@ -112,11 +117,11 @@ describe('private cookie storage', () => {
     expect(fs.existsSync(path.join(root, 'cookies', 'youtube.txt'))).toBe(false)
   })
 
-  it('keeps the previous cookie file if private permission protection fails', () => {
+  it('keeps the previous cookie file if synchronizing a replacement fails', () => {
     const manager = store()
     manager.write('youtube', [cookie()])
     const previous = fs.readFileSync(path.join(root, 'cookies', 'youtube.txt'), 'utf8')
-    vi.mocked(permissions.protect).mockImplementation((file, directory) => { if (!directory) throw new Error('secret must not escape: ' + file) })
+    vi.spyOn(fs, 'fsyncSync').mockImplementationOnce(() => { throw new Error('secret must not escape') })
     expect(() => manager.write('youtube', [cookie({ value: 'replacement' })])).toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
     expect(fs.readFileSync(path.join(root, 'cookies', 'youtube.txt'), 'utf8')).toBe(previous)
     expect(fs.readdirSync(path.join(root, 'cookies'))).toEqual(['youtube.txt'])
@@ -166,8 +171,6 @@ describe('private cookie storage', () => {
       temporary = file!
       expect(file).not.toBe(path.join(root, 'cookies', 'youtube.txt'))
       expect(fs.readFileSync(file!, 'utf8')).toContain('test-private-value')
-      expect(permissions.protect).toHaveBeenCalledWith(path.dirname(file!), true)
-      expect(permissions.protect).toHaveBeenCalledWith(file!, false)
       return 'resolved'
     })).toBe('resolved')
     expect(fs.existsSync(path.dirname(temporary))).toBe(false)
@@ -208,57 +211,10 @@ describe('private cookie storage', () => {
     expect((await manager.status()).douyu.loggedIn).toBe(true)
   })
 
-  it('awaits one asynchronous ACL batch before reading and does not cache permission success', async () => {
-    const manager = store()
-    manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_auth', value: 'scoped' })])
-    let release!: () => void
-    const ready = new Promise<void>(resolve => { release = resolve })
-    const verify = vi.fn(async () => ready)
-    permissions.verifyManyAsync = verify
-    vi.mocked(permissions.verify).mockClear()
-    const open = vi.spyOn(fs.promises, 'open')
-    const pending = manager.cookieHeader('douyu')
-    expect(verify).toHaveBeenCalledWith([
-      { target: path.join(root, 'cookies'), directory: true },
-      { target: path.join(root, 'cookies', 'douyu.txt'), directory: false },
-    ])
-    expect(open).not.toHaveBeenCalled()
-    expect(permissions.verify).not.toHaveBeenCalled()
-    await new Promise<void>(resolve => setTimeout(resolve, 0))
-    expect(open).not.toHaveBeenCalled()
-    release()
-    await expect(pending).resolves.toBe('acf_auth=scoped')
-    await expect(manager.cookieHeader('douyu')).resolves.toBe('acf_auth=scoped')
-    expect(verify).toHaveBeenCalledTimes(2)
-    expect(permissions.verify).not.toHaveBeenCalled()
-  })
-
-  it('rejects failed asynchronous ACL checks without returning cookie data or raw errors', async () => {
-    const manager = store()
-    manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_auth' })])
-    permissions.verifyManyAsync = vi.fn(async () => { throw new Error('private-value and local path') })
-    await expect(manager.cookieHeader('douyu')).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
-    await expect(manager.status()).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
-  })
-
-  it('invalidates the file and its directory before and after cookie writes and before logout', () => {
-    const invalidate = vi.fn()
-    permissions.invalidate = invalidate
-    const manager = store()
-    manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_auth' })])
-    const file = path.join(root, 'cookies', 'douyu.txt')
-    const directory = path.join(root, 'cookies')
-    expect(invalidate.mock.calls).toEqual([[file], [directory], [file], [directory]])
-    invalidate.mockClear()
-    manager.logout('douyu')
-    expect(invalidate.mock.calls).toEqual([[file], [directory]])
-  })
-
-  it('rejects a regular cookie file replaced while the permission check is pending', async () => {
+  it('rejects a regular cookie file replaced while opening the file is pending', async () => {
     const manager = store()
     manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_auth', value: 'old' })])
-    let release!: () => void
-    permissions.verifyManyAsync = async () => new Promise(resolve => { release = resolve })
+    const release = pauseOpen()
     const pending = manager.cookieHeader('douyu')
     const rejected = expect(pending).rejects.toThrow('账号数据读写失败')
     const file = path.join(root, 'cookies', 'douyu.txt')
@@ -269,11 +225,10 @@ describe('private cookie storage', () => {
     await rejected
   })
 
-  it.each(['write', 'logout'] as const)('invalidates a read waiting for permissions when %s changes credentials', async action => {
+  it.each(['write', 'logout'] as const)('invalidates a pending read when %s changes credentials', async action => {
     const manager = store()
     manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_auth', value: 'old' })])
-    let release!: () => void
-    permissions.verifyManyAsync = async () => new Promise(resolve => { release = resolve })
+    const release = pauseOpen()
     const pending = manager.cookieHeader('douyu')
     const rejected = expect(pending).rejects.toThrow('账号数据读写失败')
     if (action === 'write') manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_auth', value: 'new' })])
@@ -282,11 +237,10 @@ describe('private cookie storage', () => {
     await rejected
   })
 
-  it('refuses a directory junction installed while an asynchronous permission check is pending', async () => {
+  it('refuses a directory junction installed while opening the file is pending', async () => {
     const manager = store()
     manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_auth' })])
-    let release!: () => void
-    permissions.verifyManyAsync = async () => new Promise(resolve => { release = resolve })
+    const release = pauseOpen()
     const pending = manager.cookieHeader('douyu')
     const rejected = expect(pending).rejects.toThrow('账号数据读写失败')
     const directory = path.join(root, 'cookies'), moved = path.join(root, 'original-cookies')
@@ -298,12 +252,12 @@ describe('private cookie storage', () => {
   })
 })
 
-describe('cookie path and permission boundary', () => {
+describe('cookie path boundary', () => {
   it.each(['../outside', '/absolute'])('rejects paths outside the configured private root: %s', suffix => {
     expect(() => containedPath(root, path.resolve(root, suffix))).toThrow()
   })
   it('rejects a junction/symlink before a cookie directory can escape the root', () => {
-    const outside = fs.mkdtempSync(path.join(process.cwd(), '.runtime-cache', 'cookie-tests-outside-'))
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'cookie-tests-outside-'))
     try {
       fs.symlinkSync(outside, path.join(root, 'cookies'), process.platform === 'win32' ? 'junction' : 'dir')
       expect(() => store().write('youtube', [cookie()])).toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
@@ -312,7 +266,7 @@ describe('cookie path and permission boundary', () => {
   })
   it('rejects regular files used as directory components', () => {
     fs.writeFileSync(path.join(root, 'cookies'), '')
-    expect(() => privateDirectory(root, path.join(root, 'cookies'), permissions)).toThrow()
+    expect(() => privateDirectory(root, path.join(root, 'cookies'))).toThrow()
   })
   it('filters lookalike domains and unrelated Google services', () => {
     for (const host of ['youtube.com.evil', 'evilyoutube.com', 'mail.google.com', '.google.evil']) expect(cookieDomainAllowed(host, 'youtube')).toBe(false)
@@ -322,8 +276,5 @@ describe('cookie path and permission boundary', () => {
     const environment = { PSModulePath: 'pwsh7-modules', psMODULEpath: 'also-remove', KEEP: 'unchanged' }
     expect(powershellEnvironment(environment)).toEqual({ KEEP: 'unchanged' })
     expect(environment.PSModulePath).toBe('pwsh7-modules')
-    expect(PRIVATE_ACL_SCRIPT).toContain("$_.AccessControlType -eq 'Allow'")
-    expect(PRIVATE_ACL_SCRIPT).toContain("StartsWith('S-1-15-3-')")
-    expect(PRIVATE_ACL_SCRIPT).toContain('ReparsePoint')
   })
 })

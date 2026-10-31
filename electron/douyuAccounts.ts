@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { LoginManager, LoginError, type PlatformLoginStatus } from './login'
-import { NativePrivatePermissions, privateDirectory, type PrivatePermissions } from './privateStorage'
+import { privateDirectory } from './privateStorage'
 import { PrivateJsonStore } from './privateJsonStore'
 import type { DouyuAccountsSnapshot } from '../server/douyu/types'
 
@@ -62,7 +62,6 @@ const emptyLogin = (): PlatformLoginStatus => ({ loggedIn: false, cookieCount: 0
 export interface DouyuAccountManagerOptions {
   defaultLogin: AccountLogin
   createLogin?: (accountRoot: string) => AccountLogin
-  permissions?: PrivatePermissions
   store?: { load(): unknown; save(value: AccountStorage): void }
   now?: () => number
   id?: () => string
@@ -71,7 +70,6 @@ export interface DouyuAccountManagerOptions {
 export class DouyuAccountManager {
   private registry: AccountStorage
   private readonly store: { load(): unknown; save(value: AccountStorage): void }
-  private readonly permissions: PrivatePermissions
   private readonly managers = new Map<string, AccountLogin>()
   private readonly busy = new Set<string>()
   private readonly revisions = new Map<string, number>()
@@ -83,8 +81,7 @@ export class DouyuAccountManager {
   private disposed = false
 
   constructor(private readonly root: string, private readonly options: DouyuAccountManagerOptions) {
-    this.permissions = options.permissions ?? new NativePrivatePermissions()
-    this.store = options.store ?? new PrivateJsonStore<AccountStorage>(root, 'douyu/accounts.json', this.permissions)
+    this.store = options.store ?? new PrivateJsonStore<AccountStorage>(root, 'douyu/accounts.json')
     try { this.registry = readStorage(this.store.load(), (options.now ?? Date.now)()) }
     catch { throw new DouyuAccountError('storage-failed') }
   }
@@ -163,7 +160,7 @@ export class DouyuAccountManager {
     let manager = this.managers.get(id)
     if (!manager) {
       try {
-        const accountRoot = privateDirectory(this.root, path.join(this.root, 'douyu', 'account-data', id), this.permissions)
+        const accountRoot = privateDirectory(this.root, path.join(this.root, 'douyu', 'account-data', id))
         manager = this.options.createLogin?.(accountRoot) ?? new LoginManager(accountRoot)
         this.managers.set(id, manager)
       } catch { throw new DouyuAccountError('storage-failed') }

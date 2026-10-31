@@ -1,10 +1,11 @@
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import os from 'node:os'
 import { describe, expect, it, vi } from 'vitest'
 import { NetworkPolicy } from '../server/networkPolicy'
 import { NetworkPreferences } from './networkPreferences'
 
-const root = path.resolve('.runtime-cache/codex-network-impl-20261030-implementation')
+const root = os.tmpdir()
 async function directory() { await mkdir(root, { recursive: true }); return mkdtemp(path.join(root, 'network-preferences-')) }
 
 describe('persistent domestic network preferences', () => {

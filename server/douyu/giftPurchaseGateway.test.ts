@@ -69,7 +69,7 @@ describe('bounded official routes and credential isolation', () => {
     expect(h.request.mock.calls[0]?.[1]?.redirect).toBe('manual')
   })
 
-  it.each(['127.0.0.1', '10.0.0.1', '::1'])('refuses private DNS address %s', address => {
+  it.each(['not-an-ip', '127.1', '1.2.3.256'])('refuses invalid DNS address %s', address => {
     const h = setup({ resolve: async () => [address] })
     return expect(h.gateway.readCatalog('100', signal())).rejects.toThrow().then(() => { expect(h.request).not.toHaveBeenCalled() })
   })

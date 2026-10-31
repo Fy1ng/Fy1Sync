@@ -90,7 +90,7 @@ describe('Huya HTTP chat receive-only lifecycle', () => {
     expect(context.client.diagnostics).toMatchObject({ chats: 1, gifts: 1, connections: 1, signatureRequests: 1,
       parser: { packets: 2, bufferedBytes: 0, sequenceGaps: 0, fragmentFailures: 0 } })
     expect(context.stream.mock.calls[0]![1]).toEqual({ enabled: true, hosts: ['*.huya.com'], allowNonStandardPorts: false,
-      allowNonLoopbackTargets: false, maxRedirects: 0, requestTimeoutMs: 15_000 })
+      maxRedirects: 0, requestTimeoutMs: 15_000 })
     expect(attempt.options).toMatchObject({ connectTimeoutMs: 15_000, readTimeoutMs: 30_000,
       idleTimeoutMs: 60_000, maxBufferedBytes: 262_144 })
   })
