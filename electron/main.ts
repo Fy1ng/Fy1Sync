@@ -66,6 +66,17 @@ if (process.env.STREAM_SYNC_USER_DATA_DIR) {
   app.setPath('userData', path)
   app.setPath('sessionData', path)
 }
+// One app per data directory: two would write the same cookie, account and buffer files with
+// nothing to order the writes. Electron keys the lock to userData, so a separate test profile
+// still runs alongside the installed app. A second launch brings the first window forward.
+const primaryInstance = app.requestSingleInstanceLock()
+if (!primaryInstance) app.quit()
+app.on('second-instance', () => {
+  if (!window || window.isDestroyed()) return
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
+})
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 const decoderPreferences = new DecoderPreferences(app.getPath('userData'),
   app.commandLine.hasSwitch('disable-accelerated-video-decode'))
@@ -648,7 +659,7 @@ async function start(): Promise<void> {
   window.on('closed', () => { window = null; void dispose?.() })
   await window.loadURL(APP_URL)
 }
-app.whenReady().then(start).catch(() => { console.error('应用启动失败, 请检查构建产物和数据目录'); app.exit(1) })
+if (primaryInstance) app.whenReady().then(start).catch(() => { console.error('应用启动失败, 请检查构建产物和数据目录'); app.exit(1) })
 app.on('window-all-closed', () => app.quit())
 let quitting = false
 app.on('before-quit', (event) => {
