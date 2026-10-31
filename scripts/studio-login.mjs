@@ -13,7 +13,7 @@
  * --check    print what this build sees as logged in, then quit
  */
 
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { cp, mkdir, readdir, readFile, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
