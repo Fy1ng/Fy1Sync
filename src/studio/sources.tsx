@@ -215,6 +215,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       play()
       return true
     } finally {
+      session.endSourceChange(role, generation)
       patch(role, { busy: false })
     }
   }, [connectRoom, disconnectRoom, loadDescriptor, offerLogin, patch, play, session])

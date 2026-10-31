@@ -252,9 +252,10 @@ export function CountdownPrompt(): React.ReactNode {
     const state = snapshot.autoProfiles[role]
     return state.phase === 'not-found' || state.phase === 'unsupported' || state.phase === 'locating' || state.phase === 'learning'
   })
-  if (rows.length === 0) return null
+  if (rows.length === 0 && !snapshot.playbackRecovery) return null
   return (
     <div className="prompt-stack" aria-live="polite">
+      <PlaybackRecoveryPrompt />
       {rows.map((role) => {
         const state = snapshot.autoProfiles[role]
         const working = state.phase === 'locating' || state.phase === 'learning'
@@ -275,6 +276,24 @@ export function CountdownPrompt(): React.ReactNode {
           </div>
         )
       })}
+    </div>
+  )
+}
+
+export function PlaybackRecoveryPrompt(): React.ReactNode {
+  const session = useSession()
+  const snapshot = useSessionSnapshot()
+  const recovery = snapshot.playbackRecovery
+  if (!recovery) return null
+  const busy = session.autoSync.isRunning || session.offsetBusy || snapshot.autoProfileBusy
+  const ready = SOURCE_ROLES.every(role => snapshot.media[role].status === 'ready')
+  return (
+    <div className="prompt" role="status">
+      <span className="prompt-text">{recovery.kind === 'reconnect'
+        ? '重新连接后, 两路可能错开了'
+        : `画面刚卡顿, 两路可能错开了约 ${recovery.driftSeconds?.toFixed(1)} 秒`}</span>
+      <button type="button" className="btn-quiet small" disabled={busy || !ready}
+        onClick={() => startAutoAlign(session)}>重新对齐</button>
     </div>
   )
 }

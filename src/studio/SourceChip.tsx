@@ -97,6 +97,7 @@ function SourcePanel({ role, onDone, onSchedule }: {
       {load.notes.map((note) => <p key={note} className="muted">{note}</p>)}
 
       {buffer && <p className="muted">{bufferStatusText(buffer)}</p>}
+      <PlaybackDiagnosticsPanel role={role} />
 
       {role === 'commentary' && (state.descriptor?.platform === 'huya' || snapshot.danmaku.room?.startsWith('huya:')
         ? <p className="muted" role="status">虎牙弹幕: {snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
@@ -118,6 +119,29 @@ function SourcePanel({ role, onDone, onSchedule }: {
         )}
       </div>
     </div>
+  )
+}
+
+export function PlaybackDiagnosticsPanel({ role }: { role: SourceRole }): React.ReactNode {
+  const session = useSession()
+  const snapshot = useSessionSnapshot()
+  const stall = snapshot.playbackDiagnostics[role]
+  return (
+    <details>
+      <summary>播放诊断</summary>
+      <p className="muted">{stall
+        ? `最近卡顿 ${(stall.durationMs / 1000).toFixed(1)} 秒${stall.ongoing ? ' (尚未恢复)' : ''}. ${stall.hint}`
+        : '暂未记录到卡顿'}</p>
+      <button type="button" className="btn-quiet small" onClick={() => {
+        const blob = new Blob([JSON.stringify(session.exportPlaybackDiagnostics(), null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = 'Fy1Sync-playback-diagnostics.json'
+        link.click()
+        URL.revokeObjectURL(url)
+      }}>导出播放诊断</button>
+    </details>
   )
 }
 

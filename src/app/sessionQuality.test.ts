@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Session } from './session'
 import { apiClient } from './apiClient'
 import { primeMediaElement } from '../test/setup'
@@ -6,7 +6,8 @@ import { createEmptyProfile } from '../core/profileSchema'
 import type { MediaDescriptor } from '../core/types'
 
 let session: Session
-afterEach(() => session?.dispose())
+beforeEach(() => vi.useFakeTimers())
+afterEach(() => { session?.dispose(); vi.useRealTimers() })
 
 async function harness(profile: boolean) {
   session = new Session({ createSampler: () => null })
@@ -16,17 +17,27 @@ async function harness(profile: boolean) {
   await session.loadSource('commentary', { ...source, sourceQuality: undefined, sourceQualities: undefined })
   for (const role of ['official', 'commentary'] as const) primeMediaElement(session.engine.element(role), { duration: 600, currentTime: 100 })
   await session.applyOffset(5)
+  session.autoSync.authorize()
   await session.engine.setPlaying(true)
   if (profile) session.setProfileForAll(createEmptyProfile('test', 'Test'))
   const switchQuality = vi.spyOn(apiClient, 'switchQuality').mockResolvedValue({ ok: true, value: { ok: true, stream: {
     platform: 'youtube', kind: 'progressive', url: 'app://app/buffer/new.mp4', label: '新画质', channel: 'id', requiresProxy: false,
     quality: 'low', qualities: source.sourceQualities,
   } } })
-  const sync = vi.spyOn(session, 'syncNow').mockResolvedValue({ applied: true } as any)
+  const sync = vi.spyOn(session.autoSync, 'run').mockResolvedValue({ applied: true } as any)
   return { switchQuality, sync }
 }
 
 describe('quality restart synchronization', () => {
+  it('does not reauthorize or automatically align after manual adjustment', async () => {
+    const h = await harness(true)
+    await session.applyOffset(4)
+    const authorize = vi.spyOn(session.autoSync, 'authorize')
+    await session.changeSourceQuality('official', 'low')
+    expect(h.sync).not.toHaveBeenCalled()
+    expect(authorize).not.toHaveBeenCalled()
+    expect(session.autoSync.autoApplyAuthorized).toBe(false)
+  })
   it('resets that role rewind and synchronizes exactly once after a successful switch', async () => {
     const h = await harness(true)
     await session.changeSourceQuality('official', 'low')

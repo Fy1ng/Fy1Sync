@@ -17,6 +17,7 @@ import { SOURCE_ROLES } from '../core/types'
 import { attachMedia, type AttachMode, type MediaAttachment, type MediaError } from './hlsController'
 import { AUTO_QUALITY, type QualityOption } from './quality'
 import { clampSeek, readTimebase, seekReached, SEEK_TOLERANCE_SECONDS } from './timebase'
+import type { PlaybackDiagnosticInput } from './playbackDiagnostics'
 
 export type RoleStatus = 'empty' | 'loading' | 'ready' | 'error'
 
@@ -143,6 +144,16 @@ function createElement(role: SourceRole): HTMLVideoElement {
 
 /** Runtime bits that are not part of the observable state. */
 interface RoleRuntime {
+  observationRevision: number
+  continuity: number | null
+  discontinuities: number
+  playlistStart: number | null
+  playlistEnd: number | null
+  fragment: PlaybackDiagnosticInput['fragment']
+  fragmentAt: number
+  diagnosticError: PlaybackDiagnosticInput['error']
+  diagnosticErrorAt: number
+  switchingLevel: boolean
   element: HTMLVideoElement
   attachment: MediaAttachment | null
   attachmentAbort: AbortController | null
@@ -176,6 +187,9 @@ export class MediaEngine {
     for (const role of SOURCE_ROLES) {
       const element = createElement(role)
       const runtime: RoleRuntime = {
+        observationRevision: 0,
+        continuity: null, discontinuities: 0, playlistStart: null, playlistEnd: null,
+        fragment: null, fragmentAt: 0, diagnosticError: null, diagnosticErrorAt: 0, switchingLevel: false,
         element,
         attachment: null,
         attachmentAbort: null,
@@ -192,6 +206,11 @@ export class MediaEngine {
   private listen(role: SourceRole, element: HTMLVideoElement): () => void {
     const onEvent = (event: Event) => {
       if (event.type === 'seeked') this.resolveSeek(role)
+      const runtime = this.runtime.get(role)
+      if (event.type === 'playing' && runtime?.switchingLevel && element.readyState >= element.HAVE_FUTURE_DATA) {
+        runtime.switchingLevel = false
+        runtime.observationRevision++
+      }
       this.readElement(role)
     }
     for (const type of MEDIA_EVENTS) element.addEventListener(type, onEvent)
@@ -295,10 +314,18 @@ export class MediaEngine {
     const runtime = this.runtime.get(role)
     if (!runtime || this.disposed) return
     const generation = ++runtime.generation
+    runtime.observationRevision++
     this.teardown(role)
     const controller = new AbortController()
     runtime.attachmentAbort = controller
     runtime.liveHint = undefined
+    runtime.continuity = null
+    runtime.discontinuities = 0
+    runtime.playlistStart = null
+    runtime.playlistEnd = null
+    runtime.fragment = null
+    runtime.diagnosticError = null
+    runtime.switchingLevel = false
 
     this.state[role] = {
       ...this.state[role],
@@ -322,6 +349,35 @@ export class MediaEngine {
 
     try {
       const attachment = await attachMedia(runtime.element, descriptor, {
+        onPlayingContinuity: cc => {
+          if (!current()) return
+          if (runtime.switchingLevel && runtime.element.readyState >= runtime.element.HAVE_FUTURE_DATA) {
+            runtime.switchingLevel = false
+            runtime.observationRevision++
+          }
+          if (runtime.continuity !== null && cc > runtime.continuity) runtime.discontinuities++
+          runtime.continuity = cc
+        },
+        onPlaylist: (start, end) => {
+          if (!current()) return
+          runtime.playlistStart = start
+          runtime.playlistEnd = end
+        },
+        onFragment: (phase, elapsedMs, start, end, loadMs) => {
+          if (!current()) return
+          runtime.fragment = { phase, elapsedMs, start, end, loadMs }
+          runtime.fragmentAt = performance.now()
+        },
+        onDiagnosticError: (type, details) => {
+          if (!current()) return
+          runtime.diagnosticError = { type, details }
+          runtime.diagnosticErrorAt = performance.now()
+        },
+        onLevelSwitching: () => {
+          if (!current()) return
+          runtime.switchingLevel = true
+          runtime.observationRevision++
+        },
         onQualityOptions: (options) => {
           if (!current()) return
           this.state[role] = { ...this.state[role], quality: options }
@@ -336,6 +392,8 @@ export class MediaEngine {
         },
         onLevelSwitch: (level, autoLevel) => {
           if (!current()) return
+          if (runtime.switchingLevel) runtime.observationRevision++
+          runtime.switchingLevel = false
           this.state[role] = { ...this.state[role], level, autoLevel }
           this.notify()
         },
@@ -427,6 +485,7 @@ export class MediaEngine {
     const runtime = this.runtime.get(role)
     if (!runtime) return
     runtime.generation += 1
+    runtime.observationRevision++
     this.teardown(role)
     runtime.liveHint = undefined
     this.state[role] = {
@@ -449,6 +508,32 @@ export class MediaEngine {
       currentTime: runtime.element.currentTime,
       timebase,
       ready: state.status === 'ready' && runtime.element.readyState >= runtime.element.HAVE_METADATA,
+    }
+  }
+
+  /** Read the actual elements, including fields that do not emit media events reliably. */
+  playbackSample(role: SourceRole): Omit<PlaybackDiagnosticInput, 'at' | 'timerLateMs' | 'localBuffer' | 'observing'> & {
+    discontinuities: number; busy: boolean; observationRevision: number
+  } {
+    const runtime = this.runtime.get(role)!
+    const video = runtime.element
+    const ranges = video.buffered
+    const seekable = video.seekable
+    const quality = video.getVideoPlaybackQuality?.()
+    return {
+      currentTime: video.currentTime, paused: video.paused, seeking: video.seeking, ended: video.ended,
+      readyState: video.readyState,
+      buffered: Array.from({ length: ranges.length }, (_, index) => [ranges.start(index), ranges.end(index)]),
+      seekableStart: seekable.length ? seekable.start(0) : null,
+      seekableEnd: seekable.length ? seekable.end(seekable.length - 1) : null,
+      playlistStart: runtime.playlistStart, playlistEnd: runtime.playlistEnd,
+      fragment: runtime.fragment ? { ...runtime.fragment, elapsedMs: runtime.fragment.elapsedMs
+        + (runtime.fragment.phase === 'buffered' ? 0 : Math.max(0, performance.now() - runtime.fragmentAt)) } : null,
+      error: runtime.diagnosticError ? { ...runtime.diagnosticError, ageMs: Math.max(0, performance.now() - runtime.diagnosticErrorAt) } : null,
+      droppedFrames: quality?.droppedVideoFrames ?? null,
+      discontinuities: runtime.discontinuities,
+      observationRevision: runtime.observationRevision,
+      busy: runtime.pendingSeek !== null || runtime.switchingLevel,
     }
   }
 
@@ -478,6 +563,7 @@ export class MediaEngine {
     // this element is no longer heading to.
     this.resolveSeek(role, false)
 
+    runtime.observationRevision++
     return new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
         runtime.pendingSeek = null
@@ -563,6 +649,10 @@ export class MediaEngine {
   setLevel(role: SourceRole, level: number): void {
     const runtime = this.runtime.get(role)
     if (!runtime) return
+    if (runtime.attachment?.mode === 'hlsjs' && level !== this.state[role].level) {
+      runtime.switchingLevel = true
+      runtime.observationRevision++
+    }
     runtime.attachment?.setLevel(level)
     this.state[role] = { ...this.state[role], level }
     this.notify()
