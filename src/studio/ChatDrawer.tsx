@@ -25,8 +25,13 @@ import { remember } from '../app/remembered'
 
 /** A one-line row; longer messages wrap and are measured. */
 const ROW = 30
-/** How close to the end still counts as following it. */
-const END_SLACK = ROW
+/**
+ * How close to the end still counts as following it. One pixel absorbs sub-pixel rounding and
+ * nothing more: any real step up must stop the follow. A wider slack read a small wheel step
+ * (10–20 px) as still at the end, so the next message pulled the list back down under the
+ * reader, a visible jump each time.
+ */
+const END_SLACK = 1
 
 export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   onClose: () => void
@@ -62,7 +67,11 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
     anchorTo: 'end',
     followOnAppend: true,
     scrollEndThreshold: END_SLACK,
-    initialOffset: () => Number.MAX_SAFE_INTEGER,
+    // Start at the end, but as a real offset. A sentinel like MAX_SAFE_INTEGER is never read back
+    // while the list is too short to scroll, since no scroll event fires, so the virtualizer
+    // went on computing the visible range from that far-off offset. It kept only the newest row
+    // plus overscan, and the rows above went missing while the list was still filling up.
+    initialOffset: () => Math.max(0, messages.length * ROW - (scroller.current?.clientHeight ?? 0)),
   })
   const atEnd = useRef(true)
 

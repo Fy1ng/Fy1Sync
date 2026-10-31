@@ -1,7 +1,8 @@
 /**
  * The sidebar chat list under load: 200 messages a second through the real relay, IPC,
- * timeline and windowing. The point is that the DOM stays bounded while the history grows,
- * and that a reader scrolled up is not moved by arriving messages.
+ * timeline and windowing, one-liners mixed with messages that wrap to two or three lines. The
+ * point is that the DOM stays bounded while the history grows, that a reader scrolled up is
+ * not moved by arriving messages, and that a list still filling up shows every row.
  */
 
 import { APP_ORIGIN, expect, test } from './electron'
@@ -179,6 +180,61 @@ test.describe('弹幕列表', () => {
       await jump.click()
       await expect(jump).toHaveCount(0)
       await expect.poll(async () => list.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThan(30)
+
+      // Rows of several heights really are on screen, or this run tested one-liners only.
+      expect(await list.locator('.msg').evaluateAll(rows => rows.filter(row => row.getBoundingClientRect().height > 40).length)).toBeGreaterThan(0)
+    } finally {
+      await stop()
+    }
+  })
+
+  test('往上滚一小格就停在原处, 新弹幕不会把列表拉回底部', async ({ page, electronApp }) => {
+    await openPlayer(page)
+    await connectDanmaku(page)
+    await setPlaying(page, false)
+    const stop = await stressDanmaku(electronApp, 30)
+    try {
+      const list = page.getByRole('log', { name: '弹幕列表' })
+      await expect.poll(() => list.evaluate(node => node.scrollHeight / node.clientHeight), { timeout: 30_000 }).toBeGreaterThan(3)
+      const box = (await list.boundingBox())!
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+      const fromEnd = () => list.evaluate(node => node.scrollHeight - node.scrollTop - node.clientHeight)
+      for (let trial = 0; trial < 4; trial++) {
+        await list.evaluate(node => { node.scrollTop = node.scrollHeight })
+        await expect.poll(fromEnd).toBeLessThanOrEqual(1)
+        await page.waitForTimeout(300)
+        // A small wheel step, smaller than one row: the reader has moved and must not be pulled back.
+        await page.mouse.wheel(0, -20)
+        await expect.poll(fromEnd).toBeGreaterThan(1)
+        await page.waitForTimeout(600)
+        expect(await fromEnd()).toBeGreaterThan(1)
+      }
+    } finally {
+      await stop()
+    }
+  })
+
+  test('弹幕还没铺满列表时, 每一条都从顶上依次显示', async ({ page, electronApp }) => {
+    await openPlayer(page)
+    await connectDanmaku(page)
+    await setPlaying(page, false)
+    const stop = await stressDanmaku(electronApp, 20)
+    try {
+      const list = page.getByRole('log', { name: '弹幕列表' })
+      // Enough rows to show the old fault, which kept only the newest few, well short of filling the list.
+      await expect.poll(() => list.locator('.msg').count(), { timeout: 20_000 }).toBeGreaterThanOrEqual(10)
+      await stop()
+      // While the history is shorter than the viewport, it starts at the top with the first message.
+      const layout = await list.evaluate(node => {
+        const top = node.getBoundingClientRect().top
+        const rows = [...node.querySelectorAll<HTMLElement>('.msg')].sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
+        return { short: node.scrollHeight <= node.clientHeight, firstTop: rows[0] ? rows[0].getBoundingClientRect().top - top : null,
+          first: rows[0]?.querySelector('.msg-text')?.textContent ?? null, rows: rows.length }
+      })
+      expect(layout.short).toBe(true)
+      expect(layout.rows).toBeGreaterThanOrEqual(8)
+      expect(layout.first).toBe('压测弹幕 #1')
+      expect(Math.abs(layout.firstTop!)).toBeLessThanOrEqual(1)
     } finally {
       await stop()
     }
