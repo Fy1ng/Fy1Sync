@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import { metadataUserAgent } from '../appIdentity'
 import { metadataConfig } from '../config'
 import { ProxyError, safeFetch, type Resolver } from '../safeFetch'
-import { LiquipediaRateLimit } from './liquipediaRateLimit'
+import { DispatchTurns, LiquipediaRateLimit } from './liquipediaRateLimit'
 
 export const LOGO_REFRESH_MS = 7 * 24 * 60 * 60_000
 export const LOGO_REFRESH_STEP_MS = 30_000
@@ -98,15 +98,36 @@ function atomicFile(dir: string, name: string, bytes: Uint8Array | string): void
   } finally { try { unlinkSync(temporary) } catch { /* Already renamed. */ } }
 }
 
+/**
+ * One image download at a time, across every cache. A waiting download is picked by its
+ * cache's current priority, not by when it queued: what the viewer is looking at can change
+ * while the line is long, and a crest that has not been sent yet should follow that.
+ */
+interface Waiter { priority: () => number; order: number; resume: () => void }
 let active = false
-const foreground: Array<() => void> = [], background: Array<() => void> = []
-async function slot<T>(low: boolean, run: () => Promise<T>): Promise<T> {
-  if (active) await new Promise<void>(yes => (low ? background : foreground).push(yes))
+let order = 0
+const foreground: Waiter[] = [], background: Waiter[] = []
+function takeNext(line: Waiter[]): Waiter | undefined {
+  if (!line.length) return undefined
+  let best = 0
+  for (let index = 1; index < line.length; index++) {
+    const waiter = line[index]!, chosen = line[best]!
+    const rank = waiter.priority(), current = chosen.priority()
+    if (rank < current || (rank === current && waiter.order < chosen.order)) best = index
+  }
+  return line.splice(best, 1)[0]
+}
+/** True while a download that ranks above `rank` is waiting for the slot. */
+function outranked(rank: number): boolean { return foreground.some(waiter => waiter.priority() < rank) }
+async function slot<T>(low: boolean, priority: () => number, run: () => Promise<T>): Promise<T> {
+  if (active) await new Promise<void>(resume => (low ? background : foreground).push({ priority, order: ++order, resume }))
   else active = true
   try { return await run() }
-  finally { const next = foreground.shift() ?? background.shift(); if (next) next(); else active = false }
+  finally { const next = takeNext(foreground) ?? takeNext(background); if (next) next.resume(); else active = false }
 }
 class YieldRefresh extends Error {}
+/** A crest the viewer now needs more is waiting; nothing was sent, so this is not a failure. */
+class YieldPriority extends Error {}
 class InvalidLogo extends Error {}
 class TemporaryLogo extends Error { constructor(readonly retryAfter = 0) { super('Temporary team logo failure') } }
 function pause(ms: number, signal: AbortSignal): Promise<void> {
@@ -138,6 +159,8 @@ interface Dependencies {
   resolve?: Resolver
   now?: () => number
   rateLimit?: LiquipediaRateLimit
+  /** Turn-taking with the tier query; the schedule service passes its own. */
+  turns?: DispatchTurns
   onUpdated?: () => void
 }
 
@@ -146,12 +169,16 @@ export class TeamLogoCache {
   private readonly lifetime = new AbortController()
   private readonly flights = new Map<string, Promise<void>>()
   private readonly rateLimit: LiquipediaRateLimit
+  private readonly turns: DispatchTurns
   private activePaths = new Set<string>()
+  /** Lower is sooner. A path the schedule did not rank waits behind every ranked one. */
+  private ranks = new Map<string, number>()
   private refreshTimer: ReturnType<typeof setTimeout> | undefined
   private refreshFlight = false
   constructor(private readonly options: Dependencies) {
     this.now = options.now ?? Date.now
     this.rateLimit = options.rateLimit ?? new LiquipediaRateLimit(options.userDataDir, this.now)
+    this.turns = options.turns ?? new DispatchTurns(this.rateLimit)
   }
 
   private read(key: string): Logo | null { return readTeamLogo(this.options.userDataDir, key, this.now(), this.options.bundledLogoDir) }
@@ -170,6 +197,18 @@ export class TeamLogoCache {
     const normalized = normalizeLogoPath(path)
     if (normalized) await this.flights.get(teamLogoKey(normalized))
   }
+
+  /** Order missing crests by the schedule's ranking: index 0 goes first. */
+  setPriorities(paths: readonly string[]): void {
+    const ranks = new Map<string, number>()
+    paths.forEach((path, index) => {
+      const normalized = normalizeLogoPath(path)
+      if (normalized && !ranks.has(normalized)) ranks.set(normalized, index)
+    })
+    this.ranks = ranks
+  }
+
+  private rank(path: string): number { return this.ranks.get(path) ?? Number.MAX_SAFE_INTEGER }
 
   setActivePaths(paths: Iterable<string>): void {
     this.activePaths = new Set([...paths].map(normalizeLogoPath).filter((path): path is string => !!path))
@@ -224,9 +263,23 @@ export class TeamLogoCache {
     while (!this.lifetime.signal.aborted) {
       if (low && !this.activePaths.has(path)) return
       try {
-        await slot(low, async () => {
+        await slot(low, () => this.rank(path), async () => {
           if (this.lifetime.signal.aborted || (low && !this.activePaths.has(path))) return
           if (!low && this.read(key)) return
+          // Wait out the shared quota holding the slot, but step aside if a crest the viewer
+          // now needs more turned up meanwhile, and let a waiting tier query have its turn.
+          // Nothing is reserved or sent until it is ours.
+          if (!low) {
+            const release = this.turns.hold('logo')
+            try {
+              for (;;) {
+                if (outranked(this.rank(path))) throw new YieldPriority()
+                const wait = this.rateLimit.delay()
+                if (wait <= 0 && this.turns.mayGo('logo')) break
+                await pause(Math.min(Math.max(25, wait), 250), this.lifetime.signal)
+              }
+            } finally { release() }
+          }
           const result = await this.fetchImage(path, low)
           this.lifetime.signal.throwIfAborted()
           const previous = this.read(key), sha256 = hash(result.bytes)
@@ -240,6 +293,7 @@ export class TeamLogoCache {
       } catch (error) {
         if (this.lifetime.signal.aborted) return
         if (error instanceof YieldRefresh) { await pause(Math.max(25, this.rateLimit.delay()), this.lifetime.signal); continue }
+        if (error instanceof YieldPriority) continue
         const transient = !(error instanceof InvalidLogo) && (!(error instanceof ProxyError) || error.reason === 'dns-failed' || error.reason === 'upstream-failed')
         if (transient && attempt < LOGO_RETRY_DELAYS_MS.length) {
           const delay = Math.max(LOGO_RETRY_DELAYS_MS[attempt++]!, error instanceof TemporaryLogo ? error.retryAfter : 0)
@@ -266,8 +320,8 @@ export class TeamLogoCache {
         fetchImpl: async (input, init) => {
           if (low) {
             // Refreshes yield the only image slot while waiting for HTTP quota.
-            if (foreground.length || !this.activePaths.has(path) || !this.rateLimit.reserve()) throw new YieldRefresh()
-          } else await this.rateLimit.wait(signal)
+            if (foreground.length || !this.turns.idle || !this.activePaths.has(path) || !this.rateLimit.reserve()) throw new YieldRefresh()
+          } else await this.turns.wait('logo', signal)
           signal.throwIfAborted()
           timer = setTimeout(() => controller.abort(new DOMException('Team logo request timed out', 'TimeoutError')), 15_000)
           return abortable((this.options.request ?? fetch)(input, init), signal)

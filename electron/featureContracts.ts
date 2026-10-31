@@ -32,6 +32,8 @@ export interface SavedRoom {
 export interface FeatureMethods extends BackendMethods {
   getCs2Schedule: { args: { refresh?: boolean } | undefined; result: Cs2Schedule }
   getStreamTitles: { args: { streams: StreamTitleInput[] }; result: StreamTitle[] }
+  /** The event 赛程 shows, as a Liquipedia path; its missing crests are fetched next. */
+  setCs2ScheduleFocus: { args: { eventPath: string | null }; result: { updated: true } }
   listSavedRooms: { args: undefined; result: SavedRoom[] }
   saveRoom: { args: Omit<SavedRoom, 'id' | 'savedAt'>; result: SavedRoom }
   removeSavedRoom: { args: { id: string }; result: { removed: boolean } }
@@ -68,7 +70,7 @@ export type FeatureMethod = keyof FeatureMethods
 /** One whitelist shared by preload and the feature dispatcher. */
 export const FEATURE_METHODS = [
   ...BACKEND_METHODS,
-  'getCs2Schedule', 'getStreamTitles',
+  'getCs2Schedule', 'getStreamTitles', 'setCs2ScheduleFocus',
   'listSavedRooms', 'saveRoom', 'removeSavedRoom',
   'activateDouyuRoom', 'getDanmakuFeatures', 'setDanmakuPreferences', 'setMessageAffixes',
   'queryDanmakuHistory', 'queryDanmakuFavorites', 'addDanmakuFavorite', 'updateDanmakuFavorite', 'removeDanmakuFavorite',

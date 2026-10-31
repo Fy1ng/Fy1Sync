@@ -21,6 +21,19 @@ export interface EventGroup {
 
 const eventKey = (match: Cs2Match): string => match.tournament.url.split('#')[0] || match.tournament.name
 
+/**
+ * The event's Liquipedia path, for telling main which event is on screen. Only the path goes
+ * across, never the address; a key from an event name or another site gives null.
+ */
+export function eventPath(group: Pick<EventGroup, 'key'> | undefined): string | null {
+  if (!group) return null
+  try {
+    const url = new URL(group.key)
+    return url.origin === 'https://liquipedia.net' && url.pathname.startsWith('/counterstrike/') && !url.search
+      ? url.pathname : null
+  } catch { return null }
+}
+
 /** Liquipedia's tiers in order of importance; Misc (-1) after C, unknown last. */
 const TIER_RANK: Record<string, number> = { '1': 0, '2': 1, '3': 2, '4': 3, '-1': 4, null: 5 }
 export const tierRank = (tier: Cs2Match['tournament']['tier']): number => TIER_RANK[String(tier)] ?? 5

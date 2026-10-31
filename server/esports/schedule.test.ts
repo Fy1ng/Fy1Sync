@@ -449,21 +449,22 @@ describe('background tournament query cache', () => {
     expect((await stored()).entries[path]).toMatchObject({ tier: 1 })
     expect((await service.getCs2Schedule()).matches[0]!.tournament.tier).toBe(1)
   })
-  it('enqueues logos after query completion and keeps snapshots nonblocking and read-only', async () => {
+  it('enqueues logos without waiting for the tier query and keeps snapshots nonblocking and read-only', async () => {
     let complete!: () => void
     const ready = new Promise<void>(resolve => { complete = resolve })
     let cached = false
     const images = { get: vi.fn((_path: string | undefined, download = true) => {
       if (download) void ready.then(() => { cached = true })
       return cached ? 'app://app/team-logo/abc' : null
-    }), setActivePaths: vi.fn(), dispose: vi.fn(async () => {}) } as unknown as TeamLogoCache
+    }), setActivePaths: vi.fn(), setPriorities: vi.fn(), dispose: vi.fn(async () => {}) } as unknown as TeamLogoCache
     const { service } = create(images)
     const first = await service.getCs2Schedule()
     expect(first.matches[0]!.teams[0]!.logo).toBeNull()
-    expect(vi.mocked(images.get).mock.calls.every(call => call[1] === false)).toBe(true)
+    // The snapshot itself only reads; the downloads are asked for right after, before any query.
+    expect(calls.map(call => call.action)).toEqual(['parse'])
+    expect(vi.mocked(images.get).mock.calls.some(call => call[1] !== false)).toBe(true)
     await vi.advanceTimersByTimeAsync(2_000)
     expect(calls.map(call => call.action)).toEqual(['parse', 'query'])
-    expect(vi.mocked(images.get).mock.calls.some(call => call[1] !== false)).toBe(true)
     complete(); await ready
     expect((await service.getCs2Schedule()).matches[0]!.teams[0]!.logo).toContain('app://app/team-logo/')
     expect(calls).toHaveLength(2)
@@ -482,10 +483,9 @@ describe('background tournament query cache', () => {
     services.push(service)
     const first = await service.getCs2Schedule()
     expect(first.matches[0]!.teams[0]!.logo).toBeNull()
-    await vi.advanceTimersByTimeAsync(2_000)
-    expect(starts.map(value => value.action)).toEqual(['parse', 'query'])
-    await vi.advanceTimersByTimeAsync(6_000)
-    expect(starts.slice(0, 3).map(value => value.action)).toEqual(['parse', 'query', 'logo'])
+    // A crest takes the first slot after the parse, then the tier query, then crests again.
+    await vi.advanceTimersByTimeAsync(8_000)
+    expect(starts.slice(0, 5).map(value => value.action)).toEqual(['parse', 'logo', 'query', 'logo', 'logo'])
     expect(starts.slice(1).every((value, index) => value.at - starts[index]!.at >= 2_000)).toBe(true)
     expect(events.map(event => event.data.type)).toContain('logos-updated')
     expect(events.slice(1).every((event, index) => event.at - events[index]!.at >= 2_000)).toBe(true)
@@ -497,7 +497,7 @@ describe('background tournament query cache', () => {
     expect(starts.filter(value => value.action === 'parse')).toHaveLength(1)
   })
   it('keeps logo refresh scope inside the current schedule window and stops updating it on disposal', async () => {
-    const images = { get: vi.fn(() => null), setActivePaths: vi.fn(), dispose: vi.fn(async () => {}) } as unknown as TeamLogoCache
+    const images = { get: vi.fn(() => null), setActivePaths: vi.fn(), setPriorities: vi.fn(), dispose: vi.fn(async () => {}) } as unknown as TeamLogoCache
     const { service } = create(images)
     const paths = new Map<string, string>()
     const matches = parseSchedule(fixture, paths)
@@ -589,6 +589,73 @@ describe('background schedule refresh', () => {
     await service.dispose()
     await vi.advanceTimersByTimeAsync(SCHEDULE_TTL_MS * 3)
     expect(parses(request)).toHaveLength(1)
+  })
+})
+
+describe('crest order for the event 赛程 shows', () => {
+  let directory: string
+  const services: EsportsService[] = []
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'fy1sync-focus-'))
+    vi.useFakeTimers(); vi.setSystemTime(NOW)
+  })
+  afterEach(async () => {
+    await Promise.all(services.splice(0).map(service => service.dispose()))
+    vi.useRealTimers()
+    await rm(directory, { recursive: true, force: true })
+  })
+  const logoName = (url: string) => url.split('/').pop()!.replace(/^\d+px-/, '').replace(/_(darkmode|allmode|lightmode)\.png$/, '')
+  function create(options: { slowTier?: Promise<void> } = {}) {
+    const sent: string[] = []
+    const request = vi.fn<typeof fetch>(async input => {
+      const url = new URL(String(input)), action = url.searchParams.get('action')
+      sent.push(action ?? `logo:${logoName(url.pathname)}`)
+      if (action === 'parse') return response(fixture)
+      if (action === 'query') {
+        await options.slowTier
+        return response({ query: { pages: url.searchParams.get('titles')!.split('|').map(title => ({ title, categories: [{ title: 'Category:S-Tier Tournaments' }] })) } })
+      }
+      return new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0]), { headers: { 'content-type': 'image/png' } })
+    })
+    const service = new EsportsService({ userDataDir: directory, version: '0.1.3', request, resolve: async () => ['93.184.216.34'], log: () => {} })
+    services.push(service)
+    return { service, sent }
+  }
+
+  it('fetches live crests first, then the shown event, then other upcoming, then finished', async () => {
+    const { service, sent } = create()
+    await service.getCs2Schedule()
+    // Before the first crest is sent, the viewer opens Tesla Cup.
+    service.setScheduleFocus({ eventPath: '/counterstrike/Tesla_Cup/2026' })
+    await vi.advanceTimersByTimeAsync(2 * 12_000)
+    const logos = sent.filter(value => value.startsWith('logo:')).map(value => value.slice(5))
+    expect(logos.slice(0, 4).sort()).toEqual(['BetBoom_Team_2024', 'DENDELE_CS', 'G2_Esports_2019', 'Natus_Vincere_2021'])
+    expect(logos.slice(4, 6)).toEqual(['B8', 'K27'])
+    expect(logos.slice(6, 8)).toEqual(['FlyQuest_2021', 'StaQued'])
+    expect(logos.slice(8).sort()).toEqual(['9z_Team_2026', 'TyLoo_2016'])
+    expect(new Set(logos).size).toBe(logos.length)
+  })
+  it('does not hold crests back for a slow tier query, and takes turns with it', async () => {
+    let answer!: () => void
+    const { service, sent } = create({ slowTier: new Promise<void>(resolve => { answer = resolve }) })
+    await service.getCs2Schedule()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(sent.slice(0, 3)).toEqual(['parse', expect.stringMatching(/^logo:/), 'query'])
+    // The query has not answered yet, and crests keep going every two seconds.
+    expect(sent.filter(value => value.startsWith('logo:')).length).toBeGreaterThanOrEqual(4)
+    answer()
+  })
+  it('accepts only a Liquipedia event path on the current schedule, and never fetches for it', async () => {
+    const { service, sent } = create()
+    await service.getCs2Schedule()
+    const before = sent.length
+    expect(service.setScheduleFocus({ eventPath: '/counterstrike/Unknown/2026' })).toEqual({ updated: true })
+    expect(service.setScheduleFocus({ eventPath: null })).toEqual({ updated: true })
+    expect(sent.length).toBe(before)
+    for (const bad of [{ eventPath: 'https://liquipedia.net/counterstrike/PGL/2026/Masters' }, { eventPath: '/counterstrike/a?b' },
+      { eventPath: '/dota2/PGL' }, { eventPath: 1 }, { eventPath: '/counterstrike/x', extra: true }, {}, null]) {
+      expect(() => service.setScheduleFocus(bad as never)).toThrow()
+    }
   })
 })
 

@@ -132,6 +132,7 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     removeSavedRoom: args => savedRooms.remove(args),
     getCs2Schedule: args => esports.getCs2Schedule(args),
     getStreamTitles: args => esports.getStreamTitles(args),
+    setCs2ScheduleFocus: args => esports.setScheduleFocus(args),
     openAppReleasePage: async args => {
       noArgs(args)
       const url = update.state().releaseUrl

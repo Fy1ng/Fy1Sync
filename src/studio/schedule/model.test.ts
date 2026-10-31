@@ -1,7 +1,7 @@
 /** Grouping the schedule by event and telling the two stages of one event apart. */
 import { describe, expect, it } from 'vitest'
 import type { Cs2Match, Cs2Schedule, StreamTitle } from '../../../electron/featureContracts'
-import { formatStart, groupEvents, matchStage, orderedStreams, stageLabel, streamKey, tierLabel, titleRequests } from './model'
+import { eventPath, formatStart, groupEvents, matchStage, orderedStreams, stageLabel, streamKey, tierLabel, titleRequests } from './model'
 
 const at = Date.parse('2026-10-27T10:00:00Z')
 function match(id: string, over: Partial<Cs2Match> & { event?: string; tier?: Cs2Match['tournament']['tier'] } = {}): Cs2Match {
@@ -106,5 +106,19 @@ describe('formatStart', () => {
     expect(formatStart(new Date(2026, 9, 28, 1, 0).getTime(), now)).toBe('明天 01:00')
     expect(formatStart(new Date(2026, 9, 26, 23, 0).getTime(), now)).toBe('昨天 23:00')
     expect(formatStart(new Date(2026, 9, 30, 9, 5).getTime(), now)).toBe('10月30日 09:05')
+  })
+})
+
+describe('the event path sent to main', () => {
+  it('is the Liquipedia path without the site or the stage anchor, the same for both stages', () => {
+    const [group] = groupEvents({ matches: [match('a'), match('b', { tournament: { ...match('b').tournament, url: 'https://liquipedia.net/counterstrike/PGL/2026/Masters#Final' } })] } as Cs2Schedule)
+    expect(eventPath(group)).toBe('/counterstrike/PGL/2026/Masters')
+    expect(eventPath({ key: 'https://liquipedia.net/counterstrike/Regional_Cup/2026/Kraków_Final' })).toBe('/counterstrike/Regional_Cup/2026/Krak%C3%B3w_Final')
+  })
+  it('is null for an event known only by name, another site or no event', () => {
+    expect(eventPath({ key: 'Some Cup' })).toBeNull()
+    expect(eventPath({ key: 'https://example.com/counterstrike/PGL' })).toBeNull()
+    expect(eventPath({ key: 'https://liquipedia.net/dota2/PGL' })).toBeNull()
+    expect(eventPath(undefined)).toBeNull()
   })
 })

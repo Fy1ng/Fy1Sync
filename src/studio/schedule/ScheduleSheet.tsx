@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiClient } from '../../app/apiClient'
 import type { Cs2Match, Cs2Schedule, Cs2Stream, StreamTitle } from '../../../electron/featureContracts'
 import { Icon, Sheet, SideTabs } from '../kit'
-import { formatStart, groupEvents, matchStage, orderedStreams, PLATFORM_NAME, streamKey, tierLabel, titleRequests, type EventGroup } from './model'
+import { eventPath, formatStart, groupEvents, matchStage, orderedStreams, PLATFORM_NAME, streamKey, tierLabel, titleRequests, type EventGroup } from './model'
 import { lastSchedule, onSchedule, readSchedule, scheduleChanged } from './store'
 import './schedule.css'
 import { useRemembered } from '../../app/remembered'
@@ -78,6 +78,12 @@ export function ScheduleSheet({ onClose, onWatch }: {
   const events = useMemo(() => groupEvents(schedule), [schedule])
   const current = events.find((group) => group.key === eventKey) ?? events[0]
   useEffect(() => { if (current && current.key !== eventKey) setEventKey(current.key) }, [current, eventKey])
+
+  // Main fetches the shown event's missing crests next; tell it which one that is, and that
+  // none is once the sheet closes. Keyed on the path, so crest and tier updates resend nothing.
+  const focus = eventPath(current)
+  useEffect(() => { void apiClient.feature('setCs2ScheduleFocus', { eventPath: focus }) }, [focus])
+  useEffect(() => () => { void apiClient.feature('setCs2ScheduleFocus', { eventPath: null }) }, [])
 
   // Titles for the chosen event's live and next streams, read in one batch per change.
   const requestKey = JSON.stringify(titleRequests(current))

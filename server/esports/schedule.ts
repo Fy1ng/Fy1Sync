@@ -7,7 +7,7 @@ import { FeatureApiError } from '../featureApi'
 import { PinnedDispatcherPool, safeFetch, type Resolver } from '../safeFetch'
 import { currentMatches, parseSchedule, ScheduleFormatError, validChannel } from './parser'
 import { normalizeTournamentPath, queryTournamentTiers, type TournamentTier } from './tiers'
-import { LiquipediaRateLimit, pause } from './liquipediaRateLimit'
+import { DispatchTurns, LiquipediaRateLimit, pause } from './liquipediaRateLimit'
 import type { Cs2ScheduleEvent } from '../../electron/featureContracts'
 import type { Cs2Match, Cs2Schedule, StreamTitle, StreamTitleInput } from './types'
 import { TeamLogoCache } from './teamLogos'
@@ -152,6 +152,14 @@ export function scheduleArguments(raw: unknown): { refresh?: boolean } | undefin
   if (!object(raw) || Object.keys(raw).some(k => k !== 'refresh') || (raw.refresh !== undefined && typeof raw.refresh !== 'boolean')) return invalid()
   return raw as { refresh?: boolean }
 }
+/** The event 赛程 shows, as a Liquipedia path such as `/counterstrike/PGL/2026/Masters`; never a full URL. */
+export function scheduleFocusArguments(raw: unknown): { eventPath: string | null } {
+  if (!object(raw) || Object.keys(raw).length !== 1 || !Object.hasOwn(raw, 'eventPath')) return invalid()
+  const value = raw.eventPath
+  if (value === null) return { eventPath: null }
+  if (typeof value !== 'string' || value.length > 500 || !value.startsWith('/counterstrike/') || /[?#\\]/.test(value)) return invalid()
+  return { eventPath: value }
+}
 export function streamTitleArguments(raw: unknown): { streams: StreamTitleInput[] } {
   if (!object(raw) || Object.keys(raw).length !== 1 || !Array.isArray(raw.streams) || raw.streams.length > 12) return invalid()
   const streams = raw.streams.map(value => {
@@ -168,6 +176,7 @@ export class EsportsService {
   private readonly now: () => number
   private readonly disk: ScheduleDisk
   private readonly rateLimit: LiquipediaRateLimit
+  private readonly turns: DispatchTurns
   private readonly pool = new PinnedDispatcherPool()
   private readonly lifetime = new AbortController()
   private readonly logos: TeamLogoCache | null
@@ -183,13 +192,16 @@ export class EsportsService {
   private lastEventAt = -Infinity
   private readonly pendingEvents = new Set<Cs2ScheduleEvent['data']['type']>()
   private booted = false
+  /** The event 赛程 shows, normalized; its crests are fetched right after the live ones. */
+  private focus: string | null = null
   private readonly titles = new Map<string, { at: number; value: StreamTitle }>()
   private readonly titleFlights = new Map<string, Promise<StreamTitle>>()
   constructor(private readonly options: Dependencies) {
     this.now = options.now ?? Date.now
     this.disk = new ScheduleDisk(options.userDataDir)
     this.rateLimit = new LiquipediaRateLimit(options.userDataDir, this.now)
-    this.logos = options.logos === undefined ? new TeamLogoCache({ ...options, rateLimit: this.rateLimit,
+    this.turns = new DispatchTurns(this.rateLimit)
+    this.logos = options.logos === undefined ? new TeamLogoCache({ ...options, rateLimit: this.rateLimit, turns: this.turns,
       onUpdated: () => this.notify('logos-updated') }) : options.logos
     if (this.logos) {
       // Recompute the visible time window even while no renderer is reading snapshots.
@@ -251,6 +263,18 @@ export class EsportsService {
     }, due)
     this.refreshTimer.unref?.()
   }
+  /**
+   * Remember which event 赛程 shows, so its missing crests are fetched next. Only events on the
+   * current schedule count; this never sends a request of its own.
+   */
+  setScheduleFocus(raw: { eventPath: string | null }): { updated: true } {
+    const { eventPath } = scheduleFocusArguments(raw)
+    this.lifetime.signal.throwIfAborted()
+    const path = eventPath === null ? null : normalizeTournamentPath(eventPath)
+    this.focus = path !== null && this.tournamentPaths().includes(path) ? path : null
+    this.enqueueLogos()
+    return { updated: true }
+  }
   private tournamentPaths(): string[] {
     return [...new Set(currentMatches(this.cache?.matches ?? [], this.now())
       .map(match => normalizeTournamentPath(match.tournament.url)).filter((path): path is string => path !== null))]
@@ -261,13 +285,24 @@ export class EsportsService {
     if (entry.fetchedAt === null || now < entry.fetchedAt) return 0
     return Math.max(0, entry.fetchedAt + (entry.tier === null ? TIER_NULL_TTL_MS : TIER_TTL_MS) - now)
   }
+  /**
+   * Missing crests go live first, then the event 赛程 shows, then other matches still to
+   * come, then finished ones. Each image is ranked once, by its most urgent match.
+   */
   private enqueueLogos(): void {
     if (this.lifetime.signal.aborted) return
     const matches = currentMatches(this.cache?.matches ?? [], this.now())
     this.updateActiveLogos(matches)
-    for (const match of matches) {
-      match.teams.forEach((_team, index) => this.logos?.get(this.cache?.logoPaths.get(`${match.id}:${index}`)))
-    }
+    const band = (match: Cs2Match): number => match.state === 'live' ? 0
+      : normalizeTournamentPath(match.tournament.url) === this.focus && this.focus !== null ? 1
+        : match.state === 'upcoming' ? 2 : 3
+    // currentMatches already orders by start within each state; the band keeps that order.
+    const ordered = matches.map((match, index) => ({ match, index }))
+      .sort((a, b) => band(a.match) - band(b.match) || a.index - b.index).map(entry => entry.match)
+    const paths = ordered.flatMap(match => match.teams.map((_team, index) => this.cache?.logoPaths.get(`${match.id}:${index}`)))
+      .filter((path): path is string => path !== undefined)
+    this.logos?.setPriorities(paths)
+    for (const path of paths) this.logos?.get(path)
   }
   private updateActiveLogos(matches: Cs2Match[]): void {
     const paths = matches.flatMap(match => match.teams.map((_team, index) => this.cache?.logoPaths.get(`${match.id}:${index}`)))
@@ -275,13 +310,16 @@ export class EsportsService {
     this.logos?.setActivePaths(paths)
   }
   private scheduleTierRefresh(): void {
-    if (this.lifetime.signal.aborted || this.tierFlight) return
+    if (this.lifetime.signal.aborted) return
+    // Crests never wait for the tier query, even one already in flight: both take the same
+    // 2-second quota in turns, and the first crest asked for takes the first slot.
+    this.enqueueLogos()
+    if (this.tierFlight) return
     clearTimeout(this.tierTimer)
     this.tierTimer = undefined
     const now = this.now(), cached = this.disk.loadTiers(), paths = this.tournamentPaths()
-    if (!paths.length) { this.enqueueLogos(); return }
+    if (!paths.length) return
     const due = Math.min(...paths.map(path => this.tierDelay(cached.entries[path], now)))
-    if (due > 0) this.enqueueLogos()
     // Tier queries take only the HTTP quota, independent of the 30-second parse quota.
     this.tierTimer = setTimeout(() => {
       this.tierTimer = undefined
@@ -290,7 +328,7 @@ export class EsportsService {
         if (!this.lifetime.signal.aborted) (this.options.log ?? console.warn)('Liquipedia tier cache refresh failed')
       }).finally(() => {
         this.tierFlight = undefined
-        this.enqueueLogos()
+        // Also re-ranks crests by any tier that just landed.
         this.scheduleTierRefresh()
       })
       this.tierFlight = work
@@ -339,7 +377,7 @@ export class EsportsService {
       signal, resolve: this.options.resolve, dispatcherPool: this.pool,
       headers: { 'User-Agent': metadataUserAgent(this.options.version), 'Accept-Encoding': 'gzip', Accept: 'application/json' },
       fetchImpl: async (input, init) => {
-        if (!parse) await this.rateLimit.wait(signal)
+        if (!parse) await this.turns.wait('tier', signal)
         return (this.options.request ?? fetch)(input, init)
       },
     })

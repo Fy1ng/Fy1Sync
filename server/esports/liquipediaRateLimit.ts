@@ -109,3 +109,45 @@ export class LiquipediaRateLimit {
     }
   }
 }
+
+export type DispatchKind = 'logo' | 'tier'
+
+/**
+ * Crests and the tier query share the 2-second HTTP slot. While both wait for it they take
+ * turns, a crest first, so the query neither holds crests back nor starves behind them; a kind
+ * waiting alone takes every slot. Only waiting to send counts: a slow tier answer holds nothing.
+ */
+export class DispatchTurns {
+  private readonly waiting: Record<DispatchKind, number> = { logo: 0, tier: 0 }
+  private last: DispatchKind | null = null
+  constructor(readonly rateLimit: LiquipediaRateLimit) {}
+
+  /** Mark `kind` as waiting to send until the returned release is called (more calls are no-ops). */
+  hold(kind: DispatchKind): () => void {
+    this.waiting[kind]++
+    let held = true
+    return () => { if (held) { held = false; this.waiting[kind]-- } }
+  }
+
+  mayGo(kind: DispatchKind): boolean {
+    const other: DispatchKind = kind === 'logo' ? 'tier' : 'logo'
+    return this.waiting[other] === 0 || this.last === other || (this.last === null && kind === 'logo')
+  }
+
+  /** Record a reserved slot, so the other kind goes next if it is waiting. */
+  sent(kind: DispatchKind): void { this.last = kind }
+
+  get idle(): boolean { return this.waiting.logo === 0 && this.waiting.tier === 0 }
+
+  /** Wait for `kind`'s turn and reserve the slot. */
+  async wait(kind: DispatchKind, signal: AbortSignal): Promise<void> {
+    const release = this.hold(kind)
+    try {
+      for (;;) {
+        signal.throwIfAborted()
+        if (this.mayGo(kind) && this.rateLimit.reserve()) { this.sent(kind); return }
+        await pause(Math.max(25, this.rateLimit.delay()), signal)
+      }
+    } finally { release() }
+  }
+}
