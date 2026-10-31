@@ -19,6 +19,9 @@ test('数字靓号显示原输入并经主进程解析连接实际弹幕房间',
   const panel = await openSourcePanel(page, 'commentary')
   await expect(panel).toContainText('房间 6657')
   await page.keyboard.press('Escape')
+  // The browser closes a popover on its own task; opening the panel again while this one is
+  // still on its way out found it "visible", skipped the click and then saw it disappear.
+  await expect(panel).toBeHidden()
   await disconnectDanmaku(page)
   await expect(page.locator('.drawer')).toHaveCount(0)
 })
