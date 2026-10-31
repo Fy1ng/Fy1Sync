@@ -313,6 +313,7 @@
 
 .editor-transport-group {
   display: flex;
+  align-items: center;
   gap: 2px;
   margin-left: 6px;
 }
@@ -320,6 +321,11 @@
 .editor-transport .icon-btn {
   width: 32px;
   height: 32px;
+}
+
+.editor-transport .editor-jump {
+  min-width: 44px;
+  padding: 0 6px;
 }
 
 .editor-transport .icon-btn .icon {
@@ -534,6 +540,41 @@
   font-size: 10px;
   color: var(--ash-2);
   min-height: 15px;
+}
+
+.roi-nudge {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+}
+
+.roi-nudge em {
+  flex: 1;
+  text-align: center;
+  line-height: 20px;
+}
+
+.studio .roi-nudge button {
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--chalk);
+  background: rgb(255 255 255 / 6%);
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.studio .roi-nudge button:hover:not(:disabled) {
+  background: rgb(255 255 255 / 12%);
+}
+
+.studio .roi-nudge button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .glyph-tools {

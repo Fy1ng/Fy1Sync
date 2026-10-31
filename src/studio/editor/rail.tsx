@@ -86,12 +86,36 @@ export function RegionSection({ fieldId = 'clock', label, roi, onRoi, videoSize,
               }}
             />
             {/* Fractions are what gets stored; pixels are what the user can see on screen. */}
-            <em className="num">{field.span ? `${Math.round(roi[field.key] * field.span)}px` : ''}</em>
+            <span className="roi-nudge">
+              <button type="button" disabled={!field.span} aria-label={`${field.label}减 1 像素`}
+                onClick={() => onRoi(nudgeRoi(roi, field.key, -1, videoSize))}>−</button>
+              <em className="num">{field.span ? `${Math.round(roi[field.key] * field.span)}px` : ''}</em>
+              <button type="button" disabled={!field.span} aria-label={`${field.label}加 1 像素`}
+                onClick={() => onRoi(nudgeRoi(roi, field.key, 1, videoSize))}>+</button>
+            </span>
           </label>
         ))}
       </div>
     </section>
   )
+}
+
+/**
+ * One native pixel on one value of the region. The pack stores whole pixels, rounded from these
+ * fractions, so the step lands on the next pixel. Each button changes only its own value: at the
+ * picture's edge it stops rather than moving the box.
+ */
+export function nudgeRoi(roi: RoiRect, key: keyof RoiRect, delta: -1 | 1, size: { width: number; height: number }): RoiRect {
+  const span = key === 'x' || key === 'w' ? size.width : size.height
+  if (!span) return roi
+  const px = { x: Math.round(roi.x * size.width), y: Math.round(roi.y * size.height),
+    w: Math.round(roi.w * size.width), h: Math.round(roi.h * size.height) }
+  const next = { ...px }
+  if (key === 'x') next.x = Math.max(0, Math.min(size.width - px.w, px.x + delta))
+  else if (key === 'y') next.y = Math.max(0, Math.min(size.height - px.h, px.y + delta))
+  else if (key === 'w') next.w = Math.max(1, Math.min(size.width - px.x, px.w + delta))
+  else next.h = Math.max(1, Math.min(size.height - px.y, px.h + delta))
+  return { x: next.x / size.width, y: next.y / size.height, w: next.w / size.width, h: next.h / size.height }
 }
 
 export function BinarizeSection({ profile, onPatch }: { profile: EditorClockModel; onPatch: Patch }): React.ReactNode {

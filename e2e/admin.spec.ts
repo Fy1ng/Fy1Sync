@@ -157,6 +157,27 @@ test.describe('取帧与切分', () => {
     await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.paused)).toBe(false)
     await page.keyboard.press('Space')
     await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.paused)).toBe(true)
+
+    // Whole-second jumps, by button and by Shift / Ctrl + arrow, stay inside the 26 s file.
+    const at = () => video.evaluate((node: HTMLVideoElement) => node.currentTime)
+    const jumpTo = async (press: () => Promise<void>, expected: number): Promise<void> => {
+      await press()
+      await expect.poll(at).toBeCloseTo(expected, 1)
+      await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.seeking)).toBe(false)
+    }
+    await video.evaluate((node: HTMLVideoElement) => { node.currentTime = 5 })
+    await expect.poll(at).toBeCloseTo(5, 1)
+    await jumpTo(() => page.getByRole('button', { name: '+1s', exact: true }).click(), 6)
+    await jumpTo(() => page.getByRole('button', { name: '+10s', exact: true }).click(), 16)
+    await jumpTo(() => page.getByRole('button', { name: '-1s', exact: true }).click(), 15)
+    await page.locator('.editor-stage').focus()
+    await jumpTo(() => page.keyboard.press('Shift+ArrowRight'), 16)
+    await jumpTo(() => page.keyboard.press('Control+ArrowLeft'), 6)
+    await jumpTo(() => page.keyboard.press('Control+ArrowLeft'), 0)
+    await jumpTo(() => page.getByRole('button', { name: '+10s', exact: true }).click(), 10)
+    await jumpTo(() => page.getByRole('button', { name: '+10s', exact: true }).click(), 20)
+    await jumpTo(() => page.getByRole('button', { name: '+10s', exact: true }).click(), 26)
+    expect(await video.evaluate((node: HTMLVideoElement) => node.paused)).toBe(true)
   })
 
   test('载入样片后取帧并切出字符框', async ({ page, electronApp }) => {
@@ -202,7 +223,8 @@ test.describe('取帧与切分', () => {
     await expect.poll(async () => page.locator('.glyph-box').count(), { timeout: 20_000 }).toBeGreaterThan(0)
 
     const emptyBefore = await page.locator('.template-cell.is-empty').count()
-    await page.locator('.glyph-box').first().click()
+    // The leftmost box is selected as soon as the frame is cut, so the reading can be typed at once.
+    await expect(page.locator('.glyph-box').first()).toHaveClass(/is-selected/)
     // 0:19 reads 0, :, 1, 9 left to right; the pad auto-advances, so one click per glyph.
     for (const char of ['0', ':', '1', '9']) {
       await page.locator('.char-pad').getByRole('button', { name: char, exact: true }).click()

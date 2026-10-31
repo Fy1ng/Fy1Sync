@@ -119,6 +119,12 @@ test('4K倒计时放大后手柄独立可拖动, 导出保留原生像素并可�
   await roi.press('ArrowRight')
   await roi.press('Shift+ArrowDown')
   await page.screenshot({ path: testInfo.outputPath('03-clock-resized.png'), fullPage: true })
+  // The rail's one-pixel buttons: X twice right, then one back, and the width one narrower.
+  await page.getByRole('button', { name: 'X加 1 像素', exact: true }).click()
+  await page.getByRole('button', { name: 'X加 1 像素', exact: true }).click()
+  await page.getByRole('button', { name: 'X减 1 像素', exact: true }).click()
+  await page.getByRole('button', { name: '宽减 1 像素', exact: true }).click()
+  await expect(roi.locator('.roi-size')).toContainText('127×72')
 
   const savePath = testInfo.outputPath('zoom-native-coordinates.json')
   await mkdir(dirname(savePath), { recursive: true })
@@ -136,7 +142,7 @@ test('4K倒计时放大后手柄独立可拖动, 导出保留原生像素并可�
   expect(await electronApp.evaluate(() => (globalThis as typeof globalThis & { __zoomDownload: Promise<string> }).__zoomDownload)).toBe('completed')
   const exported = JSON.parse(await readFile(savePath, 'utf8')) as HudStylePack
   expect(parseHudStylePack(exported).issues).toEqual([])
-  expect(exported.variants[0]!.fields.clock!.roi).toEqual({ x: 1851, y: 106, w: 128, h: 72 })
+  expect(exported.variants[0]!.fields.clock!.roi).toEqual({ x: 1852, y: 106, w: 127, h: 72 })
   expect(exported.variants[0]!.fields.scoreLeft).toEqual(variant.fields.scoreLeft)
   expect(exported.variants[0]!.fields.scoreRight).toEqual(variant.fields.scoreRight)
   expect(exported.variants[1]).toEqual(pack.variants[1])

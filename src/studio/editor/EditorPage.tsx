@@ -199,10 +199,11 @@ export default function EditorPage(): React.ReactNode {
   }, [frame, pack])
 
   // Manual box edits live in their own state so they survive a re-render, but a fresh
-  // analysis replaces them: the old boxes indexed into a different image.
+  // analysis replaces them: the old boxes indexed into a different image. Boxes run left to
+  // right, so the first one is selected: the reading can be typed at once.
   useEffect(() => {
     setBoxes(analysis ? analysis.boxes : [])
-    setSelected(-1)
+    setSelected(analysis?.boxes.length ? 0 : -1)
     setRecognized(null)
   }, [analysis])
 
@@ -407,6 +408,17 @@ export default function EditorPage(): React.ReactNode {
       .finally(() => { stepping.current = false })
   }
 
+  /** Jump by whole seconds, inside the file; the seek then grabs the frame, as a scrub does. */
+  const jump = (seconds: number): void => {
+    const video = videoRef.current
+    if (!video || stepping.current) return
+    video.pause()
+    const end = Number.isFinite(video.duration) ? video.duration : video.currentTime
+    const target = Math.max(0, Math.min(end, video.currentTime + seconds))
+    setMediaTime(target)
+    video.currentTime = target
+  }
+
   const togglePlay = (): void => {
     const video = videoRef.current
     if (!video) return
@@ -504,14 +516,17 @@ export default function EditorPage(): React.ReactNode {
     } catch (error) { setMessage({ kind: 'error', text: `取样失败: ${String(error)}` }) }
   }
 
-  // Keyboard: digits and ':' teach the selected box, ←/→ step a frame, Space plays. Typing
+  // Keyboard: digits and ':' teach the selected box, ←/→ step a frame, Shift+←/→ jump a
+  // second and Ctrl+←/→ ten, Space plays. A focused region box keeps its own arrows. Typing
   // into a field keeps its keys; buttons keep Space and the arrows but not the digits, so
   // clicking a glyph box and then typing the clock works.
-  const keys = useRef({ assign, step, togglePlay, video: false })
-  keys.current = { assign, step, togglePlay, video: sampleUrl !== '' && sampleKind === 'video' }
+  const keys = useRef({ assign, step, jump, togglePlay, video: false })
+  keys.current = { assign, step, jump, togglePlay, video: sampleUrl !== '' && sampleKind === 'video' }
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.ctrlKey || event.metaKey || event.altKey) return
+      const arrow = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0
+      const jumpBy = arrow && !event.altKey && !event.metaKey ? (event.ctrlKey ? 10 : event.shiftKey ? 1 : 0) : 0
+      if (!jumpBy && (event.ctrlKey || event.metaKey || event.altKey)) return
       const target = event.target
       if (!(target instanceof Element)) return
       if (target.closest('textarea, select, [contenteditable="true"], .pop') || (target instanceof HTMLInputElement && target.type !== 'range')) return
@@ -521,7 +536,10 @@ export default function EditorPage(): React.ReactNode {
         return
       }
       if (!keys.current.video || target.closest('button, input, [role="group"]')) return
-      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      if (jumpBy) {
+        event.preventDefault()
+        keys.current.jump(arrow * jumpBy)
+      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
         event.preventDefault()
         keys.current.step(event.key === 'ArrowLeft' ? -1 : 1)
       } else if (event.key === ' ') {
@@ -836,11 +854,15 @@ export default function EditorPage(): React.ReactNode {
             {video ? (
               <>
                 <span className="editor-transport-group">
+                  <button type="button" className="btn-quiet small editor-jump num" onClick={() => jump(-10)} title="后退 10 秒（Ctrl+←）">-10s</button>
+                  <button type="button" className="btn-quiet small editor-jump num" onClick={() => jump(-1)} title="后退 1 秒（Shift+←）">-1s</button>
                   <button type="button" className="icon-btn" onClick={() => step(-1)} aria-label="上一帧" title="上一帧（←）"><Icon name="back" /></button>
                   <button type="button" className="icon-btn" onClick={togglePlay} aria-label={playing ? '暂停' : '播放'} title="播放 / 暂停（空格）">
                     <Icon name={playing ? 'pause' : 'play'} />
                   </button>
                   <button type="button" className="icon-btn" onClick={() => step(1)} aria-label="下一帧" title="下一帧（→）"><Icon name="forward" /></button>
+                  <button type="button" className="btn-quiet small editor-jump num" onClick={() => jump(1)} title="前进 1 秒（Shift+→）">+1s</button>
+                  <button type="button" className="btn-quiet small editor-jump num" onClick={() => jump(10)} title="前进 10 秒（Ctrl+→）">+10s</button>
                 </span>
                 <input type="range" className="editor-scrub" min={0} max={Math.max(0.1, duration)} step={0.02}
                   value={Math.min(mediaTime, duration || mediaTime)} aria-label="样片进度"
