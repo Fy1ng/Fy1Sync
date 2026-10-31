@@ -17,7 +17,7 @@ export class LoginError extends Error {
       'login-busy': '该平台正在登录, 请先关闭已有的登录窗口.', 'login-cancelled': '登录已取消.',
       'login-failed': 'Chrome 登录或账号导出失败, 请关闭此平台的登录窗口后重试.',
       'login-incomplete': '登录未完成, 未读取到平台认证 Cookie, 已保留原有登录数据.',
-      'cookie-storage-failed': '账号数据读写或私有权限验证失败.' }[code])
+      'cookie-storage-failed': '登录信息保存失败, 请重试.' }[code])
     this.name = 'LoginError'
   }
 }

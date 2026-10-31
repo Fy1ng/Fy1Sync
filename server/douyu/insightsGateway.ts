@@ -1,6 +1,6 @@
 import { isIP } from 'node:net'
 import { hostAllowed } from '../config'
-import { dnsResolver, isPrivateAddress, safeFetch } from '../safeFetch'
+import { dnsResolver, safeFetch } from '../safeFetch'
 import { validDouyuRoom } from '../platforms/douyuRoom'
 import type { DouyuActionDependencies } from './actions'
 import { abortable, cancelBody, cancelled, record } from './actionHttp'
@@ -113,12 +113,12 @@ export class DouyuInsightsGateway {
     try {
       const credentials = await this.credentials(context, url)
       const { response } = await safeFetch(url, {
-        ...this.deps.proxy, hosts: [HOST], maxRedirects: 0, allowNonLoopbackTargets: false, allowNonStandardPorts: false,
+        ...this.deps.proxy, hosts: [HOST], maxRedirects: 0, allowNonStandardPorts: false,
       }, {
         method: 'GET', signal: context.signal,
         resolve: async host => {
           const addresses = await abortable((this.deps.resolve ?? dnsResolver)(host), context.signal)
-          if (!Array.isArray(addresses) || !addresses.length || addresses.length > 64 || addresses.some(address => !isIP(address) || isPrivateAddress(address))) throw new DouyuInsightsError('unavailable')
+          if (!Array.isArray(addresses) || !addresses.length || addresses.length > 64 || addresses.some(address => !isIP(address))) throw new DouyuInsightsError('unavailable')
           return addresses
         },
         fetchImpl: async (input, init) => {

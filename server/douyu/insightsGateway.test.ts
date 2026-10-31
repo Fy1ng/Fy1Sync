@@ -8,7 +8,7 @@ const COOKIE = 'acf_uid=42; acf_auth=synthetic-account-secret'
 const envelope = (data: unknown) => ({ error: 0, data })
 const followed = (room: string) => ({ room_id: room, room_name: `room ${room}`, nickname: '主播', show_status: '1', videoLoop: '0', show_time: String(NOW / 1000 - 60), online: 123 })
 const idle = () => new AbortController().signal
-function setup(responses: Array<unknown | Error>, options: { now?: number; privateDns?: boolean } = {}) {
+function setup(responses: Array<unknown | Error>, options: { now?: number; invalidDns?: boolean } = {}) {
   let index = 0, cookie = COOKIE
   const request = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: RequestInit) => {
     const response = responses[index++]
@@ -18,7 +18,7 @@ function setup(responses: Array<unknown | Error>, options: { now?: number; priva
   })
   const cookieHeader = vi.fn(async () => cookie)
   const gateway = new DouyuInsightsGateway({ proxy: resolveConfig({}).proxy, request, cookieHeader,
-    resolve: async () => [options.privateDns ? '127.0.0.1' : '8.8.8.8'], now: () => options.now ?? NOW })
+    resolve: async () => [options.invalidDns ? 'not-an-ip' : '8.8.8.8'], now: () => options.now ?? NOW })
   return { gateway, request, cookieHeader, setCookie: (value: string) => { cookie = value } }
 }
 afterEach(() => { vi.useRealTimers() })
@@ -96,11 +96,11 @@ describe('read-only followed room gateway', () => {
     await expect(f.gateway.readFollowedRooms('a', idle())).rejects.toThrow()
     expect(f.request).toHaveBeenCalledTimes(1)
   })
-  it('rejects duplicate JSON keys, private DNS and missing credentials', async () => {
+  it('rejects duplicate JSON keys, invalid DNS and missing credentials', async () => {
     await expect(setup([new Response('{"error":-1,"error":0,"data":{}}')]).gateway.readFollowedRooms('a', idle())).rejects.toThrow()
-    const privateRequest = setup([], { privateDns: true })
-    await expect(privateRequest.gateway.readFollowedRooms('a', idle())).rejects.toThrow()
-    expect(privateRequest.request).not.toHaveBeenCalled()
+    const invalidRequest = setup([], { invalidDns: true })
+    await expect(invalidRequest.gateway.readFollowedRooms('a', idle())).rejects.toThrow()
+    expect(invalidRequest.request).not.toHaveBeenCalled()
     const f = setup([]); f.setCookie('')
     await expect(f.gateway.readFollowedRooms('a', idle())).rejects.toMatchObject({ code: 'login-required' })
     expect(f.request).not.toHaveBeenCalled()

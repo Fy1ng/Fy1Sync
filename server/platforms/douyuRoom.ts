@@ -93,7 +93,7 @@ export function createDouyuRoomResolver(proxy: ProxyConfig, fetchImpl?: typeof f
     if (!proxy.enabled || !hostAllowed('m.douyu.com', proxy.hosts)) throw new Error('Remote metadata disabled')
     const signal = AbortSignal.timeout(Math.min(proxy.requestTimeoutMs, 15_000))
     const { response } = await safeFetch(`https://m.douyu.com/${room}`, {
-      ...proxy, hosts: ['m.douyu.com'], maxRedirects: 0, allowNonLoopbackTargets: false, allowNonStandardPorts: false,
+      ...proxy, hosts: ['m.douyu.com'], maxRedirects: 0, allowNonStandardPorts: false,
     }, { signal, fetchImpl, resolve: dns, network, headers: { Accept: 'text/html', 'User-Agent': 'Mozilla/5.0', Referer: 'https://m.douyu.com/' } })
     if (!response.ok || !response.body) { await response.body?.cancel(); throw new StreamFailureError(httpFailure(response.status)) }
     const reader = response.body.getReader()

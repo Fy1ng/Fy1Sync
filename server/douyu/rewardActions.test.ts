@@ -522,7 +522,7 @@ describe('bounded parsing, credential scope and uncertain dispatches', () => {
     expectPrivate(result)
   })
 
-  it.each([{ addresses: ['127.0.0.1'] }, { addresses: ['8.8.8.8', '10.0.0.1'] }, { addresses: ['not-an-ip'] }, { addresses: [] }])('refuses unsafe DNS answers before any HTTP request', async ({ addresses }) => {
+  it.each([{ addresses: ['not-an-ip'] }, { addresses: [] }, { addresses: Array.from({ length: 65 }, () => '8.8.8.8') }])('refuses unsafe DNS answers before any HTTP request', async ({ addresses }) => {
     const { actions, request } = setup([], { resolve: async () => addresses })
     expect(await actions.run(task(), signal())).toMatchObject({ status: 'waiting-user' })
     expect(request).not.toHaveBeenCalled()

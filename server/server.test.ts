@@ -204,12 +204,6 @@ describe('desktop main-process service', () => {
       expect(registered).toEqual([])
     })
 
-    it.each(['http://127.0.0.1/a.mp4', 'http://169.254.169.254/a.mp4', 'http://10.0.0.1/a.mp4', 'http://[::1]/a.mp4'])('rejects private media targets before registering: %s', async (input) => {
-      expect(await service.invoke('resolve', { input })).toMatchObject({ ok: false, code: 'private-address' })
-      expect(fetchImpl).not.toHaveBeenCalled()
-      expect(registered).toEqual([])
-    })
-
     it('refuses remote media outside the hostname allow list', async () => {
       const other = setup({ proxy: { ...proxy, hosts: ['allowed.example'] } })
       expect(await other.invoke('resolve', { input: 'https://8.8.8.8/video.mp4' })).toMatchObject({ ok: false, code: 'host-not-allowed' })
@@ -249,7 +243,7 @@ describe('desktop main-process service', () => {
       other.dispose()
     })
 
-    it('blocks a resolver redirect into the metadata address', async () => {
+    it('blocks a resolver redirect outside the allowed hostname', async () => {
       fetchImpl.mockResolvedValue(new Response(null, { status: 302, headers: { location: 'http://169.254.169.254/' } }))
       expect(value(await service.invoke('resolve', { input: '288016', platform: 'douyu' }))).toMatchObject({ ok: false, failure: { code: 'upstream-error' } })
       expect(fetchImpl).toHaveBeenCalledOnce()

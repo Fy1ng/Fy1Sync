@@ -49,7 +49,7 @@ test.describe('opt-in real YouTube adaptive acquisition', () => {
       const { page, application: electronApp } = running
       decoder = await decoderTelemetry(page, electronApp)
       // Cookie bytes stay in the test/main Node contexts and never cross renderer IPC.
-      // CookieStore enforces the same private file permissions as normal login.
+      // CookieStore retains the normal path validation and atomic write behavior.
       const userData = await electronApp.evaluate(({ app }) => app.getPath('userData'))
       new CookieStore(userData).write('youtube', await fixtureCookies(process.env.STREAM_SYNC_YOUTUBE_ADAPTIVE_COOKIE_FILE!))
       test.info().annotations.push({ type: 'authentication', description: '显式测试 cookie 仅导入本场景可丢弃目录, 不复制日常浏览器资料.' })

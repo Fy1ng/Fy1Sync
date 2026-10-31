@@ -70,11 +70,11 @@ export function createNetworkSocket(raw: string, platform: DanmakuPlatform, opti
   void (async () => {
     const route = await network.route(url.href)
     if (stopped) return
-    // Reuse the existing direct DNS/private-address checks without broadening the WebSocket endpoint list.
+    // Reuse direct DNS validation and address pinning without broadening the WebSocket endpoint list.
     const target = new URL(url)
     target.protocol = 'https:'
     const check = await checkUrl(target.href, { enabled: true, hosts: [expected.hostname], allowNonStandardPorts: platform === 'douyu',
-      allowNonLoopbackTargets: false, maxRedirects: 0, requestTimeoutMs: 15_000 }, options.resolve, route.kind === 'http')
+      maxRedirects: 0, requestTimeoutMs: 15_000 }, options.resolve, route.kind === 'http')
     if (stopped) return
     if (!check.ok) throw new Error('弹幕连接地址校验失败.')
     dispatcher = route.kind === 'http'

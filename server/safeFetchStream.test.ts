@@ -263,7 +263,6 @@ describe('safeFetchStream', () => {
 
   it.each([
     { raw: 'https://outside.invalid/chat', addresses: ['93.184.216.34'], reason: 'host-not-allowed' },
-    { raw: target, addresses: ['127.0.0.1'], reason: 'private-address' },
     { raw: target, addresses: ['not-an-ip'], reason: 'dns-failed' },
   ])('retains safeFetch policy rejection: $reason', async ({ raw, addresses, reason }) => {
     const fetchImpl = vi.fn<typeof fetch>()
@@ -272,13 +271,13 @@ describe('safeFetchStream', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
-  it('revalidates a redirected hostname and refuses a private address before a second request', async () => {
+  it('revalidates a redirected hostname and refuses invalid DNS before a second request', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () => new Response(null, {
       status: 302, headers: { location: 'https://other.huya.com/chat' },
     }))
     await expect(safeFetchStream(target, policy, {
-      ...defaults, fetchImpl, resolve: async host => host === 'chat.huya.com' ? ['93.184.216.34'] : ['10.0.0.1'],
-    })).rejects.toMatchObject({ code: 'policy-rejected', policyReason: 'private-address' })
+      ...defaults, fetchImpl, resolve: async host => host === 'chat.huya.com' ? ['93.184.216.34'] : ['not-an-ip'],
+    })).rejects.toMatchObject({ code: 'policy-rejected', policyReason: 'dns-failed' })
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 

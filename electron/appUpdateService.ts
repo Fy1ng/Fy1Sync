@@ -77,7 +77,7 @@ export function parseAppUpdateSource(raw: unknown): AppUpdateSource | null {
 }
 
 function policy(host: string): ProxyConfig {
-  return { enabled: true, hosts: [host], allowNonStandardPorts: false, allowNonLoopbackTargets: false, maxRedirects: 0, requestTimeoutMs: TIMEOUT }
+  return { enabled: true, hosts: [host], allowNonStandardPorts: false, maxRedirects: 0, requestTimeoutMs: TIMEOUT }
 }
 function bounded<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {

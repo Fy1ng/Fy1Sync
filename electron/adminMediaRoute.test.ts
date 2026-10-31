@@ -1,9 +1,10 @@
 import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import os from 'node:os'
 import { describe, expect, it } from 'vitest'
 import { AdminMediaRoute } from './adminMediaRoute'
 
-const testRoot = path.resolve('.runtime-cache', `codex-ytimport-impl-${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}`, 'route')
+const testRoot = path.join(os.tmpdir(), 'admin-media-route')
 async function fixture(extension = 'mp4') {
   await mkdir(testRoot, { recursive: true })
   const directory = await mkdtemp(path.join(testRoot, 'case-'))

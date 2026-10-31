@@ -119,7 +119,7 @@ export class DouyuActions {
     const { response } = await safeFetch(CHECK_IN_URL, {
       ...this.deps.proxy,
       hosts: [CHECK_IN_HOST], maxRedirects: 0,
-      allowNonLoopbackTargets: false, allowNonStandardPorts: false,
+      allowNonStandardPorts: false,
     }, {
       method: 'POST', body: new URLSearchParams({ rid: task.room }).toString(), signal,
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json', token, aid: 'android1' },

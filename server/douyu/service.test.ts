@@ -25,7 +25,7 @@ function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'stream-syncer-douyu-service-'))
   const defaultLogin = loginStub()
   const accounts = new DouyuAccountManager(root, {
-    defaultLogin, createLogin: () => loginStub(), permissions: { protect() {}, verify() {} },
+    defaultLogin, createLogin: () => loginStub(),
     store: { load: () => undefined, save() {} }, id: () => accountId,
   })
   const run = vi.fn(async (_task: DouyuTaskDefinition, _signal: AbortSignal): Promise<DouyuTaskOutcome> => ({ status: 'succeeded', message: 'synthetic result' }))

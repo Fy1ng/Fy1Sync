@@ -182,7 +182,7 @@ export class DouyuModeration {
     signal: AbortSignal, dispatch?: () => void): Promise<Response> {
     if (!this.deps.proxy.enabled || !hostAllowed(HOST, this.deps.proxy.hosts)) throw new Error('Disabled policy')
     const response = await safeFetch(url, { ...this.deps.proxy, hosts: [HOST], maxRedirects: 0,
-      allowNonLoopbackTargets: false, allowNonStandardPorts: false }, {
+      allowNonStandardPorts: false }, {
       ...init, signal,
       resolve: host => abortable((this.deps.resolve ?? dnsResolver)(host), signal),
       fetchImpl: async (input, requestInit) => {

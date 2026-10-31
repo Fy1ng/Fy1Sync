@@ -141,16 +141,16 @@ describe('anonymous Huya HTTP chat signal', () => {
     const [url, config, options] = vi.mocked(fetch).mock.calls[0]!
     expect(url).toBe('https://wup.huya.com')
     expect(config).toEqual({ enabled: true, hosts: ['wup.huya.com'], allowNonStandardPorts: false,
-      allowNonLoopbackTargets: false, maxRedirects: 0, requestTimeoutMs: 15_000 })
+      maxRedirects: 0, requestTimeoutMs: 15_000 })
     expect(options?.method).toBe('POST')
     expect(options?.headers).toEqual({ 'Content-Type': 'application/octet-stream' })
     expect(Buffer.from(options!.body as Uint8Array).toString('hex')).toBe(fixture.request)
   })
 
-  it('enforces private DNS protection on the real safeFetch path', async () => {
+  it('enforces DNS validity on the real safeFetch path', async () => {
     const network = vi.fn()
     const guarded: typeof safeFetch = (url, config, options) => safeFetch(url, config, {
-      ...options, resolve: async () => ['127.0.0.1'], fetchImpl: network,
+      ...options, resolve: async () => ['not-an-ip'], fetchImpl: network,
     })
     await expect(requestHuyaChatSignal(uid, new AbortController().signal, { safeFetchImpl: guarded })).rejects.toThrow('无法读取虎牙聊天流签名.')
     expect(network).not.toHaveBeenCalled()

@@ -11,8 +11,7 @@ async function fixture() {
   const choose = vi.fn(async (kind: 'png' | 'gif') => path.join(root, `export.${kind}`))
   const encode = vi.fn(async (input: { output: string }) => { await fs.writeFile(input.output, 'GIF89a-fixture') })
   const save = vi.fn()
-  const capture = new MediaCapture({ root, load: () => undefined, save, chooseDestination: choose, encode,
-    permissions: { protect() {}, verify() {} } })
+  const capture = new MediaCapture({ root, load: () => undefined, save, chooseDestination: choose, encode })
   return { root, capture, choose, encode, save }
 }
 afterEach(async () => {

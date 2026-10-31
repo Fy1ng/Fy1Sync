@@ -3,7 +3,7 @@ import { isIP } from 'node:net'
 import { Worker } from 'node:worker_threads'
 import path from 'node:path'
 import { hostAllowed } from '../config'
-import { dnsResolver, isPrivateAddress, safeFetch } from '../safeFetch'
+import { dnsResolver, safeFetch } from '../safeFetch'
 import { validDouyuRoom } from '../platforms/douyuRoom'
 import type { DouyuActionDependencies } from './actions'
 import { abortable, cancelBody, cancelled, MAX_TIMEOUT_MS, readPayload } from './actionHttp'
@@ -278,7 +278,7 @@ export class DouyuMessageSender {
 
   private async resolve(hostname: string): Promise<string[]> {
     const addresses = await (this.deps.resolve ?? dnsResolver)(hostname)
-    if (!Array.isArray(addresses) || !addresses.length || addresses.length > 64 || addresses.some(address => typeof address !== 'string' || !isIP(address) || isPrivateAddress(address))) throw new MessageProtocolError()
+    if (!Array.isArray(addresses) || !addresses.length || addresses.length > 64 || addresses.some(address => typeof address !== 'string' || !isIP(address))) throw new MessageProtocolError()
     return addresses
   }
 
@@ -288,7 +288,7 @@ export class DouyuMessageSender {
     this.assertActive(signal)
     const { response } = await safeFetch(url, {
       ...this.deps.proxy, hosts: [SITE_HOST], maxRedirects: 0,
-      allowNonStandardPorts: false, allowNonLoopbackTargets: false,
+      allowNonStandardPorts: false,
     }, {
       method, signal, headers: { Accept: 'application/json' },
       resolve: host => this.resolve(host),

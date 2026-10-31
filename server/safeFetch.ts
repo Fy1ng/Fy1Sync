@@ -1,20 +1,14 @@
 /**
- * SSRF-guarded outbound fetch.
+ * Outbound fetch with per-hop URL validation.
  *
- * The browser hands this server arbitrary URLs (a playlist the user pasted, a segment
- * URI found inside a playlist). Without checks that is a confused-deputy hole: the
- * server would happily fetch `http://169.254.169.254/` or a host on the user's LAN and
- * hand the body back. So every hop is validated: scheme, port, allow-listed hostname,
- * and, on DIRECT routes, the resolved IP literals. HTTP proxy routes trust the
- * configured proxy's DNS while retaining URL checks and certificate validation.
- *
- * Redirects are followed manually, one validated hop at a time, because `fetch`'s own
- * redirect handling would skip the checks on hops 2..n.
+ * Every hop validates scheme, port, allow-listed hostname and URL credentials.
+ * DIRECT routes retain valid resolved IP literals for the connection. HTTP proxy
+ * routes use the configured proxy's DNS and retain certificate validation.
+ * Redirects are followed manually so every destination receives the same checks.
  */
 
 import { lookup } from 'node:dns/promises'
 import { isIP, type LookupFunction } from 'node:net'
-import ipaddr from 'ipaddr.js'
 import { Agent, ProxyAgent, buildConnector, type Dispatcher } from 'undici'
 import { networkContext, type NetworkContext, type NetworkRoute } from './networkPolicy'
 import { StreamFailureError, classifyNetworkFailure } from './networkFailure'
@@ -25,7 +19,6 @@ export type UrlRejection =
   | 'bad-scheme'
   | 'bad-port'
   | 'host-not-allowed'
-  | 'private-address'
   | 'dns-failed'
   | 'too-many-redirects'
 
@@ -36,73 +29,6 @@ export type UrlCheck =
 const ALLOWED_PROTOCOLS = new Set(['http:', 'https:'])
 const STANDARD_PORTS = new Set(['', '80', '443'])
 const MAX_DNS_ADDRESSES = 64
-
-const BLOCKED_IPV4_CIDRS = [
-  '0.0.0.0/8', // unspecified / this network
-  '10.0.0.0/8',
-  '100.64.0.0/10', // CGNAT
-  '127.0.0.0/8',
-  '169.254.0.0/16', // link-local + metadata
-  '172.16.0.0/12',
-  '192.0.0.0/24', // IETF protocol assignments, not the entire 192.0.0.0/16
-  '192.0.2.0/24', // TEST-NET-1
-  '192.88.99.0/24', // deprecated 6to4 relay anycast
-  '192.168.0.0/16',
-  '198.51.100.0/24', // TEST-NET-2
-  '203.0.113.0/24', // TEST-NET-3
-  '224.0.0.0/4', // multicast
-  '240.0.0.0/4', // reserved, including limited broadcast
-].map(cidr => ipaddr.IPv4.parseCIDR(cidr))
-
-const BLOCKED_IPV6_CIDRS = [
-  '::/128',
-  '::1/128',
-  '64:ff9b:1::/48', // local-use translation, unlike the well-known /96 below
-  '100::/64', // discard-only
-  '100:0:0:1::/64', // dummy prefix
-  '2001:2::/48', // benchmarking
-  '2001:10::/28', // deprecated ORCHID
-  '2001:db8::/32', // documentation
-  '3fff::/20', // documentation
-  '5f00::/16', // SRv6 SIDs, not globally reachable destinations
-  'fc00::/7', // unique local
-  'fe80::/10', // link-local
-  'fec0::/10', // deprecated site-local
-  'ff00::/8', // multicast
-].map(cidr => ipaddr.IPv6.parseCIDR(cidr))
-
-const FAKE_IPV4_CIDR = ipaddr.IPv4.parseCIDR('198.18.0.0/15')
-const EMBEDDED_IPV4_CIDRS = ['::/96', '::ffff:0:0/96', '64:ff9b::/96']
-  .map(cidr => ipaddr.IPv6.parseCIDR(cidr))
-
-/**
- * True for addresses that must never be reachable through DIRECT connections: loopback, RFC1918,
- * link-local, CGNAT, multicast and the explicit reserved/local-use prefixes above.
- * Other addresses stay eligible; library range labels are not the proxy's policy.
- */
-export function isPrivateAddress(address: string): boolean {
-  const version = isIP(address)
-  // Keep Node's strict literal gate: ipaddr.js also accepts legacy octal/short forms.
-  if (version === 0) return false
-  if (version === 4) return isPrivateIPv4(ipaddr.IPv4.parse(address))
-  // A validated zone ID affects routing scope, not the address's CIDR membership.
-  const parsed = ipaddr.IPv6.parse(address.split('%')[0]!)
-  if (BLOCKED_IPV6_CIDRS.some(cidr => parsed.match(cidr))) return true
-  if (EMBEDDED_IPV4_CIDRS.some(cidr => parsed.match(cidr))) {
-    return isPrivateIPv4(new ipaddr.IPv4(parsed.toByteArray().slice(12)))
-  }
-  return false
-}
-
-function isPrivateIPv4(address: ipaddr.IPv4): boolean {
-  // 198.18.0.0/15 (benchmarking) is deliberately NOT blocked. Clash/mihomo-style proxies in
-  // TUN fake-IP mode answer every DNS query with an address from this range and route the
-  // connection by domain, so blocking it rejects every platform request on such machines.
-  // It is safe to allow: the hostname allow-list is checked before DNS, and the range is not
-  // assigned to real hosts on a LAN.
-  if (address.match(FAKE_IPV4_CIDR)) return false
-  return BLOCKED_IPV4_CIDRS.some(cidr => address.match(cidr))
-}
 
 export type Resolver = (hostname: string) => Promise<string[]>
 
@@ -138,7 +64,7 @@ export async function checkUrl(
 
   if (proxied) return { ok: true, url, addresses: [] }
 
-  // A hostname is only as safe as what it resolves to; DNS can point anywhere.
+  // Resolve once and retain valid addresses for the direct connection.
   let addresses: string[]
   const literal = isIP(url.hostname.replace(/^\[|\]$/g, ''))
   if (literal) {
@@ -159,17 +85,6 @@ export async function checkUrl(
   }
   // Retain an immutable snapshot of this lookup, not a resolver-owned array.
   addresses = [...new Set(addresses)]
-
-  if (!config.allowNonLoopbackTargets) {
-    const blocked = addresses.find((address) => isPrivateAddress(address))
-    if (blocked !== undefined) {
-      return {
-        ok: false,
-        reason: 'private-address',
-        detail: `目标解析到内网地址 ${blocked}，已拒绝`,
-      }
-    }
-  }
 
   return { ok: true, url, addresses }
 }
@@ -280,7 +195,7 @@ async function checkWithSignal(target: string, config: ProxyConfig, resolve: Res
 
 /**
  * Fetch with per-hop validation. Redirects are resolved here rather than by `fetch`
- * so a redirect to an internal address is rejected instead of silently followed.
+ * so each redirect destination is checked against the URL policy.
  */
 export async function safeFetch(
   raw: string,

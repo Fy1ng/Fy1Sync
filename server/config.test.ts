@@ -119,7 +119,6 @@ describe('resolveConfig', () => {
         enabled: true,
         hosts: DEFAULT_PROXY_HOSTS,
         allowNonStandardPorts: false,
-        allowNonLoopbackTargets: false,
         maxRedirects: 4,
         requestTimeoutMs: 15_000,
       },
@@ -137,7 +136,6 @@ describe('resolveConfig', () => {
         enabled: false,
         hosts: ['a.example.com', 'b.example.com'],
         allowNonStandardPorts: false,
-        allowNonLoopbackTargets: false,
         maxRedirects: 2,
         requestTimeoutMs: 3_000,
       },
@@ -157,13 +155,11 @@ describe('resolveConfig', () => {
     expect(config).toEqual(resolveConfig({}))
   })
 
-  it('cannot enable private targets or non-standard ports through environment flags', () => {
+  it('cannot enable non-standard ports through environment flags', () => {
     const config = resolveConfig({
       STREAM_SYNC_MEDIA_PROXY_ALLOW_NONSTANDARD_PORTS: 'true',
-      STREAM_SYNC_MEDIA_PROXY_ALLOW_NON_LOOPBACK: '1',
     })
     expect(config.proxy.allowNonStandardPorts).toBe(false)
-    expect(config.proxy.allowNonLoopbackTargets).toBe(false)
   })
 
   it.each(['0', '8'])('accepts redirect boundary %s', (value) => {

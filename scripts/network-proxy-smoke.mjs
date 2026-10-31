@@ -23,7 +23,7 @@ await writeFile(entry, [
 ].join('\n') + '\n', { flag: 'wx' })
 const compiled = await build({ configFile: false, root, logLevel: 'silent',
   build: { ssr: entry, write: false, emptyOutDir: false, minify: false, target: 'node22',
-    rollupOptions: { external: [/^node:/, 'undici', 'ipaddr.js'], output: { format: 'cjs', entryFileNames: 'probe.cjs', codeSplitting: false } },
+    rollupOptions: { external: [/^node:/, 'undici'], output: { format: 'cjs', entryFileNames: 'probe.cjs', codeSplitting: false } },
   },
 })
 for (const output of (Array.isArray(compiled) ? compiled : [compiled])) for (const asset of output.output) {
@@ -162,7 +162,7 @@ try {
   const proxyUrl = `http://127.0.0.1:${proxyPort}`
   const network = { route: async () => ({ kind: 'http', proxyUrl }) }
   const resolve = async () => { counts.localDns++; throw new Error('Local DNS is forbidden in the proxy smoke test') }
-  const config = { enabled: true, hosts: ['fixture.invalid'], allowNonStandardPorts: false, allowNonLoopbackTargets: false, maxRedirects: 2, requestTimeoutMs: 10_000 }
+  const config = { enabled: true, hosts: ['fixture.invalid'], allowNonStandardPorts: false, maxRedirects: 2, requestTimeoutMs: 10_000 }
   let previous = before()
   const response = await safeFetch('http://fixture.invalid/probe', config, { network, resolve })
   assert.equal(await response.response.text(), 'offline-proxy')

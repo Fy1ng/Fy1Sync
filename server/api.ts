@@ -479,7 +479,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             'login-cancelled': '登录操作已取消',
             'login-incomplete': '登录未完成, 未读取到平台认证 Cookie, 已保留原有登录数据.',
             'login-failed': 'Chrome 登录失败, 请关闭专用窗口后重试',
-            'cookie-storage-failed': '登录信息无法安全保存, 请检查本机文件权限',
+            'cookie-storage-failed': '登录信息保存失败, 请重试',
           }
           return fail(String(error.code), messages[String(error.code)] ?? '账号操作失败')
         }

@@ -2,7 +2,7 @@
 import { isIP } from 'node:net'
 import { hostAllowed } from '../config'
 import { validDouyuRoom } from '../platforms/douyuRoom'
-import { dnsResolver, isPrivateAddress, safeFetch } from '../safeFetch'
+import { dnsResolver, safeFetch } from '../safeFetch'
 import type { DouyuActionDependencies } from './actions'
 import { abortable, cancelled, MAX_RESPONSE_BYTES, MAX_TIMEOUT_MS, record } from './actionHttp'
 import type { DouyuTaskDefinition, DouyuTaskOutcome } from './types'
@@ -329,12 +329,12 @@ export class DouyuFishingActions {
     const original = publicRequest ? null : await this.credentials(context, url, signal)
     const { response } = await safeFetch(url, {
       ...this.deps.proxy, hosts: [expected.hostname], maxRedirects: 0,
-      allowNonStandardPorts: false, allowNonLoopbackTargets: false,
+      allowNonStandardPorts: false,
     }, {
       signal, method: write ? 'POST' : 'GET',
       resolve: async host => {
         const addresses = await abortable((this.deps.resolve ?? dnsResolver)(host), signal)
-        if (!Array.isArray(addresses) || !addresses.length || addresses.length > 64 || addresses.some(address => typeof address !== 'string' || !isIP(address) || isPrivateAddress(address))) return invalid()
+        if (!Array.isArray(addresses) || !addresses.length || addresses.length > 64 || addresses.some(address => typeof address !== 'string' || !isIP(address))) return invalid()
         return addresses
       },
       fetchImpl: async (checkedUrl, init) => {

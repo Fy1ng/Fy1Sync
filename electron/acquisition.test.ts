@@ -100,7 +100,7 @@ describe('main acquisition boundary', () => {
     expect(h.runYtDlp).not.toHaveBeenCalled()
   })
 
-  it.each(['https://127.0.0.1/private.m3u8', 'https://169.254.169.254/private.m3u8'])('rejects an unsafe highest Twitch rendition before buffering: %s', async uri => {
+  it.each(['https://video.ttvnw.net:9/private.m3u8', 'https://video.ttvnw.net:8080/private.m3u8'])('rejects a non-standard Twitch rendition port before buffering: %s', async uri => {
     const h = harness({ fetchImpl: async input => String(input).includes('gql.twitch.tv')
       ? Response.json({ data: { streamPlaybackAccessToken: { value: 'PRIVATE', signature: 'PRIVATE' } } })
       : new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,FRAME-RATE=60\n' + uri),
@@ -187,7 +187,7 @@ describe('main acquisition boundary', () => {
     expect(h.runYtDlp).toHaveBeenCalledTimes(3)
   })
 
-  it.each(['http://127.0.0.1/x.mp4', 'http://169.254.169.254/x.m3u8', 'https://user:password@8.8.8.8/x.flv'])('rejects untrusted direct input %s before spawning', async (input) => {
+  it.each(['http://127.0.0.1:9/x.mp4', 'https://8.8.8.8:8080/x.m3u8', 'https://user:password@8.8.8.8/x.flv'])('rejects untrusted direct input %s before spawning', async (input) => {
     const h = harness()
     await expect(h.acquisition.resolve(input, 'direct', 'official')).rejects.toHaveProperty('reason')
     expect(h.buffer.start).not.toHaveBeenCalled()

@@ -17,7 +17,7 @@ describe('service-owned pinned connection pool', () => {
     if (!address || typeof address === 'string') throw new Error('Missing fixture address')
     const pool = new PinnedDispatcherPool()
     try {
-      const config = { ...metadataConfig(), hosts: ['fixture.invalid'], allowNonStandardPorts: true, allowNonLoopbackTargets: true }
+      const config = { ...metadataConfig(), hosts: ['fixture.invalid'], allowNonStandardPorts: true }
       for (let index = 0; index < 2; index++) {
         const result = await safeFetch(`http://fixture.invalid:${address.port}/`, config, { dispatcherPool: pool, resolve: async () => ['127.0.0.1'], headers: { 'Accept-Encoding': 'gzip' } })
         expect(await result.response.json()).toEqual({ fixture: true })
@@ -42,8 +42,11 @@ describe('service-owned pinned connection pool', () => {
       await (await safeFetch('https://liquipedia.net/counterstrike/api.php', metadataConfig(), options)).response.text()
       expect(dispatcher(2)).not.toBe(dispatcher(1))
       addresses = ['127.0.0.1']
+      await (await safeFetch('https://liquipedia.net/counterstrike/api.php', metadataConfig(), options)).response.text()
+      expect(dispatcher(3)).not.toBe(dispatcher(2))
+      addresses = ['not-an-ip']
       await expect(safeFetch('https://liquipedia.net/counterstrike/api.php', metadataConfig(), options)).rejects.toThrow()
-      expect(request).toHaveBeenCalledTimes(3)
+      expect(request).toHaveBeenCalledTimes(4)
     } finally { await pool.dispose() }
   })
   it('rejects use after disposal', async () => {

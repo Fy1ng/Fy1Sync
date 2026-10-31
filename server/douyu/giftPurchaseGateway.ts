@@ -86,7 +86,7 @@ export class DouyuGiftPurchaseGateway extends DouyuBackpackGateway {
     return this.bounded(signal, async active => {
       const target = `${CATALOG_URL}?rid=${room}`
       const { response } = await safeFetch(target, { ...this.deps.proxy, hosts: [CATALOG_HOST], maxRedirects: 0,
-        allowNonStandardPorts: false, allowNonLoopbackTargets: false }, {
+        allowNonStandardPorts: false, }, {
         method: 'GET', signal: active,
         resolve: host => this.resolve(host, active),
         fetchImpl: async (url, init) => {

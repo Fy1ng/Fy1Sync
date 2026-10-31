@@ -1,5 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import os from 'node:os'
 import { crc32, deflateRawSync } from 'node:zlib'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { fingerprintRelease, verifyPackageArchive, type PackageSnapshot } from '../scripts/package-archive.mjs'
@@ -79,7 +80,7 @@ function zip(members: Member[], comment = ''): Buffer {
   return Buffer.concat([...local, directory, end, commentBytes])
 }
 
-const fixturesRoot = path.resolve('.runtime-cache/source-audit-20261024/zip-fixtures')
+const fixturesRoot = path.join(os.tmpdir(), 'zip-fixtures')
 let root: string, release: string, archive: string
 beforeEach(async () => {
   await mkdir(fixturesRoot, { recursive: true })

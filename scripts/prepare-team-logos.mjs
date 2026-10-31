@@ -17,7 +17,7 @@ export async function loadLogoCache(workDir) {
   await writeFile(entry, `export * from ${JSON.stringify(path.join(root, 'server', 'esports', 'teamLogos.ts').replaceAll('\\', '/'))};\n`, { flag: 'wx' })
   // Bundled like the Electron build, so the output loads from any directory (a temp one in tests).
   await build({
-    configFile: false, root, logLevel: 'warn', ssr: { noExternal: ['undici', 'ipaddr.js'] },
+    configFile: false, root, logLevel: 'warn', ssr: { noExternal: ['undici'] },
     build: {
       ssr: entry, outDir: directory, emptyOutDir: false, minify: false, sourcemap: false, target: 'node24',
       rollupOptions: { external: [/^node:/], output: { format: 'cjs', entryFileNames: output, codeSplitting: false } },

@@ -207,7 +207,7 @@ export async function requestHuyaChatSignal(presenterUid: bigint, signal: AbortS
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
   const combined = AbortSignal.any([signal, controller.signal])
   const config: ProxyConfig = { enabled: true, hosts: ['wup.huya.com'], allowNonStandardPorts: false,
-    allowNonLoopbackTargets: false, maxRedirects: 0, requestTimeoutMs: timeoutMs }
+    maxRedirects: 0, requestTimeoutMs: timeoutMs }
   let abort = () => {}
   let response: Response | undefined
   try {

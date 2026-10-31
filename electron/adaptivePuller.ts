@@ -42,7 +42,7 @@ const BEHIND_HEAD = 2
 const MAX_ATTEMPTS = 3
 const policy: ProxyConfig = {
   enabled: true, hosts: ['*.googlevideo.com'], allowNonStandardPorts: false,
-  allowNonLoopbackTargets: false, maxRedirects: 3, requestTimeoutMs: 20_000,
+  maxRedirects: 3, requestTimeoutMs: 20_000,
 }
 
 function requireMediaUrl(raw: string | URL | Request): URL {

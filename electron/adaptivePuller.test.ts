@@ -242,9 +242,9 @@ describe('adaptive sq acquisition', () => {
     expect(publicDns).not.toHaveBeenCalled()
   })
 
-  it('refuses DNS that resolves an allowlisted CDN to a private address', async () => {
+  it('refuses DNS that resolves an allowlisted CDN to an invalid address', async () => {
     const fetcher = vi.fn() as typeof fetch
-    const h = harness(fetcher, { resolve: async () => ['127.0.0.1'] })
+    const h = harness(fetcher, { resolve: async () => ['invalid-address'] })
     expect(await h.pending).toMatchObject({ code: 'adaptive-unsafe-url' })
     expect(fetcher).not.toHaveBeenCalled()
   })

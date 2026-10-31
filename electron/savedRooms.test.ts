@@ -1,10 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FEATURE_METHODS } from './featureContracts'
 import { SavedRoomsStore, type SavedRoomsOptions, type SavedRoomsStorage } from './savedRooms'
 
-const runtime = path.resolve('.runtime-cache')
+const runtime = path.resolve(os.tmpdir())
 const roots: string[] = []
 const source = { role: 'official' as const, input: '6657', platform: 'douyu', label: '赛事直播' }
 
@@ -12,10 +13,9 @@ function fixture(options: SavedRoomsOptions = {}) {
   fs.mkdirSync(runtime, { recursive: true })
   const root = fs.mkdtempSync(path.join(runtime, 'saved-rooms-test-'))
   roots.push(root)
-  const permissions = { protect: vi.fn(), verify: vi.fn() }
   let sequence = 0, time = 1000
-  const create = () => new SavedRoomsStore(root, { permissions, id: () => `id-${++sequence}`, now: () => time++, ...options })
-  return { root, file: path.join(root, 'rooms', 'saved.json'), permissions, create, store: create() }
+  const create = () => new SavedRoomsStore(root, { id: () => `id-${++sequence}`, now: () => time++, ...options })
+  return { root, file: path.join(root, 'rooms', 'saved.json'), create, store: create() }
 }
 
 afterEach(() => {
@@ -37,7 +37,6 @@ describe('saved room storage', () => {
     const second = f.store.save({ ...source, input: '1234' })
     expect(f.store.list()).toEqual([second, first])
     expect(f.create().list()).toEqual([second, first])
-    expect(f.permissions.protect).toHaveBeenCalledWith(expect.stringContaining('.saved.json-'), false)
     expect(fs.readdirSync(path.dirname(f.file))).toEqual(['saved.json'])
   })
 
@@ -110,14 +109,7 @@ describe('saved room storage', () => {
     expect(save).not.toHaveBeenCalled()
   })
 
-  it('does not bypass failed private file permissions when recovering from a read error', () => {
-    const f = fixture()
-    f.store.save(source)
-    f.permissions.verify.mockImplementation(() => { throw new Error('permission failure') })
-    const recovered = f.create()
-    expect(recovered.list()).toEqual([])
-    expect(() => recovered.save(source)).toThrow('直播间收藏保存失败')
-  })
+
 })
 
 describe('saved room validation', () => {

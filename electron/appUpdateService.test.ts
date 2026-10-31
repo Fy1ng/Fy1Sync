@@ -50,11 +50,11 @@ describe('read-only application updates', () => {
     expect(value).toMatchObject({ phase: 'error', releaseUrl: null, latestVersion: null })
     expect(JSON.stringify(value)).not.toMatch(/password|token=secret|alert\(/)
   })
-  it('permits a separately pinned release origin and rejects private addresses', async () => {
+  it('permits a separately pinned release origin and rejects invalid DNS addresses', async () => {
     const f = setup({ ...release, releaseUrl: 'https://downloads.example.org/app/0.2.0' }, { ...source, releaseOrigin: 'https://downloads.example.org' })
     expect((await f.service.check()).phase).toBe('available')
     const request = vi.fn()
-    const service = new AppUpdateService({ currentVersion: '1.0.0', source, request, resolve: async () => ['127.0.0.1'] })
+    const service = new AppUpdateService({ currentVersion: '1.0.0', source, request, resolve: async () => ['invalid-address'] })
     services.push(service)
     expect((await service.check()).phase).toBe('error'); expect(request).not.toHaveBeenCalled()
   })

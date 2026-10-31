@@ -2,12 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { parseSourceInput } from '../src/core/mediaSources'
 import type { SavedRoom } from './featureContracts'
 import { PrivateJsonStore } from './privateJsonStore'
-import type { PrivatePermissions } from './privateStorage'
 
 export interface SavedRoomsStorage { version: 1; rooms: SavedRoom[] }
 export interface SavedRoomsOptions {
   store?: { load(): unknown; save(value: SavedRoomsStorage): void }
-  permissions?: PrivatePermissions
   now?: () => number
   id?: () => string
 }
@@ -89,7 +87,7 @@ export class SavedRoomsStore {
   private readonly id: () => string
 
   constructor(root: string, options: SavedRoomsOptions = {}) {
-    this.store = options.store ?? new PrivateJsonStore<SavedRoomsStorage>(root, 'rooms/saved.json', options.permissions)
+    this.store = options.store ?? new PrivateJsonStore<SavedRoomsStorage>(root, 'rooms/saved.json')
     this.now = options.now ?? Date.now
     this.id = options.id ?? randomUUID
     try {

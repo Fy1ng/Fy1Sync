@@ -67,8 +67,8 @@ describe('registered media capabilities', () => {
     expect((await f.registry.handle(request(url))).status).toBe(403)
     expect(f.calls).toHaveLength(0)
   })
-  it('blocks private DNS results before fetch', async () => {
-    const f = fixture(PLAYLIST, { resolve: async () => ['127.0.0.1'] })
+  it('blocks invalid DNS results before fetch', async () => {
+    const f = fixture(PLAYLIST, { resolve: async () => ['not-an-ip'] })
     expect((await f.registry.handle(request(f.url))).status).toBe(403)
     expect(f.calls).toHaveLength(0)
   })
@@ -144,8 +144,8 @@ describe('media fetch and HLS', () => {
     const f = fixture('#EXTM3U\nfile:///secret\n')
     expect((await f.registry.handle(request(f.url))).status).toBe(502)
   })
-  it('revalidates redirects to private addresses', async () => {
-    const f = fixture(PLAYLIST, { config: { ...resolveConfig({}).proxy, hosts: ['*'] }, fetchImpl: (async () => new Response(null, { status: 302, headers: { location: 'http://127.0.0.1/a.ts' } })) as typeof fetch })
+  it('revalidates redirect hostname allow lists', async () => {
+    const f = fixture(PLAYLIST, { fetchImpl: (async () => new Response(null, { status: 302, headers: { location: 'http://127.0.0.1/a.ts' } })) as typeof fetch })
     expect((await f.registry.handle(request(f.url))).status).toBe(403)
   })
   it('preserves mislabelled binary bytes without text transcoding', async () => {

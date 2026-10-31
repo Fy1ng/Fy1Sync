@@ -191,7 +191,7 @@ export class DouyuYubaActions {
     const { response } = await safeFetch(url, {
       ...this.deps.proxy,
       hosts: [host], maxRedirects: 0,
-      allowNonLoopbackTargets: false, allowNonStandardPorts: false,
+      allowNonStandardPorts: false,
     }, {
       method: options.form ? 'POST' : 'GET', headers, signal,
       resolve: host => abortable((this.deps.resolve ?? dnsResolver)(host), signal),

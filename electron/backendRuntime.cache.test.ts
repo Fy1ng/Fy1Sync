@@ -1,8 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createBackendRuntime, type BackendRuntimeOptions } from './backendRuntime'
-import { NativePrivatePermissions } from './privateStorage'
 import { DanmakuFeatures } from './danmakuFeatures'
 import { ActivityPreferencesStore } from './activityPreferences'
 import type { SavedRoom } from './featureContracts'
@@ -14,7 +14,7 @@ import type { DouyuInventorySnapshot } from '../server/douyu/inventoryTypes'
 import type { DouyuTasksSnapshot } from '../server/douyu/types'
 import { resolveConfig } from '../server/config'
 
-const runtimeRoot = path.resolve('.runtime-cache')
+const runtimeRoot = path.resolve(os.tmpdir())
 const secondAccount = '00000000-0000-4000-8000-000000000002'
 type AccountEvent = { type: 'changed' } | { type: 'invalidated'; accountId: string }
 const fixtures: Array<{ root: string; dispose: () => Promise<void> }> = []
@@ -22,8 +22,6 @@ const fixtures: Array<{ root: string; dispose: () => Promise<void> }> = []
 function fixture() {
   fs.mkdirSync(runtimeRoot, { recursive: true })
   const root = fs.mkdtempSync(path.join(runtimeRoot, 'backend-cache-test-'))
-  vi.spyOn(NativePrivatePermissions.prototype, 'protect').mockImplementation(() => {})
-  vi.spyOn(NativePrivatePermissions.prototype, 'verify').mockImplementation(() => {})
   const accountListeners = new Set<(event: AccountEvent) => void>()
   const taskListeners = new Set<(state: DouyuTasksSnapshot) => void>()
   let loggedIn = true

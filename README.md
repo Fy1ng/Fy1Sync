@@ -138,7 +138,7 @@ cookie 保存在 userData 的私有目录, 仅当前用户可读写. YouTube 调
 
 应用在同一 userData 下使用 `browser-profile/<platform>/`, `cookies/<platform>.txt`, `tools.json` 和 `buffer/<session>/<role>/`. 两路各有一个 ffmpeg 子进程, 默认按播放列表 `EXTINF` 累计保留最近约 180 s, 以完整分片为边界, 不把 90 个分片直接视为 180 s. 缓冲量和启动, 停滞, 重连, 失败状态通过 IPC 事件显示. 每次重新加载或切画质生成新的缓冲 URL; 自动重连保留 URL, 追加 discontinuity 并重新解析签名地址. HLS默认最多连续重试 5 次, 间隔 1 / 2 / 5 / 10 / 15 s, 连续稳定产出 30 s 后重置失败计数. 自适应媒体经双管道转为fMP4, 连续失败两轮后切换最佳HLS并保持当前能力URL. 正常退出会终止 ffmpeg 进程树并删除本次会话目录, 不是永久录像.
 
-新建斗鱼账号使用 `douyu/account-data/<id>/browser-profile/douyu/` 和 `douyu/account-data/<id>/cookies/douyu.txt`; 默认账号继续使用原路径. `douyu/accounts.json` 仅保存账号标签及活动账号, `douyu/tasks.json` 仅保存任务定义和保留房间. 两者有版本和容量限制, 私有权限及原子写入, 损坏时保留文件并禁用相应工具, 不静默覆盖.
+新建斗鱼账号使用 `douyu/account-data/<id>/browser-profile/douyu/` 和 `douyu/account-data/<id>/cookies/douyu.txt`; 默认账号继续使用原路径. `douyu/accounts.json` 仅保存账号标签及活动账号, `douyu/tasks.json` 仅保存任务定义和保留房间. 两者有版本和容量限制, 路径校验及原子写入, 损坏时保留文件并禁用相应工具, 不静默覆盖.
 
 以下环境变量供本机开发和隔离验证使用:
 
@@ -155,9 +155,9 @@ Electron 窗口启用 `contextIsolation`, `sandbox`, `webSecurity`, 关闭 `node
 
 弹幕列表收起后可从顶栏 `展开弹幕` 或 `C` 键恢复. 播放中顶底栏在无操作 3.2 秒后隐藏, 移动鼠标或聚焦控件重新显示. 全屏时添加直播间和摄像头取景仍可操作, 请求失败会显示原因. 连续手动调整偏移会按实际 seek 结果串行记账并合并最新目标; 更换片源时停止旧的加载和偏移操作. HLS 自动恢复有重试上限, 原生媒体错误也会显示明确原因.
 
-Windows 凭据读取使用异步 ACL 检查, 每次仍验证目录和文件的私有权限, 不缓存权限成功结果. 登录, 退出或销毁期间返回的旧凭据不会继续使用.
+凭据读写仍校验目录和文件路径, 拒绝符号链接和路径越界, 不再检查或设置文件 ACL. 登录, 退出或销毁期间返回的旧凭据不会继续使用.
 
-页面, 本地测试媒体和本地缓冲使用同源自定义协议. 缓冲路径只允许读取活动会话, 角色和 generation 对应的播放列表与分片, 不接受任意文件路径. 平台 API 使用 safeFetch 的 SSRF 防护, 解析出的 ffmpeg URL 输入先通过 checkUrl 校验; 此类输入的后续重定向和DNS由ffmpeg处理. 自适应分片由主进程 safeFetch 逐跳检查 googlevideo HTTPS 域名和DNS后读取, 签名URL不传给ffmpeg或渲染进程. 保留的媒体登记路径使用不透明标识, 由主进程 safeFetch 读取, 支持 Range 和受控 HLS 子资源. 具体边界见 媒体路径与安全.
+页面, 本地测试媒体和本地缓冲使用同源自定义协议. 缓冲路径只允许读取活动会话, 角色和 generation 对应的播放列表与分片, 不接受任意文件路径. 平台 API 使用 safeFetch 的域名白名单, 协议, 端口和逐跳校验, 拒绝 URL 登录凭据, 不再因 DNS 解析到内网或保留地址而拒绝; 解析出的 ffmpeg URL 输入先通过 checkUrl 校验, 此类输入的后续重定向和DNS由ffmpeg处理. 自适应分片由主进程 safeFetch 逐跳检查 googlevideo HTTPS 域名和DNS后读取, 签名URL不传给ffmpeg或渲染进程. 保留的媒体登记路径使用不透明标识, 由主进程 safeFetch 读取, 支持 Range 和受控 HLS 子资源. 具体边界见 媒体路径与安全.
 
 安全配置和单元测试不代表真实平台已可播放. 平台认证, CDN 限制, 远程媒体兼容性, 登录和实际直播稳定性仍需单独验证.
 

@@ -293,14 +293,14 @@ describe('Yuba outbound and body limits', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
-  it.each([0, 1, 2])('rejects private DNS at preflight/request stage %s, even with permissive settings', async privateStage => {
+  it.each([0, 1, 2])('rejects invalid DNS at preflight/request stage %s, even with permissive settings', async invalidStage => {
     let stage = 0
     const { actions, request } = setup({
-      proxy: { ...proxy, hosts: ['*'], allowNonLoopbackTargets: true, allowNonStandardPorts: true, maxRedirects: 8 },
-      resolve: async () => stage++ === privateStage ? ['8.8.8.8', '127.0.0.1'] : ['8.8.8.8'],
+      proxy: { ...proxy, hosts: ['*'], allowNonStandardPorts: true, maxRedirects: 8 },
+      resolve: async () => stage++ === invalidStage ? ['8.8.8.8', 'not-an-ip'] : ['8.8.8.8'],
     })
     expect(await actions.run(task, signal())).toMatchObject({ status: 'failed', message: expect.stringContaining('未发送') })
-    expect(request).toHaveBeenCalledTimes(privateStage)
+    expect(request).toHaveBeenCalledTimes(invalidStage)
     expect(writeCount(request)).toBe(0)
   })
 
