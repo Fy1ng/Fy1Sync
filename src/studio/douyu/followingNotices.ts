@@ -27,6 +27,8 @@ export interface LiveNoticeState {
   monitorError: string
   /** Why the reminder was switched off by the app rather than by the viewer. */
   stopped: string
+  /** False until main has said what it runs; the switch waits for that instead of showing off. */
+  synced: boolean
   notices: LiveNotice[]
 }
 
@@ -34,7 +36,7 @@ const MAX_NOTICES = 20
 export const MAX_NOTIFY_ROOMS = 64
 
 const INITIAL: LiveNoticeState = {
-  enabled: false, scope: 'selected', rooms: [], accountId: null, pending: false, error: '', monitorError: '', stopped: '', notices: [],
+  enabled: false, scope: 'selected', rooms: [], accountId: null, pending: false, error: '', monitorError: '', stopped: '', synced: false, notices: [],
 }
 
 type Sink = (text: string) => void
@@ -114,10 +116,31 @@ export async function applyLiveNotices(input: ApplyInput): Promise<boolean> {
     if (!state.enabled) listen(false)
     return false
   }
+  // What main runs is the truth: "所选房间" with nothing chosen comes back off.
   const enabled = result.value.enabled
-  set({ pending: false, enabled: input.enabled, accountId: enabled ? result.value.followedAccountId : null })
+  set({ pending: false, synced: true, enabled, accountId: enabled ? result.value.followedAccountId : null })
   listen(enabled)
   return true
+}
+
+/**
+ * Take what the main process runs now. The reminder outlives a reload of this window, which
+ * would otherwise show it off while it still notifies. A set sent meanwhile wins over this read.
+ */
+export async function syncLiveNotices(): Promise<void> {
+  const mine = generation
+  const result = await apiClient.feature('getDouyuLiveNotifications', undefined)
+  if (mine !== generation || state.pending || !result.ok) return
+  const value = result.value as Partial<typeof result.value> | null
+  if (!value || typeof value.enabled !== 'boolean' || !Array.isArray(value.rooms)) return
+  const enabled = value.enabled
+  const rooms = value.rooms.filter((room): room is string => typeof room === 'string')
+  const followedAccountId = typeof value.followedAccountId === 'string' ? value.followedAccountId : null
+  // An empty room list with a followed account is "全部关注"; otherwise keep the rooms.
+  const scope: NotifyScope = enabled && rooms.length === 0 && followedAccountId ? 'all' : rooms.length > 0 ? 'selected' : state.scope
+  set({ synced: true, enabled, accountId: enabled ? followedAccountId : null,
+    ...(enabled ? { scope, rooms: [...new Set(rooms)].slice(0, MAX_NOTIFY_ROOMS) } : {}) })
+  listen(enabled)
 }
 
 /**

@@ -246,7 +246,7 @@ export function createDanmakuHandlers(deps: DanmakuHandlerDependencies): Feature
 }
 
 export interface InsightsHandlerDependencies {
-  insights?: Pick<DouyuInsightsService, 'snapshot' | 'refreshRoom' | 'reportPlayback' | 'setNotifications' | 'startFollowMonitor' | 'stopFollowMonitor'>
+  insights?: Pick<DouyuInsightsService, 'snapshot' | 'refreshRoom' | 'reportPlayback' | 'setNotifications' | 'startFollowMonitor' | 'stopFollowMonitor' | 'notificationState'>
   gateway?: Pick<DouyuInsightsGateway, 'readFollowedRooms' | 'readBadgeAges' | 'readMonthlySpending' | 'readWatchTime'>
   update?: Pick<AppUpdateService, 'check' | 'state'>
   withAccount: WithFeatureAccount
@@ -304,10 +304,11 @@ export function createInsightsHandlers(deps: InsightsHandlerDependencies): Featu
         insights().setNotifications(enabled, rooms)
         if (enabled && id) insights().startFollowMonitor(id)
         else insights().stopFollowMonitor()
-        return { enabled, rooms, followedAccountId: enabled ? id : null }
+        return insights().notificationState()
       }
       return enabled && id ? deps.withAccount(id, apply) : apply()
     },
+    getDouyuLiveNotifications: args => { noArgs(args); return insights().notificationState() },
     checkAppUpdate: args => { noArgs(args); return requiredService(deps.update).check() },
     getAppUpdateState: args => { noArgs(args); return requiredService(deps.update).state() },
   }

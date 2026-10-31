@@ -62,6 +62,8 @@ export interface FeatureMethods extends BackendMethods {
   getDouyuWatchTime: { args: { accountId: string; room: string; refresh?: boolean }; result: DouyuWatchTime }
   reportDouyuPlayback: { args: { room: string; playing: boolean }; result: DouyuRoomInsights }
   setDouyuLiveNotifications: { args: DouyuLiveNotificationSettings; result: DouyuLiveNotificationState }
+  /** What the main process is running now; a reloaded window starts from this, not from off. */
+  getDouyuLiveNotifications: { args: undefined; result: DouyuLiveNotificationState }
   checkAppUpdate: { args: undefined; result: AppUpdateState }
   getAppUpdateState: { args: undefined; result: AppUpdateState }
 }
@@ -76,6 +78,6 @@ export const FEATURE_METHODS = [
   'queryDanmakuHistory', 'queryDanmakuFavorites', 'addDanmakuFavorite', 'updateDanmakuFavorite', 'removeDanmakuFavorite',
   'getDanmakuRate', 'getDanmakuUserDetails', 'openDanmakuHistory', 'getDouyuDelivery', 'sendComposedDouyuMessage',
   'previewDouyuMute', 'muteDouyuUser', 'getDouyuRoomInsights', 'refreshDouyuRoomInsights', 'getDouyuFollowedRooms',
-  'getDouyuBadgeAges', 'getDouyuMonthlySpending', 'getDouyuWatchTime', 'reportDouyuPlayback', 'setDouyuLiveNotifications',
+  'getDouyuBadgeAges', 'getDouyuMonthlySpending', 'getDouyuWatchTime', 'reportDouyuPlayback', 'setDouyuLiveNotifications', 'getDouyuLiveNotifications',
   'checkAppUpdate', 'getAppUpdateState',
 ] as const satisfies readonly FeatureMethod[]

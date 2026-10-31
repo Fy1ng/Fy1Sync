@@ -9,13 +9,12 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiClient } from '../../app/apiClient'
-import { useSession } from '../../app/SessionContext'
 import type { DouyuFollowedRoom, DouyuFollowedRooms } from '../../../server/douyu/insightsTypes'
 import { Icon, Segmented, Switch } from '../kit'
 import { formatDuration, formatTime } from '../insights/format'
 import {
-  applyLiveNotices, dismissLiveNotice, draftLiveNotices, MAX_NOTIFY_ROOMS, rememberRoomNames, setNoticeSink,
-  stopForAccountChange, useLiveNotices, type NotifyScope,
+  applyLiveNotices, dismissLiveNotice, draftLiveNotices, MAX_NOTIFY_ROOMS, rememberRoomNames,
+  stopForAccountChange, syncLiveNotices, useLiveNotices, type NotifyScope,
 } from './followingNotices'
 import type { DouyuData } from './useDouyu'
 import './following.css'
@@ -44,7 +43,6 @@ export function Following({ data, onWatch }: {
   /** Watch a room as the main commentary side. Extra-screen opening goes through IPC directly. */
   onWatch: (room: string) => void
 }): React.ReactNode {
-  const session = useSession()
   const account = data.active
   const accountId = account?.id ?? null
   const ready = !!account?.login.loggedIn
@@ -65,8 +63,9 @@ export function Following({ data, onWatch }: {
     return () => { mounted.current = false; generation.current++ }
   }, [])
 
-  // Notices raised while the tab is closed still reach the player's toast line.
-  useEffect(() => { setNoticeSink((text) => session.notice('info', text)) }, [session])
+  // Read again on opening and on an account change: the main process stops a follow monitor
+  // when its account changes, and says so to nobody.
+  useEffect(() => { void syncLiveNotices() }, [accountId, ready])
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000)
@@ -96,9 +95,9 @@ export function Following({ data, onWatch }: {
 
   // The main process stops a follow monitor when its account changes or signs out.
   useEffect(() => {
-    if (!notify.enabled || !notify.accountId || notify.pending) return
+    if (!notify.synced || !notify.enabled || !notify.accountId || notify.pending) return
     if (notify.accountId !== accountId || !ready) void stopForAccountChange()
-  }, [notify.enabled, notify.accountId, notify.pending, accountId, ready])
+  }, [notify.synced, notify.enabled, notify.accountId, notify.pending, accountId, ready])
 
   const send = (patch: { enabled?: boolean; scope?: NotifyScope; rooms?: string[] }): void => {
     const next = { enabled: notify.enabled, scope: notify.scope, rooms: notify.rooms, ...patch }
@@ -141,7 +140,7 @@ export function Following({ data, onWatch }: {
   return (
     <div className="desk-pane following">
       <section className="follow-notify" aria-label="开播提醒">
-        <Switch label="开播提醒" checked={notify.enabled} disabled={notify.pending || (!notify.enabled && needsAccount)}
+        <Switch label="开播提醒" checked={notify.enabled} disabled={!notify.synced || notify.pending || (!notify.enabled && needsAccount)}
           detail="仅在应用运行期间检查；首次读取到的直播状态不视为开播" onChange={toggle} />
         <div className="row-split">
           <span className="muted">提醒范围</span>
@@ -242,7 +241,7 @@ function NotifyStatus({ ready }: { ready: boolean }): React.ReactNode {
       {notify.monitorError && <p className="form-error" role="alert">监控状态：{notify.monitorError}</p>}
       {notify.stopped && <p className="lane" role="status">{notify.stopped}</p>}
       {notify.scope === 'all' && !ready && <p className="lane">全部关注需要已登录的当前账号。</p>}
-      {notify.enabled && notify.scope === 'selected' && notify.rooms.length === 0 && (
+      {notify.scope === 'selected' && notify.rooms.length === 0 && (
         <p className="lane">请在下方列表中选择需要提醒的房间。</p>
       )}
       {notify.enabled && notify.scope === 'selected' && notify.rooms.length > 0 && (

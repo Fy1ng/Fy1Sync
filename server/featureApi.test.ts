@@ -55,7 +55,11 @@ function insightsFixture(withAccount: WithFeatureAccount = passAccount) {
     snapshot: vi.fn((room: string) => service.snapshot(room)),
     refreshRoom: vi.fn((room: string, signal: AbortSignal) => service.refreshRoom(room, signal)),
     reportPlayback: vi.fn((room: string, playing: boolean, sessionId?: string) => service.reportPlayback(room, playing, sessionId)),
-    setNotifications: vi.fn(), startFollowMonitor: vi.fn(), stopFollowMonitor: vi.fn(),
+    // The real service, so a read after a set sees what the set did.
+    setNotifications: vi.fn((enabled: boolean, rooms?: readonly string[]) => service.setNotifications(enabled, rooms)),
+    startFollowMonitor: vi.fn((accountId: string) => service.startFollowMonitor(accountId)),
+    stopFollowMonitor: vi.fn(() => service.stopFollowMonitor()),
+    notificationState: vi.fn(() => service.notificationState()),
   }
   const state: AppUpdateState = { phase: 'unconfigured', currentVersion: '0.1.3', latestVersion: null, releaseUrl: null,
     releaseNotes: null, checkedAt: null, message: 'No update source configured' }
@@ -331,6 +335,21 @@ describe('insights, playback and update handlers', () => {
     expect(await f.api.invoke('setDouyuLiveNotifications', { enabled: false }))
       .toEqual({ ok: true, value: { enabled: false, rooms: [], followedAccountId: null } })
     expect(f.insights.stopFollowMonitor).toHaveBeenCalledOnce()
+    f.dispose()
+  })
+
+  it('reads back what the reminder runs now, without touching the account or the monitor', async () => {
+    let accountChecks = 0
+    const f = insightsFixture(async (_id, run) => { accountChecks++; return run(new AbortController().signal) })
+    expect(await f.api.invoke('getDouyuLiveNotifications', undefined)).toEqual({ ok: true, value: { enabled: false, rooms: [], followedAccountId: null } })
+    await f.api.invoke('setDouyuLiveNotifications', { enabled: true, accountId: 'default' })
+    const checks = accountChecks, starts = f.insights.startFollowMonitor.mock.calls.length
+    expect(await f.api.invoke('getDouyuLiveNotifications', undefined)).toEqual({ ok: true, value: { enabled: true, rooms: [], followedAccountId: 'default' } })
+    expect(accountChecks).toBe(checks)
+    expect(f.insights.startFollowMonitor).toHaveBeenCalledTimes(starts)
+    for (const args of [{}, null, { accountId: 'default' }]) {
+      expect(await f.api.invoke('getDouyuLiveNotifications', args)).toMatchObject({ code: 'invalid-arguments' })
+    }
     f.dispose()
   })
 

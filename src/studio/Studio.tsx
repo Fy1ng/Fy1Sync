@@ -29,6 +29,7 @@ import { PipButton } from './PipButton'
 import type { RecordsTab } from './records/DanmakuRecords'
 import { ScheduleSheet } from './schedule/ScheduleSheet'
 import { prefetchSchedule } from './schedule/store'
+import { setNoticeSink, syncLiveNotices } from './douyu/followingNotices'
 import { SettingsSheet, type SettingsSection, type SettingsTarget } from './SettingsSheet'
 import { SourceChip } from './SourceChip'
 import { SourceLoaderProvider, ROLE_LABEL, useSourceLoader } from './sources'
@@ -107,6 +108,12 @@ function StudioView(): React.ReactNode {
   useEffect(() => { void session.boot() }, [session])
   // Read the schedule now so 赛程 opens on data instead of waiting for Liquipedia.
   useEffect(() => { prefetchSchedule() }, [])
+  // A 开播提醒 left on survives a reload of this window: take it from main, and send its notices
+  // to the toast line even while 关注 has not been opened.
+  useEffect(() => {
+    setNoticeSink((text) => session.notice('info', text))
+    void syncLiveNotices()
+  }, [session])
   // Suspend, never dispose: the session is shared with the scene editor route.
   useEffect(() => () => session.suspend(), [session])
   useEffect(() => {
