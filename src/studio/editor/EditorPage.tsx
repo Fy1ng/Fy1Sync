@@ -10,22 +10,17 @@
  * order the work happens. The library and file actions are menus in the top bar because
  * they are used once per session, not once per glyph.
  *
- * Two rules carry over unchanged. Recognition runs through the same `recognizeFrame` the
- * worker calls, so 验证当前帧 tests the real pipeline. And every sample comes from a decoded
- * frame of the user's own video: a template drawn from a system font does not match a
- * broadcast's anti-aliased, overlay-blended digits.
+ * Preview, teaching and playback use the same Rust frame pipeline.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  createEmptyProfile,
-  parseProfile,
-  profileReadiness,
   type ClockChar,
-  type RecognitionProfile,
   type RoiRect,
 } from '../../core/profileSchema'
-import { compileTemplates, recognizeFrame, type RecognizeResult } from '../../core/templateMatch'
+import { createEmptyHudStylePack, parseHudStylePack, hudPackReadiness, type HudStylePack } from '../../core/hudStylePack'
+import { prepareHudGlyphs, recognizeHudFrame, type HudAnalysis, type HudFieldResult } from '../../core/hudWasm'
+import { clockModel, patchClock, sizeEmptyClock, type EditorClockModel } from './editorModel'
 import type { GlyphBox } from '../../core/segmentation'
 import { profileStore, type StoredProfile } from '../../core/profileStore'
 import { apiClient, issuesFrom, type PresetSummary } from '../../app/apiClient'
@@ -33,7 +28,7 @@ import { FrameGrabber, FULL_FRAME_ROI, type GrabbedFrame } from '../../recogniti
 import { useSession } from '../../app/SessionContext'
 import { routeLink } from '../../app/navigate'
 import { Icon, Segmented } from '../kit'
-import { analyzeFrame, drawGray, drawMask, sampleFromBox } from './framePipeline'
+import { drawGray, drawMask, sampleFromPrepared } from './framePipeline'
 import { RoiWindow } from './RoiWindow'
 import { FrameStepper, presentAt } from './frameStep'
 import { pairReading } from './reading'
@@ -59,10 +54,13 @@ const TYPED_CHARS = new Set<string>(['0', '1', '2', '3', '4', '5', '6', '7', '8'
 /** Only the trusted local app frame can invoke preset writes in main. */
 export default function EditorPage(): React.ReactNode {
   const session = useSession()
-  const [profile, setProfile] = useState<RecognitionProfile>(() => session.takeEditingCandidate() ?? createEmptyProfile())
+  const [candidate] = useState(() => session.takeEditingCandidate())
+  const [pack, setPack] = useState<HudStylePack>(() => candidate ?? createEmptyHudStylePack())
+  const adoptFootageSize = useRef(candidate === null)
+  const profile = useMemo(() => clockModel(pack), [pack])
   useEffect(() => session.clearEditingCandidate(), [session])
   const [etag, setEtag] = useState<string | undefined>(undefined)
-  const [publishedProfile, setPublishedProfile] = useState<RecognitionProfile | null>(null)
+  const [publishedProfile, setPublishedProfile] = useState<HudStylePack | null>(null)
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState<'draft' | 'publish' | null>(null)
   const saveInFlight = useRef(false)
@@ -70,9 +68,9 @@ export default function EditorPage(): React.ReactNode {
   const editRevision = useRef(0)
   const documentRevision = useRef(0)
   const libraryRevision = useRef(0)
-  const profileRef = useRef(profile)
-  profileRef.current = profile
-  const publishedCurrent = useMemo(() => publishedProfile !== null && JSON.stringify(profile) === JSON.stringify(publishedProfile), [profile, publishedProfile])
+  const profileRef = useRef(pack)
+  profileRef.current = pack
+  const publishedCurrent = useMemo(() => publishedProfile !== null && JSON.stringify(pack) === JSON.stringify(publishedProfile), [pack, publishedProfile])
   const [message, setMessage] = useState<Message | null>(null)
   const [presets, setPresets] = useState<PresetSummary[]>([])
   const [drafts, setDrafts] = useState<StoredProfile[]>([])
@@ -92,7 +90,11 @@ export default function EditorPage(): React.ReactNode {
   const [frame, setFrame] = useState<GrabbedFrame | null>(null)
   const [boxes, setBoxes] = useState<GlyphBox[]>([])
   const [selected, setSelected] = useState(-1)
-  const [recognized, setRecognized] = useState<RecognizeResult | null>(null)
+  const [recognized, setRecognized] = useState<HudFieldResult | null>(null)
+  const frameRef = useRef(frame)
+  frameRef.current = frame
+  const boxesRef = useRef(boxes)
+  boxesRef.current = boxes
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const stageRef = useRef<HTMLDivElement | null>(null)
@@ -109,18 +111,29 @@ export default function EditorPage(): React.ReactNode {
   const binaryCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const objectUrlRef = useRef<string>('')
 
-  const readiness = useMemo(() => profileReadiness(profile), [profile])
+  const readiness = useMemo(() => hudPackReadiness(pack), [pack])
   useEffect(() => {
     mounted.current = true
     return () => { mounted.current = false; documentRevision.current++; libraryRevision.current++ }
   }, [])
 
-  // Re-derived whenever the frame, the ROI or the thresholds change: that is exactly the
-  // set of inputs the preview depends on, and re-segmenting a clock-sized crop is cheap.
-  const analysis = useMemo(
-    () => (frame ? analyzeFrame(frame, profile.roi, profile.preprocess) : null),
-    [frame, profile.roi, profile.preprocess],
-  )
+  const [analysis, setAnalysis] = useState<HudAnalysis | null>(null)
+  const analysisKey = JSON.stringify([pack.variants[0]!.nativeSize, pack.variants[0]!.fields.clock!.roi,
+    pack.variants[0]!.fields.clock!.preprocess, pack.variants[0]!.fields.clock!.segment])
+  useEffect(() => {
+    if (!adoptFootageSize.current || !videoSize.width || !videoSize.height) return
+    setPack(current => sizeEmptyClock(current, videoSize.width, videoSize.height))
+  }, [videoSize.width, videoSize.height])
+  useEffect(() => {
+    let active = true
+    setAnalysis(null)
+    if (frame) void prepareHudGlyphs(frame, profileRef.current).then(result => {
+      if (active) setAnalysis(result)
+    }).catch(error => {
+      if (active) setMessage({ kind: 'error', text: `画面处理失败: ${error instanceof Error ? error.message : String(error)}` })
+    })
+    return () => { active = false }
+  }, [frame, analysisKey])
 
   // Manual box edits live in their own state so they survive a re-render, but a fresh
   // analysis replaces them: the old boxes indexed into a different image.
@@ -160,14 +173,14 @@ export default function EditorPage(): React.ReactNode {
     [],
   )
 
-  const patch = useCallback((update: Partial<RecognitionProfile>) => {
+  const patch = useCallback((update: Partial<EditorClockModel>) => {
     ++editRevision.current
     if (update.id !== undefined && update.id !== profileRef.current.id) {
       ++documentRevision.current
       setEtag(undefined)
       setPublishedProfile(null)
     }
-    setProfile((current) => ({ ...current, ...update }))
+    setPack(current => patchClock(current, update))
     setDirty(true)
   }, [])
 
@@ -298,31 +311,41 @@ export default function EditorPage(): React.ReactNode {
     else video.pause()
   }
 
-  const assign = (char: ClockChar): void => {
-    if (!analysis || selected < 0) return
-    const box = boxes[selected]
-    if (!box) return
-    const sample = sampleFromBox(analysis.binary, box, char, `${sampleName || '样片'} @ ${mediaTime.toFixed(2)}s`)
-    const existing = profile.templates[char] ?? []
-    patch({ templates: { ...profile.templates, [char]: [...existing, sample] } })
-    // Advance the selection so teaching a whole clock is one keystroke per glyph.
-    setSelected(selected + 1 < boxes.length ? selected + 1 : -1)
+  const preparedSamples = async (): Promise<string[]> => {
+    if (!frame) throw new Error('先取一帧')
+    return (await prepareHudGlyphs(frame, pack, pack.variants[0]!.id, boxes)).bitmaps
+  }
+  const assign = async (char: ClockChar): Promise<void> => {
+    if (!analysis || selected < 0 || !boxes[selected]) return
+    const revision = editRevision.current
+    try {
+      const samples = await preparedSamples()
+      if (!mounted.current || revision !== editRevision.current || frameRef.current !== frame || boxesRef.current !== boxes) return
+      const sample = sampleFromPrepared(samples[selected]!, char, `${sampleName || '样片'} @ ${mediaTime.toFixed(2)}s`)
+      patch({ templates: { ...profile.templates, [char]: [...(profile.templates[char] ?? []), sample] } })
+      setSelected(selected + 1 < boxes.length ? selected + 1 : -1)
+    } catch (error) { setMessage({ kind: 'error', text: `制字失败: ${String(error)}` }) }
   }
 
-  /** The whole reading typed at once: one sample per box, left to right. */
-  const assignReading = (text: string): string | null => {
+  /** The whole reading typed at once: one Rust-prepared sample per box. */
+  const assignReading = async (text: string): Promise<string | null> => {
     if (!analysis) return '先取一帧'
     const paired = pairReading(text, boxes.length)
     if (!paired.ok) return paired.reason
-    const origin = `${sampleName || '样片'} @ ${mediaTime.toFixed(2)}s`
-    const templates = { ...profile.templates }
-    paired.chars.forEach((char, index) => {
-      templates[char] = [...(templates[char] ?? []), sampleFromBox(analysis.binary, boxes[index]!, char, origin)]
-    })
-    patch({ templates })
-    setSelected(-1)
-    setMessage({ kind: 'info', text: `已把 ${paired.chars.join('')} 的 ${paired.chars.length} 个字符存为样本` })
-    return null
+    const revision = editRevision.current
+    try {
+      const samples = await preparedSamples()
+      if (!mounted.current || revision !== editRevision.current || frameRef.current !== frame || boxesRef.current !== boxes) return '当前设置已改变, 请重新制字'
+      const origin = `${sampleName || '样片'} @ ${mediaTime.toFixed(2)}s`
+      const templates = { ...profile.templates }
+      paired.chars.forEach((char, index) => {
+        templates[char] = [...(templates[char] ?? []), sampleFromPrepared(samples[index]!, char, origin)]
+      })
+      patch({ templates })
+      setSelected(-1)
+      setMessage({ kind: 'info', text: `已把 ${paired.chars.join('')} 的 ${paired.chars.length} 个字符存为样本` })
+      return null
+    } catch (error) { return `制字失败: ${String(error)}` }
   }
 
   /** Reviewed samples from a scanned stretch, each glyph once. */
@@ -347,17 +370,13 @@ export default function EditorPage(): React.ReactNode {
     patch({ templates })
   }
 
-  const verifyFrame = (): void => {
+  const verifyFrame = async (): Promise<void> => {
     if (!frame) return
-    const result = recognizeFrame(
-      // `recognizeFrame` names the buffer `data`; the grabber names it `pixels`.
-      { data: frame.pixels, width: frame.width, height: frame.height },
-      profile,
-      compileTemplates(profile),
-      { mediaTime: frame.mediaTime, wallTime: frame.wallTime, frameIndex: 0 },
-      { segment: {} },
-    )
-    setRecognized(result)
+    const revision = editRevision.current
+    try {
+      const result = await recognizeHudFrame(frame, pack)
+      if (mounted.current && revision === editRevision.current && frameRef.current === frame) setRecognized(result.fields.clock)
+    } catch (error) { setMessage({ kind: 'error', text: `验证失败: ${String(error)}` }) }
   }
 
   // Keyboard: digits and ':' teach the selected box, ←/→ step a frame, Space plays. Typing
@@ -393,7 +412,7 @@ export default function EditorPage(): React.ReactNode {
     if (saveInFlight.current) return
     saveInFlight.current = true
     setSaving('draft')
-    const submitted = profile
+    const submitted = pack
     const revision = editRevision.current
     const document = documentRevision.current
     try {
@@ -414,7 +433,7 @@ export default function EditorPage(): React.ReactNode {
     if (saveInFlight.current) return
     saveInFlight.current = true
     setSaving('publish')
-    const submitted = profile
+    const submitted = pack
     const revision = editRevision.current
     const document = documentRevision.current
     try {
@@ -460,7 +479,12 @@ export default function EditorPage(): React.ReactNode {
       setMessage({ kind: 'error', text: `载入失败：${result.message}` })
       return
     }
-    setProfile(result.value.profile)
+    if (!result.value.profile.variants[0]?.fields.clock) {
+      setMessage({ kind: 'error', text: '当前编辑器需要第一个布局档配置倒计时字段' })
+      return
+    }
+    adoptFootageSize.current = false
+    setPack(result.value.profile)
     setPublishedProfile(result.value.profile)
     setEtag(result.value.etag)
     setDirty(false)
@@ -478,7 +502,12 @@ export default function EditorPage(): React.ReactNode {
         void refreshLibrary()
         return
       }
-      setProfile(found)
+      if (!found.variants[0]?.fields.clock) {
+        setMessage({ kind: 'error', text: '当前编辑器需要第一个布局档配置倒计时字段' })
+        return
+      }
+      adoptFootageSize.current = false
+      setPack(found)
       setPublishedProfile(null)
       setEtag(undefined)
       setDirty(false)
@@ -492,7 +521,8 @@ export default function EditorPage(): React.ReactNode {
   const newProfile = (): void => {
     ++editRevision.current
     ++documentRevision.current
-    setProfile(createEmptyProfile())
+    adoptFootageSize.current = true
+    setPack(createEmptyHudStylePack(undefined, undefined, videoSize.width && videoSize.height ? videoSize : undefined))
     setPublishedProfile(null)
     setEtag(undefined)
     setDirty(false)
@@ -503,21 +533,22 @@ export default function EditorPage(): React.ReactNode {
     const revision = ++editRevision.current
     const document = ++documentRevision.current
     try {
-      const parsed = parseProfile(JSON.parse(await file.text()) as unknown)
+      const parsed = parseHudStylePack(JSON.parse(await file.text()) as unknown)
       if (!mounted.current || revision !== editRevision.current || document !== documentRevision.current) return
-      if (!parsed.profile) {
+      if (!parsed.pack) {
         setMessage({ kind: 'error', text: `导入失败：${parsed.issues.map((issue) => `${issue.path} ${issue.message}`).join('；')}` })
         return
       }
-      setProfile(parsed.profile)
+      if (!parsed.pack.variants[0]?.fields.clock) {
+        setMessage({ kind: 'error', text: '当前编辑器需要第一个布局档配置倒计时字段' })
+        return
+      }
+      adoptFootageSize.current = false
+      setPack(parsed.pack)
       setPublishedProfile(null)
       setEtag(undefined)
       setDirty(true)
-      const warnings = parsed.issues.filter((issue) => issue.severity === 'warning')
-      setMessage({
-        kind: warnings.length ? 'warn' : 'info',
-        text: warnings.length ? `已导入，注意：${warnings.map((issue) => issue.message).join('；')}` : '已导入',
-      })
+      setMessage({ kind: 'info', text: '已导入' })
     } catch (error) {
       if (mounted.current && revision === editRevision.current && document === documentRevision.current)
         setMessage({ kind: 'error', text: `导入失败：${error instanceof Error ? error.message : String(error)}` })
@@ -525,7 +556,7 @@ export default function EditorPage(): React.ReactNode {
   }
 
   const exportFile = (): void => {
-    const blob = new Blob([JSON.stringify(profile, null, 2)], { type: 'application/json' })
+    const blob = new Blob([JSON.stringify(pack, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -550,7 +581,7 @@ export default function EditorPage(): React.ReactNode {
       setMessage({ kind: 'warn', text: '播放器读取的是已发布的预设，请先发布到本机再应用' })
       return
     }
-    session.setProfileForAll(profile)
+    session.setProfileForAll(pack)
     session.updateSettings({ profileId: profile.id })
     setMessage({ kind: 'info', text: `已设为播放器的倒计时样式（${profile.id}）` })
   }
@@ -708,7 +739,7 @@ export default function EditorPage(): React.ReactNode {
           <GlyphSection profile={profile} readiness={readiness} boxes={boxes} selected={selected}
             bounds={analysis ? { width: analysis.binary.width, height: analysis.binary.height } : null}
             onBoxes={setBoxes} onAssign={assign} onAssignReading={assignReading} onVerify={frame ? verifyFrame : null} recognized={recognized} />
-          <StretchSection video={video ? videoRef.current : null} profile={profile} onSave={saveStretch} />
+          <StretchSection video={video ? videoRef.current : null} pack={pack} onSave={saveStretch} />
           <SampleSection profile={profile} onRemove={removeSample} />
           <ParamsSection profile={profile} onPatch={patch} />
         </aside>

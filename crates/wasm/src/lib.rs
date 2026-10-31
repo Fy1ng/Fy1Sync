@@ -49,6 +49,21 @@ impl Default for RecognitionEngine {
         Self::new()
     }
 }
+
+#[wasm_bindgen]
+pub fn recognize_hud_frame(rgba:&[u8],width:usize,height:usize,pack_json:&str,variant_id:&str) -> Result<String,JsValue> {
+    let pack=stream_syncer_core::hud_pack_from_json(pack_json).map_err(|e|JsValue::from_str(&e))?;
+    let result=stream_syncer_core::recognize_hud_frame(rgba,width,height,&pack,variant_id).map_err(|e|JsValue::from_str(&e))?;
+    serde_json::to_string(&result).map_err(|e|JsValue::from_str(&e.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn prepare_hud_glyphs(rgba:&[u8],width:usize,height:usize,pack_json:&str,variant_id:&str,boxes_json:&str) -> Result<String,JsValue> {
+    let pack=stream_syncer_core::hud_pack_from_json(pack_json).map_err(|e|JsValue::from_str(&e))?;
+    let boxes=if boxes_json.is_empty(){None}else{Some(serde_json::from_str(boxes_json).map_err(|e|JsValue::from_str(&e.to_string()))?)};
+    let result=stream_syncer_core::prepare_hud_glyphs_with_boxes(rgba,width,height,&pack,variant_id,boxes).map_err(|e|JsValue::from_str(&e))?;
+    serde_json::to_string(&result).map_err(|e|JsValue::from_str(&e.to_string()))
+}
 #[wasm_bindgen]
 pub fn dispatch(op: &str, input_json: &str) -> Result<String, JsValue> {
     let input = serde_json::from_str(input_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -233,11 +248,12 @@ mod tests {
     #[test]
     fn engine_configure_json() {
         let mut engine = super::RecognitionEngine::new();
-        let p = stream_syncer_core::empty_profile("custom/test", "Test");
+        let cases:serde_json::Value=serde_json::from_str(include_str!("../../../tests/fixtures/hud-style-pack/cases.json")).unwrap();
+        let p = &cases[0]["value"];
         let ready = engine.configure(&p.to_string()).unwrap();
         assert!(ready.contains("missing"));
         let result = engine.recognize(&[0; 4], 1, 1, 0.0, 0.0, 0.0, false);
-        assert!(result.contains("insufficient-templates"));
+        assert!(result.contains("decode-failed"));
     }
     #[test]
     fn dispatch_json() {

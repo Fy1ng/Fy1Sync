@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { BinaryImage } from '../../core/imageOps'
+import { normalizeGlyph, cropBinary } from '../../core/imageOps'
+import { packBitmap } from '../../core/bitmapCodec'
 import type { GlyphBox } from '../../core/segmentation'
 import { pictureChange, proposeStretch, stretchSamples, type StretchFrame } from './stretch'
 
 /** A 4-box crop whose ink pattern stands for one reading: same text, same pixels. */
-function crop(text: string, noise = 0): { binary: BinaryImage; boxes: GlyphBox[] } {
+function crop(text: string, noise = 0): Omit<StretchFrame, 'at'> {
   const width = 40, height = 10
   const data = new Uint8Array(width * height)
   const chars = [...text]
@@ -16,7 +17,8 @@ function crop(text: string, noise = 0): { binary: BinaryImage; boxes: GlyphBox[]
   })
   for (let index = 0; index < noise; index++) data[index * 7 % data.length] = data[index * 7 % data.length]! ^ 255
   const boxes = chars.map((_, slot) => ({ x: slot * 10, y: 0, width: 10, height: 10 }) as GlyphBox)
-  return { binary: { data, width, height }, boxes }
+  const binary = { data, width, height }
+  return { binary, boxes, bitmaps: boxes.map(box => packBitmap(normalizeGlyph(cropBinary(binary, box)))) }
 }
 
 /** Frames at `fps` from `start`, each showing `readingAt(t)`. */

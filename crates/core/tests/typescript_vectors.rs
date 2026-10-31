@@ -112,6 +112,26 @@ fn profile(scale: usize, roi: RoiRect) -> RecognitionProfile {
     }
     p
 }
+fn hud_pack(profile: &RecognitionProfile, width:usize, height:usize) -> Value {
+    let mut bitmaps=serde_json::Map::new();
+    let mut glyphs=serde_json::Map::new();
+    for (c,samples) in &profile.templates {
+        let mut ids=vec![];
+        for (i,sample) in samples.iter().enumerate() {
+            let id=format!("glyph-{}-{i}",if c==":" {"colon"}else{c});
+            bitmaps.insert(id.clone(),json!({"width":32,"height":48,"data":sample.data}));
+            ids.push(id);
+        }
+        glyphs.insert(c.clone(),json!(ids));
+    }
+    let rect=roi_to_pixels(&profile.roi,width,height);
+    json!({"kind":"hud-style-pack","schemaVersion":1,"id":profile.id,"revision":1,"name":profile.name,"bitmaps":bitmaps,"variants":[{
+        "id":"official-top-360","nativeSize":{"width":width,"height":height},
+        "fields":{"clock":{"roi":{"x":rect.x as usize,"y":rect.y as usize,"w":rect.width as usize,"h":rect.height as usize},
+            "preprocess":profile.preprocess,"segment":{"minColumnInk":1,"minGlyphWidth":2,"minGapWidth":1,"minInkRatio":0.08},
+            "glyphs":glyphs,"grammar":{"kind":"countdown","format":profile.clock_format},"match":{"minScore":profile.match_threshold,"minMargin":0.02},"gateCue":null},
+            "scoreLeft":null,"scoreRight":null,"round":null},"cues":{},"states":{},"organizer":null}]})
+}
 fn clock(text: &str, scale: usize) -> (Vec<u8>, RoiRect) {
     let mut data = vec![0; 640 * 360 * 4];
     for p in data.chunks_mut(4) {
@@ -510,7 +530,7 @@ fn engine_preserves_numeric_metadata() {
     let p = profile(6, roi);
     let mut engine = Engine::new();
     engine
-        .configure(&serde_json::to_string(&p).unwrap())
+        .configure(&hud_pack(&p,640,360).to_string())
         .unwrap();
     for index in [4_294_967_313.0, -1.0, 1.5] {
         let result = engine.recognize(&frame, 640, 360, -0.0, -0.0, index, false);
@@ -519,4 +539,116 @@ fn engine_preserves_numeric_metadata() {
         assert!(reading["mediaTime"].as_f64().unwrap().is_sign_negative());
         assert!(reading["wallTime"].as_f64().unwrap().is_sign_negative());
     }
+}
+
+#[test]
+fn full_frame_hud_and_glyph_preparation_share_every_intermediate() {
+    let (frame,roi)=clock("1:37",6);
+    let pack=parse_hud_style_pack(&hud_pack(&profile(6,roi),640,360)).unwrap();
+    let result=recognize_hud_frame(&frame,640,360,&pack,"official-top-360").unwrap();
+    assert!(matches!(result.fields.score_left,HudFieldResult::Failed{ref reason,..} if reason=="not-implemented"));
+    assert!(matches!(result.fields.score_right,HudFieldResult::Failed{ref reason,..} if reason=="not-implemented"));
+    assert!(matches!(result.fields.round,HudFieldResult::Failed{ref reason,..} if reason=="not-implemented"));
+    assert!(result.cues.is_empty());
+    assert!(result.states.is_empty());
+    assert!(matches!(result.organizer,HudPresenceResult::Failed{ref reason} if reason=="not-implemented"));
+    let HudFieldResult::Read{reading,debug:Some(debug)}=result.fields.clock else {panic!("{result:?}")};
+    assert_eq!(reading.text,"1:37");
+    assert_eq!(reading.value,97.0);
+    let prepared=prepare_hud_glyphs(&frame,640,360,&pack,"official-top-360").unwrap();
+    assert_eq!(prepared.roi_pixels,debug.roi_pixels);
+    assert_eq!(prepared.gray,debug.gray);
+    assert_eq!(prepared.binary,debug.binary);
+    assert_eq!(prepared.boxes,debug.boxes);
+    assert_eq!(prepared.projection,debug.projection);
+    assert_eq!(prepared.normalized,debug.normalized);
+    for (bitmap,mask) in prepared.bitmaps.iter().zip(&prepared.normalized) {assert_eq!(&unpack_bitmap(bitmap,1536).unwrap(),mask);}
+    let custom=prepare_hud_glyphs_with_boxes(&frame,640,360,&pack,"official-top-360",Some(prepared.boxes.clone())).unwrap();
+    assert_eq!(custom.bitmaps,prepared.bitmaps);
+    let mut bad=prepared.boxes; bad[0].x=-1.0;
+    assert!(prepare_hud_glyphs_with_boxes(&frame,640,360,&pack,"official-top-360",Some(bad)).is_err());
+    assert!(recognize_hud_frame(&frame,640,360,&pack,"missing").is_err());
+    assert!(recognize_hud_frame(&frame,640,359,&pack,"official-top-360").is_err());
+    assert!(recognize_hud_frame(&frame[..frame.len()-1],640,360,&pack,"official-top-360").is_err());
+}
+
+#[test]
+fn hud_configure_rejects_old_and_unknown_data_before_replacing_a_pack() {
+    let (frame,roi)=clock("1:37",6);
+    let profile=profile(6,roi);
+    let mut engine=Engine::new();
+    engine.configure(&hud_pack(&profile,640,360).to_string()).unwrap();
+    let mut bad=hud_pack(&profile,640,360);bad["variants"][0]["fields"]["clock"]["preprocess"]["channel"]=json!("red");
+    let error=engine.configure(&bad.to_string()).unwrap_err();
+    assert!(error.contains("variants[0].fields.clock.preprocess.channel"));
+    assert_eq!(engine.recognize(&frame,640,360,0.0,0.0,0.0,true)["outcome"]["reason"],"no-profile");
+    assert!(engine.configure("{\"schemaVersion\":2}").unwrap_err().contains("重新制作"));
+    assert!(engine.configure(&serde_json::to_string(&profile).unwrap()).is_err());
+}
+
+#[test]
+fn hud_honors_segment_and_matching_settings() {
+    let (frame,roi)=clock("1:37",6);
+    let mut pack=parse_hud_style_pack(&hud_pack(&profile(6,roi),640,360)).unwrap();
+    pack.variants[0].fields.clock.as_mut().unwrap().r#match.min_margin=1.0;
+    let result=recognize_hud_frame(&frame,640,360,&pack,"official-top-360").unwrap();
+    assert!(matches!(result.fields.clock,HudFieldResult::Failed{ref reason,..} if reason=="low-confidence"));
+    let field=pack.variants[0].fields.clock.as_mut().unwrap();
+    field.r#match.min_margin=0.02;field.segment.min_glyph_width=1000;
+    let result=recognize_hud_frame(&frame,640,360,&pack,"official-top-360").unwrap();
+    assert!(matches!(result.fields.clock,HudFieldResult::Failed{ref reason,..} if reason=="no-candidates"));
+}
+
+#[test]
+fn hud_presence_slots_preserve_configured_keys_without_claiming_matches() {
+    let (frame,roi)=clock("1:37",6);
+    let mut value=hud_pack(&profile(6,roi),640,360);
+    value["bitmaps"]["mark"]=json!({"width":3,"height":3,"data":pack_bitmap(&[255,0,255,0,255,0,255,0,255])});
+    let cue=json!({"roi":{"x":0,"y":0,"w":3,"h":3},"preprocess":{"scale":1.0,"threshold":150,"invert":false},"templates":["mark"],"minScore":0.8});
+    value["variants"][0]["cues"]["replay"]=cue.clone();
+    value["variants"][0]["states"]["replay"]=json!([[{"kind":"cue","cue":"replay","present":true}]]);
+    value["variants"][0]["organizer"]=cue;
+    let pack=parse_hud_style_pack(&value).unwrap();
+    let result=recognize_hud_frame(&frame,640,360,&pack,"official-top-360").unwrap();
+    let result=serde_json::to_value(result).unwrap();
+    assert_eq!(result["cues"],json!({"replay":{"status":"failed","reason":"not-implemented"}}));
+    assert_eq!(result["states"],json!({"replay":{"status":"failed","reason":"not-implemented"}}));
+    assert_eq!(result["organizer"],json!({"status":"failed","reason":"not-implemented"}));
+    assert_eq!(serde_json::to_value(HudPresenceResult::Matched).unwrap(),json!({"status":"matched"}));
+    assert_eq!(serde_json::to_value(HudPresenceResult::NotMatched).unwrap(),json!({"status":"not-matched"}));
+    assert_eq!(serde_json::to_value(HudPresenceResult::Indeterminate{reason:"unknown".into()}).unwrap(),json!({"status":"indeterminate","reason":"unknown"}));
+}
+
+#[test]
+fn shared_hud_schema_fixtures() {
+    fn normalize_numbers(v:&mut Value) {
+        if v.is_number() { *v=json!(v.as_f64().unwrap()); }
+        else if let Some(map)=v.as_object_mut() { for child in map.values_mut(){normalize_numbers(child);} }
+        else if let Some(array)=v.as_array_mut() { for child in array {normalize_numbers(child);} }
+    }
+    let cases:Value=serde_json::from_str(include_str!("../../../tests/fixtures/hud-style-pack/cases.json")).unwrap();
+    for case in cases.as_array().unwrap() {
+        let issues=validate_hud_style_pack(&case["value"]);
+        assert_eq!(issues.is_empty(),case["valid"].as_bool().unwrap(),"{}: {:?}",case["name"],issues);
+        for path in case["paths"].as_array().unwrap() {assert!(issues.iter().any(|i|i.path==path.as_str().unwrap()),"{}: missing {} in {:?}",case["name"],path,issues);}
+        if issues.is_empty() {
+            let pack=parse_hud_style_pack(&case["value"]).unwrap();
+            let mut actual=serde_json::to_value(&pack).unwrap(); let mut expected=case["value"].clone();
+            normalize_numbers(&mut actual);normalize_numbers(&mut expected);
+            assert_eq!(actual,expected,"{}: roundtrip",case["name"]);
+        }
+    }
+}
+
+#[test]
+fn hud_integer_json_spellings_have_javascript_semantics() {
+    let cases:Value=serde_json::from_str(include_str!("../../../tests/fixtures/hud-style-pack/cases.json")).unwrap();
+    let mut pack=cases[1]["value"].clone();
+    fn float_spellings(v:&mut Value) {
+        if v.is_number() {*v=json!(v.as_f64().unwrap());}
+        else if let Some(map)=v.as_object_mut(){for child in map.values_mut(){float_spellings(child);}}
+        else if let Some(array)=v.as_array_mut(){for child in array {float_spellings(child);}}
+    }
+    float_spellings(&mut pack);
+    assert!(parse_hud_style_pack(&pack).is_ok());
 }

@@ -1,9 +1,9 @@
+import { validateLearnedProfile as validateProfile } from '../test/recognitionReference'
 // @vitest-environment node
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createFrame, drawText } from '../test/glyphFont'
-import { validateProfile } from '../core/profileSchema'
 import { MIN_SYNC_CONFIDENCE } from '../core/types'
 import { AutoClockSession, TickMomentDetector, initSync, recognize_auto } from './pkg/stream_syncer_wasm.js'
 

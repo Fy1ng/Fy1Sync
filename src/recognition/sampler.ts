@@ -17,6 +17,7 @@
  * the duplicated cost is a few kilobytes of template masks.
  */
 
+import { captureRoi, isHudPack, variantForSize, type ActiveProfile } from '../core/activeProfile'
 import type { RecognitionProfile } from '../core/profileSchema'
 import { ClockJumpDetector, parseCountdown } from '../core/clockJump'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
@@ -35,7 +36,7 @@ export interface SamplerOptions {
   createWorker: () => WorkerLike
   video: VideoResolver
   /** Active profile per role; null disables that role. */
-  profile: (role: SourceRole) => RecognitionProfile | null
+  profile: (role: SourceRole) => ActiveProfile | null
   now?: () => number
   clock?: () => number
   /** Overridable for tests; defaults to the real frame loop. */
@@ -59,7 +60,7 @@ interface RoleChannel {
   client: RecognitionClient
   grabber: FrameGrabber
   /** The profile the worker is currently configured for, by identity. */
-  configuredFor: RecognitionProfile | null
+  configuredFor: ActiveProfile | null
   video: HTMLVideoElement | null
   source: string
   rhythm: RhythmSampler
@@ -77,9 +78,10 @@ interface RoleChannel {
  * learning or editing a glyph always makes a new sample, and comparing bitmaps per frame
  * would be waste.
  */
-function sameProfile(a: RecognitionProfile | null, b: RecognitionProfile): boolean {
+function sameProfile(a: ActiveProfile | null, b: ActiveProfile): boolean {
   if (a === b) return true
   if (!a) return false
+  if (isHudPack(a) || isHudPack(b)) return isHudPack(a) && isHudPack(b) && a.id === b.id && a.revision === b.revision && JSON.stringify(a) === JSON.stringify(b)
   return a.id === b.id && a.name === b.name && a.updatedAt === b.updatedAt
     && a.clockFormat === b.clockFormat && a.sampleFps === b.sampleFps && a.matchThreshold === b.matchThreshold
     && a.roi.x === b.roi.x && a.roi.y === b.roi.y && a.roi.w === b.roi.w && a.roi.h === b.roi.h
@@ -198,7 +200,7 @@ export class RecognitionSampler {
     if (!video || !profile) return null
 
     const channel = this.channelFor(role)
-    const fps = Math.max(1, Math.min(60, profile.sampleFps))
+    const fps = Math.max(1, Math.min(60, (isHudPack(profile) ? 30 : profile.sampleFps)))
     let activeLoop = true
     const invalidate = (): void => {
       channel.epoch += 1
@@ -223,7 +225,11 @@ export class RecognitionSampler {
       }
       if (channel.configuredFor !== active) {
         this.resetTiming(channel)
-        channel.client.configure(active, { automatic: active.id.startsWith('session/') })
+        try {
+          channel.client.configure(active, isHudPack(active)
+            ? { variantId: variantForSize(active, { width: video.videoWidth, height: video.videoHeight }) }
+            : { automatic: active.id.startsWith('session/') })
+        } catch (error) { this.options.onError?.(role, String(error)); return }
         channel.configuredFor = active
       }
       if (!channel.rhythm.shouldSample(mediaTime)) return
@@ -236,7 +242,7 @@ export class RecognitionSampler {
       const epoch = channel.epoch
       const width = video.videoWidth
       const height = video.videoHeight
-      const result = await channel.grabber.grabAsync(video, active.roi, mediaTime)
+      const result = await channel.grabber.grabAsync(video, captureRoi(active), mediaTime)
       // A seek, a new source, new dimensions, another profile or a new window while
       // reading back all make this frame stale. Checked here as well as by the events,
       // because a source or size change has no event of its own until the next frame.

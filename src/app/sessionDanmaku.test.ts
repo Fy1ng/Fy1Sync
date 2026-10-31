@@ -1,3 +1,5 @@
+import { learnedClockPack } from '../core/activeProfile'
+import type { HudStylePack } from '../core/hudStylePack'
 /** IPC subscription tests keep filtering, media-time scheduling and profiles real. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -65,7 +67,7 @@ function descriptor(): MediaDescriptor {
 }
 
 /** A profile the schema accepts as recognition-ready: every clock char has a sample. */
-function readyProfile(id = 'cs2/iem'): RecognitionProfile {
+function readyProfile(id = 'cs2/iem'): HudStylePack {
   const templates: RecognitionProfile['templates'] = {}
   CLOCK_CHARS.forEach((char, index) => {
     const mask = new Uint8Array(TEMPLATE_PIXELS)
@@ -74,7 +76,7 @@ function readyProfile(id = 'cs2/iem'): RecognitionProfile {
     }
     templates[char] = [{ id: `${char}-0`, data: packBitmap(mask), createdAt: 1 }]
   })
-  return { ...createEmptyProfile(id, 'IEM 主舞台'), templates }
+  return learnedClockPack({ ...createEmptyProfile(id, 'IEM 主舞台'), templates }, { width: 1920, height: 1080 })
 }
 
 const sessions: Session[] = []

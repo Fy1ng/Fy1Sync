@@ -1,7 +1,7 @@
 /** Built desktop app smoke checks: the real shell, preload IPC and scheme guards. */
 
 import { APP_ORIGIN, expect, test } from './electron'
-import type { RecognitionProfile } from '../src/core/profileSchema'
+import type { HudStylePack } from '../src/core/hudStylePack'
 import { closeSourceDialog, connectDanmaku, failOnPageError, invoke, loadBothFixtures, offsetReadout, openPlayer, openSourceDialog, revealOverlay, sourceDialog } from './helpers'
 
 test.describe('应用外壳', () => {
@@ -201,7 +201,7 @@ test.describe('主进程接口与安全边界', () => {
     expect(verified).toEqual({ ok: true, value: { ok: true } })
     const rejected = await invoke(page, 'savePreset', {
       id: 'smoke-should-fail',
-      profile: { schemaVersion: 2, id: 'smoke-should-fail' } as RecognitionProfile,
+      profile: { kind: 'hud-style-pack', schemaVersion: 1, id: 'smoke-should-fail' } as HudStylePack,
     })
     expect(rejected.ok).toBe(false)
     if (rejected.ok) throw new Error('Invalid profile was unexpectedly accepted')

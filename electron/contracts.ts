@@ -3,7 +3,7 @@ import type { NetworkPreferenceState } from './networkPreferences'
 import type {
   ApiResult, HealthInfo, PresetRecord, PresetSummary, SavedPreset,
 } from '../src/app/apiClient'
-import type { RecognitionProfile } from '../src/core/profileSchema'
+import type { HudStylePack } from '../src/core/hudStylePack'
 import type { ResolveResult } from '../server/platforms/types'
 import type { SourceRole } from '../src/core/types'
 import type { BufferState } from './bufferManager'
@@ -60,7 +60,7 @@ export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods {
   logout: { args: { platform: LoginPlatform }; result: { ok: true } }
   listPresets: { args: undefined; result: { presets: PresetSummary[] } }
   getPreset: { args: { id: string }; result: PresetRecord }
-  savePreset: { args: { id: string; profile: RecognitionProfile; token?: string; etag?: string }; result: SavedPreset }
+  savePreset: { args: { id: string; profile: HudStylePack; token?: string; etag?: string }; result: SavedPreset }
   deletePreset: { args: { id: string; token?: string }; result: { ok: true } }
 }
 

@@ -430,7 +430,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             const records = await presets.list()
             return { ok: true, value: { presets: records.map((entry) => ({
               id: entry.id, name: entry.profile.name, updatedAt: entry.updatedAt,
-              etag: entry.etag, templateChars: Object.keys(entry.profile.templates).length,
+              etag: entry.etag, templateChars: Object.keys(entry.profile.variants[0]?.fields.clock?.glyphs ?? {}).length,
             })) } }
           }
           case 'getPreset': {

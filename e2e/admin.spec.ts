@@ -1,8 +1,10 @@
 /** The local editor: trusted app access, decoded-frame teaching and preset IPC. */
 
 import { fileURLToPath } from 'node:url'
+import { mkdir, readFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { type Page } from '@playwright/test'
-import type { RecognitionProfile } from '../src/core/profileSchema'
+import { createEmptyHudStylePack, type HudStylePack } from '../src/core/hudStylePack'
 import { CLOCK_CHARS, TEMPLATE_PIXELS } from '../src/core/profileSchema'
 import { packBitmap } from '../src/core/bitmapCodec'
 import { APP_ORIGIN, expect, test } from './electron'
@@ -16,9 +18,12 @@ test.describe('本机编辑器访问', () => {
     failOnPageError(page)
     const id = 'e2e/draft-publication'
     const profile = baseProfile(id)
-    profile.templates = Object.fromEntries(CLOCK_CHARS.map(char => [char, [{
-      id: char, data: packBitmap(new Uint8Array(TEMPLATE_PIXELS).fill(255)), createdAt: 1,
-    }]]))
+    const data = packBitmap(Uint8Array.from({ length: TEMPLATE_PIXELS }, (_, i) => i % 3 ? 0 : 255))
+    for (const char of CLOCK_CHARS) {
+      const bitmapId = `clock-${char === ':' ? 'colon' : char}`
+      profile.bitmaps[bitmapId] = { width: 32, height: 48, data }
+      profile.variants[0]!.fields.clock!.glyphs[char] = [bitmapId]
+    }
     const seeded = await invoke(page, 'savePreset', { id, profile })
     expect(seeded.ok).toBe(true)
     await page.goto(APP_ORIGIN + '/admin')
@@ -53,7 +58,7 @@ test.describe('本机编辑器访问', () => {
     await page.goto(APP_ORIGIN + '/admin')
     const rejected = await invoke(page, 'savePreset', {
       id: 'e2e/invalid',
-      profile: { schemaVersion: 2, id: 'e2e/invalid' } as RecognitionProfile,
+      profile: { kind: 'hud-style-pack', schemaVersion: 1, id: 'e2e/invalid' } as HudStylePack,
     })
     expect(rejected.ok).toBe(false)
     if (rejected.ok) throw new Error('Invalid profile was unexpectedly written')
@@ -108,17 +113,15 @@ test.describe('本机编辑器访问', () => {
 test.describe('取帧与切分', () => {
   test.skip(!fixturesReady(), '缺少测试源，先运行 npm run fixtures')
 
-  test('前后一帧按文件真实的帧走, 不看采样帧率', async ({ page }) => {
+  test('前后一帧按文件真实的帧走', async ({ page }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
     await page.locator('main input[accept="video/*"]').setInputFiles(officialPath)
     const video = page.locator('video.editor-media')
     await expect.poll(async () => video.evaluate((node: HTMLVideoElement) => node.videoWidth)).toBeGreaterThan(0)
-    // The fixture is 30 fps; 采样帧率 at 60 would make the old fixed step land on every
-    // frame twice. Stepping must ignore it.
+    // Sampling cadence is owned by the player now; file stepping still follows all 30 fps.
     await page.locator('details.rail-more > summary').click()
-    await page.getByRole('slider', { name: '采样帧率' }).fill('60')
-    await expect(page.getByRole('slider', { name: '采样帧率' })).toHaveValue('60')
+    await expect(page.getByRole('slider', { name: '采样帧率' })).toHaveCount(0)
     await seekSample(page, 1)
     // Every frame the page presents, in order: what each click actually lands on.
     await video.evaluate((node: HTMLVideoElement) => {
@@ -257,6 +260,54 @@ test.describe('取帧与切分', () => {
 })
 
 test.describe('发布预设', () => {
+  test('新样式包导出实际文件后能重新导入并保留所有布局和字段', async ({ page, electronApp }, testInfo) => {
+    failOnPageError(page)
+    const profile = baseProfile('e2e/export-roundtrip')
+    const clock = profile.variants[0]!.fields.clock!
+    profile.bitmaps.sample = { width: 32, height: 48,
+      data: packBitmap(Uint8Array.from({ length: TEMPLATE_PIXELS }, (_, index) => index % 7 === 0 ? 255 : 0)) }
+    clock.glyphs['1'] = ['sample']
+    profile.variants[0]!.fields.scoreLeft = { ...structuredClone(clock), grammar: { kind: 'integer', min: 0, max: 99 } }
+    profile.variants[0]!.organizer = { roi: { x: 0, y: 0, w: 32, h: 48 },
+      preprocess: { ...clock.preprocess }, templates: ['sample'], minScore: 0.9 }
+    profile.variants[0]!.states['has-clock'] = [[{ kind: 'field', field: 'clock', present: true }]]
+    profile.variants.push({ ...structuredClone(profile.variants[0]!), id: 'official-bottom-1080' })
+    expect((await invoke(page, 'savePreset', { id: profile.id, profile })).ok).toBe(true)
+    await page.goto(APP_ORIGIN + '/admin')
+    await openLibrary(page)
+    await page.locator('.library-item').filter({ hasText: profile.id }).first().click()
+    await expect(page.locator('.editor-note')).toContainText('已载入预设')
+
+    const target = testInfo.outputPath('export-roundtrip.json')
+    await mkdir(dirname(target), { recursive: true })
+    await electronApp.evaluate(({ session }, savePath) => {
+      const state = globalThis as typeof globalThis & { __hudPackDownload?: Promise<{ state: string; filename: string; path: string }> }
+      state.__hudPackDownload = new Promise(resolve => {
+        session.defaultSession.once('will-download', (_event, item) => {
+          // DownloadItem needs the native absolute Windows path supplied by outputPath.
+          item.setSavePath(savePath)
+          item.once('done', (_done, outcome) => resolve({ state: outcome, filename: item.getFilename(), path: item.getSavePath() }))
+        })
+      })
+    }, target)
+    await page.getByRole('button', { name: '更多', exact: true }).click()
+    await page.getByRole('button', { name: '导出 JSON', exact: true }).click()
+    const download = await electronApp.evaluate(() => (globalThis as typeof globalThis & {
+      __hudPackDownload: Promise<{ state: string; filename: string; path: string }>
+    }).__hudPackDownload)
+    expect(download).toEqual({ state: 'completed', filename: 'e2e-export-roundtrip.json', path: target })
+    expect(JSON.parse(await readFile(target, 'utf8'))).toEqual(profile)
+
+    await page.getByRole('button', { name: '更多', exact: true }).click()
+    await page.getByRole('button', { name: '新建空白样式', exact: true }).click()
+    await page.getByLabel('导入 JSON', { exact: true }).setInputFiles(target)
+    await expect(page.locator('.editor-note')).toContainText('已导入')
+    await page.getByRole('button', { name: '发布到本机', exact: true }).click()
+    await expect(page.locator('.editor-note')).toContainText('已发布为本机预设')
+    const fetched = await invoke(page, 'getPreset', { id: profile.id })
+    expect(fetched.ok && fetched.value.profile).toEqual(profile)
+  })
+
   test('发布后可以通过接口读回，并带 etag', async ({ page }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
@@ -376,20 +427,8 @@ test.describe('YouTube 录像素材', () => {
 })
 
 /** A minimal valid profile for seeding through the API. */
-function baseProfile(id: string): RecognitionProfile {
-  return {
-    schemaVersion: 2,
-    id,
-    name: '种子预设',
-    roi: { x: 0.44, y: 0.02, w: 0.12, h: 0.07 },
-    clockFormat: 'm:ss',
-    detectWindowSeconds: 3,
-    sampleFps: 30,
-    matchThreshold: 0.82,
-    preprocess: { scale: 1, threshold: 128, invert: false },
-    templates: {},
-    updatedAt: 0,
-  }
+function baseProfile(id: string): HudStylePack {
+  return createEmptyHudStylePack(id, '种子预设')
 }
 
 /** Fill one of the top bar's two fields, named 名称 and 标识. */

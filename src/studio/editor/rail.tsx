@@ -10,17 +10,16 @@ import {
   DEFAULT_PREPROCESS,
   TEMPLATE_PIXELS,
   type ClockChar,
-  type RecognitionProfile,
   type RoiRect,
 } from '../../core/profileSchema'
-import type { CountdownFormat } from '../../core/clockJump'
-import type { RecognizeResult } from '../../core/templateMatch'
+import type { EditorClockModel } from './editorModel'
+import type { HudFieldResult } from '../../core/hudWasm'
 import { unpackBitmap } from '../../core/bitmapCodec'
 import { adjustGlyphBox, excludeGlyphBox, mergeGlyphBoxes, splitGlyphBox, type GlyphBox } from '../../core/segmentation'
 import { Range, Segmented, Switch } from '../kit'
 import { drawMask, TEMPLATE_SIZE, type FrameAnalysis } from './framePipeline'
 
-type Patch = (update: Partial<RecognitionProfile>) => void
+type Patch = (update: Partial<EditorClockModel>) => void
 
 export function RegionSection({ roi, onRoi, videoSize, analysis, boxes, selected, onSelect, grayRef, binaryRef }: {
   roi: RoiRect
@@ -92,8 +91,8 @@ export function RegionSection({ roi, onRoi, videoSize, analysis, boxes, selected
   )
 }
 
-export function BinarizeSection({ profile, onPatch }: { profile: RecognitionProfile; onPatch: Patch }): React.ReactNode {
-  const set = (update: Partial<RecognitionProfile['preprocess']>): void =>
+export function BinarizeSection({ profile, onPatch }: { profile: EditorClockModel; onPatch: Patch }): React.ReactNode {
+  const set = (update: Partial<EditorClockModel['preprocess']>): void =>
     onPatch({ preprocess: { ...profile.preprocess, ...update } })
   const changed = profile.preprocess.scale !== DEFAULT_PREPROCESS.scale
     || profile.preprocess.threshold !== DEFAULT_PREPROCESS.threshold
@@ -122,7 +121,7 @@ export function BinarizeSection({ profile, onPatch }: { profile: RecognitionProf
  * directly (merge, split, drop, nudge an edge) and then teaches from those.
  */
 export function GlyphSection({ profile, readiness, boxes, selected, bounds, onBoxes, onAssign, onAssignReading, onVerify, recognized }: {
-  profile: RecognitionProfile
+  profile: EditorClockModel
   readiness: { ready: boolean; missing: ClockChar[]; sampleCount: number }
   boxes: GlyphBox[]
   selected: number
@@ -130,15 +129,15 @@ export function GlyphSection({ profile, readiness, boxes, selected, bounds, onBo
   onBoxes: (boxes: GlyphBox[]) => void
   onAssign: (char: ClockChar) => void
   /** Teach every box from one typed reading; returns why it was refused, or null. */
-  onAssignReading: (text: string) => string | null
+  onAssignReading: (text: string) => Promise<string | null>
   onVerify: (() => void) | null
-  recognized: RecognizeResult | null
+  recognized: HudFieldResult | null
 }): React.ReactNode {
   const active = selected >= 0 ? boxes[selected] : undefined
   const [reading, setReading] = useState('')
   const [readingProblem, setReadingProblem] = useState<string | null>(null)
-  const saveReading = (): void => {
-    const problem = onAssignReading(reading)
+  const saveReading = async (): Promise<void> => {
+    const problem = await onAssignReading(reading)
     setReadingProblem(problem)
     if (!problem) setReading('')
   }
@@ -182,7 +181,7 @@ export function GlyphSection({ profile, readiness, boxes, selected, bounds, onBo
         <p className="muted">点选裁切图中的字符框</p>
       )}
       {bounds && boxes.length > 0 && (
-        <form className="reading-row" onSubmit={(event) => { event.preventDefault(); saveReading() }}>
+        <form className="reading-row" onSubmit={(event) => { event.preventDefault(); void saveReading() }}>
           <input className="text-input num" value={reading} aria-label="整帧读数" placeholder={`整帧读数，${boxes.length} 个字符`}
             spellCheck={false} autoComplete="off" inputMode="numeric"
             onChange={(event) => { setReading(event.target.value); setReadingProblem(null) }} />
@@ -201,10 +200,10 @@ export function GlyphSection({ profile, readiness, boxes, selected, bounds, onBo
       <div className="verify-row">
         <button type="button" className="btn-quiet small" disabled={!onVerify} onClick={() => onVerify?.()}>验证当前帧</button>
         {recognized && (
-          <span className={`verify-result num ${recognized.outcome.status === 'success' ? 'is-ok' : 'is-bad'}`} role="status">
-            {recognized.outcome.status === 'success'
-              ? `识别为 ${recognized.outcome.reading.text} · 置信度 ${recognized.outcome.reading.confidence.toFixed(3)}`
-              : `识别失败：${recognized.outcome.detail || recognized.outcome.reason}`}
+          <span className={`verify-result num ${recognized.status === 'read' ? 'is-ok' : 'is-bad'}`} role="status">
+            {recognized.status === 'read'
+              ? `识别为 ${recognized.reading.text} · 置信度 ${recognized.reading.confidence.toFixed(3)}`
+              : recognized.status === 'absent' ? '画面里没有倒计时' : `${recognized.status === 'indeterminate' ? '无法判断' : '识别失败'}: ${recognized.reason}`}
           </span>
         )}
       </div>
@@ -227,7 +226,7 @@ const EDGE_TEXT = { left: '左边', right: '右边', top: '上边', bottom: '下
 
 /** Stored samples, per character, as thumbnails so a bad one can be spotted and dropped. */
 export function SampleSection({ profile, onRemove }: {
-  profile: RecognitionProfile
+  profile: EditorClockModel
   onRemove: (char: ClockChar, id: string) => void
 }): React.ReactNode {
   return (
@@ -259,15 +258,14 @@ export function SampleSection({ profile, onRemove }: {
   )
 }
 
-const CLOCK_FORMATS: { value: CountdownFormat; label: string }[] = [
+const CLOCK_FORMATS: { value: EditorClockModel['clockFormat']; label: string }[] = [
   { value: 'm:ss', label: '1:45' },
   { value: 'mm:ss', label: '01:45' },
   { value: 'ss', label: '45' },
-  { value: 'auto', label: '自动' },
 ]
 
 /** Set once per broadcast and rarely touched again, so it starts closed. */
-export function ParamsSection({ profile, onPatch }: { profile: RecognitionProfile; onPatch: Patch }): React.ReactNode {
+export function ParamsSection({ profile, onPatch }: { profile: EditorClockModel; onPatch: Patch }): React.ReactNode {
   return (
     <details className="rail-group rail-more">
       <summary><h2>识别参数</h2></summary>
@@ -276,18 +274,9 @@ export function ParamsSection({ profile, onPatch }: { profile: RecognitionProfil
         <Segmented label="倒计时格式" value={profile.clockFormat} options={CLOCK_FORMATS}
           onChange={(clockFormat) => onPatch({ clockFormat })} />
       </div>
-      <Range label="识别窗口" min={1} max={6} step={1} value={profile.detectWindowSeconds} unit=" 秒"
-        onChange={(detectWindowSeconds) => onPatch({ detectWindowSeconds })} />
-      <Range label="采样帧率" min={5} max={60} step={5} value={profile.sampleFps} unit=" fps"
-        onChange={(sampleFps) => onPatch({ sampleFps })} />
       <Range label="匹配阈值" min={0.5} max={0.99} step={0.01} value={profile.matchThreshold}
         format={(value) => value.toFixed(2)} onChange={(matchThreshold) => onPatch({ matchThreshold })} />
       <p className="muted">调高会漏读，调低会误读</p>
-      <label className="field-stack">
-        <span className="field-label">备注</span>
-        <textarea className="text-input" rows={2} value={profile.notes ?? ''} aria-label="备注"
-          placeholder="赛事名称、倒计时位置" onChange={(event) => onPatch({ notes: event.target.value })} />
-      </label>
     </details>
   )
 }

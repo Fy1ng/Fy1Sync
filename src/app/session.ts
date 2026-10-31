@@ -26,7 +26,8 @@ import { MediaEngine, type EngineState } from '../media/mediaEngine'
 import { RecognitionSampler } from '../recognition/sampler'
 import { OnlineAutoProfiles, initialAutoProfileState, type AutoProfileState } from '../recognition/autoProfile'
 import { createRecognitionWorker } from '../recognition/createWorker'
-import { parseProfile, type RecognitionProfile } from '../core/profileSchema'
+import { parseHudStylePack, type HudStylePack } from '../core/hudStylePack'
+import { isHudPack, learnedClockPack, type ActiveProfile } from '../core/activeProfile'
 import { AutoSyncController, type AutoSyncPhase, type AutoSyncRunResult } from '../sync/autoSync'
 import { apiClient, type PresetSummary } from './apiClient'
 import type { AppSettings } from './settings'
@@ -71,7 +72,7 @@ export interface SessionSnapshot {
     pending: number
     dropped: number
   }
-  profiles: Record<SourceRole, RecognitionProfile | null>
+  profiles: Record<SourceRole, ActiveProfile | null>
   autoProfiles: Record<SourceRole, AutoProfileState>
   autoProfileBusy: boolean
   /** Presets the server offers, so the player can pick one without opening the editor. */
@@ -119,7 +120,8 @@ export class Session {
   private sampler: RecognitionSampler | null = null
   private autoProfiles: Pick<OnlineAutoProfiles, 'controller' | 'monitor' | 'reset' | 'suspend' | 'dispose'> | null = null
   private autoRequestRevision = 0
-  private candidateToEdit: RecognitionProfile | null = null
+  private candidateToEdit: ActiveProfile | null = null
+  private candidateRole: SourceRole = 'official'
   private samplerFactory: ((session: Session) => RecognitionSampler | null) | null
   private settingsValue: AppSettings
   private readonly storage: SessionOptions['storage']
@@ -153,7 +155,7 @@ export class Session {
   private playbackPending = 0
   private pipPresentationReduced = false
   private readonly pendingQualityWaits = new Set<() => void>()
-  private profileMap: Record<SourceRole, RecognitionProfile | null> = {
+  private profileMap: Record<SourceRole, ActiveProfile | null> = {
     official: null,
     commentary: null,
   }
@@ -375,11 +377,11 @@ export class Session {
     return this.sampler
   }
 
-  profileFor(role: SourceRole): RecognitionProfile | null {
+  profileFor(role: SourceRole): ActiveProfile | null {
     return this.profileMap[role]
   }
 
-  setProfile(role: SourceRole, profile: RecognitionProfile | null): void {
+  setProfile(role: SourceRole, profile: ActiveProfile | null): void {
     ++this.profileRevision
     ++this.autoRequestRevision
     this.autoSync.cancel(false)
@@ -390,7 +392,7 @@ export class Session {
   }
 
   /** Both roles share one countdown profile: it is the same on-screen clock. */
-  setProfileForAll(profile: RecognitionProfile | null): void {
+  setProfileForAll(profile: ActiveProfile | null): void {
     ++this.profileRevision
     ++this.autoRequestRevision
     this.autoSync.cancel(false)
@@ -426,22 +428,22 @@ export class Session {
    *
    * The server validates on write, but a preset file can be edited by hand between then
    * and now, and a malformed profile would fail inside the recognition worker where there
-   * is nowhere useful to report it. `parseProfile` also migrates a v1 file forward.
+   * is nowhere useful to report it. Imported files must satisfy the current style-pack contract.
    */
-  private async fetchProfile(id: string, revision: number): Promise<RecognitionProfile | null> {
+  private async fetchProfile(id: string, revision: number): Promise<ActiveProfile | null> {
     const result = await apiClient.getPreset(id)
     if (revision !== this.profileRevision || this.disposed) return null
     if (!result.ok) {
       this.notice('error', `识别场景 ${id} 载入失败：${result.message}`)
       return null
     }
-    const parsed = parseProfile(result.value.profile)
-    if (!parsed.profile) {
+    const parsed = parseHudStylePack(result.value.profile)
+    if (!parsed.pack) {
       const first = parsed.issues.find((issue) => issue.severity === 'error')
       this.notice('error', `识别场景 ${id} 格式无效：${first?.message ?? '未知问题'}`)
       return null
     }
-    return parsed.profile
+    return parsed.pack
   }
 
   /**
@@ -1030,12 +1032,17 @@ export class Session {
     this.autoSync.cancel(false)
   }
   editAutoProfile(role: SourceRole): void {
+    this.candidateRole = role
     this.candidateToEdit = this.autoProfiles?.controller.state(role).candidate ?? this.profileFor(role)
   }
-  takeEditingCandidate(): RecognitionProfile | null {
+  takeEditingCandidate(): HudStylePack | null {
     const candidate = this.candidateToEdit
     // React StrictMode can invoke a state initializer twice.
-    return candidate ? structuredClone(candidate) : null
+    if (!candidate) return null
+    if (isHudPack(candidate)) return structuredClone(candidate)
+    const video = this.engine.element(this.candidateRole)
+    if (!video.videoWidth || !video.videoHeight) return null
+    return learnedClockPack(candidate, { width: video.videoWidth, height: video.videoHeight })
   }
   clearEditingCandidate(): void { this.candidateToEdit = null }
   async saveAutoProfile(role: SourceRole): Promise<boolean> {
@@ -1043,7 +1050,9 @@ export class Session {
     if (!candidate) return false
     // A new id on every explicit save prevents silent replacement of an existing preset.
     const id = `auto/${role}-${this.now()}-${++this.noticeSeq}`
-    const profile = { ...structuredClone(candidate), id, updatedAt: this.now() }
+    const video = this.engine.element(role)
+    if (!video?.videoWidth || !video.videoHeight) { this.notice('warn', '视频原生尺寸尚未就绪'); return false }
+    const profile = { ...learnedClockPack(candidate, { width: video.videoWidth, height: video.videoHeight }), id }
     const result = await apiClient.savePreset(id, profile)
     if (!result.ok) { this.notice('warn', `候选保存失败: ${result.message}`); return false }
     this.notice('info', '候选已另存为新预设')

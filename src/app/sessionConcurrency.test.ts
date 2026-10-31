@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Session } from './session'
 import { apiClient } from './apiClient'
-import { createEmptyProfile } from '../core/profileSchema'
+import { createEmptyHudStylePack as createEmptyProfile } from '../core/hudStylePack'
 import { primeMediaElement } from '../test/setup'
 import type { RecognitionSampler } from '../recognition/sampler'
 import type { RecognitionOutcome, SourceRole } from '../core/types'

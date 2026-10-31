@@ -18,7 +18,7 @@
 
 import { fileURLToPath } from 'node:url'
 import { type Page } from '@playwright/test'
-import type { RecognitionProfile } from '../src/core/profileSchema'
+import type { HudStylePack } from '../src/core/hudStylePack'
 import { APP_ORIGIN, expect, launchApplication, test } from './electron'
 import {
   invoke,
@@ -141,7 +141,7 @@ test.describe('自动同步', () => {
 
   let presetId = ''
   let presetName = ''
-  let taughtProfile: RecognitionProfile | undefined
+  let taughtProfile: HudStylePack | undefined
 
   // Teach once in another disposable Electron app. Every scenario gets its own app and
   // preset store, seeded with the result of this actual decoded-frame teaching flow.
@@ -172,12 +172,11 @@ test.describe('自动同步', () => {
     const fetched = await invoke(page, 'getPreset', { id: presetId })
     expect(fetched.ok).toBe(true)
     if (!fetched.ok) throw new Error(fetched.message)
-    expect(Object.keys(fetched.value.profile.templates).sort()).toEqual(CLOCK_CHARS)
+    expect(Object.keys(fetched.value.profile.variants[0]!.fields.clock!.glyphs).sort()).toEqual(CLOCK_CHARS)
   })
 
   test('识别出的偏移落在 0.25 s 误差内', async ({ page }) => {
-    // The worker silently falls back to the TypeScript engine when WASM cannot load (CSP,
-    // missing asset), and the offset would still pass. Pin the backend the run really used.
+    // A style pack requires Rust/WASM; pin the backend the complete run really used.
     const backends: string[] = []
     page.on('worker', worker => worker.on('console', message => {
       const match = /\[识别 Worker\] 后端: (\S+)/.exec(message.text())
@@ -360,7 +359,7 @@ async function selectPreset(page: Page, name: string): Promise<void> {
   const id = await option.getAttribute('value')
   if (!id) throw new Error('倒计时样式必须对应已发布预设')
   const published = await invoke(page, 'getPreset', { id })
-  expect(published.ok && Object.keys(published.value.profile.templates).sort()).toEqual(CLOCK_CHARS)
+  expect(published.ok && Object.keys(published.value.profile.variants[0]!.fields.clock!.glyphs).sort()).toEqual(CLOCK_CHARS)
   await select.selectOption(id)
   await expect(select.locator('option:checked')).toHaveText(name)
   await page.keyboard.press('Escape')

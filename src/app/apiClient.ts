@@ -2,7 +2,7 @@
 
 import type { DesktopMethods, StreamSyncerBridge, WindowState } from '../../electron/contracts'
 import type { ResolveFailure, ResolvedStream } from '../../server/platforms/types'
-import type { ProfileIssue, RecognitionProfile } from '../core/profileSchema'
+import type { HudPackIssue, HudStylePack } from '../core/hudStylePack'
 import type { SourceRole } from '../core/types'
 import type { BufferState } from '../../electron/bufferManager'
 import type { LoginPlatform } from '../../electron/login'
@@ -31,7 +31,7 @@ export interface PresetSummary {
 }
 
 export interface PresetRecord {
-  profile: RecognitionProfile
+  profile: HudStylePack
   etag: string
 }
 
@@ -163,7 +163,7 @@ export class ApiClient {
   /** Pass the last loaded ETag so stale editors cannot overwrite another edit. */
   savePreset(
     id: string,
-    profile: RecognitionProfile,
+    profile: HudStylePack,
     token = '',
     etag?: string,
   ): Promise<ApiResult<SavedPreset>> {
@@ -189,11 +189,11 @@ export class ApiClient {
 }
 
 /** Validation issues travel in the failure detail; verify their shape before display. */
-export function issuesFrom(detail: unknown): ProfileIssue[] {
+export function issuesFrom(detail: unknown): HudPackIssue[] {
   const issues = (detail as { issues?: unknown } | undefined)?.issues
   if (!Array.isArray(issues)) return []
-  return issues.filter((issue): issue is ProfileIssue => {
-    const candidate = issue as ProfileIssue | undefined
+  return issues.filter((issue): issue is HudPackIssue => {
+    const candidate = issue as HudPackIssue | undefined
     return typeof candidate?.path === 'string' && typeof candidate?.message === 'string'
   })
 }

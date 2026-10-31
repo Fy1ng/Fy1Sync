@@ -7,7 +7,8 @@ import { SessionProvider } from '../../app/SessionContext'
 import EditorPage from './EditorPage'
 import { apiClient } from '../../app/apiClient'
 import { profileStore } from '../../core/profileStore'
-import { CLOCK_CHARS, createEmptyProfile, TEMPLATE_PIXELS } from '../../core/profileSchema'
+import { CLOCK_CHARS, TEMPLATE_PIXELS } from '../../core/profileSchema'
+import { createEmptyHudStylePack } from '../../core/hudStylePack'
 import { packBitmap } from '../../core/bitmapCodec'
 
 const sessions: Session[] = []
@@ -70,10 +71,14 @@ describe('publish conflicts', () => {
 })
 
 async function editingPublishedProfile() {
-  const profile = createEmptyProfile('test/published', 'Original')
-  profile.templates = Object.fromEntries(CLOCK_CHARS.map(char => [char, [{
-    id: char, data: packBitmap(new Uint8Array(TEMPLATE_PIXELS).fill(255)), createdAt: 1,
-  }]]))
+  const profile = createEmptyHudStylePack('test/published', 'Original')
+  for (const [index, char] of CLOCK_CHARS.entries()) {
+    const id = `glyph-${index}`
+    const ink = new Uint8Array(TEMPLATE_PIXELS)
+    ink[index] = 255
+    profile.bitmaps[id] = { width: 32, height: 48, data: packBitmap(ink) }
+    profile.variants[0]!.fields.clock!.glyphs[char] = [id]
+  }
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
   vi.spyOn(apiClient, 'listPresets').mockResolvedValue({ ok: true, value: { presets: [
     { id: profile.id, name: profile.name, etag: 'original-etag', templateChars: 11, updatedAt: 1 },

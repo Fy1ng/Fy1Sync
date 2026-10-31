@@ -4,13 +4,15 @@ import * as bitmap from '../core/bitmapCodec'
 import { ClockJumpDetector, parseCountdown, type ClockJumpOptions, type CountdownFormat } from '../core/clockJump'
 import * as image from '../core/imageOps'
 import { clockAnchorMs, estimateOffset, median } from '../core/offsetEstimator'
-import { CLOCK_CHARS, createEmptyProfile, profileReadiness, validateProfile, type RecognitionProfile } from '../core/profileSchema'
+import { CLOCK_CHARS, createEmptyProfile, profileReadiness, type RecognitionProfile } from '../core/profileSchema'
 import * as segmentation from '../core/segmentation'
 import * as sync from '../core/syncPlan'
-import * as template from '../core/templateMatch'
+import * as template from '../test/recognitionReference'
 import type { ClockJumpEvent, MediaSnapshot, RecognitionOutcome, SourceRole } from '../core/types'
-import { RecognitionEngine } from '../recognition/engine'
-import type { ResultMessage } from '../recognition/protocol'
+import { learnedClockPack } from '../core/activeProfile'
+import { hudPackReadiness, type HudStylePack } from '../core/hudStylePack'
+import type { HudFrameResult } from '../core/hudWasm'
+import { recognize_hud_frame } from './pkg/stream_syncer_wasm.js'
 import { createFrame, drawText, renderGlyphMask } from '../test/glyphFont'
 import { assertExact, assertParityIntegrity, checkParity, parseWasmJson, WasmRecognitionEngine, wasmCall } from './test-helpers'
 
@@ -87,10 +89,10 @@ describe('fixed-seed image, ROI, threshold and editor parity', () => {
   })
 })
 
-describe('fixed-seed templates and recognition parity', () => {
+describe('fixed-seed Rust template and recognition vectors', () => {
   it.each(cases(64))('recognition vector %i', (index) => {
     const random = randomFor(index + 1000)
-    const { frame } = rendered(index, random)
+    const { frame, text } = rendered(index, random)
     const profile = profileAt(integer(random, 1, 9))
     profile.clockFormat = (['m:ss', 'ss', 'auto', 'mm:ss'] as const)[index % 4]!
     profile.matchThreshold = random()
@@ -98,14 +100,32 @@ describe('fixed-seed templates and recognition parity', () => {
     if (index % 9 === 0) delete profile.templates['0']
     if (index % 13 === 0) profile.templates['4']?.unshift({ id: 'corrupt', data: '!!!!', createdAt: 0 })
     parity('profileReadiness', profileReadiness, profile)
-    parity('validateProfile', validateProfile, profile)
-    const compiled = parity('compileTemplates', template.compileTemplates, profile)
+    const compiled = template.compileTemplates(profile)
+    expect(compiled.chars).toEqual(CLOCK_CHARS.filter(char => profile.templates[char]?.some(sample => sample.id !== 'corrupt')))
+    for (const masks of compiled.masks.values()) for (const mask of masks) expect(mask).toHaveLength(32 * 48)
     const glyph = image.normalizeGlyphCoverage(renderGlyphMask(CLOCK_CHARS[index % CLOCK_CHARS.length]!, integer(random, 1, 9)))
-    parity('matchGlyph', template.matchGlyph, glyph, compiled)
-    parity('recognizeFrame', template.recognizeFrame, frame, profile, compiled,
+    const matched = template.matchGlyph(glyph, compiled)
+    expect(matched.score).toBeGreaterThanOrEqual(0)
+    expect(matched.score).toBeLessThanOrEqual(1)
+    expect(matched.runnerUpScore).toBeLessThanOrEqual(matched.score)
+    const result = template.recognizeFrame(frame, profile, compiled,
       { mediaTime: random() * 1200, wallTime: random() * 1_000_000, frameIndex: index },
       { minInkRatio: random() * 0.1, maxInkRatio: 0.5 + random() * 0.5,
         minMargin: random() * 0.1, segment: { minGapWidth: integer(random, 1, 3) } })
+    if (result.outcome.status === 'success') {
+      expect(result.outcome.reading.text).toBe(text)
+      expect(result.outcome.reading.seconds).toBe(parseCountdown(text, profile.clockFormat))
+      expect(result.outcome.reading.confidence).toBeGreaterThanOrEqual(profile.matchThreshold)
+      expect(result.outcome.reading.scores).toHaveLength(text.length)
+    } else {
+      expect(result.outcome.status).toBe('failed')
+      if (result.outcome.status === 'failed') expect(['insufficient-templates', 'blank-frame', 'no-candidates', 'low-confidence', 'invalid-format']).toContain(result.outcome.reason)
+    }
+    if (result.debug) {
+      expect(result.debug.binary.data).toHaveLength(frame.width * frame.height)
+      expect(result.debug.projection).toHaveLength(frame.width)
+      expect(result.debug.matches.length).toBeLessThanOrEqual(result.debug.boxes.length)
+    }
   })
 
   it('keeps character and sample ties in insertion order', () => {
@@ -115,7 +135,7 @@ describe('fixed-seed templates and recognition parity', () => {
         ['9', [mask, mask]], ['8', [mask]], ['7', [mask]],
       ]),
     }
-    const matched = parity('matchGlyph', template.matchGlyph, mask, compiled)
+    const matched = template.matchGlyph(mask, compiled)
     expect(matched).toEqual({ char: '9', score: 1, runnerUpScore: 1, sampleIndex: 0 })
   })
 })
@@ -229,57 +249,88 @@ describe('fixed-seed offsets and seek snapshots', () => {
   })
 })
 
-describe('stateful WASM engine parity', () => {
+type EngineResult = { outcome: RecognitionOutcome | { status: 'indeterminate'; reason: string } | { status: 'absent' }; debug: unknown }
+function statelessClock(frame: ReturnType<typeof createFrame>, pack: HudStylePack,
+  meta: { mediaTime: number; wallTime: number; frameIndex: number }, wantDebug: boolean): EngineResult {
+  const result = JSON.parse(recognize_hud_frame(new Uint8Array(frame.data), frame.width, frame.height,
+    JSON.stringify(pack), pack.variants[0]!.id)) as HudFrameResult
+  const clock = result.fields.clock
+  const outcome: EngineResult['outcome'] = clock.status === 'read'
+    ? { status: 'success', reading: { text: clock.reading.text, seconds: clock.reading.value,
+      scores: clock.reading.scores, confidence: clock.reading.confidence, ...meta } }
+    : clock.status === 'failed'
+      ? { status: 'failed', reason: clock.reason as Extract<RecognitionOutcome, { status: 'failed' }>['reason'] }
+      : clock.status === 'indeterminate' ? { status: 'indeterminate', reason: clock.reason } : { status: 'absent' }
+  return { outcome, debug: wantDebug ? clock.debug : null }
+}
+
+describe('stateful and stateless HUD WASM entry points', () => {
   it.each([
     { frameIndex: 2 ** 32 + 17, mediaTime: 1, wallTime: 2 },
     { frameIndex: -1, mediaTime: 1, wallTime: 2 },
     { frameIndex: 1.5, mediaTime: 1, wallTime: 2 },
     { frameIndex: -0, mediaTime: -0, wallTime: -0 },
-  ])('preserves numeric frame metadata $frameIndex', (meta) => {
-    const { frame, scale } = rendered(1, randomFor(6000))
-    const profile = profileAt(scale)
-    profile.clockFormat = 'auto'
-    const oracle = new RecognitionEngine(() => 0)
+  ])('preserves numeric frame metadata $frameIndex', meta => {
+    const { frame, text, scale } = rendered(1, randomFor(6000))
+    const pack = learnedClockPack(profileAt(scale), { width: frame.width, height: frame.height })
     const engine = new WasmRecognitionEngine()
     try {
-      oracle.handle({ type: 'configure', generation: 1, profile })
-      engine.configure(JSON.stringify(profile))
-      const expected = oracle.handle({ type: 'frame', generation: 1, role: 'official',
-        pixels: frame.data.slice().buffer as ArrayBuffer, width: frame.width, height: frame.height,
-        ...meta, wantDebug: true }) as ResultMessage
-      expect(expected.outcome.status).toBe('success')
-      assertExact('engine.metadata', parseWasmJson(engine.recognize(new Uint8Array(frame.data),
-        frame.width, frame.height, meta.mediaTime, meta.wallTime, meta.frameIndex, true)),
-        { outcome: expected.outcome, debug: expected.debug })
+      engine.configure(JSON.stringify(pack))
+      const result = parseWasmJson(engine.recognize(new Uint8Array(frame.data), frame.width, frame.height,
+        meta.mediaTime, meta.wallTime, meta.frameIndex, true)) as EngineResult
+      expect(result.outcome.status).toBe('success')
+      if (result.outcome.status === 'success') {
+        expect(result.outcome.reading).toMatchObject({ text, seconds: parseCountdown(text), ...meta })
+      }
+      assertExact('hud.engine.metadata', result, statelessClock(frame, pack, meta, true))
     } finally { engine.free() }
   })
-  it.each(cases(32))('engine vector %i', (index) => {
+
+  it.each(cases(32))('engine vector %i', index => {
     const random = randomFor(index + 5000)
-    const { frame } = rendered(index, random)
+    const { frame, text } = rendered(index, random)
     const profile = profileAt(integer(random, 2, 7))
-    profile.clockFormat = 'auto'
+    profile.clockFormat = index % 4 === 0 ? 'ss' : 'm:ss'
     profile.matchThreshold = 0.7
     if (index % 8 === 0) delete profile.templates['5']
-    const oracle = new RecognitionEngine(() => 0)
+    const pack = learnedClockPack(profile, { width: frame.width, height: frame.height })
     const engine = new WasmRecognitionEngine()
     try {
-      const configured = oracle.handle({ type: 'configure', generation: 1, profile })
-      if (configured?.type !== 'configured') throw new Error('Unexpected TS configuration response')
-      assertExact('engine.configure', parseWasmJson(engine.configure(JSON.stringify(profile))), {
-        ready: configured.ready, missing: configured.missing, sampleCount: configured.sampleCount,
-      })
+      assertExact('hud.engine.configure', parseWasmJson(engine.configure(JSON.stringify(pack))), hudPackReadiness(pack))
       for (const wantDebug of [false, true]) {
-        const mediaTime = random() * 1000
-        const wallTime = random() * 100_000
-        const expected = oracle.handle({ type: 'frame', generation: 1, role: 'official',
-          pixels: frame.data.slice().buffer as ArrayBuffer, width: frame.width, height: frame.height,
-          mediaTime, wallTime, frameIndex: index, wantDebug }) as ResultMessage
-        assertExact('engine.recognize', parseWasmJson(engine.recognize(new Uint8Array(frame.data),
-          frame.width, frame.height, mediaTime, wallTime, index, wantDebug)),
-          { outcome: expected.outcome, debug: expected.debug })
+        const meta = { mediaTime: random() * 1000, wallTime: random() * 100_000, frameIndex: index }
+        const result = parseWasmJson(engine.recognize(new Uint8Array(frame.data), frame.width, frame.height,
+          meta.mediaTime, meta.wallTime, meta.frameIndex, wantDebug)) as EngineResult
+        assertExact('hud.engine.recognize', result, statelessClock(frame, pack, meta, wantDebug))
+        if (index % 8 === 0) expect(result.outcome).toMatchObject({ status: 'failed', reason: 'insufficient-templates' })
+        else if (result.outcome.status === 'success') {
+          expect(result.outcome.reading).toMatchObject({ text, seconds: parseCountdown(text, profile.clockFormat), ...meta })
+        } else {
+          // Mismatched training and frame scales may reject a small glyph; they must never invent a reading.
+          expect(result.outcome).toMatchObject({ status: 'failed', reason: 'low-confidence' })
+        }
+        expect(result.debug === null).toBe(!wantDebug)
       }
+      const changed = structuredClone(pack)
+      changed.variants[0]!.fields.clock!.glyphs = {}
+      expect(JSON.parse(engine.configure(JSON.stringify(changed))).ready).toBe(false)
+      expect(JSON.parse(engine.recognize(new Uint8Array(frame.data), frame.width, frame.height, 0, 0, 0, false)).outcome)
+        .toEqual({ status: 'failed', reason: 'insufficient-templates' })
+    } finally { engine.free() }
+  })
+
+  it('strictly validates reconfiguration and clears the previous configuration after rejection', () => {
+    const { frame, scale } = rendered(1, randomFor(6001))
+    const pack = learnedClockPack(profileAt(scale), { width: frame.width, height: frame.height })
+    const engine = new WasmRecognitionEngine()
+    try {
+      expect(JSON.parse(engine.configure(JSON.stringify(pack))).ready).toBe(true)
+      expect(() => engine.configure(JSON.stringify({ ...pack, extra: true }))).toThrow()
+      expect(JSON.parse(engine.recognize(new Uint8Array(frame.data), frame.width, frame.height, 0, 0, 0, true)))
+        .toEqual({ outcome: { status: 'failed', reason: 'no-profile' }, debug: null })
+      expect(() => engine.configure(JSON.stringify({ schemaVersion: 2, templates: {} }))).toThrow()
     } finally { engine.free() }
   })
 })
 
-afterAll(() => assertParityIntegrity('Fixed-seed parity seed=' + SEED))
+afterAll(() => assertParityIntegrity('Fixed-seed image/sync parity and Rust HUD entry vectors seed=' + SEED))

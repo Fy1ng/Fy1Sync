@@ -1,3 +1,4 @@
+import { validateLearnedProfile as validateProfile } from '../test/recognitionReference'
 /**
  * Recognition against real decoded video frames.
  *
@@ -26,11 +27,10 @@ import { binarize, cropBinary, normalizeGlyph, roiToPixels, toGrayscale } from '
 import {
   CLOCK_CHARS,
   createEmptyProfile,
-  validateProfile,
   type RecognitionProfile,
 } from '../core/profileSchema'
 import { segmentGlyphs } from '../core/segmentation'
-import { compileTemplates, recognizeFrame, type CompiledTemplates } from '../core/templateMatch'
+import { compileTemplates, recognizeFrame, type CompiledTemplates } from '../test/recognitionReference'
 import { FULL_FRAME_ROI } from './frameGrabber'
 
 // From the project root, not `import.meta.url`: under jsdom the module URL is an http one,
@@ -187,7 +187,7 @@ describe.skipIf(!ready)('真实帧识别', () => {
       readings.push(
         result.outcome.status === 'success'
           ? result.outcome.reading.text
-          : `失败(${result.outcome.reason}:${result.outcome.detail ?? ''})`,
+          : `失败(${('reason' in result.outcome ? result.outcome.reason : result.outcome.status)}:${('detail' in result.outcome ? result.outcome.detail : '') ?? ''})`,
       )
     }
     expect(readings).toEqual([
@@ -207,7 +207,7 @@ describe.skipIf(!ready)('真实帧识别', () => {
       readings.push(
         result.outcome.status === 'success'
           ? result.outcome.reading.text
-          : `失败(${result.outcome.reason}:${result.outcome.detail ?? ''})`,
+          : `失败(${('reason' in result.outcome ? result.outcome.reason : result.outcome.status)}:${('detail' in result.outcome ? result.outcome.detail : '') ?? ''})`,
       )
     }
     expect(readings).toEqual([

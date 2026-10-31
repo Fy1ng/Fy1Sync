@@ -1,189 +1,103 @@
-/**
- * The editor preview against the recogniser it claims to mirror.
- *
- * `framePipeline` exists so the editor can show each intermediate step, and it recomputes
- * them from the same primitives rather than reusing `recognizeFrame`'s debug output. That
- * only stays honest if the two agree: an ROI or threshold that looks right in the editor
- * but segments differently in the player would send the user off tuning a preset against
- * a preview nothing else sees. These tests hold the two paths against each other.
- */
-
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { analyzeFrame, drawGray, drawMask, sampleFromBox, TEMPLATE_SIZE } from './framePipeline'
-import { unpackBitmap } from '../../core/bitmapCodec'
-import { normalizeGlyph, cropBinary } from '../../core/imageOps'
-import {
-  TEMPLATE_HEIGHT,
-  TEMPLATE_PIXELS,
-  TEMPLATE_WIDTH,
-  createEmptyProfile,
-  validateProfile,
-  type RecognitionProfile,
-} from '../../core/profileSchema'
-import { compileTemplates, recognizeFrame } from '../../core/templateMatch'
-import { packBitmap } from '../../core/bitmapCodec'
+/** Rust owns the editor preview and the stored glyph preparation. */
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import init from '../../wasm/pkg/stream_syncer_wasm.js'
+import { drawGray, drawMask, sampleFromPrepared, TEMPLATE_SIZE } from './framePipeline'
+import { prepareHudGlyphs, recognizeHudFrame } from '../../core/hudWasm'
+import { createEmptyHudStylePack, parseHudStylePack } from '../../core/hudStylePack'
+import { unpackBitmap, packBitmap } from '../../core/bitmapCodec'
+import { normalizeGlyph } from '../../core/imageOps'
+import { TEMPLATE_HEIGHT, TEMPLATE_PIXELS, TEMPLATE_WIDTH, type ClockChar } from '../../core/profileSchema'
 import { CLOCK_GLYPHS, createFrame, drawText, renderGlyphMask } from '../../test/glyphFont'
 
 const PREPROCESS = { scale: 1.6, threshold: 120, invert: false }
-
-/** A clock drawn into a 640x360 frame, with an ROI padded around it. */
+beforeAll(async () => {
+  await init({ module_or_path: Uint8Array.from(readFileSync(resolve('src/wasm/pkg/stream_syncer_wasm_bg.wasm'))) })
+})
 function clockFrame(text: string, scale = 6) {
-  const frame = createFrame(640, 360)
-  const box = drawText(frame, text, 280, 20, { scale, tracking: 1 })
-  const pad = 6
-  return {
-    frame: { pixels: frame.data, width: frame.width, height: frame.height },
-    raw: frame,
-    roi: {
-      x: (box.x - pad) / frame.width,
-      y: (box.y - pad) / frame.height,
-      w: (box.width + pad * 2) / frame.width,
-      h: (box.height + pad * 2) / frame.height,
-    },
-  }
-}
-
-function buildProfile(roi: RecognitionProfile['roi'], scale = 6): RecognitionProfile {
-  const templates: Record<string, Array<{ id: string; data: string; createdAt: number }>> = {}
+  const raw = createFrame(640, 360)
+  const box = drawText(raw, text, 280, 20, { scale, tracking: 1 })
+  const pack = createEmptyHudStylePack('cs2/test', '测试场景', { width: raw.width, height: raw.height })
+  const clock = pack.variants[0]!.fields.clock!
+  clock.roi = { x: box.x - 6, y: box.y - 6, w: box.width + 12, h: box.height + 12 }
+  clock.preprocess = PREPROCESS
   for (const char of CLOCK_GLYPHS) {
-    templates[char] = [
-      { id: `${char}-0`, data: packBitmap(normalizeGlyph(renderGlyphMask(char, scale))), createdAt: 1 },
-    ]
+    const id = char === ':' ? 'colon' : char
+    pack.bitmaps[id] = { width: 32, height: 48, data: packBitmap(normalizeGlyph(renderGlyphMask(char, scale))) }
+    clock.glyphs[char as ClockChar] = [id]
   }
-  const { profile, issues } = validateProfile({
-    ...createEmptyProfile('cs2/test', '测试场景'),
-    roi,
-    preprocess: PREPROCESS,
-    templates,
-  })
-  if (!profile) throw new Error(`invalid test profile: ${JSON.stringify(issues)}`)
-  return profile
+  return { frame: { pixels: raw.data, width: raw.width, height: raw.height }, pack }
 }
 
-describe('analyzeFrame', () => {
-  it('agrees with the recogniser on every step it previews', () => {
-    const { frame, raw, roi } = clockFrame('1:30')
-    const profile = buildProfile(roi)
-
-    const preview = analyzeFrame(frame, roi, PREPROCESS)
-    const { debug } = recognizeFrame(
-      { data: raw.data, width: raw.width, height: raw.height },
-      profile,
-      compileTemplates(profile),
-      { mediaTime: 0, wallTime: 0, frameIndex: 0 },
-    )
-
+describe('Rust frame analysis', () => {
+  it('agrees with the recogniser on every step it previews', async () => {
+    const { frame, pack } = clockFrame('1:30')
+    const preview = await prepareHudGlyphs(frame, pack)
+    const { debug } = (await recognizeHudFrame(frame, pack)).fields.clock
     expect(debug).not.toBeNull()
-    // Same crop, same threshold, same cuts, same ink. A drift in any one of these is a
-    // preview that teaches the user something the player will not reproduce.
     expect(preview.roiPixels).toEqual(debug?.roiPixels)
-    expect(preview.projection).toEqual(debug?.projection)
+    expect(preview.gray).toEqual(debug?.gray)
+    expect(preview.binary).toEqual(debug?.binary)
     expect(preview.boxes).toEqual(debug?.boxes)
+    expect(preview.projection).toEqual(debug?.projection)
     expect(preview.inkRatio).toBeCloseTo(debug?.inkRatio ?? -1, 12)
-    expect(Array.from(preview.binary.data)).toEqual(Array.from(debug?.binary.data ?? []))
-    expect(preview.binary.width).toBe(debug?.binary.width)
-    expect(preview.binary.height).toBe(debug?.binary.height)
   })
-
-  it('previews the grey crop at the ROI size, not the frame size', () => {
-    const { frame, roi } = clockFrame('1:30')
-
-    const { gray, roiPixels, binary } = analyzeFrame(frame, roi, PREPROCESS)
-
-    // The editor draws grey and binary side by side, so they have to line up pixel for
-    // pixel; a full-frame grey next to a cropped binary reads as a broken ROI.
+  it('previews the grey crop at the ROI size, not the frame size', async () => {
+    const { frame, pack } = clockFrame('1:30')
+    const { gray, roiPixels, binary } = await prepareHudGlyphs(frame, pack)
     expect(gray.width).toBe(roiPixels.width)
     expect(gray.height).toBe(roiPixels.height)
     expect(binary.width).toBe(gray.width)
     expect(binary.height).toBe(gray.height)
     expect(gray.data.length).toBe(roiPixels.width * roiPixels.height)
   })
-
-  it('finds one box per drawn character', () => {
-    const { frame, roi } = clockFrame('1:30')
-
-    const { boxes, inkRatio: ratio } = analyzeFrame(frame, roi, PREPROCESS)
-
+  it('finds one box per drawn character', async () => {
+    const { frame, pack } = clockFrame('1:30')
+    const { boxes, bitmaps, inkRatio } = await prepareHudGlyphs(frame, pack)
     expect(boxes).toHaveLength(4)
-    expect(ratio).toBeGreaterThan(0)
-    expect(ratio).toBeLessThan(1)
+    expect(bitmaps).toHaveLength(4)
+    expect(inkRatio).toBeGreaterThan(0)
+    expect(inkRatio).toBeLessThan(1)
   })
-
-  it('reports an empty region as empty rather than throwing', () => {
-    const frame = createFrame(320, 180)
-    const roi = { x: 0.1, y: 0.1, w: 0.2, h: 0.2 }
-
-    const analysis = analyzeFrame(
-      { pixels: frame.data, width: frame.width, height: frame.height },
-      roi,
-      PREPROCESS,
-    )
-
-    // A user drags the ROI over blank scoreboard constantly. It has to come back clean.
+  it('reports an empty region as empty rather than throwing', async () => {
+    const { frame, pack } = clockFrame('1:30')
+    frame.pixels.fill(0)
+    const analysis = await prepareHudGlyphs(frame, pack)
     expect(analysis.boxes).toEqual([])
     expect(analysis.inkRatio).toBe(0)
-    expect(analysis.projection.every((column) => column === 0)).toBe(true)
+    expect(analysis.projection.every(column => column === 0)).toBe(true)
   })
 })
 
-describe('sampleFromBox', () => {
-  it('stores a mask the server will accept and recognition can compile', () => {
-    const { frame, roi } = clockFrame('1:30')
-    const { binary, boxes } = analyzeFrame(frame, roi, PREPROCESS)
-    const box = boxes[0]
-    expect(box).toBeDefined()
-    if (!box) return
-
-    const sample = sampleFromBox(binary, box, '1', 'editor')
-
-    // The schema fixes the template size, and it is the server's gate too: a sample of
-    // any other size comes back as `invalid-profile`, which the user sees as a save that
-    // failed for no visible reason. Validate the way the server does.
-    const { profile: accepted, issues } = validateProfile({
-      ...createEmptyProfile('cs2/test', '测试场景'),
-      roi,
-      preprocess: PREPROCESS,
-      templates: { '1': [sample] },
-    })
-    expect(issues).toEqual([])
-    expect(accepted).not.toBeNull()
-
-    const mask = unpackBitmap(sample.data, TEMPLATE_PIXELS)
-    expect(TEMPLATE_SIZE).toEqual({ width: TEMPLATE_WIDTH, height: TEMPLATE_HEIGHT })
+describe('prepared glyph samples', () => {
+  it('stores a Rust-prepared mask the server accepts', async () => {
+    const { frame, pack } = clockFrame('1:30')
+    const analysis = await prepareHudGlyphs(frame, pack)
+    const sample = sampleFromPrepared(analysis.bitmaps[0]!, '1', 'editor')
+    pack.bitmaps[sample.id] = { width: 32, height: 48, data: sample.data }
+    pack.variants[0]!.fields.clock!.glyphs['1'] = [sample.id]
+    expect(parseHudStylePack(pack).issues).toEqual([])
     expect(sample.origin).toBe('editor')
     expect(sample.createdAt).toBeGreaterThan(0)
-    expect(mask.some((value) => value !== 0)).toBe(true)
+    expect(unpackBitmap(sample.data, TEMPLATE_PIXELS).some(value => value !== 0)).toBe(true)
+    expect(TEMPLATE_SIZE).toEqual({ width: TEMPLATE_WIDTH, height: TEMPLATE_HEIGHT })
   })
-
-  it('normalises the same way the recogniser does before matching', () => {
-    const { frame, roi } = clockFrame('1:30')
-    const { binary, boxes } = analyzeFrame(frame, roi, PREPROCESS)
-    const box = boxes[0]
-    if (!box) throw new Error('expected a segmented box')
-
-    const sample = sampleFromBox(binary, box, '1', 'editor')
-
-    // Stored samples are compared against `normalizeGlyph` output at match time, so the
-    // editor has to store that and not the raw crop.
-    expect(Array.from(unpackBitmap(sample.data, TEMPLATE_PIXELS))).toEqual(
-      Array.from(normalizeGlyph(cropBinary(binary, box))),
-    )
+  it('keeps Rust normalisation and honors manually adjusted boxes', async () => {
+    const { frame, pack } = clockFrame('1:30')
+    const automatic = await prepareHudGlyphs(frame, pack)
+    const manual = await prepareHudGlyphs(frame, pack, undefined, [automatic.boxes[0]!])
+    const sample = sampleFromPrepared(manual.bitmaps[0]!, '1', 'editor')
+    expect(manual.boxes).toHaveLength(1)
+    expect(sample.data).toBe(automatic.bitmaps[0])
+    expect(unpackBitmap(sample.data, TEMPLATE_PIXELS)).toEqual(manual.normalized[0])
   })
-
-  it('gives two samples of one character distinct ids', () => {
-    const { frame, roi } = clockFrame('1:30')
-    const { binary, boxes } = analyzeFrame(frame, roi, PREPROCESS)
-    const box = boxes[0]
-    if (!box) throw new Error('expected a segmented box')
-
-    const ids = new Set(
-      Array.from({ length: 25 }, () => sampleFromBox(binary, box, '1', 'editor').id),
-    )
-
-    // Samples accumulate under one character key; a collision silently overwrites the
-    // user's earlier capture.
+  it('gives two samples of one character distinct ids', async () => {
+    const { frame, pack } = clockFrame('1:30')
+    const { bitmaps } = await prepareHudGlyphs(frame, pack)
+    const ids = new Set(Array.from({ length: 25 }, () => sampleFromPrepared(bitmaps[0]!, '1', 'editor').id))
     expect(ids.size).toBe(25)
-    expect([...ids].every((id) => id.startsWith('1-'))).toBe(true)
+    expect([...ids].every(id => id.startsWith('1-'))).toBe(true)
   })
 })
 

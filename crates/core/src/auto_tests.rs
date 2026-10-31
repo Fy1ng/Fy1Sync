@@ -185,7 +185,7 @@ fn full_resolution_1080_and_1440_scan_has_no_position_assumption() {
 }
 
 #[test]
-fn self_learning_recovers_exact_labels_and_valid_v2_profile() {
+fn self_learning_recovers_exact_labels_and_internal_clock_profile() {
     let frames: Vec<_> = (0..320)
         .map(|n| {
             let time = n as f64 * 0.1001;
@@ -206,7 +206,7 @@ fn self_learning_recovers_exact_labels_and_valid_v2_profile() {
     assert_eq!(report.consistent_offsets, 1);
     let profile = report.profile.unwrap();
     assert_eq!(profile.match_threshold, 0.82);
-    assert!(validate_profile(&serde_json::to_value(&profile).unwrap())["profile"].is_object());
+    assert!(serde_json::from_value::<RecognitionProfile>(serde_json::to_value(&profile).unwrap()).is_ok());
     assert_eq!(report.learned_chars.len(), 11);
     for n in 0..30 {
         let time = n as f64 + 0.2;
@@ -548,7 +548,7 @@ fn learns_and_reads_narrow_one_two_minute_digits_and_seconds_only() {
         let learned = learn_clock(&frames, &roi);
         assert!(learned.reason.is_none(), "{start}/{format}: {learned:?}");
         let profile = learned.profile.unwrap();
-        assert!(validate_profile(&serde_json::to_value(&profile).unwrap())["profile"].is_object());
+        assert!(serde_json::from_value::<RecognitionProfile>(serde_json::to_value(&profile).unwrap()).is_ok());
         for n in 0..22 {
             let reading = recognize_auto_frame(&shaped_clock(start - n, format), &profile);
             assert_eq!(

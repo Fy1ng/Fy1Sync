@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import appPackage from '../package.json'
 import type { ApiResult } from '../src/app/apiClient'
 import { packBitmap } from '../src/core/bitmapCodec'
-import { createEmptyProfile, TEMPLATE_PIXELS } from '../src/core/profileSchema'
+import { TEMPLATE_PIXELS } from '../src/core/profileSchema'
+import { createEmptyHudStylePack } from '../src/core/hudStylePack'
 import { createDesktopService, createResolverDeps, type DesktopService } from './api'
 import { resolveConfig, type ProxyConfig } from './config'
 import { DanmakuRelay } from './danmaku/relay'
@@ -22,11 +23,10 @@ function sampleData(): string {
 }
 
 function validProfile(overrides: Record<string, unknown> = {}) {
-  return {
-    ...createEmptyProfile('cs2/iem', 'IEM Countdown'),
-    templates: { '0': [{ id: 's0', data: sampleData(), createdAt: 1, origin: 'editor' }] },
-    ...overrides,
-  }
+  const pack = createEmptyHudStylePack('cs2/iem', 'IEM Countdown')
+  pack.bitmaps.s0 = { width: 32, height: 48, data: sampleData() }
+  pack.variants[0]!.fields.clock!.glyphs['0'] = ['s0']
+  return { ...pack, ...overrides }
 }
 
 function value<T = Record<string, any>>(result: ApiResult<unknown>): T {
@@ -300,8 +300,8 @@ describe('desktop main-process service', () => {
     })
 
     it('returns validation paths for an invalid profile', async () => {
-      expect(await save({ matchThreshold: 5 })).toMatchObject({
-        ok: false, code: 'invalid-profile', detail: { issues: expect.arrayContaining([expect.objectContaining({ path: 'matchThreshold' })]) },
+      expect(await save({ revision: 0 })).toMatchObject({
+        ok: false, code: 'invalid-profile', detail: { issues: expect.arrayContaining([expect.objectContaining({ path: 'revision' })]) },
       })
     })
 

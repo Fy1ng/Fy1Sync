@@ -2,9 +2,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { StreamSyncerBridge } from '../../electron/contracts'
 import { ApiClient, issuesFrom, type ApiResult, type DanmakuEvent } from './apiClient'
-import type { RecognitionProfile } from '../core/profileSchema'
+import { createEmptyHudStylePack } from '../core/hudStylePack'
 
-const PROFILE = { id: 'cs2/iem', name: '测试' } as unknown as RecognitionProfile
+const PROFILE = createEmptyHudStylePack('cs2/iem', '测试')
 
 function bridgeWith(result: ApiResult<unknown>): StreamSyncerBridge {
   return {

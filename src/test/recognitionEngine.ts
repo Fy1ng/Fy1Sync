@@ -1,0 +1,136 @@
+/** Test-only message harness for learned-clock vectors executed by Rust dispatch. */
+
+import { profileReadiness, type RecognitionProfile } from '../core/profileSchema'
+import { compileTemplates, recognizeFrame, type CompiledTemplates } from './recognitionReference'
+import type {
+  ConfiguredMessage,
+  FrameMessage,
+  ResultMessage,
+  WorkerDebug,
+  WorkerRequest,
+  WorkerResponse,
+} from '../recognition/protocol'
+
+export class RecognitionEngine {
+  private generation = -1
+  private profile: RecognitionProfile | null = null
+  private templates: CompiledTemplates | null = null
+
+  constructor(private readonly now: () => number = () => Date.now()) {}
+
+  /** Returns the response to post back, or `null` when nothing should be sent. */
+  handle(request: WorkerRequest): WorkerResponse | null {
+    switch (request.type) {
+      case 'configure':
+        return this.configure(request.generation, request.profile)
+      case 'cancel':
+        // Bumping the generation is enough: in-flight frames from older
+        // generations are dropped when their results are produced.
+        this.generation = Math.max(this.generation, request.generation)
+        return null
+      case 'frame': {
+        const response = this.processFrame(request)
+        if (response?.type === 'result') {
+          response.backend = 'typescript'
+          response.tickMomentStatus = 'unsupported'
+        }
+        return response
+      }
+      case 'locate':
+      case 'learn': {
+        if (request.generation < this.generation) return null
+        this.generation = request.generation
+        const envelope = { generation: request.generation, requestId: request.requestId }
+        const result = { status: 'unsupported', backend: 'typescript', reason: 'auto-profile-unsupported',
+          detail: '当前使用 TypeScript 识别后端, 请手动选择或编辑预设' } as const
+        return request.type === 'locate' ? { type: 'located', ...envelope, result } : { type: 'learned', ...envelope, result }
+      }
+      default:
+        return null
+    }
+  }
+
+  private configure(generation: number, profile: import('../core/activeProfile').ActiveProfile): ConfiguredMessage {
+    this.generation = generation
+    if ('kind' in profile) throw new Error('Reference engine accepts learned clocks only')
+    this.profile = profile
+    this.templates = compileTemplates(profile)
+    const readiness = profileReadiness(profile)
+    return {
+      type: 'configured',
+      generation,
+      ready: readiness.ready,
+      missing: readiness.missing,
+      sampleCount: readiness.sampleCount,
+    }
+  }
+
+  private processFrame(request: FrameMessage): WorkerResponse | null {
+    if (request.generation !== this.generation) return null
+    if (!this.profile || !this.templates) {
+      return { type: 'error', generation: request.generation, message: '识别引擎尚未配置' }
+    }
+    const started = this.now()
+    try {
+      const pixels = new Uint8Array(request.pixels)
+      const expected = request.width * request.height * 4
+      if (pixels.length < expected) {
+        return {
+          type: 'result',
+          generation: request.generation,
+          role: request.role,
+          frameIndex: request.frameIndex,
+          outcome: { status: 'failed', reason: 'decode-failed', detail: '帧数据长度不足' },
+          debug: null,
+          elapsedMs: this.now() - started,
+        }
+      }
+      const result = recognizeFrame(
+        { data: pixels, width: request.width, height: request.height },
+        this.profile,
+        this.templates,
+        {
+          mediaTime: request.mediaTime,
+          wallTime: request.wallTime,
+          frameIndex: request.frameIndex,
+        },
+      )
+      return {
+        type: 'result',
+        generation: request.generation,
+        role: request.role,
+        frameIndex: request.frameIndex,
+        outcome: result.outcome,
+        debug: request.wantDebug ? toWorkerDebug(result.debug) : null,
+        elapsedMs: this.now() - started,
+      } satisfies ResultMessage
+    } catch (error) {
+      return {
+        type: 'result',
+        generation: request.generation,
+        role: request.role,
+        frameIndex: request.frameIndex,
+        outcome: {
+          status: 'failed',
+          reason: 'decode-failed',
+          detail: error instanceof Error ? error.message : String(error),
+        },
+        debug: null,
+        elapsedMs: this.now() - started,
+      }
+    }
+  }
+}
+
+function toWorkerDebug(debug: import('./recognitionReference').RecognizeDebug | null): WorkerDebug | null {
+  if (!debug) return null
+  return {
+    roiPixels: debug.roiPixels,
+    binary: { data: debug.binary.data, width: debug.binary.width, height: debug.binary.height },
+    boxes: debug.boxes,
+    projection: debug.projection,
+    inkRatio: debug.inkRatio,
+    matches: debug.matches,
+    normalized: debug.normalized,
+  }
+}

@@ -5,7 +5,7 @@ import { normalizeGlyph } from '../core/imageOps'
 import { createEmptyProfile, type ClockChar, type RecognitionProfile } from '../core/profileSchema'
 import { CLOCK_GLYPHS, createFrame, drawText, renderGlyphMask } from '../test/glyphFont'
 import { RecognitionClient, type WorkerLike } from './client'
-import { RecognitionEngine } from './engine'
+import { RecognitionEngine } from '../test/recognitionEngine'
 import { FULL_FRAME_ROI, FrameGrabber } from './frameGrabber'
 import type { ResultMessage, WorkerRequest, WorkerResponse } from './protocol'
 
@@ -194,7 +194,7 @@ describe('RecognitionClient', () => {
     const sent = worker.sent[0]
     expect(sent?.type).toBe('configure')
     if (sent?.type === 'configure') {
-      expect(sent.profile.roi).toEqual(FULL_FRAME_ROI)
+      expect('roi' in sent.profile && sent.profile.roi).toEqual(FULL_FRAME_ROI)
     }
     // The client keeps the real ROI so the grabber knows what to crop.
     expect(client.roi).toEqual({ x: 0.4, y: 0.02, w: 0.2, h: 0.08 })

@@ -44,7 +44,11 @@ async function harness(automatic = true, position = 100) {
   })
   await session.loadSource('official', source)
   await session.loadSource('commentary', source)
-  for (const role of ['official', 'commentary'] as const) primeMediaElement(session.engine.element(role), { duration: 600, currentTime: position })
+  for (const role of ['official', 'commentary'] as const) {
+    Object.defineProperty(session.engine.element(role), 'videoWidth', { configurable: true, value: 1920 })
+    Object.defineProperty(session.engine.element(role), 'videoHeight', { configurable: true, value: 1080 })
+    primeMediaElement(session.engine.element(role), { duration: 600, currentTime: position })
+  }
   return { sample }
 }
 

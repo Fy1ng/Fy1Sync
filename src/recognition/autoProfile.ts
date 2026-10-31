@@ -1,3 +1,4 @@
+import { captureRoi, isHudPack, variantForSize, type ActiveProfile } from '../core/activeProfile'
 /** Source-local discovery and consent. Saved profiles are never mutated here. */
 import type { RecognitionProfile, RoiRect } from '../core/profileSchema'
 import { MIN_SYNC_CONFIDENCE, SOURCE_ROLES, type RecognitionOutcome, type SourceRole } from '../core/types'
@@ -204,7 +205,7 @@ export class OnlineAutoProfiles {
   constructor(private readonly options: {
     createWorker: () => WorkerLike
     video: (role: SourceRole) => HTMLVideoElement | null
-    profile: (role: SourceRole) => RecognitionProfile | null
+    profile: (role: SourceRole) => ActiveProfile | null
     use: AutoProfileDeps['use']
     changed: () => void
   }) {
@@ -226,7 +227,10 @@ export class OnlineAutoProfiles {
     const profile = this.options.profile(role)
     if (!video || !profile || this.disposed) return
     const client = this.client(role)
-    client.configure(profile, { automatic: profile.id.startsWith('session/') })
+    try {
+      client.configure(profile, isHudPack(profile) ? { variantId: variantForSize(profile, { width: video.videoWidth, height: video.videoHeight }) }
+        : { automatic: profile.id.startsWith('session/') })
+    } catch { return }
     const grabber = new FrameGrabber(() => performance.now())
     let last = -Infinity
     let active = true
@@ -242,7 +246,7 @@ export class OnlineAutoProfiles {
       const segment = generation
       const source = [video.src, video.currentSrc, video.srcObject, video.videoWidth, video.videoHeight]
       const currentProfile = this.options.profile(role) ?? profile
-      const frame = await grabber.grabAsync(video, currentProfile.roi, mediaTime)
+      const frame = await grabber.grabAsync(video, captureRoi(currentProfile), mediaTime)
       if (!active || this.disposed || segment !== generation || video.paused || video.seeking || this.controller.busy
         || this.options.video(role) !== video || (this.options.profile(role) ?? profile) !== currentProfile
         || source.some((value, index) => value !== [video.src, video.currentSrc, video.srcObject, video.videoWidth, video.videoHeight][index])) return

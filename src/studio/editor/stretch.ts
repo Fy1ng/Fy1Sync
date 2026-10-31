@@ -12,8 +12,7 @@
  * the frames from there on are left for the viewer rather than guessed.
  */
 
-import { normalizeGlyph, cropBinary, type BinaryImage } from '../../core/imageOps'
-import { packBitmap } from '../../core/bitmapCodec'
+import { cropBinary, type BinaryImage } from '../../core/imageOps'
 import type { GlyphBox } from '../../core/segmentation'
 import type { ClockChar } from '../../core/profileSchema'
 import { parseCountdown } from '../../core/clockJump'
@@ -25,6 +24,8 @@ export interface StretchFrame {
   at: number
   binary: BinaryImage
   boxes: GlyphBox[]
+  /** Packed 32x48 glyphs returned by Rust for these boxes. */
+  bitmaps: string[]
 }
 
 export type GroupState =
@@ -147,7 +148,8 @@ export function stretchSamples(frames: StretchFrame[], groups: StretchGroup[], k
       const paired = pairReading(group.text, frame.boxes.length)
       if (!paired.ok) continue
       paired.chars.forEach((char, index) => {
-        const data = packBitmap(normalizeGlyph(cropBinary(frame.binary, frame.boxes[index]!)))
+        const data = frame.bitmaps[index]
+        if (!data) return
         const key = `${char}\u0000${data}`
         if (seen.has(key)) return
         seen.add(key)

@@ -10,27 +10,27 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
-import { mkdir, open, readFile, readdir, rename, unlink } from 'node:fs/promises'
+import { mkdir, open, readFile, readdir, rename, stat, unlink } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import {
-  parseProfile,
-  type ProfileIssue,
-  type RecognitionProfile,
-} from '../src/core/profileSchema'
+  parseHudStylePack,
+  type HudPackIssue,
+  type HudStylePack,
+} from '../src/core/hudStylePack'
 
 /** A profile with several multi-sample templates is tens of KB; 2 MiB is generous. */
 export const MAX_PRESET_BYTES = 2 * 1_048_576
 
 export type PresetRecord = {
   id: string
-  profile: RecognitionProfile
+  profile: HudStylePack
   updatedAt: number
   etag: string
 }
 
 export type SaveOutcome =
   | { ok: true; record: PresetRecord; created: boolean }
-  | { ok: false; code: 'invalid'; issues: ProfileIssue[] }
+  | { ok: false; code: 'invalid'; issues: HudPackIssue[] }
   | { ok: false; code: 'too-large'; message: string }
   | { ok: false; code: 'conflict'; currentEtag: string }
   | { ok: false; code: 'io-error'; message: string }
@@ -97,7 +97,7 @@ function sameFileName(left: string, right: string): boolean {
 type FileEntry = { exists: boolean; record: PresetRecord | null }
 type OwnedEntry = { fileName: string; record: PresetRecord }
 
-export function etagFor(profile: RecognitionProfile): string {
+export function etagFor(profile: HudStylePack): string {
   return createHash('sha256').update(JSON.stringify(profile)).digest('hex').slice(0, 32)
 }
 
@@ -170,12 +170,15 @@ export class PresetStore {
     }
 
     // Snapshot caller-owned data before joining a queue that may await another write.
-    const parsed = parseProfile(JSON.parse(serialized))
-    if (!parsed.profile) {
+    const parsed = parseHudStylePack(raw)
+    if (!parsed.pack) {
       return { ok: false, code: 'invalid', issues: parsed.issues }
     }
+    if (parsed.pack.id !== id) {
+      return { ok: false, code: 'invalid', issues: [{ path: 'id', message: '样式包 ID 与保存目标不一致', severity: 'error' }] }
+    }
 
-    const validated = parsed.profile
+    const validated = JSON.parse(serialized) as HudStylePack
     return ordered<SaveOutcome>(this.dir, async () => {
       try {
         const canonical = await this.readFile(fileName)
@@ -185,8 +188,8 @@ export class PresetStore {
         if (expectedEtag !== undefined && existing?.record.etag !== expectedEtag) {
           return { ok: false, code: 'conflict', currentEtag: existing?.record.etag ?? '' }
         }
-        const profile: RecognitionProfile = { ...validated, id, updatedAt: Date.now() }
-        const record: PresetRecord = { id, profile, updatedAt: profile.updatedAt, etag: etagFor(profile) }
+        const profile = validated
+        const record: PresetRecord = { id, profile, updatedAt: Date.now(), etag: etagFor(profile) }
         await mkdir(this.dir, { recursive: true })
         if (existing) {
           const backupName = backupNameFor(fileName)
@@ -235,7 +238,7 @@ export class PresetStore {
     return null
   }
 
-  private async atomicWrite(fileName: string, profile: RecognitionProfile): Promise<void> {
+  private async atomicWrite(fileName: string, profile: HudStylePack): Promise<void> {
     const target = join(this.dir, fileName)
     const temporary = `${target}.${randomUUID()}.tmp`
     try {
@@ -251,13 +254,13 @@ export class PresetStore {
   private async readFile(fileName: string): Promise<FileEntry> {
     try {
       const text = await readFile(join(this.dir, fileName), 'utf8')
-      const parsed = parseProfile(JSON.parse(text))
-      if (!parsed.profile || !fileNameFor(parsed.profile.id)) return { exists: true, record: null }
+      const parsed = parseHudStylePack(JSON.parse(text))
+      if (!parsed.pack || !fileNameFor(parsed.pack.id)) return { exists: true, record: null }
       return { exists: true, record: {
-        id: parsed.profile.id,
-        profile: parsed.profile,
-        updatedAt: parsed.profile.updatedAt ?? 0,
-        etag: etagFor(parsed.profile),
+        id: parsed.pack.id,
+        profile: parsed.pack,
+        updatedAt: (await stat(join(this.dir, fileName))).mtimeMs,
+        etag: etagFor(parsed.pack),
       } }
     } catch (error) {
       return { exists: (error as NodeJS.ErrnoException).code !== 'ENOENT', record: null }

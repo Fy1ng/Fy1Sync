@@ -223,38 +223,36 @@ async function renderHls(dirName, sourceName) {
   process.stdout.write(`  ${dirName}/index.m3u8  HLS VOD\n`)
 }
 
-/**
- * The profile that matches these fixtures, so a test run has something to recognise.
- *
- * Shape follows `RecognitionProfile` in src/core/profileSchema.ts — `preprocess.threshold` is
- * 0..255, not a fraction, and `templates` stays empty on purpose: glyphs come from a local
- * font, so bitmaps captured on one machine would not match another's render. Import this in
- * the Profile Editor and capture from `frame-0-20.png`.
- */
+/** Glyphs are taught from decoded fixture frames through the editor's Rust entry point. */
 async function writeProfileStub() {
   const profile = {
-    schemaVersion: 2,
+    kind: 'hud-style-pack',
+    schemaVersion: 1,
     id: 'fixture/countdown',
+    revision: 1,
     name: '测试源倒计时',
-    roi: ROI,
-    clockFormat: 'm:ss',
-    detectWindowSeconds: 3,
-    sampleFps: 30,
-    matchThreshold: 0.82,
-    // Light glyphs (0xF2F5F7) on a near-black plate (0x0B0E12): the bright pixels are
-    // already the ink, so `invert` stays off — it is for the opposite polarity, a dark
-    // clock on a light scoreboard. `binarize` keeps pixels >= threshold when invert is
-    // false, and the plate sits far below 150 while the glyphs sit far above it.
-    preprocess: { scale: 1.4, threshold: 150, invert: false },
-    templates: {},
-    updatedAt: 0,
-    notes:
-      '由 scripts/generate-test-sources.mjs 生成的测试源配套配置。模板需在 Profile Editor 中用 ' +
-      'frame-0-20.png 采集：字形来自本机字体，不同机器渲染结果不同。',
+    bitmaps: {},
+    variants: [{
+      id: 'official-top-720',
+      nativeSize: { width: WIDTH, height: HEIGHT },
+      fields: {
+        clock: {
+          roi: { x: Math.round(ROI.x * WIDTH), y: Math.round(ROI.y * HEIGHT), w: Math.round(ROI.w * WIDTH), h: Math.round(ROI.h * HEIGHT) },
+          preprocess: { scale: 1.4, threshold: 150, invert: false },
+          segment: { minColumnInk: 1, minGlyphWidth: 2, minGapWidth: 1, minInkRatio: 0.08 },
+          glyphs: {},
+          grammar: { kind: 'countdown', format: 'm:ss' },
+          match: { minScore: 0.82, minMargin: 0.03 },
+          gateCue: null,
+        },
+        scoreLeft: null, scoreRight: null, round: null,
+      },
+      cues: {}, states: {}, organizer: null,
+    }],
   }
   const target = join(outDir, 'fixture-profile.json')
   await writeFile(target, `${JSON.stringify(profile, null, 2)}\n`, 'utf8')
-  process.stdout.write('  fixture-profile.json  ROI 与预处理参数\n')
+  process.stdout.write('  fixture-profile.json  样式包区域与预处理参数\n')
 }
 
 async function main() {

@@ -4,10 +4,9 @@ import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
-// Reuse the existing suites verbatim. Every exported core call they make is run
-// against WASM as well, so new oracle vectors automatically join the parity suite.
-// jsdom is needed only by the existing RecognitionClient/FrameGrabber test cases;
-// the WASM itself is synchronously instantiated from bytes by Node.
+// Existing image, segmentation and sync vectors retain independent TS/Rust parity.
+// Recognition scenarios assert Rust output through the test-only adapter; there is no
+// second TS recognizer. jsdom supports RecognitionClient/FrameGrabber test cases.
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>()
   const executable = process.env.STREAM_SYNC_FFMPEG
@@ -34,7 +33,7 @@ vi.mock('../core/segmentation', async (importOriginal) => {
 vi.mock('../core/templateMatch', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../core/templateMatch')>()
   const { wrapModule } = await import('./test-helpers')
-  return wrapModule(actual, ['scoreMasks', 'scoreCoverage', 'compileTemplates', 'matchGlyph', 'recognizeFrame'])
+  return wrapModule(actual, ['scoreMasks', 'scoreCoverage'])
 })
 vi.mock('../core/bitmapCodec', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../core/bitmapCodec')>()
@@ -44,8 +43,7 @@ vi.mock('../core/bitmapCodec', async (importOriginal) => {
 vi.mock('../core/profileSchema', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../core/profileSchema')>()
   const { wrapModule } = await import('./test-helpers')
-  // v1 disk migration remains in TS and is outside the Rust recognition contract.
-  return wrapModule(actual, ['validateProfile', 'profileReadiness'])
+  return wrapModule(actual, ['profileReadiness'])
 })
 vi.mock('../core/clockJump', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../core/clockJump')>()
@@ -93,12 +91,11 @@ import '../recognition/recognition.test'
 import '../recognition/fixtureFrames.test'
 import { assertParityIntegrity, parityCounts } from './test-helpers'
 
-// The parity bridge serialises every argument as JSON, so each full 1280x720 frame costs
-// about 1.5 s per call here. Production recognition passes the Uint8Array directly; only
-// this oracle run needs the longer budget.
+// The Rust-vector bridge serializes full fixture frames as JSON. Production recognition
+// passes RGBA bytes directly; decoded fixture scenarios need the larger test budget.
 vi.setConfig({ testTimeout: 120_000, hookTimeout: 300_000 })
 
-describe('original vectors through both implementations', () => {
+describe('original TS/Rust primitive parity and Rust recognition vectors', () => {
   it('requires decoded-frame fixture prerequisites instead of silently skipping parity', () => {
     for (const name of ['official.mp4', 'commentary.mp4']) {
       expect(existsSync(join(process.cwd(), 'public/test-sources', name)), name).toBe(true)
@@ -106,11 +103,11 @@ describe('original vectors through both implementations', () => {
     expect(() => execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' })).not.toThrow()
   })
   it('exercises each required algorithm family', () => {
-    for (const operation of ['recognizeFrame', 'segmentGlyphs', 'matchGlyph', 'clockJump.push',
-      'estimateOffset', 'planOffsetChange', 'packBitmap', 'validateProfile', 'profileReadiness']) {
+    for (const operation of ['scoreMasks', 'scoreCoverage', 'segmentGlyphs', 'clockJump.push',
+      'estimateOffset', 'planOffsetChange', 'packBitmap', 'profileReadiness']) {
       expect(parityCounts[operation], operation).toBeGreaterThan(0)
     }
   })
 })
 
-afterAll(() => assertParityIntegrity('Original-vector parity'))
+afterAll(() => assertParityIntegrity('Original image/sync parity with Rust recognition vectors'))

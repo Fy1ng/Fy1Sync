@@ -1,3 +1,4 @@
+import { validateLearnedProfile as validateProfile } from '../test/recognitionReference'
 import { describe, expect, it } from 'vitest'
 import { packBitmap } from './bitmapCodec'
 import {
@@ -13,9 +14,9 @@ import {
   roiToPixels,
   toGrayscale,
 } from './imageOps'
-import { TEMPLATE_HEIGHT, TEMPLATE_PIXELS, TEMPLATE_WIDTH, createEmptyProfile, validateProfile, type RecognitionProfile } from './profileSchema'
+import { TEMPLATE_HEIGHT, TEMPLATE_PIXELS, TEMPLATE_WIDTH, createEmptyProfile, type RecognitionProfile } from './profileSchema'
 import { adjustGlyphBox, columnProjection, excludeGlyphBox, mergeGlyphBoxes, segmentGlyphs, splitGlyphBox } from './segmentation'
-import { compileTemplates, matchGlyph, recognizeFrame, scoreCoverage, scoreMasks } from './templateMatch'
+import { compileTemplates, matchGlyph, recognizeFrame, scoreCoverage, scoreMasks } from '../test/recognitionReference'
 import { CLOCK_GLYPHS, createFrame, drawText, renderGlyphMask, type RgbaFrame } from '../test/glyphFont'
 
 const PREPROCESS = { scale: 1.6, threshold: 120, invert: false }
