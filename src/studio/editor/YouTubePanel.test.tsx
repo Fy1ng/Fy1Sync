@@ -97,7 +97,20 @@ describe('the YouTube panel', () => {
     fake.push(fake.state({ currentTime: 750 + MAX_CLIP_SECONDS + 1 }))
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /设为出点/ })) })
     expect(screen.getByRole('button', { name: /下载这一段/ })).toBeDisabled()
-    expect(screen.getByText('一次最多下载 5 分钟')).toBeInTheDocument()
+    expect(screen.getByText('一次最多下载 3 小时')).toBeInTheDocument()
+  })
+
+  it.each([3600, MAX_CLIP_SECONDS])('allows a full %s-second match clip', async (duration) => {
+    const fake = fakeSource()
+    await opened(fake)
+    fake.push(fake.state({ duration: 20_000, currentTime: 0 }))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /设为入点/ })) })
+    fake.push(fake.state({ duration: 20_000, currentTime: duration }))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /设为出点/ })) })
+    const download = screen.getByRole('button', { name: /下载这一段/ })
+    expect(download).toBeEnabled()
+    await act(async () => { fireEvent.click(download) })
+    expect(fake.source.startClip).toHaveBeenCalledWith('https://www.youtube.com/watch?v=swMquqtyh-A', 0, duration, 2160)
   })
 
   it.each([2160, 1440, 1080] as const)('downloads the selected %sp independently of the player quality', async (targetHeight) => {

@@ -72,9 +72,9 @@ describe('YouTube admin IPC boundary', () => {
       ['ytBrowseCommand', { action: 'eval', seconds: 2 }], ['ytBrowseCommand', { action: 'seek', seconds: NaN }],
       ['ytBrowseCommand', { action: 'pause', seconds: 2 }], ['ytImportCancel', { jobId: '../../file' }],
       ['ytImportStart', { url: 'x', startSeconds: 3, endSeconds: 2, targetHeight: 2160 }],
-      ['ytImportStart', { url: 'x', startSeconds: 0, endSeconds: 301, targetHeight: 2160, output: 'file' }],
+      ['ytImportStart', { url: 'x', startSeconds: 0, endSeconds: 10801, targetHeight: 2160, output: 'file' }],
     ] as const) expect(await f.call(method, args)).toMatchObject({ ok: false, code: 'invalid-arguments' })
-    expect(await f.call('ytImportStart', { url: 'x', startSeconds: 0, endSeconds: 301, targetHeight: 2160 })).toMatchObject({ code: 'too-long' })
+    expect(await f.call('ytImportStart', { url: 'x', startSeconds: 0, endSeconds: 10801, targetHeight: 2160 })).toMatchObject({ code: 'too-long' })
     expect(f.imports.start).not.toHaveBeenCalled()
     expect(f.browse.open).not.toHaveBeenCalled()
     expect(await f.call('arbitrary')).toMatchObject({ code: 'unknown-method' })
@@ -94,6 +94,16 @@ describe('YouTube admin IPC boundary', () => {
       expect(await f.call('ytImportStart', { ...request, targetHeight })).toMatchObject({ ok: true })
       expect(f.imports.start).toHaveBeenLastCalledWith({ ...request, targetHeight })
     }
+    await f.installed.dispose()
+  })
+
+  it('accepts exactly three hours and rejects a longer clip at the IPC boundary', async () => {
+    const f = fixture()
+    const request = { url: 'https://www.youtube.com/watch?v=abcdefghijk', startSeconds: 120, endSeconds: 10920, targetHeight: 2160 }
+    expect(await f.call('ytImportStart', request)).toMatchObject({ ok: true })
+    expect(f.imports.start).toHaveBeenCalledExactlyOnceWith(request)
+    expect(await f.call('ytImportStart', { ...request, endSeconds: 10920.01 })).toMatchObject({ code: 'too-long' })
+    expect(f.imports.start).toHaveBeenCalledOnce()
     await f.installed.dispose()
   })
 

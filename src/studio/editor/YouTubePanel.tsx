@@ -4,7 +4,7 @@
  * Two jobs, kept apart. Browsing plays the recording in a signed-in YouTube player that
  * main lays over this panel, and takes a still of the decoded frame at its real size: that
  * still is a training sample like any screenshot. Downloading saves a marked stretch (at
- * most five minutes) as local footage, for the frame-by-frame work a page cannot give.
+ * most three hours) as local footage, for the frame-by-frame work a page cannot give.
  *
  * The page itself never reaches this renderer. Main owns it and its cookies; this side
  * only tells main where the player goes and receives a state and stills.
@@ -15,7 +15,7 @@ import type { YtImportHeight } from '../../../electron/ytImport'
 import type { GrabbedFrame } from '../../recognition/frameGrabber'
 
 /** Longest stretch one download may cover. */
-export const MAX_CLIP_SECONDS = 5 * 60
+export const MAX_CLIP_SECONDS = 3 * 60 * 60
 
 export interface YouTubeBrowseState {
   videoId: string
@@ -101,7 +101,7 @@ export const YOUTUBE_ERROR_TEXT: Record<YouTubeError, string> = {
   network: '连不上 YouTube，请检查网络或代理',
   'rate-limited': 'YouTube 暂时限制了请求，请过几分钟再试',
   'disk-full': '磁盘空间不足',
-  'too-long': `一次最多下载 ${MAX_CLIP_SECONDS / 60} 分钟`,
+  'too-long': '一次最多下载 3 小时',
   'invalid-url': '不是 YouTube 录像链接',
   cancelled: '已取消',
   failed: '操作没有完成，请重试',
