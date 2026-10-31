@@ -31,6 +31,7 @@ function fixture() {
   const cue = { roi: { x: 0, y: 0, w: 3, h: 3 }, preprocess: { scale: 1, threshold: 150, invert: false }, templates: ['mark'], minScore: .8 }
   variant.cues.replay = cue
   variant.states.replay = [[{ kind: 'cue', cue: 'replay', present: true }]]
+  variant.states.active = [[{ kind: 'field', field: 'clock', present: true }]]
   variant.organizer = cue
   const request: FrameMessage = {
     type: 'frame', generation: 2, role: 'official', frameIndex: 11,
@@ -76,9 +77,12 @@ describe('HUD full-frame Rust/WASM recognition', () => {
       for (const field of ['scoreLeft', 'scoreRight', 'round'] as const) {
         expect(player.hud?.fields[field]).toEqual({ status: 'failed', reason: field === 'round' ? 'score-failed' : 'not-configured', debug: null })
       }
-      expect(player.hud?.cues).toEqual({ replay: { status: 'failed', reason: 'not-implemented' } })
-      expect(player.hud?.states).toEqual({ replay: { status: 'failed', reason: 'not-implemented' } })
-      expect(player.hud?.organizer).toEqual({ status: 'failed', reason: 'not-implemented' })
+      expect(player.hud).toMatchObject({ content: 'live', phase: 'active',
+        cues: { replay: { status: 'not-matched', score: 0 } },
+        states: { replay: { status: 'not-matched' }, active: { status: 'matched' } },
+        organizer: { status: 'not-matched', score: 0 } })
+      expect(player.hud?.cues.replay?.debug?.binary.data).toBeInstanceOf(Uint8Array)
+      expect(player.hud?.organizer.debug?.gray.data).toBeInstanceOf(Uint8Array)
       expect(recognizeHud).toHaveBeenCalledOnce()
       expect(recognizeHud).toHaveBeenCalledWith(new Uint8Array(request.pixels), 640, 360, JSON.stringify(pack), variant.id)
       expect(oldRecognition).not.toHaveBeenCalled()
@@ -103,6 +107,22 @@ describe('HUD full-frame Rust/WASM recognition', () => {
       expect(editor.fields.round).toMatchObject({ status: 'read', reading: { text: '26', value: 26, source: 'derived' }, debug: null })
       const player = engine.handle(request) as ResultMessage
       expect(player.hud).toEqual(editor)
+      expect(player.outcome).toMatchObject({ status: 'success', reading: { text: '1:37', seconds: 97 } })
+    } finally { recognition.free() }
+  })
+
+  it('syncs a clock-only pack: no replay cue reads as live, no phase rules hold nothing back', async () => {
+    const { pack, variant, frame, request } = fixture()
+    // A pack as auto-learning or an unfinished editor saves it: the clock and nothing else.
+    variant.cues = {}
+    variant.states = {}
+    variant.organizer = null
+    const { recognition, engine } = realEngine()
+    try {
+      engine.handle({ type: 'configure', generation: 2, profile: pack, variantId: variant.id })
+      const editor = await recognizeHudFrame({ pixels: frame.data, width: frame.width, height: frame.height }, pack, variant.id)
+      expect(editor).toMatchObject({ content: 'live', phase: 'unconfigured' })
+      const player = engine.handle(request) as ResultMessage
       expect(player.outcome).toMatchObject({ status: 'success', reading: { text: '1:37', seconds: 97 } })
     } finally { recognition.free() }
   })

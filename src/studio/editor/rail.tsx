@@ -22,8 +22,9 @@ import { drawMask, TEMPLATE_SIZE, type FrameAnalysis } from './framePipeline'
 
 type Patch = (update: Partial<EditorClockModel>) => void
 
-export function RegionSection({ fieldId = 'clock', roi, onRoi, videoSize, analysis, boxes, selected, onSelect, grayRef, binaryRef }: {
+export function RegionSection({ fieldId = 'clock', label, roi, onRoi, videoSize, analysis, boxes, selected, onSelect, grayRef, binaryRef }: {
   fieldId?: HudFieldId
+  label?: string
   roi: RoiRect
   onRoi: (roi: RoiRect) => void
   videoSize: { width: number; height: number }
@@ -66,7 +67,7 @@ export function RegionSection({ fieldId = 'clock', roi, onRoi, videoSize, analys
           </div>
         </div>
       ) : (
-        <p className="muted">在画面上框住{FIELD_LABELS[fieldId]}, 载入截图或取一帧后显示裁切结果</p>
+        <p className="muted">在画面上框住{label ?? FIELD_LABELS[fieldId]}, 载入截图或取一帧后显示裁切结果</p>
       )}
       <div className="roi-fields">
         {fields.map((field) => (

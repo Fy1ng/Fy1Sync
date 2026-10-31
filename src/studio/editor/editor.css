@@ -829,6 +829,16 @@
   color: var(--drift);
 }
 
-.roi-window.is-readonly { border-color: #a5b4c8; opacity: 0.65; pointer-events: none; z-index: 1; }
+.roi-window.is-readonly { border-color: #a5b4c8; opacity: 0.65; pointer-events: none; z-index: 1; box-shadow: none; }
 .roi-window:not(.is-readonly) { z-index: 2; }
 .roi-window.is-readonly .roi-size { background: #344255; }
+.cue-templates { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.cue-templates .template-thumb { width: 110px; height: 52px; }
+.cue-templates canvas { max-width: 100%; max-height: 100%; object-fit: contain; }
+.cue-result { font-size: 12px; }
+.state-rules summary { cursor: pointer; }
+.state-rule { border-top: 1px solid var(--line); padding: 10px 0; }
+.state-rule-cues { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.state-rule-cues label { display: flex; align-items: center; gap: 4px; font-size: 11px; }
+.state-rule-cues select { max-width: 74px; background: var(--panel); color: inherit; border: 1px solid var(--line); border-radius: 4px; }
+.frame-state-preview p { margin: 5px 0; font-size: 12px; }

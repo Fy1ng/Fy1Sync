@@ -5,7 +5,9 @@ import { RecognitionEngine } from './engine'
 import type { FrameMessage, ResultMessage } from './protocol'
 
 const profile = createEmptyHudStylePack(undefined, undefined, { width: 2, height: 2 })
-const failedHud = (debug: unknown = null) => ({ variantId: profile.variants[0]!.id, fields: Object.fromEntries(['clock','scoreLeft','scoreRight','round'].map(id => [id,{status:'failed',reason:'blank-frame',debug: id === 'clock' ? debug : null}])) })
+const failedHud = (debug: unknown = null) => ({ variantId: profile.variants[0]!.id, content: 'indeterminate', phase: 'indeterminate',
+  fields: Object.fromEntries(['clock','scoreLeft','scoreRight','round'].map(id => [id,{status:'failed',reason:'blank-frame',debug: id === 'clock' ? debug : null}])),
+  cues: {}, states: {}, organizer: { status: 'failed', reason: 'not-configured', score: null, debug: null } })
 const frame: FrameMessage = { type: 'frame', generation: 2, role: 'official', frameIndex: 7,
   width: 2, height: 2, pixels: new ArrayBuffer(16), mediaTime: 1, wallTime: 2000, wantDebug: true }
 

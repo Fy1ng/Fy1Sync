@@ -65,6 +65,12 @@ pub fn prepare_hud_glyphs(rgba:&[u8],width:usize,height:usize,pack_json:&str,var
     serde_json::to_string(&result).map_err(|e|JsValue::from_str(&e.to_string()))
 }
 #[wasm_bindgen]
+pub fn prepare_hud_cue(rgba:&[u8],width:usize,height:usize,pack_json:&str,variant_id:&str,cue_id:&str) -> Result<String,JsValue> {
+    let pack=stream_syncer_core::hud_pack_from_json(pack_json).map_err(|e|JsValue::from_str(&e))?;
+    let result=stream_syncer_core::prepare_hud_cue(rgba,width,height,&pack,variant_id,cue_id).map_err(|e|JsValue::from_str(&e))?;
+    serde_json::to_string(&result).map_err(|e|JsValue::from_str(&e.to_string()))
+}
+#[wasm_bindgen]
 pub fn dispatch(op: &str, input_json: &str) -> Result<String, JsValue> {
     let input = serde_json::from_str(input_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
     stream_syncer_core::dispatch(op, input)

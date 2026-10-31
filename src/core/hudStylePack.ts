@@ -125,8 +125,8 @@ export function parseHudStylePack(value: unknown): HudPackValidation {
     for (let p = 0; p < pixels; p += 1) if (decoded.charCodeAt(p >> 3) & (1 << (7 - (p % 8)))) ink += 1
     if (ink === 0 || ink === pixels) error(`${path}.data`, '位图不能全空或全满')
   }
-  const references = (raw: unknown, path: string, dimensions: { width: number; height: number } | null): void => {
-    if (!Array.isArray(raw) || raw.length === 0) { error(path, '必须是非空位图 ID 数组'); return }
+  const references = (raw: unknown, path: string, dimensions: { width: number; height: number } | null, allowEmpty = false): void => {
+    if (!Array.isArray(raw) || (!allowEmpty && raw.length === 0)) { error(path, allowEmpty ? '必须是位图 ID 数组' : '必须是非空位图 ID 数组'); return }
     raw.forEach((ref: unknown, index) => {
       const p = `${path}[${index}]`
       if (typeof ref !== 'string' || !Object.hasOwn(bitmaps, ref)) { error(p, '引用的位图不存在'); return }
@@ -154,7 +154,7 @@ export function parseHudStylePack(value: unknown): HudPackValidation {
       const hasRoi = roi(region, `${p}.roi`, native)
       preprocess(raw.preprocess, `${p}.preprocess`)
       number(raw.minScore, `${p}.minScore`, 0, 1)
-      references(raw.templates, `${p}.templates`, hasRoi ? { width: region.w!, height: region.h! } : null)
+      references(raw.templates, `${p}.templates`, hasRoi ? { width: region.w!, height: region.h! } : null, true)
     }
     for (const [key, cue] of Object.entries(cues)) template(cue, `${path}.cues.${key}`)
     if (variant.organizer !== null) template(variant.organizer, `${path}.organizer`)

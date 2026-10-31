@@ -551,7 +551,7 @@ fn full_frame_hud_and_glyph_preparation_share_every_intermediate() {
     assert!(matches!(result.fields.round,HudFieldResult::Failed{ref reason,..} if reason=="score-failed"));
     assert!(result.cues.is_empty());
     assert!(result.states.is_empty());
-    assert!(matches!(result.organizer,HudPresenceResult::Failed{ref reason} if reason=="not-implemented"));
+    assert!(matches!(result.organizer,HudPresenceResult::Failed{ref reason,..} if reason=="not-configured"));
     let HudFieldResult::Read{reading,debug:Some(debug)}=result.fields.clock else {panic!("{result:?}")};
     assert_eq!(reading.text,"1:37");
     assert_eq!(reading.value,97.0);
@@ -600,23 +600,89 @@ fn hud_honors_segment_and_matching_settings() {
 }
 
 #[test]
-fn hud_presence_slots_preserve_configured_keys_without_claiming_matches() {
-    let (frame,roi)=clock("1:37",6);
+fn hud_cues_organizer_and_preparation_share_the_whole_region() {
+    let (mut frame,roi)=clock("1:37",6);
     let mut value=hud_pack(&profile(6,roi),640,360);
-    value["bitmaps"]["mark"]=json!({"width":3,"height":3,"data":pack_bitmap(&[255,0,255,0,255,0,255,0,255])});
-    let cue=json!({"roi":{"x":0,"y":0,"w":3,"h":3},"preprocess":{"scale":1.0,"threshold":150,"invert":false},"templates":["mark"],"minScore":0.8});
+    let mask=[255,0,255,0,255,0,255,0,255];
+    value["bitmaps"]["mark"]=json!({"width":3,"height":3,"data":pack_bitmap(&mask)});
+    value["bitmaps"]["other-mark"]=json!({"width":3,"height":3,"data":pack_bitmap(&[0,255,0,255,0,255,0,255,0])});
+    let cue=json!({"roi":{"x":7,"y":11,"w":3,"h":3},"preprocess":{"scale":1.4,"threshold":150,"invert":false},"templates":["other-mark","mark"],"minScore":1.0});
     value["variants"][0]["cues"]["replay"]=cue.clone();
     value["variants"][0]["states"]["replay"]=json!([[{"kind":"cue","cue":"replay","present":true}]]);
     value["variants"][0]["organizer"]=cue;
     let pack=parse_hud_style_pack(&value).unwrap();
     let result=recognize_hud_frame(&frame,640,360,&pack,"official-top-360").unwrap();
-    let result=serde_json::to_value(result).unwrap();
-    assert_eq!(result["cues"],json!({"replay":{"status":"failed","reason":"not-implemented"}}));
-    assert_eq!(result["states"],json!({"replay":{"status":"failed","reason":"not-implemented"}}));
-    assert_eq!(result["organizer"],json!({"status":"failed","reason":"not-implemented"}));
-    assert_eq!(serde_json::to_value(HudPresenceResult::Matched).unwrap(),json!({"status":"matched"}));
-    assert_eq!(serde_json::to_value(HudPresenceResult::NotMatched).unwrap(),json!({"status":"not-matched"}));
-    assert_eq!(serde_json::to_value(HudPresenceResult::Indeterminate{reason:"unknown".into()}).unwrap(),json!({"status":"indeterminate","reason":"unknown"}));
+    assert!(matches!(result.cues["replay"],HudPresenceResult::NotMatched{score:Some(0.0),..}));
+    assert!(matches!(result.states["replay"],HudPresenceResult::NotMatched{score:None,debug:None}));
+    assert!(matches!(result.organizer,HudPresenceResult::NotMatched{score:Some(0.0),..}));
+    assert_eq!(result.content,"live");
+    for (i, pixel) in mask.iter().enumerate() {
+        let offset=((11+i/3)*640+7+i%3)*4;
+        frame[offset..offset+3].fill(*pixel);
+    }
+    let result=recognize_hud_frame(&frame,640,360,&pack,"official-top-360").unwrap();
+    let HudPresenceResult::Matched{score:Some(score),debug:Some(debug)}=&result.cues["replay"] else { panic!("{result:?}") };
+    assert_eq!(*score,1.0);
+    assert_eq!(debug.roi_pixels,Rect{x:7.0,y:11.0,width:3.0,height:3.0});
+    assert_eq!(debug.binary.data,mask);
+    assert_eq!(result.content,"replay");
+    assert!(matches!(result.organizer,HudPresenceResult::Matched{score:Some(1.0),..}));
+    for cue_id in ["replay","organizer"] {
+        let prepared=prepare_hud_cue(&frame,640,360,&pack,"official-top-360",cue_id).unwrap();
+        assert_eq!(prepared.gray,debug.gray);
+        assert_eq!(prepared.binary,debug.binary);
+        assert_eq!(unpack_bitmap(&prepared.bitmap,9).unwrap(),mask);
+    }
+    assert!(prepare_hud_cue(&frame,640,360,&pack,"official-top-360","bomb").is_err());
+    assert!(prepare_hud_cue(&frame,640,359,&pack,"official-top-360","replay").is_err());
+    value["variants"][0]["cues"]["replay"]["templates"]=json!([]);
+    value["variants"][0]["organizer"]["templates"]=json!([]);
+    let empty=parse_hud_style_pack(&value).unwrap();
+    let result=recognize_hud_frame(&frame,640,360,&empty,"official-top-360").unwrap();
+    assert!(matches!(result.cues["replay"],HudPresenceResult::Failed{ref reason,score:None,debug:Some(_)} if reason=="insufficient-templates"));
+    assert!(matches!(result.organizer,HudPresenceResult::Failed{ref reason,..} if reason=="insufficient-templates"));
+    assert!(matches!(result.states["replay"],HudPresenceResult::Failed{ref reason,..} if reason=="dependency-failed"));
+    assert_eq!(result.content,"indeterminate");
+}
+
+#[test]
+fn bomb_and_statistics_provide_positive_evidence_of_missing_fields() {
+    let (frame,roi)=clock("1:37",6);
+    let mut value=hud_pack(&profile(6,roi),640,360);
+    value["bitmaps"]["mark"]=json!({"width":3,"height":3,"data":pack_bitmap(&[255,0,255,0,255,0,255,0,255])});
+    let cue=json!({"roi":{"x":0,"y":0,"w":3,"h":3},"preprocess":{"scale":1.0,"threshold":150,"invert":false},"templates":["mark"],"minScore":0.8});
+    value["variants"][0]["cues"]["bomb"]=cue.clone();
+    value["variants"][0]["states"]["planted"]=json!([[{"kind":"cue","cue":"bomb","present":true},{"kind":"field","field":"clock","present":false}]]);
+    let mut pack=parse_hud_style_pack(&value).unwrap();
+    let absent_mark=recognize_hud_frame(&frame,640,360,&pack,"official-top-360").unwrap();
+    assert!(matches!(absent_mark.fields.clock,HudFieldResult::Read{..}));
+    assert!(matches!(absent_mark.states["planted"],HudPresenceResult::NotMatched{..}));
+    let mut bomb_frame=frame;
+    for (i,pixel) in [255,0,255,0,255,0,255,0,255].iter().enumerate() {
+        bomb_frame[(i/3*640+i%3)*4..(i/3*640+i%3)*4+3].fill(*pixel);
+    }
+    let bomb=recognize_hud_frame(&bomb_frame,640,360,&pack,"official-top-360").unwrap();
+    assert!(matches!(bomb.fields.clock,HudFieldResult::Absent{..}));
+    assert!(matches!(bomb.states["planted"],HudPresenceResult::Matched{..}));
+    assert_eq!(bomb.phase,"planted");
+    for cue_id in ["roundHistory","scoreboard"] {
+        let mark=pack.variants[0].cues.remove("bomb").or_else(||pack.variants[0].cues.remove("roundHistory")).unwrap();
+        pack.variants[0].cues.insert(cue_id.into(),mark);
+        pack.variants[0].states.clear();
+        pack.variants[0].states.insert(if cue_id=="roundHistory" {"round-history"} else {"scoreboard"}.into(),vec![vec![HudCondition::Cue{cue:cue_id.into(),present:true}]]);
+        for side in ["scoreLeft","scoreRight"] {
+            let mut field=pack.variants[0].fields.clock.as_ref().unwrap().clone();
+            field.grammar=HudGrammar::Integer{min:0,max:99};
+            field.glyphs.remove(":");
+            if side=="scoreLeft" {pack.variants[0].fields.score_left=Some(field)} else {pack.variants[0].fields.score_right=Some(field)};
+        }
+        let stats=recognize_hud_frame(&bomb_frame,640,360,&pack,"official-top-360").unwrap();
+        assert!(matches!(stats.fields.clock,HudFieldResult::Absent{..}));
+        assert!(matches!(stats.fields.score_left,HudFieldResult::Absent{..}));
+        assert!(matches!(stats.fields.score_right,HudFieldResult::Absent{..}));
+        assert!(matches!(stats.fields.round,HudFieldResult::Indeterminate{..}));
+        assert_eq!(stats.phase,"statistics");
+    }
 }
 
 #[test]

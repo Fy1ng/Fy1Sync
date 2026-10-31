@@ -256,13 +256,14 @@ fn references(
     bitmaps: &Value,
     path: &str,
     expected: Option<(u64, u64)>,
+    allow_empty: bool,
     issues: &mut Vec<HudIssue>,
 ) {
     let Some(ids) = v.as_array() else {
         problem(issues, path, "必须是位图 ID 数组");
         return;
     };
-    if ids.is_empty() {
+    if ids.is_empty() && !allow_empty {
         problem(issues, path, "必须是非空位图 ID 数组");
         return;
     }
@@ -307,11 +308,9 @@ fn cue(v: &Value, size: &Value, bitmaps: &Value, path: &str, issues: &mut Vec<Hu
         bitmaps,
         &path_at(path, "templates"),
         unsigned(&v["roi"]["w"]).zip(unsigned(&v["roi"]["h"])),
+        true,
         issues,
     );
-    if v["templates"].as_array().is_some_and(Vec::is_empty) {
-        problem(issues, &path_at(path, "templates"), "模板不能为空");
-    }
 }
 fn field(
     v: &Value,
@@ -381,7 +380,7 @@ fn field(
             if !CLOCK_CHARS.contains(&c.as_str()) || (name != "clock" && c == ":") {
                 problem(issues, &cp, "不支持的字形字符");
             }
-            references(ids, bitmaps, &cp, Some((32, 48)), issues);
+            references(ids, bitmaps, &cp, Some((32, 48)), false, issues);
         }
     } else {
         problem(issues, &gp, "必须是字形映射对象");
@@ -773,12 +772,27 @@ pub struct HudFieldResults {
     pub round: HudFieldResult,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HudCueDebug {
+    pub roi_pixels: Rect,
+    pub gray: Image,
+    pub binary: Image,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HudCuePreparation {
+    pub roi_pixels: Rect,
+    pub gray: Image,
+    pub binary: Image,
+    pub bitmap: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "kebab-case")]
 pub enum HudPresenceResult {
-    Matched,
-    NotMatched,
-    Indeterminate { reason: String },
-    Failed { reason: String },
+    Matched { score: Option<f64>, debug: Option<HudCueDebug> },
+    NotMatched { score: Option<f64>, debug: Option<HudCueDebug> },
+    Indeterminate { reason: String, score: Option<f64>, debug: Option<HudCueDebug> },
+    Failed { reason: String, score: Option<f64>, debug: Option<HudCueDebug> },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -788,6 +802,8 @@ pub struct HudFrameResult {
     pub cues: BTreeMap<String, HudPresenceResult>,
     pub states: BTreeMap<String, HudPresenceResult>,
     pub organizer: HudPresenceResult,
+    pub content: String,
+    pub phase: String,
 }
 fn failed(reason: &str, debug: Option<HudDebug>) -> HudFieldResult {
     HudFieldResult::Failed {
@@ -814,6 +830,162 @@ fn frame_variant<'a>(
         return Err("RGBA 帧数据长度不匹配".into());
     }
     Ok(variant)
+}
+fn analyze_hud_cue(rgba: &[u8], width: usize, cue: &HudCue) -> HudCueDebug {
+    let mut crop = Vec::with_capacity(cue.roi.w * cue.roi.h * 4);
+    for y in cue.roi.y..cue.roi.y + cue.roi.h {
+        let start = (y * width + cue.roi.x) * 4;
+        crop.extend_from_slice(&rgba[start..start + cue.roi.w * 4]);
+    }
+    let gray = to_grayscale(&crop, cue.roi.w, cue.roi.h);
+    let binary = binarize(&gray, &cue.preprocess);
+    HudCueDebug { roi_pixels: cue.roi.rect(), gray, binary }
+}
+pub fn prepare_hud_cue(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    pack: &HudStylePack,
+    id: &str,
+    cue_id: &str,
+) -> Result<HudCuePreparation, String> {
+    let variant = frame_variant(rgba, width, height, pack, id)?;
+    let cue = if cue_id == "organizer" { variant.organizer.as_ref() } else { variant.cues.get(cue_id) }
+        .ok_or_else(|| "固定图形不存在或尚未配置".to_string())?;
+    let debug = analyze_hud_cue(rgba, width, cue);
+    Ok(HudCuePreparation {
+        bitmap: pack_bitmap(&debug.binary.data),
+        roi_pixels: debug.roi_pixels,
+        gray: debug.gray,
+        binary: debug.binary,
+    })
+}
+fn presence_failed(reason: &str, debug: Option<HudCueDebug>) -> HudPresenceResult {
+    HudPresenceResult::Failed { reason: reason.into(), score: None, debug }
+}
+fn recognize_hud_cue(
+    rgba: &[u8],
+    width: usize,
+    pack: &HudStylePack,
+    cue: &HudCue,
+) -> HudPresenceResult {
+    let debug = analyze_hud_cue(rgba, width, cue);
+    if cue.templates.is_empty() {
+        return presence_failed("insufficient-templates", Some(debug));
+    }
+    let score = cue.templates.iter().map(|id| {
+        let template = &pack.bitmaps[id];
+        let mask = unpack_bitmap(&template.data, template.width * template.height).unwrap();
+        score_masks(&debug.binary.data, &mask)
+    }).fold(0.0, f64::max);
+    if score >= cue.min_score {
+        HudPresenceResult::Matched { score: Some(score), debug: Some(debug) }
+    } else {
+        HudPresenceResult::NotMatched { score: Some(score), debug: Some(debug) }
+    }
+}
+fn presence_matched(result: Option<&HudPresenceResult>) -> bool {
+    matches!(result, Some(HudPresenceResult::Matched { .. }))
+}
+fn condition_value(
+    condition: &HudCondition,
+    cues: &BTreeMap<String, HudPresenceResult>,
+    fields: &HudFieldResults,
+) -> Result<Option<bool>, ()> {
+    let (value, expected) = match condition {
+        HudCondition::Cue { cue, present } => {
+            let value = match cues.get(cue) {
+                Some(HudPresenceResult::Matched { .. }) => Some(true),
+                Some(HudPresenceResult::NotMatched { .. }) => Some(false),
+                Some(HudPresenceResult::Indeterminate { .. }) => None,
+                _ => return Err(()),
+            };
+            (value, *present)
+        }
+        HudCondition::Field { field, present } => {
+            let field = match field.as_str() {
+                "clock" => &fields.clock,
+                "scoreLeft" => &fields.score_left,
+                "scoreRight" => &fields.score_right,
+                _ => return Err(()),
+            };
+            let value = match field {
+                HudFieldResult::Read { .. } => Some(true),
+                HudFieldResult::Absent { .. } => Some(false),
+                HudFieldResult::Indeterminate { .. } => None,
+                HudFieldResult::Failed { .. } => return Err(()),
+            };
+            (value, *present)
+        }
+    };
+    Ok(value.map(|value| value == expected))
+}
+fn evaluate_hud_state(
+    groups: &[Vec<HudCondition>],
+    cues: &BTreeMap<String, HudPresenceResult>,
+    fields: &HudFieldResults,
+) -> HudPresenceResult {
+    let mut matched = false;
+    let mut uncertain = false;
+    for group in groups {
+        let mut group_matches = true;
+        let mut group_uncertain = false;
+        for condition in group {
+            match condition_value(condition, cues, fields) {
+                Err(()) => return presence_failed("dependency-failed", None),
+                Ok(Some(false)) => group_matches = false,
+                Ok(Some(true)) => (),
+                Ok(None) => group_uncertain = true,
+            }
+        }
+        matched |= group_matches && !group_uncertain;
+        uncertain |= group_matches && group_uncertain;
+    }
+    if matched {
+        HudPresenceResult::Matched { score: None, debug: None }
+    } else if uncertain {
+        HudPresenceResult::Indeterminate { reason: "dependency-indeterminate".into(), score: None, debug: None }
+    } else {
+        HudPresenceResult::NotMatched { score: None, debug: None }
+    }
+}
+/// Replay or live. A pack that configures neither a replay state nor a replay cue cannot see
+/// a marker, so it never sees one: live, as for any frame without a marker (cold start A).
+/// Configured but unreadable stays indeterminate.
+fn hud_content(cues: &BTreeMap<String, HudPresenceResult>, states: &BTreeMap<String, HudPresenceResult>) -> String {
+    match states.get("replay").or_else(|| cues.get("replay")) {
+        None => "live",
+        Some(HudPresenceResult::Matched { .. }) => "replay",
+        Some(HudPresenceResult::NotMatched { .. }) => "live",
+        _ => "indeterminate",
+    }.into()
+}
+/// The phase of play. With no `active` state configured, a frame that matches no phase is
+/// unconfigured rather than indeterminate: the pack does not judge phases, so it must not
+/// hold the clock back. A configured phase that fails to read still makes it indeterminate.
+fn hud_phase(states: &BTreeMap<String, HudPresenceResult>) -> String {
+    if ["statistics", "round-history", "scoreboard"].iter().any(|id| presence_matched(states.get(*id))) {
+        return "statistics".into();
+    }
+    let mut phase = None;
+    for (id, value) in [
+        ("statistics", "statistics"), ("round-history", "statistics"), ("scoreboard", "statistics"),
+        ("paused", "paused"), ("round-over", "roundOver"), ("planted", "planted"), ("active", "active"),
+    ] {
+        match states.get(id) {
+            Some(HudPresenceResult::Matched { .. }) => {
+                if phase.is_some_and(|current| current != value) {
+                    return "indeterminate".into();
+                }
+                phase = Some(value);
+            }
+            Some(HudPresenceResult::Failed { .. } | HudPresenceResult::Indeterminate { .. }) => {
+                return "indeterminate".into();
+            }
+            _ => (),
+        }
+    }
+    phase.unwrap_or(if states.contains_key("active") { "indeterminate" } else { "unconfigured" }).into()
 }
 fn analyze_hud_field(rgba: &[u8], width: usize, field: &HudField) -> (HudDebug, Vec<Vec<u8>>) {
     let rect = field.roi.rect();
@@ -1017,38 +1189,134 @@ pub fn recognize_hud_frame(
     id: &str,
 ) -> Result<HudFrameResult, String> {
     let variant = frame_variant(rgba, width, height, pack, id)?;
-    let clock = recognize_hud_field(rgba, width, pack, id, variant.fields.clock.as_ref());
-    let score_left = recognize_hud_field(rgba, width, pack, id, variant.fields.score_left.as_ref());
-    let score_right = recognize_hud_field(rgba, width, pack, id, variant.fields.score_right.as_ref());
-    let round = derive_round(&score_left, &score_right);
-    let unimplemented = HudPresenceResult::Failed {
-        reason: "not-implemented".into(),
+    let cues: BTreeMap<_, _> = variant.cues.iter().map(|(key, cue)| {
+        (key.clone(), recognize_hud_cue(rgba, width, pack, cue))
+    }).collect();
+    let statistics = ["roundHistory", "scoreboard"].iter().any(|id| presence_matched(cues.get(*id)));
+    let planted = presence_matched(cues.get("bomb"));
+    let read_field = |field: Option<&HudField>, absent: bool| {
+        if absent && field.is_some() {
+            HudFieldResult::Absent { debug: None }
+        } else {
+            recognize_hud_field(rgba, width, pack, id, field)
+        }
     };
+    let clock = read_field(variant.fields.clock.as_ref(), statistics || planted);
+    let score_left = read_field(variant.fields.score_left.as_ref(), statistics);
+    let score_right = read_field(variant.fields.score_right.as_ref(), statistics);
+    let round = derive_round(&score_left, &score_right);
+    let fields = HudFieldResults { clock, score_left, score_right, round };
+    let states = variant.states.iter().map(|(key, groups)| {
+        (key.clone(), evaluate_hud_state(groups, &cues, &fields))
+    }).collect();
+    let content = hud_content(&cues, &states);
+    let phase = hud_phase(&states);
+    let organizer = variant.organizer.as_ref().map_or_else(
+        || presence_failed("not-configured", None),
+        |cue| recognize_hud_cue(rgba, width, pack, cue),
+    );
     Ok(HudFrameResult {
         variant_id: id.into(),
-        fields: HudFieldResults {
-            clock,
-            score_left,
-            score_right,
-            round,
-        },
-        cues: variant
-            .cues
-            .keys()
-            .map(|key| (key.clone(), unimplemented.clone()))
-            .collect(),
-        states: variant
-            .states
-            .keys()
-            .map(|key| (key.clone(), unimplemented.clone()))
-            .collect(),
-        organizer: unimplemented,
+        fields,
+        cues,
+        states,
+        organizer,
+        content,
+        phase,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn presence(value: Option<bool>) -> HudPresenceResult {
+        match value {
+            Some(true) => HudPresenceResult::Matched { score: None, debug: None },
+            Some(false) => HudPresenceResult::NotMatched { score: None, debug: None },
+            None => presence_failed("insufficient-templates", None),
+        }
+    }
+    fn cue_condition(cue: &str, present: bool) -> HudCondition {
+        HudCondition::Cue { cue: cue.into(), present }
+    }
+    fn state_fields(clock: HudFieldResult) -> HudFieldResults {
+        HudFieldResults { clock, score_left: failed("not-configured", None), score_right: failed("not-configured", None), round: failed("score-failed", None) }
+    }
+
+    #[test]
+    fn state_rules_use_or_of_and_and_fail_on_any_failed_dependency() {
+        let fields = state_fields(HudFieldResult::Absent { debug: None });
+        let cues = BTreeMap::from([
+            ("replay".into(), presence(Some(true))),
+            ("bomb".into(), presence(Some(false))),
+            ("timeout".into(), presence(None)),
+        ]);
+        let groups = vec![
+            vec![cue_condition("replay", true), cue_condition("bomb", false)],
+            vec![cue_condition("bomb", true)],
+        ];
+        assert!(matches!(evaluate_hud_state(&groups, &cues, &fields), HudPresenceResult::Matched { .. }));
+        let groups = vec![vec![cue_condition("replay", false)], vec![cue_condition("bomb", true)]];
+        assert!(matches!(evaluate_hud_state(&groups, &cues, &fields), HudPresenceResult::NotMatched { .. }));
+        for groups in [
+            vec![vec![cue_condition("replay", true)], vec![cue_condition("timeout", false)]],
+            vec![vec![cue_condition("bomb", true), cue_condition("timeout", true)]],
+            vec![vec![HudCondition::Field { field: "scoreLeft".into(), present: false }]],
+        ] {
+            assert!(matches!(evaluate_hud_state(&groups, &cues, &fields), HudPresenceResult::Failed { .. }));
+        }
+        let no_clock = vec![vec![HudCondition::Field { field: "clock".into(), present: false }]];
+        assert!(matches!(evaluate_hud_state(&no_clock, &cues, &fields), HudPresenceResult::Matched { .. }));
+        let unknown_fields = state_fields(HudFieldResult::Indeterminate { reason: "unknown".into(), debug: None });
+        assert!(matches!(evaluate_hud_state(&no_clock, &cues, &unknown_fields), HudPresenceResult::Indeterminate { .. }));
+        let false_and_unknown = vec![vec![cue_condition("bomb", true), HudCondition::Field { field: "clock".into(), present: false }]];
+        assert!(matches!(evaluate_hud_state(&false_and_unknown, &cues, &unknown_fields), HudPresenceResult::NotMatched { .. }));
+    }
+
+    #[test]
+    fn content_and_phase_are_independent_and_statistics_takes_precedence() {
+        let cues = BTreeMap::from([("replay".into(), presence(Some(true)))]);
+        let mut states = BTreeMap::from([("planted".into(), presence(Some(true)))]);
+        assert_eq!(hud_content(&cues, &states), "replay");
+        assert_eq!(hud_phase(&states), "planted");
+        states.insert("paused".into(), presence(Some(true)));
+        assert_eq!(hud_phase(&states), "indeterminate");
+        states.insert("round-history".into(), presence(Some(true)));
+        states.insert("scoreboard".into(), presence(Some(true)));
+        assert_eq!(hud_phase(&states), "statistics");
+        states.clear();
+        states.insert("round-over".into(), presence(Some(true)));
+        assert_eq!(hud_phase(&states), "roundOver");
+        states.insert("planted".into(), presence(None));
+        assert_eq!(hud_phase(&states), "indeterminate");
+        states.clear();
+        assert_eq!(hud_phase(&states), "unconfigured");
+        assert_eq!(hud_content(&BTreeMap::new(), &states), "live");
+        states.insert("replay".into(), presence(Some(false)));
+        assert_eq!(hud_content(&cues, &states), "live");
+    }
+
+    #[test]
+    fn an_unconfigured_axis_does_not_hold_the_clock_back() {
+        // No replay state or cue: live, as cold start A treats any frame without a marker.
+        assert_eq!(hud_content(&BTreeMap::new(), &BTreeMap::new()), "live");
+        // A replay cue that cannot be read is not the same as no cue.
+        let unreadable = BTreeMap::from([("replay".into(), presence(None))]);
+        assert_eq!(hud_content(&unreadable, &BTreeMap::new()), "indeterminate");
+        // Phases configured, but not active play: a frame matching none of them is unjudged.
+        let only_planted = BTreeMap::from([("planted".into(), presence(Some(false)))]);
+        assert_eq!(hud_phase(&only_planted), "unconfigured");
+        // Active play configured and not seen: indeterminate, as before.
+        let with_active = BTreeMap::from([("planted".into(), presence(Some(false))), ("active".into(), presence(Some(false)))]);
+        assert_eq!(hud_phase(&with_active), "indeterminate");
+        // A configured phase that fails to read still blocks, active or not.
+        let failing = BTreeMap::from([("paused".into(), presence(None))]);
+        assert_eq!(hud_phase(&failing), "indeterminate");
+        // Matched phases are reported whether or not active is configured.
+        let planted = BTreeMap::from([("planted".into(), presence(Some(true)))]);
+        assert_eq!(hud_phase(&planted), "planted");
+    }
 
     #[test]
     fn derived_round_propagates_the_worse_score_status() {

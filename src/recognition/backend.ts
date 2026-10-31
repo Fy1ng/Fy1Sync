@@ -103,7 +103,7 @@ export class WasmWorkerEngine implements WorkerEngine {
             hud = hudFrameFromJson(this.wasm.recognizeHud(pixels, request.width, request.height, JSON.stringify(this.profile), variantId))
             const crop = hud.fields.clock.debug?.gray
             if (crop) tickMoment = this.detectTick(request.role, crop.data, crop.width, crop.height, request.mediaTime)
-            outcome = hudClockOutcome(hud.fields.clock, request)
+            outcome = hudClockOutcome(hud, request)
             debug = request.wantDebug ? hud.fields.clock.debug : null
           } else if (this.automatic) {
             if (!this.wasm.recognizeAuto || !this.profile) {
