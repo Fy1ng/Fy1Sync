@@ -12,7 +12,8 @@ import {
   type ClockChar,
   type RoiRect,
 } from '../../core/profileSchema'
-import type { EditorClockModel } from './editorModel'
+import type { HudFieldId } from '../../core/hudStylePack'
+import { FIELD_LABELS, type EditorClockModel } from './editorModel'
 import type { HudFieldResult } from '../../core/hudWasm'
 import { unpackBitmap } from '../../core/bitmapCodec'
 import { adjustGlyphBox, excludeGlyphBox, mergeGlyphBoxes, splitGlyphBox, type GlyphBox } from '../../core/segmentation'
@@ -21,7 +22,8 @@ import { drawMask, TEMPLATE_SIZE, type FrameAnalysis } from './framePipeline'
 
 type Patch = (update: Partial<EditorClockModel>) => void
 
-export function RegionSection({ roi, onRoi, videoSize, analysis, boxes, selected, onSelect, grayRef, binaryRef }: {
+export function RegionSection({ fieldId = 'clock', roi, onRoi, videoSize, analysis, boxes, selected, onSelect, grayRef, binaryRef }: {
+  fieldId?: HudFieldId
   roi: RoiRect
   onRoi: (roi: RoiRect) => void
   videoSize: { width: number; height: number }
@@ -64,7 +66,7 @@ export function RegionSection({ roi, onRoi, videoSize, analysis, boxes, selected
           </div>
         </div>
       ) : (
-        <p className="muted">在画面上框住倒计时，载入截图或取一帧后显示裁切结果</p>
+        <p className="muted">在画面上框住{FIELD_LABELS[fieldId]}, 载入截图或取一帧后显示裁切结果</p>
       )}
       <div className="roi-fields">
         {fields.map((field) => (
@@ -120,7 +122,8 @@ export function BinarizeSection({ profile, onPatch }: { profile: EditorClockMode
  * box of its own. Rather than adding heuristics for each case, the user fixes the boxes
  * directly (merge, split, drop, nudge an edge) and then teaches from those.
  */
-export function GlyphSection({ profile, readiness, boxes, selected, bounds, onBoxes, onAssign, onAssignReading, onVerify, recognized }: {
+export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, selected, bounds, onBoxes, onAssign, onAssignReading, onVerify, recognized }: {
+  fieldId?: HudFieldId
   profile: EditorClockModel
   readiness: { ready: boolean; missing: ClockChar[]; sampleCount: number }
   boxes: GlyphBox[]
@@ -190,7 +193,7 @@ export function GlyphSection({ profile, readiness, boxes, selected, bounds, onBo
       )}
       {readingProblem && <p className="form-error" role="alert">{readingProblem}</p>}
       <div className="char-pad" role="group" aria-label="存为字符样本">
-        {CLOCK_CHARS.map((char) => (
+        {CLOCK_CHARS.filter(char => fieldId === 'clock' || char !== ':').map((char) => (
           <button type="button" key={char} className={`char-key num${(profile.templates[char]?.length ?? 0) > 0 ? ' is-taught' : ''}`}
             disabled={!active} onClick={() => onAssign(char)} aria-label={char}>
             {char}
@@ -203,7 +206,7 @@ export function GlyphSection({ profile, readiness, boxes, selected, bounds, onBo
           <span className={`verify-result num ${recognized.status === 'read' ? 'is-ok' : 'is-bad'}`} role="status">
             {recognized.status === 'read'
               ? `识别为 ${recognized.reading.text} · 置信度 ${recognized.reading.confidence.toFixed(3)}`
-              : recognized.status === 'absent' ? '画面里没有倒计时' : `${recognized.status === 'indeterminate' ? '无法判断' : '识别失败'}: ${recognized.reason}`}
+              : recognized.status === 'absent' ? `画面里没有${FIELD_LABELS[fieldId]}` : `${recognized.status === 'indeterminate' ? '无法判断' : '识别失败'}: ${recognized.reason}`}
           </span>
         )}
       </div>
@@ -225,7 +228,8 @@ export function GlyphSection({ profile, readiness, boxes, selected, bounds, onBo
 const EDGE_TEXT = { left: '左边', right: '右边', top: '上边', bottom: '下边' } as const
 
 /** Stored samples, per character, as thumbnails so a bad one can be spotted and dropped. */
-export function SampleSection({ profile, onRemove }: {
+export function SampleSection({ fieldId = 'clock', profile, onRemove }: {
+  fieldId?: HudFieldId
   profile: EditorClockModel
   onRemove: (char: ClockChar, id: string) => void
 }): React.ReactNode {
@@ -236,7 +240,7 @@ export function SampleSection({ profile, onRemove }: {
         <span className="rail-meta">点缩略图删除</span>
       </div>
       <div className="template-grid">
-        {CLOCK_CHARS.map((char) => {
+        {CLOCK_CHARS.filter(char => fieldId === 'clock' || char !== ':').map((char) => {
           const samples = profile.templates[char] ?? []
           return (
             <div key={char} className={`template-cell${samples.length === 0 ? ' is-empty' : ''}`}>
@@ -265,18 +269,33 @@ const CLOCK_FORMATS: { value: EditorClockModel['clockFormat']; label: string }[]
 ]
 
 /** Set once per broadcast and rarely touched again, so it starts closed. */
-export function ParamsSection({ profile, onPatch }: { profile: EditorClockModel; onPatch: Patch }): React.ReactNode {
+export function ParamsSection({ fieldId = 'clock', profile, onPatch }: { fieldId?: HudFieldId; profile: EditorClockModel; onPatch: Patch }): React.ReactNode {
   return (
     <details className="rail-group rail-more">
       <summary><h2>识别参数</h2></summary>
-      <div className="field-stack">
+      {fieldId === 'clock' && <div className="field-stack">
         <span className="field-label">倒计时格式</span>
         <Segmented label="倒计时格式" value={profile.clockFormat} options={CLOCK_FORMATS}
           onChange={(clockFormat) => onPatch({ clockFormat })} />
-      </div>
+      </div>}
       <Range label="匹配阈值" min={0.5} max={0.99} step={0.01} value={profile.matchThreshold}
         format={(value) => value.toFixed(2)} onChange={(matchThreshold) => onPatch({ matchThreshold })} />
       <p className="muted">调高会漏读，调低会误读</p>
+      <div className="field-stack">
+        {([
+          ['minColumnInk', '每列最少前景像素'], ['minGlyphWidth', '最小字符宽度'], ['minGapWidth', '最小字符间隔'],
+        ] as const).map(([key, label]) => (
+          <label className="roi-field" key={key}><span>{label}</span>
+            <input className="num" type="number" min={1} max={16384} step={1} aria-label={label} value={profile.segment[key]}
+              onChange={event => {
+                const value = Number(event.target.value)
+                if (Number.isInteger(value) && value >= 1 && value <= 16384) onPatch({ segment: { ...profile.segment, [key]: value } })
+              }} />
+          </label>
+        ))}
+      </div>
+      <Range label="最小前景比例" min={0} max={1} step={0.01} value={profile.segment.minInkRatio}
+        format={value => value.toFixed(2)} onChange={minInkRatio => onPatch({ segment: { ...profile.segment, minInkRatio } })} />
     </details>
   )
 }

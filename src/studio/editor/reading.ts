@@ -7,6 +7,7 @@
  * boxes are wrong (two digits merged, a colon split) and samples from it would be wrong too.
  */
 
+import type { HudFieldId } from '../../core/hudStylePack'
 import { CLOCK_CHARS, type ClockChar } from '../../core/profileSchema'
 
 const CHARS = new Set<string>(CLOCK_CHARS)
@@ -16,7 +17,10 @@ export type ReadingPairs =
   | { ok: false; reason: string }
 
 /** Pair `text` with `boxCount` boxes, left to right; whitespace is ignored. */
-export function pairReading(text: string, boxCount: number): ReadingPairs {
+export function pairReading(text: string, boxCount: number, fieldId: HudFieldId = 'clock'): ReadingPairs {
+  if (fieldId !== 'clock' && !/^(0|[1-9][0-9]?)$/.test(text.replace(/\s+/g, ''))) {
+    return { ok: false, reason: '比分必须是 0 到 99 的整数, 不接受前导 0' }
+  }
   const chars = [...text.replace(/\s+/g, '')]
   if (chars.length === 0) return { ok: false, reason: '输入这一帧的完整读数，例如 1:23' }
   const bad = chars.find((char) => !CHARS.has(char))

@@ -260,6 +260,63 @@ test.describe('取帧与切分', () => {
 })
 
 test.describe('发布预设', () => {
+  test('比分字段各自制作字形, 切换后验证当前帧并保留各自样本', async ({ page }) => {
+    failOnPageError(page)
+    await page.goto(APP_ORIGIN + '/admin')
+    const png = await page.evaluate(() => {
+      const canvas = document.createElement('canvas')
+      canvas.width = 1280
+      canvas.height = 720
+      const context = canvas.getContext('2d')!
+      context.fillStyle = '#000'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      context.fillStyle = '#fff'
+      // Integer blocks avoid platform font rasterization; 96 px normalizes exactly to 48.
+      const glyphs: Record<string, string[]> = {
+        '1': ['00100', '01100', '00100', '00100', '00100', '00100', '00100', '11111'],
+        '8': ['01110', '11011', '11011', '01110', '11011', '11011', '11011', '01110'],
+        '7': ['11111', '00011', '00010', '00110', '00100', '01100', '01000', '11000'],
+      }
+      for (const [text, start] of [['18', 420], ['7', 760]] as const) {
+        for (const [index, char] of [...text].entries()) {
+          glyphs[char]!.forEach((row, y) => [...row].forEach((pixel, x) => {
+            if (pixel === '1') context.fillRect(start + index * 72 + x * 12, 90 + y * 12, 12, 12)
+          }))
+        }
+      }
+      return canvas.toDataURL('image/png').split(',')[1]!
+    })
+    await page.locator('main input[accept^="image/"]').setInputFiles({
+      name: 'scores.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64'),
+    })
+    await expect(page.locator('img.editor-media')).toBeVisible()
+    const field = page.getByRole('combobox', { name: '当前字段', exact: true })
+
+    for (const score of [
+      { id: 'scoreLeft', text: '18', x: 400, width: 200, samples: 2 },
+      { id: 'scoreRight', text: '7', x: 740, width: 140, samples: 1 },
+    ]) {
+      await field.selectOption(score.id)
+      await setRoi(page, { x: score.x / 1280, y: 70 / 720, w: score.width / 1280, h: 140 / 720 })
+      await expect.poll(async () => page.locator('.glyph-box').count()).toBe(score.text.length)
+      await expect(page.locator('.template-thumb')).toHaveCount(0)
+      await expect(page.locator('.char-pad').getByRole('button', { name: ':', exact: true })).toHaveCount(0)
+      await page.getByRole('textbox', { name: '整帧读数', exact: true }).fill(score.text)
+      await page.getByRole('button', { name: '存为样本', exact: true }).click()
+      await expect(page.locator('.template-thumb')).toHaveCount(score.samples)
+      await page.getByRole('button', { name: '验证当前帧', exact: true }).click()
+      await expect(page.locator('.verify-result')).toContainText(`识别为 ${score.text}`)
+    }
+
+    await field.selectOption('scoreLeft')
+    await expect(page.locator('.template-thumb')).toHaveCount(2)
+    await page.getByRole('button', { name: '验证当前帧', exact: true }).click()
+    await expect(page.locator('.verify-result')).toContainText('识别为 18')
+    await field.selectOption('clock')
+    await expect(page.locator('.template-thumb')).toHaveCount(0)
+    await expect(page.locator('.char-pad').getByRole('button', { name: ':', exact: true })).toBeVisible()
+  })
+
   test('新样式包导出实际文件后能重新导入并保留所有布局和字段', async ({ page, electronApp }, testInfo) => {
     failOnPageError(page)
     const profile = baseProfile('e2e/export-roundtrip')

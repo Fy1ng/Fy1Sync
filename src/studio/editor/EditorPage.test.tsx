@@ -179,3 +179,26 @@ async function openPreset(): Promise<void> {
   if (trigger.getAttribute('aria-expanded') !== 'true') fireEvent.click(trigger)
   await waitFor(() => expect(screen.getByRole('dialog', { name: '打开' })).toHaveAttribute('data-open', 'true'))
 }
+
+describe('editor current field', () => {
+  it('switches threshold, glyphs and saved samples without changing the other fields', async () => {
+    const { profile, draft } = await editingPublishedProfile()
+    expect(screen.getAllByRole('button', { name: /删除字符/ })).toHaveLength(11)
+    fireEvent.change(screen.getByRole('combobox', { name: '当前字段' }), { target: { value: 'scoreLeft' } })
+    expect(screen.queryByRole('button', { name: ':' })).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('button', { name: /删除字符/ })).toHaveLength(0)
+    fireEvent.change(screen.getByRole('slider', { name: '阈值' }), { target: { value: '75' } })
+    fireEvent.change(screen.getByRole('combobox', { name: '当前字段' }), { target: { value: 'scoreRight' } })
+    expect(screen.getByRole('slider', { name: '阈值' })).toHaveValue('150')
+    fireEvent.change(screen.getByRole('slider', { name: '阈值' }), { target: { value: '110' } })
+    fireEvent.change(screen.getByRole('combobox', { name: '当前字段' }), { target: { value: 'clock' } })
+    expect(screen.getAllByRole('button', { name: /删除字符/ })).toHaveLength(11)
+    expect(screen.getByRole('slider', { name: '阈值' })).toHaveValue('150')
+    fireEvent.click(screen.getByRole('button', { name: '存为草稿' }))
+    await waitFor(() => expect(draft).toHaveBeenCalled())
+    const saved = draft.mock.calls[0]![0]
+    expect(saved.variants[0]!.fields.clock).toEqual(profile.variants[0]!.fields.clock)
+    expect(saved.variants[0]!.fields.scoreLeft!.preprocess.threshold).toBe(75)
+    expect(saved.variants[0]!.fields.scoreRight!.preprocess.threshold).toBe(110)
+  })
+})

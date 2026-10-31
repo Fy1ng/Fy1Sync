@@ -35,12 +35,16 @@ export function RoiWindow({
   videoHeight,
   /** Element the ROI is drawn over; used to measure the painted picture box. */
   hostRef,
+  readOnly = false,
+  label,
 }: {
   roi: RoiRect
   onChange: (roi: RoiRect) => void
   videoWidth: number
   videoHeight: number
   hostRef: React.RefObject<HTMLDivElement | null>
+  readOnly?: boolean
+  label?: string
 }): React.ReactNode {
   const [box, setBox] = useState<Rect>({ x: 0, y: 0, width: 0, height: 0 })
   const dragRef = useRef<DragState | null>(null)
@@ -61,7 +65,7 @@ export function RoiWindow({
   }, [hostRef, videoWidth, videoHeight])
 
   const beginDrag = (mode: Handle | 'move') => (event: ReactPointerEvent<HTMLElement>) => {
-    if (box.width <= 0 || box.height <= 0) return
+    if (readOnly || box.width <= 0 || box.height <= 0) return
     event.preventDefault()
     event.stopPropagation()
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -117,18 +121,20 @@ export function RoiWindow({
 
   return (
     <div
-      className="roi-window"
+      className={`roi-window${readOnly ? ' is-readonly' : ''}`}
+      data-field={label}
+      aria-readonly={readOnly}
       style={style}
       role="group"
-      aria-label="识别区域，方向键移动，Alt+方向键缩放"
-      tabIndex={0}
-      onKeyDown={onKeyDown}
+      aria-label={readOnly ? `${label ?? '字段'}识别区域, 只读` : '识别区域，方向键移动，Alt+方向键缩放'}
+      tabIndex={readOnly ? undefined : 0}
+      onKeyDown={readOnly ? undefined : onKeyDown}
       onPointerDown={beginDrag('move')}
       onPointerMove={continueDrag}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
     >
-      {HANDLES.map((handle) => (
+      {!readOnly && HANDLES.map((handle) => (
         <span
           key={handle}
           className={`roi-handle roi-handle-${handle}`}
@@ -140,7 +146,7 @@ export function RoiWindow({
         />
       ))}
       <span className="roi-size">
-        {Math.round(roi.w * videoWidth)}×{Math.round(roi.h * videoHeight)}
+        {label ? `${label} ` : ''}{Math.round(roi.w * videoWidth)}×{Math.round(roi.h * videoHeight)}
       </span>
     </div>
   )

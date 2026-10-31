@@ -14,6 +14,7 @@
 
 import { cropBinary, type BinaryImage } from '../../core/imageOps'
 import type { GlyphBox } from '../../core/segmentation'
+import type { HudFieldId } from '../../core/hudStylePack'
 import type { ClockChar } from '../../core/profileSchema'
 import { parseCountdown } from '../../core/clockJump'
 import { clockText, pairReading } from './reading'
@@ -31,6 +32,8 @@ export interface StretchFrame {
 export type GroupState =
   /** The reading follows from the count; saved unless the viewer leaves it out. */
   | 'proposed'
+  /** A score change is only a suggestion until the viewer confirms it. */
+  | 'pending'
   /** Boxes do not match the reading's characters: nothing sensible to save. */
   | 'box-mismatch'
   /** After a change the count cannot explain: left out until the viewer types its reading. */
@@ -90,20 +93,24 @@ export function pictureChange(a: Pick<StretchFrame, 'binary' | 'boxes'>, b: Pick
  * Group the frames into runs of one picture and propose each run's reading, counting down
  * from `firstReading` by one per tick. `format` is the HUD's countdown format.
  */
-export function proposeStretch(frames: StretchFrame[], firstReading: string, format: 'm:ss' | 'mm:ss' | 'ss'): StretchGroup[] {
+export function proposeStretch(frames: StretchFrame[], firstReading: string, format: 'm:ss' | 'mm:ss' | 'ss', fieldId: HudFieldId = 'clock'): StretchGroup[] {
   const groups: StretchGroup[] = []
   if (frames.length === 0) return groups
-  let seconds = parseCountdown(firstReading.replace(/\s+/g, ''), format === 'ss' ? 'ss' : format)
+  const score = fieldId !== 'clock'
+  const cleaned = firstReading.replace(/\s+/g, '')
+  let seconds = score ? (/^(0|[1-9][0-9]?)$/.test(cleaned) ? Number(cleaned) : null)
+    : parseCountdown(cleaned, format === 'ss' ? 'ss' : format)
   // Counting stops for good at the first change it cannot explain.
   let counting = seconds !== null
   let lastTick: number | null = null
   let start = 0
   const close = (end: number): void => {
     const first = frames[start]!, last = frames[end]!
-    const text = seconds !== null ? clockText(seconds, format) : ''
-    const group: StretchGroup = { from: first.at, to: last.at, frames: end - start + 1, text, state: 'proposed', sample: start + Math.floor((end - start) / 2) }
-    if (!counting) Object.assign(group, { state: 'unsure', text: '', note: '画面变化不在整秒上，可能是回放、暂停或转场，请填写读数或不要存入' })
-    else if (!pairReading(text, frames[group.sample]!.boxes.length).ok) {
+    const text = seconds !== null ? score ? String(seconds) : clockText(seconds, format) : ''
+    const group: StretchGroup = { from: first.at, to: last.at, frames: end - start + 1, text, state: score ? 'pending' : 'proposed', sample: start + Math.floor((end - start) / 2) }
+    if (score) group.note = '比分变化仅提议前一个值 + 1, 请确认或改正后存入'
+    if (!counting) Object.assign(group, { state: 'unsure', text: '', note: score ? '比分提议超出 0 到 99 或入点读数无效, 请填写读数' : '画面变化不在整秒上，可能是回放、暂停或转场，请填写读数或不要存入' })
+    else if (!pairReading(text, frames[group.sample]!.boxes.length, fieldId).ok) {
       Object.assign(group, { state: 'box-mismatch', note: `切出 ${frames[group.sample]!.boxes.length} 个字符框，和读数 ${text} 对不上` })
     }
     groups.push(group)
@@ -114,6 +121,11 @@ export function proposeStretch(frames: StretchFrame[], firstReading: string, for
     start = index
     const at = frames[index]!.at
     if (counting && seconds !== null) {
+      if (score) {
+        if (seconds < 99) seconds += 1
+        else counting = false
+        continue
+      }
       // The first change after the start can come any time within the first second.
       const since = lastTick === null ? at - frames[0]!.at : at - lastTick
       const onBeat = lastTick === null ? since <= 1 + TICK_TOLERANCE : Math.abs(since - 1) <= TICK_TOLERANCE
@@ -138,14 +150,14 @@ export interface StretchSample {
  * its character, keeping one copy of each distinct glyph picture. Between ticks a HUD draws
  * the same pixels every frame, so this keeps a stretch to a few samples per character.
  */
-export function stretchSamples(frames: StretchFrame[], groups: StretchGroup[], keep: (group: StretchGroup) => boolean): StretchSample[] {
+export function stretchSamples(frames: StretchFrame[], groups: StretchGroup[], keep: (group: StretchGroup) => boolean, fieldId: HudFieldId = 'clock'): StretchSample[] {
   const seen = new Set<string>()
   const samples: StretchSample[] = []
   for (const group of groups) {
     if (!keep(group)) continue
     for (const frame of frames) {
       if (frame.at < group.from - 1e-6 || frame.at > group.to + 1e-6) continue
-      const paired = pairReading(group.text, frame.boxes.length)
+      const paired = pairReading(group.text, frame.boxes.length, fieldId)
       if (!paired.ok) continue
       paired.chars.forEach((char, index) => {
         const data = frame.bitmaps[index]

@@ -1,5 +1,5 @@
 /**
- * The countdown style editor (`/admin`).
+ * The HUD style editor (`/admin`).
  *
  * This is where a recognition profile is made: frame the scoreboard clock on a sample,
  * tune the threshold until the digits come out clean, fix the glyph cuts, and teach each
@@ -18,9 +18,9 @@ import {
   type ClockChar,
   type RoiRect,
 } from '../../core/profileSchema'
-import { createEmptyHudStylePack, parseHudStylePack, hudPackReadiness, type HudStylePack } from '../../core/hudStylePack'
+import { createEmptyHudStylePack, parseHudStylePack, hudPackReadiness, HUD_FIELD_IDS, type HudFieldId, type HudStylePack } from '../../core/hudStylePack'
 import { prepareHudGlyphs, recognizeHudFrame, type HudAnalysis, type HudFieldResult } from '../../core/hudWasm'
-import { clockModel, patchClock, sizeEmptyClock, type EditorClockModel } from './editorModel'
+import { FIELD_LABELS, fieldModel, fieldReadiness, patchField, sizeEmptyClock, type EditorClockModel } from './editorModel'
 import type { GlyphBox } from '../../core/segmentation'
 import { profileStore, type StoredProfile } from '../../core/profileStore'
 import { apiClient, issuesFrom, type PresetSummary } from '../../app/apiClient'
@@ -57,7 +57,9 @@ export default function EditorPage(): React.ReactNode {
   const [candidate] = useState(() => session.takeEditingCandidate())
   const [pack, setPack] = useState<HudStylePack>(() => candidate ?? createEmptyHudStylePack())
   const adoptFootageSize = useRef(candidate === null)
-  const profile = useMemo(() => clockModel(pack), [pack])
+  const [fieldId, setFieldId] = useState<HudFieldId>('clock')
+  const profile = useMemo(() => fieldModel(pack, fieldId), [pack, fieldId])
+  const activePack = useMemo(() => pack.variants[0]!.fields[fieldId] ? pack : patchField(pack, fieldId, {}), [pack, fieldId])
   useEffect(() => session.clearEditingCandidate(), [session])
   const [etag, setEtag] = useState<string | undefined>(undefined)
   const [publishedProfile, setPublishedProfile] = useState<HudStylePack | null>(null)
@@ -68,8 +70,8 @@ export default function EditorPage(): React.ReactNode {
   const editRevision = useRef(0)
   const documentRevision = useRef(0)
   const libraryRevision = useRef(0)
-  const profileRef = useRef(pack)
-  profileRef.current = pack
+  const profileRef = useRef(activePack)
+  profileRef.current = activePack
   const publishedCurrent = useMemo(() => publishedProfile !== null && JSON.stringify(pack) === JSON.stringify(publishedProfile), [pack, publishedProfile])
   const [message, setMessage] = useState<Message | null>(null)
   const [presets, setPresets] = useState<PresetSummary[]>([])
@@ -111,15 +113,15 @@ export default function EditorPage(): React.ReactNode {
   const binaryCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const objectUrlRef = useRef<string>('')
 
-  const readiness = useMemo(() => hudPackReadiness(pack), [pack])
+  const readiness = useMemo(() => fieldReadiness(pack, fieldId), [pack, fieldId])
+  const clockReadiness = useMemo(() => hudPackReadiness(pack), [pack])
   useEffect(() => {
     mounted.current = true
     return () => { mounted.current = false; documentRevision.current++; libraryRevision.current++ }
   }, [])
 
   const [analysis, setAnalysis] = useState<HudAnalysis | null>(null)
-  const analysisKey = JSON.stringify([pack.variants[0]!.nativeSize, pack.variants[0]!.fields.clock!.roi,
-    pack.variants[0]!.fields.clock!.preprocess, pack.variants[0]!.fields.clock!.segment])
+  const analysisKey = JSON.stringify([fieldId, pack.variants[0]!.nativeSize, profile.roi, profile.preprocess, profile.segment])
   useEffect(() => {
     if (!adoptFootageSize.current || !videoSize.width || !videoSize.height) return
     setPack(current => sizeEmptyClock(current, videoSize.width, videoSize.height))
@@ -127,13 +129,13 @@ export default function EditorPage(): React.ReactNode {
   useEffect(() => {
     let active = true
     setAnalysis(null)
-    if (frame) void prepareHudGlyphs(frame, profileRef.current).then(result => {
+    if (frame) void prepareHudGlyphs(frame, profileRef.current, undefined, undefined, fieldId).then(result => {
       if (active) setAnalysis(result)
     }).catch(error => {
       if (active) setMessage({ kind: 'error', text: `画面处理失败: ${error instanceof Error ? error.message : String(error)}` })
     })
     return () => { active = false }
-  }, [frame, analysisKey])
+  }, [frame, analysisKey, fieldId])
 
   // Manual box edits live in their own state so they survive a re-render, but a fresh
   // analysis replaces them: the old boxes indexed into a different image.
@@ -180,9 +182,18 @@ export default function EditorPage(): React.ReactNode {
       setEtag(undefined)
       setPublishedProfile(null)
     }
-    setPack(current => patchClock(current, update))
+    setPack(current => patchField(current, fieldId, update))
     setDirty(true)
-  }, [])
+  }, [fieldId])
+
+  const changeField = (next: HudFieldId): void => {
+    ++editRevision.current
+    setAnalysis(null)
+    setRecognized(null)
+    setBoxes([])
+    setSelected(-1)
+    setFieldId(next)
+  }
 
   const setRoi = useCallback((roi: RoiRect) => patch({ roi }), [patch])
 
@@ -313,10 +324,10 @@ export default function EditorPage(): React.ReactNode {
 
   const preparedSamples = async (): Promise<string[]> => {
     if (!frame) throw new Error('先取一帧')
-    return (await prepareHudGlyphs(frame, pack, pack.variants[0]!.id, boxes)).bitmaps
+    return (await prepareHudGlyphs(frame, activePack, pack.variants[0]!.id, boxes, fieldId)).bitmaps
   }
   const assign = async (char: ClockChar): Promise<void> => {
-    if (!analysis || selected < 0 || !boxes[selected]) return
+    if (!analysis || selected < 0 || !boxes[selected] || (fieldId !== 'clock' && char === ':')) return
     const revision = editRevision.current
     try {
       const samples = await preparedSamples()
@@ -330,7 +341,7 @@ export default function EditorPage(): React.ReactNode {
   /** The whole reading typed at once: one Rust-prepared sample per box. */
   const assignReading = async (text: string): Promise<string | null> => {
     if (!analysis) return '先取一帧'
-    const paired = pairReading(text, boxes.length)
+    const paired = pairReading(text, boxes.length, fieldId)
     if (!paired.ok) return paired.reason
     const revision = editRevision.current
     try {
@@ -374,8 +385,8 @@ export default function EditorPage(): React.ReactNode {
     if (!frame) return
     const revision = editRevision.current
     try {
-      const result = await recognizeHudFrame(frame, pack)
-      if (mounted.current && revision === editRevision.current && frameRef.current === frame) setRecognized(result.fields.clock)
+      const result = await recognizeHudFrame(frame, activePack)
+      if (mounted.current && revision === editRevision.current && frameRef.current === frame) setRecognized(result.fields[fieldId])
     } catch (error) { setMessage({ kind: 'error', text: `验证失败: ${String(error)}` }) }
   }
 
@@ -479,12 +490,9 @@ export default function EditorPage(): React.ReactNode {
       setMessage({ kind: 'error', text: `载入失败：${result.message}` })
       return
     }
-    if (!result.value.profile.variants[0]?.fields.clock) {
-      setMessage({ kind: 'error', text: '当前编辑器需要第一个布局档配置倒计时字段' })
-      return
-    }
     adoptFootageSize.current = false
     setPack(result.value.profile)
+    setFieldId('clock')
     setPublishedProfile(result.value.profile)
     setEtag(result.value.etag)
     setDirty(false)
@@ -502,12 +510,9 @@ export default function EditorPage(): React.ReactNode {
         void refreshLibrary()
         return
       }
-      if (!found.variants[0]?.fields.clock) {
-        setMessage({ kind: 'error', text: '当前编辑器需要第一个布局档配置倒计时字段' })
-        return
-      }
       adoptFootageSize.current = false
       setPack(found)
+      setFieldId('clock')
       setPublishedProfile(null)
       setEtag(undefined)
       setDirty(false)
@@ -523,6 +528,7 @@ export default function EditorPage(): React.ReactNode {
     ++documentRevision.current
     adoptFootageSize.current = true
     setPack(createEmptyHudStylePack(undefined, undefined, videoSize.width && videoSize.height ? videoSize : undefined))
+    setFieldId('clock')
     setPublishedProfile(null)
     setEtag(undefined)
     setDirty(false)
@@ -539,12 +545,9 @@ export default function EditorPage(): React.ReactNode {
         setMessage({ kind: 'error', text: `导入失败：${parsed.issues.map((issue) => `${issue.path} ${issue.message}`).join('；')}` })
         return
       }
-      if (!parsed.pack.variants[0]?.fields.clock) {
-        setMessage({ kind: 'error', text: '当前编辑器需要第一个布局档配置倒计时字段' })
-        return
-      }
       adoptFootageSize.current = false
       setPack(parsed.pack)
+      setFieldId('clock')
       setPublishedProfile(null)
       setEtag(undefined)
       setDirty(true)
@@ -573,8 +576,8 @@ export default function EditorPage(): React.ReactNode {
    * process and unmodified since.
    */
   const applyToPlayer = (): void => {
-    if (!readiness.ready) {
-      setMessage({ kind: 'warn', text: `还缺少字符样本：${readiness.missing.join(' ')}` })
+    if (!clockReadiness.ready) {
+      setMessage({ kind: 'warn', text: `还缺少字符样本：${clockReadiness.missing.join(' ')}` })
       return
     }
     if (!etag || !publishedCurrent || saving) {
@@ -681,7 +684,11 @@ export default function EditorPage(): React.ReactNode {
               </div>
             )}
             {sampleUrl && (
-              <RoiWindow roi={profile.roi} onChange={setRoi} videoWidth={videoSize.width} videoHeight={videoSize.height} hostRef={stageRef} />
+              HUD_FIELD_IDS.map(id => (
+                <RoiWindow key={id} roi={fieldModel(pack, id).roi} onChange={setRoi}
+                  readOnly={id !== fieldId} label={FIELD_LABELS[id]}
+                  videoWidth={videoSize.width} videoHeight={videoSize.height} hostRef={stageRef} />
+              ))
             )}
           </div>
 
@@ -732,16 +739,25 @@ export default function EditorPage(): React.ReactNode {
         </section>
 
         <aside className="editor-rail" aria-label="识别设置">
-          <RegionSection roi={profile.roi} onRoi={setRoi} videoSize={videoSize} analysis={analysis}
+          <section className="rail-group">
+            <label className="field-stack">
+              <span className="field-label">当前字段</span>
+              <select className="text-input" aria-label="当前字段" value={fieldId}
+                onChange={event => changeField(event.target.value as HudFieldId)}>
+                {HUD_FIELD_IDS.map(id => <option key={id} value={id}>{FIELD_LABELS[id]}</option>)}
+              </select>
+            </label>
+          </section>
+          <RegionSection fieldId={fieldId} roi={profile.roi} onRoi={setRoi} videoSize={videoSize} analysis={analysis}
             boxes={boxes} selected={selected} onSelect={setSelected}
             grayRef={grayCanvasRef} binaryRef={binaryCanvasRef} />
           <BinarizeSection profile={profile} onPatch={patch} />
-          <GlyphSection profile={profile} readiness={readiness} boxes={boxes} selected={selected}
+          <GlyphSection key={`glyph-${fieldId}`} fieldId={fieldId} profile={profile} readiness={readiness} boxes={boxes} selected={selected}
             bounds={analysis ? { width: analysis.binary.width, height: analysis.binary.height } : null}
             onBoxes={setBoxes} onAssign={assign} onAssignReading={assignReading} onVerify={frame ? verifyFrame : null} recognized={recognized} />
-          <StretchSection video={video ? videoRef.current : null} pack={pack} onSave={saveStretch} />
-          <SampleSection profile={profile} onRemove={removeSample} />
-          <ParamsSection profile={profile} onPatch={patch} />
+          <StretchSection key={`stretch-${fieldId}`} fieldId={fieldId} video={video ? videoRef.current : null} pack={activePack} onSave={saveStretch} />
+          <SampleSection fieldId={fieldId} profile={profile} onRemove={removeSample} />
+          <ParamsSection fieldId={fieldId} profile={profile} onPatch={patch} />
         </aside>
       </main>
     </div>

@@ -29,3 +29,12 @@ describe('clockText', () => {
     expect(clockText(-2, 'm:ss')).toBe('0:00')
   })
 })
+
+describe('score reading', () => {
+  it('pairs one or two digits and rejects leading zeros and clock punctuation', () => {
+    expect(pairReading('0', 1, 'scoreLeft')).toEqual({ ok: true, chars: ['0'] })
+    expect(pairReading('99', 2, 'scoreRight')).toEqual({ ok: true, chars: ['9', '9'] })
+    for (const text of ['00', '01', '100', '-1', '1:2']) expect(pairReading(text, text.length, 'scoreLeft').ok).toBe(false)
+    expect(pairReading('10', 1, 'scoreRight').ok).toBe(false)
+  })
+})

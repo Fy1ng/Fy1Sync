@@ -74,7 +74,7 @@ describe('HUD full-frame Rust/WASM recognition', () => {
       expect(player.hud?.fields.clock.debug?.matches).toHaveLength(4)
       expect(player.hud?.fields.clock.debug?.normalized).toHaveLength(4)
       for (const field of ['scoreLeft', 'scoreRight', 'round'] as const) {
-        expect(player.hud?.fields[field]).toEqual({ status: 'failed', reason: 'not-implemented', debug: null })
+        expect(player.hud?.fields[field]).toEqual({ status: 'failed', reason: field === 'round' ? 'score-failed' : 'not-configured', debug: null })
       }
       expect(player.hud?.cues).toEqual({ replay: { status: 'failed', reason: 'not-implemented' } })
       expect(player.hud?.states).toEqual({ replay: { status: 'failed', reason: 'not-implemented' } })
@@ -82,6 +82,28 @@ describe('HUD full-frame Rust/WASM recognition', () => {
       expect(recognizeHud).toHaveBeenCalledOnce()
       expect(recognizeHud).toHaveBeenCalledWith(new Uint8Array(request.pixels), 640, 360, JSON.stringify(pack), variant.id)
       expect(oldRecognition).not.toHaveBeenCalled()
+    } finally { recognition.free() }
+  })
+
+  it('reads both scores and derives the round while sync still consumes only the clock', async () => {
+    const { pack, variant, frame, request } = fixture()
+    for (const [fieldId, text, x] of [['scoreLeft', '18', 140], ['scoreRight', '7', 460]] as const) {
+      drawText(frame, text, x, 20, { scale: 6 })
+      variant.fields[fieldId] = { ...structuredClone(variant.fields.clock!),
+        roi: { x: x - 6, y: 14, w: 100, h: 54 }, grammar: { kind: 'integer', min: 0, max: 99 },
+        glyphs: Object.fromEntries(Object.entries(variant.fields.clock!.glyphs).filter(([char]) => char !== ':')) }
+    }
+    request.pixels = frame.data.slice().buffer as ArrayBuffer
+    const { recognition, engine } = realEngine()
+    try {
+      engine.handle({ type: 'configure', generation: 2, profile: pack, variantId: variant.id })
+      const editor = await recognizeHudFrame({ pixels: frame.data, width: frame.width, height: frame.height }, pack, variant.id)
+      expect(editor.fields.scoreLeft).toMatchObject({ status: 'read', reading: { value: 18, source: 'recognized' } })
+      expect(editor.fields.scoreRight).toMatchObject({ status: 'read', reading: { value: 7, source: 'recognized' } })
+      expect(editor.fields.round).toMatchObject({ status: 'read', reading: { text: '26', value: 26, source: 'derived' }, debug: null })
+      const player = engine.handle(request) as ResultMessage
+      expect(player.hud).toEqual(editor)
+      expect(player.outcome).toMatchObject({ status: 'success', reading: { text: '1:37', seconds: 97 } })
     } finally { recognition.free() }
   })
 

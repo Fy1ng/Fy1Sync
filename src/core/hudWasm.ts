@@ -1,5 +1,5 @@
 /** The editor and player share these Rust frame and glyph entry points. */
-import type { HudCueId, HudFieldId, HudStylePack } from './hudStylePack'
+import type { HudCueId, HudFieldId, HudResultFieldId, HudStylePack } from './hudStylePack'
 import type { ClockChar } from './profileSchema'
 import type { GlyphBox } from './segmentation'
 
@@ -17,7 +17,7 @@ export interface HudDebug {
 }
 export interface HudAnalysis extends Omit<HudDebug, 'matches'> { bitmaps: string[] }
 export type HudFieldResult = (
-  | { status: 'read'; reading: { text: string; value: number; confidence: number; scores: number[] } }
+  | { status: 'read'; reading: { text: string; value: number; confidence: number; scores: number[]; source: 'recognized' | 'derived' } }
   | { status: 'absent' }
   | { status: 'indeterminate'; reason: string }
   | { status: 'failed'; reason: string }
@@ -26,7 +26,7 @@ export type HudPresenceResult = { status: 'matched' } | { status: 'not-matched' 
   | { status: 'indeterminate'; reason: string } | { status: 'failed'; reason: string }
 export interface HudFrameResult {
   variantId: string
-  fields: Record<HudFieldId, HudFieldResult>
+  fields: Record<HudResultFieldId, HudFieldResult>
   cues: Partial<Record<HudCueId, HudPresenceResult>>
   states: Record<string, HudPresenceResult>
   organizer: HudPresenceResult
@@ -49,7 +49,7 @@ export function hudFrameFromJson(value: string): HudFrameResult {
 
 interface HudModule {
   recognize_hud_frame(rgba: Uint8Array, width: number, height: number, pack: string, variant: string): string
-  prepare_hud_glyphs(rgba: Uint8Array, width: number, height: number, pack: string, variant: string, boxes: string): string
+  prepare_hud_glyphs(rgba: Uint8Array, width: number, height: number, pack: string, variant: string, field: string, boxes: string): string
 }
 let modulePromise: Promise<HudModule> | null = null
 async function loadHudWasm(): Promise<HudModule> {
@@ -72,9 +72,9 @@ export async function recognizeHudFrame(frame: HudFrame, pack: HudStylePack, var
   const wasm = await loadHudWasm()
   return hudFrameFromJson(wasm.recognize_hud_frame(pixels(frame), frame.width, frame.height, JSON.stringify(pack), variantId))
 }
-export async function prepareHudGlyphs(frame: HudFrame, pack: HudStylePack, variantId = pack.variants[0]!.id, boxes?: GlyphBox[]): Promise<HudAnalysis> {
+export async function prepareHudGlyphs(frame: HudFrame, pack: HudStylePack, variantId = pack.variants[0]!.id, boxes?: GlyphBox[], fieldId: HudFieldId = 'clock'): Promise<HudAnalysis> {
   const wasm = await loadHudWasm()
-  const result = JSON.parse(wasm.prepare_hud_glyphs(pixels(frame), frame.width, frame.height, JSON.stringify(pack), variantId,
+  const result = JSON.parse(wasm.prepare_hud_glyphs(pixels(frame), frame.width, frame.height, JSON.stringify(pack), variantId, fieldId,
     boxes ? JSON.stringify(boxes) : '')) as JsonAnalysis
   return { ...result, gray: { ...result.gray, data: Uint8Array.from(result.gray.data) },
     binary: { ...result.binary, data: Uint8Array.from(result.binary.data) },

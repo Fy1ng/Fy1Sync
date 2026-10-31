@@ -828,3 +828,7 @@
 .stretch-note {
   color: var(--drift);
 }
+
+.roi-window.is-readonly { border-color: #a5b4c8; opacity: 0.65; pointer-events: none; z-index: 1; }
+.roi-window:not(.is-readonly) { z-index: 2; }
+.roi-window.is-readonly .roi-size { background: #344255; }

@@ -2,9 +2,11 @@
 import { CLOCK_CHARS, type ClockChar, type PreprocessSettings } from './profileSchema'
 
 export const HUD_STYLE_PACK_VERSION = 1 as const
-export const HUD_FIELD_IDS = ['clock', 'scoreLeft', 'scoreRight', 'round'] as const
+export const HUD_FIELD_IDS = ['clock', 'scoreLeft', 'scoreRight'] as const
+export const HUD_RESULT_FIELD_IDS = [...HUD_FIELD_IDS, 'round'] as const
 export const HUD_CUE_IDS = ['replay', 'bomb', 'timeout', 'roundPrefix', 'roundOver', 'roundHistory', 'scoreboard'] as const
 export type HudFieldId = (typeof HUD_FIELD_IDS)[number]
+export type HudResultFieldId = (typeof HUD_RESULT_FIELD_IDS)[number]
 export type HudCueId = (typeof HUD_CUE_IDS)[number]
 export interface HudRoi { x: number; y: number; w: number; h: number }
 export interface HudSize { width: number; height: number }
@@ -181,15 +183,15 @@ export function parseHudStylePack(value: unknown): HudPackValidation {
       } else {
         object(field.grammar, `${p}.grammar`, ['kind', 'min', 'max'])
         if (field.grammar.kind !== 'integer') error(`${p}.grammar.kind`, '数字字段必须使用 integer 语法')
-        const min = number(field.grammar.min, `${p}.grammar.min`, fieldId === 'round' ? 1 : 0, 99, true)
-        const max = number(field.grammar.max, `${p}.grammar.max`, fieldId === 'round' ? 1 : 0, 99, true)
+        const min = number(field.grammar.min, `${p}.grammar.min`, 0, 99, true)
+        const max = number(field.grammar.max, `${p}.grammar.max`, 0, 99, true)
         if (min && max && (field.grammar.min as number) > (field.grammar.max as number)) error(`${p}.grammar`, 'min 不能大于 max')
       }
       if (object(field.match, `${p}.match`, ['minScore', 'minMargin'])) {
         number(field.match.minScore, `${p}.match.minScore`, 0, 1)
         number(field.match.minMargin, `${p}.match.minMargin`, 0, 1)
       }
-      if (fieldId === 'round' ? field.gateCue !== 'roundPrefix' : field.gateCue !== null) error(`${p}.gateCue`, fieldId === 'round' ? '回合数字段必须使用 roundPrefix 门控' : '该字段的 gateCue 必须为 null')
+      if (field.gateCue !== null) error(`${p}.gateCue`, '该字段的 gateCue 必须为 null')
       if (field.gateCue !== null && (typeof field.gateCue !== 'string' || !Object.hasOwn(cues, field.gateCue))) error(`${p}.gateCue`, '引用的 cue 不存在')
     }
     if (!record(variant.states)) error(`${path}.states`, '必须是对象')
@@ -208,7 +210,7 @@ export function parseHudStylePack(value: unknown): HudPackValidation {
             if (typeof condition.cue !== 'string' || !Object.hasOwn(cues, condition.cue)) error(`${cp}.cue`, '引用的 cue 不存在')
           } else if (condition.kind === 'field') {
             object(condition, cp, ['kind', 'field', 'present'])
-            if (typeof condition.field !== 'string' || !Object.hasOwn(fields, condition.field) || fields[condition.field] === null) error(`${cp}.field`, '引用的字段未配置')
+            if (typeof condition.field !== 'string' || !(HUD_FIELD_IDS as readonly string[]).includes(condition.field) || !Object.hasOwn(fields, condition.field) || fields[condition.field] === null) error(`${cp}.field`, '引用的字段未配置')
           } else { error(`${cp}.kind`, '未知条件类型'); return }
           boolean(condition.present, `${cp}.present`)
         })
@@ -232,7 +234,7 @@ export function createEmptyHudStylePack(id = 'custom/untitled', name = '未命�
           segment: { minColumnInk: 1, minGlyphWidth: 2, minGapWidth: 1, minInkRatio: 0.08 },
           glyphs: {}, grammar: { kind: 'countdown', format: 'm:ss' }, match: { minScore: 0.82, minMargin: 0.03 }, gateCue: null,
         },
-        scoreLeft: null, scoreRight: null, round: null,
+        scoreLeft: null, scoreRight: null,
       },
       cues: {}, states: {}, organizer: null,
     }],

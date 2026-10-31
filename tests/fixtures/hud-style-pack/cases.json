@@ -61,8 +61,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -201,40 +200,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -546,40 +511,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -865,40 +796,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -1129,8 +1026,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -1203,8 +1099,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -1280,8 +1175,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -1358,8 +1252,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -1435,8 +1328,7 @@
               "channel": "red"
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -1512,8 +1404,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -1589,8 +1480,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -1666,8 +1556,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -1743,8 +1632,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -1820,8 +1708,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -1897,8 +1784,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -2039,40 +1925,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -2359,40 +2211,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -2706,40 +2524,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -3026,40 +2810,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -3373,40 +3123,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -3693,40 +3409,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -3974,8 +3656,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -4062,8 +3743,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -4138,8 +3818,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -4214,8 +3893,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -4290,8 +3968,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -4366,8 +4043,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -4442,8 +4118,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -4584,40 +4259,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -4903,40 +4544,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -5184,8 +4791,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -5260,8 +4866,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -5336,8 +4941,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -5412,8 +5016,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -5488,8 +5091,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -5564,8 +5166,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -5640,8 +5241,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -5716,8 +5316,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -5792,8 +5391,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -5868,8 +5466,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -5942,8 +5539,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -6021,8 +5617,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -6097,8 +5692,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -6173,8 +5767,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -6249,8 +5842,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -6325,8 +5917,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -6401,8 +5992,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -6477,8 +6067,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -6553,8 +6142,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -6629,8 +6217,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -6705,8 +6292,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -6777,8 +6363,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -6853,8 +6438,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -6929,8 +6513,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -6941,1218 +6524,6 @@
     "valid": false,
     "paths": [
       "variants[0].fields.clock.match.minMargin"
-    ]
-  },
-  {
-    "name": "round-no-gate",
-    "value": {
-      "kind": "hud-style-pack",
-      "schemaVersion": 1,
-      "id": "cs2/pgl",
-      "revision": 1,
-      "name": "PGL 测试样式",
-      "bitmaps": {
-        "digit": {
-          "width": 32,
-          "height": 48,
-          "data": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
-        },
-        "mark": {
-          "width": 3,
-          "height": 3,
-          "data": "qoA="
-        }
-      },
-      "variants": [
-        {
-          "id": "official-top-2160",
-          "nativeSize": {
-            "width": 3840,
-            "height": 2160
-          },
-          "fields": {
-            "clock": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "countdown",
-                "format": "m:ss"
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "scoreLeft": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 0,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "scoreRight": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 0,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            }
-          },
-          "cues": {
-            "replay": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "bomb": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "timeout": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "roundPrefix": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "roundOver": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "roundHistory": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "scoreboard": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            }
-          },
-          "states": {
-            "live": [
-              [
-                {
-                  "kind": "cue",
-                  "cue": "replay",
-                  "present": false
-                },
-                {
-                  "kind": "field",
-                  "field": "clock",
-                  "present": true
-                }
-              ]
-            ],
-            "planted": [
-              [
-                {
-                  "kind": "cue",
-                  "cue": "bomb",
-                  "present": true
-                },
-                {
-                  "kind": "field",
-                  "field": "clock",
-                  "present": false
-                }
-              ],
-              [
-                {
-                  "kind": "cue",
-                  "cue": "timeout",
-                  "present": true
-                }
-              ]
-            ]
-          },
-          "organizer": {
-            "roi": {
-              "x": 340,
-              "y": 870,
-              "w": 3,
-              "h": 3
-            },
-            "preprocess": {
-              "scale": 1.4,
-              "threshold": 150,
-              "invert": false
-            },
-            "templates": [
-              "mark"
-            ],
-            "minScore": 0.85
-          }
-        },
-        {
-          "id": "camera-bottom-2160",
-          "nativeSize": {
-            "width": 3840,
-            "height": 2160
-          },
-          "fields": {
-            "clock": {
-              "roi": {
-                "x": 1854,
-                "y": 1418,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "countdown",
-                "format": "m:ss"
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "scoreLeft": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 0,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "scoreRight": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 0,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
-            }
-          },
-          "cues": {
-            "replay": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "bomb": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "timeout": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "roundPrefix": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "roundOver": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "roundHistory": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "scoreboard": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            }
-          },
-          "states": {
-            "live": [
-              [
-                {
-                  "kind": "cue",
-                  "cue": "replay",
-                  "present": false
-                },
-                {
-                  "kind": "field",
-                  "field": "clock",
-                  "present": true
-                }
-              ]
-            ],
-            "planted": [
-              [
-                {
-                  "kind": "cue",
-                  "cue": "bomb",
-                  "present": true
-                },
-                {
-                  "kind": "field",
-                  "field": "clock",
-                  "present": false
-                }
-              ],
-              [
-                {
-                  "kind": "cue",
-                  "cue": "timeout",
-                  "present": true
-                }
-              ]
-            ]
-          },
-          "organizer": {
-            "roi": {
-              "x": 340,
-              "y": 870,
-              "w": 3,
-              "h": 3
-            },
-            "preprocess": {
-              "scale": 1.4,
-              "threshold": 150,
-              "invert": false
-            },
-            "templates": [
-              "mark"
-            ],
-            "minScore": 0.85
-          }
-        }
-      ]
-    },
-    "valid": false,
-    "paths": [
-      "variants[0].fields.round.gateCue"
-    ]
-  },
-  {
-    "name": "missing-gate-cue",
-    "value": {
-      "kind": "hud-style-pack",
-      "schemaVersion": 1,
-      "id": "cs2/pgl",
-      "revision": 1,
-      "name": "PGL 测试样式",
-      "bitmaps": {
-        "digit": {
-          "width": 32,
-          "height": 48,
-          "data": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
-        },
-        "mark": {
-          "width": 3,
-          "height": 3,
-          "data": "qoA="
-        }
-      },
-      "variants": [
-        {
-          "id": "official-top-2160",
-          "nativeSize": {
-            "width": 3840,
-            "height": 2160
-          },
-          "fields": {
-            "clock": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "countdown",
-                "format": "m:ss"
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "scoreLeft": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 0,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "scoreRight": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 0,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
-            }
-          },
-          "cues": {},
-          "states": {
-            "live": [
-              [
-                {
-                  "kind": "cue",
-                  "cue": "replay",
-                  "present": false
-                },
-                {
-                  "kind": "field",
-                  "field": "clock",
-                  "present": true
-                }
-              ]
-            ],
-            "planted": [
-              [
-                {
-                  "kind": "cue",
-                  "cue": "bomb",
-                  "present": true
-                },
-                {
-                  "kind": "field",
-                  "field": "clock",
-                  "present": false
-                }
-              ],
-              [
-                {
-                  "kind": "cue",
-                  "cue": "timeout",
-                  "present": true
-                }
-              ]
-            ]
-          },
-          "organizer": {
-            "roi": {
-              "x": 340,
-              "y": 870,
-              "w": 3,
-              "h": 3
-            },
-            "preprocess": {
-              "scale": 1.4,
-              "threshold": 150,
-              "invert": false
-            },
-            "templates": [
-              "mark"
-            ],
-            "minScore": 0.85
-          }
-        },
-        {
-          "id": "camera-bottom-2160",
-          "nativeSize": {
-            "width": 3840,
-            "height": 2160
-          },
-          "fields": {
-            "clock": {
-              "roi": {
-                "x": 1854,
-                "y": 1418,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "countdown",
-                "format": "m:ss"
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "scoreLeft": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 0,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "scoreRight": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 0,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
-            }
-          },
-          "cues": {
-            "replay": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "bomb": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "timeout": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "roundPrefix": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "roundOver": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "roundHistory": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "scoreboard": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            }
-          },
-          "states": {
-            "live": [
-              [
-                {
-                  "kind": "cue",
-                  "cue": "replay",
-                  "present": false
-                },
-                {
-                  "kind": "field",
-                  "field": "clock",
-                  "present": true
-                }
-              ]
-            ],
-            "planted": [
-              [
-                {
-                  "kind": "cue",
-                  "cue": "bomb",
-                  "present": true
-                },
-                {
-                  "kind": "field",
-                  "field": "clock",
-                  "present": false
-                }
-              ],
-              [
-                {
-                  "kind": "cue",
-                  "cue": "timeout",
-                  "present": true
-                }
-              ]
-            ]
-          },
-          "organizer": {
-            "roi": {
-              "x": 340,
-              "y": 870,
-              "w": 3,
-              "h": 3
-            },
-            "preprocess": {
-              "scale": 1.4,
-              "threshold": 150,
-              "invert": false
-            },
-            "templates": [
-              "mark"
-            ],
-            "minScore": 0.85
-          }
-        }
-      ]
-    },
-    "valid": false,
-    "paths": [
-      "variants[0].fields.round.gateCue"
     ]
   },
   {
@@ -8283,40 +6654,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -8602,40 +6939,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -8822,672 +7125,6 @@
     ]
   },
   {
-    "name": "round-zero",
-    "value": {
-      "kind": "hud-style-pack",
-      "schemaVersion": 1,
-      "id": "cs2/pgl",
-      "revision": 1,
-      "name": "PGL 测试样式",
-      "bitmaps": {
-        "digit": {
-          "width": 32,
-          "height": 48,
-          "data": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
-        },
-        "mark": {
-          "width": 3,
-          "height": 3,
-          "data": "qoA="
-        }
-      },
-      "variants": [
-        {
-          "id": "official-top-2160",
-          "nativeSize": {
-            "width": 3840,
-            "height": 2160
-          },
-          "fields": {
-            "clock": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "countdown",
-                "format": "m:ss"
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "scoreLeft": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 0,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "scoreRight": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 0,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 0,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
-            }
-          },
-          "cues": {
-            "replay": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "bomb": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "timeout": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "roundPrefix": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "roundOver": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "roundHistory": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "scoreboard": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            }
-          },
-          "states": {
-            "live": [
-              [
-                {
-                  "kind": "cue",
-                  "cue": "replay",
-                  "present": false
-                },
-                {
-                  "kind": "field",
-                  "field": "clock",
-                  "present": true
-                }
-              ]
-            ],
-            "planted": [
-              [
-                {
-                  "kind": "cue",
-                  "cue": "bomb",
-                  "present": true
-                },
-                {
-                  "kind": "field",
-                  "field": "clock",
-                  "present": false
-                }
-              ],
-              [
-                {
-                  "kind": "cue",
-                  "cue": "timeout",
-                  "present": true
-                }
-              ]
-            ]
-          },
-          "organizer": {
-            "roi": {
-              "x": 340,
-              "y": 870,
-              "w": 3,
-              "h": 3
-            },
-            "preprocess": {
-              "scale": 1.4,
-              "threshold": 150,
-              "invert": false
-            },
-            "templates": [
-              "mark"
-            ],
-            "minScore": 0.85
-          }
-        },
-        {
-          "id": "camera-bottom-2160",
-          "nativeSize": {
-            "width": 3840,
-            "height": 2160
-          },
-          "fields": {
-            "clock": {
-              "roi": {
-                "x": 1854,
-                "y": 1418,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "countdown",
-                "format": "m:ss"
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "scoreLeft": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 0,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "scoreRight": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 0,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
-            }
-          },
-          "cues": {
-            "replay": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "bomb": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "timeout": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "roundPrefix": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "roundOver": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "roundHistory": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            },
-            "scoreboard": {
-              "roi": {
-                "x": 340,
-                "y": 870,
-                "w": 3,
-                "h": 3
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "templates": [
-                "mark"
-              ],
-              "minScore": 0.85
-            }
-          },
-          "states": {
-            "live": [
-              [
-                {
-                  "kind": "cue",
-                  "cue": "replay",
-                  "present": false
-                },
-                {
-                  "kind": "field",
-                  "field": "clock",
-                  "present": true
-                }
-              ]
-            ],
-            "planted": [
-              [
-                {
-                  "kind": "cue",
-                  "cue": "bomb",
-                  "present": true
-                },
-                {
-                  "kind": "field",
-                  "field": "clock",
-                  "present": false
-                }
-              ],
-              [
-                {
-                  "kind": "cue",
-                  "cue": "timeout",
-                  "present": true
-                }
-              ]
-            ]
-          },
-          "organizer": {
-            "roi": {
-              "x": 340,
-              "y": 870,
-              "w": 3,
-              "h": 3
-            },
-            "preprocess": {
-              "scale": 1.4,
-              "threshold": 150,
-              "invert": false
-            },
-            "templates": [
-              "mark"
-            ],
-            "minScore": 0.85
-          }
-        }
-      ]
-    },
-    "valid": false,
-    "paths": [
-      "variants[0].fields.round.grammar.min"
-    ]
-  },
-  {
     "name": "template-size",
     "value": {
       "kind": "hud-style-pack",
@@ -9615,40 +7252,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -9934,40 +7537,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -10281,40 +7850,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -10600,40 +8135,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -10881,8 +8382,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {
             "freeze": {
@@ -11041,40 +8541,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -11359,40 +8825,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -11706,40 +9138,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -12025,40 +9423,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -12306,8 +9670,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {
@@ -12392,8 +9755,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {
@@ -12538,40 +9900,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -12857,40 +10185,6 @@
                 "minMargin": 0.03
               },
               "gateCue": null
-            },
-            "round": {
-              "roi": {
-                "x": 1854,
-                "y": 98,
-                "w": 116,
-                "h": 64
-              },
-              "preprocess": {
-                "scale": 1.4,
-                "threshold": 150,
-                "invert": false
-              },
-              "segment": {
-                "minColumnInk": 1,
-                "minGlyphWidth": 2,
-                "minGapWidth": 1,
-                "minInkRatio": 0.08
-              },
-              "glyphs": {
-                "0": [
-                  "digit"
-                ]
-              },
-              "grammar": {
-                "kind": "integer",
-                "min": 1,
-                "max": 99
-              },
-              "match": {
-                "minScore": 0.82,
-                "minMargin": 0.03
-              },
-              "gateCue": "roundPrefix"
             }
           },
           "cues": {
@@ -13132,8 +10426,7 @@
               "gateCue": null
             },
             "scoreLeft": null,
-            "scoreRight": null,
-            "round": null
+            "scoreRight": null
           },
           "cues": {},
           "states": {},
@@ -13144,6 +10437,1254 @@
     "valid": false,
     "paths": [
       "variants[0].fields.clock.segment"
+    ]
+  },
+  {
+    "name": "round-field-is-removed",
+    "value": {
+      "kind": "hud-style-pack",
+      "schemaVersion": 1,
+      "id": "cs2/pgl",
+      "revision": 1,
+      "name": "PGL 测试样式",
+      "bitmaps": {
+        "digit": {
+          "width": 32,
+          "height": 48,
+          "data": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+        },
+        "mark": {
+          "width": 3,
+          "height": 3,
+          "data": "qoA="
+        }
+      },
+      "variants": [
+        {
+          "id": "official-top-2160",
+          "nativeSize": {
+            "width": 3840,
+            "height": 2160
+          },
+          "fields": {
+            "clock": {
+              "roi": {
+                "x": 1854,
+                "y": 98,
+                "w": 116,
+                "h": 64
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "segment": {
+                "minColumnInk": 1,
+                "minGlyphWidth": 2,
+                "minGapWidth": 1,
+                "minInkRatio": 0.08
+              },
+              "glyphs": {
+                "0": [
+                  "digit"
+                ]
+              },
+              "grammar": {
+                "kind": "countdown",
+                "format": "m:ss"
+              },
+              "match": {
+                "minScore": 0.82,
+                "minMargin": 0.03
+              },
+              "gateCue": null
+            },
+            "scoreLeft": {
+              "roi": {
+                "x": 1854,
+                "y": 98,
+                "w": 116,
+                "h": 64
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "segment": {
+                "minColumnInk": 1,
+                "minGlyphWidth": 2,
+                "minGapWidth": 1,
+                "minInkRatio": 0.08
+              },
+              "glyphs": {
+                "0": [
+                  "digit"
+                ]
+              },
+              "grammar": {
+                "kind": "integer",
+                "min": 0,
+                "max": 99
+              },
+              "match": {
+                "minScore": 0.82,
+                "minMargin": 0.03
+              },
+              "gateCue": null
+            },
+            "scoreRight": {
+              "roi": {
+                "x": 1854,
+                "y": 98,
+                "w": 116,
+                "h": 64
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "segment": {
+                "minColumnInk": 1,
+                "minGlyphWidth": 2,
+                "minGapWidth": 1,
+                "minInkRatio": 0.08
+              },
+              "glyphs": {
+                "0": [
+                  "digit"
+                ]
+              },
+              "grammar": {
+                "kind": "integer",
+                "min": 0,
+                "max": 99
+              },
+              "match": {
+                "minScore": 0.82,
+                "minMargin": 0.03
+              },
+              "gateCue": null
+            },
+            "round": null
+          },
+          "cues": {
+            "replay": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "bomb": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "timeout": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "roundPrefix": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "roundOver": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "roundHistory": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "scoreboard": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            }
+          },
+          "states": {
+            "live": [
+              [
+                {
+                  "kind": "cue",
+                  "cue": "replay",
+                  "present": false
+                },
+                {
+                  "kind": "field",
+                  "field": "clock",
+                  "present": true
+                }
+              ]
+            ],
+            "planted": [
+              [
+                {
+                  "kind": "cue",
+                  "cue": "bomb",
+                  "present": true
+                },
+                {
+                  "kind": "field",
+                  "field": "clock",
+                  "present": false
+                }
+              ],
+              [
+                {
+                  "kind": "cue",
+                  "cue": "timeout",
+                  "present": true
+                }
+              ]
+            ]
+          },
+          "organizer": {
+            "roi": {
+              "x": 340,
+              "y": 870,
+              "w": 3,
+              "h": 3
+            },
+            "preprocess": {
+              "scale": 1.4,
+              "threshold": 150,
+              "invert": false
+            },
+            "templates": [
+              "mark"
+            ],
+            "minScore": 0.85
+          }
+        }
+      ]
+    },
+    "valid": false,
+    "paths": [
+      "variants[0].fields.round"
+    ]
+  },
+  {
+    "name": "round-condition-is-invalid",
+    "value": {
+      "kind": "hud-style-pack",
+      "schemaVersion": 1,
+      "id": "cs2/pgl",
+      "revision": 1,
+      "name": "PGL 测试样式",
+      "bitmaps": {
+        "digit": {
+          "width": 32,
+          "height": 48,
+          "data": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+        },
+        "mark": {
+          "width": 3,
+          "height": 3,
+          "data": "qoA="
+        }
+      },
+      "variants": [
+        {
+          "id": "official-top-2160",
+          "nativeSize": {
+            "width": 3840,
+            "height": 2160
+          },
+          "fields": {
+            "clock": {
+              "roi": {
+                "x": 1854,
+                "y": 98,
+                "w": 116,
+                "h": 64
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "segment": {
+                "minColumnInk": 1,
+                "minGlyphWidth": 2,
+                "minGapWidth": 1,
+                "minInkRatio": 0.08
+              },
+              "glyphs": {
+                "0": [
+                  "digit"
+                ]
+              },
+              "grammar": {
+                "kind": "countdown",
+                "format": "m:ss"
+              },
+              "match": {
+                "minScore": 0.82,
+                "minMargin": 0.03
+              },
+              "gateCue": null
+            },
+            "scoreLeft": {
+              "roi": {
+                "x": 1854,
+                "y": 98,
+                "w": 116,
+                "h": 64
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "segment": {
+                "minColumnInk": 1,
+                "minGlyphWidth": 2,
+                "minGapWidth": 1,
+                "minInkRatio": 0.08
+              },
+              "glyphs": {
+                "0": [
+                  "digit"
+                ]
+              },
+              "grammar": {
+                "kind": "integer",
+                "min": 0,
+                "max": 99
+              },
+              "match": {
+                "minScore": 0.82,
+                "minMargin": 0.03
+              },
+              "gateCue": null
+            },
+            "scoreRight": {
+              "roi": {
+                "x": 1854,
+                "y": 98,
+                "w": 116,
+                "h": 64
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "segment": {
+                "minColumnInk": 1,
+                "minGlyphWidth": 2,
+                "minGapWidth": 1,
+                "minInkRatio": 0.08
+              },
+              "glyphs": {
+                "0": [
+                  "digit"
+                ]
+              },
+              "grammar": {
+                "kind": "integer",
+                "min": 0,
+                "max": 99
+              },
+              "match": {
+                "minScore": 0.82,
+                "minMargin": 0.03
+              },
+              "gateCue": null
+            }
+          },
+          "cues": {
+            "replay": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "bomb": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "timeout": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "roundPrefix": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "roundOver": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "roundHistory": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "scoreboard": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            }
+          },
+          "states": {
+            "live": [
+              [
+                {
+                  "kind": "field",
+                  "field": "round",
+                  "present": true
+                }
+              ]
+            ],
+            "planted": [
+              [
+                {
+                  "kind": "cue",
+                  "cue": "bomb",
+                  "present": true
+                },
+                {
+                  "kind": "field",
+                  "field": "clock",
+                  "present": false
+                }
+              ],
+              [
+                {
+                  "kind": "cue",
+                  "cue": "timeout",
+                  "present": true
+                }
+              ]
+            ]
+          },
+          "organizer": {
+            "roi": {
+              "x": 340,
+              "y": 870,
+              "w": 3,
+              "h": 3
+            },
+            "preprocess": {
+              "scale": 1.4,
+              "threshold": 150,
+              "invert": false
+            },
+            "templates": [
+              "mark"
+            ],
+            "minScore": 0.85
+          }
+        }
+      ]
+    },
+    "valid": false,
+    "paths": [
+      "variants[0].states.live[0][0].field"
+    ]
+  },
+  {
+    "name": "score-gate-is-invalid",
+    "value": {
+      "kind": "hud-style-pack",
+      "schemaVersion": 1,
+      "id": "cs2/pgl",
+      "revision": 1,
+      "name": "PGL 测试样式",
+      "bitmaps": {
+        "digit": {
+          "width": 32,
+          "height": 48,
+          "data": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+        },
+        "mark": {
+          "width": 3,
+          "height": 3,
+          "data": "qoA="
+        }
+      },
+      "variants": [
+        {
+          "id": "official-top-2160",
+          "nativeSize": {
+            "width": 3840,
+            "height": 2160
+          },
+          "fields": {
+            "clock": {
+              "roi": {
+                "x": 1854,
+                "y": 98,
+                "w": 116,
+                "h": 64
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "segment": {
+                "minColumnInk": 1,
+                "minGlyphWidth": 2,
+                "minGapWidth": 1,
+                "minInkRatio": 0.08
+              },
+              "glyphs": {
+                "0": [
+                  "digit"
+                ]
+              },
+              "grammar": {
+                "kind": "countdown",
+                "format": "m:ss"
+              },
+              "match": {
+                "minScore": 0.82,
+                "minMargin": 0.03
+              },
+              "gateCue": null
+            },
+            "scoreLeft": {
+              "roi": {
+                "x": 1854,
+                "y": 98,
+                "w": 116,
+                "h": 64
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "segment": {
+                "minColumnInk": 1,
+                "minGlyphWidth": 2,
+                "minGapWidth": 1,
+                "minInkRatio": 0.08
+              },
+              "glyphs": {
+                "0": [
+                  "digit"
+                ]
+              },
+              "grammar": {
+                "kind": "integer",
+                "min": 0,
+                "max": 99
+              },
+              "match": {
+                "minScore": 0.82,
+                "minMargin": 0.03
+              },
+              "gateCue": "roundPrefix"
+            },
+            "scoreRight": {
+              "roi": {
+                "x": 1854,
+                "y": 98,
+                "w": 116,
+                "h": 64
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "segment": {
+                "minColumnInk": 1,
+                "minGlyphWidth": 2,
+                "minGapWidth": 1,
+                "minInkRatio": 0.08
+              },
+              "glyphs": {
+                "0": [
+                  "digit"
+                ]
+              },
+              "grammar": {
+                "kind": "integer",
+                "min": 0,
+                "max": 99
+              },
+              "match": {
+                "minScore": 0.82,
+                "minMargin": 0.03
+              },
+              "gateCue": null
+            }
+          },
+          "cues": {
+            "replay": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "bomb": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "timeout": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "roundPrefix": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "roundOver": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "roundHistory": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "scoreboard": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            }
+          },
+          "states": {
+            "live": [
+              [
+                {
+                  "kind": "cue",
+                  "cue": "replay",
+                  "present": false
+                },
+                {
+                  "kind": "field",
+                  "field": "clock",
+                  "present": true
+                }
+              ]
+            ],
+            "planted": [
+              [
+                {
+                  "kind": "cue",
+                  "cue": "bomb",
+                  "present": true
+                },
+                {
+                  "kind": "field",
+                  "field": "clock",
+                  "present": false
+                }
+              ],
+              [
+                {
+                  "kind": "cue",
+                  "cue": "timeout",
+                  "present": true
+                }
+              ]
+            ]
+          },
+          "organizer": {
+            "roi": {
+              "x": 340,
+              "y": 870,
+              "w": 3,
+              "h": 3
+            },
+            "preprocess": {
+              "scale": 1.4,
+              "threshold": 150,
+              "invert": false
+            },
+            "templates": [
+              "mark"
+            ],
+            "minScore": 0.85
+          }
+        }
+      ]
+    },
+    "valid": false,
+    "paths": [
+      "variants[0].fields.scoreLeft.gateCue"
+    ]
+  },
+  {
+    "name": "score-over-99",
+    "value": {
+      "kind": "hud-style-pack",
+      "schemaVersion": 1,
+      "id": "cs2/pgl",
+      "revision": 1,
+      "name": "PGL 测试样式",
+      "bitmaps": {
+        "digit": {
+          "width": 32,
+          "height": 48,
+          "data": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+        },
+        "mark": {
+          "width": 3,
+          "height": 3,
+          "data": "qoA="
+        }
+      },
+      "variants": [
+        {
+          "id": "official-top-2160",
+          "nativeSize": {
+            "width": 3840,
+            "height": 2160
+          },
+          "fields": {
+            "clock": {
+              "roi": {
+                "x": 1854,
+                "y": 98,
+                "w": 116,
+                "h": 64
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "segment": {
+                "minColumnInk": 1,
+                "minGlyphWidth": 2,
+                "minGapWidth": 1,
+                "minInkRatio": 0.08
+              },
+              "glyphs": {
+                "0": [
+                  "digit"
+                ]
+              },
+              "grammar": {
+                "kind": "countdown",
+                "format": "m:ss"
+              },
+              "match": {
+                "minScore": 0.82,
+                "minMargin": 0.03
+              },
+              "gateCue": null
+            },
+            "scoreLeft": {
+              "roi": {
+                "x": 1854,
+                "y": 98,
+                "w": 116,
+                "h": 64
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "segment": {
+                "minColumnInk": 1,
+                "minGlyphWidth": 2,
+                "minGapWidth": 1,
+                "minInkRatio": 0.08
+              },
+              "glyphs": {
+                "0": [
+                  "digit"
+                ]
+              },
+              "grammar": {
+                "kind": "integer",
+                "min": 0,
+                "max": 100
+              },
+              "match": {
+                "minScore": 0.82,
+                "minMargin": 0.03
+              },
+              "gateCue": null
+            },
+            "scoreRight": {
+              "roi": {
+                "x": 1854,
+                "y": 98,
+                "w": 116,
+                "h": 64
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "segment": {
+                "minColumnInk": 1,
+                "minGlyphWidth": 2,
+                "minGapWidth": 1,
+                "minInkRatio": 0.08
+              },
+              "glyphs": {
+                "0": [
+                  "digit"
+                ]
+              },
+              "grammar": {
+                "kind": "integer",
+                "min": 0,
+                "max": 99
+              },
+              "match": {
+                "minScore": 0.82,
+                "minMargin": 0.03
+              },
+              "gateCue": null
+            }
+          },
+          "cues": {
+            "replay": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "bomb": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "timeout": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "roundPrefix": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "roundOver": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "roundHistory": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            },
+            "scoreboard": {
+              "roi": {
+                "x": 340,
+                "y": 870,
+                "w": 3,
+                "h": 3
+              },
+              "preprocess": {
+                "scale": 1.4,
+                "threshold": 150,
+                "invert": false
+              },
+              "templates": [
+                "mark"
+              ],
+              "minScore": 0.85
+            }
+          },
+          "states": {
+            "live": [
+              [
+                {
+                  "kind": "cue",
+                  "cue": "replay",
+                  "present": false
+                },
+                {
+                  "kind": "field",
+                  "field": "clock",
+                  "present": true
+                }
+              ]
+            ],
+            "planted": [
+              [
+                {
+                  "kind": "cue",
+                  "cue": "bomb",
+                  "present": true
+                },
+                {
+                  "kind": "field",
+                  "field": "clock",
+                  "present": false
+                }
+              ],
+              [
+                {
+                  "kind": "cue",
+                  "cue": "timeout",
+                  "present": true
+                }
+              ]
+            ]
+          },
+          "organizer": {
+            "roi": {
+              "x": 340,
+              "y": 870,
+              "w": 3,
+              "h": 3
+            },
+            "preprocess": {
+              "scale": 1.4,
+              "threshold": 150,
+              "invert": false
+            },
+            "templates": [
+              "mark"
+            ],
+            "minScore": 0.85
+          }
+        }
+      ]
+    },
+    "valid": false,
+    "paths": [
+      "variants[0].fields.scoreLeft.grammar.max"
     ]
   }
 ]

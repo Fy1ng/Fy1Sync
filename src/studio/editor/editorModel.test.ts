@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createEmptyHudStylePack, parseHudStylePack } from '../../core/hudStylePack'
 import { packBitmap } from '../../core/bitmapCodec'
-import { clockModel, patchClock, sizeEmptyClock } from './editorModel'
+import { clockModel, fieldModel, fieldReadiness, patchClock, patchField, sizeEmptyClock } from './editorModel'
 
 describe('clock editor pack view', () => {
   it('preserves other fields, layouts, cues, states and organizer through an edit and JSON round trip', () => {
@@ -57,5 +57,37 @@ describe('clock editor pack view', () => {
     pack.variants[0]!.fields.scoreLeft = null
     pack.variants[0]!.states.hasClock = [[{ kind: 'field', field: 'clock', present: true }]]
     expect(sizeEmptyClock(pack, 3840, 2160)).toBe(pack)
+  })
+})
+
+describe('score editor pack view', () => {
+  it('keeps score parameters and glyphs independent and preserves the rest of the pack', () => {
+    const pack = createEmptyHudStylePack('test/pgl', 'PGL', { width: 3840, height: 2160 })
+    const clock = structuredClone(pack.variants[0]!.fields.clock)
+    const data = packBitmap(Uint8Array.from({ length: 1536 }, (_, index) => index % 3 === 0 ? 255 : 0))
+    const left = patchField(pack, 'scoreLeft', { preprocess: { scale: 1, threshold: 75, invert: false },
+      roi: { x: 1688 / 3840, y: 88 / 2160, w: 136 / 3840, h: 116 / 2160 },
+      templates: { '8': [{ id: 'left-eight', data, createdAt: 0 }] } })
+    const both = patchField(left, 'scoreRight', { preprocess: { scale: 1, threshold: 110, invert: false },
+      segment: { minColumnInk: 2, minGlyphWidth: 3, minGapWidth: 2, minInkRatio: 0.1 } })
+    expect(both.variants[0]!.fields.clock).toEqual(clock)
+    expect(both.variants[0]!.fields.scoreLeft).toEqual(left.variants[0]!.fields.scoreLeft)
+    expect(both.variants[0]!.fields.scoreLeft!.roi).toEqual({ x: 1688, y: 88, w: 136, h: 116 })
+    expect(fieldModel(both, 'scoreLeft').templates['8']).toHaveLength(1)
+    expect(fieldModel(both, 'scoreRight').templates['8']).toBeUndefined()
+    expect(fieldModel(both, 'scoreLeft').preprocess.threshold).toBe(75)
+    expect(fieldModel(both, 'scoreRight').preprocess.threshold).toBe(110)
+    expect(fieldModel(both, 'scoreRight').segment.minGapWidth).toBe(2)
+    expect(fieldReadiness(both, 'scoreLeft')).toMatchObject({ sampleCount: 1, ready: false })
+    expect(fieldReadiness(both, 'scoreLeft').missing).not.toContain(':')
+    expect(parseHudStylePack(both).issues).toEqual([])
+  })
+
+  it('provides empty score views without changing the imported document', () => {
+    const pack = createEmptyHudStylePack()
+    const before = JSON.stringify(pack)
+    expect(fieldModel(pack, 'scoreLeft').matchThreshold).toBe(0.9)
+    expect(fieldModel(pack, 'scoreRight').templates).toEqual({})
+    expect(JSON.stringify(pack)).toBe(before)
   })
 })

@@ -1,9 +1,10 @@
 /** Scan a stretch through Rust; only reviewed glyph bitmaps are kept. */
 
 import { useEffect, useRef, useState } from 'react'
-import type { HudStylePack } from '../../core/hudStylePack'
+import type { HudFieldId, HudStylePack } from '../../core/hudStylePack'
 import { prepareHudGlyphs } from '../../core/hudWasm'
 import { FrameGrabber, FULL_FRAME_ROI } from '../../recognition/frameGrabber'
+import { pairReading } from './reading'
 import { drawMask } from './framePipeline'
 import { proposeStretch, stretchSamples, type StretchFrame, type StretchGroup, type StretchSample } from './stretch'
 
@@ -12,13 +13,14 @@ const SCAN_RATE = 0.25
 /** Longest stretch one scan takes: a minute is 3 600 frames at 60 fps. */
 const MAX_STRETCH_SECONDS = 60
 
-const STATE_TEXT = { proposed: '', 'box-mismatch': '字符框数不对', unsure: '待确认' } as const
+const STATE_TEXT = { proposed: '', 'box-mismatch': '字符框数不对', unsure: '待确认', pending: '待确认' } as const
 
 function GroupPicture({ frame }: { frame: StretchFrame }): React.ReactNode {
   return <canvas className="stretch-pic" ref={(node) => drawMask(node, frame.binary)} />
 }
 
-export function StretchSection({ video, pack, onSave }: {
+export function StretchSection({ video, pack, onSave, fieldId = 'clock' }: {
+  fieldId?: HudFieldId
   /** The loaded recording, or null while none is (a screenshot, or nothing). */
   video: HTMLVideoElement | null
   pack: HudStylePack
@@ -33,9 +35,9 @@ export function StretchSection({ video, pack, onSave }: {
   const [kept, setKept] = useState<boolean[]>([])
   const [problem, setProblem] = useState<string | null>(null)
   const cancel = useRef<(() => void) | null>(null)
-  const grammar = pack.variants[0]!.fields.clock!.grammar
-  const format = grammar.kind === 'countdown' ? grammar.format : 'm:ss'
-  useEffect(() => () => cancel.current?.(), [video, pack])
+  const grammar = pack.variants[0]!.fields[fieldId]?.grammar
+  const format = grammar?.kind === 'countdown' ? grammar.format : 'm:ss'
+  useEffect(() => () => cancel.current?.(), [video, pack, fieldId])
 
   const length = mark.in !== null && mark.out !== null ? mark.out - mark.in : null
   const markProblem = length === null ? null : length <= 0 ? '出点要在入点之后'
@@ -105,7 +107,7 @@ export function StretchSection({ video, pack, onSave }: {
             try {
               const grabbed = grabber.grab(video, FULL_FRAME_ROI, meta.mediaTime)
               if (!grabbed.ok) throw new Error(`取帧失败: ${grabbed.reason}`)
-              const prepared = await prepareHudGlyphs(grabbed.frame, pack)
+              const prepared = await prepareHudGlyphs(grabbed.frame, pack, undefined, undefined, fieldId)
               if (completed) return
               if (collected.length === 0 || meta.mediaTime > collected[collected.length - 1]!.at + 1e-4) {
                 collected.push({ at: meta.mediaTime, binary: prepared.binary, boxes: prepared.boxes, bitmaps: prepared.bitmaps })
@@ -143,13 +145,13 @@ export function StretchSection({ video, pack, onSave }: {
     if (stopped) return
     if (scanError) { setProblem(scanError); return }
     if (collected.length === 0) { setProblem('这一段没有取到画面'); return }
-    const proposal = proposeStretch(collected, first, format)
+    const proposal = proposeStretch(collected, first, format, fieldId)
     setFrames(collected)
     setGroups(proposal)
     setKept(proposal.map((group) => group.state === 'proposed'))
   }
 
-  const keptSamples = (): StretchSample[] => stretchSamples(frames, groups, (group) => kept[groups.indexOf(group)] === true)
+  const keptSamples = (): StretchSample[] => stretchSamples(frames, groups, (group) => kept[groups.indexOf(group)] === true, fieldId)
   const save = (): void => {
     const samples = keptSamples()
     if (samples.length === 0) { setProblem('没有可存的样本：勾选至少一组，并确认它的读数和字符框数一致'); return }
@@ -158,9 +160,11 @@ export function StretchSection({ video, pack, onSave }: {
     setFrames([])
   }
   const edit = (index: number, text: string): void => {
-    setGroups((current) => current.map((group, at) => at === index ? { ...group, text } : group))
-    // A typed reading is the viewer's word for it: keep it unless they untick it.
-    setKept((current) => current.map((value, at) => at === index ? text.trim() !== '' : value))
+    const valid = pairReading(text, frames[groups[index]!.sample]!.boxes.length, fieldId).ok
+    setGroups((current) => current.map((group, at) => at === index ? { ...group, text,
+      state: valid ? 'proposed' : 'box-mismatch', note: undefined } : group))
+    // A valid typed reading confirms this group; invalid input cannot become a sample.
+    setKept((current) => current.map((value, at) => at === index ? valid : value))
   }
 
   const clock = (time: number | null): string => time === null ? '' : ` ${time.toFixed(2)}s`
@@ -169,7 +173,7 @@ export function StretchSection({ video, pack, onSave }: {
     <section className="rail-group" aria-label="整段标注">
       <div className="rail-head">
         <h2>整段标注</h2>
-        <span className="rail-meta">倒计时每秒减 1</span>
+        <span className="rail-meta">{fieldId === 'clock' ? '倒计时每秒减 1' : '比分变化提议 + 1, 逐组确认'}</span>
       </div>
       {!video ? (
         <p className="muted">载入录像后，标出一段并填写第一帧的读数，一次存下整段的字符样本</p>
@@ -183,7 +187,7 @@ export function StretchSection({ video, pack, onSave }: {
           </div>
           {markProblem && <p className="form-error">{markProblem}</p>}
           <form className="reading-row" onSubmit={(event) => { event.preventDefault(); void run() }}>
-            <input className="text-input num" value={first} aria-label="入点读数" placeholder="入点那一帧的读数，例如 1:49"
+            <input className="text-input num" value={first} aria-label="入点读数" placeholder={fieldId === 'clock' ? '入点那一帧的读数，例如 1:49' : '入点那一帧的比分, 例如 8'}
               spellCheck={false} autoComplete="off" inputMode="numeric" disabled={scan !== null}
               onChange={(event) => setFirst(event.target.value)} />
             {scan ? (
@@ -203,7 +207,12 @@ export function StretchSection({ video, pack, onSave }: {
                 {groups.map((group, index) => (
                   <li key={`${group.from}-${index}`} className="stretch-group" data-state={group.state}>
                     <input type="checkbox" checked={kept[index] === true} aria-label={`存入 ${group.text || '这一组'}`}
-                      onChange={(event) => setKept((current) => current.map((value, at) => at === index ? event.target.checked : value))} />
+                      onChange={(event) => {
+                        const checked = event.target.checked
+                        const valid = pairReading(group.text, frames[group.sample]!.boxes.length, fieldId).ok
+                        setKept(current => current.map((value, at) => at === index ? checked && valid : value))
+                        if (checked && valid) setGroups(current => current.map((item, at) => at === index ? { ...item, state: 'proposed', note: undefined } : item))
+                      }} />
                     <GroupPicture frame={frames[group.sample]!} />
                     <input className="text-input num stretch-text" value={group.text} aria-label={`${group.from.toFixed(2)}s 起的读数`}
                       onChange={(event) => edit(index, event.target.value)} />

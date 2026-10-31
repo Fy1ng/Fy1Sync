@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const HUD_FIELDS: [&str; 4] = ["clock", "scoreLeft", "scoreRight", "round"];
+pub const HUD_FIELDS: [&str; 3] = ["clock", "scoreLeft", "scoreRight"];
 pub const HUD_CUES: [&str; 7] = [
     "replay",
     "bomb",
@@ -72,7 +72,16 @@ pub struct HudFields {
     pub clock: Option<HudField>,
     pub score_left: Option<HudField>,
     pub score_right: Option<HudField>,
-    pub round: Option<HudField>,
+}
+impl HudFields {
+    fn get(&self, id: &str) -> Option<&HudField> {
+        match id {
+            "clock" => self.clock.as_ref(),
+            "scoreLeft" => self.score_left.as_ref(),
+            "scoreRight" => self.score_right.as_ref(),
+            _ => None,
+        }
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -309,7 +318,6 @@ fn field(
     name: &str,
     size: &Value,
     bitmaps: &Value,
-    cues: &Value,
     path: &str,
     issues: &mut Vec<HudIssue>,
 ) {
@@ -393,7 +401,7 @@ fn field(
         let min = bounded(
             &g["min"],
             &path_at(&p, "min"),
-            if name == "round" { 1.0 } else { 0.0 },
+            0.0,
             99.0,
             true,
             issues,
@@ -401,7 +409,7 @@ fn field(
         let max = bounded(
             &g["max"],
             &path_at(&p, "max"),
-            if name == "round" { 1.0 } else { 0.0 },
+            0.0,
             99.0,
             true,
             issues,
@@ -417,17 +425,8 @@ fn field(
     }
     let gate = &v["gateCue"];
     let p = path_at(path, "gateCue");
-    if name == "round" {
-        if gate != "roundPrefix" {
-            problem(issues, &p, "回合数必须使用 Round 前缀门控");
-        }
-    } else if !gate.is_null() {
+    if !gate.is_null() {
         problem(issues, &p, "该字段不支持门控");
-    }
-    if let Some(gate) = gate.as_str() {
-        if !HUD_CUES.contains(&gate) || cues.get(gate).is_none() {
-            problem(issues, &p, "引用的 cue 不存在");
-        }
     }
 }
 
@@ -581,7 +580,6 @@ pub fn validate_hud_style_pack(value: &Value) -> Vec<HudIssue> {
                     k,
                     size,
                     bitmaps,
-                    cues,
                     &path_at(&fp, k),
                     &mut issues,
                 );
@@ -741,6 +739,7 @@ pub struct HudGlyphPreparation {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HudReading {
+    pub source: String,
     pub text: String,
     pub value: f64,
     pub confidence: f64,
@@ -852,8 +851,9 @@ pub fn prepare_hud_glyphs(
     height: usize,
     pack: &HudStylePack,
     id: &str,
+    field_id: &str,
 ) -> Result<HudGlyphPreparation, String> {
-    prepare_hud_glyphs_with_boxes(rgba, width, height, pack, id, None)
+    prepare_hud_glyphs_with_boxes(rgba, width, height, pack, id, field_id, None)
 }
 pub fn prepare_hud_glyphs_with_boxes(
     rgba: &[u8],
@@ -861,14 +861,14 @@ pub fn prepare_hud_glyphs_with_boxes(
     height: usize,
     pack: &HudStylePack,
     id: &str,
+    field_id: &str,
     boxes: Option<Vec<GlyphBox>>,
 ) -> Result<HudGlyphPreparation, String> {
     let variant = frame_variant(rgba, width, height, pack, id)?;
     let field = variant
         .fields
-        .clock
-        .as_ref()
-        .ok_or_else(|| "尚未配置倒计时字段".to_string())?;
+        .get(field_id)
+        .ok_or_else(|| "字段不存在或尚未配置".to_string())?;
     let (mut debug, _) = analyze_hud_field(rgba, width, field);
     if let Some(boxes) = boxes {
         for b in &boxes {
@@ -907,15 +907,22 @@ pub fn prepare_hud_glyphs_with_boxes(
         bitmaps,
     })
 }
-pub fn recognize_hud_frame(
+fn parse_score(text: &str, min: usize, max: usize) -> Option<f64> {
+    if text.is_empty() || text.len() > 2 || !text.bytes().all(|c| c.is_ascii_digit())
+        || (text.len() > 1 && text.starts_with('0')) {
+        return None;
+    }
+    let value = text.parse::<usize>().ok()?;
+    (value <= 99 && value >= min && value <= max).then_some(value as f64)
+}
+fn recognize_hud_field(
     rgba: &[u8],
     width: usize,
-    height: usize,
     pack: &HudStylePack,
     id: &str,
-) -> Result<HudFrameResult, String> {
-    let variant = frame_variant(rgba, width, height, pack, id)?;
-    let clock = if let Some(field) = variant.fields.clock.as_ref() {
+    field: Option<&HudField>,
+) -> HudFieldResult {
+    if let Some(field) = field {
         let (mut debug, coverage) = analyze_hud_field(rgba, width, field);
         let mut templates = CompiledTemplates {
             chars: vec![],
@@ -938,18 +945,17 @@ pub fn recognize_hud_frame(
             .iter()
             .map(|mask| match_glyph(mask, &templates))
             .collect();
-        let readiness = hud_pack_readiness(pack, id);
-        if readiness["ready"] != true {
+        let countdown = matches!(field.grammar, HudGrammar::Countdown { .. });
+        let complete = CLOCK_CHARS[..10].iter().all(|c| field.glyphs.get(*c).is_some_and(|ids| !ids.is_empty()));
+        if countdown && hud_pack_readiness(pack, id)["ready"] != true {
             failed("insufficient-templates", Some(debug))
         } else if debug.ink_ratio < 0.004 || debug.ink_ratio > 0.85 {
             failed("blank-frame", Some(debug))
         } else if debug.boxes.is_empty() {
             failed("no-candidates", Some(debug))
-        } else if debug.matches.iter().any(|m| {
-            m.char.is_none()
-                || m.score < field.r#match.min_score
-                || m.score - m.runner_up_score < field.r#match.min_margin
-        }) {
+        } else if debug.matches.iter().any(|m| m.char.is_none() || m.score < field.r#match.min_score) {
+            failed(if !countdown && !complete { "missing-glyph" } else { "low-confidence" }, Some(debug))
+        } else if debug.matches.iter().any(|m| m.score - m.runner_up_score < field.r#match.min_margin) {
             failed("low-confidence", Some(debug))
         } else {
             let text: String = debug
@@ -959,13 +965,14 @@ pub fn recognize_hud_frame(
                 .collect();
             let value = match &field.grammar {
                 HudGrammar::Countdown { format } => parse_countdown(&text, format),
-                _ => None,
+                HudGrammar::Integer { min, max } => parse_score(&text, *min, *max),
             };
             if let Some(value) = value {
                 let scores: Vec<_> = debug.matches.iter().map(|m| m.score).collect();
                 let confidence = scores.iter().copied().fold(1.0, f64::min);
                 HudFieldResult::Read {
                     reading: HudReading {
+                        source: "recognized".into(),
                         text,
                         value,
                         confidence,
@@ -979,7 +986,41 @@ pub fn recognize_hud_frame(
         }
     } else {
         failed("not-configured", None)
-    };
+    }
+}
+fn derive_round(left: &HudFieldResult, right: &HudFieldResult) -> HudFieldResult {
+    match (left, right) {
+        (HudFieldResult::Read { reading: left, .. }, HudFieldResult::Read { reading: right, .. }) => {
+            let value = left.value + right.value + 1.0;
+            HudFieldResult::Read {
+                reading: HudReading {
+                    source: "derived".into(),
+                    text: format!("{value:.0}"),
+                    value,
+                    confidence: left.confidence.min(right.confidence),
+                    scores: left.scores.iter().chain(&right.scores).copied().collect(),
+                },
+                debug: None,
+            }
+        }
+        (HudFieldResult::Failed { .. }, _) | (_, HudFieldResult::Failed { .. }) => {
+            failed("score-failed", None)
+        }
+        _ => HudFieldResult::Indeterminate { reason: "score-indeterminate".into(), debug: None },
+    }
+}
+pub fn recognize_hud_frame(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    pack: &HudStylePack,
+    id: &str,
+) -> Result<HudFrameResult, String> {
+    let variant = frame_variant(rgba, width, height, pack, id)?;
+    let clock = recognize_hud_field(rgba, width, pack, id, variant.fields.clock.as_ref());
+    let score_left = recognize_hud_field(rgba, width, pack, id, variant.fields.score_left.as_ref());
+    let score_right = recognize_hud_field(rgba, width, pack, id, variant.fields.score_right.as_ref());
+    let round = derive_round(&score_left, &score_right);
     let unimplemented = HudPresenceResult::Failed {
         reason: "not-implemented".into(),
     };
@@ -987,9 +1028,9 @@ pub fn recognize_hud_frame(
         variant_id: id.into(),
         fields: HudFieldResults {
             clock,
-            score_left: failed("not-implemented", None),
-            score_right: failed("not-implemented", None),
-            round: failed("not-implemented", None),
+            score_left,
+            score_right,
+            round,
         },
         cues: variant
             .cues
@@ -1003,4 +1044,30 @@ pub fn recognize_hud_frame(
             .collect(),
         organizer: unimplemented,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derived_round_propagates_the_worse_score_status() {
+        let read = HudFieldResult::Read {
+            reading: HudReading { source: "recognized".into(), text: "99".into(), value: 99.0, confidence: 0.9, scores: vec![0.9, 0.95] },
+            debug: None,
+        };
+        let absent = HudFieldResult::Absent { debug: None };
+        let unknown = HudFieldResult::Indeterminate { reason: "unknown-state".into(), debug: None };
+        let failure = failed("missing-glyph", None);
+        for (left, right) in [(&read, &unknown), (&unknown, &read), (&unknown, &unknown), (&read, &absent), (&absent, &read)] {
+            assert!(matches!(derive_round(left, right), HudFieldResult::Indeterminate { .. }));
+        }
+        for (left, right) in [(&failure, &unknown), (&unknown, &failure), (&failure, &read), (&read, &failure), (&failure, &failure), (&absent, &failure)] {
+            assert!(matches!(derive_round(left, right), HudFieldResult::Failed { .. }));
+        }
+        let HudFieldResult::Read { reading, .. } = derive_round(&read, &read) else { unreachable!() };
+        assert_eq!(reading.value, 199.0);
+        assert_eq!(reading.source, "derived");
+        assert_eq!(reading.confidence, 0.9);
+    }
 }

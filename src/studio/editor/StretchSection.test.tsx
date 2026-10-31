@@ -1,7 +1,7 @@
 /** A slow 4K seek must settle before the scan subscribes to presented frames. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { createEmptyHudStylePack } from '../../core/hudStylePack'
+import { type HudFieldId, createEmptyHudStylePack } from '../../core/hudStylePack'
 import { StretchSection } from './StretchSection'
 
 const mocks = vi.hoisted(() => ({ grab: vi.fn(), prepare: vi.fn(), dispose: vi.fn() }))
@@ -19,7 +19,7 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks() })
 
-function setup() {
+function setup(fieldId: HudFieldId = 'clock') {
   const video = document.createElement('video')
   let time = 0.5, seeking = false, ready = 2
   const callbacks = new Map<number, VideoFrameRequestCallback>()
@@ -36,11 +36,12 @@ function setup() {
   video.requestVideoFrameCallback = request
   video.cancelVideoFrameCallback = cancel
   const remove = vi.spyOn(video, 'removeEventListener')
-  const rendered = render(<StretchSection video={video} pack={createEmptyHudStylePack()} onSave={vi.fn()} />)
+  const save = vi.fn()
+  const rendered = render(<StretchSection fieldId={fieldId} video={video} pack={createEmptyHudStylePack()} onSave={save} />)
   fireEvent.click(screen.getByRole('button', { name: /设为入点/ }))
   time = 12.5
   fireEvent.click(screen.getByRole('button', { name: /设为出点/ }))
-  fireEvent.change(screen.getByRole('textbox', { name: '入点读数' }), { target: { value: '1:53' } })
+  fireEvent.change(screen.getByRole('textbox', { name: '入点读数' }), { target: { value: fieldId === 'clock' ? '1:53' : '8' } })
   const start = () => fireEvent.click(screen.getByRole('button', { name: '扫描这一段' }))
   const seeked = () => { seeking = false; fireEvent(video, new Event('seeked')) }
   const decoded = () => { ready = 2; fireEvent(video, new Event('loadeddata')) }
@@ -49,7 +50,7 @@ function setup() {
     callbacks.delete(id)
     await act(async () => { callback(0, { mediaTime } as VideoFrameCallbackMetadata) })
   }
-  return { video, pause, play, request, cancel, remove, callbacks, start, seeked, decoded, present, unmount: rendered.unmount }
+  return { video, save, pause, play, request, cancel, remove, callbacks, start, seeked, decoded, present, unmount: rendered.unmount }
 }
 
 describe('stretch scan lifecycle', () => {
@@ -119,5 +120,28 @@ describe('stretch scan lifecycle', () => {
     expect(scan.request).not.toHaveBeenCalled()
     expect(mocks.dispose).toHaveBeenCalledTimes(1)
     expect(scan.remove).toHaveBeenCalledWith('loadeddata', expect.any(Function))
+  })
+})
+
+describe('score stretch review', () => {
+  it('leaves score proposals unticked until a person confirms or corrects the reading', async () => {
+    const scan = setup('scoreLeft')
+    mocks.prepare.mockResolvedValue({ binary: { data: new Uint8Array([255, 0, 0, 255]), width: 2, height: 2 },
+      boxes: [{ x: 0, y: 0, width: 2, height: 2, ink: 2 }], bitmaps: ['AQ=='] })
+    scan.start()
+    scan.seeked()
+    scan.decoded()
+    await waitFor(() => expect(scan.request).toHaveBeenCalledTimes(1))
+    await scan.present(0.5)
+    await scan.present(1.5)
+    await scan.present(12.6)
+    const check = await screen.findByRole('checkbox', { name: '存入 8' })
+    expect(check).not.toBeChecked()
+    expect(screen.getByText('待确认')).toBeInTheDocument()
+    expect(mocks.prepare).toHaveBeenCalledWith(expect.anything(), expect.anything(), undefined, undefined, 'scoreLeft')
+    fireEvent.change(screen.getByRole('textbox', { name: '0.50s 起的读数' }), { target: { value: '9' } })
+    expect(screen.getByRole('checkbox', { name: '存入 9' })).toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: '存入勾选的 1 组' }))
+    expect(scan.save).toHaveBeenCalledWith([{ char: '9', data: 'AQ==', at: 0.5 }])
   })
 })

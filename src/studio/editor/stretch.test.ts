@@ -110,3 +110,26 @@ describe('stretchSamples', () => {
     expect(stretchSamples(frames, groups, () => true).map((sample) => sample.char).sort()).toEqual(['0', '7', ':'])
   })
 })
+
+describe('score stretch proposals', () => {
+  it('holds between changes and suggests +1 without treating an irregular change as a clock tick', () => {
+    const frames = stretch(10, 0, 7, t => t < 2.3 ? '8' : t < 5.6 ? '9' : '10')
+    const groups = proposeStretch(frames, '8', 'ss', 'scoreLeft')
+    expect(groups.map(group => [group.text, group.state])).toEqual([
+      ['8', 'pending'], ['9', 'pending'], ['10', 'pending'],
+    ])
+    expect(groups.every(group => group.note?.includes('确认'))).toBe(true)
+    expect(stretchSamples(frames, groups, () => false, 'scoreLeft')).toEqual([])
+    expect(stretchSamples(frames, groups, () => true, 'scoreLeft').map(sample => sample.char).sort()).toEqual(['0', '1', '8', '9'])
+  })
+
+  it('keeps box mismatch checks and refuses invalid score corrections', () => {
+    const frames = stretch(10, 0, 1, () => '10')
+    const groups = proposeStretch(frames, '9', 'ss', 'scoreRight')
+    expect(groups[0]!.state).toBe('box-mismatch')
+    groups[0]!.text = '07'
+    expect(stretchSamples(frames, groups, () => true, 'scoreRight')).toEqual([])
+    groups[0]!.text = '10'
+    expect(stretchSamples(frames, groups, () => true, 'scoreRight').map(sample => sample.char).sort()).toEqual(['0', '1'])
+  })
+})

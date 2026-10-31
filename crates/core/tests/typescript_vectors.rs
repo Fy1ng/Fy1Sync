@@ -130,7 +130,7 @@ fn hud_pack(profile: &RecognitionProfile, width:usize, height:usize) -> Value {
         "fields":{"clock":{"roi":{"x":rect.x as usize,"y":rect.y as usize,"w":rect.width as usize,"h":rect.height as usize},
             "preprocess":profile.preprocess,"segment":{"minColumnInk":1,"minGlyphWidth":2,"minGapWidth":1,"minInkRatio":0.08},
             "glyphs":glyphs,"grammar":{"kind":"countdown","format":profile.clock_format},"match":{"minScore":profile.match_threshold,"minMargin":0.02},"gateCue":null},
-            "scoreLeft":null,"scoreRight":null,"round":null},"cues":{},"states":{},"organizer":null}]})
+            "scoreLeft":null,"scoreRight":null},"cues":{},"states":{},"organizer":null}]})
 }
 fn clock(text: &str, scale: usize) -> (Vec<u8>, RoiRect) {
     let mut data = vec![0; 640 * 360 * 4];
@@ -546,16 +546,16 @@ fn full_frame_hud_and_glyph_preparation_share_every_intermediate() {
     let (frame,roi)=clock("1:37",6);
     let pack=parse_hud_style_pack(&hud_pack(&profile(6,roi),640,360)).unwrap();
     let result=recognize_hud_frame(&frame,640,360,&pack,"official-top-360").unwrap();
-    assert!(matches!(result.fields.score_left,HudFieldResult::Failed{ref reason,..} if reason=="not-implemented"));
-    assert!(matches!(result.fields.score_right,HudFieldResult::Failed{ref reason,..} if reason=="not-implemented"));
-    assert!(matches!(result.fields.round,HudFieldResult::Failed{ref reason,..} if reason=="not-implemented"));
+    assert!(matches!(result.fields.score_left,HudFieldResult::Failed{ref reason,..} if reason=="not-configured"));
+    assert!(matches!(result.fields.score_right,HudFieldResult::Failed{ref reason,..} if reason=="not-configured"));
+    assert!(matches!(result.fields.round,HudFieldResult::Failed{ref reason,..} if reason=="score-failed"));
     assert!(result.cues.is_empty());
     assert!(result.states.is_empty());
     assert!(matches!(result.organizer,HudPresenceResult::Failed{ref reason} if reason=="not-implemented"));
     let HudFieldResult::Read{reading,debug:Some(debug)}=result.fields.clock else {panic!("{result:?}")};
     assert_eq!(reading.text,"1:37");
     assert_eq!(reading.value,97.0);
-    let prepared=prepare_hud_glyphs(&frame,640,360,&pack,"official-top-360").unwrap();
+    let prepared=prepare_hud_glyphs(&frame,640,360,&pack,"official-top-360","clock").unwrap();
     assert_eq!(prepared.roi_pixels,debug.roi_pixels);
     assert_eq!(prepared.gray,debug.gray);
     assert_eq!(prepared.binary,debug.binary);
@@ -563,10 +563,10 @@ fn full_frame_hud_and_glyph_preparation_share_every_intermediate() {
     assert_eq!(prepared.projection,debug.projection);
     assert_eq!(prepared.normalized,debug.normalized);
     for (bitmap,mask) in prepared.bitmaps.iter().zip(&prepared.normalized) {assert_eq!(&unpack_bitmap(bitmap,1536).unwrap(),mask);}
-    let custom=prepare_hud_glyphs_with_boxes(&frame,640,360,&pack,"official-top-360",Some(prepared.boxes.clone())).unwrap();
+    let custom=prepare_hud_glyphs_with_boxes(&frame,640,360,&pack,"official-top-360","clock",Some(prepared.boxes.clone())).unwrap();
     assert_eq!(custom.bitmaps,prepared.bitmaps);
     let mut bad=prepared.boxes; bad[0].x=-1.0;
-    assert!(prepare_hud_glyphs_with_boxes(&frame,640,360,&pack,"official-top-360",Some(bad)).is_err());
+    assert!(prepare_hud_glyphs_with_boxes(&frame,640,360,&pack,"official-top-360","clock",Some(bad)).is_err());
     assert!(recognize_hud_frame(&frame,640,360,&pack,"missing").is_err());
     assert!(recognize_hud_frame(&frame,640,359,&pack,"official-top-360").is_err());
     assert!(recognize_hud_frame(&frame[..frame.len()-1],640,360,&pack,"official-top-360").is_err());
@@ -651,4 +651,89 @@ fn hud_integer_json_spellings_have_javascript_semantics() {
     }
     float_spellings(&mut pack);
     assert!(parse_hud_style_pack(&pack).is_ok());
+}
+
+fn scoreboard(left: &str, right: &str) -> (Vec<u8>, HudStylePack) {
+    let (mut frame, roi) = clock(left, 6);
+    let (right_frame, right_roi) = clock(right, 6);
+    let rect = roi_to_pixels(&right_roi, 640, 360);
+    for y in rect.y as usize..(rect.y + rect.height) as usize {
+        for x in rect.x as usize..(rect.x + rect.width) as usize {
+            let from = (y * 640 + x) * 4;
+            let to = (y * 640 + x + 150) * 4;
+            frame[to..to + 4].copy_from_slice(&right_frame[from..from + 4]);
+        }
+    }
+    let mut value = hud_pack(&profile(6, roi), 640, 360);
+    let mut field = value["variants"][0]["fields"]["clock"].clone();
+    field["grammar"] = json!({"kind":"integer","min":0,"max":99});
+    field["glyphs"].as_object_mut().unwrap().remove(":");
+    value["variants"][0]["fields"]["clock"] = Value::Null;
+    value["variants"][0]["fields"]["scoreLeft"] = field.clone();
+    field["roi"] = json!({"x":rect.x as usize + 150,"y":rect.y as usize,"w":rect.width as usize,"h":rect.height as usize});
+    value["variants"][0]["fields"]["scoreRight"] = field;
+    (frame, parse_hud_style_pack(&value).unwrap())
+}
+
+#[test]
+fn score_fields_read_integers_and_derive_round_without_a_round_roi() {
+    for (left, right) in [("0", "7"), ("8", "9"), ("10", "8"), ("60", "99"), ("99", "99")] {
+        let (frame, mut pack) = scoreboard(left, right);
+        pack.variants[0].fields.score_left.as_mut().unwrap().preprocess.threshold = 75.0;
+        pack.variants[0].fields.score_right.as_mut().unwrap().preprocess.threshold = 110.0;
+        let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+        for (field, text) in [(&result.fields.score_left, left), (&result.fields.score_right, right)] {
+            let HudFieldResult::Read { reading, .. } = field else { panic!("{text}: {field:?}") };
+            assert_eq!(reading.text, text);
+            assert_eq!(reading.source, "recognized");
+        }
+        let HudFieldResult::Read { reading, debug } = &result.fields.round else { panic!("{result:?}") };
+        assert_eq!(reading.value, left.parse::<f64>().unwrap() + right.parse::<f64>().unwrap() + 1.0);
+        assert_eq!(reading.source, "derived");
+        assert!(debug.is_none());
+        let prepared = prepare_hud_glyphs(&frame, 640, 360, &pack, "official-top-360", "scoreRight").unwrap();
+        let HudFieldResult::Read { debug: Some(debug), .. } = &result.fields.score_right else { unreachable!() };
+        assert_eq!(prepared.roi_pixels, debug.roi_pixels);
+        assert_eq!(prepared.normalized, debug.normalized);
+        assert!(prepare_hud_glyphs(&frame, 640, 360, &pack, "official-top-360", "round").is_err());
+        pack.variants[0].fields.score_left.as_mut().unwrap().preprocess.scale = 1.0;
+        pack.variants[0].fields.score_left.as_mut().unwrap().preprocess.threshold = 255.0;
+        let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+        assert!(matches!(result.fields.score_left, HudFieldResult::Failed { .. }));
+        assert!(matches!(result.fields.score_right, HudFieldResult::Read { .. }));
+        assert!(matches!(result.fields.round, HudFieldResult::Failed { .. }));
+    }
+}
+
+#[test]
+fn scores_reject_leading_zero_long_numbers_and_out_of_range_values() {
+    for text in ["00", "01", "001", "100"] {
+        let (frame, pack) = scoreboard(text, "7");
+        let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+        assert!(matches!(result.fields.score_left, HudFieldResult::Failed { ref reason, .. } if reason == "invalid-format"), "{text}: {result:?}");
+        assert!(matches!(result.fields.round, HudFieldResult::Failed { .. }));
+    }
+    let (frame, mut pack) = scoreboard("8", "7");
+    pack.variants[0].fields.score_left.as_mut().unwrap().grammar = HudGrammar::Integer { min: 0, max: 7 };
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+    assert!(matches!(result.fields.score_left, HudFieldResult::Failed { ref reason, .. } if reason == "invalid-format"));
+}
+
+#[test]
+fn partial_score_banks_reject_missing_digits_instead_of_using_similar_known_digits() {
+    for digit in 0..10 {
+        let text = digit.to_string();
+        let (frame, mut pack) = scoreboard(&text, &text);
+        pack.variants[0].fields.score_left.as_mut().unwrap().glyphs.retain(|c, _| ["0", "1", "8", "9"].contains(&c.as_str()));
+        pack.variants[0].fields.score_right.as_mut().unwrap().glyphs.retain(|c, _| ["7", "8"].contains(&c.as_str()));
+        let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+        for (field, available) in [(&result.fields.score_left, [0, 1, 8, 9].as_slice()), (&result.fields.score_right, [7, 8].as_slice())] {
+            if available.contains(&digit) {
+                let HudFieldResult::Read { reading, .. } = field else { panic!("{text}: {field:?}") };
+                assert_eq!(reading.text, text);
+            } else {
+                assert!(matches!(field, HudFieldResult::Failed { reason, .. } if reason == "missing-glyph"), "{text}: {field:?}");
+            }
+        }
+    }
 }
