@@ -51,6 +51,14 @@ if (flag('refresh') || !await exists(profile)) {
     const icacls = (...args) => execFileSync(join(system32, 'icacls.exe'), args, { stdio: 'ignore' })
     icacls(profile, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`)
     icacls(join(profile, '*'), '/reset', '/T', '/C', '/Q')
+    // Inheriting is not enough for the cookie files. Before replacing or reading one, the app
+    // checks that the file's own access rules are protected from inheritance, which a reset file
+    // is not, so saving a new Douyu or YouTube login failed. Give each the explicit owner-only
+    // rule the app itself writes.
+    const cookies = join(profile, 'cookies')
+    if (await exists(cookies)) for (const name of await readdir(cookies)) {
+      icacls(join(cookies, name), '/inheritance:r', '/grant:r', `*${sid}:F`)
+    }
   }
   console.log(`已从 ${source} 复制登录信息：${(await readdir(profile)).join('、')}`)
 }
