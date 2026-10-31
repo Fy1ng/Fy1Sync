@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import fixture from './fixtures/youtube-live.json'
 import adaptiveFixture from './fixtures/youtube-adaptive-live.json'
 import { detectPlatform, resolveStream } from './index'
-import { parseYouTubeUrl, resolveYouTube, selectYouTubeFormat, youtubeAdaptiveFormats, youtubeFormats } from './youtube'
+import { sanitizedFailure } from '../api'
+import { parseYouTubeUrl, resolveYouTube, selectYouTubeFormat, YOUTUBE_REFUSALS, youtubeAdaptiveFormats, youtubeFormats } from './youtube'
 import type { ResolverDeps } from './types'
 
 function deps(overrides: Partial<ResolverDeps> = {}): ResolverDeps {
@@ -159,6 +160,24 @@ describe('YouTube recorded live formats', () => {
       expect(!result.ok && result.failure.code).toBe(code)
       expect(JSON.stringify(result)).not.toMatch(/secret|token=private|media.invalid/)
     }
+  })
+
+  it.each([
+    ['Sign in to confirm you are not a bot', 'bot-check'],
+    ['Sign in to confirm your age', 'age-restricted'],
+    ['Join this channel to get access to members-only content', 'members-only'],
+    ['This video is not available in your country', 'geo-restricted'],
+    ['Private video. Sign in if you have been granted access', 'private'],
+    ['YouTube sign in required', 'sign-in'],
+  ] as const)('reports %s as the %s refusal', async (message, reason) => {
+    const result = await resolveYouTube('youtu.be/abcdefghijk', deps({ runYtDlp: async () => { throw new Error(message) } }))
+    expect(result).toEqual({ ok: false, failure: { code: 'restricted', reason, ...YOUTUBE_REFUSALS[reason] } })
+  })
+
+  it('keeps the fixed refusal wording across the IPC boundary and hides any other text', () => {
+    expect(sanitizedFailure({ ok: false, failure: { code: 'restricted', reason: 'bot-check', message: 'Cookie=secret' } }))
+      .toEqual({ ok: false, failure: { code: 'restricted', reason: 'bot-check', ...YOUTUBE_REFUSALS['bot-check'] } })
+    expect(JSON.stringify(sanitizedFailure({ ok: false, failure: { code: 'restricted', message: 'Cookie=secret' } }))).not.toMatch(/secret/)
   })
 
   it('returns structured failures for missing tools, missing formats and unavailable quality', async () => {

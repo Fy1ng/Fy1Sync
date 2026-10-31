@@ -120,6 +120,34 @@ export function selectYouTubeFormat(formats: YouTubeFormat[], requested?: string
   return formats.find((item) => item.height <= height && item.fps <= fps)
 }
 
+/** Why YouTube refused a stream, as fixed categories. Extractor text never reaches the UI. */
+export type YouTubeRefusal = 'bot-check' | 'sign-in' | 'members-only' | 'age-restricted' | 'geo-restricted' | 'private'
+
+/** Wording per refusal, shown as is. src/studio/sources.tsx decides which ones a sign-in can lift. */
+export const YOUTUBE_REFUSALS: Record<YouTubeRefusal, { message: string; hint?: string }> = {
+  'bot-check': { message: 'YouTube 要求验证不是机器人, 当前网络暂时不能观看.', hint: '换一个代理节点, 或稍后重试.' },
+  'sign-in': { message: 'YouTube 要求登录后才能观看此直播.' },
+  'members-only': { message: '此直播仅限频道会员观看.', hint: '需要有该频道会员资格的 YouTube 账号.' },
+  'age-restricted': { message: '此直播有年龄限制.', hint: '需要已确认年龄的 YouTube 账号.' },
+  'geo-restricted': { message: '此直播在当前网络所在的地区不可观看.', hint: '换一个所在地区不同的代理节点后重试.' },
+  private: { message: '此直播未公开, 无法观看.' },
+}
+
+export function isYouTubeRefusal(value: unknown): value is YouTubeRefusal {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(YOUTUBE_REFUSALS, value)
+}
+
+/** Order matters: "Sign in to confirm you're not a bot" and "...confirm your age" are sign-in messages too. */
+function refusalFor(message: string): YouTubeRefusal | undefined {
+  if (/age.restricted|confirm your age/i.test(message)) return 'age-restricted'
+  if (/not a bot|bot check/i.test(message)) return 'bot-check'
+  if (/members.only/i.test(message)) return 'members-only'
+  if (/geo.restricted|available in your country|available from your location/i.test(message)) return 'geo-restricted'
+  if (/private video/i.test(message)) return 'private'
+  if (/sign.?in|login/i.test(message)) return 'sign-in'
+  return undefined
+}
+
 export async function resolveYouTube(input: string, deps: ResolverDeps): Promise<ResolveResult> {
   const url = parseYouTubeUrl(input)
   if (!url) return failure('unsupported-url', '请输入有效的 YouTube 直播视频或频道地址.', MANUAL_URL_HINT)
@@ -130,9 +158,8 @@ export async function resolveYouTube(input: string, deps: ResolverDeps): Promise
     if (error instanceof StreamFailureError) throw error
     // Extractor errors can contain cookies, headers or signed URLs. Classify but never echo them.
     const message = error instanceof Error ? error.message : ''
-    if (/not a bot|sign.?in|private video|members.only|age.restricted|geo.restricted|not available in your country/i.test(message)) {
-      return failure('restricted', 'YouTube 要求登录, 或此直播受到访问限制.', '请在账号区域登录 YouTube 后重试.')
-    }
+    const refusal = refusalFor(message)
+    if (refusal) return { ok: false, failure: { code: 'restricted', reason: refusal, ...YOUTUBE_REFUSALS[refusal] } }
     if (/not (?:currently )?live|recording is not available|live (?:event|stream) (?:has ended|will begin)|not broadcasting/i.test(message)) {
       return failure('not-live', '该 YouTube 频道当前未开播.', MANUAL_URL_HINT)
     }

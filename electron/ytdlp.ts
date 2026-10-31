@@ -39,6 +39,22 @@ function warningCodes(stderr: string): string[] {
   ].flatMap(([pattern, code]) => (pattern as RegExp).test(stderr) ? [code as string] : [])
 }
 
+/**
+ * A fixed label for why YouTube refused the run. The distinctions matter to the UI (a sign-in
+ * can lift a bot check, a region cannot be lifted), so they must not collapse into one message.
+ * youtube.ts maps these labels to user wording; the extractor's own text is never returned.
+ */
+function youtubeFailureLabel(stderr: string): string {
+  if (/age.restricted|confirm your age/i.test(stderr)) return 'YouTube age restricted'
+  if (/not a bot/i.test(stderr)) return 'YouTube bot check'
+  if (/members.only/i.test(stderr)) return 'YouTube members only'
+  if (/geo.restricted|available in your country|available from your location/i.test(stderr)) return 'YouTube geo restricted'
+  if (/private video/i.test(stderr)) return 'YouTube private video'
+  if (/sign in|login|required/i.test(stderr)) return 'YouTube sign in required'
+  if (/not (?:currently )?live|recording is not available|live (?:event|stream) (?:has ended|will begin)/i.test(stderr)) return 'YouTube not currently live'
+  return 'YouTube 取流失败, 请检查直播状态和网络'
+}
+
 /** Captured metadata is private and bounded; stderr is classified, never returned. */
 export class YtDlpRunner {
   private readonly children = new Set<ChildProcess>()
@@ -174,9 +190,7 @@ export class YtDlpRunner {
                 ? '虎牙房间当前未开播' : '虎牙取流失败, 请检查直播状态和网络'))
             return
           }
-          reject(new Error(/sign in|not a bot|login|required|members.only|private video/i.test(stderr)
-            ? 'YouTube sign in required' : /not (?:currently )?live|recording is not available|live (?:event|stream) (?:has ended|will begin)/i.test(stderr)
-              ? 'YouTube not currently live' : 'YouTube 取流失败, 请检查直播状态和网络'))
+          reject(new Error(youtubeFailureLabel(stderr)))
           return
         }
         try {

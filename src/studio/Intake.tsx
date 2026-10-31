@@ -12,13 +12,10 @@ import { useEffect, useRef, useState } from 'react'
 import { useSessionSnapshot, useSession } from '../app/SessionContext'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { Icon } from './kit'
-import { LOGIN_LABEL, PLATFORM_LABEL, ROLE_LABEL, SOURCE_HINT, SOURCE_KINDS, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
+import { LOGIN_LABEL, LoginOffer, PLATFORM_LABEL, ROLE_LABEL, SOURCE_HINT, SOURCE_KINDS, parseRoomInput, sourceTitle, spaced, useSourceLoader, type RoomPlatform } from './sources'
 import { useSavedRooms, type SavedRoom } from './savedRooms'
 
 const ROOM_PLATFORMS: RoomPlatform[] = ['douyu', 'bilibili', 'huya']
-
-/** A Latin name sits in Chinese with a space either side, as elsewhere: 登录 YouTube 后重试. */
-const spaced = (name: string): string => /^[A-Za-z]/.test(name) ? ` ${name} ` : name
 
 export function Intake({ onClose, pendingFile, onSchedule }: {
   onClose: () => void
@@ -157,13 +154,7 @@ function Slot({ role, selected, onPick }: { role: SourceRole; selected: boolean;
         <span className="slot-error" role="alert">{load.problem?.message ?? state.error?.message}</span>
       )}
       {selected && !load.problem && state.status === 'error' && state.error && <span className="slot-error" role="alert">{state.error.message}</span>}
-      {load.login && !load.busy && !load.loggingIn && (
-        <span className="slot-login">
-          {/* A refusal needs the login to play at all; a step-down only to get the top quality. */}
-          <span>{load.problem ? `登录${spaced(LOGIN_LABEL[load.login])}后重试` : `登录${spaced(LOGIN_LABEL[load.login])}可看最高画质`}</span>
-          <button type="button" className="btn-solid small" onClick={() => void loader.login(role)}>登录</button>
-        </span>
-      )}
+      <LoginOffer role={role} />
     </div>
   )
 }

@@ -10,6 +10,7 @@ import type { ApiResult } from '../src/app/apiClient'
 import type { ProxyConfig } from './config'
 import { DanmakuRelay } from './danmaku/relay'
 import { resolveStream, type PlatformKind, type ResolveResult } from './platforms'
+import { isYouTubeRefusal, YOUTUBE_REFUSALS } from './platforms/youtube'
 import { fileNameFor, MAX_PRESET_BYTES, PresetStore } from './presetStore'
 import { checkUrl, ProxyError, safeFetch } from './safeFetch'
 import type { SourceRole } from '../src/core/types'
@@ -123,6 +124,11 @@ function fixturePath(input: string): boolean {
 
 export function sanitizedFailure(result: ResolveResult): ResolveResult {
   if (result.ok) return result
+  // YouTube's fixed refusal wording says what to do about it; the generic line below would hide that.
+  const reason = result.failure.reason
+  if (result.failure.code === 'restricted' && isYouTubeRefusal(reason)) {
+    return { ok: false, failure: { code: 'restricted', reason, ...YOUTUBE_REFUSALS[reason] } }
+  }
   const messages = {
     'unsupported-url': '无法识别该媒体地址或平台',
     'not-live': '直播当前未开始或受限制',

@@ -10,7 +10,7 @@ import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { SourceRole } from '../core/types'
 import { bufferStatusText } from '../ui/bufferStatus'
 import { Icon, Popover, Segmented, usePopover } from './kit'
-import { PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform, SOURCE_HINT } from './sources'
+import { LoginOffer, PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform, SOURCE_HINT } from './sources'
 import { canSave, removeSavedRoom, saveRoom, savedFor, useSavedRooms, type SavedRoom } from './savedRooms'
 
 export function SourceChip({ role, onSchedule, onShowPreview = null }: {
@@ -93,6 +93,7 @@ function SourcePanel({ role, onDone, onSchedule }: {
       {load.problem && (
         <p className="form-error" role="alert">{load.problem.message}{load.problem.hint ? ` ${load.problem.hint}` : ''}</p>
       )}
+      <LoginOffer role={role} />
       {state.status === 'error' && state.error && <p className="form-error">{state.error.message}</p>}
       {load.notes.map((note) => <p key={note} className="muted">{note}</p>)}
 
