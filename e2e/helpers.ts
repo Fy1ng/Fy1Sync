@@ -443,8 +443,12 @@ export async function stressDanmaku(application: ElectronApplication, perSecond:
       carry += perTick
       for (; carry >= 1; carry -= 1) {
         sequence += 1
+        // A real room mixes one-liners with messages long enough to wrap to two or three lines, so
+        // row heights vary: every seventh message wraps, every thirteenth runs longer still.
+        const text = sequence % 13 === 0 ? `压测弹幕 #${sequence}，一条很长的弹幕，在侧栏里要换成三行以上才能放下，用来检查行高不同的消息混在一起时列表还稳不稳`
+          : sequence % 7 === 0 ? `压测弹幕 #${sequence}，一条会换成两行显示的弹幕` : '压测弹幕 #' + sequence
         main.__streamSyncerTest?.emitDanmaku('288016', 'danmaku', {
-          id: 'stress-' + sequence, text: '压测弹幕 #' + sequence, username: '观众' + (sequence % 97), color: 0,
+          id: 'stress-' + sequence, text, username: '观众' + (sequence % 97), color: 0,
           level: 0, receivedAt: Date.now(), room: '288016', system: false,
         } satisfies ChatMessage)
       }
