@@ -766,6 +766,11 @@ export class Session {
     if (!Number.isFinite(deltaSeconds) || Math.abs(deltaSeconds) > 86_400) return Promise.resolve(false)
     return this.navigatePlayback(role, deltaSeconds)
   }
+  /** A point picked on the time line, kept in the same bookkeeping as a relative seek. */
+  seekPlaybackTo(role: SourceRole, target: number): Promise<boolean> {
+    if (!Number.isFinite(target)) return Promise.resolve(false)
+    return this.navigatePlayback(role, { to: target })
+  }
   returnPlaybackToLive(role: SourceRole): Promise<boolean> { return this.navigatePlayback(role, 'live') }
   /** Native PiP owns presentation; stop expensive recognition while the opt-in mode is active. */
   setPresentationReduced(reduced: boolean): void {
@@ -782,7 +787,7 @@ export class Session {
     }
     this.notify()
   }
-  private navigatePlayback(role: SourceRole, move: number | 'live'): Promise<boolean> {
+  private navigatePlayback(role: SourceRole, move: number | 'live' | { to: number }): Promise<boolean> {
     if (!SOURCE_ROLES.includes(role) || this.disposed || this.playbackPending >= 32) return Promise.resolve(false)
     const generation = this.sourceGeneration[role]
     this.playbackRecovery = null
@@ -798,7 +803,8 @@ export class Session {
       if (this.disposed || generation !== this.sourceGeneration[role]) return false
       const before = this.engine.snapshot(role)
       if (!before?.ready) return false
-      const requested = move === 'live' ? latestPlayableTime(before.timebase, this.engine.livePosition(role)) : before.currentTime + move
+      const requested = move === 'live' ? latestPlayableTime(before.timebase, this.engine.livePosition(role))
+        : typeof move === 'number' ? before.currentTime + move : move.to
       if (requested === null) return false
       const target = clampPlayableSeek(requested, before.timebase, this.engine.livePosition(role)).target
       const capture = this.captureSeekMovement(role)

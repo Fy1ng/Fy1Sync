@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { seekableRange } from '../core/syncPlan'
-import { clampPlayableSeek, latestPlayableTime } from '../media/timebase'
+import { latestPlayableTime } from '../media/timebase'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { Icon } from './kit'
 import { ROLE_LABEL } from './sources'
@@ -68,7 +68,10 @@ function Volume({ role }: { role: SourceRole }): React.ReactNode {
   )
 }
 
-/** The main picture's time line. A live stream's axis is its seekable window. */
+/**
+ * The main picture's time line. A live stream's axis is its seekable window. Dragging it and
+ * 回到直播 move the main picture only, like ←/→; the alignment readout follows the move.
+ */
 export function Timeline(): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
@@ -87,9 +90,11 @@ export function Timeline(): React.ReactNode {
   // goes away once it has done its job.
   const behind = Math.max(0, (latestPlayableTime(timebase, state.livePosition) ?? end) - state.currentTime)
   const pct = (value: number): string => `${Math.min(100, Math.max(0, ((value - start) / (end - start)) * 100))}%`
+  // Through the session, so the seek cancels automatic alignment and is counted in the offset.
+  // The thumb stays where it was dropped until the seek settles, unless a newer drag took over.
   const commit = (value: number): void => {
-    void session.engine.seek(role, clampPlayableSeek(value, timebase, state.livePosition).target)
-    setDrag(null)
+    setDrag(value)
+    void session.seekPlaybackTo(role, value).finally(() => setDrag((current) => current === value ? null : current))
   }
 
   return (

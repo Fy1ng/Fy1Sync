@@ -147,10 +147,11 @@ function StudioView(): React.ReactNode {
       const target = event.target
       if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return
       const step = event.shiftKey ? snapshot.settings.largeStepSeconds : snapshot.settings.smallStepSeconds
-      // ←/→ move playback the way any player does. Both sides move together, so the
-      // alignment between them is kept; the alignment itself is nudged with , and .
+      // ←/→ move the main picture only, like its time line and 回到直播; the alignment readout
+      // follows what the move did. The alignment itself is nudged with , and .
       const seek = (seconds: number): void => {
-        for (const role of SOURCE_ROLES) if (session.snapshot.media[role].status !== 'empty') void session.seekPlayback(role, seconds)
+        const role = session.snapshot.mainRole
+        if (session.snapshot.media[role].status !== 'empty') void session.seekPlayback(role, seconds)
       }
       switch (event.code) {
         case 'Space': event.preventDefault(); void session.togglePlaying(); break

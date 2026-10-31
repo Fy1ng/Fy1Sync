@@ -111,6 +111,19 @@ describe('backend playback navigation and danmaku processing', () => {
     expect(h.engine.element('official').currentTime).toBe(214)
   })
 
+  it('moves only the picked side to a time-line point and counts the move in the offset', async () => {
+    const h = await harness()
+    expect(await h.session.seekPlaybackTo('official', 70)).toBe(true)
+    expect(timeOf(h.engine, 'official')).toBe(70)
+    expect(timeOf(h.engine, 'commentary')).toBe(100)
+    expect(h.session.flush().appliedRewind).toEqual({ official: 30, commentary: 0 })
+    expect(h.session.flush().autoSync.authorized).toBe(false)
+    // Dragging back to where it was takes the rewind away again.
+    expect(await h.session.seekPlaybackTo('official', 100)).toBe(true)
+    expect(h.session.flush().appliedRewind.official).toBe(0)
+    expect(await h.session.seekPlaybackTo('official', Number.NaN)).toBe(false)
+  })
+
   it('applies media-time duplicate merging without changing the original message text', async () => {
     const h = await harness()
     h.session.configureDanmakuProcessing({ duplicateMode: 'combo', filterSuspectedBots: true })
