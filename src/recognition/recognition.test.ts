@@ -243,6 +243,40 @@ describe('RecognitionClient', () => {
     expect(client.getStats()).toMatchObject({ submitted: 2, dropped: 1, stalled: 1 })
   })
 
+  it('stops reporting busy once a silent frame passes the stall timeout', () => {
+    const worker = new FakeWorker()
+    let now = 0
+    const client = new RecognitionClient({ createWorker: () => worker, now: () => now, stallTimeoutMs: 500 })
+    client.configure(profileWithTemplates())
+    worker.silent = true
+    client.submit('official', grabbed())
+    now = 499
+    expect(client.busy).toBe(true)
+    now = 500
+    // Callers gate on busy before they grab, so it must free them without a submit first.
+    expect(client.busy).toBe(false)
+  })
+
+  it('drops a late reply to a frame it gave up on', () => {
+    const worker = new FakeWorker()
+    let now = 0
+    const results: ResultMessage[] = []
+    const client = new RecognitionClient({ createWorker: () => worker, now: () => now, stallTimeoutMs: 500, onResult: result => results.push(result) })
+    const generation = client.configure(profileWithTemplates())
+    worker.silent = true
+    client.submit('official', grabbed('1:59', 12))
+    now = 600
+    client.submit('official', grabbed('1:58', 13))
+    const reply = (frameIndex: number) => worker.emit({ type: 'result', generation, role: 'official', frameIndex,
+      outcome: { status: 'failed', reason: 'no-candidates' }, debug: null, elapsedMs: 1 })
+    reply(1)
+    expect(results).toHaveLength(0)
+    expect(client.busy).toBe(true)
+    reply(2)
+    expect(results.map(result => result.frameIndex)).toEqual([2])
+    expect(client.busy).toBe(false)
+  })
+
   it('refuses to submit before a profile is configured', () => {
     const worker = new FakeWorker()
     const client = new RecognitionClient({ createWorker: () => worker })

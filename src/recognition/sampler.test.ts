@@ -26,7 +26,8 @@ function profileFor(overrides: Partial<RecognitionProfile> = {}): RecognitionPro
  * accidentally depends on a synchronous answer must fail here.
  */
 function fakeWorker(
-  reply: (frame: Extract<WorkerRequest, { type: 'frame' }>) => RecognitionOutcome,
+  /** null leaves the frame unanswered, like a worker that never replies. */
+  reply: (frame: Extract<WorkerRequest, { type: 'frame' }>) => RecognitionOutcome | null,
   metadata?: (frame: Extract<WorkerRequest, { type: 'frame' }>) => Partial<ResultMessage>,
 ) {
   const listeners = new Set<(event: MessageEvent<WorkerResponse>) => void>()
@@ -55,13 +56,15 @@ function fakeWorker(
       }
       if (message.type !== 'frame') return
       const frame = message
+      const outcome = reply(frame)
+      if (outcome === null) return
       queueMicrotask(() =>
         emit({
           type: 'result',
           generation: frame.generation,
           role: frame.role,
           frameIndex: frame.frameIndex,
-          outcome: reply(frame),
+          outcome,
           debug: null,
           elapsedMs: 1,
           ...metadata?.(frame),
@@ -179,7 +182,7 @@ interface Harness {
 function harness(options: {
   profile?: (role: SourceRole) => RecognitionProfile | null
   video?: (role: SourceRole) => HTMLVideoElement | null
-  reply?: (frame: Extract<WorkerRequest, { type: 'frame' }>) => RecognitionOutcome
+  reply?: (frame: Extract<WorkerRequest, { type: 'frame' }>) => RecognitionOutcome | null
   metadata?: (frame: Extract<WorkerRequest, { type: 'frame' }>) => Partial<ResultMessage>
   capture?: FrameGrabber['grabAsync']
 } = {}): Harness {
@@ -970,6 +973,32 @@ describe('asynchronous sampling acquisition', () => {
       expect(bench.workers[0]!.frames()[0]).toMatchObject({ mediaTime: 42.5, wallTime: 1234 })
       expect(bench.outcomes[0]?.outcome).toMatchObject({ status: 'success', reading: { mediaTime: 42.5, wallTime: 1234 } })
       await vi.advanceTimersByTimeAsync(75)
+      await run
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('resumes sampling after the worker leaves a frame unanswered', async () => {
+    vi.useFakeTimers()
+    // The first frame goes unanswered; every later one is answered as usual.
+    let answered = false
+    const video = fakeVideo()
+    const bench = harness({ video: role => role === 'official' ? video : null,
+      reply: frame => { if (!answered) { answered = true; return null } return success(30, frame.mediaTime, frame.wallTime) } })
+    try {
+      const run = bench.sampler.sample(10_000, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
+      await bench.loop.tick(10)
+      expect(bench.workers[0]!.frames()).toHaveLength(1)
+      // Within the stall timeout the next frame is dropped as backpressure.
+      await vi.advanceTimersByTimeAsync(1_000)
+      await bench.loop.tick(10.5)
+      expect(bench.outcomes).toHaveLength(0)
+      // Past it, sampling goes on through the same busy gate, with no submit to unstick it.
+      await vi.advanceTimersByTimeAsync(1_500)
+      await bench.loop.tick(11)
+      await bench.loop.tick(11.5)
+      expect(bench.workers[0]!.frames().length).toBeGreaterThanOrEqual(2)
+      expect(bench.outcomes.length).toBeGreaterThanOrEqual(1)
+      await vi.advanceTimersByTimeAsync(10_000)
       await run
     } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
   })

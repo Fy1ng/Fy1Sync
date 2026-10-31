@@ -91,9 +91,10 @@ export class RecognitionClient {
         this.options.onConfigured?.(message)
         break
       case 'result':
-        if (this.inFlight && this.inFlight.frameIndex === message.frameIndex) {
-          this.inFlight = null
-        }
+        // Only the frame in flight is answered. A reply to one given up on after a stall is
+        // older than the frame that replaced it and would read the clock out of order.
+        if (!this.inFlight || this.inFlight.frameIndex !== message.frameIndex) return
+        this.inFlight = null
         this.stats.completed += 1
         this.stats.lastElapsedMs = message.elapsedMs
         this.options.onResult?.(message)
@@ -143,8 +144,13 @@ export class RecognitionClient {
     return this.profile
   }
 
+  /**
+   * A frame the worker has held past the stall timeout no longer counts: callers check this
+   * before grabbing, so a frame that is never answered must stop holding them back, and the
+   * next submit replaces it.
+   */
   get busy(): boolean {
-    return this.inFlight !== null
+    return this.inFlight !== null && this.now() - this.inFlight.at < this.stallTimeoutMs
   }
 
   getStats(): ClientStats {
