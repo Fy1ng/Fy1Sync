@@ -33,8 +33,11 @@ export interface MediaAttachment {
   mode: AttachMode
   /** -1 selects automatic level switching. */
   setLevel(level: number): void
-  /** Jump to the live edge; no-op for VOD and native playback. */
-  seekToLive(): void
+  /**
+   * Where live playback rejoins: hls.js's sync point, a few segments behind the newest one,
+   * which is also where it starts a live stream. null for VOD and native playback.
+   */
+  livePosition(): number | null
   destroy(): void
 }
 
@@ -78,7 +81,7 @@ function ownMedia(video: HTMLVideoElement, signal?: AbortSignal): AttachmentOwne
 }
 
 function emptyAttachment(): MediaAttachment {
-  return { mode: 'native', setLevel() {}, seekToLive() {}, destroy() {} }
+  return { mode: 'native', setLevel() {}, livePosition: () => null, destroy() {} }
 }
 
 function loadHls(): Promise<HlsModule> {
@@ -249,13 +252,10 @@ export async function attachMedia(
       hls.currentLevel = level
       if (level < 0) hls.nextLevel = -1
     },
-    seekToLive() {
-      if (!owner.current()) return
-      if (hls.liveSyncPosition !== null && Number.isFinite(hls.liveSyncPosition)) {
-        video.currentTime = hls.liveSyncPosition
-      } else if (video.seekable.length > 0) {
-        video.currentTime = video.seekable.end(video.seekable.length - 1)
-      }
+    livePosition() {
+      if (!owner.current()) return null
+      const position = hls.liveSyncPosition
+      return position !== null && Number.isFinite(position) ? position : null
     },
     destroy: owner.destroy,
   }
@@ -283,12 +283,7 @@ function nativeAttachment(video: HTMLVideoElement, url: string, owner: Attachmen
     setLevel() {
       // Native playback picks its own variant; nothing to switch.
     },
-    seekToLive() {
-      if (!owner.current()) return
-      if (video.seekable.length > 0) {
-        video.currentTime = video.seekable.end(video.seekable.length - 1)
-      }
-    },
+    livePosition: () => null,
     destroy: owner.destroy,
   }
 }

@@ -4,22 +4,37 @@ import type { Timebase } from '../core/types'
 export interface PlaybackSeekResult { ok: boolean; target: number | null; clamped: boolean; reason: 'unavailable' | 'cancelled' | 'timeout' | null }
 export interface NativePipResult { ok: boolean; active: boolean; reason: 'unsupported' | 'not-ready' | 'user-gesture-required' | 'failed' | null }
 
-export function latestPlayableTime(timebase: Timebase): number | null {
-  return timebase.kind === 'live' ? Math.max(timebase.seekableStart, timebase.seekableEnd - 0.25) : null
+/**
+ * Behind the newest segment when hls.js has no sync point to offer: three of the local
+ * buffer's 2-second segments, about where hls.js itself rejoins.
+ */
+const LIVE_FALLBACK_BEHIND_SECONDS = 6
+
+/**
+ * Where 回到直播 lands. Not the newest frame: right behind it nothing is buffered yet, so the
+ * picture waits for the next segment to be written and fetched, a stall of up to a segment
+ * every time. hls.js's sync point stays a few segments back, where it starts a live stream.
+ */
+export function latestPlayableTime(timebase: Timebase, livePosition: number | null = null): number | null {
+  if (timebase.kind !== 'live') return null
+  const target = livePosition !== null && Number.isFinite(livePosition) ? Math.min(livePosition, timebase.seekableEnd)
+    : timebase.seekableEnd - LIVE_FALLBACK_BEHIND_SECONDS
+  return Math.max(timebase.seekableStart, target)
 }
 
 /** Headless media controls. Claude binds gestures/keys without owning or remounting video. */
 export class PlaybackControls {
   private cancelSeek: (() => void) | null = null
   private disposed = false
-  constructor(readonly video: HTMLVideoElement, private readonly isLive?: () => boolean | undefined, private readonly timeoutMs = 8_000) {}
+  constructor(readonly video: HTMLVideoElement, private readonly isLive?: () => boolean | undefined, private readonly timeoutMs = 8_000,
+    private readonly livePosition: () => number | null = () => null) {}
   async seekBy(seconds: number): Promise<PlaybackSeekResult> {
     if (!Number.isFinite(seconds) || Math.abs(seconds) > 86_400) return this.unavailable()
     return this.seekTo(this.video.currentTime + seconds)
   }
   async returnToLive(): Promise<PlaybackSeekResult> {
     const timebase = readTimebase(this.video, this.isLive?.())
-    const target = timebase ? latestPlayableTime(timebase) : null
+    const target = timebase ? latestPlayableTime(timebase, this.livePosition()) : null
     return target === null ? this.unavailable() : this.seekTo(target)
   }
   seekTo(target: number): Promise<PlaybackSeekResult> {

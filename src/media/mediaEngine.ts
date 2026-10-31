@@ -48,6 +48,8 @@ export interface RoleState {
   autoLevel: number
   isLive: boolean
   attachMode: AttachMode | null
+  /** Where live playback rejoins (hls.js's sync point); null for VOD or before it is known. */
+  livePosition: number | null
   /**
    * A frame of this source has been presented. Metadata alone (`ready`) can arrive for a
    * stream whose video never decodes, so "is the picture actually there" is asked here.
@@ -106,6 +108,7 @@ function initialRoleState(role: SourceRole): RoleState {
     autoLevel: -1,
     isLive: false,
     attachMode: null,
+    livePosition: null,
     firstFrame: false,
   }
 }
@@ -227,6 +230,7 @@ export class MediaEngine {
       volume: element.volume,
       muted: element.muted,
       isLive: timebase?.kind === 'live',
+      livePosition: timebase?.kind === 'live' ? runtime.attachment?.livePosition() ?? null : null,
       // Metadata arriving is what turns a loading source into a usable one.
       status:
         previous.status === 'loading' && element.readyState >= element.HAVE_METADATA
@@ -307,6 +311,7 @@ export class MediaEngine {
       level: -1,
       autoLevel: -1,
       attachMode: null,
+      livePosition: null,
       firstFrame: false,
     }
     this.notify()
@@ -563,8 +568,9 @@ export class MediaEngine {
     this.notify()
   }
 
-  seekToLive(role: SourceRole): void {
-    this.runtime.get(role)?.attachment?.seekToLive()
+  /** Where live playback rejoins for this source, read now; null for VOD or native playback. */
+  livePosition(role: SourceRole): number | null {
+    return this.runtime.get(role)?.attachment?.livePosition() ?? null
   }
 
   dispose(): void {

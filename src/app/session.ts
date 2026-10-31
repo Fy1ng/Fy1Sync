@@ -764,7 +764,7 @@ export class Session {
       if (this.disposed || generation !== this.sourceGeneration[role]) return false
       const before = this.engine.snapshot(role)
       if (!before?.ready) return false
-      const requested = move === 'live' ? latestPlayableTime(before.timebase) : before.currentTime + move
+      const requested = move === 'live' ? latestPlayableTime(before.timebase, this.engine.livePosition(role)) : before.currentTime + move
       if (requested === null) return false
       const target = clampSeek(requested, before.timebase).target
       const capture = this.captureSeekMovement(role)

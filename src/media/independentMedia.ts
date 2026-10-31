@@ -18,7 +18,7 @@ export class IndependentMedia {
     this.video.playsInline = true
     this.video.crossOrigin = 'anonymous'
     this.video.muted = true
-    this.controls = new PlaybackControls(this.video, () => this.live)
+    this.controls = new PlaybackControls(this.video, () => this.live, undefined, () => this.attachment?.livePosition() ?? null)
   }
   mount(container: HTMLElement | null): void {
     if (this.disposed || !container) { this.video.remove(); return }

@@ -98,6 +98,15 @@ describe('backend playback navigation and danmaku processing', () => {
     expect(h.session.flush().autoSync.authorized).toBe(false)
   })
 
+  it('returns a live source to a few segments behind its newest frame, not onto it', async () => {
+    const h = await harness()
+    // A live stream reports an unbounded duration and a moving seekable end.
+    primeMediaElement(h.engine.element('official'), { duration: Infinity, seekableStart: 40, seekableEnd: 220, currentTime: 150 })
+    expect(await h.session.returnPlaybackToLive('official')).toBe(true)
+    // Without an hls.js sync point it stays three 2-second segments back.
+    expect(h.engine.element('official').currentTime).toBe(214)
+  })
+
   it('applies media-time duplicate merging without changing the original message text', async () => {
     const h = await harness()
     h.session.configureDanmakuProcessing({ duplicateMode: 'combo', filterSuspectedBots: true })
