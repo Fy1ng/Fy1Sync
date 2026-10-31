@@ -362,7 +362,8 @@ describe('background tournament query cache', () => {
     const { service } = create()
     await service.getCs2Schedule()
     await vi.advanceTimersByTimeAsync(ttl - 1)
-    expect(calls.map(call => call.action)).toEqual(['parse'])
+    // The schedule itself refreshes every five minutes meanwhile; the tier waits for its own TTL.
+    expect(calls.filter(call => call.action === 'query')).toHaveLength(0)
     await service.dispose()
     const next = create()
     await next.service.getCs2Schedule()
@@ -529,6 +530,65 @@ describe('background tournament query cache', () => {
     await vi.advanceTimersByTimeAsync(TIER_TTL_MS * 2)
     expect(calls).toHaveLength(1)
     expect(events).toHaveLength(0)
+  })
+})
+
+describe('background schedule refresh', () => {
+  let directory: string
+  const services: EsportsService[] = []
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'fy1sync-refresh-'))
+    vi.useFakeTimers(); vi.setSystemTime(NOW)
+  })
+  afterEach(async () => {
+    await Promise.all(services.splice(0).map(service => service.dispose()))
+    vi.useRealTimers()
+    await rm(directory, { recursive: true, force: true })
+  })
+  function create(request: typeof fetch) {
+    const service = new EsportsService({ userDataDir: directory, version: '0.1.3', logos: null, request, resolve: async () => ['93.184.216.34'], log: () => {} })
+    services.push(service)
+    return service
+  }
+  const parses = (request: ReturnType<typeof vi.fn>) => request.mock.calls.filter(([input]) => new URL(String(input)).searchParams.get('action') === 'parse')
+
+  it('reads the schedule again every five minutes while nobody asks', async () => {
+    const request = vi.fn<typeof fetch>().mockImplementation(async input =>
+      new URL(String(input)).searchParams.get('action') === 'parse' ? response() : response({ query: { pages: [] } }))
+    const service = create(request)
+    await service.getCs2Schedule()
+    expect(parses(request)).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(SCHEDULE_TTL_MS - 1)
+    expect(parses(request)).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(parses(request)).toHaveLength(2)
+    expect((await service.getCs2Schedule()).fetchedAt).toBe(NOW + SCHEDULE_TTL_MS)
+    await vi.advanceTimersByTimeAsync(SCHEDULE_TTL_MS)
+    expect(parses(request)).toHaveLength(3)
+  })
+  it('waits a whole interval after a failed read, then keeps the cycle going', async () => {
+    let offline = true
+    const request = vi.fn<typeof fetch>().mockImplementation(async input => {
+      if (new URL(String(input)).searchParams.get('action') !== 'parse') return response({ query: { pages: [] } })
+      if (offline) throw new Error('offline')
+      return response()
+    })
+    const service = create(request)
+    expect(await service.getCs2Schedule()).toMatchObject({ stale: true, error: expect.any(String) })
+    await vi.advanceTimersByTimeAsync(SCHEDULE_TTL_MS - 1)
+    expect(parses(request)).toHaveLength(1)
+    offline = false
+    await vi.advanceTimersByTimeAsync(1)
+    expect(parses(request)).toHaveLength(2)
+    expect(await service.getCs2Schedule()).toMatchObject({ stale: false, fetchedAt: NOW + SCHEDULE_TTL_MS })
+  })
+  it('stops reading once disposed', async () => {
+    const request = vi.fn<typeof fetch>().mockImplementation(async () => response())
+    const service = create(request)
+    await service.getCs2Schedule()
+    await service.dispose()
+    await vi.advanceTimersByTimeAsync(SCHEDULE_TTL_MS * 3)
+    expect(parses(request)).toHaveLength(1)
   })
 })
 

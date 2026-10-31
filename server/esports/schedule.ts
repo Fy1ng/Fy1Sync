@@ -177,6 +177,9 @@ export class EsportsService {
   private tierTimer: ReturnType<typeof setTimeout> | undefined
   private logoTimer: ReturnType<typeof setInterval> | undefined
   private eventTimer: ReturnType<typeof setTimeout> | undefined
+  private refreshTimer: ReturnType<typeof setTimeout> | undefined
+  /** When a parse was last tried, so a failed one waits a whole interval before the next. */
+  private attemptedAt = -Infinity
   private lastEventAt = -Infinity
   private readonly pendingEvents = new Set<Cs2ScheduleEvent['data']['type']>()
   private booted = false
@@ -216,12 +219,37 @@ export class EsportsService {
     if (fromDisk && (!this.cache || fromDisk.fetchedAt > this.cache.fetchedAt)) this.cache = fromDisk
     const first = !this.booted
     this.booted = true
-    if (!args?.refresh && this.cache && !this.snapshot().stale) { this.scheduleTierRefresh(); return Promise.resolve(this.snapshot()) }
-    const work = this.refresh().finally(() => { if (this.flight === work) this.flight = undefined; this.scheduleTierRefresh() })
+    if (!args?.refresh && this.cache && !this.snapshot().stale) {
+      this.scheduleTierRefresh()
+      this.scheduleBackgroundRefresh()
+      return Promise.resolve(this.snapshot())
+    }
+    const work = this.refresh().finally(() => {
+      if (this.flight === work) this.flight = undefined
+      this.scheduleTierRefresh()
+      this.scheduleBackgroundRefresh()
+    })
     this.flight = work
     // Cold starts can paint old data immediately. A later read joins the same refresh.
     if (first && this.cache && !args?.refresh) { void work; return Promise.resolve(this.snapshot()) }
     return work.then(value => structuredClone(value))
+  }
+  /**
+   * Keep the cache fresh while 赛程 is closed: read again once it is due, five minutes after the
+   * last fetch or the last failed try. The first read of the session starts the cycle, so a cold
+   * start still paints the disk copy first.
+   */
+  private scheduleBackgroundRefresh(): void {
+    if (this.lifetime.signal.aborted) return
+    clearTimeout(this.refreshTimer)
+    const last = Math.max(this.cache?.fetchedAt ?? -Infinity, this.attemptedAt)
+    // Capped at one interval, so a clock moved backwards cannot push the next read out for hours.
+    const due = Math.min(SCHEDULE_TTL_MS, Math.max(0, last + SCHEDULE_TTL_MS - this.now()))
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = undefined
+      if (!this.lifetime.signal.aborted) void this.getCs2Schedule().catch(() => undefined)
+    }, due)
+    this.refreshTimer.unref?.()
   }
   private tournamentPaths(): string[] {
     return [...new Set(currentMatches(this.cache?.matches ?? [], this.now())
@@ -339,6 +367,7 @@ export class EsportsService {
     if (changed) this.notify('tiers-updated')
   }
   private async refresh(): Promise<Cs2Schedule> {
+    this.attemptedAt = this.now()
     try {
       const payload = await this.fetchMetadata(SCHEDULE_URL, true)
       const logoPaths = new Map<string, string>()
@@ -410,6 +439,7 @@ export class EsportsService {
     clearTimeout(this.tierTimer)
     clearInterval(this.logoTimer)
     clearTimeout(this.eventTimer)
+    clearTimeout(this.refreshTimer)
     this.pendingEvents.clear()
     await this.logos?.dispose()
     await this.pool.dispose()
