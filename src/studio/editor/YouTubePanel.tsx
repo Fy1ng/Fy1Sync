@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { YtImportHeight } from '../../../electron/ytImport'
 import type { GrabbedFrame } from '../../recognition/frameGrabber'
+import { Switch } from '../kit'
 
 /** Longest stretch one download may cover. */
 export const MAX_CLIP_SECONDS = 3 * 60 * 60
@@ -177,7 +178,8 @@ function usePlayerPlacement(source: YouTubeSource, slot: React.RefObject<HTMLDiv
     }
     const schedule = (): void => { if (!frame) frame = requestAnimationFrame(report) }
     const observer = new ResizeObserver(schedule)
-    observer.observe(node)
+    // Watching the ancestors too: a note shown above moves the slot without resizing it.
+    for (let element: Element | null = node; element; element = element.parentElement) observer.observe(element)
     window.addEventListener('resize', schedule)
     // Capture: scroll, popover `toggle` and dialog `close` do not bubble.
     for (const type of ['scroll', 'toggle', 'close']) document.addEventListener(type, schedule, true)
@@ -192,12 +194,17 @@ function usePlayerPlacement(source: YouTubeSource, slot: React.RefObject<HTMLDiv
   }, [source, slot, active])
 }
 
-export function YouTubePanel({ source, onStill, onClipReady }: {
+export function YouTubePanel({ source, onStill, onClipReady, autoStill, onAutoStillChange, active }: {
   source: YouTubeSource
-  /** A still was taken: hand it to the editor as the current frame. */
-  onStill: (still: YouTubeStill) => void | Promise<void>
+  /** A still was taken: hand it to the editor as the current frame. `auto` when 自动取帧 took it. */
+  onStill: (still: YouTubeStill, auto: boolean) => void | Promise<void>
   /** A downloaded clip is ready: open it as footage. */
   onClipReady: (job: YouTubeClipJob) => void
+  /** 自动取帧, shared with the local footage's switch. */
+  autoStill: boolean
+  onAutoStillChange: (on: boolean) => void
+  /** The panel is the footage on show; a hidden one never takes a still by itself. */
+  active: boolean
 }): React.ReactNode {
   const [link, setLink] = useState('')
   const [openedUrl, setOpenedUrl] = useState<string | null>(null)
@@ -238,15 +245,44 @@ export function YouTubePanel({ source, onStill, onClipReady }: {
     setMark({ in: null, out: null })
   }
 
-  const takeStill = useCallback(async (): Promise<void> => {
+  /** The recording last seen and where it stood still (`at`, null while it plays); null before any. */
+  const stopped = useRef<{ videoId: string; at: string | null } | null>(null)
+  const takingRef = useRef(false)
+  const takeStill = useCallback(async (auto = false): Promise<void> => {
+    if (takingRef.current) return
+    takingRef.current = true
     setProblem(null)
     setTaking(true)
     try {
       const result = await source.still()
-      if (!result.ok) { setProblem(YOUTUBE_ERROR_TEXT[result.error]); return }
-      await onStill(result.still)
-    } finally { setTaking(false) }
+      if (!result.ok) {
+        // Caught mid-seek: the next pushed state tries again, without a note.
+        if (auto && result.error === 'snapshot-unavailable') {
+          if (stopped.current) stopped.current = { ...stopped.current, at: null }
+          return
+        }
+        setProblem(YOUTUBE_ERROR_TEXT[result.error])
+        return
+      }
+      await onStill(result.still, auto)
+    } finally { takingRef.current = false; setTaking(false) }
   }, [source, onStill])
+
+  // 自动取帧: take the frame the player stops on, paused or moved while paused, once. Only a
+  // stop seen while the switch is on and this panel is shown counts, so opening a recording,
+  // coming back to this panel or turning the switch on never replaces the frame in use. The
+  // state arrives about once a second, so a stop is taken within about a second.
+  useEffect(() => {
+    if (!state) { stopped.current = null; return }
+    const at = state.playing ? null : state.currentTime.toFixed(3)
+    const previous = stopped.current
+    if (previous?.videoId === state.videoId && previous.at === at) return
+    if (at !== null && takingRef.current) return
+    stopped.current = { videoId: state.videoId, at }
+    // The first look at a recording is where it opened, not where it was stopped.
+    const fresh = previous?.videoId !== state.videoId
+    if (at !== null && !fresh && autoStill && active && state.playerOnly && !state.advert && !state.error) void takeStill(true)
+  }, [state, autoStill, active, takeStill])
 
   // The pushed state can be a second old; a mark reads the player now.
   const setPoint = async (which: 'in' | 'out'): Promise<void> => {
@@ -297,6 +333,7 @@ export function YouTubePanel({ source, onStill, onClipReady }: {
             <button type="button" className="btn-solid small" disabled={!ready || state.advert || taking} onClick={() => void takeStill()}>
               {taking ? '正在截取…' : '截当前画面'}
             </button>
+            <Switch label="自动取帧" checked={autoStill} onChange={onAutoStillChange} />
             <span className="yt-divider" aria-hidden="true" />
             <button type="button" className="btn-quiet small" disabled={!ready} onClick={() => void setPoint('in')}>
               设为入点{mark.in !== null ? ` ${clock(mark.in)}` : ''}

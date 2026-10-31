@@ -31,7 +31,7 @@ import { apiClient, issuesFrom, type PresetSummary } from '../../app/apiClient'
 import { FrameGrabber, FULL_FRAME_ROI, type GrabbedFrame } from '../../recognition/frameGrabber'
 import { useSession } from '../../app/SessionContext'
 import { routeLink } from '../../app/navigate'
-import { Icon, Segmented } from '../kit'
+import { Icon, Segmented, Switch } from '../kit'
 import { drawGray, drawMask, sampleFromPrepared } from './framePipeline'
 import { RoiWindow } from './RoiWindow'
 import { EditorStage } from './EditorStage'
@@ -56,6 +56,12 @@ interface Message {
 }
 
 const TYPED_CHARS = new Set<string>(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ':'])
+
+const AUTO_GRAB_KEY = 'studio.editor.autoGrab'
+/** 自动取帧 is on unless it was turned off; a blocked storage keeps it on. */
+function readAutoGrab(): boolean {
+  try { return window.localStorage.getItem(AUTO_GRAB_KEY) !== 'off' } catch { return true }
+}
 
 /** Only the trusted local app frame can invoke preset writes in main. */
 export default function EditorPage(): React.ReactNode {
@@ -95,6 +101,12 @@ export default function EditorPage(): React.ReactNode {
   const [sampleName, setSampleName] = useState('')
   /** Where footage comes from: local files, or a YouTube recording browsed through main. */
   const [footage, setFootage] = useState<'local' | 'youtube'>('local')
+  /** 自动取帧: take the frame playback stops on (a seek, a pause) without a click. */
+  const [autoGrab, setAutoGrabState] = useState(readAutoGrab)
+  const setAutoGrab = useCallback((on: boolean): void => {
+    setAutoGrabState(on)
+    try { window.localStorage.setItem(AUTO_GRAB_KEY, on ? 'on' : 'off') } catch { /* Kept for this window only. */ }
+  }, [])
   const ytSource = useMemo<YouTubeSource | null>(() => youtubeSource(), [])
   const [videoSize, setVideoSize] = useState({ width: 0, height: 0 })
   const [mediaTime, setMediaTime] = useState(0)
@@ -327,8 +339,11 @@ export default function EditorPage(): React.ReactNode {
     setMessage({ kind: 'info', text: `已载入${name}（${decoded.frame.width}×${decoded.frame.height}）` })
   }, [project.clear])
 
-  /** A YouTube still is a screenshot like any other: the frame to sample from. */
-  const openStill = useCallback(async (still: YouTubeStill): Promise<void> => {
+  /**
+   * A YouTube still is a screenshot like any other: the frame to sample from. One taken by
+   * 自动取帧 leaves the player on show, so the recording can be paused and stepped again.
+   */
+  const openStill = useCallback(async (still: YouTubeStill, auto = false): Promise<void> => {
     const canvas = document.createElement('canvas')
     canvas.width = still.frame.width
     canvas.height = still.frame.height
@@ -349,7 +364,7 @@ export default function EditorPage(): React.ReactNode {
     setDuration(0)
     setPlaying(false)
     setFrame(still.frame)
-    setFootage('local')
+    if (!auto) setFootage('local')
     setMessage(still.native
       ? { kind: 'info', text: `已截取 ${still.frame.width}×${still.frame.height} 原尺寸画面` }
       : { kind: 'warn', text: `截到的画面不是原尺寸（${still.frame.width}×${still.frame.height}），不建议当样本` })
@@ -787,7 +802,8 @@ export default function EditorPage(): React.ReactNode {
           {/* Kept mounted while hidden, so the page and a running download survive a switch. */}
           {ytSource && (
             <div className="editor-yt" hidden={footage !== 'youtube'}>
-              <YouTubePanel source={ytSource} onStill={openStill} onClipReady={openClip} />
+              <YouTubePanel source={ytSource} onStill={openStill} onClipReady={openClip}
+                autoStill={autoGrab} onAutoStillChange={setAutoGrab} active={footage === 'youtube'} />
             </div>
           )}
           <EditorStage mediaSize={videoSize} roi={profile.roi} enabled={!!sampleUrl} hidden={footage === 'youtube'}
@@ -813,13 +829,17 @@ export default function EditorPage(): React.ReactNode {
                   setDuration(Number.isFinite(node.duration) ? node.duration : 0)
                 }}
                 onPlay={() => setPlaying(true)}
-                onPause={() => setPlaying(false)}
+                onPause={(event) => {
+                  setPlaying(false)
+                  // A pause that starts a step or a jump is followed by its seek, which grabs.
+                  if (autoGrab && !event.currentTarget.seeking) grab()
+                }}
                 onTimeUpdate={(event) => setMediaTime(event.currentTarget.currentTime)}
                 onSeeked={(event) => {
                   setMediaTime(event.currentTarget.currentTime)
                   // A seek is the usual way to reach the frame you want; grabbing right
-                  // after it saves a click and guarantees the preview matches the picture.
-                  grab()
+                  // after it saves a click and keeps the preview on the picture.
+                  if (autoGrab) grab()
                 }}
               />
             ) : (
@@ -875,6 +895,7 @@ export default function EditorPage(): React.ReactNode {
                   }} />
                 <span className="editor-time num"><span>{mediaTime.toFixed(2)}s</span> / {duration ? `${duration.toFixed(2)}s` : '—'}</span>
                 <button type="button" className="btn-solid small" onClick={grab}>取当前帧</button>
+                <Switch label="自动取帧" checked={autoGrab} onChange={setAutoGrab} />
               </>
             ) : (
               <span className="editor-transport-meta muted">

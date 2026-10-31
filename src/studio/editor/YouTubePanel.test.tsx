@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MAX_CLIP_SECONDS, YouTubePanel, clock, youtubeVideoId, type YouTubeBrowseState, type YouTubeClipJob, type YouTubeSource } from './YouTubePanel'
+import { MAX_CLIP_SECONDS, YOUTUBE_ERROR_TEXT, YouTubePanel, clock, youtubeVideoId, type YouTubeBrowseState, type YouTubeClipJob, type YouTubeSource } from './YouTubePanel'
 
 afterEach(cleanup)
 
@@ -29,8 +29,10 @@ function fakeSource() {
   return { source, push: (s: YouTubeBrowseState | null) => act(() => { current = s; push(s) }), pushJobs: (j: YouTubeClipJob[]) => act(() => pushJobs(j)), state }
 }
 
-async function opened(fake: ReturnType<typeof fakeSource>, handlers = { onStill: vi.fn(), onClipReady: vi.fn() }) {
-  render(<YouTubePanel source={fake.source} {...handlers} />)
+type PanelProps = Pick<React.ComponentProps<typeof YouTubePanel>, 'autoStill' | 'active' | 'onAutoStillChange'>
+
+async function opened(fake: ReturnType<typeof fakeSource>, handlers = { onStill: vi.fn(), onClipReady: vi.fn() }, props: Partial<PanelProps> = {}) {
+  render(<YouTubePanel source={fake.source} {...handlers} autoStill={false} active onAutoStillChange={() => {}} {...props} />)
   fireEvent.change(screen.getByLabelText('YouTube 录像链接'), { target: { value: 'https://www.youtube.com/watch?v=swMquqtyh-A' } })
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: '打开' })) })
   return handlers
@@ -78,7 +80,67 @@ describe('the YouTube panel', () => {
     const handlers = await opened(fake)
     fake.push(fake.state())
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: '截当前画面' })) })
-    expect(handlers.onStill).toHaveBeenCalledWith(expect.objectContaining({ native: true, videoId: 'swMquqtyh-A' }))
+    expect(handlers.onStill).toHaveBeenCalledWith(expect.objectContaining({ native: true, videoId: 'swMquqtyh-A' }), false)
+  })
+
+  it('takes the frame the player stops on, once per stop, while 自动取帧 is on', async () => {
+    const fake = fakeSource()
+    const handlers = await opened(fake, undefined, { autoStill: true })
+    const settle = (): Promise<void> => act(async () => {})
+    fake.push(fake.state({ playing: true, currentTime: 10 }))
+    await settle()
+    expect(fake.source.still).not.toHaveBeenCalled()
+    fake.push(fake.state({ currentTime: 12.5 }))
+    await settle()
+    expect(fake.source.still).toHaveBeenCalledTimes(1)
+    expect(handlers.onStill).toHaveBeenLastCalledWith(expect.objectContaining({ videoId: 'swMquqtyh-A' }), true)
+    // The same stop pushed again is not taken twice; a frame step while paused is a new stop.
+    fake.push(fake.state({ currentTime: 12.5 }))
+    await settle()
+    expect(fake.source.still).toHaveBeenCalledTimes(1)
+    fake.push(fake.state({ currentTime: 12.517 }))
+    await settle()
+    expect(fake.source.still).toHaveBeenCalledTimes(2)
+  })
+
+  it('takes nothing where a recording opened, while hidden, or with the switch off', async () => {
+    for (const props of [{ autoStill: true }, { autoStill: true, active: false }, { autoStill: false }]) {
+      const fake = fakeSource()
+      await opened(fake, undefined, props)
+      fake.push(fake.state({ currentTime: 0 }))
+      if (!props.autoStill || props.active === false) {
+        fake.push(fake.state({ playing: true, currentTime: 3 }))
+        fake.push(fake.state({ currentTime: 4 }))
+      }
+      await act(async () => {})
+      expect(fake.source.still).not.toHaveBeenCalled()
+      cleanup()
+    }
+  })
+
+  it('tries a stop caught mid-seek again on the next state, without a note', async () => {
+    const fake = fakeSource()
+    vi.mocked(fake.source.still).mockResolvedValueOnce({ ok: false, error: 'snapshot-unavailable' })
+    const handlers = await opened(fake, undefined, { autoStill: true })
+    fake.push(fake.state({ playing: true, currentTime: 19 }))
+    fake.push(fake.state({ currentTime: 20 }))
+    await act(async () => {})
+    expect(fake.source.still).toHaveBeenCalledTimes(1)
+    expect(handlers.onStill).not.toHaveBeenCalled()
+    expect(screen.queryByText(YOUTUBE_ERROR_TEXT['snapshot-unavailable'])).toBeNull()
+    fake.push(fake.state({ currentTime: 20 }))
+    await act(async () => {})
+    expect(fake.source.still).toHaveBeenCalledTimes(2)
+    expect(handlers.onStill).toHaveBeenCalledTimes(1)
+  })
+
+  it('flips 自动取帧 from its switch', async () => {
+    const fake = fakeSource()
+    const onAutoStillChange = vi.fn()
+    await opened(fake, undefined, { autoStill: false, onAutoStillChange })
+    fake.push(fake.state())
+    fireEvent.click(screen.getByRole('switch', { name: '自动取帧' }))
+    expect(onAutoStillChange).toHaveBeenCalledWith(true)
   })
 
   it('downloads the marked stretch and refuses one over the limit', async () => {
