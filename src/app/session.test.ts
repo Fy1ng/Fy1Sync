@@ -105,6 +105,10 @@ describe('backend playback navigation and danmaku processing', () => {
     expect(await h.session.returnPlaybackToLive('official')).toBe(true)
     // Without an hls.js sync point it stays three 2-second segments back.
     expect(h.engine.element('official').currentTime).toBe(214)
+    // Stepping ahead past that point stops there too, instead of at the newest frame.
+    primeMediaElement(h.engine.element('official'), { duration: Infinity, seekableStart: 40, seekableEnd: 220, currentTime: 210 })
+    expect(await h.session.seekPlayback('official', 30)).toBe(true)
+    expect(h.engine.element('official').currentTime).toBe(214)
   })
 
   it('applies media-time duplicate merging without changing the original message text', async () => {

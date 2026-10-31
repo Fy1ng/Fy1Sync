@@ -1,26 +1,9 @@
-import { clampSeek, readTimebase, seekReached } from './timebase'
-import type { Timebase } from '../core/types'
+import { clampPlayableSeek, latestPlayableTime, readTimebase, seekReached } from './timebase'
+
+export { latestPlayableTime }
 
 export interface PlaybackSeekResult { ok: boolean; target: number | null; clamped: boolean; reason: 'unavailable' | 'cancelled' | 'timeout' | null }
 export interface NativePipResult { ok: boolean; active: boolean; reason: 'unsupported' | 'not-ready' | 'user-gesture-required' | 'failed' | null }
-
-/**
- * Behind the newest segment when hls.js has no sync point to offer: three of the local
- * buffer's 2-second segments, about where hls.js itself rejoins.
- */
-const LIVE_FALLBACK_BEHIND_SECONDS = 6
-
-/**
- * Where 回到直播 lands. Not the newest frame: right behind it nothing is buffered yet, so the
- * picture waits for the next segment to be written and fetched, a stall of up to a segment
- * every time. hls.js's sync point stays a few segments back, where it starts a live stream.
- */
-export function latestPlayableTime(timebase: Timebase, livePosition: number | null = null): number | null {
-  if (timebase.kind !== 'live') return null
-  const target = livePosition !== null && Number.isFinite(livePosition) ? Math.min(livePosition, timebase.seekableEnd)
-    : timebase.seekableEnd - LIVE_FALLBACK_BEHIND_SECONDS
-  return Math.max(timebase.seekableStart, target)
-}
 
 /** Headless media controls. Claude binds gestures/keys without owning or remounting video. */
 export class PlaybackControls {
@@ -42,7 +25,7 @@ export class PlaybackControls {
     const timebase = readTimebase(this.video, this.isLive?.())
     if (!timebase) return Promise.resolve(this.unavailable())
     this.cancelSeek?.()
-    const next = clampSeek(target, timebase)
+    const next = clampPlayableSeek(target, timebase, this.livePosition())
     if (!this.video.seeking && seekReached(this.video.currentTime, next.target)) return Promise.resolve({ ok: true, target: next.target, clamped: next.clamped, reason: null })
     return new Promise(resolve => {
       let done = false

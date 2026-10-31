@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { latestPlayableTime, PlaybackControls } from './playbackControls'
+import { clampPlayableSeek } from './timebase'
 import { IndependentMedia } from './independentMedia'
 
 function fixture(livePosition: () => number | null = () => null) {
@@ -26,6 +27,11 @@ describe('where 回到直播 lands', () => {
     expect(latestPlayableTime(live, 151)).toBe(150)
     expect(latestPlayableTime({ kind: 'live', seekableStart: 100, seekableEnd: 103 })).toBe(100)
     expect(latestPlayableTime({ kind: 'vod', duration: 600 }, 590)).toBeNull()
+  })
+  it('holds a seek ahead to the same point, and leaves recordings alone', () => {
+    expect(clampPlayableSeek(149.9, live)).toEqual({ target: 144, clamped: true, shortfall: expect.closeTo(5.9, 5) })
+    expect(clampPlayableSeek(130, live)).toEqual({ target: 130, clamped: false, shortfall: 0 })
+    expect(clampPlayableSeek(599, { kind: 'vod', duration: 600 })).toEqual({ target: 599, clamped: false, shortfall: 0 })
   })
 })
 describe('headless playback controls', () => {

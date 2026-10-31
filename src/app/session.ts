@@ -37,7 +37,7 @@ import { colorForIndex } from '../../server/danmaku/douyuProtocol'
 import type { ChatMessage } from '../../server/danmaku/types'
 import { normalizeDouyuGift, normalizeDouyuSender } from '../core/douyuMetadata'
 import { DanmakuProcessor, DEFAULT_DANMAKU_PREFERENCES, readDanmakuPreferences, type DanmakuPreferences } from '../core/danmakuProcessing'
-import { clampSeek } from '../media/timebase'
+import { clampPlayableSeek } from '../media/timebase'
 import { latestPlayableTime } from '../media/playbackControls'
 
 /** Released danmaku kept for the chat list. */
@@ -766,7 +766,7 @@ export class Session {
       if (!before?.ready) return false
       const requested = move === 'live' ? latestPlayableTime(before.timebase, this.engine.livePosition(role)) : before.currentTime + move
       if (requested === null) return false
-      const target = clampSeek(requested, before.timebase).target
+      const target = clampPlayableSeek(requested, before.timebase, this.engine.livePosition(role)).target
       const capture = this.captureSeekMovement(role)
       const reached = await this.engine.seek(role, target)
       if (this.disposed || generation !== this.sourceGeneration[role]) return false

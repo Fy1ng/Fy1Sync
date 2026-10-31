@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { seekableRange } from '../core/syncPlan'
-import { latestPlayableTime } from '../media/playbackControls'
+import { clampPlayableSeek, latestPlayableTime } from '../media/timebase'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { Icon } from './kit'
 import { ROLE_LABEL } from './sources'
@@ -87,7 +87,10 @@ export function Timeline(): React.ReactNode {
   // goes away once it has done its job.
   const behind = Math.max(0, (latestPlayableTime(timebase, state.livePosition) ?? end) - state.currentTime)
   const pct = (value: number): string => `${Math.min(100, Math.max(0, ((value - start) / (end - start)) * 100))}%`
-  const commit = (value: number): void => { void session.engine.seek(role, value); setDrag(null) }
+  const commit = (value: number): void => {
+    void session.engine.seek(role, clampPlayableSeek(value, timebase, state.livePosition).target)
+    setDrag(null)
+  }
 
   return (
     <div className="timeline">

@@ -96,6 +96,36 @@ export function clampSeek(target: number, timebase: Timebase): ClampedSeek {
 }
 
 /**
+ * Behind the newest segment when hls.js has no sync point to offer: three of the local
+ * buffer's 2-second segments, about where hls.js itself rejoins.
+ */
+const LIVE_FALLBACK_BEHIND_SECONDS = 6
+
+/**
+ * Where 回到直播 lands. Not the newest frame: right behind it nothing is buffered yet, so the
+ * picture waits for the next segment to be written and fetched, a stall of up to a segment
+ * every time. hls.js's sync point stays a few segments back, where it starts a live stream.
+ */
+export function latestPlayableTime(timebase: Timebase, livePosition: number | null = null): number | null {
+  if (timebase.kind !== 'live') return null
+  const target = livePosition !== null && Number.isFinite(livePosition) ? Math.min(livePosition, timebase.seekableEnd)
+    : timebase.seekableEnd - LIVE_FALLBACK_BEHIND_SECONDS
+  return Math.max(timebase.seekableStart, target)
+}
+
+/**
+ * A seek the user asked for, kept no nearer the newest frame than 回到直播 lands: dragging the
+ * time line to its end would otherwise stall the same way. Sync seeks keep `clampSeek`, so
+ * the planner's own accounting of what each source can reach stays true.
+ */
+export function clampPlayableSeek(target: number, timebase: Timebase, livePosition: number | null = null): ClampedSeek {
+  const next = clampSeek(target, timebase)
+  const ceiling = latestPlayableTime(timebase, livePosition)
+  if (ceiling === null || next.target <= ceiling) return next
+  return { target: ceiling, clamped: true, shortfall: next.shortfall + next.target - ceiling }
+}
+
+/**
  * Plan a rewind of `seconds` from `from`. Positive `seconds` moves backwards.
  * The shortfall is what the caller reports as "DVR window too short".
  */
