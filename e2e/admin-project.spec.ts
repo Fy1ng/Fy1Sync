@@ -21,11 +21,13 @@ test('编辑工程重启恢复未发布草稿和素材, 文件改名后按 SHA-2
     await page.getByRole('textbox', { name: '名称', exact: true }).fill('未发布但已自动记住')
     await page.getByLabel('素材比赛').fill('PGL / A vs B / Map 2')
     await page.getByLabel('素材用途').selectOption('validation')
-    // This invoke follows the autosave on the same IPC channel and inspects the persisted snapshot.
+    // Autosaves coalesce while a write is in flight; wait for the complete latest snapshot.
     await expect.poll(async () => {
       const saved = await invoke(page, 'editorProjectLoad', undefined)
-      return saved.ok && saved.value.project?.pack.name
-    }).toBe('未发布但已自动记住')
+      const project = saved.ok ? saved.value.project : null
+      const media = project?.media.find(item => item.id === project.currentMediaId)
+      return { name: project?.pack.name, match: media?.match, purpose: media?.purpose }
+    }).toEqual({ name: '未发布但已自动记住', match: 'PGL / A vs B / Map 2', purpose: 'validation' })
     await running.restart()
     page = running.page
     await page.goto(APP_ORIGIN + '/admin')

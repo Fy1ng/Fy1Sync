@@ -147,6 +147,16 @@ test.describe('取帧与切分', () => {
     // One real frame per press, forward then back, never a repeat or a skip.
     expect(indices.slice(1, 11).map((index, i) => index - indices[i]!)).toEqual(Array(10).fill(1))
     expect(indices.slice(11).map((index, i) => index - indices[10 + i]!)).toEqual(Array(4).fill(-1))
+    await page.getByRole('button', { name: '放大到当前框', exact: true }).click()
+    const zoomedFrame = await landed(() => page.getByRole('button', { name: '下一帧' }).click())
+    expect(frame(zoomedFrame)).toBe(indices.at(-1)! + 1)
+    const zoomedBack = await landed(() => page.getByRole('button', { name: '上一帧' }).click())
+    expect(frame(zoomedBack)).toBe(indices.at(-1)!)
+    await page.locator('.editor-stage').focus()
+    await page.keyboard.press('Space')
+    await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.paused)).toBe(false)
+    await page.keyboard.press('Space')
+    await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.paused)).toBe(true)
   })
 
   test('载入样片后取帧并切出字符框', async ({ page, electronApp }) => {
@@ -168,6 +178,15 @@ test.describe('取帧与切分', () => {
     await expect(page.locator('.crop-canvas').first()).toBeVisible()
     // 0:19 at t=1s — four glyphs.
     await expect.poll(async () => page.locator('.glyph-box').count(), { timeout: 20_000 }).toBeGreaterThanOrEqual(3)
+    const crop = page.locator('.crop-canvas').first()
+    const nativePreview = await crop.evaluate((node: HTMLCanvasElement) => node.toDataURL())
+    const time = await video.evaluate((node: HTMLVideoElement) => node.currentTime)
+    await page.getByRole('button', { name: '放大到当前框', exact: true }).click()
+    await expect(page.locator('.editor-stage')).toHaveClass(/is-zoomed/)
+    await page.getByRole('button', { name: '取当前帧' }).click()
+    await expect.poll(() => page.locator('.glyph-box').count()).toBe(4)
+    await expect.poll(() => crop.evaluate((node: HTMLCanvasElement) => node.toDataURL())).toBe(nativePreview)
+    expect(await video.evaluate((node: HTMLVideoElement) => node.currentTime)).toBe(time)
   })
 
   test('点字符按钮把选中的框存成模板样本', async ({ page, electronApp }) => {
@@ -202,6 +221,7 @@ test.describe('取帧与切分', () => {
     await expect.poll(async () => video.evaluate((node: HTMLVideoElement) => node.videoWidth)).toBeGreaterThan(0)
     await setRoi(page, { x: 0.42, y: 0.045, w: 0.16, h: 0.13 })
     const section = page.getByRole('region', { name: '整段标注' })
+    await page.getByRole('button', { name: '放大到当前框', exact: true }).click()
 
     // 1.0 s shows 0:19 (see the single-frame test); mark 1.0 to 4.2 s.
     await seekSample(page, 1)

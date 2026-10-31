@@ -250,11 +250,46 @@
 }
 
 .editor-media {
+  position: absolute;
   display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;
   user-select: none;
+}
+
+.editor-stage {
+  touch-action: none;
+}
+
+.editor-stage.is-zoomed .editor-media {
+  image-rendering: pixelated;
+}
+
+.editor-stage.is-zoomed {
+  cursor: grab;
+}
+
+.editor-stage.is-panning,
+.editor-stage.is-panning * {
+  cursor: grabbing;
+}
+
+.editor-view-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: none;
+  font-size: 11px;
+}
+
+.editor-view-tools[hidden] {
+  display: none;
+}
+
+.editor-zoom-value {
+  min-width: 5ch;
 }
 
 .editor-empty {

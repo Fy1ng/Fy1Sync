@@ -34,6 +34,7 @@ import { routeLink } from '../../app/navigate'
 import { Icon, Segmented } from '../kit'
 import { drawGray, drawMask, sampleFromPrepared } from './framePipeline'
 import { RoiWindow } from './RoiWindow'
+import { EditorStage } from './EditorStage'
 import { FrameStepper, presentAt } from './frameStep'
 import { pairReading } from './reading'
 import { StretchSection } from './StretchSection'
@@ -112,7 +113,6 @@ export default function EditorPage(): React.ReactNode {
   boxesRef.current = boxes
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const stageRef = useRef<HTMLDivElement | null>(null)
   const grabberRef = useRef(new FrameGrabber())
   /** Steps by the file's real frames; reset whenever a different file is opened. */
   const stepperRef = useRef<FrameStepper | null>(null)
@@ -772,14 +772,18 @@ export default function EditorPage(): React.ReactNode {
               <YouTubePanel source={ytSource} onStill={openStill} onClipReady={openClip} />
             </div>
           )}
-          <div className="editor-stage" ref={stageRef} hidden={footage === 'youtube'}>
+          <EditorStage mediaSize={videoSize} roi={profile.roi} enabled={!!sampleUrl} hidden={footage === 'youtube'}
+            resetKey={JSON.stringify([sampleUrl, variantId, pack.id])}>
+            {picture => <>
             {sampleUrl && sampleKind === 'image' ? (
-              <img src={sampleUrl} className="editor-media" alt={sampleName} draggable={false} />
+              <img src={sampleUrl} className="editor-media" alt={sampleName} draggable={false}
+                style={{ left: picture.x, top: picture.y, width: picture.width, height: picture.height }} />
             ) : sampleUrl ? (
               <video
                 ref={videoRef}
                 src={sampleUrl}
                 className="editor-media"
+                style={{ left: picture.x, top: picture.y, width: picture.width, height: picture.height }}
                 controls={false}
                 playsInline
                 muted
@@ -810,13 +814,14 @@ export default function EditorPage(): React.ReactNode {
               <>{HUD_FIELD_IDS.map(id => (
                 <RoiWindow key={id} roi={fieldModel(pack, id, variantId).roi} onChange={setRoi}
                   readOnly={id !== fieldId} label={FIELD_LABELS[id]}
-                  videoWidth={videoSize.width} videoHeight={videoSize.height} hostRef={stageRef} />
+                  videoWidth={videoSize.width} videoHeight={videoSize.height} contentBox={picture} />
               ))}{[...HUD_CUE_IDS, 'organizer' as const].filter(id => id === fieldId || (id === 'organizer' ? variant.organizer : variant.cues[id])).map(id => (
                 <RoiWindow key={id} roi={cueModel(pack, id, variantId).roi} onChange={setRoi} readOnly={id !== fieldId} label={CUE_LABELS[id]}
-                  videoWidth={videoSize.width} videoHeight={videoSize.height} hostRef={stageRef} />
+                  videoWidth={videoSize.width} videoHeight={videoSize.height} contentBox={picture} />
               ))}</>
             )}
-          </div>
+            </>}
+          </EditorStage>
 
           <div className="editor-transport" hidden={footage === 'youtube'}>
             <button type="button" className="btn-quiet small" onClick={() => void project.choose()}>选择录像</button>
