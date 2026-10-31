@@ -472,6 +472,20 @@ test.describe('YouTube 录像素材', () => {
     await expect(panel).toBeHidden()
   })
 
+  test('片段下载接口只接受三种数字画质, 离线时不启动下载', async ({ page }) => {
+    failOnPageError(page)
+    await page.goto(APP_ORIGIN + '/admin')
+    const request = { url: 'https://www.youtube.com/watch?v=abcdefghijk', startSeconds: 0, endSeconds: 20 }
+    const call = (args: unknown) => page.evaluate((value) => window.streamSyncer!.invoke('ytImportStart', value as never), args)
+    expect(await call(request)).toMatchObject({ ok: false, code: 'invalid-arguments' })
+    for (const targetHeight of [720, 4320, 1440.5, '2160', null]) {
+      expect(await call({ ...request, targetHeight })).toMatchObject({ ok: false, code: 'invalid-arguments' })
+    }
+    for (const targetHeight of [2160, 1440, 1080]) {
+      expect(await call({ ...request, targetHeight })).toMatchObject({ ok: false, code: 'network' })
+    }
+  })
+
   test('播放器位置接口只收严格参数', async ({ page }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')

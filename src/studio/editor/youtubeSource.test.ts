@@ -56,15 +56,31 @@ describe('youtubeSource', () => {
     expect(await youtubeSource(api)!.still()).toEqual({ ok: false, error: 'origin-tainted' })
   })
 
+  it.each([2160, 1440, 1080] as const)('passes the requested %sp to main', async (targetHeight) => {
+    const { api, invoke } = bridge({ ytImportStart: { ok: true, value: { jobId: 'a' } } })
+    expect(await youtubeSource(api)!.startClip('https://www.youtube.com/watch?v=swMquqtyh-A', 750, 930, targetHeight))
+      .toEqual({ ok: true, jobId: 'a' })
+    expect(invoke).toHaveBeenCalledWith('ytImportStart', { url: 'https://www.youtube.com/watch?v=swMquqtyh-A', startSeconds: 750, endSeconds: 930, targetHeight })
+  })
+
+  it('restores old ready clips using the format dimensions alone', async () => {
+    const { api } = bridge({ ytImportList: { ok: true, value: [{ jobId: 'old', videoId: 'v', startSeconds: 1, endSeconds: 20,
+      state: 'ready', format: { width: 2560, height: 1440 }, mediaUrl: 'app://app/admin-media/old' }] } })
+    const seen = vi.fn()
+    youtubeSource(api)!.subscribeClips(seen)
+    await vi.waitFor(() => expect(seen).toHaveBeenCalledWith([expect.objectContaining({ jobId: 'old', state: 'ready',
+      width: 2560, height: 1440, targetHeight: undefined, mediaUrl: 'app://app/admin-media/old' })]))
+  })
+
   it('turns import jobs into panel jobs with 0..1 progress', async () => {
     const { api, listeners } = bridge({ ytImportList: { ok: true, value: [] } })
     const seen = vi.fn()
     youtubeSource(api)!.subscribeClips(seen)
-    listeners.job!({ jobId: 'a', videoId: 'v', startSeconds: 1, endSeconds: 20, state: 'downloading',
+    listeners.job!({ jobId: 'a', videoId: 'v', startSeconds: 1, endSeconds: 20, targetHeight: 1440, state: 'downloading',
       progress: { downloadedBytes: 5, totalBytes: 10, percent: 50 } } as never)
-    expect(seen).toHaveBeenLastCalledWith([expect.objectContaining({ jobId: 'a', progress: 0.5, title: '' })])
-    listeners.job!({ jobId: 'a', videoId: 'v', startSeconds: 1, endSeconds: 20, state: 'failed',
+    expect(seen).toHaveBeenLastCalledWith([expect.objectContaining({ jobId: 'a', progress: 0.5, title: '', targetHeight: 1440 })])
+    listeners.job!({ jobId: 'a', videoId: 'v', startSeconds: 1, endSeconds: 20, targetHeight: 1440, state: 'failed',
       error: { code: 'format-unavailable', message: '' } } as never)
-    expect(seen).toHaveBeenLastCalledWith([expect.objectContaining({ state: 'failed', error: 'format-unavailable', progress: null })])
+    expect(seen).toHaveBeenLastCalledWith([expect.objectContaining({ state: 'failed', error: 'format-unavailable', progress: null, targetHeight: 1440 })])
   })
 })

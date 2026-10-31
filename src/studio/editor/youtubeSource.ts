@@ -31,7 +31,7 @@ function clipJob(job: YtImportJob): YouTubeClipJob {
   return {
     jobId: job.jobId, videoId: job.videoId, title: job.title ?? '', startSeconds: job.startSeconds, endSeconds: job.endSeconds,
     state: job.state, progress: typeof percent === 'number' ? percent / 100 : null,
-    width: job.format?.width, height: job.format?.height,
+    width: job.format?.width, height: job.format?.height, targetHeight: job.targetHeight,
     error: job.error ? errorOf(job.error.code) : undefined, mediaUrl: job.mediaUrl,
   }
 }
@@ -70,8 +70,8 @@ export function youtubeSource(bridge: StreamSyncerBridge | undefined = typeof wi
         native: shot.isOneToOne, videoId: shot.videoId, approxTime: shot.approximateTime,
       } }
     },
-    async startClip(url, startSeconds, endSeconds) {
-      const result = await call(() => api.invoke('ytImportStart', { url, startSeconds, endSeconds }))
+    async startClip(url, startSeconds, endSeconds, targetHeight) {
+      const result = await call(() => api.invoke('ytImportStart', { url, startSeconds, endSeconds, targetHeight }))
       return result.ok ? { ok: true, jobId: result.value.jobId } : { ok: false, error: errorOf(result.code) }
     },
     async cancelClip(jobId) { await call(() => api.invoke('ytImportCancel', { jobId })) },

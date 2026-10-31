@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MAX_CLIP_SECONDS, YouTubePanel, clock, youtubeVideoId, type YouTubeBrowseState, type YouTubeClipJob, type YouTubeSource } from './YouTubePanel'
 
@@ -57,14 +57,20 @@ describe('the YouTube panel', () => {
     expect(fake.source.open).toHaveBeenCalledWith('https://www.youtube.com/watch?v=swMquqtyh-A')
   })
 
-  it('says when the page is not decoding 4K', async () => {
+  it.each([[3840, 2160], [2560, 1440], [1920, 1080]])('accepts the supported native size %sx%s', async (videoWidth, videoHeight) => {
     const fake = fakeSource()
     await opened(fake)
-    fake.push(fake.state({ videoWidth: 1920, videoHeight: 1080 }))
-    expect(screen.getByText(/不是 4K/)).toBeInTheDocument()
-    expect(screen.getByText('1920×1080')).toBeInTheDocument()
-    fake.push(fake.state())
-    expect(screen.queryByText(/不是 4K/)).toBeNull()
+    fake.push(fake.state({ videoWidth, videoHeight }))
+    expect(screen.queryByText(/在播放器的画质菜单里选/)).toBeNull()
+    expect(screen.getByText(`${videoWidth}×${videoHeight}`)).toHaveAttribute('data-native', 'true')
+  })
+
+  it.each([[1280, 720], [2048, 1080], [7680, 4320], [3840, 1440]])('warns for the unsupported size %sx%s', async (videoWidth, videoHeight) => {
+    const fake = fakeSource()
+    await opened(fake)
+    fake.push(fake.state({ videoWidth, videoHeight }))
+    expect(screen.getByText(/在播放器的画质菜单里选/)).toHaveTextContent('2160p、1440p 或 1080p')
+    expect(screen.getByText(`${videoWidth}×${videoHeight}`)).toHaveAttribute('data-native', 'false')
   })
 
   it('hands a still to the editor', async () => {
@@ -85,12 +91,54 @@ describe('the YouTube panel', () => {
     const download = screen.getByRole('button', { name: /下载这一段/ })
     expect(download).toHaveTextContent('3:00')
     await act(async () => { fireEvent.click(download) })
-    expect(fake.source.startClip).toHaveBeenCalledWith('https://www.youtube.com/watch?v=swMquqtyh-A', 750, 930)
+    expect(screen.getByRole('combobox', { name: '下载画质' })).toHaveValue('2160')
+    expect(fake.source.startClip).toHaveBeenCalledWith('https://www.youtube.com/watch?v=swMquqtyh-A', 750, 930, 2160)
 
     fake.push(fake.state({ currentTime: 750 + MAX_CLIP_SECONDS + 1 }))
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /设为出点/ })) })
     expect(screen.getByRole('button', { name: /下载这一段/ })).toBeDisabled()
     expect(screen.getByText('一次最多下载 5 分钟')).toBeInTheDocument()
+  })
+
+  it.each([2160, 1440, 1080] as const)('downloads the selected %sp independently of the player quality', async (targetHeight) => {
+    const fake = fakeSource()
+    await opened(fake)
+    fake.push(fake.state({ videoWidth: 1920, videoHeight: 1080, currentTime: 750 }))
+    const quality = screen.getByRole('combobox', { name: '下载画质' })
+    expect(quality).toHaveValue('2160')
+    expect(within(quality).getAllByRole('option').map((option) => option.textContent)).toEqual(['2160p', '1440p', '1080p'])
+    fireEvent.change(quality, { target: { value: String(targetHeight) } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /设为入点/ })) })
+    fake.push(fake.state({ videoWidth: 2560, videoHeight: 1440, currentTime: 930 }))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /设为出点/ })) })
+    expect(quality).toHaveValue(String(targetHeight))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /下载这一段/ })) })
+    expect(fake.source.startClip).toHaveBeenCalledWith('https://www.youtube.com/watch?v=swMquqtyh-A', 750, 930, targetHeight)
+  })
+
+  it('names the requested quality when starting the download fails', async () => {
+    const fake = fakeSource()
+    vi.mocked(fake.source.startClip).mockResolvedValueOnce({ ok: false, error: 'format-unavailable' })
+    await opened(fake)
+    fireEvent.change(screen.getByRole('combobox', { name: '下载画质' }), { target: { value: '1440' } })
+    fake.push(fake.state({ currentTime: 750 }))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /设为入点/ })) })
+    fake.push(fake.state({ currentTime: 930 }))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /设为出点/ })) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /下载这一段/ })) })
+    expect(screen.getByRole('alert')).toHaveTextContent('这段录像没有 1440p，请换一档画质')
+  })
+
+  it.each([2160, 1440, 1080] as const)('keeps %sp in the job status and failure after the selector changes', async (targetHeight) => {
+    const fake = fakeSource()
+    await opened(fake)
+    const job: YouTubeClipJob = { jobId: 'j1', videoId: 'swMquqtyh-A', title: 'T', startSeconds: 750, endSeconds: 930,
+      targetHeight, state: 'probing', progress: null }
+    fake.pushJobs([job])
+    expect(screen.getByText(`正在查找 ${targetHeight}p…`)).toBeInTheDocument()
+    fireEvent.change(screen.getByRole('combobox', { name: '下载画质' }), { target: { value: targetHeight === 2160 ? '1080' : '2160' } })
+    fake.pushJobs([{ ...job, state: 'failed', error: 'format-unavailable' }])
+    expect(screen.getByText(`这段录像没有 ${targetHeight}p，请换一档画质`)).toBeInTheDocument()
   })
 
   it('keeps the buttons off until the player alone is showing', async () => {
@@ -177,6 +225,10 @@ describe('the YouTube panel', () => {
     fake.pushJobs([ready])
     fake.pushJobs([ready])
     expect(handlers.onClipReady).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('已下载 · 3840×2160')).toBeInTheDocument()
+    fireEvent.click(within(screen.getByRole('list', { name: '下载' })).getByRole('button', { name: '打开' }))
+    expect(handlers.onClipReady).toHaveBeenLastCalledWith(ready)
+    expect(handlers.onClipReady).toHaveBeenCalledTimes(2)
   })
 
   it('closes the page when the editor goes away', async () => {

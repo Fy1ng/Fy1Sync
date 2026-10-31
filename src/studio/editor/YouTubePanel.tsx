@@ -11,6 +11,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { YtImportHeight } from '../../../electron/ytImport'
 import type { GrabbedFrame } from '../../recognition/frameGrabber'
 
 /** Longest stretch one download may cover. */
@@ -58,6 +59,7 @@ export interface YouTubeClipJob {
   progress: number | null
   width?: number
   height?: number
+  targetHeight?: YtImportHeight
   error?: YouTubeError
   /** Set once ready: a URL this page can play and seek. */
   mediaUrl?: string
@@ -82,7 +84,7 @@ export interface YouTubeSource {
   /** The state right now, for marks that should not lag the pushed one. */
   now(): Promise<YouTubeBrowseState | null>
   still(): Promise<{ ok: true; still: YouTubeStill } | { ok: false; error: YouTubeError }>
-  startClip(url: string, startSeconds: number, endSeconds: number): Promise<{ ok: true; jobId: string } | { ok: false; error: YouTubeError }>
+  startClip(url: string, startSeconds: number, endSeconds: number, targetHeight: YtImportHeight): Promise<{ ok: true; jobId: string } | { ok: false; error: YouTubeError }>
   cancelClip(jobId: string): Promise<void>
   subscribeClips(listener: (jobs: YouTubeClipJob[]) => void): () => void
 }
@@ -94,7 +96,7 @@ export const YOUTUBE_ERROR_TEXT: Record<YouTubeError, string> = {
   'geo-restricted': '这段录像在当前地区不可看',
   'video-unavailable': '录像不存在、已设为私享或已删除',
   'live-not-supported': '还在直播的录像暂不支持按时间段下载，请等直播结束',
-  'format-unavailable': '拿不到这段录像的最高画质',
+  'format-unavailable': '这段录像没有所选画质',
   'provider-failed': '取流验证失败，请稍后再试',
   network: '连不上 YouTube，请检查网络或代理',
   'rate-limited': 'YouTube 暂时限制了请求，请过几分钟再试',
@@ -111,6 +113,12 @@ export const YOUTUBE_ERROR_TEXT: Record<YouTubeError, string> = {
   closed: '录像窗口已关闭，请重新打开',
   'origin-tainted': '读不到视频画面，YouTube 可能换了播放方式',
   'player-only-failed': '无法只显示播放器，请重新打开录像',
+}
+
+function clipError(error: YouTubeError, targetHeight?: YtImportHeight): string {
+  return error === 'format-unavailable' && targetHeight
+    ? `这段录像没有 ${targetHeight}p，请换一档画质`
+    : YOUTUBE_ERROR_TEXT[error]
 }
 
 /** The id from a watch, share or live link; null when the text is not one. */
@@ -196,6 +204,7 @@ export function YouTubePanel({ source, onStill, onClipReady }: {
   const [state, setState] = useState<YouTubeBrowseState | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [taking, setTaking] = useState(false)
+  const [targetHeight, setTargetHeight] = useState<YtImportHeight>(2160)
   const [mark, setMark] = useState<{ in: number | null; out: number | null }>({ in: null, out: null })
   const [jobs, setJobs] = useState<YouTubeClipJob[]>([])
   const announced = useRef(new Set<string>())
@@ -250,11 +259,13 @@ export function YouTubePanel({ source, onStill, onClipReady }: {
   const download = async (): Promise<void> => {
     if (!openedUrl || mark.in === null || mark.out === null || clipProblem) return
     setProblem(null)
-    const result = await source.startClip(openedUrl, mark.in, mark.out)
-    if (!result.ok) setProblem(YOUTUBE_ERROR_TEXT[result.error])
+    const result = await source.startClip(openedUrl, mark.in, mark.out, targetHeight)
+    if (!result.ok) setProblem(clipError(result.error, targetHeight))
   }
   const running = jobs.some((job) => job.state === 'probing' || job.state === 'downloading')
-  const native = state ? state.videoWidth >= 3840 && state.videoHeight >= 2160 : false
+  const native = state ? state.videoWidth === 3840 && state.videoHeight === 2160
+    || state.videoWidth === 2560 && state.videoHeight === 1440
+    || state.videoWidth === 1920 && state.videoHeight === 1080 : false
   const ready = state?.playerOnly === true
 
   return (
@@ -276,7 +287,7 @@ export function YouTubePanel({ source, onStill, onClipReady }: {
               {state && state.videoWidth && state.videoHeight ? `${state.videoWidth}×${state.videoHeight}` : '未在播放'}
             </span>
             {state && !native && state.videoWidth > 0 && (
-              <span className="note-warn">不是 4K：在播放器的画质菜单里选 2160p</span>
+              <span className="note-warn">在播放器的画质菜单里选 2160p、1440p 或 1080p</span>
             )}
             {state?.advert && <span className="muted">正在播广告，结束后再截图</span>}
           </div>
@@ -292,6 +303,12 @@ export function YouTubePanel({ source, onStill, onClipReady }: {
             <button type="button" className="btn-quiet small" disabled={!ready} onClick={() => void setPoint('out')}>
               设为出点{mark.out !== null ? ` ${clock(mark.out)}` : ''}
             </button>
+            <select className="text-input num yt-quality" aria-label="下载画质" value={targetHeight}
+              onChange={(event) => setTargetHeight(Number(event.target.value) as YtImportHeight)}>
+              <option value={2160}>2160p</option>
+              <option value={1440}>1440p</option>
+              <option value={1080}>1080p</option>
+            </select>
             <button type="button" className="btn-solid small" disabled={length === null || clipProblem !== null || running}
               onClick={() => void download()}>
               下载这一段{length !== null && !clipProblem ? `（${clock(length)}）` : ''}
@@ -311,11 +328,11 @@ export function YouTubePanel({ source, onStill, onClipReady }: {
                 {job.title || job.videoId} <span className="muted num">{clock(job.startSeconds)}–{clock(job.endSeconds)}</span>
               </span>
               <span className="muted">
-                {job.state === 'probing' ? '正在查找最高画质…'
+                {job.state === 'probing' ? `正在查找${job.targetHeight ? ` ${job.targetHeight}p` : '所选画质'}…`
                   : job.state === 'downloading' ? (job.progress !== null ? `正在下载 ${Math.round(job.progress * 100)}%` : '正在下载…')
                     : job.state === 'ready' ? `已下载${job.width ? ` · ${job.width}×${job.height}` : ''}`
                       : job.state === 'cancelled' ? '已取消'
-                        : YOUTUBE_ERROR_TEXT[job.error ?? 'failed']}
+                        : clipError(job.error ?? 'failed', job.targetHeight)}
               </span>
               {(job.state === 'probing' || job.state === 'downloading') && (
                 <button type="button" className="btn-quiet small" onClick={() => void source.cancelClip(job.jobId)}>取消</button>
