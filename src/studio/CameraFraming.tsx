@@ -19,7 +19,9 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
   onClose: () => void
 }): React.ReactNode {
   const session = useSession()
-  const still = useRef<HTMLCanvasElement | null>(null)
+  // A callback ref: Sheet mounts its content only after the dialog opens, a commit after this
+  // component's own, so the canvas is not there yet when an effect on mount would run.
+  const [still, setStill] = useState<HTMLCanvasElement | null>(null)
   const stage = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [roi, setRoi] = useState<RoiRect>(initial ?? { x: 0.02, y: 0.4, w: 0.16, h: 0.2 })
@@ -34,7 +36,7 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
 
   useEffect(() => {
     const video = session.engine.element('commentary')
-    const canvas = still.current
+    const canvas = still
     if (!video || !canvas) return
     let lastPaint = Number.NEGATIVE_INFINITY
     let lastWidth = 0
@@ -63,7 +65,7 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
     video.addEventListener('emptied', reset)
     video.addEventListener('loadstart', reset)
     return () => { stop(); video.removeEventListener('emptied', reset); video.removeEventListener('loadstart', reset) }
-  }, [session])
+  }, [session, still])
 
   const change = (next: RoiRect): void => {
     pending.current?.abort()
@@ -118,7 +120,7 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
       <div className="framing">
         <p className="muted">在解说画面上框选主播摄像头区域，选框可略大于实际范围。</p>
         <div className="framing-stage" ref={stage}>
-          <canvas ref={still} className="framing-still" />
+          <canvas ref={setStill} className="framing-still" />
           {size.width > 0 && <RoiWindow roi={roi} onChange={change} videoWidth={size.width} videoHeight={size.height} hostRef={stage} />}
         </div>
         {message && <p className="muted" role="status">{message}</p>}
