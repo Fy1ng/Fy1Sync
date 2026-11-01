@@ -468,6 +468,7 @@ export default function EditorPage(): React.ReactNode {
       if (!mounted.current || countdown.isBusy() || revision !== editRevision.current || frameRef.current !== frame || boxesRef.current !== boxes) return
       const sample = sampleFromPrepared(samples[selected]!, char, `${sampleName || '样片'} @ ${mediaTime.toFixed(2)}s`)
       patch({ templates: { ...profile.templates, [char]: [...(profile.templates[char] ?? []), sample] } })
+      if (frame) countdown.recordGlyph(char, selected, boxes, frame)
       setSelected(selected + 1 < boxes.length ? selected + 1 : -1)
     } catch (error) { setMessage({ kind: 'error', text: `制字失败: ${String(error)}` }) }
   }

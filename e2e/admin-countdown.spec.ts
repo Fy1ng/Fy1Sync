@@ -5,6 +5,46 @@ import { chooseEditorVideo, failOnPageError, fixturesReady } from './helpers'
 
 const fixture = fileURLToPath(new URL('../public/test-sources/official.mp4', import.meta.url))
 
+for (const method of ['keyboard', 'pad'] as const) {
+  test(`字符框输入倒计时后可自动写入和撤回 (${method})`, async ({ page, electronApp }) => {
+    test.skip(!fixturesReady(), '缺少测试源, 先运行 npm run fixtures')
+    failOnPageError(page)
+    await page.goto(APP_ORIGIN + '/admin')
+    await chooseEditorVideo(electronApp, page, fixture)
+    const video = page.locator('video.editor-media')
+    await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.videoWidth)).toBeGreaterThan(0)
+    for (const [index, value] of [0.42, 0.045, 0.16, 0.13].entries()) {
+      await page.locator('.roi-field input').nth(index).fill(String(value))
+    }
+    await video.evaluate((node: HTMLVideoElement) => { node.currentTime = 1 })
+    await expect(page.locator('.glyph-box')).toHaveCount(4)
+    await page.locator('.glyph-box').first().click()
+    if (method === 'keyboard') await page.keyboard.type('0:19')
+    else for (const char of ['0', ':', '1', '9']) await page.locator('.char-pad').getByRole('button', { name: char, exact: true }).click()
+    const reading = page.getByRole('textbox', { name: '整帧读数' })
+    await expect(reading).toHaveValue('0:19')
+    await expect(page.locator('.template-thumb')).toHaveCount(4)
+    await page.getByRole('button', { name: '+1s', exact: true }).click()
+    await expect(reading).toHaveValue('0:18')
+    await expect(page.locator('.template-thumb')).toHaveCount(8)
+    await page.getByRole('button', { name: '撤回自动写入' }).click()
+    await expect(reading).toHaveValue('0:19')
+    await expect(page.locator('.template-thumb')).toHaveCount(4)
+    await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(1, 2)
+    // A new frame cannot complete its clock with labels retained from the previous one.
+    await video.evaluate((node: HTMLVideoElement) => { node.currentTime = 2 })
+    await expect(reading).toHaveValue('')
+    await expect(page.locator('.glyph-box')).toHaveCount(4)
+    await page.locator('.glyph-box').last().click()
+    await page.keyboard.type('8')
+    await expect(page.locator('.template-thumb')).toHaveCount(5)
+    await expect(reading).toHaveValue('')
+    await page.getByRole('button', { name: '+1s', exact: true }).click()
+    await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(3, 2)
+    await expect(page.locator('.template-thumb')).toHaveCount(5)
+  })
+}
+
 test('倒计时跳转自动存入目标帧, 连续撤回保留手动样本和其他设置', async ({ page, electronApp }) => {
   test.skip(!fixturesReady(), '缺少测试源, 先运行 npm run fixtures')
   failOnPageError(page)

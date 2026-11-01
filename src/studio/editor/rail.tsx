@@ -252,7 +252,7 @@ export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, sel
       {readingProblem && <p className="form-error" role="alert">{readingProblem}</p>}
       {fieldId === 'clock' && (
         <div className="reading-actions">
-          <p className="muted">先填写当前帧读数, 再用 +/-1s/10s 自动写入.</p>
+          <p className="muted">填写整帧读数, 或点选字符框后输入完整倒计时, 再用 +/-1s/10s 自动写入.</p>
           <button type="button" className="btn-quiet small" disabled={locked || !onUndo} onClick={() => onUndo?.()}
             title="恢复上次自动写入前的画面与读数">撤回自动写入</button>
         </div>

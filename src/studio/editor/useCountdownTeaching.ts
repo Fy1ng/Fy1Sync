@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { parseCountdown } from '../../core/clockJump'
 import { prepareHudGlyphs } from '../../core/hudWasm'
 import type { HudStylePack } from '../../core/hudStylePack'
-import { CLOCK_CHARS } from '../../core/profileSchema'
+import { CLOCK_CHARS, type ClockChar } from '../../core/profileSchema'
+import type { GlyphBox } from '../../core/segmentation'
 import { FULL_FRAME_ROI, type FrameGrabber, type GrabbedFrame } from '../../recognition/frameGrabber'
 import type { EditorTarget } from './cueModel'
 import { fieldModel, patchField } from './editorModel'
@@ -54,6 +55,7 @@ export function useCountdownTeaching(options: Options) {
   const [reading, setReading] = useState('')
   const readingRef = useRef('')
   const anchor = useRef<{ video: HTMLVideoElement; time: number } | null>(null)
+  const glyphReading = useRef<{ frame: GrabbedFrame; boxes: GlyphBox[]; chars: Array<ClockChar | null> } | null>(null)
   const [busy, setBusy] = useState(false)
   const pending = useRef<Pending | null>(null)
   const [undoSteps, setUndoSteps] = useState<UndoStep[]>([])
@@ -65,12 +67,35 @@ export function useCountdownTeaching(options: Options) {
     pending.current = null
     if (mounted.current) setBusy(false)
   }, [])
-  const changeReading = useCallback((text: string) => {
+  const updateReading = useCallback((text: string) => {
     readingRef.current = text
     const video = latest.current.video.current
     anchor.current = video && text.trim() ? { video, time: video.currentTime } : null
     setReading(text)
   }, [])
+  const changeReading = useCallback((text: string) => {
+    glyphReading.current = null
+    updateReading(text)
+  }, [updateReading])
+  /** Per-box teaching establishes the same baseline once every visible glyph is labelled. */
+  const recordGlyph = (char: ClockChar, index: number, boxes: GlyphBox[], frame: GrabbedFrame): void => {
+    const current = latest.current
+    if (current.fieldId !== 'clock' || pending.current || !boxes[index]) return
+    const video = current.video.current
+    if (video && (!video.paused || video.seeking || Math.abs(video.currentTime - frame.mediaTime) > 1e-6)) {
+      changeReading('')
+      return
+    }
+    let labelled = glyphReading.current
+    if (!labelled || labelled.frame !== frame || labelled.boxes !== boxes) {
+      labelled = { frame, boxes, chars: Array<ClockChar | null>(boxes.length).fill(null) }
+      glyphReading.current = labelled
+    }
+    labelled.chars[index] = char
+    const text = labelled.chars.every(value => value !== null) ? labelled.chars.join('') : ''
+    const format = fieldModel(current.pack, 'clock', current.variantId).clockFormat
+    updateReading(parseCountdown(text, format) === null ? '' : text)
+  }
   const reset = useCallback(() => {
     finish()
     changeReading('')
@@ -212,7 +237,7 @@ export function useCountdownTeaching(options: Options) {
     }
   }
 
-  return { reading, changeReading, busy, jump, undo: undoSteps.length ? undo : null, reset,
+  return { reading, changeReading, recordGlyph, busy, jump, undo: undoSteps.length ? undo : null, reset,
     onSeeking, onSeeked, onPlay, isBusy: () => pending.current !== null }
 }
 

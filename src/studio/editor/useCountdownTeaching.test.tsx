@@ -65,6 +65,62 @@ function sampleCount(pack: HudStylePack): number {
 }
 
 describe('countdown jump teaching', () => {
+  it('collects per-box labels in visual order and uses the complete clock for jumps and undo', async () => {
+    const view = setup()
+    const frame = { width: 16, height: 8, pixels: new Uint8ClampedArray(512), mediaTime: 5, wallTime: 1 }
+    const boxes = analysis(5).boxes
+    for (const [index, char] of [[2, '1'], [0, '0'], [3, '5']] as const) {
+      act(() => view.result.current.recordGlyph(char, index, boxes, frame))
+      expect(view.result.current.reading).toBe('')
+    }
+    act(() => view.result.current.recordGlyph(':', 1, boxes, frame))
+    expect(view.result.current.reading).toBe('0:15')
+    await view.jump(1)
+    expect(view.result.current.reading).toBe('0:14')
+    expect(view.writes).toHaveBeenCalledOnce()
+    await act(async () => view.result.current.undo?.())
+    expect(view.result.current.reading).toBe('0:15')
+    expect(view.video.currentTime).toBe(5)
+  })
+
+  it('requires a valid countdown and updates a corrected glyph at its own position', () => {
+    const view = setup()
+    const frame = { width: 16, height: 8, pixels: new Uint8ClampedArray(512), mediaTime: 5, wallTime: 1 }
+    const boxes = analysis(5).boxes
+    for (const [index, char] of [...'0:99'].entries()) act(() => view.result.current.recordGlyph(char as ClockChar, index, boxes, frame))
+    expect(view.result.current.reading).toBe('')
+    act(() => view.result.current.recordGlyph('1', 2, boxes, frame))
+    expect(view.result.current.reading).toBe('0:19')
+    act(() => view.result.current.recordGlyph('8', 3, boxes, frame))
+    expect(view.result.current.reading).toBe('0:18')
+  })
+
+  it.each(['frame', 'boxes', 'field', 'reading'] as const)('never combines incomplete labels across a different %s', change => {
+    const view = setup()
+    let frame = { width: 16, height: 8, pixels: new Uint8ClampedArray(512), mediaTime: 5, wallTime: 1 }
+    let boxes = analysis(5).boxes
+    for (const [index, char] of [...'0:1'].entries()) act(() => view.result.current.recordGlyph(char as ClockChar, index, boxes, frame))
+    if (change === 'frame') frame = { ...frame }
+    if (change === 'boxes') boxes = boxes.map(box => ({ ...box }))
+    if (change === 'field') {
+      view.rerender({ ...view.scope, fieldId: 'scoreLeft' })
+      view.rerender(view.scope)
+    }
+    if (change === 'reading') view.fill('')
+    act(() => view.result.current.recordGlyph('5', 3, boxes, frame))
+    expect(view.result.current.reading).toBe('')
+    act(() => expect(view.result.current.jump(1)).toBe(false))
+  })
+
+  it('does not anchor an old captured frame to a newer video time when automatic capture is off', () => {
+    const view = setup()
+    const frame = { width: 16, height: 8, pixels: new Uint8ClampedArray(512), mediaTime: 4, wallTime: 1 }
+    const boxes = analysis(4).boxes
+    for (const [index, char] of [...'0:16'].entries()) act(() => view.result.current.recordGlyph(char as ClockChar, index, boxes, frame))
+    expect(view.result.current.reading).toBe('')
+    expect(view.writes).not.toHaveBeenCalled()
+  })
+
   it('labels only the destination frame, follows all four jumps and undoes each append', async () => {
     const view = setup()
     view.fill('0:15')
