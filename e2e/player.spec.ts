@@ -247,7 +247,8 @@ test.describe('片源画质和摄像头入口', () => {
     // way a user would, then check the size label says it is now loose all round.
     await dialog.locator('.roi-window').focus()
     for (let n = 0; n < 12; n += 1) await page.keyboard.press('Alt+Shift+ArrowRight')
-    for (let n = 0; n < 12; n += 1) await page.keyboard.press('Alt+Shift+ArrowDown')
+    // Shift nudges are ten native pixels, so 14 presses make the 144px box 284px tall.
+    for (let n = 0; n < 14; n += 1) await page.keyboard.press('Alt+Shift+ArrowDown')
     const [roughW, roughH] = ((await dialog.locator('.roi-size').textContent()) ?? '').split('×').map(Number)
     expect(roughW).toBeGreaterThan(300)
     expect(roughH).toBeGreaterThan(270)

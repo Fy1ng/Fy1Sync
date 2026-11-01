@@ -1,13 +1,10 @@
 /** Zoom changes only the view; exported regions retain native frame pixels. */
-import { existsSync } from 'node:fs'
 import { mkdir, readFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { Locator } from '@playwright/test'
 import { createEmptyHudStylePack, parseHudStylePack, type HudStylePack } from '../src/core/hudStylePack'
 import { APP_ORIGIN, expect, test } from './electron'
 import { failOnPageError } from './helpers'
-
-const referenceFrame = 'C:/Users/Fy1ng/Documents/ChatGPT/Fy1Sync/.runtime-cache/codex-stage2-impl2-20261031/frames/frame-01.png'
 
 async function bounds(locator: Locator): Promise<{ x: number; y: number; width: number; height: number }> {
   const box = await locator.boundingBox()
@@ -33,8 +30,8 @@ test('4K倒计时放大后手柄独立可拖动, 导出保留原生像素并可�
   })
   await expect(page.locator('.editor-note')).toContainText('已导入')
 
-  // Keep the repository test portable when the local recording is unavailable.
-  const screenshot = existsSync(referenceFrame) ? await readFile(referenceFrame) : Buffer.from(await page.evaluate(() => {
+  // Generate fixture pixels locally; the test must not depend on a private recording cache.
+  const screenshot = Buffer.from(await page.evaluate(() => {
     const canvas = document.createElement('canvas')
     canvas.width = 3840
     canvas.height = 2160
@@ -63,12 +60,18 @@ test('4K倒计时放大后手柄独立可拖动, 导出保留原生像素并可�
   // A wheel zoom keeps the image fraction under the cursor fixed.
   const viewport = await bounds(stage)
   const anchor = { x: viewport.x + viewport.width * 0.6, y: viewport.y + viewport.height * 0.6 }
+  await stage.evaluate(node => node.addEventListener('wheel', event => {
+    const wheel = event as WheelEvent
+    node.setAttribute('data-test-wheel-point', JSON.stringify({ x: wheel.clientX, y: wheel.clientY }))
+  }, { once: true }))
   await page.mouse.move(anchor.x, anchor.y)
   await page.mouse.wheel(0, -240)
   await expect.poll(async () => (await bounds(media)).width).toBeGreaterThan(fitted.width)
   const wheeled = await bounds(media)
-  expect((anchor.x - wheeled.x) / wheeled.width).toBeCloseTo((anchor.x - fitted.x) / fitted.width, 3)
-  expect((anchor.y - wheeled.y) / wheeled.height).toBeCloseTo((anchor.y - fitted.y) / fitted.height, 3)
+  // Chromium quantizes wheel coordinates; compare against the delivered point, not a fractional request.
+  const delivered = await stage.evaluate(node => JSON.parse(node.getAttribute('data-test-wheel-point')!) as { x: number; y: number })
+  expect((delivered.x - wheeled.x) / wheeled.width).toBeCloseTo((delivered.x - fitted.x) / fitted.width, 3)
+  expect((delivered.y - wheeled.y) / wheeled.height).toBeCloseTo((delivered.y - fitted.y) / fitted.height, 3)
 
   // Middle-button drag pans without entering an ROI drag.
   await page.mouse.move(anchor.x, anchor.y)

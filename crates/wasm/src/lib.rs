@@ -265,8 +265,17 @@ mod tests {
         let p = &cases[0]["value"];
         let ready = engine.configure(&p.to_string()).unwrap();
         assert!(ready.contains("missing"));
-        let result = engine.recognize(&[0; 4], 1, 1, 0.0, 0.0, 0.0, false);
-        assert!(result.contains("decode-failed"));
+        // A different resolution is valid; incomplete templates remain the actual failure.
+        let result: serde_json::Value = serde_json::from_str(
+            &engine.recognize(&[0; 4], 1, 1, 0.0, 0.0, 0.0, false),
+        ).unwrap();
+        assert_eq!(result["outcome"]["reason"], "insufficient-templates");
+        assert!(result["debug"].is_null());
+
+        let malformed: serde_json::Value = serde_json::from_str(
+            &engine.recognize(&[0; 3], 1, 1, 0.0, 0.0, 0.0, false),
+        ).unwrap();
+        assert_eq!(malformed["outcome"]["reason"], "decode-failed");
     }
     #[test]
     fn dispatch_json() {
