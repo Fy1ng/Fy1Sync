@@ -7,6 +7,7 @@ import type { DouyuMessageInput, DouyuMessageOutcome } from '../server/douyu/typ
 import type { DouyuMuteInput, DouyuModerationTarget, DouyuModerationOutcome, DouyuModerationPermission } from '../server/douyu/moderation'
 import type { DouyuRoomInsights, DouyuFollowedRooms, DouyuBadgeAges, DouyuMonthlySpending, DouyuWatchTime } from '../server/douyu/insightsTypes'
 import type { AppUpdateState } from './appUpdateService'
+import type { OnlineUpdateKind, OnlineUpdateSourceId, OnlineUpdateState } from './onlineUpdateContracts'
 import { BACKEND_METHODS, type BackendMethods } from './backendContracts'
 import type { Cs2Schedule, StreamTitle, StreamTitleInput } from '../server/esports/types'
 export type { Cs2Schedule, Cs2Match, Cs2Team, Cs2Stream, StreamTitle, StreamTitleInput } from '../server/esports/types'
@@ -66,6 +67,14 @@ export interface FeatureMethods extends BackendMethods {
   getDouyuLiveNotifications: { args: undefined; result: DouyuLiveNotificationState }
   checkAppUpdate: { args: undefined; result: AppUpdateState }
   getAppUpdateState: { args: undefined; result: AppUpdateState }
+  getOnlineUpdateState: { args: undefined; result: OnlineUpdateState }
+  setOnlineUpdateSource: { args: { source: OnlineUpdateSourceId }; result: OnlineUpdateState }
+  checkOnlineUpdate: { args: undefined; result: OnlineUpdateState }
+  downloadOnlineUpdate: { args: { kind: OnlineUpdateKind }; result: OnlineUpdateState }
+  cancelOnlineUpdate: { args: undefined; result: OnlineUpdateState }
+  applyOnlineUpdate: { args: { kind: OnlineUpdateKind }; result: { accepted: boolean } }
+  rollbackFrontendUpdate: { args: undefined; result: { accepted: boolean } }
+  reportFrontendReady: { args: { bridgeVersion: number }; result: { accepted: boolean } }
 }
 
 export type FeatureMethod = keyof FeatureMethods
@@ -80,4 +89,6 @@ export const FEATURE_METHODS = [
   'previewDouyuMute', 'muteDouyuUser', 'getDouyuRoomInsights', 'refreshDouyuRoomInsights', 'getDouyuFollowedRooms',
   'getDouyuBadgeAges', 'getDouyuMonthlySpending', 'getDouyuWatchTime', 'reportDouyuPlayback', 'setDouyuLiveNotifications', 'getDouyuLiveNotifications',
   'checkAppUpdate', 'getAppUpdateState',
+  'getOnlineUpdateState', 'setOnlineUpdateSource', 'checkOnlineUpdate', 'downloadOnlineUpdate',
+  'cancelOnlineUpdate', 'applyOnlineUpdate', 'rollbackFrontendUpdate', 'reportFrontendReady',
 ] as const satisfies readonly FeatureMethod[]

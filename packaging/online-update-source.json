@@ -1,0 +1,13 @@
+{
+  "mirrors": [
+    {
+      "id": "github",
+      "manifestUrl": "https://raw.githubusercontent.com/Fy1ng/Fy1Sync/refs/heads/app-updates/manifest.json"
+    },
+    {
+      "id": "gitcode",
+      "manifestUrl": "https://raw.gitcode.com/Fy1ng/Fy1Sync/raw/app-updates/manifest.json"
+    }
+  ],
+  "publicKey": "MCowBQYDK2VwAyEAoiBweHzChOeYWE8iVd7jiuZxSSzVjt1fO0XvLF+F6nY="
+}

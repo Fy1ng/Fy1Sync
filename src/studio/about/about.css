@@ -1,4 +1,46 @@
-/* About group in settings: version and update check. */
+/* Signed frontend and application updates share the existing settings surface. */
+
+.studio .about-version-facts {
+  grid-template-columns: 1fr;
+}
+
+.studio .about-update-channels {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.studio .about-update-channel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: linear-gradient(120deg, rgb(255 255 255 / 3%), transparent 65%);
+}
+
+.studio .about-update-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.studio .about-update-channel .row-split > button {
+  flex-shrink: 0;
+}
+
+.studio .about-update-heading h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.studio .about-update-channel p {
+  margin: 0;
+}
 
 .studio .about-status {
   display: flex;
@@ -13,11 +55,14 @@
   font-weight: 400;
 }
 
-.studio .about-status.is-current {
+.studio .about-status.is-current,
+.studio .about-status.is-ready {
   color: var(--lock);
 }
 
-.studio .about-status.is-available {
+.studio .about-status.is-available,
+.studio .about-status.is-incompatible,
+.studio .about-status.is-rolled-back {
   color: var(--drift);
 }
 
@@ -26,24 +71,22 @@
 }
 
 .studio .about-notes {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
   padding: 10px 12px;
   background: rgb(0 0 0 / 25%);
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
 }
 
-.studio .about-notes h4 {
+.studio .about-notes summary {
   font-size: 12px;
   font-weight: 700;
   color: var(--ash);
+  cursor: pointer;
 }
 
 .studio .about-notes pre {
   max-height: 220px;
-  margin: 0;
+  margin: 8px 0 0;
   overflow-y: auto;
   font-family: var(--cjk);
   font-size: 12px;
@@ -51,4 +94,42 @@
   color: var(--chalk);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.studio .about-update-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.studio .about-update-progress progress {
+  flex: 1 1 120px;
+  min-width: 0;
+  height: 6px;
+  accent-color: var(--lock);
+}
+
+.studio .about-update-progress span {
+  font-size: 12px;
+}
+
+.studio .about-update-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.studio .about-update-error p {
+  flex: 1 1 180px;
+  margin: 0;
+}
+
+@media (max-width: 560px) {
+  .studio .about-update-channel .row-split {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
 }

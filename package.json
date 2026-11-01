@@ -25,7 +25,8 @@
     "package:prepare": "node scripts/prepare-package.mjs",
     "package:win": "node scripts/package-win.mjs",
     "package:check": "node scripts/check-package.mjs",
-    "stylepacks:release": "node scripts/stylepack-release.mjs"
+    "stylepacks:release": "node scripts/stylepack-release.mjs",
+    "updates:release": "node scripts/online-update-release.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "3.14.23",

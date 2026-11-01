@@ -17,6 +17,7 @@ import { Session } from './app/session'
 import { SessionProvider } from './app/SessionContext'
 import { Studio } from './studio/Studio'
 import { TitleBar } from './studio/TitleBar'
+import { FrontendReady } from './app/FrontendReady'
 import './studio/titlebar.css'
 
 const EditorPage = lazy(() => import('./studio/editor/EditorPage'))
@@ -62,6 +63,7 @@ function App(): React.ReactNode {
           <EditorPage />
         </Suspense>
       ) : <Studio />}
+      <FrontendReady />
     </SessionProvider>
   )
 }
