@@ -130,6 +130,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
   const setRoomAlias = useCallback((alias: string | null) => { rememberedAlias = alias; setAlias(alias) }, [])
   const room = useSessionSnapshot().danmaku.room
   const live = useRef(state)
+  const loads = useRef<Partial<Record<SourceRole, object>>>({})
   // What each side last asked for, so a login can retry it as typed.
   const asked = useRef<Partial<Record<SourceRole, { input: string; platform?: RoomPlatform }>>>({})
   const patch = useCallback((role: SourceRole, next: Partial<RoleLoad>) => {
@@ -148,16 +149,21 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
   const play = useCallback(() => { void session.setPlaying(true) }, [session])
 
   const loadDescriptor = useCallback(async (role: SourceRole, descriptor: MediaDescriptor) => {
+    const request = {}
+    loads.current[role] = request
     patch(role, { busy: true, problem: null, notes: [] })
     try {
-      await session.loadSource(role, descriptor)
+      const loading = session.loadSource(role, descriptor)
+      const generation = session.sourceRevision(role)
+      await loading
+      if (generation !== session.sourceRevision(role) || loads.current[role] !== request) return
       if (role === 'commentary' && descriptor.platform === 'huya') {
         const sourceRoom = descriptor.sourceRoom ?? roomFromInput(descriptor.input)
         if (sourceRoom) connectRoom(`huya:${sourceRoom}`, roomFromInput(descriptor.input) ?? sourceRoom)
         else disconnectRoom()
       }
-    } finally { patch(role, { busy: false }) }
-    if (session.snapshot.media[role].status !== 'empty') play()
+      if (session.snapshot.media[role].status !== 'empty') play()
+    } finally { if (loads.current[role] === request) patch(role, { busy: false }) }
   }, [connectRoom, disconnectRoom, patch, play, session])
 
   /**
@@ -183,8 +189,10 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     }
     if (!parsed.needsResolve) { await loadDescriptor(role, toDescriptor(parsed)); return true }
 
+    const request = {}
+    loads.current[role] = request
     patch(role, { busy: true, problem: null, notes: [], login: null })
-    const generation = session.beginSourceChange(role)
+    let generation = session.beginSourceChange(role)
     const platformOf = parsed.platform
     try {
       const result = await apiClient.resolve(
@@ -207,7 +215,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       patch(role, { notes: stream.notes ?? [] })
       // Douyu is asked for 原画 (rate 0); another rate back is the anonymous step-down.
       if (stream.platform === 'douyu' && stream.quality !== undefined && stream.quality !== '0') void offerLogin(role, 'douyu', generation, false)
-      await session.loadSource(role, {
+      const loading = session.loadSource(role, {
         ...toDescriptor(
           { ...parsed, kind: stream.kind, label: stream.label },
           { url: stream.url, viaProxy: stream.requiresProxy },
@@ -217,6 +225,10 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         sourceQuality: stream.quality,
         sourceRoom: stream.sourceRoom ?? stream.danmakuRoom,
       })
+      generation = session.sourceRevision(role)
+      await loading
+      // Removal and a newer source both invalidate any room that accompanied this load.
+      if (generation !== session.sourceRevision(role) || loads.current[role] !== request) return false
       // The commentary room's danmaku come along with it; nothing to set up separately.
       if (role === 'commentary') {
         if (parsed.platform === 'huya' || stream.platform === 'huya') {
@@ -230,7 +242,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       return true
     } finally {
       session.endSourceChange(role, generation)
-      patch(role, { busy: false })
+      if (loads.current[role] === request) patch(role, { busy: false })
     }
   }, [connectRoom, disconnectRoom, loadDescriptor, offerLogin, patch, play, session])
 

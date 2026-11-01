@@ -242,6 +242,65 @@ describe('Session danmaku transport', () => {
     expect(session.flush().danmaku.room).toBeNull()
   })
 
+  it.each(['288016', 'huya:660000'])('removing commentary clears its %s chat, pending messages and late relay events', async room => {
+    const { session } = await makeSession()
+    session.updateSettings({ sidebarVisible: true })
+    session.connectDanmaku(room)
+    const subscription = StubDanmakuSubscription.instances.at(-1)!
+    const platform = room.startsWith('huya:') ? 'huya' : 'douyu'
+    subscription.emit('state', { room, state: 'connected' })
+    subscription.emit('danmaku', { text: 'shown before removal', username: 'viewer', platform })
+    expect(session.drainDanmaku()).toHaveLength(1)
+    subscription.emit('danmaku', { text: 'pending before removal', username: 'viewer', platform })
+    expect(session.flush().danmaku.pending).toBe(1)
+
+    session.unloadSource('commentary')
+    expect(subscription.closed).toBe(true)
+    expect(session.chatHistory()).toEqual([])
+    expect(session.drainDanmaku()).toEqual([])
+    expect(session.flush()).toMatchObject({ media: { commentary: { status: 'empty' } },
+      danmaku: { room: null, connected: false, pending: 0, dropped: 0, error: null }, settings: { sidebarVisible: true } })
+    subscription.emit('state', { room, state: 'connected' })
+    subscription.emit('danmaku', { text: 'late after removal', username: 'viewer', platform })
+    expect(session.drainDanmaku()).toEqual([])
+    expect(session.flush().danmaku.room).toBeNull()
+
+    session.connectDanmaku(room)
+    const replacement = StubDanmakuSubscription.instances.at(-1)!
+    replacement.emit('state', { room, state: 'connected' })
+    replacement.emit('danmaku', { text: 'fresh connection', username: 'viewer', platform })
+    expect(session.drainDanmaku()).toEqual([expect.objectContaining({ text: 'fresh connection' })])
+    expect(session.flush().danmaku).toMatchObject({ room, connected: true })
+  })
+
+  it.each(['unload', 'disconnect'])('does not restore suspended chat after an explicit %s', async action => {
+    const { session } = await makeSession()
+    session.connectDanmaku('288016')
+    session.suspend()
+    if (action === 'unload') session.unloadSource('commentary')
+    else session.disconnectDanmaku()
+    session.suspend()
+    const before = StubDanmakuSubscription.instances.length
+    await session.boot()
+    expect(StubDanmakuSubscription.instances).toHaveLength(before)
+    expect(session.flush().danmaku.room).toBeNull()
+  })
+
+  it('keeps commentary chat and the sidebar preference when only the official picture is removed', async () => {
+    const { session } = await makeSession()
+    await session.loadSource('official', { ...descriptor(), label: 'official' })
+    session.updateSettings({ sidebarVisible: true })
+    session.connectDanmaku('288016')
+    const subscription = StubDanmakuSubscription.instances.at(-1)!
+    subscription.emit('state', { room: '288016', state: 'connected' })
+    subscription.emit('danmaku', { text: 'keep this room', username: 'viewer' })
+    session.drainDanmaku()
+    session.unloadSource('official')
+    expect(subscription.closed).toBe(false)
+    expect(session.chatHistory()).toEqual([expect.objectContaining({ text: 'keep this room' })])
+    expect(session.flush()).toMatchObject({ danmaku: { room: '288016', connected: true }, settings: { sidebarVisible: true } })
+  })
+
   it('subscribes to the relay with a structured room id', async () => {
     const { session } = await makeSession()
     session.connectDanmaku('288016')

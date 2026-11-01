@@ -657,6 +657,7 @@ export class Session {
     this.invalidateAutomaticWork(role)
     ++this.sourceGeneration[role]
     this.changingSources.delete(role)
+    if (role === 'commentary') this.disconnectDanmaku()
     void apiClient.stopBuffer(role)
     this.bufferStates = { ...this.bufferStates, [role]: null }
     this.engine.unload(role)
@@ -1266,6 +1267,7 @@ export class Session {
   }
 
   disconnectDanmaku(): void {
+    this.parkedDanmakuRoom = null
     this.danmakuGeneration += 1
     this.unsubscribeDanmaku?.()
     this.unsubscribeDanmaku = null
@@ -1450,7 +1452,7 @@ export class Session {
   suspend(): void {
     this.stopPlaybackObservation()
     // Remembered so the next boot reconnects it: the room is part of what was loaded.
-    this.parkedDanmakuRoom = this.danmakuState.room ?? this.parkedDanmakuRoom
+    const parkedDanmakuRoom = this.danmakuState.room ?? this.parkedDanmakuRoom
     ++this.autoRequestRevision
     this.autoProfiles?.suspend()
     this.stopScheduler()
@@ -1458,6 +1460,7 @@ export class Session {
     // so coming back must not report 「手动调整过偏移」 the user never made.
     this.autoSync.cancel(false)
     this.disconnectDanmaku()
+    this.parkedDanmakuRoom = parkedDanmakuRoom
   }
 
   /** Tear the session down for good. Only its owner may call this. */
