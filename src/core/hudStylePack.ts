@@ -1,5 +1,6 @@
 /** Portable HUD assets. Validation never repairs or fills imported data. */
-import { CLOCK_CHARS, type ClockChar, type PreprocessSettings } from './profileSchema'
+import { CLOCK_CHARS, type ClockChar } from './profileSchema'
+import { createHudPreprocess, type HudPreprocessSettings } from './hudPreprocess'
 
 export const HUD_STYLE_PACK_VERSION = 1 as const
 export const HUD_FIELD_IDS = ['clock', 'scoreLeft', 'scoreRight'] as const
@@ -15,7 +16,7 @@ export interface HudSegment { minColumnInk: number; minGlyphWidth: number; minGa
 export type HudGrammar = { kind: 'countdown'; format: 'm:ss' | 'mm:ss' | 'ss' } | { kind: 'integer'; min: number; max: number }
 export interface HudField {
   roi: HudRoi
-  preprocess: PreprocessSettings
+  preprocess: HudPreprocessSettings
   segment: HudSegment
   glyphs: Partial<Record<ClockChar, string[]>>
   grammar: HudGrammar
@@ -24,7 +25,7 @@ export interface HudField {
 }
 export interface HudCue {
   roi: HudRoi
-  preprocess: PreprocessSettings
+  preprocess: HudPreprocessSettings
   templates: string[]
   minScore: number
 }
@@ -81,10 +82,27 @@ export function parseHudStylePack(value: unknown): HudPackValidation {
     return width && height
   }
   const preprocess = (raw: unknown, path: string): void => {
-    if (!object(raw, path, ['scale', 'threshold', 'invert'])) return
+    if (!object(raw, path, ['mode', 'scale', 'threshold', 'invert', 'adaptive', 'hsv'])) return
+    if (!['gray', 'adaptive', 'hsv'].includes(raw.mode as string)) error(`${path}.mode`, '必须是 gray, adaptive 或 hsv')
     number(raw.scale, at(path, 'scale'), 0.1, 10)
     number(raw.threshold, at(path, 'threshold'), 0, 255)
     boolean(raw.invert, at(path, 'invert'))
+    const adaptivePath = `${path}.adaptive`
+    if (object(raw.adaptive, adaptivePath, ['windowSize', 'offset'])) {
+      if (number(raw.adaptive.windowSize, `${adaptivePath}.windowSize`, 3, 255, true)
+        && (raw.adaptive.windowSize as number) % 2 !== 1) error(`${adaptivePath}.windowSize`, '局部窗口大小必须为奇数')
+      number(raw.adaptive.offset, `${adaptivePath}.offset`, 0, 128)
+    }
+    const hsvPath = `${path}.hsv`
+    if (object(raw.hsv, hsvPath, ['hue', 'tolerance', 'saturationMin', 'saturationMax', 'valueMin', 'valueMax'])) {
+      if (number(raw.hsv.hue, `${hsvPath}.hue`, 0, 360) && raw.hsv.hue === 360) error(`${hsvPath}.hue`, '色相必须小于 360')
+      number(raw.hsv.tolerance, `${hsvPath}.tolerance`, 0, 180)
+      for (const key of ['saturationMin', 'saturationMax', 'valueMin', 'valueMax']) number(raw.hsv[key], `${hsvPath}.${key}`, 0, 1)
+      if (typeof raw.hsv.saturationMin === 'number' && typeof raw.hsv.saturationMax === 'number'
+        && raw.hsv.saturationMin > raw.hsv.saturationMax) error(`${hsvPath}.saturationMin`, '最低饱和度不能高于最高饱和度')
+      if (typeof raw.hsv.valueMin === 'number' && typeof raw.hsv.valueMax === 'number'
+        && raw.hsv.valueMin > raw.hsv.valueMax) error(`${hsvPath}.valueMin`, '最低明度不能高于最高明度')
+    }
   }
   const roi = (raw: unknown, path: string, native: Record<string, unknown>): raw is Record<string, number> => {
     if (!object(raw, path, ['x', 'y', 'w', 'h'])) return false
@@ -230,7 +248,7 @@ export function createEmptyHudStylePack(id = 'custom/untitled', name = '未命�
       fields: {
         clock: {
           roi: { x: Math.floor(nativeSize.width * 0.44), y: Math.floor(nativeSize.height * 0.02), w: Math.max(1, Math.floor(nativeSize.width * 0.12)), h: Math.max(1, Math.floor(nativeSize.height * 0.07)) },
-          preprocess: { scale: 1.4, threshold: 150, invert: false },
+          preprocess: createHudPreprocess(),
           segment: { minColumnInk: 1, minGlyphWidth: 2, minGapWidth: 1, minInkRatio: 0.08 },
           glyphs: {}, grammar: { kind: 'countdown', format: 'm:ss' }, match: { minScore: 0.82, minMargin: 0.03 }, gateCue: null,
         },

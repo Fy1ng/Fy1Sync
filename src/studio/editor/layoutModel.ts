@@ -55,8 +55,12 @@ export function generateScaledLayout(pack: HudStylePack, variantId: string, heig
   const id = unusedId(current.id, `-${height}`, value => pack.variants.some(variant => variant.id === value))
   const variant = { ...structuredClone(current), id, nativeSize }
   const bitmaps = { ...pack.bitmaps }
+  const scaleWindow = (preprocess: HudCue['preprocess']): void => {
+    if (preprocess.mode === 'adaptive') preprocess.adaptive.windowSize = Math.max(3, Math.round(preprocess.adaptive.windowSize * ratio) | 1)
+  }
   const scaleCue = (cue: HudCue): void => {
     cue.roi = scaledRoi(cue.roi, ratio, nativeSize)
+    scaleWindow(cue.preprocess)
     cue.templates = cue.templates.map(reference => {
       const bitmapId = unusedId(reference, `-${height}`, value => Object.hasOwn(bitmaps, value))
       bitmaps[bitmapId] = scaledBitmap(pack.bitmaps[reference]!, cue.roi.w, cue.roi.h)
@@ -67,6 +71,7 @@ export function generateScaledLayout(pack: HudStylePack, variantId: string, heig
     const field = variant.fields[fieldId]
     if (!field) continue
     field.roi = scaledRoi(field.roi, ratio, nativeSize)
+    scaleWindow(field.preprocess)
     for (const key of ['minColumnInk', 'minGlyphWidth', 'minGapWidth'] as const) {
       field.segment[key] = Math.max(1, Math.round(field.segment[key] * ratio))
     }

@@ -238,14 +238,16 @@ async function writeProfileStub() {
       fields: {
         clock: {
           roi: { x: Math.round(ROI.x * WIDTH), y: Math.round(ROI.y * HEIGHT), w: Math.round(ROI.w * WIDTH), h: Math.round(ROI.h * HEIGHT) },
-          preprocess: { scale: 1.4, threshold: 150, invert: false },
+          preprocess: { mode: 'gray', scale: 1.4, threshold: 150, invert: false,
+            adaptive: { windowSize: 15, offset: 7 },
+            hsv: { hue: 0, tolerance: 15, saturationMin: 0.25, saturationMax: 1, valueMin: 0.03, valueMax: 1 } },
           segment: { minColumnInk: 1, minGlyphWidth: 2, minGapWidth: 1, minInkRatio: 0.08 },
           glyphs: {},
           grammar: { kind: 'countdown', format: 'm:ss' },
           match: { minScore: 0.82, minMargin: 0.03 },
           gateCue: null,
         },
-        scoreLeft: null, scoreRight: null, round: null,
+        scoreLeft: null, scoreRight: null,
       },
       cues: {}, states: {}, organizer: null,
     }],

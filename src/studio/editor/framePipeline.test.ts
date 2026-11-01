@@ -1,3 +1,4 @@
+import { createHudPreprocess } from '../../core/hudPreprocess'
 /** Rust owns the editor preview and the stored glyph preparation. */
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -11,7 +12,7 @@ import { normalizeGlyph } from '../../core/imageOps'
 import { TEMPLATE_HEIGHT, TEMPLATE_PIXELS, TEMPLATE_WIDTH, type ClockChar } from '../../core/profileSchema'
 import { CLOCK_GLYPHS, createFrame, drawText, renderGlyphMask } from '../../test/glyphFont'
 
-const PREPROCESS = { scale: 1.6, threshold: 120, invert: false }
+const PREPROCESS = createHudPreprocess({ scale: 1.6, threshold: 120, invert: false })
 beforeAll(async () => {
   await init({ module_or_path: Uint8Array.from(readFileSync(resolve('src/wasm/pkg/stream_syncer_wasm_bg.wasm'))) })
 })

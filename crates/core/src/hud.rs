@@ -87,7 +87,7 @@ impl HudFields {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HudField {
     pub roi: HudRoi,
-    pub preprocess: PreprocessSettings,
+    pub preprocess: HudPreprocessSettings,
     pub segment: HudSegment,
     pub glyphs: BTreeMap<String, Vec<String>>,
     pub grammar: HudGrammar,
@@ -118,7 +118,7 @@ pub enum HudGrammar {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HudCue {
     pub roi: HudRoi,
-    pub preprocess: PreprocessSettings,
+    pub preprocess: HudPreprocessSettings,
     pub templates: Vec<String>,
     pub min_score: f64,
 }
@@ -212,8 +212,11 @@ fn identifier(v: &Value, path: &str, max: usize, issues: &mut Vec<HudIssue>) {
     }
 }
 fn preprocess(v: &Value, path: &str, issues: &mut Vec<HudIssue>) {
-    if !object(v, path, &["scale", "threshold", "invert"], issues) {
+    if !object(v, path, &["mode", "scale", "threshold", "invert", "adaptive", "hsv"], issues) {
         return;
+    }
+    if !matches!(v["mode"].as_str(), Some("gray" | "adaptive" | "hsv")) {
+        problem(issues, &path_at(path, "mode"), "未知预处理模式");
     }
     bounded(
         &v["scale"],
@@ -233,6 +236,29 @@ fn preprocess(v: &Value, path: &str, issues: &mut Vec<HudIssue>) {
     );
     if !v["invert"].is_boolean() {
         problem(issues, &path_at(path, "invert"), "必须是布尔值");
+    }
+    let adaptive = &v["adaptive"];
+    let ap = path_at(path, "adaptive");
+    if object(adaptive, &ap, &["windowSize", "offset"], issues) {
+        let window = bounded(&adaptive["windowSize"], &path_at(&ap, "windowSize"), 3.0, 255.0, true, issues);
+        if window.is_some_and(|value| value as usize % 2 == 0) {
+            problem(issues, &path_at(&ap, "windowSize"), "窗口大小必须为奇数");
+        }
+        bounded(&adaptive["offset"], &path_at(&ap, "offset"), 0.0, 128.0, false, issues);
+    }
+    let hsv = &v["hsv"];
+    let hp = path_at(path, "hsv");
+    if object(hsv, &hp, &["hue", "tolerance", "saturationMin", "saturationMax", "valueMin", "valueMax"], issues) {
+        let hue = bounded(&hsv["hue"], &path_at(&hp, "hue"), 0.0, 360.0, false, issues);
+        if hue == Some(360.0) { problem(issues, &path_at(&hp, "hue"), "色相必须小于 360"); }
+        bounded(&hsv["tolerance"], &path_at(&hp, "tolerance"), 0.0, 180.0, false, issues);
+        for (min_key, max_key) in [("saturationMin", "saturationMax"), ("valueMin", "valueMax")] {
+            let min = bounded(&hsv[min_key], &path_at(&hp, min_key), 0.0, 1.0, false, issues);
+            let max = bounded(&hsv[max_key], &path_at(&hp, max_key), 0.0, 1.0, false, issues);
+            if min.zip(max).is_some_and(|(min, max)| min > max) {
+                problem(issues, &path_at(&hp, min_key), "最小值不得大于最大值");
+            }
+        }
     }
 }
 fn roi(v: &Value, size: &Value, path: &str, issues: &mut Vec<HudIssue>) {
@@ -832,15 +858,43 @@ fn frame_variant<'a>(
     }
     Ok(variant)
 }
-fn analyze_hud_cue(rgba: &[u8], width: usize, cue: &HudCue) -> HudCueDebug {
-    let mut crop = Vec::with_capacity(cue.roi.w * cue.roi.h * 4);
-    for y in cue.roi.y..cue.roi.y + cue.roi.h {
-        let start = (y * width + cue.roi.x) * 4;
-        crop.extend_from_slice(&rgba[start..start + cue.roi.w * 4]);
+fn crop_hud_rgba(rgba: &[u8], width: usize, roi: &HudRoi) -> Vec<u8> {
+    let mut crop = Vec::with_capacity(roi.w * roi.h * 4);
+    for y in roi.y..roi.y + roi.h {
+        let start = (y * width + roi.x) * 4;
+        crop.extend_from_slice(&rgba[start..start + roi.w * 4]);
     }
-    let gray = to_grayscale(&crop, cue.roi.w, cue.roi.h);
-    let binary = binarize(&gray, &cue.preprocess);
+    crop
+}
+fn analyze_hud_cue(rgba: &[u8], width: usize, cue: &HudCue) -> HudCueDebug {
+    let crop = crop_hud_rgba(rgba, width, &cue.roi);
+    let (gray, binary) = preprocess_hud_rgba(&crop, cue.roi.w, cue.roi.h, &cue.preprocess);
     HudCueDebug { roi_pixels: cue.roi.rect(), gray, binary }
+}
+pub fn recommend_hud_preprocess(
+    rgba: &[u8], width: usize, height: usize, pack: &HudStylePack, variant_id: &str,
+    target_id: &str, request: &HudPreprocessRequest,
+) -> Result<HudPreprocessRecommendation, String> {
+    let variant = frame_variant(rgba, width, height, pack, variant_id)?;
+    let (roi, settings) = if HUD_FIELDS.contains(&target_id) {
+        let field = variant.fields.get(target_id).ok_or_else(|| "字段尚未配置".to_string())?;
+        (&field.roi, &field.preprocess)
+    } else {
+        let cue = if target_id == "organizer" { variant.organizer.as_ref() } else { variant.cues.get(target_id) }
+            .ok_or_else(|| "固定图形不存在或尚未配置".to_string())?;
+        (&cue.roi, &cue.preprocess)
+    };
+    let local_request = match *request {
+        HudPreprocessRequest::Hsv { x, y } => {
+            if x < roi.x || y < roi.y || x >= roi.x + roi.w || y >= roi.y + roi.h {
+                return Err("color-point-outside-roi".into());
+            }
+            HudPreprocessRequest::Hsv { x: x - roi.x, y: y - roi.y }
+        }
+        _ => request.clone(),
+    };
+    let crop = crop_hud_rgba(rgba, width, roi);
+    crate::hud_preprocess::recommend_hud_roi_preprocess(&crop, roi.w, roi.h, settings, &local_request)
 }
 pub fn prepare_hud_cue(
     rgba: &[u8],
@@ -990,13 +1044,8 @@ fn hud_phase(states: &BTreeMap<String, HudPresenceResult>) -> String {
 }
 fn analyze_hud_field(rgba: &[u8], width: usize, field: &HudField) -> (HudDebug, Vec<Vec<u8>>) {
     let rect = field.roi.rect();
-    let mut crop = Vec::with_capacity(field.roi.w * field.roi.h * 4);
-    for y in field.roi.y..field.roi.y + field.roi.h {
-        let start = (y * width + field.roi.x) * 4;
-        crop.extend_from_slice(&rgba[start..start + field.roi.w * 4]);
-    }
-    let gray = to_grayscale(&crop, field.roi.w, field.roi.h);
-    let binary = binarize(&gray, &field.preprocess);
+    let crop = crop_hud_rgba(rgba, width, &field.roi);
+    let (gray, binary) = preprocess_hud_rgba(&crop, field.roi.w, field.roi.h, &field.preprocess);
     let seg = segment_glyphs(&binary, &serde_json::to_value(&field.segment).unwrap());
     let coverage: Vec<_> = seg
         .boxes
@@ -1304,7 +1353,7 @@ mod tests {
     fn score_glyph_union_deduplicates_per_character_and_excludes_the_clock() {
         let field = |glyphs| HudField {
             roi: HudRoi { x: 0, y: 0, w: 1, h: 1 },
-            preprocess: PreprocessSettings { scale: 1.0, threshold: 100.0, invert: false },
+            preprocess: HudPreprocessSettings { scale: 1.0, threshold: 100.0, ..HudPreprocessSettings::default() },
             segment: HudSegment { min_column_ink: 1, min_glyph_width: 1, min_gap_width: 1, min_ink_ratio: 0.0 },
             glyphs,
             grammar: HudGrammar::Integer { min: 0, max: 99 },

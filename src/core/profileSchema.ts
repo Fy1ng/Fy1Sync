@@ -20,7 +20,7 @@ export interface PreprocessSettings {
   scale: number
   /** Binarisation cut-off, 0..255. */
   threshold: number
-  /** Light-on-dark clocks need inversion so ink is 255. */
+  /** Dark-on-light clocks need inversion so ink is 255. */
   invert: boolean
 }
 

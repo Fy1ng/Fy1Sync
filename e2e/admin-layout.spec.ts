@@ -1,3 +1,4 @@
+import { createHudPreprocess } from '../src/core/hudPreprocess'
 /** Layout edits retain independent native regions in the exported pack. */
 import { mkdir, readFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
@@ -70,7 +71,7 @@ test('编辑器从 2160p 生成 1440p, 导出并重新导入独立低档布局',
   original.fields.clock!.roi = { x: 101, y: 53, w: 11, h: 9 }
   pack.bitmaps.replay = { width: 11, height: 9,
     data: packBitmap(Uint8Array.from({ length: 11 * 9 }, (_, index) => index % 11 < 6 ? 255 : 0)) }
-  original.cues.replay = { roi: { x: 101, y: 53, w: 11, h: 9 }, preprocess: { scale: 1.8, threshold: 139, invert: true },
+  original.cues.replay = { roi: { x: 101, y: 53, w: 11, h: 9 }, preprocess: createHudPreprocess({ scale: 1.8, threshold: 139, invert: true }),
     templates: ['replay'], minScore: 0.91 }
   original.organizer = structuredClone(original.cues.replay)
   await page.goto(APP_ORIGIN + '/admin')

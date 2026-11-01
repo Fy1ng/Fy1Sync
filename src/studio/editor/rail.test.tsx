@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createEmptyHudStylePack } from '../../core/hudStylePack'
-import { DEFAULT_PREPROCESS } from '../../core/profileSchema'
+import { createHudPreprocess } from '../../core/hudPreprocess'
 import { fieldModel, type EditorClockModel } from './editorModel'
 import { BinarizeSection, GlyphSection, ParamsSection } from './rail'
 
@@ -53,7 +53,7 @@ describe('editor rail disclosures', () => {
     await waitFor(() => expect(threshold).toBeVisible())
     expect(screen.getByRole('switch', { name: /反相/ })).toBeChecked()
     fireEvent.click(screen.getByRole('button', { name: '恢复默认' }))
-    expect(threshold).toHaveValue(String(DEFAULT_PREPROCESS.threshold))
+    expect(threshold).toHaveValue(String(createHudPreprocess().threshold))
     expect(screen.getByRole('switch', { name: /反相/ })).not.toBeChecked()
     expect(screen.getByRole('button', { name: '恢复默认' })).toBeDisabled()
   })

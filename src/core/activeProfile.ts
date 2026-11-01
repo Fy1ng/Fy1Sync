@@ -1,6 +1,7 @@
 /** Session-only learned clocks are never accepted as imported style packs. */
 import { createEmptyHudStylePack, type HudSize, type HudStylePack } from './hudStylePack'
 import type { RecognitionProfile, RoiRect } from './profileSchema'
+import { createHudPreprocess } from './hudPreprocess'
 
 export type ActiveProfile = HudStylePack | RecognitionProfile
 
@@ -27,7 +28,7 @@ export function learnedClockPack(profile: RecognitionProfile, size: HudSize): Hu
   const y = Math.round(profile.roi.y * size.height)
   clock.roi = { x, y, w: Math.min(size.width - x, Math.max(1, Math.round(profile.roi.w * size.width))),
     h: Math.min(size.height - y, Math.max(1, Math.round(profile.roi.h * size.height))) }
-  clock.preprocess = { ...profile.preprocess }
+  clock.preprocess = createHudPreprocess(profile.preprocess)
   clock.grammar = { kind: 'countdown', format: profile.clockFormat === 'auto' ? 'm:ss' : profile.clockFormat }
   clock.match.minScore = profile.matchThreshold
   for (const [char, samples] of Object.entries(profile.templates)) {

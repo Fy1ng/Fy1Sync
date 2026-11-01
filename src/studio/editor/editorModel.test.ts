@@ -1,3 +1,4 @@
+import { createHudPreprocess } from '../../core/hudPreprocess'
 import { describe, expect, it } from 'vitest'
 import { createEmptyHudStylePack, parseHudStylePack } from '../../core/hudStylePack'
 import { packBitmap } from '../../core/bitmapCodec'
@@ -65,10 +66,10 @@ describe('score editor pack view', () => {
     const pack = createEmptyHudStylePack('test/pgl', 'PGL', { width: 3840, height: 2160 })
     const clock = structuredClone(pack.variants[0]!.fields.clock)
     const data = packBitmap(Uint8Array.from({ length: 1536 }, (_, index) => index % 3 === 0 ? 255 : 0))
-    const left = patchField(pack, 'scoreLeft', { preprocess: { scale: 1, threshold: 75, invert: false },
+    const left = patchField(pack, 'scoreLeft', { preprocess: createHudPreprocess({ scale: 1, threshold: 75, invert: false }),
       roi: { x: 1688 / 3840, y: 88 / 2160, w: 136 / 3840, h: 116 / 2160 },
       templates: { '8': [{ id: 'left-eight', data, createdAt: 0 }] } })
-    const both = patchField(left, 'scoreRight', { preprocess: { scale: 1, threshold: 110, invert: false },
+    const both = patchField(left, 'scoreRight', { preprocess: createHudPreprocess({ scale: 1, threshold: 110, invert: false }),
       segment: { minColumnInk: 2, minGlyphWidth: 3, minGapWidth: 2, minInkRatio: 0.1 } })
     expect(both.variants[0]!.fields.clock).toEqual(clock)
     expect(both.variants[0]!.fields.scoreLeft).toEqual(left.variants[0]!.fields.scoreLeft)
@@ -135,8 +136,8 @@ describe('score editor pack view', () => {
 
   it('adds or removes shared samples from either side while keeping both sets of color settings', () => {
     const data = packBitmap(Uint8Array.from({ length: 1536 }, (_, index) => index % 3 === 0 ? 255 : 0))
-    let pack = patchField(createEmptyHudStylePack(), 'scoreLeft', { preprocess: { scale: 1, threshold: 75, invert: false } })
-    pack = patchField(pack, 'scoreRight', { preprocess: { scale: 2, threshold: 190, invert: true } })
+    let pack = patchField(createEmptyHudStylePack(), 'scoreLeft', { preprocess: createHudPreprocess({ scale: 1, threshold: 75, invert: false }) })
+    pack = patchField(pack, 'scoreRight', { preprocess: createHudPreprocess({ scale: 2, threshold: 190, invert: true }) })
     const left = patchField(pack, 'scoreLeft', { templates: { '8': [{ id: 'eight', data, createdAt: 0 }] } })
     const both = patchField(left, 'scoreRight', { templates: {
       ...fieldModel(left, 'scoreRight').templates, '7': [{ id: 'seven', data, createdAt: 0 }],
@@ -146,8 +147,8 @@ describe('score editor pack view', () => {
     const kept = patchField(both, 'scoreRight', { templates: { '7': fieldModel(both, 'scoreRight').templates['7']! } })
     expect(fieldModel(kept, 'scoreLeft').templates['8']).toBeUndefined()
     expect(fieldModel(kept, 'scoreRight').templates['8']).toBeUndefined()
-    expect(fieldModel(kept, 'scoreLeft').preprocess).toEqual({ scale: 1, threshold: 75, invert: false })
-    expect(fieldModel(kept, 'scoreRight').preprocess).toEqual({ scale: 2, threshold: 190, invert: true })
+    expect(fieldModel(kept, 'scoreLeft').preprocess).toEqual(createHudPreprocess({ scale: 1, threshold: 75, invert: false }))
+    expect(fieldModel(kept, 'scoreRight').preprocess).toEqual(createHudPreprocess({ scale: 2, threshold: 190, invert: true }))
     expect(kept.variants[0]!.fields.clock).toEqual(pack.variants[0]!.fields.clock)
     expect(parseHudStylePack(kept).issues).toEqual([])
   })

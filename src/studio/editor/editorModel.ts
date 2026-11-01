@@ -1,5 +1,6 @@
 /** A field-specific rail view; the full pack remains the authoritative document. */
-import { CLOCK_CHARS, type ClockChar, type PreprocessSettings, type RoiRect, type TemplateSample } from '../../core/profileSchema'
+import { CLOCK_CHARS, type ClockChar, type RoiRect, type TemplateSample } from '../../core/profileSchema'
+import type { HudPreprocessSettings } from '../../core/hudPreprocess'
 import { createEmptyHudStylePack, type HudField, type HudFieldId, type HudSegment, type HudStylePack, type HudVariant } from '../../core/hudStylePack'
 import { editorVariant } from './layoutModel'
 
@@ -7,7 +8,7 @@ export interface EditorClockModel {
   id: string
   name: string
   roi: RoiRect
-  preprocess: PreprocessSettings
+  preprocess: HudPreprocessSettings
   segment: HudSegment
   templates: Partial<Record<ClockChar, TemplateSample[]>>
   clockFormat: 'm:ss' | 'mm:ss' | 'ss'

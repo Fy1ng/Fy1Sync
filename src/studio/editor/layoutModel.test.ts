@@ -1,3 +1,4 @@
+import { createHudPreprocess } from '../../core/hudPreprocess'
 import { describe, expect, it } from 'vitest'
 import { createEmptyHudStylePack, parseHudStylePack } from '../../core/hudStylePack'
 import { packBitmap, unpackBitmap } from '../../core/bitmapCodec'
@@ -18,7 +19,7 @@ describe('editor layouts', () => {
     expect(added.pack.variants[1]).toEqual({ ...top, id: added.id, organizer: null })
     expect(added.pack.variants[1]!.fields).not.toBe(top.fields)
     expect(added.pack.variants[1]!.cues).not.toBe(top.cues)
-    const numeric = patchField(added.pack, 'clock', { preprocess: { scale: 1, threshold: 123, invert: false } }, added.id)
+    const numeric = patchField(added.pack, 'clock', { preprocess: createHudPreprocess({ scale: 1, threshold: 123, invert: false }) }, added.id)
     const changed = patchCue(numeric, 'replay', { roi: { x: 0.1, y: 0.8, w: 0.1, h: 0.1 } }, undefined, added.id)
     expect(changed.variants[0]).toEqual(top)
     expect(fieldModel(changed, 'clock', added.id).preprocess.threshold).toBe(123)
@@ -54,11 +55,11 @@ function scalablePack() {
   const clock = variant.fields.clock!
   clock.roi = { x: 101, y: 53, w: 11, h: 9 }
   clock.segment = { minColumnInk: 1, minGlyphWidth: 5, minGapWidth: 3, minInkRatio: 0.12 }
-  clock.preprocess = { scale: 1.8, threshold: 139, invert: true }
+  clock.preprocess = createHudPreprocess({ scale: 1.8, threshold: 139, invert: true })
   pack.bitmaps.glyph = { width: 32, height: 48, data: packBitmap(Uint8Array.from({ length: 32 * 48 }, (_, i) => i === 0 ? 255 : 0)) }
   clock.glyphs['1'] = ['glyph']
   pack.bitmaps.mark = { width: 4, height: 4, data: packBitmap(Uint8Array.of(0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255)) }
-  variant.cues.replay = { roi: { x: 100, y: 50, w: 4, h: 4 }, preprocess: { scale: 2.1, threshold: 151, invert: false }, templates: ['mark'], minScore: 0.91 }
+  variant.cues.replay = { roi: { x: 100, y: 50, w: 4, h: 4 }, preprocess: createHudPreprocess({ scale: 2.1, threshold: 151, invert: false }), templates: ['mark'], minScore: 0.91 }
   variant.organizer = structuredClone(variant.cues.replay)
   variant.states.replay = [[{ kind: 'cue', cue: 'replay', present: true }]]
   return pack
@@ -107,6 +108,22 @@ describe('generated lower resolution layouts', () => {
     scaled.fields.clock!.glyphs['1']!.push('another-sample')
     expect(original.variants[0]!.fields.clock!.glyphs['1']).toEqual(['glyph'])
     expect(scaled.cues.replay!.templates).not.toEqual(scaled.organizer!.templates)
+  })
+
+  it('scales adaptive windows to an odd native size while retaining color ranges', () => {
+    const original = scalablePack()
+    const variant = original.variants[0]!
+    variant.fields.clock!.preprocess.mode = 'adaptive'
+    variant.fields.clock!.preprocess.adaptive = { windowSize: 31, offset: 11 }
+    variant.cues.replay!.preprocess.mode = 'adaptive'
+    variant.cues.replay!.preprocess.adaptive = { windowSize: 5, offset: 8 }
+    variant.organizer!.preprocess.mode = 'hsv'
+    variant.organizer!.preprocess.hsv.hue = 358
+    const result = generateScaledLayout(original, variant.id, 1080).pack.variants[1]!
+    expect(result.fields.clock!.preprocess.adaptive).toEqual({ windowSize: 17, offset: 11 })
+    expect(result.cues.replay!.preprocess.adaptive).toEqual({ windowSize: 3, offset: 8 })
+    expect(result.organizer!.preprocess.hsv).toEqual(variant.organizer!.preprocess.hsv)
+    expect(variant.fields.clock!.preprocess.adaptive.windowSize).toBe(31)
   })
 
   it.each([1440, 1080] as const)('keeps one-pixel edge regions inside the %ip frame and pixel settings at least one', height => {

@@ -128,7 +128,7 @@ fn hud_pack(profile: &RecognitionProfile, width:usize, height:usize) -> Value {
     json!({"kind":"hud-style-pack","schemaVersion":1,"id":profile.id,"revision":1,"name":profile.name,"bitmaps":bitmaps,"variants":[{
         "id":"official-top-360","nativeSize":{"width":width,"height":height},
         "fields":{"clock":{"roi":{"x":rect.x as usize,"y":rect.y as usize,"w":rect.width as usize,"h":rect.height as usize},
-            "preprocess":profile.preprocess,"segment":{"minColumnInk":1,"minGlyphWidth":2,"minGapWidth":1,"minInkRatio":0.08},
+            "preprocess":HudPreprocessSettings::from_internal(&profile.preprocess),"segment":{"minColumnInk":1,"minGlyphWidth":2,"minGapWidth":1,"minInkRatio":0.08},
             "glyphs":glyphs,"grammar":{"kind":"countdown","format":profile.clock_format},"match":{"minScore":profile.match_threshold,"minMargin":0.02},"gateCue":null},
             "scoreLeft":null,"scoreRight":null},"cues":{},"states":{},"organizer":null}]})
 }
@@ -606,7 +606,7 @@ fn hud_cues_organizer_and_preparation_share_the_whole_region() {
     let mask=[255,0,255,0,255,0,255,0,255];
     value["bitmaps"]["mark"]=json!({"width":3,"height":3,"data":pack_bitmap(&mask)});
     value["bitmaps"]["other-mark"]=json!({"width":3,"height":3,"data":pack_bitmap(&[0,255,0,255,0,255,0,255,0])});
-    let cue=json!({"roi":{"x":7,"y":11,"w":3,"h":3},"preprocess":{"scale":1.4,"threshold":150,"invert":false},"templates":["other-mark","mark"],"minScore":1.0});
+    let cue=json!({"roi":{"x":7,"y":11,"w":3,"h":3},"preprocess":HudPreprocessSettings::default(),"templates":["other-mark","mark"],"minScore":1.0});
     value["variants"][0]["cues"]["replay"]=cue.clone();
     value["variants"][0]["states"]["replay"]=json!([[{"kind":"cue","cue":"replay","present":true}]]);
     value["variants"][0]["organizer"]=cue;
@@ -652,7 +652,7 @@ fn layout_pack() -> (Vec<u8>, HudStylePack) {
     value["bitmaps"]["organizer"] = json!({"width":3,"height":3,"data":pack_bitmap(&mask)});
     value["variants"][0]["organizer"] = json!({
         "roi":{"x":7,"y":11,"w":3,"h":3},
-        "preprocess":{"scale":1.0,"threshold":150,"invert":false},
+        "preprocess":HudPreprocessSettings { scale: 1.0, ..HudPreprocessSettings::default() },
         "templates":["organizer"],"minScore":1.0
     });
     let mut bottom = value["variants"][0].clone();
@@ -752,7 +752,7 @@ fn bomb_and_statistics_provide_positive_evidence_of_missing_fields() {
     let (frame,roi)=clock("1:37",6);
     let mut value=hud_pack(&profile(6,roi),640,360);
     value["bitmaps"]["mark"]=json!({"width":3,"height":3,"data":pack_bitmap(&[255,0,255,0,255,0,255,0,255])});
-    let cue=json!({"roi":{"x":0,"y":0,"w":3,"h":3},"preprocess":{"scale":1.0,"threshold":150,"invert":false},"templates":["mark"],"minScore":0.8});
+    let cue=json!({"roi":{"x":0,"y":0,"w":3,"h":3},"preprocess":HudPreprocessSettings { scale: 1.0, ..HudPreprocessSettings::default() },"templates":["mark"],"minScore":0.8});
     value["variants"][0]["cues"]["bomb"]=cue.clone();
     value["variants"][0]["states"]["planted"]=json!([[{"kind":"cue","cue":"bomb","present":true},{"kind":"field","field":"clock","present":false}]]);
     let mut pack=parse_hud_style_pack(&value).unwrap();
@@ -950,7 +950,7 @@ fn shared_score_glyphs_keep_color_preprocessing_matching_and_grammar_independent
                 });
             }
         }
-        field.preprocess = PreprocessSettings { scale: 1.0, threshold: if left_side { 80.0 } else { 200.0 }, invert: !left_side };
+        field.preprocess = HudPreprocessSettings { scale: 1.0, threshold: if left_side { 80.0 } else { 200.0 }, invert: !left_side, ..HudPreprocessSettings::default() };
         if !left_side { field.glyphs.clear(); }
     }
     let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
@@ -1002,4 +1002,115 @@ fn shared_score_glyphs_do_not_enable_null_fields_or_borrow_other_layouts_and_clo
     assert!(matches!(result.fields.clock, HudFieldResult::Failed { ref reason, .. } if reason == "insufficient-templates"));
     assert!(matches!(result.fields.score_left, HudFieldResult::Read { .. }));
     assert!(matches!(result.fields.score_right, HudFieldResult::Read { .. }));
+}
+
+#[test]
+fn hud_preprocess_modes_use_identical_masks_for_fields_cues_and_recognition() {
+    let (original, roi) = clock("1:37", 6);
+    for mode in [HudPreprocessMode::Gray, HudPreprocessMode::Adaptive, HudPreprocessMode::Hsv] {
+        let mut frame = original.clone();
+        let mut pack = parse_hud_style_pack(&hud_pack(&profile(6, roi.clone()), 640, 360)).unwrap();
+        let field = pack.variants[0].fields.clock.as_mut().unwrap();
+        field.preprocess.mode = mode;
+        field.preprocess.scale = 1.0;
+        field.preprocess.adaptive.window_size = 31;
+        field.preprocess.adaptive.offset = 7.0;
+        if mode == HudPreprocessMode::Hsv {
+            // Both colors become gray 18, so only the original RGB can separate the glyphs.
+            for y in field.roi.y..field.roi.y + field.roi.h {
+                for x in field.roi.x..field.roi.x + field.roi.w {
+                    let pixel = &mut frame[(y * 640 + x) * 4..(y * 640 + x) * 4 + 4];
+                    let ink = pixel[0] > 200;
+                    pixel.copy_from_slice(if ink { &[60, 0, 0, 255] } else { &[0, 0, 160, 255] });
+                }
+            }
+        }
+        let cue = HudCue { roi: field.roi.clone(), preprocess: field.preprocess.clone(), templates: vec![], min_score: 1.0 };
+        pack.variants[0].cues.insert("replay".into(), cue.clone());
+        pack.variants[0].organizer = Some(cue);
+        let prepared = prepare_hud_glyphs(&frame, 640, 360, &pack, "official-top-360", "clock").unwrap();
+        let mark = prepare_hud_cue(&frame, 640, 360, &pack, "official-top-360", "replay").unwrap();
+        assert_eq!(prepared.gray, mark.gray);
+        assert_eq!(prepared.binary, mark.binary);
+        assert_eq!(prepared.boxes.len(), 4, "{mode:?}");
+        pack.bitmaps.insert("same-region".into(), HudBitmap { width: mark.binary.width, height: mark.binary.height, data: mark.bitmap });
+        pack.variants[0].cues.get_mut("replay").unwrap().templates = vec!["same-region".into()];
+        pack.variants[0].organizer.as_mut().unwrap().templates = vec!["same-region".into()];
+        let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+        let HudFieldResult::Read { reading, debug: Some(debug) } = &result.fields.clock else { panic!("{mode:?}: {result:?}") };
+        assert_eq!(reading.text, "1:37");
+        assert_eq!(debug.binary, prepared.binary);
+        assert_eq!(debug.normalized, prepared.normalized);
+        assert!(matches!(result.cues["replay"], HudPresenceResult::Matched { score: Some(1.0), .. }));
+        assert!(matches!(result.organizer, HudPresenceResult::Matched { score: Some(1.0), .. }));
+        assert!(validate_hud_style_pack(&serde_json::to_value(&pack).unwrap()).is_empty());
+    }
+}
+
+#[test]
+fn hud_preprocess_parser_requires_the_unique_complete_settings_format() {
+    let (_, pack) = scoreboard("8", "9");
+    let value = serde_json::to_value(&pack).unwrap();
+    for (pointer, replacement) in [
+        ("/mode", json!("rgb")), ("/scale", json!(0)), ("/scale", json!(11)),
+        ("/threshold", json!(-1)), ("/threshold", json!(256)), ("/invert", json!(1)),
+        ("/adaptive/windowSize", json!(2)), ("/adaptive/windowSize", json!(4)),
+        ("/adaptive/windowSize", json!(257)), ("/adaptive/windowSize", json!(3.5)),
+        ("/adaptive/offset", json!(-1)), ("/adaptive/offset", json!(129)),
+        ("/hsv/hue", json!(-0.1)), ("/hsv/hue", json!(360)),
+        ("/hsv/tolerance", json!(181)), ("/hsv/saturationMin", json!(1.1)),
+        ("/hsv/saturationMax", json!(-0.1)), ("/hsv/valueMin", json!(-1)),
+        ("/hsv/valueMax", json!(1.1)), ("/hsv/saturationMax", json!(0.1)),
+        ("/hsv/valueMax", json!(0.01)),
+    ] {
+        let mut invalid = value.clone();
+        let preprocess = &mut invalid["variants"][0]["fields"]["scoreLeft"]["preprocess"];
+        *preprocess.pointer_mut(pointer).unwrap() = replacement;
+        let issues = validate_hud_style_pack(&invalid);
+        assert!(!issues.is_empty(), "{pointer}: {invalid}");
+        assert!(issues.iter().all(|issue| issue.path.starts_with("variants[0].fields.scoreLeft.preprocess")));
+    }
+    for missing in ["mode", "adaptive", "hsv"] {
+        let mut invalid = value.clone();
+        invalid["variants"][0]["fields"]["scoreLeft"]["preprocess"].as_object_mut().unwrap().remove(missing);
+        assert!(parse_hud_style_pack(&invalid).is_err());
+    }
+    for pointer in ["", "/adaptive", "/hsv"] {
+        let mut invalid = value.clone();
+        invalid["variants"][0]["fields"]["scoreLeft"]["preprocess"].pointer_mut(pointer).unwrap()
+            .as_object_mut().unwrap().insert("unknown".into(), json!(0));
+        assert!(parse_hud_style_pack(&invalid).is_err());
+    }
+    let mut old = value.clone();
+    old["variants"][0]["fields"]["scoreLeft"]["preprocess"] = json!({"scale":1.4,"threshold":150,"invert":false});
+    assert!(parse_hud_style_pack(&old).is_err());
+    let mut valid = value;
+    valid["variants"][0]["fields"]["scoreLeft"]["preprocess"]["adaptive"]["windowSize"] = json!(255.0);
+    valid["variants"][0]["fields"]["scoreLeft"]["preprocess"]["hsv"]["hue"] = json!(359.999);
+    assert!(parse_hud_style_pack(&valid).is_ok());
+}
+
+#[test]
+fn hud_preprocess_recommendations_resolve_full_frame_coordinates_and_reject_invalid_targets() {
+    let (frame, mut pack) = scoreboard("8", "9");
+    let field = pack.variants[0].fields.score_left.as_ref().unwrap();
+    let roi = field.roi.clone();
+    pack.variants[0].organizer = Some(HudCue { roi: field.roi.clone(), preprocess: field.preprocess.clone(), templates: vec![], min_score: 0.9 });
+    for target in ["scoreLeft", "organizer"] {
+        let recommended = recommend_hud_preprocess(&frame, 640, 360, &pack, "official-top-360", target,
+            &HudPreprocessRequest::Hsv { x: 287, y: 21 }).unwrap();
+        let settings = recommended.settings.unwrap();
+        assert_eq!(settings.mode, HudPreprocessMode::Hsv);
+        assert!(settings.validate().is_ok());
+        for (x, y) in [(roi.x - 1, roi.y), (roi.x + roi.w, roi.y), (roi.x, roi.y - 1), (roi.x, roi.y + roi.h)] {
+            assert!(recommend_hud_preprocess(&frame, 640, 360, &pack, "official-top-360", target,
+                &HudPreprocessRequest::Hsv { x, y }).is_err());
+        }
+        assert!(recommend_hud_preprocess(&frame, 640, 359, &pack, "official-top-360", target, &HudPreprocessRequest::Polarity {}).is_err());
+    }
+    for target in ["clock", "missing", "round"] {
+        assert!(recommend_hud_preprocess(&frame, 640, 360, &pack, "official-top-360", target, &HudPreprocessRequest::Polarity {}).is_err());
+    }
+    assert!(recommend_hud_preprocess(&frame, 640, 360, &pack, "missing", "scoreLeft", &HudPreprocessRequest::Polarity {}).is_err());
+    assert!(recommend_hud_preprocess(&frame[..frame.len() - 1], 640, 360, &pack, "official-top-360", "scoreLeft", &HudPreprocessRequest::Polarity {}).is_err());
 }

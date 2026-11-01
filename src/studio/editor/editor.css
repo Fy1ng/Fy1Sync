@@ -972,3 +972,18 @@
 .editor-media-info { display: flex; align-items: end; gap: 12px; padding: 8px 0; }
 .editor-media-info > .muted { overflow-wrap: anywhere; flex: 1; }
 .editor-media-info .field-stack { flex: 1; }
+
+.preprocess-color-preview {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+  outline: 1px solid var(--line);
+  image-rendering: pixelated;
+}
+
+.preprocess-color-preview.is-picking {
+  cursor: crosshair;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

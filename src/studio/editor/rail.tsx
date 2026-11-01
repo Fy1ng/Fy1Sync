@@ -7,7 +7,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   CLOCK_CHARS,
-  DEFAULT_PREPROCESS,
   TEMPLATE_PIXELS,
   type ClockChar,
   type RoiRect,
@@ -17,8 +16,9 @@ import { FIELD_LABELS, type EditorClockModel } from './editorModel'
 import type { HudFieldResult } from '../../core/hudWasm'
 import { unpackBitmap } from '../../core/bitmapCodec'
 import { adjustGlyphBox, excludeGlyphBox, mergeGlyphBoxes, splitGlyphBox, type GlyphBox } from '../../core/segmentation'
-import { Range, Segmented, Switch } from '../kit'
+import { Range, Segmented } from '../kit'
 import { drawMask, TEMPLATE_SIZE, type FrameAnalysis } from './framePipeline'
+import { PreprocessControls, type PreprocessControlsProps } from './PreprocessControls'
 
 type Patch = (update: Partial<EditorClockModel>) => void
 
@@ -128,22 +128,10 @@ export function nudgeRoi(roi: RoiRect, key: keyof RoiRect, delta: -1 | 1, size: 
   return { x: next.x / size.width, y: next.y / size.height, w: next.w / size.width, h: next.h / size.height }
 }
 
-export function BinarizeSection({ profile, onPatch }: { profile: EditorClockModel; onPatch: Patch }): React.ReactNode {
-  const set = (update: Partial<EditorClockModel['preprocess']>): void =>
-    onPatch({ preprocess: { ...profile.preprocess, ...update } })
-  const changed = profile.preprocess.scale !== DEFAULT_PREPROCESS.scale
-    || profile.preprocess.threshold !== DEFAULT_PREPROCESS.threshold
-    || profile.preprocess.invert !== DEFAULT_PREPROCESS.invert
+export function BinarizeSection(props: PreprocessControlsProps): React.ReactNode {
   return (
     <RailDisclosure title="二值化">
-      <div className="rail-reset-row">
-        <button type="button" className="link-btn rail-link" disabled={!changed} onClick={() => set({ ...DEFAULT_PREPROCESS })}>恢复默认</button>
-      </div>
-      <Range label="对比度" min={0.5} max={3} step={0.1} value={profile.preprocess.scale}
-        format={(value) => `${value.toFixed(1)}×`} onChange={(scale) => set({ scale })} />
-      <Range label="阈值" min={0} max={255} step={1} value={profile.preprocess.threshold}
-        onChange={(threshold) => set({ threshold })} />
-      <Switch label="反相" detail="浅底深字时打开" checked={profile.preprocess.invert} onChange={(invert) => set({ invert })} />
+      <PreprocessControls {...props} />
     </RailDisclosure>
   )
 }

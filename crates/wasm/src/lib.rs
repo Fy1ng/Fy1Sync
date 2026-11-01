@@ -71,6 +71,13 @@ pub fn prepare_hud_cue(rgba:&[u8],width:usize,height:usize,pack_json:&str,varian
     serde_json::to_string(&result).map_err(|e|JsValue::from_str(&e.to_string()))
 }
 #[wasm_bindgen]
+pub fn recommend_hud_preprocess(rgba:&[u8],width:usize,height:usize,pack_json:&str,variant_id:&str,target_id:&str,request_json:&str) -> Result<String,JsValue> {
+    let pack=stream_syncer_core::hud_pack_from_json(pack_json).map_err(|e|JsValue::from_str(&e))?;
+    let request=serde_json::from_str::<stream_syncer_core::HudPreprocessRequest>(request_json).map_err(|e|JsValue::from_str(&e.to_string()))?;
+    let result=stream_syncer_core::recommend_hud_preprocess(rgba,width,height,&pack,variant_id,target_id,&request).map_err(|e|JsValue::from_str(&e))?;
+    serde_json::to_string(&result).map_err(|e|JsValue::from_str(&e.to_string()))
+}
+#[wasm_bindgen]
 pub fn dispatch(op: &str, input_json: &str) -> Result<String, JsValue> {
     let input = serde_json::from_str(input_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
     stream_syncer_core::dispatch(op, input)

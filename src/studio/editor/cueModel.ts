@@ -3,6 +3,7 @@ import { HUD_CUE_IDS, type HudCue, type HudCueId, type HudStylePack } from '../.
 import type { HudCueAnalysis } from '../../core/hudWasm'
 import { fieldModel, type EditorClockModel } from './editorModel'
 import { editorVariant } from './layoutModel'
+import { createHudPreprocess } from '../../core/hudPreprocess'
 
 export type CueTarget = HudCueId | 'organizer'
 export type EditorTarget = 'clock' | 'scoreLeft' | 'scoreRight' | CueTarget
@@ -18,7 +19,7 @@ export function editorCue(pack: HudStylePack, id: CueTarget, variantId?: string)
   if (cue) return cue
   const clock = variant.fields.clock
   return { roi: clock?.roi ?? { x: 0, y: 0, w: Math.max(1, Math.floor(variant.nativeSize.width / 10)), h: Math.max(1, Math.floor(variant.nativeSize.height / 10)) },
-    preprocess: { scale: 1, threshold: 150, invert: false }, templates: [], minScore: 0.9 }
+    preprocess: createHudPreprocess({ scale: 1 }), templates: [], minScore: 0.9 }
 }
 export function cueModel(pack: HudStylePack, id: CueTarget, variantId?: string): EditorClockModel {
   const cue = editorCue(pack, id, variantId)

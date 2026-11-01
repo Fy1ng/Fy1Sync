@@ -46,6 +46,7 @@ import { youtubeSource } from './youtubeSource'
 import { useEditorProject } from './useEditorProject'
 import { useCountdownTeaching } from './useCountdownTeaching'
 import { AutoStepControl } from './AutoStepControl'
+import { usePreprocessRecommendation } from './usePreprocessRecommendation'
 import '../studio.css'
 import './editor.css'
 
@@ -267,6 +268,16 @@ export default function EditorPage(): React.ReactNode {
     setPack(current => isCueTarget(fieldId) ? patchCue(current, fieldId, update, undefined, variantId) : patchField(current, fieldId, update, variantId))
     setDirty(true)
   }, [fieldId, variantId])
+
+  const preprocessing = usePreprocessRecommendation({ frame, pack: activePack, variantId, target: fieldId,
+    revision: editRevision, disabled: countdown.busy, apply: preprocess => patch({ preprocess }), message: setMessage })
+  const patchPreprocess = (update: Partial<EditorClockModel>): void => {
+    patch(update)
+    if (update.preprocess && JSON.stringify(update.preprocess) !== JSON.stringify(profile.preprocess)) {
+      const hasSamples = cueId ? editorCue(pack, cueId, variantId).templates.length > 0 : readiness.sampleCount > 0
+      if (hasSamples) setMessage({ kind: 'warn', text: '预处理参数已改变, 原样本已保留. 请重新验证当前帧, 必要时重新取样, 不要直接继续自动写入.' })
+    }
+  }
 
   const changeField = (next: EditorTarget): void => {
     ++editRevision.current
@@ -912,7 +923,8 @@ export default function EditorPage(): React.ReactNode {
           <RegionSection fieldId={numericId} label={cueId ? CUE_LABELS[cueId] : undefined} roi={profile.roi} onRoi={setRoi} videoSize={videoSize} analysis={analysis}
             boxes={boxes} selected={selected} onSelect={setSelected}
             grayRef={grayCanvasRef} binaryRef={binaryCanvasRef} />
-          <BinarizeSection profile={profile} onPatch={patch} />
+          <BinarizeSection profile={profile} onPatch={patchPreprocess} frame={frame}
+            busy={countdown.busy || preprocessing.busy} onRecommend={(kind, point) => { void preprocessing.recommend(kind, point) }} />
           {cueId ? <CueSection id={cueId} pack={activePack} variantId={variantId} result={cueId === 'organizer' ? frameResult?.organizer : frameResult?.cues[cueId]}
             onSave={frame ? () => void saveCue() : null} onThreshold={matchThreshold => patch({ matchThreshold })}
             onRemove={bitmapId => {

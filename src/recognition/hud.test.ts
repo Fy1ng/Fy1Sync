@@ -1,3 +1,4 @@
+import { createHudPreprocess } from '../core/hudPreprocess'
 import { describe, expect, it, vi } from 'vitest'
 import { packBitmap } from '../core/bitmapCodec'
 import { normalizeGlyph } from '../core/imageOps'
@@ -21,14 +22,14 @@ function fixture() {
   const variant = pack.variants[0]!
   const clock = variant.fields.clock!
   clock.roi = { x: 274, y: 14, w: 150, h: 54 }
-  clock.preprocess = { scale: 1.6, threshold: 120, invert: false }
+  clock.preprocess = createHudPreprocess({ scale: 1.6, threshold: 120, invert: false })
   for (const char of CLOCK_CHARS) {
     const id = `clock-${char === ':' ? 'colon' : char}`
     pack.bitmaps[id] = { width: 32, height: 48, data: packBitmap(normalizeGlyph(renderGlyphMask(char, 6))) }
     clock.glyphs[char] = [id]
   }
   pack.bitmaps.mark = { width: 3, height: 3, data: packBitmap(Uint8Array.of(255, 0, 255, 0, 255, 0, 255, 0, 255)) }
-  const cue = { roi: { x: 0, y: 0, w: 3, h: 3 }, preprocess: { scale: 1, threshold: 150, invert: false }, templates: ['mark'], minScore: .8 }
+  const cue = { roi: { x: 0, y: 0, w: 3, h: 3 }, preprocess: createHudPreprocess({ scale: 1, threshold: 150, invert: false }), templates: ['mark'], minScore: .8 }
   variant.cues.replay = cue
   variant.states.replay = [[{ kind: 'cue', cue: 'replay', present: true }]]
   variant.states.active = [[{ kind: 'field', field: 'clock', present: true }]]
@@ -117,7 +118,7 @@ describe('HUD full-frame Rust/WASM recognition', () => {
       drawText(frame, text, x, 20, { scale: 6, ink: fieldId === 'scoreLeft' ? [235, 238, 245] : [170, 170, 0] })
       variant.fields[fieldId] = { ...structuredClone(variant.fields.clock!),
         roi: { x: x - 6, y: 14, w: 100, h: 54 }, grammar: { kind: 'integer', min: 0, max: 99 },
-        preprocess: { scale: 1, threshold: fieldId === 'scoreLeft' ? 180 : 100, invert: false },
+        preprocess: createHudPreprocess({ scale: 1, threshold: fieldId === 'scoreLeft' ? 180 : 100, invert: false }),
         glyphs: fieldId === trainedSide
           ? Object.fromEntries(Object.entries(variant.fields.clock!.glyphs).filter(([char]) => char !== ':')) : {} }
     }

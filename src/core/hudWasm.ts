@@ -2,6 +2,7 @@
 import type { HudCueId, HudFieldId, HudResultFieldId, HudStylePack } from './hudStylePack'
 import type { ClockChar } from './profileSchema'
 import type { GlyphBox } from './segmentation'
+import type { HudPreprocessRecommendation, HudPreprocessRequest } from './hudPreprocess'
 
 export interface HudImage { data: Uint8Array; width: number; height: number }
 export interface HudGlyphMatch { char: ClockChar | null; score: number; runnerUpScore: number; sampleIndex: number }
@@ -67,6 +68,7 @@ interface HudModule {
   recognize_hud_frame(rgba: Uint8Array, width: number, height: number, pack: string, variant: string): string
   prepare_hud_glyphs(rgba: Uint8Array, width: number, height: number, pack: string, variant: string, field: string, boxes: string): string
   prepare_hud_cue(rgba: Uint8Array, width: number, height: number, pack: string, variant: string, cue: string): string
+  recommend_hud_preprocess(rgba: Uint8Array, width: number, height: number, pack: string, variant: string, target: string, request: string): string
 }
 let modulePromise: Promise<HudModule> | null = null
 async function loadHudWasm(): Promise<HudModule> {
@@ -76,7 +78,7 @@ async function loadHudWasm(): Promise<HudModule> {
       const { default: wasmUrl } = await import('../wasm/pkg/stream_syncer_wasm_bg.wasm?url')
       await module.default({ module_or_path: wasmUrl })
       const hud = module as unknown as HudModule
-      if (!hud.recognize_hud_frame || !hud.prepare_hud_glyphs || !hud.prepare_hud_cue) throw new Error('当前 WASM 缺少样式包识别入口')
+      if (!hud.recognize_hud_frame || !hud.prepare_hud_glyphs || !hud.prepare_hud_cue || !hud.recommend_hud_preprocess) throw new Error('当前 WASM 缺少样式包识别入口')
       return hud
     } catch (error) {
       throw new Error(`样式包需要 Rust/WASM, 无法加载: ${error instanceof Error ? error.message : String(error)}`)
@@ -101,4 +103,11 @@ export async function prepareHudCue(frame: HudFrame, pack: HudStylePack, cueId: 
   const wasm = await loadHudWasm()
   const result = JSON.parse(wasm.prepare_hud_cue(pixels(frame), frame.width, frame.height, JSON.stringify(pack), variantId, cueId)) as JsonCueDebug & { bitmap: string }
   return { ...cueDebugFromJson(result), bitmap: result.bitmap }
+}
+
+export async function recommendHudPreprocess(frame: HudFrame, pack: HudStylePack, variantId: string,
+  target: HudFieldId | HudCueId | 'organizer', request: HudPreprocessRequest): Promise<HudPreprocessRecommendation> {
+  const wasm = await loadHudWasm()
+  return JSON.parse(wasm.recommend_hud_preprocess(pixels(frame), frame.width, frame.height,
+    JSON.stringify(pack), variantId, target, JSON.stringify(request))) as HudPreprocessRecommendation
 }

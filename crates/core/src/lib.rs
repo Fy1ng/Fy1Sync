@@ -7,6 +7,7 @@ mod camera;
 mod image;
 mod matching;
 mod hud;
+mod hud_preprocess;
 mod profile;
 mod temporal;
 
@@ -16,6 +17,7 @@ pub use camera::*;
 pub use image::*;
 pub use matching::*;
 pub use hud::*;
+pub use hud_preprocess::*;
 pub use profile::*;
 use serde_json::{json, Value};
 pub use temporal::*;
