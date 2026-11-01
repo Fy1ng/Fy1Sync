@@ -47,6 +47,9 @@ import { useEditorProject } from './useEditorProject'
 import { useCountdownTeaching } from './useCountdownTeaching'
 import { AutoStepControl } from './AutoStepControl'
 import { usePreprocessRecommendation } from './usePreprocessRecommendation'
+import { useBatchValidation } from './useBatchValidation'
+import { BatchValidationPanel } from './BatchValidationPanel'
+import { waitValidationVideo } from './batchValidationRunner'
 import '../studio.css'
 import './editor.css'
 
@@ -112,6 +115,12 @@ export default function EditorPage(): React.ReactNode {
   const [mediaTime, setMediaTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [playing, setPlaying] = useState(false)
+  const [validationOpen, setValidationOpen] = useState(false)
+  const validationReadOnly = useRef(false)
+  validationReadOnly.current = validationOpen
+  const validation = useBatchValidation({ source: sampleKind === 'video' ? sampleUrl : '', sourceName: sampleName, pack, duration })
+  const reviewSeek = useRef<AbortController | null>(null)
+  useEffect(() => () => reviewSeek.current?.abort(), [sampleUrl])
 
   const [frame, setFrame] = useState<GrabbedFrame | null>(null)
   const [boxes, setBoxes] = useState<GlyphBox[]>([])
@@ -144,6 +153,7 @@ export default function EditorPage(): React.ReactNode {
     } })
 
   const openVideo = useCallback((url: string, name: string): void => {
+    if (validationReadOnly.current) return
     countdown.reset()
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
     objectUrlRef.current = ''
@@ -259,6 +269,7 @@ export default function EditorPage(): React.ReactNode {
   )
 
   const patch = useCallback((update: Partial<EditorClockModel>) => {
+    if (validationReadOnly.current) return
     ++editRevision.current
     if (update.id !== undefined && update.id !== profileRef.current.id) {
       ++documentRevision.current
@@ -344,7 +355,9 @@ export default function EditorPage(): React.ReactNode {
   const setRoi = useCallback((roi: RoiRect) => patch({ roi }), [patch])
 
   const openScreenshot = useCallback(async (file: File, origin: 'file' | 'paste'): Promise<void> => {
+    if (validationReadOnly.current) return
     const decoded = await decodeScreenshot(file)
+    if (validationReadOnly.current) return
     if (!decoded.ok) {
       setMessage({ kind: 'error', text: decoded.message })
       return
@@ -371,13 +384,14 @@ export default function EditorPage(): React.ReactNode {
    * 自动取帧 leaves the player on show, so the recording can be paused and stepped again.
    */
   const openStill = useCallback(async (still: YouTubeStill, auto = false): Promise<void> => {
+    if (validationReadOnly.current) return
     const canvas = document.createElement('canvas')
     canvas.width = still.frame.width
     canvas.height = still.frame.height
     canvas.getContext('2d')?.putImageData(new ImageData(still.frame.pixels as Uint8ClampedArray<ArrayBuffer>, still.frame.width, still.frame.height), 0, 0)
     // A blob, not a data URL: a 4K PNG as a data URL is a 13 MB string, twice as slow to show.
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
-    if (!blob) return
+    if (!blob || validationReadOnly.current) return
     countdown.reset()
     project.clear()
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
@@ -400,7 +414,7 @@ export default function EditorPage(): React.ReactNode {
 
   /** A downloaded stretch opens as footage, the same as a chosen file. */
   const openClip = useCallback((job: YouTubeClipJob): void => {
-    if (!job.mediaUrl || !job.assetId) return
+    if (!job.mediaUrl || !job.assetId || validationReadOnly.current) return
     const name = `${job.title || job.videoId} ${Math.round(job.startSeconds)}-${Math.round(job.endSeconds)}s`
     project.remember({ id: `youtube-${job.assetId}`, kind: 'youtube', assetId: job.assetId, name, match: '', purpose: 'making' })
     openVideo(job.mediaUrl, name)
@@ -410,6 +424,7 @@ export default function EditorPage(): React.ReactNode {
   // Ctrl+V anywhere on the editor, except into a text field, which keeps its own paste.
   useEffect(() => {
     const onPaste = (event: ClipboardEvent): void => {
+      if (validationReadOnly.current) return
       const target = event.target
       if (target instanceof Element && target.closest('input, textarea, [contenteditable="true"]')) return
       const file = imageFromClipboard(event.clipboardData)
@@ -439,7 +454,7 @@ export default function EditorPage(): React.ReactNode {
   const step = (delta: -1 | 1): void => {
     const video = videoRef.current
     // A held arrow key repeats faster than a seek lands; each press waits for the last.
-    if (!video || stepping.current || countdown.isBusy()) return
+    if (!video || stepping.current || countdown.isBusy() || validationReadOnly.current) return
     video.pause()
     stepperRef.current ??= new FrameStepper(presentAt(video))
     stepping.current = true
@@ -454,7 +469,7 @@ export default function EditorPage(): React.ReactNode {
   /** A clock reading opts whole-second jumps into teaching the destination frame. */
   const jump = (seconds: number): void => {
     const video = videoRef.current
-    if (!video || stepping.current || countdown.isBusy()) return
+    if (!video || stepping.current || countdown.isBusy() || validationReadOnly.current) return
     if (countdown.jump(seconds)) return
     video.pause()
     const end = Number.isFinite(video.duration) ? video.duration : video.currentTime
@@ -470,7 +485,7 @@ export default function EditorPage(): React.ReactNode {
     else video.pause()
   }
 
-  const assign = (char: ClockChar): void => { if (analysis) void countdown.assign(char, selected) }
+  const assign = (char: ClockChar): void => { if (analysis && !validationReadOnly.current) void countdown.assign(char, selected) }
 
   /** Reviewed samples from a scanned stretch, each glyph once. */
   const saveStretch = (samples: StretchSample[]): void => {
@@ -531,6 +546,7 @@ export default function EditorPage(): React.ReactNode {
   keys.current = { step, jump, togglePlay, undo: countdown.undo, video: sampleUrl !== '' && sampleKind === 'video' }
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (validationReadOnly.current) return
       const target = event.target
       if (!(target instanceof Element)) return
       if (target.closest('textarea, select, [contenteditable="true"], .pop') || (target instanceof HTMLInputElement && target.type !== 'range')) return
@@ -740,9 +756,33 @@ export default function EditorPage(): React.ReactNode {
   const state = dirty ? 'dirty' : publishedCurrent ? 'published' : 'unpublished'
   const video = sampleUrl !== '' && sampleKind === 'video'
 
+  const openValidation = (): void => {
+    if (!video || countdown.isBusy() || preprocessing.busy || stepping.current || saving !== null) return
+    videoRef.current?.pause()
+    setFootage('local')
+    setMessage(null)
+    setValidationOpen(true)
+  }
+  const jumpToValidationFrame = (at: number): void => {
+    const node = videoRef.current
+    if (!node || validation.state.phase === 'running') return
+    reviewSeek.current?.abort()
+    const controller = new AbortController()
+    reviewSeek.current = controller
+    node.pause()
+    void waitValidationVideo(node, at, controller.signal).then(() => {
+      if (!controller.signal.aborted) {
+        grab()
+        node.closest('.editor-stage')?.scrollIntoView({ block: 'nearest' })
+      }
+    }).catch(error => {
+      if (!controller.signal.aborted) setMessage({ kind: 'error', text: `跳转失败: ${error instanceof Error ? error.message : String(error)}` })
+    }).finally(() => { if (reviewSeek.current === controller) reviewSeek.current = null })
+  }
+
   return (
     <div className="studio editor" inert={!project.ready}>
-      <header className="editor-bar">
+      <header className="editor-bar" inert={validationOpen}>
         <a className="icon-btn" {...routeLink('/')} aria-label="返回播放器" title="返回播放器"><Icon name="back" /></a>
         <div className="editor-title">
           <input className="editor-name" value={profile.name} aria-label="名称" spellCheck={false}
@@ -751,11 +791,14 @@ export default function EditorPage(): React.ReactNode {
             title="小写字母、数字和斜线，发布时作为预设文件名" onChange={(event) => patch({ id: event.target.value })} />
         </div>
         <span className="editor-state" data-state={state}>{STATE_TEXT[state]}</span>
+        {validationOpen && <span className="editor-validation-mode">验收模式 / 样式只读</span>}
         <span className="editor-spacer" />
         <LibraryMenu presets={presets} drafts={drafts} onLoadPreset={loadPreset} onLoadDraft={loadDraft}
           onDeleteDraft={async (id) => { await profileStore.remove(id); void refreshLibrary() }} />
         <FileMenu onNew={newProfile} onImport={importFile} onExport={exportFile} />
         <span className="editor-divider" aria-hidden="true" />
+        <button type="button" className="btn-quiet" disabled={!video || !duration || countdown.busy || preprocessing.busy || saving !== null}
+          onClick={openValidation}>只读批量验收</button>
         <button type="button" className="btn-quiet" disabled={saving !== null} onClick={() => void saveDraft()}>
           {saving === 'draft' ? '正在保存…' : '存为草稿'}
         </button>
@@ -766,7 +809,7 @@ export default function EditorPage(): React.ReactNode {
       </header>
 
       {message && (
-        <div className={`editor-note is-${message.kind}`} role={message.conflict ? 'alert' : 'status'} aria-label="编辑器提示">
+        <div className={`editor-note is-${message.kind}`} role={message.conflict ? 'alert' : 'status'} aria-label="编辑器提示" inert={validationOpen && !!message.conflict}>
           <span className="editor-note-text">{message.text}</span>
           {message.conflict && (
             <>
@@ -785,22 +828,22 @@ export default function EditorPage(): React.ReactNode {
         </div>
       )}
 
-      {(project.error || project.needsRelink) && <div className="editor-note is-warn" aria-live="polite" data-testid="project-note">
+      {(project.error || project.needsRelink) && <div className="editor-note is-warn" aria-live="polite" data-testid="project-note" inert={validationOpen}>
         <span>{project.error || '素材文件不可用或大小已改变, 请重新选择原文件并核对 SHA-256.'}</span>
         {project.needsRelink && <button type="button" className="btn-quiet small" onClick={() => void project.choose(true)}>重新选择原素材</button>}
       </div>}
 
-      <main className="editor-main">
+      <main className={`editor-main${validationOpen ? ' is-validating' : ''}`}>
         <section className="editor-stage-col" aria-label="样片">
-          {ytSource && (
+          {ytSource && !validationOpen && (
             <Segmented label="素材来源" value={footage} onChange={setFootage}
               options={[{ value: 'local', label: '本地文件' }, { value: 'youtube', label: 'YouTube 录像' }]} />
           )}
           {/* Kept mounted while hidden, so the page and a running download survive a switch. */}
           {ytSource && (
-            <div className="editor-yt" hidden={footage !== 'youtube'}>
+            <div className="editor-yt" hidden={footage !== 'youtube'} inert={validationOpen}>
               <YouTubePanel source={ytSource} onStill={openStill} onClipReady={openClip}
-                autoStill={autoGrab} onAutoStillChange={setAutoGrab} active={footage === 'youtube'} />
+                autoStill={autoGrab && !validationOpen} onAutoStillChange={setAutoGrab} active={footage === 'youtube' && !validationOpen} />
             </div>
           )}
           <EditorStage mediaSize={videoSize} roi={profile.roi} enabled={!!sampleUrl} hidden={footage === 'youtube'}
@@ -850,17 +893,17 @@ export default function EditorPage(): React.ReactNode {
             {sampleUrl && (
               <>{HUD_FIELD_IDS.filter(id => id === fieldId || variant.fields[id]?.enabled !== false).map(id => (
                 <RoiWindow key={id} roi={fieldModel(pack, id, variantId).roi} onChange={setRoi}
-                  readOnly={id !== fieldId || !profile.enabled} label={FIELD_LABELS[id]}
+                  readOnly={validationOpen || id !== fieldId || !profile.enabled} label={FIELD_LABELS[id]}
                   videoWidth={videoSize.width} videoHeight={videoSize.height} contentBox={picture} />
               ))}{[...HUD_CUE_IDS, 'organizer' as const].filter(id => id === fieldId || (id === 'organizer' ? variant.organizer?.enabled : variant.cues[id]?.enabled)).map(id => (
-                <RoiWindow key={id} roi={cueModel(pack, id, variantId).roi} onChange={setRoi} readOnly={id !== fieldId || !profile.enabled} label={CUE_LABELS[id]}
+                <RoiWindow key={id} roi={cueModel(pack, id, variantId).roi} onChange={setRoi} readOnly={validationOpen || id !== fieldId || !profile.enabled} label={CUE_LABELS[id]}
                   videoWidth={videoSize.width} videoHeight={videoSize.height} contentBox={picture} />
               ))}</>
             )}
             </>}
           </EditorStage>
 
-          <div className="editor-transport" hidden={footage === 'youtube'}>
+          <div className="editor-transport" hidden={footage === 'youtube'} inert={validationOpen}>
             <button type="button" className="btn-quiet small" onClick={() => void project.choose()}>选择录像</button>
             <label className="btn-quiet small file-pick">
               选择截图
@@ -904,7 +947,7 @@ export default function EditorPage(): React.ReactNode {
               </span>
             )}
           </div>
-          {project.current && <div className="editor-media-info">
+          {project.current && <div className="editor-media-info" inert={validationOpen}>
             <span className="muted">{project.current.name}</span>
             <label className="field-stack"><span className="field-label">比赛</span>
               <input className="text-input" aria-label="素材比赛" value={project.current.match}
@@ -917,9 +960,17 @@ export default function EditorPage(): React.ReactNode {
               </select>
             </label>
           </div>}
+          {validationOpen && <BatchValidationPanel duration={duration} mediaTime={mediaTime} sourceName={sampleName}
+            state={validation.state} onStart={validation.start} onStop={validation.stop} onInspect={validation.inspect}
+            onJump={jumpToValidationFrame} onClose={() => {
+              if (validation.state.phase === 'running') return
+              reviewSeek.current?.abort()
+              validation.cancelPreview()
+              setValidationOpen(false)
+            }} />}
         </section>
 
-        <aside className="editor-rail" aria-label="识别设置">
+        <aside className="editor-rail" aria-label="识别设置" inert={validationOpen} hidden={validationOpen}>
           <LayoutSection key={variantId} pack={pack} variant={variant} canCreate={!!frame}
             onSelect={changeLayout} onCreate={createLayout} onGenerate={generateLayout} onRename={editLayoutId} onDelete={deleteLayout} />
           <section className="rail-group">
@@ -958,7 +1009,7 @@ export default function EditorPage(): React.ReactNode {
             bounds={analysis ? { width: analysis.binary.width, height: analysis.binary.height } : null}
             onBoxes={setBoxes} onAssign={assign} onVerify={frame && profile.enabled ? verifyFrame : null}
             recognized={profile.enabled ? recognized : { status: 'disabled', debug: null }} />
-          <StretchSection key={`stretch-${variantId}-${fieldId}-${profile.enabled}`} fieldId={numericId} variantId={variantId} video={video && profile.enabled ? videoRef.current : null} pack={activePack} onSave={saveStretch} />
+          {!validationOpen && <StretchSection key={`stretch-${variantId}-${fieldId}-${profile.enabled}`} fieldId={numericId} variantId={variantId} video={video && profile.enabled ? videoRef.current : null} pack={activePack} onSave={saveStretch} />}
           <SampleSection fieldId={numericId} profile={profile} onRemove={removeSample} />
           <ParamsSection fieldId={numericId} profile={profile} onPatch={patch} />
           </>}

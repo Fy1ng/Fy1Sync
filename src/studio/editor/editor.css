@@ -240,6 +240,37 @@
   min-height: 0;
 }
 
+.editor-main.is-validating {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.editor-bar[inert] > :not(.editor-title):not(.editor-state):not(.editor-validation-mode) {
+  display: none;
+}
+
+.editor-validation-mode {
+  margin-left: auto;
+  color: var(--ash);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.editor-main.is-validating .editor-stage-col {
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.editor-main.is-validating .editor-stage {
+  flex: none;
+  height: clamp(180px, 28vh, 300px);
+}
+
+.editor-main.is-validating .editor-transport,
+.editor-main.is-validating .editor-media-info,
+.editor-rail[hidden] {
+  display: none;
+}
+
 .editor-stage {
   position: relative;
   flex: 1;
