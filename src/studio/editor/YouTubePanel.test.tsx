@@ -67,12 +67,13 @@ describe('the YouTube panel', () => {
     expect(screen.getByText(`${videoWidth}×${videoHeight}`)).toHaveAttribute('data-native', 'true')
   })
 
-  it.each([[1280, 720], [2048, 1080], [7680, 4320], [3840, 1440]])('warns for the unsupported size %sx%s', async (videoWidth, videoHeight) => {
+  it.each([[1280, 720], [2048, 1080], [7680, 4320], [3840, 1440]])('does not restrict footage to a resolution whitelist: %sx%s', async (videoWidth, videoHeight) => {
     const fake = fakeSource()
     await opened(fake)
     fake.push(fake.state({ videoWidth, videoHeight }))
-    expect(screen.getByText(/在播放器的画质菜单里选/)).toHaveTextContent('2160p、1440p 或 1080p')
-    expect(screen.getByText(`${videoWidth}×${videoHeight}`)).toHaveAttribute('data-native', 'false')
+    expect(screen.queryByText(/在播放器的画质菜单里选/)).not.toBeInTheDocument()
+    expect(screen.getByText(/不限制素材分辨率/)).toBeInTheDocument()
+    expect(screen.getByText(`${videoWidth}×${videoHeight}`)).toHaveAttribute('data-native', 'true')
   })
 
   it('hands a still to the editor', async () => {

@@ -852,6 +852,24 @@ fn failed(reason: &str, debug: Option<HudDebug>) -> HudFieldResult {
         debug,
     }
 }
+fn validate_hud_frame(rgba: &[u8], width: usize, height: usize, pack: &HudStylePack) -> Result<(), String> {
+    const MAX_PIXELS: usize = 16_777_216;
+    if width == 0 || height == 0
+        || width.checked_mul(height).filter(|&n| n <= MAX_PIXELS).and_then(|n| n.checked_mul(4)) != Some(rgba.len()) {
+        return Err("RGBA 帧尺寸或数据长度无效".into());
+    }
+    // Small source frames must not expand into unbounded reference buffers from a package.
+    for variant in &pack.variants {
+        let regions = [variant.fields.clock.as_ref(), variant.fields.score_left.as_ref(), variant.fields.score_right.as_ref()]
+            .into_iter().flatten().map(|field| &field.roi)
+            .chain(variant.cues.values().map(|cue| &cue.roi))
+            .chain(variant.organizer.iter().map(|cue| &cue.roi));
+        if regions.into_iter().any(|roi| roi.w.checked_mul(roi.h).is_none_or(|n| n == 0 || n > MAX_PIXELS)) {
+            return Err("参考区域像素数超过处理安全上限".into());
+        }
+    }
+    Ok(())
+}
 fn frame_variant<'a>(
     rgba: &[u8],
     width: usize,
@@ -859,17 +877,12 @@ fn frame_variant<'a>(
     pack: &'a HudStylePack,
     id: &str,
 ) -> Result<&'a HudVariant, String> {
+    validate_hud_frame(rgba, width, height, pack)?;
     let variant = pack
         .variants
         .iter()
         .find(|v| v.id == id)
         .ok_or_else(|| "布局 ID 不存在".to_string())?;
-    if width != variant.native_size.width || height != variant.native_size.height {
-        return Err("帧尺寸与布局原生尺寸不一致".into());
-    }
-    if width.checked_mul(height).and_then(|n| n.checked_mul(4)) != Some(rgba.len()) {
-        return Err("RGBA 帧数据长度不匹配".into());
-    }
     Ok(variant)
 }
 fn crop_hud_rgba(rgba: &[u8], width: usize, roi: &HudRoi) -> Vec<u8> {
@@ -880,16 +893,85 @@ fn crop_hud_rgba(rgba: &[u8], width: usize, roi: &HudRoi) -> Vec<u8> {
     }
     crop
 }
-fn analyze_hud_cue(rgba: &[u8], width: usize, cue: &HudCue) -> HudCueDebug {
-    let crop = crop_hud_rgba(rgba, width, &cue.roi);
+/// Reference dimensions describe coordinates and template rasterization, not accepted video sizes.
+struct HudFrameView<'a> {
+    rgba: &'a [u8],
+    width: usize,
+    height: usize,
+    reference: &'a HudSize,
+}
+impl HudFrameView<'_> {
+    fn roi(&self, roi: &HudRoi) -> HudRoi {
+        let sx = self.width as f64 / self.reference.width as f64;
+        let sy = self.height as f64 / self.reference.height as f64;
+        let x = (js_round(roi.x as f64 * sx) as usize).min(self.width - 1);
+        let y = (js_round(roi.y as f64 * sy) as usize).min(self.height - 1);
+        HudRoi {
+            x, y,
+            w: (js_round(roi.w as f64 * sx) as usize).clamp(1, self.width - x),
+            h: (js_round(roi.h as f64 * sy) as usize).clamp(1, self.height - y),
+        }
+    }
+
+    fn crop(&self, roi: &HudRoi) -> Vec<u8> {
+        let actual = self.roi(roi);
+        if actual.w == roi.w && actual.h == roi.h {
+            return crop_hud_rgba(self.rgba, self.width, &actual);
+        }
+        let xs = sample_axis(actual.w, roi.w);
+        let ys = sample_axis(actual.h, roi.h);
+        let mut output = vec![0; roi.w * roi.h * 4];
+        for (y, yw) in ys.iter().enumerate() {
+            for (x, xw) in xs.iter().enumerate() {
+                let mut pixel = [0.0; 4];
+                for &(sy, wy) in yw {
+                    for &(sx, wx) in xw {
+                        let start = ((actual.y + sy) * self.width + actual.x + sx) * 4;
+                        for (channel, value) in pixel.iter_mut().enumerate() {
+                            *value += self.rgba[start + channel] as f64 * wx * wy;
+                        }
+                    }
+                }
+                for (channel, value) in pixel.into_iter().enumerate() {
+                    output[(y * roi.w + x) * 4 + channel] = js_round(value).clamp(0.0, 255.0) as u8;
+                }
+            }
+        }
+        output
+    }
+}
+
+/// Area weights avoid decimation aliasing; enlargement uses pixel-center bilinear weights.
+fn sample_axis(source: usize, target: usize) -> Vec<Vec<(usize, f64)>> {
+    let scale = source as f64 / target as f64;
+    (0..target).map(|index| {
+        if source > target {
+            let start = index as f64 * scale;
+            let end = ((index + 1) as f64 * scale).min(source as f64);
+            (start.floor() as usize..end.ceil() as usize).filter_map(|pixel| {
+                let weight = (end.min((pixel + 1) as f64) - start.max(pixel as f64)) / (end - start);
+                (pixel < source && weight > 0.0).then_some((pixel, weight))
+            }).collect()
+        } else {
+            let center = ((index as f64 + 0.5) * scale - 0.5).clamp(0.0, (source - 1) as f64);
+            let left = center.floor() as usize;
+            let right = (left + 1).min(source - 1);
+            if left == right { vec![(left, 1.0)] }
+            else { vec![(left, 1.0 - (center - left as f64)), (right, center - left as f64)] }
+        }
+    }).collect()
+}
+fn analyze_hud_cue(frame: &HudFrameView<'_>, cue: &HudCue) -> HudCueDebug {
+    let crop = frame.crop(&cue.roi);
     let (gray, binary) = preprocess_hud_rgba(&crop, cue.roi.w, cue.roi.h, &cue.preprocess);
-    HudCueDebug { roi_pixels: cue.roi.rect(), gray, binary }
+    HudCueDebug { roi_pixels: frame.roi(&cue.roi).rect(), gray, binary }
 }
 pub fn recommend_hud_preprocess(
     rgba: &[u8], width: usize, height: usize, pack: &HudStylePack, variant_id: &str,
     target_id: &str, request: &HudPreprocessRequest,
 ) -> Result<HudPreprocessRecommendation, String> {
     let variant = frame_variant(rgba, width, height, pack, variant_id)?;
+    let frame = HudFrameView { rgba, width, height, reference: &variant.native_size };
     let (roi, settings) = if HUD_FIELDS.contains(&target_id) {
         let field = variant.fields.get(target_id).ok_or_else(|| "字段尚未配置".to_string())?;
         if !field.enabled { return Err("field-disabled".into()); }
@@ -900,17 +982,18 @@ pub fn recommend_hud_preprocess(
         if !cue.enabled { return Err("field-disabled".into()); }
         (&cue.roi, &cue.preprocess)
     };
-    let local_request = match *request {
-        HudPreprocessRequest::Hsv { x, y } => {
-            if x < roi.x || y < roi.y || x >= roi.x + roi.w || y >= roi.y + roi.h {
-                return Err("color-point-outside-roi".into());
-            }
-            HudPreprocessRequest::Hsv { x: x - roi.x, y: y - roi.y }
+    if let HudPreprocessRequest::Hsv { x, y } = *request {
+        let actual = frame.roi(roi);
+        if x < actual.x || y < actual.y || x >= actual.x + actual.w || y >= actual.y + actual.h {
+            return Err("color-point-outside-roi".into());
         }
-        _ => request.clone(),
-    };
-    let crop = crop_hud_rgba(rgba, width, roi);
-    crate::hud_preprocess::recommend_hud_roi_preprocess(&crop, roi.w, roi.h, settings, &local_request)
+        // A picked color is the original RGB pixel, never an interpolated reference pixel.
+        let start = (y * width + x) * 4;
+        return crate::hud_preprocess::recommend_hud_roi_preprocess(&rgba[start..start + 4], 1, 1, settings,
+            &HudPreprocessRequest::Hsv { x: 0, y: 0 });
+    }
+    let crop = frame.crop(roi);
+    crate::hud_preprocess::recommend_hud_roi_preprocess(&crop, roi.w, roi.h, settings, request)
 }
 pub fn prepare_hud_cue(
     rgba: &[u8],
@@ -924,7 +1007,8 @@ pub fn prepare_hud_cue(
     let cue = if cue_id == "organizer" { variant.organizer.as_ref() } else { variant.cues.get(cue_id) }
         .ok_or_else(|| "固定图形不存在或尚未配置".to_string())?;
     if !cue.enabled { return Err("field-disabled".into()); }
-    let debug = analyze_hud_cue(rgba, width, cue);
+    let frame = HudFrameView { rgba, width, height, reference: &variant.native_size };
+    let debug = analyze_hud_cue(&frame, cue);
     Ok(HudCuePreparation {
         bitmap: pack_bitmap(&debug.binary.data),
         roi_pixels: debug.roi_pixels,
@@ -936,13 +1020,12 @@ fn presence_failed(reason: &str, debug: Option<HudCueDebug>) -> HudPresenceResul
     HudPresenceResult::Failed { reason: reason.into(), score: None, debug }
 }
 fn recognize_hud_cue(
-    rgba: &[u8],
-    width: usize,
+    frame: &HudFrameView<'_>,
     pack: &HudStylePack,
     cue: &HudCue,
 ) -> HudPresenceResult {
     if !cue.enabled { return HudPresenceResult::Disabled { score: None, debug: None }; }
-    let debug = analyze_hud_cue(rgba, width, cue);
+    let debug = analyze_hud_cue(frame, cue);
     if cue.templates.is_empty() {
         return presence_failed("insufficient-templates", Some(debug));
     }
@@ -1095,9 +1178,9 @@ fn hud_phase_with_timeout(states: &BTreeMap<String, HudPresenceResult>, cues: &B
         "paused".into()
     }
 }
-fn analyze_hud_field(rgba: &[u8], width: usize, field: &HudField) -> (HudDebug, Vec<Vec<u8>>) {
-    let rect = field.roi.rect();
-    let crop = crop_hud_rgba(rgba, width, &field.roi);
+fn analyze_hud_field(frame: &HudFrameView<'_>, field: &HudField) -> (HudDebug, Vec<Vec<u8>>) {
+    let rect = frame.roi(&field.roi).rect();
+    let crop = frame.crop(&field.roi);
     let (gray, binary) = preprocess_hud_rgba(&crop, field.roi.w, field.roi.h, &field.preprocess);
     let seg = segment_glyphs(&binary, &serde_json::to_value(&field.segment).unwrap());
     let coverage: Vec<_> = seg
@@ -1145,7 +1228,8 @@ pub fn prepare_hud_glyphs_with_boxes(
         .get(field_id)
         .ok_or_else(|| "字段不存在或尚未配置".to_string())?;
     if !field.enabled { return Err("field-disabled".into()); }
-    let (mut debug, _) = analyze_hud_field(rgba, width, field);
+    let frame = HudFrameView { rgba, width, height, reference: &variant.native_size };
+    let (mut debug, _) = analyze_hud_field(&frame, field);
     if let Some(boxes) = boxes {
         for b in &boxes {
             if [b.x, b.y, b.width, b.height]
@@ -1212,8 +1296,7 @@ fn shared_score_glyphs(fields: &HudFields) -> BTreeMap<String, Vec<String>> {
     glyphs
 }
 fn recognize_hud_field(
-    rgba: &[u8],
-    width: usize,
+    frame: &HudFrameView<'_>,
     pack: &HudStylePack,
     id: &str,
     field: Option<&HudField>,
@@ -1221,7 +1304,7 @@ fn recognize_hud_field(
 ) -> HudFieldResult {
     if let Some(field) = field {
         if !field.enabled { return HudFieldResult::Disabled { debug: None }; }
-        let (mut debug, coverage) = analyze_hud_field(rgba, width, field);
+        let (mut debug, coverage) = analyze_hud_field(frame, field);
         let glyphs = shared_glyphs.unwrap_or(&field.glyphs);
         let mut templates = CompiledTemplates {
             chars: vec![],
@@ -1268,7 +1351,9 @@ fn recognize_hud_field(
             };
             if let Some(value) = value {
                 let scores: Vec<_> = debug.matches.iter().map(|m| m.score).collect();
-                let confidence = scores.iter().copied().fold(1.0, f64::min);
+                // Separators must pass their own matching gates, but do not rate the digits.
+                let confidence = debug.matches.iter().filter(|m| !countdown || m.char.as_deref() != Some(":"))
+                    .map(|m| m.score).fold(1.0, f64::min);
                 HudFieldResult::Read {
                     reading: HudReading {
                         source: "recognized".into(),
@@ -1330,13 +1415,12 @@ pub fn recognize_hud_frame(
     pack: &HudStylePack,
     id: &str,
 ) -> Result<HudFrameResult, String> {
+    validate_hud_frame(rgba, width, height, pack)?;
     let (variant, selected_organizer) = if id.is_empty() {
-        if width.checked_mul(height).and_then(|n| n.checked_mul(4)) != Some(rgba.len()) {
-            return Err("RGBA 帧数据长度不匹配".into());
-        }
-        let candidates: Vec<_> = pack.variants.iter().filter(|variant| {
+        let mut candidates: Vec<_> = pack.variants.iter().filter(|variant| {
             variant.native_size.width == width && variant.native_size.height == height
         }).collect();
+        if candidates.is_empty() { candidates.extend(pack.variants.iter()); }
         match candidates.as_slice() {
             [] => return Ok(indeterminate_layout("no-match")),
             [variant] => (*variant, None),
@@ -1345,7 +1429,8 @@ pub fn recognize_hud_frame(
                 for variant in candidates {
                     let Some(cue) = &variant.organizer else { continue };
                     if !cue.enabled { continue; }
-                    let organizer = recognize_hud_cue(rgba, width, pack, cue);
+                    let frame = HudFrameView { rgba, width, height, reference: &variant.native_size };
+                    let organizer = recognize_hud_cue(&frame, pack, cue);
                     if presence_matched(Some(&organizer)) {
                         if selected.is_some() {
                             return Ok(indeterminate_layout("multiple-matches"));
@@ -1362,8 +1447,9 @@ pub fn recognize_hud_frame(
     } else {
         (frame_variant(rgba, width, height, pack, id)?, None)
     };
+    let frame = HudFrameView { rgba, width, height, reference: &variant.native_size };
     let cues: BTreeMap<_, _> = variant.cues.iter().map(|(key, cue)| {
-        (key.clone(), recognize_hud_cue(rgba, width, pack, cue))
+        (key.clone(), recognize_hud_cue(&frame, pack, cue))
     }).collect();
     let statistics = ["roundHistory", "scoreboard"].iter().any(|id| presence_matched(cues.get(*id)));
     let planted = presence_matched(cues.get("bomb"));
@@ -1375,7 +1461,7 @@ pub fn recognize_hud_frame(
         } else if absent && field.is_some() {
             HudFieldResult::Absent { debug: None }
         } else {
-            recognize_hud_field(rgba, width, pack, &variant.id, field, glyphs)
+            recognize_hud_field(&frame, pack, &variant.id, field, glyphs)
         }
     };
     let clock = read_field(variant.fields.clock.as_ref(), statistics || planted, None);
@@ -1390,7 +1476,7 @@ pub fn recognize_hud_frame(
     let phase = hud_phase_with_timeout(&states, &cues);
     let organizer = selected_organizer.unwrap_or_else(|| variant.organizer.as_ref().map_or_else(
         || presence_failed("not-configured", None),
-        |cue| recognize_hud_cue(rgba, width, pack, cue),
+        |cue| recognize_hud_cue(&frame, pack, cue),
     ));
     Ok(HudFrameResult {
         variant_id: Some(variant.id.clone()),

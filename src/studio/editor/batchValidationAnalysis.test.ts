@@ -141,11 +141,60 @@ describe('threshold-aware review findings', () => {
   it('checks the weakest glyph score and near-threshold runner-up margin', () => {
     const input = result(), profile = pack()
     const clock = read(97, '1:37', 0.98)
-    if (clock.status === 'read') clock.reading.scores = [1, 1, 0.825]
+    if (clock.status === 'read') clock.reading.scores = [1, 1, 1, 0.825]
     clock.debug = { matches: [{ char: '7', score: 0.96, runnerUpScore: 0.927, sampleIndex: 0 }] } as HudDebug
     input.fields.clock = clock
     const output = frame(input, null, 0, profile)
     expect(codes(output)).toEqual(['weak-score', 'weak-margin'])
+  })
+
+  it('does not reintroduce a distinctive colon score into the digit aggregate', () => {
+    const profile = pack(), input = result()
+    profile.variants[0]!.fields.clock!.match.minScore = 0.84
+    input.fields.clock = read(97, '1:37', 0.97)
+    if (input.fields.clock.status === 'read') input.fields.clock.reading.scores = [0.99, 0.85, 0.97, 0.98]
+    input.fields.clock.debug = { matches: [{ char: ':', score: 0.85, runnerUpScore: 0.3, sampleIndex: 0 }] } as HudDebug
+    const before = JSON.stringify([profile, input])
+    const output = frame(freeze(input), null, 0, freeze(profile))
+    expect(issues(output)).toEqual([])
+    expect(output.fields.clock.confidence).toBe(0.97)
+    expect(JSON.stringify([profile, input])).toBe(before)
+  })
+
+  it('still flags a weak digit even when its colon is distinctive', () => {
+    const input = result()
+    input.fields.clock = read(97, '1:37', 0.825)
+    if (input.fields.clock.status === 'read') input.fields.clock.reading.scores = [0.99, 0.85, 0.97, 0.825]
+    input.fields.clock.debug = { matches: [{ char: ':', score: 0.85, runnerUpScore: 0.3, sampleIndex: 0 }] } as HudDebug
+    expect(codes(frame(input))).toEqual(['weak-score'])
+  })
+
+  it('reports an ambiguous separator independently of otherwise strong digits', () => {
+    const input = result()
+    input.fields.clock = read(97, '1:37', 0.98)
+    if (input.fields.clock.status === 'read') input.fields.clock.reading.scores = [0.99, 0.85, 0.99, 0.98]
+    input.fields.clock.debug = { matches: [{ char: ':', score: 0.85, runnerUpScore: 0.817, sampleIndex: 0 }] } as HudDebug
+    const output = frame(input)
+    expect(codes(output)).toEqual(['weak-margin'])
+    expect(issues(output)[0]?.message).toContain('冒号')
+    expect(output.fields.clock.confidence).toBe(0.98)
+  })
+
+  it('uses the engine aggregate rather than guessing the positions in incomplete score metadata', () => {
+    const input = result()
+    input.fields.clock = read(97, '1:37', 0.98)
+    if (input.fields.clock.status === 'read') input.fields.clock.reading.scores = [0.7]
+    expect(issues(frame(input))).toEqual([])
+    if (input.fields.clock.status === 'read') input.fields.clock.reading.confidence = 0.825
+    expect(codes(frame(input))).toEqual(['weak-score'])
+  })
+
+  it.each(['clock', 'scoreLeft', 'scoreRight'] as const)('retains all numeric scores for separator-free %s', id => {
+    const profile = pack(), input = result()
+    profile.variants[0]!.fields.clock!.grammar = { kind: 'countdown', format: 'ss' }
+    input.fields[id] = read(37, '37', 0.98)
+    if (input.fields[id].status === 'read') input.fields[id].reading.scores = [0.825, 0.98]
+    expect(issues(frame(input, null, 0, profile)).map(note => [note.target, note.code])).toEqual([[id, 'weak-score']])
   })
 
   it('does not call perfect matches weak when a user requires a perfect score', () => {

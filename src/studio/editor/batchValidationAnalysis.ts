@@ -29,15 +29,22 @@ function weakFieldNotes(id: HudFieldId, result: HudFieldResult, variant: HudVari
   const field = variant.fields[id]
   if (!field?.enabled || result.status !== 'read' || result.reading.source !== 'recognized') return []
   const notes: ValidationNote[] = []
-  const weakest = Math.min(result.reading.confidence, ...result.reading.scores)
+  const { text, scores, confidence } = result.reading
+  const separatedClock = id === 'clock' && field.grammar.kind === 'countdown' && field.grammar.format !== 'ss' && text.includes(':')
+  // The engine's aggregate already excludes separators. Only map raw scores when their
+  // positions are known; a shortened diagnostics array must not turn a colon into a digit.
+  const evaluatedScores = separatedClock ? scores.length === text.length ? scores.filter((_, index) => text[index] !== ':') : [] : scores
+  const weakest = Math.min(confidence, ...evaluatedScores)
   // Review the bottom tenth of the configured score headroom, not an absolute global cutoff.
   const scoreLimit = field.match.minScore + (1 - field.match.minScore) * 0.1
   if (field.match.minScore < 1 && weakest <= scoreLimit) notes.push({ kind: 'issue', target: id, code: 'weak-score',
     message: `${FIELD_LABELS[id]}匹配得分接近当前阈值 ${field.match.minScore.toFixed(3)}, 请抽查` })
-  const margins = result.debug?.matches.map(match => match.score - match.runnerUpScore) ?? []
-  if (field.match.minMargin > 0 && margins.some(margin => margin <= field.match.minMargin * 1.25)) notes.push({
-    kind: 'issue', target: id, code: 'weak-margin', message: `${FIELD_LABELS[id]}候选字形分差接近最小分差 ${field.match.minMargin.toFixed(3)}, 请抽查`,
-  })
+  const weakMargins = result.debug?.matches.filter(match => match.score - match.runnerUpScore <= field.match.minMargin * 1.25) ?? []
+  if (field.match.minMargin > 0 && weakMargins.length) {
+    const label = separatedClock && weakMargins.every(match => match.char === ':') ? '倒计时冒号' : `${FIELD_LABELS[id]}候选字形`
+    notes.push({ kind: 'issue', target: id, code: 'weak-margin',
+      message: `${label}分差接近最小分差 ${field.match.minMargin.toFixed(3)}, 请抽查` })
+  }
   return notes
 }
 
@@ -98,7 +105,7 @@ export function analyzeValidationFrame(result: HudFrameResult, pack: HudStylePac
     fields: fieldsFor(id => compactField(result.fields[id])), cues: {}, notes: [] }
   if (!variant) {
     row.notes.push({ kind: 'issue', target: 'layout', code: result.selectionReason === 'multiple-matches' ? 'multiple-layouts' : 'no-layout',
-      message: result.selectionReason === 'multiple-matches' ? '多个布局同时匹配, 播放器无法选择' : '没有匹配布局, 请检查原生分辨率与主办方模板' })
+      message: result.selectionReason === 'multiple-matches' ? '多个布局同时匹配, 播放器无法选择' : '没有匹配布局, 请检查布局与主办方模板' })
     return row
   }
 

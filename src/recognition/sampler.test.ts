@@ -607,7 +607,7 @@ describe('RecognitionSampler', () => {
     }
   })
 
-  it('names a style pack with no layout at the video size instead of reading every frame as unresolved', async () => {
+  it('passes a style pack to the recognizer when its reference size differs from the video', async () => {
     const restore = stubGrabber()
     const loop = manualLoop()
     const errors: Array<{ role: SourceRole; message: string }> = []
@@ -629,8 +629,9 @@ describe('RecognitionSampler', () => {
       const run = sampler.sample(30, () => {}, { aborted: false })
       await loop.tick(3)
       await run
-      expect(errors[0]).toEqual({ role: 'official', message: expect.stringContaining('640x360 的布局档') })
-      expect(posted).not.toContain('frame')
+      expect(errors).toEqual([])
+      expect(posted).toContain('configure')
+      expect(posted).toContain('frame')
     } finally {
       sampler.dispose()
       restore()

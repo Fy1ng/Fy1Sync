@@ -227,6 +227,7 @@ export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, sel
           </span>
         )}
       </div>
+      {fieldId === 'clock' && profile.clockFormat !== 'ss' && <p className="muted">总置信度只计算数字, 冒号单独检查匹配与分差.</p>}
       {recognized?.debug && recognized.debug.matches.length > 0 && (
         <ol className="match-list num">
           {recognized.debug.matches.map((match, index) => (

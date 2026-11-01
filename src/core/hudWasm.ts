@@ -7,6 +7,7 @@ import type { HudPreprocessRecommendation, HudPreprocessRequest } from './hudPre
 export interface HudImage { data: Uint8Array; width: number; height: number }
 export interface HudGlyphMatch { char: ClockChar | null; score: number; runnerUpScore: number; sampleIndex: number }
 export interface HudCueDebug {
+  /** Location in the decoded frame; gray/binary images use the layout's reference ROI size. */
   roiPixels: { x: number; y: number; width: number; height: number }
   gray: HudImage
   binary: HudImage
@@ -19,6 +20,7 @@ export interface HudDebug extends HudCueDebug {
   matches: HudGlyphMatch[]
 }
 export interface HudAnalysis extends Omit<HudDebug, 'matches'> { bitmaps: string[] }
+/** Countdown confidence uses digits only; scores/debug retain the independently checked colon. */
 export type HudFieldResult = (
   | { status: 'read'; reading: { text: string; value: number; confidence: number; scores: number[]; source: 'recognized' | 'derived' } }
   | { status: 'absent' }

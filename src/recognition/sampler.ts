@@ -17,7 +17,7 @@
  * the duplicated cost is a few kilobytes of template masks.
  */
 
-import { assertLayoutForSize, captureRoi, isHudPack, type ActiveProfile } from '../core/activeProfile'
+import { captureRoi, isHudPack, type ActiveProfile } from '../core/activeProfile'
 import type { RecognitionProfile } from '../core/profileSchema'
 import { ClockJumpDetector, parseCountdown } from '../core/clockJump'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
@@ -224,7 +224,6 @@ export class RecognitionSampler {
       if (channel.configuredFor !== active) {
         this.resetTiming(channel)
         try {
-          if (isHudPack(active)) assertLayoutForSize(active, { width: video.videoWidth, height: video.videoHeight })
           channel.client.configure(active, isHudPack(active) ? {} : { automatic: active.id.startsWith('session/') })
         } catch (error) { this.options.onError?.(role, String(error)); return }
         channel.configuredFor = active

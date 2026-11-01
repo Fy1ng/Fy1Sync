@@ -9,13 +9,6 @@ export function isHudPack(profile: ActiveProfile): profile is HudStylePack {
   return 'kind' in profile && profile.kind === 'hud-style-pack'
 }
 
-/** Layouts are chosen per frame, but a pack with none at this size can never read the video. */
-export function assertLayoutForSize(pack: HudStylePack, size: HudSize): void {
-  if (!pack.variants.some(item => item.nativeSize.width === size.width && item.nativeSize.height === size.height)) {
-    throw new Error(`样式包没有 ${size.width}x${size.height} 的布局档`)
-  }
-}
-
 export function captureRoi(profile: ActiveProfile): RoiRect {
   return isHudPack(profile) ? { x: 0, y: 0, w: 1, h: 1 } : profile.roi
 }

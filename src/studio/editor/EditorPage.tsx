@@ -971,7 +971,7 @@ export default function EditorPage(): React.ReactNode {
         </section>
 
         <aside className="editor-rail" aria-label="识别设置" inert={validationOpen} hidden={validationOpen}>
-          <LayoutSection key={variantId} pack={pack} variant={variant} canCreate={!!frame}
+          <LayoutSection key={variantId} pack={pack} variant={variant} canCreate={!!frame} frameSize={videoSize}
             onSelect={changeLayout} onCreate={createLayout} onGenerate={generateLayout} onRename={editLayoutId} onDelete={deleteLayout} />
           <section className="rail-group">
             <label className="field-stack">
@@ -987,7 +987,7 @@ export default function EditorPage(): React.ReactNode {
             {!profile.enabled && <p className="muted" role="note">该字段已关闭. 下方配置仅供查看, 重新启用后可继续制作.</p>}
           </section>
           <fieldset className="editor-field-controls" disabled={!profile.enabled} aria-label="当前字段设置">
-          <RegionSection fieldId={numericId} label={cueId ? CUE_LABELS[cueId] : undefined} roi={profile.roi} onRoi={setRoi} videoSize={videoSize} analysis={analysis}
+          <RegionSection fieldId={numericId} label={cueId ? CUE_LABELS[cueId] : undefined} roi={profile.roi} onRoi={setRoi} videoSize={variant.nativeSize} analysis={analysis}
             boxes={boxes} selected={selected} onSelect={setSelected}
             grayRef={grayCanvasRef} binaryRef={binaryCanvasRef} />
           <BinarizeSection profile={profile} onPatch={patchPreprocess} frame={frame}

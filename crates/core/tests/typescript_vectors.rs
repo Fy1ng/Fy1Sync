@@ -573,6 +573,236 @@ fn full_frame_hud_and_glyph_preparation_share_every_intermediate() {
 }
 
 #[test]
+fn hud_countdown_confidence_excludes_colon_without_hiding_its_score_or_relaxing_its_gates() {
+    let (frame, roi) = clock("1:37", 6);
+    let mut pack = parse_hud_style_pack(&hud_pack(&profile(6, roi), 640, 360)).unwrap();
+    let colon_id = pack.variants[0].fields.clock.as_ref().unwrap().glyphs[":"].first().unwrap().clone();
+    let bitmap = pack.bitmaps.get_mut(&colon_id).unwrap();
+    let mut mask = unpack_bitmap(&bitmap.data, 1536).unwrap();
+    let mut ink = 0;
+    for pixel in &mut mask {
+        if *pixel != 0 {
+            ink += 1;
+            if ink % 7 == 0 { *pixel = 0; }
+        }
+    }
+    bitmap.data = pack_bitmap(&mask);
+    pack.variants[0].fields.clock.as_mut().unwrap().r#match.min_score = 0.7;
+    let original = serde_json::to_value(&pack).unwrap();
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    let HudFieldResult::Read { reading, debug: Some(debug) } = result.fields.clock else { panic!("{result:?}") };
+    let colon = &debug.matches[1];
+    assert_eq!(reading.text, "1:37");
+    assert_eq!(reading.scores.len(), 4);
+    assert_eq!(colon.char.as_deref(), Some(":"));
+    assert!(colon.score > 0.7 && colon.score < 0.9);
+    assert!(colon.score - colon.runner_up_score > 0.2);
+    assert_eq!(reading.scores[1], colon.score);
+    let digits = debug.matches.iter().filter(|m| m.char.as_deref() != Some(":"))
+        .map(|m| m.score).fold(1.0, f64::min);
+    assert_eq!(reading.confidence, digits);
+    assert!(reading.confidence > colon.score);
+    assert_eq!(serde_json::to_value(&pack).unwrap(), original);
+
+    pack.variants[0].fields.clock.as_mut().unwrap().r#match.min_score = (colon.score + digits) / 2.0;
+    let gated = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    assert!(matches!(gated.fields.clock, HudFieldResult::Failed { ref reason, .. } if reason == "low-confidence"));
+}
+
+#[test]
+fn hud_small_video_cannot_expand_an_unbounded_reference_region() {
+    let (_, roi) = clock("1:37", 6);
+    let mut pack = parse_hud_style_pack(&hud_pack(&profile(6, roi), 640, 360)).unwrap();
+    pack.variants[0].native_size = HudSize { width: 8192, height: 8192 };
+    pack.variants[0].fields.clock.as_mut().unwrap().roi = HudRoi { x: 0, y: 0, w: 8192, h: 8192 };
+    let tiny = [0, 0, 0, 255];
+    assert!(recognize_hud_frame(&tiny, 1, 1, &pack, "").unwrap_err().contains("安全上限"));
+    assert!(prepare_hud_glyphs(&tiny, 1, 1, &pack, "official-top-360", "clock").unwrap_err().contains("安全上限"));
+}
+
+#[test]
+fn hud_ambiguous_colon_and_invalid_colon_placement_are_still_rejected() {
+    let (frame, roi) = clock("1:37", 6);
+    let mut pack = parse_hud_style_pack(&hud_pack(&profile(6, roi), 640, 360)).unwrap();
+    let colon_id = pack.variants[0].fields.clock.as_ref().unwrap().glyphs[":"].first().unwrap().clone();
+    let mut near_colon = unpack_bitmap(&pack.bitmaps[&colon_id].data, 1536).unwrap();
+    *near_colon.iter_mut().find(|pixel| **pixel == 0).unwrap() = 255;
+    pack.bitmaps.insert("ambiguous-two".into(), HudBitmap { width: 32, height: 48, data: pack_bitmap(&near_colon) });
+    pack.variants[0].fields.clock.as_mut().unwrap().glyphs.get_mut("2").unwrap().push("ambiguous-two".into());
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    let HudFieldResult::Failed { reason, debug: Some(debug) } = result.fields.clock else { panic!("{result:?}") };
+    assert_eq!(reason, "low-confidence");
+    assert!(debug.matches[1].score - debug.matches[1].runner_up_score < 0.02);
+
+    let (bad_frame, bad_roi) = clock("13:7", 6);
+    let mut bad_pack = parse_hud_style_pack(&hud_pack(&profile(6, bad_roi), 640, 360)).unwrap();
+    bad_pack.variants[0].fields.clock.as_mut().unwrap().grammar = HudGrammar::Countdown { format: "m:ss".into() };
+    let result = recognize_hud_frame(&bad_frame, 640, 360, &bad_pack, "").unwrap();
+    assert!(matches!(result.fields.clock, HudFieldResult::Failed { ref reason, .. } if reason == "invalid-format"));
+}
+
+#[test]
+fn hud_seconds_only_and_integer_readings_keep_the_lowest_digit_confidence() {
+    let (frame, roi) = clock("37", 6);
+    let mut pack = parse_hud_style_pack(&hud_pack(&profile(6, roi), 640, 360)).unwrap();
+    pack.variants[0].fields.clock.as_mut().unwrap().grammar = HudGrammar::Countdown { format: "ss".into() };
+    pack.variants[0].fields.clock.as_mut().unwrap().glyphs.remove(":");
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    let HudFieldResult::Read { reading, .. } = result.fields.clock else { panic!("{result:?}") };
+    assert_eq!(reading.text, "37");
+    assert_eq!(reading.confidence, reading.scores.iter().copied().fold(1.0, f64::min));
+
+    let (frame, pack) = scoreboard("18", "7");
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    for field in [result.fields.score_left, result.fields.score_right] {
+        let HudFieldResult::Read { reading, .. } = field else { panic!("{field:?}") };
+        assert_eq!(reading.confidence, reading.scores.iter().copied().fold(1.0, f64::min));
+    }
+}
+
+fn nearest_rgba(frame: &[u8], width: usize, height: usize, target_width: usize, target_height: usize) -> Vec<u8> {
+    let mut output = vec![0; target_width * target_height * 4];
+    for y in 0..target_height {
+        for x in 0..target_width {
+            let source = ((y * height / target_height) * width + x * width / target_width) * 4;
+            output[(y * target_width + x) * 4..(y * target_width + x) * 4 + 4].copy_from_slice(&frame[source..source + 4]);
+        }
+    }
+    output
+}
+
+#[test]
+fn hud_reference_layout_reads_smaller_larger_and_differently_shaped_frames_without_mutation() {
+    let (frame, roi) = clock("1:37", 6);
+    let pack = parse_hud_style_pack(&hud_pack(&profile(6, roi), 640, 360)).unwrap();
+    let before = serde_json::to_value(&pack).unwrap();
+    let native = prepare_hud_glyphs(&frame, 640, 360, &pack, "official-top-360", "clock").unwrap();
+    for (width, height) in [(320, 180), (960, 540), (1280, 720), (1920, 1080), (1280, 360)] {
+        let resized = nearest_rgba(&frame, 640, 360, width, height);
+        for id in ["", "official-top-360"] {
+            let result = recognize_hud_frame(&resized, width, height, &pack, id).unwrap();
+            let HudFieldResult::Read { reading, debug: Some(debug) } = result.fields.clock else { panic!("{width}x{height}: {result:?}") };
+            assert_eq!(result.variant_id.as_deref(), Some("official-top-360"));
+            assert_eq!(reading.text, "1:37");
+            assert_eq!(debug.binary, native.binary);
+            assert_eq!(debug.boxes, native.boxes);
+            let prepared = prepare_hud_glyphs(&resized, width, height, &pack, "official-top-360", "clock").unwrap();
+            assert_eq!(prepared.binary, debug.binary);
+            assert_eq!(prepared.roi_pixels, debug.roi_pixels);
+            assert_eq!(prepared.bitmaps, native.bitmaps);
+            let custom = prepare_hud_glyphs_with_boxes(&resized, width, height, &pack, "official-top-360", "clock", Some(native.boxes.clone())).unwrap();
+            assert_eq!(custom.bitmaps, native.bitmaps);
+            assert_eq!(debug.roi_pixels.x, js_round(native.roi_pixels.x * width as f64 / 640.0));
+            assert_eq!(debug.roi_pixels.y, js_round(native.roi_pixels.y * height as f64 / 360.0));
+            assert_eq!(debug.roi_pixels.width, js_round(native.roi_pixels.width * width as f64 / 640.0));
+            assert_eq!(debug.roi_pixels.height, js_round(native.roi_pixels.height * height as f64 / 360.0));
+        }
+    }
+    assert_eq!(serde_json::to_value(&pack).unwrap(), before);
+}
+
+#[test]
+fn hud_reference_cues_scores_states_and_organizer_share_mapped_pixels() {
+    let (mut frame, mut pack) = scoreboard("18", "7");
+    let mask = [255, 0, 255, 0, 255, 0, 255, 0, 255];
+    pack.bitmaps.insert("mark".into(), HudBitmap { width: 3, height: 3, data: pack_bitmap(&mask) });
+    let cue = HudCue { enabled: true, roi: HudRoi { x: 7, y: 11, w: 3, h: 3 },
+        preprocess: HudPreprocessSettings { scale: 1.0, ..HudPreprocessSettings::default() }, templates: vec!["mark".into()], min_score: 1.0 };
+    pack.variants[0].cues.insert("timeoutRight".into(), cue.clone());
+    pack.variants[0].organizer = Some(cue);
+    paint_layout_mark(&mut frame, 7);
+    let native = prepare_hud_cue(&frame, 640, 360, &pack, "official-top-360", "timeoutRight").unwrap();
+    for (width, height) in [(1280, 720), (1920, 1080)] {
+        let resized = nearest_rgba(&frame, 640, 360, width, height);
+        let result = recognize_hud_frame(&resized, width, height, &pack, "").unwrap();
+        assert_eq!(result.phase, "paused");
+        assert!(matches!(result.cues["timeoutRight"], HudPresenceResult::Matched { score: Some(1.0), .. }));
+        assert!(matches!(result.organizer, HudPresenceResult::Matched { score: Some(1.0), .. }));
+        for (field, expected) in [(&result.fields.score_left, "18"), (&result.fields.score_right, "7")] {
+            assert!(matches!(field, HudFieldResult::Read { reading, .. } if reading.text == expected));
+        }
+        assert!(matches!(result.fields.round, HudFieldResult::Read { reading, .. } if reading.value == 26.0));
+        let prepared = prepare_hud_cue(&resized, width, height, &pack, "official-top-360", "timeoutRight").unwrap();
+        assert_eq!(prepared.bitmap, native.bitmap);
+        assert_eq!(prepared.gray, native.gray);
+        assert_eq!(prepared.binary, native.binary);
+        assert_eq!(prepared.roi_pixels, Rect { x: 7.0 * width as f64 / 640.0, y: 11.0 * height as f64 / 360.0,
+            width: 3.0 * width as f64 / 640.0, height: 3.0 * height as f64 / 360.0 });
+    }
+}
+
+#[test]
+fn hud_cross_resolution_layout_selection_keeps_conflicts_and_prefers_exact_candidates() {
+    let (mut frame, mut pack) = layout_pack();
+    paint_layout_mark(&mut frame, 7);
+    let resized = nearest_rgba(&frame, 640, 360, 1280, 720);
+    let result = recognize_hud_frame(&resized, 1280, 720, &pack, "").unwrap();
+    assert_eq!(result.variant_id.as_deref(), Some("official-top-360"));
+    paint_layout_mark(&mut frame, 21);
+    let both = nearest_rgba(&frame, 640, 360, 1280, 720);
+    assert_indeterminate_layout(&recognize_hud_frame(&both, 1280, 720, &pack, "").unwrap(), "multiple-matches");
+    let explicit = recognize_hud_frame(&both, 1280, 720, &pack, "official-bottom-360").unwrap();
+    assert_eq!(explicit.variant_id.as_deref(), Some("official-bottom-360"));
+    let mut exact = pack.variants[0].clone();
+    exact.id = "native-720".into();
+    exact.native_size = HudSize { width: 1280, height: 720 };
+    exact.organizer = None;
+    pack.variants.push(exact);
+    assert_eq!(recognize_hud_frame(&both, 1280, 720, &pack, "").unwrap().variant_id.as_deref(), Some("native-720"));
+}
+
+#[test]
+fn hud_scaled_hsv_pick_uses_original_rgb_and_recommendations_do_not_modify_the_pack() {
+    let (frame, mut pack) = scoreboard("8", "9");
+    let cue = HudCue { enabled: true, roi: HudRoi { x: 100, y: 80, w: 6, h: 6 },
+        preprocess: HudPreprocessSettings::default(), templates: vec![], min_score: 0.9 };
+    pack.variants[0].organizer = Some(cue);
+    let mut resized = nearest_rgba(&frame, 640, 360, 1280, 720);
+    let (x, y) = (201, 161);
+    resized[(y * 1280 + x) * 4..(y * 1280 + x) * 4 + 4].copy_from_slice(&[60, 0, 0, 255]);
+    let before = serde_json::to_value(&pack).unwrap();
+    let picked = recommend_hud_preprocess(&resized, 1280, 720, &pack, "official-top-360", "organizer", &HudPreprocessRequest::Hsv { x, y }).unwrap();
+    let settings = picked.settings.unwrap();
+    assert_eq!(settings.hsv.hue, 0.0);
+    assert_eq!(settings.hsv.saturation_min, 0.8);
+    assert_eq!(settings.hsv.value_max, 60.0 / 255.0 + 0.25);
+    for (x, y) in [(199, 160), (212, 160), (200, 159), (200, 172)] {
+        assert!(recommend_hud_preprocess(&resized, 1280, 720, &pack, "official-top-360", "organizer", &HudPreprocessRequest::Hsv { x, y }).is_err());
+    }
+    for request in [HudPreprocessRequest::Threshold {}, HudPreprocessRequest::Polarity {}] {
+        let native = recommend_hud_preprocess(&frame, 640, 360, &pack, "official-top-360", "scoreLeft", &request).unwrap();
+        let scaled = recommend_hud_preprocess(&resized, 1280, 720, &pack, "official-top-360", "scoreLeft", &request).unwrap();
+        assert_eq!(serde_json::to_value(native).unwrap(), serde_json::to_value(scaled).unwrap());
+    }
+    assert_eq!(serde_json::to_value(&pack).unwrap(), before);
+}
+
+#[test]
+fn hud_scaled_edge_regions_remain_inside_frame_and_empty_or_overflowing_frames_are_rejected() {
+    let (_, mut pack) = scoreboard("8", "9");
+    pack.variants[0].fields.score_left.as_mut().unwrap().roi = HudRoi { x: 639, y: 359, w: 1, h: 1 };
+    pack.variants[0].organizer = Some(HudCue { enabled: true, roi: HudRoi { x: 639, y: 359, w: 1, h: 1 },
+        preprocess: HudPreprocessSettings::default(), templates: vec![], min_score: 0.9 });
+    for (width, height) in [(1, 1), (3, 2), (319, 179), (1279, 719)] {
+        let data = vec![160; width * height * 4];
+        let glyphs = prepare_hud_glyphs(&data, width, height, &pack, "official-top-360", "scoreLeft").unwrap();
+        let cue = prepare_hud_cue(&data, width, height, &pack, "official-top-360", "organizer").unwrap();
+        for rect in [glyphs.roi_pixels, cue.roi_pixels] {
+            assert!(rect.x >= 0.0 && rect.y >= 0.0 && rect.width >= 1.0 && rect.height >= 1.0);
+            assert!(rect.x + rect.width <= width as f64 && rect.y + rect.height <= height as f64);
+        }
+        assert_eq!(cue.binary.width, 1);
+        assert_eq!(cue.binary.height, 1);
+    }
+    for (width, height) in [(0, 0), (0, 1), (1, 0), (usize::MAX, 2)] {
+        assert!(recognize_hud_frame(&[], width, height, &pack, "").is_err());
+        assert!(prepare_hud_glyphs(&[], width, height, &pack, "official-top-360", "clock").is_err());
+        assert!(prepare_hud_cue(&[], width, height, &pack, "official-top-360", "organizer").is_err());
+        assert!(recommend_hud_preprocess(&[], width, height, &pack, "official-top-360", "clock", &HudPreprocessRequest::Polarity {}).is_err());
+    }
+}
+
+#[test]
 fn hud_configure_rejects_old_and_unknown_data_before_replacing_a_pack() {
     let (frame,roi)=clock("1:37",6);
     let profile=profile(6,roi);

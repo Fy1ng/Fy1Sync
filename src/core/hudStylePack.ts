@@ -34,6 +34,7 @@ export interface HudCue {
 export type HudCondition = { kind: 'cue'; cue: HudCueId; present: boolean } | { kind: 'field'; field: HudFieldId; present: boolean }
 export interface HudVariant {
   id: string
+  /** Reference coordinate size; a decoded frame is not required to have this resolution. */
   nativeSize: HudSize
   fields: Record<HudFieldId, HudField | null>
   cues: Partial<Record<HudCueId, HudCue>>

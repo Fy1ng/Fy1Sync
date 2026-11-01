@@ -301,8 +301,17 @@ describe('HUD full-frame Rust/WASM recognition', () => {
     } finally { recognition.free() }
   })
 
-  it('captures one complete frame per sampling tick for a style pack', async () => {
+  it.each([1, 2])('captures a full frame with reference size multiplier %s without blocking on resolution', async multiplier => {
     const { pack, frame } = fixture()
+    if (multiplier !== 1) {
+      const variant = pack.variants[0]!
+      variant.cues = {}
+      variant.states = {}
+      variant.organizer = null
+      variant.nativeSize = { width: 640 * multiplier, height: 360 * multiplier }
+      const roi = variant.fields.clock!.roi
+      variant.fields.clock!.roi = { x: roi.x * multiplier, y: roi.y * multiplier, w: roi.w * multiplier, h: roi.h * multiplier }
+    }
     const { recognition, engine } = realEngine()
     const listeners = new Set<(event: MessageEvent<WorkerResponse>) => void>()
     const sent: WorkerRequest[] = []

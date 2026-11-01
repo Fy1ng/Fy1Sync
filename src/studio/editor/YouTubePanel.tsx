@@ -300,9 +300,8 @@ export function YouTubePanel({ source, onStill, onClipReady, autoStill, onAutoSt
     if (!result.ok) setProblem(clipError(result.error, targetHeight))
   }
   const running = jobs.some((job) => job.state === 'probing' || job.state === 'downloading')
-  const native = state ? state.videoWidth === 3840 && state.videoHeight === 2160
-    || state.videoWidth === 2560 && state.videoHeight === 1440
-    || state.videoWidth === 1920 && state.videoHeight === 1080 : false
+  const native = state ? Number.isSafeInteger(state.videoWidth) && state.videoWidth > 0
+    && Number.isSafeInteger(state.videoHeight) && state.videoHeight > 0 : false
   const ready = state?.playerOnly === true
 
   return (
@@ -323,9 +322,7 @@ export function YouTubePanel({ source, onStill, onClipReady, autoStill, onAutoSt
             <span className="num" data-native={native} title="YouTube 实际解码的尺寸">
               {state && state.videoWidth && state.videoHeight ? `${state.videoWidth}×${state.videoHeight}` : '未在播放'}
             </span>
-            {state && !native && state.videoWidth > 0 && (
-              <span className="note-warn">在播放器的画质菜单里选 2160p、1440p 或 1080p</span>
-            )}
+            {native && <span className="muted">不限制素材分辨率, 优先使用清晰且 HUD 完整的画面.</span>}
             {state?.advert && <span className="muted">正在播广告，结束后再截图</span>}
           </div>
 

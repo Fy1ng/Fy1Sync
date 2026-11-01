@@ -1,4 +1,4 @@
-import { assertLayoutForSize, captureRoi, isHudPack, type ActiveProfile } from '../core/activeProfile'
+import { captureRoi, isHudPack, type ActiveProfile } from '../core/activeProfile'
 /** Source-local discovery and consent. Saved profiles are never mutated here. */
 import type { RecognitionProfile, RoiRect } from '../core/profileSchema'
 import { MIN_SYNC_CONFIDENCE, SOURCE_ROLES, type RecognitionOutcome, type SourceRole } from '../core/types'
@@ -228,7 +228,6 @@ export class OnlineAutoProfiles {
     if (!video || !profile || this.disposed) return
     const client = this.client(role)
     try {
-      if (isHudPack(profile)) assertLayoutForSize(profile, { width: video.videoWidth, height: video.videoHeight })
       client.configure(profile, isHudPack(profile) ? {} : { automatic: profile.id.startsWith('session/') })
     } catch { return }
     const grabber = new FrameGrabber(() => performance.now())

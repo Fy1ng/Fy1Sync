@@ -1,5 +1,6 @@
 import { parseHudStylePack, HUD_FIELD_IDS, HUD_CUE_IDS, type HudStylePack } from '../../core/hudStylePack'
 import { recognizeHudFrame, type HudFrameResult } from '../../core/hudWasm'
+import { hudRoiAtSize } from '../../core/hudGeometry'
 import { FrameGrabber, FULL_FRAME_ROI, type GrabbedFrame } from '../../recognition/frameGrabber'
 import { analyzeValidationFrame, failureValidationRow } from './batchValidationAnalysis'
 import { FIELD_LABELS } from './editorModel'
@@ -199,15 +200,15 @@ export function validationImages(frame: GrabbedFrame, pack: HudStylePack, layout
     images.push({ target, label, url: canvas.toDataURL('image/png'), width: roi.w, height: roi.h })
   }
   crop('frame', '原始整帧', { x: 0, y: 0, w: frame.width, h: frame.height }, 640)
-  const variant = pack.variants.find(item => item.id === layout && item.nativeSize.width === frame.width && item.nativeSize.height === frame.height)
+  const variant = pack.variants.find(item => item.id === layout)
   if (variant) {
     for (const id of HUD_FIELD_IDS) {
       const field = variant.fields[id]
-      if (field?.enabled) crop(id, FIELD_LABELS[id], field.roi, 512)
+      if (field?.enabled) crop(id, FIELD_LABELS[id], hudRoiAtSize(field.roi, variant.nativeSize, frame), 512)
     }
     for (const id of [...HUD_CUE_IDS, 'organizer' as const]) {
       const cue = id === 'organizer' ? variant.organizer : variant.cues[id]
-      if (cue?.enabled) crop(id, CUE_LABELS[id], cue.roi, 512)
+      if (cue?.enabled) crop(id, CUE_LABELS[id], hudRoiAtSize(cue.roi, variant.nativeSize, frame), 512)
     }
   }
   return images

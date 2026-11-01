@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createEmptyHudStylePack } from '../../core/hudStylePack'
 import { createHudPreprocess } from '../../core/hudPreprocess'
+import type { HudDebug } from '../../core/hudWasm'
 import { fieldModel, type EditorClockModel } from './editorModel'
 import { BinarizeSection, GlyphSection, ParamsSection } from './rail'
 
@@ -79,6 +80,25 @@ describe('editor rail disclosures', () => {
 })
 
 describe('click-to-teach glyph reading', () => {
+  it('explains digit-only confidence without hiding raw colon and runner-up scores', () => {
+    const props = glyphProps({ recognized: { status: 'read', reading: {
+      source: 'recognized', text: '1:37', value: 97, confidence: 0.97, scores: [0.99, 0.85, 0.97, 0.98],
+    }, debug: { matches: [{ char: ':', score: 0.85, runnerUpScore: 0.3, sampleIndex: 0 }] } as HudDebug } })
+    render(<GlyphSection {...props} />)
+    expect(screen.getByText('总置信度只计算数字, 冒号单独检查匹配与分差.')).toBeInTheDocument()
+    expect(screen.getByText(/识别为 1:37/)).toHaveTextContent('置信度 0.970')
+    expect(screen.getByRole('listitem')).toHaveTextContent(':0.850次优 0.300')
+    expect(props.onAssign).not.toHaveBeenCalled()
+  })
+
+  it('does not show separator guidance for score fields or second-only clocks', () => {
+    const props = glyphProps()
+    const { rerender } = render(<GlyphSection {...props} fieldId="scoreLeft" />)
+    expect(screen.queryByText(/总置信度只计算数字/)).not.toBeInTheDocument()
+    rerender(<GlyphSection {...props} profile={{ ...props.profile, clockFormat: 'ss' }} />)
+    expect(screen.queryByText(/总置信度只计算数字/)).not.toBeInTheDocument()
+  })
+
   it('shows a read-only placeholder with no manual input or save action', () => {
     render(<GlyphSection {...glyphProps({ reading: '' })} />)
     const reading = screen.getByLabelText('当前读数')
