@@ -83,9 +83,17 @@ test.describe('无预设自动同步', () => {
     await seekBoth(page, 0.25, 0.25)
     await setPlaying(page, true)
     await revealOverlay(page)
+    await expect(page.locator('.align-beta')).toHaveText('适配中')
+    const alignOptions = await openAlignOptions(page)
+    await expect(alignOptions.locator('.align-testing')).toContainText('适配中')
+    await expect(alignOptions.locator('.align-testing')).toContainText('HUD 布局, 字体和清晰度尚未全部适配')
+    await page.keyboard.press('Escape')
     await page.getByRole('button', { name: '自动对齐', exact: true }).click()
     // The limits are said over the picture; a found countdown is used without asking.
-    await expect(page.locator('.toast').filter({ hasText: '目前自动同步条件较苛刻' })).toBeVisible()
+    const adaptingNotice = page.locator('.toast').filter({ hasText: '自动对齐适配中:' })
+    await expect(adaptingNotice).toBeVisible()
+    await expect(adaptingNotice).toContainText('回放, 暂停或切镜头也可能影响识别')
+    await expect(adaptingNotice).toContainText('不准时可手动微调')
     for (const role of ['official', 'commentary']) {
       const card = page.locator(`.prompt[data-role="${role}"]`)
       await expect(card).toHaveCount(0, { timeout: 60_000 })
