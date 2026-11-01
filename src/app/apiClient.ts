@@ -28,11 +28,14 @@ export interface PresetSummary {
   updatedAt: number
   etag: string
   templateChars: number
+  source?: 'cloud'
+  revision?: number
 }
 
 export interface PresetRecord {
   profile: HudStylePack
   etag: string
+  source?: 'cloud'
 }
 
 export interface SavedPreset {
@@ -82,6 +85,8 @@ export class ApiClient {
     try { return this.bridge().subscribeFeatures?.(listener) ?? (() => {}) } catch { return () => {} }
   }
   getToolsStatus() { return this.request('getToolsStatus', undefined) }
+  getStylePackSyncState() { return this.request('getStylePackSyncState', undefined) }
+  syncStylePacks() { return this.request('syncStylePacks', undefined) }
   updateYtdlp() { return this.request('updateYtdlp', undefined) }
   restoreYtdlp(target: 'previous' | 'bundled') { return this.request('restoreYtdlp', { target }) }
   setDecoderPreferences(mode: DecoderMode) { return this.request('setDecoderPreferences', { mode }) }

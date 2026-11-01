@@ -26,6 +26,8 @@ import { readPlatformBytes, readPlatformText } from './platformResponse'
 import { DouyuRenewalError, readRenewalRooms, readRenewalQuantities, type DouyuRenewalService } from './douyu/renewalService'
 import type { FeatureApi } from './featureApi'
 import type { FeatureCallContext, FeatureEvent } from '../electron/featureContracts'
+import type { StylePackSyncService } from '../electron/stylePackSync'
+import type { StylePackSyncState } from '../electron/stylePackSyncContracts'
 
 export interface AcquisitionService {
   resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string, preferAdaptive?: boolean): Promise<ResolveResult>
@@ -53,6 +55,7 @@ export type DesktopServiceDeps = {
   douyuTasks?: DouyuTaskManager
   douyuRenewal?: DouyuRenewalService
   features?: FeatureApi
+  stylePacks?: Pick<StylePackSyncService, 'list' | 'get' | 'state' | 'sync' | 'subscribe'>
 }
 
 export type DesktopService = {
@@ -160,7 +163,11 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
     subscribeBuffer: deps.acquisition ? (listener) => deps.acquisition!.subscribe(listener) : undefined,
     subscribeDouyuAccounts: deps.douyuAccounts ? listener => deps.douyuAccounts!.subscribeSnapshots(listener) : undefined,
     subscribeDouyuTasks: deps.douyuTasks ? listener => deps.douyuTasks!.subscribe(listener) : undefined,
-    subscribeFeatures: deps.features ? listener => deps.features!.subscribe(listener) : undefined,
+    subscribeFeatures: deps.features || deps.stylePacks ? listener => {
+      const emit = (event: FeatureEvent) => { if (!disposed) listener(event) }
+      const releases = [deps.features?.subscribe(emit), deps.stylePacks?.subscribe(emit)]
+      return () => { for (const release of releases) release?.() }
+    } : undefined,
     setDouyuRoom: deps.douyuTasks ? room => deps.douyuTasks!.setRoom(room) : undefined,
     async invoke(method, args, context) {
       if (disposed) return fail('service-closed', '本地服务已关闭')
@@ -433,17 +440,29 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
           }
           case 'listPresets': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
-            const records = await presets.list()
+            const [local, cloud] = await Promise.all([presets.list(), deps.stylePacks?.list() ?? []])
+            const localIds = new Set(local.map(entry => entry.id))
+            const records = [...local, ...cloud.filter(entry => !localIds.has(entry.id))]
             return { ok: true, value: { presets: records.map((entry) => ({
               id: entry.id, name: entry.profile.name, updatedAt: entry.updatedAt,
               etag: entry.etag, templateChars: Object.keys(entry.profile.variants[0]?.fields.clock?.glyphs ?? {}).length,
+              ...(!localIds.has(entry.id) ? { source: 'cloud' as const, revision: entry.profile.revision } : {}),
             })) } }
+          }
+          case 'getStylePackSyncState':
+          case 'syncStylePacks': {
+            if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
+            const unavailable: StylePackSyncState = { phase: 'unconfigured', checkedAt: null, updatedAt: null,
+              installed: 0, downloaded: 0, incompatible: 0, message: '赛事样式包分发源尚未启用.' }
+            return { ok: true, value: deps.stylePacks
+              ? await (method === 'syncStylePacks' ? deps.stylePacks.sync() : deps.stylePacks.state()) : unavailable }
           }
           case 'getPreset': {
             if (!fields(args, ['id']) || !validId(args.id)) return fail('invalid-id', '预设 ID 无效')
-            const entry = await presets.get(args.id)
+            const local = await presets.get(args.id)
+            const entry = local ?? await deps.stylePacks?.get(args.id)
             if (!entry) return fail('not-found', '预设不存在')
-            return { ok: true, value: { profile: entry.profile, etag: entry.etag } }
+            return { ok: true, value: { profile: entry.profile, etag: entry.etag, ...(!local ? { source: 'cloud' as const } : {}) } }
           }
           case 'savePreset': {
             if (!fields(args, ['id', 'profile'], ['token', 'etag']) || !optionalToken(args)

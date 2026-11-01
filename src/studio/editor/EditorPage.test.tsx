@@ -97,6 +97,37 @@ async function editingPublishedProfile() {
 }
 
 describe('editor saved and published state', () => {
+  it('refreshes cloud entries while retaining unsaved edits and the current local ETag', async () => {
+    const listeners: Array<Parameters<typeof apiClient.subscribeFeatures>[0]> = []
+    vi.spyOn(apiClient, 'subscribeFeatures').mockImplementation(listener => { listeners.push(listener); return () => {} })
+    const { profile, publish } = await editingPublishedProfile()
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'My unsaved edits' } })
+    vi.mocked(apiClient.listPresets).mockResolvedValue({ ok: true, value: { presets: [
+      { id: 'cloud/iem', name: 'New cloud pack', etag: 'cloud', templateChars: 11, updatedAt: 2, source: 'cloud' },
+    ] } })
+    await act(async () => { for (const emit of listeners) emit({ topic: 'stylepacks-changed', data: { revision: 2 } }) })
+    expect(screen.getByLabelText('名称')).toHaveValue('My unsaved edits')
+    expect(screen.getByRole('banner')).toHaveTextContent('未保存')
+    await openPreset()
+    expect(await screen.findByRole('button', { name: /New cloud pack/ })).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', { name: '发布到本机' }))
+    await waitFor(() => expect(publish).toHaveBeenCalledWith(profile.id,
+      expect.objectContaining({ name: 'My unsaved edits' }), '', 'original-etag'))
+  })
+
+  it('publishes an edited cloud preset as a local override without using its cloud ETag', async () => {
+    const { profile, read, publish } = await editingPublishedProfile()
+    read.mockResolvedValue({ ok: true, value: { profile, etag: 'cloud-etag', source: 'cloud' } })
+    await openPreset()
+    fireEvent.click(await screen.findByRole('button', { name: /Original/ }))
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2))
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'My cloud override' } })
+    fireEvent.click(screen.getByRole('button', { name: '发布到本机' }))
+    await waitFor(() => expect(publish).toHaveBeenCalledWith(profile.id,
+      expect.objectContaining({ name: 'My cloud override' }), '', undefined))
+  })
+
   it('keeps a saved draft unpublishable until the edited content is actually published', async () => {
     const { session, publish } = await editingPublishedProfile()
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Draft only' } })

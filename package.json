@@ -24,7 +24,8 @@
     "ffmpeg:build": "node scripts/build-ffmpeg.mjs",
     "package:prepare": "node scripts/prepare-package.mjs",
     "package:win": "node scripts/package-win.mjs",
-    "package:check": "node scripts/check-package.mjs"
+    "package:check": "node scripts/check-package.mjs",
+    "stylepacks:release": "node scripts/stylepack-release.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "3.14.23",

@@ -15,6 +15,7 @@ import type { DouyuRenewalTargetPage, DouyuRenewalPlan, DouyuRenewalResult, Douy
 import type { FeatureMethods, FeatureEvent } from './featureContracts'
 import type { YouTubeAdminMethods, YtBrowseState, YtImportJob } from './ytAdminContracts'
 import type { EditorProjectMethods } from './editorProjectContracts'
+import type { StylePackSyncState } from './stylePackSyncContracts'
 
 export interface WindowState { maximized: boolean; fullscreen: boolean; focused: boolean }
 
@@ -60,6 +61,8 @@ export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods, Edi
   loginStatus: { args: undefined; result: LoginStatus }
   logout: { args: { platform: LoginPlatform }; result: { ok: true } }
   listPresets: { args: undefined; result: { presets: PresetSummary[] } }
+  getStylePackSyncState: { args: undefined; result: StylePackSyncState }
+  syncStylePacks: { args: undefined; result: StylePackSyncState }
   getPreset: { args: { id: string }; result: PresetRecord }
   savePreset: { args: { id: string; profile: HudStylePack; token?: string; etag?: string }; result: SavedPreset }
   deletePreset: { args: { id: string; token?: string }; result: { ok: true } }

@@ -51,6 +51,9 @@ import { YouTubeBrowseManager } from './ytBrowse'
 import { YouTubeImportJobManager } from './ytImport'
 import { installYouTubeAdminIpc } from './ytImportIpc'
 import { EditorProjectManager, installEditorProjectIpc } from './editorProject'
+import { parseStylePackSource, StylePackSyncService } from './stylePackSync'
+import stylePackSource from '../packaging/stylepack-source.json'
+import appPackage from '../package.json'
 
 const networkRuntimePath = app.isPackaged
   ? join(process.resourcesPath, 'app.asar.unpacked', 'electron', 'network-runtime.cjs')
@@ -441,9 +444,39 @@ async function start(): Promise<void> {
         onClosed: listener => { created.on('closed', listener); return () => created.removeListener('closed', listener) } }
     },
   })
+  const stylePackDataDir = process.env.STREAM_SYNC_DATA_DIR || userDataDir
+  let trustedStylePackSource: ReturnType<typeof parseStylePackSource> = null
+  let stylePackFixturePath: string | undefined
+  try {
+    trustedStylePackSource = parseStylePackSource(e2e ? null : stylePackSource)
+    // The offline harness owns this disposable file. Packaged applications never read it.
+    if (!app.isPackaged && offlineE2e) {
+      const fixturePath = join(stylePackDataDir, 'stylepack-fixture.json')
+      const text = await readFile(fixturePath, 'utf8').catch(error => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ''
+        throw error
+      })
+      if (text) {
+        if (text.length > 4 * 1_048_576) throw new Error('Large style pack fixture')
+        trustedStylePackSource = parseStylePackSource(JSON.parse(text).source)
+        stylePackFixturePath = fixturePath
+      }
+    }
+  } catch { console.error('赛事样式包分发配置无效, 自动同步未启用.'); trustedStylePackSource = null }
+  const stylePacks = new StylePackSyncService({ dataDir: stylePackDataDir,
+    source: trustedStylePackSource, currentVersion: appPackage.version,
+    ...(stylePackFixturePath ? { resolve: async () => ['93.184.216.34'], request: (async input => {
+      const text = await readFile(stylePackFixturePath!, 'utf8')
+      if (text.length > 4 * 1_048_576) throw new Error('Large style pack fixture')
+      const fixture = JSON.parse(text) as { responses: Record<string, unknown>; fail?: boolean }
+      const url = input instanceof Request ? input.url : String(input)
+      if (fixture.fail || typeof fixture.responses?.[url] !== 'string') throw new Error('Offline style pack fixture unavailable')
+      return new Response(fixture.responses[url], { headers: { 'content-type': 'application/json' } })
+    }) as typeof fetch } : {}),
+  })
   const service = createDesktopService({
     dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, resolveHuyaRoom, registerMedia: media.register, acquisition, decoderPreferences, networkPreferences: preferences, tools, douyuAccounts, douyuTasks, douyuRenewal,
-    features: backend?.api,
+    features: backend?.api, stylePacks,
   })
   session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
     callback(allowsAppPermission(permission, {
@@ -621,6 +654,7 @@ async function start(): Promise<void> {
   }
   let cleanup: Promise<void> | undefined
   dispose = () => cleanup ??= (async () => {
+    stylePacks.dispose()
     releaseWindowState()
     mainWindow.removeListener('focus', refreshRuntime)
     mainWindow.removeListener('blur', refreshRuntime)
@@ -658,6 +692,7 @@ async function start(): Promise<void> {
   })()
   window.on('closed', () => { window = null; void dispose?.() })
   await window.loadURL(APP_URL)
+  stylePacks.start()
 }
 if (primaryInstance) app.whenReady().then(start).catch(() => { console.error('应用启动失败, 请检查构建产物和数据目录'); app.exit(1) })
 app.on('window-all-closed', () => app.quit())

@@ -238,6 +238,9 @@ export default function EditorPage(): React.ReactNode {
 
   useEffect(() => {
     void refreshLibrary()
+    return apiClient.subscribeFeatures(event => {
+      if (event.topic === 'stylepacks-changed') void refreshLibrary()
+    })
   }, [refreshLibrary])
 
   // Object URLs are revoked on replacement and on unmount; a leaked one pins the whole
@@ -642,7 +645,8 @@ export default function EditorPage(): React.ReactNode {
     setSelectedVariantId(undefined)
     setFieldId('clock')
     setPublishedProfile(result.value.profile)
-    setEtag(result.value.etag)
+    // Publishing an edited cloud asset creates a local override, never a cloud write.
+    setEtag(result.value.source === 'cloud' ? undefined : result.value.etag)
     setDirty(false)
     setMessage({ kind: 'info', text: `已载入预设 ${id}` })
   }

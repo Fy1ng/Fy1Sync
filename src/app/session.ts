@@ -174,6 +174,7 @@ export class Session {
     dropped: 0,
   }
   private presetList: PresetSummary[] = []
+  private presetListRevision = 0
   private unsubscribeDanmaku: (() => void) | null = null
   private danmakuGeneration = 0
   private filter: CompiledDanmakuFilter
@@ -289,7 +290,10 @@ export class Session {
     this.snapshotValue = this.buildSnapshot()
     this.applyAudioSettings()
     this.releaseFeatures = apiClient.subscribeFeatures(event => {
-      if (event.topic === 'danmaku-preferences' && event.data && typeof event.data === 'object') {
+      if (this.disposed) return
+      if (event.topic === 'stylepacks-changed') {
+        void this.refreshPresets()
+      } else if (event.topic === 'danmaku-preferences' && event.data && typeof event.data === 'object') {
         this.configureDanmakuProcessing((event.data as { preferences?: unknown }).preferences)
       } else if (event.topic === 'pip' && event.data && typeof event.data === 'object') {
         const value = event.data as { phase?: string; options?: { lowPower?: boolean } }
@@ -474,7 +478,11 @@ export class Session {
    * evidence that a stored preset is gone.
    */
   async refreshPresets(): Promise<boolean> {
+    if (this.disposed) return false
+    const revision = ++this.presetListRevision
     const result = await apiClient.listPresets()
+    if (this.disposed) return false
+    if (revision !== this.presetListRevision) return false
     if (!result.ok) return false
     this.presetList = result.value.presets
     this.notify()

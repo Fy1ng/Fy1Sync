@@ -162,6 +162,49 @@ describe('serialized manual offsets', () => {
 })
 
 describe('latest profile selection', () => {
+  it('refreshes cloud presets without changing either active profile or playback', async () => {
+    let emit!: Parameters<typeof apiClient.subscribeFeatures>[0]
+    vi.spyOn(apiClient, 'subscribeFeatures').mockImplementation(listener => { emit = listener; return () => {} })
+    const list = vi.spyOn(apiClient, 'listPresets').mockResolvedValue({ ok: true, value: { presets: [
+      { id: 'cloud/iem', name: 'IEM revision 2', etag: 'new', updatedAt: 2, templateChars: 11, source: 'cloud', revision: 2 },
+    ] } })
+    const session = await harness()
+    const profile = createEmptyProfile('cloud/iem', 'IEM revision 1')
+    session.setProfileForAll(profile)
+    const official = session.profileFor('official')
+    const commentary = session.profileFor('commentary')
+    const cancel = vi.spyOn(session.autoSync, 'cancel')
+    emit({ topic: 'stylepacks-changed', data: { revision: 2 } })
+    await tick()
+    expect(list).toHaveBeenCalledOnce()
+    expect(session.snapshot.presets[0]?.name).toBe('IEM revision 2')
+    expect(session.profileFor('official')).toBe(official)
+    expect(session.profileFor('commentary')).toBe(commentary)
+    expect(session.engine.element('official').currentTime).toBe(100)
+    expect(cancel).not.toHaveBeenCalled()
+  })
+
+  it('ignores stale preset lists and late cloud events after disposal', async () => {
+    let emit!: Parameters<typeof apiClient.subscribeFeatures>[0]
+    vi.spyOn(apiClient, 'subscribeFeatures').mockImplementation(listener => { emit = listener; return () => {} })
+    const session = await harness()
+    let finish!: (value: Awaited<ReturnType<typeof apiClient.listPresets>>) => void
+    const list = vi.spyOn(apiClient, 'listPresets')
+      .mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+      .mockResolvedValue({ ok: true, value: { presets: [
+        { id: 'new', name: 'new', etag: 'new', templateChars: 11, updatedAt: 2 },
+      ] } })
+    const first = session.refreshPresets()
+    expect(await session.refreshPresets()).toBe(true)
+    finish({ ok: true, value: { presets: [] } })
+    expect(await first).toBe(false)
+    expect(session.snapshot.presets[0]?.id).toBe('new')
+    session.dispose()
+    emit({ topic: 'stylepacks-changed', data: { revision: 3 } })
+    expect(await session.refreshPresets()).toBe(false)
+    expect(list).toHaveBeenCalledTimes(2)
+  })
+
   it('ignores a late preset response after selecting no profile', async () => {
     const session = await harness()
     let finish!: (value: Awaited<ReturnType<typeof apiClient.getPreset>>) => void
