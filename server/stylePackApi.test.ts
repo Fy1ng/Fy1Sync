@@ -13,9 +13,10 @@ describe('cloud style pack desktop boundary', () => {
   let service: DesktopService
   let cloud: PresetRecord
   let notify: ((event: StylePackSyncEvent) => void) | undefined
-  const state: StylePackSyncState = { phase: 'current', checkedAt: 1, updatedAt: 1,
+  const state: StylePackSyncState = { source: 'github', availableSources: ['github', 'gitcode'], catalogRevision: 1, phase: 'current', checkedAt: 1, updatedAt: 1,
     installed: 1, downloaded: 0, incompatible: 0, message: '已是最新.' }
   const sync = vi.fn(async () => state)
+  const setSource = vi.fn((source: 'github' | 'gitcode') => ({ ...state, source }))
   const release = vi.fn()
 
   beforeEach(async () => {
@@ -23,11 +24,11 @@ describe('cloud style pack desktop boundary', () => {
     const profile = createEmptyHudStylePack('cs2/iem', 'Cloud IEM')
     cloud = { id: profile.id, profile, etag: etagFor(profile), updatedAt: 1 }
     notify = undefined
-    sync.mockClear(); release.mockClear()
+    sync.mockClear(); release.mockClear(); setSource.mockClear()
     service = createDesktopService({ dataDir: root, proxy: resolveConfig({}).proxy,
       registerMedia: url => url, stylePacks: {
         list: async () => [structuredClone(cloud)], get: async id => id === cloud.id ? structuredClone(cloud) : null,
-        state: () => state, sync, subscribe: listener => { notify = listener; return release },
+        state: () => state, sync, setSource, subscribe: listener => { notify = listener; return release },
       },
     })
   })
@@ -77,5 +78,15 @@ describe('cloud style pack desktop boundary', () => {
     expect(receive).toHaveBeenCalledOnce()
     unsubscribe()
     expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('allows only built-in source identifiers and does not refresh implicitly', async () => {
+    for (const args of [{ source: 'https://evil.test/manifest.json' }, { source: 'github', publicKey: 'other' }, { source: 'auto' }, null, {}]) {
+      expect(await service.invoke('setStylePackSyncSource', args)).toMatchObject({ ok: false, code: 'invalid-arguments' })
+    }
+    expect(setSource).not.toHaveBeenCalled()
+    expect(await service.invoke('setStylePackSyncSource', { source: 'gitcode' })).toEqual({ ok: true, value: { ...state, source: 'gitcode' } })
+    expect(setSource).toHaveBeenCalledExactlyOnceWith('gitcode')
+    expect(sync).not.toHaveBeenCalled()
   })
 })

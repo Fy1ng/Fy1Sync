@@ -7,7 +7,7 @@ import { etagFor, fileNameFor, MAX_PRESET_BYTES, type PresetRecord } from '../se
 import { safeFetch, type Resolver } from '../server/safeFetch'
 import { compareAppVersions } from './appUpdateService'
 import { assertRegularPath, containedPath, privateDirectory } from './privateStorage'
-import type { SignedStylePackCatalog, StylePackCatalog, StylePackCatalogEntry, StylePackSource, StylePackSyncEvent, StylePackSyncState } from './stylePackSyncContracts'
+import type { SignedStylePackCatalog, StylePackCatalog, StylePackCatalogEntry, StylePackMirror, StylePackSource, StylePackSourceId, StylePackSyncEvent, StylePackSyncState } from './stylePackSyncContracts'
 
 const MAX_CATALOG_BYTES = 256 * 1024
 const MAX_ARCHIVE_BYTES = 72 * 1024 * 1024
@@ -21,6 +21,7 @@ const exact = (value: Record<string, unknown>, keys: string[]) => Object.keys(va
 const positive = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) > 0
 const digest = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex')
 const invalid = () => new Error('样式包来源或签名清单无效.')
+const SOURCE_LABEL = { github: 'GitHub', gitcode: 'GitCode' } as const
 
 function base64(value: unknown): Buffer {
   if (typeof value !== 'string' || !value.length || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) throw invalid()
@@ -31,10 +32,17 @@ function base64(value: unknown): Buffer {
 
 export function parseStylePackSource(raw: unknown): StylePackSource | null {
   if (raw === null || raw === undefined) return null
-  if (!object(raw) || !exact(raw, ['manifestUrl', 'publicKey']) || typeof raw.manifestUrl !== 'string' || raw.manifestUrl.length > 2048 || /[\x00-\x20\x7f]/.test(raw.manifestUrl)) throw invalid()
-  let url: URL
-  try { url = new URL(raw.manifestUrl) } catch { throw invalid() }
-  if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash || url.search || !url.hostname.includes('.')) throw invalid()
+  if (!object(raw) || !exact(raw, ['mirrors', 'publicKey']) || !Array.isArray(raw.mirrors) || !raw.mirrors.length || raw.mirrors.length > 2) throw invalid()
+  const ids = new Set<string>()
+  const mirrors: StylePackMirror[] = raw.mirrors.map(value => {
+    if (!object(value) || !exact(value, ['id', 'manifestUrl']) || (value.id !== 'github' && value.id !== 'gitcode') || ids.has(value.id)
+      || typeof value.manifestUrl !== 'string' || value.manifestUrl.length > 2048 || /[\x00-\x20\x7f]/.test(value.manifestUrl)) throw invalid()
+    let url: URL
+    try { url = new URL(value.manifestUrl) } catch { throw invalid() }
+    if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash || url.search || !url.hostname.includes('.')) throw invalid()
+    ids.add(value.id)
+    return { id: value.id, manifestUrl: url.href }
+  })
   if (typeof raw.publicKey !== 'string' || raw.publicKey.length > 128) throw invalid()
   const key = base64(raw.publicKey)
   if (key.length !== 44) throw invalid()
@@ -42,7 +50,7 @@ export function parseStylePackSource(raw: unknown): StylePackSource | null {
     const publicKey = createPublicKey({ key, type: 'spki', format: 'der' })
     if (publicKey.asymmetricKeyType !== 'ed25519' || !Buffer.from(publicKey.export({ type: 'spki', format: 'der' })).equals(key)) throw invalid()
   } catch { throw invalid() }
-  return { manifestUrl: url.href, publicKey: key.toString('base64') }
+  return { mirrors, publicKey: key.toString('base64') }
 }
 
 function semver(value: unknown): value is string {
@@ -118,11 +126,28 @@ export class StylePackSyncService {
     this.source = parseStylePackSource(options.source)
     this.now = options.now ?? Date.now
     if (!semver(options.currentVersion)) throw new Error('应用版本号无效.')
-    this.value = { phase: this.source ? 'idle' : 'unconfigured', checkedAt: null, updatedAt: null, installed: 0, downloaded: 0, incompatible: 0, message: this.source ? '赛事样式将在后台自动同步.' : '尚未配置赛事样式来源.' }
+    const availableSources = this.source?.mirrors.map(mirror => mirror.id) ?? []
+    let selected: StylePackSourceId = availableSources.includes('github') ? 'github' : availableSources[0] ?? 'github'
+    try {
+      const preference: unknown = JSON.parse(this.bytes('source.json', 1024).toString('utf8'))
+      if (object(preference) && exact(preference, ['source']) && availableSources.includes(preference.source as StylePackSourceId)) selected = preference.source as StylePackSourceId
+    } catch { /* An absent or invalid local preference cannot change the trusted mirror list. */ }
+    this.value = { source: selected, availableSources, catalogRevision: null, phase: this.source ? 'idle' : 'unconfigured', checkedAt: null, updatedAt: null,
+      installed: 0, downloaded: 0, incompatible: 0, message: this.source ? '赛事样式将在后台自动同步.' : '尚未配置赛事样式来源.' }
     if (this.source) this.load()
   }
 
-  state(): StylePackSyncState { return { ...this.value } }
+  state(): StylePackSyncState { return { ...this.value, availableSources: [...this.value.availableSources] } }
+  setSource(id: StylePackSourceId): StylePackSyncState {
+    if (!this.source?.mirrors.some(mirror => mirror.id === id)) throw new Error('该样式包来源未配置.')
+    if (this.disposed || this.flight || this.value.phase === 'syncing') throw new Error('正在刷新样式包, 请完成后再切换来源.')
+    if (id === this.value.source) return this.state()
+    this.atomic('source.json', Buffer.from(JSON.stringify({ source: id })))
+    this.failures = 0
+    this.update({ source: id, phase: 'idle', checkedAt: null, downloaded: 0, message: `已选择 ${SOURCE_LABEL[id]}, 点击手动刷新从该源检查更新.` })
+    this.schedule(CHECK_INTERVAL)
+    return this.state()
+  }
   async list(): Promise<PresetRecord[]> { return structuredClone([...this.installed.values()].map(value => value.record)) }
   async get(id: string): Promise<PresetRecord | null> { return structuredClone(this.installed.get(id)?.record ?? null) }
   subscribe(listener: (event: StylePackSyncEvent) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener) }
@@ -206,7 +231,7 @@ export class StylePackSyncService {
       for (const [id, item] of this.selected(proofs, cachedVersion)) installed.set(id, { ...item, record: this.record(item.entry, this.bytes(item.entry.path, MAX_PRESET_BYTES), updatedAt) })
       this.proofs = proofs
       this.installed = installed
-      this.value = { ...this.value, installed: installed.size, updatedAt, incompatible: this.latest()!.catalog.packs.filter(entry => compareAppVersions(this.options.currentVersion, entry.minAppVersion) < 0).length }
+      this.value = { ...this.value, catalogRevision: this.latest()!.catalog.revision, installed: installed.size, updatedAt, incompatible: this.latest()!.catalog.packs.filter(entry => compareAppVersions(this.options.currentVersion, entry.minAppVersion) < 0).length }
     } catch { /* Missing or damaged cloud data never touches local user presets. */ }
   }
 
@@ -234,16 +259,18 @@ export class StylePackSyncService {
     }
   }
 
-  private async download(url: string, limit: number): Promise<Buffer> {
-    const manifest = new URL(this.source!.manifestUrl), target = new URL(url)
+  private async download(mirror: StylePackMirror, url: string, limit: number): Promise<Buffer> {
+    const manifest = new URL(mirror.manifestUrl), target = new URL(url)
     if (target.origin !== manifest.origin || !target.pathname.startsWith(new URL('.', manifest).pathname) || target.search || target.hash || target.username || target.password) throw invalid()
     const deadline = new AbortController()
     const timer = setTimeout(() => deadline.abort(), REQUEST_TIMEOUT)
     const signal = AbortSignal.any([this.lifetime.signal, deadline.signal])
     try {
       const request: typeof fetch = (input, init) => bounded((this.options.request ?? fetch)(input, { ...init, credentials: 'omit', cache: 'no-store' }), signal)
-      const result = await bounded(safeFetch(target.href, { enabled: true, hosts: [target.hostname], allowNonStandardPorts: false, maxRedirects: 0, requestTimeoutMs: REQUEST_TIMEOUT }, { signal, resolve: this.options.resolve, fetchImpl: request, headers: { Accept: 'application/json' } }), signal)
+      const result = await bounded(safeFetch(target.href, { enabled: true, hosts: [target.hostname], allowNonStandardPorts: false, maxRedirects: 0, requestTimeoutMs: REQUEST_TIMEOUT },
+        { signal, resolve: this.options.resolve, fetchImpl: request, headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' } }), signal)
       if (result.finalUrl.href !== target.href) throw invalid()
+      if (!result.response.ok) { void result.response.body?.cancel().catch(() => {}); throw new Error(`来源返回 HTTP ${result.response.status}.`) }
       return await readBounded(result.response, limit, signal)
     } finally { clearTimeout(timer) }
   }
@@ -263,10 +290,12 @@ export class StylePackSyncService {
   }
 
   private async run(): Promise<StylePackSyncState> {
-    this.update({ phase: 'syncing', downloaded: 0, message: '正在后台同步赛事样式.' })
+    const mirror = this.source!.mirrors.find(item => item.id === this.value.source)!
+    const label = SOURCE_LABEL[mirror.id]
+    this.update({ phase: 'syncing', downloaded: 0, message: `正在从 ${label} 刷新赛事样式.` })
     let downloaded = 0
     try {
-      const bytes = await this.download(this.source!.manifestUrl, MAX_CATALOG_BYTES)
+      const bytes = await this.download(mirror, mirror.manifestUrl, MAX_CATALOG_BYTES)
       const incoming = this.proof(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)))
       const previous = this.latest()
       if (previous && (incoming.catalog.revision < previous.catalog.revision || incoming.catalog.revision === previous.catalog.revision && incoming.hash !== previous.hash)) throw invalid()
@@ -278,7 +307,7 @@ export class StylePackSyncService {
         let record: PresetRecord | null = null
         try { record = this.record(item.entry, this.bytes(item.entry.path, MAX_PRESET_BYTES), this.now()) } catch { /* Download verified bytes to repair absent or damaged cache entries. */ }
         if (!record) {
-          const blob = await this.download(new URL(item.entry.path, this.source!.manifestUrl).href, item.entry.bytes)
+          const blob = await this.download(mirror, new URL(item.entry.path, mirror.manifestUrl).href, item.entry.bytes)
           record = this.record(item.entry, blob, this.now())
           this.lifetime.signal.throwIfAborted()
           this.atomic(item.entry.path, blob)
@@ -300,10 +329,14 @@ export class StylePackSyncService {
       this.removeUnusedBlobs(installed)
       this.failures = 0
       const at = this.now()
-      this.update({ phase: changed ? 'updated' : 'current', installed: installed.size, checkedAt: at, updatedAt: changed ? at : this.value.updatedAt, downloaded, incompatible: incoming.catalog.packs.filter(entry => compareAppVersions(this.options.currentVersion, entry.minAppVersion) < 0).length, message: changed ? '赛事样式已自动更新.' : '赛事样式已是最新可用版本.' })
+      this.update({ phase: changed ? 'updated' : 'current', catalogRevision: incoming.catalog.revision, installed: installed.size, checkedAt: at, updatedAt: changed ? at : this.value.updatedAt, downloaded,
+        incompatible: incoming.catalog.packs.filter(entry => compareAppVersions(this.options.currentVersion, entry.minAppVersion) < 0).length,
+        message: changed ? `已从 ${label} 更新赛事样式.` : `${label} 的赛事样式已是最新可用版本.` })
       if (changed && !this.disposed) this.emit({ topic: 'stylepacks-changed', data: { revision: incoming.catalog.revision } })
-    } catch {
-      if (!this.disposed) { this.failures++; this.update({ phase: 'error', checkedAt: this.now(), downloaded, message: '赛事样式同步失败, 已保留原有可用样式并将在后台重试.' }) }
+    } catch (error) {
+      const detail = error instanceof Error && /^来源返回 HTTP \d{3}\.$/.test(error.message) ? ` ${error.message}` : ''
+      if (!this.disposed) { this.failures++; this.update({ phase: 'error', checkedAt: this.now(), downloaded,
+        message: `${label} 刷新失败.${detail} 已保留原有可用样式, 可重试或手动切换来源.` }) }
     }
     return this.state()
   }

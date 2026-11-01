@@ -1,5 +1,5 @@
 import type { HudPackValidation } from '../src/core/hudStylePack'
-import type { StylePackCatalog, StylePackSource } from '../electron/stylePackSyncContracts'
+import type { StylePackCatalog, StylePackMirror, StylePackSource } from '../electron/stylePackSyncContracts'
 
 export interface ReleaseValidators {
   parseHudStylePack(raw: unknown): HudPackValidation
@@ -10,7 +10,7 @@ export interface StylePackReleaseOptions {
   inputDirectory: string
   destination: string
   privateKeyPath: string
-  manifestUrl: string
+  mirrors: StylePackMirror[]
   revision: number
   previousManifest?: string
   minAppVersion?: string

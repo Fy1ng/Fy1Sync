@@ -1,1 +1,13 @@
-null
+{
+  "mirrors": [
+    {
+      "id": "github",
+      "manifestUrl": "https://raw.githubusercontent.com/Fy1ng/Fy1Sync/refs/heads/style-packs/manifest.json"
+    },
+    {
+      "id": "gitcode",
+      "manifestUrl": "https://raw.gitcode.com/Fy1ng/Fy1Sync/raw/style-packs/manifest.json"
+    }
+  ],
+  "publicKey": "MCowBQYDK2VwAyEAvDWfMqCa/ydLbw5OBfJMkq3hbZeUd4N2OyPs4cSYlSg="
+}

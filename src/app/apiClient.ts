@@ -10,6 +10,7 @@ import type { DecoderMode } from '../../electron/decoderPreferences'
 import type { DouyuAccountsSnapshot, DouyuTaskPolicy, DouyuTasksSnapshot } from '../../server/douyu/types'
 import type { DomesticRouting } from '../../server/networkPolicy'
 import type { FeatureMethod, FeatureMethods, FeatureEvent } from '../../electron/featureContracts'
+import type { StylePackSourceId } from '../../electron/stylePackSyncContracts'
 
 export type ApiResult<T> =
   | { ok: true; value: T }
@@ -87,6 +88,7 @@ export class ApiClient {
   getToolsStatus() { return this.request('getToolsStatus', undefined) }
   getStylePackSyncState() { return this.request('getStylePackSyncState', undefined) }
   syncStylePacks() { return this.request('syncStylePacks', undefined) }
+  setStylePackSyncSource(source: StylePackSourceId) { return this.request('setStylePackSyncSource', { source }) }
   updateYtdlp() { return this.request('updateYtdlp', undefined) }
   restoreYtdlp(target: 'previous' | 'bundled') { return this.request('restoreYtdlp', { target }) }
   setDecoderPreferences(mode: DecoderMode) { return this.request('setDecoderPreferences', { mode }) }

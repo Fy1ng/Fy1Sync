@@ -9,7 +9,8 @@ import { parseStylePackSource, StylePackSyncService, verifyStylePackCatalog } fr
 import type { SignedStylePackCatalog, StylePackCatalog, StylePackCatalogEntry, StylePackSource, StylePackSyncEvent } from './stylePackSyncContracts'
 
 const keys = generateKeyPairSync('ed25519')
-const source: StylePackSource = { manifestUrl: 'https://styles.example.org/stable/catalog.json', publicKey: keys.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }
+const manifestUrl = 'https://styles.example.org/stable/catalog.json'
+const source: StylePackSource = { mirrors: [{ id: 'github', manifestUrl }], publicKey: keys.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }
 const directories: string[] = [], services: StylePackSyncService[] = []
 afterEach(async () => { services.splice(0).forEach(service => service.dispose()); vi.useRealTimers(); await Promise.all(directories.splice(0).map(dir => rm(dir, { recursive: true, force: true }))) })
 
@@ -39,8 +40,8 @@ async function setup(options: { dataDir?: string; source?: StylePackSource | nul
   const service = new StylePackSyncService({ dataDir, source: options.source === undefined ? source : options.source, currentVersion: options.currentVersion ?? '0.2.0', request, resolve: async () => ['8.8.8.8'], now: () => 1793000000000 })
   services.push(service)
   const publish = (value: StylePackCatalog, packs: ReturnType<typeof pack>[] = []) => {
-    assets.set(source.manifestUrl, Buffer.from(JSON.stringify(signed(value))))
-    for (const item of packs) assets.set(new URL(item.entry.path, source.manifestUrl).href, item.bytes)
+    assets.set(manifestUrl, Buffer.from(JSON.stringify(signed(value))))
+    for (const item of packs) assets.set(new URL(item.entry.path, manifestUrl).href, item.bytes)
   }
   return { dataDir, service, assets, request, publish }
 }
@@ -70,10 +71,15 @@ describe('signed style catalog validation', () => {
     expect(() => verifyStylePackCatalog({ payload: 'x'.repeat(262145), signature: 'AA==' }, source)).toThrow()
     expect(() => verifyStylePackCatalog(signed(null, Buffer.from([0xff])), source)).toThrow()
   })
-  it('requires one HTTPS origin and an actual Ed25519 public key in local source configuration', () => {
+  it('requires explicit HTTPS mirrors and an actual Ed25519 public key in local source configuration', () => {
     expect(parseStylePackSource(undefined)).toBeNull()
     expect(parseStylePackSource(source)).toEqual(source)
-    for (const raw of [{ ...source, manifestUrl: 'http://styles.example.org/catalog.json' }, { ...source, manifestUrl: 'https://user:secret@styles.example.org/catalog.json' }, { ...source, manifestUrl: 'https://styles.example.org:8443/catalog.json' }, { ...source, publicKey: 'secret' }, { ...source, cookie: 'secret' }]) expect(() => parseStylePackSource(raw)).toThrow()
+    for (const url of ['http://styles.example.org/catalog.json', 'https://user:secret@styles.example.org/catalog.json', 'https://styles.example.org:8443/catalog.json', 'https://styles.example.org/catalog.json?token=x']) {
+      expect(() => parseStylePackSource({ ...source, mirrors: [{ id: 'github', manifestUrl: url }] })).toThrow()
+    }
+    for (const raw of [{ ...source, publicKey: 'secret' }, { ...source, cookie: 'secret' }, { ...source, mirrors: [] },
+      { ...source, mirrors: [source.mirrors[0], source.mirrors[0]] }, { ...source, mirrors: [{ id: 'other', manifestUrl }] },
+      { manifestUrl, publicKey: source.publicKey }]) expect(() => parseStylePackSource(raw)).toThrow()
   })
 })
 
@@ -92,6 +98,7 @@ describe('silent incremental style synchronization', () => {
     expect(f.request.mock.calls.map(call => String(call[0])).filter(url => url.endsWith(first.entry.path))).toHaveLength(1)
     for (const call of f.request.mock.calls) {
       expect(call[1]).toMatchObject({ credentials: 'omit', redirect: 'manual', cache: 'no-store' })
+      expect(call[1]?.headers).toMatchObject({ 'Cache-Control': 'no-cache' })
       expect(call[1]?.headers).not.toHaveProperty('Cookie')
     }
     const restarted = await setup({ dataDir: f.dataDir })
@@ -108,7 +115,7 @@ describe('silent incremental style synchronization', () => {
     f.publish(catalog(1, original.entry), [original]); await f.service.sync()
     const previous = await readFile(join(f.dataDir, 'stylepacks', 'active.json'))
     f.publish(catalog(2, update.entry, bad.entry), [update, bad])
-    f.assets.set(new URL(bad.entry.path, source.manifestUrl).href, Buffer.from('corrupt'))
+    f.assets.set(new URL(bad.entry.path, manifestUrl).href, Buffer.from('corrupt'))
     expect(await f.service.sync()).toMatchObject({ phase: 'error', installed: 1 })
     expect(await f.service.get(original.entry.id)).toMatchObject({ profile: original.profile })
     expect(await f.service.get(bad.entry.id)).toBeNull()
@@ -193,16 +200,16 @@ describe('silent incremental style synchronization', () => {
       entry = { ...entry, sha256, path: `packs/${sha256}.json`, bytes: bytes.length }
     }
     f.publish(catalog(1, entry))
-    f.assets.set(new URL(entry.path, source.manifestUrl).href, bytes)
+    f.assets.set(new URL(entry.path, manifestUrl).href, bytes)
     expect((await f.service.sync()).phase).toBe('error')
     expect(await f.service.list()).toEqual([])
   })
   it('rejects redirects and streamed metadata beyond the configured bound', async () => {
     const f = await setup()
-    f.assets.set(source.manifestUrl, new Response('', { status: 302, headers: { Location: 'https://evil.example/catalog.json' } }))
+    f.assets.set(manifestUrl, new Response('', { status: 302, headers: { Location: 'https://evil.example/catalog.json' } }))
     expect((await f.service.sync()).phase).toBe('error')
     expect(f.request).toHaveBeenCalledTimes(1)
-    f.assets.set(source.manifestUrl, Buffer.from('x'.repeat(262145)))
+    f.assets.set(manifestUrl, Buffer.from('x'.repeat(262145)))
     expect((await f.service.sync()).phase).toBe('error')
   })
   it('bounds an uncooperative transport and streamed body by the request deadline', async () => {
@@ -285,5 +292,56 @@ describe('silent incremental style synchronization', () => {
     f.service.start()
     expect((await f.service.sync()).phase).toBe('unconfigured')
     expect(f.request).not.toHaveBeenCalled()
+  })
+
+  it('persists a manual mirror choice without downloading until refresh and shares verified cached packs', async () => {
+    const gitcodeUrl = 'https://styles-mirror.example.org/releases/catalog.json'
+    const mirrors: StylePackSource = { ...source, mirrors: [...source.mirrors, { id: 'gitcode', manifestUrl: gitcodeUrl }] }
+    const f = await setup({ source: mirrors }), item = pack()
+    f.publish(catalog(1, item.entry), [item])
+    expect(await f.service.sync()).toMatchObject({ source: 'github', catalogRevision: 1, installed: 1 })
+    f.request.mockClear()
+    expect(f.service.setSource('gitcode')).toMatchObject({ source: 'gitcode', phase: 'idle', availableSources: ['github', 'gitcode'] })
+    expect(f.request).not.toHaveBeenCalled()
+    f.assets.set(gitcodeUrl, Buffer.from(JSON.stringify(signed(catalog(1, item.entry)))))
+    expect(await f.service.sync()).toMatchObject({ source: 'gitcode', phase: 'current', installed: 1, downloaded: 0 })
+    expect(f.request.mock.calls.map(call => String(call[0]))).toEqual([gitcodeUrl])
+    const restarted = await setup({ dataDir: f.dataDir, source: mirrors })
+    expect(restarted.service.state()).toMatchObject({ source: 'gitcode', catalogRevision: 1, installed: 1 })
+    const exposed = restarted.service.state(); exposed.availableSources.length = 0
+    expect(restarted.service.state().availableSources).toEqual(['github', 'gitcode'])
+    expect(await restarted.service.sync()).toMatchObject({ phase: 'error', installed: 1, source: 'gitcode' })
+    expect(restarted.request.mock.calls.map(call => String(call[0]))).toEqual([gitcodeUrl])
+  })
+
+  it('rejects downgrades and altered same-revision catalogs after changing mirrors', async () => {
+    const gitcodeUrl = 'https://mirror.example.org/styles/catalog.json'
+    const f = await setup({ source: { ...source, mirrors: [...source.mirrors, { id: 'gitcode', manifestUrl: gitcodeUrl }] } }), item = pack('cs2/iem', 2)
+    f.publish(catalog(2, item.entry), [item]); await f.service.sync(); f.service.setSource('gitcode')
+    for (const incoming of [catalog(1, pack().entry), catalog(2)]) {
+      f.assets.set(gitcodeUrl, Buffer.from(JSON.stringify(signed(incoming))))
+      expect(await f.service.sync()).toMatchObject({ phase: 'error', installed: 1, catalogRevision: 2 })
+      expect((await f.service.get(item.entry.id))?.profile).toEqual(item.profile)
+    }
+  })
+
+  it('rejects unavailable sources and source changes during a refresh without replacing preferences', async () => {
+    const gitcodeUrl = 'https://mirror.example.org/catalog.json'
+    const f = await setup({ source: { ...source, mirrors: [...source.mirrors, { id: 'gitcode', manifestUrl: gitcodeUrl }] } })
+    f.request.mockImplementationOnce(() => new Promise<Response>(() => {}))
+    const pending = f.service.sync()
+    expect(() => f.service.setSource('gitcode')).toThrow('正在刷新')
+    expect(f.service.state().source).toBe('github')
+    f.service.dispose(); await pending
+    const single = await setup()
+    expect(() => single.service.setSource('gitcode')).toThrow('未配置')
+  })
+
+  it('reports selected-source HTTP failures without switching or erasing installed packs', async () => {
+    const f = await setup(), item = pack()
+    f.publish(catalog(1, item.entry), [item]); await f.service.sync()
+    f.assets.set(manifestUrl, new Response('denied', { status: 403 }))
+    expect(await f.service.sync()).toMatchObject({ phase: 'error', installed: 1, message: expect.stringContaining('HTTP 403') })
+    expect((await f.service.get(item.entry.id))?.profile).toEqual(item.profile)
   })
 })

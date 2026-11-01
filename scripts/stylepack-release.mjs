@@ -163,7 +163,7 @@ export async function prepareStylePackRelease(options) {
     throw new Error('无法读取有效的发布私钥.')
   }
   const publicKey = publicKeyFor(privateKey)
-  const source = validators.parseStylePackSource({ manifestUrl: options.manifestUrl, publicKey })
+  const source = validators.parseStylePackSource({ mirrors: options.mirrors, publicKey })
   if (!source) throw new Error('必须指定固定的 HTTPS 清单地址.')
   const pkg = JSON.parse(await readFile(path.join(projectRoot, 'package.json'), 'utf8'))
   const minAppVersion = options.minAppVersion ?? pkg.version
@@ -244,7 +244,7 @@ export const help = `赛事样式包离线发布工具
   node scripts/stylepack-release.mjs keygen --out <private-dir>
 
 将已完成独立比赛验收并正式导出的 JSON 制作为静态分发文件:
-  node scripts/stylepack-release.mjs prepare --input <pack-dir> --out <public-dir> --key <private-key.pem> --manifest-url <https://host/path/manifest.json> --revision <n>
+  node scripts/stylepack-release.mjs prepare --input <pack-dir> --out <public-dir> --key <private-key.pem> --github-manifest-url <https://host/path/manifest.json> --gitcode-manifest-url <https://host/path/manifest.json> --revision <n>
 
 可选参数:
   --previous <manifest.json>     前次已签名清单, 用于版本连续性校验
@@ -278,13 +278,15 @@ export async function runStylePackRelease(argv) {
     return
   }
   if (!['prepare', 'build'].includes(command)) throw new Error('未知命令, 请使用 --help.')
-  const allowed = ['--input', '--out', '--key', '--manifest-url', '--revision', '--previous', '--min-app-version', '--allow-empty']
-  if (Object.keys(args).some(name => !allowed.includes(name)) || ['--input', '--out', '--key', '--manifest-url', '--revision'].some(name => typeof args[name] !== 'string')) {
+  const allowed = ['--input', '--out', '--key', '--github-manifest-url', '--gitcode-manifest-url', '--revision', '--previous', '--min-app-version', '--allow-empty']
+  if (Object.keys(args).some(name => !allowed.includes(name)) || ['--input', '--out', '--key', '--revision'].some(name => typeof args[name] !== 'string')
+    || (!args['--github-manifest-url'] && !args['--gitcode-manifest-url'])) {
     throw new Error('prepare 参数缺失或包含未知选项, 请使用 --help.')
   }
   if (!/^[1-9][0-9]*$/.test(args['--revision'])) throw new Error('清单版本必须是正安全整数.')
   const result = await prepareStylePackRelease({
-    inputDirectory: args['--input'], destination: args['--out'], privateKeyPath: args['--key'], manifestUrl: args['--manifest-url'],
+    inputDirectory: args['--input'], destination: args['--out'], privateKeyPath: args['--key'],
+    mirrors: ['github', 'gitcode'].filter(id => args[`--${id}-manifest-url`]).map(id => ({ id, manifestUrl: args[`--${id}-manifest-url`] })),
     revision: Number(args['--revision']), previousManifest: args['--previous'], minAppVersion: args['--min-app-version'], allowEmpty: args['--allow-empty'] === true,
   })
   process.stdout.write(`已离线生成 ${result.packs} 个样式包, 清单 revision ${result.catalog.revision}. 尚未上传或发布.\n`)

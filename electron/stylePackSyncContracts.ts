@@ -1,6 +1,8 @@
 /** Signed data distribution is independent of application and recognizer code updates. */
+export type StylePackSourceId = 'github' | 'gitcode'
+export interface StylePackMirror { id: StylePackSourceId; manifestUrl: string }
 export interface StylePackSource {
-  manifestUrl: string
+  mirrors: StylePackMirror[]
   /** Base64 DER SubjectPublicKeyInfo for one trusted Ed25519 publisher. */
   publicKey: string
 }
@@ -29,6 +31,9 @@ export interface SignedStylePackCatalog {
 }
 
 export interface StylePackSyncState {
+  source: StylePackSourceId
+  availableSources: StylePackSourceId[]
+  catalogRevision: number | null
   phase: 'unconfigured' | 'idle' | 'syncing' | 'current' | 'updated' | 'error'
   checkedAt: number | null
   updatedAt: number | null

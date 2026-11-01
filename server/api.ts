@@ -55,7 +55,7 @@ export type DesktopServiceDeps = {
   douyuTasks?: DouyuTaskManager
   douyuRenewal?: DouyuRenewalService
   features?: FeatureApi
-  stylePacks?: Pick<StylePackSyncService, 'list' | 'get' | 'state' | 'sync' | 'subscribe'>
+  stylePacks?: Pick<StylePackSyncService, 'list' | 'get' | 'state' | 'sync' | 'setSource' | 'subscribe'>
 }
 
 export type DesktopService = {
@@ -452,10 +452,17 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
           case 'getStylePackSyncState':
           case 'syncStylePacks': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
-            const unavailable: StylePackSyncState = { phase: 'unconfigured', checkedAt: null, updatedAt: null,
+            const unavailable: StylePackSyncState = { source: 'github', availableSources: [], catalogRevision: null, phase: 'unconfigured', checkedAt: null, updatedAt: null,
               installed: 0, downloaded: 0, incompatible: 0, message: '赛事样式包分发源尚未启用.' }
             return { ok: true, value: deps.stylePacks
               ? await (method === 'syncStylePacks' ? deps.stylePacks.sync() : deps.stylePacks.state()) : unavailable }
+          }
+          case 'setStylePackSyncSource': {
+            if (!fields(args, ['source']) || (args.source !== 'github' && args.source !== 'gitcode')) return fail('invalid-arguments', '请选择内置的样式包来源.')
+            if (!deps.stylePacks || !deps.stylePacks.state().availableSources.includes(args.source)) return fail('not-available', '该样式包来源尚未配置.')
+            if (deps.stylePacks.state().phase === 'syncing') return fail('busy', '正在刷新样式包, 请完成后再切换来源.')
+            try { return { ok: true, value: deps.stylePacks.setSource(args.source) } }
+            catch { return fail('source-save-failed', '样式包来源保存失败, 原设置未改变, 请重试.') }
           }
           case 'getPreset': {
             if (!fields(args, ['id']) || !validId(args.id)) return fail('invalid-id', '预设 ID 无效')

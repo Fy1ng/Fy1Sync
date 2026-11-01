@@ -22,7 +22,7 @@ describe('offline style pack releases', () => {
     await writeFile(join(inputDirectory, 'iem.json'), JSON.stringify(createEmptyHudStylePack('cs2/iem', 'IEM')))
     options = {
       inputDirectory, destination: join(directory, 'public'), privateKeyPath: keys.privatePath,
-      manifestUrl: 'https://assets.example.com/styles/manifest.json', revision: 1, minAppVersion: '0.2.0', validators,
+      mirrors: [{ id: 'github', manifestUrl: 'https://assets.example.com/styles/manifest.json' }], revision: 1, minAppVersion: '0.2.0', validators,
     }
   })
 

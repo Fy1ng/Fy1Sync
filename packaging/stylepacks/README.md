@@ -4,6 +4,8 @@
 
 客户端启动后自动检查, 运行期间每 6 小时检查, 也支持手动同步. 仅下载新增或内容发生变化的包. 云端包保存在独立缓存中, 不覆盖本机预设. 下载, 签名或格式校验失败时继续使用旧版本. 正在同步的会话保留已加载版本, 下次选择或新会话再使用更新后的包.
 
+在 `设置 -> 倒计时样式 -> 赛事样式包` 选择 `GitHub` 或 `GitCode`, 点击 `手动刷新` 即可立即检查. 来源选择保存在本机, 重启后保留; 切换只保存设置, 不立即下载. 仅访问所选源, 不因失败静默切换, 两站共用签名信任和已验证缓存, 不允许镜像滞后导致降级. 手动刷新请求使用 `Cache-Control: no-cache` 重新验证清单.
+
 布局内的 `nativeSize` 记录模板参考尺寸, 不是录像分辨率白名单. 识别区域按实际画面宽高映射, 然后统一到参考区域尺寸处理. 同尺寸布局优先, 没有同尺寸布局时可使用其他参考尺寸; 多个候选仍需主办方模板消歧. 单纯分辨率改变不必重制整包, 但低清晰度, 裁剪, 黑边或 HUD 位置变化仍需实际验收, 必要时另设布局. 像素数和文件大小的资源安全上限仍保留.
 
 跨分辨率取样使用整帧的连续坐标网格, 不先将裁切区域宽高取整后重新拉伸. 降采样采用面积加权, 放大采用固定三次插值. 这些处理不能恢复低清晰度录像中已经丢失的细笔画, 也不会自动降低匹配阈值或替用户增加样本.
@@ -20,18 +22,24 @@
 
    该目录会得到 `private-key.pem` 和 `public-key.spki.txt`. 已存在的密钥不会被覆盖. 私钥不输出到终端, 不进入公开目录, 不打包到客户端, 不提交到 Git. Windows 上请使用只有发布人员可访问的私有目录和系统文件权限保护它.
 
-2. 在现有 HTTPS 服务器, CDN 或对象存储上确定固定的清单地址, 例如 `https://assets.example.com/fy1sync/stylepacks/manifest.json`. 云端只需托管静态文件, 无需新增业务服务器或数据库.
+2. 两个公开仓库使用独立的 `style-packs` 分支托管静态文件, 无需业务服务器或数据库:
 
-3. 将 `packaging/stylepack-source.json` 从 `null` 改成下列公开配置后再构建客户端:
+   - GitHub: `https://raw.githubusercontent.com/Fy1ng/Fy1Sync/refs/heads/style-packs/manifest.json`
+   - GitCode: `https://raw.gitcode.com/Fy1ng/Fy1Sync/raw/style-packs/manifest.json`
+
+3. `packaging/stylepack-source.json` 保存内置的公开镜像地址和发布公钥, 不包含私钥. 配置结构如下:
 
    ```json
    {
-     "manifestUrl": "https://assets.example.com/fy1sync/stylepacks/manifest.json",
+     "mirrors": [
+       { "id": "github", "manifestUrl": "https://raw.githubusercontent.com/Fy1ng/Fy1Sync/refs/heads/style-packs/manifest.json" },
+       { "id": "gitcode", "manifestUrl": "https://raw.gitcode.com/Fy1ng/Fy1Sync/raw/style-packs/manifest.json" }
+     ],
      "publicKey": "public-key.spki.txt 中的单行 Base64 公钥"
    }
    ```
 
-   这里的域名仅为说明示例. 当前默认配置是 `null`, 因为尚未指定真实托管地址和发布公钥. 未配置时客户端显示未配置, 不会假装已连通云端. 客户端公钥必须在首次发布支持该功能的安装包前确定. 更换发布密钥或可信源应更新客户端的可信配置.
+   应复用当前发布密钥进行后续签名, 不要每次发布重新生成. 更换发布密钥或可信源应更新客户端的可信配置. 前端只能选择内置来源 ID, 不能替换地址或公钥. `null` 仅用于未配置构建, 默认分发配置已启用.
 
 ## 制作后续发布
 
@@ -48,11 +56,12 @@ node scripts/stylepack-release.mjs prepare `
   --input C:/release-input/validated-stylepacks `
   --out C:/release-output/stylepacks `
   --key C:/private/fy1sync-stylepack-signing/private-key.pem `
-  --manifest-url https://assets.example.com/fy1sync/stylepacks/manifest.json `
+  --github-manifest-url https://raw.githubusercontent.com/Fy1ng/Fy1Sync/refs/heads/style-packs/manifest.json `
+  --gitcode-manifest-url https://raw.gitcode.com/Fy1ng/Fy1Sync/raw/style-packs/manifest.json `
   --revision 1
 ```
 
-输出为 `manifest.json` 和 `packs/<sha256>.json`. 输出只含公共数据文件, 不含私钥. 工具复用生产样式包和签名清单校验器, 校验大小, 格式, 重复 ID 和版本连续性. 相同内容使用确定的 JSON 序列化, 因而保留相同文件名与 SHA256, 客户端可以跳过下载.
+输出为 `manifest.json` 和 `packs/<sha256>.json`. 两个镜像上传同一份输出, 不分别签名或修改 JSON. 输出只含公共数据文件, 不含私钥. 工具复用生产样式包和签名清单校验器, 校验大小, 格式, 重复 ID 和版本连续性. 相同内容使用确定的 JSON 序列化, 因而保留相同文件名与 SHA256, 客户端可以跳过下载.
 
 下一次发布提高清单 `--revision`. 修改某个包时, 还必须提高该 JSON 内部的 `revision`. 未变化的包保留原 revision 和内容. 使用已有输出目录时会自动验证其中的旧签名清单; 输出到新目录时, 用 `--previous <旧 manifest.json>` 显式关联前次发布, 防止误降级或同版本修改内容. 旧签名须由同一私钥对应的公钥验证通过.
 
