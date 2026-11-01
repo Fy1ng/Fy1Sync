@@ -43,6 +43,59 @@ afterEach(async () => {
 })
 
 describe('current editor project', () => {
+  it('keeps the restored playback URL usable through repeated and concurrent project reads', async () => {
+    const f = await picked()
+    await f.manager.save(project(f.chosen.media))
+    const restarted = new EditorProjectManager(f.options)
+    const first = await restarted.load()
+    const originalUrl = first.media!.url
+    const subsequent = await Promise.all([restarted.load(), restarted.load(), restarted.load()])
+    for (const value of subsequent) expect(value.media?.url).toBe(originalUrl)
+    const range = await restarted.handle(new Request(originalUrl, { headers: { range: 'bytes=4-7' } }))
+    expect(range.status).toBe(206)
+    expect(await range.text()).toBe('4567')
+    expect((await restarted.handle(new Request(originalUrl, { method: 'HEAD' }))).status).toBe(200)
+    expect((await f.manager.handle(new Request(originalUrl))).status).toBe(404)
+  })
+
+  it('hydrates once when multiple callers restore a cold manager at the same time', async () => {
+    const f = await picked()
+    await f.manager.save(project(f.chosen.media))
+    let release!: () => void
+    const beforeLoad = vi.fn(() => new Promise<void>(resolve => { release = resolve }))
+    const restarted = new EditorProjectManager({ ...f.options, beforeLoad })
+    const pending = Array.from({ length: 4 }, () => restarted.load())
+    expect(beforeLoad).toHaveBeenCalledOnce()
+    release()
+    const values = await Promise.all(pending)
+    expect(new Set(values.map(value => value.media?.url)).size).toBe(1)
+    expect((await restarted.handle(new Request(values[0]!.media!.url, { method: 'HEAD' }))).status).toBe(200)
+    expect(beforeLoad).toHaveBeenCalledOnce()
+  })
+
+  it('does not revoke a fresh picker grant when an observer reads the project before autosave', async () => {
+    const f = await picked()
+    const chosen = f.chosen
+    expect(await f.manager.load()).toMatchObject({ project: null, media: null })
+    const body = await f.manager.handle(new Request(chosen.url, { headers: { range: 'bytes=0-3' } }))
+    expect(body.status).toBe(206)
+    expect(await body.text()).toBe('0123')
+    await expect(f.manager.save(project(chosen.media))).resolves.toEqual({ ok: true })
+    expect((await f.manager.load()).media?.url).toBe(chosen.url)
+  })
+
+  it('reads the latest completed save without rolling memory back to an older disk snapshot', async () => {
+    const f = await picked()
+    const value = project(f.chosen.media)
+    await f.manager.save(value)
+    const saving = f.manager.save({ ...value, pack: { ...value.pack, name: 'latest save' } })
+    const read = f.manager.load()
+    await saving
+    expect((await read).project?.pack.name).toBe('latest save')
+    expect((await f.manager.load()).project?.pack.name).toBe('latest save')
+    expect((await f.manager.restore(f.chosen.media.id)).media?.url).toBe(f.chosen.url)
+  })
+
   it('starts empty and restores unpublished edits, layout, media metadata and local video after restart', async () => {
     const f = await picked()
     expect(await f.manager.load()).toEqual({ project: null, media: null, needsRelink: false })
@@ -143,6 +196,21 @@ describe('current editor project', () => {
     value.media[0]!.purpose = 'validation'
     await f.manager.save(value)
     expect(await f.manager.choose(f.chosen.media.id)).toMatchObject({ media: value.media[0] })
+  })
+
+  it('revokes only a relinked file grant and reuses the replacement route on read', async () => {
+    const f = await picked()
+    await f.manager.save(project(f.chosen.media))
+    const moved = path.join(f.root, 'moved.mp4')
+    await fs.rename(f.file, moved)
+    f.chooseFile.mockResolvedValue(moved)
+    const relinked = (await f.manager.choose(f.chosen.media.id))!
+    expect(relinked.url).not.toBe(f.chosen.url)
+    // The stale path is deliberately occupied again; the old token must stay revoked.
+    await fs.writeFile(f.file, '9876543210')
+    expect((await f.manager.handle(new Request(f.chosen.url))).status).toBe(404)
+    expect((await f.manager.load()).media?.url).toBe(relinked.url)
+    expect(await (await f.manager.handle(new Request(relinked.url))).text()).toBe('0123456789')
   })
 
   it('does not hash an unchanged-size file again on restore', async () => {

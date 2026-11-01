@@ -67,9 +67,12 @@ async function regularFile(file: string) {
 export class EditorProjectManager {
   private readonly file: string
   private writing: Promise<void> = Promise.resolve()
+  private initialized = false
+  private initializing: Promise<void> | null = null
   private project: EditorProject | null = null
   private readonly local = new Map<string, EditorLocalMedia>()
-  private readonly routes = new Map<string, { file: string; size: number; contentType: string }>()
+  private readonly mediaRoutes = new Map<string, string>()
+  private readonly routes = new Map<string, { file: string; size: number; sha256: string; contentType: string }>()
 
   constructor(private readonly options: {
     userDataDirectory: string
@@ -80,6 +83,25 @@ export class EditorProjectManager {
   }
 
   async load(): Promise<EditorProjectLoaded> {
+    await this.initialize()
+    await this.writing
+    const project = this.project ? structuredClone(this.project) : null
+    const restored = project?.currentMediaId ? await this.restore(project.currentMediaId) : { media: null, needsRelink: false }
+    return { project, ...restored }
+  }
+
+  private initialize(): Promise<void> {
+    if (this.initialized) return Promise.resolve()
+    // StrictMode, diagnostics and autosave observers can read concurrently. Hydrate once;
+    // reading a snapshot must not revoke URLs held by a player or a validation decoder.
+    this.initializing ??= this.readInitialProject().then(() => { this.initialized = true }, error => {
+      this.initializing = null
+      throw error
+    })
+    return this.initializing
+  }
+
+  private async readInitialProject(): Promise<void> {
     await this.options.beforeLoad?.()
     let value: unknown
     try {
@@ -90,15 +112,12 @@ export class EditorProjectManager {
       if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw new Error('工程读取失败, 原文件已保留.')
     }
     this.project = value === undefined ? null : projectValue(value)
-    this.local.clear()
-    this.routes.clear()
     for (const media of this.project?.media ?? []) if (media.kind === 'local') this.local.set(media.id, structuredClone(media))
-    const restored = this.project?.currentMediaId ? await this.restore(this.project.currentMediaId) : { media: null, needsRelink: false }
-    return { project: this.project ? structuredClone(this.project) : null, ...restored }
   }
 
   async save(value: unknown): Promise<{ ok: true }> {
-    const project = projectValue(value)
+    const project = structuredClone(projectValue(value))
+    await this.initialize()
     for (const media of project.media) if (media.kind === 'local') {
       const granted = this.local.get(media.id)
       if (!granted || media.path !== granted.path || media.size !== granted.size || media.sha256 !== granted.sha256) throw invalid()
@@ -106,15 +125,18 @@ export class EditorProjectManager {
     const text = JSON.stringify(project)
     if (Buffer.byteLength(text, 'utf8') > PROJECT_LIMIT) throw invalid()
     // Writes run in order, so an older snapshot never lands after a newer one.
-    const write = this.writing.then(() => this.write(text))
+    const write = this.writing.then(async () => {
+      await this.write(text)
+      this.project = project
+      for (const media of project.media) if (media.kind === 'local') this.local.set(media.id, structuredClone(media))
+    })
     this.writing = write.catch(() => {})
     await write
-    this.project = structuredClone(project)
-    for (const media of project.media) if (media.kind === 'local') this.local.set(media.id, structuredClone(media))
     return { ok: true }
   }
 
   async choose(relinkId?: string): Promise<{ media: EditorLocalMedia; url: string } | null> {
+    await this.initialize()
     const expected = relinkId === undefined ? undefined : this.local.get(relinkId)
     if (relinkId !== undefined && !expected) throw invalid()
     const selected = await this.options.chooseFile()
@@ -144,6 +166,7 @@ export class EditorProjectManager {
   }
 
   async restore(id: string): Promise<{ media: EditorMediaLocation | null; needsRelink: boolean }> {
+    await this.initialize()
     const media = this.local.get(id)
     if (!media) {
       if (this.project?.media.some(item => item.id === id && item.kind === 'youtube')) return { media: null, needsRelink: false }
@@ -172,8 +195,17 @@ export class EditorProjectManager {
   private mismatch(): Error { return Object.assign(new Error('所选文件与原素材的大小或 SHA-256 不一致, 请重新选择原文件.'), { code: 'media-mismatch' }) }
 
   private publish(media: EditorLocalMedia): string {
+    const previous = this.mediaRoutes.get(media.id)
+    const asset = previous ? this.routes.get(previous) : undefined
+    if (asset && asset.file === media.path && asset.size === media.size && asset.sha256 === media.sha256) {
+      return `app://app/editor-media/${previous}`
+    }
+    // Relinking changes the grant's file identity; old paths must not become readable again.
+    if (previous) this.routes.delete(previous)
     const token = randomUUID()
-    this.routes.set(token, { file: media.path, size: media.size, contentType: TYPES[path.extname(media.path).toLowerCase()] ?? 'application/octet-stream' })
+    this.routes.set(token, { file: media.path, size: media.size, sha256: media.sha256,
+      contentType: TYPES[path.extname(media.path).toLowerCase()] ?? 'application/octet-stream' })
+    this.mediaRoutes.set(media.id, token)
     return `app://app/editor-media/${token}`
   }
 
