@@ -271,7 +271,7 @@ test.describe('取帧与切分', () => {
     expect(total).toBeLessThan(40)
   })
 
-  test('整帧读数一次存下全部字符, 位数和字符框对不上时说明', async ({ page, electronApp }) => {
+  test('字符按钮即点即存, 整帧读数只读且同一帧不重复保存', async ({ page, electronApp }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
     await chooseEditorVideo(electronApp, page, officialPath)
@@ -283,17 +283,18 @@ test.describe('取帧与切分', () => {
     await page.getByRole('button', { name: '取当前帧' }).click()
     await expect.poll(async () => page.locator('.glyph-box').count(), { timeout: 20_000 }).toBe(4)
 
-    const field = page.getByRole('textbox', { name: '整帧读数' })
-    // Three characters for four boxes: refused, nothing stored.
-    await field.fill('019')
-    await page.getByRole('button', { name: '存为样本' }).click()
-    await expect(page.locator('.editor-rail [role="alert"]')).toContainText('3 个字符，切出了 4 个字符框')
-    await expect(page.locator('.editor-rail')).toContainText('0 个样本')
-
-    await field.fill('0:19')
-    await page.getByRole('button', { name: '存为样本' }).click()
-    await expect(page.locator('.editor-rail')).toContainText('4 个样本')
-    await expect(field).toHaveValue('0:19')
+    await expect(page.getByRole('textbox', { name: '整帧读数' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '存为样本', exact: true })).toHaveCount(0)
+    const reading = page.getByLabel('当前读数', { exact: true })
+    for (const [index, char] of ['0', ':', '1', '9'].entries()) {
+      await page.locator('.char-pad').getByRole('button', { name: char, exact: true }).click()
+      await expect(page.locator('.template-thumb')).toHaveCount(index + 1)
+    }
+    await expect(reading).toHaveText('0:19')
+    await page.getByRole('button', { name: '取当前帧' }).click()
+    await expect(page.locator('.glyph-box')).toHaveCount(4)
+    for (const char of ['0', ':', '1', '9']) await page.locator('.char-pad').getByRole('button', { name: char, exact: true }).click()
+    await expect(page.locator('.template-thumb')).toHaveCount(4)
     for (const char of ['0', ':', '1', '9']) {
       await expect(page.locator('.template-cell').filter({ has: page.locator('.template-char', { hasText: new RegExp(`^${char}$`) }) })
         .locator('.template-thumb')).toHaveCount(1)
@@ -343,8 +344,7 @@ test.describe('发布预设', () => {
       await expect.poll(async () => page.locator('.glyph-box').count()).toBe(score.text.length)
       await expect(page.locator('.template-thumb')).toHaveCount(0)
       await expect(page.locator('.char-pad').getByRole('button', { name: ':', exact: true })).toHaveCount(0)
-      await page.getByRole('textbox', { name: '整帧读数', exact: true }).fill(score.text)
-      await page.getByRole('button', { name: '存为样本', exact: true }).click()
+      for (const char of score.text) await page.locator('.char-pad').getByRole('button', { name: char, exact: true }).click()
       await expect(page.locator('.template-thumb')).toHaveCount(score.samples)
       await page.getByRole('button', { name: '验证当前帧', exact: true }).click()
       await expect(page.locator('.verify-result')).toContainText(`识别为 ${score.text}`)

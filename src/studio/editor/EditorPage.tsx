@@ -32,11 +32,10 @@ import { FrameGrabber, FULL_FRAME_ROI, type GrabbedFrame } from '../../recogniti
 import { useSession } from '../../app/SessionContext'
 import { routeLink } from '../../app/navigate'
 import { Icon, Segmented, Switch } from '../kit'
-import { drawGray, drawMask, sampleFromPrepared } from './framePipeline'
+import { drawGray, drawMask } from './framePipeline'
 import { RoiWindow } from './RoiWindow'
 import { EditorStage } from './EditorStage'
 import { FrameStepper, presentAt } from './frameStep'
-import { pairReading } from './reading'
 import { StretchSection } from './StretchSection'
 import type { StretchSample } from './stretch'
 import { decodeScreenshot, imageFromClipboard } from './screenshotSample'
@@ -55,8 +54,6 @@ interface Message {
   /** Set when a publish lost an ETag race; the note then offers the two ways out. */
   conflict?: { currentEtag?: string }
 }
-
-const TYPED_CHARS = new Set<string>(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ':'])
 
 const AUTO_GRAB_KEY = 'studio.editor.autoGrab'
 /** 自动取帧 is on unless it was turned off; a blocked storage keeps it on. */
@@ -122,8 +119,6 @@ export default function EditorPage(): React.ReactNode {
   const [playerFrameResult, setPlayerFrameResult] = useState<HudFrameResult | null>(null)
   const frameRef = useRef(frame)
   frameRef.current = frame
-  const boxesRef = useRef(boxes)
-  boxesRef.current = boxes
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const grabberRef = useRef(new FrameGrabber())
@@ -138,9 +133,9 @@ export default function EditorPage(): React.ReactNode {
   const grayCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const binaryCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const objectUrlRef = useRef<string>('')
-  const countdown = useCountdownTeaching({ pack: activePack, fieldId, variantId, source: sampleUrl, sampleName,
+  const countdown = useCountdownTeaching({ pack: activePack, fieldId, variantId, source: sampleUrl, frame, boxes,
     video: videoRef, grabber: grabberRef, revision: editRevision, documentRevision: documentRevision.current,
-    onFrame: setFrame, onMessage: setMessage, onPack: updated => {
+    onFrame: setFrame, onSelect: setSelected, onMessage: setMessage, onPack: updated => {
       ++editRevision.current
       setPack(updated)
       setDirty(true)
@@ -221,7 +216,7 @@ export default function EditorPage(): React.ReactNode {
 
   // Manual box edits live in their own state so they survive a re-render, but a fresh
   // analysis replaces them: the old boxes indexed into a different image. Boxes run left to
-  // right, so the first one is selected: the reading can be typed at once.
+  // right, so the first one is selected for the character buttons.
   useEffect(() => {
     setBoxes(analysis ? analysis.boxes : [])
     setSelected(analysis?.boxes.length ? 0 : -1)
@@ -456,44 +451,7 @@ export default function EditorPage(): React.ReactNode {
     else video.pause()
   }
 
-  const preparedSamples = async (): Promise<string[]> => {
-    if (!frame) throw new Error('先取一帧')
-    return (await prepareHudGlyphs(frame, activePack, variantId, boxes, numericId)).bitmaps
-  }
-  const assign = async (char: ClockChar): Promise<void> => {
-    if (countdown.isBusy() || cueId || !analysis || selected < 0 || !boxes[selected] || (fieldId !== 'clock' && char === ':')) return
-    const revision = editRevision.current
-    try {
-      const samples = await preparedSamples()
-      if (!mounted.current || countdown.isBusy() || revision !== editRevision.current || frameRef.current !== frame || boxesRef.current !== boxes) return
-      const sample = sampleFromPrepared(samples[selected]!, char, `${sampleName || '样片'} @ ${mediaTime.toFixed(2)}s`)
-      patch({ templates: { ...profile.templates, [char]: [...(profile.templates[char] ?? []), sample] } })
-      if (frame) countdown.recordGlyph(char, selected, boxes, frame)
-      setSelected(selected + 1 < boxes.length ? selected + 1 : -1)
-    } catch (error) { setMessage({ kind: 'error', text: `制字失败: ${String(error)}` }) }
-  }
-
-  /** The whole reading typed at once: one Rust-prepared sample per box. */
-  const assignReading = async (text: string): Promise<string | null> => {
-    if (countdown.isBusy()) return '正在跳转, 请稍后再制字'
-    if (!analysis) return '先取一帧'
-    const paired = pairReading(text, boxes.length, numericId)
-    if (!paired.ok) return paired.reason
-    const revision = editRevision.current
-    try {
-      const samples = await preparedSamples()
-      if (!mounted.current || countdown.isBusy() || revision !== editRevision.current || frameRef.current !== frame || boxesRef.current !== boxes) return '当前设置已改变, 请重新制字'
-      const origin = `${sampleName || '样片'} @ ${mediaTime.toFixed(2)}s`
-      const templates = { ...profile.templates }
-      paired.chars.forEach((char, index) => {
-        templates[char] = [...(templates[char] ?? []), sampleFromPrepared(samples[index]!, char, origin)]
-      })
-      patch({ templates })
-      setSelected(-1)
-      setMessage({ kind: 'info', text: `已把 ${paired.chars.join('')} 的 ${paired.chars.length} 个字符存为样本` })
-      return null
-    } catch (error) { return `制字失败: ${String(error)}` }
-  }
+  const assign = (char: ClockChar): void => { if (analysis) void countdown.assign(char, selected) }
 
   /** Reviewed samples from a scanned stretch, each glyph once. */
   const saveStretch = (samples: StretchSample[]): void => {
@@ -548,18 +506,15 @@ export default function EditorPage(): React.ReactNode {
     } catch (error) { setMessage({ kind: 'error', text: `取样失败: ${String(error)}` }) }
   }
 
-  // Keyboard: digits and ':' teach the selected box, ←/→ step a frame, Shift+←/→ jump a
-  // second and Ctrl+←/→ ten, Space plays. A focused region box keeps its own arrows. Typing
-  // into a field keeps its keys; buttons keep Space and the arrows but not the digits, so
-  // clicking a glyph box and then typing the clock works.
-  const keys = useRef({ assign, step, jump, togglePlay, undo: countdown.undo, video: false })
-  keys.current = { assign, step, jump, togglePlay, undo: countdown.undo, video: sampleUrl !== '' && sampleKind === 'video' }
+  // Ctrl+Z is scoped to this editor; editable text keeps its native text undo.
+  const keys = useRef({ step, jump, togglePlay, undo: countdown.undo, video: false })
+  keys.current = { step, jump, togglePlay, undo: countdown.undo, video: sampleUrl !== '' && sampleKind === 'video' }
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       const target = event.target
       if (!(target instanceof Element)) return
       if (target.closest('textarea, select, [contenteditable="true"], .pop') || (target instanceof HTMLInputElement && target.type !== 'range')) return
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'z' && keys.current.undo) {
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'z' && keys.current.undo) {
         event.preventDefault()
         keys.current.undo()
         return
@@ -567,11 +522,6 @@ export default function EditorPage(): React.ReactNode {
       const arrow = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0
       const jumpBy = arrow && !event.altKey && !event.metaKey ? (event.ctrlKey ? 10 : event.shiftKey ? 1 : 0) : 0
       if (!jumpBy && (event.ctrlKey || event.metaKey || event.altKey)) return
-      if (TYPED_CHARS.has(event.key)) {
-        event.preventDefault()
-        keys.current.assign(event.key as ClockChar)
-        return
-      }
       if (!keys.current.video || target.closest('button, input, [role="group"]')) return
       if (jumpBy) {
         event.preventDefault()
@@ -792,7 +742,7 @@ export default function EditorPage(): React.ReactNode {
       </header>
 
       {message && (
-        <div className={`editor-note is-${message.kind}`} role={message.conflict ? 'alert' : 'status'}>
+        <div className={`editor-note is-${message.kind}`} role={message.conflict ? 'alert' : 'status'} aria-label="编辑器提示">
           <span className="editor-note-text">{message.text}</span>
           {message.conflict && (
             <>
@@ -973,9 +923,9 @@ export default function EditorPage(): React.ReactNode {
               setDirty(true)
             }} /> : <>
           <GlyphSection key={`glyph-${variantId}-${fieldId}`} fieldId={numericId} profile={profile} readiness={readiness} boxes={boxes} selected={selected}
-            reading={countdown.reading} onReadingChange={countdown.changeReading} onUndo={countdown.undo} busy={countdown.busy}
+            reading={countdown.reading} onUndo={countdown.undo} busy={countdown.busy}
             bounds={analysis ? { width: analysis.binary.width, height: analysis.binary.height } : null}
-            onBoxes={setBoxes} onAssign={assign} onAssignReading={assignReading} onVerify={frame ? verifyFrame : null} recognized={recognized} />
+            onBoxes={setBoxes} onAssign={assign} onVerify={frame ? verifyFrame : null} recognized={recognized} />
           <StretchSection key={`stretch-${variantId}-${fieldId}`} fieldId={numericId} variantId={variantId} video={video ? videoRef.current : null} pack={activePack} onSave={saveStretch} />
           <SampleSection fieldId={numericId} profile={profile} onRemove={removeSample} />
           <ParamsSection fieldId={numericId} profile={profile} onPatch={patch} />

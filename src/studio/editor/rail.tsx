@@ -156,8 +156,8 @@ export function BinarizeSection({ profile, onPatch }: { profile: EditorClockMode
  * box of its own. Rather than adding heuristics for each case, the user fixes the boxes
  * directly (merge, split, drop, nudge an edge) and then teaches from those.
  */
-export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, selected, bounds, onBoxes, onAssign, onAssignReading,
-  onVerify, recognized, reading, onReadingChange, onUndo, busy }: {
+export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, selected, bounds, onBoxes, onAssign,
+  onVerify, recognized, reading, onUndo, busy }: {
   fieldId?: HudFieldId
   profile: EditorClockModel
   readiness: { ready: boolean; missing: ClockChar[]; sampleCount: number }
@@ -166,44 +166,13 @@ export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, sel
   bounds: { width: number; height: number } | null
   onBoxes: (boxes: GlyphBox[]) => void
   onAssign: (char: ClockChar) => void
-  /** Teach every box from one typed reading; returns why it was refused, or null. */
-  onAssignReading: (text: string) => Promise<string | null>
   onVerify: (() => void) | null
   recognized: HudFieldResult | null
   reading: string
-  onReadingChange: (reading: string) => void
   onUndo: (() => void) | null
   busy: boolean
 }): React.ReactNode {
   const active = selected >= 0 ? boxes[selected] : undefined
-  const [readingProblem, setReadingProblem] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-  const saveInFlight = useRef(false)
-  const readingRef = useRef(reading)
-  readingRef.current = reading
-  const mounted = useRef(false)
-  useEffect(() => {
-    mounted.current = true
-    return () => { mounted.current = false }
-  }, [])
-  useEffect(() => { setReadingProblem(null) }, [reading])
-  const locked = busy || saving
-  const saveReading = async (): Promise<void> => {
-    if (busy || saveInFlight.current || reading.trim() === '') return
-    saveInFlight.current = true
-    setSaving(true)
-    try {
-      const problem = await onAssignReading(reading)
-      if (!mounted.current || readingRef.current !== reading) return
-      setReadingProblem(problem)
-      if (!problem && fieldId !== 'clock') onReadingChange('')
-    } catch (error) {
-      if (mounted.current && readingRef.current === reading) setReadingProblem(`制字失败: ${String(error)}`)
-    } finally {
-      saveInFlight.current = false
-      if (mounted.current) setSaving(false)
-    }
-  }
   return (
     <RailDisclosure title="字符" meta={
       <span className="rail-meta">
@@ -219,20 +188,20 @@ export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, sel
           <div className="glyph-tools">
             <span className="rail-meta num">第 {selected + 1} 个 · {active.width}×{active.height}</span>
             <span className="row-end">
-              <button type="button" className="btn-quiet small" disabled={locked || selected + 1 >= boxes.length}
+              <button type="button" className="btn-quiet small" disabled={busy || selected + 1 >= boxes.length}
                 onClick={() => onBoxes(mergeGlyphBoxes(boxes, selected, selected + 1))}>与右侧合并</button>
-              <button type="button" className="btn-quiet small" disabled={locked || active.width < 4}
+              <button type="button" className="btn-quiet small" disabled={busy || active.width < 4}
                 onClick={() => onBoxes(splitGlyphBox(boxes, selected, active.x + Math.floor(active.width / 2)))}>居中拆分</button>
-              <button type="button" className="btn-quiet small" disabled={locked} onClick={() => onBoxes(excludeGlyphBox(boxes, selected))}>排除</button>
+              <button type="button" className="btn-quiet small" disabled={busy} onClick={() => onBoxes(excludeGlyphBox(boxes, selected))}>排除</button>
             </span>
           </div>
           <div className="edge-grid">
             {(['left', 'right', 'top', 'bottom'] as const).map((edge) => (
               <span key={edge} className="edge-row">
                 <span>{EDGE_TEXT[edge]}</span>
-                <button type="button" disabled={locked} onClick={() => onBoxes(adjustGlyphBox(boxes, selected, edge, -1, bounds))}
+                <button type="button" disabled={busy} onClick={() => onBoxes(adjustGlyphBox(boxes, selected, edge, -1, bounds))}
                   aria-label={`${EDGE_TEXT[edge]}减 1 像素`}>−</button>
-                <button type="button" disabled={locked} onClick={() => onBoxes(adjustGlyphBox(boxes, selected, edge, 1, bounds))}
+                <button type="button" disabled={busy} onClick={() => onBoxes(adjustGlyphBox(boxes, selected, edge, 1, bounds))}
                   aria-label={`${EDGE_TEXT[edge]}加 1 像素`}>+</button>
               </span>
             ))}
@@ -241,32 +210,25 @@ export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, sel
       ) : (
         <p className="muted">点选裁切图中的字符框</p>
       )}
-      {bounds && boxes.length > 0 && (
-        <form className="reading-row" onSubmit={(event) => { event.preventDefault(); void saveReading() }}>
-          <input className="text-input num" value={reading} aria-label="整帧读数" placeholder={`整帧读数，${boxes.length} 个字符`}
-            spellCheck={false} autoComplete="off" inputMode="numeric" disabled={locked}
-            onChange={(event) => { onReadingChange(event.target.value); setReadingProblem(null) }} />
-          <button type="submit" className="btn-solid small" disabled={locked || reading.trim() === ''}>存为样本</button>
-        </form>
-      )}
-      {readingProblem && <p className="form-error" role="alert">{readingProblem}</p>}
-      {fieldId === 'clock' && (
-        <div className="reading-actions">
-          <p className="muted">填写整帧读数, 或点选字符框后输入完整倒计时, 再用 +/-1s/10s 自动写入.</p>
-          <button type="button" className="btn-quiet small" disabled={locked || !onUndo} onClick={() => onUndo?.()}
-            title="恢复上次自动写入前的画面与读数">撤回自动写入</button>
-        </div>
-      )}
+      <div className="reading-row">
+        <span className="field-label">当前读数</span>
+        <output className="reading-output num" aria-label="当前读数">{reading || '待标注'}</output>
+      </div>
+      <div className="reading-actions">
+        <p className="muted">点击字符按钮逐个标注, 立即存入样本.{fieldId === 'clock' ? ' 完整倒计时可用于 +/-1s/10s 自动写入.' : ''}</p>
+        <button type="button" className="btn-quiet small" disabled={busy || !onUndo} onClick={() => onUndo?.()}
+          title="撤回上次字符标注或自动写入 (Ctrl+Z)">撤回</button>
+      </div>
       <div className="char-pad" role="group" aria-label="存为字符样本">
         {CLOCK_CHARS.filter(char => fieldId === 'clock' || char !== ':').map((char) => (
           <button type="button" key={char} className={`char-key num${(profile.templates[char]?.length ?? 0) > 0 ? ' is-taught' : ''}`}
-            disabled={locked || !active} onClick={() => onAssign(char)} aria-label={char}>
+            disabled={busy || !active} onClick={() => onAssign(char)} aria-label={char}>
             {char}
           </button>
         ))}
       </div>
       <div className="verify-row">
-        <button type="button" className="btn-quiet small" disabled={locked || !onVerify} onClick={() => onVerify?.()}>验证当前帧</button>
+        <button type="button" className="btn-quiet small" disabled={busy || !onVerify} onClick={() => onVerify?.()}>验证当前帧</button>
         {recognized && (
           <span className={`verify-result num ${recognized.status === 'read' ? 'is-ok' : 'is-bad'}`} role="status">
             {recognized.status === 'read'

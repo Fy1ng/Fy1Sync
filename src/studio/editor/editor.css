@@ -877,15 +877,25 @@
   color: #ff8a80;
 }
 
-/* One reading typed for the whole frame, saved as one sample per glyph box. */
+/* Read-only progress from character labels, including not-yet-labelled positions. */
 .reading-row {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
 }
 
 .reading-row .text-input {
   flex: 1;
   min-width: 0;
+}
+
+.reading-output {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 16px;
+  font-weight: 800;
+  text-align: right;
 }
 
 .reading-actions {
