@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Fy1ng/Fy1Sync/a184bca7782e82676a672655985db72af5ad1589/assets/readme/hero.svg" width="100%" alt="Fy1Sync: 画面与解说, 同一刻. 将赛事画面, 主播解说和弹幕对齐的 Windows 桌面播放器.">
+  <img src="./assets/readme/hero.svg" width="100%" alt="Fy1Sync: 画面与解说, 同一刻. 将赛事画面, 主播解说和弹幕对齐的 Windows 桌面播放器.">
 </p>
 
 # Fy1Sync
@@ -11,7 +11,7 @@ Fy1Sync 是一款 Windows 桌面播放器. 将两路直播或录像放进同一�
 [下载安装](#下载安装) · [开始观看](#开始观看) · [接入范围](#接入范围) · [使用边界](#使用边界) · [从源码运行](#从源码运行)
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Fy1ng/Fy1Sync/a184bca7782e82676a672655985db72af5ad1589/assets/readme/player.webp" width="100%" alt="Fy1Sync 当前观赛界面: 主画面, 解说小窗, 独立音量, 5 秒手动偏移和右侧弹幕列表. 使用本地合成片源与测试弹幕.">
+  <img src="./assets/readme/player.webp" width="100%" alt="Fy1Sync 当前观赛界面: 主画面, 解说小窗, 独立音量, 5 秒手动偏移和右侧弹幕列表. 使用本地合成片源与测试弹幕.">
 </p>
 
 *界面截图使用当前代码渲染, 片源与弹幕均为离线测试数据, 不代表真实赛事或自动对齐效果.*
@@ -54,13 +54,13 @@ Fy1Sync 是一款 Windows 桌面播放器. 将两路直播或录像放进同一�
 <summary>查看当前自动对齐选项</summary>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Fy1ng/Fy1Sync/a184bca7782e82676a672655985db72af5ad1589/assets/readme/alignment.webp" width="100%" alt="当前自动对齐选项: 明示测试中, 提供定时对齐, 倒计时样式和仅测量入口. 截图使用离线测试片源.">
+  <img src="./assets/readme/alignment.webp" width="100%" alt="当前自动对齐选项: 明示测试中, 提供定时对齐, 倒计时样式和仅测量入口. 截图使用离线测试片源.">
 </p>
 
 </details>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Fy1ng/Fy1Sync/a184bca7782e82676a672655985db72af5ad1589/assets/readme/intake.webp" width="100%" alt="添加直播间界面: 一个输入框接收直播链接或房间号, 下方分别显示画面侧和解说侧的载入状态.">
+  <img src="./assets/readme/intake.webp" width="100%" alt="添加直播间界面: 一个输入框接收直播链接或房间号, 下方分别显示画面侧和解说侧的载入状态.">
 </p>
 
 斗鱼和虎牙的解说源会尝试同时连接对应房间弹幕. 弹幕延后跟随解说侧的时间调整, 并非逐条识别画面内容; 网络重连, 回放或平台本身的延迟仍可能影响观感.
