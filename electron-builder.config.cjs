@@ -9,7 +9,7 @@ module.exports = {
   asarUnpack: ['electron/network-runtime.cjs'],
   npmRebuild: false,
   files: [
-    'package.json', 'electron/main.cjs', 'electron/preload.cjs', 'electron/network-runtime.cjs', 'client/index.html',
+    'package.json', 'electron/main.cjs', 'electron/preload.cjs', 'electron/network-runtime.cjs', 'electron/icon.png', 'client/index.html',
     'client/assets/**/*.js', 'client/assets/**/*.css', 'client/assets/**/*.wasm', 'client/assets/**/*.woff2',
     '!node_modules', '!node_modules/**/*',
   ],
@@ -20,7 +20,7 @@ module.exports = {
   copyright: '',
   // Empty metadata clears Electron's upstream company field without inventing an owner/publisher.
   extraMetadata: { author: { name: '' } },
-  // The title bar's mark (scripts/make-icon.mjs) is the app, installer and uninstaller icon.
+  // OS and installer icons use the supplied artwork; the in-app title-bar mark stays unchanged.
   win: { target: [{ target: 'nsis', arch: ['x64'] }, { target: 'zip', arch: ['x64'] }], signExecutable: false, icon: 'packaging/icon.ico' },
   nsis: {
     artifactName: 'Fy1Sync-${version}-win-x64-nsis.${ext}',

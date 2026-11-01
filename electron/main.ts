@@ -434,6 +434,7 @@ async function start(): Promise<void> {
     createPipWindow: () => {
       const created = new BrowserWindow({ show: false, width: 480, height: 270, minWidth: 240, minHeight: 135,
         autoHideMenuBar: true, alwaysOnTop: true, title: 'Fy1Sync - 画中画',
+        icon: join(__dirname, 'icon.png'),
         webPreferences: { preload: join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true,
           nodeIntegration: false, webSecurity: true, backgroundThrottling: false } })
       pipWindow = created
@@ -601,6 +602,7 @@ async function start(): Promise<void> {
   window = new BrowserWindow({
     width: 1440, height: 900, minWidth: 800, minHeight: 600,
     title: 'Fy1Sync', titleBarStyle: 'hidden',
+    icon: join(__dirname, 'icon.png'),
     // Keep native resizing and snapping while the renderer owns the caption buttons.
     frame: true, ...(process.platform === 'win32' ? { thickFrame: true } : {}),
     backgroundColor: '#0d0d0f',

@@ -1,6 +1,6 @@
 {
   "name": "fy1sync",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Electron desktop app for aligned esports video, commentary and danmaku.",

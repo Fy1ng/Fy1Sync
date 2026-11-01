@@ -58,7 +58,8 @@ test('损坏图片不算断点命中, 下载经过生产 MIME 和文件头校验
   let requests = 0, summary
   await assert.rejects(prepareTeamLogos({ core, list, destination,
     cacheDependencies: { resolve: async () => ['93.184.216.34'], request: async (_input, init) => {
-      requests++; assert.equal(init.headers['User-Agent'], 'Fy1Sync/0.2.0 (local desktop app; sync@fy1ng.cn)')
+      const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+      requests++; assert.equal(init.headers['User-Agent'], `Fy1Sync/${pkg.version} (local desktop app; sync@fy1ng.cn)`)
       return new Response('<svg/>', { headers: { 'content-type': 'image/png' } })
     } }, onSummary: value => { summary = value },
   }), /下载或校验失败/)

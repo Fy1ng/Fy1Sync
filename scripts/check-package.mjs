@@ -37,8 +37,9 @@ const applicationMetadata = JSON.parse(extractFile(path.join(resources, 'app.asa
 if (applicationMetadata.name !== 'fy1sync' || applicationMetadata.version !== version) throw new Error('Unexpected Fy1Sync application metadata')
 if (!(await stat(path.join(directory, 'Fy1Sync.exe'))).isFile()) throw new Error('Fy1Sync executable is missing')
 for (const name of asar) {
-  if (!/^(?:package\.json|electron(?:\/(?:main|preload|network-runtime)\.cjs)?|client(?:\/assets)?|client\/index\.html|client\/assets\/[A-Za-z0-9_.-]+\.(?:js|css|wasm|woff2))$/.test(name)) throw new Error('Unexpected ASAR entry: ' + name)
+  if (!/^(?:package\.json|electron(?:\/(?:main|preload|network-runtime)\.cjs)?|electron\/icon\.png|client(?:\/assets)?|client\/index\.html|client\/assets\/[A-Za-z0-9_.-]+\.(?:js|css|wasm|woff2))$/.test(name)) throw new Error('Unexpected ASAR entry: ' + name)
 }
+if (!extractFile(path.join(resources, 'app.asar'), 'electron/icon.png').equals(await readFile(path.join(root, 'packaging', 'icon.png')))) throw new Error('The runtime application icon differs from the release artwork')
 const networkEntry = statFile(path.join(resources, 'app.asar'), 'electron/network-runtime.cjs')
 const networkRuntime = await lstat(path.join(resources, 'app.asar.unpacked', 'electron', 'network-runtime.cjs'))
 if (!networkEntry.unpacked || !networkRuntime.isFile() || networkRuntime.isSymbolicLink() || !networkRuntime.size || networkRuntime.size !== networkEntry.size) throw new Error('The physical network runtime is missing or differs from its ASAR entry')
