@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fixture from './fixtures/liquipedia-matches.json'
 import { currentMatches, parseSchedule, ScheduleFormatError } from './parser'
-import { EsportsService, PARSE_INTERVAL_MS, SCHEDULE_TTL_MS, TITLE_TTL_MS, TIER_TTL_MS, TIER_NULL_TTL_MS, TIER_RETRY_MS, scheduleArguments, streamTitleArguments, titleStage } from './schedule'
+import { CHANNEL_RETRY_MS, EsportsService, PARSE_INTERVAL_MS, SCHEDULE_TTL_MS, TITLE_TTL_MS, TIER_TTL_MS, TIER_NULL_TTL_MS, TIER_RETRY_MS, scheduleArguments, streamTitleArguments, titleStage } from './schedule'
 import { normalizeTournamentPath } from './tiers'
 import { LIQUIPEDIA_INTERVAL_MS } from './liquipediaRateLimit'
 import type { TeamLogoCache } from './teamLogos'
@@ -18,16 +18,17 @@ const response = (value: unknown = fixture) => new Response(JSON.stringify(value
 const change = (from: string, to: string) => ({ parse: { text: { '*': fixture.parse.text['*'].replace(from, to) } } })
 
 describe('Liquipedia fixture parsing', () => {
-  it('reads real live, upcoming, TBD and finished matches, with stable identities and resolvable streams', () => {
+  it('reads real live, upcoming, TBD and finished matches, with stable identities and their stream entries', () => {
     const matches = parseSchedule(fixture)
     expect(matches).toHaveLength(9)
     expect(matches[0]).toMatchObject({ startsAt: 1793032200000, state: 'live', teams: [{ name: 'G2 Esports', short: 'G2' }, { name: 'DENDELE CS', short: 'DENDELE' }],
-      score: [0, 1], bestOf: 3, tournament: { name: 'PGL Masters Bucharest 2026', stage: 'Round 3', tier: null, url: 'https://liquipedia.net/counterstrike/PGL/2026/Masters#Round_3' } })
+      score: [0, 1], bestOf: 3, tournament: { name: 'PGL Masters Bucharest 2026', stage: 'Round 3', tier: null, url: 'https://liquipedia.net/counterstrike/PGL/2026/Masters#Round_3', logo: null } })
+    // A Twitch entry is a registry name; its channel is matched later. A YouTube link with its video plays as given.
     expect(matches[0]!.streams).toEqual([
-      { platform: 'twitch', channel: 'PGL_CS2', videoId: null, url: 'https://www.twitch.tv/PGL_CS2' },
-      { platform: 'youtube', channel: 'PGL', videoId: 'sx5tneE-ILg', url: 'https://www.youtube.com/watch?v=sx5tneE-ILg' },
+      { platform: 'twitch', entry: 'PGL_CS2', channel: null, url: null, missing: 'finding', videoId: null },
+      { platform: 'youtube', entry: 'PGL', channel: null, url: 'https://www.youtube.com/watch?v=sx5tneE-ILg', missing: null, videoId: 'sx5tneE-ILg' },
     ])
-    expect(matches[1]!.streams[0]!.channel).toBe('PGL')
+    expect(matches[1]!.streams[0]!.entry).toBe('PGL')
     expect(matches[2]).toMatchObject({ state: 'upcoming', score: null, teams: [{ name: 'FlyQuest' }, { name: 'StaQued', short: null }] })
     expect(matches[4]).toMatchObject({ teams: [{ name: 'TBD', short: null }, { name: 'TBD', short: null }] })
     expect(matches[6]).toMatchObject({ state: 'finished', score: [0, 2] })
@@ -41,10 +42,24 @@ describe('Liquipedia fixture parsing', () => {
     const enriched = change('class="match-info"', 'class="match-info" data-filter-group="filterbuttons-liquipediatier" data-filter-category="1"')
     expect(parseSchedule(enriched)[0]!.tournament.tier).toBe(1)
   })
-  it('uses a channel live URL when a YouTube video id is absent and drops Kick', () => {
+  it('never makes a channel address out of an entry: without a video it waits for its channel, and Kick is dropped', () => {
     const result = parseSchedule(change('/youtube/PGL/sx5tneE-ILg', '/youtube/PGL'))[0]!
-    expect(result.streams[1]).toMatchObject({ videoId: null, url: 'https://www.youtube.com/@PGL/live' })
+    expect(result.streams[1]).toMatchObject({ entry: 'PGL', videoId: null, url: null, missing: 'finding' })
     expect(result.streams).toHaveLength(2)
+  })
+  it('keeps a match whose entry is a name no channel could have', () => {
+    const matches = parseSchedule(change('/twitch/PGL_CS2"', '/twitch/PGL_Dota_2_(English)"'))
+    expect(matches).toHaveLength(9)
+    expect(matches[0]!.streams[0]).toMatchObject({ entry: 'PGL_Dota_2_(English)', url: null })
+  })
+  it('takes the event icon from the tournament box, dark theme first at twice the size, apart from the crests', () => {
+    const logos = new Map<string, string>()
+    const [first] = parseSchedule(fixture, logos)
+    expect(logos.get(`${first!.id}:event`)).toBe('/commons/images/thumb/b/b1/PGL_Masters_Bucharest_2026_icon_darkmode.png/100px-PGL_Masters_Bucharest_2026_icon_darkmode.png')
+    expect(logos.get(`${first!.id}:0`)).not.toContain('PGL_Masters')
+    // One icon for every theme.
+    const iem = parseSchedule(fixture, logos).at(-1)!
+    expect(logos.get(`${iem.id}:event`)).toMatch(/\/100px-Intel_Extreme_Masters_2022_icon_allmode\.png$/)
   })
   it.each([
     ['match-info-header-opponent', 'removed-opponent'], ['match-info-header-scoreholder-upper', 'removed-score'],
@@ -501,8 +516,12 @@ describe('background tournament query cache', () => {
     const { service } = create(images)
     const paths = new Map<string, string>()
     const matches = parseSchedule(fixture, paths)
-    const visiblePaths = (at: number) => currentMatches(matches, at).flatMap(match =>
-      match.teams.map((_team, index) => paths.get(`${match.id}:${index}`)).filter((path): path is string => !!path))
+    // Crests first, then the event icons, in the same order.
+    const visiblePaths = (at: number) => {
+      const shown = currentMatches(matches, at)
+      return [...shown.flatMap(match => match.teams.map((_team, index) => paths.get(`${match.id}:${index}`))),
+        ...shown.map(match => paths.get(`${match.id}:event`))].filter((path): path is string => !!path)
+    }
     await service.getCs2Schedule()
     expect(images.setActivePaths).toHaveBeenLastCalledWith(visiblePaths(NOW))
     vi.setSystemTime(NOW + 5 * 24 * 3600_000)
@@ -622,17 +641,19 @@ describe('crest order for the event 赛程 shows', () => {
     return { service, sent }
   }
 
-  it('fetches live crests first, then the shown event, then other upcoming, then finished', async () => {
+  it('fetches live crests first, then the shown event, then other upcoming, then finished, and event icons after them all', async () => {
     const { service, sent } = create()
     await service.getCs2Schedule()
     // Before the first crest is sent, the viewer opens Tesla Cup.
     service.setScheduleFocus({ eventPath: '/counterstrike/Tesla_Cup/2026' })
-    await vi.advanceTimersByTimeAsync(2 * 12_000)
+    await vi.advanceTimersByTimeAsync(2 * 18_000)
     const logos = sent.filter(value => value.startsWith('logo:')).map(value => value.slice(5))
     expect(logos.slice(0, 4).sort()).toEqual(['BetBoom_Team_2024', 'DENDELE_CS', 'G2_Esports_2019', 'Natus_Vincere_2021'])
     expect(logos.slice(4, 6)).toEqual(['B8', 'K27'])
     expect(logos.slice(6, 8)).toEqual(['FlyQuest_2021', 'StaQued'])
-    expect(logos.slice(8).sort()).toEqual(['9z_Team_2026', 'TyLoo_2016'])
+    expect(logos.slice(8, 10).sort()).toEqual(['9z_Team_2026', 'TyLoo_2016'])
+    // Icons in the same order: the live event, the shown one, then the next one to come.
+    expect(logos.slice(10, 13)).toEqual(['PGL_Masters_Bucharest_2026_icon', 'Tesla_Cup', 'Dfrag_Invitational_2025'])
     expect(new Set(logos).size).toBe(logos.length)
   })
   it('does not hold crests back for a slow tier query, and takes turns with it', async () => {
@@ -656,6 +677,108 @@ describe('crest order for the event 赛程 shows', () => {
       { eventPath: '/dota2/PGL' }, { eventPath: 1 }, { eventPath: '/counterstrike/x', extra: true }, {}, null]) {
       expect(() => service.setScheduleFocus(bad as never)).toThrow()
     }
+  })
+})
+
+describe('channels behind the streams of the event 赛程 shows', () => {
+  let directory: string, failing: boolean
+  const services: EsportsService[] = []
+  const events: string[] = []
+  /** Links per page title; a page not listed here does not exist. */
+  let pages: Record<string, string[]>
+  const pgl = ['https://www.twitch.tv/PGL', 'https://www.twitch.tv/pgl_cs2', 'https://www.youtube.com/PGL/streams', 'https://youtu.be/YcBD2QIKQAI']
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'fy1sync-channels-'))
+    vi.useFakeTimers(); vi.setSystemTime(NOW)
+    events.length = 0; failing = false; pages = { 'PGL/2026/Masters': pgl }
+  })
+  afterEach(async () => {
+    await Promise.all(services.splice(0).map(service => service.dispose()))
+    vi.useRealTimers()
+    await rm(directory, { recursive: true, force: true })
+  })
+  function create() {
+    const asked: string[] = []
+    const request = vi.fn<typeof fetch>(async input => {
+      const params = new URL(String(input)).searchParams
+      if (params.get('action') === 'parse') return response(fixture)
+      const title = params.get('titles') ?? ''
+      if (params.get('prop') === 'extlinks') {
+        asked.push(title)
+        if (failing) throw new Error('offline')
+        const links = pages[title]
+        return response({ query: { pages: [links ? { ns: 0, title, extlinks: links.map(url => ({ url })) } : { ns: 0, title, missing: true }] } })
+      }
+      return response({ query: { pages: title.split('|').map(page => ({ title: page })) } })
+    })
+    const service = new EsportsService({ userDataDir: directory, version: '0.1.3', request, logos: null, resolve: async () => ['93.184.216.34'],
+      log: () => {}, onEvent: event => events.push(event.data.type) })
+    services.push(service)
+    return { service, asked }
+  }
+  const twitchStreams = async (service: EsportsService) => (await service.getCs2Schedule()).matches
+    .filter(match => match.tournament.url.includes('/PGL/2026/Masters#Round_3') && match.state === 'live').map(match => match.streams[0]!)
+  const focusPgl = (service: EsportsService) => service.setScheduleFocus({ eventPath: '/counterstrike/PGL/2026/Masters' })
+
+  it('reads the event page once when it is shown, and plays each entry on its matched channel', async () => {
+    const { service, asked } = create()
+    await service.getCs2Schedule()
+    expect((await twitchStreams(service)).map(stream => stream.missing)).toEqual(['finding', 'finding'])
+    focusPgl(service)
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(asked).toEqual(['PGL/2026/Masters'])
+    expect(await twitchStreams(service)).toEqual([
+      { platform: 'twitch', entry: 'PGL_CS2', channel: 'pgl_cs2', url: 'https://www.twitch.tv/pgl_cs2', missing: null, videoId: null },
+      { platform: 'twitch', entry: 'PGL', channel: 'pgl', url: 'https://www.twitch.tv/pgl', missing: null, videoId: null },
+    ])
+    expect(events).toContain('streams-updated')
+    // Shown again the same day: nothing more is asked.
+    service.setScheduleFocus({ eventPath: null })
+    focusPgl(service)
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(asked).toHaveLength(1)
+  })
+  it('asks the parent page when the event page links no channel', async () => {
+    pages = { 'PGL/2026/Masters': ['https://kick.com/PGL'], 'PGL/2026': pgl }
+    const { service, asked } = create()
+    await service.getCs2Schedule()
+    focusPgl(service)
+    await vi.advanceTimersByTimeAsync(8_000)
+    expect(asked).toEqual(['PGL/2026/Masters', 'PGL/2026'])
+    expect((await twitchStreams(service)).map(stream => stream.url)).toEqual(['https://www.twitch.tv/pgl_cs2', 'https://www.twitch.tv/pgl'])
+  })
+  it('says when no linked channel can be told for an entry, and never guesses one', async () => {
+    pages = { 'PGL/2026/Masters': ['https://www.twitch.tv/somebody', 'https://www.twitch.tv/someone_else'] }
+    const { service } = create()
+    await service.getCs2Schedule()
+    focusPgl(service)
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect((await twitchStreams(service)).map(stream => [stream.url, stream.missing])).toEqual([[null, 'unmatched'], [null, 'unmatched']])
+  })
+  it('says when the page could not be read, and reads it again only after five minutes', async () => {
+    failing = true
+    const { service, asked } = create()
+    await service.getCs2Schedule()
+    focusPgl(service)
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect((await twitchStreams(service)).map(stream => stream.missing)).toEqual(['failed', 'failed'])
+    focusPgl(service)
+    expect(asked).toHaveLength(1)
+    failing = false
+    await vi.advanceTimersByTimeAsync(CHANNEL_RETRY_MS)
+    focusPgl(service)
+    // Being read again, it no longer says it failed.
+    expect((await twitchStreams(service)).map(stream => stream.missing)).toEqual(['finding', 'finding'])
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(asked).toHaveLength(2)
+    expect((await twitchStreams(service)).map(stream => stream.missing)).toEqual([null, null])
+  })
+  it('asks nothing for an event whose streams all play as given', async () => {
+    const { service, asked } = create()
+    await service.getCs2Schedule()
+    service.setScheduleFocus({ eventPath: '/counterstrike/Tesla_Cup/2026' })
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(asked).toEqual([])
   })
 })
 

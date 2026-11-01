@@ -18,11 +18,13 @@ const version = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest
 
 describe('team logo parsing', () => {
   const parsed = (html = fixture.parse.text['*']) => { const paths = new Map<string, string>(); const matches = parseSchedule(payload(html), paths); return { matches, paths } }
+  /** Crest paths only; event icons are kept under their own `:event` keys. */
+  const crests = (paths: Map<string, string>) => [...paths].filter(([key]) => !key.endsWith(':event')).map(([, value]) => value)
   it('selects darkmode 2x only inside opponent team icons, excluding tournament icons', () => {
     const { matches, paths } = parsed()
     expect(paths.get(`${matches[0]!.id}:0`)).toBe('/commons/images/thumb/c/cd/G2_Esports_2019_darkmode.png/88px-G2_Esports_2019_darkmode.png')
     expect(paths.get(`${matches[0]!.id}:1`)).toContain('DENDELE_CS_allmode.png/76px-')
-    expect([...paths.values()].some(value => value.includes('PGL_Masters'))).toBe(false)
+    expect(crests(paths).some(value => value.includes('PGL_Masters'))).toBe(false)
     expect(matches.every(match => match.teams.every(team => team.logo === null))).toBe(true)
   })
   it('prefers allmode over lightmode and falls back to lightmode', () => {
@@ -33,7 +35,7 @@ describe('team logo parsing', () => {
   })
   it('rejects tournament alt paths even when injected into a team icon', () => {
     const html = fixture.parse.text['*'].replaceAll('alt=""', 'alt="PGL/2026/Masters#Round 3"')
-    expect(parsed(html).paths.size).toBe(0)
+    expect(crests(parsed(html).paths)).toHaveLength(0)
   })
   it('ignores invalid image paths and falls back from an invalid 2x to src', () => {
     const html = fixture.parse.text['*'].replaceAll('/commons/images/thumb/c/cd/G2_Esports_2019_darkmode.png/88px-G2_Esports_2019_darkmode.png', 'https://evil.invalid/a.png')

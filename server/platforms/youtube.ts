@@ -6,6 +6,12 @@ import { failure, MANUAL_URL_HINT, type QualityOption, type ResolvedStream, type
 const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com'])
 const SHORT_HOSTS = new Set(['youtu.be', 'www.youtu.be'])
 const VIDEO_ID = /^[a-zA-Z0-9_-]{11}$/
+/** First path segments that are YouTube's own pages, never an old-style channel name. */
+const RESERVED_PATHS = new Set(['watch', 'live', 'embed', 'shorts', 'playlist', 'results', 'search', 'feed', 'feeds',
+  'channel', 'user', 'hashtag', 'gaming', 'premium', 'music', 'kids', 'about', 'account', 'signin', 'logout', 'upload',
+  'redirect', 'attribution_link', 'oembed', 'iframe_api', 'get_video_info', 'clip', 'post', 'source', 'trending',
+  'explore', 'movies', 'browse', 'storefront', 'shared', 'api', 'youtubei', 'error', 'signup', 'channels', 'red',
+  'watch_popup', 'live_chat', 'studio', 'video', 'videos', 'community', 'podcasts', 'news', 'courses', 'new'])
 
 /** Canonicalize public watch/channel pages and never pass arbitrary extractor URLs. */
 export function parseYouTubeUrl(input: string): string | null {
@@ -25,6 +31,9 @@ export function parseYouTubeUrl(input: string): string | null {
   if (/^\/@[^/?#\s]{1,100}(?:\/live)?$/.test(path) || /^\/(?:channel|c|user)\/[a-zA-Z0-9_-]{1,100}(?:\/live)?$/.test(path)) {
     return `https://www.youtube.com${path.endsWith('/live') ? path : `${path}/live`}`
   }
+  // An old-style channel name straight after the host (youtube.com/PGL), as event pages still link it.
+  const legacy = /^\/([a-zA-Z0-9_-]{3,100})(?:\/live)?$/.exec(path)?.[1]
+  if (legacy && !RESERVED_PATHS.has(legacy.toLowerCase())) return `https://www.youtube.com/${legacy}/live`
   return null
 }
 

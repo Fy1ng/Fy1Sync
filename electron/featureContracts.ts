@@ -16,7 +16,7 @@ export interface FeatureCallContext { readonly senderId?: number }
 export interface FeatureEvent { topic: string; data: unknown }
 export interface Cs2ScheduleEvent extends FeatureEvent {
   topic: 'cs2-schedule'
-  data: { type: 'tiers-updated' | 'logos-updated' }
+  data: { type: 'tiers-updated' | 'logos-updated' | 'streams-updated' }
 }
 export interface DouyuLiveNotificationSettings { enabled: boolean; rooms?: string[]; accountId?: string }
 export interface DouyuLiveNotificationState { enabled: boolean; rooms: string[]; followedAccountId: string | null }

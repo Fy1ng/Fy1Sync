@@ -4,6 +4,8 @@ CS2 schedule metadata is by [Liquipedia contributors](https://liquipedia.net/cou
 
 预置战队队标来自 [Liquipedia Commons](https://liquipedia.net/commons/Main_Page), 商标、著作权及其他相关权利归各战队或相应权利人所有. 图片不因赛程数据采用 CC BY-SA 而自动取得该许可. Fy1Sync 根据用户自担风险预置的决定随包分发队标, 收到权利人要求即移除. 选队依据为 [Liquipedia Global VRS](https://liquipedia.net/counterstrike/Valve_Regional_Standings) 在 2026-10-26 的前 64 队, 固定清单见 `packaging/team-logos.json`; 安装包 `resources/team-logos/manifest.json` 记录逐图来源 URL、SHA256、大小和下载时间.
 
+赛程中的赛事图标同样来自 Liquipedia Commons, 商标、著作权及其他相关权利归各主办方或相应权利人所有; Liquipedia 将其标注为合理使用 (`fairuselogo`), 不是自由许可. Fy1Sync 不随包分发赛事图标, 只在赛程显示时按需下载并缓存在用户数据目录, 按用户自担风险的决定使用, 收到权利人要求即停止显示.
+
 Fy1Sync itself is Copyright (C) 2026 Fy1ng and is licensed under the GNU General Public License, version 3 or (at your option) any later version (`GPL-3.0-or-later`). The full text is `LICENSE` in the source repository and `licenses/Fy1Sync-LICENSE.txt` in the package. Third-party programs remain separate executables or provider resources, outside app.asar, with their own terms listed below.
 
 Huya's minimal TarsV3 protocol implementation and golden request/response fixtures reference [biliup/biliup commit 48a0d234794bb918e211076b357823438e8c109d](https://github.com/biliup/biliup/tree/48a0d234794bb918e211076b357823438e8c109d), MIT, Copyright (c) 2019 ForgQi. The full notice is retained in `server/platforms/fixtures/huya-biliup-LICENSE.txt`; preserve it with redistributed implementations or fixture copies. No Simple Live code is included.

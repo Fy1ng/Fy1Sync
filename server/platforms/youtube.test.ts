@@ -18,6 +18,9 @@ describe('YouTube public page validation', () => {
     ['https://www.youtube.com/@esl', 'https://www.youtube.com/@esl/live'],
     ['youtube.com/channel/UCPublicChannel/live', 'https://www.youtube.com/channel/UCPublicChannel/live'],
     ['https://youtube.com/user/esl', 'https://www.youtube.com/user/esl/live'],
+    // An old-style name straight after the host, as event pages link PGL and BLAST.
+    ['https://www.youtube.com/PGL', 'https://www.youtube.com/PGL/live'],
+    ['youtube.com/BLASTPremier/live', 'https://www.youtube.com/BLASTPremier/live'],
   ])('canonicalizes %s', (input, expected) => {
     expect(parseYouTubeUrl(input)).toBe(expected)
     expect(detectPlatform(input)).toBe('youtube')
@@ -28,7 +31,8 @@ describe('YouTube public page validation', () => {
     'https://user:secret@youtube.com/watch?v=abcdefghijk', 'https://youtube.com:8080/watch?v=abcdefghijk',
     'file:///youtube.com/watch?v=abcdefghijk', 'https://youtube.com/playlist?list=123',
     'https://youtube.com/redirect?q=http://127.0.0.1', 'https://youtu.be/abc',
-    'https://www.youtube.com/watch?v=bad', '',
+    'https://www.youtube.com/watch?v=bad', '', 'https://www.youtube.com/feed', 'https://www.youtube.com/results?search_query=pgl',
+    'https://www.youtube.com/PGL/videos', 'https://www.youtube.com/ab',
   ])('rejects %s without starting an extractor', async (input) => {
     const runner = vi.fn()
     expect(parseYouTubeUrl(input)).toBeNull()

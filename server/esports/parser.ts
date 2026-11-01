@@ -48,13 +48,12 @@ function team(node: Node): Cs2Team {
   return { name: full, short: short === full ? null : short, logo: null }
 }
 
-/** Scope the icon search to the opponent's team block, never the tournament container. */
-export function teamLogoPath(node: Node): string | null {
+/** The best of a set of icon images: the dark-theme one when there are two, at twice the size when offered. */
+function iconPath(icons: Node[], skip: (image: Node) => boolean = () => false): string | null {
   const candidates: Array<{ path: string; priority: number }> = []
-  for (const block of byClass(node, 'block-team')) for (const icon of byClass(block, 'team-template-image-icon')) {
+  for (const icon of icons) {
     for (const image of all(icon, value => element(value) && value.tagName === 'img')) {
-      // Tournament icons carry wiki paths in alt; team icons use an empty alt.
-      if ((attr(image, 'alt') ?? '').includes('/')) continue
+      if (skip(image)) continue
       const source = normalizeLogoPath(attr(image, 'src'))
       if (!source) continue
       const twoX = (attr(image, 'srcset') ?? '').split(',').map(value => /^\s*(\S+)\s+2x\s*$/.exec(value)?.[1])
@@ -66,6 +65,19 @@ export function teamLogoPath(node: Node): string | null {
     }
   }
   return candidates.sort((a, b) => b.priority - a.priority)[0]?.path ?? null
+}
+
+/** Scope the icon search to the opponent's team block, never the tournament container. */
+export function teamLogoPath(node: Node): string | null {
+  // Tournament icons carry wiki paths in alt; team icons use an empty alt.
+  return iconPath(byClass(node, 'block-team').flatMap(block => byClass(block, 'team-template-image-icon')),
+    image => (attr(image, 'alt') ?? '').includes('/'))
+}
+
+/** The event's icon beside its name, from the tournament container only. Optional: none is fine. */
+export function eventLogoPath(node: Node): string | null {
+  const container = byClass(node, 'match-info-tournament')
+  return container.length === 1 ? iconPath(byClass(container[0]!, 'league-icon-small-image')) : null
 }
 
 function tier(node: Node): Cs2Match['tournament']['tier'] {
@@ -82,6 +94,10 @@ function tier(node: Node): Cs2Match['tournament']['tier'] {
   return null
 }
 
+/**
+ * The streams a match links, by registry entry. A link that names its video plays as given;
+ * the rest wait for their channel, which the schedule service matches on the event page.
+ */
 function streams(node: Node): Cs2Stream[] {
   const links = one(byClass(node, 'match-info-links'), '.match-info-links')
   const result = new Map<string, Cs2Stream>()
@@ -91,21 +107,24 @@ function streams(node: Node): Cs2Stream[] {
     const parts = href.slice('/counterstrike/Special:Stream/'.length).split('/')
     const platform = parts[0]
     if (platform !== 'youtube' && platform !== 'twitch') continue
-    let channel: string
-    try { channel = decodeURIComponent(parts[1] ?? '') } catch { return fail('.match-info-links stream channel') }
+    let entry: string
+    try { entry = decodeURIComponent(parts[1] ?? '') } catch { return fail('.match-info-links stream entry') }
     const videoId = parts[2] || null
-    if (parts.length > 3 || !validChannel(platform, channel) || (videoId !== null && !/^[A-Za-z0-9_-]{11}$/.test(videoId))
+    if (parts.length > 3 || !validEntry(entry) || (videoId !== null && !/^[A-Za-z0-9_-]{11}$/.test(videoId))
       || (platform === 'twitch' && videoId !== null)) return fail('.match-info-links stream URL')
-    const url = platform === 'twitch' ? `https://www.twitch.tv/${encodeURIComponent(channel)}`
-      : videoId ? `https://www.youtube.com/watch?v=${videoId}` : `https://www.youtube.com/@${encodeURIComponent(channel.replace(/^@/, ''))}/live`
-    result.set(`${platform}:${channel}:${videoId}`, { platform, channel, videoId, url })
+    const url = videoId ? `https://www.youtube.com/watch?v=${videoId}` : null
+    result.set(`${platform}:${entry}:${videoId}`, { platform, entry, channel: null, url, missing: url ? null : 'finding', videoId })
   }
   return [...result.values()]
 }
 
-export function validChannel(platform: 'youtube' | 'twitch', channel: unknown): channel is string {
-  return typeof channel === 'string' && (platform === 'twitch' ? /^[A-Za-z0-9_]{3,25}$/.test(channel)
-    : /^@?[\p{L}\p{N}_.-]{1,100}$/u.test(channel))
+/** A registry entry as a Special:Stream link names it: a short name, never a path. */
+export function validEntry(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 100 && !/[\x00-\x1f\x7f/\\?#]/.test(value)
+}
+
+export function validTwitchLogin(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_]{3,25}$/.test(value)
 }
 
 /**
@@ -173,8 +192,10 @@ function parseMatch(node: Node, logoPaths: Map<string, string>): Cs2Match {
   const finished = attr(timer, 'data-finished') === 'finished' || byClass(node, 'match-info-header-winner').length > 0
   const state: Cs2Match['state'] = finished ? 'finished' : score ? 'live' : 'upcoming'
   const id = createHash('sha256').update(JSON.stringify([url, startsAt, ...teams.map(t => t.name)])).digest('hex').slice(0, 24)
-  const result: Cs2Match = { id, startsAt, state, teams, score, bestOf, tournament: { name, stage, tier: tier(node), url }, streams: streams(node) }
+  const result: Cs2Match = { id, startsAt, state, teams, score, bestOf, tournament: { name, stage, tier: tier(node), url, logo: null }, streams: streams(node) }
   opponents.forEach((opponent, index) => { const path = teamLogoPath(opponent); if (path) logoPaths.set(`${id}:${index}`, path) })
+  const icon = eventLogoPath(node)
+  if (icon) logoPaths.set(`${id}:event`, icon)
   return result
 }
 

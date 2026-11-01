@@ -203,7 +203,7 @@ export function HoldButton({ onStep, className, children, label, disabled = fals
  */
 export function SideTabs<T extends string>({ label, tabs, value, onChange, aside, children }: {
   label: string
-  tabs: { id: T; label: string; badge?: React.ReactNode }[]
+  tabs: { id: T; label: string; icon?: React.ReactNode; badge?: React.ReactNode }[]
   value: T
   onChange: (id: T) => void
   aside?: React.ReactNode
@@ -228,7 +228,8 @@ export function SideTabs<T extends string>({ label, tabs, value, onChange, aside
             <button key={tab.id} id={`${base}-${tab.id}`} type="button" role="tab" aria-selected={tab.id === value}
               tabIndex={tab.id === value ? 0 : -1} aria-controls={`${base}-panel`}
               className={tab.id === value ? 'is-on' : undefined} onClick={() => onChange(tab.id)}>
-              <span>{tab.label}</span>
+              {tab.icon}
+              <span className="side-tab-label">{tab.label}</span>
               {tab.badge}
             </button>
           ))}
