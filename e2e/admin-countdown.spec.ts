@@ -171,20 +171,50 @@ test('一次标注后自动逐秒处理到零, 停止后仍可逐次撤回', asy
   await expect.poll(() => page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(19, 2)
 })
 
-test('自动逐秒识别与预计读数冲突时立即停在问题帧, 不写入错误样本', async ({ page, electronApp }) => {
+test('训练时已有字形或预览读数与推算冲突也不停止, 只按起始时间标注', async ({ page, electronApp }) => {
   test.skip(!fixturesReady(), '缺少测试源, 先运行 npm run fixtures')
   await open(page, electronApp)
-  // Existing reliable samples make this later intentionally wrong seed detectable.
+  // Recognition can disagree with this seed, but training is not a recognition-accuracy test.
   await seek(page, 18)
   await label(page, '0:02')
   await seek(page, 17)
   await label(page, '0:04')
   await page.getByRole('button', { name: '自动 +1s', exact: true }).click()
-  await expect(page.getByRole('status', { name: '编辑器提示' })).toContainText('自动 +1s 已停止')
-  await expect(page.getByRole('status', { name: '编辑器提示' })).toContainText('匹配')
-  await expect(page.locator('.template-thumb')).toHaveCount(8)
-  await expect.poll(() => page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(18, 2)
+  await expect(page.getByRole('status', { name: '编辑器提示' })).toContainText('倒计时已到 0')
+  await expect(page.getByRole('group', { name: '自动逐秒标注' })).toContainText('已处理 4 帧')
+  await expect(page.getByLabel('当前读数', { exact: true })).toHaveText('0:00')
+  await expect.poll(() => page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(21, 2)
   await expect(page.getByRole('button', { name: '停止自动 +1s', exact: true })).toHaveCount(0)
+})
+
+test('自动逐秒遇到多出的字符框时停在该帧, 不保存该帧并允许撤回之前的步骤', async ({ page, electronApp }) => {
+  test.skip(!fixturesReady(), '缺少测试源, 先运行 npm run fixtures')
+  await open(page, electronApp)
+  await seek(page, 17)
+  await label(page, '0:03')
+  // Add a fifth foreground shape at one timestamp only in this disposable fixture's capture path.
+  await page.evaluate(() => {
+    const draw = OffscreenCanvasRenderingContext2D.prototype.drawImage
+    OffscreenCanvasRenderingContext2D.prototype.drawImage = function (this: OffscreenCanvasRenderingContext2D, ...args: Parameters<typeof draw>) {
+      draw.apply(this, args)
+      const video = args[0]
+      if (video instanceof HTMLVideoElement && Math.abs(video.currentTime - 19) < 0.001) {
+        this.fillStyle = '#fff'
+        this.fillRect(Math.round(video.videoWidth * 0.42) + 2, Math.round(video.videoHeight * 0.045) + 5,
+          4, Math.round(video.videoHeight * 0.13) - 10)
+      }
+    } as typeof draw
+  })
+  await page.getByRole('button', { name: '自动 +1s', exact: true }).click()
+  await expect(page.getByRole('status', { name: '编辑器提示' })).toContainText('读数有 4 个字符，切出了 5 个字符框')
+  await expect(page.getByRole('group', { name: '自动逐秒标注' })).toContainText('已处理 1 帧')
+  await expect(page.locator('.template-thumb')).toHaveCount(8)
+  await expect.poll(() => page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(19, 2)
+  await expect(page.getByRole('button', { name: '停止自动 +1s', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: '撤回', exact: true }).click()
+  await expect(page.locator('.template-thumb')).toHaveCount(4)
+  await expect(page.getByLabel('当前读数', { exact: true })).toHaveText('0:03')
+  await expect.poll(() => page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(17, 2)
 })
 
 test('自动逐秒运行时可手动停止且不会再后台写入', async ({ page, electronApp }) => {

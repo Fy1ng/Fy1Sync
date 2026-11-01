@@ -1,7 +1,7 @@
 /** Character buttons and timed jumps share one reversible sample transaction history. */
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { parseCountdown } from '../../core/clockJump'
-import { prepareHudGlyphs, recognizeHudFrame } from '../../core/hudWasm'
+import { prepareHudGlyphs } from '../../core/hudWasm'
 import type { HudFieldId, HudStylePack } from '../../core/hudStylePack'
 import type { ClockChar } from '../../core/profileSchema'
 import type { GlyphBox } from '../../core/segmentation'
@@ -10,7 +10,6 @@ import { isCueTarget, type EditorTarget } from './cueModel'
 import { fieldModel } from './editorModel'
 import { applyGlyphChange, glyphFrameKey, labelledReading, teachGlyphs, type GlyphChange } from './glyphTeaching'
 import { clockText, pairReading } from './reading'
-import { checkAutoCountdown } from './autoCountdownCheck'
 
 interface Options {
   pack: HudStylePack
@@ -239,14 +238,10 @@ export function useCountdownTeaching(options: Options) {
         return
       }
       const prepared = await prepareHudGlyphs(captured.frame, current.pack, current.variantId, undefined, 'clock')
+      if (!isCurrent(job)) return
+      // Training labels come from the seeded countdown, not the unfinished recognition model.
       const paired = pairReading(job.next!, prepared.boxes.length)
       if (!paired.ok) throw new Error(`${paired.reason}; 本次未自动写入`)
-      let inferred: string[] = []
-      if (job.automatic) {
-        const observed = await recognizeHudFrame(captured.frame, current.pack, current.variantId)
-        if (!isCurrent(job)) throw new Error('当前素材或设置已改变, 本次未自动写入')
-        inferred = checkAutoCountdown(observed, current.pack, current.variantId, job.next!)
-      }
       const key = await glyphFrameKey(captured.frame, current.pack, 'clock', current.variantId, prepared.boxes)
       const result = await teachGlyphs(current.pack, 'clock', current.variantId, key, prepared.boxes.length,
         paired.chars.map((char, index) => ({ char, index, data: prepared.bitmaps[index]! })))
@@ -262,7 +257,7 @@ export function useCountdownTeaching(options: Options) {
         run.revision = latest.current.revision.current
         setAutoSteps(run.steps)
         continueAuto = true
-        current.onMessage({ kind: 'info', text: `自动 +1s: 已处理 ${run.steps} 帧, 当前 ${job.next}${inferred.length ? ', 新字形按倒计时推算' : ''}` })
+        current.onMessage({ kind: 'info', text: `自动 +1s: 已处理 ${run.steps} 帧, 当前 ${job.next}, 字符数 ${paired.chars.length}, 按倒计时推算标注` })
       } else {
         current.onMessage({ kind: 'info', text: result.pack === current.pack ? `倒计时已同步为 ${job.next}, 该帧已保存, 未重复添加`
           : `倒计时已同步为 ${job.next}, 已自动写入字符样本, 可撤回` })

@@ -26,6 +26,8 @@ describe('automatic second-step control', () => {
     const start = screen.getByRole('button', { name: '自动 +1s' })
     expect(screen.getByRole('group', { name: '自动逐秒标注' })).toContainElement(start)
     expect(start).toHaveAttribute('title', expect.stringContaining('完成当前帧处理后再继续'))
+    expect(start).toHaveAttribute('title', expect.stringContaining('字符框数不符时停止'))
+    expect(start).toHaveAttribute('title', expect.stringContaining('不以识别置信度决定停止'))
     fireEvent.click(start)
     expect(props.onStart).toHaveBeenCalledTimes(1)
     expect(props.onStop).not.toHaveBeenCalled()
