@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="430" viewBox="0 0 1200 430" role="img" aria-labelledby="title desc">
+  <title id="title">Fy1Sync - 画面与解说, 同一刻</title>
+  <desc id="desc">面向赛事观众的桌面播放器. 两条时间轴在同一个播放位置对齐, 对应赛事画面和主播解说. 弹幕跟随解说延后.</desc>
+  <rect width="1200" height="430" rx="16" fill="#0d0d0f"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei UI','PingFang SC',sans-serif">
+    <g id="identity" fill="#f3f0ea">
+      <path d="M65 56h20v20H65z" fill="#6fd3a8"/>
+      <path d="M65 76 85 56v20z" fill="#f3f0ea"/>
+      <text x="99" y="73" font-size="20" letter-spacing="3" fill="#9a9893">LIVE VIEWING, IN SYNC</text>
+      <text x="58" y="213" font-size="148" font-weight="700" letter-spacing="-7">Fy1Sync</text>
+      <text x="65" y="280" font-size="46" font-weight="500">画面与解说, 同一刻.</text>
+    </g>
+    <g id="synchronized-timelines" stroke-linecap="round">
+      <path d="M67 342h1066" stroke="#333337" stroke-width="2"/>
+      <path d="M67 385h1066" stroke="#333337" stroke-width="2"/>
+      <path d="M67 342h673" stroke="#f3f0ea" stroke-width="5"/>
+      <path d="M67 385h673" stroke="#6fd3a8" stroke-width="5"/>
+      <path d="M740 320v86" stroke="#6fd3a8" stroke-width="2"/>
+      <circle cx="740" cy="342" r="8" fill="#f3f0ea"/>
+      <circle cx="740" cy="385" r="8" fill="#6fd3a8"/>
+      <path d="M790 344h18m-18 39h18m38-39h18m-18 39h18m38-39h18m-18 39h18" stroke="#64635f" stroke-width="2"/>
+    </g>
+    <text x="1133" y="71" text-anchor="end" font-size="20" fill="#9a9893">WINDOWS x64</text>
+  </g>
+</svg>
