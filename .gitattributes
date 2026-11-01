@@ -1,0 +1,3 @@
+* text=auto eol=lf
+/manifest.json -text
+/packs/*.json -text

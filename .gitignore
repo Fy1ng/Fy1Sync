@@ -1,0 +1,9 @@
+# This branch contains reviewed public distribution files only.
+/*
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/manifest.json
+!/packs/
+/packs/*
+!/packs/*.json
