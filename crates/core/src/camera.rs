@@ -1,15 +1,21 @@
 //! Streamer camera crop: tighten a rough user box to the camera's own rectangle.
 //!
-//! A webcam overlay on a commentary stream is a rectangle with a hard edge against the game
-//! picture behind it. Inside the user's rough box that edge is the one straight line that
-//! stays in the same place in every frame: game edges move with the camera and average out
-//! over a few frames, the overlay border does not. Static HUD elements and furniture inside
-//! the camera picture are also persistent. Finite line support, corner closure and the
-//! outer supported rectangle distinguish them without assuming a fixed camera aspect ratio.
+//! RGB contrast at two spatial scales preserves chromatic and softly compressed borders.
+//! Persistent finite lines, rounded-corner support and joint rectangle closure distinguish
+//! a camera from moving game edges and shorter interior objects. Comparable separate
+//! rectangles are reported as ambiguous rather than silently selecting or joining them.
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Image, RoiRect};
+use crate::RoiRect;
+
+#[derive(Clone, Debug)]
+pub struct CameraFrame {
+    /// Packed RGBA pixels; alpha is ignored for opaque decoded video frames.
+    pub data: Vec<u8>,
+    pub width: usize,
+    pub height: usize,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -17,23 +23,41 @@ pub struct CameraTighten {
     pub roi: RoiRect,
     /// Which sides moved to a detected edge: left, top, right, bottom.
     pub found: [bool; 4],
+    /// Multiple separate, similarly supported targets require a narrower user selection.
+    pub ambiguous: bool,
 }
 
-/// Grayscale frames of the whole picture (all the same size) and a rough box in 0..1.
-pub fn tighten_camera_box(frames: &[Image], rough: &RoiRect) -> CameraTighten {
+/// RGBA frames of one local analysis region and a rough box in that region's 0..1 space.
+pub fn tighten_camera_box(frames: &[CameraFrame], rough: &RoiRect) -> CameraTighten {
     let unchanged = CameraTighten {
         roi: rough.clone(),
         found: [false; 4],
+        ambiguous: false,
     };
     let Some(first) = frames.first() else {
         return unchanged;
     };
     let (w, h) = (first.width, first.height);
+    let Some(bytes) = w.checked_mul(h).and_then(|n| n.checked_mul(4)) else {
+        return unchanged;
+    };
     if w < 8
         || h < 8
+        || w > 960
+        || h > 960
+        || !(3..=8).contains(&frames.len())
+        || ![rough.x, rough.y, rough.w, rough.h]
+            .iter()
+            .all(|v| v.is_finite())
+        || rough.x < 0.0
+        || rough.y < 0.0
+        || rough.w <= 0.0
+        || rough.h <= 0.0
+        || rough.x + rough.w > 1.0 + 1e-9
+        || rough.y + rough.h > 1.0 + 1e-9
         || frames
             .iter()
-            .any(|f| f.width != w || f.height != h || f.data.len() < w * h)
+            .any(|f| f.width != w || f.height != h || f.data.len() != bytes)
     {
         return unchanged;
     }
@@ -46,8 +70,57 @@ pub fn tighten_camera_box(frames: &[Image], rough: &RoiRect) -> CameraTighten {
     if r <= l + 8 || b <= t + 8 {
         return unchanged;
     }
-    let vertical = Lines::new(frames, [l, t, r, b], true);
-    let horizontal = Lines::new(frames, [l, t, r, b], false);
+    let sharp = locate_camera(frames, rough, [l, t, r, b], 1);
+    if sharp.ambiguous {
+        return sharp;
+    }
+    let broad = locate_camera(frames, rough, [l, t, r, b], 4);
+    if !sharp.found.iter().any(|&side| side) {
+        return broad;
+    }
+    // Fine contrast on a monitor or furniture inside a softly compressed camera must
+    // not prevent the enclosing, independently supported camera from being considered.
+    // Near-identical detections retain sharp localization rather than the wider filter.
+    let encloses = (sharp.roi.x - broad.roi.x) * w as f64 >= 3.0
+        && (sharp.roi.y - broad.roi.y) * h as f64 >= 3.0
+        && (broad.roi.x + broad.roi.w - sharp.roi.x - sharp.roi.w) * w as f64 >= 3.0
+        && (broad.roi.y + broad.roi.h - sharp.roi.y - sharp.roi.h) * h as f64 >= 3.0;
+    let complete = broad.found.iter().filter(|&&side| side).count()
+        + [
+            broad.roi.x == 0.0,
+            broad.roi.y == 0.0,
+            broad.roi.x + broad.roi.w == 1.0,
+            broad.roi.y + broad.roi.h == 1.0,
+        ]
+        .iter()
+        .filter(|&&side| side)
+        .count()
+        == 4;
+    if !broad.ambiguous
+        && complete
+        && encloses
+        && broad.roi.w * broad.roi.h > sharp.roi.w * sharp.roi.h * 1.2
+    {
+        broad
+    } else {
+        sharp
+    }
+}
+
+fn locate_camera(
+    frames: &[CameraFrame],
+    rough: &RoiRect,
+    [l, t, r, b]: [usize; 4],
+    radius: usize,
+) -> CameraTighten {
+    let (w, h) = (frames[0].width, frames[0].height);
+    let unchanged = CameraTighten {
+        roi: rough.clone(),
+        found: [false; 4],
+        ambiguous: false,
+    };
+    let vertical = Lines::new(frames, [l, t, r, b], true, radius);
+    let horizontal = Lines::new(frames, [l, t, r, b], false, radius);
     let mut lefts = vertical.candidates(-1);
     lefts.push(l);
     let mut rights = vertical.candidates(1);
@@ -56,7 +129,7 @@ pub fn tighten_camera_box(frames: &[Image], rough: &RoiRect) -> CameraTighten {
     tops.push(t);
     let mut bottoms = horizontal.candidates(1);
     bottoms.push(b);
-    let mut best: Option<(usize, f64, [usize; 4])> = None;
+    let mut ranked: Vec<(usize, f64, [usize; 4])> = Vec::new();
     for &nl in &lefts {
         for &nr in &rights {
             if nr <= nl + 12 {
@@ -88,20 +161,30 @@ pub fn tighten_camera_box(frames: &[Image], rough: &RoiRect) -> CameraTighten {
                     if supported < 3 {
                         continue;
                     }
-                    let quality: Vec<_> = sides.iter().flatten().copied().collect();
-                    let weakest = quality.iter().copied().fold(f64::INFINITY, f64::min);
-                    let mean = quality.iter().sum::<f64>() / quality.len() as f64;
+                    // One obscured side is recoverable from three continuous peers. Two
+                    // long broken sides often span separate HUD/camera rectangles.
+                    let continuous = sides.iter().flatten().filter(|e| e.continuous).count()
+                        + frame_sides.iter().filter(|&&f| f).count();
+                    if continuous < 3 {
+                        continue;
+                    }
+                    let quality = sides.iter().flatten().map(|e| e.score);
+                    let weakest = quality.clone().fold(f64::INFINITY, f64::min);
+                    let mean = quality.sum::<f64>() / sides.iter().flatten().count() as f64;
                     // A modest border-closure tie-break, without imposing a webcam aspect ratio.
                     let corners = [(nl, nt), (nr - 1, nt), (nl, nb - 1), (nr - 1, nb - 1)];
-                    let levels: Vec<f64> = corners
-                        .iter()
-                        .map(|&(x, y)| {
-                            frames.iter().map(|f| f.data[y * w + x] as f64).sum::<f64>()
-                                / frames.len() as f64
+                    let spread = (0..3)
+                        .map(|channel| {
+                            let levels = corners.iter().map(|&(x, y)| {
+                                frames
+                                    .iter()
+                                    .map(|f| f.data[(y * w + x) * 4 + channel] as f64)
+                                    .sum::<f64>()
+                                    / frames.len() as f64
+                            });
+                            levels.clone().fold(0.0, f64::max) - levels.fold(255.0, f64::min)
                         })
-                        .collect();
-                    let spread = levels.iter().copied().fold(0.0, f64::max)
-                        - levels.iter().copied().fold(255.0, f64::min);
+                        .fold(0.0, f64::max);
                     // Prefer the outer supported rectangle to a closed piece of furniture inside
                     // it. This only ranks rectangles whose individual sides already passed.
                     let retained_area = ((nr - nl) * (nb - nt)) as f64 / ((r - l) * (b - t)) as f64;
@@ -111,19 +194,26 @@ pub fn tighten_camera_box(frames: &[Image], rough: &RoiRect) -> CameraTighten {
                         + retained_area.ln() * 1.8;
                     // A supported fourth side outranks arbitrary extra rough-box area.
                     // Only compare area/strength after the actual support count agrees.
-                    if best.as_ref().is_none_or(|(previous_support, previous, _)| {
-                        supported > *previous_support
-                            || (supported == *previous_support && score > *previous)
-                    }) {
-                        best = Some((supported, score, [nl, nt, nr, nb]));
-                    }
+                    keep_hypothesis(&mut ranked, (supported, score, [nl, nt, nr, nb]));
                 }
             }
         }
     }
-    let Some((_, _, [nl, nt, nr, nb])) = best else {
+    ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.total_cmp(&a.1)));
+    let Some(&(support, score, [nl, nt, nr, nb])) = ranked.first() else {
         return unchanged;
     };
+    for &(other_support, other_score, [ol, ot, or, ob]) in ranked.iter().skip(1) {
+        if other_support < support || score - other_score > 0.3 {
+            break;
+        }
+        if overlap([nl, nt, nr, nb], [ol, ot, or, ob]) < 0.45 {
+            return CameraTighten {
+                ambiguous: true,
+                ..unchanged
+            };
+        }
+    }
     // Keep undetected sides in the user's original normalized coordinates. Rounding to
     // analysis pixels must not move a fractional rough side or appear to expand it.
     let nx = if nl == l {
@@ -154,6 +244,37 @@ pub fn tighten_camera_box(frames: &[Image], rough: &RoiRect) -> CameraTighten {
             h: bottom - ny,
         },
         found: [nl != l, nt != t, nr != r, nb != b],
+        ambiguous: false,
+    }
+}
+
+type Hypothesis = (usize, f64, [usize; 4]);
+fn overlap([l, t, r, b]: [usize; 4], [ol, ot, or, ob]: [usize; 4]) -> f64 {
+    let intersection = r.min(or).saturating_sub(l.max(ol)) * b.min(ob).saturating_sub(t.max(ot));
+    let union = (r - l) * (b - t) + (or - ol) * (ob - ot) - intersection;
+    intersection as f64 / union as f64
+}
+
+fn keep_hypothesis(hypotheses: &mut Vec<Hypothesis>, next: Hypothesis) {
+    let better = |a: &Hypothesis, b: &Hypothesis| a.0 > b.0 || a.0 == b.0 && a.1 > b.1;
+    // A thick/compressed border creates many nearly identical rectangles. Coalesce them
+    // so they cannot evict a genuinely separate runner-up from the bounded ambiguity set.
+    if let Some(previous) = hypotheses.iter_mut().find(|p| overlap(p.2, next.2) >= 0.85) {
+        if better(&next, previous) {
+            *previous = next;
+        }
+    } else if hypotheses.len() < 32 {
+        hypotheses.push(next);
+    } else {
+        let weakest = hypotheses
+            .iter()
+            .enumerate()
+            .min_by(|a, b| a.1 .0.cmp(&b.1 .0).then_with(|| a.1 .1.total_cmp(&b.1 .1)))
+            .map(|(i, _)| i)
+            .unwrap();
+        if better(&next, &hypotheses[weakest]) {
+            hypotheses[weakest] = next;
+        }
     }
 }
 
@@ -167,8 +288,13 @@ struct Lines {
     hits: Vec<Vec<usize>>,
     threshold: f64,
 }
+#[derive(Clone, Copy)]
+struct Evidence {
+    score: f64,
+    continuous: bool,
+}
 impl Lines {
-    fn new(frames: &[Image], [l, t, r, b]: [usize; 4], vertical: bool) -> Self {
+    fn new(frames: &[CameraFrame], [l, t, r, b]: [usize; 4], vertical: bool, scale: usize) -> Self {
         // Include the rough sides themselves: an already aligned side can provide real
         // support even though it does not move. Frame-edge sides are known separately.
         let (origin, end, start, stop) = if vertical {
@@ -183,19 +309,32 @@ impl Lines {
             let edge = origin + i + 1;
             for (j, value) in line.iter_mut().enumerate() {
                 let point = start + j;
-                let mut samples: Vec<u8> = frames
-                    .iter()
-                    .map(|f| {
-                        let (a, z) = if vertical {
-                            (point * f.width + edge - 1, point * f.width + edge)
-                        } else {
-                            ((edge - 1) * f.width + point, edge * f.width + point)
+                let mut samples = [0.0; 8];
+                for (index, f) in frames.iter().enumerate() {
+                    let axis = if vertical { f.width } else { f.height };
+                    let radius = scale.min(edge).min(axis - edge);
+                    let mut broad: f64 = 0.0;
+                    for channel in 0..3 {
+                        let at = |position| {
+                            f.data[(if vertical {
+                                point * f.width + position
+                            } else {
+                                position * f.width + point
+                            }) * 4
+                                + channel] as f64
                         };
-                        f.data[a].abs_diff(f.data[z])
-                    })
-                    .collect();
-                samples.sort_unstable();
-                *value = samples[(samples.len() - 1) / 4] as f64;
+                        let mut left = 0.0;
+                        let mut right = 0.0;
+                        for offset in 0..radius {
+                            left += at(edge - 1 - offset);
+                            right += at(edge + offset);
+                        }
+                        broad = broad.max((left - right).abs() / radius as f64);
+                    }
+                    samples[index] = broad;
+                }
+                samples[..frames.len()].sort_by(f64::total_cmp);
+                *value = samples[(frames.len() - 1) / 4];
                 typical.push(*value);
             }
         }
@@ -228,7 +367,7 @@ impl Lines {
             threshold,
         }
     }
-    fn evidence(&self, edge: usize, from: usize, to: usize) -> Option<f64> {
+    fn evidence(&self, edge: usize, from: usize, to: usize) -> Option<Evidence> {
         if edge <= self.origin
             || edge > self.origin + self.sums.len()
             || from < self.start
@@ -243,16 +382,43 @@ impl Lines {
         let span = (b - a) as f64;
         let coverage = (self.hits[i][b] - self.hits[i][a]) as f64 / span;
         let mean = (self.sums[i][b] - self.sums[i][a]) / span;
-        let corner = ((b - a) / 8).max(3).min((b - a) / 2);
-        let leading = (self.hits[i][a + corner] - self.hits[i][a]) as f64 / corner as f64;
-        let trailing = (self.hits[i][b] - self.hits[i][b - corner]) as f64 / corner as f64;
+        let corner = ((b - a) / 8).max(3).min((b - a) / 3);
+        let mut leading = (self.hits[i][a + corner] - self.hits[i][a]) as f64 / corner as f64;
+        let mut trailing = (self.hits[i][b] - self.hits[i][b - corner]) as f64 / corner as f64;
+        if coverage >= 0.7 {
+            // Rounded corners lose short endpoint segments, not the straight central side.
+            leading = leading.max(
+                (self.hits[i][a + corner * 3] - self.hits[i][a + corner * 2]) as f64
+                    / corner as f64,
+            );
+            trailing = trailing.max(
+                (self.hits[i][b - corner * 2] - self.hits[i][b - corner * 3]) as f64
+                    / corner as f64,
+            );
+        }
         // Borderless black camera content can blend into a black game scene in the middle
         // of a side. Both endpoints must still meet the other sides, rather than treating
         // one short furniture line as a complete edge.
         if coverage < 0.35 || leading < 0.6 || trailing < 0.6 || mean < self.threshold {
             None
         } else {
-            Some((mean / self.threshold).ln_1p() * coverage)
+            let bins = 12;
+            let mut missing = 0;
+            let mut longest_gap = 0;
+            for bin in 1..bins - 1 {
+                let x = a + (b - a) * bin / bins;
+                let y = a + (b - a) * (bin + 1) / bins;
+                if (self.hits[i][y] - self.hits[i][x]) * 2 < y - x {
+                    missing += 1;
+                } else {
+                    missing = 0;
+                }
+                longest_gap = longest_gap.max(missing);
+            }
+            Some(Evidence {
+                score: (mean / self.threshold).ln_1p() * coverage,
+                continuous: longest_gap <= 2,
+            })
         }
     }
     fn candidates(&self, outward: i32) -> Vec<usize> {
@@ -260,6 +426,7 @@ impl Lines {
         // borderless side blends into the background. Full-side and endpoint tests above
         // still decide whether this line can belong to a rectangle.
         let window = 12.min(self.length);
+        let mut strengths = vec![0.0; self.sums.len()];
         let mut scores: Vec<(usize, f64)> = self
             .sums
             .iter()
@@ -272,29 +439,52 @@ impl Lines {
                         score = score.max((sums[b] - sums[a]) / window as f64);
                     }
                 }
-                (score >= self.threshold).then_some((i, score))
+                // A tiny bright HUD fragment must not evict an extended weaker camera side.
+                strengths[i] = score;
+                let support = self.hits[i][self.length] as f64;
+                (score >= self.threshold)
+                    .then_some((i, score.min(self.threshold * 2.0) * support.sqrt()))
             })
             .collect();
         scores.sort_by(|a, b| b.1.total_cmp(&a.1));
-        let mut kept: Vec<(usize, usize, f64)> = Vec::new();
-        for (i, score) in scores {
-            if let Some((_, chosen, strongest)) =
-                kept.iter_mut().find(|(a, _, _)| a.abs_diff(i) <= 3)
+        let mut kept: Vec<(usize, usize, f64, bool)> = Vec::new();
+        for (mut i, score) in scores {
+            let level = strengths[i] * 0.8;
+            let mut lo = i;
+            let mut hi = i;
+            while lo > 0 && i - lo < 6 && strengths[lo - 1] >= level {
+                lo -= 1;
+            }
+            while hi + 1 < strengths.len() && hi - i < 6 && strengths[hi + 1] >= level {
+                hi += 1;
+            }
+            let soft = (3..=9).contains(&(hi - lo + 1));
+            if soft {
+                // A soft step has a band of equal gradients, not a hard outer edge. Its
+                // center is the crop boundary; choosing the band's outside includes a halo.
+                i = ((lo..=hi).map(|x| x as f64 * strengths[x]).sum::<f64>()
+                    / strengths[lo..=hi].iter().sum::<f64>())
+                .round() as usize;
+            }
+            if let Some((_, chosen, strongest, centered)) =
+                kept.iter_mut().find(|(a, _, _, _)| a.abs_diff(i) <= 3)
             {
-                if score >= *strongest * 0.5
+                if !soft
+                    && !*centered
+                    && score >= *strongest * 0.5
                     && ((outward < 0 && i < *chosen) || (outward > 0 && i > *chosen))
                 {
                     *chosen = i;
                 }
             } else if kept.len() < 16 {
-                kept.push((i, i, score));
+                kept.push((i, i, score, soft));
             }
         }
         // Keep the strongest boundary as well as the outward one. Compression may put a
         // short bright fragment one pixel farther out; rectangle support decides which
         // actually spans the full side instead of discarding the correct boundary here.
         kept.into_iter()
-            .flat_map(|(anchor, chosen, _)| {
+            .flat_map(|(anchor, chosen, _, _)| {
                 if anchor == chosen {
                     vec![self.origin + chosen + 1]
                 } else {
@@ -315,6 +505,20 @@ fn clamp_px(value: f64, limit: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Image;
+
+    // Preserve the pre-existing monochrome scene fixtures while exercising RGBA input.
+    fn tighten_camera_box(frames: &[Image], rough: &RoiRect) -> CameraTighten {
+        let frames: Vec<_> = frames
+            .iter()
+            .map(|frame| CameraFrame {
+                width: frame.width,
+                height: frame.height,
+                data: frame.data.iter().flat_map(|&v| [v, v, v, 255]).collect(),
+            })
+            .collect();
+        super::tighten_camera_box(&frames, rough)
+    }
 
     /// A 320x180 frame: textured "game" everywhere, a camera rectangle at
     /// (100..220, 60..150) with a 2 px light border and moving content inside.

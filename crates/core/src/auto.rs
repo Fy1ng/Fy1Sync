@@ -761,7 +761,6 @@ fn learn_at_threshold(frames: &[TimedFrame], roi: &RoiRect, threshold: f64) -> L
     };
     let profile = if templates.len() > 1 {
         Some(RecognitionProfile {
-            schema_version: 2,
             id: "auto/countdown".into(),
             name: "自动学习候选".into(),
             roi: roi.clone(),

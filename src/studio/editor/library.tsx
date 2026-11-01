@@ -22,12 +22,12 @@ export function LibraryMenu({ presets, drafts, onLoadPreset, onLoadDraft, onDele
         打开<Icon name="chevron" />
       </button>
       <Popover {...menu.popover} className="editor-menu library-menu" label="打开">
-        <p className="menu-heading">本机预设</p>
+        <p className="menu-heading">可用预设</p>
         {presets.length === 0 ? <p className="menu-meta menu-empty">暂无已发布的预设</p> : presets.map((preset) => (
           <button type="button" key={preset.id} className="menu-item library-item"
             onClick={() => { menu.close(); void onLoadPreset(preset.id) }}>
             <span className="library-name">{preset.name}</span>
-            <span className="menu-note num">{preset.id} · {preset.templateChars} 个字符</span>
+            <span className="menu-note num">{preset.source === 'cloud' ? '云端 / ' : ''}{preset.id} · {preset.templateChars} 个字符</span>
           </button>
         ))}
         <div className="menu-rule" />

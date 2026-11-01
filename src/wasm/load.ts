@@ -1,4 +1,4 @@
-import init, { AutoClockSession, RecognitionEngine, TickMomentDetector, recognize_auto } from './pkg/stream_syncer_wasm.js'
+import init, { AutoClockSession, RecognitionEngine, TickMomentDetector, recognize_auto, recognize_hud_frame } from './pkg/stream_syncer_wasm.js'
 import wasmUrl from './pkg/stream_syncer_wasm_bg.wasm?url'
 import type { WasmEngine } from '../recognition/backend'
 
@@ -6,6 +6,7 @@ export async function loadWasmEngine(): Promise<WasmEngine> {
   await init({ module_or_path: wasmUrl })
   const recognition = new RecognitionEngine()
   return {
+    recognizeHud: (...args) => recognize_hud_frame(...args),
     configure: (profile) => recognition.configure(profile),
     recognize: (...args) => recognition.recognize(...args),
     recognizeAuto: (gray, width, height, profile) => recognize_auto(gray, width, height, profile),
@@ -16,7 +17,7 @@ export async function loadWasmEngine(): Promise<WasmEngine> {
 
 let cameraModule: Promise<(frames: Uint8Array, width: number, height: number, rough: string) => string> | null = null
 
-/** The camera crop runs on the main thread: one call over a few small frames, on demand. */
+/** Camera workers load the matching RGBA detector and WASM from the same frontend bundle. */
 export function loadCameraTighten(): Promise<(frames: Uint8Array, width: number, height: number, rough: string) => string> {
   cameraModule ??= (async () => {
     const module = await import('./pkg/stream_syncer_wasm.js')

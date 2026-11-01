@@ -11,13 +11,14 @@ import { Session } from '../../app/session'
 import { SessionProvider } from '../../app/SessionContext'
 import type { DouyuFollowedRooms } from '../../../server/douyu/insightsTypes'
 import { Following } from './Following'
-import { resetLiveNotices } from './followingNotices'
+import { resetLiveNotices, syncLiveNotices } from './followingNotices'
 import type { DouyuData } from './useDouyu'
 
 type Call = { method: string; args: unknown }
 let calls: Call[] = []
 let listeners: Array<(event: FeatureEvent) => void> = []
-let responses: Record<string, (args: unknown) => { ok: boolean; value?: unknown; code?: string; message?: string }> = {}
+type Reply = { ok: boolean; value?: unknown; code?: string; message?: string }
+let responses: Record<string, (args: unknown) => Reply | Promise<Reply>> = {}
 const sessions: Session[] = []
 
 const followed = (patch: Partial<DouyuFollowedRooms> = {}): DouyuFollowedRooms => ({
@@ -38,6 +39,7 @@ beforeEach(() => {
   listeners = []
   responses = {
     getDouyuFollowedRooms: () => ({ ok: true, value: followed() }),
+    getDouyuLiveNotifications: () => ({ ok: true, value: { enabled: false, rooms: [], followedAccountId: null } }),
     openStreamSession: (args) => ({ ok: true, value: { id: 'extra-1', input: (args as { input: string }).input, phase: 'opening', stream: null, buffer: null, error: null } }),
     setDouyuLiveNotifications: (args) => {
       const value = args as { enabled: boolean; rooms?: string[]; accountId?: string }
@@ -172,5 +174,57 @@ describe('live notifications', () => {
     expect(within(notices).getAllByText('乙的直播间（200） 已开播')).toHaveLength(1)
     emit({ type: 'monitor-error', accountId: 'a1', message: '关注列表不完整, 本轮未生成开播提醒.' })
     expect(screen.getByText(/监控状态：关注列表不完整/)).toBeInTheDocument()
+  })
+
+  it('shows a reminder left running by an earlier load of this window as on, with its rooms', async () => {
+    responses.getDouyuLiveNotifications = () => ({ ok: true, value: { enabled: true, rooms: ['200'], followedAccountId: 'a1' } })
+    renderFollowing()
+    await waitFor(() => expect(screen.getByRole('switch', { name: /开播提醒/ })).toBeChecked())
+    expect(await screen.findByRole('checkbox', { name: '开播提醒 房间 200' })).toBeChecked()
+    expect(screen.getByText('已对所选 1 个房间开启提醒。')).toBeInTheDocument()
+    // Reading never sends anything back.
+    expect(named('setDouyuLiveNotifications')).toEqual([])
+  })
+
+  it('restores 全部关注 from an empty room list with a followed account', async () => {
+    responses.getDouyuLiveNotifications = () => ({ ok: true, value: { enabled: true, rooms: [], followedAccountId: 'a1' } })
+    renderFollowing()
+    expect(await screen.findByText(/已对当前账号的全部关注开启提醒/)).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: '全部关注' })).toBeChecked()
+  })
+
+  it('keeps the switch closed to input until main has answered', async () => {
+    let answer!: (reply: Reply) => void
+    responses.getDouyuLiveNotifications = () => new Promise<Reply>(resolve => { answer = resolve })
+    renderFollowing()
+    await screen.findByRole('group', { name: /甲的直播间/ })
+    expect(screen.getByRole('switch', { name: /开播提醒/ })).toBeDisabled()
+    await act(async () => answer({ ok: true, value: { enabled: false, rooms: [], followedAccountId: null } }))
+    await waitFor(() => expect(screen.getByRole('switch', { name: /开播提醒/ })).toBeEnabled())
+  })
+
+  it('lets a setting sent after a read win over that read', async () => {
+    renderFollowing()
+    await screen.findByRole('group', { name: /甲的直播间/ })
+    await waitFor(() => expect(screen.getByRole('switch', { name: /开播提醒/ })).toBeEnabled())
+    let answer!: (reply: Reply) => void
+    responses.getDouyuLiveNotifications = () => new Promise<Reply>(resolve => { answer = resolve })
+    const stale = syncLiveNotices()
+    fireEvent.click(screen.getByRole('radio', { name: '全部关注' }))
+    fireEvent.click(screen.getByRole('switch', { name: /开播提醒/ }))
+    await screen.findByText(/已对当前账号的全部关注开启提醒/)
+    await act(async () => { answer({ ok: true, value: { enabled: false, rooms: [], followedAccountId: null } }); await stale })
+    expect(screen.getByRole('switch', { name: /开播提醒/ })).toBeChecked()
+  })
+
+  it('shows what main runs after a set, not what was asked', async () => {
+    responses.setDouyuLiveNotifications = () => ({ ok: true, value: { enabled: false, rooms: [], followedAccountId: null } })
+    renderFollowing()
+    await screen.findByRole('group', { name: /甲的直播间/ })
+    fireEvent.click(screen.getByRole('checkbox', { name: '开播提醒 房间 100' }))
+    await waitFor(() => expect(screen.getByRole('switch', { name: /开播提醒/ })).toBeEnabled())
+    fireEvent.click(screen.getByRole('switch', { name: /开播提醒/ }))
+    await waitFor(() => expect(named('setDouyuLiveNotifications')).toHaveLength(1))
+    await waitFor(() => expect(screen.getByRole('switch', { name: /开播提醒/ })).not.toBeChecked())
   })
 })

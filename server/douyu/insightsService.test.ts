@@ -126,6 +126,21 @@ describe('live notifications and read races', () => {
     await vi.advanceTimersByTimeAsync(180_000)
     expect(f.gateway.readFollowedRooms).toHaveBeenCalledTimes(2)
   })
+  it('reports the reminder and its monitor as they run, as a copy', () => {
+    const f = setup()
+    expect(f.service.notificationState()).toEqual({ enabled: false, rooms: [], followedAccountId: null })
+    f.service.setNotifications(true, ['100', '200']); f.service.startFollowMonitor('a')
+    const state = f.service.notificationState()
+    expect(state).toEqual({ enabled: true, rooms: ['100', '200'], followedAccountId: 'a' })
+    state.rooms.push('300')
+    expect(f.service.notificationState().rooms).toEqual(['100', '200'])
+    // Invalidating another account changes nothing; the monitored one only stops the monitor.
+    f.service.invalidateAccount('b')
+    expect(f.service.notificationState().followedAccountId).toBe('a')
+    f.service.invalidateAccount('a')
+    expect(f.service.notificationState()).toEqual({ enabled: true, rooms: ['100', '200'], followedAccountId: null })
+    expect(f.gateway.readFollowedRooms).toHaveBeenCalledTimes(1)
+  })
   it('does not notify from incomplete follow pages', async () => {
     const f = setup()
     f.gateway.readFollowedRooms.mockResolvedValueOnce(f.follows(false)).mockResolvedValueOnce({ ...f.follows(true), coverage: 'partial' })

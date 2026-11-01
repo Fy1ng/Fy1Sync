@@ -113,3 +113,17 @@ describe('YouTube admin preload boundary', () => {
     expect(progress).toHaveBeenCalledOnce()
   })
 })
+
+describe('editor project preload boundary', () => {
+  it('routes project persistence and the native media picker through the admin channel', async () => {
+    const bridge = await loadBridge()
+    await bridge.invoke('editorProjectLoad', undefined)
+    await bridge.invoke('editorMediaChoose', { relinkId: 'local-one' })
+    await bridge.invoke('editorMediaRestore', { id: 'local-one' })
+    expect(electron.ipcRenderer.invoke.mock.calls).toEqual([
+      ['stream-syncer:editor-invoke', 'editorProjectLoad', undefined],
+      ['stream-syncer:editor-invoke', 'editorMediaChoose', { relinkId: 'local-one' }],
+      ['stream-syncer:editor-invoke', 'editorMediaRestore', { id: 'local-one' }],
+    ])
+  })
+})

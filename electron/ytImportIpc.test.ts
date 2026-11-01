@@ -71,13 +71,39 @@ describe('YouTube admin IPC boundary', () => {
       ['ytBrowseClose', {}], ['ytBrowseState', {}], ['ytBrowseSnapshot', null], ['ytImportList', {}],
       ['ytBrowseCommand', { action: 'eval', seconds: 2 }], ['ytBrowseCommand', { action: 'seek', seconds: NaN }],
       ['ytBrowseCommand', { action: 'pause', seconds: 2 }], ['ytImportCancel', { jobId: '../../file' }],
-      ['ytImportStart', { url: 'x', startSeconds: 3, endSeconds: 2 }],
-      ['ytImportStart', { url: 'x', startSeconds: 0, endSeconds: 301, output: 'file' }],
+      ['ytImportStart', { url: 'x', startSeconds: 3, endSeconds: 2, targetHeight: 2160 }],
+      ['ytImportStart', { url: 'x', startSeconds: 0, endSeconds: 10801, targetHeight: 2160, output: 'file' }],
     ] as const) expect(await f.call(method, args)).toMatchObject({ ok: false, code: 'invalid-arguments' })
-    expect(await f.call('ytImportStart', { url: 'x', startSeconds: 0, endSeconds: 301 })).toMatchObject({ code: 'too-long' })
+    expect(await f.call('ytImportStart', { url: 'x', startSeconds: 0, endSeconds: 10801, targetHeight: 2160 })).toMatchObject({ code: 'too-long' })
     expect(f.imports.start).not.toHaveBeenCalled()
     expect(f.browse.open).not.toHaveBeenCalled()
     expect(await f.call('arbitrary')).toMatchObject({ code: 'unknown-method' })
+    await f.installed.dispose()
+  })
+
+  it('accepts only the three numeric clip heights and requires the field', async () => {
+    const f = fixture()
+    const request = { url: 'https://www.youtube.com/watch?v=abcdefghijk', startSeconds: 0, endSeconds: 20 }
+    for (const targetHeight of [undefined, null, '2160', '1440p', 0, 720, 1440.5, 4320, NaN, Infinity, [1080]]) {
+      expect(await f.call('ytImportStart', { ...request, targetHeight })).toMatchObject({ ok: false, code: 'invalid-arguments' })
+    }
+    expect(await f.call('ytImportStart', request)).toMatchObject({ ok: false, code: 'invalid-arguments' })
+    expect(await f.call('ytImportStart', { ...request, get targetHeight() { throw new Error('must not read accessors') } })).toMatchObject({ code: 'invalid-arguments' })
+    expect(f.imports.start).not.toHaveBeenCalled()
+    for (const targetHeight of [2160, 1440, 1080]) {
+      expect(await f.call('ytImportStart', { ...request, targetHeight })).toMatchObject({ ok: true })
+      expect(f.imports.start).toHaveBeenLastCalledWith({ ...request, targetHeight })
+    }
+    await f.installed.dispose()
+  })
+
+  it('accepts exactly three hours and rejects a longer clip at the IPC boundary', async () => {
+    const f = fixture()
+    const request = { url: 'https://www.youtube.com/watch?v=abcdefghijk', startSeconds: 120, endSeconds: 10920, targetHeight: 2160 }
+    expect(await f.call('ytImportStart', request)).toMatchObject({ ok: true })
+    expect(f.imports.start).toHaveBeenCalledExactlyOnceWith(request)
+    expect(await f.call('ytImportStart', { ...request, endSeconds: 10920.01 })).toMatchObject({ code: 'too-long' })
+    expect(f.imports.start).toHaveBeenCalledOnce()
     await f.installed.dispose()
   })
 
@@ -87,8 +113,8 @@ describe('YouTube admin IPC boundary', () => {
     const viewport = { rect: { x: 10, y: 20, width: 640, height: 360 }, visible: true }
     expect(await f.call('ytBrowseSetViewport', viewport)).toEqual({ ok: true, value: { ok: true } })
     await f.call('ytBrowseCommand', { action: 'seek', seconds: 4 })
-    await f.call('ytImportStart', { url: 'https://www.youtube.com/watch?v=abcdefghijk', startSeconds: 0, endSeconds: 20 })
-    expect(f.imports.start).toHaveBeenCalledWith({ url: 'https://www.youtube.com/watch?v=abcdefghijk', startSeconds: 0, endSeconds: 20 })
+    await f.call('ytImportStart', { url: 'https://www.youtube.com/watch?v=abcdefghijk', startSeconds: 0, endSeconds: 20, targetHeight: 2160 })
+    expect(f.imports.start).toHaveBeenCalledWith({ url: 'https://www.youtube.com/watch?v=abcdefghijk', startSeconds: 0, endSeconds: 20, targetHeight: 2160 })
     expect(f.browse.open).toHaveBeenCalledWith(f.ownerWindow, 'https://www.youtube.com/watch?v=abcdefghijk')
     expect(f.browse.setViewport).toHaveBeenCalledExactlyOnceWith(viewport)
     expect(f.installed.emit('yt-import-progress', { state: 'ready' })).toBe(true)

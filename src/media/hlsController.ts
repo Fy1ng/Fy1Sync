@@ -21,6 +21,11 @@ export interface MediaError {
 }
 
 export interface AttachHandlers {
+  onPlayingContinuity?: (cc: number) => void
+  onPlaylist?: (start: number | null, end: number | null) => void
+  onFragment?: (phase: 'loading' | 'loaded' | 'buffered', elapsedMs: number, start: number, end: number, loadMs: number | null) => void
+  onDiagnosticError?: (type: string, details: string) => void
+  onLevelSwitching?: () => void
   onQualityOptions?: (options: QualityOption[]) => void
   onLevelSwitch?: (level: number, autoLevel: number) => void
   onError?: (error: MediaError) => void
@@ -33,8 +38,11 @@ export interface MediaAttachment {
   mode: AttachMode
   /** -1 selects automatic level switching. */
   setLevel(level: number): void
-  /** Jump to the live edge; no-op for VOD and native playback. */
-  seekToLive(): void
+  /**
+   * Where live playback rejoins: hls.js's sync point, a few segments behind the newest one,
+   * which is also where it starts a live stream. null for VOD and native playback.
+   */
+  livePosition(): number | null
   destroy(): void
 }
 
@@ -78,7 +86,7 @@ function ownMedia(video: HTMLVideoElement, signal?: AbortSignal): AttachmentOwne
 }
 
 function emptyAttachment(): MediaAttachment {
-  return { mode: 'native', setLevel() {}, seekToLive() {}, destroy() {} }
+  return { mode: 'native', setLevel() {}, livePosition: () => null, destroy() {} }
 }
 
 function loadHls(): Promise<HlsModule> {
@@ -206,13 +214,43 @@ export async function attachMedia(
   hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
     if (!owner.current()) return
     handlers.onLiveHint?.(Boolean(data.details.live))
+    const fragments = data.details.fragments ?? []
+    const first = fragments[0]
+    const last = fragments.at(-1)
+    handlers.onPlaylist?.(first?.start ?? null, last ? last.start + last.duration : null)
   })
+  hls.on(Hls.Events.FRAG_CHANGED, (_event, data) => {
+    if (owner.current() && Number.isFinite(data.frag.cc)) handlers.onPlayingContinuity?.(data.frag.cc)
+  })
+  hls.on(Hls.Events.LEVEL_SWITCHING, () => {
+    if (owner.current()) handlers.onLevelSwitching?.()
+  })
+  let fragmentStart: number | null = null
+  let fragmentLoadMs: number | null = null
+  let fragmentKey = ''
+  const fragmentPhase = (phase: 'loading' | 'loaded' | 'buffered', frag: {
+    type: string; cc: number; sn: number | 'initSegment'; level: number; start: number; duration: number
+  }) => {
+    if (!owner.current() || frag.type !== 'main') return
+    const key = `${frag.cc}:${frag.level}:${frag.sn}`
+    if (phase !== 'loading' && key !== fragmentKey) return
+    fragmentKey = key
+    if (phase === 'loading') { fragmentStart = performance.now(); fragmentLoadMs = null }
+    if (phase === 'loaded') fragmentLoadMs = fragmentStart === null ? null : Math.max(0, performance.now() - fragmentStart)
+    // Loading and append wait have separate clocks; a slow fetch is not a slow append.
+    const elapsedMs = phase === 'buffered' && fragmentStart !== null ? Math.max(0, performance.now() - fragmentStart) : 0
+    handlers.onFragment?.(phase, elapsedMs, frag.start, frag.start + frag.duration, fragmentLoadMs)
+  }
+  hls.on(Hls.Events.FRAG_LOADING, (_event, data) => fragmentPhase('loading', data.frag))
+  hls.on(Hls.Events.FRAG_LOADED, (_event, data) => fragmentPhase('loaded', data.frag))
+  hls.on(Hls.Events.FRAG_BUFFERED, (_event, data) => fragmentPhase('buffered', data.frag))
   hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
     if (!owner.current()) return
     handlers.onLevelSwitch?.(hls.autoLevelEnabled ? -1 : data.level, data.level)
   })
   hls.on(Hls.Events.ERROR, (_event, data) => {
     if (!owner.current()) return
+    handlers.onDiagnosticError?.(data.type, data.details)
     const error = translateHlsError(Hls, data)
     if (!data.fatal) { handlers.onError?.(error); return }
     resetStability()
@@ -249,13 +287,10 @@ export async function attachMedia(
       hls.currentLevel = level
       if (level < 0) hls.nextLevel = -1
     },
-    seekToLive() {
-      if (!owner.current()) return
-      if (hls.liveSyncPosition !== null && Number.isFinite(hls.liveSyncPosition)) {
-        video.currentTime = hls.liveSyncPosition
-      } else if (video.seekable.length > 0) {
-        video.currentTime = video.seekable.end(video.seekable.length - 1)
-      }
+    livePosition() {
+      if (!owner.current()) return null
+      const position = hls.liveSyncPosition
+      return position !== null && Number.isFinite(position) ? position : null
     },
     destroy: owner.destroy,
   }
@@ -283,12 +318,7 @@ function nativeAttachment(video: HTMLVideoElement, url: string, owner: Attachmen
     setLevel() {
       // Native playback picks its own variant; nothing to switch.
     },
-    seekToLive() {
-      if (!owner.current()) return
-      if (video.seekable.length > 0) {
-        video.currentTime = video.seekable.end(video.seekable.length - 1)
-      }
-    },
+    livePosition: () => null,
     destroy: owner.destroy,
   }
 }

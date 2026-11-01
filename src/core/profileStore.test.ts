@@ -1,30 +1,20 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { packBitmap } from './bitmapCodec'
-import { CLOCK_CHARS, createEmptyProfile, TEMPLATE_PIXELS, type RecognitionProfile } from './profileSchema'
-import { LEGACY_DONE_KEY, LEGACY_KEY, ProfileStore } from './profileStore'
+import { CLOCK_CHARS, TEMPLATE_PIXELS } from './profileSchema'
+import { createEmptyHudStylePack, type HudStylePack } from './hudStylePack'
+import { ProfileStore } from './profileStore'
 
-function withTemplates(id = 'cs2/store'): RecognitionProfile {
-  const profile = createEmptyProfile(id, '存储测试')
+function withTemplates(id = 'cs2/store'): HudStylePack {
+  const profile = createEmptyHudStylePack(id, '存储测试')
   const mask = new Uint8Array(TEMPLATE_PIXELS)
   mask.fill(255, 0, 200)
   for (const char of CLOCK_CHARS) {
-    profile.templates[char] = [{ id: `${char}-0`, data: packBitmap(mask), createdAt: 1 }]
+    const id = `glyph-${char === ':' ? 'colon' : char}`
+    profile.bitmaps[id] = { width: 32, height: 48, data: packBitmap(mask) }
+    profile.variants[0]!.fields.clock!.glyphs[char] = [id]
   }
   return profile
-}
-
-class MemoryStorage implements Pick<Storage, 'getItem' | 'removeItem' | 'setItem'> {
-  private readonly map = new Map<string, string>()
-  getItem(key: string): string | null {
-    return this.map.get(key) ?? null
-  }
-  setItem(key: string, value: string): void {
-    this.map.set(key, value)
-  }
-  removeItem(key: string): void {
-    this.map.delete(key)
-  }
 }
 
 describe('ProfileStore', () => {
@@ -40,13 +30,13 @@ describe('ProfileStore', () => {
     await store.save(profile)
     const loaded = await store.get(profile.id)
     expect(loaded?.id).toBe(profile.id)
-    expect(loaded?.templates['0']).toHaveLength(1)
+    expect(loaded?.variants[0]?.fields.clock?.glyphs['0']).toHaveLength(1)
   })
 
   it('stamps updatedAt on save', async () => {
     const saved = await store.save(withTemplates())
     expect(saved.updatedAt).toBeGreaterThan(0)
-    expect(saved.profile.updatedAt).toBeGreaterThan(0)
+    expect(saved.profile).not.toHaveProperty('updatedAt')
   })
 
   it('returns null for a missing id', async () => {
@@ -77,73 +67,24 @@ describe('ProfileStore', () => {
     expect(await store.get(profile.id)).toBeNull()
   })
 
-  it('migrates a localStorage draft once', async () => {
-    const storage = new MemoryStorage()
-    storage.setItem(LEGACY_KEY, JSON.stringify(withTemplates('cs2/legacy')))
-    const first = await store.migrateLegacy(storage)
-    expect(first.migrated).toBe(true)
-    expect(await store.get('cs2/legacy')).not.toBeNull()
-    expect(storage.getItem(LEGACY_KEY)).toBeNull()
-    expect(storage.getItem(LEGACY_DONE_KEY)).toBe('1')
-
-    // A second run must not re-import, even if a draft reappears.
-    storage.setItem(LEGACY_KEY, JSON.stringify(withTemplates('cs2/again')))
-    const second = await store.migrateLegacy(storage)
-    expect(second.migrated).toBe(false)
-    expect(await store.get('cs2/again')).toBeNull()
-  })
-
-  it('marks migration done when there is nothing to migrate', async () => {
-    const storage = new MemoryStorage()
-    const result = await store.migrateLegacy(storage)
-    expect(result.migrated).toBe(false)
-    expect(storage.getItem(LEGACY_DONE_KEY)).toBe('1')
-  })
-
-  it('discards an unparsable draft instead of retrying it forever', async () => {
-    const storage = new MemoryStorage()
-    storage.setItem(LEGACY_KEY, '{ not json')
-    const result = await store.migrateLegacy(storage)
-    expect(result.migrated).toBe(false)
-    expect(result.reason).toBeTruthy()
-    expect(storage.getItem(LEGACY_KEY)).toBeNull()
-  })
-
-  it('discards a draft that fails validation', async () => {
-    const storage = new MemoryStorage()
-    storage.setItem(LEGACY_KEY, JSON.stringify({ schemaVersion: 2, id: 'BAD ID' }))
-    const result = await store.migrateLegacy(storage)
-    expect(result.migrated).toBe(false)
-    expect(result.reason).toBeTruthy()
+  it.each([1, 2])('rejects old v%s profiles without migrating them', async version => {
+    await expect(store.save({ schemaVersion: version, id: 'cs2/old', templates: {} } as unknown as HudStylePack)).rejects.toThrow('重新制作')
     expect(await store.list()).toHaveLength(0)
   })
 
-  it('migrates a v1 draft through the schema migration', async () => {
-    const storage = new MemoryStorage()
-    const mask = new Uint8Array(TEMPLATE_PIXELS)
-    mask.fill(255, 0, 120)
-    storage.setItem(
-      LEGACY_KEY,
-      JSON.stringify({
-        id: 'cs2/v1',
-        name: 'V1 草稿',
-        roi: { x: 0.4, y: 0.02, w: 0.2, h: 0.08 },
-        clockFormat: 'm:ss',
-        detectWindowSeconds: 3,
-        sampleFps: 30,
-        scale: 1.5,
-        threshold: 140,
-        invert: true,
-        matchThreshold: 0.8,
-        templates: Object.fromEntries(CLOCK_CHARS.map((char) => [char, packBitmap(mask)])),
-      }),
-    )
-    const result = await store.migrateLegacy(storage)
-    expect(result.migrated).toBe(true)
-    const loaded = await store.get('cs2/v1')
-    expect(loaded?.schemaVersion).toBe(2)
-    expect(loaded?.preprocess).toMatchObject({ scale: 1.5, threshold: 140, invert: true })
-    expect(loaded?.templates['5']?.[0]?.origin).toBe('v1')
+  it('rejects an invalid pack before writing it', async () => {
+    const invalid = withTemplates()
+    invalid.variants[0]!.fields.clock!.roi.w = 0
+    await expect(store.save(invalid)).rejects.toThrow('roi.w')
+    expect(await store.list()).toHaveLength(0)
+  })
+
+  it('snapshots the submitted pack before the database opens', async () => {
+    const pack = withTemplates()
+    const pending = store.save(pack)
+    pack.name = 'Changed after save'
+    await pending
+    expect((await store.get(pack.id))?.name).toBe('存储测试')
   })
 
   it('skips rows that no longer validate', async () => {

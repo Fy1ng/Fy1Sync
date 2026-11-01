@@ -1,87 +1,10 @@
-/**
- * The editor's view of the recognition pipeline.
- *
- * `recognizeFrame` runs the same steps internally, but the editor has to *show* each
- * intermediate: the grey crop, the binary image, the column projection, the glyph boxes.
- * Recomputing them here from the same primitives keeps the editor honest — a preview
- * built from different code could disagree with what recognition actually sees.
- */
+/** Canvas display helpers; all image analysis is produced by Rust/WASM. */
+import type { HudAnalysis } from '../../core/hudWasm'
+import { TEMPLATE_HEIGHT, TEMPLATE_WIDTH, type ClockChar, type TemplateSample } from '../../core/profileSchema'
+export type FrameAnalysis = HudAnalysis
 
-import {
-  binarize,
-  cropBinary,
-  inkRatio,
-  normalizeGlyph,
-  roiToPixels,
-  toGrayscale,
-  type BinaryImage,
-  type Rect,
-} from '../../core/imageOps'
-import { packBitmap } from '../../core/bitmapCodec'
-import { segmentGlyphs, type GlyphBox } from '../../core/segmentation'
-import {
-  TEMPLATE_HEIGHT,
-  TEMPLATE_WIDTH,
-  type ClockChar,
-  type PreprocessSettings,
-  type RoiRect,
-  type TemplateSample,
-} from '../../core/profileSchema'
-import type { GrabbedFrame } from '../../recognition/frameGrabber'
-
-export interface FrameAnalysis {
-  /** Pixel rect the ROI maps to inside the frame. */
-  roiPixels: Rect
-  /** Grey crop, before thresholding. Shown next to the binary one for comparison. */
-  gray: BinaryImage
-  binary: BinaryImage
-  boxes: GlyphBox[]
-  projection: number[]
-  inkRatio: number
-}
-
-/**
- * Crop + threshold + segment one grabbed frame.
- *
- * `cropBinary` is used on the grey image on purpose: `GrayImage` and `BinaryImage` have
- * the same shape and the crop is a plain byte copy, so there is no second implementation
- * to keep in step.
- */
-export function analyzeFrame(
-  frame: Pick<GrabbedFrame, 'pixels' | 'width' | 'height'>,
-  roi: RoiRect,
-  preprocess: PreprocessSettings,
-): FrameAnalysis {
-  const roiPixels = roiToPixels(roi, frame.width, frame.height)
-  const gray = toGrayscale(frame.pixels, frame.width, frame.height)
-  const grayCrop = cropBinary(gray, roiPixels)
-  const binary = binarize(grayCrop, preprocess)
-  const segmented = segmentGlyphs(binary)
-  return {
-    roiPixels,
-    gray: grayCrop,
-    binary,
-    boxes: segmented.boxes,
-    projection: segmented.projection,
-    inkRatio: inkRatio(binary),
-  }
-}
-
-/** Normalise one glyph box into a storable template sample. */
-export function sampleFromBox(
-  binary: BinaryImage,
-  box: GlyphBox,
-  char: ClockChar,
-  origin: string,
-): TemplateSample {
-  const mask = normalizeGlyph(cropBinary(binary, box))
-  return {
-    // Random enough to never collide within a profile, readable enough to debug.
-    id: `${char}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-    data: packBitmap(mask),
-    createdAt: Date.now(),
-    origin,
-  }
+export function sampleFromPrepared(data: string, char: ClockChar, origin: string): TemplateSample {
+  return { id: `${char === ':' ? 'colon' : char}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, data, createdAt: Date.now(), origin }
 }
 
 /**

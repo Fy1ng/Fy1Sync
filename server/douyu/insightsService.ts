@@ -224,6 +224,11 @@ export class DouyuInsightsService {
     return this.snapshot(room)
   }
 
+  /** What is running now, for a window that was reloaded: the reminder and the follow monitor's account. */
+  notificationState(): { enabled: boolean; rooms: string[]; followedAccountId: string | null } {
+    this.check()
+    return { enabled: this.notifications.enabled, rooms: [...this.notifications.rooms], followedAccountId: this.monitor?.accountId ?? null }
+  }
   setNotifications(enabled: boolean, rooms: readonly string[] = []): void {
     this.check()
     if (typeof enabled !== 'boolean' || !Array.isArray(rooms) || rooms.length > MAX_ROOMS || rooms.some(room => !validDouyuRoom(room))) throw new Error('开播提醒设置无效.')

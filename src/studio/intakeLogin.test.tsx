@@ -9,6 +9,7 @@ import { SourceLoaderProvider } from './sources'
 
 const sessions: Session[] = []
 let signedIn = false
+let youtubeSignedIn = false
 
 function mount(): Session {
   const session = new Session({ createSampler: () => null })
@@ -27,9 +28,10 @@ const stepDown = { ok: true as const, value: { ok: true as const, stream: {
 
 beforeEach(() => {
   signedIn = false
+  youtubeSignedIn = false
   vi.stubGlobal('streamSyncer', {
     invoke: vi.fn(async (method: string) => {
-      if (method === 'loginStatus') return { ok: true, value: { douyu: { loggedIn: signedIn }, youtube: { loggedIn: false } } }
+      if (method === 'loginStatus') return { ok: true, value: { douyu: { loggedIn: signedIn }, youtube: { loggedIn: youtubeSignedIn } } }
       if (method === 'getToolsStatus') return { ok: true, value: { tools: [], fixturesAvailable: false } }
       return { ok: true, value: { presets: [] } }
     }) as StreamSyncerBridge['invoke'],
@@ -93,5 +95,33 @@ describe('the login offer on the intake screen', () => {
     fireEvent.change(field, { target: { value: 'https://www.youtube.com/watch?v=abcdefghijk' } })
     fireEvent.submit(field.closest('form')!)
     expect(await screen.findByText('登录 YouTube 后重试')).toBeInTheDocument()
+  })
+
+  it('offers a fresh login, not a first one, when a signed-in YouTube account is refused', async () => {
+    youtubeSignedIn = true
+    vi.spyOn(apiClient, 'resolve').mockResolvedValue({ ok: true, value: { ok: false, failure: {
+      code: 'restricted', reason: 'bot-check', message: 'YouTube 要求验证不是机器人, 当前网络暂时不能观看.', hint: '换一个代理节点, 或稍后重试.',
+    } } })
+    mount()
+    fireEvent.click(screen.getByRole('radio', { name: /画面/ }))
+    const field = screen.getByLabelText('直播间链接')
+    fireEvent.change(field, { target: { value: 'https://www.youtube.com/watch?v=abcdefghijk' } })
+    fireEvent.submit(field.closest('form')!)
+    expect(await screen.findByText('重新登录 YouTube 后重试')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重新登录' })).toBeInTheDocument()
+  })
+
+  it('offers no login for a region refusal, which signing in cannot lift', async () => {
+    vi.spyOn(apiClient, 'resolve').mockResolvedValue({ ok: true, value: { ok: false, failure: {
+      code: 'restricted', reason: 'geo-restricted', message: '此直播在当前网络所在的地区不可观看.',
+    } } })
+    mount()
+    fireEvent.click(screen.getByRole('radio', { name: /画面/ }))
+    const field = screen.getByLabelText('直播间链接')
+    fireEvent.change(field, { target: { value: 'https://www.youtube.com/watch?v=abcdefghijk' } })
+    fireEvent.submit(field.closest('form')!)
+    expect(await screen.findByText('此直播在当前网络所在的地区不可观看.')).toBeInTheDocument()
+    await new Promise((done) => setTimeout(done, 20))
+    expect(screen.queryByText(/后重试|可看最高画质/)).toBeNull()
   })
 })

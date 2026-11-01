@@ -21,11 +21,27 @@
 }
 
 /* Event names are long and distinguish themselves at the end (2026, Season 13); wrap to two lines. */
-.studio .sched .side-nav [role='tab'] span:first-child {
+.studio .sched .side-nav .side-tab-label {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
+}
+
+/*
+ * Event icons keep their own shape (Stake is tall, Circuito Retake a thin strip) inside a fixed
+ * box, so names line up whether an event has an icon or not.
+ */
+.studio .sched-icon {
+  flex: none;
+  width: 28px;
+  height: 20px;
+  object-fit: contain;
+}
+
+.studio .sched-event .sched-icon {
+  width: 44px;
+  height: 30px;
 }
 
 .studio .sched-live-dot {
@@ -236,6 +252,18 @@
   white-space: nowrap;
 }
 
+/* Why no stream can be played yet; a lookup that failed reads as a warning, the rest stay quiet. */
+.studio .match-missing {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio .match-missing[data-missing='failed'] {
+  color: var(--warn);
+}
+
 .studio .match-watch {
   grid-area: watch;
   display: flex;
@@ -253,6 +281,11 @@
 
 .studio .sched-foot > p {
   flex-basis: 100%;
+}
+
+.studio .sched-wait {
+  font-size: 12px;
+  color: var(--ash);
 }
 
 .studio .sched-source {

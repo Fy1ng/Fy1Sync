@@ -222,16 +222,6 @@ pub fn dispatch(op: &str, mut input: Value) -> Result<Value, String> {
             text(0, "id", "custom/untitled"),
             text(1, "name", "未命名场景"),
         ),
-        "validateProfile" => validate_profile(if input.is_array() {
-            a(0, "value")
-        } else {
-            input.get("value").unwrap_or(&input)
-        }),
-        "parseProfile" => parse_profile(if input.is_array() {
-            a(0, "value")
-        } else {
-            input.get("value").unwrap_or(&input)
-        }),
         "profileReadiness" => profile_readiness(&de(a(0, "profile"))?),
         _ => return Err(format!("unknown operation: {op}")),
     })

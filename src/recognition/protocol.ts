@@ -1,3 +1,5 @@
+import type { ActiveProfile } from '../core/activeProfile'
+import type { HudFrameResult } from '../core/hudWasm'
 /**
  * Worker protocol for clock recognition.
  *
@@ -16,7 +18,7 @@ import type { RecognitionOutcome, SourceRole } from '../core/types'
 export interface ConfigureMessage {
   type: 'configure'
   generation: number
-  profile: RecognitionProfile
+  profile: ActiveProfile
   /** Explicit P4a partial-profile path; omitted keeps the P3 parity contract. */
   automatic?: boolean
 }
@@ -157,6 +159,7 @@ export interface ResultMessage {
   frameIndex: number
   outcome: RecognitionOutcome
   debug: WorkerDebug | null
+  hud?: HudFrameResult
   /** Worker-side processing time in ms, shown in the debug panel. */
   elapsedMs: number
   backend?: RecognitionBackend

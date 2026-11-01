@@ -11,23 +11,25 @@ import type { YoutubeCookieAccess } from './ytdlp'
 export type YtImportErrorCode = 'bot-challenge' | 'auth-required' | 'geo-restricted' | 'video-unavailable'
   | 'live-not-supported' | 'format-unavailable' | 'provider-failed' | 'network' | 'rate-limited'
   | 'disk-full' | 'too-long' | 'cancelled'
-export interface YtImportRequest { url: string; startSeconds: number; endSeconds: number }
+export type YtImportHeight = 2160 | 1440 | 1080
+export interface YtImportRequest { url: string; startSeconds: number; endSeconds: number; targetHeight: YtImportHeight }
 export interface YtImportFormat {
   videoFormatId: string; audioFormatId: string | null; width: number; height: number; fps: number
   videoCodec: string; audioCodec: string; container: 'mp4'
 }
 export interface YtImportMetadata {
   videoId: string; title: string; startSeconds: number; endSeconds: number; format: YtImportFormat
-  sha256: string; size: number; downloadedAt: string
+  sha256: string; size: number; downloadedAt: string; mtimeMs?: number
 }
 export interface YtImportJob {
-  jobId: string; videoId: string; startSeconds: number; endSeconds: number
+  jobId: string; videoId: string; startSeconds: number; endSeconds: number; targetHeight?: YtImportHeight
   state: 'probing' | 'downloading' | 'ready' | 'failed' | 'cancelled'
   title?: string; duration?: number; format?: YtImportFormat; assetId?: string; mediaUrl?: string
   progress?: { downloadedBytes: number; totalBytes?: number; percent?: number; speedBytesPerSecond?: number; etaSeconds?: number }
   size?: number; sha256?: string; downloadedAt?: string; error?: { code: YtImportErrorCode; message: string }
 }
-const MAX_BYTES = 2 * 1024 ** 3
+const MAX_BYTES = 40 * 1024 ** 3
+export const MAX_YT_IMPORT_SECONDS = 3 * 60 * 60
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const FORMAT_ID = /^[a-zA-Z0-9_-]{1,80}$/
 const MESSAGES: Record<YtImportErrorCode, string> = {
@@ -35,10 +37,10 @@ const MESSAGES: Record<YtImportErrorCode, string> = {
   'auth-required': '需要应用里已保存的 YouTube 登录, 请重新登录后重试.',
   'geo-restricted': '该录像在当前地区不可用.', 'video-unavailable': '该录像不可用或无法读取.',
   'live-not-supported': '仍在直播或尚未结束处理的录像暂不支持片段下载.',
-  'format-unavailable': '最高可下载格式不可用或无法无损封装, 未降低画质.',
+  'format-unavailable': '所选画质不可用或无法无损封装, 未改用其他画质.',
   'provider-failed': 'YouTube 工具或 PO token provider 不可用, 请检查工具安装.',
   network: '下载网络失败或超时, 请检查网络和系统代理.', 'rate-limited': 'YouTube 请求受到限流, 请稍后重试.',
-  'disk-full': '片段超过 2GiB 或磁盘剩余空间不足.', 'too-long': '单个片段最多 5 分钟.', cancelled: '下载已取消.',
+  'disk-full': '片段超过 40GiB 或磁盘剩余空间不足.', 'too-long': '单个片段最多 3 小时.', cancelled: '下载已取消.',
 }
 export class YtImportError extends Error {
   constructor(readonly code: YtImportErrorCode) { super(MESSAGES[code]); this.name = 'YtImportError' }
@@ -78,7 +80,7 @@ const safeText = (value: unknown, limit: number): string => typeof value === 'st
 
 export const YT_IMPORT_METADATA_TEMPLATE = '{"metadata":%(.{id,title,duration,is_live,live_status})j,"formats":%(formats.:.{format_id,url,protocol,width,height,fps,tbr,abr,asr,vcodec,acodec,ext,filesize,filesize_approx,has_drm,quality})j}'
 
-function selectFormats(info: unknown, videoId: string, start: number, end: number): { title: string; duration: number; format: YtImportFormat; estimatedBytes: number } {
+function selectFormats(info: unknown, videoId: string, start: number, end: number, targetHeight: YtImportHeight): { title: string; duration: number; format: YtImportFormat; estimatedBytes: number } {
   if (!info || typeof info !== 'object') throw new YtImportError('video-unavailable')
   const record = info as Record<string, unknown>
   const metadata = record.metadata as Record<string, unknown> | undefined
@@ -91,8 +93,8 @@ function selectFormats(info: unknown, videoId: string, start: number, end: numbe
     const format = item as Format
     return FORMAT_ID.test(String(format.format_id)) && !format.has_drm && typeof format.url === 'string' && !!format.url.trim()
   })
-  const videos = formats.filter(format => format.vcodec && format.vcodec !== 'none' && number(format.width) && number(format.height))
-  videos.sort((a, b) => number(b.height) - number(a.height) || number(b.width) - number(a.width)
+  const videos = formats.filter(format => format.vcodec && format.vcodec !== 'none' && number(format.width) && format.height === targetHeight)
+  videos.sort((a, b) => number(b.width) - number(a.width)
     || number(b.fps) - number(a.fps) || number(b.quality) - number(a.quality) || number(b.tbr) - number(a.tbr))
   const video = videos[0]
   if (!video) throw new YtImportError('format-unavailable')
@@ -147,19 +149,21 @@ export class YouTubeImportJobManager {
   start(request: YtImportRequest): YtImportJob {
     if (this.disposed) throw new YtImportError('cancelled')
     if (this.active) throw new Error('已有下载任务正在运行, 请等待完成或取消.')
-    if (!request || typeof request !== 'object' || Object.keys(request).some(key => !['url', 'startSeconds', 'endSeconds'].includes(key))
+    if (!request || typeof request !== 'object' || Object.keys(request).some(key => !['url', 'startSeconds', 'endSeconds', 'targetHeight'].includes(key))
+      || ![2160, 1440, 1080].includes(request.targetHeight)
       || typeof request.startSeconds !== 'number' || typeof request.endSeconds !== 'number'
       || !Number.isFinite(request.startSeconds) || !Number.isFinite(request.endSeconds)
       || request.startSeconds < 0 || request.endSeconds <= request.startSeconds || request.endSeconds > 1_000_000_000) throw new Error('选段参数无效.')
-    if (request.endSeconds - request.startSeconds > 300) throw new YtImportError('too-long')
+    if (request.endSeconds - request.startSeconds > MAX_YT_IMPORT_SECONDS) throw new YtImportError('too-long')
     const identity = normalizeYtImportUrl(request.url)
+    const targetHeight = request.targetHeight
     const job: YtImportJob = { jobId: randomUUID(), videoId: identity.videoId, startSeconds: request.startSeconds,
-      endSeconds: request.endSeconds, state: 'probing' }
+      endSeconds: request.endSeconds, targetHeight, state: 'probing' }
     this.jobs.set(job.jobId, job)
     const active: ActiveJob = { job, controller: new AbortController(), promise: Promise.resolve() }
     this.active = active
     this.emit(job)
-    active.promise = Promise.resolve().then(() => this.execute(active, identity.url)).finally(() => { if (this.active === active) this.active = undefined })
+    active.promise = Promise.resolve().then(() => this.execute(active, identity.url, targetHeight)).finally(() => { if (this.active === active) this.active = undefined })
     return structuredClone(job)
   }
   async cancel(jobId: string): Promise<YtImportJob | undefined> {
@@ -181,7 +185,7 @@ export class YouTubeImportJobManager {
     if ((await fs.promises.lstat(this.root)).isSymbolicLink() || path.relative(this.root, await fs.promises.realpath(this.root)) !== '') throw new YtImportError('disk-full')
   }
 
-  private async execute(active: ActiveJob, url: string): Promise<void> {
+  private async execute(active: ActiveJob, url: string, targetHeight: YtImportHeight): Promise<void> {
     const job = active.job
     let plugin: PrivatePotPlugin | undefined
     try {
@@ -211,7 +215,7 @@ export class YouTubeImportJobManager {
         this.current(active)
         let parsed: unknown
         try { parsed = JSON.parse(probe) } catch { throw new YtImportError('video-unavailable') }
-        const selected = selectFormats(parsed, job.videoId, job.startSeconds, job.endSeconds)
+        const selected = selectFormats(parsed, job.videoId, job.startSeconds, job.endSeconds, targetHeight)
         const free = await (this.options.freeBytes?.(directory) ?? fs.promises.statfs(directory).then(stat => stat.bavail * stat.bsize))
         if (selected.estimatedBytes > MAX_BYTES || !Number.isFinite(free) || free < selected.estimatedBytes * 2 + 64 * 1024 ** 2) throw new YtImportError('disk-full')
         Object.assign(job, { title: selected.title, duration: selected.duration, format: selected.format, state: 'downloading', progress: { downloadedBytes: 0, totalBytes: selected.estimatedBytes } })
@@ -239,7 +243,7 @@ export class YouTubeImportJobManager {
         const sha256 = await hashFile(file, active.controller.signal)
         this.current(active)
         const metadata: YtImportMetadata = { videoId: job.videoId, title: selected.title, startSeconds: job.startSeconds,
-          endSeconds: job.endSeconds, format: selected.format, size: stat.size, sha256, downloadedAt: new Date().toISOString() }
+          endSeconds: job.endSeconds, format: selected.format, size: stat.size, sha256, downloadedAt: new Date().toISOString(), mtimeMs: stat.mtimeMs }
         return { file, metadata }
       })
       // Commit after cookie-snapshot cleanup. No await can interleave a cancellation with publication.
@@ -258,7 +262,7 @@ export class YouTubeImportJobManager {
           : error && typeof error === 'object' && 'tool' in error ? 'provider-failed'
             : error && typeof error === 'object' && 'code' in error && ['login-cancelled', 'cookie-storage-failed'].includes(String(error.code)) ? 'auth-required' : 'network'
       job.state = code === 'cancelled' ? 'cancelled' : 'failed'
-      job.error = { code, message: MESSAGES[code] }
+      job.error = { code, message: code === 'format-unavailable' ? `${targetHeight}p 画质不可用或无法无损封装, 未改用其他画质.` : MESSAGES[code] }
       this.emit(job)
     } finally { await plugin?.dispose().catch(() => {}) }
   }
@@ -284,7 +288,9 @@ export class YouTubeImportJobManager {
       const stop = (code: YtImportErrorCode) => { if (!stopped && !settled) { stopped = code; void this.terminate(child).catch(() => {}) } }
       const abort = () => stop('cancelled')
       active.controller.signal.addEventListener('abort', abort, { once: true })
-      const timer = setTimeout(() => stop('network'), stage === 'download' ? this.options.downloadTimeoutMs ?? 30 * 60_000 : this.options.probeTimeoutMs ?? 120_000)
+      // Allow ten minutes of wall time per minute of footage, with the existing short-clip floor.
+      const downloadTimeout = this.options.downloadTimeoutMs ?? Math.max(30 * 60_000, (active.job.endSeconds - active.job.startSeconds) * 10_000)
+      const timer = setTimeout(() => stop('network'), stage === 'download' ? downloadTimeout : this.options.probeTimeoutMs ?? 120_000)
       const poll = stage === 'download' ? setInterval(() => {
         if (checking || stopped) return
         checking = true
@@ -347,9 +353,17 @@ export class YouTubeImportJobManager {
         if (!validMetadata(metadata)) continue
         const file = path.join(directory, `media.${metadata.format.container}`)
         const stat = await fs.promises.lstat(file)
-        if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== metadata.size) continue
-        const sha256 = await hashFile(file)
-        if (sha256 !== metadata.sha256) continue
+        if (!stat.isFile() || stat.isSymbolicLink() || !stat.size || stat.size > MAX_BYTES) continue
+        if (stat.size !== metadata.size || stat.mtimeMs !== metadata.mtimeMs) {
+          const sha256 = await hashFile(file)
+          if (stat.size !== metadata.size || sha256 !== metadata.sha256) continue
+          metadata.mtimeMs = stat.mtimeMs
+          const temporary = path.join(directory, `metadata-${randomUUID()}.tmp`)
+          try {
+            await fs.promises.writeFile(temporary, JSON.stringify(metadata, null, 2) + '\n', { flag: 'wx', mode: 0o600 })
+            await fs.promises.rename(temporary, sidecar)
+          } finally { await fs.promises.rm(temporary, { force: true }) }
+        }
         const mediaUrl = this.options.publish?.(entry.name, file) ?? `app://app/admin-media/${entry.name}`
         this.jobs.set(entry.name, { jobId: entry.name, videoId: metadata.videoId, title: metadata.title,
           startSeconds: metadata.startSeconds, endSeconds: metadata.endSeconds, format: metadata.format,
@@ -371,12 +385,13 @@ async function hashFile(file: string, signal?: AbortSignal): Promise<string> {
 }
 function validMetadata(value: YtImportMetadata): boolean {
   const format = value?.format
-  return !!value && Object.keys(value).every(key => ['videoId', 'title', 'startSeconds', 'endSeconds', 'format', 'sha256', 'size', 'downloadedAt'].includes(key))
+  return !!value && Object.keys(value).every(key => ['videoId', 'title', 'startSeconds', 'endSeconds', 'format', 'sha256', 'size', 'downloadedAt', 'mtimeMs'].includes(key))
     && /^[\w-]{11}$/.test(value.videoId) && typeof value.title === 'string' && value.title.length <= 300
     && Number.isFinite(value.startSeconds) && value.startSeconds >= 0 && Number.isFinite(value.endSeconds)
-    && value.endSeconds > value.startSeconds && value.endSeconds - value.startSeconds <= 300
+    && value.endSeconds > value.startSeconds && value.endSeconds - value.startSeconds <= MAX_YT_IMPORT_SECONDS
     && /^[0-9a-f]{64}$/.test(value.sha256) && Number.isSafeInteger(value.size) && value.size > 0 && value.size <= MAX_BYTES
     && typeof value.downloadedAt === 'string' && Number.isFinite(Date.parse(value.downloadedAt))
+    && (value.mtimeMs === undefined || Number.isFinite(value.mtimeMs) && value.mtimeMs >= 0)
     && !!format && Object.keys(format).every(key => ['videoFormatId', 'audioFormatId', 'width', 'height', 'fps', 'videoCodec', 'audioCodec', 'container'].includes(key))
     && typeof format.videoFormatId === 'string' && FORMAT_ID.test(format.videoFormatId)
     && (format.audioFormatId === null || typeof format.audioFormatId === 'string' && FORMAT_ID.test(format.audioFormatId))

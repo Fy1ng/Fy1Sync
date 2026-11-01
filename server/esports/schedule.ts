@@ -5,9 +5,10 @@ import { metadataUserAgent } from '../appIdentity'
 import { metadataConfig } from '../config'
 import { FeatureApiError } from '../featureApi'
 import { PinnedDispatcherPool, safeFetch, type Resolver } from '../safeFetch'
-import { currentMatches, parseSchedule, ScheduleFormatError, validChannel } from './parser'
+import { currentMatches, parseSchedule, ScheduleFormatError, validEntry, validTwitchLogin } from './parser'
 import { normalizeTournamentPath, queryTournamentTiers, type TournamentTier } from './tiers'
-import { LiquipediaRateLimit, pause } from './liquipediaRateLimit'
+import { DispatchTurns, LiquipediaRateLimit, pause } from './liquipediaRateLimit'
+import { channelLinksUrl, eventChannels, matchChannel, type EventChannels } from './streamChannels'
 import type { Cs2ScheduleEvent } from '../../electron/featureContracts'
 import type { Cs2Match, Cs2Schedule, StreamTitle, StreamTitleInput } from './types'
 import { TeamLogoCache } from './teamLogos'
@@ -26,6 +27,9 @@ export const TITLE_TTL_MS = 120_000
 export const TIER_TTL_MS = 24 * 60 * 60_000
 export const TIER_NULL_TTL_MS = 6 * 60 * 60_000
 export const TIER_RETRY_MS = 300_000
+/** An event's channels are read again after a day, or five minutes after a failed read. */
+export const CHANNEL_TTL_MS = 24 * 60 * 60_000
+export const CHANNEL_RETRY_MS = 300_000
 const MAX_BODY_BYTES = 2_000_000
 const UNAVAILABLE = '赛程暂时无法读取, 请稍后重试'
 /** Refused for the 30-second parse quota; `at` is when the quota frees. */
@@ -34,6 +38,7 @@ class RateLimited extends Error { constructor(readonly at: number) { super('Liqu
 interface CachedSchedule { fetchedAt: number; matches: Cs2Match[]; logoPaths: Map<string, string> }
 interface CachedTier { tier: TournamentTier | null; fetchedAt: number | null; retryAt?: number }
 interface CachedTiers { schema: 2; entries: Record<string, CachedTier> }
+interface CachedChannels extends EventChannels { at: number; failed: boolean }
 const emptyTiers = (): CachedTiers => ({ schema: 2, entries: Object.create(null) as Record<string, CachedTier> })
 interface Dependencies {
   userDataDir: string
@@ -152,11 +157,20 @@ export function scheduleArguments(raw: unknown): { refresh?: boolean } | undefin
   if (!object(raw) || Object.keys(raw).some(k => k !== 'refresh') || (raw.refresh !== undefined && typeof raw.refresh !== 'boolean')) return invalid()
   return raw as { refresh?: boolean }
 }
+/** The event 赛程 shows, as a Liquipedia path such as `/counterstrike/PGL/2026/Masters`; never a full URL. */
+export function scheduleFocusArguments(raw: unknown): { eventPath: string | null } {
+  if (!object(raw) || Object.keys(raw).length !== 1 || !Object.hasOwn(raw, 'eventPath')) return invalid()
+  const value = raw.eventPath
+  if (value === null) return { eventPath: null }
+  if (typeof value !== 'string' || value.length > 500 || !value.startsWith('/counterstrike/') || /[?#\\]/.test(value)) return invalid()
+  return { eventPath: value }
+}
 export function streamTitleArguments(raw: unknown): { streams: StreamTitleInput[] } {
   if (!object(raw) || Object.keys(raw).length !== 1 || !Array.isArray(raw.streams) || raw.streams.length > 12) return invalid()
   const streams = raw.streams.map(value => {
     if (!object(value) || Object.keys(value).length !== 3 || !Object.hasOwn(value, 'videoId')
-      || (value.platform !== 'youtube' && value.platform !== 'twitch') || !validChannel(value.platform, value.channel)
+      || (value.platform !== 'youtube' && value.platform !== 'twitch')
+      || !(value.platform === 'twitch' ? validTwitchLogin(value.channel) : validEntry(value.channel))
       || (value.videoId !== null && (typeof value.videoId !== 'string' || !/^[A-Za-z0-9_-]{11}$/.test(value.videoId)))
       || (value.platform === 'twitch' && value.videoId !== null)) return invalid()
     return { platform: value.platform, channel: value.channel, videoId: value.videoId } as StreamTitleInput
@@ -168,6 +182,7 @@ export class EsportsService {
   private readonly now: () => number
   private readonly disk: ScheduleDisk
   private readonly rateLimit: LiquipediaRateLimit
+  private readonly turns: DispatchTurns
   private readonly pool = new PinnedDispatcherPool()
   private readonly lifetime = new AbortController()
   private readonly logos: TeamLogoCache | null
@@ -177,16 +192,25 @@ export class EsportsService {
   private tierTimer: ReturnType<typeof setTimeout> | undefined
   private logoTimer: ReturnType<typeof setInterval> | undefined
   private eventTimer: ReturnType<typeof setTimeout> | undefined
+  private refreshTimer: ReturnType<typeof setTimeout> | undefined
+  /** When a parse was last tried, so a failed one waits a whole interval before the next. */
+  private attemptedAt = -Infinity
   private lastEventAt = -Infinity
   private readonly pendingEvents = new Set<Cs2ScheduleEvent['data']['type']>()
   private booted = false
+  /** The event 赛程 shows, normalized; its crests are fetched right after the live ones. */
+  private focus: string | null = null
   private readonly titles = new Map<string, { at: number; value: StreamTitle }>()
   private readonly titleFlights = new Map<string, Promise<StreamTitle>>()
+  /** The channels linked from each event page, by normalized event path, in memory only. */
+  private readonly channels = new Map<string, CachedChannels>()
+  private readonly channelFlights = new Map<string, Promise<void>>()
   constructor(private readonly options: Dependencies) {
     this.now = options.now ?? Date.now
     this.disk = new ScheduleDisk(options.userDataDir)
     this.rateLimit = new LiquipediaRateLimit(options.userDataDir, this.now)
-    this.logos = options.logos === undefined ? new TeamLogoCache({ ...options, rateLimit: this.rateLimit,
+    this.turns = new DispatchTurns(this.rateLimit)
+    this.logos = options.logos === undefined ? new TeamLogoCache({ ...options, rateLimit: this.rateLimit, turns: this.turns,
       onUpdated: () => this.notify('logos-updated') }) : options.logos
     if (this.logos) {
       // Recompute the visible time window even while no renderer is reading snapshots.
@@ -202,7 +226,9 @@ export class EsportsService {
     for (const match of matches) {
       const path = normalizeTournamentPath(match.tournament.url)
       match.tournament.tier = path === null ? null : cached.entries[path]?.tier ?? null
+      match.tournament.logo = this.logos?.get(this.cache?.logoPaths.get(`${match.id}:event`), false) ?? null
       match.teams.forEach((team, index) => { team.logo = this.logos?.get(this.cache?.logoPaths.get(`${match.id}:${index}`), false) ?? null })
+      this.resolveStreams(match, path)
     }
     return { fetchedAt: this.cache?.fetchedAt ?? 0, source: 'liquipedia', attribution: ATTRIBUTION,
       stale: !!error || !this.cache || now - this.cache.fetchedAt >= SCHEDULE_TTL_MS || now < this.cache.fetchedAt,
@@ -216,12 +242,95 @@ export class EsportsService {
     if (fromDisk && (!this.cache || fromDisk.fetchedAt > this.cache.fetchedAt)) this.cache = fromDisk
     const first = !this.booted
     this.booted = true
-    if (!args?.refresh && this.cache && !this.snapshot().stale) { this.scheduleTierRefresh(); return Promise.resolve(this.snapshot()) }
-    const work = this.refresh().finally(() => { if (this.flight === work) this.flight = undefined; this.scheduleTierRefresh() })
+    if (!args?.refresh && this.cache && !this.snapshot().stale) {
+      this.scheduleTierRefresh()
+      this.scheduleBackgroundRefresh()
+      return Promise.resolve(this.snapshot())
+    }
+    const work = this.refresh().finally(() => {
+      if (this.flight === work) this.flight = undefined
+      this.scheduleTierRefresh()
+      this.scheduleBackgroundRefresh()
+    })
     this.flight = work
     // Cold starts can paint old data immediately. A later read joins the same refresh.
     if (first && this.cache && !args?.refresh) { void work; return Promise.resolve(this.snapshot()) }
     return work.then(value => structuredClone(value))
+  }
+  /**
+   * Keep the cache fresh while 赛程 is closed: read again once it is due, five minutes after the
+   * last fetch or the last failed try. The first read of the session starts the cycle, so a cold
+   * start still paints the disk copy first.
+   */
+  private scheduleBackgroundRefresh(): void {
+    if (this.lifetime.signal.aborted) return
+    clearTimeout(this.refreshTimer)
+    const last = Math.max(this.cache?.fetchedAt ?? -Infinity, this.attemptedAt)
+    // Capped at one interval, so a clock moved backwards cannot push the next read out for hours.
+    const due = Math.min(SCHEDULE_TTL_MS, Math.max(0, last + SCHEDULE_TTL_MS - this.now()))
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = undefined
+      if (!this.lifetime.signal.aborted) void this.getCs2Schedule().catch(() => undefined)
+    }, due)
+    this.refreshTimer.unref?.()
+  }
+  /**
+   * Remember which event 赛程 shows, so its missing crests are fetched next and the channels
+   * behind its streams are looked up. Only events on the current schedule count.
+   */
+  setScheduleFocus(raw: { eventPath: string | null }): { updated: true } {
+    const { eventPath } = scheduleFocusArguments(raw)
+    this.lifetime.signal.throwIfAborted()
+    const path = eventPath === null ? null : normalizeTournamentPath(eventPath)
+    this.focus = path !== null && this.tournamentPaths().includes(path) ? path : null
+    this.enqueueLogos()
+    if (this.focus) this.findChannels(this.focus)
+    return { updated: true }
+  }
+  /**
+   * Read which channels an event page links, for its streams that name no video: one plain
+   * query in the shared 2-second slot, taking turns with crests as the tier query does. A page
+   * that links none (a stage page under the event) passes the look to its parent, at most two
+   * levels up. Kept a day; a failed read may be tried again after five minutes.
+   */
+  private findChannels(path: string): void {
+    if (this.lifetime.signal.aborted || this.channelFlights.has(path)) return
+    const cached = this.channels.get(path), now = this.now()
+    if (cached && now >= cached.at && now - cached.at < (cached.failed ? CHANNEL_RETRY_MS : CHANNEL_TTL_MS)) return
+    const waiting = currentMatches(this.cache?.matches ?? [], now)
+      .some(match => normalizeTournamentPath(match.tournament.url) === path && match.streams.some(stream => stream.url === null))
+    if (!waiting) return
+    const work = (async () => {
+      for (let page = path, depth = 0; ; depth++) {
+        const found = eventChannels(await this.fetchMetadata(channelLinksUrl(page), false))
+        const slash = page.lastIndexOf('/')
+        if (found.twitch.length || found.youtube.length || depth >= 2 || slash < 0) return found
+        page = page.slice(0, slash)
+      }
+    })().then(found => { this.channels.set(path, { ...found, at: this.now(), failed: false }) }, () => {
+      if (this.lifetime.signal.aborted) return
+      ;(this.options.log ?? console.warn)('Liquipedia stream channel lookup failed')
+      this.channels.set(path, { twitch: [], youtube: [], at: this.now(), failed: true })
+    }).finally(() => {
+      this.channelFlights.delete(path)
+      this.notify('streams-updated')
+    })
+    this.channelFlights.set(path, work)
+  }
+  /** Give each stream that names no video its matched channel, or say why it has none yet. */
+  private resolveStreams(match: Cs2Match, path: string | null): void {
+    const found = path === null ? undefined : this.channels.get(path)
+    for (const stream of match.streams) {
+      if (stream.url !== null) continue
+      if (path !== null && (!found || found.failed)) {
+        // A failed read being tried again shows as finding, not as failed.
+        stream.missing = found && !this.channelFlights.has(path) ? 'failed' : 'finding'
+        continue
+      }
+      const channel = found ? matchChannel(stream.entry, found[stream.platform]) : null
+      if (channel) Object.assign(stream, { channel: channel.name, url: channel.url, missing: null })
+      else stream.missing = 'unmatched'
+    }
   }
   private tournamentPaths(): string[] {
     return [...new Set(currentMatches(this.cache?.matches ?? [], this.now())
@@ -233,27 +342,45 @@ export class EsportsService {
     if (entry.fetchedAt === null || now < entry.fetchedAt) return 0
     return Math.max(0, entry.fetchedAt + (entry.tier === null ? TIER_NULL_TTL_MS : TIER_TTL_MS) - now)
   }
+  /**
+   * Missing crests go live first, then the event 赛程 shows, then other matches still to
+   * come, then finished ones. Each image is ranked once, by its most urgent match. Event icons
+   * come after every crest: a crest says who plays, an icon only marks the event in the list.
+   */
   private enqueueLogos(): void {
     if (this.lifetime.signal.aborted) return
     const matches = currentMatches(this.cache?.matches ?? [], this.now())
     this.updateActiveLogos(matches)
-    for (const match of matches) {
-      match.teams.forEach((_team, index) => this.logos?.get(this.cache?.logoPaths.get(`${match.id}:${index}`)))
-    }
+    const band = (match: Cs2Match): number => match.state === 'live' ? 0
+      : normalizeTournamentPath(match.tournament.url) === this.focus && this.focus !== null ? 1
+        : match.state === 'upcoming' ? 2 : 3
+    // currentMatches already orders by start within each state; the band keeps that order.
+    const ordered = matches.map((match, index) => ({ match, index }))
+      .sort((a, b) => band(a.match) - band(b.match) || a.index - b.index).map(entry => entry.match)
+    const paths = this.logoPathsOf(ordered)
+    this.logos?.setPriorities(paths)
+    for (const path of paths) this.logos?.get(path)
   }
   private updateActiveLogos(matches: Cs2Match[]): void {
-    const paths = matches.flatMap(match => match.teams.map((_team, index) => this.cache?.logoPaths.get(`${match.id}:${index}`)))
-      .filter((path): path is string => path !== undefined)
-    this.logos?.setActivePaths(paths)
+    this.logos?.setActivePaths(this.logoPathsOf(matches))
+  }
+  /** Every crest of these matches in their order, then every event icon in the same order. */
+  private logoPathsOf(matches: Cs2Match[]): string[] {
+    const crests = matches.flatMap(match => match.teams.map((_team, index) => this.cache?.logoPaths.get(`${match.id}:${index}`)))
+    const icons = matches.map(match => this.cache?.logoPaths.get(`${match.id}:event`))
+    return [...crests, ...icons].filter((path): path is string => path !== undefined)
   }
   private scheduleTierRefresh(): void {
-    if (this.lifetime.signal.aborted || this.tierFlight) return
+    if (this.lifetime.signal.aborted) return
+    // Crests never wait for the tier query, even one already in flight: both take the same
+    // 2-second quota in turns, and the first crest asked for takes the first slot.
+    this.enqueueLogos()
+    if (this.tierFlight) return
     clearTimeout(this.tierTimer)
     this.tierTimer = undefined
     const now = this.now(), cached = this.disk.loadTiers(), paths = this.tournamentPaths()
-    if (!paths.length) { this.enqueueLogos(); return }
+    if (!paths.length) return
     const due = Math.min(...paths.map(path => this.tierDelay(cached.entries[path], now)))
-    if (due > 0) this.enqueueLogos()
     // Tier queries take only the HTTP quota, independent of the 30-second parse quota.
     this.tierTimer = setTimeout(() => {
       this.tierTimer = undefined
@@ -262,7 +389,7 @@ export class EsportsService {
         if (!this.lifetime.signal.aborted) (this.options.log ?? console.warn)('Liquipedia tier cache refresh failed')
       }).finally(() => {
         this.tierFlight = undefined
-        this.enqueueLogos()
+        // Also re-ranks crests by any tier that just landed.
         this.scheduleTierRefresh()
       })
       this.tierFlight = work
@@ -311,7 +438,7 @@ export class EsportsService {
       signal, resolve: this.options.resolve, dispatcherPool: this.pool,
       headers: { 'User-Agent': metadataUserAgent(this.options.version), 'Accept-Encoding': 'gzip', Accept: 'application/json' },
       fetchImpl: async (input, init) => {
-        if (!parse) await this.rateLimit.wait(signal)
+        if (!parse) await this.turns.wait('tier', signal)
         return (this.options.request ?? fetch)(input, init)
       },
     })
@@ -339,6 +466,7 @@ export class EsportsService {
     if (changed) this.notify('tiers-updated')
   }
   private async refresh(): Promise<Cs2Schedule> {
+    this.attemptedAt = this.now()
     try {
       const payload = await this.fetchMetadata(SCHEDULE_URL, true)
       const logoPaths = new Map<string, string>()
@@ -410,10 +538,12 @@ export class EsportsService {
     clearTimeout(this.tierTimer)
     clearInterval(this.logoTimer)
     clearTimeout(this.eventTimer)
+    clearTimeout(this.refreshTimer)
     this.pendingEvents.clear()
     await this.logos?.dispose()
     await this.pool.dispose()
-    await Promise.allSettled([this.flight, this.tierFlight, ...this.titleFlights.values()])
+    await Promise.allSettled([this.flight, this.tierFlight, ...this.titleFlights.values(), ...this.channelFlights.values()])
     this.titles.clear()
+    this.channels.clear()
   }
 }

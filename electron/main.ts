@@ -50,6 +50,18 @@ import { AdminMediaRoute } from './adminMediaRoute'
 import { YouTubeBrowseManager } from './ytBrowse'
 import { YouTubeImportJobManager } from './ytImport'
 import { installYouTubeAdminIpc } from './ytImportIpc'
+import { EditorProjectManager, installEditorProjectIpc } from './editorProject'
+import { parseStylePackSource, StylePackSyncService } from './stylePackSync'
+import { FeatureApi } from '../server/featureApi'
+import { FrontendUpdates } from './frontendUpdates'
+import { parseOnlineUpdateSource } from './onlineUpdateManifest'
+import { OnlineUpdateService } from './onlineUpdateService'
+import { createOnlineUpdateHandlers } from './onlineUpdateHandlers'
+import { launchApplicationInstaller, supportsApplicationInstall } from './applicationInstaller'
+import stylePackSource from '../packaging/stylepack-source.json'
+import onlineUpdateSource from '../packaging/online-update-source.json'
+import frontendBuild from '../packaging/frontend-build.json'
+import appPackage from '../package.json'
 
 const networkRuntimePath = app.isPackaged
   ? join(process.resourcesPath, 'app.asar.unpacked', 'electron', 'network-runtime.cjs')
@@ -65,6 +77,17 @@ if (process.env.STREAM_SYNC_USER_DATA_DIR) {
   app.setPath('userData', path)
   app.setPath('sessionData', path)
 }
+// One app per data directory: two would write the same cookie, account and buffer files with
+// nothing to order the writes. Electron keys the lock to userData, so a separate test profile
+// still runs alongside the installed app. A second launch brings the first window forward.
+const primaryInstance = app.requestSingleInstanceLock()
+if (!primaryInstance) app.quit()
+app.on('second-instance', () => {
+  if (!window || window.isDestroyed()) return
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
+})
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 const decoderPreferences = new DecoderPreferences(app.getPath('userData'),
   app.commandLine.hasSwitch('disable-accelerated-video-decode'))
@@ -73,9 +96,11 @@ if (decoderPreferences.get().effectiveMode === 'software') {
 }
 let window: BrowserWindow | null = null
 let dispose: (() => Promise<void>) | undefined
+let confirmedInstaller: { userDataDir: string; file: string } | undefined
 
 async function start(): Promise<void> {
-  const clientDir = resolve(__dirname, '../client')
+  const bundledClientDir = resolve(__dirname, '../client')
+  let clientDir = bundledClientDir
   const config = resolveConfig(process.env, resolve(__dirname, '../..'))
   // All routes retain domain, protocol and port validation.
   const proxy = { ...config.proxy, allowNonStandardPorts: false }
@@ -93,10 +118,18 @@ async function start(): Promise<void> {
   let pipWindow: BrowserWindow | null = null
   let handlers: ReturnType<typeof installIpcHandlers> | undefined
   let youtubeAdmin: ReturnType<typeof installYouTubeAdminIpc> | undefined
+  let editorProjectIpc: ReturnType<typeof installEditorProjectIpc> | undefined
   let youtubeBrowse: YouTubeBrowseManager | undefined
   let youtubeImports: YouTubeImportJobManager | undefined
+  let youtubeImportsReady: Promise<void> = Promise.resolve()
   let youtubeLoginTransitions = 0
   const adminMedia = new AdminMediaRoute(join(userDataDir, 'admin-media'))
+  const editorProject = new EditorProjectManager({ userDataDirectory: userDataDir, beforeLoad: () => youtubeImportsReady, chooseFile: async () => {
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, { title: '选择比赛录像', properties: ['openFile'],
+      filters: [{ name: '视频', extensions: ['mp4', 'm4v', 'webm', 'mkv', 'mov'] }] })
+    return result.canceled ? null : result.filePaths[0] ?? null
+  } })
   const resetYouTubeAdmin = async () => {
     if (youtubeAdmin) await youtubeAdmin.reset()
     else await Promise.all([youtubeBrowse?.close(), youtubeImports?.cancelAll()])
@@ -265,8 +298,8 @@ async function start(): Promise<void> {
     publish: (assetId, file) => adminMedia.register(assetId, file),
     event: job => { youtubeAdmin?.emit('yt-import-progress', job) },
   })
-  // Restoring hashes every saved clip; it must not hold up the first window.
-  void youtubeImports.initialize().catch(() => { console.error('admin 素材目录不可用, 已保留原文件.') })
+  // Restore saved clips without holding up the first window.
+  youtubeImportsReady = youtubeImports.initialize().catch(() => { console.error('admin 素材目录不可用, 已保留原文件.') })
   const bufferDiagnostics: unknown[] = []
   const trackStats = () => ({ segments: 0, bytes: 0, firstSq: null as number | null, lastSq: null as number | null, gaps: 0, repeated: 0, maxHeadLag: 0 })
   const adaptiveStats = { rounds: 0, statuses: {} as Record<string, number>, httpErrors: 0, probes: 0, reconnects: 0, fallback: false,
@@ -401,6 +434,7 @@ async function start(): Promise<void> {
     createPipWindow: () => {
       const created = new BrowserWindow({ show: false, width: 480, height: 270, minWidth: 240, minHeight: 135,
         autoHideMenuBar: true, alwaysOnTop: true, title: 'Fy1Sync - 画中画',
+        icon: join(__dirname, 'icon.png'),
         webPreferences: { preload: join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true,
           nodeIntegration: false, webSecurity: true, backgroundThrottling: false } })
       pipWindow = created
@@ -421,9 +455,113 @@ async function start(): Promise<void> {
         onClosed: listener => { created.on('closed', listener); return () => created.removeListener('closed', listener) } }
     },
   })
+  const stylePackDataDir = process.env.STREAM_SYNC_DATA_DIR || userDataDir
+  let trustedStylePackSource: ReturnType<typeof parseStylePackSource> = null
+  let stylePackFixturePath: string | undefined
+  try {
+    trustedStylePackSource = parseStylePackSource(e2e ? null : stylePackSource)
+    // The offline harness owns this disposable file. Packaged applications never read it.
+    if (!app.isPackaged && offlineE2e) {
+      const fixturePath = join(stylePackDataDir, 'stylepack-fixture.json')
+      const text = await readFile(fixturePath, 'utf8').catch(error => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ''
+        throw error
+      })
+      if (text) {
+        if (text.length > 4 * 1_048_576) throw new Error('Large style pack fixture')
+        trustedStylePackSource = parseStylePackSource(JSON.parse(text).source)
+        stylePackFixturePath = fixturePath
+      }
+    }
+  } catch { console.error('赛事样式包分发配置无效, 自动同步未启用.'); trustedStylePackSource = null }
+  const stylePacks = new StylePackSyncService({ dataDir: stylePackDataDir,
+    source: trustedStylePackSource, currentVersion: appPackage.version,
+    ...(stylePackFixturePath ? { resolve: async () => ['93.184.216.34'], request: (async input => {
+      const text = await readFile(stylePackFixturePath!, 'utf8')
+      if (text.length > 4 * 1_048_576) throw new Error('Large style pack fixture')
+      const fixture = JSON.parse(text) as { responses: Record<string, unknown>; fail?: boolean }
+      const url = input instanceof Request ? input.url : String(input)
+      if (fixture.fail || typeof fixture.responses?.[url] !== 'string') throw new Error('Offline style pack fixture unavailable')
+      return new Response(fixture.responses[url], { headers: { 'content-type': 'application/json' } })
+    }) as typeof fetch } : {}),
+  })
+  let trustedOnlineUpdateSource: ReturnType<typeof parseOnlineUpdateSource> = null
+  let onlineUpdateFixture: string | undefined
+  try {
+    trustedOnlineUpdateSource = parseOnlineUpdateSource(e2e ? null : onlineUpdateSource)
+    if (!app.isPackaged && offlineE2e) {
+      const fixture = join(stylePackDataDir, 'online-update-fixture.json')
+      const text = await readFile(fixture, 'utf8').catch(error => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ''
+        throw error
+      })
+      if (text) {
+        if (text.length > 96 * 1_048_576) throw new Error('Large online update fixture')
+        trustedOnlineUpdateSource = parseOnlineUpdateSource(JSON.parse(text).source)
+        onlineUpdateFixture = fixture
+      }
+    }
+  } catch { console.error('签名在线更新来源无效, 将保留安装包内置界面.'); trustedOnlineUpdateSource = null }
+  const frontendUpdates = new FrontendUpdates({ userDataDir, bundledClientDir, source: trustedOnlineUpdateSource,
+    currentAppVersion: appPackage.version, bridgeVersion: frontendBuild.bridgeVersion, bundledRevision: frontendBuild.revision })
+  clientDir = frontendUpdates.beginBoot()
+  const onlineUpdates = new OnlineUpdateService({ userDataDir, source: trustedOnlineUpdateSource, frontend: frontendUpdates,
+    currentAppVersion: appPackage.version, bridgeVersion: frontendBuild.bridgeVersion,
+    installSupported: supportsApplicationInstall({ packaged: app.isPackaged, platform: process.platform, arch: process.arch, executable: process.execPath }),
+    ...(onlineUpdateFixture ? { resolve: async () => ['93.184.216.34'], request: (async input => {
+      const text = await readFile(onlineUpdateFixture!, 'utf8')
+      if (text.length > 96 * 1_048_576) throw new Error('Large online update fixture')
+      const fixture = JSON.parse(text) as { responses: Record<string, string>; fail?: boolean }
+      const url = input instanceof Request ? input.url : String(input)
+      if (fixture.fail || typeof fixture.responses?.[url] !== 'string') throw new Error('Offline online update fixture unavailable')
+      return new Response(Buffer.from(fixture.responses[url], 'base64'), { headers: { 'content-type': 'application/octet-stream' } })
+    }) as typeof fetch } : {}),
+  })
+  const features = backend?.api ?? new FeatureApi()
+  const publishOnlineUpdate = () => features.publish({ topic: 'online-update', data: onlineUpdates.state() })
+  const releaseOnlineUpdate = onlineUpdates.subscribe(publishOnlineUpdate)
+  let frontendBootTimer: ReturnType<typeof setTimeout> | undefined
+  let lifecycleTimer: ReturnType<typeof setTimeout> | undefined
+  const confirmUpdate = async (title: string, detail: string) => {
+    if (!window || window.isDestroyed()) return false
+    const result = await dialog.showMessageBox(window, { type: 'question', title, message: title, detail,
+      buttons: ['继续', '取消'], defaultId: 1, cancelId: 1, noLink: true })
+    return result.response === 0
+  }
+  const restartForFrontend = () => {
+    app.relaunch()
+    lifecycleTimer = setTimeout(() => app.quit(), 100)
+  }
+  features.register(createOnlineUpdateHandlers({ service: onlineUpdates,
+    isPrimary: id => !!window && !window.isDestroyed() && window.webContents.id === id,
+    apply: async kind => {
+      if (kind === 'frontend') {
+        if (!await confirmUpdate('应用前端更新并重启', '即将结束当前播放并重启应用. 请确认编辑内容已保存. 新界面启动失败时会自动回退, 不会删除草稿或样式包.')) return false
+        if (onlineUpdates.state().frontend.phase !== 'ready') return false
+        restartForFrontend()
+      } else {
+        if (!await confirmUpdate('安装完整应用更新', '即将退出应用并打开已校验的 Windows 安装向导. 请确认编辑内容已保存, 然后按向导完成升级. 不会静默安装, 也不会新增桌面快捷键.')) return false
+        confirmedInstaller = { userDataDir, file: await onlineUpdates.installerPath() }
+        lifecycleTimer = setTimeout(() => app.quit(), 100)
+      }
+      return true
+    },
+    rollback: async () => {
+      if (!await confirmUpdate('回退前端并重启', '即将结束当前播放, 取消待应用的前端包并恢复之前的可用界面. 请确认编辑内容已保存. 赛事样式包和本机草稿不受影响.')) return false
+      frontendUpdates.rollbackForRestart()
+      restartForFrontend()
+      return true
+    },
+    healthy: bridgeVersion => {
+      const accepted = frontendUpdates.confirmHealthy(bridgeVersion)
+      if (accepted && frontendBootTimer) { clearTimeout(frontendBootTimer); frontendBootTimer = undefined }
+      publishOnlineUpdate()
+      return accepted
+    },
+  }))
   const service = createDesktopService({
     dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, resolveHuyaRoom, registerMedia: media.register, acquisition, decoderPreferences, networkPreferences: preferences, tools, douyuAccounts, douyuTasks, douyuRenewal,
-    features: backend?.api,
+    features, stylePacks,
   })
   session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
     callback(allowsAppPermission(permission, {
@@ -449,12 +587,14 @@ async function start(): Promise<void> {
       if (url.pathname.startsWith('/media/')) response = await media.handle(request)
       else if (url.pathname.startsWith('/buffer/')) response = await buffer.handle(request)
       else if (url.pathname.startsWith('/admin-media/')) response = await adminMedia.handle(request)
+      else if (url.pathname.startsWith('/editor-media/')) response = await editorProject.handle(request)
       else if (url.pathname.startsWith('/team-logo/')) response = teamLogoResponse(request, userDataDir, bundledLogoDir)
       else if (url.pathname === '/pip' || url.pathname === '/pip/') response = await serveStatic(new Request(APP_URL, { method: request.method }), { root: clientDir })
       else response = await serveStatic(request, { root: clientDir })
       if (!response) response = url.pathname === '/' ? missingClientResponse(clientDir) : new Response(null, { status: 404 })
       response.headers.set('Content-Security-Policy', CONTENT_SECURITY_POLICY)
       response.headers.set('X-Content-Type-Options', 'nosniff')
+      if (response.headers.get('content-type')?.startsWith('text/html')) response.headers.set('Cache-Control', 'no-store')
       return response
     } catch { return new Response('资源读取失败', { status: 500 }) }
   })
@@ -462,6 +602,7 @@ async function start(): Promise<void> {
   window = new BrowserWindow({
     width: 1440, height: 900, minWidth: 800, minHeight: 600,
     title: 'Fy1Sync', titleBarStyle: 'hidden',
+    icon: join(__dirname, 'icon.png'),
     // Keep native resizing and snapping while the renderer owns the caption buttons.
     frame: true, ...(process.platform === 'win32' ? { thickFrame: true } : {}),
     backgroundColor: '#0d0d0f',
@@ -472,6 +613,19 @@ async function start(): Promise<void> {
   })
   const contents = window.webContents
   const mainWindow = window
+  let bootRecovery: Promise<void> | null = null
+  const recoverFrontend = (): Promise<void> | null => {
+    if (!frontendUpdates.failBoot()) return bootRecovery
+    if (frontendBootTimer) { clearTimeout(frontendBootTimer); frontendBootTimer = undefined }
+    clientDir = frontendUpdates.clientDir()
+    publishOnlineUpdate()
+    bootRecovery = contents.loadURL(APP_URL)
+    void bootRecovery.catch(() => console.error('回退界面加载失败, 请重新启动应用.'))
+    return bootRecovery
+  }
+  contents.on('did-fail-load', (_event, code, _description, _url, isMainFrame) => {
+    if (isMainFrame && code !== -3) void recoverFrontend()
+  })
   const releaseWindowState = subscribeWindowState(mainWindow)
   const releasePipPresentation = backend?.pip.subscribe(state => {
     if (!mainWindow.isDestroyed()) {
@@ -518,6 +672,7 @@ async function start(): Promise<void> {
   })
   youtubeAdmin = installYouTubeAdminIpc(ipcMain, contents, { ownerWindow: mainWindow, browse: youtubeBrowse, imports: youtubeImports,
     offline: offlineE2e, blocked: () => youtubeLoginTransitions > 0 })
+  editorProjectIpc = installEditorProjectIpc(ipcMain, contents, editorProject)
   if (e2e) Object.assign(globalThis, { __streamSyncerTest: {
     getWindowState: () => mainWindow.isDestroyed() ? null : getWindowState(mainWindow),
     ...(!app.isPackaged ? { setDouyuToolsFixture() {
@@ -592,6 +747,7 @@ async function start(): Promise<void> {
   contents.on('will-attach-webview', (event) => event.preventDefault())
   contents.on('render-process-gone', (_event, details) => {
     console.error(`Renderer exited: ${details.reason}, exitCode ${details.exitCode}`)
+    void recoverFrontend()
   })
   const index = join(clientDir, 'index.html')
   if (process.env.STREAM_SYNC_DEV === '1') {
@@ -599,6 +755,12 @@ async function start(): Promise<void> {
   }
   let cleanup: Promise<void> | undefined
   dispose = () => cleanup ??= (async () => {
+    if (frontendBootTimer) clearTimeout(frontendBootTimer)
+    if (lifecycleTimer) clearTimeout(lifecycleTimer)
+    releaseOnlineUpdate()
+    onlineUpdates.dispose()
+    frontendUpdates.dispose()
+    stylePacks.dispose()
     releaseWindowState()
     mainWindow.removeListener('focus', refreshRuntime)
     mainWindow.removeListener('blur', refreshRuntime)
@@ -613,12 +775,14 @@ async function start(): Promise<void> {
     releaseAccountEvents?.()
     releasePipPresentation?.()
     await backend?.dispose()
+    if (!backend) features.dispose()
     danmakuFeatures?.dispose()
     douyuRenewal?.dispose()
     douyuTasks?.dispose()
     douyuMessageSender?.dispose()
     unwatchFile(index)
     await youtubeAdmin?.dispose()
+    editorProjectIpc?.dispose()
     await youtubeImports?.dispose()
     await youtubeBrowse?.close()
     adminMedia.clear()
@@ -634,14 +798,36 @@ async function start(): Promise<void> {
     dispose = undefined
   })()
   window.on('closed', () => { window = null; void dispose?.() })
-  await window.loadURL(APP_URL)
+  if (frontendUpdates.snapshot().phase === 'trial') frontendBootTimer = setTimeout(() => { void recoverFrontend() }, 30_000)
+  try { await window.loadURL(APP_URL) }
+  catch (error) {
+    const recovery = recoverFrontend()
+    if (recovery) await recovery
+    else throw error
+  }
+  stylePacks.start()
 }
-app.whenReady().then(start).catch(() => { console.error('应用启动失败, 请检查构建产物和数据目录'); app.exit(1) })
+if (primaryInstance) app.whenReady().then(start).catch(() => { console.error('应用启动失败, 请检查构建产物和数据目录'); app.exit(1) })
 app.on('window-all-closed', () => app.quit())
 let quitting = false
+let shutdownComplete = false
 app.on('before-quit', (event) => {
-  if (!dispose || quitting) return
+  if (shutdownComplete) return
+  if (quitting) { event.preventDefault(); return }
+  if (!dispose && !confirmedInstaller) return
   event.preventDefault()
   quitting = true
-  void dispose().finally(() => app.quit())
+  // NSIS may close a running application after a short grace period. Finish all data and
+  // media cleanup first; never let an installer race the asynchronous normal shutdown.
+  const installer = confirmedInstaller
+  confirmedInstaller = undefined
+  void (async () => {
+    await dispose?.()
+    if (installer) await launchApplicationInstaller(installer.userDataDir, installer.file)
+  })().catch(() => {
+    if (installer) {
+      dialog.showErrorBox('完整应用更新未启动', '未能安全启动安装向导, 没有安装更新. 应用将重新启动, 请稍后重试.')
+      app.relaunch()
+    }
+  }).finally(() => { shutdownComplete = true; app.quit() })
 })

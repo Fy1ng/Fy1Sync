@@ -10,7 +10,7 @@ import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { SourceRole } from '../core/types'
 import { bufferStatusText } from '../ui/bufferStatus'
 import { Icon, Popover, Segmented, usePopover } from './kit'
-import { PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
+import { LoginOffer, PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform, SOURCE_HINT } from './sources'
 import { canSave, removeSavedRoom, saveRoom, savedFor, useSavedRooms, type SavedRoom } from './savedRooms'
 
 export function SourceChip({ role, onSchedule, onShowPreview = null }: {
@@ -71,7 +71,7 @@ function SourcePanel({ role, onDone, onSchedule }: {
         void loader.loadInput(role, input, bareRoom ? roomPlatform : undefined).then((ok) => { if (ok) onDone() })
       }}>
         <input value={input} onChange={(event) => setInput(event.target.value)} aria-label={`${ROLE_LABEL[role]}链接`}
-          placeholder={role === 'official' ? 'YouTube、Twitch 或虎牙直播间链接' : '斗鱼、哔哩哔哩或虎牙直播间链接、房间号'} spellCheck={false} />
+          placeholder={SOURCE_HINT} spellCheck={false} />
         <button type="submit" className="btn-solid" disabled={load.busy || input.trim() === ''}>
           {load.busy ? '载入中' : '载入'}
         </button>
@@ -93,10 +93,12 @@ function SourcePanel({ role, onDone, onSchedule }: {
       {load.problem && (
         <p className="form-error" role="alert">{load.problem.message}{load.problem.hint ? ` ${load.problem.hint}` : ''}</p>
       )}
+      <LoginOffer role={role} />
       {state.status === 'error' && state.error && <p className="form-error">{state.error.message}</p>}
       {load.notes.map((note) => <p key={note} className="muted">{note}</p>)}
 
       {buffer && <p className="muted">{bufferStatusText(buffer)}</p>}
+      <PlaybackDiagnosticsPanel role={role} />
 
       {role === 'commentary' && (state.descriptor?.platform === 'huya' || snapshot.danmaku.room?.startsWith('huya:')
         ? <p className="muted" role="status">虎牙弹幕: {snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
@@ -118,6 +120,29 @@ function SourcePanel({ role, onDone, onSchedule }: {
         )}
       </div>
     </div>
+  )
+}
+
+export function PlaybackDiagnosticsPanel({ role }: { role: SourceRole }): React.ReactNode {
+  const session = useSession()
+  const snapshot = useSessionSnapshot()
+  const stall = snapshot.playbackDiagnostics[role]
+  return (
+    <details>
+      <summary>播放诊断</summary>
+      <p className="muted">{stall
+        ? `最近卡顿 ${(stall.durationMs / 1000).toFixed(1)} 秒${stall.ongoing ? ' (尚未恢复)' : ''}. ${stall.hint}`
+        : '暂未记录到卡顿'}</p>
+      <button type="button" className="btn-quiet small" onClick={() => {
+        const blob = new Blob([JSON.stringify(session.exportPlaybackDiagnostics(), null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = 'Fy1Sync-playback-diagnostics.json'
+        link.click()
+        URL.revokeObjectURL(url)
+      }}>导出播放诊断</button>
+    </details>
   )
 }
 

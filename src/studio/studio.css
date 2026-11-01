@@ -3083,6 +3083,12 @@ body,
   background: rgb(255 255 255 / 5%);
 }
 
+/* The label takes the room between an optional icon and the badge. */
+.studio .side-nav .side-tab-label {
+  flex: 1;
+  min-width: 0;
+}
+
 .studio .side-nav [role='tab'].is-on {
   color: var(--chalk);
   font-weight: 600;

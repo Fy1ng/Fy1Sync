@@ -121,4 +121,6 @@ export type RecognitionFailure =
 
 export type RecognitionOutcome =
   | { status: 'success'; reading: ClockReading }
+  | { status: 'absent' }
+  | { status: 'indeterminate'; reason: string }
   | { status: 'failed'; reason: RecognitionFailure; detail?: string }

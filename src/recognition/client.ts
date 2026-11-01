@@ -1,3 +1,4 @@
+import { isHudPack, captureRoi, type ActiveProfile } from '../core/activeProfile'
 /**
  * Main-thread side of the recognition worker.
  *
@@ -8,11 +9,10 @@
  *  - generations: any change to the profile, ROI or source bumps a counter, and
  *    results from an older generation are discarded rather than applied to the new
  *    configuration.
- *  - cropping: frames are cropped here (see FrameGrabber), so the worker gets a
- *    profile whose ROI is the whole image.
+ *  - style packs keep the full frame; session learning receives its native ROI crop.
  */
 
-import type { RecognitionProfile, RoiRect } from '../core/profileSchema'
+import type { RoiRect } from '../core/profileSchema'
 import type { SourceRole } from '../core/types'
 import { FULL_FRAME_ROI, type GrabbedFrame } from './frameGrabber'
 import type {
@@ -61,7 +61,7 @@ export class RecognitionClient {
   private generationValue = 0
   private frameIndex = 0
   private inFlight: { frameIndex: number; at: number } | null = null
-  private profile: RecognitionProfile | null = null
+  private profile: ActiveProfile | null = null
   private disposed = false
   private requestId = 0
   private retainedWindowId: number | null = null
@@ -91,9 +91,10 @@ export class RecognitionClient {
         this.options.onConfigured?.(message)
         break
       case 'result':
-        if (this.inFlight && this.inFlight.frameIndex === message.frameIndex) {
-          this.inFlight = null
-        }
+        // Only the frame in flight is answered. A reply to one given up on after a stall is
+        // older than the frame that replaced it and would read the clock out of order.
+        if (!this.inFlight || this.inFlight.frameIndex !== message.frameIndex) return
+        this.inFlight = null
         this.stats.completed += 1
         this.stats.lastElapsedMs = message.elapsedMs
         this.options.onResult?.(message)
@@ -135,16 +136,21 @@ export class RecognitionClient {
   }
 
   /** ROI in source fractions, used by the caller to crop before submitting. */
-  get roi(): RecognitionProfile['roi'] | null {
-    return this.profile?.roi ?? null
+  get roi(): RoiRect | null {
+    return this.profile ? captureRoi(this.profile) : null
   }
 
-  get activeProfile(): RecognitionProfile | null {
+  get activeProfile(): ActiveProfile | null {
     return this.profile
   }
 
+  /**
+   * A frame the worker has held past the stall timeout no longer counts: callers check this
+   * before grabbing, so a frame that is never answered must stop holding them back, and the
+   * next submit replaces it.
+   */
   get busy(): boolean {
-    return this.inFlight !== null
+    return this.inFlight !== null && this.now() - this.inFlight.at < this.stallTimeoutMs
   }
 
   getStats(): ClientStats {
@@ -152,7 +158,7 @@ export class RecognitionClient {
   }
 
   /** Install a profile. Always starts a new generation. */
-  configure(profile: RecognitionProfile, options: { automatic?: boolean } = {}): number {
+  configure(profile: ActiveProfile, options: { automatic?: boolean } = {}): number {
     if (this.disposed) return this.generationValue
     this.finishPending({ status: 'cancelled', reason: 'reconfigured' })
     this.retainedWindowId = null
@@ -164,7 +170,7 @@ export class RecognitionClient {
     worker.postMessage({
       type: 'configure',
       generation: this.generationValue,
-      profile: { ...profile, roi: { ...FULL_FRAME_ROI } },
+      profile: isHudPack(profile) ? profile : { ...profile, roi: { ...FULL_FRAME_ROI } },
       ...(options.automatic ? { automatic: true } : {}),
     })
     return this.generationValue

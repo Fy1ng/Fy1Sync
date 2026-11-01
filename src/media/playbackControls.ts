@@ -1,25 +1,23 @@
-import { clampSeek, readTimebase, seekReached } from './timebase'
-import type { Timebase } from '../core/types'
+import { clampPlayableSeek, latestPlayableTime, readTimebase, seekReached } from './timebase'
+
+export { latestPlayableTime }
 
 export interface PlaybackSeekResult { ok: boolean; target: number | null; clamped: boolean; reason: 'unavailable' | 'cancelled' | 'timeout' | null }
 export interface NativePipResult { ok: boolean; active: boolean; reason: 'unsupported' | 'not-ready' | 'user-gesture-required' | 'failed' | null }
-
-export function latestPlayableTime(timebase: Timebase): number | null {
-  return timebase.kind === 'live' ? Math.max(timebase.seekableStart, timebase.seekableEnd - 0.25) : null
-}
 
 /** Headless media controls. Claude binds gestures/keys without owning or remounting video. */
 export class PlaybackControls {
   private cancelSeek: (() => void) | null = null
   private disposed = false
-  constructor(readonly video: HTMLVideoElement, private readonly isLive?: () => boolean | undefined, private readonly timeoutMs = 8_000) {}
+  constructor(readonly video: HTMLVideoElement, private readonly isLive?: () => boolean | undefined, private readonly timeoutMs = 8_000,
+    private readonly livePosition: () => number | null = () => null) {}
   async seekBy(seconds: number): Promise<PlaybackSeekResult> {
     if (!Number.isFinite(seconds) || Math.abs(seconds) > 86_400) return this.unavailable()
     return this.seekTo(this.video.currentTime + seconds)
   }
   async returnToLive(): Promise<PlaybackSeekResult> {
     const timebase = readTimebase(this.video, this.isLive?.())
-    const target = timebase ? latestPlayableTime(timebase) : null
+    const target = timebase ? latestPlayableTime(timebase, this.livePosition()) : null
     return target === null ? this.unavailable() : this.seekTo(target)
   }
   seekTo(target: number): Promise<PlaybackSeekResult> {
@@ -27,7 +25,7 @@ export class PlaybackControls {
     const timebase = readTimebase(this.video, this.isLive?.())
     if (!timebase) return Promise.resolve(this.unavailable())
     this.cancelSeek?.()
-    const next = clampSeek(target, timebase)
+    const next = clampPlayableSeek(target, timebase, this.livePosition())
     if (!this.video.seeking && seekReached(this.video.currentTime, next.target)) return Promise.resolve({ ok: true, target: next.target, clamped: next.clamped, reason: null })
     return new Promise(resolve => {
       let done = false

@@ -12,13 +12,10 @@ import { useEffect, useRef, useState } from 'react'
 import { useSessionSnapshot, useSession } from '../app/SessionContext'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { Icon } from './kit'
-import { LOGIN_LABEL, PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
+import { LOGIN_LABEL, LoginOffer, PLATFORM_LABEL, ROLE_LABEL, SOURCE_HINT, SOURCE_KINDS, parseRoomInput, sourceTitle, spaced, useSourceLoader, type RoomPlatform } from './sources'
 import { useSavedRooms, type SavedRoom } from './savedRooms'
 
 const ROOM_PLATFORMS: RoomPlatform[] = ['douyu', 'bilibili', 'huya']
-
-/** A Latin name sits in Chinese with a space either side, as elsewhere: 登录 YouTube 后重试. */
-const spaced = (name: string): string => /^[A-Za-z]/.test(name) ? ` ${name} ` : name
 
 export function Intake({ onClose, pendingFile, onSchedule }: {
   onClose: () => void
@@ -85,11 +82,15 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
     <div className="intake" role="dialog" aria-modal="true" aria-label="添加直播间">
       <div className="intake-body">
         <h1 className="intake-title">添加直播间</h1>
+        <div className="intake-slots" role="radiogroup" aria-label="添加到">
+          {SOURCE_ROLES.map((side) => <Slot key={side} role={side} selected={side === role} onPick={() => pick(side)} />)}
+        </div>
+
         <form className="intake-field" data-disabled={role === null} onSubmit={(event) => { event.preventDefault(); submit() }}>
           <input ref={field} value={text} disabled={role === null}
             onChange={(event) => { setText(event.target.value); if (role) loader.clearProblem(role) }}
             aria-label="直播间链接" spellCheck={false} autoComplete="off"
-            placeholder={role === null ? '先选择画面或解说' : role === 'official' ? 'YouTube、Twitch 或虎牙链接' : '斗鱼、哔哩哔哩或虎牙链接、房间号'} />
+            placeholder={role === null ? '先选择画面或解说' : SOURCE_HINT} />
           <button type="submit" className="intake-go" disabled={!canSubmit} aria-label="添加" title="添加（回车）">
             <Icon name="enter" />
           </button>
@@ -107,10 +108,6 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
         )}
 
         {load?.problem && <p className="intake-error" role="alert">{load.problem.message}{load.problem.hint ? ` ${load.problem.hint}` : ''}</p>}
-
-        <div className="intake-slots" role="radiogroup" aria-label="添加到">
-          {SOURCE_ROLES.map((side) => <Slot key={side} role={side} selected={side === role} onPick={() => pick(side)} />)}
-        </div>
 
         {media.official.status === 'empty' && !loader.state.official.busy && (
           <button type="button" className="intake-find" onClick={onSchedule}>
@@ -149,7 +146,7 @@ function Slot({ role, selected, onPick }: { role: SourceRole; selected: boolean;
           {load.loggingIn ? `在登录窗口中登录${load.login ? spaced(LOGIN_LABEL[load.login]) : ''}，完成后关闭窗口`
             : status === 'loading' ? '载入中…'
               : descriptor ? sourceTitle(descriptor)
-                : role === 'official' ? 'YouTube、Twitch、虎牙' : '斗鱼、哔哩哔哩、虎牙'}
+                : SOURCE_KINDS}
         </span>
       </button>
       {/* The side being filled shows its problem under the field instead. */}
@@ -157,13 +154,7 @@ function Slot({ role, selected, onPick }: { role: SourceRole; selected: boolean;
         <span className="slot-error" role="alert">{load.problem?.message ?? state.error?.message}</span>
       )}
       {selected && !load.problem && state.status === 'error' && state.error && <span className="slot-error" role="alert">{state.error.message}</span>}
-      {load.login && !load.busy && !load.loggingIn && (
-        <span className="slot-login">
-          {/* A refusal needs the login to play at all; a step-down only to get the top quality. */}
-          <span>{load.problem ? `登录${spaced(LOGIN_LABEL[load.login])}后重试` : `登录${spaced(LOGIN_LABEL[load.login])}可看最高画质`}</span>
-          <button type="button" className="btn-solid small" onClick={() => void loader.login(role)}>登录</button>
-        </span>
-      )}
+      <LoginOffer role={role} />
     </div>
   )
 }

@@ -6,6 +6,7 @@
 - 测试数据只用临时目录和 `e2e/.data`。不读写、复制或迁移真实的 `%APPDATA%\Stream Syncer` / `%APPDATA%\Fy1Sync`。
 - 不做真实账号写操作：发送弹幕、赠礼、签到、禁言、续牌等。
 - 不提交、不推送、不做 git 写操作，除非这次任务明确要求。
+- 除非用户明确要求其他分支, 远程只推送 `main` 分支. 版本标签和 Releases 按本次发布授权执行, 不因此推送工作分支或数据分支.
 - 发往 liquipedia.net 的请求：任意两次至少间隔 2 秒，`action=parse` 至少间隔 30 秒。User-Agent 为 `Fy1Sync/<版本> (local desktop app; sync@fy1ng.cn)`。
 - 提交作者为 `Fy1ng <dev@fy1ng.com>`，仓库本地配置已设置。
 - 临时文件放 `.runtime-cache/`。

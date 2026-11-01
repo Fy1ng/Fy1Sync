@@ -2,7 +2,7 @@
 
 import type { DesktopMethods, StreamSyncerBridge, WindowState } from '../../electron/contracts'
 import type { ResolveFailure, ResolvedStream } from '../../server/platforms/types'
-import type { ProfileIssue, RecognitionProfile } from '../core/profileSchema'
+import type { HudPackIssue, HudStylePack } from '../core/hudStylePack'
 import type { SourceRole } from '../core/types'
 import type { BufferState } from '../../electron/bufferManager'
 import type { LoginPlatform } from '../../electron/login'
@@ -10,6 +10,7 @@ import type { DecoderMode } from '../../electron/decoderPreferences'
 import type { DouyuAccountsSnapshot, DouyuTaskPolicy, DouyuTasksSnapshot } from '../../server/douyu/types'
 import type { DomesticRouting } from '../../server/networkPolicy'
 import type { FeatureMethod, FeatureMethods, FeatureEvent } from '../../electron/featureContracts'
+import type { StylePackSourceId } from '../../electron/stylePackSyncContracts'
 
 export type ApiResult<T> =
   | { ok: true; value: T }
@@ -28,11 +29,14 @@ export interface PresetSummary {
   updatedAt: number
   etag: string
   templateChars: number
+  source?: 'cloud'
+  revision?: number
 }
 
 export interface PresetRecord {
-  profile: RecognitionProfile
+  profile: HudStylePack
   etag: string
+  source?: 'cloud'
 }
 
 export interface SavedPreset {
@@ -82,6 +86,9 @@ export class ApiClient {
     try { return this.bridge().subscribeFeatures?.(listener) ?? (() => {}) } catch { return () => {} }
   }
   getToolsStatus() { return this.request('getToolsStatus', undefined) }
+  getStylePackSyncState() { return this.request('getStylePackSyncState', undefined) }
+  syncStylePacks() { return this.request('syncStylePacks', undefined) }
+  setStylePackSyncSource(source: StylePackSourceId) { return this.request('setStylePackSyncSource', { source }) }
   updateYtdlp() { return this.request('updateYtdlp', undefined) }
   restoreYtdlp(target: 'previous' | 'bundled') { return this.request('restoreYtdlp', { target }) }
   setDecoderPreferences(mode: DecoderMode) { return this.request('setDecoderPreferences', { mode }) }
@@ -163,7 +170,7 @@ export class ApiClient {
   /** Pass the last loaded ETag so stale editors cannot overwrite another edit. */
   savePreset(
     id: string,
-    profile: RecognitionProfile,
+    profile: HudStylePack,
     token = '',
     etag?: string,
   ): Promise<ApiResult<SavedPreset>> {
@@ -189,11 +196,11 @@ export class ApiClient {
 }
 
 /** Validation issues travel in the failure detail; verify their shape before display. */
-export function issuesFrom(detail: unknown): ProfileIssue[] {
+export function issuesFrom(detail: unknown): HudPackIssue[] {
   const issues = (detail as { issues?: unknown } | undefined)?.issues
   if (!Array.isArray(issues)) return []
-  return issues.filter((issue): issue is ProfileIssue => {
-    const candidate = issue as ProfileIssue | undefined
+  return issues.filter((issue): issue is HudPackIssue => {
+    const candidate = issue as HudPackIssue | undefined
     return typeof candidate?.path === 'string' && typeof candidate?.message === 'string'
   })
 }

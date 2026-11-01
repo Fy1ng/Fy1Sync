@@ -10,6 +10,72 @@ import { connectDanmaku, fixturesReady, loadBothFixtures, openPlayer, seekBoth, 
 import { parseStt, serializeStt, toChatMessage, toGiftMessage } from '../server/danmaku/douyuProtocol'
 import { SETTINGS_KEY } from '../src/app/settings'
 
+test('底部跟随在长消息批量到达, 历史淘汰和重新换行后仍可靠', async ({ page, electronApp }) => {
+  await openPlayer(page)
+  await connectDanmaku(page)
+  await setPlaying(page, false)
+  const list = page.getByRole('log', { name: '弹幕列表' })
+  const append = async (batch: number, count: number) => {
+    await electronApp.evaluate((_electron, { batch, count }) => {
+      const main = globalThis as typeof globalThis & { __streamSyncerTest: { emitDanmaku(room: string, event: string, data: unknown): number } }
+      main.__streamSyncerTest.emitDanmaku('288016', 'state', { room: '288016', state: 'connected' })
+      for (let index = 0; index < count; index++) main.__streamSyncerTest.emitDanmaku('288016', 'danmaku', {
+        id: `bottom-${batch}-${index}`, text: `底部验证 ${batch}-${index} ` + '长消息需要完整换行显示'.repeat(index % 5 * 5),
+        username: '观众' + index, color: 0, level: 0, receivedAt: Date.now(), room: '288016', system: false,
+      })
+    }, { batch, count })
+    await expect(list.locator('.msg-text').filter({ hasText: `底部验证 ${batch}-${count - 1} ` })).toBeVisible()
+    await expect.poll(() => list.evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop)).toBeLessThanOrEqual(1)
+    await expect(page.locator('.drawer-jump')).toHaveCount(0)
+  }
+
+  await append(0, 100)
+  // Crossing the bounded history limit keeps the newest row selected even at a fixed count.
+  for (let batch = 1; batch <= 22; batch++) await append(batch, 100)
+  const change = async (width: number, font: number) => {
+    await page.evaluate(({ width, font }) => {
+      document.querySelector<HTMLElement>('.studio')!.style.gridTemplateColumns = `minmax(0, 1fr) ${width}px`
+      document.querySelector<HTMLElement>('.drawer-scroll')!.style.fontSize = `${font}px`
+    }, { width, font })
+    await expect.poll(() => list.evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop)).toBeLessThanOrEqual(1)
+  }
+  await change(260, 16)
+  await append(23, 4)
+  await change(420, 13)
+  await append(24, 4)
+  await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1200, 640))
+  await expect.poll(() => list.evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop)).toBeLessThanOrEqual(1)
+  await append(25, 4)
+})
+
+test('连续弹幕中缩放窗口并重新滚到底部后保持吸附', async ({ page, electronApp }) => {
+  await openPlayer(page)
+  await connectDanmaku(page)
+  await setPlaying(page, false)
+  const list = page.getByRole('log', { name: '弹幕列表' })
+  const stop = await stressDanmaku(electronApp, 200)
+  try {
+    await expect.poll(() => list.evaluate(node => node.scrollHeight / node.clientHeight)).toBeGreaterThan(5)
+    for (const [index, zoom] of [1.1, 0.9, 1.25, 1, 0.8, 1.2].entries()) {
+      await electronApp.evaluate(({ BrowserWindow }, { zoom, index }) => {
+        const window = BrowserWindow.getAllWindows()[0]!
+        window.webContents.setZoomFactor(zoom)
+        window.setSize(1200, index % 2 ? 880 : 650)
+      }, { index, zoom })
+      await expect.poll(() => list.evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop)).toBeLessThanOrEqual(1)
+      await expect(page.locator('.drawer-jump')).toHaveCount(0)
+    }
+    await list.evaluate(node => { node.scrollTop = node.scrollHeight / 2 })
+    await expect(page.locator('.drawer-jump')).toBeVisible()
+    // The native End key restores following, not just the visible scroll position once.
+    await list.focus()
+    await list.press('End')
+    await expect(page.locator('.drawer-jump')).toHaveCount(0)
+    await stop()
+    await expect.poll(() => list.evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop)).toBeLessThanOrEqual(1)
+  } finally { await stop() }
+})
+
 test('旧配置不恢复已移除的本地视觉, 普通弹幕设置和真实礼物通知仍正常', async ({ page, electronApp }, testInfo) => {
   const consoleErrors: string[] = []
   page.on('console', message => {

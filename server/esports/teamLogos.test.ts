@@ -18,11 +18,13 @@ const version = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest
 
 describe('team logo parsing', () => {
   const parsed = (html = fixture.parse.text['*']) => { const paths = new Map<string, string>(); const matches = parseSchedule(payload(html), paths); return { matches, paths } }
+  /** Crest paths only; event icons are kept under their own `:event` keys. */
+  const crests = (paths: Map<string, string>) => [...paths].filter(([key]) => !key.endsWith(':event')).map(([, value]) => value)
   it('selects darkmode 2x only inside opponent team icons, excluding tournament icons', () => {
     const { matches, paths } = parsed()
     expect(paths.get(`${matches[0]!.id}:0`)).toBe('/commons/images/thumb/c/cd/G2_Esports_2019_darkmode.png/88px-G2_Esports_2019_darkmode.png')
     expect(paths.get(`${matches[0]!.id}:1`)).toContain('DENDELE_CS_allmode.png/76px-')
-    expect([...paths.values()].some(value => value.includes('PGL_Masters'))).toBe(false)
+    expect(crests(paths).some(value => value.includes('PGL_Masters'))).toBe(false)
     expect(matches.every(match => match.teams.every(team => team.logo === null))).toBe(true)
   })
   it('prefers allmode over lightmode and falls back to lightmode', () => {
@@ -33,7 +35,7 @@ describe('team logo parsing', () => {
   })
   it('rejects tournament alt paths even when injected into a team icon', () => {
     const html = fixture.parse.text['*'].replaceAll('alt=""', 'alt="PGL/2026/Masters#Round 3"')
-    expect(parsed(html).paths.size).toBe(0)
+    expect(crests(parsed(html).paths)).toHaveLength(0)
   })
   it('ignores invalid image paths and falls back from an invalid 2x to src', () => {
     const html = fixture.parse.text['*'].replaceAll('/commons/images/thumb/c/cd/G2_Esports_2019_darkmode.png/88px-G2_Esports_2019_darkmode.png', 'https://evil.invalid/a.png')
@@ -290,6 +292,30 @@ describe('team logo disk and network cache', () => {
     expect(readTeamLogo(root, linkKey, now, bundle)).toBeNull()
   })
 
+  it('sends waiting crests by their current priority, and a slotted one steps aside before it reserves', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(now)
+    const sized = (px: number) => path.replace('48px', `${px}px`)
+    const [first, early, late, urgent] = [sized(60), sized(61), sized(62), sized(63)]
+    const sent: string[] = []
+    const request = vi.fn<typeof fetch>(async input => { sent.push(new URL(String(input)).pathname); return image() })
+    const cache = create(request), limiter = new LiquipediaRateLimit(root, () => now)
+    try {
+      expect(limiter.reserve(true)).toBe(true)
+      cache.setPriorities([first, early, late, urgent])
+      for (const value of [first, early, late]) cache.get(value)
+      await vi.advanceTimersByTimeAsync(0)
+      // `first` holds the only slot and waits for the quota. The viewer's focus changes:
+      cache.setPriorities([urgent, late, early, first])
+      cache.get(urgent)
+      for (let step = 0; step < 4; step++) {
+        now += LIQUIPEDIA_INTERVAL_MS; await vi.advanceTimersByTimeAsync(LIQUIPEDIA_INTERVAL_MS)
+      }
+      await cache.idle()
+      expect(sent).toEqual([urgent, late, early, first])
+      expect(request).toHaveBeenCalledTimes(4)
+      expect(new Set(sent).size).toBe(4)
+    } finally { vi.useRealTimers() }
+  })
   it('spreads due refreshes and gives newly missing images priority while a refresh waits for quota', async () => {
     vi.useFakeTimers(); vi.setSystemTime(now)
     const other = path.replace('48px', '50px'), fresh = path.replace('48px', '52px')

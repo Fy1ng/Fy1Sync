@@ -3,7 +3,7 @@ import type { NetworkPreferenceState } from './networkPreferences'
 import type {
   ApiResult, HealthInfo, PresetRecord, PresetSummary, SavedPreset,
 } from '../src/app/apiClient'
-import type { RecognitionProfile } from '../src/core/profileSchema'
+import type { HudStylePack } from '../src/core/hudStylePack'
 import type { ResolveResult } from '../server/platforms/types'
 import type { SourceRole } from '../src/core/types'
 import type { BufferState } from './bufferManager'
@@ -14,10 +14,12 @@ import type { DouyuAccountsSnapshot, DouyuMessageInput, DouyuMessageOutcome, Dou
 import type { DouyuRenewalTargetPage, DouyuRenewalPlan, DouyuRenewalResult, DouyuRenewalQuantity } from '../server/douyu/renewalTypes'
 import type { FeatureMethods, FeatureEvent } from './featureContracts'
 import type { YouTubeAdminMethods, YtBrowseState, YtImportJob } from './ytAdminContracts'
+import type { EditorProjectMethods } from './editorProjectContracts'
+import type { StylePackSourceId, StylePackSyncState } from './stylePackSyncContracts'
 
 export interface WindowState { maximized: boolean; fullscreen: boolean; focused: boolean }
 
-export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods {
+export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods, EditorProjectMethods {
   windowControl: { args: { action: 'minimize' | 'toggle-maximize' | 'close' }; result: WindowState }
   getWindowState: { args: undefined; result: WindowState }
   listDouyuAccounts: { args: undefined; result: DouyuAccountsSnapshot }
@@ -59,8 +61,11 @@ export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods {
   loginStatus: { args: undefined; result: LoginStatus }
   logout: { args: { platform: LoginPlatform }; result: { ok: true } }
   listPresets: { args: undefined; result: { presets: PresetSummary[] } }
+  getStylePackSyncState: { args: undefined; result: StylePackSyncState }
+  syncStylePacks: { args: undefined; result: StylePackSyncState }
+  setStylePackSyncSource: { args: { source: StylePackSourceId }; result: StylePackSyncState }
   getPreset: { args: { id: string }; result: PresetRecord }
-  savePreset: { args: { id: string; profile: RecognitionProfile; token?: string; etag?: string }; result: SavedPreset }
+  savePreset: { args: { id: string; profile: HudStylePack; token?: string; etag?: string }; result: SavedPreset }
   deletePreset: { args: { id: string; token?: string }; result: { ok: true } }
 }
 

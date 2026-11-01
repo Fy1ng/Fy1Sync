@@ -5,7 +5,9 @@
  * Events down the left (live ones first); the chosen event's matches on the right, grouped
  * into 进行中 / 即将开始 / 已结束. Each match lists the streams it can be watched on, with
  * the broadcast's own title when it is known, so two stages of one event can be told apart.
- * Picking a stream loads it as 画面 and closes the sheet.
+ * Picking a stream loads it as 画面 and closes the sheet. A stream that names no video waits
+ * for main to find its channel on the event page; until then its button is off and the row
+ * says why.
  *
  * The data is Liquipedia's (CC-BY-SA 3.0); main rate-limits and caches it, and the footer
  * says where it came from and how old it is.
@@ -15,7 +17,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiClient } from '../../app/apiClient'
 import type { Cs2Match, Cs2Schedule, Cs2Stream, StreamTitle } from '../../../electron/featureContracts'
 import { Icon, Sheet, SideTabs } from '../kit'
-import { formatStart, groupEvents, matchStage, orderedStreams, PLATFORM_NAME, streamKey, tierLabel, titleRequests, type EventGroup } from './model'
+import { eventPath, formatStart, groupEvents, matchStage, MISSING_TEXT, orderedStreams, PLATFORM_NAME, streamKey, streamTitle, tierLabel, titleKey, titleRequests, type EventGroup } from './model'
 import { lastSchedule, onSchedule, readSchedule, scheduleChanged } from './store'
 import './schedule.css'
 import { useRemembered } from '../../app/remembered'
@@ -32,6 +34,8 @@ export function ScheduleSheet({ onClose, onWatch }: {
   const [schedule, setSchedule] = useState<Cs2Schedule | null>(lastSchedule)
   const [failure, setFailure] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  // When Liquipedia's 30-second parse limit lets the next refresh run; null when it may now.
+  const [refreshAt, setRefreshAt] = useState<number | null>(null)
   // The chosen event and the titles read so far survive closing the sheet.
   const [eventKey, setEventKey] = useRemembered<string | null>('schedule:event', null)
   const [titles, setTitles] = useRemembered<Map<string, StreamTitle>>('schedule:titles', new Map())
@@ -48,7 +52,19 @@ export function ScheduleSheet({ onClose, onWatch }: {
     if (!result.ok) { setFailure(result.message); return }
     setFailure(null)
     setSchedule(result.value)
+    // Only a refresh says whether the limit turned it away; the minute's plain read, served
+    // from cache, must not end a countdown that still holds.
+    if (refresh) setRefreshAt(result.value.refreshAt ?? null)
   }
+
+  // Count down once a second while held back, and free the button when the time comes.
+  const waitSeconds = refreshAt === null ? 0 : Math.max(0, Math.ceil((refreshAt - now) / 1000))
+  useEffect(() => {
+    if (refreshAt === null) return
+    if (refreshAt <= Date.now()) { setRefreshAt(null); return }
+    const timer = window.setTimeout(() => setNow(Date.now()), 1000 - (Date.now() % 1000) || 1000)
+    return () => window.clearTimeout(timer)
+  }, [refreshAt, now])
 
   useEffect(() => {
     alive.current = true
@@ -65,6 +81,12 @@ export function ScheduleSheet({ onClose, onWatch }: {
   const current = events.find((group) => group.key === eventKey) ?? events[0]
   useEffect(() => { if (current && current.key !== eventKey) setEventKey(current.key) }, [current, eventKey])
 
+  // Main fetches the shown event's missing crests next; tell it which one that is, and that
+  // none is once the sheet closes. Keyed on the path, so crest and tier updates resend nothing.
+  const focus = eventPath(current)
+  useEffect(() => { void apiClient.feature('setCs2ScheduleFocus', { eventPath: focus }) }, [focus])
+  useEffect(() => () => { void apiClient.feature('setCs2ScheduleFocus', { eventPath: null }) }, [])
+
   // Titles for the chosen event's live and next streams, read in one batch per change.
   const requestKey = JSON.stringify(titleRequests(current))
   useEffect(() => {
@@ -75,7 +97,7 @@ export function ScheduleSheet({ onClose, onWatch }: {
       if (!alive.current || run !== titleRun.current || !result.ok) return
       setTitles((previous) => {
         const next = new Map(previous)
-        for (const title of result.value) next.set(streamKey(title), title)
+        for (const title of result.value) next.set(titleKey(title), title)
         return next
       })
     })
@@ -83,6 +105,7 @@ export function ScheduleSheet({ onClose, onWatch }: {
 
   // The pick closes the sheet at once; 添加直播间 or the source chip behind it shows the load.
   const watch = (stream: Cs2Stream): void => {
+    if (!stream.url) return
     onWatch(stream.url)
     onClose()
   }
@@ -92,6 +115,7 @@ export function ScheduleSheet({ onClose, onWatch }: {
     return {
       id: group.key,
       label: group.name,
+      icon: <EventIcon src={group.logo} />,
       badge: (tier || group.live.length > 0) ? (
         <span className="sched-badges">
           {group.live.length > 0 && <span className="sched-live-dot" aria-label={`${group.live.length} 场进行中`} />}
@@ -117,11 +141,12 @@ export function ScheduleSheet({ onClose, onWatch }: {
         )}
         <footer className="sched-foot">
           {schedule?.stale && <p className="note-warn">{schedule.error ?? '赛程暂时无法更新，显示的是上次读取的结果'}</p>}
+          {waitSeconds > 0 && <p className="sched-wait" role="status">Liquipedia 限制每 30 秒刷新一次，还需 {waitSeconds} 秒</p>}
           <span className="sched-source">
             {schedule ? `${schedule.attribution} · 更新于 ${formatStart(schedule.fetchedAt, now)}` : '赛程数据来自 Liquipedia (CC-BY-SA 3.0)'}
           </span>
-          <button type="button" className="btn-quiet small" disabled={refreshing} onClick={() => void read(true)}>
-            <Icon name="refresh" />{refreshing ? '正在刷新' : '刷新'}
+          <button type="button" className="btn-quiet small" disabled={refreshing || waitSeconds > 0} onClick={() => void read(true)}>
+            <Icon name="refresh" />{refreshing ? '正在刷新' : waitSeconds > 0 ? `${waitSeconds} 秒后可刷新` : '刷新'}
           </button>
         </footer>
       </div>
@@ -143,6 +168,7 @@ function EventPane({ group, titles, now, onWatch }: {
   return (
     <div className="sched-pane">
       <h3 className="sched-event display">
+        {group.logo && <EventIcon src={group.logo} />}
         {group.name}
         {tierLabel(group.tier) && <span className="sched-tier" data-tier={group.tier}>{tierLabel(group.tier)} 级</span>}
       </h3>
@@ -171,9 +197,11 @@ function MatchRow({ match, titles, now, siblingsLive, onWatch }: {
   const [left, right] = match.teams
   const stage = matchStage(match, titles, siblingsLive)
   const streams = orderedStreams(match)
-  const title = streams.map((stream) => titles.get(streamKey(stream))?.title).find(Boolean)
+  const title = streams.map((stream) => streamTitle(titles, stream)?.title).find(Boolean)
   const label = `${left.name} 对 ${right.name}`
   const winner = match.state === 'finished' && match.score ? (match.score[0] > match.score[1] ? 0 : match.score[1] > match.score[0] ? 1 : -1) : -1
+  // With nothing to play yet, say why once, from the first stream still waiting for its channel.
+  const waiting = streams.some((stream) => stream.url) ? null : streams.find((stream) => stream.missing)?.missing ?? null
   return (
     <li className="match" data-state={match.state} aria-label={label}>
       <div className="match-when">
@@ -193,21 +221,22 @@ function MatchRow({ match, titles, now, siblingsLive, onWatch }: {
         {stage && <span className="match-stage" data-from={stage.from}>{stage.label}</span>}
         {match.tournament.stage && <span>{match.tournament.stage}</span>}
         {title && <span className="match-title" title={title}>{title}</span>}
+        {waiting && <span className="match-missing" data-missing={waiting}>{MISSING_TEXT[waiting]}</span>}
       </div>
       <div className="match-watch">
         {streams.length === 0
           ? <span className="muted">未登记直播</span>
           : streams.map((stream, index) => {
-            const key = streamKey(stream)
-            const known = titles.get(key)
+            const known = streamTitle(titles, stream)
             const off = known?.live === false
+            const name = stream.channel ?? stream.entry
             // One obvious choice per live match: the first playable stream.
-            const primary = match.state === 'live' && !off && index === streams.findIndex((item) => titles.get(streamKey(item))?.live !== false)
+            const primary = match.state === 'live' && !off && index === streams.findIndex((item) => item.url && streamTitle(titles, item)?.live !== false)
             return (
-              <button key={key} type="button" className={primary ? 'btn-solid small' : 'btn-quiet small'}
-                onClick={() => onWatch(stream)}
-                aria-label={`在${PLATFORM_NAME[stream.platform]}观看 ${label}（${stream.channel}）`}
-                title={`${PLATFORM_NAME[stream.platform]} · ${stream.channel}${off ? ' · 未在直播' : ''}`}>
+              <button key={streamKey(stream)} type="button" className={primary ? 'btn-solid small' : 'btn-quiet small'}
+                disabled={!stream.url} onClick={() => onWatch(stream)}
+                aria-label={`在${PLATFORM_NAME[stream.platform]}观看 ${label}（${name}）`}
+                title={stream.missing ? MISSING_TEXT[stream.missing] : `${PLATFORM_NAME[stream.platform]} · ${name}${off ? ' · 未在直播' : ''}`}>
                 {PLATFORM_NAME[stream.platform]}
               </button>
             )
@@ -215,6 +244,17 @@ function MatchRow({ match, titles, now, siblingsLive, onWatch }: {
       </div>
     </li>
   )
+}
+
+/**
+ * An event's icon, main's cached copy, in a fixed box so event names line up; an event without
+ * one, or an icon that fails to load, leaves the box empty. A new address is tried again.
+ */
+function EventIcon({ src }: { src: string | null }): React.ReactNode {
+  const [failed, setFailed] = useState<string | null>(null)
+  return src && failed !== src
+    ? <img className="sched-icon" src={src} alt="" draggable={false} onError={() => setFailed(src)} />
+    : <span className="sched-icon" aria-hidden="true" />
 }
 
 /**

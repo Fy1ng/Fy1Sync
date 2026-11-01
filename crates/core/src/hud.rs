@@ -1,0 +1,1744 @@
+use crate::*;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
+
+pub const HUD_FIELDS: [&str; 3] = ["clock", "scoreLeft", "scoreRight"];
+pub const HUD_CUES: [&str; 8] = [
+    "replay",
+    "bomb",
+    "timeout",
+    "timeoutRight",
+    "roundPrefix",
+    "roundOver",
+    "roundHistory",
+    "scoreboard",
+];
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HudStylePack {
+    pub kind: String,
+    pub schema_version: u32,
+    pub id: String,
+    pub revision: u64,
+    pub name: String,
+    pub bitmaps: BTreeMap<String, HudBitmap>,
+    pub variants: Vec<HudVariant>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HudBitmap {
+    pub width: usize,
+    pub height: usize,
+    pub data: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HudSize {
+    pub width: usize,
+    pub height: usize,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HudRoi {
+    pub x: usize,
+    pub y: usize,
+    pub w: usize,
+    pub h: usize,
+}
+impl HudRoi {
+    fn rect(&self) -> Rect {
+        Rect {
+            x: self.x as f64,
+            y: self.y as f64,
+            width: self.w as f64,
+            height: self.h as f64,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HudVariant {
+    pub id: String,
+    pub native_size: HudSize,
+    pub fields: HudFields,
+    pub cues: BTreeMap<String, HudCue>,
+    pub states: BTreeMap<String, Vec<Vec<HudCondition>>>,
+    pub organizer: Option<HudCue>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HudFields {
+    pub clock: Option<HudField>,
+    pub score_left: Option<HudField>,
+    pub score_right: Option<HudField>,
+}
+impl HudFields {
+    fn get(&self, id: &str) -> Option<&HudField> {
+        match id {
+            "clock" => self.clock.as_ref(),
+            "scoreLeft" => self.score_left.as_ref(),
+            "scoreRight" => self.score_right.as_ref(),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HudField {
+    pub enabled: bool,
+    pub roi: HudRoi,
+    pub preprocess: HudPreprocessSettings,
+    pub segment: HudSegment,
+    pub glyphs: BTreeMap<String, Vec<String>>,
+    pub grammar: HudGrammar,
+    pub r#match: HudMatch,
+    pub gate_cue: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HudSegment {
+    pub min_column_ink: usize,
+    pub min_glyph_width: usize,
+    pub min_gap_width: usize,
+    pub min_ink_ratio: f64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HudMatch {
+    pub min_score: f64,
+    pub min_margin: f64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum HudGrammar {
+    Countdown { format: String },
+    Integer { min: usize, max: usize },
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HudCue {
+    pub enabled: bool,
+    pub roi: HudRoi,
+    pub preprocess: HudPreprocessSettings,
+    pub templates: Vec<String>,
+    pub min_score: f64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum HudCondition {
+    Cue { cue: String, present: bool },
+    Field { field: String, present: bool },
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HudIssue {
+    pub path: String,
+    pub message: String,
+    pub severity: String,
+}
+
+fn problem(issues: &mut Vec<HudIssue>, path: &str, message: &str) {
+    issues.push(HudIssue {
+        path: path.into(),
+        message: message.into(),
+        severity: "error".into(),
+    });
+}
+fn path_at(path: &str, key: &str) -> String {
+    if path.is_empty() {
+        key.into()
+    } else {
+        format!("{path}.{key}")
+    }
+}
+fn unsigned(v: &Value) -> Option<u64> {
+    v.as_f64()
+        .filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0 && *n <= 9_007_199_254_740_991.0)
+        .map(|n| n as u64)
+}
+fn object(v: &Value, path: &str, keys: &[&str], issues: &mut Vec<HudIssue>) -> bool {
+    let Some(map) = v.as_object() else {
+        problem(issues, path, "必须是对象");
+        return false;
+    };
+    for key in map.keys() {
+        if !keys.contains(&key.as_str()) {
+            problem(issues, &path_at(path, key), "未知字段");
+        }
+    }
+    for key in keys {
+        if !map.contains_key(*key) {
+            problem(issues, &path_at(path, key), "缺少必填字段");
+        }
+    }
+    true
+}
+fn bounded(
+    v: &Value,
+    path: &str,
+    lo: f64,
+    hi: f64,
+    integer: bool,
+    issues: &mut Vec<HudIssue>,
+) -> Option<f64> {
+    match v.as_f64() {
+        Some(n) if n.is_finite() && n >= lo && n <= hi && (!integer || n.fract() == 0.0) => Some(n),
+        _ => {
+            problem(
+                issues,
+                path,
+                if integer {
+                    "必须是范围内的整数"
+                } else {
+                    "必须是范围内的有限数值"
+                },
+            );
+            None
+        }
+    }
+}
+fn identifier(v: &Value, path: &str, max: usize, issues: &mut Vec<HudIssue>) {
+    let valid = v.as_str().is_some_and(|s| {
+        !s.is_empty()
+            && s.len() <= max
+            && !s.contains("..")
+            && s.split('/').all(|p| {
+                let mut c = p.chars();
+                c.next()
+                    .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+                    && c.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "._-".contains(c))
+            })
+    });
+    if !valid {
+        problem(issues, path, "标识无效");
+    }
+}
+fn preprocess(v: &Value, path: &str, issues: &mut Vec<HudIssue>) {
+    if !object(v, path, &["mode", "scale", "threshold", "invert", "adaptive", "hsv"], issues) {
+        return;
+    }
+    if !matches!(v["mode"].as_str(), Some("gray" | "adaptive" | "hsv")) {
+        problem(issues, &path_at(path, "mode"), "未知预处理模式");
+    }
+    bounded(
+        &v["scale"],
+        &path_at(path, "scale"),
+        0.1,
+        10.0,
+        false,
+        issues,
+    );
+    bounded(
+        &v["threshold"],
+        &path_at(path, "threshold"),
+        0.0,
+        255.0,
+        false,
+        issues,
+    );
+    if !v["invert"].is_boolean() {
+        problem(issues, &path_at(path, "invert"), "必须是布尔值");
+    }
+    let adaptive = &v["adaptive"];
+    let ap = path_at(path, "adaptive");
+    if object(adaptive, &ap, &["windowSize", "offset"], issues) {
+        let window = bounded(&adaptive["windowSize"], &path_at(&ap, "windowSize"), 3.0, 255.0, true, issues);
+        if window.is_some_and(|value| value as usize % 2 == 0) {
+            problem(issues, &path_at(&ap, "windowSize"), "窗口大小必须为奇数");
+        }
+        bounded(&adaptive["offset"], &path_at(&ap, "offset"), 0.0, 128.0, false, issues);
+    }
+    let hsv = &v["hsv"];
+    let hp = path_at(path, "hsv");
+    if object(hsv, &hp, &["hue", "tolerance", "saturationMin", "saturationMax", "valueMin", "valueMax"], issues) {
+        let hue = bounded(&hsv["hue"], &path_at(&hp, "hue"), 0.0, 360.0, false, issues);
+        if hue == Some(360.0) { problem(issues, &path_at(&hp, "hue"), "色相必须小于 360"); }
+        bounded(&hsv["tolerance"], &path_at(&hp, "tolerance"), 0.0, 180.0, false, issues);
+        for (min_key, max_key) in [("saturationMin", "saturationMax"), ("valueMin", "valueMax")] {
+            let min = bounded(&hsv[min_key], &path_at(&hp, min_key), 0.0, 1.0, false, issues);
+            let max = bounded(&hsv[max_key], &path_at(&hp, max_key), 0.0, 1.0, false, issues);
+            if min.zip(max).is_some_and(|(min, max)| min > max) {
+                problem(issues, &path_at(&hp, min_key), "最小值不得大于最大值");
+            }
+        }
+    }
+}
+fn roi(v: &Value, size: &Value, path: &str, issues: &mut Vec<HudIssue>) {
+    if !object(v, path, &["x", "y", "w", "h"], issues) {
+        return;
+    }
+    let x = bounded(&v["x"], &path_at(path, "x"), 0.0, 16384.0, true, issues);
+    let y = bounded(&v["y"], &path_at(path, "y"), 0.0, 16384.0, true, issues);
+    let w = bounded(&v["w"], &path_at(path, "w"), 1.0, 16384.0, true, issues);
+    let h = bounded(&v["h"], &path_at(path, "h"), 1.0, 16384.0, true, issues);
+    if let (Some(x), Some(y), Some(w), Some(h), Some(sw), Some(sh)) =
+        (x, y, w, h, size["width"].as_f64(), size["height"].as_f64())
+    {
+        if x + w > sw || y + h > sh {
+            problem(issues, path, "区域超出原生画面");
+        }
+    }
+}
+fn references(
+    v: &Value,
+    bitmaps: &Value,
+    path: &str,
+    expected: Option<(u64, u64)>,
+    allow_empty: bool,
+    issues: &mut Vec<HudIssue>,
+) {
+    let Some(ids) = v.as_array() else {
+        problem(issues, path, "必须是位图 ID 数组");
+        return;
+    };
+    if ids.is_empty() && !allow_empty {
+        problem(issues, path, "必须是非空位图 ID 数组");
+        return;
+    }
+    for (i, id) in ids.iter().enumerate() {
+        let p = format!("{path}[{i}]");
+        let Some(id) = id.as_str() else {
+            problem(issues, &p, "必须是位图 ID");
+            continue;
+        };
+        let Some(bitmap) = bitmaps.get(id) else {
+            problem(issues, &p, "引用的位图不存在");
+            continue;
+        };
+        if let Some((w, h)) = expected {
+            if unsigned(&bitmap["width"]) != Some(w) || unsigned(&bitmap["height"]) != Some(h) {
+                problem(issues, &p, "位图尺寸与用途不符");
+            }
+        }
+    }
+}
+fn cue(v: &Value, size: &Value, bitmaps: &Value, path: &str, issues: &mut Vec<HudIssue>) {
+    if !object(
+        v,
+        path,
+        &["enabled", "roi", "preprocess", "templates", "minScore"],
+        issues,
+    ) {
+        return;
+    }
+    if !v["enabled"].is_boolean() {
+        problem(issues, &path_at(path, "enabled"), "必须是布尔值");
+    }
+    roi(&v["roi"], size, &path_at(path, "roi"), issues);
+    preprocess(&v["preprocess"], &path_at(path, "preprocess"), issues);
+    bounded(
+        &v["minScore"],
+        &path_at(path, "minScore"),
+        0.0,
+        1.0,
+        false,
+        issues,
+    );
+    references(
+        &v["templates"],
+        bitmaps,
+        &path_at(path, "templates"),
+        unsigned(&v["roi"]["w"]).zip(unsigned(&v["roi"]["h"])),
+        true,
+        issues,
+    );
+}
+fn field(
+    v: &Value,
+    name: &str,
+    size: &Value,
+    bitmaps: &Value,
+    path: &str,
+    issues: &mut Vec<HudIssue>,
+) {
+    if v.is_null() {
+        return;
+    }
+    if !object(
+        v,
+        path,
+        &[
+            "enabled",
+            "roi",
+            "preprocess",
+            "segment",
+            "glyphs",
+            "grammar",
+            "match",
+            "gateCue",
+        ],
+        issues,
+    ) {
+        return;
+    }
+    if !v["enabled"].is_boolean() {
+        problem(issues, &path_at(path, "enabled"), "必须是布尔值");
+    }
+    roi(&v["roi"], size, &path_at(path, "roi"), issues);
+    preprocess(&v["preprocess"], &path_at(path, "preprocess"), issues);
+    let s = &v["segment"];
+    let sp = path_at(path, "segment");
+    if object(
+        s,
+        &sp,
+        &[
+            "minColumnInk",
+            "minGlyphWidth",
+            "minGapWidth",
+            "minInkRatio",
+        ],
+        issues,
+    ) {
+        for k in ["minColumnInk", "minGlyphWidth", "minGapWidth"] {
+            bounded(&s[k], &path_at(&sp, k), 1.0, 16384.0, true, issues);
+        }
+        bounded(
+            &s["minInkRatio"],
+            &path_at(&sp, "minInkRatio"),
+            0.0,
+            1.0,
+            false,
+            issues,
+        );
+    }
+    let m = &v["match"];
+    let mp = path_at(path, "match");
+    if object(m, &mp, &["minScore", "minMargin"], issues) {
+        for k in ["minScore", "minMargin"] {
+            bounded(&m[k], &path_at(&mp, k), 0.0, 1.0, false, issues);
+        }
+    }
+    let gp = path_at(path, "glyphs");
+    if let Some(glyphs) = v["glyphs"].as_object() {
+        for (c, ids) in glyphs {
+            let cp = path_at(&gp, c);
+            if !CLOCK_CHARS.contains(&c.as_str()) || (name != "clock" && c == ":") {
+                problem(issues, &cp, "不支持的字形字符");
+            }
+            references(ids, bitmaps, &cp, Some((32, 48)), false, issues);
+        }
+    } else {
+        problem(issues, &gp, "必须是字形映射对象");
+    }
+    let g = &v["grammar"];
+    let p = path_at(path, "grammar");
+    if g["kind"] == "countdown" {
+        object(g, &p, &["kind", "format"], issues);
+        if !matches!(g["format"].as_str(), Some("m:ss" | "mm:ss" | "ss")) {
+            problem(issues, &path_at(&p, "format"), "未知倒计时语法");
+        }
+        if name != "clock" {
+            problem(issues, &path_at(&p, "kind"), "该字段必须使用整数语法");
+        }
+    } else if g["kind"] == "integer" {
+        object(g, &p, &["kind", "min", "max"], issues);
+        let min = bounded(
+            &g["min"],
+            &path_at(&p, "min"),
+            0.0,
+            99.0,
+            true,
+            issues,
+        );
+        let max = bounded(
+            &g["max"],
+            &path_at(&p, "max"),
+            0.0,
+            99.0,
+            true,
+            issues,
+        );
+        if min.zip(max).is_some_and(|(min, max)| min > max) {
+            problem(issues, &p, "最小值不得大于最大值");
+        }
+        if name == "clock" {
+            problem(issues, &path_at(&p, "kind"), "倒计时必须使用倒计时语法");
+        }
+    } else {
+        problem(issues, &path_at(&p, "kind"), "未知字段语法");
+    }
+    let gate = &v["gateCue"];
+    let p = path_at(path, "gateCue");
+    if !gate.is_null() {
+        problem(issues, &p, "该字段不支持门控");
+    }
+}
+
+/// Validate before deserializing so unknown keys and semantic errors retain their paths.
+pub fn validate_hud_style_pack(value: &Value) -> Vec<HudIssue> {
+    let mut issues = Vec::new();
+    if unsigned(&value["schemaVersion"]) == Some(2)
+        || (value["kind"] != "hud-style-pack"
+            && (value.get("templates").is_some() || value.get("clockFormat").is_some()))
+    {
+        problem(
+            &mut issues,
+            "schemaVersion",
+            "旧 v2 配置已停用, 请重新制作样式包",
+        );
+        return issues;
+    }
+    if !object(
+        value,
+        "",
+        &[
+            "kind",
+            "schemaVersion",
+            "id",
+            "revision",
+            "name",
+            "bitmaps",
+            "variants",
+        ],
+        &mut issues,
+    ) {
+        return issues;
+    }
+    if value["kind"] != "hud-style-pack" {
+        problem(&mut issues, "kind", "必须是 hud-style-pack");
+    }
+    if unsigned(&value["schemaVersion"]) != Some(1) {
+        problem(&mut issues, "schemaVersion", "只支持样式包版本 1");
+    }
+    identifier(&value["id"], "id", 65, &mut issues);
+    bounded(
+        &value["revision"],
+        "revision",
+        1.0,
+        9_007_199_254_740_991.0,
+        true,
+        &mut issues,
+    );
+    if !value["name"]
+        .as_str()
+        .is_some_and(|s| !s.trim_matches(crate::js_whitespace).is_empty())
+    {
+        problem(&mut issues, "name", "名称必须是非空字符串");
+    }
+    let bitmaps = &value["bitmaps"];
+    if let Some(map) = bitmaps.as_object() {
+        for (id, b) in map {
+            let path = format!("bitmaps.{id}");
+            identifier(&json!(id), &path, 128, &mut issues);
+            if !object(b, &path, &["width", "height", "data"], &mut issues) {
+                continue;
+            }
+            let w = bounded(
+                &b["width"],
+                &path_at(&path, "width"),
+                1.0,
+                16384.0,
+                true,
+                &mut issues,
+            );
+            let h = bounded(
+                &b["height"],
+                &path_at(&path, "height"),
+                1.0,
+                16384.0,
+                true,
+                &mut issues,
+            );
+            let p = path_at(&path, "data");
+            if let (Some(w), Some(h), Some(data)) = (w, h, b["data"].as_str()) {
+                let count = (w * h) as usize;
+                let decoded = if data.len() == count.div_ceil(8).div_ceil(3) * 4 {
+                    unpack_bitmap(data, count).ok()
+                } else {
+                    None
+                };
+                if let Some(mask) = decoded.filter(|mask| pack_bitmap(mask) == data) {
+                    if mask.iter().all(|v| *v == 0) || mask.iter().all(|v| *v != 0) {
+                        problem(&mut issues, &p, "位图不能全空或全满");
+                    }
+                } else {
+                    problem(&mut issues, &p, "位图 Base64 格式, 字节数或填充位无效");
+                }
+            } else if !b["data"].is_string() {
+                problem(&mut issues, &p, "位图数据必须是 Base64 字符串");
+            }
+        }
+    } else {
+        problem(&mut issues, "bitmaps", "必须是位图映射对象");
+    }
+    let Some(variants) = value["variants"].as_array() else {
+        problem(&mut issues, "variants", "必须是布局数组");
+        return issues;
+    };
+    if variants.is_empty() {
+        problem(&mut issues, "variants", "至少需要一个布局");
+    }
+    let mut ids = BTreeSet::new();
+    for (index, v) in variants.iter().enumerate() {
+        let p = format!("variants[{index}]");
+        if !object(
+            v,
+            &p,
+            &["id", "nativeSize", "fields", "cues", "states", "organizer"],
+            &mut issues,
+        ) {
+            continue;
+        }
+        identifier(&v["id"], &path_at(&p, "id"), 128, &mut issues);
+        if let Some(id) = v["id"].as_str() {
+            if !ids.insert(id) {
+                problem(&mut issues, &path_at(&p, "id"), "布局 ID 重复");
+            }
+        }
+        let size = &v["nativeSize"];
+        let sp = path_at(&p, "nativeSize");
+        if object(size, &sp, &["width", "height"], &mut issues) {
+            for k in ["width", "height"] {
+                bounded(&size[k], &path_at(&sp, k), 1.0, 16384.0, true, &mut issues);
+            }
+        }
+        let cues = &v["cues"];
+        let cp = path_at(&p, "cues");
+        if let Some(map) = cues.as_object() {
+            for (k, c) in map {
+                let kp = path_at(&cp, k);
+                if !HUD_CUES.contains(&k.as_str()) {
+                    problem(&mut issues, &kp, "未知 cue");
+                }
+                cue(c, size, bitmaps, &kp, &mut issues);
+            }
+        } else {
+            problem(&mut issues, &cp, "必须是 cue 映射对象");
+        }
+        let fields = &v["fields"];
+        let fp = path_at(&p, "fields");
+        if object(fields, &fp, &HUD_FIELDS, &mut issues) {
+            for k in HUD_FIELDS {
+                field(
+                    &fields[k],
+                    k,
+                    size,
+                    bitmaps,
+                    &path_at(&fp, k),
+                    &mut issues,
+                );
+            }
+        }
+        if !v["organizer"].is_null() {
+            cue(
+                &v["organizer"],
+                size,
+                bitmaps,
+                &path_at(&p, "organizer"),
+                &mut issues,
+            );
+        }
+        let states = &v["states"];
+        let sp = path_at(&p, "states");
+        if let Some(map) = states.as_object() {
+            for (name, groups) in map {
+                let np = path_at(&sp, name);
+                identifier(&json!(name), &np, 128, &mut issues);
+                let Some(groups) = groups.as_array() else {
+                    problem(&mut issues, &np, "必须是条件组数组");
+                    continue;
+                };
+                if groups.is_empty() {
+                    problem(&mut issues, &np, "状态条件组不能为空");
+                }
+                for (i, group) in groups.iter().enumerate() {
+                    let gp = format!("{np}[{i}]");
+                    let Some(group) = group.as_array() else {
+                        problem(&mut issues, &gp, "必须是条件数组");
+                        continue;
+                    };
+                    if group.is_empty() {
+                        problem(&mut issues, &gp, "条件组不能为空");
+                    }
+                    for (j, c) in group.iter().enumerate() {
+                        let cp = format!("{gp}[{j}]");
+                        if c["kind"] == "cue" {
+                            object(c, &cp, &["kind", "cue", "present"], &mut issues);
+                            if !c["cue"]
+                                .as_str()
+                                .is_some_and(|k| HUD_CUES.contains(&k) && cues.get(k).is_some())
+                            {
+                                problem(&mut issues, &path_at(&cp, "cue"), "引用的 cue 不存在");
+                            }
+                        } else if c["kind"] == "field" {
+                            object(c, &cp, &["kind", "field", "present"], &mut issues);
+                            if !c["field"].as_str().is_some_and(|k| {
+                                HUD_FIELDS.contains(&k)
+                                    && fields.get(k).is_some_and(|v| !v.is_null())
+                            }) {
+                                problem(&mut issues, &path_at(&cp, "field"), "引用的字段不存在");
+                            }
+                        } else {
+                            problem(&mut issues, &path_at(&cp, "kind"), "未知条件类型");
+                            continue;
+                        }
+                        if !c["present"].is_boolean() {
+                            problem(&mut issues, &path_at(&cp, "present"), "必须是布尔值");
+                        }
+                    }
+                }
+            }
+        } else {
+            problem(&mut issues, &sp, "必须是状态映射对象");
+        }
+    }
+    issues
+}
+pub fn parse_hud_style_pack(value: &Value) -> Result<HudStylePack, Vec<HudIssue>> {
+    let issues = validate_hud_style_pack(value);
+    if !issues.is_empty() {
+        return Err(issues);
+    }
+    // JSON has one numeric type. Accept integer spellings such as 1.0, as JS does.
+    fn integer_spellings(v: &mut Value) {
+        if v.is_number() {
+            if let Some(n) = unsigned(v) {
+                *v = json!(n);
+            }
+        } else if let Some(map) = v.as_object_mut() {
+            for child in map.values_mut() {
+                integer_spellings(child);
+            }
+        } else if let Some(array) = v.as_array_mut() {
+            for child in array {
+                integer_spellings(child);
+            }
+        }
+    }
+    let mut value = value.clone();
+    integer_spellings(&mut value);
+    serde_json::from_value(value).map_err(|e| {
+        vec![HudIssue {
+            path: String::new(),
+            message: e.to_string(),
+            severity: "error".into(),
+        }]
+    })
+}
+pub fn hud_pack_from_json(raw: &str) -> Result<HudStylePack, String> {
+    let value = serde_json::from_str(raw).map_err(|e| e.to_string())?;
+    parse_hud_style_pack(&value).map_err(|issues| {
+        issues
+            .iter()
+            .map(|i| format!("{}: {}", i.path, i.message))
+            .collect::<Vec<_>>()
+            .join("; ")
+    })
+}
+pub fn hud_pack_readiness(pack: &HudStylePack, variant_id: &str) -> Value {
+    let Some(field) = pack
+        .variants
+        .iter()
+        .find(|v| v.id == variant_id)
+        .and_then(|v| v.fields.clock.as_ref())
+    else {
+        return json!({"ready":false,"missing":CLOCK_CHARS,"sampleCount":0});
+    };
+    let needed = &CLOCK_CHARS[..if matches!(&field.grammar,HudGrammar::Countdown{format} if format=="ss")
+    {
+        10
+    } else {
+        11
+    }];
+    let missing: Vec<_> = needed
+        .iter()
+        .filter(|c| field.glyphs.get(**c).is_none_or(Vec::is_empty))
+        .collect();
+    json!({"ready":field.enabled && missing.is_empty(),"missing":missing,"sampleCount":field.glyphs.values().map(Vec::len).sum::<usize>()})
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HudDebug {
+    pub roi_pixels: Rect,
+    pub gray: Image,
+    pub binary: Image,
+    pub boxes: Vec<GlyphBox>,
+    pub projection: Vec<usize>,
+    pub ink_ratio: f64,
+    pub normalized: Vec<Vec<u8>>,
+    pub matches: Vec<GlyphMatch>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HudGlyphPreparation {
+    pub roi_pixels: Rect,
+    pub gray: Image,
+    pub binary: Image,
+    pub boxes: Vec<GlyphBox>,
+    pub projection: Vec<usize>,
+    pub ink_ratio: f64,
+    pub normalized: Vec<Vec<u8>>,
+    pub bitmaps: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HudReading {
+    pub source: String,
+    pub text: String,
+    pub value: f64,
+    pub confidence: f64,
+    pub scores: Vec<f64>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "lowercase")]
+pub enum HudFieldResult {
+    Disabled {
+        debug: Option<HudDebug>,
+    },
+    Read {
+        reading: HudReading,
+        debug: Option<HudDebug>,
+    },
+    Absent {
+        debug: Option<HudDebug>,
+    },
+    Indeterminate {
+        reason: String,
+        debug: Option<HudDebug>,
+    },
+    Failed {
+        reason: String,
+        debug: Option<HudDebug>,
+    },
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HudFieldResults {
+    pub clock: HudFieldResult,
+    pub score_left: HudFieldResult,
+    pub score_right: HudFieldResult,
+    pub round: HudFieldResult,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HudCueDebug {
+    pub roi_pixels: Rect,
+    pub gray: Image,
+    pub binary: Image,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HudCuePreparation {
+    pub roi_pixels: Rect,
+    pub gray: Image,
+    pub binary: Image,
+    pub bitmap: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "kebab-case")]
+pub enum HudPresenceResult {
+    Disabled { score: Option<f64>, debug: Option<HudCueDebug> },
+    Matched { score: Option<f64>, debug: Option<HudCueDebug> },
+    NotMatched { score: Option<f64>, debug: Option<HudCueDebug> },
+    Indeterminate { reason: String, score: Option<f64>, debug: Option<HudCueDebug> },
+    Failed { reason: String, score: Option<f64>, debug: Option<HudCueDebug> },
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HudFrameResult {
+    pub variant_id: Option<String>,
+    pub selection_reason: Option<String>,
+    pub fields: HudFieldResults,
+    pub cues: BTreeMap<String, HudPresenceResult>,
+    pub states: BTreeMap<String, HudPresenceResult>,
+    pub organizer: HudPresenceResult,
+    pub content: String,
+    pub phase: String,
+}
+fn failed(reason: &str, debug: Option<HudDebug>) -> HudFieldResult {
+    HudFieldResult::Failed {
+        reason: reason.into(),
+        debug,
+    }
+}
+fn validate_hud_frame(rgba: &[u8], width: usize, height: usize, pack: &HudStylePack) -> Result<(), String> {
+    const MAX_PIXELS: usize = 16_777_216;
+    if width == 0 || height == 0
+        || width.checked_mul(height).filter(|&n| n <= MAX_PIXELS).and_then(|n| n.checked_mul(4)) != Some(rgba.len()) {
+        return Err("RGBA 帧尺寸或数据长度无效".into());
+    }
+    // Small source frames must not expand into unbounded reference buffers from a package.
+    for variant in &pack.variants {
+        let regions = [variant.fields.clock.as_ref(), variant.fields.score_left.as_ref(), variant.fields.score_right.as_ref()]
+            .into_iter().flatten().map(|field| &field.roi)
+            .chain(variant.cues.values().map(|cue| &cue.roi))
+            .chain(variant.organizer.iter().map(|cue| &cue.roi));
+        if regions.into_iter().any(|roi| roi.w.checked_mul(roi.h).is_none_or(|n| n == 0 || n > MAX_PIXELS)) {
+            return Err("参考区域像素数超过处理安全上限".into());
+        }
+    }
+    Ok(())
+}
+fn frame_variant<'a>(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    pack: &'a HudStylePack,
+    id: &str,
+) -> Result<&'a HudVariant, String> {
+    validate_hud_frame(rgba, width, height, pack)?;
+    let variant = pack
+        .variants
+        .iter()
+        .find(|v| v.id == id)
+        .ok_or_else(|| "布局 ID 不存在".to_string())?;
+    Ok(variant)
+}
+fn crop_hud_rgba(rgba: &[u8], width: usize, roi: &HudRoi) -> Vec<u8> {
+    let mut crop = Vec::with_capacity(roi.w * roi.h * 4);
+    for y in roi.y..roi.y + roi.h {
+        let start = (y * width + roi.x) * 4;
+        crop.extend_from_slice(&rgba[start..start + roi.w * 4]);
+    }
+    crop
+}
+/// Reference dimensions describe coordinates and template rasterization, not accepted video sizes.
+struct HudFrameView<'a> {
+    rgba: &'a [u8],
+    width: usize,
+    height: usize,
+    reference: &'a HudSize,
+}
+impl HudFrameView<'_> {
+    fn roi(&self, roi: &HudRoi) -> HudRoi {
+        let sx = self.width as f64 / self.reference.width as f64;
+        let sy = self.height as f64 / self.reference.height as f64;
+        let x = (js_round(roi.x as f64 * sx) as usize).min(self.width - 1);
+        let y = (js_round(roi.y as f64 * sy) as usize).min(self.height - 1);
+        HudRoi {
+            x, y,
+            w: (js_round(roi.w as f64 * sx) as usize).clamp(1, self.width - x),
+            h: (js_round(roi.h as f64 * sy) as usize).clamp(1, self.height - y),
+        }
+    }
+
+    fn crop(&self, roi: &HudRoi) -> Vec<u8> {
+        let actual = self.roi(roi);
+        if self.width == self.reference.width && self.height == self.reference.height {
+            return crop_hud_rgba(self.rgba, self.width, &actual);
+        }
+        // Resample on the full-frame grid. Rounding a crop first changes its origin and
+        // scale independently: a 46.5px region must not become a stretched 47px region.
+        let xs = sample_axis(self.width, self.reference.width, roi.x, roi.w);
+        let ys = sample_axis(self.height, self.reference.height, roi.y, roi.h);
+        let mut output = vec![0; roi.w * roi.h * 4];
+        for (y, yw) in ys.iter().enumerate() {
+            for (x, xw) in xs.iter().enumerate() {
+                let mut pixel = [0.0; 4];
+                for &(sy, wy) in yw {
+                    for &(sx, wx) in xw {
+                        let start = (sy * self.width + sx) * 4;
+                        for (channel, value) in pixel.iter_mut().enumerate() {
+                            *value += self.rgba[start + channel] as f64 * wx * wy;
+                        }
+                    }
+                }
+                for (channel, value) in pixel.into_iter().enumerate() {
+                    output[(y * roi.w + x) * 4 + channel] = js_round(value).clamp(0.0, 255.0) as u8;
+                }
+            }
+        }
+        output
+    }
+}
+
+fn cubic_weight(distance: f64) -> f64 {
+    let x = distance.abs();
+    // A fixed cubic kernel preserves thin strokes better than bilinear reconstruction.
+    let a = -0.75;
+    if x < 1.0 { (a + 2.0) * x.powi(3) - (a + 3.0) * x.powi(2) + 1.0 }
+    else if x < 2.0 { a * x.powi(3) - 5.0 * a * x.powi(2) + 8.0 * a * x - 4.0 * a }
+    else { 0.0 }
+}
+
+/// Global pixel-center phase is shared by all ROIs; area weights handle actual downsampling.
+fn sample_axis(source: usize, target: usize, offset: usize, length: usize) -> Vec<Vec<(usize, f64)>> {
+    let scale = source as f64 / target as f64;
+    (offset..offset + length).map(|index| {
+        if source > target {
+            let start = index as f64 * scale;
+            let end = ((index + 1) as f64 * scale).min(source as f64);
+            (start.floor() as usize..end.ceil() as usize).filter_map(|pixel| {
+                let weight = (end.min((pixel + 1) as f64) - start.max(pixel as f64)) / (end - start);
+                (pixel < source && weight > 0.0).then_some((pixel, weight))
+            }).collect()
+        } else {
+            let center = (index as f64 + 0.5) * scale - 0.5;
+            let left = center.floor() as isize;
+            (left - 1..=left + 2).map(|pixel| {
+                (pixel.clamp(0, source as isize - 1) as usize, cubic_weight(center - pixel as f64))
+            }).filter(|(_, weight)| weight.abs() > 1e-12).collect()
+        }
+    }).collect()
+}
+fn analyze_hud_cue(frame: &HudFrameView<'_>, cue: &HudCue) -> HudCueDebug {
+    let crop = frame.crop(&cue.roi);
+    let (gray, binary) = preprocess_hud_rgba(&crop, cue.roi.w, cue.roi.h, &cue.preprocess);
+    HudCueDebug { roi_pixels: frame.roi(&cue.roi).rect(), gray, binary }
+}
+pub fn recommend_hud_preprocess(
+    rgba: &[u8], width: usize, height: usize, pack: &HudStylePack, variant_id: &str,
+    target_id: &str, request: &HudPreprocessRequest,
+) -> Result<HudPreprocessRecommendation, String> {
+    let variant = frame_variant(rgba, width, height, pack, variant_id)?;
+    let frame = HudFrameView { rgba, width, height, reference: &variant.native_size };
+    let (roi, settings) = if HUD_FIELDS.contains(&target_id) {
+        let field = variant.fields.get(target_id).ok_or_else(|| "字段尚未配置".to_string())?;
+        if !field.enabled { return Err("field-disabled".into()); }
+        (&field.roi, &field.preprocess)
+    } else {
+        let cue = if target_id == "organizer" { variant.organizer.as_ref() } else { variant.cues.get(target_id) }
+            .ok_or_else(|| "固定图形不存在或尚未配置".to_string())?;
+        if !cue.enabled { return Err("field-disabled".into()); }
+        (&cue.roi, &cue.preprocess)
+    };
+    if let HudPreprocessRequest::Hsv { x, y } = *request {
+        let actual = frame.roi(roi);
+        if x < actual.x || y < actual.y || x >= actual.x + actual.w || y >= actual.y + actual.h {
+            return Err("color-point-outside-roi".into());
+        }
+        // A picked color is the original RGB pixel, never an interpolated reference pixel.
+        let start = (y * width + x) * 4;
+        return crate::hud_preprocess::recommend_hud_roi_preprocess(&rgba[start..start + 4], 1, 1, settings,
+            &HudPreprocessRequest::Hsv { x: 0, y: 0 });
+    }
+    let crop = frame.crop(roi);
+    crate::hud_preprocess::recommend_hud_roi_preprocess(&crop, roi.w, roi.h, settings, request)
+}
+pub fn prepare_hud_cue(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    pack: &HudStylePack,
+    id: &str,
+    cue_id: &str,
+) -> Result<HudCuePreparation, String> {
+    let variant = frame_variant(rgba, width, height, pack, id)?;
+    let cue = if cue_id == "organizer" { variant.organizer.as_ref() } else { variant.cues.get(cue_id) }
+        .ok_or_else(|| "固定图形不存在或尚未配置".to_string())?;
+    if !cue.enabled { return Err("field-disabled".into()); }
+    let frame = HudFrameView { rgba, width, height, reference: &variant.native_size };
+    let debug = analyze_hud_cue(&frame, cue);
+    Ok(HudCuePreparation {
+        bitmap: pack_bitmap(&debug.binary.data),
+        roi_pixels: debug.roi_pixels,
+        gray: debug.gray,
+        binary: debug.binary,
+    })
+}
+fn presence_failed(reason: &str, debug: Option<HudCueDebug>) -> HudPresenceResult {
+    HudPresenceResult::Failed { reason: reason.into(), score: None, debug }
+}
+fn recognize_hud_cue(
+    frame: &HudFrameView<'_>,
+    pack: &HudStylePack,
+    cue: &HudCue,
+) -> HudPresenceResult {
+    if !cue.enabled { return HudPresenceResult::Disabled { score: None, debug: None }; }
+    let debug = analyze_hud_cue(frame, cue);
+    if cue.templates.is_empty() {
+        return presence_failed("insufficient-templates", Some(debug));
+    }
+    let score = cue.templates.iter().map(|id| {
+        let template = &pack.bitmaps[id];
+        let mask = unpack_bitmap(&template.data, template.width * template.height).unwrap();
+        score_masks(&debug.binary.data, &mask)
+    }).fold(0.0, f64::max);
+    if score >= cue.min_score {
+        HudPresenceResult::Matched { score: Some(score), debug: Some(debug) }
+    } else {
+        HudPresenceResult::NotMatched { score: Some(score), debug: Some(debug) }
+    }
+}
+fn presence_matched(result: Option<&HudPresenceResult>) -> bool {
+    matches!(result, Some(HudPresenceResult::Matched { .. }))
+}
+fn condition_disabled(condition: &HudCondition, cues: &BTreeMap<String, HudPresenceResult>, fields: &HudFieldResults) -> bool {
+    match condition {
+        HudCondition::Cue { cue, .. } => matches!(cues.get(cue), Some(HudPresenceResult::Disabled { .. })),
+        HudCondition::Field { field, .. } => {
+            let result = match field.as_str() {
+                "clock" => &fields.clock,
+                "scoreLeft" => &fields.score_left,
+                "scoreRight" => &fields.score_right,
+                _ => return false,
+            };
+            matches!(result, HudFieldResult::Disabled { .. })
+        }
+    }
+}
+fn condition_value(
+    condition: &HudCondition,
+    cues: &BTreeMap<String, HudPresenceResult>,
+    fields: &HudFieldResults,
+) -> Result<Option<bool>, ()> {
+    let (value, expected) = match condition {
+        HudCondition::Cue { cue, present } => {
+            let value = match cues.get(cue) {
+                Some(HudPresenceResult::Matched { .. }) => Some(true),
+                Some(HudPresenceResult::NotMatched { .. }) => Some(false),
+                Some(HudPresenceResult::Indeterminate { .. }) => None,
+                _ => return Err(()),
+            };
+            (value, *present)
+        }
+        HudCondition::Field { field, present } => {
+            let field = match field.as_str() {
+                "clock" => &fields.clock,
+                "scoreLeft" => &fields.score_left,
+                "scoreRight" => &fields.score_right,
+                _ => return Err(()),
+            };
+            let value = match field {
+                HudFieldResult::Read { .. } => Some(true),
+                HudFieldResult::Absent { .. } => Some(false),
+                HudFieldResult::Indeterminate { .. } => None,
+                HudFieldResult::Failed { .. } | HudFieldResult::Disabled { .. } => return Err(()),
+            };
+            (value, *present)
+        }
+    };
+    Ok(value.map(|value| value == expected))
+}
+fn evaluate_hud_state(
+    groups: &[Vec<HudCondition>],
+    cues: &BTreeMap<String, HudPresenceResult>,
+    fields: &HudFieldResults,
+) -> HudPresenceResult {
+    let mut matched = false;
+    let mut uncertain = false;
+    let mut enabled_group = false;
+    for group in groups {
+        // Skip the complete AND group, never just the disabled condition inside it.
+        if group.iter().any(|condition| condition_disabled(condition, cues, fields)) { continue; }
+        enabled_group = true;
+        let mut group_matches = true;
+        let mut group_uncertain = false;
+        for condition in group {
+            match condition_value(condition, cues, fields) {
+                Err(()) => return presence_failed("dependency-failed", None),
+                Ok(Some(false)) => group_matches = false,
+                Ok(Some(true)) => (),
+                Ok(None) => group_uncertain = true,
+            }
+        }
+        matched |= group_matches && !group_uncertain;
+        uncertain |= group_matches && group_uncertain;
+    }
+    if !enabled_group {
+        HudPresenceResult::Disabled { score: None, debug: None }
+    } else if matched {
+        HudPresenceResult::Matched { score: None, debug: None }
+    } else if uncertain {
+        HudPresenceResult::Indeterminate { reason: "dependency-indeterminate".into(), score: None, debug: None }
+    } else {
+        HudPresenceResult::NotMatched { score: None, debug: None }
+    }
+}
+/// Replay or live. A pack that configures neither a replay state nor a replay cue cannot see
+/// a marker, so it never sees one: live, as for any frame without a marker (cold start A).
+/// Configured but unreadable stays indeterminate.
+fn hud_content(cues: &BTreeMap<String, HudPresenceResult>, states: &BTreeMap<String, HudPresenceResult>) -> String {
+    let enabled = |value: &&HudPresenceResult| !matches!(value, HudPresenceResult::Disabled { .. });
+    match states.get("replay").filter(enabled).or_else(|| cues.get("replay").filter(enabled)) {
+        None => "live",
+        Some(HudPresenceResult::Matched { .. }) => "replay",
+        Some(HudPresenceResult::NotMatched { .. }) => "live",
+        _ => "indeterminate",
+    }.into()
+}
+/// The phase of play. With no `active` state configured, a frame that matches no phase is
+/// unconfigured rather than indeterminate: the pack does not judge phases, so it must not
+/// hold the clock back. A configured phase that fails to read still makes it indeterminate.
+fn hud_phase(states: &BTreeMap<String, HudPresenceResult>) -> String {
+    if ["statistics", "round-history", "scoreboard"].iter().any(|id| presence_matched(states.get(*id))) {
+        return "statistics".into();
+    }
+    let mut phase = None;
+    for (id, value) in [
+        ("statistics", "statistics"), ("round-history", "statistics"), ("scoreboard", "statistics"),
+        ("paused", "paused"), ("round-over", "roundOver"), ("planted", "planted"), ("active", "active"),
+    ] {
+        match states.get(id) {
+            Some(HudPresenceResult::Matched { .. }) => {
+                if phase.is_some_and(|current| current != value) {
+                    return "indeterminate".into();
+                }
+                phase = Some(value);
+            }
+            Some(HudPresenceResult::Failed { .. } | HudPresenceResult::Indeterminate { .. }) => {
+                return "indeterminate".into();
+            }
+            _ => (),
+        }
+    }
+    let active_enabled = states.get("active").is_some_and(|state| !matches!(state, HudPresenceResult::Disabled { .. }));
+    phase.unwrap_or(if active_enabled { "indeterminate" } else { "unconfigured" }).into()
+}
+fn hud_phase_with_timeout(states: &BTreeMap<String, HudPresenceResult>, cues: &BTreeMap<String, HudPresenceResult>) -> String {
+    let phase = hud_phase(states);
+    if !["timeout", "timeoutRight"].iter().any(|id| presence_matched(cues.get(*id))) {
+        return phase;
+    }
+    // Either explicit team timeout interrupts active play, even if the other side is unreadable.
+    // Statistics retains precedence; the actual side-specific cue results remain unchanged.
+    if phase == "statistics" || ["roundHistory", "scoreboard"].iter().any(|id| presence_matched(cues.get(*id))) {
+        "statistics".into()
+    } else {
+        "paused".into()
+    }
+}
+fn analyze_hud_field(frame: &HudFrameView<'_>, field: &HudField) -> (HudDebug, Vec<Vec<u8>>) {
+    let rect = frame.roi(&field.roi).rect();
+    let crop = frame.crop(&field.roi);
+    let (gray, binary) = preprocess_hud_rgba(&crop, field.roi.w, field.roi.h, &field.preprocess);
+    let seg = segment_glyphs(&binary, &serde_json::to_value(&field.segment).unwrap());
+    let coverage: Vec<_> = seg
+        .boxes
+        .iter()
+        .map(|b| normalize_glyph_coverage(&crop_binary(&binary, &b.rect())))
+        .collect();
+    let normalized = coverage.iter().map(|c| threshold_coverage(c)).collect();
+    (
+        HudDebug {
+            roi_pixels: rect,
+            gray,
+            ink_ratio: ink_ratio(&binary),
+            binary,
+            boxes: seg.boxes,
+            projection: seg.projection,
+            normalized,
+            matches: vec![],
+        },
+        coverage,
+    )
+}
+pub fn prepare_hud_glyphs(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    pack: &HudStylePack,
+    id: &str,
+    field_id: &str,
+) -> Result<HudGlyphPreparation, String> {
+    prepare_hud_glyphs_with_boxes(rgba, width, height, pack, id, field_id, None)
+}
+pub fn prepare_hud_glyphs_with_boxes(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    pack: &HudStylePack,
+    id: &str,
+    field_id: &str,
+    boxes: Option<Vec<GlyphBox>>,
+) -> Result<HudGlyphPreparation, String> {
+    let variant = frame_variant(rgba, width, height, pack, id)?;
+    let field = variant
+        .fields
+        .get(field_id)
+        .ok_or_else(|| "字段不存在或尚未配置".to_string())?;
+    if !field.enabled { return Err("field-disabled".into()); }
+    let frame = HudFrameView { rgba, width, height, reference: &variant.native_size };
+    let (mut debug, _) = analyze_hud_field(&frame, field);
+    if let Some(boxes) = boxes {
+        for b in &boxes {
+            if [b.x, b.y, b.width, b.height]
+                .iter()
+                .any(|v| !v.is_finite() || v.fract() != 0.0)
+                || b.x < 0.0
+                || b.y < 0.0
+                || b.width < 1.0
+                || b.height < 1.0
+                || b.x + b.width > debug.binary.width as f64
+                || b.y + b.height > debug.binary.height as f64
+            {
+                return Err("字框必须是二值区域内的整数矩形".into());
+            }
+        }
+        debug.normalized = boxes
+            .iter()
+            .map(|b| normalize_glyph(&crop_binary(&debug.binary, &b.rect())))
+            .collect();
+        debug.boxes = boxes;
+    }
+    let bitmaps = debug
+        .normalized
+        .iter()
+        .map(|mask| pack_bitmap(mask))
+        .collect();
+    Ok(HudGlyphPreparation {
+        roi_pixels: debug.roi_pixels,
+        gray: debug.gray,
+        binary: debug.binary,
+        boxes: debug.boxes,
+        projection: debug.projection,
+        ink_ratio: debug.ink_ratio,
+        normalized: debug.normalized,
+        bitmaps,
+    })
+}
+fn parse_score(text: &str, min: usize, max: usize) -> Option<f64> {
+    if text.is_empty() || text.len() > 2 || !text.bytes().all(|c| c.is_ascii_digit())
+        || (text.len() > 1 && text.starts_with('0')) {
+        return None;
+    }
+    let value = text.parse::<usize>().ok()?;
+    (value <= 99 && value >= min && value <= max).then_some(value as f64)
+}
+fn shared_score_glyphs(fields: &HudFields) -> BTreeMap<String, Vec<String>> {
+    let mut glyphs = BTreeMap::new();
+    for c in &CLOCK_CHARS[..10] {
+        let mut seen = BTreeSet::new();
+        let mut ids = Vec::new();
+        for field in [fields.score_left.as_ref(), fields.score_right.as_ref()].into_iter().flatten().filter(|field| field.enabled) {
+            if let Some(samples) = field.glyphs.get(*c) {
+                for id in samples {
+                    if seen.insert(id) {
+                        ids.push(id.clone());
+                    }
+                }
+            }
+        }
+        if !ids.is_empty() {
+            glyphs.insert((*c).into(), ids);
+        }
+    }
+    glyphs
+}
+fn recognize_hud_field(
+    frame: &HudFrameView<'_>,
+    pack: &HudStylePack,
+    id: &str,
+    field: Option<&HudField>,
+    shared_glyphs: Option<&BTreeMap<String, Vec<String>>>,
+) -> HudFieldResult {
+    if let Some(field) = field {
+        if !field.enabled { return HudFieldResult::Disabled { debug: None }; }
+        let (mut debug, coverage) = analyze_hud_field(frame, field);
+        let glyphs = shared_glyphs.unwrap_or(&field.glyphs);
+        let mut templates = CompiledTemplates {
+            chars: vec![],
+            masks: vec![],
+        };
+        for c in CLOCK_CHARS {
+            if let Some(ids) = glyphs.get(c) {
+                let masks = ids
+                    .iter()
+                    .filter_map(|id| pack.bitmaps.get(id))
+                    .map(|b| unpack_bitmap(&b.data, 1536).unwrap())
+                    .collect::<Vec<_>>();
+                if !masks.is_empty() {
+                    templates.chars.push(c.into());
+                    templates.masks.push((c.into(), masks));
+                }
+            }
+        }
+        debug.matches = coverage
+            .iter()
+            .map(|mask| match_glyph(mask, &templates))
+            .collect();
+        let countdown = matches!(field.grammar, HudGrammar::Countdown { .. });
+        let complete = CLOCK_CHARS[..10].iter().all(|c| glyphs.get(*c).is_some_and(|ids| !ids.is_empty()));
+        if countdown && hud_pack_readiness(pack, id)["ready"] != true {
+            failed("insufficient-templates", Some(debug))
+        } else if debug.ink_ratio < 0.004 || debug.ink_ratio > 0.85 {
+            failed("blank-frame", Some(debug))
+        } else if debug.boxes.is_empty() {
+            failed("no-candidates", Some(debug))
+        } else if debug.matches.iter().any(|m| m.char.is_none() || m.score < field.r#match.min_score) {
+            failed(if !countdown && !complete { "missing-glyph" } else { "low-confidence" }, Some(debug))
+        } else if debug.matches.iter().any(|m| m.score - m.runner_up_score < field.r#match.min_margin) {
+            failed("low-confidence", Some(debug))
+        } else {
+            let text: String = debug
+                .matches
+                .iter()
+                .filter_map(|m| m.char.as_deref())
+                .collect();
+            let value = match &field.grammar {
+                HudGrammar::Countdown { format } => parse_countdown(&text, format),
+                HudGrammar::Integer { min, max } => parse_score(&text, *min, *max),
+            };
+            if let Some(value) = value {
+                let scores: Vec<_> = debug.matches.iter().map(|m| m.score).collect();
+                // Separators must pass their own matching gates, but do not rate the digits.
+                let confidence = debug.matches.iter().filter(|m| !countdown || m.char.as_deref() != Some(":"))
+                    .map(|m| m.score).fold(1.0, f64::min);
+                HudFieldResult::Read {
+                    reading: HudReading {
+                        source: "recognized".into(),
+                        text,
+                        value,
+                        confidence,
+                        scores,
+                    },
+                    debug: Some(debug),
+                }
+            } else {
+                failed("invalid-format", Some(debug))
+            }
+        }
+    } else {
+        failed("not-configured", None)
+    }
+}
+fn derive_round(left: &HudFieldResult, right: &HudFieldResult) -> HudFieldResult {
+    match (left, right) {
+        (HudFieldResult::Disabled { .. }, _) | (_, HudFieldResult::Disabled { .. }) => HudFieldResult::Disabled { debug: None },
+        (HudFieldResult::Read { reading: left, .. }, HudFieldResult::Read { reading: right, .. }) => {
+            let value = left.value + right.value + 1.0;
+            HudFieldResult::Read {
+                reading: HudReading {
+                    source: "derived".into(),
+                    text: format!("{value:.0}"),
+                    value,
+                    confidence: left.confidence.min(right.confidence),
+                    scores: left.scores.iter().chain(&right.scores).copied().collect(),
+                },
+                debug: None,
+            }
+        }
+        (HudFieldResult::Failed { .. }, _) | (_, HudFieldResult::Failed { .. }) => {
+            failed("score-failed", None)
+        }
+        _ => HudFieldResult::Indeterminate { reason: "score-indeterminate".into(), debug: None },
+    }
+}
+fn indeterminate_layout(reason: &str) -> HudFrameResult {
+    let field = || HudFieldResult::Indeterminate { reason: reason.into(), debug: None };
+    HudFrameResult {
+        variant_id: None,
+        selection_reason: Some(reason.into()),
+        fields: HudFieldResults { clock: field(), score_left: field(), score_right: field(), round: field() },
+        cues: BTreeMap::new(),
+        states: BTreeMap::new(),
+        organizer: HudPresenceResult::Indeterminate { reason: reason.into(), score: None, debug: None },
+        content: "indeterminate".into(),
+        phase: "indeterminate".into(),
+    }
+}
+/// An empty ID selects this frame's layout; explicit IDs let the editor inspect its current layout.
+pub fn recognize_hud_frame(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    pack: &HudStylePack,
+    id: &str,
+) -> Result<HudFrameResult, String> {
+    validate_hud_frame(rgba, width, height, pack)?;
+    let (variant, selected_organizer) = if id.is_empty() {
+        let mut candidates: Vec<_> = pack.variants.iter().filter(|variant| {
+            variant.native_size.width == width && variant.native_size.height == height
+        }).collect();
+        if candidates.is_empty() { candidates.extend(pack.variants.iter()); }
+        match candidates.as_slice() {
+            [] => return Ok(indeterminate_layout("no-match")),
+            [variant] => (*variant, None),
+            _ => {
+                let mut selected = None;
+                for variant in candidates {
+                    let Some(cue) = &variant.organizer else { continue };
+                    if !cue.enabled { continue; }
+                    let frame = HudFrameView { rgba, width, height, reference: &variant.native_size };
+                    let organizer = recognize_hud_cue(&frame, pack, cue);
+                    if presence_matched(Some(&organizer)) {
+                        if selected.is_some() {
+                            return Ok(indeterminate_layout("multiple-matches"));
+                        }
+                        selected = Some((variant, Some(organizer)));
+                    }
+                }
+                match selected {
+                    Some(selected) => selected,
+                    None => return Ok(indeterminate_layout("no-match")),
+                }
+            }
+        }
+    } else {
+        (frame_variant(rgba, width, height, pack, id)?, None)
+    };
+    let frame = HudFrameView { rgba, width, height, reference: &variant.native_size };
+    let cues: BTreeMap<_, _> = variant.cues.iter().map(|(key, cue)| {
+        (key.clone(), recognize_hud_cue(&frame, pack, cue))
+    }).collect();
+    let statistics = ["roundHistory", "scoreboard"].iter().any(|id| presence_matched(cues.get(*id)));
+    let planted = presence_matched(cues.get("bomb"));
+    // Fonts are shared only within this layout; each score still owns its color and ROI pipeline.
+    let score_glyphs = shared_score_glyphs(&variant.fields);
+    let read_field = |field: Option<&HudField>, absent: bool, glyphs: Option<&BTreeMap<String, Vec<String>>>| {
+        if field.is_some_and(|field| !field.enabled) {
+            HudFieldResult::Disabled { debug: None }
+        } else if absent && field.is_some() {
+            HudFieldResult::Absent { debug: None }
+        } else {
+            recognize_hud_field(&frame, pack, &variant.id, field, glyphs)
+        }
+    };
+    let clock = read_field(variant.fields.clock.as_ref(), statistics || planted, None);
+    let score_left = read_field(variant.fields.score_left.as_ref(), statistics, Some(&score_glyphs));
+    let score_right = read_field(variant.fields.score_right.as_ref(), statistics, Some(&score_glyphs));
+    let round = derive_round(&score_left, &score_right);
+    let fields = HudFieldResults { clock, score_left, score_right, round };
+    let states = variant.states.iter().map(|(key, groups)| {
+        (key.clone(), evaluate_hud_state(groups, &cues, &fields))
+    }).collect();
+    let content = hud_content(&cues, &states);
+    let phase = hud_phase_with_timeout(&states, &cues);
+    let organizer = selected_organizer.unwrap_or_else(|| variant.organizer.as_ref().map_or_else(
+        || presence_failed("not-configured", None),
+        |cue| recognize_hud_cue(&frame, pack, cue),
+    ));
+    Ok(HudFrameResult {
+        variant_id: Some(variant.id.clone()),
+        selection_reason: None,
+        fields,
+        cues,
+        states,
+        organizer,
+        content,
+        phase,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fractional_reference_crops_share_the_global_pixel_grid() {
+        for (width, height, rw, rh) in [(24, 18, 32, 24), (40, 30, 32, 24)] {
+            let pixels: Vec<u8> = (0..width * height).flat_map(|index| {
+                let value = ((index * 37 + index / width * 19) % 256) as u8;
+                [value, value, value, 255]
+            }).collect();
+            let size = HudSize { width: rw, height: rh };
+            let view = HudFrameView { rgba: &pixels, width, height, reference: &size };
+            let complete = view.crop(&HudRoi { x: 0, y: 0, w: rw, h: rh });
+            for roi in [HudRoi { x: 3, y: 5, w: 7, h: 9 }, HudRoi { x: 7, y: 4, w: 13, h: 11 },
+                HudRoi { x: rw - 1, y: rh - 1, w: 1, h: 1 }] {
+                assert_eq!(view.crop(&roi), crop_hud_rgba(&complete, rw, &roi));
+            }
+        }
+    }
+
+    #[test]
+    fn reference_resampling_preserves_constant_edges_and_native_pixels() {
+        let pixels: Vec<u8> = (0..12).flat_map(|_| [64, 128, 192, 255]).collect();
+        let size = HudSize { width: 7, height: 5 };
+        let view = HudFrameView { rgba: &pixels, width: 4, height: 3, reference: &size };
+        assert!(view.crop(&HudRoi { x: 0, y: 0, w: 7, h: 5 }).chunks_exact(4).all(|pixel| pixel == [64, 128, 192, 255]));
+        let native = HudSize { width: 4, height: 3 };
+        let view = HudFrameView { rgba: &pixels, width: 4, height: 3, reference: &native };
+        assert_eq!(view.crop(&HudRoi { x: 0, y: 0, w: 4, h: 3 }), pixels);
+    }
+
+    #[test]
+    fn score_glyph_union_deduplicates_per_character_and_excludes_the_clock() {
+        let field = |glyphs| HudField {
+            enabled: true,
+            roi: HudRoi { x: 0, y: 0, w: 1, h: 1 },
+            preprocess: HudPreprocessSettings { scale: 1.0, threshold: 100.0, ..HudPreprocessSettings::default() },
+            segment: HudSegment { min_column_ink: 1, min_glyph_width: 1, min_gap_width: 1, min_ink_ratio: 0.0 },
+            glyphs,
+            grammar: HudGrammar::Integer { min: 0, max: 99 },
+            r#match: HudMatch { min_score: 0.9, min_margin: 0.03 },
+            gate_cue: None,
+        };
+        let fields = HudFields {
+            clock: Some(field(BTreeMap::from([("4".into(), vec!["clock-four".into()])]))),
+            score_left: Some(field(BTreeMap::from([
+                ("8".into(), vec!["shared-eight".into(), "left-eight".into(), "shared-eight".into()]),
+                (":".into(), vec!["colon".into()]),
+            ]))),
+            score_right: Some(field(BTreeMap::from([
+                ("8".into(), vec!["shared-eight".into(), "right-eight".into()]),
+                ("9".into(), vec!["right-nine".into()]),
+            ]))),
+        };
+        assert_eq!(shared_score_glyphs(&fields), BTreeMap::from([
+            ("8".into(), vec!["shared-eight".into(), "left-eight".into(), "right-eight".into()]),
+            ("9".into(), vec!["right-nine".into()]),
+        ]));
+    }
+
+    fn presence(value: Option<bool>) -> HudPresenceResult {
+        match value {
+            Some(true) => HudPresenceResult::Matched { score: None, debug: None },
+            Some(false) => HudPresenceResult::NotMatched { score: None, debug: None },
+            None => presence_failed("insufficient-templates", None),
+        }
+    }
+    fn cue_condition(cue: &str, present: bool) -> HudCondition {
+        HudCondition::Cue { cue: cue.into(), present }
+    }
+    fn state_fields(clock: HudFieldResult) -> HudFieldResults {
+        HudFieldResults { clock, score_left: failed("not-configured", None), score_right: failed("not-configured", None), round: failed("score-failed", None) }
+    }
+
+    #[test]
+    fn state_rules_use_or_of_and_and_fail_on_any_failed_dependency() {
+        let fields = state_fields(HudFieldResult::Absent { debug: None });
+        let cues = BTreeMap::from([
+            ("replay".into(), presence(Some(true))),
+            ("bomb".into(), presence(Some(false))),
+            ("timeout".into(), presence(None)),
+        ]);
+        let groups = vec![
+            vec![cue_condition("replay", true), cue_condition("bomb", false)],
+            vec![cue_condition("bomb", true)],
+        ];
+        assert!(matches!(evaluate_hud_state(&groups, &cues, &fields), HudPresenceResult::Matched { .. }));
+        let groups = vec![vec![cue_condition("replay", false)], vec![cue_condition("bomb", true)]];
+        assert!(matches!(evaluate_hud_state(&groups, &cues, &fields), HudPresenceResult::NotMatched { .. }));
+        for groups in [
+            vec![vec![cue_condition("replay", true)], vec![cue_condition("timeout", false)]],
+            vec![vec![cue_condition("bomb", true), cue_condition("timeout", true)]],
+            vec![vec![HudCondition::Field { field: "scoreLeft".into(), present: false }]],
+        ] {
+            assert!(matches!(evaluate_hud_state(&groups, &cues, &fields), HudPresenceResult::Failed { .. }));
+        }
+        let no_clock = vec![vec![HudCondition::Field { field: "clock".into(), present: false }]];
+        assert!(matches!(evaluate_hud_state(&no_clock, &cues, &fields), HudPresenceResult::Matched { .. }));
+        let unknown_fields = state_fields(HudFieldResult::Indeterminate { reason: "unknown".into(), debug: None });
+        assert!(matches!(evaluate_hud_state(&no_clock, &cues, &unknown_fields), HudPresenceResult::Indeterminate { .. }));
+        let false_and_unknown = vec![vec![cue_condition("bomb", true), HudCondition::Field { field: "clock".into(), present: false }]];
+        assert!(matches!(evaluate_hud_state(&false_and_unknown, &cues, &unknown_fields), HudPresenceResult::NotMatched { .. }));
+    }
+
+    #[test]
+    fn disabled_dependencies_skip_whole_and_groups_including_negative_conditions() {
+        let fields = state_fields(HudFieldResult::Disabled { debug: None });
+        let cues = BTreeMap::from([
+            ("replay".into(), HudPresenceResult::Disabled { score: None, debug: None }),
+            ("bomb".into(), presence(Some(true))),
+            ("timeout".into(), presence(None)),
+        ]);
+        for expected in [true, false] {
+            for disabled in [cue_condition("replay", expected), HudCondition::Field { field: "clock".into(), present: expected }] {
+                let group = vec![cue_condition("bomb", true), disabled.clone()];
+                assert!(matches!(evaluate_hud_state(&[group.clone()], &cues, &fields), HudPresenceResult::Disabled { score: None, debug: None }));
+                let failing_group = vec![cue_condition("timeout", true), disabled.clone()];
+                assert!(matches!(evaluate_hud_state(&[failing_group.clone()], &cues, &fields), HudPresenceResult::Disabled { .. }));
+                // An unrelated OR branch continues to participate with its original conditions.
+                assert!(matches!(evaluate_hud_state(&[group.clone(), vec![cue_condition("bomb", true)]], &cues, &fields), HudPresenceResult::Matched { .. }));
+                assert!(matches!(evaluate_hud_state(&[group, vec![cue_condition("bomb", false)]], &cues, &fields), HudPresenceResult::NotMatched { .. }));
+                assert!(matches!(evaluate_hud_state(&[failing_group, vec![cue_condition("timeout", false)]], &cues, &fields), HudPresenceResult::Failed { .. }));
+            }
+        }
+    }
+
+    #[test]
+    fn disabled_phases_and_replay_rules_do_not_block_enabled_detection() {
+        let disabled = || HudPresenceResult::Disabled { score: None, debug: None };
+        let mut states = BTreeMap::from([
+            ("active".into(), disabled()), ("replay".into(), disabled()),
+            ("statistics".into(), disabled()), ("paused".into(), disabled()),
+        ]);
+        assert_eq!(hud_phase(&states), "unconfigured");
+        assert_eq!(hud_content(&BTreeMap::new(), &states), "live");
+        assert_eq!(hud_content(&BTreeMap::from([("replay".into(), disabled())]), &states), "live");
+        assert_eq!(hud_content(&BTreeMap::from([("replay".into(), presence(Some(true)))]), &states), "replay");
+        assert_eq!(hud_content(&BTreeMap::from([("replay".into(), presence(None))]), &states), "indeterminate");
+        states.insert("active".into(), presence(Some(true)));
+        assert_eq!(hud_phase(&states), "active");
+    }
+
+    #[test]
+    fn either_timeout_interrupts_active_without_erasing_side_results_or_statistics() {
+        let active = BTreeMap::from([("active".into(), presence(Some(true)))]);
+        for side in ["timeout", "timeoutRight"] {
+            let other = if side == "timeout" { "timeoutRight" } else { "timeout" };
+            for other_result in [presence(Some(false)), presence(None), HudPresenceResult::Disabled { score: None, debug: None }] {
+                let mut cues = BTreeMap::from([(side.into(), presence(Some(true))), (other.into(), other_result)]);
+                let before = serde_json::to_value(&cues).unwrap();
+                assert_eq!(hud_phase_with_timeout(&active, &cues), "paused");
+                assert_eq!(serde_json::to_value(&cues).unwrap(), before);
+                let mut states = active.clone();
+                states.insert("paused".into(), presence(None));
+                assert_eq!(hud_phase_with_timeout(&states, &cues), "paused");
+                states.insert("scoreboard".into(), presence(Some(true)));
+                assert_eq!(hud_phase_with_timeout(&states, &cues), "statistics");
+                cues.insert("roundHistory".into(), presence(Some(true)));
+                assert_eq!(hud_phase_with_timeout(&active, &cues), "statistics");
+            }
+        }
+        let both = BTreeMap::from([("timeout".into(), presence(Some(true))), ("timeoutRight".into(), presence(Some(true)))]);
+        assert_eq!(hud_phase_with_timeout(&active, &both), "paused");
+        for cues in [BTreeMap::new(), BTreeMap::from([("timeout".into(), presence(Some(false)))]),
+            BTreeMap::from([("timeout".into(), presence(None)), ("timeoutRight".into(), HudPresenceResult::Disabled { score: None, debug: None })])] {
+            assert_eq!(hud_phase_with_timeout(&active, &cues), "active");
+            assert_eq!(hud_phase_with_timeout(&BTreeMap::new(), &cues), "unconfigured");
+        }
+    }
+
+    #[test]
+    fn content_and_phase_are_independent_and_statistics_takes_precedence() {
+        let cues = BTreeMap::from([("replay".into(), presence(Some(true)))]);
+        let mut states = BTreeMap::from([("planted".into(), presence(Some(true)))]);
+        assert_eq!(hud_content(&cues, &states), "replay");
+        assert_eq!(hud_phase(&states), "planted");
+        states.insert("paused".into(), presence(Some(true)));
+        assert_eq!(hud_phase(&states), "indeterminate");
+        states.insert("round-history".into(), presence(Some(true)));
+        states.insert("scoreboard".into(), presence(Some(true)));
+        assert_eq!(hud_phase(&states), "statistics");
+        states.clear();
+        states.insert("round-over".into(), presence(Some(true)));
+        assert_eq!(hud_phase(&states), "roundOver");
+        states.insert("planted".into(), presence(None));
+        assert_eq!(hud_phase(&states), "indeterminate");
+        states.clear();
+        assert_eq!(hud_phase(&states), "unconfigured");
+        assert_eq!(hud_content(&BTreeMap::new(), &states), "live");
+        states.insert("replay".into(), presence(Some(false)));
+        assert_eq!(hud_content(&cues, &states), "live");
+    }
+
+    #[test]
+    fn an_unconfigured_axis_does_not_hold_the_clock_back() {
+        // No replay state or cue: live, as cold start A treats any frame without a marker.
+        assert_eq!(hud_content(&BTreeMap::new(), &BTreeMap::new()), "live");
+        // A replay cue that cannot be read is not the same as no cue.
+        let unreadable = BTreeMap::from([("replay".into(), presence(None))]);
+        assert_eq!(hud_content(&unreadable, &BTreeMap::new()), "indeterminate");
+        // Phases configured, but not active play: a frame matching none of them is unjudged.
+        let only_planted = BTreeMap::from([("planted".into(), presence(Some(false)))]);
+        assert_eq!(hud_phase(&only_planted), "unconfigured");
+        // Active play configured and not seen: indeterminate, as before.
+        let with_active = BTreeMap::from([("planted".into(), presence(Some(false))), ("active".into(), presence(Some(false)))]);
+        assert_eq!(hud_phase(&with_active), "indeterminate");
+        // A configured phase that fails to read still blocks, active or not.
+        let failing = BTreeMap::from([("paused".into(), presence(None))]);
+        assert_eq!(hud_phase(&failing), "indeterminate");
+        // Matched phases are reported whether or not active is configured.
+        let planted = BTreeMap::from([("planted".into(), presence(Some(true)))]);
+        assert_eq!(hud_phase(&planted), "planted");
+    }
+
+    #[test]
+    fn derived_round_propagates_the_worse_score_status() {
+        let read = HudFieldResult::Read {
+            reading: HudReading { source: "recognized".into(), text: "99".into(), value: 99.0, confidence: 0.9, scores: vec![0.9, 0.95] },
+            debug: None,
+        };
+        let absent = HudFieldResult::Absent { debug: None };
+        let unknown = HudFieldResult::Indeterminate { reason: "unknown-state".into(), debug: None };
+        let failure = failed("missing-glyph", None);
+        for (left, right) in [(&read, &unknown), (&unknown, &read), (&unknown, &unknown), (&read, &absent), (&absent, &read)] {
+            assert!(matches!(derive_round(left, right), HudFieldResult::Indeterminate { .. }));
+        }
+        for (left, right) in [(&failure, &unknown), (&unknown, &failure), (&failure, &read), (&read, &failure), (&failure, &failure), (&absent, &failure)] {
+            assert!(matches!(derive_round(left, right), HudFieldResult::Failed { .. }));
+        }
+        let HudFieldResult::Read { reading, .. } = derive_round(&read, &read) else { unreachable!() };
+        assert_eq!(reading.value, 199.0);
+        assert_eq!(reading.source, "derived");
+        assert_eq!(reading.confidence, 0.9);
+        let disabled = HudFieldResult::Disabled { debug: None };
+        for other in [&read, &absent, &unknown, &failure, &disabled] {
+            assert!(matches!(derive_round(&disabled, other), HudFieldResult::Disabled { debug: None }));
+            assert!(matches!(derive_round(other, &disabled), HudFieldResult::Disabled { debug: None }));
+        }
+    }
+}

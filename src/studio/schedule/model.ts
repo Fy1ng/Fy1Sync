@@ -7,19 +7,34 @@
  * title gives none, two live matches of one event are told apart by their channels.
  */
 
-import type { Cs2Match, Cs2Schedule, Cs2Stream, StreamTitle } from '../../../electron/featureContracts'
+import type { Cs2Match, Cs2Schedule, Cs2Stream, StreamTitle, StreamTitleInput } from '../../../electron/featureContracts'
 
 export interface EventGroup {
   /** The event's own page without the stage anchor, stable across refreshes. */
   key: string
   name: string
   tier: Cs2Match['tournament']['tier']
+  /** The event's icon, from the first of its matches that has one. */
+  logo: string | null
   live: Cs2Match[]
   upcoming: Cs2Match[]
   finished: Cs2Match[]
 }
 
 const eventKey = (match: Cs2Match): string => match.tournament.url.split('#')[0] || match.tournament.name
+
+/**
+ * The event's Liquipedia path, for telling main which event is on screen. Only the path goes
+ * across, never the address; a key from an event name or another site gives null.
+ */
+export function eventPath(group: Pick<EventGroup, 'key'> | undefined): string | null {
+  if (!group) return null
+  try {
+    const url = new URL(group.key)
+    return url.origin === 'https://liquipedia.net' && url.pathname.startsWith('/counterstrike/') && !url.search
+      ? url.pathname : null
+  } catch { return null }
+}
 
 /** Liquipedia's tiers in order of importance; Misc (-1) after C, unknown last. */
 const TIER_RANK: Record<string, number> = { '1': 0, '2': 1, '3': 2, '4': 3, '-1': 4, null: 5 }
@@ -35,9 +50,10 @@ export function groupEvents(schedule: Cs2Schedule | null): EventGroup[] {
     const key = eventKey(match)
     let group = groups.get(key)
     if (!group) {
-      group = { key, name: match.tournament.name, tier: match.tournament.tier, live: [], upcoming: [], finished: [] }
+      group = { key, name: match.tournament.name, tier: match.tournament.tier, logo: null, live: [], upcoming: [], finished: [] }
       groups.set(key, group)
     }
+    group.logo ??= match.tournament.logo
     group[match.state].push(match)
   }
   const soonest = (group: EventGroup): number => (group.live[0] ?? group.upcoming[0] ?? group.finished.at(-1))?.startsAt ?? Infinity
@@ -52,17 +68,34 @@ export function groupEvents(schedule: Cs2Schedule | null): EventGroup[] {
     || soonest(a) - soonest(b))
 }
 
-export const streamKey = (stream: Pick<Cs2Stream, 'platform' | 'channel' | 'videoId'>): string =>
-  JSON.stringify([stream.platform, stream.channel.toLowerCase(), stream.videoId])
+/** A stream's identity within a match: its registry entry, which stays put while its channel is looked up. */
+export const streamKey = (stream: Pick<Cs2Stream, 'platform' | 'entry' | 'videoId'>): string =>
+  JSON.stringify([stream.platform, stream.entry.toLowerCase(), stream.videoId])
+
+/**
+ * What a stream's title is read by: the video on YouTube, the matched channel on Twitch. Null
+ * while neither is known; a YouTube channel page carries no title worth a request.
+ */
+export function titleInput(stream: Cs2Stream): StreamTitleInput | null {
+  if (stream.platform === 'youtube') return stream.videoId ? { platform: 'youtube', channel: stream.channel ?? stream.entry, videoId: stream.videoId } : null
+  return stream.channel ? { platform: 'twitch', channel: stream.channel, videoId: null } : null
+}
+
+export const titleKey = (input: StreamTitleInput): string => JSON.stringify([input.platform, input.channel.toLowerCase(), input.videoId])
+
+export function streamTitle(titles: ReadonlyMap<string, StreamTitle>, stream: Cs2Stream): StreamTitle | undefined {
+  const input = titleInput(stream)
+  return input ? titles.get(titleKey(input)) : undefined
+}
 
 /** The streams whose titles are worth reading for this event: on now first, then next. */
-export function titleRequests(group: EventGroup | undefined, limit = 12): Pick<Cs2Stream, 'platform' | 'channel' | 'videoId'>[] {
+export function titleRequests(group: EventGroup | undefined, limit = 12): StreamTitleInput[] {
   if (!group) return []
-  const seen = new Map<string, Pick<Cs2Stream, 'platform' | 'channel' | 'videoId'>>()
+  const seen = new Map<string, StreamTitleInput>()
   for (const match of [...group.live, ...group.upcoming.slice(0, 4)]) {
-    for (const { platform, channel, videoId } of match.streams) {
-      const key = streamKey({ platform, channel, videoId })
-      if (!seen.has(key)) seen.set(key, { platform, channel, videoId })
+    for (const stream of match.streams) {
+      const input = titleInput(stream)
+      if (input && !seen.has(titleKey(input))) seen.set(titleKey(input), input)
     }
   }
   return [...seen.values()].slice(0, limit)
@@ -80,14 +113,22 @@ export function stageLabel(stage: string | null | undefined): string | null {
  */
 export function matchStage(match: Cs2Match, titles: ReadonlyMap<string, StreamTitle>, siblingsLive: number): { label: string; from: 'title' | 'channel' } | null {
   for (const stream of match.streams) {
-    const label = stageLabel(titles.get(streamKey(stream))?.stage)
+    const label = stageLabel(streamTitle(titles, stream)?.stage)
     if (label) return { label, from: 'title' }
   }
-  if (match.state === 'live' && siblingsLive > 1 && match.streams[0]) return { label: `频道 ${match.streams[0].channel}`, from: 'channel' }
+  const first = match.streams[0]
+  if (match.state === 'live' && siblingsLive > 1 && first) return { label: `频道 ${first.channel ?? first.entry}`, from: 'channel' }
   return null
 }
 
 export const PLATFORM_NAME: Record<Cs2Stream['platform'], string> = { youtube: 'YouTube', twitch: 'Twitch' }
+
+/** Why a stream cannot be played yet, in the sheet's words. */
+export const MISSING_TEXT: Record<NonNullable<Cs2Stream['missing']>, string> = {
+  finding: '正在查找直播频道…',
+  unmatched: '没找到这场比赛的直播频道，请手动粘贴直播链接',
+  failed: '暂时无法读取直播频道',
+}
 
 /** Streams in the order worth offering: YouTube first, since it carries the higher qualities here. */
 export function orderedStreams(match: Cs2Match): Cs2Stream[] {

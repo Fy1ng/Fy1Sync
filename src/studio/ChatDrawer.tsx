@@ -8,7 +8,7 @@
  * messages are dropped from the front. A way back down is offered meanwhile.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { DanmakuMessage } from '../core/danmakuTimeline'
@@ -22,16 +22,10 @@ import { Icon, Popover } from './kit'
 import { useSourceLoader } from './sources'
 import { deliveryText } from './useStudioComposer'
 import { remember } from '../app/remembered'
+import { useChatFollow } from './useChatFollow'
 
 /** A one-line row; longer messages wrap and are measured. */
 const ROW = 30
-/**
- * How close to the end still counts as following it. One pixel absorbs sub-pixel rounding and
- * nothing more: any real step up must stop the follow. A wider slack read a small wheel step
- * (10–20 px) as still at the end, so the next message pulled the list back down under the
- * reader, a visible jump each time.
- */
-const END_SLACK = 1
 
 export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   onClose: () => void
@@ -55,9 +49,6 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   const total = useSyncExternalStore(subscribe, () => session.chatCount())
 
   const scroller = useRef<HTMLDivElement | null>(null)
-  const [viewport, setViewport] = useState(0)
-  const seen = useRef(total)
-  const [unread, setUnread] = useState(0)
   const virtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => scroller.current,
@@ -65,38 +56,16 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
     getItemKey: (index) => messages[index]!.id,
     overscan: 6,
     anchorTo: 'end',
-    followOnAppend: true,
-    scrollEndThreshold: END_SLACK,
+    // Reading anchors still belong to the virtualizer; explicit follow intent handles the end.
+    followOnAppend: false,
+    scrollEndThreshold: 1,
     // Start at the end, but as a real offset. A sentinel like MAX_SAFE_INTEGER is never read back
     // while the list is too short to scroll, since no scroll event fires, so the virtualizer
     // went on computing the visible range from that far-off offset. It kept only the newest row
     // plus overscan, and the rows above went missing while the list was still filling up.
     initialOffset: () => Math.max(0, messages.length * ROW - (scroller.current?.clientHeight ?? 0)),
   })
-  const atEnd = useRef(true)
-
-  useEffect(() => {
-    const node = scroller.current
-    if (!node) return
-    const measure = (): void => setViewport(node.clientHeight)
-    measure()
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(measure)
-    observer.observe(node)
-    return () => observer.disconnect()
-  }, [])
-
-  useLayoutEffect(() => {
-    const arrived = Math.max(0, total - seen.current)
-    seen.current = total
-    if (!atEnd.current && arrived > 0) setUnread((count) => count + arrived)
-    if (messages.length === 0) setUnread(0)
-  }, [total, messages.length])
-
-  // A smaller viewport (the window, or the send box growing) keeps a followed list at the end.
-  useLayoutEffect(() => {
-    if (atEnd.current && messages.length > 0) virtualizer.scrollToIndex(messages.length - 1, { align: 'end' })
-  }, [viewport])
+  const { unread, jump, onScroll } = useChatFollow(scroller, virtualizer, total, messages.length, danmaku.room)
 
   // "回复" from the picture writes into the box; follow it there.
   useEffect(() => {
@@ -138,11 +107,8 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
 
       <div className="drawer-feed">
         <div className="drawer-scroll" ref={scroller} role="log" aria-live="off" aria-label="弹幕列表" tabIndex={0}
-          onScroll={(event) => {
-            // Read the element itself: the virtualizer's own scroll listener may not have run yet.
-            const node = event.currentTarget
-            atEnd.current = node.scrollHeight - node.scrollTop - node.clientHeight <= END_SLACK
-            if (atEnd.current) setUnread(0)
+          onScroll={() => {
+            onScroll()
             setRowMenu(null)
           }}>
           {messages.length === 0 ? (
@@ -183,11 +149,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
           </Popover>
         )}
         {unread > 0 && (
-          <button type="button" className="drawer-jump" onClick={() => {
-            atEnd.current = true
-            setUnread(0)
-            if (messages.length > 0) virtualizer.scrollToIndex(messages.length - 1, { align: 'end' })
-          }}>{unread > 99 ? '99+' : unread} 条新弹幕</button>
+          <button type="button" className="drawer-jump" onClick={jump}>{unread > 99 ? '99+' : unread} 条新弹幕</button>
         )}
       </div>
 

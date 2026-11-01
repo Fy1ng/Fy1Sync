@@ -22,6 +22,7 @@ import { DanmakuRecords, type RecordsTab } from './records/DanmakuRecords'
 import { Icon, Segmented, Sheet, SideTabs, Switch } from './kit'
 import { PipSettings } from './pip/PipSettings'
 import { remember, useRemembered } from '../app/remembered'
+import { StylePackSyncSettings } from './stylepacks/StylePackSync'
 
 export type SettingsSection = 'douyu' | 'records' | 'insights' | 'editor' | 'general'
 
@@ -72,7 +73,10 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
           {section === 'insights' && !huya && (room
             ? <RoomInsights room={room} />
             : <p className="settings-empty">连接斗鱼弹幕房间后显示房间数据</p>)}
-          {section === 'editor' && <EditorDoor onClose={onClose} />}
+          {section === 'editor' && <div className="settings-page">
+            <StylePackSyncSettings />
+            <EditorDoor onClose={onClose} />
+          </div>}
         </div>
       </div>
     </Sheet>

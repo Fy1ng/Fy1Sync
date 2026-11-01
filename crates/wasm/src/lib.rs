@@ -49,6 +49,34 @@ impl Default for RecognitionEngine {
         Self::new()
     }
 }
+
+#[wasm_bindgen]
+pub fn recognize_hud_frame(rgba:&[u8],width:usize,height:usize,pack_json:&str,variant_id:&str) -> Result<String,JsValue> {
+    let pack=stream_syncer_core::hud_pack_from_json(pack_json).map_err(|e|JsValue::from_str(&e))?;
+    let result=stream_syncer_core::recognize_hud_frame(rgba,width,height,&pack,variant_id).map_err(|e|JsValue::from_str(&e))?;
+    serde_json::to_string(&result).map_err(|e|JsValue::from_str(&e.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn prepare_hud_glyphs(rgba:&[u8],width:usize,height:usize,pack_json:&str,variant_id:&str,field_id:&str,boxes_json:&str) -> Result<String,JsValue> {
+    let pack=stream_syncer_core::hud_pack_from_json(pack_json).map_err(|e|JsValue::from_str(&e))?;
+    let boxes=if boxes_json.is_empty(){None}else{Some(serde_json::from_str(boxes_json).map_err(|e|JsValue::from_str(&e.to_string()))?)};
+    let result=stream_syncer_core::prepare_hud_glyphs_with_boxes(rgba,width,height,&pack,variant_id,field_id,boxes).map_err(|e|JsValue::from_str(&e))?;
+    serde_json::to_string(&result).map_err(|e|JsValue::from_str(&e.to_string()))
+}
+#[wasm_bindgen]
+pub fn prepare_hud_cue(rgba:&[u8],width:usize,height:usize,pack_json:&str,variant_id:&str,cue_id:&str) -> Result<String,JsValue> {
+    let pack=stream_syncer_core::hud_pack_from_json(pack_json).map_err(|e|JsValue::from_str(&e))?;
+    let result=stream_syncer_core::prepare_hud_cue(rgba,width,height,&pack,variant_id,cue_id).map_err(|e|JsValue::from_str(&e))?;
+    serde_json::to_string(&result).map_err(|e|JsValue::from_str(&e.to_string()))
+}
+#[wasm_bindgen]
+pub fn recommend_hud_preprocess(rgba:&[u8],width:usize,height:usize,pack_json:&str,variant_id:&str,target_id:&str,request_json:&str) -> Result<String,JsValue> {
+    let pack=stream_syncer_core::hud_pack_from_json(pack_json).map_err(|e|JsValue::from_str(&e))?;
+    let request=serde_json::from_str::<stream_syncer_core::HudPreprocessRequest>(request_json).map_err(|e|JsValue::from_str(&e.to_string()))?;
+    let result=stream_syncer_core::recommend_hud_preprocess(rgba,width,height,&pack,variant_id,target_id,&request).map_err(|e|JsValue::from_str(&e))?;
+    serde_json::to_string(&result).map_err(|e|JsValue::from_str(&e.to_string()))
+}
 #[wasm_bindgen]
 pub fn dispatch(op: &str, input_json: &str) -> Result<String, JsValue> {
     let input = serde_json::from_str(input_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -233,11 +261,21 @@ mod tests {
     #[test]
     fn engine_configure_json() {
         let mut engine = super::RecognitionEngine::new();
-        let p = stream_syncer_core::empty_profile("custom/test", "Test");
+        let cases:serde_json::Value=serde_json::from_str(include_str!("../../../tests/fixtures/hud-style-pack/cases.json")).unwrap();
+        let p = &cases[0]["value"];
         let ready = engine.configure(&p.to_string()).unwrap();
         assert!(ready.contains("missing"));
-        let result = engine.recognize(&[0; 4], 1, 1, 0.0, 0.0, 0.0, false);
-        assert!(result.contains("insufficient-templates"));
+        // A different resolution is valid; incomplete templates remain the actual failure.
+        let result: serde_json::Value = serde_json::from_str(
+            &engine.recognize(&[0; 4], 1, 1, 0.0, 0.0, 0.0, false),
+        ).unwrap();
+        assert_eq!(result["outcome"]["reason"], "insufficient-templates");
+        assert!(result["debug"].is_null());
+
+        let malformed: serde_json::Value = serde_json::from_str(
+            &engine.recognize(&[0; 3], 1, 1, 0.0, 0.0, 0.0, false),
+        ).unwrap();
+        assert_eq!(malformed["outcome"]["reason"], "decode-failed");
     }
     #[test]
     fn dispatch_json() {
@@ -248,22 +286,22 @@ mod tests {
     }
 }
 
-/// Tighten a rough camera box. `frames` is `count` grayscale frames of `width`x`height`
-/// back to back (a few seconds sampled at 1 fps is enough); returns `{ roi, found }` JSON.
+/// Tighten a rough camera box from consecutive RGBA frames of a bounded local region.
 #[wasm_bindgen]
 pub fn tighten_camera(frames: &[u8], width: usize, height: usize, rough_json: &str) -> Result<String, JsValue> {
     let size = width
         .checked_mul(height)
-        .filter(|&n| n > 0 && n <= 16_777_216)
+        .filter(|&n| n > 0 && width <= 960 && height <= 960)
+        .and_then(|n| n.checked_mul(4))
         .ok_or_else(|| JsValue::from_str("帧尺寸无效"))?;
-    if frames.is_empty() || frames.len() % size != 0 || frames.len() / size > 32 {
+    if frames.len() % size != 0 || !(3..=8).contains(&(frames.len() / size)) {
         return Err(JsValue::from_str("摄像头取景帧数据无效"));
     }
     let rough: stream_syncer_core::RoiRect =
         serde_json::from_str(rough_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
     let images: Vec<_> = frames
         .chunks_exact(size)
-        .map(|chunk| stream_syncer_core::Image { data: chunk.to_vec(), width, height })
+        .map(|chunk| stream_syncer_core::CameraFrame { data: chunk.to_vec(), width, height })
         .collect();
     serde_json::to_string(&stream_syncer_core::tighten_camera_box(&images, &rough))
         .map_err(|e| JsValue::from_str(&e.to_string()))

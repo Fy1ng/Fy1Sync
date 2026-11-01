@@ -4,25 +4,37 @@
  * are set once per broadcast.
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   CLOCK_CHARS,
-  DEFAULT_PREPROCESS,
   TEMPLATE_PIXELS,
   type ClockChar,
-  type RecognitionProfile,
   type RoiRect,
 } from '../../core/profileSchema'
-import type { CountdownFormat } from '../../core/clockJump'
-import type { RecognizeResult } from '../../core/templateMatch'
+import type { HudFieldId } from '../../core/hudStylePack'
+import { FIELD_LABELS, type EditorClockModel } from './editorModel'
+import type { HudFieldResult } from '../../core/hudWasm'
 import { unpackBitmap } from '../../core/bitmapCodec'
 import { adjustGlyphBox, excludeGlyphBox, mergeGlyphBoxes, splitGlyphBox, type GlyphBox } from '../../core/segmentation'
-import { Range, Segmented, Switch } from '../kit'
+import { Range, Segmented } from '../kit'
 import { drawMask, TEMPLATE_SIZE, type FrameAnalysis } from './framePipeline'
+import { PreprocessControls, type PreprocessControlsProps } from './PreprocessControls'
 
-type Patch = (update: Partial<RecognitionProfile>) => void
+type Patch = (update: Partial<EditorClockModel>) => void
 
-export function RegionSection({ roi, onRoi, videoSize, analysis, boxes, selected, onSelect, grayRef, binaryRef }: {
+function RailDisclosure({ title, meta, children }: { title: string; meta?: React.ReactNode; children: React.ReactNode }): React.ReactNode {
+  const [expanded, setExpanded] = useState(true)
+  return (
+    <details className="rail-group rail-collapsible" open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}>
+      <summary><h2>{title}</h2>{meta}</summary>
+      <div className="rail-content">{children}</div>
+    </details>
+  )
+}
+
+export function RegionSection({ fieldId = 'clock', label, roi, onRoi, videoSize, analysis, boxes, selected, onSelect, grayRef, binaryRef }: {
+  fieldId?: HudFieldId
+  label?: string
   roi: RoiRect
   onRoi: (roi: RoiRect) => void
   videoSize: { width: number; height: number }
@@ -65,7 +77,7 @@ export function RegionSection({ roi, onRoi, videoSize, analysis, boxes, selected
           </div>
         </div>
       ) : (
-        <p className="muted">在画面上框住倒计时，载入截图或取一帧后显示裁切结果</p>
+        <p className="muted">在画面上框住{label ?? FIELD_LABELS[fieldId]}, 载入截图或取一帧后显示裁切结果</p>
       )}
       <div className="roi-fields">
         {fields.map((field) => (
@@ -84,7 +96,13 @@ export function RegionSection({ roi, onRoi, videoSize, analysis, boxes, selected
               }}
             />
             {/* Fractions are what gets stored; pixels are what the user can see on screen. */}
-            <em className="num">{field.span ? `${Math.round(roi[field.key] * field.span)}px` : ''}</em>
+            <span className="roi-nudge">
+              <button type="button" disabled={!field.span} aria-label={`${field.label}减 1 像素`}
+                onClick={() => onRoi(nudgeRoi(roi, field.key, -1, videoSize))}>−</button>
+              <em className="num">{field.span ? `${Math.round(roi[field.key] * field.span)}px` : ''}</em>
+              <button type="button" disabled={!field.span} aria-label={`${field.label}加 1 像素`}
+                onClick={() => onRoi(nudgeRoi(roi, field.key, 1, videoSize))}>+</button>
+            </span>
           </label>
         ))}
       </div>
@@ -92,24 +110,29 @@ export function RegionSection({ roi, onRoi, videoSize, analysis, boxes, selected
   )
 }
 
-export function BinarizeSection({ profile, onPatch }: { profile: RecognitionProfile; onPatch: Patch }): React.ReactNode {
-  const set = (update: Partial<RecognitionProfile['preprocess']>): void =>
-    onPatch({ preprocess: { ...profile.preprocess, ...update } })
-  const changed = profile.preprocess.scale !== DEFAULT_PREPROCESS.scale
-    || profile.preprocess.threshold !== DEFAULT_PREPROCESS.threshold
-    || profile.preprocess.invert !== DEFAULT_PREPROCESS.invert
+/**
+ * One native pixel on one value of the region. The pack stores whole pixels, rounded from these
+ * fractions, so the step lands on the next pixel. Each button changes only its own value: at the
+ * picture's edge it stops rather than moving the box.
+ */
+export function nudgeRoi(roi: RoiRect, key: keyof RoiRect, delta: -1 | 1, size: { width: number; height: number }): RoiRect {
+  const span = key === 'x' || key === 'w' ? size.width : size.height
+  if (!span) return roi
+  const px = { x: Math.round(roi.x * size.width), y: Math.round(roi.y * size.height),
+    w: Math.round(roi.w * size.width), h: Math.round(roi.h * size.height) }
+  const next = { ...px }
+  if (key === 'x') next.x = Math.max(0, Math.min(size.width - px.w, px.x + delta))
+  else if (key === 'y') next.y = Math.max(0, Math.min(size.height - px.h, px.y + delta))
+  else if (key === 'w') next.w = Math.max(1, Math.min(size.width - px.x, px.w + delta))
+  else next.h = Math.max(1, Math.min(size.height - px.y, px.h + delta))
+  return { x: next.x / size.width, y: next.y / size.height, w: next.w / size.width, h: next.h / size.height }
+}
+
+export function BinarizeSection(props: PreprocessControlsProps): React.ReactNode {
   return (
-    <section className="rail-group">
-      <div className="rail-head">
-        <h2>二值化</h2>
-        <button type="button" className="link-btn rail-link" disabled={!changed} onClick={() => set({ ...DEFAULT_PREPROCESS })}>恢复默认</button>
-      </div>
-      <Range label="对比度" min={0.5} max={3} step={0.1} value={profile.preprocess.scale}
-        format={(value) => `${value.toFixed(1)}×`} onChange={(scale) => set({ scale })} />
-      <Range label="阈值" min={0} max={255} step={1} value={profile.preprocess.threshold}
-        onChange={(threshold) => set({ threshold })} />
-      <Switch label="反相" detail="浅底深字时打开" checked={profile.preprocess.invert} onChange={(invert) => set({ invert })} />
-    </section>
+    <RailDisclosure title="二值化">
+      <PreprocessControls {...props} />
+    </RailDisclosure>
   )
 }
 
@@ -121,8 +144,10 @@ export function BinarizeSection({ profile, onPatch }: { profile: RecognitionProf
  * box of its own. Rather than adding heuristics for each case, the user fixes the boxes
  * directly (merge, split, drop, nudge an edge) and then teaches from those.
  */
-export function GlyphSection({ profile, readiness, boxes, selected, bounds, onBoxes, onAssign, onVerify, recognized }: {
-  profile: RecognitionProfile
+export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, selected, bounds, onBoxes, onAssign,
+  onVerify, recognized, reading, onUndo, busy }: {
+  fieldId?: HudFieldId
+  profile: EditorClockModel
   readiness: { ready: boolean; missing: ClockChar[]; sampleCount: number }
   boxes: GlyphBox[]
   selected: number
@@ -130,17 +155,18 @@ export function GlyphSection({ profile, readiness, boxes, selected, bounds, onBo
   onBoxes: (boxes: GlyphBox[]) => void
   onAssign: (char: ClockChar) => void
   onVerify: (() => void) | null
-  recognized: RecognizeResult | null
+  recognized: HudFieldResult | null
+  reading: string
+  onUndo: (() => void) | null
+  busy: boolean
 }): React.ReactNode {
   const active = selected >= 0 ? boxes[selected] : undefined
   return (
-    <section className="rail-group">
-      <div className="rail-head">
-        <h2>字符</h2>
-        <span className="rail-meta">
-          {readiness.sampleCount} 个样本{readiness.ready ? '' : ` · 缺 ${readiness.missing.join(' ')}`}
-        </span>
-      </div>
+    <RailDisclosure title="字符" meta={
+      <span className="rail-meta">
+        {readiness.sampleCount} 个样本{readiness.ready ? '' : ` · 缺 ${readiness.missing.join(' ')}`}
+      </span>
+    }>
       {!bounds ? (
         <p className="muted">取一帧后，点选裁切图中的字符框，再按对应字符存为样本</p>
       ) : boxes.length === 0 ? (
@@ -150,20 +176,20 @@ export function GlyphSection({ profile, readiness, boxes, selected, bounds, onBo
           <div className="glyph-tools">
             <span className="rail-meta num">第 {selected + 1} 个 · {active.width}×{active.height}</span>
             <span className="row-end">
-              <button type="button" className="btn-quiet small" disabled={selected + 1 >= boxes.length}
+              <button type="button" className="btn-quiet small" disabled={busy || selected + 1 >= boxes.length}
                 onClick={() => onBoxes(mergeGlyphBoxes(boxes, selected, selected + 1))}>与右侧合并</button>
-              <button type="button" className="btn-quiet small" disabled={active.width < 4}
+              <button type="button" className="btn-quiet small" disabled={busy || active.width < 4}
                 onClick={() => onBoxes(splitGlyphBox(boxes, selected, active.x + Math.floor(active.width / 2)))}>居中拆分</button>
-              <button type="button" className="btn-quiet small" onClick={() => onBoxes(excludeGlyphBox(boxes, selected))}>排除</button>
+              <button type="button" className="btn-quiet small" disabled={busy} onClick={() => onBoxes(excludeGlyphBox(boxes, selected))}>排除</button>
             </span>
           </div>
           <div className="edge-grid">
             {(['left', 'right', 'top', 'bottom'] as const).map((edge) => (
               <span key={edge} className="edge-row">
                 <span>{EDGE_TEXT[edge]}</span>
-                <button type="button" onClick={() => onBoxes(adjustGlyphBox(boxes, selected, edge, -1, bounds))}
+                <button type="button" disabled={busy} onClick={() => onBoxes(adjustGlyphBox(boxes, selected, edge, -1, bounds))}
                   aria-label={`${EDGE_TEXT[edge]}减 1 像素`}>−</button>
-                <button type="button" onClick={() => onBoxes(adjustGlyphBox(boxes, selected, edge, 1, bounds))}
+                <button type="button" disabled={busy} onClick={() => onBoxes(adjustGlyphBox(boxes, selected, edge, 1, bounds))}
                   aria-label={`${EDGE_TEXT[edge]}加 1 像素`}>+</button>
               </span>
             ))}
@@ -172,24 +198,36 @@ export function GlyphSection({ profile, readiness, boxes, selected, bounds, onBo
       ) : (
         <p className="muted">点选裁切图中的字符框</p>
       )}
+      <div className="reading-row">
+        <span className="field-label">当前读数</span>
+        <output className="reading-output num" aria-label="当前读数">{reading || '待标注'}</output>
+      </div>
+      <div className="reading-actions">
+        <p className="muted">点击字符按钮逐个标注, 立即存入样本.{fieldId === 'clock' ? ' 完整倒计时可用于 +/-1s/10s 自动写入.' : ''}</p>
+        <button type="button" className="btn-quiet small" disabled={busy || !onUndo} onClick={() => onUndo?.()}
+          title="撤回上次字符标注或自动写入 (Ctrl+Z)">撤回</button>
+      </div>
+      {fieldId !== 'clock' && <p className="muted">左右比分共用数字样本, 两侧识别区域和二值化参数分别设置.</p>}
       <div className="char-pad" role="group" aria-label="存为字符样本">
-        {CLOCK_CHARS.map((char) => (
+        {CLOCK_CHARS.filter(char => fieldId === 'clock' || char !== ':').map((char) => (
           <button type="button" key={char} className={`char-key num${(profile.templates[char]?.length ?? 0) > 0 ? ' is-taught' : ''}`}
-            disabled={!active} onClick={() => onAssign(char)} aria-label={char}>
+            disabled={busy || !active} onClick={() => onAssign(char)} aria-label={char}>
             {char}
           </button>
         ))}
       </div>
       <div className="verify-row">
-        <button type="button" className="btn-quiet small" disabled={!onVerify} onClick={() => onVerify?.()}>验证当前帧</button>
+        <button type="button" className="btn-quiet small" disabled={busy || !onVerify} onClick={() => onVerify?.()}>验证当前帧</button>
         {recognized && (
-          <span className={`verify-result num ${recognized.outcome.status === 'success' ? 'is-ok' : 'is-bad'}`} role="status">
-            {recognized.outcome.status === 'success'
-              ? `识别为 ${recognized.outcome.reading.text} · 置信度 ${recognized.outcome.reading.confidence.toFixed(3)}`
-              : `识别失败：${recognized.outcome.detail || recognized.outcome.reason}`}
+          <span className={`verify-result num ${recognized.status === 'read' ? 'is-ok' : recognized.status === 'disabled' ? '' : 'is-bad'}`} role="status">
+            {recognized.status === 'read'
+              ? `识别为 ${recognized.reading.text} · 置信度 ${recognized.reading.confidence.toFixed(3)}`
+              : recognized.status === 'disabled' ? '字段已关闭'
+                : recognized.status === 'absent' ? `画面里没有${FIELD_LABELS[fieldId]}` : `${recognized.status === 'indeterminate' ? '无法判断' : '识别失败'}: ${recognized.reason}`}
           </span>
         )}
       </div>
+      {fieldId === 'clock' && profile.clockFormat !== 'ss' && <p className="muted">总置信度只计算数字, 冒号单独检查匹配与分差.</p>}
       {recognized?.debug && recognized.debug.matches.length > 0 && (
         <ol className="match-list num">
           {recognized.debug.matches.map((match, index) => (
@@ -201,25 +239,26 @@ export function GlyphSection({ profile, readiness, boxes, selected, bounds, onBo
           ))}
         </ol>
       )}
-    </section>
+    </RailDisclosure>
   )
 }
 
 const EDGE_TEXT = { left: '左边', right: '右边', top: '上边', bottom: '下边' } as const
 
 /** Stored samples, per character, as thumbnails so a bad one can be spotted and dropped. */
-export function SampleSection({ profile, onRemove }: {
-  profile: RecognitionProfile
+export function SampleSection({ fieldId = 'clock', profile, onRemove }: {
+  fieldId?: HudFieldId
+  profile: EditorClockModel
   onRemove: (char: ClockChar, id: string) => void
 }): React.ReactNode {
   return (
     <section className="rail-group">
       <div className="rail-head">
-        <h2>已存样本</h2>
+        <h2>{fieldId === 'clock' ? '已存样本' : '左右比分共用样本'}</h2>
         <span className="rail-meta">点缩略图删除</span>
       </div>
       <div className="template-grid">
-        {CLOCK_CHARS.map((char) => {
+        {CLOCK_CHARS.filter(char => fieldId === 'clock' || char !== ':').map((char) => {
           const samples = profile.templates[char] ?? []
           return (
             <div key={char} className={`template-cell${samples.length === 0 ? ' is-empty' : ''}`}>
@@ -241,35 +280,40 @@ export function SampleSection({ profile, onRemove }: {
   )
 }
 
-const CLOCK_FORMATS: { value: CountdownFormat; label: string }[] = [
+const CLOCK_FORMATS: { value: EditorClockModel['clockFormat']; label: string }[] = [
   { value: 'm:ss', label: '1:45' },
   { value: 'mm:ss', label: '01:45' },
   { value: 'ss', label: '45' },
-  { value: 'auto', label: '自动' },
 ]
 
 /** Set once per broadcast and rarely touched again, so it starts closed. */
-export function ParamsSection({ profile, onPatch }: { profile: RecognitionProfile; onPatch: Patch }): React.ReactNode {
+export function ParamsSection({ fieldId = 'clock', profile, onPatch }: { fieldId?: HudFieldId; profile: EditorClockModel; onPatch: Patch }): React.ReactNode {
   return (
     <details className="rail-group rail-more">
       <summary><h2>识别参数</h2></summary>
-      <div className="field-stack">
+      {fieldId === 'clock' && <div className="field-stack">
         <span className="field-label">倒计时格式</span>
         <Segmented label="倒计时格式" value={profile.clockFormat} options={CLOCK_FORMATS}
           onChange={(clockFormat) => onPatch({ clockFormat })} />
-      </div>
-      <Range label="识别窗口" min={1} max={6} step={1} value={profile.detectWindowSeconds} unit=" 秒"
-        onChange={(detectWindowSeconds) => onPatch({ detectWindowSeconds })} />
-      <Range label="采样帧率" min={5} max={60} step={5} value={profile.sampleFps} unit=" fps"
-        onChange={(sampleFps) => onPatch({ sampleFps })} />
+      </div>}
       <Range label="匹配阈值" min={0.5} max={0.99} step={0.01} value={profile.matchThreshold}
         format={(value) => value.toFixed(2)} onChange={(matchThreshold) => onPatch({ matchThreshold })} />
       <p className="muted">调高会漏读，调低会误读</p>
-      <label className="field-stack">
-        <span className="field-label">备注</span>
-        <textarea className="text-input" rows={2} value={profile.notes ?? ''} aria-label="备注"
-          placeholder="赛事名称、倒计时位置" onChange={(event) => onPatch({ notes: event.target.value })} />
-      </label>
+      <div className="field-stack">
+        {([
+          ['minColumnInk', '每列最少前景像素'], ['minGlyphWidth', '最小字符宽度'], ['minGapWidth', '最小字符间隔'],
+        ] as const).map(([key, label]) => (
+          <label className="roi-field" key={key}><span>{label}</span>
+            <input className="num" type="number" min={1} max={16384} step={1} aria-label={label} value={profile.segment[key]}
+              onChange={event => {
+                const value = Number(event.target.value)
+                if (Number.isInteger(value) && value >= 1 && value <= 16384) onPatch({ segment: { ...profile.segment, [key]: value } })
+              }} />
+          </label>
+        ))}
+      </div>
+      <Range label="最小前景比例" min={0} max={1} step={0.01} value={profile.segment.minInkRatio}
+        format={value => value.toFixed(2)} onChange={minInkRatio => onPatch({ segment: { ...profile.segment, minInkRatio } })} />
     </details>
   )
 }

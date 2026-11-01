@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Session } from '../app/session'
 import { SessionProvider } from '../app/SessionContext'
 import type { StreamSyncerBridge } from '../../electron/contracts'
+import { primeMediaElement } from '../test/setup'
 import { parseRoomInput, roomFromInput, sourceTitle } from './sources'
 import { Studio } from './Studio'
 import { balanceOf, volumesFor } from './transport'
@@ -187,7 +188,7 @@ describe('the studio', () => {
     expect(apply.mock.calls.at(-1)![0]).toBeGreaterThan(apply.mock.calls[0]![0] as number)
   })
 
-  it('moves both sides together on ←/→ and nudges the alignment on , and .', async () => {
+  it('moves the main picture only on ←/→ and nudges the alignment on , and .', async () => {
     const session = makeSession()
     for (const role of ['official', 'commentary'] as const) {
       void session.loadSource(role, { kind: 'test', url: `/test-sources/${role}.mp4`, input: role, label: role, loop: true, viaProxy: false, platform: 'test' })
@@ -198,15 +199,39 @@ describe('the studio', () => {
     await flush()
 
     fireEvent.keyDown(window, { code: 'ArrowLeft' })
-    expect(seek.mock.calls.map(([role, delta]) => [role, delta]).sort()).toEqual([['commentary', -5], ['official', -5]])
+    expect(seek.mock.calls).toEqual([['official', -5]])
     fireEvent.keyDown(window, { code: 'ArrowRight', shiftKey: true })
-    expect(seek).toHaveBeenLastCalledWith(expect.any(String), 30)
+    expect(seek).toHaveBeenLastCalledWith('official', 30)
+    // After a swap the keys follow the picture on the big screen.
+    await act(async () => session.swapRoles())
+    fireEvent.keyDown(window, { code: 'ArrowLeft' })
+    expect(seek).toHaveBeenLastCalledWith('commentary', -5)
+    expect(seek).toHaveBeenCalledTimes(3)
     expect(apply).not.toHaveBeenCalled()
 
     // , is 回退画面: the picture is held back, a positive offset.
     fireEvent.keyDown(window, { code: 'Comma' })
     await waitFor(() => expect(apply).toHaveBeenCalled())
     expect(apply.mock.calls.at(-1)![0]).toBeGreaterThan(0)
+  })
+
+  it('sends a dragged time line through the session, for the main picture only', async () => {
+    const session = makeSession()
+    for (const role of ['official', 'commentary'] as const) {
+      void session.loadSource(role, { kind: 'test', url: `/test-sources/${role}.mp4`, input: role, label: role, loop: true, viaProxy: false, platform: 'test' })
+    }
+    await flush()
+    primeMediaElement(session.engine.element('official'), { duration: 600, currentTime: 100 })
+    const seekTo = vi.spyOn(session, 'seekPlaybackTo').mockResolvedValue(true)
+    const raw = vi.spyOn(session.engine, 'seek')
+    renderStudio(session)
+    await flush()
+
+    const line = screen.getByRole('slider', { name: '播放进度' })
+    fireEvent.change(line, { target: { value: '40' } })
+    fireEvent.pointerUp(line)
+    expect(seekTo).toHaveBeenCalledWith('official', 40)
+    expect(raw).not.toHaveBeenCalled()
   })
 
   it('puts a lone commentary on the big screen and gives it back when the picture arrives', async () => {

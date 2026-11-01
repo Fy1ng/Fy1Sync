@@ -167,7 +167,7 @@ export class CookieStore {
     try {
       if (!isLoginPlatform(platform) || !Array.isArray(cookies) || cookies.length > 50_000) throw storageFailure()
       this.revisions[platform]++
-      const lines = ['# Netscape HTTP Cookie File', '# Stream Syncer private login data. Do not share this file.', '']
+      const lines = ['# Netscape HTTP Cookie File', '# Fy1Sync private login data. Do not share this file.', '']
       for (const cookie of cookies) {
         if (!cookie || typeof cookie.domain !== 'string' || !cookieDomainAllowed(cookie.domain, platform)) continue
         const subdomains = cookie.hostOnly === undefined ? cookie.domain.startsWith('.') : !cookie.hostOnly

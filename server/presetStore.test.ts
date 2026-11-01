@@ -10,7 +10,8 @@ import {
   PresetStore,
 } from './presetStore'
 import { packBitmap } from '../src/core/bitmapCodec'
-import { createEmptyProfile, PROFILE_SCHEMA_VERSION, TEMPLATE_PIXELS } from '../src/core/profileSchema'
+import { TEMPLATE_PIXELS } from '../src/core/profileSchema'
+import { createEmptyHudStylePack, HUD_STYLE_PACK_VERSION } from '../src/core/hudStylePack'
 
 /**
  * A bit-packed sample of exactly the size the schema demands. The store only cares that
@@ -74,13 +75,13 @@ describe('fileNameFor', () => {
 
 describe('etagFor', () => {
   it('is stable for equal content and differs when content changes', () => {
-    const profile = createEmptyProfile('cs2/iem', 'IEM')
+    const profile = createEmptyHudStylePack('cs2/iem', 'IEM')
     expect(etagFor(profile)).toBe(etagFor({ ...profile }))
-    expect(etagFor({ ...profile, matchThreshold: 0.9 })).not.toBe(etagFor(profile))
+    expect(etagFor({ ...profile, revision: 2 })).not.toBe(etagFor(profile))
   })
 
   it('is a 32-character hex digest', () => {
-    expect(etagFor(createEmptyProfile())).toMatch(/^[0-9a-f]{32}$/)
+    expect(etagFor(createEmptyHudStylePack())).toMatch(/^[0-9a-f]{32}$/)
   })
 })
 
@@ -97,13 +98,12 @@ describe('PresetStore', () => {
     await rm(dataDir, { recursive: true, force: true })
   })
 
-  const validProfile = (overrides: Record<string, unknown> = {}) => ({
-    ...createEmptyProfile('cs2/iem', 'IEM Countdown'),
-    templates: {
-      '0': [{ id: 's0', data: sampleData(0), createdAt: 1, origin: 'editor' }],
-    },
-    ...overrides,
-  })
+  const validProfile = (overrides: Record<string, unknown> = {}) => {
+    const profile = createEmptyHudStylePack('cs2/iem', 'IEM Countdown')
+    profile.bitmaps.s0 = { width: 32, height: 48, data: sampleData(0) }
+    profile.variants[0]!.fields.clock!.glyphs['0'] = ['s0']
+    return { ...profile, ...overrides }
+  }
 
   it('returns an empty list before anything is written', async () => {
     expect(await store.list()).toEqual([])
@@ -126,16 +126,15 @@ describe('PresetStore', () => {
     expect(await readdir(join(dataDir, 'presets'))).toContain(fileNameFor('cs2/iem'))
   })
 
-  it('forces the stored id to match the requested one', async () => {
-    // The body is untrusted; an id mismatch would make the file unreachable by its name.
+  it('rejects a body id that differs from the requested one', async () => {
     const outcome = await store.save('cs2/iem', validProfile({ id: 'somewhere/else' }))
-    expect(outcome.ok).toBe(true)
-    expect((await store.get('cs2/iem'))?.profile.id).toBe('cs2/iem')
+    expect(outcome).toMatchObject({ ok: false, code: 'invalid', issues: [expect.objectContaining({ path: 'id' })] })
+    expect(await store.get('cs2/iem')).toBeNull()
   })
 
   it('stamps updatedAt on save', async () => {
     const before = Date.now()
-    const outcome = await store.save('cs2/iem', validProfile({ updatedAt: 0 }))
+    const outcome = await store.save('cs2/iem', validProfile())
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) return
     expect(outcome.record.updatedAt).toBeGreaterThanOrEqual(before)
@@ -161,32 +160,26 @@ describe('PresetStore', () => {
     expect(outcome.issues.length).toBeGreaterThan(0)
   })
 
+  it('rejects unknown properties before JSON serialization could discard them', async () => {
+    expect(await store.save('cs2/iem', validProfile({ unexpected: undefined }))).toMatchObject({
+      ok: false, code: 'invalid', issues: [expect.objectContaining({ path: 'unexpected' })],
+    })
+  })
+
   it('rejects a future schema version rather than guessing', async () => {
     const outcome = await store.save('cs2/iem', {
       ...validProfile(),
-      schemaVersion: PROFILE_SCHEMA_VERSION + 1,
+      schemaVersion: HUD_STYLE_PACK_VERSION + 1,
     })
     expect(outcome.ok).toBe(false)
     if (outcome.ok || outcome.code !== 'invalid') return
     expect(outcome.issues[0]?.path).toBe('schemaVersion')
   })
 
-  it('migrates a v1 payload on the way in', async () => {
-    const outcome = await store.save('cs2/iem', {
-      schemaVersion: 1,
-      id: 'cs2/iem',
-      name: 'Legacy',
-      roi: { x: 0.4, y: 0.02, w: 0.2, h: 0.08 },
-      clockFormat: 'm:ss',
-      detectWindowSeconds: 3,
-      sampleFps: 30,
-      matchThreshold: 0.82,
-      templates: { '0': { data: sampleData(1) } },
-    })
-    expect(outcome.ok).toBe(true)
-    if (!outcome.ok) return
-    expect(outcome.record.profile.schemaVersion).toBe(PROFILE_SCHEMA_VERSION)
-    expect(outcome.record.profile.templates['0']).toHaveLength(1)
+  it.each([1, 2])('rejects a legacy v%s payload without migration', async schemaVersion => {
+    const outcome = await store.save('cs2/iem', { schemaVersion, id: 'cs2/iem', templates: {} })
+    expect(outcome).toMatchObject({ ok: false, code: 'invalid', issues: [expect.objectContaining({ path: 'schemaVersion', message: expect.stringContaining('重新制作') })] })
+    expect(await store.list()).toEqual([])
   })
 
   it('rejects a payload over the size cap', async () => {
@@ -238,7 +231,7 @@ describe('PresetStore', () => {
   })
 
   it('rejects an expected etag when the preset no longer exists', async () => {
-    const outcome = await store.save('cs2/new', validProfile(), 'whatever')
+    const outcome = await store.save('cs2/new', validProfile({ id: 'cs2/new' }), 'whatever')
     expect(outcome).toMatchObject({ ok: false, code: 'conflict', currentEtag: '' })
     expect(await store.get('cs2/new')).toBeNull()
   })
@@ -280,8 +273,8 @@ describe('PresetStore', () => {
   })
 
   it('lists presets newest first', async () => {
-    await store.save('cs2/a', validProfile({ name: 'A', updatedAt: 1 }))
-    await store.save('cs2/b', validProfile({ name: 'B', updatedAt: 2 }))
+    await store.save('cs2/a', validProfile({ id: 'cs2/a', name: 'A' }))
+    await store.save('cs2/b', validProfile({ id: 'cs2/b', name: 'B' }))
     const listed = await store.list()
     expect(listed).toHaveLength(2)
     expect(listed[0]!.updatedAt).toBeGreaterThanOrEqual(listed[1]!.updatedAt)
@@ -297,7 +290,7 @@ describe('PresetStore', () => {
   })
 
   it('skips a corrupt file instead of failing the whole listing', async () => {
-    await store.save('cs2/good', validProfile())
+    await store.save('cs2/good', validProfile({ id: 'cs2/good' }))
     await writeFile(join(dataDir, 'presets', 'cs2__broken.json'), '{ not json', 'utf8')
     await writeFile(join(dataDir, 'presets', 'cs2__empty.json'), '{}', 'utf8')
     const listed = await store.list()
@@ -385,7 +378,7 @@ describe('PresetStore', () => {
   })
 
   it.each(['con', 'nul.txt', 'aux', 'prn', 'com1', 'lpt9'])('stores Windows reserved names as ordinary encoded IDs (%s)', async id => {
-    expect((await store.save(id, validProfile())).ok).toBe(true)
+    expect((await store.save(id, validProfile({ id }))).ok).toBe(true)
     expect((await store.get(id))?.id).toBe(id)
     expect((await store.list()).map(record => record.id)).toContain(id)
     expect(await store.remove(id)).toBe(true)
@@ -393,9 +386,9 @@ describe('PresetStore', () => {
 
   it('keeps new slash, underscore and backup-looking IDs independent', async () => {
     for (const id of ['event/one', 'event__one', 'event', 'event.bak']) {
-      expect((await store.save(id, validProfile({ name: id }))).ok).toBe(true)
+      expect((await store.save(id, validProfile({ id, name: id }))).ok).toBe(true)
     }
-    await store.save('event', validProfile({ name: 'Updated event' }))
+    await store.save('event', validProfile({ id: 'event', name: 'Updated event' }))
     expect((await store.get('event/one'))?.profile.name).toBe('event/one')
     expect((await store.get('event__one'))?.profile.name).toBe('event__one')
     expect((await store.get('event.bak'))?.profile.name).toBe('event.bak')
@@ -415,7 +408,7 @@ describe('PresetStore', () => {
     expect(initial?.profile.name).toBe('Legacy')
     expect(await store.get('cs2__iem')).toBeNull()
     expect(await store.remove('cs2__iem')).toBe(false)
-    expect((await store.save('cs2__iem', validProfile({ name: 'Underscore' }))).ok).toBe(true)
+    expect((await store.save('cs2__iem', validProfile({ id: 'cs2__iem', name: 'Underscore' }))).ok).toBe(true)
     expect((await store.save('cs2/iem', validProfile({ name: 'Updated legacy' }), initial!.etag)).ok).toBe(true)
     expect(JSON.parse(await readFile(legacy, 'utf8')).name).toBe('Updated legacy')
     expect((await readdir(directory)).includes(fileNameFor('cs2/iem')!)).toBe(false)
@@ -430,7 +423,7 @@ describe('PresetStore', () => {
     const independent = JSON.stringify(validProfile({ id: 'event.bak', name: 'Independent' }))
     await writeFile(join(directory, 'event.bak.json'), independent)
     expect(await store.list()).toHaveLength(2)
-    expect((await store.save('event', validProfile({ name: 'Updated' }))).ok).toBe(true)
+    expect((await store.save('event', validProfile({ id: 'event', name: 'Updated' }))).ok).toBe(true)
     expect(await readFile(join(directory, 'event.bak.json'), 'utf8')).toBe(independent)
     expect(await store.remove('event')).toBe(true)
     expect((await store.get('event.bak'))?.profile.name).toBe('Independent')

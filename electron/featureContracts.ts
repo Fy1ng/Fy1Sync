@@ -7,6 +7,7 @@ import type { DouyuMessageInput, DouyuMessageOutcome } from '../server/douyu/typ
 import type { DouyuMuteInput, DouyuModerationTarget, DouyuModerationOutcome, DouyuModerationPermission } from '../server/douyu/moderation'
 import type { DouyuRoomInsights, DouyuFollowedRooms, DouyuBadgeAges, DouyuMonthlySpending, DouyuWatchTime } from '../server/douyu/insightsTypes'
 import type { AppUpdateState } from './appUpdateService'
+import type { OnlineUpdateKind, OnlineUpdateSourceId, OnlineUpdateState } from './onlineUpdateContracts'
 import { BACKEND_METHODS, type BackendMethods } from './backendContracts'
 import type { Cs2Schedule, StreamTitle, StreamTitleInput } from '../server/esports/types'
 export type { Cs2Schedule, Cs2Match, Cs2Team, Cs2Stream, StreamTitle, StreamTitleInput } from '../server/esports/types'
@@ -16,7 +17,7 @@ export interface FeatureCallContext { readonly senderId?: number }
 export interface FeatureEvent { topic: string; data: unknown }
 export interface Cs2ScheduleEvent extends FeatureEvent {
   topic: 'cs2-schedule'
-  data: { type: 'tiers-updated' | 'logos-updated' }
+  data: { type: 'tiers-updated' | 'logos-updated' | 'streams-updated' }
 }
 export interface DouyuLiveNotificationSettings { enabled: boolean; rooms?: string[]; accountId?: string }
 export interface DouyuLiveNotificationState { enabled: boolean; rooms: string[]; followedAccountId: string | null }
@@ -32,6 +33,8 @@ export interface SavedRoom {
 export interface FeatureMethods extends BackendMethods {
   getCs2Schedule: { args: { refresh?: boolean } | undefined; result: Cs2Schedule }
   getStreamTitles: { args: { streams: StreamTitleInput[] }; result: StreamTitle[] }
+  /** The event 赛程 shows, as a Liquipedia path; its missing crests are fetched next. */
+  setCs2ScheduleFocus: { args: { eventPath: string | null }; result: { updated: true } }
   listSavedRooms: { args: undefined; result: SavedRoom[] }
   saveRoom: { args: Omit<SavedRoom, 'id' | 'savedAt'>; result: SavedRoom }
   removeSavedRoom: { args: { id: string }; result: { removed: boolean } }
@@ -60,20 +63,32 @@ export interface FeatureMethods extends BackendMethods {
   getDouyuWatchTime: { args: { accountId: string; room: string; refresh?: boolean }; result: DouyuWatchTime }
   reportDouyuPlayback: { args: { room: string; playing: boolean }; result: DouyuRoomInsights }
   setDouyuLiveNotifications: { args: DouyuLiveNotificationSettings; result: DouyuLiveNotificationState }
+  /** What the main process is running now; a reloaded window starts from this, not from off. */
+  getDouyuLiveNotifications: { args: undefined; result: DouyuLiveNotificationState }
   checkAppUpdate: { args: undefined; result: AppUpdateState }
   getAppUpdateState: { args: undefined; result: AppUpdateState }
+  getOnlineUpdateState: { args: undefined; result: OnlineUpdateState }
+  setOnlineUpdateSource: { args: { source: OnlineUpdateSourceId }; result: OnlineUpdateState }
+  checkOnlineUpdate: { args: undefined; result: OnlineUpdateState }
+  downloadOnlineUpdate: { args: { kind: OnlineUpdateKind }; result: OnlineUpdateState }
+  cancelOnlineUpdate: { args: undefined; result: OnlineUpdateState }
+  applyOnlineUpdate: { args: { kind: OnlineUpdateKind }; result: { accepted: boolean } }
+  rollbackFrontendUpdate: { args: undefined; result: { accepted: boolean } }
+  reportFrontendReady: { args: { bridgeVersion: number }; result: { accepted: boolean } }
 }
 
 export type FeatureMethod = keyof FeatureMethods
 /** One whitelist shared by preload and the feature dispatcher. */
 export const FEATURE_METHODS = [
   ...BACKEND_METHODS,
-  'getCs2Schedule', 'getStreamTitles',
+  'getCs2Schedule', 'getStreamTitles', 'setCs2ScheduleFocus',
   'listSavedRooms', 'saveRoom', 'removeSavedRoom',
   'activateDouyuRoom', 'getDanmakuFeatures', 'setDanmakuPreferences', 'setMessageAffixes',
   'queryDanmakuHistory', 'queryDanmakuFavorites', 'addDanmakuFavorite', 'updateDanmakuFavorite', 'removeDanmakuFavorite',
   'getDanmakuRate', 'getDanmakuUserDetails', 'openDanmakuHistory', 'getDouyuDelivery', 'sendComposedDouyuMessage',
   'previewDouyuMute', 'muteDouyuUser', 'getDouyuRoomInsights', 'refreshDouyuRoomInsights', 'getDouyuFollowedRooms',
-  'getDouyuBadgeAges', 'getDouyuMonthlySpending', 'getDouyuWatchTime', 'reportDouyuPlayback', 'setDouyuLiveNotifications',
+  'getDouyuBadgeAges', 'getDouyuMonthlySpending', 'getDouyuWatchTime', 'reportDouyuPlayback', 'setDouyuLiveNotifications', 'getDouyuLiveNotifications',
   'checkAppUpdate', 'getAppUpdateState',
+  'getOnlineUpdateState', 'setOnlineUpdateSource', 'checkOnlineUpdate', 'downloadOnlineUpdate',
+  'cancelOnlineUpdate', 'applyOnlineUpdate', 'rollbackFrontendUpdate', 'reportFrontendReady',
 ] as const satisfies readonly FeatureMethod[]

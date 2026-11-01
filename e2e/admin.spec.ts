@@ -1,12 +1,14 @@
 /** The local editor: trusted app access, decoded-frame teaching and preset IPC. */
 
 import { fileURLToPath } from 'node:url'
+import { mkdir, readFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { type Page } from '@playwright/test'
-import type { RecognitionProfile } from '../src/core/profileSchema'
+import { createEmptyHudStylePack, type HudStylePack } from '../src/core/hudStylePack'
 import { CLOCK_CHARS, TEMPLATE_PIXELS } from '../src/core/profileSchema'
 import { packBitmap } from '../src/core/bitmapCodec'
 import { APP_ORIGIN, expect, test } from './electron'
-import { closeSourceDialog, failOnPageError, fixturesReady, invoke, loadBothFixtures, mediaTimes, openAlignOptions, openPlayer, openSettingsSection, setPlaying, sourceDialog } from './helpers'
+import { chooseEditorVideo, closeSourceDialog, failOnPageError, fixturesReady, invoke, loadBothFixtures, mediaTimes, openAlignOptions, openPlayer, openSettingsSection, setPlaying, sourceDialog } from './helpers'
 
 const officialPath = fileURLToPath(new URL('../public/test-sources/official.mp4', import.meta.url))
 const framePath = fileURLToPath(new URL('../public/test-sources/frame-0-20.png', import.meta.url))
@@ -16,9 +18,12 @@ test.describe('本机编辑器访问', () => {
     failOnPageError(page)
     const id = 'e2e/draft-publication'
     const profile = baseProfile(id)
-    profile.templates = Object.fromEntries(CLOCK_CHARS.map(char => [char, [{
-      id: char, data: packBitmap(new Uint8Array(TEMPLATE_PIXELS).fill(255)), createdAt: 1,
-    }]]))
+    const data = packBitmap(Uint8Array.from({ length: TEMPLATE_PIXELS }, (_, i) => i % 3 ? 0 : 255))
+    for (const char of CLOCK_CHARS) {
+      const bitmapId = `clock-${char === ':' ? 'colon' : char}`
+      profile.bitmaps[bitmapId] = { width: 32, height: 48, data }
+      profile.variants[0]!.fields.clock!.glyphs[char] = [bitmapId]
+    }
     const seeded = await invoke(page, 'savePreset', { id, profile })
     expect(seeded.ok).toBe(true)
     await page.goto(APP_ORIGIN + '/admin')
@@ -53,7 +58,7 @@ test.describe('本机编辑器访问', () => {
     await page.goto(APP_ORIGIN + '/admin')
     const rejected = await invoke(page, 'savePreset', {
       id: 'e2e/invalid',
-      profile: { schemaVersion: 2, id: 'e2e/invalid' } as RecognitionProfile,
+      profile: { kind: 'hud-style-pack', schemaVersion: 1, id: 'e2e/invalid' } as HudStylePack,
     })
     expect(rejected.ok).toBe(false)
     if (rejected.ok) throw new Error('Invalid profile was unexpectedly written')
@@ -108,12 +113,79 @@ test.describe('本机编辑器访问', () => {
 test.describe('取帧与切分', () => {
   test.skip(!fixturesReady(), '缺少测试源，先运行 npm run fixtures')
 
-  test('载入样片后取帧并切出字符框', async ({ page }) => {
+  test('前后一帧按文件真实的帧走', async ({ page, electronApp }) => {
+    failOnPageError(page)
+    await page.goto(APP_ORIGIN + '/admin')
+    await chooseEditorVideo(electronApp, page, officialPath)
+    const video = page.locator('video.editor-media')
+    await expect.poll(async () => video.evaluate((node: HTMLVideoElement) => node.videoWidth)).toBeGreaterThan(0)
+    // Sampling cadence is owned by the player now; file stepping still follows all 30 fps.
+    await page.locator('details.rail-more > summary').click()
+    await expect(page.getByRole('slider', { name: '采样帧率' })).toHaveCount(0)
+    await seekSample(page, 1)
+    // Every frame the page presents, in order: what each click actually lands on.
+    await video.evaluate((node: HTMLVideoElement) => {
+      const seen: number[] = []
+      ;(window as unknown as { __frames: number[] }).__frames = seen
+      const watch = () => node.requestVideoFrameCallback((_now, meta) => { seen.push(meta.mediaTime); watch() })
+      watch()
+    })
+    const landed = async (press: () => Promise<void>): Promise<number> => {
+      const count = await page.evaluate(() => (window as unknown as { __frames: number[] }).__frames.length)
+      await press()
+      await expect.poll(async () => page.evaluate(() => (window as unknown as { __frames: number[] }).__frames.length)).toBeGreaterThan(count)
+      // A step may nudge more than once; wait for it to settle on the frame it keeps.
+      await page.waitForTimeout(400)
+      return page.evaluate(() => { const f = (window as unknown as { __frames: number[] }).__frames; return f[f.length - 1]! })
+    }
+    const nudge = await landed(async () => { await video.evaluate((node: HTMLVideoElement) => { node.currentTime = 1.01 }) })
+    const visits: number[] = [nudge]
+    for (let i = 0; i < 10; i++) visits.push(await landed(() => page.getByRole('button', { name: '下一帧' }).click()))
+    for (let i = 0; i < 4; i++) visits.push(await landed(() => page.getByRole('button', { name: '上一帧' }).click()))
+    const frame = (time: number) => Math.round(time * 30)
+    const indices = visits.map(frame)
+    // One real frame per press, forward then back, never a repeat or a skip.
+    expect(indices.slice(1, 11).map((index, i) => index - indices[i]!)).toEqual(Array(10).fill(1))
+    expect(indices.slice(11).map((index, i) => index - indices[10 + i]!)).toEqual(Array(4).fill(-1))
+    await page.getByRole('button', { name: '放大到当前框', exact: true }).click()
+    const zoomedFrame = await landed(() => page.getByRole('button', { name: '下一帧' }).click())
+    expect(frame(zoomedFrame)).toBe(indices.at(-1)! + 1)
+    const zoomedBack = await landed(() => page.getByRole('button', { name: '上一帧' }).click())
+    expect(frame(zoomedBack)).toBe(indices.at(-1)!)
+    await page.locator('.editor-stage').focus()
+    await page.keyboard.press('Space')
+    await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.paused)).toBe(false)
+    await page.keyboard.press('Space')
+    await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.paused)).toBe(true)
+
+    // Whole-second jumps, by button and by Shift / Ctrl + arrow, stay inside the 26 s file.
+    const at = () => video.evaluate((node: HTMLVideoElement) => node.currentTime)
+    const jumpTo = async (press: () => Promise<void>, expected: number): Promise<void> => {
+      await press()
+      await expect.poll(at).toBeCloseTo(expected, 1)
+      await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.seeking)).toBe(false)
+    }
+    await video.evaluate((node: HTMLVideoElement) => { node.currentTime = 5 })
+    await expect.poll(at).toBeCloseTo(5, 1)
+    await jumpTo(() => page.getByRole('button', { name: '+1s', exact: true }).click(), 6)
+    await jumpTo(() => page.getByRole('button', { name: '+10s', exact: true }).click(), 16)
+    await jumpTo(() => page.getByRole('button', { name: '-1s', exact: true }).click(), 15)
+    await page.locator('.editor-stage').focus()
+    await jumpTo(() => page.keyboard.press('Shift+ArrowRight'), 16)
+    await jumpTo(() => page.keyboard.press('Control+ArrowLeft'), 6)
+    await jumpTo(() => page.keyboard.press('Control+ArrowLeft'), 0)
+    await jumpTo(() => page.getByRole('button', { name: '+10s', exact: true }).click(), 10)
+    await jumpTo(() => page.getByRole('button', { name: '+10s', exact: true }).click(), 20)
+    await jumpTo(() => page.getByRole('button', { name: '+10s', exact: true }).click(), 26)
+    expect(await video.evaluate((node: HTMLVideoElement) => node.paused)).toBe(true)
+  })
+
+  test('载入样片后取帧并切出字符框', async ({ page, electronApp }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
     await expect(page.locator('.editor-main')).toBeVisible()
 
-    await page.locator('main input[accept="video/*"]').setInputFiles(officialPath)
+    await chooseEditorVideo(electronApp, page, officialPath)
     const video = page.locator('video.editor-media')
     await expect(video).toBeVisible()
     await expect.poll(async () => video.evaluate((node: HTMLVideoElement) => node.videoWidth)).toBeGreaterThan(0)
@@ -127,12 +199,21 @@ test.describe('取帧与切分', () => {
     await expect(page.locator('.crop-canvas').first()).toBeVisible()
     // 0:19 at t=1s — four glyphs.
     await expect.poll(async () => page.locator('.glyph-box').count(), { timeout: 20_000 }).toBeGreaterThanOrEqual(3)
+    const crop = page.locator('.crop-canvas').first()
+    const nativePreview = await crop.evaluate((node: HTMLCanvasElement) => node.toDataURL())
+    const time = await video.evaluate((node: HTMLVideoElement) => node.currentTime)
+    await page.getByRole('button', { name: '放大到当前框', exact: true }).click()
+    await expect(page.locator('.editor-stage')).toHaveClass(/is-zoomed/)
+    await page.getByRole('button', { name: '取当前帧' }).click()
+    await expect.poll(() => page.locator('.glyph-box').count()).toBe(4)
+    await expect.poll(() => crop.evaluate((node: HTMLCanvasElement) => node.toDataURL())).toBe(nativePreview)
+    expect(await video.evaluate((node: HTMLVideoElement) => node.currentTime)).toBe(time)
   })
 
-  test('点字符按钮把选中的框存成模板样本', async ({ page }) => {
+  test('点字符按钮把选中的框存成模板样本', async ({ page, electronApp }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
-    await page.locator('main input[accept="video/*"]').setInputFiles(officialPath)
+    await chooseEditorVideo(electronApp, page, officialPath)
     await expect.poll(async () =>
       page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.videoWidth),
     ).toBeGreaterThan(0)
@@ -142,7 +223,8 @@ test.describe('取帧与切分', () => {
     await expect.poll(async () => page.locator('.glyph-box').count(), { timeout: 20_000 }).toBeGreaterThan(0)
 
     const emptyBefore = await page.locator('.template-cell.is-empty').count()
-    await page.locator('.glyph-box').first().click()
+    // The leftmost box is selected as soon as the frame is cut, so the reading can be typed at once.
+    await expect(page.locator('.glyph-box').first()).toHaveClass(/is-selected/)
     // 0:19 reads 0, :, 1, 9 left to right; the pad auto-advances, so one click per glyph.
     for (const char of ['0', ':', '1', '9']) {
       await page.locator('.char-pad').getByRole('button', { name: char, exact: true }).click()
@@ -151,9 +233,200 @@ test.describe('取帧与切分', () => {
     await expect(page.locator('.editor-rail')).toContainText('4 个样本')
     expect(await page.locator('.template-cell.is-empty').count()).toBeLessThan(emptyBefore)
   })
+
+  test('整段扫描按每秒减 1 提议读数, 勾选后一次存入, 相同字形只存一次', async ({ page, electronApp }) => {
+    test.setTimeout(120_000)
+    failOnPageError(page)
+    await page.goto(APP_ORIGIN + '/admin')
+    await chooseEditorVideo(electronApp, page, officialPath)
+    const video = page.locator('video.editor-media')
+    await expect.poll(async () => video.evaluate((node: HTMLVideoElement) => node.videoWidth)).toBeGreaterThan(0)
+    await setRoi(page, { x: 0.42, y: 0.045, w: 0.16, h: 0.13 })
+    const section = page.getByRole('region', { name: '整段标注' })
+    await page.getByRole('button', { name: '放大到当前框', exact: true }).click()
+
+    // 1.0 s shows 0:19 (see the single-frame test); mark 1.0 to 4.2 s.
+    await seekSample(page, 1)
+    await section.getByRole('button', { name: /设为入点/ }).click()
+    await seekSample(page, 4.2)
+    await section.getByRole('button', { name: /设为出点/ }).click()
+    await section.getByRole('textbox', { name: '入点读数' }).fill('0:19')
+    await section.getByRole('button', { name: '扫描这一段' }).click()
+
+    const results = section.getByRole('list', { name: '扫描结果' })
+    await expect(results).toBeVisible({ timeout: 60_000 })
+    const readings = await results.getByRole('textbox').evaluateAll((nodes) => nodes.map((node) => (node as HTMLInputElement).value))
+    // Counted down one per change; every whole second in the stretch is there.
+    expect(readings.filter(Boolean).slice(0, 4)).toEqual(['0:19', '0:18', '0:17', '0:16'])
+    const save = section.getByRole('button', { name: /存入勾选的/ })
+    await save.click()
+    await expect(results).toBeHidden()
+    await expect(page.locator('.editor-message, .editor-note').first()).toContainText('相同的字形只存一次')
+    // 0:19..0:15 uses 0 : 1 9 8 7 6 5: each character at least once, far fewer samples than frames.
+    for (const char of ['0', ':', '1', '9', '8', '7', '6']) {
+      await expect(page.locator('.template-cell').filter({ has: page.locator('.template-char', { hasText: new RegExp(`^${char}$`) }) })
+        .locator('.template-thumb').first()).toBeVisible()
+    }
+    const total = await page.locator('.template-thumb').count()
+    expect(total).toBeLessThan(40)
+  })
+
+  test('字符按钮即点即存, 整帧读数只读且同一帧不重复保存', async ({ page, electronApp }) => {
+    failOnPageError(page)
+    await page.goto(APP_ORIGIN + '/admin')
+    await chooseEditorVideo(electronApp, page, officialPath)
+    await expect.poll(async () =>
+      page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.videoWidth),
+    ).toBeGreaterThan(0)
+    await setRoi(page, { x: 0.42, y: 0.045, w: 0.16, h: 0.13 })
+    await seekSample(page, 1)
+    await page.getByRole('button', { name: '取当前帧' }).click()
+    await expect.poll(async () => page.locator('.glyph-box').count(), { timeout: 20_000 }).toBe(4)
+
+    await expect(page.getByRole('textbox', { name: '整帧读数' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '存为样本', exact: true })).toHaveCount(0)
+    const reading = page.getByLabel('当前读数', { exact: true })
+    for (const [index, char] of ['0', ':', '1', '9'].entries()) {
+      await page.locator('.char-pad').getByRole('button', { name: char, exact: true }).click()
+      await expect(page.locator('.template-thumb')).toHaveCount(index + 1)
+    }
+    await expect(reading).toHaveText('0:19')
+    await page.getByRole('button', { name: '取当前帧' }).click()
+    await expect(page.locator('.glyph-box')).toHaveCount(4)
+    for (const char of ['0', ':', '1', '9']) await page.locator('.char-pad').getByRole('button', { name: char, exact: true }).click()
+    await expect(page.locator('.template-thumb')).toHaveCount(4)
+    for (const char of ['0', ':', '1', '9']) {
+      await expect(page.locator('.template-cell').filter({ has: page.locator('.template-char', { hasText: new RegExp(`^${char}$`) }) })
+        .locator('.template-thumb')).toHaveCount(1)
+    }
+  })
 })
 
 test.describe('发布预设', () => {
+  test('左右比分共享字形, 不同颜色独立二值化, 删除和撤回同时生效', async ({ page }) => {
+    failOnPageError(page)
+    await page.goto(APP_ORIGIN + '/admin')
+    const png = await page.evaluate(() => {
+      const canvas = document.createElement('canvas')
+      canvas.width = 1280
+      canvas.height = 720
+      const context = canvas.getContext('2d')!
+      context.fillStyle = '#000'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      context.fillStyle = '#fff'
+      // Integer blocks avoid platform font rasterization; 96 px normalizes exactly to 48.
+      const glyphs: Record<string, string[]> = {
+        '1': ['00100', '01100', '00100', '00100', '00100', '00100', '00100', '11111'],
+        '8': ['01110', '11011', '11011', '01110', '11011', '11011', '11011', '01110'],
+        '7': ['11111', '00011', '00010', '00110', '00100', '01100', '01000', '11000'],
+      }
+      for (const [text, start, color] of [['18', 420, '#ffffff'], ['87', 760, '#aaaa00']] as const) {
+        context.fillStyle = color
+        for (const [index, char] of [...text].entries()) {
+          glyphs[char]!.forEach((row, y) => [...row].forEach((pixel, x) => {
+            if (pixel === '1') context.fillRect(start + index * 72 + x * 12, 90 + y * 12, 12, 12)
+          }))
+        }
+      }
+      return canvas.toDataURL('image/png').split(',')[1]!
+    })
+    await page.locator('main input[accept^="image/"]').setInputFiles({
+      name: 'scores.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64'),
+    })
+    await expect(page.locator('img.editor-media')).toBeVisible()
+    const field = page.getByRole('combobox', { name: '当前字段', exact: true })
+
+    await field.selectOption('scoreLeft')
+    await setRoi(page, { x: 400 / 1280, y: 70 / 720, w: 200 / 1280, h: 140 / 720 })
+    await expect(page.locator('.glyph-box')).toHaveCount(2)
+    for (const char of '18') await page.locator('.char-pad').getByRole('button', { name: char, exact: true }).click()
+    await expect(page.locator('.template-thumb')).toHaveCount(2)
+
+    await field.selectOption('scoreRight')
+    // The right score has a different color; only its threshold changes, not the left one.
+    const threshold = page.getByRole('slider', { name: '阈值', exact: true })
+    for (let index = 0; index < 50; index++) await threshold.press('ArrowLeft')
+    await expect(threshold).toHaveValue('100')
+    await setRoi(page, { x: 740 / 1280, y: 70 / 720, w: 200 / 1280, h: 140 / 720 })
+    await expect(page.locator('.glyph-box')).toHaveCount(2)
+    await expect(page.locator('.template-thumb')).toHaveCount(2)
+    await expect(page.getByRole('heading', { name: '左右比分共用样本', exact: true })).toBeVisible()
+    await expect(page.getByLabel('当前读数', { exact: true })).toHaveText('待标注')
+    // Only teach the previously unseen 7; the right-hand 8 comes from the left-hand glyph.
+    await page.locator('.glyph-box').last().click()
+    await page.locator('.char-pad').getByRole('button', { name: '7', exact: true }).click()
+    await expect(page.locator('.template-thumb')).toHaveCount(3)
+    await page.getByRole('button', { name: '验证当前帧', exact: true }).click()
+    await expect(page.locator('.verify-result')).toContainText('识别为 87')
+    await page.getByRole('button', { name: '撤回', exact: true }).click()
+    await expect(page.locator('.template-thumb')).toHaveCount(2)
+    await page.locator('.glyph-box').last().click()
+    await page.locator('.char-pad').getByRole('button', { name: '7', exact: true }).click()
+    await expect(page.locator('.template-thumb')).toHaveCount(3)
+
+    await field.selectOption('scoreLeft')
+    await expect(threshold).toHaveValue('150')
+    await expect(page.locator('.template-thumb')).toHaveCount(3)
+    await page.getByRole('button', { name: '验证当前帧', exact: true }).click()
+    await expect(page.locator('.verify-result')).toContainText('识别为 18')
+    await page.getByRole('button', { name: '删除字符 7 的样本', exact: true }).click()
+    await field.selectOption('scoreRight')
+    await expect(threshold).toHaveValue('100')
+    await expect(page.locator('.template-thumb')).toHaveCount(2)
+    await expect(page.getByRole('button', { name: '删除字符 7 的样本', exact: true })).toHaveCount(0)
+    await field.selectOption('clock')
+    await expect(page.locator('.template-thumb')).toHaveCount(0)
+    await expect(page.locator('.char-pad').getByRole('button', { name: ':', exact: true })).toBeVisible()
+  })
+
+  test('新样式包导出实际文件后能重新导入并保留所有布局和字段', async ({ page, electronApp }, testInfo) => {
+    failOnPageError(page)
+    const profile = baseProfile('e2e/export-roundtrip')
+    const clock = profile.variants[0]!.fields.clock!
+    profile.bitmaps.sample = { width: 32, height: 48,
+      data: packBitmap(Uint8Array.from({ length: TEMPLATE_PIXELS }, (_, index) => index % 7 === 0 ? 255 : 0)) }
+    clock.glyphs['1'] = ['sample']
+    profile.variants[0]!.fields.scoreLeft = { ...structuredClone(clock), grammar: { kind: 'integer', min: 0, max: 99 } }
+    profile.variants[0]!.organizer = { enabled: true, roi: { x: 0, y: 0, w: 32, h: 48 },
+      preprocess: { ...clock.preprocess }, templates: ['sample'], minScore: 0.9 }
+    profile.variants[0]!.states['has-clock'] = [[{ kind: 'field', field: 'clock', present: true }]]
+    profile.variants.push({ ...structuredClone(profile.variants[0]!), id: 'official-bottom-1080' })
+    expect((await invoke(page, 'savePreset', { id: profile.id, profile })).ok).toBe(true)
+    await page.goto(APP_ORIGIN + '/admin')
+    await openLibrary(page)
+    await page.locator('.library-item').filter({ hasText: profile.id }).first().click()
+    await expect(page.locator('.editor-note')).toContainText('已载入预设')
+
+    const target = testInfo.outputPath('export-roundtrip.json')
+    await mkdir(dirname(target), { recursive: true })
+    await electronApp.evaluate(({ session }, savePath) => {
+      const state = globalThis as typeof globalThis & { __hudPackDownload?: Promise<{ state: string; filename: string; path: string }> }
+      state.__hudPackDownload = new Promise(resolve => {
+        session.defaultSession.once('will-download', (_event, item) => {
+          // DownloadItem needs the native absolute Windows path supplied by outputPath.
+          item.setSavePath(savePath)
+          item.once('done', (_done, outcome) => resolve({ state: outcome, filename: item.getFilename(), path: item.getSavePath() }))
+        })
+      })
+    }, target)
+    await page.getByRole('button', { name: '更多', exact: true }).click()
+    await page.getByRole('button', { name: '导出 JSON', exact: true }).click()
+    const download = await electronApp.evaluate(() => (globalThis as typeof globalThis & {
+      __hudPackDownload: Promise<{ state: string; filename: string; path: string }>
+    }).__hudPackDownload)
+    expect(download).toEqual({ state: 'completed', filename: 'e2e-export-roundtrip.json', path: target })
+    expect(JSON.parse(await readFile(target, 'utf8'))).toEqual(profile)
+
+    await page.getByRole('button', { name: '更多', exact: true }).click()
+    await page.getByRole('button', { name: '新建空白样式', exact: true }).click()
+    await page.getByLabel('导入 JSON', { exact: true }).setInputFiles(target)
+    await expect(page.locator('.editor-note')).toContainText('已导入')
+    await page.getByRole('button', { name: '发布到本机', exact: true }).click()
+    await expect(page.locator('.editor-note')).toContainText('已发布为本机预设')
+    const fetched = await invoke(page, 'getPreset', { id: profile.id })
+    expect(fetched.ok && fetched.value.profile).toEqual(profile)
+  })
+
   test('发布后可以通过接口读回，并带 etag', async ({ page }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
@@ -244,21 +517,51 @@ test.describe('发布预设', () => {
   })
 })
 
+test.describe('YouTube 录像素材', () => {
+  test('编辑器能切到 YouTube 录像并经主进程打开链接, 离线时说明原因', async ({ page }) => {
+    failOnPageError(page)
+    await page.goto(APP_ORIGIN + '/admin')
+    await page.getByRole('radiogroup', { name: '素材来源' }).getByText('YouTube 录像').click()
+    const panel = page.getByRole('region', { name: 'YouTube 录像' })
+    await expect(panel).toBeVisible()
+    await panel.getByRole('textbox', { name: 'YouTube 录像链接' }).fill('https://youtu.be/swMquqtyh-A')
+    await panel.getByRole('button', { name: '打开', exact: true }).click()
+    // Offline e2e refuses network in main, so this proves the request reached main and came back.
+    await expect(panel.getByRole('alert')).toContainText('连不上 YouTube')
+    // Clip downloads are listed through main as well; none have run here.
+    await expect(panel.getByRole('list', { name: '下载' })).toHaveCount(0)
+    await page.getByRole('radiogroup', { name: '素材来源' }).getByText('本地文件').click()
+    await expect(panel).toBeHidden()
+  })
+
+  test('片段下载接口只接受三种数字画质, 离线时不启动下载', async ({ page }) => {
+    failOnPageError(page)
+    await page.goto(APP_ORIGIN + '/admin')
+    const request = { url: 'https://www.youtube.com/watch?v=abcdefghijk', startSeconds: 0, endSeconds: 20 }
+    const call = (args: unknown) => page.evaluate((value) => window.streamSyncer!.invoke('ytImportStart', value as never), args)
+    expect(await call(request)).toMatchObject({ ok: false, code: 'invalid-arguments' })
+    for (const targetHeight of [720, 4320, 1440.5, '2160', null]) {
+      expect(await call({ ...request, targetHeight })).toMatchObject({ ok: false, code: 'invalid-arguments' })
+    }
+    for (const targetHeight of [2160, 1440, 1080]) {
+      expect(await call({ ...request, targetHeight })).toMatchObject({ ok: false, code: 'network' })
+    }
+  })
+
+  test('播放器位置接口只收严格参数', async ({ page }) => {
+    failOnPageError(page)
+    await page.goto(APP_ORIGIN + '/admin')
+    const call = (args: unknown) => page.evaluate((value) => window.streamSyncer!.invoke('ytBrowseSetViewport', value as never), args)
+    expect(await call({ rect: { x: 10, y: 20, width: 640, height: 360 }, visible: true })).toMatchObject({ ok: true })
+    expect(await call({ rect: { x: 10, y: 20, width: 640, height: 360 }, visible: true, extra: 1 })).toMatchObject({ ok: false, code: 'invalid-arguments' })
+    expect(await call({ rect: { x: 10, y: 20, width: -1, height: 360 }, visible: true })).toMatchObject({ ok: false, code: 'invalid-arguments' })
+    expect(await call({ rect: { x: 10, y: 20, width: 640, height: 360 }, visible: 'yes' })).toMatchObject({ ok: false, code: 'invalid-arguments' })
+  })
+})
+
 /** A minimal valid profile for seeding through the API. */
-function baseProfile(id: string): RecognitionProfile {
-  return {
-    schemaVersion: 2,
-    id,
-    name: '种子预设',
-    roi: { x: 0.44, y: 0.02, w: 0.12, h: 0.07 },
-    clockFormat: 'm:ss',
-    detectWindowSeconds: 3,
-    sampleFps: 30,
-    matchThreshold: 0.82,
-    preprocess: { scale: 1, threshold: 128, invert: false },
-    templates: {},
-    updatedAt: 0,
-  }
+function baseProfile(id: string): HudStylePack {
+  return createEmptyHudStylePack(id, '种子预设')
 }
 
 /** Fill one of the top bar's two fields, named 名称 and 标识. */

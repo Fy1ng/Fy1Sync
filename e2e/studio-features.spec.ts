@@ -111,9 +111,9 @@ test('系统画中画由真实点击打开并可关闭', async ({ page }) => {
 test('增强画中画页面自行就绪, 切换音频归属并恢复视频', async ({ page, electronApp }, testInfo) => {
   await openPlayer(page)
   await loadBothFixtures(page)
-  // Local fixture URLs load directly in the renderer; register the matching acquisition
-  // source so the real restricted PiP window can request its own playback descriptor.
-  expect(await invoke(page, 'resolve', { input: FIXTURES.official, role: 'official' })).toMatchObject({ ok: true, value: { ok: true } })
+  // Enhanced PiP prefers the loaded commentary. Register its matching acquisition source
+  // so the restricted window can request its own playback descriptor.
+  expect(await invoke(page, 'resolve', { input: FIXTURES.commentary, role: 'commentary' })).toMatchObject({ ok: true, value: { ok: true } })
   expect(await invoke(page, 'setEnhancedPipOptions', { lowPower: true })).toMatchObject({ ok: true })
   const menu = await openPipMenu(page)
   const opened = electronApp.waitForEvent('window')

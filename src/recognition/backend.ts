@@ -1,6 +1,9 @@
-/** WASM is preferred; the TypeScript engine remains an independent fallback/oracle. */
+/** HUD style packs always run through the shared Rust/WASM entry. */
 import { toGrayscale } from '../core/imageOps'
-import type { RecognitionProfile } from '../core/profileSchema'
+import { profileReadiness } from '../core/profileSchema'
+import { isHudPack, type ActiveProfile } from '../core/activeProfile'
+import { hudFrameFromJson, type HudFrameResult } from '../core/hudWasm'
+import { hudClockOutcome } from './hudResult'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
 import { RecognitionEngine } from './engine'
 import type {
@@ -26,39 +29,28 @@ export interface WasmTickDetector {
   free(): void
 }
 export interface WasmEngine {
+  recognizeHud?(rgba: Uint8Array, width: number, height: number, packJson: string, variantId: string): string
   configure(profileJson: string): string
   recognize(rgba: Uint8Array, width: number, height: number, mediaTime: number, wallTime: number, frameIndex: number, wantDebug: boolean): string
   createAutoSession?(): WasmAutoSession
   createTickDetector?(): WasmTickDetector
   recognizeAuto?(gray: Uint8Array, width: number, height: number, profileJson: string): string
 }
-type JsonDebug = Omit<WorkerDebug, 'binary' | 'normalized'> & {
-  binary: { data: number[]; width: number; height: number }
-  normalized: number[][]
-}
-function debugFromJson(debug: JsonDebug | null): WorkerDebug | null {
-  return debug && {
-    ...debug,
-    binary: { ...debug.binary, data: Uint8Array.from(debug.binary.data) },
-    normalized: debug.normalized.map((mask) => Uint8Array.from(mask)),
-  }
-}
 function annotate(response: WorkerResponse | null, backend: RecognitionBackend): WorkerResponse | null {
   if (response?.type === 'result') {
     response.backend = backend
     response.tickMomentStatus = backend === 'wasm' ? 'supported' : 'unsupported'
-    if (response.debug) Object.assign(response.debug, { backend })
   }
   return response
 }
 
-type DetectorState = { detector: WasmTickDetector; width: number; height: number; time: number }
+type DetectorState = { detector: WasmTickDetector; width: number; height: number; time: number; variantId?: string | null }
 
 export class WasmWorkerEngine implements WorkerEngine {
   readonly backend = 'wasm' as const
   private generation = -1
   private configured = false
-  private profile: RecognitionProfile | null = null
+  private profile: ActiveProfile | null = null
   private automatic = false
   private readonly detectors = new Map<SourceRole, DetectorState>()
   private retainedWindow: { session: WasmAutoSession; generation: number; id: number } | null = null
@@ -70,7 +62,12 @@ export class WasmWorkerEngine implements WorkerEngine {
     switch (request.type) {
       case 'configure': {
         this.releaseWindow()
-        const readiness = JSON.parse(this.wasm.configure(JSON.stringify(request.profile))) as { ready: boolean; missing: string[]; sampleCount: number }
+        this.configured = false
+        this.profile = null
+        if ('schemaVersion' in request.profile && !isHudPack(request.profile)) throw new Error('旧版倒计时配置已停用, 请重新制作样式包')
+        const readiness = isHudPack(request.profile)
+          ? JSON.parse(this.wasm.configure(JSON.stringify(request.profile))) as { ready: boolean; missing: string[]; sampleCount: number }
+          : profileReadiness(request.profile)
         this.resetDetectors()
         this.generation = request.generation
         this.configured = true
@@ -93,15 +90,28 @@ export class WasmWorkerEngine implements WorkerEngine {
         let outcome: RecognitionOutcome
         let debug: WorkerDebug | null = null
         let tickMoment: TickMoment | undefined
+        let hud: HudFrameResult | undefined
         try {
           const pixels = validPixels(request)
-          const gray = toGrayscale(pixels, request.width, request.height).data
-          tickMoment = this.detectTick(request.role, gray, request.width, request.height, request.mediaTime)
-          if (this.automatic) {
+          const gray = this.profile && isHudPack(this.profile) ? null : toGrayscale(pixels, request.width, request.height).data
+          if (gray) tickMoment = this.detectTick(request.role, gray, request.width, request.height, request.mediaTime)
+          if (this.profile && isHudPack(this.profile)) {
+            if (!this.wasm.recognizeHud) throw new Error('WASM 不支持样式包识别, 请重新构建应用')
+            hud = hudFrameFromJson(this.wasm.recognizeHud(pixels, request.width, request.height, JSON.stringify(this.profile), ''))
+            const detector = this.detectors.get(request.role)
+            if (detector && detector.variantId !== hud.variantId) {
+              detector.detector.reset()
+              detector.variantId = hud.variantId
+            }
+            const crop = hud.fields.clock.debug?.gray
+            if (crop) tickMoment = this.detectTick(request.role, crop.data, crop.width, crop.height, request.mediaTime, hud.variantId)
+            outcome = hudClockOutcome(hud, request)
+            debug = request.wantDebug ? hud.fields.clock.debug : null
+          } else if (this.automatic) {
             if (!this.wasm.recognizeAuto || !this.profile) {
               outcome = { status: 'failed', reason: 'insufficient-templates', detail: '当前后端不支持自动学习预设' }
             } else {
-              const reading = JSON.parse(this.wasm.recognizeAuto(gray, request.width, request.height, JSON.stringify(this.profile))) as {
+              const reading = JSON.parse(this.wasm.recognizeAuto(gray!, request.width, request.height, JSON.stringify(this.profile))) as {
                 text: string | null; value: number | null; confidence: number; reason: string | null
               }
               if (reading.text !== null && reading.value !== null) {
@@ -117,16 +127,14 @@ export class WasmWorkerEngine implements WorkerEngine {
               }
             }
           } else {
-            const result = JSON.parse(this.wasm.recognize(pixels, request.width, request.height, request.mediaTime, request.wallTime, request.frameIndex, request.wantDebug)) as { outcome: RecognitionOutcome; debug: JsonDebug | null }
-            outcome = result.outcome
-            debug = request.wantDebug ? debugFromJson(result.debug) : null
+            outcome = { status: 'failed', reason: 'insufficient-templates', detail: '临时学习模型只能用于自动识别, 手工预设请使用新样式包' }
           }
         } catch (error) {
           outcome = { status: 'failed', reason: 'decode-failed', detail: errorText(error) }
         }
         return annotate({ type: 'result', generation: request.generation, role: request.role,
           frameIndex: request.frameIndex, outcome, debug, elapsedMs: this.now() - started,
-          ...(tickMoment ? { tickMoment } : {}) }, this.backend)
+          ...(hud ? { hud } : {}), ...(tickMoment ? { tickMoment } : {}) }, this.backend)
       }
       default: return null
     }
@@ -193,11 +201,11 @@ export class WasmWorkerEngine implements WorkerEngine {
     }
   }
 
-  private detectTick(role: SourceRole, gray: Uint8Array, width: number, height: number, time: number): TickMoment | undefined {
+  private detectTick(role: SourceRole, gray: Uint8Array, width: number, height: number, time: number, variantId?: string | null): TickMoment | undefined {
     if (!this.wasm.createTickDetector) return undefined
     let state = this.detectors.get(role)
     if (!state) {
-      state = { detector: this.wasm.createTickDetector(), width, height, time: -Infinity }
+      state = { detector: this.wasm.createTickDetector(), width, height, time: -Infinity, variantId }
       this.detectors.set(role, state)
     }
     if (state.width !== width || state.height !== height || time <= state.time) state.detector.reset()
@@ -252,7 +260,7 @@ export async function createWorkerEngine(options: {
       fallbackReason = errorText(error)
     }
   }
-  const engine = new RecognitionEngine(now)
+  const engine = new RecognitionEngine(now, `样式包需要 Rust/WASM, 无法加载: ${fallbackReason ?? '当前后端不可用'}`)
   options.report?.('typescript', fallbackReason)
   return { backend: 'typescript', handle: (request) => annotate(engine.handle(request), 'typescript') }
 }

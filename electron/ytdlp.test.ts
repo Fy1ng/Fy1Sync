@@ -143,6 +143,21 @@ describe('isolated yt-dlp execution', () => {
     expect(h.cleanup).toHaveBeenCalledOnce()
   })
 
+  it.each([
+    ['Sign in to confirm your age. This video may be inappropriate', 'YouTube age restricted'],
+    ['This video is not available in your country', 'YouTube geo restricted'],
+    ['Join this channel to get access to members-only content', 'YouTube members only'],
+    ['Private video. Sign in if you have been granted access', 'YouTube private video'],
+  ])('labels %s as "%s" without the extractor text', async (stderr, label) => {
+    const h = harness()
+    const pending = h.runner.resolve('https://www.youtube.com/watch?v=abcdefghijk')
+    const rejected = expect(pending).rejects.toThrow(new RegExp(`^${label}$`))
+    await vi.waitFor(() => expect(h.launch).toHaveBeenCalledOnce())
+    h.child.stderr!.emit('data', Buffer.from(stderr))
+    h.child.emit('close', 1)
+    await rejected
+  })
+
   it('kills the whole runtime tree and finishes cookie cleanup during disposal', async () => {
     const h = harness()
     const pending = h.runner.resolve('https://www.youtube.com/watch?v=abcdefghijk')
@@ -316,7 +331,7 @@ describe('optional yt-dlp PO token script integration', () => {
     vi.mocked(locateYouTubePotProvider).mockResolvedValue(provider)
     const h = forked()
     const pending = h.runner.resolve(url)
-    const rejected = expect(pending).rejects.toThrow('YouTube sign in required')
+    const rejected = expect(pending).rejects.toThrow('YouTube bot check')
     await vi.waitFor(() => expect(h.children).toHaveLength(2))
     h.finish('adaptive', 0, webOnly)
     h.run('hls').child.stderr!.emit('data', Buffer.from('Sign in to confirm you are not a bot'))

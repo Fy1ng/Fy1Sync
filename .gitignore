@@ -41,3 +41,6 @@ playwright-report/
 
 # Environment files of every flavour (secrets); add an explicit exception for a public sample
 .env.*
+
+# Generated style pack publisher keys are private, even outside the runtime cache.
+private-key.pem

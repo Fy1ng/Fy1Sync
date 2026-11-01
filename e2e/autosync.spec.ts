@@ -17,10 +17,11 @@
  */
 
 import { fileURLToPath } from 'node:url'
-import { type Page } from '@playwright/test'
-import type { RecognitionProfile } from '../src/core/profileSchema'
+import { type ElectronApplication, type Page } from '@playwright/test'
+import type { HudStylePack } from '../src/core/hudStylePack'
 import { APP_ORIGIN, expect, launchApplication, test } from './electron'
 import {
+  chooseEditorVideo,
   invoke,
   FIXTURE_DELAY_SECONDS,
   MAX_DETECTION_ERROR_SECONDS,
@@ -82,9 +83,17 @@ test.describe('无预设自动同步', () => {
     await seekBoth(page, 0.25, 0.25)
     await setPlaying(page, true)
     await revealOverlay(page)
+    await expect(page.locator('.align-beta')).toHaveText('适配中')
+    const alignOptions = await openAlignOptions(page)
+    await expect(alignOptions.locator('.align-testing')).toContainText('适配中')
+    await expect(alignOptions.locator('.align-testing')).toContainText('HUD 布局, 字体和清晰度尚未全部适配')
+    await page.keyboard.press('Escape')
     await page.getByRole('button', { name: '自动对齐', exact: true }).click()
     // The limits are said over the picture; a found countdown is used without asking.
-    await expect(page.locator('.toast').filter({ hasText: '目前自动同步条件较苛刻' })).toBeVisible()
+    const adaptingNotice = page.locator('.toast').filter({ hasText: '自动对齐适配中:' })
+    await expect(adaptingNotice).toBeVisible()
+    await expect(adaptingNotice).toContainText('回放, 暂停或切镜头也可能影响识别')
+    await expect(adaptingNotice).toContainText('不准时可手动微调')
     for (const role of ['official', 'commentary']) {
       const card = page.locator(`.prompt[data-role="${role}"]`)
       await expect(card).toHaveCount(0, { timeout: 60_000 })
@@ -141,7 +150,7 @@ test.describe('自动同步', () => {
 
   let presetId = ''
   let presetName = ''
-  let taughtProfile: RecognitionProfile | undefined
+  let taughtProfile: HudStylePack | undefined
 
   // Teach once in another disposable Electron app. Every scenario gets its own app and
   // preset store, seeded with the result of this actual decoded-frame teaching flow.
@@ -152,7 +161,7 @@ test.describe('自动同步', () => {
     presetName = '自动同步测试场景 ' + stamp
     const running = await launchApplication('autosync-teaching')
     try {
-      await teachProfile(running.page, presetId, presetName)
+      await teachProfile(running.application, running.page, presetId, presetName)
       const fetched = await invoke(running.page, 'getPreset', { id: presetId })
       expect(fetched.ok).toBe(true)
       if (!fetched.ok) throw new Error(fetched.message)
@@ -172,12 +181,11 @@ test.describe('自动同步', () => {
     const fetched = await invoke(page, 'getPreset', { id: presetId })
     expect(fetched.ok).toBe(true)
     if (!fetched.ok) throw new Error(fetched.message)
-    expect(Object.keys(fetched.value.profile.templates).sort()).toEqual(CLOCK_CHARS)
+    expect(Object.keys(fetched.value.profile.variants[0]!.fields.clock!.glyphs).sort()).toEqual(CLOCK_CHARS)
   })
 
   test('识别出的偏移落在 0.25 s 误差内', async ({ page }) => {
-    // The worker silently falls back to the TypeScript engine when WASM cannot load (CSP,
-    // missing asset), and the offset would still pass. Pin the backend the run really used.
+    // A style pack requires Rust/WASM; pin the backend the complete run really used.
     const backends: string[] = []
     page.on('worker', worker => worker.on('console', message => {
       const match = /\[识别 Worker\] 后端: (\S+)/.exec(message.text())
@@ -298,7 +306,7 @@ test.describe('自动同步', () => {
  * Build a working profile in the editor: ROI, one grabbed frame per lesson, a click per
  * glyph, then publish.
  */
-async function teachProfile(page: Page, id: string, name: string): Promise<void> {
+async function teachProfile(application: ElectronApplication, page: Page, id: string, name: string): Promise<void> {
   failOnPageError(page)
   await page.goto(APP_ORIGIN + '/admin')
   await expect(page.locator('.editor-main')).toBeVisible()
@@ -306,7 +314,7 @@ async function teachProfile(page: Page, id: string, name: string): Promise<void>
   await setField(page, '标识', id)
   await setField(page, '名称', name)
 
-  await page.locator('main input[accept="video/*"]').setInputFiles(officialPath)
+  await chooseEditorVideo(application, page, officialPath)
   await expect
     .poll(async () =>
       page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.videoWidth),
@@ -360,7 +368,7 @@ async function selectPreset(page: Page, name: string): Promise<void> {
   const id = await option.getAttribute('value')
   if (!id) throw new Error('倒计时样式必须对应已发布预设')
   const published = await invoke(page, 'getPreset', { id })
-  expect(published.ok && Object.keys(published.value.profile.templates).sort()).toEqual(CLOCK_CHARS)
+  expect(published.ok && Object.keys(published.value.profile.variants[0]!.fields.clock!.glyphs).sort()).toEqual(CLOCK_CHARS)
   await select.selectOption(id)
   await expect(select.locator('option:checked')).toHaveText(name)
   await page.keyboard.press('Escape')

@@ -5,7 +5,7 @@ import { normalizeGlyph } from '../core/imageOps'
 import { createEmptyProfile, type ClockChar, type RecognitionProfile } from '../core/profileSchema'
 import { CLOCK_GLYPHS, createFrame, drawText, renderGlyphMask } from '../test/glyphFont'
 import { RecognitionClient, type WorkerLike } from './client'
-import { RecognitionEngine } from './engine'
+import { RecognitionEngine } from '../test/recognitionEngine'
 import { FULL_FRAME_ROI, FrameGrabber } from './frameGrabber'
 import type { ResultMessage, WorkerRequest, WorkerResponse } from './protocol'
 
@@ -194,7 +194,7 @@ describe('RecognitionClient', () => {
     const sent = worker.sent[0]
     expect(sent?.type).toBe('configure')
     if (sent?.type === 'configure') {
-      expect(sent.profile.roi).toEqual(FULL_FRAME_ROI)
+      expect('roi' in sent.profile && sent.profile.roi).toEqual(FULL_FRAME_ROI)
     }
     // The client keeps the real ROI so the grabber knows what to crop.
     expect(client.roi).toEqual({ x: 0.4, y: 0.02, w: 0.2, h: 0.08 })
@@ -241,6 +241,40 @@ describe('RecognitionClient', () => {
     now = 900
     expect(client.submit('official', grabbed())).toBe(true)
     expect(client.getStats()).toMatchObject({ submitted: 2, dropped: 1, stalled: 1 })
+  })
+
+  it('stops reporting busy once a silent frame passes the stall timeout', () => {
+    const worker = new FakeWorker()
+    let now = 0
+    const client = new RecognitionClient({ createWorker: () => worker, now: () => now, stallTimeoutMs: 500 })
+    client.configure(profileWithTemplates())
+    worker.silent = true
+    client.submit('official', grabbed())
+    now = 499
+    expect(client.busy).toBe(true)
+    now = 500
+    // Callers gate on busy before they grab, so it must free them without a submit first.
+    expect(client.busy).toBe(false)
+  })
+
+  it('drops a late reply to a frame it gave up on', () => {
+    const worker = new FakeWorker()
+    let now = 0
+    const results: ResultMessage[] = []
+    const client = new RecognitionClient({ createWorker: () => worker, now: () => now, stallTimeoutMs: 500, onResult: result => results.push(result) })
+    const generation = client.configure(profileWithTemplates())
+    worker.silent = true
+    client.submit('official', grabbed('1:59', 12))
+    now = 600
+    client.submit('official', grabbed('1:58', 13))
+    const reply = (frameIndex: number) => worker.emit({ type: 'result', generation, role: 'official', frameIndex,
+      outcome: { status: 'failed', reason: 'no-candidates' }, debug: null, elapsedMs: 1 })
+    reply(1)
+    expect(results).toHaveLength(0)
+    expect(client.busy).toBe(true)
+    reply(2)
+    expect(results.map(result => result.frameIndex)).toEqual([2])
+    expect(client.busy).toBe(false)
   })
 
   it('refuses to submit before a profile is configured', () => {

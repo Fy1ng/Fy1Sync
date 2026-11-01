@@ -10,6 +10,7 @@ import type { ApiResult } from '../src/app/apiClient'
 import type { ProxyConfig } from './config'
 import { DanmakuRelay } from './danmaku/relay'
 import { resolveStream, type PlatformKind, type ResolveResult } from './platforms'
+import { isYouTubeRefusal, YOUTUBE_REFUSALS } from './platforms/youtube'
 import { fileNameFor, MAX_PRESET_BYTES, PresetStore } from './presetStore'
 import { checkUrl, ProxyError, safeFetch } from './safeFetch'
 import type { SourceRole } from '../src/core/types'
@@ -25,6 +26,8 @@ import { readPlatformBytes, readPlatformText } from './platformResponse'
 import { DouyuRenewalError, readRenewalRooms, readRenewalQuantities, type DouyuRenewalService } from './douyu/renewalService'
 import type { FeatureApi } from './featureApi'
 import type { FeatureCallContext, FeatureEvent } from '../electron/featureContracts'
+import type { StylePackSyncService } from '../electron/stylePackSync'
+import type { StylePackSyncState } from '../electron/stylePackSyncContracts'
 
 export interface AcquisitionService {
   resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string, preferAdaptive?: boolean): Promise<ResolveResult>
@@ -52,6 +55,7 @@ export type DesktopServiceDeps = {
   douyuTasks?: DouyuTaskManager
   douyuRenewal?: DouyuRenewalService
   features?: FeatureApi
+  stylePacks?: Pick<StylePackSyncService, 'list' | 'get' | 'state' | 'sync' | 'setSource' | 'subscribe'>
 }
 
 export type DesktopService = {
@@ -123,6 +127,11 @@ function fixturePath(input: string): boolean {
 
 export function sanitizedFailure(result: ResolveResult): ResolveResult {
   if (result.ok) return result
+  // YouTube's fixed refusal wording says what to do about it; the generic line below would hide that.
+  const reason = result.failure.reason
+  if (result.failure.code === 'restricted' && isYouTubeRefusal(reason)) {
+    return { ok: false, failure: { code: 'restricted', reason, ...YOUTUBE_REFUSALS[reason] } }
+  }
   const messages = {
     'unsupported-url': '无法识别该媒体地址或平台',
     'not-live': '直播当前未开始或受限制',
@@ -154,7 +163,11 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
     subscribeBuffer: deps.acquisition ? (listener) => deps.acquisition!.subscribe(listener) : undefined,
     subscribeDouyuAccounts: deps.douyuAccounts ? listener => deps.douyuAccounts!.subscribeSnapshots(listener) : undefined,
     subscribeDouyuTasks: deps.douyuTasks ? listener => deps.douyuTasks!.subscribe(listener) : undefined,
-    subscribeFeatures: deps.features ? listener => deps.features!.subscribe(listener) : undefined,
+    subscribeFeatures: deps.features || deps.stylePacks ? listener => {
+      const emit = (event: FeatureEvent) => { if (!disposed) listener(event) }
+      const releases = [deps.features?.subscribe(emit), deps.stylePacks?.subscribe(emit)]
+      return () => { for (const release of releases) release?.() }
+    } : undefined,
     setDouyuRoom: deps.douyuTasks ? room => deps.douyuTasks!.setRoom(room) : undefined,
     async invoke(method, args, context) {
       if (disposed) return fail('service-closed', '本地服务已关闭')
@@ -427,17 +440,36 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
           }
           case 'listPresets': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
-            const records = await presets.list()
+            const [local, cloud] = await Promise.all([presets.list(), deps.stylePacks?.list() ?? []])
+            const localIds = new Set(local.map(entry => entry.id))
+            const records = [...local, ...cloud.filter(entry => !localIds.has(entry.id))]
             return { ok: true, value: { presets: records.map((entry) => ({
               id: entry.id, name: entry.profile.name, updatedAt: entry.updatedAt,
-              etag: entry.etag, templateChars: Object.keys(entry.profile.templates).length,
+              etag: entry.etag, templateChars: Object.keys(entry.profile.variants[0]?.fields.clock?.glyphs ?? {}).length,
+              ...(!localIds.has(entry.id) ? { source: 'cloud' as const, revision: entry.profile.revision } : {}),
             })) } }
+          }
+          case 'getStylePackSyncState':
+          case 'syncStylePacks': {
+            if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
+            const unavailable: StylePackSyncState = { source: 'github', availableSources: [], catalogRevision: null, phase: 'unconfigured', checkedAt: null, updatedAt: null,
+              installed: 0, downloaded: 0, incompatible: 0, message: '赛事样式包分发源尚未启用.' }
+            return { ok: true, value: deps.stylePacks
+              ? await (method === 'syncStylePacks' ? deps.stylePacks.sync() : deps.stylePacks.state()) : unavailable }
+          }
+          case 'setStylePackSyncSource': {
+            if (!fields(args, ['source']) || (args.source !== 'github' && args.source !== 'gitcode')) return fail('invalid-arguments', '请选择内置的样式包来源.')
+            if (!deps.stylePacks || !deps.stylePacks.state().availableSources.includes(args.source)) return fail('not-available', '该样式包来源尚未配置.')
+            if (deps.stylePacks.state().phase === 'syncing') return fail('busy', '正在刷新样式包, 请完成后再切换来源.')
+            try { return { ok: true, value: deps.stylePacks.setSource(args.source) } }
+            catch { return fail('source-save-failed', '样式包来源保存失败, 原设置未改变, 请重试.') }
           }
           case 'getPreset': {
             if (!fields(args, ['id']) || !validId(args.id)) return fail('invalid-id', '预设 ID 无效')
-            const entry = await presets.get(args.id)
+            const local = await presets.get(args.id)
+            const entry = local ?? await deps.stylePacks?.get(args.id)
             if (!entry) return fail('not-found', '预设不存在')
-            return { ok: true, value: { profile: entry.profile, etag: entry.etag } }
+            return { ok: true, value: { profile: entry.profile, etag: entry.etag, ...(!local ? { source: 'cloud' as const } : {}) } }
           }
           case 'savePreset': {
             if (!fields(args, ['id', 'profile'], ['token', 'etag']) || !optionalToken(args)

@@ -17,6 +17,7 @@
  * the duplicated cost is a few kilobytes of template masks.
  */
 
+import { captureRoi, isHudPack, type ActiveProfile } from '../core/activeProfile'
 import type { RecognitionProfile } from '../core/profileSchema'
 import { ClockJumpDetector, parseCountdown } from '../core/clockJump'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
@@ -25,6 +26,7 @@ import { RecognitionClient, type WorkerLike } from './client'
 import { FrameGrabber, startFrameLoop } from './frameGrabber'
 import type { ResultMessage } from './protocol'
 import { RhythmSampler } from './rhythm'
+import { HudReplaySession, hudSyncOutcome } from './hudResult'
 
 export type OutcomeSink = (role: SourceRole, outcome: RecognitionOutcome) => void
 
@@ -35,7 +37,7 @@ export interface SamplerOptions {
   createWorker: () => WorkerLike
   video: VideoResolver
   /** Active profile per role; null disables that role. */
-  profile: (role: SourceRole) => RecognitionProfile | null
+  profile: (role: SourceRole) => ActiveProfile | null
   now?: () => number
   clock?: () => number
   /** Overridable for tests; defaults to the real frame loop. */
@@ -59,9 +61,15 @@ interface RoleChannel {
   client: RecognitionClient
   grabber: FrameGrabber
   /** The profile the worker is currently configured for, by identity. */
-  configuredFor: RecognitionProfile | null
+  configuredFor: ActiveProfile | null
   video: HTMLVideoElement | null
   source: string
+  sourceObject: HTMLVideoElement['srcObject']
+  width: number
+  height: number
+  stopObserving: (() => void) | null
+  replay: HudReplaySession
+  variantId: string | null | undefined
   rhythm: RhythmSampler
   jumps: ClockJumpDetector
   pendingMoment: ResultMessage['tickMoment'] | null
@@ -77,9 +85,10 @@ interface RoleChannel {
  * learning or editing a glyph always makes a new sample, and comparing bitmaps per frame
  * would be waste.
  */
-function sameProfile(a: RecognitionProfile | null, b: RecognitionProfile): boolean {
+function sameProfile(a: ActiveProfile | null, b: ActiveProfile): boolean {
   if (a === b) return true
   if (!a) return false
+  if (isHudPack(a) || isHudPack(b)) return isHudPack(a) && isHudPack(b) && a.id === b.id && a.revision === b.revision && JSON.stringify(a) === JSON.stringify(b)
   return a.id === b.id && a.name === b.name && a.updatedAt === b.updatedAt
     && a.clockFormat === b.clockFormat && a.sampleFps === b.sampleFps && a.matchThreshold === b.matchThreshold
     && a.roi.x === b.roi.x && a.roi.y === b.roi.y && a.roi.w === b.roi.w && a.roi.h === b.roi.h
@@ -185,6 +194,7 @@ export class RecognitionSampler {
     this.disposed = true
     this.sink = null
     for (const channel of this.channels.values()) {
+      channel.stopObserving?.()
       channel.client.dispose()
       channel.grabber.dispose()
     }
@@ -198,32 +208,24 @@ export class RecognitionSampler {
     if (!video || !profile) return null
 
     const channel = this.channelFor(role)
-    const fps = Math.max(1, Math.min(60, profile.sampleFps))
+    const fps = Math.max(1, Math.min(60, (isHudPack(profile) ? 30 : profile.sampleFps)))
     let activeLoop = true
-    const invalidate = (): void => {
-      channel.epoch += 1
-      channel.grabber.cancel()
-      channel.client.cancel()
-      channel.configuredFor = null
-      this.resetTiming(channel)
-    }
-    if (channel.video !== video) invalidate()
-    channel.video = video
-    channel.source = video.currentSrc || video.src || ''
-    for (const event of ['seeking', 'emptied', 'loadstart']) video.addEventListener?.(event, invalidate)
+    this.observeSource(channel, video)
 
     const stop = this.frameLoop(video, fps, async (mediaTime) => {
       if (!activeLoop || signal.aborted || this.disposed) return
+      if (this.options.video(role) !== video) {
+        this.invalidateSource(channel)
+        return
+      }
       const active = this.options.profile(role)
       if (!active) return
-      const source = video.currentSrc || video.src || ''
-      if (channel.source !== source) {
-        invalidate()
-        channel.source = source
-      }
+      this.observeSource(channel, video)
       if (channel.configuredFor !== active) {
         this.resetTiming(channel)
-        channel.client.configure(active, { automatic: active.id.startsWith('session/') })
+        try {
+          channel.client.configure(active, isHudPack(active) ? {} : { automatic: active.id.startsWith('session/') })
+        } catch (error) { this.options.onError?.(role, String(error)); return }
         channel.configuredFor = active
       }
       if (!channel.rhythm.shouldSample(mediaTime)) return
@@ -236,13 +238,14 @@ export class RecognitionSampler {
       const epoch = channel.epoch
       const width = video.videoWidth
       const height = video.videoHeight
-      const result = await channel.grabber.grabAsync(video, active.roi, mediaTime)
+      const result = await channel.grabber.grabAsync(video, captureRoi(active), mediaTime)
       // A seek, a new source, new dimensions, another profile or a new window while
       // reading back all make this frame stale. Checked here as well as by the events,
       // because a source or size change has no event of its own until the next frame.
       if (!activeLoop || signal.aborted || this.disposed || this.sampleGeneration !== sampleGeneration
         || channel.epoch !== epoch || channel.video !== video
         || channel.source !== (video.currentSrc || video.src || '')
+        || channel.sourceObject !== video.srcObject
         || video.videoWidth !== width || video.videoHeight !== height
         || !sameProfile(this.options.profile(role), active)) return
       if (!result.ok) {
@@ -273,7 +276,6 @@ export class RecognitionSampler {
       activeLoop = false
       stop()
       channel.grabber.cancel()
-      for (const event of ['seeking', 'emptied', 'loadstart']) video.removeEventListener?.(event, invalidate)
     }
   }
 
@@ -286,6 +288,12 @@ export class RecognitionSampler {
       epoch: 0,
       video: null,
       source: '',
+      sourceObject: null,
+      width: 0,
+      height: 0,
+      stopObserving: null,
+      replay: new HudReplaySession(),
+      variantId: undefined,
       rhythm: new RhythmSampler(),
       jumps: new ClockJumpDetector(role),
       pendingMoment: null,
@@ -296,7 +304,21 @@ export class RecognitionSampler {
         now: this.now,
         onError: (message) => this.options.onError?.(role, message),
         onResult: (message) => {
-          const outcome = this.atTickMoment(channel, message)
+          if (!this.sink) return
+          const video = channel.video
+          if (!video || this.options.video(role) !== video || !this.sameSource(channel, video)) {
+            this.invalidateSource(channel)
+            return
+          }
+          if (message.hud && channel.variantId !== message.hud.variantId) {
+            const anchor = channel.frameAnchor
+            this.resetTiming(channel)
+            channel.frameAnchor = anchor
+            channel.variantId = message.hud.variantId
+          }
+          const hud = message.hud ? channel.replay.observe(message.hud) : undefined
+          const current = hud ? { ...message, hud, outcome: hudSyncOutcome(hud, message.outcome) } : message
+          const outcome = this.atTickMoment(channel, current)
           const result = channel.jumps.push(outcome)
           if (result.event) channel.rhythm.confirmTick(result.event.mediaTime)
           if (result.dropped === 'not-decrement' || result.dropped === 'abnormal-interval') channel.rhythm.reset()
@@ -307,6 +329,40 @@ export class RecognitionSampler {
     }
     this.channels.set(role, channel)
     return channel
+  }
+
+  private sameSource(channel: RoleChannel, video: HTMLVideoElement): boolean {
+    return channel.video === video && channel.source === (video.currentSrc || video.src || '')
+      && channel.sourceObject === video.srcObject && channel.width === video.videoWidth && channel.height === video.videoHeight
+  }
+
+  private invalidateSource(channel: RoleChannel): void {
+    channel.epoch += 1
+    channel.grabber.cancel()
+    channel.client.cancel()
+    channel.configuredFor = null
+    channel.replay.reset()
+    channel.variantId = undefined
+    this.resetTiming(channel)
+  }
+
+  private observeSource(channel: RoleChannel, video: HTMLVideoElement): void {
+    const changedVideo = channel.video !== video
+    if (!this.sameSource(channel, video)) this.invalidateSource(channel)
+    if (changedVideo) {
+      channel.stopObserving?.()
+      const invalidate = (): void => this.invalidateSource(channel)
+      const events = ['seeking', 'emptied', 'loadstart', 'resize']
+      for (const event of events) video.addEventListener?.(event, invalidate)
+      channel.stopObserving = () => {
+        for (const event of events) video.removeEventListener?.(event, invalidate)
+      }
+    }
+    channel.video = video
+    channel.source = video.currentSrc || video.src || ''
+    channel.sourceObject = video.srcObject
+    channel.width = video.videoWidth
+    channel.height = video.videoHeight
   }
 
   private resetTiming(channel: RoleChannel): void {

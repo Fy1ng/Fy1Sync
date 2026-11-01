@@ -98,6 +98,32 @@ describe('backend playback navigation and danmaku processing', () => {
     expect(h.session.flush().autoSync.authorized).toBe(false)
   })
 
+  it('returns a live source to a few segments behind its newest frame, not onto it', async () => {
+    const h = await harness()
+    // A live stream reports an unbounded duration and a moving seekable end.
+    primeMediaElement(h.engine.element('official'), { duration: Infinity, seekableStart: 40, seekableEnd: 220, currentTime: 150 })
+    expect(await h.session.returnPlaybackToLive('official')).toBe(true)
+    // Without an hls.js sync point it stays three 2-second segments back.
+    expect(h.engine.element('official').currentTime).toBe(214)
+    // Stepping ahead past that point stops there too, instead of at the newest frame.
+    primeMediaElement(h.engine.element('official'), { duration: Infinity, seekableStart: 40, seekableEnd: 220, currentTime: 210 })
+    expect(await h.session.seekPlayback('official', 30)).toBe(true)
+    expect(h.engine.element('official').currentTime).toBe(214)
+  })
+
+  it('moves only the picked side to a time-line point and counts the move in the offset', async () => {
+    const h = await harness()
+    expect(await h.session.seekPlaybackTo('official', 70)).toBe(true)
+    expect(timeOf(h.engine, 'official')).toBe(70)
+    expect(timeOf(h.engine, 'commentary')).toBe(100)
+    expect(h.session.flush().appliedRewind).toEqual({ official: 30, commentary: 0 })
+    expect(h.session.flush().autoSync.authorized).toBe(false)
+    // Dragging back to where it was takes the rewind away again.
+    expect(await h.session.seekPlaybackTo('official', 100)).toBe(true)
+    expect(h.session.flush().appliedRewind.official).toBe(0)
+    expect(await h.session.seekPlaybackTo('official', Number.NaN)).toBe(false)
+  })
+
   it('applies media-time duplicate merging without changing the original message text', async () => {
     const h = await harness()
     h.session.configureDanmakuProcessing({ duplicateMode: 'combo', filterSuspectedBots: true })

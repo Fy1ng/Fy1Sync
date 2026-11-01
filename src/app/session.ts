@@ -26,7 +26,8 @@ import { MediaEngine, type EngineState } from '../media/mediaEngine'
 import { RecognitionSampler } from '../recognition/sampler'
 import { OnlineAutoProfiles, initialAutoProfileState, type AutoProfileState } from '../recognition/autoProfile'
 import { createRecognitionWorker } from '../recognition/createWorker'
-import { parseProfile, type RecognitionProfile } from '../core/profileSchema'
+import { parseHudStylePack, type HudStylePack } from '../core/hudStylePack'
+import { isHudPack, learnedClockPack, type ActiveProfile } from '../core/activeProfile'
 import { AutoSyncController, type AutoSyncPhase, type AutoSyncRunResult } from '../sync/autoSync'
 import { apiClient, type PresetSummary } from './apiClient'
 import type { AppSettings } from './settings'
@@ -36,8 +37,10 @@ import { colorForIndex } from '../../server/danmaku/douyuProtocol'
 import type { ChatMessage } from '../../server/danmaku/types'
 import { normalizeDouyuGift, normalizeDouyuSender } from '../core/douyuMetadata'
 import { DanmakuProcessor, DEFAULT_DANMAKU_PREFERENCES, readDanmakuPreferences, type DanmakuPreferences } from '../core/danmakuProcessing'
-import { clampSeek } from '../media/timebase'
+import { clampPlayableSeek } from '../media/timebase'
 import { latestPlayableTime } from '../media/playbackControls'
+import { createPlaybackProgress, observePlaybackProgress } from '../media/playbackProgress'
+import { PlaybackDiagnostics, type PlaybackStallSummary } from '../media/playbackDiagnostics'
 
 /** Released danmaku kept for the chat list. */
 export const CHAT_HISTORY_LIMIT = 2000
@@ -71,7 +74,7 @@ export interface SessionSnapshot {
     pending: number
     dropped: number
   }
-  profiles: Record<SourceRole, RecognitionProfile | null>
+  profiles: Record<SourceRole, ActiveProfile | null>
   autoProfiles: Record<SourceRole, AutoProfileState>
   autoProfileBusy: boolean
   /** Presets the server offers, so the player can pick one without opening the editor. */
@@ -79,6 +82,8 @@ export interface SessionSnapshot {
   notices: Notice[]
   buffers: Record<SourceRole, BufferState | null>
   qualityBusy: Record<SourceRole, boolean>
+  playbackRecovery: { kind: 'stall' | 'reconnect'; driftSeconds: number | null } | null
+  playbackDiagnostics: Record<SourceRole, PlaybackStallSummary | null>
 }
 
 export interface Notice {
@@ -119,7 +124,8 @@ export class Session {
   private sampler: RecognitionSampler | null = null
   private autoProfiles: Pick<OnlineAutoProfiles, 'controller' | 'monitor' | 'reset' | 'suspend' | 'dispose'> | null = null
   private autoRequestRevision = 0
-  private candidateToEdit: RecognitionProfile | null = null
+  private candidateToEdit: ActiveProfile | null = null
+  private candidateRole: SourceRole = 'official'
   private samplerFactory: ((session: Session) => RecognitionSampler | null) | null
   private settingsValue: AppSettings
   private readonly storage: SessionOptions['storage']
@@ -153,7 +159,7 @@ export class Session {
   private playbackPending = 0
   private pipPresentationReduced = false
   private readonly pendingQualityWaits = new Set<() => void>()
-  private profileMap: Record<SourceRole, RecognitionProfile | null> = {
+  private profileMap: Record<SourceRole, ActiveProfile | null> = {
     official: null,
     commentary: null,
   }
@@ -168,10 +174,22 @@ export class Session {
     dropped: 0,
   }
   private presetList: PresetSummary[] = []
+  private presetListRevision = 0
   private unsubscribeDanmaku: (() => void) | null = null
   private danmakuGeneration = 0
   private filter: CompiledDanmakuFilter
   private schedulerDeadline: number | null = null
+  private progress = createPlaybackProgress()
+  private diagnosticProgress = { official: createPlaybackProgress(), commentary: createPlaybackProgress() }
+  private readonly diagnostics = new PlaybackDiagnostics()
+  private playbackRecovery: SessionSnapshot['playbackRecovery'] = null
+  private observationTimer: ReturnType<typeof setInterval> | null = null
+  private observationAt: number | null = null
+  private diagnosticNotifyAt = 0
+  private continuity = { official: 0, commentary: 0 }
+  private observationRevision = { official: 0, commentary: 0 }
+  private reconnectPending = false
+  private readonly changingSources = new Set<SourceRole>()
   private snapshotValue: SessionSnapshot
   private notifyQueued = false
   private disposed = false
@@ -260,6 +278,8 @@ export class Session {
     })
     this.autoSync.onPhaseChange(phase => {
       const result = this.autoSync.result
+      this.resetPlaybackObservation()
+      if (phase === 'done' && result?.applied && !result.failure && !result.dryRun) this.playbackRecovery = null
       if ((phase === 'done' || phase === 'failed') && result?.plan && result.appliedRewind && result.failure?.kind !== 'cancelled') {
         this.planValue = result.plan
         this.requestedOffset = result.failure?.kind === 'buffer-limit' && result.estimate
@@ -270,13 +290,17 @@ export class Session {
     this.snapshotValue = this.buildSnapshot()
     this.applyAudioSettings()
     this.releaseFeatures = apiClient.subscribeFeatures(event => {
-      if (event.topic === 'danmaku-preferences' && event.data && typeof event.data === 'object') {
+      if (this.disposed) return
+      if (event.topic === 'stylepacks-changed') {
+        void this.refreshPresets()
+      } else if (event.topic === 'danmaku-preferences' && event.data && typeof event.data === 'object') {
         this.configureDanmakuProcessing((event.data as { preferences?: unknown }).preferences)
       } else if (event.topic === 'pip' && event.data && typeof event.data === 'object') {
         const value = event.data as { phase?: string; options?: { lowPower?: boolean } }
         this.setPresentationReduced(value.phase === 'ready' && value.options?.lowPower === true)
       }
     })
+    this.startPlaybackObservation()
   }
 
   get snapshot(): SessionSnapshot {
@@ -354,6 +378,8 @@ export class Session {
       notices: this.noticeList,
       buffers: { ...this.bufferStates },
       qualityBusy: { ...this.qualityBusy },
+      playbackRecovery: this.playbackRecovery,
+      playbackDiagnostics: { official: this.diagnostics.summary('official'), commentary: this.diagnostics.summary('commentary') },
     }
   }
 
@@ -375,11 +401,11 @@ export class Session {
     return this.sampler
   }
 
-  profileFor(role: SourceRole): RecognitionProfile | null {
+  profileFor(role: SourceRole): ActiveProfile | null {
     return this.profileMap[role]
   }
 
-  setProfile(role: SourceRole, profile: RecognitionProfile | null): void {
+  setProfile(role: SourceRole, profile: ActiveProfile | null): void {
     ++this.profileRevision
     ++this.autoRequestRevision
     this.autoSync.cancel(false)
@@ -390,7 +416,7 @@ export class Session {
   }
 
   /** Both roles share one countdown profile: it is the same on-screen clock. */
-  setProfileForAll(profile: RecognitionProfile | null): void {
+  setProfileForAll(profile: ActiveProfile | null): void {
     ++this.profileRevision
     ++this.autoRequestRevision
     this.autoSync.cancel(false)
@@ -426,22 +452,22 @@ export class Session {
    *
    * The server validates on write, but a preset file can be edited by hand between then
    * and now, and a malformed profile would fail inside the recognition worker where there
-   * is nowhere useful to report it. `parseProfile` also migrates a v1 file forward.
+   * is nowhere useful to report it. Imported files must satisfy the current style-pack contract.
    */
-  private async fetchProfile(id: string, revision: number): Promise<RecognitionProfile | null> {
+  private async fetchProfile(id: string, revision: number): Promise<ActiveProfile | null> {
     const result = await apiClient.getPreset(id)
     if (revision !== this.profileRevision || this.disposed) return null
     if (!result.ok) {
       this.notice('error', `识别场景 ${id} 载入失败：${result.message}`)
       return null
     }
-    const parsed = parseProfile(result.value.profile)
-    if (!parsed.profile) {
+    const parsed = parseHudStylePack(result.value.profile)
+    if (!parsed.pack) {
       const first = parsed.issues.find((issue) => issue.severity === 'error')
       this.notice('error', `识别场景 ${id} 格式无效：${first?.message ?? '未知问题'}`)
       return null
     }
-    return parsed.profile
+    return parsed.pack
   }
 
   /**
@@ -452,7 +478,11 @@ export class Session {
    * evidence that a stored preset is gone.
    */
   async refreshPresets(): Promise<boolean> {
+    if (this.disposed) return false
+    const revision = ++this.presetListRevision
     const result = await apiClient.listPresets()
+    if (this.disposed) return false
+    if (revision !== this.presetListRevision) return false
     if (!result.ok) return false
     this.presetList = result.value.presets
     this.notify()
@@ -467,6 +497,7 @@ export class Session {
    * actually said so, or restarting while it is down would throw the choice away.
    */
   async boot(): Promise<void> {
+    this.startPlaybackObservation()
     void apiClient.feature('getDanmakuFeatures', undefined).then(result => {
       if (!this.disposed && result?.ok) this.configureDanmakuProcessing(result.value.preferences)
     })
@@ -561,7 +592,13 @@ export class Session {
 
   beginSourceChange(role: SourceRole): number {
     this.invalidateAutomaticWork(role)
+    this.changingSources.add(role)
     return ++this.sourceGeneration[role]
+  }
+  endSourceChange(role: SourceRole, generation: number): void {
+    if (generation !== this.sourceGeneration[role]) return
+    this.changingSources.delete(role)
+    this.resetPlaybackObservation()
   }
   sourceRevision(role: SourceRole): number { return this.sourceGeneration[role] }
 
@@ -569,29 +606,32 @@ export class Session {
     this.invalidateOffsetRequests()
     this.invalidateAutomaticWork(role, options)
     const generation = ++this.sourceGeneration[role]
-    if (!descriptor.url.includes('/buffer/')) {
-      await apiClient.stopBuffer(role)
-      this.bufferStates = { ...this.bufferStates, [role]: null }
-    }
-    if (generation !== this.sourceGeneration[role] || this.disposed) return
-    await this.engine.load(role, descriptor)
-    if (generation !== this.sourceGeneration[role] || this.disposed) return
-    const state = this.engine.getState()[role]
-    if (state.status === 'error') {
-      this.notice('error', `${roleName(role)}加载失败：${state.error?.message ?? '未知错误'}`)
-      return
-    }
-    // A new source starts at its own position, so whatever rewind the old one carried is
-    // no longer applied to anything. Keeping the number would make the next plan compute
-    // its move from a rewind that does not exist.
-    this.applied = { ...this.applied, [role]: 0 }
-    this.requestedOffset = offsetFromRewind(this.applied)
-    this.autoSync.cancel(false)
-    this.notice('info', `${roleName(role)}已载入：${descriptor.label}`)
-    this.watchPicture(role, generation)
-    this.applyAudioSettings()
-    this.autoProfiles?.monitor(role)
-    this.notify()
+    this.changingSources.add(role)
+    try {
+      if (!descriptor.url.includes('/buffer/')) {
+        await apiClient.stopBuffer(role)
+        this.bufferStates = { ...this.bufferStates, [role]: null }
+      }
+      if (generation !== this.sourceGeneration[role] || this.disposed) return
+      await this.engine.load(role, descriptor)
+      if (generation !== this.sourceGeneration[role] || this.disposed) return
+      const state = this.engine.getState()[role]
+      if (state.status === 'error') {
+        this.notice('error', `${roleName(role)}加载失败：${state.error?.message ?? '未知错误'}`)
+        return
+      }
+      // A new source starts at its own position, so whatever rewind the old one carried is
+      // no longer applied to anything. Keeping the number would make the next plan compute
+      // its move from a rewind that does not exist.
+      this.applied = { ...this.applied, [role]: 0 }
+      this.requestedOffset = offsetFromRewind(this.applied)
+      this.autoSync.cancel(false)
+      this.notice('info', `${roleName(role)}已载入：${descriptor.label}`)
+      this.watchPicture(role, generation)
+      this.applyAudioSettings()
+      this.autoProfiles?.monitor(role)
+      this.notify()
+    } finally { this.endSourceChange(role, generation) }
   }
 
   /**
@@ -616,6 +656,8 @@ export class Session {
     this.invalidateOffsetRequests()
     this.invalidateAutomaticWork(role)
     ++this.sourceGeneration[role]
+    this.changingSources.delete(role)
+    if (role === 'commentary') this.disconnectDanmaku()
     void apiClient.stopBuffer(role)
     this.bufferStates = { ...this.bufferStates, [role]: null }
     this.engine.unload(role)
@@ -670,7 +712,7 @@ export class Session {
         this.notice('info', '画质已切换, 请恢复两路播放后点击立即同步')
         return
       }
-      const result = await this.syncNow()
+      const result = await this.executeSync(false)
       if (!result.applied) this.notice('warn', '画质已切换, 自动同步未完成, 请点击立即同步')
     } finally {
       this.qualityBusy = { ...this.qualityBusy, [role]: false }
@@ -733,11 +775,17 @@ export class Session {
     if (!Number.isFinite(deltaSeconds) || Math.abs(deltaSeconds) > 86_400) return Promise.resolve(false)
     return this.navigatePlayback(role, deltaSeconds)
   }
+  /** A point picked on the time line, kept in the same bookkeeping as a relative seek. */
+  seekPlaybackTo(role: SourceRole, target: number): Promise<boolean> {
+    if (!Number.isFinite(target)) return Promise.resolve(false)
+    return this.navigatePlayback(role, { to: target })
+  }
   returnPlaybackToLive(role: SourceRole): Promise<boolean> { return this.navigatePlayback(role, 'live') }
   /** Native PiP owns presentation; stop expensive recognition while the opt-in mode is active. */
   setPresentationReduced(reduced: boolean): void {
     if (this.disposed || this.pipPresentationReduced === reduced) return
     this.pipPresentationReduced = reduced
+    this.resetPlaybackObservation()
     if (reduced) {
       this.autoProfiles?.suspend()
       this.stopScheduler()
@@ -748,9 +796,11 @@ export class Session {
     }
     this.notify()
   }
-  private navigatePlayback(role: SourceRole, move: number | 'live'): Promise<boolean> {
+  private navigatePlayback(role: SourceRole, move: number | 'live' | { to: number }): Promise<boolean> {
     if (!SOURCE_ROLES.includes(role) || this.disposed || this.playbackPending >= 32) return Promise.resolve(false)
     const generation = this.sourceGeneration[role]
+    this.playbackRecovery = null
+    this.resetPlaybackObservation()
     this.autoSync.cancel(true); ++this.autoRequestRevision
     this.invalidateOffsetRequests()
     const automatic = this.automaticSeek
@@ -762,9 +812,10 @@ export class Session {
       if (this.disposed || generation !== this.sourceGeneration[role]) return false
       const before = this.engine.snapshot(role)
       if (!before?.ready) return false
-      const requested = move === 'live' ? latestPlayableTime(before.timebase) : before.currentTime + move
+      const requested = move === 'live' ? latestPlayableTime(before.timebase, this.engine.livePosition(role))
+        : typeof move === 'number' ? before.currentTime + move : move.to
       if (requested === null) return false
-      const target = clampSeek(requested, before.timebase).target
+      const target = clampPlayableSeek(requested, before.timebase, this.engine.livePosition(role)).target
       const capture = this.captureSeekMovement(role)
       const reached = await this.engine.seek(role, target)
       if (this.disposed || generation !== this.sourceGeneration[role]) return false
@@ -794,6 +845,8 @@ export class Session {
 
   applyOffset(nextOffset: number, options: { fromAuto?: boolean } = {}): Promise<OffsetPlan> {
     if (!options.fromAuto) {
+      this.playbackRecovery = null
+      this.resetPlaybackObservation()
       // Manual input wins over a scheduled run, and revokes its authorization: after a
       // human moves the slider the scheduler must not quietly overwrite that choice.
       this.autoSync.cancel(true)
@@ -943,6 +996,92 @@ export class Session {
 
   // --------------------------------------------------------------- auto sync
 
+  private canObservePlayback(): boolean {
+    return !this.disposed && !this.pipPresentationReduced && !this.autoSync.isRunning
+      && !this.automaticSeek && !this.offsetDrain && this.playbackPending === 0
+      && this.changingSources.size === 0 && !SOURCE_ROLES.some(role => this.qualityBusy[role]
+        || this.engine.playbackSample(role).busy)
+  }
+
+  private resetPlaybackObservation(): void {
+    this.progress = createPlaybackProgress()
+    this.diagnosticProgress = { official: createPlaybackProgress(), commentary: createPlaybackProgress() }
+    this.reconnectPending = false
+    for (const role of SOURCE_ROLES) {
+      this.diagnostics.endStall(role)
+      const sample = this.engine.playbackSample(role)
+      this.continuity[role] = sample.discontinuities
+      this.observationRevision[role] = sample.observationRevision
+    }
+  }
+
+  private startPlaybackObservation(): void {
+    if (this.observationTimer !== null || this.disposed) return
+    this.observationAt = null
+    this.observationTimer = setInterval(() => this.observePlayback(), 500)
+  }
+
+  private stopPlaybackObservation(): void {
+    if (this.observationTimer !== null) clearInterval(this.observationTimer)
+    this.observationTimer = null
+    this.resetPlaybackObservation()
+  }
+
+  private observePlayback(): void {
+    const at = this.now()
+    const timerLateMs = this.observationAt === null ? 0 : Math.max(0, at - this.observationAt - 500)
+    this.observationAt = at
+    const samples = { official: this.engine.playbackSample('official'), commentary: this.engine.playbackSample('commentary') }
+    const enabled = this.canObservePlayback()
+      && SOURCE_ROLES.every(role => samples[role].observationRevision === this.observationRevision[role])
+    const media = this.engine.getState()
+    const paired = enabled && SOURCE_ROLES.every(role => media[role].status === 'ready')
+    for (const role of SOURCE_ROLES) {
+      const sample = samples[role]
+      const observing = enabled && media[role].status === 'ready'
+      this.diagnostics.record(role, { ...sample, at, timerLateMs, observing, localBuffer: this.bufferStates[role] })
+      // A source's diagnostic clock remains useful when its peer is absent or paused.
+      const individual = observePlaybackProgress(this.diagnosticProgress[role], { at, official: sample, commentary: sample }, observing)
+      this.diagnosticProgress[role] = individual.state
+      if (individual.started.length) this.diagnostics.startStall(role)
+      if (individual.ended.length || !observing || sample.paused || sample.seeking || sample.ended
+        || timerLateMs > 1000) this.diagnostics.endStall(role)
+      if (paired && !sample.paused && !sample.seeking && !sample.ended
+        && sample.discontinuities > this.continuity[role]) this.reconnectPending = true
+      this.continuity[role] = sample.discontinuities
+      this.observationRevision[role] = sample.observationRevision
+    }
+    const result = observePlaybackProgress(this.progress, { at, ...samples }, paired)
+    this.progress = result.state
+    if (!paired || SOURCE_ROLES.some(role => samples[role].paused || samples[role].seeking || samples[role].ended)
+      || timerLateMs > 1000) this.reconnectPending = false
+    if (result.recovery || (this.reconnectPending && !result.state.episode)) {
+      this.playbackRecovery = this.reconnectPending
+        ? { kind: 'reconnect', driftSeconds: null }
+        : { kind: 'stall', driftSeconds: result.recovery!.driftSeconds }
+      this.reconnectPending = false
+      this.notify()
+      // Failure keeps the prompt. Neither this call nor a scheduler tick can re-arm it.
+      if (this.settingsValue.autoSyncEnabled && this.autoSync.autoApplyAuthorized && this.canObservePlayback()) {
+        this.startScheduler()
+        void this.executeSync(false)
+      }
+    }
+    if (at - this.diagnosticNotifyAt >= 1000) {
+      this.diagnosticNotifyAt = at
+      this.notify()
+    }
+  }
+
+  exportPlaybackDiagnostics(): ReturnType<PlaybackDiagnostics['export']> { return this.diagnostics.export() }
+
+  private cancelledSyncResult(): AutoSyncRunResult {
+    return { phase: 'failed', dryRun: false, estimate: null, plan: null, applied: false,
+      failure: { kind: 'cancelled', message: '自动同步已取消' }, divergence: null,
+      samples: { official: 0, commentary: 0 }, jumps: { official: 0, commentary: 0 },
+      startedAt: this.now(), finishedAt: this.now() }
+  }
+
   /** Measure only. Allowed even when auto-apply has been revoked. */
   async measureOnce(): Promise<AutoSyncRunResult> {
     const result = await this.autoSync.dryRun(this.applied)
@@ -951,15 +1090,17 @@ export class Session {
   }
 
   async syncNow(): Promise<AutoSyncRunResult> {
+    return this.executeSync(true)
+  }
+
+  /** Recovery shares the controller's scheduler gate, without granting authorization. */
+  private async executeSync(authorize: boolean): Promise<AutoSyncRunResult> {
+    if (!authorize && (!this.autoSync.autoApplyAuthorized || this.autoSync.isRunning)) return this.cancelledSyncResult()
     const revision = ++this.autoRequestRevision
     if (this.offsetDrain) await this.offsetDrain
-    if (revision !== this.autoRequestRevision || this.disposed) return {
-      phase: 'failed', dryRun: false, estimate: null, plan: null, applied: false,
-      failure: { kind: 'cancelled', message: '自动同步已取消' }, divergence: null,
-      samples: { official: 0, commentary: 0 }, jumps: { official: 0, commentary: 0 },
-      startedAt: this.now(), finishedAt: this.now(),
-    }
-    this.autoSync.authorize()
+    if (revision !== this.autoRequestRevision || this.disposed
+      || (!authorize && !this.autoSync.autoApplyAuthorized)) return this.cancelledSyncResult()
+    if (authorize) this.autoSync.authorize()
     const result = await this.autoSync.run(this.applied)
     if (revision !== this.autoRequestRevision || this.disposed) return result
     if (result.appliedRewind || result.applied) {
@@ -1030,12 +1171,17 @@ export class Session {
     this.autoSync.cancel(false)
   }
   editAutoProfile(role: SourceRole): void {
+    this.candidateRole = role
     this.candidateToEdit = this.autoProfiles?.controller.state(role).candidate ?? this.profileFor(role)
   }
-  takeEditingCandidate(): RecognitionProfile | null {
+  takeEditingCandidate(): HudStylePack | null {
     const candidate = this.candidateToEdit
     // React StrictMode can invoke a state initializer twice.
-    return candidate ? structuredClone(candidate) : null
+    if (!candidate) return null
+    if (isHudPack(candidate)) return structuredClone(candidate)
+    const video = this.engine.element(this.candidateRole)
+    if (!video.videoWidth || !video.videoHeight) return null
+    return learnedClockPack(candidate, { width: video.videoWidth, height: video.videoHeight })
   }
   clearEditingCandidate(): void { this.candidateToEdit = null }
   async saveAutoProfile(role: SourceRole): Promise<boolean> {
@@ -1043,7 +1189,9 @@ export class Session {
     if (!candidate) return false
     // A new id on every explicit save prevents silent replacement of an existing preset.
     const id = `auto/${role}-${this.now()}-${++this.noticeSeq}`
-    const profile = { ...structuredClone(candidate), id, updatedAt: this.now() }
+    const video = this.engine.element(role)
+    if (!video?.videoWidth || !video.videoHeight) { this.notice('warn', '视频原生尺寸尚未就绪'); return false }
+    const profile = { ...learnedClockPack(candidate, { width: video.videoWidth, height: video.videoHeight }), id }
     const result = await apiClient.savePreset(id, profile)
     if (!result.ok) { this.notice('warn', `候选保存失败: ${result.message}`); return false }
     this.notice('info', '候选已另存为新预设')
@@ -1051,6 +1199,10 @@ export class Session {
     return true
   }
   private invalidateAutomaticWork(role: SourceRole, options: { keepSessionProfile?: boolean } = {}): void {
+    this.playbackRecovery = null
+    this.diagnostics.reset(role)
+    this.continuity[role] = 0
+    this.resetPlaybackObservation()
     ++this.autoRequestRevision
     this.autoSync.cancel(false)
     this.autoProfiles?.reset(role)
@@ -1115,6 +1267,7 @@ export class Session {
   }
 
   disconnectDanmaku(): void {
+    this.parkedDanmakuRoom = null
     this.danmakuGeneration += 1
     this.unsubscribeDanmaku?.()
     this.unsubscribeDanmaku = null
@@ -1297,8 +1450,9 @@ export class Session {
    * here comes back on the next `boot`, so the page can be left and re-entered.
    */
   suspend(): void {
+    this.stopPlaybackObservation()
     // Remembered so the next boot reconnects it: the room is part of what was loaded.
-    this.parkedDanmakuRoom = this.danmakuState.room ?? this.parkedDanmakuRoom
+    const parkedDanmakuRoom = this.danmakuState.room ?? this.parkedDanmakuRoom
     ++this.autoRequestRevision
     this.autoProfiles?.suspend()
     this.stopScheduler()
@@ -1306,10 +1460,13 @@ export class Session {
     // so coming back must not report 「手动调整过偏移」 the user never made.
     this.autoSync.cancel(false)
     this.disconnectDanmaku()
+    this.parkedDanmakuRoom = parkedDanmakuRoom
   }
 
   /** Tear the session down for good. Only its owner may call this. */
   dispose(): void {
+    if (this.disposed) return
+    this.stopPlaybackObservation()
     this.releaseFeatures?.()
     this.invalidateOffsetRequests()
     this.disposed = true

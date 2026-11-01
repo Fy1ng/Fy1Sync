@@ -7,7 +7,8 @@ import { SessionProvider } from '../../app/SessionContext'
 import EditorPage from './EditorPage'
 import { apiClient } from '../../app/apiClient'
 import { profileStore } from '../../core/profileStore'
-import { CLOCK_CHARS, createEmptyProfile, TEMPLATE_PIXELS } from '../../core/profileSchema'
+import { CLOCK_CHARS, TEMPLATE_PIXELS } from '../../core/profileSchema'
+import { createEmptyHudStylePack } from '../../core/hudStylePack'
 import { packBitmap } from '../../core/bitmapCodec'
 
 const sessions: Session[] = []
@@ -31,7 +32,7 @@ describe('EditorPage desktop entry', () => {
     expect(screen.getByLabelText('名称')).toHaveValue('未命名场景')
     expect(screen.queryByLabelText('管理令牌')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '发布到本机' }))
-    expect(await screen.findByRole('status')).toHaveTextContent('roi.w 必须大于 0')
+    expect(await screen.findByRole('status', { name: '编辑器提示' })).toHaveTextContent('roi.w 必须大于 0')
     expect(invoke).toHaveBeenCalledWith('savePreset', expect.objectContaining({ token: '', etag: undefined }))
     expect(vi.mocked(invoke).mock.calls.some(([method]) => method === 'verifyAdmin')).toBe(false)
   })
@@ -62,7 +63,7 @@ describe('publish conflicts', () => {
     expect(screen.getByRole('button', { name: '载入对方版本（放弃本次修改）' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '用我的版本覆盖' }))
-    expect(await screen.findByRole('status')).toHaveTextContent('已发布为本机预设')
+    expect(await screen.findByRole('status', { name: '编辑器提示' })).toHaveTextContent('已发布为本机预设')
     const saves = calls.filter((call) => call.method === 'savePreset')
     expect(saves).toHaveLength(2)
     expect(saves[1]!.args).toEqual(expect.objectContaining({ etag: 'etag-theirs' }))
@@ -70,10 +71,14 @@ describe('publish conflicts', () => {
 })
 
 async function editingPublishedProfile() {
-  const profile = createEmptyProfile('test/published', 'Original')
-  profile.templates = Object.fromEntries(CLOCK_CHARS.map(char => [char, [{
-    id: char, data: packBitmap(new Uint8Array(TEMPLATE_PIXELS).fill(255)), createdAt: 1,
-  }]]))
+  const profile = createEmptyHudStylePack('test/published', 'Original')
+  for (const [index, char] of CLOCK_CHARS.entries()) {
+    const id = `glyph-${index}`
+    const ink = new Uint8Array(TEMPLATE_PIXELS)
+    ink[index] = 255
+    profile.bitmaps[id] = { width: 32, height: 48, data: packBitmap(ink) }
+    profile.variants[0]!.fields.clock!.glyphs[char] = [id]
+  }
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
   vi.spyOn(apiClient, 'listPresets').mockResolvedValue({ ok: true, value: { presets: [
     { id: profile.id, name: profile.name, etag: 'original-etag', templateChars: 11, updatedAt: 1 },
@@ -92,17 +97,48 @@ async function editingPublishedProfile() {
 }
 
 describe('editor saved and published state', () => {
+  it('refreshes cloud entries while retaining unsaved edits and the current local ETag', async () => {
+    const listeners: Array<Parameters<typeof apiClient.subscribeFeatures>[0]> = []
+    vi.spyOn(apiClient, 'subscribeFeatures').mockImplementation(listener => { listeners.push(listener); return () => {} })
+    const { profile, publish } = await editingPublishedProfile()
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'My unsaved edits' } })
+    vi.mocked(apiClient.listPresets).mockResolvedValue({ ok: true, value: { presets: [
+      { id: 'cloud/iem', name: 'New cloud pack', etag: 'cloud', templateChars: 11, updatedAt: 2, source: 'cloud' },
+    ] } })
+    await act(async () => { for (const emit of listeners) emit({ topic: 'stylepacks-changed', data: { revision: 2 } }) })
+    expect(screen.getByLabelText('名称')).toHaveValue('My unsaved edits')
+    expect(screen.getByRole('banner')).toHaveTextContent('未保存')
+    await openPreset()
+    expect(await screen.findByRole('button', { name: /New cloud pack/ })).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', { name: '发布到本机' }))
+    await waitFor(() => expect(publish).toHaveBeenCalledWith(profile.id,
+      expect.objectContaining({ name: 'My unsaved edits' }), '', 'original-etag'))
+  })
+
+  it('publishes an edited cloud preset as a local override without using its cloud ETag', async () => {
+    const { profile, read, publish } = await editingPublishedProfile()
+    read.mockResolvedValue({ ok: true, value: { profile, etag: 'cloud-etag', source: 'cloud' } })
+    await openPreset()
+    fireEvent.click(await screen.findByRole('button', { name: /Original/ }))
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2))
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'My cloud override' } })
+    fireEvent.click(screen.getByRole('button', { name: '发布到本机' }))
+    await waitFor(() => expect(publish).toHaveBeenCalledWith(profile.id,
+      expect.objectContaining({ name: 'My cloud override' }), '', undefined))
+  })
+
   it('keeps a saved draft unpublishable until the edited content is actually published', async () => {
     const { session, publish } = await editingPublishedProfile()
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Draft only' } })
     fireEvent.click(screen.getByRole('button', { name: '存为草稿' }))
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('已保存到本机草稿'))
+    await waitFor(() => expect(screen.getByRole('status', { name: '编辑器提示' })).toHaveTextContent('已保存到本机草稿'))
     fireEvent.click(screen.getByRole('button', { name: '应用到播放器' }))
-    expect(screen.getByRole('status')).toHaveTextContent('请先')
+    expect(screen.getByRole('status', { name: '编辑器提示' })).toHaveTextContent('请先')
     expect(session.profileFor('official')).toBeNull()
     expect(publish).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '发布到本机' }))
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('已发布为本机预设'))
+    await waitFor(() => expect(screen.getByRole('status', { name: '编辑器提示' })).toHaveTextContent('已发布为本机预设'))
     fireEvent.click(screen.getByRole('button', { name: '应用到播放器' }))
     expect(session.profileFor('official')?.name).toBe('Draft only')
   })
@@ -120,7 +156,7 @@ describe('editor saved and published state', () => {
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'New edits' } })
     await act(async () => finish({ ok: true, value: { id: profile.id, etag: 'submitted-etag', updatedAt: 4 } }))
     expect(screen.getByLabelText('名称')).toHaveValue('New edits')
-    expect(screen.getByRole('status')).toHaveTextContent('当前还有未发布的修改')
+    expect(screen.getByRole('status', { name: '编辑器提示' })).toHaveTextContent('当前还有未发布的修改')
     expect(screen.getByRole('banner')).toHaveTextContent('未保存')
     fireEvent.click(screen.getByRole('button', { name: '应用到播放器' }))
     expect(session.profileFor('official')).toBeNull()
@@ -138,7 +174,7 @@ describe('editor saved and published state', () => {
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Unsaved changes' } })
     await act(async () => finish({ id: profile.id, profile: draft.mock.calls[0]![0], updatedAt: 4 }))
     expect(screen.getByLabelText('名称')).toHaveValue('Unsaved changes')
-    expect(screen.getByRole('status')).toHaveTextContent('当前还有未保存的修改')
+    expect(screen.getByRole('status', { name: '编辑器提示' })).toHaveTextContent('当前还有未保存的修改')
     expect(screen.getByRole('banner')).toHaveTextContent('未保存')
   })
 
@@ -174,3 +210,69 @@ async function openPreset(): Promise<void> {
   if (trigger.getAttribute('aria-expanded') !== 'true') fireEvent.click(trigger)
   await waitFor(() => expect(screen.getByRole('dialog', { name: '打开' })).toHaveAttribute('data-open', 'true'))
 }
+
+describe('editor current field', () => {
+  it('disables and re-enables a field without losing its configuration or samples', async () => {
+    const { profile, draft, session } = await editingPublishedProfile()
+    const toggle = screen.getByRole('switch', { name: /启用当前字段/ })
+    expect(toggle).toBeChecked()
+    fireEvent.click(toggle)
+    expect(toggle).not.toBeChecked()
+    expect(screen.getByRole('slider', { name: '阈值' })).toBeDisabled()
+    for (const button of screen.getAllByRole('button', { name: /删除字符/ })) expect(button).toBeDisabled()
+    expect(screen.getByRole('option', { name: '倒计时 (已关闭)' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '应用到播放器' }))
+    expect(screen.getByRole('status', { name: '编辑器提示' })).toHaveTextContent('倒计时字段已关闭')
+    expect(session.profileFor('official')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '存为草稿' }))
+    await waitFor(() => expect(draft).toHaveBeenCalledTimes(1))
+    const saved = draft.mock.calls[0]![0]
+    expect(saved.bitmaps).toEqual(profile.bitmaps)
+    expect(saved.variants[0]!.fields.clock).toEqual({ ...profile.variants[0]!.fields.clock!, enabled: false })
+    fireEvent.click(toggle)
+    expect(screen.getByRole('slider', { name: '阈值' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: '存为草稿' }))
+    await waitFor(() => expect(draft).toHaveBeenCalledTimes(2))
+    expect(draft.mock.calls[1]![0].variants).toEqual(profile.variants)
+    expect(draft.mock.calls[1]![0].bitmaps).toEqual(profile.bitmaps)
+  })
+
+  it('keeps all twelve targets independently switchable and persists disabled cue defaults', async () => {
+    const { draft } = await editingPublishedProfile()
+    const target = screen.getByRole('combobox', { name: '当前字段' })
+    for (const id of ['clock', 'scoreLeft', 'scoreRight', 'replay', 'bomb', 'timeout', 'timeoutRight', 'roundPrefix', 'roundOver', 'roundHistory', 'scoreboard', 'organizer']) {
+      fireEvent.change(target, { target: { value: id } })
+      const toggle = screen.getByRole('switch', { name: /启用当前字段/ })
+      expect(toggle).toBeChecked()
+      fireEvent.click(toggle)
+      expect(screen.getByRole('group', { name: '当前字段设置' })).toBeDisabled()
+    }
+    fireEvent.click(screen.getByRole('button', { name: '存为草稿' }))
+    await waitFor(() => expect(draft).toHaveBeenCalledOnce())
+    const variant = draft.mock.calls[0]![0].variants[0]!
+    for (const field of [...Object.values(variant.fields), ...Object.values(variant.cues), variant.organizer]) expect(field?.enabled).toBe(false)
+    expect(variant.fields.clock!.glyphs['0']).toEqual(['glyph-0'])
+    expect(variant.cues.roundOver!.templates).toEqual([])
+  })
+
+  it('switches threshold, glyphs and saved samples without changing the other fields', async () => {
+    const { profile, draft } = await editingPublishedProfile()
+    expect(screen.getAllByRole('button', { name: /删除字符/ })).toHaveLength(11)
+    fireEvent.change(screen.getByRole('combobox', { name: '当前字段' }), { target: { value: 'scoreLeft' } })
+    expect(screen.queryByRole('button', { name: ':' })).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('button', { name: /删除字符/ })).toHaveLength(0)
+    fireEvent.change(screen.getByRole('slider', { name: '阈值' }), { target: { value: '75' } })
+    fireEvent.change(screen.getByRole('combobox', { name: '当前字段' }), { target: { value: 'scoreRight' } })
+    expect(screen.getByRole('slider', { name: '阈值' })).toHaveValue('150')
+    fireEvent.change(screen.getByRole('slider', { name: '阈值' }), { target: { value: '110' } })
+    fireEvent.change(screen.getByRole('combobox', { name: '当前字段' }), { target: { value: 'clock' } })
+    expect(screen.getAllByRole('button', { name: /删除字符/ })).toHaveLength(11)
+    expect(screen.getByRole('slider', { name: '阈值' })).toHaveValue('150')
+    fireEvent.click(screen.getByRole('button', { name: '存为草稿' }))
+    await waitFor(() => expect(draft).toHaveBeenCalled())
+    const saved = draft.mock.calls[0]![0]
+    expect(saved.variants[0]!.fields.clock).toEqual(profile.variants[0]!.fields.clock)
+    expect(saved.variants[0]!.fields.scoreLeft!.preprocess.threshold).toBe(75)
+    expect(saved.variants[0]!.fields.scoreRight!.preprocess.threshold).toBe(110)
+  })
+})

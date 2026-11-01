@@ -145,17 +145,15 @@ function OffsetEditor({ value, onDone }: { value: number; onDone: () => void }):
   )
 }
 
-/**
- * Real-recording acceptance has not yet passed 0.35 s on two different events, so the first
- * release labels automatic alignment as testing and points at the manual controls.
- */
-const AUTO_ALIGN_TESTING = true
-/** Said over the picture on each run while recognition only works in the easy case. */
-const AUTO_ALIGN_LIMITS = '目前自动同步条件较苛刻，必须在同一比分的非回放/冷却时间内同步才可能同步成功，正在优化中'
+/** Event-specific HUD coverage and cross-resolution matching are still being adapted. */
+const AUTO_ALIGN_ADAPTING = true
+const AUTO_ALIGN_REASON = '各赛事的 HUD 布局, 字体和清晰度尚未全部适配, 回放, 暂停或切镜头也可能影响识别.'
+/** Both the button and its shortcut explain the same current limitations before a run. */
+const AUTO_ALIGN_LIMITS = `自动对齐适配中: ${AUTO_ALIGN_REASON} 请在同一回合, 比分一致且倒计时正常走动时同步; 不准时可手动微调.`
 
 /** 自动对齐 from its button or the A key. */
 export function startAutoAlign(session: Session): void {
-  if (AUTO_ALIGN_TESTING) session.notice('warn', AUTO_ALIGN_LIMITS)
+  if (AUTO_ALIGN_ADAPTING) session.notice('warn', AUTO_ALIGN_LIMITS)
   void session.syncNow()
 }
 
@@ -181,7 +179,7 @@ export function AutoAlign(): React.ReactNode {
         <button type="button" className="align-main" disabled={busy || !bothReady} onClick={() => startAutoAlign(session)}
           title={bothReady ? '识别两路画面中的比赛倒计时并自动对齐（A）' : '两路均载入后才能对齐'}>
           自动对齐
-          {AUTO_ALIGN_TESTING && <span className="align-beta" aria-hidden="true">测试中</span>}
+          {AUTO_ALIGN_ADAPTING && <span className="align-beta" aria-hidden="true">适配中</span>}
         </button>
       )}
       <button type="button" className="align-more" {...menu.trigger} aria-label="对齐选项"
@@ -189,9 +187,9 @@ export function AutoAlign(): React.ReactNode {
         <Icon name="chevron" />
       </button>
       <Popover {...menu.popover} className="align-menu" label="对齐选项">
-        {AUTO_ALIGN_TESTING && (
-          <p className="align-testing"><span className="tag">测试中</span>
-            自动对齐还没在足够多的真实比赛上验证。对不上时用「回退画面」「快进画面」微调，或点中间的秒数直接输入。</p>
+        {AUTO_ALIGN_ADAPTING && (
+          <p className="align-testing"><span className="tag">适配中</span>
+            {AUTO_ALIGN_REASON} 对不上时用回退画面或快进画面微调, 也可点中间的秒数直接输入.</p>
         )}
         <Switch label="比赛中保持对齐" detail={autoSync.nextRunInSeconds !== null ? `${Math.max(0, Math.round(autoSync.nextRunInSeconds))} 秒后再次对齐` : undefined}
           checked={settings.autoSyncEnabled} onChange={(checked) => session.setAutoSyncEnabled(checked)} />
@@ -252,9 +250,10 @@ export function CountdownPrompt(): React.ReactNode {
     const state = snapshot.autoProfiles[role]
     return state.phase === 'not-found' || state.phase === 'unsupported' || state.phase === 'locating' || state.phase === 'learning'
   })
-  if (rows.length === 0) return null
+  if (rows.length === 0 && !snapshot.playbackRecovery) return null
   return (
     <div className="prompt-stack" aria-live="polite">
+      <PlaybackRecoveryPrompt />
       {rows.map((role) => {
         const state = snapshot.autoProfiles[role]
         const working = state.phase === 'locating' || state.phase === 'learning'
@@ -275,6 +274,24 @@ export function CountdownPrompt(): React.ReactNode {
           </div>
         )
       })}
+    </div>
+  )
+}
+
+export function PlaybackRecoveryPrompt(): React.ReactNode {
+  const session = useSession()
+  const snapshot = useSessionSnapshot()
+  const recovery = snapshot.playbackRecovery
+  if (!recovery) return null
+  const busy = session.autoSync.isRunning || session.offsetBusy || snapshot.autoProfileBusy
+  const ready = SOURCE_ROLES.every(role => snapshot.media[role].status === 'ready')
+  return (
+    <div className="prompt" role="status">
+      <span className="prompt-text">{recovery.kind === 'reconnect'
+        ? '重新连接后, 两路可能错开了'
+        : `画面刚卡顿, 两路可能错开了约 ${recovery.driftSeconds?.toFixed(1)} 秒`}</span>
+      <button type="button" className="btn-quiet small" disabled={busy || !ready}
+        onClick={() => startAutoAlign(session)}>重新对齐</button>
     </div>
   )
 }

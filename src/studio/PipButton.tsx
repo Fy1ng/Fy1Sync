@@ -1,16 +1,21 @@
 /**
- * Picture-in-picture for the main picture, from the dock (handoff items 05, 06).
+ * Picture-in-picture from the dock (handoff items 05, 06).
  *
- * Two kinds, one button: the system window is Chromium's own and shows only the video; the
- * enhanced window is the app's `/pip` page with this room's danmaku and a send box. The
+ * Two kinds, one button: the system window is Chromium's own and shows only the main video;
+ * the enhanced window is the app's `/pip` page with that room's danmaku and a send box. The
  * system one must be requested inside the click itself (it needs the user gesture), so its
  * menu item calls `toggleNativePip` directly rather than through any async step first.
+ *
+ * The enhanced window plays the commentary whenever one is loaded, whichever side is on the
+ * big screen: it takes over the sound and main mutes its whole window meanwhile, so it must
+ * carry what was being heard. Its picture is the commentary stream itself, no camera crop.
  */
 
 import { useEffect, useState } from 'react'
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { PipState } from '../../electron/pipManager'
+import type { SourceRole } from '../core/types'
 import { PlaybackControls } from '../media/playbackControls'
 import { Icon, Popover, usePopover } from './kit'
 
@@ -30,6 +35,7 @@ export function PipButton(): React.ReactNode {
   const [native, setNative] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
   const loaded = media[mainRole].status !== 'empty'
+  const enhancedRole: SourceRole = media.commentary.status !== 'empty' ? 'commentary' : mainRole
 
   useEffect(() => {
     let live = true
@@ -70,7 +76,7 @@ export function PipButton(): React.ReactNode {
     setProblem(null)
     const result = enhancedOpen
       ? await apiClient.feature('closeEnhancedPip', undefined)
-      : await apiClient.feature('openEnhancedPip', { id: mainRole })
+      : await apiClient.feature('openEnhancedPip', { id: enhancedRole })
     if (!result.ok) { setProblem(result.message); return }
     setPip(result.value)
     if (result.value.phase === 'failed') setProblem(result.value.message ?? '画中画打开失败')
@@ -90,7 +96,7 @@ export function PipButton(): React.ReactNode {
         </button>
         <button type="button" className="menu-item" onClick={() => void toggleEnhanced()} disabled={pip?.phase === 'opening'}>
           {pip?.phase === 'opening' ? '正在打开…' : enhancedOpen ? '关闭增强画中画' : '增强画中画'}
-          <span className="menu-note">含弹幕与发送</span>
+          <span className="menu-note">{enhancedRole === mainRole ? '含弹幕与发送' : '播放解说，含弹幕与发送'}</span>
         </button>
         {problem && <p className="form-error" role="alert">{problem}</p>}
       </Popover>

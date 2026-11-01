@@ -1,8 +1,10 @@
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { _electron, expect, test as baseTest, type ElectronApplication, type Page } from '@playwright/test'
+import type { StylePackSource } from '../electron/stylePackSyncContracts'
+import type { OnlineUpdateSource } from '../electron/onlineUpdateContracts'
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 const testDataRoot = process.env.STREAM_SYNC_E2E_DATA_ROOT || path.join(projectRoot, 'e2e', '.data')
@@ -14,10 +16,15 @@ export interface RunningApplication {
   page: Page
   restart(): Promise<void>
   close(): Promise<void>
+  setStylePackResponses(responses: Record<string, string>, fail?: boolean): Promise<void>
+  setOnlineUpdateResponses(responses: Record<string, string>, fail?: boolean): Promise<void>
 }
 
 /** Launch the built application with a disposable profile and preset store. */
-export async function launchApplication(label: string, options: { softwareVideo?: boolean } = {}): Promise<RunningApplication> {
+export async function launchApplication(label: string, options: { softwareVideo?: boolean
+  stylePacks?: { source: StylePackSource; responses: Record<string, string> }
+  onlineUpdates?: { source: OnlineUpdateSource; responses: Record<string, string> }
+} = {}): Promise<RunningApplication> {
   const dataDir = path.join(testDataRoot, randomUUID().slice(0, 12))
   await mkdir(dataDir, { recursive: true })
   const temporaryDir = path.join(dataDir, 'temp')
@@ -33,12 +40,32 @@ export async function launchApplication(label: string, options: { softwareVideo?
     STREAM_SYNC_OFFLINE_E2E: process.env.STREAM_SYNC_LIVE_TESTS === '1' || process.env.STREAM_SYNC_YOUTUBE_ADAPTIVE === '1' ? '0' : '1',
     TEMP: temporaryDir, TMP: temporaryDir,
   })
+  const setStylePackResponses = async (responses: Record<string, string>, fail = false) => {
+    if (!options.stylePacks || env.STREAM_SYNC_OFFLINE_E2E !== '1') throw new Error('Style pack fixture requires an offline test profile')
+    await mkdir(env.STREAM_SYNC_DATA_DIR!, { recursive: true })
+    const fixture = path.join(env.STREAM_SYNC_DATA_DIR!, 'stylepack-fixture.json')
+    const temporary = fixture + '.tmp'
+    await writeFile(temporary, JSON.stringify({ source: options.stylePacks.source, responses, fail }))
+    await rename(temporary, fixture)
+  }
+  if (options.stylePacks) await setStylePackResponses(options.stylePacks.responses)
+  const setOnlineUpdateResponses = async (responses: Record<string, string>, fail = false) => {
+    if (!options.onlineUpdates || env.STREAM_SYNC_OFFLINE_E2E !== '1') throw new Error('Online update fixture requires an offline test profile')
+    const content = JSON.stringify({ source: options.onlineUpdates.source, responses, fail })
+    if (Buffer.byteLength(content) > 96 * 1_048_576) throw new Error('Online update fixture exceeds the offline transport limit')
+    await mkdir(env.STREAM_SYNC_DATA_DIR!, { recursive: true })
+    const fixture = path.join(env.STREAM_SYNC_DATA_DIR!, 'online-update-fixture.json')
+    const temporary = fixture + '.tmp'
+    await writeFile(temporary, content)
+    await rename(temporary, fixture)
+  }
+  if (options.onlineUpdates) await setOnlineUpdateResponses(options.onlineUpdates.responses)
 
   let application: ElectronApplication | undefined
   let page: Page
   const launch = async () => {
     application = await _electron.launch({
-      args: [path.join(projectRoot, 'dist', 'electron', 'main.cjs'), '--autoplay-policy=no-user-gesture-required', '--mute-audio',
+      args: [path.join(process.env.STREAM_SYNC_E2E_APP_DIR || path.join(projectRoot, 'dist'), 'electron', 'main.cjs'), '--autoplay-policy=no-user-gesture-required', '--mute-audio',
         ...((options.softwareVideo ?? process.env.STREAM_SYNC_E2E_SOFTWARE_VIDEO === '1') ? ['--disable-accelerated-video-decode'] : [])],
       cwd: projectRoot,
       env,
@@ -62,6 +89,8 @@ export async function launchApplication(label: string, options: { softwareVideo?
     return {
       get application() { return application! },
       get page() { return page },
+      setStylePackResponses,
+      setOnlineUpdateResponses,
       async restart() {
         await application!.close()
         await launch()

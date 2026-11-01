@@ -1,6 +1,6 @@
 import { build } from 'vite'
 import { fileURLToPath } from 'node:url'
-import { mkdir, writeFile, rm, readFile } from 'node:fs/promises'
+import { cp, mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 const root = new URL('../', import.meta.url)
@@ -51,6 +51,7 @@ export async function buildElectron(write = true) {
   })
   const runtime = await buildNetworkRuntime(write)
   if (write) {
+    await cp(new URL('packaging/icon.png', root), new URL('dist/electron/icon.png', root))
     await mkdir(new URL('dist', root), { recursive: true })
     const { name, version } = JSON.parse(await readFile(new URL('package.json', root), 'utf8'))
     await writeFile(new URL('dist/package.json', root), JSON.stringify({ name, version, main: 'electron/main.cjs' }, null, 2) + '\n')

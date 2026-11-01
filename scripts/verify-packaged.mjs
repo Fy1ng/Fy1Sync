@@ -118,16 +118,16 @@ for (const [label, folder] of [['unpacked', path.join(root, '.release', 'win-unp
     if (!status.ok || status.value.tools.some(tool => tool.source !== 'bundled' || !tool.available || /失败|不可用/.test(tool.version)) || !status.value.provider.available || status.value.provider.source !== 'bundled' || status.value.fixturesAvailable) throw new Error('Packaged tools were not selected from bundled resources')
     const provider = await run(exe, [path.join(tools, 'provider', 'server', 'build', 'generate_once.js'), '--version'], childEnv)
     if (provider !== '2.0.2') throw new Error('Unexpected packaged provider version')
-    const cachePrivate = await application.evaluate((_electron, cache) => new Promise((resolve, reject) => {
-      const { spawn } = process.getBuiltinModule('node:child_process')
-      const systemRoot = process.env.SystemRoot ?? 'C:\\Windows'
-      const script = "$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value;$acl=Get-Acl -LiteralPath $env:STREAM_SYNC_CACHE_ACL_PATH;$rules=@($acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])|Where-Object {$_.AccessControlType -eq 'Allow'});if(-not $acl.AreAccessRulesProtected -or @($rules|Where-Object {$_.IdentityReference.Value -ne $sid -and -not $_.IdentityReference.Value.StartsWith('S-1-15-3-')}).Count -ne 0){exit 1};Write-Output 'PRIVATE_OK'"
-      const child = spawn(systemRoot + '\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-        windowsHide: true, shell: false, env: { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => name.toLowerCase() !== 'psmodulepath')), STREAM_SYNC_CACHE_ACL_PATH: cache }, stdio: ['ignore', 'pipe', 'ignore'],
-      })
-      let output = ''; child.stdout.on('data', b => output += b)
-      child.once('error', reject); child.once('close', code => code === 0 && output.trim() === 'PRIVATE_OK' ? resolve(true) : reject(new Error('Provider cache is not private')))
-    }), path.join(profile, 'provider-cache'))
+    // The application intentionally no longer rewrites Windows ACLs. Verify the actual
+    // storage contract: a regular directory inside this disposable userData, not global cache.
+    const cacheIsolated = await application.evaluate(({ app }, expectedProfile) => {
+      const fs = process.getBuiltinModule('node:fs'), path = process.getBuiltinModule('node:path')
+      const base = fs.realpathSync(app.getPath('userData'))
+      if (base !== fs.realpathSync(expectedProfile)) throw new Error('Unexpected package verification profile')
+      const cache = path.join(base, 'provider-cache'), info = fs.lstatSync(cache)
+      if (!info.isDirectory() || info.isSymbolicLink() || path.dirname(fs.realpathSync(cache)) !== base) throw new Error('Provider cache escapes the isolated profile')
+      return true
+    }, profile)
     await expect(page).toHaveTitle('Fy1Sync')
     const intake = page.getByRole('dialog', { name: '添加直播间', exact: true })
     await expect(intake).toBeVisible()
@@ -140,14 +140,13 @@ for (const [label, folder] of [['unpacked', path.join(root, '.release', 'win-unp
     const probe = JSON.parse(await run(path.join(tools, 'ffmpeg', 'ffprobe.exe'), ['-v', 'error', '-show_entries', 'stream=codec_name,width,height', '-of', 'json', copiedMedia], cleanEnv))
     if (!probe.streams?.some(stream => stream.width === 1280 && stream.height === 720)) throw new Error('Packaged ffmpeg/ffprobe remux failed')
     const ffmpegChecks = await probePackagedFfmpeg({ ffmpeg: path.join(tools, 'ffmpeg', 'ffmpeg.exe'), directory: path.join(evidence, `ffmpeg-${label}-${randomUUID()}`), env: runtimeEnv })
+    await intake.getByRole('radiogroup', { name: '添加到', exact: true }).getByRole('radio', { name: /^画面/ }).click()
     await page.locator('.studio').evaluate((element, base64) => {
       const bytes = Uint8Array.from(atob(base64), character => character.charCodeAt(0))
       const transfer = new DataTransfer()
       transfer.items.add(new File([bytes], 'official.mp4', { type: 'video/mp4' }))
       element.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }))
     }, (await readFile(media)).toString('base64'))
-    await intake.getByRole('group', { name: '选择添加位置', exact: true })
-      .getByRole('button', { name: '画面', exact: true }).click()
     const video = page.locator('video.media-element[data-role=official]')
     await expect.poll(() => video.evaluate(v => v.readyState)).toBeGreaterThanOrEqual(2)
     await intake.getByRole('button', { name: '开始观看', exact: true }).click()
@@ -171,7 +170,7 @@ for (const [label, folder] of [['unpacked', path.join(root, '.release', 'win-unp
     const editor = await sample.evaluate(image => ({ width: image.naturalWidth, height: image.naturalHeight }))
     await page.screenshot({ path: path.join(evidence, `${label}-editor.png`) })
     if (requests || errors.length) throw new Error('Packaged offline playback/editor emitted external requests or page errors')
-    result = { label, executable: exe, packageArtifacts: report.artifacts, nodeNetworks, mainNetwork, status: status.value, providerDependencies: { canvas: false, nativeFiles: 0 }, provider, providerCachePrivate: cachePrivate, remuxProbe: probe, ffmpegChecks, playback, editor, externalRequests: requests, pageErrors: errors }
+    result = { label, executable: exe, packageArtifacts: report.artifacts, nodeNetworks, mainNetwork, status: status.value, providerDependencies: { canvas: false, nativeFiles: 0 }, provider, providerCacheIsolated: cacheIsolated, remuxProbe: probe, ffmpegChecks, playback, editor, externalRequests: requests, pageErrors: errors }
     results.push(result)
   } finally {
     if (application) {
