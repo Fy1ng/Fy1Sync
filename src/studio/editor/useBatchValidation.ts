@@ -1,20 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { HudStylePack } from '../../core/hudStylePack'
 import { BatchValidationSession } from './batchValidationRunner'
-import { EMPTY_VALIDATION_STATE, type ValidationRange, type ValidationState } from './batchValidationTypes'
+import { EMPTY_VALIDATION_STATE, type ValidationRange, type ValidationRow, type ValidationState } from './batchValidationTypes'
+
+interface ActiveScan {
+  controller: AbortController
+  session: BatchValidationSession
+  stoppedRows: ValidationRow[] | null
+}
 
 export function useBatchValidation(options: { source: string; sourceName: string; pack: HudStylePack; duration: number }) {
   const latest = useRef(options)
   latest.current = options
   const [state, setState] = useState<ValidationState>(EMPTY_VALIDATION_STATE)
   const session = useRef<BatchValidationSession | null>(null)
-  const scan = useRef<AbortController | null>(null)
+  const scan = useRef<ActiveScan | null>(null)
   const preview = useRef<AbortController | null>(null)
   const mounted = useRef(true)
 
   useEffect(() => {
     mounted.current = true
-    scan.current?.abort()
+    scan.current?.controller.abort()
     preview.current?.abort()
     scan.current = null
     preview.current = null
@@ -22,14 +28,19 @@ export function useBatchValidation(options: { source: string; sourceName: string
     setState(EMPTY_VALIDATION_STATE)
     return () => {
       mounted.current = false
-      scan.current?.abort()
+      scan.current?.controller.abort()
       preview.current?.abort()
       scan.current = null
       preview.current = null
     }
   }, [options.source])
 
-  const stop = useCallback(() => { scan.current?.abort() }, [])
+  const stop = useCallback(() => {
+    const active = scan.current
+    if (!active || active.controller.signal.aborted) return
+    active.stoppedRows = [...active.session.rows]
+    active.controller.abort()
+  }, [])
   const cancelPreview = useCallback(() => {
     preview.current?.abort()
     preview.current = null
@@ -46,21 +57,26 @@ export function useBatchValidation(options: { source: string; sourceName: string
     }
     session.current = next
     const controller = new AbortController()
-    scan.current = controller
+    const active: ActiveScan = { controller, session: next, stoppedRows: null }
+    const source = latest.current.source
+    scan.current = active
     setState({ ...EMPTY_VALIDATION_STATE, phase: 'running', run: next.run })
     let lastPaint = 0
-    const current = (): boolean => mounted.current && session.current === next && scan.current === controller
+    const current = (): boolean => mounted.current && session.current === next && scan.current === active && latest.current.source === source
+    const finish = (phase: 'complete' | 'error', error?: unknown): void => {
+      if (!current()) return
+      // The runner settles only after releasing its decoder. Until then start/inspect stay locked.
+      scan.current = null
+      const stopped = controller.signal.aborted
+      setState(value => ({ ...value, phase: stopped ? 'stopped' : phase,
+        rows: active.stoppedRows ?? [...next.rows], error: stopped || phase === 'complete' ? null : error instanceof Error ? error.message : String(error) }))
+    }
     void next.scan(controller.signal, () => {
-      if (current() && Date.now() - lastPaint >= 100) {
+      if (current() && !controller.signal.aborted && Date.now() - lastPaint >= 100) {
         lastPaint = Date.now()
         setState(value => ({ ...value, rows: [...next.rows] }))
       }
-    }).then(() => {
-      if (current()) setState(value => ({ ...value, phase: controller.signal.aborted ? 'stopped' : 'complete', rows: [...next.rows] }))
-    }, error => {
-      if (current()) setState(value => ({ ...value, phase: controller.signal.aborted ? 'stopped' : 'error', rows: [...next.rows],
-        error: controller.signal.aborted ? null : error instanceof Error ? error.message : String(error) }))
-    }).finally(() => { if (scan.current === controller) scan.current = null })
+    }).then(() => finish('complete'), error => finish('error', error))
   }, [])
 
   const inspect = useCallback((index: number): void => {

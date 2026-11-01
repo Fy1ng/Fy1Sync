@@ -102,8 +102,11 @@ test('未训练样式仍扫完整段, 停止保留部分结果, 重新验收不�
   await panel.getByRole('spinbutton', { name: '验收结束时间' }).fill('6.5')
   await panel.getByRole('button', { name: '开始验收', exact: true }).click()
   await expect(panel.getByRole('status').filter({ hasText: '验收完成' })).toHaveText('验收完成: 5 / 5 帧', { timeout: 30_000 })
+  await expect(panel.getByLabel('验收统计')).toContainText('疑点 0 帧')
+  await expect(panel.getByLabel('验收统计')).toContainText('未判定 5 帧')
+  await panel.getByRole('button', { name: '状态与未判定', exact: true }).click()
   await expect(panel.getByRole('list', { name: '验收结果', exact: true }).getByRole('listitem')).toHaveCount(5)
-  await expect(panel.getByRole('button', { name: '查看 5.50s 验收结果' })).toContainText('识别失败')
+  await expect(panel.getByRole('button', { name: '查看 5.50s 验收结果' })).toContainText('未读出')
   expect(await packHash(page)).toBe(original)
 
   await panel.getByRole('button', { name: '选择全片' }).click()
@@ -143,6 +146,10 @@ test('批量验收支持不同参考分辨率并显示实际帧裁切', async ({
   await page.getByLabel('导入 JSON', { exact: true }).setInputFiles({ name: 'reference-layout.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(pack)) })
   await expect(page.getByRole('status', { name: '编辑器提示' })).toContainText('已导入')
   await expect(page.getByTestId('layout-scaled-frame')).toContainText('1280x720')
+  await expect.poll(async () => {
+    const saved = await invoke(page, 'editorProjectLoad', undefined)
+    return saved.ok ? saved.value.project?.pack : null
+  }).toEqual(pack)
   const original = await packHash(page)
   await page.getByRole('button', { name: '只读批量验收', exact: true }).click()
   const panel = page.getByRole('region', { name: '只读批量验收', exact: true })
@@ -150,6 +157,7 @@ test('批量验收支持不同参考分辨率并显示实际帧裁切', async ({
   await panel.getByRole('spinbutton', { name: '验收结束时间' }).fill('2.5')
   await panel.getByRole('button', { name: '开始验收', exact: true }).click()
   await expect(panel.getByRole('status').filter({ hasText: '验收完成' })).toHaveText('验收完成: 1 / 1 帧')
+  await panel.getByRole('button', { name: '全部', exact: true }).click()
   await expect(panel.getByRole('button', { name: '查看 1.50s 验收结果' })).toContainText('official-top-1080')
   await expect(panel.getByRole('button', { name: '查看 1.50s 验收结果' })).not.toContainText('没有匹配布局')
   await panel.getByRole('button', { name: '查看 1.50s 验收结果' }).click()

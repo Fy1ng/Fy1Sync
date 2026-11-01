@@ -35,6 +35,7 @@ export interface ValidationRow {
 export interface ValidationSummary {
   sampled: number
   issueFrames: number
+  unavailableFrames: number
   transitionFrames: number
   fields: Record<HudFieldId, { read: number; attempted: number; absent: number; disabled: number }>
 }

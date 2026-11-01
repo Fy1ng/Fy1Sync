@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import { useState } from 'react'
+import { flushSync } from 'react-dom'
 import { fireEvent, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { BatchValidationPanel } from './BatchValidationPanel'
 import { EMPTY_VALIDATION_STATE, type ValidationField, type ValidationRow, type ValidationState } from './batchValidationTypes'
 
@@ -87,6 +90,35 @@ describe('read-only batch validation range', () => {
 })
 
 describe('batch validation results', () => {
+  it.each(['pointer', 'Enter', 'Space'] as const)('does not submit a restart when %s stops during event dispatch', async activation => {
+    const user = userEvent.setup()
+    const onStart = vi.fn(), onStop = vi.fn()
+    const initial = completed([row(0)], 'running')
+    function FastStop() {
+      const [state, setState] = useState(initial)
+      return <BatchValidationPanel duration={300} mediaTime={12.5} sourceName="validation.mp4" state={state}
+        onStart={onStart} onStop={() => {
+          onStop()
+          // A real browser may render abort completion before click's default activation.
+          flushSync(() => setState(current => ({ ...current, phase: 'stopped' })))
+        }} onInspect={vi.fn()} onJump={vi.fn()} onClose={vi.fn()} />
+    }
+    render(<FastStop />)
+    const stop = screen.getByRole('button', { name: '停止验收' })
+    if (activation === 'pointer') await user.click(stop)
+    else { stop.focus(); await user.keyboard(activation === 'Enter' ? '{Enter}' : ' ') }
+    expect(onStop).toHaveBeenCalledOnce()
+    expect(onStart).not.toHaveBeenCalled()
+    expect(stop).not.toBeInTheDocument()
+    const restart = screen.getByRole('button', { name: '重新验收' })
+    expect(restart).toHaveAttribute('type', 'button')
+    await user.click(screen.getByRole('spinbutton', { name: '验收开始时间' }))
+    await user.keyboard('{Enter}')
+    expect(onStart).not.toHaveBeenCalled()
+    await user.click(restart)
+    expect(onStart).toHaveBeenCalledOnce()
+  })
+
   it('shows snapshot progress and retains partial results after stopping', () => {
     const rows = [row(0, [{ kind: 'issue', target: 'clock', code: 'clock-jump', message: '倒计时疑似跳变' }])]
     const state = completed(rows, 'running')
@@ -120,7 +152,7 @@ describe('batch validation results', () => {
     list = screen.getByRole('list', { name: '验收结果' })
     expect(within(list).getAllByRole('button')).toHaveLength(11)
     expect(within(list).getByRole('button', { name: '查看 62.50s 验收结果' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '状态切换' }))
+    fireEvent.click(screen.getByRole('button', { name: '状态与未判定' }))
     expect(within(screen.getByRole('list', { name: '验收结果' })).getAllByRole('button')).toHaveLength(1)
     expect(screen.getByText('第 1 / 1 页')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '全部' }))
@@ -140,6 +172,21 @@ describe('batch validation results', () => {
     expect(within(stats).getByText('读取成功 0/0')).toBeInTheDocument()
     expect(within(stats).getByText('--')).toBeInTheDocument()
     expect(within(stats).getByText(/没有人工真值/)).toBeInTheDocument()
+  })
+
+  it('keeps consecutive unread frames reviewable without counting disabled cues or asserting errors', () => {
+    const rows = [row(0), row(1)]
+    for (const value of rows) {
+      value.fields.clock = { status: 'failed', text: null, value: null, confidence: null, reason: 'blank-frame' }
+      value.cues.bomb = { status: 'disabled', score: null, reason: null }
+    }
+    rows[0]!.notes = [{ kind: 'transition', target: 'clock', code: 'field-unavailable', message: '倒计时暂不可读, 未作正误判定' }]
+    setup({ state: completed(rows) })
+    expect(screen.getByLabelText('验收统计')).toHaveTextContent('疑点 0 帧 / 未判定 2 帧')
+    expect(screen.queryByRole('list', { name: '验收结果' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '状态与未判定' }))
+    expect(within(screen.getByRole('list', { name: '验收结果' })).getAllByRole('listitem')).toHaveLength(2)
+    expect(screen.getByRole('button', { name: '查看 13.50s 验收结果' })).toHaveTextContent('未取得完整有效观测, 未作正误判定')
   })
 
   it('renders full read-only evidence, crops and source-frame navigation', () => {

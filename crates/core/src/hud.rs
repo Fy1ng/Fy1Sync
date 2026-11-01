@@ -915,18 +915,20 @@ impl HudFrameView<'_> {
 
     fn crop(&self, roi: &HudRoi) -> Vec<u8> {
         let actual = self.roi(roi);
-        if actual.w == roi.w && actual.h == roi.h {
+        if self.width == self.reference.width && self.height == self.reference.height {
             return crop_hud_rgba(self.rgba, self.width, &actual);
         }
-        let xs = sample_axis(actual.w, roi.w);
-        let ys = sample_axis(actual.h, roi.h);
+        // Resample on the full-frame grid. Rounding a crop first changes its origin and
+        // scale independently: a 46.5px region must not become a stretched 47px region.
+        let xs = sample_axis(self.width, self.reference.width, roi.x, roi.w);
+        let ys = sample_axis(self.height, self.reference.height, roi.y, roi.h);
         let mut output = vec![0; roi.w * roi.h * 4];
         for (y, yw) in ys.iter().enumerate() {
             for (x, xw) in xs.iter().enumerate() {
                 let mut pixel = [0.0; 4];
                 for &(sy, wy) in yw {
                     for &(sx, wx) in xw {
-                        let start = ((actual.y + sy) * self.width + actual.x + sx) * 4;
+                        let start = (sy * self.width + sx) * 4;
                         for (channel, value) in pixel.iter_mut().enumerate() {
                             *value += self.rgba[start + channel] as f64 * wx * wy;
                         }
@@ -941,10 +943,19 @@ impl HudFrameView<'_> {
     }
 }
 
-/// Area weights avoid decimation aliasing; enlargement uses pixel-center bilinear weights.
-fn sample_axis(source: usize, target: usize) -> Vec<Vec<(usize, f64)>> {
+fn cubic_weight(distance: f64) -> f64 {
+    let x = distance.abs();
+    // A fixed cubic kernel preserves thin strokes better than bilinear reconstruction.
+    let a = -0.75;
+    if x < 1.0 { (a + 2.0) * x.powi(3) - (a + 3.0) * x.powi(2) + 1.0 }
+    else if x < 2.0 { a * x.powi(3) - 5.0 * a * x.powi(2) + 8.0 * a * x - 4.0 * a }
+    else { 0.0 }
+}
+
+/// Global pixel-center phase is shared by all ROIs; area weights handle actual downsampling.
+fn sample_axis(source: usize, target: usize, offset: usize, length: usize) -> Vec<Vec<(usize, f64)>> {
     let scale = source as f64 / target as f64;
-    (0..target).map(|index| {
+    (offset..offset + length).map(|index| {
         if source > target {
             let start = index as f64 * scale;
             let end = ((index + 1) as f64 * scale).min(source as f64);
@@ -953,11 +964,11 @@ fn sample_axis(source: usize, target: usize) -> Vec<Vec<(usize, f64)>> {
                 (pixel < source && weight > 0.0).then_some((pixel, weight))
             }).collect()
         } else {
-            let center = ((index as f64 + 0.5) * scale - 0.5).clamp(0.0, (source - 1) as f64);
-            let left = center.floor() as usize;
-            let right = (left + 1).min(source - 1);
-            if left == right { vec![(left, 1.0)] }
-            else { vec![(left, 1.0 - (center - left as f64)), (right, center - left as f64)] }
+            let center = (index as f64 + 0.5) * scale - 0.5;
+            let left = center.floor() as isize;
+            (left - 1..=left + 2).map(|pixel| {
+                (pixel.clamp(0, source as isize - 1) as usize, cubic_weight(center - pixel as f64))
+            }).filter(|(_, weight)| weight.abs() > 1e-12).collect()
         }
     }).collect()
 }
@@ -1493,6 +1504,34 @@ pub fn recognize_hud_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fractional_reference_crops_share_the_global_pixel_grid() {
+        for (width, height, rw, rh) in [(24, 18, 32, 24), (40, 30, 32, 24)] {
+            let pixels: Vec<u8> = (0..width * height).flat_map(|index| {
+                let value = ((index * 37 + index / width * 19) % 256) as u8;
+                [value, value, value, 255]
+            }).collect();
+            let size = HudSize { width: rw, height: rh };
+            let view = HudFrameView { rgba: &pixels, width, height, reference: &size };
+            let complete = view.crop(&HudRoi { x: 0, y: 0, w: rw, h: rh });
+            for roi in [HudRoi { x: 3, y: 5, w: 7, h: 9 }, HudRoi { x: 7, y: 4, w: 13, h: 11 },
+                HudRoi { x: rw - 1, y: rh - 1, w: 1, h: 1 }] {
+                assert_eq!(view.crop(&roi), crop_hud_rgba(&complete, rw, &roi));
+            }
+        }
+    }
+
+    #[test]
+    fn reference_resampling_preserves_constant_edges_and_native_pixels() {
+        let pixels: Vec<u8> = (0..12).flat_map(|_| [64, 128, 192, 255]).collect();
+        let size = HudSize { width: 7, height: 5 };
+        let view = HudFrameView { rgba: &pixels, width: 4, height: 3, reference: &size };
+        assert!(view.crop(&HudRoi { x: 0, y: 0, w: 7, h: 5 }).chunks_exact(4).all(|pixel| pixel == [64, 128, 192, 255]));
+        let native = HudSize { width: 4, height: 3 };
+        let view = HudFrameView { rgba: &pixels, width: 4, height: 3, reference: &native };
+        assert_eq!(view.crop(&HudRoi { x: 0, y: 0, w: 4, h: 3 }), pixels);
+    }
 
     #[test]
     fn score_glyph_union_deduplicates_per_character_and_excludes_the_clock() {

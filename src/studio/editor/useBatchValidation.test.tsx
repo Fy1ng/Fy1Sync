@@ -62,6 +62,51 @@ describe('validation session hook', () => {
     expect(view.result.current.state.error).toBeNull()
   })
 
+  it('waits for stop cleanup, ignores repeated stop and late progress, and restarts only explicitly', async () => {
+    const view = renderHook(() => useBatchValidation(options()))
+    act(() => view.result.current.start(range))
+    const first = fake.sessions[0]!
+    act(() => { first.rows.push(row(0)); first.progress?.() })
+    const aborts = vi.fn()
+    first.signal!.addEventListener('abort', aborts)
+    act(() => {
+      view.result.current.stop()
+      view.result.current.stop()
+      view.result.current.start(range)
+      view.result.current.inspect(0)
+    })
+    expect(aborts).toHaveBeenCalledOnce()
+    expect(fake.sessions).toHaveLength(1)
+    expect(view.result.current.state.phase).toBe('running')
+    expect(first.previewSignal).toBeNull()
+    await act(async () => {
+      first.rows.push(row(1))
+      first.progress?.()
+      first.finish()
+    })
+    expect(view.result.current.state.phase).toBe('stopped')
+    expect(view.result.current.state.rows).toEqual([row(0)])
+    expect(fake.sessions).toHaveLength(1)
+    act(() => view.result.current.start(range))
+    expect(fake.sessions).toHaveLength(2)
+    expect(view.result.current.state.rows).toEqual([])
+    expect(view.result.current.state.phase).toBe('running')
+    const next = fake.sessions[1]!
+    await act(async () => { first.fail(new Error('late failure')); next.finish() })
+    expect(view.result.current.state.phase).toBe('complete')
+    expect(view.result.current.state.error).toBeNull()
+  })
+
+  it('aborts a scan on unmount and discards its eventual result', async () => {
+    const view = renderHook(() => useBatchValidation(options()))
+    act(() => view.result.current.start(range))
+    const session = fake.sessions[0]!
+    view.unmount()
+    expect(session.signal!.aborted).toBe(true)
+    await act(async () => { session.rows.push(row(0)); session.progress?.(); session.finish() })
+    expect(fake.sessions).toHaveLength(1)
+  })
+
   it('cancels old work on source replacement and discards its late completion', async () => {
     const first = options()
     const view = renderHook(props => useBatchValidation(props), { initialProps: first })

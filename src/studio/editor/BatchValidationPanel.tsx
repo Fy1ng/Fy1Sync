@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useState } from 'react'
 import { HUD_CUE_IDS, HUD_FIELD_IDS } from '../../core/hudStylePack'
 import { CUE_LABELS } from './cueModel'
 import { FIELD_LABELS } from './editorModel'
-import { summarizeValidation } from './batchValidationAnalysis'
+import { summarizeValidation, validationUnavailable } from './batchValidationAnalysis'
 import { MAX_VALIDATION_SAMPLES, type ValidationField, type ValidationPresence, type ValidationRange,
   type ValidationState, type ValidationTarget } from './batchValidationTypes'
 import './batchValidation.css'
@@ -25,8 +25,8 @@ const CONTENT = { live: '直播', replay: '回放', indeterminate: '内容无法
 const PHASE = { active: '进行中', planted: '下包', paused: '暂停', roundOver: '回合结束', statistics: '统计页',
   indeterminate: '阶段无法判断', unconfigured: '阶段未配置' }
 const TARGET: Record<ValidationTarget, string> = { ...FIELD_LABELS, ...CUE_LABELS, layout: '布局', state: '状态', frame: '画面' }
-const FIELD_STATE = { read: '已读取', absent: '未出现', disabled: '已关闭', failed: '识别失败', indeterminate: '无法判断' }
-const CUE_STATE = { matched: '出现', 'not-matched': '不出现', disabled: '已关闭', failed: '识别失败', indeterminate: '无法判断' }
+const FIELD_STATE = { read: '已读取', absent: '未出现', disabled: '已关闭', failed: '未读出', indeterminate: '未判定' }
+const CUE_STATE = { matched: '出现', 'not-matched': '不出现', disabled: '已关闭', failed: '未判定', indeterminate: '未判定' }
 const time = (at: number): string => `${at.toFixed(2)}s`
 const reading = (field: ValidationField): string => field.status === 'read' ? field.text ?? String(field.value ?? '')
   : field.reason === 'not-configured' ? '未配置' : FIELD_STATE[field.status]
@@ -61,7 +61,7 @@ export function BatchValidationPanel({ duration, mediaTime, sourceName, state, o
         : end <= start ? '结束时间必须晚于开始时间.'
           : planned > MAX_VALIDATION_SAMPLES ? `本次超过 ${MAX_VALIDATION_SAMPLES} 帧, 请缩短区间或增大抽样间隔.` : null
   const summary = useMemo(() => summarizeValidation(state.rows), [state.rows])
-  const filtered = useMemo(() => state.rows.filter(row => filter === 'all'
+  const filtered = useMemo(() => state.rows.filter(row => filter === 'all' || (filter === 'transitions' && validationUnavailable(row))
     || row.notes.some(note => note.kind === (filter === 'issues' ? 'issue' : 'transition'))), [state.rows, filter])
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const currentPage = Math.min(page, pages - 1)
@@ -79,10 +79,7 @@ export function BatchValidationPanel({ duration, mediaTime, sourceName, state, o
       <button type="button" className="btn-quiet small" onClick={onClose} disabled={busy}
         title={busy ? '停止验收或等待读取结束后返回制作' : undefined}>返回制作</button>
     </header>
-    <form className="batch-validation-range" onSubmit={event => {
-      event.preventDefault()
-      if (!rangeError && !busy) { setPage(0); onStart({ from: start, to: end, step }) }
-    }}>
+    <div className="batch-validation-range">
       <label className="field-stack"><span className="field-label">开始 (秒)</span>
         <input type="number" className="text-input num" aria-label="验收开始时间" min={0} max={available ? duration : 0}
           step="any" value={from} disabled={busy} onChange={event => setFrom(event.target.value)} /></label>
@@ -94,8 +91,11 @@ export function BatchValidationPanel({ duration, mediaTime, sourceName, state, o
           onChange={event => setStep(Number(event.target.value))}>
           {[0.5, 1, 2, 5].map(value => <option key={value} value={value}>{value}s</option>)}
         </select></label>
-      {running ? <button type="button" className="btn-solid" onClick={onStop}>停止验收</button>
-        : <button type="submit" className="btn-solid" disabled={!!rangeError || busy}>{state.run ? '重新验收' : '开始验收'}</button>}
+      {/* Stop can finish during click dispatch. Never turn its live DOM node into a submitter. */}
+      {running ? <button key="stop" type="button" className="btn-solid" onClick={onStop}>停止验收</button>
+        : <button key="start" type="button" className="btn-solid" disabled={!!rangeError || busy} onClick={() => {
+          if (!rangeError && !busy) { setPage(0); onStart({ from: start, to: end, step }) }
+        }}>{state.run ? '重新验收' : '开始验收'}</button>}
       <div className="batch-validation-range-tools">
         <button type="button" className="btn-quiet small" disabled={!available || busy} onClick={() => setFrom(String(currentTime))}>当前位置为开始</button>
         <button type="button" className="btn-quiet small" disabled={!available || busy} onClick={() => setTo(String(currentTime))}>当前位置为结束</button>
@@ -103,9 +103,10 @@ export function BatchValidationPanel({ duration, mediaTime, sourceName, state, o
           onClick={() => { setFrom('0'); setTo(String(duration)) }}>选择全片</button>
         {!rangeError && <span className="muted num">预计 {planned} 帧</span>}
       </div>
-    </form>
+    </div>
     {rangeError && <p className="note-warn" role="note">{rangeError}</p>}
     <p className="muted">按间隔抽样, 不含结束时刻, 可能漏过短暂事件. 读取成功率和置信度不是准确率, 未发现疑点也需要抽查.</p>
+    <p className="muted">已关闭字段不参与判定. 切镜头或倒计时被替换时, 缺少有效读数记为未判定, 不作为识别错误或正确样本.</p>
     {state.run && <div className="batch-validation-progress">
       <p className="batch-validation-snapshot">快照: {state.run.packName} / {state.run.packId} / revision {state.run.packRevision}</p>
       <p className="muted">录像: {state.run.sourceName} / {time(state.run.from)} - {time(state.run.to)} / 每 {state.run.step}s</p>
@@ -115,7 +116,7 @@ export function BatchValidationPanel({ duration, mediaTime, sourceName, state, o
     {state.error && <p className="form-error" role="alert">{state.error}</p>}
     {state.rows.length > 0 && <>
       <div className="batch-validation-summary" aria-label="验收统计">
-        <p>已抽样 <b className="num">{summary.sampled}</b> 帧 / 疑点 <b className="num">{summary.issueFrames}</b> 帧 / 状态切换 <b className="num">{summary.transitionFrames}</b> 帧</p>
+        <p>已抽样 <b className="num">{summary.sampled}</b> 帧 / 疑点 <b className="num">{summary.issueFrames}</b> 帧 / 未判定 <b className="num">{summary.unavailableFrames}</b> 帧 / 状态记录 <b className="num">{summary.transitionFrames}</b> 帧</p>
         <div className="batch-validation-field-stats">{HUD_FIELD_IDS.map(id => {
           const field = summary.fields[id]
           return <div key={id}><span>{FIELD_LABELS[id]}</span>
@@ -123,10 +124,10 @@ export function BatchValidationPanel({ duration, mediaTime, sourceName, state, o
             <span className="muted">读取成功 {field.read}/{field.attempted}</span>
             <span className="muted">未出现 {field.absent} / 已关闭 {field.disabled}</span></div>
         })}</div>
-        <p className="muted">分母按可尝试读取的数字字段统计, 未出现和已关闭单独列出. 没有人工真值, 本结果不代表准确率.</p>
+        <p className="muted">分母按已配置的数字字段读取尝试统计, 未读出不等于读错; 未出现和已关闭单独列出. 没有人工真值, 本结果不代表准确率.</p>
       </div>
       <div className="batch-validation-filters" role="group" aria-label="验收结果筛选">
-        {([['issues', '疑点'], ['transitions', '状态切换'], ['all', '全部']] as const).map(([value, label]) =>
+        {([['issues', '疑点'], ['transitions', '状态与未判定'], ['all', '全部']] as const).map(([value, label]) =>
           <button type="button" key={value} className="btn-quiet small" aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}
         <span className="muted">{filtered.length} 条结果</span>
       </div>
@@ -140,7 +141,8 @@ export function BatchValidationPanel({ duration, mediaTime, sourceName, state, o
             <span className="num">{reading(row.fields.clock)}</span>
             <span className="num">{reading(row.fields.scoreLeft)} / {reading(row.fields.scoreRight)}</span>
             <span>{CONTENT[row.content]} / {PHASE[row.phase]}<small>{row.layout ?? '没有匹配布局'}</small></span>
-            <span>{row.notes.length ? row.notes.map(note => note.message).join(' / ') : '未发现规则疑点'}</span>
+            <span>{row.notes.length ? row.notes.map(note => note.message).join(' / ')
+              : validationUnavailable(row) ? '未取得完整有效观测, 未作正误判定' : '未发现规则疑点'}</span>
           </button></li>)}
         </ul>
         <nav className="batch-validation-pages" aria-label="验收结果分页">
@@ -166,7 +168,7 @@ export function BatchValidationPanel({ duration, mediaTime, sourceName, state, o
         return cue ? <div key={id}><dt>{CUE_LABELS[id]}</dt><dd>{cueText(cue)}{cue.reason ? ` / ${cue.reason}` : ''}</dd></div> : null
       })}</dl>
       {selected.notes.length > 0 && <ul className="batch-validation-notes" aria-label="当前帧检查记录">
-        {selected.notes.map((note, index) => <li key={index} data-kind={note.kind}><b>{note.kind === 'issue' ? '疑点' : '切换'} / {TARGET[note.target]}</b> {note.message}</li>)}
+        {selected.notes.map((note, index) => <li key={index} data-kind={note.kind}><b>{note.kind === 'issue' ? '疑点' : '观测'} / {TARGET[note.target]}</b> {note.message}</li>)}
       </ul>}
       {state.previewBusy && <p className="muted" role="status">正在读取原始画面...</p>}
       {preview && <div className="batch-validation-pictures">{preview.images.map((image, index) => <figure key={`${image.target}-${index}`}

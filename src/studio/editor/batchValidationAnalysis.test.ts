@@ -14,6 +14,7 @@ function pack(): HudStylePack {
     preprocess: structuredClone(variant.fields.clock!.preprocess), templates: ['test'], minScore: 0.9 })
   variant.cues = { replay: cue(), bomb: cue(), timeout: cue(), timeoutRight: cue() }
   variant.organizer = cue()
+  variant.states.active = [[{ kind: 'field', field: 'clock', present: true }]]
   return value
 }
 
@@ -63,14 +64,14 @@ describe('compact validation evidence', () => {
     expect(input.fields.clock.status === 'read' && input.fields.clock.reading.text).toBe('96')
   })
 
-  it.each(['no-match', 'multiple-matches'] as const)('reports %s once without claiming fields were attempted', selectionReason => {
+  it.each(['no-match', 'multiple-matches'] as const)('reports %s without claiming unavailable fields were attempted', selectionReason => {
     const input = result()
     input.variantId = null
     input.selectionReason = selectionReason
     input.content = 'indeterminate'; input.phase = 'indeterminate'
     const output = frame(input)
     expect(output.notes).toHaveLength(1)
-    expect(output.notes[0]).toMatchObject({ kind: 'issue', target: 'layout', code: selectionReason === 'no-match' ? 'no-layout' : 'multiple-layouts' })
+    expect(output.notes[0]).toMatchObject({ kind: selectionReason === 'no-match' ? 'transition' : 'issue', target: 'layout', code: selectionReason === 'no-match' ? 'no-layout' : 'multiple-layouts' })
     expect(summarizeValidation([output]).fields.clock).toEqual({ read: 0, attempted: 0, absent: 0, disabled: 0 })
   })
 
@@ -80,14 +81,16 @@ describe('compact validation evidence', () => {
     expect(codes(output)).toEqual(['no-layout'])
   })
 
-  it('reports enabled field failures and preserves disabled/absent as distinct results', () => {
+  it('keeps missing readings unjudged and preserves disabled/absent as distinct results', () => {
     const input = result()
     input.fields.clock = { status: 'failed', reason: 'low-confidence', debug: null }
     input.fields.scoreLeft = { status: 'disabled', debug: null }
     input.fields.scoreRight = { status: 'absent', debug: null }
     const profile = pack(); profile.variants[0]!.fields.scoreLeft!.enabled = false
     const output = frame(input, null, 0, profile)
-    expect(issues(output)).toEqual([{ kind: 'issue', target: 'clock', code: 'field-failed', message: '倒计时识别失败: low-confidence' }])
+    expect(issues(output)).toEqual([])
+    expect(output.notes).toContainEqual({ kind: 'transition', target: 'clock', code: 'field-unavailable',
+      message: '倒计时未取得有效读数: low-confidence, 可能未显示或暂不可读, 未作正误判定' })
     expect(output.fields.scoreLeft.status).toBe('disabled')
     expect(output.fields.scoreRight.status).toBe('absent')
   })
@@ -106,15 +109,17 @@ describe('compact validation evidence', () => {
     expect(summarizeValidation([output]).fields.scoreLeft.attempted).toBe(0)
   })
 
-  it('reports unknown content, phase, enabled cue failures and a missing configured cue', () => {
+  it('keeps unknown axes and unreadable configured markers as observations, not errors', () => {
     const input = result()
     input.content = 'indeterminate'; input.phase = 'indeterminate'
     input.cues.timeout = presence('failed')
     delete input.cues.timeoutRight
     input.organizer = presence('indeterminate')
     const output = frame(input)
-    expect(issues(output).map(note => note.target)).toEqual(['timeout', 'timeoutRight', 'organizer', 'state', 'state'])
-    expect(codes(output)).toEqual(['cue-unreadable', 'cue-unreadable', 'cue-unreadable', 'content-indeterminate', 'phase-indeterminate'])
+    expect(issues(output)).toEqual([])
+    expect(output.notes.map(note => note.target)).toEqual(['timeout', 'timeoutRight', 'organizer', 'state', 'state'])
+    expect(output.notes.map(note => note.code)).toEqual(['cue-unreadable', 'cue-unreadable', 'cue-unreadable', 'content-indeterminate', 'phase-indeterminate'])
+    expect(output.notes.every(note => note.message.includes('未作正误判定'))).toBe(true)
   })
 
   it('does not turn a known disabled cue into a failure or an appearance transition', () => {
@@ -203,6 +208,122 @@ describe('threshold-aware review findings', () => {
     profile.variants[0]!.fields.clock!.match.minMargin = 0
     input.fields.clock.debug = { matches: [{ char: '7', score: 1, runnerUpScore: 1, sampleIndex: 0 }] } as HudDebug
     expect(codes(frame(input, null, 0, profile))).toEqual([])
+  })
+})
+
+describe('configured scope and unjudged visibility', () => {
+  it('masks stale failed or matched results for every disabled cue and missing field', () => {
+    const profile = pack(), input = result()
+    const variant = profile.variants[0]!
+    variant.cues.bomb!.enabled = false
+    variant.cues.timeout!.enabled = false
+    variant.organizer!.enabled = false
+    variant.fields.scoreLeft!.enabled = false
+    variant.fields.scoreRight = null
+    input.cues.bomb = presence('failed')
+    input.cues.timeout = presence('matched', 1)
+    input.organizer = presence('failed')
+    input.fields.scoreLeft = read(80)
+    input.fields.scoreRight = read(90)
+    const before = JSON.stringify([profile, input])
+    const output = frame(freeze(input), null, 0, freeze(profile))
+    expect(output.cues.bomb).toEqual({ status: 'disabled', score: null, reason: null })
+    expect(output.cues.timeout).toEqual({ status: 'disabled', score: null, reason: null })
+    expect(output.cues.organizer).toEqual({ status: 'disabled', score: null, reason: null })
+    expect(output.fields.scoreLeft).toEqual({ status: 'disabled', text: null, value: null, confidence: null, reason: null })
+    expect(output.fields.scoreRight).toEqual({ status: 'failed', text: null, value: null, confidence: null, reason: 'not-configured' })
+    expect(output.notes).toEqual([])
+    expect(summarizeValidation([output]).fields.scoreLeft).toEqual({ read: 0, attempted: 0, absent: 0, disabled: 1 })
+    expect(summarizeValidation([output]).fields.scoreRight).toEqual({ read: 0, attempted: 0, absent: 0, disabled: 0 })
+    expect(JSON.stringify([profile, input])).toBe(before)
+  })
+
+  it('does not use a disabled score to declare a swap, a score jump, or break active-clock comparison', () => {
+    const profile = pack(), variant = profile.variants[0]!
+    variant.fields.scoreRight!.enabled = false
+    const previous = frame(result(), null, 0, profile)
+    // Even a previous row captured before a switch cannot re-enable the excluded field.
+    previous.fields.scoreRight = { status: 'read', text: '3', value: 3, confidence: 1, reason: null }
+    const output = frame(result(79, 8, 80), previous, 1, profile)
+    expect(output.notes.some(note => note.target === 'scoreRight' || note.code === 'score-swap')).toBe(false)
+    expect(codes(output)).toEqual(['clock-jump'])
+  })
+
+  it('does not require a disabled bomb detector to explain a missing clock with otherwise readable scores', () => {
+    const profile = pack(), variant = profile.variants[0]!
+    variant.states = {}
+    variant.cues.bomb!.enabled = false
+    for (const status of ['failed', 'absent', 'indeterminate'] as const) {
+      const input = { ...result(0, 0, 0), phase: 'unconfigured' as const }
+      input.fields.clock = status === 'absent' ? { status, debug: null } : { status, reason: 'blank-frame', debug: null }
+      input.cues.bomb = presence('failed')
+      const output = frame(input, null, 123, profile)
+      expect(issues(output)).toEqual([])
+      expect(output.notes.some(note => note.target === 'bomb' || note.message.includes('炸弹'))).toBe(false)
+      expect(output.notes.find(note => note.target === 'clock')?.message).toContain('未作正误判定')
+      expect(output.fields.scoreLeft.value).toBe(0)
+      expect(output.fields.scoreRight.value).toBe(0)
+    }
+  })
+
+  it('does not repeatedly flag cutaway frames, and explicitly records recovered reading', () => {
+    const profile = pack(), input = result()
+    for (const id of ['clock', 'scoreLeft', 'scoreRight'] as const) input.fields[id] = { status: 'failed', reason: 'blank-frame', debug: null }
+    input.content = 'indeterminate'; input.phase = 'indeterminate'
+    input.cues.replay = presence('failed')
+    input.organizer = presence('failed')
+    const first = frame(input, null, 10, profile)
+    const next = frame(input, first, 11, profile)
+    expect(issues(first)).toEqual([])
+    expect(issues(next)).toEqual([])
+    expect(next.notes).toEqual([])
+    const recovered = frame(result(), next, 12, profile)
+    expect(codes(recovered)).not.toContain('clock-jump')
+    expect(recovered.notes.filter(note => note.code === 'field-restored')).toHaveLength(3)
+  })
+
+  it('excludes enabled but untrained fields from attempts instead of reporting every frame as wrong', () => {
+    const input = result(), profile = pack()
+    input.fields.clock = { status: 'failed', reason: 'insufficient-templates', debug: null }
+    input.cues.bomb = { status: 'failed', reason: 'insufficient-templates', score: null, debug: null }
+    profile.variants[0]!.cues.bomb!.templates = []
+    const first = frame(input, null, 0, profile), second = frame(input, first, 1, profile)
+    expect(issues(first)).toEqual([])
+    expect(second.notes).toEqual([])
+    expect(first.notes.find(note => note.target === 'clock')?.message).toContain('尚未配置完整样本')
+    expect(summarizeValidation([first, second]).fields.clock.attempted).toBe(0)
+  })
+
+  it('ignores axes derived solely from disabled AND groups and does not reuse stale marker evidence', () => {
+    const profile = pack(), variant = profile.variants[0]!
+    variant.cues.bomb!.enabled = false
+    variant.cues.replay!.enabled = false
+    variant.cues.timeout!.enabled = false
+    variant.cues.timeoutRight!.enabled = false
+    variant.states = {
+      active: [[{ kind: 'cue', cue: 'bomb', present: false }, { kind: 'field', field: 'clock', present: true }]],
+      replay: [[{ kind: 'cue', cue: 'replay', present: true }]],
+      paused: [[{ kind: 'cue', cue: 'timeout', present: true }]],
+    }
+    const input = { ...result(), content: 'indeterminate' as const, phase: 'indeterminate' as const }
+    input.cues.bomb = input.cues.replay = presence('failed')
+    input.cues.timeout = presence('matched', 1)
+    const output = frame(input, null, 0, profile)
+    expect(output.content).toBe('live')
+    expect(output.phase).toBe('unconfigured')
+    expect(issues(output)).toEqual([])
+    expect(output.notes.some(note => note.target === 'state')).toBe(false)
+  })
+
+  it('still evaluates a live OR branch when another AND group references a disabled field', () => {
+    const profile = pack(), variant = profile.variants[0]!
+    variant.cues.bomb!.enabled = false
+    variant.states.active = [
+      [{ kind: 'cue', cue: 'bomb', present: false }, { kind: 'field', field: 'clock', present: true }],
+      [{ kind: 'field', field: 'clock', present: true }],
+    ]
+    const previous = frame(result(), null, 0, profile)
+    expect(codes(frame(result(79), previous, 1, profile))).toContain('clock-jump')
   })
 })
 
@@ -299,15 +420,14 @@ describe('conservative temporal findings', () => {
     }
   })
 
-  it('requires readable stable scores to compare an unconfigured phase', () => {
-    const first = frame({ ...result(), phase: 'unconfigured' })
-    expect(codes(frame({ ...result(20), phase: 'unconfigured' }, first))).toContain('clock-jump')
-    const profile = pack(), input = { ...result(20), phase: 'unconfigured' as const }
-    for (const id of ['scoreLeft', 'scoreRight'] as const) {
-      profile.variants[0]!.fields[id] = null
-      input.fields[id] = { status: 'failed', reason: 'not-configured', debug: null }
-    }
-    expect(codes(frame(input, first, 1, profile))).not.toContain('clock-jump')
+  it('does not infer active play merely from stable scores in an unconfigured phase', () => {
+    const profile = pack()
+    profile.variants[0]!.states = {}
+    const first = frame({ ...result(), phase: 'unconfigured' }, null, 0, profile)
+    expect(codes(frame({ ...result(20), phase: 'unconfigured' }, first, 1, profile))).not.toContain('clock-jump')
+    const reset = frame({ ...result(115), phase: 'unconfigured' }, frame({ ...result(1), phase: 'unconfigured' }, null, 0, profile), 1, profile)
+    expect(codes(reset)).toEqual([])
+    expect(reset.notes).toContainEqual(expect.objectContaining({ kind: 'transition', code: 'clock-reset' }))
   })
 })
 
@@ -353,6 +473,7 @@ describe('event transitions and summary accounting', () => {
     const summary = summarizeValidation([frame(result()), failed, next])
     expect(summary.sampled).toBe(3)
     expect(summary.issueFrames).toBe(1)
+    expect(summary.unavailableFrames).toBe(1)
     expect(summary.fields.clock).toEqual({ read: 2, attempted: 2, absent: 0, disabled: 0 })
   })
 
@@ -370,8 +491,9 @@ describe('event transitions and summary accounting', () => {
     }
     const third = frame(thirdInput, second, 2, profile)
     const summary = summarizeValidation(freeze([first, second, third]))
-    expect(summary.issueFrames).toBe(1)
-    expect(summary.transitionFrames).toBe(1)
+    expect(summary.issueFrames).toBe(0)
+    expect(summary.unavailableFrames).toBe(1)
+    expect(summary.transitionFrames).toBe(3)
     expect(summary.fields.clock).toEqual({ read: 1, attempted: 2, absent: 0, disabled: 1 })
     expect(summary.fields.scoreLeft).toEqual({ read: 1, attempted: 2, absent: 0, disabled: 1 })
     expect(summary.fields.scoreRight).toEqual({ read: 1, attempted: 1, absent: 1, disabled: 1 })
@@ -381,7 +503,7 @@ describe('event transitions and summary accounting', () => {
   it('starts a fresh empty summary without sharing counters between calls', () => {
     const first = summarizeValidation([]), second = summarizeValidation([])
     first.fields.clock.attempted = 10
-    expect(second).toEqual({ sampled: 0, issueFrames: 0, transitionFrames: 0,
+    expect(second).toEqual({ sampled: 0, issueFrames: 0, unavailableFrames: 0, transitionFrames: 0,
       fields: { clock: { read: 0, attempted: 0, absent: 0, disabled: 0 }, scoreLeft: { read: 0, attempted: 0, absent: 0, disabled: 0 },
         scoreRight: { read: 0, attempted: 0, absent: 0, disabled: 0 } } })
   })
