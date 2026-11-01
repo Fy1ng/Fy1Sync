@@ -387,7 +387,7 @@ test.describe('发布预设', () => {
       data: packBitmap(Uint8Array.from({ length: TEMPLATE_PIXELS }, (_, index) => index % 7 === 0 ? 255 : 0)) }
     clock.glyphs['1'] = ['sample']
     profile.variants[0]!.fields.scoreLeft = { ...structuredClone(clock), grammar: { kind: 'integer', min: 0, max: 99 } }
-    profile.variants[0]!.organizer = { roi: { x: 0, y: 0, w: 32, h: 48 },
+    profile.variants[0]!.organizer = { enabled: true, roi: { x: 0, y: 0, w: 32, h: 48 },
       preprocess: { ...clock.preprocess }, templates: ['sample'], minScore: 0.9 }
     profile.variants[0]!.states['has-clock'] = [[{ kind: 'field', field: 'clock', present: true }]]
     profile.variants.push({ ...structuredClone(profile.variants[0]!), id: 'official-bottom-1080' })

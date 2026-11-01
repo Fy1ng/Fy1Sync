@@ -392,6 +392,21 @@
   padding: 16px 0;
 }
 
+.editor-field-controls {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.editor-field-controls:disabled {
+  opacity: 0.65;
+}
+
+.editor-field-controls + .rail-group {
+  border-top: 1px solid var(--line);
+}
+
 .rail-group + .rail-group {
   border-top: 1px solid var(--line);
 }

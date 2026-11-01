@@ -15,6 +15,7 @@ export interface HudBitmap extends HudSize { data: string }
 export interface HudSegment { minColumnInk: number; minGlyphWidth: number; minGapWidth: number; minInkRatio: number }
 export type HudGrammar = { kind: 'countdown'; format: 'm:ss' | 'mm:ss' | 'ss' } | { kind: 'integer'; min: number; max: number }
 export interface HudField {
+  enabled: boolean
   roi: HudRoi
   preprocess: HudPreprocessSettings
   segment: HudSegment
@@ -24,6 +25,7 @@ export interface HudField {
   gateCue: HudCueId | null
 }
 export interface HudCue {
+  enabled: boolean
   roi: HudRoi
   preprocess: HudPreprocessSettings
   templates: string[]
@@ -167,7 +169,8 @@ export function parseHudStylePack(value: unknown): HudPackValidation {
     if (!record(variant.cues)) error(`${path}.cues`, '必须是对象')
     for (const key of Object.keys(cues)) if (!(HUD_CUE_IDS as readonly string[]).includes(key)) error(`${path}.cues.${key}`, '未知字段')
     const template = (raw: unknown, p: string): void => {
-      if (!object(raw, p, ['roi', 'preprocess', 'templates', 'minScore'])) return
+      if (!object(raw, p, ['enabled', 'roi', 'preprocess', 'templates', 'minScore'])) return
+      boolean(raw.enabled, `${p}.enabled`)
       const region = raw.roi
       const hasRoi = roi(region, `${p}.roi`, native)
       preprocess(raw.preprocess, `${p}.preprocess`)
@@ -181,7 +184,8 @@ export function parseHudStylePack(value: unknown): HudPackValidation {
       const field = variant.fields[fieldId]
       const p = `${path}.fields.${fieldId}`
       if (field === null) continue
-      if (!object(field, p, ['roi', 'preprocess', 'segment', 'glyphs', 'grammar', 'match', 'gateCue'])) continue
+      if (!object(field, p, ['enabled', 'roi', 'preprocess', 'segment', 'glyphs', 'grammar', 'match', 'gateCue'])) continue
+      boolean(field.enabled, `${p}.enabled`)
       roi(field.roi, `${p}.roi`, native)
       preprocess(field.preprocess, `${p}.preprocess`)
       if (object(field.segment, `${p}.segment`, ['minColumnInk', 'minGlyphWidth', 'minGapWidth', 'minInkRatio'])) {
@@ -247,6 +251,7 @@ export function createEmptyHudStylePack(id = 'custom/untitled', name = '未命�
       id: `official-top-${nativeSize.height}`, nativeSize: { ...nativeSize },
       fields: {
         clock: {
+          enabled: true,
           roi: { x: Math.floor(nativeSize.width * 0.44), y: Math.floor(nativeSize.height * 0.02), w: Math.max(1, Math.floor(nativeSize.width * 0.12)), h: Math.max(1, Math.floor(nativeSize.height * 0.07)) },
           preprocess: createHudPreprocess(),
           segment: { minColumnInk: 1, minGlyphWidth: 2, minGapWidth: 1, minInkRatio: 0.08 },
@@ -264,5 +269,5 @@ export function hudPackReadiness(pack: HudStylePack, variantId = pack.variants[0
   const needed = clock?.grammar.kind === 'countdown' && clock.grammar.format === 'ss' ? CLOCK_CHARS.filter(char => char !== ':') : CLOCK_CHARS
   const missing = needed.filter(char => !clock?.glyphs[char]?.length)
   const sampleCount = Object.values(clock?.glyphs ?? {}).reduce((count, refs) => count + refs.length, 0)
-  return { ready: missing.length === 0, missing, sampleCount }
+  return { ready: clock?.enabled === true && missing.length === 0, missing, sampleCount }
 }

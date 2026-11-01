@@ -28,6 +28,6 @@ export function LayoutSection({ pack, variant, canCreate, onSelect, onCreate, on
       <button type="button" className="btn-quiet small" onClick={() => onGenerate(1440)}>生成 1440p</button>
       <button type="button" className="btn-quiet small" onClick={() => onGenerate(1080)}>生成 1080p</button>
     </div>}
-    {multiple && !variant.organizer && <p className="note-warn" data-testid="layout-organizer-warning">同一尺寸有多个布局, 当前布局没有主办方区域, 这个布局不会被播放器选中.</p>}
+    {multiple && (!variant.organizer || !variant.organizer.enabled) && <p className="note-warn" data-testid="layout-organizer-warning">同一尺寸有多个布局, 当前布局的主办方未启用, 不会自动选中.</p>}
   </section>
 }

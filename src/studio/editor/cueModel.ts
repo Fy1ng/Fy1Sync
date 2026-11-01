@@ -18,13 +18,13 @@ export function editorCue(pack: HudStylePack, id: CueTarget, variantId?: string)
   const cue = id === 'organizer' ? variant.organizer : variant.cues[id]
   if (cue) return cue
   const clock = variant.fields.clock
-  return { roi: clock?.roi ?? { x: 0, y: 0, w: Math.max(1, Math.floor(variant.nativeSize.width / 10)), h: Math.max(1, Math.floor(variant.nativeSize.height / 10)) },
+  return { enabled: true, roi: clock?.roi ?? { x: 0, y: 0, w: Math.max(1, Math.floor(variant.nativeSize.width / 10)), h: Math.max(1, Math.floor(variant.nativeSize.height / 10)) },
     preprocess: createHudPreprocess({ scale: 1 }), templates: [], minScore: 0.9 }
 }
 export function cueModel(pack: HudStylePack, id: CueTarget, variantId?: string): EditorClockModel {
   const cue = editorCue(pack, id, variantId)
   const { width, height } = editorVariant(pack, variantId).nativeSize
-  return { ...fieldModel(pack, 'clock', variantId), roi: { x: cue.roi.x / width, y: cue.roi.y / height, w: cue.roi.w / width, h: cue.roi.h / height },
+  return { ...fieldModel(pack, 'clock', variantId), enabled: cue.enabled, roi: { x: cue.roi.x / width, y: cue.roi.y / height, w: cue.roi.w / width, h: cue.roi.h / height },
     preprocess: cue.preprocess, matchThreshold: cue.minScore, templates: {} }
 }
 export function patchCue(pack: HudStylePack, id: CueTarget, patch: Partial<EditorClockModel>, sample?: HudCueAnalysis, variantId?: string): HudStylePack {
@@ -38,7 +38,7 @@ export function patchCue(pack: HudStylePack, id: CueTarget, patch: Partial<Edito
   const changedSize = roi.w !== cue.roi.w || roi.h !== cue.roi.h
   const templates = changedSize ? [] : cue.templates
   const bitmapId = `cue-${id.toLowerCase()}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-  const updated: HudCue = { roi, preprocess: patch.preprocess ?? cue.preprocess, minScore: patch.matchThreshold ?? cue.minScore,
+  const updated: HudCue = { enabled: patch.enabled ?? cue.enabled, roi, preprocess: patch.preprocess ?? cue.preprocess, minScore: patch.matchThreshold ?? cue.minScore,
     templates: sample ? [...templates, bitmapId] : templates }
   return { ...pack, id: patch.id ?? pack.id, name: patch.name ?? pack.name, revision: pack.revision + 1,
     bitmaps: sample ? { ...pack.bitmaps, [bitmapId]: { width: roi.w, height: roi.h, data: sample.bitmap } } : pack.bitmaps,

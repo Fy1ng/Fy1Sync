@@ -219,10 +219,11 @@ export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, sel
       <div className="verify-row">
         <button type="button" className="btn-quiet small" disabled={busy || !onVerify} onClick={() => onVerify?.()}>验证当前帧</button>
         {recognized && (
-          <span className={`verify-result num ${recognized.status === 'read' ? 'is-ok' : 'is-bad'}`} role="status">
+          <span className={`verify-result num ${recognized.status === 'read' ? 'is-ok' : recognized.status === 'disabled' ? '' : 'is-bad'}`} role="status">
             {recognized.status === 'read'
               ? `识别为 ${recognized.reading.text} · 置信度 ${recognized.reading.confidence.toFixed(3)}`
-              : recognized.status === 'absent' ? `画面里没有${FIELD_LABELS[fieldId]}` : `${recognized.status === 'indeterminate' ? '无法判断' : '识别失败'}: ${recognized.reason}`}
+              : recognized.status === 'disabled' ? '字段已关闭'
+                : recognized.status === 'absent' ? `画面里没有${FIELD_LABELS[fieldId]}` : `${recognized.status === 'indeterminate' ? '无法判断' : '识别失败'}: ${recognized.reason}`}
           </span>
         )}
       </div>

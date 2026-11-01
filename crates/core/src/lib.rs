@@ -92,6 +92,7 @@ impl Engine {
         match recognize_hud_frame(rgba,width,height,pack,&pack.variants[0].id) {
             Ok(result) => {
                 let (outcome,debug) = match result.fields.clock {
+                    HudFieldResult::Disabled{debug} => (json!({"status":"disabled"}),debug),
                     HudFieldResult::Read{reading,debug} => (json!({"status":"success","reading":{
                         "text":reading.text,"seconds":reading.value,"scores":reading.scores,"confidence":reading.confidence,
                         "mediaTime":media_time,"wallTime":wall_time,"frameIndex":frame_index}}),debug),

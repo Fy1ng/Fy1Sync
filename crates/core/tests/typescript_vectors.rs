@@ -127,7 +127,7 @@ fn hud_pack(profile: &RecognitionProfile, width:usize, height:usize) -> Value {
     let rect=roi_to_pixels(&profile.roi,width,height);
     json!({"kind":"hud-style-pack","schemaVersion":1,"id":profile.id,"revision":1,"name":profile.name,"bitmaps":bitmaps,"variants":[{
         "id":"official-top-360","nativeSize":{"width":width,"height":height},
-        "fields":{"clock":{"roi":{"x":rect.x as usize,"y":rect.y as usize,"w":rect.width as usize,"h":rect.height as usize},
+        "fields":{"clock":{"enabled":true,"roi":{"x":rect.x as usize,"y":rect.y as usize,"w":rect.width as usize,"h":rect.height as usize},
             "preprocess":HudPreprocessSettings::from_internal(&profile.preprocess),"segment":{"minColumnInk":1,"minGlyphWidth":2,"minGapWidth":1,"minInkRatio":0.08},
             "glyphs":glyphs,"grammar":{"kind":"countdown","format":profile.clock_format},"match":{"minScore":profile.match_threshold,"minMargin":0.02},"gateCue":null},
             "scoreLeft":null,"scoreRight":null},"cues":{},"states":{},"organizer":null}]})
@@ -606,7 +606,7 @@ fn hud_cues_organizer_and_preparation_share_the_whole_region() {
     let mask=[255,0,255,0,255,0,255,0,255];
     value["bitmaps"]["mark"]=json!({"width":3,"height":3,"data":pack_bitmap(&mask)});
     value["bitmaps"]["other-mark"]=json!({"width":3,"height":3,"data":pack_bitmap(&[0,255,0,255,0,255,0,255,0])});
-    let cue=json!({"roi":{"x":7,"y":11,"w":3,"h":3},"preprocess":HudPreprocessSettings::default(),"templates":["other-mark","mark"],"minScore":1.0});
+    let cue=json!({"enabled":true,"roi":{"x":7,"y":11,"w":3,"h":3},"preprocess":HudPreprocessSettings::default(),"templates":["other-mark","mark"],"minScore":1.0});
     value["variants"][0]["cues"]["replay"]=cue.clone();
     value["variants"][0]["states"]["replay"]=json!([[{"kind":"cue","cue":"replay","present":true}]]);
     value["variants"][0]["organizer"]=cue;
@@ -651,6 +651,7 @@ fn layout_pack() -> (Vec<u8>, HudStylePack) {
     let mask = [255, 0, 255, 0, 255, 0, 255, 0, 255];
     value["bitmaps"]["organizer"] = json!({"width":3,"height":3,"data":pack_bitmap(&mask)});
     value["variants"][0]["organizer"] = json!({
+        "enabled":true,
         "roi":{"x":7,"y":11,"w":3,"h":3},
         "preprocess":HudPreprocessSettings { scale: 1.0, ..HudPreprocessSettings::default() },
         "templates":["organizer"],"minScore":1.0
@@ -752,7 +753,7 @@ fn bomb_and_statistics_provide_positive_evidence_of_missing_fields() {
     let (frame,roi)=clock("1:37",6);
     let mut value=hud_pack(&profile(6,roi),640,360);
     value["bitmaps"]["mark"]=json!({"width":3,"height":3,"data":pack_bitmap(&[255,0,255,0,255,0,255,0,255])});
-    let cue=json!({"roi":{"x":0,"y":0,"w":3,"h":3},"preprocess":HudPreprocessSettings { scale: 1.0, ..HudPreprocessSettings::default() },"templates":["mark"],"minScore":0.8});
+    let cue=json!({"enabled":true,"roi":{"x":0,"y":0,"w":3,"h":3},"preprocess":HudPreprocessSettings { scale: 1.0, ..HudPreprocessSettings::default() },"templates":["mark"],"minScore":0.8});
     value["variants"][0]["cues"]["bomb"]=cue.clone();
     value["variants"][0]["states"]["planted"]=json!([[{"kind":"cue","cue":"bomb","present":true},{"kind":"field","field":"clock","present":false}]]);
     let mut pack=parse_hud_style_pack(&value).unwrap();
@@ -1025,7 +1026,7 @@ fn hud_preprocess_modes_use_identical_masks_for_fields_cues_and_recognition() {
                 }
             }
         }
-        let cue = HudCue { roi: field.roi.clone(), preprocess: field.preprocess.clone(), templates: vec![], min_score: 1.0 };
+        let cue = HudCue { enabled: true, roi: field.roi.clone(), preprocess: field.preprocess.clone(), templates: vec![], min_score: 1.0 };
         pack.variants[0].cues.insert("replay".into(), cue.clone());
         pack.variants[0].organizer = Some(cue);
         let prepared = prepare_hud_glyphs(&frame, 640, 360, &pack, "official-top-360", "clock").unwrap();
@@ -1095,7 +1096,7 @@ fn hud_preprocess_recommendations_resolve_full_frame_coordinates_and_reject_inva
     let (frame, mut pack) = scoreboard("8", "9");
     let field = pack.variants[0].fields.score_left.as_ref().unwrap();
     let roi = field.roi.clone();
-    pack.variants[0].organizer = Some(HudCue { roi: field.roi.clone(), preprocess: field.preprocess.clone(), templates: vec![], min_score: 0.9 });
+    pack.variants[0].organizer = Some(HudCue { enabled: true, roi: field.roi.clone(), preprocess: field.preprocess.clone(), templates: vec![], min_score: 0.9 });
     for target in ["scoreLeft", "organizer"] {
         let recommended = recommend_hud_preprocess(&frame, 640, 360, &pack, "official-top-360", target,
             &HudPreprocessRequest::Hsv { x: 287, y: 21 }).unwrap();
@@ -1113,4 +1114,136 @@ fn hud_preprocess_recommendations_resolve_full_frame_coordinates_and_reject_inva
     }
     assert!(recommend_hud_preprocess(&frame, 640, 360, &pack, "missing", "scoreLeft", &HudPreprocessRequest::Polarity {}).is_err());
     assert!(recommend_hud_preprocess(&frame[..frame.len() - 1], 640, 360, &pack, "official-top-360", "scoreLeft", &HudPreprocessRequest::Polarity {}).is_err());
+}
+
+#[test]
+fn disabled_clock_keeps_templates_and_stats_but_skips_reading_and_editor_operations() {
+    let (frame, roi) = clock("1:37", 6);
+    let mut pack = parse_hud_style_pack(&hud_pack(&profile(6, roi), 640, 360)).unwrap();
+    let before = serde_json::to_value(&pack).unwrap();
+    let ready = hud_pack_readiness(&pack, "official-top-360");
+    assert_eq!(ready["ready"], true);
+    pack.variants[0].fields.clock.as_mut().unwrap().enabled = false;
+    let disabled_snapshot = serde_json::to_value(&pack).unwrap();
+    let readiness = hud_pack_readiness(&pack, "official-top-360");
+    assert_eq!(readiness["ready"], false);
+    assert_eq!(readiness["missing"], ready["missing"]);
+    assert_eq!(readiness["sampleCount"], ready["sampleCount"]);
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+    assert!(matches!(result.fields.clock, HudFieldResult::Disabled { debug: None }));
+    assert_eq!(serde_json::to_value(&result.fields.clock).unwrap(), json!({"status":"disabled","debug":null}));
+    assert_eq!(prepare_hud_glyphs(&frame, 640, 360, &pack, "official-top-360", "clock").unwrap_err(), "field-disabled");
+    assert_eq!(recommend_hud_preprocess(&frame, 640, 360, &pack, "official-top-360", "clock", &HudPreprocessRequest::Polarity {}).unwrap_err(), "field-disabled");
+    let mut engine = Engine::new();
+    assert_eq!(engine.configure(&serde_json::to_string(&pack).unwrap()).unwrap()["ready"], false);
+    assert_eq!(engine.recognize(&frame, 640, 360, 0.0, 0.0, 0.0, true)["outcome"], json!({"status":"disabled"}));
+    assert_eq!(serde_json::to_value(&pack).unwrap(), disabled_snapshot);
+    pack.variants[0].fields.clock.as_mut().unwrap().enabled = true;
+    assert_eq!(serde_json::to_value(&pack).unwrap(), before);
+    assert!(matches!(recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap().fields.clock, HudFieldResult::Read { .. }));
+}
+
+#[test]
+fn disabled_cues_and_organizer_never_hide_or_invalidate_the_clock() {
+    let (mut frame, mut pack) = layout_pack();
+    pack.variants.truncate(1);
+    paint_layout_mark(&mut frame, 7);
+    let mut mark = pack.variants[0].organizer.as_ref().unwrap().clone();
+    mark.enabled = false;
+    pack.variants[0].organizer = Some(mark.clone());
+    for id in ["replay", "bomb", "timeout", "roundOver", "roundHistory", "scoreboard"] {
+        pack.variants[0].cues.insert(id.into(), mark.clone());
+    }
+    for (state, cue) in [("replay", "replay"), ("planted", "bomb"), ("paused", "timeout"), ("round-over", "roundOver"), ("statistics", "scoreboard")] {
+        pack.variants[0].states.insert(state.into(), vec![vec![HudCondition::Cue { cue: cue.into(), present: true }]]);
+    }
+    pack.variants[0].states.insert("active".into(), vec![vec![HudCondition::Cue { cue: "bomb".into(), present: false }]]);
+    let before = serde_json::to_value(&pack).unwrap();
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    assert!(matches!(result.fields.clock, HudFieldResult::Read { .. }));
+    assert_eq!(result.content, "live");
+    assert_eq!(result.phase, "unconfigured");
+    for result in result.cues.values().chain(result.states.values()).chain(std::iter::once(&result.organizer)) {
+        assert!(matches!(result, HudPresenceResult::Disabled { score: None, debug: None }));
+        assert_eq!(serde_json::to_value(result).unwrap(), json!({"status":"disabled","score":null,"debug":null}));
+    }
+    for id in ["replay", "organizer"] {
+        assert_eq!(prepare_hud_cue(&frame, 640, 360, &pack, "official-top-360", id).unwrap_err(), "field-disabled");
+        assert_eq!(recommend_hud_preprocess(&frame, 640, 360, &pack, "official-top-360", id, &HudPreprocessRequest::Threshold {}).unwrap_err(), "field-disabled");
+    }
+    assert_eq!(serde_json::to_value(&pack).unwrap(), before);
+    pack.variants[0].cues.get_mut("replay").unwrap().enabled = true;
+    let replay = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    assert_eq!(replay.content, "replay");
+    assert!(matches!(replay.fields.clock, HudFieldResult::Read { .. }));
+    pack.variants[0].cues.get_mut("bomb").unwrap().enabled = true;
+    let planted = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    assert!(matches!(planted.fields.clock, HudFieldResult::Absent { .. }));
+    pack.variants[0].fields.clock.as_mut().unwrap().enabled = false;
+    assert!(matches!(recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap().fields.clock, HudFieldResult::Disabled { debug: None }));
+}
+
+#[test]
+fn disabled_scores_do_not_read_derive_round_or_supply_unshared_glyphs() {
+    let (frame, mut pack) = scoreboard("8", "9");
+    let original = serde_json::to_value(&pack).unwrap();
+    pack.variants[0].fields.score_left.as_mut().unwrap().enabled = false;
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+    assert!(matches!(result.fields.score_left, HudFieldResult::Disabled { debug: None }));
+    assert!(matches!(result.fields.score_right, HudFieldResult::Read { .. }));
+    assert!(matches!(result.fields.round, HudFieldResult::Disabled { debug: None }));
+    let shared_right = pack.variants[0].fields.score_right.as_ref().unwrap().glyphs.clone();
+    pack.variants[0].fields.score_right.as_mut().unwrap().glyphs.clear();
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+    assert!(matches!(result.fields.score_right, HudFieldResult::Failed { ref reason, .. } if reason == "missing-glyph"));
+    pack.variants[0].fields.score_right.as_mut().unwrap().glyphs = shared_right;
+    pack.variants[0].fields.score_left.as_mut().unwrap().enabled = true;
+    assert_eq!(serde_json::to_value(&pack).unwrap(), original);
+    assert!(matches!(recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap().fields.round, HudFieldResult::Read { .. }));
+}
+
+#[test]
+fn disabled_organizers_are_excluded_from_multi_layout_selection_but_not_single_fallback() {
+    let (mut frame, mut pack) = layout_pack();
+    paint_layout_mark(&mut frame, 7);
+    paint_layout_mark(&mut frame, 21);
+    pack.variants[0].organizer.as_mut().unwrap().enabled = false;
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    assert_eq!(result.variant_id.as_deref(), Some("official-bottom-360"));
+    pack.variants[1].organizer.as_mut().unwrap().enabled = false;
+    assert_indeterminate_layout(&recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap(), "no-match");
+    let explicit = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+    assert!(matches!(explicit.fields.clock, HudFieldResult::Read { .. }));
+    assert!(matches!(explicit.organizer, HudPresenceResult::Disabled { .. }));
+    pack.variants.truncate(1);
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    assert_eq!(result.variant_id.as_deref(), Some("official-top-360"));
+    assert!(matches!(result.fields.clock, HudFieldResult::Read { .. }));
+}
+
+#[test]
+fn enabled_is_required_boolean_and_disabled_configuration_remains_strictly_validated() {
+    let (_, pack) = layout_pack();
+    let base = serde_json::to_value(&pack).unwrap();
+    for target in ["/variants/0/fields/clock", "/variants/0/organizer"] {
+        for enabled in [Value::Null, json!(0), json!(1), json!("false")] {
+            let mut invalid = base.clone();
+            invalid.pointer_mut(target).unwrap()["enabled"] = enabled;
+            assert!(parse_hud_style_pack(&invalid).is_err(), "{invalid}");
+        }
+        let mut invalid = base.clone();
+        invalid.pointer_mut(target).unwrap().as_object_mut().unwrap().remove("enabled");
+        assert!(parse_hud_style_pack(&invalid).is_err());
+        for property in ["roi", "preprocess"] {
+            let mut invalid = base.clone();
+            let item = invalid.pointer_mut(target).unwrap();
+            item["enabled"] = json!(false);
+            item[property] = json!({});
+            assert!(parse_hud_style_pack(&invalid).is_err());
+        }
+        let mut valid = base.clone();
+        valid.pointer_mut(target).unwrap()["enabled"] = json!(false);
+        let parsed = parse_hud_style_pack(&valid).unwrap();
+        assert_eq!(serde_json::to_value(parsed).unwrap().pointer(target).unwrap()["enabled"], false);
+    }
 }

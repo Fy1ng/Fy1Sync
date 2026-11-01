@@ -68,6 +68,25 @@ describe('source-local replay continuity', () => {
     session.observe(hudResult('replay', null))
     expect(session.observe(hudResult('live', 18)).content).toBe('replay')
   })
+
+  it('clears stale replay memory once replay detection has explicitly been disabled', () => {
+    const session = new HudReplaySession()
+    session.observe(hudResult('replay', 17))
+    const disabled = hudResult('live', 17)
+    disabled.cues.replay = { status: 'disabled', score: null, debug: null }
+    disabled.states.replay = { status: 'disabled', score: null, debug: null }
+    expect(session.observe(disabled).content).toBe('live')
+    expect(session.observe(hudResult('live', 17)).content).toBe('live')
+  })
+
+  it('does not clear replay memory when an enabled alternative detector remains', () => {
+    const session = new HudReplaySession()
+    session.observe(hudResult('replay', 17))
+    const result = hudResult('live', 17)
+    result.states.replay = { status: 'disabled', score: null, debug: null }
+    result.cues.replay = { status: 'not-matched', score: 0, debug: null }
+    expect(session.observe(result).content).toBe('replay')
+  })
 })
 
 describe('HUD countdown sync eligibility', () => {
@@ -97,5 +116,11 @@ describe('HUD countdown sync eligibility', () => {
     expect(hudClockOutcome(hud, frame)).toEqual({ status: 'absent' })
     const failed = { status: 'failed', reason: 'no-candidates' } as const
     expect(hudSyncOutcome(hudResult('indeterminate'), failed)).toBe(failed)
+  })
+
+  it('does not turn a disabled clock into a sync reading or a missing on-screen clock', () => {
+    const result = hudResult()
+    result.fields.clock = { status: 'disabled', debug: null }
+    expect(hudClockOutcome(result, frame)).toEqual({ status: 'failed', reason: 'no-profile', detail: 'clock-disabled' })
   })
 })

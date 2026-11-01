@@ -237,6 +237,7 @@ async function writeProfileStub() {
       nativeSize: { width: WIDTH, height: HEIGHT },
       fields: {
         clock: {
+          enabled: true,
           roi: { x: Math.round(ROI.x * WIDTH), y: Math.round(ROI.y * HEIGHT), w: Math.round(ROI.w * WIDTH), h: Math.round(ROI.h * HEIGHT) },
           preprocess: { mode: 'gray', scale: 1.4, threshold: 150, invert: false,
             adaptive: { windowSize: 15, offset: 7 },

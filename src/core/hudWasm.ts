@@ -22,10 +22,11 @@ export interface HudAnalysis extends Omit<HudDebug, 'matches'> { bitmaps: string
 export type HudFieldResult = (
   | { status: 'read'; reading: { text: string; value: number; confidence: number; scores: number[]; source: 'recognized' | 'derived' } }
   | { status: 'absent' }
+  | { status: 'disabled' }
   | { status: 'indeterminate'; reason: string }
   | { status: 'failed'; reason: string }
 ) & { debug: HudDebug | null }
-export type HudPresenceResult = ({ status: 'matched' } | { status: 'not-matched' }
+export type HudPresenceResult = ({ status: 'matched' } | { status: 'not-matched' } | { status: 'disabled' }
   | { status: 'indeterminate'; reason: string } | { status: 'failed'; reason: string }) & { score: number | null; debug: HudCueDebug | null }
 export type HudContent = 'live' | 'replay' | 'indeterminate'
 /** `unconfigured`: the pack judges no phase of play, so the frame is not held back on that account. */

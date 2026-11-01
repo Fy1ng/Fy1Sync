@@ -59,7 +59,7 @@ function scalablePack() {
   pack.bitmaps.glyph = { width: 32, height: 48, data: packBitmap(Uint8Array.from({ length: 32 * 48 }, (_, i) => i === 0 ? 255 : 0)) }
   clock.glyphs['1'] = ['glyph']
   pack.bitmaps.mark = { width: 4, height: 4, data: packBitmap(Uint8Array.of(0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255)) }
-  variant.cues.replay = { roi: { x: 100, y: 50, w: 4, h: 4 }, preprocess: createHudPreprocess({ scale: 2.1, threshold: 151, invert: false }), templates: ['mark'], minScore: 0.91 }
+  variant.cues.replay = { enabled: true, roi: { x: 100, y: 50, w: 4, h: 4 }, preprocess: createHudPreprocess({ scale: 2.1, threshold: 151, invert: false }), templates: ['mark'], minScore: 0.91 }
   variant.organizer = structuredClone(variant.cues.replay)
   variant.states.replay = [[{ kind: 'cue', cue: 'replay', present: true }]]
   return pack

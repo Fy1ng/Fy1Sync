@@ -15,7 +15,7 @@ describe('HUD production preprocessing through WASM', () => {
       for (let y = 16; y < 30; y++) for (let x = 25; x < 40; x++) if (x < 31 || y < 21) set(x, y)
       const pack = createEmptyHudStylePack('test/red-icon', '图标', { width: frame.width, height: frame.height })
       const variant = pack.variants[0]!
-      variant.cues.bomb = { roi: { x: 20, y: 10, w: 30, h: 30 }, preprocess: createHudPreprocess({ scale: 1 }), templates: [], minScore: 0.95 }
+      variant.cues.bomb = { enabled: true, roi: { x: 20, y: 10, w: 30, h: 30 }, preprocess: createHudPreprocess({ scale: 1 }), templates: [], minScore: 0.95 }
       const input = { pixels: frame.data, width: frame.width, height: frame.height }
       const gray = await prepareHudCue(input, pack, 'bomb')
       expect(new Set(gray.gray.data).size).toBe(1)

@@ -14,6 +14,13 @@ export class HudReplaySession {
 
   observe(result: HudFrameResult): HudFrameResult {
     if (result.variantId === null) return result
+    const replayStateDisabled = result.states.replay?.status === 'disabled'
+    const replayCueDisabled = result.cues.replay?.status === 'disabled'
+    if ((replayStateDisabled || replayCueDisabled)
+      && (!result.states.replay || replayStateDisabled) && (!result.cues.replay || replayCueDisabled)) {
+      this.reset()
+      return result
+    }
     const round = result.fields.round.status === 'read' ? result.fields.round.reading.value : null
     if (result.content === 'replay') {
       this.replay = true
@@ -46,6 +53,7 @@ function clockOutcome(result: HudFieldResult, frame: Pick<FrameMessage, 'mediaTi
       mediaTime: frame.mediaTime, wallTime: frame.wallTime, frameIndex: frame.frameIndex } }
   }
   if (result.status === 'absent') return { status: 'absent' }
+  if (result.status === 'disabled') return { status: 'failed', reason: 'no-profile', detail: 'clock-disabled' }
   if (result.status === 'indeterminate') return { status: 'indeterminate', reason: result.reason }
   const reasons: RecognitionFailure[] = ['no-profile', 'insufficient-templates', 'blank-frame', 'no-candidates', 'low-confidence', 'invalid-format', 'decode-failed']
   const reason = result.reason

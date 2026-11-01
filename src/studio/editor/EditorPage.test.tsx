@@ -212,6 +212,49 @@ async function openPreset(): Promise<void> {
 }
 
 describe('editor current field', () => {
+  it('disables and re-enables a field without losing its configuration or samples', async () => {
+    const { profile, draft, session } = await editingPublishedProfile()
+    const toggle = screen.getByRole('switch', { name: /启用当前字段/ })
+    expect(toggle).toBeChecked()
+    fireEvent.click(toggle)
+    expect(toggle).not.toBeChecked()
+    expect(screen.getByRole('slider', { name: '阈值' })).toBeDisabled()
+    for (const button of screen.getAllByRole('button', { name: /删除字符/ })) expect(button).toBeDisabled()
+    expect(screen.getByRole('option', { name: '倒计时 (已关闭)' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '应用到播放器' }))
+    expect(screen.getByRole('status', { name: '编辑器提示' })).toHaveTextContent('倒计时字段已关闭')
+    expect(session.profileFor('official')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '存为草稿' }))
+    await waitFor(() => expect(draft).toHaveBeenCalledTimes(1))
+    const saved = draft.mock.calls[0]![0]
+    expect(saved.bitmaps).toEqual(profile.bitmaps)
+    expect(saved.variants[0]!.fields.clock).toEqual({ ...profile.variants[0]!.fields.clock!, enabled: false })
+    fireEvent.click(toggle)
+    expect(screen.getByRole('slider', { name: '阈值' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: '存为草稿' }))
+    await waitFor(() => expect(draft).toHaveBeenCalledTimes(2))
+    expect(draft.mock.calls[1]![0].variants).toEqual(profile.variants)
+    expect(draft.mock.calls[1]![0].bitmaps).toEqual(profile.bitmaps)
+  })
+
+  it('keeps all eleven targets independently switchable and persists disabled cue defaults', async () => {
+    const { draft } = await editingPublishedProfile()
+    const target = screen.getByRole('combobox', { name: '当前字段' })
+    for (const id of ['clock', 'scoreLeft', 'scoreRight', 'replay', 'bomb', 'timeout', 'roundPrefix', 'roundOver', 'roundHistory', 'scoreboard', 'organizer']) {
+      fireEvent.change(target, { target: { value: id } })
+      const toggle = screen.getByRole('switch', { name: /启用当前字段/ })
+      expect(toggle).toBeChecked()
+      fireEvent.click(toggle)
+      expect(screen.getByRole('group', { name: '当前字段设置' })).toBeDisabled()
+    }
+    fireEvent.click(screen.getByRole('button', { name: '存为草稿' }))
+    await waitFor(() => expect(draft).toHaveBeenCalledOnce())
+    const variant = draft.mock.calls[0]![0].variants[0]!
+    for (const field of [...Object.values(variant.fields), ...Object.values(variant.cues), variant.organizer]) expect(field?.enabled).toBe(false)
+    expect(variant.fields.clock!.glyphs['0']).toEqual(['glyph-0'])
+    expect(variant.cues.roundOver!.templates).toEqual([])
+  })
+
   it('switches threshold, glyphs and saved samples without changing the other fields', async () => {
     const { profile, draft } = await editingPublishedProfile()
     expect(screen.getAllByRole('button', { name: /删除字符/ })).toHaveLength(11)

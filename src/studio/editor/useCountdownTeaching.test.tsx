@@ -149,7 +149,7 @@ describe('character button teaching', () => {
   })
 
   it('supports still screenshots and independent score characters with the same undo', async () => {
-    const view = setup({ still: true })
+    const view = setup({ still: true, pack: patchField(createEmptyHudStylePack(), 'scoreLeft', {}) })
     view.rerender({ ...view.scope, fieldId: 'scoreLeft' })
     await view.assign('1', 0)
     await view.assign('8', 1)
@@ -376,6 +376,38 @@ describe('shared jump history', () => {
 })
 
 describe('automatic one-second teaching', () => {
+  it('does not teach or auto-step a disabled clock and resumes only after re-enabling', async () => {
+    const view = setup()
+    await view.label('0:15')
+    const samples = sampleCount(view.result.current.pack)
+    act(() => view.result.current.edit(pack => patchField(pack, 'clock', { enabled: false })))
+    expect(view.result.current.canAutoStart).toBe(false)
+    await view.assign('8', 3)
+    act(() => view.result.current.startAuto())
+    expect(view.result.current.autoRunning).toBe(false)
+    expect(sampleCount(view.result.current.pack)).toBe(samples)
+    act(() => expect(view.result.current.jump(1)).toBe(false))
+    act(() => view.result.current.edit(pack => patchField(pack, 'clock', { enabled: true })))
+    await waitFor(() => expect(view.result.current.reading).toBe('0:15'))
+    expect(view.result.current.canAutoStart).toBe(true)
+  })
+
+  it('cancels in-flight automatic processing when the current clock is disabled', async () => {
+    const view = setup()
+    await view.label('0:15')
+    const savedCount = sampleCount(view.result.current.pack)
+    let finish!: (result: hud.HudFrameResult) => void
+    const original = view.recognize.getMockImplementation()!
+    view.recognize.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    act(() => view.result.current.startAuto())
+    await waitFor(() => expect(view.recognize).toHaveBeenCalledOnce())
+    act(() => view.result.current.edit(pack => patchField(pack, 'clock', { enabled: false })))
+    expect(view.result.current.autoRunning).toBe(false)
+    await act(async () => finish(await original(picture(6), view.result.current.pack, view.result.current.pack.variants[0]!.id)))
+    expect(sampleCount(view.result.current.pack)).toBe(savedCount)
+    expect(view.result.current.pack.variants[0]!.fields.clock!.enabled).toBe(false)
+  })
+
   it('requires one complete current-frame reading, then processes serially until zero and retains undo', async () => {
     const view = setup({ time: 17 })
     expect(view.result.current.canAutoStart).toBe(false)

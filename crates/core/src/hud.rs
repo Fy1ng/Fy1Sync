@@ -86,6 +86,7 @@ impl HudFields {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HudField {
+    pub enabled: bool,
     pub roi: HudRoi,
     pub preprocess: HudPreprocessSettings,
     pub segment: HudSegment,
@@ -117,6 +118,7 @@ pub enum HudGrammar {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HudCue {
+    pub enabled: bool,
     pub roi: HudRoi,
     pub preprocess: HudPreprocessSettings,
     pub templates: Vec<String>,
@@ -314,10 +316,13 @@ fn cue(v: &Value, size: &Value, bitmaps: &Value, path: &str, issues: &mut Vec<Hu
     if !object(
         v,
         path,
-        &["roi", "preprocess", "templates", "minScore"],
+        &["enabled", "roi", "preprocess", "templates", "minScore"],
         issues,
     ) {
         return;
+    }
+    if !v["enabled"].is_boolean() {
+        problem(issues, &path_at(path, "enabled"), "必须是布尔值");
     }
     roi(&v["roi"], size, &path_at(path, "roi"), issues);
     preprocess(&v["preprocess"], &path_at(path, "preprocess"), issues);
@@ -353,6 +358,7 @@ fn field(
         v,
         path,
         &[
+            "enabled",
             "roi",
             "preprocess",
             "segment",
@@ -364,6 +370,9 @@ fn field(
         issues,
     ) {
         return;
+    }
+    if !v["enabled"].is_boolean() {
+        problem(issues, &path_at(path, "enabled"), "必须是布尔值");
     }
     roi(&v["roi"], size, &path_at(path, "roi"), issues);
     preprocess(&v["preprocess"], &path_at(path, "preprocess"), issues);
@@ -735,7 +744,7 @@ pub fn hud_pack_readiness(pack: &HudStylePack, variant_id: &str) -> Value {
         .iter()
         .filter(|c| field.glyphs.get(**c).is_none_or(Vec::is_empty))
         .collect();
-    json!({"ready":missing.is_empty(),"missing":missing,"sampleCount":field.glyphs.values().map(Vec::len).sum::<usize>()})
+    json!({"ready":field.enabled && missing.is_empty(),"missing":missing,"sampleCount":field.glyphs.values().map(Vec::len).sum::<usize>()})
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -773,6 +782,9 @@ pub struct HudReading {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum HudFieldResult {
+    Disabled {
+        debug: Option<HudDebug>,
+    },
     Read {
         reading: HudReading,
         debug: Option<HudDebug>,
@@ -815,6 +827,7 @@ pub struct HudCuePreparation {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "kebab-case")]
 pub enum HudPresenceResult {
+    Disabled { score: Option<f64>, debug: Option<HudCueDebug> },
     Matched { score: Option<f64>, debug: Option<HudCueDebug> },
     NotMatched { score: Option<f64>, debug: Option<HudCueDebug> },
     Indeterminate { reason: String, score: Option<f64>, debug: Option<HudCueDebug> },
@@ -878,10 +891,12 @@ pub fn recommend_hud_preprocess(
     let variant = frame_variant(rgba, width, height, pack, variant_id)?;
     let (roi, settings) = if HUD_FIELDS.contains(&target_id) {
         let field = variant.fields.get(target_id).ok_or_else(|| "字段尚未配置".to_string())?;
+        if !field.enabled { return Err("field-disabled".into()); }
         (&field.roi, &field.preprocess)
     } else {
         let cue = if target_id == "organizer" { variant.organizer.as_ref() } else { variant.cues.get(target_id) }
             .ok_or_else(|| "固定图形不存在或尚未配置".to_string())?;
+        if !cue.enabled { return Err("field-disabled".into()); }
         (&cue.roi, &cue.preprocess)
     };
     let local_request = match *request {
@@ -907,6 +922,7 @@ pub fn prepare_hud_cue(
     let variant = frame_variant(rgba, width, height, pack, id)?;
     let cue = if cue_id == "organizer" { variant.organizer.as_ref() } else { variant.cues.get(cue_id) }
         .ok_or_else(|| "固定图形不存在或尚未配置".to_string())?;
+    if !cue.enabled { return Err("field-disabled".into()); }
     let debug = analyze_hud_cue(rgba, width, cue);
     Ok(HudCuePreparation {
         bitmap: pack_bitmap(&debug.binary.data),
@@ -924,6 +940,7 @@ fn recognize_hud_cue(
     pack: &HudStylePack,
     cue: &HudCue,
 ) -> HudPresenceResult {
+    if !cue.enabled { return HudPresenceResult::Disabled { score: None, debug: None }; }
     let debug = analyze_hud_cue(rgba, width, cue);
     if cue.templates.is_empty() {
         return presence_failed("insufficient-templates", Some(debug));
@@ -941,6 +958,20 @@ fn recognize_hud_cue(
 }
 fn presence_matched(result: Option<&HudPresenceResult>) -> bool {
     matches!(result, Some(HudPresenceResult::Matched { .. }))
+}
+fn condition_disabled(condition: &HudCondition, cues: &BTreeMap<String, HudPresenceResult>, fields: &HudFieldResults) -> bool {
+    match condition {
+        HudCondition::Cue { cue, .. } => matches!(cues.get(cue), Some(HudPresenceResult::Disabled { .. })),
+        HudCondition::Field { field, .. } => {
+            let result = match field.as_str() {
+                "clock" => &fields.clock,
+                "scoreLeft" => &fields.score_left,
+                "scoreRight" => &fields.score_right,
+                _ => return false,
+            };
+            matches!(result, HudFieldResult::Disabled { .. })
+        }
+    }
 }
 fn condition_value(
     condition: &HudCondition,
@@ -968,7 +999,7 @@ fn condition_value(
                 HudFieldResult::Read { .. } => Some(true),
                 HudFieldResult::Absent { .. } => Some(false),
                 HudFieldResult::Indeterminate { .. } => None,
-                HudFieldResult::Failed { .. } => return Err(()),
+                HudFieldResult::Failed { .. } | HudFieldResult::Disabled { .. } => return Err(()),
             };
             (value, *present)
         }
@@ -982,7 +1013,11 @@ fn evaluate_hud_state(
 ) -> HudPresenceResult {
     let mut matched = false;
     let mut uncertain = false;
+    let mut enabled_group = false;
     for group in groups {
+        // Skip the complete AND group, never just the disabled condition inside it.
+        if group.iter().any(|condition| condition_disabled(condition, cues, fields)) { continue; }
+        enabled_group = true;
         let mut group_matches = true;
         let mut group_uncertain = false;
         for condition in group {
@@ -996,7 +1031,9 @@ fn evaluate_hud_state(
         matched |= group_matches && !group_uncertain;
         uncertain |= group_matches && group_uncertain;
     }
-    if matched {
+    if !enabled_group {
+        HudPresenceResult::Disabled { score: None, debug: None }
+    } else if matched {
         HudPresenceResult::Matched { score: None, debug: None }
     } else if uncertain {
         HudPresenceResult::Indeterminate { reason: "dependency-indeterminate".into(), score: None, debug: None }
@@ -1008,7 +1045,8 @@ fn evaluate_hud_state(
 /// a marker, so it never sees one: live, as for any frame without a marker (cold start A).
 /// Configured but unreadable stays indeterminate.
 fn hud_content(cues: &BTreeMap<String, HudPresenceResult>, states: &BTreeMap<String, HudPresenceResult>) -> String {
-    match states.get("replay").or_else(|| cues.get("replay")) {
+    let enabled = |value: &&HudPresenceResult| !matches!(value, HudPresenceResult::Disabled { .. });
+    match states.get("replay").filter(enabled).or_else(|| cues.get("replay").filter(enabled)) {
         None => "live",
         Some(HudPresenceResult::Matched { .. }) => "replay",
         Some(HudPresenceResult::NotMatched { .. }) => "live",
@@ -1040,7 +1078,8 @@ fn hud_phase(states: &BTreeMap<String, HudPresenceResult>) -> String {
             _ => (),
         }
     }
-    phase.unwrap_or(if states.contains_key("active") { "indeterminate" } else { "unconfigured" }).into()
+    let active_enabled = states.get("active").is_some_and(|state| !matches!(state, HudPresenceResult::Disabled { .. }));
+    phase.unwrap_or(if active_enabled { "indeterminate" } else { "unconfigured" }).into()
 }
 fn analyze_hud_field(rgba: &[u8], width: usize, field: &HudField) -> (HudDebug, Vec<Vec<u8>>) {
     let rect = field.roi.rect();
@@ -1091,6 +1130,7 @@ pub fn prepare_hud_glyphs_with_boxes(
         .fields
         .get(field_id)
         .ok_or_else(|| "字段不存在或尚未配置".to_string())?;
+    if !field.enabled { return Err("field-disabled".into()); }
     let (mut debug, _) = analyze_hud_field(rgba, width, field);
     if let Some(boxes) = boxes {
         for b in &boxes {
@@ -1142,7 +1182,7 @@ fn shared_score_glyphs(fields: &HudFields) -> BTreeMap<String, Vec<String>> {
     for c in &CLOCK_CHARS[..10] {
         let mut seen = BTreeSet::new();
         let mut ids = Vec::new();
-        for field in [fields.score_left.as_ref(), fields.score_right.as_ref()].into_iter().flatten() {
+        for field in [fields.score_left.as_ref(), fields.score_right.as_ref()].into_iter().flatten().filter(|field| field.enabled) {
             if let Some(samples) = field.glyphs.get(*c) {
                 for id in samples {
                     if seen.insert(id) {
@@ -1166,6 +1206,7 @@ fn recognize_hud_field(
     shared_glyphs: Option<&BTreeMap<String, Vec<String>>>,
 ) -> HudFieldResult {
     if let Some(field) = field {
+        if !field.enabled { return HudFieldResult::Disabled { debug: None }; }
         let (mut debug, coverage) = analyze_hud_field(rgba, width, field);
         let glyphs = shared_glyphs.unwrap_or(&field.glyphs);
         let mut templates = CompiledTemplates {
@@ -1234,6 +1275,7 @@ fn recognize_hud_field(
 }
 fn derive_round(left: &HudFieldResult, right: &HudFieldResult) -> HudFieldResult {
     match (left, right) {
+        (HudFieldResult::Disabled { .. }, _) | (_, HudFieldResult::Disabled { .. }) => HudFieldResult::Disabled { debug: None },
         (HudFieldResult::Read { reading: left, .. }, HudFieldResult::Read { reading: right, .. }) => {
             let value = left.value + right.value + 1.0;
             HudFieldResult::Read {
@@ -1288,6 +1330,7 @@ pub fn recognize_hud_frame(
                 let mut selected = None;
                 for variant in candidates {
                     let Some(cue) = &variant.organizer else { continue };
+                    if !cue.enabled { continue; }
                     let organizer = recognize_hud_cue(rgba, width, pack, cue);
                     if presence_matched(Some(&organizer)) {
                         if selected.is_some() {
@@ -1313,7 +1356,9 @@ pub fn recognize_hud_frame(
     // Fonts are shared only within this layout; each score still owns its color and ROI pipeline.
     let score_glyphs = shared_score_glyphs(&variant.fields);
     let read_field = |field: Option<&HudField>, absent: bool, glyphs: Option<&BTreeMap<String, Vec<String>>>| {
-        if absent && field.is_some() {
+        if field.is_some_and(|field| !field.enabled) {
+            HudFieldResult::Disabled { debug: None }
+        } else if absent && field.is_some() {
             HudFieldResult::Absent { debug: None }
         } else {
             recognize_hud_field(rgba, width, pack, &variant.id, field, glyphs)
@@ -1352,6 +1397,7 @@ mod tests {
     #[test]
     fn score_glyph_union_deduplicates_per_character_and_excludes_the_clock() {
         let field = |glyphs| HudField {
+            enabled: true,
             roi: HudRoi { x: 0, y: 0, w: 1, h: 1 },
             preprocess: HudPreprocessSettings { scale: 1.0, threshold: 100.0, ..HudPreprocessSettings::default() },
             segment: HudSegment { min_column_ink: 1, min_glyph_width: 1, min_gap_width: 1, min_ink_ratio: 0.0 },
@@ -1422,6 +1468,44 @@ mod tests {
     }
 
     #[test]
+    fn disabled_dependencies_skip_whole_and_groups_including_negative_conditions() {
+        let fields = state_fields(HudFieldResult::Disabled { debug: None });
+        let cues = BTreeMap::from([
+            ("replay".into(), HudPresenceResult::Disabled { score: None, debug: None }),
+            ("bomb".into(), presence(Some(true))),
+            ("timeout".into(), presence(None)),
+        ]);
+        for expected in [true, false] {
+            for disabled in [cue_condition("replay", expected), HudCondition::Field { field: "clock".into(), present: expected }] {
+                let group = vec![cue_condition("bomb", true), disabled.clone()];
+                assert!(matches!(evaluate_hud_state(&[group.clone()], &cues, &fields), HudPresenceResult::Disabled { score: None, debug: None }));
+                let failing_group = vec![cue_condition("timeout", true), disabled.clone()];
+                assert!(matches!(evaluate_hud_state(&[failing_group.clone()], &cues, &fields), HudPresenceResult::Disabled { .. }));
+                // An unrelated OR branch continues to participate with its original conditions.
+                assert!(matches!(evaluate_hud_state(&[group.clone(), vec![cue_condition("bomb", true)]], &cues, &fields), HudPresenceResult::Matched { .. }));
+                assert!(matches!(evaluate_hud_state(&[group, vec![cue_condition("bomb", false)]], &cues, &fields), HudPresenceResult::NotMatched { .. }));
+                assert!(matches!(evaluate_hud_state(&[failing_group, vec![cue_condition("timeout", false)]], &cues, &fields), HudPresenceResult::Failed { .. }));
+            }
+        }
+    }
+
+    #[test]
+    fn disabled_phases_and_replay_rules_do_not_block_enabled_detection() {
+        let disabled = || HudPresenceResult::Disabled { score: None, debug: None };
+        let mut states = BTreeMap::from([
+            ("active".into(), disabled()), ("replay".into(), disabled()),
+            ("statistics".into(), disabled()), ("paused".into(), disabled()),
+        ]);
+        assert_eq!(hud_phase(&states), "unconfigured");
+        assert_eq!(hud_content(&BTreeMap::new(), &states), "live");
+        assert_eq!(hud_content(&BTreeMap::from([("replay".into(), disabled())]), &states), "live");
+        assert_eq!(hud_content(&BTreeMap::from([("replay".into(), presence(Some(true)))]), &states), "replay");
+        assert_eq!(hud_content(&BTreeMap::from([("replay".into(), presence(None))]), &states), "indeterminate");
+        states.insert("active".into(), presence(Some(true)));
+        assert_eq!(hud_phase(&states), "active");
+    }
+
+    #[test]
     fn content_and_phase_are_independent_and_statistics_takes_precedence() {
         let cues = BTreeMap::from([("replay".into(), presence(Some(true)))]);
         let mut states = BTreeMap::from([("planted".into(), presence(Some(true)))]);
@@ -1484,5 +1568,10 @@ mod tests {
         assert_eq!(reading.value, 199.0);
         assert_eq!(reading.source, "derived");
         assert_eq!(reading.confidence, 0.9);
+        let disabled = HudFieldResult::Disabled { debug: None };
+        for other in [&read, &absent, &unknown, &failure, &disabled] {
+            assert!(matches!(derive_round(&disabled, other), HudFieldResult::Disabled { debug: None }));
+            assert!(matches!(derive_round(other, &disabled), HudFieldResult::Disabled { debug: None }));
+        }
     }
 }

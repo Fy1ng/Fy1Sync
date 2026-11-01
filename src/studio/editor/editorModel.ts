@@ -5,6 +5,7 @@ import { createEmptyHudStylePack, type HudField, type HudFieldId, type HudSegmen
 import { editorVariant } from './layoutModel'
 
 export interface EditorClockModel {
+  enabled: boolean
   id: string
   name: string
   roi: RoiRect
@@ -43,7 +44,7 @@ export function fieldModel(pack: HudStylePack, fieldId: HudFieldId, variantId?: 
   const field = editorField(pack, fieldId, variant.id)
   const glyphs = fieldId === 'clock' ? field.glyphs : scoreGlyphs(variant)
   const { width, height } = variant.nativeSize
-  return { id: pack.id, name: pack.name, roi: { x: field.roi.x / width, y: field.roi.y / height,
+  return { enabled: field.enabled, id: pack.id, name: pack.name, roi: { x: field.roi.x / width, y: field.roi.y / height,
     w: field.roi.w / width, h: field.roi.h / height }, preprocess: field.preprocess, segment: field.segment,
     clockFormat: field.grammar.kind === 'countdown' ? field.grammar.format : 'ss', matchThreshold: field.match.minScore,
     templates: Object.fromEntries(CLOCK_CHARS.flatMap(char => {
@@ -58,7 +59,7 @@ export function fieldReadiness(pack: HudStylePack, fieldId: HudFieldId, variantI
   const needed = fieldId === 'clock' && field.grammar.kind === 'countdown' && field.grammar.format !== 'ss'
     ? CLOCK_CHARS : CLOCK_CHARS.filter(char => char !== ':')
   const missing = needed.filter(char => !glyphs[char]?.length)
-  return { ready: missing.length === 0, missing,
+  return { ready: field.enabled && missing.length === 0, missing,
     sampleCount: Object.values(glyphs).reduce((count, refs) => count + refs.length, 0) }
 }
 
@@ -79,7 +80,7 @@ export function patchField(pack: HudStylePack, fieldId: HudFieldId, patch: Parti
   const roi = patch.roi ? { x, y, w: Math.max(1, Math.min(width - x, Math.round(patch.roi.w * width))),
     h: Math.max(1, Math.min(height - y, Math.round(patch.roi.h * height))) } : field.roi
   const fields: HudVariant['fields'] = { ...variant.fields, [fieldId]: {
-      ...field, roi, preprocess: patch.preprocess ?? field.preprocess, segment: patch.segment ?? field.segment, glyphs,
+      ...field, enabled: patch.enabled ?? field.enabled, roi, preprocess: patch.preprocess ?? field.preprocess, segment: patch.segment ?? field.segment, glyphs,
       grammar: fieldId === 'clock' && patch.clockFormat ? { kind: 'countdown', format: patch.clockFormat } : field.grammar,
       match: { ...field.match, minScore: patch.matchThreshold ?? field.match.minScore },
     } }

@@ -29,7 +29,7 @@ function fixture() {
     clock.glyphs[char] = [id]
   }
   pack.bitmaps.mark = { width: 3, height: 3, data: packBitmap(Uint8Array.of(255, 0, 255, 0, 255, 0, 255, 0, 255)) }
-  const cue = { roi: { x: 0, y: 0, w: 3, h: 3 }, preprocess: createHudPreprocess({ scale: 1, threshold: 150, invert: false }), templates: ['mark'], minScore: .8 }
+  const cue = { enabled: true, roi: { x: 0, y: 0, w: 3, h: 3 }, preprocess: createHudPreprocess({ scale: 1, threshold: 150, invert: false }), templates: ['mark'], minScore: .8 }
   variant.cues.replay = cue
   variant.states.replay = [[{ kind: 'cue', cue: 'replay', present: true }]]
   variant.states.active = [[{ kind: 'field', field: 'clock', present: true }]]
@@ -53,6 +53,43 @@ function realEngine() {
 }
 
 describe('HUD full-frame Rust/WASM recognition', () => {
+  it('reports a disabled clock consistently in the editor and player without discarding its templates', async () => {
+    const { pack, variant, frame, request } = fixture()
+    const originalClock = structuredClone(variant.fields.clock!)
+    const before = structuredClone(pack.bitmaps)
+    variant.fields.clock!.enabled = false
+    const { recognition, engine } = realEngine()
+    try {
+      expect(engine.handle({ type: 'configure', generation: 2, profile: pack })).toMatchObject({ type: 'configured', ready: false })
+      const result = await recognizeHudFrame({ pixels: frame.data, width: frame.width, height: frame.height }, pack, variant.id)
+      expect(result.fields.clock).toEqual({ status: 'disabled', debug: null })
+      expect(result.states.active).toEqual({ status: 'disabled', score: null, debug: null })
+      expect(result.phase).toBe('unconfigured')
+      const player = engine.handle(request) as ResultMessage
+      expect(player.hud).toEqual(result)
+      expect(player.outcome).toEqual({ status: 'failed', reason: 'no-profile', detail: 'clock-disabled' })
+      variant.fields.clock!.enabled = true
+      const enabled = await recognizeHudFrame({ pixels: frame.data, width: frame.width, height: frame.height }, pack, variant.id)
+      expect(enabled.fields.clock).toMatchObject({ status: 'read', reading: { text: '1:37' } })
+      expect(variant.fields.clock).toEqual(originalClock)
+      expect(pack.bitmaps).toEqual(before)
+    } finally { recognition.free() }
+  })
+
+  it('ignores a disabled replay detector and its rule rather than treating it as missing evidence', async () => {
+    const { pack, variant, frame } = fixture()
+    const { recognition } = realEngine()
+    try {
+      variant.cues.replay = { ...variant.cues.replay!, enabled: false }
+      const result = await recognizeHudFrame({ pixels: frame.data, width: frame.width, height: frame.height }, pack, variant.id)
+      expect(result.cues.replay).toEqual({ status: 'disabled', score: null, debug: null })
+      expect(result.states.replay).toEqual({ status: 'disabled', score: null, debug: null })
+      expect(result.content).toBe('live')
+      expect(result.fields.clock.status).toBe('read')
+      expect(variant.cues.replay.templates).toEqual(['mark'])
+    } finally { recognition.free() }
+  })
+
   it('returns the same reading and complete debug data in the editor and player', async () => {
     const { pack, variant, frame, request } = fixture()
     expect(parseHudStylePack(pack).issues).toEqual([])

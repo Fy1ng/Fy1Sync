@@ -1,6 +1,7 @@
 import { expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { createEmptyHudStylePack } from '../../core/hudStylePack'
+import { editorCue } from './cueModel'
 import { LayoutSection } from './LayoutSection'
 
 it('offers both lower resolution actions only for a 3840x2160 layout', () => {
@@ -14,4 +15,35 @@ it('offers both lower resolution actions only for a 3840x2160 layout', () => {
   view.rerender(<LayoutSection {...props} variant={{ ...props.variant, nativeSize: { width: 2560, height: 1440 } }} />)
   expect(screen.queryByRole('button', { name: '生成 1440p' })).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: '生成 1080p' })).not.toBeInTheDocument()
+})
+
+it('warns when a competing same-size layout has no enabled organizer', () => {
+  const pack = createEmptyHudStylePack()
+  const variant = pack.variants[0]!
+  pack.variants.push({ ...structuredClone(variant), id: 'second' })
+  const props = { pack, variant, canCreate: false, onSelect: vi.fn(), onCreate: vi.fn(),
+    onGenerate: vi.fn(), onRename: () => null, onDelete: vi.fn() }
+  const view = render(<LayoutSection {...props} />)
+  expect(screen.getByTestId('layout-organizer-warning')).toHaveTextContent('主办方未启用, 不会自动选中')
+  variant.organizer = { ...editorCue(pack, 'organizer'), enabled: false }
+  view.rerender(<LayoutSection {...props} />)
+  expect(screen.getByTestId('layout-organizer-warning')).toHaveTextContent('主办方未启用, 不会自动选中')
+  variant.organizer.enabled = true
+  view.rerender(<LayoutSection {...props} />)
+  expect(screen.queryByTestId('layout-organizer-warning')).not.toBeInTheDocument()
+  expect(props.onSelect).not.toHaveBeenCalled()
+  expect(pack.variants[1]!.organizer).toBeNull()
+})
+
+it('does not demand an organizer when no other layout has the same resolution', () => {
+  const pack = createEmptyHudStylePack()
+  const variant = pack.variants[0]!
+  variant.organizer = { ...editorCue(pack, 'organizer'), enabled: false }
+  const props = { pack, variant, canCreate: false, onSelect: vi.fn(), onCreate: vi.fn(),
+    onGenerate: vi.fn(), onRename: () => null, onDelete: vi.fn() }
+  const view = render(<LayoutSection {...props} />)
+  expect(screen.queryByTestId('layout-organizer-warning')).not.toBeInTheDocument()
+  pack.variants.push({ ...structuredClone(variant), id: 'small', nativeSize: { width: 1280, height: 720 } })
+  view.rerender(<LayoutSection {...props} />)
+  expect(screen.queryByTestId('layout-organizer-warning')).not.toBeInTheDocument()
 })

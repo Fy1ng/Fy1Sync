@@ -5,10 +5,10 @@ import type { HudFrameResult } from '../../core/hudWasm'
 export function checkAutoCountdown(result: HudFrameResult, pack: HudStylePack, variantId: string, expected: string): string[] {
   const variant = pack.variants.find(item => item.id === variantId)
   const field = variant?.fields.clock
-  if (!field || result.variantId !== variantId) throw new Error('无法确认当前倒计时布局')
+  if (!field || !field.enabled || result.variantId !== variantId) throw new Error('倒计时字段已关闭或无法确认当前布局')
   if (result.content !== 'live') throw new Error('检测到回放或无法判断的画面')
   if (result.phase !== 'active' && result.phase !== 'unconfigured') throw new Error(`当前不是连续倒计时阶段 (${result.phase})`)
-  if (variant.organizer && result.organizer.status !== 'matched') throw new Error('主办方标记不匹配或无法判断')
+  if (variant.organizer?.enabled && result.organizer.status !== 'matched') throw new Error('主办方标记不匹配或无法判断')
   for (const id of ['replay', 'bomb', 'timeout', 'roundOver', 'roundHistory', 'scoreboard'] as const) {
     if (result.cues[id]?.status === 'matched') throw new Error(`检测到画面状态 ${id}, 需要重新确认倒计时`)
   }
@@ -18,7 +18,7 @@ export function checkAutoCountdown(result: HudFrameResult, pack: HudStylePack, v
     return []
   }
   if (clock.status !== 'failed' || clock.reason !== 'insufficient-templates') {
-    throw new Error(clock.status === 'absent' ? '画面没有倒计时' : `倒计时识别失败: ${clock.reason}`)
+    throw new Error(clock.status === 'disabled' ? '倒计时字段已关闭' : clock.status === 'absent' ? '画面没有倒计时' : `倒计时识别失败: ${clock.reason}`)
   }
   const debug = clock.debug
   if (!debug || debug.boxes.length !== expected.length || debug.matches.length !== expected.length

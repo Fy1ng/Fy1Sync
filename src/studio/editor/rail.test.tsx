@@ -151,4 +151,10 @@ describe('click-to-teach glyph reading', () => {
     fireEvent.click(zero)
     expect(props.onAssign).not.toHaveBeenCalled()
   })
+
+  it.each(['clock', 'scoreLeft', 'scoreRight'] as const)('shows a disabled %s result without a recognition error', fieldId => {
+    render(<GlyphSection {...glyphProps({ fieldId, recognized: { status: 'disabled', debug: null } })} />)
+    expect(screen.getByText('字段已关闭')).not.toHaveClass('is-bad')
+    expect(screen.queryByText(/识别失败|无法判断|undefined/)).not.toBeInTheDocument()
+  })
 })

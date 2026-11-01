@@ -65,7 +65,10 @@ interface AutoRun {
 export function useCountdownTeaching(options: Options) {
   const latest = useRef(options)
   latest.current = options
-  const context = JSON.stringify([options.pack.id, options.variantId, options.fieldId, options.source, options.documentRevision])
+  const targetVariant = options.pack.variants.find(variant => variant.id === options.variantId)
+  const target = isCueTarget(options.fieldId) ? options.fieldId === 'organizer' ? targetVariant?.organizer : targetVariant?.cues[options.fieldId]
+    : targetVariant?.fields[options.fieldId]
+  const context = JSON.stringify([options.pack.id, options.variantId, options.fieldId, target?.enabled, options.source, options.documentRevision])
   const contextRef = useRef(context)
   contextRef.current = context
   const [reading, setReading] = useState('')
@@ -123,7 +126,7 @@ export function useCountdownTeaching(options: Options) {
   useEffect(() => {
     const { frame, boxes, pack, fieldId, variantId } = options
     if (busy || autoRunning) return
-    if (!frame || !boxes.length || isCueTarget(fieldId)) { updateReading(''); return }
+    if (!frame || !boxes.length || isCueTarget(fieldId) || !pack.variants.find(variant => variant.id === variantId)?.fields[fieldId]?.enabled) { updateReading(''); return }
     let active = true
     void glyphFrameKey(frame, pack, fieldId, variantId, boxes).then(key => {
       if (!active || pending.current) return
@@ -177,6 +180,7 @@ export function useCountdownTeaching(options: Options) {
     const current = latest.current
     const { frame, boxes, fieldId, variantId } = current
     if (pending.current || automatic.current || !frame || !boxes[index] || isCueTarget(fieldId) || (fieldId !== 'clock' && char === ':')) return
+    if (!current.pack.variants.find(variant => variant.id === variantId)?.fields[fieldId]?.enabled) return
     const video = current.video.current
     if (video && (!video.paused || video.seeking || Math.abs(frame.mediaTime - video.currentTime) > 1e-6)) {
       current.onMessage({ kind: 'warn', text: '请先暂停并取当前帧, 再点击字符按钮' })
@@ -285,6 +289,7 @@ export function useCountdownTeaching(options: Options) {
     const video = current.video.current
     if (pending.current || (automatic.current && automatic.current !== auto)) return true
     if (!video || current.fieldId !== 'clock' || !readingRef.current || readingRef.current.includes('?')) return false
+    if (!current.pack.variants.find(variant => variant.id === current.variantId)?.fields.clock?.enabled) return false
     const end = Number.isFinite(video.duration) ? video.duration : video.currentTime
     const to = Math.max(0, Math.min(end, video.currentTime + seconds))
     if (Math.abs(to - video.currentTime) < 1e-6) return true
@@ -336,6 +341,7 @@ export function useCountdownTeaching(options: Options) {
     const video = current.video.current
     if (!video || current.fieldId !== 'clock' || !current.frame || !current.boxes.length || pending.current || automatic.current
       || !video.paused || video.seeking || anchor.current?.video !== video || Math.abs(anchor.current.time - video.currentTime) > 1e-6) return false
+    if (!current.pack.variants.find(variant => variant.id === current.variantId)?.fields.clock?.enabled) return false
     const seconds = parseCountdown(readingRef.current, fieldModel(current.pack, 'clock', current.variantId).clockFormat)
     return seconds !== null && seconds > 0 && Number.isFinite(video.duration) && video.currentTime + 1 <= video.duration + 1e-6
   }

@@ -9,6 +9,7 @@ import { editorVariant } from './layoutModel'
 
 export function presenceText(result: HudPresenceResult | undefined, organizer = false): string {
   if (!result) return '尚未预览'
+  if (result.status === 'disabled') return '已关闭'
   const text = result.status === 'matched' ? organizer ? '匹配' : '出现'
     : result.status === 'not-matched' ? organizer ? '不匹配' : '不出现'
       : result.status === 'failed' ? `识别失败: ${result.reason}` : `无法判断: ${result.reason}`
@@ -47,6 +48,7 @@ export function StateRules({ pack, variantId, onChange }: { pack: HudStylePack; 
   const states = variant.states
   const ids = [...new Set([...Object.keys(STATE_LABELS), ...Object.keys(states)])]
   const change = (id: string, groupIndex: number, cue: typeof HUD_CUE_IDS[number], value: string): void => {
+    if (!variant.cues[cue]?.enabled) return
     const groups = (states[id] ?? [[]]).map(group => [...group])
     const group = groups[groupIndex]!.filter(condition => condition.kind !== 'cue' || condition.cue !== cue)
     if (value !== '') group.push({ kind: 'cue', cue, present: value === 'present' })
@@ -58,20 +60,25 @@ export function StateRules({ pack, variantId, onChange }: { pack: HudStylePack; 
     onChange(next)
   }
   return <details className="rail-group state-rules"><summary><h2>状态规则</h2></summary>
-    <p className="muted">组内全部满足, 任一组满足即成立. 未配置 cue 需先框区域.</p>
+    <p className="muted">组内全部满足, 任一组满足即成立. 引用已关闭字段的组不参与判断, 其他组不受影响. 未配置 cue 需先框区域.</p>
     {ids.map(id => <div className="state-rule" key={id}><b>{STATE_LABELS[id] ?? id}</b>
       {(states[id] ?? [[]]).map((group, groupIndex) => <div className="state-rule-cues" key={groupIndex}>
         {HUD_CUE_IDS.map(cue => {
           const condition = group.find(item => item.kind === 'cue' && item.cue === cue)
-          return <label key={cue}><span>{CUE_LABELS[cue]}</span><select aria-label={`${STATE_LABELS[id] ?? id} ${groupIndex + 1} ${CUE_LABELS[cue]}`}
-            disabled={!variant.cues[cue]} value={condition ? condition.present ? 'present' : 'absent' : ''}
+          const closed = variant.cues[cue]?.enabled === false
+          const label = `${CUE_LABELS[cue]}${closed ? ' (已关闭)' : ''}`
+          return <label key={cue}><span>{label}</span><select aria-label={`${STATE_LABELS[id] ?? id} ${groupIndex + 1} ${label}`}
+            disabled={!variant.cues[cue]?.enabled} value={condition ? condition.present ? 'present' : 'absent' : ''}
             onChange={event => change(id, groupIndex, cue, event.target.value)}>
             <option value="">不限</option><option value="present">出现</option><option value="absent">不出现</option>
           </select></label>
         })}
         {group.filter(item => item.kind === 'field').map((condition, index) => <span className="muted" key={index}>
-          {condition.kind === 'field' ? `${condition.field}: ${condition.present ? '读到' : '不在'}` : ''}
+          {condition.kind === 'field' ? `${condition.field}: ${condition.present ? '读到' : '不在'}${variant.fields[condition.field]?.enabled === false ? ' (已关闭)' : ''}` : ''}
         </span>)}
+        {group.some(condition => condition.kind === 'cue' ? variant.cues[condition.cue]?.enabled === false
+          : variant.fields[condition.field]?.enabled === false)
+          && <p className="note-warn">该组引用了已关闭字段, 暂不参与判断</p>}
       </div>)}
     </div>)}
   </details>

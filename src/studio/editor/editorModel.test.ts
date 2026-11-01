@@ -13,7 +13,7 @@ describe('clock editor pack view', () => {
     pack.bitmaps.digit = { width: 32, height: 48, data }
     clock.glyphs['1'] = ['digit']
     variant.fields.scoreLeft = { ...structuredClone(clock), grammar: { kind: 'integer', min: 0, max: 99 } }
-    variant.cues.replay = { roi: { x: 0, y: 0, w: 32, h: 48 }, preprocess: { ...clock.preprocess }, templates: ['digit'], minScore: 0.8 }
+    variant.cues.replay = { enabled: true, roi: { x: 0, y: 0, w: 32, h: 48 }, preprocess: { ...clock.preprocess }, templates: ['digit'], minScore: 0.8 }
     variant.states.replay = [[{ kind: 'cue', cue: 'replay', present: true }]]
     variant.organizer = structuredClone(variant.cues.replay)
     pack.variants.push({ ...structuredClone(variant), id: 'official-bottom-2160' })

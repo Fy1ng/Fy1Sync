@@ -175,7 +175,7 @@ export default function EditorPage(): React.ReactNode {
   }, [])
 
   const [analysis, setAnalysis] = useState<HudAnalysis | null>(null)
-  const analysisKey = JSON.stringify([variantId, fieldId, variant.nativeSize, profile.roi, profile.preprocess, profile.segment])
+  const analysisKey = JSON.stringify([variantId, fieldId, profile.enabled, variant.nativeSize, profile.roi, profile.preprocess, profile.segment])
   useEffect(() => {
     if (!adoptFootageSize.current || !videoSize.width || !videoSize.height) return
     setPack(current => sizeEmptyClock(current, videoSize.width, videoSize.height))
@@ -183,7 +183,7 @@ export default function EditorPage(): React.ReactNode {
   useEffect(() => {
     let active = true
     setAnalysis(null)
-    const prepared = !frame ? null : cueId ? prepareHudCue(frame, profileRef.current, cueId, variantId).then(result => ({ ...result,
+    const prepared = !frame || !profile.enabled ? null : cueId ? prepareHudCue(frame, profileRef.current, cueId, variantId).then(result => ({ ...result,
       boxes: [], projection: [], normalized: [], bitmaps: [], inkRatio: 0 }))
       : prepareHudGlyphs(frame, profileRef.current, variantId, undefined, numericId)
     if (prepared) void prepared.then(result => {
@@ -192,7 +192,7 @@ export default function EditorPage(): React.ReactNode {
       if (active) setMessage({ kind: 'error', text: `画面处理失败: ${error instanceof Error ? error.message : String(error)}` })
     })
     return () => { active = false }
-  }, [frame, analysisKey, cueId, numericId, variantId])
+  }, [frame, analysisKey, cueId, numericId, variantId, profile.enabled])
 
   useEffect(() => {
     let active = true
@@ -270,13 +270,20 @@ export default function EditorPage(): React.ReactNode {
   }, [fieldId, variantId])
 
   const preprocessing = usePreprocessRecommendation({ frame, pack: activePack, variantId, target: fieldId,
-    revision: editRevision, disabled: countdown.busy, apply: preprocess => patch({ preprocess }), message: setMessage })
+    revision: editRevision, disabled: countdown.busy || !profile.enabled, apply: preprocess => patch({ preprocess }), message: setMessage })
   const patchPreprocess = (update: Partial<EditorClockModel>): void => {
     patch(update)
     if (update.preprocess && JSON.stringify(update.preprocess) !== JSON.stringify(profile.preprocess)) {
       const hasSamples = cueId ? editorCue(pack, cueId, variantId).templates.length > 0 : readiness.sampleCount > 0
       if (hasSamples) setMessage({ kind: 'warn', text: '预处理参数已改变, 原样本已保留. 请重新验证当前帧, 必要时重新取样, 不要直接继续自动写入.' })
     }
+  }
+
+  const toggleField = (enabled: boolean): void => {
+    if (countdown.autoRunning) countdown.stopAuto()
+    patch({ enabled })
+    const label = cueId ? CUE_LABELS[cueId] : FIELD_LABELS[numericId]
+    setMessage({ kind: 'info', text: enabled ? `${label}已启用` : `${label}已关闭, 区域, 参数和样本已保留, 不再参与识别` })
   }
 
   const changeField = (next: EditorTarget): void => {
@@ -467,6 +474,7 @@ export default function EditorPage(): React.ReactNode {
 
   /** Reviewed samples from a scanned stretch, each glyph once. */
   const saveStretch = (samples: StretchSample[]): void => {
+    if (!profile.enabled) return
     const templates = { ...profile.templates }
     const stamp = Date.now()
     samples.forEach((sample, index) => {
@@ -488,7 +496,7 @@ export default function EditorPage(): React.ReactNode {
   }
 
   const verifyFrame = async (): Promise<void> => {
-    if (!frame) return
+    if (!frame || !profile.enabled) return
     const revision = editRevision.current
     try {
       const result = await recognizeHudFrame(frame, activePack, variantId)
@@ -500,7 +508,7 @@ export default function EditorPage(): React.ReactNode {
   }
 
   const saveCue = async (): Promise<void> => {
-    if (!frame || !cueId) return
+    if (!frame || !cueId || !profile.enabled) return
     const revision = editRevision.current
     try {
       const sample = await prepareHudCue(frame, activePack, cueId, variantId)
@@ -712,6 +720,10 @@ export default function EditorPage(): React.ReactNode {
    * process and unmodified since.
    */
   const applyToPlayer = (): void => {
+    if (variant.fields.clock?.enabled === false) {
+      setMessage({ kind: 'warn', text: '倒计时字段已关闭, 请启用后再应用到播放器' })
+      return
+    }
     if (!clockReadiness.ready) {
       setMessage({ kind: 'warn', text: `还缺少字符样本：${clockReadiness.missing.join(' ')}` })
       return
@@ -836,12 +848,12 @@ export default function EditorPage(): React.ReactNode {
               </div>
             )}
             {sampleUrl && (
-              <>{HUD_FIELD_IDS.map(id => (
+              <>{HUD_FIELD_IDS.filter(id => id === fieldId || variant.fields[id]?.enabled !== false).map(id => (
                 <RoiWindow key={id} roi={fieldModel(pack, id, variantId).roi} onChange={setRoi}
-                  readOnly={id !== fieldId} label={FIELD_LABELS[id]}
+                  readOnly={id !== fieldId || !profile.enabled} label={FIELD_LABELS[id]}
                   videoWidth={videoSize.width} videoHeight={videoSize.height} contentBox={picture} />
-              ))}{[...HUD_CUE_IDS, 'organizer' as const].filter(id => id === fieldId || (id === 'organizer' ? variant.organizer : variant.cues[id])).map(id => (
-                <RoiWindow key={id} roi={cueModel(pack, id, variantId).roi} onChange={setRoi} readOnly={id !== fieldId} label={CUE_LABELS[id]}
+              ))}{[...HUD_CUE_IDS, 'organizer' as const].filter(id => id === fieldId || (id === 'organizer' ? variant.organizer?.enabled : variant.cues[id]?.enabled)).map(id => (
+                <RoiWindow key={id} roi={cueModel(pack, id, variantId).roi} onChange={setRoi} readOnly={id !== fieldId || !profile.enabled} label={CUE_LABELS[id]}
                   videoWidth={videoSize.width} videoHeight={videoSize.height} contentBox={picture} />
               ))}</>
             )}
@@ -915,18 +927,22 @@ export default function EditorPage(): React.ReactNode {
               <span className="field-label">当前字段</span>
               <select className="text-input" aria-label="当前字段" value={fieldId}
                 onChange={event => changeField(event.target.value as EditorTarget)}>
-                {HUD_FIELD_IDS.map(id => <option key={id} value={id}>{FIELD_LABELS[id]}</option>)}
-                {[...HUD_CUE_IDS, 'organizer' as const].map(id => <option key={id} value={id}>{CUE_LABELS[id]}</option>)}
+                {HUD_FIELD_IDS.map(id => <option key={id} value={id}>{FIELD_LABELS[id]}{variant.fields[id]?.enabled === false ? ' (已关闭)' : ''}</option>)}
+                {[...HUD_CUE_IDS, 'organizer' as const].map(id => <option key={id} value={id}>{CUE_LABELS[id]}{(id === 'organizer' ? variant.organizer : variant.cues[id])?.enabled === false ? ' (已关闭)' : ''}</option>)}
               </select>
             </label>
+            <Switch label="启用当前字段" checked={profile.enabled} onChange={toggleField}
+              detail="关闭后保留区域, 参数和样本, 不参与识别" />
+            {!profile.enabled && <p className="muted" role="note">该字段已关闭. 下方配置仅供查看, 重新启用后可继续制作.</p>}
           </section>
+          <fieldset className="editor-field-controls" disabled={!profile.enabled} aria-label="当前字段设置">
           <RegionSection fieldId={numericId} label={cueId ? CUE_LABELS[cueId] : undefined} roi={profile.roi} onRoi={setRoi} videoSize={videoSize} analysis={analysis}
             boxes={boxes} selected={selected} onSelect={setSelected}
             grayRef={grayCanvasRef} binaryRef={binaryCanvasRef} />
           <BinarizeSection profile={profile} onPatch={patchPreprocess} frame={frame}
-            busy={countdown.busy || preprocessing.busy} onRecommend={(kind, point) => { void preprocessing.recommend(kind, point) }} />
+            busy={!profile.enabled || countdown.busy || preprocessing.busy} onRecommend={(kind, point) => { void preprocessing.recommend(kind, point) }} />
           {cueId ? <CueSection id={cueId} pack={activePack} variantId={variantId} result={cueId === 'organizer' ? frameResult?.organizer : frameResult?.cues[cueId]}
-            onSave={frame ? () => void saveCue() : null} onThreshold={matchThreshold => patch({ matchThreshold })}
+            onSave={frame && profile.enabled ? () => void saveCue() : null} onThreshold={matchThreshold => patch({ matchThreshold })}
             onRemove={bitmapId => {
               ++editRevision.current
               setPack(current => {
@@ -938,13 +954,15 @@ export default function EditorPage(): React.ReactNode {
               setDirty(true)
             }} /> : <>
           <GlyphSection key={`glyph-${variantId}-${fieldId}`} fieldId={numericId} profile={profile} readiness={readiness} boxes={boxes} selected={selected}
-            reading={countdown.reading} onUndo={countdown.undo} busy={countdown.busy}
+            reading={countdown.reading} onUndo={countdown.undo} busy={countdown.busy || !profile.enabled}
             bounds={analysis ? { width: analysis.binary.width, height: analysis.binary.height } : null}
-            onBoxes={setBoxes} onAssign={assign} onVerify={frame ? verifyFrame : null} recognized={recognized} />
-          <StretchSection key={`stretch-${variantId}-${fieldId}`} fieldId={numericId} variantId={variantId} video={video ? videoRef.current : null} pack={activePack} onSave={saveStretch} />
+            onBoxes={setBoxes} onAssign={assign} onVerify={frame && profile.enabled ? verifyFrame : null}
+            recognized={profile.enabled ? recognized : { status: 'disabled', debug: null }} />
+          <StretchSection key={`stretch-${variantId}-${fieldId}-${profile.enabled}`} fieldId={numericId} variantId={variantId} video={video && profile.enabled ? videoRef.current : null} pack={activePack} onSave={saveStretch} />
           <SampleSection fieldId={numericId} profile={profile} onRemove={removeSample} />
           <ParamsSection fieldId={numericId} profile={profile} onPatch={patch} />
           </>}
+          </fieldset>
           <FrameStatePreview result={frameResult} playerResult={playerFrameResult} />
           <StateRules pack={pack} variantId={variantId} onChange={states => {
             ++editRevision.current
