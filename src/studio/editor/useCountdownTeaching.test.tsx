@@ -11,6 +11,7 @@ import { primeMediaElement } from '../../test/setup'
 import type { EditorTarget } from './cueModel'
 import { fieldModel, patchField } from './editorModel'
 import { useCountdownTeaching } from './useCountdownTeaching'
+import { clockText } from './reading'
 
 beforeEach(() => vi.stubGlobal('crypto', webcrypto))
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
@@ -45,6 +46,21 @@ function setup(options: { time?: number; duration?: number; format?: 'm:ss' | 'm
   const grabber = new FrameGrabber()
   const grab = vi.spyOn(grabber, 'grab').mockImplementation(node => ({ ok: true, frame: picture(node.currentTime) }))
   const prepare = vi.spyOn(hud, 'prepareHudGlyphs').mockImplementation(async frame => analysis((frame as GrabbedFrame).mediaTime, count))
+  const recognize = vi.spyOn(hud, 'recognizeHudFrame').mockImplementation(async (frame, pack, variantId) => {
+    const at = (frame as GrabbedFrame).mediaTime
+    const text = clockText(Math.max(0, 20 - at), options.format ?? 'm:ss')
+    const glyphs = pack.variants.find(variant => variant.id === variantId)!.fields.clock!.glyphs
+    const debug = { ...analysis(at, count), matches: [...text].map(char => ({
+      char: glyphs[char as ClockChar]?.length ? char as ClockChar : null,
+      score: glyphs[char as ClockChar]?.length ? 0.98 : 0.3, runnerUpScore: 0.1, sampleIndex: 0,
+    })) }
+    return { variantId: variantId!, selectionReason: null, content: 'live', phase: 'unconfigured', cues: {}, states: {},
+      organizer: { status: 'failed', reason: 'not-configured', score: null, debug: null }, fields: {
+        clock: { status: 'failed', reason: 'insufficient-templates', debug },
+        scoreLeft: { status: 'failed', reason: 'not-configured', debug: null },
+        scoreRight: { status: 'failed', reason: 'not-configured', debug: null }, round: { status: 'failed', reason: 'not-configured', debug: null },
+      } }
+  })
   const scope: Scope = { fieldId: 'clock', source: 'fixture.mp4', documentRevision: 0 }
   const hook = renderHook((current: Scope) => {
     const [pack, setPack] = useState(initial)
@@ -71,7 +87,7 @@ function setup(options: { time?: number; duration?: number; format?: 'm:ss' | 'm
     act(() => { if (video) video.currentTime = time; hook.result.current.onFrame(picture(time)) })
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
   }
-  return { ...hook, initial, video, writes, messages, selected, grab, prepare, scope, label, assign, jump, undo, capture }
+  return { ...hook, initial, video, writes, messages, selected, grab, prepare, recognize, scope, label, assign, jump, undo, capture }
 }
 function sampleCount(pack: HudStylePack, field: 'clock' | 'scoreLeft' = 'clock'): number {
   return Object.values(fieldModel(pack, field).templates).reduce((total, samples) => total + samples.length, 0)
@@ -325,6 +341,121 @@ describe('shared jump history', () => {
     expect(view.result.current.busy).toBe(false)
     await act(async () => { finish(analysis(6)) })
     expect(sampleCount(view.result.current.pack)).toBe(4)
+    expect(view.messages).toHaveBeenLastCalledWith(expect.objectContaining({ text: expect.stringContaining('超时') }))
+  })
+})
+
+describe('automatic one-second teaching', () => {
+  it('requires one complete current-frame reading, then processes serially until zero and retains undo', async () => {
+    const view = setup({ time: 17 })
+    expect(view.result.current.canAutoStart).toBe(false)
+    await view.label('0:03')
+    await waitFor(() => expect(view.result.current.canAutoStart).toBe(true))
+    act(() => { view.result.current.startAuto() })
+    expect(view.result.current.autoRunning).toBe(true)
+    expect(view.result.current.busy).toBe(true)
+    await waitFor(() => expect(view.result.current.autoRunning).toBe(false), { timeout: 3000 })
+    expect(view.video!.currentTime).toBe(20)
+    expect(view.result.current.autoSteps).toBe(3)
+    await waitFor(() => expect(view.result.current.reading).toBe('0:00'))
+    expect(view.recognize).toHaveBeenCalledTimes(3)
+    // New evidence must not be included in the pack passed to recognition for that same frame.
+    expect(view.recognize.mock.calls[0]![1].variants[0]!.fields.clock!.glyphs['2']).toBeUndefined()
+    expect(sampleCount(view.result.current.pack)).toBe(16)
+    expect(view.messages).toHaveBeenLastCalledWith(expect.objectContaining({ text: expect.stringContaining('倒计时已到 0') }))
+    await view.undo()
+    expect(view.video!.currentTime).toBe(19)
+    expect(sampleCount(view.result.current.pack)).toBe(12)
+  })
+
+  it('stops on recognition mismatch before committing the bad frame', async () => {
+    const view = setup({ time: 17 })
+    await view.label('0:03')
+    const recognize = view.recognize.getMockImplementation()!
+    view.recognize.mockImplementation(async (...args) => {
+      const result = await recognize(...args)
+      if ((args[0] as GrabbedFrame).mediaTime === 19) result.fields.clock = { status: 'read', debug: null,
+        reading: { text: '0:02', value: 2, source: 'recognized', confidence: 1, scores: [1, 1, 1, 1] } }
+      return result
+    })
+    act(() => view.result.current.startAuto())
+    await waitFor(() => expect(view.result.current.autoRunning).toBe(false), { timeout: 3000 })
+    expect(view.result.current.autoSteps).toBe(1)
+    expect(view.video!.currentTime).toBe(19)
+    expect(sampleCount(view.result.current.pack)).toBe(8)
+    expect(view.messages).toHaveBeenLastCalledWith(expect.objectContaining({ text: expect.stringContaining('倒计时不匹配') }))
+  })
+
+  it('can be stopped during a pending recognition and ignores its late completion', async () => {
+    const view = setup()
+    await view.label('0:15')
+    let finish!: (result: hud.HudFrameResult) => void
+    const original = view.recognize.getMockImplementation()!
+    view.recognize.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    act(() => view.result.current.startAuto())
+    await waitFor(() => expect(view.recognize).toHaveBeenCalledOnce())
+    act(() => view.result.current.startAuto())
+    act(() => view.result.current.stopAuto())
+    expect(view.result.current.autoRunning).toBe(false)
+    await act(async () => {
+      finish(await original(picture(6), view.result.current.pack, view.result.current.pack.variants[0]!.id))
+      await new Promise(resolve => setTimeout(resolve, 150))
+    })
+    expect(view.video!.currentTime).toBe(6)
+    expect(sampleCount(view.result.current.pack)).toBe(4)
+    expect(view.recognize).toHaveBeenCalledOnce()
+    expect(view.result.current.autoSteps).toBe(0)
+  })
+
+  it('stops at the file boundary without creating a clamped duplicate', async () => {
+    const view = setup({ time: 5, duration: 6.5 })
+    await view.label('0:15')
+    act(() => view.result.current.startAuto())
+    await waitFor(() => expect(view.result.current.autoRunning).toBe(false), { timeout: 3000 })
+    expect(view.video!.currentTime).toBe(6)
+    expect(view.result.current.autoSteps).toBe(1)
+    expect(sampleCount(view.result.current.pack)).toBe(8)
+    expect(view.messages).toHaveBeenLastCalledWith(expect.objectContaining({ text: expect.stringContaining('素材末尾') }))
+  })
+
+  it('cancels further steps if settings change between frames', async () => {
+    const view = setup()
+    await view.label('0:15')
+    act(() => view.result.current.startAuto())
+    await waitFor(() => expect(view.result.current.autoSteps).toBe(1))
+    act(() => view.result.current.edit(pack => patchField(pack, 'clock', { name: 'Changed' })))
+    await waitFor(() => expect(view.result.current.autoRunning).toBe(false))
+    expect(view.video!.currentTime).toBe(6)
+    expect(view.result.current.autoSteps).toBe(1)
+    expect(view.messages).toHaveBeenLastCalledWith(expect.objectContaining({ text: expect.stringContaining('设置已改变') }))
+  })
+
+  it('stops after capture failure without silently retrying', async () => {
+    const view = setup()
+    await view.label('0:15')
+    view.grab.mockReturnValueOnce({ ok: false, reason: 'no-video-frame' })
+    act(() => view.result.current.startAuto())
+    await waitFor(() => expect(view.result.current.autoRunning).toBe(false))
+    expect(view.grab).toHaveBeenCalledOnce()
+    expect(sampleCount(view.result.current.pack)).toBe(4)
+    expect(view.messages).toHaveBeenLastCalledWith(expect.objectContaining({ text: expect.stringContaining('取帧失败') }))
+  })
+
+  it('stops the automatic session on timeout and prevents a late step from restarting it', async () => {
+    const view = setup()
+    await view.label('0:15')
+    vi.useFakeTimers()
+    let finish!: (value: hud.HudAnalysis) => void
+    view.prepare.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    act(() => { view.result.current.startAuto(); vi.advanceTimersByTime(100) })
+    expect(view.result.current.autoRunning).toBe(true)
+    act(() => vi.advanceTimersByTime(10_000))
+    expect(view.result.current.autoRunning).toBe(false)
+    expect(view.result.current.busy).toBe(false)
+    await act(async () => finish(analysis(6)))
+    act(() => vi.advanceTimersByTime(500))
+    expect(sampleCount(view.result.current.pack)).toBe(4)
+    expect(view.video!.currentTime).toBe(6)
     expect(view.messages).toHaveBeenLastCalledWith(expect.objectContaining({ text: expect.stringContaining('超时') }))
   })
 })

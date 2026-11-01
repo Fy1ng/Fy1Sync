@@ -45,6 +45,7 @@ import { YouTubePanel, type YouTubeClipJob, type YouTubeSource, type YouTubeStil
 import { youtubeSource } from './youtubeSource'
 import { useEditorProject } from './useEditorProject'
 import { useCountdownTeaching } from './useCountdownTeaching'
+import { AutoStepControl } from './AutoStepControl'
 import '../studio.css'
 import './editor.css'
 
@@ -859,6 +860,8 @@ export default function EditorPage(): React.ReactNode {
                   <button type="button" className="btn-quiet small editor-jump num" disabled={countdown.busy} onClick={() => jump(1)} title="前进 1 秒（Shift+→）">+1s</button>
                   <button type="button" className="btn-quiet small editor-jump num" disabled={countdown.busy} onClick={() => jump(10)} title="前进 10 秒（Ctrl+→）">+10s</button>
                 </span>
+                {fieldId === 'clock' && <AutoStepControl running={countdown.autoRunning} canStart={countdown.canAutoStart && !stepping.current}
+                  steps={countdown.autoSteps} onStart={countdown.startAuto} onStop={countdown.stopAuto} />}
                 <input type="range" className="editor-scrub" disabled={countdown.busy} min={0} max={Math.max(0.1, duration)} step={0.02}
                   value={Math.min(mediaTime, duration || mediaTime)} aria-label="样片进度"
                   style={{ '--fill': `${duration ? (mediaTime / duration) * 100 : 0}%` } as React.CSSProperties}

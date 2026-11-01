@@ -1,7 +1,7 @@
 /** Character buttons and timed jumps share one reversible sample transaction history. */
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { parseCountdown } from '../../core/clockJump'
-import { prepareHudGlyphs } from '../../core/hudWasm'
+import { prepareHudGlyphs, recognizeHudFrame } from '../../core/hudWasm'
 import type { HudFieldId, HudStylePack } from '../../core/hudStylePack'
 import type { ClockChar } from '../../core/profileSchema'
 import type { GlyphBox } from '../../core/segmentation'
@@ -10,6 +10,7 @@ import { isCueTarget, type EditorTarget } from './cueModel'
 import { fieldModel } from './editorModel'
 import { applyGlyphChange, glyphFrameKey, labelledReading, teachGlyphs, type GlyphChange } from './glyphTeaching'
 import { clockText, pairReading } from './reading'
+import { checkAutoCountdown } from './autoCountdownCheck'
 
 interface Options {
   pack: HudStylePack
@@ -49,8 +50,16 @@ interface Pending {
   next: string | null
   problem: string | null
   undo?: UndoStep
+  automatic?: AutoRun
   capturing: boolean
   timer: ReturnType<typeof setTimeout>
+}
+
+interface AutoRun {
+  context: string
+  revision: number
+  steps: number
+  timer: ReturnType<typeof setTimeout> | null
 }
 
 export function useCountdownTeaching(options: Options) {
@@ -64,11 +73,20 @@ export function useCountdownTeaching(options: Options) {
   const anchor = useRef<{ video: HTMLVideoElement; time: number } | null>(null)
   const [busy, setBusy] = useState(false)
   const pending = useRef<Pending | null>(null)
+  const [autoRunning, setAutoRunning] = useState(false)
+  const [autoSteps, setAutoSteps] = useState(0)
+  const automatic = useRef<AutoRun | null>(null)
+  const nextAutoStep = useRef<() => void>(() => {})
   const [undoCount, setUndoCount] = useState(0)
   const history = useRef<UndoStep[]>([])
   const mounted = useRef(true)
   const selectionAfterAnalysis = useRef<{ frame: GrabbedFrame; selected: number } | null>(null)
 
+  const clearAutomatic = useCallback(() => {
+    if (automatic.current?.timer) clearTimeout(automatic.current.timer)
+    automatic.current = null
+    if (mounted.current) setAutoRunning(false)
+  }, [])
   const finish = useCallback(() => {
     if (pending.current) clearTimeout(pending.current.timer)
     pending.current = null
@@ -82,12 +100,13 @@ export function useCountdownTeaching(options: Options) {
     setReading(text)
   }, [])
   const reset = useCallback(() => {
+    clearAutomatic()
     finish()
     updateReading('')
     history.current = []
     selectionAfterAnalysis.current = null
     setUndoCount(0)
-  }, [updateReading, finish])
+  }, [updateReading, finish, clearAutomatic])
   useEffect(() => { reset() }, [context, reset])
   useEffect(() => {
     mounted.current = true
@@ -95,13 +114,15 @@ export function useCountdownTeaching(options: Options) {
       mounted.current = false
       if (pending.current) clearTimeout(pending.current.timer)
       pending.current = null
+      if (automatic.current?.timer) clearTimeout(automatic.current.timer)
+      automatic.current = null
     }
   }, [])
 
   // Recover labels from stored IDs, including a re-capture, a revisit and a saved project.
   useEffect(() => {
     const { frame, boxes, pack, fieldId, variantId } = options
-    if (busy) return
+    if (busy || autoRunning) return
     if (!frame || !boxes.length || isCueTarget(fieldId)) { updateReading(''); return }
     let active = true
     void glyphFrameKey(frame, pack, fieldId, variantId, boxes).then(key => {
@@ -114,25 +135,27 @@ export function useCountdownTeaching(options: Options) {
       }
     }).catch(() => { if (active) updateReading('') })
     return () => { active = false }
-  }, [options.frame, options.boxes, options.pack, options.fieldId, options.variantId, busy, context, updateReading])
+  }, [options.frame, options.boxes, options.pack, options.fieldId, options.variantId, busy, autoRunning, context, updateReading])
 
   const isCurrent = (job: Pending): boolean => pending.current === job && mounted.current
+    && (!job.automatic || automatic.current === job.automatic)
     && contextRef.current === job.context && latest.current.revision.current === job.revision
     && latest.current.video.current === job.video && (!job.video || (job.video.paused
       && Math.abs(job.video.currentTime - job.to) < 1e-6))
 
   const begin = (kind: Pending['kind'], to: number, next: string | null = null, problem: string | null = null,
-    undo?: UndoStep): Pending => {
+    undo?: UndoStep, auto?: AutoRun): Pending => {
     const current = latest.current
     const video = current.video.current
-    const job: Pending = { kind, video, to, next, problem, undo, beforeFrame: video ? null : current.frame,
+    const job: Pending = { kind, video, to, next, problem, undo, automatic: auto, beforeFrame: video ? null : current.frame,
       from: video?.currentTime ?? current.frame?.mediaTime ?? 0,
       context: contextRef.current, revision: current.revision.current, capturing: false,
       timer: setTimeout(() => {
         if (pending.current !== job) return
+        if (job.automatic) clearAutomatic()
         finish()
         updateReading('')
-        latest.current.onMessage({ kind: 'warn', text: '等待画面或制字超时, 本次未改动模板, 请重新取帧' })
+        latest.current.onMessage({ kind: 'warn', text: `${job.automatic ? '自动 +1s 已停止: ' : ''}等待画面或制字超时, 本次未改动模板, 请重新取帧` })
       }, 10_000) }
     pending.current = job
     setBusy(true)
@@ -144,15 +167,16 @@ export function useCountdownTeaching(options: Options) {
   }
   const fail = (job: Pending, error: unknown): void => {
     if (pending.current === job && mounted.current && contextRef.current === job.context) {
+      if (job.automatic) clearAutomatic()
       updateReading('')
-      latest.current.onMessage({ kind: 'warn', text: error instanceof Error ? error.message : String(error) })
+      latest.current.onMessage({ kind: 'warn', text: `${job.automatic ? '自动 +1s 已停止: ' : ''}${error instanceof Error ? error.message : String(error)}` })
     }
   }
 
   const assign = async (char: ClockChar, index: number): Promise<void> => {
     const current = latest.current
     const { frame, boxes, fieldId, variantId } = current
-    if (pending.current || !frame || !boxes[index] || isCueTarget(fieldId) || (fieldId !== 'clock' && char === ':')) return
+    if (pending.current || automatic.current || !frame || !boxes[index] || isCueTarget(fieldId) || (fieldId !== 'clock' && char === ':')) return
     const video = current.video.current
     if (video && (!video.paused || video.seeking || Math.abs(frame.mediaTime - video.currentTime) > 1e-6)) {
       current.onMessage({ kind: 'warn', text: '请先暂停并取当前帧, 再点击字符按钮' })
@@ -181,6 +205,7 @@ export function useCountdownTeaching(options: Options) {
   const complete = async (job: Pending): Promise<void> => {
     if (job.capturing) return
     job.capturing = true
+    let continueAuto = false
     try {
       if (!isCurrent(job)) throw new Error('当前素材或设置已改变, 本次未自动写入')
       const current = latest.current
@@ -192,8 +217,9 @@ export function useCountdownTeaching(options: Options) {
       if (!captured?.ok) throw new Error('取帧失败, 本次未改动模板')
       if (!sameFrame) current.onFrame(captured.frame)
       if (job.problem) {
+        if (job.automatic) clearAutomatic()
         updateReading('')
-        current.onMessage({ kind: 'warn', text: job.problem })
+        current.onMessage({ kind: 'warn', text: `${job.automatic ? '自动 +1s 已停止: ' : ''}${job.problem}` })
         return
       }
       if (job.undo) {
@@ -211,6 +237,12 @@ export function useCountdownTeaching(options: Options) {
       const prepared = await prepareHudGlyphs(captured.frame, current.pack, current.variantId, undefined, 'clock')
       const paired = pairReading(job.next!, prepared.boxes.length)
       if (!paired.ok) throw new Error(`${paired.reason}; 本次未自动写入`)
+      let inferred: string[] = []
+      if (job.automatic) {
+        const observed = await recognizeHudFrame(captured.frame, current.pack, current.variantId)
+        if (!isCurrent(job)) throw new Error('当前素材或设置已改变, 本次未自动写入')
+        inferred = checkAutoCountdown(observed, current.pack, current.variantId, job.next!)
+      }
       const key = await glyphFrameKey(captured.frame, current.pack, 'clock', current.variantId, prepared.boxes)
       const result = await teachGlyphs(current.pack, 'clock', current.variantId, key, prepared.boxes.length,
         paired.chars.map((char, index) => ({ char, index, data: prepared.bitmaps[index]! })))
@@ -220,10 +252,25 @@ export function useCountdownTeaching(options: Options) {
       push({ kind: 'jump', at: job.from, frame: job.beforeFrame, fieldId: 'clock', variantId: current.variantId,
         selected: 0, change: result.change })
       updateReading(job.next!, captured.frame)
-      current.onMessage({ kind: 'info', text: result.pack === current.pack ? `倒计时已同步为 ${job.next}, 该帧已保存, 未重复添加`
-        : `倒计时已同步为 ${job.next}, 已自动写入字符样本, 可撤回` })
+      if (job.automatic) {
+        const run = job.automatic
+        run.steps++
+        run.revision = latest.current.revision.current
+        setAutoSteps(run.steps)
+        continueAuto = true
+        current.onMessage({ kind: 'info', text: `自动 +1s: 已处理 ${run.steps} 帧, 当前 ${job.next}${inferred.length ? ', 新字形按倒计时推算' : ''}` })
+      } else {
+        current.onMessage({ kind: 'info', text: result.pack === current.pack ? `倒计时已同步为 ${job.next}, 该帧已保存, 未重复添加`
+          : `倒计时已同步为 ${job.next}, 已自动写入字符样本, 可撤回` })
+      }
     } catch (error) { fail(job, error) }
-    finally { if (pending.current === job) finish() }
+    finally {
+      if (pending.current === job) finish()
+      if (continueAuto && job.automatic && automatic.current === job.automatic) {
+        // Yield to React and allow Stop to act between completed, non-overlapping steps.
+        job.automatic.timer = setTimeout(() => nextAutoStep.current(), 100)
+      }
+    }
   }
 
   const seek = (job: Pending): void => {
@@ -233,10 +280,10 @@ export function useCountdownTeaching(options: Options) {
       else job.video.currentTime = job.to
     } catch (error) { fail(job, error); finish() }
   }
-  const jump = (seconds: number): boolean => {
+  const jump = (seconds: number, auto?: AutoRun): boolean => {
     const current = latest.current
     const video = current.video.current
-    if (pending.current) return true
+    if (pending.current || (automatic.current && automatic.current !== auto)) return true
     if (!video || current.fieldId !== 'clock' || !readingRef.current || readingRef.current.includes('?')) return false
     const end = Number.isFinite(video.duration) ? video.duration : video.currentTime
     const to = Math.max(0, Math.min(end, video.currentTime + seconds))
@@ -252,16 +299,18 @@ export function useCountdownTeaching(options: Options) {
         : Math.abs(elapsed - Math.round(elapsed)) > 1e-6 ? '素材边界不足整秒, 本次未自动写入, 请标注目标帧'
           : nextSeconds < 0 || parseCountdown(next, format) !== nextSeconds ? '跳转后的倒计时超出格式范围, 请确认新回合或暂停状态'
             : null
-    seek(begin('jump', to, problem ? null : next, problem))
+    seek(begin('jump', to, problem ? null : next, problem, undefined, auto))
     return true
   }
   const undo = (): void => {
     const step = history.current.at(-1)
-    if (!step || pending.current) return
+    if (!step || pending.current || automatic.current) return
     seek(begin('undo', step.at, null, null, step))
   }
   const onSeeking = (video: HTMLVideoElement): void => {
     if (pending.current?.video === video && Math.abs(pending.current.to - video.currentTime) < 1e-6) return
+    if (automatic.current) latest.current.onMessage({ kind: 'info', text: '自动 +1s 已停止: 视频位置已改变' })
+    clearAutomatic()
     finish()
     updateReading('')
   }
@@ -271,8 +320,60 @@ export function useCountdownTeaching(options: Options) {
     void complete(job)
     return true
   }
-  const onPlay = (): void => { finish(); updateReading('') }
+  const onPlay = (): void => {
+    if (automatic.current) latest.current.onMessage({ kind: 'info', text: '自动 +1s 已停止: 视频开始播放' })
+    clearAutomatic(); finish(); updateReading('')
+  }
 
-  return { reading, assign, busy, jump, undo: undoCount ? undo : null, reset,
-    onSeeking, onSeeked, onPlay, isBusy: () => pending.current !== null }
+  const stopAuto = (): void => {
+    const steps = automatic.current?.steps ?? autoSteps
+    clearAutomatic()
+    if (pending.current?.automatic) finish()
+    latest.current.onMessage({ kind: 'info', text: `已停止自动 +1s, 保留 ${steps} 帧已完成结果` })
+  }
+  const readyToStart = (): boolean => {
+    const current = latest.current
+    const video = current.video.current
+    if (!video || current.fieldId !== 'clock' || !current.frame || !current.boxes.length || pending.current || automatic.current
+      || !video.paused || video.seeking || anchor.current?.video !== video || Math.abs(anchor.current.time - video.currentTime) > 1e-6) return false
+    const seconds = parseCountdown(readingRef.current, fieldModel(current.pack, 'clock', current.variantId).clockFormat)
+    return seconds !== null && seconds > 0 && Number.isFinite(video.duration) && video.currentTime + 1 <= video.duration + 1e-6
+  }
+  const startAuto = (): void => {
+    if (!readyToStart()) return
+    automatic.current = { context: contextRef.current, revision: latest.current.revision.current, steps: 0, timer: null }
+    setAutoSteps(0)
+    setAutoRunning(true)
+    latest.current.onMessage({ kind: 'info', text: '自动 +1s 已开始, 遇到异常会停止, 已完成步骤可逐次撤回' })
+    automatic.current.timer = setTimeout(() => nextAutoStep.current(), 100)
+  }
+  nextAutoStep.current = () => {
+    const run = automatic.current
+    if (!run || !mounted.current) return
+    run.timer = null
+    const current = latest.current
+    const video = current.video.current
+    let reason: string | null = null
+    if (contextRef.current !== run.context || current.revision.current !== run.revision) reason = '素材或识别设置已改变'
+    else if (!video || !video.paused || video.seeking || current.fieldId !== 'clock') reason = '视频不在可处理的暂停状态'
+    else {
+      const seconds = parseCountdown(readingRef.current, fieldModel(current.pack, 'clock', current.variantId).clockFormat)
+      if (seconds === null) reason = '当前倒计时无法继续, 请重新标注'
+      else if (seconds === 0) reason = '倒计时已到 0, 请确认下一回合'
+      else if (!Number.isFinite(video.duration) || video.currentTime + 1 > video.duration + 1e-6) reason = '已到素材末尾, 剩余不足 1 秒'
+    }
+    if (reason) {
+      clearAutomatic()
+      current.onMessage({ kind: 'info', text: `自动 +1s 已停止: ${reason}. 已处理 ${run.steps} 帧` })
+      return
+    }
+    if (!jump(1, run)) {
+      clearAutomatic()
+      current.onMessage({ kind: 'warn', text: '自动 +1s 已停止: 倒计时标注不完整' })
+    }
+  }
+
+  return { reading, assign, busy: busy || autoRunning, jump, undo: undoCount ? undo : null, reset,
+    autoRunning, autoSteps, canAutoStart: readyToStart(), startAuto, stopAuto,
+    onSeeking, onSeeked, onPlay, isBusy: () => pending.current !== null || automatic.current !== null }
 }
