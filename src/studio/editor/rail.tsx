@@ -22,6 +22,16 @@ import { drawMask, TEMPLATE_SIZE, type FrameAnalysis } from './framePipeline'
 
 type Patch = (update: Partial<EditorClockModel>) => void
 
+function RailDisclosure({ title, meta, children }: { title: string; meta?: React.ReactNode; children: React.ReactNode }): React.ReactNode {
+  const [expanded, setExpanded] = useState(true)
+  return (
+    <details className="rail-group rail-collapsible" open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}>
+      <summary><h2>{title}</h2>{meta}</summary>
+      <div className="rail-content">{children}</div>
+    </details>
+  )
+}
+
 export function RegionSection({ fieldId = 'clock', label, roi, onRoi, videoSize, analysis, boxes, selected, onSelect, grayRef, binaryRef }: {
   fieldId?: HudFieldId
   label?: string
@@ -125,9 +135,8 @@ export function BinarizeSection({ profile, onPatch }: { profile: EditorClockMode
     || profile.preprocess.threshold !== DEFAULT_PREPROCESS.threshold
     || profile.preprocess.invert !== DEFAULT_PREPROCESS.invert
   return (
-    <section className="rail-group">
-      <div className="rail-head">
-        <h2>二值化</h2>
+    <RailDisclosure title="二值化">
+      <div className="rail-reset-row">
         <button type="button" className="link-btn rail-link" disabled={!changed} onClick={() => set({ ...DEFAULT_PREPROCESS })}>恢复默认</button>
       </div>
       <Range label="对比度" min={0.5} max={3} step={0.1} value={profile.preprocess.scale}
@@ -135,7 +144,7 @@ export function BinarizeSection({ profile, onPatch }: { profile: EditorClockMode
       <Range label="阈值" min={0} max={255} step={1} value={profile.preprocess.threshold}
         onChange={(threshold) => set({ threshold })} />
       <Switch label="反相" detail="浅底深字时打开" checked={profile.preprocess.invert} onChange={(invert) => set({ invert })} />
-    </section>
+    </RailDisclosure>
   )
 }
 
@@ -147,7 +156,8 @@ export function BinarizeSection({ profile, onPatch }: { profile: EditorClockMode
  * box of its own. Rather than adding heuristics for each case, the user fixes the boxes
  * directly (merge, split, drop, nudge an edge) and then teaches from those.
  */
-export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, selected, bounds, onBoxes, onAssign, onAssignReading, onVerify, recognized }: {
+export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, selected, bounds, onBoxes, onAssign, onAssignReading,
+  onVerify, recognized, reading, onReadingChange, onUndo, busy }: {
   fieldId?: HudFieldId
   profile: EditorClockModel
   readiness: { ready: boolean; missing: ClockChar[]; sampleCount: number }
@@ -160,23 +170,46 @@ export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, sel
   onAssignReading: (text: string) => Promise<string | null>
   onVerify: (() => void) | null
   recognized: HudFieldResult | null
+  reading: string
+  onReadingChange: (reading: string) => void
+  onUndo: (() => void) | null
+  busy: boolean
 }): React.ReactNode {
   const active = selected >= 0 ? boxes[selected] : undefined
-  const [reading, setReading] = useState('')
   const [readingProblem, setReadingProblem] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const saveInFlight = useRef(false)
+  const readingRef = useRef(reading)
+  readingRef.current = reading
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+  useEffect(() => { setReadingProblem(null) }, [reading])
+  const locked = busy || saving
   const saveReading = async (): Promise<void> => {
-    const problem = await onAssignReading(reading)
-    setReadingProblem(problem)
-    if (!problem) setReading('')
+    if (busy || saveInFlight.current || reading.trim() === '') return
+    saveInFlight.current = true
+    setSaving(true)
+    try {
+      const problem = await onAssignReading(reading)
+      if (!mounted.current || readingRef.current !== reading) return
+      setReadingProblem(problem)
+      if (!problem && fieldId !== 'clock') onReadingChange('')
+    } catch (error) {
+      if (mounted.current && readingRef.current === reading) setReadingProblem(`制字失败: ${String(error)}`)
+    } finally {
+      saveInFlight.current = false
+      if (mounted.current) setSaving(false)
+    }
   }
   return (
-    <section className="rail-group">
-      <div className="rail-head">
-        <h2>字符</h2>
-        <span className="rail-meta">
-          {readiness.sampleCount} 个样本{readiness.ready ? '' : ` · 缺 ${readiness.missing.join(' ')}`}
-        </span>
-      </div>
+    <RailDisclosure title="字符" meta={
+      <span className="rail-meta">
+        {readiness.sampleCount} 个样本{readiness.ready ? '' : ` · 缺 ${readiness.missing.join(' ')}`}
+      </span>
+    }>
       {!bounds ? (
         <p className="muted">取一帧后，点选裁切图中的字符框，再按对应字符存为样本</p>
       ) : boxes.length === 0 ? (
@@ -186,20 +219,20 @@ export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, sel
           <div className="glyph-tools">
             <span className="rail-meta num">第 {selected + 1} 个 · {active.width}×{active.height}</span>
             <span className="row-end">
-              <button type="button" className="btn-quiet small" disabled={selected + 1 >= boxes.length}
+              <button type="button" className="btn-quiet small" disabled={locked || selected + 1 >= boxes.length}
                 onClick={() => onBoxes(mergeGlyphBoxes(boxes, selected, selected + 1))}>与右侧合并</button>
-              <button type="button" className="btn-quiet small" disabled={active.width < 4}
+              <button type="button" className="btn-quiet small" disabled={locked || active.width < 4}
                 onClick={() => onBoxes(splitGlyphBox(boxes, selected, active.x + Math.floor(active.width / 2)))}>居中拆分</button>
-              <button type="button" className="btn-quiet small" onClick={() => onBoxes(excludeGlyphBox(boxes, selected))}>排除</button>
+              <button type="button" className="btn-quiet small" disabled={locked} onClick={() => onBoxes(excludeGlyphBox(boxes, selected))}>排除</button>
             </span>
           </div>
           <div className="edge-grid">
             {(['left', 'right', 'top', 'bottom'] as const).map((edge) => (
               <span key={edge} className="edge-row">
                 <span>{EDGE_TEXT[edge]}</span>
-                <button type="button" onClick={() => onBoxes(adjustGlyphBox(boxes, selected, edge, -1, bounds))}
+                <button type="button" disabled={locked} onClick={() => onBoxes(adjustGlyphBox(boxes, selected, edge, -1, bounds))}
                   aria-label={`${EDGE_TEXT[edge]}减 1 像素`}>−</button>
-                <button type="button" onClick={() => onBoxes(adjustGlyphBox(boxes, selected, edge, 1, bounds))}
+                <button type="button" disabled={locked} onClick={() => onBoxes(adjustGlyphBox(boxes, selected, edge, 1, bounds))}
                   aria-label={`${EDGE_TEXT[edge]}加 1 像素`}>+</button>
               </span>
             ))}
@@ -211,22 +244,29 @@ export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, sel
       {bounds && boxes.length > 0 && (
         <form className="reading-row" onSubmit={(event) => { event.preventDefault(); void saveReading() }}>
           <input className="text-input num" value={reading} aria-label="整帧读数" placeholder={`整帧读数，${boxes.length} 个字符`}
-            spellCheck={false} autoComplete="off" inputMode="numeric"
-            onChange={(event) => { setReading(event.target.value); setReadingProblem(null) }} />
-          <button type="submit" className="btn-solid small" disabled={reading.trim() === ''}>存为样本</button>
+            spellCheck={false} autoComplete="off" inputMode="numeric" disabled={locked}
+            onChange={(event) => { onReadingChange(event.target.value); setReadingProblem(null) }} />
+          <button type="submit" className="btn-solid small" disabled={locked || reading.trim() === ''}>存为样本</button>
         </form>
       )}
       {readingProblem && <p className="form-error" role="alert">{readingProblem}</p>}
+      {fieldId === 'clock' && (
+        <div className="reading-actions">
+          <p className="muted">先填写当前帧读数, 再用 +/-1s/10s 自动写入.</p>
+          <button type="button" className="btn-quiet small" disabled={locked || !onUndo} onClick={() => onUndo?.()}
+            title="恢复上次自动写入前的画面与读数">撤回自动写入</button>
+        </div>
+      )}
       <div className="char-pad" role="group" aria-label="存为字符样本">
         {CLOCK_CHARS.filter(char => fieldId === 'clock' || char !== ':').map((char) => (
           <button type="button" key={char} className={`char-key num${(profile.templates[char]?.length ?? 0) > 0 ? ' is-taught' : ''}`}
-            disabled={!active} onClick={() => onAssign(char)} aria-label={char}>
+            disabled={locked || !active} onClick={() => onAssign(char)} aria-label={char}>
             {char}
           </button>
         ))}
       </div>
       <div className="verify-row">
-        <button type="button" className="btn-quiet small" disabled={!onVerify} onClick={() => onVerify?.()}>验证当前帧</button>
+        <button type="button" className="btn-quiet small" disabled={locked || !onVerify} onClick={() => onVerify?.()}>验证当前帧</button>
         {recognized && (
           <span className={`verify-result num ${recognized.status === 'read' ? 'is-ok' : 'is-bad'}`} role="status">
             {recognized.status === 'read'
@@ -246,7 +286,7 @@ export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, sel
           ))}
         </ol>
       )}
-    </section>
+    </RailDisclosure>
   )
 }
 

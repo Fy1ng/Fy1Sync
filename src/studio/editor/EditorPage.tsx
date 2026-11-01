@@ -45,6 +45,7 @@ import { BinarizeSection, GlyphSection, ParamsSection, RegionSection, SampleSect
 import { YouTubePanel, type YouTubeClipJob, type YouTubeSource, type YouTubeStill } from './YouTubePanel'
 import { youtubeSource } from './youtubeSource'
 import { useEditorProject } from './useEditorProject'
+import { useCountdownTeaching } from './useCountdownTeaching'
 import '../studio.css'
 import './editor.css'
 
@@ -137,8 +138,16 @@ export default function EditorPage(): React.ReactNode {
   const grayCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const binaryCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const objectUrlRef = useRef<string>('')
+  const countdown = useCountdownTeaching({ pack: activePack, fieldId, variantId, source: sampleUrl, sampleName,
+    video: videoRef, grabber: grabberRef, revision: editRevision, documentRevision: documentRevision.current,
+    onFrame: setFrame, onMessage: setMessage, onPack: updated => {
+      ++editRevision.current
+      setPack(updated)
+      setDirty(true)
+    } })
 
   const openVideo = useCallback((url: string, name: string): void => {
+    countdown.reset()
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
     objectUrlRef.current = ''
     stepperRef.current = null
@@ -152,7 +161,7 @@ export default function EditorPage(): React.ReactNode {
     setPlaying(false)
     setFootage('local')
     setMessage(null)
-  }, [])
+  }, [countdown.reset])
   const project = useEditorProject({ pack, variantId, hasCandidate: candidate !== null, open: openVideo,
     restorePack: (saved, id) => {
       adoptFootageSize.current = false
@@ -326,6 +335,7 @@ export default function EditorPage(): React.ReactNode {
       setMessage({ kind: 'error', text: decoded.message })
       return
     }
+    countdown.reset()
     project.clear()
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
     const url = URL.createObjectURL(file)
@@ -340,7 +350,7 @@ export default function EditorPage(): React.ReactNode {
     setPlaying(false)
     setFrame(decoded.frame)
     setMessage({ kind: 'info', text: `已载入${name}（${decoded.frame.width}×${decoded.frame.height}）` })
-  }, [project.clear])
+  }, [project.clear, countdown.reset])
 
   /**
    * A YouTube still is a screenshot like any other: the frame to sample from. One taken by
@@ -354,6 +364,7 @@ export default function EditorPage(): React.ReactNode {
     // A blob, not a data URL: a 4K PNG as a data URL is a 13 MB string, twice as slow to show.
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
     if (!blob) return
+    countdown.reset()
     project.clear()
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
     const url = URL.createObjectURL(blob)
@@ -371,7 +382,7 @@ export default function EditorPage(): React.ReactNode {
     setMessage(still.native
       ? { kind: 'info', text: `已截取 ${still.frame.width}×${still.frame.height} 原尺寸画面` }
       : { kind: 'warn', text: `截到的画面不是原尺寸（${still.frame.width}×${still.frame.height}），不建议当样本` })
-  }, [project.clear])
+  }, [project.clear, countdown.reset])
 
   /** A downloaded stretch opens as footage, the same as a chosen file. */
   const openClip = useCallback((job: YouTubeClipJob): void => {
@@ -399,7 +410,7 @@ export default function EditorPage(): React.ReactNode {
   const grab = useCallback(() => {
     const video = videoRef.current
     // A screenshot is already the frame; there is nothing to grab again.
-    if (!video || sampleKind === 'image') return
+    if (!video || sampleKind === 'image' || countdown.isBusy()) return
     // The whole frame is grabbed, not just the ROI: the editor re-crops on every ROI
     // change, and re-grabbing per pixel of drag would stall on a paused decoder.
     const result = grabberRef.current.grab(video, FULL_FRAME_ROI, video.currentTime)
@@ -409,12 +420,12 @@ export default function EditorPage(): React.ReactNode {
     }
     setFrame(result.frame)
     setMessage(null)
-  }, [sampleKind])
+  }, [sampleKind, countdown.isBusy])
 
   const step = (delta: -1 | 1): void => {
     const video = videoRef.current
     // A held arrow key repeats faster than a seek lands; each press waits for the last.
-    if (!video || stepping.current) return
+    if (!video || stepping.current || countdown.isBusy()) return
     video.pause()
     stepperRef.current ??= new FrameStepper(presentAt(video))
     stepping.current = true
@@ -426,10 +437,11 @@ export default function EditorPage(): React.ReactNode {
       .finally(() => { stepping.current = false })
   }
 
-  /** Jump by whole seconds, inside the file; the seek then grabs the frame, as a scrub does. */
+  /** A clock reading opts whole-second jumps into teaching the destination frame. */
   const jump = (seconds: number): void => {
     const video = videoRef.current
-    if (!video || stepping.current) return
+    if (!video || stepping.current || countdown.isBusy()) return
+    if (countdown.jump(seconds)) return
     video.pause()
     const end = Number.isFinite(video.duration) ? video.duration : video.currentTime
     const target = Math.max(0, Math.min(end, video.currentTime + seconds))
@@ -439,7 +451,7 @@ export default function EditorPage(): React.ReactNode {
 
   const togglePlay = (): void => {
     const video = videoRef.current
-    if (!video) return
+    if (!video || countdown.isBusy()) return
     if (video.paused) void video.play().catch(() => undefined)
     else video.pause()
   }
@@ -449,11 +461,11 @@ export default function EditorPage(): React.ReactNode {
     return (await prepareHudGlyphs(frame, activePack, variantId, boxes, numericId)).bitmaps
   }
   const assign = async (char: ClockChar): Promise<void> => {
-    if (cueId || !analysis || selected < 0 || !boxes[selected] || (fieldId !== 'clock' && char === ':')) return
+    if (countdown.isBusy() || cueId || !analysis || selected < 0 || !boxes[selected] || (fieldId !== 'clock' && char === ':')) return
     const revision = editRevision.current
     try {
       const samples = await preparedSamples()
-      if (!mounted.current || revision !== editRevision.current || frameRef.current !== frame || boxesRef.current !== boxes) return
+      if (!mounted.current || countdown.isBusy() || revision !== editRevision.current || frameRef.current !== frame || boxesRef.current !== boxes) return
       const sample = sampleFromPrepared(samples[selected]!, char, `${sampleName || '样片'} @ ${mediaTime.toFixed(2)}s`)
       patch({ templates: { ...profile.templates, [char]: [...(profile.templates[char] ?? []), sample] } })
       setSelected(selected + 1 < boxes.length ? selected + 1 : -1)
@@ -462,13 +474,14 @@ export default function EditorPage(): React.ReactNode {
 
   /** The whole reading typed at once: one Rust-prepared sample per box. */
   const assignReading = async (text: string): Promise<string | null> => {
+    if (countdown.isBusy()) return '正在跳转, 请稍后再制字'
     if (!analysis) return '先取一帧'
     const paired = pairReading(text, boxes.length, numericId)
     if (!paired.ok) return paired.reason
     const revision = editRevision.current
     try {
       const samples = await preparedSamples()
-      if (!mounted.current || revision !== editRevision.current || frameRef.current !== frame || boxesRef.current !== boxes) return '当前设置已改变, 请重新制字'
+      if (!mounted.current || countdown.isBusy() || revision !== editRevision.current || frameRef.current !== frame || boxesRef.current !== boxes) return '当前设置已改变, 请重新制字'
       const origin = `${sampleName || '样片'} @ ${mediaTime.toFixed(2)}s`
       const templates = { ...profile.templates }
       paired.chars.forEach((char, index) => {
@@ -538,16 +551,21 @@ export default function EditorPage(): React.ReactNode {
   // second and Ctrl+←/→ ten, Space plays. A focused region box keeps its own arrows. Typing
   // into a field keeps its keys; buttons keep Space and the arrows but not the digits, so
   // clicking a glyph box and then typing the clock works.
-  const keys = useRef({ assign, step, jump, togglePlay, video: false })
-  keys.current = { assign, step, jump, togglePlay, video: sampleUrl !== '' && sampleKind === 'video' }
+  const keys = useRef({ assign, step, jump, togglePlay, undo: countdown.undo, video: false })
+  keys.current = { assign, step, jump, togglePlay, undo: countdown.undo, video: sampleUrl !== '' && sampleKind === 'video' }
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      const arrow = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0
-      const jumpBy = arrow && !event.altKey && !event.metaKey ? (event.ctrlKey ? 10 : event.shiftKey ? 1 : 0) : 0
-      if (!jumpBy && (event.ctrlKey || event.metaKey || event.altKey)) return
       const target = event.target
       if (!(target instanceof Element)) return
       if (target.closest('textarea, select, [contenteditable="true"], .pop') || (target instanceof HTMLInputElement && target.type !== 'range')) return
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'z' && keys.current.undo) {
+        event.preventDefault()
+        keys.current.undo()
+        return
+      }
+      const arrow = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0
+      const jumpBy = arrow && !event.altKey && !event.metaKey ? (event.ctrlKey ? 10 : event.shiftKey ? 1 : 0) : 0
+      if (!jumpBy && (event.ctrlKey || event.metaKey || event.altKey)) return
       if (TYPED_CHARS.has(event.key)) {
         event.preventDefault()
         keys.current.assign(event.key as ClockChar)
@@ -832,15 +850,17 @@ export default function EditorPage(): React.ReactNode {
                   setVideoSize({ width: node.videoWidth, height: node.videoHeight })
                   setDuration(Number.isFinite(node.duration) ? node.duration : 0)
                 }}
-                onPlay={() => setPlaying(true)}
+                onPlay={() => { setPlaying(true); countdown.onPlay() }}
                 onPause={(event) => {
                   setPlaying(false)
                   // A pause that starts a step or a jump is followed by its seek, which grabs.
-                  if (autoGrab && !event.currentTarget.seeking) grab()
+                  if (autoGrab && !event.currentTarget.seeking && !countdown.isBusy()) grab()
                 }}
                 onTimeUpdate={(event) => setMediaTime(event.currentTarget.currentTime)}
+                onSeeking={(event) => countdown.onSeeking(event.currentTarget)}
                 onSeeked={(event) => {
                   setMediaTime(event.currentTarget.currentTime)
+                  if (countdown.onSeeked(event.currentTarget)) return
                   // A seek is the usual way to reach the frame you want; grabbing right
                   // after it saves a click and keeps the preview on the picture.
                   if (autoGrab) grab()
@@ -878,17 +898,17 @@ export default function EditorPage(): React.ReactNode {
             {video ? (
               <>
                 <span className="editor-transport-group">
-                  <button type="button" className="btn-quiet small editor-jump num" onClick={() => jump(-10)} title="后退 10 秒（Ctrl+←）">-10s</button>
-                  <button type="button" className="btn-quiet small editor-jump num" onClick={() => jump(-1)} title="后退 1 秒（Shift+←）">-1s</button>
-                  <button type="button" className="icon-btn" onClick={() => step(-1)} aria-label="上一帧" title="上一帧（←）"><Icon name="back" /></button>
-                  <button type="button" className="icon-btn" onClick={togglePlay} aria-label={playing ? '暂停' : '播放'} title="播放 / 暂停（空格）">
+                  <button type="button" className="btn-quiet small editor-jump num" disabled={countdown.busy} onClick={() => jump(-10)} title="后退 10 秒（Ctrl+←）">-10s</button>
+                  <button type="button" className="btn-quiet small editor-jump num" disabled={countdown.busy} onClick={() => jump(-1)} title="后退 1 秒（Shift+←）">-1s</button>
+                  <button type="button" className="icon-btn" disabled={countdown.busy} onClick={() => step(-1)} aria-label="上一帧" title="上一帧（←）"><Icon name="back" /></button>
+                  <button type="button" className="icon-btn" disabled={countdown.busy} onClick={togglePlay} aria-label={playing ? '暂停' : '播放'} title="播放 / 暂停（空格）">
                     <Icon name={playing ? 'pause' : 'play'} />
                   </button>
-                  <button type="button" className="icon-btn" onClick={() => step(1)} aria-label="下一帧" title="下一帧（→）"><Icon name="forward" /></button>
-                  <button type="button" className="btn-quiet small editor-jump num" onClick={() => jump(1)} title="前进 1 秒（Shift+→）">+1s</button>
-                  <button type="button" className="btn-quiet small editor-jump num" onClick={() => jump(10)} title="前进 10 秒（Ctrl+→）">+10s</button>
+                  <button type="button" className="icon-btn" disabled={countdown.busy} onClick={() => step(1)} aria-label="下一帧" title="下一帧（→）"><Icon name="forward" /></button>
+                  <button type="button" className="btn-quiet small editor-jump num" disabled={countdown.busy} onClick={() => jump(1)} title="前进 1 秒（Shift+→）">+1s</button>
+                  <button type="button" className="btn-quiet small editor-jump num" disabled={countdown.busy} onClick={() => jump(10)} title="前进 10 秒（Ctrl+→）">+10s</button>
                 </span>
-                <input type="range" className="editor-scrub" min={0} max={Math.max(0.1, duration)} step={0.02}
+                <input type="range" className="editor-scrub" disabled={countdown.busy} min={0} max={Math.max(0.1, duration)} step={0.02}
                   value={Math.min(mediaTime, duration || mediaTime)} aria-label="样片进度"
                   style={{ '--fill': `${duration ? (mediaTime / duration) * 100 : 0}%` } as React.CSSProperties}
                   onChange={(event) => {
@@ -898,7 +918,7 @@ export default function EditorPage(): React.ReactNode {
                     if (node) node.currentTime = value
                   }} />
                 <span className="editor-time num"><span>{mediaTime.toFixed(2)}s</span> / {duration ? `${duration.toFixed(2)}s` : '—'}</span>
-                <button type="button" className="btn-solid small" onClick={grab}>取当前帧</button>
+                <button type="button" className="btn-solid small" disabled={countdown.busy} onClick={grab}>取当前帧</button>
                 <Switch label="自动取帧" checked={autoGrab} onChange={setAutoGrab} />
               </>
             ) : (
@@ -952,6 +972,7 @@ export default function EditorPage(): React.ReactNode {
               setDirty(true)
             }} /> : <>
           <GlyphSection key={`glyph-${variantId}-${fieldId}`} fieldId={numericId} profile={profile} readiness={readiness} boxes={boxes} selected={selected}
+            reading={countdown.reading} onReadingChange={countdown.changeReading} onUndo={countdown.undo} busy={countdown.busy}
             bounds={analysis ? { width: analysis.binary.width, height: analysis.binary.height } : null}
             onBoxes={setBoxes} onAssign={assign} onAssignReading={assignReading} onVerify={frame ? verifyFrame : null} recognized={recognized} />
           <StretchSection key={`stretch-${variantId}-${fieldId}`} fieldId={numericId} variantId={variantId} video={video ? videoRef.current : null} pack={activePack} onSave={saveStretch} />

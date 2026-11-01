@@ -422,7 +422,7 @@
   text-decoration: none;
 }
 
-.rail-more summary {
+:is(.rail-more, .rail-collapsible) > summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -431,14 +431,15 @@
   border-radius: 4px;
 }
 
-.rail-more summary::-webkit-details-marker {
+:is(.rail-more, .rail-collapsible) > summary::-webkit-details-marker {
   display: none;
 }
 
-.rail-more summary::after {
+:is(.rail-more, .rail-collapsible) > summary::after {
   content: '';
   width: 6px;
   height: 6px;
+  flex-shrink: 0;
   margin-right: 4px;
   border-right: 1.5px solid var(--ash);
   border-bottom: 1.5px solid var(--ash);
@@ -446,12 +447,37 @@
   transition: transform 160ms var(--ease);
 }
 
-.rail-more[open] summary::after {
+:is(.rail-more, .rail-collapsible)[open] > summary::after {
   transform: rotate(-135deg);
 }
 
 .rail-more:not([open]) {
   gap: 0;
+}
+
+.rail-collapsible {
+  display: block;
+}
+
+.rail-collapsible > summary {
+  gap: 10px;
+}
+
+.rail-collapsible > summary .rail-meta {
+  margin-left: auto;
+  text-align: right;
+}
+
+.rail-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.rail-reset-row {
+  display: flex;
+  justify-content: flex-end;
 }
 
 /* The crop is a few dozen pixels tall; pixelated keeps every pixel readable when scaled. */
@@ -860,6 +886,14 @@
 .reading-row .text-input {
   flex: 1;
   min-width: 0;
+}
+
+.reading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 /* 整段标注: one row per run of identical frames, with its picture and reading. */

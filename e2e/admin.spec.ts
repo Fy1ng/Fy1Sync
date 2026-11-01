@@ -293,7 +293,7 @@ test.describe('取帧与切分', () => {
     await field.fill('0:19')
     await page.getByRole('button', { name: '存为样本' }).click()
     await expect(page.locator('.editor-rail')).toContainText('4 个样本')
-    await expect(field).toHaveValue('')
+    await expect(field).toHaveValue('0:19')
     for (const char of ['0', ':', '1', '9']) {
       await expect(page.locator('.template-cell').filter({ has: page.locator('.template-char', { hasText: new RegExp(`^${char}$`) }) })
         .locator('.template-thumb')).toHaveCount(1)
