@@ -4,10 +4,11 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const HUD_FIELDS: [&str; 3] = ["clock", "scoreLeft", "scoreRight"];
-pub const HUD_CUES: [&str; 7] = [
+pub const HUD_CUES: [&str; 8] = [
     "replay",
     "bomb",
     "timeout",
+    "timeoutRight",
     "roundPrefix",
     "roundOver",
     "roundHistory",
@@ -1081,6 +1082,19 @@ fn hud_phase(states: &BTreeMap<String, HudPresenceResult>) -> String {
     let active_enabled = states.get("active").is_some_and(|state| !matches!(state, HudPresenceResult::Disabled { .. }));
     phase.unwrap_or(if active_enabled { "indeterminate" } else { "unconfigured" }).into()
 }
+fn hud_phase_with_timeout(states: &BTreeMap<String, HudPresenceResult>, cues: &BTreeMap<String, HudPresenceResult>) -> String {
+    let phase = hud_phase(states);
+    if !["timeout", "timeoutRight"].iter().any(|id| presence_matched(cues.get(*id))) {
+        return phase;
+    }
+    // Either explicit team timeout interrupts active play, even if the other side is unreadable.
+    // Statistics retains precedence; the actual side-specific cue results remain unchanged.
+    if phase == "statistics" || ["roundHistory", "scoreboard"].iter().any(|id| presence_matched(cues.get(*id))) {
+        "statistics".into()
+    } else {
+        "paused".into()
+    }
+}
 fn analyze_hud_field(rgba: &[u8], width: usize, field: &HudField) -> (HudDebug, Vec<Vec<u8>>) {
     let rect = field.roi.rect();
     let crop = crop_hud_rgba(rgba, width, &field.roi);
@@ -1373,7 +1387,7 @@ pub fn recognize_hud_frame(
         (key.clone(), evaluate_hud_state(groups, &cues, &fields))
     }).collect();
     let content = hud_content(&cues, &states);
-    let phase = hud_phase(&states);
+    let phase = hud_phase_with_timeout(&states, &cues);
     let organizer = selected_organizer.unwrap_or_else(|| variant.organizer.as_ref().map_or_else(
         || presence_failed("not-configured", None),
         |cue| recognize_hud_cue(rgba, width, pack, cue),
@@ -1503,6 +1517,34 @@ mod tests {
         assert_eq!(hud_content(&BTreeMap::from([("replay".into(), presence(None))]), &states), "indeterminate");
         states.insert("active".into(), presence(Some(true)));
         assert_eq!(hud_phase(&states), "active");
+    }
+
+    #[test]
+    fn either_timeout_interrupts_active_without_erasing_side_results_or_statistics() {
+        let active = BTreeMap::from([("active".into(), presence(Some(true)))]);
+        for side in ["timeout", "timeoutRight"] {
+            let other = if side == "timeout" { "timeoutRight" } else { "timeout" };
+            for other_result in [presence(Some(false)), presence(None), HudPresenceResult::Disabled { score: None, debug: None }] {
+                let mut cues = BTreeMap::from([(side.into(), presence(Some(true))), (other.into(), other_result)]);
+                let before = serde_json::to_value(&cues).unwrap();
+                assert_eq!(hud_phase_with_timeout(&active, &cues), "paused");
+                assert_eq!(serde_json::to_value(&cues).unwrap(), before);
+                let mut states = active.clone();
+                states.insert("paused".into(), presence(None));
+                assert_eq!(hud_phase_with_timeout(&states, &cues), "paused");
+                states.insert("scoreboard".into(), presence(Some(true)));
+                assert_eq!(hud_phase_with_timeout(&states, &cues), "statistics");
+                cues.insert("roundHistory".into(), presence(Some(true)));
+                assert_eq!(hud_phase_with_timeout(&active, &cues), "statistics");
+            }
+        }
+        let both = BTreeMap::from([("timeout".into(), presence(Some(true))), ("timeoutRight".into(), presence(Some(true)))]);
+        assert_eq!(hud_phase_with_timeout(&active, &both), "paused");
+        for cues in [BTreeMap::new(), BTreeMap::from([("timeout".into(), presence(Some(false)))]),
+            BTreeMap::from([("timeout".into(), presence(None)), ("timeoutRight".into(), HudPresenceResult::Disabled { score: None, debug: None })])] {
+            assert_eq!(hud_phase_with_timeout(&active, &cues), "active");
+            assert_eq!(hud_phase_with_timeout(&BTreeMap::new(), &cues), "unconfigured");
+        }
     }
 
     #[test]

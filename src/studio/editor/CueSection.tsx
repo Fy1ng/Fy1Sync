@@ -33,6 +33,7 @@ export function CueSection({ id, pack, variantId, result, onSave, onThreshold, o
       <CueThumb pack={pack} bitmapId={bitmapId} />
     </button>)}</div>
     <p className="muted">整块区域保存为模板. 改变区域宽高后需要重新取样.</p>
+    {(id === 'timeout' || id === 'timeoutRight') && <p className="muted">左右 Timeout 分别框选和取样, 任意一侧出现即标记暂停. 只框固定文字或图形, 不含队名和变化的秒数.</p>}
   </section>
 }
 function CueThumb({ pack, bitmapId }: { pack: HudStylePack; bitmapId: string }): React.ReactNode {
@@ -61,6 +62,7 @@ export function StateRules({ pack, variantId, onChange }: { pack: HudStylePack; 
   }
   return <details className="rail-group state-rules"><summary><h2>状态规则</h2></summary>
     <p className="muted">组内全部满足, 任一组满足即成立. 引用已关闭字段的组不参与判断, 其他组不受影响. 未配置 cue 需先框区域.</p>
+    <p className="muted">任意一侧 Timeout 出现会直接标记暂停, 无需将左右两侧都设为必须出现.</p>
     {ids.map(id => <div className="state-rule" key={id}><b>{STATE_LABELS[id] ?? id}</b>
       {(states[id] ?? [[]]).map((group, groupIndex) => <div className="state-rule-cues" key={groupIndex}>
         {HUD_CUE_IDS.map(cue => {
@@ -86,10 +88,13 @@ export function StateRules({ pack, variantId, onChange }: { pack: HudStylePack; 
 const CONTENT = { live: '直播', replay: '回放', indeterminate: '无法判断' }
 const PHASE = { active: '进行中', planted: '下包', paused: '暂停', roundOver: '回合结束', statistics: '统计页', indeterminate: '无法判断', unconfigured: '未配置' }
 export function FrameStatePreview({ result, playerResult }: { result: HudFrameResult | null; playerResult?: HudFrameResult | null }): React.ReactNode {
+  const leftTimeout = result?.cues.timeout?.status === 'matched'
+  const rightTimeout = result?.cues.timeoutRight?.status === 'matched'
   return <section className="rail-group frame-state-preview" aria-label="当前帧状态">
     <h2>当前帧状态</h2>
     <p>内容: <span data-testid="hud-content">{result ? CONTENT[result.content] : '尚未预览'}</span></p>
     <p>阶段: <span data-testid="hud-phase">{result ? PHASE[result.phase] : '尚未预览'}</span></p>
+    {(leftTimeout || rightTimeout) && <p>暂停标记: <span data-testid="hud-timeout-side">{leftTimeout && rightTimeout ? '左右两侧' : leftTimeout ? '左侧队伍' : '右侧队伍'}</span></p>}
     <p>主办方: <span data-testid="hud-organizer">{presenceText(result?.organizer, true)}</span></p>
     <p>播放器布局: <span data-testid="hud-player-layout">{!playerResult ? '尚未预览' : playerResult.variantId
       ?? (playerResult.selectionReason === 'multiple-matches' ? '无法判断: 多个布局匹配' : '无法判断: 没有布局匹配')}</span></p>

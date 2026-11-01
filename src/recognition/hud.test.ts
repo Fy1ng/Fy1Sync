@@ -53,6 +53,34 @@ function realEngine() {
 }
 
 describe('HUD full-frame Rust/WASM recognition', () => {
+  it.each(['timeout', 'timeoutRight'] as const)('recognizes %s as a pause in both editor and player without changing the clock reading', async side => {
+    const { pack, variant, frame, request } = fixture()
+    const mask = [255, 0, 255, 0, 255, 0, 255, 0, 255]
+    for (const [id, x] of [['timeout', 100], ['timeoutRight', 500]] as const) {
+      variant.cues[id] = { ...structuredClone(variant.cues.replay!), roi: { x, y: 100, w: 3, h: 3 },
+        preprocess: createHudPreprocess({ scale: 1, threshold: id === 'timeout' ? 180 : 90 }) }
+      if (id === side) for (const [index, ink] of mask.entries()) {
+        if (ink) frame.data.set(id === 'timeout' ? [240, 240, 240, 255] : [160, 160, 0, 255],
+          ((100 + Math.floor(index / 3)) * frame.width + x + index % 3) * 4)
+      }
+    }
+    request.pixels = frame.data.slice().buffer as ArrayBuffer
+    const { recognition, engine } = realEngine()
+    try {
+      engine.handle({ type: 'configure', generation: 2, profile: pack })
+      const result = await recognizeHudFrame({ pixels: frame.data, width: frame.width, height: frame.height }, pack, variant.id)
+      expect(result.cues[side]?.status).toBe('matched')
+      expect(result.cues[side === 'timeout' ? 'timeoutRight' : 'timeout']?.status).toBe('not-matched')
+      expect(result.phase).toBe('paused')
+      expect(result.fields.clock).toMatchObject({ status: 'read', reading: { text: '1:37' } })
+      expect((engine.handle(request) as ResultMessage).hud).toEqual(result)
+      variant.cues[side]!.enabled = false
+      const disabled = await recognizeHudFrame({ pixels: frame.data, width: frame.width, height: frame.height }, pack, variant.id)
+      expect(disabled.cues[side]?.status).toBe('disabled')
+      expect(disabled.phase).toBe('active')
+    } finally { recognition.free() }
+  })
+
   it('reports a disabled clock consistently in the editor and player without discarding its templates', async () => {
     const { pack, variant, frame, request } = fixture()
     const originalClock = structuredClone(variant.fields.clock!)

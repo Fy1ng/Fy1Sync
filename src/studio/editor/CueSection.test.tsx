@@ -2,10 +2,54 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { createEmptyHudStylePack, type HudCondition } from '../../core/hudStylePack'
 import type { HudFrameResult, HudPresenceResult } from '../../core/hudWasm'
-import { editorCue } from './cueModel'
+import { cueModel, editorCue, patchCue } from './cueModel'
 import { CueSection, FrameStatePreview, presenceText, StateRules } from './CueSection'
 
 afterEach(cleanup)
+
+it('keeps left and right timeout regions, preprocessing and switches independent', () => {
+  const empty = createEmptyHudStylePack()
+  const left = patchCue(empty, 'timeout', { roi: { x: 0.1, y: 0.2, w: 0.2, h: 0.1 } })
+  const both = patchCue(left, 'timeoutRight', { roi: { x: 0.7, y: 0.2, w: 0.2, h: 0.1 },
+    preprocess: { ...editorCue(left, 'timeoutRight').preprocess, threshold: 80, invert: true } })
+  expect(both.variants[0]!.cues.timeout).toEqual(left.variants[0]!.cues.timeout)
+  expect(cueModel(both, 'timeout').preprocess.threshold).toBe(150)
+  expect(cueModel(both, 'timeoutRight').preprocess.threshold).toBe(80)
+  const disabled = patchCue(both, 'timeoutRight', { enabled: false })
+  expect(disabled.variants[0]!.cues.timeout).toEqual(both.variants[0]!.cues.timeout)
+  expect(disabled.variants[0]!.cues.timeoutRight).toEqual({ ...both.variants[0]!.cues.timeoutRight, enabled: false })
+  expect(patchCue(disabled, 'timeoutRight', { enabled: true }).variants).toEqual(both.variants)
+})
+
+it('shows which side has timeout evidence without merging the two cue results', () => {
+  const disabled = { status: 'disabled', debug: null } as const
+  const result: HudFrameResult = { variantId: 'layout', selectionReason: null, content: 'live', phase: 'paused',
+    fields: { clock: disabled, scoreLeft: disabled, scoreRight: disabled, round: disabled }, states: {},
+    organizer: { status: 'disabled', score: null, debug: null }, cues: {
+      timeout: { status: 'not-matched', score: 0, debug: null }, timeoutRight: { status: 'matched', score: 1, debug: null },
+    } }
+  const view = render(<FrameStatePreview result={result} />)
+  expect(screen.getByTestId('hud-phase')).toHaveTextContent('暂停')
+  expect(screen.getByTestId('hud-timeout-side')).toHaveTextContent('右侧队伍')
+  view.rerender(<FrameStatePreview result={{ ...result, cues: { ...result.cues,
+    timeout: { status: 'matched', score: 1, debug: null } } }} />)
+  expect(screen.getByTestId('hud-timeout-side')).toHaveTextContent('左右两侧')
+  view.rerender(<FrameStatePreview result={{ ...result, cues: {} }} />)
+  expect(screen.queryByTestId('hud-timeout-side')).not.toBeInTheDocument()
+})
+
+it('offers both timeout conditions and explains that either side is sufficient for a pause', () => {
+  const pack = createEmptyHudStylePack()
+  pack.variants[0]!.cues.timeout = editorCue(pack, 'timeout')
+  pack.variants[0]!.cues.timeoutRight = editorCue(pack, 'timeoutRight')
+  const change = vi.fn()
+  render(<StateRules pack={pack} onChange={change} />)
+  fireEvent.click(screen.getByText('状态规则'))
+  expect(screen.getByLabelText('暂停 1 左侧 Timeout')).toBeEnabled()
+  fireEvent.change(screen.getByLabelText('暂停 1 右侧 Timeout'), { target: { value: 'present' } })
+  expect(change).toHaveBeenCalledWith({ paused: [[{ kind: 'cue', cue: 'timeoutRight', present: true }]] })
+  expect(screen.getByText('任意一侧 Timeout 出现会直接标记暂停, 无需将左右两侧都设为必须出现.')).toBeInTheDocument()
+})
 
 it('editing cue requirements preserves imported OR groups, field conditions and other states', () => {
   const pack = createEmptyHudStylePack()
@@ -21,7 +65,8 @@ it('editing cue requirements preserves imported OR groups, field conditions and 
   fireEvent.change(screen.getByLabelText('回放 1 回放标记'), { target: { value: 'absent' } })
   expect(change).toHaveBeenCalledWith({ replay: [[field, { kind: 'cue', cue: 'replay', present: false }],
     [{ kind: 'cue', cue: 'bomb', present: true }]], planted: variant.states.planted })
-  expect(screen.getByLabelText('回放 1 Timeout')).toBeDisabled()
+  expect(screen.getByLabelText('回放 1 左侧 Timeout')).toBeDisabled()
+  expect(screen.getByLabelText('回放 1 右侧 Timeout')).toBeDisabled()
 })
 
 it('shows and edits the selected layout state rules', () => {

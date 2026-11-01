@@ -5,7 +5,7 @@ import { createHudPreprocess, type HudPreprocessSettings } from './hudPreprocess
 export const HUD_STYLE_PACK_VERSION = 1 as const
 export const HUD_FIELD_IDS = ['clock', 'scoreLeft', 'scoreRight'] as const
 export const HUD_RESULT_FIELD_IDS = [...HUD_FIELD_IDS, 'round'] as const
-export const HUD_CUE_IDS = ['replay', 'bomb', 'timeout', 'roundPrefix', 'roundOver', 'roundHistory', 'scoreboard'] as const
+export const HUD_CUE_IDS = ['replay', 'bomb', 'timeout', 'timeoutRight', 'roundPrefix', 'roundOver', 'roundHistory', 'scoreboard'] as const
 export type HudFieldId = (typeof HUD_FIELD_IDS)[number]
 export type HudResultFieldId = (typeof HUD_RESULT_FIELD_IDS)[number]
 export type HudCueId = (typeof HUD_CUE_IDS)[number]

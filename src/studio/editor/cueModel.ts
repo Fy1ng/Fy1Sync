@@ -7,7 +7,7 @@ import { createHudPreprocess } from '../../core/hudPreprocess'
 
 export type CueTarget = HudCueId | 'organizer'
 export type EditorTarget = 'clock' | 'scoreLeft' | 'scoreRight' | CueTarget
-export const CUE_LABELS: Record<CueTarget, string> = { replay: '回放标记', bomb: '炸弹', timeout: 'Timeout',
+export const CUE_LABELS: Record<CueTarget, string> = { replay: '回放标记', bomb: '炸弹', timeout: '左侧 Timeout', timeoutRight: '右侧 Timeout',
   roundPrefix: 'Round 前缀', roundOver: 'Round Over', roundHistory: '回合记录标题', scoreboard: '记分板标题', organizer: '主办方区域' }
 export const STATE_LABELS: Record<string, string> = { replay: '回放', active: '进行中', planted: '下包', paused: '暂停',
   'round-over': '回合结束', 'round-history': '回合记录', scoreboard: '记分板' }

@@ -70,6 +70,10 @@ test('关闭回放标记同时停用引用它的正反条件组, 模板和规则
   await page.locator('.state-rules > summary').click()
   await page.getByRole('combobox', { name: '回放 1 回放标记', exact: true }).selectOption('present')
   await page.getByRole('combobox', { name: '暂停 1 回放标记', exact: true }).selectOption('absent')
+  await expect.poll(async () => {
+    const stored = await invoke(page, 'editorProjectLoad', undefined)
+    return stored.ok ? stored.value.project?.pack.variants[0]!.states : null
+  }).toEqual({ replay: [[{ kind: 'cue', cue: 'replay', present: true }]], paused: [[{ kind: 'cue', cue: 'replay', present: false }]] })
   const before = await invoke(page, 'editorProjectLoad', undefined)
   if (!before.ok || !before.value.project) throw new Error('Expected editor project')
   const original = before.value.project.pack.variants[0]!
@@ -104,7 +108,7 @@ test('关闭其他字段不影响当前开关, 关闭正在自动处理的倒计
   await chooseEditorVideo(electronApp, page, official)
   const video = page.locator('video.editor-media')
   await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.readyState)).toBeGreaterThanOrEqual(2)
-  for (const field of ['scoreLeft', 'scoreRight', 'replay', 'bomb', 'timeout', 'roundPrefix', 'roundOver', 'roundHistory', 'scoreboard', 'organizer']) {
+  for (const field of ['scoreLeft', 'scoreRight', 'replay', 'bomb', 'timeout', 'timeoutRight', 'roundPrefix', 'roundOver', 'roundHistory', 'scoreboard', 'organizer']) {
     await target.selectOption(field)
     await expect(toggle).toBeChecked()
     await toggle.press('Space')

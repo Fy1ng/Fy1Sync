@@ -237,10 +237,10 @@ describe('editor current field', () => {
     expect(draft.mock.calls[1]![0].bitmaps).toEqual(profile.bitmaps)
   })
 
-  it('keeps all eleven targets independently switchable and persists disabled cue defaults', async () => {
+  it('keeps all twelve targets independently switchable and persists disabled cue defaults', async () => {
     const { draft } = await editingPublishedProfile()
     const target = screen.getByRole('combobox', { name: '当前字段' })
-    for (const id of ['clock', 'scoreLeft', 'scoreRight', 'replay', 'bomb', 'timeout', 'roundPrefix', 'roundOver', 'roundHistory', 'scoreboard', 'organizer']) {
+    for (const id of ['clock', 'scoreLeft', 'scoreRight', 'replay', 'bomb', 'timeout', 'timeoutRight', 'roundPrefix', 'roundOver', 'roundHistory', 'scoreboard', 'organizer']) {
       fireEvent.change(target, { target: { value: id } })
       const toggle = screen.getByRole('switch', { name: /启用当前字段/ })
       expect(toggle).toBeChecked()

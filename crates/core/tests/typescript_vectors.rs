@@ -1247,3 +1247,101 @@ fn enabled_is_required_boolean_and_disabled_configuration_remains_strictly_valid
         assert_eq!(serde_json::to_value(parsed).unwrap().pointer(target).unwrap()["enabled"], false);
     }
 }
+
+fn team_timeout_fixture(left: bool, right: bool) -> (Vec<u8>, HudStylePack) {
+    let (mut frame, roi) = clock("1:37", 6);
+    let mut value = hud_pack(&profile(6, roi), 640, 360);
+    for (id, x, present, mask, inverted) in [
+        ("timeout", 7, left, [255, 0, 255, 0, 255, 0, 255, 0, 255], false),
+        ("timeoutRight", 500, right, [0, 255, 0, 255, 255, 255, 0, 255, 0], true),
+    ] {
+        let bitmap_id = if inverted { "right-timeout" } else { "left-timeout" };
+        value["bitmaps"][bitmap_id] = json!({"width":3,"height":3,"data":pack_bitmap(&mask)});
+        value["variants"][0]["cues"][id] = json!({
+            "enabled":true,"roi":{"x":x,"y":80,"w":3,"h":3},
+            "preprocess":HudPreprocessSettings { scale:1.0, threshold: if inverted {80.0} else {100.0}, invert:inverted, ..HudPreprocessSettings::default() },
+            "templates":[bitmap_id],"minScore":1.0,
+        });
+        for (i, &ink) in mask.iter().enumerate() {
+            let selected = present && ink != 0;
+            let color = match (inverted, selected) {
+                (false, true) => [200, 90, 40, 255],
+                (false, false) => [12, 14, 18, 255],
+                (true, true) => [12, 25, 85, 255],
+                (true, false) => [240, 230, 220, 255],
+            };
+            let offset = ((80 + i / 3) * 640 + x + i % 3) * 4;
+            frame[offset..offset + 4].copy_from_slice(&color);
+        }
+    }
+    value["variants"][0]["states"]["active"] = json!([[{"kind":"field","field":"clock","present":true}]]);
+    (frame, parse_hud_style_pack(&value).unwrap())
+}
+
+#[test]
+fn team_timeouts_read_independent_positions_colors_and_templates_and_pause_on_either_side() {
+    assert!(HUD_CUES.contains(&"timeoutRight"));
+    for (left, right) in [(false, false), (true, false), (false, true), (true, true)] {
+        let (frame, pack) = team_timeout_fixture(left, right);
+        let before = serde_json::to_value(&pack).unwrap();
+        let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+        assert_eq!(result.phase, if left || right { "paused" } else { "active" });
+        assert!(matches!(result.fields.clock, HudFieldResult::Read { ref reading, .. } if reading.text == "1:37"));
+        assert!(matches!(result.states["active"], HudPresenceResult::Matched { .. }));
+        for (id, expected, x) in [("timeout", left, 7.0), ("timeoutRight", right, 500.0)] {
+            assert_eq!(matches!(result.cues[id], HudPresenceResult::Matched { .. }), expected);
+            assert_eq!(matches!(result.cues[id], HudPresenceResult::NotMatched { .. }), !expected);
+            let prepared = prepare_hud_cue(&frame, 640, 360, &pack, "official-top-360", id).unwrap();
+            assert_eq!(prepared.roi_pixels.x, x);
+            if expected {
+                let template = &pack.variants[0].cues[id].templates[0];
+                assert_eq!(prepared.bitmap, pack.bitmaps[template].data);
+            }
+        }
+        assert_eq!(serde_json::to_value(&pack).unwrap(), before);
+    }
+}
+
+#[test]
+fn disabling_or_removing_one_team_timeout_does_not_disable_the_other() {
+    for disabled_side in ["timeout", "timeoutRight"] {
+        let enabled_side = if disabled_side == "timeout" { "timeoutRight" } else { "timeout" };
+        let (frame, mut pack) = team_timeout_fixture(true, true);
+        pack.variants[0].cues.get_mut(disabled_side).unwrap().enabled = false;
+        let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+        assert_eq!(result.phase, "paused");
+        assert!(matches!(result.cues[disabled_side], HudPresenceResult::Disabled { score: None, debug: None }));
+        assert!(matches!(result.cues[enabled_side], HudPresenceResult::Matched { .. }));
+        pack.variants[0].cues.remove(disabled_side);
+        assert!(validate_hud_style_pack(&serde_json::to_value(&pack).unwrap()).is_empty());
+        let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+        assert_eq!(result.phase, "paused");
+        assert!(!result.cues.contains_key(disabled_side));
+        pack.variants[0].cues.get_mut(enabled_side).unwrap().enabled = false;
+        assert_eq!(recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap().phase, "active");
+    }
+}
+
+#[test]
+fn unreadable_team_timeout_preserves_other_positive_evidence_and_strict_rule_dependencies() {
+    for unreadable in ["timeout", "timeoutRight"] {
+        let (frame, mut pack) = team_timeout_fixture(true, true);
+        pack.variants[0].cues.get_mut(unreadable).unwrap().templates.clear();
+        pack.variants[0].states.insert("paused".into(), vec![
+            vec![HudCondition::Cue { cue:"timeout".into(), present:true }],
+            vec![HudCondition::Cue { cue:"timeoutRight".into(), present:true }],
+        ]);
+        pack.variants[0].states.insert("negative-check".into(), vec![vec![HudCondition::Cue { cue:unreadable.into(), present:false }]]);
+        assert!(validate_hud_style_pack(&serde_json::to_value(&pack).unwrap()).is_empty());
+        let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+        assert_eq!(result.phase, "paused");
+        assert!(matches!(result.cues[unreadable], HudPresenceResult::Failed { ref reason, .. } if reason == "insufficient-templates"));
+        assert!(matches!(result.states["paused"], HudPresenceResult::Failed { .. }));
+        assert!(matches!(result.states["negative-check"], HudPresenceResult::Failed { .. }));
+        pack.variants[0].cues.get_mut(unreadable).unwrap().enabled = false;
+        let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+        assert_eq!(result.phase, "paused");
+        assert!(matches!(result.states["paused"], HudPresenceResult::Matched { .. }));
+        assert!(matches!(result.states["negative-check"], HudPresenceResult::Disabled { .. }));
+    }
+}
