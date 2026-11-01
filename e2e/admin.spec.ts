@@ -303,7 +303,7 @@ test.describe('取帧与切分', () => {
 })
 
 test.describe('发布预设', () => {
-  test('比分字段各自制作字形, 切换后验证当前帧并保留各自样本', async ({ page }) => {
+  test('左右比分共享字形, 不同颜色独立二值化, 删除和撤回同时生效', async ({ page }) => {
     failOnPageError(page)
     await page.goto(APP_ORIGIN + '/admin')
     const png = await page.evaluate(() => {
@@ -320,7 +320,8 @@ test.describe('发布预设', () => {
         '8': ['01110', '11011', '11011', '01110', '11011', '11011', '11011', '01110'],
         '7': ['11111', '00011', '00010', '00110', '00100', '01100', '01000', '11000'],
       }
-      for (const [text, start] of [['18', 420], ['7', 760]] as const) {
+      for (const [text, start, color] of [['18', 420, '#ffffff'], ['87', 760, '#aaaa00']] as const) {
+        context.fillStyle = color
         for (const [index, char] of [...text].entries()) {
           glyphs[char]!.forEach((row, y) => [...row].forEach((pixel, x) => {
             if (pixel === '1') context.fillRect(start + index * 72 + x * 12, 90 + y * 12, 12, 12)
@@ -335,25 +336,44 @@ test.describe('发布预设', () => {
     await expect(page.locator('img.editor-media')).toBeVisible()
     const field = page.getByRole('combobox', { name: '当前字段', exact: true })
 
-    for (const score of [
-      { id: 'scoreLeft', text: '18', x: 400, width: 200, samples: 2 },
-      { id: 'scoreRight', text: '7', x: 740, width: 140, samples: 1 },
-    ]) {
-      await field.selectOption(score.id)
-      await setRoi(page, { x: score.x / 1280, y: 70 / 720, w: score.width / 1280, h: 140 / 720 })
-      await expect.poll(async () => page.locator('.glyph-box').count()).toBe(score.text.length)
-      await expect(page.locator('.template-thumb')).toHaveCount(0)
-      await expect(page.locator('.char-pad').getByRole('button', { name: ':', exact: true })).toHaveCount(0)
-      for (const char of score.text) await page.locator('.char-pad').getByRole('button', { name: char, exact: true }).click()
-      await expect(page.locator('.template-thumb')).toHaveCount(score.samples)
-      await page.getByRole('button', { name: '验证当前帧', exact: true }).click()
-      await expect(page.locator('.verify-result')).toContainText(`识别为 ${score.text}`)
-    }
+    await field.selectOption('scoreLeft')
+    await setRoi(page, { x: 400 / 1280, y: 70 / 720, w: 200 / 1280, h: 140 / 720 })
+    await expect(page.locator('.glyph-box')).toHaveCount(2)
+    for (const char of '18') await page.locator('.char-pad').getByRole('button', { name: char, exact: true }).click()
+    await expect(page.locator('.template-thumb')).toHaveCount(2)
+
+    await field.selectOption('scoreRight')
+    // The right score has a different color; only its threshold changes, not the left one.
+    const threshold = page.getByRole('slider', { name: '阈值', exact: true })
+    for (let index = 0; index < 50; index++) await threshold.press('ArrowLeft')
+    await expect(threshold).toHaveValue('100')
+    await setRoi(page, { x: 740 / 1280, y: 70 / 720, w: 200 / 1280, h: 140 / 720 })
+    await expect(page.locator('.glyph-box')).toHaveCount(2)
+    await expect(page.locator('.template-thumb')).toHaveCount(2)
+    await expect(page.getByRole('heading', { name: '左右比分共用样本', exact: true })).toBeVisible()
+    await expect(page.getByLabel('当前读数', { exact: true })).toHaveText('待标注')
+    // Only teach the previously unseen 7; the right-hand 8 comes from the left-hand glyph.
+    await page.locator('.glyph-box').last().click()
+    await page.locator('.char-pad').getByRole('button', { name: '7', exact: true }).click()
+    await expect(page.locator('.template-thumb')).toHaveCount(3)
+    await page.getByRole('button', { name: '验证当前帧', exact: true }).click()
+    await expect(page.locator('.verify-result')).toContainText('识别为 87')
+    await page.getByRole('button', { name: '撤回', exact: true }).click()
+    await expect(page.locator('.template-thumb')).toHaveCount(2)
+    await page.locator('.glyph-box').last().click()
+    await page.locator('.char-pad').getByRole('button', { name: '7', exact: true }).click()
+    await expect(page.locator('.template-thumb')).toHaveCount(3)
 
     await field.selectOption('scoreLeft')
-    await expect(page.locator('.template-thumb')).toHaveCount(2)
+    await expect(threshold).toHaveValue('150')
+    await expect(page.locator('.template-thumb')).toHaveCount(3)
     await page.getByRole('button', { name: '验证当前帧', exact: true }).click()
     await expect(page.locator('.verify-result')).toContainText('识别为 18')
+    await page.getByRole('button', { name: '删除字符 7 的样本', exact: true }).click()
+    await field.selectOption('scoreRight')
+    await expect(threshold).toHaveValue('100')
+    await expect(page.locator('.template-thumb')).toHaveCount(2)
+    await expect(page.getByRole('button', { name: '删除字符 7 的样本', exact: true })).toHaveCount(0)
     await field.selectOption('clock')
     await expect(page.locator('.template-thumb')).toHaveCount(0)
     await expect(page.locator('.char-pad').getByRole('button', { name: ':', exact: true })).toBeVisible()

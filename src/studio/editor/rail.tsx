@@ -219,6 +219,7 @@ export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, sel
         <button type="button" className="btn-quiet small" disabled={busy || !onUndo} onClick={() => onUndo?.()}
           title="撤回上次字符标注或自动写入 (Ctrl+Z)">撤回</button>
       </div>
+      {fieldId !== 'clock' && <p className="muted">左右比分共用数字样本, 两侧识别区域和二值化参数分别设置.</p>}
       <div className="char-pad" role="group" aria-label="存为字符样本">
         {CLOCK_CHARS.filter(char => fieldId === 'clock' || char !== ':').map((char) => (
           <button type="button" key={char} className={`char-key num${(profile.templates[char]?.length ?? 0) > 0 ? ' is-taught' : ''}`}
@@ -263,7 +264,7 @@ export function SampleSection({ fieldId = 'clock', profile, onRemove }: {
   return (
     <section className="rail-group">
       <div className="rail-head">
-        <h2>已存样本</h2>
+        <h2>{fieldId === 'clock' ? '已存样本' : '左右比分共用样本'}</h2>
         <span className="rail-meta">点缩略图删除</span>
       </div>
       <div className="template-grid">

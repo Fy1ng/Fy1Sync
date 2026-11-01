@@ -895,8 +895,8 @@ fn partial_score_banks_reject_missing_digits_instead_of_using_similar_known_digi
         pack.variants[0].fields.score_left.as_mut().unwrap().glyphs.retain(|c, _| ["0", "1", "8", "9"].contains(&c.as_str()));
         pack.variants[0].fields.score_right.as_mut().unwrap().glyphs.retain(|c, _| ["7", "8"].contains(&c.as_str()));
         let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
-        for (field, available) in [(&result.fields.score_left, [0, 1, 8, 9].as_slice()), (&result.fields.score_right, [7, 8].as_slice())] {
-            if available.contains(&digit) {
+        for field in [&result.fields.score_left, &result.fields.score_right] {
+            if [0, 1, 7, 8, 9].contains(&digit) {
                 let HudFieldResult::Read { reading, .. } = field else { panic!("{text}: {field:?}") };
                 assert_eq!(reading.text, text);
             } else {
@@ -904,4 +904,102 @@ fn partial_score_banks_reject_missing_digits_instead_of_using_similar_known_digi
             }
         }
     }
+}
+
+#[test]
+fn shared_score_glyphs_read_both_sides_with_only_one_side_trained() {
+    for train_left in [true, false] {
+        let (frame, mut pack) = scoreboard("18", "9");
+        let fields = &mut pack.variants[0].fields;
+        let (trained, untrained) = if train_left {
+            (fields.score_left.as_mut().unwrap(), fields.score_right.as_mut().unwrap())
+        } else {
+            (fields.score_right.as_mut().unwrap(), fields.score_left.as_mut().unwrap())
+        };
+        trained.glyphs.retain(|c, _| ["1", "8", "9"].contains(&c.as_str()));
+        untrained.glyphs.clear();
+        let before = serde_json::to_value(&pack).unwrap();
+        let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+        for (field, expected) in [(&result.fields.score_left, "18"), (&result.fields.score_right, "9")] {
+            let HudFieldResult::Read { reading, .. } = field else { panic!("{field:?}") };
+            assert_eq!(reading.text, expected);
+        }
+        assert_eq!(serde_json::to_value(&pack).unwrap(), before);
+        let result = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+        assert!(matches!(result.fields.round, HudFieldResult::Read { ref reading, .. } if reading.value == 28.0));
+    }
+}
+
+#[test]
+fn shared_score_glyphs_keep_color_preprocessing_matching_and_grammar_independent() {
+    let (mut frame, mut pack) = scoreboard("18", "18");
+    let fields = &mut pack.variants[0].fields;
+    for (left_side, field) in [
+        (true, fields.score_left.as_mut().unwrap()),
+        (false, fields.score_right.as_mut().unwrap()),
+    ] {
+        for y in field.roi.y..field.roi.y + field.roi.h {
+            for x in field.roi.x..field.roi.x + field.roi.w {
+                let pixel = &mut frame[(y * 640 + x) * 4..(y * 640 + x) * 4 + 4];
+                let foreground = pixel[0] > 200;
+                pixel.copy_from_slice(match (left_side, foreground) {
+                    (true, true) => &[60, 180, 220, 255],
+                    (true, false) => &[8, 10, 14, 255],
+                    (false, true) => &[22, 12, 35, 255],
+                    (false, false) => &[245, 235, 215, 255],
+                });
+            }
+        }
+        field.preprocess = PreprocessSettings { scale: 1.0, threshold: if left_side { 80.0 } else { 200.0 }, invert: !left_side };
+        if !left_side { field.glyphs.clear(); }
+    }
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+    for (field_id, result) in [("scoreLeft", &result.fields.score_left), ("scoreRight", &result.fields.score_right)] {
+        let HudFieldResult::Read { reading, debug: Some(debug) } = result else { panic!("{result:?}") };
+        assert_eq!(reading.text, "18");
+        let prepared = prepare_hud_glyphs(&frame, 640, 360, &pack, "official-top-360", field_id).unwrap();
+        assert_eq!(prepared.roi_pixels, debug.roi_pixels);
+        assert_eq!(prepared.normalized, debug.normalized);
+    }
+    pack.variants[0].fields.score_right.as_mut().unwrap().grammar = HudGrammar::Integer { min: 0, max: 17 };
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+    assert!(matches!(result.fields.score_left, HudFieldResult::Read { .. }));
+    assert!(matches!(result.fields.score_right, HudFieldResult::Failed { ref reason, .. } if reason == "invalid-format"));
+    pack.variants[0].fields.score_left.as_mut().unwrap().preprocess.threshold = 255.0;
+    pack.variants[0].fields.score_right.as_mut().unwrap().grammar = HudGrammar::Integer { min: 0, max: 99 };
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+    assert!(matches!(result.fields.score_left, HudFieldResult::Failed { .. }));
+    assert!(matches!(result.fields.score_right, HudFieldResult::Read { .. }));
+}
+
+#[test]
+fn shared_score_glyphs_do_not_enable_null_fields_or_borrow_other_layouts_and_clocks() {
+    let (frame, mut pack) = scoreboard("8", "9");
+    pack.variants[0].fields.score_right = None;
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+    assert!(matches!(result.fields.score_left, HudFieldResult::Read { .. }));
+    assert!(matches!(result.fields.score_right, HudFieldResult::Failed { ref reason, .. } if reason == "not-configured"));
+
+    let (frame, mut pack) = scoreboard("8", "9");
+    let mut other = pack.variants[0].clone();
+    other.id = "other-layout".into();
+    pack.variants.push(other);
+    pack.variants[0].fields.clock = pack.variants[0].fields.score_left.clone();
+    pack.variants[0].fields.clock.as_mut().unwrap().grammar = HudGrammar::Countdown { format: "ss".into() };
+    pack.variants[0].fields.score_left.as_mut().unwrap().glyphs.clear();
+    pack.variants[0].fields.score_right.as_mut().unwrap().glyphs.clear();
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+    assert!(matches!(result.fields.clock, HudFieldResult::Read { .. }));
+    for field in [&result.fields.score_left, &result.fields.score_right] {
+        assert!(matches!(field, HudFieldResult::Failed { reason, .. } if reason == "missing-glyph"));
+    }
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "other-layout").unwrap();
+    assert!(matches!(result.fields.score_left, HudFieldResult::Read { .. }));
+    assert!(matches!(result.fields.score_right, HudFieldResult::Read { .. }));
+    pack.variants[0].fields.score_left = pack.variants[1].fields.score_left.clone();
+    pack.variants[0].fields.clock.as_mut().unwrap().glyphs.clear();
+    let result = recognize_hud_frame(&frame, 640, 360, &pack, "official-top-360").unwrap();
+    assert!(matches!(result.fields.clock, HudFieldResult::Failed { ref reason, .. } if reason == "insufficient-templates"));
+    assert!(matches!(result.fields.score_left, HudFieldResult::Read { .. }));
+    assert!(matches!(result.fields.score_right, HudFieldResult::Read { .. }));
 }

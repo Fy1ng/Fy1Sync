@@ -118,6 +118,7 @@ describe('click-to-teach glyph reading', () => {
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '存为样本' })).not.toBeInTheDocument()
     if (fieldId !== 'clock') expect(screen.queryByRole('button', { name: ':' })).not.toBeInTheDocument()
+    if (fieldId !== 'clock') expect(screen.getByText('左右比分共用数字样本, 两侧识别区域和二值化参数分别设置.')).toBeInTheDocument()
   })
 
   it('offers undo even if the latest frame has no glyph boxes', () => {

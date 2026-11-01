@@ -61,7 +61,7 @@ describe('clock editor pack view', () => {
 })
 
 describe('score editor pack view', () => {
-  it('keeps score parameters and glyphs independent and preserves the rest of the pack', () => {
+  it('shares digit samples while retaining independent score parameters and the rest of the pack', () => {
     const pack = createEmptyHudStylePack('test/pgl', 'PGL', { width: 3840, height: 2160 })
     const clock = structuredClone(pack.variants[0]!.fields.clock)
     const data = packBitmap(Uint8Array.from({ length: 1536 }, (_, index) => index % 3 === 0 ? 255 : 0))
@@ -74,11 +74,13 @@ describe('score editor pack view', () => {
     expect(both.variants[0]!.fields.scoreLeft).toEqual(left.variants[0]!.fields.scoreLeft)
     expect(both.variants[0]!.fields.scoreLeft!.roi).toEqual({ x: 1688, y: 88, w: 136, h: 116 })
     expect(fieldModel(both, 'scoreLeft').templates['8']).toHaveLength(1)
-    expect(fieldModel(both, 'scoreRight').templates['8']).toBeUndefined()
+    expect(fieldModel(both, 'scoreRight').templates['8']).toHaveLength(1)
     expect(fieldModel(both, 'scoreLeft').preprocess.threshold).toBe(75)
     expect(fieldModel(both, 'scoreRight').preprocess.threshold).toBe(110)
     expect(fieldModel(both, 'scoreRight').segment.minGapWidth).toBe(2)
     expect(fieldReadiness(both, 'scoreLeft')).toMatchObject({ sampleCount: 1, ready: false })
+    expect(fieldReadiness(both, 'scoreRight')).toEqual(fieldReadiness(both, 'scoreLeft'))
+    expect(both.variants[0]!.fields.scoreRight!.glyphs).toEqual(both.variants[0]!.fields.scoreLeft!.glyphs)
     expect(fieldReadiness(both, 'scoreLeft').missing).not.toContain(':')
     expect(parseHudStylePack(both).issues).toEqual([])
   })
@@ -89,5 +91,64 @@ describe('score editor pack view', () => {
     expect(fieldModel(pack, 'scoreLeft').matchThreshold).toBe(0.9)
     expect(fieldModel(pack, 'scoreRight').templates).toEqual({})
     expect(JSON.stringify(pack)).toBe(before)
+  })
+
+  it('does not activate the other side until its region is explicitly configured', () => {
+    const pack = createEmptyHudStylePack()
+    const data = packBitmap(Uint8Array.from({ length: 1536 }, (_, index) => index % 3 === 0 ? 255 : 0))
+    const left = patchField(pack, 'scoreLeft', { templates: { '8': [{ id: 'eight', data, createdAt: 0 }] } })
+    expect(left.variants[0]!.fields.scoreRight).toBeNull()
+    expect(fieldModel(left, 'scoreRight').templates['8']).toHaveLength(1)
+    expect(left.variants[0]!.fields.scoreRight).toBeNull()
+    const both = patchField(left, 'scoreRight', { roi: { x: 0.6, y: 0.1, w: 0.1, h: 0.1 } })
+    expect(both.variants[0]!.fields.scoreRight!.glyphs['8']).toEqual(['eight'])
+  })
+
+  it('reads the union of legacy score glyphs once per ID without mixing clock or other layouts', () => {
+    let pack = createEmptyHudStylePack('test/shared', 'Shared')
+    pack = patchField(patchField(pack, 'scoreLeft', {}), 'scoreRight', {})
+    const variant = pack.variants[0]!
+    for (const [index, id] of ['common-eight', 'left-eight', 'right-eight', 'seven', 'clock-nine', 'other-nine'].entries()) {
+      const pixels = new Uint8Array(1536)
+      pixels[index] = 255
+      pack.bitmaps[id] = { width: 32, height: 48, data: packBitmap(pixels) }
+    }
+    variant.fields.scoreLeft!.glyphs = { '8': ['common-eight', 'left-eight'] }
+    variant.fields.scoreRight!.glyphs = { '8': ['common-eight', 'right-eight'], '7': ['seven'] }
+    variant.fields.clock!.glyphs = { '9': ['clock-nine'] }
+    const other = structuredClone(variant)
+    other.id = 'other-layout'
+    other.fields.scoreLeft!.glyphs = { '9': ['other-nine'] }
+    other.fields.scoreRight!.glyphs = {}
+    pack.variants.push(other)
+    const before = JSON.stringify(pack)
+    for (const fieldId of ['scoreLeft', 'scoreRight'] as const) {
+      expect(fieldModel(pack, fieldId).templates['8']?.map(sample => sample.id)).toEqual(['common-eight', 'left-eight', 'right-eight'])
+      expect(fieldModel(pack, fieldId).templates['7']).toHaveLength(1)
+      expect(fieldModel(pack, fieldId).templates['9']).toBeUndefined()
+      expect(fieldReadiness(pack, fieldId).sampleCount).toBe(4)
+      expect(fieldReadiness(pack, fieldId, other.id).sampleCount).toBe(1)
+    }
+    expect(JSON.stringify(pack)).toBe(before)
+    expect(parseHudStylePack(pack).issues).toEqual([])
+  })
+
+  it('adds or removes shared samples from either side while keeping both sets of color settings', () => {
+    const data = packBitmap(Uint8Array.from({ length: 1536 }, (_, index) => index % 3 === 0 ? 255 : 0))
+    let pack = patchField(createEmptyHudStylePack(), 'scoreLeft', { preprocess: { scale: 1, threshold: 75, invert: false } })
+    pack = patchField(pack, 'scoreRight', { preprocess: { scale: 2, threshold: 190, invert: true } })
+    const left = patchField(pack, 'scoreLeft', { templates: { '8': [{ id: 'eight', data, createdAt: 0 }] } })
+    const both = patchField(left, 'scoreRight', { templates: {
+      ...fieldModel(left, 'scoreRight').templates, '7': [{ id: 'seven', data, createdAt: 0 }],
+    } })
+    expect(both.variants[0]!.fields.scoreLeft!.glyphs).toEqual({ '8': ['eight'], '7': ['seven'] })
+    expect(both.variants[0]!.fields.scoreRight!.glyphs).toEqual(both.variants[0]!.fields.scoreLeft!.glyphs)
+    const kept = patchField(both, 'scoreRight', { templates: { '7': fieldModel(both, 'scoreRight').templates['7']! } })
+    expect(fieldModel(kept, 'scoreLeft').templates['8']).toBeUndefined()
+    expect(fieldModel(kept, 'scoreRight').templates['8']).toBeUndefined()
+    expect(fieldModel(kept, 'scoreLeft').preprocess).toEqual({ scale: 1, threshold: 75, invert: false })
+    expect(fieldModel(kept, 'scoreRight').preprocess).toEqual({ scale: 2, threshold: 190, invert: true })
+    expect(kept.variants[0]!.fields.clock).toEqual(pack.variants[0]!.fields.clock)
+    expect(parseHudStylePack(kept).issues).toEqual([])
   })
 })

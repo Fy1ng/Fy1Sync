@@ -111,6 +111,30 @@ describe('HUD full-frame Rust/WASM recognition', () => {
     } finally { recognition.free() }
   })
 
+  it.each(['scoreLeft', 'scoreRight'] as const)('uses legacy %s glyphs on both sides identically in the editor and player', async trainedSide => {
+    const { pack, variant, frame, request } = fixture()
+    for (const [fieldId, text, x] of [['scoreLeft', '18', 140], ['scoreRight', '87', 460]] as const) {
+      drawText(frame, text, x, 20, { scale: 6, ink: fieldId === 'scoreLeft' ? [235, 238, 245] : [170, 170, 0] })
+      variant.fields[fieldId] = { ...structuredClone(variant.fields.clock!),
+        roi: { x: x - 6, y: 14, w: 100, h: 54 }, grammar: { kind: 'integer', min: 0, max: 99 },
+        preprocess: { scale: 1, threshold: fieldId === 'scoreLeft' ? 180 : 100, invert: false },
+        glyphs: fieldId === trainedSide
+          ? Object.fromEntries(Object.entries(variant.fields.clock!.glyphs).filter(([char]) => char !== ':')) : {} }
+    }
+    request.pixels = frame.data.slice().buffer as ArrayBuffer
+    const before = JSON.stringify(pack)
+    const { recognition, engine } = realEngine()
+    try {
+      engine.handle({ type: 'configure', generation: 2, profile: pack })
+      const editor = await recognizeHudFrame({ pixels: frame.data, width: frame.width, height: frame.height }, pack, variant.id)
+      expect(editor.fields.scoreLeft).toMatchObject({ status: 'read', reading: { text: '18' } })
+      expect(editor.fields.scoreRight).toMatchObject({ status: 'read', reading: { text: '87' } })
+      const player = engine.handle(request) as ResultMessage
+      expect(player.hud).toEqual(editor)
+      expect(JSON.stringify(pack)).toBe(before)
+    } finally { recognition.free() }
+  })
+
   it('syncs a clock-only pack: no replay cue reads as live, no phase rules hold nothing back', async () => {
     const { pack, variant, frame, request } = fixture()
     // A pack as auto-learning or an unfinished editor saves it: the clock and nothing else.

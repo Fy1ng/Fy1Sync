@@ -1088,21 +1088,43 @@ fn parse_score(text: &str, min: usize, max: usize) -> Option<f64> {
     let value = text.parse::<usize>().ok()?;
     (value <= 99 && value >= min && value <= max).then_some(value as f64)
 }
+fn shared_score_glyphs(fields: &HudFields) -> BTreeMap<String, Vec<String>> {
+    let mut glyphs = BTreeMap::new();
+    for c in &CLOCK_CHARS[..10] {
+        let mut seen = BTreeSet::new();
+        let mut ids = Vec::new();
+        for field in [fields.score_left.as_ref(), fields.score_right.as_ref()].into_iter().flatten() {
+            if let Some(samples) = field.glyphs.get(*c) {
+                for id in samples {
+                    if seen.insert(id) {
+                        ids.push(id.clone());
+                    }
+                }
+            }
+        }
+        if !ids.is_empty() {
+            glyphs.insert((*c).into(), ids);
+        }
+    }
+    glyphs
+}
 fn recognize_hud_field(
     rgba: &[u8],
     width: usize,
     pack: &HudStylePack,
     id: &str,
     field: Option<&HudField>,
+    shared_glyphs: Option<&BTreeMap<String, Vec<String>>>,
 ) -> HudFieldResult {
     if let Some(field) = field {
         let (mut debug, coverage) = analyze_hud_field(rgba, width, field);
+        let glyphs = shared_glyphs.unwrap_or(&field.glyphs);
         let mut templates = CompiledTemplates {
             chars: vec![],
             masks: vec![],
         };
         for c in CLOCK_CHARS {
-            if let Some(ids) = field.glyphs.get(c) {
+            if let Some(ids) = glyphs.get(c) {
                 let masks = ids
                     .iter()
                     .filter_map(|id| pack.bitmaps.get(id))
@@ -1119,7 +1141,7 @@ fn recognize_hud_field(
             .map(|mask| match_glyph(mask, &templates))
             .collect();
         let countdown = matches!(field.grammar, HudGrammar::Countdown { .. });
-        let complete = CLOCK_CHARS[..10].iter().all(|c| field.glyphs.get(*c).is_some_and(|ids| !ids.is_empty()));
+        let complete = CLOCK_CHARS[..10].iter().all(|c| glyphs.get(*c).is_some_and(|ids| !ids.is_empty()));
         if countdown && hud_pack_readiness(pack, id)["ready"] != true {
             failed("insufficient-templates", Some(debug))
         } else if debug.ink_ratio < 0.004 || debug.ink_ratio > 0.85 {
@@ -1239,16 +1261,18 @@ pub fn recognize_hud_frame(
     }).collect();
     let statistics = ["roundHistory", "scoreboard"].iter().any(|id| presence_matched(cues.get(*id)));
     let planted = presence_matched(cues.get("bomb"));
-    let read_field = |field: Option<&HudField>, absent: bool| {
+    // Fonts are shared only within this layout; each score still owns its color and ROI pipeline.
+    let score_glyphs = shared_score_glyphs(&variant.fields);
+    let read_field = |field: Option<&HudField>, absent: bool, glyphs: Option<&BTreeMap<String, Vec<String>>>| {
         if absent && field.is_some() {
             HudFieldResult::Absent { debug: None }
         } else {
-            recognize_hud_field(rgba, width, pack, &variant.id, field)
+            recognize_hud_field(rgba, width, pack, &variant.id, field, glyphs)
         }
     };
-    let clock = read_field(variant.fields.clock.as_ref(), statistics || planted);
-    let score_left = read_field(variant.fields.score_left.as_ref(), statistics);
-    let score_right = read_field(variant.fields.score_right.as_ref(), statistics);
+    let clock = read_field(variant.fields.clock.as_ref(), statistics || planted, None);
+    let score_left = read_field(variant.fields.score_left.as_ref(), statistics, Some(&score_glyphs));
+    let score_right = read_field(variant.fields.score_right.as_ref(), statistics, Some(&score_glyphs));
     let round = derive_round(&score_left, &score_right);
     let fields = HudFieldResults { clock, score_left, score_right, round };
     let states = variant.states.iter().map(|(key, groups)| {
@@ -1275,6 +1299,34 @@ pub fn recognize_hud_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn score_glyph_union_deduplicates_per_character_and_excludes_the_clock() {
+        let field = |glyphs| HudField {
+            roi: HudRoi { x: 0, y: 0, w: 1, h: 1 },
+            preprocess: PreprocessSettings { scale: 1.0, threshold: 100.0, invert: false },
+            segment: HudSegment { min_column_ink: 1, min_glyph_width: 1, min_gap_width: 1, min_ink_ratio: 0.0 },
+            glyphs,
+            grammar: HudGrammar::Integer { min: 0, max: 99 },
+            r#match: HudMatch { min_score: 0.9, min_margin: 0.03 },
+            gate_cue: None,
+        };
+        let fields = HudFields {
+            clock: Some(field(BTreeMap::from([("4".into(), vec!["clock-four".into()])]))),
+            score_left: Some(field(BTreeMap::from([
+                ("8".into(), vec!["shared-eight".into(), "left-eight".into(), "shared-eight".into()]),
+                (":".into(), vec!["colon".into()]),
+            ]))),
+            score_right: Some(field(BTreeMap::from([
+                ("8".into(), vec!["shared-eight".into(), "right-eight".into()]),
+                ("9".into(), vec!["right-nine".into()]),
+            ]))),
+        };
+        assert_eq!(shared_score_glyphs(&fields), BTreeMap::from([
+            ("8".into(), vec!["shared-eight".into(), "left-eight".into(), "right-eight".into()]),
+            ("9".into(), vec!["right-nine".into()]),
+        ]));
+    }
 
     fn presence(value: Option<bool>) -> HudPresenceResult {
         match value {

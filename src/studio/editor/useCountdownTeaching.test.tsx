@@ -89,7 +89,7 @@ function setup(options: { time?: number; duration?: number; format?: 'm:ss' | 'm
   }
   return { ...hook, initial, video, writes, messages, selected, grab, prepare, recognize, scope, label, assign, jump, undo, capture }
 }
-function sampleCount(pack: HudStylePack, field: 'clock' | 'scoreLeft' = 'clock'): number {
+function sampleCount(pack: HudStylePack, field: 'clock' | 'scoreLeft' | 'scoreRight' = 'clock'): number {
   return Object.values(fieldModel(pack, field).templates).reduce((total, samples) => total + samples.length, 0)
 }
 
@@ -154,12 +154,42 @@ describe('character button teaching', () => {
     await view.assign('1', 0)
     await view.assign('8', 1)
     expect(sampleCount(view.result.current.pack, 'scoreLeft')).toBe(2)
+    expect(sampleCount(view.result.current.pack, 'scoreRight')).toBe(2)
     expect(sampleCount(view.result.current.pack)).toBe(0)
     await view.assign(':', 2)
     expect(sampleCount(view.result.current.pack, 'scoreLeft')).toBe(2)
     await view.undo()
     expect(sampleCount(view.result.current.pack, 'scoreLeft')).toBe(1)
+    expect(sampleCount(view.result.current.pack, 'scoreRight')).toBe(1)
     expect(view.grab).not.toHaveBeenCalled()
+  })
+
+  it('shares corrections and undo across configured score fields without confusing their frame labels', async () => {
+    const pack = patchField(patchField(createEmptyHudStylePack(), 'scoreLeft', {}), 'scoreRight', {})
+    const view = setup({ still: true, pack })
+    view.rerender({ ...view.scope, fieldId: 'scoreLeft' })
+    await view.assign('1', 0)
+    expect(sampleCount(view.result.current.pack, 'scoreRight')).toBe(1)
+    view.rerender({ ...view.scope, fieldId: 'scoreRight' })
+    await waitFor(() => expect(view.result.current.reading).toBe(''))
+    await view.assign('8', 0)
+    expect(sampleCount(view.result.current.pack, 'scoreLeft')).toBe(2)
+    await view.assign('7', 0)
+    for (const field of ['scoreLeft', 'scoreRight'] as const) {
+      expect(sampleCount(view.result.current.pack, field)).toBe(2)
+      expect(fieldModel(view.result.current.pack, field).templates['8']).toBeUndefined()
+      expect(fieldModel(view.result.current.pack, field).templates['7']).toHaveLength(1)
+    }
+    await view.undo()
+    expect(fieldModel(view.result.current.pack, 'scoreLeft').templates['8']).toHaveLength(1)
+    expect(fieldModel(view.result.current.pack, 'scoreRight').templates['7']).toBeUndefined()
+    await view.undo()
+    expect(sampleCount(view.result.current.pack, 'scoreLeft')).toBe(1)
+    expect(sampleCount(view.result.current.pack, 'scoreRight')).toBe(1)
+    expect(view.result.current.pack.variants[0]!.fields.scoreLeft!.glyphs)
+      .toEqual(view.result.current.pack.variants[0]!.fields.scoreRight!.glyphs)
+    expect(sampleCount(view.result.current.pack)).toBe(0)
+    expect(parseHudStylePack(view.result.current.pack).issues).toEqual([])
   })
 
   it('keeps manually adjusted character boxes when undoing a click on the current frame', async () => {
