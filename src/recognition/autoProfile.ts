@@ -277,9 +277,14 @@ export class OnlineAutoProfiles {
   private client(role: SourceRole): RecognitionClient {
     let client = this.clients.get(role)
     if (!client) {
+      const observe = (outcome: RecognitionOutcome): void => {
+        const profile = this.options.profile(role)
+        // Keep recognizing selected packs without replacing them with session learning.
+        if (profile && !isHudPack(profile)) this.controller.observe(role, outcome)
+      }
       client = new RecognitionClient({ createWorker: this.options.createWorker,
-        onResult: message => this.controller.observe(role, message.outcome),
-        onError: message => this.controller.observe(role, { status: 'failed', reason: 'decode-failed', detail: message }),
+        onResult: message => observe(message.outcome),
+        onError: message => observe({ status: 'failed', reason: 'decode-failed', detail: message }),
       })
       this.clients.set(role, client)
     }

@@ -573,7 +573,7 @@ fn full_frame_hud_and_glyph_preparation_share_every_intermediate() {
 }
 
 #[test]
-fn hud_countdown_confidence_excludes_colon_without_hiding_its_score_or_relaxing_its_gates() {
+fn hud_countdown_confidence_excludes_colon_without_hiding_its_score_or_relaxing_digit_gates() {
     let (frame, roi) = clock("1:37", 6);
     let mut pack = parse_hud_style_pack(&hud_pack(&profile(6, roi), 640, 360)).unwrap();
     let colon_id = pack.variants[0].fields.clock.as_ref().unwrap().glyphs[":"].first().unwrap().clone();
@@ -605,6 +605,9 @@ fn hud_countdown_confidence_excludes_colon_without_hiding_its_score_or_relaxing_
     assert_eq!(serde_json::to_value(&pack).unwrap(), original);
 
     pack.variants[0].fields.clock.as_mut().unwrap().r#match.min_score = (colon.score + digits) / 2.0;
+    let gated = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
+    assert!(matches!(gated.fields.clock, HudFieldResult::Read { ref reading, .. } if reading.confidence == digits));
+    pack.variants[0].fields.clock.as_mut().unwrap().r#match.min_score = digits + 0.000001;
     let gated = recognize_hud_frame(&frame, 640, 360, &pack, "").unwrap();
     assert!(matches!(gated.fields.clock, HudFieldResult::Failed { ref reason, .. } if reason == "low-confidence"));
 }

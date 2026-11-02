@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Session } from './session'
 import { apiClient } from './apiClient'
 import { createEmptyProfile } from '../core/profileSchema'
+import { createEmptyHudStylePack } from '../core/hudStylePack'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
 import { AutoProfileController } from '../recognition/autoProfile'
 import type { RecognitionSampler } from '../recognition/sampler'
@@ -15,6 +16,7 @@ const source = { kind: 'progressive' as const, url: 'https://example.test/source
 const frames = Array.from({ length: 30 }, (_, i) => ({ width: 1, height: 1, mediaTime: i / 8, wallTime: i * 125, pixels: new Uint8ClampedArray(4) }))
 
 async function harness(automatic = true, position = 100) {
+  let controller: AutoProfileController | undefined
   const sample = vi.fn(async (_window: number, emit: (role: SourceRole, outcome: RecognitionOutcome) => void) => {
     for (const role of ['official', 'commentary'] as const) {
       for (let index = 0; index < 3; index++) for (let stable = 0; stable < 2; stable++) {
@@ -37,9 +39,10 @@ async function harness(automatic = true, position = 100) {
           profile, confidence: 0.95, learnedChars: ['0', '1', ':'], missingChars: [], observations: 12, consistentOffsets: 1, reason: null,
         } })), cancel: vi.fn(), dispose: vi.fn(),
       }
-      const controller = new AutoProfileController({ client: () => client, capture: async () => frames, use: options.use, changed: options.changed })
-      return { controller, monitor: vi.fn(), reset: role => controller.reset(role),
-        suspend: () => { controller.cancel('official'); controller.cancel('commentary') }, dispose: () => controller.dispose() }
+      const created = new AutoProfileController({ client: () => client, capture: async () => frames, use: options.use, changed: options.changed })
+      controller = created
+      return { controller: created, monitor: vi.fn(), reset: role => created.reset(role),
+        suspend: () => { created.cancel('official'); created.cancel('commentary') }, dispose: () => created.dispose() }
     } } : {}),
   })
   await session.loadSource('official', source)
@@ -49,10 +52,78 @@ async function harness(automatic = true, position = 100) {
     Object.defineProperty(session.engine.element(role), 'videoHeight', { configurable: true, value: 1080 })
     primeMediaElement(session.engine.element(role), { duration: 600, currentTime: position })
   }
-  return { sample }
+  return { sample, controller }
 }
 
 describe('automatic profile session integration', () => {
+  it.each([
+    { status: 'failed', reason: 'low-confidence' },
+    { status: 'failed', reason: 'blank-frame' },
+    { status: 'failed', reason: 'insufficient-templates' },
+    { status: 'absent' },
+    { status: 'indeterminate', reason: 'hud-content-indeterminate' },
+    { status: 'success', reading: { text: '0:20', seconds: 20, confidence: 0.7, scores: [0.7], mediaTime: 100, wallTime: 1000, frameIndex: 1 } },
+  ] satisfies RecognitionOutcome[])('keeps the selected HUD pack on unreliable readings ($status) and uses it after recovery', async outcome => {
+    const h = await harness()
+    const pack = { ...createEmptyHudStylePack('iem/cs2', 'IEM'), revision: 7187 }
+    vi.spyOn(apiClient, 'getPreset').mockResolvedValue({ ok: true, value: { profile: pack, etag: 'iem-7187' } })
+    expect(await session.selectProfile(pack.id)).toBe(true)
+    const acquire = vi.spyOn(h.controller!, 'acquire')
+    const seek = vi.spyOn(session.engine, 'seek')
+    h.sample.mockImplementationOnce(async (_window, emit) => {
+      for (const role of ['official', 'commentary'] as const) emit(role, outcome)
+    })
+    const result = await session.syncNow()
+    expect(result.failure?.kind).toBe('rejected')
+    expect(result.applied).toBe(false)
+    expect(result.samples).toEqual({ official: 1, commentary: 1 })
+    expect(acquire).not.toHaveBeenCalled()
+    expect(seek).not.toHaveBeenCalled()
+    expect(h.sample).toHaveBeenCalledTimes(1)
+    expect(session.flush().settings.profileId).toBe('iem/cs2')
+    for (const role of ['official', 'commentary'] as const) expect(session.profileFor(role)).toEqual(pack)
+
+    const recovered = await session.syncNow()
+    expect(recovered.phase).toBe('done')
+    expect(recovered.applied).toBe(true)
+    expect(acquire).not.toHaveBeenCalled()
+    for (const role of ['official', 'commentary'] as const) expect(session.profileFor(role)).toEqual(pack)
+  })
+
+  it('still relearns session candidates when no HUD pack was selected', async () => {
+    const h = await harness()
+    await session.measureOnce()
+    const acquire = vi.spyOn(h.controller!, 'acquire')
+    h.sample.mockImplementationOnce(async (_window, emit) => {
+      for (const role of ['official', 'commentary'] as const) emit(role, { status: 'failed', reason: 'low-confidence' })
+    })
+    const result = await session.measureOnce()
+    expect(result.phase).toBe('done')
+    expect(acquire.mock.calls).toEqual([['official'], ['commentary']])
+    expect(session.flush().settings.profileId).toBe('')
+  })
+
+  it('does not restart learning when a cancelled sampling window finishes late', async () => {
+    const h = await harness()
+    await session.measureOnce()
+    const acquire = vi.spyOn(h.controller!, 'acquire')
+    let finish!: () => void
+    const started = new Promise<void>(resolve => {
+      h.sample.mockImplementationOnce(async (_window, emit) => {
+        resolve()
+        await new Promise<void>(done => { finish = done })
+        for (const role of ['official', 'commentary'] as const) emit(role, { status: 'failed', reason: 'low-confidence' })
+      })
+    })
+    const pending = session.syncNow()
+    await started
+    session.cancelAutoSync()
+    finish()
+    expect((await pending).failure?.kind).toBe('cancelled')
+    expect(acquire).not.toHaveBeenCalled()
+    expect(session.flush().autoSync.authorized).toBe(false)
+  })
+
   it('uses both learned candidates without asking, aligns and never saves implicitly', async () => {
     await harness()
     const save = vi.spyOn(apiClient, 'savePreset')

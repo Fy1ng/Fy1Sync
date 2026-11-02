@@ -53,6 +53,35 @@ function realEngine() {
 }
 
 describe('HUD full-frame Rust/WASM recognition', () => {
+  it('uses reliable digits when a distinct clock separator scores below the numeric threshold', async () => {
+    const { pack, variant, frame, request } = fixture()
+    const clock = variant.fields.clock!
+    const colon = normalizeGlyph(renderGlyphMask(':', 6))
+    pack.bitmaps['clock-colon']!.data = packBitmap(Uint8Array.from(colon, (_value, index) => index % 32 >= 2 ? colon[index - 2]! : 0))
+    const { recognition, engine } = realEngine()
+    try {
+      const result = await recognizeHudFrame({ pixels: frame.data, width: frame.width, height: frame.height }, pack, variant.id)
+      const matches = result.fields.clock.debug!.matches
+      const separator = matches.find(match => match.char === ':')!
+      expect(separator).toBeDefined()
+      expect(separator.score).toBeLessThan(clock.match.minScore)
+      expect(separator.score - separator.runnerUpScore).toBeGreaterThan(clock.match.minMargin)
+      const digitConfidence = Math.min(...matches.filter(match => match.char !== ':').map(match => match.score))
+      expect(digitConfidence).toBeGreaterThanOrEqual(clock.match.minScore)
+      expect(result.fields.clock).toMatchObject({ status: 'read', reading: { text: '1:37', confidence: digitConfidence } })
+      engine.handle({ type: 'configure', generation: 2, profile: pack })
+      expect((engine.handle(request) as ResultMessage).outcome).toMatchObject({ status: 'success', reading: { confidence: digitConfidence } })
+
+      clock.match.minScore = digitConfidence + 0.001
+      const weakDigit = await recognizeHudFrame({ pixels: frame.data, width: frame.width, height: frame.height }, pack, variant.id)
+      expect(weakDigit.fields.clock).toMatchObject({ status: 'failed', reason: 'low-confidence' })
+      clock.match.minScore = 0.82
+      clock.match.minMargin = separator.score - separator.runnerUpScore + 0.001
+      const ambiguous = await recognizeHudFrame({ pixels: frame.data, width: frame.width, height: frame.height }, pack, variant.id)
+      expect(ambiguous.fields.clock).toMatchObject({ status: 'failed', reason: 'low-confidence' })
+    } finally { recognition.free() }
+  })
+
   it.each(['timeout', 'timeoutRight'] as const)('recognizes %s as a pause in both editor and player without changing the clock reading', async side => {
     const { pack, variant, frame, request } = fixture()
     const mask = [255, 0, 255, 0, 255, 0, 255, 0, 255]

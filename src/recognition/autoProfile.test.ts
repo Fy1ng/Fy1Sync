@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createEmptyProfile, type RoiRect } from '../core/profileSchema'
+import { createEmptyHudStylePack } from '../core/hudStylePack'
+import type { ActiveProfile } from '../core/activeProfile'
 import { MIN_SYNC_CONFIDENCE, type RecognitionOutcome, type SourceRole } from '../core/types'
 import { FrameGrabber, FULL_FRAME_ROI, type AsyncGrabResult, type GrabbedFrame } from './frameGrabber'
 import { AutoProfileController, AUTO_PROFILE_MAX_FRAMES, AUTO_PROFILE_NATIVE_BYTES, AUTO_PROFILE_WINDOW_MS, CLOCK_LOST_MS, OnlineAutoProfiles } from './autoProfile'
@@ -215,7 +217,7 @@ describe('source-local automatic profiles', () => {
 
 afterEach(() => vi.useRealTimers())
 
-function onlineHarness(roi = { x: .48, y: .03, w: .03, h: .025 }, monitoring = false) {
+function onlineHarness(roi = { x: .48, y: .03, w: .03, h: .025 }, monitoring: boolean | ActiveProfile = false, outcome?: RecognitionOutcome) {
   vi.useFakeTimers()
   const video = document.createElement('video')
   video.src = 'https://example.test/first'
@@ -238,7 +240,9 @@ function onlineHarness(roi = { x: .48, y: .03, w: .03, h: .025 }, monitoring = f
       const reply: WorkerResponse | null = message.type === 'locate'
         ? { type: 'located', generation: message.generation, requestId: message.requestId,
           result: { status: 'success', backend: 'wasm', candidates: [{ ...candidate, roi }] } }
-        : message.type === 'learn' ? { type: 'learned', generation: message.generation, requestId: message.requestId, result: learned } : null
+        : message.type === 'learn' ? { type: 'learned', generation: message.generation, requestId: message.requestId, result: learned }
+          : message.type === 'frame' && outcome ? { type: 'result', generation: message.generation, frameIndex: message.frameIndex,
+            role: message.role, outcome, debug: null, elapsedMs: 1 } : null
       if (reply) for (const listener of listeners) listener({ data: reply } as MessageEvent<WorkerResponse>)
     },
     terminate: vi.fn(),
@@ -246,11 +250,49 @@ function onlineHarness(roi = { x: .48, y: .03, w: .03, h: .025 }, monitoring = f
     removeEventListener: (type, listener) => { if (type === 'message') listeners.delete(listener as (event: MessageEvent<WorkerResponse>) => void) },
   }
   const use = vi.fn()
-  const online = new OnlineAutoProfiles({ createWorker: () => worker, video: () => video, profile: () => monitoring ? profile : null, use, changed: vi.fn() })
+  const online = new OnlineAutoProfiles({ createWorker: () => worker, video: () => video,
+    profile: () => typeof monitoring === 'boolean' ? monitoring ? profile : null : monitoring, use, changed: vi.fn() })
   return { online, video, drawImage, messages, use, pause: () => { paused = true } }
 }
 
 describe('bounded native learning acquisition', () => {
+  it.each([
+    { status: 'failed', reason: 'low-confidence' },
+    { status: 'absent' },
+    { status: 'indeterminate', reason: 'hud-content-indeterminate' },
+  ] satisfies RecognitionOutcome[])('continues monitoring the selected HUD pack without learning after sustained $status outcomes', async outcome => {
+    const pack = { ...createEmptyHudStylePack('iem/cs2', 'IEM'), revision: 7187 }
+    const h = onlineHarness(undefined, pack, outcome)
+    const acquire = vi.spyOn(h.online.controller, 'acquire')
+    h.online.monitor('official')
+    await vi.advanceTimersByTimeAsync(CLOCK_LOST_MS + 1000)
+    expect(h.messages.filter(message => message.type === 'frame').length).toBeGreaterThan(10)
+    expect(h.messages.find(message => message.type === 'configure')).toMatchObject({ profile: pack })
+    expect(acquire).not.toHaveBeenCalled()
+    expect(h.online.controller.state('official').phase).toBe('idle')
+    expect(h.use).not.toHaveBeenCalled()
+    h.online.dispose()
+  })
+
+  it('keeps cancelled monitoring from restarting learning and allows an explicit new run', async () => {
+    const h = onlineHarness(undefined, true, failed)
+    const acquire = vi.spyOn(h.online.controller, 'acquire')
+    h.online.monitor('official')
+    await vi.advanceTimersByTimeAsync(CLOCK_LOST_MS - 1000)
+    h.online.controller.cancel('official')
+    await vi.advanceTimersByTimeAsync(AUTO_PROFILE_WINDOW_MS * 3)
+    expect(acquire).not.toHaveBeenCalled()
+    expect(h.online.controller.state('official').phase).toBe('cancelled')
+    expect(h.messages.some(message => message.type === 'locate')).toBe(false)
+    expect(h.use).not.toHaveBeenCalled()
+
+    const run = h.online.controller.acquire('official')
+    await vi.advanceTimersByTimeAsync(AUTO_PROFILE_WINDOW_MS * 2)
+    expect(await run).toBe(true)
+    expect(h.use).toHaveBeenCalledTimes(1)
+    h.online.dispose()
+  })
+
   it('keeps discovery at 960 and learns only a bounded crop at native 1440p resolution', async () => {
     const h = onlineHarness()
     const run = h.online.controller.acquire('official')

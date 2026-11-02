@@ -234,7 +234,11 @@ export class Session {
           }, signal)
           if (signal.aborted) return
           if (!this.autoProfiles) { for (const outcome of buffered) onOutcome(...outcome); return }
-          const lost = SOURCE_ROLES.filter(role => !read[role])
+          // A selected HUD pack remains authoritative through missing HUDs and weak reads.
+          const lost = SOURCE_ROLES.filter(role => {
+            const profile = this.profileFor(role)
+            return !read[role] && (!profile || !isHudPack(profile))
+          })
           if (lost.length) {
             const acquired = await allAccepted(lost.map(role => this.autoProfiles!.controller.acquire(role)))
             if (!signal.aborted && acquired) await sampler.sample(windowMs, onOutcome, signal)

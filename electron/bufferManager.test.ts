@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -216,6 +216,68 @@ describe('BufferManager', () => {
     const body = await (await f.manager.handle(new Request(url))).text()
     expect(parseHlsSegments(body).segments).toHaveLength(180)
     expect(body).toContain('#EXT-X-MEDIA-SEQUENCE:20')
+  })
+  it.skipIf(process.platform !== 'win32')('keeps a rolling live buffer running when a playlist reader briefly blocks atomic replacement', async () => {
+    const f = await fixture(), { url, resolve } = await start(f)
+    const directory = await writeManifest(f, 0, Array(90).fill(2))
+    await f.clock.advance(100)
+    await until(() => f.current().state === 'ready')
+    const index = path.join(directory, 'index.m3u8')
+    const previous = await readFile(index, 'utf8')
+    const reader = await open(index, 'r')
+    try {
+      await writeManifest(f, 0, Array(91).fill(2))
+      await f.clock.advance(100)
+      // Windows cannot replace this open target, as during a BufferRoute response read.
+      await new Promise(resolve => setTimeout(resolve, 35))
+      expect(await readFile(index, 'utf8')).toBe(previous)
+    } finally { await reader.close() }
+    await vi.waitFor(async () => {
+      const body = await (await f.manager.handle(new Request(url))).text()
+      expect(body).toContain('#EXT-X-MEDIA-SEQUENCE:1')
+      expect(body).toContain('segment_0_000000090.ts')
+    }, { timeout: 1000, interval: 10 })
+    expect(f.current()).toMatchObject({ state: 'ready', seconds: 180, completeSegments: 90 })
+    expect(f.states.some(state => state.state === 'failed')).toBe(false)
+    expect(f.killTree).not.toHaveBeenCalled()
+    expect(resolve).toHaveBeenCalledTimes(1)
+  })
+  it.skipIf(process.platform !== 'win32')('bounds replacement retries and keeps the last complete playlist when a reader never releases it', async () => {
+    const f = await fixture()
+    await start(f)
+    const directory = await writeManifest(f, 0, [2, 2])
+    await f.clock.advance(100)
+    await until(() => f.current().state === 'ready')
+    const index = path.join(directory, 'index.m3u8')
+    const previous = await readFile(index, 'utf8')
+    const reader = await open(index, 'r')
+    try {
+      await writeManifest(f, 0, [2, 2, 2])
+      await f.clock.advance(100)
+      await until(() => f.current().state === 'failed')
+      expect(f.current()).toMatchObject({ reason: 'buffer-write-failed', retriesRemaining: 0 })
+      expect(await readFile(index, 'utf8')).toBe(previous)
+      expect(f.killTree).toHaveBeenCalledTimes(1)
+    } finally { await reader.close() }
+  })
+  it.skipIf(process.platform !== 'win32')('does not publish or restart a session stopped during a blocked playlist replacement', async () => {
+    const f = await fixture(), { url, resolve } = await start(f)
+    const directory = await writeManifest(f, 0, [2, 2])
+    await f.clock.advance(100)
+    await until(() => f.current().state === 'ready')
+    const reader = await open(path.join(directory, 'index.m3u8'), 'r')
+    try {
+      await writeManifest(f, 0, [2, 2, 2])
+      await f.clock.advance(100)
+      const stopped = f.manager.stop('official')
+      await reader.close()
+      await stopped
+    } finally { await reader.close() }
+    await f.clock.advance(10_000)
+    expect(f.current().state).toBe('stopped')
+    expect(resolve).toHaveBeenCalledTimes(1)
+    expect((await f.manager.handle(new Request(url))).status).toBe(404)
+    await expect(readdir(directory)).rejects.toMatchObject({ code: 'ENOENT' })
   })
   it('re-resolves after EOF, preserves the local URL and marks discontinuity', async () => {
     const f = await fixture(), { url, resolve } = await start(f)

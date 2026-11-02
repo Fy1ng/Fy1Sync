@@ -1346,7 +1346,8 @@ fn recognize_hud_field(
             failed("blank-frame", Some(debug))
         } else if debug.boxes.is_empty() {
             failed("no-candidates", Some(debug))
-        } else if debug.matches.iter().any(|m| m.char.is_none() || m.score < field.r#match.min_score) {
+        } else if debug.matches.iter().any(|m| m.char.is_none()
+            || (!(countdown && m.char.as_deref() == Some(":")) && m.score < field.r#match.min_score)) {
             failed(if !countdown && !complete { "missing-glyph" } else { "low-confidence" }, Some(debug))
         } else if debug.matches.iter().any(|m| m.score - m.runner_up_score < field.r#match.min_margin) {
             failed("low-confidence", Some(debug))
@@ -1362,7 +1363,7 @@ fn recognize_hud_field(
             };
             if let Some(value) = value {
                 let scores: Vec<_> = debug.matches.iter().map(|m| m.score).collect();
-                // Separators must pass their own matching gates, but do not rate the digits.
+                // Separators must remain distinct and fit the grammar, but do not rate the digits.
                 let confidence = debug.matches.iter().filter(|m| !countdown || m.char.as_deref() != Some(":"))
                     .map(|m| m.score).fold(1.0, f64::min);
                 HudFieldResult::Read {

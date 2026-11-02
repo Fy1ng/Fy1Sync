@@ -70,6 +70,7 @@ const INIT = /^init_\d+\.mp4$/
 // independently selected by summed EXTINF durations, never by this count.
 const RAW_MANIFEST_SEGMENTS = 8192
 const MAX_MANIFEST_BYTES = 4 * 1024 * 1024
+const PUBLISH_RETRY_MS = [10, 25, 50, 100] as const
 
 export class BufferManager {
   private readonly sessionId = randomUUID()
@@ -394,8 +395,18 @@ export class BufferManager {
     }
     const temporary = path.join(session.directory, 'index.m3u8.tmp')
     await writeFile(temporary, `${lines.join('\n')}\n`, { mode: 0o600 })
-    if (!this.current(session)) return
-    await rename(temporary, path.join(session.directory, 'index.m3u8'))
+    for (let attempt = 0; this.current(session); attempt++) {
+      try {
+        await rename(temporary, path.join(session.directory, 'index.m3u8'))
+        return
+      } catch (error) {
+        // Windows playlist readers briefly block replacement. Keep the complete old
+        // playlist available while retrying, and bound persistent filesystem failures.
+        const delay = PUBLISH_RETRY_MS[attempt]
+        if (delay === undefined || !['EPERM', 'EACCES', 'EBUSY'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+        await new Promise<void>(resolve => setTimeout(resolve, delay))
+      }
+    }
   }
 
   private finish(session: RoleSession, run: Run, reason: string): Promise<void> {
