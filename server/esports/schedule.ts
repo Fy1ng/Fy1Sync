@@ -15,9 +15,8 @@ import { TeamLogoCache } from './teamLogos'
 
 export { PARSE_INTERVAL_MS } from './liquipediaRateLimit'
 
-// Rendered from `text`, not `page`: the page's own parser cache is not invalidated when a match
-// page records a score, and was seen serving an 11-hour-old copy. Parsing the transclusion
-// runs the ticker against LPDB now and leaves the shared page cache alone.
+// Parse the transclusion instead of reusing the shared page parser cache. Individual
+// widgets can still return old match data; a fresh API read does not prove fresh scores.
 export const SCHEDULE_URL = 'https://liquipedia.net/counterstrike/api.php?' + new URLSearchParams({
   action: 'parse', format: 'json', prop: 'text', title: 'Liquipedia:Matches', text: '{{Liquipedia:Matches}}',
 })
@@ -472,8 +471,10 @@ export class EsportsService {
       const logoPaths = new Map<string, string>()
       const matches = parseSchedule(payload, logoPaths,
         selector => (this.options.log ?? console.warn)(`Liquipedia match skipped: ${selector}`)), fetchedAt = this.now()
+      const changed = this.cache !== null && JSON.stringify(this.cache.matches) !== JSON.stringify(matches)
       this.disk.save(payload, fetchedAt)
       this.cache = { fetchedAt, matches, logoPaths }
+      if (changed) this.notify('schedule-updated')
       return this.snapshot()
     } catch (error) {
       if (this.lifetime.signal.aborted) throw this.lifetime.signal.reason

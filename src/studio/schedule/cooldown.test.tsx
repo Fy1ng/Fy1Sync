@@ -58,12 +58,13 @@ describe('schedule refresh cooldown', () => {
     expect(screen.getByRole('button', { name: /13 秒后可刷新/ })).toBeDisabled()
   })
 
-  it('shows nothing extra when the refresh went through', async () => {
+  it('shows completed source feedback without a cooldown when the refresh went through', async () => {
     render(<ScheduleSheet onClose={() => {}} onWatch={() => {}} />)
     await settle()
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: '刷新' })) })
     await settle()
-    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByRole('status')).toHaveTextContent('已检查源数据, 赛程暂无变化')
+    expect(screen.queryByText(/还需 \d+ 秒/)).toBeNull()
     expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled()
   })
 })

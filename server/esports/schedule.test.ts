@@ -564,12 +564,34 @@ describe('background schedule refresh', () => {
     vi.useRealTimers()
     await rm(directory, { recursive: true, force: true })
   })
-  function create(request: typeof fetch) {
-    const service = new EsportsService({ userDataDir: directory, version: '0.1.3', logos: null, request, resolve: async () => ['93.184.216.34'], log: () => {} })
+  function create(request: typeof fetch, onEvent?: ConstructorParameters<typeof EsportsService>[0]['onEvent']) {
+    const service = new EsportsService({ userDataDir: directory, version: '0.1.3', logos: null, request, resolve: async () => ['93.184.216.34'], log: () => {}, onEvent })
     services.push(service)
     return service
   }
   const parses = (request: ReturnType<typeof vi.fn>) => request.mock.calls.filter(([input]) => new URL(String(input)).searchParams.get('action') === 'parse')
+
+  it('notifies an open window when a background refresh changes the same match score', async () => {
+    let score = '0'
+    const request = vi.fn<typeof fetch>().mockImplementation(async input =>
+      new URL(String(input)).searchParams.get('action') === 'parse'
+        ? response(change('>0</span><span class="match-info-header-scoreholder-divider">', `>${score}</span><span class="match-info-header-scoreholder-divider">`))
+        : response({ query: { pages: [] } }))
+    const seen: Array<ReturnType<EsportsService['getCs2Schedule']>> = []
+    let service!: EsportsService
+    service = create(request, event => {
+      if (event.data.type === 'schedule-updated') seen.push(service.getCs2Schedule())
+    })
+    const first = await service.getCs2Schedule()
+    const match = first.matches.find(match => match.teams[0].name === 'G2 Esports')!
+    expect(match.score).toEqual([0, 1])
+    seen.length = 0
+    score = '2'
+    await vi.advanceTimersByTimeAsync(SCHEDULE_TTL_MS)
+    const updated = (await Promise.all(seen)).at(-1)
+    expect(updated?.matches.find(item => item.id === match.id)?.score).toEqual([2, 1])
+    expect(updated?.fetchedAt).toBe(NOW + SCHEDULE_TTL_MS)
+  })
 
   it('reads the schedule again every five minutes while nobody asks', async () => {
     const request = vi.fn<typeof fetch>().mockImplementation(async input =>

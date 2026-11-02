@@ -34,6 +34,7 @@ export function ScheduleSheet({ onClose, onWatch }: {
   const [schedule, setSchedule] = useState<Cs2Schedule | null>(lastSchedule)
   const [failure, setFailure] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [refreshMessage, setRefreshMessage] = useState<string | null>(null)
   // When Liquipedia's 30-second parse limit lets the next refresh run; null when it may now.
   const [refreshAt, setRefreshAt] = useState<number | null>(null)
   // The chosen event and the titles read so far survive closing the sheet.
@@ -44,14 +45,21 @@ export function ScheduleSheet({ onClose, onWatch }: {
   const titleRun = useRef(0)
 
   const read = async (refresh: boolean): Promise<void> => {
-    if (refresh) setRefreshing(true)
+    const before = lastSchedule()
+    if (refresh) { setRefreshing(true); setRefreshMessage(null) }
     const result = await readSchedule(refresh)
     if (!alive.current) return
     if (refresh) setRefreshing(false)
     setNow(Date.now())
     if (!result.ok) { setFailure(result.message); return }
     setFailure(null)
-    setSchedule(result.value)
+    // The store rejects out-of-order replies; an older sheet read must not undo that.
+    const next = lastSchedule() ?? result.value
+    setSchedule(next)
+    if (refresh && !next.stale && !result.value.refreshAt) {
+      setRefreshMessage(before && JSON.stringify(before.matches) === JSON.stringify(next.matches)
+        ? '已检查源数据, 赛程暂无变化. 比分以直播画面为准.' : '已读取源数据.')
+    }
     // Only a refresh says whether the limit turned it away; the minute's plain read, served
     // from cache, must not end a countdown that still holds.
     if (refresh) setRefreshAt(result.value.refreshAt ?? null)
@@ -140,10 +148,11 @@ export function ScheduleSheet({ onClose, onWatch }: {
           </SideTabs>
         )}
         <footer className="sched-foot">
+          {refreshMessage && <p role="status">{refreshMessage}</p>}
           {schedule?.stale && <p className="note-warn">{schedule.error ?? '赛程暂时无法更新，显示的是上次读取的结果'}</p>}
           {waitSeconds > 0 && <p className="sched-wait" role="status">Liquipedia 限制每 30 秒刷新一次，还需 {waitSeconds} 秒</p>}
           <span className="sched-source">
-            {schedule ? `${schedule.attribution} · 更新于 ${formatStart(schedule.fetchedAt, now)}` : '赛程数据来自 Liquipedia (CC-BY-SA 3.0)'}
+            {schedule ? `${schedule.attribution} · 读取于 ${formatStart(schedule.fetchedAt, now)}` : '赛程数据来自 Liquipedia (CC-BY-SA 3.0)'}
           </span>
           <button type="button" className="btn-quiet small" disabled={refreshing || waitSeconds > 0} onClick={() => void read(true)}>
             <Icon name="refresh" />{refreshing ? '正在刷新' : waitSeconds > 0 ? `${waitSeconds} 秒后可刷新` : '刷新'}
