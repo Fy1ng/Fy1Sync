@@ -152,11 +152,12 @@ export function ScheduleSheet({ onClose, onWatch }: {
           {schedule?.stale && <p className="note-warn">{schedule.error ?? '赛程暂时无法更新，显示的是上次读取的结果'}</p>}
           {waitSeconds > 0 && <p className="sched-wait" role="status">Liquipedia 限制每 30 秒刷新一次，还需 {waitSeconds} 秒</p>}
           <span className="sched-source">
-            {schedule ? `${schedule.attribution} · 读取于 ${formatStart(schedule.fetchedAt, now)}` : '赛程数据来自 Liquipedia (CC-BY-SA 3.0)'}
+            {schedule ? `${schedule.attribution} - 来源读取于 ${formatStart(schedule.fetchedAt, now)}` : '赛程数据来自 Liquipedia (CC-BY-SA 3.0)'}
           </span>
           <button type="button" className="btn-quiet small" disabled={refreshing || waitSeconds > 0} onClick={() => void read(true)}>
             <Icon name="refresh" />{refreshing ? '正在刷新' : waitSeconds > 0 ? `${waitSeconds} 秒后可刷新` : '刷新'}
           </button>
+          {schedule && <p className="muted">读取时间不代表赛果更新时间.</p>}
         </footer>
       </div>
     </Sheet>
@@ -209,13 +210,17 @@ function MatchRow({ match, titles, now, siblingsLive, onWatch }: {
   const title = streams.map((stream) => streamTitle(titles, stream)?.title).find(Boolean)
   const label = `${left.name} 对 ${right.name}`
   const winner = match.state === 'finished' && match.score ? (match.score[0] > match.score[1] ? 0 : match.score[1] > match.score[0] ? 1 : -1) : -1
+  const awaitingScore = match.state === 'live' && match.score?.[0] === 0 && match.score[1] === 0
   // With nothing to play yet, say why once, from the first stream still waiting for its channel.
   const waiting = streams.some((stream) => stream.url) ? null : streams.find((stream) => stream.missing)?.missing ?? null
   return (
     <li className="match" data-state={match.state} aria-label={label}>
       <div className="match-when">
         {match.state === 'live'
-          ? <span className="match-live">直播中</span>
+          ? <span className={awaitingScore ? 'muted' : 'match-live'}
+              title={awaitingScore ? '来源当前记录为 0:0, 尚不能确认实际比赛进度. 请以直播画面为准.' : undefined}>
+              {awaitingScore ? '赛果待更新' : '直播中'}
+            </span>
           : <span className="num">{formatStart(match.startsAt, now)}</span>}
         {match.bestOf && <span className="match-bo">BO{match.bestOf}</span>}
       </div>

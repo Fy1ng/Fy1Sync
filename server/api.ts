@@ -10,7 +10,7 @@ import type { ApiResult } from '../src/app/apiClient'
 import type { ProxyConfig } from './config'
 import { DanmakuRelay } from './danmaku/relay'
 import { resolveStream, type PlatformKind, type ResolveResult } from './platforms'
-import { isYouTubeRefusal, YOUTUBE_REFUSALS } from './platforms/youtube'
+import { isYouTubeFormatFailure, isYouTubeRefusal, YOUTUBE_FORMAT_FAILURES, YOUTUBE_REFUSALS } from './platforms/youtube'
 import { fileNameFor, MAX_PRESET_BYTES, PresetStore } from './presetStore'
 import { checkUrl, ProxyError, safeFetch } from './safeFetch'
 import type { SourceRole } from '../src/core/types'
@@ -18,6 +18,7 @@ import type { BufferState } from '../electron/bufferManager'
 import type { LoginPlatform, LoginResult, LoginStatus } from '../electron/login'
 import { isDecoderMode, type DecoderPreferencesService } from '../electron/decoderPreferences'
 import type { ToolsService } from '../electron/toolsService'
+import type { AcquisitionDiagnosticsService } from '../electron/diagnosticContracts'
 import { DouyuAccountError, isDouyuAccountId, type DouyuAccountManager } from '../electron/douyuAccounts'
 import { DouyuTaskError, type DouyuTaskManager } from '../electron/douyuTasks'
 import { DOUYU_TASK_KINDS, DOUYU_TASK_POLICIES, isDouyuActivityKind, type DouyuTaskKind, type DouyuTaskPolicy, type DouyuTasksSnapshot } from './douyu/types'
@@ -51,6 +52,7 @@ export type DesktopServiceDeps = {
   decoderPreferences?: DecoderPreferencesService
   networkPreferences?: NetworkPreferencesService
   tools?: ToolsService
+  diagnostics?: AcquisitionDiagnosticsService
   douyuAccounts?: DouyuAccountManager
   douyuTasks?: DouyuTaskManager
   douyuRenewal?: DouyuRenewalService
@@ -131,6 +133,9 @@ export function sanitizedFailure(result: ResolveResult): ResolveResult {
   const reason = result.failure.reason
   if (result.failure.code === 'restricted' && isYouTubeRefusal(reason)) {
     return { ok: false, failure: { code: 'restricted', reason, ...YOUTUBE_REFUSALS[reason] } }
+  }
+  if (result.failure.code === 'needs-manual-url' && isYouTubeFormatFailure(reason)) {
+    return { ok: false, failure: { code: 'needs-manual-url', reason, ...YOUTUBE_FORMAT_FAILURES[reason] } }
   }
   const messages = {
     'unsupported-url': '无法识别该媒体地址或平台',
@@ -331,6 +336,11 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
           case 'resolveDouyuRoom': {
             if (!fields(args, ['input']) || typeof args.input !== 'string' || args.input.length > MAX_INPUT_LENGTH) return fail('invalid-arguments', '房间身份查询参数无效')
             return { ok: true, value: await resolveRoom(args.input) }
+          }
+          case 'getAcquisitionDiagnostics': {
+            if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
+            if (!deps.diagnostics) return fail('not-available', '取流诊断不可用')
+            return { ok: true, value: await deps.diagnostics.report() }
           }
           case 'getToolsStatus':
           case 'updateYtdlp': {

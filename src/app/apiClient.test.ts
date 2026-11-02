@@ -61,6 +61,13 @@ describe('ApiClient IPC failures', () => {
 })
 
 describe('ApiClient IPC arguments', () => {
+  it('reads acquisition diagnostics without forwarding renderer state or optional arguments', async () => {
+    const report = { schemaVersion: 1, attempts: [] }
+    const bridge = bridgeWith({ ok: true, value: report })
+    expect(await new ApiClient({ bridge }).getAcquisitionDiagnostics()).toEqual({ ok: true, value: report })
+    expect(bridge.invoke).toHaveBeenCalledExactlyOnceWith('getAcquisitionDiagnostics', undefined)
+  })
+
   it('forwards an explicit account and room for a single message', async () => {
     const outcome = { status: 'waiting-user', message: '请到官方房间核对.', nextAllowedAt: null }
     const bridge = bridgeWith({ ok: true, value: outcome })

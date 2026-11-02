@@ -5,7 +5,7 @@ import { chooseEditorVideo, failOnPageError, fixturesReady, invoke } from './hel
 
 const official = fileURLToPath(new URL('../public/test-sources/official.mp4', import.meta.url))
 
-test('关闭倒计时后保留样本, 禁用制作及自动步进, 重开后开关仍保留', async ({ page, electronApp }) => {
+test('关闭倒计时后保留样本并禁用制作, 重开后开关仍保留', async ({ page, electronApp }) => {
   test.skip(!fixturesReady(), '缺少测试源, 先运行 npm run fixtures')
   failOnPageError(page)
   await page.goto(APP_ORIGIN + '/admin')
@@ -25,7 +25,8 @@ test('关闭倒计时后保留样本, 禁用制作及自动步进, 重开后开�
   await toggle.press('Space')
   await expect(toggle).not.toBeChecked()
   await expect(page.getByRole('slider', { name: '阈值', exact: true })).toBeDisabled()
-  await expect(page.getByRole('button', { name: '自动 +1s', exact: true })).toBeDisabled()
+  await expect(page.locator('.char-pad').getByRole('button').first()).toBeDisabled()
+  await expect(page.getByRole('button', { name: '+1s', exact: true })).toBeEnabled()
   await expect(page.getByRole('button', { name: '验证当前帧', exact: true })).toBeDisabled()
   await expect(page.locator('.verify-result')).toHaveText('字段已关闭')
   await expect(page.locator('.template-thumb')).toHaveCount(4)
@@ -99,7 +100,7 @@ test('关闭回放标记同时停用引用它的正反条件组, 模板和规则
   await expect(page.getByRole('combobox', { name: '回放 1 回放标记', exact: true })).toBeEnabled()
 })
 
-test('关闭其他字段不影响当前开关, 关闭正在自动处理的倒计时会停止', async ({ page, electronApp }) => {
+test('关闭其他字段不影响倒计时开关, 手动浏览不自动增添样本', async ({ page, electronApp }) => {
   test.skip(!fixturesReady(), '缺少测试源, 先运行 npm run fixtures')
   failOnPageError(page)
   await page.goto(APP_ORIGIN + '/admin')
@@ -120,16 +121,23 @@ test('关闭其他字段不影响当前开关, 关闭正在自动处理的倒计
   await video.evaluate((node: HTMLVideoElement) => { node.currentTime = 1 })
   await expect(page.locator('.glyph-box')).toHaveCount(4)
   for (const char of '0:19') await page.locator('.char-pad').getByRole('button', { name: char, exact: true }).click()
-  await video.evaluate((node: HTMLVideoElement) => {
-    const descriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime')!
-    Object.defineProperty(node, 'currentTime', { configurable: true, get() { return descriptor.get!.call(this) },
-      set(value) { setTimeout(() => descriptor.set!.call(this, value), 1000) } })
-  })
-  await page.getByRole('button', { name: '自动 +1s', exact: true }).click()
-  await expect(page.getByRole('button', { name: '停止自动 +1s', exact: true })).toBeVisible()
-  await toggle.press('Space')
-  await expect(page.getByRole('button', { name: '停止自动 +1s', exact: true })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: '自动 +1s', exact: true })).toBeDisabled()
-  await page.waitForTimeout(1200)
   await expect(page.locator('.template-thumb')).toHaveCount(4)
+  const before = await invoke(page, 'editorProjectLoad', undefined)
+  if (!before.ok || !before.value.project) throw new Error('Expected a saved editor project')
+  const clock = before.value.project.pack.variants[0]!.fields.clock!
+  await expect(page.getByRole('button', { name: '自动 +1s', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: '+1s', exact: true }).click()
+  await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(2, 2)
+  await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.seeking)).toBe(false)
+  const browsed = await invoke(page, 'editorProjectLoad', undefined)
+  expect(browsed.ok && browsed.value.project?.pack.variants[0]!.fields.clock).toEqual(clock)
+  await toggle.press('Space')
+  await expect(toggle).not.toBeChecked()
+  await expect(page.locator('.char-pad').getByRole('button').first()).toBeDisabled()
+  await page.getByRole('button', { name: '+1s', exact: true }).click()
+  await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(3, 2)
+  await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.seeking)).toBe(false)
+  await expect(page.locator('.template-thumb')).toHaveCount(4)
+  const disabled = await invoke(page, 'editorProjectLoad', undefined)
+  expect(disabled.ok && disabled.value.project?.pack.variants[0]!.fields.clock).toEqual({ ...clock, enabled: false })
 })

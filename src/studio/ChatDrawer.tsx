@@ -209,7 +209,7 @@ function RowActions({ message, note, setNote, close, onReply }: {
       <span className="row-menu-user">{message.user}{uid && <span className="num muted"> {uid}</span>}</span>
       {writes && !readOnly && <button type="button" className="menu-item" disabled={!composer.canEdit} onClick={onReply}>回复</button>}
       {!readOnly && <button type="button" className="menu-item" onClick={() => { void actions.favorite(message).then(setNote) }}>收藏</button>}
-      <button type="button" className="menu-item" onClick={() => { actions.copy(message.text); close() }}>复制</button>
+      <button type="button" className="menu-item" disabled={actions.copying} onClick={() => { void actions.copy(message.text); close() }}>复制</button>
       {!readOnly && uid && actions.showDetails && (
         <button type="button" className="menu-item" onClick={() => { actions.showDetails?.(message); close() }}>用户详情</button>
       )}

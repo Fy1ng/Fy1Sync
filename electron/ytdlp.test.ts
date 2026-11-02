@@ -5,6 +5,7 @@ import { YOUTUBE_METADATA_TEMPLATE, YtDlpRunner, type YtDlpDiagnostic } from './
 import { locateYouTubePotProvider } from './toolLocator'
 import adaptiveFixture from '../server/platforms/fixtures/youtube-adaptive-live.json'
 import { prepareScriptOnlyPotPlugin } from './potPlugin'
+import { youtubeAdaptiveFormats, youtubeFormats } from '../server/platforms/youtube'
 
 vi.mock('./toolLocator', async (actual) => ({ ...await actual<object>(), locateTool: vi.fn(async () => '/tools/yt-dlp.exe'), locateYouTubePotProvider: vi.fn(async () => undefined) }))
 vi.mock('./potPlugin', () => ({ prepareScriptOnlyPotPlugin: vi.fn() }))
@@ -64,7 +65,7 @@ describe('isolated yt-dlp execution', () => {
     expect(await pending).toEqual(metadata)
     expect(events).toContainEqual(expect.objectContaining({ stage: 'huya', status: 'resolved', adaptiveHeights: [] }))
     expect(events.some(event => event.stage === 'provider')).toBe(false)
-    expect(JSON.stringify(events)).not.toMatch(/PRIVATE|wsSecret|https|Cookie/)
+    expect(JSON.stringify(events)).not.toMatch(/PRIVATE|wsSecret|https:\/\/|Cookie/)
     expect(h.cleanup).not.toHaveBeenCalled()
   })
 
@@ -110,7 +111,7 @@ describe('isolated yt-dlp execution', () => {
     await pending
     expect(events).toContainEqual(expect.objectContaining({ stage: 'hls', warnings: ['token-provider'] }))
     expect(events).toContainEqual(expect.objectContaining({ heights: expect.arrayContaining([1440]), adaptiveHeights: expect.arrayContaining([1440]) }))
-    expect(JSON.stringify(events)).not.toMatch(/PRIVATE|SECRET|https|googlevideo|Cookie|location/)
+    expect(JSON.stringify(events)).not.toMatch(/PRIVATE|SECRET|https:\/\/|googlevideo|Cookie|location/)
   })
   it('uses argument arrays, a temporary cookie path and child-only Electron Node mode', async () => {
     const h = harness()
@@ -257,8 +258,10 @@ describe('optional yt-dlp PO token script integration', () => {
     const killTree = vi.fn(async (child: ChildProcess) => { child.emit('close', 1) })
     const runner = new YtDlpRunner({ electronPath: '/electron.exe', networkRuntimePath: '/application/runtime/network-runtime.cjs', cookies, spawn: launch,
       env: { PATH: 'kept' }, timeoutMs: 1000, killTree })
-    const run = (kind: 'hls' | 'adaptive') => children.find(({ args }) => args.includes('--plugin-dirs') === (kind === 'adaptive'))!
-    const finish = (kind: 'hls' | 'adaptive', code: number, body?: unknown) => {
+    const run = (kind: 'hls' | 'adaptive' | 'hls-fallback') => children.find(({ args }) => kind === 'hls-fallback'
+      ? args.includes('youtube:player_client=web_safari')
+      : !args.includes('youtube:player_client=web_safari') && args.includes('--plugin-dirs') === (kind === 'adaptive'))!
+    const finish = (kind: 'hls' | 'adaptive' | 'hls-fallback', code: number, body?: unknown) => {
       const { child } = run(kind)
       if (body !== undefined) child.stdout!.emit('data', metadataOutput(body as Record<string, unknown>))
       child.emit('close', code)
@@ -267,6 +270,7 @@ describe('optional yt-dlp PO token script integration', () => {
   }
   const hlsOnly = { ...adaptiveFixture, formats: adaptiveFixture.formats.filter((f) => f.protocol === 'm3u8_native') }
   const webOnly = { ...adaptiveFixture, formats: adaptiveFixture.formats.filter((f) => f.protocol === 'https') }
+  const videoOnly = { ...webOnly, formats: webOnly.formats.filter(format => format.vcodec !== 'none') }
 
   it('runs the unchanged HLS extraction and a script-only adaptive one, and merges them', async () => {
     vi.mocked(locateYouTubePotProvider).mockResolvedValue(provider)
@@ -310,6 +314,73 @@ describe('optional yt-dlp PO token script integration', () => {
     expect(await pending).toEqual(hlsOnly)
     expect(h.cookies.withTemporaryCookies).toHaveBeenCalledOnce()
     expect(pluginCleanup).toHaveBeenCalledOnce()
+  })
+
+  it('keeps compatible HLS from the web extraction when default clients return only adaptive formats', async () => {
+    vi.mocked(locateYouTubePotProvider).mockResolvedValue(provider)
+    const h = forked()
+    const pending = h.runner.resolve(url)
+    await vi.waitFor(() => expect(h.children).toHaveLength(2))
+    h.finish('hls', 0, webOnly)
+    h.finish('adaptive', 0, adaptiveFixture)
+    const merged = await pending
+    expect(youtubeFormats(merged).map(format => format.format_id)).toEqual(['301', '300'])
+    expect(youtubeAdaptiveFormats(merged, 1080).map(format => format.format_id)).toContain('308')
+    expect(h.cleanup).toHaveBeenCalledOnce()
+    expect(pluginCleanup).toHaveBeenCalledOnce()
+  })
+
+  it.each([true, false])('retries missing live HLS once with Safari, provider=%s', async available => {
+    if (available) vi.mocked(locateYouTubePotProvider).mockResolvedValue(provider)
+    const h = forked()
+    const pending = h.runner.resolve(url)
+    await vi.waitFor(() => expect(h.children).toHaveLength(available ? 2 : 1))
+    h.finish('hls', 0, videoOnly)
+    if (available) h.finish('adaptive', 0, videoOnly)
+    await vi.waitFor(() => expect(h.run('hls-fallback')).toBeDefined())
+    const args = h.run('hls-fallback').args
+    expect(args).toEqual(expect.arrayContaining(['--no-plugin-dirs', '--extractor-args', 'youtube:player_client=web_safari', '--cookies', '/private/copy.txt']))
+    expect(args.includes('--plugin-dirs')).toBe(available)
+    h.finish('hls-fallback', 0, hlsOnly)
+    expect(youtubeFormats(await pending).map(format => format.format_id)).toEqual(['301', '300'])
+    expect(h.children).toHaveLength(available ? 3 : 2)
+    expect(pluginCleanup).toHaveBeenCalledTimes(available ? 2 : 0)
+  })
+
+  it.each(['missing', 'different-broadcast', 'failed'])('does not loop or mix sources after an unusable Safari retry: %s', async outcome => {
+    const h = forked()
+    const pending = h.runner.resolve(url)
+    await vi.waitFor(() => expect(h.children).toHaveLength(1))
+    h.finish('hls', 0, videoOnly)
+    await vi.waitFor(() => expect(h.run('hls-fallback')).toBeDefined())
+    h.finish('hls-fallback', outcome === 'failed' ? 1 : 0,
+      outcome === 'different-broadcast' ? { ...hlsOnly, id: 'klmnopqrstu' } : videoOnly)
+    const result = await pending as typeof videoOnly
+    expect(result.id).toBe(videoOnly.id)
+    expect([...result.formats].sort((a, b) => a.format_id.localeCompare(b.format_id)))
+      .toEqual([...videoOnly.formats].sort((a, b) => a.format_id.localeCompare(b.format_id)))
+    expect(h.children).toHaveLength(2)
+    expect(h.cleanup).toHaveBeenCalledOnce()
+  })
+
+  it('returns a complete adaptive pair immediately without waiting on another client', async () => {
+    const h = forked()
+    const pending = h.runner.resolve(url)
+    await vi.waitFor(() => expect(h.children).toHaveLength(1))
+    h.finish('hls', 0, webOnly)
+    expect(youtubeAdaptiveFormats(await pending, 0)).not.toHaveLength(0)
+    expect(h.children).toHaveLength(1)
+  })
+
+  it('still retries Safari for HLS-only recovery even when default metadata includes adaptive pairs', async () => {
+    const h = forked()
+    const pending = h.runner.resolve(url, false)
+    await vi.waitFor(() => expect(h.children).toHaveLength(1))
+    h.finish('hls', 0, webOnly)
+    await vi.waitFor(() => expect(h.run('hls-fallback')).toBeDefined())
+    h.finish('hls-fallback', 0, hlsOnly)
+    expect(youtubeFormats(await pending)).toHaveLength(2)
+    expect(h.children).toHaveLength(2)
   })
 
   it.each([

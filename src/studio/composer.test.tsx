@@ -54,6 +54,7 @@ afterEach(() => {
   cleanup()
   while (sessions.length > 0) sessions.pop()?.dispose()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 async function connectedSession(): Promise<Session> {
@@ -74,7 +75,10 @@ function Probe(): React.ReactNode {
       <span data-testid="relogin">{composer.needsRelogin ? 'relogin' : ''}</span>
       <span data-testid="delivery">{deliveryText(composer.delivery) ?? ''}</span>
       <span data-testid="draft">{composer.draft}</span>
+      <span data-testid="notice" data-state={composer.notice?.status ?? ''}>{composer.notice?.message ?? ''}</span>
+      <span data-testid="gateway">{composer.delivery?.gateway ?? ''}</span>
       <button type="button" onClick={() => composer.setDraft('你好')}>draft</button>
+      <button type="button" onClick={() => composer.setDraft('新的草稿')}>draft-new</button>
       <button type="button" onClick={() => void composer.sendDraft()}>send</button>
       <button type="button" onClick={() => void composer.repeat('原文')}>repeat</button>
       <button type="button" onClick={() => actions.mute({ id: 'm', text: '刷屏', user: '某观众', color: '', scheduleTime: 0, receivedAt: 0, sender: { uid: '42' } })}>mute</button>
@@ -95,6 +99,192 @@ function renderProbe(session: Session): void {
 }
 
 describe('the studio send box', () => {
+  const uncertain = () => ({ status: 'waiting-user', message: '发送结果无法确认, 请在官方房间核对.', nextAllowedAt: null, deliveryId: 'd1', gatewayAccepted: false })
+  const echo = (roomEcho: 'pending' | 'observed' | 'not-observed' = 'observed') => ({ id: 'd1', accountId: 'default', room: '288016', sentAt: 0,
+    deadlineAt: Date.now() + 60_000, gateway: 'unknown', roomEcho, observedAt: roomEcho === 'observed' ? 1 : null, messageId: null })
+  const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve() }
+  const holdFirstDelivery = () => {
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    const invoke = vi.mocked(window.streamSyncer!.invoke) as unknown as {
+      getMockImplementation(): (method: string, args: unknown) => Promise<unknown>
+      mockImplementation(next: (method: string, args: unknown) => Promise<unknown>): void
+    }
+    const original = invoke.getMockImplementation()
+    let intercepted = false
+    invoke.mockImplementation(async (method, args) => {
+      if (method === 'getDouyuDelivery' && !intercepted) {
+        intercepted = true
+        calls.push({ method, args })
+        await held
+        return { ok: true, value: echo() }
+      }
+      return original(method, args)
+    })
+    return release
+  }
+
+  it('treats an unknown gateway with a strict room echo as success without rewriting the receipt', async () => {
+    handlers.sendComposedDouyuMessage = uncertain
+    handlers.getDouyuDelivery = () => echo()
+    renderProbe(await connectedSession())
+    await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('ready'))
+    fireEvent.click(screen.getByText('draft'))
+    fireEvent.click(screen.getByText('send'))
+    await waitFor(() => expect(screen.getByTestId('notice')).toHaveAttribute('data-state', 'succeeded'))
+    expect(screen.getByTestId('notice')).toHaveTextContent('已发送, 已在房间中显示.')
+    expect(screen.getByTestId('notice')).not.toHaveTextContent('核对')
+    expect(screen.getByTestId('delivery')).toHaveTextContent('发送成功 - 已在房间中显示')
+    expect(screen.getByTestId('gateway')).toHaveTextContent('unknown')
+    expect(screen.getByTestId('draft').textContent).toBe('')
+    expect(calls.filter(call => call.method === 'sendComposedDouyuMessage')).toHaveLength(1)
+  })
+
+  it('updates a previously uncertain send when its room echo arrives later, without resending', async () => {
+    handlers.sendComposedDouyuMessage = uncertain
+    let observed = false
+    handlers.getDouyuDelivery = () => echo(observed ? 'observed' : 'pending')
+    renderProbe(await connectedSession())
+    await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('ready'))
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByText('draft'))
+    fireEvent.click(screen.getByText('send'))
+    await act(settle)
+    expect(calls.filter(call => call.method === 'sendComposedDouyuMessage')).toHaveLength(1)
+    expect(screen.getByTestId('notice')).toHaveAttribute('data-state', 'waiting-user')
+    expect(screen.getByTestId('draft')).toHaveTextContent('你好')
+    observed = true
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+    expect(screen.getByTestId('notice')).toHaveAttribute('data-state', 'succeeded')
+    expect(screen.getByTestId('draft').textContent).toBe('')
+    expect(calls.filter(call => call.method === 'sendComposedDouyuMessage')).toHaveLength(1)
+  })
+
+  it.each(['draft-new', 'draft'])('preserves later draft edits when an uncertain send is observed, edit=%s', async edit => {
+    handlers.sendComposedDouyuMessage = uncertain
+    let observed = false
+    handlers.getDouyuDelivery = () => echo(observed ? 'observed' : 'pending')
+    renderProbe(await connectedSession())
+    await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('ready'))
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByText('draft'))
+    fireEvent.click(screen.getByText('send'))
+    await act(settle)
+    fireEvent.click(screen.getByText(edit, { exact: true }))
+    observed = true
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+    expect(screen.getByTestId('notice')).toHaveAttribute('data-state', 'succeeded')
+    expect(screen.getByTestId('draft')).toHaveTextContent(edit === 'draft' ? '你好' : '新的草稿')
+  })
+
+  it('does not clear an unrelated draft for a repeated message observed in the room', async () => {
+    handlers.sendComposedDouyuMessage = uncertain
+    handlers.getDouyuDelivery = () => echo()
+    renderProbe(await connectedSession())
+    await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('ready'))
+    fireEvent.click(screen.getByText('draft'))
+    fireEvent.click(screen.getByText('repeat'))
+    await waitFor(() => expect(screen.getByTestId('notice')).toHaveAttribute('data-state', 'succeeded'))
+    expect(screen.getByTestId('draft')).toHaveTextContent('你好')
+  })
+
+  it.each([
+    { gateway: 'unknown', roomEcho: 'pending' }, { gateway: 'unknown', roomEcho: 'not-observed' },
+    { gateway: 'pending', roomEcho: 'observed' }, { gateway: 'rejected', roomEcho: 'observed' },
+  ])('keeps nonqualifying delivery evidence from promoting the send: %j', async evidence => {
+    handlers.sendComposedDouyuMessage = uncertain
+    handlers.getDouyuDelivery = () => ({ ...echo(), ...evidence })
+    renderProbe(await connectedSession())
+    await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('ready'))
+    fireEvent.click(screen.getByText('draft'))
+    fireEvent.click(screen.getByText('send'))
+    await waitFor(() => expect(calls.some(call => call.method === 'getDouyuDelivery')).toBe(true))
+    expect(screen.getByTestId('notice')).toHaveAttribute('data-state', 'waiting-user')
+    expect(screen.getByTestId('draft')).toHaveTextContent('你好')
+  })
+
+  it.each([{ id: 'another' }, { room: 'another' }, { accountId: 'another' }])('ignores delivery metadata belonging to another send: %j', async identity => {
+    handlers.sendComposedDouyuMessage = uncertain
+    handlers.getDouyuDelivery = () => ({ ...echo(), ...identity })
+    renderProbe(await connectedSession())
+    await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('ready'))
+    fireEvent.click(screen.getByText('draft'))
+    fireEvent.click(screen.getByText('send'))
+    await waitFor(() => expect(calls.some(call => call.method === 'getDouyuDelivery')).toBe(true))
+    expect(screen.getByTestId('notice')).toHaveAttribute('data-state', 'waiting-user')
+    expect(screen.getByTestId('gateway').textContent).toBe('')
+    expect(screen.getByTestId('draft')).toHaveTextContent('你好')
+  })
+
+  it('ignores an observed reply from the previous room after a room switch', async () => {
+    handlers.sendComposedDouyuMessage = uncertain
+    const release = holdFirstDelivery()
+    const session = await connectedSession()
+    renderProbe(session)
+    await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('ready'))
+    fireEvent.click(screen.getByText('draft'))
+    fireEvent.click(screen.getByText('send'))
+    await waitFor(() => expect(calls.some(call => call.method === 'getDouyuDelivery')).toBe(true))
+    await act(async () => { session.connectDanmaku('777'); await settle() })
+    fireEvent.click(screen.getByText('draft-new'))
+    await act(async () => { release(); await settle() })
+    expect(screen.getByTestId('notice').textContent).toBe('')
+    expect(screen.getByTestId('delivery').textContent).toBe('')
+    expect(screen.getByTestId('draft')).toHaveTextContent('新的草稿')
+  })
+
+  it('ignores a late observed reply after an account switch and preserves the next account draft', async () => {
+    handlers.sendComposedDouyuMessage = uncertain
+    const release = holdFirstDelivery()
+    let push!: (snapshot: unknown) => void
+    const bridge = window.streamSyncer as unknown as { subscribeDouyuTasks: (listener: (snapshot: unknown) => void) => () => void }
+    bridge.subscribeDouyuTasks = listener => { push = listener; return () => {} }
+    renderProbe(await connectedSession())
+    await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('ready'))
+    fireEvent.click(screen.getByText('draft'))
+    fireEvent.click(screen.getByText('send'))
+    await waitFor(() => expect(calls.some(call => call.method === 'getDouyuDelivery')).toBe(true))
+    handlers.listDouyuAccounts = () => ({ activeAccountId: 'second', accounts: [{ id: 'second', label: '小号', active: true, busy: false, login: { loggedIn: true } }] })
+    await act(async () => { push({ activeAccountId: 'second', tasks: [], retainedRooms: [] }); await settle() })
+    fireEvent.click(screen.getByText('draft-new'))
+    await act(async () => { release(); await settle() })
+    expect(screen.getByTestId('notice').textContent).toBe('')
+    expect(screen.getByTestId('delivery').textContent).toBe('')
+    expect(screen.getByTestId('draft')).toHaveTextContent('新的草稿')
+  })
+
+  it('does not let the previous delivery overwrite a newer send or clear its draft', async () => {
+    let sends = 0
+    handlers.sendComposedDouyuMessage = () => ({ ...uncertain(), deliveryId: ++sends === 1 ? 'd1' : 'd2', message: sends === 1 ? '第一条待核对' : '第二条待核对' })
+    handlers.getDouyuDelivery = () => ({ ...echo('not-observed'), id: 'd2' })
+    const release = holdFirstDelivery()
+    renderProbe(await connectedSession())
+    await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('ready'))
+    fireEvent.click(screen.getByText('draft'))
+    fireEvent.click(screen.getByText('send'))
+    await waitFor(() => expect(calls.some(call => call.method === 'getDouyuDelivery')).toBe(true))
+    fireEvent.click(screen.getByText('draft-new'))
+    fireEvent.click(screen.getByText('send'))
+    await waitFor(() => expect(screen.getByTestId('notice')).toHaveTextContent('第二条待核对'))
+    await act(async () => { release(); await settle() })
+    expect(screen.getByTestId('notice')).toHaveAttribute('data-state', 'waiting-user')
+    expect(screen.getByTestId('notice')).toHaveTextContent('第二条待核对')
+    expect(screen.getByTestId('draft')).toHaveTextContent('新的草稿')
+    expect(calls.filter(call => call.method === 'sendComposedDouyuMessage')).toHaveLength(2)
+  })
+
+  it('does not override an explicit send failure with unrelated observed metadata', async () => {
+    handlers.sendComposedDouyuMessage = () => ({ ...uncertain(), status: 'failed', message: '明确拒绝' })
+    handlers.getDouyuDelivery = () => echo()
+    renderProbe(await connectedSession())
+    await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('ready'))
+    fireEvent.click(screen.getByText('draft'))
+    fireEvent.click(screen.getByText('send'))
+    await waitFor(() => expect(calls.some(call => call.method === 'getDouyuDelivery')).toBe(true))
+    expect(screen.getByTestId('notice')).toHaveAttribute('data-state', 'failed')
+    expect(screen.getByTestId('draft')).toHaveTextContent('你好')
+  })
+
   it('sends typed text as a message and +1 verbatim as a repeat', async () => {
     renderProbe(await connectedSession())
     await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('ready'))

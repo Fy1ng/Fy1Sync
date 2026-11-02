@@ -76,6 +76,8 @@ export type ResolverDeps = {
   douyuCookie?: string
   quality?: string
   preferAdaptive?: boolean
+  /** Internal retry constraint after adaptive playback fails, never accepted from IPC. */
+  hlsOnly?: boolean
   now?: () => number
 }
 

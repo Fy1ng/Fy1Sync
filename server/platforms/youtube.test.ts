@@ -3,7 +3,7 @@ import fixture from './fixtures/youtube-live.json'
 import adaptiveFixture from './fixtures/youtube-adaptive-live.json'
 import { detectPlatform, resolveStream } from './index'
 import { sanitizedFailure } from '../api'
-import { parseYouTubeUrl, resolveYouTube, selectYouTubeFormat, YOUTUBE_REFUSALS, youtubeAdaptiveFormats, youtubeFormats } from './youtube'
+import { parseYouTubeUrl, resolveYouTube, selectYouTubeFormat, YOUTUBE_FORMAT_FAILURES, YOUTUBE_REFUSALS, youtubeAdaptiveFormats, youtubeFormats } from './youtube'
 import type { ResolverDeps } from './types'
 
 function deps(overrides: Partial<ResolverDeps> = {}): ResolverDeps {
@@ -83,6 +83,21 @@ describe('YouTube optional adaptive formats', () => {
     expect(youtubeAdaptiveFormats(adaptiveFixture, 2160)).toEqual([])
     const result = await resolveYouTube('youtu.be/abcdefghijk', adaptiveDeps({ preferAdaptive: true, runYtDlp: async () => info }))
     expect(result.ok && result.stream.quality).toBe('301')
+  })
+
+  it.each([
+    [{}, '248'], [{ preferAdaptive: true }, '313'], [{ quality: '308' }, '308'],
+  ])('plays supported adaptive pairs without requiring a spare HLS rendition: %j', async (settings, expected) => {
+    const info = { ...adaptiveFixture, formats: adaptiveFixture.formats.filter(format => format.protocol === 'https') }
+    const result = await resolveYouTube('youtu.be/abcdefghijk', adaptiveDeps({ ...settings, runYtDlp: async () => info }))
+    expect(result).toMatchObject({ ok: true, stream: { quality: expected, adaptive: { audioUrl: expect.stringContaining('itag=140') } } })
+    if (result.ok) expect(result.stream.url).toBe(result.stream.adaptive?.videoUrl)
+  })
+
+  it('does not re-enter adaptive playback during an explicit HLS-only recovery', async () => {
+    const info = { ...adaptiveFixture, formats: adaptiveFixture.formats.filter(format => format.protocol === 'https') }
+    expect(await resolveYouTube('youtu.be/abcdefghijk', adaptiveDeps({ hlsOnly: true, runYtDlp: async () => info })))
+      .toMatchObject({ ok: false, failure: { reason: 'youtube-hls-missing' } })
   })
 
   it.each([
@@ -191,5 +206,27 @@ describe('YouTube recorded live formats', () => {
     expect(!empty.ok && empty.failure.code).toBe('needs-manual-url')
     const unavailable = await resolveYouTube('youtu.be/abcdefghijk', deps({ quality: 'missing' }))
     expect(!unavailable.ok && unavailable.failure.code).toBe('unsupported-url')
+  })
+
+  it.each([
+    [[], 'youtube-formats-empty'],
+    [adaptiveFixture.formats.filter(format => format.protocol === 'https' && format.vcodec !== 'none'), 'youtube-hls-missing'],
+    [[{ ...fixture.formats[0], acodec: 'none' }], 'youtube-hls-separated'],
+    [[{ ...fixture.formats[0], vcodec: 'none' }], 'youtube-hls-separated'],
+    [[{ ...fixture.formats[0], vcodec: 'hev1' }], 'youtube-hls-unsupported'],
+  ] as const)('classifies unsupported format sets and preserves only safe wording across IPC: %j', async (formats, reason) => {
+    const result = await resolveYouTube('youtu.be/abcdefghijk', deps({ runYtDlp: async () => ({ ...fixture, formats }) }))
+    const expected = { ok: false, failure: { code: 'needs-manual-url', reason, ...YOUTUBE_FORMAT_FAILURES[reason] } }
+    expect(result).toEqual(expected)
+    expect(sanitizedFailure(result)).toEqual(expected)
+    expect(sanitizedFailure({ ok: false, failure: { code: 'needs-manual-url', reason, message: 'Cookie=SECRET', hint: 'https://signed.invalid/?token=PRIVATE' } })).toEqual(expected)
+    expect(JSON.stringify(result)).not.toMatch(/googlevideo|example\.invalid|Cookie|token=|SECRET|PRIVATE/)
+  })
+
+  it('does not preserve an unrecognized format diagnostic or a diagnostic with the wrong failure code', () => {
+    for (const [code, reason] of [['needs-manual-url', 'youtube-hls-SECRET'], ['upstream-error', 'youtube-hls-missing']] as const) {
+      const result = sanitizedFailure({ ok: false, failure: { code, reason, message: 'Cookie=SECRET', hint: 'token=PRIVATE' } })
+      expect(JSON.stringify(result)).not.toMatch(/SECRET|PRIVATE|youtube-hls|Cookie|token=/)
+    }
   })
 })

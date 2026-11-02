@@ -4,6 +4,7 @@ import { Acquisition } from './acquisition'
 import { resolveConfig } from '../server/config'
 import { createDesktopService } from '../server/api'
 import * as platformResolvers from '../server/platforms'
+import adaptiveFixture from '../server/platforms/fixtures/youtube-adaptive-live.json'
 
 vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '8.8.8.8', family: 4 }]) }))
 
@@ -130,6 +131,19 @@ describe('main acquisition boundary', () => {
     expect(h.runYtDlp).toHaveBeenCalledTimes(3)
     expect(h.runYtDlp).toHaveBeenLastCalledWith('https://www.youtube.com/watch?v=abcdefghijk', false, expect.any(Object))
     service.dispose()
+  })
+
+  it('buffers adaptive-only broadcasts privately and keeps HLS-only recovery from returning another adaptive pair', async () => {
+    const runYtDlp = vi.fn(async () => ({ ...adaptiveFixture, formats: adaptiveFixture.formats.filter(format => format.protocol === 'https') }))
+    const h = harness({ runYtDlp })
+    const result = await h.acquisition.resolve('https://youtu.be/abcdefghijk', 'youtube', 'official')
+    expect(result).toMatchObject({ ok: true, stream: { quality: '248', url: expect.stringContaining('app://app/buffer/') } })
+    expect(h.inputs[0]?.adaptive).toMatchObject({ height: 1080 })
+    expect(JSON.stringify(result)).not.toMatch(/googlevideo|videoUrl|audioUrl|itag=/)
+    expect((await h.reconnect()).adaptive).toMatchObject({ height: 1080 })
+    await expect(h.reconnect(true)).rejects.toMatchObject({ failure: { code: 'needs-manual-url' } })
+    expect(runYtDlp).toHaveBeenLastCalledWith('https://www.youtube.com/watch?v=abcdefghijk', false, expect.any(Object))
+    h.acquisition.dispose()
   })
 
   it('returns the actual HLS quality when adaptive fails during initial buffer readiness', async () => {

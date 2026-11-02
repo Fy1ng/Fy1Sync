@@ -262,6 +262,67 @@ describe('structured limits and separately observed delivery', () => {
     expect(tracker.get(result.deliveryId!)!).toMatchObject({ gateway: 'unknown', roomEcho: 'pending' })
     expect(sockets[0]!.messages).toHaveLength(1)
   })
+
+  it('returns success when the strict room observation already confirms an unknown receipt', async () => {
+    fakeClock()
+    const tracker = new DeliveryTracker({ now: () => Date.now(), id: () => 'observed-send' })
+    const { sender, sockets } = setup({ ack: (_message, socket) => {
+      expect(tracker.observe({ id: 'room-echo', text: input.text, room: input.room, color: 0, level: 1,
+        username: 'fixture', receivedAt: BASE + 1, system: false, sender: { uid: '42' } })).toBe('observed-send')
+      socket.emit('close', {})
+    } }, { deliveryTracker: tracker })
+    const result = await sender.send(input, signal())
+    expect(result).toMatchObject({ status: 'succeeded', message: '已发送, 已在房间中显示.', deliveryId: 'observed-send', gatewayAccepted: false })
+    expect(tracker.get('observed-send')).toMatchObject({ gateway: 'unknown', roomEcho: 'observed', messageId: 'room-echo' })
+    expect(sockets[0]!.messages).toHaveLength(1)
+    expect(result).not.toHaveProperty('deferredUntil')
+    expectClean(sockets[0]!)
+  })
+
+  it('uses the room observation after the receipt timeout without claiming gateway acceptance or resending', async () => {
+    fakeClock()
+    const tracker = new DeliveryTracker({ now: () => Date.now(), id: () => 'observed-timeout' })
+    const { sender, sockets } = setup({ ack: false, onSend: message => {
+      if (message.type !== 'chatmessage') return
+      tracker.observe({ id: 'room-echo', text: input.text, room: input.room, color: 0, level: 1,
+        username: 'fixture', receivedAt: BASE + 1, system: false, sender: { uid: '42' } })
+    } }, { deliveryTracker: tracker })
+    const pending = sender.send(input, signal())
+    await flush()
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(await pending).toMatchObject({ status: 'succeeded', message: '已发送, 已在房间中显示.', gatewayAccepted: false })
+    expect(tracker.get('observed-timeout')).toMatchObject({ gateway: 'unknown', roomEcho: 'observed' })
+    expect(sockets[0]!.messages).toHaveLength(1)
+  })
+
+  it.each([
+    { sender: { uid: '43' } }, { room: 'another-room' }, { text: 'same-looking but different' }, { color: 2 }, { receivedAt: BASE - 1 },
+  ])('does not promote unmatched room traffic after an unknown receipt: %j', async mismatch => {
+    fakeClock()
+    const tracker = new DeliveryTracker({ now: () => Date.now(), id: () => 'unmatched-send' })
+    const { sender, sockets } = setup({ ack: (_message, socket) => {
+      expect(tracker.observe({ id: 'other-echo', text: input.text, room: input.room, color: 0, level: 1,
+        username: 'fixture', receivedAt: BASE + 1, system: false, sender: { uid: '42' }, ...mismatch })).toBeNull()
+      socket.emit('close', {})
+    } }, { deliveryTracker: tracker })
+    expect(await sender.send(input, signal())).toMatchObject({ status: 'waiting-user', gatewayAccepted: false })
+    expect(tracker.get('unmatched-send')).toMatchObject({ gateway: 'unknown', roomEcho: 'pending' })
+    expect(sockets[0]!.messages).toHaveLength(1)
+  })
+
+  it('does not promote an ambiguous same-text room observation', async () => {
+    fakeClock()
+    let sequence = 0
+    const tracker = new DeliveryTracker({ now: () => Date.now(), id: () => 'ambiguous-' + ++sequence })
+    const { sender, sockets } = setup({ ack: (_message, socket) => {
+      tracker.begin({ accountId: input.accountId, room: input.room, text: input.text, color: input.color, uid: '42' })
+      expect(tracker.observe({ id: 'ambiguous-echo', text: input.text, room: input.room, color: 0, level: 1,
+        username: 'fixture', receivedAt: BASE + 1, system: false, sender: { uid: '42' } })).toBeNull()
+      socket.emit('close', {})
+    } }, { deliveryTracker: tracker })
+    expect(await sender.send(input, signal())).toMatchObject({ status: 'waiting-user', gatewayAccepted: false })
+    expect(sockets[0]!.messages).toHaveLength(1)
+  })
 })
 
 describe('server length and persistent cooldown', () => {

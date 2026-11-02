@@ -17,7 +17,7 @@ export function isAppDocument(raw: string): boolean {
   return ['/', '/index.html', '/admin', '/admin/', '/pip', '/pip/'].includes(new URL(raw).pathname)
 }
 
-/** Fullscreen is the only renderer permission needed by this local player. */
+/** Only fullscreen and sanitized clipboard writes are needed, scoped to trusted app main frames. */
 export function allowsAppPermission(permission: string, context: {
   trustedWindow: boolean
   documentUrl: string
@@ -25,7 +25,7 @@ export function allowsAppPermission(permission: string, context: {
   requestingOrigin?: string
   isMainFrame?: boolean
 }): boolean {
-  return permission === 'fullscreen' && context.trustedWindow && context.isMainFrame === true
+  return (permission === 'fullscreen' || permission === 'clipboard-sanitized-write') && context.trustedWindow && context.isMainFrame === true
     && isAppDocument(context.documentUrl)
     && typeof context.requestingUrl === 'string' && isAppDocument(context.requestingUrl)
     && (context.requestingOrigin === undefined || isAppOrigin(context.requestingOrigin))

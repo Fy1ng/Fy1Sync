@@ -1,7 +1,8 @@
 import type { RoiRect } from '../core/profileSchema'
 
 /** Observe the existing commentary element. This module never owns playback. */
-export function watchCameraFrames(video: HTMLVideoElement, receive: (mediaTime: number) => void): () => void {
+export function watchCameraFrames(video: HTMLVideoElement, receive: (mediaTime: number) => void,
+  options: { previewFallback?: boolean } = {}): () => void {
   let stopped = false
   let frame = 0
   let animation = 0
@@ -13,14 +14,32 @@ export function watchCameraFrames(video: HTMLVideoElement, receive: (mediaTime: 
     }
   }
   const refresh = (): void => paint(video.currentTime, true)
-  const events = ['loadeddata', 'seeked', 'resize', 'pause'] as const
+  const invalidate = (): void => { lastTime = Number.NaN }
+  const events = options.previewFallback
+    ? ['loadeddata', 'seeked', 'resize', 'pause', 'canplay', 'playing', 'timeupdate'] as const
+    : ['loadeddata', 'seeked', 'resize', 'pause'] as const
   events.forEach(event => video.addEventListener(event, refresh))
+  if (options.previewFallback) {
+    video.addEventListener('emptied', invalidate)
+    video.addEventListener('loadstart', invalidate)
+  }
   if (typeof video.requestVideoFrameCallback === 'function') {
     const next: VideoFrameRequestCallback = (_now, metadata) => {
       paint(metadata.mediaTime)
       if (!stopped) frame = video.requestVideoFrameCallback(next)
     }
     frame = video.requestVideoFrameCallback(next)
+    if (options.previewFallback) {
+      // A modal or occluded video may stop presentation callbacks while its pixels remain readable.
+      // Only previews use this recovery path; analysis still requires decoded frame timestamps.
+      let checkedAt = -Infinity
+      const recover = (now: number): void => {
+        if (stopped) return
+        if (now - checkedAt >= 100) { checkedAt = now; paint(video.currentTime) }
+        animation = requestAnimationFrame(recover)
+      }
+      animation = requestAnimationFrame(recover)
+    }
   } else {
     const next = (): void => {
       paint(video.currentTime)
@@ -34,6 +53,8 @@ export function watchCameraFrames(video: HTMLVideoElement, receive: (mediaTime: 
     if (frame) video.cancelVideoFrameCallback(frame)
     if (animation) cancelAnimationFrame(animation)
     events.forEach(event => video.removeEventListener(event, refresh))
+    video.removeEventListener('emptied', invalidate)
+    video.removeEventListener('loadstart', invalidate)
   }
 }
 

@@ -33,8 +33,32 @@ describe('schedule match refresh', () => {
     fireEvent.click(screen.getByRole('button', { name: '刷新' }))
     await settle()
     expect(screen.getByRole('status')).toHaveTextContent('已检查源数据, 赛程暂无变化')
-    expect(screen.getByText(/读取于/)).toBeInTheDocument()
+    expect(screen.getByText(/来源读取于/)).toBeInTheDocument()
+    expect(screen.getByText('读取时间不代表赛果更新时间.')).toBeInTheDocument()
     expect(match().querySelector('.match-score')).toHaveTextContent('0:0')
+  })
+
+  it('keeps a zero score but does not claim that its source confirms live progress', async () => {
+    render(<ScheduleSheet onClose={() => {}} onWatch={() => {}} />)
+    await settle()
+    const pending = within(match()).getByText('赛果待更新')
+    expect(pending).toHaveAttribute('title', '来源当前记录为 0:0, 尚不能确认实际比赛进度. 请以直播画面为准.')
+    expect(within(match()).queryByText('直播中')).toBeNull()
+    expect(match().querySelector('.match-score')).toHaveTextContent('0:0')
+    expect(match()).toHaveAttribute('data-state', 'live')
+  })
+
+  it('continues showing nonzero live scores as live progress', async () => {
+    read = async () => {
+      const value = schedule()
+      value.matches[0]!.score = [1, 0]
+      return value
+    }
+    render(<ScheduleSheet onClose={() => {}} onWatch={() => {}} />)
+    await settle()
+    expect(within(match()).getByText('直播中')).toBeInTheDocument()
+    expect(within(match()).queryByText('赛果待更新')).toBeNull()
+    expect(match().querySelector('.match-score')).toHaveTextContent('1:0')
   })
 
   it('keeps the new match status and score when an earlier opening read resolves after manual refresh', async () => {
@@ -62,9 +86,12 @@ describe('schedule match refresh', () => {
     await settle()
     expect(match()).toHaveAttribute('data-state', 'live')
     expect(match().querySelector('.match-score')).toHaveTextContent('0:0')
+    expect(within(match()).getByText('赛果待更新')).toBeInTheDocument()
     finished = true
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
     expect(match()).toHaveAttribute('data-state', 'finished')
     expect(match().querySelector('.match-score')).toHaveTextContent('2:1')
+    expect(within(match()).queryByText('赛果待更新')).toBeNull()
+    expect(within(screen.getByRole('region', { name: '已结束' })).getByRole('listitem')).toBe(match())
   })
 })

@@ -32,14 +32,14 @@ Fy1Sync 是一款 Windows 桌面播放器. 将两路直播或录像放进同一�
 
 ## 下载安装
 
-当前提供 **Windows x64** 安装包和免安装压缩包. `v0.2.0` 为预发布版本.
+当前版本为 `v0.3.1`, 提供 **Windows x64** 安装包和免安装压缩包.
 
 | 版本 | 使用方式 |
 | --- | --- |
-| [下载安装包](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.2.0/Fy1Sync-0.2.0-win-x64-nsis.exe) | 运行安装向导, 按提示选择安装位置 |
-| [下载免安装版](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.2.0/Fy1Sync-0.2.0-win-x64-portable.zip) | 解压整个目录后运行 `Fy1Sync.exe` |
+| [下载安装包](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.3.1/Fy1Sync-0.3.1-win-x64-nsis.exe) | 运行安装向导, 按提示选择安装位置 |
+| [下载免安装版](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.3.1/Fy1Sync-0.3.1-win-x64-portable.zip) | 解压整个目录后运行 `Fy1Sync.exe` |
 
-[查看全部 Releases](https://github.com/Fy1ng/Fy1Sync/releases). 请区分应用版本与单独发布的 FFmpeg 构建资源.
+[查看全部 Releases](https://github.com/Fy1ng/Fy1Sync/releases) / [GitCode 下载镜像](https://gitcode.com/Fy1ng/Fy1Sync/releases). 请区分应用版本与单独发布的 FFmpeg 构建资源.
 
 发布包已带上取流和转码所需的工具资源, 普通使用无需安装 Node.js 或 Rust. 需要登录平台账号时, 请安装 [Google Chrome](https://www.google.com/chrome/), 在应用打开的独立窗口中自行完成登录.
 
@@ -70,15 +70,15 @@ Fy1Sync 是一款 Windows 桌面播放器. 将两路直播或录像放进同一�
 | 按键 | 操作 |
 | --- | --- |
 | `Space` | 播放 / 暂停 |
-| `Left` / `Right` | 两路一起后退 / 前进 5 秒 |
-| `Shift + Left` / `Shift + Right` | 两路一起后退 / 前进 30 秒 |
+| `Left` / `Right` | 当前主画面后退 / 前进 5 秒 |
+| `Shift + Left` / `Shift + Right` | 当前主画面后退 / 前进 30 秒 |
 | `,` / `.` | 回退 / 快进画面, 调整两路相对偏移 |
-| `Shift + ,` / `Shift + .` | 使用较大步长调整相对偏移 |
+| `Shift + ,` / `Shift + .` | 使用小步长微调相对偏移 |
 | `A` | 尝试自动对齐 |
 | `D` / `C` | 切换画面弹幕 / 弹幕侧栏 |
 | `F` | 切换全屏 |
 
-微调默认单次 `0.5` 秒, 大步长 `5` 秒, 可在设置的通用分区中调整. 输入框或对话框获得焦点时, 播放器快捷键不会抢占输入.
+相对偏移默认单次调整 `5` 秒, 按住 `Shift` 时微调 `0.5` 秒, 可在设置的通用分区中调整. 回退画面和快进画面按钮同样支持按住 `Shift` 微调. 输入框或对话框获得焦点时, 播放器快捷键不会抢占输入.
 
 ## 接入范围
 

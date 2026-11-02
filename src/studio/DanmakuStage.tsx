@@ -236,8 +236,8 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
             onClick={() => { composer.reply(message.user); onReply(); release() }}>回复</button>}
           {!readOnly && <button type="button" title="收藏到本机"
             onClick={() => { void actions.favorite(message).then(setNote) }}>收藏</button>}
-          <button type="button" title="复制弹幕内容"
-            onClick={() => { actions.copy(message.text); release() }}>复制</button>
+          <button type="button" title="复制弹幕内容" disabled={actions.copying}
+            onClick={() => { void actions.copy(message.text); release() }}>复制</button>
           <button type="button" title={`不再显示 ${message.user} 的弹幕`}
             onClick={() => { blockUser(message.user); release() }}>屏蔽</button>
           {!readOnly && uid && actions.showDetails && (

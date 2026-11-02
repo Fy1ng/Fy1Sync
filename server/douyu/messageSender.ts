@@ -9,6 +9,7 @@ import type { DouyuActionDependencies } from './actions'
 import { abortable, cancelBody, cancelled, MAX_TIMEOUT_MS, readPayload } from './actionHttp'
 import type { DouyuMessageInput, DouyuMessageOutcome, DouyuTerminalOutcome as DouyuTaskOutcome } from './types'
 import type { DeliveryTracker } from '../danmaku/deliveryTracker'
+import { ROOM_OBSERVED_SEND_MESSAGE, roomEchoConfirmsSend } from '../../src/core/douyuDelivery'
 import { observeAccountRoom, type AccountInspection, type DouyuAccountRoomState } from './accountRoomState'
 import {
   encodeMessageFrame, gatewayAddress, MAX_BUFFER_BYTES, MAX_COOLDOWN_MS, MAX_TOTAL_BYTES,
@@ -262,9 +263,13 @@ export class DouyuMessageSender {
       else if (result.status === 'failed') this.deps.deliveryTracker.reject(context.deliveryId)
       else this.deps.deliveryTracker.uncertain(context.deliveryId)
     }
+    const observed = context.deliveryId && this.deps.deliveryTracker
+      ? roomEchoConfirmsSend(this.deps.deliveryTracker.get(context.deliveryId)) : false
+    const delivered = observed && result.status === 'waiting-user'
+      ? { ...result, status: 'succeeded' as const, message: ROOM_OBSERVED_SEND_MESSAGE } : result
     // Never let a submitted, cancelled or stale result become an automatic retry.
     const canDefer = !context.dispatched && !combined.aborted && result.status === 'waiting-user' && deferredUntil !== undefined && Number.isSafeInteger(deferredUntil) && deferredUntil > this.clock()
-    return { ...result, nextAllowedAt: state.nextAllowedAt, ...(canDefer ? { deferredUntil } : {}),
+    return { ...delivered, nextAllowedAt: state.nextAllowedAt, ...(canDefer ? { deferredUntil } : {}),
       ...(context.deliveryId ? { deliveryId: context.deliveryId, gatewayAccepted: result.status === 'succeeded' } : {}) }
   }
 

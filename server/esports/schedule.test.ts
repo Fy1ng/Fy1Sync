@@ -376,10 +376,10 @@ describe('background tournament query cache', () => {
     resolveTier = () => tier
     const { service } = create()
     await service.getCs2Schedule()
-    await vi.advanceTimersByTimeAsync(ttl - 1)
-    // The schedule itself refreshes every five minutes meanwhile; the tier waits for its own TTL.
-    expect(calls.filter(call => call.action === 'query')).toHaveLength(0)
+    // This case checks persistent tier expiry across restarts, not hundreds of background schedule writes.
     await service.dispose()
+    vi.setSystemTime(NOW + ttl - 1)
+    expect(calls.filter(call => call.action === 'query')).toHaveLength(0)
     const next = create()
     await next.service.getCs2Schedule()
     // A stale schedule may refresh independently; no tier query until its own TTL.
@@ -606,6 +606,68 @@ describe('background schedule refresh', () => {
     expect((await service.getCs2Schedule()).fetchedAt).toBe(NOW + SCHEDULE_TTL_MS)
     await vi.advanceTimersByTimeAsync(SCHEDULE_TTL_MS)
     expect(parses(request)).toHaveLength(3)
+  })
+
+  it('checks the focused live event every minute and returns to five minutes when the sheet closes', async () => {
+    const request = vi.fn<typeof fetch>().mockImplementation(async input =>
+      new URL(String(input)).searchParams.get('action') === 'parse' ? response() : response({ query: { pages: [] } }))
+    const service = create(request)
+    await service.getCs2Schedule()
+    service.setScheduleFocus({ eventPath: '/counterstrike/PGL/2026/Masters' })
+    await vi.advanceTimersByTimeAsync(60_000 - 1)
+    expect(parses(request)).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(parses(request)).toHaveLength(2)
+    expect((await service.getCs2Schedule()).fetchedAt).toBe(NOW + 60_000)
+
+    service.setScheduleFocus({ eventPath: null })
+    await vi.advanceTimersByTimeAsync(SCHEDULE_TTL_MS - 1)
+    expect(parses(request)).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(parses(request)).toHaveLength(3)
+  })
+
+  it('queues an older cache when its live event is opened, respects the shared request slot and reuses a fresh cache', async () => {
+    const request = vi.fn<typeof fetch>().mockImplementation(async input =>
+      new URL(String(input)).searchParams.get('action') === 'parse' ? response()
+        : response({ query: { pages: [{ extlinks: [{ url: 'https://www.youtube.com/@PGL' }] }] } }))
+    const service = create(request)
+    await service.getCs2Schedule()
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(parses(request)).toHaveLength(1)
+    service.setScheduleFocus({ eventPath: '/counterstrike/PGL/2026/Masters' })
+    // The focused event's channel lookup may occupy the shared two-second HTTP slot first.
+    await vi.advanceTimersByTimeAsync(LIQUIPEDIA_INTERVAL_MS)
+    expect(parses(request)).toHaveLength(2)
+    expect((await service.getCs2Schedule()).fetchedAt).toBe(NOW + 120_000 + LIQUIPEDIA_INTERVAL_MS)
+    service.setScheduleFocus({ eventPath: '/counterstrike/PGL/2026/Masters' })
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(parses(request)).toHaveLength(2)
+  })
+
+  it('keeps five-minute caching for a focused event whose matches have finished', async () => {
+    const payload = { parse: { text: { '*': fixture.parse.text['*'].replace(/class="timer-object[^"]*"/g, '$& data-finished="finished"') } } }
+    const request = vi.fn<typeof fetch>().mockImplementation(async input =>
+      new URL(String(input)).searchParams.get('action') === 'parse' ? response(payload) : response({ query: { pages: [] } }))
+    const service = create(request)
+    expect((await service.getCs2Schedule()).matches.every(match => match.state === 'finished')).toBe(true)
+    service.setScheduleFocus({ eventPath: '/counterstrike/PGL/2026/Masters' })
+    await vi.advanceTimersByTimeAsync(SCHEDULE_TTL_MS - 1)
+    expect(parses(request)).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(parses(request)).toHaveLength(2)
+  })
+
+  it.each([[10, 2], [60, 1]])('uses minute checks only near the focused event start, minutes until start=%s', async (minutes, expected) => {
+    const timestamp = Math.floor((NOW + minutes * 60_000) / 1000)
+    const payload = { parse: { text: { '*': fixture.parse.text['*'].replace(/data-timestamp="\d+"/g, `data-timestamp="${timestamp}"`) } } }
+    const request = vi.fn<typeof fetch>().mockImplementation(async input =>
+      new URL(String(input)).searchParams.get('action') === 'parse' ? response(payload) : response({ query: { pages: [] } }))
+    const service = create(request)
+    await service.getCs2Schedule()
+    service.setScheduleFocus({ eventPath: '/counterstrike/PGL/2026/Masters' })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(parses(request)).toHaveLength(expected)
   })
   it('waits a whole interval after a failed read, then keeps the cycle going', async () => {
     let offline = true

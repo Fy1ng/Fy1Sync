@@ -89,7 +89,7 @@ function adaptiveUrl(value: unknown): value is string {
   } catch { return false }
 }
 
-/** Expose only higher-than-HLS renditions, one codec per height/fps with VP9 preferred. */
+/** Expose higher-than-HLS renditions, or all supported pairs when HLS is absent. */
 export function youtubeAdaptiveFormats(info: unknown, bestHlsHeight: number): YouTubeFormat[] {
   const source = record(info).formats
   if (!Array.isArray(source)) return []
@@ -119,7 +119,8 @@ export function youtubeAdaptiveFormats(info: unknown, bestHlsHeight: number): Yo
 
 /** A quality can be the exposed format id, or a requested height/fps such as 720p60. */
 export function selectYouTubeFormat(formats: YouTubeFormat[], requested?: string, preferAdaptive = false): YouTubeFormat | undefined {
-  if (!requested || requested === 'auto') return preferAdaptive ? formats[0] : formats.find(item => !item.adaptive)
+  if (!requested || requested === 'auto') return preferAdaptive ? formats[0]
+    : formats.find(item => !item.adaptive) ?? formats.find(item => item.height <= 1080) ?? formats[0]
   const exact = formats.find((item) => item.format_id === requested)
   if (exact) return exact
   const size = requested.match(/^(\d{2,4})p(?:(\d{1,3}(?:\.\d+)?))?$/i)
@@ -144,6 +145,41 @@ export const YOUTUBE_REFUSALS: Record<YouTubeRefusal, { message: string; hint?: 
 
 export function isYouTubeRefusal(value: unknown): value is YouTubeRefusal {
   return typeof value === 'string' && Object.prototype.hasOwnProperty.call(YOUTUBE_REFUSALS, value)
+}
+
+/** Fixed format failures survive sanitization without exposing extractor output. */
+export const YOUTUBE_FORMAT_FAILURES = {
+  'youtube-formats-empty': {
+    message: 'YouTube 没有返回直播音视频格式.',
+    hint: '请重新解析. 若仍失败, 请反馈错误代码 YT-FORMATS-EMPTY 以及应用和 yt-dlp 版本.',
+  },
+  'youtube-hls-separated': {
+    message: 'YouTube 本次返回了分离的直播音视频轨, 暂无法播放.',
+    hint: '请重新解析. 若仍失败, 请反馈错误代码 YT-HLS-SEPARATED 以及应用和 yt-dlp 版本.',
+  },
+  'youtube-hls-unsupported': {
+    message: 'YouTube 返回的直播格式不符合播放要求.',
+    hint: '请反馈错误代码 YT-HLS-UNSUPPORTED 以及应用和 yt-dlp 版本.',
+  },
+  'youtube-hls-missing': {
+    message: 'YouTube 已返回直播信息, 但没有适用于当前播放器的音视频流.',
+    hint: '请重新解析. 若仍失败, 请反馈错误代码 YT-HLS-MISSING 以及应用和 yt-dlp 版本.',
+  },
+} as const
+export type YouTubeFormatFailure = keyof typeof YOUTUBE_FORMAT_FAILURES
+
+export function isYouTubeFormatFailure(value: unknown): value is YouTubeFormatFailure {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(YOUTUBE_FORMAT_FAILURES, value)
+}
+
+function formatFailure(info: unknown): Extract<ResolveResult, { ok: false }> {
+  const raw = record(info).formats
+  const formats = Array.isArray(raw) ? raw.map(record) : []
+  const hls = formats.filter(item => typeof item.protocol === 'string' && /^m3u8(?:_native)?$/.test(item.protocol))
+  const reason: YouTubeFormatFailure = !formats.length ? 'youtube-formats-empty'
+    : hls.some(item => item.acodec === 'none' || item.vcodec === 'none') ? 'youtube-hls-separated'
+      : hls.length ? 'youtube-hls-unsupported' : 'youtube-hls-missing'
+  return { ok: false, failure: { code: 'needs-manual-url', reason, ...YOUTUBE_FORMAT_FAILURES[reason] } }
 }
 
 /** Order matters: "Sign in to confirm you're not a bot" and "...confirm your age" are sign-in messages too. */
@@ -179,15 +215,16 @@ export async function resolveYouTube(input: string, deps: ResolverDeps): Promise
     return failure('not-live', '该 YouTube 视频当前不是直播, 暂不支持点播或直播回放.', MANUAL_URL_HINT)
   }
   const hlsFormats = youtubeFormats(info)
-  if (!hlsFormats.length) return failure('needs-manual-url', 'YouTube 未返回可转封装的 H.264/AAC HLS 直播流.', MANUAL_URL_HINT)
-  const formats = [...hlsFormats, ...youtubeAdaptiveFormats(info, hlsFormats[0]!.height)]
+  const adaptiveFormats = deps.hlsOnly ? [] : youtubeAdaptiveFormats(info, hlsFormats[0]?.height ?? 0)
+  if (!hlsFormats.length && !adaptiveFormats.length) return formatFailure(info)
+  const formats = [...hlsFormats, ...adaptiveFormats]
     .sort((a, b) => b.height - a.height || b.fps - a.fps || b.tbr - a.tbr)
   const selected = selectYouTubeFormat(formats, deps.quality, deps.preferAdaptive)
   if (!selected) return failure('unsupported-url', '当前 YouTube 直播不提供所选画质.', '请重新解析并选择列表中的画质.')
   const qualities: QualityOption[] = formats.map((item) => ({ id: item.format_id, label: `${item.height}p${item.fps > 30 ? item.fps : ''}`, height: item.height, ...(item.fps ? { fps: item.fps } : {}), ...(item.adaptive ? { adaptive: true } : {}) }))
   // Titles and authenticated http_headers are deliberately excluded from IPC metadata.
   return { ok: true, stream: {
-    platform: 'youtube', url: deps.proxify(selected.adaptive ? hlsFormats[0]!.url : selected.url), kind: 'hls', label: 'YouTube 直播',
+    platform: 'youtube', url: deps.proxify(selected.adaptive ? hlsFormats[0]?.url ?? selected.url : selected.url), kind: 'hls', label: 'YouTube 直播',
     channel: typeof data.id === 'string' && VIDEO_ID.test(data.id) ? data.id : url,
     requiresProxy: true, qualities, quality: selected.format_id,
     ...(selected.adaptive ? { adaptive: selected.adaptive } : {}),

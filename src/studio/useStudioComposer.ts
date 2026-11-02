@@ -21,6 +21,7 @@ import { composeMessage, DEFAULT_MESSAGE_AFFIXES, MessageCompositionError, type 
 import type { DanmakuFeaturesSnapshot } from '../../electron/danmakuFeatures'
 import type { DeliveryEvidence } from '../../server/danmaku/deliveryTracker'
 import type { DouyuMessageOutcome, DouyuTasksSnapshot } from '../../server/douyu/types'
+import { ROOM_OBSERVED_SEND_MESSAGE, roomEchoConfirmsSend } from '../core/douyuDelivery'
 
 /**
  * `canSend` is main's own check of the send credentials, which is stricter than the website
@@ -214,19 +215,25 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
   }, [affixes, serverLimit])
 
   /** Follow one delivery record until it settles or its deadline passes. Never resends. */
-  const watchDelivery = useCallback((accountId: string, id: string) => {
+  const watchDelivery = useCallback((accountId: string, room: string, id: string, operation: SendOperation, outcome: DouyuMessageOutcome) => {
     const watch = ++deliveryWatch.current
     const poll = async (): Promise<void> => {
-      if (!mounted.current || watch !== deliveryWatch.current) return
+      if (!mounted.current || watch !== deliveryWatch.current || operation.context !== contextVersion.current) return
       const result = await apiClient.feature('getDouyuDelivery', { accountId, id })
-      if (!mounted.current || watch !== deliveryWatch.current || !result.ok || !result.value) return
+      if (!mounted.current || watch !== deliveryWatch.current || operation.context !== contextVersion.current || !result.ok || !result.value) return
       const evidence = result.value
+      if (evidence.id !== id || evidence.accountId !== accountId || evidence.room !== room) return
       setDelivery(evidence)
+      if (outcome.status !== 'failed' && roomEchoConfirmsSend(evidence)) {
+        setNotice(current => current?.deliveryId === id && current.status !== 'failed'
+          ? { ...current, status: 'succeeded', message: ROOM_OBSERVED_SEND_MESSAGE } : current)
+        if (operation.draftVersion !== null && operation.draftVersion === draftVersion.current) setDraft('')
+      }
       const settled = evidence.roomEcho !== 'pending' || evidence.gateway === 'rejected'
       if (!settled && Date.now() < evidence.deadlineAt) window.setTimeout(() => void poll(), DELIVERY_POLL_MS)
     }
     void poll()
-  }, [])
+  }, [setDraft])
 
   const send = useCallback(async (text: string, mode: SendMode, fromDraft: boolean) => {
     const current = currentContext.current
@@ -252,7 +259,7 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
       cooldown.current = deadline
       setNextAllowedAt(deadline)
       setNow(Date.now())
-      if (value.deliveryId) watchDelivery(accountId, value.deliveryId)
+      if (value.deliveryId) watchDelivery(accountId, current.room, value.deliveryId, operation, value)
       if (value.status === 'succeeded' && operation.draftVersion !== null && operation.draftVersion === draftVersion.current) setDraft('')
     } catch {
       if (mounted.current && operation.context === contextVersion.current) setNotice({ status: 'waiting-user', message: UNCERTAIN, nextAllowedAt: null })
@@ -290,6 +297,7 @@ export type StudioComposer = ReturnType<typeof useStudioComposer>
 /** One line for the delivery record under the send box, or null when there is none. */
 export function deliveryText(evidence: DeliveryEvidence | null): string | null {
   if (!evidence) return null
+  if (roomEchoConfirmsSend(evidence)) return '发送成功 - 已在房间中显示'
   const gateway = { pending: '等待平台受理', accepted: '平台已受理', rejected: '平台未受理', unknown: '平台受理情况未知' }[evidence.gateway]
   const echo = { pending: '正在确认房间内显示', observed: '已在房间中显示', 'not-observed': '未在房间中观察到（不代表被屏蔽）' }[evidence.roomEcho]
   return `${gateway} · ${echo}`

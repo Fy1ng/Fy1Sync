@@ -24,6 +24,7 @@ import { ChromeLoginDriver, findSystemChrome, LoginManager } from './login'
 import { CookieStore } from './cookies'
 import { Acquisition } from './acquisition'
 import { YtDlpRunner, type YtDlpDiagnostic } from './ytdlp'
+import { AcquisitionDiagnostics } from './acquisitionDiagnostics'
 import { locateTool, type ToolSettings } from './toolLocator'
 import { DecoderPreferences } from './decoderPreferences'
 import { ManagedYtdlp } from './toolUpdater'
@@ -285,6 +286,12 @@ async function start(): Promise<void> {
     providerCacheHome,
   }
   const tools = new DesktopTools(toolSettings, toolContext, managedYtdlp, process.env, !app.isPackaged)
+  const diagnostics = new AcquisitionDiagnostics({
+    app: { version: app.getVersion(), electron: process.versions.electron, node: process.versions.node,
+      platform: process.platform === 'win32' || process.platform === 'darwin' || process.platform === 'linux' ? process.platform : 'unknown',
+      arch: ['x64', 'arm64', 'ia32', 'arm'].includes(process.arch) ? process.arch as 'x64' | 'arm64' | 'ia32' | 'arm' : 'unknown', packaged: app.isPackaged },
+    tools, loginStatus: () => playbackLogins.loginStatus(),
+  })
   const youtubeDiagnostics: YtDlpDiagnostic[] = []
   const ytdlp = new YtDlpRunner({ electronPath: process.execPath, networkRuntimePath, cookies: logins, settings: toolSettings, toolContext,
     diagnostic: e2e ? event => { youtubeDiagnostics.push(event); if (youtubeDiagnostics.length > 100) youtubeDiagnostics.shift() } : undefined,
@@ -371,7 +378,8 @@ async function start(): Promise<void> {
     }
     return globalThis.fetch(input, init)
   }, offlineE2e ? async () => ['8.8.8.8'] : undefined)
-  const acquisition = new Acquisition({ buffer, logins: playbackLogins, runYtDlp: (url, adaptive, context) => ytdlp.resolve(url, adaptive, context), network: platform => network.context(platform),
+  const acquisition = new Acquisition({ buffer, logins: playbackLogins, diagnostics,
+    runYtDlp: (url, adaptive, context, diagnostic) => ytdlp.resolve(url, adaptive, context, diagnostic), network: platform => network.context(platform),
     mediaInput: (url, headers, context) => gateway.register(url, headers, context), proxy, resolveDouyuRoom: offlineE2e ? roomResolver.resolve : undefined,
     ensureTools: async (platform) => {
       if (offlineE2e) throw new Error('默认离线测试禁止真实平台取流')
@@ -560,7 +568,7 @@ async function start(): Promise<void> {
     },
   }))
   const service = createDesktopService({
-    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, resolveHuyaRoom, registerMedia: media.register, acquisition, decoderPreferences, networkPreferences: preferences, tools, douyuAccounts, douyuTasks, douyuRenewal,
+    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, resolveHuyaRoom, registerMedia: media.register, acquisition, decoderPreferences, networkPreferences: preferences, tools, diagnostics, douyuAccounts, douyuTasks, douyuRenewal,
     features, stylePacks,
   })
   session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {

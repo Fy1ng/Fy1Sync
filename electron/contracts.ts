@@ -10,6 +10,7 @@ import type { BufferState } from './bufferManager'
 import type { LoginPlatform, LoginResult, LoginStatus } from './login'
 import type { DecoderMode, DecoderPreferenceState } from './decoderPreferences'
 import type { ToolsStatus } from './toolsService'
+import type { AcquisitionDiagnosticReport } from './diagnosticContracts'
 import type { DouyuAccountsSnapshot, DouyuMessageInput, DouyuMessageOutcome, DouyuMessageSchedule, DouyuTasksSnapshot, DouyuTaskKind, DouyuTaskPolicy } from '../server/douyu/types'
 import type { DouyuRenewalTargetPage, DouyuRenewalPlan, DouyuRenewalResult, DouyuRenewalQuantity } from '../server/douyu/renewalTypes'
 import type { FeatureMethods, FeatureEvent } from './featureContracts'
@@ -46,6 +47,7 @@ export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods, Edi
   closeDouyuTaskRoom: { args: { room: string }; result: DouyuTasksSnapshot }
   resolveDouyuRoom: { args: { input: string }; result: import('../server/platforms/douyuRoom').DouyuRoomResult }
   getToolsStatus: { args: undefined; result: ToolsStatus }
+  getAcquisitionDiagnostics: { args: undefined; result: AcquisitionDiagnosticReport }
   updateYtdlp: { args: undefined; result: ToolsStatus }
   restoreYtdlp: { args: { target: 'previous' | 'bundled' }; result: ToolsStatus }
   health: { args: undefined; result: HealthInfo }

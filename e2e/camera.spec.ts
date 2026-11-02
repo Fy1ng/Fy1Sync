@@ -18,6 +18,29 @@ async function picture(page: Page) {
 
 test.describe('摄像头取景实时帧', () => {
   test.skip(!fixturesReady(), '缺少本地测试源')
+  test('首帧未就绪且视频帧回调不返回时, 框选仍恢复真实画面和保存', async ({ page }) => {
+    await openPlayer(page)
+    await loadBothFixtures(page)
+    const video = page.locator('video.media-element[data-role="commentary"]')
+    await video.evaluate((video: HTMLVideoElement) => {
+      Object.defineProperty(video, 'readyState', { configurable: true, get: () => 1 })
+      video.requestVideoFrameCallback = () => 999
+      video.cancelVideoFrameCallback = () => {}
+    })
+    await openCamera(page)
+    const dialog = page.getByRole('dialog', { name: '摄像头小窗', exact: true })
+    await expect(dialog.getByRole('button', { name: '保存', exact: true })).toBeDisabled()
+    await expect(dialog).toContainText('正在等待解说画面就绪')
+    await video.evaluate(video => { Reflect.deleteProperty(video, 'readyState') })
+    await expect(dialog.getByRole('button', { name: '保存', exact: true })).toBeEnabled()
+    await expect(dialog.locator('.roi-window')).toBeVisible()
+    expect(await dialog.locator('.framing-still').evaluate((canvas: HTMLCanvasElement) => {
+      const pixels = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data
+      return pixels.some((value, index) => index % 4 !== 3 && value > 10)
+    })).toBe(true)
+    await dialog.getByRole('button', { name: '保存', exact: true }).click()
+    await expect(page.locator('.camera-overlay')).toBeVisible()
+  })
   test('预览随解说帧推进且暂停和 seek 保持一致', async ({ page }) => {
     await openPlayer(page)
     await loadBothFixtures(page)

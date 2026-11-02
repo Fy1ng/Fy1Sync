@@ -12,6 +12,12 @@ for (const activation of ['pointer', 'Enter', 'Space'] as const) test(`真实 ${
   await chooseEditorVideo(electronApp, page, official)
   const editorVideo = page.locator('video.editor-media')
   await expect.poll(() => editorVideo.evaluate((video: HTMLVideoElement) => video.readyState)).toBeGreaterThanOrEqual(2)
+  const nativeSize = await editorVideo.evaluate((video: HTMLVideoElement) => ({ width: video.videoWidth, height: video.videoHeight }))
+  // Loading media adapts and saves the initial layout asynchronously. Capture the baseline after that save.
+  await expect.poll(async () => {
+    const result = await invoke(page, 'editorProjectLoad', undefined)
+    return result.ok && result.value.project?.pack.variants[0]?.nativeSize
+  }).toEqual(nativeSize)
   const before = await invoke(page, 'editorProjectLoad', undefined)
   if (!before.ok || !before.value.project) throw new Error('Expected a saved editor project')
   const pack = before.value.project.pack

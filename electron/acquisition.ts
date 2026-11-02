@@ -9,6 +9,9 @@ import { StreamFailureError, classifyNetworkFailure, type StreamFailure } from '
 import { isStreamId, type StreamId } from './streamIdentity'
 import type { BufferInput, BufferManager, BufferState } from './bufferManager'
 import type { LoginManager } from './login'
+import type { YtDlpDiagnostic } from './ytdlp'
+import type { AcquisitionDiagnosticRecorder, DiagnosticAttemptSink } from './diagnosticContracts'
+import { diagnosticCode } from './diagnosticSanitizer'
 
 type Selection = { input: string; platform?: PlatformKind; quality?: string; preferAdaptive?: boolean; stream: ResolvedStream }
 
@@ -23,7 +26,8 @@ export class Acquisition implements AcquisitionService {
   constructor(private readonly deps: {
     buffer: Pick<BufferManager, 'start' | 'stop' | 'subscribe'>
     logins: Pick<LoginManager, 'login' | 'loginStatus' | 'logout' | 'cookieHeader'>
-    runYtDlp: (url: string, adaptive?: boolean, network?: NetworkContext) => Promise<unknown>
+    runYtDlp: (url: string, adaptive?: boolean, network?: NetworkContext, diagnostic?: (event: YtDlpDiagnostic) => void) => Promise<unknown>
+    diagnostics?: AcquisitionDiagnosticRecorder
     proxy: ProxyConfig
     network?: (platform: PlatformKind | null) => NetworkContext
     mediaInput?: (url: string, headers: Record<string,string> | undefined, network: NetworkContext) => Promise<{url:string;proxyUrl:string;readFailure?:()=>StreamFailure|undefined}>
@@ -35,6 +39,24 @@ export class Acquisition implements AcquisitionService {
   }) {}
 
   async resolve(input: string, platform: PlatformKind | undefined, role: StreamId, quality?: string, preferAdaptive = false, confirmedRoom?: string): Promise<ResolveResult> {
+    const diagnostic = detectPlatform(input, platform) === 'youtube' ? this.deps.diagnostics?.begin(role) : undefined
+    try {
+      const result = await this.resolveAttempt(input, platform, role, quality, preferAdaptive, confirmedRoom, diagnostic)
+      diagnostic?.finish(result.ok ? 'resolved' : 'failed', result.ok
+        ? { stage: 'buffer', status: 'resolved' }
+        : { stage: 'resolve', status: 'failed', code: diagnosticCode(result.failure.reason ?? result.failure.code) })
+      return result
+    } catch (error) {
+      diagnostic?.finish('failed', { stage: 'resolve', status: 'failed', code: errorDiagnosticCode(error) })
+      throw error
+    }
+  }
+
+  private async resolveAttempt(input: string, platform: PlatformKind | undefined, role: StreamId, quality?: string, preferAdaptive = false, confirmedRoom?: string, diagnostic?: DiagnosticAttemptSink): Promise<ResolveResult> {
+    const cancelled = () => {
+      diagnostic?.finish('cancelled', { stage: 'resolve', status: 'cancelled', code: 'cancelled' })
+      return refusal('片源操作已被替换')
+    }
     if (!isStreamId(role)) return refusal('播放会话无效')
     const generation = ++this.generationSequence
     this.generations.set(role, generation)
@@ -43,7 +65,7 @@ export class Acquisition implements AcquisitionService {
     if (/^\/test-sources\/(?:[\w-]+\/)*[\w-]+\.(?:m3u8|mp4|webm|mov|mkv|ts)$/.test(input)
       && (platform === undefined || platform === 'direct')) {
       await this.deps.buffer.stop(role)
-      if (generation !== this.generations.get(role) || this.disposed) return refusal('片源操作已被替换')
+      if (generation !== this.generations.get(role) || this.disposed) return cancelled()
       this.selections.delete(role)
       const stream: ResolvedStream = {
         platform: 'direct', channel: 'fixture', kind: input.endsWith('.m3u8') ? 'hls' : 'progressive',
@@ -61,22 +83,33 @@ export class Acquisition implements AcquisitionService {
     let fallbackHeight: number | undefined
     const network = this.deps.network?.(detected) ?? networkContext(detected)
     let first: ResolveResult
-    try { first = await this.resolveInput(input, platform, quality, preferAdaptive, false, confirmedRoom, network) }
+    try { first = await this.resolveInput(input, platform, quality, preferAdaptive, false, confirmedRoom, network, diagnostic) }
     catch (error) { if (error instanceof ProxyError && error.reason !== 'dns-failed') throw error; return failedResult(classifyNetworkFailure(error, 'resolve')) }
     // A previously offered adaptive id can disappear when provider setup falls back
     // to the old extractor mode. Preserve playback instead of rejecting that switch.
     if (!first.ok && first.failure.code === 'unsupported-url' && detected === 'youtube' && requestedAdaptive?.height) {
       fallbackHeight = requestedAdaptive.height
-      first = await this.resolveInput(input, platform, 'auto', false, true, undefined, network)
+      first = await this.resolveInput(input, platform, 'auto', false, true, undefined, network, diagnostic)
     }
-    if (generation !== this.generations.get(role) || this.disposed) return refusal('片源操作已被替换')
+    if (generation !== this.generations.get(role) || this.disposed) return cancelled()
     if (!first.ok) return { ...first, failure: { ...first.failure, stage: first.failure.stage ?? 'resolve', reason: first.failure.reason ?? first.failure.code } }
     if (detected !== 'youtube') await this.deps.ensureTools?.(detected)
-    if (generation !== this.generations.get(role) || this.disposed) return refusal('片源操作已被替换')
+    if (generation !== this.generations.get(role) || this.disposed) return cancelled()
     let initial = true
     const selection: Selection = { input, platform, quality, preferAdaptive, stream: retainAdaptiveQualities(sameSource, first.stream) }
     const prepare = async (hlsOnly = false): Promise<BufferInput> => {
-      const resolved = initial && !hlsOnly ? first : await this.resolveInput(input, platform, hlsOnly ? 'auto' : quality, hlsOnly ? false : preferAdaptive, hlsOnly, selection.stream.sourceRoom, network)
+      const reuse = initial && !hlsOnly
+      const reconnect = !reuse && detected === 'youtube' ? this.deps.diagnostics?.begin(role, hlsOnly ? 'hls-recovery' : 'reconnect') : undefined
+      let resolved: ResolveResult
+      try {
+        resolved = reuse ? first : await this.resolveInput(input, platform, hlsOnly ? 'auto' : quality, hlsOnly ? false : preferAdaptive, hlsOnly, selection.stream.sourceRoom, network, reconnect ?? diagnostic)
+        reconnect?.finish(resolved.ok ? 'resolved' : 'failed', resolved.ok
+          ? { stage: 'resolve', status: 'resolved', adaptive: Boolean(resolved.stream.adaptive) }
+          : { stage: 'resolve', status: 'failed', code: diagnosticCode(resolved.failure.reason ?? resolved.failure.code) })
+      } catch (error) {
+        reconnect?.finish('failed', { stage: 'resolve', status: 'failed', code: errorDiagnosticCode(error) })
+        throw error
+      }
       initial = false
       if (generation !== this.activeGenerations.get(role) || this.disposed) throw new Error('片源操作已取消')
       if (!resolved.ok) throw new StreamFailureError({ stage: 'resolve', code: resolved.failure.code, message: resolved.failure.message })
@@ -94,12 +127,13 @@ export class Acquisition implements AcquisitionService {
     }
     // Subscribe before start so a fast producer cannot race its first usable playlist.
     const readiness = this.waitUntilPlayable(role, generation, Boolean(first.stream.adaptive))
+    diagnostic?.record({ stage: 'buffer', status: 'started', adaptive: Boolean(first.stream.adaptive) })
     try {
       readiness.activate()
       this.activeGenerations.set(role, generation)
       const local = await this.deps.buffer.start(role, prepare)
       await readiness.promise
-      if (generation !== this.generations.get(role) || this.disposed) return refusal('片源操作已被替换')
+      if (generation !== this.generations.get(role) || this.disposed) return cancelled()
       this.selections.set(role, selection)
       const { headers: _headers, adaptive: _adaptive, ...publicStream } = selection.stream
       const publicSelection: ResolvedStream = {
@@ -162,11 +196,12 @@ export class Acquisition implements AcquisitionService {
     return this.resolve(selected.input, selected.platform, role, selected.quality, selected.preferAdaptive, selected.stream.sourceRoom)
   }
 
-  private async resolveInput(input: string, platform?: PlatformKind, quality?: string, preferAdaptive = false, hlsOnly = false, confirmedRoom?: string, network: NetworkContext = networkContext(detectPlatform(input, platform))): Promise<ResolveResult> {
+  private async resolveInput(input: string, platform?: PlatformKind, quality?: string, preferAdaptive = false, hlsOnly = false, confirmedRoom?: string, network: NetworkContext = networkContext(detectPlatform(input, platform)), diagnostic?: DiagnosticAttemptSink): Promise<ResolveResult> {
     const resolver = createResolverDeps(this.deps.proxy, (url) => url, this.deps.fetchImpl, network)
     const result = await resolveStream(input, {
-      ...resolver, quality, preferAdaptive, resolveDouyuRoom: this.deps.resolveDouyuRoom ?? createDouyuRoomResolver(this.deps.proxy, this.deps.fetchImpl, this.deps.dns, network).resolve,
-      ...(confirmedRoom ? { douyuRoomIdentity: { room: confirmedRoom, inputRoom: confirmedRoom } } : {}), runYtDlp: url => this.deps.runYtDlp(url, !hlsOnly, network),
+      ...resolver, quality, preferAdaptive, hlsOnly, resolveDouyuRoom: this.deps.resolveDouyuRoom ?? createDouyuRoomResolver(this.deps.proxy, this.deps.fetchImpl, this.deps.dns, network).resolve,
+      ...(confirmedRoom ? { douyuRoomIdentity: { room: confirmedRoom, inputRoom: confirmedRoom } } : {}),
+      runYtDlp: url => diagnostic ? this.deps.runYtDlp(url, !hlsOnly, network, event => diagnostic.record(event)) : this.deps.runYtDlp(url, !hlsOnly, network),
       douyuCookie: detectPlatform(input, platform) === 'douyu' ? await this.deps.logins.cookieHeader('douyu') : undefined,
     }, platform)
     if (!result.ok) return sanitizedFailure(result)
@@ -206,6 +241,13 @@ export class Acquisition implements AcquisitionService {
     void promise.catch(() => {})
     return { promise, cancel: () => cancel(), activate: () => { active = true } }
   }
+}
+
+function errorDiagnosticCode(error: unknown) {
+  if (error instanceof StreamFailureError) return diagnosticCode(error.failure.code)
+  if (error && typeof error === 'object' && 'code' in error) return diagnosticCode(error.code)
+  if (error instanceof ProxyError) return diagnosticCode(error.reason)
+  return 'unknown' as const
 }
 
 /** Keep offered retry options for this broadcast, never expired input URLs. */

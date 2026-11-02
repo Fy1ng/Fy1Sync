@@ -24,7 +24,7 @@ const methods = new Set<DesktopMethod>([
   'switchQuality', 'stopBuffer', 'login', 'loginStatus', 'logout',
   'getNetworkPreferences', 'setNetworkPreferences',
   'getDecoderPreferences', 'setDecoderPreferences',
-  'getToolsStatus', 'updateYtdlp', 'restoreYtdlp',
+  'getToolsStatus', 'getAcquisitionDiagnostics', 'updateYtdlp', 'restoreYtdlp',
 ])
 let nextSubscription = 0
 

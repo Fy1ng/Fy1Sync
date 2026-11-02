@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { apiClient } from '../app/apiClient'
+import { createFeedbackReport } from '../app/diagnosticReport'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { DecoderPreferenceState } from '../../electron/decoderPreferences'
 import type { NetworkPreferenceState } from '../../electron/networkPreferences'
@@ -308,10 +309,15 @@ function Decoding(): React.ReactNode {
 const SOURCE_NAME = { external: '自定义', managed: '已更新', bundled: '内置', PATH: '系统' } as const
 
 export function Tools(): React.ReactNode {
+  const session = useSession()
   const mounted = useMounted()
   const [status, setStatus] = useRemembered<ToolsStatus | null>('tools-status', null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const exportPending = useRef(false)
+  const [exporting, setExporting] = useState(false)
+  const [exportMessage, setExportMessage] = useState('')
+  const [exportError, setExportError] = useState('')
   const running = busy || (!!status && ['checking', 'downloading', 'verifying'].includes(status.update.phase))
   useEffect(() => {
     void apiClient.getToolsStatus().then((result) => {
@@ -341,6 +347,33 @@ export function Tools(): React.ReactNode {
     } finally { if (mounted.current) setBusy(false) }
   }
   const update = status?.update
+  const exportReport = async (): Promise<void> => {
+    if (exportPending.current) return
+    exportPending.current = true
+    setExporting(true)
+    setExportMessage('')
+    setExportError('')
+    let url: string | undefined
+    try {
+      const result = await apiClient.getAcquisitionDiagnostics()
+      if (!mounted.current) return
+      if (!result.ok) { setExportError('诊断报告暂时无法生成, 请重试.'); return }
+      const report = createFeedbackReport(result.value, session.exportPlaybackDiagnostics())
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' })
+      url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'Fy1Sync-diagnostics.json'
+      link.click()
+      setExportMessage('诊断报告已生成, 请查看下载文件.')
+    } catch {
+      if (mounted.current) setExportError('诊断报告导出失败, 请重试.')
+    } finally {
+      if (url) URL.revokeObjectURL(url)
+      exportPending.current = false
+      if (mounted.current) setExporting(false)
+    }
+  }
   return (
     <Group title="取流工具">
       <dl className="facts">
@@ -364,6 +397,14 @@ export function Tools(): React.ReactNode {
         </p>
       )}
       {error && <p className="form-error" role="alert">{error}</p>}
+      <p className="muted">请在出现问题后导出诊断报告, 文件不会自动上传.</p>
+      <div className="row-end">
+        <button type="button" className="btn-quiet small" disabled={exporting} onClick={() => void exportReport()}>
+          {exporting ? '正在导出' : '导出诊断报告'}
+        </button>
+      </div>
+      {exportMessage && <p className="muted" role="status">{exportMessage}</p>}
+      {exportError && <p className="form-error" role="alert">{exportError}</p>}
     </Group>
   )
 }

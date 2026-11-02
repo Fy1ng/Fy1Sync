@@ -86,6 +86,7 @@ export class ApiClient {
     try { return this.bridge().subscribeFeatures?.(listener) ?? (() => {}) } catch { return () => {} }
   }
   getToolsStatus() { return this.request('getToolsStatus', undefined) }
+  getAcquisitionDiagnostics() { return this.request('getAcquisitionDiagnostics', undefined) }
   getStylePackSyncState() { return this.request('getStylePackSyncState', undefined) }
   syncStylePacks() { return this.request('syncStylePacks', undefined) }
   setStylePackSyncSource(source: StylePackSourceId) { return this.request('setStylePackSyncSource', { source }) }

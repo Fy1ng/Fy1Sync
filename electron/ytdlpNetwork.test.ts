@@ -8,6 +8,7 @@ import type { NetworkContext, NetworkRoute } from '../server/networkPolicy'
 import { locateYouTubePotProvider } from './toolLocator'
 import { prepareScriptOnlyPotPlugin, readScriptOnlyPluginZip } from './potPlugin'
 import { YtDlpRunner } from './ytdlp'
+import youtubeFixture from '../server/platforms/fixtures/youtube-live.json'
 
 vi.mock('./toolLocator', async actual => ({ ...await actual<object>(), locateTool: vi.fn(async () => '/fixture/yt-dlp.exe'),
   locateYouTubePotProvider: vi.fn(async () => undefined) }))
@@ -41,7 +42,7 @@ function harness() {
   runners.push(runner)
   const finish = () => {
     for (const { child } of launches) {
-      child.stdout!.emit('data', Buffer.from(JSON.stringify({ metadata: { id: 'abcdefghijk', is_live: true }, formats: [] })))
+      child.stdout!.emit('data', Buffer.from(JSON.stringify({ metadata: { id: 'abcdefghijk', is_live: true }, formats: youtubeFixture.formats })))
       child.emit('close', 0)
     }
   }

@@ -43,6 +43,7 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
     let lastPaint = Number.NEGATIVE_INFINITY
     let lastWidth = 0
     let lastHeight = 0
+    setMessage('正在等待解说画面就绪...')
     const stop = watchCameraFrames(video, () => {
       const { videoWidth: width, videoHeight: height } = video
       const changed = width !== lastWidth || height !== lastHeight
@@ -51,11 +52,13 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
       const h = Math.max(1, Math.round(w * height / width))
       if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h }
       try {
-        canvas.getContext('2d')?.drawImage(video, 0, 0, w, h)
+        const context = canvas.getContext('2d')
+        if (!context) throw new Error('Preview context unavailable')
+        context.drawImage(video, 0, 0, w, h)
         lastPaint = performance.now()
         if (changed) { lastWidth = width; lastHeight = height; setSize({ width, height }); setPrevious(null); setMessage(null) }
       } catch { setMessage('暂时无法读取解说画面，请在画面恢复后重试') }
-    })
+    }, { previewFallback: true })
     const reset = (): void => {
       pending.current?.abort()
       pending.current = null

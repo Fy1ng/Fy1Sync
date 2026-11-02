@@ -48,18 +48,18 @@ function fixture(options: IpcHandlerOptions = {}) {
 }
 
 describe('app origin and document boundary', async () => {
-  it('allows fullscreen only for the trusted main application document', () => {
+  it.each(['fullscreen', 'clipboard-sanitized-write'])('allows %s only for the trusted main application document', (permission) => {
     const context = { trustedWindow: true, documentUrl: 'app://app/', requestingUrl: 'app://app/', requestingOrigin: 'app://app', isMainFrame: true }
-    expect(allowsAppPermission('fullscreen', context)).toBe(true)
-    for (const permission of ['media', 'geolocation', 'notifications', 'clipboard-read', 'automatic-fullscreen', 'unknown']) {
-      expect(allowsAppPermission(permission, context)).toBe(false)
+    expect(allowsAppPermission(permission, context)).toBe(true)
+    for (const rejected of ['media', 'geolocation', 'notifications', 'clipboard-read', 'deprecated-sync-clipboard-read', 'clipboard-write', 'automatic-fullscreen', 'unknown']) {
+      expect(allowsAppPermission(rejected, context)).toBe(false)
     }
     for (const overrides of [
       { trustedWindow: false }, { isMainFrame: false }, { isMainFrame: undefined },
       { documentUrl: 'https://example.com/' }, { requestingUrl: 'app://app/media/id' },
       { requestingUrl: 'https://example.com/' }, { requestingUrl: undefined },
       { requestingOrigin: 'https://example.com' },
-    ]) expect(allowsAppPermission('fullscreen', { ...context, ...overrides })).toBe(false)
+    ]) expect(allowsAppPermission(permission, { ...context, ...overrides })).toBe(false)
   })
   it('trusts only the fixed privileged origin', async () => {
     expect(isAppOrigin('app://app/assets/app.js')).toBe(true)

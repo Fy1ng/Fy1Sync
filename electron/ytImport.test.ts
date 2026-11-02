@@ -435,7 +435,10 @@ describe('YouTube section imports', () => {
     await vi.waitFor(() => expect(h.launches).toHaveLength(2))
     await h.manager.cancel(job.jobId)
     expect(liveKill).not.toHaveBeenCalled()
-    live.stdout!.emit('data', Buffer.from(JSON.stringify({ metadata: { id: videoId, is_live: true }, formats: [] })))
+    // The independent live run is playable, so it does not need a second client fallback.
+    live.stdout!.emit('data', Buffer.from(JSON.stringify({ metadata: { id: videoId, is_live: true }, formats: [
+      { format_id: '301', protocol: 'm3u8_native', height: 1080, fps: 60, vcodec: 'avc1.64002a', acodec: 'mp4a.40.2', url: 'https://media.googlevideo.com/live.m3u8' },
+    ] })))
     live.emit('close', 0)
     await expect(livePending).resolves.toMatchObject({ id: videoId, is_live: true })
     await runner.dispose(); await h.manager.dispose()

@@ -22,6 +22,8 @@ export const SCHEDULE_URL = 'https://liquipedia.net/counterstrike/api.php?' + ne
 })
 export const ATTRIBUTION = '赛程数据来自 Liquipedia (CC-BY-SA 3.0)'
 export const SCHEDULE_TTL_MS = 300_000
+const ACTIVE_SCHEDULE_TTL_MS = 60_000
+const SOON_WINDOW_MS = 15 * 60_000
 export const TITLE_TTL_MS = 120_000
 export const TIER_TTL_MS = 24 * 60 * 60_000
 export const TIER_NULL_TTL_MS = 6 * 60 * 60_000
@@ -230,7 +232,7 @@ export class EsportsService {
       this.resolveStreams(match, path)
     }
     return { fetchedAt: this.cache?.fetchedAt ?? 0, source: 'liquipedia', attribution: ATTRIBUTION,
-      stale: !!error || !this.cache || now - this.cache.fetchedAt >= SCHEDULE_TTL_MS || now < this.cache.fetchedAt,
+      stale: !!error || !this.cache || now - this.cache.fetchedAt >= this.scheduleTtl() || now < this.cache.fetchedAt,
       ...(error ? { error } : {}), ...(refreshAt !== undefined ? { refreshAt } : {}), matches }
   }
   getCs2Schedule(raw?: { refresh?: boolean }): Promise<Cs2Schedule> {
@@ -256,17 +258,22 @@ export class EsportsService {
     if (first && this.cache && !args?.refresh) { void work; return Promise.resolve(this.snapshot()) }
     return work.then(value => structuredClone(value))
   }
-  /**
-   * Keep the cache fresh while 赛程 is closed: read again once it is due, five minutes after the
-   * last fetch or the last failed try. The first read of the session starts the cycle, so a cold
-   * start still paints the disk copy first.
-   */
+  /** Only an active event being viewed needs minute-level reads; closed sheets keep the background cadence. */
+  private scheduleTtl(): number {
+    if (!this.focus || !this.cache) return SCHEDULE_TTL_MS
+    const now = this.now()
+    const active = currentMatches(this.cache.matches, now).some(match =>
+      normalizeTournamentPath(match.tournament.url) === this.focus && match.state !== 'finished' && match.startsAt <= now + SOON_WINDOW_MS)
+    return active ? ACTIVE_SCHEDULE_TTL_MS : SCHEDULE_TTL_MS
+  }
+  /** Refresh when due after the last fetch or failed try, without changing shared request quotas. */
   private scheduleBackgroundRefresh(): void {
     if (this.lifetime.signal.aborted) return
     clearTimeout(this.refreshTimer)
+    const interval = this.scheduleTtl()
     const last = Math.max(this.cache?.fetchedAt ?? -Infinity, this.attemptedAt)
     // Capped at one interval, so a clock moved backwards cannot push the next read out for hours.
-    const due = Math.min(SCHEDULE_TTL_MS, Math.max(0, last + SCHEDULE_TTL_MS - this.now()))
+    const due = Math.min(interval, Math.max(0, last + interval - this.now()))
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = undefined
       if (!this.lifetime.signal.aborted) void this.getCs2Schedule().catch(() => undefined)
@@ -282,6 +289,7 @@ export class EsportsService {
     this.lifetime.signal.throwIfAborted()
     const path = eventPath === null ? null : normalizeTournamentPath(eventPath)
     this.focus = path !== null && this.tournamentPaths().includes(path) ? path : null
+    if (this.booted) this.scheduleBackgroundRefresh()
     this.enqueueLogos()
     if (this.focus) this.findChannels(this.focus)
     return { updated: true }

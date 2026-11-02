@@ -78,9 +78,9 @@ test.describe('双路播放与手动同步', () => {
     const before = await mediaTimes(page)
     const alignment = page.getByRole('group', { name: '对齐', exact: true })
 
-    // 快进画面 rewinds the commentary side (negative offset), so official − commentary grows.
-    await alignment.getByRole('button', { name: '快进画面', exact: true }).click()
-    await alignment.getByRole('button', { name: '快进画面', exact: true }).click()
+    // Shift selects the fine step; 快进画面 rewinds commentary, increasing official minus commentary.
+    await alignment.getByRole('button', { name: '快进画面', exact: true }).click({ modifiers: ['Shift'] })
+    await alignment.getByRole('button', { name: '快进画面', exact: true }).click({ modifiers: ['Shift'] })
 
     await expect
       .poll(async () => (await offsetReadout(page)).requested, { timeout: 15_000 })

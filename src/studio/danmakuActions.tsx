@@ -9,7 +9,7 @@
  * checked with the platform first and confirmed by the viewer before it is submitted.
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { DanmakuMessage } from '../core/danmakuTimeline'
@@ -28,7 +28,9 @@ export const MUTE_MINUTES = [1, 10, 30, 60, 480, 1440, 4320, 10080, 43200, 25920
 interface Actions {
   /** Save to the local favorites. Resolves to a short result line. */
   favorite: (message: DanmakuMessage) => Promise<string>
-  copy: (text: string) => void
+  /** Copy text with a shared pending guard and persistent result notice. */
+  copy: (text: string) => Promise<void>
+  copying: boolean
   /** Stop showing this sender's danmaku (local filter). */
   block: (user: string) => void
   /** Sender details; only when the "用户详情" switch is on and the sender has a UID. */
@@ -48,7 +50,16 @@ export function DanmakuActionsProvider({ children, onOpenRecords }: {
   const { danmaku, danmakuPreferences } = useSessionSnapshot()
   const [details, setDetails] = useState<DanmakuMessage | null>(null)
   const [muting, setMuting] = useState<DanmakuMessage | null>(null)
+  const [copying, setCopying] = useState(false)
+  const copyPending = useRef<Promise<void> | null>(null)
+  const mounted = useRef(false)
   const room = danmaku.room
+  const copyContext = useRef({ session, room })
+  if (copyContext.current.session !== session || copyContext.current.room !== room) copyContext.current = { session, room }
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
 
   const favorite = useCallback(async (message: DanmakuMessage): Promise<string> => {
     const uid = message.sender?.uid
@@ -58,7 +69,26 @@ export function DanmakuActionsProvider({ children, onOpenRecords }: {
     return result.ok ? '已收藏' : result.message
   }, [room])
 
-  const copy = useCallback((text: string) => { void navigator.clipboard?.writeText(text) }, [])
+  const copy = useCallback((text: string): Promise<void> => {
+    if (copyPending.current) return copyPending.current
+    const context = copyContext.current
+    setCopying(true)
+    const pending = (async () => {
+      try {
+        if (typeof navigator.clipboard?.writeText !== 'function') throw new Error('Clipboard text writing unavailable')
+        await navigator.clipboard.writeText(text)
+        if (mounted.current && copyContext.current === context) session.notice('info', '弹幕已复制')
+      } catch {
+        if (mounted.current && copyContext.current === context) session.notice('warn', '复制失败, 请重试.')
+      }
+    })().finally(() => {
+      if (copyPending.current !== pending) return
+      copyPending.current = null
+      if (mounted.current) setCopying(false)
+    })
+    copyPending.current = pending
+    return pending
+  }, [session])
 
   const block = useCallback((user: string) => {
     const filter = session.settings.danmaku.filter
@@ -67,11 +97,11 @@ export function DanmakuActionsProvider({ children, onOpenRecords }: {
   }, [session])
 
   const value = useMemo<Actions>(() => ({
-    favorite, copy, block,
+    favorite, copy, copying, block,
     showDetails: danmakuPreferences.showUserDetails ? (message) => setDetails(message) : null,
     mute: (message) => setMuting(message),
     history: (uid) => onOpenRecords('history', uid),
-  }), [block, copy, danmakuPreferences.showUserDetails, favorite, onOpenRecords])
+  }), [block, copy, copying, danmakuPreferences.showUserDetails, favorite, onOpenRecords])
 
   return (
     <ActionsContext.Provider value={value}>

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cameraSamplingPlan, sampleCameraFrames } from './cameraFrames'
+import { cameraSamplingPlan, sampleCameraFrames, watchCameraFrames } from './cameraFrames'
 
 let video: HTMLVideoElement
 let callback: VideoFrameRequestCallback | undefined
@@ -27,10 +27,49 @@ beforeEach(() => {
   })
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage: draw, getImageData: readback } as unknown as CanvasRenderingContext2D)
 })
-afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers() })
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers() })
 const frame = (value: number) => { time = value; callback?.(performance.now(), { mediaTime: time } as VideoFrameCallbackMetadata) }
 
 describe('local color camera sampling', () => {
+  it('recovers a preview that opens before the first frame when presentation callbacks never arrive', () => {
+    let animation: FrameRequestCallback | undefined
+    vi.stubGlobal('requestAnimationFrame', vi.fn((next: FrameRequestCallback) => { animation = next; return 9 }))
+    const cancel = vi.fn()
+    vi.stubGlobal('cancelAnimationFrame', cancel)
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 1 })
+    const receive = vi.fn()
+    const stop = watchCameraFrames(video, receive, { previewFallback: true })
+    animation?.(100)
+    expect(receive).not.toHaveBeenCalled()
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 2 })
+    animation?.(200)
+    expect(receive).toHaveBeenCalledExactlyOnceWith(0)
+    time = 1
+    animation?.(300)
+    expect(receive).toHaveBeenLastCalledWith(1)
+    stop()
+    animation?.(500)
+    expect(receive).toHaveBeenCalledTimes(2)
+    expect(cancel).toHaveBeenCalledWith(9)
+    expect(video.cancelVideoFrameCallback).toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps analysis on decoded callbacks instead of adopting the preview-only recovery path', () => {
+    const animation = vi.fn()
+    vi.stubGlobal('requestAnimationFrame', animation)
+    const receive = vi.fn()
+    const stop = watchCameraFrames(video, receive)
+    expect(receive).toHaveBeenCalledOnce()
+    time = 1
+    video.dispatchEvent(new Event('timeupdate'))
+    expect(receive).toHaveBeenCalledOnce()
+    expect(animation).not.toHaveBeenCalled()
+    frame(1)
+    expect(receive).toHaveBeenCalledTimes(2)
+    stop()
+    vi.unstubAllGlobals()
+  })
   it('keeps small 4K camera regions at native pixels instead of reducing the entire video to 960px', () => {
     const plan = cameraSamplingPlan(3840, 2160, { x: 100 / 3840, y: 80 / 2160, w: 256 / 3840, h: 144 / 2160 })
     expect(plan.width).toBe(plan.sw)
