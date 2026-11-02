@@ -116,7 +116,7 @@ function General(): React.ReactNode {
 function EditorDoor({ onClose }: { onClose: () => void }): React.ReactNode {
   return (
     <div className="settings-door">
-      <p>倒计时样式告诉自动对齐比赛倒计时在画面的哪个位置、长什么样。打开编辑器后可从录像或截图教会每个数字，两路直播保持载入。</p>
+      <p>倒计时样式用于识别比赛 HUD. 请手动制作或导入样式包, 再在对齐选项中选择. 两路直播保持载入.</p>
       <a className="btn-solid" {...routeLink('/admin', onClose)}><Icon name="tune" />打开倒计时样式编辑器</a>
     </div>
   )

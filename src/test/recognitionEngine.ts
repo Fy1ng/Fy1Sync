@@ -36,15 +36,6 @@ export class RecognitionEngine {
         }
         return response
       }
-      case 'locate':
-      case 'learn': {
-        if (request.generation < this.generation) return null
-        this.generation = request.generation
-        const envelope = { generation: request.generation, requestId: request.requestId }
-        const result = { status: 'unsupported', backend: 'typescript', reason: 'auto-profile-unsupported',
-          detail: '当前使用 TypeScript 识别后端, 请手动选择或编辑预设' } as const
-        return request.type === 'locate' ? { type: 'located', ...envelope, result } : { type: 'learned', ...envelope, result }
-      }
       default:
         return null
     }

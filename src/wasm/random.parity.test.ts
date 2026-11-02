@@ -9,7 +9,7 @@ import * as segmentation from '../core/segmentation'
 import * as sync from '../core/syncPlan'
 import * as template from '../test/recognitionReference'
 import type { ClockJumpEvent, MediaSnapshot, RecognitionOutcome, SourceRole } from '../core/types'
-import { learnedClockPack } from '../core/activeProfile'
+import { manualPackFixture } from '../test/profileFixture'
 import { hudPackReadiness, type HudStylePack } from '../core/hudStylePack'
 import type { HudFrameResult } from '../core/hudWasm'
 import { recognize_hud_frame } from './pkg/stream_syncer_wasm.js'
@@ -272,7 +272,7 @@ describe('stateful and stateless HUD WASM entry points', () => {
     { frameIndex: -0, mediaTime: -0, wallTime: -0 },
   ])('preserves numeric frame metadata $frameIndex', meta => {
     const { frame, text, scale } = rendered(1, randomFor(6000))
-    const pack = learnedClockPack(profileAt(scale), { width: frame.width, height: frame.height })
+    const pack = manualPackFixture(profileAt(scale), { width: frame.width, height: frame.height })
     const engine = new WasmRecognitionEngine()
     try {
       engine.configure(JSON.stringify(pack))
@@ -293,7 +293,7 @@ describe('stateful and stateless HUD WASM entry points', () => {
     profile.clockFormat = index % 4 === 0 ? 'ss' : 'm:ss'
     profile.matchThreshold = 0.7
     if (index % 8 === 0) delete profile.templates['5']
-    const pack = learnedClockPack(profile, { width: frame.width, height: frame.height })
+    const pack = manualPackFixture(profile, { width: frame.width, height: frame.height })
     const engine = new WasmRecognitionEngine()
     try {
       assertExact('hud.engine.configure', parseWasmJson(engine.configure(JSON.stringify(pack))), hudPackReadiness(pack))
@@ -321,7 +321,7 @@ describe('stateful and stateless HUD WASM entry points', () => {
 
   it('strictly validates reconfiguration and clears the previous configuration after rejection', () => {
     const { frame, scale } = rendered(1, randomFor(6001))
-    const pack = learnedClockPack(profileAt(scale), { width: frame.width, height: frame.height })
+    const pack = manualPackFixture(profileAt(scale), { width: frame.width, height: frame.height })
     const engine = new WasmRecognitionEngine()
     try {
       expect(JSON.parse(engine.configure(JSON.stringify(pack))).ready).toBe(true)

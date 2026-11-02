@@ -1,4 +1,4 @@
-import { learnedClockPack } from '../core/activeProfile'
+import { manualPackFixture } from '../test/profileFixture'
 import type { HudStylePack } from '../core/hudStylePack'
 /** IPC subscription tests keep filtering, media-time scheduling and profiles real. */
 
@@ -76,7 +76,7 @@ function readyProfile(id = 'cs2/iem'): HudStylePack {
     }
     templates[char] = [{ id: `${char}-0`, data: packBitmap(mask), createdAt: 1 }]
   })
-  return learnedClockPack({ ...createEmptyProfile(id, 'IEM 主舞台'), templates }, { width: 1920, height: 1080 })
+  return manualPackFixture({ ...createEmptyProfile(id, 'IEM 主舞台'), templates }, { width: 1920, height: 1080 })
 }
 
 const sessions: Session[] = []

@@ -34,7 +34,7 @@ import { SettingsSheet, type SettingsSection, type SettingsTarget } from './Sett
 import { SourceChip } from './SourceChip'
 import { SourceLoaderProvider, ROLE_LABEL, useSourceLoader } from './sources'
 import { ADD_STREAM_POPOVER, ExtraStreams } from './streams/ExtraStreams'
-import { AutoAlign, CountdownPrompt, startAutoAlign, SyncCapsule, useNudge } from './sync'
+import { AutoAlign, PlaybackRecoveryPrompt, startAutoAlign, SyncCapsule, useNudge } from './sync'
 import { useComposer } from './composer'
 import { Toasts } from './Toasts'
 import { QualityMenu } from './QualityMenu'
@@ -244,7 +244,7 @@ function StudioView(): React.ReactNode {
           {fullscreen.error && <p className="toast is-error floating-error" role="alert">{fullscreen.error}</p>}
 
           <footer className="dock" ref={dock} {...chromeHover}>
-            <CountdownPrompt />
+            <PlaybackRecoveryPrompt />
             <Timeline />
             <div className="dock-row" ref={dockRow} data-fold={dockFold}>
               <div className="dock-left">

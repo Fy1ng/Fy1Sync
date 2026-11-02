@@ -4,7 +4,7 @@ import type { HudStylePack } from '../../core/hudStylePack'
 import type { EditorMedia, EditorProject } from '../../../electron/editorProjectContracts'
 
 export function useEditorProject(options: {
-  pack: HudStylePack; variantId: string; hasCandidate: boolean
+  pack: HudStylePack; variantId: string
   restorePack: (pack: HudStylePack, variantId: string) => void
   open: (url: string, name: string) => void
 }) {
@@ -33,7 +33,7 @@ export function useEditorProject(options: {
       setLoaded(true)
       if (!saved.project) return
       const project = saved.project
-      if (!callbacks.current.hasCandidate) callbacks.current.restorePack(project.pack, project.variantId)
+      callbacks.current.restorePack(project.pack, project.variantId)
       setMedia(project.media)
       setCurrentMediaId(project.currentMediaId)
       setNeedsRelink(saved.needsRelink)

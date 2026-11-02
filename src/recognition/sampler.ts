@@ -224,7 +224,7 @@ export class RecognitionSampler {
       if (channel.configuredFor !== active) {
         this.resetTiming(channel)
         try {
-          channel.client.configure(active, isHudPack(active) ? {} : { automatic: active.id.startsWith('session/') })
+          channel.client.configure(active)
         } catch (error) { this.options.onError?.(role, String(error)); return }
         channel.configuredFor = active
       }

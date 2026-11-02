@@ -16,7 +16,7 @@
 import { compileDanmakuFilter, type CompiledDanmakuFilter } from '../core/danmakuFilter'
 import { DanmakuTimeline, LiveEdgeClock, scheduleTimeFor, type DanmakuMessage } from '../core/danmakuTimeline'
 import type { MediaDescriptor } from '../core/types'
-import { MIN_SYNC_CONFIDENCE, NO_REWIND, SOURCE_ROLES, type AppliedRewind, type SourceRole } from '../core/types'
+import { NO_REWIND, SOURCE_ROLES, type AppliedRewind, type SourceRole } from '../core/types'
 import {
   offsetFromRewind,
   planOffsetChange,
@@ -24,10 +24,9 @@ import {
 } from '../core/syncPlan'
 import { MediaEngine, type EngineState } from '../media/mediaEngine'
 import { RecognitionSampler } from '../recognition/sampler'
-import { OnlineAutoProfiles, initialAutoProfileState, type AutoProfileState } from '../recognition/autoProfile'
 import { createRecognitionWorker } from '../recognition/createWorker'
-import { parseHudStylePack, type HudStylePack } from '../core/hudStylePack'
-import { isHudPack, learnedClockPack, type ActiveProfile } from '../core/activeProfile'
+import { parseHudStylePack } from '../core/hudStylePack'
+import type { ActiveProfile } from '../core/activeProfile'
 import { AutoSyncController, type AutoSyncPhase, type AutoSyncRunResult } from '../sync/autoSync'
 import { apiClient, type PresetSummary } from './apiClient'
 import type { AppSettings } from './settings'
@@ -75,8 +74,6 @@ export interface SessionSnapshot {
     dropped: number
   }
   profiles: Record<SourceRole, ActiveProfile | null>
-  autoProfiles: Record<SourceRole, AutoProfileState>
-  autoProfileBusy: boolean
   /** Presets the server offers, so the player can pick one without opening the editor. */
   presets: PresetSummary[]
   notices: Notice[]
@@ -98,7 +95,6 @@ export interface SessionOptions {
   storage?: Parameters<typeof loadSettings>[0]
   /** Injected so tests can drive the sampler without a real worker. */
   createSampler?: (session: Session) => RecognitionSampler | null
-  createAutoProfiles?: (options: ConstructorParameters<typeof OnlineAutoProfiles>[0]) => Pick<OnlineAutoProfiles, 'controller' | 'monitor' | 'reset' | 'suspend' | 'dispose'> | null
   now?: () => number
 }
 
@@ -122,10 +118,7 @@ export class Session {
   private pausedClock: { media: number; wall: number } | null = null
 
   private sampler: RecognitionSampler | null = null
-  private autoProfiles: Pick<OnlineAutoProfiles, 'controller' | 'monitor' | 'reset' | 'suspend' | 'dispose'> | null = null
   private autoRequestRevision = 0
-  private candidateToEdit: ActiveProfile | null = null
-  private candidateRole: SourceRole = 'official'
   private samplerFactory: ((session: Session) => RecognitionSampler | null) | null
   private settingsValue: AppSettings
   private readonly storage: SessionOptions['storage']
@@ -201,51 +194,16 @@ export class Session {
     this.settingsValue = loadSettings(this.storage)
     this.filter = compileDanmakuFilter(this.settingsValue.danmaku.filter)
     this.samplerFactory = options.createSampler ?? defaultSamplerFactory
-    if (options.createAutoProfiles || (typeof Worker !== 'undefined' && !options.createSampler)) {
-      const autoOptions: ConstructorParameters<typeof OnlineAutoProfiles>[0] = {
-        createWorker: createRecognitionWorker,
-        video: role => this.engine.element(role),
-        profile: role => this.profileFor(role),
-        use: (role, profile) => {
-          ++this.profileRevision
-          this.profileMap = { ...this.profileMap, [role]: profile }
-          this.notify()
-        },
-        changed: () => this.notify(),
-      }
-      this.autoProfiles = options.createAutoProfiles ? options.createAutoProfiles(autoOptions) : new OnlineAutoProfiles(autoOptions)
-    }
 
     this.autoSync = new AutoSyncController(
       {
         sample: async (windowMs, onOutcome, signal) => {
           const sampler = this.ensureSampler()
           if (!sampler) return
-          if (this.autoProfiles) {
-            const acquired = await allAccepted(SOURCE_ROLES.map(role => this.profileFor(role)
-              ? Promise.resolve(true) : this.autoProfiles!.controller.acquire(role)))
-            if (signal.aborted || !acquired) return
-          }
-          const read = { official: false, commentary: false }
-          const buffered: Array<Parameters<typeof onOutcome>> = []
-          await sampler.sample(windowMs, (role, outcome) => {
-            if (outcome.status === 'success' && outcome.reading.confidence >= MIN_SYNC_CONFIDENCE) read[role] = true
-            buffered.push([role, outcome])
-          }, signal)
-          if (signal.aborted) return
-          if (!this.autoProfiles) { for (const outcome of buffered) onOutcome(...outcome); return }
-          // A selected HUD pack remains authoritative through missing HUDs and weak reads.
-          const lost = SOURCE_ROLES.filter(role => {
-            const profile = this.profileFor(role)
-            return !read[role] && (!profile || !isHudPack(profile))
-          })
-          if (lost.length) {
-            const acquired = await allAccepted(lost.map(role => this.autoProfiles!.controller.acquire(role)))
-            if (!signal.aborted && acquired) await sampler.sample(windowMs, onOutcome, signal)
-          } else for (const outcome of buffered) onOutcome(...outcome)
+          await sampler.sample(windowMs, onOutcome, signal)
         },
         snapshot: (role) => this.engine.snapshot(role),
-        hasProfile: () => this.autoProfiles !== null || SOURCE_ROLES.some((role) => this.profileMap[role] !== null),
+        hasProfile: () => SOURCE_ROLES.every((role) => this.profileMap[role] !== null),
         seek: (role, target) => {
           const capture = this.captureSeekMovement(role)
           const seek = { done: this.engine.seek(role, target), capture }
@@ -373,11 +331,6 @@ export class Session {
       playing: this.playingValue,
       danmaku: { ...this.danmakuState, pending: stats.pending, dropped: stats.expired },
       profiles: { ...this.profileMap },
-      autoProfiles: {
-        official: this.autoProfiles?.controller.state('official') ?? initialAutoProfileState(),
-        commentary: this.autoProfiles?.controller.state('commentary') ?? initialAutoProfileState(),
-      },
-      autoProfileBusy: this.autoProfiles?.controller.busy ?? false,
       presets: this.presetList,
       notices: this.noticeList,
       buffers: { ...this.bufferStates },
@@ -413,9 +366,7 @@ export class Session {
     ++this.profileRevision
     ++this.autoRequestRevision
     this.autoSync.cancel(false)
-    this.autoProfiles?.reset(role)
     this.profileMap = { ...this.profileMap, [role]: profile }
-    this.autoProfiles?.monitor(role)
     this.notify()
   }
 
@@ -424,9 +375,7 @@ export class Session {
     ++this.profileRevision
     ++this.autoRequestRevision
     this.autoSync.cancel(false)
-    for (const role of SOURCE_ROLES) this.autoProfiles?.reset(role)
     this.profileMap = { official: profile, commentary: profile }
-    for (const role of SOURCE_ROLES) this.autoProfiles?.monitor(role)
     this.notify()
   }
 
@@ -506,7 +455,6 @@ export class Session {
       if (!this.disposed && result?.ok) this.configureDanmakuProcessing(result.value.preferences)
     })
     const revision = this.profileRevision
-    for (const role of SOURCE_ROLES) this.autoProfiles?.monitor(role)
     // Before the first await, so re-entering the page resumes on the spot instead of
     // waiting on the network. This is also what restores a *persisted* toggle: settings
     // reload with `autoSyncEnabled: true`, but only `setAutoSyncEnabled` ever armed the
@@ -606,9 +554,9 @@ export class Session {
   }
   sourceRevision(role: SourceRole): number { return this.sourceGeneration[role] }
 
-  async loadSource(role: SourceRole, descriptor: MediaDescriptor, options: { keepSessionProfile?: boolean } = {}): Promise<void> {
+  async loadSource(role: SourceRole, descriptor: MediaDescriptor): Promise<void> {
     this.invalidateOffsetRequests()
-    this.invalidateAutomaticWork(role, options)
+    this.invalidateAutomaticWork(role)
     const generation = ++this.sourceGeneration[role]
     this.changingSources.add(role)
     try {
@@ -633,7 +581,6 @@ export class Session {
       this.notice('info', `${roleName(role)}已载入：${descriptor.label}`)
       this.watchPicture(role, generation)
       this.applyAudioSettings()
-      this.autoProfiles?.monitor(role)
       this.notify()
     } finally { this.endSourceChange(role, generation) }
   }
@@ -675,10 +622,9 @@ export class Session {
     const descriptor = this.sourceDescriptor(role)
     if (this.qualityBusy[role] || !descriptor?.sourceQualities?.some((option) => option.id === quality)
       || descriptor.sourceQuality === quality) return
-    // Same broadcast, same scoreboard: the ROI is a fraction of the frame and the glyphs a
-    // normalised mask, so a profile the user accepted this session still reads the new
-    // rendition. Dropping it here would make the post-switch re-sync impossible.
-    this.invalidateAutomaticWork(role, { keepSessionProfile: true })
+    // Keep the manually selected pack across quality changes. Its reference coordinates
+    // are scaled to the new video size by the shared HUD recognition path.
+    this.invalidateAutomaticWork(role)
     const generation = ++this.sourceGeneration[role]
     const wasPlaying = !this.engine.element(role).paused
     this.qualityBusy = { ...this.qualityBusy, [role]: true }
@@ -695,7 +641,7 @@ export class Session {
       const replacement: MediaDescriptor = { ...descriptor, url: stream.url, kind: stream.kind,
         label: stream.label, sourceQualities: stream.qualities, sourceQuality: stream.quality,
         sourceRoom: stream.sourceRoom ?? descriptor.sourceRoom }
-      await this.loadSource(role, replacement, { keepSessionProfile: true })
+      await this.loadSource(role, replacement)
       const loadedGeneration = this.sourceGeneration[role]
       if (this.engine.getState()[role].descriptor !== replacement || this.disposed) return
       if (this.engine.getState()[role].status === 'error') {
@@ -708,7 +654,7 @@ export class Session {
       }
       const available = await this.waitForQualityFrames(role, loadedGeneration)
       if (this.disposed || loadedGeneration !== this.sourceGeneration[role]) return
-      if (!available || !SOURCE_ROLES.some((item) => this.profileFor(item))) {
+      if (!available || !SOURCE_ROLES.every((item) => this.profileFor(item))) {
         this.notice('info', '画质已切换, 两路画面就绪并选择预设后请点击立即同步')
         return
       }
@@ -729,7 +675,7 @@ export class Session {
       && this.engine.element(item).readyState >= 2)
     if (ready()) return Promise.resolve(true)
     // No selected profile or other source means waiting cannot lead to synchronization.
-    if (!SOURCE_ROLES.some((item) => this.profileFor(item))
+    if (!SOURCE_ROLES.every((item) => this.profileFor(item))
       || SOURCE_ROLES.some((item) => this.engine.getState()[item].status === 'empty')) return Promise.resolve(false)
     return new Promise((resolve) => {
       const finish = (result: boolean) => { clearTimeout(timer); off(); this.pendingQualityWaits.delete(cancel); resolve(result) }
@@ -791,11 +737,9 @@ export class Session {
     this.pipPresentationReduced = reduced
     this.resetPlaybackObservation()
     if (reduced) {
-      this.autoProfiles?.suspend()
       this.stopScheduler()
       this.autoSync.cancel(false)
     } else {
-      for (const role of SOURCE_ROLES) this.autoProfiles?.monitor(role)
       if (this.settingsValue.autoSyncEnabled) this.startScheduler()
     }
     this.notify()
@@ -856,7 +800,6 @@ export class Session {
       this.autoSync.cancel(true)
       this.interruptedAutomaticSeek ??= this.automaticSeek
       ++this.autoRequestRevision
-      for (const role of SOURCE_ROLES) if (this.autoProfiles?.controller.busy) this.autoProfiles.controller.cancel(role)
     }
     this.requestedOffset = nextOffset
     const promise = new Promise<OffsetPlan>((finish, fail) => {
@@ -1165,61 +1108,19 @@ export class Session {
     this.autoSync.configure({ seekThresholdSeconds: threshold })
   }
 
-  acceptAutoProfile(role: SourceRole): void { this.autoProfiles?.controller.accept(role) }
-  retryAutoProfile(role: SourceRole): void {
-    this.autoProfiles?.controller.cancel(role)
-    void this.autoProfiles?.controller.acquire(role)
-  }
-  cancelAutoProfile(role: SourceRole): void {
-    this.autoProfiles?.controller.cancel(role)
-    this.autoSync.cancel(false)
-  }
-  editAutoProfile(role: SourceRole): void {
-    this.candidateRole = role
-    this.candidateToEdit = this.autoProfiles?.controller.state(role).candidate ?? this.profileFor(role)
-  }
-  takeEditingCandidate(): HudStylePack | null {
-    const candidate = this.candidateToEdit
-    // React StrictMode can invoke a state initializer twice.
-    if (!candidate) return null
-    if (isHudPack(candidate)) return structuredClone(candidate)
-    const video = this.engine.element(this.candidateRole)
-    if (!video.videoWidth || !video.videoHeight) return null
-    return learnedClockPack(candidate, { width: video.videoWidth, height: video.videoHeight })
-  }
-  clearEditingCandidate(): void { this.candidateToEdit = null }
-  async saveAutoProfile(role: SourceRole): Promise<boolean> {
-    const candidate = this.autoProfiles?.controller.state(role).candidate
-    if (!candidate) return false
-    // A new id on every explicit save prevents silent replacement of an existing preset.
-    const id = `auto/${role}-${this.now()}-${++this.noticeSeq}`
-    const video = this.engine.element(role)
-    if (!video?.videoWidth || !video.videoHeight) { this.notice('warn', '视频原生尺寸尚未就绪'); return false }
-    const profile = { ...learnedClockPack(candidate, { width: video.videoWidth, height: video.videoHeight }), id }
-    const result = await apiClient.savePreset(id, profile)
-    if (!result.ok) { this.notice('warn', `候选保存失败: ${result.message}`); return false }
-    this.notice('info', '候选已另存为新预设')
-    await this.refreshPresets()
-    return true
-  }
-  private invalidateAutomaticWork(role: SourceRole, options: { keepSessionProfile?: boolean } = {}): void {
+  private invalidateAutomaticWork(role: SourceRole): void {
     this.playbackRecovery = null
     this.diagnostics.reset(role)
     this.continuity[role] = 0
     this.resetPlaybackObservation()
     ++this.autoRequestRevision
     this.autoSync.cancel(false)
-    this.autoProfiles?.reset(role)
-    if (!options.keepSessionProfile && this.profileMap[role]?.id.startsWith('session/')) {
-      this.profileMap = { ...this.profileMap, [role]: null }
-    }
   }
 
   /** Abort an in-flight run; the button that calls this is the user's stop control. */
   cancelAutoSync(): void {
     ++this.autoRequestRevision
     this.autoSync.cancel()
-    for (const role of SOURCE_ROLES) this.autoProfiles?.controller.cancel(role)
     this.notify()
   }
 
@@ -1458,7 +1359,6 @@ export class Session {
     // Remembered so the next boot reconnects it: the room is part of what was loaded.
     const parkedDanmakuRoom = this.danmakuState.room ?? this.parkedDanmakuRoom
     ++this.autoRequestRevision
-    this.autoProfiles?.suspend()
     this.stopScheduler()
     // `false`: leaving the page is not the manual intervention that revokes auto-apply,
     // so coming back must not report 「手动调整过偏移」 the user never made.
@@ -1484,7 +1384,6 @@ export class Session {
     this.stopScheduler()
     this.disconnectDanmaku()
     this.autoSync.dispose()
-    this.autoProfiles?.dispose()
     this.sampler?.dispose()
     this.engine.dispose()
     this.listeners.clear()
@@ -1510,19 +1409,6 @@ function defaultSamplerFactory(session: Session): RecognitionSampler | null {
 
 export function roleName(role: SourceRole): string {
   return role === 'official' ? '官方画面' : '国内解说'
-}
-
-/** One cancelled source ends the sync wait without cancelling the other source's candidate. */
-function allAccepted(promises: Array<Promise<boolean>>): Promise<boolean> {
-  if (!promises.length) return Promise.resolve(true)
-  return new Promise(resolve => {
-    let remaining = promises.length
-    for (const promise of promises) void promise.then(accepted => {
-      if (!accepted) resolve(false)
-      remaining -= 1
-      if (!remaining) resolve(true)
-    }, () => resolve(false))
-  })
 }
 
 /** Re-exported so components do not each import from three modules. */

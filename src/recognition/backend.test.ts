@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createEmptyHudStylePack } from '../core/hudStylePack'
+import { createEmptyProfile } from '../core/profileSchema'
 import { createWorkerEngine, WasmWorkerEngine } from './backend'
 import { RecognitionEngine } from './engine'
-import type { FrameMessage, ResultMessage } from './protocol'
+import type { FrameMessage, ResultMessage, WorkerRequest } from './protocol'
 
 const profile = createEmptyHudStylePack(undefined, undefined, { width: 2, height: 2 })
 const failedHud = (debug: unknown = null) => ({ variantId: profile.variants[0]!.id, selectionReason: null, content: 'indeterminate', phase: 'indeterminate',
@@ -12,6 +13,29 @@ const frame: FrameMessage = { type: 'frame', generation: 2, role: 'official', fr
   width: 2, height: 2, pixels: new ArrayBuffer(16), mediaTime: 1, wallTime: 2000, wantDebug: true }
 
 describe('Worker backend selection', () => {
+  it('rejects a legacy learned profile even when an old sender requests automatic recognition', () => {
+    const configure = vi.fn(() => '{}')
+    const recognizeHud = vi.fn(() => JSON.stringify(failedHud()))
+    const engine = new WasmWorkerEngine({ configure, recognize: () => '', recognizeHud }, () => 0)
+    engine.handle({ type: 'configure', generation: 2, profile })
+    const legacy = { type: 'configure', generation: 3, profile: createEmptyProfile('session/official'), automatic: true }
+    expect(() => engine.handle(legacy as WorkerRequest)).toThrow(/重新制作样式包/)
+    expect(configure).toHaveBeenCalledTimes(1)
+    expect(engine.handle(frame)).toMatchObject({ type: 'error' })
+    expect(recognizeHud).not.toHaveBeenCalled()
+  })
+
+  it.each(['locate', 'learn'])('ignores a removed %s request without affecting the configured manual HUD', type => {
+    const recognizeHud = vi.fn(() => JSON.stringify(failedHud()))
+    const engine = new WasmWorkerEngine({ configure: () => '{}', recognize: () => '', recognizeHud }, () => 0)
+    engine.handle({ type: 'configure', generation: 2, profile })
+    const obsolete = { type, generation: 5, requestId: 1, frames: [] } as unknown as WorkerRequest
+    expect(engine.handle(obsolete)).toBeNull()
+    expect(new RecognitionEngine().handle(obsolete)).toBeNull()
+    expect(engine.handle(frame)).toMatchObject({ type: 'result', generation: 2 })
+    expect(recognizeHud).toHaveBeenCalledTimes(1)
+  })
+
   it('reports a missing WASM capability after instantiation fails', async () => {
     const report = vi.fn()
     const engine = await createWorkerEngine({ load: async () => { throw new Error('CSP denied') }, now: () => 0, report })
@@ -95,5 +119,37 @@ describe('Worker backend selection', () => {
     expect(push('bottom', 5).tickMoment).toBeUndefined()
     expect(push('bottom', 6).tickMoment).toBeDefined()
     expect(detector.reset).toHaveBeenCalledTimes(3)
+  })
+
+  it('resets tick timing after a crop resize or backwards media time and frees it on cancellation', () => {
+    let width = 2
+    let fresh = true
+    const detector = {
+      push: vi.fn((_gray: Uint8Array, _width: number, _height: number, time: number) => {
+        const result = fresh ? null : { lastUnchanged: time - .1, firstChanged: time, tickTime: time - .05, change: .5, noiseFloor: 0 }
+        fresh = false
+        return JSON.stringify(result)
+      }),
+      reset: vi.fn(() => { fresh = true }), free: vi.fn(),
+    }
+    const engine = new WasmWorkerEngine({ configure: () => '{}', recognize: () => '',
+      recognizeHud: () => JSON.stringify(failedHud({
+        gray: { data: Array(width * 2).fill(255), width, height: 2 },
+        binary: { data: Array(width * 2).fill(255), width, height: 2 },
+        roiPixels: { x: 0, y: 0, width, height: 2 },
+        boxes: [], projection: [], inkRatio: 1, matches: [], normalized: [],
+      })), createTickDetector: () => detector }, () => 0)
+    engine.handle({ type: 'configure', generation: 2, profile })
+    const push = (time: number) => engine.handle({ ...frame, mediaTime: time }) as ResultMessage
+    expect(push(10).tickMoment).toBeUndefined()
+    expect(push(10.1).tickMoment).toBeDefined()
+    width = 3
+    expect(push(10.2).tickMoment).toBeUndefined()
+    expect(push(10.3).tickMoment).toBeDefined()
+    expect(push(9).tickMoment).toBeUndefined()
+    expect(detector.reset).toHaveBeenCalledTimes(2)
+    engine.handle({ type: 'cancel', generation: 3 })
+    expect(detector.free).toHaveBeenCalledTimes(1)
+    expect(engine.handle(frame)).toBeNull()
   })
 })

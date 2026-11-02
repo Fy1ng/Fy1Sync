@@ -1,6 +1,6 @@
 /** Test-only Rust dispatch adapter for existing recognition vectors. */
 import { wasmCall } from '../wasm/test-helpers'
-import { learnedClockPack } from '../core/activeProfile'
+import { manualPackFixture } from './profileFixture'
 import { parseHudStylePack, type HudPackIssue } from '../core/hudStylePack'
 import type { ClockChar, RecognitionProfile } from '../core/profileSchema'
 import type { GlyphBox, SegmentOptions } from '../core/segmentation'
@@ -41,6 +41,6 @@ export function recognizeFrame(frame: RgbaFrame, profile: RecognitionProfile, te
 
 /** Validate trusted fixture learning output against the persisted asset constraints. */
 export function validateLearnedProfile(profile: RecognitionProfile): { profile: RecognitionProfile | null; issues: HudPackIssue[] } {
-  const result = parseHudStylePack(learnedClockPack(profile, { width: 1920, height: 1080 }))
+  const result = parseHudStylePack(manualPackFixture(profile, { width: 1920, height: 1080 }))
   return { profile: result.pack ? profile : null, issues: result.issues }
 }

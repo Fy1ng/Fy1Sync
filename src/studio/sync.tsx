@@ -14,13 +14,11 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { navigate, routeLink } from '../app/navigate'
+import { routeLink } from '../app/navigate'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { Session } from '../app/session'
 import { MAX_OFFSET_SECONDS, SOURCE_ROLES, type SourceRole } from '../core/types'
-import { AUTO_PROFILE_TEXT } from '../recognition/autoProfile'
 import { HoldButton, Icon, Popover, Segmented, Switch, usePopover } from './kit'
-import { ROLE_LABEL } from './sources'
 
 const clampOffset = (value: number): number =>
   Math.round(Math.min(MAX_OFFSET_SECONDS, Math.max(-MAX_OFFSET_SECONDS, value)) * 100) / 100
@@ -163,7 +161,7 @@ export function AutoAlign(): React.ReactNode {
   const menu = usePopover()
   const { autoSync, settings } = snapshot
   const running = autoSync.phase !== 'idle' && autoSync.phase !== 'done' && autoSync.phase !== 'failed'
-  const busy = running || session.offsetBusy || snapshot.autoProfileBusy
+  const busy = running || session.offsetBusy
   const bothReady = snapshot.media.official.status === 'ready' && snapshot.media.commentary.status === 'ready'
   const result = autoSync.lastResult
 
@@ -207,7 +205,7 @@ export function AutoAlign(): React.ReactNode {
           <span>倒计时样式</span>
           <select value={settings.profileId} disabled={snapshot.presets.length === 0}
             onChange={(event) => void session.selectProfile(event.target.value)}>
-            <option value="">自动识别</option>
+            <option value="">请选择手动样式包</option>
             {snapshot.presets.map((preset) => (
               <option key={preset.id} value={preset.id} disabled={preset.templateChars === 0}>{preset.name}</option>
             ))}
@@ -239,51 +237,12 @@ const PHASE: Record<string, string> = {
   verifying: '复核中…',
 }
 
-/**
- * While a run finds the countdown on its own, and when it could not. A found countdown is
- * used straight away, so nothing here waits for a yes.
- */
-export function CountdownPrompt(): React.ReactNode {
-  const session = useSession()
-  const snapshot = useSessionSnapshot()
-  const rows = SOURCE_ROLES.filter((role) => {
-    const state = snapshot.autoProfiles[role]
-    return state.phase === 'not-found' || state.phase === 'unsupported' || state.phase === 'locating' || state.phase === 'learning'
-  })
-  if (rows.length === 0 && !snapshot.playbackRecovery) return null
-  return (
-    <div className="prompt-stack" aria-live="polite">
-      <PlaybackRecoveryPrompt />
-      {rows.map((role) => {
-        const state = snapshot.autoProfiles[role]
-        const working = state.phase === 'locating' || state.phase === 'learning'
-        return (
-          <div key={role} className="prompt" data-role={role}>
-            <span className="prompt-text">
-              <b>{ROLE_LABEL[role]}</b>
-              {working ? `正在识别比赛倒计时（${AUTO_PROFILE_TEXT[state.phase]}）` : state.reason ?? AUTO_PROFILE_TEXT[state.phase]}
-            </span>
-            {!working && <button type="button" className="btn-quiet small" onClick={() => session.retryAutoProfile(role)}>重新识别</button>}
-            {working && <button type="button" className="btn-quiet small" onClick={() => session.cancelAutoProfile(role)}>取消</button>}
-            {!working && (
-              <button type="button" className="btn-quiet small" onClick={() => {
-                session.editAutoProfile(role)
-                navigate('/admin')
-              }}>手动框选</button>
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
 export function PlaybackRecoveryPrompt(): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const recovery = snapshot.playbackRecovery
   if (!recovery) return null
-  const busy = session.autoSync.isRunning || session.offsetBusy || snapshot.autoProfileBusy
+  const busy = session.autoSync.isRunning || session.offsetBusy
   const ready = SOURCE_ROLES.every(role => snapshot.media[role].status === 'ready')
   return (
     <div className="prompt" role="status">

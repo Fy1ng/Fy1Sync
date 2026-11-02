@@ -1,4 +1,4 @@
-import init, { AutoClockSession, RecognitionEngine, TickMomentDetector, recognize_auto, recognize_hud_frame } from './pkg/stream_syncer_wasm.js'
+import init, { RecognitionEngine, TickMomentDetector, recognize_hud_frame } from './pkg/stream_syncer_wasm.js'
 import wasmUrl from './pkg/stream_syncer_wasm_bg.wasm?url'
 import type { WasmEngine } from '../recognition/backend'
 
@@ -9,8 +9,6 @@ export async function loadWasmEngine(): Promise<WasmEngine> {
     recognizeHud: (...args) => recognize_hud_frame(...args),
     configure: (profile) => recognition.configure(profile),
     recognize: (...args) => recognition.recognize(...args),
-    recognizeAuto: (gray, width, height, profile) => recognize_auto(gray, width, height, profile),
-    createAutoSession: () => new AutoClockSession(),
     createTickDetector: () => new TickMomentDetector(),
   }
 }

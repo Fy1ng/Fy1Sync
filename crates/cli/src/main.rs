@@ -10,17 +10,10 @@ use std::thread;
 use std::time::Instant;
 use stream_syncer_core::{dispatch, ClockJumpDetector, Engine};
 
-mod auto;
-
-const HELP: &str = "离线录像识别工具\n\nstream-syncer-cli locate --video <file> [--from s] [--duration s]\nstream-syncer-cli learn --video <file> [--roi x,y,w,h] [--from s] [--duration s] --out <new-profile.json>\nstream-syncer-cli recognize (--profile <json> | --auto) --video <file> [--from s] [--to s] [--fps n]\nstream-syncer-cli offset (--profile <json> | --auto) --official <file> --commentary <file> [--from s] [--to s] [--fps n]\n\n所有命令支持 --ffmpeg path. 自动模式支持 --learn-duration s (逐窗扫描长度, 默认 30, 最长 60).\n自动模式在完整文件或指定范围逐窗定位和学习, 报告首个成功窗口, 后续成功窗口补齐缺失字符.\n--from 默认 0, 定位/学习的 --duration 默认 30, --to 为不含终点的结束时间.\n旧模式 --fps 默认 30; 自动模式默认 60, 定位/学习采样 10fps.\nffmpeg 来源: --ffmpeg, STREAM_SYNC_FFMPEG, PATH. ffprobe 使用同目录程序.\n输出为 JSONL. 自动模式报告采样边界和容器 start_time, 时间是文件相对秒数.\n两路录像起点不自动对齐, 不推测墙上时钟或录制开始时间差.\n";
+const HELP: &str = "离线录像识别工具\n\nstream-syncer-cli recognize --profile <json> --video <file> [--from s] [--to s] [--fps n]\nstream-syncer-cli offset --profile <json> --official <file> --commentary <file> [--from s] [--to s] [--fps n]\n\n样式包必须手动提供, 不支持自动定位或学习.\n所有命令支持 --ffmpeg path, --duration s 可替代 --to.\n--from 默认 0, --fps 默认 30, --to 为不含终点的结束时间.\nffmpeg 来源: --ffmpeg, STREAM_SYNC_FFMPEG, PATH. ffprobe 使用同目录程序.\n输出为 JSONL, 时间是文件相对秒数.\n两路录像起点不自动对齐, 不推测墙上时钟或录制开始时间差.\n";
 
 #[derive(Debug, PartialEq)]
 enum Operation {
-    Locate(PathBuf),
-    Learn {
-        video: PathBuf,
-        out: PathBuf,
-    },
     Recognize(PathBuf),
     Offset {
         official: PathBuf,
@@ -31,10 +24,7 @@ enum Operation {
 #[derive(Debug)]
 struct Options {
     operation: Operation,
-    profile: Option<PathBuf>,
-    automatic: bool,
-    roi: Option<stream_syncer_core::RoiRect>,
-    learn_duration: f64,
+    profile: PathBuf,
     from: f64,
     to: Option<f64>,
     fps: f64,
@@ -57,28 +47,15 @@ fn parse_options(
         return Ok(None);
     }
     let operation = args[0].to_str().ok_or("命令不是有效 UTF-8")?;
-    if !matches!(operation, "recognize" | "offset" | "locate" | "learn") {
+    if !matches!(operation, "recognize" | "offset") {
         return Err(format!("未知命令: {operation}"));
     }
     let mut flags = BTreeMap::new();
     let mut index = 1;
     while index < args.len() {
         let flag = args[index].to_str().ok_or("参数名不是有效 UTF-8")?;
-        if flag == "--auto" && matches!(operation, "recognize" | "offset") {
-            if flags
-                .insert(flag.to_owned(), OsString::from("true"))
-                .is_some()
-            {
-                return Err(format!("参数重复: {flag}"));
-            }
-            index += 1;
-            continue;
-        }
-        let allowed = matches!(flag, "--from" | "--duration" | "--ffmpeg")
-            || (matches!(operation, "recognize" | "offset")
-                && matches!(flag, "--profile" | "--to" | "--fps" | "--learn-duration"))
-            || (matches!(operation, "recognize" | "locate" | "learn") && flag == "--video")
-            || (operation == "learn" && matches!(flag, "--roi" | "--out"))
+        let allowed = matches!(flag, "--from" | "--duration" | "--ffmpeg" | "--profile" | "--to" | "--fps")
+            || (operation == "recognize" && flag == "--video")
             || (operation == "offset" && matches!(flag, "--official" | "--commentary"));
         if !allowed {
             return Err(format!("未知参数: {flag}"));
@@ -101,18 +78,9 @@ fn parse_options(
             .map(PathBuf::from)
             .ok_or_else(|| format!("缺少参数: {flag}"))
     };
-    let automatic = flags.contains_key("--auto");
-    let profile = flags.get("--profile").map(PathBuf::from);
-    if matches!(operation, "recognize" | "offset") && automatic == profile.is_some() {
-        return Err("必须且只能指定 --profile 或 --auto".into());
-    }
+    let profile = required_path("--profile")?;
     let operation = match operation {
         "recognize" => Operation::Recognize(required_path("--video")?),
-        "locate" => Operation::Locate(required_path("--video")?),
-        "learn" => Operation::Learn {
-            video: required_path("--video")?,
-            out: required_path("--out")?,
-        },
         _ => Operation::Offset {
             official: required_path("--official")?,
             commentary: required_path("--commentary")?,
@@ -137,31 +105,11 @@ fn parse_options(
         }
         to = Some(from + duration);
     }
-    if to.is_none() && matches!(operation, Operation::Locate(_) | Operation::Learn { .. }) {
-        to = Some(from + 30.0);
-    }
-    let learn_duration = flags
-        .get("--learn-duration")
-        .map(|value| number(value, "--learn-duration"))
-        .transpose()?
-        .unwrap_or(30.0);
-    if !(3.0..=60.0).contains(&learn_duration) {
-        return Err("--learn-duration 必须在 3..60 秒内".into());
-    }
-    if matches!(operation, Operation::Locate(_) | Operation::Learn { .. })
-        && to.unwrap() - from > 60.0
-    {
-        return Err("定位/学习窗口最长 60 秒".into());
-    }
-    let roi = flags
-        .get("--roi")
-        .map(|value| auto::parse_roi(value))
-        .transpose()?;
     let fps = flags
         .get("--fps")
         .map(|value| number(value, "--fps"))
         .transpose()?
-        .unwrap_or(if automatic { 60.0 } else { 30.0 });
+        .unwrap_or(30.0);
     if from < 0.0 || to.is_some_and(|end| !end.is_finite() || end <= from) {
         return Err("时间范围要求 0 <= from < to".to_owned());
     }
@@ -179,9 +127,6 @@ fn parse_options(
     Ok(Some(Options {
         operation,
         profile,
-        automatic,
-        roi,
-        learn_duration,
         from,
         to,
         fps,
@@ -449,15 +394,7 @@ fn recognize_video(
 }
 
 fn run(options: Options, writer: &mut impl Write) -> Result<(), String> {
-    if options.automatic
-        || matches!(
-            options.operation,
-            Operation::Locate(_) | Operation::Learn { .. }
-        )
-    {
-        return auto::run(&options, writer);
-    }
-    let profile = fs::read_to_string(options.profile.as_ref().ok_or("缺少 --profile")?)
+    let profile = fs::read_to_string(&options.profile)
         .map_err(|error| format!("读取配置失败: {error}"))?;
     match &options.operation {
         Operation::Recognize(video) => {
@@ -482,7 +419,6 @@ fn run(options: Options, writer: &mut impl Write) -> Result<(), String> {
                 &json!({"type": "offset", "estimate": estimate, "timebase": "file-relative-sampled"}),
             )?;
         }
-        _ => unreachable!("automatic operations dispatched above"),
     }
     Ok(())
 }
@@ -530,84 +466,24 @@ mod tests {
     }
 
     #[test]
-    fn automatic_and_discovery_options_are_unambiguous() {
-        let parsed = parse_options(
-            args(&[
-                "recognize",
-                "--auto",
-                "--video",
-                "a.ts",
-                "--from",
-                "2",
-                "--duration",
-                "8",
-            ]),
-            None,
-        )
-        .unwrap()
-        .unwrap();
-        assert!(parsed.automatic);
-        assert!(parsed.profile.is_none());
-        assert_eq!(parsed.fps, 60.0);
-        assert_eq!(parsed.to, Some(10.0));
-        let parsed = parse_options(
-            args(&[
-                "learn",
-                "--video",
-                "a.ts",
-                "--roi",
-                ".1,.2,.3,.4",
-                "--out",
-                "new.json",
-            ]),
-            None,
-        )
-        .unwrap()
-        .unwrap();
-        assert!(parsed.roi.is_some());
-        assert_eq!(parsed.to, Some(30.0));
+    fn rejects_removed_learning_commands_and_requires_a_manual_style_pack() {
         for values in [
-            vec![
-                "recognize",
-                "--auto",
-                "--video",
-                "a.ts",
-                "--from",
-                "1e308",
-                "--duration",
-                "1e308",
-            ],
-            vec![
-                "recognize",
-                "--auto",
-                "--profile",
-                "p.json",
-                "--video",
-                "a.ts",
-            ],
-            vec!["recognize", "--auto", "--auto", "--video", "a.ts"],
-            vec![
-                "recognize",
-                "--auto",
-                "--video",
-                "a.ts",
-                "--learn-duration",
-                "61",
-            ],
-            vec!["locate", "--video", "a.ts", "--duration", "61"],
-            vec![
-                "recognize",
-                "--auto",
-                "--video",
-                "a.ts",
-                "--to",
-                "4",
-                "--duration",
-                "3",
-            ],
+            vec!["recognize", "--video", "a.ts"],
+            vec!["recognize", "--auto", "--video", "a.ts"],
+            vec!["offset", "--auto", "--official", "a.ts", "--commentary", "b.ts"],
+            vec!["locate", "--video", "a.ts"],
+            vec!["learn", "--video", "a.ts", "--out", "new.json"],
+            vec!["recognize", "--profile", "p.json", "--video", "a.ts", "--learn-duration", "30"],
+            vec!["recognize", "--profile", "p.json", "--video", "a.ts", "--roi", ".1,.2,.3,.4"],
         ] {
             assert!(parse_options(args(&values), None).is_err());
         }
+        let parsed = parse_options(args(&[
+            "recognize", "--profile", "manual.json", "--video", "a.ts", "--from", "2", "--duration", "8",
+        ]), None).unwrap().unwrap();
+        assert_eq!(parsed.profile, PathBuf::from("manual.json"));
+        assert_eq!(parsed.fps, 30.0);
+        assert_eq!(parsed.to, Some(10.0));
     }
 
     #[test]
@@ -624,7 +500,7 @@ mod tests {
         let parsed = parse_options(args(&values), Some("env-ffmpeg".into()))
             .unwrap()
             .unwrap();
-        assert_eq!(parsed.profile, Some(PathBuf::from("配置 a.json")));
+        assert_eq!(parsed.profile, PathBuf::from("配置 a.json"));
         assert_eq!(parsed.ffmpeg, PathBuf::from("tool folder/ffmpeg.exe"));
         assert_eq!(parsed.operation, Operation::Recognize("录制 a.ts".into()));
         assert_eq!(

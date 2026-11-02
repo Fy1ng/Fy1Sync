@@ -62,7 +62,7 @@ test('只有字符按钮即点即存, 更正不叠加, 撤回按钮和 Ctrl+Z �
   await page.getByRole('button', { name: '撤回', exact: true }).click()
   await expect(reading).toHaveText('0:??')
   await expect(page.locator('.template-thumb')).toHaveCount(2)
-  // Incomplete labels cannot seed automatic teaching.
+  // Navigation must never extrapolate stored character labels.
   await page.getByRole('button', { name: '+1s', exact: true }).click()
   await expect(page.locator('.template-thumb')).toHaveCount(2)
   await expect(reading).toHaveText('待标注')
@@ -98,33 +98,26 @@ test('重新取帧, 返回同一帧和重开工程均不会重复添加样本', 
   await expect(page.getByRole('button', { name: '撤回', exact: true })).toBeDisabled()
 })
 
-test('四种跳秒自动写入和字符点击共用按顺序撤回的历史', async ({ page, electronApp }) => {
+test('跳秒只导航素材, 不推算读数或创建样本, 手动撤回仍返回原标注帧', async ({ page, electronApp }) => {
   test.skip(!fixturesReady(), '缺少测试源, 先运行 npm run fixtures')
   await open(page, electronApp)
   await label(page, '0:19')
-  await page.getByRole('switch', { name: '自动取帧', exact: true }).press('Space')
   const reading = page.getByLabel('当前读数', { exact: true })
   const video = page.locator('video.editor-media')
-  for (const [button, time, value, samples] of [
-    ['+1s', 2, '0:18', 8], ['+10s', 12, '0:08', 12], ['-1s', 11, '0:09', 16], ['-10s', 1, '0:19', 16],
-  ] as const) {
+  await expect(page.getByRole('button', { name: '自动 +1s', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('group', { name: '自动逐秒标注' })).toHaveCount(0)
+  for (const [button, time] of [['+1s', 2], ['+10s', 12], ['-1s', 11], ['-10s', 1]] as const) {
     await page.getByRole('button', { name: button, exact: true }).click()
-    await expect(reading).toHaveText(value)
-    await expect(page.locator('.template-thumb')).toHaveCount(samples)
     await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(time, 2)
+    await expect(page.locator('.template-thumb')).toHaveCount(4)
+    await expect(reading).toHaveText(time === 1 ? '0:19' : '待标注')
   }
-  await page.getByRole('textbox', { name: '名称', exact: true }).fill('保留其他修改')
-  // Text editing retains its own Ctrl+Z instead of consuming sample history.
-  await page.keyboard.press('Control+z')
-  await expect(page.locator('.template-thumb')).toHaveCount(16)
-  for (const [time, value, samples] of [[11, '0:09', 16], [12, '0:08', 12], [2, '0:18', 8], [1, '0:19', 4]] as const) {
-    await page.getByRole('button', { name: '撤回', exact: true }).click()
-    await expect(reading).toHaveText(value)
-    await expect(page.locator('.template-thumb')).toHaveCount(samples)
-    await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(time, 2)
-  }
-  await page.locator('.editor-stage').focus()
-  await page.keyboard.press('Control+z')
+  await page.getByRole('button', { name: '+1s', exact: true }).click()
+  await expect(reading).toHaveText('待标注')
+  await page.waitForTimeout(500)
+  await expect(page.locator('.template-thumb')).toHaveCount(4)
+  await page.getByRole('button', { name: '撤回', exact: true }).click()
+  await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(1, 2)
   await expect(page.locator('.template-thumb')).toHaveCount(3)
   await expect(reading).toHaveText('0:1?')
 })
@@ -145,95 +138,10 @@ test('折叠字符面板不会丢失只读倒计时或撤回状态', async ({ pa
   await glyphs.locator('summary').click()
   await expect(reading).toBeHidden()
   await page.getByRole('button', { name: '+1s', exact: true }).click()
-  await expect(glyphs.locator('summary')).toContainText('8 个样本')
+  await expect(glyphs.locator('summary')).toContainText('4 个样本')
   await glyphs.locator('summary').click()
-  await expect(reading).toHaveText('0:18')
+  await expect(reading).toHaveText('待标注')
   await page.getByRole('button', { name: '撤回', exact: true }).click()
-  await expect(reading).toHaveText('0:19')
-  await expect(page.locator('.template-thumb')).toHaveCount(4)
-})
-
-test('一次标注后自动逐秒处理到零, 停止后仍可逐次撤回', async ({ page, electronApp }) => {
-  test.skip(!fixturesReady(), '缺少测试源, 先运行 npm run fixtures')
-  await open(page, electronApp)
-  await expect(page.getByRole('button', { name: '自动 +1s', exact: true })).toBeDisabled()
-  await seek(page, 17)
-  await label(page, '0:03')
-  await expect(page.getByRole('button', { name: '自动 +1s', exact: true })).toBeEnabled()
-  await page.getByRole('button', { name: '自动 +1s', exact: true }).click()
-  await expect(page.getByRole('status', { name: '编辑器提示' })).toContainText('倒计时已到 0', { timeout: 20_000 })
-  await expect(page.getByLabel('当前读数', { exact: true })).toHaveText('0:00')
-  await expect(page.getByRole('group', { name: '自动逐秒标注' })).toContainText('已处理 3 帧')
-  await expect(page.locator('.template-thumb')).toHaveCount(16)
-  await page.getByRole('button', { name: '撤回', exact: true }).click()
-  await expect(page.getByLabel('当前读数', { exact: true })).toHaveText('0:01')
-  await expect(page.locator('.template-thumb')).toHaveCount(12)
-  await expect.poll(() => page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(19, 2)
-})
-
-test('训练时已有字形或预览读数与推算冲突也不停止, 只按起始时间标注', async ({ page, electronApp }) => {
-  test.skip(!fixturesReady(), '缺少测试源, 先运行 npm run fixtures')
-  await open(page, electronApp)
-  // Recognition can disagree with this seed, but training is not a recognition-accuracy test.
-  await seek(page, 18)
-  await label(page, '0:02')
-  await seek(page, 17)
-  await label(page, '0:04')
-  await page.getByRole('button', { name: '自动 +1s', exact: true }).click()
-  await expect(page.getByRole('status', { name: '编辑器提示' })).toContainText('倒计时已到 0')
-  await expect(page.getByRole('group', { name: '自动逐秒标注' })).toContainText('已处理 4 帧')
-  await expect(page.getByLabel('当前读数', { exact: true })).toHaveText('0:00')
-  await expect.poll(() => page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(21, 2)
-  await expect(page.getByRole('button', { name: '停止自动 +1s', exact: true })).toHaveCount(0)
-})
-
-test('自动逐秒遇到多出的字符框时停在该帧, 不保存该帧并允许撤回之前的步骤', async ({ page, electronApp }) => {
-  test.skip(!fixturesReady(), '缺少测试源, 先运行 npm run fixtures')
-  await open(page, electronApp)
-  await seek(page, 17)
-  await label(page, '0:03')
-  // Add a fifth foreground shape at one timestamp only in this disposable fixture's capture path.
-  await page.evaluate(() => {
-    const draw = OffscreenCanvasRenderingContext2D.prototype.drawImage
-    OffscreenCanvasRenderingContext2D.prototype.drawImage = function (this: OffscreenCanvasRenderingContext2D, ...args: Parameters<typeof draw>) {
-      draw.apply(this, args)
-      const video = args[0]
-      if (video instanceof HTMLVideoElement && Math.abs(video.currentTime - 19) < 0.001) {
-        this.fillStyle = '#fff'
-        this.fillRect(Math.round(video.videoWidth * 0.42) + 2, Math.round(video.videoHeight * 0.045) + 5,
-          4, Math.round(video.videoHeight * 0.13) - 10)
-      }
-    } as typeof draw
-  })
-  await page.getByRole('button', { name: '自动 +1s', exact: true }).click()
-  await expect(page.getByRole('status', { name: '编辑器提示' })).toContainText('读数有 4 个字符，切出了 5 个字符框')
-  await expect(page.getByRole('group', { name: '自动逐秒标注' })).toContainText('已处理 1 帧')
-  await expect(page.locator('.template-thumb')).toHaveCount(8)
-  await expect.poll(() => page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(19, 2)
-  await expect(page.getByRole('button', { name: '停止自动 +1s', exact: true })).toHaveCount(0)
-  await page.getByRole('button', { name: '撤回', exact: true }).click()
-  await expect(page.locator('.template-thumb')).toHaveCount(4)
-  await expect(page.getByLabel('当前读数', { exact: true })).toHaveText('0:03')
-  await expect.poll(() => page.locator('video.editor-media').evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(17, 2)
-})
-
-test('自动逐秒运行时可手动停止且不会再后台写入', async ({ page, electronApp }) => {
-  test.skip(!fixturesReady(), '缺少测试源, 先运行 npm run fixtures')
-  await open(page, electronApp)
-  await label(page, '0:19')
-  // Slow down decoding solely in this disposable renderer to exercise Stop during an in-flight seek.
-  await page.locator('video.editor-media').evaluate((video: HTMLVideoElement) => {
-    const descriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime')!
-    Object.defineProperty(video, 'currentTime', { configurable: true,
-      get() { return descriptor.get!.call(this) },
-      set(value) { setTimeout(() => descriptor.set!.call(this, value), 1000) },
-    })
-  })
-  await page.getByRole('button', { name: '自动 +1s', exact: true }).click()
-  await expect(page.getByRole('button', { name: '停止自动 +1s', exact: true })).toBeEnabled()
-  await page.getByRole('button', { name: '停止自动 +1s', exact: true }).click()
-  await expect(page.getByRole('status', { name: '编辑器提示' })).toContainText('已停止自动 +1s')
-  await page.waitForTimeout(1300)
-  await expect(page.locator('.template-thumb')).toHaveCount(4)
-  await expect(page.getByRole('button', { name: '停止自动 +1s', exact: true })).toHaveCount(0)
+  await expect(reading).toHaveText('0:1?')
+  await expect(page.locator('.template-thumb')).toHaveCount(3)
 })

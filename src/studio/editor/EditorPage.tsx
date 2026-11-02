@@ -45,7 +45,6 @@ import { YouTubePanel, type YouTubeClipJob, type YouTubeSource, type YouTubeStil
 import { youtubeSource } from './youtubeSource'
 import { useEditorProject } from './useEditorProject'
 import { useCountdownTeaching } from './useCountdownTeaching'
-import { AutoStepControl } from './AutoStepControl'
 import { usePreprocessRecommendation } from './usePreprocessRecommendation'
 import { useBatchValidation } from './useBatchValidation'
 import { BatchValidationPanel } from './BatchValidationPanel'
@@ -69,19 +68,17 @@ function readAutoGrab(): boolean {
 /** Only the trusted local app frame can invoke preset writes in main. */
 export default function EditorPage(): React.ReactNode {
   const session = useSession()
-  const [candidate] = useState(() => session.takeEditingCandidate())
-  const [pack, setPack] = useState<HudStylePack>(() => candidate ?? createEmptyHudStylePack())
+  const [pack, setPack] = useState<HudStylePack>(createEmptyHudStylePack)
   const [selectedVariantId, setSelectedVariantId] = useState<string | undefined>(undefined)
   const variant = editorVariant(pack, selectedVariantId)
   const variantId = variant.id
-  const adoptFootageSize = useRef(candidate === null)
+  const adoptFootageSize = useRef(true)
   const [fieldId, setFieldId] = useState<EditorTarget>('clock')
   const cueId = isCueTarget(fieldId) ? fieldId : null
   const numericId = isCueTarget(fieldId) ? 'clock' : fieldId
   const profile = useMemo(() => isCueTarget(fieldId) ? cueModel(pack, fieldId, variantId) : fieldModel(pack, fieldId, variantId), [pack, fieldId, variantId])
   const activePack = useMemo(() => isCueTarget(fieldId) ? patchCue(pack, fieldId, {}, undefined, variantId)
     : variant.fields[fieldId] ? pack : patchField(pack, fieldId, {}, variantId), [pack, fieldId, variant, variantId])
-  useEffect(() => session.clearEditingCandidate(), [session])
   const [etag, setEtag] = useState<string | undefined>(undefined)
   const [publishedProfile, setPublishedProfile] = useState<HudStylePack | null>(null)
   const [dirty, setDirty] = useState(false)
@@ -169,7 +166,7 @@ export default function EditorPage(): React.ReactNode {
     setFootage('local')
     setMessage(null)
   }, [countdown.reset])
-  const project = useEditorProject({ pack, variantId, hasCandidate: candidate !== null, open: openVideo,
+  const project = useEditorProject({ pack, variantId, open: openVideo,
     restorePack: (saved, id) => {
       adoptFootageSize.current = false
       setPack(saved)
@@ -286,12 +283,11 @@ export default function EditorPage(): React.ReactNode {
     patch(update)
     if (update.preprocess && JSON.stringify(update.preprocess) !== JSON.stringify(profile.preprocess)) {
       const hasSamples = cueId ? editorCue(pack, cueId, variantId).templates.length > 0 : readiness.sampleCount > 0
-      if (hasSamples) setMessage({ kind: 'warn', text: '预处理参数已改变, 原样本已保留. 请重新验证当前帧, 必要时重新取样, 不要直接继续自动写入.' })
+      if (hasSamples) setMessage({ kind: 'warn', text: '预处理参数已改变, 原样本已保留. 请重新验证当前帧, 必要时重新取样.' })
     }
   }
 
   const toggleField = (enabled: boolean): void => {
-    if (countdown.autoRunning) countdown.stopAuto()
     patch({ enabled })
     const label = cueId ? CUE_LABELS[cueId] : FIELD_LABELS[numericId]
     setMessage({ kind: 'info', text: enabled ? `${label}已启用` : `${label}已关闭, 区域, 参数和样本已保留, 不再参与识别` })
@@ -466,11 +462,10 @@ export default function EditorPage(): React.ReactNode {
       .finally(() => { stepping.current = false })
   }
 
-  /** A clock reading opts whole-second jumps into teaching the destination frame. */
+  /** Navigating footage never creates or extrapolates character labels. */
   const jump = (seconds: number): void => {
     const video = videoRef.current
     if (!video || stepping.current || countdown.isBusy() || validationReadOnly.current) return
-    if (countdown.jump(seconds)) return
     video.pause()
     const end = Number.isFinite(video.duration) ? video.duration : video.currentTime
     const target = Math.max(0, Math.min(end, video.currentTime + seconds))
@@ -926,8 +921,6 @@ export default function EditorPage(): React.ReactNode {
                   <button type="button" className="btn-quiet small editor-jump num" disabled={countdown.busy} onClick={() => jump(1)} title="前进 1 秒（Shift+→）">+1s</button>
                   <button type="button" className="btn-quiet small editor-jump num" disabled={countdown.busy} onClick={() => jump(10)} title="前进 10 秒（Ctrl+→）">+10s</button>
                 </span>
-                {fieldId === 'clock' && <AutoStepControl running={countdown.autoRunning} canStart={countdown.canAutoStart && !stepping.current}
-                  steps={countdown.autoSteps} onStart={countdown.startAuto} onStop={countdown.stopAuto} />}
                 <input type="range" className="editor-scrub" disabled={countdown.busy} min={0} max={Math.max(0.1, duration)} step={0.02}
                   value={Math.min(mediaTime, duration || mediaTime)} aria-label="样片进度"
                   style={{ '--fill': `${duration ? (mediaTime / duration) * 100 : 0}%` } as React.CSSProperties}

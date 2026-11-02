@@ -29,7 +29,6 @@ import {
   failOnPageError,
   fixturesReady,
   loadBothFixtures,
-  loadSource,
   mediaTimes,
   offsetReadout,
   openAlignOptions,
@@ -59,57 +58,19 @@ const CLOCK_CHARS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ':']
  */
 const START_SECONDS = 12
 
-test.describe('无预设自动同步', () => {
+test.describe('手动样式包要求', () => {
   test.skip(!fixturesReady(), '缺少测试源, 先运行 npm run fixtures')
-  test.setTimeout(180_000)
-
-  test('无预设时两路独立定位学习并在使用后对齐到 0.35 s 内', async ({ page }) => {
-    const backends: string[] = []
-    page.on('worker', worker => worker.on('console', message => {
-      const match = /\[识别 Worker\] 后端: (\S+)/.exec(message.text())
-      if (match) backends.push(match[1]!)
-    }))
+  test('无样式包时明确提示手动选择且不会学习或移动播放位置', async ({ page }) => {
     await openPlayer(page)
-    const before = await invoke(page, 'listPresets', undefined)
-    expect(before.ok).toBe(true)
-    if (!before.ok) throw new Error(before.message)
-    expect(before.value.presets).toEqual([])
+    await loadBothFixtures(page)
     const options = await openAlignOptions(page)
-    await expect(options.getByRole('combobox', { name: '倒计时样式' }).locator('option:checked')).toHaveText('自动识别')
-    await page.keyboard.press('Escape')
-    await loadSource(page, 'official', '/test-sources/auto-official.mp4')
-    await loadSource(page, 'commentary', '/test-sources/auto-commentary.mp4')
-    // Leave separate live windows for discovery and native ROI learning, then measurement.
-    await seekBoth(page, 0.25, 0.25)
-    await setPlaying(page, true)
-    await revealOverlay(page)
-    await expect(page.locator('.align-beta')).toHaveText('适配中')
-    const alignOptions = await openAlignOptions(page)
-    await expect(alignOptions.locator('.align-testing')).toContainText('适配中')
-    await expect(alignOptions.locator('.align-testing')).toContainText('HUD 布局, 字体和清晰度尚未全部适配')
-    await page.keyboard.press('Escape')
-    await page.getByRole('button', { name: '自动对齐', exact: true }).click()
-    // The limits are said over the picture; a found countdown is used without asking.
-    const adaptingNotice = page.locator('.toast').filter({ hasText: '自动对齐适配中:' })
-    await expect(adaptingNotice).toBeVisible()
-    await expect(adaptingNotice).toContainText('回放, 暂停或切镜头也可能影响识别')
-    await expect(adaptingNotice).toContainText('不准时可手动微调')
-    for (const role of ['official', 'commentary']) {
-      const card = page.locator(`.prompt[data-role="${role}"]`)
-      await expect(card).toHaveCount(0, { timeout: 60_000 })
-      await expect(card.getByRole('button', { name: '使用', exact: true })).toHaveCount(0)
-    }
-    await waitForPhase(page, '已完成')
-    const divergence = await readResult(page, '校验残差')
-    expect(divergence).not.toBeNull()
-    expect(Math.abs(divergence ?? Number.NaN)).toBeLessThanOrEqual(MAX_DIVERGENCE_SECONDS)
-    const times = await mediaTimes(page)
-    expect(Math.abs(times.lag + FIXTURE_DELAY_SECONDS)).toBeLessThanOrEqual(MAX_DIVERGENCE_SECONDS)
-    expect(backends.length, '实际识别 Worker 应报告后端').toBeGreaterThan(0)
-    expect(new Set(backends)).toEqual(new Set(['wasm']))
-    const after = await invoke(page, 'listPresets', undefined)
-    expect(after.ok && after.value.presets).toEqual([])
-    expect(await page.locator('video.media-element').evaluateAll(videos => videos.map(video => (video as HTMLVideoElement).playbackRate))).toEqual([1, 1])
+    await expect(options.getByRole('combobox', { name: '倒计时样式' }).locator('option:checked')).toHaveText('请选择手动样式包')
+    await options.getByRole('button', { name: '仅测量', exact: true }).click()
+    await expect(page.locator('.toast').filter({ hasText: '请先选择手动提供的样式包' })).toBeVisible()
+    await expect(page.locator('.prompt')).toHaveCount(0)
+    expect(await offsetReadout(page)).toMatchObject({ requested: 0, applied: 0 })
+    const presets = await invoke(page, 'listPresets', undefined)
+    expect(presets.ok && presets.value.presets).toEqual([])
   })
 })
 
@@ -286,18 +247,16 @@ test.describe('自动同步', () => {
       .toBeCloseTo(auto - 0.5, 1)
   })
 
-  test('未播放时无预设提示恢复播放且不应用偏移', async ({ page }) => {
+  test('暂停时保留手动样式包且不应用偏移', async ({ page }) => {
     await openPlayer(page)
+    const options = await openAlignOptions(page)
+    await options.getByRole('combobox', { name: '倒计时样式' }).selectOption(presetId)
+    await page.keyboard.press('Escape')
     await loadBothFixtures(page)
     await setPlaying(page, false)
-
-    // Discovery cannot learn from paused video. Explain this per source.
     await (await openAlignOptions(page)).getByRole('button', { name: '仅测量', exact: true }).click()
     await waitForPhase(page, '未完成')
-    await expect(page.locator('.prompt')).toHaveCount(2)
-    for (const role of ['official', 'commentary']) {
-      await expect(page.locator(`.prompt[data-role="${role}"]`)).toContainText('恢复两路播放')
-    }
+    await expect(page.locator('.prompt')).toHaveCount(0)
     expect(await offsetReadout(page)).toMatchObject({ requested: 0, applied: 0 })
   })
 })

@@ -108,14 +108,6 @@ impl ClockJumpDetector {
     }
 }
 
-/// Bounded, source-local discovery window. Pixels are grayscale, one byte per pixel.
-/// This API is available to workers without changing the P3 worker protocol or UI.
-#[wasm_bindgen]
-pub struct AutoClockSession {
-    frames: Vec<stream_syncer_core::TimedFrame>,
-    bytes: usize,
-}
-
 fn gray_image(
     pixels: &[u8],
     width: usize,
@@ -133,88 +125,6 @@ fn gray_image(
         width,
         height,
     })
-}
-
-/// Explicit P4a partial-profile path; the existing recognition engine stays unchanged.
-#[wasm_bindgen]
-pub fn recognize_auto(
-    pixels: &[u8],
-    width: usize,
-    height: usize,
-    profile_json: &str,
-) -> Result<String, JsValue> {
-    let image = gray_image(pixels, width, height)?;
-    let profile: stream_syncer_core::RecognitionProfile = serde_json::from_str(profile_json)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-    serde_json::to_string(&stream_syncer_core::recognize_auto_frame(&image, &profile))
-        .map_err(|e| JsValue::from_str(&e.to_string()))
-}
-
-#[wasm_bindgen]
-impl AutoClockSession {
-    #[wasm_bindgen(constructor)]
-    pub fn new() -> Self {
-        Self {
-            frames: Vec::new(),
-            bytes: 0,
-        }
-    }
-    pub fn reset(&mut self) {
-        self.frames.clear();
-        self.bytes = 0;
-    }
-    pub fn push(
-        &mut self,
-        pixels: &[u8],
-        width: usize,
-        height: usize,
-        time: f64,
-    ) -> Result<(), JsValue> {
-        if !time.is_finite() || self.frames.last().is_some_and(|f| time <= f.time) {
-            return Err(JsValue::from_str("时间戳必须有限且严格递增"));
-        }
-        if self.frames.len() >= 600 || self.bytes.saturating_add(pixels.len()) > 128 * 1024 * 1024 {
-            return Err(JsValue::from_str(
-                "自动学习窗口达到内存上限, 请重置或降低分辨率/采样率",
-            ));
-        }
-        if self
-            .frames
-            .first()
-            .is_some_and(|f| f.image.width != width || f.image.height != height)
-        {
-            return Err(JsValue::from_str("窗口内帧尺寸必须一致"));
-        }
-        let image = gray_image(pixels, width, height)?;
-        self.bytes += image.data.len();
-        self.frames
-            .push(stream_syncer_core::TimedFrame { time, image });
-        Ok(())
-    }
-    pub fn locate(&self) -> String {
-        serde_json::to_string(&stream_syncer_core::locate_clock(&self.frames)).unwrap()
-    }
-    pub fn learn(&self, roi_json: &str) -> Result<String, JsValue> {
-        let roi: stream_syncer_core::RoiRect =
-            serde_json::from_str(roi_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
-        if ![roi.x, roi.y, roi.w, roi.h].iter().all(|v| v.is_finite())
-            || roi.x < 0.0
-            || roi.y < 0.0
-            || roi.w <= 0.0
-            || roi.h <= 0.0
-            || roi.x + roi.w > 1.0
-            || roi.y + roi.h > 1.0
-        {
-            return Err(JsValue::from_str("ROI 必须位于画面内且宽高为正"));
-        }
-        serde_json::to_string(&stream_syncer_core::learn_clock(&self.frames, &roi))
-            .map_err(|e| JsValue::from_str(&e.to_string()))
-    }
-}
-impl Default for AutoClockSession {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 #[wasm_bindgen]

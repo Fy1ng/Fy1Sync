@@ -277,7 +277,7 @@ export class AutoSyncController {
       if (this.deps.hasProfile && !this.deps.hasProfile()) {
         return this.fail(startedAt, dryRun, {
           kind: 'not-ready',
-          message: '还没有选择识别场景，先在侧栏选一个再识别倒计时',
+          message: '请先选择手动提供的样式包, 再识别倒计时和自动对齐',
         })
       }
 

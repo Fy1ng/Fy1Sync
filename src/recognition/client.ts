@@ -9,7 +9,7 @@ import { isHudPack, captureRoi, type ActiveProfile } from '../core/activeProfile
  *  - generations: any change to the profile, ROI or source bumps a counter, and
  *    results from an older generation are discarded rather than applied to the new
  *    configuration.
- *  - style packs keep the full frame; session learning receives its native ROI crop.
+ *  - style packs keep the full frame for their configured HUD regions.
  */
 
 import type { RoiRect } from '../core/profileSchema'
@@ -17,15 +17,12 @@ import type { SourceRole } from '../core/types'
 import { FULL_FRAME_ROI, type GrabbedFrame } from './frameGrabber'
 import type {
   ConfiguredMessage,
-  AutoOperationFailure,
-  LearnResult,
-  LocateResult,
   ResultMessage,
   WorkerRequest,
   WorkerResponse,
 } from './protocol'
 
-export type { AutoOperationFailure, LearnReport, LearnResult, LocateResult, RoiCandidate, TickMoment } from './protocol'
+export type { TickMoment } from './protocol'
 
 export interface WorkerLike {
   postMessage(message: WorkerRequest, transfer?: Transferable[]): void
@@ -44,8 +41,6 @@ export interface RecognitionClientOptions {
   now?: () => number
   /** A frame held longer than this is assumed lost so sampling can resume. */
   stallTimeoutMs?: number
-  /** Discovery/learning may take longer than one recognition frame. */
-  autoTimeoutMs?: number
 }
 
 export interface ClientStats {
@@ -63,15 +58,6 @@ export class RecognitionClient {
   private inFlight: { frameIndex: number; at: number } | null = null
   private profile: ActiveProfile | null = null
   private disposed = false
-  private requestId = 0
-  private retainedWindowId: number | null = null
-  private latestLocateRequestId = 0
-  private readonly pending = new Map<number, {
-    type: 'locate' | 'learn'
-    retainForLearning?: boolean
-    resolve: (result: LocateResult | LearnResult) => void
-    timer: ReturnType<typeof setTimeout>
-  }>()
   private readonly stats: ClientStats = {
     submitted: 0,
     completed: 0,
@@ -101,20 +87,8 @@ export class RecognitionClient {
         break
       case 'error':
         this.inFlight = null
-        this.failWorkerOperations(message.message)
         this.options.onError?.(message.message)
         break
-      case 'located':
-      case 'learned': {
-        const pending = this.pending.get(message.requestId)
-        if (!pending || (pending.type === 'locate') !== (message.type === 'located')) return
-        if (message.type === 'located' && message.result.status === 'success' && pending.retainForLearning
-          && message.requestId === this.latestLocateRequestId) this.retainedWindowId = message.result.windowId ?? null
-        clearTimeout(pending.timer)
-        this.pending.delete(message.requestId)
-        pending.resolve(message.result)
-        break
-      }
     }
   }
 
@@ -122,7 +96,6 @@ export class RecognitionClient {
     this.inFlight = null
     const message =
       event instanceof ErrorEvent && event.message ? event.message : '识别 Worker 发生错误'
-    this.failWorkerOperations(message)
     this.options.onError?.(message)
   }
 
@@ -158,10 +131,8 @@ export class RecognitionClient {
   }
 
   /** Install a profile. Always starts a new generation. */
-  configure(profile: ActiveProfile, options: { automatic?: boolean } = {}): number {
+  configure(profile: ActiveProfile): number {
     if (this.disposed) return this.generationValue
-    this.finishPending({ status: 'cancelled', reason: 'reconfigured' })
-    this.retainedWindowId = null
     this.profile = profile
     this.generationValue += 1
     this.inFlight = null
@@ -171,7 +142,6 @@ export class RecognitionClient {
       type: 'configure',
       generation: this.generationValue,
       profile: isHudPack(profile) ? profile : { ...profile, roi: { ...FULL_FRAME_ROI } },
-      ...(options.automatic ? { automatic: true } : {}),
     })
     return this.generationValue
   }
@@ -216,31 +186,17 @@ export class RecognitionClient {
     return true
   }
 
-  /** Transfer a full-frame window; optionally retain its grayscale session for one learn. */
-  locate(frames: GrabbedFrame[], options: { retainForLearning?: boolean } = {}): Promise<LocateResult> {
-    return this.requestWindow('locate', frames, undefined, options) as Promise<LocateResult>
-  }
-
-  /** Pass [] with windowId to reuse a retained window. Never installs or persists the candidate. */
-  learn(frames: GrabbedFrame[], roi: RoiRect, options: { windowId?: number } = {}): Promise<LearnResult> {
-    return this.requestWindow('learn', frames, roi, options) as Promise<LearnResult>
-  }
-
   /** Invalidate in-flight and queued work without dropping the profile. */
   cancel(): number {
     if (this.disposed) return this.generationValue
     this.generationValue += 1
     this.inFlight = null
-    this.retainedWindowId = null
-    this.finishPending({ status: 'cancelled', reason: 'cancelled' })
     this.worker?.postMessage({ type: 'cancel', generation: this.generationValue })
     return this.generationValue
   }
 
   dispose(): void {
     this.disposed = true
-    this.retainedWindowId = null
-    this.finishPending({ status: 'cancelled', reason: 'disposed' })
     this.inFlight = null
     this.profile = null
     if (this.worker) {
@@ -258,64 +214,6 @@ export class RecognitionClient {
     worker.addEventListener('error', this.handleError)
     this.worker = worker
     return worker
-  }
-
-  private requestWindow(type: 'locate' | 'learn', frames: GrabbedFrame[], roi?: RoiRect,
-    options: { retainForLearning?: boolean; windowId?: number } = {}): Promise<LocateResult | LearnResult> {
-    if (this.disposed) return Promise.resolve({ status: 'cancelled', reason: 'disposed' })
-    return new Promise((resolve) => {
-      const requestId = ++this.requestId
-      if (type === 'locate' || options.windowId === undefined || options.windowId === this.retainedWindowId) this.retainedWindowId = null
-      if (type === 'locate') this.latestLocateRequestId = requestId
-      const timer = setTimeout(() => {
-        this.pending.delete(requestId)
-        this.invalidateAutomaticGeneration()
-        this.finishPending({ status: 'cancelled', reason: 'window-invalidated' })
-        resolve({ status: 'failed', reason: 'worker-timeout', detail: '自动识别 Worker 响应超时' })
-      }, this.options.autoTimeoutMs ?? 60_000)
-      this.pending.set(requestId, { type, resolve, timer, retainForLearning: options.retainForLearning })
-      try {
-        const window = frames.map((frame) => ({ ...frame, pixels: toTransferable(frame.pixels) }))
-        const transfer = [...new Set(window.map((frame) => frame.pixels))]
-        const common = { generation: this.generationValue, requestId, frames: window }
-        const worker = this.ensureWorker()
-        if (type === 'locate') worker.postMessage({ type: 'locate', ...common,
-          ...(options.retainForLearning ? { retainForLearning: true } : {}) }, transfer)
-        else worker.postMessage({ type: 'learn', ...common, roi: roi!,
-          ...(options.windowId !== undefined ? { windowId: options.windowId } : {}) }, transfer)
-      } catch (error) {
-        clearTimeout(timer)
-        this.pending.delete(requestId)
-        this.invalidateAutomaticGeneration()
-        this.finishPending({ status: 'cancelled', reason: 'window-invalidated' })
-        resolve({ status: 'failed', reason: 'worker-error', detail: error instanceof Error ? error.message : String(error) })
-      }
-    })
-  }
-
-  private finishPending(result: AutoOperationFailure): void {
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer)
-      pending.resolve(result)
-    }
-    this.pending.clear()
-  }
-
-  private failWorkerOperations(detail: string): void {
-    const hadAutomaticWork = this.pending.size > 0 || this.retainedWindowId !== null
-    this.finishPending({ status: 'failed', reason: 'worker-error', detail })
-    if (hadAutomaticWork) this.invalidateAutomaticGeneration()
-  }
-
-  private invalidateAutomaticGeneration(): void {
-    this.generationValue += 1
-    this.inFlight = null
-    this.retainedWindowId = null
-    try {
-      this.worker?.postMessage({ type: 'cancel', generation: this.generationValue })
-    } catch {
-      // A broken transport may reject cancel too. The new generation still rejects late replies.
-    }
   }
 }
 

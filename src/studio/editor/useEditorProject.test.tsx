@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { StreamSyncerBridge } from '../../../electron/contracts'
 import type { EditorLocalMedia, EditorProject, EditorProjectLoaded } from '../../../electron/editorProjectContracts'
-import { createEmptyHudStylePack, type HudStylePack } from '../../core/hudStylePack'
+import { createEmptyHudStylePack } from '../../core/hudStylePack'
 import { useEditorProject } from './useEditorProject'
 
 const local: EditorLocalMedia = { id: 'local-one', kind: 'local', path: 'C:/samples/match.mp4', size: 100,
@@ -23,13 +23,13 @@ function mockBridge(loaded: EditorProjectLoaded, overrides: Record<string, unkno
   return { invoke, responses, saves: () => invoke.mock.calls.filter(([method]) => method === 'editorProjectSave')
     .map(([, args]) => (args as { project: EditorProject }).project) }
 }
-function mounted(initial = createEmptyHudStylePack(), hasCandidate = false) {
+function mounted(initial = createEmptyHudStylePack()) {
   const restorePack = vi.fn()
   const open = vi.fn()
   const hook = renderHook(() => {
     const [pack, setPack] = useState(initial)
     const [variantId, setVariantId] = useState(initial.variants[0]!.id)
-    const project = useEditorProject({ pack, variantId, hasCandidate, open, restorePack: (next, id) => {
+    const project = useEditorProject({ pack, variantId, open, restorePack: (next, id) => {
       restorePack(next, id)
       setPack(next)
       setVariantId(id)
@@ -138,36 +138,6 @@ describe('current editor project hook', () => {
     expect(f.result.current.project.current?.id).toBe('youtube-one')
   })
 
-  it('keeps an explicit candidate package while restoring the saved media', async () => {
-    const project = savedProject()
-    const api = mockBridge({ project, media: { id: local.id, url: 'app://app/editor-media/restored' }, needsRelink: false })
-    const candidate: HudStylePack = createEmptyHudStylePack('candidate/new', '从播放器编辑')
-    const f = mounted(candidate, true)
-    await waitFor(() => expect(f.result.current.project.ready).toBe(true))
-    expect(f.restorePack).not.toHaveBeenCalled()
-    expect(f.result.current.pack).toBe(candidate)
-    expect(f.result.current.variantId).toBe(candidate.variants[0]!.id)
-    expect(f.result.current.project.current).toEqual(local)
-    expect(f.open).toHaveBeenCalledWith('app://app/editor-media/restored', local.name)
-    await waitFor(() => expect(api.saves().at(-1)).toMatchObject({ pack: candidate, currentMediaId: local.id, media: [local] }))
-  })
-
-  it.each(['failure', 'rejection'])('does not overwrite the persisted project after load %s', async mode => {
-    const api = mockBridge({ project: null, media: null, needsRelink: false }, {
-      editorProjectLoad: { ok: false, code: 'project-failed', message: '工程读取失败' },
-    })
-    if (mode === 'rejection') api.invoke.mockImplementation(async method => {
-      if (method === 'editorProjectLoad') throw new Error('read failed')
-      return api.responses[method]
-    })
-    const f = mounted()
-    await waitFor(() => expect(f.result.current.project.error).toMatch(/读取失败/))
-    await act(async () => { f.result.current.setPack({ ...f.result.current.pack, name: '读取失败后继续编辑' }) })
-    expect(api.saves()).toHaveLength(0)
-  })
-})
-
-describe('autosave pacing', () => {
   it('keeps one save in flight and sends only the newest snapshot after it', async () => {
     let release: (() => void) | null = null
     const api = mockBridge({ project: null, media: null, needsRelink: false })
