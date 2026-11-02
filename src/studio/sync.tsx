@@ -109,7 +109,7 @@ export function SyncCapsule(): React.ReactNode {
       >
         <span className="capsule-nudge-main" aria-hidden="true">
           <span className="capsule-nudge-label"><Icon name="back" /><span>回退画面</span></span>
-          <span className="capsule-nudge-step num">{`<${stepLabel}`}</span>
+          <span className="capsule-nudge-step"><Icon name="back" /><span className="capsule-nudge-value">{stepLabel}</span></span>
         </span>
         <small className="capsule-nudge-hint">按住Shift微调</small>
       </HoldButton>
@@ -140,7 +140,7 @@ export function SyncCapsule(): React.ReactNode {
       >
         <span className="capsule-nudge-main" aria-hidden="true">
           <span className="capsule-nudge-label"><span>快进画面</span><Icon name="forward" /></span>
-          <span className="capsule-nudge-step num">{`${stepLabel}>`}</span>
+          <span className="capsule-nudge-step"><span className="capsule-nudge-value">{stepLabel}</span><Icon name="forward" /></span>
         </span>
         <small className="capsule-nudge-hint">按住Shift微调</small>
       </HoldButton>

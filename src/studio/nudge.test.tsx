@@ -39,6 +39,10 @@ describe('manual alignment nudge controls', () => {
     expect(back).toHaveClass('capsule-nudge')
     expect(back.querySelector('.capsule-nudge-label')).toHaveTextContent('回退画面')
     expect(forward.querySelector('.capsule-nudge-label')).toHaveTextContent('快进画面')
+    for (const button of [back, forward]) {
+      expect(button.querySelector('.capsule-nudge-step .icon path')?.getAttribute('d'))
+        .toBe(button.querySelector('.capsule-nudge-label .icon path')?.getAttribute('d'))
+    }
     expect(back.querySelector('.capsule-nudge-hint')).toHaveTextContent('按住Shift微调')
     expect(forward.querySelector('.capsule-nudge-hint')).toHaveTextContent('按住Shift微调')
     fireEvent.click(back)
@@ -52,18 +56,18 @@ describe('manual alignment nudge controls', () => {
   it('updates both displayed step values immediately when Shift changes while hovered', async () => {
     const { back, forward } = await mount()
     fireEvent.pointerEnter(forward)
-    expect(back.querySelector('.capsule-nudge-step')).toHaveTextContent('<5s')
-    expect(forward.querySelector('.capsule-nudge-step')).toHaveTextContent('5s>')
+    expect(back.querySelector('.capsule-nudge-step')).toHaveTextContent('5s')
+    expect(forward.querySelector('.capsule-nudge-step')).toHaveTextContent('5s')
     fireEvent.keyDown(window, { key: 'Shift', code: 'ShiftLeft', shiftKey: true })
-    expect(back.querySelector('.capsule-nudge-step')).toHaveTextContent('<0.5s')
-    expect(forward.querySelector('.capsule-nudge-step')).toHaveTextContent('0.5s>')
+    expect(back.querySelector('.capsule-nudge-step')).toHaveTextContent('0.5s')
+    expect(forward.querySelector('.capsule-nudge-step')).toHaveTextContent('0.5s')
     expect(forward.title).toContain('0.5s')
     fireEvent.keyUp(window, { key: 'Shift', code: 'ShiftLeft', shiftKey: false })
-    expect(forward.querySelector('.capsule-nudge-step')).toHaveTextContent('5s>')
+    expect(forward.querySelector('.capsule-nudge-step')).toHaveTextContent('5s')
     fireEvent.pointerEnter(back, { shiftKey: true })
-    expect(back.querySelector('.capsule-nudge-step')).toHaveTextContent('<0.5s')
+    expect(back.querySelector('.capsule-nudge-step')).toHaveTextContent('0.5s')
     fireEvent.blur(window)
-    expect(back.querySelector('.capsule-nudge-step')).toHaveTextContent('<5s')
+    expect(back.querySelector('.capsule-nudge-step')).toHaveTextContent('5s')
   })
 
   it('changes repeat steps immediately on Shift down and up, even after a long hold', async () => {
