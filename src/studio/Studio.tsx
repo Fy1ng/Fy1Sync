@@ -34,7 +34,7 @@ import { SettingsSheet, type SettingsSection, type SettingsTarget } from './Sett
 import { SourceChip } from './SourceChip'
 import { SourceLoaderProvider, ROLE_LABEL, useSourceLoader } from './sources'
 import { ADD_STREAM_POPOVER, ExtraStreams } from './streams/ExtraStreams'
-import { AutoAlign, PlaybackRecoveryPrompt, startAutoAlign, SyncCapsule, useNudge } from './sync'
+import { AutoAlign, nudgeStepFor, PlaybackRecoveryPrompt, startAutoAlign, SyncCapsule, useNudge } from './sync'
 import { useComposer } from './composer'
 import { Toasts } from './Toasts'
 import { QualityMenu } from './QualityMenu'
@@ -146,7 +146,7 @@ function StudioView(): React.ReactNode {
       if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return
       const target = event.target
       if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return
-      const step = event.shiftKey ? snapshot.settings.largeStepSeconds : snapshot.settings.smallStepSeconds
+      const step = nudgeStepFor(event.shiftKey, snapshot.settings.smallStepSeconds, snapshot.settings.largeStepSeconds)
       // ←/→ move the main picture only, like its time line and 回到直播; the alignment readout
       // follows what the move did. The alignment itself is nudged with , and .
       const seek = (seconds: number): void => {
@@ -158,8 +158,10 @@ function StudioView(): React.ReactNode {
         case 'ArrowLeft': event.preventDefault(); seek(event.shiftKey ? -SEEK_LARGE : -SEEK_SMALL); break
         case 'ArrowRight': event.preventDefault(); seek(event.shiftKey ? SEEK_LARGE : SEEK_SMALL); break
         // , and . sit under < and >: picture back, picture forward, like the two buttons.
-        case 'Comma': event.preventDefault(); nudge('late', step); break
-        case 'Period': event.preventDefault(); nudge('early', step); break
+        case 'Comma':
+        case 'BracketLeft': event.preventDefault(); nudge('late', step); break
+        case 'Period':
+        case 'BracketRight': event.preventDefault(); nudge('early', step); break
         case 'KeyA': startAutoAlign(session); break
         case 'KeyD': session.updateDanmakuSettings({ enabled: !session.settings.danmaku.enabled }); break
         case 'KeyC': setChat(!session.settings.sidebarVisible); break

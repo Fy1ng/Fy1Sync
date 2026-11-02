@@ -60,6 +60,39 @@ const START_SECONDS = 12
 
 test.describe('手动样式包要求', () => {
   test.skip(!fixturesReady(), '缺少测试源, 先运行 npm run fixtures')
+  test('手动按钮默认大步进, 悬浮显示步长且 Shift 即时切换微调', async ({ page }) => {
+    await openPlayer(page)
+    await loadBothFixtures(page)
+    await seekBoth(page, START_SECONDS, START_SECONDS)
+    await setPlaying(page, false)
+    await revealOverlay(page)
+    const controls = page.getByRole('group', { name: '对齐', exact: true })
+    const back = controls.getByRole('button', { name: '回退画面', exact: true })
+    const forward = controls.getByRole('button', { name: '快进画面', exact: true })
+    await expect(controls.getByText('按住Shift微调', { exact: true })).toHaveCount(2)
+    await back.hover()
+    await expect(back.locator('.capsule-nudge-step')).toBeVisible()
+    await expect(back.locator('.capsule-nudge-step')).toHaveText('<5s')
+    await page.keyboard.down('Shift')
+    await expect(back.locator('.capsule-nudge-step')).toHaveText('<0.5s')
+    await back.click()
+    await expect.poll(async () => (await offsetReadout(page)).requested).toBeCloseTo(0.5, 2)
+    await page.keyboard.up('Shift')
+    await expect(back.locator('.capsule-nudge-step')).toHaveText('<5s')
+    await back.click()
+    await expect.poll(async () => (await offsetReadout(page)).requested).toBeCloseTo(5.5, 2)
+    await forward.hover()
+    await expect(forward.locator('.capsule-nudge-step')).toHaveText('5s>')
+    await forward.click()
+    await expect.poll(async () => (await offsetReadout(page)).requested).toBeCloseTo(0.5, 2)
+    await page.keyboard.down('Shift')
+    await expect(forward.locator('.capsule-nudge-step')).toHaveText('0.5s>')
+    await forward.click()
+    await page.keyboard.up('Shift')
+    await expect.poll(async () => (await offsetReadout(page)).requested).toBeCloseTo(0, 2)
+    await expect(controls).not.toContainText('缓冲不足')
+  })
+
   test('无样式包时明确提示手动选择且不会学习或移动播放位置', async ({ page }) => {
     await openPlayer(page)
     await loadBothFixtures(page)
@@ -244,7 +277,7 @@ test.describe('自动同步', () => {
     await expect(await openAlignOptions(page)).toContainText('自动对齐已暂停')
     await expect
       .poll(async () => (await offsetReadout(page)).requested, { timeout: 15_000 })
-      .toBeCloseTo(auto - 0.5, 1)
+      .toBeCloseTo(auto - 5, 1)
   })
 
   test('暂停时保留手动样式包且不应用偏移', async ({ page }) => {

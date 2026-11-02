@@ -1141,8 +1141,10 @@ body,
 
 .studio .capsule-nudge {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  gap: 3px;
   padding: 0 12px;
   font-size: 13px;
   font-weight: 500;
@@ -1151,6 +1153,43 @@ body,
   touch-action: manipulation;
   border-radius: 0;
   transition: background 120ms var(--ease);
+}
+
+.studio .capsule-nudge-main {
+  display: grid;
+  place-items: center;
+}
+
+.studio .capsule-nudge-label,
+.studio .capsule-nudge-step {
+  grid-area: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.studio .capsule-nudge-step {
+  visibility: hidden;
+}
+
+.studio .capsule-nudge:hover .capsule-nudge-label,
+.studio .capsule-nudge:focus-visible .capsule-nudge-label {
+  visibility: hidden;
+}
+
+.studio .capsule-nudge:hover .capsule-nudge-step,
+.studio .capsule-nudge:focus-visible .capsule-nudge-step {
+  visibility: visible;
+}
+
+.studio .capsule-nudge-hint {
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--ash);
+  white-space: nowrap;
 }
 
 .studio .capsule-nudge:first-of-type {

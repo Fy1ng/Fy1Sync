@@ -5,7 +5,8 @@
  * Direction follows the sync design: a positive offset rewinds the official source, a
  * negative one rewinds the commentary. The buttons are named for what the user sees move:
  * ◀ sends the official picture back (offset grows), ▶ sends the commentary back (offset
- * shrinks). Nothing ever plays forward; live media can only go back.
+ * shrinks). Removing a previous delay can seek that source forward again; crossing zero
+ * then delays the other source. Every move stays inside the reachable media window.
  */
 
 import { MAX_OFFSET_SECONDS } from '../../core/types'
@@ -100,8 +101,8 @@ export function normalizeSteps(small: unknown, large: unknown, fallback: { small
 
 /**
  * Keyboard shortcuts, active while focus is not in a text field:
- *   [ / ]           small step  (◀ official back / commentary back ▶)
- *   Shift+[ / ]     large step
+ *   [ / ]           large step  (official back / commentary back)
+ *   Shift+[ / ]     small step
  *   \               back to zero
  * Brackets because they sit together, carry no browser or media meaning, and point the
  * same way as the buttons.
@@ -110,7 +111,7 @@ export type ShortcutAction = { kind: 'nudge'; direction: NudgeDirection; size: '
 
 export function shortcutFor(event: Pick<KeyboardEvent, 'code' | 'shiftKey' | 'ctrlKey' | 'altKey' | 'metaKey'>): ShortcutAction | null {
   if (event.ctrlKey || event.altKey || event.metaKey) return null
-  const size = event.shiftKey ? 'large' : 'small'
+  const size = event.shiftKey ? 'small' : 'large'
   if (event.code === 'BracketLeft') return { kind: 'nudge', direction: 'official', size }
   if (event.code === 'BracketRight') return { kind: 'nudge', direction: 'commentary', size }
   if (event.code === 'Backslash' && !event.shiftKey) return { kind: 'reset' }

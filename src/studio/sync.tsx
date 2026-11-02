@@ -13,7 +13,7 @@
  * progress and stops when it lands, which is the one piece of motion in the chrome.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { routeLink } from '../app/navigate'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { Session } from '../app/session'
@@ -23,8 +23,27 @@ import { HoldButton, Icon, Popover, Segmented, Switch, usePopover } from './kit'
 const clampOffset = (value: number): number =>
   Math.round(Math.min(MAX_OFFSET_SECONDS, Math.max(-MAX_OFFSET_SECONDS, value)) * 100) / 100
 
-/** Held presses switch from the small step to the large one after about a second. */
-const stepFor = (held: number, small: number, large: number): number => (held >= 8 ? large : small)
+export const nudgeStepFor = (shift: boolean, small: number, large: number): number => shift ? small : large
+
+function useNudgeModifier() {
+  const [shift, setShift] = useState(false)
+  const current = useRef(false)
+  const update = useCallback((next: boolean) => { current.current = next; setShift(next) }, [])
+  useEffect(() => {
+    const change = (event: KeyboardEvent): void => update(event.shiftKey
+      || (event.type === 'keydown' && (event.key === 'Shift' || event.code.startsWith('Shift'))))
+    const reset = (): void => update(false)
+    window.addEventListener('keydown', change)
+    window.addEventListener('keyup', change)
+    window.addEventListener('blur', reset)
+    return () => {
+      window.removeEventListener('keydown', change)
+      window.removeEventListener('keyup', change)
+      window.removeEventListener('blur', reset)
+    }
+  }, [update])
+  return { shift, current, update }
+}
 
 type StripState = 'idle' | 'working' | 'locked' | 'short' | 'failed'
 
@@ -52,16 +71,25 @@ export function SyncCapsule(): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const nudge = useNudge()
+  const modifier = useNudgeModifier()
   const editor = usePopover()
   const { settings, autoSync } = snapshot
   const requested = snapshot.requestedOffsetSeconds
   const shortfall = requested - snapshot.offsetSeconds
+  const incomplete = Math.abs(shortfall) > 0.05
+  const bufferLimited = incomplete && snapshot.lastPlan?.limited === true && snapshot.lastPlan.limitReason === 'buffer-limit'
   const running = autoSync.phase !== 'idle' && autoSync.phase !== 'done' && autoSync.phase !== 'failed'
   const paired = snapshot.media.official.status !== 'empty' && snapshot.media.commentary.status !== 'empty'
+  const step = nudgeStepFor(modifier.shift, settings.smallStepSeconds, settings.largeStepSeconds)
+  const stepLabel = `${Number(step.toFixed(2))}s`
+  const move = (direction: 'early' | 'late', keys?: { shiftKey: boolean }): void => {
+    if (keys) modifier.update(keys.shiftKey)
+    nudge(direction, nudgeStepFor(modifier.current.current, settings.smallStepSeconds, settings.largeStepSeconds))
+  }
 
   const state: StripState = running || session.offsetBusy ? 'working'
-    : Math.abs(shortfall) > 0.05 ? 'short'
-      : autoSync.phase === 'failed' ? 'failed'
+    : bufferLimited ? 'short'
+      : incomplete || autoSync.phase === 'failed' ? 'failed'
         : autoSync.phase === 'done' && autoSync.authorized ? 'locked'
           : 'idle'
 
@@ -74,12 +102,16 @@ export function SyncCapsule(): React.ReactNode {
       <HoldButton
         className="capsule-nudge"
         label="回退画面"
-        title={`画面相对解说回退 ${settings.smallStepSeconds} 秒（, 键，长按连续调整）`}
+        title={`画面相对解说回退 ${step}s (, 或 [ 键, 按住Shift微调, 长按连续调整)`}
         disabled={!paired || requested >= MAX_OFFSET_SECONDS}
-        onStep={(held) => nudge('late', stepFor(held, settings.smallStepSeconds, settings.largeStepSeconds))}
+        onPointerEnter={event => modifier.update(event.shiftKey)}
+        onStep={(_held, keys) => move('late', keys)}
       >
-        <Icon name="back" />
-        <span>回退画面</span>
+        <span className="capsule-nudge-main" aria-hidden="true">
+          <span className="capsule-nudge-label"><Icon name="back" /><span>回退画面</span></span>
+          <span className="capsule-nudge-step num">{`<${stepLabel}`}</span>
+        </span>
+        <small className="capsule-nudge-hint">按住Shift微调</small>
       </HoldButton>
 
       <div className="capsule-readout-wrap">
@@ -87,7 +119,10 @@ export function SyncCapsule(): React.ReactNode {
           aria-label={`${caption} ${magnitude.toFixed(1)} 秒，点击输入`}>
           <span className="capsule-value">{magnitude.toFixed(1)}</span>
           <span className="capsule-caption">
-            {state === 'short' ? `缓冲不足，相差 ${Math.abs(shortfall).toFixed(1)}s` : state === 'locked' ? '已对齐' : caption}
+            {state === 'short' ? `缓冲不足, 相差 ${Math.abs(shortfall).toFixed(1)}s`
+              : state === 'failed' && incomplete ? snapshot.lastPlan?.limitReason === 'not-ready'
+                ? '片源尚未就绪' : `调整误差 ${Math.abs(shortfall).toFixed(1)}s`
+                : state === 'locked' ? '已对齐' : caption}
           </span>
         </button>
         <Popover {...editor.popover} className="offset-editor" label="输入延后时间">
@@ -98,12 +133,16 @@ export function SyncCapsule(): React.ReactNode {
       <HoldButton
         className="capsule-nudge"
         label="快进画面"
-        title={`画面相对解说快进 ${settings.smallStepSeconds} 秒（. 键，长按连续调整）`}
+        title={`画面相对解说快进 ${step}s (. 或 ] 键, 按住Shift微调, 长按连续调整)`}
         disabled={!paired || requested <= -MAX_OFFSET_SECONDS}
-        onStep={(held) => nudge('early', stepFor(held, settings.smallStepSeconds, settings.largeStepSeconds))}
+        onPointerEnter={event => modifier.update(event.shiftKey)}
+        onStep={(_held, keys) => move('early', keys)}
       >
-        <span>快进画面</span>
-        <Icon name="forward" />
+        <span className="capsule-nudge-main" aria-hidden="true">
+          <span className="capsule-nudge-label"><span>快进画面</span><Icon name="forward" /></span>
+          <span className="capsule-nudge-step num">{`${stepLabel}>`}</span>
+        </span>
+        <small className="capsule-nudge-hint">按住Shift微调</small>
       </HoldButton>
     </div>
   )

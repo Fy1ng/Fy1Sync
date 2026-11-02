@@ -142,17 +142,19 @@ export function Range({ label, value, min, max, step, unit = '', format, onChang
 }
 
 /**
- * A button that repeats while held, and speeds up the longer it is held: taps make small
- * corrections, a held press crosses tens of seconds without a separate "big step" control.
+ * A button that repeats while held, using the latest action when modifiers change.
  */
-export function HoldButton({ onStep, className, children, label, disabled = false, title }: {
-  onStep: (held: number) => void
+export function HoldButton({ onStep, className, children, label, disabled = false, title, onPointerEnter }: {
+  onStep: (held: number, modifiers?: { shiftKey: boolean }) => void
   className?: string
   children: React.ReactNode
   label: string
   disabled?: boolean
   title?: string
+  onPointerEnter?: React.PointerEventHandler<HTMLButtonElement>
 }): React.ReactNode {
+  const latestStep = useRef(onStep)
+  latestStep.current = onStep
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const count = useRef(0)
   const fromPointer = useRef(false)
@@ -162,10 +164,16 @@ export function HoldButton({ onStep, className, children, label, disabled = fals
     count.current = 0
   }, [])
   useEffect(() => stop, [stop])
+  useEffect(() => { if (disabled) stop() }, [disabled, stop])
+  useEffect(() => {
+    const cancel = (): void => { stop(); fromPointer.current = false }
+    window.addEventListener('blur', cancel)
+    return () => window.removeEventListener('blur', cancel)
+  }, [stop])
   const repeat = (): void => {
     timer.current = setTimeout(() => {
       count.current += 1
-      onStep(count.current)
+      latestStep.current(count.current)
       repeat()
     }, count.current === 0 ? 420 : Math.max(60, 160 - count.current * 6))
   }
@@ -176,20 +184,21 @@ export function HoldButton({ onStep, className, children, label, disabled = fals
       aria-label={label}
       title={title ?? label}
       disabled={disabled}
+      onPointerEnter={onPointerEnter}
       onPointerDown={(event) => {
         if (event.button !== 0) return
         event.currentTarget.setPointerCapture?.(event.pointerId)
         fromPointer.current = true
-        onStep(0)
+        latestStep.current(0, { shiftKey: event.shiftKey })
         repeat()
       }}
       onPointerUp={stop}
-      onPointerCancel={stop}
+      onPointerCancel={() => { stop(); fromPointer.current = false }}
       onLostPointerCapture={stop}
-      onClick={() => {
+      onClick={(event) => {
         // Pointer presses already stepped on pointerdown; this is keyboard activation.
         if (fromPointer.current) { fromPointer.current = false; return }
-        onStep(0)
+        latestStep.current(0, { shiftKey: event.shiftKey })
       }}
     >
       {children}

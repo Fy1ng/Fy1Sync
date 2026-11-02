@@ -212,7 +212,22 @@ describe('the studio', () => {
     // , is 回退画面: the picture is held back, a positive offset.
     fireEvent.keyDown(window, { code: 'Comma' })
     await waitFor(() => expect(apply).toHaveBeenCalled())
-    expect(apply.mock.calls.at(-1)![0]).toBeGreaterThan(0)
+    expect(apply.mock.calls.at(-1)![0]).toBe(session.settings.largeStepSeconds)
+    await flush()
+    const last = Number(apply.mock.calls.at(-1)![0])
+    fireEvent.keyDown(window, { code: 'Period', shiftKey: true })
+    await waitFor(() => expect(apply).toHaveBeenCalledTimes(2))
+    expect(Number(apply.mock.calls.at(-1)![0]) - last).toBe(-session.settings.smallStepSeconds)
+    await flush()
+    const next = Number(apply.mock.calls.at(-1)![0])
+    fireEvent.keyDown(window, { code: 'BracketLeft', shiftKey: true })
+    await waitFor(() => expect(apply).toHaveBeenCalledTimes(3))
+    expect(Number(apply.mock.calls.at(-1)![0]) - next).toBe(session.settings.smallStepSeconds)
+    await flush()
+    const previous = Number(apply.mock.calls.at(-1)![0])
+    fireEvent.keyDown(window, { code: 'BracketRight' })
+    await waitFor(() => expect(apply).toHaveBeenCalledTimes(4))
+    expect(Number(apply.mock.calls.at(-1)![0]) - previous).toBe(-session.settings.largeStepSeconds)
   })
 
   it('sends a dragged time line through the session, for the main picture only', async () => {

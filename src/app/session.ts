@@ -18,6 +18,7 @@ import { DanmakuTimeline, LiveEdgeClock, scheduleTimeFor, type DanmakuMessage } 
 import type { MediaDescriptor } from '../core/types'
 import { NO_REWIND, SOURCE_ROLES, type AppliedRewind, type SourceRole } from '../core/types'
 import {
+  clampOffset,
   offsetFromRewind,
   planOffsetChange,
   type OffsetPlan,
@@ -792,6 +793,7 @@ export class Session {
   get offsetBusy(): boolean { return this.offsetDrain !== null }
 
   applyOffset(nextOffset: number, options: { fromAuto?: boolean } = {}): Promise<OffsetPlan> {
+    nextOffset = clampOffset(nextOffset)
     if (!options.fromAuto) {
       this.playbackRecovery = null
       this.resetPlaybackObservation()
@@ -884,14 +886,13 @@ export class Session {
       return this.currentOffsetPlan(offsetFromRewind(this.applied))
     }
     if (!active()) return cancelled()
-    const plan = planOffsetChange({
-      nextOffset,
-      applied: this.applied,
-      snapshots: {
-        official: this.engine.snapshot('official') ?? undefined,
-        commentary: this.engine.snapshot('commentary') ?? undefined,
-      },
-    })
+    const plan = this.currentOffsetPlan(nextOffset)
+    // Each source is replanned after the preceding native seek. Publish the moves
+    // actually attempted, not limits from a live window that may have changed meanwhile.
+    plan.seeks = []
+    plan.missingRoles = []
+    plan.limited = false
+    delete plan.limitReason
     this.planValue = plan
 
     for (const role of SOURCE_ROLES) {
@@ -900,9 +901,18 @@ export class Session {
       const seek = currentPlan.seeks.find(entry => entry.role === role)
       if (!seek) {
         this.applied = { ...this.applied, [role]: currentPlan.rewindAfter[role] }
+        if (currentPlan.missingRoles.includes(role)) {
+          plan.missingRoles.push(role)
+          plan.limited = true
+          plan.limitReason = 'not-ready'
+        }
         continue
       }
-      if (currentPlan.limited) { plan.limited = true; plan.limitReason = currentPlan.limitReason }
+      plan.seeks.push(seek)
+      if (seek.clamped) {
+        plan.limited = true
+        if (plan.limitReason !== 'not-ready') plan.limitReason = 'buffer-limit'
+      }
       const capture = this.captureSeekMovement(role)
       const ok = await this.engine.seek(seek.role, seek.to)
       capture()

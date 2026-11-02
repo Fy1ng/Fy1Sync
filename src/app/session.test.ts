@@ -187,6 +187,16 @@ describe('Session snapshot', () => {
 })
 
 describe('Session offset bookkeeping', () => {
+  it('keeps the requested value within the same manual range as the applied plan', async () => {
+    const { session, engine } = await harness()
+    const plan = await session.applyOffset(65)
+    expect(plan).toMatchObject({ requestedOffset: 60, effectiveOffset: 60, limited: false })
+    expect(timeOf(engine, 'official')).toBe(40)
+    expect(session.flush()).toMatchObject({ requestedOffsetSeconds: 60, offsetSeconds: 60 })
+    await session.nudgeOffset(5)
+    expect(session.flush()).toMatchObject({ requestedOffsetSeconds: 60, offsetSeconds: 60 })
+  })
+
   it('rewinds the official source for a positive offset', async () => {
     const { session, engine } = await harness()
     await session.applyOffset(4)

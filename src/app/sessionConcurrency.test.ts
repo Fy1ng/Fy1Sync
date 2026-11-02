@@ -37,6 +37,61 @@ function holdSeeks(element: HTMLVideoElement) {
 }
 
 describe('serialized manual offsets', () => {
+  it('does not report a stale buffer limit when the live window grows before the second seek', async () => {
+    const session = await harness()
+    const official = session.engine.element('official'), commentary = session.engine.element('commentary')
+    for (const video of [official, commentary]) primeMediaElement(video, { duration: Infinity, currentTime: 100, seekableStart: 0, seekableEnd: 110 })
+    await session.seekPlayback('official', -5)
+    await session.seekPlayback('commentary', -5)
+    primeMediaElement(commentary, { duration: Infinity, currentTime: 95, seekableStart: 0, seekableEnd: 98 })
+    const clock = holdSeeks(official)
+    const pending = session.applyOffset(2)
+    await tick()
+    expect(clock.targets).toEqual([98])
+    primeMediaElement(commentary, { duration: Infinity, currentTime: 95, seekableStart: 0, seekableEnd: 102 })
+    clock.finish()
+    const plan = await pending
+    expect(official.currentTime).toBe(98)
+    expect(commentary.currentTime).toBe(100)
+    expect(plan.effectiveOffset).toBe(2)
+    expect(plan.limited).toBe(false)
+    expect(plan.limitReason).toBeUndefined()
+    expect(plan.seeks.find(seek => seek.role === 'commentary')).toMatchObject({ from: 95, to: 100, requested: 100, clamped: false, shortfall: 0 })
+    expect(session.flush().notices.some(notice => notice.text.includes('缓存长度不足'))).toBe(false)
+  })
+
+  it('records the actual later clamp when the live window becomes shorter during the first seek', async () => {
+    const session = await harness()
+    const official = session.engine.element('official'), commentary = session.engine.element('commentary')
+    for (const video of [official, commentary]) primeMediaElement(video, { duration: Infinity, currentTime: 100, seekableStart: 0, seekableEnd: 102 })
+    await session.seekPlayback('official', -5)
+    await session.seekPlayback('commentary', -5)
+    const clock = holdSeeks(official)
+    const pending = session.applyOffset(2)
+    await tick()
+    primeMediaElement(commentary, { duration: Infinity, currentTime: 95, seekableStart: 0, seekableEnd: 98 })
+    clock.finish()
+    const plan = await pending
+    expect(commentary.currentTime).toBe(98)
+    expect(plan).toMatchObject({ effectiveOffset: 0, limited: true, limitReason: 'buffer-limit' })
+    expect(plan.seeks.find(seek => seek.role === 'commentary')).toMatchObject({ from: 95, to: 98, requested: 100, clamped: true, shortfall: 2 })
+    expect(session.flush().notices.some(notice => notice.text.includes('缓存长度不足'))).toBe(true)
+  })
+
+  it('retains the observed peer advance as seek residual without calling it a buffer limit', async () => {
+    const session = await harness()
+    const official = session.engine.element('official'), commentary = session.engine.element('commentary')
+    const clock = holdSeeks(official)
+    const pending = session.applyOffset(5)
+    await tick()
+    primeMediaElement(commentary, { currentTime: 100.3, duration: 600 })
+    clock.finish()
+    const plan = await pending
+    expect(plan).toMatchObject({ requestedOffset: 5, effectiveOffset: 5.3, limited: false })
+    expect(session.flush()).toMatchObject({ requestedOffsetSeconds: 5, offsetSeconds: 5.3, appliedRewind: { official: 5.3, commentary: 0 } })
+    expect(session.flush().notices.some(notice => notice.text.includes('缓存长度不足'))).toBe(false)
+  })
+
   it('finishes one seek and coalesces the remaining inputs to the latest target', async () => {
     const session = await harness()
     const official = session.engine.element('official')
