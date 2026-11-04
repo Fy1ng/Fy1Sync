@@ -1,11 +1,19 @@
-import { request } from 'node:http'
+import { createServer, request, type RequestListener, type Server } from 'node:http'
+import { connect } from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveConfig } from '../server/config'
 import type { NetworkContext } from '../server/networkPolicy'
 import { MediaGateway } from './mediaGateway'
 
 const active: MediaGateway[] = []
-afterEach(async () => { await Promise.all(active.splice(0).map(gateway => gateway.dispose())) })
+const upstreams: Server[] = []
+afterEach(async () => {
+  await Promise.all(active.splice(0).map(gateway => gateway.dispose()))
+  await Promise.all(upstreams.splice(0).map(server => new Promise<void>(resolve => {
+    server.close(() => resolve())
+    server.closeAllConnections()
+  })))
+})
 const config = { ...resolveConfig({}).proxy, hosts: ['fixture.invalid', 'cdn.fixture.invalid'], requestTimeoutMs: 5_000 }
 const target = 'https://fixture.invalid/live/index.m3u8?signature=PRIVATE'
 const context = (): NetworkContext => ({ route: vi.fn(async () => ({ kind: 'direct' as const })) })
@@ -26,6 +34,31 @@ function local(url: string, options: { method?: string; headers?: Record<string,
     })
     req.on('error', reject)
     req.end()
+  })
+}
+
+async function actualUpstream(handler: RequestListener) {
+  const server = createServer(handler)
+  upstreams.push(server)
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('Missing fixture address')
+  return `http://127.0.0.1:${address.port}`
+}
+
+function rawRequest(url: string, lines: string[]): Promise<number> {
+  const target = new URL(url)
+  return new Promise((resolve, reject) => {
+    const socket = connect(Number(target.port), target.hostname)
+    let response = ''
+    socket.setTimeout(2_000, () => socket.destroy(new Error('Raw fixture request timed out')))
+    socket.once('connect', () => socket.end(`GET ${target.pathname} HTTP/1.1\r\n${lines.join('\r\n')}\r\nConnection: close\r\n\r\n`))
+    socket.on('data', bytes => { response += bytes.toString() })
+    socket.once('end', () => {
+      const status = /^HTTP\/1\.1 (\d{3})/.exec(response)?.[1]
+      if (status) resolve(Number(status)); else reject(new Error('Missing raw fixture status'))
+    })
+    socket.once('error', reject)
   })
 }
 
@@ -65,6 +98,63 @@ describe('FFmpeg controlled media gateway', () => {
       { method: 'POST' },
     ]) expect((await local(input.url, options)).status).toBeGreaterThanOrEqual(400)
     expect(upstream).not.toHaveBeenCalled()
+  })
+
+  it('rejects duplicate raw Host headers and well-formed unknown capabilities before fetching', async () => {
+    const upstream = vi.fn(async () => new Response('unused')) as unknown as typeof fetch
+    const input = await gateway(upstream).register(target, undefined, context())
+    const host = new URL(input.url).host
+    expect(await rawRequest(input.url, [`Host: ${host}`, `Host: ${host}`])).toBeGreaterThanOrEqual(400)
+    expect(await rawRequest(input.url, [`Host: ${host}`, 'hOsT: evil.invalid'])).toBeGreaterThanOrEqual(400)
+    expect((await local(input.url, { path: '/media/00000000-0000-4000-8000-000000000000' })).status).toBe(404)
+    expect(upstream).not.toHaveBeenCalled()
+  })
+
+  it('refuses explicit foreign or opaque browser origins and cross-site metadata even with a valid capability', async () => {
+    const upstream = vi.fn(async () => new Response('unused')) as unknown as typeof fetch
+    const input = await gateway(upstream).register(target, undefined, context())
+    const attempts: Record<string, string>[] = [
+      { origin: 'https://evil.invalid' },
+      { origin: 'null' },
+      { origin: 'app://app.evil.invalid' },
+      { origin: 'http://localhost:' + new URL(input.url).port },
+      { 'sec-fetch-site': 'cross-site' },
+      { 'sec-fetch-site': 'same-site' },
+      { origin: 'app://app', 'sec-fetch-site': 'cross-site' },
+      { referer: 'https://evil.invalid/player' },
+      { referer: 'null' },
+    ]
+    for (const headers of attempts) {
+      const response = await local(input.url, { headers })
+      expect(response.status).toBe(403)
+      expect(response.headers['access-control-allow-origin']).toBeUndefined()
+    }
+    expect(upstream).not.toHaveBeenCalled()
+  })
+
+  it('serves actual HTTP bytes for internal GET and HEAD while accepting FFmpeg without browser metadata', async () => {
+    const seen: string[] = []
+    const origin = await actualUpstream((request, response) => {
+      seen.push(request.method!)
+      response.writeHead(200, { 'content-type': 'video/mp2t' }).end('fixture-bytes')
+    })
+    const service = new MediaGateway({ ...config, hosts: ['127.0.0.1'], allowNonStandardPorts: true })
+    active.push(service)
+    const input = await service.register(`${origin}/segment.ts`, undefined, context())
+    const internalOrigin = new URL(input.url).origin
+    const attempts: Array<Record<string, string> | undefined> = [undefined,
+      { origin: 'app://app', referer: 'app://app/', 'sec-fetch-site': 'same-origin' },
+      { origin: internalOrigin, referer: `${internalOrigin}/player`, 'sec-fetch-site': 'same-origin' },
+      { 'sec-fetch-site': 'none' },
+    ]
+    for (const headers of attempts) {
+      for (const method of ['GET', 'HEAD']) {
+        const response = await local(input.url, { method, headers })
+        expect(response.status).toBe(200)
+        expect(response.body).toBe(method === 'GET' ? 'fixture-bytes' : '')
+      }
+    }
+    expect(seen).toEqual(['GET', 'HEAD', 'GET', 'HEAD', 'GET', 'HEAD', 'GET', 'HEAD'])
   })
 
   it('forwards HEAD and only approved request/response headers', async () => {
@@ -195,17 +285,20 @@ describe('FFmpeg controlled media gateway', () => {
   })
 
   it('closes active connections and refuses new registrations on disposal', async () => {
-    const upstream = vi.fn(async (_input, init) => {
-      return new Response(new ReadableStream({ start(controller) {
-        controller.enqueue(new Uint8Array([1]))
-        init?.signal?.addEventListener('abort', () => controller.error(new Error('aborted')), { once: true })
-      } }), { headers: { 'content-type': 'video/mp2t' } })
-    }) as typeof fetch
-    const service = gateway(upstream)
-    const input = await service.register('https://fixture.invalid/segment.ts', undefined, context())
+    const closed = vi.fn()
+    const origin = await actualUpstream((_request, response) => {
+      response.writeHead(200, { 'content-type': 'video/mp2t' }).write(Buffer.from([1]))
+      response.once('close', closed)
+    })
+    const service = new MediaGateway({ ...config, hosts: ['127.0.0.1'], allowNonStandardPorts: true })
+    active.push(service)
+    const input = await service.register(`${origin}/segment.ts`, undefined, context())
     const stream = await fetch(input.url)
+    const reader = stream.body!.getReader()
+    expect((await reader.read()).value).toEqual(new Uint8Array([1]))
     await service.dispose()
-    await expect(stream.arrayBuffer()).rejects.toThrow()
+    await expect(reader.read()).rejects.toThrow()
+    await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce())
     await expect(service.register(target, undefined, context())).rejects.toThrow('已关闭')
     await expect(local(input.url)).rejects.toThrow()
   })

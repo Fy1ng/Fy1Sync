@@ -9,7 +9,9 @@ import type { ApiResult } from '../src/app/apiClient'
 import { packBitmap } from '../src/core/bitmapCodec'
 import { TEMPLATE_PIXELS } from '../src/core/profileSchema'
 import { createEmptyHudStylePack } from '../src/core/hudStylePack'
-import { createDesktopService, createResolverDeps, type DesktopService } from './api'
+import { createDesktopService, createResolverDeps, sanitizedFailure, type DesktopService, type AcquisitionService } from './api'
+import { StreamFailureError } from './networkFailure'
+import { ProxyError } from './safeFetch'
 import { resolveConfig, type ProxyConfig } from './config'
 import { DanmakuRelay } from './danmaku/relay'
 import { MAX_PRESET_BYTES } from './presetStore'
@@ -65,6 +67,23 @@ describe('platform metadata request limits', () => {
     await expect(deps.fetchJson('https://www.douyu.com/api')).rejects.toHaveProperty('name', 'StreamFailureError')
     expect(cancel).toHaveBeenCalledOnce()
     await expect(deps.fetchJson('https://www.douyu.com/api')).rejects.toThrow('平台返回的数据格式无效')
+  })
+})
+
+describe('public stream failure wording', () => {
+  it.each([
+    ['connect', 'dns-failed', '域名解析失败.'],
+    ['proxy', 'proxy-unreachable', '代理不可达, 请检查系统代理.'],
+    ['connect', 'tls-certificate', '服务器证书校验失败.'],
+    ['http', 'http-403', '服务器返回 HTTP 403.'],
+    ['connect', 'connection-timeout', '网络连接超时.'],
+    ['playback-not-ready', 'media-format-invalid', '媒体格式无效或返回的内容不是可播放视频.'],
+    ['resolve', 'policy-rejected', '媒体地址被应用的安全策略拒绝.'],
+  ] as const)('keeps %s/%s while discarding provider text', (stage, reason, message) => {
+    const result = sanitizedFailure({ ok: false, failure: { code: 'upstream-error', stage, reason,
+      message: 'Cookie=PRIVATE https://signed.invalid/?token=PRIVATE', hint: 'PRIVATE' } })
+    expect(result).toMatchObject({ ok: false, failure: { stage, reason, message, hint: expect.any(String) } })
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE|signed\.invalid|token=|Cookie/)
   })
 })
 
@@ -167,6 +186,28 @@ describe('desktop main-process service', () => {
   })
 
   describe('stream resolution and registration', () => {
+    it.each([
+      [new ProxyError('dns-failed', 'Cookie=PRIVATE https://signed.invalid/?token=PRIVATE'), 'dns-failed', '域名解析失败.'],
+      [new ProxyError('too-many-redirects', 'PRIVATE'), 'too-many-redirects', '服务器重定向次数过多, 请稍后重试.'],
+      [new ProxyError('upstream-failed', 'PRIVATE'), 'upstream-failed', '媒体服务器请求失败, 请稍后重试.'],
+    ])('shows the actual resolve error without echoing sensitive diagnostics', async (error, code, message) => {
+      const acquisition = { resolve: vi.fn(async () => { throw error }), switchQuality: vi.fn(async () => { throw error }) } as unknown as AcquisitionService
+      const other = setup({ acquisition })
+      for (const [method, args] of [['resolve', { input: '6657', platform: 'douyu' }], ['switchQuality', { role: 'official', quality: '0' }]] as const) {
+        const result = await other.invoke(method, args)
+        expect(result).toMatchObject({ ok: false, code, message })
+        expect(JSON.stringify(result)).not.toMatch(/PRIVATE|signed\.invalid|token=|Cookie/)
+      }
+      other.dispose()
+    })
+    it('preserves a structured network failure thrown by acquisition', async () => {
+      const acquisition = { resolve: vi.fn(async () => { throw new StreamFailureError({ stage: 'connect', code: 'tls-certificate', message: 'PRIVATE' }) }) } as unknown as AcquisitionService
+      const other = setup({ acquisition })
+      const result = await other.invoke('resolve', { input: '6657', platform: 'douyu' })
+      expect(result).toMatchObject({ ok: true, value: { ok: false, failure: { stage: 'connect', reason: 'tls-certificate', message: '服务器证书校验失败.' } } })
+      expect(JSON.stringify(result)).not.toContain('PRIVATE')
+      other.dispose()
+    })
     it.each([undefined, {}, null, [], { input: 'x', extra: true }, { input: 'x', platform: 'unsupported' }, { input: 'x'.repeat(8_193) }])('validates resolver arguments: %j', async (args) => {
       expect(await service.invoke('resolve', args)).toMatchObject({ ok: false, code: 'invalid-arguments' })
     })
@@ -204,15 +245,15 @@ describe('desktop main-process service', () => {
       expect(registered).toEqual([])
     })
 
-    it('refuses remote media outside the hostname allow list', async () => {
+    it('permits user-selected media independently of the API hostname allow list', async () => {
       const other = setup({ proxy: { ...proxy, hosts: ['allowed.example'] } })
-      expect(await other.invoke('resolve', { input: 'https://8.8.8.8/video.mp4' })).toMatchObject({ ok: false, code: 'host-not-allowed' })
-      expect(registered).toEqual([])
+      expect(await other.invoke('resolve', { input: 'https://custom.example/video.mp4' })).toMatchObject({ ok: true, value: { ok: true } })
+      expect(registered).toEqual(['https://custom.example/video.mp4'])
       other.dispose()
     })
 
-    it('refuses nonstandard media ports', async () => {
-      expect(await service.invoke('resolve', { input: 'https://8.8.8.8:9000/video.mp4' })).toMatchObject({ ok: false, code: 'bad-port' })
+    it('accepts nonstandard media ports', async () => {
+      expect(await service.invoke('resolve', { input: 'https://8.8.8.8:9000/video.mp4' })).toMatchObject({ ok: true, value: { ok: true } })
     })
 
     it('rejects media credentials without echoing them', async () => {

@@ -1,15 +1,19 @@
-import { execFileSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
 import { connect, type Socket } from 'node:net'
 import path from 'node:path'
 import os from 'node:os'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import { fetch as undiciFetch } from 'undici'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProxyConfig } from './config'
 import { directNetwork, type NetworkContext } from './networkPolicy'
+import { classifyNetworkFailure } from './networkFailure'
 import { PinnedDispatcherPool, safeFetch } from './safeFetch'
+import { TEST_TLS_CERT, TEST_TLS_KEY } from './networkTls.testFixture'
 
 const policy: ProxyConfig = { enabled: true, hosts: ['fixture.invalid', 'cdn.fixture.invalid'],
   allowNonStandardPorts: false, maxRedirects: 3, requestTimeoutMs: 3000 }
@@ -46,7 +50,37 @@ async function tunnel(target: Server) {
     for (const socket of sockets) socket.destroy()
     await Promise.all([relay, target].map(server => new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections() })))
   })
-  return { requests, network: { route: async () => ({ kind: 'http' as const, proxyUrl: `http://127.0.0.1:${relayPort}` }) } }
+  return { requests, sockets, targetPort, network: { route: async () => ({ kind: 'http' as const, proxyUrl: `http://127.0.0.1:${relayPort}` }) } }
+}
+
+/** Trust only this synthetic certificate in a child; production TLS verification stays enabled. */
+async function trustedTlsRequest(url: string, route: { kind: 'direct' | 'http'; proxyUrl?: string }) {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'fy1sync-test-tls-'))
+  const certificate = path.join(directory, 'synthetic-ca.pem')
+  await writeFile(certificate, TEST_TLS_CERT, { flag: 'wx' })
+  const env: NodeJS.ProcessEnv = { ...process.env, NODE_EXTRA_CA_CERTS: certificate }
+  delete env.NODE_TLS_REJECT_UNAUTHORIZED
+  const source = `
+    import { runnerImport } from 'vite'
+    const { module } = await runnerImport(process.argv[1], { configFile: false, logLevel: 'silent' })
+    const config = JSON.parse(process.argv[3]), route = JSON.parse(process.argv[4])
+    try {
+      const result = await module.safeFetch(process.argv[2], config, {
+        network: { route: async () => route }, resolve: async () => ['127.0.0.1']
+      })
+      process.stdout.write(JSON.stringify({ status: result.response.status, body: await result.response.text() }))
+    } catch (error) {
+      process.stderr.write(JSON.stringify({ code: error?.failure?.code ?? error?.code ?? 'fixture-failed' }))
+      process.exitCode = 1
+    }
+  `
+  try {
+    const result = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', source,
+      fileURLToPath(new URL('./safeFetch.ts', import.meta.url)), url,
+      JSON.stringify({ ...policy, allowNonStandardPorts: true }), JSON.stringify(route)],
+    { env, windowsHide: true, timeout: 15_000, maxBuffer: 1_048_576 })
+    return JSON.parse(result.stdout) as { status: number; body: string }
+  } finally { await rm(directory, { recursive: true, force: true }) }
 }
 
 describe('safeFetch trusted proxy branch', () => {
@@ -97,7 +131,7 @@ describe('safeFetch trusted proxy branch', () => {
   it.each(['Cookie', 'Authorization', 'Proxy-Authorization'])('refuses cross-origin redirects carrying %s', async name => {
     const fetchImpl = responses(new Response(null, { status: 302, headers: { location: 'https://cdn.fixture.invalid/live' } }))
     await expect(safeFetch('https://fixture.invalid/start', policy, { network: proxy, fetchImpl,
-      headers: { [name]: 'fixture-credential' } })).rejects.toMatchObject({ reason: 'upstream-failed' })
+      headers: { [name]: 'fixture-credential' } })).rejects.toMatchObject({ reason: 'cross-origin-credentials' })
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
@@ -141,16 +175,8 @@ describe('safeFetch trusted proxy branch', () => {
     expect(dns).not.toHaveBeenCalled()
   })
 
-  const opensslAvailable = (() => { try { execFileSync('openssl', ['version'], { stdio: 'ignore', windowsHide: true }); return true } catch { return false } })()
-  it.skipIf(!opensslAvailable)('rejects a real self-signed TLS certificate behind a local CONNECT proxy', async () => {
-    const root = os.tmpdir()
-    await mkdir(root, { recursive: true })
-    const directory = await mkdtemp(path.join(root, 'proxy-tls-'))
-    execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=fixture.invalid',
-      '-addext', 'subjectAltName=DNS:fixture.invalid', '-keyout', path.join(directory, 'key.pem'), '-out', path.join(directory, 'cert.pem')],
-    { stdio: 'ignore', windowsHide: true, timeout: 10_000 })
-    const [key, cert] = await Promise.all([readFile(path.join(directory, 'key.pem')), readFile(path.join(directory, 'cert.pem'))])
-    const target = createHttpsServer({ key, cert }, (_request, response) => response.end('must not trust this fixture'))
+  it('rejects a real self-signed TLS certificate behind a local CONNECT proxy without external tools', async () => {
+    const target = createHttpsServer({ key: TEST_TLS_KEY, cert: TEST_TLS_CERT }, (_request, response) => response.end('must not trust this fixture'))
     target.on('tlsClientError', () => {})
     const relay = await tunnel(target)
     const dns = vi.fn(async () => { throw new Error('local DNS must not run') })
@@ -158,5 +184,90 @@ describe('safeFetch trusted proxy branch', () => {
       fetchImpl: undiciFetch as unknown as typeof fetch })).rejects.toMatchObject({ failure: { stage: 'connect', code: 'tls-certificate' } })
     expect(relay.requests).toEqual(['fixture.invalid:443'])
     expect(dns).not.toHaveBeenCalled()
-  }, 15_000)
+  })
+
+  it.each(['direct', 'http'] as const)('verifies a trusted synthetic HTTPS certificate on a non-standard target port via %s', async kind => {
+    const hosts: Array<string | undefined> = []
+    const target = createHttpsServer({ key: TEST_TLS_KEY, cert: TEST_TLS_CERT }, (request, response) => {
+      hosts.push(request.headers.host)
+      response.end('verified-local-tls')
+    })
+    target.on('tlsClientError', () => {})
+    let targetPort: number, route: { kind: 'direct' | 'http'; proxyUrl?: string }
+    let authorities: string[] | undefined
+    if (kind === 'http') {
+      const relay = await tunnel(target)
+      targetPort = relay.targetPort
+      route = await relay.network.route()
+      authorities = relay.requests
+    } else {
+      targetPort = await listen(target)
+      route = { kind: 'direct' }
+      releases.push(() => new Promise<void>(resolve => { target.close(() => resolve()); target.closeAllConnections() }))
+    }
+    const url = `https://fixture.invalid:${targetPort}/live?signature=PRIVATE`
+    expect(await trustedTlsRequest(url, route)).toEqual({ status: 200, body: 'verified-local-tls' })
+    expect(hosts).toEqual([`fixture.invalid:${targetPort}`])
+    if (authorities) expect(authorities).toEqual([`fixture.invalid:${targetPort}`])
+  }, 20_000)
+
+  it.each(['direct', 'http'] as const)('retains real certificate verification on a non-standard HTTPS target via %s', async kind => {
+    const handled = vi.fn()
+    const target = createHttpsServer({ key: TEST_TLS_KEY, cert: TEST_TLS_CERT }, handled)
+    target.on('tlsClientError', () => {})
+    let targetPort: number, network: NetworkContext
+    if (kind === 'http') {
+      const relay = await tunnel(target)
+      targetPort = relay.targetPort
+      network = relay.network
+    } else {
+      targetPort = await listen(target)
+      network = directNetwork
+      releases.push(() => new Promise<void>(resolve => { target.close(() => resolve()); target.closeAllConnections() }))
+    }
+    const operation = safeFetch(`https://fixture.invalid:${targetPort}/live?signature=PRIVATE`,
+      { ...policy, allowNonStandardPorts: true }, { network, resolve: async () => ['127.0.0.1'] })
+    const failure = await operation.then(() => null, error => classifyNetworkFailure(error))
+    expect(failure).toMatchObject({ stage: 'connect', code: 'tls-certificate' })
+    expect(JSON.stringify(failure)).not.toMatch(/PRIVATE|signature|https?:\/\//)
+    expect(handled).not.toHaveBeenCalled()
+  })
+
+  it('cancels an actual CONNECT media stream and closes both sides of the tunnel', async () => {
+    const closed = vi.fn()
+    const target = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'video/mp2t' }).write('first')
+      response.once('close', closed)
+    })
+    const relay = await tunnel(target)
+    const controller = new AbortController()
+    const result = await safeFetch('http://fixture.invalid/live', policy, {
+      network: relay.network, signal: controller.signal, resolve: async () => { throw new Error('Proxy owns target DNS') },
+    })
+    const reader = result.response.body!.getReader()
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe('first')
+    controller.abort()
+    await expect(reader.read()).rejects.toThrow()
+    await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(relay.sockets.size).toBe(0))
+  })
+
+  it('uses real CONNECT and DIRECT sockets for a redirected URL whose route changes', async () => {
+    const destination = createServer((_request, response) => response.end('direct-after-connect'))
+    const destinationPort = await listen(destination)
+    releases.push(() => new Promise<void>(resolve => { destination.close(() => resolve()); destination.closeAllConnections() }))
+    const first = createServer((_request, response) => response.writeHead(302, { location: `http://cdn.fixture.invalid:${destinationPort}/final` }).end())
+    const relay = await tunnel(first)
+    const route = vi.fn(async (url: string) => url.includes('cdn.fixture.invalid') ? { kind: 'direct' as const } : relay.network.route())
+    const dns = vi.fn(async () => ['127.0.0.1'])
+    const result = await safeFetch(`http://fixture.invalid:${relay.targetPort}/start`, { ...policy, allowNonStandardPorts: true }, {
+      network: { route }, resolve: dns,
+    })
+    expect(await result.response.text()).toBe('direct-after-connect')
+    expect(relay.requests).toEqual([`fixture.invalid:${relay.targetPort}`])
+    expect(route.mock.calls.map(call => call[0])).toEqual([
+      `http://fixture.invalid:${relay.targetPort}/start`, `http://cdn.fixture.invalid:${destinationPort}/final`,
+    ])
+    expect(dns.mock.calls).toEqual([['cdn.fixture.invalid']])
+  })
 })

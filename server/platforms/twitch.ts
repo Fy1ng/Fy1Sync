@@ -164,6 +164,7 @@ export async function resolveTwitch(
     ok: true,
     stream: {
       platform: 'twitch',
+      ...(deps.mediaAccess?.() ? { mediaAccess: deps.mediaAccess() } : {}),
       url: deps.proxify(selected?.url ?? finalPlaylistUrl),
       kind: 'hls',
       label: `Twitch · ${channel}`,

@@ -10,8 +10,10 @@ export const DIAGNOSTIC_CODES = [
   'tool-missing', 'tool-invalid-path', 'tool-not-executable', 'provider-prepare-failed',
   'extractor-failed', 'invalid-metadata', 'spawn-failed', 'runtime-unavailable', 'timeout', 'output-limit',
   'proxy-resolution-failed', 'proxy-unreachable', 'proxy-rejected', 'proxy-failed',
+  'proxy-type-unsupported', 'socks4-unsupported',
   'dns-failed', 'connection-refused', 'connection-timeout', 'connection-failed', 'tls-certificate', 'tls-failed',
   'source-resolve-failed', 'first-video-timeout', 'playback-not-ready', 'buffer-failed', 'upstream-stalled', 'policy-rejected',
+  'upstream-request-failed', 'media-format-invalid', 'media-codec-unsupported', 'credentials-cross-origin', 'media-network-boundary',
   'adaptive-expired', 'adaptive-request-failed', 'adaptive-invalid-head', 'adaptive-unsafe-url',
   'adaptive-segment-too-large', 'adaptive-pipe-failed', 'adaptive-aborted',
   'invalid-url', 'host-not-allowed', 'port-not-allowed', 'private-address', 'redirect-limit',
@@ -32,8 +34,8 @@ export interface DiagnosticEvent {
   status: typeof DIAGNOSTIC_STATUSES[number]
   extractionId?: number
   client?: 'default' | 'web' | 'web_safari' | 'huya'
-  route?: 'direct' | 'http' | 'unknown'
-  routeReason?: 'socks-unsupported' | 'proxy-type-unsupported' | 'proxy-resolution-failed'
+  route?: 'direct' | 'http' | 'socks5' | 'unsupported' | 'unknown'
+  routeReason?: 'socks4-unsupported' | 'proxy-type-unsupported' | 'proxy-resolution-failed'
   code?: DiagnosticCode
   exitCode?: number | null
   stopped?: boolean

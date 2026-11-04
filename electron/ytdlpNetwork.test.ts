@@ -53,6 +53,7 @@ describe('explicit yt-dlp and provider route ownership', () => {
   it.each([
     ['DIRECT', { kind: 'direct' }, ''],
     ['HTTP', { kind: 'http', proxyUrl: 'http://fixture-user:fixture-password@127.0.0.1:3128' }, 'http://fixture-user:fixture-password@127.0.0.1:3128'],
+    ['SOCKS5', { kind: 'socks5', proxyUrl: 'socks5://fixture-user:fixture-password@127.0.0.1:1080' }, 'socks5h://fixture-user:fixture-password@127.0.0.1:1080'],
   ] as const)('passes %s explicitly and removes inherited proxy variables', async (_label, selected, expected) => {
     const h = harness()
     const route = vi.fn(async (): Promise<NetworkRoute> => selected)
@@ -111,6 +112,53 @@ describe('explicit yt-dlp and provider route ownership', () => {
     expect(locateYouTubePotProvider).not.toHaveBeenCalled()
     h.finish(); await pending
   })
+
+  it('does not turn an unsupported system proxy into an implicit DIRECT route', async () => {
+    const h = harness()
+    await expect(h.runner.resolve('https://www.youtube.com/watch?v=abcdefghijk', false, {
+      route: async () => ({ kind: 'unsupported', reason: 'socks4-unsupported' }),
+    })).rejects.toMatchObject({ failure: { stage: 'proxy', code: 'proxy-type-unsupported' } })
+    expect(h.launches).toEqual([])
+  })
+  it('skips an unsupported PAC item only when the system explicitly supplied a later route', async () => {
+    const h = harness()
+    const pending = h.runner.resolve('https://www.youtube.com/watch?v=abcdefghijk', false, {
+      route: async () => ({ kind: 'unsupported', reason: 'socks4-unsupported', alternatives: [{ kind: 'direct' }] }),
+    })
+    await vi.waitFor(() => expect(h.launches).toHaveLength(1))
+    expect(h.launches[0]!.args.slice(0, 2)).toEqual(['--proxy', ''])
+    h.finish(); await pending
+  })
+
+  it('tries only the next declared PAC route after a confirmed proxy connection failure', async () => {
+    const h = harness()
+    const pending = h.runner.resolve('https://www.youtube.com/watch?v=abcdefghijk', false, { route: async () => ({
+      kind: 'socks5', proxyUrl: 'socks5://127.0.0.1:1080', alternatives: [{ kind: 'http', proxyUrl: 'http://127.0.0.1:3128' }, { kind: 'direct' }],
+    }) })
+    await vi.waitFor(() => expect(h.launches).toHaveLength(1))
+    h.launches[0]!.child.stderr!.emit('data', Buffer.from('Unable to connect to proxy: Connection refused PRIVATE'))
+    h.launches[0]!.child.emit('close', 1)
+    await vi.waitFor(() => expect(h.launches).toHaveLength(2))
+    expect(h.launches.map(item => item.args.slice(0, 2))).toEqual([
+      ['--proxy', 'socks5h://127.0.0.1:1080'], ['--proxy', 'http://127.0.0.1:3128'],
+    ])
+    h.finish(); await pending
+    expect(h.launches).toHaveLength(2)
+  })
+
+  it.each(['HTTP Error 403: Forbidden', 'Sign in to confirm you are not a bot', 'certificate verify failed', 'Proxy authentication failed: 407'])(
+    'keeps the selected route for an upstream or authentication failure: %s', async text => {
+      const h = harness()
+      const pending = h.runner.resolve('https://www.youtube.com/watch?v=abcdefghijk', false, { route: async () => ({
+        kind: 'socks5', proxyUrl: 'socks5://127.0.0.1:1080', alternatives: [{ kind: 'direct' }],
+      }) }).catch(error => error)
+      await vi.waitFor(() => expect(h.launches).toHaveLength(1))
+      h.launches[0]!.child.stderr!.emit('data', Buffer.from(text))
+      h.launches[0]!.child.emit('close', 1)
+      const error = await pending
+      expect(error).toBeInstanceOf(Error)
+      expect(h.launches).toHaveLength(1)
+    })
 
   it('attributes an explicitly proxied extraction connection refusal to the proxy', async () => {
     const h = harness()

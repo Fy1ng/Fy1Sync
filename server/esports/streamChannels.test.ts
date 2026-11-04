@@ -58,6 +58,21 @@ describe('pairing an entry with a channel', () => {
     expect(matchChannel('DFRAG TV', [twitch('dfragtv'), twitch('other')])?.name).toBe('dfragtv')
   })
 
+  it('pairs IEM registry names with the ESL channels linked by the event, keeping A and B separate', () => {
+    // Public IEM Beijing 2026 event links, checked on 2026-11-03.
+    const channels = eventChannels({ query: { pages: [{ extlinks: [
+      'https://www.twitch.tv/eslcs', 'https://www.twitch.tv/eslcsb', 'https://www.twitch.tv/cs2_maincast',
+      'https://www.youtube.com/ESLCS', 'https://www.youtube.com/@cs2_maincast',
+    ].map(url => ({ url })) }] } })
+    expect(matchChannel('ESL_Counter-Strike', channels.twitch)?.url).toBe('https://www.twitch.tv/eslcs')
+    expect(matchChannel('ESL_Counter-Strike_B', channels.twitch)?.url).toBe('https://www.twitch.tv/eslcsb')
+    expect(matchChannel('ESL_Counter-Strike', channels.youtube)?.url).toBe('https://www.youtube.com/ESLCS/live')
+    expect(matchChannel('ESL_Counter-Strike_B', [twitch('eslcs'), twitch('cs2_maincast')])).toBeNull()
+    expect(matchChannel('ESL_Counter-Strike_B', [twitch('eslcs')])).toBeNull()
+    expect(matchChannel('ESL_Counter-Strike', [twitch('not_eslcs'), twitch('cs2_maincast')])).toBeNull()
+    expect(matchChannel('ESL_Counter-Strike', [twitch('ESL_Counter-Strike'), twitch('eslcs')])?.name).toBe('ESL_Counter-Strike')
+  })
+
   it('takes the one channel whose name contains the entry', () => {
     expect(matchChannel('Gamers_Club', [twitch('gamersclubcs'), twitch('elsewhere')])?.name).toBe('gamersclubcs')
     expect(matchChannel('BLAST', [twitch('blastpremier'), twitch('betboom_cs_ru')])?.name).toBe('blastpremier')

@@ -1,17 +1,42 @@
 import { describe, expect, it, vi } from 'vitest'
-import { NetworkPolicy, parseProxyResult, type DomesticRouting } from './networkPolicy'
+import { NetworkPolicy, parseProxyResult, routeCandidates, routeUsesRemoteDns, type DomesticRouting } from './networkPolicy'
 
 describe('system proxy route policy', () => {
   it.each([
     ['DIRECT', { kind: 'direct' }],
-    ['PROXY 127.0.0.1:3128; DIRECT', { kind: 'http', proxyUrl: 'http://127.0.0.1:3128/' }],
+    ['PROXY 127.0.0.1:3128; DIRECT', { kind: 'http', proxyUrl: 'http://127.0.0.1:3128/', alternatives: [{ kind: 'direct' }] }],
     ['HTTP proxy.invalid:8080', { kind: 'http', proxyUrl: 'http://proxy.invalid:8080/' }],
     ['HTTPS proxy.invalid:443', { kind: 'http', proxyUrl: 'https://proxy.invalid/' }],
-    ['SOCKS5 127.0.0.1:1080', { kind: 'direct', reason: 'socks-unsupported' }],
-    ['SOCKS 127.0.0.1:1080; PROXY 127.0.0.1:3128', { kind: 'direct', reason: 'socks-unsupported' }],
-    ['unknown value', { kind: 'direct', reason: 'proxy-type-unsupported' }],
+    ['SOCKS5 127.0.0.1:1080', { kind: 'socks5', proxyUrl: 'socks5://127.0.0.1:1080' }],
+    ['SOCKS5 proxy.invalid', { kind: 'socks5', proxyUrl: 'socks5://proxy.invalid:1080' }],
+    ['SOCKS 127.0.0.1:1080; PROXY 127.0.0.1:3128', { kind: 'unsupported', reason: 'socks4-unsupported', alternatives: [{ kind: 'http', proxyUrl: 'http://127.0.0.1:3128/' }] }],
+    ['unknown value', { kind: 'unsupported', reason: 'proxy-type-unsupported' }],
   ])('parses Chromium result %s', (value, route) => {
     expect(parseProxyResult(value)).toEqual(route)
+  })
+
+  it('retains every explicit PAC alternative in order without inventing direct access', () => {
+    const route = parseProxyResult('SOCKS4 private.invalid:1080; SOCKS5 proxy.invalid:1080; HTTPS other.invalid:443; DIRECT')
+    expect(routeCandidates(route)).toEqual([
+      { kind: 'unsupported', reason: 'socks4-unsupported' },
+      { kind: 'socks5', proxyUrl: 'socks5://proxy.invalid:1080' },
+      { kind: 'http', proxyUrl: 'https://other.invalid/' },
+      { kind: 'direct' },
+    ])
+    expect(routeCandidates(parseProxyResult('SOCKS4 private.invalid:1080'))).toEqual([{ kind: 'unsupported', reason: 'socks4-unsupported' }])
+    expect(routeCandidates(parseProxyResult('PROXY one.invalid:80; PROXY two.invalid:80')).some(item => item.kind === 'direct')).toBe(false)
+  })
+
+  it.each(['', 'PROXY proxy.invalid/path', 'PROXY proxy.invalid?x=1', 'SOCKS5 host.invalid:70000', 'SOCKS7 hidden.invalid:1080', 'PROXY host.invalid bad'])
+    ('reports malformed or unsupported proxy result without disclosing its endpoint: %s', value => {
+      expect(parseProxyResult(value)).toEqual({ kind: 'unsupported', reason: 'proxy-type-unsupported' })
+    })
+
+  it('reserves local target DNS for direct connections', () => {
+    expect(routeUsesRemoteDns({ kind: 'direct' })).toBe(false)
+    expect(routeUsesRemoteDns({ kind: 'unsupported', reason: 'socks4-unsupported' })).toBe(false)
+    expect(routeUsesRemoteDns({ kind: 'http', proxyUrl: 'http://proxy.invalid/' })).toBe(true)
+    expect(routeUsesRemoteDns({ kind: 'socks5', proxyUrl: 'socks5://proxy.invalid:1080' })).toBe(true)
   })
 
   it('evaluates PAC by the complete target URL, including a distinct media CDN', async () => {
@@ -91,10 +116,17 @@ describe('system proxy route policy', () => {
     expect(await policy.summary()).toEqual({ type: 'PAC' })
   })
 
-  it('reports SOCKS fallback without disclosing the proxy endpoint', async () => {
+  it('reports supported SOCKS without disclosing the proxy endpoint', async () => {
     const policy = new NetworkPolicy(async () => 'SOCKS5 private-user:private-pass@127.0.0.1:1080', () => 'system')
     const summary = await policy.summary()
-    expect(summary).toEqual({ type: 'SOCKS', fallbackReason: 'socks-unsupported' })
+    expect(summary).toEqual({ type: 'SOCKS' })
     expect(JSON.stringify(summary)).not.toMatch(/private-user|private-pass|127\.0\.0\.1|1080/)
+  })
+
+  it('reports unsupported SOCKS4 honestly and mixed PAC candidates without credentials', async () => {
+    expect(await new NetworkPolicy(async () => 'SOCKS4 private.invalid:1080', () => 'system').summary())
+      .toEqual({ type: 'SOCKS', fallbackReason: 'socks4-unsupported' })
+    expect(await new NetworkPolicy(async () => 'SOCKS5 proxy.invalid:1080; PROXY other.invalid:8080; DIRECT', () => 'system').summary())
+      .toEqual({ type: 'PAC' })
   })
 })

@@ -376,7 +376,11 @@ export class BufferManager {
         }
       }
       await this.publish(session)
-      if (!run.finishing) this.emit(session, this.isReady(session, run) ? 'ready' : 'buffering')
+      // Fast HTTP sources can exit before the first poll. Publish their sealed
+      // video evidence before the existing reconnect path advances the state.
+      if (!run.finishing || (run.exited && !run.failure && this.isReady(session, run))) {
+        this.emit(session, this.isReady(session, run) ? 'ready' : 'buffering')
+      }
     }
     const discarded = session.discarded.filter(item => item.deleteAfter <= this.clock.now())
     session.discarded = session.discarded.filter(item => item.deleteAfter > this.clock.now())

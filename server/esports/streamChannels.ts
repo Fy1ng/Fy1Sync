@@ -77,19 +77,28 @@ export function eventChannels(payload: unknown): EventChannels {
 /** Letters and digits only, lower case: `PGL_CS2`, `PGL CS2` and `pgl_cs2` read the same. */
 const plain = (value: string): string => value.replace(/^@/, '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
 
+/** Registry names whose current channel names differ, verified against IEM's event links. */
+const ENTRY_CHANNEL_NAMES = new Map([
+  ['eslcounterstrike', 'eslcs'],
+  ['eslcounterstrikeb', 'eslcsb'],
+])
+
 /**
  * The channel an entry stands for among the event's channels on that platform, or null when it
  * cannot be told: the same name (`PGL_CS2` → pgl_cs2), else the one channel whose name contains
- * the entry's (`Gamers_Club` → gamersclubcs), else the event's only channel. A channel shorter
- * than the entry is never taken for it: `PGL 2` is not `PGL`.
+ * the entry's (`Gamers_Club` → gamersclubcs), else the event's only channel. Known registry
+ * aliases require their exact channel among the event links, preserving the broadcast stage.
+ * Other entries are never shortened to a channel inside them: `PGL 2` is not `PGL`.
  */
 export function matchChannel(entry: string, channels: readonly StreamChannel[]): StreamChannel | null {
   const wanted = plain(entry)
-  const rules = [(name: string) => name === wanted, (name: string) => wanted.length >= 3 && name.includes(wanted)]
+  const alias = ENTRY_CHANNEL_NAMES.get(wanted)
+  const rules = [(name: string) => name === wanted, (name: string) => alias
+    ? name === alias : wanted.length >= 3 && name.includes(wanted)]
   for (const rule of wanted ? rules : []) {
     const found = channels.filter(channel => rule(plain(channel.name)))
     if (found.length === 1) return found[0]!
     if (found.length > 1) return null
   }
-  return channels.length === 1 ? channels[0]! : null
+  return !alias && channels.length === 1 ? channels[0]! : null
 }

@@ -83,6 +83,19 @@ async function start(f: Awaited<ReturnType<typeof fixture>>, resolve = vi.fn(asy
 }
 
 describe('BufferManager', () => {
+  it('publishes complete video on EOF before the first poll without skipping readiness', async () => {
+    const f = await fixture()
+    await start(f)
+    await writeManifest(f, 0, [2, 2, 2])
+    expect(f.states.some(state => state.state === 'ready')).toBe(false)
+    f.children[0]!.emit('close', 0)
+    await until(() => f.states.some(state => state.state === 'reconnecting'))
+    const ready = f.states.findIndex(state => state.state === 'ready')
+    const reconnecting = f.states.findIndex(state => state.state === 'reconnecting')
+    expect(ready).toBeGreaterThanOrEqual(0)
+    expect(ready).toBeLessThan(reconnecting)
+    expect(f.states[ready]).toMatchObject({ seconds: 6, hasVideo: true, completeSegments: 3 })
+  })
   it('runs one shell-free copy mux child per role and never publishes inputs or stderr', async () => {
     const f = await fixture(), { url } = await start(f)
     await f.manager.start('commentary', async () => ({ url: 'https://cdn.example/commentary.flv', headers: { Referer: 'https://www.douyu.com/' } }))

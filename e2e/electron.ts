@@ -21,7 +21,7 @@ export interface RunningApplication {
 }
 
 /** Launch the built application with a disposable profile and preset store. */
-export async function launchApplication(label: string, options: { softwareVideo?: boolean
+export async function launchApplication(label: string, options: { softwareVideo?: boolean; liveNetwork?: boolean
   stylePacks?: { source: StylePackSource; responses: Record<string, string> }
   onlineUpdates?: { source: OnlineUpdateSource; responses: Record<string, string> }
 } = {}): Promise<RunningApplication> {
@@ -37,7 +37,7 @@ export async function launchApplication(label: string, options: { softwareVideo?
     STREAM_SYNC_E2E: '1',
     STREAM_SYNC_USER_DATA_DIR: path.join(dataDir, 'userData'),
     STREAM_SYNC_DATA_DIR: path.join(dataDir, 'data'),
-    STREAM_SYNC_OFFLINE_E2E: process.env.STREAM_SYNC_LIVE_TESTS === '1' || process.env.STREAM_SYNC_YOUTUBE_ADAPTIVE === '1' ? '0' : '1',
+    STREAM_SYNC_OFFLINE_E2E: options.liveNetwork || process.env.STREAM_SYNC_LIVE_TESTS === '1' || process.env.STREAM_SYNC_YOUTUBE_ADAPTIVE === '1' ? '0' : '1',
     TEMP: temporaryDir, TMP: temporaryDir,
   })
   const setStylePackResponses = async (responses: Record<string, string>, fail = false) => {

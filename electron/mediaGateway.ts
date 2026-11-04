@@ -7,7 +7,9 @@ import type { ProxyConfig } from '../server/config'
 import { MediaRegistry } from '../server/mediaProxy'
 import { classifyNetworkFailure, type StreamFailure } from '../server/networkFailure'
 import type { NetworkContext } from '../server/networkPolicy'
+import type { MediaAccess } from '../server/mediaAccess'
 import type { Resolver } from '../server/safeFetch'
+import { isAppOrigin } from './security'
 
 export interface MediaGatewayOptions { fetchImpl?: typeof fetch; resolve?: Resolver }
 export interface GatewayInput {
@@ -18,6 +20,23 @@ export interface GatewayInput {
 interface Listener { server: Server; registry: MediaRegistry; origin: string; host: string }
 const CAPABILITY = /^\/media\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
+/** Browser metadata can reject a foreign page; absent metadata remains valid for FFmpeg. */
+function allowsBrowserRequest(request: IncomingMessage, origin: string): boolean {
+  const source = request.headers.origin
+  if (source !== undefined && source !== 'app://app' && source !== origin) return false
+  const site = request.headers['sec-fetch-site']
+  if (site !== undefined && site !== 'same-origin' && site !== 'none') return false
+  const referrer = request.headers.referer
+  if (referrer !== undefined) {
+    if (typeof referrer !== 'string') return false
+    try {
+      const url = new URL(referrer)
+      if (url.username || url.password || (!isAppOrigin(referrer) && url.origin !== origin)) return false
+    } catch { return false }
+  }
+  return true
+}
+
 export class MediaGateway {
   private starting?: Promise<Listener>
   private closed = false
@@ -25,14 +44,14 @@ export class MediaGateway {
   private readonly failures = new WeakMap<NetworkContext, StreamFailure>()
   constructor(private readonly config: ProxyConfig, private readonly options: MediaGatewayOptions = {}) {}
 
-  async register(url: string, headers: Record<string, string> | undefined, network: NetworkContext): Promise<GatewayInput> {
+  async register(url: string, headers: Record<string, string> | undefined, network: NetworkContext, access?: MediaAccess): Promise<GatewayInput> {
     if (this.closed) throw new Error('媒体转发服务已关闭.')
     const listener = await this.start()
     if (this.closed) throw new Error('媒体转发服务已关闭.')
     // Isolate diagnostics per FFmpeg input while preserving its frozen route decisions.
     const inputNetwork: NetworkContext = { route: target => network.route(target) }
     return {
-      url: listener.registry.register(url, headers ? { ...headers } : undefined, inputNetwork),
+      url: listener.registry.register(url, headers ? { ...headers } : undefined, inputNetwork, access),
       // The upstream policy belongs to the Node gateway, never FFmpeg's environment.
       proxyUrl: '',
       readFailure: () => { const failure = this.failures.get(inputNetwork); return failure ? { ...failure } : undefined },
@@ -46,7 +65,7 @@ export class MediaGateway {
     if (!this.starting) return
     const listener = await this.starting.catch(() => undefined)
     if (!listener) return
-    listener.registry.clear()
+    await listener.registry.dispose()
     await new Promise<void>(resolve => {
       listener.server.close(() => resolve())
       listener.server.closeAllConnections()
@@ -88,6 +107,7 @@ export class MediaGateway {
     if (hosts.length !== 1 || request.headers.host !== listener.host || !request.url || !CAPABILITY.test(request.url)) {
       stop(403); return
     }
+    if (!allowsBrowserRequest(request, listener.origin)) { stop(403); return }
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       response.setHeader('allow', 'GET, HEAD'); stop(405); return
     }

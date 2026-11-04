@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AcquisitionDiagnostics } from './acquisitionDiagnostics'
 import { DIAGNOSTIC_LIMITS, type AcquisitionDiagnosticReport } from './diagnosticContracts'
-import { sanitizeDiagnosticReport } from './diagnosticSanitizer'
+import { diagnosticCode, sanitizeDiagnosticReport } from './diagnosticSanitizer'
 import { createDesktopService } from '../server/api'
 import { resolveConfig } from '../server/config'
 import { Acquisition } from './acquisition'
@@ -27,6 +27,16 @@ function fixture() {
 }
 
 describe('bounded ordinary acquisition diagnostics', () => {
+  it.each(['socks5', 'unsupported'] as const)('exports only the route category %s and never its proxy URI', route => {
+    const report = sanitizeDiagnosticReport({ attempts: [{ id: 1, events: [{ stage: 'route', status: 'resolved', route,
+      proxyUrl: 'socks5://PRIVATE:PRIVATE@127.0.0.1:1080', url: 'https://signed.invalid/?token=PRIVATE' }] }] })
+    expect(report.attempts[0]?.events[0]?.route).toBe(route)
+    expect(JSON.stringify(report)).not.toMatch(/PRIVATE|signed\.invalid|proxyUrl|socks5:\/\//)
+  })
+  it.each(['upstream-request-failed', 'media-format-invalid', 'media-codec-unsupported', 'credentials-cross-origin'] as const)('retains the fixed failure code %s without admitting source text', code => {
+    expect(diagnosticCode(code)).toBe(code)
+    expect(diagnosticCode(code + ' Cookie=PRIVATE https://signed.invalid/?token=PRIVATE')).toBe('unknown')
+  })
   it('retains only whitelisted fields at collection and returns independent snapshots', async () => {
     const { diagnostics } = fixture()
     const attempt = diagnostics.begin('stream-' + secret)

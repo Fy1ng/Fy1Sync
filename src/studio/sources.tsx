@@ -12,6 +12,7 @@ import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { parseSourceInput, toDescriptor } from '../core/mediaSources'
 import type { MediaDescriptor, PlatformId, SourceRole } from '../core/types'
 import type { LoginPlatform } from '../../electron/login'
+import { streamFailureHint } from '../../server/networkFailure'
 
 export interface RoleLoad {
   busy: boolean
@@ -200,11 +201,11 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         session.settings.preferAdaptive || undefined,
       )
       if (generation !== session.sourceRevision(role)) return false
-      if (!result.ok) { patch(role, { problem: { message: result.message } }); return false }
+      if (!result.ok) { patch(role, { problem: { message: result.message, hint: streamFailureHint(result.code) } }); return false }
       if (!result.value.ok) {
         const { failure } = result.value
         // A proxy that cannot be reached is not the platform's fault; say which to check.
-        const hint = failure.stage === 'proxy' ? '请确认代理软件已开启，可在 设置 › 网络 查看系统代理' : failure.hint
+        const hint = streamFailureHint(failure.reason) ?? failure.hint
         patch(role, { problem: { message: failure.message, hint } })
         // A refusal with no reason is Douyu's; YouTube's say which kind, and only a sign-in kind gets the offer.
         const signInCanHelp = !failure.reason || SIGN_IN_REFUSALS.has(failure.reason)

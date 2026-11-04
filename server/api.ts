@@ -2,17 +2,18 @@
 
 import { isDomesticRouting, type NetworkPreferencesService } from '../electron/networkPreferences'
 import { type NetworkContext } from './networkPolicy'
-import { StreamFailureError, classifyNetworkFailure, httpFailure } from './networkFailure'
+import { StreamFailureError, classifyNetworkFailure, httpFailure, streamFailureForCode, streamFailureHint, type StreamFailure } from './networkFailure'
 import appPackage from '../package.json'
 import { createDouyuRoomResolver, type ResolveDouyuRoom } from './platforms/douyuRoom'
 import { resolveHuyaDanmakuRoom, type HuyaDanmakuRoom } from './platforms/huyaDanmaku'
 import type { ApiResult } from '../src/app/apiClient'
-import type { ProxyConfig } from './config'
+import { mediaRequestPolicy, type ProxyConfig } from './config'
+import { mediaChild, mediaEntry, type MediaAccess } from './mediaAccess'
 import { DanmakuRelay } from './danmaku/relay'
 import { resolveStream, type PlatformKind, type ResolveResult } from './platforms'
 import { isYouTubeFormatFailure, isYouTubeRefusal, YOUTUBE_FORMAT_FAILURES, YOUTUBE_REFUSALS } from './platforms/youtube'
 import { fileNameFor, MAX_PRESET_BYTES, PresetStore } from './presetStore'
-import { checkUrl, ProxyError, safeFetch } from './safeFetch'
+import { checkUrlSyntax, ProxyError, safeFetch } from './safeFetch'
 import type { SourceRole } from '../src/core/types'
 import type { BufferState } from '../electron/bufferManager'
 import type { LoginPlatform, LoginResult, LoginStatus } from '../electron/login'
@@ -45,7 +46,7 @@ export type DesktopServiceDeps = {
   proxy: ProxyConfig
   relay?: DanmakuRelay
   fetchImpl?: typeof fetch
-  registerMedia: (url: string) => string
+  registerMedia: (url: string, access?: MediaAccess) => string
   resolveDouyuRoom?: ResolveDouyuRoom
   resolveHuyaRoom?: (input: string) => Promise<HuyaDanmakuRoom>
   acquisition?: AcquisitionService
@@ -137,6 +138,9 @@ export function sanitizedFailure(result: ResolveResult): ResolveResult {
   if (result.failure.code === 'needs-manual-url' && isYouTubeFormatFailure(reason)) {
     return { ok: false, failure: { code: 'needs-manual-url', reason, ...YOUTUBE_FORMAT_FAILURES[reason] } }
   }
+  const network = streamFailureForCode(reason)
+    ?? (result.failure.code === 'upstream-error' && result.failure.stage ? classifyNetworkFailure(undefined, result.failure.stage) : undefined)
+  if (network) return resolvedFailure(network)
   const messages = {
     'unsupported-url': '无法识别该媒体地址或平台',
     'not-live': '直播当前未开始或受限制',
@@ -151,6 +155,12 @@ export function sanitizedFailure(result: ResolveResult): ResolveResult {
       ? '请在账号区域登录对应平台后重新加载, 或使用可播放的媒体地址'
       : '请检查地址和直播状态, 或提供可播放的媒体地址',
   } }
+}
+
+function resolvedFailure(failure: StreamFailure): ResolveResult {
+  const safe = streamFailureForCode(failure.code) ?? classifyNetworkFailure(undefined, failure.stage)
+  return { ok: false, failure: { code: 'upstream-error', stage: safe.stage, reason: safe.code, message: safe.message,
+    hint: streamFailureHint(safe.code), ...(safe.status === undefined ? {} : { status: safe.status }) } }
 }
 
 /** The Electron IPC boundary checks the sender before calling any service method. */
@@ -395,10 +405,10 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
               return fail('invalid-arguments', '媒体地址过长或平台参数无效')
             }
             const input = args.input.trim()
-            if (deps.acquisition) return { ok: true, value: await deps.acquisition.resolve(
+            if (deps.acquisition) return { ok: true, value: sanitizedFailure(await deps.acquisition.resolve(
               input, args.platform as PlatformKind | undefined, args.role as SourceRole ?? 'official', args.quality as string | undefined,
               ...(args.preferAdaptive === undefined ? [] : [args.preferAdaptive as boolean]),
-            ) }
+            )) }
             if (fixturePath(input) && (args.platform === undefined || args.platform === 'direct')) {
               return { ok: true, value: { ok: true, stream: {
                 platform: 'direct', url: input, kind: /\.m3u8?$/.test(input) ? 'hls' : 'progressive',
@@ -408,7 +418,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             // Resolution owns this lookup only until it has checked the returned target.
             const registered = new Map<string, string>()
             const register = (url: string): string => {
-              const opaque = deps.registerMedia(url)
+              const opaque = `pending-media:${registered.size + 1}`
               registered.set(opaque, url)
               return opaque
             }
@@ -416,17 +426,18 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             const result = await resolveStream(input, resolverDeps, args.platform as PlatformKind | undefined)
             if (!result.ok) return { ok: true, value: sanitizedFailure(result) }
             const rawUrl = registered.get(result.stream.url) ?? result.stream.url
-            const target = await checkUrl(rawUrl, deps.proxy)
-            if (!target.ok) return fail(target.reason, '媒体地址未通过安全检查')
+            const target = checkUrlSyntax(rawUrl, mediaRequestPolicy(deps.proxy))
+            if (!target.ok) return fail(target.reason, streamFailureForCode(target.reason)?.message ?? '媒体地址被应用的安全策略拒绝.')
             if (target.url.username || target.url.password) return fail('invalid-url', '媒体地址不能包含登录凭据')
-            const url = registered.has(result.stream.url) ? result.stream.url : register(rawUrl)
-            return { ok: true, value: { ok: true, stream: { ...result.stream, url, requiresProxy: false, notes: ['媒体通过本地主进程安全加载'] } } }
+            const url = deps.registerMedia(rawUrl, result.stream.mediaAccess)
+            const { mediaAccess: _access, ...publicStream } = result.stream
+            return { ok: true, value: { ok: true, stream: { ...publicStream, url, requiresProxy: false, notes: ['媒体通过本地主进程安全加载'] } } }
           }
           case 'switchQuality': {
             if (!fields(args, ['role', 'quality']) || !isRole(args.role) || typeof args.quality !== 'string'
               || args.quality.length === 0 || args.quality.length > 128) return fail('invalid-arguments', '画质参数无效')
             if (!deps.acquisition) return fail('not-available', '取流服务不可用')
-            return { ok: true, value: await deps.acquisition.switchQuality(args.role, args.quality) }
+            return { ok: true, value: sanitizedFailure(await deps.acquisition.switchQuality(args.role, args.quality)) }
           }
           case 'stopBuffer': {
             if (!fields(args, ['role']) || !isRole(args.role)) return fail('invalid-arguments', '片源角色无效')
@@ -508,7 +519,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
         }
       } catch (error) {
         if (error instanceof DouyuAccountError || error instanceof DouyuTaskError || error instanceof DouyuRenewalError) return fail(error.code, error.message)
-        if (error instanceof ProxyError) return fail(error.reason, '媒体地址未通过安全检查')
+        if (error instanceof ProxyError) return fail(error.reason, classifyNetworkFailure(error).message)
         // Tool errors contain only stable codes, never executable paths or child output.
         if (error instanceof Error && 'tool' in error && 'code' in error
           && ['tool-missing', 'tool-invalid-path', 'tool-not-executable'].includes(String(error.code))) {
@@ -525,6 +536,9 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
           }
           return fail(String(error.code), messages[String(error.code)] ?? '账号操作失败')
         }
+        if (method === 'resolve' || method === 'switchQuality') {
+          return { ok: true, value: resolvedFailure(classifyNetworkFailure(error, 'resolve')) }
+        }
         // Never expose filesystem paths, signed media URLs, or upstream error bodies.
         return fail('internal-error', '本地服务无法完成此操作')
       }
@@ -539,6 +553,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
 
 /** Platform requests keep the existing per-hop SSRF policy and fixed platform headers. */
 export function createResolverDeps(proxy: ProxyConfig, registerMedia: (url: string) => string, fetchImpl?: typeof fetch, network?: NetworkContext) {
+  let playlistAccess: MediaAccess | undefined
   const request = async (url: string, init?: RequestInit, binary = false) => {
     try {
       const signal = AbortSignal.timeout(proxy.requestTimeoutMs)
@@ -567,10 +582,12 @@ export function createResolverDeps(proxy: ProxyConfig, registerMedia: (url: stri
     fetchBytes: async (url: string, init?: RequestInit) => await request(url, init, true) as Uint8Array,
     fetchPlaylist: async (url: string) => {
       const signal = AbortSignal.timeout(proxy.requestTimeoutMs)
-      const { response, finalUrl } = await safeFetch(url, proxy, { signal, fetchImpl, network })
+      playlistAccess = mediaEntry(url)
+      const { response, finalUrl } = await safeFetch(url, mediaRequestPolicy(proxy), { signal, fetchImpl, network, mediaAccess: playlistAccess })
       if (!response.ok) { await response.body?.cancel(); throw new StreamFailureError(httpFailure(response.status)) }
       return { text: await readPlatformText(response, signal), finalUrl: finalUrl.href }
     },
+    mediaAccess: () => playlistAccess ? mediaChild(playlistAccess) : undefined,
     proxify: registerMedia,
   }
 }

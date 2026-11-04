@@ -9,10 +9,12 @@
 
 import { lookup } from 'node:dns/promises'
 import { isIP, type LookupFunction } from 'node:net'
-import { Agent, ProxyAgent, buildConnector, type Dispatcher } from 'undici'
-import { networkContext, type NetworkContext, type NetworkRoute } from './networkPolicy'
+import { Agent, buildConnector, type Dispatcher } from 'undici'
+import { networkContext, routeCandidates, routeUsesRemoteDns, type NetworkContext, type NetworkRoute } from './networkPolicy'
+import { createProxyDispatcher, isProxyConnectFailure } from './proxyDispatcher'
 import { StreamFailureError, classifyNetworkFailure } from './networkFailure'
-import { hostAllowed, type ProxyConfig } from './config'
+import { hostAllowed, type RequestPolicy } from './config'
+import { mediaEntry, type MediaAccess } from './mediaAccess'
 
 export type UrlRejection =
   | 'invalid-url'
@@ -21,6 +23,8 @@ export type UrlRejection =
   | 'host-not-allowed'
   | 'dns-failed'
   | 'too-many-redirects'
+  | 'media-network-boundary'
+  | 'cross-origin-credentials'
 
 export type UrlCheck =
   | { ok: true; url: URL; addresses: string[] }
@@ -40,10 +44,15 @@ export const dnsResolver: Resolver = async (hostname) => {
 /** Validate one URL against the proxy policy. Never performs the request. */
 export async function checkUrl(
   raw: string,
-  config: ProxyConfig,
+  config: RequestPolicy,
   resolve: Resolver = dnsResolver,
   proxied = false,
 ): Promise<UrlCheck> {
+  const syntax = checkUrlSyntax(raw, config)
+  return syntax.ok ? resolveTarget(syntax.url, resolve, proxied) : syntax
+}
+
+export function checkUrlSyntax(raw: string, config: RequestPolicy): UrlCheck {
   let url: URL
   try {
     url = new URL(raw)
@@ -55,13 +64,18 @@ export async function checkUrl(
   if (!ALLOWED_PROTOCOLS.has(url.protocol)) {
     return { ok: false, reason: 'bad-scheme', detail: `仅支持 http/https，收到 ${url.protocol}` }
   }
-  if (!config.allowNonStandardPorts && !STANDARD_PORTS.has(url.port)) {
+  const strict = 'purpose' in config ? undefined : config
+  if (strict && !strict.allowNonStandardPorts && !STANDARD_PORTS.has(url.port)) {
     return { ok: false, reason: 'bad-port', detail: `不允许的端口 ${url.port}` }
   }
-  if (!hostAllowed(url.hostname, config.hosts)) {
+  if (strict && !hostAllowed(url.hostname, strict.hosts)) {
     return { ok: false, reason: 'host-not-allowed', detail: `域名未在白名单内：${url.hostname}` }
   }
 
+  return { ok: true, url, addresses: [] }
+}
+
+async function resolveTarget(url: URL, resolve: Resolver, proxied: boolean): Promise<UrlCheck> {
   if (proxied) return { ok: true, url, addresses: [] }
 
   // Resolve once and retain valid addresses for the direct connection.
@@ -110,6 +124,10 @@ export type SafeFetchOptions = {
   /** Owned by a trusted service, never renderer input. Every reuse still validates DNS. */
   dispatcherPool?: PinnedDispatcherPool
   network?: NetworkContext
+  /** Explicit source authority, shared by redirects and automatically discovered HLS resources. */
+  mediaAccess?: MediaAccess
+  /** Separates sessions and credential identities while retaining per-origin pooling. */
+  connectionScope?: string
 }
 
 export type SafeFetchResult = {
@@ -124,7 +142,7 @@ function validAddresses(addresses: unknown): addresses is string[] {
 }
 
 /** The caller has already applied its HTTP or WebSocket address policy. */
-export function createPinnedDispatcher(hostname: string, addresses: readonly string[], timeoutMs = 15_000, keepAliveTimeout = 4_000): Agent {
+export function createPinnedDispatcher(hostname: string, addresses: readonly string[], timeoutMs = 15_000, keepAliveTimeout = 4_000, connections = 1): Agent {
   if (!validAddresses(addresses)) throw new ProxyError('dns-failed', '无法固定已校验的连接地址.', 403)
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
   const records = [...new Set(addresses)].map(address => ({ address, family: isIP(address) }))
@@ -141,7 +159,7 @@ export function createPinnedDispatcher(hostname: string, addresses: readonly str
   }
   const connect = buildConnector({ lookup, timeout: timeoutMs, autoSelectFamily: true })
   return new Agent({
-    connections: 1, maxOrigins: 1,
+    connections, maxOrigins: 1,
     keepAliveTimeout, keepAliveMaxTimeout: Math.max(keepAliveTimeout, 60_000),
     connect: (options, callback) => {
       // Literal addresses bypass Node's lookup callback, so validate the connect
@@ -155,35 +173,41 @@ export function createPinnedDispatcher(hostname: string, addresses: readonly str
 /** Small service-owned pool; changed DNS answers never reuse a differently pinned socket. */
 export class PinnedDispatcherPool {
   private readonly agents = new Map<string, Dispatcher>()
+  private readonly retiring = new Set<Dispatcher>()
   private closed = false
-  get(url: URL, addresses: string[], timeoutMs: number, route?: NetworkRoute): Dispatcher {
+  constructor(private readonly options: { maxEntries?: number; connections?: number } = {}) {}
+  get(url: URL, addresses: string[], timeoutMs: number, route?: NetworkRoute, scope = ''): Dispatcher {
     if (this.closed) throw new Error('Network service closed')
-    const key = JSON.stringify([url.origin, [...addresses].sort(), timeoutMs, route?.proxyUrl ?? 'DIRECT'])
+    const key = JSON.stringify([url.origin, [...addresses].sort(), timeoutMs, route?.kind ?? 'direct', route?.proxyUrl ?? '', scope])
     let agent = this.agents.get(key)
     if (!agent) {
-      if (this.agents.size >= 8) {
+      if (this.agents.size >= (this.options.maxEntries ?? 8)) {
         const first = this.agents.keys().next().value!
-        void this.agents.get(first)!.close().catch(() => {})
+        const retiring = this.agents.get(first)!
+        this.retiring.add(retiring)
+        void retiring.close().catch(() => {}).finally(() => this.retiring.delete(retiring))
         this.agents.delete(first)
       }
-      agent = route?.kind === 'http' ? new ProxyAgent({ uri: route.proxyUrl!, requestTls: { rejectUnauthorized: true }, proxyTls: { rejectUnauthorized: true } }) : createPinnedDispatcher(url.hostname, addresses, timeoutMs, 60_000)
+      agent = route && route.kind !== 'direct' ? createProxyDispatcher(route, timeoutMs, this.options.connections ?? 1)
+        : createPinnedDispatcher(url.hostname, addresses, timeoutMs, 60_000, this.options.connections ?? 1)
       this.agents.set(key, agent)
     }
     return agent
   }
   async dispose(): Promise<void> {
     this.closed = true
-    await Promise.all([...this.agents.values()].map(agent => agent.destroy().catch(() => {})))
+    await Promise.all([...this.agents.values(), ...this.retiring].map(agent => agent.destroy().catch(() => {})))
     this.agents.clear()
+    this.retiring.clear()
   }
 }
 
-async function checkWithSignal(target: string, config: ProxyConfig, resolve: Resolver, signal: AbortSignal, proxied = false): Promise<UrlCheck> {
+async function withSignal<T>(operation: () => Promise<T>, signal: AbortSignal): Promise<T> {
   signal.throwIfAborted()
   let abort = () => {}
   try {
     return await Promise.race([
-      checkUrl(target, config, resolve, proxied),
+      operation(),
       new Promise<never>((_yes, no) => {
         abort = () => no(signal.reason)
         signal.addEventListener('abort', abort, { once: true })
@@ -199,7 +223,7 @@ async function checkWithSignal(target: string, config: ProxyConfig, resolve: Res
  */
 export async function safeFetch(
   raw: string,
-  config: ProxyConfig,
+  config: RequestPolicy,
   options: SafeFetchOptions = {},
 ): Promise<SafeFetchResult> {
   const doFetch = options.fetchImpl ?? fetch
@@ -207,54 +231,74 @@ export async function safeFetch(
   const signal = options.signal ?? AbortSignal.timeout(config.requestTimeoutMs)
   let target = raw
   const network = options.network ?? networkContext()
+  const access = 'purpose' in config && config.purpose === 'media' ? options.mediaAccess ?? mediaEntry(raw) : undefined
 
   for (let hop = 0; hop <= config.maxRedirects; hop += 1) {
-    const syntax = await checkWithSignal(target, config, resolve, signal, true)
-    if (!syntax.ok) throw new ProxyError(syntax.reason, syntax.detail, 403)
-    const route = await network.route(target)
-    const check = await checkWithSignal(target, config, resolve, signal, route.kind === 'http')
-    if (!check.ok) throw new ProxyError(check.reason, check.detail, 403)
     signal.throwIfAborted()
-    const pooled = options.dispatcherPool !== undefined
-    const dispatcher = options.dispatcherPool?.get(check.url, check.addresses, config.requestTimeoutMs, route)
-      ?? (route.kind === 'http' ? new ProxyAgent({ uri: route.proxyUrl!, requestTls: { rejectUnauthorized: true }, proxyTls: { rejectUnauthorized: true } }) : createPinnedDispatcher(check.url.hostname, check.addresses, config.requestTimeoutMs))
-    const abort = () => { void dispatcher.destroy().catch(() => {}) }
-    if (!pooled) signal.addEventListener('abort', abort, { once: true })
-    let response: Response
-    try {
-      const init: RequestInit & { dispatcher: Dispatcher } = {
-        method: options.method ?? 'GET', headers: options.headers, body: options.body,
-        redirect: 'manual', signal, dispatcher,
+    const syntax = checkUrlSyntax(target, config)
+    if (!syntax.ok) throw new ProxyError(syntax.reason, syntax.detail, 403)
+    const routes = routeCandidates(await withSignal(() => network.route(target), signal))
+    let response: Response | undefined
+    for (let index = 0; index < routes.length; index++) {
+      const route = routes[index]!
+      const hasNext = index < routes.length - 1
+      if (route.kind === 'unsupported') {
+        if (hasNext) continue
+        throw new StreamFailureError({ stage: 'proxy', code: route.reason === 'socks4-unsupported' ? 'socks4-unsupported' : 'proxy-type-unsupported',
+          message: route.reason === 'socks4-unsupported' ? '系统代理要求 SOCKS4, 当前不支持, 请在代理软件中改用 SOCKS5 或 HTTP.' : '系统代理类型不受支持, 请检查代理设置.' })
       }
-      response = await doFetch(check.url, init)
-      if (signal.aborted) { await response.body?.cancel().catch(() => {}); signal.throwIfAborted() }
-      // close() drains the in-flight response without aborting it, then releases
-      // its connection. A body cancellation or signal abort also tears it down.
-      if (!pooled) void dispatcher.close().catch(() => dispatcher.destroy()).catch(() => {})
-        .finally(() => signal.removeEventListener('abort', abort))
-    } catch (error) {
-      signal.removeEventListener('abort', abort)
-      if (!pooled) await dispatcher.destroy().catch(() => {})
-      if (route.kind === 'direct' || error instanceof Error && error.name === 'AdaptivePullError') throw error
-      const failure = classifyNetworkFailure(error, 'proxy')
-      throw new StreamFailureError(failure)
+      const check = await withSignal(() => resolveTarget(syntax.url, resolve, routeUsesRemoteDns(route)), signal)
+      if (!check.ok) throw new ProxyError(check.reason, check.detail, 403)
+      if (access && !access.scope.permits(check.url, check.addresses, access.entry && hop === 0, false)) {
+        throw new ProxyError('media-network-boundary', '自动发现的媒体资源跨到了未授权的本机或局域网来源, 请手动添加该来源.', 403)
+      }
+      signal.throwIfAborted()
+      const pooled = options.dispatcherPool !== undefined
+      const dispatcher = options.dispatcherPool?.get(check.url, check.addresses, config.requestTimeoutMs, route, options.connectionScope)
+        ?? (route.kind !== 'direct' ? createProxyDispatcher(route, config.requestTimeoutMs) : createPinnedDispatcher(check.url.hostname, check.addresses, config.requestTimeoutMs))
+      const abort = () => { void dispatcher.destroy().catch(() => {}) }
+      if (!pooled) signal.addEventListener('abort', abort, { once: true })
+      try {
+        const init: RequestInit & { dispatcher: Dispatcher } = {
+          method: options.method ?? 'GET', headers: options.headers, body: options.body,
+          redirect: 'manual', signal, dispatcher,
+        }
+        response = await doFetch(check.url, init)
+        if (signal.aborted) { await response.body?.cancel().catch(() => {}); signal.throwIfAborted() }
+        access?.scope.permits(check.url, check.addresses, access.entry && hop === 0)
+        if (!pooled) void dispatcher.close().catch(() => dispatcher.destroy()).catch(() => {})
+          .finally(() => signal.removeEventListener('abort', abort))
+        break
+      } catch (error) {
+        signal.removeEventListener('abort', abort)
+        if (!pooled) await dispatcher.destroy().catch(() => {})
+        signal.throwIfAborted()
+        if (route.kind !== 'direct' && hasNext && isProxyConnectFailure(error)) continue
+        if (route.kind === 'direct' || error instanceof Error && error.name === 'AdaptivePullError') throw error
+        throw new StreamFailureError(classifyNetworkFailure(error, 'proxy'))
+      }
     }
+    if (!response) throw new StreamFailureError({ stage: 'proxy', code: 'proxy-type-unsupported', message: '系统代理没有可用的连接候选.' })
 
     if (!isRedirect(response.status)) {
-      return { response, finalUrl: check.url }
+      return { response, finalUrl: syntax.url }
     }
     const location = response.headers.get('location')
-    if (!location) return { response, finalUrl: check.url }
+    if (!location) return { response, finalUrl: syntax.url }
     // Drain the redirect body so the socket can be reused.
     await response.body?.cancel().catch(() => {})
-    const next = new URL(location, check.url)
+    const next = new URL(location, syntax.url)
     // Platform login credentials must never follow a redirect to another origin.
-    const credentials = Object.keys(options.headers ?? {}).some(name => /^(cookie|authorization|proxy-authorization)$/i.test(name))
-    if (credentials && next.origin !== check.url.origin) throw new ProxyError('upstream-failed', '禁止将平台登录信息发送到其他来源', 403)
+    if (hasSensitiveHeaders(options.headers) && next.origin !== syntax.url.origin) throw new ProxyError('cross-origin-credentials', '禁止将平台登录信息发送到其他来源', 403)
     target = next.toString()
   }
 
   throw new ProxyError('too-many-redirects', `跳转次数超过 ${config.maxRedirects} 次`, 502)
+}
+
+export function hasSensitiveHeaders(headers?: Record<string, string>): boolean {
+  return Object.keys(headers ?? {}).some(name => /^(?:cookie2?|authorization|proxy-authorization)$/i.test(name)
+    || /(?:token|secret|csrf|api[-_]?key|^x-auth)/i.test(name))
 }
 
 function isRedirect(status: number): boolean {

@@ -2,15 +2,17 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { cleanProxyEnvironment, networkContext, type NetworkContext } from '../server/networkPolicy'
+import { cleanProxyEnvironment, networkContext, routeCandidates, type NetworkContext, type NetworkRoute } from '../server/networkPolicy'
+import { isProxyConnectFailure } from '../server/proxyDispatcher'
+import type { StreamFailure } from '../server/networkFailure'
 import { killProcessTree } from './bufferManager'
 import { locateTool, locateYouTubePotProvider, type ToolContext, type ToolSettings } from './toolLocator'
 import { prepareScriptOnlyPotPlugin, type PrivatePotPlugin } from './potPlugin'
-import type { YoutubeCookieAccess } from './ytdlp'
+import { ytDlpProxyConnectionError, ytDlpProxyConnectionFailure, ytDlpProxyUrl, type YoutubeCookieAccess } from './ytdlp'
 
 export type YtImportErrorCode = 'bot-challenge' | 'auth-required' | 'geo-restricted' | 'video-unavailable'
   | 'live-not-supported' | 'format-unavailable' | 'provider-failed' | 'network' | 'rate-limited'
-  | 'disk-full' | 'too-long' | 'cancelled'
+  | 'disk-full' | 'too-long' | 'cancelled' | 'socks4-unsupported' | 'proxy-type-unsupported'
 export type YtImportHeight = 2160 | 1440 | 1080
 export interface YtImportRequest { url: string; startSeconds: number; endSeconds: number; targetHeight: YtImportHeight }
 export interface YtImportFormat {
@@ -40,10 +42,35 @@ const MESSAGES: Record<YtImportErrorCode, string> = {
   'format-unavailable': '所选画质不可用或无法无损封装, 未改用其他画质.',
   'provider-failed': 'YouTube 工具或 PO token provider 不可用, 请检查工具安装.',
   network: '下载网络失败或超时, 请检查网络和系统代理.', 'rate-limited': 'YouTube 请求受到限流, 请稍后重试.',
+  'socks4-unsupported': '暂不支持 SOCKS4 代理, 请改用 HTTP 或 SOCKS5 代理后重试.',
+  'proxy-type-unsupported': '系统代理类型或地址不受支持, 请改用有效的 HTTP 或 SOCKS5 代理后重试.',
   'disk-full': '片段超过 40GiB 或磁盘剩余空间不足.', 'too-long': '单个片段最多 3 小时.', cancelled: '下载已取消.',
 }
 export class YtImportError extends Error {
   constructor(readonly code: YtImportErrorCode) { super(MESSAGES[code]); this.name = 'YtImportError' }
+}
+
+/** Skip only explicitly unsupported PAC entries; never add an implicit DIRECT route. */
+function importRouteCandidates(route: NetworkRoute): readonly NetworkRoute[] {
+  const candidates = routeCandidates(route)
+  const supported = candidates.filter(candidate => candidate.kind !== 'unsupported')
+  if (!supported.length) throw new YtImportError(candidates[0]?.reason === 'socks4-unsupported' ? 'socks4-unsupported' : 'proxy-type-unsupported')
+  return supported
+}
+
+function unsupportedProxyCode(error: unknown): 'socks4-unsupported' | 'proxy-type-unsupported' | undefined {
+  if (!error || typeof error !== 'object') return undefined
+  const raw = error as { code?: unknown; reason?: unknown; failure?: { code?: unknown } }
+  for (const code of [raw.failure?.code, raw.code, raw.reason]) {
+    if (code === 'socks4-unsupported' || code === 'proxy-type-unsupported') return code
+  }
+  return undefined
+}
+
+/** A downloader with one --proxy cannot represent a different per-media PAC plan. */
+function sameRoutePlan(left: readonly NetworkRoute[], right: readonly NetworkRoute[]): boolean {
+  return left.length === right.length && left.every((candidate, index) => candidate.kind === right[index]!.kind
+    && ytDlpProxyUrl(candidate) === ytDlpProxyUrl(right[index]!))
 }
 
 /** Canonicalize a video identity, never a renderer-supplied request target. */
@@ -78,9 +105,20 @@ type Format = Record<string, unknown>
 const number = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
 const safeText = (value: unknown, limit: number): string => typeof value === 'string' ? value.replace(/[\x00-\x1f\x7f]/g, '').slice(0, limit) : ''
 
-export const YT_IMPORT_METADATA_TEMPLATE = '{"metadata":%(.{id,title,duration,is_live,live_status})j,"formats":%(formats.:.{format_id,url,protocol,width,height,fps,tbr,abr,asr,vcodec,acodec,ext,filesize,filesize_approx,has_drm,quality})j}'
+export const YT_IMPORT_METADATA_TEMPLATE = '{"metadata":%(.{id,title,duration,is_live,live_status})j,"formats":%(formats.:.{format_id,url,protocol,width,height,fps,tbr,abr,asr,vcodec,acodec,ext,filesize,filesize_approx,has_drm,quality,http_headers})j}'
 
-function selectFormats(info: unknown, videoId: string, start: number, end: number, targetHeight: YtImportHeight): { title: string; duration: number; format: YtImportFormat; estimatedBytes: number } {
+interface ImportInput { url: string; headers: Record<string, string> }
+interface SelectedImport { title: string; duration: number; format: YtImportFormat; estimatedBytes: number; inputs: ImportInput[] }
+
+/** Signed media stays private; only the declared User-Agent is retained, never cookies. */
+function importInput(format: Format): ImportInput {
+  const raw = format.http_headers && typeof format.http_headers === 'object' ? format.http_headers as Record<string, unknown> : {}
+  const agent = raw['User-Agent'] ?? raw['user-agent']
+  return { url: String(format.url), headers: { Referer: 'https://www.youtube.com/',
+    ...(typeof agent === 'string' && agent.length <= 4096 && !/[\r\n\x00]/.test(agent) ? { 'User-Agent': agent } : {}) } }
+}
+
+function selectFormats(info: unknown, videoId: string, start: number, end: number, targetHeight: YtImportHeight): SelectedImport {
   if (!info || typeof info !== 'object') throw new YtImportError('video-unavailable')
   const record = info as Record<string, unknown>
   const metadata = record.metadata as Record<string, unknown> | undefined
@@ -123,7 +161,7 @@ function selectFormats(info: unknown, videoId: string, start: number, end: numbe
   return { title: safeText(metadata.title, 300), duration,
     format: { videoFormatId: String(video.format_id), audioFormatId: audio ? String(audio.format_id) : null,
       width: number(video.width), height: number(video.height), fps: number(video.fps), videoCodec, audioCodec, container },
-    estimatedBytes: Math.ceil(estimate(video) + (audio ? estimate(audio) : 0)) }
+    estimatedBytes: Math.ceil(estimate(video) + (audio ? estimate(audio) : 0)), inputs: [importInput(video), ...(audio ? [importInput(audio)] : [])] }
 }
 
 interface ActiveJob { job: YtImportJob; controller: AbortController; promise: Promise<void>; child?: ChildProcess }
@@ -133,6 +171,9 @@ export interface YtImportOptions {
   spawn?: typeof spawn; killTree?: (child: ChildProcess) => Promise<void>
   event?: (job: YtImportJob) => void; publish?: (assetId: string, file: string) => string
   freeBytes?: (directory: string) => Promise<number>; probeTimeoutMs?: number; downloadTimeoutMs?: number
+  mediaInput?: (url: string, headers: Record<string, string> | undefined, network: NetworkContext) => Promise<{
+    url: string; proxyUrl: string; readFailure?: () => StreamFailure | undefined
+  }>
 }
 
 /** Owns only import children. It never disposes or cancels the live resolver. */
@@ -194,24 +235,36 @@ export class YouTubeImportJobManager {
       const directory = path.join(this.root, job.jobId)
       await fs.promises.mkdir(directory, { mode: 0o700 })
       this.current(active)
+      const network = this.options.network?.() ?? networkContext('youtube')
       const [executable, ffmpeg, ffprobe, provider, route] = await Promise.all([
         locateTool('yt-dlp', this.options.settings, this.options.env, this.options.toolContext),
         locateTool('ffmpeg', this.options.settings, this.options.env, this.options.toolContext),
         locateTool('ffprobe', this.options.settings, this.options.env, this.options.toolContext),
         locateYouTubePotProvider(this.options.env, this.options.toolContext),
-        (this.options.network?.() ?? networkContext('youtube')).route(url),
+        network.route(url),
       ])
       if (!provider) throw new YtImportError('provider-failed')
       try { plugin = await prepareScriptOnlyPotPlugin(provider.pluginDir) } catch { throw new YtImportError('provider-failed') }
-      const proxy = route.proxyUrl ?? ''
+      const candidates = importRouteCandidates(route)
       const completed = await this.options.cookies.withTemporaryCookies('youtube', async cookieFile => {
         this.current(active)
         if (!cookieFile) throw new YtImportError('auth-required')
-        const base = ['--proxy', proxy, '--ignore-config', '--no-cache-dir', '--no-playlist', '--socket-timeout', '30', '--retries', '1', '--extractor-retries', '1',
+        const base = (proxy: string) => ['--proxy', proxy, '--ignore-config', '--no-cache-dir', '--no-playlist', '--socket-timeout', '30', '--retries', '1', '--extractor-retries', '1',
           '--no-plugin-dirs', '--plugin-dirs', plugin!.pluginDir, '--extractor-args', `youtubepot-bgutilscript:server_home=${provider.serverHome}`,
           '--no-js-runtimes', '--js-runtimes', `node:${this.options.electronPath}`, '--no-remote-components', '--cookies', cookieFile,
           '--ffmpeg-location', ffmpeg]
-        const probe = await this.runChild(active, executable, [...base, '--no-progress', '--skip-download', '--print', YT_IMPORT_METADATA_TEMPLATE, '--', url], proxy, directory, 'probe')
+        let probe = '', selectedIndex = 0
+        for (let index = 0; index < candidates.length; index++) {
+          const candidate = candidates[index]!
+          const proxy = ytDlpProxyUrl(candidate)
+          try {
+            probe = await this.runChild(active, executable, [...base(proxy), '--no-progress', '--skip-download', '--print', YT_IMPORT_METADATA_TEMPLATE, '--', url], proxy, directory, 'probe')
+            selectedIndex = index
+            break
+          } catch (error) {
+            if (candidate.kind === 'direct' || index + 1 === candidates.length || !isProxyConnectFailure(error)) throw error
+          }
+        }
         this.current(active)
         let parsed: unknown
         try { parsed = JSON.parse(probe) } catch { throw new YtImportError('video-unavailable') }
@@ -220,13 +273,7 @@ export class YouTubeImportJobManager {
         if (selected.estimatedBytes > MAX_BYTES || !Number.isFinite(free) || free < selected.estimatedBytes * 2 + 64 * 1024 ** 2) throw new YtImportError('disk-full')
         Object.assign(job, { title: selected.title, duration: selected.duration, format: selected.format, state: 'downloading', progress: { downloadedBytes: 0, totalBytes: selected.estimatedBytes } })
         this.emit(job)
-        const ids = selected.format.videoFormatId + (selected.format.audioFormatId ? `+${selected.format.audioFormatId}` : '')
-        await this.runChild(active, executable, [...base, '--format', ids, '--download-sections', `*${job.startSeconds}-${job.endSeconds}`,
-          '--no-force-keyframes-at-cuts', '--downloader-args', 'ffmpeg_o:-c:v copy -c:a copy', '--merge-output-format', selected.format.container,
-          '--remux-video', selected.format.container, '--no-write-info-json', '--no-write-thumbnail', '--no-write-subs', '--no-write-auto-subs',
-          '--no-embed-metadata', '--no-embed-thumbnail', '--newline', '--progress', '--progress-delta', '1', '--output-na-placeholder', 'null',
-          '--progress-template', 'download:FY1_PROGRESS:[%(progress.downloaded_bytes)j,%(progress.total_bytes)j,%(progress.speed)j,%(progress.eta)j]',
-          '--output', path.join(directory, 'media.%(ext)s'), '--', url], proxy, directory, 'download')
+        await this.downloadSelected(active, executable, ffmpeg, base, selected, candidates.slice(selectedIndex), network, directory, url)
         this.current(active)
         const file = path.join(directory, `media.${selected.format.container}`)
         const stat = await fs.promises.lstat(file)
@@ -258,13 +305,62 @@ export class YouTubeImportJobManager {
       this.emit(job)
     } catch (error) {
       const code: YtImportErrorCode = active.controller.signal.aborted || this.disposed ? 'cancelled'
-        : error instanceof YtImportError ? error.code : (error as NodeJS.ErrnoException)?.code === 'ENOSPC' ? 'disk-full'
+        : error instanceof YtImportError ? error.code : unsupportedProxyCode(error) ?? ((error as NodeJS.ErrnoException)?.code === 'ENOSPC' ? 'disk-full'
           : error && typeof error === 'object' && 'tool' in error ? 'provider-failed'
-            : error && typeof error === 'object' && 'code' in error && ['login-cancelled', 'cookie-storage-failed'].includes(String(error.code)) ? 'auth-required' : 'network'
+            : error && typeof error === 'object' && 'code' in error && ['login-cancelled', 'cookie-storage-failed'].includes(String(error.code)) ? 'auth-required' : 'network')
       job.state = code === 'cancelled' ? 'cancelled' : 'failed'
       job.error = { code, message: code === 'format-unavailable' ? `${targetHeight}p 画质不可用或无法无损封装, 未改用其他画质.` : MESSAGES[code] }
       this.emit(job)
     } finally { await plugin?.dispose().catch(() => {}) }
+  }
+
+  private async downloadSelected(active: ActiveJob, executable: string, ffmpeg: string, base: (proxy: string) => string[], selected: SelectedImport,
+    candidates: readonly NetworkRoute[], network: NetworkContext, directory: string, url: string): Promise<void> {
+    const job = active.job
+    const mediaPlans = await Promise.all(selected.inputs.map(async input => importRouteCandidates(await network.route(input.url))))
+    if (candidates.some(route => route.kind === 'socks5') || mediaPlans.some(plan => plan.some(route => route.kind === 'socks5') || !sameRoutePlan(plan, candidates))) {
+      await this.downloadThroughGateway(active, ffmpeg, selected, network, directory)
+      return
+    }
+    for (let index = 0; index < candidates.length; index++) {
+      const candidate = candidates[index]!
+      const proxy = ytDlpProxyUrl(candidate)
+      try {
+        const ids = selected.format.videoFormatId + (selected.format.audioFormatId ? `+${selected.format.audioFormatId}` : '')
+        await this.runChild(active, executable, [...base(proxy), '--format', ids, '--download-sections', `*${job.startSeconds}-${job.endSeconds}`,
+          '--no-force-keyframes-at-cuts', '--downloader-args', 'ffmpeg_o:-c:v copy -c:a copy', '--merge-output-format', selected.format.container,
+          '--remux-video', selected.format.container, '--no-write-info-json', '--no-write-thumbnail', '--no-write-subs', '--no-write-auto-subs',
+          '--no-embed-metadata', '--no-embed-thumbnail', '--newline', '--progress', '--progress-delta', '1', '--output-na-placeholder', 'null',
+          '--progress-template', 'download:FY1_PROGRESS:[%(progress.downloaded_bytes)j,%(progress.total_bytes)j,%(progress.speed)j,%(progress.eta)j]',
+          '--output', path.join(directory, 'media.%(ext)s'), '--', url], proxy, directory, 'download')
+        return
+      } catch (error) {
+        if (candidate.kind === 'direct' || index + 1 === candidates.length || !isProxyConnectFailure(error)) throw error
+        // A different route must never restart a transfer that already produced media bytes.
+        for (const name of await fs.promises.readdir(directory)) {
+          if (!name.startsWith('media.')) continue
+          const stat = await fs.promises.lstat(path.join(directory, name))
+          if (!stat.isFile() || stat.isSymbolicLink() || stat.size) throw error
+        }
+      }
+    }
+  }
+
+  private async downloadThroughGateway(active: ActiveJob, ffmpeg: string, selected: SelectedImport, network: NetworkContext, directory: string): Promise<void> {
+    if (!this.options.mediaInput) throw new YtImportError('network')
+    const inputs = []
+    for (const input of selected.inputs) {
+      const url = new URL(input.url)
+      if (url.protocol !== 'https:' || !/^(?:[a-z0-9-]+\.)+googlevideo\.com$/i.test(url.hostname) || url.port || url.username || url.password || url.hash) throw new YtImportError('format-unavailable')
+      this.current(active)
+      inputs.push(await this.options.mediaInput(input.url, input.headers, network))
+    }
+    this.current(active)
+    const args = ['-hide_banner', '-nostdin', '-y', '-loglevel', 'error',
+      ...inputs.flatMap(input => ['-protocol_whitelist', 'http,tcp,crypto', '-ss', String(active.job.startSeconds), '-i', input.url]),
+      '-t', String(active.job.endSeconds - active.job.startSeconds), '-map', '0:v:0', '-map', inputs.length > 1 ? '1:a:0' : '0:a:0',
+      '-c:v', 'copy', '-c:a', 'copy', '-progress', 'pipe:1', '-nostats', path.join(directory, 'media.mp4')]
+    await this.runChild(active, ffmpeg, args, '', directory, 'download')
   }
 
   private terminate(child: ChildProcess): Promise<void> {
@@ -304,7 +400,7 @@ export class YouTubeImportJobManager {
           }
         }).catch(() => stop('disk-full')).finally(() => { checking = false })
       }, 1000) : undefined
-      const finish = (error?: YtImportError) => {
+      const finish = (error?: Error) => {
         if (settled) return
         settled = true; clearTimeout(timer); clearInterval(poll); active.controller.signal.removeEventListener('abort', abort)
         if (active.child === child) active.child = undefined
@@ -334,7 +430,8 @@ export class YouTubeImportJobManager {
       })
       child.stderr?.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString('utf8')).slice(-32768) })
       child.once('error', () => finish(new YtImportError('provider-failed')))
-      child.once('close', code => finish(stopped ? new YtImportError(stopped) : code !== 0 ? new YtImportError(classifyYtImportError(stderr)) : undefined))
+      child.once('close', code => finish(stopped ? new YtImportError(stopped) : code !== 0
+        ? proxy && ytDlpProxyConnectionFailure(stderr) ? ytDlpProxyConnectionError() : new YtImportError(classifyYtImportError(stderr)) : undefined))
       if (active.controller.signal.aborted) abort()
     })
   }

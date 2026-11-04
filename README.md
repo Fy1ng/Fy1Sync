@@ -32,12 +32,12 @@ Fy1Sync 是一款 Windows 桌面播放器. 将两路直播或录像放进同一�
 
 ## 下载安装
 
-当前版本为 `v0.3.1`, 提供 **Windows x64** 安装包和免安装压缩包.
+当前版本为 `v0.3.2`, 提供 **Windows x64** 安装包和免安装压缩包.
 
 | 版本 | 使用方式 |
 | --- | --- |
-| [下载安装包](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.3.1/Fy1Sync-0.3.1-win-x64-nsis.exe) | 运行安装向导, 按提示选择安装位置 |
-| [下载免安装版](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.3.1/Fy1Sync-0.3.1-win-x64-portable.zip) | 解压整个目录后运行 `Fy1Sync.exe` |
+| [下载安装包](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.3.2/Fy1Sync-0.3.2-win-x64-nsis.exe) | 运行安装向导, 按提示选择安装位置 |
+| [下载免安装版](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.3.2/Fy1Sync-0.3.2-win-x64-portable.zip) | 解压整个目录后运行 `Fy1Sync.exe` |
 
 [查看全部 Releases](https://github.com/Fy1ng/Fy1Sync/releases) / [GitCode 下载镜像](https://gitcode.com/Fy1ng/Fy1Sync/releases). 请区分应用版本与单独发布的 FFmpeg 构建资源.
 
@@ -94,6 +94,10 @@ Fy1Sync 是一款 Windows 桌面播放器. 将两路直播或录像放进同一�
 | 媒体直链 / 本地文件 | HLS `.m3u8` 与可解码的视频文件或直链 | 可与另一侧片源组合, 不自带平台账号功能 |
 
 直接粘贴 `.mpd` 的 DASH 链接目前不支持. YouTube 自适应取流由内部流程处理, 不等于通用 DASH 直链支持. 文件扩展名也不保证编码可播放, 仍取决于内置 FFmpeg 和 Chromium 的解码能力.
+
+媒体直链支持自定义域名, HTTP/HTTPS 非标准端口和本机/局域网服务. 播放列表可自动读取同源资源及其他公网 CDN; 如其分片或跳转指向另一个本机/局域网服务, 请直接添加该目标的媒体地址. 对本地来源的授权仅适用于选择的 origin, 不扩展到其他主机或端口.
+
+系统代理支持 HTTP, HTTPS 和 SOCKS5, 并保留 PAC 返回的候选顺序. 只有明确的代理连接建立失败才尝试后续候选, 不会自行增加 DIRECT 回退. SOCKS4 会显示不支持提示, 可在代理软件中改用 SOCKS5 或 HTTP. 国内平台仍可在网络设置中选择直连; Fake-IP 地址不会仅因保留网段而被拒绝.
 
 ## 使用边界
 

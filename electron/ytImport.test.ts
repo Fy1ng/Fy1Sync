@@ -8,6 +8,8 @@ import { YouTubeImportJobManager, classifyYtImportError, normalizeYtImportUrl, t
 import { locateYouTubePotProvider } from './toolLocator'
 import { prepareScriptOnlyPotPlugin } from './potPlugin'
 import { YtDlpRunner } from './ytdlp'
+import type { NetworkRoute } from '../server/networkPolicy'
+import { StreamFailureError } from '../server/networkFailure'
 
 vi.mock('./toolLocator', async actual => ({ ...await actual<object>(),
   locateTool: vi.fn(async (tool: string) => path.resolve(`.runtime-cache/mock-tools/${tool}.exe`)),
@@ -35,10 +37,11 @@ const probeInfo = () => ({ metadata: { id: videoId, title: '本地 mock 录像',
 function child(): ChildProcess {
   return Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter(), kill: vi.fn(), pid: 9000 }) as unknown as ChildProcess
 }
-function harness(options: { info?: ReturnType<typeof probeInfo>; hold?: 'probe' | 'download'; failure?: string; freeBytes?: number; cookieFile?: string | null; verifyWidth?: number; verifyHeight?: number; publishFailure?: boolean; env?: NodeJS.ProcessEnv; downloadTimeoutMs?: number } = {}) {
+function harness(options: { info?: ReturnType<typeof probeInfo>; hold?: 'probe' | 'download'; failure?: string; probeFailures?: string[]; freeBytes?: number; cookieFile?: string | null; verifyWidth?: number; verifyHeight?: number; publishFailure?: boolean; env?: NodeJS.ProcessEnv; downloadTimeoutMs?: number; network?: YtImportOptions['network']; mediaInput?: YtImportOptions['mediaInput'] } = {}) {
   const root = fs.mkdtempSync(path.join(tmpdir(), 'ytimport-test-'))
   roots.push(root)
   const launches: Array<{ child: ChildProcess; args: string[]; options: Record<string, unknown> }> = []
+  let probeCount = 0
   const events: YtImportJob[] = []
   const cookieCleaned = vi.fn()
   const publish = vi.fn((assetId: string, file: string) => {
@@ -53,18 +56,23 @@ function harness(options: { info?: ReturnType<typeof probeInfo>; hold?: 'probe' 
   const launch = vi.fn((_executable, args: string[], spawnOptions) => {
     const process = child()
     launches.push({ child: process, args, options: spawnOptions })
-    const stage = args.includes('--skip-download') ? 'probe' : args.includes('--download-sections') ? 'download' : 'verify'
+    const stage = args.includes('--skip-download') ? 'probe' : args.includes('--download-sections') || args.includes('-progress') ? 'download' : 'verify'
     if (stage === options.hold) return process
     setImmediate(() => {
-      if (stage === 'probe') process.stdout!.emit('data', Buffer.from(JSON.stringify(options.info ?? probeInfo())))
+      if (stage === 'probe') {
+        const failure = options.probeFailures?.[probeCount++]
+        if (failure) { process.stderr!.emit('data', Buffer.from(failure)); process.emit('close', 1); return }
+        process.stdout!.emit('data', Buffer.from(JSON.stringify(options.info ?? probeInfo())))
+      }
       else if (stage === 'download') {
         if (options.failure) { process.stderr!.emit('data', Buffer.from(options.failure)); process.emit('close', 1); return }
-        const template = args[args.indexOf('--output') + 1]!
+        const template = args.includes('--output') ? args[args.indexOf('--output') + 1]! : args.at(-1)!
         fs.writeFileSync(template.replace('%(ext)s', 'mp4'), 'local synthetic media bytes')
         process.stdout!.emit('data', Buffer.from('FY1_PROGRESS:[1024,2048,100,10]\n'))
       } else {
-        const download = launches.find(launch => launch.args.includes('--download-sections'))!.args
-        const id = download[download.indexOf('--format') + 1]!.split('+')[0]
+        const download = launches.find(launch => launch.args.includes('--download-sections') || launch.args.includes('-progress'))!.args
+        const id = download.includes('--format') ? download[download.indexOf('--format') + 1]!.split('+')[0]
+          : (options.info ?? probeInfo()).formats.find(format => format.height === manager.list()[0]?.targetHeight)!.format_id
         const format = (options.info ?? probeInfo()).formats.find(format => format.format_id === id)!
         process.stdout!.emit('data', Buffer.from(JSON.stringify({ streams: [
           { codec_type: 'video', codec_name: format.vcodec.startsWith('avc1') ? 'h264' : 'av1',
@@ -79,7 +87,7 @@ function harness(options: { info?: ReturnType<typeof probeInfo>; hold?: 'probe' 
   const killTree = vi.fn(async (process: ChildProcess) => { process.emit('close', 1) })
   const manager = new YouTubeImportJobManager({ userDataDirectory: root, electronPath: '/electron.exe', networkRuntimePath: runtimePath,
     cookies, spawn: launch, killTree, downloadTimeoutMs: options.downloadTimeoutMs, event: job => events.push(job), publish, freeBytes: async () => options.freeBytes ?? 100 * 1024 ** 3,
-    network: () => ({ route: async () => ({ kind: 'http', proxyUrl: 'http://127.0.0.1:3128' }) }),
+    network: options.network ?? (() => ({ route: async () => ({ kind: 'http', proxyUrl: 'http://127.0.0.1:3128' }) })), mediaInput: options.mediaInput,
     env: options.env ?? { HTTP_PROXY: 'http://inherited.invalid', no_proxy: '*', PATH: 'safe' } })
   return { manager, launches, launch, killTree, cookies, events, publish, cookieCleaned, root }
 }
@@ -89,6 +97,176 @@ async function settled(manager: YouTubeImportJobManager): Promise<YtImportJob> {
 }
 
 describe('YouTube section imports', () => {
+  it.each([
+    ['DIRECT to HTTP', { kind: 'direct' }, { kind: 'http', proxyUrl: 'http://127.0.0.1:3128' }],
+    ['HTTP to DIRECT', { kind: 'http', proxyUrl: 'http://127.0.0.1:3128' }, { kind: 'direct' }],
+    ['different HTTP proxies', { kind: 'http', proxyUrl: 'http://127.0.0.1:3128' }, { kind: 'http', proxyUrl: 'http://127.0.0.1:8123' }],
+    ['SOCKS media alternative', { kind: 'http', proxyUrl: 'http://127.0.0.1:3128' }, { kind: 'http', proxyUrl: 'http://127.0.0.1:3128', alternatives: [{ kind: 'socks5', proxyUrl: 'socks5://127.0.0.1:1080' }] }],
+    ['HTTP media alternative', { kind: 'direct' }, { kind: 'direct', alternatives: [{ kind: 'http', proxyUrl: 'http://127.0.0.1:3128' }] }],
+  ] satisfies Array<[string, NetworkRoute, NetworkRoute]>)('uses per-media PAC routes through the gateway for %s', async (_label, probeRoute, mediaRoute) => {
+    const network = { route: vi.fn(async (url: string) => url.startsWith('https://www.youtube.com/') ? probeRoute : mediaRoute) }
+    const mediaInput = vi.fn<NonNullable<YtImportOptions['mediaInput']>>(async () => ({ url: 'http://127.0.0.1:19000/media/opaque', proxyUrl: '' }))
+    const h = harness({ network: () => network, mediaInput })
+    h.manager.start(request)
+    expect(await settled(h.manager)).toMatchObject({ state: 'ready', format: { videoFormatId: '399', audioFormatId: '251' } })
+    expect(mediaInput.mock.calls.map(call => call[0])).toEqual([probeInfo().formats[0]!.url, probeInfo().formats[2]!.url])
+    expect(mediaInput.mock.calls.every(call => call[2] === network)).toBe(true)
+    expect(h.launches[1]!.args).toContain('-progress')
+    expect(h.launches[1]!.args).not.toContain('--proxy')
+    expect(h.launches[1]!.args).not.toContain('--download-sections')
+    expect(network.route.mock.calls.map(call => call[0])).toEqual([request.url, probeInfo().formats[0]!.url, probeInfo().formats[2]!.url])
+    await h.manager.dispose()
+  })
+
+  it('routes video and audio independently when only the audio PAC plan differs from the probe', async () => {
+    const network = { route: vi.fn(async (url: string): Promise<NetworkRoute> => ({ kind: 'http',
+      proxyUrl: url.endsWith('/audio') ? 'http://127.0.0.1:8123' : 'http://127.0.0.1:3128' })) }
+    const mediaInput = vi.fn<NonNullable<YtImportOptions['mediaInput']>>(async () => ({ url: 'http://127.0.0.1:19000/media/opaque', proxyUrl: '' }))
+    const h = harness({ network: () => network, mediaInput })
+    h.manager.start(request)
+    expect(await settled(h.manager)).toMatchObject({ state: 'ready' })
+    expect(mediaInput).toHaveBeenCalledTimes(2)
+    expect(h.launches[1]!.args).not.toContain('--proxy')
+    await h.manager.dispose()
+  })
+
+  it.each([{ kind: 'direct' }, { kind: 'http', proxyUrl: 'http://127.0.0.1:3128' }] satisfies NetworkRoute[])(
+    'preserves the existing yt-dlp path for the same %j media plan', async route => {
+      const mediaInput = vi.fn<NonNullable<YtImportOptions['mediaInput']>>()
+      const h = harness({ network: () => ({ route: async () => route }), mediaInput })
+      h.manager.start(request)
+      expect(await settled(h.manager)).toMatchObject({ state: 'ready' })
+      expect(h.launches[1]!.args).toContain('--download-sections')
+      expect(mediaInput).not.toHaveBeenCalled()
+      await h.manager.dispose()
+    })
+
+  it.each(['socks4-unsupported', 'proxy-type-unsupported'] as const)('skips an explicit unsupported PAC entry %s before HTTP', async reason => {
+    const h = harness({ network: () => ({ route: async () => ({ kind: 'unsupported', reason,
+      alternatives: [{ kind: 'http', proxyUrl: 'http://127.0.0.1:3128' }],
+    }) }) })
+    h.manager.start(request)
+    expect(await settled(h.manager)).toMatchObject({ state: 'ready' })
+    expect(h.launches[0]!.args.slice(0, 2)).toEqual(['--proxy', 'http://127.0.0.1:3128'])
+    expect(h.launches[1]!.args).toContain('--download-sections')
+    await h.manager.dispose()
+  })
+
+  it('lets a media PAC plan skip unsupported entries before its explicit HTTP candidate', async () => {
+    const network = { route: vi.fn(async (url: string): Promise<NetworkRoute> => url.startsWith('https://www.youtube.com/')
+      ? { kind: 'direct' } : { kind: 'unsupported', reason: 'socks4-unsupported', alternatives: [{ kind: 'http', proxyUrl: 'http://127.0.0.1:3128' }] }) }
+    const mediaInput = vi.fn<NonNullable<YtImportOptions['mediaInput']>>(async () => ({ url: 'http://127.0.0.1:19000/media/opaque', proxyUrl: '' }))
+    const h = harness({ network: () => network, mediaInput })
+    h.manager.start(request)
+    expect(await settled(h.manager)).toMatchObject({ state: 'ready' })
+    expect(mediaInput).toHaveBeenCalledTimes(2)
+    await h.manager.dispose()
+  })
+
+  it.each(['socks4-unsupported', 'proxy-type-unsupported'] as const)('reports actionable %s when no supported probe candidate exists', async reason => {
+    const h = harness({ network: () => ({ route: async () => ({ kind: 'unsupported', reason }) }) })
+    h.manager.start(request)
+    const job = await settled(h.manager)
+    expect(job).toMatchObject({ state: 'failed', error: { code: reason, message: expect.stringContaining('HTTP 或 SOCKS5') } })
+    expect(h.launches).toEqual([])
+    await h.manager.dispose()
+  })
+
+  it.each(['socks4-unsupported', 'proxy-type-unsupported'] as const)('preserves fixed %s from the media gateway', async code => {
+    const mediaInput = vi.fn<NonNullable<YtImportOptions['mediaInput']>>(async () => {
+      throw new StreamFailureError({ stage: 'proxy', code, message: 'PRIVATE socks5://user:password@proxy.invalid/' })
+    })
+    const h = harness({ network: () => ({ route: async url => url.startsWith('https://www.youtube.com/')
+      ? { kind: 'direct' } : { kind: 'http', proxyUrl: 'http://127.0.0.1:3128' } }), mediaInput })
+    h.manager.start(request)
+    const job = await settled(h.manager)
+    expect(job).toMatchObject({ state: 'failed', error: { code, message: expect.stringContaining('HTTP 或 SOCKS5') } })
+    expect(JSON.stringify([job, h.events])).not.toMatch(/PRIVATE|password|proxy\.invalid/)
+    expect(h.publish).not.toHaveBeenCalled()
+    await h.manager.dispose()
+  })
+
+  it.each(['socks4-unsupported', 'proxy-type-unsupported'] as const)('reports actionable %s when the selected media has no usable PAC candidate', async reason => {
+    const mediaInput = vi.fn<NonNullable<YtImportOptions['mediaInput']>>()
+    const h = harness({ network: () => ({ route: async url => url.startsWith('https://www.youtube.com/')
+      ? { kind: 'direct' } : { kind: 'unsupported', reason } }), mediaInput })
+    h.manager.start(request)
+    expect(await settled(h.manager)).toMatchObject({ state: 'failed', error: { code: reason, message: expect.stringContaining('HTTP 或 SOCKS5') } })
+    expect(h.launches).toHaveLength(1)
+    expect(mediaInput).not.toHaveBeenCalled()
+    expect(h.publish).not.toHaveBeenCalled()
+    await h.manager.dispose()
+  })
+  it('uses proxy DNS for a SOCKS5 probe and sends only the selected tracks through opaque FFmpeg inputs', async () => {
+    const network = { route: vi.fn(async () => ({ kind: 'socks5' as const, proxyUrl: 'socks5://PRIVATE:PRIVATE@127.0.0.1:1080' })) }
+    let capability = 0
+    const mediaInput = vi.fn<NonNullable<YtImportOptions['mediaInput']>>(async () => ({ url: `http://127.0.0.1:19000/media/${++capability}`, proxyUrl: '' }))
+    const h = harness({ network: () => network, mediaInput })
+    h.manager.start(request)
+    const job = await settled(h.manager)
+    expect(job).toMatchObject({ state: 'ready', format: { videoFormatId: '399', audioFormatId: '251', height: 2160 } })
+    expect(h.launches).toHaveLength(3)
+    expect(h.launches[0]?.args.slice(0, 2)).toEqual(['--proxy', 'socks5h://PRIVATE:PRIVATE@127.0.0.1:1080'])
+    expect(mediaInput.mock.calls.map(call => call[0])).toEqual([probeInfo().formats[0]!.url, probeInfo().formats[2]!.url])
+    expect(mediaInput.mock.calls.every(call => call[2] === network)).toBe(true)
+    expect(mediaInput.mock.calls.every(call => Object.keys(call[1] ?? {}).every(key => !/cookie|authorization/i.test(key)))).toBe(true)
+    const args = h.launches[1]!.args
+    expect(args.filter(value => value === '-ss')).toHaveLength(2)
+    expect(args[args.indexOf('-ss') + 1]).toBe('40')
+    expect(args[args.indexOf('-t') + 1]).toBe('15')
+    expect(args.slice(args.indexOf('-c:v'), args.indexOf('-c:v') + 4)).toEqual(['-c:v', 'copy', '-c:a', 'copy'])
+    expect(args).not.toContain('--download-sections')
+    expect(args.join(' ')).not.toMatch(/PRIVATE|googlevideo|cookies|socks5/)
+    const env = h.launches[1]!.options.env as NodeJS.ProcessEnv
+    expect(Object.keys(env).filter(key => /^(http|https|all|no)_proxy$/i.test(key))).toEqual([])
+    expect(JSON.stringify([job, h.events])).not.toMatch(/PRIVATE|googlevideo|socks5/)
+    await h.manager.dispose()
+  })
+
+  it('keeps the requested height and fails safely when no SOCKS media gateway was injected', async () => {
+    const h = harness({ network: () => ({ route: async () => ({ kind: 'socks5', proxyUrl: 'socks5://127.0.0.1:1080' }) }) })
+    h.manager.start(request)
+    expect(await settled(h.manager)).toMatchObject({ state: 'failed', error: { code: 'network' } })
+    expect(h.launches).toHaveLength(1)
+    expect(h.publish).not.toHaveBeenCalled()
+    await h.manager.dispose()
+  })
+
+  it.each(['https://evil.invalid/video', 'http://media.googlevideo.com/video', 'https://user:PRIVATE@media.googlevideo.com/video'])(
+    'refuses unsafe gateway media %s without forwarding credentials', async url => {
+      const info = probeInfo(); info.formats[0]!.url = url
+      const mediaInput = vi.fn<NonNullable<YtImportOptions['mediaInput']>>()
+      const h = harness({ info, mediaInput, network: () => ({ route: async () => ({ kind: 'socks5', proxyUrl: 'socks5://127.0.0.1:1080' }) }) })
+      h.manager.start(request)
+      expect(await settled(h.manager)).toMatchObject({ state: 'failed', error: { code: 'format-unavailable' } })
+      expect(mediaInput).not.toHaveBeenCalled()
+      expect(h.publish).not.toHaveBeenCalled()
+      expect(JSON.stringify(h.events)).not.toContain('PRIVATE')
+      await h.manager.dispose()
+    })
+
+  it('tries the next PAC probe only after a proven proxy connection failure', async () => {
+    const h = harness({ probeFailures: ['Unable to connect to proxy: Connection refused PRIVATE'], network: () => ({ route: async () => ({
+      kind: 'socks5', proxyUrl: 'socks5://127.0.0.1:1080', alternatives: [{ kind: 'http', proxyUrl: 'http://127.0.0.1:3128' }],
+    }) }), mediaInput: async () => ({ url: 'http://127.0.0.1:19000/media/opaque', proxyUrl: '' }) })
+    h.manager.start(request)
+    expect(await settled(h.manager)).toMatchObject({ state: 'ready' })
+    expect(h.launches[0]!.args.slice(0, 2)).toEqual(['--proxy', 'socks5h://127.0.0.1:1080'])
+    expect(h.launches[1]!.args.slice(0, 2)).toEqual(['--proxy', 'http://127.0.0.1:3128'])
+    expect(JSON.stringify(h.events)).not.toContain('PRIVATE')
+    await h.manager.dispose()
+  })
+
+  it.each(['Please sign in', 'HTTP Error 403', 'certificate verify failed'])(
+    'does not change the PAC route for %s', async failure => {
+      const h = harness({ probeFailures: [failure], network: () => ({ route: async () => ({ kind: 'http',
+        proxyUrl: 'http://127.0.0.1:3128', alternatives: [{ kind: 'direct' }],
+      }) }) })
+      h.manager.start(request)
+      expect(await settled(h.manager)).toMatchObject({ state: 'failed' })
+      expect(h.launches).toHaveLength(1)
+      await h.manager.dispose()
+    })
   it('pins selected video/audio IDs, private cookies, section, copy codecs, runtime, plugin and selected proxy', async () => {
     const h = harness()
     const initial = h.manager.start(request)

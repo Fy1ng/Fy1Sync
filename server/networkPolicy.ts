@@ -2,29 +2,62 @@ import { StreamFailureError } from './networkFailure'
 import type { PlatformKind } from './platforms/types'
 
 export type DomesticRouting = 'direct' | 'system'
-export interface NetworkRoute { kind: 'direct' | 'http'; proxyUrl?: string; reason?: 'socks-unsupported' | 'proxy-type-unsupported' }
+export interface NetworkRoute {
+  kind: 'direct' | 'http' | 'socks5' | 'unsupported'
+  proxyUrl?: string
+  reason?: 'socks4-unsupported' | 'proxy-type-unsupported'
+  alternatives?: readonly NetworkRoute[]
+}
 export interface NetworkContext { route(url: string): Promise<NetworkRoute> }
 export interface ProxySummary { type: 'direct' | 'HTTP' | 'SOCKS' | 'PAC'; fallbackReason?: string }
 export const directNetwork: NetworkContext = { route: async () => ({ kind: 'direct' }) }
 const DOMESTIC = /(^|\.)(douyu\.com|douyucdn[23]?\.cn|dyscdn\.com|edgesrv\.com|douyuscdn\.com|bytefcdnrd\.com|bilibili\.com|bilivideo\.com|hdslb\.com|huya\.com|msstatic\.com)$/i
 export function domesticTarget(raw: string): boolean { try { return DOMESTIC.test(new URL(raw).hostname) } catch { return false } }
 
-/** Parse Chromium's ordered result. Unsupported SOCKS explicitly falls back to DIRECT. */
+/** Preserve Chromium's ordered alternatives. Never invent a DIRECT fallback. */
 export function parseProxyResult(result: string): NetworkRoute {
+  const routes: NetworkRoute[] = []
   for (const entry of result.split(';')) {
     const value = entry.trim()
-    if (/^DIRECT$/i.test(value)) return { kind: 'direct' }
+    if (!value) continue
+    if (/^DIRECT$/i.test(value)) { routes.push({ kind: 'direct' }); continue }
     const match = /^(PROXY|HTTPS|HTTP|SOCKS\d*)\s+(.+)$/i.exec(value)
-    if (!match) continue
-    if (/^SOCKS/i.test(match[1]!)) return { kind: 'direct', reason: 'socks-unsupported' }
+    if (!match) { routes.push({ kind: 'unsupported', reason: 'proxy-type-unsupported' }); continue }
+    const type = match[1]!.toUpperCase()
+    if (type === 'SOCKS' || type === 'SOCKS4') {
+      routes.push({ kind: 'unsupported', reason: 'socks4-unsupported' }); continue
+    }
+    if (type.startsWith('SOCKS') && type !== 'SOCKS5') {
+      routes.push({ kind: 'unsupported', reason: 'proxy-type-unsupported' }); continue
+    }
     try {
-      const url = new URL(`${match[1]!.toUpperCase() === 'HTTPS' ? 'https' : 'http'}://${match[2]}`)
-      if (!url.hostname || url.pathname !== '/' || url.search || url.hash) continue
-      return { kind: 'http', proxyUrl: url.href }
-    } catch { /* Try the next declared route. */ }
+      const url = new URL(`${type === 'HTTPS' ? 'https' : type === 'SOCKS5' ? 'socks5' : 'http'}://${match[2]}`)
+      if (!url.hostname || !['', '/'].includes(url.pathname)
+        || url.search || url.hash || /[\s\x00-\x1f\x7f]/.test(match[2]!)) throw new Error('Invalid proxy endpoint')
+      if (type === 'SOCKS5' && !url.port) url.port = '1080'
+      routes.push({ kind: type === 'SOCKS5' ? 'socks5' : 'http', proxyUrl: url.href })
+    } catch { routes.push({ kind: 'unsupported', reason: 'proxy-type-unsupported' }) }
   }
-  return { kind: 'direct', reason: 'proxy-type-unsupported' }
+  const [first = { kind: 'unsupported', reason: 'proxy-type-unsupported' } as NetworkRoute, ...alternatives] = routes
+  for (const route of alternatives) Object.freeze(route)
+  return Object.freeze({ ...first, ...(alternatives.length ? { alternatives: Object.freeze(alternatives) } : {}) })
 }
+
+export function routeCandidates(route: NetworkRoute): readonly NetworkRoute[] {
+  const result: NetworkRoute[] = []
+  const seen = new Set<NetworkRoute>()
+  const visit = (value: NetworkRoute): void => {
+    if (seen.has(value)) return
+    seen.add(value)
+    const { alternatives, ...candidate } = value
+    result.push(candidate)
+    for (const alternative of alternatives ?? []) visit(alternative)
+  }
+  visit(route)
+  return result
+}
+
+export function routeUsesRemoteDns(route: NetworkRoute): boolean { return route.kind === 'http' || route.kind === 'socks5' }
 
 export class NetworkPolicy {
   private readonly cache = new Map<string, { expires: number; value: Promise<NetworkRoute> }>()
@@ -58,10 +91,12 @@ export class NetworkPolicy {
   }
   async summary(): Promise<ProxySummary> {
     const values = await Promise.all(['https://www.youtube.com/', 'https://gql.twitch.tv/', 'https://www.douyu.com/'].map(url => this.system(url)))
-    const types = new Set(values.map(route => route.reason === 'socks-unsupported' ? 'SOCKS' : route.kind === 'http' ? 'HTTP' : 'direct'))
+    const routes = values.flatMap(value => routeCandidates(value))
+    const types = new Set<ProxySummary['type']>(routes.map(route => route.kind === 'socks5' || route.reason === 'socks4-unsupported' ? 'SOCKS'
+      : route.kind === 'http' ? 'HTTP' : route.kind === 'direct' ? 'direct' : 'PAC'))
     const source = await this.proxyMode?.().catch(() => undefined)
     return { type: source ?? (types.size > 1 ? 'PAC' : [...types][0] as ProxySummary['type']),
-      ...(values.some(route => route.reason) ? { fallbackReason: values.find(route => route.reason)!.reason } : {}) }
+      ...(routes.some(route => route.reason) ? { fallbackReason: routes.find(route => route.reason)!.reason } : {}) }
   }
 }
 let defaultPolicy: NetworkPolicy | undefined

@@ -1,4 +1,4 @@
-/** Outbound media policy for the Electron main process; no listener configuration. */
+/** Strict API policy and separate ordinary-media request limits. */
 
 export type ProxyConfig = {
   enabled: boolean
@@ -7,6 +7,14 @@ export type ProxyConfig = {
   allowNonStandardPorts: boolean
   maxRedirects: number
   requestTimeoutMs: number
+}
+
+export type MediaRequestPolicy = Pick<ProxyConfig, 'enabled' | 'maxRedirects' | 'requestTimeoutMs'> & { purpose: 'media' }
+export type RequestPolicy = ProxyConfig | MediaRequestPolicy
+
+/** Media permission is explicit and never broadens the API host list. */
+export function mediaRequestPolicy(config: ProxyConfig): MediaRequestPolicy {
+  return { purpose: 'media', enabled: config.enabled, maxRedirects: config.maxRedirects, requestTimeoutMs: config.requestTimeoutMs }
 }
 
 export const DEFAULT_PROXY_HOSTS = [

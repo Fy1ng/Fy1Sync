@@ -1,4 +1,5 @@
 import type { DouyuRoomIdentity, ResolveDouyuRoom } from './douyuRoom'
+import type { MediaAccess } from '../mediaAccess'
 /** Shared shapes for platform stream resolution. */
 
 export type PlatformKind = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'huya' | 'direct'
@@ -12,6 +13,8 @@ export type QualityOption = {
 }
 
 export type ResolvedStream = {
+  /** Main-only authority inherited when a resolver chooses a playlist rendition. */
+  mediaAccess?: MediaAccess
   platform: PlatformKind
   /** Playlist or progressive URL, already proxied when the platform needs it. */
   url: string
@@ -59,6 +62,7 @@ export type ResolveResult =
   | { ok: false; failure: ResolveFailure }
 
 export type ResolverDeps = {
+  mediaAccess?: () => MediaAccess | undefined
   resolveDouyuRoom?: ResolveDouyuRoom
   /** Internal acquisition pin. Never accepted from renderer arguments. */
   douyuRoomIdentity?: DouyuRoomIdentity

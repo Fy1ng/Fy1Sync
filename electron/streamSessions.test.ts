@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { StreamSessions } from './streamSessions'
 import type { StreamId } from './streamIdentity'
 import type { ResolveResult, ResolvedStream } from '../server/platforms'
+import { StreamFailureError } from '../server/networkFailure'
 
 function fixture() {
   let sequence = 0
@@ -21,6 +22,19 @@ function fixture() {
   return { manager, port, source }
 }
 describe('independent stream sessions', () => {
+  it.each([
+    [Object.assign(new Error('Cookie=PRIVATE https://signed.invalid/?token=PRIVATE'), { code: 'ENOTFOUND' }), '域名解析失败.'],
+    [new StreamFailureError({ stage: 'proxy', code: 'proxy-unreachable', message: 'PRIVATE' }), '代理不可达, 请检查系统代理.'],
+    [Object.assign(new Error('PRIVATE'), { code: 'CERT_HAS_EXPIRED' }), '服务器证书校验失败.'],
+    [{ status: 403, message: 'PRIVATE' }, '服务器返回 HTTP 403.'],
+  ])('preserves the classified acquisition failure without leaking diagnostics', async (error, message) => {
+    const f = fixture()
+    f.port.resolve.mockRejectedValueOnce(error)
+    const opened = await f.manager.open({ input: 'one' })
+    expect(opened).toMatchObject({ phase: 'failed', error: message })
+    expect(JSON.stringify(opened)).not.toMatch(/PRIVATE|signed\.invalid|token=|Cookie/)
+    await f.manager.dispose()
+  })
   it('accepts Huya room selections at the main-process session boundary', async () => {
     const f = fixture()
     const view = await f.manager.open({ input: '  huya.com/660000  ', platform: 'huya', quality: '8000' })

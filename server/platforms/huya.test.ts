@@ -103,8 +103,8 @@ describe('Huya bounded page metadata', () => {
     { sCdnType: 'hy' }, { sCdnType: 'HUYA' }, { sCdnType: 'HYZJ' }, { sCdnType: 'A'.repeat(17) },
     { sStreamName: 'a'.repeat(257) }, { sStreamName: '../escape' }, { sStreamName: 123 },
     { iWebPriorityRate: '100' }, { iWebPriorityRate: -1 }, { iWebPriorityRate: 1_000_001 },
-    { sFlvUrlSuffix: 'm3u8' }, { sFlvUrl: 'https://huya.com.evil.invalid/live' },
-    { sFlvUrl: 'https://user:secret@flv.huya.com/live' }, { sFlvUrl: 'https://flv.huya.com:8443/live' },
+    { sFlvUrlSuffix: 'm3u8' }, { sFlvUrl: 'file:///live' },
+    { sFlvUrl: 'https://user:secret@flv.huya.com/live' },
     { sFlvUrl: 'https://flv.huya.com/live?secret=fixture' }, { sFlvUrl: 'https://flv.huya.com/live#secret' },
     { sFlvUrl: 'https://flv.huya.com/line\nunsafe' }, { sFlvUrl: 'a'.repeat(32769) },
     { lPresenterUid: '18446744073709551616' }, { lPresenterUid: -1 }, { lPresenterUid: 9_007_199_254_740_992 },
@@ -203,6 +203,12 @@ describe('Huya local signing fixed vectors', () => {
 })
 
 describe('Huya resolver token fallback and media boundary', () => {
+  it('keeps API endpoints fixed while accepting a resolver-produced CDN on a non-standard port', async () => {
+    const result = parseHuyaPage(page({}, [sampleLine({ sFlvUrl: 'https://custom-cdn.example:8443/src' })]), '123456')
+    expect(result).toMatchObject({ ok: true, lines: [{ base: 'https://custom-cdn.example:8443/src' }] })
+    expect(parseHuyaPage(page({}, [sampleLine({ sFlvUrl: 'http://custom-cdn.example:8000/src' })]), '123456'))
+      .toMatchObject({ ok: true, lines: [{ base: 'http://custom-cdn.example:8000/src' }] })
+  })
   it.each(['Ex', 'AntiCode'])('omits ratio for original quality and retains nonzero ratios with %s tokens', async source => {
     for (const quality of [undefined, '0', '8000']) {
       const result = await resolveHuya('123456', deps({ quality,

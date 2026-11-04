@@ -781,11 +781,11 @@ describe('channels behind the streams of the event 赛程 shows', () => {
     vi.useRealTimers()
     await rm(directory, { recursive: true, force: true })
   })
-  function create() {
+  function create(payload: unknown = fixture) {
     const asked: string[] = []
     const request = vi.fn<typeof fetch>(async input => {
       const params = new URL(String(input)).searchParams
-      if (params.get('action') === 'parse') return response(fixture)
+      if (params.get('action') === 'parse') return response(payload)
       const title = params.get('titles') ?? ''
       if (params.get('prop') === 'extlinks') {
         asked.push(title)
@@ -821,6 +821,20 @@ describe('channels behind the streams of the event 赛程 shows', () => {
     focusPgl(service)
     await vi.advanceTimersByTimeAsync(6_000)
     expect(asked).toHaveLength(1)
+  })
+  it('enables both IEM-style ESL streams after the event channel lookup completes', async () => {
+    const payload = JSON.parse(JSON.stringify(fixture).replaceAll('twitch/PGL_CS2', 'twitch/ESL_Counter-Strike_B').replaceAll('twitch/PGL', 'twitch/ESL_Counter-Strike'))
+    pages = { 'PGL/2026/Masters': ['https://www.twitch.tv/eslcs', 'https://www.twitch.tv/eslcsb', 'https://www.twitch.tv/cs2_maincast'] }
+    const { service } = create(payload)
+    await service.getCs2Schedule()
+    expect((await twitchStreams(service)).map(stream => stream.missing)).toEqual(['finding', 'finding'])
+    focusPgl(service)
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect((await twitchStreams(service)).map(stream => [stream.entry, stream.url, stream.missing])).toEqual([
+      ['ESL_Counter-Strike_B', 'https://www.twitch.tv/eslcsb', null],
+      ['ESL_Counter-Strike', 'https://www.twitch.tv/eslcs', null],
+    ])
+    expect(events).toContain('streams-updated')
   })
   it('asks the parent page when the event page links no channel', async () => {
     pages = { 'PGL/2026/Masters': ['https://kick.com/PGL'], 'PGL/2026': pgl }

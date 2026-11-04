@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createNetworkSocket } from './networkSocket'
 import { installNetworkPolicy, NetworkPolicy, type NetworkContext, type NetworkRoute } from '../networkPolicy'
+import { markProxyConnectFailure } from '../proxyDispatcher'
 
 const mocks = vi.hoisted(() => {
   const sockets: Array<{ binaryType?: string; send: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn>; fire(type: string, event?: unknown): void }> = []
@@ -22,7 +23,8 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('undici', async importOriginal => ({ ...await importOriginal<typeof import('undici')>(), ProxyAgent: mocks.proxy, WebSocket: mocks.websocket }))
+vi.mock('undici', async importOriginal => ({ ...await importOriginal<typeof import('undici')>(), WebSocket: mocks.websocket }))
+vi.mock('../proxyDispatcher', async importOriginal => ({ ...await importOriginal<typeof import('../proxyDispatcher')>(), createProxyDispatcher: mocks.proxy }))
 vi.mock('../safeFetch', async importOriginal => ({ ...await importOriginal<typeof import('../safeFetch')>(), createPinnedDispatcher: mocks.pinned }))
 
 const douyu = 'wss://danmuproxy.douyu.com:8506/'
@@ -52,7 +54,7 @@ describe('platform danmaku network transport', () => {
     await flush()
     expect(resolve).not.toHaveBeenCalled()
     expect(mocks.pinned).not.toHaveBeenCalled()
-    expect(mocks.proxy).toHaveBeenCalledExactlyOnceWith({ uri: 'http://127.0.0.1:7890/', requestTls: { rejectUnauthorized: true }, proxyTls: { rejectUnauthorized: true } })
+    expect(mocks.proxy).toHaveBeenCalledExactlyOnceWith({ kind: 'http', proxyUrl: 'http://127.0.0.1:7890/' }, 15_000)
     socket.close()
   })
 
@@ -143,9 +145,90 @@ describe('platform danmaku network transport', () => {
     await flush()
     mocks.sockets[0]!.fire('error', { message: 'certificate cookie=private https://signed.invalid/?token=private' })
     mocks.sockets[0]!.fire('close', { reason: 'private' })
+    await flush()
     expect(error).toHaveBeenCalledExactlyOnceWith({ message: '弹幕网络连接失败, 请检查出网设置.' })
     expect(close).toHaveBeenCalledOnce()
     expect(JSON.stringify([error.mock.calls, close.mock.calls])).not.toContain('private')
     expect(mocks.dispatchers[0]!.destroy).toHaveBeenCalledOnce()
+  })
+
+  it('uses SOCKS5 remote target DNS and falls through declared unsupported candidates only', async () => {
+    const resolve = vi.fn(async () => { throw new Error('local DNS forbidden') })
+    const socket = createNetworkSocket(huya, 'huya', { resolve, network: { route: async () => ({
+      kind: 'unsupported', reason: 'socks4-unsupported', alternatives: [{ kind: 'socks5', proxyUrl: 'socks5://127.0.0.1:1080' }],
+    }) } })
+    await flush()
+    expect(resolve).not.toHaveBeenCalled()
+    expect(mocks.proxy).toHaveBeenCalledWith({ kind: 'socks5', proxyUrl: 'socks5://127.0.0.1:1080' }, 15_000)
+    socket.close()
+  })
+
+  it('tries the next PAC candidate only for a proven proxy connection failure before open', async () => {
+    const socket = createNetworkSocket(huya, 'huya', { resolve: async () => ['8.8.8.8'], network: { route: async () => ({
+      kind: 'socks5', proxyUrl: 'socks5://127.0.0.1:1080', alternatives: [{ kind: 'http', proxyUrl: 'http://127.0.0.1:7890/' }, { kind: 'direct' }],
+    }) } })
+    const open = vi.fn(), error = vi.fn()
+    socket.addEventListener('open', open); socket.addEventListener('error', error)
+    await flush()
+    mocks.sockets[0]!.fire('error', { error: markProxyConnectFailure(Object.assign(new Error('代理连接失败.'), { code: 'ECONNREFUSED' })) })
+    await flush()
+    expect(mocks.proxy.mock.calls.map(call => (call[0] as NetworkRoute).kind)).toEqual(['socks5', 'http'])
+    expect(mocks.dispatchers[0]!.destroy).toHaveBeenCalledOnce()
+    mocks.sockets[1]!.fire('open')
+    expect(open).toHaveBeenCalledOnce()
+    expect(error).not.toHaveBeenCalled()
+    expect(mocks.pinned).not.toHaveBeenCalled()
+    socket.close()
+    expect(mocks.dispatchers[1]!.destroy).toHaveBeenCalledOnce()
+  })
+
+  it.each(['CERT_HAS_EXPIRED', 'UND_ERR_SOCKS5_AUTH_FAILED', 'UND_ERR_SOCKET'])
+    ('does not bypass a proxy on %s even with an explicit DIRECT alternative', async code => {
+      const socket = createNetworkSocket(huya, 'huya', { resolve: async () => ['8.8.8.8'], network: { route: async () => ({
+        kind: 'http', proxyUrl: 'http://127.0.0.1:7890/', alternatives: [{ kind: 'direct' }],
+      }) } })
+      const error = vi.fn(); socket.addEventListener('error', error)
+      await flush()
+      mocks.sockets[0]!.fire('error', { error: Object.assign(new Error('private diagnostic'), { code }) })
+      await flush()
+      expect(mocks.websocket).toHaveBeenCalledOnce()
+      expect(mocks.pinned).not.toHaveBeenCalled()
+      expect(error).toHaveBeenCalledOnce()
+    })
+
+  it('does not reconnect through another candidate after a WebSocket has opened', async () => {
+    const socket = createNetworkSocket(huya, 'huya', { network: { route: async () => ({
+      kind: 'socks5', proxyUrl: 'socks5://127.0.0.1:1080', alternatives: [{ kind: 'direct' }],
+    }) } })
+    await flush()
+    mocks.sockets[0]!.fire('open')
+    mocks.sockets[0]!.fire('error', { error: markProxyConnectFailure(new Error('fixture')) })
+    await flush()
+    expect(mocks.websocket).toHaveBeenCalledOnce()
+    expect(mocks.dispatchers[0]!.destroy).toHaveBeenCalledOnce()
+    socket.close()
+  })
+
+  it('bounds pending routing and opening, and cancels every pending dispatcher once', async () => {
+    const routing = createNetworkSocket(huya, 'huya', { timeoutMs: 20, network: { route: () => new Promise(() => {}) } })
+    const routingError = vi.fn(); routing.addEventListener('error', routingError)
+    await new Promise(resolve => setTimeout(resolve, 40))
+    expect(routingError).toHaveBeenCalledOnce()
+    expect(mocks.websocket).not.toHaveBeenCalled()
+    const opening = createNetworkSocket(huya, 'huya', { timeoutMs: 20, network: proxied })
+    const openingError = vi.fn(); opening.addEventListener('error', openingError)
+    await vi.waitFor(() => expect(openingError).toHaveBeenCalledOnce())
+    expect(mocks.dispatchers[0]!.destroy).toHaveBeenCalledOnce()
+    routing.close(); opening.close()
+    expect(mocks.dispatchers[0]!.destroy).toHaveBeenCalledOnce()
+  })
+
+  it('reports unsupported-only proxy policy without opening a direct connection', async () => {
+    const socket = createNetworkSocket(huya, 'huya', { network: { route: async () => ({ kind: 'unsupported', reason: 'socks4-unsupported' }) } })
+    const error = vi.fn(); socket.addEventListener('error', error)
+    await flush()
+    expect(error).toHaveBeenCalledOnce()
+    expect(mocks.websocket).not.toHaveBeenCalled()
+    expect(mocks.pinned).not.toHaveBeenCalled()
   })
 })

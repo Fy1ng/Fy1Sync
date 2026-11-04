@@ -5,6 +5,9 @@ import { closeSourceDialog, invoke, loadSource, openPlayer, setPlaying } from '.
 const platforms = [
   { platform: 'youtube', role: 'official', variable: 'STREAM_SYNC_YOUTUBE_LIVE_URL' },
   { platform: 'douyu', role: 'commentary', variable: 'STREAM_SYNC_DOUYU_LIVE_URL' },
+  { platform: 'huya', role: 'commentary', variable: 'STREAM_SYNC_HUYA_LIVE_URL' },
+  { platform: 'bilibili', role: 'commentary', variable: 'STREAM_SYNC_BILIBILI_LIVE_URL' },
+  { platform: 'twitch', role: 'official', variable: 'STREAM_SYNC_TWITCH_LIVE_URL' },
 ] as const
 
 for (const { platform, role, variable } of platforms) {
@@ -33,7 +36,7 @@ for (const { platform, role, variable } of platforms) {
       const url = result.value.stream.url
       expect(url.startsWith(APP_ORIGIN + '/buffer/')).toBe(true)
       expect(result.value.stream.kind).toBe('hls')
-      expect(result.value.stream.qualities?.length ?? 0).toBeGreaterThan(0)
+      if (platform === 'youtube' || platform === 'douyu' || platform === 'huya') expect(result.value.stream.qualities?.length ?? 0).toBeGreaterThan(0)
 
       await expect.poll(async () => page.evaluate(async playlist => {
         const response = await fetch(playlist, { cache: 'no-store' })

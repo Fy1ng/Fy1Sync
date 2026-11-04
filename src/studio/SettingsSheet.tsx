@@ -258,8 +258,11 @@ function Network(): React.ReactNode {
         <span>系统代理</span>
         <span className="muted">{proxy ? PROXY_NAME[proxy.type] : '正在读取'}</span>
       </div>
-      {proxy?.fallbackReason === 'socks-unsupported' && (
-        <p className="note-warn">暂不支持 SOCKS 代理，YouTube 和 Twitch 会直接连接。可在代理软件里改用 HTTP 代理端口，或开启虚拟网卡（TUN）模式。</p>
+      {proxy?.fallbackReason === 'socks4-unsupported' && (
+        <p className="note-warn">暂不支持 SOCKS4 代理, 请改用 HTTP 或 SOCKS5 代理. 不会自动改为直连.</p>
+      )}
+      {proxy?.fallbackReason === 'proxy-type-unsupported' && (
+        <p className="note-warn">系统代理类型不受支持, 请改用 HTTP 或 SOCKS5 代理. 不会自动改为直连.</p>
       )}
       <p className="muted">YouTube 和 Twitch 使用系统代理。</p>
       <Switch label="斗鱼、哔哩哔哩、虎牙直接连接" detail="开着代理时也不经过代理，避免被分到海外线路。下次载入直播间时生效"

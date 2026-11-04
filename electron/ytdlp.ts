@@ -1,4 +1,4 @@
-import { cleanProxyEnvironment, networkContext, type NetworkContext } from '../server/networkPolicy'
+import { cleanProxyEnvironment, networkContext, routeCandidates, type NetworkContext, type NetworkRoute } from '../server/networkPolicy'
 import { StreamFailureError, classifyFfmpegStderr, classifyNetworkFailure } from '../server/networkFailure'
 import { spawn, type ChildProcess } from 'node:child_process'
 import path from 'node:path'
@@ -7,11 +7,38 @@ import { killProcessTree } from './bufferManager'
 import { youtubeAdaptiveFormats, youtubeFormats } from '../server/platforms/youtube'
 import { prepareScriptOnlyPotPlugin, type PrivatePotPlugin } from './potPlugin'
 import { DIAGNOSTIC_CODES, type DiagnosticCode, type DiagnosticEvent, type DiagnosticFormatSummary } from './diagnosticContracts'
+import { isProxyConnectFailure, markProxyConnectFailure } from '../server/proxyDispatcher'
 
 // Keep the fields consumed by the selectors, without huge fragment/subtitle histories.
 // yt-dlp's dictionary projection runs before the data reaches the bounded parent pipe.
 export const YOUTUBE_METADATA_TEMPLATE = '{"metadata":%(.{id,is_live,live_status})j,"formats":%(formats.:.{format_id,url,protocol,height,fps,tbr,vcodec,acodec,ext})j}'
 const MAX_METADATA_BYTES = 16 * 1_048_576
+
+/** yt-dlp uses socks5h to keep destination DNS at the proxy. */
+export function ytDlpProxyUrl(route: NetworkRoute): string {
+  if (route.kind === 'direct') return ''
+  if (route.kind === 'unsupported') throw new StreamFailureError({ stage: 'proxy', code: 'proxy-type-unsupported', message: '系统代理类型不受支持, 请改用 HTTP 或 SOCKS5 代理.' })
+  try {
+    const url = new URL(route.proxyUrl ?? '')
+    if (route.kind === 'socks5') {
+      if (url.protocol !== 'socks5:' && url.protocol !== 'socks5h:') throw new Error()
+      url.protocol = 'socks5h:'
+    } else if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error()
+    return route.kind === 'socks5' ? url.href : route.proxyUrl!
+  } catch { throw new StreamFailureError({ stage: 'proxy', code: 'proxy-type-unsupported', message: '系统代理地址无效, 请检查代理设置.' }) }
+}
+
+/** Only explicit proxy connection failures allow trying the next PAC candidate. */
+export function ytDlpProxyConnectionFailure(stderr: string): boolean {
+  if (/HTTP (?:Error|error|status)\s*[45]\d{2}|HTTP\/\d(?:\.\d)?\s+[45]\d{2}|407|authenticat|certificate|cert verify|TLS|SSL|sign.?in|log.?in|not a bot/i.test(stderr)) return false
+  return /(?:unable|failed|cannot|could not) to connect to (?:the )?proxy|ProxyConnectionError|proxy connection (?:failed|refused|timed out)|SOCKS.{0,160}(?:connection refused|timed out|failed to establish a new connection)/i.test(stderr)
+}
+
+export function ytDlpProxyConnectionError(): StreamFailureError {
+  const error = new StreamFailureError({ stage: 'proxy', code: 'proxy-unreachable', message: '代理不可达, 请检查系统代理.' })
+  markProxyConnectFailure(error)
+  return error
+}
 
 export interface YoutubeCookieAccess {
   withTemporaryCookies<T>(platform: 'youtube', callback: (path?: string) => Promise<T>): Promise<T>
@@ -162,9 +189,22 @@ export class YtDlpRunner {
         code: fixedCode(classifyNetworkFailure(error, 'proxy').code, 'proxy-failed') })
       throw error
     }
-    context.emit({ stage: 'route', status: 'resolved', route: route.kind === 'http' ? 'http' : 'direct',
-      ...(['socks-unsupported', 'proxy-type-unsupported'].includes(route.reason ?? '') ? { routeReason: route.reason } : {}) })
-    const proxyUrl = route.proxyUrl ?? ''
+    const candidates = routeCandidates(route)
+    for (let index = 0; index < candidates.length; index++) {
+      const candidate = candidates[index]!
+      if (candidate.kind === 'unsupported' && index + 1 < candidates.length) continue
+      context.emit({ stage: 'route', status: candidate.kind === 'unsupported' ? 'failed' : 'resolved', route: candidate.kind,
+        ...(candidate.reason ? { routeReason: candidate.reason } : {}) })
+      try { return await this.runOnRoute(url, adaptive, ytDlpProxyUrl(candidate), context) }
+      catch (error) {
+        if (candidate.kind === 'direct' || candidate.kind === 'unsupported' || index + 1 === candidates.length
+          || !isProxyConnectFailure(error)) throw error
+      }
+    }
+    throw new StreamFailureError({ stage: 'proxy', code: 'proxy-type-unsupported', message: '系统代理没有可用的出网方式.' })
+  }
+
+  private async runOnRoute(url: string, adaptive: boolean, proxyUrl: string, context: DiagnosticContext): Promise<unknown> {
     const executable = await locateTool('yt-dlp', this.options.settings, this.options.env, this.options.toolContext)
     if (/^https:\/\/www\.huya\.com\/[1-9]\d{0,15}$/.test(url)) {
       // Huya's last-resort extractor is anonymous and never loads YouTube cookies,
@@ -330,6 +370,10 @@ export class YtDlpRunner {
           reject(new Error('yt-dlp 超时或已取消')); return
         }
         if (code !== 0) {
+          if (proxyUrl && ytDlpProxyConnectionFailure(stderr)) {
+            event({ ...completed, status: 'failed', code: 'proxy-unreachable', stopped: false })
+            reject(ytDlpProxyConnectionError()); return
+          }
           const classified = classifyFfmpegStderr(stderr)
           if (classified) {
             const failure = proxyUrl ? classifyNetworkFailure(new Error(stderr), 'proxy') : classified

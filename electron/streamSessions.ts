@@ -3,6 +3,8 @@ import type { Acquisition } from './acquisition'
 import type { BufferState } from './bufferManager'
 import { isExtraStreamId, isStreamId, type StreamId } from './streamIdentity'
 import type { PlatformKind, ResolvedStream, ResolveResult } from '../server/platforms'
+import { sanitizedFailure } from '../server/api'
+import { classifyNetworkFailure } from '../server/networkFailure'
 
 export interface OpenStreamInput { input: string; platform?: PlatformKind; quality?: string; preferAdaptive?: boolean }
 export interface StreamSessionView {
@@ -96,8 +98,11 @@ export class StreamSessions {
     runtime.view.error = null
     this.publish()
     let result: ResolveResult
-    try { result = await operation() }
-    catch { result = { ok: false, failure: { code: 'upstream-error', message: '取流失败, 请检查来源和本机工具' } } }
+    try { result = sanitizedFailure(await operation()) }
+    catch (error) {
+      const failure = classifyNetworkFailure(error, 'resolve')
+      result = sanitizedFailure({ ok: false, failure: { code: 'upstream-error', stage: failure.stage, reason: failure.code, message: failure.message } })
+    }
     if (this.disposed || this.sessions.get(runtime.view.id) !== runtime || runtime.revision !== revision) throw new StreamSessionError('stream-cancelled')
     if (result.ok) { runtime.view.stream = structuredClone(result.stream); runtime.view.phase = 'ready' }
     else { runtime.view.phase = 'failed'; runtime.view.error = result.failure.message }

@@ -301,6 +301,7 @@ async function start(): Promise<void> {
     changed: (ownerId, state) => { youtubeAdmin?.emit('yt-browse-state', state, ownerId) },
   })
   youtubeImports = new YouTubeImportJobManager({ userDataDirectory: userDataDir, electronPath: process.execPath,
+    mediaInput: (url, headers, network) => gateway.register(url, headers, network),
     networkRuntimePath, cookies: logins, settings: toolSettings, toolContext, network: () => network.context('youtube'),
     publish: (assetId, file) => adminMedia.register(assetId, file),
     event: job => { youtubeAdmin?.emit('yt-import-progress', job) },
@@ -380,7 +381,7 @@ async function start(): Promise<void> {
   }, offlineE2e ? async () => ['8.8.8.8'] : undefined)
   const acquisition = new Acquisition({ buffer, logins: playbackLogins, diagnostics,
     runYtDlp: (url, adaptive, context, diagnostic) => ytdlp.resolve(url, adaptive, context, diagnostic), network: platform => network.context(platform),
-    mediaInput: (url, headers, context) => gateway.register(url, headers, context), proxy, resolveDouyuRoom: offlineE2e ? roomResolver.resolve : undefined,
+    mediaInput: (url, headers, context, access) => gateway.register(url, headers, context, access), proxy, resolveDouyuRoom: offlineE2e ? roomResolver.resolve : undefined,
     ensureTools: async (platform) => {
       if (offlineE2e) throw new Error('默认离线测试禁止真实平台取流')
       await locateTool('ffmpeg', toolSettings, process.env, toolContext)
@@ -568,7 +569,8 @@ async function start(): Promise<void> {
     },
   }))
   const service = createDesktopService({
-    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, resolveHuyaRoom, registerMedia: media.register, acquisition, decoderPreferences, networkPreferences: preferences, tools, diagnostics, douyuAccounts, douyuTasks, douyuRenewal,
+    dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, resolveHuyaRoom,
+    registerMedia: (url, access) => media.register(url, undefined, undefined, access), acquisition, decoderPreferences, networkPreferences: preferences, tools, diagnostics, douyuAccounts, douyuTasks, douyuRenewal,
     features, stylePacks,
   })
   session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
@@ -797,7 +799,7 @@ async function start(): Promise<void> {
     handlers?.dispose()
     service.dispose()
     acquisition.dispose()
-    await Promise.all([gateway.dispose(), ytdlp.dispose(), buffer.dispose(), logins.dispose(), douyuAccounts?.dispose()])
+    await Promise.all([media.dispose(), gateway.dispose(), ytdlp.dispose(), buffer.dispose(), logins.dispose(), douyuAccounts?.dispose()])
     media.clear()
     protocol.unhandle('app')
     delete (globalThis as { __streamSyncerTest?: unknown }).__streamSyncerTest

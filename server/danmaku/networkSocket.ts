@@ -1,6 +1,7 @@
-import { ProxyAgent, WebSocket, type Dispatcher } from 'undici'
-import { networkContext, type NetworkContext } from '../networkPolicy'
+import { WebSocket, type Dispatcher } from 'undici'
+import { networkContext, routeCandidates, routeUsesRemoteDns, type NetworkContext } from '../networkPolicy'
 import { checkUrl, createPinnedDispatcher, type Resolver } from '../safeFetch'
+import { createProxyDispatcher, isProxyConnectFailure } from '../proxyDispatcher'
 import type { DanmakuPlatform, WebSocketLike } from './types'
 
 const ENDPOINTS = {
@@ -11,6 +12,7 @@ const ENDPOINTS = {
 export interface NetworkSocketOptions {
   network?: NetworkContext
   resolve?: Resolver
+  timeoutMs?: number
 }
 
 /** Defer transport creation until the platform policy and direct DNS guard have settled. */
@@ -24,13 +26,22 @@ export function createNetworkSocket(raw: string, platform: DanmakuPlatform, opti
   let transport: WebSocketLike | undefined
   let dispatcher: Dispatcher | undefined
   let stopped = false
+  let opened = false
   let binaryType = 'arraybuffer'
+  let settleAttempt: ((value: unknown) => void) | undefined
+  const timeoutMs = options.timeoutMs ?? 15_000
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const clearDeadline = () => { clearTimeout(timer); timer = undefined }
   const emit = (type: string, event: unknown) => {
     for (const listener of listeners.get(type) ?? []) {
       try { listener(event) } catch { /* One observer cannot retain the network transport. */ }
     }
   }
   const release = () => {
+    clearDeadline()
+    const settle = settleAttempt
+    settleAttempt = undefined
+    settle?.(new Error('弹幕连接已释放.'))
     const owned = dispatcher
     dispatcher = undefined
     if (owned) void owned.destroy().catch(() => {})
@@ -51,7 +62,7 @@ export function createNetworkSocket(raw: string, platform: DanmakuPlatform, opti
       entries.add(listener)
     },
     send(data) {
-      if (stopped || !transport) throw new Error('弹幕连接尚未就绪.')
+      if (stopped || !opened || !transport) throw new Error('弹幕连接尚未就绪.')
       transport.send(data)
     },
     close() {
@@ -67,33 +78,62 @@ export function createNetworkSocket(raw: string, platform: DanmakuPlatform, opti
       if (transport) transport.binaryType = binaryType
     },
   }
+  timer = setTimeout(fail, timeoutMs)
   void (async () => {
-    const route = await network.route(url.href)
+    const routes = routeCandidates(await network.route(url.href))
     if (stopped) return
-    // Reuse direct DNS validation and address pinning without broadening the WebSocket endpoint list.
-    const target = new URL(url)
-    target.protocol = 'https:'
-    const check = await checkUrl(target.href, { enabled: true, hosts: [expected.hostname], allowNonStandardPorts: platform === 'douyu',
-      maxRedirects: 0, requestTimeoutMs: 15_000 }, options.resolve, route.kind === 'http')
-    if (stopped) return
-    if (!check.ok) throw new Error('弹幕连接地址校验失败.')
-    dispatcher = route.kind === 'http'
-      ? new ProxyAgent({ uri: route.proxyUrl!, requestTls: { rejectUnauthorized: true }, proxyTls: { rejectUnauthorized: true } })
-      : createPinnedDispatcher(url.hostname, check.addresses)
-    if (stopped) { release(); return }
-    // Undici's WebSocket handshake rejects HTTP redirects rather than following an unchecked target.
-    const socket = new WebSocket(url.href, { dispatcher }) as unknown as WebSocketLike
-    transport = socket
-    socket.binaryType = binaryType
-    socket.addEventListener('open', () => { if (!stopped) emit('open', {}) })
-    socket.addEventListener('message', (event: { data: unknown }) => { if (!stopped) emit('message', { data: event.data }) })
-    socket.addEventListener('error', fail)
-    socket.addEventListener('close', (event: { code?: number; wasClean?: boolean }) => {
+    for (let index = 0; index < routes.length; index++) {
+      const route = routes[index]!
+      if (route.kind === 'unsupported') {
+        if (index + 1 < routes.length) continue
+        throw new Error('系统代理类型不受支持.')
+      }
+      clearDeadline()
+      timer = setTimeout(fail, timeoutMs)
+      // Keep fixed endpoint validation while proxy DNS belongs to the selected route.
+      const target = new URL(url)
+      target.protocol = 'https:'
+      const check = await checkUrl(target.href, { enabled: true, hosts: [expected.hostname], allowNonStandardPorts: platform === 'douyu',
+        maxRedirects: 0, requestTimeoutMs: timeoutMs }, options.resolve, routeUsesRemoteDns(route))
       if (stopped) return
-      stopped = true
+      if (!check.ok) throw new Error('弹幕连接地址校验失败.')
+      dispatcher = route.kind === 'direct' ? createPinnedDispatcher(url.hostname, check.addresses)
+        : createProxyDispatcher(route, timeoutMs)
+      if (stopped) { release(); return }
+      clearDeadline()
+      // Proxy dispatchers need time to surface a proven connector timeout;
+      // generic WebSocket/handshake timeouts still terminate this connection.
+      timer = setTimeout(fail, timeoutMs + 200)
+      const attempt = await new Promise<unknown>(resolve => {
+        settleAttempt = resolve
+        // Undici refuses HTTP redirects during the WebSocket handshake.
+        const socket = new WebSocket(url.href, { dispatcher }) as unknown as WebSocketLike
+        transport = socket
+        socket.binaryType = binaryType
+        socket.addEventListener('open', () => {
+          if (stopped || transport !== socket) return
+          opened = true; settleAttempt = undefined; clearDeadline(); emit('open', {}); resolve(null)
+        })
+        socket.addEventListener('message', (event: { data: unknown }) => { if (!stopped && opened && transport === socket) emit('message', { data: event.data }) })
+        socket.addEventListener('error', (event: { error?: unknown }) => {
+          if (stopped || transport !== socket) return
+          if (opened) fail()
+          else resolve(event.error ?? new Error('弹幕网络连接失败.'))
+        })
+        socket.addEventListener('close', (event: { code?: number; wasClean?: boolean }) => {
+          if (stopped || transport !== socket) return
+          if (!opened) { resolve(new Error('弹幕连接建立失败.')); return }
+          stopped = true; release()
+          emit('close', { code: event.code, wasClean: event.wasClean, reason: '弹幕连接已断开.' })
+        })
+      })
+      if (stopped || opened) return
+      const previous = transport
+      transport = undefined
+      try { previous?.close() } catch { /* The failed handshake may already be closed. */ }
       release()
-      emit('close', { code: event.code, wasClean: event.wasClean, reason: '弹幕连接已断开.' })
-    })
+      if (index + 1 >= routes.length || !isProxyConnectFailure(attempt)) throw attempt
+    }
   })().catch(fail)
   return facade
 }

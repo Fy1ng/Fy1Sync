@@ -1,9 +1,10 @@
 import { createDouyuRoomResolver, type ResolveDouyuRoom } from '../server/platforms/douyuRoom'
 import type { AcquisitionService } from '../server/api'
 import { createResolverDeps, sanitizedFailure } from '../server/api'
-import type { ProxyConfig } from '../server/config'
+import { mediaRequestPolicy, type ProxyConfig } from '../server/config'
+import type { MediaAccess } from '../server/mediaAccess'
 import { detectPlatform, resolveStream, type PlatformKind, type ResolveResult, type ResolvedStream } from '../server/platforms'
-import { checkUrl, ProxyError, type Resolver } from '../server/safeFetch'
+import { checkUrlSyntax, ProxyError, type Resolver } from '../server/safeFetch'
 import { networkContext, type NetworkContext } from '../server/networkPolicy'
 import { StreamFailureError, classifyNetworkFailure, type StreamFailure } from '../server/networkFailure'
 import { isStreamId, type StreamId } from './streamIdentity'
@@ -30,7 +31,7 @@ export class Acquisition implements AcquisitionService {
     diagnostics?: AcquisitionDiagnosticRecorder
     proxy: ProxyConfig
     network?: (platform: PlatformKind | null) => NetworkContext
-    mediaInput?: (url: string, headers: Record<string,string> | undefined, network: NetworkContext) => Promise<{url:string;proxyUrl:string;readFailure?:()=>StreamFailure|undefined}>
+    mediaInput?: (url: string, headers: Record<string,string> | undefined, network: NetworkContext, access?: MediaAccess) => Promise<{url:string;proxyUrl:string;readFailure?:()=>StreamFailure|undefined}>
     fetchImpl?: typeof fetch
     resolveDouyuRoom?: ResolveDouyuRoom
     dns?: Resolver
@@ -116,7 +117,7 @@ export class Acquisition implements AcquisitionService {
       selection.stream = retainAdaptiveQualities(selection.stream, resolved.stream)
       const headers = resolved.stream.headers
         ?? (resolved.stream.platform === 'bilibili' ? { Referer: 'https://live.bilibili.com/' } : undefined)
-      const media = !resolved.stream.adaptive && this.deps.mediaInput ? await this.deps.mediaInput(resolved.stream.url, headers, network) : undefined
+      const media = !resolved.stream.adaptive && this.deps.mediaInput ? await this.deps.mediaInput(resolved.stream.url, headers, network, resolved.stream.mediaAccess) : undefined
       const route = media ? undefined : await network.route(resolved.stream.url)
       return { url: media?.url ?? resolved.stream.url, gatewayHls: Boolean(media && resolved.stream.kind === 'hls'), network, proxyUrl: media?.proxyUrl ?? route?.proxyUrl ?? '', readFailure: media?.readFailure, headers: media ? undefined : resolved.stream.headers
         ?? (!media && resolved.stream.platform === 'bilibili' ? { Referer: 'https://live.bilibili.com/' } : undefined),
@@ -135,7 +136,7 @@ export class Acquisition implements AcquisitionService {
       await readiness.promise
       if (generation !== this.generations.get(role) || this.disposed) return cancelled()
       this.selections.set(role, selection)
-      const { headers: _headers, adaptive: _adaptive, ...publicStream } = selection.stream
+      const { headers: _headers, adaptive: _adaptive, mediaAccess: _access, ...publicStream } = selection.stream
       const publicSelection: ResolvedStream = {
         ...publicStream, url: local.url, kind: 'hls', requiresProxy: false,
         notes: ['主进程转封装为本地 HLS, 默认保留最近 180 秒', ...(selection.stream.notes ?? [])],
@@ -205,12 +206,13 @@ export class Acquisition implements AcquisitionService {
       douyuCookie: detectPlatform(input, platform) === 'douyu' ? await this.deps.logins.cookieHeader('douyu') : undefined,
     }, platform)
     if (!result.ok) return sanitizedFailure(result)
-    const checked = await checkUrl(result.stream.url, this.deps.proxy, this.deps.dns, (await network.route(result.stream.url)).kind === 'http')
+    // Actual media connections own DNS and route validation; do not resolve the same target here.
+    const checked = checkUrlSyntax(result.stream.url, mediaRequestPolicy(this.deps.proxy))
     if (!checked.ok) throw new ProxyError(checked.reason, '媒体地址未通过安全检查')
     if (checked.url.username || checked.url.password) throw new ProxyError('invalid-url', '媒体地址不能包含登录凭据')
     if (result.stream.adaptive) {
       for (const raw of [result.stream.adaptive.videoUrl, result.stream.adaptive.audioUrl]) {
-        const target = await checkUrl(raw, { ...this.deps.proxy, hosts: ['*.googlevideo.com'], allowNonStandardPorts: false }, this.deps.dns, (await network.route(raw)).kind === 'http')
+        const target = checkUrlSyntax(raw, { ...this.deps.proxy, hosts: ['*.googlevideo.com'], allowNonStandardPorts: false })
         if (!target.ok || target.url.protocol !== 'https:' || target.url.port || target.url.username || target.url.password) {
           throw new ProxyError('host-not-allowed', '自适应媒体地址未通过安全检查')
         }

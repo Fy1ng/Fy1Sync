@@ -100,9 +100,9 @@ function mediaUrl(value: unknown): URL | null {
   if (typeof value !== 'string' || value.length > 32_768 || /[\x00-\x20\x7f]/.test(value)) return null
   try {
     const url = new URL(value)
-    if (!['http:', 'https:'].includes(url.protocol) || url.port || url.username || url.password || url.hash
-      || !/(^|\.)huya\.com$/i.test(url.hostname)) return null
-    url.protocol = 'https:'
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash) return null
+    // Preserve the established HTTPS preference for Huya's default CDN origins only.
+    if (!url.port && /(^|\.)huya\.com$/i.test(url.hostname)) url.protocol = 'https:'
     return url
   } catch { return null }
 }

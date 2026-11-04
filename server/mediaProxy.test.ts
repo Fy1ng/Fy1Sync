@@ -61,11 +61,13 @@ describe('registered media capabilities', () => {
     const f = fixture(PLAYLIST, { config: { ...resolveConfig({}).proxy, enabled: false } })
     expect((await f.registry.handle(request(f.url))).status).toBe(503)
   })
-  it('blocks hosts outside the allow list before fetch', async () => {
+  it('reads an explicitly selected media host outside the API allow list', async () => {
     const f = fixture()
-    const url = f.registry.register('https://evil.example/a.mp4')
-    expect((await f.registry.handle(request(url))).status).toBe(403)
-    expect(f.calls).toHaveLength(0)
+    const url = f.registry.register('https://custom-media.example:8443/a.mp4')
+    const response = await f.registry.handle(request(url))
+    expect(response.status).toBe(200)
+    await response.body?.cancel()
+    expect(f.calls).toHaveLength(1)
   })
   it('blocks invalid DNS results before fetch', async () => {
     const f = fixture(PLAYLIST, { resolve: async () => ['not-an-ip'] })
@@ -100,9 +102,11 @@ describe('media fetch and HLS', () => {
     const text = await response.text()
     expect(text).not.toContain('https://')
     expect(text.match(/app:\/\/app\/media\//g)).toHaveLength(4)
-    expect(text).toContain(f.registry.register('https://video-weaver.ttvnw.net/live/seg.ts'))
     expect(response.headers.get('content-length')).toBe(String(Buffer.byteLength(text)))
     expect(response.headers.get('cache-control')).toBe('no-store')
+    const segment = text.trim().split('\n').at(-1)!
+    await (await f.registry.handle(request(segment))).body?.cancel()
+    expect(f.calls.at(-1)!.url).toBe('https://video-weaver.ttvnw.net/live/seg.ts')
   })
   it('removes FFmpeg probe ranges from known playlists before rewriting their complete body', async () => {
     const f = fixture()
@@ -130,28 +134,101 @@ describe('media fetch and HLS', () => {
     expect(await response.text()).toContain('/media/')
   })
   it('uses the final redirect URL when registering relative segments', async () => {
-    const f = fixture(PLAYLIST, { fetchImpl: (async (url) => String(url) === TARGET ? new Response(null, { status: 302, headers: { location: '/redirect/index.m3u8' } }) : new Response(PLAYLIST, { headers: { 'content-type': 'text/plain' } })) as typeof fetch })
+    const seen: string[] = []
+    const f = fixture(PLAYLIST, { fetchImpl: (async (url) => {
+      seen.push(String(url))
+      return String(url) === TARGET ? new Response(null, { status: 302, headers: { location: '/redirect/index.m3u8' } }) : new Response(PLAYLIST, { headers: { 'content-type': 'text/plain' } })
+    }) as typeof fetch })
     const text = await (await f.registry.handle(request(f.url))).text()
-    expect(text).toContain(f.registry.register('https://video-weaver.ttvnw.net/redirect/seg.ts'))
+    await (await f.registry.handle(request(text.trim().split('\n').at(-1)!))).body?.cancel()
+    expect(seen.at(-1)).toBe('https://video-weaver.ttvnw.net/redirect/seg.ts')
   })
   it('rewrites opaque signed playlists labelled as octet-stream', async () => {
     const f = fixture(PLAYLIST, {}, { 'content-type': 'application/octet-stream' })
     const url = f.registry.register('https://video-weaver.ttvnw.net/v1/CvYE...signed')
     const text = await (await f.registry.handle(request(url))).text()
-    expect(text).toContain(f.registry.register('https://video-weaver.ttvnw.net/v1/seg.ts'))
+    await (await f.registry.handle(request(text.trim().split('\n').at(-1)!))).body?.cancel()
+    expect(f.calls.at(-1)!.url).toBe('https://video-weaver.ttvnw.net/v1/seg.ts')
   })
   it('refuses unsafe URI schemes found in a playlist', async () => {
     const f = fixture('#EXTM3U\nfile:///secret\n')
     expect((await f.registry.handle(request(f.url))).status).toBe(502)
   })
-  it('revalidates redirect hostname allow lists', async () => {
+  it('rejects an automatic redirect crossing into an ungranted local origin', async () => {
     const f = fixture(PLAYLIST, { fetchImpl: (async () => new Response(null, { status: 302, headers: { location: 'http://127.0.0.1/a.ts' } })) as typeof fetch })
     expect((await f.registry.handle(request(f.url))).status).toBe(403)
+  })
+  it('allows anonymous cross-CDN HLS resources on non-standard ports', async () => {
+    const f = fixture('#EXTM3U\n#EXTINF:4,\nhttps://another-cdn.example:8080/seg.ts?signature=fixture\n')
+    const playlist = await (await f.registry.handle(request(f.url))).text()
+    const child = playlist.trim().split('\n').at(-1)!
+    await (await f.registry.handle(request(child))).body?.cancel()
+    expect(f.calls.at(-1)!.url).toBe('https://another-cdn.example:8080/seg.ts?signature=fixture')
+  })
+  it.each(['http://127.0.0.1:8080/private', 'http://192.168.1.2:8000/private', 'http://localhost/private'])('rejects automatically discovered local service %s', async target => {
+    const f = fixture(`#EXTM3U\n#EXTINF:4,\n${target}\n`)
+    const playlist = await (await f.registry.handle(request(f.url))).text()
+    const child = playlist.trim().split('\n').at(-1)!
+    const response = await f.registry.handle(request(child))
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchObject({ error: { code: 'media-network-boundary' } })
+    expect(f.calls).toHaveLength(1)
+  })
+  it('accepts a chosen local HLS origin but never grants another port in the same playlist', async () => {
+    const f = fixture('#EXTM3U\n#EXTINF:4,\nseg.ts\n#EXTINF:4,\nhttp://127.0.0.1:8000/private\n')
+    const top = f.registry.register('http://127.0.0.1:8080/live.m3u8')
+    const text = await (await f.registry.handle(request(top))).text()
+    const children = text.match(/app:\/\/app\/media\/[a-f0-9-]+/g)!
+    expect((await f.registry.handle(request(children[0]!))).status).toBe(200)
+    expect((await f.registry.handle(request(children[1]!))).status).toBe(403)
+    expect(f.calls).toHaveLength(2)
+  })
+  it('rejects a same-origin public playlist that rebinds to a local IP for its segment', async () => {
+    const resolve = vi.fn().mockResolvedValueOnce(['93.184.216.34']).mockResolvedValueOnce(['127.0.0.1'])
+    const f = fixture(PLAYLIST, { resolve })
+    const text = await (await f.registry.handle(request(f.url))).text()
+    expect((await f.registry.handle(request(text.trim().split('\n').at(-1)!))).status).toBe(403)
+    expect(f.calls).toHaveLength(1)
+  })
+  it.each(['Cookie', 'Authorization', 'X-API-Key'])('does not carry %s to an HLS CDN origin', async name => {
+    const f = fixture('#EXTM3U\nhttps://another-cdn.example/seg.ts\n')
+    const response = await f.registry.handle(request(f.registry.register(TARGET, { [name]: 'PRIVATE_CREDENTIAL' })))
+    expect(response.status).toBe(403)
+    expect(await response.text()).not.toContain('PRIVATE_CREDENTIAL')
+    expect(f.calls).toHaveLength(1)
   })
   it('preserves mislabelled binary bytes without text transcoding', async () => {
     const bytes = new Uint8Array([255,0,128,99])
     const f = fixture(bytes, {}, { 'content-type': 'application/vnd.apple.mpegurl' })
     expect(new Uint8Array(await (await f.registry.handle(request(f.url))).arrayBuffer())).toEqual(bytes)
+  })
+  it('streams large mislabeled binary data instead of applying the playlist body limit', async () => {
+    const bytes = new Uint8Array(4_194_305).fill(255)
+    const f = fixture(bytes, {}, { 'content-type': 'application/vnd.apple.mpegurl' })
+    const response = await f.registry.handle(request(f.url))
+    expect(response.status).toBe(200)
+    expect(Buffer.from(await response.arrayBuffer()).equals(Buffer.from(bytes))).toBe(true)
+  })
+  it('rewrites a playlist disguised as binary MP4 before FFmpeg can discover unguarded resources', async () => {
+    const f = fixture('#EXTM3U\n#EXTINF:4,\nhttp://127.0.0.1:8080/private\n', {}, { 'content-type': 'video/mp4' })
+    const top = f.registry.register('https://custom.example/video.mp4')
+    const text = await (await f.registry.handle(request(top))).text()
+    expect(text).not.toContain('http://127.0.0.1')
+    const response = await f.registry.handle(request(text.trim().split('\n').at(-1)!))
+    expect(response.status).toBe(403)
+    expect(f.calls).toHaveLength(1)
+  })
+  it('retries a disguised ranged MP4 playlist in full before rewriting its resources', async () => {
+    const calls: RequestInit[] = []
+    const f = fixture(PLAYLIST, { fetchImpl: (async (_url, init = {}) => {
+      calls.push(init)
+      return new Response(PLAYLIST, { status: calls.length === 1 ? 206 : 200, headers: { 'content-type': 'video/mp4' } })
+    }) as typeof fetch })
+    const text = await (await f.registry.handle(request(f.registry.register('https://custom.example/video.mp4'), { range: 'bytes=0-1023' }))).text()
+    expect(calls).toHaveLength(2)
+    expect(calls[1]!.headers).not.toHaveProperty('range')
+    expect(text).toContain('app://app/media/')
+    expect(text).not.toContain('\nseg.ts')
   })
   it('streams media without whole-body text buffering', async () => {
     const bytes = new Uint8Array(4_194_305)

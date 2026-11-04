@@ -39,9 +39,9 @@ export function sanitizeDiagnosticEvent(value: unknown, at: number): DiagnosticE
   if (extractionId !== undefined) event.extractionId = extractionId
   const client = choice(raw.client, ['default', 'web', 'web_safari', 'huya'] as const)
   if (client) event.client = client
-  const route = choice(raw.route, ['direct', 'http', 'unknown'] as const)
+  const route = choice(raw.route, ['direct', 'http', 'socks5', 'unsupported', 'unknown'] as const)
   if (route) event.route = route
-  const routeReason = choice(raw.routeReason, ['socks-unsupported', 'proxy-type-unsupported', 'proxy-resolution-failed'] as const)
+  const routeReason = choice(raw.routeReason, ['socks4-unsupported', 'proxy-type-unsupported', 'proxy-resolution-failed'] as const)
   if (routeReason) event.routeReason = routeReason
   if (raw.code !== undefined) event.code = diagnosticCode(raw.code)
   if (raw.exitCode === null) event.exitCode = null

@@ -101,13 +101,13 @@ describe('main acquisition boundary', () => {
     expect(h.runYtDlp).not.toHaveBeenCalled()
   })
 
-  it.each(['https://video.ttvnw.net:9/private.m3u8', 'https://video.ttvnw.net:8080/private.m3u8'])('rejects a non-standard Twitch rendition port before buffering: %s', async uri => {
+  it.each(['https://video.ttvnw.net:8443/live.m3u8', 'https://video.ttvnw.net:8080/live.m3u8'])('accepts a non-standard Twitch rendition port for buffering: %s', async uri => {
     const h = harness({ fetchImpl: async input => String(input).includes('gql.twitch.tv')
       ? Response.json({ data: { streamPlaybackAccessToken: { value: 'PRIVATE', signature: 'PRIVATE' } } })
       : new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,FRAME-RATE=60\n' + uri),
     })
-    await expect(h.acquisition.resolve('twitch.tv/pgl', 'twitch', 'official', undefined, true)).rejects.toHaveProperty('reason')
-    expect(h.buffer.start).not.toHaveBeenCalled()
+    expect(await h.acquisition.resolve('twitch.tv/pgl', 'twitch', 'official', undefined, true)).toMatchObject({ ok: true })
+    expect(h.inputs[0]?.url).toBe(uri)
   })
 
   it('keeps adaptive video/audio URLs private while passing the preference and re-resolving the best HLS fallback', async () => {
@@ -201,10 +201,17 @@ describe('main acquisition boundary', () => {
     expect(h.runYtDlp).toHaveBeenCalledTimes(3)
   })
 
-  it.each(['http://127.0.0.1:9/x.mp4', 'https://8.8.8.8:8080/x.m3u8', 'https://user:password@8.8.8.8/x.flv'])('rejects untrusted direct input %s before spawning', async (input) => {
+  it.each(['https://user:password@8.8.8.8/x.flv'])('rejects credential-bearing direct input %s before spawning', async (input) => {
     const h = harness()
     await expect(h.acquisition.resolve(input, 'direct', 'official')).rejects.toHaveProperty('reason')
     expect(h.buffer.start).not.toHaveBeenCalled()
+  })
+  it.each(['http://127.0.0.1:8000/x.mp4', 'https://custom.example:8080/x.m3u8', 'http://192.168.1.5:8080/live.flv'])('accepts explicitly selected custom and local media %s', async input => {
+    const dns = vi.fn(async () => ['127.0.0.1'])
+    const h = harness({ dns })
+    expect(await h.acquisition.resolve(input, 'direct', 'official')).toMatchObject({ ok: true })
+    expect(h.inputs[0]?.url).toBe(input)
+    expect(dns).not.toHaveBeenCalled()
   })
 
   it('routes direct FLV through ffmpeg and stops the producer for a local fixture', async () => {
@@ -307,7 +314,7 @@ describe('main acquisition boundary', () => {
       proxy: h.proxy, dns: async () => ['8.8.8.8'], ensureTools })
     const service = createDesktopService({ dataDir: '.', proxy: h.proxy, registerMedia: () => '', acquisition })
     expect(await service.invoke('resolve', { input: 'not-a-stream-at-all' })).toMatchObject({ ok: true, value: { ok: false, failure: { code: 'unsupported-url' } } })
-    expect(await service.invoke('resolve', { input: 'http://127.0.0.1:9/secret', platform: 'direct' })).toMatchObject({ ok: false, code: 'bad-port' })
+    expect(await service.invoke('resolve', { input: 'https://user:PRIVATE@custom.example/live', platform: 'direct' })).toMatchObject({ ok: false, code: 'invalid-url' })
     expect(ensureTools).not.toHaveBeenCalled()
     service.dispose()
   })
