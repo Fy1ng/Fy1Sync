@@ -31,13 +31,15 @@ export interface SourceRejection {
 
 export type SourceParseResult = SourceClassification | SourceRejection
 
-const HLS_PATTERN = /\.m3u8(\?|$)/iu
+const HLS_PATTERN = /\.m3u8?(\?|$)/iu
 const DASH_PATTERN = /\.mpd(\?|$)/iu
 const PROGRESSIVE_PATTERN = /\.(mp4|m4v|webm|ogv|mov|mkv|flv|ts)(\?|$)/iu
 
 export function parseSourceInput(raw: string): SourceParseResult {
   const input = raw.trim()
   if (!input) return { ok: false, reason: 'empty', message: '请输入直播间地址或媒体链接' }
+
+  if (/^playlist:[0-9a-f-]{36}$/.test(input)) return { ok: true, platform: 'direct', kind: 'progressive', url: input, needsResolve: true, suggestProxy: false, label: '频道' }
 
   if (/^[1-9][0-9]{0,11}$/.test(input)) return {
     ok: true, platform: 'douyu', kind: 'hls', url: input, channel: input,

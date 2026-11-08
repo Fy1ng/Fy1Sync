@@ -200,6 +200,7 @@ export function createDanmakuHandlers(deps: DanmakuHandlerDependencies): Feature
       features().removeFavorite(boundedText(value.id, 160))
       return { removed: true }
     },
+    getBilibiliRoomInsights: args => { const value = fields(args, ['room']).room; if (typeof value !== 'string' || !/^bilibili:[1-9]\d{0,11}$/.test(value)) return invalid(); return features().bilibiliInsights(value) },
     getDanmakuRate: args => features().rate(room(fields(args, ['room']).room)),
     getDanmakuUserDetails: args => {
       const value = fields(args, ['room', 'uid'])

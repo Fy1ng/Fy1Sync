@@ -78,6 +78,8 @@ export type ResolverDeps = {
   runYtDlp?: (url: string) => Promise<unknown>
   /** Main-process-only cookie header read from the private Douyu cookie store. */
   douyuCookie?: string
+  /** Main-process-only cookie header read from the private Bilibili cookie store. */
+  bilibiliCookie?: string
   quality?: string
   preferAdaptive?: boolean
   /** Internal retry constraint after adaptive playback fails, never accepted from IPC. */

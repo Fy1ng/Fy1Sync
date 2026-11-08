@@ -48,6 +48,7 @@ export interface FeatureMethods extends BackendMethods {
   addDanmakuFavorite: { args: AddFavoriteDanmaku; result: FavoriteDanmaku }
   updateDanmakuFavorite: { args: { id: string; text: string }; result: FavoriteDanmaku }
   removeDanmakuFavorite: { args: { id: string }; result: { removed: true } }
+  getBilibiliRoomInsights: { args: { room: string }; result: ReturnType<DanmakuFeatures['bilibiliInsights']> }
   getDanmakuRate: { args: { room: string }; result: DanmakuRate }
   getDanmakuUserDetails: { args: { room: string; uid: string }; result: ReturnType<DanmakuFeatures['userDetails']> }
   openDanmakuHistory: { args: { uid: string }; result: { opened: true } }
@@ -85,7 +86,7 @@ export const FEATURE_METHODS = [
   'listSavedRooms', 'saveRoom', 'removeSavedRoom',
   'activateDouyuRoom', 'getDanmakuFeatures', 'setDanmakuPreferences', 'setMessageAffixes',
   'queryDanmakuHistory', 'queryDanmakuFavorites', 'addDanmakuFavorite', 'updateDanmakuFavorite', 'removeDanmakuFavorite',
-  'getDanmakuRate', 'getDanmakuUserDetails', 'openDanmakuHistory', 'getDouyuDelivery', 'sendComposedDouyuMessage',
+  'getBilibiliRoomInsights', 'getDanmakuRate', 'getDanmakuUserDetails', 'openDanmakuHistory', 'getDouyuDelivery', 'sendComposedDouyuMessage',
   'previewDouyuMute', 'muteDouyuUser', 'getDouyuRoomInsights', 'refreshDouyuRoomInsights', 'getDouyuFollowedRooms',
   'getDouyuBadgeAges', 'getDouyuMonthlySpending', 'getDouyuWatchTime', 'reportDouyuPlayback', 'setDouyuLiveNotifications', 'getDouyuLiveNotifications',
   'checkAppUpdate', 'getAppUpdateState',

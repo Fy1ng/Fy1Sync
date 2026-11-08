@@ -74,7 +74,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
     let next: string | null = null
     if (!disposed) for (const entry of subscriptions.values()) if (entry.owner.contents === contents && entry.room !== null) {
       // The last selected subscription controls intent. Huya clears the Douyu operation room.
-      next = entry.room.startsWith('huya:') ? null : entry.room
+      next = /^(huya|bilibili):/.test(entry.room) ? null : entry.room
     }
     if (next === taskRoom) return
     service.setDouyuRoom?.(next)
@@ -163,9 +163,10 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
   ipc.handle('stream-syncer:subscribe', async (event, room: unknown, subscriptionId: unknown) => {
     const owner = sender(event)
     if (!owner) return denied()
+    const bilibili = typeof room === 'string' && room.startsWith('bilibili:')
     const huya = typeof room === 'string' && room.startsWith('huya:')
-    const input = typeof room === 'string' ? (huya || room.startsWith('douyu:') ? room.slice(room.indexOf(':') + 1) : room) : ''
-    const parsed = huya ? (/^[A-Za-z0-9_-]{1,64}$/.test(input) ? `huya:${input}` : null) : parseDouyuRoom(input)
+    const input = typeof room === 'string' ? (huya || bilibili || room.startsWith('douyu:') ? room.slice(room.indexOf(':') + 1) : room) : ''
+    const parsed = bilibili ? (/^[1-9][0-9]{0,11}$/.test(input) ? `bilibili:${input}` : null) : huya ? (/^[A-Za-z0-9_-]{1,64}$/.test(input) ? `huya:${input}` : null) : parseDouyuRoom(input)
     if (!validId(subscriptionId) || typeof room !== 'string' || room.length > 8192 || !parsed) {
       return { ok: false, code: 'bad-room', message: '房间号或订阅标识无效' }
     }
@@ -185,7 +186,9 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
     }
     try {
       let canonical: string
-      if (huya) {
+      if (bilibili) {
+        canonical = `bilibili:${input}`
+      } else if (huya) {
         const identity = await service.resolveHuyaRoom(input)
         if (!/^[1-9][0-9]{0,15}$/.test(identity.room)) throw new Error('虎牙房间身份无效')
         canonical = `huya:${identity.room}`

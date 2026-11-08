@@ -1,3 +1,4 @@
+import type { BilibiliMetadata } from './bilibiliMetadata'
 /**
  * Danmaku timeline.
  *
@@ -15,12 +16,12 @@
 
 import type { DouyuGiftMetadata, DouyuSenderMetadata } from './types'
 
-export interface DanmakuMessage {
+export interface DanmakuMessage extends BilibiliMetadata {
   id: string
   text: string
   user: string
   color: string
-  platform?: 'douyu' | 'huya'
+  platform?: 'douyu' | 'huya' | 'bilibili'
   system?: boolean
   huyaGift?: { id: string; count: number; name?: string }
   /** Commentary media time (seconds) at which this message should appear. */

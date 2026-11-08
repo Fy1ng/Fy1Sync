@@ -12,6 +12,7 @@
  * underneath still gets clicks everywhere else.
  */
 
+import { BilibiliMessage, fillBilibiliMessage } from './BilibiliMessage'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useAnimationFrame } from '../app/hooks'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
@@ -134,6 +135,9 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
   useEffect(() => { flush() }, [snapshot.danmaku.room, flush])
   useEffect(() => flush, [flush])
 
+  const [superChats, setSuperChats] = useState<Array<{ message: DanmakuMessage; until: number }>>([])
+  useEffect(() => setSuperChats([]), [snapshot.danmaku.room])
+
   const entryFor = (message: DanmakuMessage): LayerEntry<DanmakuMessage> => {
     const settings = settingsRef.current
     return {
@@ -141,7 +145,7 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
       build: () => {
         const node = document.createElement('span')
         node.className = 'danmaku-item'
-        node.textContent = message.text
+        fillBilibiliMessage(node, message.text, message)
         if (message.duplicateGroupId) {
           const badge = document.createElement('span')
           badge.className = 'danmaku-count'
@@ -161,7 +165,13 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
     const released = session.drainDanmaku()
     const layer = layerRef.current
     if (!settingsRef.current.enabled || !layer) return
-    const scrolling = released.filter((message) => !message.gift && !message.huyaGift)
+    const paid = released.filter(m => m.superChat)
+    setSuperChats(current => {
+      const active = current.filter(item => item.until > nowMs)
+      for (const message of paid) { if (!active.some(item => item.message.id === message.id)) active.push({ message, until: nowMs + message.superChat!.duration * 1000 }) }
+      return paid.length || active.length !== current.length ? active.slice(-3) : current
+    })
+    const scrolling = released.filter((message) => !message.gift && !message.huyaGift && !message.superChat)
     if (scrolling.length > 0) layer.spawn(scrolling.map(entryFor), nowMs)
     layer.sweep()
   })
@@ -216,7 +226,7 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
   }
 
   const message = menu?.item.data
-  const readOnly = message?.platform === 'huya' || snapshot.danmaku.room?.startsWith('huya:') === true
+  const readOnly = (message?.platform === 'huya' || message?.platform === 'bilibili') || /^(huya|bilibili):/.test(snapshot.danmaku.room ?? '')
   const writes = snapshot.settings.douyuWrites
   const repeatProblem = message ? composer.repeatProblem(message.text) : null
   const uid = message?.sender?.uid
@@ -225,6 +235,10 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
     <>
       <div className="danmaku-layer danmaku-stage" ref={hostRef} aria-hidden="true"
         onPointerOver={onPointerOver} onPointerMove={onPointerMove} onPointerOut={(event) => { if (itemAt(event.target)) scheduleLeave() }} />
+      {settingsRef.current.enabled && <div className="bili-sc-feed" aria-label="醒目留言">{superChats.map(({ message: sc }) => <article key={sc.id} className="bili-sc-card" style={{ background: sc.superChat!.background, color: sc.superChat!.color }}>
+        <header><span>{sc.user}</span><span>SC ¥{sc.superChat!.price}</span></header>
+        <p><BilibiliMessage text={sc.text} emotes={sc.emotes} /></p>
+      </article>)}</div>}
       {menu && message && (
         <div ref={menuNode} className="dm-menu" role="toolbar" aria-label={`弹幕操作：${message.text}`}
           style={{ top: menu.top }}

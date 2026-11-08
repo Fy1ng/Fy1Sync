@@ -7,6 +7,8 @@
  * the text into the composer and never sends it.
  */
 
+import { BilibiliMessage } from '../BilibiliMessage'
+import { bilibiliColor } from '../../core/bilibiliMetadata'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiClient } from '../../app/apiClient'
 import type { MessageHistoryPage, MessageHistoryQuery } from '../../../server/danmaku/messageHistory'
@@ -18,7 +20,7 @@ export type RecordsTab = 'history' | 'favorites'
 
 const PAGE_SIZE = 50
 
-const ROOM = /^[1-9][0-9]{0,11}$/
+const ROOM = /^(?:bilibili:)?[1-9][0-9]{0,11}$/
 const UID = /^[1-9][0-9]{0,19}$/
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\x00-\x1f\x7f-\x9f]/
@@ -26,10 +28,11 @@ const CONTROL = /[\x00-\x1f\x7f-\x9f]/
 type Filters = { uid: string; room: string; text: string }
 
 /** Turns the typed filters into a query the main process accepts, or names the bad field. */
-function toQuery(filters: Filters, page: number): MessageHistoryQuery | string {
-  const uid = filters.uid.trim(), room = filters.room.trim(), text = filters.text.trim()
+function toQuery(filters: Filters, page: number, bilibili = false): MessageHistoryQuery | string {
+  const uid = filters.uid.trim(), rawRoom = filters.room.trim(), text = filters.text.trim()
+  const room = bilibili && /^[1-9]\d{0,11}$/.test(rawRoom) ? `bilibili:${rawRoom}` : rawRoom
   if (uid && !UID.test(uid)) return '用户 ID 须为数字'
-  if (room && !ROOM.test(room)) return '房间号须为数字'
+  if (room && !ROOM.test(room)) return '房间号须为数字，B 站房间使用 bilibili:房间号'
   if (text.length > 200 || CONTROL.test(text)) return '搜索内容过长或含有无效字符'
   return { ...(uid ? { uid } : {}), ...(room ? { room } : {}), query: text, page, pageSize: PAGE_SIZE }
 }
@@ -90,14 +93,14 @@ function HistoryTab({ initialUid, room }: { initialUid?: string; room: string | 
   const [external, setExternal] = useState('')
 
   useEffect(() => {
-    const query = toQuery(applied, page)
+    const query = toQuery(applied, page, room?.startsWith('bilibili:'))
     if (typeof query === 'string') { setError(query); return }
     void run(query)
-  }, [applied, page, run, setError])
+  }, [applied, page, run, setError, room])
 
   const search = (event: React.FormEvent): void => {
     event.preventDefault()
-    const query = toQuery(filters, 1)
+    const query = toQuery(filters, 1, room?.startsWith('bilibili:'))
     if (typeof query === 'string') { setError(query); return }
     setApplied({ ...filters })
     setPage(1)
@@ -124,7 +127,7 @@ function HistoryTab({ initialUid, room }: { initialUid?: string; room: string | 
       </form>
       <div className="row-split records-note">
         <p className="muted">仅包含本应用运行期间接收到的弹幕，不是完整历史记录。</p>
-        {UID.test(uid) && (
+        {!room?.startsWith('bilibili:') && !filters.room.startsWith('bilibili:') && UID.test(uid) && (
           <button type="button" className="btn-quiet small" onClick={() => void openExternal()} title="在浏览器中打开第三方公开页面">
             在 Doseeing 查看<span className="records-third">第三方</span>
           </button>
@@ -142,10 +145,13 @@ function HistoryTab({ initialUid, room }: { initialUid?: string; room: string | 
                 <div className="records-meta">
                   <time className="num" dateTime={new Date(item.receivedAt).toISOString()}>{formatTime(item.receivedAt)}</time>
                   <span className="records-user">{item.username || '匿名'}</span>
-                  {item.sender?.uid && <span className="num muted">UID {item.sender.uid}</span>}
+                  {(item.bilibiliUid ?? item.sender?.uid) && <span className="num muted">UID {item.bilibiliUid ?? item.sender?.uid}</span>}
                   <span className="num muted">房间 {item.room}</span>
                 </div>
-                <p className="records-text">{item.text}</p>
+                <p className="records-text" style={item.platform === 'bilibili' ? { color: bilibiliColor(item.color) } : undefined}>
+                  {item.superChat && <span className="bili-sc-label">SC ¥{item.superChat.price}</span>}
+                  <BilibiliMessage text={item.text} emotes={item.emotes} />
+                </p>
               </li>
             ))}
           </ol>
@@ -324,6 +330,7 @@ export function DanmakuRecords({ initialTab, initialUid, room, onFill }: {
   const [tab, setTab] = useState<RecordsTab>(initialTab)
   // A chat row's 历史弹幕 can open this again for another user while it is showing.
   useEffect(() => setTab(initialTab), [initialTab, initialUid])
+  if (room?.startsWith('bilibili:')) return <HistoryTab key={`${room}:${initialUid ?? ''}`} initialUid={initialUid} room={room} />
   // Both panes stay mounted so switching tabs keeps each one's filters and page.
   return (
     <SideTabs label="弹幕记录" value={tab} onChange={setTab} tabs={TABS}>

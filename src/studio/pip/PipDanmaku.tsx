@@ -10,6 +10,8 @@
  * Motion, measuring and lanes are the main stage's `ScrollingLayer`.
  */
 
+import { bilibiliColor, copyBilibiliMetadata, type BilibiliMetadata } from '../../core/bilibiliMetadata'
+import { fillBilibiliMessage } from '../BilibiliMessage'
 import { useEffect, useRef } from 'react'
 import { apiClient } from '../../app/apiClient'
 import { AREA_FRACTION, type LaneLayout } from '../../core/danmakuLanes'
@@ -107,7 +109,7 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
     }
     function ingest(data: unknown): void {
       if (!drawingRef.current || !video || !data || typeof data !== 'object') return
-      const payload = data as { text?: unknown; username?: unknown; color?: unknown; system?: unknown; gift?: unknown; huyaGift?: unknown; dms?: unknown; platform?: unknown }
+      const payload = data as BilibiliMetadata & { text?: unknown; username?: unknown; color?: unknown; system?: unknown; gift?: unknown; huyaGift?: unknown; dms?: unknown; platform?: unknown }
       // Gift and system notices are the main stage's business; this overlay is chat only.
       if (typeof payload.text !== 'string' || !payload.text.trim() || payload.system === true || payload.gift !== undefined || payload.huyaGift !== undefined) return
       const timebase = readTimebase(video)
@@ -118,7 +120,8 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
         id: `p${++sequence.current}`,
         text: payload.text,
         user: typeof payload.username === 'string' ? payload.username : '',
-        color: colorForIndex(typeof payload.color === 'number' ? payload.color : 0),
+        color: payload.platform === 'bilibili' ? bilibiliColor(payload.color) : colorForIndex(typeof payload.color === 'number' ? payload.color : 0),
+        ...(payload.platform === 'bilibili' ? { platform: 'bilibili' as const, ...copyBilibiliMetadata(payload) } : {}),
         ...(payload.platform === 'huya' ? { platform: 'huya' as const } : {}),
         ...(typeof payload.dms === 'number' && Number.isFinite(payload.dms) ? { dms: payload.dms } : {}),
         scheduleTime,
@@ -142,7 +145,8 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
       build: () => {
         const node = document.createElement('span')
         node.className = 'pip-dm'
-        node.textContent = message.text
+        if (message.superChat) { node.append(document.createTextNode(`SC ¥${message.superChat.price} · ${message.user}：`)); node.style.background = message.superChat.background; node.style.padding = '2px 6px'; node.style.borderRadius = '4px' }
+        fillBilibiliMessage(node, message.text, message)
         if (message.color) node.style.color = message.color
         return node
       },
@@ -158,7 +162,7 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
       const released = video.paused ? timeline.current.releaseAll() : timeline.current.advance(mediaTime)
       const fresh: LayerEntry<Shown>[] = []
       for (const message of released) {
-        const result = processor.current.process({ text: message.text, room: room ?? undefined, platform: message.platform, ...(message.dms !== undefined ? { dms: message.dms } : {}) }, mediaTime)
+        const result = processor.current.process({ text: message.text, room: room ?? undefined, platform: message.platform, superChat: message.superChat, ...(message.dms !== undefined ? { dms: message.dms } : {}) }, mediaTime)
         if (result.kind === 'hide') continue
         if (result.kind === 'merge') {
           for (const item of layer.current?.items ?? []) {

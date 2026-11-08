@@ -20,7 +20,7 @@ import { Icon, Range, Segmented, Switch } from './kit'
 export function DanmakuPanel({ onClose }: { onClose: () => void }): React.ReactNode {
   const session = useSession()
   const { settings, danmakuPreferences: prefs, danmaku: connection } = useSessionSnapshot()
-  const readOnly = connection.room?.startsWith('huya:') === true
+  const readOnly = /^(huya|bilibili):/.test(connection.room ?? '')
   const danmaku = settings.danmaku
   const writes = settings.douyuWrites
   const composer = useComposer()

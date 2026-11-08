@@ -31,7 +31,10 @@ import type { FeatureCallContext, FeatureEvent } from '../electron/featureContra
 import type { StylePackSyncService } from '../electron/stylePackSync'
 import type { StylePackSyncState } from '../electron/stylePackSyncContracts'
 
+import { parseM3u, MAX_PLAYLIST_BYTES, type PlaylistEntry } from './m3uPlaylist'
+
 export interface AcquisitionService {
+  registerPlaylistEntry?(entry: PlaylistEntry): string
   resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string, preferAdaptive?: boolean): Promise<ResolveResult>
   switchQuality(role: SourceRole, quality: string): Promise<ResolveResult>
   stop(role: SourceRole): Promise<void>
@@ -393,6 +396,28 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             // A trusted local editor replaces the web-server token gate.
             return { ok: true, value: { ok: true } }
           }
+          case 'importPlaylist': {
+            if (!fields(args, [], ['url', 'text']) || (typeof args.url === 'string') === (typeof args.text === 'string')) return fail('invalid-arguments', '请提供播放列表地址或文本')
+            if (!deps.acquisition?.registerPlaylistEntry) return fail('not-available', '当前环境不支持频道列表')
+            let text: string, finalUrl: string | undefined
+            if (typeof args.url === 'string') {
+              if (args.url.length > MAX_INPUT_LENGTH) return fail('invalid-arguments', '播放列表地址过长')
+              const signal = AbortSignal.timeout(deps.proxy.requestTimeoutMs)
+              const fetched = await safeFetch(args.url, mediaRequestPolicy(deps.proxy), { signal, fetchImpl: deps.fetchImpl, mediaAccess: mediaEntry(args.url) })
+              if (!fetched.response.ok) { await fetched.response.body?.cancel(); return fail('upstream-error', '播放列表下载失败') }
+              finalUrl = fetched.finalUrl.href
+              text = await readPlatformText(fetched.response, signal)
+            } else text = args.text as string
+            if (new TextEncoder().encode(text).length > MAX_PLAYLIST_BYTES) return fail('invalid-arguments', '播放列表超过 2 MB')
+            try {
+              const parsed = parseM3u(text, finalUrl)
+              if (parsed.kind === 'hls') {
+                if (!finalUrl) return fail('unsupported-url', '这是 HLS 清单，请添加它的 HTTP/HTTPS 地址')
+                return { ok: true, value: { kind: 'hls', entries: [], url: finalUrl } }
+              }
+              return { ok: true, value: { kind: 'channels', entries: parsed.entries.map(entry => ({ name: entry.name, group: entry.group, input: deps.acquisition!.registerPlaylistEntry!(entry) })) } }
+            } catch (error) { return fail('invalid-playlist', error instanceof Error ? error.message : '播放列表解析失败') }
+          }
           case 'resolve': {
             if (!fields(args, ['input'], ['platform', 'role', 'quality', 'preferAdaptive'])) return fail('invalid-arguments', '媒体解析参数无效')
             if (typeof args.input !== 'string' || args.input.trim().length === 0) {
@@ -451,7 +476,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
           }
           case 'login':
           case 'logout': {
-            if (!fields(args, ['platform']) || (args.platform !== 'youtube' && args.platform !== 'douyu')) {
+            if (!fields(args, ['platform']) || (args.platform !== 'youtube' && args.platform !== 'douyu' && args.platform !== 'bilibili')) {
               return fail('invalid-arguments', '不支持的登录平台')
             }
             if (!deps.acquisition) return fail('not-available', '账号服务不可用')

@@ -61,7 +61,7 @@ export class DeliveryTracker {
   uncertain(id: string): void { this.markGateway(id, 'unknown') }
 
   observe(message: ChatMessage): string | null {
-    if (message?.platform === 'huya' || (typeof message?.room === 'string' && message.room.startsWith('huya:'))) return null
+    if ((message?.platform === 'huya' || message?.platform === 'bilibili') || (typeof message?.room === 'string' && /^(huya|bilibili):/.test(message.room))) return null
     this.expire()
     if (!message || message.system || message.gift || !message.sender?.uid || !message.id
       || !Number.isSafeInteger(message.receivedAt)) return null

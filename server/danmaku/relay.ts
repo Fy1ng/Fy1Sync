@@ -7,6 +7,7 @@
  * leave a connection running forever.
  */
 
+import { BilibiliDanmakuClient, type BilibiliDeps } from './bilibiliClient'
 import { DouyuDanmakuClient } from './douyuClient'
 import { HuyaRoomClient, type HuyaRoomClientDeps } from './huyaRoomClient'
 import { danmakuRoom, type ChatMessage, type DanmakuClient, type DanmakuClientDeps,
@@ -23,6 +24,7 @@ export type RawDanmakuEvent = { platform: DanmakuPlatform } & ({ type: 'message'
 
 export type DanmakuRelayDeps = DanmakuClientDeps & {
   huya?: HuyaRoomClientDeps
+  bilibili?: BilibiliDeps
   createClient?: (platform: DanmakuPlatform, room: string, events: DanmakuClientEvents) => DanmakuClient
 }
 
@@ -147,7 +149,9 @@ export class DanmakuRelay {
       },
     }
     room.client = this.deps.createClient?.(identity.platform, identity.room, events)
-      ?? (identity.platform === 'huya'
+      ?? (identity.platform === 'bilibili'
+        ? new BilibiliDanmakuClient(identity.room, events, { ...this.deps, ...this.deps.bilibili })
+        : identity.platform === 'huya'
         ? new HuyaRoomClient(identity.room, events, { ...this.deps, ...this.deps.huya })
         : new DouyuDanmakuClient(identity.room, events, this.deps))
     this.rooms.set(identity.key, room)

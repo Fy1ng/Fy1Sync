@@ -214,6 +214,11 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     insights.subscribe(data => api.publish({ topic: 'insights', data })))
   if (automations) releases.push(automations.subscribe(data => api.publish({ topic: 'automations', data })))
   releases.push(options.relay.observe(event => {
+    if (event.platform === 'bilibili') {
+      if (event.type === 'message') options.danmaku.observe(event.message)
+      else options.danmaku.observeBilibiliEvent(event)
+      return
+    }
     // Huya is receive-only: no delivery tracking, history, catalog fetch or Douyu statistics.
     if (event.platform === 'huya') return
     if (event.type === 'message' && (event.message.platform === 'huya' || event.message.room.startsWith('huya:'))) return
@@ -221,7 +226,7 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     if (event.type === 'state' && event.room.startsWith('huya:')) return
     if (event.type === 'message') { options.danmaku.observe(event.message); insights.observe(event.message) }
     else if (event.type === 'signal') {
-      if (event.signal.kind !== 'viewers') insights.signal(event.signal)
+      if (event.signal.platform !== 'bilibili' && event.signal.kind !== 'viewers') insights.signal(event.signal)
     }
     else {
       insights.connection(event.room, event.state)

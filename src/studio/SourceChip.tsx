@@ -100,14 +100,14 @@ function SourcePanel({ role, onDone, onSchedule }: {
       {buffer && <p className="muted">{bufferStatusText(buffer)}</p>}
       <PlaybackDiagnosticsPanel role={role} />
 
-      {role === 'commentary' && (state.descriptor?.platform === 'huya' || snapshot.danmaku.room?.startsWith('huya:')
-        ? <p className="muted" role="status">虎牙弹幕: {snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
+      {role === 'commentary' && (state.descriptor?.platform === 'huya' || state.descriptor?.platform === 'bilibili' || /^(huya|bilibili):/.test(snapshot.danmaku.room ?? '')
+        ? <p className="muted" role="status">{state.descriptor?.platform === 'bilibili' ? 'B 站' : '虎牙'}弹幕: {snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
           : snapshot.danmaku.room ? snapshot.danmaku.error ?? `正在连接房间 ${loader.roomName}` : '未连接'}</p>
         : <DanmakuRoom />)}
       <div className="row-split panel-foot">
         <label className="btn-quiet small file-pick">
           <Icon name="file" /> 本地文件
-          <input type="file" accept="video/*" disabled={load.busy} onChange={(event) => {
+          <input type="file" accept="video/*,.m3u,.m3u8" disabled={load.busy} onChange={(event) => {
             const file = event.target.files?.[0]
             if (file) void loader.loadFile(role, file).then(onDone)
           }} />
