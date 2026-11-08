@@ -5,6 +5,7 @@ import { createProxyDispatcher, isProxyConnectFailure } from '../proxyDispatcher
 import type { DanmakuPlatform, WebSocketLike } from './types'
 
 const ENDPOINTS = {
+  bilibili: { hostname: 'broadcastlv.chat.bilibili.com', port: '' },
   douyu: { hostname: 'danmuproxy.douyu.com', port: '8506' },
   huya: { hostname: 'cdnws.api.huya.com', port: '' },
 } as const
@@ -17,10 +18,11 @@ export interface NetworkSocketOptions {
 
 /** Defer transport creation until the platform policy and direct DNS guard have settled. */
 export function createNetworkSocket(raw: string, platform: DanmakuPlatform, options: NetworkSocketOptions = {}): WebSocketLike {
-  const expected = ENDPOINTS[platform]
   const url = new URL(raw)
+  const expected = platform === 'bilibili' && /^[a-z0-9-]+\.chat\.bilibili\.com$/.test(url.hostname) && ['', '2245'].includes(url.port)
+    ? { hostname: url.hostname, port: url.port } : ENDPOINTS[platform]
   if (url.protocol !== 'wss:' || url.hostname !== expected.hostname || url.port !== expected.port
-    || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error('弹幕连接地址不在允许范围内.')
+    || url.username || url.password || url.pathname !== (platform === 'bilibili' ? '/sub' : '/') || url.search || url.hash) throw new Error('弹幕连接地址不在允许范围内.')
   const network = options.network ?? networkContext(platform)
   const listeners = new Map<string, Set<(event: any) => void>>()
   let transport: WebSocketLike | undefined
@@ -93,7 +95,7 @@ export function createNetworkSocket(raw: string, platform: DanmakuPlatform, opti
       // Keep fixed endpoint validation while proxy DNS belongs to the selected route.
       const target = new URL(url)
       target.protocol = 'https:'
-      const check = await checkUrl(target.href, { enabled: true, hosts: [expected.hostname], allowNonStandardPorts: platform === 'douyu',
+      const check = await checkUrl(target.href, { enabled: true, hosts: [expected.hostname], allowNonStandardPorts: platform === 'douyu' || platform === 'bilibili',
         maxRedirects: 0, requestTimeoutMs: timeoutMs }, options.resolve, routeUsesRemoteDns(route))
       if (stopped) return
       if (!check.ok) throw new Error('弹幕连接地址校验失败.')

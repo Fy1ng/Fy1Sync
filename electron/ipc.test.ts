@@ -99,6 +99,17 @@ describe('app origin and document boundary', async () => {
 })
 
 describe('Huya read-only subscription boundary', () => {
+  it('subscribes Bilibili without using Douyu lookup or activating Douyu account tasks', async () => {
+    const f = fixture()
+    expect(await f.call('subscribe', 'bilibili:123456', '1')).toEqual({ ok: true, value: { ok: true, room: 'bilibili:123456' } })
+    expect(f.resolveRoom).not.toHaveBeenCalled()
+    expect(f.resolveHuyaRoom).not.toHaveBeenCalled()
+    expect(f.subscribe).toHaveBeenCalledWith('bilibili:123456', expect.any(Object))
+    expect(f.setRoom.mock.calls.every(call => call[0] === null)).toBe(true)
+    expect(await f.call('invoke', 'activateDouyuRoom', { room: '123456' })).toMatchObject({ code: 'room-not-subscribed' })
+    f.installed.dispose()
+  })
+
   it('canonicalizes aliases and never assigns a Huya room to Douyu tasks or activation', async () => {
     const f = fixture()
     await f.call('subscribe', '100', '1')

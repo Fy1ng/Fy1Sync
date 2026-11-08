@@ -15,6 +15,7 @@ import { resolveConfig } from '../server/config'
 import { DanmakuRelay } from '../server/danmaku/relay'
 import { MediaRegistry } from '../server/mediaProxy'
 import { serveStatic, missingClientResponse } from '../server/static'
+import { bilibiliEmoteResponse } from './bilibiliEmoteRoute'
 import { APP_URL, CONTENT_SECURITY_POLICY, allowsAppPermission, isAppDocument, isAppOrigin } from './security'
 import { installIpcHandlers } from './ipc'
 import { getWindowState, subscribeWindowState } from './windowControls'
@@ -260,14 +261,16 @@ async function start(): Promise<void> {
     }
   }
   const playbackLogins = {
-    async login(platform: 'youtube' | 'douyu') {
-      if (platform !== 'youtube') return douyuAccounts ? douyuAccounts.loginActive() : Promise.reject(new DouyuAccountError('storage-failed'))
+    async login(platform: 'youtube' | 'douyu' | 'bilibili') {
+      if (platform === 'douyu') return douyuAccounts ? douyuAccounts.loginActive() : Promise.reject(new DouyuAccountError('storage-failed'))
+      if (platform === 'bilibili') return logins.login(platform)
       youtubeLoginTransitions++
       try { await resetYouTubeAdmin(); return await logins.login(platform) }
       finally { youtubeLoginTransitions-- }
     },
-    async logout(platform: 'youtube' | 'douyu') {
-      if (platform !== 'youtube') return douyuAccounts ? douyuAccounts.logoutActive() : Promise.reject(new DouyuAccountError('storage-failed'))
+    async logout(platform: 'youtube' | 'douyu' | 'bilibili') {
+      if (platform === 'douyu') return douyuAccounts ? douyuAccounts.logoutActive() : Promise.reject(new DouyuAccountError('storage-failed'))
+      if (platform === 'bilibili') return logins.logout(platform)
       youtubeLoginTransitions++
       try { await resetYouTubeAdmin(); await logins.logout(platform) }
       finally { youtubeLoginTransitions-- }
@@ -277,7 +280,9 @@ async function start(): Promise<void> {
       return { ...status, douyu: douyuAccounts ? await douyuAccounts.activeLoginStatus()
         : { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false } }
     },
-    cookieHeader: (_platform: 'douyu') => douyuAccounts ? douyuAccounts.activeCookieHeader() : Promise.resolve(''),
+    async cookieHeader(platform: 'douyu' | 'bilibili') {
+      return platform === 'douyu' ? douyuAccounts ? douyuAccounts.activeCookieHeader() : '' : logins.cookieHeader('bilibili')
+    },
   }
   const providerCacheHome = privateDirectory(userDataDir, join(userDataDir, 'provider-cache'))
   const toolContext = {
@@ -394,7 +399,7 @@ async function start(): Promise<void> {
     if (offlineE2e) return Promise.reject(new Error('默认离线测试禁止真实虎牙房间查询'))
     return resolveHuyaDanmakuRoom(room, createResolverDeps(proxy, media.register).fetchText)
   }
-  const relay = new DanmakuRelay({ huya: { resolveRoom: resolveHuyaRoom },
+  const relay = new DanmakuRelay({ bilibili: { cookieHeader: url => { if (offlineE2e) return Promise.reject(new Error('默认离线测试禁止真实 B 站查询')); return logins.cookieHeader('bilibili', url) } }, huya: { resolveRoom: resolveHuyaRoom },
     ...(e2e ? { createSocket: () => ({ send() {}, close() {}, addEventListener() {} }) } : {}) })
   if (douyuAccounts && douyuTasks) {
     const gateway = new DouyuBackpackGateway({ proxy, cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url) })
@@ -594,7 +599,8 @@ async function start(): Promise<void> {
       if (!isAppOrigin(request.url)) return new Response(null, { status: 403 })
       const url = new URL(request.url)
       let response: Response | null
-      if (url.pathname.startsWith('/media/')) response = await media.handle(request)
+      if (url.pathname === '/bilibili-emote') response = await bilibiliEmoteResponse(request)
+      else if (url.pathname.startsWith('/media/')) response = await media.handle(request)
       else if (url.pathname.startsWith('/buffer/')) response = await buffer.handle(request)
       else if (url.pathname.startsWith('/admin-media/')) response = await adminMedia.handle(request)
       else if (url.pathname.startsWith('/editor-media/')) response = await editorProject.handle(request)

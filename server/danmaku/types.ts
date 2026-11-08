@@ -1,9 +1,10 @@
+import type { BilibiliMetadata } from '../../src/core/bilibiliMetadata'
 /** Platform-neutral receive-only danmaku contracts. */
 import type { DouyuGiftMetadata, DouyuSenderMetadata } from '../../src/core/types'
 import type { DouyuRoomSignal } from '../douyu/insightsTypes'
 
-export type DanmakuPlatform = 'douyu' | 'huya'
-export type ChatMessage = {
+export type DanmakuPlatform = 'douyu' | 'huya' | 'bilibili'
+export type ChatMessage = BilibiliMetadata & {
   id: string
   text: string
   username: string
@@ -20,7 +21,7 @@ export type ChatMessage = {
   huyaGift?: { id: string; count: number; name?: string }
 }
 
-export type RoomSignal = (DouyuRoomSignal & { platform?: 'douyu' })
+export type RoomSignal = { platform: 'bilibili'; kind: 'popularity' | 'watched' | 'likes'; room: string; receivedAt: number; count: number } | (DouyuRoomSignal & { platform?: 'douyu' })
   | { platform: 'huya'; kind: 'viewers'; room: string; receivedAt: number; count: number; messageId?: string }
 export type DanmakuState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed'
 export type DanmakuClientEvents = {
@@ -50,7 +51,7 @@ export interface DanmakuClient {
 
 /** Internal room identities always include a platform; legacy callers still see bare Douyu IDs. */
 export function danmakuRoom(input: string): { platform: DanmakuPlatform; room: string; key: string; external: string } {
-  const platform = input.startsWith('huya:') ? 'huya' : 'douyu'
+  const platform = input.startsWith('bilibili:') ? 'bilibili' : input.startsWith('huya:') ? 'huya' : 'douyu'
   const room = input.startsWith(`${platform}:`) ? input.slice(platform.length + 1) : input
-  return { platform, room, key: `${platform}:${room}`, external: platform === 'huya' ? `huya:${room}` : room }
+  return { platform, room, key: `${platform}:${room}`, external: platform !== 'douyu' ? `${platform}:${room}` : room }
 }

@@ -1,3 +1,4 @@
+import { copyBilibiliMetadata } from '../../src/core/bilibiliMetadata'
 import { normalizeDouyuGift, normalizeDouyuSender, normalizeDouyuUid } from '../../src/core/douyuMetadata'
 import type { ChatMessage } from './types'
 
@@ -21,7 +22,7 @@ export interface DanmakuRate {
 }
 type RoomRate = { since: number; buckets: Array<{ second: number; count: number }> }
 
-const roomValid = (value: unknown): value is string => typeof value === 'string' && /^[1-9][0-9]{0,11}$/.test(value)
+const roomValid = (value: unknown): value is string => typeof value === 'string' && /^(?:bilibili:)?[1-9][0-9]{0,11}$/.test(value)
 const textValid = (value: unknown, limit: number): value is string => typeof value === 'string' && value.length <= limit && !/[\x00-\x1f\x7f-\x9f]/.test(value)
 
 export function readHistoryQuery(raw: unknown = {}): Required<Pick<MessageHistoryQuery, 'query' | 'page' | 'pageSize'>> & Pick<MessageHistoryQuery, 'room' | 'uid'> {
@@ -50,13 +51,13 @@ export function copyHistoryMessage(raw: ChatMessage): ChatMessage | null {
   if (!raw || !roomValid(raw.room) || !textValid(raw.id, 160) || !raw.id
     || !textValid(raw.text, 2_000) || !raw.text.trim() || !textValid(raw.username, 128)
     || !Number.isSafeInteger(raw.receivedAt) || raw.receivedAt < 0 || typeof raw.system !== 'boolean'
-    || !Number.isInteger(raw.color) || raw.color < 0 || raw.color > 6
+    || !Number.isInteger(raw.color) || raw.color < 0 || raw.color > (raw.platform === 'bilibili' ? 0xffffff : 6)
     || !Number.isInteger(raw.level) || raw.level < 0 || raw.level > 1_000) return null
   const sender = normalizeDouyuSender(raw.sender)
   const gift = normalizeDouyuGift(raw.gift)
   if (raw.gift !== undefined && !gift) return null
   const dms = typeof raw.dms === 'number' && Number.isSafeInteger(raw.dms) && raw.dms >= 0 && raw.dms <= 1_000_000_000 ? raw.dms : undefined
-  return { id: raw.id, text: raw.text, username: raw.username, color: raw.color, level: raw.level,
+  return { ...(raw.platform === 'bilibili' && raw.room.startsWith('bilibili:') ? { platform: 'bilibili' as const, ...copyBilibiliMetadata(raw) } : {}), id: raw.id, text: raw.text, username: raw.username, color: raw.color, level: raw.level,
     receivedAt: raw.receivedAt, room: raw.room, system: raw.system,
     ...(sender ? { sender } : {}), ...(gift ? { gift } : {}), ...(dms === undefined ? {} : { dms }) }
 }
@@ -95,7 +96,7 @@ export class MessageHistory {
     this.seen.add(key)
     this.cursor = (this.cursor + 1) % this.capacity
     this.size = Math.min(this.capacity, this.size + 1)
-    if (!message.system && !message.gift) this.count(message.room)
+    if (!message.system && !message.gift && !message.superChat) this.count(message.room)
     return true
   }
 
@@ -103,7 +104,7 @@ export class MessageHistory {
     const options = readHistoryQuery(query)
     const needle = options.query.toLowerCase()
     const matching = this.entries().reverse().filter(message => (!options.room || message.room === options.room)
-      && (!options.uid || message.sender?.uid === options.uid)
+      && (!options.uid || (message.bilibiliUid ?? message.sender?.uid) === options.uid)
       && (!needle || message.text.toLowerCase().includes(needle) || message.username.toLowerCase().includes(needle)))
     const start = (options.page - 1) * options.pageSize
     return { items: matching.slice(start, start + options.pageSize).map(message => copyHistoryMessage(message)!),
@@ -120,6 +121,14 @@ export class MessageHistory {
     const count = state.buckets.reduce((total, bucket) => total + (bucket.second > second - 60 && bucket.second <= second ? bucket.count : 0), 0)
     const sampleSeconds = Math.min(60, Math.max(1, (now - state.since) / 1_000))
     return { room, receivedLastMinute: count, messagesPerMinute: Math.round(count * 60 / sampleSeconds), sampleSeconds, since: state.since }
+  }
+
+  bilibiliSnapshot(room: string) {
+    if (!/^bilibili:[1-9]\d{0,11}$/.test(room)) throw new Error('B 站房间号无效')
+    const items = this.entries().filter(m => m.room === room)
+    const sc = items.filter(m => m.superChat)
+    return { room, messages: items.filter(m => !m.superChat).length, users: new Set(items.map(m => m.bilibiliUid).filter(Boolean)).size,
+      superChats: sc.length, superChatYuan: sc.reduce((sum, m) => sum + m.superChat!.price, 0), rate: this.rate(room), capacity: this.capacity, truncated: this.evicted }
   }
 
   clear(room?: string): void {

@@ -4,6 +4,7 @@ import { DEFAULT_MESSAGE_AFFIXES, readMessageAffixes, type MessageAffixes } from
 import { normalizeDouyuUid } from '../src/core/douyuMetadata'
 import { MessageHistory, doseeingHistoryUrl, readHistoryQuery, type MessageHistoryQuery } from '../server/danmaku/messageHistory'
 import { DeliveryTracker } from '../server/danmaku/deliveryTracker'
+import type { RawDanmakuEvent } from '../server/danmaku/relay'
 import type { ChatMessage } from '../server/danmaku/types'
 
 export interface FavoriteDanmaku {
@@ -150,6 +151,18 @@ export class DanmakuFeatures {
     this.deliveries.observe(message)
     return true
   }
+
+  private readonly bilibiliStates = new Map<string, { state?: string; popularity?: number; watched?: number; likes?: number }>()
+  observeBilibiliEvent(event: RawDanmakuEvent): void {
+    if (event.platform !== 'bilibili' || event.type === 'message') return
+    const room = event.type === 'state' ? event.room : event.signal.room
+    const state = this.bilibiliStates.get(room) ?? {}
+    if (event.type === 'state') state.state = event.state
+    else if (event.signal.platform === 'bilibili') state[event.signal.kind] = event.signal.count
+    if (this.bilibiliStates.size >= 64 && !this.bilibiliStates.has(room)) this.bilibiliStates.delete(this.bilibiliStates.keys().next().value!)
+    this.bilibiliStates.set(room, state)
+  }
+  bilibiliInsights(room: string) { return { ...this.history.bilibiliSnapshot(room), ...this.bilibiliStates.get(room) } }
 
   searchHistory(query: MessageHistoryQuery = {}) { return this.history.search(query) }
   rate(room: string) { return this.history.rate(room) }

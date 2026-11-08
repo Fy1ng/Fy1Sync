@@ -19,7 +19,7 @@ const methods = new Set<DesktopMethod>([
   'sendDouyuMessage', 'openDouyuTaskRoom',
   'getDouyuRenewalTargets', 'previewDouyuRenewal', 'executeDouyuRenewal', 'cancelDouyuRenewal',
   'getDouyuTasks', 'createDouyuTask', 'setDouyuTaskPolicy', 'startDouyuTask', 'pauseDouyuTask', 'removeDouyuTask', 'retainDouyuTaskRoom', 'closeDouyuTaskRoom',
-  'resolveDouyuRoom', 'health', 'verifyAdmin', 'resolve', 'listPresets', 'getPreset', 'savePreset', 'deletePreset',
+  'importPlaylist', 'resolveDouyuRoom', 'health', 'verifyAdmin', 'resolve', 'listPresets', 'getPreset', 'savePreset', 'deletePreset',
   'getStylePackSyncState', 'syncStylePacks', 'setStylePackSyncSource',
   'switchQuality', 'stopBuffer', 'login', 'loginStatus', 'logout',
   'getNetworkPreferences', 'setNetworkPreferences',

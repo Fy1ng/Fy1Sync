@@ -31,6 +31,7 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
   const [role, setRole] = useState<SourceRole | null>(null)
   const [text, setText] = useState('')
   const [roomPlatform, setRoomPlatform] = useState<RoomPlatform | null>(null)
+  const handledFile = useRef<File | null>(null)
   const field = useRef<HTMLInputElement | null>(null)
   const bothReady = media.official.status === 'ready' && media.commentary.status === 'ready'
   const anyLoaded = SOURCE_ROLES.some((side) => media[side].status !== 'empty')
@@ -70,11 +71,11 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
 
   // A file dropped on the window goes to the side being filled, or the only empty one.
   useEffect(() => {
-    if (!pendingFile) return
+    if (!pendingFile || handledFile.current === pendingFile) return
     const empty = SOURCE_ROLES.filter((side) => media[side].status === 'empty')
     const side = role ?? (empty.length === 1 ? empty[0]! : null)
-    if (side) void loader.loadFile(side, pendingFile)
-  }, [pendingFile])
+    if (side) { handledFile.current = pendingFile; void loader.loadFile(side, pendingFile) }
+  }, [pendingFile, role])
 
   const load = role ? loader.state[role] : null
 
@@ -121,7 +122,7 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
           room.platform === 'douyu' || room.platform === 'bilibili' || room.platform === 'huya' ? room.platform : undefined)} />
 
         <p className="intake-foot">
-          <span>支持将视频文件拖入窗口</span>
+          <span>支持将视频文件或 M3U 频道列表拖入窗口</span>
           {!bothReady && (
             <button type="button" className="link-btn intake-skip" onClick={onClose}>{anyLoaded ? '开始观看' : '跳过'}</button>
           )}

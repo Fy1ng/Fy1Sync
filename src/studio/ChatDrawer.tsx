@@ -8,6 +8,7 @@
  * messages are dropped from the front. A way back down is offered meanwhile.
  */
 
+import { BilibiliMessage } from './BilibiliMessage'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
@@ -35,7 +36,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const { danmaku } = snapshot
-  const readOnly = danmaku.room?.startsWith('huya:') === true
+  const readOnly = /^(huya|bilibili):/.test(danmaku.room ?? '')
   const writes = useDouyuWrites()
   const composer = useComposer()
   const { roomName } = useSourceLoader()
@@ -113,16 +114,16 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
           }}>
           {messages.length === 0 ? (
             <p className="drawer-empty">
-              {danmaku.connected ? '弹幕将随解说进度显示' : danmaku.room ? '正在连接…' : '载入斗鱼或虎牙解说后显示弹幕'}
+              {danmaku.connected ? '弹幕将随解说进度显示' : danmaku.room ? '正在连接…' : '载入斗鱼、B 站或虎牙解说后显示弹幕'}
             </p>
           ) : (
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
               {rows.map((row) => { const message = messages[row.index]!; return (
                 <div key={row.key} data-index={row.index} ref={virtualizer.measureElement}
-                  className={`msg ${message.gift || message.huyaGift ? 'is-gift' : ''}`.trim()}
+                  className={`msg ${message.superChat ? 'is-sc' : ''} ${message.gift || message.huyaGift ? 'is-gift' : ''}`.trim()}
                   style={{ transform: `translateY(${row.start}px)` }}>
                   <span className="msg-user">{message.user}</span>
-                  <span className="msg-text">{message.text}</span>
+                  <span className="msg-text" style={message.platform === 'bilibili' ? { color: message.color } : undefined}>{message.superChat && <span className="bili-sc-label">SC ¥{message.superChat.price}</span>}<BilibiliMessage text={message.text} emotes={message.emotes} /></span>
                   {message.duplicateCount !== undefined && message.duplicateCount > 1 && (
                     <span className="msg-count num" title="相同弹幕的合并次数">×{message.duplicateCount}</span>
                   )}
@@ -201,7 +202,7 @@ function RowActions({ message, note, setNote, close, onReply }: {
   const composer = useComposer()
   const actions = useDanmakuActions()
   const { danmaku } = useSessionSnapshot()
-  const readOnly = message.platform === 'huya' || danmaku.room?.startsWith('huya:') === true
+  const readOnly = (message.platform === 'huya' || message.platform === 'bilibili') || /^(huya|bilibili):/.test(danmaku.room ?? '')
   const writes = useDouyuWrites()
   const uid = message.sender?.uid
   return (

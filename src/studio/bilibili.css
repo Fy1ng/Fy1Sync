@@ -1,0 +1,11 @@
+.bili-emote { display: inline-block; width: 1.5em; height: 1.5em; object-fit: contain; vertical-align: middle; }
+.bili-sc-feed { position: absolute; top: 14px; right: 14px; width: min(340px, 45%); z-index: 4; pointer-events: none; display: grid; gap: 8px; }
+.bili-sc-card { padding: 10px 14px; border-radius: 8px; border: 1px solid currentColor; box-shadow: 0 2px 8px #0006; overflow-wrap: anywhere; }
+.bili-sc-card header { display: flex; justify-content: space-between; gap: 12px; font-weight: 700; }
+.bili-sc-card p { margin: 8px 0 0; }
+.msg.is-sc { border-left: 3px solid #e6b64d; background: #e6b64d15; }
+.bili-sc-label { display: inline-block; margin-right: 8px; color: #edc45f; font-weight: 700; }
+.bili-insights-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 20px 0; }
+.bili-insights-grid div { padding: 14px; background: #ffffff08; border-radius: 6px; }
+.bili-insights-grid dt { color: var(--muted, #999); font-size: 12px; }
+.bili-insights-grid dd { margin: 8px 0 0; font-size: 23px; font-variant-numeric: tabular-nums; }

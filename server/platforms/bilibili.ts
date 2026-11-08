@@ -88,7 +88,12 @@ export async function resolveBilibili(
 
   let payload: PlayInfoResponse
   try {
-    payload = (await deps.fetchJson(`${PLAY_INFO_API}?${params.toString()}`)) as PlayInfoResponse
+    payload = (await deps.fetchJson(`${PLAY_INFO_API}?${params.toString()}`, {
+      headers: {
+        Referer: 'https://live.bilibili.com/',
+        ...(deps.bilibiliCookie ? { Cookie: deps.bilibiliCookie } : {}),
+      },
+    })) as PlayInfoResponse
   } catch (error) {
     if (error instanceof StreamFailureError) throw error
     return failure(
@@ -145,6 +150,8 @@ export async function resolveBilibili(
       kind: 'hls',
       label: `B 站直播 · ${room}`,
       channel: room,
+      sourceRoom: String(payload.data?.room_id ?? room),
+      danmakuRoom: `bilibili:${payload.data?.room_id ?? room}`,
       requiresProxy: true,
       qualities: available.length ? available.map(qn => ({ id: String(qn), label: label(qn) })) : undefined,
       quality: current === undefined ? undefined : String(current),

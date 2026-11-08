@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import type { PlaylistEntry } from '../server/m3uPlaylist'
 import { createDouyuRoomResolver, type ResolveDouyuRoom } from '../server/platforms/douyuRoom'
 import type { AcquisitionService } from '../server/api'
 import { createResolverDeps, sanitizedFailure } from '../server/api'
@@ -23,6 +25,13 @@ export class Acquisition implements AcquisitionService {
   private readonly activeGenerations = new Map<StreamId, number>()
   private readonly publicStreams = new Map<StreamId, ResolvedStream>()
   private generationSequence = 0
+  private readonly playlistEntries = new Map<string, PlaylistEntry>()
+  registerPlaylistEntry(entry: PlaylistEntry): string {
+    if (this.playlistEntries.size >= 20000) throw new Error('已导入的频道过多，请重启应用后重试')
+    const input = `playlist:${randomUUID()}`
+    this.playlistEntries.set(input, structuredClone(entry))
+    return input
+  }
   private disposed = false
   constructor(private readonly deps: {
     buffer: Pick<BufferManager, 'start' | 'stop' | 'subscribe'>
@@ -180,6 +189,7 @@ export class Acquisition implements AcquisitionService {
 
   dispose(): void {
     this.disposed = true
+    this.playlistEntries.clear()
     this.generations.clear()
     this.activeGenerations.clear()
     this.selections.clear()
@@ -198,12 +208,20 @@ export class Acquisition implements AcquisitionService {
   }
 
   private async resolveInput(input: string, platform?: PlatformKind, quality?: string, preferAdaptive = false, hlsOnly = false, confirmedRoom?: string, network: NetworkContext = networkContext(detectPlatform(input, platform)), diagnostic?: DiagnosticAttemptSink): Promise<ResolveResult> {
+    if (input.startsWith('playlist:')) {
+      const entry = this.playlistEntries.get(input)
+      if (!entry) return refusal('频道列表已失效，请重新导入')
+      return { ok: true, stream: { platform: 'direct', channel: input, url: entry.url,
+        kind: /\.m3u8?$/i.test(new URL(entry.url).pathname) ? 'hls' : 'progressive',
+        label: entry.name, headers: entry.headers, requiresProxy: false } }
+    }
     const resolver = createResolverDeps(this.deps.proxy, (url) => url, this.deps.fetchImpl, network)
     const result = await resolveStream(input, {
       ...resolver, quality, preferAdaptive, hlsOnly, resolveDouyuRoom: this.deps.resolveDouyuRoom ?? createDouyuRoomResolver(this.deps.proxy, this.deps.fetchImpl, this.deps.dns, network).resolve,
       ...(confirmedRoom ? { douyuRoomIdentity: { room: confirmedRoom, inputRoom: confirmedRoom } } : {}),
       runYtDlp: url => diagnostic ? this.deps.runYtDlp(url, !hlsOnly, network, event => diagnostic.record(event)) : this.deps.runYtDlp(url, !hlsOnly, network),
       douyuCookie: detectPlatform(input, platform) === 'douyu' ? await this.deps.logins.cookieHeader('douyu') : undefined,
+      bilibiliCookie: detectPlatform(input, platform) === 'bilibili' ? await this.deps.logins.cookieHeader('bilibili') : undefined,
     }, platform)
     if (!result.ok) return sanitizedFailure(result)
     // Actual media connections own DNS and route validation; do not resolve the same target here.

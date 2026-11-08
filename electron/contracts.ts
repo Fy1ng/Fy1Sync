@@ -56,6 +56,7 @@ export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods, Edi
   getDecoderPreferences: { args: undefined; result: DecoderPreferenceState }
   setDecoderPreferences: { args: { mode: DecoderMode }; result: DecoderPreferenceState }
   verifyAdmin: { args: { token: string }; result: { ok: true } }
+  importPlaylist: { args: { url?: string; text?: string }; result: import('../server/m3uPlaylist').PlaylistView }
   resolve: { args: { input: string; platform?: string; role?: SourceRole; quality?: string; preferAdaptive?: boolean }; result: ResolveResult }
   switchQuality: { args: { role: SourceRole; quality: string }; result: ResolveResult }
   stopBuffer: { args: { role: SourceRole }; result: { ok: true } }

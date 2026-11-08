@@ -100,6 +100,8 @@ export class ApiClient {
   }
 
   /** A platform refusal remains distinct from an IPC transport failure. */
+  importPlaylist(args: { url?: string; text?: string }) { return this.request('importPlaylist', args) }
+
   resolve(
     input: string,
     platform?: string,

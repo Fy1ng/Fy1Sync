@@ -295,7 +295,7 @@ export class LoginManager {
   private readonly driver: BrowserLoginDriver
   private readonly operations = new Map<LoginPlatform, { controller: AbortController; promise: Promise<LoginResult> }>()
   private readonly loggingOut = new Set<LoginPlatform>()
-  private readonly revisions: Record<LoginPlatform, number> = { youtube: 0, douyu: 0 }
+  private readonly revisions: Record<LoginPlatform, number> = { youtube: 0, douyu: 0, bilibili: 0 }
   private disposed = false
 
   constructor(userDataDirectory: string, private readonly options: LoginManagerOptions = {}) {
@@ -340,7 +340,7 @@ export class LoginManager {
     try { return await this.store.status() } catch { throw new LoginError('cookie-storage-failed') }
   }
 
-  async cookieHeader(platform: 'douyu', requestUrl?: string): Promise<string> {
+  async cookieHeader(platform: 'douyu' | 'bilibili', requestUrl?: string): Promise<string> {
     if (this.disposed || this.loggingOut.has(platform)) return ''
     const revision = this.revisions[platform]
     const current = () => !this.disposed && !this.loggingOut.has(platform) && revision === this.revisions[platform]
@@ -388,6 +388,7 @@ export class LoginManager {
     this.disposed = true
     this.revisions.youtube++
     this.revisions.douyu++
+    this.revisions.bilibili++
     const operations = [...this.operations.values()]
     for (const operation of operations) operation.controller.abort()
     await Promise.allSettled(operations.map(operation => operation.promise))

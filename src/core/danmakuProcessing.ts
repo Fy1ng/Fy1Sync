@@ -58,12 +58,13 @@ export function danmakuLaneHeight(fontSize: number, verticalGapPx: number): numb
 
 export interface ProcessableDanmaku {
   text: string
-  platform?: 'douyu' | 'huya'
+  platform?: 'douyu' | 'huya' | 'bilibili'
   room?: string
   /** Public intelligent-filter score, not a bot identity or authentication claim. */
   dms?: number
   system?: boolean
   gift?: unknown
+  superChat?: unknown
 }
 
 export type DanmakuProcessingResult = {
@@ -113,9 +114,9 @@ export class DanmakuProcessor {
       || (message.room !== undefined && (typeof message.room !== 'string' || message.room.length > 64))) return result('hide', 0, null, 'invalid')
     if (mediaTimeSeconds < this.lastMediaTime) this.reset()
     this.lastMediaTime = mediaTimeSeconds
-    if (message.system || message.gift !== undefined) return result('show')
+    if (message.system || message.gift !== undefined || message.superChat !== undefined) return result('show')
     // DouyuEx uses absence of dms as a heuristic. It is explicitly opt-in here.
-    if (message.platform !== 'huya' && this.preferences.filterSuspectedBots && (typeof message.dms !== 'number' || !Number.isFinite(message.dms))) return result('hide', 0, null, 'missing-dms')
+    if (message.platform !== 'huya' && message.platform !== 'bilibili' && this.preferences.filterSuspectedBots && (typeof message.dms !== 'number' || !Number.isFinite(message.dms))) return result('hide', 0, null, 'missing-dms')
     if (this.preferences.duplicateMode === 'all') return result('show')
     for (const [key, group] of this.groups) if (group.expiresAt <= mediaTimeSeconds) this.groups.delete(key)
     const key = JSON.stringify([message.room ?? '', text])

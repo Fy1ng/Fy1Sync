@@ -116,6 +116,33 @@ afterEach(() => {
 })
 
 describe('Session danmaku transport', () => {
+  it('preserves Bilibili colors and emotes and keeps SC despite density sampling and duplicate filtering', async () => {
+    const { session } = await makeSession()
+    session.configureDanmakuProcessing({ duplicateMode: 'single', filterSuspectedBots: true })
+    session.connectDanmaku('bilibili:6')
+    const source = StubDanmakuSubscription.instances[0]!
+    source.emit('danmaku', { platform: 'bilibili', color: 0x12ab34, text: '[笑]', username: '观众', bilibiliUid: '42', emotes: [{ text: '[笑]', url: 'https://i0.hdslb.com/bfs/emote/a.png' }] })
+    expect(session.drainDanmaku()[0]).toMatchObject({ color: '#12ab34', bilibiliUid: '42', emotes: [{ text: '[笑]' }] })
+    session.updateDanmakuSettings({ density: 0.1 })
+    const random = vi.spyOn(Math, 'random').mockReturnValue(1)
+    try {
+      for (const id of ['1', '2']) source.emit('danmaku', { platform: 'bilibili', text: '相同SC', username: '观众', superChat: { id, price: 30, duration: 60, background: '#1565c0', color: '#ffffff' } })
+      expect(session.drainDanmaku()).toHaveLength(2)
+    } finally { random.mockRestore() }
+  })
+
+  it('displays Bilibili chat with bot filtering enabled and keeps room identities separate', async () => {
+    const { session } = await makeSession()
+    session.configureDanmakuProcessing({ filterSuspectedBots: true })
+    session.connectDanmaku('bilibili:6')
+    const source = StubDanmakuSubscription.instances[0]!
+    source.emit('state', { state: 'connected', room: 'bilibili:123456' })
+    source.emit('danmaku', { platform: 'douyu', text: 'wrong platform', username: '观众' })
+    source.emit('danmaku', { platform: 'bilibili', text: 'B 站加油', username: '观众' })
+    expect(session.flush().danmaku.room).toBe('bilibili:123456')
+    expect(session.drainDanmaku()).toEqual([expect.objectContaining({ text: 'B 站加油', platform: 'bilibili' })])
+  })
+
   it('normalizes a Huya alias through state without turning the room into a Douyu room', async () => {
     const { session } = await makeSession()
     session.connectDanmaku('huya:kpl')

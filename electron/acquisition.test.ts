@@ -42,6 +42,29 @@ function harness(overrides: Partial<ConstructorParameters<typeof Acquisition>[0]
 }
 
 describe('main acquisition boundary', () => {
+  it('imports channel metadata through the desktop service without exposing request headers', async () => {
+    const h = harness()
+    const service = createDesktopService({ dataDir: 'e2e/.data/m3u-import-unit', proxy: h.proxy, acquisition: h.acquisition, registerMedia: url => url })
+    const imported = await service.invoke('importPlaylist', { text: '#EXTM3U\n#EXTINF:-1 group-title="体育",测试台\n#EXTVLCOPT:http-user-agent=Private Player\nhttps://relay.example/live' })
+    expect(imported).toMatchObject({ ok: true, value: { kind: 'channels', entries: [{ name: '测试台', group: '体育', input: expect.stringMatching(/^playlist:/) }] } })
+    expect(JSON.stringify(imported)).not.toContain('Private Player')
+    expect(h.buffer.start).not.toHaveBeenCalled()
+    const hls = await service.invoke('importPlaylist', { text: '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\nsegment.ts' })
+    expect(hls).toMatchObject({ ok: false, code: 'unsupported-url' })
+  })
+
+  it('loads extensionless imported channels and retains their headers on reconnect and restart', async () => {
+    const h = harness()
+    const input = h.acquisition.registerPlaylistEntry({ name: '测试频道', group: '体育', url: 'https://relay.example:4022/rtp/233.1.2.3:5140', headers: { Referer: 'https://player.example/', 'User-Agent': 'Test' } })
+    const result = await h.acquisition.resolve(input, 'direct', 'official')
+    expect(result).toMatchObject({ ok: true, stream: { label: '测试频道', kind: 'hls' } })
+    expect(result.ok && result.stream.headers).toBeUndefined()
+    expect(h.inputs[0]).toMatchObject({ url: 'https://relay.example:4022/rtp/233.1.2.3:5140', headers: { Referer: 'https://player.example/', 'User-Agent': 'Test' } })
+    expect(await h.reconnect()).toMatchObject({ headers: { Referer: 'https://player.example/' } })
+    expect(await h.acquisition.restart('official')).toMatchObject({ ok: true })
+    expect(h.inputs.at(-1)?.headers).toEqual(h.inputs[0]?.headers)
+  })
+
   it('passes Huya headers without probing signed media and re-resolves every reconnect, quality switch and restart', async () => {
     const fetchImpl = vi.fn(async () => { throw new Error('Signed media must not be preconnected') })
     const h = harness({ fetchImpl })

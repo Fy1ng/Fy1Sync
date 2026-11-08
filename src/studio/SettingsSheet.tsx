@@ -6,6 +6,7 @@
  * so it opens in place of the player (an in-page route that keeps both streams loaded).
  */
 
+import { BilibiliRoomInsights } from './insights/BilibiliRoomInsights'
 import { useEffect, useRef, useState } from 'react'
 import { apiClient } from '../app/apiClient'
 import { createFeedbackReport } from '../app/diagnosticReport'
@@ -48,6 +49,7 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
 }): React.ReactNode {
   const [section, setSection] = useState<SettingsSection>(target.section)
   const huya = room?.startsWith('huya:') === true
+  const bilibili = room?.startsWith('bilibili:') === true
   useEffect(() => setSection(target.section), [target])
   useEffect(() => { remember('settings:section', section) }, [section])
   return (
@@ -63,15 +65,16 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
         </nav>
         <div className="settings-body" role="tabpanel" aria-label={SECTIONS.find((item) => item.id === section)?.label}>
           {section === 'general' && <General />}
-          {huya && ['douyu', 'records', 'insights'].includes(section) && (
-            <p className="settings-empty">当前虎牙房间仅支持只读弹幕, 斗鱼操作与统计暂不可用</p>
+          {((huya && ['douyu', 'records', 'insights'].includes(section)) || (bilibili && section === 'douyu')) && (
+            <p className="settings-empty">当前房间仅支持只读弹幕, 斗鱼操作与统计暂不可用</p>
           )}
-          {section === 'douyu' && !huya && <DouyuDesk onWatch={(next) => { onWatch(next); onClose() }} />}
+          {section === 'douyu' && !huya && !bilibili && <DouyuDesk onWatch={(next) => { onWatch(next); onClose() }} />}
           {section === 'records' && !huya && (
             <DanmakuRecords initialTab={target.records?.tab ?? 'history'} initialUid={target.records?.uid} room={room}
               onFill={(text) => { onFill(text); onClose() }} />
           )}
-          {section === 'insights' && !huya && (room
+          {section === 'insights' && bilibili && room && <BilibiliRoomInsights room={room} />}
+          {section === 'insights' && !huya && !bilibili && (room
             ? <RoomInsights room={room} />
             : <p className="settings-empty">连接斗鱼弹幕房间后显示房间数据</p>)}
           {section === 'editor' && <div className="settings-page">
@@ -84,9 +87,10 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
   )
 }
 
-type GeneralPage = 'youtube' | 'align' | 'network' | 'decoding' | 'pip' | 'capture' | 'tools' | 'about'
+type GeneralPage = 'youtube' | 'bilibili' | 'align' | 'network' | 'decoding' | 'pip' | 'capture' | 'tools' | 'about'
 const GENERAL: { id: GeneralPage; label: string }[] = [
   { id: 'youtube', label: 'YouTube' },
+  { id: 'bilibili', label: '哔哩哔哩' },
   { id: 'align', label: '对齐' },
   { id: 'network', label: '网络' },
   { id: 'decoding', label: '解码' },
@@ -102,6 +106,7 @@ function General(): React.ReactNode {
     <SideTabs label="通用" value={page} onChange={setPage} tabs={GENERAL}>
       <div className="settings-page">
         {page === 'youtube' && <YouTubeAccount />}
+        {page === 'bilibili' && <BilibiliAccount />}
         {page === 'align' && <AlignPrefs />}
         {page === 'network' && <Network />}
         {page === 'decoding' && <Decoding />}
@@ -111,6 +116,48 @@ function General(): React.ReactNode {
         {page === 'about' && <Group title="关于"><AppUpdateSettings /></Group>}
       </div>
     </SideTabs>
+  )
+}
+
+function BilibiliAccount(): React.ReactNode {
+  const [status, setStatus] = useRemembered<LoginStatus | null>('login-status', null)
+  const mounted = useMounted()
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const refresh = async (): Promise<void> => {
+    const result = await apiClient.loginStatus()
+    if (!mounted.current) return
+    if (result.ok) setStatus(result.value)
+    else setMessage(result.message)
+  }
+  useEffect(() => { void refresh() }, [])
+  const act = async (logout: boolean): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    setMessage(logout ? '' : '请在弹出的 Chrome 窗口中登录 B 站，完成后关闭该窗口')
+    try {
+      const result = logout ? await apiClient.logout('bilibili') : await apiClient.login('bilibili')
+      if (!mounted.current) return
+      setMessage(result.ok ? (logout ? '已退出' : '已登录，重新载入直播间后生效') : result.message)
+      await refresh()
+    } finally { if (mounted.current) setBusy(false) }
+  }
+  const bilibili = status?.bilibili
+  return (
+    <Group title="哔哩哔哩">
+      <div className="row-split">
+        <span>
+          {status === null ? '正在检查登录状态' : bilibili?.loggedIn ? '已登录' : '未登录'}
+          {bilibili?.expiresAt ? <span className="muted">，{new Date(bilibili.expiresAt * 1000).toLocaleDateString('zh-CN')} 到期</span> : null}
+        </span>
+        <span className="row-end">
+          {bilibili?.cookieCount ? <button type="button" className="btn-quiet small" disabled={busy} onClick={() => void act(true)}>退出</button> : null}
+          <button type="button" className="btn-solid small" disabled={busy || status === null} onClick={() => void act(false)}>{bilibili?.loggedIn ? '重新登录' : '登录'}</button>
+        </span>
+      </div>
+      <p className="muted">登录后重新载入直播间，可获取账号允许的直播画质。登录信息保存在本机。</p>
+      {message && <p className="muted" role="status">{message}</p>}
+    </Group>
   )
 }
 

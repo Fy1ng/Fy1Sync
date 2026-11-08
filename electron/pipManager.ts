@@ -61,7 +61,7 @@ export class PipManager {
     this.clearTimer = deps.clearTimer ?? (handle => clearTimeout(handle as ReturnType<typeof setTimeout>))
   }
   state(): PipState {
-    const room = this.value.source?.platform === 'huya' ? null : this.value.source?.sourceRoom ?? null
+    const room = (this.value.source?.platform === 'huya' || this.value.source?.platform === 'bilibili') ? null : this.value.source?.sourceRoom ?? null
     const sender = this.deps.sendContext?.(room) ?? { accountId: null, canAttempt: false }
     return structuredClone({ ...this.value, sendContext: { ...sender, canAttempt: room !== null && sender.canAttempt, room } })
   }
@@ -138,12 +138,12 @@ export class PipManager {
     if (['getEnhancedPip', 'reportEnhancedPip', 'closeEnhancedPip', 'recoverEnhancedPip', 'setEnhancedPipOptions', 'getDanmakuFeatures'].includes(method)) return true
     const value = args && typeof args === 'object' ? args as Record<string, unknown> : {}
     if (method === 'getStreamPlayback') return value.id === this.value.streamId
-    if (['activateDouyuRoom', 'sendComposedDouyuMessage', 'getDouyuRoomInsights', 'reportDouyuPlayback', 'getDanmakuRate', 'getDanmakuUserDetails'].includes(method)) return this.value.source?.platform !== 'huya' && value.room === this.value.source?.sourceRoom
+    if (['activateDouyuRoom', 'sendComposedDouyuMessage', 'getDouyuRoomInsights', 'reportDouyuPlayback', 'getDanmakuRate', 'getDanmakuUserDetails'].includes(method)) return this.value.source?.platform !== 'huya' && this.value.source?.platform !== 'bilibili' && value.room === this.value.source?.sourceRoom
     return false
   }
   permitsRoom(senderId: number, room: string): boolean {
     const source = this.value.source
-    const expected = source?.sourceRoom ? (source.platform === 'huya' ? `huya:${source.sourceRoom}` : source.sourceRoom) : null
+    const expected = source?.sourceRoom ? ((source.platform === 'huya' || source.platform === 'bilibili') ? `${source.platform}:${source.sourceRoom}` : source.sourceRoom) : null
     return senderId === this.window?.id && room === expected
   }
   dispose(): void { if (!this.disposed) { this.close(); this.disposed = true; this.listeners.clear() } }

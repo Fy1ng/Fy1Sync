@@ -6,6 +6,8 @@
  * popover mid-resolve does not lose what comes back.
  */
 
+import { PlaylistPicker } from './PlaylistPicker'
+import type { PlaylistView } from '../../server/m3uPlaylist'
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react'
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
@@ -28,7 +30,7 @@ export interface RoleLoad {
 
 const IDLE: RoleLoad = { busy: false, problem: null, notes: [], login: null, signedIn: false, loggingIn: false }
 
-export const LOGIN_LABEL: Record<LoginPlatform, string> = { douyu: '斗鱼', youtube: 'YouTube' }
+export const LOGIN_LABEL: Record<LoginPlatform, string> = { douyu: '斗鱼', youtube: 'YouTube', bilibili: 'B 站' }
 
 /** A Latin name sits in Chinese with a space either side, as elsewhere: 登录 YouTube 后重试. */
 export const spaced = (name: string): string => /^[A-Za-z]/.test(name) ? ` ${name} ` : name
@@ -46,7 +48,7 @@ export const PLATFORM_LABEL: Record<PlatformId, string> = {
 export type RoomPlatform = 'douyu' | 'bilibili' | 'huya'
 
 /** What either side accepts: any side may play any source, so both say the same. */
-export const SOURCE_HINT = '斗鱼、哔哩哔哩、虎牙、YouTube、Twitch 链接或房间号'
+export const SOURCE_HINT = '直播间链接、房间号、媒体直链或 M3U 频道列表'
 export const SOURCE_KINDS = '斗鱼、哔哩哔哩、虎牙、YouTube、Twitch'
 
 /**
@@ -126,6 +128,8 @@ let rememberedAlias: string | null = null
 
 export function SourceLoaderProvider({ children }: { children: React.ReactNode }): React.ReactNode {
   const session = useSession()
+  const [playlist, setPlaylist] = useState<{ role: SourceRole; entries: PlaylistView['entries'] } | null>(null)
+  const importRevision = useRef<Record<SourceRole, number>>({ official: 0, commentary: 0 })
   const [state, setState] = useState<Record<SourceRole, RoleLoad>>({ official: IDLE, commentary: IDLE })
   const [roomAlias, setAlias] = useState<string | null>(() => rememberedAlias)
   const setRoomAlias = useCallback((alias: string | null) => { rememberedAlias = alias; setAlias(alias) }, [])
@@ -158,9 +162,9 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       const generation = session.sourceRevision(role)
       await loading
       if (generation !== session.sourceRevision(role) || loads.current[role] !== request) return
-      if (role === 'commentary' && descriptor.platform === 'huya') {
+      if (role === 'commentary' && (descriptor.platform === 'huya' || descriptor.platform === 'bilibili')) {
         const sourceRoom = descriptor.sourceRoom ?? roomFromInput(descriptor.input)
-        if (sourceRoom) connectRoom(`huya:${sourceRoom}`, roomFromInput(descriptor.input) ?? sourceRoom)
+        if (sourceRoom) connectRoom(`${descriptor.platform}:${sourceRoom}`, roomFromInput(descriptor.input) ?? sourceRoom)
         else disconnectRoom()
       }
       if (session.snapshot.media[role].status !== 'empty') play()
@@ -180,6 +184,19 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
   }, [patch, session])
 
   const loadInput = useCallback(async (role: SourceRole, input: string, platform?: RoomPlatform): Promise<boolean> => {
+    // Importing metadata does not replace the active source.
+    if (/^https?:\/\//i.test(input) && /\.m3u8?(?:[?#]|$)/i.test(input)) {
+      const revision = ++importRevision.current[role]
+      patch(role, { busy: true, problem: null })
+      try {
+        const result = await apiClient.importPlaylist({ url: input })
+        if (revision !== importRevision.current[role]) return false
+        if (!result.ok) { patch(role, { problem: { message: result.message } }); return false }
+        if (result.value.kind === 'channels') { setPlaylist({ role, entries: result.value.entries }); return false }
+        input = result.value.url!
+      } catch { patch(role, { problem: { message: '无法读取播放列表，请检查地址和网络' } }); return false }
+      finally { if (revision === importRevision.current[role]) patch(role, { busy: false }) }
+    }
     const typed = parseRoomInput(input)
     const roomPlatform = typed?.platform ?? platform
     let parsed = parseSourceInput(typed && roomPlatform === 'huya' ? `https://www.huya.com/${typed.room}` : typed ? typed.room : input)
@@ -209,13 +226,16 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         patch(role, { problem: { message: failure.message, hint } })
         // A refusal with no reason is Douyu's; YouTube's say which kind, and only a sign-in kind gets the offer.
         const signInCanHelp = !failure.reason || SIGN_IN_REFUSALS.has(failure.reason)
-        if (failure.code === 'restricted' && (platformOf === 'douyu' || platformOf === 'youtube') && signInCanHelp) void offerLogin(role, platformOf, generation, true)
+        if (failure.code === 'restricted' && (platformOf === 'douyu' || platformOf === 'youtube' || platformOf === 'bilibili') && signInCanHelp) void offerLogin(role, platformOf, generation, true)
         return false
       }
       const stream = result.value.stream
       patch(role, { notes: stream.notes ?? [] })
       // Douyu is asked for 原画 (rate 0); another rate back is the anonymous step-down.
       if (stream.platform === 'douyu' && stream.quality !== undefined && stream.quality !== '0') void offerLogin(role, 'douyu', generation, false)
+      if (stream.platform === 'bilibili' && stream.quality !== undefined && stream.quality !== '10000') {
+        void offerLogin(role, 'bilibili', generation, false)
+      }
       const loading = session.loadSource(role, {
         ...toDescriptor(
           { ...parsed, kind: stream.kind, label: stream.label },
@@ -232,9 +252,9 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       if (generation !== session.sourceRevision(role) || loads.current[role] !== request) return false
       // The commentary room's danmaku come along with it; nothing to set up separately.
       if (role === 'commentary') {
-        if (parsed.platform === 'huya' || stream.platform === 'huya') {
+        if (stream.platform === 'bilibili' || parsed.platform === 'bilibili' || parsed.platform === 'huya' || stream.platform === 'huya') {
           const sourceRoom = stream.sourceRoom ?? stream.danmakuRoom ?? roomFromInput(input)
-          if (sourceRoom) connectRoom(`huya:${sourceRoom}`, roomFromInput(input) ?? sourceRoom)
+          if (sourceRoom) connectRoom(`${stream.platform}:${sourceRoom}`, roomFromInput(input) ?? sourceRoom)
           else disconnectRoom()
         }
         else if (stream.danmakuRoom) connectRoom(stream.danmakuRoom, roomFromInput(input) ?? stream.danmakuRoom)
@@ -259,18 +279,40 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     if (again) await loadInput(role, again.input, again.platform)
   }, [loadInput, patch])
 
-  const loadFile = useCallback((role: SourceRole, file: File) => loadDescriptor(role, {
+  const loadFile = useCallback(async (role: SourceRole, file: File) => {
+    if (/\.m3u8?$/i.test(file.name)) {
+      const revision = ++importRevision.current[role]
+      patch(role, { busy: true, problem: null })
+      try {
+        if (file.size > 2 * 1024 * 1024) { patch(role, { problem: { message: '播放列表超过 2 MB' } }); return }
+        const result = await apiClient.importPlaylist({ text: await file.text() })
+        if (revision !== importRevision.current[role]) return
+        if (!result.ok) patch(role, { problem: { message: result.message } })
+        else setPlaylist({ role, entries: result.value.entries })
+      } catch { patch(role, { problem: { message: '无法读取播放列表文件' } }) }
+      finally { if (revision === importRevision.current[role]) patch(role, { busy: false }) }
+      return
+    }
+    await loadDescriptor(role, {
     // An object URL keeps the file local; nothing is uploaded.
     kind: 'file', url: URL.createObjectURL(file), input: file.name, label: file.name,
     loop: false, viaProxy: false, platform: 'file',
-  }), [loadDescriptor])
+    })
+  }, [loadDescriptor, patch])
 
   const clearProblem = useCallback((role: SourceRole) => patch(role, { problem: null }), [patch])
 
   const roomName = room ? roomAlias ?? room : null
   const value = useMemo(() => ({ state, loadInput, loadFile, loadDescriptor, clearProblem, login, roomName, connectRoom, disconnectRoom }),
     [state, loadInput, loadFile, loadDescriptor, clearProblem, login, roomName, connectRoom, disconnectRoom])
-  return <LoaderContext.Provider value={value}>{children}</LoaderContext.Provider>
+  return <LoaderContext.Provider value={value}>{children}
+    {playlist && <PlaylistPicker entries={playlist.entries} roleLabel={ROLE_LABEL[playlist.role]}
+      onCancel={() => setPlaylist(null)} onSelect={async (input) => {
+        const role = playlist.role
+        setPlaylist(null)
+        await loadInput(role, input)
+      }} />}
+  </LoaderContext.Provider>
 }
 
 export function useSourceLoader(): Loader {

@@ -33,6 +33,7 @@ import { apiClient, type PresetSummary } from './apiClient'
 import type { AppSettings } from './settings'
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from './settings'
 import type { BufferState } from '../../electron/bufferManager'
+import { bilibiliColor, copyBilibiliMetadata } from '../core/bilibiliMetadata'
 import { colorForIndex } from '../../server/danmaku/douyuProtocol'
 import type { ChatMessage } from '../../server/danmaku/types'
 import { normalizeDouyuGift, normalizeDouyuSender } from '../core/douyuMetadata'
@@ -1197,10 +1198,11 @@ export class Session {
   }
 
   /** Park one relayed message. Public so tests and the mock generator can feed it. */
-  pushDanmaku(message: Pick<DanmakuMessage, 'text' | 'user' | 'color' | 'sender' | 'gift' | 'dms' | 'platform' | 'huyaGift' | 'system'>): void {
+  pushDanmaku(message: Pick<DanmakuMessage, 'text' | 'user' | 'color' | 'sender' | 'gift' | 'dms' | 'platform' | 'huyaGift' | 'system' | 'bilibiliUid' | 'emotes' | 'superChat'>): void {
     const huya = message.platform === 'huya'
-    const sender = huya ? null : normalizeDouyuSender(message.sender)
-    const gift = huya ? null : normalizeDouyuGift(message.gift)
+    const foreign = huya || message.platform === 'bilibili'
+    const sender = foreign ? null : normalizeDouyuSender(message.sender)
+    const gift = foreign ? null : normalizeDouyuGift(message.gift)
     const huyaGift = huya && message.huyaGift && /^[0-9]{1,20}$/.test(message.huyaGift.id)
       && Number.isSafeInteger(message.huyaGift.count) && message.huyaGift.count > 0
       ? { id: message.huyaGift.id, count: message.huyaGift.count,
@@ -1218,7 +1220,7 @@ export class Session {
     const density = this.settingsValue.danmaku.density
     // Sampling on arrival, not on render: a dropped message never occupies a lane, so
     // density behaves as a real load control rather than a visual one.
-    if (!isGift && density < 1 && Math.random() > density) return
+    if (!isGift && !message.superChat && density < 1 && Math.random() > density) return
     const snapshot = this.engine.snapshot('commentary')
     const scheduleTime = snapshot
       ? scheduleTimeFor(snapshot, { clock: this.liveEdge, nowMs: this.now() })
@@ -1226,6 +1228,7 @@ export class Session {
     this.timeline.push({
       id: `d${++this.noticeSeq}`,
       text: message.text,
+      ...(message.platform === 'bilibili' ? copyBilibiliMetadata(message) : {}),
       user: message.user,
       color: message.color,
       ...(message.platform ? { platform: message.platform } : {}),
@@ -1243,13 +1246,15 @@ export class Session {
     if (!data || typeof data !== 'object') return
     const payload = data as Partial<ChatMessage>
     if (typeof payload.text !== 'string' || payload.text.length === 0) return
-    const platform = payload.platform === 'huya' ? 'huya' : 'douyu'
-    if ((platform === 'huya') !== (this.danmakuState.room?.startsWith('huya:') === true)) return
-    if (platform === 'huya') {
+    const platform = payload.platform === 'bilibili' ? 'bilibili' : payload.platform === 'huya' ? 'huya' : 'douyu'
+    const roomPlatform = this.danmakuState.room?.startsWith('bilibili:') ? 'bilibili' : this.danmakuState.room?.startsWith('huya:') ? 'huya' : 'douyu'
+    if (platform !== roomPlatform) return
+    if (platform === 'huya' || platform === 'bilibili') {
       this.pushDanmaku({
         text: payload.text,
         user: typeof payload.username === 'string' ? payload.username.trim() || '匿名' : '匿名',
-        color: colorForIndex(0), platform,
+        color: platform === 'bilibili' ? bilibiliColor(payload.color) : colorForIndex(0), platform,
+        ...(platform === 'bilibili' ? copyBilibiliMetadata(payload) : {}),
         ...(payload.system === true ? { system: true } : {}),
         ...(payload.huyaGift !== undefined ? { huyaGift: payload.huyaGift } : {}),
       })
@@ -1280,7 +1285,7 @@ export class Session {
       ...this.danmakuState,
       connected,
       ...(typeof payload.room === 'string'
-        && (this.danmakuState.room?.startsWith('huya:') ? /^huya:[1-9][0-9]{0,15}$/ : /^[1-9][0-9]{0,11}$/).test(payload.room)
+        && (this.danmakuState.room?.startsWith('bilibili:') ? /^bilibili:[1-9][0-9]{0,11}$/ : this.danmakuState.room?.startsWith('huya:') ? /^huya:[1-9][0-9]{0,15}$/ : /^[1-9][0-9]{0,11}$/).test(payload.room)
         ? { room: payload.room } : {}),
       error: connected ? null : (detail ?? DANMAKU_STATE_TEXT[state] ?? this.danmakuState.error),
     }
