@@ -27,6 +27,10 @@ jobs:
           cache: npm
       - run: npm ci
       # A single job owns all Liquipedia requests; every native build reuses these files.
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .packaging/team-logos
+          key: team-logos-${{ hashFiles('packaging/team-logos.json') }}
       - run: node scripts/prepare-team-logos.mjs
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:

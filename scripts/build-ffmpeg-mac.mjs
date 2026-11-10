@@ -242,7 +242,9 @@ export async function ensureInput(entry, cache, temporary, environment) {
     return destination
   }
   const download = path.join(temporary, entry.file + '.partial')
-  await macRun('/usr/bin/curl', ['--disable', '--fail', '--location', '--proto', '=https', '--proto-redir', '=https', '--silent', '--show-error', '--max-time', '900', '--output', download, entry.url], { env: environment })
+  // zlib moves historical releases into fossils; retain the exact locked bytes and hash.
+  const url = entry.id === 'zlib' && entry.url === `https://zlib.net/${entry.file}` ? `https://zlib.net/fossils/${entry.file}` : entry.url
+  await macRun('/usr/bin/curl', ['--disable', '--fail', '--location', '--proto', '=https', '--proto-redir', '=https', '--silent', '--show-error', '--max-time', '900', '--output', download, url], { env: environment })
   await verifyIdentity(download, entry)
   await cp(download, destination, { force: false, errorOnExist: true })
   return destination
