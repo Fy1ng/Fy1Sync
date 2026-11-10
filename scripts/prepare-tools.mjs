@@ -297,7 +297,8 @@ await cp(path.join(root, 'packaging', 'provider-package-lock.json'), path.join(s
 const npmCli = npmCliPath()
 const npmEnvironment = { ...process.env, npm_config_cache: path.join(staging, 'npm-cache'), npm_config_audit: 'false', npm_config_fund: 'false' }
 // The checked-in patched lock fixes every registry tarball and integrity. Do not run install scripts.
-await run(process.execPath, [npmCli, 'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], server, npmEnvironment)
+// Script mode invokes JS entry points directly, so no executable symlinks are needed.
+await run(process.execPath, [npmCli, 'ci', '--omit=dev', '--ignore-scripts', '--bin-links=false', '--no-audit', '--no-fund'], server, npmEnvironment)
 await assertProviderDependencies(path.join(server, 'node_modules'))
 await run(process.execPath, [path.join(root, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', path.join(server, 'tsconfig.json'), '--noCheck', '--incremental', 'false', '--sourceMap', 'false'])
 const providerOut = path.join(output, 'provider')
