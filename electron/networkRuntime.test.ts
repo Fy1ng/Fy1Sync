@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 let directory = ''
 let runtimePath = ''
 const require = createRequire(import.meta.url)
+const subprocessTimeout = process.env.CI ? 30_000 : 8_000
 
 beforeAll(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), 'stream-syncer-network-runtime-'))
@@ -58,7 +59,7 @@ describe('patched isolated Electron networking runtime', () => {
       console.log(JSON.stringify({ version:runtime.networkRuntimeVersion, electron:process.versions.electron, listeners, rejected, survived:true }));
     `
     const outcome = spawnSync(require('electron') as string, ['--input-type=module', '-e', program], {
-      cwd: directory, windowsHide: true, encoding: 'utf8', timeout: 8_000,
+      cwd: directory, windowsHide: true, encoding: 'utf8', timeout: subprocessTimeout,
       env: {
         ...process.env, ELECTRON_RUN_AS_NODE: '1', NODE_PATH: '',
         NODE_OPTIONS: mode === 'node-options' ? `--require="${runtimePath.replace(/\\/g, '/')}"` : '',
@@ -71,5 +72,5 @@ describe('patched isolated Electron networking runtime', () => {
       version: pkg.dependencies.undici, electron: pkg.devDependencies.electron,
       listeners: 0, rejected: true, survived: true,
     })
-  }, 12_000)
+  }, subprocessTimeout + 4_000)
 })
