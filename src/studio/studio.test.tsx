@@ -16,6 +16,7 @@ import { primeMediaElement } from '../test/setup'
 import { parseRoomInput, roomFromInput, sourceTitle } from './sources'
 import { Studio } from './Studio'
 import { balanceOf, volumesFor } from './transport'
+import { AutoAlign, startAutoAlign } from './sync'
 
 const sessions: Session[] = []
 
@@ -98,6 +99,33 @@ describe('the balance slider', () => {
 })
 
 describe('the studio', () => {
+  it('shows the adapting notice once per session across repeated alignment requests', async () => {
+    const session = makeSession()
+    vi.spyOn(session, 'syncNow').mockResolvedValue({} as Awaited<ReturnType<Session['syncNow']>>)
+    const notice = vi.spyOn(session, 'notice')
+    startAutoAlign(session)
+    startAutoAlign(session)
+    await flush()
+    expect(notice.mock.calls.filter(([, text]) => text.startsWith('自动对齐适配中:'))).toHaveLength(1)
+    expect(session.syncNow).toHaveBeenCalledTimes(2)
+  })
+
+  it('defaults alignment to basic mode and exposes the saved-pack selector only in style-pack mode', async () => {
+    const session = makeSession()
+    session.updateSettings({ profileId: 'saved/iem' })
+    render(<SessionProvider session={session}><AutoAlign /></SessionProvider>)
+    fireEvent.click(screen.getByRole('button', { name: '对齐选项' }))
+    expect(screen.getByRole('radio', { name: '基础模式' })).toBeChecked()
+    expect(screen.getByText(/自动查找 0:01-1:55/)).toHaveTextContent('同一回合的正式倒计时')
+    expect(screen.queryByRole('combobox', { name: '倒计时样式' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('radio', { name: '样式包模式' }))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: '倒计时样式' })).toBeInTheDocument())
+    expect(session.settings.profileId).toBe('saved/iem')
+    fireEvent.click(screen.getByRole('radio', { name: '基础模式' }))
+    await waitFor(() => expect(screen.queryByRole('combobox', { name: '倒计时样式' })).not.toBeInTheDocument())
+    expect(session.settings.profileId).toBe('saved/iem')
+  })
+
   it('opens on the paste screen when nothing is loaded', async () => {
     renderStudio(makeSession())
     await flush()

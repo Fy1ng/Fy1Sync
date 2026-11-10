@@ -13,10 +13,14 @@
 import type { DanmakuArea } from '../core/danmakuLanes'
 import { DEFAULT_FILTER_SETTINGS, type DanmakuFilterSettings } from '../core/danmakuFilter'
 import { normalizeSteps } from '../ui/controls/manualOffset'
+import type { RoiRect } from '../core/profileSchema'
+import type { SourceRole } from '../core/types'
+import { normalizeBasicClockMemory, type BasicClockMemoryEntry } from '../core/basicClockMemory'
 
 export const SETTINGS_KEY = 'stream-sync.settings.v1'
 
 export type CameraUpscaleTier = 'off' | 'performance' | 'quality'
+export type RecognitionMode = 'basic' | 'style-pack'
 
 export interface DanmakuSettings {
   enabled: boolean
@@ -44,6 +48,9 @@ export interface AppSettings {
   danmaku: DanmakuSettings
   autoSyncEnabled: boolean
   autoSyncIntervalSeconds: number
+  recognitionMode: RecognitionMode
+  basicClockRoi: RoiRect | null
+  basicClockMemory: BasicClockMemoryEntry[]
   detectWindowSeconds: number
   seekThresholdSeconds: number
   sidebarVisible: boolean
@@ -84,8 +91,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   autoSyncEnabled: false,
   autoSyncIntervalSeconds: 30,
+  recognitionMode: 'basic',
+  basicClockRoi: null,
+  basicClockMemory: [],
   detectWindowSeconds: 3,
-  seekThresholdSeconds: 1.5,
+  seekThresholdSeconds: 2,
   sidebarVisible: true,
   // On: YouTube's adaptive formats are where 1440p and up live; the HLS ladder stops lower.
   preferAdaptive: true,
@@ -109,6 +119,17 @@ function strings(value: unknown): string[] {
   return value.filter((entry): entry is string => typeof entry === 'string')
 }
 
+/** A manual clock region is authoritative, so malformed saved data never becomes a crop. */
+export function normalizeBasicClockRoi(value: unknown): RoiRect | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const { x, y, w, h } = value as Record<string, unknown>
+  if (![x, y, w, h].every(number => typeof number === 'number' && Number.isFinite(number))) return null
+  const rect = { x, y, w, h } as RoiRect
+  if (rect.x < 0 || rect.y < 0 || rect.w <= 0 || rect.h <= 0
+    || rect.x >= 1 || rect.y >= 1 || rect.x + rect.w > 1 + 1e-9 || rect.y + rect.h > 1 + 1e-9) return null
+  return { ...rect, w: Math.min(rect.w, 1 - rect.x), h: Math.min(rect.h, 1 - rect.y) }
+}
+
 function area(value: unknown): DanmakuArea {
   return value === 'quarter' || value === 'half' || value === 'full'
     ? value
@@ -129,6 +150,10 @@ export function mergeSettings(raw: unknown): AppSettings {
   const danmaku = (stored.danmaku ?? {}) as Partial<DanmakuSettings>
   const filter = (danmaku.filter ?? {}) as Partial<DanmakuFilterSettings>
   const defaults = DEFAULT_SETTINGS
+  const legacyRois = (raw as { basicClockRois?: Partial<Record<SourceRole, unknown>> } | null)?.basicClockRois
+  const manualRoi = Object.prototype.hasOwnProperty.call(stored, 'basicClockRoi')
+    ? normalizeBasicClockRoi(stored.basicClockRoi)
+    : normalizeBasicClockRoi(legacyRois?.official) ?? normalizeBasicClockRoi(legacyRois?.commentary)
 
   return {
     volume: {
@@ -158,9 +183,12 @@ export function mergeSettings(raw: unknown): AppSettings {
     autoSyncEnabled: boolean(stored.autoSyncEnabled, defaults.autoSyncEnabled),
     // The sync design fixes the interval choices at 15/30/60 s.
     autoSyncIntervalSeconds: clamp(stored.autoSyncIntervalSeconds, 10, 600, 30),
+    recognitionMode: stored.recognitionMode === 'style-pack' ? 'style-pack' : 'basic',
+    basicClockRoi: manualRoi,
+    basicClockMemory: normalizeBasicClockMemory(stored.basicClockMemory),
     // Only 2 s and 3 s windows are offered; anything else came from a bad blob.
     detectWindowSeconds: stored.detectWindowSeconds === 2 ? 2 : 3,
-    seekThresholdSeconds: clamp(stored.seekThresholdSeconds, 0.2, 5, 1.5),
+    seekThresholdSeconds: clamp(stored.seekThresholdSeconds, 0.2, 2, 2),
     sidebarVisible: boolean(stored.sidebarVisible, defaults.sidebarVisible),
     preferAdaptive: boolean(stored.preferAdaptive, defaults.preferAdaptive),
     cameraUpscale: stored.cameraUpscale === 'off' || stored.cameraUpscale === 'performance' || stored.cameraUpscale === 'quality'

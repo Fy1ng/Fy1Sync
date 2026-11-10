@@ -51,6 +51,34 @@ impl Default for RecognitionEngine {
 }
 
 #[wasm_bindgen]
+pub struct BasicClockRecognizer {
+    inner: stream_syncer_core::BasicClockRecognizer,
+}
+#[wasm_bindgen]
+impl BasicClockRecognizer {
+    #[wasm_bindgen(constructor)]
+    pub fn new(templates_json: &str) -> Result<BasicClockRecognizer, JsValue> {
+        Ok(Self { inner: stream_syncer_core::BasicClockRecognizer::new(templates_json)
+            .map_err(|error| JsValue::from_str(&error))? })
+    }
+    pub fn reset(&mut self) { self.inner.reset(); }
+    pub fn reset_timing(&mut self) { self.inner.reset_timing(); }
+    pub fn set_roi_preserving_layout(&mut self, roi_json: &str) -> Result<(), JsValue> {
+        self.inner.set_roi_preserving_layout(roi_json).map_err(|error| JsValue::from_str(&error))
+    }
+    pub fn set_roi(&mut self, roi_json: &str) -> Result<(), JsValue> {
+        self.inner.set_roi(roi_json).map_err(|error| JsValue::from_str(&error))
+    }
+    pub fn set_search_roi(&mut self, roi_json: &str) -> Result<(), JsValue> {
+        self.inner.set_search_roi(roi_json).map_err(|error| JsValue::from_str(&error))
+    }
+    pub fn push(&mut self, rgba: &[u8], width: usize, height: usize,
+        media_time: f64, wall_time: f64, frame_index: f64, want_debug: bool) -> String {
+        self.inner.push(rgba, width, height, media_time, wall_time, frame_index, want_debug).to_string()
+    }
+}
+
+#[wasm_bindgen]
 pub fn recognize_hud_frame(rgba:&[u8],width:usize,height:usize,pack_json:&str,variant_id:&str) -> Result<String,JsValue> {
     let pack=stream_syncer_core::hud_pack_from_json(pack_json).map_err(|e|JsValue::from_str(&e))?;
     let result=stream_syncer_core::recognize_hud_frame(rgba,width,height,&pack,variant_id).map_err(|e|JsValue::from_str(&e))?;

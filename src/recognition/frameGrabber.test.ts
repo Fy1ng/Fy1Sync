@@ -43,6 +43,31 @@ describe('discovery frame acquisition', () => {
     expect(result.ok && [result.frame.width, result.frame.height]).toEqual([320, 180])
   })
 
+  it('snapshots fallback clocks before blocking canvas readback', () => {
+    const video = document.createElement('video')
+    Object.defineProperties(video, { videoWidth: { value: 8 }, videoHeight: { value: 8 }, readyState: { value: 4 } })
+    video.currentTime = 10
+    let wallTime = 1000
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: () => { wallTime += 80; video.currentTime = 10.08 },
+      getImageData: () => { wallTime += 70; video.currentTime = 10.15; return { data: new Uint8ClampedArray(8 * 8 * 4) } },
+    } as unknown as CanvasRenderingContext2D)
+    const grabber = new FrameGrabber(() => wallTime)
+    try {
+      expect(grabber.grab(video, FULL_FRAME_ROI)).toMatchObject({ ok: true, frame: { mediaTime: 10, wallTime: 1000 } })
+    } finally { grabber.dispose() }
+  })
+
+  it('forwards the expected display time and callback clock reported by rVFC', () => {
+    let callback!: (now: number, metadata: { mediaTime: number; expectedDisplayTime: number }) => void
+    const video = { requestVideoFrameCallback: (next: typeof callback) => { callback = next; return 1 } } as unknown as HTMLVideoElement
+    const onFrame = vi.fn()
+    const stop = startFrameLoop(video, 30, onFrame)
+    callback(120, { mediaTime: 10.031, expectedDisplayTime: 100 })
+    expect(onFrame).toHaveBeenCalledWith(10.031, { callbackTime: 120, expectedDisplayTime: 100 })
+    stop()
+  })
+
   it('uses rVFC metadata.mediaTime for every callback and cancels the pending frame', () => {
     let callback: ((now: number, metadata: { mediaTime: number }) => void) | null = null
     const cancel = vi.fn()

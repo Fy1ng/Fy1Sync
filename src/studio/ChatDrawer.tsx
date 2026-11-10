@@ -23,6 +23,7 @@ import { useSourceLoader } from './sources'
 import { deliveryText } from './useStudioComposer'
 import { remember } from '../app/remembered'
 import { useChatFollow } from './useChatFollow'
+import { BasicRecognitionPanel } from './BasicRecognitionPanel'
 
 /** A one-line row; longer messages wrap and are measured. */
 const ROW = 30
@@ -104,6 +105,8 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
           <Icon name="close" />
         </button>
       </header>
+
+      {snapshot.settings.recognitionMode === 'basic' && <BasicRecognitionPanel />}
 
       <div className="drawer-feed">
         <div className="drawer-scroll" ref={scroller} role="log" aria-live="off" aria-label="弹幕列表" tabIndex={0}

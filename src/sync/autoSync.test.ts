@@ -67,15 +67,18 @@ function makeDeps(
   } = {},
 ): { deps: AutoSyncDeps; positions: Positions; seeks: Array<{ role: SourceRole; to: number }> } {
   const positions: Positions = { ...(init.positions ?? { official: 500, commentary: 500 }) }
+  const initialPositions = { ...positions }
   const seeks: Array<{ role: SourceRole; to: number }> = []
+  let readingNow = 1000
 
   const deps: AutoSyncDeps = {
     sample: async (_windowMs, onOutcome) => {
-      countdown('official', init.official ?? [119, 118, 117], init.officialWallOffsetMs ?? 0, onOutcome)
+      countdown('official', init.official ?? [119, 118, 117],
+        (init.officialWallOffsetMs ?? 0) + (initialPositions.official - positions.official) * 1000, onOutcome)
       countdown(
         'commentary',
         init.commentary ?? [119, 118, 117],
-        init.commentaryWallOffsetMs ?? 0,
+        (init.commentaryWallOffsetMs ?? 0) + (initialPositions.commentary - positions.commentary) * 1000,
         onOutcome,
       )
     },
@@ -91,15 +94,321 @@ function makeDeps(
       return true
     },
     now: () => 1_000,
+    readingClock: () => readingNow,
     sleep: async () => {},
     ...overrides,
   }
+  const sample = deps.sample
+  deps.sample = (windowMs, emit, signal) => sample(windowMs, (role, outcome) => {
+    // These synthetic sequences are emitted immediately, rather than waiting
+    // for their countdown timestamps. Their frame clock models zero transport lag.
+    if (!overrides.readingClock && outcome.status === 'success') readingNow = outcome.reading.wallTime
+    emit(role, outcome)
+  }, signal)
   return { deps, positions, seeks }
 }
 
 const applied: AppliedRewind = { ...NO_REWIND }
 
+const healthyPlayback: NonNullable<AutoSyncDeps['playbackState']> = () => ({
+  paused: false, seeking: false, ended: false, readyState: 4, busy: false,
+  observationRevision: 0, discontinuities: 0,
+})
+
+describe('AutoSyncController evidence completion', () => {
+  it('finishes normally only after both roles provide at least two continuous jumps', async () => {
+    const { deps } = makeDeps({ sample: async (_window, emit, signal) => {
+      expect(signal.aborted).toBe(false)
+      expect(signal.completed).toBe(false)
+      countdown('official', [119, 118, 117], 0, emit)
+      expect(signal.completed).toBe(false)
+      countdown('commentary', [119, 118], 0, emit)
+      expect(signal.completed).toBe(false)
+      emit('commentary', reading('1:57', 117, 102, 3000))
+      expect(signal.completed).toBe(false)
+      emit('commentary', reading('1:57', 117, 102.033, 3033))
+      expect(signal.completed).toBe(true)
+      expect(signal.aborted).toBe(false)
+    } })
+    const result = await new AutoSyncController(deps).dryRun(applied)
+    expect(result.phase).toBe('done')
+    expect(result.estimate?.officialEvents).toBe(2)
+    expect(result.estimate?.commentaryEvents).toBe(2)
+  })
+
+  it.each(['reverse', 'skip', 'media-gap'] as const)('discards earlier completed evidence on the first %s frame', async kind => {
+    const fixture = makeDeps({ sample: async (_window, emit, signal) => {
+      countdown('official', [119, 118, 117], 0, emit)
+      countdown('commentary', [119, 118, 117], 0, emit)
+      expect(signal.completed).toBe(true)
+      const seconds = kind === 'reverse' ? 118 : kind === 'skip' ? 114 : 116
+      emit('official', reading(`1:${seconds - 60}`, seconds, kind === 'media-gap' ? 120 : 103, 4000))
+      expect(signal.completed).toBe(false)
+      expect(signal.aborted).toBe(false)
+    } })
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.phase).toBe('failed')
+    expect(fixture.seeks).toEqual([])
+  })
+
+  it('uses only the new common countdown epoch when both sources recover after a reverse tick', async () => {
+    const { deps } = makeDeps({ sample: async (_window, emit, signal) => {
+      countdown('official', [119, 118, 117], 0, emit)
+      countdown('commentary', [119, 118, 117], 0, emit)
+      expect(signal.completed).toBe(true)
+      countdown('official', [118, 117, 116], 0, emit, 103)
+      expect(signal.completed).toBe(false)
+      countdown('commentary', [118, 117, 116], 0, emit, 103)
+      expect(signal.completed).toBe(true)
+    } })
+    const result = await new AutoSyncController(deps).dryRun(applied)
+    expect(result.phase).toBe('done')
+    expect(result.estimate?.officialEvents).toBe(2)
+    expect(result.estimate?.commentaryEvents).toBe(2)
+  })
+
+  it('rechecks playback revisions even if no callback follows a previously sufficient measurement', async () => {
+    let revision = 0
+    const fixture = makeDeps({
+      playbackState: role => ({ ...healthyPlayback(role), observationRevision: revision }),
+      sample: async (_window, emit, signal) => {
+        countdown('official', [119, 118, 117], 0, emit)
+        countdown('commentary', [119, 118, 117], 0, emit)
+        expect(signal.completed).toBe(true)
+        revision++
+        expect(signal.completed).toBe(false)
+      },
+    })
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.failure?.kind).toBe('not-ready')
+    expect(fixture.seeks).toEqual([])
+  })
+
+  it('does not confuse completion with cancellation or apply after cancellation', async () => {
+    let controller: AutoSyncController
+    const fixture = makeDeps({ sample: async (_window, emit, signal) => {
+      countdown('official', [119, 118, 117], 0, emit)
+      countdown('commentary', [119, 118, 117], 0, emit)
+      expect(signal.completed).toBe(true)
+      controller.cancel(false)
+      expect(signal.completed).toBe(false)
+      expect(signal.aborted).toBe(true)
+    } })
+    controller = new AutoSyncController(fixture.deps)
+    const result = await controller.run(applied)
+    expect(result.failure?.kind).toBe('cancelled')
+    expect(fixture.seeks).toEqual([])
+  })
+
+  it('invalidates completed evidence when a late low-confidence frame arrives', async () => {
+    const fixture = makeDeps({ sample: async (_window, emit, signal) => {
+      countdown('official', [119, 118, 117], 0, emit)
+      countdown('commentary', [119, 118, 117], 0, emit)
+      expect(signal.completed).toBe(true)
+      emit('official', { status: 'failed', reason: 'low-confidence' })
+      expect(signal.completed).toBe(false)
+    } })
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.failure?.kind).toBe('not-ready')
+    expect(fixture.seeks).toEqual([])
+  })
+
+  it('does not accept stale captured readings merely because their results just arrived', async () => {
+    const fixture = makeDeps({ now: () => 10000, readingClock: () => 10000, playbackState: healthyPlayback,
+      sample: async (_window, emit, signal) => {
+        countdown('official', [119, 118, 117], 0, emit)
+        countdown('commentary', [119, 118, 117], 0, emit)
+        expect(signal.completed).toBe(false)
+      },
+    })
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.failure?.kind).toBe('not-ready')
+    expect(fixture.seeks).toEqual([])
+  })
+
+  it('expires a completion while waiting for the sample operation to resolve', async () => {
+    let now = 1000
+    const fixture = makeDeps({ now: () => now, sample: async (_window, emit, signal) => {
+      countdown('official', [119, 118, 117], 0, emit)
+      countdown('commentary', [119, 118, 117], 0, emit)
+      expect(signal.completed).toBe(true)
+      now += 601
+      expect(signal.completed).toBe(false)
+    } })
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.failure?.kind).toBe('not-ready')
+    expect(fixture.seeks).toEqual([])
+  })
+
+  it.each([0, 550, 600, 601, -1, -5000, Number.NaN, Infinity, -Infinity])
+    ('validates captured age %s ms in the reading clock epoch before accepting completion', async capturedAge => {
+      let frameNow = 1000
+      const valid = Number.isFinite(capturedAge) && capturedAge >= 0 && capturedAge <= 600
+      const fixture = makeDeps({ now: () => 1_800_000_000_000, readingClock: () => frameNow,
+        playbackState: healthyPlayback, sample: async (_window, emit, signal) => {
+          const deliver = (role: SourceRole, outcome: RecognitionOutcome): void => {
+            if (outcome.status === 'success') frameNow = outcome.reading.wallTime + capturedAge
+            emit(role, outcome)
+          }
+          countdown('official', [119, 118, 117], 0, deliver)
+          countdown('commentary', [119, 118, 117], 0, deliver)
+          expect(signal.completed).toBe(valid)
+          expect(signal.aborted).toBe(false)
+        },
+      })
+      const result = await new AutoSyncController(fixture.deps).dryRun(applied)
+      expect(result.phase).toBe(valid ? 'done' : 'failed')
+      if (!valid) expect(result.failure?.kind).toBe('not-ready')
+      expect(fixture.seeks).toEqual([])
+    })
+
+  it('includes time since delivery in captured age across unrelated clock epochs', async () => {
+    let runNow = 1_800_000_000_000, frameNow = 1000
+    const fixture = makeDeps({ now: () => runNow, readingClock: () => frameNow,
+      sample: async (_window, emit, signal) => {
+        const deliver = (role: SourceRole, outcome: RecognitionOutcome): void => {
+          if (outcome.status === 'success') frameNow = outcome.reading.wallTime + 550
+          emit(role, outcome)
+        }
+        countdown('official', [119, 118, 117], 0, deliver)
+        countdown('commentary', [119, 118, 117], 0, deliver)
+        expect(signal.completed).toBe(true)
+        runNow += 50
+        expect(signal.completed).toBe(true)
+        runNow++
+        expect(signal.completed).toBe(false)
+      },
+    })
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.failure?.kind).toBe('not-ready')
+    expect(fixture.seeks).toEqual([])
+  })
+
+  it.each([Number.NaN, Infinity, -Infinity])('rejects a late non-finite frame timestamp %s after completion', async wallTime => {
+    let frameNow = 1000
+    const fixture = makeDeps({ now: () => 1_800_000_000_000, readingClock: () => frameNow,
+      sample: async (_window, emit, signal) => {
+        const deliver = (role: SourceRole, outcome: RecognitionOutcome): void => {
+          if (outcome.status === 'success') frameNow = outcome.reading.wallTime
+          emit(role, outcome)
+        }
+        countdown('official', [119, 118, 117], 0, deliver)
+        countdown('commentary', [119, 118, 117], 0, deliver)
+        expect(signal.completed).toBe(true)
+        emit('official', reading('1:57', 117, 102.066, wallTime))
+        expect(signal.completed).toBe(false)
+      },
+    })
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.failure?.kind).toBe('not-ready')
+    expect(fixture.seeks).toEqual([])
+  })
+
+  it('rejects a late future frame timestamp instead of clamping its captured age to zero', async () => {
+    let frameNow = 1000
+    const fixture = makeDeps({ now: () => 1_800_000_000_000, readingClock: () => frameNow,
+      sample: async (_window, emit, signal) => {
+        const deliver = (role: SourceRole, outcome: RecognitionOutcome): void => {
+          if (outcome.status === 'success') frameNow = outcome.reading.wallTime
+          emit(role, outcome)
+        }
+        countdown('official', [119, 118, 117], 0, deliver)
+        countdown('commentary', [119, 118, 117], 0, deliver)
+        expect(signal.completed).toBe(true)
+        emit('official', reading('1:57', 117, 102.066, frameNow + 1))
+        expect(signal.completed).toBe(false)
+      },
+    })
+    const result = await new AutoSyncController(fixture.deps).run(applied)
+    expect(result.failure?.kind).toBe('not-ready')
+    expect(fixture.seeks).toEqual([])
+  })
+
+  it('defaults the reading clock to now when frame and run timestamps share an epoch', async () => {
+    let now = 1000
+    const fixture = makeDeps({ now: () => now, sample: async (_window, emit, signal) => {
+      const deliver = (role: SourceRole, outcome: RecognitionOutcome): void => {
+        if (outcome.status === 'success') now = outcome.reading.wallTime
+        emit(role, outcome)
+      }
+      countdown('official', [119, 118, 117], 0, deliver)
+      countdown('commentary', [119, 118, 117], 0, deliver)
+      expect(signal.completed).toBe(true)
+    } })
+    delete fixture.deps.readingClock
+    const result = await new AutoSyncController(fixture.deps).dryRun(applied)
+    expect(result.phase).toBe('done')
+    expect(result.estimate?.officialEvents).toBe(2)
+    expect(result.estimate?.commentaryEvents).toBe(2)
+  })
+
+  it('keeps the strict 0.2 second spread requirement for verification with a looser detection configuration', async () => {
+    let windows = 0
+    const fixture = makeDeps({ estimateOptions: { maxAnchorSpreadSeconds: 5 },
+      sample: async (_window, emit, signal) => {
+        windows++
+        countdown('official', [119, 118, 117], 0, (role, outcome) => {
+          if (windows > 1 && outcome.status === 'success' && outcome.reading.seconds === 117) {
+            outcome = { ...outcome, reading: { ...outcome.reading, wallTime: outcome.reading.wallTime + 250 } }
+          }
+          emit(role, outcome)
+        })
+        countdown('commentary', [119, 118, 117], 0, emit)
+        expect(signal.completed).toBe(windows === 1)
+      },
+    })
+    const result = await new AutoSyncController(fixture.deps, { maxCorrectionPasses: 0 }).run(applied)
+    expect(result.failure?.kind).toBe('verify-failed')
+    expect(result.failure?.message).toContain('官方源跳秒时间不稳定')
+    expect(windows).toBe(2)
+  })
+
+  it('requires at least two new jumps for verification even after a complete initial sample', async () => {
+    let windows = 0
+    const fixture = makeDeps({ sample: async (_window, emit, signal) => {
+      windows++
+      const values = windows === 1 ? [119, 118, 117] : [119, 118]
+      countdown('official', values, 0, emit)
+      countdown('commentary', values, 0, emit)
+      expect(signal.completed).toBe(windows === 1)
+    } })
+    const result = await new AutoSyncController(fixture.deps, { maxCorrectionPasses: 0 }).run(applied)
+    expect(result.failure?.kind).toBe('verify-failed')
+    expect(result.failure?.message).toContain('连续跳秒证据不足')
+    expect(windows).toBe(2)
+  })
+})
+
 describe('AutoSyncController', () => {
+  it.each(['manual', 'silent'] as const)('uses the pair-holding seek only for %s runs', async mode => {
+    const { deps } = makeDeps({}, { commentaryWallOffsetMs: 5000 })
+    const original = deps.seek
+    const normal = vi.fn(original)
+    const manual = vi.fn(original)
+    deps.seek = normal
+    deps.seekManual = manual
+    const result = await new AutoSyncController(deps, { settleSeconds: 0 }).run(applied, mode)
+    expect(result.phase).toBe('done')
+    expect(manual).toHaveBeenCalledTimes(mode === 'manual' ? 1 : 0)
+    expect(normal).toHaveBeenCalledTimes(mode === 'silent' ? 1 : 0)
+  })
+
+  it('also holds the pair for a manual verification correction', async () => {
+    const { deps } = makeDeps({}, { commentaryWallOffsetMs: 5000 })
+    const original = deps.seek
+    let first = true
+    deps.seek = vi.fn(original)
+    deps.seekManual = vi.fn((role, target) => {
+      const landing = first ? target + .5 : target
+      first = false
+      return original(role, landing)
+    })
+    const result = await new AutoSyncController(deps, { settleSeconds: 0 }).run(applied)
+    expect(result.phase).toBe('done')
+    expect(deps.seekManual).toHaveBeenCalledTimes(2)
+    expect(deps.seek).not.toHaveBeenCalled()
+  })
+
   it('estimates and applies a rewind when the commentary source lags', async () => {
     // Commentary jumps 5s later on the wall clock -> commentary is behind -> rewind official.
     const { deps, seeks, positions } = makeDeps({}, { commentaryWallOffsetMs: 5_000 })
@@ -224,13 +533,13 @@ describe('AutoSyncController', () => {
     expect(result.divergence).toBeCloseTo(1.2, 2)
   })
 
-  it('accepts a landing inside the 0.35s gate of the sync design', async () => {
+  it('rejects a persistent 0.3s landing error under the tighter visual verification gate', async () => {
     const { deps } = makeDeps({}, { commentaryWallOffsetMs: 5_000, seekShortfall: 0.3 })
     const controller = new AutoSyncController(deps)
 
     const result = await controller.run(applied)
 
-    expect(result.phase).toBe('done')
+    expect(result.phase).toBe('failed')
     expect(result.divergence).toBeCloseTo(0.3, 2)
   })
 
@@ -401,6 +710,7 @@ describe('AutoSyncController', () => {
       controller.startScheduler(() => applied)
       await vi.advanceTimersByTimeAsync(30_000)
       expect(runs).toHaveBeenCalledTimes(1)
+      expect(runs).toHaveBeenCalledWith(applied, 'silent')
 
       controller.cancel()
       await vi.advanceTimersByTimeAsync(60_000)
@@ -469,7 +779,7 @@ describe('AutoSyncController.configure', () => {
     controller.configure({ detectWindowSeconds: 2 })
     await controller.run(applied)
 
-    expect(windows).toEqual([3_000, 2_000])
+    expect(windows).toEqual([3_000, 4_000, 2_000, 4_000])
   })
 
   it('merges the patch instead of replacing the whole option set', async () => {
@@ -490,7 +800,7 @@ describe('AutoSyncController.configure', () => {
     controller.configure({ schedulerIntervalSeconds: 15 })
     const result = await controller.run(applied)
 
-    expect(windows).toEqual([2_000])
+    expect(windows).toEqual([2_000, 4_000])
     expect(result.phase).toBe('done')
   })
 
@@ -576,7 +886,7 @@ describe('AutoSyncController profile guard', () => {
     expect(result.phase).toBe('failed')
     expect(result.failure).toMatchObject({
       kind: 'not-ready',
-      message: '请先选择手动提供的样式包, 再识别倒计时和自动对齐',
+      message: '样式包模式需要先选择手动提供的样式包, 再识别倒计时和自动对齐',
     })
     // The point of the guard: no window spent, no seek issued, nothing blamed on the picture.
     expect(sampled).toBe(false)
@@ -638,10 +948,10 @@ describe('AutoSyncController rate correction', () => {
     return { ...fixture, rates, changes, rewinds }
   }
 
-  it.each([1.5, 0.5, -0.5])('converges from %s seconds using actual media progress without seeking', async (residual) => {
+  it.each([1.99, 1.5, 0.5, -0.5, -1.99])('silently converges from %s seconds using actual media progress without seeking', async (residual) => {
     const fixture = rateDeps(residual)
     const controller = new AutoSyncController(fixture.deps)
-    const result = await controller.run(applied)
+    const result = await controller.run(applied, 'silent')
 
     expect(result.phase).toBe('done')
     expect(result.divergence).toBeLessThanOrEqual(0.1)
@@ -656,7 +966,7 @@ describe('AutoSyncController rate correction', () => {
 
   it('does not nudge a measured residual already inside the deadband', async () => {
     const fixture = rateDeps(0.09)
-    const result = await new AutoSyncController(fixture.deps).run(applied)
+    const result = await new AutoSyncController(fixture.deps).run(applied, 'silent')
     expect(result.phase).toBe('done')
     expect(fixture.changes.every((change) => change.rate === 1)).toBe(true)
     expect(fixture.seeks).toEqual([])
@@ -665,7 +975,7 @@ describe('AutoSyncController rate correction', () => {
 
   it('seeks above the configured threshold and never starts a rate nudge', async () => {
     const fixture = rateDeps(0.6)
-    const result = await new AutoSyncController(fixture.deps, { seekThresholdSeconds: 0.5 }).run(applied)
+    const result = await new AutoSyncController(fixture.deps, { seekThresholdSeconds: 0.5 }).run(applied, 'silent')
     expect(result.phase).toBe('done')
     expect(fixture.seeks).toEqual([{ role: 'official', to: 499.4 }])
     expect(fixture.changes.every((change) => change.rate === 1)).toBe(true)
@@ -673,7 +983,7 @@ describe('AutoSyncController rate correction', () => {
 
   it('keeps both carried rewinds when a small correction changes direction', async () => {
     const fixture = rateDeps(-0.5)
-    const result = await new AutoSyncController(fixture.deps).run({ official: 5, commentary: 0 })
+    const result = await new AutoSyncController(fixture.deps).run({ official: 5, commentary: 0 }, 'silent')
     expect(result.phase).toBe('done')
     expect(result.appliedRewind?.official).toBe(5)
     expect(result.appliedRewind?.commentary).toBeGreaterThanOrEqual(0.4)
@@ -683,7 +993,7 @@ describe('AutoSyncController rate correction', () => {
   it('fails a stalled pair instead of inferring convergence from elapsed time', async () => {
     const fixture = rateDeps(0.5)
     fixture.deps.sleep = async () => {}
-    const result = await new AutoSyncController(fixture.deps, { rateTimeoutSeconds: 0.2 }).run(applied)
+    const result = await new AutoSyncController(fixture.deps, { rateTimeoutSeconds: 0.2 }).run(applied, 'silent')
     expect(result.failure?.kind).toBe('verify-failed')
     expect(result.divergence).toBe(0.5)
     expect(result.appliedRewind).toEqual(applied)
@@ -700,8 +1010,9 @@ describe('AutoSyncController rate correction', () => {
       await gate.promise
     }
     const controller = new AutoSyncController(fixture.deps)
-    const pending = controller.run(applied)
+    const pending = controller.run(applied, 'silent')
     // Sampling resolves asynchronously before the first nudge poll.
+    await Promise.resolve()
     await Promise.resolve()
     await Promise.resolve()
     expect(fixture.rates.official).toBe(0.95)
@@ -718,7 +1029,7 @@ describe('AutoSyncController rate correction', () => {
   it('restores rates when a dependency fails while correcting', async () => {
     const fixture = rateDeps(0.5)
     fixture.deps.sleep = async () => { throw new Error('media disconnected') }
-    const result = await new AutoSyncController(fixture.deps).run(applied)
+    const result = await new AutoSyncController(fixture.deps).run(applied, 'silent')
     expect(result.failure?.message).toBe('media disconnected')
     expect(fixture.rates).toEqual({ official: 1, commentary: 1 })
   })
@@ -734,18 +1045,43 @@ describe('AutoSyncController rate correction', () => {
         drifted = true
       }
     }
-    const result = await new AutoSyncController(fixture.deps).run(applied)
+    const result = await new AutoSyncController(fixture.deps).run(applied, 'silent')
     expect(result.phase).toBe('done')
     expect(fixture.seeks.length).toBeGreaterThan(0)
     expect(fixture.rates).toEqual({ official: 1, commentary: 1 })
     expect(result.appliedRewind!.official - result.appliedRewind!.commentary).toBeCloseTo(0.5, 2)
   })
 
-  it('fails explicitly rather than seeking when rate control is unavailable', async () => {
+  it.each(['manual', 'silent'] as const)('falls back to seek in %s mode when rate control is unavailable', async mode => {
     const fixture = makeDeps({}, { commentaryWallOffsetMs: 500 })
+    const result = await new AutoSyncController(fixture.deps).run(applied, mode)
+    expect(result.phase).toBe('done')
+    expect(fixture.seeks).toEqual([{ role: 'official', to: 499.5 }])
+  })
+
+  it.each([2, 2.01, -2, -2.01])('silently seeks at %s seconds even with an old wider setting', async residual => {
+    const fixture = rateDeps(residual)
+    const result = await new AutoSyncController(fixture.deps, { seekThresholdSeconds: 5 }).run(applied, 'silent')
+    expect(result.phase).toBe('done')
+    expect(fixture.seeks).toEqual([{ role: residual > 0 ? 'official' : 'commentary', to: 500 - Math.abs(residual) }])
+    expect(fixture.changes.every(change => change.rate === 1)).toBe(true)
+    expect(result.appliedRewind![residual > 0 ? 'official' : 'commentary']).toBe(Math.abs(residual))
+  })
+
+  it.each([0.2, 0.5, 1.9, -0.2, -0.5, -1.9])('manually seeks at %s seconds without changing speed', async residual => {
+    const fixture = rateDeps(residual)
+    const result = await new AutoSyncController(fixture.deps, { seekThresholdSeconds: 5 }).run(applied)
+    expect(result.phase).toBe('done')
+    expect(fixture.seeks).toEqual([{ role: residual > 0 ? 'official' : 'commentary', to: 500 - Math.abs(residual) }])
+    expect(fixture.changes.every(change => change.rate === 1)).toBe(true)
+  })
+
+  it('does not seek a manually measured residual already inside the verification tolerance', async () => {
+    const fixture = rateDeps(0.12)
     const result = await new AutoSyncController(fixture.deps).run(applied)
-    expect(result.failure?.kind).toBe('rate-unavailable')
+    expect(result.phase).toBe('done')
     expect(fixture.seeks).toEqual([])
+    expect(fixture.changes.every(change => change.rate === 1)).toBe(true)
   })
 })
 

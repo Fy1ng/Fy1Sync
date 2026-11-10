@@ -225,6 +225,10 @@ export class FrameGrabber {
       return { ok: false, reason: 'decode-failed', detail: '无法创建 2D 画布' }
     }
 
+    // The synchronous fallback can block on both GPU drawing and CPU readback.
+    // Its pixels still belong to the frame selected before either operation.
+    const mediaTime = mediaTimeOverride ?? video.currentTime
+    const wallTime = this.clock()
     try {
       target.context.drawImage(
         video,
@@ -268,8 +272,8 @@ export class FrameGrabber {
         pixels: image.data,
         width: outputWidth,
         height: outputHeight,
-        mediaTime: mediaTimeOverride ?? video.currentTime,
-        wallTime: this.clock(),
+        mediaTime,
+        wallTime,
       },
     }
   }
@@ -304,6 +308,12 @@ export class FrameGrabber {
   }
 }
 
+/** Presentation and callback times in rVFC's shared high-resolution clock (ms). */
+export interface FramePresentationTiming {
+  callbackTime: number
+  expectedDisplayTime: number
+}
+
 interface VideoFrameMetadata {
   mediaTime: number
   presentedFrames: number
@@ -329,15 +339,17 @@ export function supportsFrameCallback(video: HTMLVideoElement): boolean {
 export function startFrameLoop(
   video: HTMLVideoElement,
   fps: number,
-  onFrame: (mediaTime: number) => void,
+  onFrame: (mediaTime: number, timing?: FramePresentationTiming) => void,
 ): () => void {
   const frameVideo = video as FrameCallbackVideo
   if (typeof frameVideo.requestVideoFrameCallback === 'function') {
     let handle = 0
     let stopped = false
-    const step = (_now: number, metadata: VideoFrameMetadata): void => {
+    const step = (now: number, metadata: VideoFrameMetadata): void => {
       if (stopped) return
-      onFrame(metadata.mediaTime)
+      if (Number.isFinite(now) && Number.isFinite(metadata.expectedDisplayTime)) {
+        onFrame(metadata.mediaTime, { callbackTime: now, expectedDisplayTime: metadata.expectedDisplayTime })
+      } else onFrame(metadata.mediaTime)
       handle = frameVideo.requestVideoFrameCallback!(step)
     }
     handle = frameVideo.requestVideoFrameCallback(step)

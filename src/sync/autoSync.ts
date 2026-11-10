@@ -11,7 +11,7 @@
  * its clock and sleep injected, so tests drive it deterministically.
  */
 
-import { ClockJumpDetector, type ClockJumpOptions } from '../core/clockJump'
+import { ClockJumpDetector, parseCountdown, type ClockJumpOptions } from '../core/clockJump'
 import {
   estimateOffset,
   OFFSET_REJECTION_TEXT,
@@ -27,8 +27,10 @@ import type {
   RecognitionOutcome,
   SourceRole,
 } from '../core/types'
-import { SOURCE_ROLES } from '../core/types'
-import { rateNudgeAction } from './rateNudge'
+import { MIN_SYNC_CONFIDENCE, SOURCE_ROLES } from '../core/types'
+import { rateNudgeAction, rateNudgeSeekThreshold } from './rateNudge'
+
+export type AutoSyncMode = 'manual' | 'silent'
 
 export type AutoSyncPhase =
   | 'idle'
@@ -73,7 +75,7 @@ export interface AutoSyncDeps {
   sample: (
     windowMs: number,
     onOutcome: (role: SourceRole, outcome: RecognitionOutcome) => void,
-    signal: { aborted: boolean },
+    signal: { aborted: boolean; readonly completed?: boolean },
   ) => Promise<void>
   snapshot: (role: SourceRole) => MediaSnapshot | null
   /**
@@ -86,23 +88,36 @@ export interface AutoSyncDeps {
   hasProfile?: () => boolean
   /** Perform one seek. Resolves true when the element confirmed the new position. */
   seek: (role: SourceRole, target: number) => Promise<boolean>
+  /** Manual seeks may hold the pair so decoder wait cannot consume the correction. */
+  seekManual?: (role: SourceRole, target: number) => Promise<boolean>
   /** Apply a bounded playback-rate correction to the real media element. */
   setPlaybackRate?: (role: SourceRole, rate: number) => void
+  /** Read live playback health, independently of metadata/seek completion. */
+  playbackState?: (role: SourceRole) => {
+    paused: boolean; seeking: boolean; ended: boolean; readyState: number
+    busy: boolean; observationRevision: number; discontinuities: number
+  }
   /** Keep session bookkeeping current even for scheduled or interrupted runs. */
   onAppliedRewind?: (rewind: AppliedRewind) => void
   now?: () => number
+  /** Clock sharing RecognitionOutcome.reading.wallTime's epoch; defaults to now. */
+  readingClock?: () => number
   sleep?: (ms: number) => Promise<void>
   estimateOptions?: EstimateOptions
 }
 
 export interface AutoSyncOptions {
   detectWindowSeconds?: number
-  /** Verification tolerance; the sync design sets 0.35 s. */
+  /** Maximum accepted error from fresh visual evidence; defaults to 0.15 s. */
   maxDivergenceSeconds?: number
   /** Seconds to settle before measuring the applied result. */
   settleSeconds?: number
+  /** Fresh countdown evidence after each adjustment. Never reuse pre-seek jumps. */
+  verificationWindowSeconds?: number
+  /** Bound recovery when a live seek or buffer stall changes the relative delay. */
+  maxCorrectionPasses?: number
   schedulerIntervalSeconds?: number
-  /** Seek only above this absolute residual; smaller errors use playback rate. */
+  /** Optional stricter silent seek boundary. Never permits rates at or above 2 s. */
   seekThresholdSeconds?: number
   rateDeadbandSeconds?: number
   /** A stalled/paused pair must fail rather than claim elapsed time corrected it. */
@@ -112,10 +127,11 @@ export interface AutoSyncOptions {
 
 const DEFAULTS = {
   detectWindowSeconds: 3,
-  maxDivergenceSeconds: 0.35,
+  maxDivergenceSeconds: 0.15,
   settleSeconds: 0.4,
+  verificationWindowSeconds: 4,
+  maxCorrectionPasses: 2,
   schedulerIntervalSeconds: 30,
-  seekThresholdSeconds: 1.5,
   rateDeadbandSeconds: 0.1,
   rateTimeoutSeconds: 45,
 } as const
@@ -166,12 +182,12 @@ export class AutoSyncController {
 
   /** Measure without seeking. Always allowed, even when auto-apply is revoked. */
   dryRun(applied: AppliedRewind): Promise<AutoSyncRunResult> {
-    return this.execute(applied, true)
+    return this.execute(applied, true, 'manual')
   }
 
-  /** Measure and apply. */
-  run(applied: AppliedRewind): Promise<AutoSyncRunResult> {
-    return this.execute(applied, false)
+  /** Manual runs seek; only a silent scheduled run may adjust playback speed. */
+  run(applied: AppliedRewind, mode: AutoSyncMode = 'manual'): Promise<AutoSyncRunResult> {
+    return this.execute(applied, false, mode)
   }
 
   /**
@@ -216,7 +232,7 @@ export class AutoSyncController {
       (this.options.schedulerIntervalSeconds ?? DEFAULTS.schedulerIntervalSeconds) * 1000
     this.schedulerTimer = setInterval(() => {
       if (this.running || !this.authorized) return
-      void this.run(applied())
+      void this.run(applied(), 'silent')
     }, intervalMs)
   }
 
@@ -239,7 +255,7 @@ export class AutoSyncController {
     for (const listener of this.listeners) listener(phase)
   }
 
-  private async execute(applied: AppliedRewind, dryRun: boolean): Promise<AutoSyncRunResult> {
+  private async execute(applied: AppliedRewind, dryRun: boolean, mode: AutoSyncMode): Promise<AutoSyncRunResult> {
     const startedAt = this.now()
     if (this.running) {
       // A refused caller owns no run state and must not unlock the active run.
@@ -260,12 +276,6 @@ export class AutoSyncController {
     this.running = true
     this.aborted = false
     const token = ++this.runToken
-    // eslint-disable-next-line @typescript-eslint/no-this-alias -- read by the abort view below
-    const self = this
-    const detectors: Record<SourceRole, ClockJumpDetector> = {
-      official: new ClockJumpDetector('official', this.options.jumpOptions),
-      commentary: new ClockJumpDetector('commentary', this.options.jumpOptions),
-    }
     const jumps: Record<SourceRole, ClockJumpEvent[]> = { official: [], commentary: [] }
     const samples: Record<SourceRole, number> = { official: 0, commentary: 0 }
     let estimateValue: OffsetEstimate | undefined
@@ -277,7 +287,7 @@ export class AutoSyncController {
       if (this.deps.hasProfile && !this.deps.hasProfile()) {
         return this.fail(startedAt, dryRun, {
           kind: 'not-ready',
-          message: '请先选择手动提供的样式包, 再识别倒计时和自动对齐',
+          message: '样式包模式需要先选择手动提供的样式包, 再识别倒计时和自动对齐',
         })
       }
 
@@ -295,20 +305,10 @@ export class AutoSyncController {
       this.setPhase('sampling')
       const windowMs =
         (this.options.detectWindowSeconds ?? DEFAULTS.detectWindowSeconds) * 1000
-      const abortView = {
-        get aborted() {
-          return self.stale(token)
-        },
-      }
-      await this.deps.sample(
-        windowMs,
-        (role, outcome) => {
-          samples[role] += 1
-          const push = detectors[role].push(outcome)
-          if (push.event) jumps[role].push(push.event)
-        },
-        abortView,
-      )
+      const evidence = await this.sampleClockEvidence(token, windowMs, samples, jumps, {
+        ...this.deps.estimateOptions,
+        appliedOffsetSeconds: offsetFromRewind(applied),
+      })
       if (this.stale(token)) {
         return this.fail(startedAt, dryRun, { kind: 'cancelled', message: '自动同步已取消' }, {
           samples,
@@ -325,8 +325,14 @@ export class AutoSyncController {
         )
       }
 
+      if (evidence.interrupted) {
+        return this.fail(startedAt, dryRun, {
+          kind: 'not-ready', message: '识别期间播放发生暂停, 缓冲或跳转, 请稳定播放后重试',
+        }, { samples, jumps })
+      }
+
       this.setPhase('estimating')
-      const estimate = estimateOffset(jumps.official, jumps.commentary, {
+      const estimate = estimateOffset(evidence.fresh.official, evidence.fresh.commentary, {
         ...this.deps.estimateOptions,
         appliedOffsetSeconds: offsetFromRewind(applied),
       })
@@ -341,6 +347,11 @@ export class AutoSyncController {
           },
           { samples, jumps },
         )
+      }
+      if (!evidence.readingsFresh || (evidence.endedEarly && !evidence.ready)) {
+        return this.fail(startedAt, dryRun, {
+          kind: 'not-ready', message: '识别证据已过期或连续跳秒不足, 请重试',
+        }, { samples, jumps })
       }
       estimateValue = estimate
 
@@ -376,16 +387,12 @@ export class AutoSyncController {
         this.deps.onAppliedRewind?.({ ...rewind })
       }
       const residual = estimate.residualSeconds
-      const threshold = this.options.seekThresholdSeconds ?? DEFAULTS.seekThresholdSeconds
+      const threshold = rateNudgeSeekThreshold(this.options.seekThresholdSeconds)
       const deadband = this.options.rateDeadbandSeconds ?? DEFAULTS.rateDeadbandSeconds
-      let needsSeek = Math.abs(residual) > threshold
-      if (!needsSeek && Math.abs(residual) > deadband) {
-        if (!this.deps.setPlaybackRate) {
-          return this.fail(startedAt, dryRun, {
-            kind: 'rate-unavailable',
-            message: '播放器暂不支持小幅速率校正',
-          }, { samples, jumps, estimate, plan })
-        }
+      const aligned = Math.abs(residual) <= (mode === 'manual'
+        ? this.options.maxDivergenceSeconds ?? DEFAULTS.maxDivergenceSeconds : deadband)
+      let needsSeek = !aligned && (mode === 'manual' || Math.abs(residual) >= threshold || !this.deps.setPlaybackRate)
+      if (!aligned && !needsSeek) {
         const nudge = await this.applyRateNudge(residual, snapshots, applied, token, publishRewind)
         if (this.stale(token)) {
           return this.fail(startedAt, dryRun, { kind: 'cancelled', message: '自动同步已取消' }, {
@@ -423,7 +430,7 @@ export class AutoSyncController {
           plan.limited = true
           plan.limitReason = currentPlan.limitReason
         }
-        const confirmed = await this.deps.seek(seek.role, currentSeek.to)
+        const confirmed = await this.seek(seek.role, currentSeek.to, mode)
         if (this.stale(token)) {
           return this.fail(startedAt, dryRun, { kind: 'cancelled', message: '自动同步已取消' }, {
             samples, jumps, estimate, plan, applied: true, appliedRewind: appliedValue,
@@ -442,7 +449,11 @@ export class AutoSyncController {
             [seek.role]: round(Math.max(0, appliedValue[seek.role] + from - to + peerAdvance)),
           })
         }
-        if (!confirmed) {
+        // A live decoder can land at a nearby keyframe. This is not success:
+        // only fresh visual verification below may accept or correct that landing.
+        const movedLive = beforeSeek[seek.role]?.timebase.kind === 'live' && this.deps.playbackState
+          && from !== undefined && to !== undefined && Math.abs(to - from) > 0.05
+        if (!confirmed && !movedLive) {
           return this.fail(
             startedAt,
             dryRun,
@@ -464,33 +475,13 @@ export class AutoSyncController {
       }
 
       this.setPhase('verifying')
-      await this.sleep((this.options.settleSeconds ?? DEFAULTS.settleSeconds) * 1000)
-      if (this.stale(token)) {
-        return this.fail(startedAt, dryRun, { kind: 'cancelled', message: '自动同步已取消' }, {
-          samples,
-          jumps,
-          estimate,
-          plan,
-          applied: true,
-          appliedRewind: appliedValue,
+      const verification = await this.verifyAndCorrect(token, appliedValue, publishRewind, samples, jumps, mode)
+      const divergence = verification.divergence
+      if (verification.failure) {
+        return this.fail(startedAt, dryRun, verification.failure, {
+          samples, jumps, estimate, plan, applied: true, appliedRewind: appliedValue,
+          ...(divergence !== null ? { divergence } : {}),
         })
-      }
-
-      const divergence = needsSeek
-        ? this.measureDivergence(plan, snapshots)
-        : this.measureRateDivergence(residual, snapshots)
-      const tolerance = this.options.maxDivergenceSeconds ?? DEFAULTS.maxDivergenceSeconds
-      if (divergence > tolerance) {
-        return this.fail(
-          startedAt,
-          dryRun,
-          {
-            kind: 'verify-failed',
-            message: `跳转后偏差 ${divergence.toFixed(2)} 秒，超出允许范围`,
-            divergence,
-          },
-          { samples, jumps, estimate, plan, applied: true, appliedRewind: appliedValue, divergence },
-        )
       }
 
       return this.finish({
@@ -531,6 +522,223 @@ export class AutoSyncController {
         // A removed media element must not prevent restoring the other source.
       }
     }
+  }
+
+  private playable(): boolean {
+    return SOURCE_ROLES.every(role => {
+      const snapshot = this.deps.snapshot(role)
+      const state = this.deps.playbackState?.(role)
+      return snapshot?.ready && Number.isFinite(snapshot.currentTime)
+        && (!state || (!state.paused && !state.seeking && !state.ended && !state.busy && state.readyState >= 3))
+    })
+  }
+
+  /** Require observed progress, not just seeked or elapsed wall time. */
+  private async settlePlayback(token: number): Promise<boolean> {
+    const settleMs = Math.max(200, (this.options.settleSeconds ?? DEFAULTS.settleSeconds) * 1000)
+    if (!this.deps.playbackState) {
+      await this.sleep(settleMs)
+      return !this.stale(token) && this.playable()
+    }
+    let previous = this.collectSnapshots()
+    let stableMs = 0
+    for (let elapsed = 0; elapsed < 8000; elapsed += 100) {
+      if (this.stale(token)) return false
+      await this.sleep(100)
+      if (this.stale(token)) return false
+      const current = this.collectSnapshots()
+      const advancing = this.playable() && SOURCE_ROLES.every(role => {
+        const delta = (current[role]?.currentTime ?? NaN) - (previous[role]?.currentTime ?? NaN)
+        return delta >= 0.025 && delta <= 0.25
+      })
+      stableMs = advancing ? stableMs + 100 : 0
+      if (stableMs >= settleMs) return true
+      previous = current
+    }
+    return false
+  }
+
+  /** Account for one-sided buffering as well as intentional correction. */
+  private progressRewind(applied: AppliedRewind, before: Partial<Record<SourceRole, MediaSnapshot>>): AppliedRewind {
+    const after = this.collectSnapshots()
+    if (!before.official || !before.commentary || !after.official || !after.commentary) return applied
+    const correction = (after.commentary.currentTime - before.commentary.currentTime)
+      - (after.official.currentTime - before.official.currentTime)
+    if (!Number.isFinite(correction)) return applied
+    const common = Math.min(applied.official, applied.commentary)
+    const offset = offsetFromRewind(applied) + correction
+    return { official: round(common + Math.max(0, offset)), commentary: round(common + Math.max(0, -offset)) }
+  }
+
+  /** A normal early finish uses the same evidence gate as the final measurement. */
+  private async sampleClockEvidence(
+    token: number,
+    windowMs: number,
+    samples: Record<SourceRole, number>,
+    allJumps: Record<SourceRole, ClockJumpEvent[]>,
+    estimateOptions: EstimateOptions,
+  ): Promise<{ fresh: Record<SourceRole, ClockJumpEvent[]>; interrupted: boolean; ready: boolean; endedEarly: boolean; readingsFresh: boolean }> {
+    const detectors = { official: new ClockJumpDetector('official', this.options.jumpOptions),
+      commentary: new ClockJumpDetector('commentary', this.options.jumpOptions) }
+    const fresh: Record<SourceRole, ClockJumpEvent[]> = { official: [], commentary: [] }
+    const revisions = SOURCE_ROLES.map(role => this.deps.playbackState?.(role))
+    const lastReadingAt: Record<SourceRole, number> = { official: -Infinity, commentary: -Infinity }
+    const lastSeconds: Record<SourceRole, number | null> = { official: null, commentary: null }
+    const lastMediaTime: Record<SourceRole, number | null> = { official: null, commentary: null }
+    const minConfidence = Math.max(MIN_SYNC_CONFIDENCE,
+      this.options.jumpOptions?.minConfidence ?? MIN_SYNC_CONFIDENCE,
+      estimateOptions.minConfidence ?? MIN_SYNC_CONFIDENCE)
+    let interrupted = false, endedEarly = false
+    const inspectPlayback = (): void => {
+      interrupted ||= !this.playable() || SOURCE_ROLES.some((role, index) => {
+        const current = this.deps.playbackState?.(role), before = revisions[index]
+        return !!before && !!current && (before.observationRevision !== current.observationRevision
+          || before.discontinuities !== current.discontinuities)
+      })
+    }
+    const readingsFresh = (): boolean => SOURCE_ROLES.every(role => {
+      const age = this.now() - lastReadingAt[role]
+      return Number.isFinite(age) && age >= 0 && age <= 600
+    })
+    const ready = (): boolean => {
+      inspectPlayback()
+      return !this.stale(token) && !interrupted && readingsFresh()
+        && fresh.official.length >= 2 && fresh.commentary.length >= 2
+        && estimateOffset(fresh.official, fresh.commentary, { ...estimateOptions, minConfidence }).status === 'ok'
+    }
+    const resetEvidence = (): void => {
+      // A reset, reverse tick or skipped interval starts a new common observation
+      // epoch. Neither role may lend old jumps to a new countdown sequence.
+      for (const role of SOURCE_ROLES) {
+        fresh[role].length = 0
+        detectors[role].reset()
+        lastSeconds[role] = null
+        lastMediaTime[role] = null
+        lastReadingAt[role] = -Infinity
+      }
+    }
+    const self = this
+    await this.deps.sample(windowMs, (role, outcome) => {
+      samples[role]++
+      inspectPlayback()
+      lastReadingAt[role] = -Infinity
+      if (outcome.status === 'success' && outcome.reading.confidence >= minConfidence
+        && parseCountdown(outcome.reading.text, this.options.jumpOptions?.format) === outcome.reading.seconds) {
+        const value = outcome.reading.seconds, mediaTime = outcome.reading.mediaTime
+        const previous = lastSeconds[role], previousMedia = lastMediaTime[role]
+        // Invalidate on the first contrary frame, before the detector waits for
+        // confirmation. Otherwise a peer callback could finish on the old chain.
+        if ((previous !== null && (value > previous || previous - value > 1))
+          || (previousMedia !== null && (mediaTime < previousMedia
+            || mediaTime - previousMedia > (this.options.jumpOptions?.jumpIntervalRange?.[1] ?? 2.5)))) resetEvidence()
+        lastSeconds[role] = value
+        lastMediaTime[role] = mediaTime
+        const receivedAt = this.now()
+        const capturedAge = (this.deps.readingClock?.() ?? receivedAt) - outcome.reading.wallTime
+        // Capture age is measured in the frame clock's epoch, then translated
+        // onto the run clock. Time since arrival must still age the evidence.
+        if (Number.isFinite(capturedAge) && capturedAge >= 0) lastReadingAt[role] = receivedAt - capturedAge
+      }
+      const pushed = detectors[role].push(outcome)
+      if (pushed.dropped === 'not-decrement' || pushed.dropped === 'abnormal-interval') {
+        resetEvidence()
+        detectors[role].push(outcome)
+      }
+      if (pushed.event) { fresh[role].push(pushed.event); allJumps[role].push(pushed.event) }
+    }, {
+      get aborted() { return self.stale(token) },
+      get completed() {
+        const completed = ready()
+        endedEarly ||= completed
+        return completed
+      },
+    })
+    const evidenceReady = ready()
+    // A late callback or media interruption invalidates an earlier completion.
+    return { fresh, interrupted, ready: evidenceReady, endedEarly, readingsFresh: readingsFresh() }
+  }
+
+  private async verifyAndCorrect(
+    token: number,
+    initialApplied: AppliedRewind,
+    publish: (rewind: AppliedRewind) => void,
+    samples: Record<SourceRole, number>,
+    allJumps: Record<SourceRole, ClockJumpEvent[]>,
+    mode: AutoSyncMode,
+  ): Promise<{ divergence: number | null; failure: AutoSyncFailure | null }> {
+    let carried = initialApplied
+    let divergence: number | null = null
+    const update = (rewind: AppliedRewind): void => { carried = rewind; publish(rewind) }
+    const cancelled = (): AutoSyncFailure => ({ kind: 'cancelled', message: '自动同步已取消' })
+    const failed = (message: string): AutoSyncFailure => ({ kind: 'verify-failed', message, divergence: divergence ?? Infinity })
+    const tolerance = this.options.maxDivergenceSeconds ?? DEFAULTS.maxDivergenceSeconds
+    const passes = Math.max(0, Math.min(3, this.options.maxCorrectionPasses ?? DEFAULTS.maxCorrectionPasses))
+    for (let pass = 0; pass <= passes; pass++) {
+      this.setPhase('verifying')
+      const beforeSettle = this.collectSnapshots()
+      const stable = await this.settlePlayback(token)
+      if (this.stale(token)) return { divergence, failure: cancelled() }
+      update(this.progressRewind(carried, beforeSettle))
+      if (!stable) return { divergence, failure: failed('复核时播放仍在暂停或缓冲, 尚未确认对齐') }
+
+      const beforeSample = this.collectSnapshots()
+      const estimateOptions = {
+        ...this.deps.estimateOptions,
+        appliedOffsetSeconds: offsetFromRewind(carried),
+        maxAnchorSpreadSeconds: Math.min(0.2, this.deps.estimateOptions?.maxAnchorSpreadSeconds ?? 0.2),
+      }
+      const evidence = await this.sampleClockEvidence(token,
+        Math.max(3, this.options.verificationWindowSeconds ?? DEFAULTS.verificationWindowSeconds) * 1000,
+        samples, allJumps, estimateOptions)
+      if (this.stale(token)) return { divergence, failure: cancelled() }
+      update(this.progressRewind(carried, beforeSample))
+      if (evidence.interrupted || !evidence.readingsFresh || (evidence.endedEarly && !evidence.ready)) {
+        if (pass < passes) continue
+        return { divergence, failure: failed('复核期间播放发生缓冲或跳转, 尚未确认对齐') }
+      }
+      const fresh = evidence.fresh
+      const measured = estimateOffset(fresh.official, fresh.commentary, {
+        ...estimateOptions, appliedOffsetSeconds: offsetFromRewind(carried),
+      })
+      if (measured.status === 'rejected' || fresh.official.length < 2 || fresh.commentary.length < 2) {
+        if (pass < passes) continue
+        const reason = measured.status === 'rejected' ? OFFSET_REJECTION_TEXT[measured.reason] : '连续跳秒证据不足'
+        return { divergence, failure: failed(`复核未通过: ${reason}`) }
+      }
+      divergence = Math.abs(measured.residualSeconds)
+      if (divergence <= tolerance) return { divergence, failure: null }
+      if (pass === passes) return { divergence, failure: failed(`复核偏差 ${divergence.toFixed(2)} 秒, 尚未收敛`) }
+
+      this.setPhase('applying')
+      const snapshots = this.collectSnapshots()
+      const threshold = rateNudgeSeekThreshold(this.options.seekThresholdSeconds)
+      if (mode === 'silent' && divergence < threshold && this.deps.setPlaybackRate) {
+        const correction = await this.applyRateNudge(measured.residualSeconds, snapshots, carried, token, update)
+        if (this.stale(token)) return { divergence, failure: cancelled() }
+        if (correction.kind === 'failed') return { divergence: Math.abs(correction.error),
+          failure: failed('复核校正时播放进度未能收敛') }
+        // Re-measure if a new stall changed the required correction during a nudge.
+        continue
+      }
+
+      const targetOffset = measured.totalOffsetSeconds
+      const plan = planOffsetChange({ nextOffset: targetOffset, applied: carried, snapshots })
+      for (const planned of plan.seeks) {
+        const before = this.collectSnapshots()
+        const currentPlan = planOffsetChange({ nextOffset: targetOffset, applied: carried, snapshots: before })
+        if (currentPlan.limited) return { divergence, failure: { kind: 'buffer-limit', message: '缓存长度不足, 无法完成复核校正' } }
+        const seek = currentPlan.seeks.find(item => item.role === planned.role)
+        if (!seek) continue
+        const confirmed = await this.seek(seek.role, seek.to, mode)
+        if (this.stale(token)) return { divergence, failure: cancelled() }
+        update(this.progressRewind(carried, before))
+        const after = this.deps.snapshot(seek.role)
+        const movedLive = before[seek.role]?.timebase.kind === 'live' && this.deps.playbackState
+          && after && Math.abs(after.currentTime - seek.from) > 0.05
+        if (!confirmed && !movedLive) return { divergence, failure: { kind: 'seek-failed', message: '复核校正跳转未生效' } }
+      }
+    }
+    return { divergence, failure: failed('复核未完成') }
   }
 
   private async applyRateNudge(
@@ -592,6 +800,10 @@ export class AutoSyncController {
     }
   }
 
+  private seek(role: SourceRole, target: number, mode: AutoSyncMode): Promise<boolean> {
+    return mode === 'manual' && this.deps.seekManual ? this.deps.seekManual(role, target) : this.deps.seek(role, target)
+  }
+
   private collectSnapshots(): Partial<Record<SourceRole, MediaSnapshot>> {
     const snapshots: Partial<Record<SourceRole, MediaSnapshot>> = {}
     for (const role of SOURCE_ROLES) {
@@ -599,51 +811,6 @@ export class AutoSyncController {
       if (snapshot) snapshots[role] = snapshot
     }
     return snapshots
-  }
-
-  private measureRateDivergence(
-    residual: number,
-    before: Partial<Record<SourceRole, MediaSnapshot>>,
-  ): number {
-    const after = this.collectSnapshots()
-    if (!after.official || !after.commentary || !before.official || !before.commentary) {
-      return Number.POSITIVE_INFINITY
-    }
-    const corrected = after.commentary.currentTime - before.commentary.currentTime -
-      (after.official.currentTime - before.official.currentTime)
-    return round(Math.abs(residual - corrected))
-  }
-
-  /**
-   * How far the two sources ended up from the gap the plan asked for — the "两路差值"
-   * of the sync design, not each source's distance from its own target.
-   *
-   * The difference matters because verification happens after a settle delay, and
-   * during it playing sources keep advancing. Measured per source, both would read
-   * a settle-length error and every run on a playing pair would fail the 0.35 s
-   * gate; measured as a gap, equal advance on both sides cancels and only real
-   * misalignment is left. A seek the element quietly refused still shows up, since
-   * only one side then fails to move.
-   */
-  private measureDivergence(
-    plan: OffsetPlan,
-    before: Partial<Record<SourceRole, MediaSnapshot>>,
-  ): number {
-    let officialDrift = 0
-    let commentaryDrift = 0
-    for (const role of SOURCE_ROLES) {
-      const after = this.deps.snapshot(role)
-      if (!after) return Number.POSITIVE_INFINITY
-      const seek = plan.seeks.find((entry) => entry.role === role)
-      // A role the plan left alone should still be where it was, modulo playback.
-      const target = seek ? seek.to : before[role]?.currentTime
-      if (target === undefined) return Number.POSITIVE_INFINITY
-      const drift = after.currentTime - target
-      if (role === 'official') officialDrift = drift
-      else commentaryDrift = drift
-    }
-    // Drift shared by both sides is the settle delay elapsing, not misalignment.
-    return round(Math.abs(commentaryDrift - officialDrift))
   }
 
   private stale(token: number): boolean {

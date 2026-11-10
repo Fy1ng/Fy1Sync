@@ -46,8 +46,8 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function harness(options: { hls?: boolean; sampler?: RecognitionSampler } = {}) {
-  const session = new Session({ createSampler: () => options.sampler ?? null })
+async function harness(options: { hls?: boolean; sampler?: RecognitionSampler; readingClock?: () => number } = {}) {
+  const session = new Session({ createSampler: () => options.sampler ?? null, readingClock: options.readingClock })
   sessions.push(session)
   for (const role of ['official', 'commentary'] as const) {
     await session.loadSource(role, { ...source, kind: options.hls ? 'hls' : 'progressive' })
@@ -138,19 +138,29 @@ describe('playback recovery authorization', () => {
   })
 
   it.each(['explicit', 'recovery'] as const)('clears the prompt after successful %s alignment', async mode => {
+    let baseline: Record<SourceRole, number> | undefined
+    let readingAt = 0
     const sampler = { dispose() {}, async sample(_window: number, emit: (role: SourceRole, outcome: RecognitionOutcome) => void) {
+      baseline ??= { official: h.session.engine.element('official').currentTime, commentary: h.session.engine.element('commentary').currentTime }
       for (const role of ['official', 'commentary'] as const) for (let index = 0; index < 3; index++) for (let stable = 0; stable < 2; stable++) {
         emit(role, { status: 'success', reading: { text: `0:${59 - index}`, seconds: 59 - index,
           scores: [0.95], confidence: 0.95, mediaTime: 100 + index + stable / 30,
-          wallTime: 1000 + index * 1000 + stable * 1000 / 30 + (role === 'commentary' ? 5000 : 0), frameIndex: index * 2 + stable } })
+          wallTime: (readingAt = 1000 + index * 1000 + stable * 1000 / 30 + (role === 'commentary' ? 5000 : 0)
+            + (baseline[role] - h.session.engine.element(role).currentTime) * 1000), frameIndex: index * 2 + stable } })
       }
     } } as unknown as RecognitionSampler
-    const h = await harness({ sampler })
+    const h = await harness({ sampler, readingClock: () => readingAt })
+    vi.spyOn(h.session.autoSync as unknown as { sleep(ms: number): Promise<void> }, 'sleep').mockImplementation(async ms => {
+      for (const role of ['official', 'commentary'] as const) {
+        const video = h.session.engine.element(role)
+        primeMediaElement(video, { currentTime: video.currentTime + ms / 1000 * video.playbackRate })
+      }
+    })
     h.session.setProfileForAll(createEmptyHudStylePack('test'))
     if (mode === 'recovery') h.session.setAutoSyncEnabled(true)
     const authorize = vi.spyOn(h.session.autoSync, 'authorize')
     await h.stall(); await h.recover()
-    expect(h.session.flush().playbackRecovery).not.toBeNull()
+    if (mode === 'explicit') expect(h.session.flush().playbackRecovery).not.toBeNull()
     const aligning = mode === 'explicit' ? h.session.syncNow() : null
     await vi.advanceTimersByTimeAsync(1000)
     const result = aligning ? await aligning : h.session.autoSync.result

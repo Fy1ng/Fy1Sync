@@ -1,12 +1,19 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createHudPreprocess } from '../core/hudPreprocess'
 import { createEmptyHudStylePack } from '../core/hudStylePack'
-import { createFrame, drawText } from '../test/glyphFont'
-import { RecognitionEngine, TickMomentDetector, initSync, recognize_hud_frame } from '../wasm/pkg/stream_syncer_wasm.js'
+import { CLOCK_GLYPHS, createFrame, drawText, renderGlyphMask } from '../test/glyphFont'
+import { BasicClockRecognizer, RecognitionEngine, TickMomentDetector, initSync, recognize_hud_frame } from '../wasm/pkg/stream_syncer_wasm.js'
 import { WasmWorkerEngine } from './backend'
-import type { ResultMessage } from './protocol'
+import type { BasicClockProgress, ResultMessage, WorkerResponse } from './protocol'
+import { BASIC_CLOCK_PROFILE } from '../core/activeProfile'
+import { normalizeGlyph } from '../core/imageOps'
+import { packBitmap } from '../core/bitmapCodec'
+import { ClockJumpDetector } from '../core/clockJump'
+import { FrameGrabber } from './frameGrabber'
+import { RecognitionSampler } from './sampler'
+import type { WorkerLike } from './client'
 
 initSync({ module: readFileSync(join(process.cwd(), 'src/wasm/pkg/stream_syncer_wasm_bg.wasm')) })
 
@@ -17,6 +24,66 @@ function frame(value: number, width = 320, height = 180) {
 }
 
 describe('manual HUD worker tick timing', () => {
+  it('keeps real native manual-clock recognition producing sampler jumps while debug is toggled', async () => {
+    vi.useFakeTimers()
+    const priors = Object.fromEntries(CLOCK_GLYPHS.map(char => [char, [packBitmap(normalizeGlyph(renderGlyphMask(char, 6)))]]))
+    const instances: BasicClockRecognizer[] = []
+    const engine = new WasmWorkerEngine({ configure: () => '{}', recognize: () => '',
+      createBasicClockRecognizer: templates => {
+        const native = new BasicClockRecognizer(templates)
+        instances.push(native)
+        return { push: (...args) => native.push(...args), reset: () => native.reset(), free: () => native.free(),
+          resetTiming: () => native.reset_timing(), setRoiPreservingCache: roi => native.set_roi_preserving_layout(roi),
+          setRoi: roi => native.set_roi(roi), setSearchRoi: roi => native.set_search_roi(roi) }
+      } }, () => Date.now(), () => priors)
+    const video = { videoWidth: 320, videoHeight: 180, readyState: 4, currentTime: 0, playbackRate: 1 } as HTMLVideoElement
+    const capture = vi.spyOn(FrameGrabber.prototype, 'grabScaledAsync').mockImplementation(async (_video, _roi, _width, mediaTime = 0) => {
+      const image = frame(65 - Math.floor(mediaTime + 1e-9))
+      return { ok: true, frame: { pixels: image.data, width: image.width, height: image.height,
+        mediaTime, wallTime: 50_000 + mediaTime * 1000 } }
+    })
+    let tick: (time: number) => void = () => {}
+    const listeners = new Set<(event: MessageEvent<WorkerResponse>) => void>()
+    const worker: WorkerLike = {
+      postMessage: request => { queueMicrotask(() => {
+        const response = engine.handle(request)
+        if (response) for (const listener of listeners) listener({ data: response } as MessageEvent<WorkerResponse>)
+      }) },
+      addEventListener: (type, listener) => { if (type === 'message') listeners.add(listener as (event: MessageEvent<WorkerResponse>) => void) },
+      removeEventListener: (type, listener) => { if (type === 'message') listeners.delete(listener as (event: MessageEvent<WorkerResponse>) => void) },
+      terminate: () => { listeners.clear() },
+    }
+    let debug = true
+    const progress: BasicClockProgress[] = []
+    const errors: string[] = []
+    const detector = new ClockJumpDetector('official')
+    const jumps: number[] = []
+    const sampler = new RecognitionSampler({ createWorker: () => worker, video: role => role === 'official' ? video : null,
+      profile: role => role === 'official' ? { ...BASIC_CLOCK_PROFILE, roi: { x: 70 / 320, y: 99 / 180, w: 54 / 320, h: 22 / 180 } } : null,
+      frameLoop: (_video, _fps, onFrame) => { tick = onFrame; return () => { tick = () => {} } },
+      wantBasicDebug: () => debug, onBasicProgress: (_role, value) => progress.push(value),
+      onError: (_role, message) => errors.push(message) })
+    const signal = { aborted: false }
+    try {
+      const run = sampler.sample(8000, (_role, outcome) => { const event = detector.push(outcome).event; if (event) jumps.push(event.toSeconds) }, signal)
+      for (let index = 0; index <= 210; index++) {
+        if (index === 120) debug = false
+        tick(index / 30)
+        for (let flush = 0; flush < 10; flush++) await Promise.resolve()
+        await vi.advanceTimersByTimeAsync(1000 / 30)
+      }
+      expect(errors).toEqual([])
+      expect(instances).toHaveLength(1)
+      expect(jumps.length).toBeGreaterThanOrEqual(3)
+      expect(progress.some(value => value.visual?.debug != null)).toBe(true)
+      expect(progress.at(-1)!.sync?.jumps).toBeGreaterThanOrEqual(3)
+      expect(progress.at(-1)!.sync?.readings).toBeGreaterThan(10)
+      signal.aborted = true
+      await vi.advanceTimersByTimeAsync(50)
+      await run
+    } finally { sampler.dispose(); capture.mockRestore(); for (const native of instances) native.free(); vi.useRealTimers() }
+  })
+
   it('keeps per-source pixel brackets when matching fails and resets after seek, cancel and configuration change', () => {
     const recognition = new RecognitionEngine()
     const engine = new WasmWorkerEngine({

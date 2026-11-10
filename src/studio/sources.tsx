@@ -10,6 +10,7 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState } fro
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { parseSourceInput, toDescriptor } from '../core/mediaSources'
+import { basicClockFileKey } from '../core/basicClockMemory'
 import type { MediaDescriptor, PlatformId, SourceRole } from '../core/types'
 import type { LoginPlatform } from '../../electron/login'
 import { streamFailureHint } from '../../server/networkFailure'
@@ -262,6 +263,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
   const loadFile = useCallback((role: SourceRole, file: File) => loadDescriptor(role, {
     // An object URL keeps the file local; nothing is uploaded.
     kind: 'file', url: URL.createObjectURL(file), input: file.name, label: file.name,
+    recognitionSourceKey: basicClockFileKey(file),
     loop: false, viaProxy: false, platform: 'file',
   }), [loadDescriptor])
 

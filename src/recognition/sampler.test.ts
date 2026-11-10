@@ -9,12 +9,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createEmptyProfile, type RecognitionProfile } from '../core/profileSchema'
 import { createEmptyHudStylePack } from '../core/hudStylePack'
+import { BASIC_CLOCK_PROFILE, type ActiveProfile } from '../core/activeProfile'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
 import type { WorkerLike } from './client'
-import { FrameGrabber, type AsyncGrabResult } from './frameGrabber'
-import type { ResultMessage, WorkerRequest, WorkerResponse } from './protocol'
+import { FrameGrabber, type AsyncGrabResult, type FramePresentationTiming } from './frameGrabber'
+import type { BasicClockProgress, ResultMessage, WorkerRequest, WorkerResponse } from './protocol'
 import { RecognitionSampler } from './sampler'
 import type { HudFrameResult } from '../core/hudWasm'
+import { ClockJumpDetector } from '../core/clockJump'
 
 function profileFor(overrides: Partial<RecognitionProfile> = {}): RecognitionProfile {
   return { ...createEmptyProfile('cs2/iem', 'IEM'), sampleFps: 30, ...overrides }
@@ -114,11 +116,11 @@ function fakeVideo(): HTMLVideoElement {
 
 /** A frame loop driven by hand, so a test decides exactly how many frames exist. */
 function manualLoop() {
-  const roles: Array<{ video: HTMLVideoElement; onFrame: (mediaTime: number) => void; stopped: boolean }> = []
+  const roles: Array<{ video: HTMLVideoElement; onFrame: (mediaTime: number, timing?: FramePresentationTiming) => void; stopped: boolean }> = []
   const frameLoop = (
     video: HTMLVideoElement,
     _fps: number,
-    onFrame: (mediaTime: number) => void,
+    onFrame: (mediaTime: number, timing?: FramePresentationTiming) => void,
   ): (() => void) => {
     const entry = { video, onFrame, stopped: false }
     roles.push(entry)
@@ -130,9 +132,9 @@ function manualLoop() {
     frameLoop: frameLoop as never,
     roles,
     /** Deliver one frame to every live loop, then let the worker replies land. */
-    async tick(mediaTime: number) {
+    async tick(mediaTime: number, timing?: FramePresentationTiming) {
       for (const entry of roles) {
-        if (!entry.stopped) entry.onFrame(mediaTime)
+        if (!entry.stopped) entry.onFrame(mediaTime, timing)
       }
       for (let i = 0; i < 8; i++) await Promise.resolve()
     },
@@ -147,6 +149,7 @@ function manualLoop() {
 function stubGrabber(capture?: FrameGrabber['grabAsync']): () => void {
   const original = FrameGrabber.prototype.grab
   const originalAsync = FrameGrabber.prototype.grabAsync
+  const originalScaledAsync = FrameGrabber.prototype.grabScaledAsync
   FrameGrabber.prototype.grab = function grab(video, _roi, mediaTime) {
     if (video.readyState < 2) {
       return { ok: false, reason: 'no-video-frame', detail: '视频尚未解码出画面' }
@@ -165,9 +168,13 @@ function stubGrabber(capture?: FrameGrabber['grabAsync']): () => void {
   FrameGrabber.prototype.grabAsync = capture ?? async function grabAsync(this: FrameGrabber, video, roi, mediaTime) {
     return this.grab(video, roi, mediaTime)
   }
+  FrameGrabber.prototype.grabScaledAsync = function grabScaledAsync(video, roi, _maxWidth, mediaTime) {
+    return this.grabAsync(video, roi, mediaTime)
+  }
   return () => {
     FrameGrabber.prototype.grab = original
     FrameGrabber.prototype.grabAsync = originalAsync
+    FrameGrabber.prototype.grabScaledAsync = originalScaledAsync
   }
 }
 
@@ -180,11 +187,13 @@ interface Harness {
 }
 
 function harness(options: {
-  profile?: (role: SourceRole) => RecognitionProfile | null
+  profile?: (role: SourceRole) => ActiveProfile | null
   video?: (role: SourceRole) => HTMLVideoElement | null
   reply?: (frame: Extract<WorkerRequest, { type: 'frame' }>) => RecognitionOutcome | null
   metadata?: (frame: Extract<WorkerRequest, { type: 'frame' }>) => Partial<ResultMessage>
   capture?: FrameGrabber['grabAsync']
+  wantBasicDebug?: () => boolean
+  onBasicProgress?: (role: SourceRole, progress: BasicClockProgress) => void
 } = {}): Harness {
   const restore = stubGrabber(options.capture)
   const loop = manualLoop()
@@ -206,12 +215,494 @@ function harness(options: {
     profile: options.profile ?? (() => shared),
     frameLoop: loop.frameLoop,
     now: () => Date.now(),
+    wantBasicDebug: options.wantBasicDebug,
+    onBasicProgress: options.onBasicProgress,
   })
 
   return { sampler, outcomes, loop, workers, restore }
 }
 
 describe('RecognitionSampler', () => {
+  it('publishes an expanded verified envelope immediately instead of waiting for the preview throttle', async () => {
+    vi.useFakeTimers()
+    const region = { x: .4, y: .02, w: .2, h: .1 }
+    const progress = vi.fn()
+    const video = eventfulVideo()
+    const bench = harness({ video: role => role === 'official' ? video : null, profile: () => BASIC_CLOCK_PROFILE,
+      metadata: frame => ({ basic: { mode: 'auto', status: 'locked', roi: frame.frameIndex === 1 ? region : { ...region, w: .202 } } }),
+      onBasicProgress: progress })
+    try {
+      const run = bench.sampler.sample(200, () => {}, { aborted: false })
+      await bench.loop.tick(10)
+      await vi.advanceTimersByTimeAsync(70)
+      await bench.loop.tick(10.1)
+      expect(progress).toHaveBeenCalledTimes(2)
+      expect(progress.mock.calls[1]![1].diagnostic.roi.w).toBe(.202)
+      await vi.advanceTimersByTimeAsync(130)
+      await run
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('publishes an early rVFC result only at its presentation time without changing its timestamp', async () => {
+    vi.useFakeTimers()
+    const bench = harness({ profile: () => BASIC_CLOCK_PROFILE,
+      reply: frame => success(30, frame.mediaTime, Date.now() + 8) })
+    const received: RecognitionOutcome[] = []
+    const startedAt = Date.now()
+    try {
+      const run = bench.sampler.sample(6000, (_role, outcome) => received.push(outcome), {
+        aborted: false, get completed() { return received.length === 2 },
+      })
+      await bench.loop.tick(10)
+      expect(received).toEqual([])
+      await vi.advanceTimersByTimeAsync(7)
+      expect(received).toEqual([])
+      await vi.advanceTimersByTimeAsync(1)
+      await run
+      expect(received).toHaveLength(2)
+      expect(Date.now() - startedAt).toBe(8)
+      for (const outcome of received) expect(outcome).toMatchObject({ status: 'success', reading: { wallTime: startedAt + 8 } })
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it.each(['seek', 'cancel', 'source'] as const)('drops a presentation-delayed result across %s', async kind => {
+    vi.useFakeTimers()
+    const video = eventfulVideo()
+    const bench = harness({ video: role => role === 'official' ? video : null, profile: () => BASIC_CLOCK_PROFILE,
+      reply: frame => success(30, frame.mediaTime, Date.now() + 8) })
+    const received: RecognitionOutcome[] = []
+    const signal = { aborted: false }
+    try {
+      const run = bench.sampler.sample(100, (_role, outcome) => received.push(outcome), signal)
+      await bench.loop.tick(10)
+      if (kind === 'seek') video.dispatchEvent(new Event('seeking'))
+      if (kind === 'source') video.src = 'new-source.mp4'
+      if (kind === 'cancel') signal.aborted = true
+      await vi.advanceTimersByTimeAsync(100)
+      await run
+      expect(received).toEqual([])
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('pre-recognizes one moving source without a sync request and promotes its exact layout without dropping the cache', async () => {
+    vi.useFakeTimers()
+    const video = eventfulVideo()
+    const roi = { x: .4, y: .02, w: .2, h: .1 }
+    let active: ActiveProfile = BASIC_CLOCK_PROFILE
+    const progress: BasicClockProgress[] = []
+    const bench = harness({ video: role => role === 'official' ? video : null, profile: () => active,
+      metadata: () => ({ basic: { mode: 'auto', status: 'locked', roi, text: '0:30' } }),
+      onBasicProgress: (_role, value) => { progress.push(value); active = { ...BASIC_CLOCK_PROFILE, roi, roiOrigin: 'memory' } } })
+    try {
+      bench.sampler.setBackgroundRoles(['official'])
+      await bench.loop.tick(10)
+      expect(bench.workers).toHaveLength(0)
+      await bench.loop.tick(10.1)
+      expect(bench.workers).toHaveLength(1)
+      expect(progress[0]?.diagnostic.status).toBe('locked')
+      await bench.loop.tick(10.2)
+      expect(bench.workers[0]!.configures()).toHaveLength(2)
+      expect(bench.workers[0]!.configures()[1]).toMatchObject({ preserveBasic: true, profile: { roiOrigin: 'memory', roi } })
+      expect(bench.workers[0]!.frames().every(frame => frame.role === 'official')).toBe(true)
+      bench.sampler.setBackgroundRoles([])
+      const submitted = bench.workers[0]!.frames().length
+      await bench.loop.tick(10.3)
+      expect(bench.workers[0]!.frames()).toHaveLength(submitted)
+      expect(bench.workers[0]!.terminated).toBe(false)
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('reuses recent background readings only on request and immediately ends on sufficient evidence', async () => {
+    vi.useFakeTimers()
+    const video = eventfulVideo()
+    const bench = harness({ video: role => role === 'official' ? video : null, profile: () => BASIC_CLOCK_PROFILE,
+      reply: frame => success(50 - Math.floor(frame.mediaTime), frame.mediaTime, Date.now()) })
+    try {
+      bench.sampler.setBackgroundRoles(['official'])
+      for (let index = 0; index <= 30; index++) {
+        await bench.loop.tick(10 + index / 10)
+        await vi.advanceTimersByTimeAsync(100)
+      }
+      bench.sampler.setBackgroundRoles(['official'], true)
+      const readings: RecognitionOutcome[] = []
+      const before = Date.now()
+      await bench.sampler.sample(6000, (_role, outcome) => readings.push(outcome), {
+        aborted: false, get completed() { return readings.length >= 3 },
+      }, true)
+      expect(readings.length).toBeGreaterThan(10)
+      expect(Date.now()).toBe(before)
+      expect(bench.workers[0]!.configures()).toHaveLength(1)
+
+      const fresh: RecognitionOutcome[] = []
+      const verify = bench.sampler.sample(4000, (_role, outcome) => fresh.push(outcome), {
+        aborted: false, get completed() { return fresh.length >= 1 },
+      })
+      expect(fresh).toEqual([])
+      await bench.loop.tick(13.2)
+      await verify
+      expect(fresh).toHaveLength(1)
+      expect(Date.now()).toBe(before)
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('discards pre-seek background evidence while retaining the verified layout for fresh frames', async () => {
+    vi.useFakeTimers()
+    const video = eventfulVideo()
+    const bench = harness({ video: role => role === 'official' ? video : null, profile: () => BASIC_CLOCK_PROFILE })
+    try {
+      bench.sampler.setBackgroundRoles(['official'])
+      await bench.loop.tick(10)
+      await bench.loop.tick(10.1)
+      video.dispatchEvent(new Event('seeking'))
+      bench.sampler.setBackgroundRoles(['official'], true)
+      const readings: RecognitionOutcome[] = []
+      const run = bench.sampler.sample(100, (_role, outcome) => readings.push(outcome), { aborted: false }, true)
+      expect(readings).toEqual([])
+      await bench.loop.tick(8)
+      await vi.advanceTimersByTimeAsync(100)
+      await run
+      expect(readings).toHaveLength(1)
+      expect(bench.workers[0]!.configures()).toHaveLength(1)
+      expect(bench.workers[0]!.sent).toContainEqual(expect.objectContaining({ type: 'cancel', preserveBasic: true, resetTiming: true }))
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('resets native timing on both verified sources for a new window even when only the peer sought', async () => {
+    vi.useFakeTimers()
+    const bench = harness({ profile: () => BASIC_CLOCK_PROFILE,
+      metadata: () => ({ basic: { mode: 'auto', status: 'locked', roi: { x: .4, y: .02, w: .2, h: .1 } } }) })
+    try {
+      const first = bench.sampler.sample(100, () => {}, { aborted: false })
+      await bench.loop.tick(10)
+      await vi.advanceTimersByTimeAsync(100)
+      await first
+      const second = bench.sampler.sample(100, () => {}, { aborted: false })
+      for (const worker of bench.workers) expect(worker.sent.at(-1)).toMatchObject({ type: 'cancel', preserveBasic: true, resetTiming: true })
+      await bench.loop.tick(10.9)
+      await vi.advanceTimersByTimeAsync(100)
+      await second
+      for (const worker of bench.workers) expect(worker.configures()).toHaveLength(1)
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('preserves the complete visual frame when a later state update has no image', async () => {
+    vi.useFakeTimers()
+    const progress: BasicClockProgress[] = []
+    const video = fakeVideo()
+    const bench = harness({ profile: () => ({ ...BASIC_CLOCK_PROFILE, roi: { x: .2, y: .1, w: .3, h: .2 } }),
+      video: role => role === 'official' ? video : null, wantBasicDebug: () => true,
+      onBasicProgress: (_role, value) => progress.push(value),
+      metadata: frame => ({ basic: { mode: 'manual', status: frame.frameIndex === 1 ? 'locked' : 'searching',
+        text: frame.frameIndex === 1 ? '0:30' : '0:29', mediaTime: frame.mediaTime,
+        ...(frame.frameIndex === 1 ? { preview: { width: 1, height: 1, data: Uint8Array.of(100) } } : {}) },
+        ...(frame.frameIndex === 1 ? { debug: { binary: { width: 1, height: 1, data: Uint8Array.of(255) },
+          roiPixels: { x: 0, y: 0, width: 1, height: 1 }, boxes: [], projection: [], inkRatio: 1, matches: [], normalized: [] } } : {}) }) })
+    const signal = { aborted: false }
+    try {
+      const run = bench.sampler.sample(1000, () => {}, signal)
+      await bench.loop.tick(0)
+      await vi.advanceTimersByTimeAsync(100)
+      await bench.loop.tick(.1)
+      expect(progress).toHaveLength(2)
+      expect(progress[1]!.diagnostic).toMatchObject({ status: 'searching', text: '0:29', mediaTime: .1 })
+      expect(progress[1]!.debug).toBeNull()
+      expect(progress[1]!.visual).toBe(progress[0]!.visual)
+      expect(progress[1]!.visual).toMatchObject({ frameIndex: 1, diagnostic: { text: '0:30', mediaTime: 0 },
+        debug: { binary: { data: Uint8Array.of(255) } } })
+      expect(bench.workers[0]!.configures()).toHaveLength(1)
+      signal.aborted = true
+      await vi.advanceTimersByTimeAsync(50)
+      await run
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it.each(['source', 'dimensions', 'profile'] as const)('clears a saved visual frame after %s invalidation', async kind => {
+    vi.useFakeTimers()
+    const video = eventfulVideo()
+    let active: ActiveProfile = BASIC_CLOCK_PROFILE
+    const progress: BasicClockProgress[] = []
+    const bench = harness({ profile: () => active, video: role => role === 'official' ? video : null,
+      onBasicProgress: (_role, value) => progress.push(value),
+      metadata: frame => ({ basic: { mode: 'auto', status: 'searching', mediaTime: frame.mediaTime,
+        ...(frame.frameIndex === 1 ? { preview: { width: 1, height: 1, data: Uint8Array.of(100) } } : {}) } }) })
+    const signal = { aborted: false }
+    try {
+      const run = bench.sampler.sample(1000, () => {}, signal)
+      await bench.loop.tick(0)
+      expect(progress[0]!.visual).toBeDefined()
+      if (kind === 'source') video.src = 'replacement.mp4'
+      if (kind === 'dimensions') Object.defineProperty(video, 'videoWidth', { value: 1280 })
+      if (kind === 'profile') active = { ...BASIC_CLOCK_PROFILE, searchRoi: { x: .1, y: .05, w: .8, h: .2 } }
+      await bench.loop.tick(.1)
+      expect(progress.at(-1)!.visual).toBeUndefined()
+      expect(progress.at(-1)!.diagnostic.mediaTime).toBe(.1)
+      signal.aborted = true
+      await vi.advanceTimersByTimeAsync(50)
+      await run
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('retains the old visual across a completed window with its own frame time and resets jump counts', async () => {
+    vi.useFakeTimers()
+    const video = fakeVideo()
+    const progress: BasicClockProgress[] = []
+    const bench = harness({ profile: () => BASIC_CLOCK_PROFILE, video: role => role === 'official' ? video : null,
+      onBasicProgress: (_role, value) => progress.push(value),
+      metadata: frame => ({ basic: { mode: 'auto', status: 'locked', mediaTime: frame.mediaTime,
+        ...(frame.frameIndex === 1 ? { preview: { width: 1, height: 1, data: Uint8Array.of(100) } } : {}) } }) })
+    const sample = async (time: number) => {
+      const run = bench.sampler.sample(100, () => {}, { aborted: false })
+      await bench.loop.tick(time)
+      await vi.advanceTimersByTimeAsync(100)
+      await run
+    }
+    try {
+      await sample(0)
+      await sample(.1)
+      expect(progress.at(-1)!.visual).toBe(progress[0]!.visual)
+      expect(progress.at(-1)!.visual!.diagnostic.mediaTime).toBe(0)
+      expect(progress.at(-1)!.frameIndex).toBe(2)
+      expect(progress.at(-1)!.sync).toEqual({ readings: 1, jumps: 0 })
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it.each([false, true])('produces confirmed jumps from a stable manual configuration with debug=%s', async debug => {
+    vi.useFakeTimers()
+    let enabled = debug
+    const detector = new ClockJumpDetector('official')
+    const events: number[] = []
+    const progress: BasicClockProgress[] = []
+    const video = fakeVideo()
+    const bench = harness({ profile: () => ({ ...BASIC_CLOCK_PROFILE, roi: { x: .2, y: .1, w: .3, h: .2 } }),
+      video: role => role === 'official' ? video : null,
+      capture: async (_video, _roi, mediaTime = 0) => ({ ok: true, frame: { width: 8, height: 8,
+        pixels: new Uint8ClampedArray(8 * 8 * 4), mediaTime, wallTime: 50_000 + mediaTime * 1000 } }),
+      wantBasicDebug: () => enabled, onBasicProgress: (_role, value) => progress.push(value),
+      reply: frame => success(30 - Math.floor(frame.mediaTime + 1e-9), frame.mediaTime, frame.wallTime),
+      metadata: frame => ({ basic: { status: 'locked', mode: 'manual', text: `0:${30 - Math.floor(frame.mediaTime + 1e-9)}`,
+        mediaTime: frame.mediaTime, ...(frame.wantDebug ? { preview: { width: 1, height: 1, data: Uint8Array.of(100) } } : {}) },
+        ...(frame.mediaTime > 0 && Math.abs(frame.mediaTime - Math.round(frame.mediaTime)) < 1e-6 ? {
+          tickMoment: { lastUnchanged: frame.mediaTime - 1 / 15, firstChanged: frame.mediaTime,
+            midpoint: frame.mediaTime - 1 / 30, change: .2, noiseFloor: .01 },
+        } : {}) }) })
+    const signal = { aborted: false }
+    try {
+      const run = bench.sampler.sample(7000, (_role, outcome) => {
+        const event = detector.push(outcome).event
+        if (event) events.push(event.toSeconds)
+      }, signal)
+      for (let index = 0; index <= 180; index++) {
+        if (index === 90) enabled = !enabled
+        await bench.loop.tick(index / 30)
+        await vi.advanceTimersByTimeAsync(1000 / 30)
+      }
+      expect(bench.workers[0]!.configures()).toHaveLength(1)
+      expect(events.length).toBeGreaterThanOrEqual(5)
+      expect(progress.at(-1)!.sync?.jumps).toBeGreaterThanOrEqual(5)
+      expect(progress.at(-1)!.sync?.readings).toBeGreaterThan(20)
+      const latest = progress.at(-1)!
+      expect(latest.sync!.readings).toBeGreaterThanOrEqual(latest.frameIndex - 1)
+      const detailed = bench.workers[0]!.frames().filter(frame => frame.wantDebug)
+      expect(detailed.length).toBeGreaterThan(0)
+      for (let index = 1; index < detailed.length; index++) expect(detailed[index]!.wallTime - detailed[index - 1]!.wallTime).toBeGreaterThanOrEqual(490)
+      signal.aborted = true
+      await vi.advanceTimersByTimeAsync(50)
+      await run
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('does not count candidate text as successful readings or confirmed jumps', async () => {
+    vi.useFakeTimers()
+    const progress: BasicClockProgress[] = []
+    const bench = harness({ profile: () => BASIC_CLOCK_PROFILE,
+      reply: () => ({ status: 'indeterminate', reason: 'basic-clock-confirming' }),
+      metadata: frame => ({ basic: { status: 'confirming', mode: 'auto', text: `0:${30 - frame.frameIndex}` } }),
+      onBasicProgress: (_role, value) => progress.push(value) })
+    try {
+      const run = bench.sampler.sample(100, () => {}, { aborted: false })
+      await bench.loop.tick(0)
+      await vi.advanceTimersByTimeAsync(100)
+      await run
+      expect(progress[0]!.sync).toEqual({ readings: 0, jumps: 0 })
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('keeps a requested preview whose readback completes sooner than the previous one', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    const progress: BasicClockProgress[] = []
+    const video = fakeVideo()
+    const bench = harness({ profile: () => BASIC_CLOCK_PROFILE, video: role => role === 'official' ? video : null,
+      wantBasicDebug: () => true, onBasicProgress: (_role, value) => progress.push(value),
+      metadata: frame => {
+        vi.setSystemTime(frame.frameIndex === 1 ? 100 : 550)
+        return { basic: { mode: 'auto', status: 'searching', preview: { width: 1, height: 1, data: Uint8Array.of(frame.frameIndex) } } }
+      } })
+    const signal = { aborted: false }
+    try {
+      const run = bench.sampler.sample(2000, () => {}, signal)
+      await bench.loop.tick(0)
+      vi.setSystemTime(500)
+      await bench.loop.tick(.5)
+      expect(progress.map(value => value.diagnostic.preview?.data[0])).toEqual([1, 2])
+      expect(progress.map(value => value.receivedAt)).toEqual([100, 550])
+      signal.aborted = true
+      await vi.advanceTimersByTimeAsync(50)
+      await run
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('requests basic preview at two fps only while enabled and publishes status changes immediately', async () => {
+    vi.useFakeTimers()
+    let enabled = true
+    const progress: Array<{ role: SourceRole; value: BasicClockProgress }> = []
+    const bench = harness({ profile: () => BASIC_CLOCK_PROFILE, wantBasicDebug: () => enabled,
+      onBasicProgress: (role, value) => progress.push({ role, value }),
+      metadata: frame => ({ basic: { mode: 'auto',
+        status: frame.frameIndex < 3 ? 'searching' : frame.frameIndex === 3 ? 'confirming' : 'locked',
+        ...(frame.wantDebug ? { preview: { width: 1, height: 1, data: Uint8Array.of(140) } } : {}) },
+        debug: null }) })
+    const signal = { aborted: false }
+    try {
+      const run = bench.sampler.sample(3000, () => {}, signal)
+      for (let index = 0; index < 10; index++) {
+        await bench.loop.tick(index / 10)
+        await vi.advanceTimersByTimeAsync(100)
+      }
+      enabled = false
+      for (let index = 10; index < 15; index++) {
+        await bench.loop.tick(index / 10)
+        await vi.advanceTimersByTimeAsync(100)
+      }
+      for (const worker of bench.workers) {
+        expect(worker.frames().filter(frame => frame.wantDebug).map(frame => frame.mediaTime)).toEqual([0, .5])
+        expect(worker.frames().filter(frame => frame.mediaTime >= 1).every(frame => !frame.wantDebug)).toBe(true)
+      }
+      const official = progress.filter(entry => entry.role === 'official').map(entry => entry.value)
+      expect(official.map(entry => entry.diagnostic.status)).toEqual(['searching', 'confirming', 'locked', 'locked', 'locked'])
+      expect(official.filter(entry => entry.diagnostic.preview)).toHaveLength(2)
+      expect(official[0]!.frameIndex).toBe(1)
+      expect(official[1]!.receivedAt - official[0]!.receivedAt).toBe(200)
+      signal.aborted = true
+      await vi.advanceTimersByTimeAsync(50)
+      await run
+      const count = progress.length
+      const sent = bench.workers.map(worker => worker.frames().length)
+      await bench.loop.tick(2)
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(progress).toHaveLength(count)
+      expect(bench.workers.map(worker => worker.frames().length)).toEqual(sent)
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it.each(['seek', 'source', 'dimensions', 'roi', 'origin', 'search'] as const)('does not publish a basic preview received after %s changes', async kind => {
+    vi.useFakeTimers()
+    const video = eventfulVideo()
+    let active: ActiveProfile = { ...BASIC_CLOCK_PROFILE, roi: { x: .2, y: .1, w: .3, h: .2 } }
+    const progress = vi.fn()
+    let first = true
+    const bench = harness({ profile: () => active, video: role => role === 'official' ? video : null,
+      wantBasicDebug: () => true, onBasicProgress: progress,
+      metadata: () => {
+        if (first) {
+          first = false
+          if (kind === 'seek') video.dispatchEvent(new Event('seeking'))
+          if (kind === 'source') video.src = 'replacement.mp4'
+          if (kind === 'dimensions') Object.defineProperty(video, 'videoWidth', { value: 1280 })
+          if (kind === 'roi') active = { ...BASIC_CLOCK_PROFILE, roi: { x: .3, y: .1, w: .3, h: .2 } }
+          if (kind === 'origin') active = { ...BASIC_CLOCK_PROFILE, roi: { x: .2, y: .1, w: .3, h: .2 }, roiOrigin: 'memory' }
+          if (kind === 'search') active = { ...BASIC_CLOCK_PROFILE, roi: { x: .2, y: .1, w: .3, h: .2 }, searchRoi: { x: .1, y: .05, w: .8, h: .3 } }
+        }
+        return { basic: { mode: 'manual', status: 'confirming', preview: { width: 1, height: 1, data: Uint8Array.of(140) } } }
+      } })
+    try {
+      const run = bench.sampler.sample(100, () => {}, { aborted: false })
+      await bench.loop.tick(10)
+      expect(progress).not.toHaveBeenCalled()
+      await bench.loop.tick(10.1)
+      expect(progress).toHaveBeenCalledTimes(1)
+      expect(bench.workers[0]!.configures()).toHaveLength(kind === 'seek' ? 1 : 2)
+      await vi.advanceTimersByTimeAsync(100)
+      await run
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('bounds basic readback to its configured fps even when rVFC supplies 60fps', async () => {
+    const bench = harness({ profile: () => BASIC_CLOCK_PROFILE })
+    const scaled = vi.spyOn(FrameGrabber.prototype, 'grabScaledAsync')
+    try {
+      const signal = { aborted: false }
+      const run = bench.sampler.sample(10_000, () => {}, signal)
+      for (let index = 0; index < 60; index++) await bench.loop.tick(index / 60)
+      for (const worker of bench.workers) expect(worker.frames().length).toBeLessThanOrEqual(15)
+      expect(scaled.mock.calls.every(call => call[2] === 1920)).toBe(true)
+      signal.aborted = true
+      await run
+    } finally { scaled.mockRestore(); bench.sampler.dispose(); bench.restore() }
+  })
+  it.each(['seek', 'source', 'dimensions', 'profile'] as const)('preserves layout only for same-source playback interruptions: %s', async kind => {
+    vi.useFakeTimers()
+    const video = eventfulVideo()
+    let active: ActiveProfile = BASIC_CLOCK_PROFILE
+    const bench = harness({ profile: () => active, video: role => role === 'official' ? video : null })
+    const sample = async (time: number) => {
+      const pending = bench.sampler.sample(100, () => {}, { aborted: false })
+      await bench.loop.tick(time)
+      await vi.advanceTimersByTimeAsync(100)
+      await pending
+    }
+    try {
+      await sample(10)
+      if (kind === 'seek') video.dispatchEvent(new Event('seeking'))
+      if (kind === 'source') video.src = 'replacement.mp4'
+      if (kind === 'dimensions') Object.defineProperty(video, 'videoWidth', { value: 1280 })
+      if (kind === 'profile') active = createEmptyHudStylePack('manual/replacement', '手动样式')
+      await sample(11)
+      const worker = bench.workers[0]!
+      expect(worker.configures()).toHaveLength(kind === 'seek' ? 1 : 2)
+      if (kind === 'seek') expect(worker.sent).toContainEqual(expect.objectContaining({ type: 'cancel', preserveBasic: true, resetTiming: true }))
+      else if (kind !== 'profile') expect(worker.sent.filter(message => message.type === 'cancel'
+        && !message.preserveBasic).length).toBeGreaterThan(0)
+      else expect(worker.configures()[1]).toMatchObject({ profile: active })
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('retains layout across completed and cancelled windows while cancellation clears timing', async () => {
+    const rois: unknown[] = []
+    const bench = harness({ profile: () => BASIC_CLOCK_PROFILE,
+      capture: async (_video, roi, mediaTime) => {
+        rois.push(roi)
+        return { ok: true, frame: { pixels: new Uint8ClampedArray(8 * 8 * 4), width: 8, height: 8,
+          mediaTime: mediaTime ?? 0, wallTime: 1000 } }
+      } })
+    try {
+      const first = bench.sampler.sample(20, () => {}, { aborted: false })
+      await bench.loop.tick(10)
+      await first
+      const second = bench.sampler.sample(20, () => {}, { aborted: false })
+      await bench.loop.tick(10.5)
+      await second
+      expect(rois).toEqual(Array(4).fill({ x: 0, y: 0, w: 1, h: 1 }))
+      for (const worker of bench.workers) {
+        expect(worker.configures()).toHaveLength(1)
+        expect(worker.sent.filter(message => message.type === 'cancel')).toMatchObject([
+          { preserveBasic: true }, { preserveBasic: true },
+        ])
+        expect(worker.frames()[1]!.generation).toBeGreaterThan(worker.frames()[0]!.generation)
+      }
+      const signal = { aborted: false }
+      const cancelled = bench.sampler.sample(50, () => {}, signal)
+      await bench.loop.tick(11)
+      signal.aborted = true
+      await cancelled
+      for (const worker of bench.workers) expect(worker.sent.at(-1)).toMatchObject({ type: 'cancel' })
+      for (const worker of bench.workers) expect(worker.sent.at(-1)).toMatchObject({ preserveBasic: true, resetTiming: true })
+    } finally {
+      bench.sampler.dispose()
+      bench.restore()
+    }
+  })
+
   it('gives each role its own worker, so neither invalidates the other', async () => {
     const bench = harness()
     try {
@@ -432,6 +923,7 @@ describe('RecognitionSampler', () => {
     video.playbackRate = 1.05
     const bench = harness({
       video: (role) => role === 'official' ? video : null,
+      capture: async (_video, _roi, mediaTime = 0) => captured(mediaTime, 1000 + (mediaTime - 10) * 1000 / 1.05),
       reply: (frame) => frame.mediaTime === 10.06
         ? { status: 'failed', reason: 'low-confidence' }
         : success(frame.mediaTime < 10.06 ? 30 : 29, frame.mediaTime, frame.wallTime),
@@ -448,12 +940,127 @@ describe('RecognitionSampler', () => {
       expect(changed?.status).toBe('success')
       if (changed?.status !== 'success') return
       expect(changed.reading.mediaTime).toBeCloseTo(10.045)
-      expect(changed.reading.wallTime).toBeCloseTo(1000 + (10.045 - 10.09) * 1000 / 1.05)
+      expect(changed.reading.wallTime).toBeCloseTo(1000 + .045 * 1000 / 1.05)
       expect(bench.outcomes.filter((entry) => entry.outcome.status === 'failed')).toHaveLength(1)
     } finally {
       bench.sampler.dispose()
       bench.restore()
     }
+  })
+
+  it('anchors tick wall time to the actual image bracket despite delayed later OCR', async () => {
+    const video = fakeVideo()
+    video.playbackRate = 1.05
+    const bench = harness({
+      video: role => role === 'official' ? video : null,
+      capture: async (_video, _roi, mediaTime = 0) => captured(mediaTime,
+        1000 + (mediaTime - 10) * 1000 / 1.05 + (mediaTime >= 10.09 ? 120 : 0)),
+      reply: frame => frame.mediaTime === 10.06 ? { status: 'failed', reason: 'low-confidence' }
+        : success(frame.mediaTime < 10.06 ? 30 : 29, frame.mediaTime, frame.wallTime),
+      metadata: frame => frame.mediaTime === 10.06 ? {
+        tickMoment: { lastUnchanged: 10.03, firstChanged: 10.06, midpoint: 10.045, change: .2, noiseFloor: .01 },
+      } : {},
+    })
+    try {
+      const run = bench.sampler.sample(30, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
+      for (const time of [10, 10.03, 10.06, 10.09]) await bench.loop.tick(time)
+      await run
+      const changed = bench.outcomes.at(-1)!.outcome
+      expect(changed).toMatchObject({ status: 'success', reading: { mediaTime: 10.045 } })
+      if (changed.status === 'success') expect(changed.reading.wallTime).toBeCloseTo(1000 + .045 * 1000 / 1.05)
+    } finally { bench.sampler.dispose(); bench.restore() }
+  })
+
+  it.each(['waiting', 'pause', 'ratechange'] as const)('cancels a pre-%s GPU readback and starts fresh timing', async event => {
+    vi.useFakeTimers()
+    const video = eventfulVideo()
+    let finish!: (result: AsyncGrabResult) => void
+    let held = true
+    const bench = harness({
+      video: role => role === 'official' ? video : null,
+      profile: () => BASIC_CLOCK_PROFILE,
+      capture: (_video, _roi, mediaTime) => held ? new Promise(resolve => { finish = resolve }) : Promise.resolve(captured(mediaTime)),
+    })
+    try {
+      const run = bench.sampler.sample(100, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
+      await bench.loop.tick(10)
+      video.dispatchEvent(new Event(event))
+      finish(captured(10))
+      for (let index = 0; index < 8; index++) await Promise.resolve()
+      expect(bench.workers[0]!.frames()).toHaveLength(0)
+      expect(bench.outcomes).toHaveLength(0)
+      held = false
+      await bench.loop.tick(10.1)
+      expect(bench.workers[0]!.configures()).toHaveLength(1)
+      expect(bench.workers[0]!.sent).toContainEqual(expect.objectContaining({ type: 'cancel', preserveBasic: true, resetTiming: true }))
+      expect(bench.workers[0]!.frames()).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(100)
+      await run
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('does not assign a precise midpoint across an unreported buffer pause', async () => {
+    const video = fakeVideo()
+    const bench = harness({
+      video: role => role === 'official' ? video : null,
+      capture: async (_video, _roi, mediaTime = 0) => captured(mediaTime,
+        1000 + (mediaTime - 10) * 1000 + (mediaTime >= 10.06 ? 2000 : 0)),
+      reply: frame => frame.mediaTime === 10.06 ? { status: 'failed', reason: 'low-confidence' }
+        : success(frame.mediaTime < 10.06 ? 30 : 29, frame.mediaTime, frame.wallTime),
+      metadata: frame => frame.mediaTime === 10.06 ? {
+        tickMoment: { lastUnchanged: 10.03, firstChanged: 10.06, midpoint: 10.045, change: .2, noiseFloor: .01 },
+      } : {},
+    })
+    try {
+      const run = bench.sampler.sample(30, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
+      for (const time of [10, 10.03, 10.06, 10.09]) await bench.loop.tick(time)
+      await run
+      expect(bench.outcomes.at(-1)!.outcome).toMatchObject({ status: 'success', reading: { mediaTime: 10.09, wallTime: 3090 } })
+    } finally { bench.sampler.dispose(); bench.restore() }
+  })
+
+  it('discards a GPU readback across a live timestamp rewind without a seeking event', async () => {
+    vi.useFakeTimers()
+    const video = eventfulVideo()
+    let finish!: (result: AsyncGrabResult) => void
+    let held = true
+    const bench = harness({
+      video: role => role === 'official' ? video : null,
+      profile: () => BASIC_CLOCK_PROFILE,
+      capture: (_video, _roi, mediaTime) => held ? new Promise(resolve => { finish = resolve }) : Promise.resolve(captured(mediaTime)),
+    })
+    try {
+      const run = bench.sampler.sample(100, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
+      await bench.loop.tick(10)
+      held = false
+      await bench.loop.tick(9.9)
+      finish(captured(10))
+      for (let index = 0; index < 8; index++) await Promise.resolve()
+      expect(bench.workers[0]!.configures()).toHaveLength(1)
+      expect(bench.workers[0]!.sent).toContainEqual(expect.objectContaining({ type: 'cancel', preserveBasic: true, resetTiming: true }))
+      expect(bench.workers[0]!.frames().map(frame => frame.mediaTime)).toEqual([9.9])
+      expect(bench.outcomes).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(100)
+      await run
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('keeps a sparse one-second pixel bracket as an observation rather than a precise tick', async () => {
+    const video = fakeVideo()
+    const bench = harness({
+      video: role => role === 'official' ? video : null,
+      capture: async (_video, _roi, mediaTime = 0) => captured(mediaTime, mediaTime * 1000),
+      reply: frame => success(frame.mediaTime < 11 ? 30 : 29, frame.mediaTime, frame.wallTime),
+      metadata: frame => frame.mediaTime === 11 ? {
+        tickMoment: { lastUnchanged: 10, firstChanged: 11, midpoint: 10.5, change: .2, noiseFloor: .01 },
+      } : {},
+    })
+    try {
+      const run = bench.sampler.sample(30, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
+      for (const time of [10, 11]) await bench.loop.tick(time)
+      await run
+      expect(bench.outcomes.at(-1)!.outcome).toMatchObject({ status: 'success', reading: { mediaTime: 11, wallTime: 11000 } })
+    } finally { bench.sampler.dispose(); bench.restore() }
   })
 
   it('does not invent a decrement or move unchanged readings for image changes', async () => {
@@ -568,12 +1175,16 @@ describe('RecognitionSampler', () => {
     const restore = stubGrabber()
     const loop = manualLoop()
     const errors: Array<{ role: SourceRole; message: string }> = []
+    const progress: BasicClockProgress[] = []
+    let frames = 0
+    let workers = 0
     const listeners = new Set<(event: MessageEvent<WorkerResponse>) => void>()
     const video = fakeVideo()
     const sampler = new RecognitionSampler({
-      createWorker: () => ({
+      createWorker: () => { workers += 1; return {
         postMessage(message) {
           if (message.type === 'frame') {
+            frames += 1
             queueMicrotask(() => {
               for (const listener of listeners) {
                 listener({
@@ -590,17 +1201,29 @@ describe('RecognitionSampler', () => {
         removeEventListener(type, listener) {
           if (type === 'message') listeners.delete(listener as (event: MessageEvent<WorkerResponse>) => void)
         },
-      }),
+      } },
       video: (role) => (role === 'official' ? video : null),
-      profile: (role) => (role === 'official' ? profileFor() : null),
+      profile: (role) => (role === 'official' ? BASIC_CLOCK_PROFILE : null),
       frameLoop: loop.frameLoop as never,
       onError: (role, message) => errors.push({ role, message }),
+      onBasicProgress: (_role, value) => progress.push(value),
     })
     try {
       const run = sampler.sample(30, () => {}, { aborted: false })
       await loop.tick(10)
+      await loop.tick(10.1)
+      await loop.tick(10.2)
       await run
       expect(errors).toEqual([{ role: 'official', message: '模板缺失' }])
+      expect(frames).toBe(1)
+      expect(progress.at(-1)).toMatchObject({ error: '模板缺失', debug: null, sync: { readings: 0, jumps: 0 } })
+      expect(progress.at(-1)!.visual).toBeUndefined()
+      const retry = sampler.sample(30, () => {}, { aborted: false })
+      await loop.tick(11)
+      await retry
+      expect(workers).toBe(2)
+      expect(frames).toBe(2)
+      expect(errors).toHaveLength(2)
     } finally {
       sampler.dispose()
       restore()
@@ -954,6 +1577,26 @@ describe('asynchronous sampling acquisition', () => {
       expect(bench.outcomes).toHaveLength(0)
       await vi.advanceTimersByTimeAsync(100)
       await fresh
+    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
+  })
+
+  it('preserves the rVFC presentation clock through delayed GPU readback', async () => {
+    vi.useFakeTimers()
+    const video = eventfulVideo()
+    const sampledAt = Date.now()
+    let finish!: (result: AsyncGrabResult) => void
+    const bench = harness({ video: role => role === 'official' ? video : null,
+      capture: () => new Promise(resolve => { finish = resolve }) })
+    try {
+      const run = bench.sampler.sample(100, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
+      await bench.loop.tick(42.5, { callbackTime: 500, expectedDisplayTime: 480 })
+      await vi.advanceTimersByTimeAsync(25)
+      finish(captured(42.5, sampledAt))
+      for (let index = 0; index < 8; index++) await Promise.resolve()
+      expect(bench.workers[0]!.frames()[0]).toMatchObject({ mediaTime: 42.5, wallTime: sampledAt - 20 })
+      expect(bench.outcomes[0]?.outcome).toMatchObject({ status: 'success', reading: { mediaTime: 42.5, wallTime: sampledAt - 20 } })
+      await vi.advanceTimersByTimeAsync(75)
+      await run
     } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
   })
 

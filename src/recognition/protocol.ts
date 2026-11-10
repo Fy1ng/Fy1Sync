@@ -13,11 +13,14 @@ import type { HudFrameResult } from '../core/hudWasm'
 import type { GlyphBox } from '../core/segmentation'
 import type { GlyphMatch } from '../core/templateMatch'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
+import type { RoiRect } from '../core/profileSchema'
 
 export interface ConfigureMessage {
   type: 'configure'
   generation: number
   profile: ActiveProfile
+  /** Preserve compatible layout caches when promoting a discovered clock to memory. */
+  preserveBasic?: boolean
 }
 
 export interface FrameMessage {
@@ -38,6 +41,10 @@ export interface FrameMessage {
 export interface CancelMessage {
   type: 'cancel'
   generation: number
+  /** Window completion may retain an automatic clock; source invalidation never does. */
+  preserveBasic?: boolean
+  /** Playback interruptions invalidate time evidence while keeping verified layout parameters. */
+  resetTiming?: boolean
 }
 
 export type WorkerRequest = ConfigureMessage | FrameMessage | CancelMessage
@@ -51,6 +58,32 @@ export interface TickMoment {
   midpoint: number
   change: number
   noiseFloor: number
+}
+
+export interface BasicClockDiagnostic {
+  status: 'searching' | 'confirming' | 'locked' | 'ambiguous'
+  mode: 'auto' | 'manual' | 'memory'
+  roi?: RoiRect
+  searchRoi?: RoiRect
+  text?: string
+  candidates?: RoiRect[]
+  preview?: { width: number; height: number; data: Uint8Array }
+  threshold?: number
+  mediaTime?: number
+  inputSize?: { width: number; height: number }
+}
+
+export interface BasicClockVisualFrame {
+  diagnostic: BasicClockDiagnostic
+  debug: WorkerDebug | null
+  frameIndex: number
+  receivedAt: number
+}
+
+export interface BasicClockProgress extends BasicClockVisualFrame {
+  visual?: BasicClockVisualFrame
+  sync?: { readings: number; jumps: number; lastDrop?: string }
+  error?: string
 }
 
 /** Debug payload trimmed to what survives structured cloning cheaply. */
@@ -80,6 +113,7 @@ export interface ResultMessage {
   outcome: RecognitionOutcome
   debug: WorkerDebug | null
   hud?: HudFrameResult
+  basic?: BasicClockDiagnostic
   /** Worker-side processing time in ms, shown in the debug panel. */
   elapsedMs: number
   backend?: RecognitionBackend

@@ -92,11 +92,14 @@ function StudioView(): React.ReactNode {
   const [onChrome, setOnChrome] = useState(false)
   const chromeHover = { onPointerEnter: () => setOnChrome(true), onPointerLeave: () => setOnChrome(false) }
 
-  const busyChrome = intake || tuning || settingsAt !== null || addingStream || scheduleOpen || onChrome
+  const aligning = snapshot.autoSync.phase !== 'idle' && snapshot.autoSync.phase !== 'done' && snapshot.autoSync.phase !== 'failed'
+  const busyChrome = intake || tuning || settingsAt !== null || addingStream || scheduleOpen || onChrome || aligning
   const chrome = useOverlayVisibility(3200, !snapshot.playing || busyChrome)
   // The drawer is the room's chat; with no room there is nothing to hold it open for.
   const hasRoom = snapshot.danmaku.connected || snapshot.danmaku.room !== null
-  const chatOpen = snapshot.settings.sidebarVisible && hasRoom
+  const hasSidebar = hasRoom || (snapshot.settings.recognitionMode === 'basic'
+    && SOURCE_ROLES.some(role => snapshot.media[role].status !== 'empty'))
+  const chatOpen = snapshot.settings.sidebarVisible && hasSidebar
   const setChat = useCallback((open: boolean) => session.updateSettings({ sidebarVisible: open }), [session])
 
   const mainRole = snapshot.mainRole
@@ -230,7 +233,7 @@ function StudioView(): React.ReactNode {
             {/* With the chat open, 设置 lives in its header; without it, here. */}
             {!chatOpen && (
               <div className="topbar-tools">
-                {hasRoom && (
+                {hasSidebar && (
                   <button type="button" className="icon-btn glass" onClick={() => setChat(true)} aria-label="展开弹幕" title="弹幕列表（C）">
                     <Icon name="chat" />
                   </button>

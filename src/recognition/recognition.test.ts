@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { packBitmap } from '../core/bitmapCodec'
 import { normalizeGlyph } from '../core/imageOps'
 import { createEmptyProfile, type ClockChar, type RecognitionProfile } from '../core/profileSchema'
+import { BASIC_CLOCK_PROFILE } from '../core/activeProfile'
 import { CLOCK_GLYPHS, createFrame, drawText, renderGlyphMask } from '../test/glyphFont'
 import { RecognitionClient, type WorkerLike } from './client'
 import { RecognitionEngine } from '../test/recognitionEngine'
@@ -185,6 +186,28 @@ function grabbed(text = '1:59', mediaTime = 12) {
 }
 
 describe('RecognitionClient', () => {
+  it('keeps the basic configuration intact and invalidates responses while preserving a completed window', () => {
+    const worker = new FakeWorker()
+    worker.silent = true
+    const onResult = vi.fn()
+    const client = new RecognitionClient({ createWorker: () => worker, onResult })
+    const generation = client.configure(BASIC_CLOCK_PROFILE)
+    expect(worker.sent[0]).toEqual({ type: 'configure', generation, profile: BASIC_CLOCK_PROFILE })
+    expect(client.roi).toEqual(FULL_FRAME_ROI)
+    expect(client.submit('official', grabbed())).toBe(true)
+    const next = client.cancel(true)
+    expect(worker.sent.at(-1)).toEqual({ type: 'cancel', generation: next, preserveBasic: true })
+    const interrupted = client.cancel(true, true)
+    expect(worker.sent.at(-1)).toEqual({ type: 'cancel', generation: interrupted, preserveBasic: true, resetTiming: true })
+    const promoted = client.configure({ ...BASIC_CLOCK_PROFILE, roi: { x: .2, y: .1, w: .3, h: .2 }, roiOrigin: 'memory' }, true)
+    expect(worker.sent.at(-1)).toMatchObject({ type: 'configure', generation: promoted, preserveBasic: true,
+      profile: { roiOrigin: 'memory' } })
+    worker.emit({ type: 'result', generation, role: 'official', frameIndex: 1,
+      outcome: { status: 'indeterminate', reason: 'basic-clock-confirming' }, debug: null, elapsedMs: 1 })
+    expect(onResult).not.toHaveBeenCalled()
+    client.dispose()
+  })
+
   it('configures the worker with a full-frame ROI and keeps the real ROI locally', () => {
     const worker = new FakeWorker()
     const client = new RecognitionClient({ createWorker: () => worker })
@@ -353,6 +376,28 @@ describe('RecognitionClient', () => {
     worker.emitError('boom')
     expect(errors).toEqual(['boom'])
     expect(client.busy).toBe(false)
+    expect(worker.terminated).toBe(true)
+    expect(client.submit('official', grabbed())).toBe(false)
+    worker.emitError('boom again')
+    expect(errors).toEqual(['boom'])
+  })
+
+  it('retries a worker failure only after a fresh configuration with a new worker', () => {
+    const first = new FakeWorker()
+    const second = new FakeWorker()
+    let created = 0
+    const errors = vi.fn()
+    const results = vi.fn()
+    const client = new RecognitionClient({ createWorker: () => created++ === 0 ? first : second, onError: errors, onResult: results })
+    client.configure(profileWithTemplates())
+    first.emitError('worker stopped')
+    expect(client.submit('official', grabbed())).toBe(false)
+    client.configure(profileWithTemplates())
+    expect(client.submit('official', grabbed())).toBe(true)
+    expect(created).toBe(2)
+    expect(results).toHaveBeenCalledTimes(1)
+    expect(errors).toHaveBeenCalledExactlyOnceWith('worker stopped')
+    client.dispose()
   })
 
   it('reports configuration readiness to the caller', () => {

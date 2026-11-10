@@ -573,7 +573,7 @@ describe('Session profile selection', () => {
   /** A session that comes up with a profile id already in storage, as after a reload. */
   function bootedSession(profileId: string): Session {
     const storage = memoryStorage()
-    storage.setItem(SETTINGS_KEY, JSON.stringify({ profileId }))
+    storage.setItem(SETTINGS_KEY, JSON.stringify({ profileId, recognitionMode: 'style-pack' }))
     const session = new Session({
       engine: new MediaEngine(),
       storage,
@@ -634,6 +634,7 @@ describe('Session profile selection', () => {
     // The server validates on write, but a preset file can be hand-edited after that.
     stubApi({ presets: { 'bad/one': { profile: { schemaVersion: 2, id: 'bad/one' }, etag: 'a' } } })
     const { session } = await makeSession({ load: false })
+    session.setRecognitionMode('style-pack')
     await expect(session.selectProfile('bad/one')).resolves.toBe(false)
     expect(session.profileFor('official')).toBeNull()
     expect(session.flush().notices[0]?.text).toContain('格式无效')

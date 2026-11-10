@@ -2,12 +2,18 @@ import { describe, expect, it } from 'vitest'
 import { rateNudgeAction } from './rateNudge'
 
 describe('rateNudgeAction', () => {
-  it('hands over to seek only strictly above the configured threshold', () => {
+  it('requires seek at the exclusive two second rate boundary', () => {
     expect(rateNudgeAction(1.5, 'official').kind).toBe('rate')
     expect(rateNudgeAction(-1.5, 'commentary').kind).toBe('rate')
-    expect(rateNudgeAction(1.501, 'official')).toEqual({ kind: 'seek', rate: 1 })
-    expect(rateNudgeAction(-1.501, 'commentary')).toEqual({ kind: 'seek', rate: 1 })
+    expect(rateNudgeAction(1.99, 'official').kind).toBe('rate')
+    expect(rateNudgeAction(-1.99, 'commentary').kind).toBe('rate')
+    for (const error of [2, -2, 2.01, -2.01]) {
+      expect(rateNudgeAction(error, 'official')).toEqual({ kind: 'seek', rate: 1 })
+      expect(rateNudgeAction(error, 'official', { seekThresholdSeconds: 5, deadbandSeconds: 5 }))
+        .toEqual({ kind: 'seek', rate: 1 })
+    }
     expect(rateNudgeAction(0.6, 'official', { seekThresholdSeconds: 0.5 }).kind).toBe('seek')
+    expect(rateNudgeAction(0.5, 'official', { seekThresholdSeconds: 0.5 }).kind).toBe('seek')
   })
 
   it('restores normal speed inside the inclusive 0.1 second deadband', () => {

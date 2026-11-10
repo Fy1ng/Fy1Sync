@@ -30,6 +30,8 @@ export type MediaDescriptor = {
   sourceQuality?: string
   /** Confirmed room of this video, independent of the danmaku subscription. */
   sourceRoom?: string
+  /** Stable, opaque local-file identity for clock-region memories; never a blob URL. */
+  recognitionSourceKey?: string
 }
 
 export type PlatformId = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'huya' | 'direct' | 'file' | 'test'

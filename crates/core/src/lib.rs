@@ -3,6 +3,7 @@
 
 mod dispatch;
 mod auto;
+mod basic_clock;
 mod camera;
 mod image;
 mod matching;
@@ -13,6 +14,7 @@ mod temporal;
 
 pub use dispatch::dispatch;
 pub use auto::*;
+pub use basic_clock::*;
 pub use camera::*;
 pub use image::*;
 pub use matching::*;

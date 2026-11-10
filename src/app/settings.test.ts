@@ -31,6 +31,47 @@ function fakeStorage(initial?: string): SettingsStorage & { value: string | null
 }
 
 describe('mergeSettings', () => {
+  it('caps silent speed correction below two seconds while retaining stricter saved thresholds', () => {
+    expect(DEFAULT_SETTINGS.seekThresholdSeconds).toBe(2)
+    expect(mergeSettings({}).seekThresholdSeconds).toBe(2)
+    expect(mergeSettings({ seekThresholdSeconds: 5 }).seekThresholdSeconds).toBe(2)
+    expect(mergeSettings({ seekThresholdSeconds: 1.5 }).seekThresholdSeconds).toBe(1.5)
+  })
+
+  it('round-trips valid source memories and ignores malformed saved caches', () => {
+    const memory = { key: 'clock-v1:youtube:1234567890abcdef', roi: { x: .4, y: .02, w: .2, h: .1 }, aspectRatio: 16 / 9, updatedAt: 1000 }
+    const stored = fakeStorage()
+    saveSettings({ ...DEFAULT_SETTINGS, basicClockMemory: [memory] }, stored)
+    expect(loadSettings(stored).basicClockMemory).toEqual([memory])
+    for (const invalid of [null, {}, 'clock', [{ ...memory, roi: { ...memory.roi, w: -1 } }], [{ ...memory, key: 'https://example.test/?token=secret' }]]) {
+      expect(mergeSettings({ basicClockMemory: invalid }).basicClockMemory).toEqual([])
+    }
+  })
+
+  it('migrates the official crop while discarding the old user-editable search interval', () => {
+    const roi = { x: .42, y: .04, w: .16, h: .13 }
+    const other = { x: .2, y: .1, w: .3, h: .2 }
+    expect(mergeSettings({ basicClockRois: { official: roi, commentary: other } }).basicClockRoi).toEqual(roi)
+    expect(mergeSettings({ basicClockRois: { commentary: other } }).basicClockRoi).toEqual(other)
+    expect(mergeSettings({ basicClockRoi: null, basicClockRois: { official: roi } }).basicClockRoi).toBeNull()
+    for (const invalid of [null, [], 'clock', { ...roi, x: -1 }, { ...roi, w: 0 }, { ...roi, h: Infinity }, { ...roi, x: .99 }]) {
+      expect(mergeSettings({ basicClockRoi: invalid }).basicClockRoi).toBeNull()
+      expect(mergeSettings({ basicClockSearchRoi: invalid })).not.toHaveProperty('basicClockSearchRoi')
+    }
+    const storage = fakeStorage()
+    saveSettings({ ...DEFAULT_SETTINGS, basicClockRoi: roi }, storage)
+    expect(loadSettings(storage)).toMatchObject({ basicClockRoi: roi })
+    expect(mergeSettings({ basicClockSearchRoi: other })).not.toHaveProperty('basicClockSearchRoi')
+  })
+
+  it('defaults old settings to basic recognition while retaining the saved style pack', () => {
+    expect(mergeSettings({ profileId: 'cs2/iem' })).toMatchObject({ recognitionMode: 'basic', profileId: 'cs2/iem' })
+    expect(mergeSettings({ recognitionMode: 'style-pack' }).recognitionMode).toBe('style-pack')
+    for (const recognitionMode of [null, true, 'automatic', {}, []]) {
+      expect(mergeSettings({ recognitionMode }).recognitionMode).toBe('basic')
+    }
+  })
+
   it('normalizes the camera upscaler without breaking older settings', () => {
     expect(mergeSettings({ volume: { commentary: 0.4 } }).cameraUpscale).toBe('performance')
     for (const tier of ['off', 'performance', 'quality'] as const) {
@@ -176,6 +217,12 @@ describe('loadSettings', () => {
     const restored = loadSettings(storage)
     expect(restored.profileId).toBe('cs2/iem')
     expect(restored.smallStepSeconds).toBe(0.1)
+  })
+
+  it('remembers an explicit style-pack mode without discarding its selected pack', () => {
+    const storage = fakeStorage()
+    saveSettings({ ...DEFAULT_SETTINGS, recognitionMode: 'style-pack', profileId: 'cs2/iem' }, storage)
+    expect(loadSettings(storage)).toMatchObject({ recognitionMode: 'style-pack', profileId: 'cs2/iem' })
   })
 
   it('persists an explicitly enabled adaptive preference with the existing settings blob', () => {

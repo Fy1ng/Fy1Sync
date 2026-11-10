@@ -66,8 +66,16 @@ describe('quality restart synchronization', () => {
     expect(session.profileFor('official')).toBe(pack)
   })
 
-  it('suggests immediate sync when no profile is selected', async () => {
+  it('re-syncs in basic mode without a manually supplied pack', async () => {
     const h = await harness(false)
+    await session.changeSourceQuality('official', 'low')
+    expect(session.profileFor('official')?.id).toBe('basic-clock')
+    expect(h.sync).toHaveBeenCalledTimes(1)
+  })
+
+  it('suggests immediate sync when style-pack mode has no profile', async () => {
+    const h = await harness(false)
+    session.setRecognitionMode('style-pack')
     await session.changeSourceQuality('official', 'low')
     expect(h.sync).not.toHaveBeenCalled()
     expect(session.flush().notices.some((notice) => notice.text.includes('立即同步'))).toBe(true)

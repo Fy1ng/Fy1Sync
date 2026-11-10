@@ -1,0 +1,24 @@
+.basic-region-sheet { padding: 0 24px 24px; }
+.basic-region-sheet__instructions { color: var(--ash); font-size: 12px; line-height: 1.7; margin: 0 0 14px; }
+.basic-region-sheet__stage-wrap { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+.basic-region-sheet__stage-wrap .editor-stage { position: relative; flex: none; width: 100%; height: clamp(220px, 50vh, 560px); min-height: 200px; overflow: hidden; background: #000; border-radius: var(--r-sm); touch-action: none; }
+.basic-region-sheet__surface { position: absolute; inset: 0; touch-action: none; }
+.basic-region-sheet__still { position: absolute; display: block; user-select: none; }
+.basic-region-sheet__stage-wrap .editor-stage.is-zoomed .basic-region-sheet__still { image-rendering: pixelated; }
+.basic-region-sheet__stage-wrap .editor-stage.is-zoomed { cursor: grab; }
+.basic-region-sheet__stage-wrap .editor-stage.is-panning, .basic-region-sheet__stage-wrap .editor-stage.is-panning * { cursor: grabbing; }
+.basic-region-sheet__surface.is-drawing { cursor: crosshair; }
+.basic-region-sheet__stage-wrap .roi-window { z-index: 1; }
+.basic-region-sheet__stage-wrap .roi-window.is-readonly { pointer-events: none; opacity: .5; }
+.basic-region-sheet__stage-wrap .editor-view-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; flex: none; font-size: 11px; }
+.basic-region-sheet__stage-wrap .editor-view-tools[hidden], .basic-region-sheet__stage-wrap .editor-stage[hidden] { display: none; }
+.basic-region-sheet__stage-wrap .editor-zoom-value { min-width: 5ch; }
+.basic-region-sheet__stage-wrap .editor-view-tools .muted { color: var(--ash); }
+.basic-region-sheet__actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; }
+.basic-region-sheet__actions > span { display: flex; gap: 8px; }
+.basic-region-sheet__problem { color: #e9bb6a; font-size: 12px; line-height: 1.6; margin: 10px 0 0; }
+@media (max-width: 600px) {
+  .basic-region-sheet { padding: 0 14px 18px; }
+  .basic-region-sheet__actions { align-items: stretch; flex-direction: column; }
+  .basic-region-sheet__actions > span { justify-content: flex-end; }
+}

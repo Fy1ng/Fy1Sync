@@ -117,7 +117,7 @@ function General(): React.ReactNode {
 function EditorDoor({ onClose }: { onClose: () => void }): React.ReactNode {
   return (
     <div className="settings-door">
-      <p>倒计时样式用于识别比赛 HUD. 请手动制作或导入样式包, 再在对齐选项中选择. 两路直播保持载入.</p>
+      <p>基础模式会自动查找倒计时. 需要适配特定赛事 HUD 时, 可制作或导入样式包, 再在对齐选项中切换到样式包模式. 两路直播保持载入.</p>
       <a className="btn-solid" {...routeLink('/admin', onClose)}><Icon name="tune" />打开倒计时样式编辑器</a>
     </div>
   )
@@ -206,13 +206,18 @@ function AlignPrefs(): React.ReactNode {
       </div>
       <div className="field-stack">
         <span className="field-label">倒计时识别时长</span>
-        <Segmented label="倒计时识别时长" value={settings.detectWindowSeconds} onChange={(seconds) => session.setDetectWindow(seconds)}
-          options={[{ value: 2, label: '2 秒（较快）' }, { value: 3, label: '3 秒（较稳）' }]} />
+        {settings.recognitionMode === 'basic' ? (
+          <p className="muted">基础模式载入后自动预识别, 最多观察 6 秒. 连续跳秒证据足够即可提前结束.</p>
+        ) : (
+          <Segmented label="倒计时识别时长" value={settings.detectWindowSeconds} onChange={(seconds) => session.setDetectWindow(seconds)}
+            options={[{ value: 2, label: '2 秒 (较快)' }, { value: 3, label: '3 秒 (较稳)' }]} />
+        )}
       </div>
       <div className="field-stack">
-        <span className="field-label">跳转阈值</span>
-        <Segmented label="跳转阈值" value={settings.seekThresholdSeconds} onChange={(seconds) => session.setSeekThreshold(seconds)}
+        <span className="field-label">静默同步跳转阈值</span>
+        <Segmented label="静默同步跳转阈值" value={settings.seekThresholdSeconds} onChange={(seconds) => session.setSeekThreshold(seconds)}
           options={[1, 1.5, 2].map((value) => ({ value, label: `${value} 秒` }))} />
+        <p className="muted">仅静默自动同步在差值小于阈值时使用变速. 手动同步需要调整时始终跳转.</p>
       </div>
     </Group>
   )

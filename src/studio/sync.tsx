@@ -186,11 +186,16 @@ function OffsetEditor({ value, onDone }: { value: number; onDone: () => void }):
 const AUTO_ALIGN_ADAPTING = true
 const AUTO_ALIGN_REASON = '各赛事的 HUD 布局, 字体和清晰度尚未全部适配, 回放, 暂停或切镜头也可能影响识别.'
 /** Both the button and its shortcut explain the same current limitations before a run. */
-const AUTO_ALIGN_LIMITS = `自动对齐适配中: ${AUTO_ALIGN_REASON} 请在同一回合, 比分一致且倒计时正常走动时同步; 不准时可手动微调.`
+const AUTO_ALIGN_LIMITS = `自动对齐适配中: ${AUTO_ALIGN_REASON} 请在同一回合的正式倒计时正常走动时同步; 不准时可手动微调.`
+const informedSessions = new WeakSet<Session>()
 
 /** 自动对齐 from its button or the A key. */
 export function startAutoAlign(session: Session): void {
-  if (AUTO_ALIGN_ADAPTING) session.notice('warn', AUTO_ALIGN_LIMITS)
+  if (AUTO_ALIGN_ADAPTING && !informedSessions.has(session)) {
+    informedSessions.add(session)
+    session.notice('warn', AUTO_ALIGN_LIMITS)
+  }
+  if (session.settings.recognitionMode === 'basic' && !session.settings.sidebarVisible) session.updateSettings({ sidebarVisible: true })
   void session.syncNow()
 }
 
@@ -214,7 +219,7 @@ export function AutoAlign(): React.ReactNode {
         </button>
       ) : (
         <button type="button" className="align-main" disabled={busy || !bothReady} onClick={() => startAutoAlign(session)}
-          title={bothReady ? '识别两路画面中的比赛倒计时并自动对齐（A）' : '两路均载入后才能对齐'}>
+          title={bothReady ? '识别两路画面中的比赛倒计时并自动对齐 (A)' : '两路均载入后才能对齐'}>
           自动对齐
           {AUTO_ALIGN_ADAPTING && <span className="align-beta" aria-hidden="true">适配中</span>}
         </button>
@@ -240,16 +245,23 @@ export function AutoAlign(): React.ReactNode {
         )}
 
         <div className="menu-rule" />
-        <label className="field-row">
-          <span>倒计时样式</span>
-          <select value={settings.profileId} disabled={snapshot.presets.length === 0}
-            onChange={(event) => void session.selectProfile(event.target.value)}>
-            <option value="">请选择手动样式包</option>
-            {snapshot.presets.map((preset) => (
-              <option key={preset.id} value={preset.id} disabled={preset.templateChars === 0}>{preset.name}</option>
-            ))}
-          </select>
-        </label>
+        <Segmented label="识别模式" value={settings.recognitionMode}
+          onChange={(mode) => session.setRecognitionMode(mode)}
+          options={[{ value: 'basic', label: '基础模式' }, { value: 'style-pack', label: '样式包模式' }]} />
+        {settings.recognitionMode === 'basic' ? (
+          <p className="menu-meta">自动查找 0:01-1:55 的倒计时, 适用于 CS2 同一回合的正式倒计时. 首次识别需要观察几个跳秒, 未能确定唯一时钟时不会调整位置.</p>
+        ) : (
+          <label className="field-row">
+            <span>倒计时样式</span>
+            <select value={settings.profileId} disabled={snapshot.presets.length === 0}
+              onChange={(event) => void session.selectProfile(event.target.value)}>
+              <option value="">请选择手动样式包</option>
+              {snapshot.presets.map((preset) => (
+                <option key={preset.id} value={preset.id} disabled={preset.templateChars === 0}>{preset.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <div className="row-split">
           <button type="button" className="btn-quiet" disabled={busy || !bothReady} onClick={() => void session.measureOnce()}>
             仅测量

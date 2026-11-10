@@ -1,4 +1,4 @@
-import { isHudPack, captureRoi, type ActiveProfile } from '../core/activeProfile'
+import { isBasicClock, isHudPack, captureRoi, type ActiveProfile } from '../core/activeProfile'
 /**
  * Main-thread side of the recognition worker.
  *
@@ -58,6 +58,7 @@ export class RecognitionClient {
   private inFlight: { frameIndex: number; at: number } | null = null
   private profile: ActiveProfile | null = null
   private disposed = false
+  private faulted = false
   private readonly stats: ClientStats = {
     submitted: 0,
     completed: 0,
@@ -86,17 +87,15 @@ export class RecognitionClient {
         this.options.onResult?.(message)
         break
       case 'error':
-        this.inFlight = null
-        this.options.onError?.(message.message)
+        this.failWorker(message.message)
         break
     }
   }
 
   private readonly handleError = (event: Event): void => {
-    this.inFlight = null
     const message =
       event instanceof ErrorEvent && event.message ? event.message : '识别 Worker 发生错误'
-    this.options.onError?.(message)
+    this.failWorker(message)
   }
 
   constructor(private readonly options: RecognitionClientOptions) {
@@ -131,18 +130,22 @@ export class RecognitionClient {
   }
 
   /** Install a profile. Always starts a new generation. */
-  configure(profile: ActiveProfile): number {
+  configure(profile: ActiveProfile, preserveBasic = false): number {
     if (this.disposed) return this.generationValue
     this.profile = profile
+    this.faulted = false
     this.generationValue += 1
     this.inFlight = null
-    const worker = this.ensureWorker()
     // The frame arrives pre-cropped, so the worker must not crop again.
-    worker.postMessage({
-      type: 'configure',
-      generation: this.generationValue,
-      profile: isHudPack(profile) ? profile : { ...profile, roi: { ...FULL_FRAME_ROI } },
-    })
+    try {
+      const worker = this.ensureWorker()
+      worker.postMessage({
+        type: 'configure',
+        generation: this.generationValue,
+        profile: isHudPack(profile) || isBasicClock(profile) ? profile : { ...profile, roi: { ...FULL_FRAME_ROI } },
+        ...(preserveBasic ? { preserveBasic: true } : {}),
+      })
+    } catch (error) { this.failWorker(error instanceof Error ? error.message : String(error)) }
     return this.generationValue
   }
 
@@ -152,7 +155,7 @@ export class RecognitionClient {
    * not as an error.
    */
   submit(role: SourceRole, frame: GrabbedFrame, wantDebug = false): boolean {
-    if (this.disposed || !this.profile) return false
+    if (this.disposed || this.faulted || !this.profile) return false
     if (this.inFlight) {
       if (this.now() - this.inFlight.at < this.stallTimeoutMs) {
         this.stats.dropped += 1
@@ -163,12 +166,11 @@ export class RecognitionClient {
       this.stats.stalled += 1
       this.inFlight = null
     }
-    const worker = this.ensureWorker()
     const index = ++this.frameIndex
     const buffer = toTransferable(frame.pixels)
     this.inFlight = { frameIndex: index, at: this.now() }
     this.stats.submitted += 1
-    worker.postMessage(
+    try { this.ensureWorker().postMessage(
       {
         type: 'frame',
         generation: this.generationValue,
@@ -182,16 +184,20 @@ export class RecognitionClient {
         wantDebug,
       },
       [buffer],
-    )
+    ) } catch (error) {
+      this.failWorker(error instanceof Error ? error.message : String(error))
+      return false
+    }
     return true
   }
 
   /** Invalidate in-flight and queued work without dropping the profile. */
-  cancel(): number {
+  cancel(preserveBasic = false, resetTiming = false): number {
     if (this.disposed) return this.generationValue
     this.generationValue += 1
     this.inFlight = null
-    this.worker?.postMessage({ type: 'cancel', generation: this.generationValue })
+    this.worker?.postMessage({ type: 'cancel', generation: this.generationValue,
+      ...(preserveBasic ? { preserveBasic: true } : {}), ...(resetTiming ? { resetTiming: true } : {}) })
     return this.generationValue
   }
 
@@ -214,6 +220,21 @@ export class RecognitionClient {
     worker.addEventListener('error', this.handleError)
     this.worker = worker
     return worker
+  }
+
+  private failWorker(message: string): void {
+    if (this.disposed || this.faulted) return
+    this.faulted = true
+    this.inFlight = null
+    this.generationValue += 1
+    if (this.worker) {
+      this.worker.removeEventListener('message', this.handleMessage)
+      this.worker.removeEventListener('error', this.handleError)
+      this.worker.terminate()
+      this.worker = null
+    }
+    // A fresh configure is the retry boundary; more frames cannot flood a failed worker.
+    this.options.onError?.(message)
   }
 }
 

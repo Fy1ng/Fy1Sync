@@ -103,9 +103,10 @@ test.describe('手动样式包要求', () => {
     await openPlayer(page)
     await loadBothFixtures(page)
     const options = await openAlignOptions(page)
+    await setCheckedByLabel(options.getByRole('radio', { name: '样式包模式', exact: true }))
     await expect(options.getByRole('combobox', { name: '倒计时样式' }).locator('option:checked')).toHaveText('请选择手动样式包')
     await options.getByRole('button', { name: '仅测量', exact: true }).click()
-    await expect(page.locator('.toast').filter({ hasText: '请先选择手动提供的样式包' })).toBeVisible()
+    await expect(page.locator('.toast').filter({ hasText: '样式包模式需要先选择手动提供的样式包' })).toBeVisible()
     await expect(page.locator('.prompt')).toHaveCount(0)
     expect(await offsetReadout(page)).toMatchObject({ requested: 0, applied: 0 })
     const presets = await invoke(page, 'listPresets', undefined)
@@ -289,6 +290,7 @@ test.describe('自动同步', () => {
   test('暂停时保留手动样式包且不应用偏移', async ({ page }) => {
     await openPlayer(page)
     const options = await openAlignOptions(page)
+    await setCheckedByLabel(options.getByRole('radio', { name: '样式包模式', exact: true }))
     await options.getByRole('combobox', { name: '倒计时样式' }).selectOption(presetId)
     await page.keyboard.press('Escape')
     await loadBothFixtures(page)
@@ -359,6 +361,7 @@ async function teachProfile(application: ElectronApplication, page: Page, id: st
 /** Choose a published preset in the studio's alignment options. */
 async function selectPreset(page: Page, name: string): Promise<void> {
   const options = await openAlignOptions(page)
+  await setCheckedByLabel(options.getByRole('radio', { name: '样式包模式', exact: true }))
   const select = options.getByRole('combobox', { name: '倒计时样式' })
   await expect(select).toBeEnabled({ timeout: 20_000 })
   const option = select.getByRole('option', { name, exact: true })
