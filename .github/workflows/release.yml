@@ -148,6 +148,10 @@ jobs:
           else
             npm run package:smoke
           fi
+      - name: Verify disposable NSIS install and uninstall
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/smoke-nsis.ps1
       - name: Upload validated packages
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
