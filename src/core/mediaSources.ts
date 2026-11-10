@@ -8,6 +8,7 @@
  */
 
 import type { MediaDescriptor, MediaKind, PlatformId } from './types'
+import { parseDouyinInput } from './douyinInput'
 
 export interface SourceClassification {
   ok: true
@@ -42,6 +43,14 @@ export function parseSourceInput(raw: string): SourceParseResult {
   if (/^[1-9][0-9]{0,11}$/.test(input)) return {
     ok: true, platform: 'douyu', kind: 'hls', url: input, channel: input,
     needsResolve: true, suggestProxy: true, label: `斗鱼 / ${input}`,
+  }
+
+  const douyin = parseDouyinInput(raw)
+  if (douyin && !/^[0-9]+$/.test(input)) return {
+    ok: true, platform: 'douyin', kind: 'hls', url: douyin.url,
+    ...(douyin.kind === 'room' ? { channel: douyin.room } : {}),
+    needsResolve: true, suggestProxy: true,
+    label: douyin.kind === 'room' ? `抖音 / ${douyin.room}` : '抖音直播',
   }
 
   // Bare test fixtures and same-origin paths.
@@ -87,6 +96,10 @@ export function parseSourceInput(raw: string): SourceParseResult {
   }
 
   const host = url.hostname.toLowerCase().replace(/^www\./u, '').replace(/^m\./u, '')
+
+  if (/(^|\.)douyin\.com$/.test(host) || /(^|\.)amemv\.com$/.test(host)) {
+    return { ok: false, reason: 'unsupported-page', message: '请输入有效的抖音直播间地址或直播分享链接' }
+  }
 
   if (host === 'youtube.com' || host === 'youtu.be') {
     return { ok: true, platform: 'youtube', kind: 'hls', url: url.href,
@@ -163,7 +176,7 @@ export function parseSourceInput(raw: string): SourceParseResult {
   return {
     ok: false,
     reason: 'unsupported-page',
-    message: '请填入 YouTube / Twitch / 斗鱼 / B 站 / 虎牙直播间地址, 或直接的 .m3u8 / .mp4 / .flv 链接',
+    message: '请填入 YouTube / Twitch / 斗鱼 / B 站 / 虎牙 / 抖音直播间地址, 或直接的 .m3u8 / .mp4 / .flv 链接',
   }
 }
 

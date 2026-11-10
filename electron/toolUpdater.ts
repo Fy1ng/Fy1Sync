@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { lstat, mkdir, open, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { constants, createReadStream } from 'node:fs'
+import { access, chmod, lstat, mkdir, open, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { toolVersion } from './toolVersions'
 import { containedPath } from './privateStorage'
+import { ytdlpReleaseAsset, type YtdlpReleaseAsset } from './toolPlatform'
 
 const API = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest'
 const VERSION = /^\d{4}\.\d{2}\.\d{2}(?:\.\d+)?$/
@@ -107,7 +108,7 @@ async function downloadBytes(url: string, limit: number, transport?: Transport):
   await officialDownload(url, limit, async bytes => { chunks.push(bytes) }, transport)
   return Buffer.concat(chunks)
 }
-function release(value: unknown): { version: string; exe: string; sums: string; size: number } {
+function release(value: unknown, assetName: YtdlpReleaseAsset): { version: string; exe: string; sums: string; size: number } {
   if (!value || typeof value !== 'object') throw new UpdateError('release')
   const r = value as Record<string, unknown>
   if (typeof r.tag_name !== 'string' || !VERSION.test(r.tag_name) || r.draft !== false || r.prerelease !== false || !Array.isArray(r.assets) || r.assets.length > 100) throw new UpdateError('release')
@@ -119,43 +120,65 @@ function release(value: unknown): { version: string; exe: string; sums: string; 
     if (found.length !== 1 || !a || a.browser_download_url !== base + name || !Number.isSafeInteger(a.size) || (a.size as number) <= 0 || (a.size as number) > limit) throw new UpdateError('release')
     return { url: base + name, size: a.size as number }
   }
-  const exe = asset('yt-dlp.exe', MAX_EXE), sums = asset('SHA2-256SUMS', MAX_SUMS)
+  const exe = asset(assetName, MAX_EXE), sums = asset('SHA2-256SUMS', MAX_SUMS)
   return { version: r.tag_name, exe: exe.url, sums: sums.url, size: exe.size }
 }
-export function releaseChecksum(text: string): string {
-  const matches = text.split(/\r?\n/).filter(line => /(?:\s|\*)yt-dlp\.exe(?:\s|$)/.test(line))
+export function releaseChecksum(text: string, assetName: YtdlpReleaseAsset = 'yt-dlp.exe'): string {
+  const escapedName = assetName.replaceAll('.', '\\.')
+  const name = new RegExp(`(?:\\s|\\*)${escapedName}(?:\\s|$)`)
+  const matches = text.split(/\r?\n/).filter(line => name.test(line))
   if (matches.length !== 1) throw new UpdateError('checksum')
-  const match = /^([a-fA-F0-9]{64}) [ *]yt-dlp\.exe$/.exec(matches[0]!)
+  const match = new RegExp(`^([a-fA-F0-9]{64}) [ *]${escapedName}$`).exec(matches[0]!)
   if (!match) throw new UpdateError('checksum')
   return match[1]!.toLowerCase()
+}
+
+function samePhysicalPath(actual: string, expected: string): boolean {
+  const a = path.resolve(actual), b = path.resolve(expected)
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
 }
 
 export class ManagedYtdlp implements ToolUpdaterService {
   private readonly root: string
   private readonly userData: string
+  private readonly platform: NodeJS.Platform
+  private readonly assetName: YtdlpReleaseAsset | undefined
+  private readonly filename: string
   private manifest: Manifest = { schema: 1 }
   private initialized?: Promise<void>
   private flight?: Promise<ToolUpdateState>
   private status: ToolUpdateState = { phase: 'idle', downloadedBytes: 0, totalBytes: 0, message: '仅手动检查官方稳定版, 启动时不联网.' }
-  constructor(userData: string, private readonly options: { transport?: Transport; verify?: (file: string) => Promise<string>; baselineVersion?: string } = {}) {
+  constructor(userData: string, private readonly options: { transport?: Transport; verify?: (file: string) => Promise<string>; baselineVersion?: string; platform?: NodeJS.Platform; arch?: string } = {}) {
     this.userData = path.resolve(userData)
     this.root = path.join(userData, 'managed-tools', 'yt-dlp')
+    this.platform = options.platform ?? process.platform
+    this.assetName = ytdlpReleaseAsset(this.platform, options.arch ?? process.arch)
+    // Distinct Windows architecture names prevent cross-architecture manifest reuse.
+    this.filename = this.platform === 'darwin' ? 'yt-dlp' : this.assetName ?? 'unsupported'
   }
   state(): ToolUpdateState { return { ...this.status, activeVersion: this.manifest.active?.version, previousVersion: this.manifest.previous?.version } }
-  private async safeRoot(create = false): Promise<void> {
+  private async safeRoot(create = false): Promise<string> {
     containedPath(this.userData, this.root)
     if (create) await mkdir(this.root, { recursive: true, mode: 0o700 })
+    // macOS system parents may be aliases (/var -> /private/var); the app subtree may not.
+    const canonicalUserData = await realpath(this.userData)
     const actual = await realpath(this.root)
-    if (path.resolve(actual).toLowerCase() !== path.resolve(this.root).toLowerCase() || (await lstat(this.root)).isSymbolicLink()) throw new UpdateError('storage')
+    const expected = path.join(canonicalUserData, path.relative(this.userData, this.root))
+    if (!samePhysicalPath(actual, expected) || (await lstat(this.root)).isSymbolicLink()) throw new UpdateError('storage')
+    return actual
   }
   private async valid(e?: Entry): Promise<string | undefined> {
     if (!e) return undefined
     try {
-      await this.safeRoot()
-      const dir = path.join(this.root, e.id), file = path.join(dir, 'yt-dlp.exe')
-      if ((await lstat(dir)).isSymbolicLink() || (await lstat(file)).isSymbolicLink() || await realpath(file) !== file) return undefined
+      const canonicalRoot = await this.safeRoot()
+      if (!this.assetName) return undefined
+      const dir = path.join(this.root, e.id), file = path.join(dir, this.filename)
+      containedPath(this.userData, file)
+      if ((await lstat(dir)).isSymbolicLink() || (await lstat(file)).isSymbolicLink()
+        || !samePhysicalPath(await realpath(file), path.join(canonicalRoot, e.id, this.filename))) return undefined
       const s = await stat(file)
       if (!s.isFile() || s.size <= 0 || s.size > MAX_EXE || await sha256File(file) !== e.sha256) return undefined
+      await access(file, this.platform === 'win32' ? constants.R_OK : constants.X_OK)
       return file
     } catch { return undefined }
   }
@@ -184,7 +207,8 @@ export class ManagedYtdlp implements ToolUpdaterService {
   }
   async activePath(): Promise<string | undefined> {
     await this.init()
-    if (await this.valid(this.manifest.active)) return path.join(this.root, this.manifest.active!.id, 'yt-dlp.exe')
+    const selected = await this.valid(this.manifest.active)
+    if (selected) return selected
     if (this.manifest.active) {
       const fallback = await this.valid(this.manifest.previous)
       this.manifest = { schema: 1, ...(fallback ? { active: this.manifest.previous } : {}) }
@@ -210,18 +234,19 @@ export class ManagedYtdlp implements ToolUpdaterService {
   private async performUpdate(): Promise<ToolUpdateState> {
     let temporary: string | undefined, promoted: string | undefined, committed = false
     try {
+      if (!this.assetName) throw new UpdateError('release')
       await this.init()
       await this.activePath()
       this.status = { phase: 'checking', downloadedBytes: 0, totalBytes: 0, message: '正在检查 GitHub 官方稳定版...' }
       let info: ReturnType<typeof release>
-      try { info = release(JSON.parse((await downloadBytes(API, MAX_JSON, this.options.transport)).toString('utf8'))) }
+      try { info = release(JSON.parse((await downloadBytes(API, MAX_JSON, this.options.transport)).toString('utf8')), this.assetName) }
       catch (error) { if (error instanceof UpdateError) throw error; throw new UpdateError('release') }
       const current = this.manifest.active?.version ?? this.options.baselineVersion
       if (current && info.version.localeCompare(current, 'en', { numeric: true }) <= 0) {
         this.status = { ...this.status, phase: 'current', message: '当前受控工具已是该稳定版或更新版本.' }
         return this.state()
       }
-      const checksum = releaseChecksum((await downloadBytes(info.sums, MAX_SUMS, this.options.transport)).toString('utf8'))
+      const checksum = releaseChecksum((await downloadBytes(info.sums, MAX_SUMS, this.options.transport)).toString('utf8'), this.assetName)
       await this.safeRoot(true)
       temporary = path.join(this.root, `download-${randomUUID()}.tmp`)
       const file = await open(temporary, 'wx', 0o700)
@@ -243,13 +268,15 @@ export class ManagedYtdlp implements ToolUpdaterService {
       const id = randomUUID()
       promoted = path.join(this.root, id)
       await mkdir(promoted, { mode: 0o700 })
-      const executable = path.join(promoted, 'yt-dlp.exe')
+      const executable = path.join(promoted, this.filename)
       await rename(temporary, executable)
       temporary = undefined
+      if (this.platform !== 'win32') await chmod(executable, 0o700)
       let verified: string
       try { verified = await (this.options.verify ?? (file => toolVersion(file, true)))(executable) } catch { throw new UpdateError('verification') }
       if (verified !== info.version) throw new UpdateError('verification')
       if (await sha256File(executable) !== checksum) throw new UpdateError('checksum')
+      try { await access(executable, this.platform === 'win32' ? constants.R_OK : constants.X_OK) } catch { throw new UpdateError('verification') }
       const previous = this.manifest.active ?? this.manifest.previous
       await this.save({ schema: 1, active: { id, version: info.version, sha256: checksum }, ...(previous ? { previous } : {}) })
       committed = true

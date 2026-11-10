@@ -42,6 +42,15 @@ describe('independent stream sessions', () => {
     expect(f.port.resolve).toHaveBeenCalledWith('huya.com/660000', 'huya', view.id, '8000', undefined)
     await f.manager.dispose()
   })
+  it('accepts Douyin room selections and quality changes for an independent stream', async () => {
+    const f = fixture()
+    const view = await f.manager.open({ input: '  live.douyin.com/100  ', platform: 'douyin', quality: 'origin' })
+    expect(view.phase).toBe('ready')
+    expect(f.port.resolve).toHaveBeenCalledWith('live.douyin.com/100', 'douyin', view.id, 'origin', undefined)
+    await f.manager.switchQuality(view.id, 'hd')
+    expect(f.port.switchQuality).toHaveBeenCalledWith(view.id, 'hd')
+    await f.manager.dispose()
+  })
   it('opens more than two streams and closes only the selected producer', async () => {
     const f = fixture()
     const streams = await Promise.all(['one', 'two', 'three'].map(input => f.manager.open({ input })))

@@ -31,6 +31,7 @@ import { apiClient, issuesFrom, type PresetSummary } from '../../app/apiClient'
 import { FrameGrabber, FULL_FRAME_ROI, type GrabbedFrame } from '../../recognition/frameGrabber'
 import { useSession } from '../../app/SessionContext'
 import { routeLink } from '../../app/navigate'
+import { primaryModifier, shortcutLabel } from '../../app/platform'
 import { Icon, Segmented, Switch } from '../kit'
 import { drawGray, drawMask } from './framePipeline'
 import { RoiWindow } from './RoiWindow'
@@ -417,7 +418,7 @@ export default function EditorPage(): React.ReactNode {
     setMessage({ kind: 'info', text: '已打开下载的片段' })
   }, [openVideo, project.remember])
 
-  // Ctrl+V anywhere on the editor, except into a text field, which keeps its own paste.
+  // Native paste works anywhere except in text fields, which keep their own paste.
   useEffect(() => {
     const onPaste = (event: ClipboardEvent): void => {
       if (validationReadOnly.current) return
@@ -536,22 +537,22 @@ export default function EditorPage(): React.ReactNode {
     } catch (error) { setMessage({ kind: 'error', text: `取样失败: ${String(error)}` }) }
   }
 
-  // Ctrl+Z is scoped to this editor; editable text keeps its native text undo.
+  // The platform's primary undo shortcut is scoped to the editor; text keeps native undo.
   const keys = useRef({ step, jump, togglePlay, undo: countdown.undo, video: false })
   keys.current = { step, jump, togglePlay, undo: countdown.undo, video: sampleUrl !== '' && sampleKind === 'video' }
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (validationReadOnly.current) return
+      if (validationReadOnly.current || event.defaultPrevented || event.isComposing) return
       const target = event.target
       if (!(target instanceof Element)) return
       if (target.closest('textarea, select, [contenteditable="true"], .pop') || (target instanceof HTMLInputElement && target.type !== 'range')) return
-      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'z' && keys.current.undo) {
+      if (primaryModifier(event) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'z' && keys.current.undo) {
         event.preventDefault()
         keys.current.undo()
         return
       }
       const arrow = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0
-      const jumpBy = arrow && !event.altKey && !event.metaKey ? (event.ctrlKey ? 10 : event.shiftKey ? 1 : 0) : 0
+      const jumpBy = arrow && !event.altKey ? (primaryModifier(event) ? 10 : !event.ctrlKey && !event.metaKey && event.shiftKey ? 1 : 0) : 0
       if (!jumpBy && (event.ctrlKey || event.metaKey || event.altKey)) return
       if (!keys.current.video || target.closest('button, input, [role="group"]')) return
       if (jumpBy) {
@@ -882,7 +883,7 @@ export default function EditorPage(): React.ReactNode {
             ) : (
               <div className="editor-empty">
                 <p>载入一段比赛录像或一张截图</p>
-                <p className="muted">也可以直接按 Ctrl+V 粘贴截图，文件只在本机读取</p>
+                <p className="muted">也可以直接按 {shortcutLabel('V')} 粘贴截图, 文件只在本机读取</p>
               </div>
             )}
             {sampleUrl && (
@@ -911,7 +912,7 @@ export default function EditorPage(): React.ReactNode {
             {video ? (
               <>
                 <span className="editor-transport-group">
-                  <button type="button" className="btn-quiet small editor-jump num" disabled={countdown.busy} onClick={() => jump(-10)} title="后退 10 秒（Ctrl+←）">-10s</button>
+                  <button type="button" className="btn-quiet small editor-jump num" disabled={countdown.busy} onClick={() => jump(-10)} title={`后退 10 秒 (${shortcutLabel('Left')})`}>-10s</button>
                   <button type="button" className="btn-quiet small editor-jump num" disabled={countdown.busy} onClick={() => jump(-1)} title="后退 1 秒（Shift+←）">-1s</button>
                   <button type="button" className="icon-btn" disabled={countdown.busy} onClick={() => step(-1)} aria-label="上一帧" title="上一帧（←）"><Icon name="back" /></button>
                   <button type="button" className="icon-btn" disabled={countdown.busy} onClick={togglePlay} aria-label={playing ? '暂停' : '播放'} title="播放 / 暂停（空格）">
@@ -919,7 +920,7 @@ export default function EditorPage(): React.ReactNode {
                   </button>
                   <button type="button" className="icon-btn" disabled={countdown.busy} onClick={() => step(1)} aria-label="下一帧" title="下一帧（→）"><Icon name="forward" /></button>
                   <button type="button" className="btn-quiet small editor-jump num" disabled={countdown.busy} onClick={() => jump(1)} title="前进 1 秒（Shift+→）">+1s</button>
-                  <button type="button" className="btn-quiet small editor-jump num" disabled={countdown.busy} onClick={() => jump(10)} title="前进 10 秒（Ctrl+→）">+10s</button>
+                  <button type="button" className="btn-quiet small editor-jump num" disabled={countdown.busy} onClick={() => jump(10)} title={`前进 10 秒 (${shortcutLabel('Right')})`}>+10s</button>
                 </span>
                 <input type="range" className="editor-scrub" disabled={countdown.busy} min={0} max={Math.max(0.1, duration)} step={0.02}
                   value={Math.min(mediaTime, duration || mediaTime)} aria-label="样片进度"

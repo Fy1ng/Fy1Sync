@@ -9,7 +9,7 @@ module.exports = {
   asarUnpack: ['electron/network-runtime.cjs'],
   npmRebuild: false,
   files: [
-    'package.json', 'electron/main.cjs', 'electron/preload.cjs', 'electron/network-runtime.cjs', 'electron/icon.png', 'client/index.html',
+    'package.json', 'electron/main.cjs', 'electron/preload.cjs', 'electron/login-card-preload.cjs', 'electron/network-runtime.cjs', 'electron/icon.png', 'client/index.html',
     'client/assets/**/*.js', 'client/assets/**/*.css', 'client/assets/**/*.wasm', 'client/assets/**/*.woff2',
     '!node_modules', '!node_modules/**/*',
   ],
@@ -22,6 +22,29 @@ module.exports = {
   extraMetadata: { author: { name: '' } },
   // OS and installer icons use the supplied artwork; the in-app title-bar mark stays unchanged.
   win: { target: [{ target: 'nsis', arch: ['x64'] }, { target: 'zip', arch: ['x64'] }], signExecutable: false, icon: 'packaging/icon.ico' },
+  mac: {
+    minimumSystemVersion: require('./packaging/tools-mac-lock.json').minimumSystemVersion,
+    target: [{ target: 'dmg', arch: ['arm64', 'x64'] }, { target: 'zip', arch: ['arm64', 'x64'] }],
+    artifactName: 'Fy1Sync-${version}-mac-${arch}.${ext}',
+    icon: 'packaging/icon-source.png', category: 'public.app-category.entertainment',
+    // Normal electron-builder identity/notarization environment variables remain available.
+    hardenedRuntime: true,
+    extraFiles: [
+      { from: 'node_modules/electron/dist/LICENSE', to: 'LICENSE.electron.txt' },
+      { from: 'node_modules/electron/dist/LICENSES.chromium.html', to: 'LICENSES.chromium.html' },
+    ],
+  },
+  linux: {
+    target: [{ target: 'deb', arch: ['x64', 'arm64'] }, { target: 'AppImage', arch: ['x64', 'arm64'] }, { target: 'tar.gz', arch: ['x64', 'arm64'] }],
+    artifactName: 'Fy1Sync-${version}-linux-${arch}.${ext}',
+    executableName: 'fy1sync', icon: 'packaging/icon-source.png', category: 'AudioVideo',
+    maintainer: 'Fy1ng <dev@fy1ng.com>',
+    synopsis: '电竞双路视频对齐播放器',
+    description: '同步观看电竞赛事视频, 解说和弹幕.',
+  },
+  deb: {
+    depends: ['libgtk-3-0', 'libnotify4', 'libnss3', 'libxss1', 'libxtst6', 'xdg-utils', 'libatspi2.0-0', 'libuuid1', 'libsecret-1-0', 'libgbm1', 'libasound2', 'libgnutls30', 'ca-certificates'],
+  },
   nsis: {
     artifactName: 'Fy1Sync-${version}-win-x64-nsis.${ext}',
     oneClick: false, perMachine: false, allowElevation: false,

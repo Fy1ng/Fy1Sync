@@ -41,6 +41,25 @@ describe('parseSourceInput', () => {
     expect(expectOk('douyu.com/dyshow').channel).toBe('dyshow')
   })
 
+  it.each([
+    'https://live.douyin.com/12345678901234567890', 'live.douyin.com/12345',
+    'https://v.douyin.com/abCD123/', '主播正在直播 https://v.douyin.com/abCD123/。',
+    'https://webcast.amemv.com/webcast/reflow/7123456789012345678?app_id=1128',
+  ])('classifies a supported Douyin link for platform acquisition: %s', input => {
+    expect(expectOk(input)).toMatchObject({ platform: 'douyin', kind: 'hls', needsResolve: true })
+  })
+
+  it('does not turn a reflow room id into a web room channel or change the numeric default', () => {
+    expect(expectOk('https://webcast.amemv.com/webcast/reflow/7123456789012345678').channel).toBeUndefined()
+    expect(expectOk('12345').platform).toBe('douyu')
+  })
+
+  it.each(['https://www.douyin.com/user/12345', 'https://live.douyin.com/123.mp4',
+    'https://v.douyin.com/abc.m3u8', 'https://live.douyin.com:8443/12345',
+    'https://user:password@live.douyin.com/12345'])('rejects a Douyin page instead of routing it as direct media: %s', input => {
+    expect(parseSourceInput(input)).toMatchObject({ ok: false, reason: 'unsupported-page' })
+  })
+
   it.each(['huya.com/660000', 'https://www.huya.com/kpl', 'https://m.huya.com/lpl?from=share', 'https://huya.com/room-name/'])(
     'recognises a Huya room and keeps its identity for acquisition: %s', (input) => {
       const result = expectOk(input)

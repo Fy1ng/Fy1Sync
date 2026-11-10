@@ -2,6 +2,8 @@
 
 import { resolveBilibili, parseBilibiliRoom } from './bilibili'
 import { resolveDouyu, parseDouyuRoom } from './douyu'
+import { resolveDouyin } from './douyin'
+import { parseDouyinInput } from '../../src/core/douyinInput'
 import { resolveHuya, parseHuyaRoom } from './huya'
 import { resolveTwitch, parseTwitchChannel } from './twitch'
 import { resolveYouTube, parseYouTubeUrl } from './youtube'
@@ -19,6 +21,7 @@ export function detectPlatform(input: string, explicit?: PlatformKind): Platform
   if (trimmed.length === 0) return null
 
   if (looksLikeDirectMedia(trimmed)) return 'direct'
+  if (!/^\d+$/.test(trimmed) && parseDouyinInput(trimmed)) return 'douyin'
 
   let host = ''
   try {
@@ -63,13 +66,15 @@ export async function resolveStream(
       return resolveBilibili(input, deps)
     case 'huya':
       return resolveHuya(input, deps)
+    case 'douyin':
+      return resolveDouyin(input, deps)
     case 'direct':
       return resolveDirect(input)
     default:
       return failure(
         'unsupported-url',
         '无法识别该输入属于哪个平台',
-        '支持 YouTube 直播, Twitch 频道, 斗鱼房间, 虎牙房间, B 站直播间, 或直接粘贴 m3u8 / mp4 / flv 地址.',
+        '支持 YouTube 直播, Twitch 频道, 斗鱼房间, 虎牙房间, B 站直播间, 抖音直播间, 或直接粘贴 m3u8 / mp4 / flv 地址.',
       )
   }
 }

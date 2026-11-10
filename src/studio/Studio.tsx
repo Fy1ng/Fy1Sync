@@ -41,6 +41,7 @@ import { QualityMenu } from './QualityMenu'
 import { DanmakuSwitch, PlayButton, Timeline, Volumes } from './transport'
 import './studio.css'
 import { remember, remembered } from '../app/remembered'
+import { EmbeddedLoginOverlay, useEmbeddedLoginState } from './login/EmbeddedLogin'
 
 /** Seconds per ←/→ press, and with Shift. */
 const SEEK_SMALL = 5
@@ -59,6 +60,7 @@ export function Studio(): React.ReactNode {
 function StudioView(): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
+  const embeddedLogin = useEmbeddedLoginState()
   const root = useRef<HTMLDivElement | null>(null)
   const fullscreen = useFullscreen(root)
   const camera = useCamera()
@@ -93,7 +95,7 @@ function StudioView(): React.ReactNode {
   const chromeHover = { onPointerEnter: () => setOnChrome(true), onPointerLeave: () => setOnChrome(false) }
 
   const aligning = snapshot.autoSync.phase !== 'idle' && snapshot.autoSync.phase !== 'done' && snapshot.autoSync.phase !== 'failed'
-  const busyChrome = intake || tuning || settingsAt !== null || addingStream || scheduleOpen || onChrome || aligning
+  const busyChrome = intake || tuning || settingsAt !== null || addingStream || scheduleOpen || onChrome || aligning || embeddedLogin !== null
   const chrome = useOverlayVisibility(3200, !snapshot.playing || busyChrome)
   // The drawer is the room's chat; with no room there is nothing to hold it open for.
   const hasRoom = snapshot.danmaku.connected || snapshot.danmaku.room !== null
@@ -146,7 +148,7 @@ function StudioView(): React.ReactNode {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return
+      if (embeddedLogin || event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return
       const target = event.target
       if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return
       const step = nudgeStepFor(event.shiftKey, snapshot.settings.smallStepSeconds, snapshot.settings.largeStepSeconds)
@@ -174,7 +176,7 @@ function StudioView(): React.ReactNode {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [fullscreen, nudge, session, setChat, snapshot.settings.largeStepSeconds, snapshot.settings.smallStepSeconds])
+  }, [embeddedLogin, fullscreen, nudge, session, setChat, snapshot.settings.largeStepSeconds, snapshot.settings.smallStepSeconds])
 
   return (
     <div
@@ -305,6 +307,7 @@ function StudioView(): React.ReactNode {
             onClose={() => setFraming(false)}
           />
         )}
+        <EmbeddedLoginOverlay state={embeddedLogin} />
       </DanmakuActionsProvider>
     </div>
   )

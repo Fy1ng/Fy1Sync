@@ -6,8 +6,9 @@ import { assertRegularPath, containedPath, privateDirectory } from './privateSto
 import type { CookiesSetDetails } from 'electron'
 
 export interface YoutubeCookieSession { cookies: { set(details: CookiesSetDetails): Promise<void> } }
+export type LoginCookieSession = YoutubeCookieSession
 
-export type LoginPlatform = 'youtube' | 'douyu'
+export type LoginPlatform = 'youtube' | 'douyu' | 'douyin'
 export interface LoginResult { cookieCount: number; authKeysPresent: string[] }
 export interface PlatformLoginStatus extends LoginResult {
   loggedIn: boolean
@@ -29,6 +30,7 @@ export interface BrowserCookie {
   hostOnly?: boolean
   session?: boolean
   expirationDate?: number
+  sameSite?: CookiesSetDetails['sameSite']
   name: string
   value: string
 }
@@ -44,13 +46,21 @@ function douyuNickname(cookies: StoredCookie[]): { nickname?: string } {
   return name ? { nickname: name } : {}
 }
 
-function douyuHeader(cookies: StoredCookie[], target: URL): string {
+function cookieMatchesTarget(cookie: BrowserCookie, target: URL): boolean {
+  const domain = cookie.domain.replace(/^\./, '').toLowerCase()
+  const subdomains = cookie.hostOnly === undefined ? cookie.domain.startsWith('.') : !cookie.hostOnly
+  const cookiePath = cookie.path || '/'
+  return (target.hostname === domain || (subdomains && target.hostname.endsWith(`.${domain}`)))
+    && (target.pathname === cookiePath || target.pathname.startsWith(cookiePath.endsWith('/') ? cookiePath : `${cookiePath}/`))
+    && (!cookie.secure || target.protocol === 'https:')
+}
+
+function scopedHeader(cookies: StoredCookie[], target: URL): string {
   const selected = new Map<string, StoredCookie>()
-  for (const cookie of cookies.filter(cookie => (target.hostname === cookie.domain || (cookie.subdomains && target.hostname.endsWith(`.${cookie.domain}`)))
-    && (target.pathname === cookie.path || target.pathname.startsWith(cookie.path.endsWith('/') ? cookie.path : `${cookie.path}/`)))
+  for (const cookie of cookies.filter(cookie => cookieMatchesTarget(cookie, target))
     .sort((a, b) => b.path.length - a.path.length)) {
     const previous = selected.get(cookie.name)
-    // Prefer the exact host (www.douyu.com for sending) before parent-domain material.
+    // Prefer the exact host before parent-domain material.
     if (!previous || cookie.domain.length > previous.domain.length
       || (cookie.domain === previous.domain && cookie.path.length > previous.path.length)
       || (cookie.domain === previous.domain && cookie.path === previous.path && !cookie.subdomains && previous.subdomains)) selected.set(cookie.name, cookie)
@@ -61,20 +71,37 @@ function douyuHeader(cookies: StoredCookie[], target: URL): string {
 export const LOGIN_PLATFORMS = {
   youtube: { url: 'https://www.youtube.com', authKeys: ['SAPISID', '__Secure-3PSID', '__Secure-1PSID', 'SID', 'HSID', 'SSID'] },
   douyu: { url: 'https://www.douyu.com', authKeys: ['acf_uid', 'acf_auth', 'acf_biz', 'acf_stk'] },
+  douyin: { url: 'https://live.douyin.com/', authKeys: ['sessionid', 'sessionid_ss'] },
 } as const
 
 const MAX_COOKIE_FILE_BYTES = 4 * 1024 * 1024
 const storageFailure = () => new Error('账号数据读写失败, 未返回任何 cookie 数据.')
 const sameFile = (before: fs.Stats, after: fs.Stats): boolean => after.isFile() && !after.isSymbolicLink()
   && before.ino === after.ino && before.dev === after.dev && before.size === after.size && before.mtimeMs === after.mtimeMs
-export function isLoginPlatform(value: unknown): value is LoginPlatform { return value === 'youtube' || value === 'douyu' }
+export function isLoginPlatform(value: unknown): value is LoginPlatform { return value === 'youtube' || value === 'douyu' || value === 'douyin' }
 
 export function cookieDomainAllowed(domain: string, platform: LoginPlatform): boolean {
   const host = domain.replace(/^\./, '').toLowerCase()
   if (!/^[a-z0-9.-]+$/.test(host)) return false
   if (platform === 'youtube' && (host === 'google.com' || host === 'accounts.google.com' || host.endsWith('.accounts.google.com'))) return true
-  const base = platform === 'youtube' ? 'youtube.com' : 'douyu.com'
+  if (platform === 'douyin' && !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)*douyin\.com$/.test(host)) return false
+  const base = platform === 'youtube' ? 'youtube.com' : platform === 'douyu' ? 'douyu.com' : 'douyin.com'
   return host === base || host.endsWith(`.${base}`)
+}
+
+/** Douyin authentication must apply to the fixed live homepage, not an unrelated account host/path. */
+function isAuthenticationCookie(cookie: BrowserCookie, platform: LoginPlatform, now: number): boolean {
+  const keys: readonly string[] = LOGIN_PLATFORMS[platform].authKeys
+  if (!cookieDomainAllowed(cookie.domain, platform) || !keys.includes(cookie.name) || !cookie.value) return false
+  if (platform !== 'douyin') return !!(cookie.session || !cookie.expirationDate || cookie.expirationDate > now)
+  const expiry = cookie.expirationDate
+  return !/[\x00-\x20\x7f;]/.test(cookie.value)
+    && (expiry === undefined || (Number.isFinite(expiry) && expiry >= 0 && (expiry === 0 || Math.floor(expiry) > now)))
+    && cookieMatchesTarget(cookie, new URL(LOGIN_PLATFORMS.douyin.url))
+}
+
+export function hasAuthenticationCookies(cookies: BrowserCookie[], platform: LoginPlatform, now = Date.now() / 1000): boolean {
+  return cookies.some(cookie => isAuthenticationCookie(cookie, platform, now))
 }
 
 function parseCookies(text: string, platform: LoginPlatform, now: number): StoredCookie[] {
@@ -105,7 +132,7 @@ export interface CookieStoreOptions { now?: () => number }
 /** Cookie values are private to the main process; public methods return fixed metadata only. */
 export class CookieStore {
   private readonly now: () => number
-  private readonly revisions: Record<LoginPlatform, number> = { youtube: 0, douyu: 0 }
+  private readonly revisions: Record<LoginPlatform, number> = { youtube: 0, douyu: 0, douyin: 0 }
   readonly root: string
 
   constructor(userDataDirectory: string, options: CookieStoreOptions = {}) {
@@ -172,7 +199,11 @@ export class CookieStore {
         if (!cookie || typeof cookie.domain !== 'string' || !cookieDomainAllowed(cookie.domain, platform)) continue
         const subdomains = cookie.hostOnly === undefined ? cookie.domain.startsWith('.') : !cookie.hostOnly
         const domain = `${cookie.httpOnly ? '#HttpOnly_' : ''}${subdomains ? '.' : ''}${cookie.domain.replace(/^\./, '').toLowerCase()}`
-        const expiry = cookie.session || !cookie.expirationDate ? 0 : Math.floor(cookie.expirationDate)
+        if (platform === 'douyin' && cookie.expirationDate !== undefined
+          && (!Number.isFinite(cookie.expirationDate) || cookie.expirationDate < 0)) throw storageFailure()
+        const sessionCookie = platform === 'douyin' ? cookie.expirationDate === undefined || cookie.expirationDate === 0
+          : cookie.session || !cookie.expirationDate
+        const expiry = sessionCookie ? 0 : Math.floor(cookie.expirationDate!)
         const fields = [domain, subdomains ? 'TRUE' : 'FALSE', cookie.path || '/', cookie.secure ? 'TRUE' : 'FALSE', String(expiry), cookie.name, cookie.value]
         if (fields.some(field => typeof field !== 'string' || /[\t\r\n\0]/.test(field))) throw storageFailure()
         lines.push(fields.join('\t'))
@@ -204,17 +235,17 @@ export class CookieStore {
 
   private summary(platform: LoginPlatform, cookies: StoredCookie[]): PlatformLoginStatus {
     const known: readonly string[] = LOGIN_PLATFORMS[platform].authKeys
-    const auth = cookies.filter(cookie => known.includes(cookie.name))
+    const auth = cookies.filter(cookie => platform === 'douyin' ? isAuthenticationCookie(cookie, platform, this.now()) : known.includes(cookie.name))
     const expiries = auth.map(cookie => cookie.expires).filter(expiry => expiry > 0)
     const present = new Set(auth.map(cookie => cookie.name))
     return { cookieCount: cookies.length, authKeysPresent: known.filter(key => present.has(key)), loggedIn: auth.length > 0,
       expiresAt: expiries.length ? Math.min(...expiries) : null, hasSessionCookies: auth.some(cookie => cookie.expires === 0),
-      ...(platform === 'douyu' ? messageCredentialStatus(douyuHeader(cookies, new URL('https://www.douyu.com/'))) : {}),
+      ...(platform === 'douyu' ? messageCredentialStatus(scopedHeader(cookies, new URL('https://www.douyu.com/'))) : {}),
       ...(platform === 'douyu' && auth.length > 0 ? douyuNickname(cookies) : {}) }
   }
 
   async status(): Promise<LoginStatus> {
-    return Object.fromEntries(await Promise.all((['youtube', 'douyu'] as const).map(async platform => [platform,
+    return Object.fromEntries(await Promise.all((['youtube', 'douyu', 'douyin'] as const).map(async platform => [platform,
       this.summary(platform, (await this.read(platform))?.cookies ?? []),
     ]))) as LoginStatus
   }
@@ -239,16 +270,41 @@ export class CookieStore {
     } catch { throw storageFailure() }
   }
 
-  async cookieHeader(platform: 'douyu', requestUrl = 'https://www.douyu.com/lapi/live/getH5PlayV1/'): Promise<string> {
-    if (platform !== 'douyu') throw storageFailure()
+  /** Restore only live-origin cookies into the controller's isolated, transient login session. */
+  async injectDouyinCookies(target: LoginCookieSession, current: () => boolean = () => true): Promise<void> {
+    try {
+      const revision = this.revisions.douyin
+      const loaded = await this.read('douyin')
+      if (!current() || revision !== this.revisions.douyin) throw storageFailure()
+      if (!loaded || !hasAuthenticationCookies(loaded.cookies, 'douyin', this.now())) return
+      for (const cookie of loaded.cookies.filter(cookie => cookieMatchesTarget(cookie, new URL(LOGIN_PLATFORMS.douyin.url)))) {
+        if (!current() || revision !== this.revisions.douyin) throw storageFailure()
+        await target.cookies.set({
+          url: LOGIN_PLATFORMS.douyin.url,
+          ...(cookie.subdomains ? { domain: `.${cookie.domain}` } : {}),
+          path: cookie.path, name: cookie.name, value: cookie.value, secure: cookie.secure, httpOnly: cookie.httpOnly,
+          ...(cookie.expires ? { expirationDate: cookie.expires } : {}),
+        })
+      }
+      if (!current() || revision !== this.revisions.douyin) throw storageFailure()
+    } catch { throw storageFailure() }
+  }
+
+  async cookieHeader(platform: 'douyu' | 'douyin', requestUrl?: string): Promise<string> {
+    if (platform !== 'douyu' && platform !== 'douyin') throw storageFailure()
+    const url = requestUrl ?? (platform === 'douyu' ? 'https://www.douyu.com/lapi/live/getH5PlayV1/' : undefined)
+    if (!url || (platform === 'douyin' && /[\\\x00-\x20\x7f]/.test(url))) throw storageFailure()
     let target: URL
-    try { target = new URL(requestUrl) } catch { throw storageFailure() }
+    try { target = new URL(url) } catch { throw storageFailure() }
     if (target.protocol !== 'https:' || target.username || target.password || target.port
-      || (target.hostname !== 'douyu.com' && !target.hostname.endsWith('.douyu.com'))) throw storageFailure()
+      || (platform === 'douyu' && target.hostname !== 'douyu.com' && !target.hostname.endsWith('.douyu.com'))
+      || (platform === 'douyin' && (target.origin !== 'https://live.douyin.com' || target.hash
+        || !(target.pathname === '/' || /^\/[1-9][0-9]{0,19}\/?$/.test(target.pathname)
+          || target.pathname === '/webcast/room/web/enter/' || target.pathname === '/webcast/im/fetch/')))) throw storageFailure()
     const revision = this.revisions[platform]
     const loaded = await this.read(platform)
     if (revision !== this.revisions[platform]) throw storageFailure()
-    return douyuHeader(loaded?.cookies ?? [], target)
+    return scopedHeader(loaded?.cookies ?? [], target)
   }
 
   async withTemporaryCookies<T>(platform: 'youtube', callback: (file?: string) => Promise<T>): Promise<T> {

@@ -6,6 +6,8 @@ import { StreamFailureError, classifyNetworkFailure, httpFailure, streamFailureF
 import appPackage from '../package.json'
 import { createDouyuRoomResolver, type ResolveDouyuRoom } from './platforms/douyuRoom'
 import { resolveHuyaDanmakuRoom, type HuyaDanmakuRoom } from './platforms/huyaDanmaku'
+import { resolveDouyinDanmakuRoom } from './platforms/douyinDanmaku'
+import { createNetworkSocket } from './danmaku/networkSocket'
 import type { ApiResult } from '../src/app/apiClient'
 import { mediaRequestPolicy, type ProxyConfig } from './config'
 import { mediaChild, mediaEntry, type MediaAccess } from './mediaAccess'
@@ -118,7 +120,7 @@ function validId(id: unknown): id is string {
 }
 
 function isPlatform(value: unknown): value is PlatformKind {
-  return value === 'youtube' || value === 'direct' || value === 'twitch' || value === 'douyu' || value === 'bilibili' || value === 'huya'
+  return value === 'youtube' || value === 'direct' || value === 'twitch' || value === 'douyu' || value === 'bilibili' || value === 'huya' || value === 'douyin'
 }
 
 function isRole(value: unknown): value is SourceRole { return value === 'official' || value === 'commentary' }
@@ -166,7 +168,12 @@ function resolvedFailure(failure: StreamFailure): ResolveResult {
 /** The Electron IPC boundary checks the sender before calling any service method. */
 export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
   const resolveHuyaRoom = deps.resolveHuyaRoom ?? (input => resolveHuyaDanmakuRoom(input, createResolverDeps(deps.proxy, deps.registerMedia, deps.fetchImpl).fetchText))
-  const relay = deps.relay ?? new DanmakuRelay({ huya: { resolveRoom: resolveHuyaRoom } })
+  const relay = deps.relay ?? new DanmakuRelay({ huya: { resolveRoom: resolveHuyaRoom },
+    douyin: {
+      resolveRoom: webRoom => resolveDouyinDanmakuRoom(webRoom, createResolverDeps(deps.proxy, deps.registerMedia, deps.fetchImpl)),
+      createSocket: (url, headers) => createNetworkSocket(url, 'douyin', { headers }),
+    },
+  })
   const presets = new PresetStore(deps.dataDir)
   let disposed = false
   const resolveRoom = deps.resolveDouyuRoom ?? createDouyuRoomResolver(deps.proxy, deps.fetchImpl).resolve
@@ -451,7 +458,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
           }
           case 'login':
           case 'logout': {
-            if (!fields(args, ['platform']) || (args.platform !== 'youtube' && args.platform !== 'douyu')) {
+            if (!fields(args, ['platform']) || (args.platform !== 'youtube' && args.platform !== 'douyu' && args.platform !== 'douyin')) {
               return fail('invalid-arguments', '不支持的登录平台')
             }
             if (!deps.acquisition) return fail('not-available', '账号服务不可用')
@@ -531,7 +538,8 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             'login-busy': '登录操作正在进行, 请先完成当前窗口',
             'login-cancelled': '登录操作已取消',
             'login-incomplete': '登录未完成, 未读取到平台认证 Cookie, 已保留原有登录数据.',
-            'login-failed': 'Chrome 登录失败, 请关闭专用窗口后重试',
+            'login-failed': record(args) && args.platform === 'douyin'
+              ? '抖音内嵌登录未完成, 请在应用内重试.' : 'Chrome 登录失败, 请关闭专用窗口后重试',
             'cookie-storage-failed': '登录信息保存失败, 请重试',
           }
           return fail(String(error.code), messages[String(error.code)] ?? '账号操作失败')
@@ -554,10 +562,10 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
 /** Platform requests keep the existing per-hop SSRF policy and fixed platform headers. */
 export function createResolverDeps(proxy: ProxyConfig, registerMedia: (url: string) => string, fetchImpl?: typeof fetch, network?: NetworkContext) {
   let playlistAccess: MediaAccess | undefined
-  const request = async (url: string, init?: RequestInit, binary = false) => {
+  const request = async (url: string, init?: RequestInit, mode: 'text' | 'binary' | 'page' = 'text') => {
     try {
       const signal = AbortSignal.timeout(proxy.requestTimeoutMs)
-      const { response } = await safeFetch(url, { ...proxy, enabled: true }, {
+      const { response, finalUrl } = await safeFetch(url, { ...proxy, enabled: true }, {
         method: init?.method ?? 'GET',
         headers: { accept: 'application/json, text/plain, */*', ...(init?.headers as Record<string, string> | undefined) },
         body: typeof init?.body === 'string' ? init.body : init?.body instanceof Uint8Array ? new Uint8Array(init.body) : undefined,
@@ -568,7 +576,9 @@ export function createResolverDeps(proxy: ProxyConfig, registerMedia: (url: stri
         void response.body?.cancel().catch(() => {})
         throw new StreamFailureError(httpFailure(response.status))
       }
-      return binary ? await readPlatformBytes(response, signal) : await readPlatformText(response, signal)
+      if (mode === 'binary') return await readPlatformBytes(response, signal)
+      const text = await readPlatformText(response, signal)
+      return mode === 'page' ? { text, finalUrl: finalUrl.href, setCookie: response.headers.getSetCookie() } : text
     } catch (error) {
       throw new StreamFailureError(classifyNetworkFailure(error))
     }
@@ -579,7 +589,8 @@ export function createResolverDeps(proxy: ProxyConfig, registerMedia: (url: stri
       try { return JSON.parse(text) as unknown } catch { throw new Error('平台返回的数据格式无效') }
     },
     fetchText: async (url: string, init?: RequestInit) => await request(url, init) as string,
-    fetchBytes: async (url: string, init?: RequestInit) => await request(url, init, true) as Uint8Array,
+    fetchBytes: async (url: string, init?: RequestInit) => await request(url, init, 'binary') as Uint8Array,
+    fetchPage: async (url: string, init?: RequestInit) => await request(url, init, 'page') as import('./platforms/types').PlatformPage,
     fetchPlaylist: async (url: string) => {
       const signal = AbortSignal.timeout(proxy.requestTimeoutMs)
       playlistAccess = mediaEntry(url)

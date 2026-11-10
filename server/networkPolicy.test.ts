@@ -50,7 +50,7 @@ describe('system proxy route policy', () => {
     ])
   })
 
-  it.each(['douyu', 'bilibili', 'huya'] as const)('keeps %s API, media CDN and sockets direct unless configured to follow the system', async platform => {
+  it.each(['douyu', 'bilibili', 'huya', 'douyin'] as const)('keeps %s API, media CDN and sockets direct unless configured to follow the system', async platform => {
     let mode: DomesticRouting = 'direct'
     const resolve = vi.fn(async () => 'PROXY 127.0.0.1:3128')
     const policy = new NetworkPolicy(resolve, () => mode)
@@ -76,7 +76,9 @@ describe('system proxy route policy', () => {
     const resolve = vi.fn(async () => 'PROXY 127.0.0.1:3128')
     const context = new NetworkPolicy(resolve, () => 'direct').context()
     for (const url of ['https://www.douyu.com/', 'https://cdn.douyucdn2.cn/live', 'https://api.live.bilibili.com/',
-      'https://cdn.bilivideo.com/live', 'https://www.huya.com/', 'https://cdn.msstatic.com/live']) {
+      'https://cdn.bilivideo.com/live', 'https://www.huya.com/', 'https://cdn.msstatic.com/live',
+      'https://live.douyin.com/100', 'https://v.douyin.com/fixture/', 'https://webcast.amemv.com/webcast/reflow/100',
+      'https://pull-hls.douyincdn.com/live/fixture.m3u8']) {
       expect(await context.route(url)).toEqual({ kind: 'direct' })
     }
     expect(await context.route('https://evil-douyu.com/')).toMatchObject({ kind: 'http' })

@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="Fy1Sync: 画面与解说, 同一刻. 将赛事画面, 主播解说和弹幕对齐的 Windows 桌面播放器.">
+  <img src="./assets/readme/hero.svg" width="100%" alt="Fy1Sync: 画面与解说, 同一刻. 将赛事画面, 主播解说和弹幕对齐的跨平台桌面播放器.">
 </p>
 
 # Fy1Sync
 
 **看官方赛事画面, 听喜欢的主播解说, 让弹幕跟上正在发生的这一刻.**
 
-Fy1Sync 是一款 Windows 桌面播放器. 将两路直播或录像放进同一个窗口, 分别选择画面和声音, 再通过延后较快的一路把它们对齐. 主要观赛场景是 CS2, 也可以手动组合其他内容的片源.
+Fy1Sync 是一款支持 Windows, macOS 和 Linux 的桌面播放器. 将两路直播或录像放进同一个窗口, 分别选择画面和声音, 再通过延后较快的一路把它们对齐. 主要观赛场景是 CS2, 也可以手动组合其他内容的片源.
 
 [下载安装](#下载安装) · [开始观看](#开始观看) · [接入范围](#接入范围) · [使用边界](#使用边界) · [从源码运行](#从源码运行)
 
@@ -32,16 +32,18 @@ Fy1Sync 是一款 Windows 桌面播放器. 将两路直播或录像放进同一�
 
 ## 下载安装
 
-当前版本为 `v0.3.2`, 提供 **Windows x64** 安装包和免安装压缩包.
+当前发布版本为 `v0.4.0`, 包含抖音直播接入, 基础识别优化以及 Windows, macOS 和 Linux 桌面包. 各平台使用 GitHub CI 原生构建并检查. [版本说明与 SHA256 校验文件](https://github.com/Fy1ng/Fy1Sync/releases/tag/v0.4.0).
 
 | 版本 | 使用方式 |
 | --- | --- |
-| [下载安装包](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.3.2/Fy1Sync-0.3.2-win-x64-nsis.exe) | 运行安装向导, 按提示选择安装位置 |
-| [下载免安装版](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.3.2/Fy1Sync-0.3.2-win-x64-portable.zip) | 解压整个目录后运行 `Fy1Sync.exe` |
+| [Windows x64 安装包](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.0/Fy1Sync-0.4.0-win-x64-nsis.exe) | NSIS 安装向导, 支持覆盖升级 |
+| [Windows x64 免安装版](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.0/Fy1Sync-0.4.0-win-x64-portable.zip) | 解压整个目录后运行 `Fy1Sync.exe` |
+| [macOS Intel x64](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.0/Fy1Sync-0.4.0-mac-x64.dmg) / [Apple Silicon arm64](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.0/Fy1Sync-0.4.0-mac-arm64.dmg) | DMG 安装包, macOS 13+; 发布页同时提供 ZIP |
+| [Linux x64](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.0/Fy1Sync-0.4.0-linux-x64.deb) / [Linux arm64](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.0/Fy1Sync-0.4.0-linux-arm64.deb) | DEB 安装包; 发布页同时提供 AppImage 和 tar.gz |
 
 [查看全部 Releases](https://github.com/Fy1ng/Fy1Sync/releases) / [GitCode 下载镜像](https://gitcode.com/Fy1ng/Fy1Sync/releases). 请区分应用版本与单独发布的 FFmpeg 构建资源.
 
-发布包已带上取流和转码所需的工具资源, 普通使用无需安装 Node.js 或 Rust. 需要登录平台账号时, 请安装 [Google Chrome](https://www.google.com/chrome/), 在应用打开的独立窗口中自行完成登录.
+发布包已带上取流和转码所需的工具资源, 普通使用无需安装 Node.js 或 Rust. YouTube 账号使用 [Google Chrome](https://www.google.com/chrome/) 独立窗口登录, 其他已接入的平台使用应用内登录卡片. 抖音最终真实账号登录状态尚未完成验收, 遇到平台验证时需要在官方验证界面继续操作.
 
 ## 开始观看
 
@@ -103,9 +105,16 @@ Fy1Sync 是一款 Windows 桌面播放器. 将两路直播或录像放进同一�
 | 斗鱼 | 直播间链接或房间号 | 接收弹幕, 提供账号与房间工具; 写操作需另行开启 |
 | 虎牙 | 直播间链接或房间号 | 只读弹幕, 不支持斗鱼式的账号操作与统计 |
 | 哔哩哔哩直播 | 直播间链接或房间号 | 未接入弹幕 |
+| 抖音直播 | 公开直播间链接, 直播分享链接或选择抖音后输入网页房间号; 支持可用画质选择 | 接收只读文字弹幕, 可在设置中登录; 不支持发送, 赠礼等账号操作 |
 | 媒体直链 / 本地文件 | HLS `.m3u8` 与可解码的视频文件或直链 | 可与另一侧片源组合, 不自带平台账号功能 |
 
 直接粘贴 `.mpd` 的 DASH 链接目前不支持. YouTube 自适应取流由内部流程处理, 不等于通用 DASH 直链支持. 文件扩展名也不保证编码可播放, 仍取决于内置 FFmpeg 和 Chromium 的解码能力.
+
+抖音支持 `live.douyin.com/<网页房间号>` 和 `v.douyin.com` 直播分享. 分享链接中的长场次 ID 与网页房间号不同, 会在确认主播身份后查找当前场次. 取流优先读取公开页面数据, 必要时使用本次新生成的匿名会话读取房间接口, 不执行网页脚本. 直播流进入现有本地缓冲, 支持主画面, 解说, 同屏观看, 画质切换和重新解析; 旧场次即使保留流地址也不会被当作正在直播.
+
+抖音登录位于设置 - 通用 - 抖音, 在应用内统一卡片中扫码或使用短信/密码, 不需要另外安装 Chrome. 验证码与其他安全验证在同一卡片内使用官方组件完成. 应用确认有效登录凭据和官方账号身份后自动关闭卡片, 保存本机登录状态. 卡片输入与官方页面分别运行在隔离视图中, 播放器只接收登录阶段, 不读取密码或验证码. 登录凭据仅用于固定的抖音房间页面和接口, 不发送给媒体 CDN 或弹幕 WebSocket. 匿名状态也会尝试获取直播和弹幕, 需要验证或访问授权的房间仍可能无法载入. 登录或退出后刷新弹幕会话, 视频需要重新载入以使用新的登录状态.
+
+抖音解说源会自动接收当前房间的文字弹幕, 按解说进度延后显示, 支持过滤, 去重, 复制和本地屏蔽; 弹幕连接失败不影响直播播放. 房间面板可手动重连, 增强画中画也可显示同房间弹幕. 暂不接入礼物通知, 不提供抖音弹幕发送, 账号任务或斗鱼式历史统计.
 
 媒体直链支持自定义域名, HTTP/HTTPS 非标准端口和本机/局域网服务. 播放列表可自动读取同源资源及其他公网 CDN; 如其分片或跳转指向另一个本机/局域网服务, 请直接添加该目标的媒体地址. 对本地来源的授权仅适用于选择的 origin, 不扩展到其他主机或端口.
 
@@ -117,7 +126,7 @@ Fy1Sync 是一款 Windows 桌面播放器. 将两路直播或录像放进同一�
 - **对齐通过等待实现.** 应用只能延后较快的一路, 无法让较慢的一路提前到尚未接收到的未来画面. 缓冲不够时需先等待; 多路高画质播放会增加带宽, 内存和解码负担.
 - **平台状态会影响取流.** 登录状态, 地区限制, 平台改版和接口风控均可能导致某个来源暂时不可用. YouTube 提示验证身份或内容需要授权时, 请先登录有观看权限的账号. 应用不提供网络线路.
 - **账号写操作默认关闭.** 斗鱼设置中的实验性开关控制发送, 赠礼, 续牌及任务等入口. 开启后会使用真实账号执行操作, 可能消耗礼物或余额, 也可能触发平台限制. 关闭开关会隐藏入口, **不会自动停止已经运行的任务**, 应先手动暂停.
-- **平台支持以 Windows x64 为准.** 当前发布与工具准备流程面向 Windows x64, 不将其他系统列为已经验证的平台. 内置精简 FFmpeg 也不覆盖全部媒体格式.
+- **桌面发布覆盖 Windows x64, macOS x64/arm64 和 Linux x64/arm64.** Windows 提供 NSIS/ZIP, macOS 提供 DMG/ZIP, Linux 提供 DEB/AppImage/tar.gz. 内置精简 FFmpeg 不覆盖全部媒体格式. macOS 最低版本为 13, Linux 构建基线为 Ubuntu 22.04 / glibc 2.35.
 
 登录信息保存在本机. 不要分享含账号资料的应用数据目录. HTTPS 取流会验证服务器证书; 使用会解密 HTTPS 的代理时, 需保证其根证书已正确安装到 Windows 证书库.
 
@@ -154,7 +163,50 @@ $env:STREAM_SYNC_POT_SERVER_HOME = (Resolve-Path ".packaging/tools/provider/serv
 npm run dev
 ```
 
+macOS 需要 macOS 13 或更新版本和 Xcode Command Line Tools, 可先运行 `xcode-select --install` 安装. 最低系统版本来自项目固定的 [Electron 44 平台要求](https://github.com/electron/electron/blob/v44.9.3/docs/breaking-changes.md#removed-macos-12-support). 使用与目标 CPU 架构一致的 Node.js, 在 Mac 上重新安装依赖; Apple Silicon 推荐使用原生 arm64 终端. 以下命令使用系统终端的 zsh/bash:
+
+```sh
+git clone https://github.com/Fy1ng/Fy1Sync.git
+cd Fy1Sync
+npm ci
+rustup target add wasm32-unknown-unknown
+
+# Build the locked native media tools and prepare the YouTube token provider.
+npm run tools:prepare
+export STREAM_SYNC_FFMPEG="$PWD/.packaging/tools/ffmpeg/ffmpeg"
+export STREAM_SYNC_FFPROBE="$PWD/.packaging/tools/ffmpeg/ffprobe"
+export STREAM_SYNC_YTDLP="$PWD/.packaging/tools/yt-dlp"
+export STREAM_SYNC_POT_PLUGIN_DIR="$PWD/.packaging/tools/provider/plugin"
+export STREAM_SYNC_POT_SERVER_HOME="$PWD/.packaging/tools/provider/server"
+
+npm run dev
+```
+
 首次运行会在项目内准备固定版本的 `wasm-bindgen-cli` 并编译 WASM. 上述工具准备过程需要下载构建输入, 可使用后续保留的本地缓存.
+
+macOS 使用左上角原生窗口按钮和系统菜单. 关闭最后一个窗口会结束当前播放并释放后台资源, 应用保留在 Dock, 点击 Dock 图标或菜单中的"显示主窗口"可重新打开; `Cmd+Q` 完全退出. 编辑器支持 `Cmd+Z`, `Cmd+V` 和 `Cmd+Left/Right`, 文本输入保留系统的编辑快捷键. YouTube 登录支持 `/Applications` 或用户 `~/Applications` 中的 Google Chrome.
+
+在对应 Mac 上运行 `npm run package:mac`, 产物位于 `.release/`, 名称为 `Fy1Sync-<version>-mac-<arch>.dmg` 和 `.zip`. `--arm64` / `--x64` 参数只接受当前 Node 的架构, 两个架构分别在对应环境构建. macOS 完整客户端升级使用新的应用包; 应用内手动更新 yt-dlp 会选择官方 macOS Universal 版本. FFmpeg 构建输入, 许可材料, 签名/公证配置和实机验证边界见 [macOS 构建说明](packaging/ffmpeg/README.md#macos-本机构建和打包).
+
+
+首次运行会在项目内准备固定版本的 `wasm-bindgen-cli` 并编译 WASM. 上述工具准备过程需要下载构建输入, 可使用后续保留的本地缓存.
+
+
+Linux 需要 Ubuntu 22.04 或更新的兼容桌面系统, 以及与目标 CPU 一致的 Node.js. 构建工具可用以下命令安装:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y build-essential pkg-config libgnutls28-dev patchelf libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libatspi2.0-0 libuuid1 libsecret-1-0 libgbm1 libasound2
+npm ci
+rustup target add wasm32-unknown-unknown
+npm run package:linux
+```
+
+产物位于 `.release/`, 文件名为 `Fy1Sync-<version>-linux-<arch>.deb`, `.AppImage`, `.tar.gz`. 工具设置与 macOS 相同, 都使用无 `.exe` 后缀的媒体工具. DEB 声明系统依赖; AppImage/tar.gz 需要本机提供 GTK 3, NSS, ALSA, GBM, GnuTLS 30 等桌面运行库. AppImage 可安装 FUSE 2 或使用 `--appimage-extract-and-run`. 解压运行包仍使用系统的用户数据目录.
+
+发布流程见 [.github/workflows/release.yml](.github/workflows/release.yml). 推送与 `package.json` 版本相同的 `v<version>` 标签后, CI 先在单个任务中准备队标以保证请求间隔, 再分别在 Windows x64, Mac Intel, Mac Apple Silicon, Linux x64 和 Linux arm64 原生 runner 上构建. 完整的 12 个包均通过校验和打包应用启动检查后才发布 GitHub Release 与 `SHA256SUMS.txt`. 手动运行工作流只构建和保留 Actions 产物.
+
+macOS 当前未配置 Developer ID 签名或公证, 首次打开可能需要在系统安全设置中确认来源. 原生 CI 检查覆盖构建主机上的启动, 媒体工具和归档内容, 不代表所有系统版本和硬件均完成实机验收.
 
 | 命令 | 用途 |
 | --- | --- |
@@ -163,6 +215,8 @@ npm run dev
 | `npm test` | 运行单元测试 |
 | `cargo test --workspace` | 运行 Rust 测试 |
 | `npm run test:e2e` | 运行 Electron 端到端测试 |
+| `npm run package:linux` | 在原生 Linux x64/arm64 主机上构建并检查 DEB/AppImage/tar.gz |
+| `npm run package:smoke` | 使用隔离目录启动并检查当前平台的打包应用 |
 | `npm run package:win` | 准备工具并构建 Windows x64 安装包与免安装包 |
 | `npm run package:check` | 检查本地打包结果 |
 

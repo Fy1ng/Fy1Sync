@@ -1,0 +1,163 @@
+name: Desktop release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  assets:
+    name: Prepare shared team logos
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24.15.0'
+          cache: npm
+      - run: npm ci
+      # A single job owns all Liquipedia requests; every native build reuses these files.
+      - run: node scripts/prepare-team-logos.mjs
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: team-logos
+          path: .packaging/team-logos/
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: assets
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            target: win-x64
+            command: package:win
+          - runner: macos-15-intel
+            target: mac-x64
+            command: package:mac
+          - runner: macos-15
+            target: mac-arm64
+            command: package:mac
+          - runner: ubuntu-22.04
+            target: linux-x64
+            command: package:linux
+          - runner: ubuntu-22.04-arm
+            target: linux-arm64
+            command: package:linux
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      STREAM_SYNC_PACKAGE_EVIDENCE: .runtime-cache/release-ci
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24.15.0'
+          cache: npm
+      - name: Check release version
+        run: node -e 'const p = require("./package.json"); if (process.env.GITHUB_REF_TYPE === "tag" && process.env.GITHUB_REF_NAME !== "v" + p.version) throw new Error("Tag and package version differ")'
+      - name: Install Linux native build and desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libgnutls28-dev patchelf libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libatspi2.0-0 libuuid1 libsecret-1-0 libgbm1 libasound2 xvfb xauth
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            .tools/wasm-bindgen
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: wasm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'scripts/build-wasm.mjs') }}
+      - run: npm ci
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: team-logos
+          path: .packaging/team-logos/
+      - run: npm run test:packaging
+      - name: Build native installers and portable packages
+        run: npm run ${{ matrix.command }}
+      - name: Validate Windows package
+        if: runner.os == 'Windows'
+        run: npm run package:check
+      - name: Run unit and Rust tests
+        if: runner.os == 'Windows'
+        run: |
+          npm test -- --maxWorkers=4
+          cargo test --workspace --locked
+      - name: Start packaged desktop application
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run package:smoke
+          else
+            npm run package:smoke
+          fi
+      - name: Upload validated packages
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: packages-${{ matrix.target }}
+          path: |
+            .release/Fy1Sync-*.exe
+            .release/Fy1Sync-*.zip
+            .release/Fy1Sync-*.dmg
+            .release/Fy1Sync-*.deb
+            .release/Fy1Sync-*.AppImage
+            .release/Fy1Sync-*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - name: Upload verification reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: verification-${{ matrix.target }}
+          path: .runtime-cache/release-ci/*.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  release:
+    name: Publish complete desktop release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24.15.0'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: packages-*
+          merge-multiple: true
+          path: .release-final/
+      - run: node scripts/release-artifacts.mjs .release-final
+      - name: Publish versioned release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          gh release create "$GITHUB_REF_NAME" .release-final/* --verify-tag --draft --title "Fy1Sync $version" --notes-file "packaging/releases/$version.md"
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest

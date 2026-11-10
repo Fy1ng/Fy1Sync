@@ -263,7 +263,9 @@ describe('signed online update settings', () => {
     current = { ...available, source: 'gitcode', frontend: { ...available.frontend, phase: 'ready' } }
     handlers.set('checkOnlineUpdate', () => { throw new Error('Offline fixture transport error') })
     render(<AppUpdateSettings />)
-    fireEvent.click(await screen.findByRole('button', { name: '检查更新' }))
+    const check = await screen.findByRole('button', { name: '检查更新' })
+    await waitFor(() => expect(check).toBeEnabled())
+    fireEvent.click(check)
     await screen.findByRole('alert')
     await waitFor(() => expect(calls('getOnlineUpdateState')).toHaveLength(2))
     expect(screen.getByRole('combobox', { name: '更新来源' })).toHaveValue('gitcode')

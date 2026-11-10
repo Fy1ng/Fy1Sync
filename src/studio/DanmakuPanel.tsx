@@ -16,11 +16,12 @@ import type { DanmakuPreferences } from '../core/danmakuProcessing'
 import type { MessageAffixes } from '../core/messageComposition'
 import { useComposer } from './composer'
 import { Icon, Range, Segmented, Switch } from './kit'
+import { isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
 
 export function DanmakuPanel({ onClose }: { onClose: () => void }): React.ReactNode {
   const session = useSession()
   const { settings, danmakuPreferences: prefs, danmaku: connection } = useSessionSnapshot()
-  const readOnly = connection.room?.startsWith('huya:') === true
+  const readOnly = isReadOnlyDanmakuRoom(connection.room)
   const danmaku = settings.danmaku
   const writes = settings.douyuWrites
   const composer = useComposer()

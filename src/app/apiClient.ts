@@ -11,6 +11,7 @@ import type { DouyuAccountsSnapshot, DouyuTaskPolicy, DouyuTasksSnapshot } from 
 import type { DomesticRouting } from '../../server/networkPolicy'
 import type { FeatureMethod, FeatureMethods, FeatureEvent } from '../../electron/featureContracts'
 import type { StylePackSourceId } from '../../electron/stylePackSyncContracts'
+import type { EmbeddedLoginState, EmbeddedLoginViewport } from '../../electron/embeddedLoginContracts'
 
 export type ApiResult<T> =
   | { ok: true; value: T }
@@ -116,9 +117,18 @@ export class ApiClient {
   resolveDouyuRoom(input: string) { return this.request('resolveDouyuRoom', { input }) }
   switchQuality(role: SourceRole, quality: string) { return this.request('switchQuality', { role, quality }) }
   stopBuffer(role: SourceRole) { return this.request('stopBuffer', { role }) }
+  reconnectDanmaku(room: string) { return this.request('reconnectDanmaku', { room }) }
   login(platform: LoginPlatform) { return this.request('login', { platform }) }
   loginStatus() { return this.request('loginStatus', undefined) }
   logout(platform: LoginPlatform) { return this.request('logout', { platform }) }
+  getEmbeddedLogin() { return this.request('getEmbeddedLogin', undefined) }
+  setEmbeddedLoginViewport(viewport: EmbeddedLoginViewport) { return this.request('setEmbeddedLoginViewport', viewport) }
+  cancelEmbeddedLogin(id: string) { return this.request('cancelEmbeddedLogin', { id }) }
+  retryEmbeddedLogin(id: string) { return this.request('retryEmbeddedLogin', { id }) }
+  backEmbeddedLogin(id: string) { return this.request('backEmbeddedLogin', { id }) }
+  subscribeEmbeddedLogin(listener: (state: EmbeddedLoginState | null) => void): () => void {
+    try { return this.bridge().subscribeEmbeddedLogin?.(listener) ?? (() => {}) } catch { return () => {} }
+  }
   listDouyuAccounts() { return this.request('listDouyuAccounts', undefined) }
   addDouyuAccount(label: string) { return this.request('addDouyuAccount', { label }) }
   renameDouyuAccount(id: string, label: string) { return this.request('renameDouyuAccount', { id, label }) }

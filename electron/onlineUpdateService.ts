@@ -161,7 +161,7 @@ export class OnlineUpdateService {
     const entry = this.archive?.latest.catalog.application ?? null
     if (!entry) return item('unavailable', '暂未发布可用的完整应用更新.')
     if (compareAppVersions(entry.version, this.options.currentAppVersion) <= 0) return item('current', '当前完整应用已是最新可用版本.', entry)
-    if (!this.options.installSupported) return item('incompatible', '此运行方式不支持应用内安装. 请使用 Windows x64 安装版.', entry)
+    if (!this.options.installSupported) return item('incompatible', '此运行方式不支持应用内安装. 请从发布页下载适用于当前系统的完整应用包.', entry)
     if (this.readyInstaller && same(this.readyInstaller.catalog.application, entry)) return item('ready', '安装包已下载并通过校验. 只有明确确认后才会退出应用并打开安装向导.', entry)
     if (!entry.downloads[this.selected]) return item('incompatible', '所选来源尚未提供此安装包. 可手动选择其他来源.', entry)
     return item('available', '可下载完整应用更新. 下载不会退出应用或自动安装.', entry)

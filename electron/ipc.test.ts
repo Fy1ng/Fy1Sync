@@ -31,14 +31,15 @@ function fixture(options: IpcHandlerOptions = {}) {
   const setRoom = vi.fn()
   const resolveRoom = vi.fn(async (room: string) => ({ ok: true, identity: { room, inputRoom: room } }))
   const resolveHuyaRoom = vi.fn(async (room: string) => ({ room: room === 'kpl' ? '660002' : room, presenterUid: 42n, topSid: 43n, subSid: 44n }))
-  const service = { resolveDouyuRoom: resolveRoom, resolveHuyaRoom, invoke: vi.fn(async () => ({ ok: true, value: {} })), relay: { subscribe }, dispose: vi.fn(),
+  const reconnect = vi.fn(() => true)
+  const service = { resolveDouyuRoom: resolveRoom, resolveHuyaRoom, invoke: vi.fn(async () => ({ ok: true, value: {} })), relay: { subscribe, reconnectRoom: reconnect }, dispose: vi.fn(),
     subscribeBuffer: (listener: (state: BufferState) => void) => { bufferListener = listener; return bufferRelease },
     subscribeDouyuTasks: (listener: (state: DouyuTasksSnapshot) => void) => { taskListener = listener; return taskRelease },
     subscribeFeatures: (listener: (event: FeatureEvent) => void) => { featureListener = listener; return featureRelease },
     setDouyuRoom: setRoom,
   } as unknown as DesktopService
   const installed = installIpcHandlers(ipc, contents, service, options)
-  return { resolveRoom, resolveHuyaRoom, contents, event, handlers, release, subscribe, service, installed,
+  return { resolveRoom, resolveHuyaRoom, contents, event, handlers, release, subscribe, reconnect, service, installed,
     bufferRelease, emitBuffer: (state: BufferState) => bufferListener?.(state),
     taskRelease, setRoom, emitTasks: (state: DouyuTasksSnapshot) => taskListener?.(state),
     featureRelease, emitFeatures: (event: FeatureEvent) => featureListener?.(event),
@@ -99,6 +100,30 @@ describe('app origin and document boundary', async () => {
 })
 
 describe('Huya read-only subscription boundary', () => {
+  it('keeps a Douyin web room separate from same-number Douyu tasks and subscriptions', async () => {
+    const f = fixture()
+    await f.call('subscribe', '100', '1')
+    expect(await f.call('subscribe', 'douyin:100', '2')).toEqual({ ok: true, value: { ok: true, room: 'douyin:100' } })
+    expect(f.setRoom.mock.calls).toEqual([['100'], [null]])
+    expect(f.resolveRoom).toHaveBeenCalledTimes(1)
+    expect(f.resolveHuyaRoom).not.toHaveBeenCalled()
+    expect(f.subscribe).toHaveBeenLastCalledWith('douyin:100', expect.any(Object))
+    expect(f.installed.emitDanmaku('douyin:100', 'danmaku', { platform: 'douyin' })).toBe(1)
+    expect(await f.call('invoke', 'reconnectDanmaku', { room: 'douyin:100' })).toEqual({ ok: true, value: { room: 'douyin:100' } })
+    expect(f.reconnect).toHaveBeenCalledExactlyOnceWith('douyin:100')
+    expect(await f.call('invoke', 'reconnectDanmaku', { room: 'douyin:200' })).toMatchObject({ code: 'room-not-subscribed' })
+    expect(await f.call('invoke', 'reconnectDanmaku', { room: '100' })).toMatchObject({ code: 'invalid-arguments' })
+    expect(await f.call('invoke', 'activateDouyuRoom', { room: 'douyin:100' })).toMatchObject({ code: 'invalid-arguments' })
+    f.installed.dispose()
+  })
+
+  it.each(['douyin:', 'douyin:0', 'douyin:001', 'douyin:100/path', 'douyin:' + '1'.repeat(21)])
+    ('rejects malformed Douyin subscription %s', async room => {
+      const f = fixture()
+      expect(await f.call('subscribe', room, '1')).toMatchObject({ code: 'bad-room' })
+      expect(f.subscribe).not.toHaveBeenCalled()
+      f.installed.dispose()
+    })
   it('canonicalizes aliases and never assigns a Huya room to Douyu tasks or activation', async () => {
     const f = fixture()
     await f.call('subscribe', '100', '1')

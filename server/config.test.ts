@@ -100,13 +100,15 @@ describe('hostAllowed', () => {
       'api.live.bilibili.com',
       'cn-hbyc-cmcc-bcache-10.bilivideo.com',
       'huya.com', 'www.huya.com', 'wup.huya.com', 'tx.flv.huya.com', 'hs.flv.huya.com',
+      'live.douyin.com', 'v.douyin.com', 'webcast.amemv.com',
     ]) {
       expect(hostAllowed(host, DEFAULT_PROXY_HOSTS)).toBe(true)
     }
   })
 
   it('does not allow an unrelated host by default', () => {
-    for (const host of ['evil.example.com', 'metadata.google.internal', '169.254.169.254', 'huya.com.evil.invalid', 'fakehuya.com']) {
+    for (const host of ['evil.example.com', 'metadata.google.internal', '169.254.169.254', 'huya.com.evil.invalid', 'fakehuya.com',
+      'live.douyin.com.evil.invalid', 'evildouyin.com', 'unrelated.amemv.com']) {
       expect(hostAllowed(host, DEFAULT_PROXY_HOSTS)).toBe(false)
     }
   })

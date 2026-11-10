@@ -14,10 +14,21 @@ const registryRunner: RegistryRunner = (file, args, options) => new Promise((res
 
 /** Never returns or logs the PAC URL, proxy address, registry output or process errors. */
 export async function systemProxyMode(options: SystemProxyOptions = {}): Promise<'PAC' | undefined> {
-  if ((options.platform ?? process.platform) !== 'win32') return undefined
+  const platform = options.platform ?? process.platform
   const run = options.run ?? registryRunner
-  const executable = win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'reg.exe')
   const processOptions: RegistryOptions = { windowsHide: true, timeout: 3_000, maxBuffer: MAX_OUTPUT_BYTES, encoding: 'utf8' }
+  if (platform === 'darwin') {
+    try {
+      const { stdout } = await run('/usr/sbin/scutil', ['--proxy'], processOptions)
+      // Only the effective top-level dictionary counts, not stale scoped service entries.
+      const automatic = /^ {2}ProxyAutoDiscoveryEnable\s*:\s*1\s*$/m.test(stdout)
+      const enabled = /^ {2}ProxyAutoConfigEnable\s*:\s*1\s*$/m.test(stdout)
+      const hasScript = /^ {2}ProxyAutoConfigURLString\s*:\s*\S[^\r\n]*$/m.test(stdout)
+      return automatic || enabled && hasScript ? 'PAC' : undefined
+    } catch { return undefined }
+  }
+  if (platform !== 'win32') return undefined
+  const executable = win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'reg.exe')
   const [script, connection] = await Promise.allSettled([
     run(executable, ['query', SETTINGS, '/v', 'AutoConfigURL'], processOptions),
     run(executable, ['query', `${SETTINGS}\\Connections`, '/v', 'DefaultConnectionSettings'], processOptions),

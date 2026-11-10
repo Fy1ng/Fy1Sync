@@ -20,6 +20,25 @@ beforeEach(() => {
 })
 
 describe('window controls preload boundary', () => {
+  it('routes embedded login controls separately and never exposes the credential card bridge', async () => {
+    const bridge = await loadBridge()
+    await bridge.invoke('getEmbeddedLogin', undefined)
+    await bridge.invoke('cancelEmbeddedLogin', { id: 'fixture-attempt' })
+    expect(electron.ipcRenderer.invoke.mock.calls).toEqual([
+      ['stream-syncer:embedded-login-invoke', 'getEmbeddedLogin', undefined],
+      ['stream-syncer:embedded-login-invoke', 'cancelEmbeddedLogin', { id: 'fixture-attempt' }],
+    ])
+    expect(bridge).not.toHaveProperty('loginCard')
+    await expect(bridge.invoke('loginCardAction' as DesktopMethod, undefined)).resolves.toMatchObject({ code: 'unknown-method' })
+    const listener = vi.fn()
+    const release = bridge.subscribeEmbeddedLogin!(listener)
+    const receive = electron.ipcRenderer.on.mock.calls[0]![1] as (_event: unknown, state: unknown) => void
+    receive({}, { id: 'fixture-attempt', platform: 'douyin', purpose: 'login', phase: 'ready' })
+    release()
+    receive({}, null)
+    expect(listener).toHaveBeenCalledOnce()
+    expect(electron.ipcRenderer.removeListener).toHaveBeenCalledWith('stream-syncer:embedded-login', receive)
+  })
   it('exposes a frozen bridge and allows both window methods on the existing invoke channel', async () => {
     const bridge = await loadBridge()
     expect(Object.isFrozen(bridge)).toBe(true)

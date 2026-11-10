@@ -1,22 +1,52 @@
 /** Fixed inputs only. Run explicitly at build time; application startup never invokes this. */
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { cp, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, cp, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { assertProviderDependencies } from './provider-dependencies.mjs'
 import { writeFfmpegFixtures } from './ffmpeg-fixtures.mjs'
+import { macMinimumSystemVersion, npmCliPath, packagingTarget, validateToolAsset } from './packaging-platform.mjs'
+import { buildMacFfmpeg, fileIdentity, loadMacBuild, machoArchitectures, machoHasSignature, macBuildPaths, macRun, verifyMacRuntime } from './build-ffmpeg-mac.mjs'
+import { buildLinuxFfmpeg, elfArchitecture, linuxBuildPaths, loadLinuxBuild, verifyLinuxRuntime } from './build-ffmpeg-linux.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
-const tar = path.join(process.env.SystemRoot, 'System32', 'tar.exe')
-const lock = JSON.parse(await readFile(path.join(root, 'packaging', 'tools-lock.json'), 'utf8'))
+const target = packagingTarget()
+const tar = target.platform === 'win32' ? path.join(process.env.SystemRoot, 'System32', 'tar.exe') : '/usr/bin/tar'
+let lock = JSON.parse(await readFile(path.join(root, 'packaging', 'tools-lock.json'), 'utf8'))
 const staging = path.join(root, '.packaging'), downloads = path.join(staging, 'downloads')
 // Built into tools-next and swapped in only after every check passes.
 const work = path.join(staging, 'work'), output = path.join(staging, 'tools-next'), finalOutput = path.join(staging, 'tools')
 const task = path.join(work, 'tmp')
-if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Tool preparation requires Windows x64')
 if (lock.schema !== 1 || lock.target !== 'win32-x64' || !Array.isArray(lock.assets)) throw new Error('Invalid tool lock')
+let nativeBuild
+if (target.platform === 'darwin') {
+  const nativeLock = JSON.parse(await readFile(path.join(root, 'packaging', 'tools-mac-lock.json'), 'utf8'))
+  const sourceLock = JSON.parse(await readFile(path.join(root, 'packaging', 'ffmpeg', 'build-lock.json'), 'utf8'))
+  if (nativeLock.schema !== 1 || !nativeLock.targets?.includes(target.target) || nativeLock.ytdlpVersion !== lock.ytdlpVersion || nativeLock.minimumSystemVersion !== macMinimumSystemVersion) throw new Error('Invalid macOS tool lock')
+  const nativePaths = macBuildPaths(root, sourceLock.buildId, target.arch)
+  if (!await lstat(nativePaths.output).catch(error => { if (error.code === 'ENOENT') return null; throw error })) await buildMacFfmpeg([])
+  nativeBuild = await loadMacBuild(sourceLock, target.arch)
+  const assets = lock.assets.filter(entry => ['yt-dlp-source.tar.gz', 'provider-source.tar.gz', 'provider-plugin.zip'].includes(entry.name))
+  for (const archive of nativeBuild.manifest.archives) assets.push({ name: archive.name, size: archive.size, sha256: archive.sha256, origin: 'native-local-build' })
+  const buildManifest = await fileIdentity(path.join(nativeBuild.output, 'build-manifest.json'), `build-manifest-mac-${target.arch}.json`)
+  assets.push({ ...buildManifest, origin: 'native-local-build' }, ...nativeLock.assets)
+  lock = { ...lock, target: target.target, minimumSystemVersion: macMinimumSystemVersion, ffmpegRuntimeOrigin: 'native-local-build', assets }
+}
+if (target.platform === 'linux') {
+  const nativeLock = JSON.parse(await readFile(path.join(root, 'packaging', 'tools-linux-lock.json'), 'utf8'))
+  const sourceLock = JSON.parse(await readFile(path.join(root, 'packaging', 'ffmpeg', 'build-lock.json'), 'utf8'))
+  if (nativeLock.schema !== 1 || !nativeLock.targets?.includes(target.target) || nativeLock.ytdlpVersion !== lock.ytdlpVersion) throw new Error('Invalid Linux tool lock')
+  const nativePaths = linuxBuildPaths(root, sourceLock.buildId, target.arch)
+  if (!await lstat(nativePaths.output).catch(error => { if (error.code === 'ENOENT') return null; throw error })) await buildLinuxFfmpeg([])
+  nativeBuild = await loadLinuxBuild(sourceLock, target.arch)
+  const assets = lock.assets.filter(entry => ['yt-dlp-source.tar.gz', 'provider-source.tar.gz', 'provider-plugin.zip'].includes(entry.name))
+  for (const archive of nativeBuild.manifest.archives) assets.push({ name: archive.name, size: archive.size, sha256: archive.sha256, origin: 'native-local-build' })
+  assets.push({ ...await fileIdentity(path.join(nativeBuild.output, 'build-manifest.json'), `build-manifest-linux-${target.arch}.json`), origin: 'native-local-build' },
+    nativeLock.assets.find(entry => entry.name === (target.arch === 'arm64' ? 'yt-dlp_linux_aarch64' : 'yt-dlp_linux')))
+  lock = { ...lock, target: target.target, minimumDistribution: nativeLock.minimumDistribution, ffmpegRuntimeOrigin: 'native-local-build', assets }
+}
 function run(executable, args, cwd = root, env = process.env) {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, { cwd, env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -80,6 +110,7 @@ async function extract(name, destination, expectedRoot) {
   const archive = path.join(downloads, name)
   const names = (await run(tar, ['-tf', archive])).split(/\r?\n/)
   if (names.length > 30_000 || names.some(name => !name.startsWith(expectedRoot + '/') || name.includes('\\') || name.split('/').some(part => part === '..' || part === '.') || /^[A-Za-z]:/.test(name))) throw new Error('Unexpected archive layout')
+  if (/^[lh]/m.test(await run(tar, ['-tvf', archive]))) throw new Error('Links are forbidden in source archives')
   await run(tar, ['-xf', archive, '-C', destination])
   return path.join(destination, expectedRoot)
 }
@@ -209,15 +240,18 @@ await mkdir(downloads, { recursive: true })
 await reset(work)
 await mkdir(task)
 for (const asset of lock.assets) {
-  if (!/^[a-zA-Z0-9.-]+$/.test(asset.name) || !/^[a-f0-9]{64}$/.test(asset.sha256) || !Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > 256 * 1048576) throw new Error('Invalid locked asset')
+  validateToolAsset(asset)
   const destination = path.join(downloads, asset.name)
   if (!await valid(destination, asset)) {
-    const local = path.join(staging, 'ffmpeg-build', 'out', lock.ffmpegBuildId, asset.name)
+    const local = nativeBuild && asset.origin === 'native-local-build'
+      ? path.join(nativeBuild.output, asset.name.startsWith('build-manifest-') ? 'build-manifest.json' : asset.name)
+      : path.join(staging, 'ffmpeg-build', 'out', lock.ffmpegBuildId, asset.name)
     if (await valid(local, asset)) {
       await cp(local, destination)
       if (!await valid(destination, asset)) throw new Error('Copied build cache SHA256/size mismatch: ' + asset.name)
       console.log('Using verified local build output: ' + asset.name)
     } else {
+      if (asset.origin === 'native-local-build') throw new Error('Verified native FFmpeg output is unavailable; no remote alternative is used')
       if (await lstat(local).catch(() => null)) console.warn('Ignoring local build output with mismatched SHA256/size: ' + asset.name)
       try { await download(asset, destination) } catch (error) {
         throw new Error('Unable to fetch locked asset ' + asset.name + '. If the repository is private, build FFmpeg locally first or provide the verified cache in .packaging/downloads/. No alternative build is used.', { cause: error })
@@ -227,18 +261,30 @@ for (const asset of lock.assets) {
   console.log(`Verified ${asset.name}: ${asset.sha256}`)
 }
 await reset(output)
-const manifest = JSON.parse(await readFile(path.join(downloads, 'build-manifest.json'), 'utf8'))
+const manifestName = nativeBuild ? `build-manifest-${target.artifactPlatform}-${target.arch}.json` : 'build-manifest.json'
+const manifest = JSON.parse(await readFile(path.join(downloads, manifestName), 'utf8'))
 if (manifest.schemaVersion !== 1 || manifest.buildId !== lock.ffmpegBuildId || manifest.revision + '-' + manifest.extraVersion !== lock.ffmpegVersion) throw new Error('FFmpeg manifest build identity mismatch')
-const runtimeName = 'fy1sync-ffmpeg-' + lock.ffmpegBuildId + '-win-x64.zip'
-const sourceName = 'fy1sync-ffmpeg-' + lock.ffmpegBuildId + '-source.zip'
-const runtimeFiles = ['avcodec-62.dll', 'avfilter-11.dll', 'avformat-62.dll', 'avutil-60.dll', 'ffmpeg.exe', 'ffprobe.exe', 'swscale-9.dll']
+const runtimeName = nativeBuild?.runtimeName ?? 'fy1sync-ffmpeg-' + lock.ffmpegBuildId + '-win-x64.zip'
+const sourceName = nativeBuild?.sourceName ?? 'fy1sync-ffmpeg-' + lock.ffmpegBuildId + '-source.zip'
+const runtimeFiles = nativeBuild ? manifest.assertions.files.map(entry => entry.name).sort() : ['avcodec-62.dll', 'avfilter-11.dll', 'avformat-62.dll', 'avutil-60.dll', 'ffmpeg.exe', 'ffprobe.exe', 'swscale-9.dll']
 await extractManifestArchive(runtimeName, path.join(output, 'ffmpeg'), manifest, runtimeFiles)
 const ffmpegSource = await extractManifestArchive(sourceName, path.join(work, 'ffmpeg-source'), manifest)
 const provider = await extract('provider-source.tar.gz', path.join(work, 'provider'), 'bgutil-ytdlp-pot-provider-2.0.2')
 const ytSource = await extract('yt-dlp-source.tar.gz', path.join(work, 'ytdlp-source'), 'yt-dlp')
-await cp(path.join(downloads, 'yt-dlp.exe'), path.join(output, 'yt-dlp.exe'))
-const ffmpegBuild = await verifyFfmpeg(path.join(output, 'ffmpeg'), manifest)
-if (await run(path.join(output, 'yt-dlp.exe'), ['--ignore-config', '--no-cache-dir', '--version']) !== lock.ytdlpVersion) throw new Error('Unexpected yt-dlp version')
+const ytdlpAsset = target.platform === 'linux' ? (target.arch === 'arm64' ? 'yt-dlp_linux_aarch64' : 'yt-dlp_linux') : nativeBuild ? 'yt-dlp_macos' : 'yt-dlp.exe'
+const ytdlpName = nativeBuild ? 'yt-dlp' : 'yt-dlp.exe'
+await cp(path.join(downloads, ytdlpAsset), path.join(output, ytdlpName))
+let ffmpegBuild
+if (nativeBuild) {
+  for (const name of ['ffmpeg', 'ffprobe']) await chmod(path.join(output, 'ffmpeg', name), 0o755)
+  await chmod(path.join(output, ytdlpName), 0o755)
+  const binary = await readFile(path.join(output, ytdlpName))
+  if (target.platform === 'darwin' ? !machoArchitectures(binary).includes(target.arch) : elfArchitecture(binary) !== target.arch) throw new Error('yt-dlp does not support the native CPU')
+  const checked = await (target.platform === 'darwin' ? verifyMacRuntime : verifyLinuxRuntime)(path.join(output, 'ffmpeg'), JSON.parse(await readFile(path.join(root, 'packaging', 'ffmpeg', 'build-lock.json'), 'utf8')), target.arch, task)
+  ffmpegBuild = Object.values(checked.evidence).join('\n\n')
+} else ffmpegBuild = await verifyFfmpeg(path.join(output, 'ffmpeg'), manifest)
+const ytdlpEnvironment = { ...process.env, HOME: task, APPDATA: task, LOCALAPPDATA: task, TMPDIR: task, TEMP: task, TMP: task }
+if (await run(path.join(output, ytdlpName), ['--ignore-config', '--no-cache-dir', '--version'], task, ytdlpEnvironment) !== lock.ytdlpVersion) throw new Error('Unexpected yt-dlp version')
 const server = path.join(provider, 'server')
 const dependencyPatch = JSON.parse(await readFile(path.join(root, 'packaging', 'provider-dependency-patches.json'), 'utf8'))
 if (dependencyPatch.schema !== 1 || dependencyPatch.providerVersion !== lock.providerVersion) throw new Error('Invalid provider dependency patch')
@@ -248,7 +294,7 @@ for (const name of dependencyPatch.removedDependencies) delete providerPackage.d
 for (const name of dependencyPatch.removedAllowScripts) delete providerPackage.allowScripts[name]
 await writeFile(path.join(server, 'package.json'), JSON.stringify(providerPackage, null, 2) + '\n')
 await cp(path.join(root, 'packaging', 'provider-package-lock.json'), path.join(server, 'package-lock.json'))
-const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+const npmCli = npmCliPath()
 const npmEnvironment = { ...process.env, npm_config_cache: path.join(staging, 'npm-cache'), npm_config_audit: 'false', npm_config_fund: 'false' }
 // The checked-in patched lock fixes every registry tarball and integrity. Do not run install scripts.
 await run(process.execPath, [npmCli, 'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], server, npmEnvironment)
@@ -268,13 +314,17 @@ await mkdir(path.join(licenses, 'sources'), { recursive: true })
 for (const name of [sourceName, 'provider-source.tar.gz', 'yt-dlp-source.tar.gz']) await cp(path.join(downloads, name), path.join(licenses, 'sources', name))
 await cp(path.join(ffmpegSource, 'licenses'), path.join(licenses, 'ffmpeg'), { recursive: true })
 await cp(path.join(ffmpegSource, 'packaging', 'ffmpeg', 'patches'), path.join(licenses, 'ffmpeg', 'packaging', 'ffmpeg', 'patches'), { recursive: true })
-await cp(path.join(downloads, 'build-manifest.json'), path.join(licenses, 'ffmpeg', 'build-manifest.json'))
+await cp(path.join(downloads, manifestName), path.join(licenses, 'ffmpeg', 'build-manifest.json'))
 for (const [from, to] of [['COPYING.GPLv3', 'GPLv3.txt'], ['COPYING.LGPLv2.1', 'LGPLv2.1.txt']]) await cp(path.join(ffmpegSource, 'licenses', 'ffmpeg', from), path.join(licenses, to))
 await cp(path.join(provider, 'LICENSE'), path.join(licenses, 'provider-GPLv3.txt'))
 await cp(path.join(ytSource, 'LICENSE'), path.join(licenses, 'yt-dlp-LICENSE.txt'))
 await cp(path.join(root, 'LICENSE'), path.join(licenses, 'Fy1Sync-LICENSE.txt'))
 await cp(path.join(root, 'packaging', 'THIRD-PARTY-NOTICES.md'), path.join(licenses, 'THIRD-PARTY-NOTICES.md'))
-await cp(path.join(root, 'packaging', 'tools-lock.json'), path.join(output, 'tools-lock.json'))
+if (nativeBuild) {
+  await writeFile(path.join(output, 'tools-lock.json'), JSON.stringify(lock, null, 2) + '\n')
+  const platformLock = `tools-${target.artifactPlatform}-lock.json`
+  await cp(path.join(root, 'packaging', platformLock), path.join(licenses, platformLock))
+} else await cp(path.join(root, 'packaging', 'tools-lock.json'), path.join(output, 'tools-lock.json'))
 await cp(path.join(root, 'packaging', 'provider-dependency-patches.json'), path.join(licenses, 'provider-dependency-patches.json'))
 await retainApplicationLicenses(licenses)
 await writeFile(path.join(licenses, 'FFmpeg-build.txt'), ffmpegBuild)
@@ -286,7 +336,20 @@ for (const [name, value] of Object.entries(dependencyLock.packages)) {
 }
 await writeFile(path.join(licenses, 'provider-dependencies.json'), JSON.stringify(dependencies, null, 2) + '\n')
 const inventory = await files(output)
-await writeFile(path.join(output, 'inventory.json'), JSON.stringify(await Promise.all(inventory.map(async name => ({ file: name, size: (await stat(path.join(output, name))).size, sha256: await hash(path.join(output, name)) }))), null, 2) + '\n')
+await writeFile(path.join(output, 'inventory.json'), JSON.stringify(await Promise.all(inventory.map(async name => {
+  const entry = { file: name, size: (await stat(path.join(output, name))).size, sha256: await hash(path.join(output, name)) }
+  if (target.platform === 'darwin' && (name === ytdlpName || (name.startsWith('ffmpeg/') && runtimeFiles.includes(name.slice(7))))) {
+    // Canonical unsigned hashes distinguish code-signature changes from payload changes.
+    const temporary = path.join(task, path.basename(name) + '.unsigned')
+    await cp(path.join(output, name), temporary)
+    if (machoHasSignature(await readFile(temporary))) await macRun('/usr/bin/codesign', ['--remove-signature', temporary], { cwd: task })
+    const unsigned = await fileIdentity(temporary)
+    entry.unsignedSize = unsigned.size
+    entry.unsignedSha256 = unsigned.sha256
+    await rm(temporary, { force: true })
+  }
+  return entry
+})), null, 2) + '\n')
 console.log(`Prepared ${inventory.length} verified runtime/license files under .packaging/tools. No network is needed at app startup.`)
 // Swap in the verified output; the previous one is replaced only now.
 await reset(finalOutput)

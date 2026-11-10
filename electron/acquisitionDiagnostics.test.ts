@@ -17,6 +17,7 @@ const status: ToolsStatus = { tools: [
   { name: 'yt-dlp', source: 'managed', version: '2026.10.26', available: true },
 ], provider: { available: true, source: 'bundled', version: '2.0.2' }, update: { phase: 'idle', downloadedBytes: 0, totalBytes: 0, message: '' }, externalYtdlp: false, fixturesAvailable: false, bundledAvailable: true }
 const login = { youtube: { loggedIn: true, cookieCount: 42, authKeysPresent: [secret], expiresAt: 9999999999, hasSessionCookies: false },
+  douyin: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false },
   douyu: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false } } satisfies LoginStatus
 function fixture() {
   let now = 1793613600000

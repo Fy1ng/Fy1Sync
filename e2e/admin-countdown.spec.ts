@@ -29,7 +29,7 @@ async function label(page: Page, text: string) {
   for (const char of text) await page.locator('.char-pad').getByRole('button', { name: char, exact: true }).click()
 }
 
-test('只有字符按钮即点即存, 更正不叠加, 撤回按钮和 Ctrl+Z 都撤回标注', async ({ page, electronApp }) => {
+test('只有字符按钮即点即存, 更正不叠加, 撤回按钮和撤销快捷键都撤回标注', async ({ page, electronApp }) => {
   test.skip(!fixturesReady(), '缺少测试源, 先运行 npm run fixtures')
   await open(page, electronApp)
   await expect(page.getByRole('textbox', { name: '整帧读数' })).toHaveCount(0)
@@ -55,7 +55,7 @@ test('只有字符按钮即点即存, 更正不叠加, 撤回按钮和 Ctrl+Z �
   await page.locator('.char-pad').getByRole('button', { name: '9', exact: true }).click()
   await expect(page.getByRole('status', { name: '编辑器提示' })).toContainText('未重复添加')
   await page.locator('.editor-stage').focus()
-  await page.keyboard.press('Control+z')
+  await page.keyboard.press('ControlOrMeta+z')
   await expect(reading).toHaveText('0:1?')
   await expect(page.locator('.template-thumb')).toHaveCount(3)
   await expect(page.locator('.glyph-box').last()).toHaveClass(/is-selected/)

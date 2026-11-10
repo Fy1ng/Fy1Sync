@@ -10,6 +10,26 @@ function fixture() {
   return { manager, window }
 }
 describe('restricted enhanced PiP shell', () => {
+  it('grants only the selected Douyin chat room while denying Douyu account capabilities', async () => {
+    const f = fixture()
+    const manager = new PipManager({ createWindow: () => f.window,
+      sendContext: () => ({ accountId: 'fixture', canAttempt: true }), source: () => ({
+        url: 'app://app/buffer/a/commentary/b/index.m3u8', label: '抖音', platform: 'douyin',
+        channel: '100', sourceRoom: '9000000000000000001', danmakuRoom: 'douyin:100', kind: 'hls', requiresProxy: false,
+      }) })
+    await manager.open('commentary')
+    expect(manager.permits(2, 'getStreamPlayback', { id: 'commentary' })).toBe(true)
+    expect(manager.permitsRoom(2, '100')).toBe(false)
+    expect(manager.permitsRoom(2, 'huya:100')).toBe(false)
+    expect(manager.permitsRoom(2, 'douyin:100')).toBe(true)
+    expect(manager.permitsRoom(2, 'douyin:9000000000000000001')).toBe(false)
+    expect(manager.permitsRoom(3, 'douyin:100')).toBe(false)
+    expect(manager.state().sendContext).toMatchObject({ canAttempt: false, room: null })
+    for (const method of ['activateDouyuRoom', 'sendComposedDouyuMessage', 'getDouyuRoomInsights', 'reportDouyuPlayback', 'getDanmakuRate', 'getDanmakuUserDetails']) {
+      expect(manager.permits(2, method, { room: '100' })).toBe(false)
+    }
+    manager.dispose(); f.manager.dispose()
+  })
   it('grants only namespaced read-only room access to Huya even when a Douyu ID matches', async () => {
     const f = fixture()
     const sender = vi.fn(() => ({ accountId: 'default', canAttempt: true }))

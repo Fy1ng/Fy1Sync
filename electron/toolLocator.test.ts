@@ -5,10 +5,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { locateTool, locateYouTubePotProvider, ToolError } from './toolLocator'
 
 const roots: string[] = []
-async function fixture(name = 'ffmpeg'): Promise<{ root: string; file: string }> {
+async function fixture(name = 'ffmpeg', platform: NodeJS.Platform = process.platform): Promise<{ root: string; file: string }> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'syncer-tool-'))
   roots.push(root)
-  const file = path.join(root, process.platform === 'win32' ? `${name}.exe` : name)
+  const file = path.join(root, platform === 'win32' ? `${name}.exe` : name)
   await writeFile(file, 'fixture only, never execute')
   await chmod(file, 0o700)
   return { root, file }
@@ -16,6 +16,29 @@ async function fixture(name = 'ffmpeg'): Promise<{ root: string; file: string }>
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
 
 describe('tool locator', () => {
+  it.each(['win32', 'darwin'] as const)('resolves all native bundled filenames on %s', async platform => {
+    const f = await fixture('yt-dlp', platform)
+    await mkdir(path.join(f.root, 'ffmpeg'))
+    for (const tool of ['ffmpeg', 'ffprobe'] as const) {
+      const file = path.join(f.root, 'ffmpeg', platform === 'win32' ? `${tool}.exe` : tool)
+      await writeFile(file, 'fixture only, never execute')
+      await chmod(file, 0o700)
+      expect(await locateTool(tool, {}, {}, { bundledDir: f.root, platform })).toBe(file)
+    }
+    expect(await locateTool('yt-dlp', {}, {}, { bundledDir: f.root, platform })).toBe(f.file)
+  })
+  it.each(['win32', 'darwin'] as const)('rejects the other platform bundle instead of using PATH on %s', async platform => {
+    const other = await fixture('yt-dlp', platform === 'win32' ? 'darwin' : 'win32')
+    const fallback = await fixture('yt-dlp', platform)
+    await expect(locateTool('yt-dlp', {}, { PATH: fallback.root }, { bundledDir: other.root, platform }))
+      .rejects.toMatchObject({ code: 'tool-not-executable' })
+  })
+  it.skipIf(process.platform === 'win32')('rejects a macOS tool without execute permission', async () => {
+    const f = await fixture('yt-dlp', 'darwin')
+    await chmod(f.file, 0o600)
+    await expect(locateTool('yt-dlp', {}, {}, { bundledDir: f.root, platform: 'darwin' }))
+      .rejects.toMatchObject({ code: 'tool-not-executable' })
+  })
   it('prefers explicit settings over environment and PATH', async () => {
     const a = await fixture(), b = await fixture()
     expect(await locateTool('ffmpeg', { ffmpegPath: a.file }, { STREAM_SYNC_FFMPEG: b.file, PATH: b.root })).toBe(a.file)
@@ -56,7 +79,7 @@ describe('tool locator', () => {
     await expect(locateTool('ffmpeg', { ffmpegPath: directory }, {})).rejects.toMatchObject({ code: 'tool-not-executable' })
   })
   it('returns a serializable structured missing-tool error without environment values', async () => {
-    try { await locateTool('yt-dlp', {}, { PATH: 'private-relative-path' }) } catch (error) {
+    try { await locateTool('yt-dlp', {}, { PATH: 'private-relative-path' }, { platform: 'linux' }) } catch (error) {
       expect(error).toBeInstanceOf(ToolError)
       expect(JSON.parse(JSON.stringify(error))).toMatchObject({ code: 'tool-missing', tool: 'yt-dlp' })
       expect(String(error)).not.toContain('private-relative-path')

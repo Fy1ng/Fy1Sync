@@ -10,6 +10,7 @@ const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 const testDataRoot = process.env.STREAM_SYNC_E2E_DATA_ROOT || path.join(projectRoot, 'e2e', '.data')
 
 export const APP_ORIGIN = 'app://app'
+export const visibleE2eWindows = process.env.STREAM_SYNC_E2E_VISIBLE === '1'
 
 export interface RunningApplication {
   application: ElectronApplication
@@ -35,10 +36,11 @@ export async function launchApplication(label: string, options: { softwareVideo?
   }
   Object.assign(env, {
     STREAM_SYNC_E2E: '1',
+    STREAM_SYNC_E2E_VISIBLE: visibleE2eWindows ? '1' : '0',
     STREAM_SYNC_USER_DATA_DIR: path.join(dataDir, 'userData'),
     STREAM_SYNC_DATA_DIR: path.join(dataDir, 'data'),
     STREAM_SYNC_OFFLINE_E2E: options.liveNetwork || process.env.STREAM_SYNC_LIVE_TESTS === '1' || process.env.STREAM_SYNC_YOUTUBE_ADAPTIVE === '1' ? '0' : '1',
-    TEMP: temporaryDir, TMP: temporaryDir,
+    TEMP: temporaryDir, TMP: temporaryDir, TMPDIR: temporaryDir,
   })
   const setStylePackResponses = async (responses: Record<string, string>, fail = false) => {
     if (!options.stylePacks || env.STREAM_SYNC_OFFLINE_E2E !== '1') throw new Error('Style pack fixture requires an offline test profile')

@@ -35,6 +35,36 @@ const flush = () => new Promise<void>(resolve => setImmediate(resolve))
 afterEach(() => { mocks.sockets.length = 0; mocks.dispatchers.length = 0; vi.clearAllMocks() })
 
 describe('platform danmaku network transport', () => {
+  it('allows only the Douyin live push endpoint and an anonymous ttwid handshake', async () => {
+    const url = 'wss://webcast100-ws-web-lf.douyin.com/webcast/im/push/v2/?room_id=9000000000000000001&signature=synthetic'
+    const resolve = vi.fn(async () => ['8.8.8.8'])
+    const socket = createNetworkSocket(url, 'douyin', { network: direct, resolve,
+      headers: { Cookie: 'ttwid=synthetic', Origin: 'https://live.douyin.com', Referer: 'https://live.douyin.com/', 'User-Agent': 'fixture' } })
+    await flush()
+    expect(mocks.websocket).toHaveBeenCalledWith(url, { dispatcher: mocks.dispatchers[0],
+      headers: { cookie: 'ttwid=synthetic', origin: 'https://live.douyin.com', referer: 'https://live.douyin.com/', 'user-agent': 'fixture' } })
+    expect(resolve).toHaveBeenCalledExactlyOnceWith('webcast100-ws-web-lf.douyin.com')
+    socket.close()
+  })
+
+  it.each([
+    'wss://live.douyin.com/webcast/im/push/v2/',
+    'wss://webcast100-ws-web-lf.douyin.com.evil.invalid/webcast/im/push/v2/',
+    'wss://webcast100-ws-web-lf.douyin.com/other/',
+    'wss://webcast100-ws-web-lf.douyin.com:8506/webcast/im/push/v2/',
+  ])('rejects an unapproved Douyin socket before network access: %s', url => {
+    expect(() => createNetworkSocket(url, 'douyin', { network: direct })).toThrow()
+    expect(mocks.websocket).not.toHaveBeenCalled()
+  })
+
+  it.each<Record<string, string>>([
+    { Cookie: 'sessionid=synthetic' }, { Cookie: 'ttwid=synthetic; sessionid=synthetic' },
+    { Authorization: 'Bearer synthetic' }, { Origin: 'https://other.invalid' }, { 'User-Agent': 'bad\r\nheader' },
+    { Referer: 'https://other.invalid/' },
+  ])('rejects login credentials or arbitrary headers in Douyin socket requests %#', headers => {
+    expect(() => createNetworkSocket('wss://webcast100-ws-web-lf.douyin.com/webcast/im/push/v2/', 'douyin', { headers })).toThrow()
+    expect(mocks.websocket).not.toHaveBeenCalled()
+  })
   it.each([{ platform: 'douyu', url: douyu }, { platform: 'huya', url: huya }] as const)
     ('uses guarded pinned DNS for direct $platform connections', async ({ platform, url }) => {
       const resolve = vi.fn(async () => ['8.8.8.8'])

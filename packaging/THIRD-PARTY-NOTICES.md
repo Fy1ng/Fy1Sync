@@ -1,4 +1,4 @@
-# Third-party notices for Fy1Sync local Windows x64 evaluation builds
+# Fy1Sync Windows x64, macOS/Linux arm64/x64 桌面构建第三方声明
 
 CS2 schedule metadata is by [Liquipedia contributors](https://liquipedia.net/counterstrike/Liquipedia:Matches), under [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/). Fy1Sync extracts match, team, tournament and stream fields from the MediaWiki API and supplies attribution with every schedule response. Cached metadata retains the same license. The offline fixture is a trimmed API response; its source and modifications are recorded in `server/esports/fixtures/README.md`.
 
@@ -9,6 +9,33 @@ CS2 schedule metadata is by [Liquipedia contributors](https://liquipedia.net/cou
 Fy1Sync itself is Copyright (C) 2026 Fy1ng and is licensed under the GNU General Public License, version 3 or (at your option) any later version (`GPL-3.0-or-later`). The full text is `LICENSE` in the source repository and `licenses/Fy1Sync-LICENSE.txt` in the package. Third-party programs remain separate executables or provider resources, outside app.asar, with their own terms listed below.
 
 Huya's minimal TarsV3 protocol implementation and golden request/response fixtures reference [biliup/biliup commit 48a0d234794bb918e211076b357823438e8c109d](https://github.com/biliup/biliup/tree/48a0d234794bb918e211076b357823438e8c109d), MIT, Copyright (c) 2019 ForgQi. The full notice is retained in `server/platforms/fixtures/huya-biliup-LICENSE.txt`; preserve it with redistributed implementations or fixture copies. No Simple Live code is included.
+
+抖音弹幕的本地握手签名移植自 [jwwsjlm/douyinLive](https://github.com/jwwsjlm/douyinLive/blob/af34f7c2ea2c4df90c6f4659e967fb31815d9255/internal/webcastsign/native.go), commit `af34f7c2ea2c4df90c6f4659e967fb31815d9255`. 确定性签名测试向量来自同提交的 `internal/webcastsign/native_test.go`. 接收协议字段参考 [jwwsjlm/douyinlive-proto](https://github.com/jwwsjlm/douyinlive-proto/blob/main/protobuf/new_douyin.proto), 仅实现文字聊天, 控制和必要确认字段, 不包含生成的运行时. TypeScript 实现不执行下载的脚本或使用在线签名服务. 两个来源采用的 MIT 许可及各自版权行如下, 同时完整保存在 `server/danmaku/fixtures/douyin-LICENSE.txt`.
+
+```text
+MIT License
+
+Copyright (c) 2025 今晚打打
+Copyright (c) 2026 jwwsjlm
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ## Fixed runtime inputs
 
@@ -30,6 +57,10 @@ Huya's minimal TarsV3 protocol implementation and golden request/response fixtur
 
 The provider's `canvas` dependency is removed before installation, so neither canvas nor its native libraries are shipped. Without canvas, jsdom's `getContext()` returns null; PO token generation was verified to be unaffected.
 
+macOS 使用与上表 Windows FFmpeg 相同的固定 commit, zlib 1.3.2 和 TLS 默认验证补丁, 在 arm64/x64 本机使用 Apple clang/SDK 编译 LGPL-2.1-or-later 共享库. 最低系统版本与 Electron 44 统一为 macOS 13.0, zlib/FFmpeg 通过固定部署环境和 clang flags 指定该基线, 并核验每个运行文件的 Mach-O load commands. macOS 运行包不包含 GCC, MinGW-w64 或 winpthreads; 系统 Secure Transport, Security 和 CoreFoundation 提供 HTTPS 与系统证书校验. 不随包分发 Apple SDK 或系统 framework. 媒体能力与原锁一致, Secure Transport 不支持的 DTLS/UDP 不启用. Matching source tar.gz 保留两个原始源码包, 原始许可证, 构建脚本, 补丁, 配置, source/mac 锁和验证证据. 运行库保留可替换的共享 ABI 文件, 不宣称系统工具链构建跨主机字节可复现.
+
+macOS yt-dlp 使用官方 `yt-dlp_macos` 2026.10.21 universal 可执行文件, 在包内命名为 `tools/yt-dlp`; 来源, size 和 SHA256 固定在 `packaging/tools-mac-lock.json`. bundled executable 仍按 GPLv3+ 对待, 原始 Python source 的 Unlicense 不改变官方打包执行文件及其依赖许可. 与 Windows 一样保留相同版本的 source tar.gz, LICENSE 和第三方许可信息. macOS provider 使用相同的 2.0.2 source/plugin 和 patched lock, 不运行 dependency install scripts.
+
 The provider source archive remains the unmodified upstream 2.0.2 source. This local build applies four production transitive dependency patches through `provider-dependency-patches.json` and a separately checked-in `provider-package-lock.json`: follow-redirects 1.16.0 -> 1.16.2, ip-address 10.7.3 -> 10.7.4, body-parser 2.3.0 -> 2.4.0 and Undici 7.30.0 -> 7.30.1. These address GHSA-q3jh-wrc6-jgq8, GHSA-8r9p-f939-6h3c, GHSA-rxp7-6hxx-x8q5, GHSA-27r3-jxmh-p828, GHSA-xjj6-f33q-929c and GHSA-mrwp-f3q8-3g9p without modifying provider implementation. The packaged server contains the effective package.json/lock; the patch manifest and full original source are retained together. The final dependency index describes the patched build, not an unmodified upstream dependency installation. The separate Electron update addresses GHSA-jr5w-w6x2-84p9 and is recorded in the runtime table above.
 
 ## Source and availability boundaries
@@ -40,7 +71,7 @@ The build manifest records the source, toolchain, dependency and patch identitie
 
 ## Manual yt-dlp updates
 
-An explicitly requested update uses only the official stable GitHub release, fixed `yt-dlp.exe` and `SHA2-256SUMS` assets, HTTPS and a bounded GitHub/CDN host allowlist. SHA256 checks detect corruption and mismatch; hashes fetched from the same official origin are not an independent publisher signature. New executable versions live in userData and do not overwrite the bundled executable. Keep the corresponding source and license information from the selected official release when redistributing an updated executable. Provider updates require an application package update in this first version.
+An explicitly requested update uses only the official stable GitHub release, the host platform's official `yt-dlp.exe` or `yt-dlp_macos` and `SHA2-256SUMS` assets, HTTPS and a bounded GitHub/CDN host allowlist. SHA256 checks detect corruption and mismatch; hashes fetched from the same official origin are not an independent publisher signature. New executable versions live in userData and do not overwrite the bundled executable. Keep the corresponding source and license information from the selected official release when redistributing an updated executable. Provider updates require an application package update in this first version.
 
 FFmpeg reference: https://ffmpeg.org/legal.html
 
@@ -134,3 +165,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+## Linux 发布包
+
+Linux x64/arm64 使用相同固定版本的 FFmpeg 和 zlib 源码及证书验证补丁, 在目标 CPU 架构的 Ubuntu 22.04 runner 上构建. FFmpeg 保持 LGPL-2.1-or-later 共享库模式, 使用系统 GnuTLS 30 进行 TLS 验证, 系统库不随应用重新分发. 应用包内保留 FFmpeg/zlib 原始源码, 补丁, 构建配置, 工具链版本, 校验清单和许可文件. Linux 的 yt-dlp 使用官方对应架构的独立可执行文件, 版本和 SHA256 固定在 `packaging/tools-linux-lock.json`.

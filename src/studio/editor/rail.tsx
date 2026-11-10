@@ -19,6 +19,7 @@ import { adjustGlyphBox, excludeGlyphBox, mergeGlyphBoxes, splitGlyphBox, type G
 import { Range, Segmented } from '../kit'
 import { drawMask, TEMPLATE_SIZE, type FrameAnalysis } from './framePipeline'
 import { PreprocessControls, type PreprocessControlsProps } from './PreprocessControls'
+import { shortcutLabel } from '../../app/platform'
 
 type Patch = (update: Partial<EditorClockModel>) => void
 
@@ -205,7 +206,7 @@ export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, sel
       <div className="reading-actions">
         <p className="muted">点击字符按钮逐个标注, 立即存入样本.{fieldId === 'clock' ? ' 完整倒计时可用于 +/-1s/10s 自动写入.' : ''}</p>
         <button type="button" className="btn-quiet small" disabled={busy || !onUndo} onClick={() => onUndo?.()}
-          title="撤回上次字符标注或自动写入 (Ctrl+Z)">撤回</button>
+          title={`撤回上次字符标注或自动写入 (${shortcutLabel('Z')})`}>撤回</button>
       </div>
       {fieldId !== 'clock' && <p className="muted">左右比分共用数字样本, 两侧识别区域和二值化参数分别设置.</p>}
       <div className="char-pad" role="group" aria-label="存为字符样本">

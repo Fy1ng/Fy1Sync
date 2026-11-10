@@ -1,18 +1,27 @@
 /** Built desktop app smoke checks: the real shell, preload IPC and scheme guards. */
 
-import { APP_ORIGIN, expect, test } from './electron'
+import { APP_ORIGIN, expect, test, visibleE2eWindows } from './electron'
 import type { HudStylePack } from '../src/core/hudStylePack'
 import { closeSourceDialog, connectDanmaku, failOnPageError, invoke, loadBothFixtures, offsetReadout, openPlayer, openSourceDialog, revealOverlay, sourceDialog } from './helpers'
 
 test.describe('应用外壳', () => {
-  test('Fy1Sync 自绘标题栏的窗口按钮可用, 悬浮变色, 全屏隐藏标题栏', async ({ page, electronApp }, testInfo) => {
+  test('Fy1Sync 标题栏按平台显示窗口按钮, 全屏隐藏标题栏', async ({ page, electronApp }, testInfo) => {
+    test.skip(!visibleE2eWindows, '需要可见原生窗口验证最大化, 最小化和真实 HTML 全屏; 设置 STREAM_SYNC_E2E_VISIBLE=1')
     await openPlayer(page)
     await expect(page.locator('.titlebar-name')).toHaveText('Fy1Sync')
     expect(await page.locator('.titlebar').evaluate(node => getComputedStyle(node).getPropertyValue('-webkit-app-region'))).toBe('drag')
-    expect(await electronApp.evaluate(({ app, Menu }) => ({ name: app.getName(), menu: Menu.getApplicationMenu() === null }))).toEqual({ name: 'Fy1Sync', menu: true })
+    expect(await page.evaluate(() => window.streamSyncer?.platform)).toBe(process.platform)
+    expect(await electronApp.evaluate(({ app, Menu }) => ({ name: app.getName(), menu: Menu.getApplicationMenu() === null }))).toEqual({ name: 'Fy1Sync', menu: process.platform !== 'darwin' })
     const bar = page.locator('.titlebar')
     const controls = bar.locator('.titlebar-controls')
-    expect(await controls.evaluate(node => getComputedStyle(node).getPropertyValue('-webkit-app-region'))).toBe('no-drag')
+    if (process.platform === 'darwin') {
+      await expect(bar).toHaveAttribute('data-platform', 'mac')
+      await expect(controls).toHaveCount(0)
+      expect(await bar.evaluate(node => Number.parseInt(getComputedStyle(node).paddingLeft))).toBeGreaterThanOrEqual(78)
+      const roles = await electronApp.evaluate(({ Menu }) => Menu.getApplicationMenu()!.items.flatMap(item => item.submenu?.items.map(child => child.role) ?? []))
+      expect(roles).toEqual(expect.arrayContaining(['quit', 'copy', 'paste', 'undo', 'close']))
+    } else {
+      expect(await controls.evaluate(node => getComputedStyle(node).getPropertyValue('-webkit-app-region'))).toBe('no-drag')
     // The system no longer draws caption buttons over the page.
     expect(await page.evaluate(() => (navigator as Navigator & { windowControlsOverlay?: { visible: boolean } }).windowControlsOverlay?.visible ?? false)).toBe(false)
     const isMaximized = () => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isMaximized())
@@ -33,6 +42,8 @@ test.describe('应用外壳', () => {
     await expect.poll(() => tint('关闭')).toBe('rgb(196, 43, 28)')
 
     await bar.getByRole('button', { name: '最小化', exact: true }).click()
+    }
+    if (process.platform === 'darwin') await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.minimize())
     await expect.poll(() => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isMinimized())).toBe(true)
     await electronApp.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]!; win.restore(); win.focus() })
     await page.keyboard.press('f')
@@ -47,12 +58,30 @@ test.describe('应用外壳', () => {
   })
 
   test('自绘标题栏的关闭按钮走正常关闭流程', async ({ page, electronApp }) => {
+    test.skip(process.platform === 'darwin', 'macOS 使用原生窗口按钮')
     await openPlayer(page)
     const closed = electronApp.evaluate(({ BrowserWindow }) => new Promise<boolean>((resolve) => {
       BrowserWindow.getAllWindows()[0]!.once('close', (event) => { event.preventDefault(); resolve(true) })
     }))
     await page.locator('.titlebar').getByRole('button', { name: '关闭', exact: true }).click()
     expect(await closed).toBe(true)
+  })
+
+  test('macOS 关闭最后窗口后通过 Dock 重开, IPC 与本地协议恢复', async ({ page, electronApp }) => {
+    test.skip(process.platform !== 'darwin', '需要 macOS 原生应用生命周期')
+    await openPlayer(page)
+    const nextWindow = electronApp.waitForEvent('window')
+    await electronApp.evaluate(({ app, BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]!.close()
+      app.emit('activate')
+      app.emit('activate')
+    })
+    const reopened = await nextWindow
+    await reopened.waitForURL(APP_ORIGIN + '/**')
+    await expect(reopened.locator('.titlebar-name')).toHaveText('Fy1Sync')
+    expect(page.isClosed()).toBe(true)
+    expect(await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1)
+    expect(await invoke(reopened, 'health', undefined)).toMatchObject({ ok: true, value: { ok: true } })
   })
 
   test('冷启动渲染播放页和添加直播间且没有 pageerror', async ({ page }) => {
@@ -132,7 +161,7 @@ test.describe('应用外壳', () => {
     await expect(page.locator('.drawer')).toBeVisible()
   })
 
-  test('纯房间号的平台选择包含虎牙', async ({ page }) => {
+  test('纯房间号的平台选择包含虎牙和抖音', async ({ page }) => {
     await page.goto(APP_ORIGIN + '/')
     const dialog = sourceDialog(page)
     await expect(dialog.getByRole('textbox', { name: '直播间链接' })).toBeDisabled()
@@ -142,10 +171,12 @@ test.describe('应用外壳', () => {
     await expect(platforms.getByRole('radio', { name: '虎牙', exact: true })).toBeVisible()
     await expect(platforms.getByRole('radio', { name: '斗鱼', exact: true })).toBeVisible()
     await expect(platforms.getByRole('radio', { name: '哔哩哔哩', exact: true })).toBeVisible()
+    await expect(platforms.getByRole('radio', { name: '抖音', exact: true })).toBeVisible()
     await closeSourceDialog(page)
   })
 
   test('真实全屏保留可操作的片源对话框', async ({ page }, testInfo) => {
+    test.skip(!visibleE2eWindows, '真实 HTML 全屏需要可见原生窗口; 设置 STREAM_SYNC_E2E_VISIBLE=1')
     await openPlayer(page)
     await page.getByRole('button', { name: '全屏', exact: true }).click()
     await expect.poll(() => page.evaluate(() => document.fullscreenElement?.classList.contains('studio') ?? false)).toBe(true)
@@ -191,6 +222,13 @@ test.describe('主进程接口与安全边界', () => {
 
   test('虎牙平台通过 IPC 参数校验且无效房间不会发起取流', async ({ page }) => {
     const response = await invoke(page, 'resolve', { input: 'not/a/huya-room', platform: 'huya', role: 'commentary' })
+    expect(response.ok).toBe(true)
+    if (!response.ok) throw new Error(response.message)
+    expect(response.value).toMatchObject({ ok: false, failure: { code: 'unsupported-url' } })
+  })
+
+  test('抖音平台通过 IPC 参数校验且拒绝伪造直播域名', async ({ page }) => {
+    const response = await invoke(page, 'resolve', { input: 'https://live.douyin.com.evil.invalid/100', platform: 'douyin', role: 'commentary' })
     expect(response.ok).toBe(true)
     if (!response.ok) throw new Error(response.message)
     expect(response.value).toMatchObject({ ok: false, failure: { code: 'unsupported-url' } })

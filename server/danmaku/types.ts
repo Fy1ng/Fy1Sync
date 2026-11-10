@@ -2,7 +2,15 @@
 import type { DouyuGiftMetadata, DouyuSenderMetadata } from '../../src/core/types'
 import type { DouyuRoomSignal } from '../douyu/insightsTypes'
 
-export type DanmakuPlatform = 'douyu' | 'huya'
+export type DanmakuPlatform = 'douyu' | 'huya' | 'douyin'
+
+export function isReadOnlyDanmakuPlatform(platform: unknown): boolean {
+  return platform === 'huya' || platform === 'douyin'
+}
+
+export function isReadOnlyDanmakuRoom(room: string | null | undefined): boolean {
+  return typeof room === 'string' && /^(?:huya|douyin):/.test(room)
+}
 export type ChatMessage = {
   id: string
   text: string
@@ -50,7 +58,7 @@ export interface DanmakuClient {
 
 /** Internal room identities always include a platform; legacy callers still see bare Douyu IDs. */
 export function danmakuRoom(input: string): { platform: DanmakuPlatform; room: string; key: string; external: string } {
-  const platform = input.startsWith('huya:') ? 'huya' : 'douyu'
+  const platform = input.startsWith('douyin:') ? 'douyin' : input.startsWith('huya:') ? 'huya' : 'douyu'
   const room = input.startsWith(`${platform}:`) ? input.slice(platform.length + 1) : input
-  return { platform, room, key: `${platform}:${room}`, external: platform === 'huya' ? `huya:${room}` : room }
+  return { platform, room, key: `${platform}:${room}`, external: platform === 'douyu' ? room : `${platform}:${room}` }
 }

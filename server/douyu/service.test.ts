@@ -17,7 +17,7 @@ function loginStub() {
   return {
     login: vi.fn(async () => { loggedIn = true; return { cookieCount: 1, authKeysPresent: ['acf_uid'] } }),
     logout: vi.fn(async () => { loggedIn = false }),
-    loginStatus: vi.fn(async () => ({ youtube: empty(), douyu: { ...empty(), loggedIn } })),
+    loginStatus: vi.fn(async () => ({ youtube: empty(), douyu: { ...empty(), loggedIn }, douyin: empty() })),
     cookieHeader: vi.fn(async () => ''), dispose: vi.fn(async () => {}),
   }
 }

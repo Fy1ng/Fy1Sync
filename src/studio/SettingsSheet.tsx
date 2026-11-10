@@ -24,6 +24,7 @@ import { Icon, Segmented, Sheet, SideTabs, Switch } from './kit'
 import { PipSettings } from './pip/PipSettings'
 import { remember, useRemembered } from '../app/remembered'
 import { StylePackSyncSettings } from './stylepacks/StylePackSync'
+import { isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
 
 export type SettingsSection = 'douyu' | 'records' | 'insights' | 'editor' | 'general'
 
@@ -47,7 +48,8 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
   onFill: (text: string) => void
 }): React.ReactNode {
   const [section, setSection] = useState<SettingsSection>(target.section)
-  const huya = room?.startsWith('huya:') === true
+  const readOnly = isReadOnlyDanmakuRoom(room)
+  const readOnlyPlatform = room?.startsWith('douyin:') ? '抖音' : '虎牙'
   useEffect(() => setSection(target.section), [target])
   useEffect(() => { remember('settings:section', section) }, [section])
   return (
@@ -63,15 +65,15 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
         </nav>
         <div className="settings-body" role="tabpanel" aria-label={SECTIONS.find((item) => item.id === section)?.label}>
           {section === 'general' && <General />}
-          {huya && ['douyu', 'records', 'insights'].includes(section) && (
-            <p className="settings-empty">当前虎牙房间仅支持只读弹幕, 斗鱼操作与统计暂不可用</p>
+          {readOnly && ['douyu', 'records', 'insights'].includes(section) && (
+            <p className="settings-empty">当前{readOnlyPlatform}房间仅支持只读弹幕, 斗鱼操作与统计暂不可用</p>
           )}
-          {section === 'douyu' && !huya && <DouyuDesk onWatch={(next) => { onWatch(next); onClose() }} />}
-          {section === 'records' && !huya && (
+          {section === 'douyu' && !readOnly && <DouyuDesk onWatch={(next) => { onWatch(next); onClose() }} />}
+          {section === 'records' && !readOnly && (
             <DanmakuRecords initialTab={target.records?.tab ?? 'history'} initialUid={target.records?.uid} room={room}
               onFill={(text) => { onFill(text); onClose() }} />
           )}
-          {section === 'insights' && !huya && (room
+          {section === 'insights' && !readOnly && (room
             ? <RoomInsights room={room} />
             : <p className="settings-empty">连接斗鱼弹幕房间后显示房间数据</p>)}
           {section === 'editor' && <div className="settings-page">
@@ -84,9 +86,10 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
   )
 }
 
-type GeneralPage = 'youtube' | 'align' | 'network' | 'decoding' | 'pip' | 'capture' | 'tools' | 'about'
+type GeneralPage = 'youtube' | 'douyin' | 'align' | 'network' | 'decoding' | 'pip' | 'capture' | 'tools' | 'about'
 const GENERAL: { id: GeneralPage; label: string }[] = [
   { id: 'youtube', label: 'YouTube' },
+  { id: 'douyin', label: '抖音' },
   { id: 'align', label: '对齐' },
   { id: 'network', label: '网络' },
   { id: 'decoding', label: '解码' },
@@ -102,6 +105,7 @@ function General(): React.ReactNode {
     <SideTabs label="通用" value={page} onChange={setPage} tabs={GENERAL}>
       <div className="settings-page">
         {page === 'youtube' && <YouTubeAccount />}
+        {page === 'douyin' && <DouyinAccount />}
         {page === 'align' && <AlignPrefs />}
         {page === 'network' && <Network />}
         {page === 'decoding' && <Decoding />}
@@ -183,6 +187,62 @@ function YouTubeAccount(): React.ReactNode {
       {message && <p className="muted" role="status">{message}</p>}
       <Switch label="自动使用最高画质" detail="可用时直接载入 1440p、4K 等最高清晰度，网络较慢时可关闭"
         checked={settings.preferAdaptive} onChange={(preferAdaptive) => session.updateSettings({ preferAdaptive })} />
+    </Group>
+  )
+}
+
+function DouyinAccount(): React.ReactNode {
+  const mounted = useMounted()
+  const [status, setStatus] = useRemembered<LoginStatus | null>('login-status', null)
+  const [checking, setChecking] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+  const refresh = async (): Promise<void> => {
+    setChecking(true)
+    try {
+      const result = await apiClient.loginStatus()
+      if (!mounted.current) return
+      if (result.ok && result.value?.douyin) { setStatus(result.value); setError('') }
+      else setError(result.ok ? '暂时无法读取抖音登录状态' : result.message)
+    } catch {
+      if (mounted.current) setError('抖音登录状态读取失败, 请重试')
+    } finally { if (mounted.current) setChecking(false) }
+  }
+  useEffect(() => { void refresh() }, [])
+  const act = async (logout: boolean): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    setMessage(logout ? '' : '请在应用内完成抖音官方登录或验证, 成功后自动关闭')
+    try {
+      const result = logout ? await apiClient.logout('douyin') : await apiClient.login('douyin')
+      if (!mounted.current) return
+      if (!result.ok) { setMessage(''); if (result.code !== 'login-cancelled') setError(result.message); return }
+      if (logout && status) setStatus({ ...status, douyin: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false } })
+      setMessage(logout ? '已退出抖音' : '已登录抖音, 请重新加载直播或重连弹幕以更新会话')
+      await refresh()
+    } catch {
+      if (mounted.current) { setMessage(''); setError('抖音账号操作失败, 请重试') }
+    } finally { if (mounted.current) setBusy(false) }
+  }
+  const douyin = status?.douyin
+  return (
+    <Group title="抖音">
+      <div className="row-split">
+        <span>{checking && !douyin ? '正在检查登录状态' : !douyin ? '登录状态未知' : douyin.loggedIn ? '已登录' : '未登录'}
+          {douyin?.loggedIn && douyin.expiresAt ? <span className="muted">, {new Date(douyin.expiresAt * 1000).toLocaleDateString('zh-CN')} 到期</span> : null}
+        </span>
+        <span className="row-end">
+          {douyin?.cookieCount ? <button type="button" className="btn-quiet small" disabled={busy || checking} onClick={() => void act(true)}>退出</button> : null}
+          <button type="button" className="btn-solid small" disabled={busy || checking} onClick={() => void act(false)}>{douyin?.loggedIn || douyin?.authKeysPresent?.length ? '重新登录' : '登录'}</button>
+        </span>
+      </div>
+      <p className="muted">在应用内完成官方登录或验证, 成功后自动关闭. 扫码, 短信, 密码与验证码由隔离的抖音官方登录组件处理.</p>
+      <p className="muted">登录后可用于获取直播和只读弹幕, 不支持发送弹幕或赠礼. 只有有效登录会话才显示为已登录.</p>
+      {message && <p className="muted" role="status">{message}</p>}
+      {error && <><p className="form-error" role="alert">{error}</p>
+        <button type="button" className="btn-quiet small" disabled={busy || checking} onClick={() => void refresh()}>重新检查登录状态</button></>}
     </Group>
   )
 }

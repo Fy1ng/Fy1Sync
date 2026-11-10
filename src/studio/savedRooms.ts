@@ -13,7 +13,7 @@ import { sourceTitle } from './sources'
 export type { SavedRoom }
 
 /** Platforms whose link can be loaded again; files and fixtures have nothing to keep. */
-const KEEPABLE = new Set(['youtube', 'twitch', 'douyu', 'bilibili', 'huya'])
+const KEEPABLE = new Set(['youtube', 'twitch', 'douyu', 'bilibili', 'huya', 'douyin'])
 
 export function canSave(descriptor: MediaDescriptor | null | undefined): descriptor is MediaDescriptor {
   return !!descriptor && !!descriptor.input && KEEPABLE.has(descriptor.platform ?? '')

@@ -32,9 +32,11 @@ export type MediaDescriptor = {
   sourceRoom?: string
   /** Stable, opaque local-file identity for clock-region memories; never a blob URL. */
   recognitionSourceKey?: string
+  /** Platform-qualified chat identity. Never infer it from another platform's room id. */
+  danmakuRoom?: string
 }
 
-export type PlatformId = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'huya' | 'direct' | 'file' | 'test'
+export type PlatformId = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'huya' | 'douyin' | 'direct' | 'file' | 'test'
 
 /** Public sender facts received from Douyu. */
 export interface DouyuSenderMetadata {

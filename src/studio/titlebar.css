@@ -16,9 +16,15 @@
   padding: 0 0 0 12px;
   color: #9a9893;
   background: #0d0d0f;
-  font: 500 12px/1 'Studio Sans', 'Microsoft YaHei UI', sans-serif;
+  font: 500 12px/1 'Studio Sans', -apple-system, 'PingFang SC', 'Microsoft YaHei UI', sans-serif;
   -webkit-app-region: drag;
   user-select: none;
+}
+
+/* Native traffic lights occupy the first 78px, including their drag-safe margin. */
+.titlebar[data-platform='mac'] {
+  padding-left: 82px;
+  padding-right: 12px;
 }
 
 .titlebar-mark {

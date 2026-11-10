@@ -393,4 +393,8 @@ async function main() {
   if (args.includes('--download-only')) return;
   await build(temp);
 }
-try { await main(); } catch (e) { console.error(e.stack); process.exitCode = 1; }
+try {
+  if (process.platform === 'darwin') await (await import('./build-ffmpeg-mac.mjs')).buildMacFfmpeg();
+  else if (process.platform === 'linux') await (await import('./build-ffmpeg-linux.mjs')).buildLinuxFfmpeg();
+  else await main();
+} catch (e) { console.error(e.stack); process.exitCode = 1; }

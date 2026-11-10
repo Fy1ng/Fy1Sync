@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "targets": ["darwin-arm64", "darwin-x64"],
+  "minimumSystemVersion": "13.0",
+  "ffmpegBuild": "packaging/ffmpeg/build-lock.json",
+  "ffmpegRuntimeOrigin": "native-local-build",
+  "ytdlpVersion": "2026.10.21",
+  "assets": [
+    {
+      "name": "yt-dlp_macos",
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.21/yt-dlp_macos",
+      "sha256": "7a6fe71d7d680f1fb0ac18d4949873d77db2859e90017c0f44bd94b23be4ee40",
+      "size": 37180736
+    }
+  ]
+}

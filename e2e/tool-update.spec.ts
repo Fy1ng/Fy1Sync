@@ -2,7 +2,8 @@ import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from './electron'
 import { fixturesReady, invoke, loadBothFixtures, mediaTimes, openSettings, setPlaying } from './helpers'
-const fixture = fileURLToPath(new URL('../.packaging/tools/yt-dlp.exe', import.meta.url))
+import { toolFilename } from '../electron/toolPlatform'
+const fixture = fileURLToPath(new URL(`../.packaging/tools/${toolFilename('yt-dlp')}`, import.meta.url))
 test('工具更新离线回归并保留播放', async ({ page, electronApp }) => {
   test.skip(!existsSync(fixture), 'Run npm run tools:prepare to create the pinned offline executable fixture')
   test.skip(!fixturesReady(), 'Run npm run fixtures to prepare local playback media')

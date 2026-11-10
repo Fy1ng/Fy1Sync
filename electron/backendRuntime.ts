@@ -14,6 +14,7 @@ import type { DouyuAccountManager } from './douyuAccounts'
 import { isDouyuAccountId } from './douyuAccounts'
 import type { DouyuTaskManager } from './douyuTasks'
 import type { DanmakuRelay } from '../server/danmaku/relay'
+import { isReadOnlyDanmakuPlatform, isReadOnlyDanmakuRoom } from '../server/danmaku/types'
 import { DouyuModeration } from '../server/douyu/moderation'
 import type { DouyuMessageSender } from '../server/douyu/messageSender'
 import { DouyuInsightsGateway } from '../server/douyu/insightsGateway'
@@ -214,11 +215,11 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     insights.subscribe(data => api.publish({ topic: 'insights', data })))
   if (automations) releases.push(automations.subscribe(data => api.publish({ topic: 'automations', data })))
   releases.push(options.relay.observe(event => {
-    // Huya is receive-only: no delivery tracking, history, catalog fetch or Douyu statistics.
-    if (event.platform === 'huya') return
-    if (event.type === 'message' && (event.message.platform === 'huya' || event.message.room.startsWith('huya:'))) return
+    // Other platforms never enter Douyu delivery tracking, history, catalogs or statistics.
+    if (isReadOnlyDanmakuPlatform(event.platform)) return
+    if (event.type === 'message' && (isReadOnlyDanmakuPlatform(event.message.platform) || isReadOnlyDanmakuRoom(event.message.room))) return
     if (event.type === 'signal' && event.signal.platform === 'huya') return
-    if (event.type === 'state' && event.room.startsWith('huya:')) return
+    if (event.type === 'state' && isReadOnlyDanmakuRoom(event.room)) return
     if (event.type === 'message') { options.danmaku.observe(event.message); insights.observe(event.message) }
     else if (event.type === 'signal') {
       if (event.signal.kind !== 'viewers') insights.signal(event.signal)
@@ -258,7 +259,7 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
   return {
     api, streams, pip, capture, automations, insights,
     observeFixture: (message: Parameters<DanmakuFeatures['observe']>[0]) => {
-      if (message.platform === 'huya' || message.room.startsWith('huya:')) return
+      if (isReadOnlyDanmakuPlatform(message.platform) || isReadOnlyDanmakuRoom(message.room)) return
       options.danmaku.observe(message); insights.observe(message)
     },
     async dispose() {

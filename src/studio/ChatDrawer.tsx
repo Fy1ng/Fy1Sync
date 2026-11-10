@@ -24,6 +24,7 @@ import { deliveryText } from './useStudioComposer'
 import { remember } from '../app/remembered'
 import { useChatFollow } from './useChatFollow'
 import { BasicRecognitionPanel } from './BasicRecognitionPanel'
+import { isReadOnlyDanmakuPlatform, isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
 
 /** A one-line row; longer messages wrap and are measured. */
 const ROW = 30
@@ -36,7 +37,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const { danmaku } = snapshot
-  const readOnly = danmaku.room?.startsWith('huya:') === true
+  const readOnly = isReadOnlyDanmakuRoom(danmaku.room)
   const writes = useDouyuWrites()
   const composer = useComposer()
   const { roomName } = useSourceLoader()
@@ -116,7 +117,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
           }}>
           {messages.length === 0 ? (
             <p className="drawer-empty">
-              {danmaku.connected ? '弹幕将随解说进度显示' : danmaku.room ? '正在连接…' : '载入斗鱼或虎牙解说后显示弹幕'}
+              {danmaku.connected ? '弹幕将随解说进度显示' : danmaku.room ? danmaku.error ?? '正在连接...' : '载入斗鱼, 虎牙或抖音解说后显示弹幕'}
             </p>
           ) : (
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
@@ -131,7 +132,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
                   )}
                   {!message.gift && !message.huyaGift && (
                     <span className="msg-actions">
-                      {writes && !readOnly && message.platform !== 'huya' && <button type="button" className="msg-plus" disabled={!composer.canSendText(message.text)}
+                      {writes && !readOnly && !isReadOnlyDanmakuPlatform(message.platform) && <button type="button" className="msg-plus" disabled={!composer.canSendText(message.text)}
                         aria-label={`+1：${message.text}`} title={composer.repeatProblem(message.text) ?? '发送相同内容'}
                         onClick={() => void composer.repeat(message.text)}>+1</button>}
                       <button type="button" className="msg-more" aria-label={`更多操作：${message.text}`} title="更多操作"
@@ -204,12 +205,12 @@ function RowActions({ message, note, setNote, close, onReply }: {
   const composer = useComposer()
   const actions = useDanmakuActions()
   const { danmaku } = useSessionSnapshot()
-  const readOnly = message.platform === 'huya' || danmaku.room?.startsWith('huya:') === true
+  const readOnly = isReadOnlyDanmakuPlatform(message.platform) || isReadOnlyDanmakuRoom(danmaku.room)
   const writes = useDouyuWrites()
   const uid = message.sender?.uid
   return (
     <>
-      <span className="row-menu-user">{message.user}{uid && <span className="num muted"> {uid}</span>}</span>
+      <span className="row-menu-user">{message.user}{!readOnly && uid && <span className="num muted"> {uid}</span>}</span>
       {writes && !readOnly && <button type="button" className="menu-item" disabled={!composer.canEdit} onClick={onReply}>回复</button>}
       {!readOnly && <button type="button" className="menu-item" onClick={() => { void actions.favorite(message).then(setNote) }}>收藏</button>}
       <button type="button" className="menu-item" disabled={actions.copying} onClick={() => { void actions.copy(message.text); close() }}>复制</button>

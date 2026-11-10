@@ -119,7 +119,7 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
         text: payload.text,
         user: typeof payload.username === 'string' ? payload.username : '',
         color: colorForIndex(typeof payload.color === 'number' ? payload.color : 0),
-        ...(payload.platform === 'huya' ? { platform: 'huya' as const } : {}),
+        ...(payload.platform === 'huya' || payload.platform === 'douyin' ? { platform: payload.platform } : {}),
         ...(typeof payload.dms === 'number' && Number.isFinite(payload.dms) ? { dms: payload.dms } : {}),
         scheduleTime,
         receivedAt: Date.now(),

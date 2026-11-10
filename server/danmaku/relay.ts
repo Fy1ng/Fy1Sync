@@ -8,6 +8,7 @@
  */
 
 import { DouyuDanmakuClient } from './douyuClient'
+import { DouyinDanmakuClient, type DouyinDanmakuClientDeps } from './douyinClient'
 import { HuyaRoomClient, type HuyaRoomClientDeps } from './huyaRoomClient'
 import { danmakuRoom, type ChatMessage, type DanmakuClient, type DanmakuClientDeps,
   type DanmakuClientEvents, type DanmakuPlatform, type DanmakuState, type RoomSignal } from './types'
@@ -23,6 +24,7 @@ export type RawDanmakuEvent = { platform: DanmakuPlatform } & ({ type: 'message'
 
 export type DanmakuRelayDeps = DanmakuClientDeps & {
   huya?: HuyaRoomClientDeps
+  douyin?: DouyinDanmakuClientDeps
   createClient?: (platform: DanmakuPlatform, room: string, events: DanmakuClientEvents) => DanmakuClient
 }
 
@@ -77,6 +79,12 @@ export class DanmakuRelay {
     } else if (room.idleTimer !== null) {
       this.clearTimer(room.idleTimer)
       room.idleTimer = null
+      if (identity.platform === 'douyin') {
+        // An explicit disconnect/reconnect must refresh session metadata and login state.
+        room.recent = []
+        room.client.close()
+        room.client.connect()
+      }
     }
 
     const id = this.nextSubscriberId++
@@ -115,6 +123,26 @@ export class DanmakuRelay {
     }
   }
 
+  /** Refresh live receive sessions after a login change without dropping subscribers. */
+  refreshPlatform(platform: DanmakuPlatform): void {
+    for (const room of this.rooms.values()) {
+      if (!room.key.startsWith(`${platform}:`)) continue
+      room.recent = []
+      room.client.close()
+      if (room.subscribers.size > 0) room.client.connect()
+    }
+  }
+
+  /** An explicit retry refreshes the shared connection, including any PiP subscribers. */
+  reconnectRoom(roomId: string): boolean {
+    const room = this.rooms.get(danmakuRoom(roomId).key)
+    if (!room || room.subscribers.size === 0) return false
+    room.recent = []
+    room.client.close()
+    room.client.connect()
+    return true
+  }
+
   private openRoom(roomId: string): Room {
     const identity = danmakuRoom(roomId)
     const room: Room = {
@@ -147,7 +175,12 @@ export class DanmakuRelay {
       },
     }
     room.client = this.deps.createClient?.(identity.platform, identity.room, events)
-      ?? (identity.platform === 'huya'
+      ?? (identity.platform === 'douyin'
+        ? new DouyinDanmakuClient(identity.room, events, this.deps.douyin ?? {
+          resolveRoom: async () => { throw new Error('抖音弹幕服务尚未配置.') },
+          createSocket: () => { throw new Error('抖音弹幕服务尚未配置.') },
+        })
+        : identity.platform === 'huya'
         ? new HuyaRoomClient(identity.room, events, { ...this.deps, ...this.deps.huya })
         : new DouyuDanmakuClient(identity.room, events, this.deps))
     this.rooms.set(identity.key, room)

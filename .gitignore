@@ -44,3 +44,11 @@ playwright-report/
 
 # Generated style pack publisher keys are private, even outside the runtime cache.
 private-key.pem
+
+# Local Apple signing and notarization credentials are never release sources.
+*.p12
+*.pfx
+AuthKey_*.p8
+*.keychain
+*.keychain-db
+*.provisionprofile

@@ -11,9 +11,12 @@ afterEach(() => { fs.rmSync(root, { recursive: true, force: true }) })
 
 it('writes and reloads cookie data without a permission object', async () => {
   const store = new CookieStore(root)
-  store.write('douyu', [{ domain: '.douyu.com', name: 'acf_auth', value: 'synthetic', session: true }])
+  store.write('douyu', [
+    { domain: '.douyu.com', name: 'acf_auth', value: 'synthetic', session: true },
+    { domain: '.douyu.com', name: 'acf_uid', value: '1001', session: true },
+  ])
   const reloaded = new CookieStore(root)
-  expect(await reloaded.cookieHeader('douyu')).toBe('acf_auth=synthetic')
+  expect(await reloaded.cookieHeader('douyu')).toBe('acf_auth=synthetic; acf_uid=1001')
   expect((await reloaded.status()).douyu.loggedIn).toBe(true)
 })
 

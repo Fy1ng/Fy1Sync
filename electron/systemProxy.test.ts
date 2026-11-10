@@ -16,7 +16,7 @@ function runner(flags?: number, script?: string) {
 }
 
 describe('Windows automatic proxy source summary', () => {
-  it.each(['linux', 'darwin'] as const)('does not query registry on %s', async platform => {
+  it.each(['linux', 'freebsd'] as const)('does not query registry on %s', async platform => {
     const run = runner()
     expect(await systemProxyMode({ platform, run })).toBeUndefined()
     expect(run).not.toHaveBeenCalled()
@@ -65,5 +65,30 @@ describe('Windows automatic proxy source summary', () => {
       const run: RegistryRunner = async (_file, args) => ({ stdout: args.at(-1) === 'AutoConfigURL' ? '' : `    DefaultConnectionSettings    REG_BINARY    ${blob}\r\n` })
       expect(await systemProxyMode({ platform: 'win32', run })).toBe(expected)
     }
+  })
+})
+
+describe('macOS automatic proxy source summary', () => {
+  it('labels the active PAC without exposing its address or credentials', async () => {
+    const run = vi.fn<RegistryRunner>(async () => ({ stdout: '<dictionary> {\n  ProxyAutoConfigEnable : 1\n  ProxyAutoConfigURLString : https://user:PRIVATE@fixture.invalid/proxy.pac\n}\n' }))
+    const result = await systemProxyMode({ platform: 'darwin', run })
+    expect(result).toBe('PAC')
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE|fixture|https/)
+    expect(run).toHaveBeenCalledExactlyOnceWith('/usr/sbin/scutil', ['--proxy'], { windowsHide: true, timeout: 3_000, maxBuffer: 32 * 1024, encoding: 'utf8' })
+  })
+
+  it.each([
+    ['  ProxyAutoDiscoveryEnable : 1', 'PAC'],
+    ['  ProxyAutoConfigEnable : 1', undefined],
+    ['  ProxyAutoConfigEnable : 0\n  ProxyAutoConfigURLString : https://fixture.invalid/stale.pac', undefined],
+    ['  __SCOPED__ : <dictionary> {\n    ProxyAutoConfigEnable : 1\n    ProxyAutoConfigURLString : https://fixture.invalid/scoped.pac\n  }', undefined],
+  ])('distinguishes enabled, incomplete and scoped macOS proxy settings', async (settings, expected) => {
+    const run: RegistryRunner = async () => ({ stdout: `<dictionary> {\n${settings}\n}\n` })
+    expect(await systemProxyMode({ platform: 'darwin', run })).toBe(expected)
+  })
+
+  it('keeps normal Chromium proxy routing when scutil is unavailable or times out', async () => {
+    const run: RegistryRunner = async () => { throw new Error('PRIVATE process error') }
+    expect(await systemProxyMode({ platform: 'darwin', run })).toBeUndefined()
   })
 })

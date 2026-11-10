@@ -15,7 +15,7 @@ import { Icon } from './kit'
 import { LOGIN_LABEL, LoginOffer, PLATFORM_LABEL, ROLE_LABEL, SOURCE_HINT, SOURCE_KINDS, parseRoomInput, sourceTitle, spaced, useSourceLoader, type RoomPlatform } from './sources'
 import { useSavedRooms, type SavedRoom } from './savedRooms'
 
-const ROOM_PLATFORMS: RoomPlatform[] = ['douyu', 'bilibili', 'huya']
+const ROOM_PLATFORMS: RoomPlatform[] = ['douyu', 'bilibili', 'huya', 'douyin']
 
 export function Intake({ onClose, pendingFile, onSchedule }: {
   onClose: () => void
@@ -118,7 +118,7 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
         )}
 
         <SavedRooms onPick={(room) => void loader.loadInput(room.role, room.input,
-          room.platform === 'douyu' || room.platform === 'bilibili' || room.platform === 'huya' ? room.platform : undefined)} />
+          room.platform === 'douyu' || room.platform === 'bilibili' || room.platform === 'huya' || room.platform === 'douyin' ? room.platform : undefined)} />
 
         <p className="intake-foot">
           <span>支持将视频文件拖入窗口</span>
@@ -143,7 +143,7 @@ function Slot({ role, selected, onPick }: { role: SourceRole; selected: boolean;
       <button type="button" className="slot-pick" role="radio" aria-checked={selected} onClick={onPick}>
         <span className="slot-role">{ROLE_LABEL[role]}</span>
         <span className="slot-what">
-          {load.loggingIn ? `在登录窗口中登录${load.login ? spaced(LOGIN_LABEL[load.login]) : ''}，完成后关闭窗口`
+          {load.loggingIn ? load.login === 'douyin' ? '在应用内完成抖音官方登录或验证, 成功后自动关闭' : `在登录窗口中登录${load.login ? spaced(LOGIN_LABEL[load.login]) : ''}，完成后关闭窗口`
             : status === 'loading' ? '载入中…'
               : descriptor ? sourceTitle(descriptor)
                 : SOURCE_KINDS}

@@ -11,6 +11,7 @@ import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { parseSourceInput, toDescriptor } from '../core/mediaSources'
 import { basicClockFileKey } from '../core/basicClockMemory'
+import { parseDouyinInput } from '../core/douyinInput'
 import type { MediaDescriptor, PlatformId, SourceRole } from '../core/types'
 import type { LoginPlatform } from '../../electron/login'
 import { streamFailureHint } from '../../server/networkFailure'
@@ -29,7 +30,7 @@ export interface RoleLoad {
 
 const IDLE: RoleLoad = { busy: false, problem: null, notes: [], login: null, signedIn: false, loggingIn: false }
 
-export const LOGIN_LABEL: Record<LoginPlatform, string> = { douyu: '斗鱼', youtube: 'YouTube' }
+export const LOGIN_LABEL: Record<LoginPlatform, string> = { douyu: '斗鱼', youtube: 'YouTube', douyin: '抖音' }
 
 /** A Latin name sits in Chinese with a space either side, as elsewhere: 登录 YouTube 后重试. */
 export const spaced = (name: string): string => /^[A-Za-z]/.test(name) ? ` ${name} ` : name
@@ -40,15 +41,15 @@ const SIGN_IN_REFUSALS = new Set(['bot-check', 'sign-in', 'members-only', 'age-r
 export const ROLE_LABEL: Record<SourceRole, string> = { official: '画面', commentary: '解说' }
 
 export const PLATFORM_LABEL: Record<PlatformId, string> = {
-  youtube: 'YouTube', twitch: 'Twitch', douyu: '斗鱼', bilibili: '哔哩哔哩', huya: '虎牙',
+  youtube: 'YouTube', twitch: 'Twitch', douyu: '斗鱼', bilibili: '哔哩哔哩', huya: '虎牙', douyin: '抖音',
   direct: '直链', file: '本地文件', test: '测试片源',
 }
 
-export type RoomPlatform = 'douyu' | 'bilibili' | 'huya'
+export type RoomPlatform = 'douyu' | 'bilibili' | 'huya' | 'douyin'
 
 /** What either side accepts: any side may play any source, so both say the same. */
-export const SOURCE_HINT = '斗鱼、哔哩哔哩、虎牙、YouTube、Twitch 链接或房间号'
-export const SOURCE_KINDS = '斗鱼、哔哩哔哩、虎牙、YouTube、Twitch'
+export const SOURCE_HINT = '斗鱼, 哔哩哔哩, 虎牙, 抖音, YouTube, Twitch 链接或房间号'
+export const SOURCE_KINDS = '斗鱼, 哔哩哔哩, 虎牙, 抖音, YouTube, Twitch'
 
 /**
  * A room typed on its own rather than as a link: `6979222`, or with a platform in front,
@@ -56,7 +57,9 @@ export const SOURCE_KINDS = '斗鱼、哔哩哔哩、虎牙、YouTube、Twitch'
  */
 export function parseRoomInput(text: string): { room: string; platform: RoomPlatform | null } | null {
   const value = text.trim()
-  if (/^[1-9]\d{0,11}$/.test(value)) return { room: value, platform: null }
+  if (/^[1-9]\d{0,19}$/.test(value)) return { room: value, platform: null }
+  const douyin = /^(?:douyin\s*[:：]?\s*|抖音\s*[:：]?\s*)([1-9]\d{0,19})$/i.exec(value)
+  if (douyin) return { room: douyin[1]!, platform: 'douyin' }
   const huya = /^(?:(?:hy|huya)(?:\s*[:：]\s*|\s+)|虎牙\s*[:：]?\s*)([A-Za-z0-9_-]{1,64})$/i.exec(value)
   if (huya) return { room: huya[1]!, platform: 'huya' }
   const prefixed = /^(dy|douyu|斗鱼|b|bili|bilibili|b站|哔哩哔哩)\s*[:：]?\s*([1-9]\d{0,11})$/i.exec(value)
@@ -73,8 +76,11 @@ export function roomFromInput(input: string | undefined): string | null {
   if (!input) return null
   const typed = parseRoomInput(input)
   if (typed) return typed.room
+  const douyin = parseDouyinInput(input)
+  if (douyin) return douyin.kind === 'room' ? douyin.room : null
   try {
     const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(input) ? input : `https://${input}`)
+    if (/(^|\.)douyin\.com$|(^|\.)amemv\.com$/i.test(url.hostname)) return null
     const rid = url.searchParams.get('rid')
     if (rid && /^\d{1,12}$/.test(rid)) return rid
     const segments = url.pathname.split('/').filter(Boolean).reverse()
@@ -91,6 +97,12 @@ export function roomFromInput(input: string | undefined): string | null {
 /** How a loaded source is named in the top bar and on the intake screen. */
 export function sourceTitle(descriptor: MediaDescriptor): string {
   const platform = descriptor.platform ? PLATFORM_LABEL[descriptor.platform] : ''
+  if (descriptor.platform === 'douyin') {
+    const input = parseDouyinInput(descriptor.input)
+    const typed = parseRoomInput(descriptor.input)
+    const room = input?.kind === 'room' ? input.room : typed?.platform === 'douyin' ? typed.room : null
+    if (room) return `${platform} ${room}`
+  }
   if (descriptor.platform === 'douyu' || descriptor.platform === 'bilibili' || descriptor.platform === 'huya') {
     const room = roomFromInput(descriptor.input) ?? descriptor.sourceRoom
     if (room) return `${platform} ${room}`
@@ -100,6 +112,15 @@ export function sourceTitle(descriptor: MediaDescriptor): string {
     return descriptor.label
   }
   return `${platform} ${descriptor.label}`
+}
+
+/** Reflow sourceRoom is a live-session id; subscriptions require the public web room. */
+export function douyinDanmakuRoom(descriptor: Pick<MediaDescriptor, 'input' | 'danmakuRoom'>): string | null {
+  if (/^douyin:[1-9][0-9]{0,19}$/.test(descriptor.danmakuRoom ?? '')) return descriptor.danmakuRoom!
+  const parsed = parseDouyinInput(descriptor.input)
+  if (parsed?.kind === 'room') return `douyin:${parsed.room}`
+  const typed = parseRoomInput(descriptor.input)
+  return typed?.platform === 'douyin' ? `douyin:${typed.room}` : null
 }
 
 interface Loader {
@@ -153,12 +174,20 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
   const loadDescriptor = useCallback(async (role: SourceRole, descriptor: MediaDescriptor) => {
     const request = {}
     loads.current[role] = request
-    patch(role, { busy: true, problem: null, notes: [] })
+    patch(role, { busy: true, problem: null, notes: [], ...(descriptor.platform === 'douyin' ? { login: null } : {}) })
+    if (role === 'commentary' && (descriptor.platform === 'douyin' || session.snapshot.danmaku.room?.startsWith('douyin:'))) disconnectRoom()
     try {
       const loading = session.loadSource(role, descriptor)
       const generation = session.sourceRevision(role)
       await loading
       if (generation !== session.sourceRevision(role) || loads.current[role] !== request) return
+      if (role === 'commentary' && descriptor.platform === 'douyin') {
+        const roomKey = douyinDanmakuRoom(descriptor)
+        if (roomKey) {
+          try { connectRoom(roomKey, roomKey.slice('douyin:'.length)) }
+          catch { session.notice('warn', '抖音弹幕连接失败, 视频继续播放') }
+        }
+      }
       if (role === 'commentary' && descriptor.platform === 'huya') {
         const sourceRoom = descriptor.sourceRoom ?? roomFromInput(descriptor.input)
         if (sourceRoom) connectRoom(`huya:${sourceRoom}`, roomFromInput(descriptor.input) ?? sourceRoom)
@@ -183,7 +212,9 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
   const loadInput = useCallback(async (role: SourceRole, input: string, platform?: RoomPlatform): Promise<boolean> => {
     const typed = parseRoomInput(input)
     const roomPlatform = typed?.platform ?? platform
-    let parsed = parseSourceInput(typed && roomPlatform === 'huya' ? `https://www.huya.com/${typed.room}` : typed ? typed.room : input)
+    const roomInput = typed && roomPlatform === 'douyin' ? `https://live.douyin.com/${typed.room}`
+      : typed && roomPlatform === 'huya' ? `https://www.huya.com/${typed.room}` : typed ? typed.room : input
+    let parsed = parseSourceInput(roomInput)
     if (!parsed.ok) { patch(role, { problem: { message: parsed.message }, login: null }); return false }
     asked.current[role] = { input, platform }
     if (typed && roomPlatform === 'bilibili') {
@@ -196,13 +227,18 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     patch(role, { busy: true, problem: null, notes: [], login: null })
     let generation = session.beginSourceChange(role)
     const platformOf = parsed.platform
+    if (role === 'commentary' && (platformOf === 'douyin' || session.snapshot.danmaku.room?.startsWith('douyin:'))) disconnectRoom()
     try {
       const result = await apiClient.resolve(
         parsed.url, parsed.platform, role, undefined,
         session.settings.preferAdaptive || undefined,
       )
       if (generation !== session.sourceRevision(role)) return false
-      if (!result.ok) { patch(role, { problem: { message: result.message, hint: streamFailureHint(result.code) } }); return false }
+      if (!result.ok) {
+        patch(role, { problem: { message: result.message, hint: streamFailureHint(result.code) } })
+        if (platformOf === 'douyin' && result.code === 'restricted') void offerLogin(role, 'douyin', generation, true)
+        return false
+      }
       if (!result.value.ok) {
         const { failure } = result.value
         // A proxy that cannot be reached is not the platform's fault; say which to check.
@@ -210,6 +246,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         patch(role, { problem: { message: failure.message, hint } })
         // A refusal with no reason is Douyu's; YouTube's say which kind, and only a sign-in kind gets the offer.
         const signInCanHelp = !failure.reason || SIGN_IN_REFUSALS.has(failure.reason)
+        if (failure.code === 'restricted' && platformOf === 'douyin') void offerLogin(role, 'douyin', generation, true)
         if (failure.code === 'restricted' && (platformOf === 'douyu' || platformOf === 'youtube') && signInCanHelp) void offerLogin(role, platformOf, generation, true)
         return false
       }
@@ -226,6 +263,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         sourceQualities: stream.qualities,
         sourceQuality: stream.quality,
         sourceRoom: stream.sourceRoom ?? stream.danmakuRoom,
+        danmakuRoom: stream.danmakuRoom,
       })
       generation = session.sourceRevision(role)
       await loading
@@ -233,7 +271,15 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       if (generation !== session.sourceRevision(role) || loads.current[role] !== request) return false
       // The commentary room's danmaku come along with it; nothing to set up separately.
       if (role === 'commentary') {
-        if (parsed.platform === 'huya' || stream.platform === 'huya') {
+        if (parsed.platform === 'douyin' || stream.platform === 'douyin') {
+          const roomKey = douyinDanmakuRoom({ input, danmakuRoom: stream.danmakuRoom })
+          if (roomKey) {
+            try { connectRoom(roomKey, roomKey.slice('douyin:'.length)) }
+            catch { session.notice('warn', '抖音弹幕连接失败, 视频继续播放') }
+          }
+          else disconnectRoom()
+        }
+        else if (parsed.platform === 'huya' || stream.platform === 'huya') {
           const sourceRoom = stream.sourceRoom ?? stream.danmakuRoom ?? roomFromInput(input)
           if (sourceRoom) connectRoom(`huya:${sourceRoom}`, roomFromInput(input) ?? sourceRoom)
           else disconnectRoom()
@@ -252,13 +298,21 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     const platform = live.current[role].login
     const again = asked.current[role]
     if (!platform || live.current[role].loggingIn) return
+    const generation = session.sourceRevision(role)
+    const stillCurrent = (): boolean => generation === session.sourceRevision(role) && asked.current[role] === again
     patch(role, { loggingIn: true, problem: null })
     try {
       const result = await apiClient.login(platform)
-      if (!result.ok) { patch(role, { problem: { message: result.message } }); return }
+      if (!result.ok) {
+        if (stillCurrent()) patch(role, { problem: platform === 'douyin' && result.code === 'login-cancelled' ? null : { message: result.message } })
+        return
+      }
+    } catch {
+      if (stillCurrent()) patch(role, { problem: { message: '登录暂时失败, 请重试.' } })
+      return
     } finally { patch(role, { loggingIn: false }) }
-    if (again) await loadInput(role, again.input, again.platform)
-  }, [loadInput, patch])
+    if (again && stillCurrent()) await loadInput(role, again.input, again.platform)
+  }, [loadInput, patch, session])
 
   const loadFile = useCallback((role: SourceRole, file: File) => loadDescriptor(role, {
     // An object URL keeps the file local; nothing is uploaded.
@@ -288,7 +342,7 @@ export function LoginOffer({ role }: { role: SourceRole }): React.ReactNode {
   if (!load.login || load.busy || load.loggingIn) return null
   const name = spaced(LOGIN_LABEL[load.login])
   // Without a problem this asks for a login only to get the top quality; with one, the login is needed to play.
-  const text = !load.problem ? `登录${name}可看最高画质` : load.signedIn ? `重新登录${name}后重试` : `登录${name}后重试`
+  const text = !load.problem && load.login !== 'douyin' ? `登录${name}可看最高画质` : load.signedIn ? `重新登录${name}后重试` : `登录${name}后重试`
   return (
     <span className="slot-login">
       <span>{text}</span>

@@ -11,6 +11,8 @@ import { pathToFileURL } from 'node:url'
 import { createDouyuRoomResolver } from '../server/platforms/douyuRoom'
 import { createDesktopService, createResolverDeps } from '../server/api'
 import { resolveHuyaDanmakuRoom } from '../server/platforms/huyaDanmaku'
+import { resolveDouyinDanmakuRoom } from '../server/platforms/douyinDanmaku'
+import { createNetworkSocket } from '../server/danmaku/networkSocket'
 import { resolveConfig } from '../server/config'
 import { DanmakuRelay } from '../server/danmaku/relay'
 import { MediaRegistry } from '../server/mediaProxy'
@@ -18,9 +20,15 @@ import { serveStatic, missingClientResponse } from '../server/static'
 import { APP_URL, CONTENT_SECURITY_POLICY, allowsAppPermission, isAppDocument, isAppOrigin } from './security'
 import { installIpcHandlers } from './ipc'
 import { getWindowState, subscribeWindowState } from './windowControls'
+import { applicationMenu, mainWindowChrome } from './applicationMenu'
+import { ApplicationLifecycle } from './applicationLifecycle'
 import { BufferManager } from './bufferManager'
 import { pullAdaptive, AdaptivePullError } from './adaptivePuller'
 import { ChromeLoginDriver, findSystemChrome, LoginManager } from './login'
+import { EmbeddedLoginController } from './embeddedLogin'
+import { installEmbeddedLoginIpc } from './embeddedLoginIpc'
+import { installLoginCardIpc } from './loginCardIpc'
+import { DouyinEmbeddedLoginFixtures } from './douyinEmbeddedLoginFixtures'
 import { CookieStore } from './cookies'
 import { Acquisition } from './acquisition'
 import { YtDlpRunner, type YtDlpDiagnostic } from './ytdlp'
@@ -28,6 +36,7 @@ import { AcquisitionDiagnostics } from './acquisitionDiagnostics'
 import { locateTool, type ToolSettings } from './toolLocator'
 import { DecoderPreferences } from './decoderPreferences'
 import { ManagedYtdlp } from './toolUpdater'
+import { ytdlpReleaseAsset } from './toolPlatform'
 import { DesktopTools } from './toolsService'
 import toolsLock from '../packaging/tools-lock.json'
 import { privateDirectory } from './privateStorage'
@@ -72,6 +81,10 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: {
   standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true,
 } }])
 app.setName('Fy1Sync')
+const hiddenTestWindows = process.env.STREAM_SYNC_E2E === '1' && process.env.STREAM_SYNC_E2E_VISIBLE !== '1'
+if (hiddenTestWindows) {
+  for (const name of ['disable-background-timer-throttling', 'disable-renderer-backgrounding', 'disable-backgrounding-occluded-windows']) app.commandLine.appendSwitch(name)
+}
 if (process.env.STREAM_SYNC_USER_DATA_DIR) {
   const path = resolve(process.env.STREAM_SYNC_USER_DATA_DIR)
   mkdirSync(path, { recursive: true })
@@ -83,12 +96,6 @@ if (process.env.STREAM_SYNC_USER_DATA_DIR) {
 // still runs alongside the installed app. A second launch brings the first window forward.
 const primaryInstance = app.requestSingleInstanceLock()
 if (!primaryInstance) app.quit()
-app.on('second-instance', () => {
-  if (!window || window.isDestroyed()) return
-  if (window.isMinimized()) window.restore()
-  window.show()
-  window.focus()
-})
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 const decoderPreferences = new DecoderPreferences(app.getPath('userData'),
   app.commandLine.hasSwitch('disable-accelerated-video-decode'))
@@ -98,6 +105,17 @@ if (decoderPreferences.get().effectiveMode === 'software') {
 let window: BrowserWindow | null = null
 let dispose: (() => Promise<void>) | undefined
 let confirmedInstaller: { userDataDir: string; file: string } | undefined
+const lifecycle = new ApplicationLifecycle({ window: () => window, start, dispose: () => dispose?.(), present: !hiddenTestWindows })
+const showMainWindow = () => {
+  if (!primaryInstance || !app.isReady()) return
+  void lifecycle.activate().catch(() => {
+    console.error('应用启动失败, 请检查构建产物和数据目录')
+    app.exit(1)
+  })
+}
+app.on('second-instance', showMainWindow)
+app.on('activate', showMainWindow)
+
 
 async function start(): Promise<void> {
   const bundledClientDir = resolve(__dirname, '../client')
@@ -120,6 +138,8 @@ async function start(): Promise<void> {
   let handlers: ReturnType<typeof installIpcHandlers> | undefined
   let youtubeAdmin: ReturnType<typeof installYouTubeAdminIpc> | undefined
   let editorProjectIpc: ReturnType<typeof installEditorProjectIpc> | undefined
+  let releaseEmbeddedLoginIpc: (() => void) | undefined
+  let releaseLoginCardIpc: (() => void) | undefined
   let youtubeBrowse: YouTubeBrowseManager | undefined
   let youtubeImports: YouTubeImportJobManager | undefined
   let youtubeImportsReady: Promise<void> = Promise.resolve()
@@ -171,8 +191,12 @@ async function start(): Promise<void> {
   let renewalFixture: { stock: number; outcome: 'receipt-received' | 'unknown' } | null = null
   const renewalDonationsFixture: Array<Omit<DouyuBackpackDonation, 'expectedUid'>> = []
   const browserLogin = new ChromeLoginDriver()
+  const embeddedLoginFixtures = !app.isPackaged && offlineE2e ? new DouyinEmbeddedLoginFixtures() : null
+  const embeddedLogin = new EmbeddedLoginController({ owner: () => window, domesticRouting: preferences.domesticRouting,
+    cardPreload: join(__dirname, 'login-card-preload.cjs'), fixture: embeddedLoginFixtures?.configure })
   const createLogin = (directory: string) => new LoginManager(directory, {
     findChrome: () => !app.isPackaged && offlineE2e && douyuToolsFixture ? process.execPath : findSystemChrome(),
+    embeddedDriver: embeddedLogin,
     driver: { async login(executable, profile, platform, signal, destination) {
       if (!app.isPackaged && offlineE2e && douyuToolsFixture && platform === 'douyu') {
         if (signal.aborted) throw new Error('Fixture login cancelled')
@@ -260,14 +284,20 @@ async function start(): Promise<void> {
     }
   }
   const playbackLogins = {
-    async login(platform: 'youtube' | 'douyu') {
-      if (platform !== 'youtube') return douyuAccounts ? douyuAccounts.loginActive() : Promise.reject(new DouyuAccountError('storage-failed'))
+    async login(platform: 'youtube' | 'douyu' | 'douyin') {
+      if (platform === 'douyu') return douyuAccounts ? douyuAccounts.loginActive() : Promise.reject(new DouyuAccountError('storage-failed'))
+      if (platform === 'douyin') {
+        const result = await logins.login(platform)
+        relay.refreshPlatform('douyin')
+        return result
+      }
       youtubeLoginTransitions++
       try { await resetYouTubeAdmin(); return await logins.login(platform) }
       finally { youtubeLoginTransitions-- }
     },
-    async logout(platform: 'youtube' | 'douyu') {
-      if (platform !== 'youtube') return douyuAccounts ? douyuAccounts.logoutActive() : Promise.reject(new DouyuAccountError('storage-failed'))
+    async logout(platform: 'youtube' | 'douyu' | 'douyin') {
+      if (platform === 'douyu') return douyuAccounts ? douyuAccounts.logoutActive() : Promise.reject(new DouyuAccountError('storage-failed'))
+      if (platform === 'douyin') { await logins.logout(platform); relay.refreshPlatform('douyin'); return }
       youtubeLoginTransitions++
       try { await resetYouTubeAdmin(); await logins.logout(platform) }
       finally { youtubeLoginTransitions-- }
@@ -277,7 +307,8 @@ async function start(): Promise<void> {
       return { ...status, douyu: douyuAccounts ? await douyuAccounts.activeLoginStatus()
         : { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false } }
     },
-    cookieHeader: (_platform: 'douyu') => douyuAccounts ? douyuAccounts.activeCookieHeader() : Promise.resolve(''),
+    cookieHeader: (platform: 'douyu' | 'douyin', requestUrl?: string) => platform === 'douyin'
+      ? logins.cookieHeader(platform, requestUrl) : douyuAccounts ? douyuAccounts.activeCookieHeader() : Promise.resolve(''),
   }
   const providerCacheHome = privateDirectory(userDataDir, join(userDataDir, 'provider-cache'))
   const toolContext = {
@@ -395,6 +426,17 @@ async function start(): Promise<void> {
     return resolveHuyaDanmakuRoom(room, createResolverDeps(proxy, media.register).fetchText)
   }
   const relay = new DanmakuRelay({ huya: { resolveRoom: resolveHuyaRoom },
+    douyin: {
+      resolveRoom: async webRoom => {
+        if (offlineE2e) throw new Error('默认离线测试禁止真实抖音弹幕查询')
+        const context = network.context('douyin')
+        const deps = createResolverDeps(proxy, media.register, undefined, context)
+        return resolveDouyinDanmakuRoom(webRoom, { ...deps,
+          cookieHeader: requestUrl => logins.cookieHeader('douyin', requestUrl),
+        })
+      },
+      createSocket: (url, headers) => createNetworkSocket(url, 'douyin', { headers, network: network.context('douyin') }),
+    },
     ...(e2e ? { createSocket: () => ({ send() {}, close() {}, addEventListener() {} }) } : {}) })
   if (douyuAccounts && douyuTasks) {
     const gateway = new DouyuBackpackGateway({ proxy, cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url) })
@@ -438,16 +480,18 @@ async function start(): Promise<void> {
     },
     openExternal: url => shell.openExternal(url),
     notifyLive: event => {
-      if (Notification.isSupported()) new Notification({ title: '斗鱼开播提醒', body: `关注的直播间 ${event.room} 已开播` }).show()
+      if (!hiddenTestWindows && Notification.isSupported()) new Notification({ title: '斗鱼开播提醒', body: `关注的直播间 ${event.room} 已开播` }).show()
     },
     createPipWindow: () => {
       const created = new BrowserWindow({ show: false, width: 480, height: 270, minWidth: 240, minHeight: 135,
-        autoHideMenuBar: true, alwaysOnTop: true, title: 'Fy1Sync - 画中画',
+        autoHideMenuBar: true, alwaysOnTop: !hiddenTestWindows, title: 'Fy1Sync - 画中画',
+        ...(hiddenTestWindows ? { skipTaskbar: true, focusable: false, fullscreenable: false } : {}),
         icon: join(__dirname, 'icon.png'),
         webPreferences: { preload: join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true,
-          nodeIntegration: false, webSecurity: true, backgroundThrottling: false } })
+          nodeIntegration: false, webSecurity: true, backgroundThrottling: false, offscreen: hiddenTestWindows } })
       pipWindow = created
       const contents = created.webContents
+      if (hiddenTestWindows) { contents.setFrameRate(60); contents.startPainting() }
       contents.setAudioMuted(true)
       const unregister = handlers?.registerWindow(contents)
       contents.setWindowOpenHandler(() => ({ action: 'deny' }))
@@ -458,7 +502,7 @@ async function start(): Promise<void> {
       created.on('focus', () => refreshRuntime())
       created.on('blur', () => refreshRuntime())
       created.on('closed', () => { unregister?.(); if (pipWindow === created) pipWindow = null; refreshRuntime() })
-      return { id: contents.id, load: () => created.loadURL('app://app/pip'), show: () => created.show(),
+      return { id: contents.id, load: () => created.loadURL('app://app/pip'), show: () => { if (!hiddenTestWindows) created.show() },
         close: () => { if (!created.isDestroyed()) created.close() },
         resize: (width, height) => { if (!created.isDestroyed()) created.setSize(width, height) },
         onClosed: listener => { created.on('closed', listener); return () => created.removeListener('closed', listener) } }
@@ -608,21 +652,25 @@ async function start(): Promise<void> {
       return response
     } catch { return new Response('资源读取失败', { status: 500 }) }
   })
-  Menu.setApplicationMenu(null)
   window = new BrowserWindow({
+    show: !hiddenTestWindows,
+    ...(hiddenTestWindows ? { skipTaskbar: true, focusable: false, fullscreenable: false } : {}),
     width: 1440, height: 900, minWidth: 800, minHeight: 600,
-    title: 'Fy1Sync', titleBarStyle: 'hidden',
+    title: 'Fy1Sync', ...mainWindowChrome(process.platform),
     icon: join(__dirname, 'icon.png'),
-    // Keep native resizing and snapping while the renderer owns the caption buttons.
-    frame: true, ...(process.platform === 'win32' ? { thickFrame: true } : {}),
     backgroundColor: '#0d0d0f',
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true,
-      nodeIntegration: false, webSecurity: true, backgroundThrottling: false,
+      nodeIntegration: false, webSecurity: true, backgroundThrottling: false, offscreen: hiddenTestWindows,
     },
   })
   const contents = window.webContents
   const mainWindow = window
+  if (hiddenTestWindows) { contents.setFrameRate(60); contents.startPainting() }
+  if (process.platform === 'darwin') contents.on('before-input-event', (_event, input) => {
+    // Let the editor handle annotation undo; editable text retains Chromium's native undo.
+    contents.setIgnoreMenuShortcuts(input.type === 'keyDown' && input.meta && !input.control && !input.alt && !input.shift && input.key.toLowerCase() === 'z')
+  })
   let bootRecovery: Promise<void> | null = null
   const recoverFrontend = (): Promise<void> | null => {
     if (!frontendUpdates.failBoot()) return bootRecovery
@@ -683,9 +731,20 @@ async function start(): Promise<void> {
   youtubeAdmin = installYouTubeAdminIpc(ipcMain, contents, { ownerWindow: mainWindow, browse: youtubeBrowse, imports: youtubeImports,
     offline: offlineE2e, blocked: () => youtubeLoginTransitions > 0 })
   editorProjectIpc = installEditorProjectIpc(ipcMain, contents, editorProject)
+  releaseEmbeddedLoginIpc = installEmbeddedLoginIpc(ipcMain, contents, embeddedLogin)
+  releaseLoginCardIpc = installLoginCardIpc(ipcMain, embeddedLogin)
   if (e2e) Object.assign(globalThis, { __streamSyncerTest: {
     getWindowState: () => mainWindow.isDestroyed() ? null : getWindowState(mainWindow),
-    ...(!app.isPackaged ? { setDouyuToolsFixture() {
+    ...(!app.isPackaged ? { setDouyinEmbeddedLoginFixture(scenario: Parameters<DouyinEmbeddedLoginFixtures['enable']>[0] = 'form') {
+      if (!embeddedLoginFixtures) throw new Error('Douyin login fixture is offline-only')
+      embeddedLoginFixtures.enable(scenario)
+    }, async completeDouyinEmbeddedLoginFixture(authenticated = true) {
+      if (!embeddedLoginFixtures || embeddedLogin.state()?.platform !== 'douyin') throw new Error('No active Douyin login fixture')
+      await embeddedLoginFixtures.complete(authenticated)
+    }, getDouyinEmbeddedLoginFixtureState() {
+      if (!embeddedLoginFixtures) throw new Error('Douyin login fixture is offline-only')
+      return embeddedLoginFixtures.state(embeddedLogin.state() !== null)
+    }, setDouyuToolsFixture() {
       if (!offlineE2e) throw new Error('Douyu tools fixture is offline-only')
       douyuToolsFixture = true
     }, setDouyuCredentialsFixture(missingUsername: boolean) {
@@ -726,16 +785,19 @@ async function start(): Promise<void> {
     }, setToolUpdateFixture(bytes: Uint8Array, outcome: 'success' | 'hash-mismatch' | 'network-error') {
       const content = Buffer.from(bytes)
       if (!content.length || content.length > 64 * 1048576 || !['success', 'hash-mismatch', 'network-error'].includes(outcome)) throw new Error('Invalid update fixture')
+      const asset = ytdlpReleaseAsset()
+      if (!asset) throw new Error('Unsupported offline tool update platform')
       const version = toolsLock.ytdlpVersion
       const base = `https://github.com/yt-dlp/yt-dlp/releases/download/${version}/`
+      const sums = `${outcome === 'hash-mismatch' ? '0'.repeat(64) : createHash('sha256').update(content).digest('hex')}  ${asset}\n`
       fixtureRequest = async url => {
         if (outcome === 'network-error') throw new Error('Offline fixture network failure')
         if (url === 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest') return new Response(JSON.stringify({ tag_name: version, draft: false, prerelease: false, assets: [
-          { name: 'yt-dlp.exe', browser_download_url: base + 'yt-dlp.exe', size: content.length },
-          { name: 'SHA2-256SUMS', browser_download_url: base + 'SHA2-256SUMS', size: 77 },
+          { name: asset, browser_download_url: base + asset, size: content.length },
+          { name: 'SHA2-256SUMS', browser_download_url: base + 'SHA2-256SUMS', size: Buffer.byteLength(sums) },
         ] }))
-        if (url === base + 'SHA2-256SUMS') return new Response(`${outcome === 'hash-mismatch' ? '0'.repeat(64) : createHash('sha256').update(content).digest('hex')}  yt-dlp.exe\n`)
-        if (url === base + 'yt-dlp.exe') return new Response(content)
+        if (url === base + 'SHA2-256SUMS') return new Response(sums)
+        if (url === base + asset) return new Response(content)
         throw new Error('Unknown offline fixture request')
       }
     } } : {}),
@@ -793,6 +855,9 @@ async function start(): Promise<void> {
     unwatchFile(index)
     await youtubeAdmin?.dispose()
     editorProjectIpc?.dispose()
+    releaseEmbeddedLoginIpc?.()
+    releaseLoginCardIpc?.()
+    await embeddedLogin.dispose()
     await youtubeImports?.dispose()
     await youtubeBrowse?.close()
     adminMedia.clear()
@@ -807,24 +872,32 @@ async function start(): Promise<void> {
     if (offlineE2e) session.defaultSession.webRequest.onBeforeRequest(null)
     dispose = undefined
   })()
-  window.on('closed', () => { window = null; void dispose?.() })
+  window.on('closed', () => {
+    window = null
+    void lifecycle.closed().catch(() => { console.error('窗口资源清理失败, 应用将退出.'); app.quit() })
+  })
   if (frontendUpdates.snapshot().phase === 'trial') frontendBootTimer = setTimeout(() => { void recoverFrontend() }, 30_000)
-  try { await window.loadURL(APP_URL) }
+  try { await mainWindow.loadURL(APP_URL) }
   catch (error) {
+    if (mainWindow.isDestroyed()) return
     const recovery = recoverFrontend()
     if (recovery) await recovery
     else throw error
   }
-  stylePacks.start()
+  if (!mainWindow.isDestroyed()) stylePacks.start()
 }
-if (primaryInstance) app.whenReady().then(start).catch(() => { console.error('应用启动失败, 请检查构建产物和数据目录'); app.exit(1) })
-app.on('window-all-closed', () => app.quit())
+if (primaryInstance) void app.whenReady().then(() => {
+  if (hiddenTestWindows && process.platform === 'darwin') app.setActivationPolicy('prohibited')
+  const template = applicationMenu(process.platform, showMainWindow)
+  Menu.setApplicationMenu(template ? Menu.buildFromTemplate(template) : null)
+  showMainWindow()
+})
+app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
 let quitting = false
 let shutdownComplete = false
 app.on('before-quit', (event) => {
   if (shutdownComplete) return
   if (quitting) { event.preventDefault(); return }
-  if (!dispose && !confirmedInstaller) return
   event.preventDefault()
   quitting = true
   // NSIS may close a running application after a short grace period. Finish all data and
@@ -832,7 +905,7 @@ app.on('before-quit', (event) => {
   const installer = confirmedInstaller
   confirmedInstaller = undefined
   void (async () => {
-    await dispose?.()
+    await lifecycle.quit()
     if (installer) await launchApplicationInstaller(installer.userDataDir, installer.file)
   })().catch(() => {
     if (installer) {

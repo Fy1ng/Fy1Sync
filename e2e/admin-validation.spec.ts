@@ -64,7 +64,7 @@ test('只读批量验收连续读取不同帧, 原图回看和跳转不写样本
   for (let index = 0; index < 4; index++) {
     await expect(panel.getByRole('button', { name: `查看 ${(index + 1.5).toFixed(2)}s 验收结果` })).toContainText(`0:${19 - index}`)
   }
-  await page.keyboard.press('Control+z')
+  await page.keyboard.press('ControlOrMeta+z')
   expect(await packHash(page)).toBe(original)
   await panel.getByRole('button', { name: '查看 2.50s 验收结果' }).click()
   await expect(panel.getByRole('img', { name: '倒计时原始画面', exact: true })).toBeVisible()
