@@ -4,9 +4,11 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { nativeMacArch, npmCliPath } from './packaging-platform.mjs'
 import { machoArchitectures } from './build-ffmpeg-mac.mjs'
+import { prepareElectron } from './prepare-electron.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const target = nativeMacArch(process.argv.slice(2))
+await prepareElectron()
 const environment = { ...process.env,
   ELECTRON_BUILDER_CACHE: path.join(root, '.packaging', 'builder-cache'),
   ELECTRON_CACHE: path.join(root, '.packaging', 'electron-cache'),

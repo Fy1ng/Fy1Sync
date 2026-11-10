@@ -3,8 +3,10 @@ import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { npmCliPath, packagingTarget } from './packaging-platform.mjs'
+import { prepareElectron } from './prepare-electron.mjs'
 const root = fileURLToPath(new URL('../', import.meta.url))
 if (packagingTarget().platform !== 'win32') throw new Error('Windows 安装包必须在 Windows x64 本机执行')
+await prepareElectron()
 const env = { ...process.env,
   ELECTRON_BUILDER_CACHE: path.join(root, '.packaging', 'builder-cache'),
   ELECTRON_CACHE: path.join(root, '.packaging', 'electron-cache'),
