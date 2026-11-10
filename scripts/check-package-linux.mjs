@@ -13,13 +13,23 @@ const assert = (condition, message) => { if (!condition) throw new Error(message
 const forbiddenPath = name => !/(?:^|\/)provider\/server\/node_modules\/undici\/lib\/web\/cookies(?:\/|$)/.test(name)
   && /(?:^|\/)(?:test-sources|cookies|browser-profile|\.runtime-cache|\.tools|\.git|\.env[^/]*)(?:\/|$)/i.test(name)
 
-async function comparePayload(expected, directory, exact = false) {
-  const actual = await fingerprintRelease(directory, { forbiddenPath })
-  if (exact) assert(expected.files.size === actual.files.size, 'Linux archive file count differs')
-  for (const [name, entry] of expected.files) {
-    const other = actual.files.get(name)
+const debProfile = 'resources/apparmor-profile'
+
+export function compareLinuxPayloadFiles(expected, actual, format) {
+  assert(['deb', 'AppImage', 'tar.gz'].includes(format), 'Unknown Linux package format')
+  // FPM adds its install-time AppArmor profile after concurrent archive snapshots may start.
+  const absentProfile = format !== 'deb' && expected.has(debProfile) && !actual.has(debProfile)
+  if (format !== 'AppImage') assert(expected.size - Number(absentProfile) === actual.size, 'Linux archive file count differs')
+  for (const [name, entry] of expected) {
+    if (absentProfile && name === debProfile) continue
+    const other = actual.get(name)
     assert(other && entry.sha256 === other.sha256 && entry.size === other.size, 'Linux archive payload differs: ' + name)
   }
+}
+
+async function comparePayload(expected, directory, format) {
+  const actual = await fingerprintRelease(directory, { forbiddenPath })
+  compareLinuxPayloadFiles(expected.files, actual.files, format)
 }
 
 export async function checkLinuxPackage() {
@@ -67,15 +77,17 @@ export async function checkLinuxPackage() {
       assert(architecture === (target.arch === 'x64' ? 'amd64' : 'arm64'), 'DEB CPU differs')
       assert((await nativeRun('/usr/bin/dpkg-deb', ['--field', file, 'Version'])).trim() === version, 'DEB version differs')
       await nativeRun('/usr/bin/dpkg-deb', ['--extract', file, destination])
-      await comparePayload(tree, path.join(destination, 'opt', 'Fy1Sync'), true)
+      await comparePayload(tree, path.join(destination, 'opt', 'Fy1Sync'), 'deb')
     } else if (extension === 'AppImage') {
       assert(elfArchitecture(await readFile(file)) === target.arch, 'AppImage CPU differs')
       await nativeRun(file, ['--appimage-extract'], { cwd: destination, timeout: 300_000 })
       // AppImage adds its launcher and desktop integration beside the identical application payload.
-      for (const [relative, entry] of tree.files) {
-        const actual = await fileIdentity(path.join(destination, 'squashfs-root', relative))
-        assert(actual.size === entry.size && actual.sha256 === entry.sha256, 'AppImage application payload differs: ' + relative)
+      const actual = new Map()
+      for (const [relative] of tree.files) {
+        try { actual.set(relative, await fileIdentity(path.join(destination, 'squashfs-root', relative))) }
+        catch (error) { if (relative !== debProfile || error.code !== 'ENOENT') throw error }
       }
+      compareLinuxPayloadFiles(tree.files, actual, 'AppImage')
     } else {
       const names = (await nativeRun('/usr/bin/tar', ['-tzf', file])).trim().split('\n')
       assert(names.length <= 30_000 && names.every(name => !name.startsWith('/') && !name.includes('\\') && !name.split('/').some(part => part === '..' || part === '.')), 'Unsafe Linux TAR path')
@@ -83,7 +95,7 @@ export async function checkLinuxPackage() {
       const roots = new Set(names.map(name => name.split('/')[0]))
       assert(roots.size === 1, 'Linux TAR must have one application root')
       await nativeRun('/usr/bin/tar', ['-xzf', file, '--strip-components=1', '-C', destination])
-      await comparePayload(tree, destination, true)
+      await comparePayload(tree, destination, 'tar.gz')
     }
     artifacts.push({ ...await fileIdentity(file), contents: 'matches-unpacked-app' })
   }
