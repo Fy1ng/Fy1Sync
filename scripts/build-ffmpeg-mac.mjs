@@ -292,6 +292,7 @@ export async function buildMacFfmpeg(args = process.argv.slice(2)) {
   const environment = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', HOME: work, TMPDIR: path.join(work, 'tmp'),
     SOURCE_DATE_EPOCH: String(lock.sourceDateEpoch), LC_ALL: lock.locale, LANG: lock.locale, TZ: lock.timezone,
     ...macNativeBuildEnvironment(),
+    CFLAGS: macNativeBuildEnvironment().CFLAGS.replaceAll('@BUILD_WORK@', work),
     ...Object.fromEntries(['HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY', 'NO_PROXY', 'https_proxy', 'http_proxy', 'all_proxy', 'no_proxy'].filter(key => process.env[key]).map(key => [key, process.env[key]])),
   }
   await mkdir(paths.cache, { recursive: true })
@@ -361,6 +362,8 @@ export async function buildMacFfmpeg(args = process.argv.slice(2)) {
     const resolved = await realpath(source)
     assert(resolved.startsWith(path.join(work, 'install') + path.sep), 'Installed FFmpeg link escapes private prefix')
     await cp(resolved, path.join(runtime, name))
+    await macRun('/usr/bin/strip', ['-S', path.join(runtime, name)], { env: environment })
+    await macRun('/usr/bin/codesign', ['--force', '--sign', '-', path.join(runtime, name)], { env: environment })
   }
   const assertions = await verifyMacRuntime(runtime, lock, target.arch, path.join(work, 'tmp'))
   const parser = path.join(work, 'parser-probe.c')

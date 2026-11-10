@@ -84,13 +84,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libgnutls28-dev patchelf libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libatspi2.0-0 libuuid1 libsecret-1-0 libgbm1 libasound2 xvfb xauth
-      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        id: wasm-cache
         with:
           path: |
             .tools/wasm-bindgen
             ~/.cargo/registry
             ~/.cargo/git
           key: wasm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'scripts/build-wasm.mjs') }}
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            .packaging/downloads
+            .packaging/ffmpeg-build
+          key: native-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/*lock.json', 'packaging/ffmpeg/**', 'scripts/build-ffmpeg*.mjs', 'scripts/packaging-platform.mjs') }}
       - run: npm ci
       - run: rustup target add wasm32-unknown-unknown
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
@@ -99,14 +106,40 @@ jobs:
           path: .packaging/team-logos/
       - run: npm run test:packaging
       - name: Build native installers and portable packages
+        id: package
         run: npm run ${{ matrix.command }}
       - name: Validate Windows package
         if: runner.os == 'Windows'
         run: npm run package:check
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        if: runner.os == 'Windows'
+        with:
+          path: .tools/fixture-ffmpeg
+          key: fixture-ffmpeg-windows-x64-8.0-647e467caf82b9fa200a562769b5ff4d736aaf725804ed2c64ea9752106fa569
+      - name: Prepare independently verified fixture encoder
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $fixtureRoot = Join-Path $env:GITHUB_WORKSPACE '.tools/fixture-ffmpeg'
+          New-Item -ItemType Directory -Path $fixtureRoot -Force | Out-Null
+          $fixtureZip = Join-Path $fixtureRoot 'ffmpeg-8.0-essentials_build.zip'
+          if (!(Test-Path -LiteralPath $fixtureZip)) {
+            Invoke-WebRequest -Uri 'https://github.com/GyanD/codexffmpeg/releases/download/8.0/ffmpeg-8.0-essentials_build.zip' -OutFile $fixtureZip
+          }
+          if ((Get-Item -LiteralPath $fixtureZip).Length -ne 105748282 -or (Get-FileHash -LiteralPath $fixtureZip -Algorithm SHA256).Hash.ToLowerInvariant() -ne '647e467caf82b9fa200a562769b5ff4d736aaf725804ed2c64ea9752106fa569') { throw 'Fixture encoder checksum mismatch' }
+          Expand-Archive -LiteralPath $fixtureZip -DestinationPath $fixtureRoot -Force
+          $fixtureFfmpeg = Join-Path $fixtureRoot 'ffmpeg-8.0-essentials_build/bin/ffmpeg.exe'
+          "STREAM_SYNC_FIXTURE_FFMPEG=$fixtureFfmpeg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Generate synthetic recognition media
+        if: runner.os == 'Windows'
+        run: npm run fixtures
+      - name: Prepare canonical test environment
+        if: runner.os == 'Windows'
+        run: node scripts/prepare-ci-test-env.mjs
       - name: Run unit and Rust tests
         if: runner.os == 'Windows'
         run: |
-          npm test -- --maxWorkers=4
+          npm test -- --maxWorkers=4 --testTimeout=30000 --hookTimeout=30000
           cargo test --workspace --locked
       - name: Start packaged desktop application
         run: |
@@ -137,6 +170,15 @@ jobs:
           path: .runtime-cache/release-ci/*.json
           if-no-files-found: ignore
           retention-days: 14
+      - name: Cache verified WASM build tooling
+        if: always() && steps.package.outcome == 'success' && steps.wasm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            .tools/wasm-bindgen
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: wasm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'scripts/build-wasm.mjs') }}
 
   release:
     name: Publish complete desktop release

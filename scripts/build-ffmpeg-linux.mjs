@@ -112,7 +112,7 @@ export async function buildLinuxFfmpeg(args = process.argv.slice(2)) {
   const work = await mkdtemp(path.join(root, '.runtime-cache', 'ffmpeg-linux-'))
   await mkdir(path.join(work, 'tmp'))
   const env = { PATH: '/usr/bin:/bin', HOME: work, TMPDIR: path.join(work, 'tmp'), SOURCE_DATE_EPOCH: String(lock.sourceDateEpoch),
-    LC_ALL: lock.locale, LANG: lock.locale, TZ: lock.timezone, CC: '/usr/bin/gcc', CFLAGS: '-O3 -fPIC',
+    LC_ALL: lock.locale, LANG: lock.locale, TZ: lock.timezone, CC: '/usr/bin/gcc', CFLAGS: '-O3 -fPIC -ffile-prefix-map=' + work + '=.',
     ...Object.fromEntries(['HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY', 'NO_PROXY', 'https_proxy', 'http_proxy', 'all_proxy', 'no_proxy'].filter(key => process.env[key]).map(key => [key, process.env[key]])) }
   await mkdir(paths.cache, { recursive: true })
   const inputs = {}
