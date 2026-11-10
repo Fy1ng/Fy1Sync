@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { nativeMacArch, npmCliPath } from './packaging-platform.mjs'
+import { nativeMacArch, npmCliPath, prepareBuilderCache } from './packaging-platform.mjs'
 import { machoArchitectures } from './build-ffmpeg-mac.mjs'
 import { prepareElectron } from './prepare-electron.mjs'
 
@@ -19,6 +19,7 @@ const { devDependencies } = JSON.parse(await readFile(path.join(root, 'package.j
 if (electronMetadata.version !== devDependencies.electron) throw new Error('Electron 版本与项目固定版本不一致, 请在 macOS 本机运行 npm ci')
 if (!machoArchitectures(await readFile(path.join(root, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron'))).includes(target.arch)) throw new Error('Electron 二进制架构不一致, 请在目标 macOS 主机重新运行 npm ci')
 await mkdir(path.join(root, '.packaging'), { recursive: true })
+await prepareBuilderCache(environment.ELECTRON_BUILDER_CACHE)
 function run(file, args = []) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [file, ...args], { cwd: root, env: environment, shell: false, stdio: 'inherit' })

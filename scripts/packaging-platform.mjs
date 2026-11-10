@@ -1,9 +1,19 @@
 import { existsSync } from 'node:fs'
+import { lstat, mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import macToolLock from '../packaging/tools-mac-lock.json' with { type: 'json' }
 
 export const macMinimumSystemVersion = macToolLock.minimumSystemVersion
 if (macMinimumSystemVersion !== '13.0') throw new Error('macOS 构建基线必须与 Electron 44 的 macOS 13 最低要求一致')
+
+export async function prepareBuilderCache(directory) {
+  await mkdir(directory, { recursive: true })
+  const root = await lstat(directory), metadata = path.join(directory, 'package.json')
+  const file = await lstat(metadata).catch(error => { if (error.code === 'ENOENT') return null; throw error })
+  if (!root.isDirectory() || root.isSymbolicLink() || file && (!file.isFile() || file.isSymbolicLink())) throw new Error('打包工具缓存必须使用普通目录和文件')
+  // Downloaded builder helpers are CommonJS .js files, independent of the source project's ESM scope.
+  await writeFile(metadata, JSON.stringify({ private: true, type: 'commonjs' }) + '\n')
+}
 
 export function validateToolAsset(asset) {
   if (!asset || typeof asset.name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(asset.name)

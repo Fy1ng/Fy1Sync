@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { npmCliPath, packagingTarget } from './packaging-platform.mjs'
+import { npmCliPath, packagingTarget, prepareBuilderCache } from './packaging-platform.mjs'
 import { elfArchitecture } from './build-ffmpeg-linux.mjs'
 import { prepareElectron } from './prepare-electron.mjs'
 
@@ -13,6 +13,7 @@ if (elfArchitecture(await readFile(path.join(root, 'node_modules', 'electron', '
 const env = { ...process.env, ELECTRON_BUILDER_CACHE: path.join(root, '.packaging', 'builder-cache'),
   ELECTRON_CACHE: path.join(root, '.packaging', 'electron-cache'), npm_config_cache: path.join(root, '.packaging', 'npm-cache') }
 await mkdir(path.join(root, '.packaging'), { recursive: true })
+await prepareBuilderCache(env.ELECTRON_BUILDER_CACHE)
 function run(file, args = []) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [file, ...args], { cwd: root, env, shell: false, stdio: 'inherit' })

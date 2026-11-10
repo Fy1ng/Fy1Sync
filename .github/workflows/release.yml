@@ -92,7 +92,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: wasm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'scripts/build-wasm.mjs') }}
-      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        id: native-cache
         with:
           path: |
             .packaging/downloads
@@ -166,6 +167,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+          include-hidden-files: true
       - name: Upload verification reports
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
@@ -174,8 +176,9 @@ jobs:
           path: .runtime-cache/release-ci/*.json
           if-no-files-found: ignore
           retention-days: 14
+          include-hidden-files: true
       - name: Cache verified WASM build tooling
-        if: always() && steps.package.outcome == 'success' && steps.wasm-cache.outputs.cache-hit != 'true'
+        if: always() && steps.wasm-cache.outputs.cache-hit != 'true' && hashFiles('.tools/wasm-bindgen/bin/wasm-bindgen*') != ''
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
@@ -183,6 +186,14 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: wasm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'scripts/build-wasm.mjs') }}
+      - name: Cache verified native tool builds
+        if: always() && steps.native-cache.outputs.cache-hit != 'true' && hashFiles('.packaging/ffmpeg-build/out/**/build-manifest.json') != ''
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            .packaging/downloads
+            .packaging/ffmpeg-build
+          key: native-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packaging/*lock.json', 'packaging/ffmpeg/**', 'scripts/build-ffmpeg*.mjs', 'scripts/packaging-platform.mjs') }}
 
   release:
     name: Publish complete desktop release

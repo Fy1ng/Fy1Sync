@@ -24,7 +24,7 @@ module.exports = {
   win: { target: [{ target: 'nsis', arch: ['x64'] }, { target: 'zip', arch: ['x64'] }], signExecutable: false, icon: 'packaging/icon.ico' },
   mac: {
     minimumSystemVersion: require('./packaging/tools-mac-lock.json').minimumSystemVersion,
-    target: [{ target: 'dmg', arch: ['arm64', 'x64'] }, { target: 'zip', arch: ['arm64', 'x64'] }],
+    target: ['dmg', 'zip'],
     artifactName: 'Fy1Sync-${version}-mac-${arch}.${ext}',
     icon: 'packaging/icon-source.png', category: 'public.app-category.entertainment',
     // Normal electron-builder identity/notarization environment variables remain available.
@@ -35,7 +35,7 @@ module.exports = {
     ],
   },
   linux: {
-    target: [{ target: 'deb', arch: ['x64', 'arm64'] }, { target: 'AppImage', arch: ['x64', 'arm64'] }, { target: 'tar.gz', arch: ['x64', 'arm64'] }],
+    target: ['deb', 'AppImage', 'tar.gz'],
     // Keep one CPU label across targets; builder maps ${arch} to amd64/x86_64 for DEB/AppImage.
     artifactName: 'Fy1Sync-${version}-linux-' + process.arch + '.${ext}',
     executableName: 'fy1sync', icon: 'packaging/icon-source.png', category: 'AudioVideo',

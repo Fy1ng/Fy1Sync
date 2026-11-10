@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
-import { macCapabilities, macConfigure, macMinimumSystemVersion, macNativeBuildEnvironment, macRuntimeFiles, nativeMacArch, npmCliPath, packagingTarget, validateToolAsset } from './packaging-platform.mjs'
+import { macCapabilities, macConfigure, macMinimumSystemVersion, macNativeBuildEnvironment, macRuntimeFiles, nativeMacArch, npmCliPath, packagingTarget, prepareBuilderCache, validateToolAsset } from './packaging-platform.mjs'
 
 const lock = JSON.parse(await readFile(new URL('../packaging/ffmpeg/build-lock.json', import.meta.url), 'utf8'))
 const config = createRequire(import.meta.url)('../electron-builder.config.cjs')
@@ -72,9 +75,26 @@ test('builder keeps Windows targets and exposes architecture-labelled macOS DMG/
   assert.deepEqual(config.win.target, [{ target: 'nsis', arch: ['x64'] }, { target: 'zip', arch: ['x64'] }])
   assert.equal(config.nsis.artifactName, 'Fy1Sync-${version}-win-x64-nsis.${ext}')
   assert.equal(config.artifactName, 'Fy1Sync-${version}-win-x64-portable.${ext}')
-  assert.deepEqual(config.mac.target, [{ target: 'dmg', arch: ['arm64', 'x64'] }, { target: 'zip', arch: ['arm64', 'x64'] }])
+  assert.deepEqual(config.mac.target, ['dmg', 'zip'])
+  assert.deepEqual(config.linux.target, ['deb', 'AppImage', 'tar.gz'])
   assert.equal(config.mac.artifactName, 'Fy1Sync-${version}-mac-${arch}.${ext}')
   assert.ok(config.files.includes('electron/login-card-preload.cjs'))
+})
+
+test('downloaded CommonJS builder helpers execute beneath an ESM source project', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'fy1sync-builder-cache-'))
+  try {
+    await writeFile(path.join(directory, 'package.json'), '{"type":"module"}\n')
+    const cache = path.join(directory, 'cache'), bundle = path.join(cache, 'icons-bundle')
+    await mkdir(bundle, { recursive: true })
+    const helper = path.join(bundle, 'icon-tool.js')
+    await writeFile(helper, 'console.log(require("node:fs").existsSync(process.argv[1]))\n')
+    assert.notEqual(spawnSync(process.execPath, [helper], { encoding: 'utf8' }).status, 0)
+    await prepareBuilderCache(cache)
+    const outcome = spawnSync(process.execPath, [helper], { encoding: 'utf8' })
+    assert.equal(outcome.status, 0, outcome.stderr)
+    assert.equal(outcome.stdout.trim(), 'true')
+  } finally { await rm(directory, { recursive: true, force: true }) }
 })
 
 test('npm CLI discovery uses a real npm entry without shell command construction', () => {

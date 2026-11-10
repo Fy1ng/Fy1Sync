@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { npmCliPath, packagingTarget } from './packaging-platform.mjs'
+import { npmCliPath, packagingTarget, prepareBuilderCache } from './packaging-platform.mjs'
 import { prepareElectron } from './prepare-electron.mjs'
 const root = fileURLToPath(new URL('../', import.meta.url))
 if (packagingTarget().platform !== 'win32') throw new Error('Windows 安装包必须在 Windows x64 本机执行')
@@ -14,6 +14,7 @@ const env = { ...process.env,
   CSC_IDENTITY_AUTO_DISCOVERY: 'false',
 }
 await mkdir(path.join(root, '.packaging'), { recursive: true })
+await prepareBuilderCache(env.ELECTRON_BUILDER_CACHE)
 function run(file, args = []) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [file, ...args], { cwd: root, env, shell: false, windowsHide: true, stdio: 'inherit' })
