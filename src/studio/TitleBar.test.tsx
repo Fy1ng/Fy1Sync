@@ -23,7 +23,7 @@ describe('desktop title bar', () => {
     expect(container.querySelector('.titlebar')).toHaveAttribute('data-platform', 'mac')
     expect(container.querySelector('.titlebar-controls')).toBeNull()
     expect(screen.queryByRole('button', { name: '关闭' })).not.toBeInTheDocument()
-    expect(document.documentElement.dataset.titlebar).toBe('custom')
+    await waitFor(() => expect(document.documentElement.dataset.titlebar).toBe('custom'))
     act(() => f.publish({ ...f.state, fullscreen: true }))
     expect(container.querySelector('.titlebar')).toBeNull()
     expect(document.documentElement.dataset.titlebar).toBe('native')
