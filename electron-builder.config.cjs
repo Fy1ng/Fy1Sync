@@ -36,7 +36,8 @@ module.exports = {
   },
   linux: {
     target: [{ target: 'deb', arch: ['x64', 'arm64'] }, { target: 'AppImage', arch: ['x64', 'arm64'] }, { target: 'tar.gz', arch: ['x64', 'arm64'] }],
-    artifactName: 'Fy1Sync-${version}-linux-${arch}.${ext}',
+    // Keep one CPU label across targets; builder maps ${arch} to amd64/x86_64 for DEB/AppImage.
+    artifactName: 'Fy1Sync-${version}-linux-' + process.arch + '.${ext}',
     executableName: 'fy1sync', icon: 'packaging/icon-source.png', category: 'AudioVideo',
     maintainer: 'Fy1ng <dev@fy1ng.com>',
     synopsis: '电竞双路视频对齐播放器',

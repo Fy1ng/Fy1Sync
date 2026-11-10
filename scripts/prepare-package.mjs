@@ -14,6 +14,7 @@ await mkdir(path.join(destination, 'client', 'assets'), { recursive: true })
 const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
 await writeFile(path.join(destination, 'package.json'), JSON.stringify({
   name: pkg.name, version: pkg.version, description: pkg.description, license: pkg.license,
+  homepage: 'https://github.com/Fy1ng/Fy1Sync',
   main: 'electron/main.cjs',
 }, null, 2) + '\n')
 for (const name of ['main.cjs', 'preload.cjs', 'login-card-preload.cjs', 'network-runtime.cjs', 'icon.png']) await cp(path.join(root, 'dist', 'electron', name), path.join(destination, 'electron', name))

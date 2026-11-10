@@ -29,7 +29,7 @@ export function linuxConfigure(lock, arch) {
   const omit = ['--target-os=', '--arch=', '--cc=', '--enable-schannel', '--disable-pthreads', '--enable-w32threads', '--cpu=', '--extra-cflags=', '--extra-ldflags=', '--extra-libs=']
   return [...lock.configure.filter(value => !omit.some(prefix => value.startsWith(prefix))),
     '--target-os=linux', `--arch=${arch === 'arm64' ? 'aarch64' : 'x86_64'}`, '--cc=/usr/bin/gcc',
-    '--enable-gnutls', '--enable-pthreads', '--disable-w32threads', '--disable-asm', '--enable-pic', '--disable-protocol=dtls,udp',
+    '--enable-gnutls', '--enable-pthreads', '--disable-w32threads', '--disable-asm', '--enable-pic',
     '--extra-cflags=-fPIC -I../zlib-prefix/include', '--extra-ldflags=-L../zlib-prefix/lib']
 }
 

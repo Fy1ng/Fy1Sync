@@ -270,6 +270,17 @@ export async function sourceFiles(directory, prefix = '') {
   return files
 }
 
+export async function applyNativePatches(lock, work, environment) {
+  for (const patch of lock.patches) {
+    const bytes = await readFile(path.join(repo, 'packaging', 'ffmpeg', patch.file))
+    assert(bytes.length === patch.size && sha256(bytes) === patch.sha256, 'Native patch SHA256/size mismatch')
+    // BSD patch preserves CR bytes, unlike GNU patch. Normalize only the verified private copy.
+    const file = path.join(work, path.basename(patch.file))
+    await writeFile(file, bytes.toString('utf8').replaceAll('\r\n', '\n'))
+    await macRun('/usr/bin/patch', ['--batch', '--fuzz=0', '-p1', '-i', file], { cwd: path.join(work, 'ffmpeg-source'), env: environment })
+  }
+}
+
 export async function buildMacFfmpeg(args = process.argv.slice(2)) {
   const target = packagingTarget()
   assert(target.platform === 'darwin', 'FFmpeg macOS 构建必须在 macOS arm64/x64 本机执行')
@@ -310,7 +321,7 @@ export async function buildMacFfmpeg(args = process.argv.slice(2)) {
   await rename(path.join(work, 'ffmpeg-unpack', 'FFmpeg-' + lock.commit), path.join(work, 'ffmpeg-source'))
   await extract(inputs.zlib, path.join(work, 'zlib-unpack'), environment)
   await rename(path.join(work, 'zlib-unpack', 'zlib-1.3.2'), path.join(work, 'zlib-source'))
-  for (const patch of lock.patches) await macRun('/usr/bin/patch', ['--batch', '--fuzz=0', '-p1', '-i', path.join(repo, 'packaging', 'ffmpeg', patch.file)], { cwd: path.join(work, 'ffmpeg-source'), env: environment })
+  await applyNativePatches(lock, work, environment)
   await mkdir(path.join(work, 'logs'))
   const execute = async (name, executable, argv, cwd) => {
     console.log('执行 macOS 原生构建: ' + name)

@@ -1,8 +1,8 @@
 import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { linuxConfigure, linuxRuntimeFiles, macCapabilities, packagingTarget } from './packaging-platform.mjs'
-import { ensureInput, extract, fileIdentity, macRun as nativeRun, shellWords, sourceFiles, verifyIdentity } from './build-ffmpeg-mac.mjs'
+import { linuxConfigure, linuxRuntimeFiles, packagingTarget } from './packaging-platform.mjs'
+import { applyNativePatches, ensureInput, extract, fileIdentity, macRun as nativeRun, shellWords, sourceFiles, verifyIdentity } from './build-ffmpeg-mac.mjs'
 import { writeFfmpegFixtures } from './ffmpeg-fixtures.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
@@ -36,7 +36,7 @@ export function linuxBuildPaths(repo, buildId, arch) {
 }
 
 export async function verifyLinuxRuntime(directory, lock, arch, task) {
-  const expected = linuxRuntimeFiles(lock), files = [], evidence = {}, capabilities = macCapabilities(lock)
+  const expected = linuxRuntimeFiles(lock), files = [], evidence = {}, capabilities = lock.capabilities
   assert(json((await readdir(directory)).sort()) === json(expected), 'Linux FFmpeg inventory differs')
   const env = { PATH: '/usr/bin:/bin', HOME: task, TMPDIR: task, LC_ALL: 'C', LANG: 'C', TZ: 'UTC' }
   for (const name of expected) {
@@ -96,7 +96,7 @@ export async function loadLinuxBuild(lock, arch) {
   assert(manifest.schemaVersion === 1 && manifest.target === `linux-${arch}` && manifest.buildId === lock.buildId && manifest.revision === lock.revision && manifest.extraVersion === lock.extraVersion, 'Linux FFmpeg manifest identity differs')
   await verifyIdentity(sourceLockPath, manifest.lock)
   await verifyIdentity(linuxLockPath, manifest.linuxLock)
-  assert(json(manifest.configure) === json(linuxConfigure(lock, arch)) && json(manifest.assertions.capabilities) === json(macCapabilities(lock)), 'Linux FFmpeg configuration differs')
+  assert(json(manifest.configure) === json(linuxConfigure(lock, arch)) && json(manifest.assertions.capabilities) === json(lock.capabilities), 'Linux FFmpeg configuration differs')
   assert(json(manifest.archives.map(entry => entry.name).sort()) === json([paths.runtimeName, paths.sourceName].sort()), 'Linux FFmpeg archive inventory differs')
   for (const archive of manifest.archives) await verifyIdentity(path.join(paths.output, archive.name), archive)
   for (const patch of lock.patches) await verifyIdentity(path.join(root, 'packaging', 'ffmpeg', patch.file), patch)
@@ -130,7 +130,7 @@ export async function buildLinuxFfmpeg(args = process.argv.slice(2)) {
   await rename(path.join(work, 'ffmpeg-unpack', 'FFmpeg-' + lock.commit), path.join(work, 'ffmpeg-source'))
   await extract(inputs.zlib, path.join(work, 'zlib-unpack'), env)
   await rename(path.join(work, 'zlib-unpack', 'zlib-1.3.2'), path.join(work, 'zlib-source'))
-  for (const patch of lock.patches) await nativeRun('/usr/bin/patch', ['--batch', '--fuzz=0', '-p1', '-i', path.join(root, 'packaging', 'ffmpeg', patch.file)], { cwd: path.join(work, 'ffmpeg-source'), env })
+  await applyNativePatches(lock, work, env)
   await mkdir(path.join(work, 'logs'))
   const execute = async (name, executable, argv, cwd) => {
     console.log('执行 Linux 原生构建: ' + name)
@@ -147,7 +147,7 @@ export async function buildLinuxFfmpeg(args = process.argv.slice(2)) {
   const config = Object.fromEntries([...definitions.matchAll(/^#define CONFIG_(\w+) ([01])$/gm)].map(match => [match[1], Number(match[2])]))
   for (const [key, value] of Object.entries({ ...lock.configAssertions, SCHANNEL: 0, GNUTLS: 1 })) assert(config[key] === value, 'Linux CONFIG_' + key + ' differs')
   const componentDefinitions = await readFile(path.join(work, 'build', 'config_components.h'), 'utf8')
-  for (const [kind, expected] of Object.entries(macCapabilities(lock))) {
+  for (const [kind, expected] of Object.entries(lock.capabilities)) {
     const actual = [...componentDefinitions.matchAll(new RegExp(`^#define CONFIG_(\\w+)_${kind.toUpperCase()} 1$`, 'gm'))].map(match => match[1].toLowerCase()).sort()
     assert(json(actual) === json(expected), 'Linux configured capability differs: ' + kind)
   }
