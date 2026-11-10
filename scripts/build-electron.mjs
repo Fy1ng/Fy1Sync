@@ -50,12 +50,22 @@ export async function buildElectron(write = true) {
     },
   })
   const runtime = await buildNetworkRuntime(write)
+  const loginCard = await build({
+    configFile: false, root: fileURLToPath(root),
+    build: {
+      ssr: fileURLToPath(new URL('electron/loginCardPreload.ts', root)), outDir: 'dist/electron', emptyOutDir: false,
+      minify: false, sourcemap: true, target: 'node24', write,
+      rollupOptions: { external: ['electron', /^node:/],
+        output: { format: 'cjs', entryFileNames: 'login-card-preload.cjs', codeSplitting: false } },
+    },
+  })
   if (write) {
     await cp(new URL('packaging/icon.png', root), new URL('dist/electron/icon.png', root))
     await mkdir(new URL('dist', root), { recursive: true })
     const { name, version } = JSON.parse(await readFile(new URL('package.json', root), 'utf8'))
     await writeFile(new URL('dist/package.json', root), JSON.stringify({ name, version, main: 'electron/main.cjs' }, null, 2) + '\n')
   }
-  return [...(Array.isArray(result) ? result : [result]), ...(Array.isArray(preload) ? preload : [preload]), ...(Array.isArray(runtime) ? runtime : [runtime])]
+  return [...(Array.isArray(result) ? result : [result]), ...(Array.isArray(preload) ? preload : [preload]),
+    ...(Array.isArray(runtime) ? runtime : [runtime]), ...(Array.isArray(loginCard) ? loginCard : [loginCard])]
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) await buildElectron()

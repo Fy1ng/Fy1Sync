@@ -204,6 +204,8 @@ export class Acquisition implements AcquisitionService {
       ...(confirmedRoom ? { douyuRoomIdentity: { room: confirmedRoom, inputRoom: confirmedRoom } } : {}),
       runYtDlp: url => diagnostic ? this.deps.runYtDlp(url, !hlsOnly, network, event => diagnostic.record(event)) : this.deps.runYtDlp(url, !hlsOnly, network),
       douyuCookie: detectPlatform(input, platform) === 'douyu' ? await this.deps.logins.cookieHeader('douyu') : undefined,
+      douyinCookieHeader: detectPlatform(input, platform) === 'douyin'
+        ? requestUrl => this.deps.logins.cookieHeader('douyin', requestUrl) : undefined,
     }, platform)
     if (!result.ok) return sanitizedFailure(result)
     // Actual media connections own DNS and route validation; do not resolve the same target here.

@@ -21,6 +21,7 @@ import type { DanmakuMessage } from '../core/danmakuTimeline'
 import { useComposer } from './composer'
 import { useDanmakuActions } from './danmakuActions'
 import { ScrollingLayer, type LayerEntry, type LayerItem } from './danmakuLayer'
+import { isReadOnlyDanmakuPlatform, isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
 
 type ActiveItem = LayerItem<DanmakuMessage>
 
@@ -216,7 +217,7 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
   }
 
   const message = menu?.item.data
-  const readOnly = message?.platform === 'huya' || snapshot.danmaku.room?.startsWith('huya:') === true
+  const readOnly = isReadOnlyDanmakuPlatform(message?.platform) || isReadOnlyDanmakuRoom(snapshot.danmaku.room)
   const writes = snapshot.settings.douyuWrites
   const repeatProblem = message ? composer.repeatProblem(message.text) : null
   const uid = message?.sender?.uid

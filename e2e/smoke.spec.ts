@@ -132,7 +132,7 @@ test.describe('应用外壳', () => {
     await expect(page.locator('.drawer')).toBeVisible()
   })
 
-  test('纯房间号的平台选择包含虎牙', async ({ page }) => {
+  test('纯房间号的平台选择包含虎牙和抖音', async ({ page }) => {
     await page.goto(APP_ORIGIN + '/')
     const dialog = sourceDialog(page)
     await expect(dialog.getByRole('textbox', { name: '直播间链接' })).toBeDisabled()
@@ -142,6 +142,7 @@ test.describe('应用外壳', () => {
     await expect(platforms.getByRole('radio', { name: '虎牙', exact: true })).toBeVisible()
     await expect(platforms.getByRole('radio', { name: '斗鱼', exact: true })).toBeVisible()
     await expect(platforms.getByRole('radio', { name: '哔哩哔哩', exact: true })).toBeVisible()
+    await expect(platforms.getByRole('radio', { name: '抖音', exact: true })).toBeVisible()
     await closeSourceDialog(page)
   })
 
@@ -191,6 +192,13 @@ test.describe('主进程接口与安全边界', () => {
 
   test('虎牙平台通过 IPC 参数校验且无效房间不会发起取流', async ({ page }) => {
     const response = await invoke(page, 'resolve', { input: 'not/a/huya-room', platform: 'huya', role: 'commentary' })
+    expect(response.ok).toBe(true)
+    if (!response.ok) throw new Error(response.message)
+    expect(response.value).toMatchObject({ ok: false, failure: { code: 'unsupported-url' } })
+  })
+
+  test('抖音平台通过 IPC 参数校验且拒绝伪造直播域名', async ({ page }) => {
+    const response = await invoke(page, 'resolve', { input: 'https://live.douyin.com.evil.invalid/100', platform: 'douyin', role: 'commentary' })
     expect(response.ok).toBe(true)
     if (!response.ok) throw new Error(response.message)
     expect(response.value).toMatchObject({ ok: false, failure: { code: 'unsupported-url' } })

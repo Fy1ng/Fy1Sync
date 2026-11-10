@@ -13,14 +13,34 @@ export interface NetworkSocketOptions {
   network?: NetworkContext
   resolve?: Resolver
   timeoutMs?: number
+  /** Main-produced Douyin handshake metadata. Login cookies never reach this socket. */
+  headers?: Record<string, string>
 }
 
 /** Defer transport creation until the platform policy and direct DNS guard have settled. */
 export function createNetworkSocket(raw: string, platform: DanmakuPlatform, options: NetworkSocketOptions = {}): WebSocketLike {
-  const expected = ENDPOINTS[platform]
   const url = new URL(raw)
-  if (url.protocol !== 'wss:' || url.hostname !== expected.hostname || url.port !== expected.port
-    || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error('弹幕连接地址不在允许范围内.')
+  const expected = platform === 'douyin' ? { hostname: url.hostname, port: '' } : ENDPOINTS[platform]
+  const douyinTarget = platform === 'douyin'
+    && /^webcast[1-9][0-9]{0,2}-ws-web-(?:lf|hl|lq)\.douyin\.com$/.test(url.hostname)
+    && url.pathname === '/webcast/im/push/v2/' && raw.length <= 32_768 && !/[\x00-\x20\x7f]/.test(raw)
+  if (!expected || url.protocol !== 'wss:' || url.hostname !== expected.hostname || url.port !== expected.port
+    || url.username || url.password || url.hash
+    || (platform === 'douyin' ? !douyinTarget : url.pathname !== '/' || url.search)) throw new Error('弹幕连接地址不在允许范围内.')
+  let headers: Record<string, string> | undefined
+  if (options.headers) {
+    if (platform !== 'douyin' || Object.keys(options.headers).length > 4) throw new Error('弹幕请求头不在允许范围内.')
+    headers = {}
+    for (const [key, value] of Object.entries(options.headers)) {
+      const name = key.toLowerCase()
+      if (!['cookie', 'user-agent', 'origin', 'referer'].includes(name) || typeof value !== 'string' || value.length > 8192
+        || /[\x00-\x1f\x7f]/.test(value) || Object.hasOwn(headers, name)
+        || (name === 'origin' && value !== 'https://live.douyin.com')
+        || (name === 'referer' && value !== 'https://live.douyin.com/')
+        || (name === 'cookie' && !/^ttwid=[^;\s]{1,4096}$/.test(value))) throw new Error('弹幕请求头不在允许范围内.')
+      headers[name] = value
+    }
+  }
   const network = options.network ?? networkContext(platform)
   const listeners = new Map<string, Set<(event: any) => void>>()
   let transport: WebSocketLike | undefined
@@ -107,7 +127,7 @@ export function createNetworkSocket(raw: string, platform: DanmakuPlatform, opti
       const attempt = await new Promise<unknown>(resolve => {
         settleAttempt = resolve
         // Undici refuses HTTP redirects during the WebSocket handshake.
-        const socket = new WebSocket(url.href, { dispatcher }) as unknown as WebSocketLike
+        const socket = new WebSocket(url.href, { dispatcher, ...(headers ? { headers } : {}) }) as unknown as WebSocketLike
         transport = socket
         socket.binaryType = binaryType
         socket.addEventListener('open', () => {

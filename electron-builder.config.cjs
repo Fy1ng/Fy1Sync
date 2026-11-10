@@ -9,7 +9,7 @@ module.exports = {
   asarUnpack: ['electron/network-runtime.cjs'],
   npmRebuild: false,
   files: [
-    'package.json', 'electron/main.cjs', 'electron/preload.cjs', 'electron/network-runtime.cjs', 'electron/icon.png', 'client/index.html',
+    'package.json', 'electron/main.cjs', 'electron/preload.cjs', 'electron/login-card-preload.cjs', 'electron/network-runtime.cjs', 'electron/icon.png', 'client/index.html',
     'client/assets/**/*.js', 'client/assets/**/*.css', 'client/assets/**/*.wasm', 'client/assets/**/*.woff2',
     '!node_modules', '!node_modules/**/*',
   ],

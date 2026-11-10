@@ -2,7 +2,7 @@ import type { DouyuRoomIdentity, ResolveDouyuRoom } from './douyuRoom'
 import type { MediaAccess } from '../mediaAccess'
 /** Shared shapes for platform stream resolution. */
 
-export type PlatformKind = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'huya' | 'direct'
+export type PlatformKind = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'huya' | 'douyin' | 'direct'
 
 export type QualityOption = {
   id: string
@@ -61,6 +61,9 @@ export type ResolveResult =
   | { ok: true; stream: ResolvedStream }
   | { ok: false; failure: ResolveFailure }
 
+/** Main-only page metadata, including anonymous session cookies and checked redirects. */
+export type PlatformPage = { text: string; finalUrl: string; setCookie: string[] }
+
 export type ResolverDeps = {
   mediaAccess?: () => MediaAccess | undefined
   resolveDouyuRoom?: ResolveDouyuRoom
@@ -68,6 +71,8 @@ export type ResolverDeps = {
   douyuRoomIdentity?: DouyuRoomIdentity
   fetchJson: (url: string, init?: RequestInit) => Promise<unknown>
   fetchText: (url: string, init?: RequestInit) => Promise<string>
+  /** Bounded page read; only the main-process resolver can consume session headers. */
+  fetchPage?: (url: string, init?: RequestInit) => Promise<PlatformPage>
   /** Playlist text and its final redirect URL for relative rendition references. */
   fetchPlaylist?: (url: string) => Promise<{ text: string; finalUrl: string }>
   /** Bounded binary metadata (Huya WUP), never a media preflight. */
@@ -78,6 +83,8 @@ export type ResolverDeps = {
   runYtDlp?: (url: string) => Promise<unknown>
   /** Main-process-only cookie header read from the private Douyu cookie store. */
   douyuCookie?: string
+  /** Fresh scoped login material for fixed Douyin page/API URLs only, never media CDNs. */
+  douyinCookieHeader?: (requestUrl: string) => Promise<string>
   quality?: string
   preferAdaptive?: boolean
   /** Internal retry constraint after adaptive playback fails, never accepted from IPC. */

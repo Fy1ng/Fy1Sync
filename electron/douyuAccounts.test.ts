@@ -19,12 +19,12 @@ function tempRoot(): string {
 }
 function fakeLogin(loggedIn = false) {
   const empty = { cookieCount: 0, authKeysPresent: [] as string[], loggedIn: false, expiresAt: null, hasSessionCookies: false }
-  const status: LoginStatus = { youtube: { ...empty }, douyu: { ...empty, loggedIn } }
+  const status: LoginStatus = { youtube: { ...empty }, douyu: { ...empty, loggedIn }, douyin: { ...empty } }
   return {
     login: vi.fn(async () => { status.douyu = { ...empty, cookieCount: 1, loggedIn: true, authKeysPresent: ['acf_uid'] }; return { cookieCount: 1, authKeysPresent: ['acf_uid'] } }),
     loginStatus: vi.fn(async () => structuredClone(status)),
     logout: vi.fn(async () => { status.douyu = { ...empty } }),
-    cookieHeader: vi.fn(async (_platform: 'douyu', _url?: string) => 'synthetic=value'),
+    cookieHeader: vi.fn(async (_platform: 'douyu' | 'douyin', _url?: string) => 'synthetic=value'),
     dispose: vi.fn(async () => {}),
   }
 }

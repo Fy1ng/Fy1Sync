@@ -6,14 +6,17 @@ import type { DouyuAccountsSnapshot, DouyuTasksSnapshot } from '../server/douyu/
 import { FEATURE_METHODS, type FeatureEvent } from './featureContracts'
 import { YOUTUBE_ADMIN_METHODS, type YtBrowseState, type YtImportJob } from './ytAdminContracts'
 import { EDITOR_PROJECT_METHODS } from './editorProjectContracts'
+import { EMBEDDED_LOGIN_METHODS, type EmbeddedLoginState } from './embeddedLoginContracts'
 
 const youtubeMethods = new Set<string>(YOUTUBE_ADMIN_METHODS)
 const editorMethods = new Set<string>(EDITOR_PROJECT_METHODS)
+const embeddedLoginMethods = new Set<string>(EMBEDDED_LOGIN_METHODS)
 
 const methods = new Set<DesktopMethod>([
   ...FEATURE_METHODS,
   ...YOUTUBE_ADMIN_METHODS,
   ...EDITOR_PROJECT_METHODS,
+  ...EMBEDDED_LOGIN_METHODS,
   'windowControl', 'getWindowState',
   'listDouyuAccounts', 'addDouyuAccount', 'renameDouyuAccount', 'loginDouyuAccount', 'loginDouyuYubaAccount', 'activateDouyuAccount', 'logoutDouyuAccount', 'removeDouyuAccount',
   'sendDouyuMessage', 'openDouyuTaskRoom',
@@ -21,7 +24,7 @@ const methods = new Set<DesktopMethod>([
   'getDouyuTasks', 'createDouyuTask', 'setDouyuTaskPolicy', 'startDouyuTask', 'pauseDouyuTask', 'removeDouyuTask', 'retainDouyuTaskRoom', 'closeDouyuTaskRoom',
   'resolveDouyuRoom', 'health', 'verifyAdmin', 'resolve', 'listPresets', 'getPreset', 'savePreset', 'deletePreset',
   'getStylePackSyncState', 'syncStylePacks', 'setStylePackSyncSource',
-  'switchQuality', 'stopBuffer', 'login', 'loginStatus', 'logout',
+  'switchQuality', 'stopBuffer', 'reconnectDanmaku', 'login', 'loginStatus', 'logout',
   'getNetworkPreferences', 'setNetworkPreferences',
   'getDecoderPreferences', 'setDecoderPreferences',
   'getToolsStatus', 'getAcquisitionDiagnostics', 'updateYtdlp', 'restoreYtdlp',
@@ -33,7 +36,8 @@ const bridge: StreamSyncerBridge = {
     if (!methods.has(method)) {
       return Promise.resolve({ ok: false as const, code: 'unknown-method', message: '未知桌面接口' })
     }
-    const channel = editorMethods.has(method) ? 'stream-syncer:editor-invoke' : youtubeMethods.has(method) ? 'stream-syncer:yt-invoke' : 'stream-syncer:invoke'
+    const channel = embeddedLoginMethods.has(method) ? 'stream-syncer:embedded-login-invoke'
+      : editorMethods.has(method) ? 'stream-syncer:editor-invoke' : youtubeMethods.has(method) ? 'stream-syncer:yt-invoke' : 'stream-syncer:invoke'
     return ipcRenderer.invoke(channel, method, args) as Promise<ApiResult<DesktopMethods[K]['result']>>
   },
   subscribeDanmaku(room, listener) {
@@ -88,6 +92,12 @@ const bridge: StreamSyncerBridge = {
     }
     ipcRenderer.on('stream-syncer:features', receive)
     return () => { active = false; ipcRenderer.removeListener('stream-syncer:features', receive) }
+  },
+  subscribeEmbeddedLogin(listener) {
+    let active = true
+    const receive = (_event: unknown, state: EmbeddedLoginState | null) => { if (active) listener(state) }
+    ipcRenderer.on('stream-syncer:embedded-login', receive)
+    return () => { active = false; ipcRenderer.removeListener('stream-syncer:embedded-login', receive) }
   },
   subscribeYtBrowseState(listener) {
     let active = true

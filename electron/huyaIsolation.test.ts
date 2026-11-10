@@ -71,18 +71,19 @@ describe('Huya cannot enter Douyu-only features', () => {
     }
   })
 
-  it('rejects Huya even with a numeric room and forged Douyu sender/gift metadata', () => {
+  it.each(['huya', 'douyin'] as const)('rejects %s even with a numeric room and forged Douyu sender/gift metadata', platform => {
+    const received: ChatMessage = { ...message, platform }
     const features = new DanmakuFeatures({ load: () => undefined, save() {} })
     const history = vi.spyOn(features.history, 'observe')
     const deliveries = vi.spyOn(features.deliveries, 'observe')
-    expect(features.observe(message)).toBe(false)
-    expect(features.observe({ ...message, platform: undefined, room: 'huya:660002' })).toBe(false)
+    expect(features.observe(received)).toBe(false)
+    expect(features.observe({ ...received, platform: undefined, room: `${platform}:660002` })).toBe(false)
     expect(history).not.toHaveBeenCalled()
     expect(deliveries).not.toHaveBeenCalled()
-    expect(features.history.observe(message)).toBe(false)
-    expect(features.deliveries.observe(message)).toBeNull()
+    expect(features.history.observe(received)).toBe(false)
+    expect(features.deliveries.observe(received)).toBeNull()
     const insights = new DouyuInsightsService({ gateway: {} as never })
-    insights.observe(message)
+    insights.observe(received)
     expect(insights.snapshot('660002').uniqueChatters).toBe(0)
     insights.dispose()
     vi.restoreAllMocks()

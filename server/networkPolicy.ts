@@ -11,7 +11,7 @@ export interface NetworkRoute {
 export interface NetworkContext { route(url: string): Promise<NetworkRoute> }
 export interface ProxySummary { type: 'direct' | 'HTTP' | 'SOCKS' | 'PAC'; fallbackReason?: string }
 export const directNetwork: NetworkContext = { route: async () => ({ kind: 'direct' }) }
-const DOMESTIC = /(^|\.)(douyu\.com|douyucdn[23]?\.cn|dyscdn\.com|edgesrv\.com|douyuscdn\.com|bytefcdnrd\.com|bilibili\.com|bilivideo\.com|hdslb\.com|huya\.com|msstatic\.com)$/i
+const DOMESTIC = /(^|\.)(douyu\.com|douyucdn[23]?\.cn|dyscdn\.com|edgesrv\.com|douyuscdn\.com|bytefcdnrd\.com|bilibili\.com|bilivideo\.com|hdslb\.com|huya\.com|msstatic\.com|douyin\.com|amemv\.com|douyincdn\.com)$/i
 export function domesticTarget(raw: string): boolean { try { return DOMESTIC.test(new URL(raw).hostname) } catch { return false } }
 
 /** Preserve Chromium's ordered alternatives. Never invent a DIRECT fallback. */
@@ -81,7 +81,7 @@ export class NetworkPolicy {
   context(platform?: PlatformKind | null): NetworkContext {
     const domesticMode = this.mode()
     const memo = new Map<string, Promise<NetworkRoute>>()
-    const domesticPlatform = platform === 'douyu' || platform === 'bilibili' || platform === 'huya'
+    const domesticPlatform = platform === 'douyu' || platform === 'bilibili' || platform === 'huya' || platform === 'douyin'
     return { route: (url) => {
       if (domesticMode === 'direct' && (domesticPlatform || domesticTarget(url))) return directNetwork.route(url)
       let value = memo.get(url)

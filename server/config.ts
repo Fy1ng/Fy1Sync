@@ -45,6 +45,11 @@ export const DEFAULT_PROXY_HOSTS = [
   // Huya room metadata, WUP signing tokens and platform-owned FLV CDNs.
   'huya.com',
   '*.huya.com',
+  // Douyin live pages and official live-share redirects. Media uses its own policy.
+  'live.douyin.com',
+  'v.douyin.com',
+  'webcast.amemv.com',
+  'ttwid.bytedance.com',
 ]
 
 /** Metadata only. These hosts do not grant renderer/media-proxy access. */

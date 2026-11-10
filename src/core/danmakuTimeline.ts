@@ -20,7 +20,7 @@ export interface DanmakuMessage {
   text: string
   user: string
   color: string
-  platform?: 'douyu' | 'huya'
+  platform?: 'douyu' | 'huya' | 'douyin'
   system?: boolean
   huyaGift?: { id: string; count: number; name?: string }
   /** Commentary media time (seconds) at which this message should appear. */

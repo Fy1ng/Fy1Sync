@@ -1,7 +1,7 @@
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent, WebContents } from 'electron'
 import type { DesktopService } from '../server/api'
 import { parseDouyuRoom } from '../server/platforms'
-import { danmakuRoom } from '../server/danmaku/types'
+import { danmakuRoom, isReadOnlyDanmakuRoom } from '../server/danmaku/types'
 import type { FeatureEvent } from './featureContracts'
 import { isAppDocument } from './security'
 import { invokeWindowMethod } from './windowControls'
@@ -73,8 +73,8 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
     // Additional playback windows can observe other rooms without changing the main task context.
     let next: string | null = null
     if (!disposed) for (const entry of subscriptions.values()) if (entry.owner.contents === contents && entry.room !== null) {
-      // The last selected subscription controls intent. Huya clears the Douyu operation room.
-      next = entry.room.startsWith('huya:') ? null : entry.room
+      // The last selected subscription controls intent. Other platforms clear Douyu writes.
+      next = isReadOnlyDanmakuRoom(entry.room) ? null : entry.room
     }
     if (next === taskRoom) return
     service.setDouyuRoom?.(next)
@@ -135,6 +135,20 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
     }
     const generation = owner.generation
     const current = () => sender(event) === owner && owner.generation === generation && allowMethod(owner, method, args)
+    if (method === 'reconnectDanmaku') {
+      const field = args && typeof args === 'object' && !Array.isArray(args) && Reflect.ownKeys(args).length === 1
+        ? Object.getOwnPropertyDescriptor(args, 'room') : undefined
+      const room = field && 'value' in field ? field.value : undefined
+      if (typeof room !== 'string' || !/^douyin:[1-9][0-9]{0,19}$/.test(room)) return { ok: false, code: 'invalid-arguments', message: '重连房间参数无效' }
+      if (!allowRoom(owner, room)) return denied()
+      if (![...subscriptions.values()].some(entry => entry.owner === owner && entry.room === room)) {
+        return { ok: false, code: 'room-not-subscribed', message: '请先在当前窗口订阅该弹幕房间' }
+      }
+      try {
+        return service.relay.reconnectRoom(room) && current() ? { ok: true, value: { room } }
+          : { ok: false, code: 'room-not-subscribed', message: '该弹幕房间已经关闭' }
+      } catch { return { ok: false, code: 'internal-error', message: '弹幕重连失败, 请稍后重试' } }
+    }
     if (method === 'activateDouyuRoom') {
       // This operation cannot be implemented in the service: only IPC knows subscription ownership.
       const descriptor = args && typeof args === 'object' && !Array.isArray(args)
@@ -164,8 +178,10 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
     const owner = sender(event)
     if (!owner) return denied()
     const huya = typeof room === 'string' && room.startsWith('huya:')
-    const input = typeof room === 'string' ? (huya || room.startsWith('douyu:') ? room.slice(room.indexOf(':') + 1) : room) : ''
-    const parsed = huya ? (/^[A-Za-z0-9_-]{1,64}$/.test(input) ? `huya:${input}` : null) : parseDouyuRoom(input)
+    const douyin = typeof room === 'string' && room.startsWith('douyin:')
+    const input = typeof room === 'string' ? (huya || douyin || room.startsWith('douyu:') ? room.slice(room.indexOf(':') + 1) : room) : ''
+    const parsed = douyin ? (/^[1-9][0-9]{0,19}$/.test(input) ? `douyin:${input}` : null)
+      : huya ? (/^[A-Za-z0-9_-]{1,64}$/.test(input) ? `huya:${input}` : null) : parseDouyuRoom(input)
     if (!validId(subscriptionId) || typeof room !== 'string' || room.length > 8192 || !parsed) {
       return { ok: false, code: 'bad-room', message: '房间号或订阅标识无效' }
     }
@@ -185,7 +201,10 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
     }
     try {
       let canonical: string
-      if (huya) {
+      if (douyin) {
+        // A web room id is stable across live sessions. The client resolves its current session.
+        canonical = `douyin:${input}`
+      } else if (huya) {
         const identity = await service.resolveHuyaRoom(input)
         if (!/^[1-9][0-9]{0,15}$/.test(identity.room)) throw new Error('虎牙房间身份无效')
         canonical = `huya:${identity.room}`

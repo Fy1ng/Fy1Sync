@@ -10,6 +10,33 @@ Fy1Sync itself is Copyright (C) 2026 Fy1ng and is licensed under the GNU General
 
 Huya's minimal TarsV3 protocol implementation and golden request/response fixtures reference [biliup/biliup commit 48a0d234794bb918e211076b357823438e8c109d](https://github.com/biliup/biliup/tree/48a0d234794bb918e211076b357823438e8c109d), MIT, Copyright (c) 2019 ForgQi. The full notice is retained in `server/platforms/fixtures/huya-biliup-LICENSE.txt`; preserve it with redistributed implementations or fixture copies. No Simple Live code is included.
 
+抖音弹幕的本地握手签名移植自 [jwwsjlm/douyinLive](https://github.com/jwwsjlm/douyinLive/blob/af34f7c2ea2c4df90c6f4659e967fb31815d9255/internal/webcastsign/native.go), commit `af34f7c2ea2c4df90c6f4659e967fb31815d9255`. 确定性签名测试向量来自同提交的 `internal/webcastsign/native_test.go`. 接收协议字段参考 [jwwsjlm/douyinlive-proto](https://github.com/jwwsjlm/douyinlive-proto/blob/main/protobuf/new_douyin.proto), 仅实现文字聊天, 控制和必要确认字段, 不包含生成的运行时. TypeScript 实现不执行下载的脚本或使用在线签名服务. 两个来源采用的 MIT 许可及各自版权行如下, 同时完整保存在 `server/danmaku/fixtures/douyin-LICENSE.txt`.
+
+```text
+MIT License
+
+Copyright (c) 2025 今晚打打
+Copyright (c) 2026 jwwsjlm
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Fixed runtime inputs
 
 | Component | Fixed input | License and source |

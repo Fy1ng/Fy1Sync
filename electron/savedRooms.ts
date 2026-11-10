@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { parseSourceInput } from '../src/core/mediaSources'
+import { parseDouyinInput } from '../src/core/douyinInput'
 import type { SavedRoom } from './featureContracts'
 import { PrivateJsonStore } from './privateJsonStore'
 
@@ -11,7 +12,7 @@ export interface SavedRoomsOptions {
 }
 
 export const MAX_SAVED_ROOMS = 100
-const PLATFORMS = new Set(['youtube', 'twitch', 'douyu', 'bilibili', 'huya', 'direct'])
+const PLATFORMS = new Set(['youtube', 'twitch', 'douyu', 'bilibili', 'huya', 'douyin', 'direct'])
 const text = (value: unknown, max: number): value is string => typeof value === 'string'
   && !!value.trim() && value.length <= max && !/[\x00-\x1f\x7f-\x9f\u2028\u2029]/.test(value)
 
@@ -44,7 +45,12 @@ function content(raw: unknown): Omit<SavedRoom, 'id' | 'savedAt'> {
     || !text(value.label, 100) || typeof value.platform !== 'string' || !PLATFORMS.has(value.platform)) {
     throw new SavedRoomsError('invalid-arguments')
   }
-  const input = value.input.trim()
+  let input = value.input.trim()
+  if (value.platform === 'douyin') {
+    const selected = parseDouyinInput(input.replace(/^(?:douyin|抖音)\s*[:：]?\s*/i, ''))
+    if (!selected) throw new SavedRoomsError('invalid-arguments')
+    input = selected.url
+  }
   // Only reusable network sources are eligible. In-app fixtures and filesystem paths are not.
   if (/^(?:[\\/]|\.{1,2}[\\/]|~[\\/]|[a-z]:[\\/])/i.test(input)
     || (/^[a-z][a-z0-9+.-]*:/i.test(input) && !/^https?:\/\//i.test(input))) {

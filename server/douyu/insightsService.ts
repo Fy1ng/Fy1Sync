@@ -1,4 +1,4 @@
-import type { ChatMessage } from '../danmaku/types'
+import { isReadOnlyDanmakuPlatform, type ChatMessage } from '../danmaku/types'
 import type { DanmakuState } from '../danmaku/types'
 import { validDouyuRoom } from '../platforms/douyuRoom'
 import { normalizeDouyuGift, normalizeDouyuUid } from '../../src/core/douyuMetadata'
@@ -99,7 +99,7 @@ export class DouyuInsightsService {
 
   /** Bounded local message IDs suppress relay replay without confusing equal text with duplicates. */
   observe(message: ChatMessage): void {
-    if (this.disposed || !message || message.platform === 'huya' || !validDouyuRoom(message.room)) return
+    if (this.disposed || !message || isReadOnlyDanmakuPlatform(message.platform) || !validDouyuRoom(message.room)) return
     const row = this.get(message.room)
     if (typeof message.id !== 'string' || message.id.length > 256) { this.dropped(message.room, 1); return }
     if (row.ids.has(message.id)) return

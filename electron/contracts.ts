@@ -17,10 +17,11 @@ import type { FeatureMethods, FeatureEvent } from './featureContracts'
 import type { YouTubeAdminMethods, YtBrowseState, YtImportJob } from './ytAdminContracts'
 import type { EditorProjectMethods } from './editorProjectContracts'
 import type { StylePackSourceId, StylePackSyncState } from './stylePackSyncContracts'
+import type { EmbeddedLoginMethods, EmbeddedLoginState } from './embeddedLoginContracts'
 
 export interface WindowState { maximized: boolean; fullscreen: boolean; focused: boolean }
 
-export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods, EditorProjectMethods {
+export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods, EditorProjectMethods, EmbeddedLoginMethods {
   windowControl: { args: { action: 'minimize' | 'toggle-maximize' | 'close' }; result: WindowState }
   getWindowState: { args: undefined; result: WindowState }
   listDouyuAccounts: { args: undefined; result: DouyuAccountsSnapshot }
@@ -59,6 +60,7 @@ export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods, Edi
   resolve: { args: { input: string; platform?: string; role?: SourceRole; quality?: string; preferAdaptive?: boolean }; result: ResolveResult }
   switchQuality: { args: { role: SourceRole; quality: string }; result: ResolveResult }
   stopBuffer: { args: { role: SourceRole }; result: { ok: true } }
+  reconnectDanmaku: { args: { room: string }; result: { room: string } }
   login: { args: { platform: LoginPlatform }; result: LoginResult }
   loginStatus: { args: undefined; result: LoginStatus }
   logout: { args: { platform: LoginPlatform }; result: { ok: true } }
@@ -81,6 +83,7 @@ export interface StreamSyncerBridge {
   subscribeDouyuAccounts?(listener: (state: DouyuAccountsSnapshot) => void): () => void
   subscribeDouyuTasks?(listener: (state: DouyuTasksSnapshot) => void): () => void
   subscribeFeatures?(listener: (event: FeatureEvent) => void): () => void
+  subscribeEmbeddedLogin?(listener: (state: EmbeddedLoginState | null) => void): () => void
   subscribeYtBrowseState?(listener: (state: YtBrowseState) => void): () => void
   subscribeYtImportProgress?(listener: (job: YtImportJob) => void): () => void
 }

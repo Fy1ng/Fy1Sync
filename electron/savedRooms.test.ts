@@ -113,12 +113,23 @@ describe('saved room storage', () => {
 })
 
 describe('saved room validation', () => {
+  it('validates an explicitly selected Douyin room without changing the default Douyu interpretation', () => {
+    const f = fixture()
+    const douyin = f.store.save({ ...source, input: '6657', platform: 'douyin' })
+    const douyu = f.store.save(source)
+    expect(douyin).toMatchObject({ input: '6657', platform: 'douyin' })
+    expect(douyu).toMatchObject({ input: '6657', platform: 'douyu' })
+    expect(f.create().list()).toHaveLength(2)
+    expect(f.store.save({ ...source, input: '抖音:6657', platform: 'douyin' })).toMatchObject({ input: '抖音:6657', platform: 'douyin' })
+  })
   it.each([
     ['youtube', 'https://www.youtube.com/watch?v=abc'],
     ['twitch', 'https://www.twitch.tv/eslcs'],
     ['douyu', 'https://www.douyu.com/6657'],
     ['bilibili', 'https://live.bilibili.com/1234'],
     ['huya', 'https://www.huya.com/6657'],
+    ['douyin', 'https://live.douyin.com/6657'],
+    ['douyin', 'https://v.douyin.com/TestShare/'],
     ['direct', 'https://cdn.example.com/live.m3u8'],
   ])('accepts the reusable %s source', (platform, input) => {
     const f = fixture()

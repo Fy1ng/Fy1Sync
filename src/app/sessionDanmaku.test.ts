@@ -116,6 +116,29 @@ afterEach(() => {
 })
 
 describe('Session danmaku transport', () => {
+  it('delays Douyin chat with commentary and rejects cross-platform or wrong-room events', async () => {
+    const { session, engine } = await makeSession({ commentaryTime: 100 })
+    session.configureDanmakuProcessing({ filterSuspectedBots: true })
+    session.connectDanmaku('douyin:100')
+    const source = StubDanmakuSubscription.instances[0]!
+    source.emit('state', { state: 'connected', room: 'douyin:100' })
+    source.emit('state', { state: 'connected', room: 'douyin:200' })
+    expect(session.flush().danmaku.room).toBe('douyin:100')
+    source.emit('danmaku', { platform: 'douyu', room: '100', text: 'wrong platform' })
+    source.emit('danmaku', { platform: 'huya', room: 'huya:100', text: 'wrong platform' })
+    source.emit('danmaku', { platform: 'douyin', room: 'douyin:200', text: 'wrong room' })
+    source.emit('danmaku', { platform: 'douyin', room: 'douyin:100', text: '抖音加油', username: '观众', sender: { uid: '42' }, dms: 10 })
+    engine.element('commentary').currentTime = 95
+    expect(session.drainDanmaku()).toEqual([])
+    engine.element('commentary').currentTime = 100
+    const messages = session.drainDanmaku()
+    expect(messages).toEqual([expect.objectContaining({ text: '抖音加油', platform: 'douyin', scheduleTime: 100 })])
+    expect(messages[0]).not.toHaveProperty('sender')
+    expect(messages[0]).not.toHaveProperty('dms')
+    session.connectDanmaku('288016')
+    source.emit('danmaku', { platform: 'douyin', room: 'douyin:100', text: 'stale message' })
+    expect(session.drainDanmaku()).toEqual([])
+  })
   it('normalizes a Huya alias through state without turning the room into a Douyu room', async () => {
     const { session } = await makeSession()
     session.connectDanmaku('huya:kpl')

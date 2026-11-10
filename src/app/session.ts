@@ -34,7 +34,7 @@ import type { AppSettings } from './settings'
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from './settings'
 import type { BufferState } from '../../electron/bufferManager'
 import { colorForIndex } from '../../server/danmaku/douyuProtocol'
-import type { ChatMessage } from '../../server/danmaku/types'
+import { danmakuRoom, isReadOnlyDanmakuPlatform, type ChatMessage } from '../../server/danmaku/types'
 import { normalizeDouyuGift, normalizeDouyuSender } from '../core/douyuMetadata'
 import { DanmakuProcessor, DEFAULT_DANMAKU_PREFERENCES, readDanmakuPreferences, type DanmakuPreferences } from '../core/danmakuProcessing'
 import { clampPlayableSeek } from '../media/timebase'
@@ -641,7 +641,8 @@ export class Session {
       const stream = response.value.stream
       const replacement: MediaDescriptor = { ...descriptor, url: stream.url, kind: stream.kind,
         label: stream.label, sourceQualities: stream.qualities, sourceQuality: stream.quality,
-        sourceRoom: stream.sourceRoom ?? descriptor.sourceRoom }
+        sourceRoom: stream.sourceRoom ?? descriptor.sourceRoom,
+        danmakuRoom: stream.danmakuRoom ?? descriptor.danmakuRoom }
       await this.loadSource(role, replacement)
       const loadedGeneration = this.sourceGeneration[role]
       if (this.engine.getState()[role].descriptor !== replacement || this.disposed) return
@@ -1199,8 +1200,9 @@ export class Session {
   /** Park one relayed message. Public so tests and the mock generator can feed it. */
   pushDanmaku(message: Pick<DanmakuMessage, 'text' | 'user' | 'color' | 'sender' | 'gift' | 'dms' | 'platform' | 'huyaGift' | 'system'>): void {
     const huya = message.platform === 'huya'
-    const sender = huya ? null : normalizeDouyuSender(message.sender)
-    const gift = huya ? null : normalizeDouyuGift(message.gift)
+    const readOnly = isReadOnlyDanmakuPlatform(message.platform)
+    const sender = readOnly ? null : normalizeDouyuSender(message.sender)
+    const gift = readOnly ? null : normalizeDouyuGift(message.gift)
     const huyaGift = huya && message.huyaGift && /^[0-9]{1,20}$/.test(message.huyaGift.id)
       && Number.isSafeInteger(message.huyaGift.count) && message.huyaGift.count > 0
       ? { id: message.huyaGift.id, count: message.huyaGift.count,
@@ -1233,7 +1235,7 @@ export class Session {
       ...(sender ? { sender } : {}),
       ...(gift ? { gift } : {}),
       ...(huyaGift ? { huyaGift } : {}),
-      ...(!huya && typeof message.dms === 'number' && Number.isFinite(message.dms) ? { dms: message.dms } : {}),
+      ...(!readOnly && typeof message.dms === 'number' && Number.isFinite(message.dms) ? { dms: message.dms } : {}),
       scheduleTime,
       receivedAt: this.now(),
     })
@@ -1243,15 +1245,16 @@ export class Session {
     if (!data || typeof data !== 'object') return
     const payload = data as Partial<ChatMessage>
     if (typeof payload.text !== 'string' || payload.text.length === 0) return
-    const platform = payload.platform === 'huya' ? 'huya' : 'douyu'
-    if ((platform === 'huya') !== (this.danmakuState.room?.startsWith('huya:') === true)) return
-    if (platform === 'huya') {
+    const platform = payload.platform === 'douyin' ? 'douyin' : payload.platform === 'huya' ? 'huya' : 'douyu'
+    if (platform !== danmakuRoom(this.danmakuState.room ?? '').platform) return
+    if (platform === 'douyin' && (payload.room !== this.danmakuState.room || payload.system || payload.gift || payload.huyaGift)) return
+    if (isReadOnlyDanmakuPlatform(platform)) {
       this.pushDanmaku({
         text: payload.text,
         user: typeof payload.username === 'string' ? payload.username.trim() || '匿名' : '匿名',
         color: colorForIndex(0), platform,
         ...(payload.system === true ? { system: true } : {}),
-        ...(payload.huyaGift !== undefined ? { huyaGift: payload.huyaGift } : {}),
+        ...(platform === 'huya' && payload.huyaGift !== undefined ? { huyaGift: payload.huyaGift } : {}),
       })
       return
     }
@@ -1276,11 +1279,13 @@ export class Session {
     const state = typeof payload.state === 'string' ? payload.state : ''
     const detail = typeof payload.detail === 'string' ? payload.detail : null
     const connected = state === 'connected'
+    if (this.danmakuState.room?.startsWith('douyin:') && payload.room !== undefined && payload.room !== this.danmakuState.room) return
     this.danmakuState = {
       ...this.danmakuState,
       connected,
       ...(typeof payload.room === 'string'
-        && (this.danmakuState.room?.startsWith('huya:') ? /^huya:[1-9][0-9]{0,15}$/ : /^[1-9][0-9]{0,11}$/).test(payload.room)
+        && (this.danmakuState.room?.startsWith('douyin:') ? /^douyin:[1-9][0-9]{0,19}$/
+          : this.danmakuState.room?.startsWith('huya:') ? /^huya:[1-9][0-9]{0,15}$/ : /^[1-9][0-9]{0,11}$/).test(payload.room)
         ? { room: payload.room } : {}),
       error: connected ? null : (detail ?? DANMAKU_STATE_TEXT[state] ?? this.danmakuState.error),
     }

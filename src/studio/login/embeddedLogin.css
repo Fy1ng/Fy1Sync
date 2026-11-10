@@ -1,0 +1,57 @@
+.studio .embedded-login-card {
+  width: min(800px, calc(100vw - 32px));
+  max-width: none;
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-2, rgb(255 255 255 / 15%));
+  border-radius: 14px;
+  background: var(--panel, #18181b);
+  color: var(--chalk, #f3f0ea);
+  font: inherit;
+  box-shadow: 0 30px 90px rgb(0 0 0 / 58%);
+}
+
+.studio .embedded-login-card[open] { display: flex; flex-direction: column; }
+.studio .embedded-login-card:not([open]) { display: none; }
+.studio .embedded-login-card:focus { outline: none; }
+.studio .embedded-login-card::backdrop { background: rgb(7 7 9 / 64%); backdrop-filter: blur(5px); }
+.studio .embedded-login-card.is-website { width: min(1040px, calc(100vw - 32px)); }
+.studio .embedded-login-head { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 16px; padding: 20px; }
+.studio .embedded-login-head h2 { font-family: var(--display); font-size: 24px; font-weight: 400; }
+.studio .embedded-login-head p { margin-top: 4px; color: var(--ash, #9a9893); font-size: 12px; }
+.studio .embedded-login-host { position: relative; flex: 0 1 auto; height: min(480px, max(0px, calc(100dvh - 196px))); min-height: 0; margin: 0 20px; overflow: hidden; background: var(--panel, #18181b); }
+.studio .is-website .embedded-login-host { height: min(620px, calc(100dvh - 196px)); }
+.studio .is-captcha .embedded-login-host { height: min(640px, calc(100dvh - 196px)); }
+.studio .embedded-login-footer { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px 20px; color: var(--ash, #9a9893); font-size: 12px; }
+.studio .embedded-login-footer p { min-width: 0; }
+.studio .embedded-login-footer > span { flex: none; color: var(--ash-2, #64635f); }
+.studio .embedded-login-back { flex: none; background: none; border: 0; padding: 0; font-size: 12px; color: var(--chalk, #f3f0ea); cursor: pointer; }
+.studio .embedded-login-back:disabled { cursor: default; opacity: .5; }
+.studio .embedded-login-placeholder { display: grid; grid-template-columns: 1fr 1fr; height: 100%; align-items: center; }
+.studio .embedded-login-placeholder > div { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 75%; gap: 16px; padding: 24px; }
+.studio .embedded-login-scan { border-right: 1px solid var(--line, rgb(255 255 255 / 8%)); }
+.studio .embedded-login-placeholder h3, .studio .embedded-login-wait h3 { font-size: 16px; font-weight: 400; }
+.studio .embedded-login-placeholder p, .studio .embedded-login-wait p { color: var(--ash, #9a9893); font-size: 12px; text-align: center; }
+.studio .embedded-login-spinner { display: block; width: 30px; height: 30px; border: 2px solid var(--line-2); border-top-color: var(--ash); border-radius: 50%; animation: embedded-login-spin 1s linear infinite; }
+.studio .embedded-login-skeleton { width: min(100%, 240px); height: 36px; border-radius: var(--r-sm, 7px); background: rgb(255 255 255 / 5%); }
+.studio .embedded-login-skeleton.is-button { height: 32px; background: rgb(255 255 255 / 9%); }
+.studio .embedded-login-wait { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 16px; height: 100%; padding: 24px; }
+@keyframes embedded-login-spin { to { transform: rotate(360deg); } }
+@media (max-height: 420px) {
+  .studio .embedded-login-head { padding: 12px 20px; }
+  .studio .embedded-login-head p, .studio .embedded-login-footer > span { display: none; }
+  .studio .embedded-login-host { height: max(0px, calc(100dvh - 150px)); }
+  .studio .embedded-login-footer { padding: 12px 20px; }
+  .studio .embedded-login-placeholder > div { gap: 8px; padding: 12px; }
+  .studio .embedded-login-skeleton { height: 20px; }
+}
+@media (max-width: 560px) {
+  .studio .embedded-login-card { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+  .studio .embedded-login-head, .studio .embedded-login-footer { padding-left: 12px; padding-right: 12px; }
+  .studio .embedded-login-host { margin: 0 12px; }
+  .studio .embedded-login-placeholder > div { padding: 12px; }
+  .studio .embedded-login-footer > span { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .studio .embedded-login-spinner { animation: none; } }

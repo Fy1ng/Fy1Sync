@@ -25,6 +25,8 @@ const invalidDestinations = [
   { platform: 'douyu', destination: 'room:1234567890123' },
   { platform: 'douyu', destination: 'room:9999\n' },
   { platform: 'youtube', destination: 'fish-act:9999' },
+  { platform: 'douyin', destination: 'yuba' },
+  { platform: 'douyin', destination: 'room:9999' },
   { platform: 'douyu', destination: 'fish-act:9999&other=1' },
   { platform: 'douyu', destination: 'fish-act:0' },
 ] as const
@@ -251,14 +253,15 @@ describe('system Chrome pipe login', () => {
   it.each([
     { platform: 'youtube', destination: undefined, url: 'https://www.youtube.com' },
     { platform: 'douyu', destination: undefined, url: 'https://www.douyu.com' },
+    { platform: 'douyin', destination: undefined, url: 'https://live.douyin.com/' },
     { platform: 'douyu', destination: 'yuba', url: 'https://yuba.douyu.com/' },
     { platform: 'douyu', destination: 'room:9999', url: 'https://www.douyu.com/9999' },
     { platform: 'douyu', destination: 'fish-act:9999', url: 'https://www.douyu.com/pages/fish-act?rid=9999' },
   ] as const)('waits for the fixed $url login window to close before exporting from the same profile over a pipe', async ({ platform, destination, url }) => {
     const manual = fakeChild(101)
     const headless = fakeChild(102)
-    const domain = platform === 'youtube' ? '.youtube.com' : '.douyu.com'
-    const name = platform === 'youtube' ? 'SAPISID' : 'acf_auth'
+    const domain = platform === 'youtube' ? '.youtube.com' : platform === 'douyu' ? '.douyu.com' : '.douyin.com'
+    const name = platform === 'youtube' ? 'SAPISID' : platform === 'douyu' ? 'acf_auth' : 'sessionid'
     const commands: Array<{ id: number; method: string }> = []
     headless.writer.on('data', (chunk: Buffer) => {
       const command = JSON.parse(chunk.toString('utf8').replace(/\0$/, '')) as { id: number; method: string }

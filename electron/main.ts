@@ -11,6 +11,8 @@ import { pathToFileURL } from 'node:url'
 import { createDouyuRoomResolver } from '../server/platforms/douyuRoom'
 import { createDesktopService, createResolverDeps } from '../server/api'
 import { resolveHuyaDanmakuRoom } from '../server/platforms/huyaDanmaku'
+import { resolveDouyinDanmakuRoom } from '../server/platforms/douyinDanmaku'
+import { createNetworkSocket } from '../server/danmaku/networkSocket'
 import { resolveConfig } from '../server/config'
 import { DanmakuRelay } from '../server/danmaku/relay'
 import { MediaRegistry } from '../server/mediaProxy'
@@ -21,6 +23,10 @@ import { getWindowState, subscribeWindowState } from './windowControls'
 import { BufferManager } from './bufferManager'
 import { pullAdaptive, AdaptivePullError } from './adaptivePuller'
 import { ChromeLoginDriver, findSystemChrome, LoginManager } from './login'
+import { EmbeddedLoginController } from './embeddedLogin'
+import { installEmbeddedLoginIpc } from './embeddedLoginIpc'
+import { installLoginCardIpc } from './loginCardIpc'
+import { DouyinEmbeddedLoginFixtures } from './douyinEmbeddedLoginFixtures'
 import { CookieStore } from './cookies'
 import { Acquisition } from './acquisition'
 import { YtDlpRunner, type YtDlpDiagnostic } from './ytdlp'
@@ -120,6 +126,8 @@ async function start(): Promise<void> {
   let handlers: ReturnType<typeof installIpcHandlers> | undefined
   let youtubeAdmin: ReturnType<typeof installYouTubeAdminIpc> | undefined
   let editorProjectIpc: ReturnType<typeof installEditorProjectIpc> | undefined
+  let releaseEmbeddedLoginIpc: (() => void) | undefined
+  let releaseLoginCardIpc: (() => void) | undefined
   let youtubeBrowse: YouTubeBrowseManager | undefined
   let youtubeImports: YouTubeImportJobManager | undefined
   let youtubeImportsReady: Promise<void> = Promise.resolve()
@@ -171,8 +179,12 @@ async function start(): Promise<void> {
   let renewalFixture: { stock: number; outcome: 'receipt-received' | 'unknown' } | null = null
   const renewalDonationsFixture: Array<Omit<DouyuBackpackDonation, 'expectedUid'>> = []
   const browserLogin = new ChromeLoginDriver()
+  const embeddedLoginFixtures = !app.isPackaged && offlineE2e ? new DouyinEmbeddedLoginFixtures() : null
+  const embeddedLogin = new EmbeddedLoginController({ owner: () => window, domesticRouting: preferences.domesticRouting,
+    cardPreload: join(__dirname, 'login-card-preload.cjs'), fixture: embeddedLoginFixtures?.configure })
   const createLogin = (directory: string) => new LoginManager(directory, {
     findChrome: () => !app.isPackaged && offlineE2e && douyuToolsFixture ? process.execPath : findSystemChrome(),
+    embeddedDriver: embeddedLogin,
     driver: { async login(executable, profile, platform, signal, destination) {
       if (!app.isPackaged && offlineE2e && douyuToolsFixture && platform === 'douyu') {
         if (signal.aborted) throw new Error('Fixture login cancelled')
@@ -260,14 +272,20 @@ async function start(): Promise<void> {
     }
   }
   const playbackLogins = {
-    async login(platform: 'youtube' | 'douyu') {
-      if (platform !== 'youtube') return douyuAccounts ? douyuAccounts.loginActive() : Promise.reject(new DouyuAccountError('storage-failed'))
+    async login(platform: 'youtube' | 'douyu' | 'douyin') {
+      if (platform === 'douyu') return douyuAccounts ? douyuAccounts.loginActive() : Promise.reject(new DouyuAccountError('storage-failed'))
+      if (platform === 'douyin') {
+        const result = await logins.login(platform)
+        relay.refreshPlatform('douyin')
+        return result
+      }
       youtubeLoginTransitions++
       try { await resetYouTubeAdmin(); return await logins.login(platform) }
       finally { youtubeLoginTransitions-- }
     },
-    async logout(platform: 'youtube' | 'douyu') {
-      if (platform !== 'youtube') return douyuAccounts ? douyuAccounts.logoutActive() : Promise.reject(new DouyuAccountError('storage-failed'))
+    async logout(platform: 'youtube' | 'douyu' | 'douyin') {
+      if (platform === 'douyu') return douyuAccounts ? douyuAccounts.logoutActive() : Promise.reject(new DouyuAccountError('storage-failed'))
+      if (platform === 'douyin') { await logins.logout(platform); relay.refreshPlatform('douyin'); return }
       youtubeLoginTransitions++
       try { await resetYouTubeAdmin(); await logins.logout(platform) }
       finally { youtubeLoginTransitions-- }
@@ -277,7 +295,8 @@ async function start(): Promise<void> {
       return { ...status, douyu: douyuAccounts ? await douyuAccounts.activeLoginStatus()
         : { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false } }
     },
-    cookieHeader: (_platform: 'douyu') => douyuAccounts ? douyuAccounts.activeCookieHeader() : Promise.resolve(''),
+    cookieHeader: (platform: 'douyu' | 'douyin', requestUrl?: string) => platform === 'douyin'
+      ? logins.cookieHeader(platform, requestUrl) : douyuAccounts ? douyuAccounts.activeCookieHeader() : Promise.resolve(''),
   }
   const providerCacheHome = privateDirectory(userDataDir, join(userDataDir, 'provider-cache'))
   const toolContext = {
@@ -395,6 +414,17 @@ async function start(): Promise<void> {
     return resolveHuyaDanmakuRoom(room, createResolverDeps(proxy, media.register).fetchText)
   }
   const relay = new DanmakuRelay({ huya: { resolveRoom: resolveHuyaRoom },
+    douyin: {
+      resolveRoom: async webRoom => {
+        if (offlineE2e) throw new Error('默认离线测试禁止真实抖音弹幕查询')
+        const context = network.context('douyin')
+        const deps = createResolverDeps(proxy, media.register, undefined, context)
+        return resolveDouyinDanmakuRoom(webRoom, { ...deps,
+          cookieHeader: requestUrl => logins.cookieHeader('douyin', requestUrl),
+        })
+      },
+      createSocket: (url, headers) => createNetworkSocket(url, 'douyin', { headers, network: network.context('douyin') }),
+    },
     ...(e2e ? { createSocket: () => ({ send() {}, close() {}, addEventListener() {} }) } : {}) })
   if (douyuAccounts && douyuTasks) {
     const gateway = new DouyuBackpackGateway({ proxy, cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url) })
@@ -683,9 +713,20 @@ async function start(): Promise<void> {
   youtubeAdmin = installYouTubeAdminIpc(ipcMain, contents, { ownerWindow: mainWindow, browse: youtubeBrowse, imports: youtubeImports,
     offline: offlineE2e, blocked: () => youtubeLoginTransitions > 0 })
   editorProjectIpc = installEditorProjectIpc(ipcMain, contents, editorProject)
+  releaseEmbeddedLoginIpc = installEmbeddedLoginIpc(ipcMain, contents, embeddedLogin)
+  releaseLoginCardIpc = installLoginCardIpc(ipcMain, embeddedLogin)
   if (e2e) Object.assign(globalThis, { __streamSyncerTest: {
     getWindowState: () => mainWindow.isDestroyed() ? null : getWindowState(mainWindow),
-    ...(!app.isPackaged ? { setDouyuToolsFixture() {
+    ...(!app.isPackaged ? { setDouyinEmbeddedLoginFixture(scenario: Parameters<DouyinEmbeddedLoginFixtures['enable']>[0] = 'form') {
+      if (!embeddedLoginFixtures) throw new Error('Douyin login fixture is offline-only')
+      embeddedLoginFixtures.enable(scenario)
+    }, async completeDouyinEmbeddedLoginFixture(authenticated = true) {
+      if (!embeddedLoginFixtures || embeddedLogin.state()?.platform !== 'douyin') throw new Error('No active Douyin login fixture')
+      await embeddedLoginFixtures.complete(authenticated)
+    }, getDouyinEmbeddedLoginFixtureState() {
+      if (!embeddedLoginFixtures) throw new Error('Douyin login fixture is offline-only')
+      return embeddedLoginFixtures.state(embeddedLogin.state() !== null)
+    }, setDouyuToolsFixture() {
       if (!offlineE2e) throw new Error('Douyu tools fixture is offline-only')
       douyuToolsFixture = true
     }, setDouyuCredentialsFixture(missingUsername: boolean) {
@@ -793,6 +834,9 @@ async function start(): Promise<void> {
     unwatchFile(index)
     await youtubeAdmin?.dispose()
     editorProjectIpc?.dispose()
+    releaseEmbeddedLoginIpc?.()
+    releaseLoginCardIpc?.()
+    await embeddedLogin.dispose()
     await youtubeImports?.dispose()
     await youtubeBrowse?.close()
     adminMedia.clear()

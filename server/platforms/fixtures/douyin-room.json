@@ -1,0 +1,18 @@
+{
+  "id_str": "9000000000000000001",
+  "status": 2,
+  "title": "测试直播",
+  "stream_url": {
+    "live_core_sdk_data": {
+      "pull_data": {
+        "options": {
+          "qualities": [
+            { "sdk_key": "sd", "name": "高清", "level": 1, "resolution": "1280x720" },
+            { "sdk_key": "origin", "name": "原画", "level": 4, "resolution": "1920x1080" }
+          ]
+        },
+        "stream_data": "{\"data\":{\"sd\":{\"main\":{\"flv\":\"https://media.douyincdn.com/fixture-low.flv?sign=SYNTHETIC_LOW\",\"hls\":\"https://media.douyincdn.com/fixture-low.m3u8?sign=SYNTHETIC_LOW\",\"sdk_params\":\"{\\\"VCodec\\\":\\\"h264\\\",\\\"fps\\\":30}\"}},\"origin\":{\"main\":{\"flv\":\"https://media.douyincdn.com/fixture-high.flv?sign=SYNTHETIC_HIGH\",\"hls\":\"https://media.douyincdn.com/fixture-high.m3u8?sign=SYNTHETIC_HIGH\",\"sdk_params\":\"{\\\"VCodec\\\":\\\"h264\\\",\\\"fps\\\":60}\"}}}}"
+      }
+    }
+  }
+}
