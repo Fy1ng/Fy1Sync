@@ -32,16 +32,16 @@ Fy1Sync 是一款支持 Windows, macOS 和 Linux 的桌面播放器. 将两路�
 
 ## 下载安装
 
-当前发布版本为 `v0.4.0`, 包含抖音直播接入, 基础识别优化以及 Windows, macOS 和 Linux 桌面包. 各平台使用 GitHub CI 原生构建并检查. [版本说明与 SHA256 校验文件](https://github.com/Fy1ng/Fy1Sync/releases/tag/v0.4.0).
+当前发布版本为 `v0.4.1`, 完善多平台内嵌登录, 抖音分享链接解析和斗鱼观时状态, 提供 Windows, macOS 和 Linux 安装包与便携包. 各平台使用 GitHub CI 原生构建并检查. [版本说明与 SHA256 校验文件](https://github.com/Fy1ng/Fy1Sync/releases/tag/v0.4.1).
 
 macOS 已加入 Apple Silicon `arm64` 和 Intel `x64` 的本机开发与 DMG/ZIP 构建入口, 要求 macOS 13 Ventura 或更新版本, 见[从源码运行](#从源码运行). 当前 Releases 中的上述版本仍以 Windows 发布包为准; macOS 原生构建, 安装和签名验收需要在对应 Mac 上完成.
 
 | 版本 | 使用方式 |
 | --- | --- |
-| [Windows x64 安装包](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.0/Fy1Sync-0.4.0-win-x64-nsis.exe) | NSIS 安装向导, 支持覆盖升级 |
-| [Windows x64 免安装版](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.0/Fy1Sync-0.4.0-win-x64-portable.zip) | 解压整个目录后运行 `Fy1Sync.exe` |
-| [macOS Intel x64](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.0/Fy1Sync-0.4.0-mac-x64.dmg) / [Apple Silicon arm64](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.0/Fy1Sync-0.4.0-mac-arm64.dmg) | DMG 安装包, macOS 13+; 发布页同时提供 ZIP |
-| [Linux x64](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.0/Fy1Sync-0.4.0-linux-x64.deb) / [Linux arm64](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.0/Fy1Sync-0.4.0-linux-arm64.deb) | DEB 安装包; 发布页同时提供 AppImage 和 tar.gz |
+| [Windows x64 安装包](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.1/Fy1Sync-0.4.1-win-x64-nsis.exe) | NSIS 安装向导, 支持覆盖升级 |
+| [Windows x64 免安装版](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.1/Fy1Sync-0.4.1-win-x64-portable.zip) | 解压整个目录后运行 `Fy1Sync.exe` |
+| [macOS Intel x64](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.1/Fy1Sync-0.4.1-mac-x64.dmg) / [Apple Silicon arm64](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.1/Fy1Sync-0.4.1-mac-arm64.dmg) | DMG 安装包, macOS 13+; 发布页同时提供 ZIP |
+| [Linux x64](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.1/Fy1Sync-0.4.1-linux-x64.deb) / [Linux arm64](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.1/Fy1Sync-0.4.1-linux-arm64.deb) | DEB 安装包; 发布页同时提供 AppImage 和 tar.gz |
 
 [查看全部 Releases](https://github.com/Fy1ng/Fy1Sync/releases) / [GitCode 下载镜像](https://gitcode.com/Fy1ng/Fy1Sync/releases). 请区分应用版本与单独发布的 FFmpeg 构建资源.
 
