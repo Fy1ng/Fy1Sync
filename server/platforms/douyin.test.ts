@@ -118,9 +118,9 @@ describe('Douyin stream resolution', () => {
     const fetchPage = vi.fn<NonNullable<ResolverDeps['fetchPage']>>(async url => url.includes('v.douyin.com')
       ? { text: syntheticDouyinReflow('100'), finalUrl: 'https://webcast.amemv.com/douyin/webcast/reflow/9000000000000000001', setCookie: [] }
       : { text: syntheticDouyinPage(), finalUrl: url, setCookie: [] })
-    const result = await resolveDouyin('https://v.douyin.com/Fixture/', deps({ fetchPage }))
+    const result = await resolveDouyin('正在直播 https://v.douyin.com/NKM8SvW_MGA/ 0@7.com :2pm', deps({ fetchPage }))
     expect(result).toMatchObject({ ok: true, stream: { channel: '100', url: expect.stringContaining('fixture-high.flv') } })
-    expect(fetchPage.mock.calls.map(([url]) => url)).toEqual(['https://v.douyin.com/Fixture/', 'https://live.douyin.com/100'])
+    expect(fetchPage.mock.calls.map(([url]) => url)).toEqual(['https://v.douyin.com/NKM8SvW_MGA/', 'https://live.douyin.com/100'])
   })
 
   it('does not treat a long shared room id as a web room without a confirmed owner', async () => {

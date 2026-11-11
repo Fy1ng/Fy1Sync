@@ -47,7 +47,7 @@ function parseLink(input: string): DouyinInput | null {
 
   const reflow = /^\/(?:douyin\/)?webcast\/reflow\/([1-9][0-9]{0,19})\/?$/.exec(url.pathname)?.[1]
   if (host === 'webcast.amemv.com' && !reflow) return null
-  if (host === 'v.douyin.com' && !/^\/[A-Za-z0-9]{1,64}\/?$/.test(url.pathname)) return null
+  if (host === 'v.douyin.com' && !/^\/[A-Za-z0-9_-]{1,64}\/?$/.test(url.pathname)) return null
   const query = new URLSearchParams()
   for (const [key, value] of url.searchParams) {
     if (!SHARE_CONTEXT.has(key)) continue

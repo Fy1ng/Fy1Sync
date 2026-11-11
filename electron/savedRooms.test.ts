@@ -130,6 +130,7 @@ describe('saved room validation', () => {
     ['huya', 'https://www.huya.com/6657'],
     ['douyin', 'https://live.douyin.com/6657'],
     ['douyin', 'https://v.douyin.com/TestShare/'],
+    ['douyin', 'https://v.douyin.com/NKM8SvW_MGA/'],
     ['direct', 'https://cdn.example.com/live.m3u8'],
   ])('accepts the reusable %s source', (platform, input) => {
     const f = fixture()

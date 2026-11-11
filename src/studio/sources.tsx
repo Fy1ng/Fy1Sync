@@ -254,6 +254,8 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       }
       const stream = result.value.stream
       patch(role, { notes: stream.notes ?? [] })
+      const sharedDouyin = parsed.platform === 'douyin' && parseDouyinInput(parsed.url)?.kind !== 'room'
+      const webRoom = sharedDouyin ? douyinDanmakuRoom({ input: parsed.url, danmakuRoom: stream.danmakuRoom })?.slice('douyin:'.length) : null
       // Douyu is asked for 原画 (rate 0); another rate back is the anonymous step-down.
       if (stream.platform === 'douyu' && stream.quality !== undefined && stream.quality !== '0') void offerLogin(role, 'douyu', generation, false)
       const loading = session.loadSource(role, {
@@ -261,7 +263,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
           { ...parsed, kind: stream.kind, label: stream.label },
           { url: stream.url, viaProxy: stream.requiresProxy },
         ),
-        input: input.trim(),
+        input: webRoom ? `https://live.douyin.com/${webRoom}` : input.trim(),
         sourceQualities: stream.qualities,
         sourceQuality: stream.quality,
         sourceRoom: stream.sourceRoom ?? stream.danmakuRoom,

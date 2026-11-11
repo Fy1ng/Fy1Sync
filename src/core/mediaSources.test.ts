@@ -44,6 +44,7 @@ describe('parseSourceInput', () => {
   it.each([
     'https://live.douyin.com/12345678901234567890', 'live.douyin.com/12345',
     'https://v.douyin.com/abCD123/', '主播正在直播 https://v.douyin.com/abCD123/。',
+    'https://v.douyin.com/NKM8SvW_MGA/', '主播正在直播 https://v.douyin.com/NKM8SvW_MGA/ 0@7.com :2pm',
     'https://webcast.amemv.com/webcast/reflow/7123456789012345678?app_id=1128',
   ])('classifies a supported Douyin link for platform acquisition: %s', input => {
     expect(expectOk(input)).toMatchObject({ platform: 'douyin', kind: 'hls', needsResolve: true })

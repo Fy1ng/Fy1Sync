@@ -48,6 +48,25 @@ function resolvedDouyin() {
 }
 
 describe('Douyin source selection and chat isolation', () => {
+  it.each(['official', 'commentary'] as const)('loads a full copied share into %s and retains the canonical room for favorites', async role => {
+    const session = makeSession()
+    const load = vi.spyOn(session, 'loadSource').mockResolvedValue(undefined)
+    const result = resolvedDouyin()
+    result.value.stream.channel = '214495728391'
+    result.value.stream.danmakuRoom = 'douyin:214495728391'
+    const resolve = vi.spyOn(apiClient, 'resolve').mockResolvedValue(result)
+    const input = '5- #在抖音，记录美好生活#【黑羽（三角洲行动）】正在直播，来和我一起支持Ta吧。复制下方链接，打开【抖音】，直接观看直播！ https://v.douyin.com/NKM8SvW_MGA/ 0@7.com :2pm'
+    mount(session, <Intake onClose={() => {}} onSchedule={() => {}} pendingFile={null} />)
+    fireEvent.click(screen.getByRole('radio', { name: role === 'official' ? /画面/ : /解说/ }))
+    const field = screen.getByLabelText('直播间链接')
+    fireEvent.change(field, { target: { value: input } })
+    fireEvent.submit(field.closest('form')!)
+    await waitFor(() => expect(load).toHaveBeenCalledWith(role, expect.objectContaining({
+      platform: 'douyin', input: 'https://live.douyin.com/214495728391', danmakuRoom: 'douyin:214495728391',
+    })))
+    expect(resolve).toHaveBeenCalledWith('https://v.douyin.com/NKM8SvW_MGA/', 'douyin', role, undefined, true)
+  })
+
   it('offers Douyin for a bare room, resolves it with the selected platform, and preserves quality choices', async () => {
     const session = makeSession()
     session.connectDanmaku('9999')

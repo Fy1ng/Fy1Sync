@@ -1,6 +1,7 @@
 /** Small, local-only clock-region memories keyed by source identity, never by a signed playback URL. */
 import type { RoiRect } from './profileSchema'
 import type { MediaDescriptor } from './types'
+import { parseDouyinInput } from './douyinInput'
 
 export interface BasicClockMemoryEntry {
   key: string
@@ -11,7 +12,7 @@ export interface BasicClockMemoryEntry {
 
 export const BASIC_CLOCK_MEMORY_LIMIT = 64
 const ASPECT_TOLERANCE = .005
-const KEY_PATTERN = /^clock-v1:(?:youtube|twitch|douyu|bilibili|huya|direct|file|test):[a-f0-9]{16}$/
+const KEY_PATTERN = /^clock-v1:(?:youtube|twitch|douyu|bilibili|huya|douyin|direct|file|test):[a-f0-9]{16}$/
 
 /** FNV-1a over UTF-16 bytes is an opaque local identifier, not a security primitive. */
 function sourceHash(value: string): string {
@@ -52,6 +53,12 @@ export function basicClockSourceKey(descriptor: MediaDescriptor | null): string 
     return typeof key === 'string' && /^clock-v1:file:[a-f0-9]{16}$/.test(key) ? key : null
   }
   const platform = descriptor.platform
+  if (platform === 'douyin') {
+    const confirmed = /^douyin:([1-9][0-9]{0,19})$/.exec(descriptor.danmakuRoom ?? '')?.[1]
+    const parsed = parseDouyinInput(descriptor.input)
+    const room = confirmed ?? (parsed?.kind === 'room' ? parsed.room : null)
+    return room ? keyFor(platform, room) : null
+  }
   if (platform === 'douyu' || platform === 'huya' || platform === 'bilibili') {
     const room = descriptor.sourceRoom?.trim()
     if (room && room.length <= 200) return keyFor(platform, room.toLowerCase())

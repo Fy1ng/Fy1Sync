@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { parseDouyinInput } from './douyinInput'
 
 describe('Douyin public input validation', () => {
+  it.each(['NKM8SvW_MGA', 'NKM8SvW-MGA', 'a'.repeat(64)])('accepts a bounded URL-safe short-link code: %s', code => {
+    expect(parseDouyinInput(`https://v.douyin.com/${code}/`)).toEqual({ kind: 'share', url: `https://v.douyin.com/${code}/` })
+  })
+
+  it('extracts the shared live link from the complete copied Douyin message', () => {
+    const input = '5- #在抖音，记录美好生活#【黑羽（三角洲行动）】正在直播，来和我一起支持Ta吧。复制下方链接，打开【抖音】，直接观看直播！ https://v.douyin.com/NKM8SvW_MGA/ 0@7.com :2pm'
+    expect(parseDouyinInput(input)).toEqual({ kind: 'share', url: 'https://v.douyin.com/NKM8SvW_MGA/' })
+  })
+
   it.each(['1', '12345678901234567890'])('normalizes a bare web room without losing digit precision: %s', room => {
     expect(parseDouyinInput(room)).toEqual({ kind: 'room', room, url: `https://live.douyin.com/${room}` })
   })
@@ -58,7 +67,8 @@ describe('Douyin public input validation', () => {
     'https://live.douyin.com/', 'https://live.douyin.com/123/extra',
     'https://live.douyin.com/0123', 'https://live.douyin.com/123%2F456',
     'https://www.douyin.com/user/12345', 'https://www.douyin.com/12345',
-    'https://v.douyin.com/a-b/', 'https://v.douyin.com/a/b',
+    'https://v.douyin.com/a%2Fb/', 'https://v.douyin.com/a/b',
+    'https://v.douyin.com/' + 'a'.repeat(65),
     'https://webcast.amemv.com/webcast/reflow/0123',
     'https://webcast.amemv.com/webcast/reflow/123/extra',
     'ftp://live.douyin.com/123', 'javascript:https://v.douyin.com/abc/',

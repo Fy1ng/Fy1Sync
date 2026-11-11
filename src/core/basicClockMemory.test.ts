@@ -14,6 +14,16 @@ function entry(id = 'one', updatedAt = 1000, aspectRatio = 16 / 9): BasicClockMe
 }
 
 describe('clock memory source identity', () => {
+  it('keeps Douyin clock memory across share URLs and live sessions for the same public room', () => {
+    const shared = basicClockSourceKey(source('https://v.douyin.com/NKM8SvW_MGA/', {
+      platform: 'douyin', sourceRoom: '7706622074026232626', danmakuRoom: 'douyin:214495728391',
+    }))
+    expect(shared).toMatch(/^clock-v1:douyin:[a-f0-9]{16}$/)
+    expect(shared).toBe(basicClockSourceKey(source('https://live.douyin.com/214495728391?camera_id=0', {
+      platform: 'douyin', sourceRoom: '7706622074026232627',
+    })))
+    expect(normalizeBasicClockMemory([{ key: shared, roi, aspectRatio: 16 / 9, updatedAt: 1000 }])).toHaveLength(1)
+  })
   it('uses the YouTube video identity across page forms, quality changes and transient playback URLs', () => {
     const first = basicClockSourceKey(source('https://www.youtube.com/watch?v=swMquqtyh-A&utm_source=test', { platform: 'youtube', sourceQuality: '2160p' }))
     for (const input of ['https://youtu.be/swMquqtyh-A?si=tracking', 'https://www.youtube.com/live/swMquqtyh-A', 'youtube.com/embed/swMquqtyh-A']) {
