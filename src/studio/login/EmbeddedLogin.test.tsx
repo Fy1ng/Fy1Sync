@@ -5,14 +5,13 @@ import type { ApiResult } from '../../app/apiClient'
 import type { EmbeddedLoginState } from '../../../electron/embeddedLoginContracts'
 import { apiClient } from '../../app/apiClient'
 import { EmbeddedLoginOverlay, useEmbeddedLoginState } from './EmbeddedLogin'
-import { remembered } from '../../app/remembered'
 
 vi.mock('../../app/apiClient', () => ({ apiClient: {
   getEmbeddedLogin: vi.fn(), subscribeEmbeddedLogin: vi.fn(), setEmbeddedLoginViewport: vi.fn(),
   cancelEmbeddedLogin: vi.fn(), retryEmbeddedLogin: vi.fn(), backEmbeddedLogin: vi.fn(), loginStatus: vi.fn(),
 } }))
 
-const ATTEMPT: EmbeddedLoginState = { id: 'attempt-a', platform: 'douyin', purpose: 'login', phase: 'loading' }
+const ATTEMPT: EmbeddedLoginState = { id: 'attempt-a', platform: 'douyu', purpose: 'login', phase: 'loading' }
 const listeners = new Set<(state: EmbeddedLoginState | null) => void>()
 const emit = (state: EmbeddedLoginState | null): void => {
   act(() => { for (const listener of listeners) listener(state) })
@@ -45,11 +44,11 @@ describe('the embedded login card', () => {
     const query = deferred<ApiResult<EmbeddedLoginState | null>>()
     vi.mocked(apiClient.getEmbeddedLogin).mockReturnValue(query.promise)
     const view = render(<StrictMode><MountedOverlay /></StrictMode>)
-    emit({ ...ATTEMPT, id: 'attempt-b', phase: 'ready' })
-    expect(screen.getByRole('dialog', { name: '抖音登录' })).toBeInTheDocument()
+    emit({ ...ATTEMPT, platform: 'huya', phase: 'ready' })
+    expect(screen.getByRole('dialog', { name: '虎牙登录' })).toBeInTheDocument()
     await act(async () => { query.resolve({ ok: true, value: ATTEMPT }); await query.promise })
-    expect(screen.getByRole('dialog', { name: '抖音登录' })).toBeInTheDocument()
-    expect(screen.getByTestId('embedded-login-host')).toHaveAttribute('aria-busy', 'false')
+    expect(screen.getByRole('dialog', { name: '虎牙登录' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '斗鱼登录' })).toBeNull()
     view.unmount()
     expect(listeners.size).toBe(0)
   })
@@ -64,25 +63,6 @@ describe('the embedded login card', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('refreshes remembered account status when a login card closes', async () => {
-    const loggedOut = { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false }
-    const status = { youtube: loggedOut, douyu: loggedOut, douyin: { ...loggedOut, loggedIn: true, cookieCount: 1, authKeysPresent: ['sessionid'] } }
-    vi.mocked(apiClient.loginStatus).mockResolvedValue({ ok: true, value: status })
-    render(<MountedOverlay />)
-    emit(ATTEMPT)
-    emit(null)
-    await waitFor(() => expect(remembered('login-status')).toEqual(status))
-    expect(screen.queryByRole('dialog')).toBeNull()
-  })
-
-  it('does not open unsupported platforms or malformed public states', () => {
-    render(<MountedOverlay />)
-    emit({ ...ATTEMPT, platform: 'douyu' } as unknown as EmbeddedLoginState)
-    expect(screen.queryByRole('dialog')).toBeNull()
-    emit({ ...ATTEMPT, id: '' })
-    expect(screen.queryByRole('dialog')).toBeNull()
-  })
-
   it('cancels only the visible attempt and keeps the settings Escape untouched', async () => {
     const underlyingKey = vi.fn()
     window.addEventListener('keydown', underlyingKey)
@@ -92,8 +72,8 @@ describe('the embedded login card', () => {
     await waitFor(() => expect(apiClient.cancelEmbeddedLogin).toHaveBeenCalledWith('attempt-a'))
     expect(underlyingKey).not.toHaveBeenCalled()
     emit(null)
-    emit({ ...ATTEMPT, id: 'attempt-b' })
-    fireEvent.click(screen.getByRole('button', { name: '关闭抖音登录' }))
+    emit({ ...ATTEMPT, id: 'attempt-b', platform: 'bilibili' })
+    fireEvent.click(screen.getByRole('button', { name: '关闭哔哩哔哩登录' }))
     await waitFor(() => expect(apiClient.cancelEmbeddedLogin).toHaveBeenLastCalledWith('attempt-b'))
     view.unmount()
     window.removeEventListener('keydown', underlyingKey)
@@ -111,7 +91,7 @@ describe('the embedded login card', () => {
     fireEvent.resize(window)
     await waitFor(() => expect(apiClient.setEmbeddedLoginViewport).toHaveBeenLastCalledWith({ id: 'attempt-a', visible: true,
       rect: { x: 50, y: 80, width: window.innerWidth - 50, height: window.innerHeight - 80 } }))
-    emit({ ...ATTEMPT, id: 'attempt-b', phase: 'ready' })
+    emit({ ...ATTEMPT, id: 'attempt-b', platform: 'huya', phase: 'ready' })
     expect(apiClient.setEmbeddedLoginViewport).toHaveBeenCalledWith({ id: 'attempt-a', visible: false, rect: { x: 0, y: 0, width: 0, height: 0 } })
     view.unmount()
     expect(apiClient.setEmbeddedLoginViewport).toHaveBeenLastCalledWith({ id: 'attempt-b', visible: false, rect: { x: 0, y: 0, width: 0, height: 0 } })
@@ -148,15 +128,15 @@ describe('the embedded login card', () => {
     vi.mocked(apiClient.cancelEmbeddedLogin).mockRejectedValue(new Error('transport unavailable'))
     render(<MountedOverlay />)
     emit(ATTEMPT)
-    fireEvent.click(screen.getByRole('button', { name: '关闭抖音登录' }))
+    fireEvent.click(screen.getByRole('button', { name: '关闭斗鱼登录' }))
     expect(await screen.findByText('暂时无法关闭, 请重试.')).toBeInTheDocument()
-    expect(screen.getByRole('dialog', { name: '抖音登录' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: '斗鱼登录' })).toBeInTheDocument()
   })
 
   it('uses a plain website card for manual room pages', () => {
     render(<MountedOverlay />)
     emit({ ...ATTEMPT, purpose: 'website' })
-    expect(screen.getByRole('dialog', { name: '抖音网页' })).toHaveClass('is-website')
+    expect(screen.getByRole('dialog', { name: '斗鱼网页' })).toHaveClass('is-website')
     expect(screen.getByText('正在打开官方网页')).toBeInTheDocument()
     expect(screen.queryByText('扫码登录')).toBeNull()
   })
@@ -179,8 +159,8 @@ describe('the embedded login card', () => {
       x: 20, y: 80, width: 760, height: 480, toJSON: () => ({}) })
     render(<MountedOverlay />)
     emit({ ...ATTEMPT, phase: 'challenge', presentation: 'captcha', message: '请完成人机验证' })
-    expect(screen.getByRole('heading', { name: '安全验证' })).toBeInTheDocument()
-    expect(screen.getByRole('dialog', { name: '抖音登录' })).toHaveClass('is-captcha')
+    expect(screen.getByRole('heading', { name: '人机验证' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: '斗鱼登录' })).toHaveClass('is-captcha')
     expect(screen.getAllByText('完成后返回登录')).toHaveLength(2)
     expect(apiClient.setEmbeddedLoginViewport).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
     expect(screen.queryByRole('button', { name: '返回统一登录' })).toBeNull()

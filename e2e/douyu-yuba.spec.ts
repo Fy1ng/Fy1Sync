@@ -18,7 +18,7 @@ test('鱼吧登录入口和签到任务通过受限 IPC, 重启后保持暂停',
     const tools = await openDouyuTab(running.page, '账号')
     const account = tools.getByRole('group', { name: '斗鱼账号 默认账号', exact: true })
     await account.getByRole('button', { name: '登录鱼吧', exact: true }).click()
-    await expect(tools).toContainText('鱼吧登录窗口已关闭')
+    await expect(tools).toContainText('鱼吧页面已关闭')
     await expect(account).toContainText('已登录')
     const form = await openTaskForm(running.page, 'yuba-sign', '9999', true)
     await form.getByRole('button', { name: '添加', exact: true }).click()

@@ -247,7 +247,7 @@ export function createDanmakuHandlers(deps: DanmakuHandlerDependencies): Feature
 
 export interface InsightsHandlerDependencies {
   insights?: Pick<DouyuInsightsService, 'snapshot' | 'refreshRoom' | 'reportPlayback' | 'setNotifications' | 'startFollowMonitor' | 'stopFollowMonitor' | 'notificationState'>
-  gateway?: Pick<DouyuInsightsGateway, 'readFollowedRooms' | 'readBadgeAges' | 'readMonthlySpending' | 'readWatchTime'>
+  gateway?: Pick<DouyuInsightsGateway, 'readFollowedRooms' | 'readBadgeAges' | 'readMonthlySpending' | 'readWatchTime'> & Partial<Pick<DouyuInsightsGateway, 'readFansWatchTime'>>
   update?: Pick<AppUpdateService, 'check' | 'state'>
   withAccount: WithFeatureAccount
   lifetime?: AbortSignal
@@ -280,6 +280,14 @@ export function createInsightsHandlers(deps: InsightsHandlerDependencies): Featu
       const id = account(value.accountId), target = room(value.room)
       if (value.refresh !== undefined && typeof value.refresh !== 'boolean') return invalid()
       return deps.withAccount(id, signal => cache.read('watch', id, target, value.refresh as boolean | undefined, () => gateway().readWatchTime(id, target, signal)))
+    },
+    getDouyuFansWatchTime: args => {
+      const value = fields(args, ['accountId', 'room'], ['refresh'])
+      const id = account(value.accountId), target = room(value.room)
+      if (value.refresh !== undefined && typeof value.refresh !== 'boolean') return invalid()
+      const service = gateway()
+      if (!service.readFansWatchTime) throw new FeatureApiError('not-available')
+      return deps.withAccount(id, signal => cache.read('fans-watch', id, target, value.refresh as boolean | undefined, () => service.readFansWatchTime!(id, target, signal)))
     },
     reportDouyuPlayback: (args, context) => {
       const value = fields(args, ['room', 'playing'])

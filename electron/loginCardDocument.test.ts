@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LoginCardAction, LoginCardBridge, LoginCardState } from './loginCardContracts'
 import { loginCardHtml, LOGIN_CARD_CSS, LOGIN_CARD_SCRIPT } from './loginCardDocument'
 
-const BASE: LoginCardState = { platform: 'douyin', stage: 'form', mode: 'password', busy: false,
+const BASE: LoginCardState = { platform: 'douyu', stage: 'form', mode: 'password', busy: false,
   qr: { status: 'loading' }, sms: { canSend: true, cooldownSeconds: 0 } }
 let listener: (state: LoginCardState) => void
 let bridge: LoginCardBridge
@@ -62,7 +62,7 @@ describe('the dedicated local login document', () => {
     start()
     await flush()
     const structure = document.querySelector('#basic')!.querySelectorAll('*').length
-    for (const platform of ['douyin'] as const) {
+    for (const platform of ['douyu', 'bilibili', 'huya'] as const) {
       emit({ platform })
       expect(document.querySelector('#basic')!.querySelectorAll('*')).toHaveLength(structure)
       expect(document.querySelectorAll('[data-login-column]')).toHaveLength(2)

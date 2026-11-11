@@ -82,6 +82,17 @@ export interface DouyuWatchTime {
   source: 'douyu-today-watch'
 }
 
+/** Official fans-home cumulative watching, separate from the card task's daily counter. */
+export interface DouyuFansWatchTime {
+  accountId: string
+  room: string
+  checkedAt: number
+  seconds: number | null
+  badgeOwned: boolean | null
+  badgeLevel: number | null
+  source: 'douyu-fanshome-cumulative'
+}
+
 export interface DouyuRankEntry {
   uid: string | null
   nickname: string

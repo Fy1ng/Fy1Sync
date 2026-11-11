@@ -34,6 +34,11 @@ import appPackage from '../package.json'
 import { EsportsService } from '../server/esports/schedule'
 import { DouyuReadCache } from '../server/douyu/readCache'
 import { SavedRoomsStore } from './savedRooms'
+import { DouyuGatewayCoordinator } from '../server/douyu/gatewayCoordinator'
+import { DouyuWatchService, type DouyuWatchContext } from '../server/douyu/watchService'
+import { DouyuWatchGateway } from '../server/douyu/watchGateway'
+import type { DouyuWatchPlaybackReport } from '../server/douyu/watchTypes'
+import { types as utilTypes } from 'node:util'
 
 export interface BackendRuntimeOptions {
   userDataDir: string
@@ -45,6 +50,10 @@ export interface BackendRuntimeOptions {
   accounts?: DouyuAccountManager
   tasks?: DouyuTaskManager
   sender?: DouyuMessageSender
+  gatewayCoordinator?: DouyuGatewayCoordinator
+  networkRuntimePath?: string
+  watchEnabled?: boolean
+  watchGateway?: Pick<DouyuWatchGateway, 'run'>
   renewal?: DouyuRenewalService
   resolveRoom: ResolveDouyuRoom
   activityPreferences: ActivityPreferencesStore
@@ -87,6 +96,68 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
   const update = new AppUpdateService({ currentVersion: appPackage.version, source: options.updateSource ?? null })
   const insightsGateway = new DouyuInsightsGateway({ proxy: options.proxy, cookieHeader })
   const insights = new DouyuInsightsService({ gateway: insightsGateway, onNotification: options.notifyLive })
+  const gatewayCoordinator = options.gatewayCoordinator ?? new DouyuGatewayCoordinator()
+  const watchGateway = options.watchGateway ?? (options.networkRuntimePath && options.watchEnabled !== false
+    ? new DouyuWatchGateway({ proxy: options.proxy, cookieHeader, networkRuntimePath: options.networkRuntimePath }) : undefined)
+  const watch = new DouyuWatchService({ coordinator: gatewayCoordinator,
+    run: (id, room, signal, stats, heartbeat) => required(watchGateway).run(id, room, signal, stats, heartbeat),
+    readWatchTime: (id, room, signal) => insightsGateway.readWatchTime(id, room, signal),
+    readFansWatchTime: (id, room, signal) => insightsGateway.readFansWatchTime(id, room, signal),
+  })
+  let watchLogin = false
+  let watchContextRevision = 0
+  let monitoredRoom: string | null = null
+  let roomStatusController: AbortController | null = null
+  let roomStatusRead: Promise<void> | null = null
+  let roomStatusAt = 0
+  const updateWatchContext = () => {
+    const state = options.tasks?.snapshot()
+    const room = state?.currentRoom ?? null
+    const roomInfo = room ? insights.snapshot(room) : null
+    const context: DouyuWatchContext = { accountId: options.accounts?.activeAccountId ?? null, room: state?.currentRoom ?? null,
+      loggedIn: watchLogin, busy: !!options.accounts?.activeAccountId && options.accounts.isBusy(options.accounts.activeAccountId),
+      locked: state?.runtime.locked ?? true, suspended: state?.runtime.suspended ?? false,
+      live: roomInfo?.live ?? null, replay: roomInfo?.replay ?? null }
+    watch.setContext(context)
+  }
+  const refreshRoomStatus = () => {
+    const room = options.tasks?.snapshot().currentRoom ?? null
+    if (room !== monitoredRoom) {
+      roomStatusController?.abort()
+      monitoredRoom = room; roomStatusAt = 0; roomStatusRead = null
+    }
+    if (!room || !watchGateway || lifetime.signal.aborted || roomStatusRead) return
+    if (roomStatusAt && Date.now() - roomStatusAt < 60_000) return
+    const controller = new AbortController()
+    roomStatusController = controller
+    const signal = AbortSignal.any([lifetime.signal, controller.signal])
+    roomStatusAt = Date.now()
+    const promise = insights.refreshRoom(room, signal).then(() => {
+      if (!signal.aborted && monitoredRoom === room) updateWatchContext()
+    }).catch(() => {
+      if (!signal.aborted && monitoredRoom === room) updateWatchContext()
+    }).finally(() => { if (roomStatusRead === promise) roomStatusRead = null })
+    roomStatusRead = promise
+  }
+  const refreshWatchLogin = () => {
+    const revision = ++watchContextRevision
+    watchLogin = false
+    updateWatchContext()
+    if (!options.accounts) return
+    void options.accounts.activeLoginStatus().then(status => {
+      if (!lifetime.signal.aborted && revision === watchContextRevision) { watchLogin = status.loggedIn; updateWatchContext() }
+    }).catch(() => {})
+  }
+  const reportWatch = (senderId: number, value: DouyuWatchPlaybackReport) =>
+    watch.report(senderId, value, options.acquisition.watchSource?.(value.role) ?? null)
+  refreshWatchLogin()
+  refreshRoomStatus()
+  const roomStatusTimer = setInterval(refreshRoomStatus, 60_000)
+  roomStatusTimer.unref?.()
+  releases.push(() => { clearInterval(roomStatusTimer); roomStatusController?.abort() })
+  releases.push(insights.subscribe(event => {
+    if (event.type === 'changed' && event.room === options.tasks?.snapshot().currentRoom) updateWatchContext()
+  }))
   const moderation = options.tasks ? new DouyuModeration({ proxy: options.proxy, cookieHeader,
     runExclusive: (context, run, signal) => queue().runAccountOperation(context, run, signal) }) : undefined
   const actionDeps = { proxy: options.proxy, cookieHeader,
@@ -142,6 +213,17 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
       return { opened: true }
     },
     getStreamSessions: args => { noArgs(args); return streams.snapshot() },
+    getDouyuWatchState: args => { noArgs(args); return watch.snapshot() },
+    reportDouyuWatchPlayback: (args, context) => {
+      const value = watchReportFields(args)
+      if ((value.role !== 'official' && value.role !== 'commentary') || typeof value.playing !== 'boolean'
+        || typeof value.currentTime !== 'number' || !Number.isFinite(value.currentTime) || value.currentTime < 0
+        || ![value.decodedBytes, value.presentedFrames].every(metric => metric === null || (typeof metric === 'number' && Number.isSafeInteger(metric) && metric >= 0))) {
+        throw new FeatureApiError('invalid-arguments')
+      }
+      if (!Number.isSafeInteger(context.senderId)) throw new FeatureApiError('forbidden')
+      return reportWatch(context.senderId!, value as unknown as DouyuWatchPlaybackReport)
+    },
     openStreamSession: args => streams.open(args),
     closeStreamSession: args => {
       const id = streamId(fields(args, ['id']).id)
@@ -158,7 +240,12 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     recoverEnhancedPip: args => { noArgs(args); return pip.recover() },
     reportEnhancedPip: (args, context) => {
       if (!Number.isSafeInteger(context.senderId)) throw new FeatureApiError('forbidden')
-      return pip.report(context.senderId!, args)
+      const state = pip.report(context.senderId!, args)
+      if (state.streamId === 'official' || state.streamId === 'commentary') reportWatch(context.senderId!, {
+        role: state.streamId, playing: args.ready && state.phase === 'ready' && args.playing,
+        currentTime: args.mediaTime, presentedFrames: args.frameCount, decodedBytes: null,
+      })
+      return state
     },
     getCaptureState: args => { noArgs(args); return capture.state() },
     setCaptureEnabled: args => { fields(args, ['enabled']); return captureChanged(() => capture.configure(args.enabled)) },
@@ -212,7 +299,14 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
   api.register(operations)
   releases.push(streams.subscribe(data => api.publish({ topic: 'streams', data })), pip.subscribe(data => api.publish({ topic: 'pip', data })),
     options.danmaku.subscribe(data => api.publish({ topic: 'danmaku-preferences', data })),
-    insights.subscribe(data => api.publish({ topic: 'insights', data })))
+    insights.subscribe(data => api.publish({ topic: 'insights', data })),
+    watch.subscribe(data => api.publish({ topic: 'douyu-watch', data })))
+  let pipOwner: number | null = null
+  releases.push(pip.subscribe(() => {
+    const current = pip.windowId()
+    if (pipOwner !== null && pipOwner !== current) watch.releaseSender(pipOwner)
+    pipOwner = current
+  }))
   if (automations) releases.push(automations.subscribe(data => api.publish({ topic: 'automations', data })))
   releases.push(options.relay.observe(event => {
     // Other platforms never enter Douyu delivery tracking, history, catalogs or statistics.
@@ -223,6 +317,7 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     if (event.type === 'message') { options.danmaku.observe(event.message); insights.observe(event.message) }
     else if (event.type === 'signal') {
       if (event.signal.kind !== 'viewers') insights.signal(event.signal)
+      if (event.signal.kind === 'live') updateWatchContext()
     }
     else {
       insights.connection(event.room, event.state)
@@ -234,9 +329,12 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     }
   }))
   releases.push(options.acquisition.subscribe(state => {
+    if ((state.role === 'official' || state.role === 'commentary') && ['starting', 'stopped', 'failed'].includes(state.state)) watch.releaseSource(state.role)
     if (pip.state().streamId === state.role && (state.state === 'starting' || state.state === 'stopped')) pip.close()
   }))
   if (options.tasks) releases.push(options.tasks.subscribe(() => {
+    updateWatchContext()
+    refreshRoomStatus()
     // Includes scheduled/manual writes and late settlement after cancellation. Clearing on
     // other queue transitions is intentionally conservative; no write outcomes are cached.
     readCache.invalidate()
@@ -245,6 +343,8 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
   if (options.accounts) {
     let previous = options.accounts.activeAccountId
     releases.push(options.accounts.subscribe(event => {
+      if (event.type === 'invalidated') watch.invalidateAccount(event.accountId)
+      refreshWatchLogin()
       readCache.invalidate()
       const next = options.accounts!.activeAccountId
       const invalidated = event.type === 'invalidated' ? event.accountId : previous !== next ? previous : null
@@ -257,13 +357,15 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     }))
   }
   return {
-    api, streams, pip, capture, automations, insights,
+    api, streams, pip, capture, automations, insights, watch,
     observeFixture: (message: Parameters<DanmakuFeatures['observe']>[0]) => {
       if (isReadOnlyDanmakuPlatform(message.platform) || isReadOnlyDanmakuRoom(message.room)) return
       options.danmaku.observe(message); insights.observe(message)
     },
     async dispose() {
       lifetime.abort()
+      await watch.dispose()
+      if (!options.gatewayCoordinator) gatewayCoordinator.dispose()
       readCache.invalidate()
       for (const release of releases) release()
       pip.dispose(); automations?.dispose(); gifts?.dispose(); inventory?.dispose(); insights.dispose(); update.dispose()
@@ -277,6 +379,20 @@ function fields(raw: unknown, required: string[], optional: string[] = []): Reco
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || required.some(k => !Object.hasOwn(raw, k))
     || Object.keys(raw).some(k => !required.includes(k) && !optional.includes(k))) throw new FeatureApiError('invalid-arguments')
   return raw as Record<string, unknown>
+}
+
+function watchReportFields(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object' || utilTypes.isProxy(raw) || Array.isArray(raw)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(raw) as object | null)) throw new FeatureApiError('invalid-arguments')
+  const names = ['role', 'playing', 'currentTime', 'decodedBytes', 'presentedFrames']
+  if (Reflect.ownKeys(raw).length !== names.length) throw new FeatureApiError('invalid-arguments')
+  const value: Record<string, unknown> = {}
+  for (const name of names) {
+    const descriptor = Object.getOwnPropertyDescriptor(raw, name)
+    if (!descriptor || !('value' in descriptor)) throw new FeatureApiError('invalid-arguments')
+    value[name] = descriptor.value
+  }
+  return value
 }
 function noArgs(args: unknown): void { if (args !== undefined) throw new FeatureApiError('invalid-arguments') }
 function string(value: unknown, limit: number): string {

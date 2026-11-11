@@ -122,16 +122,13 @@ test('抖音登录按需加载原生身份验证, 完成验证后才接收登录
   await expect(overlay.getByRole('heading', { name: '安全验证', exact: true })).toBeVisible()
   const official = electronApp.context().pages().find(value => value.url() === 'https://live.douyin.com/')!
   await expect(official.getByRole('button', { name: '完成离线验证', exact: true })).toBeVisible()
-  const visibleRegion = await electronApp.evaluate(({ BrowserWindow, WebContentsView }) => {
+  await expect.poll(() => electronApp.evaluate(({ BrowserWindow, WebContentsView }) => {
     const owner = BrowserWindow.getAllWindows()[0]!
     const descendants = (view: View): View[] => view.children.flatMap(child => [child, ...descendants(child)])
     const remote = descendants(owner.contentView).find(view => view instanceof WebContentsView && view.webContents.getURL() === 'https://live.douyin.com/') as InstanceType<typeof WebContentsView>
-    const host = descendants(owner.contentView).find(view => view.children.includes(remote))!
-    return { visible: remote.getVisible() && host.getVisible(), bounds: host.getBounds() }
-  })
-  expect(visibleRegion.visible).toBe(true)
-  expect(visibleRegion.bounds.width).toBe(726)
-  expect(visibleRegion.bounds.height).toBe(483)
+    const host = descendants(owner.contentView).find(view => view.children.includes(remote))
+    return { visible: Boolean(remote?.getVisible() && host?.getVisible()), bounds: host?.getBounds() ?? null }
+  })).toMatchObject({ visible: true, bounds: { width: 726, height: 483 } })
   await electronApp.evaluate(() => (globalThis as FixtureRuntime).__streamSyncerTest.completeDouyinEmbeddedLoginFixture(true))
   await page.waitForTimeout(1000)
   await expect(overlay).toBeVisible()

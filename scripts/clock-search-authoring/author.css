@@ -1,0 +1,28 @@
+.clock-search-author.studio { display: block; box-sizing: border-box; height: auto; min-height: 100%; overflow: auto; padding: clamp(18px, 3vw, 40px); }
+.clock-search-author__header { max-width: 900px; margin: 0 auto 24px; }
+.clock-search-author__eyebrow { margin: 0 0 5px; font-size: 11px; color: var(--ash); letter-spacing: .1em; }
+.clock-search-author__header h1 { font-size: clamp(22px, 3vw, 32px); font-weight: 650; margin: 0 0 12px; }
+.clock-search-author__header > p:last-child { color: var(--ash); font-size: 13px; line-height: 1.8; margin: 0; }
+.clock-search-author__config, .clock-search-author__sample, .clock-search-author__actions, .clock-search-author__empty, .clock-search-author__error, .clock-search-author__status { max-width: 900px; margin-left: auto; margin-right: auto; }
+.clock-search-author__config { padding: 18px 20px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.clock-search-author__config > div:first-child { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px 20px; }
+.clock-search-author__config strong { font-size: 13px; }
+.clock-search-author__config code { color: var(--ash); font-size: 11px; overflow-wrap: anywhere; }
+.clock-search-author__config > p { margin: 9px 0 0; color: var(--ash); font-size: 12px; line-height: 1.7; }
+.clock-search-author__coordinates { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 18px 0 0; }
+.clock-search-author__coordinates > div { padding: 10px; background: var(--panel-2); border-radius: 6px; }
+.clock-search-author__coordinates dt { font-size: 10px; color: var(--ash); }
+.clock-search-author__coordinates dd { margin: 6px 0 0; font: 600 20px 'Studio Figures', monospace; }
+.clock-search-author__actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; margin-bottom: 18px; }
+.clock-search-author__actions .btn-quiet, .clock-search-author__actions .btn-solid { min-height: 38px; box-sizing: border-box; }
+.clock-search-author__sample > p:first-child { color: var(--ash); font-size: 12px; margin: 14px 0 10px; }
+.clock-search-author__video { position: relative; width: 100%; overflow: hidden; background: #000; border-radius: 8px; }
+.clock-search-author__video video { display: block; width: 100%; max-height: 64vh; object-fit: contain; }
+.clock-search-author__video .roi-window { pointer-events: none; }
+.clock-search-author__hint, .clock-search-author__empty, .clock-search-author__status { color: var(--ash); font-size: 12px; line-height: 1.8; }
+.clock-search-author__empty, .clock-search-author__status { margin-top: 24px; }
+.clock-search-author__error { padding: 12px 16px; box-sizing: border-box; color: #f1b6a8; border: 1px solid rgb(241 182 168 / 25%); border-radius: 7px; font-size: 12px; line-height: 1.7; }
+@media (max-width: 620px) {
+  .clock-search-author__config { padding: 15px; }
+  .clock-search-author__coordinates { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

@@ -197,7 +197,7 @@ async function fallback(room: string, qualities: QualityOption[], deps: Resolver
     if (error instanceof StreamFailureError) throw error
     const message = error instanceof Error ? error.message : ''
     if (/offline|not.live|未开播/i.test(message)) return failure('not-live', '虎牙房间当前未开播.', '请等待主播开播后重新加载.')
-    if (/login|sign.in|forbidden|restricted|geo.restrict|登录|封禁|整改/i.test(message)) return failure('restricted', '虎牙限制了该房间或画质的访问.', '请在虎牙官网确认可播放状态. 当前暂不支持虎牙登录.')
+    if (/login|sign.in|forbidden|restricted|geo.restrict|登录|封禁|整改/i.test(message)) return failure('restricted', '虎牙限制了该房间或画质的访问.', '请在虎牙官网确认可播放状态. 备用解析工具使用匿名访问.')
     return failure('upstream-error', '虎牙备用解析失败.', MANUAL_URL_HINT)
   }
   // Some Huya extractor versions omit live/codec fields; the page already confirmed ON.
@@ -225,8 +225,13 @@ export async function resolveHuya(input: string, deps: ResolverDeps): Promise<Re
   if (deps.quality !== undefined && (!/^\d{1,7}$/.test(deps.quality) || Number(deps.quality) > 1_000_000)) return failure('unsupported-url', '虎牙画质编号无效.', '请从画质列表中重新选择.')
   let page: PageResult
   try {
-    page = parseHuyaPage(await deps.fetchText(`${REFERER}${inputRoom}`, { headers: HEADERS }), inputRoom)
-    if (page.ok && !/^\d+$/.test(inputRoom)) page = parseHuyaPage(await deps.fetchText(`${REFERER}${page.room}`, { headers: HEADERS }), page.room)
+    const readRoomPage = async (room: string) => {
+      const requestUrl = `${REFERER}${room}`
+      const cookie = await deps.cookieHeader?.('huya', requestUrl)
+      return await deps.fetchText(requestUrl, { headers: { ...HEADERS, ...(cookie ? { Cookie: cookie } : {}) } })
+    }
+    page = parseHuyaPage(await readRoomPage(inputRoom), inputRoom)
+    if (page.ok && !/^\d+$/.test(inputRoom)) page = parseHuyaPage(await readRoomPage(page.room), page.room)
   } catch (error) { if (error instanceof StreamFailureError) throw error; return failure('upstream-error', '请求虎牙房间页面失败.', MANUAL_URL_HINT) }
   if (!page.ok) return page
   const quality = deps.quality ?? page.qualities[0]?.id ?? '0'

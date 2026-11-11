@@ -1,7 +1,7 @@
 import type { CookiesSetDetails } from 'electron'
 import type { BrowserCookie } from './cookies'
 
-export type EmbeddedLoginPlatform = 'douyin'
+export type EmbeddedLoginPlatform = 'douyu' | 'bilibili' | 'huya' | 'douyin'
 export type EmbeddedLoginDestination = 'yuba' | `room:${string}` | `fish-act:${string}`
 export type EmbeddedLoginPhase = 'loading' | 'ready' | 'verifying' | 'challenge' | 'failed'
 

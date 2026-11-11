@@ -31,7 +31,7 @@ beforeEach(() => {
   youtubeSignedIn = false
   vi.stubGlobal('streamSyncer', {
     invoke: vi.fn(async (method: string) => {
-      if (method === 'loginStatus') return { ok: true, value: { douyu: { loggedIn: signedIn }, youtube: { loggedIn: youtubeSignedIn } } }
+      if (method === 'loginStatus') return { ok: true, value: { douyu: { loggedIn: signedIn }, youtube: { loggedIn: youtubeSignedIn }, bilibili: { loggedIn: signedIn }, huya: { loggedIn: signedIn } } }
       if (method === 'getToolsStatus') return { ok: true, value: { tools: [], fixturesAvailable: false } }
       return { ok: true, value: { presets: [] } }
     }) as StreamSyncerBridge['invoke'],
@@ -123,5 +123,39 @@ describe('the login offer on the intake screen', () => {
     expect(await screen.findByText('此直播在当前网络所在的地区不可观看.')).toBeInTheDocument()
     await new Promise((done) => setTimeout(done, 20))
     expect(screen.queryByText(/后重试|可看最高画质/)).toBeNull()
+  })
+
+  it.each([
+    ['bilibili', '哔哩哔哩', 'https://live.bilibili.com/21452505'],
+    ['huya', '虎牙', 'https://www.huya.com/kpl'],
+  ] as const)('offers and invokes %s sign-in only for an explicit authentication refusal', async (platform, name, input) => {
+    const resolve = vi.spyOn(apiClient, 'resolve').mockResolvedValue({ ok: true, value: { ok: false, failure: {
+      code: 'restricted', reason: 'sign-in', message: '平台要求登录后观看.',
+    } } })
+    const login = vi.spyOn(apiClient, 'login').mockResolvedValue({ ok: false, code: 'login-cancelled', message: '登录已取消.' })
+    mount()
+    fireEvent.click(screen.getByRole('radio', { name: /画面/ }))
+    const field = screen.getByLabelText('直播间链接')
+    fireEvent.change(field, { target: { value: input } })
+    fireEvent.submit(field.closest('form')!)
+    expect(await screen.findByText(`登录${name}后重试`)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '登录' }))
+    await waitFor(() => expect(login).toHaveBeenCalledWith(platform))
+    expect(resolve).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('登录已取消.')).toBeNull()
+  })
+
+  it.each(['bilibili', 'huya'] as const)('does not call a quality fallback on %s an invalid login', async (platform) => {
+    signedIn = true
+    vi.spyOn(apiClient, 'resolve').mockResolvedValue({ ok: true, value: { ok: true, stream: {
+      ...stepDown.value.stream, platform, danmakuRoom: undefined,
+    } } })
+    mount()
+    fireEvent.click(screen.getByRole('radio', { name: /画面/ }))
+    const field = screen.getByLabelText('直播间链接')
+    fireEvent.change(field, { target: { value: platform === 'bilibili' ? 'https://live.bilibili.com/21452505' : 'https://www.huya.com/kpl' } })
+    fireEvent.submit(field.closest('form')!)
+    await waitFor(() => expect(apiClient.resolve).toHaveBeenCalled())
+    expect(screen.queryByText(/登录.*后重试|可看最高画质/)).toBeNull()
   })
 })

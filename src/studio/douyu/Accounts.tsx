@@ -1,7 +1,7 @@
 /**
  * Douyu accounts. One is "当前使用" at a time: it is the one danmaku are sent from, the one
  * badge renewal reads, and the one a task needs to be able to start. Each keeps its own
- * login, signed in through a real Chrome window the viewer operates themselves.
+ * login, signed in through the official page inside the app's isolated login card.
  */
 
 import { useState } from 'react'
@@ -54,7 +54,7 @@ function AccountRow({ account, active, locked, data }: {
   const who = shown || '斗鱼账号'
 
   const login = (): void => {
-    void accountAction(`请在弹出的 Chrome 窗口中登录 ${who}，完成后关闭该窗口`,
+    void accountAction(`请在登录卡片中登录 ${who}, 完成后将自动关闭`,
       () => apiClient.loginDouyuAccount(account.id),
       (snapshot) => snapshot.accounts.find((item) => item.id === account.id)?.login.loggedIn
         ? `${who} 已登录` : `${who} 登录未完成，请重试`)
@@ -102,8 +102,8 @@ function AccountRow({ account, active, locked, data }: {
             {account.login.loggedIn ? '重新登录' : '登录'}
           </button>
           <button type="button" className="btn-quiet small" disabled={locked}
-            onClick={() => void accountAction(`请在弹出的 Chrome 窗口中登录 ${who} 的鱼吧，完成后关闭该窗口`,
-              () => apiClient.loginDouyuYubaAccount(account.id), '鱼吧登录窗口已关闭')}>
+            onClick={() => void accountAction(`请在卡片中打开 ${who} 的鱼吧, 完成后关闭页面`,
+              () => apiClient.loginDouyuYubaAccount(account.id), '鱼吧页面已关闭')}>
             登录鱼吧
           </button>
           <button type="button" className="btn-quiet small" disabled={locked} onClick={() => { setName(account.label); setMode('rename') }}>重命名</button>

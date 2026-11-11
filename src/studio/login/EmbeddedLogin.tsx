@@ -5,7 +5,7 @@ import { Icon } from '../kit'
 import { refreshLoginStatus } from './status'
 import './embeddedLogin.css'
 
-const PLATFORM_NAME = { douyin: '抖音' } as const
+const PLATFORM_NAME = { douyu: '斗鱼', bilibili: '哔哩哔哩', huya: '虎牙', douyin: '抖音' } as const
 
 function validState(state: EmbeddedLoginState | null): boolean {
   return state === null || Boolean(state && typeof state.id === 'string' && state.id
@@ -159,8 +159,8 @@ function LoginCard({ state }: { state: EmbeddedLoginState }): React.ReactNode {
       onCancel={(event) => { event.preventDefault(); event.stopPropagation(); void act('close') }}>
       <header className="embedded-login-head">
         <div>
-          <h2>{captcha ? '安全验证' : title}</h2>
-          <p>{captcha ? '完成后返回登录' : state.accountLabel ?? (website ? '在当前窗口完成网页操作' : '在应用内完成官方登录或验证, 成功后自动关闭')}</p>
+          <h2>{captcha ? (state.platform === 'douyin' ? '安全验证' : '人机验证') : title}</h2>
+          <p>{captcha ? '完成后返回登录' : state.accountLabel ?? (website ? '在当前窗口完成网页操作' : '在当前窗口完成官方账号登录')}</p>
         </div>
         <button type="button" className="icon-btn" disabled={action !== null} aria-label={`关闭${title}`}
           onClick={() => void act('close')}><Icon name="close" /></button>
@@ -173,7 +173,7 @@ function LoginCard({ state }: { state: EmbeddedLoginState }): React.ReactNode {
             <div className="embedded-login-input"><h3>短信 / 密码登录</h3><div className="embedded-login-skeleton" /><div className="embedded-login-skeleton" /><div className="embedded-login-skeleton is-button" /><p>正在准备统一登录表单</p></div>
           </div>)}
         {state.phase === 'failed' && <div className="embedded-login-wait" role="alert">
-          <Icon name="refresh" /><h3>{website ? '网页暂时无法打开' : '登录暂时无法继续'}</h3>
+          <Icon name="refresh" /><h3>{website ? '网页暂时无法打开' : '登录页面暂时无法加载'}</h3>
           <p>{state.message ?? '请检查网络连接后重试.'}</p>
           <button type="button" className="btn-solid small" disabled={action !== null} onClick={() => void act('retry')}>重试</button>
         </div>}

@@ -177,7 +177,7 @@ describe('Huya sources', () => {
     expect(feature.mock.calls.some(([method]) => ['sendComposedDouyuMessage', 'previewDouyuMute', 'getDanmakuUserDetails', 'addDanmakuFavorite'].includes(method))).toBe(false)
   })
 
-  it.each(['douyu', 'records', 'insights'] as const)('does not mount the %s backend panel for a Huya room', async (section) => {
+  it.each(['records', 'insights'] as const)('does not mount the %s backend panel for a Huya room', async (section) => {
     const session = makeSession()
     const feature = vi.spyOn(apiClient, 'feature')
     mount(session, <SettingsSheet target={{ section }} room="huya:660000" onClose={() => {}} onWatch={() => {}} onFill={() => {}} />)

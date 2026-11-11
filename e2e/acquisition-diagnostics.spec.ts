@@ -1,8 +1,10 @@
 import { _electron, expect, test } from '@playwright/test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { visibleE2eWindows } from './electron'
 
 test('普通模式在生成播放地址前失败后仍能一键导出脱敏诊断', async () => {
+  test.skip(!visibleE2eWindows, '本用例必须以 STREAM_SYNC_E2E=0 验证普通模式且不启用隐藏测试窗口; 设置 STREAM_SYNC_E2E_VISIBLE=1')
   const root = process.cwd()
   const dataRoot = path.join(root, 'e2e/.data')
   await mkdir(dataRoot, { recursive: true })
@@ -15,7 +17,7 @@ require(${JSON.stringify(path.join(root, 'dist/electron/main.cjs'))});
 `)
   const env = Object.fromEntries(Object.entries(process.env).filter(([name, value]) => value !== undefined
     && !/^STREAM_SYNC_|^ELECTRON_RUN_AS_NODE$|^NODE_OPTIONS$|^NODE_PATH$/i.test(name))) as Record<string, string>
-  Object.assign(env, { STREAM_SYNC_E2E: '0', STREAM_SYNC_USER_DATA_DIR: profile, STREAM_SYNC_DATA_DIR: profile,
+  Object.assign(env, { STREAM_SYNC_E2E: '0', STREAM_SYNC_E2E_VISIBLE: visibleE2eWindows ? '1' : '0', STREAM_SYNC_USER_DATA_DIR: profile, STREAM_SYNC_DATA_DIR: profile,
     STREAM_SYNC_FFMPEG: path.join(directory, 'PRIVATE_PATH_missing-ffmpeg.exe'),
     STREAM_SYNC_FFPROBE: path.join(directory, 'PRIVATE_PATH_missing-ffprobe.exe'),
     STREAM_SYNC_YTDLP: path.join(directory, 'PRIVATE_PATH_missing-ytdlp.exe'),

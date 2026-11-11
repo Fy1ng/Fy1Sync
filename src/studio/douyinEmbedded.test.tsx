@@ -13,7 +13,7 @@ const sessions: Session[] = []
 const listeners = new Set<(state: EmbeddedLoginState | null) => void>()
 const attempt: EmbeddedLoginState = { id: 'douyin-attempt', platform: 'douyin', purpose: 'login', phase: 'ready', presentation: 'form' }
 const loggedOut = { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false }
-const status = (loggedIn: boolean): LoginStatus => ({ youtube: loggedOut, douyu: loggedOut,
+const status = (loggedIn: boolean): LoginStatus => ({ youtube: loggedOut, douyu: loggedOut, bilibili: loggedOut, huya: loggedOut,
   douyin: { ...loggedOut, loggedIn, cookieCount: loggedIn ? 1 : 0, authKeysPresent: loggedIn ? ['sessionid'] : [] } })
 
 function emit(value: EmbeddedLoginState | null): void {
@@ -24,6 +24,7 @@ function mount(): Session {
   sessions.push(session)
   render(<SessionProvider session={session}><Studio /></SessionProvider>)
   fireEvent.click(screen.getByRole('button', { name: '设置' }))
+  fireEvent.click(screen.getByRole('tab', { name: '账号' }))
   fireEvent.click(screen.getByRole('tab', { name: '抖音' }))
   return session
 }

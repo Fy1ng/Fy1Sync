@@ -91,7 +91,7 @@ export class DouyuInsightsService {
   snapshot(room: string): DouyuRoomInsights {
     const row = this.get(room), now = this.now()
     row.value.checkedAt = now
-    row.value.broadcastSeconds = row.value.live === true && row.value.replay !== true && row.value.startedAt !== null
+    row.value.broadcastSeconds = row.value.live === true && row.value.replay === false && row.value.startedAt !== null
       ? Math.max(0, Math.floor((now - row.value.startedAt) / 1000)) : null
     row.value.localWatchSeconds = Math.floor(row.watchMs / 1000)
     return structuredClone(row.value)
@@ -204,9 +204,20 @@ export class DouyuInsightsService {
       }
       this.notifyChanged(room)
       return this.snapshot(room)
+    }).catch(error => {
+      if (!combined.aborted && !this.disposed && this.rooms.get(room) === row && row.revision === revision) this.invalidateRoomStatus(room)
+      throw error
     }).finally(() => { if (this.inFlight.get(room) === promise) this.inFlight.delete(room) })
     this.inFlight.set(room, promise)
     return promise
+  }
+
+  /** Failed status refreshes cannot keep a previously live room eligible indefinitely. */
+  invalidateRoomStatus(room: string): void {
+    if (this.disposed) return
+    const row = this.get(room)
+    row.value.live = null; row.value.replay = null; row.value.startedAt = null; row.revision++
+    this.notifyChanged(room)
   }
 
   /** Each session ID is assigned by main, not a caller-supplied elapsed-time counter. */

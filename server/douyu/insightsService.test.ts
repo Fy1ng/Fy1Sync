@@ -24,6 +24,34 @@ function chat(id: string, uid = '42', extra: Partial<ChatMessage> = {}): ChatMes
 }
 
 describe('bounded room observations', () => {
+  it('invalidates stale room status on a failed refresh without erasing a newer room signal', async () => {
+    const f = setup()
+    f.info.live = true; f.info.replay = false
+    await f.service.refreshRoom('100', new AbortController().signal)
+    f.gateway.readRoom.mockRejectedValue(new Error('fixture failure'))
+    await expect(f.service.refreshRoom('100', new AbortController().signal)).rejects.toThrow('fixture failure')
+    expect(f.service.snapshot('100')).toMatchObject({ live: null, replay: null })
+    let reject!: (error: Error) => void
+    f.gateway.readRoom.mockImplementation(() => new Promise((_resolve, fail) => { reject = fail }))
+    const pending = f.service.refreshRoom('100', new AbortController().signal)
+    f.service.signal({ kind: 'live', room: '100', live: false, replay: true, receivedAt: NOW })
+    reject(new Error('late failure'))
+    await expect(pending).rejects.toThrow('late failure')
+    expect(f.service.snapshot('100')).toMatchObject({ live: false, replay: true })
+  })
+
+  it('only computes broadcast time after both live and non-replay status are confirmed', async () => {
+    const f = setup()
+    f.info.live = true; f.info.replay = null; f.info.startedAt = NOW - 60_000
+    expect(await f.service.refreshRoom('100', new AbortController().signal)).toMatchObject({ broadcastSeconds: null })
+    f.info.replay = true
+    expect(await f.service.refreshRoom('100', new AbortController().signal)).toMatchObject({ broadcastSeconds: null })
+    f.info.replay = false
+    expect(await f.service.refreshRoom('100', new AbortController().signal)).toMatchObject({ broadcastSeconds: 60 })
+    f.service.invalidateRoomStatus('100')
+    expect(f.service.snapshot('100')).toMatchObject({ live: null, replay: null, startedAt: null, broadcastSeconds: null })
+  })
+
   it('values room catalogs independently using fish-fin units instead of assumed cash', () => {
     const f = setup()
     f.service.setRoomGiftPrices('100', [{ kind: 'gift', id: '1', amountMinor: 150, currency: 'YUCHI', source: 'official-catalog', checkedAt: NOW }])

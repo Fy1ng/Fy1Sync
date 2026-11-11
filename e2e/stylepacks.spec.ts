@@ -46,6 +46,7 @@ test('后台和手动同步只更新变化的赛事包, 离线重启仍可使用
     await settings.screenshot({ path: testInfo.outputPath('stylepack-sync.png') })
     await settings.getByRole('button', { name: '关闭', exact: true }).click()
     const options = await openAlignOptions(page)
+    await options.getByRole('radio', { name: '样式包模式', exact: true }).locator('..').click()
     await expect(options.getByRole('combobox', { name: '倒计时样式' }).locator('option', { hasText: 'IEM revision 2' })).toHaveCount(1)
     await page.keyboard.press('Escape')
 

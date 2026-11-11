@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import type { Readable, Writable } from 'node:stream'
 import { CookieStore, hasAuthenticationCookies, isLoginPlatform, LOGIN_PLATFORMS } from './cookies'
-import type { BrowserCookie, CookieStoreOptions, LoginPlatform, LoginResult, LoginStatus, YoutubeCookieSession } from './cookies'
+import type { BrowserCookie, CookieHeaderPlatform, CookieStoreOptions, LoginCookieSession, LoginPlatform, LoginResult, LoginStatus, YoutubeCookieSession } from './cookies'
 import { powershellEnvironment } from './privateStorage'
 import type { EmbeddedLoginDriver } from './embeddedLoginContracts'
 
@@ -15,8 +15,8 @@ export type LoginErrorCode = 'chrome-not-found' | 'login-busy' | 'login-cancelle
 export class LoginError extends Error {
   constructor(readonly code: LoginErrorCode, platform?: LoginPlatform) {
     super(platform === 'douyin' && code === 'login-failed' ? '抖音内嵌登录未完成, 请在应用内重试.' : { 'chrome-not-found': '未找到系统 Google Chrome, 请先安装 Chrome 后重试.',
-      'login-busy': '该平台正在登录, 请先关闭已有的登录窗口.', 'login-cancelled': '登录已取消.',
-      'login-failed': 'Chrome 登录或账号导出失败, 请关闭此平台的登录窗口后重试.',
+      'login-busy': '该平台正在登录, 请先关闭已有的登录页面.', 'login-cancelled': '登录已取消.',
+      'login-failed': '平台登录或账号读取失败, 请关闭此平台的登录页面后重试.',
       'login-incomplete': '登录未完成, 未读取到平台认证 Cookie, 已保留原有登录数据.',
       'cookie-storage-failed': '登录信息保存失败, 请重试.' }[code])
     this.name = 'LoginError'
@@ -41,7 +41,8 @@ export function findSystemChrome(environment: NodeJS.ProcessEnv = process.env, p
     ...(environment.LOCALAPPDATA ? [path.join(environment.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe')] : []),
   ] : platform === 'darwin' ? [
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    ...(environment.HOME && path.posix.isAbsolute(environment.HOME) ? [path.posix.join(environment.HOME, 'Applications/Google Chrome.app/Contents/MacOS/Google Chrome')] : []),
+    ...(environment.HOME && path.posix.isAbsolute(environment.HOME)
+      ? [path.posix.join(environment.HOME, 'Applications/Google Chrome.app/Contents/MacOS/Google Chrome')] : []),
   ]
     : ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/opt/google/chrome/chrome']
   return candidates.find(candidate => { try { return fs.statSync(candidate).isFile() } catch { return false } })
@@ -241,6 +242,9 @@ export class ChromeLoginDriver implements BrowserLoginDriver {
               hostOnly: typeof cookie.domain === 'string' && !cookie.domain.startsWith('.'),
               session: cookie.session === true || !(typeof cookie.expires === 'number' && cookie.expires > 0),
               expirationDate: typeof cookie.expires === 'number' && cookie.expires > 0 ? cookie.expires : undefined,
+              ...(cookie.sameSite === 'Strict' ? { sameSite: 'strict' as const }
+                : cookie.sameSite === 'Lax' ? { sameSite: 'lax' as const }
+                  : cookie.sameSite === 'None' ? { sameSite: 'no_restriction' as const } : {}),
             }))
             if (!hasAuthenticationCookies(selected, platform) && requestId < attempts) {
               // Poll the same profile owner instead of relaunching another reader.
@@ -274,7 +278,7 @@ export class ChromeLoginDriver implements BrowserLoginDriver {
 
   async login(executable: string, profile: string, platform: LoginPlatform, signal: AbortSignal, destination?: LoginDestination): Promise<BrowserCookie[]> {
     cancelled(signal)
-    if (!isLoginPlatform(platform) || !isLoginDestination(platform, destination)) throw new LoginError('login-failed')
+    if ((platform !== 'youtube' && platform !== 'douyu' && platform !== 'douyin') || !isLoginDestination(platform, destination)) throw new LoginError('login-failed')
     const url = destination === 'yuba' ? 'https://yuba.douyu.com/'
       : destination?.startsWith('room:') ? `https://www.douyu.com/${destination.slice(5)}`
       : destination?.startsWith('fish-act:') ? `https://www.douyu.com/pages/fish-act?rid=${destination.slice(9)}` : LOGIN_PLATFORMS[platform].url
@@ -294,7 +298,7 @@ export class LoginManager {
   private readonly driver: BrowserLoginDriver
   private readonly operations = new Map<LoginPlatform, { controller: AbortController; promise: Promise<LoginResult> }>()
   private readonly loggingOut = new Set<LoginPlatform>()
-  private readonly revisions: Record<LoginPlatform, number> = { youtube: 0, douyu: 0, douyin: 0 }
+  private readonly revisions: Record<LoginPlatform, number> = { youtube: 0, douyu: 0, bilibili: 0, huya: 0, douyin: 0 }
   private disposed = false
 
   constructor(userDataDirectory: string, private readonly options: LoginManagerOptions = {}) {
@@ -302,9 +306,11 @@ export class LoginManager {
     this.driver = options.driver ?? new ChromeLoginDriver()
   }
 
-  login(platform: LoginPlatform, destination?: LoginDestination): Promise<LoginResult> {
+  login(platform: LoginPlatform, destination?: LoginDestination, accountLabel?: string): Promise<LoginResult> {
     if (!isLoginPlatform(platform) || this.disposed) return Promise.reject(new LoginError('login-cancelled'))
     if (!isLoginDestination(platform, destination)) return Promise.reject(new LoginError('login-failed'))
+    if (accountLabel !== undefined && (typeof accountLabel !== 'string' || !accountLabel.trim() || accountLabel.length > 40
+      || /[\x00-\x1f\x7f]/.test(accountLabel))) return Promise.reject(new LoginError('login-failed'))
     if (this.operations.has(platform) || this.loggingOut.has(platform)) return Promise.reject(new LoginError('login-busy'))
     this.revisions[platform]++
     const revision = this.revisions[platform]
@@ -312,14 +318,18 @@ export class LoginManager {
     const promise = (async () => {
       try {
         let cookies: BrowserCookie[]
-        if (platform === 'douyin' && this.options.embeddedDriver) {
-          cookies = await this.options.embeddedDriver.login({ platform, signal: controller.signal,
-            initializeSession: target => this.store.injectDouyinCookies(target, () => !this.disposed && !controller.signal.aborted
-              && !this.loggingOut.has(platform) && revision === this.revisions[platform]),
+        if (platform !== 'youtube' && this.options.embeddedDriver) {
+          cookies = await this.options.embeddedDriver.login({ platform, signal: controller.signal, destination, accountLabel,
+            ...(platform === 'douyin' ? { initializeSession: (target: LoginCookieSession) => this.store.injectDouyinCookies(target, () => !this.disposed && !controller.signal.aborted
+              && !this.loggingOut.has(platform) && revision === this.revisions[platform]) } : destination ? { initializeSession: async (target: LoginCookieSession) => {
+              cancelled(controller.signal)
+              await this.injectCookies(platform, target)
+              cancelled(controller.signal)
+              if (revision !== this.revisions[platform]) throw new LoginError('login-cancelled')
+            } } : {}),
           })
         } else {
-          // A supplied synthetic driver retains the offline Chrome regression harness.
-          if (platform === 'douyin' && !this.options.driver) throw new LoginError('login-failed')
+          if (platform === 'bilibili' || platform === 'huya' || platform === 'douyin' && !this.options.driver) throw new LoginError('login-failed')
           const executable = this.options.chromeExecutable ?? (this.options.findChrome ?? findSystemChrome)()
           if (!executable) throw new LoginError('chrome-not-found')
           let profile: string
@@ -352,7 +362,7 @@ export class LoginManager {
     try { return await this.store.status() } catch { throw new LoginError('cookie-storage-failed') }
   }
 
-  async cookieHeader(platform: 'douyu' | 'douyin', requestUrl?: string): Promise<string> {
+  async cookieHeader(platform: CookieHeaderPlatform, requestUrl?: string): Promise<string> {
     if (this.disposed || this.loggingOut.has(platform)) return ''
     const revision = this.revisions[platform]
     const current = () => !this.disposed && !this.loggingOut.has(platform) && revision === this.revisions[platform]
@@ -376,12 +386,18 @@ export class LoginManager {
 
   /** Session cookies stay entirely in main and are invalidated by login changes. */
   async injectYoutubeCookies(target: YoutubeCookieSession): Promise<void> {
-    const revision = this.revisions.youtube
-    if (this.disposed || this.loggingOut.has('youtube')) throw new LoginError('login-cancelled')
+    return this.injectCookies('youtube', target)
+  }
+
+  async injectCookies(platform: LoginPlatform, target: LoginCookieSession): Promise<void> {
+    if (!isLoginPlatform(platform)) throw new LoginError('login-cancelled')
+    const revision = this.revisions[platform]
+    const current = () => !this.disposed && !this.loggingOut.has(platform) && revision === this.revisions[platform]
+    if (!current()) throw new LoginError('login-cancelled')
     try {
-      await this.store.injectYoutubeCookies(target)
-      if (this.disposed || this.loggingOut.has('youtube') || revision !== this.revisions.youtube) throw new LoginError('login-cancelled')
-    } catch { throw new LoginError('login-incomplete') }
+      await this.store.injectCookies(platform, target, current)
+      if (!current()) throw new LoginError('login-cancelled')
+    } catch { throw new LoginError(current() ? 'login-incomplete' : 'login-cancelled') }
   }
 
   async logout(platform: LoginPlatform): Promise<void> {
@@ -398,9 +414,7 @@ export class LoginManager {
 
   async dispose(): Promise<void> {
     this.disposed = true
-    this.revisions.youtube++
-    this.revisions.douyu++
-    this.revisions.douyin++
+    for (const platform of Object.keys(LOGIN_PLATFORMS) as LoginPlatform[]) this.revisions[platform]++
     const operations = [...this.operations.values()]
     for (const operation of operations) operation.controller.abort()
     await Promise.allSettled(operations.map(operation => operation.promise))

@@ -64,14 +64,23 @@ describe('message text and credential boundaries', () => {
 })
 
 describe('documented gateway signing and address bounds', () => {
-  it('matches fixed zero/one-iteration vectors and keeps the STT zero challenge', () => {
+  it('uses the official seed-iteration fallback for a zero STT challenge', () => {
     const keys = messageSigningKeys(keyPayload)
     const zero = messageChallenge({ nonce: 'fixture-challenge', its: '0' })
     expect(zero.iterations).toBe(0)
-    expect(signMessageGateway('login', keys, '6979222', '1'.repeat(32), 1_700_000_000, zero)).toEqual({ alg_ver: '1.0', key_ver: '1.0', sig: '53d868321572b07050f69f66af6f3587' })
-    expect(signMessageGateway('heartbeat', keys, '6979222', '1'.repeat(32), 1_700_000_000, zero).sig).toBe('08a99fb97167648bf5c34f9b69971cd3')
+    expect(signMessageGateway('login', keys, '6979222', '1'.repeat(32), 1_700_000_000, zero)).toEqual({ alg_ver: '1.0', key_ver: '1.0', sig: '2eeb6330b795c2371584f4a4808bfc6f' })
+    expect(signMessageGateway('heartbeat', keys, '6979222', '1'.repeat(32), 1_700_000_000, zero).sig).toBe('900d84309dc8094d1522322cee24300f')
     expect(signMessageGateway('login', keys, '6979222', '1'.repeat(32), 1_700_000_000).sig).toBe('2eeb6330b795c2371584f4a4808bfc6f')
     expect(signMessageGateway('heartbeat', keys, '6979222', '1'.repeat(32), 1_700_000_000).sig).toBe('900d84309dc8094d1522322cee24300f')
+  })
+  it('retains a different challenge nonce and explicit positive iteration count', () => {
+    const keys = messageSigningKeys(keyPayload)
+    const challenge = { nonce: 'next-challenge', iterations: 0 }
+    const args = ['6979222', '1'.repeat(32), 1_700_000_000] as const
+    expect(signMessageGateway('heartbeat', keys, ...args, challenge)).toEqual(signMessageGateway('heartbeat', keys, ...args, { ...challenge, iterations: keys.iterations }))
+    expect(signMessageGateway('heartbeat', keys, ...args, challenge)).not.toEqual(signMessageGateway('heartbeat', keys, ...args))
+    expect(signMessageGateway('heartbeat', { ...keys, iterations: 0 }, ...args, challenge).sig).not.toBe(signMessageGateway('heartbeat', keys, ...args, challenge).sig)
+    expect(() => signMessageGateway('heartbeat', keys, ...args, { nonce: 'fixture', iterations: -1 })).toThrow()
   })
   it.each(['', '-1', '1.5', '10001', 'Infinity', '1e3'])('rejects an invalid or excessive signing iteration count %s', its => {
     expect(() => messageChallenge({ nonce: 'fixture-challenge', its })).toThrow('Unsupported')

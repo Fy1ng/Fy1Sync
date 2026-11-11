@@ -49,6 +49,18 @@ function fixture(options: IpcHandlerOptions = {}) {
 }
 
 describe('app origin and document boundary', async () => {
+  it('releases playback observations on main-frame navigation and registered-window destruction', () => {
+    const released = vi.fn()
+    const f = fixture({ onWindowReleased: released })
+    f.contents.emit('did-start-navigation', {}, 'app://app/', false, true)
+    expect(released).toHaveBeenCalledWith(1)
+    const extra = windowFixture(2)
+    f.installed.registerWindow(extra)
+    extra.emit('destroyed')
+    expect(released).toHaveBeenCalledWith(2)
+    f.installed.dispose()
+  })
+
   it.each(['fullscreen', 'clipboard-sanitized-write'])('allows %s only for the trusted main application document', (permission) => {
     const context = { trustedWindow: true, documentUrl: 'app://app/', requestingUrl: 'app://app/', requestingOrigin: 'app://app', isMainFrame: true }
     expect(allowsAppPermission(permission, context)).toBe(true)

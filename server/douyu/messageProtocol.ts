@@ -130,10 +130,13 @@ export function messageChallenge(message: GatewayMessage): MessageChallenge {
 
 const md5 = (value: string): string => createHash('md5').update(value, 'utf8').digest('hex')
 
-/** Official common_17eee4a, modules 1a0dd/9b112. No remote code is evaluated. */
+/** Official common_6a22e8b WebEncrypt.sign. No remote code is evaluated. */
 export function signMessageGateway(type: 'login' | 'heartbeat', keys: MessageSigningKeys, room: string, did: string, timestamp: number, challenge?: MessageChallenge): { alg_ver: string; key_ver: string; sig: string } {
   const part = keys[type]
-  const iterations = challenge?.iterations ?? keys.iterations
+  if (challenge && unsigned(challenge.iterations, MAX_SIGN_ITERATIONS) === null) return invalid()
+  // The official signer uses enc_time || key.enc_time: a zero server challenge
+  // falls back to the seed iteration count while preserving the challenge nonce.
+  const iterations = challenge?.iterations || keys.iterations
   if (unsigned(iterations, MAX_SIGN_ITERATIONS) === null || !Number.isSafeInteger(timestamp) || timestamp < 0) return invalid()
   let hash = challenge?.nonce ?? keys.nonce
   for (let index = 0; index < iterations; index++) hash = md5(hash + part.key)

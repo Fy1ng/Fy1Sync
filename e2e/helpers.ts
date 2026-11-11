@@ -180,7 +180,7 @@ export async function loadSource(
 }
 
 /** 设置 opens from its gear: in the top bar while the chat is closed, in the chat header otherwise. */
-export async function openSettingsSection(page: Page, section: '通用' | '斗鱼' | '弹幕记录' | '房间数据' | '倒计时样式'): Promise<Locator> {
+export async function openSettingsSection(page: Page, section: '通用' | '账号' | '斗鱼' | '弹幕记录' | '房间数据' | '倒计时样式'): Promise<Locator> {
   const settings = page.getByRole('dialog', { name: '设置', exact: true })
   if (!(await settings.isVisible())) {
     await closeSourceDialog(page)
@@ -188,18 +188,20 @@ export async function openSettingsSection(page: Page, section: '通用' | '斗�
     await page.getByRole('button', { name: '设置', exact: true }).first().click()
   }
   await expect(settings).toBeVisible()
-  await settings.getByRole('tablist', { name: '设置分区' }).getByRole('tab', { name: section, exact: true }).click()
+  await settings.getByRole('tablist', { name: '设置分区' }).getByRole('tab', { name: section === '斗鱼' ? '账号' : section, exact: true }).click()
+  if (section === '斗鱼') await settings.getByRole('tablist', { name: '账号平台', exact: true }).getByRole('tab', { name: '斗鱼', exact: true }).click()
   return settings
 }
 
-/** 通用 in 设置, on one of its pages (YouTube, 对齐, 解码, 画中画, 截图与 GIF, 取流工具, 关于). */
+/** Platform accounts use 账号; the remaining preference pages use 通用. */
 export async function openSettings(page: Page, pageName = 'YouTube'): Promise<Locator> {
-  const settings = await openSettingsSection(page, '通用')
-  await settings.getByRole('tablist', { name: '通用' }).getByRole('tab', { name: pageName, exact: true }).click()
+  const platform = ['斗鱼', '哔哩哔哩', '虎牙', '抖音', 'YouTube'].includes(pageName)
+  const settings = await openSettingsSection(page, platform ? '账号' : '通用')
+  await settings.getByRole('tablist', { name: platform ? '账号平台' : '通用', exact: true }).getByRole('tab', { name: pageName, exact: true }).click()
   return settings
 }
 
-/** The 斗鱼 section of 设置; its pages are vertical tabs down the left. */
+/** Douyu's existing pages are nested beneath its platform in the account sidebar. */
 export async function openDouyuDesk(page: Page): Promise<Locator> {
   return openSettingsSection(page, '斗鱼')
 }

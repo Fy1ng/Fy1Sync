@@ -137,6 +137,8 @@ export class PipManager {
     if (senderId !== this.window?.id || !this.value.streamId) return false
     if (['getEnhancedPip', 'reportEnhancedPip', 'closeEnhancedPip', 'recoverEnhancedPip', 'setEnhancedPipOptions', 'getDanmakuFeatures'].includes(method)) return true
     const value = args && typeof args === 'object' ? args as Record<string, unknown> : {}
+    if (method === 'getDouyuWatchState') return this.value.source?.platform === 'douyu'
+    if (method === 'reportDouyuWatchPlayback') return this.value.source?.platform === 'douyu' && value.role === this.value.streamId
     if (method === 'getStreamPlayback') return value.id === this.value.streamId
     if (method === 'reconnectDanmaku') return typeof value.room === 'string' && this.permitsRoom(senderId, value.room)
     if (['activateDouyuRoom', 'sendComposedDouyuMessage', 'getDouyuRoomInsights', 'reportDouyuPlayback', 'getDanmakuRate', 'getDanmakuUserDetails'].includes(method)) return this.value.source?.platform !== 'huya' && this.value.source?.platform !== 'douyin' && value.room === this.value.source?.sourceRoom

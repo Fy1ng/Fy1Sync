@@ -5,13 +5,14 @@
  */
 
 import { StrictMode } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { apiClient } from '../app/apiClient'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Session } from '../app/session'
 import { SessionProvider } from '../app/SessionContext'
 import type { StreamSyncerBridge } from '../../electron/contracts'
+import type { EmbeddedLoginState } from '../../electron/embeddedLoginContracts'
 import { primeMediaElement } from '../test/setup'
 import { parseRoomInput, roomFromInput, sourceTitle } from './sources'
 import { Studio } from './Studio'
@@ -19,6 +20,7 @@ import { balanceOf, volumesFor } from './transport'
 import { AutoAlign, startAutoAlign } from './sync'
 
 const sessions: Session[] = []
+const embeddedLoginListeners = new Set<(state: EmbeddedLoginState | null) => void>()
 
 function makeSession(): Session {
   const session = new Session({ createSampler: () => null })
@@ -33,12 +35,19 @@ function renderStudio(session: Session): ReturnType<typeof render> {
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
 beforeEach(() => {
+  embeddedLoginListeners.clear()
   vi.stubGlobal('streamSyncer', {
     invoke: vi.fn(async (method: string) => {
       if (method === 'getToolsStatus') return { ok: true, value: { tools: [], fixturesAvailable: false } }
+      if (method === 'getEmbeddedLogin') return { ok: true, value: null }
+      if (method === 'loginStatus') return { ok: true, value: { douyu: { loggedIn: false }, youtube: { loggedIn: false }, bilibili: { loggedIn: false }, huya: { loggedIn: false } } }
       return { ok: true, value: { presets: [] } }
     }) as StreamSyncerBridge['invoke'],
     subscribeDanmaku: () => () => {},
+    subscribeEmbeddedLogin: (listener) => {
+      embeddedLoginListeners.add(listener)
+      return () => { embeddedLoginListeners.delete(listener) }
+    },
   } satisfies StreamSyncerBridge)
 })
 
@@ -99,6 +108,29 @@ describe('the balance slider', () => {
 })
 
 describe('the studio', () => {
+  it('opens native-login cards above settings and keeps the login visible when settings closes', async () => {
+    renderStudio(makeSession())
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: '跳过' }))
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    const settings = await screen.findByRole('dialog', { name: '设置' })
+    fireEvent.click(within(within(settings).getByRole('tablist', { name: '设置分区' })).getByRole('tab', { name: '账号' }))
+    fireEvent.click(within(within(settings).getByRole('tablist', { name: '账号平台' })).getByRole('tab', { name: '哔哩哔哩' }))
+    expect(await screen.findByText('哔哩哔哩账号')).toBeInTheDocument()
+    const login = vi.spyOn(apiClient, 'login').mockResolvedValue({ ok: false, code: 'login-cancelled', message: '登录已取消.' })
+    fireEvent.click(screen.getByRole('button', { name: '登录' }))
+    await waitFor(() => expect(login).toHaveBeenCalledWith('bilibili'))
+    act(() => {
+      for (const listener of embeddedLoginListeners) listener({ id: 'settings-login', platform: 'bilibili', purpose: 'login', phase: 'loading' })
+    })
+    expect(screen.getByRole('dialog', { name: '哔哩哔哩登录' })).toBeInTheDocument()
+    fireEvent.click(settings.querySelector<HTMLButtonElement>('button[aria-label="关闭"]')!)
+    expect(screen.queryByRole('dialog', { name: '设置' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: '哔哩哔哩登录' })).toBeInTheDocument()
+    act(() => { for (const listener of embeddedLoginListeners) listener(null) })
+    expect(screen.queryByRole('dialog', { name: '哔哩哔哩登录' })).toBeNull()
+  })
+
   it('shows the adapting notice once per session across repeated alignment requests', async () => {
     const session = makeSession()
     vi.spyOn(session, 'syncNow').mockResolvedValue({} as Awaited<ReturnType<Session['syncNow']>>)

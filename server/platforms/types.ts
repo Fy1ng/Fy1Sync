@@ -15,6 +15,8 @@ export type QualityOption = {
 export type ResolvedStream = {
   /** Main-only authority inherited when a resolver chooses a playlist rendition. */
   mediaAccess?: MediaAccess
+  /** Main-only CDN identity returned by Douyu's play API; never guessed from a URL. */
+  douyuWatchCdn?: string
   platform: PlatformKind
   /** Playlist or progressive URL, already proxied when the platform needs it. */
   url: string
@@ -44,6 +46,7 @@ export type ResolveFailureCode =
   | 'not-live'
   | 'room-not-found'
   | 'upstream-error'
+  | 'login-required'
   | 'restricted'
   | 'needs-manual-url'
 
@@ -85,6 +88,8 @@ export type ResolverDeps = {
   douyuCookie?: string
   /** Fresh scoped login material for fixed Douyin page/API URLs only, never media CDNs. */
   douyinCookieHeader?: (requestUrl: string) => Promise<string>
+  /** Main-only capability; read fresh scoped credentials only for fixed platform metadata URLs. */
+  cookieHeader?: (platform: 'bilibili' | 'huya', requestUrl: string) => Promise<string>
   quality?: string
   preferAdaptive?: boolean
   /** Internal retry constraint after adaptive playback fails, never accepted from IPC. */

@@ -11,7 +11,7 @@ export async function refreshLoginStatus(onError?: (message: string) => void): P
     const result = await apiClient.loginStatus()
     if (revision !== readRevision) return null
     if (!result.ok) { onError?.(result.message); return null }
-    if (!result.value?.douyin) return null
+    if (!result.value?.youtube || !result.value?.douyu) return null
     remember('login-status', result.value)
     return result.value
   } catch {

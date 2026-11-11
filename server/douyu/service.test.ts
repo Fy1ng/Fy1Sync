@@ -17,7 +17,7 @@ function loginStub() {
   return {
     login: vi.fn(async () => { loggedIn = true; return { cookieCount: 1, authKeysPresent: ['acf_uid'] } }),
     logout: vi.fn(async () => { loggedIn = false }),
-    loginStatus: vi.fn(async () => ({ youtube: empty(), douyu: { ...empty(), loggedIn }, douyin: empty() })),
+    loginStatus: vi.fn(async () => ({ youtube: empty(), douyu: { ...empty(), loggedIn }, bilibili: empty(), huya: empty(), douyin: empty() })),
     cookieHeader: vi.fn(async () => ''), dispose: vi.fn(async () => {}),
   }
 }
@@ -114,7 +114,7 @@ it('opens the activity task room in the selected profile, pauses account work an
     .toMatchObject({ ok: false, code: 'invalid-arguments' })
   expect(f.defaultLogin.login).not.toHaveBeenCalled()
   expect(await f.service.invoke('openDouyuTaskRoom', { id: task.id })).toMatchObject({ ok: true })
-  expect(f.defaultLogin.login).toHaveBeenCalledExactlyOnceWith('douyu', 'room:6979222')
+  expect(f.defaultLogin.login).toHaveBeenCalledExactlyOnceWith('douyu', 'room:6979222', '默认账号')
   expect(f.tasks.snapshot().tasks[0]).toMatchObject({ status: 'paused', nextRunAt: null })
   finish({ status: 'scheduled', message: 'stale activity state', nextRunAt: Date.now() + 60_000 })
   await Promise.resolve(); await Promise.resolve()
@@ -151,7 +151,7 @@ it('uses the fixed official fishing page for a fishing task', async () => {
   const f = fixture()
   await f.service.invoke('createDouyuTask', { ...input, kind: 'auto-fish' })
   await f.service.invoke('openDouyuTaskRoom', { id: f.tasks.snapshot().tasks[0]!.id })
-  expect(f.defaultLogin.login).toHaveBeenCalledExactlyOnceWith('douyu', 'fish-act:6979222')
+  expect(f.defaultLogin.login).toHaveBeenCalledExactlyOnceWith('douyu', 'fish-act:6979222', '默认账号')
 })
 
 it('requires login, previews without donating, and accepts only the one-use plan identifier for confirmation', async () => {
@@ -303,7 +303,7 @@ it('routes Yuba login through the selected account and keeps Yuba tasks separate
     .toMatchObject({ ok: false, code: 'invalid-arguments' })
   expect(f.defaultLogin.login).not.toHaveBeenCalled()
   expect(await f.service.invoke('loginDouyuYubaAccount', { id: 'default' })).toMatchObject({ ok: true })
-  expect(f.defaultLogin.login).toHaveBeenCalledExactlyOnceWith('douyu', 'yuba')
+  expect(f.defaultLogin.login).toHaveBeenCalledExactlyOnceWith('douyu', 'yuba', '默认账号')
   await f.service.invoke('createDouyuTask', input)
   expect(await f.service.invoke('createDouyuTask', { ...input, kind: 'yuba-sign' }))
     .toMatchObject({ ok: true, value: { tasks: [{ kind: 'room-sign' }, { kind: 'yuba-sign', status: 'paused' }] } })

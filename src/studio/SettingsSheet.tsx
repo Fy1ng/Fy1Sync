@@ -12,7 +12,7 @@ import { createFeedbackReport } from '../app/diagnosticReport'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { DecoderPreferenceState } from '../../electron/decoderPreferences'
 import type { NetworkPreferenceState } from '../../electron/networkPreferences'
-import type { LoginStatus } from '../../electron/login'
+import type { LoginPlatform, LoginStatus } from '../../electron/login'
 import type { ToolsStatus } from '../../electron/toolsService'
 import { AppUpdateSettings } from './about/AppUpdate'
 import { CaptureSettings } from './capture/Capture'
@@ -25,15 +25,17 @@ import { PipSettings } from './pip/PipSettings'
 import { remember, useRemembered } from '../app/remembered'
 import { StylePackSyncSettings } from './stylepacks/StylePackSync'
 import { isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
+import { PlatformAccount } from './login/PlatformAccount'
+import { refreshLoginStatus } from './login/status'
 
-export type SettingsSection = 'douyu' | 'records' | 'insights' | 'editor' | 'general'
+export type SettingsSection = 'accounts' | 'records' | 'insights' | 'editor' | 'general'
 
 /** Where 设置 opens, and for 弹幕记录 which page and user. */
-export interface SettingsTarget { section: SettingsSection; records?: { tab: RecordsTab; uid?: string } }
+export interface SettingsTarget { section: SettingsSection; account?: LoginPlatform; records?: { tab: RecordsTab; uid?: string } }
 
 const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: 'general', label: '通用' },
-  { id: 'douyu', label: '斗鱼' },
+  { id: 'accounts', label: '账号' },
   { id: 'records', label: '弹幕记录' },
   { id: 'insights', label: '房间数据' },
   { id: 'editor', label: '倒计时样式' },
@@ -48,7 +50,7 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
   onFill: (text: string) => void
 }): React.ReactNode {
   const [section, setSection] = useState<SettingsSection>(target.section)
-  const readOnly = isReadOnlyDanmakuRoom(room)
+  const huya = isReadOnlyDanmakuRoom(room)
   const readOnlyPlatform = room?.startsWith('douyin:') ? '抖音' : '虎牙'
   useEffect(() => setSection(target.section), [target])
   useEffect(() => { remember('settings:section', section) }, [section])
@@ -65,15 +67,15 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
         </nav>
         <div className="settings-body" role="tabpanel" aria-label={SECTIONS.find((item) => item.id === section)?.label}>
           {section === 'general' && <General />}
-          {readOnly && ['douyu', 'records', 'insights'].includes(section) && (
+          {section === 'accounts' && <AccountSettings target={target} onWatch={(next) => { onWatch(next); onClose() }} />}
+          {huya && ['records', 'insights'].includes(section) && (
             <p className="settings-empty">当前{readOnlyPlatform}房间仅支持只读弹幕, 斗鱼操作与统计暂不可用</p>
           )}
-          {section === 'douyu' && !readOnly && <DouyuDesk onWatch={(next) => { onWatch(next); onClose() }} />}
-          {section === 'records' && !readOnly && (
+          {section === 'records' && !huya && (
             <DanmakuRecords initialTab={target.records?.tab ?? 'history'} initialUid={target.records?.uid} room={room}
               onFill={(text) => { onFill(text); onClose() }} />
           )}
-          {section === 'insights' && !readOnly && (room
+          {section === 'insights' && !huya && (room
             ? <RoomInsights room={room} />
             : <p className="settings-empty">连接斗鱼弹幕房间后显示房间数据</p>)}
           {section === 'editor' && <div className="settings-page">
@@ -86,10 +88,29 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
   )
 }
 
-type GeneralPage = 'youtube' | 'douyin' | 'align' | 'network' | 'decoding' | 'pip' | 'capture' | 'tools' | 'about'
-const GENERAL: { id: GeneralPage; label: string }[] = [
-  { id: 'youtube', label: 'YouTube' },
+const ACCOUNT_PLATFORMS: { id: LoginPlatform; label: string }[] = [
+  { id: 'douyu', label: '斗鱼' },
+  { id: 'bilibili', label: '哔哩哔哩' },
+  { id: 'huya', label: '虎牙' },
   { id: 'douyin', label: '抖音' },
+  { id: 'youtube', label: 'YouTube' },
+]
+
+function AccountSettings({ target, onWatch }: { target: SettingsTarget; onWatch: (room: string) => void }): React.ReactNode {
+  const [saved, setPlatform] = useRemembered<LoginPlatform>('settings:account-platform', target.account ?? 'douyu')
+  const platform = ACCOUNT_PLATFORMS.some(item => item.id === saved) ? saved : 'douyu'
+  useEffect(() => { if (target.account) setPlatform(target.account) }, [target, setPlatform])
+  const navigation = { label: '账号平台', tabs: ACCOUNT_PLATFORMS, value: platform, onChange: setPlatform }
+  if (platform === 'douyu') return <DouyuDesk onWatch={onWatch} platformNavigation={navigation} />
+  return <SideTabs {...navigation}>
+    <div className="settings-page">
+      {platform === 'youtube' ? <YouTubeAccount /> : platform === 'douyin' ? <DouyinAccount /> : <PlatformAccount key={platform} platform={platform} />}
+    </div>
+  </SideTabs>
+}
+
+type GeneralPage = 'align' | 'network' | 'decoding' | 'pip' | 'capture' | 'tools' | 'about'
+const GENERAL: { id: GeneralPage; label: string }[] = [
   { id: 'align', label: '对齐' },
   { id: 'network', label: '网络' },
   { id: 'decoding', label: '解码' },
@@ -100,12 +121,11 @@ const GENERAL: { id: GeneralPage; label: string }[] = [
 ]
 
 function General(): React.ReactNode {
-  const [page, setPage] = useRemembered<GeneralPage>('settings:general', 'youtube')
+  const [saved, setPage] = useRemembered<GeneralPage>('settings:general', 'align')
+  const page = GENERAL.some(item => item.id === saved) ? saved : 'align'
   return (
     <SideTabs label="通用" value={page} onChange={setPage} tabs={GENERAL}>
       <div className="settings-page">
-        {page === 'youtube' && <YouTubeAccount />}
-        {page === 'douyin' && <DouyinAccount />}
         {page === 'align' && <AlignPrefs />}
         {page === 'network' && <Network />}
         {page === 'decoding' && <Decoding />}
@@ -151,10 +171,8 @@ function YouTubeAccount(): React.ReactNode {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const refresh = async (): Promise<void> => {
-    const result = await apiClient.loginStatus()
-    if (!mounted.current) return
-    if (result.ok && result.value?.youtube) setStatus(result.value)
-    else if (!result.ok) setMessage(result.message)
+    const next = await refreshLoginStatus((error) => { if (mounted.current) setMessage(error) })
+    if (mounted.current && next) setStatus(next)
   }
   useEffect(() => { void refresh() }, [])
 
@@ -164,9 +182,10 @@ function YouTubeAccount(): React.ReactNode {
     setMessage(logout ? '' : '请在弹出的 Chrome 窗口中登录，完成后关闭该窗口')
     try {
       const result = logout ? await apiClient.logout('youtube') : await apiClient.login('youtube')
-      if (!mounted.current) return
-      setMessage(result.ok ? (logout ? '已退出' : '已登录，重新载入画面后生效') : result.message)
+      if (mounted.current) setMessage(result.ok ? (logout ? '已退出' : '已登录，重新载入画面后生效') : result.message)
       await refresh()
+    } catch {
+      if (mounted.current) setMessage('账号操作暂时失败, 请重试.')
     } finally { if (mounted.current) setBusy(false) }
   }
   const youtube = status?.youtube

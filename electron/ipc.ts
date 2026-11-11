@@ -22,6 +22,7 @@ export interface IpcHandlerOptions {
   allowRoom?: (senderId: number, room: string) => boolean
   /** Buffer/task notifications use the topics "buffer" and "douyu-tasks". */
   allowEvent?: (senderId: number, event: FeatureEvent) => boolean
+  onWindowReleased?: (senderId: number) => void
 }
 interface WindowEntry { contents: WebContents; generation: number; unregister: () => void; detach: () => void }
 interface Subscription { owner: WindowEntry; id: string; room: string | null; release: () => void }
@@ -99,7 +100,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
     }
     const owner: WindowEntry = { contents: window, generation: 0, unregister: () => {}, detach: () => {} }
     const navigated = (_event: unknown, _url: string, inPlace: boolean, mainFrame: boolean) => {
-      if (mainFrame && !inPlace) { owner.generation++; clear(owner) }
+      if (mainFrame && !inPlace) { owner.generation++; clear(owner); options.onWindowReleased?.(owner.contents.id) }
     }
     const unregister = () => {
       if (windows.get(window.id) !== owner) return
@@ -107,6 +108,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
       owner.generation++
       owner.detach()
       clear(owner)
+      options.onWindowReleased?.(owner.contents.id)
     }
     owner.unregister = unregister
     owner.detach = () => {
@@ -256,7 +258,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
       safeRelease(releaseDouyuAccounts)
       safeRelease(releaseDouyuTasks)
       safeRelease(releaseFeatures)
-      for (const owner of windows.values()) { owner.generation++; owner.detach() }
+      for (const owner of windows.values()) { owner.generation++; owner.detach(); options.onWindowReleased?.(owner.contents.id) }
       windows.clear()
       clear()
       for (const channel of ['stream-syncer:invoke', 'stream-syncer:subscribe', 'stream-syncer:unsubscribe']) ipc.removeHandler(channel)

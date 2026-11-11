@@ -9,7 +9,7 @@
  * Requires `npm run fixtures`.
  */
 
-import { expect, test } from './electron'
+import { expect, test, visibleE2eWindows } from './electron'
 import {
   FIXTURES,
   closeSourceDialog,
@@ -220,6 +220,7 @@ test.describe('片源画质和摄像头入口', () => {
   test.skip(!fixturesReady(), '缺少测试源，先运行 npm run fixtures')
 
   test('全屏时摄像头取景对话框仍可打开和关闭', async ({ page }, testInfo) => {
+    test.skip(!visibleE2eWindows, '真实 HTML 全屏摄像头对话框需要可见原生窗口; 设置 STREAM_SYNC_E2E_VISIBLE=1')
     await openPlayer(page)
     await loadBothFixtures(page)
     await revealOverlay(page)

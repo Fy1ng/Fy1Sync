@@ -7,6 +7,7 @@ import type { BasicClockProgress, BasicClockVisualFrame, WorkerDebug } from '../
 import { primeMediaElement } from '../test/setup'
 import { BasicRecognitionPanel } from './BasicRecognitionPanel'
 import { BasicRegionSheet } from './BasicRegionSheet'
+import { AuthorApp } from '../../scripts/clock-search-authoring/AuthorApp'
 
 const state = vi.hoisted(() => ({ session: null as unknown as Session, snapshot: null as unknown as SessionSnapshot }))
 vi.mock('../app/SessionContext', () => ({ useSession: () => state.session, useSessionSnapshot: () => state.snapshot }))
@@ -288,5 +289,30 @@ describe('共享基础识别侧栏', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '使用此区间' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: '使用此区间' }))
     expect(save).toHaveBeenCalledExactlyOnceWith(search)
+  })
+})
+
+describe('一次性生产区间工具前端', () => {
+  it('正常已配置启动只读, 没有修改或解锁按钮', async () => {
+    const save = vi.fn()
+    vi.stubGlobal('clockSearchAuthor', { getState: vi.fn().mockResolvedValue({ config: { schemaVersion: 1, configured: true, roi: search }, writable: false, configPath: 'test/basic-search.json' }), save })
+    render(<AuthorApp />)
+    expect(await screen.findByText('只读配置')).toBeInTheDocument()
+    expect(screen.getByText(/通过制作命令的 --reset/)).toBeInTheDocument()
+    expect(screen.queryByLabelText('选择样例录像')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '框选生产寻找区间' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '写入生产配置' })).not.toBeInTheDocument()
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('--reset授权以writable为准, 已configured仍可重新制作且不会自动写入', async () => {
+    const save = vi.fn()
+    vi.stubGlobal('clockSearchAuthor', { getState: vi.fn().mockResolvedValue({ config: { schemaVersion: 1, configured: true, roi: search }, writable: true, configPath: 'test/basic-search.json' }), save })
+    render(<AuthorApp />)
+    expect(await screen.findByText('重新制作')).toBeInTheDocument()
+    expect(screen.getByLabelText('选择样例录像')).toBeEnabled()
+    expect(screen.getByRole('button', { name: '框选生产寻找区间' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '写入生产配置' })).toBeDisabled()
+    expect(save).not.toHaveBeenCalled()
   })
 })

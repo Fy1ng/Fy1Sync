@@ -32,7 +32,7 @@ const methods = new Set<DesktopMethod>([
 let nextSubscription = 0
 
 const bridge: StreamSyncerBridge = {
-  platform: ['win32', 'darwin', 'linux'].includes(process.platform) ? process.platform as 'win32' | 'darwin' | 'linux' : 'unknown',
+  platform: process.platform === 'win32' || process.platform === 'darwin' || process.platform === 'linux' ? process.platform : 'unknown',
   invoke<K extends DesktopMethod>(method: K, args: DesktopMethods[K]['args']) {
     if (!methods.has(method)) {
       return Promise.resolve({ ok: false as const, code: 'unknown-method', message: '未知桌面接口' })
@@ -94,12 +94,6 @@ const bridge: StreamSyncerBridge = {
     ipcRenderer.on('stream-syncer:features', receive)
     return () => { active = false; ipcRenderer.removeListener('stream-syncer:features', receive) }
   },
-  subscribeEmbeddedLogin(listener) {
-    let active = true
-    const receive = (_event: unknown, state: EmbeddedLoginState | null) => { if (active) listener(state) }
-    ipcRenderer.on('stream-syncer:embedded-login', receive)
-    return () => { active = false; ipcRenderer.removeListener('stream-syncer:embedded-login', receive) }
-  },
   subscribeYtBrowseState(listener) {
     let active = true
     const receive = (_event: unknown, state: YtBrowseState) => { if (active) listener(state) }
@@ -111,6 +105,12 @@ const bridge: StreamSyncerBridge = {
     const receive = (_event: unknown, job: YtImportJob) => { if (active) listener(job) }
     ipcRenderer.on('stream-syncer:yt-import-progress', receive)
     return () => { active = false; ipcRenderer.removeListener('stream-syncer:yt-import-progress', receive) }
+  },
+  subscribeEmbeddedLogin(listener) {
+    let active = true
+    const receive = (_event: unknown, state: EmbeddedLoginState | null) => { if (active) listener(state) }
+    ipcRenderer.on('stream-syncer:embedded-login', receive)
+    return () => { active = false; ipcRenderer.removeListener('stream-syncer:embedded-login', receive) }
   },
 }
 contextBridge.exposeInMainWorld('streamSyncer', Object.freeze(bridge))

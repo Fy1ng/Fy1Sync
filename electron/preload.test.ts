@@ -42,6 +42,7 @@ describe('window controls preload boundary', () => {
   it('exposes a frozen bridge and allows both window methods on the existing invoke channel', async () => {
     const bridge = await loadBridge()
     expect(Object.isFrozen(bridge)).toBe(true)
+    expect(bridge.platform).toBe(process.platform)
     await expect(bridge.invoke('getWindowState', undefined)).resolves.toMatchObject({ ok: true })
     await expect(bridge.invoke('windowControl', { action: 'minimize' })).resolves.toMatchObject({ ok: true })
     expect(electron.ipcRenderer.invoke.mock.calls).toEqual([

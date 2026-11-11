@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChromeLoginDriver, LoginManager } from './login'
 import type { BrowserLoginDriver } from './login'
 import type { BrowserCookie } from './cookies'
+import { CookieStore } from './cookies'
+import type { EmbeddedLoginDriver, EmbeddedLoginRequest } from './embeddedLoginContracts'
 
 let root: string
 const cookies: BrowserCookie[] = [{ domain: '.youtube.com', path: '/', name: 'SAPISID', value: 'never-leak-this-value', session: true }]
@@ -63,7 +65,7 @@ describe('LoginManager', () => {
   it('reuses the Douyu profile for Yuba and preserves cookie request scopes', async () => {
     const douyuCookies: BrowserCookie[] = [
       { domain: 'www.douyu.com', path: '/', name: 'acf_auth', value: 'synthetic-main', hostOnly: true, session: true },
-      { domain: '.douyu.com', path: '/', name: 'acf_uid', value: 'synthetic-uid', session: true },
+      { domain: '.douyu.com', path: '/', name: 'acf_uid', value: '42', session: true },
       { domain: 'yuba.douyu.com', path: '/', name: 'acf_yb_t', value: 'synthetic-yuba', hostOnly: true, session: true },
     ]
     const driver = { login: vi.fn<BrowserLoginDriver['login']>().mockResolvedValueOnce(douyuCookies.slice(0, 2)).mockResolvedValueOnce(douyuCookies) }
@@ -74,7 +76,7 @@ describe('LoginManager', () => {
     expect(driver.login).toHaveBeenNthCalledWith(1, 'test-chrome', profile, 'douyu', expect.any(AbortSignal), undefined)
     expect(driver.login).toHaveBeenNthCalledWith(2, 'test-chrome', profile, 'douyu', expect.any(AbortSignal), 'yuba')
     const yuba = await manager.cookieHeader('douyu', 'https://yuba.douyu.com/')
-    expect(yuba).toContain('acf_uid=synthetic-uid')
+    expect(yuba).toContain('acf_uid=42')
     expect(yuba).toContain('acf_yb_t=synthetic-yuba')
     expect(yuba).not.toContain('synthetic-main')
     const main = await manager.cookieHeader('douyu', 'https://www.douyu.com/')
@@ -105,7 +107,7 @@ describe('LoginManager', () => {
 
   it('masks browser exceptions that may contain credentials', async () => {
     const { manager } = fixture({ login: async () => { throw new Error('cookie=never-leak-this-value') } })
-    await expect(manager.login('youtube')).rejects.toMatchObject({ code: 'login-failed', message: 'Chrome 登录或账号导出失败, 请关闭此平台的登录窗口后重试.' })
+    await expect(manager.login('youtube')).rejects.toMatchObject({ code: 'login-failed', message: '平台登录或账号读取失败, 请关闭此平台的登录页面后重试.' })
   })
 
   it.each([
@@ -199,8 +201,8 @@ describe('LoginManager', () => {
   })
 
   it.each(['logout', 'login', 'dispose'] as const)('discards a cookie read that finishes after %s invalidation', async action => {
-    const oldCookies: BrowserCookie[] = [{ domain: '.douyu.com', name: 'acf_auth', value: 'old-session', session: true }]
-    const newCookies: BrowserCookie[] = [{ domain: '.douyu.com', name: 'acf_auth', value: 'new-session', session: true }]
+    const oldCookies: BrowserCookie[] = [{ domain: '.douyu.com', name: 'acf_auth', value: 'old-session', session: true }, { domain: '.douyu.com', name: 'acf_uid', value: '42', session: true }]
+    const newCookies: BrowserCookie[] = [{ domain: '.douyu.com', name: 'acf_auth', value: 'new-session', session: true }, { domain: '.douyu.com', name: 'acf_uid', value: '42', session: true }]
     const release = pauseOpen()
     const driver = { login: vi.fn<BrowserLoginDriver['login']>().mockResolvedValue(oldCookies) }
     const manager = new LoginManager(root, { chromeExecutable: 'test-chrome', driver })
@@ -211,12 +213,12 @@ describe('LoginManager', () => {
     else { driver.login.mockResolvedValue(newCookies); await manager.login('douyu') }
     release()
     await expect(pending).resolves.toBe('')
-    if (action === 'login') await expect(manager.cookieHeader('douyu')).resolves.toBe('acf_auth=new-session')
+    if (action === 'login') await expect(manager.cookieHeader('douyu')).resolves.toBe('acf_auth=new-session; acf_uid=42')
     await manager.dispose()
   })
 
   it('masks asynchronous storage errors at the public login boundary', async () => {
-    const driver = { login: vi.fn<BrowserLoginDriver['login']>().mockResolvedValue([{ domain: '.douyu.com', name: 'acf_auth', value: 'secret', session: true }]) }
+    const driver = { login: vi.fn<BrowserLoginDriver['login']>().mockResolvedValue([{ domain: '.douyu.com', name: 'acf_auth', value: 'secret', session: true }, { domain: '.douyu.com', name: 'acf_uid', value: '42', session: true }]) }
     const manager = new LoginManager(root, { chromeExecutable: 'test-chrome', driver })
     await manager.login('douyu')
     vi.spyOn(fs.promises, 'open').mockRejectedValue(new Error('private filesystem error and cookie data'))
@@ -249,6 +251,151 @@ function fakeChild(pid: number) {
   }) as unknown as ChildProcess & { writer: PassThrough; reader: PassThrough }
 }
 
+describe('embedded platform LoginManager', () => {
+  const auth = (platform: 'douyu' | 'bilibili' | 'huya', value = 'fixture-private-ticket'): BrowserCookie[] => {
+    const names = platform === 'douyu' ? ['acf_uid', 'acf_auth'] : platform === 'bilibili' ? ['DedeUserID', 'SESSDATA'] : ['udb_uid', 'udb_biztoken']
+    return names.map((name, index) => ({ domain: `.${platform}.com`, path: '/', name, value: index ? value : '42',
+      session: true, secure: true, httpOnly: true, sameSite: 'lax' }))
+  }
+
+  it.each(['douyu', 'bilibili', 'huya'] as const)('uses %s embedded login without finding Chrome or creating browser profiles', async platform => {
+    const findChrome = vi.fn(() => undefined)
+    const driver = { login: vi.fn(async () => cookies) }
+    const embeddedDriver = { login: vi.fn<EmbeddedLoginDriver['login']>(async () => auth(platform)) }
+    const manager = new LoginManager(root, { driver, embeddedDriver, findChrome })
+    const result = await manager.login(platform, undefined, '账号甲')
+    expect(result).toMatchObject({ cookieCount: 2 })
+    expect(embeddedDriver.login).toHaveBeenCalledExactlyOnceWith({ platform, signal: expect.any(AbortSignal), destination: undefined, accountLabel: '账号甲' })
+    expect(findChrome).not.toHaveBeenCalled()
+    expect(driver.login).not.toHaveBeenCalled()
+    expect(fs.existsSync(path.join(root, 'browser-profile'))).toBe(false)
+    expect((await manager.loginStatus())[platform].loggedIn).toBe(true)
+    expect(JSON.stringify(result)).not.toContain('fixture-private-ticket')
+    await manager.dispose()
+  })
+
+  it.each(['bilibili', 'huya'] as const)('fails closed when %s has no embedded driver', async platform => {
+    const findChrome = vi.fn(() => 'fixture-chrome')
+    const driver = { login: vi.fn(async () => cookies) }
+    const manager = new LoginManager(root, { findChrome, driver })
+    await expect(manager.login(platform)).rejects.toMatchObject({ code: 'login-failed' })
+    expect(findChrome).not.toHaveBeenCalled()
+    expect(driver.login).not.toHaveBeenCalled()
+    expect(fs.readdirSync(root)).toEqual([])
+    const spawn = vi.fn(() => fakeChild(101))
+    await expect(new ChromeLoginDriver({ spawn }).login('chrome', root, platform, new AbortController().signal)).rejects.toMatchObject({ code: 'login-failed' })
+    expect(spawn).not.toHaveBeenCalled()
+    await manager.dispose()
+  })
+
+  it('keeps YouTube on the existing Chrome driver when an embedded driver exists', async () => {
+    const embeddedDriver = { login: vi.fn(async () => auth('douyu')) }
+    const driver = { login: vi.fn(async () => cookies) }
+    const manager = new LoginManager(root, { driver, embeddedDriver, chromeExecutable: 'test-chrome' })
+    await manager.login('youtube')
+    expect(driver.login).toHaveBeenCalledTimes(1)
+    expect(embeddedDriver.login).not.toHaveBeenCalled()
+    await manager.dispose()
+  })
+
+  it.each(['yuba', 'room:9999', 'fish-act:9999'] as const)('injects only the initiating account for website destination %s', async destination => {
+    const first = new CookieStore(root)
+    first.write('douyu', auth('douyu', 'fixture-account-a'))
+    const otherRoot = path.join(root, 'other-account')
+    fs.mkdirSync(otherRoot)
+    new CookieStore(otherRoot).write('douyu', auth('douyu', 'fixture-account-b'))
+    first.write('bilibili', auth('bilibili', 'fixture-bili'))
+    const set = vi.fn(async (_details: unknown) => {})
+    const embeddedDriver = { login: vi.fn<EmbeddedLoginDriver['login']>(async request => {
+      expect(request.destination).toBe(destination)
+      expect(request.accountLabel).toBe('启动账号')
+      await request.initializeSession!({ cookies: { set } })
+      return auth('douyu', 'fixture-account-a')
+    }) }
+    const manager = new LoginManager(root, { embeddedDriver })
+    await manager.login('douyu', destination, '启动账号')
+    expect(set).toHaveBeenCalledTimes(2)
+    expect(JSON.stringify(set.mock.calls)).toContain('fixture-account-a')
+    expect(JSON.stringify(set.mock.calls)).not.toMatch(/fixture-account-b|fixture-bili/)
+    expect(set.mock.calls[1]![0]).toMatchObject({ httpOnly: true, secure: true, sameSite: 'lax' })
+    await manager.dispose()
+  })
+
+  it('starts a normal login without initializing the previous session', async () => {
+    new CookieStore(root).write('douyu', auth('douyu', 'old-ticket'))
+    const embeddedDriver = { login: vi.fn<EmbeddedLoginDriver['login']>(async request => {
+      expect(request.initializeSession).toBeUndefined()
+      return auth('douyu', 'new-ticket')
+    }) }
+    const manager = new LoginManager(root, { embeddedDriver })
+    await manager.login('douyu')
+    expect(await manager.cookieHeader('douyu')).toContain('acf_auth=new-ticket')
+    await manager.dispose()
+  })
+
+  it.each(['douyu', 'bilibili', 'huya'] as const)('keeps previous %s credentials on incomplete or failed embedded authentication', async platform => {
+    new CookieStore(root).write(platform, auth(platform, 'old-ticket'))
+    const file = path.join(root, 'cookies', `${platform}.txt`)
+    const previous = fs.readFileSync(file)
+    const embeddedDriver = { login: vi.fn<EmbeddedLoginDriver['login']>().mockResolvedValueOnce(auth(platform).slice(0, 1))
+      .mockRejectedValueOnce(new Error('private-cookie=secret-value')) }
+    const manager = new LoginManager(root, { embeddedDriver })
+    await expect(manager.login(platform)).rejects.toMatchObject({ code: 'login-incomplete' })
+    expect(fs.readFileSync(file)).toEqual(previous)
+    await expect(manager.login(platform)).rejects.toMatchObject({ code: 'login-failed' })
+    expect(fs.readFileSync(file)).toEqual(previous)
+    expect((await manager.loginStatus())[platform].loggedIn).toBe(true)
+    await manager.dispose()
+  })
+
+  it.each(['douyu', 'bilibili', 'huya'] as const)('rejects duplicate %s attempts and suppresses late writes after logout', async platform => {
+    let finish!: (value: BrowserCookie[]) => void
+    let request!: EmbeddedLoginRequest
+    const embeddedDriver = { login: vi.fn<EmbeddedLoginDriver['login']>(value => { request = value; return new Promise(resolve => { finish = resolve }) }) }
+    const manager = new LoginManager(root, { embeddedDriver })
+    const pending = manager.login(platform)
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'login-cancelled' })
+    await expect(manager.login(platform)).rejects.toMatchObject({ code: 'login-busy' })
+    const logout = manager.logout(platform)
+    expect(request.signal.aborted).toBe(true)
+    finish(auth(platform))
+    await logout
+    await rejected
+    expect(fs.existsSync(path.join(root, 'cookies', `${platform}.txt`))).toBe(false)
+    await manager.dispose()
+  })
+
+  it('rejects a website initializer after its initiating attempt is cancelled', async () => {
+    new CookieStore(root).write('douyu', auth('douyu'))
+    let request!: EmbeddedLoginRequest
+    const embeddedDriver = { login: vi.fn<EmbeddedLoginDriver['login']>(value => {
+      request = value
+      return new Promise((_resolve, reject) => value.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }))
+    }) }
+    const manager = new LoginManager(root, { embeddedDriver })
+    const rejected = expect(manager.login('douyu', 'yuba')).rejects.toMatchObject({ code: 'login-cancelled' })
+    await manager.dispose()
+    await rejected
+    const set = vi.fn(async () => {})
+    await expect(request.initializeSession!({ cookies: { set } })).rejects.toMatchObject({ code: 'login-cancelled' })
+    expect(set).not.toHaveBeenCalled()
+  })
+
+  it.each(['bilibili', 'huya'] as const)('discards a pending %s header after a login revision changes', async platform => {
+    const embeddedDriver = { login: vi.fn<EmbeddedLoginDriver['login']>().mockResolvedValue(auth(platform, 'old-ticket')) }
+    const manager = new LoginManager(root, { embeddedDriver })
+    await manager.login(platform)
+    const release = pauseOpen()
+    const pending = manager.cookieHeader(platform)
+    embeddedDriver.login.mockResolvedValue(auth(platform, 'new-ticket'))
+    await manager.login(platform)
+    release()
+    expect(await pending).toBe('')
+    expect(await manager.cookieHeader(platform)).toContain('new-ticket')
+    await manager.dispose()
+  })
+})
+
 describe('system Chrome pipe login', () => {
   it.each([
     { platform: 'youtube', destination: undefined, url: 'https://www.youtube.com' },
@@ -269,6 +416,7 @@ describe('system Chrome pipe login', () => {
       if (command.method === 'Browser.close') { Object.assign(headless, { exitCode: 0 }); headless.emit('exit', 0, null) }
       if (command.id === 1) queueMicrotask(() => headless.reader.write(JSON.stringify({ id: 1, result: { cookies: [
         { domain, path: '/', name, value: 'secret', expires: 2_000_000_000, secure: true },
+        ...(platform === 'douyu' ? [{ domain, path: '/', name: 'acf_uid', value: '42', expires: 2_000_000_000, secure: true }] : []),
       ] } }) + '\0'))
     })
     const spawn = vi.fn((_executable: string, args: string[], _options: SpawnOptions) => {
@@ -280,7 +428,9 @@ describe('system Chrome pipe login', () => {
     const driver = new ChromeLoginDriver({ spawn, killTree, platform: 'win32', windowPollMs: 1, releaseDelayMs: 0 })
     const result = await driver.login('chrome', '/private/profile', platform, new AbortController().signal, destination)
     expect(result).toEqual([{ domain, path: '/', name, value: 'secret', expirationDate: 2_000_000_000,
-      secure: true, httpOnly: false, hostOnly: false, session: false }])
+      secure: true, httpOnly: false, hostOnly: false, session: false },
+    ...(platform === 'douyu' ? [{ domain, path: '/', name: 'acf_uid', value: '42', expirationDate: 2_000_000_000,
+      secure: true, httpOnly: false, hostOnly: false, session: false }] : [])])
     expect(spawn).toHaveBeenCalledTimes(2)
     const manualArgs = spawn.mock.calls[0]![1]
     expect(manualArgs.at(-1)).toBe(url)

@@ -18,7 +18,9 @@ const status: ToolsStatus = { tools: [
 ], provider: { available: true, source: 'bundled', version: '2.0.2' }, update: { phase: 'idle', downloadedBytes: 0, totalBytes: 0, message: '' }, externalYtdlp: false, fixturesAvailable: false, bundledAvailable: true }
 const login = { youtube: { loggedIn: true, cookieCount: 42, authKeysPresent: [secret], expiresAt: 9999999999, hasSessionCookies: false },
   douyin: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false },
-  douyu: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false } } satisfies LoginStatus
+  douyu: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false },
+  bilibili: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false },
+  huya: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false } } satisfies LoginStatus
 function fixture() {
   let now = 1793613600000
   const tools = { status: vi.fn(async () => structuredClone(status)) }

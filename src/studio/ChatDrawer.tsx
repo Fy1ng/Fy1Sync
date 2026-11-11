@@ -17,7 +17,7 @@ import { useDouyuWrites } from './douyuWrites'
 import { useDanmakuActions } from './danmakuActions'
 import { useDanmakuRate } from './insights/RoomInsights'
 import type { RecordsTab } from './records/DanmakuRecords'
-import type { SettingsSection } from './SettingsSheet'
+import type { SettingsSection, SettingsTarget } from './SettingsSheet'
 import { Icon, Popover } from './kit'
 import { useSourceLoader } from './sources'
 import { deliveryText } from './useStudioComposer'
@@ -31,7 +31,7 @@ const ROW = 30
 
 export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   onClose: () => void
-  onOpenSettings: (section?: SettingsSection) => void
+  onOpenSettings: (section?: SettingsSection, account?: SettingsTarget['account']) => void
   onOpenRecords: (tab: RecordsTab, uid?: string) => void
 }): React.ReactNode {
   const session = useSession()
@@ -173,10 +173,10 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
         <button type="submit" className="say-send" disabled={!!composer.blockedReason || !!composer.draftProblem}>发送</button>
         <p className="say-meta">
           {composer.needsRelogin
-            ? <button type="button" className="link-btn" onClick={() => { remember('douyu:tab', 'accounts'); onOpenSettings('douyu') }}>重新登录 {composer.account?.label}</button>
+            ? <button type="button" className="link-btn" onClick={() => { remember('douyu:tab', 'accounts'); onOpenSettings('accounts', 'douyu') }}>重新登录 {composer.account?.label}</button>
             : composer.account?.loggedIn
               ? <span>以 {composer.account.label} 发送</span>
-              : <button type="button" className="link-btn" onClick={() => { remember('douyu:tab', 'accounts'); onOpenSettings('douyu') }}>登录斗鱼</button>}
+              : <button type="button" className="link-btn" onClick={() => { remember('douyu:tab', 'accounts'); onOpenSettings('accounts', 'douyu') }}>登录斗鱼</button>}
           {composer.remaining > 0 && <span className="num">{composer.remaining}s</span>}
           {composer.affixes.enabled && composer.draft.length > 0 && <span title="在弹幕设置中修改">含前后缀</span>}
           {composer.composedLength > composer.lengthLimit * 0.8 && <span className="num">{composer.composedLength}/{composer.lengthLimit}</span>}

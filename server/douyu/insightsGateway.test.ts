@@ -118,8 +118,52 @@ describe('read-only followed room gateway', () => {
 })
 
 describe('room metadata, badge age and platform watch time', () => {
+  it('reads official cumulative badge time independently with main-owned authenticated UID and room binding', async () => {
+    const f = setup([envelope({ uid: 42, rid: 6979222, watchTime: 4810476 }), envelope({ badgeLevel: 22 })])
+    expect(await f.gateway.readFansWatchTime('a', '6979222', idle())).toMatchObject({
+      accountId: 'a', room: '6979222', seconds: 4810476, badgeOwned: true, badgeLevel: 22, source: 'douyu-fanshome-cumulative',
+    })
+    expect(String(f.request.mock.calls[0]![0])).toBe('https://www.douyu.com/japi/interactnc/web/fanshome/fansinfo/myself?rid=6979222&uid=42')
+    expect(String(f.request.mock.calls[1]![0])).toBe('https://www.douyu.com/japi/interactnc/web/fanshome/badge/ownInfo?rid=6979222')
+  })
+  it('distinguishes missing badges from an unreadable cumulative value without converting it to daily time', async () => {
+    const f = setup([envelope({ uid: '42', rid: '5720533', watchTime: 0 }), { error: 40001, data: { badgeLevel: 0 } }])
+    expect(await f.gateway.readFansWatchTime('a', '5720533', idle())).toMatchObject({ seconds: 0, badgeOwned: false, badgeLevel: null })
+    const unknown = setup([envelope({ uid: '42', rid: '5720533', todayWatch: 714 }), new Error('badge read failed')])
+    expect(await unknown.gateway.readFansWatchTime('a', '5720533', idle())).toMatchObject({ seconds: null, badgeOwned: null })
+  })
+  it('rejects another user or room in cumulative responses and ignores mismatched badge metadata', async () => {
+    for (const [data, code] of [[{ uid: 43, rid: 100, watchTime: 100 }, 'login-required'], [{ uid: 42, rid: 200, watchTime: 100 }, 'invalid-data']] as const) {
+      await expect(setup([envelope(data)]).gateway.readFansWatchTime('a', '100', idle())).rejects.toMatchObject({ code })
+    }
+    const f = setup([envelope({ uid: 42, rid: 100, watchTime: 100 }), envelope({ rid: 200, badgeLevel: 22 })])
+    expect(await f.gateway.readFansWatchTime('a', '100', idle())).toMatchObject({ seconds: 100, badgeOwned: null })
+  })
+
+  const pcPage = (room: string, loop: number) => `<script>self.__next_f.push(${JSON.stringify([1,
+    `2d:${JSON.stringify(['$', 'Room', null, { roomInfo: { room: { room_id: room, rid: room, show_status: 1, room_biz_all: { videoLoop: loop } } } }])}\n`])})</script>`
+
+  it('adds anonymous PC status when h5room omits replay, follows only same-site redirects and checks canonical identity', async () => {
+    const f = setup([envelope({ room_id: '6979222', show_status: '1', show_time: NOW / 1000 - 40 }),
+      new Response(null, { status: 307, headers: { location: '/6657' } }), new Response(pcPage('6979222', 1))])
+    expect(await f.gateway.readRoom('6979222', idle())).toMatchObject({ live: true, replay: true, startedAt: null })
+    expect(f.request.mock.calls.map(call => String(call[0]))).toEqual([
+      'https://www.douyu.com/swf_api/h5room/6979222', 'https://www.douyu.com/6979222', 'https://www.douyu.com/6657',
+    ])
+    expect(f.cookieHeader).not.toHaveBeenCalled()
+    expect(f.request.mock.calls.every(call => !(call[1]?.headers as Record<string, unknown>)?.Cookie)).toBe(true)
+  })
+  it('keeps replay unknown on a foreign redirect, mismatched room or unavailable PC response', async () => {
+    for (const response of [new Response(null, { status: 307, headers: { location: 'https://outside.invalid/room' } }),
+      new Response(pcPage('200', 0)), new Response('unavailable', { status: 503 })]) {
+      const f = setup([envelope({ room_id: '100', show_status: '1' }), response])
+      expect(await f.gateway.readRoom('100', idle())).toMatchObject({ live: true, replay: null, startedAt: null })
+      expect(f.request).toHaveBeenCalledTimes(2)
+    }
+  })
+
   it('fetches room metadata anonymously and preserves unknown real viewers', async () => {
-    const f = setup([envelope({ room_id: '100', show_status: '1', show_time: NOW / 1000 - 40, owner_uid: '42', online: 0 })])
+    const f = setup([envelope({ room_id: '100', show_status: '1', videoLoop: '0', show_time: NOW / 1000 - 40, owner_uid: '42', online: 0 })])
     expect(await f.gateway.readRoom('100', idle())).toMatchObject({ live: true, startedAt: NOW - 40_000, viewers: null, popularity: 0, ownerUid: '42' })
     expect(f.cookieHeader).not.toHaveBeenCalled()
     expect(f.request.mock.calls[0]?.[1]?.headers).not.toHaveProperty('Cookie')
@@ -141,6 +185,24 @@ describe('room metadata, badge age and platform watch time', () => {
     expect(await setup([envelope({})]).gateway.readWatchTime('a', '100', idle())).toMatchObject({ seconds: null })
     expect(await setup([envelope({ todayWatch: 0, rid: 0 })]).gateway.readWatchTime('a', '100', idle())).toMatchObject({ seconds: null })
     expect(await setup([envelope({ todayWatch: 123, rid: '0' })]).gateway.readWatchTime('a', '100', idle())).toMatchObject({ seconds: null })
+  })
+  it('reads request-scoped watch seconds from a verified empty-card response with rid=0', async () => {
+    const noCard = { rid: 0, normalStatus: 0, superStatus: 0, normalCardNum: 0, superCardNum: 0, normalCardId: 0, superCardId: 0 }
+    const f = setup([envelope({ ...noCard, todayWatch: 392 }), envelope({ ...noCard, todayWatch: 607 }), envelope({ ...noCard, todayWatch: 0 })])
+    const first = await f.gateway.readWatchTime('a', '5720533', idle())
+    const second = await f.gateway.readWatchTime('a', '5720533', idle())
+    const other = await f.gateway.readWatchTime('a', '252140', idle())
+    expect(first).toMatchObject({ room: '5720533', seconds: 392 })
+    expect(second).toMatchObject({ room: '5720533', seconds: 607 })
+    expect(second.seconds! - first.seconds!).toBe(215)
+    expect(other).toMatchObject({ room: '252140', seconds: 0 })
+    expect(f.request.mock.calls.map(call => String(call[0]))).toEqual([
+      'https://www.douyu.com/japi/interactnc/web/fsjk/getCardTaskInfo?rid=5720533',
+      'https://www.douyu.com/japi/interactnc/web/fsjk/getCardTaskInfo?rid=5720533',
+      'https://www.douyu.com/japi/interactnc/web/fsjk/getCardTaskInfo?rid=252140',
+    ])
+    expect(await setup([envelope({ ...noCard, normalStatus: 1, todayWatch: 607 })]).gateway.readWatchTime('a', '5720533', idle())).toMatchObject({ seconds: null })
+    expect(await setup([envelope({ todayWatch: 607 })]).gateway.readWatchTime('a', '5720533', idle())).toMatchObject({ seconds: null })
   })
   it('accepts the official numeric room binding while rejecting mismatches and invalid IDs', async () => {
     expect(await setup([envelope({ todayWatch: 123, rid: 100 })]).gateway.readWatchTime('a', '100', idle())).toMatchObject({ seconds: 123 })

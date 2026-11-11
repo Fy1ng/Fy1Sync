@@ -230,12 +230,14 @@ export class DouyuAccountManager {
   }
 
   async login(id: string): Promise<DouyuAccountsSnapshot> {
-    await this.credentialOperation(id, manager => manager.login('douyu'))
+    const label = this.check(id)!.label
+    await this.credentialOperation(id, manager => manager.login('douyu', undefined, label))
     return this.snapshot()
   }
 
   async loginYuba(id: string): Promise<DouyuAccountsSnapshot> {
-    await this.credentialOperation(id, manager => manager.login('douyu', 'yuba'))
+    const label = this.check(id)!.label
+    await this.credentialOperation(id, manager => manager.login('douyu', 'yuba', label))
     return this.snapshot()
   }
 
@@ -243,7 +245,8 @@ export class DouyuAccountManager {
     if (typeof room !== 'string' || !/^[1-9][0-9]{0,11}$/.test(room)) throw new DouyuAccountError('invalid-arguments')
     if (page !== 'room' && page !== 'fish-act') throw new DouyuAccountError('invalid-arguments')
     if (this.activeAccountId !== id) throw new DouyuAccountError('no-active-account')
-    await this.credentialOperation(id, manager => manager.login('douyu', `${page}:${room}`))
+    const label = this.check(id)!.label
+    await this.credentialOperation(id, manager => manager.login('douyu', `${page}:${room}`, label))
     return this.snapshot()
   }
 

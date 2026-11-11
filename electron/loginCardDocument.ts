@@ -54,7 +54,7 @@ export const LOGIN_CARD_SCRIPT = String.raw`(() => {
   const byId = id => document.getElementById(id);
   const card = byId('card');
   const message = byId('message');
-  const names = { douyin: '抖音' };
+  const names = { douyu: '斗鱼', bilibili: '哔哩哔哩', huya: '虎牙', douyin: '抖音' };
   const stages = ['loading', 'form', 'submitting', 'verification', 'official', 'checking', 'failed'];
   let state = null;
   let pending = false;

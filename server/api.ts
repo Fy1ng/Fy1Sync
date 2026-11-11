@@ -19,6 +19,7 @@ import { checkUrlSyntax, ProxyError, safeFetch } from './safeFetch'
 import type { SourceRole } from '../src/core/types'
 import type { BufferState } from '../electron/bufferManager'
 import type { LoginPlatform, LoginResult, LoginStatus } from '../electron/login'
+import { isLoginPlatform } from '../electron/cookies'
 import { isDecoderMode, type DecoderPreferencesService } from '../electron/decoderPreferences'
 import type { ToolsService } from '../electron/toolsService'
 import type { AcquisitionDiagnosticsService } from '../electron/diagnosticContracts'
@@ -148,12 +149,13 @@ export function sanitizedFailure(result: ResolveResult): ResolveResult {
     'not-live': '直播当前未开始或受限制',
     'room-not-found': '未找到该直播间',
     'upstream-error': '无法获取平台播放信息',
+    'login-required': '平台要求登录或登录信息已失效',
     restricted: '平台限制了此媒体的访问',
     'needs-manual-url': '平台没有提供可播放地址',
   }
   return { ok: false, failure: {
     code: result.failure.code, message: messages[result.failure.code],
-    hint: result.failure.code === 'restricted'
+    hint: result.failure.code === 'restricted' || result.failure.code === 'login-required'
       ? '请在账号区域登录对应平台后重新加载, 或使用可播放的媒体地址'
       : '请检查地址和直播状态, 或提供可播放的媒体地址',
   } }
@@ -437,7 +439,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             if (!target.ok) return fail(target.reason, streamFailureForCode(target.reason)?.message ?? '媒体地址被应用的安全策略拒绝.')
             if (target.url.username || target.url.password) return fail('invalid-url', '媒体地址不能包含登录凭据')
             const url = deps.registerMedia(rawUrl, result.stream.mediaAccess)
-            const { mediaAccess: _access, ...publicStream } = result.stream
+            const { mediaAccess: _access, douyuWatchCdn: _cdn, ...publicStream } = result.stream
             return { ok: true, value: { ok: true, stream: { ...publicStream, url, requiresProxy: false, notes: ['媒体通过本地主进程安全加载'] } } }
           }
           case 'switchQuality': {
@@ -458,7 +460,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
           }
           case 'login':
           case 'logout': {
-            if (!fields(args, ['platform']) || (args.platform !== 'youtube' && args.platform !== 'douyu' && args.platform !== 'douyin')) {
+            if (!fields(args, ['platform']) || !isLoginPlatform(args.platform)) {
               return fail('invalid-arguments', '不支持的登录平台')
             }
             if (!deps.acquisition) return fail('not-available', '账号服务不可用')
@@ -535,11 +537,10 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
         if (error instanceof Error && error.name === 'LoginError' && 'code' in error) {
           const messages: Record<string, string> = {
             'chrome-not-found': '未找到系统 Chrome, 请安装 Chrome 后重试',
-            'login-busy': '登录操作正在进行, 请先完成当前窗口',
+            'login-busy': '登录操作正在进行, 请先完成当前登录页面',
             'login-cancelled': '登录操作已取消',
             'login-incomplete': '登录未完成, 未读取到平台认证 Cookie, 已保留原有登录数据.',
-            'login-failed': record(args) && args.platform === 'douyin'
-              ? '抖音内嵌登录未完成, 请在应用内重试.' : 'Chrome 登录失败, 请关闭专用窗口后重试',
+            'login-failed': record(args) && args.platform === 'douyin' ? '抖音内嵌登录未完成, 请在应用内重试.' : '平台登录失败, 请关闭登录页面后重试',
             'cookie-storage-failed': '登录信息保存失败, 请重试',
           }
           return fail(String(error.code), messages[String(error.code)] ?? '账号操作失败')

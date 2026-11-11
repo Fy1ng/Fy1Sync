@@ -30,7 +30,7 @@ export interface RoleLoad {
 
 const IDLE: RoleLoad = { busy: false, problem: null, notes: [], login: null, signedIn: false, loggingIn: false }
 
-export const LOGIN_LABEL: Record<LoginPlatform, string> = { douyu: '斗鱼', youtube: 'YouTube', douyin: '抖音' }
+export const LOGIN_LABEL: Record<LoginPlatform, string> = { douyu: '斗鱼', youtube: 'YouTube', bilibili: '哔哩哔哩', huya: '虎牙', douyin: '抖音' }
 
 /** A Latin name sits in Chinese with a space either side, as elsewhere: 登录 YouTube 后重试. */
 export const spaced = (name: string): string => /^[A-Za-z]/.test(name) ? ` ${name} ` : name
@@ -202,11 +202,13 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
    * a refusal may need a fresh login even when stored cookies are still there.
    */
   const offerLogin = useCallback(async (role: SourceRole, platform: LoginPlatform, generation: number, refused: boolean) => {
-    const status = await apiClient.loginStatus()
-    if (generation !== session.sourceRevision(role)) return
-    const signedIn = status.ok && Boolean(status.value[platform]?.loggedIn)
-    if (signedIn && !refused) return
-    patch(role, { login: platform, signedIn })
+    try {
+      const status = await apiClient.loginStatus()
+      if (generation !== session.sourceRevision(role)) return
+      const signedIn = status.ok && Boolean(status.value[platform]?.loggedIn)
+      if (signedIn && !refused) return
+      patch(role, { login: platform, signedIn })
+    } catch { /* A status transport failure must not replace the resolver's result. */ }
   }, [patch, session])
 
   const loadInput = useCallback(async (role: SourceRole, input: string, platform?: RoomPlatform): Promise<boolean> => {
@@ -244,10 +246,10 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         // A proxy that cannot be reached is not the platform's fault; say which to check.
         const hint = streamFailureHint(failure.reason) ?? failure.hint
         patch(role, { problem: { message: failure.message, hint } })
-        // A refusal with no reason is Douyu's; YouTube's say which kind, and only a sign-in kind gets the offer.
-        const signInCanHelp = !failure.reason || SIGN_IN_REFUSALS.has(failure.reason)
+        // Only an explicit authentication refusal offers Bilibili/Huya sign-in.
+        const signInCanHelp = SIGN_IN_REFUSALS.has(failure.reason ?? '') || (!failure.reason && (platformOf === 'douyu' || platformOf === 'youtube'))
+        if (failure.code === 'restricted' && (platformOf === 'douyu' || platformOf === 'youtube' || platformOf === 'bilibili' || platformOf === 'huya') && signInCanHelp) void offerLogin(role, platformOf, generation, true)
         if (failure.code === 'restricted' && platformOf === 'douyin') void offerLogin(role, 'douyin', generation, true)
-        if (failure.code === 'restricted' && (platformOf === 'douyu' || platformOf === 'youtube') && signInCanHelp) void offerLogin(role, platformOf, generation, true)
         return false
       }
       const stream = result.value.stream
@@ -304,7 +306,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     try {
       const result = await apiClient.login(platform)
       if (!result.ok) {
-        if (stillCurrent()) patch(role, { problem: platform === 'douyin' && result.code === 'login-cancelled' ? null : { message: result.message } })
+        if (stillCurrent()) patch(role, { problem: result.code === 'login-cancelled' ? null : { message: result.message } })
         return
       }
     } catch {

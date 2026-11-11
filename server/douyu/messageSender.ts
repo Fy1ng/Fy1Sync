@@ -11,6 +11,7 @@ import type { DouyuMessageInput, DouyuMessageOutcome, DouyuTerminalOutcome as Do
 import type { DeliveryTracker } from '../danmaku/deliveryTracker'
 import { ROOM_OBSERVED_SEND_MESSAGE, roomEchoConfirmsSend } from '../../src/core/douyuDelivery'
 import { observeAccountRoom, type AccountInspection, type DouyuAccountRoomState } from './accountRoomState'
+import type { DouyuGatewayCoordinator } from './gatewayCoordinator'
 import {
   encodeMessageFrame, gatewayAddress, MAX_BUFFER_BYTES, MAX_COOLDOWN_MS, MAX_TOTAL_BYTES,
   MessageFrameDecoder, MessageProtocolError, messageChallenge, messageColorPalette, messageCredentials,
@@ -42,6 +43,7 @@ export type DouyuMessageSenderDependencies = DouyuActionDependencies & {
   networkRuntimePath?: string
   now?: () => number
   deliveryTracker?: DeliveryTracker
+  gatewayCoordinator?: DouyuGatewayCoordinator
 }
 
 // Local, static application code only. Native WebSocket has no public terminate()
@@ -322,6 +324,24 @@ export class DouyuMessageSender {
   }
 
   private async perform(target: DouyuMessageInput, state: RoomState, context: Operation, signal: AbortSignal, deadline: number, inspection?: AccountInspection): Promise<MessageStepOutcome> {
+    if (!this.deps.gatewayCoordinator) return this.performOwned(target, state, context, signal, deadline, inspection)
+    return this.deps.gatewayCoordinator.runShort(target.accountId, signal, async () => {
+      try { return await this.performOwned(target, state, context, signal, deadline, inspection) }
+      finally {
+        // The watch lease may resume only after the one-shot transport has terminated.
+        context.closed = true
+        context.cleanup?.(); context.cleanup = null
+        if (context.socket) {
+          const socket = context.socket
+          try { socket.close(1000, 'Account operation finished') } catch { /* Termination owns final cleanup. */ }
+          try { await socket.terminate?.() } catch { /* Never expose transport diagnostics. */ }
+          context.socket = null
+        }
+      }
+    })
+  }
+
+  private async performOwned(target: DouyuMessageInput, state: RoomState, context: Operation, signal: AbortSignal, deadline: number, inspection?: AccountInspection): Promise<MessageStepOutcome> {
     let credentials: MessageCredentials | null
     try { credentials = await this.credentials(target.accountId, signal) } catch { this.assertActive(signal); return needLogin() }
     if (!credentials) return needLogin()

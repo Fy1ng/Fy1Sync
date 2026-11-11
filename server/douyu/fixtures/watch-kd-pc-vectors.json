@@ -1,0 +1,83 @@
+{
+  "source": "https://www.douyu.com/swf_api/homeH5Enc?rids=6979222",
+  "checkedAt": "2026-11-05",
+  "templateSha256": "d12a61c174ca7eb35a819dbd99f2c9c349402387e863e41ef91c3fd50b9520d7",
+  "decodedFunction": "(function (v,rs,k,did,roomid,time){for(var I=0;I<v.length;I+=2){var i,v0=v[I],v1=v[I+1],delta=0x9E3779B9,sum=delta*rs;v0=(v0>>>12)|(v0<<20);v0=(v0>>>9)|(v0<<23);v1-=0x2ad26948;v1-=0x330221a7;for(i=0;i<rs;i++){v1-=(((v0<<4)^(v0>>>5))+v0)^(sum+k[(sum>>>11)&3]);sum-=delta;v0-=(((v1<<4)^(v1>>>5))+v1)^(sum+k[sum&3]);}v0-=0xafb61f3c;v0-=0xdfe46765;v1=(v1>>>4)|(v1<<28);v1=(v1>>>12)|(v1<<20);v[I]=v0;v[I+1]=v1;}})",
+  "key": [
+    390942152,
+    4220200614,
+    2069526141,
+    992288287
+  ],
+  "reference": "PC source statically unpacked with an independent Python integer implementation. Browser differential verification covers the same transform structure with the mobile version; no live account was used.",
+  "vectors": [
+    {
+      "input": [
+        0,
+        0
+      ],
+      "inputHex": "0000000000000000",
+      "output": [
+        2683474186,
+        3248513181
+      ],
+      "outputHex": "0a91f29f9d60a0c1"
+    },
+    {
+      "input": [
+        305419896,
+        2596069104
+      ],
+      "inputHex": "78563412f0debc9a",
+      "output": [
+        1492188652,
+        2571723241
+      ],
+      "outputHex": "ecfdf058e9614999"
+    },
+    {
+      "input": [
+        4294967295,
+        2147483648
+      ],
+      "inputHex": "ffffffff00000080",
+      "output": [
+        2989916876,
+        2723858061
+      ],
+      "outputHex": "cc8236b28dc65aa2"
+    },
+    {
+      "input": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "inputHex": "01000000020000000300000004000000",
+      "output": [
+        1699628860,
+        1441134140,
+        2698153616,
+        1216494930
+      ],
+      "outputHex": "3c474e653cf6e555908ed2a0523d8248"
+    },
+    {
+      "input": [
+        2882400001,
+        591751049,
+        1985229328,
+        4275878552
+      ],
+      "inputHex": "01efcdab896745231032547698badcfe",
+      "output": [
+        750440015,
+        3764283333,
+        2163574586,
+        4188256673
+      ],
+      "outputHex": "4fceba2cc5675ee03a87f580a1b9a3f9"
+    }
+  ]
+}

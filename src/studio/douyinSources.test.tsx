@@ -151,7 +151,7 @@ describe('Douyin source selection and chat isolation', () => {
     const session = makeSession()
     const status = { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false }
     vi.spyOn(apiClient, 'loginStatus').mockResolvedValue({ ok: true, value: {
-      youtube: status, douyu: status, douyin: { ...status, loggedIn: signedIn },
+      youtube: status, douyu: status, bilibili: status, huya: status, douyin: { ...status, loggedIn: signedIn },
     } })
     const resolve = vi.spyOn(apiClient, 'resolve').mockResolvedValue({ ok: true, value: { ok: false,
       failure: { code: 'restricted', reason: 'sign-in', message: '需要抖音登录' },
@@ -224,7 +224,7 @@ describe('Douyin source selection and chat isolation', () => {
   it('does not restore the old Douyin source when embedded login ends after a source change', async () => {
     const session = makeSession()
     const loggedOut = { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false }
-    vi.spyOn(apiClient, 'loginStatus').mockResolvedValue({ ok: true, value: { youtube: loggedOut, douyu: loggedOut, douyin: loggedOut } })
+    vi.spyOn(apiClient, 'loginStatus').mockResolvedValue({ ok: true, value: { youtube: loggedOut, douyu: loggedOut, bilibili: loggedOut, huya: loggedOut, douyin: loggedOut } })
     const resolve = vi.spyOn(apiClient, 'resolve').mockResolvedValueOnce({ ok: true, value: { ok: false,
       failure: { code: 'restricted', reason: 'sign-in', message: '需要抖音登录' },
     } }).mockResolvedValue({ ok: true, value: { ok: true, stream: {
@@ -250,7 +250,7 @@ describe('Douyin source selection and chat isolation', () => {
   it('leaves an embedded-login cancellation as a retryable source state without an error', async () => {
     const session = makeSession()
     const loggedOut = { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false }
-    vi.spyOn(apiClient, 'loginStatus').mockResolvedValue({ ok: true, value: { youtube: loggedOut, douyu: loggedOut, douyin: loggedOut } })
+    vi.spyOn(apiClient, 'loginStatus').mockResolvedValue({ ok: true, value: { youtube: loggedOut, douyu: loggedOut, bilibili: loggedOut, huya: loggedOut, douyin: loggedOut } })
     vi.spyOn(apiClient, 'resolve').mockResolvedValue({ ok: true, value: { ok: false,
       failure: { code: 'restricted', reason: 'sign-in', message: '需要抖音登录' },
     } })

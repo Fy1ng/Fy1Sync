@@ -30,6 +30,15 @@ describe('restricted enhanced PiP shell', () => {
     }
     manager.dispose(); f.manager.dispose()
   })
+  it('restricts watching reports to the PiP-owned Douyu source role', async () => {
+    const f = fixture(); await f.manager.open('official')
+    expect(f.manager.permits(2, 'getDouyuWatchState', undefined)).toBe(true)
+    expect(f.manager.permits(2, 'reportDouyuWatchPlayback', { role: 'official' })).toBe(true)
+    expect(f.manager.permits(2, 'reportDouyuWatchPlayback', { role: 'commentary' })).toBe(false)
+    expect(f.manager.permits(3, 'reportDouyuWatchPlayback', { role: 'official' })).toBe(false)
+    f.manager.dispose()
+  })
+
   it('grants only namespaced read-only room access to Huya even when a Douyu ID matches', async () => {
     const f = fixture()
     const sender = vi.fn(() => ({ accountId: 'default', canAttempt: true }))

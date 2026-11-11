@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { nativeImage, session, View, WebContentsView, type BrowserWindow, type Session, type WebContents, type WebFrameMain } from 'electron'
-import { cookieDomainAllowed, hasAuthenticationCookies, type BrowserCookie } from './cookies'
+import { authenticationCookieUserId, cookieDomainAllowed, hasAuthenticationCookies, type BrowserCookie } from './cookies'
 import { LoginError } from './login'
 import type { EmbeddedLoginDriver, EmbeddedLoginRequest, EmbeddedLoginState, EmbeddedLoginViewport } from './embeddedLoginContracts'
 import { loginRequestAllowed } from './embeddedLoginPolicy'
@@ -30,6 +30,8 @@ interface Attempt {
   pendingAction: 'login' | 'verification' | 'sms' | null
   verificationCompleted: boolean
   nativeVerification: boolean
+  captchaPreflight: 'waiting' | 'pending' | 'ready' | 'failed'
+  captchaPreRequest: { id: number; revision: number } | null
   lastError: string | undefined
   qrPaused: boolean
   lastQrSource: string | null
@@ -123,7 +125,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
 
   login(request: EmbeddedLoginRequest): Promise<BrowserCookie[]> {
     if (this.disposed || request.signal.aborted) return Promise.reject(new LoginError('login-cancelled'))
-    if (request.platform !== 'douyin' || request.destination !== undefined) return Promise.reject(new LoginError('login-failed'))
+    if (!Object.hasOwn(LOGIN_ADAPTERS, request.platform) || request.platform === 'douyin' && request.destination !== undefined) return Promise.reject(new LoginError('login-failed'))
     if (this.active) return Promise.reject(new LoginError('login-busy'))
     const owner = this.options.owner()
     if (!owner || owner.isDestroyed() || !isAppDocument(owner.webContents.mainFrame.url)) return Promise.reject(new LoginError('login-failed'))
@@ -135,9 +137,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       id, request, owner, session: browserSession, view: null, card: null, broker: null,
       cardValue: { platform: request.platform, stage: 'loading', mode: 'password', qr: { status: 'loading' }, sms: unavailableSms(), busy: false },
       showingOfficial: Boolean(request.destination), explicitOfficial: false, qrPaused: false, lastQrSource: null,
-      // Douyin's desktop login is initialized in a desktop viewport, independently of the local card size.
-      returnedToForm: false, challenge: null, challengeHost: null, brokerSize: { width: 1280, height: 900 }, pendingAction: null, verificationCompleted: false, nativeVerification: false,
-      lastError: undefined,
+      returnedToForm: false, challenge: null, challengeHost: null, brokerSize: request.platform === 'douyin' ? { width: 1280, height: 900 } : { width: 760, height: 520 }, pendingAction: null, verificationCompleted: false, nativeVerification: false,
+      captchaPreflight: 'waiting', captchaPreRequest: null, lastError: undefined,
       inspecting: false, actionBusy: false, submittedAt: 0, actionRevision: 0, lastPage: 'loading', pageRevision: 0,
       viewport: null, resolve, reject, abort: new AbortController(),
       state: { id, platform: request.platform, purpose: request.destination ? 'website' : 'login', phase: 'loading',
@@ -181,8 +182,29 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     browserSession.webRequest.onBeforeRequest((details, callback) => {
       const cancel = !this.current(attempt) || !loginRequestAllowed(attempt.request.platform, details.url, details.resourceType)
         || attempt.qrPaused && isQrPolling(attempt.request.platform, details.url)
+      if (!cancel && attempt.request.platform === 'bilibili' && isBilibiliCaptchaPreflight(details.url, details.method)
+        && details.webContentsId === attempt.view?.webContents.id) {
+        attempt.captchaPreflight = 'pending'
+        attempt.captchaPreRequest = { id: details.id, revision: attempt.loadRevision }
+        if (attempt.cardValue.verification) this.cardUpdate(attempt, { sms: unavailableSms() })
+      }
       callback({ cancel })
     })
+    if (attempt.request.platform === 'bilibili') {
+      const completePreflight = (details: { id: number; statusCode?: number; webContentsId?: number }) => {
+        const pending = attempt.captchaPreRequest
+        if (!this.current(attempt) || !pending || pending.id !== details.id || pending.revision !== attempt.loadRevision
+          || details.webContentsId !== attempt.view?.webContents.id) return
+        attempt.captchaPreRequest = null
+        attempt.captchaPreflight = details.statusCode === 200 ? 'ready' : 'failed'
+      }
+      browserSession.webRequest.onCompleted(completePreflight)
+      browserSession.webRequest.onErrorOccurred(completePreflight)
+      attempt.removeListeners.push(() => {
+        browserSession.webRequest.onCompleted(null)
+        browserSession.webRequest.onErrorOccurred(null)
+      })
+    }
     await browserSession.setProxy({ mode: this.options.domesticRouting() === 'direct' ? 'direct' : 'system' })
     if (!this.current(attempt)) return
     await this.options.fixture?.(attempt.request, browserSession)
@@ -207,10 +229,12 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     view.setVisible(false)
     attempt.owner.contentView.addChildView(view)
     const contents = view.webContents
-    const userAgent = contents.getUserAgent().replace(/\b(?:Electron|Fy1Sync|stream-syncer)\/[^\s]+\s*/gi, '')
-      .replace(/\bHeadlessChrome\//g, 'Chrome/').trim()
-    contents.setUserAgent(userAgent)
-    browserSession.setUserAgent(userAgent)
+    if (attempt.request.platform === 'douyin') {
+      const userAgent = contents.getUserAgent().replace(/\b(?:Electron|Fy1Sync|stream-syncer)\/[^\s]+\s*/gi, '')
+        .replace(/\bHeadlessChrome\//g, 'Chrome/').trim()
+      contents.setUserAgent(userAgent)
+      browserSession.setUserAgent(userAgent)
+    }
     contents.setAudioMuted(true)
     // Materialize the renderer on an inert document before awaiting its Page domain.
     // A newly allocated WebContentsView has no frame to answer Page.enable yet.
@@ -256,6 +280,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
         attempt.challenge = null
         attempt.verificationCompleted = false
         attempt.nativeVerification = false
+        attempt.captchaPreflight = 'waiting'
+        attempt.captchaPreRequest = null
         if (attempt.card && !attempt.explicitOfficial) this.waitForPlatform(attempt, '正在继续登录')
       }
     })
@@ -281,8 +307,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       if (mainFrame && code !== -3) this.update(attempt, { phase: 'failed', message: '登录页面未能加载, 请检查网络后重试.' })
     })
     const changed = (_event: unknown, cookie?: Partial<BrowserCookie>) => {
-      if (!cookie || ['sessionid', 'sessionid_ss'].includes(cookie.name ?? '')
-        && (typeof cookie.domain !== 'string' || cookieDomainAllowed(cookie.domain, attempt.request.platform))) attempt.cookieRevision++
+      if (attempt.request.platform !== 'douyin' || !cookie || ['sessionid', 'sessionid_ss'].includes(cookie.name ?? '')
+        && (typeof cookie.domain !== 'string' || cookieDomainAllowed(cookie.domain, 'douyin'))) attempt.cookieRevision++
       if (attempt.cookieTimer) clearTimeout(attempt.cookieTimer)
       attempt.cookieTimer = setTimeout(() => { attempt.cookieTimer = null; void this.check(attempt) }, 600)
     }
@@ -299,7 +325,9 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       if (!this.current(attempt)) { await card.close(); return }
       this.update(attempt, { phase: 'ready', presentation: 'form' })
       card.publish(attempt.cardValue)
-      attempt.renderPulse = setInterval(() => { void this.renderHiddenPage(attempt) }, 200)
+      if (attempt.request.platform === 'bilibili' || attempt.request.platform === 'huya' || attempt.request.platform === 'douyin') {
+        attempt.renderPulse = setInterval(() => { void this.renderHiddenPage(attempt) }, 200)
+      }
     }
     attempt.poll = setInterval(() => { void this.inspect(attempt); void this.check(attempt) }, this.options.pollMs ?? 400)
     await this.load(attempt)
@@ -331,6 +359,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     attempt.pendingAction = null
     attempt.verificationCompleted = false
     attempt.nativeVerification = false
+    attempt.captchaPreflight = 'waiting'
+    attempt.captchaPreRequest = null
     attempt.lastError = undefined
     if (attempt.card) {
       attempt.showingOfficial = false
@@ -339,7 +369,11 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       this.update(attempt, { phase: 'ready', presentation: 'form', message: undefined })
     } else this.update(attempt, { phase: 'loading', message: undefined })
     this.startPageTimeout(attempt, '官网登录组件未能完成加载, 请重试.')
-    const url = LOGIN_ADAPTERS[attempt.request.platform].entryUrl
+    const destination = attempt.request.destination
+    const url = destination === 'yuba' ? 'https://yuba.douyu.com/'
+      : destination?.startsWith('room:') ? `https://www.douyu.com/${destination.slice(5)}`
+      : destination?.startsWith('fish-act:') ? `https://www.douyu.com/pages/fish-act?rid=${destination.slice(9)}`
+      : LOGIN_ADAPTERS[attempt.request.platform].entryUrl
     // Page subresources may keep loading; dom-ready can present the verified form sooner.
     try { await attempt.view.webContents.loadURL(url) }
     catch {
@@ -347,7 +381,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       return
     }
     if (!this.current(attempt) || revision !== attempt.loadRevision) return
-    await this.inspect(attempt)
+    if (destination) this.update(attempt, { phase: 'ready' })
+    else await this.inspect(attempt)
   }
 
   private cardUpdate(attempt: Attempt, patch: Partial<LoginCardState>): void {
@@ -382,8 +417,13 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     if (attempt.lastPage === 'second-factor') return true
     if (!attempt.cardValue.verification) return false
     if (attempt.lastPage === 'loading' || attempt.lastPage === 'challenge') return true
-    // A recognized base form has left the second-factor screen; unknown documents remain guarded.
-    return attempt.lastPage !== 'form'
+    if (attempt.request.platform === 'douyin') return attempt.lastPage !== 'form'
+    // A successful official redirect can leave the previous code form in our local state.
+    // Keep guarding the actual risk page, but allow server verification after it has left.
+    try {
+      const url = new URL(attempt.view?.webContents.mainFrame.url ?? '')
+      return url.origin === 'https://passport.bilibili.com' && url.pathname === '/pc/passport/riskVerify'
+    } catch { return true }
   }
 
   private async inspect(attempt: Attempt): Promise<void> {
@@ -424,7 +464,9 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       }
       const message = snapshot.error ? PAGE_ERRORS[snapshot.error] : undefined
       if (message) { attempt.lastError = message; attempt.verificationCompleted = false }
-      const sms = snapshot.sms ?? unavailableSms()
+      const waitingForCaptcha = attempt.request.platform === 'bilibili' && snapshot.page === 'second-factor'
+        && attempt.captchaPreflight !== 'ready' && !snapshot.verificationCompleted
+      const sms = waitingForCaptcha ? { ...(snapshot.sms ?? unavailableSms()), canSend: false } : snapshot.sms ?? unavailableSms()
       this.cardUpdate(attempt, { sms })
       if (attempt.pendingAction === 'sms' && ((sms.cooldownSeconds ?? 0) > 0 || message)) {
         attempt.pendingAction = null
@@ -442,7 +484,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
         if (!pendingSubmission) { attempt.submittedAt = 0; attempt.pendingAction = null }
         const waitingMessage = attempt.verificationCompleted ? '安全验证已完成, 正在确认登录状态'
           : pendingSubmission && Date.now() - attempt.submittedAt > 12_000 ? '平台仍在处理验证, 可使用官方验证页面查看进度.'
-            : pendingSubmission ? '正在等待平台验证结果' : attempt.lastError
+            : pendingSubmission ? '正在等待平台验证结果' : attempt.lastError ?? (waitingForCaptcha
+              ? attempt.captchaPreflight === 'failed' ? '人机验证准备失败, 请检查网络或使用官方验证页面.' : '正在准备人机验证, 请稍候.' : undefined)
         if (!attempt.explicitOfficial) {
           attempt.showingOfficial = false
           attempt.challenge = null
@@ -548,7 +591,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     const cookieRevision = attempt.cookieRevision
     const currentCheck = () => this.current(attempt) && pageRevision === attempt.pageRevision
       && loadRevision === attempt.loadRevision && actionRevision === attempt.actionRevision
-      && cookieRevision === attempt.cookieRevision
+      && (attempt.request.platform !== 'douyin' || cookieRevision === attempt.cookieRevision)
     const signal = AbortSignal.any([attempt.abort.signal, AbortSignal.timeout(this.options.checkTimeoutMs ?? 8000)])
     try {
       const cookies = await this.boundedCookies(attempt, signal)
@@ -565,7 +608,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       attempt.nextCheck = Date.now() + 2500
       const response = await attempt.session.fetch(loginIdentityUrl(attempt.request.platform), {
         method: 'GET', credentials: 'include', redirect: 'manual', signal,
-        headers: { Accept: 'application/json', Referer: 'https://live.douyin.com/' },
+        headers: { Accept: 'application/json', ...(attempt.request.platform === 'douyin' ? { Referer: 'https://live.douyin.com/' } : attempt.request.platform === 'huya' ? { Referer: 'https://www.huya.com/' } : {}) },
       })
       if (!response.ok) { await response.body?.cancel(); throw new Error('Identity unavailable') }
       const text = await limitedText(response, signal)
@@ -573,7 +616,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       if (!currentCheck()
         || !finishWebsite && this.awaitingSecondFactor(attempt)) return
       // uid_tt is an opaque tracking hash; only the same session's official identity is authoritative.
-      if (identity.status !== 'authenticated' || !identity.uid) {
+      const matches = attempt.request.platform === 'douyin' || authenticationCookieUserId(cookies, attempt.request.platform) === identity.uid
+      if (identity.status !== 'authenticated' || !identity.uid || !matches) {
         this.restoreCardAfterCheck(attempt, identity.status === 'anonymous' ? '请完成平台官网登录' : '暂时无法确认登录状态, 请稍后重试.')
         if (finishWebsite) await this.finish(attempt, new LoginError('login-incomplete'))
         return
@@ -583,6 +627,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       if (!currentCheck()
         || !finishWebsite && this.awaitingSecondFactor(attempt)) return
       if (!hasAuthenticationCookies(finalCookies, attempt.request.platform)
+        || attempt.request.platform !== 'douyin' && authenticationCookieUserId(finalCookies, attempt.request.platform) !== identity.uid
         || authenticationFingerprint(finalCookies, attempt.request.platform) !== credentialFingerprint) return
       await this.finish(attempt, finalCookies)
     } catch {
@@ -725,6 +770,9 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     if (attempt.actionBusy || attempt.cardValue.busy || attempt.showingOfficial || ['loading', 'submitting', 'checking'].includes(attempt.cardValue.stage)) return { ok: false, message: '请先完成当前登录步骤.' }
     const second = action.kind === 'second-send' || action.kind === 'second-submit'
     if (second !== (attempt.cardValue.stage === 'verification')) return { ok: false, message: '当前验证步骤已变化, 请重试.' }
+    if (action.kind === 'second-send' && attempt.request.platform === 'bilibili' && attempt.captchaPreflight !== 'ready') {
+      return { ok: false, message: '人机验证尚未准备好, 请稍候.' }
+    }
     if ((action.kind === 'send-sms' || action.kind === 'second-send') && !attempt.cardValue.sms.canSend) return { ok: false, message: '请等待平台允许再次发送验证码.' }
     if (action.kind === 'refresh-qr') {
       attempt.lastQrSource = null
@@ -742,11 +790,12 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     const sendingSms = action.kind === 'send-sms' || action.kind === 'second-send'
     if (submit || sendingSms) { attempt.qrPaused = true; attempt.submittedAt = Date.now(); attempt.pendingAction = sendingSms ? 'sms' : second ? 'verification' : 'login' }
     if (action.kind === 'second-submit') attempt.verificationCompleted = false
+    attempt.nativeVerification = false
     this.cardUpdate(attempt, { stage: second ? 'verification' : submit ? 'submitting' : 'form', busy: true, message: undefined,
       ...(submit ? { qr: { status: 'paused' } } : {}) })
     let payload = action
     if (action.kind === 'prepare-sms' || action.kind === 'send-sms' || action.kind === 'sms') payload = { ...action,
-      countryCode: `+${action.countryCode.replace(/^\+/, '')}` }
+      countryCode: attempt.request.platform === 'bilibili' ? action.countryCode.replace(/^\+/, '') : `+${action.countryCode.replace(/^\+/, '')}` }
     try {
       const result = await attempt.broker.act(payload)
       if (!this.current(attempt) || revision !== attempt.actionRevision) return { ok: false, message: '登录操作已取消.' }
@@ -869,9 +918,20 @@ const PAGE_ERRORS = {
 
 function unavailableSms(): LoginSmsState { return { canSend: false, cooldownSeconds: null } }
 
+/** This request initializes the risk-page challenge; it never sends an SMS. */
+function isBilibiliCaptchaPreflight(raw: string, method: string): boolean {
+  if (method !== 'POST') return false
+  try {
+    const url = new URL(raw)
+    return url.origin === 'https://passport.bilibili.com' && url.pathname === '/x/safecenter/captcha/pre'
+      && !url.username && !url.password
+  } catch { return false }
+}
+
 /** Ignore visitor/tracking refreshes but invalidate every changed authentication ticket. */
 function authenticationFingerprint(cookies: BrowserCookie[], platform: EmbeddedLoginRequest['platform']): string {
-  const names = platform === 'douyin' ? ['sessionid', 'sessionid_ss'] : []
+  const names = platform === 'douyin' ? ['sessionid', 'sessionid_ss'] : platform === 'bilibili' ? ['DedeUserID', 'SESSDATA'] : platform === 'huya' ? ['udb_uid', 'udb_biztoken']
+    : ['acf_uid', 'acf_auth', 'acf_auth_wl', 'acf_dmjwt_token', 'acf_ltkid', 'acf_biz', 'acf_stk']
   return createHash('sha256').update(JSON.stringify(cookies.filter(cookie => names.includes(cookie.name)).map(cookie => ({
     domain: cookie.domain, path: cookie.path ?? '/', name: cookie.name, value: cookie.value, hostOnly: cookie.hostOnly,
     secure: cookie.secure, httpOnly: cookie.httpOnly, session: cookie.session, expirationDate: cookie.expirationDate,
@@ -881,8 +941,11 @@ function authenticationFingerprint(cookies: BrowserCookie[], platform: EmbeddedL
 function isQrPolling(platform: EmbeddedLoginRequest['platform'], raw: string): boolean {
   try {
     const url = new URL(raw)
-    return platform === 'douyin' && (url.protocol === 'wss:' && url.hostname === 'frontier100-normal.zijieapi.com'
-      || url.origin === 'https://live.douyin.com' && url.pathname === '/passport/web/check_qrconnect/')
+    if (platform === 'douyin') return url.protocol === 'wss:' && url.hostname === 'frontier100-normal.zijieapi.com'
+      || url.origin === 'https://live.douyin.com' && url.pathname === '/passport/web/check_qrconnect/'
+    return platform === 'bilibili' ? url.hostname === 'passport.bilibili.com' && url.pathname === '/x/passport-login/web/qrcode/poll'
+      : platform === 'douyu' ? url.hostname === 'passport.douyu.com' && url.pathname === '/japi/scan/auth'
+        : url.hostname === 'udblgn.huya.com' && url.pathname === '/qrLgn/tryQrLogin'
   } catch { return false }
 }
 

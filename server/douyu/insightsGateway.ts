@@ -7,9 +7,11 @@ import { abortable, cancelBody, cancelled, record } from './actionHttp'
 import { parseRewardJson, readRewardJson, rewardCredentials, RewardProblem, type RewardCredentials } from './rewardProtocol'
 import { DouyuBackpackGateway } from './backpackGateway'
 import { parseRenewalTargets } from './renewalInventory'
+import { parseDouyuPcRoomStatus, parseDouyuRoomStatus, type DouyuRoomStatus } from './roomStatus'
+import { readPlatformText } from '../platformResponse'
 import type {
   DouyuBadgeAges, DouyuFollowedRoom, DouyuFollowedRooms, DouyuMonthlySpending,
-  DouyuRoomInfo, DouyuSpendSource, DouyuWatchTime,
+  DouyuRoomInfo, DouyuSpendSource, DouyuWatchTime, DouyuFansWatchTime,
 } from './insightsTypes'
 
 const HOST = 'www.douyu.com'
@@ -50,13 +52,13 @@ export class DouyuInsightsError extends Error {
   }
 }
 
-function envelope(raw: unknown): unknown {
+function envelope(raw: unknown, allowedErrors: readonly number[] = []): unknown {
   const value = record(raw)
   if (!value) throw new DouyuInsightsError('invalid-data')
   const statuses = ['error', 'code', 'result'].filter(key => Object.hasOwn(value, key)).map(key => value[key])
   if (statuses.some(code => [-1, '-1', 401, '401', 101, '101'].includes(code as string | number))) throw new DouyuInsightsError('login-required')
   if (statuses.some(code => [16, '16', 170001, '170001'].includes(code as string | number))) throw new DouyuInsightsError('verification-required')
-  if (!statuses.length || statuses.some(code => code !== 0 && code !== '0') || !Object.hasOwn(value, 'data')) throw new DouyuInsightsError('invalid-data')
+  if (!statuses.length || statuses.some(code => code !== 0 && code !== '0' && !allowedErrors.some(allowed => code === allowed || code === String(allowed))) || !Object.hasOwn(value, 'data')) throw new DouyuInsightsError('invalid-data')
   return typeof value.data === 'string' ? parseRewardJson(value.data) : value.data
 }
 
@@ -104,7 +106,7 @@ export class DouyuInsightsGateway {
     return value
   }
 
-  private async json(url: string, parent: Session): Promise<unknown> {
+  private async json(url: string, parent: Session, allowedErrors: readonly number[] = []): Promise<unknown> {
     const target = new URL(url)
     if (target.origin !== ORIGIN || target.username || target.password || target.hash || target.port) throw new DouyuInsightsError('invalid-arguments')
     const timeout = new AbortController()
@@ -140,7 +142,11 @@ export class DouyuInsightsGateway {
       const value = await readRewardJson(response, context.signal, MAX_BODY)
       active(context.signal)
       parent.credentials = context.credentials
-      const payload = envelope(value)
+      const payload = envelope(value, allowedErrors)
+      if (allowedErrors.length) {
+        const raw = record(value)
+        return { code: integer(raw?.error ?? raw?.code ?? raw?.result), data: payload }
+      }
       const owner = record(payload)?.uid
       if (context.credentials && owner !== undefined && identity(owner) !== context.credentials.uid) throw new DouyuInsightsError('login-required')
       return payload
@@ -193,12 +199,32 @@ export class DouyuInsightsGateway {
     return this.scope(undefined, signal, async context => {
       const data = record(await this.json(`${ORIGIN}/swf_api/h5room/${room}`, context))
       if (!data || roomIdentity(data.room_id) !== room) throw new DouyuInsightsError('invalid-data')
-      const now = this.now(), live = liveState(data.show_status), started = epoch(data.show_time, now)
+      let status = parseDouyuRoomStatus(data, room)!
+      if (status.replay === null) {
+        try { status = await this.readPcRoomStatus(room, context.signal) ?? status }
+        catch { active(context.signal) }
+      }
+      const now = this.now(), live = status.live, started = epoch(data.show_time, now)
       return { room, checkedAt: now, roomName: text(data.room_name, `房间 ${room}`), nickname: text(data.nickname),
-        ownerUid: identity(data.owner_uid), live, replay: binary(data.videoLoop ?? data.is_loop),
-        startedAt: live === true ? started : null, lastStartedAt: live === false ? started : null,
+        ownerUid: identity(data.owner_uid), live, replay: status.replay,
+        startedAt: live === true && status.replay === false ? started : null, lastStartedAt: live === false ? started : null,
         popularity: integer(data.online), viewers: null, source: 'douyu-h5room' }
     })
+  }
+
+  private async readPcRoomStatus(room: string, parentSignal: AbortSignal): Promise<DouyuRoomStatus | null> {
+    const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(15_000)])
+    const { response, finalUrl } = await safeFetch(`${ORIGIN}/${room}`, { ...this.deps.proxy, hosts: [HOST], maxRedirects: 3, allowNonStandardPorts: false }, {
+      signal, headers: { Accept: 'text/html', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/144.0.0.0 Safari/537.36', 'Cache-Control': 'no-cache' },
+      resolve: host => abortable((this.deps.resolve ?? dnsResolver)(host), signal),
+      fetchImpl: async (input, init) => {
+        const target = new URL(String(input))
+        if (target.origin !== ORIGIN || target.username || target.password || target.hash || target.port) throw new DouyuInsightsError('invalid-data')
+        return (this.deps.request ?? fetch)(input, init)
+      },
+    })
+    if (response.status !== 200 || response.redirected || (response.url && response.url !== finalUrl.href)) { cancelBody(response); return null }
+    return parseDouyuPcRoomStatus(await readPlatformText(response, signal), room)
   }
 
   async readBadgeAges(accountId: string, signal: AbortSignal): Promise<DouyuBadgeAges> {
@@ -216,12 +242,45 @@ export class DouyuInsightsGateway {
     if (!validDouyuRoom(room)) throw new DouyuInsightsError('invalid-arguments')
     return this.scope(accountId, signal, async context => {
       const data = record(await this.json(`${ORIGIN}/japi/interactnc/web/fsjk/getCardTaskInfo?rid=${room}`, context))
-      // A successful empty card response uses rid=0 and todayWatch=0. That cannot
-      // confirm this room's watch time, so preserve unknown rather than claiming zero.
+      // The card object uses rid=0 when no normal/super card is active, while todayWatch
+      // still belongs to the requested rid. Verified with the same account requesting
+      // two rooms on 2026-11-06: rid=0 returned 649 for one and 0 for the other.
+      // Accept that known empty-card shape only; an incomplete or mismatched response
+      // remains unknown rather than inventing a room binding or a zero value.
       const unbound = data?.rid === 0 || data?.rid === '0'
       if (!data || (data.rid !== undefined && !unbound && roomIdentity(data.rid) !== room)) throw new DouyuInsightsError('invalid-data')
-      const seconds = unbound ? null : integer(data.todayWatch)
+      const emptyCard = unbound && ['normalStatus', 'superStatus', 'normalCardNum', 'superCardNum', 'normalCardId', 'superCardId']
+        .every(key => integer(data[key]) === 0)
+      const confirmed = roomIdentity(data.rid) === room || emptyCard
+      const seconds = confirmed ? integer(data.todayWatch) : null
       return { accountId, room, checkedAt: this.now(), seconds: seconds !== null && seconds <= 86_400 ? seconds : null, source: 'douyu-today-watch' }
+    })
+  }
+
+  async readFansWatchTime(accountId: string, room: string, signal: AbortSignal): Promise<DouyuFansWatchTime> {
+    if (!validDouyuRoom(room)) throw new DouyuInsightsError('invalid-arguments')
+    return this.scope(accountId, signal, async context => {
+      const credentials = await this.credentials(context, `${ORIGIN}/`)
+      if (!credentials) throw new DouyuInsightsError('login-required')
+      const data = record(await this.json(`${ORIGIN}/japi/interactnc/web/fanshome/fansinfo/myself?rid=${room}&uid=${encodeURIComponent(credentials.uid)}`, context))
+      // Both response identities must match; renderer callers never provide the official UID.
+      if (!data || roomIdentity(data.rid) !== room || identity(data.uid) !== credentials.uid) throw new DouyuInsightsError('invalid-data')
+      const seconds = integer(data.watchTime)
+      let badgeOwned: boolean | null = null, badgeLevel: number | null = null
+      try {
+        const result = record(await this.json(`${ORIGIN}/japi/interactnc/web/fanshome/badge/ownInfo?rid=${room}`, context, [40001, 40002]))
+        const badge = record(result?.data)
+        if (badge && ((badge.rid !== undefined && roomIdentity(badge.rid) !== room)
+          || (badge.uid !== undefined && identity(badge.uid) !== credentials.uid))) throw new DouyuInsightsError('invalid-data')
+        if (result?.code === 0 && badge) {
+          const level = integer(badge.badgeLevel)
+          if (level !== null && level > 0 && level <= 1000) { badgeOwned = true; badgeLevel = level }
+        } else if ((result?.code === 40001 || result?.code === 40002) && badge) badgeOwned = false
+      } catch (error) {
+        active(context.signal)
+        if (error instanceof DouyuInsightsError && ['login-required', 'verification-required'].includes(error.code)) throw error
+      }
+      return { accountId, room, checkedAt: this.now(), seconds, badgeOwned, badgeLevel, source: 'douyu-fanshome-cumulative' }
     })
   }
 

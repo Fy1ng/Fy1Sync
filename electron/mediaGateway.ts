@@ -16,6 +16,8 @@ export interface GatewayInput {
   url: string
   proxyUrl: string
   readFailure: () => StreamFailure | undefined
+  /** Main-only cumulative observed media bytes for this input and its HLS children. */
+  readBytes: () => number
 }
 interface Listener { server: Server; registry: MediaRegistry; origin: string; host: string }
 const CAPABILITY = /^\/media\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
@@ -42,6 +44,7 @@ export class MediaGateway {
   private closed = false
   private readonly requests = new Set<AbortController>()
   private readonly failures = new WeakMap<NetworkContext, StreamFailure>()
+  private readonly byteCounts = new WeakMap<NetworkContext, number>()
   constructor(private readonly config: ProxyConfig, private readonly options: MediaGatewayOptions = {}) {}
 
   async register(url: string, headers: Record<string, string> | undefined, network: NetworkContext, access?: MediaAccess): Promise<GatewayInput> {
@@ -55,6 +58,7 @@ export class MediaGateway {
       // The upstream policy belongs to the Node gateway, never FFmpeg's environment.
       proxyUrl: '',
       readFailure: () => { const failure = this.failures.get(inputNetwork); return failure ? { ...failure } : undefined },
+      readBytes: () => this.byteCounts.get(inputNetwork) ?? 0,
     }
   }
 
@@ -92,6 +96,9 @@ export class MediaGateway {
         const registry = new MediaRegistry({
           config: this.config, ...this.options, publicOrigin: origin,
           onFailure: (failure, network) => { if (network) this.failures.set(network, { ...failure }) },
+          onBytes: (bytes, network) => {
+            if (network) this.byteCounts.set(network, Math.min(Number.MAX_SAFE_INTEGER, (this.byteCounts.get(network) ?? 0) + bytes))
+          },
         })
         listener = { server, registry, origin, host }
         resolve(listener)

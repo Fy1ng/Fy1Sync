@@ -14,7 +14,7 @@ import type { YtDlpDiagnostic } from './ytdlp'
 import type { AcquisitionDiagnosticRecorder, DiagnosticAttemptSink } from './diagnosticContracts'
 import { diagnosticCode } from './diagnosticSanitizer'
 
-type Selection = { input: string; platform?: PlatformKind; quality?: string; preferAdaptive?: boolean; stream: ResolvedStream }
+type Selection = { input: string; platform?: PlatformKind; quality?: string; preferAdaptive?: boolean; stream: ResolvedStream; readBytes?: () => number; mediaRevision?: number }
 
 /** Only main-produced, checked inputs can reach the buffer's ffmpeg spawner. */
 export class Acquisition implements AcquisitionService {
@@ -31,7 +31,7 @@ export class Acquisition implements AcquisitionService {
     diagnostics?: AcquisitionDiagnosticRecorder
     proxy: ProxyConfig
     network?: (platform: PlatformKind | null) => NetworkContext
-    mediaInput?: (url: string, headers: Record<string,string> | undefined, network: NetworkContext, access?: MediaAccess) => Promise<{url:string;proxyUrl:string;readFailure?:()=>StreamFailure|undefined}>
+    mediaInput?: (url: string, headers: Record<string,string> | undefined, network: NetworkContext, access?: MediaAccess) => Promise<{url:string;proxyUrl:string;readFailure?:()=>StreamFailure|undefined;readBytes?:()=>number}>
     fetchImpl?: typeof fetch
     resolveDouyuRoom?: ResolveDouyuRoom
     dns?: Resolver
@@ -118,6 +118,8 @@ export class Acquisition implements AcquisitionService {
       const headers = resolved.stream.headers
         ?? (resolved.stream.platform === 'bilibili' ? { Referer: 'https://live.bilibili.com/' } : undefined)
       const media = !resolved.stream.adaptive && this.deps.mediaInput ? await this.deps.mediaInput(resolved.stream.url, headers, network, resolved.stream.mediaAccess) : undefined
+      selection.readBytes = media?.readBytes
+      selection.mediaRevision = (selection.mediaRevision ?? 0) + 1
       const route = media ? undefined : await network.route(resolved.stream.url)
       return { url: media?.url ?? resolved.stream.url, gatewayHls: Boolean(media && resolved.stream.kind === 'hls'), network, proxyUrl: media?.proxyUrl ?? route?.proxyUrl ?? '', readFailure: media?.readFailure, headers: media ? undefined : resolved.stream.headers
         ?? (!media && resolved.stream.platform === 'bilibili' ? { Referer: 'https://live.bilibili.com/' } : undefined),
@@ -136,7 +138,7 @@ export class Acquisition implements AcquisitionService {
       await readiness.promise
       if (generation !== this.generations.get(role) || this.disposed) return cancelled()
       this.selections.set(role, selection)
-      const { headers: _headers, adaptive: _adaptive, mediaAccess: _access, ...publicStream } = selection.stream
+      const { headers: _headers, adaptive: _adaptive, mediaAccess: _access, douyuWatchCdn: _cdn, ...publicStream } = selection.stream
       const publicSelection: ResolvedStream = {
         ...publicStream, url: local.url, kind: 'hls', requiresProxy: false,
         notes: ['主进程转封装为本地 HLS, 默认保留最近 180 秒', ...(selection.stream.notes ?? [])],
@@ -191,6 +193,16 @@ export class Acquisition implements AcquisitionService {
     return value ? structuredClone(value) : null
   }
 
+  /** Internal watch authority and metrics. The renderer supplies neither room nor CDN. */
+  watchSource(role: StreamId): { room: string; cdn: string; bytes: number; generation: string } | null {
+    const selection = this.selections.get(role)
+    if (!selection || selection.stream.platform !== 'douyu' || !selection.stream.sourceRoom || !selection.readBytes) return null
+    const bytes = selection.readBytes()
+    if (!Number.isSafeInteger(bytes) || bytes < 0) return null
+    return { room: selection.stream.sourceRoom, cdn: selection.stream.douyuWatchCdn ?? '', bytes,
+      generation: `${this.activeGenerations.get(role)}:${selection.mediaRevision}` }
+  }
+
   async restart(role: StreamId): Promise<ResolveResult> {
     const selected = this.selections.get(role)
     if (!selected) return refusal('播放会话尚未就绪')
@@ -199,13 +211,16 @@ export class Acquisition implements AcquisitionService {
 
   private async resolveInput(input: string, platform?: PlatformKind, quality?: string, preferAdaptive = false, hlsOnly = false, confirmedRoom?: string, network: NetworkContext = networkContext(detectPlatform(input, platform)), diagnostic?: DiagnosticAttemptSink): Promise<ResolveResult> {
     const resolver = createResolverDeps(this.deps.proxy, (url) => url, this.deps.fetchImpl, network)
+    const detected = detectPlatform(input, platform)
     const result = await resolveStream(input, {
       ...resolver, quality, preferAdaptive, hlsOnly, resolveDouyuRoom: this.deps.resolveDouyuRoom ?? createDouyuRoomResolver(this.deps.proxy, this.deps.fetchImpl, this.deps.dns, network).resolve,
       ...(confirmedRoom ? { douyuRoomIdentity: { room: confirmedRoom, inputRoom: confirmedRoom } } : {}),
       runYtDlp: url => diagnostic ? this.deps.runYtDlp(url, !hlsOnly, network, event => diagnostic.record(event)) : this.deps.runYtDlp(url, !hlsOnly, network),
-      douyuCookie: detectPlatform(input, platform) === 'douyu' ? await this.deps.logins.cookieHeader('douyu') : undefined,
-      douyinCookieHeader: detectPlatform(input, platform) === 'douyin'
-        ? requestUrl => this.deps.logins.cookieHeader('douyin', requestUrl) : undefined,
+      douyuCookie: detected === 'douyu' ? await this.deps.logins.cookieHeader('douyu') : undefined,
+      cookieHeader: detected === 'bilibili' || detected === 'huya'
+        ? (cookiePlatform, requestUrl) => cookiePlatform === detected ? this.deps.logins.cookieHeader(cookiePlatform, requestUrl) : Promise.resolve('')
+        : undefined,
+      douyinCookieHeader: detected === 'douyin' ? requestUrl => this.deps.logins.cookieHeader('douyin', requestUrl) : undefined,
     }, platform)
     if (!result.ok) return sanitizedFailure(result)
     // Actual media connections own DNS and route validation; do not resolve the same target here.

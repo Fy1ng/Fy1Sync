@@ -128,11 +128,13 @@ export async function resolveDouyu(input: string, deps: ResolverDeps): Promise<R
   const qualities = parseDouyuQualities(data.multirates)
   const returnedRate = typeof data.rate === 'number' && Number.isInteger(data.rate) ? String(data.rate) : requestedRate
   const notes = ['直播地址带时效签名, 断流后将重新解析. 画质标签由斗鱼提供.']
+  const cdn = typeof data.rtmp_cdn === 'string' ? data.rtmp_cdn : typeof data.cdn === 'string' ? data.cdn : undefined
   if (inputRoom !== room) notes.push(`房间 ${inputRoom} 已解析为真实房间号 ${room}.`)
   if (returnedRate !== requestedRate) notes.push('斗鱼返回了较低或不同的画质档位. 原画可能需要登录后重试.')
   return { ok: true, stream: {
     platform: 'douyu', url: deps.proxify(url.toString()), kind: /\.m3u8?$/i.test(url.pathname) ? 'hls' : 'progressive',
     label: `斗鱼 ${room}`, channel: room, sourceRoom: room, requiresProxy: true, danmakuRoom: room,
     headers: { Referer: REFERER, 'User-Agent': USER_AGENT }, qualities, quality: returnedRate, notes,
+    ...(cdn && /^[A-Za-z0-9_-]{1,64}$/.test(cdn) ? { douyuWatchCdn: cdn } : {}),
   } }
 }

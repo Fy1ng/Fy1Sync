@@ -19,6 +19,7 @@
     "electron"
   ],
   "exclude": [
+    "scripts/clock-search-authoring/*.tsx",
     "Stream Sync Player",
     "Stream Sync Player_Gemini",
     "dist",

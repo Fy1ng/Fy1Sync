@@ -63,6 +63,21 @@ function rawRequest(url: string, lines: string[]): Promise<number> {
 }
 
 describe('FFmpeg controlled media gateway', () => {
+  it('counts actual media bytes per input, includes child segments and excludes rewritten playlists', async () => {
+    const upstream = vi.fn(async (input: Parameters<typeof fetch>[0]) => String(input).endsWith('segment.ts')
+      ? new Response('0123456789', { headers: { 'content-type': 'video/mp2t' } })
+      : new Response('#EXTM3U\n#EXTINF:4,\nsegment.ts\n', { headers: { 'content-type': 'application/vnd.apple.mpegurl' } })) as unknown as typeof fetch
+    const media = gateway(upstream)
+    const first = await media.register(target, undefined, context())
+    const second = await media.register(target, undefined, context())
+    const playlist = await local(first.url)
+    expect(first.readBytes()).toBe(0)
+    const segment = playlist.body.match(/http:\/\/127\.0\.0\.1:\d+\/media\/[0-9a-f-]{36}/)![0]
+    expect((await local(segment)).body).toBe('0123456789')
+    expect(first.readBytes()).toBe(10)
+    expect(second.readBytes()).toBe(0)
+  })
+
   it('exposes only opaque loopback capabilities and rewrites every nested media target', async () => {
     const network = context()
     const upstream = vi.fn(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {

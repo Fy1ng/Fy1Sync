@@ -5,11 +5,12 @@ import type { DanmakuRate, MessageHistoryPage, MessageHistoryQuery } from '../se
 import type { DeliveryEvidence } from '../server/danmaku/deliveryTracker'
 import type { DouyuMessageInput, DouyuMessageOutcome } from '../server/douyu/types'
 import type { DouyuMuteInput, DouyuModerationTarget, DouyuModerationOutcome, DouyuModerationPermission } from '../server/douyu/moderation'
-import type { DouyuRoomInsights, DouyuFollowedRooms, DouyuBadgeAges, DouyuMonthlySpending, DouyuWatchTime } from '../server/douyu/insightsTypes'
+import type { DouyuRoomInsights, DouyuFollowedRooms, DouyuBadgeAges, DouyuMonthlySpending, DouyuWatchTime, DouyuFansWatchTime } from '../server/douyu/insightsTypes'
 import type { AppUpdateState } from './appUpdateService'
 import type { OnlineUpdateKind, OnlineUpdateSourceId, OnlineUpdateState } from './onlineUpdateContracts'
 import { BACKEND_METHODS, type BackendMethods } from './backendContracts'
 import type { Cs2Schedule, StreamTitle, StreamTitleInput } from '../server/esports/types'
+import type { DouyuWatchPlaybackReport, DouyuWatchState } from '../server/douyu/watchTypes'
 export type { Cs2Schedule, Cs2Match, Cs2Team, Cs2Stream, StreamTitle, StreamTitleInput } from '../server/esports/types'
 
 /** This context is constructed by trusted IPC, never read from renderer arguments. */
@@ -61,7 +62,10 @@ export interface FeatureMethods extends BackendMethods {
   getDouyuBadgeAges: { args: { accountId: string }; result: DouyuBadgeAges }
   getDouyuMonthlySpending: { args: { accountId: string }; result: DouyuMonthlySpending }
   getDouyuWatchTime: { args: { accountId: string; room: string; refresh?: boolean }; result: DouyuWatchTime }
+  getDouyuFansWatchTime: { args: { accountId: string; room: string; refresh?: boolean }; result: DouyuFansWatchTime }
   reportDouyuPlayback: { args: { room: string; playing: boolean }; result: DouyuRoomInsights }
+  reportDouyuWatchPlayback: { args: DouyuWatchPlaybackReport; result: DouyuWatchState }
+  getDouyuWatchState: { args: undefined; result: DouyuWatchState }
   setDouyuLiveNotifications: { args: DouyuLiveNotificationSettings; result: DouyuLiveNotificationState }
   /** What the main process is running now; a reloaded window starts from this, not from off. */
   getDouyuLiveNotifications: { args: undefined; result: DouyuLiveNotificationState }
@@ -88,6 +92,8 @@ export const FEATURE_METHODS = [
   'getDanmakuRate', 'getDanmakuUserDetails', 'openDanmakuHistory', 'getDouyuDelivery', 'sendComposedDouyuMessage',
   'previewDouyuMute', 'muteDouyuUser', 'getDouyuRoomInsights', 'refreshDouyuRoomInsights', 'getDouyuFollowedRooms',
   'getDouyuBadgeAges', 'getDouyuMonthlySpending', 'getDouyuWatchTime', 'reportDouyuPlayback', 'setDouyuLiveNotifications', 'getDouyuLiveNotifications',
+  'reportDouyuWatchPlayback', 'getDouyuWatchState',
+  'getDouyuFansWatchTime',
   'checkAppUpdate', 'getAppUpdateState',
   'getOnlineUpdateState', 'setOnlineUpdateSource', 'checkOnlineUpdate', 'downloadOnlineUpdate',
   'cancelOnlineUpdate', 'applyOnlineUpdate', 'rollbackFrontendUpdate', 'reportFrontendReady',

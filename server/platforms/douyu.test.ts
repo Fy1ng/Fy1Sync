@@ -22,6 +22,15 @@ describe('Douyu iterated MD5 auth fixed vectors', () => {
 })
 
 describe('Douyu PC play API', () => {
+  it('retains only a bounded CDN identity for main-process viewing statistics', async () => {
+    const result = await resolveDouyu('9999', deps({ fetchJson: async url => url.includes('getEncryption')
+      ? { error: 0, data: encryption } : { ...play, data: { ...play.data, rtmp_cdn: 'tct-h5' } } }))
+    expect(result).toMatchObject({ ok: true, stream: { douyuWatchCdn: 'tct-h5' } })
+    const invalid = await resolveDouyu('9999', deps({ fetchJson: async url => url.includes('getEncryption')
+      ? { error: 0, data: encryption } : { ...play, data: { ...play.data, rtmp_cdn: 'https://private.invalid/path?token=fixture' } } }))
+    expect(invalid.ok && invalid.stream.douyuWatchCdn).toBeUndefined()
+  })
+
   it('builds seed and signed play requests using the cookie did, preserving HTTP FLV and Referer', async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
     const cookie = 'dy_did=abcdef0123456789abcdef0123456789; auth=private-cookie'

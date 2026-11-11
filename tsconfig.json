@@ -8,6 +8,6 @@
     // those builtins are genuinely available where that test runs.
     "types": ["vite/client", "node"]
   },
-  "include": ["src"],
+  "include": ["src", "scripts/clock-search-authoring/*.tsx"],
   "exclude": ["Stream Sync Player", "Stream Sync Player_Gemini", "dist", "node_modules"]
 }

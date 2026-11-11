@@ -20,6 +20,8 @@ export interface MediaDeps {
   network?: NetworkContext
   publicOrigin?: string
   onFailure?: (failure: StreamFailure, network?: NetworkContext) => void
+  /** Observed media bytes delivered to the consumer, excluding rewritten playlists. */
+  onBytes?: (bytes: number, network?: NetworkContext) => void
 }
 type Resource = { url: string; touched: number; headers?: Record<string,string>; network?: NetworkContext; access: MediaAccess; identity: string }
 
@@ -105,6 +107,7 @@ export class MediaRegistry {
       if (request.signal.aborted) return
       this.deps.onFailure?.(classifyNetworkFailure(controller.signal.reason?.name === 'TimeoutError' ? controller.signal.reason : error), resource.network ?? this.deps.network)
     }
+    const notifyBytes = (bytes: number) => this.deps.onBytes?.(bytes, resource.network ?? this.deps.network)
     try {
       const headers: Record<string, string> = { 'user-agent': 'StreamSyncer/0.1 (+desktop)', 'accept-encoding': 'identity' }
       for (const name of ['range', 'accept', 'if-none-match']) {
@@ -178,6 +181,7 @@ export class MediaRegistry {
           return new Response(rewritten, { status: 200, headers: outgoing })
         }
         outgoing.set('content-length', String(bytes.byteLength))
+        try { notifyBytes(bytes.byteLength) } catch { /* Metrics cannot interrupt media delivery. */ }
         return new Response(bytes, { status: upstream.status, headers: outgoing })
       }
       const reader = upstreamBody.getReader()
@@ -192,7 +196,10 @@ export class MediaRegistry {
             const chunk = await reader.read()
             clearTimeout(timeout)
             if (chunk.done) { cleanup(); stream.close() }
-            else stream.enqueue(chunk.value)
+            else {
+              try { notifyBytes(chunk.value.byteLength) } catch { /* Metrics cannot interrupt media delivery. */ }
+              stream.enqueue(chunk.value)
+            }
           } catch (error) { notifyFailure(error); cleanup(); stream.error(new Error('媒体读取中断')) }
         },
         async cancel() { controller.abort(); cleanup(); await reader.cancel().catch(() => {}) },

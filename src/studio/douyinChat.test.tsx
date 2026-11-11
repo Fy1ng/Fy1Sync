@@ -109,7 +109,7 @@ describe('Douyin read-only chat', () => {
     expect(screen.queryByRole('button', { name: /\+1|回复|收藏|禁言|历史|详情/ })).toBeNull()
   })
 
-  it.each(['douyu', 'records', 'insights'] as const)('isolates the %s backend panel with the correct platform name', async section => {
+  it.each(['records', 'insights'] as const)('isolates the %s backend panel with the correct platform name', async section => {
     const session = makeSession()
     const feature = vi.spyOn(apiClient, 'feature')
     render(<SessionProvider session={session}><SettingsSheet target={{ section }} room="douyin:12345"

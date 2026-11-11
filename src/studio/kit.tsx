@@ -210,44 +210,79 @@ export function HoldButton({ onStep, className, children, label, disabled = fals
  * Tabs down the left with the chosen pane beside them. Up/Down move between tabs the way a
  * vertical tab list should; `aside` sits under the list for facts about the whole section.
  */
-export function SideTabs<T extends string>({ label, tabs, value, onChange, aside, children }: {
+export interface SideTabNavigation<T extends string> {
   label: string
   tabs: { id: T; label: string; icon?: React.ReactNode; badge?: React.ReactNode }[]
   value: T
   onChange: (id: T) => void
+}
+
+export function SideTabs<T extends string, P extends string = never>({ label, tabs, value, onChange, aside, children, parentNavigation }: SideTabNavigation<T> & {
   aside?: React.ReactNode
   children: React.ReactNode
+  /** A platform and its pages share one sidebar; the pages expand below that platform. */
+  parentNavigation?: SideTabNavigation<P>
 }): React.ReactNode {
   const base = useId()
   const current = tabs.find((tab) => tab.id === value) ?? tabs[0]
-  const move = (event: React.KeyboardEvent<HTMLElement>): void => {
-    const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0
-    if (!step) return
-    event.preventDefault()
-    const index = tabs.findIndex((tab) => tab.id === value)
-    const next = tabs[(index + step + tabs.length) % tabs.length]!
-    onChange(next.id)
-    document.getElementById(`${base}-${next.id}`)?.focus()
-  }
+  const selectedParent = parentNavigation?.tabs.find(tab => tab.id === parentNavigation.value) ?? parentNavigation?.tabs[0]
+  const navigation = <SideTabList id={base} label={label} tabs={tabs} value={value} onChange={onChange} panelId={`${base}-panel`} />
+  const panel = <div className={parentNavigation ? 'side-subpanel' : 'side-panel'} id={`${base}-panel`} role="tabpanel" aria-labelledby={current ? `${base}-${current.id}` : undefined}>
+    {children}
+  </div>
   return (
     <div className="side-tabs">
       <div className="side-nav">
-        <div role="tablist" aria-orientation="vertical" aria-label={label} onKeyDown={move}>
-          {tabs.map((tab) => (
-            <button key={tab.id} id={`${base}-${tab.id}`} type="button" role="tab" aria-selected={tab.id === value}
-              tabIndex={tab.id === value ? 0 : -1} aria-controls={`${base}-panel`}
-              className={tab.id === value ? 'is-on' : undefined} onClick={() => onChange(tab.id)}>
-              {tab.icon}
-              <span className="side-tab-label">{tab.label}</span>
-              {tab.badge}
-            </button>
-          ))}
-        </div>
+        {parentNavigation
+          ? <SideTabList {...parentNavigation} id={`${base}-platform`} panelId={`${base}-platform-panel`}>
+            <div className="side-subnav">{navigation}</div>
+          </SideTabList>
+          : navigation}
         {aside && <div className="side-aside">{aside}</div>}
       </div>
-      <div className="side-panel" id={`${base}-panel`} role="tabpanel" aria-labelledby={current ? `${base}-${current.id}` : undefined}>
-        {children}
-      </div>
+      {parentNavigation
+        ? <div className="side-panel" id={`${base}-platform-panel`} role="tabpanel" aria-labelledby={selectedParent ? `${base}-platform-${selectedParent.id}` : undefined}>{panel}</div>
+        : panel}
+    </div>
+  )
+}
+
+function SideTabList<T extends string>({ id, label, tabs, value, onChange, panelId, children }: SideTabNavigation<T> & {
+  id: string
+  panelId: string
+  children?: React.ReactNode
+}): React.ReactNode {
+  const current = tabs.find(tab => tab.id === value) ?? tabs[0]
+  const move = (event: React.KeyboardEvent<HTMLElement>): void => {
+    if (!current || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    event.stopPropagation()
+    const index = tabs.findIndex(tab => tab.id === current.id)
+    const step = event.key === 'ArrowDown' ? 1 : -1
+    const next = event.key === 'Home' ? tabs[0]! : event.key === 'End' ? tabs[tabs.length - 1]! : tabs[(index + step + tabs.length) % tabs.length]!
+    const scope = event.currentTarget.closest('[role="dialog"]') ?? document
+    onChange(next.id)
+    const target = document.getElementById(`${id}-${next.id}`)
+    target?.focus()
+    // Switching platforms can replace the nested layout, so restore focus after that mount.
+    requestAnimationFrame(() => {
+      if (target?.isConnected) return
+      const list = [...scope.querySelectorAll<HTMLElement>('[role="tablist"]')].find(node => node.getAttribute('aria-label') === label)
+      list?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus()
+    })
+  }
+  return (
+    <div role="tablist" aria-orientation="vertical" aria-label={label} onKeyDown={move}>
+      {tabs.map(tab => <div key={tab.id} role="presentation" className="side-tab-group">
+        <button id={`${id}-${tab.id}`} type="button" role="tab" aria-selected={tab.id === current?.id}
+          tabIndex={tab.id === current?.id ? 0 : -1} aria-controls={panelId}
+          className={tab.id === current?.id ? 'is-on' : undefined} onClick={() => onChange(tab.id)}>
+          {tab.icon}
+          <span className="side-tab-label">{tab.label}</span>
+          {tab.badge}
+        </button>
+        {tab.id === current?.id && children}
+      </div>)}
     </div>
   )
 }

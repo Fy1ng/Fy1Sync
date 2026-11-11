@@ -3136,6 +3136,26 @@ body,
   background: rgb(255 255 255 / 9%);
 }
 
+.studio .side-subnav {
+  margin: 4px 0 8px 17px;
+  padding-left: 7px;
+  border-left: 1px solid var(--line-2);
+}
+
+.studio .side-subnav [role='tab'] {
+  min-height: 31px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.studio .side-subpanel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
 .studio .side-aside {
   display: flex;
   flex-direction: column;
@@ -3164,6 +3184,7 @@ body,
 }
 
 .studio .side-panel > .desk-content,
+.studio .side-subpanel > .desk-content,
 .studio .side-panel > .records-content {
   overflow: visible;
 }

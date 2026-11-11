@@ -5,7 +5,7 @@ export class DouyuReadCache {
   private readonly entries = new Map<string, Entry>()
   constructor(private readonly now: () => number = Date.now) {}
 
-  async read<T>(kind: 'followed' | 'inventory' | 'watch', accountId: string, room: string,
+  async read<T>(kind: 'followed' | 'inventory' | 'watch' | 'fans-watch', accountId: string, room: string,
     refresh: boolean | undefined, load: () => Promise<T>): Promise<T> {
     const key = JSON.stringify([kind, accountId, room])
     const cached = this.entries.get(key)

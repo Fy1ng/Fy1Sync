@@ -1,8 +1,9 @@
 import { test } from '@playwright/test'
-import { expect, launchApplication } from './electron'
+import { expect, launchApplication, visibleE2eWindows } from './electron'
 import { openDouyuTab, openPlayerWithDouyuWrites, setCheckedByLabel } from './helpers'
 
 test('续牌赠送先预览再确认, 库存变化与未知回执停止余下操作', async ({}, testInfo) => {
+  test.skip(!visibleE2eWindows, '续牌写操作需要真实窗口 foreground 所有权; 隐藏模式不抢占系统焦点, 设置 STREAM_SYNC_E2E_VISIBLE=1')
   test.setTimeout(90_000)
   const running = await launchApplication('douyu-renewal')
   const donations = () => running.application.evaluate(() => {

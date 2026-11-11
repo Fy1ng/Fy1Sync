@@ -10,7 +10,7 @@ function setup() {
   let current: typeof card | null = card
   const controller = {
     ownsCard: vi.fn((sender: unknown, frame: unknown) => current === sender && frame === current?.mainFrame && current?.mainFrame.url === 'app://login/current-attempt/'),
-    cardState: vi.fn(() => ({ platform: 'douyin' as const, stage: 'form' as const, mode: 'password' as const, qr: { status: 'unavailable' as const }, sms: { canSend: false, cooldownSeconds: null }, busy: false })),
+    cardState: vi.fn(() => ({ platform: 'bilibili' as const, stage: 'form' as const, mode: 'password' as const, qr: { status: 'unavailable' as const }, sms: { canSend: false, cooldownSeconds: null }, busy: false })),
     cardAction: vi.fn(async (_action: LoginCardAction) => ({ ok: true })),
   }
   const release = installLoginCardIpc(ipc as unknown as Pick<IpcMain, 'handle' | 'removeHandler'>, controller)

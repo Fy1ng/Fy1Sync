@@ -9,6 +9,7 @@ import {
 import { parseMessagePayload, type GatewayMessage, MAX_BUFFER_BYTES } from './messageProtocol'
 import type { DouyuMessageInput } from './types'
 import { DeliveryTracker } from '../danmaku/deliveryTracker'
+import { DouyuGatewayCoordinator } from './gatewayCoordinator'
 
 // Exercise the default worker bridge without permitting a real network worker.
 const workerFixture = vi.hoisted(() => ({ make: vi.fn<(source: string, options: unknown) => object>() }))
@@ -115,6 +116,26 @@ afterEach(async () => {
 })
 
 describe('one-shot authenticated gateway handshake', () => {
+  it('keeps the account lease until the inspection transport has terminated', async () => {
+    fakeClock()
+    const coordinator = new DouyuGatewayCoordinator()
+    let terminate!: () => void
+    const stopped = new Promise<void>(resolve => { terminate = resolve })
+    const f = setup({ onSend: (message, socket) => {
+      socket.terminate.mockImplementation(() => stopped)
+      if (message.type === 'lsigreq') queueMicrotask(() => socket.receive({ type: 'memberinfores', uid: '42', gold: '600', silver: '20' }))
+    } }, { gatewayCoordinator: coordinator })
+    const inspection = f.sender.inspect('account-one', input.room, signal(), 'balance')
+    await flush()
+    expect(f.sockets[0]!.terminate).toHaveBeenCalledOnce()
+    expect(coordinator.isBusy('account-one')).toBe(true)
+    terminate()
+    expect(await inspection).toMatchObject({ uid: '42', balance: { gold: 600 } })
+    expect(coordinator.isBusy('account-one')).toBe(false)
+    expectClean(f.sockets[0]!)
+    coordinator.dispose()
+  })
+
   it('reads an authenticated balance without ever sending a chat message', async () => {
     fakeClock()
     const f = setup({ onSend: (message, socket) => {
@@ -145,7 +166,7 @@ describe('one-shot authenticated gateway handshake', () => {
     const socket = sockets[0]!
     expect(result).toEqual({ status: 'succeeded', message: '已收到斗鱼发送回执.', nextAllowedAt: BASE + 1_000 })
     expect(socket.sent.map(message => message.type)).toEqual(['loginreq', 'livreq', 'keeplive', 'lsigreq', 'chatmessage'])
-    expect(socket.sent.find(message => message.type === 'lsigreq')?.sig).toBe('53d868321572b07050f69f66af6f3587')
+    expect(socket.sent.find(message => message.type === 'lsigreq')?.sig).toBe('2eeb6330b795c2371584f4a4808bfc6f')
     expect(socket.messages).toHaveLength(1)
     expect(socket.messages[0]).toMatchObject({ content: '中文 /@ \uff3c 😀', sender: '42', dy: '1'.repeat(32), col: '0', tts: '0', cst: String(BASE), nc: '0', ifs: '0', dat: '0' })
     expect(cookieHeader).toHaveBeenCalledTimes(3)

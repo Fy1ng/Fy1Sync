@@ -70,8 +70,8 @@ function StudioView(): React.ReactNode {
   const [droppedFile, setDroppedFile] = useState<File | null>(null)
   const [settingsAt, setSettingsAt] = useState<SettingsTarget | null>(null)
   // The gear reopens 设置 where it was left; links that name a section go there.
-  const openSettings = useCallback((section?: SettingsSection) =>
-    setSettingsAt({ section: section ?? remembered<SettingsSection>('settings:section') ?? 'general' }), [])
+  const openSettings = useCallback((section?: SettingsSection, account?: SettingsTarget['account']) =>
+    setSettingsAt({ section: section ?? remembered<SettingsSection>('settings:section') ?? 'general', ...(account ? { account } : {}) }), [])
   const [tuning, setTuning] = useState(false)
   const [framing, setFraming] = useState(false)
   const [previewHidden, setPreviewHidden] = useState(false)

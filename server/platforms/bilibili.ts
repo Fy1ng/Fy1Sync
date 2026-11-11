@@ -33,6 +33,14 @@ export function parseBilibiliRoom(input: string): string | null {
   return null
 }
 
+type PlayCodec = {
+  codec_name?: string
+  current_qn?: number
+  accept_qn?: number[]
+  base_url?: string
+  url_info?: Array<{ host?: string; extra?: string }>
+}
+
 type PlayInfoResponse = {
   code?: number
   message?: string
@@ -46,13 +54,7 @@ type PlayInfoResponse = {
           protocol_name?: string
           format?: Array<{
             format_name?: string
-            codec?: Array<{
-              codec_name?: string
-              current_qn?: number
-              accept_qn?: number[]
-              base_url?: string
-              url_info?: Array<{ host?: string; extra?: string }>
-            }>
+            codec?: PlayCodec[]
           }>
         }>
       }
@@ -88,7 +90,9 @@ export async function resolveBilibili(
 
   let payload: PlayInfoResponse
   try {
-    payload = (await deps.fetchJson(`${PLAY_INFO_API}?${params.toString()}`)) as PlayInfoResponse
+    const requestUrl = `${PLAY_INFO_API}?${params.toString()}`
+    const cookie = await deps.cookieHeader?.('bilibili', requestUrl)
+    payload = (await deps.fetchJson(requestUrl, cookie ? { headers: { Cookie: cookie } } : undefined)) as PlayInfoResponse
   } catch (error) {
     if (error instanceof StreamFailureError) throw error
     return failure(
@@ -102,6 +106,8 @@ export async function resolveBilibili(
   // the API we think we are, so it takes the same path as an explicit error code.
   const payloadCode = payload.code ?? -1
   if (payloadCode !== 0) {
+    // -101 is the explicit account-not-logged-in code; rendition caps are not identity errors.
+    if (payloadCode === -101) return failure('login-required', 'B站登录信息已失效或该直播间需要登录.', '请登录B站后重新加载片源.')
     // Only the codes that really mean "no such room" are reported as such; everything else
     // (-400 bad request, -352 risk control, 网关 5xx mapped to a code) is our problem or
     // theirs, and telling the user the room does not exist would send them chasing nothing.
@@ -116,7 +122,9 @@ export async function resolveBilibili(
     return failure('not-live', `直播间 ${room} 当前未开播`, MANUAL_URL_HINT)
   }
 
-  const selected = pickHlsUrl(payload)
+  const requested = Number(params.get('qn'))
+  const renditions = hlsRenditions(payload, requested)
+  const selected = renditions[0]
   if (!selected) {
     return failure(
       'needs-manual-url',
@@ -130,11 +138,12 @@ export async function resolveBilibili(
     .map(item => [item.qn!, item.desc!.trim().slice(0, 64)]))
   const label = (qn: number) => descriptions.get(qn) ?? QUALITY_LABELS[qn] ?? `档位 ${qn}`
   const current = validQn(selected.codec.current_qn) ? selected.codec.current_qn : undefined
-  const accepted = selected.codec.accept_qn?.filter(validQn) ?? []
-  const available = [...new Set([...accepted, ...(current ? [current] : [])])].sort((a, b) => b - a)
+  const available = [...new Set(renditions.flatMap(({ codec }) => [
+    ...(codec.accept_qn?.filter(validQn) ?? []), ...(validQn(codec.current_qn) ? [codec.current_qn] : []),
+  ]))].sort((a, b) => b - a)
   const notes = ['播放地址带时效签名, 长时间后需要重新解析.']
-  if (current !== undefined && current !== Number(params.get('qn'))) {
-    notes.push(`当前未登录, 请求${label(Number(params.get('qn')))}, 实际为${label(current)}. 可用画质由直播间返回.`)
+  if (current !== undefined && current !== requested) {
+    notes.push(`请求${label(requested)}, 实际为${label(current)}. 可用画质由直播间返回, 不能据此判断登录状态.`)
   }
 
   return {
@@ -153,21 +162,25 @@ export async function resolveBilibili(
   }
 }
 
-/** Prefer HLS (`http_hls`) over FLV, and fMP4 over TS for seekability. */
-function pickHlsUrl(payload: PlayInfoResponse) {
+/** Match the actual quality across HLS formats before preferring fMP4 for seekability. */
+function hlsRenditions(payload: PlayInfoResponse, requested: number) {
   const streams = payload.data?.playurl_info?.playurl?.stream ?? []
-  const hls = streams.find((stream) => stream.protocol_name === 'http_hls') ?? streams[0]
-  if (!hls) return null
-
-  const formats = hls.format ?? []
-  const preferred =
-    formats.find((format) => format.format_name === 'fmp4') ??
-    formats.find((format) => format.format_name === 'ts') ??
-    formats[0]
-  const codec = preferred?.codec?.find(item => item.codec_name === 'avc') ?? preferred?.codec?.[0]
-  const info = codec?.url_info?.[0]
-  if (!codec?.base_url || !info?.host) return null
-  return { url: `${info.host}${codec.base_url}${info.extra ?? ''}`, codec }
+  const candidates = streams.filter(stream => stream.protocol_name === 'http_hls').flatMap(stream =>
+    (stream.format ?? []).filter(format => format.format_name === 'fmp4' || format.format_name === 'ts').flatMap(format =>
+      (format.codec ?? []).flatMap(codec => {
+        const info = codec.url_info?.find(item => item.host)
+        if (!codec.base_url || !info?.host) return []
+        return [{ url: `${info.host}${codec.base_url}${info.extra ?? ''}`, codec, format: format.format_name }]
+      }),
+    ),
+  )
+  // Keep AVC compatibility across formats; HEVC remains a fallback when no AVC is available.
+  const codecName = candidates.some(item => item.codec.codec_name === 'avc') ? 'avc' : 'hevc'
+  return candidates.filter(item => item.codec.codec_name === codecName).sort((a, b) =>
+    Number(b.codec.current_qn === requested) - Number(a.codec.current_qn === requested)
+    || (validQn(b.codec.current_qn) ? b.codec.current_qn : 0) - (validQn(a.codec.current_qn) ? a.codec.current_qn : 0)
+    || Number(b.format === 'fmp4') - Number(a.format === 'fmp4'),
+  )
 }
 
 function validQn(value: unknown): value is number {

@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 import type { BufferInput, BufferState } from './bufferManager'
 import { Acquisition } from './acquisition'
 import { resolveConfig } from '../server/config'
 import { createDesktopService } from '../server/api'
 import * as platformResolvers from '../server/platforms'
 import adaptiveFixture from '../server/platforms/fixtures/youtube-adaptive-live.json'
+import type { LoginPlatform, LoginStatus } from './login'
 
 vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '8.8.8.8', family: 4 }]) }))
 
@@ -29,7 +31,13 @@ function harness(overrides: Partial<ConstructorParameters<typeof Acquisition>[0]
     stop: vi.fn(async () => {}),
   }
   const logins = {
-    cookieHeader: vi.fn(async () => ''), login: vi.fn(), logout: vi.fn(), loginStatus: vi.fn(),
+    cookieHeader: vi.fn(async (_platform: 'douyu' | 'bilibili' | 'huya' | 'douyin', _url?: string) => ''),
+    login: vi.fn(async (_platform: LoginPlatform) => ({ cookieCount: 2, authKeysPresent: [] as string[] })),
+    logout: vi.fn(async (_platform: LoginPlatform) => {}),
+    loginStatus: vi.fn(async (): Promise<LoginStatus> => {
+      const empty = { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false }
+      return { youtube: { ...empty }, douyu: { ...empty }, bilibili: { ...empty }, huya: { ...empty }, douyin: { ...empty } }
+    }),
   }
   const runYtDlp = vi.fn(async () => ({ is_live: true, id: 'abcdefghijk', live_status: 'is_live', formats: [
     { format_id: '301', protocol: 'm3u8_native', height: 1080, fps: 60, vcodec: 'avc1.64002a', acodec: 'mp4a.40.2', url: 'https://media.googlevideo.com/live.m3u8?signature=PRIVATE' },
@@ -42,6 +50,18 @@ function harness(overrides: Partial<ConstructorParameters<typeof Acquisition>[0]
 }
 
 describe('main acquisition boundary', () => {
+  it.each(['youtube', 'douyu', 'bilibili', 'huya'] as const)('supports %s login and logout through the validated service API', async platform => {
+    const h = harness()
+    const service = createDesktopService({ dataDir: '.', proxy: h.proxy, registerMedia: () => '', acquisition: h.acquisition })
+    expect(await service.invoke('login', { platform })).toMatchObject({ ok: true, value: { cookieCount: 2 } })
+    expect(h.logins.login).toHaveBeenCalledExactlyOnceWith(platform)
+    expect(await service.invoke('logout', { platform })).toMatchObject({ ok: true, value: { ok: true } })
+    expect(h.logins.logout).toHaveBeenCalledExactlyOnceWith(platform)
+    expect(await service.invoke('loginStatus', undefined)).toMatchObject({ ok: true, value: { youtube: {}, douyu: {}, bilibili: {}, huya: {} } })
+    for (const invalid of ['twitch', 'direct', 'huya.com', '../bilibili']) expect(await service.invoke('login', { platform: invalid })).toMatchObject({ ok: false, code: 'invalid-arguments' })
+    service.dispose()
+  })
+
   it('passes Huya headers without probing signed media and re-resolves every reconnect, quality switch and restart', async () => {
     const fetchImpl = vi.fn(async () => { throw new Error('Signed media must not be preconnected') })
     const h = harness({ fetchImpl })
@@ -321,7 +341,146 @@ describe('main acquisition boundary', () => {
 })
 
 
+describe('domestic acquisition credential boundaries', () => {
+  const biliPayload = { code: 0, data: { live_status: 1, playurl_info: { playurl: { stream: [{ protocol_name: 'http_hls', format: [{ format_name: 'ts', codec: [
+    { codec_name: 'avc', current_qn: 150, accept_qn: [150], base_url: '/live.m3u8', url_info: [{ host: 'https://fixture.bilivideo.com' }] },
+  ] }] }] } } } }
+  const huyaPage = () => readFileSync(new URL('../server/platforms/fixtures/huya-live.html', import.meta.url), 'utf8')
+  const entryUrl = (platform: 'bilibili' | 'huya') => platform === 'bilibili'
+    ? 'https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?room_id=123456&protocol=0%2C1&format=0%2C1%2C2&codec=0%2C1&qn=150&platform=web&ptype=8'
+    : 'https://www.huya.com/123456'
+
+  it.each(['bilibili', 'huya'] as const)('passes %s credentials only to exact metadata URLs and refreshes them on reconnect', async platform => {
+    const requests: Array<{ url: string; cookie: string | null }> = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      requests.push({ url, cookie: new Headers(init?.headers).get('Cookie') })
+      if (url === 'https://wup.huya.com/') return new Response(new Uint8Array([0, 1, 2]))
+      return platform === 'bilibili' ? Response.json(biliPayload) : new Response(huyaPage())
+    })
+    const mediaInput = vi.fn(async () => ({ url: 'http://127.0.0.1:4321/media/fixture', proxyUrl: '' }))
+    const h = harness({ fetchImpl, mediaInput })
+    h.logins.cookieHeader.mockResolvedValueOnce('fixture_session=first-ticket').mockResolvedValueOnce('fixture_session=second-ticket')
+    const result = await h.acquisition.resolve('123456', platform, 'official', platform === 'bilibili' ? '150' : undefined)
+    expect(result.ok).toBe(true)
+    expect(h.logins.cookieHeader).toHaveBeenCalledExactlyOnceWith(platform, entryUrl(platform))
+    expect(requests[0]).toEqual({ url: entryUrl(platform), cookie: 'fixture_session=first-ticket' })
+    expect(JSON.stringify(result)).not.toMatch(/fixture_session|first-ticket|Cookie|SESSDATA|udb_biztoken/)
+    expect(JSON.stringify(mediaInput.mock.calls)).not.toMatch(/fixture_session|first-ticket|Cookie/)
+    expect(h.inputs[0]!.headers).toBeUndefined()
+    await h.reconnect()
+    expect(h.logins.cookieHeader).toHaveBeenNthCalledWith(2, platform, entryUrl(platform))
+    expect(requests.filter(item => item.url === entryUrl(platform)).map(item => item.cookie)).toEqual(['fixture_session=first-ticket', 'fixture_session=second-ticket'])
+    expect(requests.filter(item => item.url === 'https://wup.huya.com/').every(item => item.cookie === null)).toBe(true)
+    expect(requests.every(item => item.url === entryUrl(platform) || item.url === 'https://wup.huya.com/')).toBe(true)
+    expect(JSON.stringify(mediaInput.mock.calls)).not.toMatch(/fixture_session|first-ticket|second-ticket|Cookie/)
+    expect(h.runYtDlp).not.toHaveBeenCalled()
+    h.acquisition.dispose()
+  })
+
+  it.each(['bilibili', 'huya'] as const)('uses anonymous %s metadata when logout invalidates the cookie read', async platform => {
+    const requests: Array<string | null> = []
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      requests.push(new Headers(init?.headers).get('Cookie'))
+      return platform === 'bilibili' ? Response.json(biliPayload) : new Response(huyaPage())
+    })
+    const h = harness({ fetchImpl })
+    let finish!: (value: string) => void
+    h.logins.cookieHeader.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const pending = h.acquisition.resolve('123456', platform, 'official', platform === 'bilibili' ? '150' : undefined)
+    expect(fetchImpl).not.toHaveBeenCalled()
+    finish('')
+    expect((await pending).ok).toBe(true)
+    expect(requests.every(value => value === null)).toBe(true)
+    expect(JSON.stringify(h.inputs)).not.toContain('Cookie')
+    h.acquisition.dispose()
+  })
+
+  it.each(['bilibili', 'huya'] as const)('blocks cross-origin redirects for %s metadata carrying cookies', async platform => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 302, headers: { Location: 'https://media-cdn.fixture.invalid/live' } }))
+    const h = harness({ fetchImpl })
+    h.logins.cookieHeader.mockResolvedValue('fixture_session=private-ticket')
+    const result = await h.acquisition.resolve('123456', platform, 'official', platform === 'bilibili' ? '150' : undefined)
+    expect(result).toMatchObject({ ok: false, failure: { code: 'upstream-error', reason: 'credentials-cross-origin' } })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(h.buffer.start).not.toHaveBeenCalled()
+    expect(JSON.stringify(result)).not.toMatch(/private-ticket|media-cdn\.fixture/)
+    h.acquisition.dispose()
+  })
+
+  it('retains sensitive headers on same-origin redirects while keeping them out of media inputs', async () => {
+    const calls: Array<{ url: string; cookie: string | null }> = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      calls.push({ url, cookie: new Headers(init?.headers).get('Cookie') })
+      return calls.length === 1 ? new Response(null, { status: 302, headers: { Location: '/same-origin-metadata' } }) : Response.json(biliPayload)
+    })
+    const h = harness({ fetchImpl })
+    h.logins.cookieHeader.mockResolvedValue('fixture_session=same-origin-ticket')
+    expect((await h.acquisition.resolve('123456', 'bilibili', 'official', '150')).ok).toBe(true)
+    expect(calls).toEqual([
+      { url: entryUrl('bilibili'), cookie: 'fixture_session=same-origin-ticket' },
+      { url: 'https://api.live.bilibili.com/same-origin-metadata', cookie: 'fixture_session=same-origin-ticket' },
+    ])
+    expect(JSON.stringify(h.inputs)).not.toMatch(/Cookie|fixture_session|same-origin-ticket/)
+    h.acquisition.dispose()
+  })
+
+  it('preserves explicit Bilibili login-required failures and removes upstream details at the API boundary', async () => {
+    const h = harness({ fetchImpl: async () => Response.json({ code: -101, message: 'SESSDATA=PRIVATE' }) })
+    const service = createDesktopService({ dataDir: '.', proxy: h.proxy, registerMedia: () => '', acquisition: h.acquisition })
+    const result = await service.invoke('resolve', { input: '123456', platform: 'bilibili', role: 'official' })
+    expect(result).toMatchObject({ ok: true, value: { ok: false, failure: { code: 'login-required', hint: expect.stringContaining('登录') } } })
+    expect(JSON.stringify(result)).not.toMatch(/SESSDATA|PRIVATE/)
+    expect(h.buffer.start).not.toHaveBeenCalled()
+    service.dispose()
+  })
+
+  it('binds the cookie capability to the selected platform instead of exposing other platform accounts', async () => {
+    const h = harness()
+    const resolver = vi.spyOn(platformResolvers, 'resolveStream').mockImplementation(async (_input, deps) => {
+      expect(await deps.cookieHeader!('huya', 'https://www.huya.com/123456')).toBe('')
+      expect(h.logins.cookieHeader).not.toHaveBeenCalled()
+      return { ok: false, failure: { code: 'unsupported-url', message: 'fixture' } }
+    })
+    try { await h.acquisition.resolve('123456', 'bilibili', 'official') }
+    finally { resolver.mockRestore(); h.acquisition.dispose() }
+  })
+
+  it.each(['youtube', 'twitch', 'direct'] as const)('does not expose domestic cookie capability to %s resolvers', async platform => {
+    const h = harness()
+    const resolver = vi.spyOn(platformResolvers, 'resolveStream').mockImplementation(async (_input, deps) => {
+      expect(deps.cookieHeader).toBeUndefined()
+      return { ok: false, failure: { code: 'unsupported-url', message: 'fixture' } }
+    })
+    try {
+      await h.acquisition.resolve('fixture', platform, 'official')
+      expect(h.logins.cookieHeader).not.toHaveBeenCalled()
+    } finally { resolver.mockRestore(); h.acquisition.dispose() }
+  })
+})
+
 describe('confirmed Douyu selection pin', () => {
+  it('keeps watch room, CDN and actual received bytes in main and replaces the metric generation on reconnect', async () => {
+    let bytes = 0
+    const h = harness({ resolveDouyuRoom: async () => ({ ok: true, identity: { room: '6979222', inputRoom: '6657' } }),
+      mediaInput: async () => ({ url: 'http://127.0.0.1:12345/media/fixture', proxyUrl: '', readBytes: () => bytes }),
+      fetchImpl: async input => Response.json(String(input).includes('getEncryption')
+        ? { error: 0, data: { rand_str: 'seed', key: 'key', enc_time: 1, is_special: 0, enc_data: 'enc' } }
+        : { error: 0, data: { rtmp_url: 'https://media.edgesrv.com/live', rtmp_live: 'stream.flv?signature=PRIVATE', rtmp_cdn: 'tct-h5', rate: 0 } }) })
+    expect(await h.acquisition.resolve('6657', 'douyu', 'commentary')).toMatchObject({ ok: true })
+    bytes = 1234
+    const source = h.acquisition.watchSource('commentary')!
+    expect(source).toMatchObject({ room: '6979222', cdn: 'tct-h5', bytes: 1234 })
+    expect(h.acquisition.describe('commentary')).not.toHaveProperty('douyuWatchCdn')
+    expect(JSON.stringify(source)).not.toContain('PRIVATE')
+    await h.reconnect()
+    expect(h.acquisition.watchSource('commentary')!.generation).not.toBe(source.generation)
+    await h.acquisition.stop('commentary')
+    expect(h.acquisition.watchSource('commentary')).toBeNull()
+    h.acquisition.dispose()
+  })
+
   it('retains the original input but pins reconnect and quality changes to the confirmed room', async () => {
     const room = vi.fn(async () => ({ ok: true as const, identity: { room: '6979222', inputRoom: '6657' } }))
     const requests: Array<{ url: string; init?: RequestInit }> = []

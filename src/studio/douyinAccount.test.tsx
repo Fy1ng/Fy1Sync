@@ -10,13 +10,13 @@ import { SettingsSheet } from './SettingsSheet'
 const sessions: Session[] = []
 const loggedOut: PlatformLoginStatus = { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false }
 function status(douyin: Partial<PlatformLoginStatus> = {}): LoginStatus {
-  return { youtube: loggedOut, douyu: loggedOut, douyin: { ...loggedOut, ...douyin } }
+  return { youtube: loggedOut, douyu: loggedOut, bilibili: loggedOut, huya: loggedOut, douyin: { ...loggedOut, ...douyin } }
 }
 function mount(): void {
   const session = new Session({ createSampler: () => null })
   sessions.push(session)
   render(<SessionProvider session={session}>
-    <SettingsSheet target={{ section: 'general' }} room={null} onClose={() => {}} onWatch={() => {}} onFill={() => {}} />
+    <SettingsSheet target={{ section: 'accounts', account: 'douyin' }} room={null} onClose={() => {}} onWatch={() => {}} onFill={() => {}} />
   </SessionProvider>)
   fireEvent.click(screen.getByRole('tab', { name: '抖音' }))
 }

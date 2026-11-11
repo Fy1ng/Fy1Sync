@@ -5,7 +5,8 @@
  */
 
 import { useSessionSnapshot } from '../../app/SessionContext'
-import { SideTabs } from '../kit'
+import { SideTabs, type SideTabNavigation } from '../kit'
+import type { LoginPlatform } from '../../../electron/login'
 import { Accounts } from './Accounts'
 import { Automations } from './Automations'
 import { Backpack } from './Backpack'
@@ -31,7 +32,10 @@ const TABS: { id: Tab; label: string }[] = [
 ]
 
 /** The Douyu section of 设置. `onWatch` loads a followed room as the commentary. */
-export function DouyuDesk({ onWatch }: { onWatch: (room: string) => void }): React.ReactNode {
+export function DouyuDesk({ onWatch, platformNavigation }: {
+  onWatch: (room: string) => void
+  platformNavigation?: SideTabNavigation<LoginPlatform>
+}): React.ReactNode {
   const data = useDouyu()
   const { danmaku } = useSessionSnapshot()
   // Back on the page last open; a first visit starts on 账号, as before.
@@ -39,9 +43,10 @@ export function DouyuDesk({ onWatch }: { onWatch: (room: string) => void }): Rea
   const writes = useDouyuWrites()
   const shown = !writes && WRITE_TABS.has(remembered) ? 'accounts' : remembered
   const active = data.active
+  const room = danmaku.room?.startsWith('huya:') ? null : danmaku.room
 
   return (
-    <SideTabs label="斗鱼" value={shown} onChange={setTab}
+    <SideTabs label="斗鱼" value={shown} onChange={setTab} parentNavigation={platformNavigation}
       tabs={TABS.filter((item) => writes || !WRITE_TABS.has(item.id)).map((item) => ({
         ...item,
         badge: item.id === 'tasks' && data.tasks && data.tasks.tasks.length > 0
@@ -55,9 +60,9 @@ export function DouyuDesk({ onWatch }: { onWatch: (room: string) => void }): Rea
         <div className="desk-content">
           {shown === 'accounts' && <><Accounts data={data} /><Spending data={data} /></>}
           {shown === 'following' && <Following data={data} onWatch={onWatch} />}
-          {shown === 'tasks' && <Tasks data={data} defaultRoom={danmaku.room} />}
+          {shown === 'tasks' && <Tasks data={data} defaultRoom={room} />}
           {shown === 'automations' && <Automations data={data} />}
-          {shown === 'backpack' && <Backpack data={data} room={danmaku.room} canGive={writes} />}
+          {shown === 'backpack' && <Backpack data={data} room={room} canGive={writes} />}
           {shown === 'renewal' && (
             <Renewal accountId={active?.id ?? null} accountLabel={active?.label ?? ''}
               ready={!!active?.login.loggedIn && !data.accountsBusy} />

@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CookieStore, cookieDomainAllowed } from './cookies'
+import { CookieStore, cookieDomainAllowed, hasAuthenticationCookies, isLoginPlatform } from './cookies'
 import { messageCredentials } from '../server/douyu/messageProtocol'
 import type { BrowserCookie } from './cookies'
 import { containedPath, powershellEnvironment, privateDirectory } from './privateStorage'
@@ -78,6 +78,8 @@ describe('private cookie storage', () => {
       douyu: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false,
         canSend: false, missingCredentialFields: ['acf_uid', 'acf_did', 'dy_did', 'did', 'acf_username', 'acf_auth_wl', 'acf_dmjwt_token', 'acf_ltkid', 'acf_biz', 'acf_stk'] },
       douyin: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false },
+      bilibili: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false },
+      huya: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false },
     })
     expect(JSON.stringify(await manager.status())).not.toContain('test-private-value')
   })
@@ -87,9 +89,10 @@ describe('private cookie storage', () => {
     manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_nickname', value: encodeURIComponent('解说甲') })])
     expect((await manager.status()).douyu.nickname).toBeUndefined()
     manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_uid', value: '42' }),
+      cookie({ domain: '.douyu.com', name: 'acf_auth', value: 'fixture-auth' }),
       cookie({ domain: '.douyu.com', name: 'acf_nickname', value: encodeURIComponent('解说甲') })])
     expect((await manager.status()).douyu).toMatchObject({ loggedIn: true, nickname: '解说甲' })
-    manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_uid', value: '42' }), cookie({ domain: '.douyu.com', name: 'acf_nickname', value: '%E0%A4%A' })])
+    manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_uid', value: '42' }), cookie({ domain: '.douyu.com', name: 'acf_auth' }), cookie({ domain: '.douyu.com', name: 'acf_nickname', value: '%E0%A4%A' })])
     expect((await manager.status()).douyu.nickname).toBeUndefined()
   })
 
@@ -205,7 +208,7 @@ describe('private cookie storage', () => {
     manager.prepareProfile('youtube')
     manager.prepareProfile('douyu')
     manager.write('youtube', [cookie()])
-    manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_auth' })])
+    manager.write('douyu', [cookie({ domain: '.douyu.com', name: 'acf_auth' }), cookie({ domain: '.douyu.com', name: 'acf_uid', value: '42' })])
     manager.logout('youtube')
     expect(fs.existsSync(path.join(root, 'browser-profile', 'youtube'))).toBe(false)
     expect(fs.existsSync(path.join(root, 'cookies', 'youtube.txt'))).toBe(false)
@@ -250,6 +253,116 @@ describe('private cookie storage', () => {
     release()
     await rejected
     expect(fs.existsSync(path.join(moved, 'douyu.txt'))).toBe(true)
+  })
+})
+
+describe('domestic platform cookie isolation', () => {
+  const authentication = (platform: 'bilibili' | 'huya'): BrowserCookie[] => platform === 'bilibili'
+    ? [cookie({ domain: '.bilibili.com', name: 'DedeUserID', value: '42' }), cookie({ domain: '.bilibili.com', name: 'SESSDATA', value: 'fixture-bili-session' })]
+    : [cookie({ domain: '.huya.com', name: 'udb_uid', value: '42' }), cookie({ domain: '.huya.com', name: 'udb_biztoken', value: 'fixture-huya-ticket' })]
+
+  it.each(['bilibili', 'huya'] as const)('round-trips %s attributes and injects only that platform', async platform => {
+    const manager = store()
+    manager.write(platform, [...authentication(platform), cookie({ domain: `www.${platform}.com`, hostOnly: true, path: '/account',
+      name: 'ACCOUNT', value: 'fixture-account', session: true, httpOnly: true, sameSite: 'strict' }), cookie({ domain: '.douyu.com', name: 'CROSS' })])
+    const set = vi.fn(async (_details: unknown) => {})
+    await manager.injectCookies(platform, { cookies: { set } })
+    expect(set).toHaveBeenCalledTimes(3)
+    expect(set).toHaveBeenLastCalledWith({ url: `https://www.${platform}.com/account`, path: '/account', name: 'ACCOUNT',
+      value: 'fixture-account', httpOnly: true, secure: true, sameSite: 'strict' })
+    expect((await manager.status())[platform]).toMatchObject({ loggedIn: true, cookieCount: 3 })
+    const header = await manager.cookieHeader(platform)
+    expect(header).toContain(platform === 'bilibili' ? 'SESSDATA=fixture-bili-session' : 'udb_biztoken=fixture-huya-ticket')
+    expect(header).not.toContain('ACCOUNT')
+    expect(header).not.toContain('CROSS')
+    expect(JSON.stringify(await manager.status())).not.toContain('fixture-')
+  })
+
+  it('preserves Netscape legacy files without attribute comments', async () => {
+    const manager = store()
+    manager.write('bilibili', authentication('bilibili'))
+    const set = vi.fn(async (_details: unknown) => {})
+    await manager.injectCookies('bilibili', { cookies: { set } })
+    expect(set.mock.calls[0]![0]).not.toHaveProperty('sameSite')
+    expect(fs.readFileSync(path.join(root, 'cookies', 'bilibili.txt'), 'utf8')).not.toContain('Cookie-Attributes')
+  })
+
+  it.each(['unspecified', 'no_restriction', 'lax', 'strict'] as const)('preserves SameSite %s while keeping persistent expiry', async sameSite => {
+    const manager = store()
+    manager.write('bilibili', authentication('bilibili').map(value => ({ ...value, sameSite, httpOnly: true })))
+    const set = vi.fn(async (_details: unknown) => {})
+    await manager.injectCookies('bilibili', { cookies: { set } })
+    expect(set.mock.calls[0]![0]).toMatchObject({ sameSite, expirationDate: now + 60, httpOnly: true, domain: '.bilibili.com' })
+  })
+
+  it.each(['{"sameSite":"Strict"}', '{"sameSite":"strict","value":"injected"}', '{"sameSite":"strict","sameSite":"lax"}', 'null', '{"sameSite":"strict"}\n# ignored'])('rejects malformed attribute metadata %s', async metadata => {
+    const manager = store()
+    manager.write('bilibili', authentication('bilibili'))
+    const file = path.join(root, 'cookies', 'bilibili.txt')
+    const original = fs.readFileSync(file, 'utf8')
+    fs.writeFileSync(file, original.replace('.bilibili.com\t', `# Fy1Sync-Cookie-Attributes\t${metadata}\n.bilibili.com\t`))
+    await expect(manager.status()).rejects.toThrow('未返回任何 cookie 数据')
+  })
+
+  it.each([
+    { platform: 'douyu' as const, cookies: [cookie({ domain: '.douyu.com', name: 'acf_uid', value: '42' })] },
+    { platform: 'douyu' as const, cookies: [cookie({ domain: '.douyu.com', name: 'acf_auth' })] },
+    { platform: 'bilibili' as const, cookies: authentication('bilibili').slice(0, 1) },
+    { platform: 'bilibili' as const, cookies: authentication('bilibili').slice(1) },
+    { platform: 'huya' as const, cookies: [cookie({ domain: '.huya.com', name: 'udb_uid', value: '42' }), cookie({ domain: '.huya.com', name: 'udb_passdata', value: '3' })] },
+    { platform: 'huya' as const, cookies: authentication('huya').slice(1) },
+  ])('does not treat partial or visitor identity as $platform authentication', async ({ platform, cookies }) => {
+    const manager = store()
+    manager.write(platform, cookies)
+    expect(hasAuthenticationCookies(cookies, platform, now)).toBe(false)
+    expect((await manager.status())[platform].loggedIn).toBe(false)
+    await expect(manager.injectCookies(platform, { cookies: { set: vi.fn(async () => {}) } })).rejects.toThrow('未返回任何 cookie 数据')
+  })
+
+  it.each(['bilibili', 'huya'] as const)('requires %s auth material valid in the identity endpoint scope', platform => {
+    const valid = authentication(platform)
+    expect(hasAuthenticationCookies(valid, platform, now)).toBe(true)
+    expect(hasAuthenticationCookies(valid.map(value => ({ ...value, hostOnly: true, domain: `www.${platform}.com` })), platform, now)).toBe(false)
+    expect(hasAuthenticationCookies(valid.map(value => ({ ...value, path: '/different' })), platform, now)).toBe(false)
+    expect(hasAuthenticationCookies(valid.map(value => ({ ...value, expirationDate: now - 1 })), platform, now)).toBe(false)
+    expect(hasAuthenticationCookies(valid.map(value => ({ ...value, value: 'undefined' })), platform, now)).toBe(false)
+  })
+
+  it.each([false, true])('uses exact-host authentication duplicates consistently with headers, file order %s', async reverse => {
+    const manager = store()
+    const values = [...authentication('bilibili'), cookie({ domain: 'api.bilibili.com', hostOnly: true, name: 'DedeUserID', value: '0' })]
+    manager.write('bilibili', reverse ? values.reverse() : values)
+    expect(await manager.cookieHeader('bilibili')).toContain('DedeUserID=0')
+    expect((await manager.status()).bilibili.loggedIn).toBe(false)
+  })
+
+  it('isolates all platform headers and enforces exact host/path matching', async () => {
+    const manager = store()
+    manager.write('bilibili', [...authentication('bilibili'), cookie({ domain: 'api.bilibili.com', hostOnly: true, path: '/x', name: 'API', value: 'api' }),
+      cookie({ domain: 'www.bilibili.com', hostOnly: true, name: 'WWW', value: 'www' }), cookie({ domain: '.huya.com', name: 'HUYA' })])
+    manager.write('huya', authentication('huya'))
+    const api = await manager.cookieHeader('bilibili', 'https://api.bilibili.com/x/web-interface/nav')
+    expect(api).toContain('API=api')
+    expect(api).not.toMatch(/WWW|HUYA|udb_/)
+    expect(await manager.cookieHeader('bilibili', 'https://api.bilibili.com/x-other')).not.toContain('API=')
+    expect(await manager.cookieHeader('huya')).not.toMatch(/SESSDATA|DedeUserID|API/)
+    for (const url of ['https://huya.com/', 'https://api.bilibili.com.evil.test/', 'https://cdn.bilibili.com/', 'https://upos-sz-mirrorcos.bilivideo.com/',
+      'http://api.bilibili.com/', 'https://user@api.bilibili.com/', 'https://api.bilibili.com:8443/']) {
+      await expect(manager.cookieHeader('bilibili', url)).rejects.toThrow('未返回任何 cookie 数据')
+    }
+    for (const url of ['https://bilibili.com/', 'https://cdn.huya.com/', 'https://a.msstatic.com/']) await expect(manager.cookieHeader('huya', url)).rejects.toThrow('未返回任何 cookie 数据')
+    expect(isLoginPlatform('bilibili')).toBe(true)
+    expect(isLoginPlatform('huya')).toBe(true)
+    expect(isLoginPlatform('outside')).toBe(false)
+  })
+
+  it('stops injection between cookie writes when the owner is invalidated', async () => {
+    const manager = store()
+    manager.write('bilibili', authentication('bilibili'))
+    let current = true
+    const set = vi.fn(async () => { current = false })
+    await expect(manager.injectCookies('bilibili', { cookies: { set } }, () => current)).rejects.toThrow('未返回任何 cookie 数据')
+    expect(set).toHaveBeenCalledTimes(1)
   })
 })
 

@@ -203,6 +203,44 @@ describe('Huya local signing fixed vectors', () => {
 })
 
 describe('Huya resolver token fallback and media boundary', () => {
+  it('reads scoped cookies afresh for alias and canonical room pages without attaching them to WUP or media', async () => {
+    const cookieHeader = vi.fn<NonNullable<ResolverDeps['cookieHeader']>>()
+      .mockResolvedValueOnce('udb_uid=42; udb_biztoken=fixture-alias-ticket').mockResolvedValueOnce('')
+    const fetchText = vi.fn(async (url: string) => url.endsWith('/example-room') ? fixture('alias') : fixture('live'))
+    const fetchBytes = vi.fn(async () => Buffer.from(golden.response, 'hex'))
+    const result = await resolveHuya('www.huya.com/example-room', deps({ cookieHeader, fetchText, fetchBytes }))
+    expect(result.ok).toBe(true)
+    expect(cookieHeader).toHaveBeenNthCalledWith(1, 'huya', 'https://www.huya.com/example-room')
+    expect(cookieHeader).toHaveBeenNthCalledWith(2, 'huya', 'https://www.huya.com/123456')
+    expect(fetchText).toHaveBeenNthCalledWith(1, 'https://www.huya.com/example-room', { headers: expect.objectContaining({ Cookie: 'udb_uid=42; udb_biztoken=fixture-alias-ticket' }) })
+    expect(fetchText).toHaveBeenNthCalledWith(2, 'https://www.huya.com/123456', { headers: expect.not.objectContaining({ Cookie: expect.anything() }) })
+    expect(fetchBytes).toHaveBeenCalledExactlyOnceWith('https://wup.huya.com', expect.objectContaining({ headers: expect.not.objectContaining({ Cookie: expect.anything() }) }))
+    expect(JSON.stringify(result)).not.toMatch(/udb_uid|udb_biztoken|fixture-alias-ticket|Cookie/)
+  })
+
+  it('keeps empty-cookie room requests anonymous and never grants cookie access to yt-dlp fallback', async () => {
+    const cookieHeader = vi.fn(async () => '')
+    const fetchText = vi.fn(async () => page({}, []))
+    const runYtDlp = vi.fn(async () => ({ formats: [{ url: 'https://fallback.flv.huya.com/live.flv?wsSecret=fixture', vcodec: 'h264' }] }))
+    const result = await resolveHuya('123456', deps({ cookieHeader, fetchText, runYtDlp }))
+    expect(result.ok).toBe(true)
+    expect(fetchText).toHaveBeenCalledExactlyOnceWith('https://www.huya.com/123456', { headers: expect.not.objectContaining({ Cookie: expect.anything() }) })
+    expect(cookieHeader).toHaveBeenCalledExactlyOnceWith('huya', 'https://www.huya.com/123456')
+    expect(runYtDlp).toHaveBeenCalledExactlyOnceWith('https://www.huya.com/123456')
+  })
+
+  it('sanitizes main credential-read errors without starting WUP or fallback', async () => {
+    const fetchText = vi.fn(async () => fixture('live'))
+    const fetchBytes = vi.fn()
+    const runYtDlp = vi.fn()
+    const result = await resolveHuya('123456', deps({ fetchText, fetchBytes, runYtDlp, cookieHeader: async () => { throw new Error('udb_biztoken=fixture-private-ticket') } }))
+    expect(result).toMatchObject({ ok: false, failure: { code: 'upstream-error' } })
+    expect(JSON.stringify(result)).not.toContain('fixture-private-ticket')
+    expect(fetchText).not.toHaveBeenCalled()
+    expect(fetchBytes).not.toHaveBeenCalled()
+    expect(runYtDlp).not.toHaveBeenCalled()
+  })
+
   it('keeps API endpoints fixed while accepting a resolver-produced CDN on a non-standard port', async () => {
     const result = parseHuyaPage(page({}, [sampleLine({ sFlvUrl: 'https://custom-cdn.example:8443/src' })]), '123456')
     expect(result).toMatchObject({ ok: true, lines: [{ base: 'https://custom-cdn.example:8443/src' }] })

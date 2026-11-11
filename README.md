@@ -34,6 +34,8 @@ Fy1Sync 是一款支持 Windows, macOS 和 Linux 的桌面播放器. 将两路�
 
 当前发布版本为 `v0.4.0`, 包含抖音直播接入, 基础识别优化以及 Windows, macOS 和 Linux 桌面包. 各平台使用 GitHub CI 原生构建并检查. [版本说明与 SHA256 校验文件](https://github.com/Fy1ng/Fy1Sync/releases/tag/v0.4.0).
 
+macOS 已加入 Apple Silicon `arm64` 和 Intel `x64` 的本机开发与 DMG/ZIP 构建入口, 要求 macOS 13 Ventura 或更新版本, 见[从源码运行](#从源码运行). 当前 Releases 中的上述版本仍以 Windows 发布包为准; macOS 原生构建, 安装和签名验收需要在对应 Mac 上完成.
+
 | 版本 | 使用方式 |
 | --- | --- |
 | [Windows x64 安装包](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.0/Fy1Sync-0.4.0-win-x64-nsis.exe) | NSIS 安装向导, 支持覆盖升级 |
@@ -43,7 +45,7 @@ Fy1Sync 是一款支持 Windows, macOS 和 Linux 的桌面播放器. 将两路�
 
 [查看全部 Releases](https://github.com/Fy1ng/Fy1Sync/releases) / [GitCode 下载镜像](https://gitcode.com/Fy1ng/Fy1Sync/releases). 请区分应用版本与单独发布的 FFmpeg 构建资源.
 
-发布包已带上取流和转码所需的工具资源, 普通使用无需安装 Node.js 或 Rust. YouTube 账号使用 [Google Chrome](https://www.google.com/chrome/) 独立窗口登录, 其他已接入的平台使用应用内登录卡片. 抖音最终真实账号登录状态尚未完成验收, 遇到平台验证时需要在官方验证界面继续操作.
+发布包已带上取流和转码所需的工具资源, 普通使用无需安装 Node.js 或 Rust. 斗鱼, B 站, 虎牙和抖音通过统一的应用内悬浮卡片登录, 左侧扫码, 右侧短信或密码. 需要二次验证时在卡片内继续, 复杂验证显示官方页面. YouTube 登录需要安装 [Google Chrome](https://www.google.com/chrome/), 在应用打开的独立窗口中自行完成登录.
 
 ## 开始观看
 
@@ -103,8 +105,8 @@ Fy1Sync 是一款支持 Windows, macOS 和 Linux 的桌面播放器. 将两路�
 | YouTube | 直播链接, 支持可用画质选择; 高画质取决于源与网络 | 账号登录用于取流, 未接入聊天弹幕 |
 | Twitch | 频道直播 | 未接入聊天弹幕 |
 | 斗鱼 | 直播间链接或房间号 | 接收弹幕, 提供账号与房间工具; 写操作需另行开启 |
-| 虎牙 | 直播间链接或房间号 | 只读弹幕, 不支持斗鱼式的账号操作与统计 |
-| 哔哩哔哩直播 | 直播间链接或房间号 | 未接入弹幕 |
+| 虎牙 | 直播间链接或房间号 | 只读弹幕, 内嵌登录用于取流; 不支持斗鱼式的账号操作与统计 |
+| 哔哩哔哩直播 | 直播间链接或房间号 | 内嵌登录用于取流, 未接入弹幕 |
 | 抖音直播 | 公开直播间链接, 直播分享链接或选择抖音后输入网页房间号; 支持可用画质选择 | 接收只读文字弹幕, 可在设置中登录; 不支持发送, 赠礼等账号操作 |
 | 媒体直链 / 本地文件 | HLS `.m3u8` 与可解码的视频文件或直链 | 可与另一侧片源组合, 不自带平台账号功能 |
 
@@ -144,7 +146,7 @@ Fy1Sync 是一款支持 Windows, macOS 和 Linux 的桌面播放器. 将两路�
 
 技术栈为 Electron + React + TypeScript, 识别核心使用 Rust / WebAssembly, 并保留 TypeScript 后备实现. 图形界面通过 Electron 启动, 不提供独立的浏览器部署模式.
 
-准备 Windows x64, [Node.js 22.12.0 或更新版本](https://nodejs.org/en/download), [Rust 工具链](https://www.rust-lang.org/tools/install), 以及 Rust 在 Windows 上要求的 C++ 构建环境. 以下命令使用 PowerShell:
+准备 [Node.js 22.12.0 或更新版本](https://nodejs.org/en/download) 和 [Rust 工具链](https://www.rust-lang.org/tools/install). Windows x64 还需要 Rust 要求的 C++ 构建环境. 以下 Windows 命令使用 PowerShell:
 
 ```powershell
 git clone https://github.com/Fy1ng/Fy1Sync.git
@@ -211,6 +213,7 @@ macOS 当前未配置 Developer ID 签名或公证, 首次打开可能需要在�
 | 命令 | 用途 |
 | --- | --- |
 | `npm run build` | 构建 WASM, 检查类型, 构建前端与 Electron 主进程 |
+| `npm run configure:clock-search` | 启动独立制作工具, 一次设定生产寻找区间 |
 | `npm start` | 启动已构建的桌面应用 |
 | `npm test` | 运行单元测试 |
 | `cargo test --workspace` | 运行 Rust 测试 |
@@ -218,7 +221,14 @@ macOS 当前未配置 Developer ID 签名或公证, 首次打开可能需要在�
 | `npm run package:linux` | 在原生 Linux x64/arm64 主机上构建并检查 DEB/AppImage/tar.gz |
 | `npm run package:smoke` | 使用隔离目录启动并检查当前平台的打包应用 |
 | `npm run package:win` | 准备工具并构建 Windows x64 安装包与免安装包 |
-| `npm run package:check` | 检查本地打包结果 |
+| `npm run package:mac` | 在 Mac 上准备原生工具, 构建当前架构 DMG/ZIP 并检查内容 |
+| `npm run package:check` | 按当前平台检查本地打包结果 |
+| `npm run package:check:mac` | 在 Mac 上复验当前架构的应用包和工具 |
+| `npm run test:packaging` | 运行打包平台选择, Mach-O 和归档校验的离线测试 |
+
+端到端测试默认以 Electron 离屏渲染隐藏主窗口和增强画中画, 静音运行, 不抢占桌面焦点. 离屏模式保持视频帧和动画推进, 不依赖屏幕上的可见窗口. 依赖原生全屏, 窗口按钮或真实前台焦点的专属测试默认跳过; 只有显式设置 `STREAM_SYNC_E2E_VISIBLE=1` 才显示测试窗口并运行这些项目. 测试资料始终使用隔离目录. 可用 `npm run test:e2e -- e2e/hidden-windows.spec.ts` 检查隐藏窗口下的界面, IPC 和画中画运行.
+
+制作工具只读取本地样例录像, 不运行识别. 框选并点击"写入生产配置"后保存到 `src/recognition/basicSearchRegion.json`, 后续构建固定使用该区间. 写入后工具锁定, 如需重新制作可运行 `npm run configure:clock-search -- --reset`. 工具和写入接口不会打包进正式应用.
 
 `src/studio/` 是观赛界面, `src/sync/` 管理对齐流程, `crates/core/` 实现识别算法, `electron/` 管理桌面能力, `server/platforms/` 和 `server/danmaku/` 负责平台接入. 贡献前请阅读 [AGENTS.md](https://github.com/Fy1ng/Fy1Sync/blob/main/AGENTS.md), 使用隔离的测试资料, 避免触碰真实账号数据或执行真实账号操作.
 

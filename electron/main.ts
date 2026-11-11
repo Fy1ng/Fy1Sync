@@ -24,12 +24,14 @@ import { applicationMenu, mainWindowChrome } from './applicationMenu'
 import { ApplicationLifecycle } from './applicationLifecycle'
 import { BufferManager } from './bufferManager'
 import { pullAdaptive, AdaptivePullError } from './adaptivePuller'
-import { ChromeLoginDriver, findSystemChrome, LoginManager } from './login'
+import { ChromeLoginDriver, LoginManager, type LoginPlatform } from './login'
+import { DouyinEmbeddedLoginFixtures } from './douyinEmbeddedLoginFixtures'
+import { CookieStore } from './cookies'
 import { EmbeddedLoginController } from './embeddedLogin'
 import { installEmbeddedLoginIpc } from './embeddedLoginIpc'
 import { installLoginCardIpc } from './loginCardIpc'
-import { DouyinEmbeddedLoginFixtures } from './douyinEmbeddedLoginFixtures'
-import { CookieStore } from './cookies'
+import { EmbeddedLoginFixtures } from './embeddedLoginFixtures'
+import type { EmbeddedLoginPlatform } from './embeddedLoginContracts'
 import { Acquisition } from './acquisition'
 import { YtDlpRunner, type YtDlpDiagnostic } from './ytdlp'
 import { AcquisitionDiagnostics } from './acquisitionDiagnostics'
@@ -46,6 +48,7 @@ import { DouyuTaskManager } from './douyuTasks'
 import { PrivateJsonStore } from './privateJsonStore'
 import { DouyuActions } from '../server/douyu/actions'
 import { DouyuMessageSender, NativeMessageSocket } from '../server/douyu/messageSender'
+import { DouyuGatewayCoordinator } from '../server/douyu/gatewayCoordinator'
 import { DouyuBackpackGateway } from '../server/douyu/backpackGateway'
 import { DouyuRenewalService } from '../server/douyu/renewalService'
 import type { DouyuBackpackDonation } from '../server/douyu/renewalTypes'
@@ -115,7 +118,6 @@ const showMainWindow = () => {
 }
 app.on('second-instance', showMainWindow)
 app.on('activate', showMainWindow)
-
 
 async function start(): Promise<void> {
   const bundledClientDir = resolve(__dirname, '../client')
@@ -191,13 +193,18 @@ async function start(): Promise<void> {
   let renewalFixture: { stock: number; outcome: 'receipt-received' | 'unknown' } | null = null
   const renewalDonationsFixture: Array<Omit<DouyuBackpackDonation, 'expectedUid'>> = []
   const browserLogin = new ChromeLoginDriver()
-  const embeddedLoginFixtures = !app.isPackaged && offlineE2e ? new DouyinEmbeddedLoginFixtures() : null
+  const embeddedLoginFixtures = !app.isPackaged && offlineE2e ? new EmbeddedLoginFixtures() : null
+  const douyinEmbeddedLoginFixtures = !app.isPackaged && offlineE2e ? new DouyinEmbeddedLoginFixtures() : null
   const embeddedLogin = new EmbeddedLoginController({ owner: () => window, domesticRouting: preferences.domesticRouting,
-    cardPreload: join(__dirname, 'login-card-preload.cjs'), fixture: embeddedLoginFixtures?.configure })
+    cardPreload: join(__dirname, 'login-card-preload.cjs'),
+    fixture: async (request, browserSession) => {
+      if (request.platform === 'douyin') await douyinEmbeddedLoginFixtures?.configure(request, browserSession)
+      else await embeddedLoginFixtures?.configure(request, browserSession)
+    } })
   const createLogin = (directory: string) => new LoginManager(directory, {
-    findChrome: () => !app.isPackaged && offlineE2e && douyuToolsFixture ? process.execPath : findSystemChrome(),
-    embeddedDriver: embeddedLogin,
-    driver: { async login(executable, profile, platform, signal, destination) {
+    driver: browserLogin,
+    embeddedDriver: { async login(request) {
+      const { platform, signal, destination } = request
       if (!app.isPackaged && offlineE2e && douyuToolsFixture && platform === 'douyu') {
         if (signal.aborted) throw new Error('Fixture login cancelled')
         if (destination?.startsWith('room:') || destination?.startsWith('fish-act:')) officialRoomFixture.push(destination)
@@ -208,7 +215,7 @@ async function start(): Promise<void> {
           { name: 'dy_did', value: 'f'.repeat(32) }, { name: 'acf_username', value: 'fixture-user' },
         ].map(({ name, value }) => ({ domain: '.douyu.com', path: '/', secure: true, session: true, name, value }))
       }
-      return browserLogin.login(executable, profile, platform, signal, destination)
+      return embeddedLogin.login(request)
     } },
   })
   const logins = createLogin(userDataDir)
@@ -228,6 +235,7 @@ async function start(): Promise<void> {
   let douyuAccounts: DouyuAccountManager | undefined
   let douyuTasks: DouyuTaskManager | undefined
   let douyuMessageSender: DouyuMessageSender | undefined
+  const douyuGatewayCoordinator = new DouyuGatewayCoordinator()
   let douyuRenewal: DouyuRenewalService | undefined
   let releaseAccountEvents: (() => void) | undefined
   try { douyuAccounts = new DouyuAccountManager(userDataDir, { defaultLogin: logins, createLogin }) }
@@ -241,7 +249,8 @@ async function start(): Promise<void> {
           return { accountId: id, uid: state.uid, room, checkedAt: state.checkedAt, source: state.source, eligible: state.fanEligible }
         },
       })
-      douyuMessageSender = new DouyuMessageSender({ proxy, networkRuntimePath, cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url), deliveryTracker: danmakuFeatures?.deliveries })
+      douyuMessageSender = new DouyuMessageSender({ proxy, networkRuntimePath, gatewayCoordinator: douyuGatewayCoordinator,
+        cookieHeader: (id, url) => douyuAccounts!.cookieHeader(id, url), deliveryTracker: danmakuFeatures?.deliveries })
       douyuTasks = new DouyuTaskManager({
         load: () => taskStore.load(), save: value => taskStore.save(value),
         run: async (task, signal) => {
@@ -284,20 +293,22 @@ async function start(): Promise<void> {
     }
   }
   const playbackLogins = {
-    async login(platform: 'youtube' | 'douyu' | 'douyin') {
+    async login(platform: LoginPlatform) {
       if (platform === 'douyu') return douyuAccounts ? douyuAccounts.loginActive() : Promise.reject(new DouyuAccountError('storage-failed'))
       if (platform === 'douyin') {
         const result = await logins.login(platform)
         relay.refreshPlatform('douyin')
         return result
       }
+      if (platform !== 'youtube') return logins.login(platform)
       youtubeLoginTransitions++
       try { await resetYouTubeAdmin(); return await logins.login(platform) }
       finally { youtubeLoginTransitions-- }
     },
-    async logout(platform: 'youtube' | 'douyu' | 'douyin') {
+    async logout(platform: LoginPlatform) {
       if (platform === 'douyu') return douyuAccounts ? douyuAccounts.logoutActive() : Promise.reject(new DouyuAccountError('storage-failed'))
       if (platform === 'douyin') { await logins.logout(platform); relay.refreshPlatform('douyin'); return }
+      if (platform !== 'youtube') return logins.logout(platform)
       youtubeLoginTransitions++
       try { await resetYouTubeAdmin(); await logins.logout(platform) }
       finally { youtubeLoginTransitions-- }
@@ -307,8 +318,9 @@ async function start(): Promise<void> {
       return { ...status, douyu: douyuAccounts ? await douyuAccounts.activeLoginStatus()
         : { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false } }
     },
-    cookieHeader: (platform: 'douyu' | 'douyin', requestUrl?: string) => platform === 'douyin'
-      ? logins.cookieHeader(platform, requestUrl) : douyuAccounts ? douyuAccounts.activeCookieHeader() : Promise.resolve(''),
+    cookieHeader: (platform: EmbeddedLoginPlatform, url?: string) => platform === 'douyu'
+      ? douyuAccounts ? douyuAccounts.activeCookieHeader(url) : Promise.resolve('')
+      : logins.cookieHeader(platform, url),
   }
   const providerCacheHome = privateDirectory(userDataDir, join(userDataDir, 'provider-cache'))
   const toolContext = {
@@ -471,6 +483,7 @@ async function start(): Promise<void> {
   if (danmakuFeatures && activityPreferences) backend = createBackendRuntime({
     userDataDir, bundledLogoDir, proxy, acquisition, relay, danmaku: danmakuFeatures, accounts: douyuAccounts, tasks: douyuTasks,
     sender: douyuMessageSender, renewal: douyuRenewal, resolveRoom: roomResolver.resolve, activityPreferences, ...backendConfig,
+    gatewayCoordinator: douyuGatewayCoordinator, networkRuntimePath, watchEnabled: !offlineE2e,
     ffmpegPath: () => locateTool('ffmpeg', toolSettings, process.env, toolContext),
     validatePng: bytes => { const value = nativeImage.createFromBuffer(bytes); return !value.isEmpty() },
     chooseCaptureDestination: async kind => {
@@ -718,6 +731,7 @@ async function start(): Promise<void> {
   refreshRuntime()
   handlers = installIpcHandlers(ipcMain, contents, service, {
     windowForContents: sender => BrowserWindow.fromWebContents(sender),
+    onWindowReleased: id => backend?.watch.releaseSender(id),
     allowMethod: (id, method, args) => backend?.pip.permits(id, method, args) === true,
     allowRoom: (id, room) => backend?.pip.permitsRoom(id, room) === true,
     allowEvent: (id, event) => {
@@ -725,6 +739,7 @@ async function start(): Promise<void> {
       if (event.topic === 'pip' || event.topic === 'danmaku-preferences') return true
       const value = event.data && typeof event.data === 'object' ? event.data as Record<string, unknown> : {}
       if (event.topic === 'buffer') return value.role === backend.pip.state().streamId
+      if (event.topic === 'douyu-watch') return backend.pip.state().source?.platform === 'douyu' && value.room === backend.pip.state().source?.sourceRoom
       return event.topic === 'insights' && value.room === backend.pip.state().source?.sourceRoom
     },
   })
@@ -736,13 +751,33 @@ async function start(): Promise<void> {
   if (e2e) Object.assign(globalThis, { __streamSyncerTest: {
     getWindowState: () => mainWindow.isDestroyed() ? null : getWindowState(mainWindow),
     ...(!app.isPackaged ? { setDouyinEmbeddedLoginFixture(scenario: Parameters<DouyinEmbeddedLoginFixtures['enable']>[0] = 'form') {
-      if (!embeddedLoginFixtures) throw new Error('Douyin login fixture is offline-only')
-      embeddedLoginFixtures.enable(scenario)
+      if (!douyinEmbeddedLoginFixtures) throw new Error('Douyin login fixture is offline-only')
+      douyinEmbeddedLoginFixtures.enable(scenario)
     }, async completeDouyinEmbeddedLoginFixture(authenticated = true) {
-      if (!embeddedLoginFixtures || embeddedLogin.state()?.platform !== 'douyin') throw new Error('No active Douyin login fixture')
-      await embeddedLoginFixtures.complete(authenticated)
+      if (!douyinEmbeddedLoginFixtures || embeddedLogin.state()?.platform !== 'douyin') throw new Error('No active Douyin login fixture')
+      await douyinEmbeddedLoginFixtures.complete(authenticated)
     }, getDouyinEmbeddedLoginFixtureState() {
-      if (!embeddedLoginFixtures) throw new Error('Douyin login fixture is offline-only')
+      if (!douyinEmbeddedLoginFixtures) throw new Error('Douyin login fixture is offline-only')
+      return douyinEmbeddedLoginFixtures.state(embeddedLogin.state() !== null)
+    } } : {}),
+    ...(!app.isPackaged ? { setEmbeddedLoginFixture() {
+      if (!embeddedLoginFixtures) throw new Error('Embedded login fixture is offline-only')
+      embeddedLoginFixtures.enable()
+    }, setEmbeddedLoginFixtureScenario(scenario: 'second-factor' | 'second-factor-stalled' | 'second-factor-render' | 'second-factor-v4' | 'challenge' | 'unknown' | 'sms-captcha' | 'password-error' | 'captcha-phases' | 'huya-captcha-child' | 'huya-captcha-parent') {
+      if (!embeddedLoginFixtures) throw new Error('Embedded login fixture is offline-only')
+      embeddedLoginFixtures.setScenario(scenario)
+    }, async setEmbeddedLoginFixtureCooldown(seconds: number) {
+      if (!embeddedLoginFixtures || !Number.isInteger(seconds) || seconds < 0 || seconds > 300) throw new Error('Invalid offline cooldown')
+      embeddedLoginFixtures.setCooldown(seconds)
+      const views = (await import('electron')).webContents.getAllWebContents()
+      for (const view of views) if (!view.isDestroyed() && ['https://passport.douyu.com/member/login', 'https://www.huya.com/'].includes(view.getURL())) {
+        for (const frame of view.mainFrame.framesInSubtree) await frame.executeJavaScript(`globalThis.__fixtureSetCooldown?.(${seconds})`).catch(() => {})
+      }
+    }, async completeEmbeddedLoginFixture(platform: EmbeddedLoginPlatform, authenticated = true) {
+      if (!embeddedLoginFixtures || embeddedLogin.state()?.platform !== platform) throw new Error('No active offline login fixture')
+      await embeddedLoginFixtures.complete(platform, authenticated)
+    }, getEmbeddedLoginFixtureState() {
+      if (!embeddedLoginFixtures) throw new Error('Embedded login fixture is offline-only')
       return embeddedLoginFixtures.state(embeddedLogin.state() !== null)
     }, setDouyuToolsFixture() {
       if (!offlineE2e) throw new Error('Douyu tools fixture is offline-only')
@@ -805,6 +840,10 @@ async function start(): Promise<void> {
       if (offlineE2e && event === 'danmaku') backend?.observeFixture(data as Parameters<DanmakuFeatures['observe']>[0])
       return handlers!.emitDanmaku(room, event, data)
     },
+    setDouyuRoomStatusFixture: (room: string, live: boolean, replay: boolean) => {
+      if (!offlineE2e || !/^[1-9][0-9]{0,11}$/.test(room) || typeof live !== 'boolean' || typeof replay !== 'boolean') throw new Error('Invalid offline room status fixture')
+      backend?.insights.signal({ kind: 'live', room, live, replay, receivedAt: Date.now() })
+    },
     youtubeDiagnostics: () => youtubeDiagnostics,
     bufferDiagnostics: () => bufferDiagnostics,
     adaptiveStats: () => adaptiveStats,
@@ -852,6 +891,7 @@ async function start(): Promise<void> {
     douyuRenewal?.dispose()
     douyuTasks?.dispose()
     douyuMessageSender?.dispose()
+    douyuGatewayCoordinator.dispose()
     unwatchFile(index)
     await youtubeAdmin?.dispose()
     editorProjectIpc?.dispose()

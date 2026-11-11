@@ -4,6 +4,7 @@ import os from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DouyuAccountManager } from './douyuAccounts'
 import type { LoginStatus } from './login'
+import type { CookieHeaderPlatform } from './cookies'
 import type { DouyuAccountsSnapshot } from '../server/douyu/types'
 
 const roots: string[] = []
@@ -19,12 +20,12 @@ function tempRoot(): string {
 }
 function fakeLogin(loggedIn = false) {
   const empty = { cookieCount: 0, authKeysPresent: [] as string[], loggedIn: false, expiresAt: null, hasSessionCookies: false }
-  const status: LoginStatus = { youtube: { ...empty }, douyu: { ...empty, loggedIn }, douyin: { ...empty } }
+  const status: LoginStatus = { youtube: { ...empty }, douyu: { ...empty, loggedIn }, bilibili: { ...empty }, huya: { ...empty }, douyin: { ...empty } }
   return {
     login: vi.fn(async () => { status.douyu = { ...empty, cookieCount: 1, loggedIn: true, authKeysPresent: ['acf_uid'] }; return { cookieCount: 1, authKeysPresent: ['acf_uid'] } }),
     loginStatus: vi.fn(async () => structuredClone(status)),
     logout: vi.fn(async () => { status.douyu = { ...empty } }),
-    cookieHeader: vi.fn(async (_platform: 'douyu' | 'douyin', _url?: string) => 'synthetic=value'),
+    cookieHeader: vi.fn(async (_platform: CookieHeaderPlatform, _url?: string) => 'synthetic=value'),
     dispose: vi.fn(async () => {}),
   }
 }
@@ -53,6 +54,19 @@ afterEach(async () => {
 })
 
 describe('Douyu account isolation', () => {
+  it('captures the initiating registry label even when renamed during login', async () => {
+    const f = fixture()
+    let finish!: (result: { cookieCount: number; authKeysPresent: string[] }) => void
+    f.defaultLogin.login.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const pending = f.manager.login('default')
+    await f.manager.rename('default', '新名称')
+    expect(f.defaultLogin.login).toHaveBeenCalledExactlyOnceWith('douyu', undefined, '默认账号')
+    finish({ cookieCount: 1, authKeysPresent: ['acf_uid'] })
+    expect((await pending).accounts[0]!.label).toBe('新名称')
+    await f.manager.loginYuba('default')
+    expect(f.defaultLogin.login).toHaveBeenLastCalledWith('douyu', 'yuba', '新名称')
+  })
+
   it('opens a canonical room only in the active account profile and invalidates pending work', async () => {
     const f = fixture()
     await f.manager.add('第二个')
@@ -62,7 +76,7 @@ describe('Douyu account isolation', () => {
     await expect(f.manager.openRoom('default', '9999?other=1')).rejects.toMatchObject({ code: 'invalid-arguments' })
     expect(f.defaultLogin.login).not.toHaveBeenCalled()
     await f.manager.openRoom('default', '9999')
-    expect(f.defaultLogin.login).toHaveBeenCalledExactlyOnceWith('douyu', 'room:9999')
+    expect(f.defaultLogin.login).toHaveBeenCalledExactlyOnceWith('douyu', 'room:9999', '默认账号')
     expect(events).toEqual(['default', 'default'])
     expect([...f.created.values()][0]!.login).not.toHaveBeenCalled()
   })
@@ -184,12 +198,12 @@ describe('Douyu account isolation', () => {
     expect(await f.manager.loginYuba(a)).toMatchObject({ activeAccountId: 'default', accounts: [
       { id: 'default', active: true }, { id: a, active: false, login: { loggedIn: true } },
     ] })
-    expect(login.login).toHaveBeenNthCalledWith(1, 'douyu')
-    expect(login.login).toHaveBeenNthCalledWith(2, 'douyu', 'yuba')
+    expect(login.login).toHaveBeenNthCalledWith(1, 'douyu', undefined, '第二个')
+    expect(login.login).toHaveBeenNthCalledWith(2, 'douyu', 'yuba', '第二个')
     expect(f.created.size).toBe(1)
     expect(f.defaultLogin.login).not.toHaveBeenCalled()
     await f.manager.loginYuba('default')
-    expect(f.defaultLogin.login).toHaveBeenCalledWith('douyu', 'yuba')
+    expect(f.defaultLogin.login).toHaveBeenCalledWith('douyu', 'yuba', '默认账号')
     expect(f.created.size).toBe(1)
   })
 
@@ -263,7 +277,7 @@ describe('Douyu account isolation', () => {
       { type: 'invalidated', accountId: 'default' }, { type: 'invalidated', accountId: 'default' }, { type: 'changed' },
     ])
     await f.manager.login('default')
-    expect(f.defaultLogin.login).toHaveBeenLastCalledWith('douyu')
+    expect(f.defaultLogin.login).toHaveBeenLastCalledWith('douyu', undefined, '默认账号')
   })
 
   it('keeps removal exclusive until logout and registry replacement finish', async () => {

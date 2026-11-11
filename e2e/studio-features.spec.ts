@@ -1,6 +1,6 @@
 import type { ElectronApplication, Page } from '@playwright/test'
 import type { ChatMessage } from '../server/danmaku/types'
-import { expect, test } from './electron'
+import { expect, test, visibleE2eWindows } from './electron'
 import {
   connectDanmaku, fixturesReady, FIXTURES, invoke, loadBothFixtures, mediaTimes,
   openDanmakuSettings, openDouyuDesk, openPlayer, openPlayerWithDouyuWrites, openSettings, revealOverlay, setCheckedByLabel, setPlaying,
@@ -31,7 +31,7 @@ async function prepareChat(page: Page, application: ElectronApplication): Promis
   const expand = page.getByRole('button', { name: '展开弹幕', exact: true })
   if (await expand.isVisible()) await expand.click()
   await expect(page.getByRole('textbox', { name: '弹幕内容', exact: true })).toBeEnabled()
-  await application.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]?.focus() })
+  if (visibleE2eWindows) await application.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]?.focus() })
 }
 
 async function emitMessage(application: ElectronApplication, text: string, username = '离线观众'): Promise<void> {
@@ -96,6 +96,7 @@ test('同屏小窗独立播放, 拖动缩放和快退不改变双路对齐', asy
 })
 
 test('系统画中画由真实点击打开并可关闭', async ({ page }) => {
+  test.skip(!visibleE2eWindows, '系统画中画会创建可见原生浮窗; 设置 STREAM_SYNC_E2E_VISIBLE=1')
   await openPlayer(page)
   await loadBothFixtures(page)
   const menu = await openPipMenu(page)
@@ -132,7 +133,7 @@ test('增强画中画页面自行就绪, 切换音频归属并恢复视频', asy
     muted: win.webContents.isAudioMuted(), throttle: win.webContents.backgroundThrottling,
   })))
   expect(ownership.find(win => win.path === '/')).toMatchObject({ muted: true, throttle: true })
-  expect(ownership.find(win => win.path === '/pip')).toMatchObject({ visible: true, muted: false })
+  expect(ownership.find(win => win.path === '/pip')).toMatchObject({ visible: visibleE2eWindows, muted: false })
   expect(await invoke(pip, 'getDouyuTasks', undefined)).toMatchObject({ ok: false, code: 'forbidden' })
   await expect(pip.getByRole('textbox', { name: '发送弹幕', exact: true })).toBeDisabled()
   const handle = await video.elementHandle()
@@ -336,6 +337,7 @@ async function httpState(application: ElectronApplication): Promise<StudioHttpFi
 }
 
 test('禁言先检查权限, 明确确认后仅向固定房间提交一次', async ({ page, electronApp }, testInfo) => {
+  test.skip(!visibleE2eWindows, '禁言写操作需要真实窗口 foreground 所有权; 隐藏模式不抢占系统焦点, 设置 STREAM_SYNC_E2E_VISIBLE=1')
   await installHttpFixture(electronApp)
   await prepareChat(page, electronApp)
   await emitMessage(electronApp, '离线禁言验收')
@@ -364,6 +366,7 @@ test('禁言先检查权限, 明确确认后仅向固定房间提交一次', asy
 })
 
 test('赠礼编辑作废预览, 确认按有效 planId 执行且未知结果不重试', async ({ page, electronApp }, testInfo) => {
+  test.skip(!visibleE2eWindows, '赠礼队列需要真实窗口 foreground 所有权; 隐藏模式不抢占系统焦点, 设置 STREAM_SYNC_E2E_VISIBLE=1')
   await installHttpFixture(electronApp)
   await prepareChat(page, electronApp)
   await page.evaluate(() => {

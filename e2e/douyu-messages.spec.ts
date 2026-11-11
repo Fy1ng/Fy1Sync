@@ -1,5 +1,5 @@
 import { test } from '@playwright/test'
-import { expect, launchApplication } from './electron'
+import { expect, launchApplication, visibleE2eWindows } from './electron'
 import { connectDanmaku, disconnectDanmaku, invoke, openPlayerWithDouyuWrites, setPlaying } from './helpers'
 import { parseStt, serializeStt, toChatMessage } from '../server/danmaku/douyuProtocol'
 import type { DouyuMessageInput } from '../server/douyu/types'
@@ -50,7 +50,8 @@ test('网站已登录但缺少发送凭据时, 发送框说明原因并引导重
     await expect(drawer).not.toContainText('acf_username')
     await drawer.getByRole('button', { name: /^重新登录/ }).click()
     const settings = running.page.getByRole('dialog', { name: '设置', exact: true })
-    await expect(settings.getByRole('tablist', { name: '设置分区' }).getByRole('tab', { name: '斗鱼', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await expect(settings.getByRole('tablist', { name: '设置分区' }).getByRole('tab', { name: '账号', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await expect(settings.getByRole('tablist', { name: '账号平台' }).getByRole('tab', { name: '斗鱼', exact: true })).toHaveAttribute('aria-selected', 'true')
     await expect(settings.locator('.account')).toContainText('不能发送弹幕，请重新登录')
     const sent = await running.application.evaluate(() => {
       const main = globalThis as typeof globalThis & { __streamSyncerTest?: { getDouyuSentFixture(): unknown[] } }
@@ -61,6 +62,7 @@ test('网站已登录但缺少发送凭据时, 发送框说明原因并引导重
 })
 
 test('手动发送和 +1 使用当前账号及真实房间, 未知结果保留草稿且不重发', async ({}, testInfo) => {
+  test.skip(!visibleE2eWindows, '发送队列需要真实窗口 foreground 所有权; 隐藏模式不抢占系统焦点, 设置 STREAM_SYNC_E2E_VISIBLE=1')
   test.setTimeout(90_000)
   const running = await launchApplication('douyu-messages')
   const sent = () => running.application.evaluate(() => {
@@ -130,7 +132,9 @@ test('手动发送和 +1 使用当前账号及真实房间, 未知结果保留�
     await running.page.screenshot({ path: testInfo.outputPath('douyu-messages.png'), fullPage: true })
 
     await disconnectDanmaku(running.page)
-    await expect(running.page.getByRole('textbox', { name: '弹幕内容', exact: true })).toHaveCount(0)
+    await expect(input).toBeDisabled()
+    await expect(input).toHaveValue('')
+    await expect(send).toBeDisabled()
     await expect.poll(async () => {
       const state = await invoke(running.page, 'getDouyuTasks', undefined)
       return state.ok ? state.value.currentRoom : 'unavailable'

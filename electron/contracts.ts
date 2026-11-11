@@ -87,6 +87,7 @@ export interface StreamSyncerBridge {
   subscribeEmbeddedLogin?(listener: (state: EmbeddedLoginState | null) => void): () => void
   subscribeYtBrowseState?(listener: (state: YtBrowseState) => void): () => void
   subscribeYtImportProgress?(listener: (job: YtImportJob) => void): () => void
+  subscribeEmbeddedLogin?(listener: (state: EmbeddedLoginState | null) => void): () => void
 }
 
 declare global {
