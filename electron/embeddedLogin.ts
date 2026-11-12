@@ -533,7 +533,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
         return
       }
       if ((attempt.pendingAction === 'login' || attempt.pendingAction === 'verification') && attempt.submittedAt && !message) {
-        if (!attempt.pageTimeout) this.startPageTimeout(attempt, '抖音尚未返回登录结果, 请重试. 重试只会重新打开登录页面.')
+        if (!attempt.pageTimeout) this.startPageTimeout(attempt, '平台尚未返回登录结果, 请重试. 重试只会重新打开登录页面.')
         this.waitForPlatform(attempt, Date.now() - attempt.submittedAt > 12_000
           ? '平台仍在处理登录, 可使用官方验证页面查看进度.' : '正在等待平台登录结果')
         return
