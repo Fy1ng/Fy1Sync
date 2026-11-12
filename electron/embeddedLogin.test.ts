@@ -458,6 +458,21 @@ describe('private local login-card transitions', () => {
     expect(f.remoteContents.close).not.toHaveBeenCalled()
   })
 
+  it.each([true, false])('clears a previous QR error only when refresh succeeds: %s', async succeeds => {
+    const f = setup()
+    f.setSnapshot({ page: 'form', mode: 'password', qrStatus: 'unavailable', error: 'network' })
+    f.begin()
+    await vi.waitFor(() => expect(f.controller.cardState()?.message).toBe('平台官网连接失败, 请检查网络后重试.'))
+    const previous = f.controller.cardState()?.message
+    f.setAction(async () => {
+      if (succeeds) f.setSnapshot({ page: 'form', mode: 'password', qrStatus: 'loading' })
+      return succeeds ? { ok: true } : { ok: false, reason: 'not-ready' }
+    })
+    expect((await f.controller.cardAction({ kind: 'refresh-qr' })).ok).toBe(succeeds)
+    await vi.waitFor(() => expect(f.controller.cardState()?.message).toBe(succeeds ? undefined : previous))
+    expect(f.actionCount()).toBe(1)
+  })
+
   it('dispatches mode once without implicitly sending SMS or logging in', async () => {
     const f = setup()
     f.begin()

@@ -779,6 +779,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       const result = await attempt.broker.act(action)
       if (!result.ok) return { ok: false, message: '当前二维码仍有效, 失效后再刷新.' }
       attempt.qrPaused = false
+      attempt.lastError = undefined
+      this.cardUpdate(attempt, { message: undefined })
       void this.inspect(attempt)
       return { ok: true }
     }
