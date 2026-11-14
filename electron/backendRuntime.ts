@@ -34,6 +34,9 @@ import appPackage from '../package.json'
 import { EsportsService } from '../server/esports/schedule'
 import { DouyuReadCache } from '../server/douyu/readCache'
 import { SavedRoomsStore } from './savedRooms'
+import { SavedRoomsMonitor, type RoomMetadataCollector } from './savedRoomsMonitor'
+import { SavedRoomImages } from './savedRoomImages'
+import { createRoomMetadataCollector } from '../server/platforms/roomMetadata'
 import { DouyuGatewayCoordinator } from '../server/douyu/gatewayCoordinator'
 import { DouyuWatchService, type DouyuWatchContext } from '../server/douyu/watchService'
 import { DouyuWatchGateway } from '../server/douyu/watchGateway'
@@ -65,6 +68,8 @@ export interface BackendRuntimeOptions {
   ffmpegPath: () => Promise<string>
   openExternal: (url: string) => Promise<void>
   notifyLive: (event: DouyuLiveNotification) => void
+  roomMetadataCollector?: RoomMetadataCollector
+  roomMetadataEnabled?: boolean
 }
 
 export function createBackendRuntime(options: BackendRuntimeOptions) {
@@ -73,6 +78,18 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
   const esports = new EsportsService({ userDataDir: options.userDataDir, bundledLogoDir: options.bundledLogoDir,
     version: appPackage.version, onEvent: event => api.publish(event) })
   const savedRooms = new SavedRoomsStore(options.userDataDir)
+  const roomImages = new SavedRoomImages(options.userDataDir)
+  let imagesPrunedAt = 0
+  const savedRoomsMonitor = new SavedRoomsMonitor({ store: savedRooms,
+    collect: options.roomMetadataCollector ?? createRoomMetadataCollector({ ...options, resolveRoom: options.resolveRoom }), enabled: options.roomMetadataEnabled,
+    changed: rooms => {
+      api.publish({ topic: 'saved-rooms', data: { rooms } })
+      if (Date.now() - imagesPrunedAt < 60_000) return
+      imagesPrunedAt = Date.now()
+      try { roomImages.prune(new Set(rooms.flatMap(room => [room.metadata?.avatarUrl, room.metadata?.coverUrl].filter((url): url is string => !!url)))) }
+      catch { /* Image cleanup cannot prevent publishing favorite updates. */ }
+    } })
+  savedRoomsMonitor.start()
   const readCache = new DouyuReadCache()
   const releases: (() => void)[] = []
   const required = <T>(service: T | undefined): T => { if (!service) throw new FeatureApiError('not-available'); return service }
@@ -200,8 +217,13 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
   }
   const operations: FeatureHandlers = {
     listSavedRooms: args => { noArgs(args); return savedRooms.list() },
-    saveRoom: args => savedRooms.save(args),
-    removeSavedRoom: args => savedRooms.remove(args),
+    saveRoom: args => { const result = savedRooms.save(args); savedRoomsMonitor.changed(); return result },
+    removeSavedRoom: args => { const result = savedRooms.remove(args); savedRoomsMonitor.changed(); return result },
+    refreshSavedRooms: args => {
+      const value = args === undefined ? {} : fields(args, [], ['id'])
+      const id = value.id === undefined ? undefined : string(value.id, 160)
+      return savedRoomsMonitor.refresh(id === undefined ? undefined : { id })
+    },
     getCs2Schedule: args => esports.getCs2Schedule(args),
     getStreamTitles: args => esports.getStreamTitles(args),
     setCs2ScheduleFocus: args => esports.setScheduleFocus(args),
@@ -357,13 +379,14 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     }))
   }
   return {
-    api, streams, pip, capture, automations, insights, watch,
+    api, streams, pip, capture, automations, insights, watch, roomImages,
     observeFixture: (message: Parameters<DanmakuFeatures['observe']>[0]) => {
       if (isReadOnlyDanmakuPlatform(message.platform) || isReadOnlyDanmakuRoom(message.room)) return
       options.danmaku.observe(message); insights.observe(message)
     },
     async dispose() {
       lifetime.abort()
+      savedRoomsMonitor.dispose()
       await watch.dispose()
       if (!options.gatewayCoordinator) gatewayCoordinator.dispose()
       readCache.invalidate()

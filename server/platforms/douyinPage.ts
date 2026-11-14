@@ -14,6 +14,9 @@ export interface DouyinRoomData {
   roomId?: string
   status: unknown
   title?: unknown
+  nickname?: unknown
+  avatarUrl?: unknown
+  startedAt?: unknown
   stream: JsonRecord
   h264: JsonRecord
 }
@@ -75,9 +78,13 @@ class Models {
         // A page may contain recommended rooms; never switch the viewer's selected room.
         if (expectedWebRoom && webRoom && expectedWebRoom !== webRoom) continue
         const camera = this.record(this.record(state.cameraStore).cameraInfo)
+        const owner = this.record(room.owner ?? info.anchor)
+        const avatar = this.record(owner.avatar_thumb ?? owner.avatarThumb)
         return { webRoom: webRoom ?? expectedWebRoom,
           roomId: douyinId(this.value(info.roomId)) ?? douyinId(this.value(room.id_str)),
           status: this.value(room.status), title: this.value(room.title),
+          nickname: this.value(owner.nickname), avatarUrl: this.value(avatar.url_list ?? avatar.urlList) instanceof Array ? (this.value(avatar.url_list ?? avatar.urlList) as unknown[])[0] : undefined,
+          startedAt: this.value(room.create_time ?? room.createTime),
           stream: this.media(room.stream_url), h264: this.media(camera.h264Stream) }
       }
       // The official mobile share page embeds protobuf JSON with camelCase fields.
@@ -86,6 +93,8 @@ class Models {
         const webRoom = douyinId(this.value(owner.webRid))
         if (expectedWebRoom && webRoom && expectedWebRoom !== webRoom) continue
         return { webRoom, roomId: douyinId(this.value(state.idStr)), status: this.value(state.status),
+          nickname: this.value(owner.nickname), avatarUrl: (this.value(this.record(owner.avatarThumb).urlList) as unknown[] | undefined)?.[0],
+          startedAt: this.value(state.createTime),
           title: this.value(state.title), stream: normalizeDouyinStream(this.media(state.streamUrl)), h264: {} }
       }
       for (const child of Object.values(value)) stack.push({ value: child, depth: next.depth + 1 })
@@ -186,5 +195,7 @@ export function parseDouyinWebResponse(raw: unknown, webRoom: string): DouyinRoo
   const room = asRecord(data.data[0])
   if (!Object.hasOwn(room, 'status')) return null
   return { webRoom, roomId: douyinId(room.id_str) ?? douyinId(data.enter_room_id), status: room.status,
+    nickname: asRecord(room.owner ?? data.user).nickname,
+    avatarUrl: (asRecord(asRecord(room.owner ?? data.user).avatar_thumb).url_list as unknown[] | undefined)?.[0], startedAt: room.create_time,
     title: room.title, stream: asRecord(room.stream_url), h264: {} }
 }

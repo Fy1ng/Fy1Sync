@@ -3,6 +3,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FEATURE_METHODS } from './featureContracts'
+import type { SavedRoomMetadata } from './featureContracts'
 import { SavedRoomsStore, type SavedRoomsOptions, type SavedRoomsStorage } from './savedRooms'
 
 const runtime = path.resolve(os.tmpdir())
@@ -26,6 +27,40 @@ afterEach(() => {
 })
 
 describe('saved room storage', () => {
+  it('persists and detaches successful metadata, retaining it through a failed attempt', () => {
+    const f = fixture(), room = f.store.save(source)
+    const metadata: SavedRoomMetadata = { roomId: '6657', url: 'https://www.douyu.com/6657', nickname: '主播', title: '上次标题',
+      avatarUrl: '/room-image/' + 'a'.repeat(64) + '.png', coverUrl: null, status: 'offline',
+      lastStartedAt: 1000, startTimeSource: 'platform', collectedAt: 2000 }
+    f.store.recordAttempt(room.id, 2000, metadata)
+    metadata.title = '外部修改'
+    f.store.list()[0]!.metadata!.nickname = '外部修改'
+    f.store.recordAttempt(room.id, 3000, '本次请求失败')
+    expect(f.create().list()[0]).toMatchObject({ metadata: { title: '上次标题', nickname: '主播', status: 'offline' }, lastAttemptAt: 3000, refreshError: '本次请求失败' })
+  })
+
+  it('deduplicates canonical links before collection and aliases after authoritative resolution', () => {
+    const f = fixture()
+    const first = f.store.save(source)
+    expect(f.store.save({ ...source, input: 'https://www.douyu.com/6657?from=test' }).id).toBe(first.id)
+    const canonical = f.store.save({ ...source, input: '6979222' })
+    expect(f.store.list()).toHaveLength(2)
+    f.store.recordAttempt(first.id, 2000, { roomId: '6979222', url: 'https://www.douyu.com/6979222', nickname: '主播', title: '标题',
+      avatarUrl: null, coverUrl: null, status: 'offline', lastStartedAt: null, startTimeSource: null, collectedAt: 2000 })
+    expect(f.store.list()).toHaveLength(1)
+    expect(f.store.list()[0]!.id).not.toBe(canonical.id)
+    expect(f.store.save({ ...source, input: '6979222' }).id).toBe(first.id)
+  })
+
+  it('does not permit renderer-supplied snapshots or remote image paths', () => {
+    const f = fixture()
+    expect(() => f.store.save({ ...source, metadata: {} })).toThrow('参数无效')
+    const room = f.store.save(source)
+    expect(() => f.store.recordAttempt(room.id, 2000, { roomId: '6657', url: 'https://www.douyu.com/6657', nickname: '主播', title: '标题',
+      avatarUrl: 'https://evil.test/a.png', coverUrl: null, status: 'live', lastStartedAt: null, startTimeSource: null, collectedAt: 2000 })).toThrow('参数无效')
+    expect(f.store.list()[0]!.metadata).toBeUndefined()
+  })
+
   it('registers all public methods in the IPC whitelist', () => {
     expect(FEATURE_METHODS).toEqual(expect.arrayContaining(['listSavedRooms', 'saveRoom', 'removeSavedRoom']))
   })
@@ -120,7 +155,8 @@ describe('saved room validation', () => {
     expect(douyin).toMatchObject({ input: '6657', platform: 'douyin' })
     expect(douyu).toMatchObject({ input: '6657', platform: 'douyu' })
     expect(f.create().list()).toHaveLength(2)
-    expect(f.store.save({ ...source, input: '抖音:6657', platform: 'douyin' })).toMatchObject({ input: '抖音:6657', platform: 'douyin' })
+    expect(f.store.save({ ...source, input: '抖音:6657', platform: 'douyin' })).toMatchObject({ id: douyin.id, input: '6657', platform: 'douyin' })
+    expect(f.store.list()).toHaveLength(2)
   })
   it.each([
     ['youtube', 'https://www.youtube.com/watch?v=abc'],

@@ -17,11 +17,12 @@ import { useSavedRooms, type SavedRoom } from './savedRooms'
 
 const ROOM_PLATFORMS: RoomPlatform[] = ['douyu', 'bilibili', 'huya', 'douyin']
 
-export function Intake({ onClose, pendingFile, onSchedule }: {
+export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
   onClose: () => void
   pendingFile: File | null
   /** Open 赛程, to pick the official broadcast by match. */
   onSchedule: () => void
+  onFavorites?: () => void
 }): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
@@ -119,6 +120,7 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
 
         <SavedRooms onPick={(room) => void loader.loadInput(room.role, room.input,
           room.platform === 'douyu' || room.platform === 'bilibili' || room.platform === 'huya' || room.platform === 'douyin' ? room.platform : undefined)} />
+        {onFavorites && <button type="button" className="intake-find" onClick={onFavorites}><Icon name="star" /><span>收藏直播间</span><small>查看主播资料和开播状态, 收藏未开播的房间</small></button>}
 
         <p className="intake-foot">
           <span>支持将视频文件拖入窗口</span>

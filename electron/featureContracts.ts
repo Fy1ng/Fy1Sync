@@ -29,7 +29,25 @@ export interface SavedRoom {
   platform: string
   label: string
   savedAt: number
+  metadata?: SavedRoomMetadata
+  lastAttemptAt?: number
+  refreshError?: string | null
 }
+
+/** The last successful public metadata snapshot. Times are Unix milliseconds. */
+export interface SavedRoomMetadata {
+  roomId: string
+  url: string
+  nickname: string
+  avatarUrl: string | null
+  title: string
+  coverUrl: string | null
+  status: 'live' | 'offline' | 'replay' | 'unknown'
+  lastStartedAt: number | null
+  startTimeSource: 'platform' | 'observed' | null
+  collectedAt: number
+}
+export type SaveRoomInput = Pick<SavedRoom, 'role' | 'input' | 'platform' | 'label'>
 
 export interface FeatureMethods extends BackendMethods {
   getCs2Schedule: { args: { refresh?: boolean } | undefined; result: Cs2Schedule }
@@ -37,8 +55,9 @@ export interface FeatureMethods extends BackendMethods {
   /** The event 赛程 shows, as a Liquipedia path; its missing crests are fetched next. */
   setCs2ScheduleFocus: { args: { eventPath: string | null }; result: { updated: true } }
   listSavedRooms: { args: undefined; result: SavedRoom[] }
-  saveRoom: { args: Omit<SavedRoom, 'id' | 'savedAt'>; result: SavedRoom }
+  saveRoom: { args: SaveRoomInput; result: SavedRoom }
   removeSavedRoom: { args: { id: string }; result: { removed: boolean } }
+  refreshSavedRooms: { args: { id?: string } | undefined; result: SavedRoom[] }
   /** Implemented by IPC after checking this window's established room subscriptions. */
   activateDouyuRoom: { args: { room: string }; result: { room: string } }
   getDanmakuFeatures: { args: undefined; result: DanmakuFeaturesSnapshot }
@@ -86,7 +105,7 @@ export type FeatureMethod = keyof FeatureMethods
 export const FEATURE_METHODS = [
   ...BACKEND_METHODS,
   'getCs2Schedule', 'getStreamTitles', 'setCs2ScheduleFocus',
-  'listSavedRooms', 'saveRoom', 'removeSavedRoom',
+  'listSavedRooms', 'saveRoom', 'removeSavedRoom', 'refreshSavedRooms',
   'activateDouyuRoom', 'getDanmakuFeatures', 'setDanmakuPreferences', 'setMessageAffixes',
   'queryDanmakuHistory', 'queryDanmakuFavorites', 'addDanmakuFavorite', 'updateDanmakuFavorite', 'removeDanmakuFavorite',
   'getDanmakuRate', 'getDanmakuUserDetails', 'openDanmakuHistory', 'getDouyuDelivery', 'sendComposedDouyuMessage',

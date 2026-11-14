@@ -57,6 +57,7 @@ import { isDouyuActivityKind } from '../server/douyu/types'
 import { DanmakuFeatures, type DanmakuFeaturesStorage } from './danmakuFeatures'
 import { ActivityPreferencesStore, type ActivityPreferences } from './activityPreferences'
 import { createBackendRuntime } from './backendRuntime'
+import type { SavedRoomMetadata } from './featureContracts'
 import { teamLogoResponse } from './teamLogoRoute'
 import { parseAppUpdateSource, type AppUpdateSource } from './appUpdateService'
 import { AdminMediaRoute } from './adminMediaRoute'
@@ -184,6 +185,7 @@ async function start(): Promise<void> {
     }).catch(() => ({}))
   const e2e = process.env.STREAM_SYNC_E2E === '1'
   const offlineE2e = e2e && process.env.STREAM_SYNC_OFFLINE_E2E === '1'
+  const savedRoomFixtures = new Map<string, SavedRoomMetadata | null>()
   let douyuToolsFixture = false
   const douyuSentFixture: DouyuMessageInput[] = []
   let douyuSendFixtureOutcome: 'succeeded' | 'waiting-user' = 'succeeded'
@@ -484,6 +486,11 @@ async function start(): Promise<void> {
     userDataDir, bundledLogoDir, proxy, acquisition, relay, danmaku: danmakuFeatures, accounts: douyuAccounts, tasks: douyuTasks,
     sender: douyuMessageSender, renewal: douyuRenewal, resolveRoom: roomResolver.resolve, activityPreferences, ...backendConfig,
     gatewayCoordinator: douyuGatewayCoordinator, networkRuntimePath, watchEnabled: !offlineE2e,
+    roomMetadataCollector: offlineE2e ? async room => {
+      const fixture = savedRoomFixtures.get(room.input)
+      if (!fixture) throw new Error('Offline metadata fixture unavailable')
+      return { ...structuredClone(fixture), collectedAt: Date.now() }
+    } : undefined,
     ffmpegPath: () => locateTool('ffmpeg', toolSettings, process.env, toolContext),
     validatePng: bytes => { const value = nativeImage.createFromBuffer(bytes); return !value.isEmpty() },
     chooseCaptureDestination: async kind => {
@@ -656,6 +663,7 @@ async function start(): Promise<void> {
       else if (url.pathname.startsWith('/admin-media/')) response = await adminMedia.handle(request)
       else if (url.pathname.startsWith('/editor-media/')) response = await editorProject.handle(request)
       else if (url.pathname.startsWith('/team-logo/')) response = teamLogoResponse(request, userDataDir, bundledLogoDir)
+      else if (url.pathname.startsWith('/room-image/')) response = backend?.roomImages.response(request) ?? new Response(null, { status: 404 })
       else if (url.pathname === '/pip' || url.pathname === '/pip/') response = await serveStatic(new Request(APP_URL, { method: request.method }), { root: clientDir })
       else response = await serveStatic(request, { root: clientDir })
       if (!response) response = url.pathname === '/' ? missingClientResponse(clientDir) : new Response(null, { status: 404 })
@@ -749,6 +757,10 @@ async function start(): Promise<void> {
   releaseEmbeddedLoginIpc = installEmbeddedLoginIpc(ipcMain, contents, embeddedLogin)
   releaseLoginCardIpc = installLoginCardIpc(ipcMain, embeddedLogin)
   if (e2e) Object.assign(globalThis, { __streamSyncerTest: {
+    setSavedRoomFixture(input: string, value: SavedRoomMetadata | null) {
+      if (!offlineE2e || app.isPackaged || typeof input !== 'string' || input.length > 500) throw new Error('Metadata fixture is offline-only')
+      savedRoomFixtures.set(input, structuredClone(value))
+    },
     getWindowState: () => mainWindow.isDestroyed() ? null : getWindowState(mainWindow),
     ...(!app.isPackaged ? { setDouyinEmbeddedLoginFixture(scenario: Parameters<DouyinEmbeddedLoginFixtures['enable']>[0] = 'form') {
       if (!douyinEmbeddedLoginFixtures) throw new Error('Douyin login fixture is offline-only')
