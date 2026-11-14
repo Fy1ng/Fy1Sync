@@ -154,6 +154,7 @@ export async function resolveBilibili(
       kind: 'hls',
       label: `B 站直播 · ${room}`,
       channel: room,
+      sourceRoom: Number.isSafeInteger(payload.data?.room_id) && payload.data!.room_id! > 0 ? String(payload.data!.room_id) : room,
       requiresProxy: true,
       qualities: available.length ? available.map(qn => ({ id: String(qn), label: label(qn) })) : undefined,
       quality: current === undefined ? undefined : String(current),

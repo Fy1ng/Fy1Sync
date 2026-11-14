@@ -226,6 +226,7 @@ export async function resolveYouTube(input: string, deps: ResolverDeps): Promise
   return { ok: true, stream: {
     platform: 'youtube', url: deps.proxify(selected.adaptive ? hlsFormats[0]?.url ?? selected.url : selected.url), kind: 'hls', label: 'YouTube 直播',
     channel: typeof data.id === 'string' && VIDEO_ID.test(data.id) ? data.id : url,
+    ...(typeof data.channel_id === 'string' && /^UC[A-Za-z0-9_-]{22}$/.test(data.channel_id) ? { sourceRoom: data.channel_id } : {}),
     requiresProxy: true, qualities, quality: selected.format_id,
     ...(selected.adaptive ? { adaptive: selected.adaptive } : {}),
     notes: ['直播地址会过期, 断流后将重新解析并恢复本地缓冲.'],

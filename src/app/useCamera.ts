@@ -40,7 +40,7 @@ export function useCamera(): CameraControls {
   const room = cameraRoomKey(descriptor ? {
     platform: descriptor.platform,
     sourceRoom: descriptor.sourceRoom,
-    danmakuRoom: snapshot.danmaku.room,
+    danmakuRoom: descriptor.danmakuRoom ?? (['direct', 'file', 'test'].includes(descriptor.platform ?? '') ? snapshot.danmaku.room : null),
     label: descriptor.label,
     input: descriptor.input,
   } : null)

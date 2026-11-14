@@ -2,12 +2,15 @@
  * Camera overlay configuration, per commentary room.
  *
  * A streamer's camera sits in the same place every time they go live, so the crop is saved
- * against the room (Douyu room id, Bilibili room, or the stream label for anything else) and
+ * against the video's stable platform room identity and
  * comes back automatically next time. Separate from AppSettings on purpose: those are global
  * preferences, this is a small map that grows with the rooms a user watches.
  */
 
 import type { RoiRect } from '../core/profileSchema'
+import { savedRoomKey, savedRoomInput } from '../core/savedRoomIdentity'
+import { parseDouyinInput } from '../core/douyinInput'
+import { parseSourceInput } from '../core/mediaSources'
 
 export const CAMERA_STORAGE_KEY = 'stream-sync.camera.v1'
 const MAX_ROOMS = 200
@@ -68,13 +71,34 @@ function normalizeConfig(raw: unknown): CameraConfig | null {
   return { crop, window: normalizeWindow(r.window), enabled: r.enabled !== false, updatedAt: clamp(r.updatedAt, 0, Number.MAX_SAFE_INTEGER, 0) }
 }
 
-/** Room key from a commentary source: `douyu:6979222`, else the platform plus label. */
-export function cameraRoomKey(source: { platform?: string; sourceRoom?: string; danmakuRoom?: string | null; label?: string; input?: string } | null): string | null {
+interface CameraSource { platform?: string; sourceRoom?: string; danmakuRoom?: string | null; label?: string; input?: string }
+const ROOM_PLATFORMS = new Set(['douyu', 'bilibili', 'huya', 'douyin', 'twitch', 'youtube'])
+
+/** Only identities belonging to this video can choose its saved crop and placement. */
+export function cameraRoomKey(source: CameraSource | null): string | null {
   if (!source) return null
-  if (source.sourceRoom) return `${source.platform ?? 'room'}:${source.sourceRoom}`
-  if (source.danmakuRoom) return `${source.platform ?? 'room'}:${source.danmakuRoom}`
+  const platform = source.platform ?? 'source'
+  if (platform === 'douyin') {
+    // The sourceRoom is a broadcast session id. The public web room survives a restart.
+    const ownRoom = /^douyin:([1-9]\d{0,19})$/.exec(source.danmakuRoom ?? '')?.[1]
+    const parsed = parseDouyinInput(savedRoomInput(platform, source.input ?? ''))
+    const webRoom = ownRoom ?? (parsed?.kind === 'room' ? parsed.room : undefined)
+    if (webRoom) return `douyin:${webRoom}`
+    if (parsed) return `douyin:${parsed.url}`
+  } else if (source.sourceRoom) {
+    if (platform === 'youtube' && /^UC[A-Za-z0-9_-]{22}$/.test(source.sourceRoom)) return savedRoomKey(platform, `https://www.youtube.com/channel/${source.sourceRoom}/live`)
+    return `${platform}:${source.sourceRoom.replace(new RegExp(`^${platform}:`), '')}`
+  }
+  if (source.input && ROOM_PLATFORMS.has(platform)) {
+    const parsed = parseSourceInput(savedRoomInput(platform, source.input))
+    if (parsed.ok && parsed.platform === platform) return savedRoomKey(platform, source.input)
+  }
+  if (source.danmakuRoom && (!ROOM_PLATFORMS.has(platform) || !source.danmakuRoom.includes(':') || source.danmakuRoom.startsWith(`${platform}:`))) {
+    return `${platform}:${source.danmakuRoom.replace(new RegExp(`^${platform}:`), '')}`
+  }
+  if (platform === 'douyin' && source.sourceRoom) return `douyin:${source.sourceRoom}`
   const name = (source.input || source.label || '').trim()
-  return name ? `${source.platform ?? 'source'}:${name.slice(0, 200)}` : null
+  return name ? `${platform}:${name.slice(0, 200)}` : null
 }
 
 export class CameraStore {
@@ -87,7 +111,7 @@ export class CameraStore {
       for (const [key, value] of Object.entries(parsed ?? {})) {
         const config = normalizeConfig(value)
         if (key.length <= 220 && config) this.rooms[key] = config
-        else if (value === null && /^douyu:[1-9][0-9]{0,11}$/.test(key)) this.rooms[key] = null
+        else if (value === null && key.length <= 220) this.rooms[key] = null
       }
     } catch {
       this.rooms = {}
@@ -95,7 +119,8 @@ export class CameraStore {
   }
 
   get(room: string | null): CameraConfig | null {
-    return room ? this.rooms[room] ?? null : null
+    const config = room ? this.rooms[room] : null
+    return config ? { ...config, crop: { ...config.crop }, window: { ...config.window } } : null
   }
 
   /** Copy only a confirmed source's own legacy keys, preserving both records. */
@@ -124,14 +149,8 @@ export class CameraStore {
   }
 
   remove(room: string): void {
-    if (/^douyu:[1-9][0-9]{0,11}$/.test(room)) {
-      // A V1-compatible null entry records explicit removal across inputs and restarts.
-      // Keep legacy aliases intact, but never resurrect them over this user's decision.
-      this.rooms = { ...this.rooms, [room]: null }
-    } else {
-      const { [room]: _removed, ...rest } = this.rooms
-      this.rooms = rest
-    }
+    // Keep legacy aliases intact, but never resurrect them over explicit removal.
+    this.rooms = { ...this.rooms, [room]: null }
     this.persist()
   }
 
@@ -145,8 +164,19 @@ export class CameraStore {
 }
 
 /** Only the input associated with this confirmed video is eligible for compatibility. */
-export function cameraLegacyKeys(source: { platform?: string; sourceRoom?: string; input: string } | null): string[] {
-  if (source?.platform !== 'douyu' || !source.sourceRoom || !/^[1-9][0-9]{0,11}$/.test(source.sourceRoom)) return []
+export function cameraLegacyKeys(source: (CameraSource & { input: string }) | null): string[] {
+  if (!source) return []
+  if (source.platform !== 'douyu') {
+    const platform = source.platform ?? 'source'
+    const keys = [`${platform}:${source.input.trim().slice(0, 200)}`]
+    if (source.sourceRoom) keys.push(`${platform}:${source.sourceRoom}`)
+    if (source.danmakuRoom) keys.push(`${platform}:${source.danmakuRoom}`)
+    const ownInput = parseSourceInput(savedRoomInput(platform, source.input))
+    if (ownInput.ok && ownInput.platform === platform) keys.push(savedRoomKey(platform, source.input))
+    const current = cameraRoomKey(source)
+    return [...new Set(keys)].filter(key => key !== current)
+  }
+  if (!source.sourceRoom || !/^[1-9][0-9]{0,11}$/.test(source.sourceRoom)) return []
   const input = source.input.trim()
   let alias = /^[1-9][0-9]{0,11}$/.test(input) ? input : null
   try {

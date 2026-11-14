@@ -42,6 +42,11 @@ export function CameraOverlay({ config, onWindow, stageRef, onUpscaleState }: Pr
   } | null>(null)
   const win = draft ?? config.window
 
+  useEffect(() => () => {
+    if (drag.current?.frame != null) cancelAnimationFrame(drag.current.frame)
+    drag.current = null
+  }, [])
+
   useEffect(() => {
     const node = stageRef.current
     if (!node) return

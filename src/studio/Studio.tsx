@@ -202,7 +202,7 @@ function StudioView(): React.ReactNode {
           <div className="theater-main" ref={mountMain} data-role={mainRole} />
           <DanmakuStage onReply={() => setChat(true)} />
           <ExtraStreams adding={addingStream} onAddingChange={setAddingStream} />
-          {camera.config && <CameraOverlay config={camera.config} onWindow={camera.setWindow} stageRef={theater} onUpscaleState={setCameraUpscale} />}
+          {camera.available && camera.config && <CameraOverlay key={camera.room} config={camera.config} onWindow={camera.setWindow} stageRef={theater} onUpscaleState={setCameraUpscale} />}
 
           {snapshot.media[otherRole].status !== 'empty' && !previewHidden ? (
             <div className="pip" data-role={otherRole}>

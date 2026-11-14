@@ -126,6 +126,7 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
   return (
     <Sheet title="摄像头小窗" onClose={onClose} wide>
       <div className="framing">
+        <p className="muted">裁剪范围和小窗位置会按直播间自动保存, 下次载入此直播间时自动恢复.</p>
         <p className="muted">框住完整摄像头并略留外边距, 尽量排除字幕和比分板. 贴边使用约 2 秒连续彩色画面, 只向内收紧; 保存前可撤回.</p>
         <div className="framing-stage" ref={stage}>
           <canvas ref={setStill} className="framing-still" />
