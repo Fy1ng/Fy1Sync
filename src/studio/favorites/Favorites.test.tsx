@@ -37,6 +37,7 @@ describe('favorite rooms panel', () => {
   it('keeps receiving background updates while the panel is closed', async () => {
     const view = render(<Favorites onClose={() => {}} />)
     await screen.findByText('测试主播')
+    expect(screen.getByLabelText('默认载入画面').textContent).toBe('画面')
     view.unmount()
     rooms[0]!.refreshError = '后台采集失败, 已保留缓存.'
     publish()

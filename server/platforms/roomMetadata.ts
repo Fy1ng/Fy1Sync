@@ -78,10 +78,10 @@ export function huyaMetadata(html: string, now: number): Metadata {
   const room = asRecord(jsonAfter(page, /\bTT_ROOM_DATA\s*=\s*/, 65_536))
   const profile = asRecord(jsonAfter(page, /\bTT_PROFILE_INFO\s*=\s*/, 65_536))
   const roomId = id(room.profileRoom)
-  if (!roomId || !['ON', 'OFF'].includes(String(room.state))) return fail()
+  if (!roomId || !['ON', 'OFF', 'REPLAY'].includes(String(room.state))) return fail()
   return { roomId, url: `https://www.huya.com/${roomId}`, nickname: text(profile.nick ?? room.nick, 200),
     title: text(room.introduction ?? room.roomName), avatarUrl: imageUrl(profile.avatar180 ?? profile.avatar ?? room.avatar180, 'huya'), coverUrl: null,
-    status: room.state === 'OFF' ? 'offline' : room.isReplay === true || room.isReplay === 1 ? 'replay' : 'live',
+    status: room.state === 'OFF' ? 'offline' : room.state === 'REPLAY' || room.isReplay === true || room.isReplay === 1 ? 'replay' : 'live',
     lastStartedAt: metadataTime(room.liveStartTime ?? room.startTime, now) }
 }
 

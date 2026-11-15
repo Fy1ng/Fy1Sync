@@ -18,6 +18,7 @@ describe.skipIf(!enabled)('anonymous public room metadata', () => {
     ['douyu', 'https://www.douyu.com/6657'],
     ['bilibili', 'https://live.bilibili.com/6'],
     ['huya', 'https://www.huya.com/660000'],
+    ['huya', 'https://www.huya.com/10188'],
     ['douyin', 'https://live.douyin.com/294991263559'],
     ['twitch', 'https://www.twitch.tv/eslcs'],
     ['youtube', 'https://www.youtube.com/@PGL/live'],

@@ -21,6 +21,7 @@
 .studio .favorite-warning { color: #dfc487; font-size: 12px; }
 .studio .favorite-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .studio .favorite-actions > span { margin-right: auto; font-size: 11px; }
+.studio .favorite-role { display: inline-flex; align-items: center; padding: 3px 8px; border: 1px solid #ffffff30; border-radius: 6px; color: #aaa; line-height: 1.4; white-space: nowrap; }
 .studio .favorites-empty { padding: 40px 0; text-align: center; color: #999; }
 .studio .saved-room .favorite-copy { text-align: left; }
 .studio .saved-room .favorite-avatar { width: 36px; height: 36px; flex-basis: 36px; }
@@ -30,5 +31,4 @@
   .studio .favorites-add { padding: 12px; }
   .studio .favorites-input { min-width: 100%; order: -1; }
   .studio .favorite-card { padding: 12px; }
-  .studio .favorite-actions > span { flex-basis: 100%; }
 }

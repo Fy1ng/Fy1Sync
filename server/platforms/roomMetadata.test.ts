@@ -28,6 +28,13 @@ describe('public room metadata normalization', () => {
     expect(() => huyaMetadata('<script>globalThis.executed = true</script>', NOW)).toThrow()
   })
 
+  it('collects Huya replay rooms as replay rather than treating them as acquisition failures', () => {
+    const page = html('TT_ROOM_DATA', { profileRoom: 10188, state: 'REPLAY', isReplay: true, introduction: '回放标题', startTime: NOW / 1000 - 60 })
+      + html('TT_PROFILE_INFO', { nick: '主播甲', avatar: 'https://huyaimg.msstatic.com/avatar.jpg' })
+    expect(huyaMetadata(page, NOW)).toMatchObject({ roomId: '10188', status: 'replay', nickname: '主播甲', title: '回放标题',
+      avatarUrl: 'https://huyaimg.msstatic.com/avatar.jpg', lastStartedAt: NOW - 60_000 })
+  })
+
   it('keeps a Twitch API error distinct from a channel with a null stream', () => {
     const user = { id: '123', login: 'test', displayName: '测试主播', stream: null, broadcastSettings: { title: '上次标题' } }
     expect(twitchMetadata({ data: { user } }, 'test', NOW)).toMatchObject({ nickname: '测试主播', status: 'offline', title: '上次标题' })

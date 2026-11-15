@@ -95,7 +95,7 @@ export function Favorites({ onClose }: { onClose: () => void }): React.ReactNode
         <ul className="favorites-list" aria-label="收藏直播间列表">{filtered.map(room => <li key={room.id} className="favorite-card">
           <RoomSummary room={room} />
           {room.refreshError && <p className="favorite-warning" role="status">{room.refreshError}</p>}
-          <div className="favorite-actions"><span className="muted">默认载入{ROLE_LABEL[room.role]}</span>
+          <div className="favorite-actions"><span className="favorite-role" aria-label={`默认载入${ROLE_LABEL[room.role]}`}>{ROLE_LABEL[room.role]}</span>
             <button type="button" className="btn-quiet small" disabled={working.has(room.id) || working.has('all')} onClick={() => void run(room.id, () => refreshSavedRooms(room.id))}>{working.has(room.id) ? '处理中' : '刷新'}</button>
             <button type="button" className="btn-quiet small is-danger" disabled={working.has(room.id) || working.has('all')} onClick={() => void run(room.id, () => removeSavedRoom(room.id))}>取消收藏</button>
             <button type="button" className="btn-glass small" disabled={loader.state.official.busy} onClick={() => void watch(room, 'official')}>载入画面</button>
