@@ -1491,6 +1491,22 @@ body,
   width: min(640px, 100%);
 }
 
+.studio .intake-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.studio .intake-restore {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-end;
+  margin-bottom: 4px;
+}
+
 .studio .intake-title {
   font-family: var(--display);
   font-size: clamp(40px, 7cqi, 72px);

@@ -77,11 +77,21 @@ export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
   }, [pendingFile])
 
   const load = role ? loader.state[role] : null
+  const previous = loader.previousSources ?? {}
+  const restorable = SOURCE_ROLES.filter(side => previous[side] && !loader.state[side].busy && ['empty', 'error'].includes(media[side].status))
+  const restoreHint = SOURCE_ROLES.filter(side => previous[side]).map(side => `${ROLE_LABEL[side]}: ${previous[side]!.label || previous[side]!.input}`).join(' | ')
 
   return (
     <div className="intake" role="dialog" aria-modal="true" aria-label="添加直播间">
       <div className="intake-body">
-        <h1 className="intake-title">添加直播间</h1>
+        <div className="intake-heading">
+          <h1 className="intake-title">添加直播间</h1>
+          <button type="button" className="btn-glass small intake-restore" disabled={loader.restoring || restorable.length === 0}
+            title={restoreHint || '暂无可恢复的直播间'} onClick={() => {
+              void loader.restorePrevious().then(ok => { if (ok) onClose() })
+            }}><Icon name="history" />{loader.restoring ? '恢复中...' : '恢复上次'}</button>
+        </div>
+        {loader.restoreProblem && <p className="intake-error" role="alert">{loader.restoreProblem}</p>}
         <div className="intake-slots" role="radiogroup" aria-label="添加到">
           {SOURCE_ROLES.map((side) => <Slot key={side} role={side} selected={side === role} onPick={() => pick(side)} />)}
         </div>
