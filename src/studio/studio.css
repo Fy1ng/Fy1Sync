@@ -3225,7 +3225,24 @@ body,
   height: 16px;
 }
 
-/* One tap for the official broadcast of the CS2 event on now. */
+/* Schedule and favorites share the intake action row. */
+.studio .intake-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+}
+
+.studio .intake-actions > :only-child {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 600px) {
+  .studio .intake-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
 .studio .intake-find {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -3233,6 +3250,7 @@ body,
   column-gap: 12px;
   row-gap: 2px;
   width: 100%;
+  min-width: 0;
   padding: 12px 16px;
   text-align: left;
   background: rgb(255 255 255 / 6%);
@@ -3304,27 +3322,6 @@ body,
 
 .studio .panel-foot [aria-pressed='true'] .icon {
   fill: currentColor;
-}
-
-.studio .intake-saved {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 100%;
-}
-
-.studio .intake-saved-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-
-.studio .intake-saved-role {
-  width: 36px;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--ash);
 }
 
 /* 斗鱼写操作 confirmation, under its switch. */
