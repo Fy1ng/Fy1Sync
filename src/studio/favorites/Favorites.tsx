@@ -84,10 +84,10 @@ export function Favorites({ onClose }: { onClose: () => void }): React.ReactNode
         <button type="submit" className="btn-solid" disabled={!input.trim() || working.has('add')}>{working.has('add') ? '收藏中' : '收藏房间'}</button>
       </form>
       <div className="favorites-tools">
-        <input aria-label="搜索收藏直播间" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索主播, 标题或房间号" />
         <select aria-label="筛选收藏平台" value={filter} onChange={event => setFilter(event.target.value)}><option value="all">全部平台</option>
           {PLATFORMS.map(value => <option key={value} value={value}>{PLATFORM_LABEL[value]}</option>)}
         </select>
+        <input aria-label="搜索收藏直播间" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索主播, 标题或房间号" />
         <button type="button" className="btn-quiet" disabled={!rooms?.length || working.size > 0} onClick={() => void run('all', () => refreshSavedRooms())}>
           <Icon name="refresh" />{working.has('all') ? '采集中' : '全部刷新'}</button>
       </div>

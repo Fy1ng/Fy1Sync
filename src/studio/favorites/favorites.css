@@ -4,8 +4,8 @@
 .studio .favorites-add label { display: grid; gap: 6px; font-size: 12px; color: #aaa; }
 .studio .favorites-input { flex: 1; min-width: 180px; }
 .studio .favorites-body input, .studio .favorites-body select { min-height: 36px; box-sizing: border-box; border: 1px solid #ffffff22; border-radius: 7px; background: #17171b; color: #eee; padding: 7px 10px; font: inherit; }
-.studio .favorites-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-.studio .favorites-tools input { flex: 1; min-width: 180px; }
+.studio .favorites-tools { display: grid; grid-template-columns: 116px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.studio .favorites-tools input { width: 100%; min-width: 0; }
 .studio .favorites-list { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
 .studio .favorite-card { display: grid; gap: 12px; padding: 16px; border: 1px solid #ffffff16; border-radius: 12px; background: #ffffff04; }
 .studio .favorite-summary { display: flex; align-items: flex-start; gap: 14px; min-width: 0; }
@@ -30,5 +30,7 @@
   .studio .favorites-body { padding: 0 12px 16px; }
   .studio .favorites-add { padding: 12px; }
   .studio .favorites-input { min-width: 100%; order: -1; }
+  .studio .favorites-tools { grid-template-columns: 116px minmax(0, 1fr); }
+  .studio .favorites-tools > button { grid-column: 1 / -1; justify-self: start; }
   .studio .favorite-card { padding: 12px; }
 }
