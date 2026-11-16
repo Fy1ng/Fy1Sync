@@ -3,7 +3,10 @@
 .studio .favorites-add { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; padding: 16px; border: 1px solid #ffffff16; border-radius: 12px; background: #ffffff04; }
 .studio .favorites-add label { display: grid; gap: 6px; font-size: 12px; color: #aaa; }
 .studio .favorites-input { flex: 1; min-width: 180px; }
-.studio .favorites-body input, .studio .favorites-body select { min-height: 36px; box-sizing: border-box; border: 1px solid #ffffff22; border-radius: 7px; background: #17171b; color: #eee; padding: 7px 10px; font: inherit; }
+.studio .favorites-body input, .studio .favorites-body select { min-height: 36px; box-sizing: border-box; border: 1px solid #ffffff22; border-radius: 7px; background-color: #17171b; color: #eee; padding: 7px 10px; font: inherit; }
+.studio .favorites-body select { padding-right: 30px; cursor: pointer; }
+.studio .favorites-body select:hover { border-color: #ffffff55; background-color: #1e1e23; }
+.studio .favorites-body select:focus-visible { border-color: var(--chalk); }
 .studio .favorites-tools { display: grid; grid-template-columns: max-content minmax(0, 1fr) auto; align-items: center; gap: 10px; }
 .studio .favorites-tools select { width: auto; field-sizing: content; }
 .studio .favorites-tools input { width: 100%; min-width: 0; }
