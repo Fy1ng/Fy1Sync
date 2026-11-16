@@ -11,11 +11,10 @@
 .studio .favorites-tools select { width: auto; field-sizing: content; }
 .studio .favorites-tools input { width: 100%; min-width: 0; }
 .studio .favorites-list { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
-.studio .favorite-card { display: grid; gap: 12px; padding: 16px; border: 1px solid #ffffff16; border-radius: 12px; background: #ffffff04; }
+.studio .favorite-card { display: grid; grid-template-columns: minmax(0, 1fr) max-content; gap: 12px 14px; padding: 16px; border: 1px solid #ffffff16; border-radius: 12px; background: #ffffff04; }
 .studio .favorite-summary { display: flex; align-items: flex-start; gap: 14px; min-width: 0; }
-.studio .favorite-summary.has-aside { display: grid; grid-template-columns: 56px minmax(0, 1fr) minmax(210px, 40%); }
 .studio .favorite-times { display: grid; gap: 5px; min-width: 0; }
-.studio .favorite-summary.has-aside > .favorite-times { align-self: center; }
+.studio .favorite-card > .favorite-times { grid-column: 2; align-self: center; }
 .studio .favorite-avatar { width: 56px; height: 56px; flex: 0 0 56px; border-radius: 50%; object-fit: cover; background: #ffffff10; }
 .studio .favorite-placeholder { display: grid; place-items: center; font-size: 21px; color: #ccc; }
 .studio .favorite-copy { display: grid; gap: 5px; min-width: 0; }
@@ -25,8 +24,9 @@
 .studio .favorite-facts { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: #939397; }
 .studio .favorite-status.is-live { color: #73dba5; }
 .studio .favorite-status.is-replay { color: #dfc487; }
-.studio .favorite-warning { color: #dfc487; font-size: 12px; }
-.studio .favorite-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.studio .favorite-warning { grid-column: 1 / -1; color: #dfc487; font-size: 12px; }
+.studio .favorite-actions { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; align-items: center; }
+.studio .favorite-buttons { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; min-width: 0; }
 .studio .favorite-actions > span { margin-right: auto; font-size: 11px; }
 .studio .favorite-role { display: inline-flex; align-items: center; padding: 3px 8px; border: 1px solid #ffffff30; border-radius: 6px; color: #aaa; line-height: 1.4; white-space: nowrap; }
 .studio .favorites-empty { padding: 40px 0; text-align: center; color: #999; }
@@ -34,8 +34,8 @@
 .studio .saved-room .favorite-avatar { width: 36px; height: 36px; flex-basis: 36px; }
 .studio .saved-room .favorite-facts { font-size: 10px; }
 @media (max-width: 760px) {
-  .studio .favorite-summary.has-aside { grid-template-columns: 56px minmax(0, 1fr); row-gap: 8px; }
-  .studio .favorite-summary.has-aside > .favorite-times { grid-column: 2; }
+  .studio .favorite-card { grid-template-columns: 56px minmax(0, 1fr); }
+  .studio .favorite-card > .favorite-summary { grid-column: 1 / -1; }
 }
 @media (max-width: 600px) {
   .studio .favorites-body { padding: 0 12px 16px; }
