@@ -13,6 +13,7 @@ export function savedRoomInput(platform: string, input: string): string {
   if (platform === 'bilibili' && /^[1-9]\d{0,11}$/.test(bare)) return `https://live.bilibili.com/${bare}`
   if (platform === 'huya' && /^[A-Za-z0-9_-]{1,64}$/.test(bare)) return `https://www.huya.com/${bare}`
   if (platform === 'twitch' && /^[A-Za-z0-9_]{3,25}$/.test(value)) return `https://www.twitch.tv/${value.toLowerCase()}`
+  if (platform === 'youtube' && /^[A-Za-z0-9_-]{11}$/.test(value)) return `https://www.youtube.com/watch?v=${value}`
   return value
 }
 

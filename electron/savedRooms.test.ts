@@ -159,6 +159,7 @@ describe('saved room validation', () => {
     expect(f.store.list()).toHaveLength(2)
   })
   it.each([
+    ['youtube', 'We5j4c4AcDg'],
     ['youtube', 'https://www.youtube.com/watch?v=abc'],
     ['twitch', 'https://www.twitch.tv/eslcs'],
     ['douyu', 'https://www.douyu.com/6657'],

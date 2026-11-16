@@ -54,6 +54,56 @@ describe('public room metadata normalization', () => {
     expect(() => youtubeMetadata('<html>请完成验证</html>', 'https://www.youtube.com/@test/live', NOW)).toThrow()
   })
 
+  it('reads YouTube JSON followed by DOM scripts without executing the scripts', () => {
+    const player = { videoDetails: { channelId: CHANNEL, isLiveContent: true, author: '频道甲', title: '含有 } 和 " 的标题' },
+      microformat: { playerMicroformatRenderer: { liveBroadcastDetails: { isLiveNow: true } } } }
+    const page = html('ytInitialPlayerResponse', player).replace('</script>', 'globalThis.youtubeMetadataExecuted = true;</script>')
+    expect(youtubeMetadata(page, 'https://www.youtube.com/watch?v=12345678901', NOW)).toMatchObject({ roomId: CHANNEL, status: 'live', title: player.videoDetails.title })
+    expect(Reflect.get(globalThis, 'youtubeMetadataExecuted')).toBeUndefined()
+    const expression = `<script>var ytInitialPlayerResponse = ${JSON.stringify(player)} + malicious();</script>`
+    expect(() => youtubeMetadata(expression, 'https://www.youtube.com/watch?v=12345678901', NOW)).toThrow()
+  })
+
+  it('collects public watch results when playback is blocked, without confusing recommendations for the owner', () => {
+    const current = { currentVideoEndpoint: { watchEndpoint: { videoId: 'We5j4c4AcDg' } }, contents: { twoColumnWatchNextResults: {
+      results: { results: { contents: [
+        { videoPrimaryInfoRenderer: { title: { runs: [{ text: '当前直播标题' }] }, viewCount: { videoViewCountRenderer: { isLive: true } } } },
+        { videoSecondaryInfoRenderer: { owner: { videoOwnerRenderer: { title: { runs: [{ text: '当前主播' }] },
+          navigationEndpoint: { browseEndpoint: { browseId: CHANNEL } }, thumbnail: { thumbnails: [{ url: 'https://yt3.ggpht.com/avatar.jpg' }] } } } } },
+      ] } },
+      secondaryResults: { videoOwnerRenderer: { title: { simpleText: '推荐主播' }, navigationEndpoint: { browseEndpoint: { browseId: 'UCabcdefghijklmnopqrstuv' } } } },
+    } } }
+    const blocked = html('ytInitialPlayerResponse', { playabilityStatus: { status: 'LOGIN_REQUIRED' } })
+    expect(youtubeMetadata(blocked + html('ytInitialData', current), 'https://www.youtube.com/watch?v=We5j4c4AcDg', NOW)).toMatchObject({
+      roomId: CHANNEL, nickname: '当前主播', title: '当前直播标题', status: 'live', avatarUrl: 'https://yt3.ggpht.com/avatar.jpg', lastStartedAt: null,
+    })
+    expect(() => youtubeMetadata(blocked + html('ytInitialData', current), 'https://www.youtube.com/watch?v=12345678901', NOW)).toThrow()
+    const unavailable = { ...current, contents: { twoColumnWatchNextResults: { secondaryResults: current.contents.twoColumnWatchNextResults } } }
+    expect(() => youtubeMetadata(blocked + html('ytInitialData', unavailable), 'https://www.youtube.com/watch?v=We5j4c4AcDg', NOW)).toThrow()
+    const ordinary = structuredClone(current)
+    ordinary.contents.twoColumnWatchNextResults.results.results.contents[0]!.videoPrimaryInfoRenderer!.viewCount.videoViewCountRenderer.isLive = false
+    expect(youtubeMetadata(html('ytInitialData', ordinary), 'https://www.youtube.com/watch?v=We5j4c4AcDg', NOW).status).toBe('unknown')
+  })
+
+  it('recognizes modern YouTube stream cards and uses the live card title instead of an archived or upcoming stream', () => {
+    const card = (title: string, live: boolean) => ({ richItemRenderer: { content: { lockupViewModel: {
+      contentType: 'LOCKUP_CONTENT_TYPE_VIDEO', metadata: { lockupMetadataViewModel: { title: { content: title } } },
+      contentImage: { thumbnailViewModel: { overlays: [{ thumbnailBottomOverlayViewModel: { badges: [{ thumbnailBadgeViewModel: {
+        badgeStyle: live ? 'THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE' : 'THUMBNAIL_OVERLAY_BADGE_STYLE_DEFAULT',
+      } }] } }] } },
+    } } } })
+    const initial = { metadata: { channelMetadataRenderer: { externalId: CHANNEL, title: '频道甲' } },
+      contents: { twoColumnBrowseResultsRenderer: { tabs: [{ tabRenderer: { selected: true,
+        endpoint: { commandMetadata: { webCommandMetadata: { url: '/@test/streams' } } },
+        content: { richGridRenderer: { contents: [card('上次直播标题', false), card('当前直播标题', true)] } },
+      } }] } } }
+    expect(youtubeMetadata(html('ytInitialData', initial), 'https://www.youtube.com/@test/streams', NOW)).toMatchObject({ status: 'live', title: '当前直播标题' })
+    initial.contents.twoColumnBrowseResultsRenderer.tabs[0]!.tabRenderer.content.richGridRenderer.contents = [card('下次直播标题', false)]
+    expect(youtubeMetadata(html('ytInitialData', initial), 'https://www.youtube.com/@test/streams', NOW)).toMatchObject({ status: 'offline', title: '下次直播标题' })
+    initial.contents.twoColumnBrowseResultsRenderer.tabs[0]!.tabRenderer.endpoint.commandMetadata.webCommandMetadata.url = '/@test/featured'
+    expect(() => youtubeMetadata(html('ytInitialData', initial), 'https://www.youtube.com/@test/streams', NOW)).toThrow()
+  })
+
   it('requires a selected YouTube streams tab and ignores live recommendations outside it', () => {
     const initial = { metadata: { channelMetadataRenderer: { externalId: CHANNEL, title: '频道甲' } },
       contents: { twoColumnBrowseResultsRenderer: { tabs: [{ tabRenderer: { selected: true, content: { videoRenderer: { title: { simpleText: '最近直播标题' } } } } }] } },

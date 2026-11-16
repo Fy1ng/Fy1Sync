@@ -22,6 +22,7 @@ describe.skipIf(!enabled)('anonymous public room metadata', () => {
     ['douyin', 'https://live.douyin.com/294991263559'],
     ['twitch', 'https://www.twitch.tv/eslcs'],
     ['youtube', 'https://www.youtube.com/@PGL/live'],
+    ['youtube', 'We5j4c4AcDg'],
   ])('reads %s without an account or playback', async (platform, input) => {
     const metadata = await collect({ platform, input, id: 'test-room', savedAt: 1, role: 'official', label: '测试房间' }, AbortSignal.timeout(25_000))
     console.log(JSON.stringify({ platform, nickname: metadata.nickname, status: metadata.status, lastStartedAt: metadata.lastStartedAt, hasAvatar: !!metadata.avatarUrl }))

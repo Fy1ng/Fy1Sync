@@ -8,6 +8,32 @@ const metadata = (patch: Partial<SavedRoomMetadata> = {}): SavedRoomMetadata => 
   avatarUrl: null, coverUrl: null, status: 'offline', lastStartedAt: Date.now() - 3_600_000, startTimeSource: 'platform', collectedAt: Date.now(), ...patch,
 })
 
+test('收藏 YouTube 视频 ID 后显示采集信息并与完整链接去重', async () => {
+  const running = await launchApplication('favorite-youtube-id')
+  try {
+    await running.application.evaluate((_electron, snapshot) => {
+      const main = globalThis as typeof globalThis & { __streamSyncerTest: { setSavedRoomFixture(input: string, value: SavedRoomMetadata): void } }
+      main.__streamSyncerTest.setSavedRoomFixture('We5j4c4AcDg', snapshot)
+    }, metadata({ roomId: 'UC1234567890123456789012', url: 'https://www.youtube.com/channel/UC1234567890123456789012/live',
+      nickname: 'YouTube 测试主播', title: 'YouTube 当前直播标题', status: 'live' }))
+    await openPlayer(running.page)
+    await running.page.getByRole('button', { name: '收藏直播间', exact: true }).click()
+    const panel = running.page.getByRole('dialog', { name: '收藏直播间', exact: true })
+    await panel.getByLabel('收藏平台', { exact: true }).selectOption('youtube')
+    const input = panel.getByLabel('收藏直播间链接或房间号')
+    await input.fill('We5j4c4AcDg')
+    await panel.getByRole('button', { name: '收藏房间', exact: true }).click()
+    await expect(panel.getByText('YouTube 测试主播')).toBeVisible()
+    await expect(panel.getByText('YouTube 当前直播标题', { exact: true })).toBeVisible()
+    await expect(panel.getByText('直播中', { exact: true })).toBeVisible()
+    await input.fill('https://www.youtube.com/watch?v=We5j4c4AcDg')
+    await panel.getByRole('button', { name: '收藏房间', exact: true }).click()
+    await expect(input).toHaveValue('')
+    await expect(panel.locator('.favorite-card')).toHaveCount(1)
+    await expect(panel.getByText('扩展接口参数无效.', { exact: true })).toHaveCount(0)
+  } finally { await running.close() }
+})
+
 test('收藏未开播房间, 后台采集, 失败保留缓存并在重启后恢复', async () => {
   test.setTimeout(120_000)
   const running = await launchApplication('favorite-room-cache')

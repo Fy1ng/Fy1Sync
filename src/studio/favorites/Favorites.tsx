@@ -4,6 +4,7 @@ import { useSession } from '../../app/SessionContext'
 import { PLATFORM_LABEL, ROLE_LABEL, useSourceLoader, type RoomPlatform } from '../sources'
 import { addSavedRoom, refreshSavedRooms, removeSavedRoom, useSavedRooms, type SavedRoom } from '../savedRooms'
 import type { PlatformId, SourceRole } from '../../core/types'
+import { savedRoomInput } from '../../core/savedRoomIdentity'
 import './favorites.css'
 
 const PLATFORMS = ['douyu', 'bilibili', 'huya', 'douyin', 'twitch', 'youtube'] as const
@@ -48,7 +49,7 @@ export function Favorites({ onClose }: { onClose: () => void }): React.ReactNode
     finally { setWorking(previous => { const next = new Set(previous); next.delete(key); return next }) }
   }
   const watch = async (room: SavedRoom, target: SourceRole): Promise<void> => {
-    const source = room.metadata?.url ?? room.input
+    const source = savedRoomInput(room.platform, room.metadata?.url ?? room.input)
     const ok = await loader.loadInput(target, source, ['douyu', 'bilibili', 'huya', 'douyin'].includes(room.platform) ? room.platform as RoomPlatform : undefined)
     if (ok) onClose()
     else {
@@ -76,7 +77,7 @@ export function Favorites({ onClose }: { onClose: () => void }): React.ReactNode
           {PLATFORMS.map(value => <option key={value} value={value}>{PLATFORM_LABEL[value]}</option>)}
         </select></label>
         <label className="favorites-input">直播间<input aria-label="收藏直播间链接或房间号" value={input} maxLength={500} onChange={event => setInput(event.target.value)}
-          placeholder={platform === 'youtube' ? 'YouTube 频道或直播链接' : '直播间链接或房间号'} spellCheck={false} /></label>
+          placeholder={platform === 'youtube' ? 'YouTube 频道或直播链接, 视频 ID' : '直播间链接或房间号'} spellCheck={false} /></label>
         <label>默认载入<select aria-label="收藏默认载入位置" value={role} onChange={event => setRole(event.target.value as SourceRole)}>
           <option value="official">画面</option><option value="commentary">解说</option>
         </select></label>

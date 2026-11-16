@@ -6,7 +6,7 @@ import { parseDouyinInput } from '../../src/core/douyinInput'
 import { type ProxyConfig, hostAllowed } from '../config'
 import { safeFetch } from '../safeFetch'
 import { networkContext } from '../networkPolicy'
-import { readPlatformText } from '../platformResponse'
+import { MAX_PLATFORM_RESPONSE_BYTES, readPlatformText } from '../platformResponse'
 import { parseDouyuRoom, type ResolveDouyuRoom } from './douyuRoom'
 import { parseBilibiliRoom } from './bilibili'
 import { jsonAfter, parseHuyaRoom } from './huya'
@@ -119,41 +119,68 @@ function findRecord(root: unknown, name: string): Record<string, unknown> | null
 }
 const ytText = (value: unknown): string => {
   const row = asRecord(value)
-  return text(row.simpleText ?? (Array.isArray(row.runs) ? row.runs.map(item => text(asRecord(item).text)).join('') : ''))
+  return text(row.simpleText ?? row.content ?? (Array.isArray(row.runs) ? row.runs.map(item => text(asRecord(item).text)).join('') : ''))
 }
 
 export function youtubeMetadata(html: string, url: string, now: number): Metadata {
   const player = asRecord(youtubeData(html, 'ytInitialPlayerResponse'))
   const details = asRecord(player.videoDetails), live = asRecord(asRecord(player.microformat).playerMicroformatRenderer)
   const broadcast = asRecord(live.liveBroadcastDetails)
-  const channelId = text(details.channelId)
+  const data = asRecord(youtubeData(html, 'ytInitialData'))
+  // Playback can require login while the public watch results still expose the
+  // current broadcast. Never take identity or live status from recommendations.
+  const watch = asRecord(data.contents).twoColumnWatchNextResults
+  const primaryResults = asRecord(asRecord(watch).results).results
+  const owner = findRecord(primaryResults, 'videoOwnerRenderer')
+  const primary = findRecord(primaryResults, 'videoPrimaryInfoRenderer')
+  const currentVideo = text(asRecord(asRecord(data.currentVideoEndpoint).watchEndpoint).videoId)
+  const expectedVideo = new URL(url).searchParams.get('v')
+  if (expectedVideo && currentVideo && currentVideo !== expectedVideo) return fail()
+  const publicChannel = currentVideo && (!expectedVideo || currentVideo === expectedVideo)
+    ? text(asRecord(asRecord(owner?.navigationEndpoint).browseEndpoint).browseId) : ''
+  const channelId = text(details.channelId) || publicChannel
   if (channelId && /^UC[A-Za-z0-9_-]{22}$/.test(channelId)) {
-    if (details.isLiveContent !== true) return fail()
-    const status = broadcast.isLiveNow === true ? 'live'
-      : broadcast.endTimestamp || asRecord(player.playabilityStatus).status === 'LIVE_STREAM_OFFLINE' ? 'offline' : 'unknown'
-    const data = youtubeData(html, 'ytInitialData')
-    const owner = findRecord(data, 'videoOwnerRenderer')
+    if (publicChannel && publicChannel !== channelId) return fail()
+    const publicLive = publicChannel && asRecord(asRecord(primary?.viewCount).videoViewCountRenderer).isLive === true
+    const status = broadcast.isLiveNow === true || publicLive ? 'live'
+      : details.isLiveContent === true && (broadcast.endTimestamp || asRecord(player.playabilityStatus).status === 'LIVE_STREAM_OFFLINE') ? 'offline' : 'unknown'
     const thumbnails = asRecord(owner?.thumbnail).thumbnails
-    return { roomId: channelId, url: `https://www.youtube.com/channel/${channelId}/live`, nickname: text(details.author, 200),
-      title: text(details.title), avatarUrl: imageUrl(Array.isArray(thumbnails) ? asRecord(thumbnails.at(-1)).url : null, 'youtube'),
+    return { roomId: channelId, url: `https://www.youtube.com/channel/${channelId}/live`, nickname: text(details.author || ytText(owner?.title), 200),
+      title: text(details.title) || ytText(primary?.title), avatarUrl: imageUrl(Array.isArray(thumbnails) ? asRecord(thumbnails.at(-1)).url : null, 'youtube'),
       coverUrl: null, status, lastStartedAt: metadataTime(broadcast.startTimestamp, now) }
   }
   // A channel with no current broadcast still exposes its own identity and profile.
   // The caller reads /streams (not the /live error page) before accepting offline.
   if (!new URL(url).pathname.endsWith('/streams')) return fail()
-  const data = asRecord(youtubeData(html, 'ytInitialData'))
   const metadata = asRecord(asRecord(data.metadata).channelMetadataRenderer)
   const channel = text(metadata.externalId)
   if (!/^UC[A-Za-z0-9_-]{22}$/.test(channel) || !data.contents) return fail()
   const thumbnails = asRecord(metadata.avatar).thumbnails
   // A populated channel page alone cannot prove offline: require the selected streams tab.
   const selected = findSelectedTab(data.contents)
-  if (!selected) return fail()
-  const contents = JSON.stringify(selected.content ?? {})
-  const liveNow = /"style":"BADGE_STYLE_TYPE_LIVE_NOW"|"style":"LIVE"/.test(contents)
+  const selectedUrl = text(asRecord(asRecord(asRecord(selected?.endpoint).commandMetadata).webCommandMetadata).url)
+  if (!selected?.content || (selectedUrl && !selectedUrl.replace(/\/$/, '').endsWith('/streams'))) return fail()
+  const videos = youtubeVideos(selected.content)
+  const current = videos.find(video => /"style":"(?:BADGE_STYLE_TYPE_LIVE_NOW|LIVE)"|"badgeStyle":"THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE"/.test(JSON.stringify(video)))
+  const video = current ?? videos[0]
   return { roomId: channel, url: `https://www.youtube.com/channel/${channel}/live`, nickname: text(metadata.title, 200),
-    title: ytText(findRecord(selected.content, 'videoRenderer')?.title), avatarUrl: imageUrl(Array.isArray(thumbnails) ? asRecord(thumbnails.at(-1)).url : null, 'youtube'), coverUrl: null,
-    status: liveNow ? 'live' : 'offline', lastStartedAt: null }
+    title: ytText(video?.title ?? asRecord(asRecord(video?.metadata).lockupMetadataViewModel).title), avatarUrl: imageUrl(Array.isArray(thumbnails) ? asRecord(thumbnails.at(-1)).url : null, 'youtube'), coverUrl: null,
+    status: current ? 'live' : 'offline', lastStartedAt: null }
+}
+
+function youtubeVideos(root: unknown): Record<string, unknown>[] {
+  const stack: unknown[] = [root], videos: Record<string, unknown>[] = []
+  let budget = 20_000
+  while (stack.length && --budget > 0) {
+    const value = stack.pop()
+    if (!value || typeof value !== 'object') continue
+    const row = asRecord(value)
+    const video = row.videoRenderer ?? row.gridVideoRenderer ?? (asRecord(row.lockupViewModel).contentType === 'LOCKUP_CONTENT_TYPE_VIDEO' ? row.lockupViewModel : undefined)
+    if (video) videos.push(asRecord(video))
+    else stack.push(...Object.values(value).reverse())
+  }
+  if (stack.length) return fail()
+  return videos
 }
 function findSelectedTab(root: unknown): Record<string, unknown> | null {
   const stack: unknown[] = [root]
@@ -170,14 +197,35 @@ function findSelectedTab(root: unknown): Record<string, unknown> | null {
 
 /** Parse complete JSON assignments, without evaluating any surrounding JavaScript. */
 function youtubeData(html: string, variable: string): unknown {
-  if (Buffer.byteLength(html) > 2_097_152) return undefined
+  if (Buffer.byteLength(html) > MAX_PLATFORM_RESPONSE_BYTES) return undefined
   const assignment = new RegExp(`^(?:var\\s+)?${variable}\\s*=\\s*`)
   for (const script of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)) {
     const body = script[1]!.trim()
     const match = assignment.exec(body)
     if (!match) continue
-    try { return JSON.parse(body.slice(match[0].length).replace(/;\s*$/, '')) as unknown }
-    catch { return undefined }
+    // YouTube appends DOM setup statements after player JSON in the same script.
+    // Scan one bounded JSON value without evaluating any trailing JavaScript.
+    const start = match[0].length, stack: string[] = []
+    let quoted = false, escaped = false
+    for (let index = start; index < body.length; index++) {
+      const char = body[index]!
+      if (quoted) {
+        if (escaped) escaped = false
+        else if (char === '\\') escaped = true
+        else if (char === '"') quoted = false
+      } else if (char === '"') quoted = true
+      else if (char === '{' || char === '[') {
+        stack.push(char === '{' ? '}' : ']')
+        if (stack.length > 128) return undefined
+      } else if (char === '}' || char === ']') {
+        if (stack.pop() !== char) return undefined
+        if (!stack.length) {
+          if (!/^\s*(?:;|$)/.test(body.slice(index + 1))) return undefined
+          try { return JSON.parse(body.slice(start, index + 1)) as unknown } catch { return undefined }
+        }
+      } else if (!stack.length && !/\s/.test(char)) return undefined
+    }
+    return undefined
   }
   return undefined
 }
@@ -244,7 +292,13 @@ export function createRoomMetadataCollector(options: { proxy: ProxyConfig; userD
       const target = parseYouTubeUrl(input)
       if (!target) return fail()
       let page = await read(target)
-      try { result = youtubeMetadata(page.text, target, now) }
+      try {
+        result = youtubeMetadata(page.text, page.finalUrl, now)
+        if (result.status === 'unknown') {
+          const streams = result.url.slice(0, -5) + '/streams'
+          result = youtubeMetadata((await read(streams)).text, streams, now)
+        }
+      }
       catch {
         if (!target.endsWith('/live')) throw new Error('无法读取 YouTube 直播资料.')
         const streams = target.slice(0, -5) + '/streams'

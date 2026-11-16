@@ -10,6 +10,8 @@ describe('favorite room identities', () => {
   })
 
   it('preserves case-sensitive YouTube video and channel ids while normalizing handles', () => {
+    expect(savedRoomInput('youtube', ' We5j4c4AcDg ')).toBe('https://www.youtube.com/watch?v=We5j4c4AcDg')
+    expect(savedRoomKey('youtube', 'We5j4c4AcDg')).toBe(savedRoomKey('youtube', 'https://youtu.be/We5j4c4AcDg'))
     expect(savedRoomKey('youtube', 'https://youtu.be/ABC123abcDE')).toBe(savedRoomKey('youtube', 'https://www.youtube.com/watch?v=ABC123abcDE&from=test'))
     expect(savedRoomKey('youtube', 'https://www.youtube.com/channel/UCABCdef/live')).not.toBe(savedRoomKey('youtube', 'https://www.youtube.com/channel/UCabcDEF/live'))
     expect(savedRoomKey('youtube', 'https://www.youtube.com/@PGL/live')).toBe(savedRoomKey('youtube', 'https://www.youtube.com/@pgl'))
