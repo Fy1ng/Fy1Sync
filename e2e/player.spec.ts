@@ -25,6 +25,7 @@ import {
   revealOverlay,
   seekBoth,
   setPlaying,
+  setCheckedByLabel,
   stubDanmakuStream,
   waitForBothReady,
 } from './helpers'
@@ -265,6 +266,15 @@ test.describe('片源画质和摄像头入口', () => {
     await dialog.getByRole('button', { name: '保存', exact: true }).click()
     const overlay = page.locator('.camera-overlay')
     await expect(overlay).toBeVisible()
+    // This assertion reads the ordinary 2D canvas; GPU presentation has its own suite.
+    await expect(overlay).not.toHaveAttribute('data-upscale-reason', 'initializing')
+    await revealOverlay(page)
+    await page.locator('.dock').getByRole('button', { name: '主播摄像头', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: '主播摄像头', exact: true }).getByRole('button', { name: '隐藏摄像头小窗', exact: true })).toBeVisible()
+    const upscale = page.getByRole('radiogroup', { name: '摄像头超分', exact: true })
+    if (await upscale.count()) await setCheckedByLabel(upscale.getByRole('radio', { name: '关', exact: true }))
+    await page.keyboard.press('Escape')
+    await expect(overlay.locator('canvas')).toHaveCount(1)
     // The canvas is drawing the commentary picture, not sitting blank.
     await expect.poll(() => overlay.locator('canvas').evaluate((node: HTMLCanvasElement) => {
       const data = node.getContext('2d')!.getImageData(0, 0, node.width, node.height).data

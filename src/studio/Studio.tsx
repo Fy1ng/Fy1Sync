@@ -43,6 +43,7 @@ import { DanmakuSwitch, PlayButton, Timeline, Volumes } from './transport'
 import './studio.css'
 import { remember, remembered } from '../app/remembered'
 import { EmbeddedLoginOverlay, useEmbeddedLoginState } from './login/EmbeddedLogin'
+import { Favorites } from './favorites/Favorites'
 
 /** Seconds per ←/→ press, and with Shift. */
 const SEEK_SMALL = 5
@@ -68,6 +69,7 @@ function StudioView(): React.ReactNode {
   const [cameraUpscale, setCameraUpscale] = useState(INITIAL_UPSCALE_STATE)
   const nudge = useNudge()
   const [intake, setIntake] = useState(false)
+  const [favorites, setFavorites] = useState(false)
   const [droppedFile, setDroppedFile] = useState<File | null>(null)
   const [settingsAt, setSettingsAt] = useState<SettingsTarget | null>(null)
   // The gear reopens 设置 where it was left; links that name a section go there.
@@ -96,7 +98,7 @@ function StudioView(): React.ReactNode {
   const chromeHover = { onPointerEnter: () => setOnChrome(true), onPointerLeave: () => setOnChrome(false) }
 
   const aligning = snapshot.autoSync.phase !== 'idle' && snapshot.autoSync.phase !== 'done' && snapshot.autoSync.phase !== 'failed'
-  const busyChrome = intake || tuning || settingsAt !== null || addingStream || scheduleOpen || onChrome || aligning || embeddedLogin !== null
+  const busyChrome = favorites || intake || tuning || settingsAt !== null || addingStream || scheduleOpen || onChrome || aligning || embeddedLogin !== null
   const chrome = useOverlayVisibility(3200, !snapshot.playing || busyChrome)
   // The drawer is the room's chat; with no room there is nothing to hold it open for.
   const hasRoom = snapshot.danmaku.connected || snapshot.danmaku.room !== null
@@ -201,7 +203,7 @@ function StudioView(): React.ReactNode {
           <div className="theater-main" ref={mountMain} data-role={mainRole} />
           <DanmakuStage onReply={() => setChat(true)} />
           <ExtraStreams adding={addingStream} onAddingChange={setAddingStream} />
-          {camera.config && <CameraOverlay config={camera.config} onWindow={camera.setWindow} stageRef={theater} onUpscaleState={setCameraUpscale} />}
+          {camera.available && camera.config && <CameraOverlay key={camera.room} config={camera.config} onWindow={camera.setWindow} stageRef={theater} onUpscaleState={setCameraUpscale} />}
 
           {snapshot.media[otherRole].status !== 'empty' && !previewHidden ? (
             <div className="pip" data-role={otherRole}>
@@ -221,6 +223,7 @@ function StudioView(): React.ReactNode {
 
           <header className="topbar" {...chromeHover}>
             <div className="topbar-sources">
+              <button type="button" className="icon-btn glass small" aria-label="收藏直播间" title="收藏直播间" onClick={() => setFavorites(true)}><Icon name="star" /></button>
               {SOURCE_ROLES.map((role) => (
                 <SourceChip key={role} role={role}
                   onSchedule={role === 'official' ? () => setScheduleFrom('source') : undefined}
@@ -284,13 +287,14 @@ function StudioView(): React.ReactNode {
           )}
 
           {tuning && <DanmakuPanel onClose={() => setTuning(false)} />}
-          {intake && <Intake onClose={closeIntake} pendingFile={droppedFile} onSchedule={() => setScheduleFrom('intake')} />}
+          {intake && <Intake onClose={closeIntake} pendingFile={droppedFile} onSchedule={() => setScheduleFrom('intake')} onFavorites={() => setFavorites(true)} />}
         </main>
 
         {chatOpen && (
           <ChatDrawer onClose={() => setChat(false)} onOpenSettings={openSettings} onOpenRecords={openRecords} />
         )}
 
+        {favorites && <Favorites onClose={() => setFavorites(false)} />}
         {scheduleOpen && (
           <ScheduleSheet onWatch={(url) => void loader.loadInput('official', url)} onClose={() => setScheduleFrom(null)} />
         )}

@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { parseSourceInput } from '../src/core/mediaSources'
 import { parseDouyinInput } from '../src/core/douyinInput'
-import type { SavedRoom } from './featureContracts'
+import type { SavedRoom, SavedRoomMetadata, SaveRoomInput } from './featureContracts'
+import { savedRoomInput, savedRoomKey } from '../src/core/savedRoomIdentity'
 import { PrivateJsonStore } from './privateJsonStore'
 
 export interface SavedRoomsStorage { version: 1; rooms: SavedRoom[] }
@@ -39,7 +40,7 @@ function fields(raw: unknown, allowed: readonly string[]): Record<string, unknow
   } catch { throw new SavedRoomsError('invalid-arguments') }
 }
 
-function content(raw: unknown): Omit<SavedRoom, 'id' | 'savedAt'> {
+function content(raw: unknown): SaveRoomInput {
   const value = fields(raw, ['role', 'input', 'platform', 'label'])
   if ((value.role !== 'official' && value.role !== 'commentary') || !text(value.input, 500)
     || !text(value.label, 100) || typeof value.platform !== 'string' || !PLATFORMS.has(value.platform)) {
@@ -56,7 +57,7 @@ function content(raw: unknown): Omit<SavedRoom, 'id' | 'savedAt'> {
     || (/^[a-z][a-z0-9+.-]*:/i.test(input) && !/^https?:\/\//i.test(input))) {
     throw new SavedRoomsError('invalid-arguments')
   }
-  const parsed = parseSourceInput(input)
+  const parsed = parseSourceInput(savedRoomInput(value.platform, input))
   if (!parsed.ok || parsed.platform !== value.platform || !PLATFORMS.has(parsed.platform)) {
     throw new SavedRoomsError('invalid-arguments')
   }
@@ -73,14 +74,24 @@ function storedRooms(raw: unknown): SavedRoom[] {
   for (let index = 0; index < value.rooms.length; index++) {
     const descriptor = Object.getOwnPropertyDescriptor(value.rooms, String(index))
     if (!descriptor || !('value' in descriptor)) throw new Error()
-    const record = fields(descriptor.value, ['id', 'role', 'input', 'platform', 'label', 'savedAt'])
+    const record = fields(descriptor.value, ['id', 'role', 'input', 'platform', 'label', 'savedAt', 'metadata', 'lastAttemptAt', 'refreshError'])
     const source = content({ role: record.role, input: record.input, platform: record.platform, label: record.label })
     const key = JSON.stringify([source.role, source.platform, source.input])
     if (!text(record.id, 160) || ids.has(record.id) || sources.has(key)
       || typeof record.savedAt !== 'number' || !Number.isSafeInteger(record.savedAt) || record.savedAt < 0) throw new Error()
     ids.add(record.id)
     sources.add(key)
-    rooms.push({ ...source, id: record.id, savedAt: record.savedAt })
+    const room: SavedRoom = { ...source, id: record.id, savedAt: record.savedAt }
+    if (record.metadata !== undefined) room.metadata = validateMetadata(record.metadata)
+    if (record.lastAttemptAt !== undefined) {
+      if (!timestamp(record.lastAttemptAt)) throw new Error()
+      room.lastAttemptAt = record.lastAttemptAt
+    }
+    if (record.refreshError !== undefined) {
+      if (record.refreshError !== null && !text(record.refreshError, 300)) throw new Error()
+      room.refreshError = record.refreshError as string | null
+    }
+    rooms.push(room)
   }
   return rooms
 }
@@ -106,16 +117,18 @@ export class SavedRoomsStore {
   }
 
   list(): SavedRoom[] {
-    return this.rooms.map(room => ({ ...room })).sort((left, right) => right.savedAt - left.savedAt)
+    return structuredClone(this.rooms).sort((left, right) => right.savedAt - left.savedAt)
   }
 
   save(input: unknown): SavedRoom {
     const source = content(input)
-    const existing = this.rooms.find(room => room.role === source.role && room.platform === source.platform && room.input === source.input)
+    const key = savedRoomKey(source.platform, source.input)
+    const existing = this.rooms.find(room => room.role === source.role && room.platform === source.platform
+      && (savedRoomKey(room.platform, room.input) === key || (room.metadata && savedRoomKey(room.platform, room.metadata.url) === key)))
     if (existing) {
       const updated = { ...existing, label: source.label }
       this.persist(this.rooms.map(room => room.id === existing.id ? updated : room))
-      return { ...updated }
+      return structuredClone(updated)
     }
     if (this.rooms.length >= MAX_SAVED_ROOMS) throw new SavedRoomsError('room-limit')
     const id = this.id(), savedAt = this.now()
@@ -135,9 +148,44 @@ export class SavedRoomsStore {
     return { removed: true }
   }
 
-  private persist(rooms: SavedRoom[]): void {
-    const next: SavedRoomsStorage = { version: 1, rooms: rooms.map(room => ({ ...room })) }
-    try { this.store.save(next) } catch { throw new SavedRoomsError('storage-failed') }
-    this.rooms = rooms.map(room => ({ ...room }))
+  /** A failed attempt never replaces the last successful metadata snapshot. */
+  recordAttempt(id: string, attemptedAt: number, result: SavedRoomMetadata | string): void {
+    const current = this.rooms.find(room => room.id === id)
+    if (!current) return
+    if (!timestamp(attemptedAt)) throw new SavedRoomsError('invalid-arguments')
+    const updated: SavedRoom = { ...current, lastAttemptAt: attemptedAt, refreshError: typeof result === 'string' ? result : null }
+    if (typeof result !== 'string') {
+      updated.metadata = validateMetadata(result)
+      const canonical = savedRoomKey(current.platform, result.url)
+      const aliases = this.rooms.filter(room => room.role === current.role && room.platform === current.platform
+        && (room.id === id || savedRoomKey(room.platform, room.metadata?.url ?? room.input) === canonical))
+      if (aliases.length > 1) {
+        const kept = aliases.reduce((left, right) => left.savedAt <= right.savedAt ? left : right)
+        const removed = new Set(aliases.filter(room => room.id !== kept.id).map(room => room.id))
+        this.persist(this.rooms.filter(room => !removed.has(room.id)).map(room => room.id === kept.id ? { ...kept, metadata: updated.metadata, lastAttemptAt: attemptedAt, refreshError: null } : room))
+        return
+      }
+    }
+    this.persist(this.rooms.map(room => room.id === id ? updated : room))
   }
+
+  private persist(rooms: SavedRoom[]): void {
+    const next: SavedRoomsStorage = { version: 1, rooms: structuredClone(rooms) }
+    try { this.store.save(next) } catch { throw new SavedRoomsError('storage-failed') }
+    this.rooms = structuredClone(rooms)
+  }
+}
+
+const timestamp = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+function validateMetadata(raw: unknown): SavedRoomMetadata {
+  const row = fields(raw, ['roomId', 'url', 'nickname', 'avatarUrl', 'title', 'coverUrl', 'status', 'lastStartedAt', 'startTimeSource', 'collectedAt'])
+  const optionalText = (value: unknown, max: number) => typeof value === 'string' && value.length <= max && !/[\x00-\x1f\x7f]/.test(value)
+  const image = (value: unknown) => value === null || (typeof value === 'string' && /^\/room-image\/[a-f0-9]{64}\.(?:png|jpg|webp|gif)$/.test(value))
+  if (!text(row.roomId, 160) || !text(row.url, 500) || !/^https:\/\//.test(row.url)
+    || !optionalText(row.nickname, 200) || !optionalText(row.title, 500) || !image(row.avatarUrl) || !image(row.coverUrl)
+    || !['live', 'offline', 'replay', 'unknown'].includes(String(row.status)) || !timestamp(row.collectedAt)
+    || (row.lastStartedAt !== null && (!timestamp(row.lastStartedAt) || row.lastStartedAt > row.collectedAt))
+    || ![null, 'platform', 'observed'].includes(row.startTimeSource as null)
+    || ((row.lastStartedAt === null) !== (row.startTimeSource === null))) throw new SavedRoomsError('invalid-arguments')
+  return structuredClone(row) as unknown as SavedRoomMetadata
 }

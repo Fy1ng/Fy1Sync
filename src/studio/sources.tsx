@@ -6,13 +6,14 @@
  * popover mid-resolve does not lose what comes back.
  */
 
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { parseSourceInput, toDescriptor } from '../core/mediaSources'
 import { basicClockFileKey } from '../core/basicClockMemory'
 import { parseDouyinInput } from '../core/douyinInput'
-import type { MediaDescriptor, PlatformId, SourceRole } from '../core/types'
+import { SOURCE_ROLES, type MediaDescriptor, type PlatformId, type SourceRole } from '../core/types'
+import { lastSource, loadLastSources, saveLastSources, type LastSources } from '../app/lastSources'
 import type { LoginPlatform } from '../../electron/login'
 import { streamFailureHint } from '../../server/networkFailure'
 import { displayError, errorDetails, type ErrorDetails } from '../core/errorDetails'
@@ -126,6 +127,10 @@ export function douyinDanmakuRoom(descriptor: Pick<MediaDescriptor, 'input' | 'd
 
 interface Loader {
   state: Record<SourceRole, RoleLoad>
+  previousSources: LastSources
+  restoring: boolean
+  restoreProblem: string | null
+  restorePrevious: () => Promise<boolean>
   /**
    * Resolve and load whatever was typed. `platform` settles a bare room number; without it
    * a bare number is Douyu's. Resolves false when nothing was loaded.
@@ -152,7 +157,13 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
   const [state, setState] = useState<Record<SourceRole, RoleLoad>>({ official: IDLE, commentary: IDLE })
   const [roomAlias, setAlias] = useState<string | null>(() => rememberedAlias)
   const setRoomAlias = useCallback((alias: string | null) => { rememberedAlias = alias; setAlias(alias) }, [])
-  const room = useSessionSnapshot().danmaku.room
+  const snapshot = useSessionSnapshot()
+  const room = snapshot.danmaku.room
+  const [previousSources, setPreviousSources] = useState(loadLastSources)
+  const previous = useRef(previousSources)
+  const [restoring, setRestoring] = useState(false)
+  const restoringRef = useRef(false)
+  const [restoreProblem, setRestoreProblem] = useState<string | null>(null)
   const live = useRef(state)
   const loads = useRef<Partial<Record<SourceRole, object>>>({})
   // What each side last asked for, so a login can retry it as typed.
@@ -161,6 +172,21 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     live.current = { ...live.current, [role]: { ...live.current[role], ...next } }
     setState(live.current)
   }, [])
+
+  useEffect(() => {
+    const next = { ...previous.current }
+    for (const role of SOURCE_ROLES) {
+      const media = snapshot.media[role]
+      if (media.status !== 'ready' || !media.descriptor) continue
+      const source = lastSource(media.descriptor)
+      if (source) next[role] = source
+      else delete next[role]
+    }
+    if (JSON.stringify(next) === JSON.stringify(previous.current)) return
+    previous.current = next
+    saveLastSources(next)
+    setPreviousSources(next)
+  }, [snapshot.media.official.status, snapshot.media.official.descriptor, snapshot.media.commentary.status, snapshot.media.commentary.descriptor])
 
   const connectRoom = useCallback((next: string, name?: string) => {
     // Set before connecting: the relay may swap the typed number for the real id.
@@ -334,8 +360,31 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
   const clearProblem = useCallback((role: SourceRole) => patch(role, { problem: null }), [patch])
 
   const roomName = room ? roomAlias ?? room : null
-  const value = useMemo(() => ({ state, loadInput, loadFile, loadDescriptor, clearProblem, login, roomName, connectRoom, disconnectRoom }),
-    [state, loadInput, loadFile, loadDescriptor, clearProblem, login, roomName, connectRoom, disconnectRoom])
+  const restorePrevious = useCallback(async (): Promise<boolean> => {
+    if (restoringRef.current) return false
+    const saved = { ...previous.current }
+    const roles = SOURCE_ROLES.filter(role => saved[role] && !live.current[role].busy
+      && ['empty', 'error'].includes(session.snapshot.media[role].status))
+    if (!roles.length) return false
+    restoringRef.current = true
+    setRestoring(true)
+    setRestoreProblem(null)
+    try {
+      const failures = await Promise.all(roles.map(async role => {
+        const source = saved[role]!
+        const platform = ['douyu', 'bilibili', 'huya', 'douyin'].includes(source.platform) ? source.platform as RoomPlatform : undefined
+        try { return await loadInput(role, source.input, platform) && session.snapshot.media[role].status !== 'error' ? null : role }
+        catch { patch(role, { busy: false, problem: { message: '载入失败, 请检查网络后重试.' } }); return role }
+      }))
+      const messages = failures.filter((role): role is SourceRole => role !== null)
+        .map(role => `${ROLE_LABEL[role]}: ${live.current[role].problem?.message ?? session.snapshot.media[role].error?.message ?? '恢复未完成, 请检查片源后重试.'}`)
+      if (messages.length) setRestoreProblem(messages.join(' '))
+      return messages.length === 0
+    } finally { restoringRef.current = false; setRestoring(false) }
+  }, [loadInput, patch, session])
+
+  const value = useMemo(() => ({ state, previousSources, restoring, restoreProblem, restorePrevious, loadInput, loadFile, loadDescriptor, clearProblem, login, roomName, connectRoom, disconnectRoom }),
+    [state, previousSources, restoring, restoreProblem, restorePrevious, loadInput, loadFile, loadDescriptor, clearProblem, login, roomName, connectRoom, disconnectRoom])
   return <LoaderContext.Provider value={value}>{children}</LoaderContext.Provider>
 }
 

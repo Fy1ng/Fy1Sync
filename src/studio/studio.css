@@ -249,7 +249,7 @@ body,
   min-width: 0;
   height: 34px;
   padding: 0 11px;
-  background: rgb(0 0 0 / 35%);
+  background-color: rgb(0 0 0 / 35%);
   border: 1px solid var(--line-2);
   border-radius: var(--r-sm);
   outline: none;
@@ -262,11 +262,12 @@ body,
   resize: vertical;
 }
 
-.studio select {
+.studio select,
+.studio select.text-input {
   appearance: none;
   padding-right: 30px;
   background-image: linear-gradient(45deg, transparent 50%, var(--ash) 50%), linear-gradient(-45deg, transparent 50%, var(--ash) 50%);
-  background-position: calc(100% - 15px) 15px, calc(100% - 10px) 15px;
+  background-position: calc(100% - 15px) center, calc(100% - 10px) center;
   background-size: 5px 5px;
   background-repeat: no-repeat;
 }
@@ -1489,6 +1490,22 @@ body,
   flex-direction: column;
   gap: 22px;
   width: min(640px, 100%);
+}
+
+.studio .intake-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.studio .intake-restore {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-end;
+  margin-bottom: 4px;
 }
 
 .studio .intake-title {
@@ -3225,7 +3242,24 @@ body,
   height: 16px;
 }
 
-/* One tap for the official broadcast of the CS2 event on now. */
+/* Schedule and favorites share the intake action row. */
+.studio .intake-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+}
+
+.studio .intake-actions > :only-child {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 600px) {
+  .studio .intake-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
 .studio .intake-find {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -3233,6 +3267,7 @@ body,
   column-gap: 12px;
   row-gap: 2px;
   width: 100%;
+  min-width: 0;
   padding: 12px 16px;
   text-align: left;
   background: rgb(255 255 255 / 6%);
@@ -3304,27 +3339,6 @@ body,
 
 .studio .panel-foot [aria-pressed='true'] .icon {
   fill: currentColor;
-}
-
-.studio .intake-saved {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 100%;
-}
-
-.studio .intake-saved-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-
-.studio .intake-saved-role {
-  width: 36px;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--ash);
 }
 
 /* 斗鱼写操作 confirmation, under its switch. */

@@ -31,6 +31,12 @@ function formatsFixture(...formats: ReturnType<typeof hlsFormat>[]) {
 }
 
 describe('Bilibili actual upstream quality', () => {
+  it('retains the canonical room identity for per-room camera settings', async () => {
+    const payload = { ...fixture(), data: { ...fixture().data, room_id: 12345 } }
+    const result = await resolveBilibili('live.bilibili.com/6', dependencies(undefined, payload))
+    expect(result).toMatchObject({ ok: true, stream: { sourceRoom: '12345' } })
+  })
+
   it('reads fresh main-only cookies for the complete official play-info URL and keeps credentials out of streams', async () => {
     const deps = dependencies('400')
     deps.cookieHeader = vi.fn(async () => 'SESSDATA=fixture-private-session; DedeUserID=42')

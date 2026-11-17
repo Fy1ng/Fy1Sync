@@ -13,16 +13,16 @@ import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { Icon } from './kit'
 import { LOGIN_LABEL, LoginOffer, PLATFORM_LABEL, ROLE_LABEL, SOURCE_HINT, SOURCE_KINDS, parseRoomInput, sourceTitle, spaced, useSourceLoader, type RoomPlatform } from './sources'
-import { useSavedRooms, type SavedRoom } from './savedRooms'
 import { ErrorText } from '../ui/ErrorDetails'
 
 const ROOM_PLATFORMS: RoomPlatform[] = ['douyu', 'bilibili', 'huya', 'douyin']
 
-export function Intake({ onClose, pendingFile, onSchedule }: {
+export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
   onClose: () => void
   pendingFile: File | null
   /** Open 赛程, to pick the official broadcast by match. */
   onSchedule: () => void
+  onFavorites?: () => void
 }): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
@@ -81,11 +81,21 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
   }, [pendingFile])
 
   const load = role ? loader.state[role] : null
+  const previous = loader.previousSources ?? {}
+  const restorable = SOURCE_ROLES.filter(side => previous[side] && !loader.state[side].busy && ['empty', 'error'].includes(media[side].status))
+  const restoreHint = SOURCE_ROLES.filter(side => previous[side]).map(side => `${ROLE_LABEL[side]}: ${previous[side]!.label || previous[side]!.input}`).join(' | ')
 
   return (
     <div className="intake" role="dialog" aria-modal="true" aria-label="添加直播间">
       <div className="intake-body">
-        <h1 className="intake-title">添加直播间</h1>
+        <div className="intake-heading">
+          <h1 className="intake-title">添加直播间</h1>
+          <button type="button" className="btn-glass small intake-restore" disabled={loader.restoring || restorable.length === 0}
+            title={restoreHint || '暂无可恢复的直播间'} onClick={() => {
+              void loader.restorePrevious().then(ok => { if (ok) onClose() })
+            }}><Icon name="history" />{loader.restoring ? '恢复中...' : '恢复上次'}</button>
+        </div>
+        {loader.restoreProblem && <p className="intake-error" role="alert">{loader.restoreProblem}</p>}
         <div className="intake-slots" role="radiogroup" aria-label="添加到">
           {SOURCE_ROLES.map((side) => <Slot key={side} role={side} selected={side === role} onPick={() => pick(side)} />)}
         </div>
@@ -113,16 +123,16 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
 
         {load?.problem && <p className="intake-error" role="alert"><ErrorText error={load.problem} message={<>{load.problem.message}{load.problem.hint ? ` ${load.problem.hint}` : ''}</>} /></p>}
 
-        {media.official.status === 'empty' && !loader.state.official.busy && (
-          <button type="button" className="intake-find" onClick={onSchedule}>
-            <Icon name="trophy" />
-            <span>CS2 赛程</span>
-            <small>按对阵选择官方直播，载入为画面</small>
-          </button>
-        )}
-
-        <SavedRooms onPick={(room) => void loader.loadInput(room.role, room.input,
-          room.platform === 'douyu' || room.platform === 'bilibili' || room.platform === 'huya' || room.platform === 'douyin' ? room.platform : undefined)} />
+        <div className="intake-actions">
+          {media.official.status === 'empty' && !loader.state.official.busy && (
+            <button type="button" className="intake-find" onClick={onSchedule}>
+              <Icon name="trophy" />
+              <span>CS2 赛程</span>
+              <small>按对阵选择官方直播，载入为画面</small>
+            </button>
+          )}
+          {onFavorites && <button type="button" className="intake-find" onClick={onFavorites}><Icon name="star" /><span>收藏直播间</span><small>查看主播资料和开播状态, 收藏未开播的房间</small></button>}
+        </div>
 
         <p className="intake-foot">
           <span>支持将视频文件拖入窗口</span>
@@ -157,30 +167,6 @@ function Slot({ role, selected, onPick }: { role: SourceRole; selected: boolean;
       )}
       {selected && !load.problem && state.status === 'error' && state.error && <span className="slot-error" role="alert"><ErrorText error={state.error} /></span>}
       <LoginOffer role={role} />
-    </div>
-  )
-}
-
-/** Saved rooms, by side, for a side that is still empty: one click fills it. */
-function SavedRooms({ onPick }: { onPick: (room: SavedRoom) => void }): React.ReactNode {
-  const snapshot = useSessionSnapshot()
-  const loader = useSourceLoader()
-  const rooms = (useSavedRooms() ?? []).filter((room) => snapshot.media[room.role].status === 'empty' && !loader.state[room.role].busy)
-  if (rooms.length === 0) return null
-  return (
-    <div className="intake-saved" role="group" aria-label="收藏的直播间">
-      {SOURCE_ROLES.map((role) => {
-        const mine = rooms.filter((room) => room.role === role)
-        if (mine.length === 0) return null
-        return (
-          <div key={role} className="intake-saved-row">
-            <span className="intake-saved-role">{ROLE_LABEL[role]}</span>
-            {mine.map((room) => (
-              <button key={room.id} type="button" className="btn-glass small" onClick={() => onPick(room)}>{room.label}</button>
-            ))}
-          </div>
-        )
-      })}
     </div>
   )
 }

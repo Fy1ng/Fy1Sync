@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CAMERA_STORAGE_KEY, CameraStore, cameraRoomKey, DEFAULT_CAMERA_WINDOW, normalizeCrop, normalizeWindow } from './camera'
+import { CAMERA_STORAGE_KEY, CameraStore, cameraRoomKey, cameraLegacyKeys, DEFAULT_CAMERA_WINDOW, normalizeCrop, normalizeWindow } from './camera'
 import { clampWindow } from '../ui/CameraOverlay'
 
 function memory(seed?: string) {
@@ -9,6 +9,36 @@ function memory(seed?: string) {
 const crop = { x: 0.05, y: 0.55, w: 0.2, h: 0.2 }
 
 describe('camera configuration', () => {
+  it('uses stable public room identities across inputs, session ids and title changes', () => {
+    expect(cameraRoomKey({ platform: 'douyin', input: 'https://live.douyin.com/123', sourceRoom: '900001', danmakuRoom: 'douyin:123' }))
+      .toBe(cameraRoomKey({ platform: 'douyin', input: '123', sourceRoom: '900002', danmakuRoom: 'douyin:123', label: '新标题' }))
+    expect(cameraRoomKey({ platform: 'bilibili', input: 'https://live.bilibili.com/100?from=share' })).toBe('bilibili:100')
+    expect(cameraRoomKey({ platform: 'huya', sourceRoom: '100', input: 'https://www.huya.com/alias' })).toBe('huya:100')
+    expect(cameraRoomKey({ platform: 'twitch', input: 'https://www.twitch.tv/ESLCS', label: '第一场' }))
+      .toBe(cameraRoomKey({ platform: 'twitch', input: 'https://twitch.tv/eslcs?ref=test', label: '第二场' }))
+    const channel = 'UC1234567890123456789012'
+    expect(cameraRoomKey({ platform: 'youtube', input: 'https://youtu.be/12345678901', sourceRoom: channel }))
+      .toBe(cameraRoomKey({ platform: 'youtube', input: 'https://youtu.be/abcdefghijk', sourceRoom: channel }))
+  })
+
+  it.each([
+    { platform: 'douyin', input: 'https://live.douyin.com/123', sourceRoom: '900001', danmakuRoom: 'douyin:123' },
+    { platform: 'bilibili', input: 'https://live.bilibili.com/1?from=share', sourceRoom: '100' },
+    { platform: 'huya', input: 'https://www.huya.com/alias', sourceRoom: '100' },
+    { platform: 'twitch', input: 'https://www.twitch.tv/ESLCS' },
+    { platform: 'youtube', input: 'https://www.youtube.com/@PGL/live' },
+  ])('restores an existing input binding and remembers removal for $platform', source => {
+    const storage = memory(), store = new CameraStore(storage)
+    const legacy = `${source.platform}:${source.input}`
+    const canonical = cameraRoomKey(source)!
+    const config = { crop, window: { ...DEFAULT_CAMERA_WINDOW, x: 0.42, y: 0.31 }, enabled: true, updatedAt: 1 }
+    store.set(legacy, config)
+    expect(store.getCompatible(canonical, cameraLegacyKeys(source))).toEqual(config)
+    expect(new CameraStore(storage).get(canonical)).toEqual(config)
+    store.remove(canonical)
+    expect(new CameraStore(storage).getCompatible(canonical, cameraLegacyKeys(source))).toBeNull()
+  })
+
   it('keys a room by platform and danmaku room, else by input', () => {
     expect(cameraRoomKey({ platform: 'douyu', danmakuRoom: '6979222', label: '斗鱼 6979222' })).toBe('douyu:6979222')
     expect(cameraRoomKey({ platform: 'direct', input: '/test-sources/commentary.mp4', label: '测试' })).toBe('direct:/test-sources/commentary.mp4')

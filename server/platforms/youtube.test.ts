@@ -11,6 +11,14 @@ function deps(overrides: Partial<ResolverDeps> = {}): ResolverDeps {
 }
 
 describe('YouTube public page validation', () => {
+  it('retains the broadcaster channel across separate broadcasts for camera bindings', async () => {
+    const channel_id = 'UC1234567890123456789012'
+    const first = await resolveYouTube('https://youtu.be/abcdefghijk', deps({ runYtDlp: async () => ({ ...fixture, channel_id, id: 'abcdefghijk' }) }))
+    const next = await resolveYouTube('https://youtu.be/12345678901', deps({ runYtDlp: async () => ({ ...fixture, channel_id, id: '12345678901' }) }))
+    expect(first).toMatchObject({ ok: true, stream: { sourceRoom: channel_id } })
+    expect(next).toMatchObject({ ok: true, stream: { sourceRoom: channel_id } })
+  })
+
   it.each([
     ['https://www.youtube.com/watch?v=abcdefghijk&list=private#part', 'https://www.youtube.com/watch?v=abcdefghijk'],
     ['youtu.be/abcdefghijk?t=3', 'https://www.youtube.com/watch?v=abcdefghijk'],

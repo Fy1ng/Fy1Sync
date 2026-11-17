@@ -76,6 +76,7 @@ describe('Huya bounded page metadata', () => {
     expect(parseHuyaPage(page({}, [sampleLine()], [], live), '123456')).toMatchObject({ ok: false, failure: { code: 'not-live' } })
   })
   it('rejects the explicit replay flag and both restricted-room notices', () => {
+    expect(parseHuyaPage(page({ state: 'REPLAY' }), '123456')).toMatchObject({ ok: false, failure: { code: 'not-live' } })
     expect(parseHuyaPage(page({ isReplay: true }), '123456')).toMatchObject({ ok: false, failure: { code: 'not-live' } })
     for (const notice of ['房间已被封禁', '主播已被封禁']) {
       expect(parseHuyaPage(`<p>${notice}</p>`, '123456')).toMatchObject({ ok: false, failure: { code: 'restricted' } })

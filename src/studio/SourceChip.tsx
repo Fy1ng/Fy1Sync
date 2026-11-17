@@ -15,6 +15,7 @@ import { Icon, Popover, Segmented, usePopover } from './kit'
 import { douyinDanmakuRoom, LoginOffer, PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform, SOURCE_HINT } from './sources'
 import { isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
 import { canSave, removeSavedRoom, saveRoom, savedFor, useSavedRooms, type SavedRoom } from './savedRooms'
+import { RoomSummary } from './favorites/Favorites'
 
 export function SourceChip({ role, onSchedule, onShowPreview = null }: {
   role: SourceRole
@@ -201,6 +202,7 @@ function DanmakuRoom(): React.ReactNode {
 
 /** Keep this side's link, or let it go; offered once the link is one that can be loaded again. */
 function SaveButton({ role }: { role: SourceRole }): React.ReactNode {
+  const session = useSession()
   const snapshot = useSessionSnapshot()
   const rooms = useSavedRooms()
   const [busy, setBusy] = useState(false)
@@ -211,7 +213,9 @@ function SaveButton({ role }: { role: SourceRole }): React.ReactNode {
     <button type="button" className="btn-quiet small" aria-pressed={saved !== null} disabled={busy || rooms === null}
       onClick={() => {
         setBusy(true)
-        void (saved ? removeSavedRoom(saved.id) : saveRoom(role, descriptor)).finally(() => setBusy(false))
+        void (saved ? removeSavedRoom(saved.id) : saveRoom(role, descriptor)).then(problem => {
+          if (problem) session.notice('warn', problem)
+        }).catch(() => session.notice('warn', '收藏操作失败, 请稍后重试.')).finally(() => setBusy(false))
       }}>
       <Icon name="star" />{saved ? '已收藏' : '收藏'}
     </button>
@@ -235,7 +239,7 @@ function SavedList({ role, onPick }: { role: SourceRole; onPick: (room: SavedRoo
             <li key={room.id}>
               <button type="button" className="saved-room" disabled={playing || loader.state[role].busy}
                 aria-current={playing || undefined} onClick={() => onPick(room)}>
-                {room.label}
+                <RoomSummary room={room} />
               </button>
             </li>
           )

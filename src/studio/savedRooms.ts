@@ -9,6 +9,7 @@ import { apiClient } from '../app/apiClient'
 import type { SavedRoom } from '../../electron/featureContracts'
 import type { MediaDescriptor, SourceRole } from '../core/types'
 import { sourceTitle } from './sources'
+import { savedRoomKey } from '../core/savedRoomIdentity'
 
 export type { SavedRoom }
 
@@ -21,12 +22,15 @@ export function canSave(descriptor: MediaDescriptor | null | undefined): descrip
 
 let rooms: SavedRoom[] | null = null
 let pending: Promise<void> | null = null
+let releaseEvents: (() => void) | null = null
+let revision = 0
 const listeners = new Set<() => void>()
-const publish = (next: SavedRoom[]): void => { rooms = next; for (const listener of listeners) listener() }
+const publish = (next: SavedRoom[]): void => { revision++; rooms = next; for (const listener of listeners) listener() }
 
 function load(): Promise<void> {
+  const started = revision
   pending ??= apiClient.feature('listSavedRooms', undefined).then((result) => {
-    if (result.ok && Array.isArray(result.value)) publish(result.value)
+    if (result.ok && Array.isArray(result.value) && started === revision) publish(result.value)
   }).catch(() => undefined).finally(() => { pending = null })
   return pending
 }
@@ -37,8 +41,13 @@ export function useSavedRooms(): SavedRoom[] | null {
   useEffect(() => {
     const listener = (): void => setValue(rooms)
     listeners.add(listener)
+    releaseEvents ??= apiClient.subscribeFeatures(event => {
+      const value = event.data as { rooms?: SavedRoom[] } | null
+      if (event.topic === 'saved-rooms' && Array.isArray(value?.rooms)) publish(value.rooms)
+    })
     if (rooms === null) void load()
     else setValue(rooms)
+    // Keep one subscription for the window even while every favorites panel is closed.
     return () => { listeners.delete(listener) }
   }, [])
   return value
@@ -46,14 +55,35 @@ export function useSavedRooms(): SavedRoom[] | null {
 
 export function savedFor(list: readonly SavedRoom[] | null, role: SourceRole, descriptor: MediaDescriptor | null | undefined): SavedRoom | null {
   if (!list || !descriptor) return null
-  return list.find((room) => room.role === role && room.platform === descriptor.platform && room.input === descriptor.input) ?? null
+  const key = savedRoomKey(descriptor.platform ?? '', descriptor.input)
+  return list.find(room => room.role === role && room.platform === descriptor.platform
+    && (savedRoomKey(room.platform, room.input) === key || (room.metadata && savedRoomKey(room.platform, room.metadata.url) === key))) ?? null
 }
 
 export async function saveRoom(role: SourceRole, descriptor: MediaDescriptor): Promise<string | null> {
   if (!canSave(descriptor)) return '本地文件不能收藏'
   const result = await apiClient.feature('saveRoom', { role, input: descriptor.input, platform: descriptor.platform!, label: sourceTitle(descriptor) })
   if (!result.ok) return result.message
-  publish([result.value, ...(rooms ?? []).filter((room) => room.id !== result.value.id)])
+  const current = rooms?.find(room => room.id === result.value.id)
+  publish([current && (current.lastAttemptAt ?? 0) > (result.value.lastAttemptAt ?? 0) ? { ...current, label: result.value.label } : result.value,
+    ...(rooms ?? []).filter(room => room.id !== result.value.id)])
+  return null
+}
+
+export async function addSavedRoom(input: import('../../electron/featureContracts').SaveRoomInput): Promise<string | null> {
+  const result = await apiClient.feature('saveRoom', input)
+  if (!result.ok) return result.message
+  const current = rooms?.find(room => room.id === result.value.id)
+  publish([current && (current.lastAttemptAt ?? 0) > (result.value.lastAttemptAt ?? 0) ? { ...current, label: result.value.label } : result.value,
+    ...(rooms ?? []).filter(room => room.id !== result.value.id)])
+  return null
+}
+
+export async function refreshSavedRooms(id?: string): Promise<string | null> {
+  const started = revision
+  const result = await apiClient.feature('refreshSavedRooms', id ? { id } : undefined)
+  if (!result.ok) return result.message
+  if (started === revision) publish(result.value)
   return null
 }
 
@@ -68,4 +98,7 @@ export async function removeSavedRoom(id: string): Promise<string | null> {
 export function resetSavedRooms(): void {
   rooms = null
   pending = null
+  revision++
+  releaseEvents?.()
+  releaseEvents = null
 }
