@@ -20,7 +20,8 @@ import { normalizeBasicClockMemory, type BasicClockMemoryEntry } from '../core/b
 export const SETTINGS_KEY = 'stream-sync.settings.v1'
 
 export type CameraUpscaleTier = 'off' | 'performance' | 'quality'
-export type RecognitionMode = 'basic' | 'style-pack'
+/** style-pack is accepted only as a legacy input and normalized to frame-hash. */
+export type RecognitionMode = 'basic' | 'frame-hash' | 'style-pack'
 
 export interface DanmakuSettings {
   enabled: boolean
@@ -51,6 +52,8 @@ export interface AppSettings {
   recognitionMode: RecognitionMode
   /** Show the optional recognition diagnostics above the chat; recognition itself stays enabled. */
   basicRecognitionPanelVisible: boolean
+  frameHashRegions: Record<SourceRole, RoiRect>
+  frameHashMasks: RoiRect[]
   basicClockRoi: RoiRect | null
   basicClockMemory: BasicClockMemoryEntry[]
   detectWindowSeconds: number
@@ -95,6 +98,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoSyncIntervalSeconds: 30,
   recognitionMode: 'basic',
   basicRecognitionPanelVisible: false,
+  frameHashRegions: { official: { x: 0, y: 0, w: 1, h: 1 }, commentary: { x: 0, y: 0, w: 1, h: 1 } },
+  frameHashMasks: [],
   basicClockRoi: null,
   basicClockMemory: [],
   detectWindowSeconds: 3,
@@ -186,8 +191,14 @@ export function mergeSettings(raw: unknown): AppSettings {
     autoSyncEnabled: boolean(stored.autoSyncEnabled, defaults.autoSyncEnabled),
     // The sync design fixes the interval choices at 15/30/60 s.
     autoSyncIntervalSeconds: clamp(stored.autoSyncIntervalSeconds, 10, 600, 30),
-    recognitionMode: stored.recognitionMode === 'style-pack' ? 'style-pack' : 'basic',
     basicRecognitionPanelVisible: boolean(stored.basicRecognitionPanelVisible, defaults.basicRecognitionPanelVisible),
+    recognitionMode: stored.recognitionMode === 'style-pack' || stored.recognitionMode === 'frame-hash' ? 'frame-hash' : 'basic',
+    frameHashRegions: {
+      official: normalizeBasicClockRoi(stored.frameHashRegions?.official) ?? { x: 0, y: 0, w: 1, h: 1 },
+      commentary: normalizeBasicClockRoi(stored.frameHashRegions?.commentary) ?? { x: 0, y: 0, w: 1, h: 1 },
+    },
+    frameHashMasks: Array.isArray(stored.frameHashMasks)
+      ? stored.frameHashMasks.slice(0, 8).map(normalizeBasicClockRoi).filter((r): r is RoiRect => r !== null) : [],
     basicClockRoi: manualRoi,
     basicClockMemory: normalizeBasicClockMemory(stored.basicClockMemory),
     // Only 2 s and 3 s windows are offered; anything else came from a bad blob.

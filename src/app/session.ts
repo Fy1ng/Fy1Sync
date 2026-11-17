@@ -33,6 +33,7 @@ import type { BasicClockProgress } from '../recognition/protocol'
 import { basicClockSourceKey, findBasicClockMemory, forgetBasicClockMemory, rememberBasicClock } from '../core/basicClockMemory'
 import { getBasicClockSearchRoi } from '../core/basicClockSearch'
 import { AutoSyncController, type AutoSyncPhase, type AutoSyncRunResult } from '../sync/autoSync'
+import { FrameHashSampler } from '../sync/frameHashSampler'
 import { apiClient, type PresetSummary } from './apiClient'
 import type { AppSettings, RecognitionMode } from './settings'
 import { DEFAULT_SETTINGS, loadSettings, normalizeBasicClockRoi, saveSettings } from './settings'
@@ -126,6 +127,9 @@ const DANMAKU_STATE_TEXT: Record<string, string> = {
 }
 
 export class Session {
+  private frameSampler: FrameHashSampler | null = null
+  private frameStatus = '两路载入后开始积累共同画面'
+  get frameSyncStatus(): string { return this.frameStatus }
   readonly engine: MediaEngine
   readonly autoSync: AutoSyncController
   readonly timeline = new DanmakuTimeline()
@@ -224,6 +228,13 @@ export class Session {
 
     this.autoSync = new AutoSyncController(
       {
+        measureFrames: request => {
+          if (this.settingsValue.recognitionMode !== 'frame-hash') return null
+          this.refreshFrameCapture()
+          return this.frameSampler?.measure(request) ?? Promise.resolve({
+            samples: { official: 0, commentary: 0 }, message: '画面匹配尚未就绪, 请保持两路视频播放',
+          })
+        },
         sample: async (windowMs, onOutcome, signal) => {
           if (this.settingsValue.recognitionMode === 'basic') {
             // A learned region becomes active next run; never reconfigure a sampling window mid-run.
@@ -248,7 +259,7 @@ export class Session {
         },
         snapshot: (role) => this.engine.snapshot(role),
         canStart: () => SOURCE_ROLES.every(role => this.isSyncReady(role)),
-        hasProfile: () => SOURCE_ROLES.every((role) => this.profileFor(role) !== null),
+        hasProfile: () => this.settingsValue.recognitionMode === 'frame-hash' || SOURCE_ROLES.every((role) => this.profileFor(role) !== null),
         seek: (role, target) => this.seekAutomatically(role, target, false),
         seekManual: (role, target) => this.seekAutomatically(role, target, true),
         setPlaybackRate: (role, rate) => { this.engine.element(role).playbackRate = rate },
@@ -268,7 +279,7 @@ export class Session {
       },
     )
 
-    this.engine.subscribe(() => { this.refreshBasicWarmup(); this.notify() })
+    this.engine.subscribe(() => { this.refreshBasicWarmup(); this.refreshFrameCapture(); this.notify() })
     this.releaseBuffer = apiClient.subscribeBuffer((state) => {
       if (state.role !== 'official' && state.role !== 'commentary') return
       const previousNotice = this.bufferStates[state.role]?.notice
@@ -405,7 +416,29 @@ export class Session {
     return this.sampler
   }
 
+  private refreshFrameCapture(): void {
+    const enabled = !this.disposed && this.settingsValue.recognitionMode === 'frame-hash'
+      && typeof Worker !== 'undefined' && this.changingSources.size === 0
+      && SOURCE_ROLES.every(role => this.engine.getState()[role].status === 'ready')
+    if (!enabled) {
+      this.frameSampler?.dispose()
+      this.frameSampler = null
+      return
+    }
+    if (this.frameSampler) return
+    this.frameSampler = new FrameHashSampler({
+      video: role => this.engine.element(role),
+      revision: role => {
+        const state = this.engine.playbackSample(role)
+        return `${this.sourceGeneration[role]}:${state.observationRevision}:${state.discontinuities}`
+      },
+      config: () => ({ regions: this.settingsValue.frameHashRegions, masks: this.settingsValue.frameHashMasks }),
+      onStatus: status => { this.frameStatus = status; this.notify() },
+    })
+  }
+
   profileFor(role: SourceRole): ActiveProfile | null {
+    if (this.settingsValue.recognitionMode === 'frame-hash') return null
     if (this.settingsValue.recognitionMode !== 'basic') return this.profileMap[role]
     return this.basicSamplingProfiles?.[role] ?? this.resolveBasicProfile(role)
   }
@@ -520,7 +553,6 @@ export class Session {
   }
 
   setProfile(role: SourceRole, profile: ActiveProfile | null): void {
-    this.changeRecognitionMode('style-pack', false)
     ++this.profileRevision
     ++this.autoRequestRevision
     this.autoSync.cancel(false)
@@ -530,7 +562,6 @@ export class Session {
 
   /** Both roles share one countdown profile: it is the same on-screen clock. */
   setProfileForAll(profile: ActiveProfile | null): void {
-    this.changeRecognitionMode('style-pack', false)
     this.storeProfilesForAll(profile)
   }
 
@@ -547,18 +578,18 @@ export class Session {
 
   private recognitionWindowSeconds(): number {
     return this.settingsValue.recognitionMode === 'basic'
-      ? BASIC_DETECT_WINDOW_SECONDS : this.settingsValue.detectWindowSeconds
+      ? BASIC_DETECT_WINDOW_SECONDS : 9
   }
 
   setRecognitionMode(mode: RecognitionMode): void {
-    this.changeRecognitionMode(mode, true)
+    this.changeRecognitionMode(mode === 'style-pack' ? 'frame-hash' : mode, true)
   }
 
-  private changeRecognitionMode(mode: RecognitionMode, restoreSavedPack: boolean): void {
+  private changeRecognitionMode(mode: RecognitionMode, _restoreSavedPack: boolean): void {
     if (mode === this.settingsValue.recognitionMode) return
     this.basicObservedRegions = { official: null, commentary: null }
     this.clearBasicSampling()
-    const revision = ++this.profileRevision
+    ++this.profileRevision
     ++this.autoRequestRevision
     this.autoSync.cancel(false)
     this.sampler?.dispose()
@@ -566,12 +597,6 @@ export class Session {
     this.basicProgressMap = { official: null, commentary: null }
     this.updateSettings({ recognitionMode: mode })
     this.autoSync.configure({ detectWindowSeconds: this.recognitionWindowSeconds() })
-    const id = this.settingsValue.profileId
-    if (restoreSavedPack && mode === 'style-pack' && id && SOURCE_ROLES.some(role => this.profileMap[role] === null)) {
-      void this.fetchProfile(id, revision).then(profile => {
-        if (profile && revision === this.profileRevision && !this.disposed) this.storeProfilesForAll(profile)
-      })
-    }
   }
 
   /**
@@ -677,8 +702,15 @@ export class Session {
   // ---------------------------------------------------------------- settings
 
   updateSettings(patch: Partial<AppSettings>): void {
+    if (patch.recognitionMode === 'style-pack') patch = { ...patch, recognitionMode: 'frame-hash' }
+    if (patch.recognitionMode !== undefined || patch.frameHashRegions || patch.frameHashMasks) {
+      this.autoSync.cancel(false)
+      this.frameSampler?.dispose()
+      this.frameSampler = null
+    }
     this.settingsValue = { ...this.settingsValue, ...patch }
     saveSettings(this.settingsValue, this.storage)
+    this.refreshFrameCapture()
     this.notify()
   }
 
@@ -1360,6 +1392,8 @@ export class Session {
   }
 
   private invalidateAutomaticWork(role: SourceRole): void {
+    this.frameSampler?.dispose()
+    this.frameSampler = null
     this.clearBasicSampling()
     this.basicWarmupContexts[role] = null
     this.basicObservedRegions[role] = null
@@ -1646,6 +1680,7 @@ export class Session {
     this.stopScheduler()
     this.disconnectDanmaku()
     this.autoSync.dispose()
+    this.frameSampler?.dispose()
     this.sampler?.dispose()
     this.engine.dispose()
     this.listeners.clear()

@@ -87,7 +87,7 @@ export class WasmWorkerEngine implements WorkerEngine {
           if (!preserveBasic) {
             const templates = this.makeBasicTemplates()
             for (const char of '0123456789:') {
-              if (!templates[char]?.length) throw new Error('基础倒计时数字字形不可用, 请切换样式包模式')
+              if (!templates[char]?.length) throw new Error('基础倒计时数字字形不可用, 可尝试画面匹配模式')
             }
             this.basicTemplates = JSON.stringify(templates)
             this.basicSampleCount = Object.values(templates).reduce((count, samples) => count + samples.length, 0)

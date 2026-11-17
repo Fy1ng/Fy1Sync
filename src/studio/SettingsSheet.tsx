@@ -4,8 +4,7 @@ import { displayError } from '../core/errorDetails'
  * 设置: everything that is not watching, in one window. Sections run across the top; each
  * keeps its own pages down the left. Nothing here is needed to start watching.
  *
- * The 倒计时样式 section is a doorway rather than a page: the editor needs the whole window,
- * so it opens in place of the player (an in-page route that keeps both streams loaded).
+ * Frame matching regions are configured in place while both streams stay loaded.
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -20,14 +19,13 @@ import type { ToolsStatus } from '../../electron/toolsService'
 import type { DouyinSendState } from '../core/douyinMessage'
 import { AppUpdateSettings } from './about/AppUpdate'
 import { CaptureSettings } from './capture/Capture'
-import { routeLink } from '../app/navigate'
 import { DouyuDesk } from './douyu/DouyuDesk'
 import { RoomInsights } from './insights/RoomInsights'
 import { DanmakuRecords, type RecordsTab } from './records/DanmakuRecords'
-import { Icon, Segmented, Sheet, SideTabs, Switch } from './kit'
+import { Segmented, Sheet, SideTabs, Switch } from './kit'
 import { PipSettings } from './pip/PipSettings'
 import { remember, useRemembered } from '../app/remembered'
-import { StylePackSyncSettings } from './stylepacks/StylePackSync'
+import { FrameHashSettings } from './FrameHashSettings'
 import { isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
 import { PlatformAccount } from './login/PlatformAccount'
 import { refreshLoginStatus } from './login/status'
@@ -43,7 +41,7 @@ const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: 'accounts', label: '账号' },
   { id: 'records', label: '弹幕记录' },
   { id: 'insights', label: '房间数据' },
-  { id: 'editor', label: '倒计时样式' },
+  { id: 'editor', label: '画面匹配' },
 ]
 
 export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
@@ -85,8 +83,7 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
             ? <RoomInsights room={room} />
             : <p className="settings-empty">连接斗鱼弹幕房间后显示房间数据</p>)}
           {section === 'editor' && <div className="settings-page">
-            <StylePackSyncSettings />
-            <EditorDoor onClose={onClose} />
+            <FrameHashSettings />
           </div>}
         </div>
       </div>
@@ -145,15 +142,6 @@ function General(): React.ReactNode {
         {page === 'about' && <Group title="关于"><AppUpdateSettings /></Group>}
       </div>
     </SideTabs>
-  )
-}
-
-function EditorDoor({ onClose }: { onClose: () => void }): React.ReactNode {
-  return (
-    <div className="settings-door">
-      <p>基础模式会自动查找倒计时. 需要适配特定赛事 HUD 时, 可制作或导入样式包, 再在对齐选项中切换到样式包模式. 两路直播保持载入.</p>
-      <a className="btn-solid" {...routeLink('/admin', onClose)}><Icon name="tune" />打开倒计时样式编辑器</a>
-    </div>
   )
 }
 
@@ -325,12 +313,11 @@ function AlignPrefs(): React.ReactNode {
           options={[2, 5, 10].map((value) => ({ value, label: `${value} 秒` }))} />
       </div>
       <div className="field-stack">
-        <span className="field-label">倒计时识别时长</span>
+        <span className="field-label">识别时长</span>
         {settings.recognitionMode === 'basic' ? (
           <p className="muted">基础模式载入后自动预识别, 最多观察 6 秒. 连续跳秒证据足够即可提前结束.</p>
         ) : (
-          <Segmented label="倒计时识别时长" value={settings.detectWindowSeconds} onChange={(seconds) => session.setDetectWindow(seconds)}
-            options={[{ value: 2, label: '2 秒 (较快)' }, { value: 3, label: '3 秒 (较稳)' }]} />
+          <p className="muted">画面匹配最多观察 9 秒. 延迟较大时需要先积累共同片段, 调整后会重新采集画面复核.</p>
         )}
       </div>
       <div className="field-stack">

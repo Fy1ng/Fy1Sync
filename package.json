@@ -12,6 +12,7 @@
     "dev": "node scripts/start-dev.mjs",
     "build": "npm run build:wasm && npm run typecheck && vite build && node scripts/build-electron.mjs",
     "start": "node scripts/start-electron.mjs",
+    "start:frame-sync-test": "node scripts/start-frame-sync-test.mjs",
     "configure:clock-search": "node scripts/configure-clock-search.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
