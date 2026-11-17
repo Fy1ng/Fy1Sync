@@ -14,7 +14,6 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { routeLink } from '../app/navigate'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { Session } from '../app/session'
 import { MAX_OFFSET_SECONDS, SOURCE_ROLES, type SourceRole } from '../core/types'
@@ -187,13 +186,15 @@ const AUTO_ALIGN_ADAPTING = true
 const AUTO_ALIGN_REASON = '各赛事的 HUD 布局, 字体和清晰度尚未全部适配, 回放, 暂停或切镜头也可能影响识别.'
 /** Both the button and its shortcut explain the same current limitations before a run. */
 const AUTO_ALIGN_LIMITS = `自动对齐适配中: ${AUTO_ALIGN_REASON} 请在同一回合的正式倒计时正常走动时同步; 不准时可手动微调.`
+const FRAME_ALIGN_REASON = '两路需要包含相同视角的共同画面, 静止、重复片段或遮挡过多时可能无法确认匹配.'
 const informedSessions = new WeakSet<Session>()
 
 /** 自动对齐 from its button or the A key. */
 export function startAutoAlign(session: Session): void {
   if (AUTO_ALIGN_ADAPTING && !informedSessions.has(session)) {
     informedSessions.add(session)
-    session.notice('warn', AUTO_ALIGN_LIMITS)
+    session.notice('warn', session.settings.recognitionMode === 'frame-hash'
+      ? `画面匹配适配中: ${FRAME_ALIGN_REASON} 匹配失败时可继续播放后重试.` : AUTO_ALIGN_LIMITS)
   }
   if (session.settings.recognitionMode === 'basic' && !session.settings.sidebarVisible) session.updateSettings({ sidebarVisible: true })
   void session.syncNow()
@@ -214,12 +215,12 @@ export function AutoAlign(): React.ReactNode {
       {running ? (
         <button type="button" className="align-main is-running" onClick={() => session.cancelAutoSync()}
           title="停止对齐">
-          <span className="align-phase">{PHASE[autoSync.phase]}</span>
+          <span className="align-phase">{autoSync.phase === 'sampling' && settings.recognitionMode === 'frame-hash' ? '匹配画面...' : PHASE[autoSync.phase]}</span>
           <Icon name="close" />
         </button>
       ) : (
         <button type="button" className="align-main" disabled={busy || !bothReady} onClick={() => startAutoAlign(session)}
-          title={bothReady ? '识别两路画面中的比赛倒计时并自动对齐 (A)' : '两路均载入后才能对齐'}>
+          title={bothReady ? (settings.recognitionMode === 'frame-hash' ? '匹配两路共同画面并自动对齐 (A)' : '识别两路画面中的比赛倒计时并自动对齐 (A)') : '两路均载入后才能对齐'}>
           自动对齐
           {AUTO_ALIGN_ADAPTING && <span className="align-beta" aria-hidden="true">适配中</span>}
         </button>
@@ -231,7 +232,7 @@ export function AutoAlign(): React.ReactNode {
       <Popover {...menu.popover} className="align-menu" label="对齐选项">
         {AUTO_ALIGN_ADAPTING && (
           <p className="align-testing"><span className="tag">适配中</span>
-            {AUTO_ALIGN_REASON} 对不上时用回退画面或快进画面微调, 也可点中间的秒数直接输入.</p>
+            {settings.recognitionMode === 'frame-hash' ? FRAME_ALIGN_REASON : AUTO_ALIGN_REASON} 对不上时用回退画面或快进画面微调, 也可点中间的秒数直接输入.</p>
         )}
         <Switch label="比赛中保持对齐" detail={autoSync.nextRunInSeconds !== null ? `${Math.max(0, Math.round(autoSync.nextRunInSeconds))} 秒后再次对齐` : undefined}
           checked={settings.autoSyncEnabled} onChange={(checked) => session.setAutoSyncEnabled(checked)} />
@@ -247,26 +248,17 @@ export function AutoAlign(): React.ReactNode {
         <div className="menu-rule" />
         <Segmented label="识别模式" value={settings.recognitionMode}
           onChange={(mode) => session.setRecognitionMode(mode)}
-          options={[{ value: 'basic', label: '基础模式' }, { value: 'style-pack', label: '样式包模式' }]} />
+          options={[{ value: 'basic', label: '基础模式' }, { value: 'frame-hash', label: '画面匹配' }]} />
         {settings.recognitionMode === 'basic' ? (
           <p className="menu-meta">自动查找 0:01-1:55 的倒计时, 适用于 CS2 同一回合的正式倒计时. 首次识别需要观察几个跳秒, 未能确定唯一时钟时不会调整位置.</p>
         ) : (
-          <label className="field-row">
-            <span>倒计时样式</span>
-            <select value={settings.profileId} disabled={snapshot.presets.length === 0}
-              onChange={(event) => void session.selectProfile(event.target.value)}>
-              <option value="">请选择手动样式包</option>
-              {snapshot.presets.map((preset) => (
-                <option key={preset.id} value={preset.id} disabled={preset.templateChars === 0}>{preset.name}</option>
-              ))}
-            </select>
-          </label>
+          <div className="menu-meta" role="status"><p>匹配两路相同视角的共同画面. 区域和广告遮挡可在设置的画面匹配页调整.</p>
+            <p>{session.frameSyncStatus}</p></div>
         )}
         <div className="row-split">
           <button type="button" className="btn-quiet" disabled={busy || !bothReady} onClick={() => void session.measureOnce()}>
             仅测量
           </button>
-          <a className="btn-quiet" {...routeLink('/admin')}>编辑倒计时样式</a>
         </div>
 
         {result && (

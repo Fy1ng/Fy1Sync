@@ -29,6 +29,7 @@ import type {
 } from '../core/types'
 import { MIN_SYNC_CONFIDENCE, SOURCE_ROLES } from '../core/types'
 import { rateNudgeAction, rateNudgeSeekThreshold } from './rateNudge'
+import type { FrameMeasurement, FrameMeasureRequest } from './frameHashSampler'
 
 export type AutoSyncMode = 'manual' | 'silent'
 
@@ -42,6 +43,7 @@ export type AutoSyncPhase =
   | 'failed'
 
 export type AutoSyncFailure =
+  | { kind: 'frame-match'; message: string }
   | { kind: 'rejected'; reason: OffsetRejection; message: string }
   | { kind: 'no-samples'; message: string }
   | { kind: 'not-ready'; message: string }
@@ -71,6 +73,8 @@ export interface AutoSyncRunResult {
 }
 
 export interface AutoSyncDeps {
+  /** Optional content measurement; null selects the existing countdown path. */
+  measureFrames?: (request: FrameMeasureRequest) => Promise<FrameMeasurement> | null
   /** Sample both sources for `windowMs`, feeding outcomes to the callback. */
   sample: (
     windowMs: number,
@@ -287,7 +291,7 @@ export class AutoSyncController {
       if (this.deps.hasProfile && !this.deps.hasProfile()) {
         return this.fail(startedAt, dryRun, {
           kind: 'not-ready',
-          message: '样式包模式需要先选择手动提供的样式包, 再识别倒计时和自动对齐',
+          message: '倒计时识别尚未就绪, 请等待识别完成后重试',
         })
       }
 
@@ -316,6 +320,8 @@ export class AutoSyncController {
         })
       }
 
+      if (evidence.frameFailure) return this.fail(startedAt, dryRun,
+        { kind: 'frame-match', message: evidence.frameFailure }, { samples, jumps })
       if (samples.official === 0 || samples.commentary === 0) {
         return this.fail(
           startedAt,
@@ -332,7 +338,7 @@ export class AutoSyncController {
       }
 
       this.setPhase('estimating')
-      const estimate = estimateOffset(evidence.fresh.official, evidence.fresh.commentary, {
+      const estimate = evidence.frameEstimate ?? estimateOffset(evidence.fresh.official, evidence.fresh.commentary, {
         ...this.deps.estimateOptions,
         appliedOffsetSeconds: offsetFromRewind(applied),
       })
@@ -577,7 +583,18 @@ export class AutoSyncController {
     samples: Record<SourceRole, number>,
     allJumps: Record<SourceRole, ClockJumpEvent[]>,
     estimateOptions: EstimateOptions,
-  ): Promise<{ fresh: Record<SourceRole, ClockJumpEvent[]>; interrupted: boolean; ready: boolean; endedEarly: boolean; readingsFresh: boolean }> {
+  ): Promise<{ fresh: Record<SourceRole, ClockJumpEvent[]>; interrupted: boolean; ready: boolean; endedEarly: boolean; readingsFresh: boolean;
+    frameEstimate?: OffsetEstimate; frameFailure?: string }> {
+    const selfForFrames = this
+    const frames = this.deps.measureFrames?.({ windowMs, appliedOffsetSeconds: estimateOptions.appliedOffsetSeconds ?? 0,
+      fresh: this.phaseValue === 'verifying', signal: { get aborted() { return selfForFrames.stale(token) } } })
+    if (frames) {
+      const result = await frames
+      for (const role of SOURCE_ROLES) samples[role] += result.samples[role]
+      return { fresh: { official: [], commentary: [] }, interrupted: false, ready: !!result.estimate,
+        readingsFresh: !!result.estimate, endedEarly: false, frameEstimate: result.estimate,
+        frameFailure: result.estimate ? undefined : result.message ?? '未找到可靠的共同画面' }
+    }
     const detectors = { official: new ClockJumpDetector('official', this.options.jumpOptions),
       commentary: new ClockJumpDetector('commentary', this.options.jumpOptions) }
     const fresh: Record<SourceRole, ClockJumpEvent[]> = { official: [], commentary: [] }
@@ -692,17 +709,21 @@ export class AutoSyncController {
         samples, allJumps, estimateOptions)
       if (this.stale(token)) return { divergence, failure: cancelled() }
       update(this.progressRewind(carried, beforeSample))
+      if (evidence.frameFailure) {
+        if (pass < passes) continue
+        return { divergence, failure: failed(`画面复核未通过: ${evidence.frameFailure}`) }
+      }
       if (evidence.interrupted || !evidence.readingsFresh || (evidence.endedEarly && !evidence.ready)) {
         if (pass < passes) continue
         return { divergence, failure: failed('复核期间播放发生缓冲或跳转, 尚未确认对齐') }
       }
       const fresh = evidence.fresh
-      const measured = estimateOffset(fresh.official, fresh.commentary, {
+      const measured = evidence.frameEstimate ?? estimateOffset(fresh.official, fresh.commentary, {
         ...estimateOptions, appliedOffsetSeconds: offsetFromRewind(carried),
       })
-      if (measured.status === 'rejected' || fresh.official.length < 2 || fresh.commentary.length < 2) {
+      if (measured.status === 'rejected' || (!evidence.frameEstimate && (fresh.official.length < 2 || fresh.commentary.length < 2))) {
         if (pass < passes) continue
-        const reason = measured.status === 'rejected' ? OFFSET_REJECTION_TEXT[measured.reason] : '连续跳秒证据不足'
+        const reason = evidence.frameFailure ?? (measured.status === 'rejected' ? OFFSET_REJECTION_TEXT[measured.reason] : '连续跳秒证据不足')
         return { divergence, failure: failed(`复核未通过: ${reason}`) }
       }
       divergence = Math.abs(measured.residualSeconds)
