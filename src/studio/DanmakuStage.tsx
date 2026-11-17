@@ -13,6 +13,8 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { ErrorDetailsButton, ErrorText } from '../ui/ErrorDetails'
+import type { DisplayError } from '../core/errorDetails'
 import { useAnimationFrame } from '../app/hooks'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { AREA_FRACTION } from '../core/danmakuLanes'
@@ -46,7 +48,8 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
   const { danmaku } = snapshot.settings
   const composer = useComposer()
   const actions = useDanmakuActions()
-  const [note, setNote] = useState<string | null>(null)
+  const [note, setNote] = useState<string | DisplayError | null>(null)
+  const noteRevision = useRef(0)
   const gapRef = useRef(snapshot.danmakuPreferences.verticalGapPx)
   gapRef.current = snapshot.danmakuPreferences.verticalGapPx
 
@@ -75,6 +78,7 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
 
   /** Let the held message move again, from where it stopped. */
   const release = useCallback(() => {
+    noteRevision.current++
     cancelLeave()
     const held = menuRef.current?.item
     if (held?.held) {
@@ -91,6 +95,7 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
   }
 
   const flush = useCallback(() => {
+    noteRevision.current++
     layerRef.current?.clear()
     cancelLeave()
     setMenu(null)
@@ -233,10 +238,11 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
           <span className="dm-menu-user" title={message.user}>{message.user}</span>
           {writes && !readOnly && <button type="button" disabled={!!repeatProblem} title={repeatProblem ?? '发送相同内容'}
             onClick={() => { void composer.repeat(message.text); release() }}>+1</button>}
+          {writes && !readOnly && repeatProblem && composer.repeatErrorDetail(message.text) && <ErrorDetailsButton error={composer.repeatErrorDetail(message.text)} />}
           {writes && !readOnly && <button type="button" disabled={!composer.canEdit} title={composer.canEdit ? `回复 ${message.user}` : '连接弹幕并登录斗鱼后可回复'}
             onClick={() => { composer.reply(message.user); onReply(); release() }}>回复</button>}
           {!readOnly && <button type="button" title="收藏到本机"
-            onClick={() => { void actions.favorite(message).then(setNote) }}>收藏</button>}
+            onClick={() => { const mine = ++noteRevision.current; const item = menu.item; void actions.favorite(message).then(note => { if (mine === noteRevision.current && menuRef.current?.item === item) setNote(note) }) }}>收藏</button>}
           <button type="button" title="复制弹幕内容" disabled={actions.copying}
             onClick={() => { void actions.copy(message.text); release() }}>复制</button>
           <button type="button" title={`不再显示 ${message.user} 的弹幕`}
@@ -246,7 +252,7 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
           )}
           {!readOnly && uid && <button type="button" title="查询该用户的历史弹幕" onClick={() => { actions.history(uid); release() }}>历史</button>}
           {writes && !readOnly && uid && <button type="button" title="在当前房间禁言该用户" onClick={() => { actions.mute(message); release() }}>禁言</button>}
-          {note && <span className="dm-menu-note" role="status">{note}</span>}
+          {note && <span className="dm-menu-note" role="status">{typeof note === 'string' ? note : <ErrorText error={note.detail ?? note} message={note.message} />}</span>}
         </div>
       )}
     </>

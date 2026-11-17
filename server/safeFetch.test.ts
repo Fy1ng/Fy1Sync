@@ -7,6 +7,21 @@ const proxyConfig = resolveConfig({}, '/tmp').proxy
 /** Pretend every hostname resolves to a public address unless stated otherwise. */
 const publicResolver = async () => ['93.184.216.34']
 
+it('returns a redirect to its owner without forwarding credentials or resolving the next host', async () => {
+  const requests: string[] = []
+  const result = await safeFetch('https://usher.ttvnw.net/start', { ...proxyConfig, maxRedirects: 0 }, {
+    manualRedirect: true, headers: { Cookie: 'sessionid=synthetic' }, resolve: publicResolver,
+    fetchImpl: async input => {
+      requests.push(String(input))
+      return new Response('redirect', { status: 302, headers: { location: 'https://outside.invalid/callback' } })
+    },
+  })
+  expect(result.response.status).toBe(302)
+  expect(result.finalUrl.href).toBe('https://usher.ttvnw.net/start')
+  expect(requests).toEqual(['https://usher.ttvnw.net/start'])
+  await result.response.body?.cancel()
+})
+
 describe('checkUrl', () => {
   it('accepts an allow-listed host that resolves publicly', async () => {
     const result = await checkUrl(

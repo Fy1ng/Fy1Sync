@@ -79,6 +79,34 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 describe('signed online update settings', () => {
+  it('uses a channel own failure fields without borrowing the other channel error', async () => {
+    const failedFrontend = { ...empty, phase: 'error' as const, message: '前端下载失败', errorDetail: { code: 'frontend-fetch', httpStatus: 429 } }
+    const failedApplication = { ...empty, phase: 'error' as const, message: '完整更新校验失败', errorDetail: { code: 'application-signature', exitCode: 2 } }
+    current = { ...base, frontend: failedFrontend, application: failedApplication }
+    render(<AppUpdateSettings />)
+    await screen.findByText('前端下载失败')
+    fireEvent.click(frontend().getByRole('button', { name: '查看原始错误' }))
+    expect(frontend().getByRole('region', { name: '原始错误信息' })).toHaveTextContent('frontend-fetch')
+    expect(frontend().getByRole('region', { name: '原始错误信息' })).not.toHaveTextContent('application-signature')
+    fireEvent.click(application().getByRole('button', { name: '查看原始错误' }))
+    expect(application().getByRole('region', { name: '原始错误信息' })).toHaveTextContent('application-signature')
+    expect(application().getByRole('region', { name: '原始错误信息' })).not.toHaveTextContent('frontend-fetch')
+  })
+  it('retains failed update response fields while rereading state and exposes them beside the error', async () => {
+    handlers.set('checkOnlineUpdate', () => ({ ok: false, code: 'signature-invalid', message: '更新校验失败', detail: { manifestRevision: 7, stderr: 'invalid signature', exitCode: 2 } }))
+    render(<AppUpdateSettings />)
+    const check = screen.getByRole('button', { name: '检查更新' })
+    await waitFor(() => expect(check).toBeEnabled())
+    fireEvent.click(check)
+    const alert = await screen.findByRole('alert')
+    fireEvent.click(within(alert).getByRole('button', { name: '查看原始错误' }))
+    const original = within(alert).getByRole('region', { name: '原始错误信息' })
+    expect(original).toHaveTextContent('signature-invalid')
+    expect(original).toHaveTextContent('manifestRevision')
+    expect(original).toHaveTextContent('invalid signature')
+    expect(original).toHaveTextContent('exitCode')
+    expect(calls('getOnlineUpdateState')).toHaveLength(2)
+  })
   it('reads local state on mount without checking, downloading or installing', async () => {
     render(<AppUpdateSettings />)
     expect(await screen.findByText('0.2.0')).toBeInTheDocument()

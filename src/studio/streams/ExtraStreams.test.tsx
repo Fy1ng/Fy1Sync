@@ -5,7 +5,7 @@
  */
 
 import { StrictMode } from 'react'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { StreamSyncerBridge } from '../../../electron/contracts'
@@ -13,6 +13,7 @@ import type { FeatureEvent } from '../../../electron/featureContracts'
 import type { StreamSessionView, StreamSessionsSnapshot } from '../../../electron/streamSessions'
 import { ExtraStreams, openInputFor } from './ExtraStreams'
 import { MAX_ENTRIES, boundLayout, clampRect, pruneLayout, readLayout, resizedRect, writeLayout } from './layout'
+import type { MediaError } from '../../media/hlsController'
 
 const fakes = vi.hoisted(() => ({ created: [] as FakeMediaShape[] }))
 interface FakeMediaShape {
@@ -20,6 +21,7 @@ interface FakeMediaShape {
   video: HTMLVideoElement
   disposed: boolean
   load: ReturnType<typeof vi.fn>
+  emitError: (error: MediaError | null) => void
   controls: { seekBy: ReturnType<typeof vi.fn>; returnToLive: ReturnType<typeof vi.fn>; toggleNativePip: ReturnType<typeof vi.fn> }
 }
 
@@ -28,6 +30,9 @@ vi.mock('../../media/independentMedia', () => ({
     readonly video: HTMLVideoElement
     disposed = false
     load = vi.fn(async () => {})
+    private readonly errorListeners = new Set<(error: MediaError | null) => void>()
+    subscribeErrors(listener: (error: MediaError | null) => void): () => void { this.errorListeners.add(listener); listener(null); return () => { this.errorListeners.delete(listener) } }
+    emitError(error: MediaError | null): void { for (const listener of this.errorListeners) listener(error) }
     controls = {
       seekBy: vi.fn(async () => ({ ok: true, target: 0, clamped: true, reason: null })),
       returnToLive: vi.fn(async () => ({ ok: true, target: 10, clamped: false, reason: null })),
@@ -202,6 +207,21 @@ describe('extra stream windows', () => {
     fireEvent.click(screen.getByRole('button', { name: '系统画中画' }))
     expect(fakes.created[0]!.controls.toggleNativePip).toHaveBeenCalledTimes(1)
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('当前环境不支持系统画中画'))
+    fireEvent.click(screen.getByRole('button', { name: '查看原始错误' }))
+    expect(screen.getByRole('region', { name: '原始错误信息' })).toHaveTextContent('unsupported')
+  })
+
+  it('shows the attachment diagnostic fields and clears the failure on recovery', async () => {
+    renderStreams()
+    await flush()
+    const media = fakes.created[0]!
+    act(() => media.emitError({ fatal: true, message: 'HLS 分片失败', detail: { type: 'networkError', details: 'fragLoadError', status: 503, token: 'private-token' } }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看原始错误' }))
+    const details = screen.getByRole('region', { name: '原始错误信息' })
+    expect(JSON.parse(details.querySelector('code')!.textContent!)).toMatchObject({ message: 'HLS 分片失败', detail: { type: 'networkError', details: 'fragLoadError', status: 503, token: '[redacted]' } })
+    act(() => media.emitError(null))
+    expect(within(windowFor(ID)).queryByRole('button', { name: '查看原始错误' })).toBeNull()
+    expect(screen.queryByText('HLS 分片失败')).toBeNull()
   })
 
   it('switches quality and opens the enhanced window for this stream', async () => {

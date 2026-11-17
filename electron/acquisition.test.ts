@@ -221,10 +221,12 @@ describe('main acquisition boundary', () => {
     expect(h.runYtDlp).toHaveBeenCalledTimes(3)
   })
 
-  it.each(['https://user:password@8.8.8.8/x.flv'])('rejects credential-bearing direct input %s before spawning', async (input) => {
+  it.each(['https://user:password@8.8.8.8/x.flv'])('accepts user-provided media authentication without exposing it: %s', async (input) => {
     const h = harness()
-    await expect(h.acquisition.resolve(input, 'direct', 'official')).rejects.toHaveProperty('reason')
-    expect(h.buffer.start).not.toHaveBeenCalled()
+    const result = await h.acquisition.resolve(input, 'direct', 'official')
+    expect(result.ok).toBe(true)
+    expect(JSON.stringify(result)).not.toMatch(/password|Authorization/)
+    expect(h.buffer.start).toHaveBeenCalledOnce()
   })
   it.each(['http://127.0.0.1:8000/x.mp4', 'https://custom.example:8080/x.m3u8', 'http://192.168.1.5:8080/live.flv'])('accepts explicitly selected custom and local media %s', async input => {
     const dns = vi.fn(async () => ['127.0.0.1'])
@@ -270,19 +272,34 @@ describe('main acquisition boundary', () => {
     expect((await operation).ok).toBe(true)
   })
 
-  it('does not publish a source on a premature ready event with less than four seconds', async () => {
+  it('publishes the first complete video segment before the synchronization buffer is ready', async () => {
+    const h = harness()
+    h.buffer.start.mockImplementationOnce(async (_role, prepare) => {
+      await prepare()
+      h.emit({ role: 'official', state: 'buffering', hasVideo: true, completeSegments: 1, seconds: 2 })
+      return { url: 'app://app/buffer/first-segment/index.m3u8' }
+    })
+    expect(await h.acquisition.resolve('https://8.8.8.8/live.flv', 'direct', 'official'))
+      .toMatchObject({ ok: true, stream: { url: 'app://app/buffer/first-segment/index.m3u8' } })
+  })
+
+  it.each([
+    { hasVideo: false, completeSegments: 1, seconds: 2 },
+    { hasVideo: true, completeSegments: 0, seconds: 2 },
+    { hasVideo: true, completeSegments: 1, seconds: 0 },
+  ])('does not publish an incomplete video buffer: %j', async incomplete => {
     const h = harness()
     let started = false
     h.buffer.start.mockImplementationOnce(async (_role, prepare) => {
       await prepare(); started = true
-      h.emit({ role: 'official', state: 'ready', hasVideo: true, completeSegments: 1, seconds: 0.033333 })
+      h.emit({ role: 'official', state: 'buffering', ...incomplete })
       return { url: 'app://app/buffer/partial/index.m3u8' }
     })
     let finished = false
     const operation = h.acquisition.resolve('https://8.8.8.8/live.flv', 'direct', 'official').then(value => { finished = true; return value })
     await vi.waitFor(() => expect(started).toBe(true))
     expect(finished).toBe(false)
-    h.emit({ role: 'official', state: 'ready', hasVideo: true, completeSegments: 1, seconds: 4 })
+    h.emit({ role: 'official', state: 'buffering', hasVideo: true, completeSegments: 1, seconds: 2 })
     expect((await operation).ok).toBe(true)
   })
 
@@ -334,7 +351,7 @@ describe('main acquisition boundary', () => {
       proxy: h.proxy, dns: async () => ['8.8.8.8'], ensureTools })
     const service = createDesktopService({ dataDir: '.', proxy: h.proxy, registerMedia: () => '', acquisition })
     expect(await service.invoke('resolve', { input: 'not-a-stream-at-all' })).toMatchObject({ ok: true, value: { ok: false, failure: { code: 'unsupported-url' } } })
-    expect(await service.invoke('resolve', { input: 'https://user:PRIVATE@custom.example/live', platform: 'direct' })).toMatchObject({ ok: false, code: 'invalid-url' })
+    expect(await service.invoke('resolve', { input: 'file:///private/video.mp4', platform: 'direct' })).toMatchObject({ ok: true, value: { ok: false, failure: { code: 'unsupported-url' } } })
     expect(ensureTools).not.toHaveBeenCalled()
     service.dispose()
   })
@@ -431,7 +448,8 @@ describe('domestic acquisition credential boundaries', () => {
     const service = createDesktopService({ dataDir: '.', proxy: h.proxy, registerMedia: () => '', acquisition: h.acquisition })
     const result = await service.invoke('resolve', { input: '123456', platform: 'bilibili', role: 'official' })
     expect(result).toMatchObject({ ok: true, value: { ok: false, failure: { code: 'login-required', hint: expect.stringContaining('登录') } } })
-    expect(JSON.stringify(result)).not.toMatch(/SESSDATA|PRIVATE/)
+    expect(JSON.stringify(result)).not.toContain('PRIVATE')
+    expect(result).toMatchObject({ ok: true, value: { ok: false, failure: { detail: { code: -101 } } } })
     expect(h.buffer.start).not.toHaveBeenCalled()
     service.dispose()
   })

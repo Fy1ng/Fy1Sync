@@ -6,12 +6,14 @@ import { rewritePlaylist, shouldRewrite } from './hlsRewrite'
 import type { NetworkContext } from './networkPolicy'
 import { classifyNetworkFailure, type StreamFailure } from './networkFailure'
 import { hasSensitiveHeaders, PinnedDispatcherPool, ProxyError, safeFetch, type Resolver } from './safeFetch'
+import { mediaUrlCredentials, withoutSourceCredentials } from './mediaCredentials'
 
 export const MEDIA_ORIGIN = 'app://app'
 const MAX_PLAYLIST_BYTES = 4 * 1_048_576
 const MAX_RESOURCES = 8192
 const TTL_MS = 10 * 60_000
 const RESPONSE_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag']
+class MediaCapacityError extends Error {}
 export interface MediaDeps {
   config: ProxyConfig
   resolve?: Resolver
@@ -19,25 +21,33 @@ export interface MediaDeps {
   now?: () => number
   network?: NetworkContext
   publicOrigin?: string
+  maxResources?: number
   onFailure?: (failure: StreamFailure, network?: NetworkContext) => void
   /** Observed media bytes delivered to the consumer, excluding rewritten playlists. */
   onBytes?: (bytes: number, network?: NetworkContext) => void
 }
-type Resource = { url: string; touched: number; headers?: Record<string,string>; network?: NetworkContext; access: MediaAccess; identity: string }
+type Resource = { url: string; touched: number; headers?: Record<string,string>; network?: NetworkContext; access: MediaAccess; identity: string; children: Set<string>; readers: number }
 
 export class MediaRegistry {
   private readonly resources = new Map<string, Resource>()
   private readonly ids = new Map<string, string>()
   private readonly pool = new PinnedDispatcherPool({ maxEntries: 16, connections: 4 })
   private readonly requests = new Set<AbortController>()
+  private readonly roots = new Set<string>()
+  private readonly pendingChildren = new Set<string>()
+  private readonly owners = new Map<AbortSignal, { ids: Set<string>; abort: () => void }>()
   private closed = false
-  constructor(private readonly deps: MediaDeps) {}
+  constructor(private readonly deps: MediaDeps) {
+    if (deps.maxResources !== undefined && (!Number.isSafeInteger(deps.maxResources) || deps.maxResources < 1)) throw new Error('Invalid media memory capacity')
+  }
   register = (raw: string, headers?: Record<string,string>, network?: NetworkContext, access?: MediaAccess): string =>
-    this.registerResource(raw, headers, network, access ?? mediaEntry(raw))
+    this.registerResource(raw, headers, network, access ?? mediaEntry(raw), true)
 
-  private registerResource(raw: string, headers: Record<string,string> | undefined, network: NetworkContext | undefined, access: MediaAccess): string {
+  private registerResource(raw: string, headers: Record<string,string> | undefined, network: NetworkContext | undefined, access: MediaAccess, root = false): string {
     if (this.closed) throw new Error('媒体读取服务已关闭.')
-    const url = new URL(raw)
+    const prepared = network?.media ? mediaUrlCredentials(raw, headers) : undefined
+    const url = prepared?.url ?? new URL(raw)
+    if (prepared && Object.keys(prepared.headers).length) headers = prepared.headers
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('不支持的媒体地址')
     url.hash = ''
     const value = url.toString()
@@ -50,12 +60,34 @@ export class MediaRegistry {
       resource.touched = now
       this.resources.delete(existing)
       this.resources.set(existing, resource)
+      if (root && network?.signal && !network.signal.aborted) this.roots.add(existing)
       return `${this.deps.publicOrigin ?? MEDIA_ORIGIN}/media/${existing}`
     }
-    while (this.resources.size >= MAX_RESOURCES) this.remove(this.resources.keys().next().value!)
+    const maxResources = this.deps.maxResources ?? MAX_RESOURCES
+    if (this.resources.size >= maxResources) {
+      const protectedIds = this.protectedResources()
+      for (const id of this.resources.keys()) {
+        if (!protectedIds.has(id)) this.remove(id)
+        if (this.resources.size < maxResources) break
+      }
+      if (this.resources.size >= maxResources) throw new MediaCapacityError('Media registry memory capacity exhausted')
+    }
     const id = randomUUID()
     this.ids.set(identity, id)
-    this.resources.set(id, { url: value, touched: now, headers, network, access, identity })
+    this.resources.set(id, { url: value, touched: now, headers, network, access, identity, children: new Set(), readers: 0 })
+    if (network?.signal) {
+      const signal = network.signal
+      let owner = this.owners.get(signal)
+      if (!owner) {
+        const ids = new Set<string>()
+        const abort = () => { for (const owned of ids) this.remove(owned); this.owners.delete(signal) }
+        owner = { ids, abort }; this.owners.set(signal, owner)
+        signal.addEventListener('abort', abort, { once: true })
+      }
+      owner.ids.add(id)
+      if (root && !signal.aborted) this.roots.add(id)
+      if (signal.aborted) owner.abort()
+    }
     return `${this.deps.publicOrigin ?? MEDIA_ORIGIN}/media/${id}`
   }
   private readonly contextIds = new WeakMap<NetworkContext, number>()
@@ -73,7 +105,10 @@ export class MediaRegistry {
     if (!id) { id = ++this.nextScopeId; this.scopeIds.set(scope, id) }
     return id
   }
-  clear(): void { this.resources.clear(); this.ids.clear() }
+  clear(): void {
+    for (const [signal, owner] of this.owners) signal.removeEventListener('abort', owner.abort)
+    this.owners.clear(); this.roots.clear(); this.pendingChildren.clear(); this.resources.clear(); this.ids.clear()
+  }
 
   async dispose(): Promise<void> {
     if (this.closed) return
@@ -95,13 +130,20 @@ export class MediaRegistry {
     resource.touched = this.now()
     if (!this.deps.config.enabled) return errorResponse(503, 'media-disabled', '远程媒体读取已关闭')
     const controller = new AbortController()
+    resource.readers++
     this.requests.add(controller)
     const abort = () => controller.abort()
     request.signal.addEventListener('abort', abort, { once: true })
     if (request.signal.aborted) controller.abort()
     const timeoutAbort = () => controller.abort(new DOMException('媒体读取超时.', 'TimeoutError'))
-    let timeout = setTimeout(timeoutAbort, this.deps.config.requestTimeoutMs)
-    const cleanup = () => { clearTimeout(timeout); request.signal.removeEventListener('abort', abort); this.requests.delete(controller) }
+    const timeoutMs = (resource.network ?? this.deps.network)?.media?.requestTimeoutMs ?? this.deps.config.requestTimeoutMs
+    let timeout = timeoutMs > 0 ? setTimeout(timeoutAbort, timeoutMs) : undefined
+    let cleaned = false
+    const cleanup = () => {
+      if (cleaned) return
+      cleaned = true; resource.readers--
+      clearTimeout(timeout); request.signal.removeEventListener('abort', abort); this.requests.delete(controller)
+    }
     let upstream: Response | undefined
     const notifyFailure = (error: unknown) => {
       if (request.signal.aborted) return
@@ -168,12 +210,20 @@ export class MediaRegistry {
         const body = new TextDecoder().decode(bytes)
         cleanup()
         if (shouldRewrite(result.finalUrl, type, body)) {
-          const rewritten = rewritePlaylist(body, { baseUrl: result.finalUrl, register: raw => {
-            if (new URL(raw).origin !== result.finalUrl.origin && hasSensitiveHeaders(resource.headers)) {
-              throw new ProxyError('cross-origin-credentials', '禁止将平台登录信息发送到其他来源', 403)
-            }
-            return this.registerResource(raw, resource.headers, resource.network, mediaChild(resource.access))
-          } })
+          const nextChildren = new Set<string>()
+          let rewritten: string
+          try {
+            rewritten = rewritePlaylist(body, { baseUrl: result.finalUrl, register: raw => {
+              const crossOrigin = new URL(raw).origin !== new URL(resource.url).origin
+              if (crossOrigin && hasSensitiveHeaders(resource.headers) && !resource.network?.media) throw new ProxyError('cross-origin-credentials', '禁止将平台登录信息发送到其他来源', 403)
+              const childHeaders = crossOrigin ? withoutSourceCredentials(resource.headers) : resource.headers
+              const capability = this.registerResource(raw, childHeaders, resource.network, mediaChild(resource.access))
+              const id = capability.slice(capability.lastIndexOf('/') + 1)
+              nextChildren.add(id); this.pendingChildren.add(id)
+              return capability
+            } })
+            resource.children = nextChildren
+          } finally { for (const id of nextChildren) this.pendingChildren.delete(id) }
           outgoing.set('content-type', 'application/vnd.apple.mpegurl; charset=utf-8')
           outgoing.set('content-length', String(Buffer.byteLength(rewritten)))
           outgoing.delete('content-range')
@@ -185,13 +235,13 @@ export class MediaRegistry {
         return new Response(bytes, { status: upstream.status, headers: outgoing })
       }
       const reader = upstreamBody.getReader()
-      const idleTimeoutMs = this.deps.config.requestTimeoutMs
+      const idleTimeoutMs = timeoutMs
       // Continuous FLV has no end-of-body. Limit upstream inactivity only while
       // awaiting bytes; downstream backpressure must not consume that budget.
       clearTimeout(timeout)
       const body = new ReadableStream<Uint8Array>({
         async pull(stream) {
-          timeout = setTimeout(timeoutAbort, idleTimeoutMs)
+          timeout = idleTimeoutMs > 0 ? setTimeout(timeoutAbort, idleTimeoutMs) : undefined
           try {
             const chunk = await reader.read()
             clearTimeout(timeout)
@@ -212,6 +262,7 @@ export class MediaRegistry {
       await upstream?.body?.cancel().catch(() => {})
       cleanup()
       if (error instanceof ProxyError) return errorResponse(error.status, error.reason, classifyNetworkFailure(error).message)
+      if (error instanceof MediaCapacityError) return errorResponse(503, 'media-capacity', '媒体登记内存容量已用尽, 请关闭不用的片源.')
       if (error instanceof RangeError) return errorResponse(413, 'too-large', '媒体清单超过大小上限')
       return errorResponse(timedOut ? 504 : 502, timedOut ? 'upstream-timeout' : 'upstream-failed', '媒体读取失败')
     }
@@ -221,9 +272,26 @@ export class MediaRegistry {
     const resource = this.resources.get(id)
     if (resource) this.ids.delete(resource.identity)
     this.resources.delete(id)
+    this.roots.delete(id)
+    this.pendingChildren.delete(id)
+    if (resource?.network?.signal) this.owners.get(resource.network.signal)?.ids.delete(id)
   }
   private prune(now: number): void {
-    for (const [id, resource] of this.resources) if (now - resource.touched > TTL_MS) this.remove(id)
+    const protectedIds = this.protectedResources()
+    for (const [id, resource] of this.resources) if (!protectedIds.has(id) && now - resource.touched > TTL_MS) this.remove(id)
+  }
+  private protectedResources(): Set<string> {
+    const retained = new Set<string>()
+    const pending = [...this.roots, ...this.pendingChildren]
+    for (const [id, resource] of this.resources) if (resource.readers > 0) pending.push(id)
+    while (pending.length) {
+      const id = pending.pop()!
+      if (retained.has(id)) continue
+      const resource = this.resources.get(id)
+      if (!resource) continue
+      retained.add(id); pending.push(...resource.children)
+    }
+    return retained
   }
 }
 

@@ -1,5 +1,6 @@
 import type { DouyuRoomIdentity, ResolveDouyuRoom } from './douyuRoom'
 import type { MediaAccess } from '../mediaAccess'
+import { diagnosticDetails } from '../errorDetails'
 /** Shared shapes for platform stream resolution. */
 
 export type PlatformKind = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'huya' | 'douyin' | 'direct'
@@ -51,6 +52,7 @@ export type ResolveFailureCode =
   | 'needs-manual-url'
 
 export type ResolveFailure = {
+  detail?: import('../../src/core/errorDetails').ErrorDetails
   stage?: import('../networkFailure').StreamFailureStage
   reason?: string
   status?: number
@@ -101,8 +103,9 @@ export function failure(
   code: ResolveFailureCode,
   message: string,
   hint?: string,
+  detail?: unknown,
 ): Extract<ResolveResult, { ok: false }> {
-  return { ok: false, failure: { code, message, hint } }
+  return { ok: false, failure: { code, message, hint, ...(detail === undefined ? {} : { detail: diagnosticDetails(detail) }) } }
 }
 
 export const MANUAL_URL_HINT =

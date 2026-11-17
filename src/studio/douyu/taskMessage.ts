@@ -43,7 +43,7 @@ const integer = (text: string, min: number, max: number): number | null => {
   return text.trim() !== '' && Number.isInteger(value) && value >= min && value <= max ? value : null
 }
 
-export function buildMessageSchedule(draft: LoopDraft): { schedule: DouyuMessageSchedule } | { error: string } {
+export function buildMessageSchedule(draft: LoopDraft): { schedule: DouyuMessageSchedule } | { error: string; cause?: unknown } {
   const automatic = draft.mode === 'automatic'
   const texts = automatic ? [] : messageLines(draft.lines)
   if (!automatic) {
@@ -52,7 +52,7 @@ export function buildMessageSchedule(draft: LoopDraft): { schedule: DouyuMessage
     for (const [index, line] of texts.entries()) {
       try { composeMessage(line) } catch (error) {
         const tooLong = error instanceof MessageCompositionError && error.code === 'too-long'
-        return { error: `第 ${index + 1} 条${tooLong ? '超过 500 字' : '包含不支持的字符'}` }
+        return { error: `第 ${index + 1} 条${tooLong ? '超过 500 字' : '包含不支持的字符'}`, cause: error }
       }
     }
   }

@@ -10,6 +10,8 @@ export interface ToolContext {
   platform?: NodeJS.Platform
   /** Set by main only when app.isPackaged, never inferred from a development directory. */
   bundledDir?: string
+  /** Prepared project provider resources, supplied only by the development entry point. */
+  providerDir?: string
   managedYtdlp?: () => Promise<string | undefined>
   providerCacheHome?: string
 }
@@ -59,8 +61,9 @@ export async function locateTool(tool: ToolName, settings: ToolSettings = {}, en
 /** Optional script provider directories are never discovered from PATH or started here. */
 export async function locateYouTubePotProvider(env: NodeJS.ProcessEnv = process.env, context: ToolContext = {}): Promise<YouTubePotProvider | undefined> {
   const explicit = env.STREAM_SYNC_POT_PLUGIN_DIR || env.STREAM_SYNC_POT_SERVER_HOME
-  const pluginDir = explicit ? env.STREAM_SYNC_POT_PLUGIN_DIR?.trim() : context.bundledDir ? path.join(context.bundledDir, 'provider', 'plugin') : undefined
-  const serverHome = explicit ? env.STREAM_SYNC_POT_SERVER_HOME?.trim() : context.bundledDir ? path.join(context.bundledDir, 'provider', 'server') : undefined
+  const providerRoot = context.bundledDir ? path.join(context.bundledDir, 'provider') : context.providerDir
+  const pluginDir = explicit ? env.STREAM_SYNC_POT_PLUGIN_DIR?.trim() : providerRoot ? path.join(providerRoot, 'plugin') : undefined
+  const serverHome = explicit ? env.STREAM_SYNC_POT_SERVER_HOME?.trim() : providerRoot ? path.join(providerRoot, 'server') : undefined
   if (!pluginDir || !serverHome) return undefined
   // yt-dlp parses commas/semicolons inside extractor-args instead of passing them literally.
   if ([pluginDir, serverHome].some(candidate => !path.isAbsolute(candidate) || /[\0\r\n;,]/.test(candidate))) return undefined

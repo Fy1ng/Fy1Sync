@@ -13,6 +13,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { useErrorState } from '../../ui/ErrorDetails'
+import { displayError, type DisplayError, type ErrorDetails } from '../../core/errorDetails'
 import { apiClient } from '../../app/apiClient'
 import type { PipState } from '../../../electron/pipManager'
 import type { ResolvedStream } from '../../../server/platforms/types'
@@ -55,8 +57,8 @@ export function usePipMedia(): IndependentMedia | null {
 }
 
 /** The allowed local source: from the state, or asked for by stream id when absent. */
-export function usePipSource(state: PipState | null): { source: ResolvedStream | null; problem: string | null } {
-  const [fetched, setFetched] = useState<{ id: string; source: ResolvedStream | null; problem: string | null } | null>(null)
+export function usePipSource(state: PipState | null): { source: ResolvedStream | null; problem: string | null; problemDetail?: ErrorDetails } {
+  const [fetched, setFetched] = useState<{ id: string; source: ResolvedStream | null; problem: string | null; problemDetail?: ErrorDetails } | null>(null)
   const id = state?.streamId ?? null
   const needsFetch = !!id && !state?.source && (state?.phase === 'opening' || state?.phase === 'ready')
 
@@ -66,13 +68,17 @@ export function usePipSource(state: PipState | null): { source: ResolvedStream |
     void apiClient.feature('getStreamPlayback', { id }).then(result => {
       if (!live) return
       if (result.ok) setFetched({ id, source: result.value, problem: result.value ? null : '画面来源尚未就绪' })
-      else setFetched({ id, source: null, problem: result.message })
+      else { const shown = displayError(result); setFetched({ id, source: null, problem: shown.message, problemDetail: shown.detail }) }
+    }).catch(caught => {
+      if (!live) return
+      const shown = displayError(caught, '无法读取画中画来源')
+      setFetched({ id, source: null, problem: shown.message, problemDetail: shown.detail })
     })
     return () => { live = false }
   }, [id, needsFetch])
 
   if (state?.source) return { source: state.source, problem: null }
-  if (fetched && fetched.id === id) return { source: fetched.source, problem: fetched.problem }
+  if (fetched && fetched.id === id) return { source: fetched.source, problem: fetched.problem, problemDetail: fetched.problemDetail }
   return { source: null, problem: null }
 }
 
@@ -81,8 +87,8 @@ export function usePipSource(state: PipState | null): { source: ResolvedStream |
  * `onReload` runs before each load so the danmaku timeline can drop what it parked.
  */
 export function usePipLoad(media: IndependentMedia | null, source: ResolvedStream | null,
-  recoveryRevision: number, active: boolean, onReload: () => void): string | null {
-  const [problem, setProblem] = useState<string | null>(null)
+  recoveryRevision: number, active: boolean, onReload: () => void): DisplayError | null {
+  const [problem, setProblem, problemDetail] = useErrorState(null)
   const sourceRef = useRef(source)
   sourceRef.current = source
   const reloadRef = useRef(onReload)
@@ -99,40 +105,46 @@ export function usePipLoad(media: IndependentMedia | null, source: ResolvedStrea
     void media.load(descriptorFor(current)).then(async () => {
       if (cancelled) return
       try { await video.play() } catch (error) {
-        if (cancelled || !(error instanceof DOMException) || error.name !== 'NotAllowedError' || video.muted) return
+        if (cancelled) return
+        if (!(error instanceof DOMException) || error.name !== 'NotAllowedError' || video.muted) { setProblem(displayError(error, '画面播放失败')); return }
         // An autoplay refusal for sound: play silently rather than not at all.
         video.muted = true
-        await video.play().catch(() => {})
+        await video.play().catch(caught => { if (!cancelled) setProblem(displayError(caught, '静音播放仍未成功')) })
       }
     }).catch(error => {
-      if (!cancelled) setProblem(error instanceof Error && error.message ? `画面载入失败：${error.message}` : '画面载入失败')
+      if (!cancelled) setProblem(displayError(error, '画面载入失败'))
     })
     return () => { cancelled = true }
   }, [media, key, recoveryRevision, active])
 
   useEffect(() => {
     if (!media) return
-    const onError = (): void => { if (media.video.error) setProblem('画面播放出错') }
+    const onError = (): void => { if (media.video.error) setProblem(displayError({ code: media.video.error.code, message: media.video.error.message }, '画面播放出错')) }
     const onPlaying = (): void => setProblem(null)
     media.video.addEventListener('error', onError)
     media.video.addEventListener('playing', onPlaying)
+    const off = media.subscribeErrors(error => {
+      if (error) setProblem(displayError(error.detail ?? error, error.message))
+      else setProblem(null)
+    })
     return () => {
       media.video.removeEventListener('error', onError)
       media.video.removeEventListener('playing', onPlaying)
+      off()
     }
   }, [media])
 
   // Failed or closed: stop the player so nothing keeps decoding behind the message.
   useEffect(() => { if (media && !active) media.video.pause() }, [media, active])
 
-  return problem
+  return problem ? { message: problem, detail: problemDetail ?? undefined } : null
 }
 
 /**
  * Report readiness once playback really runs, then real progress every couple of seconds
  * and at once on play/pause. Silent while `active` is false (failed or closed).
  */
-export function usePipReporter(media: IndependentMedia | null, active: boolean, onState: (state: PipState) => void): boolean {
+export function usePipReporter(media: IndependentMedia | null, active: boolean, onState: (state: PipState) => void, onError?: (error: unknown) => void): boolean {
   const [ready, setReady] = useState(false)
   const stateRef = useRef(onState)
   stateRef.current = onState
@@ -176,8 +188,10 @@ export function usePipReporter(media: IndependentMedia | null, active: boolean, 
     const report = (value: ReturnType<typeof sample>): void => {
       lastReport = Date.now()
       void apiClient.feature('reportEnhancedPip', { ready: true, ...value }).then(result => {
-        if (!disposed && result.ok) stateRef.current(result.value)
-      })
+        if (disposed) return
+        if (result.ok) { stateRef.current(result.value); onError?.(null) }
+        else onError?.(result)
+      }).catch(caught => { if (!disposed) onError?.(caught) })
     }
     const check = (): void => {
       if (disposed) return

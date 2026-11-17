@@ -32,7 +32,7 @@ describe('preprocessing recommendation transactions', () => {
     const view = renderHook(() => usePreprocessRecommendation(options))
     await act(async () => view.result.current.recommend('polarity'))
     expect(options.apply).not.toHaveBeenCalled()
-    expect(options.message).toHaveBeenCalledWith({ kind: 'warn', text: expect.stringContaining('参数保持不变') })
+    expect(options.message).toHaveBeenCalledWith({ kind: 'warn', text: expect.stringContaining('参数保持不变'), error: { settings: null, reason: 'ambiguous-polarity' } })
   })
 
   it('does not overwrite newer parameter edits with a late recommendation', async () => {

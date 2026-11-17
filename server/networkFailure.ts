@@ -1,11 +1,15 @@
+import { diagnosticDetails } from './errorDetails'
+import type { ErrorDetails } from '../src/core/errorDetails'
+
 export type StreamFailureStage = 'resolve' | 'proxy' | 'connect' | 'http' | 'stall' | 'playback-not-ready'
 
-/** Only fixed codes, messages and numeric status values may cross the process boundary. */
+/** Public messages stay fixed; original diagnostics are bounded and redacted. */
 export interface StreamFailure {
   stage: StreamFailureStage
   code: string
   message: string
   status?: number
+  detail?: ErrorDetails
 }
 
 export class StreamFailureError extends Error {
@@ -73,12 +77,17 @@ export function streamFailureHint(code: unknown): string | undefined {
   return '请检查媒体地址是否有效, 并反馈此错误以核对应用的地址策略.'
 }
 
-export function httpFailure(status: number): StreamFailure {
-  return { stage: 'http', code: `http-${status}`, message: `服务器返回 HTTP ${status}.`, status }
+export function httpFailure(status: number, detail?: unknown): StreamFailure {
+  return { stage: 'http', code: `http-${status}`, message: `服务器返回 HTTP ${status}.`, status,
+    ...(detail === undefined ? {} : { detail: diagnosticDetails(detail) }) }
 }
 
 /** Inspect diagnostics only for a bounded whitelist. Never forward source text. */
 export function classifyFfmpegStderr(text: string): StreamFailure | undefined {
+  const failure = classifyFfmpegText(text)
+  return failure ? { ...failure, detail: diagnosticDetails({ stderr: text }) } : undefined
+}
+function classifyFfmpegText(text: string): StreamFailure | undefined {
   if (/proxy.*(?:refus|reject|fail|407)|(?:refus|reject|fail).*proxy|HTTP (?:error )?407|CONNECT tunnel failed|Proxy response \([45]\d{2}\).*HTTP Tunneling/i.test(text)) {
     return { stage: 'proxy', code: 'proxy-rejected', message: '代理拒绝连接或认证失败.' }
   }
@@ -107,14 +116,29 @@ export function classifyFfmpegStderr(text: string): StreamFailure | undefined {
 }
 
 export function classifyNetworkFailure(error: unknown, fallbackStage: StreamFailureStage = 'connect'): StreamFailure {
-  if (error instanceof StreamFailureError) return { ...error.failure }
+  if (error === undefined) return classifyNetworkDetails(undefined, fallbackStage)
+  const detail = diagnosticDetails(error)
+  const failure = classifyNetworkDetails(detail, fallbackStage)
+  // Avoid growing another wrapper whenever a classified failure is transported again.
+  const wrapped = detail.failure
+  return { ...failure, detail: wrapped && typeof wrapped === 'object' && !Array.isArray(wrapped) && wrapped.detail
+    ? diagnosticDetails(wrapped.detail) : detail }
+}
+function classifyNetworkDetails(error: unknown, fallbackStage: StreamFailureStage = 'connect'): StreamFailure {
   let current = error
   const chain: { code?: unknown; status?: unknown; statusCode?: unknown; message?: unknown; cause?: unknown; name?: unknown; reason?: unknown }[] = []
   for (let depth = 0; current && depth < 8; depth++) {
-    if (current instanceof StreamFailureError) return { ...current.failure }
     if (typeof current !== 'object') break
     const item = current as typeof chain[number]
     chain.push(item)
+    if (item.name === 'StreamFailureError' && 'failure' in item) {
+      const failure = (item as { failure?: unknown }).failure
+      if (failure && typeof failure === 'object') {
+        const original = failure as StreamFailure
+        const safe = streamFailureForCode(original.code) ?? classifyNetworkDetails(undefined, original.stage)
+        return { ...safe, ...(original.detail === undefined ? {} : { detail: diagnosticDetails(original.detail) }) }
+      }
+    }
     current = item.cause
   }
   // Target or HTTPS proxy certificate failures remain connection failures, even

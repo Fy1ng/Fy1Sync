@@ -7,6 +7,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { displayError, type ErrorDetails } from '../core/errorDetails'
+import { useErrorState } from '../ui/ErrorDetails'
 import type { SourceRole } from '../core/types'
 import { useSession } from './SessionContext'
 
@@ -215,9 +217,10 @@ export function useFullscreen(target: React.RefObject<HTMLElement | null>): {
   active: boolean
   toggle: () => void
   error: string | null
+  errorDetail: ErrorDetails | null
 } {
   const [active, setActive] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, errorDetail] = useErrorState()
   const mounted = useRef(false)
 
   useEffect(() => {
@@ -235,15 +238,15 @@ export function useFullscreen(target: React.RefObject<HTMLElement | null>): {
     const node = target.current
     if (!node) return
     setError(null)
-    const fail = () => { if (mounted.current) setError('无法切换全屏. 请重试或使用窗口模式.') }
+    const fail = (error: unknown = { code: 'fullscreen-unsupported' }) => { if (mounted.current) setError(displayError(error, '无法切换全屏. 请重试或使用窗口模式.')) }
     try {
       if (document.fullscreenElement) void document.exitFullscreen().catch(fail)
       else if (node.requestFullscreen) void node.requestFullscreen().catch(fail)
       else fail()
-    } catch { fail() }
+    } catch (error) { fail(error) }
   }, [target])
 
-  return { active, toggle, error }
+  return { active, toggle, error: error || null, errorDetail }
 }
 
 /** A requestAnimationFrame loop that keeps a stable callback identity. */

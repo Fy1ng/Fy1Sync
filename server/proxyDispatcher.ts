@@ -41,7 +41,7 @@ class ManagedProxyDispatcher extends Dispatcher {
     let completed = false
     let cancelled = false
     let abortTransport: ((reason?: Error) => void) | undefined
-    const clear = () => { clearTimeout(timer); this.timers.delete(timer) }
+    const clear = () => { if (timer) { clearTimeout(timer); this.timers.delete(timer) } }
     const finish = () => { if (!completed) { completed = true; clear() } }
     const releasePending = (error: Error) => { for (const socket of owner.sockets) socket.destroy(error); owner.sockets.clear() }
     const cancel = (error: Error) => {
@@ -51,13 +51,13 @@ class ManagedProxyDispatcher extends Dispatcher {
       if (handler.onError) handler.onError(error)
       else if (handler.onResponseError) Reflect.apply(handler.onResponseError, handler, [undefined, error])
     }
-    const timer = setTimeout(() => {
+    const timer = this.timeoutMs > 0 ? setTimeout(() => {
       const error = Object.assign(new Error('代理请求建立超时.'), { code: 'UND_ERR_PROXY_HANDSHAKE_TIMEOUT' })
       cancel(error)
     // Let the connector report its marked TCP/DNS timeout before the broader
     // handshake deadline. A tunnel or source timeout must never trigger fallback.
-    }, this.timeoutMs + 100)
-    this.timers.add(timer)
+    }, Math.min(2_147_483_647, this.timeoutMs + 100)) : undefined
+    if (timer) this.timers.add(timer)
     // Fetch normally receives its abort callback only after the tunnel connects.
     // Register cancellation now so an abandoned SOCKS handshake cannot outlive it.
     const earlyConnect = typeof handler.onConnect === 'function' && typeof handler.onRequestStart !== 'function'
@@ -118,14 +118,15 @@ class ManagedProxyDispatcher extends Dispatcher {
   }
 }
 
-export function createProxyDispatcher(route: NetworkRoute, timeoutMs: number, connections = 1): Dispatcher {
+export function createProxyDispatcher(route: NetworkRoute, timeoutMs: number, connections = 1,
+  tls: { verifyTls?: boolean; verifyProxyTls?: boolean } = {}, maxHeaderSize?: number): Dispatcher {
   if ((route.kind !== 'http' && route.kind !== 'socks5') || !route.proxyUrl) throw new Error('系统代理类型不受支持.')
   const proxy = new URL(route.proxyUrl)
   if (!(route.kind === 'http' ? ['http:', 'https:'] : ['socks5:']).includes(proxy.protocol)
     || !proxy.hostname || !['', '/'].includes(proxy.pathname) || proxy.search || proxy.hash) throw new Error('系统代理地址无效.')
   const sockets = new Set<Socket>()
   const pending = new AsyncLocalStorage<PendingConnection>()
-  const connect = buildConnector({ timeout: timeoutMs, rejectUnauthorized: true, autoSelectFamily: true })
+  const connect = buildConnector({ timeout: timeoutMs, rejectUnauthorized: tls.verifyProxyTls !== false, autoSelectFamily: true })
   const tracked: buildConnector.connector = (options, callback) => {
     const owner = pending.getStore()
     if (owner?.cancelled) { queueMicrotask(() => callback(owner.cancelled!, null)); return }
@@ -139,10 +140,13 @@ export function createProxyDispatcher(route: NetworkRoute, timeoutMs: number, co
     owner?.sockets.add(socket)
     socket.once('close', () => { sockets.delete(socket); owner?.sockets.delete(socket) })
   }
-  const settings = { connections, headersTimeout: timeoutMs, bodyTimeout: 0, requestTls: { rejectUnauthorized: true, timeout: timeoutMs } }
+  const settings = { connections, headersTimeout: timeoutMs, bodyTimeout: 0,
+    ...(maxHeaderSize === undefined ? {} : { maxHeaderSize }),
+    requestTls: { rejectUnauthorized: tls.verifyTls !== false, timeout: timeoutMs } }
   const inner = route.kind === 'socks5'
     ? new Socks5ProxyAgent(proxy, { ...settings, connect: tracked })
-    : new ProxyAgent({ ...settings, uri: proxy.href, proxyTls: { rejectUnauthorized: true, timeout: timeoutMs },
-      clientFactory: (origin, options) => new Client(origin, { ...options, connect: tracked, headersTimeout: timeoutMs }) })
+    : new ProxyAgent({ ...settings, uri: proxy.href, proxyTls: { rejectUnauthorized: tls.verifyProxyTls !== false, timeout: timeoutMs },
+      clientFactory: (origin, options) => new Client(origin, { ...options, connect: tracked, headersTimeout: timeoutMs,
+        ...(maxHeaderSize === undefined ? {} : { maxHeaderSize }) }) })
   return new ManagedProxyDispatcher(inner, sockets, timeoutMs, connections, pending)
 }

@@ -18,6 +18,12 @@ await writeFile(path.join(destination, 'package.json'), JSON.stringify({
   main: 'electron/main.cjs',
 }, null, 2) + '\n')
 for (const name of ['main.cjs', 'preload.cjs', 'login-card-preload.cjs', 'network-runtime.cjs', 'icon.png']) await cp(path.join(root, 'dist', 'electron', name), path.join(destination, 'electron', name))
+if (target.platform === 'win32') {
+  const nativeDestination = path.join(root, '.packaging', 'native')
+  if (path.dirname(nativeDestination) !== path.join(root, '.packaging')) throw new Error('Invalid native staging destination')
+  await rm(nativeDestination, { recursive: true, force: true })
+  await cp(path.join(root, 'dist', 'native'), nativeDestination, { recursive: true })
+}
 await cp(path.join(root, 'dist', 'client', 'index.html'), path.join(destination, 'client', 'index.html'))
 const assets = path.join(root, 'dist', 'client', 'assets')
 for (const entry of await readdir(assets, { withFileTypes: true })) {

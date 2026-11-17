@@ -1,3 +1,4 @@
+import { diagnosticDetails } from '../errorDetails'
 import { isReadOnlyDanmakuPlatform, type ChatMessage } from '../danmaku/types'
 import type { DanmakuState } from '../danmaku/types'
 import { validDouyuRoom } from '../platforms/douyuRoom'
@@ -270,8 +271,8 @@ export class DouyuInsightsService {
       const result = await this.options.gateway.readFollowedRooms(monitor.accountId, monitor.controller.signal)
       if (this.monitor !== monitor || this.disposed || monitor.controller.signal.aborted) return
       this.observeFollowed(result, monitor)
-    } catch {
-      if (this.monitor === monitor && !this.disposed && !monitor.controller.signal.aborted) this.emit({ type: 'monitor-error', accountId: monitor.accountId, message: '关注开播状态读取失败, 未生成新的开播提醒.' })
+    } catch (error) {
+      if (this.monitor === monitor && !this.disposed && !monitor.controller.signal.aborted) this.emit({ type: 'monitor-error', accountId: monitor.accountId, message: '关注开播状态读取失败, 未生成新的开播提醒.', detail: diagnosticDetails(error) })
     } finally {
       if (this.monitor === monitor && !this.disposed && !monitor.controller.signal.aborted) {
         monitor.timer = setTimeout(() => { void this.poll(monitor) }, monitor.intervalMs)

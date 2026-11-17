@@ -7,16 +7,18 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 import { apiClient, type ApiResult } from '../../app/apiClient'
 import type { PipOptions, PipState } from '../../../electron/pipManager'
 import { Switch } from '../kit'
-import { PHASE_TEXT, isPipState, usePipState } from './pipState'
+import { PHASE_TEXT, isPipState, pipFailure, usePipState } from './pipState'
 import './pip.css'
 
 export function PipSettings(): React.ReactNode {
-  const { state, error, apply } = usePipState()
+  const { state, error, errorDetail, apply } = usePipState()
   const [busy, setBusy] = useState(false)
-  const [problem, setProblem] = useState<string | null>(null)
+  const [problem, setProblem, problemDetail] = useErrorState(null)
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
 
@@ -27,7 +29,11 @@ export function PipSettings(): React.ReactNode {
     try {
       const result = await call()
       if (!mounted.current) return
-      if (result.ok) { if (isPipState(result.value)) apply(result.value) } else setProblem(result.message)
+      if (!result.ok) setProblem(result)
+      else if (isPipState(result.value)) apply(result.value)
+      else setProblem(displayError({ code: 'invalid-pip-state' }, '无法读取画中画状态'))
+    } catch (caught) {
+      if (mounted.current) setProblem(caught)
     } finally { if (mounted.current) setBusy(false) }
   }
   const setOption = (patch: Partial<Pick<PipOptions, 'lowPower' | 'recoverStalls'>>): void => {
@@ -57,8 +63,8 @@ export function PipSettings(): React.ReactNode {
             onClick={() => void run(() => apiClient.feature('recoverEnhancedPip', undefined))}>恢复画面</button>
         </div>
       )}
-      {phase === 'failed' && state?.message && <p className="note-warn">{state.message}</p>}
-      {(problem ?? error) && <p className="note-warn" role="alert">{problem ?? error}</p>}
+      {phase === 'failed' && state && <p className="note-warn"><ErrorText error={pipFailure(state)} message={state.message ?? '画中画已失败'} /></p>}
+      {(problem || error) && <p className="note-warn" role="alert"><ErrorText error={problem ? problemDetail ?? problem : errorDetail ?? error} message={problem || error} /></p>}
     </div>
   )
 }

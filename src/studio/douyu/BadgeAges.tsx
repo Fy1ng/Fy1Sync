@@ -5,6 +5,8 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 import { apiClient } from '../../app/apiClient'
 import type { DouyuBadgeAges } from '../../../server/douyu/insightsTypes'
 import { UNKNOWN, dateOnly, dateTime } from './giftFormat'
@@ -18,7 +20,7 @@ const agesOk = (value: unknown, accountId: string): value is DouyuBadgeAges => {
 export function BadgeAges({ accountId, ready }: { accountId: string | null; ready: boolean }): React.ReactNode {
   const [ages, setAges] = useState<DouyuBadgeAges | null>(null)
   const [reading, setReading] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError, errorDetail] = useErrorState('')
   const mounted = useRef(false)
   const generation = useRef(0)
   const owner = useRef(accountId)
@@ -43,11 +45,11 @@ export function BadgeAges({ accountId, ready }: { accountId: string | null; read
     try {
       const response = await apiClient.feature('getDouyuBadgeAges', { accountId: asked })
       if (!mounted.current || mine !== generation.current) return
-      if (!response.ok) { setError(response.message); return }
-      if (!agesOk(response.value, asked)) throw new Error('bad ages')
+      if (!response.ok) { setError(response); return }
+      if (!agesOk(response.value, asked)) throw new Error('bad ages', { cause: response })
       setAges(response.value)
-    } catch {
-      if (mounted.current && mine === generation.current) setError('粉丝牌获取日期读取失败，请重试。')
+    } catch (caught) {
+      if (mounted.current && mine === generation.current) setError(displayError(caught, '粉丝牌获取日期读取失败, 请重试. '))
     } finally {
       if (mounted.current && mine === generation.current) setReading(false)
     }
@@ -63,7 +65,7 @@ export function BadgeAges({ accountId, ready }: { accountId: string | null; read
           {reading ? '读取中…' : ages ? '重新读取' : '读取'}
         </button>
       </div>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
       {ages && (
         <>
           {ages.badges.length === 0 ? <p className="muted">返回页面中没有粉丝牌。</p> : (

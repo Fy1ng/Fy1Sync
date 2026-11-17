@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import { ErrorText, useErrorState } from '../ui/ErrorDetails'
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { DanmakuPreferences } from '../core/danmakuProcessing'
@@ -25,13 +26,13 @@ export function DanmakuPanel({ onClose }: { onClose: () => void }): React.ReactN
   const danmaku = settings.danmaku
   const writes = settings.douyuWrites
   const composer = useComposer()
-  const [problem, setProblem] = useState<string | null>(null)
+  const [problem, setProblem, problemDetail] = useErrorState(null)
   const setPrefs = (patch: Partial<DanmakuPreferences>): void => {
     setProblem(null)
     void apiClient.feature('setDanmakuPreferences', patch).then((result) => {
       if (result.ok) session.configureDanmakuProcessing(result.value.preferences)
-      else setProblem(result.message)
-    })
+      else setProblem(result)
+    }).catch(setProblem)
   }
   const set = session.updateDanmakuSettings.bind(session)
   const invalid = new Map(session.invalidPatterns.map((entry) => [entry.source, entry.message]))
@@ -92,7 +93,7 @@ export function DanmakuPanel({ onClose }: { onClose: () => void }): React.ReactN
             <Affixes value={composer.affixes} onProblem={setProblem} />
           </>}
         </>}
-        {problem && <p className="form-error" role="alert">{problem}</p>}
+        {problem && <p className="form-error" role="alert"><ErrorText error={problemDetail ?? problem} message={problem} /></p>}
       </div>
     </aside>
   )
@@ -117,6 +118,7 @@ function Chips({ label, placeholder, values, invalid, onChange }: {
         {values.map((value) => (
           <span key={value} className={`chip-tag ${invalid?.has(value) ? 'is-invalid' : ''}`.trim()} title={invalid?.get(value)}>
             {value}
+            {invalid?.has(value) && <ErrorText error={{ source: value, message: invalid.get(value) }} message="" />}
             <button type="button" aria-label={`移除 ${value}`} onClick={() => onChange(values.filter((item) => item !== value))}>
               <Icon name="close" />
             </button>
@@ -138,13 +140,13 @@ function Chips({ label, placeholder, values, invalid, onChange }: {
  * Prefix and suffix for typed messages ("+1" always goes out verbatim). Edited as drafts and
  * saved on blur, so every keystroke is not a write to disk.
  */
-function Affixes({ value, onProblem }: { value: MessageAffixes; onProblem: (problem: string | null) => void }): React.ReactNode {
+function Affixes({ value, onProblem }: { value: MessageAffixes; onProblem: (problem: unknown) => void }): React.ReactNode {
   const [prefix, setPrefix] = useState(value.prefix)
   const [suffix, setSuffix] = useState(value.suffix)
   useEffect(() => { setPrefix(value.prefix); setSuffix(value.suffix) }, [value.prefix, value.suffix])
   const save = (patch: Partial<MessageAffixes>): void => {
     onProblem(null)
-    void apiClient.feature('setMessageAffixes', patch).then((result) => { if (!result.ok) onProblem(result.message) })
+    void apiClient.feature('setMessageAffixes', patch).then((result) => { if (!result.ok) onProblem(result) }).catch(onProblem)
   }
   return (
     <>

@@ -8,6 +8,7 @@ import type { DouyuAccountManager } from './douyuAccounts'
 import { installIpcHandlers, type IpcHandlerOptions } from './ipc'
 import type { DesktopMethod, StreamSyncerBridge } from './contracts'
 import type { NetworkPreferenceState } from './networkPreferences'
+import { DEFAULT_MEDIA_NETWORK } from '../server/mediaNetworkOptions'
 
 const electron = vi.hoisted(() => ({
   contextBridge: { exposeInMainWorld: vi.fn() },
@@ -63,6 +64,15 @@ beforeEach(() => { vi.clearAllMocks() })
 afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup() })
 
 describe('network preference service validation', () => {
+  it('accepts explicit playback policy settings and rejects unknown nested fields', async () => {
+    const f = serviceFixture()
+    const media = { ...DEFAULT_MEDIA_NETWORK, routing: 'direct' as const }
+    await expect(f.service.invoke('setNetworkPreferences', { domesticRouting: 'direct', media })).resolves.toMatchObject({ ok: true })
+    expect(f.set).toHaveBeenCalledWith('direct', media)
+    await expect(f.service.invoke('setNetworkPreferences', { domesticRouting: 'direct', media: { ...media, accountCookies: true } }))
+      .resolves.toMatchObject({ ok: false, code: 'invalid-arguments' })
+    expect(f.set).toHaveBeenCalledOnce()
+  })
   it('returns the proxy summary and persists only the two supported domestic modes', async () => {
     const f = serviceFixture()
     await expect(f.service.invoke('getNetworkPreferences', undefined)).resolves.toEqual({ ok: true, value: preferences })

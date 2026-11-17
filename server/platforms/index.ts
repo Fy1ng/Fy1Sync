@@ -8,6 +8,7 @@ import { resolveHuya, parseHuyaRoom } from './huya'
 import { resolveTwitch, parseTwitchChannel } from './twitch'
 import { resolveYouTube, parseYouTubeUrl } from './youtube'
 import { failure, type PlatformKind, type ResolveResult, type ResolverDeps } from './types'
+import { mediaUrlCredentials } from '../mediaCredentials'
 
 export type { PlatformKind, QualityOption, ResolveResult, ResolvedStream, ResolverDeps } from './types'
 export { parseBilibiliRoom, parseDouyuRoom, parseHuyaRoom, parseTwitchChannel, parseYouTubeUrl }
@@ -34,7 +35,7 @@ export function detectPlatform(input: string, explicit?: PlatformKind): Platform
   if (/(^|\.)bilibili\.com$/.test(host)) return 'bilibili'
   if (/(^|\.)huya\.com$/.test(host)) return 'huya'
   if (['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be', 'www.youtu.be'].includes(host)) return 'youtube'
-  return looksLikeDirectMedia(trimmed) ? 'direct' : null
+  return /^https?:\/\//i.test(trimmed) ? 'direct' : null
 }
 
 export function looksLikeDirectMedia(input: string): boolean {
@@ -87,8 +88,9 @@ export async function resolveStream(
  */
 function resolveDirect(input: string): ResolveResult {
   let url: URL
+  let headers: Record<string, string>
   try {
-    url = new URL(input.trim())
+    ;({ url, headers } = mediaUrlCredentials(input.trim()))
   } catch {
     return failure('unsupported-url', '不是合法的媒体地址')
   }
@@ -102,6 +104,7 @@ function resolveDirect(input: string): ResolveResult {
     stream: {
       platform: 'direct',
       url: url.toString(),
+      ...(Object.keys(headers).length ? { headers } : {}),
       kind: isHls ? 'hls' : 'progressive',
       label: url.hostname,
       channel: url.hostname,

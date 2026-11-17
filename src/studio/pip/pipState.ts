@@ -8,6 +8,8 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
+import { useErrorState } from '../../ui/ErrorDetails'
+import { displayError, type ErrorDetails } from '../../core/errorDetails'
 import { apiClient } from '../../app/apiClient'
 import type { PipState } from '../../../electron/pipManager'
 import { readDanmakuPreferences, DEFAULT_DANMAKU_PREFERENCES, type DanmakuPreferences } from '../../core/danmakuProcessing'
@@ -28,13 +30,14 @@ export interface PipStateView {
   state: PipState | null
   /** Why the first read failed, when it did. */
   error: string | null
+  errorDetail?: ErrorDetails | null
   /** Take a state returned directly by a call (options change, recovery, re-read). */
   apply: (state: PipState) => void
 }
 
 export function usePipState(): PipStateView {
   const [state, setState] = useState<PipState | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, errorDetail] = useErrorState(null)
 
   useEffect(() => {
     let live = true
@@ -47,18 +50,26 @@ export function usePipState(): PipStateView {
     })
     void apiClient.feature('getEnhancedPip', undefined).then((result) => {
       if (!live) return
-      if (!result.ok) { if (!pushed) setError(result.message); return }
-      if (!pushed && isPipState(result.value)) setState(result.value)
-    })
+      if (pushed) return
+      if (!result.ok) { setError(result); return }
+      if (isPipState(result.value)) setState(result.value)
+      else setError(displayError(result, '无法读取画中画状态'))
+    }).catch(caught => { if (live && !pushed) setError(caught) })
     return () => { live = false; off() }
   }, [])
 
-  const apply = useCallback((next: PipState) => { if (isPipState(next)) setState(next) }, [])
-  return { state, error, apply }
+  const apply = useCallback((next: PipState) => { if (isPipState(next)) { setState(next); setError(null) } }, [setError])
+  return { state, error, errorDetail, apply }
+}
+
+/** Read diagnostic fields without including the stream source or send context. */
+export function pipFailure(state: PipState): unknown {
+  const failure = state as PipState & { errorDetail?: unknown; detail?: unknown }
+  return failure.errorDetail ?? failure.detail ?? { phase: state.phase, message: state.message }
 }
 
 /** Display preferences for this window's own danmaku processor. */
-export function useDanmakuPreferences(): DanmakuPreferences {
+export function useDanmakuPreferences(onError?: (error: unknown) => void): DanmakuPreferences {
   const [preferences, setPreferences] = useState<DanmakuPreferences>(() => ({ ...DEFAULT_DANMAKU_PREFERENCES }))
 
   useEffect(() => {
@@ -66,7 +77,7 @@ export function useDanmakuPreferences(): DanmakuPreferences {
     let pushed = false
     const take = (raw: unknown): boolean => {
       const parsed = readDanmakuPreferences(raw)
-      if (parsed) setPreferences(parsed)
+      if (parsed) { setPreferences(parsed); onError?.(null) }
       return !!parsed
     }
     const off = apiClient.subscribeFeatures((event) => {
@@ -74,8 +85,10 @@ export function useDanmakuPreferences(): DanmakuPreferences {
       if (take((event.data as { preferences?: unknown }).preferences)) pushed = true
     })
     void apiClient.feature('getDanmakuFeatures', undefined).then((result) => {
-      if (live && !pushed && result.ok) take(result.value.preferences)
-    })
+      if (!live || pushed) return
+      if (!result.ok) { onError?.(result); return }
+      if (!take(result.value.preferences)) onError?.(displayError({ code: 'invalid-preferences' }, '无法读取弹幕显示设置'))
+    }).catch(caught => { if (live && !pushed) onError?.(caught) })
     return () => { live = false; off() }
   }, [])
 

@@ -7,13 +7,14 @@ import { Session } from '../app/session'
 import { SessionProvider } from '../app/SessionContext'
 import { forgetAll } from '../app/remembered'
 import { SettingsSheet } from './SettingsSheet'
+import { DEFAULT_MEDIA_NETWORK } from '../../server/mediaNetworkOptions'
 
 const anonymous: PlatformLoginStatus = { loggedIn: false, cookieCount: 0, authKeysPresent: [], hasSessionCookies: false, expiresAt: null }
 const accounts: DouyuAccountsSnapshot = { revision: 1, activeAccountId: 'default', accounts: [
   { id: 'default', label: '默认账号', active: true, busy: false, login: anonymous },
 ] }
 const sessions: Session[] = []
-const invoke = vi.fn(async (method: string) => {
+const invoke = vi.fn(async (method: string): Promise<unknown> => {
   if (method === 'loginStatus') return { ok: true, value: { douyu: anonymous, bilibili: anonymous, huya: anonymous, youtube: anonymous } }
   if (method === 'listDouyuAccounts') return { ok: true, value: accounts }
   if (method === 'getDouyuTasks') return { ok: true, value: { activeAccountId: 'default', retainedRooms: [], currentRoom: null,
@@ -57,6 +58,54 @@ function douyuTab(name: string): HTMLElement {
 }
 
 describe('settings account navigation', () => {
+  it('edits origin-bound headers and certificate trust without showing header values in the rule list', async () => {
+    invoke.mockImplementationOnce(async () => ({ ok: true, value: { domesticRouting: 'direct', systemProxy: { type: 'direct' }, media: { ...DEFAULT_MEDIA_NETWORK } } }))
+    mount()
+    fireEvent.click(within(screen.getByRole('tablist', { name: '通用' })).getByRole('tab', { name: '网络' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存取流网络设置' })).not.toBeDisabled())
+    fireEvent.change(screen.getByRole('textbox', { name: '来源地址' }), { target: { value: 'https://media.invalid:8443/live' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '来源请求头' }), { target: { value: 'Authorization: Bearer synthetic\nReferer: https://media.invalid/' } })
+    fireEvent.click(screen.getByRole('switch', { name: '校验该来源服务器证书' }))
+    fireEvent.click(screen.getByRole('button', { name: '加入来源设置' }))
+    expect(screen.getByRole('textbox', { name: '来源请求头' })).toHaveValue('')
+    expect(screen.queryByText('Bearer synthetic')).toBeNull()
+    fireEvent.change(screen.getByRole('spinbutton', { name: '同屏直播数量上限' }), { target: { value: '300' } })
+    const rule = { origin: 'https://media.invalid:8443', headers: { Authorization: 'Bearer synthetic', Referer: 'https://media.invalid/' }, verifyTls: false, verifyProxyTls: true }
+    invoke.mockImplementationOnce(async () => ({ ok: true, value: { domesticRouting: 'direct', systemProxy: { type: 'direct' }, media: { ...DEFAULT_MEDIA_NETWORK, sourceRules: [rule], maxExtraStreams: 300 } } }))
+    fireEvent.click(screen.getByRole('button', { name: '保存取流网络设置' }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('setNetworkPreferences', expect.objectContaining({ media: expect.objectContaining({ sourceRules: [rule], maxExtraStreams: 300 }) })))
+  })
+  it('shows open playback defaults and saves route, certificate and wait settings explicitly', async () => {
+    invoke.mockImplementationOnce(async () => ({ ok: true, value: { domesticRouting: 'direct', systemProxy: { type: 'direct' }, media: { ...DEFAULT_MEDIA_NETWORK } } }))
+    mount()
+    fireEvent.click(within(screen.getByRole('tablist', { name: '通用' })).getByRole('tab', { name: '网络' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存取流网络设置' })).not.toBeDisabled())
+    expect(screen.getByRole('switch', { name: '校验取流服务器证书' })).not.toBeChecked()
+    expect(screen.getByRole('switch', { name: '校验 HTTPS 代理证书' })).not.toBeChecked()
+    expect(screen.getByRole('switch', { name: '允许媒体访问本机和局域网' })).toBeChecked()
+    expect(screen.getByRole('spinbutton', { name: '请求超时秒数' })).toHaveValue(0)
+    fireEvent.change(screen.getByRole('combobox', { name: '取流出网方式' }), { target: { value: 'custom' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '取流代理地址' }), { target: { value: 'socks5://127.0.0.1:1080' } })
+    fireEvent.click(screen.getByRole('switch', { name: '校验取流服务器证书' }))
+    fireEvent.change(screen.getByRole('spinbutton', { name: '请求超时秒数' }), { target: { value: '30' } })
+    const media = { ...DEFAULT_MEDIA_NETWORK, routing: 'custom', proxyUrl: 'socks5://127.0.0.1:1080', verifyTls: true, requestTimeoutMs: 30000 }
+    invoke.mockImplementationOnce(async () => ({ ok: true, value: { domesticRouting: 'direct', systemProxy: { type: 'direct' }, media } }))
+    fireEvent.click(screen.getByRole('button', { name: '保存取流网络设置' }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('setNetworkPreferences', { domesticRouting: 'direct', media }))
+  })
+  it('toggles the optional recognition panel without changing recognition mode or running sync', async () => {
+    const { session } = mount()
+    const sync = vi.spyOn(session, 'syncNow')
+    const toggle = screen.getByRole('switch', { name: /^显示基础识别面板/ })
+    expect(toggle).not.toBeChecked()
+    fireEvent.click(toggle)
+    await waitFor(() => expect(toggle).toBeChecked())
+    expect(session.settings).toMatchObject({ basicRecognitionPanelVisible: true, recognitionMode: 'basic' })
+    fireEvent.click(toggle)
+    await waitFor(() => expect(toggle).not.toBeChecked())
+    expect(session.settings.recognitionMode).toBe('basic')
+    expect(sync).not.toHaveBeenCalled()
+  })
   it('puts five platforms in 账号 and nests Douyu pages within the same sidebar', async () => {
     mount()
     const sections = screen.getByRole('tablist', { name: '设置分区' })

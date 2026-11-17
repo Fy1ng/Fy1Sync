@@ -1,0 +1,24 @@
+[package]
+name = "fy1sync-browser-credentials"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace]
+
+[dependencies]
+base64 = "=0.22.1"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+zeroize = "=1.8.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_Pipes", "Win32_System_IO", "Win32_System_Diagnostics_ToolHelp", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_System_Registry"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

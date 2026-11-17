@@ -190,12 +190,12 @@ describe('YouTube recorded live formats', () => {
     ['YouTube sign in required', 'sign-in'],
   ] as const)('reports %s as the %s refusal', async (message, reason) => {
     const result = await resolveYouTube('youtu.be/abcdefghijk', deps({ runYtDlp: async () => { throw new Error(message) } }))
-    expect(result).toEqual({ ok: false, failure: { code: 'restricted', reason, ...YOUTUBE_REFUSALS[reason] } })
+    expect(result).toMatchObject({ ok: false, failure: { code: 'restricted', reason, ...YOUTUBE_REFUSALS[reason], detail: { message } } })
   })
 
   it('keeps the fixed refusal wording across the IPC boundary and hides any other text', () => {
     expect(sanitizedFailure({ ok: false, failure: { code: 'restricted', reason: 'bot-check', message: 'Cookie=secret' } }))
-      .toEqual({ ok: false, failure: { code: 'restricted', reason: 'bot-check', ...YOUTUBE_REFUSALS['bot-check'] } })
+      .toMatchObject({ ok: false, failure: { code: 'restricted', reason: 'bot-check', ...YOUTUBE_REFUSALS['bot-check'] } })
     expect(JSON.stringify(sanitizedFailure({ ok: false, failure: { code: 'restricted', message: 'Cookie=secret' } }))).not.toMatch(/secret/)
   })
 
@@ -218,15 +218,22 @@ describe('YouTube recorded live formats', () => {
     const result = await resolveYouTube('youtu.be/abcdefghijk', deps({ runYtDlp: async () => ({ ...fixture, formats }) }))
     const expected = { ok: false, failure: { code: 'needs-manual-url', reason, ...YOUTUBE_FORMAT_FAILURES[reason] } }
     expect(result).toEqual(expected)
-    expect(sanitizedFailure(result)).toEqual(expected)
-    expect(sanitizedFailure({ ok: false, failure: { code: 'needs-manual-url', reason, message: 'Cookie=SECRET', hint: 'https://signed.invalid/?token=PRIVATE' } })).toEqual(expected)
+    expect(sanitizedFailure(result)).toMatchObject(expected)
+    const original = sanitizedFailure({ ok: false, failure: { code: 'needs-manual-url', reason, message: 'Cookie=SECRET', hint: 'https://signed.invalid/?token=PRIVATE' } })
+    expect(original).toMatchObject(expected)
+    expect(JSON.stringify(original)).not.toMatch(/SECRET|PRIVATE/)
     expect(JSON.stringify(result)).not.toMatch(/googlevideo|example\.invalid|Cookie|token=|SECRET|PRIVATE/)
   })
 
   it('does not preserve an unrecognized format diagnostic or a diagnostic with the wrong failure code', () => {
     for (const [code, reason] of [['needs-manual-url', 'youtube-hls-SECRET'], ['upstream-error', 'youtube-hls-missing']] as const) {
       const result = sanitizedFailure({ ok: false, failure: { code, reason, message: 'Cookie=SECRET', hint: 'token=PRIVATE' } })
-      expect(JSON.stringify(result)).not.toMatch(/SECRET|PRIVATE|youtube-hls|Cookie|token=/)
+      if (!result.ok) {
+        const { detail, ...summary } = result.failure
+        expect(JSON.stringify(summary)).not.toMatch(/SECRET|PRIVATE|youtube-hls|Cookie|token=/)
+        expect(JSON.stringify(detail)).not.toContain('PRIVATE')
+        expect(detail?.reason).toBe(reason)
+      }
     }
   })
 })

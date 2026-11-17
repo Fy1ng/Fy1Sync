@@ -8,6 +8,8 @@ import { pairReading } from './reading'
 import { drawMask } from './framePipeline'
 import { proposeStretch, stretchSamples, type StretchFrame, type StretchGroup, type StretchSample } from './stretch'
 import { editorVariant } from './layoutModel'
+import { ErrorDetailsButton, ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 
 /** Slow enough that the page presents nearly every frame while each is grabbed. */
 const SCAN_RATE = 0.25
@@ -35,7 +37,7 @@ export function StretchSection({ video, pack, variantId, onSave, fieldId = 'cloc
   const [frames, setFrames] = useState<StretchFrame[]>([])
   const [groups, setGroups] = useState<StretchGroup[]>([])
   const [kept, setKept] = useState<boolean[]>([])
-  const [problem, setProblem] = useState<string | null>(null)
+  const [problem, setProblem, problemDetail] = useErrorState(null)
   const cancel = useRef<(() => void) | null>(null)
   const currentVariant = editorVariant(pack, variantId)
   const grammar = currentVariant.fields[fieldId]?.grammar
@@ -59,14 +61,14 @@ export function StretchSection({ video, pack, variantId, onSave, fieldId = 'cloc
     let stopped = false
     let completed = false
     let handle: number | null = null
-    let scanError: string | null = null
+    let scanError: unknown = null
     let releaseSeek = (): void => {}
     let resolveScan = (): void => {}
     const finished = new Promise<void>(resolve => { resolveScan = resolve })
     const finish = (): void => { completed = true; releaseSeek(); resolveScan() }
     const stop = (): void => { stopped = true; finish() }
     const onEnded = (): void => finish()
-    const onError = (): void => { scanError = '视频解码失败, 无法扫描这一段'; finish() }
+    const onError = (): void => { scanError = displayError({ code: video.error?.code, message: video.error?.message }, '视频解码失败, 无法扫描这一段'); finish() }
     cancel.current = stop
     video.addEventListener('ended', onEnded)
     video.addEventListener('error', onError)
@@ -109,14 +111,14 @@ export function StretchSection({ video, pack, variantId, onSave, fieldId = 'cloc
           if (meta.mediaTime >= from - 1e-3) {
             try {
               const grabbed = grabber.grab(video, FULL_FRAME_ROI, meta.mediaTime)
-              if (!grabbed.ok) throw new Error(`取帧失败: ${grabbed.reason}`)
+              if (!grabbed.ok) throw displayError(grabbed, `取帧失败: ${grabbed.reason}`)
               const prepared = await prepareHudGlyphs(grabbed.frame, pack, currentVariant.id, undefined, fieldId)
               if (completed) return
               if (collected.length === 0 || meta.mediaTime > collected[collected.length - 1]!.at + 1e-4) {
                 collected.push({ at: meta.mediaTime, binary: prepared.binary, boxes: prepared.boxes, bitmaps: prepared.bitmaps })
               }
             } catch (error) {
-              scanError = error instanceof Error ? error.message : String(error)
+              scanError = error
               finish()
               return
             }
@@ -127,12 +129,12 @@ export function StretchSection({ video, pack, variantId, onSave, fieldId = 'cloc
         handle = video.requestVideoFrameCallback(onFrame)
         video.playbackRate = SCAN_RATE
         void video.play().catch(error => {
-          if (!completed) { scanError = `无法播放扫描片段: ${error instanceof Error ? error.message : String(error)}`; finish() }
+          if (!completed) { scanError = displayError(error, `无法播放扫描片段: ${error instanceof Error ? error.message : String(error)}`); finish() }
         })
         await finished
       }
     } catch (error) {
-      scanError = error instanceof Error ? error.message : String(error)
+      scanError = error
     } finally {
       completed = true
       releaseSeek()
@@ -188,7 +190,7 @@ export function StretchSection({ video, pack, variantId, onSave, fieldId = 'cloc
             <button type="button" className="btn-quiet small" disabled={scan !== null}
               onClick={() => setMark((m) => ({ ...m, out: video.currentTime }))}>设为出点{clock(mark.out)}</button>
           </div>
-          {markProblem && <p className="form-error">{markProblem}</p>}
+          {markProblem && <p className="form-error"><ErrorText error={markProblem} message={markProblem} /></p>}
           <form className="reading-row" onSubmit={(event) => { event.preventDefault(); void run() }}>
             <input className="text-input num" value={first} aria-label="入点读数" placeholder={fieldId === 'clock' ? '入点那一帧的读数，例如 1:49' : '入点那一帧的比分, 例如 8'}
               spellCheck={false} autoComplete="off" inputMode="numeric" disabled={scan !== null}
@@ -200,11 +202,11 @@ export function StretchSection({ video, pack, variantId, onSave, fieldId = 'cloc
             )}
           </form>
           {scan && <p className="muted" role="status">正在扫描 {scan.done.toFixed(1)} / {scan.total.toFixed(1)} 秒</p>}
-          {problem && <p className="form-error" role="alert">{problem}</p>}
+          {problem && <p className="form-error" role="alert"><ErrorText error={problemDetail ?? problem} message={problem} /></p>}
           {groups.length > 0 && (
             <>
               {groups.some((group) => group.state === 'box-mismatch') && (
-                <p className="note-warn">有 {groups.filter((group) => group.state === 'box-mismatch').length} 组字符框数不对，多半是字符粘连或断开：调整阈值或识别区域后重新扫描</p>
+                <p className="note-warn">有 {groups.filter((group) => group.state === 'box-mismatch').length} 组字符框数不对，多半是字符粘连或断开：调整阈值或识别区域后重新扫描 <ErrorDetailsButton error={groups.filter(group => group.state === 'box-mismatch')} /></p>
               )}
               <ul className="stretch-groups" aria-label="扫描结果">
                 {groups.map((group, index) => (
@@ -220,7 +222,7 @@ export function StretchSection({ video, pack, variantId, onSave, fieldId = 'cloc
                     <input className="text-input num stretch-text" value={group.text} aria-label={`${group.from.toFixed(2)}s 起的读数`}
                       onChange={(event) => edit(index, event.target.value)} />
                     <span className="muted num">{group.frames} 帧</span>
-                    {group.state !== 'proposed' && <span className="stretch-note" title={group.note}>{STATE_TEXT[group.state]}</span>}
+                    {group.state !== 'proposed' && <span className="stretch-note" title={group.note}>{group.state === 'box-mismatch' ? <ErrorText error={group} message={STATE_TEXT[group.state]} /> : STATE_TEXT[group.state]}</span>}
                   </li>
                 ))}
               </ul>

@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BufferManager, buildFfmpegArgs, cleanProxyEnvironment, parseHlsSegments, type BufferClock, type BufferState, type BufferManagerOptions } from './bufferManager'
 import { ToolError } from './toolLocator'
+import { DEFAULT_MEDIA_NETWORK } from '../server/mediaNetworkOptions'
 
 class FakeChild extends EventEmitter {
   pid = 12345
@@ -83,6 +84,41 @@ async function start(f: Awaited<ReturnType<typeof fixture>>, resolve = vi.fn(asy
 }
 
 describe('BufferManager', () => {
+  it('keeps unlimited playback waiting and retrying until stopped, beyond the old timeout and retry budget', async () => {
+    const f = await fixture()
+    const network = { route: async () => ({ kind: 'direct' as const }), media: DEFAULT_MEDIA_NETWORK }
+    await start(f, vi.fn(async () => ({ url: 'https://cdn.example/live.m3u8', network })))
+    expect(f.commands[0]!.args[f.commands[0]!.args.indexOf('-rw_timeout') + 1]).toBe('0')
+    expect(f.commands[0]!.args[f.commands[0]!.args.indexOf('-tls_verify') + 1]).toBe('0')
+    await f.clock.advance(15000)
+    expect(f.children).toHaveLength(1)
+    expect(f.current().state).not.toBe('failed')
+    for (let index = 0; index < 4; index++) {
+      f.children[index]!.emit('close', 1)
+      await until(() => f.current().state === 'reconnecting')
+      await f.clock.advance(2000)
+      await until(() => f.children.length === index + 2)
+    }
+    expect(f.states.some(state => state.state === 'failed')).toBe(false)
+    expect(f.current().retriesRemaining).toBeUndefined()
+    await f.manager.stop('official')
+    expect(f.current().state).toBe('stopped')
+    const privateArgs = buildFfmpegArgs({ url: 'https://cdn.example/live.flv', network, headers: { Cookie: 'synthetic=1' } }, '/fixture', 0)
+    expect(privateArgs[privateArgs.indexOf('-tls_verify') + 1]).toBe('1')
+  })
+
+  it('honors a user-selected finite playback retry budget', async () => {
+    const f = await fixture()
+    const network = { route: async () => ({ kind: 'direct' as const }), media: { ...DEFAULT_MEDIA_NETWORK, reconnectAttempts: 1 } }
+    await start(f, vi.fn(async () => ({ url: 'https://cdn.example/live.m3u8', network })))
+    f.children[0]!.emit('close', 1)
+    await until(() => f.current().state === 'reconnecting')
+    await f.clock.advance(1000)
+    await until(() => f.children.length === 2)
+    f.children[1]!.emit('close', 1)
+    await until(() => f.current().state === 'failed')
+    expect(f.current().retriesRemaining).toBe(0)
+  })
   it('publishes complete video on EOF before the first poll without skipping readiness', async () => {
     const f = await fixture()
     await start(f)
@@ -182,7 +218,8 @@ describe('BufferManager', () => {
     f.children[0]!.emit('close', 1)
     await until(() => f.current().state === 'failed')
     expect(f.current().failure).toMatchObject({ stage, code })
-    expect(JSON.stringify(f.states)).not.toMatch(/PRIVATE|private\.invalid|sig=/)
+    expect(JSON.stringify(f.states)).not.toContain('PRIVATE')
+    expect(f.current().failure?.detail).toBeDefined()
   })
   it('passes an explicit proxy and removes inherited proxy environment variables on spawn', async () => {
     const f = await fixture()

@@ -16,6 +16,8 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useErrorState } from '../ui/ErrorDetails'
+import { displayError, errorDetails, type ErrorDetails } from '../core/errorDetails'
 import { apiClient } from '../app/apiClient'
 import { composeMessage, DEFAULT_MESSAGE_AFFIXES, MessageCompositionError, type MessageAffixes } from '../core/messageComposition'
 import type { DanmakuFeaturesSnapshot } from '../../electron/danmakuFeatures'
@@ -52,7 +54,9 @@ export function credentialProblem(missing: readonly string[]): string {
 export function useStudioComposer({ connected, room }: { connected: boolean; room: string | null }) {
   const [account, setAccount] = useState<ActiveAccount | null>(null)
   const [loading, setLoading] = useState(true)
-  const [accountError, setAccountError] = useState('')
+  const [accountError, setAccountError, accountErrorDetail] = useErrorState('')
+  const [configurationError, setConfigurationError, configurationDetail] = useErrorState('')
+  const [deliveryError, setDeliveryError, deliveryErrorDetail] = useErrorState('')
   const [draft, setDraftState] = useState('')
   const [pending, setPending] = useState(false)
   const [notice, setNotice] = useState<DouyuMessageOutcome | null>(null)
@@ -82,6 +86,7 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
     setDraftState('')
     setNotice(null)
     setDelivery(null)
+    setDeliveryError(null)
     setNextAllowedAt(null)
   }, [])
 
@@ -95,7 +100,12 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
     try {
       const result = await apiClient.listDouyuAccounts()
       if (!mounted.current || version !== accountRevision.current) return
-      if (!result.ok || !Array.isArray(result.value?.accounts)) throw new Error('Unavailable account snapshot')
+      if (!result.ok) {
+        displayedAccount.current = null; setAccount(null)
+        setAccountError(displayError(result, '无法确认当前账号, 请在斗鱼账号中刷新状态.'))
+        return
+      }
+      if (!Array.isArray(result.value?.accounts)) throw new Error('Unavailable account snapshot', { cause: { code: 'invalid-account-snapshot' } })
       const selected = result.value.accounts.find((item) => item.id === result.value.activeAccountId)
       const current = selected && typeof selected.id === 'string' && typeof selected.label === 'string'
         ? { id: selected.id, label: selected.label, loggedIn: selected.login?.loggedIn === true, busy: selected.busy === true,
@@ -107,11 +117,11 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
       displayedAccount.current = current
       setAccount(current)
       setAccountError('')
-    } catch {
+    } catch (caught) {
       if (!mounted.current || version !== accountRevision.current) return
       displayedAccount.current = null
       setAccount(null)
-      setAccountError('无法确认当前账号，请在斗鱼账号中刷新状态。')
+      setAccountError(displayError(caught, '无法确认当前账号, 请在斗鱼账号中刷新状态.'))
     } finally {
       if (mounted.current && version === accountRevision.current) setLoading(false)
     }
@@ -167,11 +177,13 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
     const off = apiClient.subscribeFeatures((event) => {
       if (event.topic !== 'danmaku-preferences' || !event.data || typeof event.data !== 'object') return
       const next = (event.data as Partial<DanmakuFeaturesSnapshot>).affixes
-      if (next) { evented = true; setAffixes(next) }
+      if (next) { evented = true; setAffixes(next); setConfigurationError(null) }
     })
     void apiClient.feature('getDanmakuFeatures', undefined).then((result) => {
-      if (live && !evented && result.ok) setAffixes(result.value.affixes)
-    })
+      if (!live || evented) return
+      if (result.ok) { setAffixes(result.value.affixes); setConfigurationError(null) }
+      else setConfigurationError(result)
+    }).catch(caught => { if (live && !evented) setConfigurationError(caught) })
     return () => { live = false; off() }
   }, [])
 
@@ -204,13 +216,13 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
     setDraftState(text)
   }, [])
 
-  const composed = useCallback((text: string, mode: SendMode): { text: string | null; problem: string | null } => {
+  const composed = useCallback((text: string, mode: SendMode): { text: string | null; problem: string | null; detail?: ErrorDetails } => {
     try {
       const value = composeMessage(text, { affixes, mode })
       if (serverLimit !== null && value.length > serverLimit) return { text: value, problem: `超过平台当前允许的 ${serverLimit} 字。` }
       return { text: value, problem: null }
     } catch (error) {
-      return { text: null, problem: error instanceof MessageCompositionError ? error.message : '弹幕内容无效。' }
+      return { text: null, problem: error instanceof MessageCompositionError ? error.message : '弹幕内容无效。', detail: errorDetails(error) }
     }
   }, [affixes, serverLimit])
 
@@ -219,14 +231,16 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
     const watch = ++deliveryWatch.current
     const poll = async (): Promise<void> => {
       if (!mounted.current || watch !== deliveryWatch.current || operation.context !== contextVersion.current) return
-      const result = await apiClient.feature('getDouyuDelivery', { accountId, id })
-      if (!mounted.current || watch !== deliveryWatch.current || operation.context !== contextVersion.current || !result.ok || !result.value) return
+      const result = await apiClient.feature('getDouyuDelivery', { accountId, id }).catch(caught => ({ ok: false as const, ...displayError(caught, '无法读取弹幕发送回执') }))
+      if (!mounted.current || watch !== deliveryWatch.current || operation.context !== contextVersion.current) return
+      if (!result.ok) { setDeliveryError(result); return }
+      if (!result.value) return
       const evidence = result.value
       if (evidence.id !== id || evidence.accountId !== accountId || evidence.room !== room) return
       setDelivery(evidence)
       if (outcome.status !== 'failed' && roomEchoConfirmsSend(evidence)) {
         setNotice(current => current?.deliveryId === id && current.status !== 'failed'
-          ? { ...current, status: 'succeeded', message: ROOM_OBSERVED_SEND_MESSAGE } : current)
+          ? { ...current, status: 'succeeded', message: ROOM_OBSERVED_SEND_MESSAGE, detail: undefined } : current)
         if (operation.draftVersion !== null && operation.draftVersion === draftVersion.current) setDraft('')
       }
       const settled = evidence.roomEcho !== 'pending' || evidence.gateway === 'rejected'
@@ -245,13 +259,14 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
     setPending(true)
     setNotice(null)
     setDelivery(null)
+    setDeliveryError(null)
     deliveryWatch.current++
     const accountId = current.account.id
     try {
       const response = await apiClient.feature('sendComposedDouyuMessage', { accountId, room: current.room, text, color: 0, mode })
       if (!mounted.current || operation.context !== contextVersion.current) return
-      const value = response.ok ? response.value : { status: 'failed' as const, message: response.message, nextAllowedAt: null }
-      if (!value || !['succeeded', 'waiting-user', 'failed'].includes(value.status) || typeof value.message !== 'string') throw new Error('Unknown send result')
+      const value = response.ok ? response.value : { status: 'failed' as const, message: response.message, nextAllowedAt: null, detail: errorDetails(response) }
+      if (!value || !['succeeded', 'waiting-user', 'failed'].includes(value.status) || typeof value.message !== 'string') throw new Error('Unknown send result', { cause: { code: 'invalid-send-result' } })
       setNotice(value)
       if (value.messageLimit) setServerLimit(value.messageLimit.effectiveMaximumUnits)
       const deadline = typeof value.nextAllowedAt === 'number' && Number.isFinite(value.nextAllowedAt) && value.nextAllowedAt > Date.now()
@@ -261,8 +276,8 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
       setNow(Date.now())
       if (value.deliveryId) watchDelivery(accountId, current.room, value.deliveryId, operation, value)
       if (value.status === 'succeeded' && operation.draftVersion !== null && operation.draftVersion === draftVersion.current) setDraft('')
-    } catch {
-      if (mounted.current && operation.context === contextVersion.current) setNotice({ status: 'waiting-user', message: UNCERTAIN, nextAllowedAt: null })
+    } catch (caught) {
+      if (mounted.current && operation.context === contextVersion.current) setNotice({ status: 'waiting-user', message: UNCERTAIN, nextAllowedAt: null, detail: errorDetails(caught) })
     } finally {
       if (inFlight.current === operation) {
         inFlight.current = null
@@ -274,19 +289,25 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
   const remaining = nextAllowedAt === null ? 0 : Math.max(0, Math.ceil((nextAllowedAt - now) / 1000))
   const blockedReason = problem || (pending ? '正在处理上一条发送…' : remaining > 0 ? `请在 ${remaining} 秒后发送。` : null)
   const draftComposition = composed(draft, 'message')
+  const blockedDetail = !problem || loading || pending ? null : accountError ? accountErrorDetail
+    : { code: !connected || !room ? 'danmaku-disconnected' : !account?.loggedIn ? 'login-required' : account.canSend === false ? 'missing-credentials' : 'account-busy', message: problem,
+      ...(account?.canSend === false ? { missingCredentialFields: account.missing } : {}) }
   return {
     account, room, draft, setDraft, pending, notice, delivery, remaining, blockedReason, refreshAccounts, affixes,
+    blockedDetail, configurationError, configurationDetail, deliveryError, deliveryErrorDetail,
     // Initial identity/room resolution resets the context. Do not accept typing before
     // that boundary; ordinary same-account refreshes keep the editor live.
     canEdit: connected && !!room && /^[1-9]\d{0,11}$/.test(room) && account?.loggedIn === true && !account.busy && account.canSend !== false,
     /** Logged in on the website, but missing what the danmaku gateway needs: a relogin fixes it. */
     needsRelogin: account?.loggedIn === true && account.canSend === false,
     draftProblem: draftComposition.problem,
+    draftErrorDetail: draftComposition.detail,
     /** Length of what will actually be sent, prefix and suffix included. */
     composedLength: draftComposition.text?.length ?? draft.length,
     lengthLimit: serverLimit ?? 500,
     canSendText: (text: string) => !blockedReason && !composed(text, 'repeat').problem,
     repeatProblem: (text: string) => blockedReason || composed(text, 'repeat').problem,
+    repeatErrorDetail: (text: string) => blockedDetail ?? composed(text, 'repeat').detail ?? (composed(text, 'repeat').problem ? { message: composed(text, 'repeat').problem } : null),
     sendDraft: () => send(draftRef.current, 'message', true),
     repeat: (text: string) => send(text, 'repeat', false),
   }

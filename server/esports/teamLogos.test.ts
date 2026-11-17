@@ -401,6 +401,12 @@ describe('team logo disk and network cache', () => {
     const cache = create(request)
     try {
       cache.get(path); await vi.advanceTimersByTimeAsync(0)
+      const shared = new LiquipediaRateLimit(root, () => now)
+      expect(shared.cooldown()?.until).toBe(now + 60_000)
+      expect(shared.reserve(true)).toBe(false)
+      const another = create(request)
+      await another.ensure(path.replace('48px', '64px'))
+      expect(request).toHaveBeenCalledTimes(1)
       now += 59_999; await vi.advanceTimersByTimeAsync(59_999)
       expect(request).toHaveBeenCalledTimes(1)
       now++; await vi.advanceTimersByTimeAsync(1); await cache.idle()

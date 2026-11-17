@@ -15,10 +15,11 @@ import { parseDouyinInput } from '../core/douyinInput'
 import type { MediaDescriptor, PlatformId, SourceRole } from '../core/types'
 import type { LoginPlatform } from '../../electron/login'
 import { streamFailureHint } from '../../server/networkFailure'
+import { displayError, errorDetails, type ErrorDetails } from '../core/errorDetails'
 
 export interface RoleLoad {
   busy: boolean
-  problem: { message: string; hint?: string } | null
+  problem: { message: string; hint?: string; detail?: ErrorDetails } | null
   notes: string[]
   /** Signing in to this platform would get the stream, or its top quality; null otherwise. */
   login: LoginPlatform | null
@@ -185,7 +186,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         const roomKey = douyinDanmakuRoom(descriptor)
         if (roomKey) {
           try { connectRoom(roomKey, roomKey.slice('douyin:'.length)) }
-          catch { session.notice('warn', '抖音弹幕连接失败, 视频继续播放') }
+          catch (error) { session.notice('warn', '抖音弹幕连接失败, 视频继续播放', error) }
         }
       }
       if (role === 'commentary' && descriptor.platform === 'huya') {
@@ -194,6 +195,8 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         else disconnectRoom()
       }
       if (session.snapshot.media[role].status !== 'empty') play()
+    } catch (error) {
+      if (loads.current[role] === request) patch(role, { problem: displayError(error, '媒体载入失败, 请查看原始错误信息.') })
     } finally { if (loads.current[role] === request) patch(role, { busy: false }) }
   }, [connectRoom, disconnectRoom, patch, play, session])
 
@@ -237,7 +240,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       )
       if (generation !== session.sourceRevision(role)) return false
       if (!result.ok) {
-        patch(role, { problem: { message: result.message, hint: streamFailureHint(result.code) } })
+        patch(role, { problem: { message: result.message, hint: streamFailureHint(result.code), detail: errorDetails(result) } })
         if (platformOf === 'douyin' && result.code === 'restricted') void offerLogin(role, 'douyin', generation, true)
         return false
       }
@@ -245,7 +248,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         const { failure } = result.value
         // A proxy that cannot be reached is not the platform's fault; say which to check.
         const hint = streamFailureHint(failure.reason) ?? failure.hint
-        patch(role, { problem: { message: failure.message, hint } })
+        patch(role, { problem: { message: failure.message, hint, detail: errorDetails(failure) } })
         // Only an explicit authentication refusal offers Bilibili/Huya sign-in.
         const signInCanHelp = SIGN_IN_REFUSALS.has(failure.reason ?? '') || (!failure.reason && (platformOf === 'douyu' || platformOf === 'youtube'))
         if (failure.code === 'restricted' && (platformOf === 'douyu' || platformOf === 'youtube' || platformOf === 'bilibili' || platformOf === 'huya') && signInCanHelp) void offerLogin(role, platformOf, generation, true)
@@ -279,7 +282,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
           const roomKey = douyinDanmakuRoom({ input, danmakuRoom: stream.danmakuRoom })
           if (roomKey) {
             try { connectRoom(roomKey, roomKey.slice('douyin:'.length)) }
-            catch { session.notice('warn', '抖音弹幕连接失败, 视频继续播放') }
+            catch (error) { session.notice('warn', '抖音弹幕连接失败, 视频继续播放', error) }
           }
           else disconnectRoom()
         }
@@ -292,6 +295,9 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       }
       play()
       return true
+    } catch (error) {
+      if (generation === session.sourceRevision(role) && loads.current[role] === request) patch(role, { problem: displayError(error, '媒体载入失败, 请查看原始错误信息.') })
+      return false
     } finally {
       session.endSourceChange(role, generation)
       if (loads.current[role] === request) patch(role, { busy: false })
@@ -308,11 +314,11 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     try {
       const result = await apiClient.login(platform)
       if (!result.ok) {
-        if (stillCurrent()) patch(role, { problem: result.code === 'login-cancelled' ? null : { message: result.message } })
+        if (stillCurrent()) patch(role, { problem: result.code === 'login-cancelled' ? null : displayError(result) })
         return
       }
-    } catch {
-      if (stillCurrent()) patch(role, { problem: { message: '登录暂时失败, 请重试.' } })
+    } catch (error) {
+      if (stillCurrent()) patch(role, { problem: displayError(error, '登录暂时失败, 请重试.') })
       return
     } finally { patch(role, { loggingIn: false }) }
     if (again && stillCurrent()) await loadInput(role, again.input, again.platform)

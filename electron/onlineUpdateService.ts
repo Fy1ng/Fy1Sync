@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { diagnosticDetails } from '../server/errorDetails'
 import { open, rename, unlink } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
@@ -99,6 +100,7 @@ export class OnlineUpdateService {
   private phase: OnlineUpdateState['phase'] = 'idle'
   private message = '手动检查更新. 下载不会中断当前播放.'
   private checkedAt: number | null = null
+  private errorDetail?: import('../src/core/errorDetails').ErrorDetails
 
   constructor(private readonly options: OnlineUpdateServiceOptions) {
     this.source = parseOnlineUpdateSource(options.source)
@@ -117,9 +119,10 @@ export class OnlineUpdateService {
     try {
       this.archive = readVerifiedUpdateArchive(options.userDataDir, this.source)
       this.checkedAt = this.archive?.checkedAt ?? null
-    } catch {
+    } catch (error) {
       this.cacheInvalid = true
       this.phase = 'error'
+      this.errorDetail = diagnosticDetails(error)
       this.message = '本地更新校验记录损坏. 已停止在线更新并保留原文件, 当前应用仍可使用.'
     }
     if (!this.cacheInvalid) this.initial = this.restoreInstaller()
@@ -131,7 +134,8 @@ export class OnlineUpdateService {
       currentAppVersion: this.options.currentAppVersion, currentFrontendRevision: snapshot.currentRevision, bridgeVersion: this.options.bridgeVersion,
       checkedAt: this.checkedAt, canRollbackFrontend: snapshot.canRollback,
       frontend: this.activeKind === 'frontend' && this.progress ? { ...this.progress } : this.frontendItem(snapshot),
-      application: this.activeKind === 'application' && this.progress ? { ...this.progress } : this.applicationItem(), message: this.message }
+      application: this.activeKind === 'application' && this.progress ? { ...this.progress } : this.applicationItem(), message: this.message,
+      ...(this.errorDetail === undefined ? {} : { errorDetail: diagnosticDetails(this.errorDetail) }) }
   }
 
   subscribe(listener: (state: OnlineUpdateState) => void): () => void {
@@ -180,6 +184,7 @@ export class OnlineUpdateService {
     this.selected = id
     if (!this.cacheInvalid) {
       this.phase = 'idle'
+      this.errorDetail = undefined
       this.message = `已选择 ${labels[id]}, 点击检查更新读取该源. 不会自动切换来源.`
     }
     this.publish()
@@ -265,17 +270,19 @@ export class OnlineUpdateService {
     const controller = new AbortController()
     this.controller = controller
     this.activeKind = kind
+    this.errorDetail = undefined
     const signal = AbortSignal.any([controller.signal, this.lifetime.signal])
     const pending = Promise.resolve().then(async () => {
       await this.initial
       signal.throwIfAborted()
       await operation(signal)
-    }).catch(() => {
+    }).catch(error => {
       if (controller.signal.aborted && !this.disposed) {
         this.phase = 'idle'
         this.message = '已取消更新操作. 原版本和已完成验证的更新仍保留.'
       } else {
         this.phase = 'error'
+        this.errorDetail = diagnosticDetails(error)
         this.message = this.cacheInvalid ? '本地更新切换未能安全完成. 已停止在线更新, 下次启动不会启用已撤回的前端包.'
           : `${kind === 'check' ? '更新检查' : '更新下载或校验'}失败. 已保留原版本和已验证缓存, 请重试或手动选择其他来源.`
       }
@@ -349,9 +356,10 @@ export class OnlineUpdateService {
       if (!entry || !same(entry, this.archive?.latest.catalog.application) || compareAppVersions(entry.version, this.options.currentAppVersion) <= 0) return
       await this.verifyInstaller(entry)
       if (!this.disposed) { this.readyInstaller = candidate; this.publish() }
-    } catch {
+    } catch (error) {
       if (!this.disposed) {
         this.phase = 'error'
+        this.errorDetail = diagnosticDetails(error)
         this.message = '已下载的安装包未通过本地校验, 不会执行. 可重新下载, 当前应用仍可使用.'
         this.publish()
       }
@@ -409,11 +417,12 @@ export class OnlineUpdateService {
         || compareAppVersions(entry.version, this.options.currentAppVersion) <= 0) throw failure()
       if (!same(proof(this.readyInstaller.envelope, this.source!).catalog.application, entry)) throw failure()
       return await this.verifyInstaller(entry)
-    } catch {
+    } catch (error) {
       this.readyInstaller = null
       this.phase = 'error'
+      this.errorDetail = diagnosticDetails(error)
       this.message = '安装包的执行前校验失败, 没有启动安装程序. 请重新下载.'
-      throw new Error('安装包不可用或未通过执行前校验.')
+      throw Object.assign(new Error('安装包不可用或未通过执行前校验.'), { detail: this.errorDetail })
     } finally { this.verifyingInstaller = false; this.publish() }
   }
 

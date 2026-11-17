@@ -17,6 +17,7 @@ import { Tasks } from './Tasks'
 import { accountName, useDouyu, type Lane } from './useDouyu'
 import { useRemembered } from '../../app/remembered'
 import { DouyuWritesPane, useDouyuWrites } from '../douyuWrites'
+import { ErrorText } from '../../ui/ErrorDetails'
 
 type Tab = 'accounts' | 'following' | 'tasks' | 'automations' | 'backpack' | 'renewal' | 'experimental'
 /** Pages that only write to Douyu; hidden until 斗鱼写操作 is on. */
@@ -32,9 +33,10 @@ const TABS: { id: Tab; label: string }[] = [
 ]
 
 /** The Douyu section of 设置. `onWatch` loads a followed room as the commentary. */
-export function DouyuDesk({ onWatch, platformNavigation }: {
+export function DouyuDesk({ onWatch, platformNavigation, accountAside }: {
   onWatch: (room: string) => void
   platformNavigation?: SideTabNavigation<LoginPlatform>
+  accountAside?: React.ReactNode
 }): React.ReactNode {
   const data = useDouyu()
   const { danmaku } = useSessionSnapshot()
@@ -52,7 +54,7 @@ export function DouyuDesk({ onWatch, platformNavigation }: {
         badge: item.id === 'tasks' && data.tasks && data.tasks.tasks.length > 0
           ? <span className="num tab-count">{data.tasks.tasks.length}</span> : undefined,
       }))}
-      aside={<span className="desk-who">
+      aside={accountAside ?? <span className="desk-who">
         {!active ? '未设置当前账号' : accountName(active)
           ? <>当前账号<b>{accountName(active)}</b>{active.login.loggedIn ? '' : '（未登录）'}</>
           : active.login.loggedIn ? '已登录' : '未登录'}
@@ -75,7 +77,7 @@ export function DouyuDesk({ onWatch, platformNavigation }: {
 
 /** The one line of feedback under a pane: what is happening, what happened, or what failed. */
 export function LaneLine({ lane }: { lane: Lane }): React.ReactNode {
-  if (lane.error) return <p className="form-error" role="alert">{lane.error}</p>
+  if (lane.error) return <p className="form-error" role="alert"><ErrorText error={lane.errorDetail ?? lane.error} message={lane.error} /></p>
   if (lane.pending || lane.notice) return <p className="lane" role="status">{lane.pending || lane.notice}</p>
   return null
 }

@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useRef } from 'react'
+import { displayError } from '../../core/errorDetails'
 import { apiClient } from '../../app/apiClient'
 import { AREA_FRACTION, type LaneLayout } from '../../core/danmakuLanes'
 import { DanmakuProcessor, danmakuLaneHeight, type DanmakuPreferences } from '../../core/danmakuProcessing'
@@ -34,7 +35,7 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
   drawing: boolean
   /** Changes on each reload of the picture; the parked queue belongs to the old one. */
   resetKey: number
-  onProblem: (problem: string | null) => void
+  onProblem: (problem: unknown) => void
 }): React.ReactNode {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const timeline = useRef(new DanmakuTimeline())
@@ -99,11 +100,11 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
         else if (event === 'state' && data && typeof data === 'object') {
           const value = data as { state?: unknown; detail?: unknown }
           if (value.state === 'connected') problemRef.current(null)
-          else if (value.state === 'closed') problemRef.current(typeof value.detail === 'string' ? value.detail : '弹幕连接已断开')
-        } else if (event === 'error') problemRef.current('弹幕连接中断，正在重试')
+          else if (value.state === 'closed') problemRef.current(displayError(data, typeof value.detail === 'string' ? value.detail : '弹幕连接已断开'))
+        } else if (event === 'error') problemRef.current(displayError(data, '弹幕连接中断, 正在重试'))
       })
-    } catch {
-      problemRef.current('弹幕连接失败')
+    } catch (caught) {
+      problemRef.current(displayError(caught, '弹幕连接失败'))
     }
     function ingest(data: unknown): void {
       if (!drawingRef.current || !video || !data || typeof data !== 'object') return

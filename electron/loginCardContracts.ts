@@ -40,16 +40,18 @@ export interface LoginChallengeRegion {
 /** This state is private to the local login view, never broadcast to the main renderer. */
 export interface LoginCardState {
   platform: EmbeddedLoginPlatform
+  transport?: 'http'
   stage: LoginCardStage
   mode: LoginCardMode
   qr: { status: LoginQrStatus; image?: string }
   sms: LoginSmsState
   busy: boolean
   message?: string
+  errorDetail?: import('../src/core/errorDetails').ErrorDetails
   verification?: LoginVerification
 }
 
-export interface LoginCardResult { ok: boolean; message?: string }
+export interface LoginCardResult { ok: boolean; message?: string; detail?: import('../src/core/errorDetails').ErrorDetails }
 export interface LoginCardBridge {
   state(): Promise<LoginCardState | null>
   act(action: LoginCardAction): Promise<LoginCardResult>

@@ -8,6 +8,7 @@
  */
 
 import type { GrabbedFrame } from '../../recognition/frameGrabber'
+import { errorDetails, type ErrorDetails } from '../../core/errorDetails'
 
 export const SCREENSHOT_TYPES = ['image/png', 'image/jpeg', 'image/webp'] as const
 export const MAX_SCREENSHOT_BYTES = 25 * 1024 * 1024
@@ -47,7 +48,7 @@ export function imageFromClipboard(data: DataTransfer | null): File | null {
   return null
 }
 
-export type DecodedScreenshot = { ok: true; frame: GrabbedFrame } | { ok: false; message: string }
+export type DecodedScreenshot = { ok: true; frame: GrabbedFrame } | { ok: false; message: string; detail?: ErrorDetails }
 
 /** Decode to RGBA at native size; the same shape the video grabber produces. */
 export async function decodeScreenshot(
@@ -60,8 +61,8 @@ export async function decodeScreenshot(
   let bitmap: ImageBitmap
   try {
     bitmap = await decode(file)
-  } catch {
-    return { ok: false, message: '无法解码这张截图' }
+  } catch (caught) {
+    return { ok: false, message: '无法解码这张截图', detail: errorDetails(caught) }
   }
   try {
     const sized = checkScreenshotSize(bitmap.width, bitmap.height)
@@ -72,6 +73,8 @@ export async function decodeScreenshot(
     context.drawImage(bitmap, 0, 0)
     const image = context.getImageData(0, 0, bitmap.width, bitmap.height)
     return { ok: true, frame: { pixels: image.data, width: image.width, height: image.height, mediaTime: 0, wallTime: clock() } }
+  } catch (caught) {
+    return { ok: false, message: '截图画面读取失败', detail: errorDetails(caught) }
   } finally {
     bitmap.close()
   }

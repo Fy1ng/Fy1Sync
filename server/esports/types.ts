@@ -9,6 +9,7 @@ export interface Cs2Stream {
   url: string | null
   /** Why `url` is still null: the event page is being read, lists no matching channel, or could not be read. */
   missing: 'finding' | 'unmatched' | 'failed' | null
+  errorDetail?: import('../../src/core/errorDetails').ErrorDetails
   videoId: string | null
 }
 export interface Cs2Match {
@@ -28,8 +29,10 @@ export interface Cs2Schedule {
   attribution: string
   stale: boolean
   error?: string
-  /** Set when a refresh was refused for Liquipedia's 30-second parse limit: when one may run again. */
+  errorDetail?: import('../../src/core/errorDetails').ErrorDetails
+  /** Earliest permitted retry, including shared upstream cooldowns. */
   refreshAt?: number
+  refreshReason?: 'parse-quota' | 'upstream-rate-limit' | 'retry'
   matches: Cs2Match[]
 }
 /**

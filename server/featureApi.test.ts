@@ -138,7 +138,10 @@ describe('typed feature dispatch and safe public failures', () => {
     const api = new FeatureApi({ getDanmakuFeatures: () => { throw error } })
     const result = await api.invoke('getDanmakuFeatures', undefined)
     expect(result).toMatchObject({ ok: false, code })
-    expect(JSON.stringify(result)).not.toContain('DO_NOT_EXPORT')
+    if (!result.ok) {
+      expect(result.message).not.toContain('DO_NOT_EXPORT')
+      expect(JSON.stringify(result.detail)).toContain('DO_NOT_EXPORT')
+    }
     api.dispose()
   })
 

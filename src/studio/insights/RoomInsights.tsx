@@ -8,6 +8,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError, errorDetails, type DisplayError, type ErrorDetails } from '../../core/errorDetails'
 import { apiClient, type ApiResult } from '../../app/apiClient'
 import type { DouyuInsightsEvent, DouyuRankEntry, DouyuRoomInsights, DouyuWatchTime, DouyuFansWatchTime } from '../../../server/douyu/insightsTypes'
 import type { DouyuWatchState } from '../../../server/douyu/watchTypes'
@@ -29,7 +31,7 @@ const RANKS: { value: RankKey; label: string }[] = [
 type Watch =
   | { kind: 'loading' }
   | { kind: 'value'; value: DouyuWatchTime }
-  | { kind: 'missing'; reason: string }
+  | { kind: 'missing'; reason: string; detail?: ErrorDetails }
 
 const isInsightsEvent = (value: unknown): value is DouyuInsightsEvent =>
   !!value && typeof value === 'object' && typeof (value as { type?: unknown }).type === 'string'
@@ -45,21 +47,24 @@ const validWatchState = (value: unknown): value is DouyuWatchState => !!value &&
   && Number.isSafeInteger((value as DouyuWatchState).verifiedIncrease) && (value as DouyuWatchState).verifiedIncrease >= 0
 
 /** A pushed snapshot wins over an initial read that was already in flight. */
-function useWatchState(): DouyuWatchState | null {
+function useWatchState(): { state: DouyuWatchState | null; error: DisplayError | null } {
   const [state, setState] = useState<DouyuWatchState | null>(null)
+  const [error, setError] = useState<DisplayError | null>(null)
   useEffect(() => {
     let live = true, pushed = false
     const unsubscribe = apiClient.subscribeFeatures(event => {
       if (event.topic !== 'douyu-watch' || !validWatchState(event.data)) return
       pushed = true
-      if (live) setState(event.data)
+      if (live) { setState(event.data); setError(null) }
     })
     void apiClient.feature('getDouyuWatchState', undefined).then(result => {
-      if (live && !pushed && result.ok && validWatchState(result.value)) setState(result.value)
-    }).catch(() => {})
+      if (!live || pushed) return
+      if (result.ok && validWatchState(result.value)) { setState(result.value); setError(null) }
+      else setError(displayError(result, result.ok ? '无法读取官方观时上报状态' : undefined))
+    }).catch(caught => { if (live && !pushed) setError(displayError(caught, '无法读取官方观时上报状态')) })
     return () => { live = false; unsubscribe() }
   }, [])
-  return state
+  return { state, error }
 }
 
 function liveState(insights: DouyuRoomInsights): string {
@@ -78,12 +83,14 @@ export function RoomInsights({ room }: { room: string }): React.ReactNode {
   // Per room: reopening shows the last figures at once; the reads below bring them up to date.
   const [tab, setTab] = useRemembered<Tab>('insights:tab', 'overview')
   const [insights, setInsights] = useRemembered<DouyuRoomInsights | null>(`insights:${room}`, null)
-  const [error, setError] = useState('')
+  const [error, setError, errorDetail] = useErrorState('')
   const [refreshing, setRefreshing] = useState(false)
   const [watch, setWatch] = useRemembered<Watch>(`insights:watch:${room}`, { kind: 'loading' })
   const [fansWatch, setFansWatch] = useState<DouyuFansWatchTime | null>(null)
-  const watchState = useWatchState()
+  const [fansWatchError, setFansWatchError, fansWatchErrorDetail] = useErrorState('')
+  const { state: watchState, error: watchStateError } = useWatchState()
   const sequence = useRef(0)
+  const watchSequence = useRef(0)
   const applied = useRef(0)
   const alive = useRef(true)
   const roomRef = useRef(room)
@@ -93,8 +100,8 @@ export function RoomInsights({ room }: { room: string }): React.ReactNode {
   const accept = (target: string, mine: number, result: ApiResult<DouyuRoomInsights>): void => {
     if (!alive.current || target !== roomRef.current || mine < applied.current) return
     applied.current = mine
-    if (!result.ok) { setError(result.message); return }
-    if (!validInsights(result.value, target)) { setError('无法读取房间数据'); return }
+    if (!result.ok) { setError(result); return }
+    if (!validInsights(result.value, target)) { setError(displayError(result, '无法读取房间数据')); return }
     setError('')
     setInsights(result.value)
   }
@@ -119,6 +126,10 @@ export function RoomInsights({ room }: { room: string }): React.ReactNode {
       const mine = ++sequence.current
       void apiClient.feature(method, { room }).then((result) => {
         if (live) accept(room, mine, result)
+      }).catch(caught => {
+        if (!live || mine < applied.current) return
+        applied.current = mine
+        setError(displayError(caught, '无法读取房间数据'))
       }).finally(() => {
         reading = false
         if (live && dirty) read()
@@ -139,11 +150,13 @@ export function RoomInsights({ room }: { room: string }): React.ReactNode {
   const current = (target: string): boolean => alive.current && roomRef.current === target
 
   async function readWatch(target: string): Promise<void> {
+    const mine = ++watchSequence.current
     // A remembered figure stays up while it is read again; only a first read shows 正在读取.
     setWatch((previous) => previous.kind === 'value' ? previous : { kind: 'loading' })
-    const accounts = await apiClient.listDouyuAccounts()
-    if (!current(target)) return
-    if (!accounts.ok) { setWatch({ kind: 'missing', reason: accounts.message }); return }
+    setFansWatchError('')
+    const accounts = await apiClient.listDouyuAccounts().catch(caught => ({ ok: false as const, ...displayError(caught, '无法读取当前账号') }))
+    if (!current(target) || mine !== watchSequence.current) return
+    if (!accounts.ok) { setWatch({ kind: 'missing', reason: accounts.message, detail: errorDetails(accounts) }); return }
     const active = accounts.value.accounts.find((account) => account.id === accounts.value.activeAccountId)
     if (!active) { setWatch({ kind: 'missing', reason: '未设置当前账号' }); return }
     if (!active.login.loggedIn) { setWatch({ kind: 'missing', reason: '当前账号未登录' }); return }
@@ -151,13 +164,17 @@ export function RoomInsights({ room }: { room: string }): React.ReactNode {
       apiClient.feature('getDouyuWatchTime', { accountId: active.id, room: target, refresh: true }),
       apiClient.feature('getDouyuFansWatchTime', { accountId: active.id, room: target, refresh: true }),
     ])
-    if (!current(target)) return
+    if (!current(target) || mine !== watchSequence.current) return
     if (cumulative.status === 'fulfilled' && cumulative.value.ok && cumulative.value.value.accountId === active.id && cumulative.value.value.room === target) setFansWatch(cumulative.value.value)
-    else setFansWatch(null)
-    if (daily.status !== 'fulfilled') { setWatch({ kind: 'missing', reason: '官方今日观看查询失败' }); return }
+    else {
+      setFansWatch(null)
+      const failure = cumulative.status === 'rejected' ? cumulative.reason : cumulative.value
+      setFansWatchError(displayError(failure, cumulative.status === 'fulfilled' && !cumulative.value.ok ? cumulative.value.message : '粉丝牌累计观看查询失败'))
+    }
+    if (daily.status !== 'fulfilled') { setWatch({ kind: 'missing', reason: '官方今日观看查询失败', detail: errorDetails(daily.reason) }); return }
     const result = daily.value
-    if (!result.ok) setWatch({ kind: 'missing', reason: result.message })
-    else if (result.value.room !== target) setWatch({ kind: 'missing', reason: '无法读取官方观看时长' })
+    if (!result.ok) setWatch({ kind: 'missing', reason: result.message, detail: errorDetails(result) })
+    else if (result.value.room !== target) setWatch({ kind: 'missing', reason: '无法读取官方观看时长', detail: errorDetails(result) })
     else setWatch({ kind: 'value', value: result.value })
   }
 
@@ -168,7 +185,7 @@ export function RoomInsights({ room }: { room: string }): React.ReactNode {
     void Promise.all([
       apiClient.feature('refreshDouyuRoomInsights', { room }).then((result) => accept(room, mine, result)),
       readWatch(room),
-    ]).finally(() => { if (alive.current) setRefreshing(false) })
+    ]).catch(caught => { if (alive.current) setError(displayError(caught, '房间数据刷新失败')) }).finally(() => { if (alive.current) setRefreshing(false) })
   }
 
   return (
@@ -181,7 +198,9 @@ export function RoomInsights({ room }: { room: string }): React.ReactNode {
         </button>
       </>}>
       <div className="insights-body">
-        {error && <p className="form-error" role="alert">{error}</p>}
+        {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
+        {watchStateError && <p className="form-error" role="alert"><ErrorText error={watchStateError.detail} message={watchStateError.message} /></p>}
+        {fansWatchError && <p className="form-error" role="alert"><ErrorText error={fansWatchErrorDetail ?? fansWatchError} message={fansWatchError} /></p>}
         {!insights && !error && <p className="lane" role="status">正在读取房间数据</p>}
         {insights && tab === 'overview' && <Overview insights={insights} watch={watch} watchState={watchState} fansWatch={fansWatch} />}
         {insights && tab === 'ranks' && <Ranks insights={insights} />}
@@ -290,7 +309,7 @@ function WatchSessionStat({ state, room }: { state: DouyuWatchState | null; room
   const phase = active?.phase === 'verified' && !verified ? 'unverified' : active?.phase
   const note = verified ? `本次粉丝牌累计观看增加 ${formatDuration(active.cumulativeIncrease)}. ${active.reason ?? ''}`
     : active?.reason ?? '登录持有此房间粉丝牌的账号并实际播放后验证. 今日观看增长不能代替累计观时验收.'
-  return <Stat label="官方观时上报" value={phase ? labels[phase] : '尚未启动'} note={note} />
+  return <Stat label="官方观时上报" value={phase ? labels[phase] : '尚未启动'} note={phase === 'failed' ? <ErrorText error={active} message={note} /> : note} />
 }
 
 function FansWatchStat({ state, value, room }: { state: DouyuWatchState | null; value: DouyuFansWatchTime | null; room: string }): React.ReactNode {
@@ -310,7 +329,7 @@ function FansWatchStat({ state, value, room }: { state: DouyuWatchState | null; 
 
 function WatchStat({ watch }: { watch: Watch }): React.ReactNode {
   if (watch.kind === 'loading') return <Stat label="官方今日观看" value={UNKNOWN} note="正在读取" />
-  if (watch.kind === 'missing') return <Stat label="官方今日观看" value={UNKNOWN} note={watch.reason} />
+  if (watch.kind === 'missing') return <Stat label="官方今日观看" value={UNKNOWN} note={watch.detail ? <ErrorText error={watch.detail} message={watch.reason} /> : watch.reason} />
   const { seconds, checkedAt } = watch.value
   return (
     <Stat label="官方今日观看" value={formatDuration(seconds)}

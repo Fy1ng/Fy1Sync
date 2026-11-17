@@ -8,6 +8,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 import { apiClient } from '../../app/apiClient'
 import type { DouyuMonthlySpending, DouyuSpendSource } from '../../../server/douyu/insightsTypes'
 import { Icon } from '../kit'
@@ -40,7 +42,7 @@ export function Spending({ data }: { data: DouyuData }): React.ReactNode {
   const ready = !!account?.login.loggedIn
   const [spending, setSpending] = useState<DouyuMonthlySpending | null>(null)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError, errorDetail] = useErrorState('')
   const generation = useRef(0)
 
   // A different or signed-out account invalidates what was shown and anything in flight.
@@ -60,9 +62,13 @@ export function Spending({ data }: { data: DouyuData }): React.ReactNode {
     void apiClient.feature('getDouyuMonthlySpending', { accountId }).then((result) => {
       if (mine !== generation.current) return
       setLoading(false)
-      if (!result.ok) { setError(result.message); return }
-      if (!validSpending(result.value) || result.value.accountId !== accountId) { setError('无法读取本月消费'); return }
+      if (!result.ok) { setError(result); return }
+      if (!validSpending(result.value) || result.value.accountId !== accountId) { setError(displayError(result, '无法读取本月消费')); return }
       setSpending(result.value)
+    }).catch(caught => {
+      if (mine !== generation.current) return
+      setLoading(false)
+      setError(displayError(caught, '无法读取本月消费'))
     })
   }
 
@@ -81,7 +87,7 @@ export function Spending({ data }: { data: DouyuData }): React.ReactNode {
       {!account && <p className="lane">未设置当前账号，无法读取消费记录。</p>}
       {account && !ready && <p className="lane">当前账号未登录，无法读取消费记录。</p>}
       {loading && <p className="lane" role="status">正在读取本月消费</p>}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
 
       {spending && (
         <>
@@ -91,7 +97,7 @@ export function Spending({ data }: { data: DouyuData }): React.ReactNode {
               ? <b className="num">{yuan(spending.totalMinor)}</b>
               : <span className="spending-missing">{AGGREGATION_REASON[spending.aggregation]}</span>}
           </div>
-          {spending.message && <p className="lane">{spending.message}</p>}
+          {spending.message && <p className="lane">{spending.aggregation === 'partial' ? <ErrorText error={spending} message={spending.message} /> : spending.message}</p>}
           {spending.sources.length === 0 && <p className="lane">未返回任何消费来源。</p>}
           {spending.sources.map((source) => <SourceBlock key={source.source} source={source} />)}
           <p className="lane">金额单位为元，按斗鱼返回的分值换算；更新于 {formatTime(spending.checkedAt)}</p>
@@ -113,6 +119,7 @@ function SourceBlock({ source }: { source: DouyuSpendSource }): React.ReactNode 
       <p className={complete ? 'lane' : 'spending-partial'}>
         {complete ? '已读取全部' : '仅读取部分'} {source.pageCount} 页，共 {source.entries} 笔
         {source.reason ? `。${source.reason}` : ''}
+        {!complete && source.reason && <ErrorText error={source} message="" />}
       </p>
       {source.categories.length > 0 && (
         <table className="spending-table">

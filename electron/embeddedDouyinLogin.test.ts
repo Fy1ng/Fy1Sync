@@ -490,11 +490,12 @@ describe('Douyin isolated local card and official controller', () => {
 })
 
 describe('Douyin embedded LoginManager integration', () => {
-  it('uses only the embedded driver and restores a scoped prior session without finding Chrome or creating its profile', async () => {
+  it('uses only a clean embedded session without restoring old tickets or creating a Chrome profile', async () => {
     const storage = new CookieStore(root)
     storage.write('douyin', [auth, { ...auth, domain: 'v.douyin.com', name: 'SHARE_ONLY' }, { ...auth, path: '/account', name: 'ACCOUNT_ONLY' }])
     const cookiesSet = vi.fn(async () => {})
     const embeddedDriver = { login: vi.fn(async (request: Parameters<EmbeddedLoginController['login']>[0]) => {
+      expect(request.initializeSession).toBeUndefined()
       await request.initializeSession?.({ cookies: { set: cookiesSet } })
       return [auth]
     }) }
@@ -504,15 +505,14 @@ describe('Douyin embedded LoginManager integration', () => {
     expect(findChrome).not.toHaveBeenCalled()
     expect(browserLogin).not.toHaveBeenCalled()
     expect(fs.existsSync(path.join(root, 'browser-profile'))).toBe(false)
-    expect(cookiesSet).toHaveBeenCalledExactlyOnceWith({ url: 'https://live.douyin.com/', domain: '.douyin.com', path: '/',
-      name: 'sessionid', value: 'synthetic-private-ticket', secure: true, httpOnly: true })
+    expect(cookiesSet).not.toHaveBeenCalled()
     await login.dispose()
   })
 
   it('fails without a configured embedded driver instead of silently launching real Chrome', async () => {
     const findChrome = vi.fn(() => 'synthetic-chrome')
     const login = new LoginManager(root, { findChrome })
-    await expect(login.login('douyin')).rejects.toMatchObject({ code: 'login-failed', message: '抖音内嵌登录未完成, 请在应用内重试.' })
+    await expect(login.login('douyin')).rejects.toMatchObject({ code: 'login-failed', message: '抖音登录未完成, 请在应用内重试.' })
     expect(findChrome).not.toHaveBeenCalled()
     expect(fs.readdirSync(root)).toEqual([])
     await login.dispose()
@@ -529,7 +529,7 @@ describe('Douyin embedded LoginManager integration', () => {
     const rejected = expect(pending).rejects.toMatchObject({ code: 'login-cancelled' })
     const logout = login.logout('douyin')
     const set = vi.fn(async () => {})
-    await expect(request.initializeSession?.({ cookies: { set } })).rejects.toThrow('账号数据读写失败')
+    expect(request.initializeSession).toBeUndefined()
     expect(set).not.toHaveBeenCalled()
     release([auth])
     await logout

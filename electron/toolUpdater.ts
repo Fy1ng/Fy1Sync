@@ -5,6 +5,9 @@ import path from 'node:path'
 import { toolVersion } from './toolVersions'
 import { containedPath } from './privateStorage'
 import { ytdlpReleaseAsset, type YtdlpReleaseAsset } from './toolPlatform'
+import { diagnosticDetails } from '../server/errorDetails'
+import { httpErrorDetails } from '../server/httpError'
+import type { ErrorDetails } from '../src/core/errorDetails'
 
 const API = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest'
 const VERSION = /^\d{4}\.\d{2}\.\d{2}(?:\.\d+)?$/
@@ -17,7 +20,7 @@ const hosts = new Set(['api.github.com', 'github.com', 'release-assets.githubuse
 type Entry = { id: string; version: string; sha256: string }
 type Manifest = { schema: 1; active?: Entry; previous?: Entry }
 export type UpdatePhase = 'idle' | 'checking' | 'downloading' | 'verifying' | 'ready' | 'current' | 'restored' | 'error'
-export interface ToolUpdateState { phase: UpdatePhase; downloadedBytes: number; totalBytes: number; downloadedVersion?: string; activeVersion?: string; previousVersion?: string; message: string }
+export interface ToolUpdateState { phase: UpdatePhase; downloadedBytes: number; totalBytes: number; downloadedVersion?: string; activeVersion?: string; previousVersion?: string; message: string; errorDetail?: ErrorDetails }
 export interface ToolUpdaterService {
   state(): ToolUpdateState
   update(): Promise<ToolUpdateState>
@@ -26,7 +29,7 @@ export interface ToolUpdaterService {
 type Transport = (url: string, init: RequestInit) => Promise<Response>
 
 export class UpdateError extends Error {
-  constructor(readonly code: 'network' | 'limit' | 'release' | 'checksum' | 'verification' | 'storage' | 'busy') { super(code) }
+  constructor(readonly code: 'network' | 'limit' | 'release' | 'checksum' | 'verification' | 'storage' | 'busy', options?: ErrorOptions) { super(code, options) }
 }
 const messages: Record<UpdateError['code'], string> = {
   network: '更新下载失败, 请检查网络后重试. 原版本仍可使用.',
@@ -80,7 +83,7 @@ export async function officialDownload(url: string, limit: number, consume: (byt
         current = new URL(location, current).href
         continue
       }
-      if (response.status !== 200 || !response.body) { await response.body?.cancel(); throw new UpdateError('network') }
+      if (response.status !== 200 || !response.body) throw new UpdateError('network', { cause: await httpErrorDetails(response) })
       if (response.headers.has('content-encoding') && response.headers.get('content-encoding') !== 'identity') { await response.body.cancel(); throw new UpdateError('network') }
       const length = response.headers.get('content-length')
       if (length !== null && (!/^\d+$/.test(length) || Number(length) > limit)) { await response.body.cancel(); throw new UpdateError('limit') }
@@ -100,7 +103,7 @@ export async function officialDownload(url: string, limit: number, consume: (byt
       return
     }
     throw new UpdateError('network')
-  } catch (error) { if (error instanceof UpdateError) throw error; throw new UpdateError('network') }
+  } catch (error) { if (error instanceof UpdateError) throw error; throw new UpdateError('network', { cause: error }) }
   finally { clearTimeout(timer) }
 }
 async function downloadBytes(url: string, limit: number, transport?: Transport): Promise<Buffer> {
@@ -240,7 +243,7 @@ export class ManagedYtdlp implements ToolUpdaterService {
       this.status = { phase: 'checking', downloadedBytes: 0, totalBytes: 0, message: '正在检查 GitHub 官方稳定版...' }
       let info: ReturnType<typeof release>
       try { info = release(JSON.parse((await downloadBytes(API, MAX_JSON, this.options.transport)).toString('utf8')), this.assetName) }
-      catch (error) { if (error instanceof UpdateError) throw error; throw new UpdateError('release') }
+      catch (error) { if (error instanceof UpdateError) throw error; throw new UpdateError('release', { cause: error }) }
       const current = this.manifest.active?.version ?? this.options.baselineVersion
       if (current && info.version.localeCompare(current, 'en', { numeric: true }) <= 0) {
         this.status = { ...this.status, phase: 'current', message: '当前受控工具已是该稳定版或更新版本.' }
@@ -273,17 +276,17 @@ export class ManagedYtdlp implements ToolUpdaterService {
       temporary = undefined
       if (this.platform !== 'win32') await chmod(executable, 0o700)
       let verified: string
-      try { verified = await (this.options.verify ?? (file => toolVersion(file, true)))(executable) } catch { throw new UpdateError('verification') }
+      try { verified = await (this.options.verify ?? (file => toolVersion(file, true)))(executable) } catch (error) { throw new UpdateError('verification', { cause: error }) }
       if (verified !== info.version) throw new UpdateError('verification')
       if (await sha256File(executable) !== checksum) throw new UpdateError('checksum')
-      try { await access(executable, this.platform === 'win32' ? constants.R_OK : constants.X_OK) } catch { throw new UpdateError('verification') }
+      try { await access(executable, this.platform === 'win32' ? constants.R_OK : constants.X_OK) } catch (error) { throw new UpdateError('verification', { cause: error }) }
       const previous = this.manifest.active ?? this.manifest.previous
       await this.save({ schema: 1, active: { id, version: info.version, sha256: checksum }, ...(previous ? { previous } : {}) })
       committed = true
       this.status = { ...this.status, phase: 'ready', message: `已验证 ${info.version}, 下次取流使用. 当前播放继续.` }
     } catch (error) {
       const code = error instanceof UpdateError ? error.code : 'storage'
-      this.status = { ...this.status, phase: 'error', message: messages[code] }
+      this.status = { ...this.status, phase: 'error', message: messages[code], errorDetail: diagnosticDetails(error) }
     } finally {
       if (temporary) await rm(temporary, { force: true }).catch(() => {})
       if (promoted && !committed) await rm(promoted, { recursive: true, force: true }).catch(() => {})
@@ -300,7 +303,7 @@ export class ManagedYtdlp implements ToolUpdaterService {
           await this.save({ schema: 1, active: this.manifest.previous, ...(this.manifest.active ? { previous: this.manifest.active } : {}) })
         } else await this.save({ schema: 1, ...(this.manifest.active ? { previous: this.manifest.active } : {}) })
         this.status = { phase: 'restored', downloadedBytes: 0, totalBytes: 0, message: '已恢复选择, 下次取流使用. 当前播放继续.' }
-      } catch { this.status = { ...this.status, phase: 'error', message: messages.storage } }
+      } catch (error) { this.status = { ...this.status, phase: 'error', message: messages.storage, errorDetail: diagnosticDetails(error) } }
       return this.state()
     })()
     this.flight = operation.finally(() => { this.flight = undefined })

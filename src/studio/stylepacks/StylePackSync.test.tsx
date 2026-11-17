@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ApiResult } from '../../app/apiClient'
 import type { FeatureEvent } from '../../../electron/featureContracts'
@@ -38,6 +38,23 @@ async function ready() {
 }
 
 describe('赛事样式包选源与刷新', () => {
+  it('keeps each refresh failure fields with its own summary and clears details after a successful retry', async () => {
+    api.syncStylePacks.mockResolvedValueOnce({ ok: false, code: 'catalog-fetch', message: '清单读取失败', detail: { httpStatus: 429, retryAfter: 120, token: 'dummy-secret' } })
+    const view = await ready()
+    expect(screen.queryByRole('button', { name: '查看原始错误' })).toBeNull()
+    fireEvent.click(view.refresh)
+    const alert = await screen.findByRole('alert')
+    fireEvent.click(within(alert).getByRole('button', { name: '查看原始错误' }))
+    const original = within(alert).getByRole('region', { name: '原始错误信息' })
+    expect(original).toHaveTextContent('catalog-fetch')
+    expect(original).toHaveTextContent('httpStatus')
+    expect(original).toHaveTextContent('429')
+    expect(original).toHaveTextContent('retryAfter')
+    expect(original).not.toHaveTextContent('dummy-secret')
+    fireEvent.click(view.refresh)
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    expect(screen.queryByRole('button', { name: '查看原始错误' })).toBeNull()
+  })
   it('loads the configured source without initiating downloads and shows only trusted source choices', async () => {
     api.getStylePackSyncState.mockResolvedValue({ ok: true, value: { ...idle, source: 'gitcode', installed: 1, catalogRevision: 7 } })
     const view = await ready()

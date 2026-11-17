@@ -5,6 +5,8 @@ import type { RoiRect } from '../core/profileSchema'
 import { EditorStage } from './editor/EditorStage'
 import { RoiWindow } from './editor/RoiWindow'
 import { Sheet } from './kit'
+import { ErrorText, useErrorState } from '../ui/ErrorDetails'
+import { displayError } from '../core/errorDetails'
 import './BasicRegionSheet.css'
 
 export interface BasicRegionSheetProps {
@@ -26,7 +28,7 @@ export function BasicRegionSheet({ video, sourceToken, initial, title, saveLabel
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [roi, setRoi] = useState<RoiRect>(initial ?? { x: 0, y: 0, w: 1, h: 1 })
   const [invalid, setInvalid] = useState(false)
-  const [problem, setProblem] = useState<string | null>(null)
+  const [problem, setProblem, problemDetail] = useErrorState()
   const [revision, setRevision] = useState(0)
   const [drawing, setDrawing] = useState(false)
   const captured = useRef<{ video: HTMLVideoElement; token: unknown; source: string; object: HTMLVideoElement['srcObject']; width: number; height: number } | null>(null)
@@ -74,7 +76,7 @@ export function BasicRegionSheet({ video, sourceToken, initial, title, saveLabel
         }
         captured.current = { video: active, token, source, object, width, height }
         setSize({ width, height }); setInvalid(false); setProblem(null); setDrawing(false); setRevision(value => value + 1)
-      } catch { setInvalid(true); setProblem('无法读取当前画面, 请重新取帧.') }
+      } catch (error) { setInvalid(true); setProblem(displayError(error, '无法读取当前画面, 请重新取帧.')) }
     }
     paint()
   }
@@ -140,7 +142,7 @@ export function BasicRegionSheet({ video, sourceToken, initial, title, saveLabel
           </div>}
         </EditorStage>
       </div>
-      {problem && <p className="basic-region-sheet__problem" role="status">{problem}</p>}
+      {problem && <p className="basic-region-sheet__problem" role="status">{problem === '正在读取当前画面...' ? problem : <ErrorText error={problemDetail ?? problem} message={problem} />}</p>}
       <div className="basic-region-sheet__actions">
         <span>
           <button type="button" className="btn-quiet" onClick={capture}>重新取帧</button>

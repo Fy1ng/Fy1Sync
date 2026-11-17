@@ -129,6 +129,23 @@ describe('shared schedule service', () => {
     await service.getCs2Schedule()
     expect(request).toHaveBeenCalledTimes(2)
   })
+  it('preserves the original Liquipedia 429 fields without leaking authentication', async () => {
+    const request = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({
+      error: { code: 'ratelimited', info: 'RateLimited: Please retry later', authentication: 'LP_AUTH_SECRET' },
+    }, { status: 429, statusText: 'Too Many Requests', headers: { 'retry-after': '30' } }))
+    const { service } = create(request)
+    const result = await service.getCs2Schedule({ refresh: true })
+    expect(result).toMatchObject({ stale: true, matches: [], errorDetail: { status: 429, statusText: 'Too Many Requests',
+      retryAfter: '30', upstream: { error: { code: 'ratelimited', info: 'RateLimited: Please retry later' } } } })
+    expect(JSON.stringify(result)).not.toContain('LP_AUTH_SECRET')
+    expect(request).toHaveBeenCalledOnce()
+  })
+  it('preserves an upstream JSON error even when its HTTP status is 200', async () => {
+    const request = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({ error: { code: 'ratelimited', info: 'Retry after 30 seconds' } }))
+    const { service } = create(request)
+    expect(await service.getCs2Schedule()).toMatchObject({ stale: true, errorDetail: {
+      upstream: { code: 'ratelimited', info: 'Retry after 30 seconds' } } })
+  })
   it('honors 30 seconds for forced refresh and a separate service after restart', async () => {
     const { service, request } = create()
     await service.getCs2Schedule({ refresh: true })
@@ -860,6 +877,7 @@ describe('channels behind the streams of the event 赛程 shows', () => {
     focusPgl(service)
     await vi.advanceTimersByTimeAsync(6_000)
     expect((await twitchStreams(service)).map(stream => stream.missing)).toEqual(['failed', 'failed'])
+    expect((await twitchStreams(service))[0]?.errorDetail).toMatchObject({ message: 'offline' })
     focusPgl(service)
     expect(asked).toHaveLength(1)
     failing = false

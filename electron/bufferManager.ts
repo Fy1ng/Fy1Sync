@@ -11,6 +11,8 @@ import { adaptiveTransport, type AdaptiveTransport } from './adaptiveTransport'
 import { isStreamId } from './streamIdentity'
 import { classifyFfmpegStderr, classifyNetworkFailure, type StreamFailure } from '../server/networkFailure'
 import { cleanProxyEnvironment, type NetworkContext } from '../server/networkPolicy'
+import type { MediaNetworkOptions } from '../server/mediaNetworkOptions'
+import { hasSensitiveHeaders } from '../server/safeFetch'
 export { cleanProxyEnvironment } from '../server/networkPolicy'
 
 export type Role = BufferRole
@@ -61,6 +63,7 @@ interface RoleSession {
   run?: Run; nextRun: number; nextSequence: number; removedDiscontinuities: number; segments: Segment[]
   discarded: { uri: string; deleteAfter: number }[]; attempts: number; retry?: unknown
   adaptiveHeight?: number; adaptiveAttempts: number; hlsOnly: boolean; notice?: BufferNotice
+  media?: Readonly<MediaNetworkOptions>
 }
 const defaultClock: BufferClock = { now: Date.now, setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: handle => clearTimeout(handle as ReturnType<typeof setTimeout>) }
 const ROLES: Role[] = ['official', 'commentary']
@@ -187,8 +190,8 @@ export class BufferManager {
     if (!this.current(session)) return
     this.notify({ role: session.role, state, seconds: duration(session.segments),
       hasVideo: session.run?.hasVideo ?? false, completeSegments: session.segments.length,
-      retriesRemaining: Math.max(0, this.maxReconnects - session.attempts)
-        + (session.adaptiveHeight && !session.hlsOnly ? Math.max(0, this.adaptiveFailures - session.adaptiveAttempts) : 0),
+      ...(Number.isFinite(this.retryLimit(session)) ? { retriesRemaining: Math.max(0, this.retryLimit(session) - session.attempts)
+        + (session.adaptiveHeight && !session.hlsOnly ? Math.max(0, this.adaptiveFailures - session.adaptiveAttempts) : 0) } : {}),
       ...(session.notice ? { notice: session.notice } : {}), ...extra })
   }
   private notify(state: BufferState): void {
@@ -220,6 +223,7 @@ export class BufferManager {
         await this.finish(session, run, 'source-resolve-failed'); return
       }
       if (!this.current(session, run)) return
+      session.media = input.network?.media
       session.adaptiveHeight ??= input.fallbackFromHeight
       if (session.adaptiveHeight && !input.adaptive && !session.notice) {
         session.hlsOnly = true
@@ -233,7 +237,8 @@ export class BufferManager {
         if (!this.current(session, run)) { run.transport.close(); return }
       }
       let args: string[]
-      try { args = buildFfmpegArgs(input, session.directory, run.id, run.transport?.audioInput, Boolean(session.adaptiveHeight)) } catch {
+      try { args = buildFfmpegArgs(input, session.directory, run.id, run.transport?.audioInput, Boolean(session.adaptiveHeight)) } catch (error) {
+        run.failure = classifyNetworkFailure(error, 'resolve')
         if (input.adaptive) await this.finish(session, run, 'invalid-buffer-input')
         else this.fail(session, 'invalid-buffer-input')
         return
@@ -250,12 +255,12 @@ export class BufferManager {
       run.child = child
       child.once('error', error => { run.failure = classifyNetworkFailure(error); void this.finish(session, run, 'ffmpeg-launch-failed') })
       child.once('close', () => { run.exited = true; void this.finish(session, run, 'upstream-ended') })
-      // Raw diagnostics may contain credentials. Only whitelist classifications survive this callback.
+      // Raw diagnostics may contain credentials; only bounded, redacted details cross IPC.
       child.stderr?.on?.('data', data => {
         if (!this.current(session, run) || run.finishing) return
         const failure = classifyFfmpegStderr(String(data))
         if (failure) run.failure = run.proxy && failure.stage === 'connect' && failure.code !== 'tls-certificate'
-          ? classifyNetworkFailure(undefined, 'proxy') : failure
+          ? { ...classifyNetworkFailure(undefined, 'proxy'), detail: failure.detail } : failure
       })
       child.stderr?.resume()
       let progress = ''
@@ -292,6 +297,7 @@ export class BufferManager {
       this.schedulePoll(session, run)
     } catch (error) {
       if (!this.current(session, run)) return
+      run.failure = classifyNetworkFailure(error, 'playback-not-ready')
       if (error instanceof ToolError) this.fail(session, error.code)
       else await this.finish(session, run, 'ffmpeg-launch-failed')
     }
@@ -314,9 +320,11 @@ export class BufferManager {
       // Copy mode closes a segment only at the next keyframe. Active packet progress
       // protects long GOPs, while a separate sealing deadline bounds broken muxers.
       const lastDuration = session.segments.at(-1)?.duration ?? 0
-      const sealBudget = run.lastSequence < 0 ? this.firstSegmentMs : Math.max(this.stallMs, lastDuration * 2000 + 10_000)
-      const idle = now - Math.max(run.lastProgress, run.lastPacketProgress) >= this.stallMs
-      const unsealed = now - (run.lastSequence < 0 ? run.startedAt : run.lastProgress) >= sealBudget
+      const stallMs = session.media?.stallTimeoutMs ?? this.stallMs
+      const firstSegmentMs = session.media?.startupTimeoutMs ?? this.firstSegmentMs
+      const sealBudget = run.lastSequence < 0 ? firstSegmentMs : stallMs > 0 ? Math.max(stallMs, lastDuration * 2000 + 10_000) : 0
+      const idle = stallMs > 0 && now - Math.max(run.lastProgress, run.lastPacketProgress) >= stallMs
+      const unsealed = sealBudget > 0 && now - (run.lastSequence < 0 ? run.startedAt : run.lastProgress) >= sealBudget
       if (idle || unsealed) {
         const readyBefore = run.hasVideo && run.lastSequence >= 0
         run.failure ??= classifyNetworkFailure(undefined, readyBefore ? 'stall' : 'playback-not-ready')
@@ -444,12 +452,14 @@ export class BufferManager {
         return
       }
     }
-    if ((!session.adaptiveHeight || session.hlsOnly) && session.attempts >= this.maxReconnects) { this.emit(session, 'failed', { reason, failure, retriesRemaining: 0 }); return }
+    if ((!session.adaptiveHeight || session.hlsOnly) && session.attempts >= this.retryLimit(session)) { this.emit(session, 'failed', { reason, failure, retriesRemaining: 0 }); return }
     const delay = this.backoff[Math.min(session.attempts, this.backoff.length - 1)]!
     session.attempts++
     this.emit(session, 'reconnecting', { attempt: session.attempts, retryInMs: delay, reason, failure })
     session.retry = this.clock.setTimeout(() => { session.retry = undefined; void this.launch(session) }, delay)
   }
+  private retryLimit(session: RoleSession): number { return session.media ? session.media.reconnectAttempts || Infinity : this.maxReconnects }
+
   private fail(session: RoleSession, reason: string): void {
     if (!this.current(session)) return
     if (session.retry !== undefined) this.clock.clearTimeout(session.retry)
@@ -538,9 +548,9 @@ export function buildFfmpegArgs(input: BufferInput, directory: string, runId: nu
       const parsed = new URL(proxy)
       if (!['http:', 'https:'].includes(parsed.protocol) || /[\r\n\0]/.test(proxy)) throw new Error('invalid input proxy')
     }
-    args.push('-http_proxy', proxy, '-rw_timeout', '20000000')
+    args.push('-http_proxy', proxy, '-rw_timeout', String((input.network?.media?.requestTimeoutMs ?? 20_000) * 1000))
     // HTTP inputs do not consume TLS protocol options and reject tls_verify as unused.
-    if (url.protocol === 'https:') args.push('-tls_verify', '1')
+    if (url.protocol === 'https:') args.push('-tls_verify', input.network?.media?.verifyTls === false && !hasSensitiveHeaders(input.headers) ? '0' : '1')
   }
   if (input.headers) {
     const headers = Object.entries(input.headers).map(([name, value]) => {

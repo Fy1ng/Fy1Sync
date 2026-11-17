@@ -1,4 +1,5 @@
 import { StreamFailureError } from '../networkFailure'
+import { diagnosticDetails } from '../errorDetails'
 /** YouTube live metadata is acquired by the main process's isolated yt-dlp runner. */
 
 import { failure, MANUAL_URL_HINT, type QualityOption, type ResolvedStream, type ResolveResult, type ResolverDeps } from './types'
@@ -204,11 +205,11 @@ export async function resolveYouTube(input: string, deps: ResolverDeps): Promise
     // Extractor errors can contain cookies, headers or signed URLs. Classify but never echo them.
     const message = error instanceof Error ? error.message : ''
     const refusal = refusalFor(message)
-    if (refusal) return { ok: false, failure: { code: 'restricted', reason: refusal, ...YOUTUBE_REFUSALS[refusal] } }
+    if (refusal) return { ok: false, failure: { code: 'restricted', reason: refusal, ...YOUTUBE_REFUSALS[refusal], detail: diagnosticDetails(error) } }
     if (/not (?:currently )?live|recording is not available|live (?:event|stream) (?:has ended|will begin)|not broadcasting/i.test(message)) {
-      return failure('not-live', '该 YouTube 频道当前未开播.', MANUAL_URL_HINT)
+      return failure('not-live', '该 YouTube 频道当前未开播.', MANUAL_URL_HINT, error)
     }
-    return failure('upstream-error', 'YouTube 直播解析失败.', '请检查网络, 登录状态和 yt-dlp 配置后重试.')
+    return failure('upstream-error', 'YouTube 直播解析失败.', '请检查网络, 登录状态和 yt-dlp 配置后重试.', error)
   }
   const data = record(info)
   if (data.is_live !== true || (typeof data.live_status === 'string' && data.live_status !== 'is_live')) {

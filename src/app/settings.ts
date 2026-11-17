@@ -49,6 +49,8 @@ export interface AppSettings {
   autoSyncEnabled: boolean
   autoSyncIntervalSeconds: number
   recognitionMode: RecognitionMode
+  /** Show the optional recognition diagnostics above the chat; recognition itself stays enabled. */
+  basicRecognitionPanelVisible: boolean
   basicClockRoi: RoiRect | null
   basicClockMemory: BasicClockMemoryEntry[]
   detectWindowSeconds: number
@@ -92,6 +94,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoSyncEnabled: false,
   autoSyncIntervalSeconds: 30,
   recognitionMode: 'basic',
+  basicRecognitionPanelVisible: false,
   basicClockRoi: null,
   basicClockMemory: [],
   detectWindowSeconds: 3,
@@ -184,6 +187,7 @@ export function mergeSettings(raw: unknown): AppSettings {
     // The sync design fixes the interval choices at 15/30/60 s.
     autoSyncIntervalSeconds: clamp(stored.autoSyncIntervalSeconds, 10, 600, 30),
     recognitionMode: stored.recognitionMode === 'style-pack' ? 'style-pack' : 'basic',
+    basicRecognitionPanelVisible: boolean(stored.basicRecognitionPanelVisible, defaults.basicRecognitionPanelVisible),
     basicClockRoi: manualRoi,
     basicClockMemory: normalizeBasicClockMemory(stored.basicClockMemory),
     // Only 2 s and 3 s windows are offered; anything else came from a bad blob.

@@ -192,10 +192,10 @@ export function analyzeValidationFrame(result: HudFrameResult, pack: HudStylePac
   return row
 }
 
-export function failureValidationRow(at: number, index: number, reason: string): ValidationRow {
+export function failureValidationRow(at: number, index: number, reason: string, detail?: import('../../core/errorDetails').ErrorDetails): ValidationRow {
   return { index, at, layout: null, content: 'indeterminate', phase: 'indeterminate',
     fields: fieldsFor(() => ({ status: 'failed', text: null, value: null, confidence: null, reason: 'frame-error' })), cues: {},
-    notes: [{ kind: 'issue', target: 'frame', code: 'frame-error', message: `取帧或识别调用失败: ${reason}` }] }
+    notes: [{ kind: 'issue', target: 'frame', code: 'frame-error', message: `取帧或识别调用失败: ${reason}`, ...(detail ? { detail } : {}) }] }
 }
 
 /** A missing reading is coverage evidence, not a known incorrect recognition. */

@@ -1,6 +1,6 @@
 /** Real sidebar diagnostics, persistent manual regions and alignment interaction rules. */
 import { expect, test } from './electron'
-import { loadSource, openPlayer, revealOverlay, seekBoth, setPlaying, waitForBothReady } from './helpers'
+import { loadSource, openPlayer, openSettings, revealOverlay, seekBoth, setCheckedByLabel, setPlaying, waitForBothReady } from './helpers'
 
 async function load(page: import('@playwright/test').Page): Promise<void> {
   await loadSource(page, 'official', '/test-sources/auto-official.mp4')
@@ -9,6 +9,11 @@ async function load(page: import('@playwright/test').Page): Promise<void> {
   await waitForBothReady(page)
   await setPlaying(page, false)
   await seekBoth(page, 8, 8)
+  const settings = await openSettings(page, '对齐')
+  await setCheckedByLabel(settings.getByRole('switch', { name: /^显示基础识别面板/ }))
+  await settings.getByRole('button', { name: '关闭', exact: true }).click()
+  const heading = page.getByRole('button', { name: '基础识别', exact: true })
+  if (await heading.getAttribute('aria-expanded') === 'false') await heading.click()
 }
 
 test.describe('侧栏基础识别', () => {

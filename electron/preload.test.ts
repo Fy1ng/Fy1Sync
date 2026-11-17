@@ -20,6 +20,23 @@ beforeEach(() => {
 })
 
 describe('window controls preload boundary', () => {
+  it('permits the fixed Liquipedia handoff through the existing feature channel', async () => {
+    const bridge = await loadBridge()
+    await bridge.invoke('openLiquipediaVerification', undefined)
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledExactlyOnceWith('stream-syncer:invoke', 'openLiquipediaVerification', undefined)
+    await expect(bridge.invoke('openExternal' as DesktopMethod, undefined)).resolves.toMatchObject({ ok: false, code: 'unknown-method' })
+    expect(electron.ipcRenderer.invoke).toHaveBeenCalledTimes(1)
+  })
+
+  it('exposes only the typed local Douyin state and send methods', async () => {
+    const bridge = await loadBridge()
+    await bridge.invoke('getDouyinSendState', undefined)
+    const input = { room:'douyin:100', expectedUid:'12345', text:'测试' }
+    await bridge.invoke('sendDouyinMessage', input)
+    expect(electron.ipcRenderer.invoke.mock.calls).toEqual([
+      ['stream-syncer:invoke','getDouyinSendState',undefined], ['stream-syncer:invoke','sendDouyinMessage',input],
+    ])
+  })
   it('routes embedded login controls separately and never exposes the credential card bridge', async () => {
     const bridge = await loadBridge()
     await bridge.invoke('getEmbeddedLogin', undefined)

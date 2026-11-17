@@ -3,7 +3,7 @@
  * time with consecutive indexes; cancel and unmount both cancel the recording there.
  */
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StreamSyncerBridge } from '../../../electron/contracts'
 import type { FeatureEvent } from '../../../electron/featureContracts'
@@ -79,6 +79,23 @@ async function startGif(): Promise<void> {
 }
 
 describe('CaptureControls', () => {
+  it('displays screenshot failure fields without adding details to successful or cancelled saves', async () => {
+    render(<CaptureControls source={() => video} />)
+    const shoot = await screen.findByRole('button', { name: '截图' })
+    expect(screen.queryByRole('button', { name: '查看原始错误' })).toBeNull()
+    vi.mocked(window.streamSyncer!.invoke).mockResolvedValueOnce({ ok: false, code: 'write-failed', message: '截图保存失败', detail: { errno: 'ENOSPC', exitCode: 28, stderr: 'disk full' } } as never)
+    fireEvent.click(shoot)
+    const status = await screen.findByRole('status')
+    fireEvent.click(within(status).getByRole('button', { name: '查看原始错误' }))
+    const original = within(status).getByRole('region', { name: '原始错误信息' })
+    expect(original).toHaveTextContent('write-failed')
+    expect(original).toHaveTextContent('ENOSPC')
+    expect(original).toHaveTextContent('exitCode')
+    expect(original).toHaveTextContent('disk full')
+    fireEvent.click(shoot)
+    expect(await screen.findByText('已取消保存')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '查看原始错误' })).toBeNull()
+  })
   it('renders nothing while capture is disabled and follows the capture topic', async () => {
     enabled = false
     const { container } = render(<CaptureControls source={() => video} />)

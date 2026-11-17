@@ -131,6 +131,75 @@ describe('private cookie storage', () => {
     expect(fs.readdirSync(path.join(root, 'cookies'))).toEqual(['youtube.txt'])
   })
 
+  it('retries a busy atomic replacement and preserves the prior file until the replacement succeeds', async () => {
+    const manager = store()
+    manager.write('youtube', [cookie({ value: 'old-session' })])
+    const file = path.join(root, 'cookies', 'youtube.txt')
+    const rename = fs.renameSync
+    const replace = vi.spyOn(fs, 'renameSync')
+      .mockImplementationOnce(() => { throw Object.assign(new Error('private path must not escape'), { code: 'EPERM' }) })
+      .mockImplementationOnce(() => { throw Object.assign(new Error('private path must not escape'), { code: 'EBUSY' }) })
+      .mockImplementation(rename)
+    const replacement = [cookie({ value: 'new-session' })]
+    const pending = manager.writeAsync('youtube', replacement)
+    replacement[0]!.value = 'mutated-after-save-started'
+    expect(fs.readFileSync(file, 'utf8')).toContain('old-session')
+    expect(fs.readdirSync(path.dirname(file))).toEqual(['youtube.txt'])
+    expect(await pending).toEqual({ cookieCount: 1, authKeysPresent: ['SAPISID'] })
+    expect(replace).toHaveBeenCalledTimes(3)
+    expect(fs.readFileSync(file, 'utf8')).toContain('new-session')
+    expect(fs.readFileSync(file, 'utf8')).not.toContain('mutated-after-save-started')
+  })
+
+  it('stops a pending local save on cancellation without changing the old session', async () => {
+    const manager = store()
+    manager.write('youtube', [cookie({ value: 'old-session' })])
+    const controller = new AbortController()
+    const replace = vi.spyOn(fs, 'renameSync').mockImplementation(() => { throw Object.assign(new Error('private'), { code: 'EPERM' }) })
+    const pending = manager.writeAsync('youtube', [cookie({ value: 'new-session' })], controller.signal)
+    const rejected = expect(pending).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    controller.abort()
+    await rejected
+    expect(replace).toHaveBeenCalledOnce()
+    expect(fs.readFileSync(path.join(root, 'cookies', 'youtube.txt'), 'utf8')).toContain('old-session')
+    expect(fs.readdirSync(path.join(root, 'cookies'))).toEqual(['youtube.txt'])
+  })
+
+  it('does not overwrite a newer session or recreate credentials after logout while waiting to save', async () => {
+    const manager = store()
+    manager.write('youtube', [cookie({ value: 'old-session' })])
+    const rename = fs.renameSync
+    vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => { throw Object.assign(new Error('busy'), { code: 'EPERM' }) }).mockImplementation(rename)
+    const stale = manager.writeAsync('youtube', [cookie({ value: 'stale-replacement' })])
+    const rejected = expect(stale).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    manager.write('youtube', [cookie({ value: 'newer-session' })])
+    await rejected
+    expect(fs.readFileSync(path.join(root, 'cookies', 'youtube.txt'), 'utf8')).toContain('newer-session')
+    vi.mocked(fs.renameSync).mockImplementationOnce(() => { throw Object.assign(new Error('busy'), { code: 'EPERM' }) })
+    const pending = manager.writeAsync('youtube', [cookie({ value: 'late-session' })])
+    const cancelled = expect(pending).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    manager.logout('youtube')
+    await cancelled
+    expect(fs.existsSync(path.join(root, 'cookies', 'youtube.txt'))).toBe(false)
+  })
+
+  it('bounds persistent replacement failures and never retries serialization or synchronization errors', async () => {
+    const manager = store()
+    manager.write('youtube', [cookie({ value: 'old-session' })])
+    const replace = vi.spyOn(fs, 'renameSync').mockImplementation(() => { throw Object.assign(new Error('private'), { code: 'EACCES' }) })
+    await expect(manager.writeAsync('youtube', [cookie({ value: 'new-session' })])).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    expect(replace).toHaveBeenCalledTimes(6)
+    expect(fs.readFileSync(path.join(root, 'cookies', 'youtube.txt'), 'utf8')).toContain('old-session')
+    expect(fs.readdirSync(path.join(root, 'cookies'))).toEqual(['youtube.txt'])
+    replace.mockClear()
+    const sync = vi.spyOn(fs, 'fsyncSync').mockImplementationOnce(() => { throw Object.assign(new Error('private'), { code: 'EPERM' }) })
+    await expect(manager.writeAsync('youtube', [cookie({ value: 'new-session' })])).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    expect(sync).toHaveBeenCalledOnce()
+    expect(replace).not.toHaveBeenCalled()
+    await expect(manager.writeAsync('youtube', [cookie({ value: 'unsafe\nvalue' })])).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    expect(sync).toHaveBeenCalledOnce()
+  })
+
   it('rejects malformed stored data and masks raw filesystem/parser errors', async () => {
     const manager = store()
     manager.write('youtube', [cookie()])

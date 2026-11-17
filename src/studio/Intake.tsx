@@ -4,16 +4,17 @@
  * link. A bare room number asks for its platform as soon as it is typed, without waiting
  * for Enter.
  *
- * It steps aside by itself once both sides play, and can always be skipped: settings, the
+ * It steps aside as soon as a source presents a frame, and can always be skipped: settings, the
  * Douyu desk and a single source are all reachable from the player without both links.
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { useSessionSnapshot, useSession } from '../app/SessionContext'
+import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { Icon } from './kit'
 import { LOGIN_LABEL, LoginOffer, PLATFORM_LABEL, ROLE_LABEL, SOURCE_HINT, SOURCE_KINDS, parseRoomInput, sourceTitle, spaced, useSourceLoader, type RoomPlatform } from './sources'
 import { useSavedRooms, type SavedRoom } from './savedRooms'
+import { ErrorText } from '../ui/ErrorDetails'
 
 const ROOM_PLATFORMS: RoomPlatform[] = ['douyu', 'bilibili', 'huya', 'douyin']
 
@@ -32,7 +33,12 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
   const [text, setText] = useState('')
   const [roomPlatform, setRoomPlatform] = useState<RoomPlatform | null>(null)
   const field = useRef<HTMLInputElement | null>(null)
-  const bothReady = media.official.status === 'ready' && media.commentary.status === 'ready'
+  const picturesAtOpen = useRef<Record<SourceRole, number | null>>({
+    official: media.official.firstFrame ? session.sourceRevision('official') : null,
+    commentary: media.commentary.firstFrame ? session.sourceRevision('commentary') : null,
+  })
+  const pictureVisible = SOURCE_ROLES.some(side => media[side].status === 'ready' && media[side].firstFrame
+    && picturesAtOpen.current[side] !== session.sourceRevision(side))
   const anyLoaded = SOURCE_ROLES.some((side) => media[side].status !== 'empty')
   const bare = parseRoomInput(text)?.platform === null ? parseRoomInput(text)!.room : null
   const canSubmit = role !== null && text.trim() !== '' && (bare === null || roomPlatform !== null) && !loader.state[role].busy
@@ -44,12 +50,10 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
-  // Both playing is the whole point of this screen; leave without making them click.
+  // Reveal the first picture while the other source and synchronization keep preparing.
   useEffect(() => {
-    if (!bothReady) return
-    const timer = setTimeout(() => { void session.setPlaying(true); onClose() }, 700)
-    return () => clearTimeout(timer)
-  }, [bothReady, onClose, session])
+    if (pictureVisible) onClose()
+  }, [pictureVisible, onClose])
 
   const pick = (next: SourceRole): void => {
     setRole(next)
@@ -107,7 +111,7 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
           </div>
         )}
 
-        {load?.problem && <p className="intake-error" role="alert">{load.problem.message}{load.problem.hint ? ` ${load.problem.hint}` : ''}</p>}
+        {load?.problem && <p className="intake-error" role="alert"><ErrorText error={load.problem} message={<>{load.problem.message}{load.problem.hint ? ` ${load.problem.hint}` : ''}</>} /></p>}
 
         {media.official.status === 'empty' && !loader.state.official.busy && (
           <button type="button" className="intake-find" onClick={onSchedule}>
@@ -122,9 +126,7 @@ export function Intake({ onClose, pendingFile, onSchedule }: {
 
         <p className="intake-foot">
           <span>支持将视频文件拖入窗口</span>
-          {!bothReady && (
-            <button type="button" className="link-btn intake-skip" onClick={onClose}>{anyLoaded ? '开始观看' : '跳过'}</button>
-          )}
+          <button type="button" className="link-btn intake-skip" onClick={onClose}>{anyLoaded ? '开始观看' : '跳过'}</button>
         </p>
       </div>
     </div>
@@ -151,9 +153,9 @@ function Slot({ role, selected, onPick }: { role: SourceRole; selected: boolean;
       </button>
       {/* The side being filled shows its problem under the field instead. */}
       {!selected && (load.problem || (state.status === 'error' && state.error)) && (
-        <span className="slot-error" role="alert">{load.problem?.message ?? state.error?.message}</span>
+        <span className="slot-error" role="alert"><ErrorText error={load.problem ?? state.error} /></span>
       )}
-      {selected && !load.problem && state.status === 'error' && state.error && <span className="slot-error" role="alert">{state.error.message}</span>}
+      {selected && !load.problem && state.status === 'error' && state.error && <span className="slot-error" role="alert"><ErrorText error={state.error} /></span>}
       <LoginOffer role={role} />
     </div>
   )

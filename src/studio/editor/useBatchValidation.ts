@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { errorDetails, errorMessage } from '../../core/errorDetails'
 import type { HudStylePack } from '../../core/hudStylePack'
 import { BatchValidationSession } from './batchValidationRunner'
 import { EMPTY_VALIDATION_STATE, type ValidationRange, type ValidationRow, type ValidationState } from './batchValidationTypes'
@@ -52,7 +53,7 @@ export function useBatchValidation(options: { source: string; sourceName: string
     preview.current = null
     let next: BatchValidationSession
     try { next = new BatchValidationSession({ ...latest.current, range }) } catch (error) {
-      setState(current => ({ ...current, error: error instanceof Error ? error.message : String(error) }))
+      setState(current => ({ ...current, error: errorMessage(error), errorDetail: errorDetails(error) }))
       return
     }
     session.current = next
@@ -69,7 +70,8 @@ export function useBatchValidation(options: { source: string; sourceName: string
       scan.current = null
       const stopped = controller.signal.aborted
       setState(value => ({ ...value, phase: stopped ? 'stopped' : phase,
-        rows: active.stoppedRows ?? [...next.rows], error: stopped || phase === 'complete' ? null : error instanceof Error ? error.message : String(error) }))
+        rows: active.stoppedRows ?? [...next.rows], error: stopped || phase === 'complete' ? null : errorMessage(error),
+        errorDetail: stopped || phase === 'complete' ? null : errorDetails(error) }))
     }
     void next.scan(controller.signal, () => {
       if (current() && !controller.signal.aborted && Date.now() - lastPaint >= 100) {
@@ -85,12 +87,12 @@ export function useBatchValidation(options: { source: string; sourceName: string
     preview.current?.abort()
     const controller = new AbortController()
     preview.current = controller
-    setState(value => ({ ...value, previewBusy: true, preview: null, selectedIndex: index, error: null }))
+    setState(value => ({ ...value, previewBusy: true, preview: null, selectedIndex: index, error: null, errorDetail: null }))
     const current = (): boolean => mounted.current && session.current === snapshot && preview.current === controller
     void snapshot.inspect(index, controller.signal).then(result => {
       if (current()) setState(value => ({ ...value, preview: result }))
     }, error => {
-      if (current() && !controller.signal.aborted) setState(value => ({ ...value, error: `预览失败: ${error instanceof Error ? error.message : String(error)}` }))
+      if (current() && !controller.signal.aborted) setState(value => ({ ...value, error: `预览失败: ${errorMessage(error)}`, errorDetail: errorDetails(error) }))
     }).finally(() => {
       if (current()) { preview.current = null; setState(value => ({ ...value, previewBusy: false })) }
     })

@@ -341,7 +341,8 @@ describe('silent incremental style synchronization', () => {
     const f = await setup(), item = pack()
     f.publish(catalog(1, item.entry), [item]); await f.service.sync()
     f.assets.set(manifestUrl, new Response('denied', { status: 403 }))
-    expect(await f.service.sync()).toMatchObject({ phase: 'error', installed: 1, message: expect.stringContaining('HTTP 403') })
+    expect(await f.service.sync()).toMatchObject({ phase: 'error', installed: 1, message: expect.stringContaining('HTTP 403'),
+      errorDetail: { status: 403 } })
     expect((await f.service.get(item.entry.id))?.profile).toEqual(item.profile)
   })
 })

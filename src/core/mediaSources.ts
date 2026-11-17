@@ -173,11 +173,7 @@ export function parseSourceInput(raw: string): SourceParseResult {
     }
   }
 
-  return {
-    ok: false,
-    reason: 'unsupported-page',
-    message: '请填入 YouTube / Twitch / 斗鱼 / B 站 / 虎牙 / 抖音直播间地址, 或直接的 .m3u8 / .mp4 / .flv 链接',
-  }
+  return directMedia(url, 'progressive')
 }
 
 function directMedia(url: URL, kind: MediaKind): SourceClassification {

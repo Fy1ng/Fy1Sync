@@ -1,9 +1,10 @@
 import { systemProxyMode } from './systemProxy'
 import { NetworkPolicy, installNetworkPolicy } from '../server/networkPolicy'
 import { NetworkPreferences } from './networkPreferences'
+import { installExternalNavigation } from './externalNavigation'
 import { MediaGateway } from './mediaGateway'
 import './networkRuntime'
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, protocol, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, protocol, session, shell, safeStorage } from 'electron'
 import { join, resolve } from 'node:path'
 import { mkdirSync, watchFile, unwatchFile } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -17,7 +18,7 @@ import { resolveConfig } from '../server/config'
 import { DanmakuRelay } from '../server/danmaku/relay'
 import { MediaRegistry } from '../server/mediaProxy'
 import { serveStatic, missingClientResponse } from '../server/static'
-import { APP_URL, CONTENT_SECURITY_POLICY, allowsAppPermission, isAppDocument, isAppOrigin } from './security'
+import { APP_URL, CONTENT_SECURITY_POLICY, allowsAppPermission, isAppOrigin } from './security'
 import { installIpcHandlers } from './ipc'
 import { getWindowState, subscribeWindowState } from './windowControls'
 import { applicationMenu, mainWindowChrome } from './applicationMenu'
@@ -31,6 +32,12 @@ import { EmbeddedLoginController } from './embeddedLogin'
 import { installEmbeddedLoginIpc } from './embeddedLoginIpc'
 import { installLoginCardIpc } from './loginCardIpc'
 import { EmbeddedLoginFixtures } from './embeddedLoginFixtures'
+import { BrowserLoginImport } from './browserLoginImport'
+import { browserCookieReader } from './browserCookieReader'
+import { browserIdentityVerifier } from './browserImportIdentity'
+import { installBrowserImportIpc } from './browserImportIpc'
+import { BrowserImportFixtures } from './browserImportFixtures'
+import { safeFetch } from '../server/safeFetch'
 import type { EmbeddedLoginPlatform } from './embeddedLoginContracts'
 import { Acquisition } from './acquisition'
 import { YtDlpRunner, type YtDlpDiagnostic } from './ytdlp'
@@ -48,6 +55,12 @@ import { DouyuTaskManager } from './douyuTasks'
 import { PrivateJsonStore } from './privateJsonStore'
 import { DouyuActions } from '../server/douyu/actions'
 import { DouyuMessageSender, NativeMessageSocket } from '../server/douyu/messageSender'
+import { DouyinMessageSender } from '../server/douyin/messageSender'
+import { douyinBrowserUserAgent } from '../server/douyin/httpContext'
+import { DouyinSigningStore } from './douyinSigningStore'
+import { DouyinHttpLogin } from '../server/douyin/httpLogin'
+import { DouyinHttpLoginFixtures } from './douyinHttpLoginFixtures'
+import { DouyinMessageFixtures, type DouyinSendFixtureScenario } from './douyinMessageFixtures'
 import { DouyuGatewayCoordinator } from '../server/douyu/gatewayCoordinator'
 import { DouyuBackpackGateway } from '../server/douyu/backpackGateway'
 import { DouyuRenewalService } from '../server/douyu/renewalService'
@@ -126,7 +139,7 @@ async function start(): Promise<void> {
   // All routes retain domain, protocol and port validation.
   const proxy = { ...config.proxy, allowNonStandardPorts: false }
   const preferences = new NetworkPreferences(app.getPath('userData'))
-  const network = new NetworkPolicy(url => session.defaultSession.resolveProxy(url), preferences.domesticRouting, Date.now, 15_000, systemProxyMode)
+  const network = new NetworkPolicy(url => session.defaultSession.resolveProxy(url), preferences.domesticRouting, Date.now, 15_000, systemProxyMode, preferences.mediaOptions)
   preferences.attach(network)
   installNetworkPolicy(network)
   const media = new MediaRegistry({ config: proxy })
@@ -160,7 +173,7 @@ async function start(): Promise<void> {
   // Releases are published on GitHub. Checks stay manual; E2E runs keep the unconfigured
   // state so no scenario reaches the network. backend.json may still point elsewhere.
   const defaultUpdateSource: AppUpdateSource | null = process.env.STREAM_SYNC_E2E === '1' ? null : { kind: 'github', owner: 'Fy1ng', repository: 'Fy1Sync' }
-  let backendConfig: { maxExtraStreams: number; updateSource: AppUpdateSource | null } = { maxExtraStreams: 16, updateSource: defaultUpdateSource }
+  let backendConfig: { maxExtraStreams: number; updateSource: AppUpdateSource | null } = { maxExtraStreams: 0, updateSource: defaultUpdateSource }
   try {
     const danmakuStore = new PrivateJsonStore<DanmakuFeaturesStorage>(userDataDir, 'douyu/danmaku-features.json')
     danmakuFeatures = new DanmakuFeatures({ load: () => danmakuStore.load(), save: value => danmakuStore.save(value) })
@@ -170,8 +183,8 @@ async function start(): Promise<void> {
       if (!raw || typeof raw !== 'object' || (raw as { version?: unknown }).version !== 1
         || Object.keys(raw).some(key => !['version', 'maxExtraStreams', 'updateSource'].includes(key))) throw new Error('Invalid backend configuration')
       const value = raw as { maxExtraStreams?: number; updateSource?: unknown }
-      const maxExtraStreams = value.maxExtraStreams ?? 16
-      if (!Number.isSafeInteger(maxExtraStreams) || maxExtraStreams < 1 || maxExtraStreams > 256) throw new Error('Invalid stream limit')
+      const maxExtraStreams = value.maxExtraStreams ?? 0
+      if (!Number.isSafeInteger(maxExtraStreams) || maxExtraStreams < 0) throw new Error('Invalid stream limit')
       backendConfig = { maxExtraStreams, updateSource: value.updateSource === undefined ? defaultUpdateSource : value.updateSource === null ? null : parseAppUpdateSource(value.updateSource) }
     }
   } catch { console.error('扩展功能本地配置不可用, 原文件已保留.'); danmakuFeatures = undefined; activityPreferences = undefined }
@@ -193,16 +206,22 @@ async function start(): Promise<void> {
   let renewalFixture: { stock: number; outcome: 'receipt-received' | 'unknown' } | null = null
   const renewalDonationsFixture: Array<Omit<DouyuBackpackDonation, 'expectedUid'>> = []
   const browserLogin = new ChromeLoginDriver()
+  mkdirSync(userDataDir,{recursive:true})
+  const douyinSigning=new DouyinSigningStore(userDataDir,{protection:safeStorage})
   const embeddedLoginFixtures = !app.isPackaged && offlineE2e ? new EmbeddedLoginFixtures() : null
   const douyinEmbeddedLoginFixtures = !app.isPackaged && offlineE2e ? new DouyinEmbeddedLoginFixtures() : null
+  const douyinHttpLoginFixtures = !app.isPackaged && offlineE2e ? new DouyinHttpLoginFixtures() : null
   const embeddedLogin = new EmbeddedLoginController({ owner: () => window, domesticRouting: preferences.domesticRouting,
     cardPreload: join(__dirname, 'login-card-preload.cjs'),
+    douyinHttp: { createSession: signal => new DouyinHttpLogin({ signal, proxy, network: () => network.context('douyin'),
+      ...(douyinHttpLoginFixtures ? { fetchImpl: douyinHttpLoginFixtures.transport(signal), resolve: async () => ['93.184.216.34'] } : {}) }) },
     fixture: async (request, browserSession) => {
       if (request.platform === 'douyin') await douyinEmbeddedLoginFixtures?.configure(request, browserSession)
       else await embeddedLoginFixtures?.configure(request, browserSession)
     } })
   const createLogin = (directory: string) => new LoginManager(directory, {
     driver: browserLogin,
+    ...(resolve(directory)===resolve(userDataDir) ? {douyinSigning} : {}),
     embeddedDriver: { async login(request) {
       const { platform, signal, destination } = request
       if (!app.isPackaged && offlineE2e && douyuToolsFixture && platform === 'douyu') {
@@ -219,6 +238,15 @@ async function start(): Promise<void> {
     } },
   })
   const logins = createLogin(userDataDir)
+  const browserImportFixtures = !app.isPackaged && offlineE2e ? new BrowserImportFixtures() : null
+  const douyinSendFixture = !app.isPackaged && offlineE2e ? new DouyinMessageFixtures() : null
+  const douyinMessages = new DouyinMessageSender({ proxy, cookieHeader:url => douyinSendFixture?.enabled && !douyinSendFixture.usesStoredLogin ? douyinSendFixture.header(url) : logins.cookieHeader('douyin',url),
+    userAgent:douyinBrowserUserAgent(app.userAgentFallback),
+    isLoginBusy:() => logins.loginInProgress('douyin'),
+    signingMaterial:(header,signal,accountUid) => logins.douyinSigningMaterial(header,signal,accountUid),
+    network:() => network.context('douyin'),
+    ...(douyinSendFixture ? { syntheticProtocol:true,fetchImpl:douyinSendFixture.request, resolve:async () => ['93.184.216.34'] } : {}),
+  })
   const nativeFetch = globalThis.fetch
   if (offlineE2e) {
     globalThis.fetch = async (input, init) => {
@@ -296,9 +324,9 @@ async function start(): Promise<void> {
     async login(platform: LoginPlatform) {
       if (platform === 'douyu') return douyuAccounts ? douyuAccounts.loginActive() : Promise.reject(new DouyuAccountError('storage-failed'))
       if (platform === 'douyin') {
-        const result = await logins.login(platform)
-        relay.refreshPlatform('douyin')
-        return result
+        douyinMessages.invalidate()
+        try { return await logins.login(platform) }
+        finally { douyinMessages.invalidate(); relay.refreshPlatform('douyin') }
       }
       if (platform !== 'youtube') return logins.login(platform)
       youtubeLoginTransitions++
@@ -307,7 +335,7 @@ async function start(): Promise<void> {
     },
     async logout(platform: LoginPlatform) {
       if (platform === 'douyu') return douyuAccounts ? douyuAccounts.logoutActive() : Promise.reject(new DouyuAccountError('storage-failed'))
-      if (platform === 'douyin') { await logins.logout(platform); relay.refreshPlatform('douyin'); return }
+      if (platform === 'douyin') { douyinMessages.invalidate(); try { await logins.logout(platform) } finally { douyinMessages.invalidate(); relay.refreshPlatform('douyin') } return }
       if (platform !== 'youtube') return logins.logout(platform)
       youtubeLoginTransitions++
       try { await resetYouTubeAdmin(); await logins.logout(platform) }
@@ -322,9 +350,50 @@ async function start(): Promise<void> {
       ? douyuAccounts ? douyuAccounts.activeCookieHeader(url) : Promise.resolve('')
       : logins.cookieHeader(platform, url),
   }
+  const browserImports = new BrowserLoginImport({
+    supported: process.platform === 'win32' || !!browserImportFixtures,
+    ...(browserImportFixtures ? { discover: browserImportFixtures.discover } : {}),
+    read: browserImportFixtures?.read ?? browserCookieReader({ executable: app.isPackaged
+      ? join(process.resourcesPath, 'native', 'browser-credentials.exe') : join(__dirname, '..', 'native', 'browser-credentials.exe') }),
+    verify: browserImportFixtures?.verify ?? browserIdentityVerifier(async (platform, url, init) => {
+      const headers = Object.fromEntries(new Headers(init.headers).entries())
+      const result = await safeFetch(url, { ...proxy, hosts: [new URL(url).hostname], maxRedirects: 0 }, {
+        method: init.method, headers, ...(typeof init.body === 'string' ? { body: init.body } : {}),
+        signal: init.signal ?? undefined, manualRedirect: true, network: network.context(platform),
+        ...(platform === 'youtube' ? { maxHeaderSize: 256 * 1024 } : {}),
+      })
+      return result.response
+    }, bytes => {
+      const image = nativeImage.createFromBuffer(Buffer.from(bytes))
+      return image.isEmpty() ? undefined : image.resize({ width: 64, height: 64, quality: 'good' }).toDataURL()
+    }),
+    write: async (platform, cookies, identity, target, signal) => {
+      if (platform === 'douyu') {
+        if (!douyuAccounts) throw new DouyuAccountError('storage-failed')
+        const accountId = await douyuAccounts.importCookies(cookies, identity, target, signal)
+        relay.refreshPlatform('douyu')
+        return { accountId }
+      }
+      if (platform === 'youtube') {
+        youtubeLoginTransitions++
+        try { await resetYouTubeAdmin(); await logins.importCookies(platform, cookies, identity, signal) }
+        finally { youtubeLoginTransitions-- }
+        return {}
+      }
+      if (platform === 'douyin') douyinMessages.invalidate()
+      try {
+        const result = await logins.importCookies(platform, cookies, identity, signal)
+        return result.signingReady === undefined ? {} : { signingReady: result.signingReady }
+      } finally {
+        if (platform === 'douyin') douyinMessages.invalidate()
+        if (platform === 'huya' || platform === 'douyin') relay.refreshPlatform(platform)
+      }
+    },
+  })
   const providerCacheHome = privateDirectory(userDataDir, join(userDataDir, 'provider-cache'))
   const toolContext = {
-    ...(app.isPackaged ? { bundledDir: join(process.resourcesPath, 'tools') } : {}),
+    ...(app.isPackaged ? { bundledDir: join(process.resourcesPath, 'tools') }
+      : { providerDir: resolve(__dirname, '../../.packaging/tools/provider') }),
     managedYtdlp: () => managedYtdlp.activePath(),
     providerCacheHome,
   }
@@ -423,7 +492,7 @@ async function start(): Promise<void> {
     return globalThis.fetch(input, init)
   }, offlineE2e ? async () => ['8.8.8.8'] : undefined)
   const acquisition = new Acquisition({ buffer, logins: playbackLogins, diagnostics,
-    runYtDlp: (url, adaptive, context, diagnostic) => ytdlp.resolve(url, adaptive, context, diagnostic), network: platform => network.context(platform),
+    runYtDlp: (url, adaptive, context, diagnostic) => ytdlp.resolve(url, adaptive, context, diagnostic), network: platform => network.mediaContext(platform),
     mediaInput: (url, headers, context, access) => gateway.register(url, headers, context, access), proxy, resolveDouyuRoom: offlineE2e ? roomResolver.resolve : undefined,
     ensureTools: async (platform) => {
       if (offlineE2e) throw new Error('默认离线测试禁止真实平台取流')
@@ -440,6 +509,7 @@ async function start(): Promise<void> {
   const relay = new DanmakuRelay({ huya: { resolveRoom: resolveHuyaRoom },
     douyin: {
       resolveRoom: async webRoom => {
+        if (douyinSendFixture?.enabled) return douyinSendFixture.room(webRoom)
         if (offlineE2e) throw new Error('默认离线测试禁止真实抖音弹幕查询')
         const context = network.context('douyin')
         const deps = createResolverDeps(proxy, media.register, undefined, context)
@@ -447,7 +517,7 @@ async function start(): Promise<void> {
           cookieHeader: requestUrl => logins.cookieHeader('douyin', requestUrl),
         })
       },
-      createSocket: (url, headers) => createNetworkSocket(url, 'douyin', { headers, network: network.context('douyin') }),
+      createSocket: (url, headers) => douyinSendFixture?.enabled ? douyinSendFixture.socket() : createNetworkSocket(url, 'douyin', { headers, network: network.context('douyin') }),
     },
     ...(e2e ? { createSocket: () => ({ send() {}, close() {}, addEventListener() {} }) } : {}) })
   if (douyuAccounts && douyuTasks) {
@@ -480,9 +550,11 @@ async function start(): Promise<void> {
       },
     })
   }
+  preferences.onChanged = () => backend?.streams.refreshLimits()
   if (danmakuFeatures && activityPreferences) backend = createBackendRuntime({
     userDataDir, bundledLogoDir, proxy, acquisition, relay, danmaku: danmakuFeatures, accounts: douyuAccounts, tasks: douyuTasks,
     sender: douyuMessageSender, renewal: douyuRenewal, resolveRoom: roomResolver.resolve, activityPreferences, ...backendConfig,
+    maxExtraStreams: preferences.extraStreamLimit,
     gatewayCoordinator: douyuGatewayCoordinator, networkRuntimePath, watchEnabled: !offlineE2e,
     ffmpegPath: () => locateTool('ffmpeg', toolSettings, process.env, toolContext),
     validatePng: bytes => { const value = nativeImage.createFromBuffer(bytes); return !value.isEmpty() },
@@ -507,10 +579,8 @@ async function start(): Promise<void> {
       if (hiddenTestWindows) { contents.setFrameRate(60); contents.startPainting() }
       contents.setAudioMuted(true)
       const unregister = handlers?.registerWindow(contents)
-      contents.setWindowOpenHandler(() => ({ action: 'deny' }))
       const pipDocument = (url: string) => isAppOrigin(url) && ['/pip', '/pip/'].includes(new URL(url).pathname)
-      contents.on('will-navigate', (event, url) => { if (!pipDocument(url)) event.preventDefault() })
-      contents.on('will-redirect', (event, url) => { if (!pipDocument(url)) event.preventDefault() })
+      installExternalNavigation(contents, url => shell.openExternal(url), pipDocument)
       contents.on('will-attach-webview', event => event.preventDefault())
       created.on('focus', () => refreshRuntime())
       created.on('blur', () => refreshRuntime())
@@ -627,8 +697,8 @@ async function start(): Promise<void> {
   }))
   const service = createDesktopService({
     dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, resolveHuyaRoom,
-    registerMedia: (url, access) => media.register(url, undefined, undefined, access), acquisition, decoderPreferences, networkPreferences: preferences, tools, diagnostics, douyuAccounts, douyuTasks, douyuRenewal,
-    features, stylePacks,
+    registerMedia: (url, access, headers) => media.register(url, headers, undefined, access), acquisition, decoderPreferences, networkPreferences: preferences, tools, diagnostics, douyuAccounts, douyuTasks, douyuRenewal,
+    features, stylePacks, douyinMessages,
   })
   session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
     callback(allowsAppPermission(permission, {
@@ -747,18 +817,33 @@ async function start(): Promise<void> {
     offline: offlineE2e, blocked: () => youtubeLoginTransitions > 0 })
   editorProjectIpc = installEditorProjectIpc(ipcMain, contents, editorProject)
   releaseEmbeddedLoginIpc = installEmbeddedLoginIpc(ipcMain, contents, embeddedLogin)
+  const releaseBrowserImportIpc = installBrowserImportIpc(ipcMain, contents, browserImports)
   releaseLoginCardIpc = installLoginCardIpc(ipcMain, embeddedLogin)
   if (e2e) Object.assign(globalThis, { __streamSyncerTest: {
+    ...(!app.isPackaged ? { setBrowserImportFixture(scenario: Parameters<BrowserImportFixtures['enable']>[0] = 'accounts') {
+      if (!browserImportFixtures) throw new Error('Browser import fixtures are offline-only')
+      browserImports.release(); browserImportFixtures.enable(scenario)
+    } } : {}),
+    setDouyinSendFixture(scenario: DouyinSendFixtureScenario = 'accepted') {
+      if (!douyinSendFixture) throw new Error('Douyin send fixture is offline-only')
+      douyinMessages.invalidate(); douyinSendFixture.enable(scenario)
+    },
+    getDouyinSendFixture() {
+      if (!douyinSendFixture) throw new Error('Douyin send fixture is offline-only')
+      return douyinSendFixture.snapshot()
+    },
     getWindowState: () => mainWindow.isDestroyed() ? null : getWindowState(mainWindow),
     ...(!app.isPackaged ? { setDouyinEmbeddedLoginFixture(scenario: Parameters<DouyinEmbeddedLoginFixtures['enable']>[0] = 'form') {
-      if (!douyinEmbeddedLoginFixtures) throw new Error('Douyin login fixture is offline-only')
+      if (!douyinEmbeddedLoginFixtures || !douyinHttpLoginFixtures) throw new Error('Douyin login fixture is offline-only')
       douyinEmbeddedLoginFixtures.enable(scenario)
+      douyinHttpLoginFixtures.enable(scenario)
+      if (douyinSendFixture && !douyinSendFixture.enabled) douyinSendFixture.enable('saved-login')
     }, async completeDouyinEmbeddedLoginFixture(authenticated = true) {
-      if (!douyinEmbeddedLoginFixtures || embeddedLogin.state()?.platform !== 'douyin') throw new Error('No active Douyin login fixture')
-      await douyinEmbeddedLoginFixtures.complete(authenticated)
+      if (!douyinHttpLoginFixtures || embeddedLogin.state()?.platform !== 'douyin') throw new Error('No active Douyin login fixture')
+      await douyinHttpLoginFixtures.complete(authenticated)
     }, getDouyinEmbeddedLoginFixtureState() {
-      if (!douyinEmbeddedLoginFixtures) throw new Error('Douyin login fixture is offline-only')
-      return douyinEmbeddedLoginFixtures.state(embeddedLogin.state() !== null)
+      if (!douyinHttpLoginFixtures) throw new Error('Douyin login fixture is offline-only')
+      return douyinHttpLoginFixtures.state(embeddedLogin.state() !== null)
     } } : {}),
     ...(!app.isPackaged ? { setEmbeddedLoginFixture() {
       if (!embeddedLoginFixtures) throw new Error('Embedded login fixture is offline-only')
@@ -852,9 +937,7 @@ async function start(): Promise<void> {
       url: pathToFileURL(join(clientDir, 'test-sources/commentary-hls/index.m3u8')).href, realtime: true,
     })),
   } })
-  contents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  contents.on('will-navigate', (event, url) => { if (!isAppDocument(url)) event.preventDefault() })
-  contents.on('will-redirect', (event, url) => { if (!isAppDocument(url)) event.preventDefault() })
+  installExternalNavigation(contents, url => shell.openExternal(url))
   contents.on('will-attach-webview', (event) => event.preventDefault())
   contents.on('render-process-gone', (_event, details) => {
     console.error(`Renderer exited: ${details.reason}, exitCode ${details.exitCode}`)
@@ -891,11 +974,14 @@ async function start(): Promise<void> {
     douyuRenewal?.dispose()
     douyuTasks?.dispose()
     douyuMessageSender?.dispose()
+    douyinMessages.dispose()
     douyuGatewayCoordinator.dispose()
     unwatchFile(index)
     await youtubeAdmin?.dispose()
     editorProjectIpc?.dispose()
     releaseEmbeddedLoginIpc?.()
+    releaseBrowserImportIpc()
+    browserImports.dispose()
     releaseLoginCardIpc?.()
     await embeddedLogin.dispose()
     await youtubeImports?.dispose()

@@ -136,14 +136,15 @@ function writeBytes(stream: Writable, bytes: Buffer, signal: AbortSignal): Promi
 export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePullOptions): Promise<void> {
   requireMediaUrl(source.videoUrl)
   requireMediaUrl(source.audioUrl)
-  const timeoutMs = options.requestTimeoutMs ?? policy.requestTimeoutMs
+  const timeoutMs = options.requestTimeoutMs ?? options.network?.media?.requestTimeoutMs ?? policy.requestTimeoutMs
+  const maxAttempts = options.network?.media ? options.network.media.reconnectAttempts || Infinity : MAX_ATTEMPTS
   const maxBytes = options.maxSegmentBytes ?? 32 * 1024 * 1024
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 2_147_483_647
     || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 128 * 1024 * 1024) {
     throw new AdaptivePullError('adaptive-request-failed')
   }
   const controller = new AbortController()
-  const signal = AbortSignal.any([controller.signal, options.signal])
+  const signal = AbortSignal.any([controller.signal, options.signal, ...(options.network?.signal ? [options.network.signal] : [])])
   const now = options.now ?? Date.now
   const wait = options.sleep ?? sleep
   const doFetch = options.fetchImpl ?? fetch
@@ -157,11 +158,11 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
   const segment = async (base: string, sq: number, probe = false): Promise<{ head: number; bytes: Buffer }> => {
     const url = requireMediaUrl(base)
     url.searchParams.set('sq', String(sq))
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       if (signal.aborted) throw abortError()
       const request = new AbortController()
       const requestSignal = AbortSignal.any([signal, request.signal])
-      const timer = setTimeout(() => { request.abort() }, timeoutMs)
+      const timer = timeoutMs > 0 ? setTimeout(() => { request.abort() }, timeoutMs) : undefined
       try {
         const operation = (async () => {
           const { response } = await safeFetch(url.toString(), policy, {
@@ -175,9 +176,9 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
           const rawHead = response.headers.get('x-head-seqnum')
           const head = Number(rawHead)
           const validHead = rawHead !== null && /^\d+$/.test(rawHead) && Number.isSafeInteger(head)
-          // Long-running broadcasts can evict sq=0 while still advertising their
-          // current head on its 404 response. This is discovery, never a media gap.
-          if (probe && response.status === 404 && validHead) {
+          // Discovery needs only headers, including when an old sq=0 was evicted.
+          // Cancel the unused historical body rather than downloading a full segment.
+          if (probe && (response.ok || response.status === 404) && validHead) {
             void response.body?.cancel().catch(() => {})
             return { head, bytes: Buffer.alloc(0) }
           }
@@ -193,15 +194,15 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
         })()
         return await abortable(operation, requestSignal)
       } catch (error) {
-        if (error instanceof StreamFailureError && attempt === MAX_ATTEMPTS - 1) throw error
+        if (error instanceof StreamFailureError && attempt === maxAttempts - 1) throw error
         if (signal.aborted) throw abortError()
         const safe = error instanceof AdaptivePullError ? error : new AdaptivePullError(
           error && typeof error === 'object' && 'reason' in error ? 'adaptive-unsafe-url' : 'adaptive-request-failed',
         )
         if (safe.code !== 'adaptive-request-failed' && safe.code !== 'adaptive-aborted') throw safe
-        if (attempt === MAX_ATTEMPTS - 1) throw new AdaptivePullError('adaptive-request-failed', safe.status)
+        if (attempt === maxAttempts - 1) throw new AdaptivePullError('adaptive-request-failed', safe.status)
       } finally { clearTimeout(timer) }
-      await wait((attempt + 1) * 500, signal)
+      await wait(Math.min(attempt + 1, 30) * 500, signal)
     }
     throw new AdaptivePullError('adaptive-request-failed')
   }
@@ -226,9 +227,9 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
           await writeBytes(output, item.bytes, signal)
           options.progress?.({ track, phase: 'written', sq, head: item.head, bytes: item.bytes.length })
           sq++
-          // A newer head permits catch-up; otherwise hold approximately two 5 s
-          // segments behind it instead of busy-polling an unfinished live sq.
-          const delay = Math.max(0, (sq - Math.max(0, item.head - BEHIND_HEAD)) * SEGMENT_MS - (now() - observedAt))
+          // Drain already advertised segments so the muxer can seal its first GOP and
+          // playback has a complete segment ahead. Pace only once the advertised head is reached.
+          const delay = Math.max(0, (sq - item.head) * SEGMENT_MS - (now() - observedAt))
           if (delay > 0) await wait(delay, signal)
         }
         throw abortError()

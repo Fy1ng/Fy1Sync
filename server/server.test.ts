@@ -81,9 +81,10 @@ describe('public stream failure wording', () => {
     ['resolve', 'policy-rejected', '媒体地址被应用的安全策略拒绝.'],
   ] as const)('keeps %s/%s while discarding provider text', (stage, reason, message) => {
     const result = sanitizedFailure({ ok: false, failure: { code: 'upstream-error', stage, reason,
-      message: 'Cookie=PRIVATE https://signed.invalid/?token=PRIVATE', hint: 'PRIVATE' } })
+      message: 'Cookie=PRIVATE https://signed.invalid/?token=PRIVATE', hint: 'original provider hint' } })
     expect(result).toMatchObject({ ok: false, failure: { stage, reason, message, hint: expect.any(String) } })
-    expect(JSON.stringify(result)).not.toMatch(/PRIVATE|signed\.invalid|token=|Cookie/)
+    expect(JSON.stringify(result)).not.toContain('PRIVATE')
+    if (!result.ok) expect(result.failure.detail?.hint).toBe('original provider hint')
   })
 })
 
@@ -131,6 +132,32 @@ describe('desktop main-process service', () => {
     expect(value(await service.invoke('health', undefined))).toEqual({
       ok: true, version: appPackage.version, proxyEnabled: true, danmakuRooms: 0,
     })
+  })
+
+  it('dispatches only validated Douyin actions with a live IPC subscription guard', async () => {
+    const state = vi.fn(async () => ({ loggedIn:true, canSend:true, uid:'12345', message:'可发送' }))
+    const send = vi.fn(async () => ({ status:'accepted' as const, message:'已受理',nextAllowedAt:null }))
+    const other = setup({ douyinMessages:{ state,send } })
+    try {
+      expect(await other.invoke('getDouyinSendState',undefined)).toMatchObject({ ok:true,value:{ uid:'12345' } })
+      expect(state).toHaveBeenLastCalledWith(undefined,false)
+      expect(await other.invoke('getDouyinSendState',{ refresh:true })).toMatchObject({ ok:true,value:{ uid:'12345' } })
+      expect(state).toHaveBeenLastCalledWith(undefined,true)
+      expect(await other.invoke('getDouyinSendState',{ url:'https://evil.invalid' })).toMatchObject({ code:'invalid-arguments' })
+      for (const args of [null,[],{},true,{ refresh:false },{ refresh:true,cookie:'synthetic-secret' }]) {
+        expect(await other.invoke('getDouyinSendState',args)).toMatchObject({ code:'invalid-arguments' })
+      }
+      const input = { room:'douyin:100', expectedUid:'12345', text:'测试' }
+      expect(await other.invoke('sendDouyinMessage',input)).toMatchObject({ code:'room-changed' })
+      for (const args of [{ ...input,room:'100' },{ ...input,text:'x'.repeat(51) },{ ...input,cookie:'secret' }]) {
+        expect(await other.invoke('sendDouyinMessage',args,{ isCurrent:() => true })).toMatchObject({ code:'invalid-arguments' })
+      }
+      expect(send).not.toHaveBeenCalled()
+      const isCurrent = () => true
+      expect(await other.invoke('sendDouyinMessage',input,{ isCurrent })).toMatchObject({ ok:true,value:{ status:'accepted' } })
+      expect(send).toHaveBeenCalledExactlyOnceWith(input,undefined,isCurrent)
+      expect(fetchImpl).not.toHaveBeenCalled()
+    } finally { other.dispose() }
   })
 
   it('accepts Huya at the resolve IPC boundary without starting a Douyu relay', async () => {
@@ -188,27 +215,28 @@ describe('desktop main-process service', () => {
   describe('stream resolution and registration', () => {
     it.each([
       [new ProxyError('dns-failed', 'Cookie=PRIVATE https://signed.invalid/?token=PRIVATE'), 'dns-failed', '域名解析失败.'],
-      [new ProxyError('too-many-redirects', 'PRIVATE'), 'too-many-redirects', '服务器重定向次数过多, 请稍后重试.'],
-      [new ProxyError('upstream-failed', 'PRIVATE'), 'upstream-failed', '媒体服务器请求失败, 请稍后重试.'],
+      [new ProxyError('too-many-redirects', 'redirect diagnostic'), 'too-many-redirects', '服务器重定向次数过多, 请稍后重试.'],
+      [new ProxyError('upstream-failed', 'upstream diagnostic'), 'upstream-failed', '媒体服务器请求失败, 请稍后重试.'],
     ])('shows the actual resolve error without echoing sensitive diagnostics', async (error, code, message) => {
       const acquisition = { resolve: vi.fn(async () => { throw error }), switchQuality: vi.fn(async () => { throw error }) } as unknown as AcquisitionService
       const other = setup({ acquisition })
       for (const [method, args] of [['resolve', { input: '6657', platform: 'douyu' }], ['switchQuality', { role: 'official', quality: '0' }]] as const) {
         const result = await other.invoke(method, args)
         expect(result).toMatchObject({ ok: false, code, message })
-        expect(JSON.stringify(result)).not.toMatch(/PRIVATE|signed\.invalid|token=|Cookie/)
+        expect(JSON.stringify(result)).not.toContain('PRIVATE')
+        expect(result).toHaveProperty('detail')
       }
       other.dispose()
     })
     it('preserves a structured network failure thrown by acquisition', async () => {
-      const acquisition = { resolve: vi.fn(async () => { throw new StreamFailureError({ stage: 'connect', code: 'tls-certificate', message: 'PRIVATE' }) }) } as unknown as AcquisitionService
+      const acquisition = { resolve: vi.fn(async () => { throw new StreamFailureError({ stage: 'connect', code: 'tls-certificate', message: 'certificate diagnostic Cookie=PRIVATE' }) }) } as unknown as AcquisitionService
       const other = setup({ acquisition })
       const result = await other.invoke('resolve', { input: '6657', platform: 'douyu' })
       expect(result).toMatchObject({ ok: true, value: { ok: false, failure: { stage: 'connect', reason: 'tls-certificate', message: '服务器证书校验失败.' } } })
       expect(JSON.stringify(result)).not.toContain('PRIVATE')
       other.dispose()
     })
-    it.each([undefined, {}, null, [], { input: 'x', extra: true }, { input: 'x', platform: 'unsupported' }, { input: 'x'.repeat(8_193) }])('validates resolver arguments: %j', async (args) => {
+    it.each([undefined, {}, null, [], { input: 'x', extra: true }, { input: 'x', platform: 'unsupported' }, { input: 'x'.repeat(256 * 1024 + 1) }])('validates resolver arguments: %j', async (args) => {
       expect(await service.invoke('resolve', args)).toMatchObject({ ok: false, code: 'invalid-arguments' })
     })
 
@@ -256,10 +284,15 @@ describe('desktop main-process service', () => {
       expect(await service.invoke('resolve', { input: 'https://8.8.8.8:9000/video.mp4' })).toMatchObject({ ok: true, value: { ok: true } })
     })
 
-    it('rejects media credentials without echoing them', async () => {
-      const result = await service.invoke('resolve', { input: 'https://example-user:example-password@8.8.8.8/video.mp4' })
-      expect(result).toMatchObject({ ok: false, code: 'invalid-url' })
-      expect(JSON.stringify(result)).not.toContain('example-password')
+    it('keeps media credentials in the registration and excludes them from the public stream', async () => {
+      const registerMedia = vi.fn(() => 'app://app/media/auth-fixture')
+      const other = setup({ registerMedia })
+      const result = await other.invoke('resolve', { input: 'https://example-user:example-password@8.8.8.8/video.mp4' })
+      expect(result).toMatchObject({ ok: true, value: { ok: true, stream: { url: 'app://app/media/auth-fixture' } } })
+      expect(JSON.stringify(result)).not.toMatch(/example-password|Authorization/)
+      expect(registerMedia).toHaveBeenCalledWith('https://8.8.8.8/video.mp4', undefined,
+        { Authorization: `Basic ${Buffer.from('example-user:example-password').toString('base64')}` })
+      other.dispose()
     })
 
     it('fetches platform metadata with fixed headers and registers the resulting media', async () => {

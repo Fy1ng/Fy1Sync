@@ -182,10 +182,10 @@ export async function resolveDouyin(input: string, deps: ResolverDeps): Promise<
     return pageFailure ?? failure('restricted', '抖音未返回可用的公开直播信息, 可能需要验证或暂时限制匿名访问.', RETRY_HINT)
   } catch (error) {
     if (error instanceof StreamFailureError) {
-      if (error.failure.status === 404) return failure('room-not-found', '抖音直播间不存在或链接已失效.', '请检查房间号或重新复制直播链接.')
-      if (error.failure.status === 401 || error.failure.status === 403) return failure('restricted', '抖音暂时不允许访问此直播间.', RETRY_HINT)
+      if (error.failure.status === 404) return failure('room-not-found', '抖音直播间不存在或链接已失效.', '请检查房间号或重新复制直播链接.', error.failure.detail ?? error)
+      if (error.failure.status === 401 || error.failure.status === 403) return failure('restricted', '抖音暂时不允许访问此直播间.', RETRY_HINT, error.failure.detail ?? error)
       throw error
     }
-    return failure('upstream-error', '读取抖音直播信息失败.', RETRY_HINT)
+    return failure('upstream-error', '读取抖音直播信息失败.', RETRY_HINT, error)
   }
 }

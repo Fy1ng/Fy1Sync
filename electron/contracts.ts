@@ -1,4 +1,5 @@
 import type { DomesticRouting } from '../server/networkPolicy'
+import type { MediaNetworkOptions } from '../server/mediaNetworkOptions'
 import type { NetworkPreferenceState } from './networkPreferences'
 import type {
   ApiResult, HealthInfo, PresetRecord, PresetSummary, SavedPreset,
@@ -18,10 +19,13 @@ import type { YouTubeAdminMethods, YtBrowseState, YtImportJob } from './ytAdminC
 import type { EditorProjectMethods } from './editorProjectContracts'
 import type { StylePackSourceId, StylePackSyncState } from './stylePackSyncContracts'
 import type { EmbeddedLoginMethods, EmbeddedLoginState } from './embeddedLoginContracts'
+import type { BrowserImportMethods } from './browserImportContracts'
 
 export interface WindowState { maximized: boolean; fullscreen: boolean; focused: boolean }
 
-export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods, EditorProjectMethods, EmbeddedLoginMethods {
+export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods, EditorProjectMethods, EmbeddedLoginMethods, BrowserImportMethods {
+  getDouyinSendState: { args: undefined | { refresh: true }; result: import('../src/core/douyinMessage').DouyinSendState }
+  sendDouyinMessage: { args: import('../src/core/douyinMessage').DouyinMessageInput; result: import('../src/core/douyinMessage').DouyinMessageOutcome }
   windowControl: { args: { action: 'minimize' | 'toggle-maximize' | 'close' }; result: WindowState }
   getWindowState: { args: undefined; result: WindowState }
   listDouyuAccounts: { args: undefined; result: DouyuAccountsSnapshot }
@@ -53,7 +57,7 @@ export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods, Edi
   restoreYtdlp: { args: { target: 'previous' | 'bundled' }; result: ToolsStatus }
   health: { args: undefined; result: HealthInfo }
   getNetworkPreferences: { args: undefined; result: NetworkPreferenceState }
-  setNetworkPreferences: { args: { domesticRouting: DomesticRouting }; result: NetworkPreferenceState }
+  setNetworkPreferences: { args: { domesticRouting: DomesticRouting; media?: MediaNetworkOptions }; result: NetworkPreferenceState }
   getDecoderPreferences: { args: undefined; result: DecoderPreferenceState }
   setDecoderPreferences: { args: { mode: DecoderMode }; result: DecoderPreferenceState }
   verifyAdmin: { args: { token: string }; result: { ok: true } }

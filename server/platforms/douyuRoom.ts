@@ -1,5 +1,8 @@
 import type { NetworkContext } from '../networkPolicy'
+import { timeoutSignal } from '../mediaNetworkOptions'
 import { StreamFailureError, httpFailure } from '../networkFailure'
+import { diagnosticDetails } from '../errorDetails'
+import { httpErrorDetails } from '../httpError'
 /** Anonymous, bounded identity lookup. Only static JSON is read; scripts never run. */
 import { hostAllowed, type ProxyConfig } from '../config'
 import { safeFetch, type Resolver } from '../safeFetch'
@@ -26,8 +29,8 @@ export function parseDouyuRoom(input: string): string | null {
   return url.pathname.split('/').filter(Boolean).reverse().map(validDouyuRoom).find(Boolean) ?? null
 }
 
-function fail(code: ResolveFailure['code'], message: string): DouyuRoomResult {
-  return { ok: false, failure: { code, message, hint: '请检查斗鱼数字房间号和网络后重试. 身份确认成功后可独立连接弹幕.' } }
+function fail(code: ResolveFailure['code'], message: string, detail?: unknown): DouyuRoomResult {
+  return { ok: false, failure: { code, message, hint: '请检查斗鱼数字房间号和网络后重试. 身份确认成功后可独立连接弹幕.', ...(detail === undefined ? {} : { detail: diagnosticDetails(detail) }) } }
 }
 const object = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
 
@@ -81,7 +84,7 @@ export class DouyuRoomResolver {
           this.cache.set(id, { room: result.identity.room, expires: (this.options.now ?? Date.now)() + (this.options.ttlMs ?? 60_000) })
         }
         return result
-      } catch (error) { if (error instanceof StreamFailureError) throw error; return fail('upstream-error', '请求斗鱼房间身份失败, 请检查网络后重试.') }
+      } catch (error) { if (error instanceof StreamFailureError) throw error; return fail('upstream-error', '请求斗鱼房间身份失败, 请检查网络后重试.', error) }
     })()
     this.pending.set(id, lookup)
     try { return await lookup } finally { if (this.pending.get(id) === lookup) this.pending.delete(id) }
@@ -91,11 +94,11 @@ export class DouyuRoomResolver {
 export function createDouyuRoomResolver(proxy: ProxyConfig, fetchImpl?: typeof fetch, dns?: Resolver, network?: NetworkContext): DouyuRoomResolver {
   return new DouyuRoomResolver(async room => {
     if (!proxy.enabled || !hostAllowed('m.douyu.com', proxy.hosts)) throw new Error('Remote metadata disabled')
-    const signal = AbortSignal.timeout(Math.min(proxy.requestTimeoutMs, 15_000))
+    const signal = timeoutSignal(network?.media?.requestTimeoutMs ?? Math.min(proxy.requestTimeoutMs, 15_000), network?.signal)
     const { response } = await safeFetch(`https://m.douyu.com/${room}`, {
       ...proxy, hosts: ['m.douyu.com'], maxRedirects: 0, allowNonStandardPorts: false,
     }, { signal, fetchImpl, resolve: dns, network, headers: { Accept: 'text/html', 'User-Agent': 'Mozilla/5.0', Referer: 'https://m.douyu.com/' } })
-    if (!response.ok || !response.body) { await response.body?.cancel(); throw new StreamFailureError(httpFailure(response.status)) }
+    if (!response.ok || !response.body) throw new StreamFailureError(httpFailure(response.status, await httpErrorDetails(response)))
     const reader = response.body.getReader()
     const chunks: Uint8Array[] = []
     let bytes = 0

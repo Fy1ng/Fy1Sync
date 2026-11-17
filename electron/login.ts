@@ -3,23 +3,28 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import type { Readable, Writable } from 'node:stream'
-import { CookieStore, hasAuthenticationCookies, isLoginPlatform, LOGIN_PLATFORMS } from './cookies'
-import type { BrowserCookie, CookieHeaderPlatform, CookieStoreOptions, LoginCookieSession, LoginPlatform, LoginResult, LoginStatus, YoutubeCookieSession } from './cookies'
+import { CookieStore, hasAuthenticationCookies, isLoginPlatform, LOGIN_PLATFORMS, douyinBrowserCookieFingerprint } from './cookies'
+import type { BrowserCookie, BrowserAccountIdentity, CookieHeaderPlatform, CookieStoreOptions, LoginCookieSession, LoginPlatform, LoginResult, LoginStatus, YoutubeCookieSession } from './cookies'
 import { powershellEnvironment } from './privateStorage'
 import type { EmbeddedLoginDriver } from './embeddedLoginContracts'
+import { diagnosticDetails } from '../server/errorDetails'
+import { douyinCookieFingerprint, parseDouyinSigningSnapshot, type DouyinSigningLookup, type DouyinSigningMaterial, type DouyinSigningSnapshot } from '../server/douyin/signingMaterial'
+import type { DouyinSigningStore } from './douyinSigningStore'
 
 export type { LoginPlatform, LoginResult, LoginStatus, PlatformLoginStatus } from './cookies'
 export type LoginDestination = 'yuba' | `room:${string}` | `fish-act:${string}`
 
 export type LoginErrorCode = 'chrome-not-found' | 'login-busy' | 'login-cancelled' | 'login-failed' | 'login-incomplete' | 'cookie-storage-failed'
 export class LoginError extends Error {
-  constructor(readonly code: LoginErrorCode, platform?: LoginPlatform) {
-    super(platform === 'douyin' && code === 'login-failed' ? '抖音内嵌登录未完成, 请在应用内重试.' : { 'chrome-not-found': '未找到系统 Google Chrome, 请先安装 Chrome 后重试.',
+  readonly detail?: import('../src/core/errorDetails').ErrorDetails
+  constructor(readonly code: LoginErrorCode, platform?: LoginPlatform, cause?: unknown) {
+    super(platform === 'douyin' && code === 'login-failed' ? '抖音登录未完成, 请在应用内重试.' : { 'chrome-not-found': '未找到系统 Google Chrome, 请先安装 Chrome 后重试.',
       'login-busy': '该平台正在登录, 请先关闭已有的登录页面.', 'login-cancelled': '登录已取消.',
       'login-failed': '平台登录或账号读取失败, 请关闭此平台的登录页面后重试.',
       'login-incomplete': '登录未完成, 未读取到平台认证 Cookie, 已保留原有登录数据.',
       'cookie-storage-failed': '登录信息保存失败, 请重试.' }[code])
     this.name = 'LoginError'
+    if (cause !== undefined) this.detail = diagnosticDetails(cause)
   }
 }
 
@@ -32,6 +37,7 @@ export interface LoginManagerOptions extends CookieStoreOptions {
   chromeExecutable?: string
   findChrome?: () => string | undefined
   store?: CookieStore
+  douyinSigning?: Pick<DouyinSigningStore,'save'|'load'|'clear'|'dispose'>
 }
 
 export function findSystemChrome(environment: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
@@ -300,6 +306,8 @@ export class LoginManager {
   private readonly loggingOut = new Set<LoginPlatform>()
   private readonly revisions: Record<LoginPlatform, number> = { youtube: 0, douyu: 0, bilibili: 0, huya: 0, douyin: 0 }
   private disposed = false
+  private signingBlocked = false
+  private signingProblem: string | undefined
 
   constructor(userDataDirectory: string, private readonly options: LoginManagerOptions = {}) {
     this.store = options.store ?? new CookieStore(userDataDirectory, options)
@@ -317,11 +325,22 @@ export class LoginManager {
     const controller = new AbortController()
     const promise = (async () => {
       try {
+        let signingSnapshot: DouyinSigningSnapshot | null = null
+        const signing=this.options.douyinSigning
+        if (platform==='douyin' && signing) {
+          this.signingBlocked=true; this.signingProblem=undefined
+          try { await signing.clear(controller.signal,()=>revision===this.revisions[platform] && !this.disposed) }
+          catch (error) { this.signingProblem='douyin-signing-store-failed'; throw new LoginError('cookie-storage-failed',platform,error) }
+        }
         let cookies: BrowserCookie[]
         if (platform !== 'youtube' && this.options.embeddedDriver) {
           cookies = await this.options.embeddedDriver.login({ platform, signal: controller.signal, destination, accountLabel,
-            ...(platform === 'douyin' ? { initializeSession: (target: LoginCookieSession) => this.store.injectDouyinCookies(target, () => !this.disposed && !controller.signal.aborted
-              && !this.loggingOut.has(platform) && revision === this.revisions[platform]) } : destination ? { initializeSession: async (target: LoginCookieSession) => {
+            ...(platform==='douyin' && signing ? {captureDouyinSigning:async (snapshot: DouyinSigningSnapshot) => {
+              if (!controller.signal.aborted && revision===this.revisions[platform] && !this.disposed) signingSnapshot=structuredClone(snapshot)
+            }} : {}),
+            // Explicit reauthentication starts clean. Keep saved cookies intact until a
+            // newly verified login succeeds, but never restore stale tickets into its form.
+            ...(destination ? { initializeSession: async (target: LoginCookieSession) => {
               cancelled(controller.signal)
               await this.injectCookies(platform, target)
               cancelled(controller.signal)
@@ -333,21 +352,44 @@ export class LoginManager {
           const executable = this.options.chromeExecutable ?? (this.options.findChrome ?? findSystemChrome)()
           if (!executable) throw new LoginError('chrome-not-found')
           let profile: string
-          try { profile = this.store.prepareProfile(platform) } catch { throw new LoginError('cookie-storage-failed') }
+          try { profile = this.store.prepareProfile(platform) } catch (error) { throw new LoginError('cookie-storage-failed', platform, error) }
           cookies = await this.driver.login(executable, profile, platform, controller.signal, destination)
         }
         cancelled(controller.signal)
         if (this.disposed || this.loggingOut.has(platform) || revision !== this.revisions[platform]) throw new LoginError('login-cancelled')
         if (!hasAuthenticationCookies(cookies, platform, this.options.now?.())) throw new LoginError('login-incomplete')
         try {
-          const result = this.store.write(platform, cookies)
+          const result = await this.store.writeAsync(platform, cookies, controller.signal,
+            () => !this.disposed && !this.loggingOut.has(platform) && revision === this.revisions[platform])
+          if (platform==='douyin' && signing) {
+            const current=()=>!this.disposed && !this.loggingOut.has(platform) && revision===this.revisions[platform]
+            let ready=false
+            try {
+              const captured=signingSnapshot as DouyinSigningSnapshot|null
+              if (!captured || captured.cookieFingerprint!==douyinBrowserCookieFingerprint(cookies,this.options.now?.())) {
+                this.signingProblem='douyin-signing-capture-unavailable'
+              } else {
+                const material=parseDouyinSigningSnapshot(captured)
+                await signing.save(material,controller.signal,current)
+                cancelled(controller.signal)
+                if (!current()) throw new LoginError('login-cancelled')
+                this.signingBlocked=false; this.signingProblem=undefined; ready=true
+              }
+            } catch (error) {
+              if (controller.signal.aborted || !current()) throw new LoginError('login-cancelled')
+              const code=typeof (error as {code?:unknown})?.code==='string' ? (error as {code:string}).code : ''
+              this.signingProblem=/^douyin-(?:signing|ticket)-[a-z-]{1,60}$/.test(code) ? code : 'douyin-signing-store-failed'
+            } finally { signingSnapshot=null }
+            this.revisions[platform]++
+            return {...result,signingReady:ready,...(this.signingProblem ? {signingProblem:this.signingProblem} : {})}
+          }
           this.revisions[platform]++
           return result
-        } catch { throw new LoginError('cookie-storage-failed') }
+        } catch (error) { throw new LoginError('cookie-storage-failed', platform, error) }
       } catch (error) {
         if (controller.signal.aborted) throw new LoginError('login-cancelled')
-        if (platform === 'douyin') throw new LoginError(error instanceof LoginError ? error.code : 'login-failed', platform)
-        throw error instanceof LoginError ? error : new LoginError('login-failed')
+        if (platform === 'douyin') throw new LoginError(error instanceof LoginError ? error.code : 'login-failed', platform, error)
+        throw error instanceof LoginError ? error : new LoginError('login-failed', platform, error)
       } finally {
         this.operations.delete(platform)
       }
@@ -359,7 +401,59 @@ export class LoginManager {
   }
 
   async loginStatus(): Promise<LoginStatus> {
-    try { return await this.store.status() } catch { throw new LoginError('cookie-storage-failed') }
+    try { return await this.store.status() } catch (error) { throw new LoginError('cookie-storage-failed', undefined, error) }
+  }
+
+  /** Only a main-owned, online-verified import reaches this writer; it shares login/logout ownership. */
+  importCookies(platform: LoginPlatform, cookies: BrowserCookie[], identity: BrowserAccountIdentity, signal?: AbortSignal): Promise<LoginResult> {
+    if (!isLoginPlatform(platform) || this.disposed || signal?.aborted) return Promise.reject(new LoginError('login-cancelled'))
+    if (this.loginInProgress(platform)) return Promise.reject(new LoginError('login-busy'))
+    if (!hasAuthenticationCookies(cookies, platform, this.options.now?.())) return Promise.reject(new LoginError('login-incomplete'))
+    const revision = ++this.revisions[platform]
+    const controller = new AbortController()
+    const abort = () => controller.abort()
+    signal?.addEventListener('abort', abort, { once: true })
+    const current = () => !this.disposed && !this.loggingOut.has(platform) && revision === this.revisions[platform]
+    const promise = (async () => {
+      try {
+        const result = await this.store.writeAsync(platform, cookies, controller.signal, current, identity)
+        if (platform === 'douyin' && this.options.douyinSigning) {
+          this.signingBlocked = true
+          this.signingProblem = 'douyin-signing-material-missing'
+          try { await this.options.douyinSigning.clear(controller.signal, current) }
+          catch { this.signingProblem = 'douyin-signing-store-failed' }
+          return { ...result, signingReady: false, signingProblem: this.signingProblem }
+        }
+        return result
+      } catch (error) {
+        throw new LoginError(controller.signal.aborted || !current() ? 'login-cancelled' : 'cookie-storage-failed', platform, error)
+      } finally {
+        signal?.removeEventListener('abort', abort)
+        this.operations.delete(platform)
+      }
+    })()
+    this.operations.set(platform, { controller, promise })
+    void promise.catch(() => {}).finally(() => { if (this.operations.get(platform)?.promise === promise) this.operations.delete(platform) })
+    return promise
+  }
+
+  savedUserId(platform: CookieHeaderPlatform): Promise<string | undefined> { return this.store.savedUserId(platform) }
+
+  loginInProgress(platform: LoginPlatform): boolean { return this.operations.has(platform) || this.loggingOut.has(platform) }
+
+  /** Private lookup, always bound to current authentication; no secrets are exposed through loginStatus. */
+  async douyinSigningMaterial(header: string, signal?: AbortSignal, accountUid?: string): Promise<DouyinSigningMaterial|null> {
+    if (this.disposed || this.loginInProgress('douyin') || !this.options.douyinSigning) return null
+    if (this.signingBlocked) {
+      if (this.signingProblem && this.signingProblem!=='douyin-signing-material-missing') {
+        throw Object.assign(new Error('抖音发送认证暂时不可用.'),{code:this.signingProblem})
+      }
+      return null
+    }
+    const revision=this.revisions.douyin
+    const current=()=>!this.disposed && !this.loginInProgress('douyin') && revision===this.revisions.douyin
+    const lookup: DouyinSigningLookup={cookieFingerprint:douyinCookieFingerprint(header),...(accountUid ? {accountUid} : {})}
+    return this.options.douyinSigning.load(lookup,signal,current)
   }
 
   async cookieHeader(platform: CookieHeaderPlatform, requestUrl?: string): Promise<string> {
@@ -369,9 +463,9 @@ export class LoginManager {
     try {
       const header = await this.store.cookieHeader(platform, requestUrl)
       return current() ? header : ''
-    } catch {
+    } catch (error) {
       if (!current()) return ''
-      throw new LoginError('cookie-storage-failed')
+      throw new LoginError('cookie-storage-failed', platform, error)
     }
   }
 
@@ -408,7 +502,13 @@ export class LoginManager {
       const operation = this.operations.get(platform)
       operation?.controller.abort()
       await operation?.promise.catch(() => {})
+      let signingError: unknown
+      if (platform==='douyin' && this.options.douyinSigning) {
+        this.signingBlocked=true; this.signingProblem=undefined
+        try { await this.options.douyinSigning.clear() } catch (error) { signingError=error }
+      }
       try { this.store.logout(platform) } catch { throw new LoginError('cookie-storage-failed') }
+      if (signingError) throw new LoginError('cookie-storage-failed',platform,signingError)
     } finally { this.loggingOut.delete(platform) }
   }
 
@@ -418,5 +518,6 @@ export class LoginManager {
     const operations = [...this.operations.values()]
     for (const operation of operations) operation.controller.abort()
     await Promise.allSettled(operations.map(operation => operation.promise))
+    this.options.douyinSigning?.dispose()
   }
 }

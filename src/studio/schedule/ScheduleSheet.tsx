@@ -13,7 +13,7 @@
  * says where it came from and how old it is.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiClient } from '../../app/apiClient'
 import type { Cs2Match, Cs2Schedule, Cs2Stream, StreamTitle } from '../../../electron/featureContracts'
 import { Icon, Sheet, SideTabs } from '../kit'
@@ -21,9 +21,14 @@ import { eventPath, formatStart, groupEvents, matchStage, MISSING_TEXT, orderedS
 import { lastSchedule, onSchedule, readSchedule, scheduleChanged } from './store'
 import './schedule.css'
 import { useRemembered } from '../../app/remembered'
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 
 /** How often the open sheet asks again. Main serves its cache in between, so this is cheap. */
 const POLL_MS = 60_000
+type RefreshBlock = { at: number; reason: NonNullable<Cs2Schedule['refreshReason']>; fetchedAt: number }
+const retryLabel = (seconds: number): string => seconds >= 3600 ? `${Math.ceil(seconds / 3600)} 小时`
+  : seconds >= 60 ? `${Math.ceil(seconds / 60)} 分钟` : `${seconds} 秒`
 
 export function ScheduleSheet({ onClose, onWatch }: {
   onClose: () => void
@@ -32,11 +37,25 @@ export function ScheduleSheet({ onClose, onWatch }: {
 }): React.ReactNode {
   // Open on what the start-up read found; the read below only brings it up to date.
   const [schedule, setSchedule] = useState<Cs2Schedule | null>(lastSchedule)
-  const [failure, setFailure] = useState<string | null>(null)
+  const [failure, setFailure, failureDetail] = useErrorState()
   const [refreshing, setRefreshing] = useState(false)
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null)
-  // When Liquipedia's 30-second parse limit lets the next refresh run; null when it may now.
-  const [refreshAt, setRefreshAt] = useState<number | null>(null)
+  const [refreshBlock, setRefreshBlock] = useState<RefreshBlock | null>(() => {
+    const value = lastSchedule()
+    return value?.refreshAt && value.refreshAt > Date.now()
+      ? { at: value.refreshAt, reason: value.refreshReason ?? 'parse-quota', fetchedAt: value.fetchedAt } : null
+  })
+  const acceptCooldown = useCallback((value: Cs2Schedule, explicit = false): void => {
+    setRefreshBlock(previous => {
+      const at = value.refreshAt
+      if (typeof at === 'number' && Number.isFinite(at) && at > Date.now()) {
+        return { at: Math.max(previous?.at ?? 0, at), reason: value.refreshReason ?? 'parse-quota', fetchedAt: value.fetchedAt }
+      }
+      if (explicit || (previous && previous.reason !== 'parse-quota' && !value.stale && value.fetchedAt > previous.fetchedAt)) return null
+      return previous
+    })
+  }, [])
+  const refreshAt = refreshBlock?.at ?? null
   // The chosen event and the titles read so far survive closing the sheet.
   const [eventKey, setEventKey] = useRemembered<string | null>('schedule:event', null)
   const [titles, setTitles] = useRemembered<Map<string, StreamTitle>>('schedule:titles', new Map())
@@ -51,7 +70,7 @@ export function ScheduleSheet({ onClose, onWatch }: {
     if (!alive.current) return
     if (refresh) setRefreshing(false)
     setNow(Date.now())
-    if (!result.ok) { setFailure(result.message); return }
+    if (!result.ok) { setFailure(result); return }
     setFailure(null)
     // The store rejects out-of-order replies; an older sheet read must not undo that.
     const next = lastSchedule() ?? result.value
@@ -60,16 +79,14 @@ export function ScheduleSheet({ onClose, onWatch }: {
       setRefreshMessage(before && JSON.stringify(before.matches) === JSON.stringify(next.matches)
         ? '已检查源数据, 赛程暂无变化. 比分以直播画面为准.' : '已读取源数据.')
     }
-    // Only a refresh says whether the limit turned it away; the minute's plain read, served
-    // from cache, must not end a countdown that still holds.
-    if (refresh) setRefreshAt(result.value.refreshAt ?? null)
+    acceptCooldown(next, refresh)
   }
 
   // Count down once a second while held back, and free the button when the time comes.
   const waitSeconds = refreshAt === null ? 0 : Math.max(0, Math.ceil((refreshAt - now) / 1000))
   useEffect(() => {
     if (refreshAt === null) return
-    if (refreshAt <= Date.now()) { setRefreshAt(null); return }
+    if (refreshAt <= Date.now()) { setRefreshBlock(null); return }
     const timer = window.setTimeout(() => setNow(Date.now()), 1000 - (Date.now() % 1000) || 1000)
     return () => window.clearTimeout(timer)
   }, [refreshAt, now])
@@ -80,12 +97,13 @@ export function ScheduleSheet({ onClose, onWatch }: {
     const timer = window.setInterval(() => void read(false), POLL_MS)
     // Main says when tiers and crests land and the store reads again (once more if a read was
     // in flight); take every schedule it keeps rather than waiting for the next poll.
-    const offRead = onSchedule((value) => { if (alive.current) { setFailure(null); setSchedule(value) } })
+    const offRead = onSchedule((value) => { if (alive.current) { setFailure(null); setSchedule(value); acceptCooldown(value) } })
     const off = apiClient.subscribeFeatures((event) => { if (event.topic === 'cs2-schedule') scheduleChanged() })
     return () => { alive.current = false; window.clearInterval(timer); off(); offRead() }
   }, [])
 
   const events = useMemo(() => groupEvents(schedule), [schedule])
+  const upstreamLimited = schedule?.refreshReason === 'upstream-rate-limit' || (schedule?.stale && schedule.errorDetail?.status === 429)
   const current = events.find((group) => group.key === eventKey) ?? events[0]
   useEffect(() => { if (current && current.key !== eventKey) setEventKey(current.key) }, [current, eventKey])
 
@@ -138,7 +156,10 @@ export function ScheduleSheet({ onClose, onWatch }: {
       <div className="sched">
         {events.length === 0 ? (
           <div className="sched-empty">
-            {failure ?? schedule?.error ?? (schedule ? '近两天没有登记的 CS2 比赛' : '正在读取赛程')}
+            <div className="sched-empty-content">
+              {failure || schedule?.error ? <ErrorText error={failure ? failureDetail ?? failure : schedule?.errorDetail ?? { message: schedule?.error }} message={failure || schedule?.error} />
+                : schedule ? '近两天没有登记的 CS2 比赛' : '正在读取赛程'}
+            </div>
           </div>
         ) : (
           <SideTabs label="赛事" value={current?.key ?? ''} onChange={setEventKey} tabs={tabs}>
@@ -149,19 +170,59 @@ export function ScheduleSheet({ onClose, onWatch }: {
         )}
         <footer className="sched-foot">
           {refreshMessage && <p role="status">{refreshMessage}</p>}
-          {schedule?.stale && <p className="note-warn">{schedule.error ?? '赛程暂时无法更新，显示的是上次读取的结果'}</p>}
-          {waitSeconds > 0 && <p className="sched-wait" role="status">Liquipedia 限制每 30 秒刷新一次，还需 {waitSeconds} 秒</p>}
+          {schedule?.stale && events.length > 0 && <p className="note-warn"><ErrorText error={schedule.errorDetail ?? { message: schedule.error, fetchedAt: schedule.fetchedAt, stale: true }} message={schedule.error ?? '赛程暂时无法更新，显示的是上次读取的结果'} /></p>}
+          {waitSeconds > 0 && <p className="sched-wait" role="status">{refreshBlock?.reason === 'upstream-rate-limit'
+            ? `Liquipedia 返回 HTTP 429, 请求已暂停, 约 ${retryLabel(waitSeconds)}后重试.`
+            : refreshBlock?.reason === 'retry' ? `赛程读取失败, 约 ${retryLabel(waitSeconds)}后重试.`
+              : `Liquipedia 限制每 30 秒刷新一次, 还需 ${waitSeconds} 秒`}</p>}
+          {upstreamLimited && <LiquipediaVerification />}
           <span className="sched-source">
-            {schedule ? `${schedule.attribution} - 来源读取于 ${formatStart(schedule.fetchedAt, now)}` : '赛程数据来自 Liquipedia (CC-BY-SA 3.0)'}
+            {schedule ? `${schedule.attribution} - ${schedule.fetchedAt > 0 ? `来源读取于 ${formatStart(schedule.fetchedAt, now)}` : '尚未成功读取来源'}` : '赛程数据来自 Liquipedia (CC-BY-SA 3.0)'}
           </span>
           <button type="button" className="btn-quiet small" disabled={refreshing || waitSeconds > 0} onClick={() => void read(true)}>
-            <Icon name="refresh" />{refreshing ? '正在刷新' : waitSeconds > 0 ? `${waitSeconds} 秒后可刷新` : '刷新'}
+            <Icon name="refresh" />{refreshing ? '正在刷新' : waitSeconds > 0 ? `${retryLabel(waitSeconds)}后可刷新` : '刷新'}
           </button>
           {schedule && <p className="muted">读取时间不代表赛果更新时间.</p>}
         </footer>
       </div>
     </Sheet>
   )
+}
+
+/** Browser handoff is explicit and does not reset request quotas or infer verification success. */
+function LiquipediaVerification(): React.ReactNode {
+  const [opening, setOpening] = useState(false)
+  const [opened, setOpened] = useState(false)
+  const [error, setError, errorDetail] = useErrorState()
+  const pending = useRef(false)
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+
+  const open = async (): Promise<void> => {
+    if (pending.current) return
+    pending.current = true
+    setOpening(true); setOpened(false); setError(null)
+    try {
+      const result = await apiClient.feature('openLiquipediaVerification', undefined)
+      if (!mounted.current) return
+      if (result.ok) setOpened(true)
+      else setError(displayError(result, '无法打开官网验证页面, 请重试.'))
+    } catch (caught) {
+      if (mounted.current) setError(displayError(caught, '无法打开官网验证页面, 请重试.'))
+    } finally {
+      pending.current = false
+      if (mounted.current) setOpening(false)
+    }
+  }
+
+  return <div className="sched-verification" role="group" aria-label="Liquipedia 官网验证">
+    <button type="button" className="btn-solid small" disabled={opening} onClick={() => void open()}>
+      <Icon name="link" />{opening ? '正在打开官网...' : '打开官网验证'}
+    </button>
+    <span className="muted">请使用与应用相同的网络和代理完成验证. 返回后仍按冷却时间重试.</span>
+    {opened && <p className="muted" role="status">已在浏览器打开 Liquipedia, 请按官网指引完成验证后返回赛程.</p>}
+    {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
+  </div>
 }
 
 function EventPane({ group, titles, now, onWatch }: {
@@ -235,7 +296,8 @@ function MatchRow({ match, titles, now, siblingsLive, onWatch }: {
         {stage && <span className="match-stage" data-from={stage.from}>{stage.label}</span>}
         {match.tournament.stage && <span>{match.tournament.stage}</span>}
         {title && <span className="match-title" title={title}>{title}</span>}
-        {waiting && <span className="match-missing" data-missing={waiting}>{MISSING_TEXT[waiting]}</span>}
+        {waiting && <span className="match-missing" data-missing={waiting}>{waiting === 'failed'
+          ? <ErrorText error={streams.find(stream => stream.missing === 'failed')?.errorDetail ?? { code: 'stream-channel-failed', message: MISSING_TEXT.failed }} message={MISSING_TEXT.failed} /> : MISSING_TEXT[waiting]}</span>}
       </div>
       <div className="match-watch">
         {streams.length === 0

@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { expect, test } from './electron'
 import { invoke, openPlayer, openSettings } from './helpers'
 
-test('抖音真实内嵌登录页显示官方二维码和表单, 取消后清理视图', async ({ page, electronApp }) => {
+test('抖音纯HTTP匿名接口显示二维码和本地表单, 取消后清理视图', async ({ page, electronApp }) => {
   test.skip(process.env.STREAM_SYNC_DOUYIN_LOGIN_LIVE !== '1' || process.env.STREAM_SYNC_LIVE_TESTS !== '1',
     '需要显式开启公开匿名登录页验证, 不提交账号或短信.')
   test.setTimeout(120_000)

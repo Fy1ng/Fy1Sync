@@ -2,6 +2,7 @@ import { build } from 'vite'
 import { fileURLToPath } from 'node:url'
 import { cp, mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
+import { buildBrowserCredentials } from './build-browser-credentials.mjs'
 
 const root = new URL('../', import.meta.url)
 const noExternal = ['parse5', 'entities', 'undici']
@@ -22,11 +23,15 @@ export async function buildNetworkRuntime(write = true, outDir = 'dist/electron'
 }
 
 export async function buildElectron(write = true) {
+  if (write) await buildBrowserCredentials()
+  const helper = process.platform === 'win32'
+    ? JSON.parse(await readFile(new URL('dist/native/browser-credentials.json', root), 'utf8')) : null
   const obsolete = fileURLToPath(new URL('dist/server', root))
   if (dirname(obsolete) !== resolve(fileURLToPath(root), 'dist')) throw new Error('Invalid obsolete artifact path')
   if (write) await rm(obsolete, { recursive: true, force: true })
   const result = await build({
     configFile: false, root: fileURLToPath(root),
+    define: { __BROWSER_CREDENTIALS_SHA256__: JSON.stringify(helper?.sha256 ?? '') },
     ssr: { noExternal },
     build: {
       ssr: true, outDir: 'dist/electron', emptyOutDir: true, minify: false, sourcemap: true,

@@ -31,6 +31,18 @@ function fakeStorage(initial?: string): SettingsStorage & { value: string | null
 }
 
 describe('mergeSettings', () => {
+  it('hides optional recognition diagnostics by default and persists the toggle independently', () => {
+    expect(DEFAULT_SETTINGS.basicRecognitionPanelVisible).toBe(false)
+    expect(mergeSettings({ recognitionMode: 'basic' }).basicRecognitionPanelVisible).toBe(false)
+    for (const invalid of [null, 'true', 1, {}, []]) {
+      expect(mergeSettings({ basicRecognitionPanelVisible: invalid }).basicRecognitionPanelVisible).toBe(false)
+    }
+    const storage = fakeStorage()
+    saveSettings({ ...DEFAULT_SETTINGS, basicRecognitionPanelVisible: true }, storage)
+    expect(loadSettings(storage)).toMatchObject({ basicRecognitionPanelVisible: true, recognitionMode: 'basic' })
+    expect(mergeSettings({ basicRecognitionPanelVisible: false, recognitionMode: 'style-pack' }))
+      .toMatchObject({ basicRecognitionPanelVisible: false, recognitionMode: 'style-pack' })
+  })
   it('caps silent speed correction below two seconds while retaining stricter saved thresholds', () => {
     expect(DEFAULT_SETTINGS.seekThresholdSeconds).toBe(2)
     expect(mergeSettings({}).seekThresholdSeconds).toBe(2)

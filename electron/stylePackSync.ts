@@ -1,4 +1,6 @@
 import fs from 'node:fs'
+import { diagnosticDetails } from '../server/errorDetails'
+import { httpErrorDetails } from '../server/httpError'
 import path from 'node:path'
 import { createHash, createPublicKey, randomUUID, verify } from 'node:crypto'
 import { TextDecoder } from 'node:util'
@@ -144,7 +146,7 @@ export class StylePackSyncService {
     if (id === this.value.source) return this.state()
     this.atomic('source.json', Buffer.from(JSON.stringify({ source: id })))
     this.failures = 0
-    this.update({ source: id, phase: 'idle', checkedAt: null, downloaded: 0, message: `已选择 ${SOURCE_LABEL[id]}, 点击手动刷新从该源检查更新.` })
+    this.update({ source: id, phase: 'idle', checkedAt: null, downloaded: 0, errorDetail: undefined, message: `已选择 ${SOURCE_LABEL[id]}, 点击手动刷新从该源检查更新.` })
     this.schedule(CHECK_INTERVAL)
     return this.state()
   }
@@ -270,7 +272,7 @@ export class StylePackSyncService {
       const result = await bounded(safeFetch(target.href, { enabled: true, hosts: [target.hostname], allowNonStandardPorts: false, maxRedirects: 0, requestTimeoutMs: REQUEST_TIMEOUT },
         { signal, resolve: this.options.resolve, fetchImpl: request, headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' } }), signal)
       if (result.finalUrl.href !== target.href) throw invalid()
-      if (!result.response.ok) { void result.response.body?.cancel().catch(() => {}); throw new Error(`来源返回 HTTP ${result.response.status}.`) }
+      if (!result.response.ok) throw Object.assign(new Error(`来源返回 HTTP ${result.response.status}.`), await httpErrorDetails(result.response))
       return await readBounded(result.response, limit, signal)
     } finally { clearTimeout(timer) }
   }
@@ -292,7 +294,7 @@ export class StylePackSyncService {
   private async run(): Promise<StylePackSyncState> {
     const mirror = this.source!.mirrors.find(item => item.id === this.value.source)!
     const label = SOURCE_LABEL[mirror.id]
-    this.update({ phase: 'syncing', downloaded: 0, message: `正在从 ${label} 刷新赛事样式.` })
+    this.update({ phase: 'syncing', downloaded: 0, errorDetail: undefined, message: `正在从 ${label} 刷新赛事样式.` })
     let downloaded = 0
     try {
       const bytes = await this.download(mirror, mirror.manifestUrl, MAX_CATALOG_BYTES)
@@ -336,7 +338,7 @@ export class StylePackSyncService {
     } catch (error) {
       const detail = error instanceof Error && /^来源返回 HTTP \d{3}\.$/.test(error.message) ? ` ${error.message}` : ''
       if (!this.disposed) { this.failures++; this.update({ phase: 'error', checkedAt: this.now(), downloaded,
-        message: `${label} 刷新失败.${detail} 已保留原有可用样式, 可重试或手动切换来源.` }) }
+        message: `${label} 刷新失败.${detail} 已保留原有可用样式, 可重试或手动切换来源.`, errorDetail: diagnosticDetails(error) }) }
     }
     return this.state()
   }

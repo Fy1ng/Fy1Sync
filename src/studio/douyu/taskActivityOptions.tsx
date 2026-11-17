@@ -5,6 +5,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 import { apiClient } from '../../app/apiClient'
 import type { ActivityPreferences } from '../../../electron/activityPreferences'
 import { Segmented, Switch } from '../kit'
@@ -28,7 +30,7 @@ export function ActivityOptions({ fishing, treasure }: { fishing: boolean; treas
   const [value, setValue] = useState<Full | null>(null)
   const [delay, setDelay] = useState('')
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError, errorDetail] = useErrorState('')
   const [notice, setNotice] = useState('')
   const mounted = useRef(true)
 
@@ -36,10 +38,10 @@ export function ActivityOptions({ fishing, treasure }: { fishing: boolean; treas
     mounted.current = true
     void apiClient.feature('getDouyuActivityOptions', undefined).then((result) => {
       if (!mounted.current) return
-      if (!result.ok) { setError(result.message); return }
+      if (!result.ok) { setError(result); return }
       const full = normalize(result.value)
       setValue(full); setDelay(String(full.treasure.claimDelayMs))
-    }).catch(() => { if (mounted.current) setError('无法读取活动设置') })
+    }).catch(caught => { if (mounted.current) setError(displayError(caught, '无法读取活动设置')) })
     return () => { mounted.current = false }
   }, [])
 
@@ -49,11 +51,11 @@ export function ActivityOptions({ fishing, treasure }: { fishing: boolean; treas
     try {
       const result = await apiClient.feature('setDouyuActivityOptions', next)
       if (!mounted.current) return
-      if (!result.ok) { setError(result.message); return }
+      if (!result.ok) { setError(result); return }
       const full = normalize(result.value)
       setValue(full); setDelay(String(full.treasure.claimDelayMs)); setNotice('活动设置已保存')
-    } catch {
-      if (mounted.current) setError('活动设置未保存，请重试')
+    } catch (caught) {
+      if (mounted.current) setError(displayError(caught, '活动设置未保存, 请重试'))
     } finally {
       if (mounted.current) setSaving(false)
     }
@@ -93,10 +95,10 @@ export function ActivityOptions({ fishing, treasure }: { fishing: boolean; treas
             <button type="button" className="btn-quiet small" disabled={saving || parsedDelay === null || !delayChanged}
               onClick={saveDelay}>保存延迟</button>
           </div>
-          {parsedDelay === null && <p className="form-error">延迟须为 0 至 60000 的整数</p>}
+          {parsedDelay === null && <p className="form-error"><ErrorText error="延迟须为 0 至 60000 的整数" message="延迟须为 0 至 60000 的整数" /></p>}
         </div>
       )}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
       {!error && notice && <p className="lane" role="status">{notice}</p>}
     </section>
   )

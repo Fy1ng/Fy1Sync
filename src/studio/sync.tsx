@@ -19,6 +19,7 @@ import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { Session } from '../app/session'
 import { MAX_OFFSET_SECONDS, SOURCE_ROLES, type SourceRole } from '../core/types'
 import { HoldButton, Icon, Popover, Segmented, Switch, usePopover } from './kit'
+import { ErrorText } from '../ui/ErrorDetails'
 
 const clampOffset = (value: number): number =>
   Math.round(Math.min(MAX_OFFSET_SECONDS, Math.max(-MAX_OFFSET_SECONDS, value)) * 100) / 100
@@ -173,7 +174,7 @@ function OffsetEditor({ value, onDone }: { value: number; onDone: () => void }):
           placeholder="0" onChange={(event) => setText(event.target.value)} />
         <span>秒</span>
       </label>
-      {!valid && <p className="form-error">请输入 0 到 {MAX_OFFSET_SECONDS} 之间的数值</p>}
+      {!valid && <p className="form-error"><ErrorText error={{ code: 'invalid-offset', message: `请输入 0 到 ${MAX_OFFSET_SECONDS} 之间的数值` }} /></p>}
       <div className="row-end">
         <button type="button" className="btn-quiet" onClick={() => { void session.resetOffset(); onDone() }}>清零</button>
         <button type="submit" className="btn-solid" disabled={!valid}>应用</button>
@@ -191,11 +192,12 @@ const informedSessions = new WeakSet<Session>()
 
 /** 自动对齐 from its button or the A key. */
 export function startAutoAlign(session: Session): void {
+  if (!session.snapshot.autoSync.ready) return
   if (AUTO_ALIGN_ADAPTING && !informedSessions.has(session)) {
     informedSessions.add(session)
     session.notice('warn', AUTO_ALIGN_LIMITS)
   }
-  if (session.settings.recognitionMode === 'basic' && !session.settings.sidebarVisible) session.updateSettings({ sidebarVisible: true })
+  if (session.settings.recognitionMode === 'basic' && session.settings.basicRecognitionPanelVisible && !session.settings.sidebarVisible) session.updateSettings({ sidebarVisible: true })
   void session.syncNow()
 }
 
@@ -206,7 +208,7 @@ export function AutoAlign(): React.ReactNode {
   const { autoSync, settings } = snapshot
   const running = autoSync.phase !== 'idle' && autoSync.phase !== 'done' && autoSync.phase !== 'failed'
   const busy = running || session.offsetBusy
-  const bothReady = snapshot.media.official.status === 'ready' && snapshot.media.commentary.status === 'ready'
+  const bothReady = autoSync.ready
   const result = autoSync.lastResult
 
   return (
@@ -219,9 +221,9 @@ export function AutoAlign(): React.ReactNode {
         </button>
       ) : (
         <button type="button" className="align-main" disabled={busy || !bothReady} onClick={() => startAutoAlign(session)}
-          title={bothReady ? '识别两路画面中的比赛倒计时并自动对齐 (A)' : '两路均载入后才能对齐'}>
-          自动对齐
-          {AUTO_ALIGN_ADAPTING && <span className="align-beta" aria-hidden="true">适配中</span>}
+          title={bothReady ? '识别两路画面中的比赛倒计时并自动对齐 (A)' : '同步准备中, 等待两路画面和缓冲就绪'}>
+          {bothReady ? '自动对齐' : '准备中'}
+          {bothReady && AUTO_ALIGN_ADAPTING && <span className="align-beta" aria-hidden="true">适配中</span>}
         </button>
       )}
       <button type="button" className="align-more" {...menu.trigger} aria-label="对齐选项"
@@ -271,7 +273,7 @@ export function AutoAlign(): React.ReactNode {
 
         {result && (
           <p className="menu-meta">
-            {result.failure ? result.failure.message
+            {result.failure ? <ErrorText error={result.failure} />
               : result.estimate ? `上次测得偏差 ${result.estimate.totalOffsetSeconds.toFixed(2)} 秒${result.divergence !== null ? `，复核误差 ${result.divergence.toFixed(2)} 秒` : ''}`
                 : '上次未能测得'}
           </p>

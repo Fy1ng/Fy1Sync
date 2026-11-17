@@ -32,7 +32,7 @@ function fixture(options: IpcHandlerOptions = {}) {
   const resolveRoom = vi.fn(async (room: string) => ({ ok: true, identity: { room, inputRoom: room } }))
   const resolveHuyaRoom = vi.fn(async (room: string) => ({ room: room === 'kpl' ? '660002' : room, presenterUid: 42n, topSid: 43n, subSid: 44n }))
   const reconnect = vi.fn(() => true)
-  const service = { resolveDouyuRoom: resolveRoom, resolveHuyaRoom, invoke: vi.fn(async () => ({ ok: true, value: {} })), relay: { subscribe, reconnectRoom: reconnect }, dispose: vi.fn(),
+  const service = { resolveDouyuRoom: resolveRoom, resolveHuyaRoom, invoke: vi.fn(async () => ({ ok: true, value: {} })), relay: { subscribe, reconnectRoom: reconnect, stateOf: () => 'connected' }, dispose: vi.fn(),
     subscribeBuffer: (listener: (state: BufferState) => void) => { bufferListener = listener; return bufferRelease },
     subscribeDouyuTasks: (listener: (state: DouyuTasksSnapshot) => void) => { taskListener = listener; return taskRelease },
     subscribeFeatures: (listener: (event: FeatureEvent) => void) => { featureListener = listener; return featureRelease },
@@ -49,6 +49,37 @@ function fixture(options: IpcHandlerOptions = {}) {
 }
 
 describe('app origin and document boundary', async () => {
+  it('requires the latest connected main-window Douyin subscription and revokes send permission on room changes', async () => {
+    const f = fixture(), input = { room:'douyin:100', expectedUid:'12345', text:'测试' }
+    expect(await f.call('invoke','sendDouyinMessage',input)).toMatchObject({ code:'room-not-subscribed' })
+    expect(f.service.invoke).not.toHaveBeenCalled()
+    await f.call('subscribe','douyin:100','1')
+    expect(await f.call('invoke','sendDouyinMessage',input)).toMatchObject({ ok:true })
+    const context = vi.mocked(f.service.invoke).mock.calls[0]![2]!
+    expect(context.isCurrent?.()).toBe(true)
+    await f.call('subscribe','douyin:200','2')
+    // An older surviving subscription must not permit a stale composer to write.
+    expect(context.isCurrent?.()).toBe(false)
+    expect(await f.call('invoke','sendDouyinMessage',input)).toMatchObject({ code:'room-not-subscribed' })
+    const next = { ...input, room:'douyin:200' }
+    expect(await f.call('invoke','sendDouyinMessage',next)).toMatchObject({ ok:true })
+    const current = vi.mocked(f.service.invoke).mock.calls.at(-1)![2]!
+    f.contents.emit('did-start-navigation',{},'https://example.com/',false,true)
+    expect(current.isCurrent?.()).toBe(false)
+    f.installed.dispose()
+  })
+  it('rejects a disconnected or additional window before invoking the Douyin sender', async () => {
+    const extra = windowFixture(2)
+    const f = fixture({ extraContents:[extra],allowMethod:() => true,allowRoom:() => true })
+    const input = { room:'douyin:100',expectedUid:'12345',text:'测试' }
+    await f.callFrom(extra,'subscribe','douyin:100','1')
+    expect(await f.callFrom(extra,'invoke','sendDouyinMessage',input)).toMatchObject({ code:'room-not-subscribed' })
+    await f.call('subscribe','douyin:100','2')
+    vi.spyOn(f.service.relay,'stateOf').mockReturnValue('reconnecting')
+    expect(await f.call('invoke','sendDouyinMessage',input)).toMatchObject({ code:'room-not-subscribed' })
+    expect(f.service.invoke).not.toHaveBeenCalled()
+    f.installed.dispose()
+  })
   it('releases playback observations on main-frame navigation and registered-window destruction', () => {
     const released = vi.fn()
     const f = fixture({ onWindowReleased: released })
@@ -205,7 +236,8 @@ describe('Huya read-only subscription boundary', () => {
     f.resolveHuyaRoom.mockRejectedValueOnce(new Error('Cookie=secret token=secret raw-frame'))
     const failed = await f.call('subscribe', 'huya:kpl', '1')
     expect(failed).toMatchObject({ code: 'upstream-error' })
-    expect(JSON.stringify(failed)).not.toMatch(/Cookie|secret|raw-frame/)
+    expect(JSON.stringify(failed)).not.toMatch(/secret|raw-frame/)
+    expect(failed).toHaveProperty('detail.message', expect.stringMatching(/^Cookie=\s*\[redacted\]$/))
     f.resolveHuyaRoom.mockResolvedValueOnce({ room: 'douyu:100', presenterUid: 1n, topSid: 1n, subSid: 1n })
     expect(await f.call('subscribe', 'huya:kpl', '1')).toMatchObject({ code: 'upstream-error' })
     expect(f.subscribe).not.toHaveBeenCalled()

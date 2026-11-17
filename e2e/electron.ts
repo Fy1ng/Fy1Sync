@@ -67,7 +67,8 @@ export async function launchApplication(label: string, options: { softwareVideo?
   let page: Page
   const launch = async () => {
     application = await _electron.launch({
-      args: [path.join(process.env.STREAM_SYNC_E2E_APP_DIR || path.join(projectRoot, 'dist'), 'electron', 'main.cjs'), '--autoplay-policy=no-user-gesture-required', '--mute-audio',
+      ...(process.env.STREAM_SYNC_E2E_EXECUTABLE ? { executablePath: process.env.STREAM_SYNC_E2E_EXECUTABLE } : {}),
+      args: [...(process.env.STREAM_SYNC_E2E_EXECUTABLE ? [] : [path.join(process.env.STREAM_SYNC_E2E_APP_DIR || path.join(projectRoot, 'dist'), 'electron', 'main.cjs')]), '--autoplay-policy=no-user-gesture-required', '--mute-audio',
         ...((options.softwareVideo ?? process.env.STREAM_SYNC_E2E_SOFTWARE_VIDEO === '1') ? ['--disable-accelerated-video-decode'] : [])],
       cwd: projectRoot,
       env,

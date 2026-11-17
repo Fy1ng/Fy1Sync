@@ -6,6 +6,7 @@
  */
 
 import { useState } from 'react'
+import { ErrorDetailsButton, ErrorText } from '../../ui/ErrorDetails'
 import { apiClient } from '../../app/apiClient'
 import { colorForIndex } from '../../../server/danmaku/douyuProtocol'
 import {
@@ -136,6 +137,7 @@ function TaskRow({ task, data, activeId }: { task: DouyuTaskView; data: DouyuDat
       <div className="task-main">
         <span className="task-kind">{KIND[task.kind]}</span>
         <span className="task-status" data-status={task.status}>{STATUS[task.status]}</span>
+        {(task.status === 'failed' || task.status === 'waiting-user') && !task.reason && !task.lastResult && <ErrorDetailsButton error={task.errorDetail ?? { status: task.status }} />}
         <span className="muted">
           {account?.label ?? '账号不可用'} · {message ? messageSummary(message)
             : activity ? '按活动时间' : task.repeatMinutes === 1440 ? '每天' : '一次'}
@@ -154,8 +156,8 @@ function TaskRow({ task, data, activeId }: { task: DouyuTaskView; data: DouyuDat
           {task.deadlineAt !== undefined && `截止 ${when(task.deadlineAt)}`}
         </p>
       )}
-      {task.reason && <p className="task-result">{task.reason}</p>}
-      {task.lastResult && task.lastResult !== task.reason && <p className="task-result">{task.lastResult}</p>}
+      {task.reason && <p className="task-result">{task.status === 'failed' || task.status === 'waiting-user' ? <ErrorText error={task.errorDetail ?? { status: task.status, message: task.reason }} message={task.reason} /> : task.reason}</p>}
+      {task.lastResult && task.lastResult !== task.reason && <p className="task-result">{task.status === 'failed' || task.status === 'waiting-user' ? <ErrorText error={task.errorDetail ?? { status: task.status, message: task.lastResult }} message={task.lastResult} /> : task.lastResult}</p>}
       {activity && (waiting || (task.officialRoom !== undefined && task.officialRoom !== task.room)) && (
         <p className="task-official">
           {waiting ? `需在官方页面处理：房间 ${officialRoom}` : `实际目标房间 ${officialRoom}`}
@@ -257,7 +259,7 @@ function NewTask({ data, defaultRoom, onDone }: { data: DouyuData; defaultRoom: 
       )}
 
       {isMessage && <LoopEditor loop={loop} edit={edit} />}
-      {isMessage && tried && messageError && <p className="form-error" role="alert">{messageError}</p>}
+      {isMessage && tried && messageError && <p className="form-error" role="alert"><ErrorText error={built} message={messageError} /></p>}
 
       <div className="row-end">
         <button type="button" className="btn-quiet" onClick={onDone}>取消</button>

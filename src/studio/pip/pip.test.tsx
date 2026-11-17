@@ -5,7 +5,7 @@
  */
 
 import { StrictMode } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { StreamSyncerBridge } from '../../../electron/contracts'
@@ -43,6 +43,27 @@ let frameCallbacks: Array<() => void>
 function invoked(method: string): Call[] {
   return calls.filter((call) => call.method === method)
 }
+
+it('shows the complete send failure without storing the submitted draft in its details', async () => {
+  install(pipState({ phase: 'ready' }))
+  const mock = vi.mocked(window.streamSyncer!.invoke)
+  const original = mock.getMockImplementation()!
+  mock.mockImplementation((async (method: string, args: unknown) => method === 'sendComposedDouyuMessage'
+    ? { ok: false, code: 'PIP_SEND_503', message: '画中画发送失败', detail: { status: 503, requestId: 'pip-send', token: 'private-token' } }
+    : original(method as never, args as never)) as StreamSyncerBridge['invoke'])
+  render(<PipPage />)
+  await flush()
+  const input = screen.getByLabelText('发送弹幕')
+  const form = input.closest('form')!
+  fireEvent.change(input, { target: { value: '测试发送草稿' } })
+  fireEvent.click(within(form).getByRole('button', { name: '发送' }))
+  fireEvent.click(await within(form).findByRole('button', { name: '查看原始错误' }))
+  const details = within(form).getByRole('region', { name: '原始错误信息' })
+  expect(JSON.parse(details.querySelector('code')!.textContent!)).toMatchObject({ code: 'PIP_SEND_503', detail: { status: 503, requestId: 'pip-send', token: '[redacted]' } })
+  expect(details.textContent).not.toContain('测试发送草稿')
+  expect(input).toHaveValue('测试发送草稿')
+  expect(mock.mock.calls.filter(([method]) => method === 'sendComposedDouyuMessage')).toHaveLength(1)
+})
 
 function install(initial: PipState, handlers: Record<string, (args: unknown) => unknown> = {}): void {
   states = [initial]

@@ -1,3 +1,5 @@
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { apiClient } from '../../app/apiClient'
 import type { EmbeddedLoginState, EmbeddedLoginViewport } from '../../../electron/embeddedLoginContracts'
@@ -52,11 +54,11 @@ function LoginCard({ state }: { state: EmbeddedLoginState }): React.ReactNode {
   const mounted = useRef(false)
   const pending = useRef(false)
   const [action, setAction] = useState<'close' | 'retry' | 'back' | null>(null)
-  const [error, setError] = useState('')
+  const [error, setError, errorDetail] = useErrorState()
   const website = state.purpose === 'website'
   const title = `${PLATFORM_NAME[state.platform]}${website ? '网页' : '登录'}`
   const captcha = state.presentation === 'captcha'
-  const official = state.presentation === 'official' || (state.phase === 'challenge' && !captcha)
+  const official = state.presentation === 'official' || (state.phase === 'challenge' && state.presentation === undefined && !captcha)
   const nativeVisible = ['ready', 'verifying', 'challenge'].includes(state.phase) && action !== 'close'
 
   useLayoutEffect(() => {
@@ -84,8 +86,8 @@ function LoginCard({ state }: { state: EmbeddedLoginState }): React.ReactNode {
       if (signature === last) return
       last = signature
       void apiClient.setEmbeddedLoginViewport(viewport).then((result) => {
-        if (live && mounted.current && !result.ok) setError(result.message)
-      }).catch(() => { if (live && mounted.current) setError('登录页面暂时无法显示, 请重试.') })
+        if (live && mounted.current && !result.ok) setError(result)
+      }).catch((error) => { if (live && mounted.current) setError(displayError(error, '登录页面暂时无法显示, 请重试.')) })
     }
     const measure = (): void => {
       frame = null
@@ -131,9 +133,9 @@ function LoginCard({ state }: { state: EmbeddedLoginState }): React.ReactNode {
     try {
       const result = next === 'close' ? await apiClient.cancelEmbeddedLogin(state.id)
         : next === 'back' ? await apiClient.backEmbeddedLogin(state.id) : await apiClient.retryEmbeddedLogin(state.id)
-      if (mounted.current && !result.ok) setError(result.message)
-    } catch {
-      if (mounted.current) setError(next === 'close' ? '暂时无法关闭, 请重试.' : next === 'back' ? '暂时无法返回登录, 请重试.' : '重试失败, 请稍后再试.')
+      if (mounted.current && !result.ok) setError(result)
+    } catch (error) {
+      if (mounted.current) setError(displayError(error, next === 'close' ? '暂时无法关闭, 请重试.' : next === 'back' ? '暂时无法返回登录, 请重试.' : '重试失败, 请稍后再试.'))
     } finally {
       pending.current = false
       if (mounted.current) setAction(null)
@@ -174,12 +176,12 @@ function LoginCard({ state }: { state: EmbeddedLoginState }): React.ReactNode {
           </div>)}
         {state.phase === 'failed' && <div className="embedded-login-wait" role="alert">
           <Icon name="refresh" /><h3>{website ? '网页暂时无法打开' : '登录页面暂时无法加载'}</h3>
-          <p>{state.message ?? '请检查网络连接后重试.'}</p>
+          <p><ErrorText error={state.errorDetail ?? { message: state.message }} message={state.message ?? '请检查网络连接后重试.'} /></p>
           <button type="button" className="btn-solid small" disabled={action !== null} onClick={() => void act('retry')}>重试</button>
         </div>}
       </div>
       <footer className="embedded-login-footer">
-        <p role={error ? 'alert' : 'status'}>{error || (action === 'close' ? '正在关闭' : captcha ? '完成后返回登录' : state.phase === 'failed' ? '可重试或关闭此页面' : state.message || (official || state.presentation === 'verification' ? '完成安全验证后将继续登录' : state.phase === 'verifying' ? '正在确认登录状态, 请稍候' : state.phase === 'loading' ? '正在准备登录页面' : website ? '完成后可关闭此页面' : '请使用扫码, 短信或密码登录, 完成后将自动关闭')) }</p>
+        <p role={error ? 'alert' : 'status'}>{error ? <ErrorText error={errorDetail ?? error} message={error} /> : (action === 'close' ? '正在关闭' : captcha ? '完成后返回登录' : state.phase === 'failed' ? '可重试或关闭此页面' : state.message || (official || state.presentation === 'verification' ? '完成安全验证后将继续登录' : state.phase === 'verifying' ? '正在确认登录状态, 请稍候' : state.phase === 'loading' ? '正在准备登录页面' : website ? '完成后可关闭此页面' : '请使用扫码, 短信或密码登录, 完成后将自动关闭')) }</p>
         {(official || captcha) && !website && <button type="button" className="embedded-login-back" disabled={action !== null}
           onClick={() => void act('back')}>{captcha ? '返回登录' : '返回统一登录'}</button>}
         <span>Esc 关闭</span>

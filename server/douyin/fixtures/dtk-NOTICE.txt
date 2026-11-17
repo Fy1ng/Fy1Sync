@@ -1,0 +1,16 @@
+抖音登录签名环境字段和独立测试参考来源:
+Evil0ctal/Douyin_TikTok_Download_API
+Copyright (c) Evil0ctal and contributors. Apache License 2.0.
+完整许可见 dtk-LICENSE.txt.
+
+固定提交: 3c045e11aecd58ab076562f1246931b9dd5d909b
+https://github.com/evil0ctal/douyin_tiktok_download_api/blob/3c045e11aecd58ab076562f1246931b9dd5d909b/src/dtk/signing/native/abogus.py
+https://github.com/evil0ctal/douyin_tiktok_download_api/blob/3c045e11aecd58ab076562f1246931b9dd5d909b/tests/fixtures/signing/abogus_browser.json
+
+本项目使用:
+- 依据独立浏览器样本核对 page_id=6241, detect_flags=14 的 nr.flags 字段, 在登录主机将值从 1 修正为 33.
+- 以独立纯 Python 参考离线生成一个合成查询/正文测试向量. 测试和生产运行均不需要 Python.
+- 在测试中使用原项目公开的 3 个浏览器签名, 解包核对结构, 摘要及校验和. 样本无账号 Cookie, 密码或手机号字段.
+- 没有移植浏览器驱动, 网络客户端或任何账号写操作.
+
+原签名实现的 cv-cat/catbus MIT 版权及修改记录仍见 catbus-LICENSE.txt 和 catbus-NOTICE.txt.

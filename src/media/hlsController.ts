@@ -10,6 +10,8 @@
 
 import type { MediaDescriptor } from '../core/types'
 import { describeLevels, type QualityOption, type RawLevel } from './quality'
+import { errorDetails, type ErrorDetails } from '../core/errorDetails'
+import type { HlsConfig, Loader, LoaderCallbacks, LoaderConfiguration, PlaylistLoaderContext } from 'hls.js'
 
 export type AttachMode = 'native' | 'hlsjs'
 
@@ -18,6 +20,7 @@ export interface MediaError {
   message: string
   /** What the user can do about it. */
   hint?: string
+  detail?: ErrorDetails
 }
 
 export interface AttachHandlers {
@@ -149,6 +152,7 @@ export async function attachMedia(
     handlers.onError?.({
       fatal: true,
       message: `无法加载 HLS 播放器：${error instanceof Error ? error.message : String(error)}`,
+      detail: errorDetails(error),
     })
     return { ...emptyAttachment(), destroy: owner.destroy }
   }
@@ -165,7 +169,31 @@ export async function attachMedia(
     return { ...emptyAttachment(), destroy: owner.destroy }
   }
 
+  const localBuffer = descriptor.url.startsWith('app://app/buffer/') || descriptor.url.startsWith('/buffer/')
+  const localPlaylistLoader = localBuffer ? class implements Loader<PlaylistLoaderContext> {
+    private readonly inner: Loader<PlaylistLoaderContext>
+    constructor(config: HlsConfig) {
+      this.inner = new (Hls.DefaultConfig.pLoader ?? Hls.DefaultConfig.loader)(config) as Loader<PlaylistLoaderContext>
+    }
+    get stats() { return this.inner.stats }
+    get context() { return this.inner.context }
+    destroy(): void { this.inner.destroy() }
+    abort(): void { this.inner.abort() }
+    getCacheAge(): number | null { return this.inner.getCacheAge?.() ?? null }
+    getResponseHeader(name: string): string | null { return this.inner.getResponseHeader?.(name) ?? null }
+    load(context: PlaylistLoaderContext, config: LoaderConfiguration, callbacks: LoaderCallbacks<PlaylistLoaderContext>): void {
+      this.inner.load(context, config, { ...callbacks, onSuccess: (response, stats, loaded, networkDetails) => {
+        // A tiny local master keeps hls.js out of its direct-media startup path,
+        // which schedules the first refresh twice in 1.6. The media URL stays unchanged.
+        if (loaded.type === 'manifest' && typeof response.data === 'string'
+          && /^#EXTINF:/m.test(response.data) && !/^#EXT-X-ENDLIST/m.test(response.data)) {
+          callbacks.onSuccess({ ...response, data: `#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n${loaded.url}\n` }, stats, loaded, networkDetails)
+        } else callbacks.onSuccess(response, stats, loaded, networkDetails)
+      } })
+    }
+  } : undefined
   const hls = new Hls({
+    ...(localPlaylistLoader ? { pLoader: localPlaylistLoader } : {}),
     // Low latency is not the goal: a stable, seekable buffer is, because sync
     // rewinds up to 60 s and needs the data to still be there.
     lowLatencyMode: false,
@@ -303,7 +331,7 @@ function nativeAttachment(video: HTMLVideoElement, url: string, owner: Attachmen
     // become an error for the new generation sharing this same element.
     if (!owner.current() || !video.error || video.src !== expected || (video.currentSrc && video.currentSrc !== expected)) return
     const error = translateNativeError(video.error.code)
-    if (error) handlers.onError?.(error)
+    if (error) handlers.onError?.({ ...error, detail: errorDetails({ code: video.error.code, message: video.error.message, type: 'MediaError' }) })
   }
   video.addEventListener('error', onError)
   owner.cleanups.push(() => {
@@ -335,7 +363,8 @@ interface HlsErrorData {
   fatal: boolean
   type: string
   details: string
-  response?: { code?: number }
+  response?: { code?: number; text?: string }
+  error?: unknown
 }
 
 export function translateHlsError(
@@ -343,33 +372,35 @@ export function translateHlsError(
   data: HlsErrorData,
 ): MediaError {
   const status = data.response?.code
+  const detail = errorDetails({ type: data.type, details: data.details, fatal: data.fatal, status,
+    error: data.error, responseMessage: data.response?.text })
   if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
     if (status === 403 || status === 401) {
       return {
-        fatal: data.fatal,
+        fatal: data.fatal, detail,
         message: `拉流被拒绝 (HTTP ${status})`,
         hint: '播放地址通常带有有效期，请重新解析或改用本地代理。',
       }
     }
     if (data.details === 'manifestLoadError' || data.details === 'manifestParsingError') {
       return {
-        fatal: data.fatal,
+        fatal: data.fatal, detail,
         message: '无法加载播放列表',
         hint: '检查地址是否有效，跨域来源需要通过本地代理。',
       }
     }
     return {
-      fatal: data.fatal,
+      fatal: data.fatal, detail,
       message: `网络错误：${data.details}${status ? ` (HTTP ${status})` : ''}`,
       hint: data.fatal ? '正在重试加载。' : undefined,
     }
   }
   if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
     return {
-      fatal: data.fatal,
+      fatal: data.fatal, detail,
       message: `解码错误：${data.details}`,
       hint: data.fatal ? '正在尝试恢复缓冲。' : undefined,
     }
   }
-  return { fatal: data.fatal, message: `播放器错误：${data.details}` }
+  return { fatal: data.fatal, message: `播放器错误：${data.details}`, detail }
 }

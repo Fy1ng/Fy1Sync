@@ -13,6 +13,8 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 import { apiClient, type ApiResult } from '../../app/apiClient'
 import type { DouyuGiftPlan, DouyuGiftResult } from '../../../server/douyu/inventoryTypes'
 
@@ -53,7 +55,7 @@ export function useGiftPlan(accountId: string | null) {
   const [result, setResult] = useState<DouyuGiftResult | null>(null)
   const [busy, setBusy] = useState<Phase>(null)
   const [stopping, setStopping] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError, errorDetail] = useErrorState('')
   const [now, setNow] = useState(Date.now)
 
   const mounted = useRef(false)
@@ -120,13 +122,13 @@ export function useGiftPlan(accountId: string | null) {
       const response = await run()
       const id = response.ok && typeof response.value?.id === 'string' ? response.value.id : null
       if (!mounted.current || mine !== generation.current) { if (id) retire(id); return }
-      if (!response.ok) { setError(response.message); return }
+      if (!response.ok) { setError(response); return }
       if (!accepts(response.value)) { if (id) retire(id); throw new Error('bad plan') }
       live.current = { id: response.value.id, used: false }
       setPlan(response.value)
       setNow(Date.now())
-    } catch {
-      if (mounted.current && mine === generation.current) setError('预览未能生成，请重新生成。')
+    } catch (caught) {
+      if (mounted.current && mine === generation.current) setError(displayError(caught, '预览未能生成，请重新生成。'))
     } finally {
       if (mine === generation.current) phase.current = null
       if (mounted.current && mine === generation.current) setBusy(null)
@@ -147,11 +149,11 @@ export function useGiftPlan(accountId: string | null) {
       // The reviewed plan is the whole command; the inputs are never resent.
       const response = await apiClient.feature('executeDouyuGiftPlan', { planId: plan.id })
       if (!mounted.current || mine !== generation.current) return
-      if (!response.ok) { setError(response.message); return }
+      if (!response.ok) { setError(response); return }
       if (!resultOk(response.value, plan.id)) throw new Error('bad result')
       setResult(response.value)
-    } catch {
-      if (mounted.current && mine === generation.current) setError('无法确认赠送结果。请在官方直播间和背包中核对，此处不会自动重试。')
+    } catch (caught) {
+      if (mounted.current && mine === generation.current) setError(displayError(caught, '无法确认赠送结果。请在官方直播间和背包中核对，此处不会自动重试。'))
     } finally {
       if (running.current === plan.id) running.current = null
       if (mine === generation.current) phase.current = null
@@ -165,13 +167,13 @@ export function useGiftPlan(accountId: string | null) {
     setStopping(true)
     try {
       const response = await apiClient.feature('cancelDouyuGiftPlan', { planId: id })
-      if (mounted.current && running.current === id && !response.ok) { setError(response.message); setStopping(false) }
-    } catch {
-      if (mounted.current && running.current === id) { setError('停止请求未确认，请在结果返回后核对。'); setStopping(false) }
+      if (mounted.current && running.current === id && !response.ok) { setError(response); setStopping(false) }
+    } catch (caught) {
+      if (mounted.current && running.current === id) { setError(displayError(caught, '停止请求未确认，请在结果返回后核对。')); setStopping(false) }
     }
   }, [stopping])
 
-  return { plan, used, result, busy, stopping, error, expired, now, preview, discard, reset, give, stop }
+  return { plan, used, result, busy, stopping, error, errorDetail, expired, now, preview, discard, reset, give, stop }
 }
 
 export type GiftPlanHandle = ReturnType<typeof useGiftPlan>

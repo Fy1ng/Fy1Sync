@@ -4,6 +4,7 @@ import { NetworkPolicy, type DomesticRouting, type NetworkContext } from '../ser
 import * as platforms from '../server/platforms'
 import { Acquisition } from './acquisition'
 import type { BufferInput, BufferState } from './bufferManager'
+import { DEFAULT_MEDIA_NETWORK } from '../server/mediaNetworkOptions'
 
 vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '8.8.8.8', family: 4 }]) }))
 
@@ -42,6 +43,19 @@ function fixture(overrides: Partial<Dependencies> = {}, ready = true) {
 }
 
 describe('acquisition network and readiness integration', () => {
+  it('detects an extensionless authenticated HLS source and sends only its opaque gateway URL to the buffer', async () => {
+    const network: NetworkContext = { route: async () => ({ kind: 'direct' }), media: DEFAULT_MEDIA_NETWORK }
+    const fetchImpl = vi.fn(async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('Authorization')).toBe(`Basic ${Buffer.from('user:password').toString('base64')}`)
+      return new Response('#EXTM3U\n#EXTINF:2,\nvideo.ts\n')
+    }) as typeof fetch
+    const h = fixture({ network: () => network, fetchImpl })
+    const result = await h.acquisition.resolve('http://user:password@media.invalid/live?signature=synthetic', 'direct', 'official')
+    expect(result).toMatchObject({ ok: true, stream: { kind: 'hls' } })
+    expect(h.inputs[0]).toMatchObject({ gatewayHls: true, url: 'http://127.0.0.1:19000/media/opaque' })
+    expect(JSON.stringify(result)).not.toContain('password')
+    expect(h.mediaInput.mock.calls[0]![0]).toBe('http://media.invalid/live?signature=synthetic')
+  })
   it('keeps one context through real platform resolution, yt-dlp, media preparation and reconnect', async () => {
     const context: NetworkContext = { route: vi.fn<NetworkContext['route']>(async () => ({ kind: 'direct' })) }
     const factory = vi.fn(() => context)
@@ -119,18 +133,18 @@ describe('acquisition network and readiness integration', () => {
     expect(JSON.stringify([first, low])).not.toMatch(/PRIVATE|signature|Cookie/)
   })
 
-  it('requires ready phase, reported video and a complete segment before publishing a source', async () => {
+  it('requires reported video and a complete nonempty segment before publishing a source', async () => {
     const h = fixture({}, false)
     let settled = false
     const operation = h.acquisition.resolve('https://8.8.8.8/live.flv', 'direct', 'official').then(result => { settled = true; return result })
     await vi.waitFor(() => expect(h.inputs).toHaveLength(1))
     const premature: BufferState[] = [
-      { role: 'official', state: 'buffering', seconds: 4, hasVideo: true, completeSegments: 1 },
+      { role: 'official', state: 'buffering', seconds: 4, hasVideo: false, completeSegments: 1 },
       { role: 'official', state: 'ready', seconds: 4, completeSegments: 1 },
       { role: 'official', state: 'ready', seconds: 4, hasVideo: false, completeSegments: 1 },
       { role: 'official', state: 'ready', seconds: 4, hasVideo: true, completeSegments: 0 },
       { role: 'official', state: 'ready', seconds: 4, hasVideo: true },
-      { role: 'official', state: 'ready', seconds: 3.9, hasVideo: true, completeSegments: 1 },
+      { role: 'official', state: 'ready', seconds: 0, hasVideo: true, completeSegments: 1 },
     ]
     for (const state of premature) {
       h.emit(state)
@@ -138,8 +152,44 @@ describe('acquisition network and readiness integration', () => {
       expect(settled).toBe(false)
       expect(h.acquisition.describe('official')).toBeNull()
     }
-    h.emit({ role: 'official', state: 'ready', seconds: 4, hasVideo: true, completeSegments: 1 })
+    h.emit({ role: 'official', state: 'buffering', seconds: 1, hasVideo: true, completeSegments: 1 })
     expect((await operation).ok).toBe(true)
+  })
+
+  it('cancels unlimited initial network reads when the user stops a playback role', async () => {
+    let signal: AbortSignal | undefined
+    const h = fixture({ network: () => ({ route: async () => ({ kind: 'direct' }), media: DEFAULT_MEDIA_NETWORK }),
+      fetchImpl: ((_input, init) => new Promise((_resolve, reject) => {
+        signal = init?.signal as AbortSignal
+        signal.addEventListener('abort', () => reject(signal?.reason), { once: true })
+      })) as typeof fetch,
+    }, false)
+    const pending = h.acquisition.resolve('https://www.twitch.tv/fixture', 'twitch', 'official')
+    await vi.waitFor(() => expect(signal).toBeDefined())
+    await h.acquisition.stop('official')
+    expect(signal?.aborted).toBe(true)
+    expect((await pending).ok).toBe(false)
+  })
+
+  it('does not start a canceled extraction after tool discovery completes late', async () => {
+    let release: (() => void) | undefined
+    const tools = vi.fn(() => new Promise<void>(resolve => { release = resolve }))
+    const h = fixture({ ensureTools: tools, network: () => ({ route: async () => ({ kind: 'direct' }), media: DEFAULT_MEDIA_NETWORK }) })
+    const pending = h.acquisition.resolve('https://www.youtube.com/watch?v=abcdefghijk', 'youtube', 'official')
+    await vi.waitFor(() => expect(tools).toHaveBeenCalledOnce())
+    await h.acquisition.stop('official')
+    release!()
+    expect((await pending).ok).toBe(false)
+    expect(h.runYtDlp).not.toHaveBeenCalled()
+  })
+
+  it('releases unlimited readiness waits on stop without publishing an obsolete source', async () => {
+    const h = fixture({ network: () => ({ route: async () => ({ kind: 'direct' }), media: DEFAULT_MEDIA_NETWORK }) }, false)
+    const pending = h.acquisition.resolve('https://8.8.8.8/live.flv', 'direct', 'official')
+    await vi.waitFor(() => expect(h.inputs).toHaveLength(1))
+    await h.acquisition.stop('official')
+    expect((await pending).ok).toBe(false)
+    expect(h.acquisition.describe('official')).toBeNull()
   })
 
   it('reports playback-not-ready when complete video evidence never arrives', async () => {
@@ -151,15 +201,16 @@ describe('acquisition network and readiness integration', () => {
 
   it.each([
     { stage: 'resolve', reason: 'upstream-error', result: () => new Response('PRIVATE Cookie=https://fixture.invalid/?signature=PRIVATE') },
-    { stage: 'proxy', reason: 'proxy-unreachable', result: () => { throw Object.assign(new Error('PRIVATE Cookie=https://fixture.invalid/?signature=PRIVATE'), { code: 'ECONNREFUSED' }) } },
-    { stage: 'connect', reason: 'tls-certificate', result: () => { throw Object.assign(new Error('PRIVATE Cookie=https://fixture.invalid/?signature=PRIVATE'), { code: 'CERT_HAS_EXPIRED' }) } },
+    { stage: 'proxy', reason: 'proxy-unreachable', result: () => { throw Object.assign(new Error('network diagnostic Cookie=https://fixture.invalid/?signature=PRIVATE'), { code: 'ECONNREFUSED' }) } },
+    { stage: 'connect', reason: 'tls-certificate', result: () => { throw Object.assign(new Error('network diagnostic Cookie=https://fixture.invalid/?signature=PRIVATE'), { code: 'CERT_HAS_EXPIRED' }) } },
     { stage: 'http', reason: 'http-403', result: () => new Response('PRIVATE Cookie=https://fixture.invalid/?signature=PRIVATE', { status: 403 }) },
   ])('returns a sanitized structured $stage failure from platform requests', async ({ stage, reason, result }) => {
     const network: NetworkContext = { route: async () => ({ kind: 'http', proxyUrl: 'http://127.0.0.1:7890' }) }
     const h = fixture({ network: () => network, fetchImpl: (async () => result()) as typeof fetch })
     const failure = await h.acquisition.resolve('twitch.tv/fixture', 'twitch', 'official')
     expect(failure).toMatchObject({ ok: false, failure: { stage, reason } })
-    expect(JSON.stringify(failure)).not.toMatch(/PRIVATE|Cookie|signature|https?:\/\//)
+    expect(JSON.stringify(failure)).not.toContain('PRIVATE')
+    if (!failure.ok) expect(failure.failure.detail).toBeDefined()
     expect(h.buffer.start).not.toHaveBeenCalled()
   })
 })

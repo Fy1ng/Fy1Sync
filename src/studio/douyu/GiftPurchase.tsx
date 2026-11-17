@@ -6,6 +6,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 import { apiClient } from '../../app/apiClient'
 import type { DouyuGiftCatalog, DouyuGiftPlan } from '../../../server/douyu/inventoryTypes'
 import { planShapeOk, type GiftPlanHandle } from './giftPlan'
@@ -24,7 +26,7 @@ export function GiftPurchase({ accountId, room, gift, locked, ready }: {
 }): React.ReactNode {
   const [catalog, setCatalog] = useState<DouyuGiftCatalog | null>(null)
   const [reading, setReading] = useState(false)
-  const [readError, setReadError] = useState('')
+  const [readError, setReadError, readErrorDetail] = useErrorState('')
   const [giftId, setGiftId] = useState('')
   const [quantity, setQuantity] = useState('')
   const [repeat, setRepeat] = useState('')
@@ -45,16 +47,16 @@ export function GiftPurchase({ accountId, room, gift, locked, ready }: {
     try {
       const response = await apiClient.feature('getDouyuGiftCatalog', { room: asked })
       if (!mounted.current || mine !== generation.current) return
-      if (!response.ok) { setReadError(response.message); return }
+      if (!response.ok) { setReadError(response); return }
       const value = response.value
-      if (!value || value.room !== asked || !Array.isArray(value.items)) throw new Error('bad catalog')
+      if (!value || value.room !== asked || !Array.isArray(value.items)) throw new Error('bad catalog', { cause: response })
       setCatalog(value)
       if (!value.items.some((item) => item.giftId === giftId && item.available)) {
         if (giftId) gift.discard()
         setGiftId('')
       }
-    } catch {
-      if (mounted.current && mine === generation.current) setReadError('礼物目录读取失败，请重试。')
+    } catch (caught) {
+      if (mounted.current && mine === generation.current) setReadError(displayError(caught, '礼物目录读取失败, 请重试. '))
     } finally {
       if (mounted.current && mine === generation.current) setReading(false)
     }
@@ -93,7 +95,7 @@ export function GiftPurchase({ accountId, room, gift, locked, ready }: {
         </button>
         {catalog && <span className="muted num">房间 {catalog.room} · 读取于 {dateTime(catalog.checkedAt)}{catalog.onceLimit !== null ? ` · 单次上限 ${catalog.onceLimit}` : ''}</span>}
       </div>
-      {readError && <p className="form-error" role="alert">{readError}</p>}
+      {readError && <p className="form-error" role="alert"><ErrorText error={readErrorDetail ?? readError} message={readError} /></p>}
       <p className="muted">将以账号余额购买并赠送，不使用背包库存。价格以鱼翅（YUCHI，scale 100）或鱼丸（YUWAN，scale 1）计，均非人民币金额。</p>
 
       {catalog && (catalog.items.length === 0 ? <p className="muted">目录中没有礼物。</p> : (
@@ -136,11 +138,11 @@ export function GiftPurchase({ accountId, room, gift, locked, ready }: {
           </label>
         </div>
       )}
-      {catalog && quantity !== '' && perSend === null && <p className="form-error">每次数量须为{limit ? ` 1 到 ${limit} ` : '正'}整数</p>}
-      {catalog && repeat !== '' && times === null && <p className="form-error">次数须为 1 到 {MAX_REPEAT} 的整数</p>}
-      {catalog && intervalMs === null && <p className="form-error">间隔须为 0 到 60000 的整数</p>}
-      {(tooLong || tooMany) && <p className="form-error">计划总时长不得超过 24 小时，总量须在可计算范围内</p>}
-      {!roomOk(room) && <p className="form-error">请填写有效的目标房间号</p>}
+      {catalog && quantity !== '' && perSend === null && <p className="form-error"><ErrorText error={`每次数量须为${limit ? ` 1 到 ${limit} ` : '正'}整数`} /></p>}
+      {catalog && repeat !== '' && times === null && <p className="form-error"><ErrorText error={`次数须为 1 到 ${MAX_REPEAT} 的整数`} /></p>}
+      {catalog && intervalMs === null && <p className="form-error"><ErrorText error="间隔须为 0 到 60000 的整数" message="间隔须为 0 到 60000 的整数" /></p>}
+      {(tooLong || tooMany) && <p className="form-error"><ErrorText error="计划总时长不得超过 24 小时，总量须在可计算范围内" message="计划总时长不得超过 24 小时，总量须在可计算范围内" /></p>}
+      {!roomOk(room) && <p className="form-error"><ErrorText error="请填写有效的目标房间号" message="请填写有效的目标房间号" /></p>}
 
       {catalog && (
         <div className="gift-actions">

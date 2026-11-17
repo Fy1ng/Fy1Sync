@@ -80,6 +80,7 @@ describe('Twitch upstream quality selection', () => {
     deps.fetchText = async () => { throw new Error('https://fixture.invalid/?Cookie=PRIVATE') }
     const result = await resolveTwitch('fixture_channel', deps)
     expect(result).toMatchObject({ ok: false, failure: { code: 'upstream-error' } })
-    expect(JSON.stringify(result)).not.toMatch(/PRIVATE|Cookie|fixture\.invalid/)
+    expect(JSON.stringify(result)).not.toContain('PRIVATE')
+    if (!result.ok) expect(result.failure.detail?.message).toBeDefined()
   })
 })

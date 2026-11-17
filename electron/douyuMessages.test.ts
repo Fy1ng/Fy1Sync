@@ -386,7 +386,8 @@ describe('manual message validation and privacy', () => {
     const raw: DouyuMessageOutcome = { status, message: '  手动发送结果  ', nextAllowedAt: Date.now() + 30_000 }
     h.send.mockResolvedValueOnce(raw)
     const result = await h.manager.sendMessage(INPUT)
-    expect(result).toEqual({ status, message: '手动发送结果', nextAllowedAt: Date.now() + 30_000 })
+    expect(result).toMatchObject({ status, message: '手动发送结果', nextAllowedAt: Date.now() + 30_000 })
+    if (status !== 'succeeded') expect(result.detail).toMatchObject({ status })
     expect(result).not.toBe(raw)
     raw.message = 'SYNTHETIC_SECRET'
     expect(result.message).toBe('手动发送结果')
@@ -417,10 +418,15 @@ describe('manual message validation and privacy', () => {
     h.send.mockResolvedValueOnce(raw)
     expect(await h.manager.sendMessage(INPUT)).toEqual(FAILURE)
     expect(getter).not.toHaveBeenCalled()
-    h.send.mockRejectedValueOnce(new Error('SYNTHETIC_SECRET'))
-    expect(await h.manager.sendMessage(INPUT)).toEqual(FAILURE)
-    h.send.mockImplementationOnce(() => { throw new Error('SYNTHETIC_SECRET') })
-    expect(await h.manager.sendMessage(INPUT)).toEqual(FAILURE)
+    h.send.mockRejectedValueOnce(new Error('Cookie: SYNTHETIC_SECRET'))
+    const asynchronous = await h.manager.sendMessage(INPUT)
+    expect(asynchronous).toMatchObject(FAILURE)
+    expect(asynchronous.detail).toBeDefined()
+    expect(JSON.stringify(asynchronous)).not.toContain('SYNTHETIC_SECRET')
+    h.send.mockImplementationOnce(() => { throw new Error('Cookie: SYNTHETIC_SECRET') })
+    const synchronous = await h.manager.sendMessage(INPUT)
+    expect(synchronous).toMatchObject(FAILURE)
+    expect(JSON.stringify(synchronous)).not.toContain('SYNTHETIC_SECRET')
   })
 
   it('returns safe deferral metadata to the manual caller without scheduling an automatic send', async () => {
@@ -428,7 +434,7 @@ describe('manual message validation and privacy', () => {
     const result: DouyuMessageOutcome = { status: 'waiting-user', message: '尚未发送, 等待已知冷却',
       nextAllowedAt: Date.now() + 5_000, deferredUntil: Date.now() + 5_000 }
     h.send.mockResolvedValueOnce(result)
-    expect(await h.manager.sendMessage(INPUT)).toEqual(result)
+    expect(await h.manager.sendMessage(INPUT)).toMatchObject(result)
     h.manager.setRuntime(BACKGROUND)
     restore(h.manager)
     await vi.advanceTimersByTimeAsync(60_000)

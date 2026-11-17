@@ -173,7 +173,7 @@ describe('live notifications', () => {
     const notices = screen.getByRole('list', { name: '开播通知' })
     expect(within(notices).getAllByText('乙的直播间（200） 已开播')).toHaveLength(1)
     emit({ type: 'monitor-error', accountId: 'a1', message: '关注列表不完整, 本轮未生成开播提醒.' })
-    expect(screen.getByText(/监控状态：关注列表不完整/)).toBeInTheDocument()
+    expect(screen.getByText(/监控状态: 关注列表不完整/)).toBeInTheDocument()
   })
 
   it('shows a reminder left running by an earlier load of this window as on, with its rooms', async () => {

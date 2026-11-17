@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { HudStylePack } from '../../core/hudStylePack'
 import type { EditorMedia, EditorProject } from '../../../electron/editorProjectContracts'
+import { useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 
 export function useEditorProject(options: {
   pack: HudStylePack; variantId: string
@@ -13,8 +15,8 @@ export function useEditorProject(options: {
   const [media, setMedia] = useState<EditorMedia[]>([])
   const [currentMediaId, setCurrentMediaId] = useState<string | null>(null)
   const [needsRelink, setNeedsRelink] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [saveError, setSaveError] = useState<string | null>(null)
+  const [error, setError, errorDetail] = useErrorState(null)
+  const [saveError, setSaveError, saveErrorDetail] = useErrorState(null)
   const callbacks = useRef(options)
   callbacks.current = options
   const current = media.find(item => item.id === currentMediaId) ?? null
@@ -26,7 +28,7 @@ export function useEditorProject(options: {
     void bridge.invoke('editorProjectLoad', undefined).then(async result => {
       if (!active) return
       if (!result.ok) {
-        if (result.code !== 'unknown-method') setError(result.message)
+        if (result.code !== 'unknown-method') setError(result)
         return
       }
       const saved = result.value
@@ -44,9 +46,9 @@ export function useEditorProject(options: {
         if (!active) return
         const clip = restored.ok ? restored.value.find(job => job.assetId === item.assetId && job.state === 'ready') : null
         if (clip?.mediaUrl) callbacks.current.open(clip.mediaUrl, item.name)
-        else setError('下载素材不可用, 请重新下载或选择其他素材.')
+        else setError(displayError(restored.ok ? { message: '下载素材不可用, 请重新下载或选择其他素材.', assetId: item.assetId } : restored, '下载素材不可用, 请重新下载或选择其他素材.'))
       }
-    }).catch(() => { if (active) setError('编辑器工程读取失败, 请重试.') })
+    }).catch(caught => { if (active) setError(displayError(caught, '编辑器工程读取失败, 请重试.')) })
       .finally(() => { if (active) setReady(true) })
     return () => { active = false }
   }, [])
@@ -60,8 +62,8 @@ export function useEditorProject(options: {
     if (!bridge || !project || inFlight.current) return
     queued.current = null
     inFlight.current = true
-    void bridge.invoke('editorProjectSave', { project }).then(result => setSaveError(result.ok ? null : result.message))
-      .catch(() => setSaveError('编辑器工程自动保存失败, 请重试.'))
+    void bridge.invoke('editorProjectSave', { project }).then(result => setSaveError(result.ok ? null : result))
+      .catch(caught => setSaveError(displayError(caught, '编辑器工程自动保存失败, 请重试.')))
       .finally(() => { inFlight.current = false; send() })
   }, [])
   useEffect(() => {
@@ -83,15 +85,15 @@ export function useEditorProject(options: {
     if (!window.streamSyncer) return
     try {
       const result = await window.streamSyncer.invoke('editorMediaChoose', relink && current ? { relinkId: current.id } : {})
-      if (!result.ok) { setError(result.message); return }
+      if (!result.ok) { setError(result); return }
       if (!result.value) return
       remember(result.value.media)
       callbacks.current.open(result.value.url, result.value.media.name)
-    } catch { setError('本地录像打开失败, 请重试.') }
+    } catch (caught) { setError(displayError(caught, '本地录像打开失败, 请重试.')) }
   }
   const annotate = useCallback((update: Partial<Pick<EditorMedia, 'match' | 'purpose'>>): void => {
     setMedia(items => items.map(item => item.id === currentMediaId ? { ...item, ...update } : item))
   }, [currentMediaId])
   const clear = useCallback(() => { setCurrentMediaId(null); setNeedsRelink(false) }, [])
-  return { ready, current, needsRelink, error: error ?? saveError, choose, remember, annotate, clear }
+  return { ready, current, needsRelink, error: error || saveError || null, errorDetail: error ? errorDetail : saveErrorDetail, choose, remember, annotate, clear }
 }

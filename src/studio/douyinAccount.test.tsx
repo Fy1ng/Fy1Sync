@@ -26,6 +26,7 @@ beforeEach(() => {
     subscribeDanmaku: () => () => {},
   } satisfies StreamSyncerBridge)
   vi.spyOn(apiClient, 'loginStatus').mockResolvedValue({ ok: true, value: status() })
+  vi.spyOn(apiClient, 'getDouyinSendState').mockResolvedValue({ ok: true, value: { loggedIn: false, canSend: false, loginState: 'signed-out', message: '未登录' } })
 })
 afterEach(() => {
   cleanup()
@@ -39,6 +40,7 @@ describe('Douyin current account settings', () => {
     vi.mocked(apiClient.loginStatus).mockResolvedValue({ ok: true, value: status({ cookieCount: 2 }) })
     const login = vi.spyOn(apiClient, 'login').mockImplementation(async () => {
       vi.mocked(apiClient.loginStatus).mockResolvedValue({ ok: true, value: status({ loggedIn: true, cookieCount: 3, authKeysPresent: ['sessionid'] }) })
+      vi.mocked(apiClient.getDouyinSendState).mockResolvedValue({ ok: true, value: { loggedIn: true, canSend: true, loginState: 'authenticated', message: '已登录' } })
       return { ok: true, value: { cookieCount: 3, authKeysPresent: ['sessionid'] } }
     })
     mount()
@@ -51,7 +53,7 @@ describe('Douyin current account settings', () => {
     fireEvent.click(panel.getByRole('button', { name: '登录' }))
     await waitFor(() => expect(panel.getByText('已登录')).toBeInTheDocument())
     expect(login).toHaveBeenCalledExactlyOnceWith('douyin')
-    expect(panel.getByText(/请重新加载直播或重连弹幕以更新会话/)).toBeInTheDocument()
+    expect(panel.getByText(/聊天栏将自动核对发送状态/)).toBeInTheDocument()
     expect(panel.getByRole('button', { name: '重新登录' })).toBeEnabled()
   })
 
@@ -85,6 +87,7 @@ describe('Douyin current account settings', () => {
 
   it('does not keep showing a logged-in account after logout if the status refresh fails', async () => {
     vi.mocked(apiClient.loginStatus).mockResolvedValue({ ok: true, value: status({ loggedIn: true, cookieCount: 1, authKeysPresent: ['sessionid'] }) })
+    vi.mocked(apiClient.getDouyinSendState).mockResolvedValue({ ok: true, value: { loggedIn: true, canSend: true, loginState: 'authenticated', message: '已登录' } })
     vi.spyOn(apiClient, 'logout').mockImplementation(async () => {
       vi.mocked(apiClient.loginStatus).mockResolvedValue({ ok: false, code: 'offline', message: '无法读取登录状态' })
       return { ok: true, value: { ok: true as const } }

@@ -9,6 +9,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { ErrorDetailsButton, ErrorText } from '../ui/ErrorDetails'
+import type { DisplayError } from '../core/errorDetails'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { DanmakuMessage } from '../core/danmakuTimeline'
@@ -24,6 +26,7 @@ import { deliveryText } from './useStudioComposer'
 import { remember } from '../app/remembered'
 import { useChatFollow } from './useChatFollow'
 import { BasicRecognitionPanel } from './BasicRecognitionPanel'
+import { DouyinComposer } from './DouyinComposer'
 import { isReadOnlyDanmakuPlatform, isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
 
 /** A one-line row; longer messages wrap and are measured. */
@@ -37,6 +40,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const { danmaku } = snapshot
+  const connectionFailure = danmaku as typeof danmaku & { errorDetail?: unknown; detail?: unknown }
   const readOnly = isReadOnlyDanmakuRoom(danmaku.room)
   const writes = useDouyuWrites()
   const composer = useComposer()
@@ -44,7 +48,9 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   const rate = useDanmakuRate(readOnly ? null : danmaku.room)
   // One menu for the whole list, anchored to the button it was opened from.
   const [rowMenu, setRowMenu] = useState<{ message: DanmakuMessage; anchor: HTMLElement } | null>(null)
-  const [rowNote, setRowNote] = useState<string | null>(null)
+  const rowMenuRef = useRef(rowMenu)
+  rowMenuRef.current = rowMenu
+  const [rowNote, setRowNote] = useState<string | DisplayError | null>(null)
   const box = useRef<HTMLTextAreaElement | null>(null)
   const subscribe = useCallback((listener: () => void) => session.subscribeChat(listener), [session])
   const messages = useSyncExternalStore(subscribe, () => session.chatHistory())
@@ -107,17 +113,17 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
         </button>
       </header>
 
-      {snapshot.settings.recognitionMode === 'basic' && <BasicRecognitionPanel />}
+      {snapshot.settings.recognitionMode === 'basic' && snapshot.settings.basicRecognitionPanelVisible && <BasicRecognitionPanel />}
 
       <div className="drawer-feed">
         <div className="drawer-scroll" ref={scroller} role="log" aria-live="off" aria-label="弹幕列表" tabIndex={0}
           onScroll={() => {
             onScroll()
-            setRowMenu(null)
+            rowMenuRef.current = null; setRowMenu(null)
           }}>
           {messages.length === 0 ? (
             <p className="drawer-empty">
-              {danmaku.connected ? '弹幕将随解说进度显示' : danmaku.room ? danmaku.error ?? '正在连接...' : '载入斗鱼, 虎牙或抖音解说后显示弹幕'}
+              {danmaku.connected ? '弹幕将随解说进度显示' : danmaku.room ? danmaku.error ? <ErrorText error={connectionFailure.errorDetail ?? connectionFailure.detail ?? { message: danmaku.error }} message={danmaku.error} /> : '正在连接...' : '载入斗鱼, 虎牙或抖音解说后显示弹幕'}
             </p>
           ) : (
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
@@ -136,7 +142,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
                         aria-label={`+1：${message.text}`} title={composer.repeatProblem(message.text) ?? '发送相同内容'}
                         onClick={() => void composer.repeat(message.text)}>+1</button>}
                       <button type="button" className="msg-more" aria-label={`更多操作：${message.text}`} title="更多操作"
-                        onClick={(event) => { setRowNote(null); setRowMenu({ message, anchor: event.currentTarget }) }}>
+                        onClick={(event) => { setRowNote(null); const next = { message, anchor: event.currentTarget }; rowMenuRef.current = next; setRowMenu(next) }}>
                         <Icon name="more" />
                       </button>
                     </span>
@@ -147,9 +153,9 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
           )}
         </div>
         {rowMenu && (
-          <Popover key={rowMenu.message.id} open anchor={rowMenu.anchor} onClose={() => setRowMenu(null)} className="row-menu" label={`弹幕操作：${rowMenu.message.text}`}>
-            <RowActions message={rowMenu.message} note={rowNote} setNote={setRowNote} close={() => setRowMenu(null)}
-              onReply={() => { composer.reply(rowMenu.message.user); setRowMenu(null) }} />
+          <Popover key={rowMenu.message.id} open anchor={rowMenu.anchor} onClose={() => { rowMenuRef.current = null; setRowMenu(null) }} className="row-menu" label={`弹幕操作：${rowMenu.message.text}`}>
+            <RowActions message={rowMenu.message} note={rowNote} setNote={note => { if (rowMenuRef.current === rowMenu) setRowNote(note) }} close={() => { rowMenuRef.current = null; setRowMenu(null) }}
+              onReply={() => { composer.reply(rowMenu.message.user); rowMenuRef.current = null; setRowMenu(null) }} />
           </Popover>
         )}
         {unread > 0 && (
@@ -157,6 +163,8 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
         )}
       </div>
 
+      {danmaku.room?.startsWith('douyin:') && <DouyinComposer key={danmaku.room} room={danmaku.room} connected={danmaku.connected}
+        onLogin={() => onOpenSettings('accounts', 'douyin')} />}
       {writes && !readOnly && <form className="say" onSubmit={(event) => { event.preventDefault(); if (!composing.current) void composer.sendDraft() }}>
         <textarea ref={box} rows={1} value={composer.draft} disabled={!composer.canEdit} aria-label="弹幕内容"
           placeholder={composer.canEdit ? '发送弹幕' : !composer.account?.loggedIn ? '登录斗鱼后可发送' : composer.needsRelogin ? '需要重新登录斗鱼' : danmaku.connected ? '正在准备…' : '连接弹幕后可发送'}
@@ -181,14 +189,16 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
           {composer.affixes.enabled && composer.draft.length > 0 && <span title="在弹幕设置中修改">含前后缀</span>}
           {composer.composedLength > composer.lengthLimit * 0.8 && <span className="num">{composer.composedLength}/{composer.lengthLimit}</span>}
         </p>
-        {composer.draft.length > 0 && composer.draftProblem && <p className="say-note is-warn">{composer.draftProblem}</p>}
-        {composer.needsRelogin && composer.blockedReason && <p className="say-note is-warn" role="status">{composer.blockedReason}</p>}
+        {composer.draft.length > 0 && composer.draftProblem && <p className="say-note is-warn"><ErrorText error={composer.draftErrorDetail ?? composer.draftProblem} message={composer.draftProblem} /></p>}
+        {composer.needsRelogin && composer.blockedReason && <p className="say-note is-warn" role="status"><ErrorText error={composer.blockedDetail ?? composer.blockedReason} message={composer.blockedReason} /></p>}
         {/* A send that cannot go out says why, instead of Enter silently doing nothing. */}
         {composer.draft.length > 0 && !composer.needsRelogin && !composer.draftProblem && !composer.notice && composer.blockedReason && composer.remaining === 0 && (
-          <p className="say-note is-warn" role="status">{composer.blockedReason}</p>
+          <p className="say-note is-warn" role="status">{composer.blockedDetail ? <ErrorText error={composer.blockedDetail} message={composer.blockedReason} /> : composer.blockedReason}</p>
         )}
-        {composer.notice && <p className="say-note" data-state={composer.notice.status} role="status">{composer.notice.message}</p>}
-        {deliveryText(composer.delivery) && <p className="say-note">{deliveryText(composer.delivery)}</p>}
+        {composer.notice && <p className="say-note" data-state={composer.notice.status} role="status">{composer.notice.status === 'succeeded' ? composer.notice.message : <ErrorText error={composer.notice.detail ?? { status: composer.notice.status, message: composer.notice.message }} message={composer.notice.message} />}</p>}
+        {composer.configurationError && <p className="say-note is-warn" role="alert"><ErrorText error={composer.configurationDetail ?? composer.configurationError} message={composer.configurationError} /></p>}
+        {composer.deliveryError && <p className="say-note is-warn" role="alert"><ErrorText error={composer.deliveryErrorDetail ?? composer.deliveryError} message={composer.deliveryError} /></p>}
+        {deliveryText(composer.delivery) && <p className="say-note">{deliveryText(composer.delivery)}{composer.delivery && (composer.delivery.gateway === 'rejected' || composer.delivery.gateway === 'unknown' || composer.delivery.roomEcho === 'not-observed') && <ErrorDetailsButton error={composer.delivery} />}</p>}
       </form>}
     </aside>
   )
@@ -197,8 +207,8 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
 /** The actions behind a row's "更多操作": the same ones the hover menu over the picture offers. */
 function RowActions({ message, note, setNote, close, onReply }: {
   message: DanmakuMessage
-  note: string | null
-  setNote: (note: string | null) => void
+  note: string | DisplayError | null
+  setNote: (note: string | DisplayError | null) => void
   close: () => void
   onReply: () => void
 }): React.ReactNode {
@@ -208,11 +218,12 @@ function RowActions({ message, note, setNote, close, onReply }: {
   const readOnly = isReadOnlyDanmakuPlatform(message.platform) || isReadOnlyDanmakuRoom(danmaku.room)
   const writes = useDouyuWrites()
   const uid = message.sender?.uid
+  const favoriteRevision = useRef(0)
   return (
     <>
       <span className="row-menu-user">{message.user}{!readOnly && uid && <span className="num muted"> {uid}</span>}</span>
       {writes && !readOnly && <button type="button" className="menu-item" disabled={!composer.canEdit} onClick={onReply}>回复</button>}
-      {!readOnly && <button type="button" className="menu-item" onClick={() => { void actions.favorite(message).then(setNote) }}>收藏</button>}
+      {!readOnly && <button type="button" className="menu-item" onClick={() => { const mine = ++favoriteRevision.current; void actions.favorite(message).then(note => { if (mine === favoriteRevision.current) setNote(note) }) }}>收藏</button>}
       <button type="button" className="menu-item" disabled={actions.copying} onClick={() => { void actions.copy(message.text); close() }}>复制</button>
       {!readOnly && uid && actions.showDetails && (
         <button type="button" className="menu-item" onClick={() => { actions.showDetails?.(message); close() }}>用户详情</button>
@@ -220,7 +231,7 @@ function RowActions({ message, note, setNote, close, onReply }: {
       {!readOnly && uid && <button type="button" className="menu-item" onClick={() => { actions.history(uid); close() }}>历史弹幕</button>}
       {writes && !readOnly && uid && <button type="button" className="menu-item" onClick={() => { actions.mute(message); close() }}>禁言</button>}
       <button type="button" className="menu-item is-danger" onClick={() => { actions.block(message.user); close() }}>屏蔽此用户</button>
-      {note && <p className="lane" role="status">{note}</p>}
+      {note && <p className="lane" role="status">{typeof note === 'string' ? note : <ErrorText error={note.detail ?? note} message={note.message} />}</p>}
     </>
   )
 }

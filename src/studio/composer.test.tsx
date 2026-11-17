@@ -76,9 +76,12 @@ function Probe(): React.ReactNode {
       <span data-testid="delivery">{deliveryText(composer.delivery) ?? ''}</span>
       <span data-testid="draft">{composer.draft}</span>
       <span data-testid="notice" data-state={composer.notice?.status ?? ''}>{composer.notice?.message ?? ''}</span>
+      <span data-testid="notice-fields">{JSON.stringify(composer.notice?.detail ?? null)}</span>
+      <span data-testid="draft-fields">{JSON.stringify(composer.draftErrorDetail ?? null)}</span>
       <span data-testid="gateway">{composer.delivery?.gateway ?? ''}</span>
       <button type="button" onClick={() => composer.setDraft('你好')}>draft</button>
       <button type="button" onClick={() => composer.setDraft('新的草稿')}>draft-new</button>
+      <button type="button" onClick={() => composer.setDraft('测试\u0000')}>draft-invalid</button>
       <button type="button" onClick={() => void composer.sendDraft()}>send</button>
       <button type="button" onClick={() => void composer.repeat('原文')}>repeat</button>
       <button type="button" onClick={() => actions.mute({ id: 'm', text: '刷屏', user: '某观众', color: '', scheduleTime: 0, receivedAt: 0, sender: { uid: '42' } })}>mute</button>
@@ -99,6 +102,25 @@ function renderProbe(session: Session): void {
 }
 
 describe('the studio send box', () => {
+  it('keeps the full failure response and validates drafts without storing their contents in errors', async () => {
+    const invoke = vi.mocked(window.streamSyncer!.invoke)
+    const original = invoke.getMockImplementation()!
+    invoke.mockImplementation((async (method: string, args: unknown) => method === 'sendComposedDouyuMessage'
+      ? { ok: false, code: 'DOUYU_SEND_503', message: '测试发送失败', detail: { code: 'ETIMEDOUT', status: 503, token: 'private-token' } }
+      : original(method as never, args as never)) as StreamSyncerBridge['invoke'])
+    renderProbe(await connectedSession())
+    await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('ready'))
+    fireEvent.click(screen.getByRole('button', { name: 'draft-invalid' }))
+    expect(JSON.parse(screen.getByTestId('draft-fields').textContent!)).toMatchObject({ name: 'MessageCompositionError', code: 'invalid-text' })
+    expect(screen.getByTestId('draft-fields').textContent).not.toContain('测试')
+    fireEvent.click(screen.getByRole('button', { name: 'draft' }))
+    fireEvent.click(screen.getByRole('button', { name: 'send' }))
+    await waitFor(() => expect(screen.getByTestId('notice')).toHaveAttribute('data-state', 'failed'))
+    expect(JSON.parse(screen.getByTestId('notice-fields').textContent!)).toMatchObject({ code: 'DOUYU_SEND_503', detail: { code: 'ETIMEDOUT', status: 503, token: '[redacted]' } })
+    expect(screen.getByTestId('notice-fields').textContent).not.toContain('你好')
+    expect(screen.getByTestId('draft')).toHaveTextContent('你好')
+  })
+
   const uncertain = () => ({ status: 'waiting-user', message: '发送结果无法确认, 请在官方房间核对.', nextAllowedAt: null, deliveryId: 'd1', gatewayAccepted: false })
   const echo = (roomEcho: 'pending' | 'observed' | 'not-observed' = 'observed') => ({ id: 'd1', accountId: 'default', room: '288016', sentAt: 0,
     deadlineAt: Date.now() + 60_000, gateway: 'unknown', roomEcho, observedAt: roomEcho === 'observed' ? 1 : null, messageId: null })

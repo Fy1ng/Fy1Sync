@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import { ErrorText } from '../../ui/ErrorDetails'
 import { apiClient } from '../../app/apiClient'
 import type { DouyuGiftPlan, DouyuInventorySnapshot } from '../../../server/douyu/inventoryTypes'
 import { Segmented } from '../kit'
@@ -80,7 +81,7 @@ export function BackpackGift({ accountId, room, inventory, gift, locked }: {
           <span>毫秒</span>
         </label>
       </div>
-      {intervalMs === null && <p className="form-error">间隔请填写 0 到 60000 的整数</p>}
+      {intervalMs === null && <p className="form-error"><ErrorText error="间隔请填写 0 到 60000 的整数" message="间隔请填写 0 到 60000 的整数" /></p>}
 
       {source === 'all' ? (
         <p className="muted">按主进程本次读取的可赠库存全部赠送给目标房间。已过期、不支持或状态未知的道具列入排除项，背包不一定因此清空。</p>
@@ -113,9 +114,9 @@ export function BackpackGift({ accountId, room, inventory, gift, locked }: {
           })}
         </ul>
       )}
-      {source === 'pick' && badPick && <p className="form-error">数量须为 1 到当前库存之间的整数</p>}
-      {tooLong && <p className="form-error">请求次数或总时长超出上限（{MAX_OPERATIONS} 次，24 小时），请减少数量或间隔</p>}
-      {!roomOk(room) && <p className="form-error">请填写有效的目标房间号</p>}
+      {source === 'pick' && badPick && <p className="form-error"><ErrorText error="数量须为 1 到当前库存之间的整数" message="数量须为 1 到当前库存之间的整数" /></p>}
+      {tooLong && <p className="form-error"><ErrorText error={`请求次数或总时长超出上限(${MAX_OPERATIONS} 次, 24 小时), 请减少数量或间隔`} /></p>}
+      {!roomOk(room) && <p className="form-error"><ErrorText error="请填写有效的目标房间号" message="请填写有效的目标房间号" /></p>}
 
       <div className="gift-actions">
         <button type="button" className={gift.plan ? 'btn-quiet small' : 'btn-solid small'}

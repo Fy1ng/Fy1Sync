@@ -50,6 +50,7 @@ export const DEFAULT_PROXY_HOSTS = [
   'v.douyin.com',
   'webcast.amemv.com',
   'ttwid.bytedance.com',
+  'mssdk.bytedance.com',
 ]
 
 /** Metadata only. These hosts do not grant renderer/media-proxy access. */

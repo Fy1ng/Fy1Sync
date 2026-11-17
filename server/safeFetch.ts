@@ -15,6 +15,8 @@ import { createProxyDispatcher, isProxyConnectFailure } from './proxyDispatcher'
 import { StreamFailureError, classifyNetworkFailure } from './networkFailure'
 import { hostAllowed, type RequestPolicy } from './config'
 import { mediaEntry, type MediaAccess } from './mediaAccess'
+import { mediaSourceRule, mediaTlsPolicy, timeoutSignal } from './mediaNetworkOptions'
+import { mediaUrlCredentials, sensitiveHeader, withoutSourceCredentials } from './mediaCredentials'
 
 export type UrlRejection =
   | 'invalid-url'
@@ -119,6 +121,8 @@ export type SafeFetchOptions = {
   method?: string
   body?: string | Uint8Array<ArrayBuffer>
   signal?: AbortSignal
+  /** Return redirects without visiting Location; the owning service must validate every next hop. */
+  manualRedirect?: boolean
   resolve?: Resolver
   fetchImpl?: typeof fetch
   /** Owned by a trusted service, never renderer input. Every reuse still validates DNS. */
@@ -128,6 +132,8 @@ export type SafeFetchOptions = {
   mediaAccess?: MediaAccess
   /** Separates sessions and credential identities while retaining per-origin pooling. */
   connectionScope?: string
+  /** Trusted service override for bounded metadata responses with large Set-Cookie headers. */
+  maxHeaderSize?: number
 }
 
 export type SafeFetchResult = {
@@ -142,7 +148,7 @@ function validAddresses(addresses: unknown): addresses is string[] {
 }
 
 /** The caller has already applied its HTTP or WebSocket address policy. */
-export function createPinnedDispatcher(hostname: string, addresses: readonly string[], timeoutMs = 15_000, keepAliveTimeout = 4_000, connections = 1): Agent {
+export function createPinnedDispatcher(hostname: string, addresses: readonly string[], timeoutMs = 15_000, keepAliveTimeout = 4_000, connections = 1, verifyTls = true, maxHeaderSize?: number): Agent {
   if (!validAddresses(addresses)) throw new ProxyError('dns-failed', '无法固定已校验的连接地址.', 403)
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
   const records = [...new Set(addresses)].map(address => ({ address, family: isIP(address) }))
@@ -157,9 +163,10 @@ export function createPinnedDispatcher(hostname: string, addresses: readonly str
       else callback(null, selected[0]!.address, selected[0]!.family)
     })
   }
-  const connect = buildConnector({ lookup, timeout: timeoutMs, autoSelectFamily: true })
+  const connect = buildConnector({ lookup, timeout: timeoutMs, autoSelectFamily: true, rejectUnauthorized: verifyTls })
   return new Agent({
-    connections, maxOrigins: 1,
+    connections, maxOrigins: 1, headersTimeout: timeoutMs, bodyTimeout: 0,
+    ...(maxHeaderSize === undefined ? {} : { maxHeaderSize }),
     keepAliveTimeout, keepAliveMaxTimeout: Math.max(keepAliveTimeout, 60_000),
     connect: (options, callback) => {
       // Literal addresses bypass Node's lookup callback, so validate the connect
@@ -176,9 +183,10 @@ export class PinnedDispatcherPool {
   private readonly retiring = new Set<Dispatcher>()
   private closed = false
   constructor(private readonly options: { maxEntries?: number; connections?: number } = {}) {}
-  get(url: URL, addresses: string[], timeoutMs: number, route?: NetworkRoute, scope = ''): Dispatcher {
+  get(url: URL, addresses: string[], timeoutMs: number, route?: NetworkRoute, scope = '',
+    tls: { verifyTls: boolean; verifyProxyTls: boolean } = { verifyTls: true, verifyProxyTls: true }, maxHeaderSize?: number): Dispatcher {
     if (this.closed) throw new Error('Network service closed')
-    const key = JSON.stringify([url.origin, [...addresses].sort(), timeoutMs, route?.kind ?? 'direct', route?.proxyUrl ?? '', scope])
+    const key = JSON.stringify([url.origin, [...addresses].sort(), timeoutMs, route?.kind ?? 'direct', route?.proxyUrl ?? '', scope, tls, maxHeaderSize])
     let agent = this.agents.get(key)
     if (!agent) {
       if (this.agents.size >= (this.options.maxEntries ?? 8)) {
@@ -188,8 +196,8 @@ export class PinnedDispatcherPool {
         void retiring.close().catch(() => {}).finally(() => this.retiring.delete(retiring))
         this.agents.delete(first)
       }
-      agent = route && route.kind !== 'direct' ? createProxyDispatcher(route, timeoutMs, this.options.connections ?? 1)
-        : createPinnedDispatcher(url.hostname, addresses, timeoutMs, 60_000, this.options.connections ?? 1)
+      agent = route && route.kind !== 'direct' ? createProxyDispatcher(route, timeoutMs, this.options.connections ?? 1, tls, maxHeaderSize)
+        : createPinnedDispatcher(url.hostname, addresses, timeoutMs, 60_000, this.options.connections ?? 1, tls.verifyTls, maxHeaderSize)
       this.agents.set(key, agent)
     }
     return agent
@@ -226,17 +234,50 @@ export async function safeFetch(
   config: RequestPolicy,
   options: SafeFetchOptions = {},
 ): Promise<SafeFetchResult> {
+  if (options.maxHeaderSize !== undefined && (!Number.isSafeInteger(options.maxHeaderSize)
+    || options.maxHeaderSize < 4096 || options.maxHeaderSize > 256 * 1024)) {
+    throw new ProxyError('invalid-url', '响应头大小上限无效.', 400)
+  }
   const doFetch = options.fetchImpl ?? fetch
   const resolve = options.resolve ?? dnsResolver
-  const signal = options.signal ?? AbortSignal.timeout(config.requestTimeoutMs)
   let target = raw
   const network = options.network ?? networkContext()
+  let headers = { ...options.headers }
+  let method = options.method ?? 'GET'
+  let body = options.body
+  if (network.media) {
+    const input = mediaUrlCredentials(raw, headers)
+    target = input.url.href
+    headers = input.headers
+  }
+  const timeoutMs = network.media?.requestTimeoutMs ?? config.requestTimeoutMs
+  const signal = options.signal ? network.signal ? AbortSignal.any([options.signal, network.signal]) : options.signal : timeoutSignal(timeoutMs, network.signal)
+  const maxRedirects = network.media ? network.media.maxRedirects || Infinity : config.maxRedirects
   const access = 'purpose' in config && config.purpose === 'media' ? options.mediaAccess ?? mediaEntry(raw) : undefined
+  const visited = new Set<string>()
 
-  for (let hop = 0; hop <= config.maxRedirects; hop += 1) {
+  for (let hop = 0; hop <= maxRedirects; hop += 1) {
     signal.throwIfAborted()
-    const syntax = checkUrlSyntax(target, config)
+    if (network.media) {
+      const input = mediaUrlCredentials(target, headers)
+      target = input.url.href; headers = input.headers
+    }
+    const sourceRule = mediaSourceRule(network.media, target)
+    const requestHeaders = { ...headers }
+    for (const [name, value] of Object.entries(sourceRule?.headers ?? {})) {
+      for (const previous of Object.keys(requestHeaders)) if (previous.toLowerCase() === name.toLowerCase()) delete requestHeaders[previous]
+      requestHeaders[name] = value
+    }
+    const credentials = hasSensitiveHeaders(requestHeaders)
+    // Anonymous playback reads are independent of the built-in platform API list.
+    const requestPolicy = network.media && (!credentials || sourceRule) && !options.manualRedirect ? { ...config, purpose: 'media' as const } : config
+    const syntax = checkUrlSyntax(target, requestPolicy)
     if (!syntax.ok) throw new ProxyError(syntax.reason, syntax.detail, 403)
+    const tls = mediaTlsPolicy(network.media, target, credentials)
+    if (network.media && visited.has(syntax.url.href)) throw new ProxyError('too-many-redirects', '重定向形成循环.', 502)
+    // Unlimited redirects must not create an unlimited in-memory URL history.
+    if (visited.size >= 256) visited.delete(visited.values().next().value!)
+    visited.add(syntax.url.href)
     const routes = routeCandidates(await withSignal(() => network.route(target), signal))
     let response: Response | undefined
     for (let index = 0; index < routes.length; index++) {
@@ -249,18 +290,19 @@ export async function safeFetch(
       }
       const check = await withSignal(() => resolveTarget(syntax.url, resolve, routeUsesRemoteDns(route)), signal)
       if (!check.ok) throw new ProxyError(check.reason, check.detail, 403)
-      if (access && !access.scope.permits(check.url, check.addresses, access.entry && hop === 0, false)) {
+      if (access && !network.media?.allowPrivate && !access.scope.permits(check.url, check.addresses, access.entry && hop === 0, false)) {
         throw new ProxyError('media-network-boundary', '自动发现的媒体资源跨到了未授权的本机或局域网来源, 请手动添加该来源.', 403)
       }
       signal.throwIfAborted()
       const pooled = options.dispatcherPool !== undefined
-      const dispatcher = options.dispatcherPool?.get(check.url, check.addresses, config.requestTimeoutMs, route, options.connectionScope)
-        ?? (route.kind !== 'direct' ? createProxyDispatcher(route, config.requestTimeoutMs) : createPinnedDispatcher(check.url.hostname, check.addresses, config.requestTimeoutMs))
+      const dispatcher = options.dispatcherPool?.get(check.url, check.addresses, timeoutMs, route, options.connectionScope, tls, options.maxHeaderSize)
+        ?? (route.kind !== 'direct' ? createProxyDispatcher(route, timeoutMs, 1, tls, options.maxHeaderSize)
+          : createPinnedDispatcher(check.url.hostname, check.addresses, timeoutMs, 4000, 1, tls.verifyTls, options.maxHeaderSize))
       const abort = () => { void dispatcher.destroy().catch(() => {}) }
       if (!pooled) signal.addEventListener('abort', abort, { once: true })
       try {
         const init: RequestInit & { dispatcher: Dispatcher } = {
-          method: options.method ?? 'GET', headers: options.headers, body: options.body,
+          method, headers: requestHeaders, body,
           redirect: 'manual', signal, dispatcher,
         }
         response = await doFetch(check.url, init)
@@ -280,7 +322,7 @@ export async function safeFetch(
     }
     if (!response) throw new StreamFailureError({ stage: 'proxy', code: 'proxy-type-unsupported', message: '系统代理没有可用的连接候选.' })
 
-    if (!isRedirect(response.status)) {
+    if (options.manualRedirect || !isRedirect(response.status)) {
       return { response, finalUrl: syntax.url }
     }
     const location = response.headers.get('location')
@@ -288,17 +330,30 @@ export async function safeFetch(
     // Drain the redirect body so the socket can be reused.
     await response.body?.cancel().catch(() => {})
     const next = new URL(location, syntax.url)
-    // Platform login credentials must never follow a redirect to another origin.
-    if (hasSensitiveHeaders(options.headers) && next.origin !== syntax.url.origin) throw new ProxyError('cross-origin-credentials', '禁止将平台登录信息发送到其他来源', 403)
+    if (next.origin !== syntax.url.origin) {
+      if (credentials && !network.media) throw new ProxyError('cross-origin-credentials', '禁止将平台登录信息发送到其他来源', 403)
+      headers = withoutSourceCredentials(headers)
+      // A cross-origin 307/308 must not replay a credential-bearing POST body.
+      if (network.media && !['GET', 'HEAD'].includes(method.toUpperCase())) {
+        if ([307, 308].includes(response.status)) {
+          if (credentials && body !== undefined) throw new ProxyError('cross-origin-credentials', '无法向其他来源重放带凭据请求体的取流请求.', 403)
+        } else {
+          method = 'GET'; body = undefined
+          headers = Object.fromEntries(Object.entries(headers).filter(([name]) => !['content-type', 'content-length'].includes(name.toLowerCase())))
+        }
+      }
+    } else if (network.media && (response.status === 303 && method !== 'HEAD' || [301, 302].includes(response.status) && method.toUpperCase() === 'POST')) {
+      method = 'GET'; body = undefined
+      headers = Object.fromEntries(Object.entries(headers).filter(([name]) => !['content-type', 'content-length'].includes(name.toLowerCase())))
+    }
     target = next.toString()
   }
 
-  throw new ProxyError('too-many-redirects', `跳转次数超过 ${config.maxRedirects} 次`, 502)
+  throw new ProxyError('too-many-redirects', `跳转次数超过 ${maxRedirects} 次`, 502)
 }
 
 export function hasSensitiveHeaders(headers?: Record<string, string>): boolean {
-  return Object.keys(headers ?? {}).some(name => /^(?:cookie2?|authorization|proxy-authorization)$/i.test(name)
-    || /(?:token|secret|csrf|api[-_]?key|^x-auth)/i.test(name))
+  return Object.keys(headers ?? {}).some(sensitiveHeader)
 }
 
 function isRedirect(status: number): boolean {

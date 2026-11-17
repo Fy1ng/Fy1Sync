@@ -54,7 +54,7 @@ describe('Bilibili actual upstream quality', () => {
     const deps = dependencies()
     deps.fetchJson = vi.fn(async () => ({ code: -101, message: 'PRIVATE_COOKIE=private-value' }))
     expect(await resolveBilibili('12345', deps)).toMatchObject({ ok: false, failure: { code: 'login-required', hint: '请登录B站后重新加载片源.' } })
-    expect(JSON.stringify(await resolveBilibili('12345', deps))).not.toContain('PRIVATE_COOKIE')
+    expect(JSON.stringify(await resolveBilibili('12345', deps))).not.toContain('private-value')
   })
 
   it.each([-102, -111, -400, -352, 403, 500])('does not treat non-login API code %s as authentication failure', async code => {

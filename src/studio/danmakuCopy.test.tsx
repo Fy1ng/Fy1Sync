@@ -40,10 +40,10 @@ afterEach(() => {
   else Reflect.deleteProperty(navigator, 'clipboard')
 })
 
-function createSession() {
+function createSession(room = 'huya:660000') {
   const session = new Session({ createSampler: () => null })
   sessions.push(session)
-  session.connectDanmaku('huya:660000')
+  session.connectDanmaku(room)
   session.flush()
   return session
 }
@@ -55,16 +55,16 @@ function Wrapper({ session, children }: { session: Session; children: React.Reac
 }
 
 type Mode = 'list' | 'overlay'
-async function mountMenu(mode: Mode) {
-  const session = createSession()
+async function mountMenu(mode: Mode, platform: 'huya' | 'douyu' = 'huya') {
+  const session = createSession(platform === 'douyu' ? '9999' : 'huya:660000')
   const notice = vi.spyOn(session, 'notice')
   const view = render(<Wrapper session={session}>{mode === 'list'
     ? <ChatDrawer onClose={() => {}} onOpenSettings={() => {}} onOpenRecords={() => {}} />
     : <DanmakuStage onReply={() => {}} />}</Wrapper>)
   await act(async () => { await Promise.resolve() })
   act(() => {
-    session.pushDanmaku({ text: '复制合成文本甲', user: '合成观众', color: '#fff', platform: 'huya' })
-    session.pushDanmaku({ text: '复制合成文本乙', user: '合成观众', color: '#fff', platform: 'huya' })
+    session.pushDanmaku({ text: '复制合成文本甲', user: '合成观众', color: '#fff', platform })
+    session.pushDanmaku({ text: '复制合成文本乙', user: '合成观众', color: '#fff', platform })
     if (mode === 'overlay') nextFrame?.(100)
     else session.drainDanmaku()
     session.flush()
@@ -78,6 +78,40 @@ async function mountMenu(mode: Mode) {
 }
 
 describe.each<Mode>(['list', 'overlay'])('copy feedback from the %s menu', mode => {
+  it('does not attach an earlier favorite result to a different danmaku menu', async () => {
+    const { open } = await mountMenu(mode, 'douyu')
+    const invoke = vi.mocked(window.streamSyncer!.invoke)
+    const original = invoke.getMockImplementation()!
+    let finish!: (result: unknown) => void
+    invoke.mockImplementation((async (method: string, args: unknown) => method === 'addDanmakuFavorite'
+      ? new Promise<unknown>(resolve => { finish = resolve }) : original(method as never, args as never)) as StreamSyncerBridge['invoke'])
+    fireEvent.click(screen.getByRole('button', { name: '收藏' }))
+    open('复制合成文本乙')
+    await act(async () => { finish({ ok: false, code: 'OLD_FAVORITE', message: '旧收藏失败', detail: { requestId: 'old-menu' } }); await Promise.resolve() })
+    const menu = mode === 'overlay' ? screen.getByRole('toolbar') : screen.getByRole('dialog', { name: /弹幕操作/ })
+    expect(within(menu).queryByText('旧收藏失败')).toBeNull()
+    expect(within(menu).queryByRole('button', { name: '查看原始错误' })).toBeNull()
+  })
+
+  it('keeps a favorite failure attached to the menu result and leaves the success plain', async () => {
+    const { notice } = await mountMenu(mode, 'douyu')
+    const invoke = vi.mocked(window.streamSyncer!.invoke)
+    const original = invoke.getMockImplementation()!
+    invoke.mockImplementation((async (method: string, args: unknown) => method === 'addDanmakuFavorite'
+      ? { ok: false, code: 'FAVORITE_STORE', message: '本地收藏失败', detail: { code: 'EACCES', token: 'private-token' } }
+      : original(method as never, args as never)) as StreamSyncerBridge['invoke'])
+    fireEvent.click(screen.getByRole('button', { name: '收藏' }))
+    const menu = mode === 'overlay' ? screen.getByRole('toolbar') : screen.getByRole('dialog', { name: /弹幕操作/ })
+    fireEvent.click(await within(menu).findByRole('button', { name: '查看原始错误' }))
+    const details = within(menu).getByRole('region', { name: '原始错误信息' })
+    expect(JSON.parse(details.querySelector('code')!.textContent!)).toMatchObject({ code: 'FAVORITE_STORE', detail: { code: 'EACCES', token: '[redacted]' } })
+    expect(notice).toHaveBeenCalledWith('warn', '本地收藏失败', expect.objectContaining({ code: 'FAVORITE_STORE' }))
+    invoke.mockImplementation(original)
+    fireEvent.click(within(menu).getByRole('button', { name: '收藏' }))
+    await within(menu).findByText('已收藏')
+    expect(within(menu).queryByRole('button', { name: '查看原始错误' })).toBeNull()
+  })
+
   it('copies exact text and reports success after the menu closes', async () => {
     const { notice } = await mountMenu(mode)
     fireEvent.click(screen.getByRole('button', { name: '复制' }))
@@ -86,13 +120,17 @@ describe.each<Mode>(['list', 'overlay'])('copy feedback from the %s menu', mode 
     await waitFor(() => expect(notice).toHaveBeenCalledExactlyOnceWith('info', '弹幕已复制'))
   })
 
-  it.each(['missing', 'rejected'] as const)('reports a static failure when clipboard access is %s', async problem => {
+  it.each(['missing', 'rejected'] as const)('keeps the clipboard summary and adds redacted original fields when access is %s', async problem => {
     if (problem === 'missing') Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
-    else writeText.mockRejectedValue(new Error('PRIVATE clipboard OS path'))
+    else writeText.mockRejectedValue(new Error('Cannot write C:\\Users\\PRIVATE\\clipboard.txt'))
     const { session, notice } = await mountMenu(mode)
     fireEvent.click(screen.getByRole('button', { name: '复制' }))
-    await waitFor(() => expect(notice).toHaveBeenCalledExactlyOnceWith('warn', '复制失败, 请重试.'))
-    expect(JSON.stringify(session.flush().notices)).not.toContain('PRIVATE')
+    await waitFor(() => expect(notice).toHaveBeenCalledExactlyOnceWith('warn', '复制失败, 请重试.', expect.any(Error)))
+    const notices = session.flush().notices
+    expect(JSON.stringify(notices)).not.toContain('PRIVATE')
+    expect(notices.find(item => item.text === '复制失败, 请重试.')?.detail).toMatchObject({
+      name: 'Error', message: problem === 'missing' ? 'Clipboard text writing unavailable' : 'Cannot write [user]\\clipboard.txt',
+    })
   })
 
   it('keeps a pending copy from writing twice or putting its result into a different menu', async () => {

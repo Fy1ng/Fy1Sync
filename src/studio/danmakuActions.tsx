@@ -10,6 +10,8 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { ErrorText } from '../ui/ErrorDetails'
+import { displayError, type DisplayError } from '../core/errorDetails'
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { DanmakuMessage } from '../core/danmakuTimeline'
@@ -27,7 +29,7 @@ export const MUTE_MINUTES = [1, 10, 30, 60, 480, 1440, 4320, 10080, 43200, 25920
 
 interface Actions {
   /** Save to the local favorites. Resolves to a short result line. */
-  favorite: (message: DanmakuMessage) => Promise<string>
+  favorite: (message: DanmakuMessage) => Promise<string | DisplayError>
   /** Copy text with a shared pending guard and persistent result notice. */
   copy: (text: string) => Promise<void>
   copying: boolean
@@ -61,13 +63,14 @@ export function DanmakuActionsProvider({ children, onOpenRecords }: {
     return () => { mounted.current = false }
   }, [])
 
-  const favorite = useCallback(async (message: DanmakuMessage): Promise<string> => {
+  const favorite = useCallback(async (message: DanmakuMessage): Promise<string | DisplayError> => {
     const uid = message.sender?.uid
     const result = await apiClient.feature('addDanmakuFavorite', {
       text: message.text, username: message.user, ...(room ? { room } : {}), ...(uid ? { uid } : {}),
-    })
-    return result.ok ? '已收藏' : result.message
-  }, [room])
+    }).catch(caught => ({ ok: false as const, ...displayError(caught, '弹幕收藏失败') }))
+    if (!result.ok) session.notice('warn', result.message, result)
+    return result.ok ? '已收藏' : displayError(result)
+  }, [room, session])
 
   const copy = useCallback((text: string): Promise<void> => {
     if (copyPending.current) return copyPending.current
@@ -78,8 +81,8 @@ export function DanmakuActionsProvider({ children, onOpenRecords }: {
         if (typeof navigator.clipboard?.writeText !== 'function') throw new Error('Clipboard text writing unavailable')
         await navigator.clipboard.writeText(text)
         if (mounted.current && copyContext.current === context) session.notice('info', '弹幕已复制')
-      } catch {
-        if (mounted.current && copyContext.current === context) session.notice('warn', '复制失败, 请重试.')
+      } catch (caught) {
+        if (mounted.current && copyContext.current === context) session.notice('warn', '复制失败, 请重试.', caught)
       }
     })().finally(() => {
       if (copyPending.current !== pending) return
@@ -124,13 +127,13 @@ type Details = { username?: string; observedAt?: number; level?: number; nobleLe
 
 /** Only facts the room actually sent with this sender's messages; the rest is 未知. */
 function SenderDetails({ room, uid, name, onClose }: { room: string; uid: string; name: string; onClose: () => void }): React.ReactNode {
-  const [state, setState] = useState<{ details: Details | null; error: string | null } | null>(null)
+  const [state, setState] = useState<{ details: Details | null; error: DisplayError | null } | null>(null)
   useEffect(() => {
     let live = true
     void apiClient.feature('getDanmakuUserDetails', { room, uid }).then((result) => {
       if (!live) return
-      setState(result.ok ? { details: result.value as Details | null, error: null } : { details: null, error: result.message })
-    })
+      setState(result.ok ? { details: result.value as Details | null, error: null } : { details: null, error: displayError(result) })
+    }).catch(caught => { if (live) setState({ details: null, error: displayError(caught, '无法读取用户详情') }) })
     return () => { live = false }
   }, [room, uid])
   const d = state?.details
@@ -138,7 +141,7 @@ function SenderDetails({ room, uid, name, onClose }: { room: string; uid: string
   return (
     <Sheet title="用户详情" onClose={onClose}>
       <div className="sheet-body">
-        {state === null ? <p className="muted">读取中…</p> : state.error ? <p className="form-error" role="alert">{state.error}</p> : (
+        {state === null ? <p className="muted">读取中…</p> : state.error ? <p className="form-error" role="alert"><ErrorText error={state.error.detail} message={state.error.message} /></p> : (
           <dl className="facts">
             <dt>昵称</dt><dd>{d?.username ?? name}</dd>
             <dt>UID</dt><dd className="num">{uid}</dd>
@@ -162,21 +165,35 @@ function MuteDialog({ room, message, onClose }: { room: string; message: Danmaku
   const [minutes, setMinutes] = useState<number>(10)
   const [permission, setPermission] = useState<DouyuModerationPermission | null>(null)
   const [outcome, setOutcome] = useState<DouyuModerationOutcome | null>(null)
+  const [permissionFailure, setPermissionFailure] = useState<unknown>(null)
+  const [outcomeFailure, setOutcomeFailure] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
+  const generation = useRef(0)
 
   useEffect(() => {
-    if (!account?.loggedIn) return
+    const mine = ++generation.current
     let live = true
+    setPermission(null); setPermissionFailure(null); setOutcome(null); setOutcomeFailure(null); setBusy(false)
+    if (!account?.loggedIn) return () => { generation.current++ }
     void apiClient.feature('previewDouyuMute', { accountId: account.id, room }).then((result) => {
-      if (live) setPermission(result.ok ? result.value : { allowed: false, code: 'request-failed', message: result.message })
+      if (!live || mine !== generation.current) return
+      setPermissionFailure(result.ok ? null : result)
+      setPermission(result.ok ? result.value : { allowed: false, code: 'request-failed', message: result.message })
+    }).catch(caught => {
+      if (!live || mine !== generation.current) return
+      setPermissionFailure(caught)
+      setPermission({ allowed: false, code: 'request-failed', message: '无法确认管理权限' })
     })
-    return () => { live = false }
+    return () => { live = false; generation.current++ }
   }, [account?.id, account?.loggedIn, room])
 
   const submit = async (): Promise<void> => {
     if (!account || busy || outcome) return
+    const mine = generation.current
     setBusy(true)
-    const result = await apiClient.feature('muteDouyuUser', { accountId: account.id, room, username: message.user, minutes })
+    const result = await apiClient.feature('muteDouyuUser', { accountId: account.id, room, username: message.user, minutes }).catch(caught => ({ ok: false as const, ...displayError(caught, '禁言结果未确认') }))
+    if (mine !== generation.current) return
+    setOutcomeFailure(result.ok ? null : result)
     setOutcome(result.ok ? result.value : { status: 'failed', code: 'request-failed', message: result.message, submitted: false })
     setBusy(false)
   }
@@ -189,9 +206,9 @@ function MuteDialog({ room, message, onClose }: { room: string; message: Danmaku
           <dt>账号</dt><dd>{account?.label ?? '未设置'}</dd>
           <dt>用户</dt><dd>{message.user}</dd>
         </dl>
-        {!account?.loggedIn ? <p className="form-error">请先登录斗鱼账号并设为当前账号。</p>
+        {!account?.loggedIn ? <p className="form-error"><ErrorText error="请先登录斗鱼账号并设为当前账号." /></p>
           : permission === null ? <p className="muted">正在向斗鱼确认管理权限…</p>
-            : !permission.allowed ? <p className="form-error" role="alert">{permission.message}</p> : (
+            : !permission.allowed ? <p className="form-error" role="alert"><ErrorText error={permissionFailure ?? permission} message={permission.message} /></p> : (
               <>
                 <label className="field-row">
                   <span>时长</span>
@@ -207,7 +224,7 @@ function MuteDialog({ room, message, onClose }: { room: string; message: Danmaku
                 )}
               </>
             )}
-        {outcome && <p className={outcome.status === 'succeeded' ? 'lane' : 'form-error'} role="status">{outcome.message}</p>}
+        {outcome && <p className={outcome.status === 'succeeded' ? 'lane' : 'form-error'} role="status">{outcome.status === 'succeeded' ? outcome.message : <ErrorText error={outcomeFailure ?? outcome} message={outcome.message} />}</p>}
       </div>
     </Sheet>
   )

@@ -10,6 +10,16 @@ function fixture() {
   return { manager, window }
 }
 describe('restricted enhanced PiP shell', () => {
+  it('preserves a redacted raw shell-loading failure and clears it after reopening', async () => {
+    const f = fixture()
+    f.window.load.mockRejectedValueOnce(Object.assign(new Error('load failed Cookie=PRIVATE_SESSION'), { code: 'ERR_FAILED' }))
+    const failed = await f.manager.open('official')
+    expect(failed).toMatchObject({ phase: 'failed', errorDetail: { code: 'ERR_FAILED' } })
+    expect(JSON.stringify(failed)).not.toContain('PRIVATE_SESSION')
+    await f.manager.open('official')
+    expect(f.manager.state().errorDetail).toBeUndefined()
+    f.manager.dispose()
+  })
   it('grants only the selected Douyin chat room while denying Douyu account capabilities', async () => {
     const f = fixture()
     const manager = new PipManager({ createWindow: () => f.window,

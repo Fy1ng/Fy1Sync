@@ -8,6 +8,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 import { apiClient } from '../../app/apiClient'
 import type { MessageHistoryPage, MessageHistoryQuery } from '../../../server/danmaku/messageHistory'
 import type { FavoriteDanmaku, FavoriteDanmakuPage } from '../../../electron/danmakuFeatures'
@@ -44,20 +46,20 @@ function formatTime(ms: number): string {
 function usePagedQuery<T>(load: (query: MessageHistoryQuery) => Promise<{ ok: true; value: T } | { ok: false; message: string }>) {
   const [data, setData] = useState<T | null>(null)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError, errorDetail] = useErrorState('')
   const sequence = useRef(0)
   useEffect(() => () => { sequence.current += 1 }, [])
   const run = useCallback(async (query: MessageHistoryQuery): Promise<void> => {
     const ticket = ++sequence.current
     setLoading(true)
     setError('')
-    const result = await load(query)
+    const result = await load(query).catch(caught => ({ ok: false as const, ...displayError(caught, '无法读取弹幕记录') }))
     if (ticket !== sequence.current) return
     setLoading(false)
     if (result.ok) setData(result.value)
-    else setError(result.message)
+    else setError(result)
   }, [load])
-  return { data, loading, error, setError, run }
+  return { data, loading, error, errorDetail, setError, run }
 }
 
 function Pager({ page, total, hasMore, loading, onPage }: {
@@ -86,8 +88,8 @@ function HistoryTab({ initialUid, room }: { initialUid?: string; room: string | 
   const [filters, setFilters] = useState<Filters>({ uid: initialUid ?? '', room: room ?? '', text: '' })
   const [applied, setApplied] = useState<Filters>(filters)
   const [page, setPage] = useState(1)
-  const { data, loading, error, setError, run } = usePagedQuery<MessageHistoryPage>(queryHistory)
-  const [external, setExternal] = useState('')
+  const { data, loading, error, errorDetail, setError, run } = usePagedQuery<MessageHistoryPage>(queryHistory)
+  const [external, setExternal, externalDetail] = useErrorState('')
 
   useEffect(() => {
     const query = toQuery(applied, page)
@@ -106,8 +108,8 @@ function HistoryTab({ initialUid, room }: { initialUid?: string; room: string | 
   const uid = filters.uid.trim()
   const openExternal = async (): Promise<void> => {
     setExternal('')
-    const result = await apiClient.feature('openDanmakuHistory', { uid })
-    if (!result.ok) setExternal(result.message)
+    const result = await apiClient.feature('openDanmakuHistory', { uid }).catch(caught => ({ ok: false as const, ...displayError(caught, '无法打开历史弹幕页面') }))
+    if (!result.ok) setExternal(result)
   }
 
   const set = (key: keyof Filters) => (event: React.ChangeEvent<HTMLInputElement>): void => {
@@ -130,8 +132,8 @@ function HistoryTab({ initialUid, room }: { initialUid?: string; room: string | 
           </button>
         )}
       </div>
-      {external && <p className="form-error" role="alert">{external}</p>}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {external && <p className="form-error" role="alert"><ErrorText error={externalDetail ?? external} message={external} /></p>}
+      {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
       {data?.truncated && <p className="muted">已超出本地容量 {data.capacity} 条，较早的记录已移除。</p>}
       {data && (data.items.length === 0
         ? <p className="records-empty">无匹配的弹幕</p>
@@ -167,7 +169,7 @@ function FavoriteRow({ item, onChanged, onRemoved, onFill }: {
   const [draft, setDraft] = useState(item.text)
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError, errorDetail] = useErrorState('')
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
 
@@ -178,10 +180,10 @@ function FavoriteRow({ item, onChanged, onRemoved, onFill }: {
     if (text === item.text) { setEditing(false); return }
     setBusy(true)
     setError('')
-    const result = await apiClient.feature('updateDanmakuFavorite', { id: item.id, text })
+    const result = await apiClient.feature('updateDanmakuFavorite', { id: item.id, text }).catch(caught => ({ ok: false as const, ...displayError(caught, '收藏修改失败') }))
     if (!mounted.current) return
     setBusy(false)
-    if (!result.ok) { setError(result.message); return }
+    if (!result.ok) { setError(result); return }
     setEditing(false)
     onChanged(result.value)
   }
@@ -189,10 +191,10 @@ function FavoriteRow({ item, onChanged, onRemoved, onFill }: {
   const remove = async (): Promise<void> => {
     setBusy(true)
     setError('')
-    const result = await apiClient.feature('removeDanmakuFavorite', { id: item.id })
+    const result = await apiClient.feature('removeDanmakuFavorite', { id: item.id }).catch(caught => ({ ok: false as const, ...displayError(caught, '收藏删除失败') }))
     if (!mounted.current) return
     setBusy(false)
-    if (!result.ok) { setError(result.message); setConfirming(false); return }
+    if (!result.ok) { setError(result); setConfirming(false); return }
     onRemoved()
   }
 
@@ -232,7 +234,7 @@ function FavoriteRow({ item, onChanged, onRemoved, onFill }: {
           </>
         )}
       </div>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
     </li>
   )
 }
@@ -242,7 +244,7 @@ function FavoritesTab({ onFill }: { onFill: (text: string) => void }): React.Rea
   const [applied, setApplied] = useState('')
   const [page, setPage] = useState(1)
   const [revision, setRevision] = useState(0)
-  const { data, loading, error, setError, run } = usePagedQuery<FavoriteDanmakuPage>(queryFavorites)
+  const { data, loading, error, errorDetail, setError, run } = usePagedQuery<FavoriteDanmakuPage>(queryFavorites)
   const [items, setItems] = useState<FavoriteDanmaku[]>([])
 
   useEffect(() => {
@@ -273,7 +275,7 @@ function FavoritesTab({ onFill }: { onFill: (text: string) => void }): React.Rea
         <button type="submit" className="btn-solid small" disabled={loading}>搜索</button>
       </form>
       <p className="muted">收藏保存在本机，填入发送框后需手动发送。</p>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
       {data && (items.length === 0
         ? <p className="records-empty">{applied ? '无匹配的收藏' : '暂无收藏'}</p>
         : (

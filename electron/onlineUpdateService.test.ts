@@ -84,6 +84,16 @@ async function fixture(overrides: Partial<OnlineUpdateServiceOptions> = {}) {
 }
 
 describe('signed online update service', () => {
+  it('exposes bounded raw HTTP failure details while keeping signed update state intact', async () => {
+    const f = await fixture()
+    f.replies.set(f.source.mirrors[0]!.manifestUrl, () => Response.json({ message: 'Request limit exceeded', token: 'SIGNED_UPDATE_SECRET' },
+      { status: 429, statusText: 'Too Many Requests', headers: { 'retry-after': '30' } }))
+    const result = await f.service.check()
+    expect(result).toMatchObject({ phase: 'error', errorDetail: { status: 429, statusText: 'Too Many Requests',
+      retryAfter: '30', upstream: { message: 'Request limit exceeded' } } })
+    expect(JSON.stringify(result)).not.toContain('SIGNED_UPDATE_SECRET')
+    expect(f.stage).not.toHaveBeenCalled()
+  })
   it('does not contact the network until a manual check and never downloads as part of checking', async () => {
     const f = await fixture()
     expect(f.request).not.toHaveBeenCalled()

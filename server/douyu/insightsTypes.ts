@@ -174,4 +174,4 @@ export interface DouyuLiveNotification {
 export type DouyuInsightsEvent =
   | { type: 'changed'; room: string }
   | { type: 'live'; notification: DouyuLiveNotification }
-  | { type: 'monitor-error'; accountId: string; message: string }
+  | { type: 'monitor-error'; accountId: string; message: string; detail?: import('../../src/core/errorDetails').ErrorDetails }

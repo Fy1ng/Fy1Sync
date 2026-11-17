@@ -196,9 +196,9 @@ async function fallback(room: string, qualities: QualityOption[], deps: Resolver
   catch (error) {
     if (error instanceof StreamFailureError) throw error
     const message = error instanceof Error ? error.message : ''
-    if (/offline|not.live|未开播/i.test(message)) return failure('not-live', '虎牙房间当前未开播.', '请等待主播开播后重新加载.')
-    if (/login|sign.in|forbidden|restricted|geo.restrict|登录|封禁|整改/i.test(message)) return failure('restricted', '虎牙限制了该房间或画质的访问.', '请在虎牙官网确认可播放状态. 备用解析工具使用匿名访问.')
-    return failure('upstream-error', '虎牙备用解析失败.', MANUAL_URL_HINT)
+    if (/offline|not.live|未开播/i.test(message)) return failure('not-live', '虎牙房间当前未开播.', '请等待主播开播后重新加载.', error)
+    if (/login|sign.in|forbidden|restricted|geo.restrict|登录|封禁|整改/i.test(message)) return failure('restricted', '虎牙限制了该房间或画质的访问.', '请在虎牙官网确认可播放状态. 备用解析工具使用匿名访问.', error)
+    return failure('upstream-error', '虎牙备用解析失败.', MANUAL_URL_HINT, error)
   }
   // Some Huya extractor versions omit live/codec fields; the page already confirmed ON.
   if (data.is_live === false || (typeof data.live_status === 'string' && data.live_status !== 'is_live') || replayTitle(data.title)) return failure('not-live', '虎牙房间当前不是直播.', MANUAL_URL_HINT)
@@ -232,7 +232,7 @@ export async function resolveHuya(input: string, deps: ResolverDeps): Promise<Re
     }
     page = parseHuyaPage(await readRoomPage(inputRoom), inputRoom)
     if (page.ok && !/^\d+$/.test(inputRoom)) page = parseHuyaPage(await readRoomPage(page.room), page.room)
-  } catch (error) { if (error instanceof StreamFailureError) throw error; return failure('upstream-error', '请求虎牙房间页面失败.', MANUAL_URL_HINT) }
+  } catch (error) { if (error instanceof StreamFailureError) throw error; return failure('upstream-error', '请求虎牙房间页面失败.', MANUAL_URL_HINT, error) }
   if (!page.ok) return page
   const quality = deps.quality ?? page.qualities[0]?.id ?? '0'
   if (page.qualities.length && !page.qualities.some(option => option.id === quality)) return failure('unsupported-url', '虎牙当前不提供所选画质.', '请重新解析并选择列表中的画质.')

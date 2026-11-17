@@ -1,5 +1,7 @@
 import { checkUrl, safeFetch, type Resolver } from '../server/safeFetch'
 import type { ProxyConfig } from '../server/config'
+import { diagnosticDetails } from '../server/errorDetails'
+import { httpErrorDetails } from '../server/httpError'
 
 export type AppUpdateSource =
   | { kind: 'manifest'; manifestUrl: string; releaseOrigin?: string }
@@ -12,6 +14,7 @@ export interface AppUpdateState {
   releaseNotes: string | null
   checkedAt: number | null
   message: string
+  errorDetail?: import('../src/core/errorDetails').ErrorDetails
 }
 type ParsedVersion = { numbers: number[]; prerelease: string[] }
 const MAX_JSON = 256 * 1024
@@ -122,12 +125,13 @@ export class AppUpdateService {
       latestVersion: null, releaseUrl: null, releaseNotes: null, checkedAt: null,
       message: this.source ? '手动检查应用版本更新.' : '尚未配置本应用的可信发布源.' }
   }
-  state(): AppUpdateState { return { ...this.status } }
+  state(): AppUpdateState { return structuredClone(this.status) }
   check(): Promise<AppUpdateState> {
     if (this.disposed) return Promise.resolve({ ...this.state(), phase: 'error', message: '应用更新服务已关闭.' })
     if (!this.source) return Promise.resolve(this.state())
     if (this.flight) return this.flight
     this.status = { ...this.status, phase: 'checking', latestVersion: null, releaseUrl: null, releaseNotes: null, message: '正在检查应用版本.' }
+    delete this.status.errorDetail
     const flight = this.run(this.source).finally(() => { if (this.flight === flight) this.flight = undefined })
     this.flight = flight
     return flight
@@ -149,7 +153,9 @@ export class AppUpdateService {
           const result = await bounded((this.options.request ?? fetch)(input, { ...init,
             headers: { Accept: 'application/json', 'User-Agent': 'Fy1Sync-Version-Check' },
           }).then(result => { if (signal.aborted) { void result.body?.cancel(); throw new Error('Cancelled') }; return result }), signal)
-          if (result.status !== 200 || result.redirected || (result.url && result.url !== url.href)) { void result.body?.cancel(); throw new Error('Unexpected release response') }
+          if (result.status !== 200 || result.redirected || (result.url && result.url !== url.href)) {
+            throw Object.assign(new Error('Unexpected release response'), await httpErrorDetails(result))
+          }
           return result
         },
       })
@@ -172,9 +178,9 @@ export class AppUpdateService {
       this.status = { phase: available ? 'available' : 'current', currentVersion: this.currentVersion, latestVersion,
         releaseUrl: releaseUrl.href, releaseNotes: typeof notes === 'string' ? notes.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/gu, '').slice(0, 8_192) : null,
         checkedAt: now(), message: available ? '发现新的应用版本, 可查看发布页.' : '未发现比当前版本更新的发布版本.' }
-    } catch {
+    } catch (error) {
       this.status = { phase: 'error', currentVersion: this.currentVersion, latestVersion: null, releaseUrl: null,
-        releaseNotes: null, checkedAt: now(), message: this.disposed ? '应用更新服务已关闭.' : '应用更新检查失败或发布信息无法确认, 请稍后重试.' }
+        releaseNotes: null, checkedAt: now(), message: this.disposed ? '应用更新服务已关闭.' : '应用更新检查失败或发布信息无法确认, 请稍后重试.', errorDetail: diagnosticDetails(error) }
     } finally { clearTimeout(timer) }
     return this.state()
   }

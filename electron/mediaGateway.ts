@@ -18,6 +18,7 @@ export interface GatewayInput {
   readFailure: () => StreamFailure | undefined
   /** Main-only cumulative observed media bytes for this input and its HLS children. */
   readBytes: () => number
+  release: () => void
 }
 interface Listener { server: Server; registry: MediaRegistry; origin: string; host: string }
 const CAPABILITY = /^\/media\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
@@ -52,13 +53,16 @@ export class MediaGateway {
     const listener = await this.start()
     if (this.closed) throw new Error('媒体转发服务已关闭.')
     // Isolate diagnostics per FFmpeg input while preserving its frozen route decisions.
-    const inputNetwork: NetworkContext = { route: target => network.route(target) }
+    const lifetime = new AbortController()
+    const inputNetwork: NetworkContext = { route: target => network.route(target), media: network.media,
+      signal: network.signal ? AbortSignal.any([network.signal, lifetime.signal]) : lifetime.signal }
     return {
       url: listener.registry.register(url, headers ? { ...headers } : undefined, inputNetwork, access),
       // The upstream policy belongs to the Node gateway, never FFmpeg's environment.
       proxyUrl: '',
       readFailure: () => { const failure = this.failures.get(inputNetwork); return failure ? { ...failure } : undefined },
       readBytes: () => this.byteCounts.get(inputNetwork) ?? 0,
+      release: () => lifetime.abort(),
     }
   }
 

@@ -10,14 +10,16 @@ describe('sanitized stream failures', () => {
     [{ status: 429 }, 'http', 'http-429'],
     [{ message: 'Server returned 404 https://private.invalid/?token=PRIVATE Cookie=PRIVATE' }, 'http', 'http-404'],
     [new Error('Cookie=PRIVATE https://private.invalid/?token=PRIVATE'), 'connect', 'connection-failed'],
-  ])('classifies a fixed code and discards all source text', (error, stage, code) => {
+  ])('classifies fixed public text while preserving redacted original fields', (error, stage, code) => {
     const result = classifyNetworkFailure(error)
     expect(result).toMatchObject({ stage, code })
-    expect(JSON.stringify(result)).not.toMatch(/PRIVATE|private\.invalid|token=|Cookie/)
+    expect(result.message).not.toMatch(/PRIVATE|private\.invalid|token=|Cookie/)
+    expect(JSON.stringify(result.detail)).not.toContain('PRIVATE')
+    expect(result.detail).toBeDefined()
   })
   it.each(['resolve', 'proxy', 'connect', 'http', 'stall', 'playback-not-ready'] as const)('preserves the structured %s stage', stage => {
     const failure = classifyNetworkFailure(undefined, stage)
-    expect(classifyNetworkFailure(new StreamFailureError(failure))).toEqual(failure)
+    expect(classifyNetworkFailure(new StreamFailureError(failure))).toMatchObject({ code: failure.code, stage: failure.stage })
   })
   it('ignores unrecognized FFmpeg diagnostics', () => {
     expect(classifyFfmpegStderr('Cookie=PRIVATE https://private.invalid/?token=PRIVATE')).toBeUndefined()
@@ -44,19 +46,23 @@ describe('sanitized stream failures', () => {
     ['host-not-allowed', 'resolve', 'host-not-allowed'],
   ])('classifies ProxyError reason %s independently of its private detail', (reason, stage, code) => {
     const result = classifyNetworkFailure({ name: 'ProxyError', reason, status: 403,
-      message: 'PRIVATE https://signed.invalid/?token=PRIVATE Cookie=PRIVATE' })
+      message: 'upstream diagnostic https://signed.invalid/?token=PRIVATE Cookie=PRIVATE' })
     expect(result).toMatchObject({ stage, code })
     expect(result.message).not.toBe('目标地址未通过安全检查.')
-    expect(JSON.stringify(result)).not.toMatch(/PRIVATE|signed\.invalid|token=|Cookie/)
+    expect(result.message).not.toMatch(/upstream diagnostic|signed\.invalid|token=|Cookie/)
+    expect(JSON.stringify(result.detail)).not.toContain('PRIVATE')
+    expect(result.detail?.message).toContain('upstream diagnostic')
   })
   it.each([
     ['Invalid data found when processing input https://signed.invalid/?token=PRIVATE', 'media-format-invalid'],
     ['moov atom not found: Cookie=PRIVATE', 'media-format-invalid'],
     ['Unknown decoder private-codec', 'media-codec-unsupported'],
     ['Could not find codec parameters for stream 0', 'media-codec-unsupported'],
-  ])('classifies media format diagnostics without forwarding source text', (text, code) => {
+  ])('classifies media format diagnostics and redacts their original stderr', (text, code) => {
     expect(classifyFfmpegStderr(text)).toMatchObject({ stage: 'playback-not-ready', code })
-    expect(JSON.stringify(classifyFfmpegStderr(text))).not.toMatch(/PRIVATE|signed\.invalid|private-codec|token=|Cookie/)
+    expect(classifyFfmpegStderr(text)?.message).not.toMatch(/PRIVATE|signed\.invalid|private-codec|token=|Cookie/)
+    expect(JSON.stringify(classifyFfmpegStderr(text)?.detail)).not.toContain('PRIVATE')
+    expect(classifyFfmpegStderr(text)?.detail?.stderr).toBeDefined()
   })
   it('does not mislabel a generic input-opening failure as invalid media', () => {
     expect(classifyFfmpegStderr('Error opening input: Immediate exit requested')).toBeUndefined()

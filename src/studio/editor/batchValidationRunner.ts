@@ -5,6 +5,7 @@ import { FrameGrabber, FULL_FRAME_ROI, type GrabbedFrame } from '../../recogniti
 import { analyzeValidationFrame, failureValidationRow } from './batchValidationAnalysis'
 import { FIELD_LABELS } from './editorModel'
 import { CUE_LABELS } from './cueModel'
+import { displayError, errorDetails, errorMessage } from '../../core/errorDetails'
 import { MAX_VALIDATION_SAMPLES, type ValidationImage, type ValidationPreview, type ValidationRange, type ValidationRow, type ValidationRun } from './batchValidationTypes'
 
 const FRAME_TIMEOUT = 15_000
@@ -51,7 +52,7 @@ export function waitValidationVideo(video: HTMLVideoElement, at: number, signal:
       else resolve()
     }
     const aborted = (): void => finish(signal.reason ?? new Error('验收已停止.'))
-    const failed = (): void => finish(new Error('录像解码失败.'))
+    const failed = (): void => finish(displayError({ code: video.error?.code, message: video.error?.message }, '录像解码失败.'))
     const check = (event?: Event): void => {
       if (settled) return
       if (signal.aborted) { aborted(); return }
@@ -95,7 +96,7 @@ export function createValidationCapture(source: string): ValidationCapture {
       await waitValidationVideo(video, at, signal)
       signal.throwIfAborted()
       const grabbed = grabber.grab(video, FULL_FRAME_ROI, at)
-      if (!grabbed.ok) throw new Error(`取帧失败: ${grabbed.reason}`)
+      if (!grabbed.ok) throw displayError(grabbed, `取帧失败: ${grabbed.reason}`)
       return grabbed.frame
     },
     dispose() {
@@ -155,7 +156,7 @@ export class BatchValidationSession {
           infrastructureFailures = 0
         } catch (error) {
           if (signal.aborted) throw error
-          this.rows.push(failureValidationRow(at, index, error instanceof Error ? error.message : String(error)))
+          this.rows.push(failureValidationRow(at, index, errorMessage(error), errorDetails(error)))
           infrastructureFailures++
         }
         progress()

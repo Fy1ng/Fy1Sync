@@ -11,6 +11,7 @@
 import { useSyncExternalStore } from 'react'
 import { apiClient } from '../../app/apiClient'
 import type { DouyuInsightsEvent } from '../../../server/douyu/insightsTypes'
+import { displayError, errorDetails, type ErrorDetails } from '../../core/errorDetails'
 
 export type NotifyScope = 'selected' | 'all'
 
@@ -24,7 +25,9 @@ export interface LiveNoticeState {
   accountId: string | null
   pending: boolean
   error: string
+  errorDetail?: ErrorDetails
   monitorError: string
+  monitorErrorDetail?: ErrorDetails
   /** Why the reminder was switched off by the app rather than by the viewer. */
   stopped: string
   /** False until main has said what it runs; the switch waits for that instead of showing off. */
@@ -66,7 +69,7 @@ function systemNotify(title: string, body: string): void {
 function onEvent(event: DouyuInsightsEvent): void {
   if (event.type === 'monitor-error') {
     if (state.accountId && event.accountId !== state.accountId) return
-    set({ monitorError: event.message })
+    set({ monitorError: event.message, monitorErrorDetail: errorDetails(event) })
     return
   }
   if (event.type !== 'live') return
@@ -106,13 +109,13 @@ export async function applyLiveNotices(input: ApplyInput): Promise<boolean> {
     : input.scope === 'all' ? { enabled: true, accountId: input.accountId! }
       : { enabled: true, rooms, ...(input.accountId ? { accountId: input.accountId } : {}) }
   const mine = ++generation
-  set({ pending: true, error: '', monitorError: '', stopped: '', scope: input.scope, rooms })
+  set({ pending: true, error: '', errorDetail: undefined, monitorError: '', monitorErrorDetail: undefined, stopped: '', scope: input.scope, rooms })
   // Subscribe before the monitor starts so its first event cannot be missed.
   if (active) listen(true)
-  const result = await apiClient.feature('setDouyuLiveNotifications', args)
+  const result = await apiClient.feature('setDouyuLiveNotifications', args).catch(caught => ({ ok: false as const, code: 'request-failed', ...displayError(caught, '无法更新开播提醒设置') }))
   if (mine !== generation) return result.ok
   if (!result.ok) {
-    set({ pending: false, error: result.message })
+    set({ pending: false, error: result.message, errorDetail: errorDetails(result) })
     if (!state.enabled) listen(false)
     return false
   }
@@ -129,16 +132,20 @@ export async function applyLiveNotices(input: ApplyInput): Promise<boolean> {
  */
 export async function syncLiveNotices(): Promise<void> {
   const mine = generation
-  const result = await apiClient.feature('getDouyuLiveNotifications', undefined)
-  if (mine !== generation || state.pending || !result.ok) return
+  const result = await apiClient.feature('getDouyuLiveNotifications', undefined).catch(caught => ({ ok: false as const, code: 'request-failed', ...displayError(caught, '无法读取开播提醒设置') }))
+  if (mine !== generation || state.pending) return
+  if (!result.ok) { set({ synced: true, error: result.message, errorDetail: errorDetails(result) }); return }
   const value = result.value as Partial<typeof result.value> | null
-  if (!value || typeof value.enabled !== 'boolean' || !Array.isArray(value.rooms)) return
+  if (!value || typeof value.enabled !== 'boolean' || !Array.isArray(value.rooms)) {
+    set({ synced: true, error: '无法读取开播提醒设置', errorDetail: errorDetails(result) })
+    return
+  }
   const enabled = value.enabled
   const rooms = value.rooms.filter((room): room is string => typeof room === 'string')
   const followedAccountId = typeof value.followedAccountId === 'string' ? value.followedAccountId : null
   // An empty room list with a followed account is "全部关注"; otherwise keep the rooms.
   const scope: NotifyScope = enabled && rooms.length === 0 && followedAccountId ? 'all' : rooms.length > 0 ? 'selected' : state.scope
-  set({ synced: true, enabled, accountId: enabled ? followedAccountId : null,
+  set({ synced: true, error: '', errorDetail: undefined, enabled, accountId: enabled ? followedAccountId : null,
     ...(enabled ? { scope, rooms: [...new Set(rooms)].slice(0, MAX_NOTIFY_ROOMS) } : {}) })
   listen(enabled)
 }

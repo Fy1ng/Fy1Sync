@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiClient, type ApiResult } from '../../app/apiClient'
 import type { OnlineUpdateItemState, OnlineUpdateKind, OnlineUpdateSourceId, OnlineUpdateState } from '../../../electron/onlineUpdateContracts'
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 import './about.css'
 
 const SOURCE: Record<OnlineUpdateSourceId, string> = { github: 'GitHub', gitcode: 'GitCode' }
@@ -24,7 +26,7 @@ export function AppUpdateSettings(): React.ReactNode {
   const [state, setState] = useState<OnlineUpdateState | null>(null)
   const [busy, setBusy] = useState<Operation | null>(null)
   const [cancelling, setCancelling] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError, errorDetail] = useErrorState('')
   const [notice, setNotice] = useState('')
   const lifetime = useRef<object | null>(null)
   const pending = useRef<object | null>(null)
@@ -37,9 +39,9 @@ export function AppUpdateSettings(): React.ReactNode {
       const result = await apiClient.feature('getOnlineUpdateState', undefined)
       if (lifetime.current !== owner || requestedRevision !== revision.current) return
       if (result.ok) setState(result.value)
-      else setError(current => current || result.message)
-    } catch {
-      if (lifetime.current === owner && requestedRevision === revision.current) setError(current => current || '读取更新状态失败, 请重试.')
+      else setError(current => current || result)
+    } catch (caught) {
+      if (lifetime.current === owner && requestedRevision === revision.current) setError(current => current || displayError(caught, '读取更新状态失败, 请重试.'))
     }
   }
 
@@ -70,7 +72,7 @@ export function AppUpdateSettings(): React.ReactNode {
       const result = await request()
       if (lifetime.current !== owner || pending.current !== token) return
       if (!result.ok) {
-        setError(result.message)
+        setError(result)
         if (operation !== 'read') await reread(owner)
       } else if ('accepted' in result.value) {
         if (!result.value.accepted) setNotice('操作已取消, 当前应用继续运行.')
@@ -78,9 +80,9 @@ export function AppUpdateSettings(): React.ReactNode {
         // A pushed state can be newer than a delayed command response.
         setState(result.value)
       }
-    } catch {
+    } catch (caught) {
       if (lifetime.current !== owner || pending.current !== token) return
-      setError('更新操作未能完成, 请重新读取状态后重试.')
+      setError(displayError(caught, '更新操作未能完成, 请重新读取状态后重试.'))
       if (operation !== 'read') await reread(owner)
     } finally {
       if (pending.current === token) {
@@ -103,10 +105,10 @@ export function AppUpdateSettings(): React.ReactNode {
       if (lifetime.current !== owner || cancelPending.current !== token) return
       if (result.ok) {
         if (submittedRevision === revision.current) setState(result.value)
-      } else { setError(result.message); await reread(owner) }
-    } catch {
+      } else { setError(result); await reread(owner) }
+    } catch (caught) {
       if (lifetime.current === owner && cancelPending.current === token) {
-        setError('取消下载失败, 请重新读取状态后重试.')
+        setError(displayError(caught, '取消下载失败, 请重新读取状态后重试.'))
         await reread(owner)
       }
     } finally {
@@ -149,7 +151,7 @@ export function AppUpdateSettings(): React.ReactNode {
       <p className="muted">切换只保存来源, 点击检查更新后访问所选源. 失败时保留已有版本, 不自动切换来源.</p>
       <div className="row-split">
         <p className={`about-status is-${state?.phase ?? 'idle'}`} role="status">
-          {status}
+          {state?.phase === 'error' && !checking ? <ErrorText error={state.errorDetail ?? state} message={status} /> : status}
           {state?.message && !checking && <span className="muted">{state.message}</span>}
         </p>
         <button type="button" className="btn-solid small" disabled={networkDisabled}
@@ -175,7 +177,7 @@ export function AppUpdateSettings(): React.ReactNode {
       <p className="muted">赛事样式包, 赛程与队标, 取流工具沿用各自的更新入口.</p>
       {notice && <p className="muted" role="status">{notice}</p>}
       {error && <div className="about-update-error">
-        <p className="form-error" role="alert">{error}</p>
+        <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>
         <button type="button" className="btn-quiet small" disabled={busy !== null || cancelling}
           onClick={() => void perform('read', () => apiClient.feature('getOnlineUpdateState', undefined))}>重新读取状态</button>
       </div>}
@@ -185,7 +187,7 @@ export function AppUpdateSettings(): React.ReactNode {
 
 function UpdateChannel({ kind, item, disabled, onDownload, onApply }: {
   kind: OnlineUpdateKind
-  item: OnlineUpdateItemState
+  item: OnlineUpdateItemState & { errorDetail?: unknown }
   disabled: boolean
   onDownload: () => void
   onApply: () => void
@@ -208,7 +210,7 @@ function UpdateChannel({ kind, item, disabled, onDownload, onApply }: {
           {frontend ? '应用并重启' : '安装完整更新'}
         </button>}
       </div>
-      <p className={`about-status is-${item.phase}`} role="status">{ITEM_PHASE[item.phase]}
+      <p className={`about-status is-${item.phase}`} role="status">{item.phase === 'error' ? <ErrorText error={item.errorDetail ?? item} message={ITEM_PHASE[item.phase]} /> : ITEM_PHASE[item.phase]}
         {item.message && <span className="muted">{item.message}</span>}
       </p>
       {item.phase === 'downloading' && <div className="about-update-progress">

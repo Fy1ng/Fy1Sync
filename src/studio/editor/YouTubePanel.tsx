@@ -14,6 +14,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { YtImportHeight } from '../../../electron/ytImport'
 import type { GrabbedFrame } from '../../recognition/frameGrabber'
 import { Switch } from '../kit'
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 
 /** Longest stretch one download may cover. */
 export const MAX_CLIP_SECONDS = 3 * 60 * 60
@@ -31,6 +33,7 @@ export interface YouTubeBrowseState {
   /** The player alone fills its view; until then main keeps the view hidden. */
   playerOnly: boolean
   error: YouTubeError | null
+  errorDetail?: unknown
 }
 
 export type YouTubeError =
@@ -63,6 +66,7 @@ export interface YouTubeClipJob {
   height?: number
   targetHeight?: YtImportHeight
   error?: YouTubeError
+  errorDetail?: unknown
   /** Set once ready: a URL this page can play and seek. */
   mediaUrl?: string
 }
@@ -77,7 +81,7 @@ export interface YouTubeViewport {
 
 /** What the editor needs from main. Kept narrow so the wiring lives in one place. */
 export interface YouTubeSource {
-  open(url: string): Promise<{ ok: true } | { ok: false; error: YouTubeError }>
+  open(url: string): Promise<{ ok: true } | { ok: false; error: YouTubeError; detail?: unknown }>
   close(): Promise<void>
   /** Place the player over `rect`, or hide it. */
   place(rect: YouTubeViewport, visible: boolean): Promise<void>
@@ -85,10 +89,11 @@ export interface YouTubeSource {
   subscribe(listener: (state: YouTubeBrowseState | null) => void): () => void
   /** The state right now, for marks that should not lag the pushed one. */
   now(): Promise<YouTubeBrowseState | null>
-  still(): Promise<{ ok: true; still: YouTubeStill } | { ok: false; error: YouTubeError }>
-  startClip(url: string, startSeconds: number, endSeconds: number, targetHeight: YtImportHeight): Promise<{ ok: true; jobId: string } | { ok: false; error: YouTubeError }>
+  still(): Promise<{ ok: true; still: YouTubeStill } | { ok: false; error: YouTubeError; detail?: unknown }>
+  startClip(url: string, startSeconds: number, endSeconds: number, targetHeight: YtImportHeight): Promise<{ ok: true; jobId: string } | { ok: false; error: YouTubeError; detail?: unknown }>
   cancelClip(jobId: string): Promise<void>
   subscribeClips(listener: (jobs: YouTubeClipJob[]) => void): () => void
+  subscribeErrors?(listener: (error: unknown) => void): () => void
 }
 
 /** Plain words for each failure, in the editor's voice: what happened and what to do. */
@@ -210,7 +215,7 @@ export function YouTubePanel({ source, onStill, onClipReady, autoStill, onAutoSt
   const [openedUrl, setOpenedUrl] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [state, setState] = useState<YouTubeBrowseState | null>(null)
-  const [problem, setProblem] = useState<string | null>(null)
+  const [problem, setProblem, problemDetail] = useErrorState(null)
   const [taking, setTaking] = useState(false)
   const [targetHeight, setTargetHeight] = useState<YtImportHeight>(2160)
   const [mark, setMark] = useState<{ in: number | null; out: number | null }>({ in: null, out: null })
@@ -219,6 +224,7 @@ export function YouTubePanel({ source, onStill, onClipReady, autoStill, onAutoSt
   const slot = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => source.subscribe(setState), [source])
+  useEffect(() => source.subscribeErrors?.(caught => setProblem(caught)), [source, setProblem])
   useEffect(() => source.subscribeClips((next) => {
     setJobs(next)
     for (const job of next) {
@@ -238,11 +244,13 @@ export function YouTubePanel({ source, onStill, onClipReady, autoStill, onAutoSt
     setBusy(true)
     setProblem(null)
     const url = `https://www.youtube.com/watch?v=${videoId}`
-    const result = await source.open(url)
-    setBusy(false)
-    if (!result.ok) { setProblem(YOUTUBE_ERROR_TEXT[result.error]); return }
-    setOpenedUrl(url)
-    setMark({ in: null, out: null })
+    try {
+      const result = await source.open(url)
+      if (!result.ok) { setProblem(displayError(result.detail ?? result, YOUTUBE_ERROR_TEXT[result.error])); return }
+      setOpenedUrl(url)
+      setMark({ in: null, out: null })
+    } catch (caught) { setProblem(displayError(caught, '录像打开失败, 请重试.')) }
+    finally { setBusy(false) }
   }
 
   /** The recording last seen and where it stood still (`at`, null while it plays); null before any. */
@@ -261,11 +269,12 @@ export function YouTubePanel({ source, onStill, onClipReady, autoStill, onAutoSt
           if (stopped.current) stopped.current = { ...stopped.current, at: null }
           return
         }
-        setProblem(YOUTUBE_ERROR_TEXT[result.error])
+        setProblem(displayError(result.detail ?? result, YOUTUBE_ERROR_TEXT[result.error]))
         return
       }
       await onStill(result.still, auto)
-    } finally { takingRef.current = false; setTaking(false) }
+    } catch (caught) { setProblem(displayError(caught, '录像取帧失败, 请重试.')) }
+    finally { takingRef.current = false; setTaking(false) }
   }, [source, onStill])
 
   // 自动取帧: take the frame the player stops on, paused or moved while paused, once. Only a
@@ -286,8 +295,10 @@ export function YouTubePanel({ source, onStill, onClipReady, autoStill, onAutoSt
 
   // The pushed state can be a second old; a mark reads the player now.
   const setPoint = async (which: 'in' | 'out'): Promise<void> => {
-    const current = await source.now()
-    if (current) setMark((m) => ({ ...m, [which]: current.currentTime }))
+    try {
+      const current = await source.now()
+      if (current) setMark((m) => ({ ...m, [which]: current.currentTime }))
+    } catch (caught) { setProblem(displayError(caught, '读取录像位置失败, 请重试.')) }
   }
 
   const length = mark.in !== null && mark.out !== null ? mark.out - mark.in : null
@@ -296,8 +307,10 @@ export function YouTubePanel({ source, onStill, onClipReady, autoStill, onAutoSt
   const download = async (): Promise<void> => {
     if (!openedUrl || mark.in === null || mark.out === null || clipProblem) return
     setProblem(null)
-    const result = await source.startClip(openedUrl, mark.in, mark.out, targetHeight)
-    if (!result.ok) setProblem(clipError(result.error, targetHeight))
+    try {
+      const result = await source.startClip(openedUrl, mark.in, mark.out, targetHeight)
+      if (!result.ok) setProblem(displayError(result.detail ?? result, clipError(result.error, targetHeight)))
+    } catch (caught) { setProblem(displayError(caught, '录像下载未能开始, 请重试.')) }
   }
   const running = jobs.some((job) => job.state === 'probing' || job.state === 'downloading')
   const native = state ? Number.isSafeInteger(state.videoWidth) && state.videoWidth > 0
@@ -316,7 +329,7 @@ export function YouTubePanel({ source, onStill, onClipReady, autoStill, onAutoSt
         <>
           {/* Main lays the player over this box; what is drawn here shows only until it is up. */}
           <div className="yt-player" ref={slot} data-ready={ready}>
-            {!ready && <span className="muted">{state?.error ? YOUTUBE_ERROR_TEXT[state.error] : '正在载入…'}</span>}
+            {!ready && <span className="muted">{state?.error ? <ErrorText error={state.errorDetail ?? state} message={YOUTUBE_ERROR_TEXT[state.error]} /> : '正在载入…'}</span>}
           </div>
           <div className="yt-status">
             <span className="num" data-native={native} title="YouTube 实际解码的尺寸">
@@ -349,11 +362,11 @@ export function YouTubePanel({ source, onStill, onClipReady, autoStill, onAutoSt
               下载这一段{length !== null && !clipProblem ? `（${clock(length)}）` : ''}
             </button>
           </div>
-          {clipProblem && <p className="form-error">{clipProblem}</p>}
+          {clipProblem && <p className="form-error"><ErrorText error={clipProblem} message={clipProblem} /></p>}
         </>
       )}
 
-      {problem && <p className="form-error" role="alert">{problem}</p>}
+      {problem && <p className="form-error" role="alert"><ErrorText error={problemDetail ?? problem} message={problem} /></p>}
 
       {jobs.length > 0 && (
         <ul className="yt-jobs" aria-label="下载">
@@ -367,10 +380,10 @@ export function YouTubePanel({ source, onStill, onClipReady, autoStill, onAutoSt
                   : job.state === 'downloading' ? (job.progress !== null ? `正在下载 ${Math.round(job.progress * 100)}%` : '正在下载…')
                     : job.state === 'ready' ? `已下载${job.width ? ` · ${job.width}×${job.height}` : ''}`
                       : job.state === 'cancelled' ? '已取消'
-                        : clipError(job.error ?? 'failed', job.targetHeight)}
+                        : <ErrorText error={job.errorDetail ?? job} message={clipError(job.error ?? 'failed', job.targetHeight)} />}
               </span>
               {(job.state === 'probing' || job.state === 'downloading') && (
-                <button type="button" className="btn-quiet small" onClick={() => void source.cancelClip(job.jobId)}>取消</button>
+                <button type="button" className="btn-quiet small" onClick={() => void source.cancelClip(job.jobId).catch(caught => setProblem(displayError(caught, '取消下载失败, 请重试.')))}>取消</button>
               )}
               {job.state === 'ready' && (
                 <button type="button" className="btn-quiet small" onClick={() => onClipReady(job)}>打开</button>

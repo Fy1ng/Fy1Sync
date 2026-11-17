@@ -357,14 +357,15 @@ describe('Huya resolver token fallback and media boundary', () => {
     expect(result).toMatchObject({ ok: false, failure: { code: 'needs-manual-url' } })
   })
   it.each([
-    ['not live PRIVATE', 'not-live'], ['Forbidden PRIVATE Cookie: SECRET', 'restricted'],
+    ['not live diagnostic', 'not-live'], ['Forbidden diagnostic Cookie: SECRET', 'restricted'],
     ['request failed https://signed.huya.com/x.flv?wsSecret=PRIVATE Cookie: SECRET', 'upstream-error'],
   ])('sanitizes every extractor error while classifying failure as %s', async (diagnostic, code) => {
     const loggers = (['error', 'warn', 'info', 'log'] as const).map(method => vi.spyOn(console, method).mockImplementation(() => {}))
     try {
       const result = await resolveHuya('123456', deps({ fetchText: async () => page({}, [sampleLine({ sFlvAntiCode: 'invalid' })]), runYtDlp: async () => { throw new Error(diagnostic) } }))
       expect(result).toMatchObject({ ok: false, failure: { code, message: expect.stringContaining('虎牙'), hint: expect.any(String) } })
-      expect(JSON.stringify(result)).not.toMatch(/PRIVATE|SECRET|signed\.huya|Cookie|wsSecret/)
+      expect(JSON.stringify(result)).not.toMatch(/PRIVATE|SECRET/)
+      if (!result.ok) expect(result.failure.detail?.message).toBeDefined()
       for (const logger of loggers) expect(logger).not.toHaveBeenCalled()
     } finally { for (const logger of loggers) logger.mockRestore() }
   })
@@ -383,7 +384,7 @@ describe('Huya resolver token fallback and media boundary', () => {
     expect(await resolveHuya('123456', deps({ fetchText: async () => page({}, []) }))).toMatchObject({ ok: false, failure: { code: 'needs-manual-url' } })
     const result = await resolveHuya('123456', deps({ fetchText: async () => { throw new Error('Cookie: SECRET signed.huya.com/?wsSecret=PRIVATE') } }))
     expect(result).toMatchObject({ ok: false, failure: { code: 'upstream-error' } })
-    expect(JSON.stringify(result)).not.toMatch(/SECRET|PRIVATE|Cookie|signed\.huya|wsSecret/)
+    expect(JSON.stringify(result)).not.toMatch(/SECRET|PRIVATE/)
   })
   it.each(['-1', '1.5', '1000001', 'x', '0\n', '1'.repeat(128), '9000'])('rejects invalid or unavailable quality %j without WUP or extractor requests', async quality => {
     const fetchBytes = vi.fn()

@@ -1,5 +1,6 @@
 import { StreamFailureError } from './networkFailure'
 import type { PlatformKind } from './platforms/types'
+import { DEFAULT_MEDIA_NETWORK, type MediaNetworkOptions } from './mediaNetworkOptions'
 
 export type DomesticRouting = 'direct' | 'system'
 export interface NetworkRoute {
@@ -8,7 +9,7 @@ export interface NetworkRoute {
   reason?: 'socks4-unsupported' | 'proxy-type-unsupported'
   alternatives?: readonly NetworkRoute[]
 }
-export interface NetworkContext { route(url: string): Promise<NetworkRoute> }
+export interface NetworkContext { route(url: string): Promise<NetworkRoute>; media?: Readonly<MediaNetworkOptions>; signal?: AbortSignal }
 export interface ProxySummary { type: 'direct' | 'HTTP' | 'SOCKS' | 'PAC'; fallbackReason?: string }
 export const directNetwork: NetworkContext = { route: async () => ({ kind: 'direct' }) }
 const DOMESTIC = /(^|\.)(douyu\.com|douyucdn[23]?\.cn|dyscdn\.com|edgesrv\.com|douyuscdn\.com|bytefcdnrd\.com|bilibili\.com|bilivideo\.com|hdslb\.com|huya\.com|msstatic\.com|douyin\.com|amemv\.com|douyincdn\.com)$/i
@@ -62,7 +63,8 @@ export function routeUsesRemoteDns(route: NetworkRoute): boolean { return route.
 export class NetworkPolicy {
   private readonly cache = new Map<string, { expires: number; value: Promise<NetworkRoute> }>()
   constructor(private readonly resolveProxy: (url: string) => Promise<string>, private readonly mode: () => DomesticRouting,
-    private readonly now = Date.now, private readonly ttlMs = 15_000, private readonly proxyMode?: () => Promise<'PAC' | undefined>) {}
+    private readonly now = Date.now, private readonly ttlMs = 15_000, private readonly proxyMode?: () => Promise<'PAC' | undefined>,
+    private readonly mediaOptions: () => Readonly<MediaNetworkOptions> = () => DEFAULT_MEDIA_NETWORK) {}
   invalidate(): void { this.cache.clear() }
   private system(url: string): Promise<NetworkRoute> {
     const old = this.cache.get(url)
@@ -97,6 +99,36 @@ export class NetworkPolicy {
     const source = await this.proxyMode?.().catch(() => undefined)
     return { type: source ?? (types.size > 1 ? 'PAC' : [...types][0] as ProxySummary['type']),
       ...(routes.some(route => route.reason) ? { fallbackReason: routes.find(route => route.reason)!.reason } : {}) }
+  }
+
+  /** Playback opts in explicitly; login, account operations and updates use context(). */
+  mediaContext(platform?: PlatformKind | null): NetworkContext {
+    const media = Object.freeze({ ...this.mediaOptions() })
+    const platformNetwork = this.context(platform)
+    const memo = new Map<string, Promise<NetworkRoute>>()
+    return { media, route: (url) => {
+      let route = memo.get(url)
+      if (!route) {
+        route = (async (): Promise<NetworkRoute> => {
+          let selected: NetworkRoute
+          if (media.routing === 'direct') selected = { kind: 'direct' }
+          else if (media.routing === 'custom') {
+            const proxy = new URL(media.proxyUrl)
+            if (proxy.protocol === 'socks5:' && !proxy.port) proxy.port = '1080'
+            selected = { kind: proxy.protocol === 'socks5:' ? 'socks5' : 'http', proxyUrl: proxy.href }
+          } else {
+            try { selected = await (media.routing === 'system' ? this.system(url) : platformNetwork.route(url)) }
+            catch (error) { if (media.fallbackDirect) return { kind: 'direct' }; throw error }
+          }
+          return media.fallbackDirect && !routeCandidates(selected).some(item => item.kind === 'direct')
+            ? { ...selected, alternatives: [...(selected.alternatives ?? []), { kind: 'direct' }] } : selected
+        })()
+        if (memo.size >= 1024) memo.delete(memo.keys().next().value!)
+        memo.set(url, route)
+        void route.catch(() => { if (memo.get(url) === route) memo.delete(url) })
+      }
+      return route
+    } }
   }
 }
 let defaultPolicy: NetworkPolicy | undefined

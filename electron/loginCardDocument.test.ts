@@ -41,6 +41,68 @@ afterEach(() => {
 })
 
 describe('the dedicated local login document', () => {
+  it('does not clear an OTP or disable its field when an HTTP phone preparation finishes after typing', async () => {
+    vi.mocked(bridge.state).mockResolvedValue({...BASE,platform:'douyin',transport:'http',mode:'sms',qr:{status:'ready'}})
+    let complete!: (result:{ok:boolean}) => void
+    vi.mocked(bridge.act).mockImplementation(action=>{sent.push(structuredClone(action));return new Promise(resolve=>{complete=resolve})})
+    start(); await flush()
+    input('phone').value='13800000000'
+    input('phone').dispatchEvent(new Event('input',{bubbles:true}))
+    input('sms-code').value='123456'
+    input('sms-code').focus()
+    await vi.advanceTimersByTimeAsync(220)
+    expect(sent).toEqual([{kind:'prepare-sms',phone:'13800000000',countryCode:'+86',accepted:true}])
+    expect(input('sms-code').value).toBe('123456')
+    expect(input('sms-code').disabled).toBe(false)
+    expect(document.activeElement).toBe(input('sms-code'))
+    complete({ok:true}); await flush()
+    expect(input('sms-code').value).toBe('123456')
+  })
+
+  it.each(['password','sms'] as const)('preserves %s inputs, focus and form nodes through an automatic HTTP QR replacement', async mode => {
+    vi.mocked(bridge.state).mockResolvedValue({...BASE,platform:'douyin',transport:'http',mode,qr:{status:'ready'}})
+    start(); await flush()
+    const form=document.getElementById('login-form')
+    input('username').value='synthetic-user'
+    input('password').value='synthetic-password'
+    input('phone').value='13800000000'
+    input('sms-code').value='123456'
+    const active=input(mode==='password'?'password':'sms-code')
+    active.focus()
+    active.setSelectionRange(2,4)
+    emit({platform:'douyin',transport:'http',mode,qr:{status:'loading'}})
+    expect(document.getElementById('login-form')).toBe(form)
+    expect(document.getElementById('card')!.dataset.stage).toBe('form')
+    expect(document.activeElement).toBe(active)
+    expect(active.selectionStart).toBe(2)
+    expect(active.disabled).toBe(false)
+    expect(button('submit-login').disabled).toBe(true)
+    expect(button('submit-login').textContent).toBe('登录')
+    emit({platform:'douyin',transport:'http',mode,qr:{status:'ready'}})
+    expect(input('password').value).toBe('synthetic-password')
+    expect(input('sms-code').value).toBe('123456')
+    expect(input('phone').value).toBe('13800000000')
+    expect(input('username').value).toBe('synthetic-user')
+    expect(document.activeElement).toBe(active)
+    expect(sent).toEqual([])
+    expect(document.getElementById('message')!.textContent).not.toContain('过期')
+  })
+
+  it('expands original login error fields without including credentials or form input', async () => {
+    start()
+    await flush()
+    input('password').value = 'FORM_SECRET'
+    emit({ stage: 'failed', message: '登录暂时失败', errorDetail: { status: 429, message: 'Rate Limited', token: 'API_SECRET' } })
+    expect(button('error-toggle').getAttribute('aria-expanded')).toBe('false')
+    button('error-toggle').click()
+    const panel = document.getElementById('error-panel')!
+    expect(panel.hidden).toBe(false)
+    expect(panel.textContent).toContain('429')
+    expect(panel.textContent).toContain('Rate Limited')
+    expect(panel.textContent).not.toMatch(/FORM_SECRET|API_SECRET/)
+    emit({ stage: 'form' })
+    expect(document.getElementById('error-tools')!.hidden).toBe(true)
+  })
   it('allows an explicit official-page handoff while waiting without resubmitting credentials', async () => {
     start()
     await flush()
@@ -62,23 +124,19 @@ describe('the dedicated local login document', () => {
     start()
     await flush()
     const structure = document.querySelector('#basic')!.querySelectorAll('*').length
-    for (const platform of ['douyu', 'bilibili', 'huya'] as const) {
+    for (const platform of ['douyu', 'bilibili', 'huya', 'douyin'] as const) {
       emit({ platform })
       expect(document.querySelector('#basic')!.querySelectorAll('*')).toHaveLength(structure)
       expect(document.querySelectorAll('[data-login-column]')).toHaveLength(2)
-      expect(input('accepted').checked).toBe(false)
+      expect(document.querySelectorAll('input[type="checkbox"], [role="checkbox"]')).toHaveLength(0)
     }
   })
 
-  it('requires consent and clears password immediately after its owner-scoped action', async () => {
+  it('submits with default consent and clears password immediately after its owner-scoped action', async () => {
     start()
     await flush()
     input('username').value = 'synthetic-user'
     input('password').value = 'synthetic-password'
-    submit()
-    expect(sent).toEqual([])
-    expect(document.getElementById('message')!.textContent).toContain('请先阅读并同意')
-    input('accepted').checked = true
     let finish!: (value: { ok: boolean }) => void
     vi.mocked(bridge.act).mockImplementation(action => {
       sent.push(structuredClone(action))
@@ -106,7 +164,6 @@ describe('the dedicated local login document', () => {
     expect(document.getElementById('password-fields')!.hidden).toBe(true)
     expect(document.getElementById('sms-fields')!.hidden).toBe(false)
     input('phone').value = '15500000000'
-    input('accepted').checked = true
     button('send-sms').click()
     await flush()
     expect(sent[1]).toEqual({ kind: 'send-sms', phone: '15500000000', countryCode: '+86', accepted: true })
@@ -129,16 +186,12 @@ describe('the dedicated local login document', () => {
     expect(input('sms-code').value).toBe('')
   })
 
-  it('prepares a consented phone without sending SMS so the official button can become enabled', async () => {
+  it('prepares a phone with default consent without sending SMS so the official button can become enabled', async () => {
     start()
     await flush()
     emit({ mode: 'sms', sms: { canSend: false, cooldownSeconds: null } })
     input('phone').value = '15500000000'
     input('phone').dispatchEvent(new Event('input', { bubbles: true }))
-    await vi.advanceTimersByTimeAsync(220)
-    expect(sent).toEqual([])
-    input('accepted').checked = true
-    input('accepted').dispatchEvent(new Event('input', { bubbles: true }))
     await vi.advanceTimersByTimeAsync(220)
     expect(sent).toEqual([{ kind: 'prepare-sms', phone: '15500000000', countryCode: '+86', accepted: true }])
     expect(button('send-sms').disabled).toBe(true)
@@ -192,7 +245,6 @@ describe('the dedicated local login document', () => {
       await flush()
       input('username').value = 'synthetic-user'
       input('password').value = 'synthetic-password'
-      input('accepted').checked = true
       button('toggle-password').click()
       if (action === 'submit') submit()
       if (action === 'mode') button('mode-sms').click()
@@ -213,7 +265,6 @@ describe('the dedicated local login document', () => {
     vi.mocked(bridge.act).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
     input('username').value = 'synthetic-user'
     input('password').value = 'synthetic-password'
-    input('accepted').checked = true
     submit()
     emit({ qr: { status: 'expired' }, message: '平台密码错误' })
     const message = document.getElementById('message')!
@@ -298,7 +349,6 @@ describe('the dedicated local login document', () => {
     vi.mocked(bridge.act).mockImplementation(action => { sent.push(structuredClone(action)); return new Promise(() => {}) })
     input('username').value = 'synthetic-user'
     input('password').value = 'synthetic-password'
-    input('accepted').checked = true
     submit()
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     expect(sent.at(-1)).toEqual({ kind: 'cancel' })

@@ -5,6 +5,7 @@
  */
 
 import type { DouyuGiftMoney, DouyuGiftResult, DouyuInventoryItem } from '../../../server/douyu/inventoryTypes'
+import { ErrorDetailsButton, ErrorText } from '../../ui/ErrorDetails'
 import { GIFT_RESULT, type GiftPlanHandle } from './giftPlan'
 import { UNKNOWN, dateTime, expiry, money, moneyBasis, secondsLeft, validMoney } from './giftFormat'
 import './backpack.css'
@@ -48,7 +49,7 @@ export function GiftPlanView({ gift, accountLabel, currentRoom, ready, inventory
   ready: boolean
   inventory: DouyuInventoryItem[] | null
 }): React.ReactNode {
-  const { plan, used, result, busy, stopping, error, expired, now } = gift
+  const { plan, used, result, busy, stopping, error, errorDetail, expired, now } = gift
   if (!plan && !result && !error) return null
 
   const canGive = ready && !!plan && !used && !expired && plan.totalQuantity > 0 && !busy
@@ -96,7 +97,7 @@ export function GiftPlanView({ gift, accountLabel, currentRoom, ready, inventory
             <dt>确认单有效期</dt>
             <dd className="num">
               {dateTime(plan.expiresAt)}
-              {!used && (expired ? <span className="form-error">　已过期，请重新生成</span> : <span className="muted">　剩余 {secondsLeft(plan.expiresAt, now)} 秒</span>)}
+              {!used && (expired ? <span className="form-error"><ErrorText error="已过期，请重新生成" message="　已过期，请重新生成" /></span> : <span className="muted">　剩余 {secondsLeft(plan.expiresAt, now)} 秒</span>)}
             </dd>
           </dl>
 
@@ -150,6 +151,7 @@ export function GiftPlanView({ gift, accountLabel, currentRoom, ready, inventory
           <p>
             <b>{GIFT_RESULT[result.status]}</b>
             {result.reason && <span className="muted">　{REASON[result.reason] ?? result.reason}</span>}
+            {(result.status === 'failed' || result.status === 'waiting-user') && <ErrorDetailsButton error={result} />}
           </p>
           <p className="num">已提交 {result.submittedQuantity} · 已收到回执 {result.confirmedQuantity}</p>
           {result.rows.length > 0 && (
@@ -157,7 +159,7 @@ export function GiftPlanView({ gift, accountLabel, currentRoom, ready, inventory
               {result.rows.map((entry, index) => (
                 <li key={`${entry.propId ?? entry.giftId ?? entry.name}-${entry.repetition}-${index}`} data-state={entry.status}>
                   <span>{entry.name} × <span className="num">{entry.quantity}</span><span className="muted num">　第 {entry.repetition} 次</span></span>
-                  <span>{ROW_STATE[entry.status] ?? UNKNOWN}{entry.message && <span className="muted"> {entry.message}</span>}</span>
+                  <span>{ROW_STATE[entry.status] ?? UNKNOWN}{entry.message && <span className="muted"> {entry.message}</span>}{entry.status !== 'receipt-received' && <ErrorDetailsButton error={entry} />}</span>
                 </li>
               ))}
             </ul>
@@ -168,7 +170,7 @@ export function GiftPlanView({ gift, accountLabel, currentRoom, ready, inventory
         </section>
       )}
 
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
     </div>
   )
 }

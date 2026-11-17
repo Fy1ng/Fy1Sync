@@ -8,6 +8,7 @@
 
 import { Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
+import { ErrorText } from './ErrorDetails'
 
 interface Props {
   children: ReactNode
@@ -35,7 +36,7 @@ export class ErrorBoundary extends Component<Props, State> {
     return (
       <div className="crash" role="alert">
         <h1>页面出错了</h1>
-        <p className="crash-message">{error.message}</p>
+        <p className="crash-message"><ErrorText error={error} /></p>
         <p className="crash-hint">
           媒体元素仍在后台，刷新页面即可恢复。若反复出现，请在设置里清除本地偏好后重试。
         </p>

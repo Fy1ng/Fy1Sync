@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { StreamSyncerBridge } from '../../electron/contracts'
 import { ApiClient, issuesFrom, type ApiResult, type DanmakuEvent } from './apiClient'
 import { createEmptyHudStylePack } from '../core/hudStylePack'
+import { DOUYIN_LOGIN_CHANGED_EVENT } from '../core/douyinMessage'
 
 const PROFILE = createEmptyHudStylePack('cs2/iem', '测试')
 
@@ -61,6 +62,20 @@ describe('ApiClient IPC failures', () => {
 })
 
 describe('ApiClient IPC arguments', () => {
+  it('notifies Douyin consumers after the login IPC has settled, including cancellation',async()=>{
+    const bridge=bridgeWith({ok:true,value:{cookieCount:1,authKeysPresent:['sessionid']}})
+    let finish!:(value:Awaited<ReturnType<StreamSyncerBridge['invoke']>>)=>void
+    vi.mocked(bridge.invoke).mockReturnValue(new Promise<Awaited<ReturnType<StreamSyncerBridge['invoke']>>>(resolve=>{finish=resolve}))
+    const client=new ApiClient({bridge}),listener=vi.fn()
+    window.addEventListener(DOUYIN_LOGIN_CHANGED_EVENT,listener)
+    try{
+      const pending=client.login('douyin')
+      expect(listener).not.toHaveBeenCalled()
+      finish({ok:false,code:'login-cancelled',message:'已取消'})
+      await pending
+      expect(listener).toHaveBeenCalledOnce()
+    }finally{window.removeEventListener(DOUYIN_LOGIN_CHANGED_EVENT,listener)}
+  })
   it('reads acquisition diagnostics without forwarding renderer state or optional arguments', async () => {
     const report = { schemaVersion: 1, attempts: [] }
     const bridge = bridgeWith({ ok: true, value: report })

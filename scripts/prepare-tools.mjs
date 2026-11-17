@@ -321,6 +321,8 @@ await cp(path.join(provider, 'LICENSE'), path.join(licenses, 'provider-GPLv3.txt
 await cp(path.join(ytSource, 'LICENSE'), path.join(licenses, 'yt-dlp-LICENSE.txt'))
 await cp(path.join(root, 'LICENSE'), path.join(licenses, 'Fy1Sync-LICENSE.txt'))
 await cp(path.join(root, 'packaging', 'THIRD-PARTY-NOTICES.md'), path.join(licenses, 'THIRD-PARTY-NOTICES.md'))
+await mkdir(path.join(licenses, 'douyin-http'), { recursive: true })
+for (const name of ['f2-LICENSE.txt', 'f2-NOTICE.txt', 'catbus-LICENSE.txt', 'catbus-NOTICE.txt', 'dtk-LICENSE.txt', 'dtk-NOTICE.txt']) await cp(path.join(root, 'server', 'douyin', 'fixtures', name), path.join(licenses, 'douyin-http', name))
 if (nativeBuild) {
   await writeFile(path.join(output, 'tools-lock.json'), JSON.stringify(lock, null, 2) + '\n')
   const platformLock = `tools-${target.artifactPlatform}-lock.json`

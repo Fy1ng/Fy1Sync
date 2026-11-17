@@ -3,6 +3,7 @@ import type { AcquisitionService } from '../server/api'
 import { createResolverDeps, sanitizedFailure } from '../server/api'
 import { mediaRequestPolicy, type ProxyConfig } from '../server/config'
 import type { MediaAccess } from '../server/mediaAccess'
+import { probeMediaKind } from '../server/mediaProbe'
 import { detectPlatform, resolveStream, type PlatformKind, type ResolveResult, type ResolvedStream } from '../server/platforms'
 import { checkUrlSyntax, ProxyError, type Resolver } from '../server/safeFetch'
 import { networkContext, type NetworkContext } from '../server/networkPolicy'
@@ -14,7 +15,7 @@ import type { YtDlpDiagnostic } from './ytdlp'
 import type { AcquisitionDiagnosticRecorder, DiagnosticAttemptSink } from './diagnosticContracts'
 import { diagnosticCode } from './diagnosticSanitizer'
 
-type Selection = { input: string; platform?: PlatformKind; quality?: string; preferAdaptive?: boolean; stream: ResolvedStream; readBytes?: () => number; mediaRevision?: number }
+type Selection = { input: string; platform?: PlatformKind; quality?: string; preferAdaptive?: boolean; stream: ResolvedStream; readBytes?: () => number; mediaRevision?: number; mediaRelease?: () => void }
 
 /** Only main-produced, checked inputs can reach the buffer's ffmpeg spawner. */
 export class Acquisition implements AcquisitionService {
@@ -22,6 +23,8 @@ export class Acquisition implements AcquisitionService {
   private readonly generations = new Map<StreamId, number>()
   private readonly activeGenerations = new Map<StreamId, number>()
   private readonly publicStreams = new Map<StreamId, ResolvedStream>()
+  private readonly pendingReady = new Map<StreamId, () => void>()
+  private readonly requests = new Map<StreamId, AbortController>()
   private generationSequence = 0
   private disposed = false
   constructor(private readonly deps: {
@@ -31,7 +34,7 @@ export class Acquisition implements AcquisitionService {
     diagnostics?: AcquisitionDiagnosticRecorder
     proxy: ProxyConfig
     network?: (platform: PlatformKind | null) => NetworkContext
-    mediaInput?: (url: string, headers: Record<string,string> | undefined, network: NetworkContext, access?: MediaAccess) => Promise<{url:string;proxyUrl:string;readFailure?:()=>StreamFailure|undefined;readBytes?:()=>number}>
+    mediaInput?: (url: string, headers: Record<string,string> | undefined, network: NetworkContext, access?: MediaAccess) => Promise<{url:string;proxyUrl:string;readFailure?:()=>StreamFailure|undefined;readBytes?:()=>number;release?:()=>void}>
     fetchImpl?: typeof fetch
     resolveDouyuRoom?: ResolveDouyuRoom
     dns?: Resolver
@@ -61,6 +64,9 @@ export class Acquisition implements AcquisitionService {
     if (!isStreamId(role)) return refusal('播放会话无效')
     const generation = ++this.generationSequence
     this.generations.set(role, generation)
+    this.pendingReady.get(role)?.()
+    this.requests.get(role)?.abort()
+    this.requests.delete(role)
     if (this.disposed) return refusal('取流服务已关闭')
     // Local fixtures bypass acquisition but still release the previous producer.
     if (/^\/test-sources\/(?:[\w-]+\/)*[\w-]+\.(?:m3u8|mp4|webm|mov|mkv|ts)$/.test(input)
@@ -78,11 +84,18 @@ export class Acquisition implements AcquisitionService {
     if (!this.deps.proxy.enabled) return refusal('远程媒体读取已关闭')
     const detected = detectPlatform(input, platform)
     if (detected === 'youtube') await this.deps.ensureTools?.(detected)
+    if (generation !== this.generations.get(role) || this.disposed) return cancelled()
     const previous = this.selections.get(role)
     const sameSource = previous?.input === input && previous.platform === platform ? previous.stream : undefined
     const requestedAdaptive = sameSource?.qualities?.find(option => option.id === quality && option.adaptive)
     let fallbackHeight: number | undefined
-    const network = this.deps.network?.(detected) ?? networkContext(detected)
+    const routeNetwork = this.deps.network?.(detected) ?? networkContext(detected)
+    let network = routeNetwork
+    if (routeNetwork.media) {
+      const owner = new AbortController()
+      this.requests.set(role, owner)
+      network = { ...routeNetwork, signal: routeNetwork.signal ? AbortSignal.any([owner.signal, routeNetwork.signal]) : owner.signal }
+    }
     let first: ResolveResult
     try { first = await this.resolveInput(input, platform, quality, preferAdaptive, false, confirmedRoom, network, diagnostic) }
     catch (error) { if (error instanceof ProxyError && error.reason !== 'dns-failed') throw error; return failedResult(classifyNetworkFailure(error, 'resolve')) }
@@ -113,11 +126,13 @@ export class Acquisition implements AcquisitionService {
       }
       initial = false
       if (generation !== this.activeGenerations.get(role) || this.disposed) throw new Error('片源操作已取消')
-      if (!resolved.ok) throw new StreamFailureError({ stage: 'resolve', code: resolved.failure.code, message: resolved.failure.message })
+      if (!resolved.ok) throw new StreamFailureError({ stage: resolved.failure.stage ?? 'resolve', code: resolved.failure.code, message: resolved.failure.message, detail: resolved.failure.detail })
       selection.stream = retainAdaptiveQualities(selection.stream, resolved.stream)
       const headers = resolved.stream.headers
         ?? (resolved.stream.platform === 'bilibili' ? { Referer: 'https://live.bilibili.com/' } : undefined)
       const media = !resolved.stream.adaptive && this.deps.mediaInput ? await this.deps.mediaInput(resolved.stream.url, headers, network, resolved.stream.mediaAccess) : undefined
+      selection.mediaRelease?.()
+      selection.mediaRelease = media?.release
       selection.readBytes = media?.readBytes
       selection.mediaRevision = (selection.mediaRevision ?? 0) + 1
       const route = media ? undefined : await network.route(resolved.stream.url)
@@ -129,7 +144,7 @@ export class Acquisition implements AcquisitionService {
       }
     }
     // Subscribe before start so a fast producer cannot race its first usable playlist.
-    const readiness = this.waitUntilPlayable(role, generation, Boolean(first.stream.adaptive))
+    const readiness = this.waitUntilPlayable(role, generation, Boolean(first.stream.adaptive), network.media?.startupTimeoutMs)
     diagnostic?.record({ stage: 'buffer', status: 'started', adaptive: Boolean(first.stream.adaptive) })
     try {
       readiness.activate()
@@ -146,7 +161,10 @@ export class Acquisition implements AcquisitionService {
       this.publicStreams.set(role, publicSelection)
       return { ok: true, stream: publicSelection }
     } catch (error) {
+      selection.mediaRelease?.()
       if (generation === this.generations.get(role)) {
+        this.requests.get(role)?.abort()
+        this.requests.delete(role)
         this.selections.delete(role)
         this.publicStreams.delete(role)
         await this.deps.buffer.stop(role)
@@ -169,6 +187,9 @@ export class Acquisition implements AcquisitionService {
     if (!isStreamId(role)) return
     const stoppedGeneration = ++this.generationSequence
     this.generations.set(role, stoppedGeneration)
+    this.pendingReady.get(role)?.()
+    this.requests.get(role)?.abort()
+    this.requests.delete(role)
     this.activeGenerations.delete(role)
     this.selections.delete(role)
     this.publicStreams.delete(role)
@@ -182,6 +203,10 @@ export class Acquisition implements AcquisitionService {
 
   dispose(): void {
     this.disposed = true
+    for (const request of this.requests.values()) request.abort()
+    this.requests.clear()
+    for (const cancel of this.pendingReady.values()) cancel()
+    this.pendingReady.clear()
     this.generations.clear()
     this.activeGenerations.clear()
     this.selections.clear()
@@ -223,6 +248,9 @@ export class Acquisition implements AcquisitionService {
       douyinCookieHeader: detected === 'douyin' ? requestUrl => this.deps.logins.cookieHeader('douyin', requestUrl) : undefined,
     }, platform)
     if (!result.ok) return sanitizedFailure(result)
+    if (network.media && result.stream.platform === 'direct' && !/\.(?:m3u8?|mp4|m4v|webm|ogv|mov|mkv|flv|ts)$/i.test(new URL(result.stream.url).pathname)) {
+      result.stream.kind = await probeMediaKind(result.stream.url, result.stream.headers, this.deps.proxy, network, this.deps.fetchImpl)
+    }
     // Actual media connections own DNS and route validation; do not resolve the same target here.
     const checked = checkUrlSyntax(result.stream.url, mediaRequestPolicy(this.deps.proxy))
     if (!checked.ok) throw new ProxyError(checked.reason, '媒体地址未通过安全检查')
@@ -238,19 +266,20 @@ export class Acquisition implements AcquisitionService {
     return result
   }
 
-  private waitUntilPlayable(role: StreamId, generation: number, adaptive = false) {
+  private waitUntilPlayable(role: StreamId, generation: number, adaptive = false, startupTimeoutMs?: number) {
     let cancel = () => {}
     let active = false
     const promise = new Promise<void>((resolve, reject) => {
       let release = () => {}
-      // The adaptive budget includes segment retries, token refresh and HLS fallback.
-      // Keep the established HLS timeout unchanged.
-      const timer = setTimeout(() => { release(); reject(new StreamFailureError({ stage: 'playback-not-ready', code: 'first-video-timeout', message: '解析成功, 但视频片段尚未就绪' })) }, this.deps.readyTimeoutMs ?? (adaptive ? 480_000 : 60_000))
+      // Playback owns the wait budget; non-playback callers retain legacy defaults.
+      const timeoutMs = this.deps.readyTimeoutMs ?? startupTimeoutMs ?? (adaptive ? 480_000 : 60_000)
+      const timer = timeoutMs > 0 ? setTimeout(() => { release(); reject(new StreamFailureError({ stage: 'playback-not-ready', code: 'first-video-timeout', message: '解析成功, 但视频片段尚未就绪' })) }, timeoutMs) : undefined
       release = this.deps.buffer.subscribe((state) => {
         if (!active || state.role !== role) return
         if (generation !== this.generations.get(role) || this.disposed) { clearTimeout(timer); release(); reject(new Error('片源已替换')); return }
         if (state.state === 'failed') { clearTimeout(timer); release(); reject(new StreamFailureError(state.failure ?? { stage: 'playback-not-ready', code: state.reason ?? 'buffer-failed', message: '解析成功, 但拉流未能就绪' })) }
-        else if (state.state === 'ready' && state.hasVideo === true && (state.completeSegments ?? 0) > 0 && state.seconds >= 4) {
+        else if ((state.state === 'buffering' || state.state === 'ready') && state.hasVideo === true
+          && (state.completeSegments ?? 0) > 0 && state.seconds > 0) {
           clearTimeout(timer); release(); resolve()
         }
       })
@@ -258,7 +287,12 @@ export class Acquisition implements AcquisitionService {
     })
     // start() itself can fail before the caller reaches its await.
     void promise.catch(() => {})
-    return { promise, cancel: () => cancel(), activate: () => { active = true } }
+    const cancelWait = () => {
+      cancel()
+      if (this.pendingReady.get(role) === cancelWait) this.pendingReady.delete(role)
+    }
+    this.pendingReady.set(role, cancelWait)
+    return { promise, cancel: cancelWait, activate: () => { active = true } }
   }
 }
 
@@ -284,5 +318,6 @@ function refusal(message: string): ResolveResult {
 }
 
 function failedResult(failure: StreamFailure): ResolveResult {
-  return { ok: false, failure: { code: 'upstream-error', message: failure.message, stage: failure.stage, reason: failure.code, ...(failure.status ? { status: failure.status } : {}) } }
+  return { ok: false, failure: { code: 'upstream-error', message: failure.message, stage: failure.stage, reason: failure.code,
+    ...(failure.detail === undefined ? {} : { detail: failure.detail }), ...(failure.status ? { status: failure.status } : {}) } }
 }

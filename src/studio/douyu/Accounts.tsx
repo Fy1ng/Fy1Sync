@@ -5,10 +5,12 @@
  */
 
 import { useState } from 'react'
+import { displayError } from '../../core/errorDetails'
 import { apiClient } from '../../app/apiClient'
 import type { DouyuAccountSummary } from '../../../server/douyu/types'
 import { LaneLine } from './DouyuDesk'
 import { accountName, accountState, type DouyuData } from './useDouyu'
+import { AccountAvatar, BrowserImportButton } from '../login/BrowserLoginImport'
 
 export function Accounts({ data }: { data: DouyuData }): React.ReactNode {
   const { all, accounts, loading, accountLane, accountsBusy, accountAction } = data
@@ -36,6 +38,7 @@ export function Accounts({ data }: { data: DouyuData }): React.ReactNode {
       </form>
 
       <LaneLine lane={accountLane} />
+      {all.length === 0 && <div className="row-end"><BrowserImportButton platform="douyu" disabled={accountsBusy} /></div>}
     </div>
   )
 }
@@ -56,8 +59,10 @@ function AccountRow({ account, active, locked, data }: {
   const login = (): void => {
     void accountAction(`请在登录卡片中登录 ${who}, 完成后将自动关闭`,
       () => apiClient.loginDouyuAccount(account.id),
-      (snapshot) => snapshot.accounts.find((item) => item.id === account.id)?.login.loggedIn
-        ? `${who} 已登录` : `${who} 登录未完成，请重试`)
+      snapshot => {
+        const login = snapshot.accounts.find(item => item.id === account.id)?.login
+        return login?.loggedIn ? `${who} 已登录` : displayError({ code: 'login-incomplete', accountId: account.id, login }, `${who} 登录未完成, 请重试`)
+      })
   }
 
   return (
@@ -76,6 +81,7 @@ function AccountRow({ account, active, locked, data }: {
           </form>
         ) : (
           <>
+            {account.login.avatar && <AccountAvatar username={shown || account.label} avatar={account.login.avatar} />}
             {shown && <span className="account-name">{shown}</span>}
             {active && <span className="tag">当前使用</span>}
             <span className="muted">{accountState(account)}</span>
@@ -92,6 +98,7 @@ function AccountRow({ account, active, locked, data }: {
         </div>
       ) : mode === 'idle' && (
         <div className="account-actions">
+          <BrowserImportButton platform="douyu" accountId={account.id} disabled={locked} />
           {!active && (
             <button type="button" className="btn-quiet small" disabled={locked}
               onClick={() => void accountAction('正在切换', () => apiClient.activateDouyuAccount(account.id), `已切换到 ${who}`)}>

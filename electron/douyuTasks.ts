@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { diagnosticDetails } from '../server/errorDetails'
 import { DOUYU_TASK_KINDS, DOUYU_TASK_POLICIES, isDouyuActivityKind } from '../server/douyu/types'
 import { readMessageSchedule } from '../server/douyu/taskConfig'
 import { composeMessage, selectMessageText } from '../src/core/messageComposition'
@@ -104,6 +105,7 @@ export class DouyuTaskManager {
       tasks: [...this.tasks.values()].map(task => ({
         ...copyDefinition(task.definition), status: task.status, reason: task.reason,
         lastRunAt: task.lastRunAt, nextRunAt: task.nextRunAt, lastResult: task.lastResult,
+        ...(task.errorDetail === undefined ? {} : { errorDetail: diagnosticDetails(task.errorDetail) }),
         ...(task.definition.kind === 'message-loop' ? { completedRuns: task.completedRuns ?? 0 } : {}),
         ...(task.deadlineAt !== undefined ? { deadlineAt: task.deadlineAt } : {}),
         ...(task.officialRoom !== undefined ? { officialRoom: task.officialRoom } : {}),
@@ -522,7 +524,7 @@ export class DouyuTaskManager {
           color: message.colors[(flight.task.completedRuns ?? 0) % message.colors.length]! }, flight.controller.signal)
       }
       return this.options.run(definition, flight.controller.signal)
-    }).then(outcome => this.finish(flight, outcome), () => this.finish(flight, { status: 'failed', message: FAILURE }))
+    }).then(outcome => this.finish(flight, outcome), error => this.finish(flight, { status: 'failed', message: FAILURE, detail: diagnosticDetails(error) }))
   }
 
   private finish(flight: TaskFlight, outcome: unknown): void {
@@ -535,6 +537,7 @@ export class DouyuTaskManager {
         : readOutcome(outcome, isDouyuActivityKind(task.definition.kind), now)
       if (!this.disposed && !flight.cancelled && this.tasks.get(task.definition.id) === task) {
         task.lastResult = result.message
+        task.errorDetail = result.status === 'failed' || result.status === 'waiting-user' ? ('detail' in result ? result.detail : undefined) : undefined
         if ('officialRoom' in result) task.officialRoom = result.officialRoom
         task.nextRunAt = null
         if (result.status === 'scheduled') {
@@ -588,7 +591,9 @@ export class DouyuTaskManager {
       if (typeof send !== 'function') return null
       immediate.dispatched = true
       return send({ ...immediate.input }, immediate.controller.signal)
-    }).then(outcome => this.finishImmediate(immediate, outcome), () => this.finishImmediate(immediate, null, true))
+    }).then(outcome => this.finishImmediate(immediate, outcome), error => this.finishImmediate(immediate,
+      immediate.type === 'operation' ? diagnosticDetails(error)
+        : { status: 'failed', message: MESSAGE_FAILURE, nextAllowedAt: null, detail: diagnosticDetails(error) }, true))
   }
 
   private finishImmediate(immediate: Immediate, outcome: unknown, failed = false): void {
@@ -599,7 +604,7 @@ export class DouyuTaskManager {
         if (!this.immediateMayDispatch(immediate)) this.cancelImmediate(immediate)
         else this.resolveMessage(immediate, result)
       } else if (!this.immediateMayDispatch(immediate)) this.cancelImmediate(immediate)
-      else this.resolveOperation(immediate, failed ? { status: 'failed' } : { status: 'completed', value: outcome })
+      else this.resolveOperation(immediate, failed ? { status: 'failed', detail: diagnosticDetails(outcome) } : { status: 'completed', value: outcome })
     }
     // Cancellation may have already resolved the caller, but never frees a live network request.
     this.flight = null
@@ -771,6 +776,7 @@ function readOutcome(raw: unknown, activity: boolean, now: number): DouyuTaskOut
     officialRoom = value.value
   }
   const extraKeys = officialRoom === undefined ? [] : ['officialRoom']
+  if (raw !== null && typeof raw === 'object' && Object.hasOwn(raw, 'detail')) extraKeys.push('detail')
   if (activity) {
     const scheduled = dataFields(raw, ['status', 'message', 'nextRunAt', ...extraKeys])
     if (scheduled?.status === 'scheduled' && typeof scheduled.message === 'string' && scheduled.message.trim()
@@ -784,7 +790,8 @@ function readOutcome(raw: unknown, activity: boolean, now: number): DouyuTaskOut
   if (!fields || !['succeeded', 'waiting-user', 'failed'].includes(fields.status as string)
     || typeof fields.message !== 'string' || !fields.message.trim() || fields.message.length > 240
     || /[\x00-\x1f\x7f]/.test(fields.message)) return { status: 'failed', message: FAILURE }
-  return { status: fields.status as DouyuTerminalOutcome['status'], message: fields.message.trim(), ...(officialRoom ? { officialRoom } : {}) }
+  return { status: fields.status as DouyuTerminalOutcome['status'], message: fields.message.trim(), ...(officialRoom ? { officialRoom } : {}),
+    ...(fields.status === 'succeeded' ? {} : { detail: diagnosticDetails(fields.detail ?? { status: fields.status, message: fields.message }) }) }
 }
 
 function failedMessage(message = MESSAGE_FAILURE): DouyuMessageOutcome {
@@ -792,7 +799,7 @@ function failedMessage(message = MESSAGE_FAILURE): DouyuMessageOutcome {
 }
 
 function readMessageOutcome(raw: unknown, now: number): DouyuMessageOutcome {
-  const optional = ['deferredUntil', 'messageLimit', 'deliveryId', 'gatewayAccepted'].filter(key => raw !== null && typeof raw === 'object' && Object.hasOwn(raw, key))
+  const optional = ['deferredUntil', 'messageLimit', 'deliveryId', 'gatewayAccepted', 'detail'].filter(key => raw !== null && typeof raw === 'object' && Object.hasOwn(raw, key))
   const fields = dataFields(raw, ['status', 'message', 'nextAllowedAt', ...optional])
   if (!fields || !['succeeded', 'waiting-user', 'failed'].includes(fields.status as string)
     || typeof fields.message !== 'string' || !fields.message.trim() || fields.message.length > 240
@@ -809,6 +816,7 @@ function readMessageOutcome(raw: unknown, now: number): DouyuMessageOutcome {
   if (fields.gatewayAccepted !== undefined && (typeof fields.gatewayAccepted !== 'boolean'
     || (fields.gatewayAccepted && fields.status !== 'succeeded'))) return failedMessage()
   return { status: fields.status as DouyuMessageOutcome['status'], message: fields.message.trim(), nextAllowedAt: fields.nextAllowedAt as number | null,
+    ...(fields.status === 'succeeded' ? {} : { detail: diagnosticDetails(fields.detail ?? { status: fields.status, message: fields.message }) }),
     ...(deferred ? { deferredUntil: fields.deferredUntil as number } : {}),
     ...(limit ? { messageLimit: limit as unknown as NonNullable<DouyuMessageOutcome['messageLimit']> } : {}),
     ...(fields.deliveryId !== undefined ? { deliveryId: fields.deliveryId as string } : {}),

@@ -7,6 +7,7 @@ import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import type { BasicClockProgress, BasicClockVisualFrame, WorkerDebug } from '../recognition/protocol'
 import { BasicRegionSheet } from './BasicRegionSheet'
 import { Icon } from './kit'
+import { ErrorText } from '../ui/ErrorDetails'
 import './BasicRecognitionPanel.css'
 
 const LABEL: Record<SourceRole, string> = { official: '官方画面', commentary: '国内解说' }
@@ -19,15 +20,16 @@ const EMPTY_REGIONS: RoiRect[] = []
 export function BasicRecognitionPanel(): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(false)
   const [framing, setFraming] = useState(false)
   const basic = snapshot.settings.recognitionMode === 'basic'
+  const visible = basic && snapshot.settings.basicRecognitionPanelVisible
   useEffect(() => {
-    session.setBasicPreviewEnabled(basic && expanded)
+    session.setBasicPreviewEnabled(visible && expanded)
     return () => session.setBasicPreviewEnabled(false)
-  }, [session, basic, expanded])
-  useEffect(() => { if (!basic) setFraming(false) }, [basic])
-  if (!basic) return null
+  }, [session, visible, expanded])
+  useEffect(() => { if (!visible) { setFraming(false); setExpanded(false) } }, [visible])
+  if (!visible) return null
   const official = session.engine.element('official')
   const officialReady = isReady(snapshot.media.official.status, official)
   const active = snapshot.profiles.official
@@ -111,7 +113,7 @@ function RecognitionCard({ role, progress, manual, memory, ready, searchRoi, sam
     <div className="basic-recognition__card-head">
       <strong>{LABEL[role]}</strong><span className="basic-recognition__mode">{manual ? '手动范围' : memory ? '记忆范围' : '自动范围'}</span>
     </div>
-    <p className="basic-recognition__status" role="status">{progress?.error || status}</p>
+    <p className="basic-recognition__status" role="status">{progress?.error ? <ErrorText error={{ message: progress.error }} /> : status}</p>
     {progress?.sync && <p className="basic-recognition__counts">有效读数 {progress.sync.readings}, 跳秒 {progress.sync.jumps}
       {progress.sync.lastDrop ? `, ${DROP_TEXT[progress.sync.lastDrop] ?? progress.sync.lastDrop}` : ''}</p>}
     <div className={`basic-recognition__visuals${fixed ? ' is-fixed' : ''}`}>

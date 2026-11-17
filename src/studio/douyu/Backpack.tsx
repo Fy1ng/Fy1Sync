@@ -9,6 +9,8 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 import { apiClient } from '../../app/apiClient'
 import type { DouyuInventorySnapshot } from '../../../server/douyu/inventoryTypes'
 import { Segmented } from '../kit'
@@ -41,7 +43,7 @@ export function Backpack({ data, room, canGive = true }: { data: DouyuData; room
   // Per account: reopening shows the last backpack at once; it is read again on open as before.
   const [inventory, setInventory] = useRemembered<DouyuInventorySnapshot | null>(accountId ? `douyu:inventory:${accountId}` : null, null)
   const [reading, setReading] = useState(false)
-  const [readError, setReadError] = useState('')
+  const [readError, setReadError, readErrorDetail] = useErrorState('')
   const [mode, setMode] = useState<Mode>('inventory')
   const edited = useRef(false)
   const mounted = useRef(false)
@@ -89,11 +91,11 @@ export function Backpack({ data, room, canGive = true }: { data: DouyuData; room
     try {
       const response = await apiClient.feature('getDouyuInventory', { accountId: asked, ...(roomOk(roomText) ? { room: roomText } : {}) })
       if (!mounted.current || mine !== generation.current) return
-      if (!response.ok) { setReadError(response.message); return }
-      if (!snapshotOk(response.value, asked)) throw new Error('bad snapshot')
+      if (!response.ok) { setReadError(response); return }
+      if (!snapshotOk(response.value, asked)) throw new Error('bad snapshot', { cause: response })
       setInventory(response.value)
-    } catch {
-      if (mounted.current && mine === generation.current) setReadError('背包读取失败，请重试。')
+    } catch (caught) {
+      if (mounted.current && mine === generation.current) setReadError(displayError(caught, '背包读取失败, 请重试. '))
     } finally {
       if (mounted.current && mine === generation.current) setReading(false)
     }
@@ -136,7 +138,7 @@ export function Backpack({ data, room, canGive = true }: { data: DouyuData; room
       {roomText === '' && <p className="muted">请填写目标房间号，或先连接直播间。</p>}
 
       <section aria-label="背包库存" className="pack-stock">
-        {readError && <p className="form-error" role="alert">{readError}</p>}
+        {readError && <p className="form-error" role="alert"><ErrorText error={readErrorDetail ?? readError} message={readError} /></p>}
         {!inventory ? (!readError && <p className="muted">{reading ? '正在读取背包…' : '尚未读取背包。'}</p>) : (
           <>
             <p className="muted num">房间 {inventory.room} · 读取于 {dateTime(inventory.checkedAt)}</p>

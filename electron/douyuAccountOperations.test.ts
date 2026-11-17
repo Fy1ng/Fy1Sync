@@ -389,7 +389,10 @@ describe('abort, cleanup and late producer settlements', () => {
     if (mode === 'lifecycle') h.manager.pauseAccount('default')
     const result = await pending
     expect(remove).toHaveBeenCalledExactlyOnceWith('abort', listener)
-    if (mode === 'reject') expect(result).toEqual({ status: 'failed' })
+    if (mode === 'reject') {
+      expect(result).toMatchObject({ status: 'failed' })
+      expect(result).toHaveProperty('detail')
+    }
     if (mode === 'complete' || mode === 'reject') {
       controller.abort()
       expect(h.operations[0]!.signal.aborted).toBe(false)
@@ -402,7 +405,9 @@ describe('abort, cleanup and late producer settlements', () => {
   it('sanitizes synchronous producer exceptions and releases the lane', async () => {
     const h = harness()
     const throwing = vi.fn((): Promise<never> => { throw new Error('SYNTHETIC_PRIVATE_PRODUCER_ERROR') })
-    expect(await h.manager.runAccountOperation(scope(), throwing, freshSignal())).toEqual({ status: 'failed' })
+    const failed = await h.manager.runAccountOperation(scope(), throwing, freshSignal())
+    expect(failed).toMatchObject({ status: 'failed' })
+    expect(failed).toHaveProperty('detail')
     h.send.mockResolvedValueOnce(MESSAGE_SUCCESS)
     expect(await h.manager.sendMessage(MESSAGE)).toEqual(MESSAGE_SUCCESS)
     expect(throwing).toHaveBeenCalledOnce()

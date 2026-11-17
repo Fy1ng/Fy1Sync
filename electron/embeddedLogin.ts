@@ -1,16 +1,20 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { nativeImage, session, View, WebContentsView, type BrowserWindow, type Session, type WebContents, type WebFrameMain } from 'electron'
-import { authenticationCookieUserId, cookieDomainAllowed, hasAuthenticationCookies, type BrowserCookie } from './cookies'
+import { authenticationCookieUserId, cookieDomainAllowed, hasAuthenticationCookies, douyinBrowserCookieFingerprint, douyinBrowserSigningServerData, type BrowserCookie } from './cookies'
 import { LoginError } from './login'
 import type { EmbeddedLoginDriver, EmbeddedLoginRequest, EmbeddedLoginState, EmbeddedLoginViewport } from './embeddedLoginContracts'
 import { loginRequestAllowed } from './embeddedLoginPolicy'
 import { LOGIN_ADAPTERS } from './loginAdapters'
 import { LoginPageBroker } from './loginPageBroker'
 import { LocalLoginCard, type LoginCardViewOptions } from './loginCardView'
+import { diagnosticDetails } from '../server/errorDetails'
 import type { LoginCardAction, LoginCardResult, LoginCardState, LoginChallengeRegion, LoginPageSnapshot, LoginSmsState } from './loginCardContracts'
 import { loginIdentityUrl, parseLoginIdentity } from './loginIdentity'
 import { isAppDocument } from './security'
 import { LOGIN_MEDIA_GUARD } from './loginMediaGuard'
+import { douyinBrowserUserAgent } from '../server/douyin/httpContext'
+import { captureDouyinSigningSnapshot } from './douyinSigningCapture'
+import { DouyinHttpLoginController, type DouyinHttpLoginOptions } from './douyinHttpLogin'
 
 interface Attempt {
   id: string
@@ -58,6 +62,8 @@ interface Attempt {
   cookieRevision: number
   loadRevision: number
   nextCheck: number
+  anonymousFingerprint: string | null
+  anonymousCookieRevision: number
   initialized: boolean
   preparing: Promise<void> | null
 }
@@ -69,6 +75,7 @@ export interface EmbeddedLoginOptions {
   createView?: (options: Electron.WebContentsViewConstructorOptions) => WebContentsView
   cardPreload: string
   createCard?: (options: LoginCardViewOptions) => LocalLoginCard
+  douyinHttp?: Pick<DouyinHttpLoginOptions, 'createSession' | 'pollMs' | 'timeoutMs'>
   timeoutMs?: number
   pollMs?: number
   checkTimeoutMs?: number
@@ -82,10 +89,16 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
   private readonly listeners = new Set<(state: EmbeddedLoginState | null) => void>()
   private readonly cleanups = new Set<Promise<void>>()
   private disposed = false
+  private readonly httpDouyin: DouyinHttpLoginController | null
+  private readonly releaseHttp: (() => void) | null
 
-  constructor(private readonly options: EmbeddedLoginOptions) {}
+  constructor(private readonly options: EmbeddedLoginOptions) {
+    this.httpDouyin = options.douyinHttp ? new DouyinHttpLoginController({ owner: options.owner, cardPreload: options.cardPreload,
+      createCard: options.createCard, ...options.douyinHttp }) : null
+    this.releaseHttp = this.httpDouyin?.subscribe(() => this.emit()) ?? null
+  }
 
-  state(): EmbeddedLoginState | null { return this.active ? { ...this.active.state } : null }
+  state(): EmbeddedLoginState | null { return this.httpDouyin?.state() ?? (this.active ? { ...this.active.state } : null) }
   subscribe(listener: (state: EmbeddedLoginState | null) => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
@@ -99,6 +112,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
   }
   private update(attempt: Attempt, patch: Partial<EmbeddedLoginState>): void {
     if (!this.current(attempt)) return
+    if (patch.phase === 'failed' && patch.errorDetail === undefined) patch.errorDetail = diagnosticDetails({ message: patch.message, code: 'login-page-failed' })
+    if (patch.phase === 'loading' || patch.message === undefined && Object.hasOwn(patch, 'message')) patch.errorDetail = undefined
     attempt.state = { ...attempt.state, ...patch }
     if (patch.phase === 'failed') this.clearPageTimeout(attempt)
     this.applyViewport(attempt)
@@ -127,6 +142,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     if (this.disposed || request.signal.aborted) return Promise.reject(new LoginError('login-cancelled'))
     if (!Object.hasOwn(LOGIN_ADAPTERS, request.platform) || request.platform === 'douyin' && request.destination !== undefined) return Promise.reject(new LoginError('login-failed'))
     if (this.active) return Promise.reject(new LoginError('login-busy'))
+    if (this.httpDouyin?.state()) return Promise.reject(new LoginError('login-busy'))
+    if (request.platform === 'douyin' && this.httpDouyin) return this.httpDouyin.login(request)
     const owner = this.options.owner()
     if (!owner || owner.isDestroyed() || !isAppDocument(owner.webContents.mainFrame.url)) return Promise.reject(new LoginError('login-failed'))
     const id = randomUUID()
@@ -144,7 +161,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       state: { id, platform: request.platform, purpose: request.destination ? 'website' : 'login', phase: 'loading',
         ...(request.accountLabel ? { accountLabel: request.accountLabel.slice(0, 80) } : {}) },
       removeListeners: [], timeout: null, pageTimeout: null, poll: null, renderPulse: null, rendering: false, cookieTimer: null, checking: false, closing: false,
-      cookieRevision: 0, loadRevision: 0, nextCheck: 0, initialized: false, preparing: null,
+      cookieRevision: 0, loadRevision: 0, nextCheck: 0, anonymousFingerprint:null, anonymousCookieRevision:-1, initialized: false, preparing: null,
     }
     this.active = attempt
     const cancel = () => { void this.finish(attempt, new LoginError('login-cancelled')) }
@@ -160,7 +177,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     })
     attempt.timeout = setTimeout(() => { void this.finish(attempt, new LoginError('login-cancelled')) }, this.options.timeoutMs ?? 30 * 60_000)
     this.emit()
-    void this.prepare(attempt).catch(() => this.update(attempt, { phase: 'failed', message: '登录页面未能加载, 请检查网络后重试.' }))
+    void this.prepare(attempt).catch(error => this.update(attempt, { phase: 'failed', message: '登录页面未能加载, 请检查网络后重试.', errorDetail: diagnosticDetails(error) }))
     return result
   }
 
@@ -230,8 +247,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     attempt.owner.contentView.addChildView(view)
     const contents = view.webContents
     if (attempt.request.platform === 'douyin') {
-      const userAgent = contents.getUserAgent().replace(/\b(?:Electron|Fy1Sync|stream-syncer)\/[^\s]+\s*/gi, '')
-        .replace(/\bHeadlessChrome\//g, 'Chrome/').trim()
+      const userAgent = douyinBrowserUserAgent(contents.getUserAgent())
       contents.setUserAgent(userAgent)
       browserSession.setUserAgent(userAgent)
     }
@@ -290,7 +306,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       else void this.inspect(attempt)
     })
     contents.on('did-frame-finish-load', () => { void this.inspect(attempt) })
-    contents.on('render-process-gone', () => {
+    contents.on('render-process-gone', (_event, details) => {
       attempt.broker?.reset()
       attempt.lastPage = 'loading'
       attempt.pageRevision++
@@ -301,14 +317,17 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       attempt.pendingAction = null
       attempt.lastError = '登录页面已中断, 请重试.'
       this.cardUpdate(attempt, { stage: 'failed', busy: false, qr: { status: 'paused' }, sms: unavailableSms(), message: attempt.lastError })
-      this.update(attempt, { phase: 'failed', presentation: 'form', message: attempt.lastError })
+      this.update(attempt, { phase: 'failed', presentation: 'form', message: attempt.lastError, errorDetail: diagnosticDetails(details) })
     })
-    contents.on('did-fail-load', (_event, code, _description, _url, mainFrame) => {
-      if (mainFrame && code !== -3) this.update(attempt, { phase: 'failed', message: '登录页面未能加载, 请检查网络后重试.' })
+    contents.on('did-fail-load', (_event, code, description, url, mainFrame) => {
+      if (mainFrame && code !== -3) this.update(attempt, { phase: 'failed', message: '登录页面未能加载, 请检查网络后重试.', errorDetail: diagnosticDetails({ code, description, url }) })
     })
     const changed = (_event: unknown, cookie?: Partial<BrowserCookie>) => {
       if (attempt.request.platform !== 'douyin' || !cookie || ['sessionid', 'sessionid_ss'].includes(cookie.name ?? '')
-        && (typeof cookie.domain !== 'string' || cookieDomainAllowed(cookie.domain, 'douyin'))) attempt.cookieRevision++
+        && (typeof cookie.domain !== 'string' || cookieDomainAllowed(cookie.domain, 'douyin'))) {
+        attempt.cookieRevision++
+        if (attempt.request.platform === 'douyin') { attempt.anonymousFingerprint=null; attempt.nextCheck=0 }
+      }
       if (attempt.cookieTimer) clearTimeout(attempt.cookieTimer)
       attempt.cookieTimer = setTimeout(() => { attempt.cookieTimer = null; void this.check(attempt) }, 600)
     }
@@ -362,6 +381,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     attempt.captchaPreflight = 'waiting'
     attempt.captchaPreRequest = null
     attempt.lastError = undefined
+    attempt.anonymousFingerprint = null
+    attempt.anonymousCookieRevision = -1
     if (attempt.card) {
       attempt.showingOfficial = false
       attempt.explicitOfficial = false
@@ -376,8 +397,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       : LOGIN_ADAPTERS[attempt.request.platform].entryUrl
     // Page subresources may keep loading; dom-ready can present the verified form sooner.
     try { await attempt.view.webContents.loadURL(url) }
-    catch {
-      if (this.current(attempt) && revision === attempt.loadRevision) this.update(attempt, { phase: 'failed', message: '登录页面未能加载, 请检查网络后重试.' })
+    catch (error) {
+      if (this.current(attempt) && revision === attempt.loadRevision) this.update(attempt, { phase: 'failed', message: '登录页面未能加载, 请检查网络后重试.', errorDetail: diagnosticDetails(error) })
       return
     }
     if (!this.current(attempt) || revision !== attempt.loadRevision) return
@@ -386,6 +407,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
   }
 
   private cardUpdate(attempt: Attempt, patch: Partial<LoginCardState>): void {
+    if (patch.message === undefined && Object.hasOwn(patch, 'message')) patch.errorDetail = undefined
+    else if (patch.stage === 'failed' && patch.errorDetail === undefined) patch.errorDetail = diagnosticDetails({ message: patch.message, code: 'login-card-failed' })
     if (!this.current(attempt)) return
     const next = { ...attempt.cardValue, ...patch }
     if (JSON.stringify(next) === JSON.stringify(attempt.cardValue)) return
@@ -443,7 +466,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       if (attempt.nativeVerification !== nativeVerification) {
         attempt.nativeVerification = nativeVerification
         attempt.pageRevision++
-        attempt.nextCheck = 0
+        if (attempt.request.platform !== 'douyin') attempt.nextCheck = 0
       }
       if (snapshot.page === 'loading') {
         if (snapshot.submissionPending) {
@@ -477,6 +500,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
         attempt.qrPaused = true
         if (snapshot.verificationCompleted && !message && !attempt.verificationCompleted) {
           attempt.verificationCompleted = true
+          attempt.anonymousFingerprint = null
           attempt.pageRevision++
           attempt.nextCheck = 0
         }
@@ -583,7 +607,9 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
   private async check(attempt: Attempt, finishWebsite = false): Promise<void> {
     if (!this.current(attempt) || attempt.state.phase === 'failed' || attempt.checking || (!finishWebsite && attempt.request.destination)
       || (!finishWebsite && this.awaitingSecondFactor(attempt))
-      || Date.now() < attempt.nextCheck || !attempt.initialized) return
+      || Date.now() < attempt.nextCheck || !attempt.initialized
+      || attempt.request.platform === 'douyin' && attempt.actionBusy) return
+    const silent = attempt.request.platform === 'douyin' && !finishWebsite
     attempt.checking = true
     const pageRevision = attempt.pageRevision
     const loadRevision = attempt.loadRevision
@@ -601,7 +627,9 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
         return
       }
       const credentialFingerprint = authenticationFingerprint(cookies, attempt.request.platform)
-      if (!attempt.showingOfficial) {
+      const submitted = attempt.pendingAction === 'login' || attempt.pendingAction === 'verification' || attempt.verificationCompleted
+      if (silent && !submitted && attempt.anonymousFingerprint === credentialFingerprint && attempt.anonymousCookieRevision === cookieRevision) return
+      if (!silent && !attempt.showingOfficial) {
         this.cardUpdate(attempt, { stage: attempt.cardValue.verification ? 'verification' : 'checking', busy: true, message: '正在确认登录状态' })
         this.update(attempt, { phase: 'verifying', message: '正在确认登录状态' })
       }
@@ -618,7 +646,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       // uid_tt is an opaque tracking hash; only the same session's official identity is authoritative.
       const matches = attempt.request.platform === 'douyin' || authenticationCookieUserId(cookies, attempt.request.platform) === identity.uid
       if (identity.status !== 'authenticated' || !identity.uid || !matches) {
-        this.restoreCardAfterCheck(attempt, identity.status === 'anonymous' ? '请完成平台官网登录' : '暂时无法确认登录状态, 请稍后重试.')
+        if (silent && identity.status === 'anonymous') { attempt.anonymousFingerprint=credentialFingerprint; attempt.anonymousCookieRevision=cookieRevision }
+        if (!silent) this.restoreCardAfterCheck(attempt, identity.status === 'anonymous' ? '请完成平台官网登录' : '暂时无法确认登录状态, 请稍后重试.')
         if (finishWebsite) await this.finish(attempt, new LoginError('login-incomplete'))
         return
       }
@@ -629,10 +658,25 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       if (!hasAuthenticationCookies(finalCookies, attempt.request.platform)
         || attempt.request.platform !== 'douyin' && authenticationCookieUserId(finalCookies, attempt.request.platform) !== identity.uid
         || authenticationFingerprint(finalCookies, attempt.request.platform) !== credentialFingerprint) return
+      if (attempt.request.platform==='douyin' && attempt.request.captureDouyinSigning && attempt.view) {
+        const cookieServerData=douyinBrowserSigningServerData(finalCookies)
+        const snapshot=await captureDouyinSigningSnapshot(attempt.view.webContents,{
+          accountUid:identity.uid,cookieFingerprint:douyinBrowserCookieFingerprint(finalCookies),
+          userAgent:douyinBrowserUserAgent(attempt.view.webContents.getUserAgent()),
+        },signal,currentCheck,{cookieServerData})
+        if (!currentCheck() || this.awaitingSecondFactor(attempt)) return
+        const checkedCookies=await this.boundedCookies(attempt,signal)
+        if (!currentCheck() || authenticationFingerprint(checkedCookies,'douyin')!==credentialFingerprint) return
+        if (cookieServerData!==undefined && douyinBrowserSigningServerData(checkedCookies)!==cookieServerData) return
+        if (snapshot) await attempt.request.captureDouyinSigning(snapshot)
+        if (!currentCheck()) return
+        await this.finish(attempt,checkedCookies)
+        return
+      }
       await this.finish(attempt, finalCookies)
     } catch {
       if (currentCheck()) {
-        this.restoreCardAfterCheck(attempt, '暂时无法确认登录状态, 请检查网络后重试.')
+        if (!silent) this.restoreCardAfterCheck(attempt, '暂时无法确认登录状态, 请检查网络后重试.')
         if (finishWebsite) await this.finish(attempt, new LoginError('login-incomplete'))
       }
     } finally { attempt.checking = false }
@@ -655,6 +699,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
   }
 
   setViewport(viewport: EmbeddedLoginViewport): void {
+    if (this.httpDouyin?.state()?.id === viewport.id) { this.httpDouyin.setViewport(viewport); return }
     const attempt = this.active
     if (!attempt || attempt.id !== viewport.id || !this.current(attempt)) return
     attempt.viewport = { ...viewport, rect: { ...viewport.rect } }
@@ -742,14 +787,16 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
   }
 
   ownsCard(sender: WebContents, frame: WebFrameMain | null): boolean {
+    if (this.httpDouyin?.state()) return this.httpDouyin.ownsCard(sender, frame)
     const attempt = this.active
     if (!attempt || !this.current(attempt) || !attempt.card || sender.isDestroyed()) return false
     try { return sender === attempt.card.contents && frame === sender.mainFrame && frame?.url === attempt.card.url }
     catch { return false }
   }
-  cardState(): LoginCardState | null { return this.active?.card ? structuredClone(this.active.cardValue) : null }
+  cardState(): LoginCardState | null { return this.httpDouyin?.cardState() ?? (this.active?.card ? structuredClone(this.active.cardValue) : null) }
 
   async cardAction(action: LoginCardAction): Promise<LoginCardResult> {
+    if (this.httpDouyin?.state()) return this.httpDouyin.cardAction(action)
     const attempt = this.active
     if (!attempt || !this.current(attempt) || !attempt.card || !attempt.broker) return { ok: false, message: '登录页面已失效.' }
     if (action.kind === 'cancel') { await this.cancel(attempt.id); return { ok: true } }
@@ -788,6 +835,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     attempt.lastError = undefined
     const submit = ['password', 'sms', 'second-submit'].includes(action.kind)
     const sendingSms = action.kind === 'send-sms' || action.kind === 'second-send'
+    if (submit) { attempt.anonymousFingerprint=null; attempt.nextCheck=0 }
     if (submit || sendingSms) { attempt.qrPaused = true; attempt.submittedAt = Date.now(); attempt.pendingAction = sendingSms ? 'sms' : second ? 'verification' : 'login' }
     if (action.kind === 'second-submit') attempt.verificationCompleted = false
     attempt.nativeVerification = false
@@ -803,8 +851,9 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
         attempt.submittedAt = 0
         attempt.pendingAction = null
         attempt.lastError = result.reason === 'invalid-input' ? '请检查账号, 密码或验证码的格式.' : '当前登录方式暂不可用, 可以使用官方验证页面.'
-        this.cardUpdate(attempt, { stage: second ? 'verification' : 'form', busy: false, message: attempt.lastError })
-        return { ok: false, message: attempt.cardValue.message }
+        const detail = diagnosticDetails({ ok: result.ok, reason: result.reason })
+        this.cardUpdate(attempt, { stage: second ? 'verification' : 'form', busy: false, message: attempt.lastError, errorDetail: detail })
+        return { ok: false, message: attempt.cardValue.message, detail }
       }
       if (action.kind === 'mode') this.cardUpdate(attempt, { mode: action.mode })
       if (sendingSms) this.cardUpdate(attempt, { sms: unavailableSms(), message: '正在等待平台发送结果' })
@@ -823,6 +872,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
   }
 
   async back(id: string): Promise<void> {
+    if (this.httpDouyin?.state()?.id === id) { await this.httpDouyin.back(id); return }
     const attempt = this.active
     if (!attempt || attempt.id !== id || !this.current(attempt) || !attempt.card) return
     attempt.actionRevision++
@@ -839,6 +889,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
   }
 
   async cancel(id: string): Promise<void> {
+    if (this.httpDouyin?.state()?.id === id) { await this.httpDouyin.cancel(id); return }
     const attempt = this.active
     if (!attempt || attempt.id !== id) return
     if (attempt.request.destination && !attempt.checking && attempt.initialized) {
@@ -850,6 +901,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     await this.finish(attempt, new LoginError('login-cancelled'))
   }
   async retry(id: string): Promise<void> {
+    if (this.httpDouyin?.state()?.id === id) { await this.httpDouyin.retry(id); return }
     const attempt = this.active
     if (!attempt || attempt.id !== id || !this.current(attempt)) return
     if (!attempt.initialized) { await this.prepare(attempt); return }
@@ -902,6 +954,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
 
   async dispose(): Promise<void> {
     this.disposed = true
+    await this.httpDouyin?.dispose()
+    this.releaseHttp?.()
     if (this.active) await this.finish(this.active, new LoginError('login-cancelled'))
     await Promise.allSettled(this.cleanups)
     this.listeners.clear()

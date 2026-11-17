@@ -1,9 +1,10 @@
 import { clampPlayableSeek, latestPlayableTime, readTimebase, seekReached } from './timebase'
+import { errorDetails, type ErrorDetails } from '../core/errorDetails'
 
 export { latestPlayableTime }
 
-export interface PlaybackSeekResult { ok: boolean; target: number | null; clamped: boolean; reason: 'unavailable' | 'cancelled' | 'timeout' | null }
-export interface NativePipResult { ok: boolean; active: boolean; reason: 'unsupported' | 'not-ready' | 'user-gesture-required' | 'failed' | null }
+export interface PlaybackSeekResult { ok: boolean; target: number | null; clamped: boolean; reason: 'unavailable' | 'cancelled' | 'timeout' | null; detail?: ErrorDetails }
+export interface NativePipResult { ok: boolean; active: boolean; reason: 'unsupported' | 'not-ready' | 'user-gesture-required' | 'failed' | null; detail?: ErrorDetails }
 
 /** Headless media controls. Claude binds gestures/keys without owning or remounting video. */
 export class PlaybackControls {
@@ -29,14 +30,14 @@ export class PlaybackControls {
     if (!this.video.seeking && seekReached(this.video.currentTime, next.target)) return Promise.resolve({ ok: true, target: next.target, clamped: next.clamped, reason: null })
     return new Promise(resolve => {
       let done = false
-      const finish = (ok: boolean, reason: PlaybackSeekResult['reason']) => {
+      const finish = (ok: boolean, reason: PlaybackSeekResult['reason'], detail?: unknown) => {
         if (done) return
         done = true
         clearTimeout(timer)
         this.video.removeEventListener('seeked', onSeek)
         this.video.removeEventListener('emptied', onCancel)
         if (this.cancelSeek === onCancel) this.cancelSeek = null
-        resolve({ ok, target: next.target, clamped: next.clamped, reason })
+        resolve({ ok, target: next.target, clamped: next.clamped, reason, ...(detail === undefined ? {} : { detail: errorDetails(detail) }) })
       }
       const onSeek = () => { if (seekReached(this.video.currentTime, next.target)) finish(true, null) }
       const onCancel = () => finish(false, 'cancelled')
@@ -44,7 +45,7 @@ export class PlaybackControls {
       this.cancelSeek = onCancel
       this.video.addEventListener('seeked', onSeek)
       this.video.addEventListener('emptied', onCancel)
-      try { this.video.currentTime = next.target } catch { finish(false, 'unavailable') }
+      try { this.video.currentTime = next.target } catch (error) { finish(false, 'unavailable', error) }
     })
   }
   supportsNativePip(): boolean {
@@ -62,7 +63,7 @@ export class PlaybackControls {
       return { ok: true, active: document.pictureInPictureElement === this.video, reason: null }
     } catch (error) {
       return { ok: false, active: document.pictureInPictureElement === this.video,
-        reason: error instanceof DOMException && error.name === 'NotAllowedError' ? 'user-gesture-required' : 'failed' }
+        reason: error instanceof DOMException && error.name === 'NotAllowedError' ? 'user-gesture-required' : 'failed', detail: errorDetails(error) }
     }
   }
   dispose(): void { this.disposed = true; this.cancelSeek?.() }

@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest'
 import { loginAttemptId, loginRequestAllowed, loginViewport } from './embeddedLoginPolicy'
 
 describe('Douyin embedded login network boundary', () => {
+  it('limits the signing storage bridge to exact passive subframes',()=>{
+    for (const url of ['https://live.douyin.com/ucenter/security/storage-bridge/index.html',
+      'https://www.douyin.com/ucenter/security/storage-bridge/index.html',
+      'https://lf-zt.douyin.com/obj/uc-assets/zt/@byted/x-storage-web/4.0.5/dist/page/index.html']) {
+      expect(loginRequestAllowed('douyin',url,'subFrame')).toBe(true)
+      expect(loginRequestAllowed('douyin',url+'?t=1794384000000','subFrame')).toBe(true)
+      expect(loginRequestAllowed('douyin',url,'mainFrame')).toBe(false)
+      expect(loginRequestAllowed('douyin',url+'?other=1','subFrame')).toBe(false)
+      expect(loginRequestAllowed('douyin',url+'#fragment','subFrame')).toBe(false)
+    }
+  })
   it.each(['https://live.douyin.com/', 'https://www.douyin.com/', 'https://sso.douyin.com/'])('allows only explicit primary navigation %s', url => {
     expect(loginRequestAllowed('douyin', url, 'mainFrame')).toBe(true)
   })

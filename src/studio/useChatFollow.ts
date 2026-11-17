@@ -31,6 +31,8 @@ export function useChatFollow(scroller: RefObject<HTMLDivElement | null>, port: 
     following.current = false
     intentUp.current = true
     port.cancelScroll()
+    if (pendingFrame.current !== null) cancelAnimationFrame(pendingFrame.current)
+    pendingFrame.current = null
   }, [port])
   const jump = useCallback(() => {
     following.current = true
@@ -48,15 +50,17 @@ export function useChatFollow(scroller: RefObject<HTMLDivElement | null>, port: 
     if (!atEnd(next)) {
       // A plain scrollbar/API move changes the offset, not the layout. Reflow and
       // virtualizer compensation must not turn off a previously pinned viewport.
-      if (dragging.current || previous && sameSize(previous, next) && next.top < previous.top - END_SLACK) following.current = false
+      if (following.current && (dragging.current || previous && sameSize(previous, next) && next.top < previous.top - END_SLACK)) pause()
       if (!following.current) intentUp.current = false
-    } else if (!intentUp.current) {
+    } else if (!dragging.current && !intentUp.current && (following.current || previous && sameSize(previous, next) && next.top > previous.top)) {
+      // A changed sizer can transiently clamp a reading viewport to its end. Only
+      // a downward move within the same layout resumes following, not duplicate reflow echoes.
       following.current = true
       setUnread(0)
     }
     lastLayout.current = next
     if (following.current) scheduleRestore()
-  }, [scroller, scheduleRestore])
+  }, [scroller, scheduleRestore, pause])
 
   useLayoutEffect(() => {
     const arrived = Math.max(0, total - seen.current.total)
@@ -82,7 +86,7 @@ export function useChatFollow(scroller: RefObject<HTMLDivElement | null>, port: 
       if (event.target !== node || event.altKey || event.metaKey) return
       if (event.key === 'End') { event.preventDefault(); jump() }
       else if (['ArrowUp', 'PageUp', 'Home'].includes(event.key) || event.key === ' ' && event.shiftKey) pause()
-      else if (['ArrowDown', 'PageDown', ' '].includes(event.key)) intentUp.current = false
+      else if (['ArrowDown', 'PageDown', ' '].includes(event.key)) { intentUp.current = false; if (atEnd(read(node))) jump() }
     }
     const pointer = (event: PointerEvent) => {
       const bounds = node.getBoundingClientRect()
@@ -93,7 +97,8 @@ export function useChatFollow(scroller: RefObject<HTMLDivElement | null>, port: 
       if (!dragging.current) return
       dragging.current = false
       intentUp.current = false
-      onScroll()
+      if (atEnd(read(node))) jump()
+      else onScroll()
     }
     const resize = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleRestore)
     resize?.observe(node)

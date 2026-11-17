@@ -13,6 +13,8 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { ErrorDetailsButton, ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 import { apiClient } from '../../app/apiClient'
 import type { DouyuRenewalPlan, DouyuRenewalResult, DouyuRenewalTargetPage } from '../../../server/douyu/renewalTypes'
 import { Segmented } from '../kit'
@@ -50,7 +52,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
   const [result, setResult] = useState<DouyuRenewalResult | null>(null)
   const [busy, setBusy] = useState<'read' | 'plan' | 'give' | null>(null)
   const [stopping, setStopping] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError, errorDetail] = useErrorState('')
   const [now, setNow] = useState(Date.now)
 
   const mounted = useRef(false)
@@ -106,15 +108,15 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
     try {
       const response = await apiClient.getDouyuRenewalTargets(accountId)
       if (!mounted.current || mine !== generation.current) return
-      if (!response.ok) { setError(response.message); return }
+      if (!response.ok) { setError(response); return }
       const value = response.value
-      if (value?.accountId !== accountId || !Array.isArray(value.targets)) throw new Error('bad page')
+      if (value?.accountId !== accountId || !Array.isArray(value.targets)) throw new Error('bad page', { cause: response })
       const rooms = new Set(value.targets.map((target) => target.room))
       setPage(value)
       setPicked((current) => current.filter((room) => rooms.has(room)))
       setOverrides((current) => Object.fromEntries(Object.entries(current).filter(([room]) => rooms.has(room))))
-    } catch {
-      if (mounted.current && mine === generation.current) setError('无法读取粉丝牌，请稍后重试')
+    } catch (caught) {
+      if (mounted.current && mine === generation.current) setError(displayError(caught, '无法读取粉丝牌, 请稍后重试'))
     } finally {
       if (mounted.current && mine === generation.current) setBusy(null)
     }
@@ -152,20 +154,20 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
         if (response.ok && typeof response.value?.id === 'string') retire(response.value.id)
         return
       }
-      if (!response.ok) { setError(response.message); return }
+      if (!response.ok) { setError(response); return }
       const value = response.value
       const total = value?.rows?.reduce((sum, row) => sum + (row.status === 'ready' && row.gift ? row.gift.quantity : 0), 0)
       if (!value || value.accountId !== accountId || typeof value.id !== 'string' || !Array.isArray(value.rows)
         || value.rows.length !== rooms.length || value.rows.some((row) => !rooms.includes(row.room)) || total !== value.totalQuantity
         || (equal && (value.allocation?.mode !== 'equal-per-prop' || !Array.isArray(value.allocation.leftovers)))) {
         if (typeof value?.id === 'string') retire(value.id)
-        throw new Error('bad plan')
+        throw new Error('bad plan', { cause: response })
       }
       livePlan.current = { id: value.id, used: false }
       setPlan(value)
       setNow(Date.now())
-    } catch {
-      if (mounted.current && mine === generation.current) setError('核对单生成失败，请稍后重试')
+    } catch (caught) {
+      if (mounted.current && mine === generation.current) setError(displayError(caught, '核对单生成失败, 请稍后重试'))
     } finally {
       if (mounted.current && mine === generation.current) setBusy(null)
     }
@@ -183,12 +185,12 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
       // The reviewed plan is the whole command; the inputs above are never resent.
       const response = await apiClient.executeDouyuRenewal(plan.id)
       if (!mounted.current || mine !== generation.current) return
-      if (!response.ok) { setError(response.message); return }
+      if (!response.ok) { setError(response); return }
       const value = response.value
-      if (!value || value.planId !== plan.id || !(value.status in RESULT) || !Array.isArray(value.rows)) throw new Error('bad result')
+      if (!value || value.planId !== plan.id || !(value.status in RESULT) || !Array.isArray(value.rows)) throw new Error('bad result', { cause: response })
       setResult(value)
-    } catch {
-      if (mounted.current && mine === generation.current) setError('无法确认结果。请在官方背包和直播间中核对，此处不会自动重试。')
+    } catch (caught) {
+      if (mounted.current && mine === generation.current) setError(displayError(caught, '无法确认结果. 请在官方背包和直播间中核对, 此处不会自动重试. '))
     } finally {
       if (running.current === plan.id) running.current = null
       if (mounted.current && mine === generation.current) { setBusy(null); setStopping(false) }
@@ -201,9 +203,9 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
     setStopping(true)
     try {
       const response = await apiClient.cancelDouyuRenewal(id)
-      if (mounted.current && running.current === id && !response.ok) { setError(response.message); setStopping(false) }
-    } catch {
-      if (mounted.current && running.current === id) { setError('停止请求未确认，请在结果返回后核对'); setStopping(false) }
+      if (mounted.current && running.current === id && !response.ok) { setError(response); setStopping(false) }
+    } catch (caught) {
+      if (mounted.current && running.current === id) { setError(displayError(caught, '停止请求未确认, 请在结果返回后核对')); setStopping(false) }
     }
   }
 
@@ -259,7 +261,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
                     <span>个</span>
                   </label>}
                 </div>
-                {base === null && <p className="form-error">请填写 1 到 1000 的整数</p>}
+                {base === null && <p className="form-error"><ErrorText error="请填写 1 到 1000 的整数" message="请填写 1 到 1000 的整数" /></p>}
                 {allocation === 'per-room' && <p className="muted">为所选房间分别填写数量，留空的房间按上方数量赠送。</p>}
                 <ul className="badges">
                   {shown.map((target) => {
@@ -294,7 +296,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
                   })}
                   {shown.length === 0 && <li className="muted">没有匹配的牌子</li>}
                 </ul>
-                {badOverride && <p className="form-error">部分房间数量无效，请填写 1 到 1000 或留空</p>}
+                {badOverride && <p className="form-error"><ErrorText error="部分房间数量无效，请填写 1 到 1000 或留空" message="部分房间数量无效，请填写 1 到 1000 或留空" /></p>}
               </>
             )}
           </li>
@@ -318,7 +320,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
                       <span>{nameOf(row)}</span>
                       {row.status === 'ready' && row.gift
                         ? <span className="num">{row.gift.name} × {row.gift.quantity}<span className="muted">（库存 {row.gift.stock}，{time(row.gift.expiresAt)}）</span></span>
-                        : <span className="muted">跳过：{row.reason ?? '当前无法赠送'}</span>}
+                        : <span className="muted"><ErrorText error={row} message={`跳过: ${row.reason ?? '当前无法赠送'}`} /></span>}
                     </li>
                   ))}
                 </ul>
@@ -328,7 +330,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
                   </p>
                 )}
                 {!livePlan.current?.used && (expired
-                  ? <p className="form-error">核对单已过期，请重新生成</p>
+                  ? <p className="form-error"><ErrorText error="核对单已过期，请重新生成" message="核对单已过期，请重新生成" /></p>
                   : <p className="muted">核对单 {Math.max(0, Math.ceil((plan.expiresAt - now) / 1000))} 秒后过期</p>)}
               </section>
             )}
@@ -350,13 +352,13 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
             </div>
             {result && (
               <section aria-label="赠送处理结果" className="plan">
-                <p><b>{RESULT[result.status]}</b><span className="muted">　收到回执不代表续期成功</span></p>
+                <p><b>{RESULT[result.status]}</b><span className="muted">　收到回执不代表续期成功</span>{(result.status === 'failed' || result.status === 'waiting-user') && <ErrorDetailsButton error={result} />}</p>
                 {result.message && <p className="muted">{result.message}</p>}
                 <ul className="plan-rows">
                   {result.rows.map((row) => (
                     <li key={row.room} data-state={row.status}>
                       <span>{nameOf(row)}</span>
-                      <span>{ROW_STATE[row.status]}{row.propName ? ` · ${row.propName} × ${row.quantity}` : ''}<span className="muted"> {row.message}</span></span>
+                      <span>{ROW_STATE[row.status]}{row.propName ? ` · ${row.propName} × ${row.quantity}` : ''}<span className="muted"> {row.message}</span>{row.status !== 'receipt-received' && <ErrorDetailsButton error={row} />}</span>
                     </li>
                   ))}
                 </ul>
@@ -365,7 +367,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
           </li>
         )}
       </ol>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
       <BadgeAges accountId={accountId} ready={ready} />
     </div>
   )

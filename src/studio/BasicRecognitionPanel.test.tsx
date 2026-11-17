@@ -34,7 +34,7 @@ beforeEach(() => {
   session = new Session({ createSampler: () => null })
   Object.assign(session, { setBasicPreviewEnabled: vi.fn(), setBasicClockRoi: vi.fn() })
   state.session = session
-  state.snapshot = { ...session.snapshot, settings: { ...session.settings, recognitionMode: 'basic', basicClockRoi: null },
+  state.snapshot = { ...session.snapshot, settings: { ...session.settings, recognitionMode: 'basic', basicRecognitionPanelVisible: true, basicClockRoi: null },
     basicProgress: { official: null, commentary: null } }
 })
 afterEach(() => { cleanup(); session.dispose(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
@@ -63,14 +63,44 @@ function binaryDebug(): WorkerDebug {
     normalized: [], matches: [{ char: '1', score: .94, runnerUpScore: .55, sampleIndex: 0 }] }
 }
 
+function renderExpandedPanel() {
+  const view = render(<BasicRecognitionPanel />)
+  fireEvent.click(screen.getByRole('button', { name: '基础识别' }))
+  return view
+}
+
 describe('共享基础识别侧栏', () => {
+  it('默认隐藏, 启用后默认收起, 再次启用及重新挂载也不自动展开', () => {
+    state.snapshot.settings.basicRecognitionPanelVisible = false
+    const view = render(<BasicRecognitionPanel />)
+    expect(screen.queryByRole('region', { name: '基础识别' })).not.toBeInTheDocument()
+    expect(session.setBasicPreviewEnabled).toHaveBeenLastCalledWith(false)
+    state.snapshot.settings.basicRecognitionPanelVisible = true
+    view.rerender(<BasicRecognitionPanel />)
+    const heading = screen.getByRole('button', { name: '基础识别' })
+    expect(heading).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('button', { name: '框选倒计时' })).not.toBeInTheDocument()
+    expect(session.setBasicPreviewEnabled).toHaveBeenLastCalledWith(false)
+    fireEvent.click(heading)
+    expect(session.setBasicPreviewEnabled).toHaveBeenLastCalledWith(true)
+    state.snapshot.settings.basicRecognitionPanelVisible = false
+    view.rerender(<BasicRecognitionPanel />)
+    expect(session.setBasicPreviewEnabled).toHaveBeenLastCalledWith(false)
+    state.snapshot.settings.basicRecognitionPanelVisible = true
+    view.rerender(<BasicRecognitionPanel />)
+    expect(screen.getByRole('button', { name: '基础识别' })).toHaveAttribute('aria-expanded', 'false')
+    view.unmount()
+    render(<BasicRecognitionPanel />)
+    expect(screen.getByRole('button', { name: '基础识别' })).toHaveAttribute('aria-expanded', 'false')
+    expect(state.snapshot.settings.recognitionMode).toBe('basic')
+  })
   it('首帧尚未可读时保持禁用确认, 下一绘制帧完成后才允许提交', async () => {
     let paint: FrameRequestCallback | undefined
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => { paint = callback; return 1 })
     vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
     context.getImageData.mockReturnValueOnce({ data: Uint8ClampedArray.of(0, 0, 0, 0) })
     ready()
-    render(<BasicRecognitionPanel />)
+    renderExpandedPanel()
     fireEvent.click(screen.getByRole('button', { name: '框选倒计时' }))
     await waitFor(() => expect(context.getImageData).toHaveBeenCalled())
     expect(screen.getByRole('button', { name: '使用此范围' })).toBeDisabled()
@@ -82,7 +112,7 @@ describe('共享基础识别侧栏', () => {
     ready()
     state.snapshot.basicProgress.official = progress()
     state.snapshot.profiles.official = { ...BASIC_CLOCK_PROFILE, searchRoi: search }
-    const view = render(<BasicRecognitionPanel />)
+    const view = renderExpandedPanel()
     expect(session.setBasicPreviewEnabled).toHaveBeenLastCalledWith(true)
     const card = screen.getByRole('article', { name: '官方画面基础识别' })
     expect(within(card).getByRole('status')).toHaveTextContent('正在寻找倒计时')
@@ -102,7 +132,7 @@ describe('共享基础识别侧栏', () => {
     ready()
     const value = progress({ status: 'locked', text: '1:39', threshold: 180 }, binaryDebug())
     state.snapshot.basicProgress.official = value
-    const view = render(<BasicRecognitionPanel />)
+    const view = renderExpandedPanel()
     const card = screen.getByRole('article', { name: '官方画面基础识别' })
     const canvas = within(card).getByLabelText('官方画面二值化结果')
     const draws = context.putImageData.mock.calls.length
@@ -119,7 +149,7 @@ describe('共享基础识别侧栏', () => {
   it('新的寻找预览不替换最后完整二值快照, 清空数据后才清空图像', () => {
     ready()
     state.snapshot.basicProgress.official = progress({ status: 'locked', text: '1:39' }, binaryDebug())
-    const view = render(<BasicRecognitionPanel />)
+    const view = renderExpandedPanel()
     const card = screen.getByRole('article', { name: '官方画面基础识别' })
     const canvas = within(card).getByLabelText('官方画面二值化结果')
     state.snapshot.basicProgress.official = progress({ status: 'searching', text: '0:02', mediaTime: 8 })
@@ -135,7 +165,7 @@ describe('共享基础识别侧栏', () => {
     ready()
     state.snapshot.settings.basicClockRoi = roi
     state.snapshot.basicProgress.official = progress({ mode: 'manual' })
-    const view = render(<BasicRecognitionPanel />)
+    const view = renderExpandedPanel()
     const card = screen.getByRole('article', { name: '官方画面基础识别' })
     expect(within(card).getByText('手动范围')).toBeInTheDocument()
     expect(within(card).queryByLabelText('官方画面寻找预览')).not.toBeInTheDocument()
@@ -153,7 +183,7 @@ describe('共享基础识别侧栏', () => {
     ready()
     state.snapshot.settings.basicClockRoi = roi
     state.snapshot.profiles.official = { ...BASIC_CLOCK_PROFILE, searchRoi: search }
-    render(<BasicRecognitionPanel />)
+    renderExpandedPanel()
     expect(screen.getAllByRole('button', { name: '框选倒计时' })).toHaveLength(1)
     expect(screen.getByRole('button', { name: '框选倒计时' })).toBeEnabled()
     expect(screen.queryByRole('button', { name: '设置寻找区间' })).not.toBeInTheDocument()
@@ -163,7 +193,7 @@ describe('共享基础识别侧栏', () => {
   })
 
   it('官方流未就绪时禁用框选, 样式包模式不显示面板', () => {
-    const view = render(<BasicRecognitionPanel />)
+    const view = renderExpandedPanel()
     expect(screen.getByRole('button', { name: '框选倒计时' })).toBeDisabled()
     expect(screen.queryByRole('button', { name: '设置寻找区间' })).not.toBeInTheDocument()
     state.snapshot = { ...state.snapshot, settings: { ...state.snapshot.settings, recognitionMode: 'style-pack' } }
@@ -175,7 +205,7 @@ describe('共享基础识别侧栏', () => {
   async function openRegion(initial: RoiRect = roi, width = 1280, height = 720) {
     const video = ready(width, height)
     state.snapshot.settings.basicClockRoi = initial
-    render(<BasicRecognitionPanel />)
+    renderExpandedPanel()
     fireEvent.click(screen.getByRole('button', { name: '框选倒计时' }))
     await waitFor(() => expect(screen.getByRole('button', { name: '使用此范围' })).toBeEnabled())
     return video

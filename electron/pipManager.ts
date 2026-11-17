@@ -1,4 +1,5 @@
 import type { ResolvedStream } from '../server/platforms'
+import { diagnosticDetails } from '../server/errorDetails'
 import { isStreamId, type StreamId } from './streamIdentity'
 
 export interface PipOptions { lowPower: boolean; recoverStalls: boolean; width: number; height: number }
@@ -11,6 +12,7 @@ export interface PipState {
   recoveryRevision: number
   recoveryAttempts: number
   message: string | null
+  errorDetail?: import('../src/core/errorDetails').ErrorDetails
   sendContext: { accountId: string | null; room: string | null; canAttempt: boolean }
 }
 export interface PipReport { ready: boolean; playing: boolean; mediaTime: number; frameCount: number }
@@ -88,8 +90,8 @@ export class PipManager {
     this.publish()
     this.arm()
     try { await window.load() }
-    catch {
-      if (this.window === window) this.fail('画中画页面加载失败, 请关闭后重试')
+    catch (error) {
+      if (this.window === window) this.fail('画中画页面加载失败, 请关闭后重试', error)
     }
     return this.state()
   }
@@ -164,7 +166,7 @@ export class PipManager {
       if (this.state().phase !== 'failed') this.arm()
     }, 1_000)
   }
-  private fail(message: string): void {
+  private fail(message: string, detail?: unknown): void {
     const hiddenWindow = this.value.phase === 'opening' ? this.window : null
     if (hiddenWindow) {
       // Keep the failure visible to the main window, but release an unusable hidden shell.
@@ -173,6 +175,8 @@ export class PipManager {
       try { hiddenWindow.close() } catch { /* The native shell may already be destroyed. */ }
     }
     this.value.phase = 'failed'; this.value.audioOwner = 'main'; this.value.message = message
+    this.value.errorDetail = diagnosticDetails(detail ?? { message, recoveryAttempts: this.value.recoveryAttempts,
+      elapsedSinceOpenMs: this.now() - this.openedAt, elapsedSinceReportMs: this.reportAt ? this.now() - this.reportAt : null })
     if (this.timer !== null) this.clearTimer(this.timer)
     this.timer = null
     this.publish()
@@ -183,6 +187,7 @@ export class PipManager {
     if (this.timer !== null) this.clearTimer(this.timer)
     this.timer = null
     this.value = { ...this.value, phase: 'closed', streamId: null, source: null, audioOwner: 'main', message: null }
+    delete this.value.errorDetail
     this.publish()
   }
   private publish(): void { for (const listener of this.listeners) { try { listener(this.state()) } catch { /* Isolate observers. */ } } }

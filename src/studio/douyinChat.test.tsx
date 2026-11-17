@@ -38,6 +38,7 @@ beforeEach(() => {
   subscribedRooms = []
   vi.stubGlobal('streamSyncer', {
     invoke: vi.fn(async (method: string) => {
+      if (method === 'getDouyinSendState') return { ok:true, value:{ loggedIn:false, canSend:false, message:'登录抖音后可发送弹幕.' } }
       if (method === 'getDanmakuFeatures') return { ok: true, value: { affixes: { enabled: false, prefix: '', suffix: '' } } }
       if (method === 'listDouyuAccounts') return { ok: true, value: { activeAccountId: 'default', accounts: [{ id: 'default', label: '主号', busy: false, login: { loggedIn: true } }] } }
       return { ok: true, value: { presets: [] } }
@@ -55,8 +56,8 @@ afterEach(() => {
 
 const DOUYU_OPERATIONS = ['sendComposedDouyuMessage', 'getDanmakuRate', 'previewDouyuMute', 'getDanmakuUserDetails', 'addDanmakuFavorite', 'activateDouyuRoom']
 
-describe('Douyin read-only chat', () => {
-  it('shows chat and copy/local blocking while hiding sending, replies, history and Douyu statistics', async () => {
+describe('Douyin chat and isolated sending', () => {
+  it('shows the Douyin composer and copy/local blocking while hiding Douyu operations', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600)
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(320)
     const session = makeSession()
@@ -66,8 +67,9 @@ describe('Douyin read-only chat', () => {
     mount(session, <ChatDrawer onClose={() => {}} onOpenSettings={() => {}} onOpenRecords={() => {}} />)
     await act(async () => { await Promise.resolve() })
     expect(screen.getByText('抖音聊天')).toBeInTheDocument()
-    expect(screen.queryByRole('textbox')).toBeNull()
-    expect(screen.queryByRole('button', { name: /发送|\+1|房间数据|弹幕记录与收藏/ })).toBeNull()
+    expect(screen.getByRole('textbox', { name:'抖音弹幕内容' })).toBeDisabled()
+    expect(screen.getByRole('button', { name:'发送' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: /\+1|房间数据|弹幕记录与收藏/ })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /更多操作/ }))
     expect(screen.queryByRole('button', { name: /回复|收藏|禁言|历史弹幕|用户详情/ })).toBeNull()
     expect(screen.getByRole('button', { name: '复制' })).toBeInTheDocument()
@@ -115,7 +117,7 @@ describe('Douyin read-only chat', () => {
     render(<SessionProvider session={session}><SettingsSheet target={{ section }} room="douyin:12345"
       onClose={() => {}} onWatch={() => {}} onFill={() => {}} /></SessionProvider>)
     await act(async () => { await Promise.resolve() })
-    expect(screen.getByText(/当前抖音房间仅支持只读弹幕/)).toBeInTheDocument()
+    expect(screen.getByText(/当前抖音房间暂不支持弹幕记录与房间统计/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /赠送|签到|发送|创建任务/ })).toBeNull()
     expect(feature).not.toHaveBeenCalled()
   })

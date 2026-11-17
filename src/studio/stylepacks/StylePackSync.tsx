@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiClient, type ApiResult } from '../../app/apiClient'
 import type { StylePackSourceId, StylePackSyncState } from '../../../electron/stylePackSyncContracts'
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 
 const PHASE: Record<StylePackSyncState['phase'], string> = {
   unconfigured: '尚未启用云端同步', idle: '等待同步', syncing: '正在同步样式包...',
@@ -11,7 +13,7 @@ const SOURCE: Record<StylePackSourceId, string> = { github: 'GitHub', gitcode: '
 export function StylePackSyncSettings(): React.ReactNode {
   const [state, setState] = useState<StylePackSyncState | null>(null)
   const [busy, setBusy] = useState<'source' | 'sync' | null>(null)
-  const [error, setError] = useState('')
+  const [error, setError, errorDetail] = useErrorState('')
   const mounted = useRef(false)
   const pending = useRef<object | null>(null)
   const revision = useRef(0)
@@ -28,9 +30,9 @@ export function StylePackSyncSettings(): React.ReactNode {
     void apiClient.getStylePackSyncState().then(result => {
       if (!active || initialRevision !== revision.current) return
       if (result.ok) setState(result.value)
-      else setError(result.message)
-    }).catch(() => {
-      if (active && initialRevision === revision.current) setError('读取样式包同步状态失败, 请重新打开设置后重试.')
+      else setError(result)
+    }).catch(caught => {
+      if (active && initialRevision === revision.current) setError(displayError(caught, '读取样式包同步状态失败, 请重新打开设置后重试.'))
     })
     return () => { active = false; mounted.current = false; pending.current = null; release() }
   }, [])
@@ -49,9 +51,9 @@ export function StylePackSyncSettings(): React.ReactNode {
       if (result.ok) {
         if (submittedRevision === revision.current) setState(result.value)
       }
-      else setError(result.message)
-    } catch {
-      if (mounted.current && pending.current === token) setError(kind === 'source' ? '保存样式包来源失败, 请重试.' : '刷新样式包失败, 请重试.')
+      else setError(result)
+    } catch (caught) {
+      if (mounted.current && pending.current === token) setError(displayError(caught, kind === 'source' ? '保存样式包来源失败, 请重试.' : '刷新样式包失败, 请重试.'))
     } finally {
       if (pending.current === token) {
         pending.current = null
@@ -80,17 +82,17 @@ export function StylePackSyncSettings(): React.ReactNode {
       </label>
       <p className="muted">切换只保存来源, 点击手动刷新即可立即检查. 只访问所选源, 失败时保留缓存, 不自动切换.</p>
       <div className="row-split">
-        <p role="status">{busy === 'source' ? '正在保存来源...' : syncing ? PHASE.syncing : state ? PHASE[state.phase] : '正在读取...'}</p>
+        <p role="status">{state?.phase === 'error' && !busy ? <ErrorText error={state.errorDetail ?? state} message={PHASE.error} /> : busy === 'source' ? '正在保存来源...' : syncing ? PHASE.syncing : state ? PHASE[state.phase] : '正在读取...'}</p>
         <button type="button" className="btn-solid small" disabled={disabled}
           onClick={() => void perform('sync', () => apiClient.syncStylePacks())}>{syncing ? '正在刷新...' : '手动刷新'}</button>
       </div>
       {state && <p className="muted">当前来源: {SOURCE[state.source]} / 清单版本: {state.catalogRevision ?? '尚未安装'}</p>}
       {state && <p className="muted">已安装 {state.installed} 个云端样式包{state.checkedAt !== null
         ? ` / 上次检查: ${new Date(state.checkedAt).toLocaleString('zh-CN', { hour12: false })}` : ''}</p>}
-      {state?.message && <p className={state.phase === 'error' ? 'note-warn' : 'muted'}>{state.message}</p>}
+      {state?.message && <p className={state.phase === 'error' ? 'note-warn' : 'muted'}>{state.phase === 'error' ? <ErrorText error={state.errorDetail ?? state} message={state.message} /> : state.message}</p>}
       {!!state?.incompatible && <p className="note-warn">还有 {state.incompatible} 个赛事样式需要新版客户端, 已有兼容版本继续保留.</p>}
       <p className="muted">更新不会打断当前对齐. 重新选择样式或下次打开应用时使用新版, 本机修改优先保留.</p>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
     </section>
   )
 }

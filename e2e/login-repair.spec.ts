@@ -230,7 +230,7 @@ async function runRepairScenario(testInfo: TestInfo, mode: RepairScenario): Prom
       await local.getByRole('tab', { name: '短信登录', exact: true }).click()
       await expect(local.locator('#sms-fields')).toBeVisible()
       await local.locator('#phone').fill('15500000000')
-      await local.locator('#accepted').check()
+      await expect(local.getByRole('checkbox')).toHaveCount(0)
       await expect(local.locator('#send-sms')).toBeEnabled()
       await local.locator('#send-sms').click()
       await expect.poll(async () => {
@@ -296,7 +296,7 @@ async function runRepairScenario(testInfo: TestInfo, mode: RepairScenario): Prom
     await local.getByRole('button', { name: '隐藏密码', exact: true }).click()
     await expect(local.locator('#password')).toHaveAttribute('type', 'password')
     await local.getByRole('button', { name: '显示密码', exact: true }).click()
-    await local.locator('#accepted').check()
+    await expect(local.getByRole('checkbox')).toHaveCount(0)
     await local.getByRole('button', { name: '登录', exact: true }).click()
     await expect(local.locator('#password')).toHaveValue('')
     await expect(local.locator('#password')).toHaveAttribute('type', 'password')

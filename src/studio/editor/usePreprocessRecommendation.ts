@@ -13,7 +13,7 @@ interface Options {
   revision: RefObject<number>
   disabled: boolean
   apply: (settings: HudPreprocessSettings) => void
-  message: (message: { kind: 'info' | 'warn' | 'error'; text: string }) => void
+  message: (message: { kind: 'info' | 'warn' | 'error'; text: string; error?: unknown }) => void
 }
 
 const REASONS: Record<string, string> = {
@@ -49,13 +49,13 @@ export function usePreprocessRecommendation(options: Options) {
         kind === 'hsv' ? { kind, x: point!.x, y: point!.y } : { kind })
       if (!stillCurrent()) return
       if (!result.settings) {
-        current.message({ kind: 'warn', text: REASONS[result.reason ?? ''] ?? '无法可靠推荐参数, 当前设置保持不变' })
+        current.message({ kind: 'warn', text: REASONS[result.reason ?? ''] ?? '无法可靠推荐参数, 当前设置保持不变', error: result })
         return
       }
       current.apply(result.settings)
       current.message({ kind: 'info', text: '已应用当前帧的推荐参数并固定, 不会逐帧自动切换. 请检查前景掩码, 已有模板需重新验证.' })
     } catch (error) {
-      if (stillCurrent()) current.message({ kind: 'error', text: `参数推荐失败: ${error instanceof Error ? error.message : String(error)}` })
+      if (stillCurrent()) current.message({ kind: 'error', text: `参数推荐失败: ${error instanceof Error ? error.message : String(error)}`, error })
     } finally {
       if (request.current === token) { request.current = null; if (mounted.current) setBusy(false) }
     }

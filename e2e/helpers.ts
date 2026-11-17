@@ -110,7 +110,10 @@ export async function closeSourceDialog(page: Page): Promise<void> {
   // The cold-start dialog opens from an effect, so it may not be up on the first paint.
   if (await dialog.isVisible().catch(() => false)) {
     const dismiss = dialog.getByRole('button', { name: /^(跳过|开始观看)$/ })
-    if (await dismiss.isVisible()) await dismiss.click()
+    if (await dismiss.isVisible()) await dismiss.click({ timeout: 2_000 }).catch(async error => {
+      // The first presented frame can dismiss intake while the click is being dispatched.
+      if (await dialog.isVisible()) throw error
+    })
     await expect(dialog).toBeHidden()
   }
 }

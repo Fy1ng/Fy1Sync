@@ -97,6 +97,36 @@
   color: var(--drift);
 }
 
+.pip-page .pip-status:has(.error-details) {
+  pointer-events: auto;
+  z-index: 4;
+  max-height: calc(100% - 72px);
+  overflow: auto;
+}
+
+.pip-page .pip-diagnostic,
+.pip-page .pip-send-block {
+  display: block;
+}
+
+.pip-page .pip-control-note:has(.error-details) {
+  overflow: visible;
+  white-space: normal;
+  max-width: 100%;
+}
+
+.pip-page .pip-controls:has(.error-details-panel) {
+  align-items: flex-start;
+  max-height: calc(100% - 56px);
+  overflow: auto;
+}
+
+.pip-page .pip-outcome:has(.error-details) {
+  white-space: normal;
+  max-height: calc(100vh - 72px);
+  overflow: auto;
+}
+
 /* ---------- chrome ---------- */
 
 .pip-page .pip-controls,

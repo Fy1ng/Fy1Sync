@@ -50,6 +50,17 @@ const watchState = (patch: Partial<DouyuWatchState> = {}): DouyuWatchState => ({
   cumulativeSeconds: null, cumulativeBaselineSeconds: null, cumulativeIncrease: 0, cumulativeCheckedAt: null, badgeOwned: null, badgeLevel: null, ...patch,
 })
 
+it('keeps the raw cumulative-watch failure separate from healthy room statistics', async () => {
+  responses.getDouyuFansWatchTime = () => { throw Object.assign(new Error('离线累计查询失败'), { code: 'FANS_WATCH_READ', status: 503 }) }
+  render(<RoomInsightsSheet room="100" onClose={() => {}} />)
+  fireEvent.click(await screen.findByRole('button', { name: '查看原始错误' }))
+  const details = screen.getByRole('region', { name: '原始错误信息' })
+  expect(details.querySelector('code')!.textContent).toContain('FANS_WATCH_READ')
+  expect(details.querySelector('code')!.textContent).toContain('503')
+  expect(screen.getByRole('group', { name: '独立发言人数' })).toHaveTextContent('12')
+  expect(within(screen.getByRole('group', { name: '观众人数' })).queryByRole('button')).toBeNull()
+})
+
 function fakeVideo() {
   const video = document.createElement('video')
   const state = { currentTime: 0, paused: true, seeking: false, ended: false, readyState: 4, error: null as MediaError | null,

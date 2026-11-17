@@ -1,5 +1,7 @@
 import { cleanProxyEnvironment, networkContext, routeCandidates, type NetworkContext, type NetworkRoute } from '../server/networkPolicy'
+import { mediaTlsPolicy, type MediaNetworkOptions } from '../server/mediaNetworkOptions'
 import { StreamFailureError, classifyFfmpegStderr, classifyNetworkFailure } from '../server/networkFailure'
+import { diagnosticDetails } from '../server/errorDetails'
 import { spawn, type ChildProcess } from 'node:child_process'
 import path from 'node:path'
 import { locateTool, locateYouTubePotProvider, type ToolSettings, type ToolContext, type YouTubePotProvider } from './toolLocator'
@@ -34,8 +36,9 @@ export function ytDlpProxyConnectionFailure(stderr: string): boolean {
   return /(?:unable|failed|cannot|could not) to connect to (?:the )?proxy|ProxyConnectionError|proxy connection (?:failed|refused|timed out)|SOCKS.{0,160}(?:connection refused|timed out|failed to establish a new connection)/i.test(stderr)
 }
 
-export function ytDlpProxyConnectionError(): StreamFailureError {
-  const error = new StreamFailureError({ stage: 'proxy', code: 'proxy-unreachable', message: '代理不可达, 请检查系统代理.' })
+export function ytDlpProxyConnectionError(detail?: unknown): StreamFailureError {
+  const error = new StreamFailureError({ stage: 'proxy', code: 'proxy-unreachable', message: '代理不可达, 请检查系统代理.',
+    ...(detail === undefined ? {} : { detail: diagnosticDetails(detail) }) })
   markProxyConnectFailure(error)
   return error
 }
@@ -45,7 +48,7 @@ export interface YoutubeCookieAccess {
 }
 
 export interface YtDlpDiagnostic extends Omit<DiagnosticEvent, 'at'> {}
-type DiagnosticContext = { emit: (event: Omit<YtDlpDiagnostic, 'extractionId'>) => void }
+type DiagnosticContext = { emit: (event: Omit<YtDlpDiagnostic, 'extractionId'>) => void; media?: Readonly<MediaNetworkOptions>; credentialed?: boolean; signal?: AbortSignal; sourceUrl?: string }
 type ChildStage = 'hls' | 'hls-fallback' | 'adaptive' | 'huya'
 const fixedCodes = new Set<string>(DIAGNOSTIC_CODES)
 
@@ -160,7 +163,7 @@ export class YtDlpRunner {
   async resolve(url: string, adaptive = true, network: NetworkContext = networkContext(/huya\.com/.test(url) ? 'huya' : 'youtube'), diagnostic?: (event: YtDlpDiagnostic) => void): Promise<unknown> {
     const extractionId = ++this.extractionSequence
     const observers = new Set([this.options.diagnostic, diagnostic])
-    const context: DiagnosticContext = { emit: event => {
+    const context: DiagnosticContext = { media: network.media, signal: network.signal, sourceUrl: url, emit: event => {
       // Observers are isolated from both the acquisition and each other's mutable copies.
       for (const observer of observers) {
         try { observer?.(structuredClone({ ...event, extractionId })) } catch { /* Diagnostics must not affect extraction. */ }
@@ -220,6 +223,7 @@ export class YtDlpRunner {
     context.emit({ stage: 'provider', status: !adaptive ? 'skipped' : provider ? 'available' : 'unavailable',
       providerConfigured: Boolean(provider), providerOutcome: adaptive && provider ? 'unconfirmed' : 'not-requested' })
     return this.options.cookies.withTemporaryCookies('youtube', async (cookiePath) => {
+      context = { ...context, credentialed: Boolean(cookiePath) }
       if (this.disposed) throw new Error('取流服务已关闭')
       const args = [
         '--ignore-config', '--no-cache-dir', '--no-playlist', '--no-progress',
@@ -229,37 +233,39 @@ export class YtDlpRunner {
         ...(cookiePath ? ['--cookies', cookiePath] : []), '--', url,
       ]
       if (provider) {
-        // Client-specific extractions may expose disjoint HLS and adaptive formats.
-        // Keep the existing HLS run unchanged and merge eligible adaptive additions.
-        const hlsRun = this.runChild(executable, args, 'hls', proxyUrl, context)
         let plugin: PrivatePotPlugin | undefined
-        const adaptiveRun = (async (): Promise<unknown> => {
-          try {
-            plugin = await prepareScriptOnlyPotPlugin(provider.pluginDir)
-            context.emit({ stage: 'provider', status: 'prepared', client: 'web', providerConfigured: true, providerOutcome: 'unconfirmed' })
-            const providerArgs = [
-              '--no-plugin-dirs', '--plugin-dirs', plugin.pluginDir,
-              '--extractor-args', `youtubepot-bgutilscript:server_home=${provider.serverHome}`,
-              '--extractor-args', 'youtube:player_client=web;formats=incomplete',
-            ]
-            // generate_once.js is spawned by the plugin; never start the HTTP server.
-            return await this.runChild(executable, [...args.slice(0, -2), ...providerArgs, ...args.slice(-2)], 'adaptive', proxyUrl, context)
-          } catch {
-            if (!plugin) {
-              context.emit({ stage: 'provider', status: 'failed', client: 'web', code: 'provider-prepare-failed', providerConfigured: true, providerOutcome: 'warning' })
-              context.emit({ stage: 'adaptive', status: 'skipped', client: 'web', code: 'provider-prepare-failed', providerConfigured: true, providerOutcome: 'warning' })
-            }
-            // A provider failure must not remove the existing cookie-aware HLS path.
-            return undefined
-          } finally {
-            await plugin?.dispose()
+        try {
+          plugin = await prepareScriptOnlyPotPlugin(provider.pluginDir)
+          context.emit({ stage: 'provider', status: 'prepared', client: 'default', providerConfigured: true, providerOutcome: 'unconfirmed' })
+          const providerArgs = [
+            '--no-plugin-dirs', '--plugin-dirs', plugin.pluginDir,
+            '--extractor-args', `youtubepot-bgutilscript:server_home=${provider.serverHome}`,
+          ]
+          // Default clients can return both HLS and adaptive pairs in one extraction.
+          // Keep the web-only compatibility retry for clients that still omit the pairs.
+          const extract = (client: 'default' | 'web', stage: ChildStage) => this.runChild(executable,
+            [...args.slice(0, -2), ...providerArgs, '--extractor-args', `youtube:player_client=${client};formats=incomplete`, ...args.slice(-2)],
+            stage, proxyUrl, context)
+          let info: unknown
+          let providerFailed = false
+          try { info = await extract('default', 'hls') } catch (error) {
+            if (this.disposed) throw new Error('yt-dlp 超时或已取消')
+            if (isProxyConnectFailure(error)) throw error
+            // A broken provider must not disable the plain, cookie-aware HLS path.
+            providerFailed = true
+            info = await this.runChild(executable, args, 'hls', proxyUrl, context)
           }
-        })()
-        const [hlsResult, adaptiveInfo] = await Promise.allSettled([hlsRun, adaptiveRun])
-        if (this.disposed) throw new Error('yt-dlp 超时或已取消')
-        if (hlsResult.status === 'rejected') throw hlsResult.reason
-        const merged = mergeAdaptiveFormats(hlsResult.value, adaptiveInfo.status === 'fulfilled' ? adaptiveInfo.value : undefined)
-        return this.recoverHls(executable, args, merged, proxyUrl, adaptive, context, provider)
+          if (!providerFailed && !youtubeAdaptiveFormats(info, 0).length) {
+            try { info = mergeAdaptiveFormats(info, await extract('web', 'adaptive')) } catch {
+              if (this.disposed) throw new Error('yt-dlp 超时或已取消')
+            }
+          }
+          return this.recoverHls(executable, args, info, proxyUrl, adaptive, context, providerFailed ? undefined : provider)
+        } catch (error) {
+          if (plugin) throw error
+          context.emit({ stage: 'provider', status: 'failed', client: 'web', code: 'provider-prepare-failed', providerConfigured: true, providerOutcome: 'warning' })
+          context.emit({ stage: 'adaptive', status: 'skipped', client: 'web', code: 'provider-prepare-failed', providerConfigured: true, providerOutcome: 'warning' })
+        } finally { await plugin?.dispose() }
       }
       context.emit({ stage: 'adaptive', status: 'skipped', client: 'web', providerConfigured: false, providerOutcome: 'not-requested' })
       return this.recoverHls(executable, args, await this.runChild(executable, args, 'hls', proxyUrl, context), proxyUrl, adaptive, context)
@@ -293,10 +299,25 @@ export class YtDlpRunner {
   }
 
   private runChild(executable: string, args: string[], stage: ChildStage, proxyUrl: string, context: DiagnosticContext): Promise<unknown> {
+    if (context.media) {
+      const media = context.media
+      const tls = mediaTlsPolicy(media, context.sourceUrl ?? '', Boolean(context.credentialed))
+      const filtered: string[] = []
+      for (let index = 0; index < args.length; index++) {
+        if (['--socket-timeout', '--retries', '--extractor-retries'].includes(args[index]!)) { index++; continue }
+        filtered.push(args[index]!)
+      }
+      args = [
+        ...(!tls.verifyTls && !tls.verifyProxyTls ? ['--no-check-certificates'] : []),
+        ...(media.requestTimeoutMs > 0 ? ['--socket-timeout', String(media.requestTimeoutMs / 1000)] : []),
+        '--retries', media.reconnectAttempts ? String(media.reconnectAttempts) : 'infinite',
+        '--extractor-retries', media.reconnectAttempts ? String(media.reconnectAttempts) : 'infinite', ...filtered,
+      ]
+    }
     const client = stage === 'adaptive' ? 'web' : stage === 'hls-fallback' ? 'web_safari' : stage === 'huya' ? 'huya' : 'default'
     const providerConfigured = args.includes('--plugin-dirs')
     const event = (value: Omit<YtDlpDiagnostic, 'stage' | 'client' | 'extractionId'>) => context.emit({ ...value, stage, client, providerConfigured })
-    if (this.disposed) {
+    if (this.disposed || context.signal?.aborted) {
       event({ status: 'cancelled', code: 'cancelled', stopReason: 'cancelled', stopped: true })
       return Promise.reject(new Error('yt-dlp 超时或已取消'))
     }
@@ -304,6 +325,8 @@ export class YtDlpRunner {
     // Only this child (and its JS runtime) inherits Electron's Node mode.
     const env: NodeJS.ProcessEnv = { ...cleanProxyEnvironment(this.options.env ?? process.env), ELECTRON_RUN_AS_NODE: '1', PYTHONIOENCODING: 'utf-8',
       ...(this.options.toolContext?.providerCacheHome ? { XDG_CACHE_HOME: this.options.toolContext.providerCacheHome } : {}) }
+    // EJS rejects any runtime stderr, including Node's FORCE_COLOR/NO_COLOR conflict warning.
+    delete env.FORCE_COLOR
     // The script provider forwards yt-dlp's proxy; its empty-proxy environment fallback is also cleared.
     if (proxyUrl) { env.HTTP_PROXY = proxyUrl; env.HTTPS_PROXY = proxyUrl; env.ALL_PROXY = proxyUrl }
     const runtime = this.options.networkRuntimePath
@@ -325,9 +348,9 @@ export class YtDlpRunner {
         child = (this.options.spawn ?? spawn)(executable, ['--proxy', proxyUrl, ...args], {
           env, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'],
         })
-      } catch {
+      } catch (error) {
         event({ status: 'failed', code: 'spawn-failed' })
-        reject(new Error('无法启动 yt-dlp, 请检查工具路径'))
+        reject(Object.assign(new Error('无法启动 yt-dlp, 请检查工具路径'), { detail: diagnosticDetails(error) }))
         return
       }
       this.children.add(child)
@@ -337,8 +360,12 @@ export class YtDlpRunner {
         stdout = ''
         void this.terminate(child)
       }
-      const timer = setTimeout(() => stop('timeout'), this.options.timeoutMs ?? 120_000)
-      const finish = () => { clearTimeout(timer); this.children.delete(child) }
+      const timeoutMs = this.options.timeoutMs ?? context.media?.startupTimeoutMs ?? 120_000
+      const timer = timeoutMs > 0 ? setTimeout(() => stop('timeout'), timeoutMs) : undefined
+      const abort = () => stop('cancelled')
+      context.signal?.addEventListener('abort', abort, { once: true })
+      if (context.signal?.aborted) abort()
+      const finish = () => { clearTimeout(timer); context.signal?.removeEventListener('abort', abort); this.children.delete(child) }
       child.stdout?.on('data', (chunk: Buffer) => {
         if (stopReason || this.disposed) return
         stdoutBytes += chunk.length
@@ -346,12 +373,12 @@ export class YtDlpRunner {
         stdout += chunk.toString('utf8')
       })
       child.stderr?.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString('utf8')).slice(-32_768) })
-      child.once('error', () => {
+      child.once('error', error => {
         if (settled) return
         settled = true
         finish()
         event({ status: 'failed', code: 'spawn-failed' })
-        reject(new Error('无法启动 yt-dlp, 请检查工具路径'))
+        reject(Object.assign(new Error('无法启动 yt-dlp, 请检查工具路径'), { detail: diagnosticDetails(error) }))
       })
       child.once('close', (code) => {
         if (settled) return
@@ -372,7 +399,7 @@ export class YtDlpRunner {
         if (code !== 0) {
           if (proxyUrl && ytDlpProxyConnectionFailure(stderr)) {
             event({ ...completed, status: 'failed', code: 'proxy-unreachable', stopped: false })
-            reject(ytDlpProxyConnectionError()); return
+            reject(ytDlpProxyConnectionError({ exitCode: code, stderr })); return
           }
           const classified = classifyFfmpegStderr(stderr)
           if (classified) {
@@ -382,12 +409,12 @@ export class YtDlpRunner {
           }
           event({ ...completed, status: 'failed', code: youtubeFailureCode(stderr), stopped: false })
           if (stage === 'huya') {
-            reject(new Error(/sign in|login|required|forbidden|restricted|geo.restrict|登录|封禁|整改/i.test(stderr)
+            reject(Object.assign(new Error(/sign in|login|required|forbidden|restricted|geo.restrict|登录|封禁|整改/i.test(stderr)
               ? '虎牙访问受限, 当前暂不支持登录' : /not (?:currently )?live|offline|未开播/i.test(stderr)
-                ? '虎牙房间当前未开播' : '虎牙取流失败, 请检查直播状态和网络'))
+                ? '虎牙房间当前未开播' : '虎牙取流失败, 请检查直播状态和网络'), { detail: diagnosticDetails({ exitCode: code, stderr }) }))
             return
           }
-          reject(new Error(youtubeFailureLabel(stderr)))
+          reject(Object.assign(new Error(youtubeFailureLabel(stderr)), { detail: diagnosticDetails({ exitCode: code, stderr }) }))
           return
         }
         try {
@@ -404,9 +431,9 @@ export class YtDlpRunner {
             formats: formatSummary(info, stage === 'huya'),
             providerOutcome: observedToken(formats) ? 'token-observed' : completed.providerOutcome })
           resolve(info)
-        } catch {
+        } catch (error) {
           event({ ...completed, status: 'failed', code: 'invalid-metadata', stopped: false })
-          reject(new Error('yt-dlp 返回无效的媒体信息'))
+          reject(Object.assign(new Error('yt-dlp 返回无效的媒体信息'), { detail: diagnosticDetails(error) }))
         }
       })
     })

@@ -44,14 +44,14 @@ function setup(captchaReady = true) {
   let completedHandler: ((details: { id: number; statusCode?: number; webContentsId?: number }) => void) | undefined
   let errorHandler: typeof completedHandler
   const browserSession = Object.assign(new EventEmitter(), {
-    cookies: jar, setProxy: vi.fn(async () => {}), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn(), setDevicePermissionHandler: vi.fn(),
+    cookies: jar, setUserAgent:vi.fn(), setProxy: vi.fn(async () => {}), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn(), setDevicePermissionHandler: vi.fn(),
     webRequest: { onBeforeRequest: vi.fn(handler => { requestHandler = handler }),
       onCompleted: vi.fn(handler => { completedHandler = handler }), onErrorOccurred: vi.fn(handler => { errorHandler = handler }) },
     closeAllConnections: vi.fn(async () => {}), clearStorageData: vi.fn(async () => {}), clearCache: vi.fn(async () => {}),
     fetch: vi.fn(async (_url: string, _options: unknown): Promise<Response> => new Response(JSON.stringify({ code: -101, data: { isLogin: false } }))),
   })
   const remoteContents = Object.assign(new EventEmitter(), {
-    id: 42, mainFrame: { url: '' }, isDestroyed: () => false, close: vi.fn(), capturePage: vi.fn(async () => ({})), setIgnoreMenuShortcuts: vi.fn(), setWindowOpenHandler: vi.fn(), setAudioMuted: vi.fn(), getZoomFactor: () => 1,
+    id: 42, getUserAgent:()=>'Mozilla/5.0 Chrome/152.0.0.0 Electron/44.0.0',setUserAgent:vi.fn(),mainFrame: { url: '' }, isDestroyed: () => false, close: vi.fn(), capturePage: vi.fn(async () => ({})), setIgnoreMenuShortcuts: vi.fn(), setWindowOpenHandler: vi.fn(), setAudioMuted: vi.fn(), getZoomFactor: () => 1,
     loadURL: vi.fn(async (url: string) => {
       remoteContents.mainFrame.url = platform === 'douyu' && url === LOGIN_ADAPTERS.douyu.entryUrl ? 'https://passport.douyu.com/member/login' : url
       if (captchaReady && platform === 'bilibili' && url !== 'about:blank') completeCaptchaPreflight()
@@ -109,6 +109,33 @@ function setup(captchaReady = true) {
 }
 
 describe('in-app isolated login lifecycle', () => {
+  it('checks rejected Douyin tickets silently, waits for authentication changes, and accepts the fresh identity', async () => {
+    const f=setup(),states:Array<{phase?:string;message?:string}>=[]
+    const old={name:'sessionid',value:'synthetic-old-session',domain:'.douyin.com',path:'/',secure:true,httpOnly:true,session:true}
+    f.setCookies([old])
+    f.browserSession.fetch.mockResolvedValue(Response.json({status_code:20003}))
+    f.controller.subscribe(value=>{if(value)states.push({phase:value.phase,message:value.message})})
+    const result=f.begin('douyin')
+    await vi.waitFor(()=>expect(f.browserSession.fetch).toHaveBeenCalledOnce())
+    await new Promise(resolve=>setTimeout(resolve,2700))
+    expect(f.browserSession.fetch).toHaveBeenCalledOnce()
+    expect(states.some(state=>state.phase==='verifying'||state.message==='请完成平台官网登录')).toBe(false)
+    expect(f.card.publish.mock.calls.some(call=>(call[0] as {stage?:string})?.stage==='checking')).toBe(false)
+    f.browserSession.fetch.mockImplementation(async()=>Response.json({status_code:0,data:{id_str:'1001',nickname:'测试账号'}}))
+    f.setCookies([{...old,value:'synthetic-new-session'}])
+    f.jar.emit('changed',{}, {name:'sessionid',domain:'.douyin.com'})
+    await expect(result).resolves.toEqual([expect.objectContaining({value:'synthetic-new-session'})])
+    expect(f.browserSession.fetch).toHaveBeenCalledTimes(2)
+  },6000)
+  it('does not turn a background Douyin identity read failure into a form error or disable fields', async () => {
+    const f=setup()
+    f.setCookies([{name:'sessionid',value:'synthetic-session',domain:'.douyin.com',path:'/',secure:true,httpOnly:true,session:true}])
+    f.browserSession.fetch.mockRejectedValue(new Error('Synthetic network error'))
+    f.begin('douyin')
+    await vi.waitFor(()=>expect(f.browserSession.fetch).toHaveBeenCalledOnce())
+    expect(f.controller.cardState()).toMatchObject({stage:'form',busy:false})
+    expect(f.controller.cardState()?.message).toBeUndefined()
+  })
   it('keeps second-factor send disabled until the original captcha initialization request completes', async () => {
     const f = setup(false)
     f.setSnapshot({ page: 'second-factor', verification: { kind: 'sms' }, sms: { canSend: true, cooldownSeconds: 0 } })

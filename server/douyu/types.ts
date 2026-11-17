@@ -58,6 +58,7 @@ export interface DouyuTaskView extends DouyuTaskDefinition {
   lastRunAt: number | null
   nextRunAt: number | null
   lastResult: string | null
+  errorDetail?: import('../../src/core/errorDetails').ErrorDetails
   /** Message tasks only. Resets on an explicit new start and is never persisted. */
   completedRuns?: number
   deadlineAt?: number
@@ -86,9 +87,9 @@ export interface DouyuTaskStorage {
 }
 
 export type DouyuTerminalOutcome =
-  | { status: 'succeeded'; message: string }
+  ({ status: 'succeeded'; message: string }
   | { status: 'waiting-user'; message: string }
-  | { status: 'failed'; message: string }
+  | { status: 'failed'; message: string }) & { detail?: import('../../src/core/errorDetails').ErrorDetails }
 
 /** Only activity adapters may schedule a fresh read after a known wait. */
 export type DouyuTaskOutcome = (DouyuTerminalOutcome
@@ -127,4 +128,4 @@ export interface DouyuAccountOperationContext {
 export type DouyuAccountOperationOutcome<T> =
   | { status: 'completed'; value: T }
   | { status: 'cancelled'; started: boolean }
-  | { status: 'busy' | 'unavailable' | 'failed' }
+  | { status: 'busy' | 'unavailable' | 'failed'; detail?: import('../../src/core/errorDetails').ErrorDetails }

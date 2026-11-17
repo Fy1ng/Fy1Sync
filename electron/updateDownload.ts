@@ -1,4 +1,5 @@
 import { isIP } from 'node:net'
+import { httpErrorDetails } from '../server/httpError'
 import { dnsResolver, safeFetch, type Resolver } from '../server/safeFetch'
 import { networkContext } from '../server/networkPolicy'
 import { secureUpdateUrl } from './onlineUpdateManifest'
@@ -103,7 +104,8 @@ export async function streamUpdateDownload(url: string, options: UpdateDownloadO
     }), signal)
     const response = fetched.response
     const length = response.headers.get('content-length'), encoding = response.headers.get('content-encoding')
-    if (response.status !== 200 || !response.body || encoding !== null && encoding.toLowerCase() !== 'identity'
+    if (response.status !== 200) throw Object.assign(failure(), await httpErrorDetails(response))
+    if (!response.body || encoding !== null && encoding.toLowerCase() !== 'identity'
       || length !== null && (!/^\d+$/.test(length) || Number(length) > options.limit || options.expectedBytes !== undefined && Number(length) !== options.expectedBytes)) {
       void response.body?.cancel().catch(() => {})
       throw failure()

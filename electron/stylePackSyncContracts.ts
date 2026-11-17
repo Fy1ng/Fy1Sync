@@ -31,6 +31,7 @@ export interface SignedStylePackCatalog {
 }
 
 export interface StylePackSyncState {
+  errorDetail?: import('../src/core/errorDetails').ErrorDetails
   source: StylePackSourceId
   availableSources: StylePackSourceId[]
   catalogRevision: number | null

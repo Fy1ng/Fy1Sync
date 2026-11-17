@@ -7,6 +7,7 @@ import type { GlyphBox } from '../../core/segmentation'
 import { FULL_FRAME_ROI, type FrameGrabber, type GrabbedFrame } from '../../recognition/frameGrabber'
 import { isCueTarget, type EditorTarget } from './cueModel'
 import { applyGlyphChange, glyphFrameKey, labelledReading, teachGlyphs, type GlyphChange } from './glyphTeaching'
+import { displayError, errorMessage } from '../../core/errorDetails'
 
 interface Options {
   pack: HudStylePack
@@ -22,7 +23,7 @@ interface Options {
   onFrame: (frame: GrabbedFrame) => void
   onPack: (pack: HudStylePack) => void
   onSelect: (index: number) => void
-  onMessage: (message: { kind: 'info' | 'warn' | 'error'; text: string }) => void
+  onMessage: (message: { kind: 'info' | 'warn' | 'error'; text: string; error?: unknown }) => void
 }
 
 interface UndoStep {
@@ -100,7 +101,9 @@ export function useCountdownTeaching(options: Options) {
         latest.current.onSelect(Math.min(selection.selected, boxes.length - 1))
         selectionAfterAnalysis.current = null
       }
-    }).catch(() => { if (active) setReading('') })
+    }).catch(error => {
+      if (active) { setReading(''); latest.current.onMessage({ kind: 'warn', text: '当前帧样本标记读取失败, 请重新取帧.', error }) }
+    })
     return () => { active = false }
   }, [options.frame, options.boxes, options.pack, options.fieldId, options.variantId, busy, context])
 
@@ -132,7 +135,7 @@ export function useCountdownTeaching(options: Options) {
   const fail = (job: Pending, error: unknown): void => {
     if (pending.current === job && mounted.current && contextRef.current === job.context) {
       setReading('')
-      latest.current.onMessage({ kind: 'warn', text: error instanceof Error ? error.message : String(error) })
+      latest.current.onMessage({ kind: 'warn', text: errorMessage(error), error })
     }
   }
 
@@ -177,7 +180,7 @@ export function useCountdownTeaching(options: Options) {
       const captured = sameFrame ? { ok: true as const, frame: sameFrame }
         : job.video ? current.grabber.current.grab(job.video, FULL_FRAME_ROI, job.video.currentTime)
         : job.undo?.frame ? { ok: true as const, frame: job.undo.frame } : null
-      if (!captured?.ok) throw new Error('取帧失败, 本次未改动模板')
+      if (!captured?.ok) throw displayError(captured ?? '没有可用的视频画面', '取帧失败, 本次未改动模板')
       if (!sameFrame) current.onFrame(captured.frame)
       if (job.undo) {
         const { change, fieldId, variantId, selected } = job.undo

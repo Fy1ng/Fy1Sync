@@ -3,6 +3,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { messageCredentialStatus } from '../server/douyu/messageProtocol'
 import { assertRegularPath, containedPath, privateDirectory } from './privateStorage'
+import { douyinCookieFingerprint } from '../server/douyin/signingMaterial'
 import type { CookiesSetDetails } from 'electron'
 
 export interface LoginCookieSession { cookies: { set(details: CookiesSetDetails): Promise<void> } }
@@ -10,7 +11,7 @@ export type YoutubeCookieSession = LoginCookieSession
 
 export type LoginPlatform = 'youtube' | 'douyu' | 'bilibili' | 'huya' | 'douyin'
 export type CookieHeaderPlatform = Exclude<LoginPlatform, 'youtube'>
-export interface LoginResult { cookieCount: number; authKeysPresent: string[] }
+export interface LoginResult { cookieCount: number; authKeysPresent: string[]; signingReady?: boolean; signingProblem?: string }
 export interface PlatformLoginStatus extends LoginResult {
   loggedIn: boolean
   /** Douyu gateway readiness, distinct from website authentication. No values leave main. */
@@ -18,6 +19,7 @@ export interface PlatformLoginStatus extends LoginResult {
   missingCredentialFields?: string[]
   /** Douyu display name from `acf_nickname`, shown in place of the account's local label. */
   nickname?: string
+  avatar?: string
   /** Earliest persistent authentication-cookie expiry, as Unix seconds. */
   expiresAt: number | null
   hasSessionCookies: boolean
@@ -36,6 +38,25 @@ export interface BrowserCookie {
   value: string
 }
 interface StoredCookie extends BrowserCookie { subdomains: boolean; expires: number; path: string }
+export interface BrowserAccountIdentity { username: string; uid?: string; avatar?: string }
+const ACCOUNT_PREFIX = '# Fy1Sync-Account\t'
+
+function accountIdentity(value: unknown): BrowserAccountIdentity {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).some(key => !['username', 'uid', 'avatar'].includes(key))) throw storageFailure()
+  const identity = value as BrowserAccountIdentity
+  if (typeof identity.username !== 'string' || !identity.username.trim() || identity.username.length > 80
+    || /[\x00-\x1f\x7f]/.test(identity.username)
+    || identity.uid !== undefined && (typeof identity.uid !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(identity.uid))
+    || identity.avatar !== undefined && (typeof identity.avatar !== 'string' || identity.avatar.length > 96 * 1024
+      || !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(identity.avatar))) throw storageFailure()
+  return { ...identity }
+}
+function readAccountIdentity(text: string): BrowserAccountIdentity | undefined {
+  const lines = text.split(/\r?\n/).filter(line => line.startsWith('# Fy1Sync-Account'))
+  if (lines.length > 1 || lines.length === 1 && !lines[0]!.startsWith(ACCOUNT_PREFIX)) throw storageFailure()
+  return lines.length ? accountIdentity(JSON.parse(lines[0]!.slice(ACCOUNT_PREFIX.length))) : undefined
+}
 
 /** The one cookie value allowed out of main: a display name, decoded and bounded. */
 function douyuNickname(cookies: StoredCookie[]): { nickname?: string } {
@@ -77,6 +98,28 @@ function selectedCookies<T extends BrowserCookie>(cookies: T[], target: URL): T[
 
 function platformHeader(cookies: StoredCookie[], target: URL): string {
   return selectedCookies(cookies, target).map(cookie => `${cookie.name}=${cookie.value}`).join('; ')
+}
+
+/** Bind the same domain/path selection that the persisted current-user request will use. */
+export function douyinBrowserCookieFingerprint(cookies: BrowserCookie[], now=Date.now()/1000): string {
+  const eligible=cookies.filter(cookie => cookieDomainAllowed(cookie.domain,'douyin')
+    && (cookie.expirationDate===undefined || cookie.expirationDate===0 || cookie.expirationDate>now))
+  const selected=selectedCookies(eligible,new URL('https://live.douyin.com/webcast/user/me/'))
+  return douyinCookieFingerprint(selected.map(cookie=>`${cookie.name}=${cookie.value}`).join('; '))
+}
+
+/** Server proof from the outgoing Cookie scope, used only in main to bind the captured private key. */
+export function douyinBrowserSigningServerData(cookies: BrowserCookie[], now=Date.now()/1000): string|undefined {
+  try {
+    const eligible=cookies.filter(cookie=>cookieDomainAllowed(cookie.domain,'douyin')
+      && (cookie.expirationDate===undefined || cookie.expirationDate===0 || cookie.expirationDate>now))
+    const raw=selectedCookies(eligible,new URL('https://live.douyin.com/webcast/user/me/')).find(cookie=>cookie.name==='bd_ticket_guard_server_data')?.value
+    if (!raw || raw.length>32768) return undefined
+    const decoded=JSON.parse(Buffer.from(decodeURIComponent(raw),'base64').toString('utf8')) as Record<string,unknown>
+    if (!decoded || typeof decoded!=='object' || !['ticket','ts_sign','client_cert'].every(key=>typeof decoded[key]==='string')) return undefined
+    return JSON.stringify({ticket:decoded.ticket,ts_sign:decoded.ts_sign,client_cert:decoded.client_cert,
+      ...(typeof decoded.aes_sign_safari==='string' ? {aes_sign_safari:decoded.aes_sign_safari} : {})})
+  } catch { return undefined }
 }
 
 export const LOGIN_PLATFORMS = {
@@ -138,7 +181,11 @@ export function authenticationCookieUserId(cookies: BrowserCookie[], platform: C
 }
 
 const MAX_COOKIE_FILE_BYTES = 4 * 1024 * 1024
-const storageFailure = () => new Error('账号数据读写失败, 未返回任何 cookie 数据.')
+const STORAGE_FAILURE_MESSAGE = '账号数据读写失败, 未返回任何 cookie 数据.'
+const storageFailure = () => new Error(STORAGE_FAILURE_MESSAGE)
+class CookieReplacementBusy extends Error {
+  constructor() { super(STORAGE_FAILURE_MESSAGE) }
+}
 const sameFile = (before: fs.Stats, after: fs.Stats): boolean => after.isFile() && !after.isSymbolicLink()
   && before.ino === after.ino && before.dev === after.dev && before.size === after.size && before.mtimeMs === after.mtimeMs
 export function isLoginPlatform(value: unknown): value is LoginPlatform { return value === 'youtube' || value === 'douyu' || value === 'bilibili' || value === 'huya' || value === 'douyin' }
@@ -218,7 +265,7 @@ export class CookieStore {
     return containedPath(this.root, path.join(this.root, 'cookies', `${platform}.txt`))
   }
 
-  private async read(platform: LoginPlatform): Promise<{ text: string; cookies: StoredCookie[] } | undefined> {
+  private async read(platform: LoginPlatform): Promise<{ text: string; cookies: StoredCookie[]; identity?: BrowserAccountIdentity } | undefined> {
     try {
       const revision = this.revisions[platform]
       const file = this.target(platform)
@@ -246,17 +293,18 @@ export class CookieStore {
       if (revision !== this.revisions[platform]) throw storageFailure()
       containedPath(this.root, file)
       if (!sameFile(before, fs.lstatSync(file))) throw storageFailure()
-      return { text, cookies: parseCookies(text, platform, this.now()) }
+      return { text, cookies: parseCookies(text, platform, this.now()), identity: readAccountIdentity(text) }
     } catch { throw storageFailure() }
   }
 
-  write(platform: LoginPlatform, cookies: BrowserCookie[]): LoginResult {
+  write(platform: LoginPlatform, cookies: BrowserCookie[], identity?: BrowserAccountIdentity): LoginResult {
     let temporary: string | undefined
     let descriptor: number | undefined
     try {
       if (!isLoginPlatform(platform) || !Array.isArray(cookies) || cookies.length > 50_000) throw storageFailure()
       this.revisions[platform]++
       const lines = ['# Netscape HTTP Cookie File', '# Fy1Sync private login data. Do not share this file.', '']
+      if (identity) lines.splice(2, 0, ACCOUNT_PREFIX + JSON.stringify(accountIdentity(identity)))
       for (const cookie of cookies) {
         if (!cookie || typeof cookie.domain !== 'string' || !cookieDomainAllowed(cookie.domain, platform)) continue
         for (const key of ['hostOnly', 'secure', 'httpOnly', 'session'] as const) {
@@ -286,19 +334,48 @@ export class CookieStore {
       fs.closeSync(descriptor)
       descriptor = undefined
       assertRegularPath(temporary, false)
-      fs.renameSync(temporary, target)
+      try { fs.renameSync(temporary, target) }
+      catch (error) {
+        // Windows readers and scanners can briefly prevent an atomic replacement.
+        // Keep the old file; never unlink it to force a replacement through.
+        if (['EPERM', 'EACCES', 'EBUSY'].includes(String((error as NodeJS.ErrnoException)?.code))) throw new CookieReplacementBusy()
+        throw error
+      }
       temporary = undefined
       assertRegularPath(target, false)
       const { cookieCount, authKeysPresent } = this.summary(platform, selected)
       return { cookieCount, authKeysPresent }
-    } catch { throw storageFailure() }
+    } catch (error) { throw error instanceof CookieReplacementBusy ? error : storageFailure() }
     finally {
       if (descriptor !== undefined) fs.closeSync(descriptor)
       if (temporary !== undefined) fs.rmSync(temporary, { force: true })
     }
   }
 
-  private summary(platform: LoginPlatform, cookies: StoredCookie[]): PlatformLoginStatus {
+  /** Bounded local persistence retry. This never repeats a platform login or account action. */
+  async writeAsync(platform: LoginPlatform, cookies: BrowserCookie[], signal?: AbortSignal, current: () => boolean = () => true, identity?: BrowserAccountIdentity): Promise<LoginResult> {
+    if (!isLoginPlatform(platform) || !Array.isArray(cookies) || cookies.length > 50_000) throw storageFailure()
+    let snapshot: BrowserCookie[]
+    try { snapshot = structuredClone(cookies) } catch { throw storageFailure() }
+    let revision = this.revisions[platform]
+    for (let attempt = 0; attempt < 6; attempt++) {
+      if (signal?.aborted || !current() || revision !== this.revisions[platform]) throw storageFailure()
+      try { return identity ? this.write(platform, snapshot, identity) : this.write(platform, snapshot) }
+      catch (error) {
+        if (!(error instanceof CookieReplacementBusy) || attempt === 5) throw error
+        revision++
+        await new Promise<void>((resolve, reject) => {
+          const abort = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(storageFailure()) }
+          const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve() }, Math.min(40 * 2 ** attempt, 400))
+          signal?.addEventListener('abort', abort, { once: true })
+          if (signal?.aborted) abort()
+        })
+      }
+    }
+    throw storageFailure()
+  }
+
+  private summary(platform: LoginPlatform, cookies: StoredCookie[], identity?: BrowserAccountIdentity): PlatformLoginStatus {
     const known: readonly string[] = LOGIN_PLATFORMS[platform].authKeys
     const auth = cookies.filter(cookie => platform === 'douyin' ? isDouyinAuthenticationCookie(cookie, this.now()) : known.includes(cookie.name) && cookie.value.length > 0)
     const expiries = auth.map(cookie => cookie.expires).filter(expiry => expiry > 0)
@@ -307,13 +384,21 @@ export class CookieStore {
     return { cookieCount: cookies.length, authKeysPresent: known.filter(key => present.has(key)), loggedIn,
       expiresAt: expiries.length ? Math.min(...expiries) : null, hasSessionCookies: auth.some(cookie => cookie.expires === 0),
       ...(platform === 'douyu' ? messageCredentialStatus(platformHeader(cookies, new URL('https://www.douyu.com/'))) : {}),
-      ...(platform === 'douyu' && loggedIn ? douyuNickname(cookies) : {}) }
+      ...(identity ? { nickname: identity.username, ...(identity.avatar ? { avatar: identity.avatar } : {}) }
+        : platform === 'douyu' && loggedIn ? douyuNickname(cookies) : {}) }
   }
 
   async status(): Promise<LoginStatus> {
-    return Object.fromEntries(await Promise.all((Object.keys(LOGIN_PLATFORMS) as LoginPlatform[]).map(async platform => [platform,
-      this.summary(platform, (await this.read(platform))?.cookies ?? []),
-    ]))) as LoginStatus
+    return Object.fromEntries(await Promise.all((Object.keys(LOGIN_PLATFORMS) as LoginPlatform[]).map(async platform => {
+      const loaded = await this.read(platform)
+      return [platform, this.summary(platform, loaded?.cookies ?? [], loaded?.identity)]
+    }))) as LoginStatus
+  }
+
+  /** Main-only identity lookup for matching imported Douyu accounts, including expired sessions. */
+  async savedUserId(platform: CookieHeaderPlatform): Promise<string | undefined> {
+    const loaded = await this.read(platform)
+    return loaded?.identity?.uid ?? authenticationCookieUserId(loaded?.cookies ?? [], platform, this.now())
   }
 
   /** Inject only into an isolated main-owned session; no credential values are returned. */
@@ -370,7 +455,8 @@ export class CookieStore {
     if (target.protocol !== 'https:' || target.username || target.password || target.port
       || !HEADER_HOSTS[platform].includes(target.hostname)) throw storageFailure()
     if (platform === 'douyin' && (target.hash || !(target.pathname === '/' || /^\/[1-9][0-9]{0,19}\/?$/.test(target.pathname)
-      || target.pathname === '/webcast/room/web/enter/' || target.pathname === '/webcast/im/fetch/'))) throw storageFailure()
+      || target.pathname === '/webcast/room/web/enter/' || target.pathname === '/webcast/im/fetch/'
+      || target.pathname === '/webcast/user/me/' || target.pathname === '/webcast/room/chat/'))) throw storageFailure()
     const revision = this.revisions[platform]
     const loaded = await this.read(platform)
     if (revision !== this.revisions[platform]) throw storageFailure()

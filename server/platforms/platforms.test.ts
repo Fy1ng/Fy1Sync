@@ -238,8 +238,8 @@ describe('detectPlatform', () => {
     for (const input of ['huya.com/12345', 'https://www.huya.com/example_room', 'https://m.huya.com/12345']) {
       expect(detectPlatform(input)).toBe('huya')
     }
-    expect(detectPlatform('https://huya.com.evil.invalid/12345')).toBeNull()
-    expect(detectPlatform('https://fakehuya.com/12345')).toBeNull()
+    expect(detectPlatform('https://huya.com.evil.invalid/12345')).toBe('direct')
+    expect(detectPlatform('https://fakehuya.com/12345')).toBe('direct')
     expect(detectPlatform('example_room', 'huya')).toBe('huya')
   })
 
@@ -256,7 +256,7 @@ describe('detectPlatform', () => {
   it('returns null for input it cannot place', () => {
     expect(detectPlatform('')).toBeNull()
     expect(detectPlatform('some random words')).toBeNull()
-    expect(detectPlatform('https://example.com/watch')).toBeNull()
+    expect(detectPlatform('https://example.com/watch')).toBe('direct')
   })
 })
 

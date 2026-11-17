@@ -6,6 +6,7 @@
  */
 
 import { useState } from 'react'
+import { ErrorText } from '../ui/ErrorDetails'
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { SourceRole } from '../core/types'
@@ -94,32 +95,33 @@ function SourcePanel({ role, onDone, onSchedule }: {
           options={[{ value: 'douyu', label: PLATFORM_LABEL.douyu }, { value: 'bilibili', label: PLATFORM_LABEL.bilibili }, { value: 'huya', label: PLATFORM_LABEL.huya }, { value: 'douyin', label: PLATFORM_LABEL.douyin }]} />
       )}
       {load.problem && (
-        <p className="form-error" role="alert">{load.problem.message}{load.problem.hint ? ` ${load.problem.hint}` : ''}</p>
+        <p className="form-error" role="alert"><ErrorText error={load.problem} message={<>{load.problem.message}{load.problem.hint ? ` ${load.problem.hint}` : ''}</>} /></p>
       )}
       <LoginOffer role={role} />
-      {state.status === 'error' && state.error && <p className="form-error">{state.error.message}</p>}
+      {state.status === 'error' && state.error && <p className="form-error"><ErrorText error={state.error} /></p>}
       {load.notes.map((note) => <p key={note} className="muted">{note}</p>)}
 
-      {buffer && <p className="muted">{bufferStatusText(buffer)}</p>}
+      {buffer && <p className="muted">{buffer.failure || buffer.state === 'failed'
+        ? <ErrorText error={buffer.failure ?? { reason: buffer.reason, message: bufferStatusText(buffer) }} message={bufferStatusText(buffer)} /> : bufferStatusText(buffer)}</p>}
       <PlaybackDiagnosticsPanel role={role} />
 
       {role === 'commentary' && state.descriptor?.platform === 'douyin' && <div>
         <p className="muted" role="status">抖音弹幕: {snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
-          : snapshot.danmaku.error ?? (snapshot.danmaku.room ? `正在连接房间 ${loader.roomName}` : '未连接')}</p>
+          : snapshot.danmaku.error ? <ErrorText error={snapshot.danmaku.errorDetail ?? { message: snapshot.danmaku.error }} message={snapshot.danmaku.error} /> : (snapshot.danmaku.room ? `正在连接房间 ${loader.roomName}` : '未连接')}</p>
         <button type="button" className="btn-quiet small" disabled={chatRetrying || !douyinDanmakuRoom(state.descriptor)} onClick={() => {
           const roomKey = douyinDanmakuRoom(state.descriptor!)
           if (!roomKey) return
           if (snapshot.danmaku.room !== roomKey) { loader.connectRoom(roomKey, roomKey.slice('douyin:'.length)); return }
           setChatRetrying(true)
           void apiClient.reconnectDanmaku(roomKey).then(result => {
-            if (!result.ok) session.notice('warn', result.message)
-          }).catch(() => session.notice('warn', '抖音弹幕重连失败, 请稍后重试')).finally(() => setChatRetrying(false))
+            if (!result.ok) session.notice('warn', result.message, result)
+          }).catch((error) => session.notice('warn', '抖音弹幕重连失败, 请稍后重试', error)).finally(() => setChatRetrying(false))
         }}>重连抖音弹幕</button>
         <p className="muted">需要登录时, 请在设置 - 通用 - 抖音中登录, 然后重连弹幕.</p>
       </div>}
       {role === 'commentary' && state.descriptor?.platform !== 'douyin' && (state.descriptor?.platform === 'huya' || isReadOnlyDanmakuRoom(snapshot.danmaku.room)
         ? <p className="muted" role="status">{snapshot.danmaku.room?.startsWith('douyin:') ? '抖音' : '虎牙'}弹幕: {snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
-          : snapshot.danmaku.room ? snapshot.danmaku.error ?? `正在连接房间 ${loader.roomName}` : '未连接'}</p>
+          : snapshot.danmaku.room ? snapshot.danmaku.error ? <ErrorText error={snapshot.danmaku.errorDetail ?? { message: snapshot.danmaku.error }} message={snapshot.danmaku.error} /> : `正在连接房间 ${loader.roomName}` : '未连接'}</p>
         : <DanmakuRoom />)}
       <div className="row-split panel-foot">
         <label className="btn-quiet small file-pick">

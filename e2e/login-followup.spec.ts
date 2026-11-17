@@ -80,7 +80,7 @@ async function views(application: ElectronApplication, remember = false): Promis
 async function fillPassword(local: Page): Promise<void> {
   await local.getByLabel('账号', { exact: true }).fill('test-account')
   await local.getByLabel('密码', { exact: true }).fill('synthetic-password')
-  await local.locator('#accepted').check()
+  await expect(local.getByRole('checkbox')).toHaveCount(0)
   await local.getByRole('button', { name: '登录', exact: true }).click()
   await expect(local.locator('#password')).toHaveValue('')
 }

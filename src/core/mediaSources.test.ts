@@ -122,12 +122,9 @@ describe('parseSourceInput', () => {
     if (!result.ok) expect(result.reason).toBe('unsupported-scheme')
   })
 
-  it('rejects a plain web page with a helpful message', () => {
+  it('accepts an extensionless HTTP address for content detection', () => {
     const result = parseSourceInput('https://example.com/some/article')
-    expect(result.ok).toBe(false)
-    if (result.ok) return
-    expect(result.reason).toBe('unsupported-page')
-    expect(result.message).toContain('.m3u8')
+    expect(result).toMatchObject({ ok: true, platform: 'direct', needsResolve: true })
   })
 
   it('rejects DASH explicitly', () => {

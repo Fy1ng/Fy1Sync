@@ -2,6 +2,7 @@
 import { nativeImage, type Session } from 'electron'
 import type { EmbeddedLoginRequest } from './embeddedLoginContracts'
 import { loginIdentityUrl } from './loginIdentity'
+import { syntheticDouyinSdkStorage } from '../server/douyin/fixtures/signingFixture'
 
 type Scenario = 'form' | 'challenge' | 'password-error' | 'account-verification'
 interface FixtureContext {
@@ -94,7 +95,7 @@ export class DouyinEmbeddedLoginFixtures {
       if (incoming.url === loginIdentityUrl('douyin')) {
         const cookies = await target.cookies.get({ url: 'https://live.douyin.com/' })
         const authenticated = context.authenticated && cookies.some(cookie => cookie.name === 'sessionid' && cookie.value === 'synthetic-embedded-session')
-        return json(authenticated ? { status_code: 0, data: { id_str: '1001', nickname: '测试账号' } }
+        return json(authenticated ? { status_code: 0, data: { id_str: '12345', nickname: '测试账号' } }
           : { status_code: 20003, data: { message: 'synthetic-not-logged-in' } })
       }
       if (url.pathname === '/__fy1sync-fixture/submit' && incoming.method === 'POST') {
@@ -113,6 +114,17 @@ export class DouyinEmbeddedLoginFixtures {
     await current.session.cookies.set({ url: 'https://live.douyin.com/', domain: '.douyin.com', path: '/',
       name: authenticated ? 'sessionid' : 'ttwid', value: authenticated ? 'synthetic-embedded-session' : 'synthetic-anonymous',
       secure: true, httpOnly: true, expirationDate: Math.floor(Date.now() / 1000) + 3600 })
+    if (authenticated) {
+      const stores=syntheticDouyinSdkStorage(current.session.getUserAgent())
+      const server=JSON.parse(stores['security-sdk/s_sdk_sign_data_key/web_protect']!) as {data:string}
+      await current.session.cookies.set({url:'https://live.douyin.com/',domain:'.douyin.com',path:'/',secure:true,httpOnly:true,
+        name:'bd_ticket_guard_server_data',value:encodeURIComponent(Buffer.from(server.data).toString('base64')),
+        expirationDate:Math.floor(Date.now()/1000)+3600})
+      const {webContents}=await import('electron')
+      const page=webContents.getAllWebContents().find(value=>value.session===current.session && value.getURL()==='https://live.douyin.com/')
+      if (!page) throw new Error('Synthetic official login view is missing')
+      await page.executeJavaScript(`(()=>{const data=${JSON.stringify(stores)};for(const [key,value] of Object.entries(data))localStorage.setItem(key,value)})()`,false)
+    }
   }
 
   state(active: boolean) {

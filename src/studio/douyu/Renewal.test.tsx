@@ -106,7 +106,7 @@ describe('badge renewal', () => {
     expect(named('previewDouyuRenewalEqual')).toEqual([{ method: 'previewDouyuRenewalEqual', args: { accountId: 'a1', rooms: ['100', '200'] } }])
     expect(named('previewDouyuRenewal')).toEqual([])
     expect(plan.textContent).toContain('留在背包：荧光棒 × 1')
-    expect(plan.textContent).toContain('跳过：没有可核对的普通背包荧光棒, 本次跳过.')
+    expect(plan.textContent).toContain('跳过: 没有可核对的普通背包荧光棒, 本次跳过.')
 
     // Switching the allocation is an edit like any other.
     fireEvent.click(screen.getByRole('radio', { name: '统一数量' }))

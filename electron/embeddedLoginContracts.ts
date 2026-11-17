@@ -1,5 +1,6 @@
 import type { CookiesSetDetails } from 'electron'
 import type { BrowserCookie } from './cookies'
+import type { DouyinSigningSnapshot } from '../server/douyin/signingMaterial'
 
 export type EmbeddedLoginPlatform = 'douyu' | 'bilibili' | 'huya' | 'douyin'
 export type EmbeddedLoginDestination = 'yuba' | `room:${string}` | `fish-act:${string}`
@@ -13,6 +14,7 @@ export interface EmbeddedLoginState {
   phase: EmbeddedLoginPhase
   accountLabel?: string
   message?: string
+  errorDetail?: import('../src/core/errorDetails').ErrorDetails
   presentation?: 'form' | 'verification' | 'captcha' | 'official'
 }
 
@@ -45,6 +47,8 @@ export interface EmbeddedLoginRequest {
   destination?: EmbeddedLoginDestination
   accountLabel?: string
   initializeSession?: (target: LoginCookieSession) => Promise<void>
+  /** Main-owned callback; signing secrets are excluded from renderer login IPC. */
+  captureDouyinSigning?: (snapshot: DouyinSigningSnapshot) => Promise<void>
 }
 
 export interface EmbeddedLoginDriver {

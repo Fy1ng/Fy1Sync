@@ -22,17 +22,44 @@ function fixture() {
   return { manager, port, source }
 }
 describe('independent stream sessions', () => {
+  it('supports unlimited and user-selected counts without a fixed 256 ceiling and masks input credentials', async () => {
+    const f = fixture()
+    let maximum = 0, sequence = 0
+    const manager = new StreamSessions(f.port, () => maximum, () => `stream-${String(++sequence).padStart(32, '0')}`)
+    const listener = vi.fn()
+    manager.subscribe(listener)
+    for (let index = 0; index < 18; index++) await manager.open({ input: 'http://user:password@media.invalid/live.mp4' })
+    expect(manager.snapshot()).toMatchObject({ maxExtraStreams: 0, sessions: expect.any(Array) })
+    expect(manager.snapshot().sessions).toHaveLength(18)
+    expect(JSON.stringify(manager.snapshot())).not.toContain('password')
+    maximum = 300
+    manager.refreshLimits()
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ maxExtraStreams: 300 }))
+    maximum = 18
+    await expect(manager.open({ input: 'another' })).rejects.toMatchObject({ code: 'stream-limit' })
+    await manager.dispose(); await f.manager.dispose()
+  })
+
+  it('accepts long signed source URLs within the memory bound', async () => {
+    const f = fixture()
+    const input = 'https://media.invalid/live?signature=' + 's'.repeat(16000)
+    expect((await f.manager.open({ input })).phase).toBe('ready')
+    expect(f.port.resolve).toHaveBeenCalledWith(input, undefined, expect.any(String), undefined, undefined)
+    await f.manager.dispose()
+  })
   it.each([
     [Object.assign(new Error('Cookie=PRIVATE https://signed.invalid/?token=PRIVATE'), { code: 'ENOTFOUND' }), '域名解析失败.'],
-    [new StreamFailureError({ stage: 'proxy', code: 'proxy-unreachable', message: 'PRIVATE' }), '代理不可达, 请检查系统代理.'],
-    [Object.assign(new Error('PRIVATE'), { code: 'CERT_HAS_EXPIRED' }), '服务器证书校验失败.'],
-    [{ status: 403, message: 'PRIVATE' }, '服务器返回 HTTP 403.'],
+    [new StreamFailureError({ stage: 'proxy', code: 'proxy-unreachable', message: 'original proxy failure' }), '代理不可达, 请检查系统代理.'],
+    [Object.assign(new Error('original certificate failure'), { code: 'CERT_HAS_EXPIRED' }), '服务器证书校验失败.'],
+    [{ status: 403, message: 'original HTTP failure' }, '服务器返回 HTTP 403.'],
   ])('preserves the classified acquisition failure without leaking diagnostics', async (error, message) => {
     const f = fixture()
     f.port.resolve.mockRejectedValueOnce(error)
     const opened = await f.manager.open({ input: 'one' })
     expect(opened).toMatchObject({ phase: 'failed', error: message })
-    expect(JSON.stringify(opened)).not.toMatch(/PRIVATE|signed\.invalid|token=|Cookie/)
+    expect(opened.error).not.toMatch(/PRIVATE|signed\.invalid|token=|Cookie|original/)
+    expect(JSON.stringify(opened.errorDetail)).not.toContain('PRIVATE')
+    expect(opened.errorDetail).toBeDefined()
     await f.manager.dispose()
   })
   it('accepts Huya room selections at the main-process session boundary', async () => {

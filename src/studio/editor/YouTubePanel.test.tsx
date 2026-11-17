@@ -53,6 +53,20 @@ describe('youtubeVideoId', () => {
 })
 
 describe('the YouTube panel', () => {
+  it('keeps original snapshot fields under the mapped Chinese error', async () => {
+    const fake = fakeSource()
+    await opened(fake)
+    fake.push(fake.state())
+    vi.mocked(fake.source.still).mockResolvedValueOnce({ ok: false, error: 'network', detail: { ok: false, code: 'snapshot-network', message: 'native capture failed', detail: { status: 503, requestId: 'snapshot-a' } } })
+    fireEvent.click(screen.getByRole('button', { name: '截当前画面' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(YOUTUBE_ERROR_TEXT.network)
+    fireEvent.click(within(alert).getByRole('button', { name: '查看原始错误' }))
+    const original = within(alert).getByRole('region', { name: '原始错误信息' })
+    expect(original).toHaveTextContent('snapshot-network')
+    expect(original).toHaveTextContent('503')
+    expect(original).toHaveTextContent('snapshot-a')
+  })
   it('opens the normalised watch link, not what was typed', async () => {
     const fake = fakeSource()
     await opened(fake)

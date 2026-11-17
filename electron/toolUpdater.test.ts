@@ -26,7 +26,7 @@ async function fixture(platform: NodeJS.Platform = 'win32', arch = 'x64') {
   const asset = ytdlpReleaseAsset(platform, arch)!
   const options = { platform, arch }
   const transport = vi.fn(async (url: string) => {
-    if (network.fail) throw new Error('private upstream URL/token/local path must stay private')
+    if (network.fail) throw new Error('Download failed https://upstream.example/release?token=PRIVATE_TOKEN Cookie=PRIVATE_COOKIE')
     const base = `https://github.com/yt-dlp/yt-dlp/releases/download/${network.version}/`
     if (url.endsWith('/releases/latest')) return new Response(JSON.stringify({ tag_name: network.version, draft: false, prerelease: false,
       assets: [{ name: asset, browser_download_url: base + asset, size: network.bytes.length }, { name: 'SHA2-256SUMS', browser_download_url: base + 'SHA2-256SUMS', size: 128 }] }))
@@ -271,7 +271,10 @@ describe('managed yt-dlp updater', () => {
     const result = await f.updater.update()
     expect(result.phase).toBe('error')
     expect(await f.updater.activePath()).toBe(selected)
-    expect(JSON.stringify(result)).not.toMatch(/private|https|token|syncer-update/)
+    expect(result.message).not.toMatch(/private|https|token|syncer-update/)
+    expect(result.errorDetail).toMatchObject({ code: failure === 'version' ? 'verification' : failure })
+    if (failure === 'network') expect(result.errorDetail).toMatchObject({ cause: { message: expect.stringContaining('Download failed') } })
+    expect(JSON.stringify(result.errorDetail)).not.toMatch(/PRIVATE_TOKEN|PRIVATE_COOKIE/)
     expect((await readdir(path.join(f.root, 'managed-tools', 'yt-dlp'))).filter(name => name.endsWith('.tmp'))).toEqual([])
   })
   it('safely rejects oversized or corrupt startup manifests without a network request', async () => {

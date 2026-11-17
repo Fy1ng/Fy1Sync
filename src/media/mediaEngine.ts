@@ -18,6 +18,7 @@ import { attachMedia, type AttachMode, type MediaAttachment, type MediaError } f
 import { AUTO_QUALITY, type QualityOption } from './quality'
 import { clampSeek, readTimebase, seekReached, SEEK_TOLERANCE_SECONDS } from './timebase'
 import type { PlaybackDiagnosticInput } from './playbackDiagnostics'
+import { errorDetails } from '../core/errorDetails'
 
 export type RoleStatus = 'empty' | 'loading' | 'ready' | 'error'
 
@@ -385,7 +386,8 @@ export class MediaEngine {
           // is highest-first after 自动, so options[1] is it. Commentary keeps ABR: a
           // streamer's restream is what a slow connection should give up first.
           const top = options[1]
-          if (top && (descriptor.platform === 'youtube' || descriptor.platform === 'twitch')) {
+          // A single rendition is already fixed; selecting it again restarts playlist loading.
+          if (top && options.length > 2 && (descriptor.platform === 'youtube' || descriptor.platform === 'twitch')) {
             queueMicrotask(() => { if (current()) this.setLevel(role, top.level) })
           }
           this.notify()
@@ -433,6 +435,7 @@ export class MediaEngine {
         error: {
           fatal: true,
           message: error instanceof Error ? error.message : '加载失败',
+          detail: errorDetails(error),
           hint: '检查地址是否可访问，或改用媒体代理。',
         },
       }
@@ -618,6 +621,7 @@ export class MediaEngine {
         error: {
           fatal: false,
           message: '浏览器拒绝了自动播放。',
+          detail: errorDetails(result.reason),
           hint: '点击播放按钮，或在站点设置中允许该页面播放媒体。',
         },
       }

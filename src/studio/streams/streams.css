@@ -18,6 +18,32 @@
   pointer-events: auto;
 }
 
+.studio .xs-state-error {
+  position: relative;
+  margin: 8px;
+  padding: 8px;
+  max-width: 440px;
+  background: var(--panel);
+  color: var(--drift);
+  z-index: 3;
+}
+
+.studio .xs-notice:has(.error-details) {
+  pointer-events: auto;
+  max-width: calc(100% - 16px);
+  width: max-content;
+  white-space: normal;
+  border-radius: 8px;
+  max-height: calc(100% - 20px);
+  overflow: auto;
+}
+
+.studio .xs-overlay:has(.error-details-panel) {
+  justify-content: flex-start;
+  align-items: stretch;
+  overflow: auto;
+}
+
 /* ---------- the add form ---------- */
 
 .studio .xs-add {

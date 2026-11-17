@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import type { Page } from '@playwright/test'
 import { expect, test } from './electron'
-import { loadSource, openPlayer, revealOverlay, seekBoth, setPlaying, waitForBothReady } from './helpers'
+import { loadSource, openPlayer, openSettings, revealOverlay, seekBoth, setCheckedByLabel, setPlaying, waitForBothReady } from './helpers'
 
 const run = promisify(execFile)
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -21,7 +21,7 @@ test.beforeAll(async () => {
   await mkdir(dataRoot, { recursive: true })
   fixtureRoot = await mkdtemp(path.join(dataRoot, 'basic-shared-'))
   commentaryFile = path.join(fixtureRoot, 'commentary-1080.mp4')
-  const input = process.env.STREAM_SYNC_SHARED_OFFICIAL || path.join(root, 'public', 'test-sources', 'auto-commentary.mp4')
+  const input = process.env.STREAM_SYNC_SHARED_OFFICIAL || path.join(process.env.STREAM_SYNC_BASIC_FIXTURE_DIR || path.join(root, 'public', 'test-sources'), 'auto-commentary.mp4')
   await run(process.env.STREAM_SYNC_FIXTURE_FFMPEG || process.env.STREAM_SYNC_FFMPEG || 'ffmpeg',
     ['-hide_banner', '-loglevel', 'error', '-i', input, '-t', '40', '-vf', 'scale=1920:1080', '-an', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', commentaryFile],
     { windowsHide: true, timeout: 60_000 })
@@ -69,20 +69,29 @@ test('官方画面一次精确框选应用不同分辨率两路, 图像稳定且
     const state = window as any
     const stored = JSON.parse(localStorage.getItem('stream-sync.settings.v1') || '{}')
     localStorage.setItem('stream-sync.settings.v1', JSON.stringify({ ...stored, basicClockSearchRoi: { x: 0, y: .8, w: 1, h: .1 } }))
-    state.sharedClock = { configurations: [], results: [], errors: [], swaps: [] }
+    state.sharedClock = { configurations: [], boundaryConfigurations: [], results: [], errors: [], swaps: [] }
     const NativeWorker = window.Worker
     window.Worker = new Proxy(NativeWorker, { construct(target, args) {
       const worker = Reflect.construct(target, args) as Worker
       if (String(args[0]).includes('recognition.worker')) {
+        let generation = -1, origin: string | null = null, cancelled = false, promotedAfterBoundary = false
         worker.addEventListener('error', event => state.sharedClock.errors.push(event.message))
         worker.addEventListener('message', event => {
           const data = event.data
+          if (data.generation !== generation) return
           if (data.type === 'error') state.sharedClock.errors.push(data.message)
           if (data.type === 'result') state.sharedClock.results.push({ role: data.role, basic: data.basic ? { ...data.basic, preview: undefined } : null, outcome: data.outcome, tickMoment: data.tickMoment })
         })
         const post = worker.postMessage.bind(worker)
         worker.postMessage = ((message: any, transfer?: Transferable[]) => {
-          if (message.type === 'configure') state.sharedClock.configurations.push(message.profile)
+          if (typeof message.generation === 'number') generation = message.generation
+          if (message.type === 'cancel') cancelled = message.preserveBasic === true
+          if (message.type === 'configure') {
+            const next = message.profile.roiOrigin ?? (message.profile.roi ? 'manual' : 'auto')
+            promotedAfterBoundary = next === 'memory' && (promotedAfterBoundary || origin === 'auto' && cancelled)
+            origin = next; cancelled = false
+            state.sharedClock[promotedAfterBoundary ? 'boundaryConfigurations' : 'configurations'].push(message.profile)
+          }
           post(message, transfer ?? [])
         }) as Worker['postMessage']
       }
@@ -97,6 +106,10 @@ test('官方画面一次精确框选应用不同分辨率两路, 图像稳定且
   await waitForBothReady(page)
   await setPlaying(page, false)
   await seekBoth(page, real ? 10 : 8, real ? 5 : 8)
+  const settings = await openSettings(page, '对齐')
+  await setCheckedByLabel(settings.getByRole('switch', { name: /^显示基础识别面板/ }))
+  await settings.getByRole('button', { name: '关闭', exact: true }).click()
+  await page.getByRole('button', { name: '基础识别', exact: true }).click()
   await page.waitForFunction(() => [...document.querySelectorAll<HTMLVideoElement>('video.media-element')].every(video => !video.seeking && video.readyState >= 2))
   const sizes = await page.evaluate(() => [...document.querySelectorAll<HTMLVideoElement>('video.media-element')].map(video => ({ role: video.dataset.role, width: video.videoWidth, height: video.videoHeight })))
   expect(sizes.find(video => video.role === 'official')!.width).toBe(real ? 3840 : 1280)
@@ -105,6 +118,7 @@ test('官方画面一次精确框选应用不同分辨率两路, 图像稳定且
   await expect(panel.getByRole('button', { name: '设置寻找区间', exact: true })).toHaveCount(0)
   await expect(panel.getByRole('button', { name: '恢复全画面寻找', exact: true })).toHaveCount(0)
   expect(await panel.getByRole('button', { name: '框选倒计时', exact: true }).count()).toBe(1)
+  await page.evaluate(() => { (window as any).sharedClock = { configurations: [], boundaryConfigurations: [], results: [], errors: [], swaps: [] } })
   await frame(page, exact)
   for (const label of ['官方画面基础识别', '国内解说基础识别']) await expect(page.getByRole('article', { name: label })).toContainText('手动范围')
   await setPlaying(page, true)
@@ -119,8 +133,10 @@ test('官方画面一次精确框选应用不同分辨率两路, 图像稳定且
       fullFrame: [...card.querySelectorAll('canvas')].some(canvas => canvas.getAttribute('aria-label')?.includes('寻找预览')) }))
     state.sharedObserver.observe(card, { childList: true, subtree: true })
   })
-  await expect(page.locator('.align-main.is-running')).toHaveCount(0, { timeout: 30_000 })
-  await expect(page.locator('.toast').getByText('已自动对齐', { exact: true })).toBeVisible()
+  await Promise.all([
+    expect(page.locator('.align-main.is-running')).toHaveCount(0, { timeout: 30_000 }),
+    expect(page.locator('.toast').getByText('已自动对齐', { exact: true })).toBeVisible({ timeout:30_000 }),
+  ])
   await expect(official.locator('.basic-recognition__counts')).toContainText(/跳秒 [1-9]/)
   const manual = await page.evaluate(() => { (window as any).sharedObserver.disconnect(); return (window as any).sharedClock })
   expect(manual.errors).toEqual([])
@@ -134,17 +150,24 @@ test('官方画面一次精确框选应用不同分辨率两路, 图像稳定且
   await page.screenshot({ path: test.info().outputPath('shared-manual-success.png') })
   await setPlaying(page, false)
   await panel.getByRole('button', { name: '自动重新寻找', exact: true }).click()
-  await page.evaluate(() => { (window as any).sharedClock = { configurations: [], results: [], errors: [], swaps: [] } })
+  await page.evaluate(() => { (window as any).sharedClock = { configurations: [], boundaryConfigurations: [], results: [], errors: [], swaps: [] } })
   await setPlaying(page, true)
   await page.keyboard.press('a')
   await expect(page.locator('.align-main.is-running')).toHaveCount(1)
-  await expect(page.locator('.align-main.is-running')).toHaveCount(0, { timeout: 30_000 })
-  await expect(page.locator('.toast').getByText('已自动对齐', { exact: true })).toBeVisible()
+  await Promise.all([
+    expect(page.locator('.align-main.is-running')).toHaveCount(0, { timeout: 30_000 }),
+    expect(page.locator('.toast').getByText('已自动对齐', { exact: true })).toBeVisible({ timeout:30_000 }),
+  ])
   const bounded = await page.evaluate(() => (window as any).sharedClock)
   expect(bounded.errors).toEqual([])
   expect(bounded.configurations).toHaveLength(2)
   for (const profile of bounded.configurations) {
     expect(profile.roi).toBeUndefined()
+    expect(profile.searchRoi ?? null).toEqual(productionSearchRoi)
+  }
+  for (const profile of bounded.boundaryConfigurations) {
+    expect(profile.roiOrigin).toBe('memory')
+    expect(profile.roi).toBeDefined()
     expect(profile.searchRoi ?? null).toEqual(productionSearchRoi)
   }
   await test.info().attach('shared-clock-regression', { body: JSON.stringify({ sizes, manual, bounded }), contentType: 'application/json' })

@@ -13,7 +13,7 @@ export function loginCardHtml(): string {
       <form id="login-form" novalidate autocomplete="off">
         <div id="password-fields" role="tabpanel" aria-label="密码登录"><label for="username">账号</label><input id="username" name="username" type="text" autocomplete="off" placeholder="手机号 / 用户名 / 邮箱" maxlength="160"><label for="password">密码</label><div class="password-field"><input id="password" name="password" type="password" autocomplete="off" placeholder="请输入密码" maxlength="256" data-secret><button id="toggle-password" type="button" aria-label="显示密码" aria-pressed="false" aria-controls="password">显示</button></div></div>
         <div id="sms-fields" role="tabpanel" aria-label="短信登录" hidden><div class="phone-fields"><div><label for="country-code">国家区号</label><input id="country-code" name="countryCode" type="text" value="+86" inputmode="tel" autocomplete="off" maxlength="6" aria-label="国家区号"></div><div><label for="phone">手机号</label><input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="请输入手机号" maxlength="24"></div></div><label for="sms-code">短信验证码</label><div class="code-field"><input id="sms-code" name="smsCode" type="text" inputmode="numeric" autocomplete="off" placeholder="请输入验证码" maxlength="16" data-secret><button id="send-sms" type="button" class="code-send">发送验证码</button></div></div>
-        <label class="agreement"><input id="accepted" type="checkbox"><span>我已阅读并同意<span id="platform-name">平台</span>的服务协议和隐私政策</span></label>
+        <p class="agreement">登录即表示同意<span id="platform-name">平台</span>的服务协议和隐私政策</p>
         <button id="submit-login" class="primary" type="submit">登录</button>
       </form>
       <details class="protocol"><summary>平台协议说明</summary><p id="protocol-text">可在官方验证页面查看平台的服务协议和隐私政策.</p></details>
@@ -22,11 +22,13 @@ export function loginCardHtml(): string {
   <section id="verification" class="verification" aria-label="安全验证" hidden><h2>安全验证</h2><p id="verification-description">请完成账号安全验证</p><p id="masked-target" class="masked"></p><form id="verification-form" novalidate autocomplete="off"><label id="verification-label" for="verification-code">验证码</label><div class="code-field"><input id="verification-code" type="text" inputmode="numeric" autocomplete="off" placeholder="请输入验证码" maxlength="16" data-secret><button id="second-send" type="button" class="code-send">发送验证码</button></div><button id="second-submit" class="primary" type="submit">继续</button></form><button id="verification-back" type="button" class="quiet">返回登录</button></section>
   <section id="official-state" class="official-state" hidden><span class="spinner" aria-hidden="true"></span><p>请在官方页面完成验证</p><button id="official-back" type="button" class="quiet">返回登录</button></section>
   <p id="message" class="message" role="status" aria-live="polite"></p>
+  <div id="error-tools" class="error-tools" hidden><button id="error-toggle" type="button" class="quiet" aria-expanded="false" aria-controls="error-panel">查看原始错误</button><pre id="error-panel" role="region" aria-label="原始错误信息" tabindex="0" hidden></pre></div>
   <div class="actions"><button id="official" type="button" class="quiet">使用官方验证页面</button><button id="cancel" type="button" class="quiet">取消登录</button></div>
 </main></body></html>`
 }
 
 export const LOGIN_CARD_CSS = `
+.error-tools { text-align: center; } #error-panel { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; text-align: left; user-select: text; padding: 10px; border: 1px solid #454548; border-radius: 7px; font: 11px/1.6 Consolas, monospace; }
 :root { color-scheme: dark; font-family: "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif; color: #f3f0ea; background: #18181b; font-size: 13px; line-height: 1.5; }
 * { box-sizing: border-box; } body { margin: 0; min-width: 0; } [hidden] { display: none !important; } h2, p { margin: 0; } h2 { font-size: 17px; font-weight: 500; } button, input { font: inherit; } button { cursor: pointer; } button:disabled { cursor: default; opacity: .48; } button, input { color: inherit; } button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid #f3f0ea; outline-offset: 3px; }
 #card { padding: 26px 28px 18px; min-height: 100vh; display: flex; flex-direction: column; }
@@ -38,7 +40,7 @@ export const LOGIN_CARD_CSS = `
 .form-column { min-width: 0; } .mode-tabs { display: flex; gap: 24px; margin-bottom: 18px; border-bottom: 1px solid #343437; }
 .mode-tabs button { background: none; border: 0; padding: 0 0 10px; color: #9a9893; font-size: 16px; border-bottom: 2px solid transparent; } .mode-tabs button[aria-selected="true"] { color: #f3f0ea; border-bottom-color: #f3f0ea; }
 label { display: block; margin-bottom: 6px; color: #c7c5c0; font-size: 12px; } input:not([type="checkbox"]) { width: 100%; height: 42px; padding: 9px 12px; background: #222225; border: 1px solid #454548; border-radius: 7px; outline: none; } input::placeholder { color: #777570; } #password-fields > input:first-of-type, .phone-fields { margin-bottom: 14px; } .phone-fields { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 10px; } .code-field { display: flex; border: 1px solid #454548; border-radius: 7px; background: #222225; overflow: hidden; } .code-field input:not([type="checkbox"]) { border: 0; min-width: 0; border-radius: 0; background: none; } .code-field input:focus-visible { outline-offset: -3px; } .code-send { flex: none; padding: 0 12px; font-size: 12px; background: none; border: 0; border-left: 1px solid #454548; }
-.agreement { display: flex; align-items: flex-start; gap: 8px; font-size: 11px; margin: 15px 0; color: #9a9893; } .agreement input { accent-color: #f3f0ea; margin: 2px 0 0; width: 14px; height: 14px; flex: none; } .primary { width: 100%; border: 0; background: #f3f0ea; color: #18181b; border-radius: 7px; padding: 10px 16px; font-weight: 500; } .quiet { border: 0; background: none; color: #9a9893; padding: 4px 0; font-size: 12px; } .quiet:hover { color: #f3f0ea; }
+.agreement { font-size: 11px; margin: 15px 0; color: #9a9893; } .primary { width: 100%; border: 0; background: #f3f0ea; color: #18181b; border-radius: 7px; padding: 10px 16px; font-weight: 500; } .quiet { border: 0; background: none; color: #9a9893; padding: 4px 0; font-size: 12px; } .quiet:hover { color: #f3f0ea; }
 .protocol { color: #777570; font-size: 11px; margin-top: 12px; } .protocol summary { cursor: pointer; } .protocol p { margin-top: 5px; } .message { min-height: 22px; margin-top: 12px; color: #9a9893; font-size: 12px; text-align: center; overflow-wrap: anywhere; } .message[data-error="true"] { color: #ffaaa3; } .actions { display: flex; justify-content: center; gap: 24px; margin-top: 8px; }
 .password-field { display: flex; border: 1px solid #454548; border-radius: 7px; overflow: hidden; background: #222225; } .password-field input:not([type="checkbox"]) { border: 0; background: none; border-radius: 0; min-width: 0; } .password-field input:focus-visible { outline-offset: -3px; } .password-field button { flex: none; background: none; border: 0; padding: 0 12px; color: #c7c5c0; font-size: 12px; } .password-field button:focus-visible { outline-offset: -3px; }
 .verification { width: min(100%, 340px); margin: auto; flex: 1; padding-top: 24px; text-align: center; } .verification h2 { font-size: 21px; margin-bottom: 12px; } .verification > p { color: #9a9893; } .verification .masked { color: #f3f0ea; font-size: 16px; margin: 8px 0 24px; } .verification form { text-align: left; } .verification .primary { margin: 20px 0 12px; } .official-state { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 18px; color: #9a9893; }
@@ -63,13 +65,15 @@ export const LOGIN_CARD_SCRIPT = String.raw`(() => {
   let operation = 0;
   let release = () => {};
   let localError = '';
+  let localErrorDetail = null;
+  let lastErrorFields = '';
   let dismissedMessage = '';
   let contactTimer;
   let preparedContact = '';
   const secretIds = ['password', 'sms-code', 'verification-code'];
   const hidePassword = () => { byId('password').type = 'password'; byId('toggle-password').textContent = '显示'; byId('toggle-password').setAttribute('aria-label', '显示密码'); byId('toggle-password').setAttribute('aria-pressed', 'false'); };
   const clearSecrets = () => { for (const id of secretIds) byId(id).value = ''; hidePassword(); };
-  const clearInputs = () => { clearSecrets(); byId('username').value = ''; byId('phone').value = ''; byId('accepted').checked = false; preparedContact = ''; };
+  const clearInputs = () => { clearSecrets(); byId('username').value = ''; byId('phone').value = ''; preparedContact = ''; };
   const syncPhone = mode => {
     const source = byId(mode === 'sms' ? 'phone' : 'username');
     const target = byId(mode === 'sms' ? 'username' : 'phone');
@@ -77,9 +81,48 @@ export const LOGIN_CARD_SCRIPT = String.raw`(() => {
     // Share phone input only within this card; usernames and emails are not SMS numbers.
     if (/^\d{0,20}$/.test(phone) && (phone || /^\d{0,20}$/.test(target.value.trim()))) target.value = phone;
   };
-  const say = (text, error = false) => { message.textContent = typeof text === 'string' ? text.slice(0, 500) : ''; message.dataset.error = String(error); message.setAttribute('role', error ? 'alert' : 'status'); message.setAttribute('aria-live', error ? 'assertive' : 'polite'); };
+  // Main supplies sanitized detail DTOs. Bound again in this isolated document; never inspect form inputs.
+  const detailsText = value => {
+    let count = 0;
+    const seen = new WeakSet();
+    const clean = value => value.slice(0, 2048)
+      .replace(/\bhttps?:\/\/[^\s<>"']+/gi, raw => { try { const url = new URL(raw); return url.origin + url.pathname + (url.search ? '?[redacted]' : ''); } catch { return '[URL omitted]'; } })
+      .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9+/_=.-]+/gi, '$1 [redacted]')
+      .replace(/(["']?(?:[\w-]{0,64}(?:cookie|auth|token|password|secret|session|ticket|credential)[\w-]{0,64}|SESSDATA|SAPISID|sid)["']?\s*[:=]\s*)(?:\[redacted\]|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&}\]]+)/gi, '$1[redacted]')
+      .replace(/\b[A-Z]:[\\/]Users[\\/][^\\/\s]+/gi, '[user]');
+    const walk = (value, depth = 0) => {
+      if (++count > 128 || depth > 5) return '[truncated]';
+      if (typeof value === 'string') return clean(value);
+      if (value === null || typeof value === 'number' || typeof value === 'boolean') return value;
+      if (!value || typeof value !== 'object') return null;
+      if (seen.has(value)) return '[circular]';
+      seen.add(value);
+      const out = {};
+      try {
+        if (value instanceof Error) out.name = value instanceof TypeError ? 'TypeError' : 'Error';
+        for (const [key, field] of Object.entries(Object.getOwnPropertyDescriptors(value)).slice(0, 32)) {
+          if (['__proto__', 'constructor', 'prototype'].includes(key)) continue;
+          if (/auth|cookie|token|password|secret|session|ticket|credential|private.?key|api.?key|sessdata|sapisid|signature/i.test(key)) out[key] = '[redacted]';
+          else if (/^(request|response|headers|config|options|env)$/.test(key)) out[key] = '[omitted]';
+          else out[key] = 'value' in field ? walk(field.value, depth + 1) : '[accessor omitted]';
+        }
+      } catch { return '[unavailable]'; }
+      return out;
+    };
+    return JSON.stringify(walk(value), null, 2).slice(0, 8192);
+  };
+  const say = (text, error = false, detail) => {
+    message.textContent = typeof text === 'string' ? text.slice(0, 500) : '';
+    message.dataset.error = String(error); message.setAttribute('role', error ? 'alert' : 'status'); message.setAttribute('aria-live', error ? 'assertive' : 'polite');
+    byId('error-tools').hidden = !error || !text;
+    const fields = error && text ? detailsText(detail || { message: text }) : '';
+    if (fields !== lastErrorFields) { byId('error-panel').hidden = true; byId('error-toggle').setAttribute('aria-expanded', 'false'); byId('error-toggle').textContent = '查看原始错误'; }
+    lastErrorFields = fields; byId('error-panel').textContent = fields;
+  };
+  byId('error-toggle').addEventListener('click', () => { const panel = byId('error-panel'); panel.hidden = !panel.hidden; byId('error-toggle').setAttribute('aria-expanded', String(!panel.hidden)); byId('error-toggle').textContent = panel.hidden ? '查看原始错误' : '收起原始错误'; });
   const busy = () => pending || !state || state.busy || ['loading', 'submitting', 'checking', 'official'].includes(state.stage);
-  const canSendSms = () => !!state && state.sms && state.sms.canSend === true && !busy();
+  const qrOnlyBusy = () => !!state && state.transport === 'http' && state.stage === 'form' && ['loading', 'unavailable'].includes(state.qr.status);
+  const canSendSms = () => !!state && state.sms && state.sms.canSend === true && !busy() && !qrOnlyBusy();
   const cooldown = () => {
     const sms = state && state.sms;
     const remaining = sms && Number.isInteger(sms.cooldownSeconds) && sms.cooldownSeconds > 0 ? sms.cooldownSeconds : null;
@@ -107,7 +150,9 @@ export const LOGIN_CARD_SCRIPT = String.raw`(() => {
     byId('mode-sms').tabIndex = state.mode === 'sms' ? 0 : -1;
     byId('platform-name').textContent = names[state.platform];
     byId('qr-instruction').textContent = '使用' + names[state.platform] + '客户端扫码登录';
-    byId('protocol-text').textContent = '请遵守' + names[state.platform] + '的服务协议和隐私政策. 可在官方验证页面查看完整协议.';
+    byId('protocol-text').textContent = '请遵守' + names[state.platform] + '的服务协议和隐私政策. '
+      + (state.transport === 'http' ? '可在抖音App中查看完整协议.' : '可在官方验证页面查看完整协议.');
+    if (state.transport === 'http') { byId('username').placeholder = '请输入手机号'; byId('password').maxLength = 128; byId('sms-code').maxLength = 6; }
     const qr = state.qr || { status: 'unavailable' };
     const image = byId('qr-image');
     const showQr = qr.status === 'ready' && safeImage(qr.image);
@@ -116,21 +161,22 @@ export const LOGIN_CARD_SCRIPT = String.raw`(() => {
     byId('qr-wait').hidden = showQr;
     byId('qr-spinner').hidden = qr.status !== 'loading';
     byId('qr-message').textContent = ({ loading: '正在加载二维码', ready: '二维码暂时不可用', scanned: '已扫码, 请在手机上确认', expired: '二维码已过期', unavailable: '二维码暂时不可用', paused: '扫码登录已暂停' })[qr.status] || '二维码暂时不可用';
-    byId('refresh-qr').disabled = busy();
+    byId('refresh-qr').disabled = busy() || state.transport === 'http' && qr.status === 'loading';
     const verification = state.verification;
     byId('verification-description').textContent = verification && verification.kind === 'email' ? '请输入发送到绑定邮箱的验证码' : '请输入发送到绑定手机的验证码';
     byId('masked-target').textContent = verification && typeof verification.maskedTarget === 'string' ? verification.maskedTarget.slice(0, 120) : '绑定的验证方式';
     byId('verification-label').textContent = verification && verification.kind === 'email' ? '邮箱验证码' : '短信验证码';
     byId('submit-login').textContent = state.stage === 'checking' ? '正在确认登录' : state.stage === 'submitting' || pending ? '正在登录' : '登录';
-    for (const id of ['username', 'password', 'toggle-password', 'phone', 'country-code', 'sms-code', 'verification-code', 'accepted', 'mode-password', 'mode-sms', 'submit-login', 'second-submit']) byId(id).disabled = busy();
+    for (const id of ['username', 'password', 'toggle-password', 'phone', 'country-code', 'sms-code', 'verification-code', 'mode-password', 'mode-sms', 'submit-login', 'second-submit']) byId(id).disabled = busy();
+    byId('submit-login').disabled = busy() || qrOnlyBusy();
     byId('official').disabled = pending;
     for (const id of ['verification-back', 'official-back']) byId(id).disabled = pending || !!state.busy;
     byId('cancel').disabled = false;
-    byId('official').hidden = state.stage === 'official';
+    byId('official').hidden = state.transport === 'http' || state.stage === 'official';
     cooldown();
     const platformMessage = state.message === dismissedMessage ? '' : state.message;
     const platformError = !!platformMessage && !state.busy && ['form', 'verification', 'failed'].includes(state.stage);
-    say(localError || platformMessage || (state.stage === 'loading' ? '正在准备登录' : state.stage === 'checking' ? '正在确认登录状态' : ''), Boolean(localError) || platformError);
+    say(localError || platformMessage || (state.stage === 'loading' ? '正在准备登录' : state.stage === 'checking' ? '正在确认登录状态' : ''), Boolean(localError) || platformError, localError ? localErrorDetail : state.errorDetail);
   };
   const take = next => {
     if (disposed) return;
@@ -148,6 +194,18 @@ export const LOGIN_CARD_SCRIPT = String.raw`(() => {
     if (prepareAgain) prepareContact();
   };
   const dispatch = async action => {
+    // HTTP phone preparation is local state only; do not interrupt typing or clear an entered OTP.
+    if (action.kind === 'prepare-sms' && state && state.transport === 'http') {
+      if (!bridge || disposed || busy()) return;
+      try {
+        let request;
+        try { request = bridge.act(action); }
+        finally { action.phone = ''; action.countryCode = ''; }
+        const result = await request;
+        if (!result.ok) preparedContact = '';
+      } catch { preparedContact = ''; }
+      return;
+    }
     if (!bridge || disposed || (action.kind !== 'cancel' && (pending || (!['back', 'official'].includes(action.kind) && busy())))) { clearSecrets(); return; }
     if (action.kind === 'send-sms' || action.kind === 'sms') {
       clearTimeout(contactTimer);
@@ -157,6 +215,7 @@ export const LOGIN_CARD_SCRIPT = String.raw`(() => {
     const startedStage = state ? state.stage : null;
     pending = true;
     localError = '';
+    localErrorDetail = null;
     dismissedMessage = state ? state.message || '' : '';
     clearSecrets();
     render();
@@ -169,22 +228,17 @@ export const LOGIN_CARD_SCRIPT = String.raw`(() => {
         if ('code' in action) action.code = '';
       }
       const result = await request;
-      if (!disposed && at === operation && state && (state.stage === startedStage || state.stage === 'failed') && !result.ok) localError = result.message || '操作未完成, 请重试.';
-    } catch { if (!disposed && at === operation && state && (state.stage === startedStage || state.stage === 'failed')) localError = '登录操作暂时失败, 请重试.'; }
+      if (!disposed && at === operation && state && (state.stage === startedStage || state.stage === 'failed') && !result.ok) { localError = result.message || '操作未完成, 请重试.'; localErrorDetail = result.detail || { message: localError }; }
+    } catch (error) { if (!disposed && at === operation && state && (state.stage === startedStage || state.stage === 'failed')) { localError = '登录操作暂时失败, 请重试.'; localErrorDetail = error; } }
     finally { clearSecrets(); if (at === operation) { pending = false; if (!disposed) render(); } }
   };
-  const invalid = text => { localError = text; say(text, true); };
-  const accepted = () => {
-    if (byId('accepted').checked) return true;
-    invalid('请先阅读并同意平台服务协议和隐私政策.');
-    return false;
-  };
+  const invalid = text => { localError = text; localErrorDetail = { message: text }; say(text, true, localErrorDetail); };
   const phoneFields = () => ({ phone: byId('phone').value.trim(), countryCode: byId('country-code').value.trim() });
   const validPhone = fields => /^\+?[1-9]\d{0,3}$/.test(fields.countryCode) && /^\d{5,20}$/.test(fields.phone);
   const prepareContact = () => {
     clearTimeout(contactTimer);
     contactTimer = setTimeout(() => {
-      if (disposed || busy() || state.stage !== 'form' || state.mode !== 'sms' || !byId('accepted').checked) return;
+      if (disposed || busy() || state.stage !== 'form' || state.mode !== 'sms') return;
       const fields = phoneFields();
       if (!validPhone(fields)) return;
       const signature = fields.countryCode + ':' + fields.phone;
@@ -196,7 +250,7 @@ export const LOGIN_CARD_SCRIPT = String.raw`(() => {
   document.addEventListener('input', event => {
     if (!(event.target instanceof HTMLInputElement)) return;
     localError = ''; dismissedMessage = state ? state.message || '' : ''; render();
-    if (['phone', 'country-code', 'accepted'].includes(event.target.id)) prepareContact();
+    if (['phone', 'country-code'].includes(event.target.id)) prepareContact();
   });
   byId('toggle-password').addEventListener('click', () => {
     const shown = byId('password').type === 'password';
@@ -215,7 +269,7 @@ export const LOGIN_CARD_SCRIPT = String.raw`(() => {
   });
   byId('login-form').addEventListener('submit', event => {
     event.preventDefault();
-    if (busy() || !accepted()) return;
+    if (busy()) return;
     if (state.mode === 'password') {
       const payload = { kind: 'password', username: byId('username').value.trim(), password: byId('password').value, accepted: true };
       if (!payload.username || !payload.password) { payload.password = ''; invalid('请输入账号和密码.'); return; }
@@ -227,7 +281,7 @@ export const LOGIN_CARD_SCRIPT = String.raw`(() => {
     }
   });
   byId('send-sms').addEventListener('click', () => {
-    if (!canSendSms() || !accepted()) return;
+    if (!canSendSms()) return;
     const fields = phoneFields();
     if (!validPhone(fields)) { invalid('请填写正确的国家区号和手机号.'); return; }
     void dispatch({ kind: 'send-sms', ...fields, accepted: true });
@@ -250,8 +304,8 @@ export const LOGIN_CARD_SCRIPT = String.raw`(() => {
   const dispose = () => { if (disposed) return; disposed = true; clearTimeout(contactTimer); clearInputs(); byId('qr-image').removeAttribute('src'); release(); state = null; };
   window.addEventListener('pagehide', dispose);
   window.addEventListener('beforeunload', dispose);
-  if (!bridge) { clearInputs(); localError = '登录接口不可用, 请重新打开登录.'; say(localError, true); for (const button of document.querySelectorAll('button')) button.disabled = true; return; }
+  if (!bridge) { clearInputs(); localError = '登录接口不可用, 请重新打开登录.'; say(localError, true); for (const button of document.querySelectorAll('button')) if (button.id !== 'error-toggle') button.disabled = true; return; }
   release = bridge.subscribe(next => { revision += 1; take(next); });
   const queriedAt = revision;
-  Promise.resolve(bridge.state()).then(next => { if (revision === queriedAt && !disposed) take(next); }).catch(() => { if (!disposed) { localError = '登录状态暂时不可用, 请重新打开登录.'; say(localError, true); } });
+  Promise.resolve(bridge.state()).then(next => { if (revision === queriedAt && !disposed) take(next); }).catch(error => { if (!disposed) { localError = '登录状态暂时不可用, 请重新打开登录.'; say(localError, true, error); } });
 })();`

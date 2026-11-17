@@ -5,6 +5,7 @@ import { isExtraStreamId, isStreamId, type StreamId } from './streamIdentity'
 import type { PlatformKind, ResolvedStream, ResolveResult } from '../server/platforms'
 import { sanitizedFailure } from '../server/api'
 import { classifyNetworkFailure } from '../server/networkFailure'
+import { displayMediaInput, MAX_MEDIA_INPUT_LENGTH } from '../src/core/mediaInput'
 
 export interface OpenStreamInput { input: string; platform?: PlatformKind; quality?: string; preferAdaptive?: boolean }
 export interface StreamSessionView {
@@ -14,6 +15,7 @@ export interface StreamSessionView {
   stream: ResolvedStream | null
   buffer: BufferState | null
   error: string | null
+  errorDetail?: import('../src/core/errorDetails').ErrorDetails
 }
 export interface StreamSessionsSnapshot { maxExtraStreams: number; sessions: StreamSessionView[] }
 export class StreamSessionError extends Error {
@@ -31,9 +33,9 @@ export class StreamSessions {
   private readonly listeners = new Set<(value: StreamSessionsSnapshot) => void>()
   private readonly release: () => void
   private disposed = false
-  constructor(private readonly acquisition: AcquisitionPort, private readonly maxExtraStreams = 16,
+  constructor(private readonly acquisition: AcquisitionPort, private readonly streamLimit: number | (() => number) = 16,
     private readonly id: () => string = () => `stream-${randomUUID().replaceAll('-', '')}`) {
-    if (!Number.isSafeInteger(maxExtraStreams) || maxExtraStreams < 1 || maxExtraStreams > 256) throw new StreamSessionError('invalid-arguments')
+    if (!Number.isSafeInteger(this.maxExtraStreams()) || this.maxExtraStreams() < 0) throw new StreamSessionError('invalid-arguments')
     this.release = acquisition.subscribe(state => {
       const session = this.sessions.get(state.role)
       if (!session) return
@@ -42,20 +44,22 @@ export class StreamSessions {
     })
   }
   snapshot(): StreamSessionsSnapshot {
-    return structuredClone({ maxExtraStreams: this.maxExtraStreams, sessions: [...this.sessions.values()].map(s => s.view) })
+    return structuredClone({ maxExtraStreams: this.maxExtraStreams(), sessions: [...this.sessions.values()].map(s => s.view) })
   }
   subscribe(listener: (value: StreamSessionsSnapshot) => void): () => void {
     if (!this.disposed) this.listeners.add(listener)
     listener(this.snapshot())
     return () => { this.listeners.delete(listener) }
   }
+  refreshLimits(): void { if (!this.disposed) this.publish() }
   async open(raw: OpenStreamInput): Promise<StreamSessionView> {
     this.alive()
     const input = readOpenStream(raw)
-    if (this.sessions.size >= this.maxExtraStreams) throw new StreamSessionError('stream-limit')
+    const limit = this.maxExtraStreams()
+    if (limit > 0 && this.sessions.size >= limit) throw new StreamSessionError('stream-limit')
     const id = this.id()
     if (!isExtraStreamId(id) || this.sessions.has(id)) throw new StreamSessionError('invalid-arguments')
-    const runtime: Runtime = { revision: 0, view: { id, input: input.input, phase: 'opening', stream: null, buffer: null, error: null } }
+    const runtime: Runtime = { revision: 0, view: { id, input: displayMediaInput(input.input), phase: 'opening', stream: null, buffer: null, error: null } }
     this.sessions.set(id, runtime)
     this.publish()
     return this.acquire(runtime, () => this.acquisition.resolve(input.input, input.platform, id, input.quality, input.preferAdaptive))
@@ -96,16 +100,17 @@ export class StreamSessions {
     const revision = ++runtime.revision
     runtime.view.phase = 'opening'
     runtime.view.error = null
+    delete runtime.view.errorDetail
     this.publish()
     let result: ResolveResult
     try { result = sanitizedFailure(await operation()) }
     catch (error) {
       const failure = classifyNetworkFailure(error, 'resolve')
-      result = sanitizedFailure({ ok: false, failure: { code: 'upstream-error', stage: failure.stage, reason: failure.code, message: failure.message } })
+      result = sanitizedFailure({ ok: false, failure: { code: 'upstream-error', stage: failure.stage, reason: failure.code, message: failure.message, detail: failure.detail } })
     }
     if (this.disposed || this.sessions.get(runtime.view.id) !== runtime || runtime.revision !== revision) throw new StreamSessionError('stream-cancelled')
     if (result.ok) { runtime.view.stream = structuredClone(result.stream); runtime.view.phase = 'ready' }
-    else { runtime.view.phase = 'failed'; runtime.view.error = result.failure.message }
+    else { runtime.view.phase = 'failed'; runtime.view.error = result.failure.message; runtime.view.errorDetail = result.failure.detail }
     this.publish()
     return structuredClone(runtime.view)
   }
@@ -115,6 +120,7 @@ export class StreamSessions {
     if (!value) throw new StreamSessionError('stream-not-found')
     return value
   }
+  private maxExtraStreams(): number { return typeof this.streamLimit === 'function' ? this.streamLimit() : this.streamLimit }
   private alive(): void { if (this.disposed) throw new StreamSessionError('disposed') }
   private publish(): void {
     for (const listener of this.listeners) { try { listener(this.snapshot()) } catch { /* Isolate renderer observers. */ } }
@@ -125,7 +131,7 @@ export function readOpenStream(raw: unknown): OpenStreamInput {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new StreamSessionError('invalid-arguments')
   const value = raw as Record<string, unknown>
   if (Object.keys(value).some(k => !['input', 'platform', 'quality', 'preferAdaptive'].includes(k))
-    || typeof value.input !== 'string' || !value.input.trim() || value.input.length > 8192
+    || typeof value.input !== 'string' || !value.input.trim() || value.input.length > MAX_MEDIA_INPUT_LENGTH
     || (value.platform !== undefined && !['youtube', 'twitch', 'douyu', 'bilibili', 'huya', 'douyin', 'direct'].includes(String(value.platform)))
     || (value.quality !== undefined && (typeof value.quality !== 'string' || !value.quality || value.quality.length > 128))
     || (value.preferAdaptive !== undefined && typeof value.preferAdaptive !== 'boolean')) throw new StreamSessionError('invalid-arguments')

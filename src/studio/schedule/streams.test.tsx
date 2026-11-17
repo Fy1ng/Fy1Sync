@@ -36,7 +36,7 @@ describe('schedule streams', () => {
       match('ok', 'Matched', [twitch({ channel: 'gamersclubcs', url: 'https://www.twitch.tv/gamersclubcs', missing: null }),
         { platform: 'youtube', entry: 'Gamers_Club', channel: null, url: null, missing: 'unmatched', videoId: null }]),
       match('finding', 'Finding', [twitch()]),
-      match('failed', 'Failed', [twitch({ missing: 'failed' })]),
+      match('failed', 'Failed', [twitch({ missing: 'failed', errorDetail: { status: 429, message: 'Rate Limited' } })]),
       match('unmatched', 'Unmatched', [twitch({ missing: 'unmatched' })]),
     ])
     const onWatch = vi.fn(), onClose = vi.fn()
@@ -54,6 +54,8 @@ describe('schedule streams', () => {
     expect(within(row('Finding')).getByRole('button', { name: /Twitch.*Gamers_Club/ })).toBeDisabled()
     expect(within(row('Finding')).getByText('正在查找直播频道…')).toBeInTheDocument()
     expect(within(row('Failed')).getByText('暂时无法读取直播频道')).toBeInTheDocument()
+    fireEvent.click(within(row('Failed')).getByRole('button', { name: '查看原始错误' }))
+    expect(within(row('Failed')).getByRole('region', { name: '原始错误信息' })).toHaveTextContent('429')
     expect(within(row('Unmatched')).getByText('没找到这场比赛的直播频道，请手动粘贴直播链接')).toBeInTheDocument()
 
     // Titles are asked for the matched channel only.

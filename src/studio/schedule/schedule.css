@@ -60,6 +60,12 @@
   color: var(--ash);
 }
 
+.studio .sched-empty-content {
+  width: min(100%, 46rem);
+  min-width: 0;
+  text-align: center;
+}
+
 .studio .sched-pane {
   display: flex;
   flex-direction: column;
@@ -281,6 +287,23 @@
 
 .studio .sched-foot > p {
   flex-basis: 100%;
+}
+
+.studio .sched-verification {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  flex-basis: 100%;
+}
+
+.studio .sched-verification > .muted:not(p) {
+  flex: 1 1 220px;
+}
+
+.studio .sched-verification > p {
+  flex-basis: 100%;
+  min-width: 0;
 }
 
 .studio .sched-wait {

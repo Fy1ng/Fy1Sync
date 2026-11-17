@@ -50,12 +50,14 @@ import { usePreprocessRecommendation } from './usePreprocessRecommendation'
 import { useBatchValidation } from './useBatchValidation'
 import { BatchValidationPanel } from './BatchValidationPanel'
 import { waitValidationVideo } from './batchValidationRunner'
+import { ErrorText } from '../../ui/ErrorDetails'
 import '../studio.css'
 import './editor.css'
 
 interface Message {
   kind: 'info' | 'warn' | 'error'
   text: string
+  error?: unknown
   /** Set when a publish lost an ETag race; the note then offers the two ways out. */
   conflict?: { currentEtag?: string }
 }
@@ -197,7 +199,7 @@ export default function EditorPage(): React.ReactNode {
     if (prepared) void prepared.then(result => {
       if (active) setAnalysis(result)
     }).catch(error => {
-      if (active) setMessage({ kind: 'error', text: `画面处理失败: ${error instanceof Error ? error.message : String(error)}` })
+      if (active) setMessage({ kind: 'error', text: `画面处理失败: ${error instanceof Error ? error.message : String(error)}`, error })
     })
     return () => { active = false }
   }, [frame, analysisKey, cueId, numericId, variantId, profile.enabled])
@@ -208,7 +210,7 @@ export default function EditorPage(): React.ReactNode {
     if (frame) void recognizeHudFrame(frame, activePack, variantId).then(result => {
       if (active) setFrameResult(result)
     }).catch(error => {
-      if (active) setMessage({ kind: 'error', text: `状态预览失败: ${String(error)}` })
+      if (active) setMessage({ kind: 'error', text: `状态预览失败: ${String(error)}`, error })
     })
     return () => { active = false }
   }, [frame, activePack, variantId])
@@ -219,7 +221,7 @@ export default function EditorPage(): React.ReactNode {
     if (frame) void recognizeHudFrame(frame, pack).then(result => {
       if (active) setPlayerFrameResult(result)
     }).catch(error => {
-      if (active) setMessage({ kind: 'error', text: `布局预览失败: ${String(error)}` })
+      if (active) setMessage({ kind: 'error', text: `布局预览失败: ${String(error)}`, error })
     })
     return () => { active = false }
   }, [frame, pack])
@@ -243,10 +245,16 @@ export default function EditorPage(): React.ReactNode {
 
   const refreshLibrary = useCallback(async () => {
     const revision = ++libraryRevision.current
-    const [remote, local] = await Promise.all([apiClient.listPresets(), profileStore.list().catch(() => [])])
+    const [remote, local] = await Promise.all([apiClient.listPresets().catch(error => {
+      if (mounted.current && revision === libraryRevision.current) setMessage({ kind: 'error', text: '预设列表读取失败, 请重试.', error })
+      return null
+    }), profileStore.list().catch(error => {
+      if (mounted.current && revision === libraryRevision.current) setMessage({ kind: 'error', text: '草稿列表读取失败, 请重试.', error })
+      return []
+    })])
     if (!mounted.current || revision !== libraryRevision.current) return
-    if (remote.ok) setPresets(remote.value.presets)
-    else setMessage({ kind: 'warn', text: `预设列表读取失败：${remote.message}` })
+    if (remote?.ok) setPresets(remote.value.presets)
+    else if (remote) setMessage({ kind: 'warn', text: `预设列表读取失败：${remote.message}`, error: remote })
     setDrafts(local)
   }, [])
 
@@ -329,7 +337,7 @@ export default function EditorPage(): React.ReactNode {
       setPack(added.pack)
       changeLayout(added.id)
       setDirty(true)
-    } catch (error) { setMessage({ kind: 'error', text: String(error) }) }
+    } catch (error) { setMessage({ kind: 'error', text: String(error), error }) }
   }
 
   const editLayoutId = (id: string): string | null => {
@@ -356,7 +364,7 @@ export default function EditorPage(): React.ReactNode {
     const decoded = await decodeScreenshot(file)
     if (validationReadOnly.current) return
     if (!decoded.ok) {
-      setMessage({ kind: 'error', text: decoded.message })
+      setMessage({ kind: 'error', text: decoded.message, error: decoded })
       return
     }
     countdown.reset()
@@ -441,7 +449,7 @@ export default function EditorPage(): React.ReactNode {
     // change, and re-grabbing per pixel of drag would stall on a paused decoder.
     const result = grabberRef.current.grab(video, FULL_FRAME_ROI, video.currentTime)
     if (!result.ok) {
-      setMessage({ kind: 'error', text: `取帧失败（${result.reason}）：${result.detail ?? '未知原因'}` })
+      setMessage({ kind: 'error', text: `取帧失败（${result.reason}）：${result.detail ?? '未知原因'}`, error: result })
       return
     }
     setFrame(result.frame)
@@ -460,6 +468,7 @@ export default function EditorPage(): React.ReactNode {
     const from = last && Math.abs(video.currentTime - last.requested) < 1e-6 ? last.at : video.currentTime
     void stepperRef.current.step(from, delta, video.duration)
       .then((at) => { shownFrame.current = { at, requested: video.currentTime } })
+      .catch(error => setMessage({ kind: 'error', text: '逐帧跳转失败, 请重试.', error }))
       .finally(() => { stepping.current = false })
   }
 
@@ -477,7 +486,7 @@ export default function EditorPage(): React.ReactNode {
   const togglePlay = (): void => {
     const video = videoRef.current
     if (!video || countdown.isBusy()) return
-    if (video.paused) void video.play().catch(() => undefined)
+    if (video.paused) void video.play().catch(error => setMessage({ kind: 'error', text: '录像播放失败, 请重试.', error }))
     else video.pause()
   }
 
@@ -515,7 +524,7 @@ export default function EditorPage(): React.ReactNode {
         setRecognized(result.fields[numericId])
         setFrameResult(result)
       }
-    } catch (error) { setMessage({ kind: 'error', text: `验证失败: ${String(error)}` }) }
+    } catch (error) { setMessage({ kind: 'error', text: `验证失败: ${String(error)}`, error }) }
   }
 
   const saveCue = async (): Promise<void> => {
@@ -527,14 +536,14 @@ export default function EditorPage(): React.ReactNode {
       const updated = patchCue(pack, cueId, {}, sample, variantId)
       const validated = parseHudStylePack(updated)
       if (!validated.pack) {
-        setMessage({ kind: 'error', text: `模板无法保存: ${validated.issues.map(issue => issue.message).join('; ')}` })
+        setMessage({ kind: 'error', text: `模板无法保存: ${validated.issues.map(issue => issue.message).join('; ')}`, error: { issues: validated.issues } })
         return
       }
       ++editRevision.current
       setPack(updated)
       setDirty(true)
       setMessage({ kind: 'info', text: `已把${CUE_LABELS[cueId]}存为模板` })
-    } catch (error) { setMessage({ kind: 'error', text: `取样失败: ${String(error)}` }) }
+    } catch (error) { setMessage({ kind: 'error', text: `取样失败: ${String(error)}`, error }) }
   }
 
   // The platform's primary undo shortcut is scoped to the editor; text keeps native undo.
@@ -587,7 +596,7 @@ export default function EditorPage(): React.ReactNode {
       void refreshLibrary()
     } catch (error) {
       if (mounted.current && document === documentRevision.current && revision === editRevision.current)
-        setMessage({ kind: 'error', text: `草稿保存失败：${error instanceof Error ? error.message : String(error)}` })
+        setMessage({ kind: 'error', text: `草稿保存失败：${error instanceof Error ? error.message : String(error)}`, error })
     } finally { saveInFlight.current = false; if (mounted.current) setSaving(null) }
   }
 
@@ -621,6 +630,7 @@ export default function EditorPage(): React.ReactNode {
         setMessage({
           kind: 'error',
           text: `预设 ${profile.id} 已在别处被修改`,
+          error: result,
           conflict: { currentEtag: typeof currentEtag === 'string' ? currentEtag : undefined },
         })
         return
@@ -628,17 +638,24 @@ export default function EditorPage(): React.ReactNode {
       setMessage({
         kind: 'error',
         text: `发布失败：${result.message}${issues.length ? `（${issues.map((issue) => `${issue.path} ${issue.message}`).join('；')}）` : ''}`,
+        error: result,
       })
+    } catch (error) {
+      if (mounted.current && document === documentRevision.current && revision === editRevision.current) setMessage({ kind: 'error', text: '发布失败, 当前修改已保留.', error })
     } finally { saveInFlight.current = false; if (mounted.current) setSaving(null) }
   }
 
   const loadPreset = async (id: string): Promise<void> => {
     const revision = ++editRevision.current
     const document = ++documentRevision.current
-    const result = await apiClient.getPreset(id)
+    const result = await apiClient.getPreset(id).catch(error => {
+      if (mounted.current && revision === editRevision.current && document === documentRevision.current) setMessage({ kind: 'error', text: '载入失败, 当前修改已保留.', error })
+      return null
+    })
+    if (!result) return
     if (!mounted.current || revision !== editRevision.current || document !== documentRevision.current) return
     if (!result.ok) {
-      setMessage({ kind: 'error', text: `载入失败：${result.message}` })
+      setMessage({ kind: 'error', text: `载入失败：${result.message}`, error: result })
       return
     }
     adoptFootageSize.current = false
@@ -671,9 +688,9 @@ export default function EditorPage(): React.ReactNode {
       setEtag(undefined)
       setDirty(false)
       setMessage({ kind: 'info', text: `已载入草稿 ${id}` })
-    } catch {
+    } catch (error) {
       if (mounted.current && revision === editRevision.current && document === documentRevision.current)
-        setMessage({ kind: 'error', text: '草稿读取失败，当前编辑内容已保留' })
+        setMessage({ kind: 'error', text: '草稿读取失败，当前编辑内容已保留', error })
     }
   }
 
@@ -697,7 +714,7 @@ export default function EditorPage(): React.ReactNode {
       const parsed = parseHudStylePack(JSON.parse(await file.text()) as unknown)
       if (!mounted.current || revision !== editRevision.current || document !== documentRevision.current) return
       if (!parsed.pack) {
-        setMessage({ kind: 'error', text: `导入失败：${parsed.issues.map((issue) => `${issue.path} ${issue.message}`).join('；')}` })
+        setMessage({ kind: 'error', text: `导入失败：${parsed.issues.map((issue) => `${issue.path} ${issue.message}`).join('；')}`, error: { issues: parsed.issues } })
         return
       }
       adoptFootageSize.current = false
@@ -710,7 +727,7 @@ export default function EditorPage(): React.ReactNode {
       setMessage({ kind: 'info', text: '已导入' })
     } catch (error) {
       if (mounted.current && revision === editRevision.current && document === documentRevision.current)
-        setMessage({ kind: 'error', text: `导入失败：${error instanceof Error ? error.message : String(error)}` })
+        setMessage({ kind: 'error', text: `导入失败：${error instanceof Error ? error.message : String(error)}`, error })
     }
   }
 
@@ -772,7 +789,7 @@ export default function EditorPage(): React.ReactNode {
         node.closest('.editor-stage')?.scrollIntoView({ block: 'nearest' })
       }
     }).catch(error => {
-      if (!controller.signal.aborted) setMessage({ kind: 'error', text: `跳转失败: ${error instanceof Error ? error.message : String(error)}` })
+      if (!controller.signal.aborted) setMessage({ kind: 'error', text: `跳转失败: ${error instanceof Error ? error.message : String(error)}`, error })
     }).finally(() => { if (reviewSeek.current === controller) reviewSeek.current = null })
   }
 
@@ -790,7 +807,10 @@ export default function EditorPage(): React.ReactNode {
         {validationOpen && <span className="editor-validation-mode">验收模式 / 样式只读</span>}
         <span className="editor-spacer" />
         <LibraryMenu presets={presets} drafts={drafts} onLoadPreset={loadPreset} onLoadDraft={loadDraft}
-          onDeleteDraft={async (id) => { await profileStore.remove(id); void refreshLibrary() }} />
+          onDeleteDraft={async (id) => {
+            try { await profileStore.remove(id); void refreshLibrary() }
+            catch (error) { setMessage({ kind: 'error', text: '草稿删除失败, 请重试.', error }) }
+          }} />
         <FileMenu onNew={newProfile} onImport={importFile} onExport={exportFile} />
         <span className="editor-divider" aria-hidden="true" />
         <button type="button" className="btn-quiet" disabled={!video || !duration || countdown.busy || preprocessing.busy || saving !== null}
@@ -806,7 +826,7 @@ export default function EditorPage(): React.ReactNode {
 
       {message && (
         <div className={`editor-note is-${message.kind}`} role={message.conflict ? 'alert' : 'status'} aria-label="编辑器提示" inert={validationOpen && !!message.conflict}>
-          <span className="editor-note-text">{message.text}</span>
+          <span className="editor-note-text">{message.kind === 'error' || message.error !== undefined ? <ErrorText error={message.error ?? message.text} message={message.text} /> : message.text}</span>
           {message.conflict && (
             <>
               <button type="button" className="btn-quiet small" onClick={() => void loadPreset(profile.id)}>
@@ -825,7 +845,7 @@ export default function EditorPage(): React.ReactNode {
       )}
 
       {(project.error || project.needsRelink) && <div className="editor-note is-warn" aria-live="polite" data-testid="project-note" inert={validationOpen}>
-        <span>{project.error || '素材文件不可用或大小已改变, 请重新选择原文件并核对 SHA-256.'}</span>
+        <span><ErrorText error={project.errorDetail ?? { message: project.error || '素材文件不可用或大小已改变, 请重新选择原文件并核对 SHA-256.', needsRelink: project.needsRelink }} message={project.error || '素材文件不可用或大小已改变, 请重新选择原文件并核对 SHA-256.'} /></span>
         {project.needsRelink && <button type="button" className="btn-quiet small" onClick={() => void project.choose(true)}>重新选择原素材</button>}
       </div>}
 

@@ -1,4 +1,5 @@
 import { types as utilTypes } from 'node:util'
+import { diagnosticDetails } from './errorDetails'
 import type { ApiResult } from '../src/app/apiClient'
 import { FEATURE_METHODS, type FeatureMethod, type FeatureMethods, type FeatureCallContext, type FeatureEvent } from '../electron/featureContracts'
 import type { DanmakuFeatures } from '../electron/danmakuFeatures'
@@ -75,16 +76,17 @@ export class FeatureApi {
       if (this.disposed) throw new FeatureApiError('service-closed')
       return { ok: true, value }
     } catch (error) {
-      // Domain errors may carry upstream/custom messages. Only fixed public codes/text cross IPC.
+      // Keep fixed public text alongside bounded, redacted original diagnostics.
+      const detail = diagnosticDetails(error)
       const isError = !utilTypes.isProxy(error) && error instanceof Error
       const descriptor = isError ? Object.getOwnPropertyDescriptor(error, 'code') : undefined
       const code: unknown = descriptor && 'value' in descriptor ? descriptor.value : undefined
-      if (typeof code === 'string' && Object.hasOwn(ERROR_TEXT, code)) return { ok: false, code, message: ERROR_TEXT[code as FeatureErrorCode] }
+      if (typeof code === 'string' && Object.hasOwn(ERROR_TEXT, code)) return { ok: false, code, message: ERROR_TEXT[code as FeatureErrorCode], detail }
       const name = isError ? Object.getOwnPropertyDescriptor(error, 'name') : undefined
       if ((name && 'value' in name && name.value === 'AbortError') || (!name && isError && error instanceof DOMException && error.name === 'AbortError')) {
-        return { ok: false, code: 'cancelled', message: ERROR_TEXT.cancelled }
+        return { ok: false, code: 'cancelled', message: ERROR_TEXT.cancelled, detail }
       }
-      return { ok: false, code: 'internal-error', message: '本地服务无法完成此操作.' }
+      return { ok: false, code: 'internal-error', message: '本地服务无法完成此操作.', detail }
     }
   }
   subscribe(listener: (event: FeatureEvent) => void): () => void {

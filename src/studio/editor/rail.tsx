@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { ErrorDetailsButton, ErrorText } from '../../ui/ErrorDetails'
 import {
   CLOCK_CHARS,
   TEMPLATE_PIXELS,
@@ -171,7 +172,7 @@ export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, sel
       {!bounds ? (
         <p className="muted">取一帧后，点选裁切图中的字符框，再按对应字符存为样本</p>
       ) : boxes.length === 0 ? (
-        <p className="note-warn">未切出字符，请调整阈值或识别区域</p>
+        <p className="note-warn"><ErrorText error="未切出字符，请调整阈值或识别区域" /></p>
       ) : active ? (
         <>
           <div className="glyph-tools">
@@ -225,6 +226,7 @@ export function GlyphSection({ fieldId = 'clock', profile, readiness, boxes, sel
               ? `识别为 ${recognized.reading.text} · 置信度 ${recognized.reading.confidence.toFixed(3)}`
               : recognized.status === 'disabled' ? '字段已关闭'
                 : recognized.status === 'absent' ? `画面里没有${FIELD_LABELS[fieldId]}` : `${recognized.status === 'indeterminate' ? '无法判断' : '识别失败'}: ${recognized.reason}`}
+            {recognized.status === 'failed' && <ErrorDetailsButton error={recognized} />}
           </span>
         )}
       </div>

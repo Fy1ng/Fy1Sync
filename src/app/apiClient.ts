@@ -9,9 +9,13 @@ import type { LoginPlatform } from '../../electron/login'
 import type { DecoderMode } from '../../electron/decoderPreferences'
 import type { DouyuAccountsSnapshot, DouyuTaskPolicy, DouyuTasksSnapshot } from '../../server/douyu/types'
 import type { DomesticRouting } from '../../server/networkPolicy'
+import type { MediaNetworkOptions } from '../../server/mediaNetworkOptions'
 import type { FeatureMethod, FeatureMethods, FeatureEvent } from '../../electron/featureContracts'
 import type { StylePackSourceId } from '../../electron/stylePackSyncContracts'
 import type { EmbeddedLoginState, EmbeddedLoginViewport } from '../../electron/embeddedLoginContracts'
+import { DOUYIN_LOGIN_CHANGED_EVENT } from '../core/douyinMessage'
+import { errorDetails } from '../core/errorDetails'
+import type { BrowserImportMethods } from '../../electron/browserImportContracts'
 
 export type ApiResult<T> =
   | { ok: true; value: T }
@@ -73,6 +77,7 @@ export class ApiClient {
         ok: false,
         code: 'ipc-error',
         message: `无法连接应用主进程: ${error instanceof Error ? error.message : String(error)}`,
+        detail: errorDetails(error),
       }
     }
   }
@@ -82,6 +87,8 @@ export class ApiClient {
   }
 
   getDecoderPreferences() { return this.request('getDecoderPreferences', undefined) }
+  getDouyinSendState(refresh = false) { return this.request('getDouyinSendState', refresh ? { refresh: true } : undefined) }
+  sendDouyinMessage(input: DesktopMethods['sendDouyinMessage']['args']) { return this.request('sendDouyinMessage', input) }
   feature<K extends FeatureMethod>(method: K, args: FeatureMethods[K]['args']) { return this.request(method, args) }
   subscribeFeatures(listener: (event: FeatureEvent) => void): () => void {
     try { return this.bridge().subscribeFeatures?.(listener) ?? (() => {}) } catch { return () => {} }
@@ -118,9 +125,27 @@ export class ApiClient {
   switchQuality(role: SourceRole, quality: string) { return this.request('switchQuality', { role, quality }) }
   stopBuffer(role: SourceRole) { return this.request('stopBuffer', { role }) }
   reconnectDanmaku(room: string) { return this.request('reconnectDanmaku', { room }) }
-  login(platform: LoginPlatform) { return this.request('login', { platform }) }
+  async login(platform: LoginPlatform) {
+    const result = await this.request('login', { platform })
+    if (platform === 'douyin' && typeof window !== 'undefined') window.dispatchEvent(new Event(DOUYIN_LOGIN_CHANGED_EVENT))
+    return result
+  }
   loginStatus() { return this.request('loginStatus', undefined) }
-  logout(platform: LoginPlatform) { return this.request('logout', { platform }) }
+  listBrowserImportProfiles() { return this.request('listBrowserImportProfiles', undefined) }
+  previewBrowserLogins(input: BrowserImportMethods['previewBrowserLogins']['args']) { return this.request('previewBrowserLogins', input) }
+  async importBrowserLogins(input: BrowserImportMethods['importBrowserLogins']['args']) {
+    const result = await this.request('importBrowserLogins', input)
+    if (typeof window !== 'undefined' && result.ok && result.value.outcomes.some(outcome => outcome.platform === 'douyin' && outcome.imported)) {
+      window.dispatchEvent(new Event(DOUYIN_LOGIN_CHANGED_EVENT))
+    }
+    return result
+  }
+  cancelBrowserImport(id: string) { return this.request('cancelBrowserImport', { id }) }
+  async logout(platform: LoginPlatform) {
+    const result = await this.request('logout', { platform })
+    if (platform === 'douyin' && typeof window !== 'undefined') window.dispatchEvent(new Event(DOUYIN_LOGIN_CHANGED_EVENT))
+    return result
+  }
   getEmbeddedLogin() { return this.request('getEmbeddedLogin', undefined) }
   setEmbeddedLoginViewport(viewport: EmbeddedLoginViewport) { return this.request('setEmbeddedLoginViewport', viewport) }
   cancelEmbeddedLogin(id: string) { return this.request('cancelEmbeddedLogin', { id }) }
@@ -155,7 +180,9 @@ export class ApiClient {
     try { return this.bridge().subscribeDouyuAccounts?.(listener) ?? (() => {}) } catch { return () => {} }
   }
   getNetworkPreferences() { return this.request('getNetworkPreferences', undefined) }
-  setNetworkPreferences(domesticRouting: DomesticRouting) { return this.request('setNetworkPreferences', { domesticRouting }) }
+  setNetworkPreferences(domesticRouting: DomesticRouting, media?: MediaNetworkOptions) {
+    return this.request('setNetworkPreferences', { domesticRouting, ...(media ? { media } : {}) })
+  }
   subscribeDouyuTasks(listener: (state: DouyuTasksSnapshot) => void): () => void {
     try { return this.bridge().subscribeDouyuTasks?.(listener) ?? (() => {}) } catch { return () => {} }
   }

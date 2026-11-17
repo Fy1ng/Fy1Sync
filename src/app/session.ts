@@ -45,6 +45,7 @@ import { clampPlayableSeek } from '../media/timebase'
 import { latestPlayableTime } from '../media/playbackControls'
 import { createPlaybackProgress, observePlaybackProgress } from '../media/playbackProgress'
 import { PlaybackDiagnostics, type PlaybackStallSummary } from '../media/playbackDiagnostics'
+import { errorDetails, type ErrorDetails } from '../core/errorDetails'
 
 /** Released danmaku kept for the chat list. */
 export const CHAT_HISTORY_LIMIT = 2000
@@ -62,6 +63,8 @@ export interface SessionSnapshot {
   requestedOffsetSeconds: number
   lastPlan: OffsetPlan | null
   autoSync: {
+    /** Playback can start before both sources have enough data for synchronization. */
+    ready: boolean
     phase: AutoSyncPhase
     authorized: boolean
     lastResult: AutoSyncRunResult | null
@@ -75,6 +78,7 @@ export interface SessionSnapshot {
     connected: boolean
     room: string | null
     error: string | null
+    errorDetail?: ErrorDetails
     pending: number
     dropped: number
   }
@@ -94,6 +98,7 @@ export interface Notice {
   kind: 'info' | 'warn' | 'error'
   text: string
   at: number
+  detail?: ErrorDetails
 }
 
 export interface SessionOptions {
@@ -242,6 +247,7 @@ export class Session {
           }
         },
         snapshot: (role) => this.engine.snapshot(role),
+        canStart: () => SOURCE_ROLES.every(role => this.isSyncReady(role)),
         hasProfile: () => SOURCE_ROLES.every((role) => this.profileFor(role) !== null),
         seek: (role, target) => this.seekAutomatically(role, target, false),
         seekManual: (role, target) => this.seekAutomatically(role, target, true),
@@ -357,6 +363,7 @@ export class Session {
       requestedOffsetSeconds: this.requestedOffset,
       lastPlan: this.planValue,
       autoSync: {
+        ready: SOURCE_ROLES.every(role => this.isSyncReady(role)),
         phase: this.autoSync.phase,
         authorized: this.autoSync.autoApplyAuthorized,
         lastResult: this.autoSync.result,
@@ -379,8 +386,9 @@ export class Session {
     }
   }
 
-  notice(kind: Notice['kind'], text: string): void {
-    const entry: Notice = { id: ++this.noticeSeq, kind, text, at: this.now() }
+  notice(kind: Notice['kind'], text: string, detail?: unknown): void {
+    const entry: Notice = { id: ++this.noticeSeq, kind, text, at: this.now(),
+      ...(kind !== 'info' ? { detail: errorDetails(detail ?? { message: text }) } : {}) }
     // Newest first, oldest dropped: the notice strip shows a few lines, not a log.
     this.noticeList = [entry, ...this.noticeList].slice(0, MAX_NOTICES)
     this.notify()
@@ -598,13 +606,13 @@ export class Session {
     const result = await apiClient.getPreset(id)
     if (revision !== this.profileRevision || this.disposed) return null
     if (!result.ok) {
-      this.notice('error', `识别场景 ${id} 载入失败：${result.message}`)
+      this.notice('error', `识别场景 ${id} 载入失败：${result.message}`, result)
       return null
     }
     const parsed = parseHudStylePack(result.value.profile)
     if (!parsed.pack) {
       const first = parsed.issues.find((issue) => issue.severity === 'error')
-      this.notice('error', `识别场景 ${id} 格式无效：${first?.message ?? '未知问题'}`)
+      this.notice('error', `识别场景 ${id} 格式无效：${first?.message ?? '未知问题'}`, { issues: parsed.issues })
       return null
     }
     return parsed.pack
@@ -739,6 +747,7 @@ export class Session {
     this.changingSources.delete(role)
     this.resetPlaybackObservation()
     this.refreshBasicWarmup()
+    this.notify()
   }
   sourceRevision(role: SourceRole): number { return this.sourceGeneration[role] }
 
@@ -757,7 +766,7 @@ export class Session {
       if (generation !== this.sourceGeneration[role] || this.disposed) return
       const state = this.engine.getState()[role]
       if (state.status === 'error') {
-        this.notice('error', `${roleName(role)}加载失败：${state.error?.message ?? '未知错误'}`)
+        this.notice('error', `${roleName(role)}加载失败：${state.error?.message ?? '未知错误'}`, state.error)
         return
       }
       // A new source starts at its own position, so whatever rewind the old one carried is
@@ -820,9 +829,9 @@ export class Session {
     try {
       const response = await apiClient.switchQuality(role, quality)
       if (generation !== this.sourceGeneration[role] || this.disposed) return
-      if (!response.ok) { this.notice('warn', response.message); return }
+      if (!response.ok) { this.notice('warn', response.message, response); return }
       if (!response.value.ok) {
-        this.notice('warn', response.value.failure.message)
+        this.notice('warn', response.value.failure.message, response.value.failure)
         return
       }
       const stream = response.value.stream
@@ -1164,6 +1173,18 @@ export class Session {
 
   // --------------------------------------------------------------- auto sync
 
+  private isSyncReady(role: SourceRole): boolean {
+    const media = this.engine.getState()[role]
+    if (media.status !== 'ready' || this.changingSources.has(role) || this.qualityBusy[role]
+      || !this.engine.snapshot(role)?.ready || this.engine.element(role).readyState < 3) return false
+    if (!media.descriptor?.url.includes('/buffer/')) return true
+    const buffer = this.bufferStates[role]
+    if (buffer) return buffer.state === 'ready' && buffer.seconds >= 4
+    const timebase = media.timebase
+    return !!timebase && (timebase.kind === 'vod' ? timebase.duration >= 4
+      : timebase.seekableEnd - timebase.seekableStart >= 4)
+  }
+
   private canObservePlayback(): boolean {
     return !this.disposed && !this.pipPresentationReduced && !this.autoSync.isRunning
       && !this.automaticSeek && !this.offsetDrain && this.playbackPending === 0
@@ -1295,7 +1316,7 @@ export class Session {
 
   private reportAutoResult(result: AutoSyncRunResult): void {
     if (result.failure) {
-      this.notice(result.failure.kind === 'cancelled' ? 'info' : 'warn', result.failure.message)
+      this.notice(result.failure.kind === 'cancelled' ? 'info' : 'warn', result.failure.message, result.failure)
       return
     }
     const estimate = result.estimate
@@ -1392,7 +1413,7 @@ export class Session {
         if (event === 'danmaku') this.ingestDanmaku(data)
         else if (event === 'state') this.ingestDanmakuState(data)
         else if (event === 'error') {
-          this.danmakuState = { ...this.danmakuState, connected: false, error: '弹幕连接中断，正在重试' }
+          this.danmakuState = { ...this.danmakuState, connected: false, error: '弹幕连接中断，正在重试', errorDetail: errorDetails(data) }
           this.notify()
         }
       })
@@ -1401,6 +1422,7 @@ export class Session {
         ...this.danmakuState,
         connected: false,
         error: `弹幕连接失败: ${error instanceof Error ? error.message : String(error)}`,
+        errorDetail: errorDetails(error),
       }
     }
     this.notify()
@@ -1499,7 +1521,7 @@ export class Session {
   /** Connection status describes the upstream room, not just the local IPC channel. */
   private ingestDanmakuState(data: unknown): void {
     if (!data || typeof data !== 'object') return
-    const payload = data as { state?: unknown; detail?: unknown; room?: unknown }
+    const payload = data as { state?: unknown; detail?: unknown; errorDetail?: unknown; room?: unknown }
     const state = typeof payload.state === 'string' ? payload.state : ''
     const detail = typeof payload.detail === 'string' ? payload.detail : null
     const connected = state === 'connected'
@@ -1512,6 +1534,7 @@ export class Session {
           : this.danmakuState.room?.startsWith('huya:') ? /^huya:[1-9][0-9]{0,15}$/ : /^[1-9][0-9]{0,11}$/).test(payload.room)
         ? { room: payload.room } : {}),
       error: connected ? null : (detail ?? DANMAKU_STATE_TEXT[state] ?? this.danmakuState.error),
+      errorDetail: connected ? undefined : errorDetails(payload.errorDetail ?? { state, detail: payload.detail }),
     }
     this.notify()
   }

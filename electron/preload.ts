@@ -7,19 +7,22 @@ import { FEATURE_METHODS, type FeatureEvent } from './featureContracts'
 import { YOUTUBE_ADMIN_METHODS, type YtBrowseState, type YtImportJob } from './ytAdminContracts'
 import { EDITOR_PROJECT_METHODS } from './editorProjectContracts'
 import { EMBEDDED_LOGIN_METHODS, type EmbeddedLoginState } from './embeddedLoginContracts'
+import { BROWSER_IMPORT_METHODS } from './browserImportContracts'
 
 const youtubeMethods = new Set<string>(YOUTUBE_ADMIN_METHODS)
 const editorMethods = new Set<string>(EDITOR_PROJECT_METHODS)
 const embeddedLoginMethods = new Set<string>(EMBEDDED_LOGIN_METHODS)
+const browserImportMethods = new Set<string>(BROWSER_IMPORT_METHODS)
 
 const methods = new Set<DesktopMethod>([
   ...FEATURE_METHODS,
   ...YOUTUBE_ADMIN_METHODS,
   ...EDITOR_PROJECT_METHODS,
   ...EMBEDDED_LOGIN_METHODS,
+  ...BROWSER_IMPORT_METHODS,
   'windowControl', 'getWindowState',
   'listDouyuAccounts', 'addDouyuAccount', 'renameDouyuAccount', 'loginDouyuAccount', 'loginDouyuYubaAccount', 'activateDouyuAccount', 'logoutDouyuAccount', 'removeDouyuAccount',
-  'sendDouyuMessage', 'openDouyuTaskRoom',
+  'sendDouyuMessage', 'openDouyuTaskRoom', 'getDouyinSendState', 'sendDouyinMessage',
   'getDouyuRenewalTargets', 'previewDouyuRenewal', 'executeDouyuRenewal', 'cancelDouyuRenewal',
   'getDouyuTasks', 'createDouyuTask', 'setDouyuTaskPolicy', 'startDouyuTask', 'pauseDouyuTask', 'removeDouyuTask', 'retainDouyuTaskRoom', 'closeDouyuTaskRoom',
   'resolveDouyuRoom', 'health', 'verifyAdmin', 'resolve', 'listPresets', 'getPreset', 'savePreset', 'deletePreset',
@@ -37,7 +40,8 @@ const bridge: StreamSyncerBridge = {
     if (!methods.has(method)) {
       return Promise.resolve({ ok: false as const, code: 'unknown-method', message: '未知桌面接口' })
     }
-    const channel = embeddedLoginMethods.has(method) ? 'stream-syncer:embedded-login-invoke'
+    const channel = browserImportMethods.has(method) ? 'stream-syncer:browser-import-invoke'
+      : embeddedLoginMethods.has(method) ? 'stream-syncer:embedded-login-invoke'
       : editorMethods.has(method) ? 'stream-syncer:editor-invoke' : youtubeMethods.has(method) ? 'stream-syncer:yt-invoke' : 'stream-syncer:invoke'
     return ipcRenderer.invoke(channel, method, args) as Promise<ApiResult<DesktopMethods[K]['result']>>
   },

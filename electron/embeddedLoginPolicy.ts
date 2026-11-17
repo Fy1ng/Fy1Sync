@@ -1,5 +1,6 @@
 import type { EmbeddedLoginPlatform, EmbeddedLoginViewport } from './embeddedLoginContracts'
 import { loginMediaRequest } from './loginMediaGuard'
+import { DOUYIN_SIGNING_STORAGE_FRAMES } from './douyinSigningCapture'
 
 const PRIMARY: Record<EmbeddedLoginPlatform, readonly string[]> = {
   douyin: ['live.douyin.com', 'www.douyin.com', 'sso.douyin.com', 'sso1.douyin.com', 'sso2.douyin.com'],
@@ -64,6 +65,11 @@ function douyinLoginRequestAllowed(platform: EmbeddedLoginPlatform, raw: string,
   if (!['https:', 'wss:'].includes(url.protocol) || url.username || url.password || url.port) return false
   if (!/^[a-z0-9.-]+$/.test(url.hostname) || /(^|\.)(?:local|localhost|localdomain|intranet)(?:\.|$)/i.test(url.hostname)) return false
   if (url.hostname === 'v.douyin.com') return false
+  if (url.pathname.startsWith('/ucenter/security/storage-bridge/')
+    || url.hostname==='lf-zt.douyin.com' && url.pathname.includes('/@byted/x-storage-web/')) {
+    return resourceType==='subFrame' && DOUYIN_SIGNING_STORAGE_FRAMES.includes(`${url.origin}${url.pathname}` as typeof DOUYIN_SIGNING_STORAGE_FRAMES[number])
+      && (!url.search || [...url.searchParams].length===1 && /^\d{1,16}$/.test(url.searchParams.get('t')||'')) && !url.hash
+  }
   if (url.protocol === 'wss:') return resourceType === 'webSocket' && QR_WEBSOCKETS.includes(url.hostname)
   if (resourceType === 'mainFrame') return url.protocol === 'https:' && PRIMARY[platform].includes(url.hostname)
   // TTVerifyCenter requests this configuration before selecting its verification resources.

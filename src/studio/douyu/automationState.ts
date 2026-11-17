@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiClient, type ApiResult } from '../../app/apiClient'
 import type { AutomationSnapshot } from '../../../electron/automationManager'
-import type { Lane } from './useDouyu'
+import { failedLane, type Lane } from './useDouyu'
 
 const IDLE: Lane = { pending: '', notice: '', error: '' }
 
@@ -35,8 +35,8 @@ export function useAutomations() {
     void apiClient.feature('getDouyuAutomations', undefined).then((result) => {
       if (!live) return
       if (result.ok && validAutomations(result.value)) { if (first === revision.current) setSnapshot(result.value) }
-      else setLane({ ...IDLE, error: result.ok ? '无法读取批量任务' : result.message })
-    }).catch(() => {}).finally(() => { if (live) setLoading(false) })
+      else setLane(failedLane(result, result.ok ? '无法读取批量任务' : undefined))
+    }).catch(error => { if (live) setLane(failedLane(error, '无法读取批量任务')) }).finally(() => { if (live) setLoading(false) })
     return () => { live = false; mounted.current = false; unsubscribe() }
   }, [])
 
@@ -52,13 +52,13 @@ export function useAutomations() {
     try {
       const result = await work()
       if (!mounted.current) return false
-      if (!result.ok) { setLane({ ...IDLE, error: result.message }); return false }
-      if (!validAutomations(result.value)) { setLane({ ...IDLE, error: '无法读取批量任务' }); return false }
+      if (!result.ok) { setLane(failedLane(result)); return false }
+      if (!validAutomations(result.value)) { setLane(failedLane(result, '无法读取批量任务')); return false }
       if (before === revision.current) setSnapshot(result.value)
       setLane({ ...IDLE, notice: done })
       return true
-    } catch {
-      if (mounted.current) setLane({ ...IDLE, error: '操作未完成，请重试' })
+    } catch (error) {
+      if (mounted.current) setLane(failedLane(error, '操作未完成, 请重试'))
       return false
     } finally {
       busy.current = false

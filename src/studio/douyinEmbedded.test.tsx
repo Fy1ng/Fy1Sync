@@ -39,6 +39,7 @@ beforeEach(() => {
     subscribeDanmaku: () => () => {},
   } satisfies StreamSyncerBridge)
   vi.spyOn(apiClient, 'loginStatus').mockResolvedValue({ ok: true, value: status(false) })
+  vi.spyOn(apiClient, 'getDouyinSendState').mockResolvedValue({ ok: true, value: { loggedIn: false, canSend: false, loginState: 'signed-out', message: '未登录' } })
   vi.spyOn(apiClient, 'getEmbeddedLogin').mockResolvedValue({ ok: true, value: null })
   vi.spyOn(apiClient, 'subscribeEmbeddedLogin').mockImplementation(listener => { listeners.add(listener); return () => { listeners.delete(listener) } })
   vi.spyOn(apiClient, 'setEmbeddedLoginViewport').mockResolvedValue({ ok: true, value: { ok: true } })
@@ -89,6 +90,7 @@ describe('Douyin embedded login in the main studio', () => {
     fireEvent.click(panel.getByRole('button', { name: '登录' }))
     expect(screen.getByRole('dialog', { name: '抖音登录' })).toBeInTheDocument()
     vi.mocked(apiClient.loginStatus).mockResolvedValue({ ok: true, value: status(true) })
+    vi.mocked(apiClient.getDouyinSendState).mockResolvedValue({ ok: true, value: { loggedIn: true, canSend: true, loginState: 'authenticated', message: '已登录' } })
     await act(async () => { emit(null); finish({ ok: true, value: { cookieCount: 1, authKeysPresent: ['sessionid'] } }); await Promise.resolve() })
     await waitFor(() => expect(panel.getByText('已登录')).toBeInTheDocument())
     expect(screen.queryByRole('dialog', { name: '抖音登录' })).toBeNull()

@@ -1,3 +1,6 @@
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
+import { composeMessage } from '../../core/messageComposition'
 /**
  * The enhanced picture-in-picture window's page, route `/pip` (handoff items 06, 07).
  *
@@ -17,7 +20,7 @@ import type { PipState } from '../../../electron/pipManager'
 import { Icon } from '../kit'
 import { PipDanmaku } from './PipDanmaku'
 import { usePipLoad, usePipMedia, usePipReporter, usePipSource } from './pipPlayback'
-import { isPipState, useDanmakuPreferences, usePipState } from './pipState'
+import { isPipState, pipFailure, useDanmakuPreferences, usePipState } from './pipState'
 import { isReadOnlyDanmakuPlatform } from '../../../server/danmaku/types'
 import './pip.css'
 
@@ -33,17 +36,19 @@ export function sendBlock(context: PipState['sendContext'] | null | undefined): 
 }
 
 export default function PipPage(): React.ReactNode {
-  const { state, error, apply } = usePipState()
-  const preferences = useDanmakuPreferences()
+  const { state, error, errorDetail, apply } = usePipState()
+  const [preferenceError, setPreferenceError, preferenceDetail] = useErrorState()
+  const preferences = useDanmakuPreferences(setPreferenceError)
   const media = usePipMedia()
   const hostRef = useRef<HTMLDivElement | null>(null)
   const active = state?.phase === 'opening' || state?.phase === 'ready'
-  const { source, problem: sourceProblem } = usePipSource(state)
+  const { source, problem: sourceProblem, problemDetail: sourceDetail } = usePipSource(state)
   const [reloads, setReloads] = useState(0)
   const onReload = useCallback(() => setReloads(value => value + 1), [])
   const loadProblem = usePipLoad(media, source, state?.recoveryRevision ?? 0, active, onReload)
-  const ready = usePipReporter(media, active, apply)
-  const [danmakuProblem, setDanmakuProblem] = useState<string | null>(null)
+  const [reportProblem, setReportProblem, reportDetail] = useErrorState()
+  const ready = usePipReporter(media, active, apply, setReportProblem)
+  const [danmakuProblem, setDanmakuProblem, danmakuDetail] = useErrorState()
 
   useEffect(() => { media?.mount(hostRef.current) }, [media])
 
@@ -51,15 +56,23 @@ export default function PipPage(): React.ReactNode {
   const reduced = state?.phase === 'ready' && state.options.lowPower
   const room = active && source ? source.platform === 'douyin' ? source.danmakuRoom ?? null : state?.sendContext.room ?? null : null
 
-  const status = statusText(state, error, ready, sourceProblem ?? loadProblem)
+  const status = statusText(state, error, ready, sourceProblem ?? loadProblem?.message ?? null)
+  const statusError = state?.phase === 'failed' ? pipFailure(state) : !state && error ? errorDetail ?? error
+    : active && sourceProblem && sourceDetail ? sourceDetail : active && loadProblem ? loadProblem.detail ?? loadProblem
+      : !status && active && danmakuProblem ? danmakuDetail ?? danmakuProblem : null
 
   return (
     <div className="pip-page" data-phase={state?.phase ?? 'loading'}>
       <div className="pip-video" ref={hostRef} />
       <PipDanmaku video={media?.video ?? null} room={room} preferences={preferences}
         drawing={!reduced} resetKey={reloads} onProblem={setDanmakuProblem} />
-      {(status || (danmakuProblem && active)) && (
-        <p className="pip-status" role="status">{status ?? danmakuProblem}</p>
+      {(status || (danmakuProblem && active) || preferenceError || reportProblem) && (
+        <p className="pip-status" role="status">
+          {(status || (danmakuProblem && active)) && (statusError ? <ErrorText error={statusError} message={status ?? danmakuProblem} /> : status ?? danmakuProblem)}
+          {status && danmakuProblem && active && <span className="pip-diagnostic"><ErrorText error={danmakuDetail ?? danmakuProblem} message={danmakuProblem} /></span>}
+          {preferenceError && <span className="pip-diagnostic"><ErrorText error={preferenceDetail ?? preferenceError} message={preferenceError} /></span>}
+          {reportProblem && <span className="pip-diagnostic"><ErrorText error={reportDetail ?? reportProblem} message={reportProblem} /></span>}
+        </p>
       )}
       <PipControls video={media?.video ?? null} state={state} apply={apply} />
       {!isReadOnlyDanmakuPlatform(source?.platform) && <SendBar context={state?.sendContext ?? null} apply={apply} />}
@@ -85,7 +98,7 @@ function PipControls({ video, state, apply }: {
   const [paused, setPaused] = useState(true)
   const [volume, setVolume] = useState(1)
   const [muted, setMuted] = useState(false)
-  const [problem, setProblem] = useState<string | null>(null)
+  const [problem, setProblem, problemDetail] = useErrorState()
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
 
@@ -104,15 +117,17 @@ function PipControls({ video, state, apply }: {
 
   const toggle = (): void => {
     if (!video) return
-    if (video.paused) void video.play().catch(() => {})
+    if (video.paused) void video.play().catch(caught => { if (mounted.current) setProblem(displayError(caught, '画面播放失败')) })
     else video.pause()
   }
 
   const call = async (method: 'recoverEnhancedPip' | 'closeEnhancedPip'): Promise<void> => {
     setProblem(null)
-    const result = await apiClient.feature(method, undefined)
+    const result = await apiClient.feature(method, undefined).catch(caught => ({ ok: false as const, ...displayError(caught, '画中画操作失败') }))
     if (!mounted.current) return
-    if (result.ok) { if (isPipState(result.value)) apply(result.value) } else setProblem(result.message)
+    if (!result.ok) setProblem(result)
+    else if (isPipState(result.value)) apply(result.value)
+    else setProblem(displayError({ code: 'invalid-pip-state' }, '无法读取画中画状态'))
   }
 
   const live = state?.phase === 'ready'
@@ -134,7 +149,7 @@ function PipControls({ video, state, apply }: {
           video.muted = video.volume === 0
         }} />
       <span className="pip-spacer" />
-      {problem && <span className="pip-control-note" role="alert">{problem}</span>}
+      {problem && <span className="pip-control-note" role="alert"><ErrorText error={problemDetail ?? problem} message={problem} /></span>}
       <button type="button" className="pip-text-btn" disabled={!live} onClick={() => void call('recoverEnhancedPip')}>恢复画面</button>
       <button type="button" className="pip-icon" aria-label="关闭画中画" title="关闭画中画"
         onClick={() => void call('closeEnhancedPip')}>
@@ -150,7 +165,7 @@ function SendBar({ context, apply }: {
 }): React.ReactNode {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
-  const [outcome, setOutcome] = useState<{ text: string; ok: boolean } | null>(null)
+  const [outcome, setOutcome] = useState<{ text: string; ok: boolean; detail?: unknown } | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mounted = useRef(true)
   useEffect(() => {
@@ -161,24 +176,27 @@ function SendBar({ context, apply }: {
     }
   }, [])
 
-  const show = (value: string, ok: boolean): void => {
+  const show = (value: unknown, ok: boolean, summary?: string): void => {
     if (!mounted.current) return
-    setOutcome({ text: value, ok })
+    const shown = displayError(value, summary)
+    setOutcome({ text: shown.message, ok, detail: ok ? undefined : shown.detail })
     if (timer.current !== null) clearTimeout(timer.current)
-    timer.current = setTimeout(() => { timer.current = null; setOutcome(null) }, OUTCOME_MS)
+    timer.current = ok ? setTimeout(() => { timer.current = null; setOutcome(null) }, OUTCOME_MS) : null
   }
 
   const block = sendBlock(context)
+  let validation: ReturnType<typeof displayError> | null = null
+  if (text) { try { composeMessage(text) } catch (caught) { validation = displayError(caught) } }
 
   const send = async (): Promise<void> => {
     const draft = text
-    if (busy || block || !draft.trim()) return
+    if (busy || block || validation || !draft.trim()) return
     setBusy(true)
     try {
       // The account or the room may have changed since the bar was drawn.
       const fresh = await apiClient.feature('getEnhancedPip', undefined)
       if (!mounted.current) return
-      if (!fresh.ok || !isPipState(fresh.value)) { show(fresh.ok ? '无法读取发送状态' : fresh.message, false); return }
+      if (!fresh.ok || !isPipState(fresh.value)) { show(fresh.ok ? { code: 'invalid-send-context' } : fresh, false, fresh.ok ? '无法读取发送状态' : undefined); return }
       apply(fresh.value)
       const current = fresh.value.sendContext
       const reason = sendBlock(current)
@@ -186,15 +204,17 @@ function SendBar({ context, apply }: {
       // Main verifies this window still matches its operation room without switching it.
       const activated = await apiClient.feature('activateDouyuRoom', { room: current.room })
       if (!mounted.current) return
-      if (!activated.ok) { show(activated.message, false); return }
+      if (!activated.ok) { show(activated, false); return }
       const result = await apiClient.feature('sendComposedDouyuMessage', {
         accountId: current.accountId, room: current.room, text: draft, color: 0, mode: 'message',
       })
       if (!mounted.current) return
-      if (!result.ok) { show(result.message, false); return }
+      if (!result.ok) { show(result, false); return }
       const succeeded = result.value.status === 'succeeded'
-      show(result.value.message || (succeeded ? '已发送' : '发送未完成'), succeeded)
+      show(result.value, succeeded, result.value.message || (succeeded ? '已发送' : '发送未完成'))
       if (succeeded) setText(value => value === draft ? '' : value)
+    } catch (caught) {
+      show(caught, false, '发送结果无法确认, 请在官方直播间核对.')
     } finally {
       if (mounted.current) setBusy(false)
     }
@@ -203,7 +223,9 @@ function SendBar({ context, apply }: {
   return (
     <form className="pip-send" data-outcome={outcome ? 'shown' : undefined}
       onSubmit={(event) => { event.preventDefault(); void send() }}>
-      {outcome && <p className={`pip-outcome ${outcome.ok ? '' : 'is-bad'}`.trim()} role="status">{outcome.text}</p>}
+      {outcome && <p className={`pip-outcome ${outcome.ok ? '' : 'is-bad'}`.trim()} role="status">{outcome.ok ? outcome.text : <ErrorText error={outcome.detail ?? outcome.text} message={outcome.text} />}</p>}
+      {validation && <p className="pip-outcome is-bad" role="alert"><ErrorText error={validation.detail} message={validation.message} /></p>}
+      {block && context && <p className="pip-send-block"><ErrorText error={{ message: block }} /></p>}
       <div className="pip-send-row">
         <input className="pip-input" type="text" aria-label="发送弹幕" maxLength={500}
           placeholder={block ?? '发送弹幕'} value={text} disabled={!!block}
@@ -215,7 +237,7 @@ function SendBar({ context, apply }: {
             event.preventDefault()
             void send()
           }} />
-        <button type="submit" className="pip-send-btn" disabled={!!block || busy || !text.trim()}>发送</button>
+        <button type="submit" className="pip-send-btn" disabled={!!block || busy || !!validation || !text.trim()}>发送</button>
       </div>
     </form>
   )

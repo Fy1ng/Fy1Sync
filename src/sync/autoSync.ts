@@ -78,6 +78,8 @@ export interface AutoSyncDeps {
     signal: { aborted: boolean; readonly completed?: boolean },
   ) => Promise<void>
   snapshot: (role: SourceRole) => MediaSnapshot | null
+  /** Playback may already be visible while the synchronization buffer is still growing. */
+  canStart?: () => boolean
   /**
    * Whether any role has a recognition profile.
    *
@@ -284,6 +286,9 @@ export class AutoSyncController {
     let applicationStarted = false
 
     try {
+      if (this.deps.canStart && !this.deps.canStart()) {
+        return this.fail(startedAt, dryRun, { kind: 'not-ready', message: '同步准备中, 请等待两路画面和缓冲就绪' })
+      }
       if (this.deps.hasProfile && !this.deps.hasProfile()) {
         return this.fail(startedAt, dryRun, {
           kind: 'not-ready',

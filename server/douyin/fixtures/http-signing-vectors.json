@@ -1,0 +1,44 @@
+[
+  {
+    "query": "aid=6383&room_id=7123456789012345678&content=%E6%B5%8B%E8%AF%95&type=0",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "values": {
+      "start": 1794384000123,
+      "end": 1794384000126,
+      "random": [
+        1234,
+        5678,
+        9012
+      ]
+    },
+    "signature": "E7mhBdu2krjihxWT569LfY3q6Xr3YhHz0SVkMD2fXVftDL39HMTa9exo1uXvnFyjF4/JIebjy4hbO3xprQAjM36UHWwEUdQ2mgukKl5Q5xSSs1feeLbQrsJx-k4lFeep5JV3EcvhqJKczbEk09Or4hqvPjoja3LkFk6FOoQ8"
+  },
+  {
+    "query": "aid=6383&room_id=7123456789012345678&content=%F0%9F%98%80+%26+%2B&type=0&msToken=fixture%3D",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "values": {
+      "start": 1794384001123,
+      "end": 1794384001126,
+      "random": [
+        1234,
+        5678,
+        9012
+      ]
+    },
+    "signature": "E7mhBdu2krjihxWT569LfY3q6WB3YhHz0SVkMD2fexftpL39HMTN9exo1uXvJK6jF4/JIebjy4hbO3xprQAjM36UHWwEUdQ2mgukKl5Q5xSSs1feeLbQrsJx-k4lFeep5JV3EcvhqJKczbEk09Or4hqvPjoja3LkFk6FOoQG"
+  },
+  {
+    "query": "aid=6383&device_platform=web&room_id=1&content=hello",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "values": {
+      "start": 1794384002123,
+      "end": 1794384002126,
+      "random": [
+        1234,
+        5678,
+        9012
+      ]
+    },
+    "signature": "E7mhBdu2krjihxWT569LfY3q6R-3YhHz0SVkMD2fixftdL39HMTB9exo1uXvjuyjF4/JIebjy4hbO3xprQAjM36UHWwEUdQ2mgukKl5Q5xSSs1feeLbQrsJx-k4lFeep5JV3EcvhqJKczbEk09Or4hqvPjoja3LkFk6FOoQh"
+  }
+]

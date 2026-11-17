@@ -5,6 +5,7 @@ import { danmakuRoom, isReadOnlyDanmakuRoom } from '../server/danmaku/types'
 import type { FeatureEvent } from './featureContracts'
 import { isAppDocument } from './security'
 import { invokeWindowMethod } from './windowControls'
+import { diagnosticDetails } from '../server/errorDetails'
 
 /** Trust both the concrete app window and its top frame, never just a claimed URL or ID. */
 export function trustedSender(event: IpcMainInvokeEvent, contents: WebContents): boolean {
@@ -133,10 +134,26 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
     if (!owner || !allowMethod(owner, method, args)) return denied()
     if (method === 'windowControl' || method === 'getWindowState') {
       try { return invokeWindowMethod(options.windowForContents?.(event.sender) ?? null, method, args) }
-      catch { return { ok: false, code: 'internal-error', message: '无法完成窗口操作' } }
+      catch (error) { return { ok: false, code: 'internal-error', message: '无法完成窗口操作', detail: diagnosticDetails(error) } }
     }
     const generation = owner.generation
     const current = () => sender(event) === owner && owner.generation === generation && allowMethod(owner, method, args)
+    if (method === 'sendDouyinMessage') {
+      const field = args && typeof args === 'object' && !Array.isArray(args)
+        ? Object.getOwnPropertyDescriptor(args, 'room') : undefined
+      const room = field && 'value' in field ? field.value : undefined
+      if (typeof room !== 'string' || !/^douyin:[1-9]\d{0,19}$/.test(room)) return { ok:false, code:'invalid-arguments', message:'抖音发送房间无效' }
+      const selected = [...subscriptions.entries()].filter(([,entry]) => entry.owner === owner).at(-1)
+      const canSend = () => current() && owner.contents === contents && allowRoom(owner, room)
+        && !!selected && subscriptions.get(selected[0]) === selected[1] && selected[1].room === room
+        && [...subscriptions.entries()].filter(([,entry]) => entry.owner === owner).at(-1)?.[0] === selected[0]
+        && service.relay.stateOf(room) === 'connected'
+      if (!canSend()) return { ok:false, code:'room-not-subscribed', message:'请先在当前窗口连接目标抖音房间' }
+      try {
+        const result = await service.invoke(method, args, Object.freeze({ senderId:owner.contents.id, isCurrent:canSend }))
+        return current() ? result : denied()
+      } catch (error) { return { ok:false, code:'internal-error', message:'抖音发送结果无法确认, 请在官方房间核对. 本次不会自动重发.', detail: diagnosticDetails(error) } }
+    }
     if (method === 'reconnectDanmaku') {
       const field = args && typeof args === 'object' && !Array.isArray(args) && Reflect.ownKeys(args).length === 1
         ? Object.getOwnPropertyDescriptor(args, 'room') : undefined
@@ -149,7 +166,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
       try {
         return service.relay.reconnectRoom(room) && current() ? { ok: true, value: { room } }
           : { ok: false, code: 'room-not-subscribed', message: '该弹幕房间已经关闭' }
-      } catch { return { ok: false, code: 'internal-error', message: '弹幕重连失败, 请稍后重试' } }
+      } catch (error) { return { ok: false, code: 'internal-error', message: '弹幕重连失败, 请稍后重试', detail: diagnosticDetails(error) } }
     }
     if (method === 'activateDouyuRoom') {
       // This operation cannot be implemented in the service: only IPC knows subscription ownership.
@@ -168,13 +185,13 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
       }
       subscriptions.delete(selected[0])
       subscriptions.set(selected[0], selected[1])
-      try { syncTaskRoom() } catch { return { ok: false, code: 'internal-error', message: '无法切换当前操作房间' } }
+      try { syncTaskRoom() } catch (error) { return { ok: false, code: 'internal-error', message: '无法切换当前操作房间', detail: diagnosticDetails(error) } }
       return current() ? { ok: true, value: { room } } : denied()
     }
     try {
       const result = await service.invoke(method, args, Object.freeze({ senderId: owner.contents.id }))
       return current() ? result : denied()
-    } catch { return { ok: false, code: 'internal-error', message: '本地服务无法完成此操作' } }
+    } catch (error) { return { ok: false, code: 'internal-error', message: '本地服务无法完成此操作', detail: diagnosticDetails(error) } }
   })
   ipc.handle('stream-syncer:subscribe', async (event, room: unknown, subscriptionId: unknown) => {
     const owner = sender(event)
@@ -215,7 +232,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
         if (!current()) { discard(); return cancelled() }
         if (!result.ok) {
           discard()
-          return { ok: false, code: result.failure.code, message: result.failure.message }
+          return { ok: false, code: result.failure.code, message: result.failure.message, detail: diagnosticDetails(result.failure) }
         }
         canonical = result.identity.room
       }
@@ -233,9 +250,9 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
       entry.room = canonical
       syncTaskRoom()
       return { ok: true, value: { ok: true, room: canonical } }
-    } catch {
+    } catch (error) {
       discard()
-      return { ok: false, code: 'upstream-error', message: '弹幕房间身份查询失败, 请重试' }
+      return { ok: false, code: 'upstream-error', message: '弹幕房间身份查询失败, 请重试', detail: diagnosticDetails(error) }
     }
   })
   ipc.handle('stream-syncer:unsubscribe', (event, subscriptionId: unknown) => {
@@ -246,7 +263,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
     const key = keyFor(owner, subscriptionId), entry = subscriptions.get(key)
     subscriptions.delete(key)
     safeRelease(entry?.release)
-    try { syncTaskRoom() } catch { return { ok: false, code: 'internal-error', message: '弹幕订阅已释放, 但操作房间更新失败' } }
+    try { syncTaskRoom() } catch (error) { return { ok: false, code: 'internal-error', message: '弹幕订阅已释放, 但操作房间更新失败', detail: diagnosticDetails(error) } }
     return { ok: true, value: { ok: true } }
   })
   return {

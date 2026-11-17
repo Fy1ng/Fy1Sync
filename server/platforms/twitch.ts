@@ -109,6 +109,7 @@ export async function resolveTwitch(
       'upstream-error',
       '请求 Twitch 播放令牌失败',
       MANUAL_URL_HINT,
+      error,
     )
   }
 
@@ -146,7 +147,7 @@ export async function resolveTwitch(
     variants = hlsVariants(playlist.text, finalPlaylistUrl)
   } catch (error) {
     if (error instanceof StreamFailureError) throw error
-    return failure('upstream-error', '读取 Twitch 画质清单失败', MANUAL_URL_HINT)
+    return failure('upstream-error', '读取 Twitch 画质清单失败', MANUAL_URL_HINT, error)
   }
   // A media playlist can still be used when the server exposes no variants.
   // IDs come from VIDEO groups, so renewed signatures never change a selection.

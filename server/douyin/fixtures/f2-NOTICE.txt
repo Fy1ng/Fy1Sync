@@ -1,0 +1,17 @@
+本地 HTTP A-Bogus 算法移植自 Johnserf-Seed/F2, 作者 JohnserfSeed.
+上游采用 Apache License 2.0, 完整许可证见 f2-LICENSE.txt.
+
+固定来源:
+https://github.com/Johnserf-Seed/f2/blob/f6be8c0ffba9a127075bbeafe4838716650b6325/f2/utils/crypto/bytedance/abogus.py
+https://github.com/Johnserf-Seed/f2/blob/f6be8c0ffba9a127075bbeafe4838716650b6325/f2/conf/conf.yaml
+https://github.com/Johnserf-Seed/f2/blob/f6be8c0ffba9a127075bbeafe4838716650b6325/f2/apps/douyin/utils.py
+
+本项目修改:
+- 将算法移植为 TypeScript, 使用纯 TypeScript SM3 以兼容 Electron.
+- 每次签名单独初始化状态, 固定与 HTTP 参数一致的浏览器尺寸和 User-Agent.
+- 仅签名已编码的请求查询串, 不执行上游 Python 或下载的网页脚本.
+- 测试向量由固定版本的原始 Python 实现生成, 时间与随机值固定.
+- 匿名令牌初始化使用上游公开的 douyin.msToken 协议载荷, 不使用其中的初始 msToken, 不发送账号 Cookie 或弹幕内容. 每次请求动态写入时间, 仅接受官方新返回的令牌.
+- HTTP 网关请求头参考 GatewayHeaderManager, 使用其公开的兼容值 x-tt-argus: 1. 该值不是认证凭据, 也不能代替有效账号会话或平台所要求的其他验证.
+
+签名向量验证算法兼容性, 不代表真实账号的风控和弹幕可见性已验收.

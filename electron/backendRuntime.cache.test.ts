@@ -13,6 +13,7 @@ import type { DouyuFollowedRooms, DouyuWatchTime } from '../server/douyu/insight
 import type { DouyuInventorySnapshot } from '../server/douyu/inventoryTypes'
 import type { DouyuTasksSnapshot } from '../server/douyu/types'
 import { resolveConfig } from '../server/config'
+import { LiquipediaRateLimit } from '../server/esports/liquipediaRateLimit'
 
 const runtimeRoot = path.resolve(os.tmpdir())
 const secondAccount = '00000000-0000-4000-8000-000000000002'
@@ -59,6 +60,7 @@ function fixture() {
   }))
   const relay = new DanmakuRelay({ createClient: () => { throw new Error('No real relay connections in this fixture') } })
   const danmaku = new DanmakuFeatures({ load: () => undefined, save() {} })
+  const openExternal = vi.fn<BackendRuntimeOptions['openExternal']>().mockResolvedValue(undefined)
   const options = {
     userDataDir: root, proxy: resolveConfig({}).proxy, relay, danmaku,
     accounts: accountPort, tasks: taskPort,
@@ -66,7 +68,7 @@ function fixture() {
     resolveRoom: async (room: string) => ({ ok: true, identity: { room, inputRoom: room } }),
     activityPreferences: new ActivityPreferencesStore({ load: () => undefined, save() {} }),
     createPipWindow: vi.fn(), chooseCaptureDestination: async () => null, validatePng: () => false,
-    ffmpegPath: async () => '', openExternal: async () => {}, notifyLive() {},
+    ffmpegPath: async () => '', openExternal, notifyLive() {},
   } as unknown as BackendRuntimeOptions
   const runtime = createBackendRuntime(options)
   fixtures.push({ root, dispose: async () => { relay.closeAll(); await runtime.dispose() } })
@@ -77,7 +79,7 @@ function fixture() {
   }
   const emitAccount = (event: AccountEvent) => { for (const listener of [...accountListeners]) listener(event) }
   const emitTasks = () => { for (const listener of [...taskListeners]) listener(taskPort.snapshot()) }
-  return { root, runtime, invoke, followed, inventory, watch, state, accountPort, emitAccount, emitTasks,
+  return { root, runtime, invoke, followed, inventory, watch, state, accountPort, emitAccount, emitTasks, openExternal,
     setLoggedIn: (value: boolean) => { loggedIn = value } }
 }
 
@@ -88,6 +90,31 @@ afterEach(async () => {
     fs.rmSync(item.root, { recursive: true, force: true })
   }
   vi.restoreAllMocks()
+})
+
+describe('Liquipedia verification browser handoff', () => {
+  it('opens only the official page without changing the persisted upstream cooldown', async () => {
+    const f = fixture()
+    const limiter = new LiquipediaRateLimit(f.root)
+    const cooldown = await limiter.rateLimited('120', new AbortController().signal)
+    const reservation = fs.readFileSync(path.join(f.root, 'events', 'liquipedia-http-attempt.json'), 'utf8')
+    expect(f.openExternal).not.toHaveBeenCalled()
+    expect(await f.runtime.api.invoke('openLiquipediaVerification', undefined)).toEqual({ ok: true, value: { opened: true } })
+    expect(f.openExternal).toHaveBeenCalledExactlyOnceWith('https://liquipedia.net/counterstrike/Liquipedia:Matches')
+    expect(limiter.cooldown()).toEqual(cooldown)
+    expect(fs.readFileSync(path.join(f.root, 'events', 'liquipedia-http-attempt.json'), 'utf8')).toBe(reservation)
+  })
+
+  it('rejects caller-supplied URLs and returns browser launch failure details', async () => {
+    const f = fixture()
+    for (const args of [{ url: 'https://example.com' }, { url: 'file:///C:/private' }, null, 'https://liquipedia.net/unblock']) {
+      expect(await f.runtime.api.invoke('openLiquipediaVerification', args)).toMatchObject({ ok: false, code: 'invalid-arguments' })
+    }
+    expect(f.openExternal).not.toHaveBeenCalled()
+    f.openExternal.mockRejectedValueOnce(Object.assign(new Error('Browser launch failed'), { code: 'EACCES' }))
+    expect(await f.runtime.api.invoke('openLiquipediaVerification', undefined)).toMatchObject({ ok: false,
+      detail: { message: 'Browser launch failed', code: 'EACCES' } })
+  })
 })
 
 describe('backend read-cache integration', () => {

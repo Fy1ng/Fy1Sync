@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { LIQUIPEDIA_INTERVAL_MS, LiquipediaRateLimit, PARSE_INTERVAL_MS } from './liquipediaRateLimit'
+import { DEFAULT_COOLDOWN_MS, LIQUIPEDIA_INTERVAL_MS, LiquipediaCoolingDown, LiquipediaRateLimit, MAX_COOLDOWN_BACKOFF_MS, PARSE_INTERVAL_MS, retryAfterDelay } from './liquipediaRateLimit'
 
 const run = promisify(execFile)
 describe('durable Liquipedia request quotas', () => {
@@ -95,5 +95,65 @@ describe('durable Liquipedia request quotas', () => {
     const results = await Promise.all([1, 2].map(() => run(process.execPath, ['--experimental-transform-types', '--input-type=module', '-e', code, root])))
     expect(results.map(result => result.stdout).sort()).toEqual(['false', 'true'])
     expect(new LiquipediaRateLimit(root, () => 1_800_000_000_000).reserve()).toBe(false)
+  })
+
+  it('persists one upstream block across parse, plain requests and process restarts', async () => {
+    const limiter = new LiquipediaRateLimit(root), start = Date.now()
+    expect(limiter.reserve(true)).toBe(true)
+    const cooldown = await limiter.rateLimited('120', new AbortController().signal)
+    expect(cooldown).toEqual({ at: start, until: start + 120_000, count: 1, retryAfter: '120' })
+    const restarted = new LiquipediaRateLimit(root)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(restarted.delay()).toBe(60_000)
+    expect(restarted.reserve()).toBe(false)
+    expect(restarted.reserve(true)).toBe(false)
+    await expect(restarted.wait(new AbortController().signal)).rejects.toBeInstanceOf(LiquipediaCoolingDown)
+    expect(JSON.parse(await readFile(join(root, 'events', 'liquipedia-http-attempt.json'), 'utf8')).at).toBe(start)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(restarted.reserve(true)).toBe(true)
+  })
+
+  it('uses a long fallback and bounded exponential backoff until a genuinely later success', async () => {
+    const limiter = new LiquipediaRateLimit(root), signal = new AbortController().signal, start = Date.now()
+    let cooldown = await limiter.rateLimited(null, signal)
+    expect(cooldown.until - start).toBe(DEFAULT_COOLDOWN_MS)
+    limiter.succeeded(start - 1)
+    expect(limiter.cooldown()).toEqual(cooldown)
+    for (let count = 2; count <= 8; count++) {
+      vi.setSystemTime(cooldown.until)
+      cooldown = await new LiquipediaRateLimit(root).rateLimited(null, signal)
+      expect(cooldown.until - Date.now()).toBe(Math.min(MAX_COOLDOWN_BACKOFF_MS, DEFAULT_COOLDOWN_MS * 2 ** (count - 1)))
+    }
+    vi.setSystemTime(cooldown.until)
+    const restarted = new LiquipediaRateLimit(root)
+    restarted.succeeded(start)
+    expect(JSON.parse(await readFile(join(root, 'events', 'liquipedia-http-attempt.json'), 'utf8')).cooldown.count).toBe(8)
+    restarted.succeeded(Date.now())
+    expect(JSON.parse(await readFile(join(root, 'events', 'liquipedia-http-attempt.json'), 'utf8')).cooldown).toBeUndefined()
+    expect((await limiter.rateLimited(null, signal)).until - Date.now()).toBe(DEFAULT_COOLDOWN_MS)
+  })
+
+  it('parses seconds and HTTP dates, respects clock offset, and rejects malformed Retry-After', async () => {
+    const now = Date.now()
+    expect(retryAfterDelay('60', now)).toBe(60_000)
+    expect(retryAfterDelay(new Date(now + 120_000).toUTCString(), now)).toBe(120_000)
+    expect(retryAfterDelay(new Date(now + 240_000).toUTCString(), now, new Date(now + 180_000).toUTCString())).toBe(60_000)
+    for (const value of ['', '-1', '1.5', 'tomorrow', 'x'.repeat(257)]) {
+      expect(retryAfterDelay(value, now)).toBeNull()
+    }
+    const limiter = new LiquipediaRateLimit(root)
+    expect((await limiter.rateLimited('0', new AbortController().signal)).until - now).toBe(PARSE_INTERVAL_MS)
+    const longer = await limiter.rateLimited('86400', new AbortController().signal)
+    expect(longer.until).toBeGreaterThanOrEqual(now + 86_400_000)
+  })
+
+  it('preserves an upstream cooldown when the wall clock moves backwards or a record is damaged', async () => {
+    const limiter = new LiquipediaRateLimit(root), start = Date.now()
+    await limiter.rateLimited(null, new AbortController().signal)
+    vi.setSystemTime(start - 60_000)
+    expect(new LiquipediaRateLimit(root).delay()).toBe(DEFAULT_COOLDOWN_MS + 60_000)
+    await writeFile(join(root, 'events', 'liquipedia-http-attempt.json'), JSON.stringify({ at: start, cooldown: { at: start, until: 'invalid' } }))
+    expect(new LiquipediaRateLimit(root).reserve()).toBe(false)
+    expect(limiter.reserve()).toBe(false)
   })
 })

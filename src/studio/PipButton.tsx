@@ -1,3 +1,5 @@
+import { ErrorText, useErrorState } from '../ui/ErrorDetails'
+import { displayError } from '../core/errorDetails'
 /**
  * Picture-in-picture from the dock (handoff items 05, 06).
  *
@@ -11,13 +13,14 @@
  * carry what was being heard. Its picture is the commentary stream itself, no camera crop.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { PipState } from '../../electron/pipManager'
 import type { SourceRole } from '../core/types'
 import { PlaybackControls } from '../media/playbackControls'
 import { Icon, Popover, usePopover } from './kit'
+import { pipFailure } from './pip/pipState'
 
 /** Why the system window did not open, by `NativePipResult.reason`. Shared with the extra-stream windows. */
 export const NATIVE_REASON: Record<string, string> = {
@@ -33,16 +36,22 @@ export function PipButton(): React.ReactNode {
   const menu = usePopover()
   const [pip, setPip] = useState<PipState | null>(null)
   const [native, setNative] = useState(false)
-  const [problem, setProblem] = useState<string | null>(null)
+  const [problem, setProblem, problemDetail] = useErrorState()
+  const revision = useRef(0)
   const loaded = media[mainRole].status !== 'empty'
   const enhancedRole: SourceRole = media.commentary.status !== 'empty' ? 'commentary' : mainRole
 
   useEffect(() => {
     let live = true
+    const before = revision.current
     const off = apiClient.subscribeFeatures((event) => {
-      if (event.topic === 'pip' && event.data && typeof event.data === 'object') setPip(event.data as PipState)
+      if (live && event.topic === 'pip' && event.data && typeof event.data === 'object') { revision.current++; setPip(event.data as PipState) }
     })
-    void apiClient.feature('getEnhancedPip', undefined).then((result) => { if (live && result.ok) setPip(result.value) })
+    void apiClient.feature('getEnhancedPip', undefined).then((result) => {
+      if (!live || before !== revision.current) return
+      if (result.ok) setPip(result.value)
+      else setProblem(result)
+    }).catch(caught => { if (live && before === revision.current) setProblem(caught) })
     return () => { live = false; off() }
   }, [])
 
@@ -66,10 +75,9 @@ export function PipButton(): React.ReactNode {
     const controls = new PlaybackControls(session.engine.element(mainRole))
     void controls.toggleNativePip().then((result) => {
       setNative(result.active)
-      if (!result.ok && result.reason) setProblem(NATIVE_REASON[result.reason] ?? NATIVE_REASON.failed!)
+      if (!result.ok && result.reason) setProblem(displayError(result, NATIVE_REASON[result.reason] ?? NATIVE_REASON.failed!))
       else menu.close()
-      controls.dispose()
-    })
+    }).catch(caught => setProblem(displayError(caught, '系统画中画操作失败'))).finally(() => controls.dispose())
   }
 
   const toggleEnhanced = async (): Promise<void> => {
@@ -77,9 +85,10 @@ export function PipButton(): React.ReactNode {
     const result = enhancedOpen
       ? await apiClient.feature('closeEnhancedPip', undefined)
       : await apiClient.feature('openEnhancedPip', { id: enhancedRole })
-    if (!result.ok) { setProblem(result.message); return }
+    if (!result.ok) { setProblem(result); return }
+    revision.current++
     setPip(result.value)
-    if (result.value.phase === 'failed') setProblem(result.value.message ?? '画中画打开失败')
+    if (result.value.phase === 'failed') setProblem(displayError(pipFailure(result.value), result.value.message ?? '画中画打开失败'))
     else menu.close()
   }
 
@@ -94,11 +103,11 @@ export function PipButton(): React.ReactNode {
           {native ? '关闭系统画中画' : '系统画中画'}
           <span className="menu-note">仅画面</span>
         </button>
-        <button type="button" className="menu-item" onClick={() => void toggleEnhanced()} disabled={pip?.phase === 'opening'}>
+        <button type="button" className="menu-item" onClick={() => void toggleEnhanced().catch(setProblem)} disabled={pip?.phase === 'opening'}>
           {pip?.phase === 'opening' ? '正在打开…' : enhancedOpen ? '关闭增强画中画' : '增强画中画'}
           <span className="menu-note">{enhancedRole === mainRole ? '含弹幕与发送' : '播放解说，含弹幕与发送'}</span>
         </button>
-        {problem && <p className="form-error" role="alert">{problem}</p>}
+        {problem && <p className="form-error" role="alert"><ErrorText error={problemDetail ?? problem} message={problem} /></p>}
       </Popover>
     </div>
   )

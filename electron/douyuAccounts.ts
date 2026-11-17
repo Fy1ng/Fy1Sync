@@ -4,10 +4,13 @@ import { LoginManager, LoginError, type PlatformLoginStatus } from './login'
 import { privateDirectory } from './privateStorage'
 import { PrivateJsonStore } from './privateJsonStore'
 import type { DouyuAccountsSnapshot } from '../server/douyu/types'
+import type { BrowserCookie, BrowserAccountIdentity } from './cookies'
+import type { DouyuImportTarget } from './browserImportContracts'
 
 type AccountRecord = { id: string; label: string; createdAt: number }
 interface AccountStorage { version: 1; accounts: AccountRecord[]; activeAccountId: string | null }
 type AccountLogin = Pick<LoginManager, 'login' | 'loginStatus' | 'logout' | 'cookieHeader' | 'dispose'>
+  & Partial<Pick<LoginManager, 'importCookies' | 'savedUserId'>>
 type AccountEvent = { type: 'changed' } | { type: 'invalidated'; accountId: string }
 
 export type DouyuAccountErrorCode = 'invalid-arguments' | 'account-not-found' | 'account-limit' | 'account-busy' | 'no-active-account' | 'storage-failed' | 'disposed'
@@ -233,6 +236,51 @@ export class DouyuAccountManager {
     const label = this.check(id)!.label
     await this.credentialOperation(id, manager => manager.login('douyu', undefined, label))
     return this.snapshot()
+  }
+
+  /** Match the verified UID before choosing a target; importing does not activate background tasks. */
+  async importCookies(cookies: BrowserCookie[], identity: BrowserAccountIdentity, target: DouyuImportTarget = { kind: 'auto' }, signal?: AbortSignal): Promise<string> {
+    this.check()
+    if (!identity.uid || !/^[1-9][0-9]{0,19}$/.test(identity.uid)) throw new DouyuAccountError('invalid-arguments')
+    let id: string | undefined
+    let created = false
+    if (target.kind === 'existing') { this.check(target.accountId); id = target.accountId }
+    if (target.kind === 'auto' || target.kind === 'new') {
+      for (const account of [...this.registry.accounts]) {
+        if (this.busy.has(account.id)) continue
+        const manager = this.manager(account.id)
+        if (await manager.savedUserId?.('douyu') === identity.uid) { id = account.id; break }
+      }
+      if (!id && target.kind === 'auto' && this.registry.accounts.some(account => account.id === 'default') && !this.busy.has('default')) {
+        const status = (await this.manager('default').loginStatus()).douyu
+        if (!status.cookieCount) id = 'default'
+      }
+    }
+    if (signal?.aborted) throw new LoginError('login-cancelled')
+    if (!id) {
+      const previous = new Set(this.registry.accounts.map(account => account.id))
+      await this.add(identity.username.slice(0, 40))
+      id = this.registry.accounts.find(account => !previous.has(account.id))?.id
+      if (!id) throw new DouyuAccountError('storage-failed')
+      created = true
+    }
+    const selected = id
+    try {
+      await this.credentialOperation(selected, async manager => {
+        if (!manager.importCookies) throw new DouyuAccountError('storage-failed')
+        await manager.importCookies('douyu', cookies, identity, signal)
+      })
+      return selected
+    } catch (error) {
+      if (created) {
+        const manager = this.managers.get(selected)
+        this.managers.delete(selected)
+        await manager?.dispose()
+        this.save({ ...this.registry, activeAccountId: this.activeAccountId === selected ? null : this.activeAccountId,
+          accounts: this.registry.accounts.filter(account => account.id !== selected) })
+      }
+      throw error
+    }
   }
 
   async loginYuba(id: string): Promise<DouyuAccountsSnapshot> {

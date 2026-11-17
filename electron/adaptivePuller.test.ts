@@ -38,9 +38,9 @@ describe('adaptive sq acquisition', () => {
     }) as typeof fetch
     const h = harness(fetcher)
     await flush()
-    expect(calls).toEqual([0, 98, 98])
-    expect(h.video).toEqual(['media-98'])
-    expect(h.audio).toEqual(['media-98'])
+    expect(calls).toEqual([0, 98, 98, 99, 99, 100, 100])
+    expect(h.video).toEqual(['media-98', 'media-99', 'media-100'])
+    expect(h.audio).toEqual(['media-98', 'media-99', 'media-100'])
     h.controller.abort()
     await h.pending
   })
@@ -70,16 +70,18 @@ describe('adaptive sq acquisition', () => {
     }) as typeof fetch
     const h = harness(fetcher)
     await flush()
-    expect(calls).toEqual([{ sq: 0, track: 'v', at: 0 }, { sq: 98, track: 'v', at: 0 }, { sq: 98, track: 'a', at: 0 }])
-    expect(h.video).toEqual(['v98'])
-    expect(h.audio).toEqual(['a98'])
-    await vi.advanceTimersByTimeAsync(4999)
-    expect(calls).toHaveLength(3)
-    await vi.advanceTimersByTimeAsync(1)
-    expect(calls.slice(3)).toEqual([{ sq: 99, track: 'v', at: 5000 }, { sq: 99, track: 'a', at: 5000 }])
-    await vi.advanceTimersByTimeAsync(5000)
+    expect(calls).toEqual([{ sq: 0, track: 'v', at: 0 }, { sq: 98, track: 'v', at: 0 }, { sq: 98, track: 'a', at: 0 },
+      { sq: 99, track: 'v', at: 0 }, { sq: 99, track: 'a', at: 0 },
+      { sq: 100, track: 'v', at: 0 }, { sq: 100, track: 'a', at: 0 }])
     expect(h.video).toEqual(['v98', 'v99', 'v100'])
     expect(h.audio).toEqual(['a98', 'a99', 'a100'])
+    await vi.advanceTimersByTimeAsync(4999)
+    expect(calls).toHaveLength(7)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(calls.slice(7)).toEqual([{ sq: 101, track: 'v', at: 5000 }, { sq: 101, track: 'a', at: 5000 }])
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(h.video).toEqual(['v98', 'v99', 'v100', 'v101', 'v102'])
+    expect(h.audio).toEqual(['a98', 'a99', 'a100', 'a101', 'a102'])
     h.controller.abort()
     expect(await h.pending).toMatchObject({ code: 'adaptive-aborted' })
   })
@@ -92,8 +94,8 @@ describe('adaptive sq acquisition', () => {
     }) as typeof fetch
     const h = harness(fetcher)
     await flush()
-    expect(h.video).toEqual(['8', '9', '10'])
-    expect(h.audio).toEqual(['8', '9', '10'])
+    expect(h.video).toEqual(['8', '9', '10', '11', '12'])
+    expect(h.audio).toEqual(['8', '9', '10', '11', '12'])
     h.controller.abort()
     await h.pending
   })
@@ -106,7 +108,7 @@ describe('adaptive sq acquisition', () => {
       return response('bytes', '1')
     }) as typeof fetch)
     await flush()
-    expect(calls).toEqual([0, 0, 0])
+    expect(calls).toEqual([0, 0, 0, 1, 1])
     h.controller.abort()
     await h.pending
   })
@@ -168,7 +170,7 @@ describe('adaptive sq acquisition', () => {
     await flush()
     expect(writes).toEqual(['v8'])
     expect(calls.filter(call => call.startsWith('v'))).toEqual(['v0', 'v8'])
-    expect(h.audio).toEqual(['a8', 'a9', 'a10'])
+    expect(h.audio).toEqual(['a8', 'a9', 'a10', 'a11', 'a12'])
     release!()
     await flush()
     expect(writes).toEqual(['v8', 'v9'])
@@ -198,7 +200,7 @@ describe('adaptive sq acquisition', () => {
     expect(fetcher).not.toHaveBeenCalled()
   })
 
-  it('times out a stalled response body and cancels all three readers', async () => {
+  it('cancels discovery and bounds each stalled media track to three body reads', async () => {
     vi.useFakeTimers()
     const cancel = vi.fn()
     const fetcher = vi.fn(async () => new Response(new ReadableStream({ cancel }), {
@@ -207,8 +209,8 @@ describe('adaptive sq acquisition', () => {
     const h = harness(fetcher, { requestTimeoutMs: 100 })
     await vi.advanceTimersByTimeAsync(1800)
     expect(await h.pending).toMatchObject({ code: 'adaptive-request-failed' })
-    expect(fetcher).toHaveBeenCalledTimes(3)
-    expect(cancel).toHaveBeenCalledTimes(3)
+    expect(fetcher).toHaveBeenCalledTimes(7)
+    expect(cancel).toHaveBeenCalledTimes(7)
   })
 
   it('bounds streamed body bytes even without Content-Length', async () => {
@@ -279,10 +281,14 @@ describe('adaptive sq acquisition', () => {
     }) as typeof fetch
     const h = harness(fetcher)
     await flush()
-    expect(h.video).toEqual(['redirected'])
-    expect(h.audio).toEqual(['redirected'])
+    expect(h.video).toEqual(['redirected', 'redirected', 'redirected'])
+    expect(h.audio).toEqual(['redirected', 'redirected', 'redirected'])
     expect(publicDns.mock.calls.map(call => call[0])).toEqual([
       'r1.example.googlevideo.com', 'r2.example.googlevideo.com',
+      'r1.example.googlevideo.com', 'r1.example.googlevideo.com',
+      'r2.example.googlevideo.com', 'r2.example.googlevideo.com',
+      'r1.example.googlevideo.com', 'r1.example.googlevideo.com',
+      'r2.example.googlevideo.com', 'r2.example.googlevideo.com',
       'r1.example.googlevideo.com', 'r1.example.googlevideo.com',
       'r2.example.googlevideo.com', 'r2.example.googlevideo.com',
     ])
@@ -296,5 +302,22 @@ describe('adaptive sq acquisition', () => {
     h.controller.abort()
     expect(await h.pending).toMatchObject({ code: 'adaptive-aborted' })
     expect(fetcher).toHaveBeenCalledTimes(0)
+  })
+
+  it('discovers the live head from headers without reading an unused media body', async () => {
+    vi.useFakeTimers()
+    const probe = response('unused historical segment')
+    const read = vi.spyOn(probe.body!, 'getReader')
+    const cancel = vi.spyOn(probe.body!, 'cancel')
+    const h = harness(vi.fn(async (input: string | URL | Request) => {
+      const sq = Number(new URL(String(input)).searchParams.get('sq'))
+      return sq === 0 ? probe : response(`segment-${sq}`)
+    }) as typeof fetch)
+    await flush()
+    expect(read).not.toHaveBeenCalled()
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(h.video).toEqual(['segment-98', 'segment-99', 'segment-100'])
+    h.controller.abort()
+    await h.pending
   })
 })

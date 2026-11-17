@@ -11,14 +11,20 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiClient, type ApiResult } from '../../app/apiClient'
 import type { DouyuAccountsSnapshot, DouyuTasksSnapshot } from '../../../server/douyu/types'
 import { remember, remembered, useRemembered } from '../../app/remembered'
+import { displayError, type DisplayError, type ErrorDetails } from '../../core/errorDetails'
 
 export interface Lane {
   pending: string
   notice: string
   error: string
+  errorDetail?: ErrorDetails
 }
 
 const IDLE: Lane = { pending: '', notice: '', error: '' }
+export function failedLane(error: unknown, summary?: string): Lane {
+  const shown = displayError(error, summary)
+  return { ...IDLE, error: shown.message, errorDetail: shown.detail }
+}
 
 const validAccounts = (value: unknown): value is DouyuAccountsSnapshot =>
   !!value && Array.isArray((value as DouyuAccountsSnapshot).accounts)
@@ -67,21 +73,21 @@ export function useDouyu() {
       apiClient.listDouyuAccounts().then((result) => {
         if (!live) return
         if (result.ok && validAccounts(result.value)) takeAccounts(result.value)
-        else setAccountLane({ ...IDLE, error: result.ok ? '无法读取斗鱼账号' : result.message })
-      }),
+        else setAccountLane(failedLane(result, result.ok ? '无法读取斗鱼账号' : undefined))
+      }).catch(error => { if (live) setAccountLane(failedLane(error, '无法读取斗鱼账号')) }),
       apiClient.getDouyuTasks().then((result) => {
         if (!live || firstTasks !== taskRevision.current) return
         if (result.ok && validTasks(result.value)) setTasks(result.value)
-        else setTaskLane({ ...IDLE, error: result.ok ? '无法读取任务' : result.message })
-      }),
-    ]).catch(() => {}).finally(() => { if (live) setLoading(false) })
+        else setTaskLane(failedLane(result, result.ok ? '无法读取任务' : undefined))
+      }).catch(error => { if (live && firstTasks === taskRevision.current) setTaskLane(failedLane(error, '无法读取任务')) }),
+    ]).finally(() => { if (live) setLoading(false) })
     return () => { live = false; mounted.current = false; unsubscribe(); unsubscribeAccounts() }
   }, [])
 
   const accountAction = useCallback(async (
     pending: string,
     work: () => Promise<ApiResult<DouyuAccountsSnapshot>>,
-    done: string | ((snapshot: DouyuAccountsSnapshot) => string),
+    done: string | ((snapshot: DouyuAccountsSnapshot) => string | DisplayError),
   ): Promise<boolean> => {
     if (accountBusy.current) return false
     accountBusy.current = true
@@ -92,12 +98,17 @@ export function useDouyu() {
       // 斗鱼 must not leave the remembered snapshot reading 处理中 for the next view.
       if (result.ok && validAccounts(result.value)) takeAccounts(result.value)
       if (!mounted.current) return false
-      if (!result.ok) { setAccountLane({ ...IDLE, error: result.message }); return false }
-      if (!validAccounts(result.value)) { setAccountLane({ ...IDLE, error: '无法读取斗鱼账号' }); return false }
-      setAccountLane({ ...IDLE, notice: typeof done === 'function' ? done(result.value) : done })
+      if (!result.ok) { setAccountLane(failedLane(result)); return false }
+      if (!validAccounts(result.value)) { setAccountLane(failedLane(result, '无法读取斗鱼账号')); return false }
+      const outcome = typeof done === 'function' ? done(result.value) : done
+      if (typeof outcome !== 'string') {
+        setAccountLane(failedLane(outcome.detail ?? outcome, outcome.message))
+        return false
+      }
+      setAccountLane({ ...IDLE, notice: outcome })
       return true
-    } catch {
-      if (mounted.current) setAccountLane({ ...IDLE, error: '操作未完成，请重试' })
+    } catch (error) {
+      if (mounted.current) setAccountLane(failedLane(error, '操作未完成, 请重试'))
       return false
     } finally {
       accountBusy.current = false
@@ -116,13 +127,13 @@ export function useDouyu() {
     try {
       const result = await work()
       if (!mounted.current) return false
-      if (!result.ok) { setTaskLane({ ...IDLE, error: result.message }); return false }
-      if (!validTasks(result.value)) { setTaskLane({ ...IDLE, error: '无法读取任务' }); return false }
+      if (!result.ok) { setTaskLane(failedLane(result)); return false }
+      if (!validTasks(result.value)) { setTaskLane(failedLane(result, '无法读取任务')); return false }
       if (revision === taskRevision.current) setTasks(result.value)
       setTaskLane({ ...IDLE, notice: done })
       return true
-    } catch {
-      if (mounted.current) setTaskLane({ ...IDLE, error: '操作未完成，请重试' })
+    } catch (error) {
+      if (mounted.current) setTaskLane(failedLane(error, '操作未完成, 请重试'))
       return false
     } finally {
       taskBusy.current = false

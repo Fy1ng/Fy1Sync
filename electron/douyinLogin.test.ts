@@ -111,12 +111,18 @@ describe('Douyin cookie authentication and scopes', () => {
       .toBe('ENTRY=entry; sessionid=live-session; ttwid=anonymous-context')
     expect(await storage.cookieHeader('douyin', `${liveUrl}webcast/im/fetch/?room_id=12345`))
       .toBe('sessionid=live-session; ttwid=anonymous-context')
+    expect(await storage.cookieHeader('douyin', `${liveUrl}webcast/user/me/?room_id=0`))
+      .toBe('sessionid=live-session; ttwid=anonymous-context')
+    expect(await storage.cookieHeader('douyin', `${liveUrl}webcast/room/chat/?room_id=12345`))
+      .toBe('sessionid=live-session; ttwid=anonymous-context')
   })
 
   it.each([undefined, 'http://live.douyin.com/', 'https://live.douyin.com:8443/', 'https://user@live.douyin.com/',
     'https://user:password@live.douyin.com/', 'https://www.douyin.com/', 'https://douyin.com/', 'https://v.douyin.com/123/',
     'https://ttwid.bytedance.com/', 'https://pull-flv-l1.douyincdn.com/live/example.flv', 'https://live.douyin.com.evil.invalid/',
     'https://live.douyin.com/account/', 'https://live.douyin.com/0', 'https://live.douyin.com/0123',
+    'https://live.douyin.com/webcast/room/chat', 'https://live.douyin.com/webcast/room/chat/other',
+    'https://live.douyin.com/webcast/user/me', 'https://live.douyin.com/webcast/user/me/other',
     'https://live.douyin.com/123456789012345678901', 'https://live.douyin.com/webcast/im/fetch/other',
     'https://live.douyin.com/webcast/room/web/enter', 'https://live.douyin.com/%2f123', 'https://live.douyin.com/#account',
     'https://live.douyin.com\\123', 'https://live.douyin.com/\n'])('rejects credential export outside the exact allowlist (%s)', async url => {
@@ -211,6 +217,37 @@ describe('Douyin cookie authentication and scopes', () => {
 })
 
 describe('Douyin login lifecycle', () => {
+  it('starts reauthentication without injecting saved tickets and replaces them only after success', async () => {
+    const storage=store()
+    storage.write('douyin',[authCookie({value:'synthetic-old-session'})])
+    let complete!: (cookies:BrowserCookie[]) => void
+    const embeddedDriver={login:vi.fn(async (request:import('./embeddedLoginContracts').EmbeddedLoginRequest):Promise<BrowserCookie[]> => {
+      expect(request.initializeSession).toBeUndefined()
+      return new Promise(resolve=>{complete=resolve})
+    })}
+    const login=new LoginManager(root,{store:storage,embeddedDriver,now:()=>now})
+    const pending=login.login('douyin')
+    expect(login.loginInProgress('douyin')).toBe(true)
+    expect(await storage.cookieHeader('douyin',liveUrl)).toContain('synthetic-old-session')
+    complete([authCookie({value:'synthetic-new-session'})])
+    await pending
+    expect(login.loginInProgress('douyin')).toBe(false)
+    expect(await storage.cookieHeader('douyin',liveUrl)).toContain('synthetic-new-session')
+    await login.dispose()
+  })
+  it('keeps the previous saved session when a clean reauthentication is cancelled', async () => {
+    const storage=store()
+    storage.write('douyin',[authCookie({value:'synthetic-old-session'})])
+    const embeddedDriver={login:vi.fn(async (request:import('./embeddedLoginContracts').EmbeddedLoginRequest):Promise<BrowserCookie[]> => {
+      expect(request.initializeSession).toBeUndefined()
+      throw new (await import('./login')).LoginError('login-cancelled')
+    })}
+    const login=new LoginManager(root,{store:storage,embeddedDriver,now:()=>now})
+    await expect(login.login('douyin')).rejects.toMatchObject({code:'login-cancelled'})
+    expect(login.loginInProgress('douyin')).toBe(false)
+    expect(await storage.cookieHeader('douyin',liveUrl)).toContain('synthetic-old-session')
+    await login.dispose()
+  })
   it.each(['sessionid', 'sessionid_ss'])('accepts %s session cookies in the isolated profile and returns only metadata', async name => {
     const driver = { login: vi.fn<BrowserLoginDriver['login']>().mockResolvedValue([authCookie({ name, expirationDate: undefined, session: true })]) }
     const login = manager(driver)

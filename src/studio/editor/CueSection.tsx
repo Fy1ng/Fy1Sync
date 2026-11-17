@@ -6,6 +6,7 @@ import { Range } from '../kit'
 import { drawMask } from './framePipeline'
 import { CUE_LABELS, STATE_LABELS, editorCue, type CueTarget } from './cueModel'
 import { editorVariant } from './layoutModel'
+import { ErrorText } from '../../ui/ErrorDetails'
 
 export function presenceText(result: HudPresenceResult | undefined, organizer = false): string {
   if (!result) return '尚未预览'
@@ -26,7 +27,7 @@ export function CueSection({ id, pack, variantId, result, onSave, onThreshold, o
     <Range label="匹配阈值" min={0} max={1} step={0.01} value={cue.minScore} format={value => value.toFixed(2)} onChange={onThreshold} />
     <div className="verify-row">
       <button type="button" className="btn-solid small" disabled={!onSave} onClick={() => onSave?.()}>存为模板</button>
-      <span className={`cue-result num ${result?.status === 'matched' ? 'is-ok' : ''}`} role="status">{presenceText(result, id === 'organizer')}</span>
+      <span className={`cue-result num ${result?.status === 'matched' ? 'is-ok' : ''}`} role="status">{result?.status === 'failed' ? <ErrorText error={result} message={presenceText(result, id === 'organizer')} /> : presenceText(result, id === 'organizer')}</span>
     </div>
     <div className="cue-templates">{cue.templates.map(bitmapId => <button type="button" className="template-thumb" key={bitmapId}
       aria-label={`删除${CUE_LABELS[id]}的模板`} title="点击删除模板" onClick={() => onRemove(bitmapId)}>
@@ -95,7 +96,7 @@ export function FrameStatePreview({ result, playerResult }: { result: HudFrameRe
     <p>内容: <span data-testid="hud-content">{result ? CONTENT[result.content] : '尚未预览'}</span></p>
     <p>阶段: <span data-testid="hud-phase">{result ? PHASE[result.phase] : '尚未预览'}</span></p>
     {(leftTimeout || rightTimeout) && <p>暂停标记: <span data-testid="hud-timeout-side">{leftTimeout && rightTimeout ? '左右两侧' : leftTimeout ? '左侧队伍' : '右侧队伍'}</span></p>}
-    <p>主办方: <span data-testid="hud-organizer">{presenceText(result?.organizer, true)}</span></p>
+    <p>主办方: <span data-testid="hud-organizer">{result?.organizer?.status === 'failed' ? <ErrorText error={result.organizer} message={presenceText(result.organizer, true)} /> : presenceText(result?.organizer, true)}</span></p>
     <p>播放器布局: <span data-testid="hud-player-layout">{!playerResult ? '尚未预览' : playerResult.variantId
       ?? (playerResult.selectionReason === 'multiple-matches' ? '无法判断: 多个布局匹配' : '无法判断: 没有布局匹配')}</span></p>
   </section>

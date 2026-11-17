@@ -1,6 +1,11 @@
 /** Main-process services without Electron imports or a network listener. */
 
 import { isDomesticRouting, type NetworkPreferencesService } from '../electron/networkPreferences'
+import { timeoutSignal, validMediaNetwork } from './mediaNetworkOptions'
+import { MAX_MEDIA_INPUT_LENGTH } from '../src/core/mediaInput'
+import { types as utilTypes } from 'node:util'
+import { diagnosticDetails } from './errorDetails'
+import { httpErrorDetails } from './httpError'
 import { type NetworkContext } from './networkPolicy'
 import { StreamFailureError, classifyNetworkFailure, httpFailure, streamFailureForCode, streamFailureHint, type StreamFailure } from './networkFailure'
 import appPackage from '../package.json'
@@ -33,6 +38,8 @@ import type { FeatureApi } from './featureApi'
 import type { FeatureCallContext, FeatureEvent } from '../electron/featureContracts'
 import type { StylePackSyncService } from '../electron/stylePackSync'
 import type { StylePackSyncState } from '../electron/stylePackSyncContracts'
+import type { DouyinMessageSender } from './douyin/messageSender'
+import { douyinMessageRoom, douyinMessageText } from '../src/core/douyinMessage'
 
 export interface AcquisitionService {
   resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string, preferAdaptive?: boolean): Promise<ResolveResult>
@@ -49,7 +56,7 @@ export type DesktopServiceDeps = {
   proxy: ProxyConfig
   relay?: DanmakuRelay
   fetchImpl?: typeof fetch
-  registerMedia: (url: string, access?: MediaAccess) => string
+  registerMedia: (url: string, access?: MediaAccess, headers?: Record<string, string>) => string
   resolveDouyuRoom?: ResolveDouyuRoom
   resolveHuyaRoom?: (input: string) => Promise<HuyaDanmakuRoom>
   acquisition?: AcquisitionService
@@ -60,12 +67,13 @@ export type DesktopServiceDeps = {
   douyuAccounts?: DouyuAccountManager
   douyuTasks?: DouyuTaskManager
   douyuRenewal?: DouyuRenewalService
+  douyinMessages?: Pick<DouyinMessageSender, 'state' | 'send'>
   features?: FeatureApi
   stylePacks?: Pick<StylePackSyncService, 'list' | 'get' | 'state' | 'sync' | 'setSource' | 'subscribe'>
 }
 
 export type DesktopService = {
-  invoke: (method: unknown, args: unknown, context?: FeatureCallContext) => Promise<ApiResult<unknown>>
+  invoke: (method: unknown, args: unknown, context?: FeatureCallContext & { readonly isCurrent?: () => boolean }) => Promise<ApiResult<unknown>>
   relay: DanmakuRelay
   resolveDouyuRoom: ResolveDouyuRoom
   resolveHuyaRoom: (input: string) => Promise<HuyaDanmakuRoom>
@@ -83,7 +91,7 @@ const MAX_ARGS_BYTES = MAX_PRESET_BYTES + 16_384
 const MAX_VALUE_DEPTH = 32
 
 function fail(code: string, message: string, detail?: unknown): ApiResult<never> {
-  return detail === undefined ? { ok: false, code, message } : { ok: false, code, message, detail }
+  return detail === undefined ? { ok: false, code, message } : { ok: false, code, message, detail: diagnosticDetails(detail) }
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -133,17 +141,18 @@ function fixturePath(input: string): boolean {
 
 export function sanitizedFailure(result: ResolveResult): ResolveResult {
   if (result.ok) return result
+  const detail = diagnosticDetails(result.failure.detail ?? result.failure)
   // YouTube's fixed refusal wording says what to do about it; the generic line below would hide that.
   const reason = result.failure.reason
   if (result.failure.code === 'restricted' && isYouTubeRefusal(reason)) {
-    return { ok: false, failure: { code: 'restricted', reason, ...YOUTUBE_REFUSALS[reason] } }
+    return { ok: false, failure: { code: 'restricted', reason, ...YOUTUBE_REFUSALS[reason], detail } }
   }
   if (result.failure.code === 'needs-manual-url' && isYouTubeFormatFailure(reason)) {
-    return { ok: false, failure: { code: 'needs-manual-url', reason, ...YOUTUBE_FORMAT_FAILURES[reason] } }
+    return { ok: false, failure: { code: 'needs-manual-url', reason, ...YOUTUBE_FORMAT_FAILURES[reason], detail } }
   }
   const network = streamFailureForCode(reason)
     ?? (result.failure.code === 'upstream-error' && result.failure.stage ? classifyNetworkFailure(undefined, result.failure.stage) : undefined)
-  if (network) return resolvedFailure(network)
+  if (network) return resolvedFailure({ ...network, detail })
   const messages = {
     'unsupported-url': '无法识别该媒体地址或平台',
     'not-live': '直播当前未开始或受限制',
@@ -154,7 +163,7 @@ export function sanitizedFailure(result: ResolveResult): ResolveResult {
     'needs-manual-url': '平台没有提供可播放地址',
   }
   return { ok: false, failure: {
-    code: result.failure.code, message: messages[result.failure.code],
+    code: result.failure.code, message: messages[result.failure.code], detail,
     hint: result.failure.code === 'restricted' || result.failure.code === 'login-required'
       ? '请在账号区域登录对应平台后重新加载, 或使用可播放的媒体地址'
       : '请检查地址和直播状态, 或提供可播放的媒体地址',
@@ -164,7 +173,7 @@ export function sanitizedFailure(result: ResolveResult): ResolveResult {
 function resolvedFailure(failure: StreamFailure): ResolveResult {
   const safe = streamFailureForCode(failure.code) ?? classifyNetworkFailure(undefined, failure.stage)
   return { ok: false, failure: { code: 'upstream-error', stage: safe.stage, reason: safe.code, message: safe.message,
-    hint: streamFailureHint(safe.code), ...(safe.status === undefined ? {} : { status: safe.status }) } }
+    hint: streamFailureHint(safe.code), detail: diagnosticDetails(failure.detail ?? failure), ...(safe.status === undefined ? {} : { status: safe.status }) } }
 }
 
 /** The Electron IPC boundary checks the sender before calling any service method. */
@@ -206,6 +215,19 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
         if (deps.features?.has(method)) return deps.features.invoke(method, args, context)
 
         switch (method) {
+          case 'getDouyinSendState': {
+            if (args !== undefined && (!args || typeof args !== 'object' || Array.isArray(args)
+              || Object.keys(args).length !== 1 || (args as { refresh?: unknown }).refresh !== true)) return fail('invalid-arguments', '抖音账号刷新参数无效')
+            if (!deps.douyinMessages) return fail('not-available', '抖音发送服务不可用')
+            return { ok:true, value:await deps.douyinMessages.state(undefined, args !== undefined) }
+          }
+          case 'sendDouyinMessage': {
+            if (!fields(args, ['room','text','expectedUid']) || !douyinMessageRoom(args.room) || !douyinMessageText(args.text)
+              || typeof args.expectedUid !== 'string' || !/^[1-9]\d{0,19}$/.test(args.expectedUid)) return fail('invalid-arguments', '抖音发送参数无效')
+            if (!context?.isCurrent?.()) return fail('room-changed', '请先在当前窗口连接目标抖音房间')
+            if (!deps.douyinMessages) return fail('not-available', '抖音发送服务不可用')
+            return { ok:true, value:await deps.douyinMessages.send({ room:args.room, text:douyinMessageText(args.text)!, expectedUid:args.expectedUid }, undefined, context.isCurrent) }
+          }
           case 'listDouyuAccounts': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
             if (!deps.douyuAccounts) return fail('not-available', '斗鱼账号配置不可用, 请检查本地配置后重试.')
@@ -377,8 +399,10 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             return deps.networkPreferences ? { ok: true, value: await deps.networkPreferences.get() } : fail('not-available', '网络设置不可用')
           }
           case 'setNetworkPreferences': {
-            if (!fields(args, ['domesticRouting']) || !isDomesticRouting(args.domesticRouting)) return fail('invalid-arguments', '国内平台出网设置无效')
-            return deps.networkPreferences ? { ok: true, value: await deps.networkPreferences.set(args.domesticRouting) } : fail('not-available', '网络设置不可用')
+            if (!fields(args, ['domesticRouting'], ['media']) || !isDomesticRouting(args.domesticRouting)
+              || args.media !== undefined && !validMediaNetwork(args.media)) return fail('invalid-arguments', '网络设置无效')
+            return deps.networkPreferences ? { ok: true, value: await deps.networkPreferences.set(args.domesticRouting,
+              ...(args.media === undefined ? [] : [args.media])) } : fail('not-available', '网络设置不可用')
           }
           case 'getDecoderPreferences': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
@@ -407,7 +431,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             if (typeof args.input !== 'string' || args.input.trim().length === 0) {
               return fail('missing-input', '缺少要解析的地址或频道名')
             }
-            if (args.input.length > MAX_INPUT_LENGTH || (args.platform !== undefined && !isPlatform(args.platform))
+            if (args.input.length > MAX_MEDIA_INPUT_LENGTH || (args.platform !== undefined && !isPlatform(args.platform))
               || (args.role !== undefined && !isRole(args.role))
               || (args.preferAdaptive !== undefined && typeof args.preferAdaptive !== 'boolean')
               || (args.quality !== undefined && (typeof args.quality !== 'string' || args.quality.length > 128))) {
@@ -438,8 +462,8 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             const target = checkUrlSyntax(rawUrl, mediaRequestPolicy(deps.proxy))
             if (!target.ok) return fail(target.reason, streamFailureForCode(target.reason)?.message ?? '媒体地址被应用的安全策略拒绝.')
             if (target.url.username || target.url.password) return fail('invalid-url', '媒体地址不能包含登录凭据')
-            const url = deps.registerMedia(rawUrl, result.stream.mediaAccess)
-            const { mediaAccess: _access, douyuWatchCdn: _cdn, ...publicStream } = result.stream
+            const url = deps.registerMedia(rawUrl, result.stream.mediaAccess, result.stream.headers)
+            const { headers: _headers, adaptive: _adaptive, mediaAccess: _access, douyuWatchCdn: _cdn, ...publicStream } = result.stream
             return { ok: true, value: { ok: true, stream: { ...publicStream, url, requiresProxy: false, notes: ['媒体通过本地主进程安全加载'] } } }
           }
           case 'switchQuality': {
@@ -527,12 +551,14 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
           default: return fail('not-found', '未知本地接口')
         }
       } catch (error) {
-        if (error instanceof DouyuAccountError || error instanceof DouyuTaskError || error instanceof DouyuRenewalError) return fail(error.code, error.message)
-        if (error instanceof ProxyError) return fail(error.reason, classifyNetworkFailure(error).message)
+        const detail = diagnosticDetails(error)
+        if (utilTypes.isProxy(error)) return fail('internal-error', '本地服务无法完成此操作', detail)
+        if (error instanceof DouyuAccountError || error instanceof DouyuTaskError || error instanceof DouyuRenewalError) return fail(error.code, error.message, detail)
+        if (error instanceof ProxyError) return fail(error.reason, classifyNetworkFailure(error).message, detail)
         // Tool errors contain only stable codes, never executable paths or child output.
         if (error instanceof Error && 'tool' in error && 'code' in error
           && ['tool-missing', 'tool-invalid-path', 'tool-not-executable'].includes(String(error.code))) {
-          return fail(String(error.code), `未找到可用的 ${String(error.tool)}, 请检查工具设置或环境变量`)
+          return fail(String(error.code), `未找到可用的 ${String(error.tool)}, 请检查工具设置或环境变量`, detail)
         }
         if (error instanceof Error && error.name === 'LoginError' && 'code' in error) {
           const messages: Record<string, string> = {
@@ -543,13 +569,12 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             'login-failed': record(args) && args.platform === 'douyin' ? '抖音内嵌登录未完成, 请在应用内重试.' : '平台登录失败, 请关闭登录页面后重试',
             'cookie-storage-failed': '登录信息保存失败, 请重试',
           }
-          return fail(String(error.code), messages[String(error.code)] ?? '账号操作失败')
+          return fail(String(error.code), messages[String(error.code)] ?? '账号操作失败', detail)
         }
         if (method === 'resolve' || method === 'switchQuality') {
           return { ok: true, value: resolvedFailure(classifyNetworkFailure(error, 'resolve')) }
         }
-        // Never expose filesystem paths, signed media URLs, or upstream error bodies.
-        return fail('internal-error', '本地服务无法完成此操作')
+        return fail('internal-error', '本地服务无法完成此操作', detail)
       }
     },
     dispose() {
@@ -565,7 +590,7 @@ export function createResolverDeps(proxy: ProxyConfig, registerMedia: (url: stri
   let playlistAccess: MediaAccess | undefined
   const request = async (url: string, init?: RequestInit, mode: 'text' | 'binary' | 'page' = 'text') => {
     try {
-      const signal = AbortSignal.timeout(proxy.requestTimeoutMs)
+      const signal = timeoutSignal(network?.media?.requestTimeoutMs ?? proxy.requestTimeoutMs, network?.signal)
       const { response, finalUrl } = await safeFetch(url, { ...proxy, enabled: true }, {
         method: init?.method ?? 'GET',
         headers: { accept: 'application/json, text/plain, */*', ...(init?.headers as Record<string, string> | undefined) },
@@ -574,8 +599,7 @@ export function createResolverDeps(proxy: ProxyConfig, registerMedia: (url: stri
         fetchImpl, network,
       })
       if (!response.ok) {
-        void response.body?.cancel().catch(() => {})
-        throw new StreamFailureError(httpFailure(response.status))
+        throw new StreamFailureError(httpFailure(response.status, await httpErrorDetails(response)))
       }
       if (mode === 'binary') return await readPlatformBytes(response, signal)
       const text = await readPlatformText(response, signal)
@@ -587,13 +611,13 @@ export function createResolverDeps(proxy: ProxyConfig, registerMedia: (url: stri
   return {
     fetchJson: async (url: string, init?: RequestInit): Promise<unknown> => {
       const text = await request(url, init) as string
-      try { return JSON.parse(text) as unknown } catch { throw new Error('平台返回的数据格式无效') }
+      try { return JSON.parse(text) as unknown } catch (error) { throw new Error('平台返回的数据格式无效', { cause: error }) }
     },
     fetchText: async (url: string, init?: RequestInit) => await request(url, init) as string,
     fetchBytes: async (url: string, init?: RequestInit) => await request(url, init, 'binary') as Uint8Array,
     fetchPage: async (url: string, init?: RequestInit) => await request(url, init, 'page') as import('./platforms/types').PlatformPage,
     fetchPlaylist: async (url: string) => {
-      const signal = AbortSignal.timeout(proxy.requestTimeoutMs)
+      const signal = timeoutSignal(network?.media?.requestTimeoutMs ?? proxy.requestTimeoutMs, network?.signal)
       playlistAccess = mediaEntry(url)
       const { response, finalUrl } = await safeFetch(url, mediaRequestPolicy(proxy), { signal, fetchImpl, network, mediaAccess: playlistAccess })
       if (!response.ok) { await response.body?.cancel(); throw new StreamFailureError(httpFailure(response.status)) }

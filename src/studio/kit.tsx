@@ -322,7 +322,11 @@ export function Sheet({ title, onClose, children, wide = false }: {
       role="dialog"
       aria-label={title}
       closedby="any"
-      onClose={() => closeRef.current()}
+      onClose={(event) => {
+        // React dispatches close through the component tree even for nested native dialogs.
+        event.stopPropagation()
+        if (event.target === event.currentTarget) closeRef.current()
+      }}
       onKeyDown={(event) => {
         if (event.key !== 'Escape') return
         // The browser closes the dialog; the page behind must not also act on this Escape.

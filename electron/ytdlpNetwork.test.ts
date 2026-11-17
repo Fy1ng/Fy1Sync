@@ -9,6 +9,7 @@ import { locateYouTubePotProvider } from './toolLocator'
 import { prepareScriptOnlyPotPlugin, readScriptOnlyPluginZip } from './potPlugin'
 import { YtDlpRunner } from './ytdlp'
 import youtubeFixture from '../server/platforms/fixtures/youtube-live.json'
+import { DEFAULT_MEDIA_NETWORK } from '../server/mediaNetworkOptions'
 
 vi.mock('./toolLocator', async actual => ({ ...await actual<object>(), locateTool: vi.fn(async () => '/fixture/yt-dlp.exe'),
   locateYouTubePotProvider: vi.fn(async () => undefined) }))
@@ -23,12 +24,13 @@ afterEach(async () => { await Promise.all(runners.splice(0).map(runner => runner
 
 const inherited: NodeJS.ProcessEnv = {
   PATH: 'fixture-path', NODE_OPTIONS: '--trace-warnings',
+  FORCE_COLOR: '1', NO_COLOR: '1',
   http_proxy: 'http://inherited.invalid:1001', HTTP_PROXY: 'http://inherited.invalid:1002',
   https_proxy: 'http://inherited.invalid:1003', HTTPS_PROXY: 'http://inherited.invalid:1004',
   all_proxy: 'socks5://inherited.invalid:1005', ALL_PROXY: 'socks5://inherited.invalid:1006',
   no_proxy: '*', NO_PROXY: '*', Http_Proxy: 'http://inherited.invalid:1007',
 }
-function harness() {
+function harness(cookiePath?: string) {
   const launches: { file: string; args: string[]; options: SpawnOptions; child: ChildProcess }[] = []
   const launch = ((file: string, args: string[], options: SpawnOptions) => {
     const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter(), kill: vi.fn() }) as unknown as ChildProcess
@@ -38,7 +40,7 @@ function harness() {
   const env = { ...inherited }
   const runner = new YtDlpRunner({ electronPath: '/fixture/electron.exe', networkRuntimePath: path.resolve('.runtime-cache/codex-network-impl-20261030-implementation/network-runtime.cjs'),
     env, spawn: launch, killTree: async child => { child.emit('close', 1) },
-    cookies: { withTemporaryCookies: async (_platform, callback) => callback(undefined) }, timeoutMs: 2000 })
+    cookies: { withTemporaryCookies: async (_platform, callback) => callback(cookiePath) }, timeoutMs: 2000 })
   runners.push(runner)
   const finish = () => {
     for (const { child } of launches) {
@@ -50,6 +52,34 @@ function harness() {
 }
 
 describe('explicit yt-dlp and provider route ownership', () => {
+  it('honors explicit source trust for a logged-in extraction', async () => {
+    const h = harness('/fixture/private-cookies.txt')
+    const pending = h.runner.resolve('https://www.youtube.com/watch?v=abcdefghijk', false, {
+      route: async () => ({ kind: 'direct' }), media: { ...DEFAULT_MEDIA_NETWORK, sourceRules: [
+        { origin: 'https://www.youtube.com', headers: {}, verifyTls: false, verifyProxyTls: false },
+      ] },
+    })
+    await vi.waitFor(() => expect(h.launches).toHaveLength(1))
+    expect(h.launches[0]!.args).toContain('--no-check-certificates')
+    h.finish(); await pending
+  })
+  it.each([undefined, '/fixture/private-cookies.txt'])('applies playback freedom to extraction while keeping credentialed TLS verified: %s', async cookiePath => {
+    const h = harness(cookiePath)
+    const owner = new AbortController()
+    const pending = h.runner.resolve('https://www.youtube.com/watch?v=abcdefghijk', false, {
+      route: async () => ({ kind: 'direct' }), media: DEFAULT_MEDIA_NETWORK, signal: owner.signal,
+    }).catch(error => error)
+    await vi.waitFor(() => expect(h.launches).toHaveLength(1))
+    const args = h.launches[0]!.args
+    expect(args.includes('--no-check-certificates')).toBe(!cookiePath)
+    expect(args).not.toContain('--socket-timeout')
+    expect(args[args.indexOf('--retries') + 1]).toBe('infinite')
+    expect(args[args.indexOf('--extractor-retries') + 1]).toBe('infinite')
+    expect((h.launches[0]!.options.env ?? {}).NODE_TLS_REJECT_UNAUTHORIZED).toBeUndefined()
+    owner.abort()
+    expect(await pending).toBeInstanceOf(Error)
+    expect(h.launches[0]!.child.listenerCount('close')).toBe(0)
+  })
   it.each([
     ['DIRECT', { kind: 'direct' }, ''],
     ['HTTP', { kind: 'http', proxyUrl: 'http://fixture-user:fixture-password@127.0.0.1:3128' }, 'http://fixture-user:fixture-password@127.0.0.1:3128'],
@@ -65,6 +95,8 @@ describe('explicit yt-dlp and provider route ownership', () => {
     expect(route).toHaveBeenCalledExactlyOnceWith('https://www.youtube.com/watch?v=abcdefghijk')
     const env = options.env!
     expect(env.PATH).toBe('fixture-path')
+    expect(env.FORCE_COLOR).toBeUndefined()
+    expect(env.NO_COLOR).toBe('1')
     expect(env.NODE_OPTIONS).toContain('--trace-warnings --require=')
     expect(options).toMatchObject({ shell: false, windowsHide: true })
     const proxyKeys = Object.keys(env).filter(name => /^(http|https|all|no)_proxy$/i.test(name))
@@ -78,16 +110,18 @@ describe('explicit yt-dlp and provider route ownership', () => {
   it.each([
     { kind: 'direct' as const },
     { kind: 'http' as const, proxyUrl: 'http://127.0.0.1:3128' },
-  ])('freezes one %j decision for both HLS and adaptive provider child trees', async selected => {
+  ])('freezes one %j decision for combined extraction and its compatibility retry', async selected => {
     vi.mocked(locateYouTubePotProvider).mockResolvedValue({ pluginDir: '/fixture/plugin', serverHome: '/fixture/provider' })
     const h = harness()
     const route = vi.fn(async (): Promise<NetworkRoute> => selected)
     const network: NetworkContext = { route }
     const pending = h.runner.resolve('https://www.youtube.com/watch?v=abcdefghijk', true, network)
+    await vi.waitFor(() => expect(h.launches).toHaveLength(1))
+    h.finish()
     await vi.waitFor(() => expect(h.launches).toHaveLength(2))
     const expected = selected.kind === 'http' ? selected.proxyUrl : ''
     expect(h.launches.some(item => item.args.includes('--plugin-dirs'))).toBe(true)
-    expect(h.launches.some(item => !item.args.includes('--plugin-dirs'))).toBe(true)
+    expect(h.launches.every(item => item.args.includes('--plugin-dirs'))).toBe(true)
     for (const item of h.launches) {
       expect(item.args.slice(0, 2)).toEqual(['--proxy', expected])
       expect(item.options.env!.HTTP_PROXY ?? '').toBe(expected)
@@ -146,6 +180,26 @@ describe('explicit yt-dlp and provider route ownership', () => {
     expect(h.launches).toHaveLength(2)
   })
 
+  it('does not repeat a broken proxy during provider recovery before trying the next PAC route', async () => {
+    vi.mocked(locateYouTubePotProvider).mockResolvedValue({ pluginDir: '/fixture/plugin', serverHome: '/fixture/provider' })
+    const h = harness()
+    const pending = h.runner.resolve('https://www.youtube.com/watch?v=abcdefghijk', true, { route: async () => ({
+      kind: 'http', proxyUrl: 'http://127.0.0.1:3128', alternatives: [{ kind: 'direct' }],
+    }) })
+    await vi.waitFor(() => expect(h.launches).toHaveLength(1))
+    h.launches[0]!.child.stderr!.emit('data', Buffer.from('Unable to connect to proxy: Connection refused'))
+    h.launches[0]!.child.emit('close', 1)
+    await vi.waitFor(() => expect(h.launches).toHaveLength(2))
+    expect(h.launches.map(item => item.args.slice(0, 2))).toEqual([
+      ['--proxy', 'http://127.0.0.1:3128'], ['--proxy', ''],
+    ])
+    h.finish()
+    await vi.waitFor(() => expect(h.launches).toHaveLength(3))
+    h.finish()
+    await pending
+    expect(h.launches.filter(item => item.args[1] !== '')).toHaveLength(1)
+  })
+
   it.each(['HTTP Error 403: Forbidden', 'Sign in to confirm you are not a bot', 'certificate verify failed', 'Proxy authentication failed: 407'])(
     'keeps the selected route for an upstream or authentication failure: %s', async text => {
       const h = harness()
@@ -170,7 +224,8 @@ describe('explicit yt-dlp and provider route ownership', () => {
     h.launches[0]!.child.emit('close', 1)
     const error = await pending
     expect(error).toMatchObject({ failure: { stage: 'proxy', code: 'proxy-unreachable' } })
-    expect(JSON.stringify(error)).not.toMatch(/PRIVATE|token=|Cookie/)
+    expect(JSON.stringify(error)).not.toContain('PRIVATE')
+    expect(error).toMatchObject({ failure: { detail: { message: expect.any(String) } } })
   })
 
   it.each([
@@ -186,7 +241,8 @@ describe('explicit yt-dlp and provider route ownership', () => {
     h.launches[0]!.child.emit('close', 1)
     const error = await pending
     expect(error).toMatchObject({ failure: { stage, code } })
-    expect(JSON.stringify(error)).not.toMatch(/PRIVATE|token=|Cookie/)
+    expect(JSON.stringify(error)).not.toContain('PRIVATE')
+    expect(error).toMatchObject({ failure: { detail: { message: expect.any(String) } } })
   })
 })
 

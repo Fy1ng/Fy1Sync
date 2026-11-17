@@ -6,7 +6,7 @@
  */
 
 import { createContext, useCallback, useContext, useState } from 'react'
-import { useSessionSnapshot } from '../app/SessionContext'
+import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { buildReplyDraft } from '../core/messageComposition'
 import { useStudioComposer, type StudioComposer } from './useStudioComposer'
 
@@ -22,16 +22,17 @@ type Composer = StudioComposer & {
 const ComposerContext = createContext<Composer | null>(null)
 
 export function ComposerProvider({ children }: { children: React.ReactNode }): React.ReactNode {
+  const session = useSession()
   const { danmaku } = useSessionSnapshot()
   const composer = useStudioComposer({ connected: danmaku.connected, room: danmaku.room })
   const [focusRequest, setFocusRequest] = useState(0)
   const { draft, setDraft } = composer
   const reply = useCallback((user: string) => {
     let mention: string
-    try { mention = buildReplyDraft(user, '') } catch { return }
+    try { mention = buildReplyDraft(user, '') } catch (caught) { session.notice('warn', '回复对象无效, 请检查用户名.', caught); return }
     setDraft(mention + draft.replace(/^@[^:：\s]+[:：]\s*/, ''))
     setFocusRequest((count) => count + 1)
-  }, [draft, setDraft])
+  }, [draft, setDraft, session])
   const fill = useCallback((text: string) => {
     setDraft(text)
     setFocusRequest((count) => count + 1)

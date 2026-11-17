@@ -14,10 +14,11 @@ import { SessionProvider } from '../app/SessionContext'
 import type { StreamSyncerBridge } from '../../electron/contracts'
 import type { EmbeddedLoginState } from '../../electron/embeddedLoginContracts'
 import { primeMediaElement } from '../test/setup'
-import { parseRoomInput, roomFromInput, sourceTitle } from './sources'
+import { parseRoomInput, roomFromInput, sourceTitle, SourceLoaderProvider } from './sources'
 import { Studio } from './Studio'
 import { balanceOf, volumesFor } from './transport'
 import { AutoAlign, startAutoAlign } from './sync'
+import { Intake } from './Intake'
 
 const sessions: Session[] = []
 const embeddedLoginListeners = new Set<(state: EmbeddedLoginState | null) => void>()
@@ -133,6 +134,12 @@ describe('the studio', () => {
 
   it('shows the adapting notice once per session across repeated alignment requests', async () => {
     const session = makeSession()
+    for (const role of ['official', 'commentary'] as const) {
+      await session.loadSource(role, { kind: 'progressive', url: `https://example.test/${role}.mp4`,
+        input: `${role}.mp4`, label: role, loop: false, viaProxy: false })
+      primeMediaElement(session.engine.element(role))
+    }
+    session.flush()
     vi.spyOn(session, 'syncNow').mockResolvedValue({} as Awaited<ReturnType<Session['syncNow']>>)
     const notice = vi.spyOn(session, 'notice')
     startAutoAlign(session)
@@ -140,6 +147,89 @@ describe('the studio', () => {
     await flush()
     expect(notice.mock.calls.filter(([, text]) => text.startsWith('自动对齐适配中:'))).toHaveLength(1)
     expect(session.syncNow).toHaveBeenCalledTimes(2)
+  })
+
+  it('reveals the first presented picture while the other source is still absent', async () => {
+    const session = makeSession()
+    let present!: () => void
+    Object.defineProperty(session.engine.element('commentary'), 'requestVideoFrameCallback', {
+      configurable: true, value: (callback: () => void) => { present = callback; return 1 },
+    })
+    renderStudio(session)
+    await flush()
+    await act(async () => {
+      await session.loadSource('commentary', { kind: 'progressive', url: 'https://example.test/commentary.mp4',
+        input: 'commentary.mp4', label: '解说', loop: false, viaProxy: false })
+      primeMediaElement(session.engine.element('commentary'))
+      session.flush()
+    })
+    expect(screen.getByRole('dialog', { name: '添加直播间' })).toBeInTheDocument()
+    act(() => { present(); session.flush() })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '添加直播间' })).not.toBeInTheDocument())
+    expect(session.snapshot.media.commentary.firstFrame).toBe(true)
+    expect(session.snapshot.media.official.status).toBe('empty')
+    expect(screen.getByRole('button', { name: '准备中' })).toBeDisabled()
+  })
+
+  it('keeps alignment and its shortcut disabled until both synchronization buffers are ready', async () => {
+    let publish!: Parameters<typeof apiClient.subscribeBuffer>[0]
+    const subscribe = vi.spyOn(apiClient, 'subscribeBuffer').mockImplementation(listener => { publish = listener; return () => {} })
+    try {
+      const session = makeSession()
+      const sync = vi.spyOn(session, 'syncNow').mockResolvedValue({} as Awaited<ReturnType<Session['syncNow']>>)
+      render(<SessionProvider session={session}><AutoAlign /></SessionProvider>)
+      await act(async () => {
+        for (const role of ['official', 'commentary'] as const) {
+          await session.loadSource(role, { kind: 'progressive', url: `app://app/buffer/${role}/index.m3u8`,
+            input: role, label: role, loop: false, viaProxy: false })
+          primeMediaElement(session.engine.element(role), { duration: Infinity, seekableEnd: 2 })
+          publish({ role, state: 'buffering', hasVideo: true, completeSegments: 1, seconds: 2 })
+        }
+        session.flush()
+      })
+      expect(screen.getByRole('button', { name: '准备中' })).toBeDisabled()
+      act(() => startAutoAlign(session))
+      expect(sync).not.toHaveBeenCalled()
+      await act(async () => {
+        expect(await session.autoSync.dryRun({ official: 0, commentary: 0 })).toMatchObject({
+          applied: false, failure: { kind: 'not-ready', message: '同步准备中, 请等待两路画面和缓冲就绪' },
+        })
+      })
+      act(() => {
+        publish({ role: 'official', state: 'ready', hasVideo: true, completeSegments: 2, seconds: 4 })
+        session.flush()
+      })
+      expect(screen.getByRole('button', { name: '准备中' })).toBeDisabled()
+      act(() => {
+        publish({ role: 'commentary', state: 'ready', hasVideo: true, completeSegments: 2, seconds: 4 })
+        session.flush()
+      })
+      expect(screen.getByRole('button', { name: '自动对齐' })).toBeEnabled()
+      fireEvent.click(screen.getByRole('button', { name: '自动对齐' }))
+      expect(sync).toHaveBeenCalledTimes(1)
+    } finally { subscribe.mockRestore() }
+  })
+
+  it('keeps an explicitly reopened source dialog available while an existing picture is visible', async () => {
+    const session = makeSession()
+    let present!: () => void
+    Object.defineProperty(session.engine.element('commentary'), 'requestVideoFrameCallback', {
+      configurable: true, value: (callback: () => void) => { present = callback; return 1 },
+    })
+    await session.loadSource('commentary', { kind: 'progressive', url: 'https://example.test/commentary.mp4',
+      input: 'commentary.mp4', label: '解说', loop: false, viaProxy: false })
+    primeMediaElement(session.engine.element('commentary'))
+    present()
+    session.flush()
+    const close = vi.fn()
+    render(<SessionProvider session={session}><SourceLoaderProvider>
+      <Intake onClose={close} pendingFile={null} onSchedule={() => {}} />
+    </SourceLoaderProvider></SessionProvider>)
+    await flush()
+    expect(screen.getByRole('dialog', { name: '添加直播间' })).toBeInTheDocument()
+    expect(close).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '开始观看' }))
+    expect(close).toHaveBeenCalledTimes(1)
   })
 
   it('defaults alignment to basic mode and exposes the saved-pack selector only in style-pack mode', async () => {

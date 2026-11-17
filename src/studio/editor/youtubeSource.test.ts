@@ -20,9 +20,9 @@ describe('youtubeSource', () => {
 
   it('maps open failures to the panel error words', async () => {
     const { api } = bridge({ ytBrowseOpen: { ok: false, code: 'auth-required', message: '' } })
-    expect(await youtubeSource(api)!.open('https://www.youtube.com/watch?v=swMquqtyh-A')).toEqual({ ok: false, error: 'auth-required' })
+    expect(await youtubeSource(api)!.open('https://www.youtube.com/watch?v=swMquqtyh-A')).toEqual({ ok: false, error: 'auth-required', detail: { ok: false, code: 'auth-required', message: '' } })
     const other = bridge({ ytBrowseOpen: { ok: false, code: 'internal-error', message: '' } })
-    expect(await youtubeSource(other.api)!.open('x')).toEqual({ ok: false, error: 'failed' })
+    expect(await youtubeSource(other.api)!.open('x')).toEqual({ ok: false, error: 'failed', detail: { ok: false, code: 'internal-error', message: '' } })
   })
 
   it('maps the pushed state', async () => {
@@ -53,7 +53,7 @@ describe('youtubeSource', () => {
 
   it('maps the new still errors', async () => {
     const { api } = bridge({ ytBrowseSnapshot: { ok: false, code: 'origin-tainted', message: '' } })
-    expect(await youtubeSource(api)!.still()).toEqual({ ok: false, error: 'origin-tainted' })
+    expect(await youtubeSource(api)!.still()).toEqual({ ok: false, error: 'origin-tainted', detail: { ok: false, code: 'origin-tainted', message: '' } })
   })
 
   it.each([2160, 1440, 1080] as const)('passes the requested %sp to main', async (targetHeight) => {
@@ -61,6 +61,26 @@ describe('youtubeSource', () => {
     expect(await youtubeSource(api)!.startClip('https://www.youtube.com/watch?v=swMquqtyh-A', 750, 930, targetHeight))
       .toEqual({ ok: true, jobId: 'a' })
     expect(invoke).toHaveBeenCalledWith('ytImportStart', { url: 'https://www.youtube.com/watch?v=swMquqtyh-A', startSeconds: 750, endSeconds: 930, targetHeight })
+  })
+
+  it('preserves bridge failure fields and rejected exceptions without converting them into an empty result', async () => {
+    const failure = { ok: false, code: 'network', message: '下载失败', detail: { status: 502, stderr: 'upstream timeout' } }
+    const { api, invoke } = bridge({ ytImportStart: failure })
+    const source = youtubeSource(api)!
+    expect(await source.startClip('x', 1, 2, 1080)).toMatchObject({ ok: false, error: 'network', detail: failure })
+    invoke.mockRejectedValueOnce(Object.assign(new Error('transport closed'), { code: 'IPC_CLOSED' }))
+    expect(await source.open('x')).toMatchObject({ ok: false, detail: { code: 'failed', detail: { name: 'Error', message: 'transport closed', code: 'IPC_CLOSED' } } })
+  })
+
+  it('reports failed cancellation through the source instance error subscription', async () => {
+    const failure = { ok: false, code: 'cancel-failed', message: '取消失败', detail: { jobId: 'job-a', exitCode: 3 } }
+    const { api } = bridge({ ytImportCancel: failure })
+    const source = youtubeSource(api)!
+    const seen = vi.fn()
+    const release = source.subscribeErrors!(seen)
+    await source.cancelClip('job-a')
+    expect(seen).toHaveBeenCalledWith(expect.objectContaining({ message: '取消下载失败, 请重试.', detail: failure }))
+    release()
   })
 
   it('restores old ready clips using the format dimensions alone', async () => {

@@ -59,16 +59,17 @@ export function parseDouyuQualities(value: unknown): QualityOption[] {
 function playFailure(payload: Record<string, unknown>, roomHint: string): ResolveResult {
   const code = payload.error
   const message = typeof payload.msg === 'string' ? payload.msg : ''
+  const detail = { code, message }
   if (code === 101 || /房间不存在|不存在的房间|room.*not.*found/i.test(message)) {
-    return failure('room-not-found', '斗鱼房间不存在.', roomHint)
+    return failure('room-not-found', '斗鱼房间不存在.', roomHint, detail)
   }
   if (code === 102 || code === -3 || /未开播|未直播|已下播|直播已结束|not.live|offline/i.test(message)) {
-    return failure('not-live', '斗鱼房间当前未开播.', roomHint)
+    return failure('not-live', '斗鱼房间当前未开播.', roomHint, detail)
   }
   if (code === 403 || code === -5 || /登录|权限|付费|限制|封禁|密码|验证|login|forbidden|restricted/i.test(message)) {
-    return failure('restricted', '斗鱼房间或所选画质需要登录, 或受到访问限制.', roomHint)
+    return failure('restricted', '斗鱼房间或所选画质需要登录, 或受到访问限制.', roomHint, detail)
   }
-  return failure('upstream-error', '斗鱼未返回有效的播放信息.', roomHint)
+  return failure('upstream-error', '斗鱼未返回有效的播放信息.', roomHint, detail)
 }
 
 export async function resolveDouyu(input: string, deps: ResolverDeps): Promise<ResolveResult> {
@@ -91,11 +92,11 @@ export async function resolveDouyu(input: string, deps: ResolverDeps): Promise<R
   try {
     const seed = record(await deps.fetchJson(`${ENCRYPTION_API}?did=${did}`, { headers }))
     const parsed = encryptionData(seed.data)
-    if (seed.error !== 0 || !parsed) return failure('upstream-error', '斗鱼签名参数暂时不可用.', roomHint)
+    if (seed.error !== 0 || !parsed) return failure('upstream-error', '斗鱼签名参数暂时不可用.', roomHint, { code: seed.error, message: seed.msg })
     encryption = parsed
   } catch (error) {
     if (error instanceof StreamFailureError) throw error
-    return failure('upstream-error', '请求斗鱼签名参数失败.', roomHint)
+    return failure('upstream-error', '请求斗鱼签名参数失败.', roomHint, error)
   }
   // Generate tt immediately before each play request. The auth must use that same tt.
   const timestamp = Math.round((deps.now ?? Date.now)() / 1000)
@@ -112,7 +113,7 @@ export async function resolveDouyu(input: string, deps: ResolverDeps): Promise<R
   } catch (error) {
     if (error instanceof StreamFailureError) throw error
     // The upstream error may contain the request Cookie header or a signed media URL.
-    return failure('upstream-error', '请求斗鱼播放地址失败.', roomHint)
+    return failure('upstream-error', '请求斗鱼播放地址失败.', roomHint, error)
   }
   if (payload.error !== 0) return playFailure(payload, roomHint)
   const data = record(payload.data)

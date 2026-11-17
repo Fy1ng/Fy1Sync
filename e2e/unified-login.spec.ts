@@ -83,7 +83,7 @@ async function identity(application: ElectronApplication, save = false): Promise
 async function fillSyntheticPassword(page: Page): Promise<void> {
   await page.getByLabel('账号', { exact: true }).fill('test-account')
   await page.getByLabel('密码', { exact: true }).fill('synthetic-password')
-  await page.locator('#accepted').check()
+  await expect(page.getByRole('checkbox')).toHaveCount(0)
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page.locator('#password')).toHaveValue('')
 }

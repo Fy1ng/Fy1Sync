@@ -8,6 +8,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 import { apiClient } from '../../app/apiClient'
 import type { DouyuFollowedRoom, DouyuFollowedRooms } from '../../../server/douyu/insightsTypes'
 import { Icon, Segmented, Switch } from '../kit'
@@ -25,7 +27,7 @@ const SCOPES: { value: NotifyScope; label: string }[] = [
   { value: 'all', label: '全部关注' },
 ]
 
-type RowNote = { text: string; error: boolean }
+type RowNote = { text: string; error: boolean; detail?: unknown }
 
 const isLive = (room: DouyuFollowedRoom): boolean => room.live === true && room.replay !== true
 
@@ -51,7 +53,7 @@ export function Following({ data, onWatch }: {
   // Per account: reopening shows the last list at once and reads it again quietly.
   const [list, setList] = useRemembered<DouyuFollowedRooms | null>(accountId ? `douyu:following:${accountId}` : null, null)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError, errorDetail] = useErrorState('')
   const [notes, setNotes] = useState<Record<string, RowNote>>({})
   const [opening, setOpening] = useState<string[]>([])
   const [now, setNow] = useState(Date.now)
@@ -80,16 +82,21 @@ export function Following({ data, onWatch }: {
     void apiClient.feature('getDouyuFollowedRooms', { accountId }).then((result) => {
       if (mine !== generation.current || !mounted.current) return
       setLoading(false)
-      if (!result.ok) { setError(result.message); return }
-      if (result.value.accountId !== accountId || !Array.isArray(result.value.rooms)) { setError('无法读取关注列表'); return }
+      if (!result.ok) { setError(result); return }
+      if (result.value.accountId !== accountId || !Array.isArray(result.value.rooms)) { setError(displayError(result, '无法读取关注列表')); return }
       rememberRoomNames(result.value.rooms)
       setList(result.value)
       setNow(Date.now())
+    }).catch(caught => {
+      if (mine !== generation.current || !mounted.current) return
+      setLoading(false)
+      setError(displayError(caught, '无法读取关注列表'))
     })
   }, [accountId, ready])
 
   useEffect(() => {
     setNotes({})
+    setOpening([])
     load()
   }, [load])
 
@@ -121,15 +128,21 @@ export function Following({ data, onWatch }: {
 
   const openExtra = (room: DouyuFollowedRoom): void => {
     if (opening.includes(room.room)) return
+    const mine = generation.current
     setOpening((items) => [...items, room.room])
     setNotes(({ [room.room]: _, ...rest }) => rest)
     void apiClient.feature('openStreamSession', { input: room.room, platform: 'douyu' }).then((result) => {
-      if (!mounted.current) return
+      if (!mounted.current || mine !== generation.current) return
       setOpening((items) => items.filter((item) => item !== room.room))
-      const note: RowNote = !result.ok ? { text: result.message, error: true }
-        : result.value.phase === 'failed' ? { text: result.value.error ?? '同屏打开失败', error: true }
+      const note: RowNote = !result.ok ? { text: result.message, error: true, detail: result }
+        : result.value.phase === 'failed' ? { text: result.value.error ?? '同屏打开失败', error: true, detail: result.value }
           : { text: '已在同屏打开', error: false }
       setNotes((items) => ({ ...items, [room.room]: note }))
+    }).catch(caught => {
+      if (!mounted.current || mine !== generation.current) return
+      setOpening(items => items.filter(item => item !== room.room))
+      const shown = displayError(caught, '同屏打开失败')
+      setNotes(items => ({ ...items, [room.room]: { text: shown.message, error: true, detail: shown.detail } }))
     })
   }
 
@@ -175,7 +188,7 @@ export function Following({ data, onWatch }: {
       {!account && <p className="desk-empty">未设置当前账号，无法读取关注列表。</p>}
       {account && !ready && <p className="desk-empty">当前账号未登录，无法读取关注列表。</p>}
       {loading && <p className="lane" role="status">{list ? '正在更新关注列表' : '正在读取关注列表'}</p>}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
 
       {list && (
         <p className={list.coverage === 'all-pages' ? 'lane' : 'follow-partial'}>
@@ -183,6 +196,7 @@ export function Following({ data, onWatch }: {
             ? `共 ${rooms.length} 个房间，已读取全部 ${list.pageCount} 页。`
             : `仅读取到部分关注列表（${list.pageCount} 页，${rooms.length} 个房间）。${list.reason ?? ''}`}
           {' '}更新于 {formatTime(list.checkedAt)}
+          {list.coverage !== 'all-pages' && list.reason && <ErrorText error={list} message="" />}
         </p>
       )}
       {list && rooms.length === 0 && <p className="desk-empty">关注列表为空。</p>}
@@ -208,7 +222,7 @@ export function Following({ data, onWatch }: {
                         : `开播于 ${formatTime(room.startedAt)} · 已播 ${formatDuration((now - room.startedAt) / 1000)}`}
                     </span>
                   )}
-                  {note && <span className={note.error ? 'form-error' : 'lane'} role={note.error ? 'alert' : 'status'}>{note.text}</span>}
+                  {note && <span className={note.error ? 'form-error' : 'lane'} role={note.error ? 'alert' : 'status'}>{note.error ? <ErrorText error={note.detail ?? note.text} message={note.text} /> : note.text}</span>}
                 </div>
                 <div className="follow-actions">
                   {notify.scope === 'selected' && (
@@ -237,8 +251,8 @@ function NotifyStatus({ ready }: { ready: boolean }): React.ReactNode {
   if (notify.pending) return <p className="lane" role="status">正在更新提醒设置</p>
   return (
     <>
-      {notify.error && <p className="form-error" role="alert">{notify.error}</p>}
-      {notify.monitorError && <p className="form-error" role="alert">监控状态：{notify.monitorError}</p>}
+      {notify.error && <p className="form-error" role="alert"><ErrorText error={notify.errorDetail ?? notify.error} message={notify.error} /></p>}
+      {notify.monitorError && <p className="form-error" role="alert"><ErrorText error={notify.monitorErrorDetail ?? notify.monitorError} message={`监控状态: ${notify.monitorError}`} /></p>}
       {notify.stopped && <p className="lane" role="status">{notify.stopped}</p>}
       {notify.scope === 'all' && !ready && <p className="lane">全部关注需要已登录的当前账号。</p>}
       {notify.scope === 'selected' && notify.rooms.length === 0 && (

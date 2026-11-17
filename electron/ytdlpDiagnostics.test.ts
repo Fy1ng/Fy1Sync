@@ -173,13 +173,12 @@ describe('ordinary yt-dlp diagnostics', () => {
     const events: YtDlpDiagnostic[] = []
     const h = harness()
     const pending = h.runner.resolve(url, true, direct, event => events.push(event))
-    await vi.waitFor(() => expect(h.launches).toHaveLength(2))
-    expect(events).toContainEqual(expect.objectContaining({ stage: 'provider', status: 'prepared', client: 'web', providerOutcome: 'unconfirmed' }))
+    await vi.waitFor(() => expect(h.launches).toHaveLength(1))
+    expect(events).toContainEqual(expect.objectContaining({ stage: 'provider', status: 'prepared', client: 'default', providerOutcome: 'unconfirmed' }))
     expect(events.some(event => event.providerOutcome === 'token-observed')).toBe(false)
-    h.finish(0, hlsOnly)
-    h.finish(1, { ...fixture, formats: fixture.formats.map(format => format.url.includes('googlevideo.com') ? { ...format, url: format.url + '&pot=PRIVATE_TOKEN' } : format) })
+    h.finish(0, { ...fixture, formats: fixture.formats.map(format => format.url.includes('googlevideo.com') ? { ...format, url: format.url + '&pot=PRIVATE_TOKEN' } : format) })
     await pending
-    expect(events).toContainEqual(expect.objectContaining({ stage: 'adaptive', client: 'web', status: 'resolved', providerOutcome: 'token-observed' }))
+    expect(events).toContainEqual(expect.objectContaining({ stage: 'hls', client: 'default', status: 'resolved', providerOutcome: 'token-observed' }))
     expect(JSON.stringify(events)).not.toMatch(/PRIVATE|pot=|googlevideo/)
   })
 
@@ -202,8 +201,10 @@ describe('ordinary yt-dlp diagnostics', () => {
     const events: YtDlpDiagnostic[] = []
     const h = harness()
     const pending = h.runner.resolve(url, true, direct, event => events.push(event))
+    await vi.waitFor(() => expect(h.launches).toHaveLength(1))
+    h.finish(0, videoOnly)
     await vi.waitFor(() => expect(h.launches).toHaveLength(2))
-    h.finish(0, videoOnly); h.finish(1, videoOnly, 'PO token unavailable Cookie=PRIVATE')
+    h.finish(1, videoOnly, 'PO token unavailable Cookie=PRIVATE')
     await vi.waitFor(() => expect(h.launches).toHaveLength(3))
     h.finish(2, hlsOnly); await pending
     for (const [stage, client] of [['hls', 'default'], ['adaptive', 'web'], ['hls-fallback', 'web_safari']] as const) {

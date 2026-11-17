@@ -7,11 +7,13 @@ import { FeatureApiError } from '../featureApi'
 import { PinnedDispatcherPool, safeFetch, type Resolver } from '../safeFetch'
 import { currentMatches, parseSchedule, ScheduleFormatError, validEntry, validTwitchLogin } from './parser'
 import { normalizeTournamentPath, queryTournamentTiers, type TournamentTier } from './tiers'
-import { DispatchTurns, LiquipediaRateLimit, pause } from './liquipediaRateLimit'
+import { DispatchTurns, LiquipediaCoolingDown, LiquipediaRateLimit, pause } from './liquipediaRateLimit'
 import { channelLinksUrl, eventChannels, matchChannel, type EventChannels } from './streamChannels'
 import type { Cs2ScheduleEvent } from '../../electron/featureContracts'
 import type { Cs2Match, Cs2Schedule, StreamTitle, StreamTitleInput } from './types'
 import { TeamLogoCache } from './teamLogos'
+import { diagnosticDetails } from '../errorDetails'
+import { httpErrorDetails } from '../httpError'
 
 export { PARSE_INTERVAL_MS } from './liquipediaRateLimit'
 
@@ -33,13 +35,14 @@ export const CHANNEL_TTL_MS = 24 * 60 * 60_000
 export const CHANNEL_RETRY_MS = 300_000
 const MAX_BODY_BYTES = 2_000_000
 const UNAVAILABLE = '赛程暂时无法读取, 请稍后重试'
+const UPSTREAM_LIMITED = 'Liquipedia 请求受限 (HTTP 429), 已暂停请求并保留上次赛程. 冷却结束后将重试; 若官网也提示封禁, 请在相同网络和代理下按官网指引完成验证.'
 /** Refused for the 30-second parse quota; `at` is when the quota frees. */
 class RateLimited extends Error { constructor(readonly at: number) { super('Liquipedia parse quota') } }
 
 interface CachedSchedule { fetchedAt: number; matches: Cs2Match[]; logoPaths: Map<string, string> }
 interface CachedTier { tier: TournamentTier | null; fetchedAt: number | null; retryAt?: number }
 interface CachedTiers { schema: 2; entries: Record<string, CachedTier> }
-interface CachedChannels extends EventChannels { at: number; failed: boolean }
+interface CachedChannels extends EventChannels { at: number; failed: boolean; errorDetail?: import('../../src/core/errorDetails').ErrorDetails }
 const emptyTiers = (): CachedTiers => ({ schema: 2, entries: Object.create(null) as Record<string, CachedTier> })
 interface Dependencies {
   userDataDir: string
@@ -106,8 +109,8 @@ class ScheduleDisk {
 
 async function readJson(response: Response): Promise<unknown> {
   if (response.status !== 200 || response.redirected || !response.body) {
-    await response.body?.cancel().catch(() => {})
-    throw new Error('Metadata response unavailable')
+    const detail = await httpErrorDetails(response)
+    throw Object.assign(new Error('Metadata response unavailable'), detail)
   }
   const reader = response.body.getReader(), chunks: Uint8Array[] = []
   let length = 0
@@ -119,7 +122,9 @@ async function readJson(response: Response): Promise<unknown> {
       if (length > MAX_BODY_BYTES) throw new Error('Metadata response too large')
       chunks.push(part.value)
     }
-    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
+    const payload: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    if (object(payload) && payload.error) throw Object.assign(new Error('Metadata API returned an error'), { upstream: diagnosticDetails(payload.error) })
+    return payload
   } catch (error) { await reader.cancel().catch(() => {}); throw error }
   finally { reader.releaseLock() }
 }
@@ -196,6 +201,7 @@ export class EsportsService {
   private refreshTimer: ReturnType<typeof setTimeout> | undefined
   /** When a parse was last tried, so a failed one waits a whole interval before the next. */
   private attemptedAt = -Infinity
+  private lastFailure: { message: string; detail: ReturnType<typeof diagnosticDetails>; failedAt: number; retryAt: number } | null = null
   private lastEventAt = -Infinity
   private readonly pendingEvents = new Set<Cs2ScheduleEvent['data']['type']>()
   private booted = false
@@ -219,8 +225,16 @@ export class EsportsService {
       this.logoTimer.unref?.()
     }
   }
-  private snapshot(error?: string, refreshAt?: number): Cs2Schedule {
+  private snapshot(error?: string, refreshAt?: number, errorDetail?: unknown, refreshReason?: Cs2Schedule['refreshReason']): Cs2Schedule {
     const now = this.now()
+    const cooldown = this.rateLimit.cooldown()
+    if (cooldown) {
+      error = UPSTREAM_LIMITED
+      refreshAt = cooldown.until
+      refreshReason = 'upstream-rate-limit'
+      errorDetail = { ...diagnosticDetails(errorDetail ?? this.lastFailure?.detail ?? { status: 429 }), status: 429,
+        cooldown, ...(cooldown.retryAfter ? { retryAfter: cooldown.retryAfter } : {}) }
+    }
     const cached = this.disk.loadTiers()
     const matches = structuredClone(currentMatches(this.cache?.matches ?? [], now))
     this.updateActiveLogos(matches)
@@ -233,16 +247,25 @@ export class EsportsService {
     }
     return { fetchedAt: this.cache?.fetchedAt ?? 0, source: 'liquipedia', attribution: ATTRIBUTION,
       stale: !!error || !this.cache || now - this.cache.fetchedAt >= this.scheduleTtl() || now < this.cache.fetchedAt,
-      ...(error ? { error } : {}), ...(refreshAt !== undefined ? { refreshAt } : {}), matches }
+      ...(error ? { error } : {}), ...(errorDetail === undefined ? {} : { errorDetail: diagnosticDetails(errorDetail) }),
+      ...(refreshAt !== undefined ? { refreshAt, ...(refreshReason ? { refreshReason } : {}) } : {}), matches }
   }
   getCs2Schedule(raw?: { refresh?: boolean }): Promise<Cs2Schedule> {
     const args = scheduleArguments(raw)
     this.lifetime.signal.throwIfAborted()
     if (this.flight) return this.flight.then(value => structuredClone(value))
     const fromDisk = this.disk.load()
-    if (fromDisk && (!this.cache || fromDisk.fetchedAt > this.cache.fetchedAt)) this.cache = fromDisk
+    if (fromDisk && (!this.cache || fromDisk.fetchedAt > this.cache.fetchedAt)) {
+      this.cache = fromDisk
+      if (this.lastFailure && fromDisk.fetchedAt > this.lastFailure.failedAt && fromDisk.fetchedAt <= this.now()) this.lastFailure = null
+    }
     const first = !this.booted
     this.booted = true
+    const cooldown = this.rateLimit.cooldown()
+    if (cooldown || (this.lastFailure && this.now() < this.lastFailure.retryAt)) {
+      this.scheduleBackgroundRefresh()
+      return Promise.resolve(this.snapshot(this.lastFailure?.message, this.lastFailure?.retryAt, this.lastFailure?.detail, 'retry'))
+    }
     if (!args?.refresh && this.cache && !this.snapshot().stale) {
       this.scheduleTierRefresh()
       this.scheduleBackgroundRefresh()
@@ -273,11 +296,13 @@ export class EsportsService {
     const interval = this.scheduleTtl()
     const last = Math.max(this.cache?.fetchedAt ?? -Infinity, this.attemptedAt)
     // Capped at one interval, so a clock moved backwards cannot push the next read out for hours.
-    const due = Math.min(interval, Math.max(0, last + interval - this.now()))
+    const now = this.now(), cooldown = this.rateLimit.cooldown()
+    const due = cooldown ? cooldown.until - now : this.lastFailure ? Math.max(0, this.lastFailure.retryAt - now)
+      : Math.min(interval, Math.max(0, last + interval - now))
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = undefined
       if (!this.lifetime.signal.aborted) void this.getCs2Schedule().catch(() => undefined)
-    }, due)
+    }, Math.min(due, 2_147_483_647))
     this.refreshTimer.unref?.()
   }
   /**
@@ -314,10 +339,10 @@ export class EsportsService {
         if (found.twitch.length || found.youtube.length || depth >= 2 || slash < 0) return found
         page = page.slice(0, slash)
       }
-    })().then(found => { this.channels.set(path, { ...found, at: this.now(), failed: false }) }, () => {
+    })().then(found => { this.channels.set(path, { ...found, at: this.now(), failed: false }) }, error => {
       if (this.lifetime.signal.aborted) return
       ;(this.options.log ?? console.warn)('Liquipedia stream channel lookup failed')
-      this.channels.set(path, { twitch: [], youtube: [], at: this.now(), failed: true })
+      this.channels.set(path, { twitch: [], youtube: [], at: this.now(), failed: true, errorDetail: diagnosticDetails(error) })
     }).finally(() => {
       this.channelFlights.delete(path)
       this.notify('streams-updated')
@@ -332,6 +357,7 @@ export class EsportsService {
       if (path !== null && (!found || found.failed)) {
         // A failed read being tried again shows as finding, not as failed.
         stream.missing = found && !this.channelFlights.has(path) ? 'failed' : 'finding'
+        if (stream.missing === 'failed' && found?.errorDetail) stream.errorDetail = found.errorDetail
         continue
       }
       const channel = found ? matchChannel(stream.entry, found[stream.platform]) : null
@@ -379,6 +405,11 @@ export class EsportsService {
   }
   private scheduleTierRefresh(): void {
     if (this.lifetime.signal.aborted) return
+    if (this.rateLimit.cooldown()) {
+      clearTimeout(this.tierTimer)
+      this.tierTimer = undefined
+      return
+    }
     // Crests never wait for the tier query, even one already in flight: both take the same
     // 2-second quota in turns, and the first crest asked for takes the first slot.
     this.enqueueLogos()
@@ -426,30 +457,61 @@ export class EsportsService {
    * waits it out; one held back by the 30-second parse quota is refused with the time it frees,
    * before any request starts, so the refusal is never mistaken for a network failure.
    */
-  private async parseSlot(): Promise<void> {
+  private async parseSlot(signal: AbortSignal): Promise<void> {
     for (;;) {
-      this.lifetime.signal.throwIfAborted()
+      signal.throwIfAborted()
+      this.rateLimit.throwIfCooling()
       // `delay()` is the shared 2-second slot alone; `delay(true)` adds the parse quota.
       const slot = this.rateLimit.delay(), quota = this.rateLimit.delay(true)
       if (quota > slot) throw new RateLimited(this.now() + quota)
-      if (slot > 0) { await pause(slot, this.lifetime.signal); continue }
+      if (slot > 0) { await pause(slot, signal); continue }
       if (this.rateLimit.reserve(true)) return
       // Lost the slot to another window or process: look again rather than spin.
-      await pause(25, this.lifetime.signal)
+      await pause(25, signal)
     }
   }
   private async fetchMetadata(url: string, parse: boolean): Promise<unknown> {
-    if (parse) await this.parseSlot()
+    this.rateLimit.throwIfCooling()
     const signal = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(15_000)])
+    let startedAt = this.now()
+    let quotaError: RateLimited | LiquipediaCoolingDown | undefined
     const result = await safeFetch(url, metadataConfig(), {
       signal, resolve: this.options.resolve, dispatcherPool: this.pool,
       headers: { 'User-Agent': metadataUserAgent(this.options.version), 'Accept-Encoding': 'gzip', Accept: 'application/json' },
       fetchImpl: async (input, init) => {
-        if (!parse) await this.turns.wait('tier', signal)
-        return (this.options.request ?? fetch)(input, init)
+        // Reserve immediately before dispatch; slow proxy/DNS decisions cannot bunch requests.
+        try {
+          if (parse) await this.parseSlot(signal)
+          else await this.turns.wait('tier', signal)
+          this.rateLimit.throwIfCooling()
+        } catch (error) {
+          if (error instanceof RateLimited || error instanceof LiquipediaCoolingDown) quotaError = error
+          throw error
+        }
+        startedAt = this.now()
+        const response = await (this.options.request ?? fetch)(input, init)
+        if (response.status === 429) {
+          await this.rateLimit.rateLimited(response.headers.get('retry-after'), signal, response.headers.get('date'))
+          this.scheduleBackgroundRefresh()
+          this.notify('schedule-updated')
+        }
+        return response
       },
-    })
-    return readJson(result.response)
+    }).catch(error => { throw quotaError ?? error })
+    try {
+      const payload = await readJson(result.response)
+      this.rateLimit.succeeded(startedAt)
+      return payload
+    } catch (error) {
+      const detail = diagnosticDetails(error), upstream = detail.upstream
+      if (result.response.status !== 429 && upstream && typeof upstream === 'object' && !Array.isArray(upstream)
+        && (upstream.code === 'ratelimited' || upstream.code === 'rate-limited')) {
+        await this.rateLimit.rateLimited(result.response.headers.get('retry-after'), signal, result.response.headers.get('date'))
+        this.scheduleBackgroundRefresh()
+        this.notify('schedule-updated')
+      }
+      throw error
+    }
   }
   private async refreshTiers(): Promise<void> {
     const cached = this.disk.loadTiers(), now = this.now()
@@ -481,17 +543,23 @@ export class EsportsService {
         selector => (this.options.log ?? console.warn)(`Liquipedia match skipped: ${selector}`)), fetchedAt = this.now()
       const changed = this.cache !== null && JSON.stringify(this.cache.matches) !== JSON.stringify(matches)
       this.disk.save(payload, fetchedAt)
+      const recovered = this.lastFailure !== null
+      this.lastFailure = null
       this.cache = { fetchedAt, matches, logoPaths }
-      if (changed) this.notify('schedule-updated')
+      if (changed || recovered) this.notify('schedule-updated')
       return this.snapshot()
     } catch (error) {
       if (this.lifetime.signal.aborted) throw this.lifetime.signal.reason
-      if (error instanceof ScheduleFormatError) {
-        ;(this.options.log ?? console.warn)(`Liquipedia selector failed: ${error.selector}`)
-        return this.snapshot(error.message)
+      if (error instanceof RateLimited) {
+        if (this.lastFailure) this.lastFailure.retryAt = Math.max(this.lastFailure.retryAt, error.at)
+        return this.snapshot(this.lastFailure?.message ?? (this.cache ? undefined : UNAVAILABLE), error.at, this.lastFailure?.detail ?? error, 'parse-quota')
       }
-      if (error instanceof RateLimited) return this.snapshot(this.cache ? undefined : UNAVAILABLE, error.at)
-      return this.snapshot(UNAVAILABLE)
+      if (error instanceof ScheduleFormatError) (this.options.log ?? console.warn)(`Liquipedia selector failed: ${error.selector}`)
+      const cooldown = this.rateLimit.cooldown()
+      const message = cooldown || error instanceof LiquipediaCoolingDown ? UPSTREAM_LIMITED : error instanceof ScheduleFormatError ? error.message : UNAVAILABLE
+      this.lastFailure = { message, detail: diagnosticDetails(error), failedAt: this.now(), retryAt: cooldown?.until ?? this.now() + SCHEDULE_TTL_MS }
+      this.notify('schedule-updated')
+      return this.snapshot(message, this.lastFailure.retryAt, error, cooldown ? 'upstream-rate-limit' : 'retry')
     }
   }
   async getStreamTitles(raw: { streams: StreamTitleInput[] }): Promise<StreamTitle[]> {

@@ -90,6 +90,7 @@ describe('chat follow intent', () => {
   it('treats an external scrollbar move as reading, but End restores persistent following', () => {
     const view = render(<Fixture />)
     scroll(300)
+    expect(port.cancelScroll).toHaveBeenCalledOnce()
     geometry.height += 60
     view.rerender(<Fixture total={42} count={42} />)
     expect(geometry.top).toBe(300)
@@ -97,6 +98,85 @@ describe('chat follow intent', () => {
     fireEvent.keyDown(screen.getByRole('log'), { key: 'End' })
     expect(geometry.top).toBe(660)
     expect(screen.getByLabelText('未读')).toHaveTextContent('0')
+  })
+
+  it('cancels both an unfinished end command and queued follow restoration before the next frame', () => {
+    const view = render(<Fixture />)
+    geometry.height += 30
+    view.rerender(<Fixture total={41} count={41} />)
+    expect(port.scrollToEnd).toHaveBeenCalledOnce()
+    fireEvent.scroll(screen.getByRole('log'))
+    expect(frames.size).toBe(1)
+    scroll(300)
+    expect(port.cancelScroll).toHaveBeenCalledOnce()
+    expect(frames.size).toBe(0)
+    geometry.height += 30
+    view.rerender(<Fixture total={42} count={42} />)
+    flushFrames()
+    expect(port.scrollToEnd).toHaveBeenCalledOnce()
+    expect(geometry.top).toBe(300)
+    expect(screen.getByLabelText('未读')).toHaveTextContent('1')
+  })
+
+  it('does not resume following when a reflow temporarily clamps a reader to the bottom', () => {
+    const view = render(<Fixture />)
+    scroll(300)
+    geometry.height = 900
+    fireEvent.scroll(screen.getByRole('log'))
+    geometry.height = 1230
+    view.rerender(<Fixture total={41} count={41} />)
+    flushFrames()
+    expect(port.scrollToEnd).not.toHaveBeenCalled()
+    expect(geometry.top).toBe(300)
+    expect(screen.getByLabelText('未读')).toHaveTextContent('1')
+    scroll(630)
+    expect(screen.getByLabelText('未读')).toHaveTextContent('0')
+    geometry.height += 30
+    view.rerender(<Fixture total={42} count={42} />)
+    expect(geometry.top).toBe(660)
+  })
+  it('ignores repeated bottom echoes even after a committed layout stores the clamped position', () => {
+    const view = render(<Fixture />)
+    scroll(300)
+    geometry.height = 900
+    fireEvent.scroll(screen.getByRole('log'))
+    view.rerender(<Fixture total={41} count={41} />)
+    fireEvent.scroll(screen.getByRole('log'))
+    fireEvent.scroll(screen.getByRole('log'))
+    geometry.height = 1230
+    view.rerender(<Fixture total={42} count={42} />)
+    flushFrames()
+    expect(port.scrollToEnd).not.toHaveBeenCalled()
+    expect(geometry.top).toBe(300)
+    expect(screen.getByLabelText('未读')).toHaveTextContent('2')
+    fireEvent.keyDown(screen.getByRole('log'), { key:'End' })
+    expect(geometry.top).toBe(630)
+  })
+  it('resumes after an explicit downward key at a clamped end', () => {
+    const view = render(<Fixture />)
+    scroll(300)
+    geometry.height = 900
+    fireEvent.scroll(screen.getByRole('log'))
+    view.rerender(<Fixture total={41} count={41} />)
+    fireEvent.keyDown(screen.getByRole('log'), { key:'ArrowDown' })
+    expect(screen.getByLabelText('未读')).toHaveTextContent('0')
+    geometry.height = 1230
+    view.rerender(<Fixture total={42} count={42} />)
+    expect(geometry.top).toBe(630)
+  })
+  it('waits for a scrollbar or middle-button drag to finish before following the end', () => {
+    vi.stubGlobal('PointerEvent', MouseEvent)
+    const view = render(<Fixture />)
+    fireEvent.pointerDown(screen.getByRole('log'), { button:1 })
+    scroll(300)
+    view.rerender(<Fixture total={41} count={41} />)
+    scroll(600)
+    expect(screen.getByLabelText('未读')).toHaveTextContent('1')
+    fireEvent.pointerUp(window, { button:1 })
+    expect(screen.getByLabelText('未读')).toHaveTextContent('0')
+    geometry.height += 30
+    view.rerender(<Fixture total={42} count={42} />)
+    expect(geometry.top).toBe(630)
   })
 
   it('does not move a reader during a viewport resize, and cleans queued work on unmount', () => {

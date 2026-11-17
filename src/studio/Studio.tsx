@@ -29,6 +29,7 @@ import { PipButton } from './PipButton'
 import type { RecordsTab } from './records/DanmakuRecords'
 import { ScheduleSheet } from './schedule/ScheduleSheet'
 import { prefetchSchedule } from './schedule/store'
+import { ErrorText } from '../ui/ErrorDetails'
 import { setNoticeSink, syncLiveNotices } from './douyu/followingNotices'
 import { SettingsSheet, type SettingsSection, type SettingsTarget } from './SettingsSheet'
 import { SourceChip } from './SourceChip'
@@ -99,7 +100,7 @@ function StudioView(): React.ReactNode {
   const chrome = useOverlayVisibility(3200, !snapshot.playing || busyChrome)
   // The drawer is the room's chat; with no room there is nothing to hold it open for.
   const hasRoom = snapshot.danmaku.connected || snapshot.danmaku.room !== null
-  const hasSidebar = hasRoom || (snapshot.settings.recognitionMode === 'basic'
+  const hasSidebar = hasRoom || (snapshot.settings.recognitionMode === 'basic' && snapshot.settings.basicRecognitionPanelVisible
     && SOURCE_ROLES.some(role => snapshot.media[role].status !== 'empty'))
   const chatOpen = snapshot.settings.sidebarVisible && hasSidebar
   const setChat = useCallback((open: boolean) => session.updateSettings({ sidebarVisible: open }), [session])
@@ -248,7 +249,7 @@ function StudioView(): React.ReactNode {
           </header>
 
           <Toasts />
-          {fullscreen.error && <p className="toast is-error floating-error" role="alert">{fullscreen.error}</p>}
+          {fullscreen.error && <p className="toast is-error floating-error" role="alert"><ErrorText error={fullscreen.errorDetail ?? fullscreen.error} message={fullscreen.error} /></p>}
 
           <footer className="dock" ref={dock} {...chromeHover}>
             <PlaybackRecoveryPrompt />

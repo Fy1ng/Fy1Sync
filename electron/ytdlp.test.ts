@@ -243,7 +243,7 @@ describe('optional yt-dlp PO token script integration', () => {
     await pending
   })
 
-  /** One fake child per launch; the adaptive run is the one carrying --plugin-dirs. */
+  /** Identify compatibility retries separately from the combined default extraction. */
   function forked() {
     const children: { child: ChildProcess; args: string[] }[] = []
     const launch = vi.fn((_file: string, args: string[]) => {
@@ -258,10 +258,12 @@ describe('optional yt-dlp PO token script integration', () => {
     const killTree = vi.fn(async (child: ChildProcess) => { child.emit('close', 1) })
     const runner = new YtDlpRunner({ electronPath: '/electron.exe', networkRuntimePath: '/application/runtime/network-runtime.cjs', cookies, spawn: launch,
       env: { PATH: 'kept' }, timeoutMs: 1000, killTree })
-    const run = (kind: 'hls' | 'adaptive' | 'hls-fallback') => children.find(({ args }) => kind === 'hls-fallback'
+    const run = (kind: 'hls' | 'adaptive' | 'hls-fallback' | 'plain') => children.find(({ args }) => kind === 'hls-fallback'
       ? args.includes('youtube:player_client=web_safari')
-      : !args.includes('youtube:player_client=web_safari') && args.includes('--plugin-dirs') === (kind === 'adaptive'))!
-    const finish = (kind: 'hls' | 'adaptive' | 'hls-fallback', code: number, body?: unknown) => {
+      : kind === 'adaptive' ? args.includes('youtube:player_client=web;formats=incomplete')
+        : kind === 'plain' ? !args.includes('--plugin-dirs')
+          : !args.includes('youtube:player_client=web_safari') && !args.includes('youtube:player_client=web;formats=incomplete'))!
+    const finish = (kind: 'hls' | 'adaptive' | 'hls-fallback' | 'plain', code: number, body?: unknown) => {
       const { child } = run(kind)
       if (body !== undefined) child.stdout!.emit('data', metadataOutput(body as Record<string, unknown>))
       child.emit('close', code)
@@ -272,32 +274,26 @@ describe('optional yt-dlp PO token script integration', () => {
   const webOnly = { ...adaptiveFixture, formats: adaptiveFixture.formats.filter((f) => f.protocol === 'https') }
   const videoOnly = { ...webOnly, formats: webOnly.formats.filter(format => format.vcodec !== 'none') }
 
-  it('runs the unchanged HLS extraction and a script-only adaptive one, and merges them', async () => {
+  it('returns HLS and the highest adaptive quality from one provider-enabled default extraction', async () => {
     vi.mocked(locateYouTubePotProvider).mockResolvedValue(provider)
     const h = forked()
     const inherited = process.env.ELECTRON_RUN_AS_NODE
     const pending = h.runner.resolve(url)
-    await vi.waitFor(() => expect(h.children).toHaveLength(2))
-    const adaptiveArgs = h.run('adaptive').args
+    await vi.waitFor(() => expect(h.children).toHaveLength(1))
+    const adaptiveArgs = h.run('hls').args
     expect(adaptiveArgs).toEqual(expect.arrayContaining(['--no-plugin-dirs', '--plugin-dirs', '/private/script-only',
       '--extractor-args', `youtubepot-bgutilscript:server_home=${provider.serverHome}`,
-      '--extractor-args', 'youtube:player_client=web;formats=incomplete']))
+      '--extractor-args', 'youtube:player_client=default;formats=incomplete']))
     expect(JSON.stringify(adaptiveArgs)).not.toMatch(/4416|http.js|server.js|listen|base_url/)
-    expect(h.run('hls').args).not.toContain('--extractor-args')
     expect(vi.mocked(h.launch).mock.calls.every(([, , options]) => (options as { shell: boolean; env: NodeJS.ProcessEnv }).shell === false
       && (options as { env: NodeJS.ProcessEnv }).env.ELECTRON_RUN_AS_NODE === '1')).toBe(true)
     expect(process.env.ELECTRON_RUN_AS_NODE).toBe(inherited)
-    // Simulate clients exposing disjoint HLS and adaptive format sets.
-    h.finish('adaptive', 0, webOnly)
-    h.finish('hls', 0, hlsOnly)
+    h.finish('hls', 0, adaptiveFixture)
     const merged = await pending as typeof adaptiveFixture
     const ids = merged.formats.map((f) => f.format_id)
     expect(ids).toEqual(expect.arrayContaining(['300', '301', '308', '140']))
-    // Only what the adaptive selector accepts is carried over: one codec per height (VP9 over
-    // AV1), nothing at or below the best HLS height, no spare audio.
-    expect(ids).not.toContain('400')
-    expect(ids).not.toContain('248')
-    expect(ids).not.toContain('139')
+    expect(youtubeAdaptiveFormats(merged, 1080).map(format => format.format_id)).toEqual(['313', '308'])
+    expect(h.children).toHaveLength(1)
     expect(h.cleanup).toHaveBeenCalledOnce()
     expect(pluginCleanup).toHaveBeenCalledOnce()
   })
@@ -306,11 +302,12 @@ describe('optional yt-dlp PO token script integration', () => {
     vi.mocked(locateYouTubePotProvider).mockResolvedValue(provider)
     const h = forked()
     const pending = h.runner.resolve(url)
+    await vi.waitFor(() => expect(h.children).toHaveLength(1))
+    h.finish('hls', 0, hlsOnly)
     await vi.waitFor(() => expect(h.children).toHaveLength(2))
     h.run('adaptive').child.stderr!.emit('data', Buffer.from('provider failure token=PRIVATE Cookie=PRIVATE'))
     if (failure === 'no-adaptive') h.finish('adaptive', 0, { is_live: true, formats: [] })
     else h.finish('adaptive', 1)
-    h.finish('hls', 0, hlsOnly)
     expect(await pending).toEqual(hlsOnly)
     expect(h.cookies.withTemporaryCookies).toHaveBeenCalledOnce()
     expect(pluginCleanup).toHaveBeenCalledOnce()
@@ -320,8 +317,9 @@ describe('optional yt-dlp PO token script integration', () => {
     vi.mocked(locateYouTubePotProvider).mockResolvedValue(provider)
     const h = forked()
     const pending = h.runner.resolve(url)
+    await vi.waitFor(() => expect(h.children).toHaveLength(1))
+    h.finish('hls', 0, videoOnly)
     await vi.waitFor(() => expect(h.children).toHaveLength(2))
-    h.finish('hls', 0, webOnly)
     h.finish('adaptive', 0, adaptiveFixture)
     const merged = await pending
     expect(youtubeFormats(merged).map(format => format.format_id)).toEqual(['301', '300'])
@@ -334,9 +332,12 @@ describe('optional yt-dlp PO token script integration', () => {
     if (available) vi.mocked(locateYouTubePotProvider).mockResolvedValue(provider)
     const h = forked()
     const pending = h.runner.resolve(url)
-    await vi.waitFor(() => expect(h.children).toHaveLength(available ? 2 : 1))
+    await vi.waitFor(() => expect(h.children).toHaveLength(1))
     h.finish('hls', 0, videoOnly)
-    if (available) h.finish('adaptive', 0, videoOnly)
+    if (available) {
+      await vi.waitFor(() => expect(h.children).toHaveLength(2))
+      h.finish('adaptive', 0, videoOnly)
+    }
     await vi.waitFor(() => expect(h.run('hls-fallback')).toBeDefined())
     const args = h.run('hls-fallback').args
     expect(args).toEqual(expect.arrayContaining(['--no-plugin-dirs', '--extractor-args', 'youtube:player_client=web_safari', '--cookies', '/private/copy.txt']))
@@ -391,33 +392,51 @@ describe('optional yt-dlp PO token script integration', () => {
     vi.mocked(locateYouTubePotProvider).mockResolvedValue(provider)
     const h = forked()
     const pending = h.runner.resolve(url)
+    await vi.waitFor(() => expect(h.children).toHaveLength(1))
+    h.finish('hls', 0, hlsOnly)
     await vi.waitFor(() => expect(h.children).toHaveLength(2))
     h.finish('adaptive', 0, { ...webOnly, ...metadata })
-    h.finish('hls', 0, hlsOnly)
     expect(await pending).toEqual(hlsOnly)
     expect(pluginCleanup).toHaveBeenCalledOnce()
   })
 
-  it('fails as before when the HLS extraction fails, whatever the provider returned', async () => {
+  it('preserves the access failure when both combined and plain HLS extraction fail', async () => {
     vi.mocked(locateYouTubePotProvider).mockResolvedValue(provider)
     const h = forked()
     const pending = h.runner.resolve(url)
     const rejected = expect(pending).rejects.toThrow('YouTube bot check')
-    await vi.waitFor(() => expect(h.children).toHaveLength(2))
-    h.finish('adaptive', 0, webOnly)
+    await vi.waitFor(() => expect(h.children).toHaveLength(1))
     h.run('hls').child.stderr!.emit('data', Buffer.from('Sign in to confirm you are not a bot'))
     h.finish('hls', 1)
+    await vi.waitFor(() => expect(h.children).toHaveLength(2))
+    h.run('plain').child.stderr!.emit('data', Buffer.from('Sign in to confirm you are not a bot'))
+    h.finish('plain', 1)
     await rejected
   })
 
-  it('cancels both extractions on disposal', async () => {
+  it('cancels an outstanding web compatibility retry on disposal', async () => {
     vi.mocked(locateYouTubePotProvider).mockResolvedValue(provider)
     const h = forked()
     const pending = h.runner.resolve(url)
     const rejected = expect(pending).rejects.toThrow('取消')
+    await vi.waitFor(() => expect(h.children).toHaveLength(1))
+    h.finish('hls', 0, hlsOnly)
     await vi.waitFor(() => expect(h.children).toHaveLength(2))
     await h.runner.dispose()
     await rejected
+    expect(h.children).toHaveLength(2)
+    expect(pluginCleanup).toHaveBeenCalledOnce()
+  })
+
+  it('retains plain HLS playback when the provider-enabled default client fails', async () => {
+    vi.mocked(locateYouTubePotProvider).mockResolvedValue(provider)
+    const h = forked()
+    const pending = h.runner.resolve(url)
+    await vi.waitFor(() => expect(h.children).toHaveLength(1))
+    h.finish('hls', 1)
+    await vi.waitFor(() => expect(h.children).toHaveLength(2))
+    h.finish('plain', 0, hlsOnly)
+    expect(await pending).toEqual(hlsOnly)
     expect(h.children).toHaveLength(2)
     expect(pluginCleanup).toHaveBeenCalledOnce()
   })

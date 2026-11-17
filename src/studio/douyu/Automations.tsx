@@ -7,6 +7,8 @@
  */
 
 import { useState } from 'react'
+import { ErrorDetailsButton, ErrorText } from '../../ui/ErrorDetails'
+import { errorDetails } from '../../core/errorDetails'
 import { apiClient, type ApiResult } from '../../app/apiClient'
 import type { AutomationSnapshot, AutomationView } from '../../../electron/automationManager'
 import type { DouyuAutomationKind, DouyuAutomationProgress, DouyuAutomationTarget } from '../../../server/douyu/automationTypes'
@@ -99,18 +101,20 @@ function AutomationRow({ task, data, act, locked }: { task: AutomationView; data
   const progress = task.progress
   const review = task.status === 'waiting-user' || progress?.evidence === 'receipt-received' || progress?.evidence === 'unconfirmed'
   const details = [targetText(task.target), ...optionText(task), repeatText(task.repeatMinutes), POLICY[task.policy]]
+  const failure = task as AutomationView & { errorDetail?: unknown; detail?: unknown; code?: unknown }
 
   return (
     <li className="task automation" data-status={task.status} role="group" aria-label={`${spec.label} (${account?.label ?? '账号不可用'})`}>
       <div className="task-main">
         <span className="task-kind">{spec.label}</span>
         <span className="task-status" data-status={task.status}>{STATUS[task.status]}</span>
+        {(task.status === 'failed' || task.status === 'waiting-user') && !task.reason && <ErrorDetailsButton error={failure.errorDetail ?? failure.detail ?? { status: task.status }} />}
         <span className="muted">{account?.label ?? '账号不可用'} · {details.join(' · ')}</span>
       </div>
 
       {progress && <Progress progress={progress} />}
 
-      {task.reason && <p className="task-result" data-status={task.status}>{task.reason}</p>}
+      {task.reason && <p className="task-result" data-status={task.status}>{task.status === 'failed' || task.status === 'waiting-user' ? <ErrorText error={failure.errorDetail ?? failure.detail ?? { code: failure.code, message: task.reason }} message={task.reason} /> : task.reason}</p>}
       {review && <p className="automation-review">结果需在官方页面人工核对，核对后再手动启动。</p>}
 
       {(task.lastRunAt !== null || task.nextRunAt !== null) && (
@@ -194,7 +198,7 @@ function NewAutomation({ data, act, locked, onDone }: { data: DouyuData; act: Ac
       if (draft.target === 'room') {
         const resolved = await apiClient.resolveDouyuRoom(draft.room.trim())
         if (!resolved.ok) return resolved
-        if (!resolved.value.ok) return { ok: false, code: resolved.value.failure.code, message: resolved.value.failure.message }
+        if (!resolved.value.ok) return { ok: false, code: resolved.value.failure.code, message: resolved.value.failure.message, detail: errorDetails(resolved.value.failure) }
         room = resolved.value.identity.room
       }
       const built = buildAutomationRequest({ ...draft, room })
@@ -309,7 +313,7 @@ function NewAutomation({ data, act, locked, onDone }: { data: DouyuData; act: Ac
         )}
       </div>
 
-      {tried && error && <p className="form-error" role="alert">{error}</p>}
+      {tried && error && <p className="form-error" role="alert"><ErrorText error={check} message={error} /></p>}
 
       <div className="row-end">
         <button type="button" className="btn-quiet" onClick={onDone}>取消</button>

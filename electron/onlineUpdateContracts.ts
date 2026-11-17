@@ -60,6 +60,7 @@ export interface OnlineUpdateItemState {
   message: string
 }
 export interface OnlineUpdateState {
+  errorDetail?: import('../src/core/errorDetails').ErrorDetails
   phase: 'unconfigured' | 'idle' | 'checking' | 'error'
   source: OnlineUpdateSourceId
   availableSources: OnlineUpdateSourceId[]

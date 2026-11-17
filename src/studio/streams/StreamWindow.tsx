@@ -1,3 +1,5 @@
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 /**
  * One extra live room as a floating window over the theater: dragged by its header, sized
  * from its corner, its own quality, volume, picture-in-picture and seek.
@@ -14,6 +16,7 @@ import type { PipState } from '../../../electron/pipManager'
 import type { StreamSessionView } from '../../../electron/streamSessions'
 import { Icon } from '../kit'
 import { NATIVE_REASON } from '../PipButton'
+import { pipFailure } from '../pip/pipState'
 import { PLATFORM_LABEL, roomFromInput } from '../sources'
 import { movedRect, resizedRect, type Bounds, type Rect } from './layout'
 import { descriptorFor, type MediaEntry, type MediaRegistry } from './mediaRegistry'
@@ -77,10 +80,11 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
   const [volume, setVolume] = useState(1)
   const [nativePip, setNativePip] = useState(false)
   const [playbackFailed, setPlaybackFailed] = useState(false)
+  const [playbackError, setPlaybackError, playbackDetail] = useErrorState()
   // A picture is up: a quality switch or restart keeps showing it rather than a blank panel.
   const [attached, setAttached] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [problem, setProblem] = useState<string | null>(null)
+  const [problem, setProblem, problemDetail] = useErrorState()
   const [notice, setNotice] = useState<string | null>(null)
 
   // Move the stable element into this window and follow what it does.
@@ -90,8 +94,11 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
     const video = entry.media.video
     entry.media.mount(mount.current)
     const syncVolume = (): void => { setMuted(video.muted); setVolume(video.volume) }
-    const onError = (): void => setPlaybackFailed(true)
-    const onPlaying = (): void => setPlaybackFailed(false)
+    const onError = (): void => {
+      setPlaybackFailed(true)
+      setPlaybackError(displayError(video.error ? { code: video.error.code, message: video.error.message } : { code: 'media-error' }, '播放失败, 请稍后重试'))
+    }
+    const onPlaying = (): void => { setPlaybackFailed(false); setPlaybackError(null) }
     const onEnter = (): void => setNativePip(true)
     const onLeave = (): void => setNativePip(false)
     syncVolume()
@@ -100,12 +107,17 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
     video.addEventListener('playing', onPlaying)
     video.addEventListener('enterpictureinpicture', onEnter)
     video.addEventListener('leavepictureinpicture', onLeave)
+    const off = entry.media.subscribeErrors(error => {
+      if (error) { setPlaybackError(displayError(error.detail ?? error, error.message)); if (error.fatal) setPlaybackFailed(true) }
+      else { setPlaybackError(null); setPlaybackFailed(false) }
+    })
     return () => {
       video.removeEventListener('volumechange', syncVolume)
       video.removeEventListener('error', onError)
       video.removeEventListener('playing', onPlaying)
       video.removeEventListener('enterpictureinpicture', onEnter)
       video.removeEventListener('leavepictureinpicture', onLeave)
+      off()
     }
   }, [id, registry])
 
@@ -123,24 +135,28 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
       let source = view.stream
       if (!source) {
         const result = await apiClient.feature('getStreamPlayback', { id })
-        if (!live || !result.ok || !result.value) return
+        if (!live) return
+        if (!result.ok || !result.value) { setPlaybackError(displayError(result, result.ok ? '播放来源尚未就绪' : undefined)); setPlaybackFailed(true); return }
         source = result.value
       }
       const key = `${entry.readyCount}|${source.kind}|${source.url}|${source.quality ?? ''}`
       if (entry.loadedKey === key) return
       entry.loadedKey = key
       setPlaybackFailed(false)
+      setPlaybackError(null)
       try {
         await entry.media.load(descriptorFor(view, source))
-      } catch {
-        if (live && entry.loadedKey === key) { entry.loadedKey = null; setPlaybackFailed(true) }
+      } catch (caught) {
+        if (live && entry.loadedKey === key) { entry.loadedKey = null; setPlaybackFailed(true); setPlaybackError(displayError(caught, '播放来源载入失败')) }
         return
       }
       if (entry.loadedKey !== key) return
       if (live) setAttached(true)
-      void entry.media.video.play().catch(() => {})
+      void entry.media.video.play().catch(caught => {
+        if (live && entry.loadedKey === key) { setPlaybackFailed(true); setPlaybackError(displayError(caught, '播放失败, 请稍后重试')) }
+      })
     }
-    void attach()
+    void attach().catch(caught => { if (live) { setPlaybackFailed(true); setPlaybackError(displayError(caught, '播放来源载入失败')) } })
     return () => { live = false }
     // The view object changes with every buffer report; only these fields mean a new source.
   }, [id, registry, view.phase, stream?.url, stream?.kind, stream?.quality])
@@ -163,7 +179,9 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
       const result = await operation()
       if (result.ok) done(result.value)
       else if (result.code === 'stream-not-found') onClosed(id)
-      else setProblem(result.message)
+      else setProblem(result)
+    } catch (caught) {
+      setProblem(displayError(caught, '同屏操作失败'))
     } finally {
       setBusy(false)
     }
@@ -188,8 +206,8 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
     // Called straight from the click so the gesture still counts.
     void entry.media.controls.toggleNativePip().then((result) => {
       setNativePip(result.active)
-      if (!result.ok && result.reason) setProblem(NATIVE_REASON[result.reason] ?? NATIVE_REASON.failed!)
-    })
+      if (!result.ok && result.reason) setProblem(displayError(result, NATIVE_REASON[result.reason] ?? NATIVE_REASON.failed!))
+    }).catch(caught => setProblem(displayError(caught, '系统画中画操作失败')))
   }
 
   const enhancedHere = pip !== null && pip.streamId === id && (pip.phase === 'opening' || pip.phase === 'ready')
@@ -198,7 +216,7 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
       () => enhancedHere ? apiClient.feature('closeEnhancedPip', undefined) : apiClient.feature('openEnhancedPip', { id }),
       (state) => {
         onPip(state)
-        if (state.phase === 'failed') setProblem(state.message ?? '增强画中画打开失败')
+        if (state.phase === 'failed') setProblem(displayError(pipFailure(state), state.message ?? '增强画中画打开失败'))
       },
     )
   }
@@ -207,7 +225,12 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
     const entry = media()
     if (!entry) return
     const pending = delta === null ? entry.media.controls.returnToLive() : entry.media.controls.seekBy(delta)
-    void pending.then((result) => flash(seekNotice(result, delta)))
+    setProblem(null)
+    void pending.then(result => {
+      const text = seekNotice(result, delta)
+      if (!result.ok && text) setProblem(displayError(result, text))
+      else flash(text)
+    }).catch(caught => setProblem(displayError(caught, '跳转失败')))
   }
 
   const setMute = (next: boolean): void => {
@@ -256,7 +279,8 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
   const title = streamTitle(view)
   const status = statusOf(view, playbackFailed)
   const qualities = stream?.qualities ?? []
-  const canRetry = view.phase === 'failed' || playbackFailed
+  const bufferFailed = view.buffer?.state === 'failed'
+  const canRetry = view.phase === 'failed' || playbackFailed || bufferFailed
 
   return (
     <section
@@ -288,11 +312,12 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
 
       <div className="xs-stage">
         <div className="xs-mount" ref={mount} />
-        {(view.phase === 'opening' && !attached) || view.phase === 'failed' || playbackFailed ? (
+        {(view.phase === 'opening' && !attached) || view.phase === 'failed' || playbackFailed || bufferFailed ? (
           <div className="xs-overlay">
             {view.phase === 'opening' && <span className="muted">正在载入</span>}
-            {view.phase === 'failed' && <span className="form-error">{view.error ?? '载入失败，请稍后重试'}</span>}
-            {view.phase === 'ready' && playbackFailed && <span className="form-error">播放失败，请稍后重试</span>}
+            {view.phase === 'failed' && <span className="form-error"><ErrorText error={view.errorDetail ?? { phase: view.phase, message: view.error }} message={view.error ?? '载入失败, 请稍后重试'} /></span>}
+            {view.phase === 'ready' && playbackFailed && <span className="form-error"><ErrorText error={playbackDetail ?? { message: playbackError }} message={playbackError || '播放失败, 请稍后重试'} /></span>}
+            {view.phase === 'ready' && !playbackFailed && bufferFailed && <span className="form-error"><ErrorText error={view.buffer?.failure?.detail ?? view.buffer?.failure ?? { state: 'failed' }} message={view.buffer?.failure?.message ?? '缓冲失败, 请稍后重试'} /></span>}
             {canRetry && (
               <button type="button" className="btn-glass small" onClick={restart} disabled={busy}>
                 <Icon name="refresh" /> 重试
@@ -301,6 +326,7 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
           </div>
         ) : null}
         {notice && <span className="xs-notice" role="status">{notice}</span>}
+        {playbackError && !playbackFailed && <span className="xs-notice" role="alert"><ErrorText error={playbackDetail ?? playbackError} message={playbackError} /></span>}
       </div>
 
       <footer className="xs-controls">
@@ -331,7 +357,7 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
           增强
         </button>
       </footer>
-      {problem && <p className="form-error xs-problem" role="alert">{problem}</p>}
+      {problem && <p className="form-error xs-problem" role="alert"><ErrorText error={problemDetail ?? problem} message={problem} /></p>}
 
       <span className="xs-resize" onPointerDown={begin('resize')} {...gestureHandlers} aria-hidden="true" />
     </section>

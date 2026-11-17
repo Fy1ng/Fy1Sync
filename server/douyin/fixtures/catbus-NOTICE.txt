@@ -1,0 +1,33 @@
+抖音 passport 纯 HTTP 签名和 dtrait 算法参考 cv-cat/catbus.
+Copyright (c) 2026 cv-cat. 上游采用 MIT License, 完整许可证见 catbus-LICENSE.txt.
+
+固定来源 commit: 48a27b9b62c41580cc61edfba767b1ff0a2cb8c3
+https://github.com/cv-cat/catbus/blob/48a27b9b62c41580cc61edfba767b1ff0a2cb8c3/src/platforms/douyin/web/sign.ts
+https://github.com/cv-cat/catbus/blob/48a27b9b62c41580cc61edfba767b1ff0a2cb8c3/src/platforms/douyin/web/crypto.ts
+https://github.com/cv-cat/catbus/blob/48a27b9b62c41580cc61edfba767b1ff0a2cb8c3/src/platforms/douyin/web/dtrait.ts
+https://github.com/cv-cat/catbus/blob/48a27b9b62c41580cc61edfba767b1ff0a2cb8c3/src/platforms/douyin/web/mssdk.ts
+https://github.com/cv-cat/catbus/blob/48a27b9b62c41580cc61edfba767b1ff0a2cb8c3/src/platforms/douyin/web/api.ts
+https://github.com/cv-cat/catbus/blob/48a27b9b62c41580cc61edfba767b1ff0a2cb8c3/static/douyin/mstoken_profile.json
+https://github.com/cv-cat/catbus/blob/48a27b9b62c41580cc61edfba767b1ff0a2cb8c3/static/douyin/mstoken_common_profile.json
+https://github.com/cv-cat/catbus/blob/48a27b9b62c41580cc61edfba767b1ff0a2cb8c3/static/douyin/dtrait_profile.json
+https://github.com/cv-cat/catbus/blob/48a27b9b62c41580cc61edfba767b1ff0a2cb8c3/tests/golden/douyin/pure.json
+
+本项目修改:
+- 抽取独立 TypeScript 函数, 显式传入 HTTP User-Agent, host 和完整编码后的 POST 正文.
+- 签名入口不保留进程计数器状态, 使用上游新会话的 call bucket 6.
+- 不执行网页 SDK, acrawler 包装器, 浏览器或远程签名服务.
+- verifyFp 的随机字符变体位按公开 SDK 原始算法使用大写 8/9/A/B.
+- passport XOR5 编码对齐公开 SDK 的 BMP 编码规则, 跳过代理码元.
+- dtrait RSA 使用 Node publicEncrypt 的 PKCS1_PADDING, AES 会话密钥保留在私有内存并在释放时清零.
+- 公开 profile 原样保留. 19 类渲染特征的历史哈希和 V8 数学常量来自上游公开采样, 不代表本机真实测量.
+- 每次按 HTTP User-Agent 重新计算对应的 dtrait 特征摘要, 每请求使用新的随机 IV 和 pathname.
+- 匿名设备报告使用独立的标准 RC4 编码, 并同步 HTTP User-Agent 和已有公开设备 profile. 不读取浏览器存储或账号字段.
+- 短信请求准备阶段通过官方 /web/common 刷新 msToken. 刷新失败不派发短信请求, 不伪造或回退到短令牌.
+- 登录主机的 nr.flags 字段依据独立浏览器样本修正为 0x21. 独立来源和许可见 dtk-NOTICE.txt 与 dtk-LICENSE.txt.
+
+公开 SDK 编码和签名规则核对来源:
+https://lf-webcast-platform.bytetos.com/obj/webcast-platform-cdn/webcast/douyin_live/chunks/9086.22d24438.js
+https://lf-webcast-platform.bytetos.com/obj/webcast-platform-cdn/webcast/douyin_live/chunks/4470.afd96251.js
+
+测试使用固定版本的纯算法参考向量和可丢弃本地随机密钥, 不使用真实账号 Cookie 或凭据.
+算法兼容性验证不代替服务器受理结果, 用户扫码结果或真实账号登录验收.

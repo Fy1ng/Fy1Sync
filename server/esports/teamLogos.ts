@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import { metadataUserAgent } from '../appIdentity'
 import { metadataConfig } from '../config'
 import { ProxyError, safeFetch, type Resolver } from '../safeFetch'
-import { DispatchTurns, LiquipediaRateLimit } from './liquipediaRateLimit'
+import { DispatchTurns, LiquipediaCoolingDown, LiquipediaRateLimit, retryAfterDelay } from './liquipediaRateLimit'
 
 export const LOGO_REFRESH_MS = 7 * 24 * 60 * 60_000
 export const LOGO_REFRESH_STEP_MS = 30_000
@@ -237,7 +237,7 @@ export class TeamLogoCache {
 
   private queue(path: string, low: boolean): void {
     const key = teamLogoKey(path)
-    if (this.lifetime.signal.aborted || this.flights.has(key) || this.failedRecently(key)) return
+    if (this.lifetime.signal.aborted || this.flights.has(key) || this.failedRecently(key) || this.rateLimit.cooldown()) return
     if (low) this.refreshFlight = true
     const work = this.download(path, key, low).catch(() => {}).finally(() => {
       this.flights.delete(key)
@@ -273,6 +273,7 @@ export class TeamLogoCache {
             const release = this.turns.hold('logo')
             try {
               for (;;) {
+                this.rateLimit.throwIfCooling()
                 if (outranked(this.rank(path))) throw new YieldPriority()
                 const wait = this.rateLimit.delay()
                 if (wait <= 0 && this.turns.mayGo('logo')) break
@@ -292,6 +293,7 @@ export class TeamLogoCache {
         return
       } catch (error) {
         if (this.lifetime.signal.aborted) return
+        if (error instanceof LiquipediaCoolingDown) return
         if (error instanceof YieldRefresh) { await pause(Math.max(25, this.rateLimit.delay()), this.lifetime.signal); continue }
         if (error instanceof YieldPriority) continue
         const transient = !(error instanceof InvalidLogo) && (!(error instanceof ProxyError) || error.reason === 'dns-failed' || error.reason === 'upstream-failed')
@@ -313,26 +315,41 @@ export class TeamLogoCache {
   private async fetchImage(path: string, low: boolean): Promise<{ bytes: Buffer; ext: Extension }> {
     const controller = new AbortController(), signal = AbortSignal.any([this.lifetime.signal, controller.signal])
     let timer: ReturnType<typeof setTimeout> | undefined
+    let startedAt = this.now()
+    let quotaError: LiquipediaCoolingDown | YieldRefresh | undefined
     try {
       const { response, finalUrl } = await safeFetch(`https://liquipedia.net${path}`, metadataConfig(), {
         signal,
         resolve: this.options.resolve,
         fetchImpl: async (input, init) => {
-          if (low) {
-            // Refreshes yield the only image slot while waiting for HTTP quota.
-            if (foreground.length || !this.turns.idle || !this.activePaths.has(path) || !this.rateLimit.reserve()) throw new YieldRefresh()
-          } else await this.turns.wait('logo', signal)
+          try {
+            this.rateLimit.throwIfCooling()
+            if (low) {
+              // Refreshes yield the only image slot while waiting for HTTP quota.
+              if (foreground.length || !this.turns.idle || !this.activePaths.has(path) || !this.rateLimit.reserve()) throw new YieldRefresh()
+            } else await this.turns.wait('logo', signal)
+          } catch (error) {
+            if (error instanceof LiquipediaCoolingDown || error instanceof YieldRefresh) quotaError = error
+            throw error
+          }
           signal.throwIfAborted()
           timer = setTimeout(() => controller.abort(new DOMException('Team logo request timed out', 'TimeoutError')), 15_000)
-          return abortable((this.options.request ?? fetch)(input, init), signal)
+          startedAt = this.now()
+          const response = await abortable((this.options.request ?? fetch)(input, init), signal)
+          if (response.status === 429) {
+            await this.rateLimit.rateLimited(response.headers.get('retry-after'), signal, response.headers.get('date'))
+          }
+          return response
         },
         headers: { 'User-Agent': metadataUserAgent(this.options.version), 'Accept-Encoding': 'gzip', Accept: 'image/png,image/jpeg,image/webp' },
-      })
-      if (response.status === 408 || response.status === 429 || response.status >= 500) {
+      }).catch(error => { throw quotaError ?? error })
+      if (response.status === 429) {
         await response.body?.cancel().catch(() => {})
-        const raw = response.headers.get('retry-after'), seconds = raw && /^\d+$/.test(raw) ? Number(raw) * 1_000 : 0
-        const date = raw ? Date.parse(raw) - this.now() : 0
-        throw new TemporaryLogo(Math.max(0, Number.isFinite(seconds) ? seconds : 0, Number.isFinite(date) ? date : 0))
+        throw new TemporaryLogo(Math.max(0, (this.rateLimit.cooldown()?.until ?? this.now()) - this.now()))
+      }
+      if (response.status === 408 || response.status >= 500) {
+        await response.body?.cancel().catch(() => {})
+        throw new TemporaryLogo(retryAfterDelay(response.headers.get('retry-after'), this.now(), response.headers.get('date')) ?? 0)
       }
       const type = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase()
       const size = response.headers.get('content-length')
@@ -357,6 +374,7 @@ export class TeamLogoCache {
       finally { reader.releaseLock() }
       const bytes = Buffer.concat(chunks), ext = logoFormat(bytes)
       if (!ext || FORMATS[ext] !== type) throw new InvalidLogo('Invalid team logo signature')
+      this.rateLimit.succeeded(startedAt)
       return { bytes, ext }
     } finally { clearTimeout(timer) }
   }

@@ -1,20 +1,22 @@
 /** Automatic regions survive a real process restart and remain separate from manual authority. */
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import path from 'node:path'
 import type { Page } from '@playwright/test'
 import type { SourceRole } from '../src/core/types'
 import { SETTINGS_KEY } from '../src/app/settings'
 import { expect, launchApplication, test } from './electron'
-import { openPlayer, revealOverlay, seekBoth, setPlaying, waitForBothReady } from './helpers'
+import { openPlayer, openSettings, revealOverlay, seekBoth, setCheckedByLabel, setPlaying, waitForBothReady } from './helpers'
 
-const officialFile = fileURLToPath(new URL('../public/test-sources/auto-official.mp4', import.meta.url))
-const commentaryFile = fileURLToPath(new URL('../public/test-sources/auto-commentary.mp4', import.meta.url))
+const fixtureDirectory = process.env.STREAM_SYNC_BASIC_FIXTURE_DIR || fileURLToPath(new URL('../public/test-sources/', import.meta.url))
+const officialFile = path.join(fixtureDirectory,'auto-official.mp4')
+const commentaryFile = path.join(fixtureDirectory,'auto-commentary.mp4')
 const roles = ['official', 'commentary'] as const
 type RegionMode = 'auto' | 'manual' | 'memory'
 interface MemoryRecord { key: string; roi: { x: number; y: number; w: number; h: number }; aspectRatio: number; updatedAt: number }
 interface Telemetry {
-  configurations: Array<{ kind: string; roiOrigin: RegionMode; hasRoi: boolean }>
-  results: Array<{ role: SourceRole; mode: RegionMode; status: string; candidateCount: number }>
+  configurations: Array<{ kind: string; roiOrigin: RegionMode; hasRoi: boolean; afterWindowBoundary?: boolean }>
+  results: Array<{ role: SourceRole; mode: RegionMode; status: string; candidateCount: number; afterWindowBoundary?: boolean }>
 }
 type ObservedWindow = Window & { basicMemoryTelemetry: Telemetry }
 
@@ -26,20 +28,32 @@ async function installTelemetry(page: Page): Promise<void> {
     window.Worker = new Proxy(NativeWorker, { construct(target, args) {
       const worker = Reflect.construct(target, args) as Worker
       if (String(args[0]).includes('recognition.worker')) {
+        let generation = -1, origin: RegionMode | null = null, cancelled = false, promotedAfterBoundary = false
         worker.addEventListener('message', event => {
-          const result = event.data as { type: string; role: SourceRole; basic?: { mode: RegionMode; status: string; candidates?: unknown[] } }
+          const result = event.data as { type: string; generation: number; role: SourceRole; basic?: { mode: RegionMode; status: string; candidates?: unknown[] } }
+          if (result.generation !== generation) return
           if (result.type === 'result' && result.basic) observed.basicMemoryTelemetry.results.push({
             role: result.role, mode: result.basic.mode, status: result.basic.status,
             candidateCount: result.basic.candidates?.length ?? 0,
+            afterWindowBoundary: promotedAfterBoundary,
           })
         })
         const post = worker.postMessage.bind(worker)
         worker.postMessage = ((message: unknown, transfer?: Transferable[]) => {
-          const request = message as { type?: string; profile?: { kind?: string; roiOrigin?: RegionMode; roi?: unknown } }
-          if (request.type === 'configure') observed.basicMemoryTelemetry.configurations.push({
-            kind: request.profile?.kind ?? '', hasRoi: !!request.profile?.roi,
-            roiOrigin: request.profile?.roiOrigin ?? (request.profile?.roi ? 'manual' : 'auto'),
-          })
+          const request = message as { type?: string; generation?: number; preserveBasic?: boolean; profile?: { kind?: string; roiOrigin?: RegionMode; roi?: unknown } }
+          if (typeof request.generation === 'number') generation = request.generation
+          if (request.type === 'cancel') cancelled = request.preserveBasic === true
+          if (request.type === 'configure') {
+            const next = request.profile?.roiOrigin ?? (request.profile?.roi ? 'manual' : 'auto')
+            // A later sampling or background window may use a newly remembered ROI.
+            // A promotion without a cancellation boundary remains in the primary assertions.
+            promotedAfterBoundary = next === 'memory' && (promotedAfterBoundary || origin === 'auto' && cancelled)
+            origin = next; cancelled = false
+            observed.basicMemoryTelemetry.configurations.push({
+              kind: request.profile?.kind ?? '', hasRoi: !!request.profile?.roi, roiOrigin: next,
+              afterWindowBoundary: promotedAfterBoundary,
+            })
+          }
           post(message, transfer ?? [])
         }) as Worker['postMessage']
       }
@@ -81,6 +95,11 @@ async function loadFiles(page: Page): Promise<Record<SourceRole, string>> {
   await waitForBothReady(page)
   await setPlaying(page, false)
   await seekBoth(page, 8, 8)
+  const settings = await openSettings(page, '对齐')
+  await setCheckedByLabel(settings.getByRole('switch', { name: /^显示基础识别面板/ }))
+  await settings.getByRole('button', { name: '关闭', exact: true }).click()
+  const heading = page.getByRole('button', { name: '基础识别', exact: true })
+  if (await heading.getAttribute('aria-expanded') === 'false') await heading.click()
   await page.waitForFunction(() => [...document.querySelectorAll<HTMLVideoElement>('video.media-element')]
     .every(video => !video.seeking && video.readyState >= 2))
   return page.evaluate(() => Object.fromEntries([...document.querySelectorAll<HTMLVideoElement>('video.media-element')]
@@ -101,7 +120,11 @@ function expectModes(value: Telemetry, expected: Record<SourceRole, RegionMode>)
   for (const role of roles) {
     const results = value.results.filter(result => result.role === role)
     expect(results.length, `Expected recognition outcomes for ${role}`).toBeGreaterThan(0)
-    expect(new Set(results.map(result => result.mode)), `Unexpected region origin for ${role}`).toEqual(new Set([expected[role]]))
+    const primary = expected[role] === 'auto' ? results.filter(result => !result.afterWindowBoundary) : results
+    expect(primary.length, `Expected primary-window outcomes for ${role}`).toBeGreaterThan(0)
+    expect(new Set(primary.map(result => result.mode)), `Unexpected region origin for ${role}`).toEqual(new Set([expected[role]]))
+    if (expected[role] === 'auto') expect(results.filter(result => result.afterWindowBoundary)
+      .every(result => result.mode === 'memory' && result.candidateCount === 0)).toBe(true)
     if (expected[role] === 'memory') expect(results.every(result => result.candidateCount === 0)).toBe(true)
   }
 }
@@ -119,7 +142,7 @@ test('自动范围跨真实重启及blob变化复用, 共享手动框优先, 显
     const first = await align(page, true)
     expectModes(first, { official: 'auto', commentary: 'auto' })
     // Learning a region must not reconfigure the worker halfway through this run.
-    expect(first.configurations.filter(configuration => configuration.kind === 'basic-clock')).toHaveLength(2)
+    expect(first.configurations.filter(configuration => configuration.kind === 'basic-clock' && !configuration.afterWindowBoundary)).toHaveLength(2)
     await expect.poll(async () => (await memory(page)).length).toBe(2)
     const saved = await memory(page)
     expect(new Set(saved.map(entry => entry.key)).size).toBe(2)

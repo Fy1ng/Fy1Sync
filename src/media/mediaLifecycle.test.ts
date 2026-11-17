@@ -10,7 +10,18 @@ function descriptor(url: string, kind: MediaDescriptor['kind'] = 'progressive'):
 
 function moduleFixture(supported = true) {
   const instances: FakeHls[] = []
+  class FakePlaylistLoader {
+    context: unknown = null
+    stats = {}
+    destroy = vi.fn()
+    abort = vi.fn()
+    load(context: { url: string; type: string }, _config: unknown, callbacks: { onSuccess: (...args: any[]) => void }) {
+      this.context = context
+      callbacks.onSuccess({ url: context.url, data: '#EXTM3U\n#EXT-X-TARGETDURATION:5\n#EXTINF:5,\nsegment.m4s\n' }, this.stats, context, {})
+    }
+  }
   class FakeHls {
+    static DefaultConfig = { loader: FakePlaylistLoader }
     static isSupported = () => supported
     static Events = { MANIFEST_PARSED: 'manifestParsed', LEVEL_LOADED: 'levelLoaded', LEVEL_SWITCHED: 'levelSwitched', ERROR: 'error' }
     static ErrorTypes = { NETWORK_ERROR: 'networkError', MEDIA_ERROR: 'mediaError' }
@@ -23,7 +34,7 @@ function moduleFixture(supported = true) {
     startLoad = vi.fn()
     recoverMediaError = vi.fn()
     destroy = vi.fn(() => { this.media?.removeAttribute('src'); this.media = null })
-    constructor() { instances.push(this) }
+    constructor(readonly config: { pLoader?: typeof FakePlaylistLoader } = {}) { instances.push(this) }
     on(event: string, handler: (...args: any[]) => void) { this.handlers.set(event, handler) }
     loadSource() {}
     attachMedia(video: HTMLVideoElement) { this.media = video; video.src = 'blob:fixture-hls' }
@@ -41,6 +52,40 @@ afterEach(() => {
 })
 
 describe('media attachment ownership', () => {
+  it.each([true, false])('uses the normal media reload path without rewriting external manifests: local=%s', async local => {
+    const fixture = moduleFixture()
+    hlsLoader.load = async () => fixture.module
+    const player = engine()
+    await player.load('official', { ...descriptor(local ? 'app://app/buffer/fixture/index.m3u8' : 'https://example.test/live.m3u8', 'hls'), platform: 'youtube' })
+    const hls = fixture.instances[0]!
+    hls.levels = [{ height: 1440, width: 2560, bitrate: 5_000_000 }]
+    hls.handlers.get('manifestParsed')?.('manifestParsed', {})
+    const Loader = hls.config.pLoader ?? fixture.module.default.DefaultConfig.loader
+    const loader = new Loader({} as never)
+    const onSuccess = vi.fn()
+    const url = local ? 'app://app/buffer/fixture/index.m3u8' : 'https://example.test/live.m3u8'
+    loader.load({ url, type: 'manifest' } as never, {} as never, { onSuccess } as never)
+    const initial = onSuccess.mock.calls[0]![0].data as string
+    expect(initial.includes('#EXT-X-STREAM-INF:')).toBe(local)
+    if (local) expect(initial).toContain(url)
+    loader.load({ url, type: 'level' } as never, {} as never, { onSuccess } as never)
+    expect(onSuccess.mock.calls[1]![0].data).toContain('#EXTINF:5,')
+    await Promise.resolve()
+    expect(hls.currentLevel).toBe(-1)
+  })
+
+  it('still selects the highest rendition when an upstream manifest has multiple levels', async () => {
+    const fixture = moduleFixture()
+    hlsLoader.load = async () => fixture.module
+    const player = engine()
+    await player.load('official', { ...descriptor('https://example.test/master.m3u8', 'hls'), platform: 'youtube' })
+    const hls = fixture.instances[0]!
+    hls.levels = [{ height: 720, width: 1280, bitrate: 1_000_000 }, { height: 1440, width: 2560, bitrate: 5_000_000 }]
+    hls.handlers.get('manifestParsed')?.('manifestParsed', {})
+    await Promise.resolve()
+    expect(hls.currentLevel).toBe(1)
+  })
+
   it.each(['hlsjs', 'native', 'rejected'] as const)('does not let a delayed %s loader replace or clear the newer file', async mode => {
     let resolve!: (module: Awaited<ReturnType<typeof hlsLoader.load>>) => void
     let reject!: (error: Error) => void
@@ -118,10 +163,11 @@ describe('native media failures', () => {
     const player = engine()
     await player.load('official', descriptor('/broken.mp4'))
     const video = player.element('official')
-    Object.defineProperty(video, 'error', { configurable: true, value: { code, message: 'private-file-path' } })
+    Object.defineProperty(video, 'error', { configurable: true, value: { code, message: 'Failed file C:\\Users\\PRIVATE_NAME\\video.mp4?token=PRIVATE_TOKEN' } })
     video.dispatchEvent(new Event('error'))
     expect(player.getState().official).toMatchObject({ status: 'error', error: { fatal: true, message: expect.stringContaining(message) } })
-    expect(JSON.stringify(player.getState().official.error)).not.toContain('private-file-path')
+    expect(player.getState().official.error?.detail).toMatchObject({ code, message: expect.stringContaining('Failed file') })
+    expect(JSON.stringify(player.getState().official.error)).not.toMatch(/PRIVATE_NAME|PRIVATE_TOKEN/)
   })
 
   it('ignores queued errors from the previous resource and intentional cancellation', async () => {

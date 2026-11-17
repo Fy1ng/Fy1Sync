@@ -57,7 +57,7 @@ export interface BackendRuntimeOptions {
   renewal?: DouyuRenewalService
   resolveRoom: ResolveDouyuRoom
   activityPreferences: ActivityPreferencesStore
-  maxExtraStreams?: number
+  maxExtraStreams?: number | (() => number)
   updateSource?: AppUpdateSource | null
   createPipWindow: () => PipWindowPort
   chooseCaptureDestination: (kind: 'png' | 'gif') => Promise<string | null>
@@ -203,6 +203,12 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     saveRoom: args => savedRooms.save(args),
     removeSavedRoom: args => savedRooms.remove(args),
     getCs2Schedule: args => esports.getCs2Schedule(args),
+    openLiquipediaVerification: async args => {
+      noArgs(args)
+      // Blocked visitors see Liquipedia's own verification form on this public page.
+      await options.openExternal('https://liquipedia.net/counterstrike/Liquipedia:Matches')
+      return { opened: true }
+    },
     getStreamTitles: args => esports.getStreamTitles(args),
     setCs2ScheduleFocus: args => esports.setScheduleFocus(args),
     openAppReleasePage: async args => {

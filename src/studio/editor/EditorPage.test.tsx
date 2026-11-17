@@ -1,6 +1,6 @@
 /** The editor is local; main still validates every published profile. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { StreamSyncerBridge } from '../../../electron/contracts'
 import { Session } from '../../app/session'
 import { SessionProvider } from '../../app/SessionContext'
@@ -59,7 +59,12 @@ describe('publish conflicts', () => {
     render(<SessionProvider session={session}><EditorPage /></SessionProvider>)
 
     fireEvent.click(screen.getByRole('button', { name: '发布到本机' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('已在别处被修改')
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('已在别处被修改')
+    fireEvent.click(within(alert).getByRole('button', { name: '查看原始错误' }))
+    expect(within(alert).getByRole('region', { name: '原始错误信息' })).toHaveTextContent('etag-theirs')
+    expect(within(alert).getByRole('region', { name: '原始错误信息' })).toHaveTextContent('conflict')
+    expect(alert.querySelector('button button')).toBeNull()
     expect(screen.getByRole('button', { name: '载入对方版本（放弃本次修改）' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '用我的版本覆盖' }))

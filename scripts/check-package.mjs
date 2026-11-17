@@ -53,6 +53,13 @@ if (!extractFile(path.join(resources, 'app.asar'), 'electron/icon.png').equals(a
 const networkEntry = statFile(path.join(resources, 'app.asar'), 'electron/network-runtime.cjs')
 const networkRuntime = await lstat(path.join(resources, 'app.asar.unpacked', 'electron', 'network-runtime.cjs'))
 if (!networkEntry.unpacked || !networkRuntime.isFile() || networkRuntime.isSymbolicLink() || !networkRuntime.size || networkRuntime.size !== networkEntry.size) throw new Error('The physical network runtime is missing or differs from its ASAR entry')
+const browserHelper = path.join(resources, 'native', 'browser-credentials.exe')
+const browserHelperManifest = JSON.parse(await readFile(path.join(resources, 'native', 'browser-credentials.json'), 'utf8'))
+if (browserHelperManifest.protocolVersion !== 1 || browserHelperManifest.file !== 'browser-credentials.exe'
+  || (await stat(browserHelper)).size !== browserHelperManifest.size || await hash(browserHelper) !== browserHelperManifest.sha256
+  || !extractFile(path.join(resources, 'app.asar'), 'electron/main.cjs').includes(Buffer.from(browserHelperManifest.sha256))) {
+  throw new Error('The native browser credential helper differs from the trusted main-process build')
+}
 const actual = await walk(path.join(resources, 'tools'))
 const inventory = JSON.parse(await readFile(path.join(resources, 'tools', 'inventory.json'), 'utf8'))
 const expected = new Set(inventory.map(e => e.file)); expected.add('inventory.json')

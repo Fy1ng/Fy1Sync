@@ -1,3 +1,5 @@
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
+import { displayError } from '../../core/errorDetails'
 /**
  * Other live rooms on the same screen (handoff items 01, 05, 06, 09).
  *
@@ -36,6 +38,8 @@ export function ExtraStreams({ adding, onAddingChange }: {
   const [registry] = useState(() => new MediaRegistry())
   const [snapshot, setSnapshot] = useState<StreamSessionsSnapshot | null>(null)
   const [pip, setPip] = useState<PipState | null>(null)
+  const [streamError, setStreamError, streamDetail] = useErrorState()
+  const [pipError, setPipError, pipDetail] = useErrorState()
   const [layout, setLayout] = useState<Layout>(readLayout)
   const [order, setOrder] = useState<string[]>([])
   const [selected, setSelected] = useState<string | null>(null)
@@ -56,15 +60,21 @@ export function ExtraStreams({ adding, onAddingChange }: {
     let pushedPip = false
     const off = apiClient.subscribeFeatures((event) => {
       if (!live) return
-      if (event.topic === 'streams' && isSnapshot(event.data)) { pushedStreams = true; setSnapshot(event.data) }
-      else if (event.topic === 'pip' && isPipState(event.data)) { pushedPip = true; setPip(event.data) }
+      if (event.topic === 'streams' && isSnapshot(event.data)) { pushedStreams = true; setSnapshot(event.data); setStreamError(null) }
+      else if (event.topic === 'pip' && isPipState(event.data)) { pushedPip = true; setPip(event.data); setPipError(null) }
     })
     void apiClient.feature('getStreamSessions', undefined).then((result) => {
-      if (live && !pushedStreams && result.ok && isSnapshot(result.value)) setSnapshot(result.value)
-    })
+      if (!live || pushedStreams) return
+      if (!result.ok) setStreamError(result)
+      else if (isSnapshot(result.value)) setSnapshot(result.value)
+      else setStreamError(displayError({ code: 'invalid-stream-snapshot' }, '无法读取同屏播放状态'))
+    }).catch(caught => { if (live && !pushedStreams) setStreamError(caught) })
     void apiClient.feature('getEnhancedPip', undefined).then((result) => {
-      if (live && !pushedPip && result.ok && isPipState(result.value)) setPip(result.value)
-    })
+      if (!live || pushedPip) return
+      if (!result.ok) setPipError(result)
+      else if (isPipState(result.value)) setPip(result.value)
+      else setPipError(displayError({ code: 'invalid-pip-state' }, '无法读取画中画状态'))
+    }).catch(caught => { if (live && !pushedPip) setPipError(caught) })
     return () => { live = false; off() }
   }, [])
 
@@ -132,10 +142,12 @@ export function ExtraStreams({ adding, onAddingChange }: {
     setSnapshot((value) => value && { ...value, sessions: value.sessions.filter((item) => item.id !== id) })
   }, [registry])
 
-  const full = snapshot !== null && sessions.length >= snapshot.maxExtraStreams
+  const full = snapshot !== null && snapshot.maxExtraStreams > 0 && sessions.length >= snapshot.maxExtraStreams
 
   return (
     <div className="extra-streams" ref={stage}>
+      {streamError && <p className="xs-state-error" role="alert"><ErrorText error={streamDetail ?? streamError} message={streamError} /></p>}
+      {pipError && <p className="xs-state-error" role="alert"><ErrorText error={pipDetail ?? pipError} message={pipError} /></p>}
       {sessions.map((view, index) => {
         const rect = clampRect(layout[view.id] ?? defaultRect(index, bounds), bounds)
         const stacked = order.indexOf(view.id)
@@ -185,7 +197,7 @@ function AddStreamForm({ full, onOpened }: {
   const [text, setText] = useState('')
   const [roomPlatform, setRoomPlatform] = useState<RoomPlatform>('douyu')
   const [busy, setBusy] = useState(false)
-  const [problem, setProblem] = useState<string | null>(null)
+  const [problem, setProblem, problemDetail] = useErrorState()
   const bareRoom = parseRoomInput(text)?.platform === null
 
   return (
@@ -197,8 +209,8 @@ function AddStreamForm({ full, onOpened }: {
       void apiClient.feature('openStreamSession', openInputFor(text, roomPlatform)).then((result) => {
         setBusy(false)
         if (result.ok) onOpened(result.value)
-        else setProblem(result.message)
-      })
+        else setProblem(result)
+      }).catch(caught => { setBusy(false); setProblem(displayError(caught, '同屏直播间打开失败')) })
     }}>
       <p className="xs-add-title">同屏观看</p>
       <div className="link-row">
@@ -213,7 +225,7 @@ function AddStreamForm({ full, onOpened }: {
           options={[{ value: 'douyu', label: PLATFORM_LABEL.douyu }, { value: 'bilibili', label: PLATFORM_LABEL.bilibili }, { value: 'huya', label: PLATFORM_LABEL.huya }, { value: 'douyin', label: PLATFORM_LABEL.douyin }]} />
       )}
       {full && <p className="muted">已达到同屏数量上限</p>}
-      {problem && <p className="form-error" role="alert">{problem}</p>}
+      {problem && <p className="form-error" role="alert"><ErrorText error={problemDetail ?? problem} message={problem} /></p>}
     </form>
   )
 }

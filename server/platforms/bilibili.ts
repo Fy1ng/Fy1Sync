@@ -99,6 +99,7 @@ export async function resolveBilibili(
       'upstream-error',
       '请求 B 站直播间信息失败',
       MANUAL_URL_HINT,
+      error,
     )
   }
 
@@ -107,7 +108,7 @@ export async function resolveBilibili(
   const payloadCode = payload.code ?? -1
   if (payloadCode !== 0) {
     // -101 is the explicit account-not-logged-in code; rendition caps are not identity errors.
-    if (payloadCode === -101) return failure('login-required', 'B站登录信息已失效或该直播间需要登录.', '请登录B站后重新加载片源.')
+    if (payloadCode === -101) return failure('login-required', 'B站登录信息已失效或该直播间需要登录.', '请登录B站后重新加载片源.', { code: payloadCode, message: payload.message })
     // Only the codes that really mean "no such room" are reported as such; everything else
     // (-400 bad request, -352 risk control, 网关 5xx mapped to a code) is our problem or
     // theirs, and telling the user the room does not exist would send them chasing nothing.
@@ -116,6 +117,7 @@ export async function resolveBilibili(
       code,
       payload.message?.trim() || `B 站未返回直播间 ${room} 的播放信息`,
       MANUAL_URL_HINT,
+      { code: payloadCode, message: payload.message },
     )
   }
   if (payload.data?.live_status !== 1) {

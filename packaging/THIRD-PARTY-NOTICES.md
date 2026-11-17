@@ -8,6 +8,8 @@ CS2 schedule metadata is by [Liquipedia contributors](https://liquipedia.net/cou
 
 Fy1Sync itself is Copyright (C) 2026 Fy1ng and is licensed under the GNU General Public License, version 3 or (at your option) any later version (`GPL-3.0-or-later`). The full text is `LICENSE` in the source repository and `licenses/Fy1Sync-LICENSE.txt` in the package. Third-party programs remain separate executables or provider resources, outside app.asar, with their own terms listed below.
 
+Windows 浏览器登录态导入助手为 Fy1Sync 自有 Rust 源码, 位于 `crates/browser-credentials`, 采用与应用一致的 GPL-3.0-or-later. 其独立 Cargo.lock 固定依赖版本, Windows 包在 `resources/native/licenses` 保存每个实际构建依赖的原始许可及 `index.json`. ABE 公开参数和版本 4 兼容性参考 [Bitwarden Chromium Importer PR #24784](https://github.com/bitwarden/clients/pull/24784), 未集成 rookie-cookies 的浏览器进程注入代码. YouTube 只读账号列表响应结构参考 [YouTube.js](https://github.com/LuanRT/YouTube.js), 未引入该库作为运行依赖.
+
 Huya's minimal TarsV3 protocol implementation and golden request/response fixtures reference [biliup/biliup commit 48a0d234794bb918e211076b357823438e8c109d](https://github.com/biliup/biliup/tree/48a0d234794bb918e211076b357823438e8c109d), MIT, Copyright (c) 2019 ForgQi. The full notice is retained in `server/platforms/fixtures/huya-biliup-LICENSE.txt`; preserve it with redistributed implementations or fixture copies. No Simple Live code is included.
 
 抖音弹幕的本地握手签名移植自 [jwwsjlm/douyinLive](https://github.com/jwwsjlm/douyinLive/blob/af34f7c2ea2c4df90c6f4659e967fb31815d9255/internal/webcastsign/native.go), commit `af34f7c2ea2c4df90c6f4659e967fb31815d9255`. 确定性签名测试向量来自同提交的 `internal/webcastsign/native_test.go`. 接收协议字段参考 [jwwsjlm/douyinlive-proto](https://github.com/jwwsjlm/douyinlive-proto/blob/main/protobuf/new_douyin.proto), 仅实现文字聊天, 控制和必要确认字段, 不包含生成的运行时. TypeScript 实现不执行下载的脚本或使用在线签名服务. 两个来源采用的 MIT 许可及各自版权行如下, 同时完整保存在 `server/danmaku/fixtures/douyin-LICENSE.txt`.
@@ -36,6 +38,12 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+抖音普通文字弹幕的本地 HTTP A-Bogus 签名算法移植自 [Johnserf-Seed/F2](https://github.com/Johnserf-Seed/f2/blob/f6be8c0ffba9a127075bbeafe4838716650b6325/f2/utils/crypto/bytedance/abogus.py), 作者 JohnserfSeed, Apache License 2.0. TypeScript 移植包含独立 SM3, 每次签名单独初始化状态, 仅对已经编码的查询串签名. 匿名令牌初始化载荷取自同提交的 `f2/conf/conf.yaml`, 不携带账号 Cookie 或弹幕内容. 原始许可证和修改说明保存在 `server/douyin/fixtures/f2-LICENSE.txt` 和 `f2-NOTICE.txt`, 随包分发到 `licenses/douyin-http/`.
+
+抖音纯 HTTP 登录的现代 A-Bogus, passport 编码, dtrait 和匿名设备报告算法参考 [cv-cat/catbus](https://github.com/cv-cat/catbus/tree/48a27b9b62c41580cc61edfba767b1ff0a2cb8c3), 固定提交 `48a27b9b62c41580cc61edfba767b1ff0a2cb8c3`, MIT License, Copyright (c) 2026 cv-cat. 本项目仅移植独立 TypeScript 算法与公开设备档案, 不包含其页面 SDK 运行器或自动短信流程. 修改说明和完整许可保存在 `server/douyin/fixtures/catbus-NOTICE.txt` 与 `catbus-LICENSE.txt`, 随包分发到 `licenses/douyin-http/`. 档案中的渲染特征来自上游历史公开采样, 不代表本机测量.
+
+抖音登录签名的环境标记及独立测试参考 [Evil0ctal/Douyin_TikTok_Download_API](https://github.com/evil0ctal/douyin_tiktok_download_api/tree/3c045e11aecd58ab076562f1246931b9dd5d909b), 固定提交 `3c045e11aecd58ab076562f1246931b9dd5d909b`, Apache License 2.0. 原始许可与修改说明为 `server/douyin/fixtures/dtk-LICENSE.txt` 和 `dtk-NOTICE.txt`, 随包分发到 `licenses/douyin-http/`. 公开浏览器样本和离线合成向量仅用于测试, 不包含账号凭据.
 
 ## Fixed runtime inputs
 

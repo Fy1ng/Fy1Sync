@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveConfig } from '../server/config'
 import type { NetworkContext } from '../server/networkPolicy'
 import { MediaGateway } from './mediaGateway'
+import { DEFAULT_MEDIA_NETWORK } from '../server/mediaNetworkOptions'
 
 const active: MediaGateway[] = []
 const upstreams: Server[] = []
@@ -63,6 +64,29 @@ function rawRequest(url: string, lines: string[]): Promise<number> {
 }
 
 describe('FFmpeg controlled media gateway', () => {
+  it('releases a replaced input without expiring the current input in the same playback session', async () => {
+    const controller = new AbortController()
+    const media = gateway(async () => new Response('video'))
+    const network = { ...context(), media: DEFAULT_MEDIA_NETWORK, signal: controller.signal }
+    const previous = await media.register('https://fixture.invalid/first.ts', undefined, network)
+    const current = await media.register('https://fixture.invalid/current.ts', undefined, network)
+    previous.release()
+    expect((await local(previous.url)).status).toBe(404)
+    expect((await local(current.url)).body).toBe('video')
+    controller.abort()
+    expect((await local(current.url)).status).toBe(404)
+  })
+  it('preserves playback permissions through the loopback gateway and nested private media resources', async () => {
+    const fetchImpl = vi.fn(async (input: Parameters<typeof fetch>[0]) => String(input).endsWith('segment.ts')
+      ? new Response('nested video') : new Response('#EXTM3U\n#EXTINF:4,\nhttp://other.internal:9210/segment.ts\n')) as typeof fetch
+    const media = gateway(fetchImpl, async () => ['127.0.0.1'])
+    const input = await media.register(target, undefined, { ...context(), media: DEFAULT_MEDIA_NETWORK })
+    const playlist = await local(input.url)
+    expect(playlist.status).toBe(200)
+    const segment = playlist.body.match(/http:\/\/127\.0\.0\.1:\d+\/media\/[0-9a-f-]{36}/)![0]
+    expect((await local(segment)).body).toBe('nested video')
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
   it('counts actual media bytes per input, includes child segments and excludes rewritten playlists', async () => {
     const upstream = vi.fn(async (input: Parameters<typeof fetch>[0]) => String(input).endsWith('segment.ts')
       ? new Response('0123456789', { headers: { 'content-type': 'video/mp2t' } })
@@ -194,7 +218,8 @@ describe('FFmpeg controlled media gateway', () => {
     const response = await local(input.url)
     expect(response.status).toBe(502)
     expect(input.readFailure()).toMatchObject({ stage: 'connect', code: 'tls-certificate' })
-    expect(JSON.stringify(input.readFailure()) + response.body).not.toMatch(/PRIVATE|signature|Cookie/)
+    expect(JSON.stringify(input.readFailure()) + response.body).not.toContain('PRIVATE')
+    expect(input.readFailure()?.detail).toBeDefined()
     const copy = input.readFailure()!
     copy.code = 'tampered'
     expect(input.readFailure()?.code).toBe('tls-certificate')
@@ -236,7 +261,7 @@ describe('FFmpeg controlled media gateway', () => {
     let fail: (() => void) | undefined
     const upstream = vi.fn(async () => new Response(new ReadableStream({ start(controller) {
       controller.enqueue(new Uint8Array([1]))
-      fail = () => controller.error(Object.assign(new Error('PRIVATE Cookie=PRIVATE'), { code: 'ECONNRESET' }))
+      fail = () => controller.error(Object.assign(new Error('stream diagnostic Cookie=PRIVATE'), { code: 'ECONNRESET' }))
     } }), { headers: { 'content-type': 'video/mp2t' } })) as typeof fetch
     const input = await gateway(upstream).register('https://fixture.invalid/segment.ts', undefined, context())
     const response = await fetch(input.url)

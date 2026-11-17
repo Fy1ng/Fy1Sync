@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react'
+import { ErrorDetailsButton, ErrorText } from '../../ui/ErrorDetails'
 import { HUD_CUE_IDS, HUD_FIELD_IDS } from '../../core/hudStylePack'
 import { CUE_LABELS } from './cueModel'
 import { FIELD_LABELS } from './editorModel'
@@ -104,7 +105,7 @@ export function BatchValidationPanel({ duration, mediaTime, sourceName, state, o
         {!rangeError && <span className="muted num">预计 {planned} 帧</span>}
       </div>
     </div>
-    {rangeError && <p className="note-warn" role="note">{rangeError}</p>}
+    {rangeError && <p className="note-warn" role="note"><ErrorText error={rangeError} message={rangeError} /></p>}
     <p className="muted">按间隔抽样, 不含结束时刻, 可能漏过短暂事件. 读取成功率和置信度不是准确率, 未发现疑点也需要抽查.</p>
     <p className="muted">已关闭字段不参与判定. 切镜头或倒计时被替换时, 缺少有效读数记为未判定, 不作为识别错误或正确样本.</p>
     {state.run && <div className="batch-validation-progress">
@@ -113,7 +114,7 @@ export function BatchValidationPanel({ duration, mediaTime, sourceName, state, o
       <progress aria-label="验收进度" max={Math.max(1, state.run.total)} value={Math.min(state.rows.length, state.run.total)} />
       <p role="status" aria-live="polite">{status}: {state.rows.length} / {state.run.total} 帧</p>
     </div>}
-    {state.error && <p className="form-error" role="alert">{state.error}</p>}
+    {state.error && <p className="form-error" role="alert"><ErrorText error={state.errorDetail ?? state.error} message={state.error} /></p>}
     {state.rows.length > 0 && <>
       <div className="batch-validation-summary" aria-label="验收统计">
         <p>已抽样 <b className="num">{summary.sampled}</b> 帧 / 疑点 <b className="num">{summary.issueFrames}</b> 帧 / 未判定 <b className="num">{summary.unavailableFrames}</b> 帧 / 状态记录 <b className="num">{summary.transitionFrames}</b> 帧</p>
@@ -143,7 +144,7 @@ export function BatchValidationPanel({ duration, mediaTime, sourceName, state, o
             <span>{CONTENT[row.content]} / {PHASE[row.phase]}<small>{row.layout ?? '没有匹配布局'}</small></span>
             <span>{row.notes.length ? row.notes.map(note => note.message).join(' / ')
               : validationUnavailable(row) ? '未取得完整有效观测, 未作正误判定' : '未发现规则疑点'}</span>
-          </button></li>)}
+          </button>{row.notes.some(note => note.kind === 'issue') && <ErrorDetailsButton error={row} />}</li>)}
         </ul>
         <nav className="batch-validation-pages" aria-label="验收结果分页">
           <button type="button" className="btn-quiet small" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>上一页</button>
@@ -161,14 +162,14 @@ export function BatchValidationPanel({ duration, mediaTime, sourceName, state, o
         const field = selected.fields[id]
         return <div key={id}><dt>{FIELD_LABELS[id]}</dt>
           <dd>{reading(field)}{field.confidence !== null ? ` / 置信度 ${field.confidence.toFixed(3)}` : ''}
-            {field.reason ? ` / ${field.reason}` : ''}</dd></div>
+            {field.reason ? ` / ${field.reason}` : ''}{field.status === 'failed' && <ErrorDetailsButton error={field} />}</dd></div>
       })}</dl>
       <dl className="batch-validation-readings">{[...HUD_CUE_IDS, 'organizer' as const].map(id => {
         const cue = selected.cues[id]
-        return cue ? <div key={id}><dt>{CUE_LABELS[id]}</dt><dd>{cueText(cue)}{cue.reason ? ` / ${cue.reason}` : ''}</dd></div> : null
+        return cue ? <div key={id}><dt>{CUE_LABELS[id]}</dt><dd>{cueText(cue)}{cue.reason ? ` / ${cue.reason}` : ''}{cue.status === 'failed' && <ErrorDetailsButton error={cue} />}</dd></div> : null
       })}</dl>
       {selected.notes.length > 0 && <ul className="batch-validation-notes" aria-label="当前帧检查记录">
-        {selected.notes.map((note, index) => <li key={index} data-kind={note.kind}><b>{note.kind === 'issue' ? '疑点' : '观测'} / {TARGET[note.target]}</b> {note.message}</li>)}
+        {selected.notes.map((note, index) => <li key={index} data-kind={note.kind}><b>{note.kind === 'issue' ? '疑点' : '观测'} / {TARGET[note.target]}</b> {note.kind === 'issue' ? <ErrorText error={note} message={note.message} /> : note.message}</li>)}
       </ul>}
       {state.previewBusy && <p className="muted" role="status">正在读取原始画面...</p>}
       {preview && <div className="batch-validation-pictures">{preview.images.map((image, index) => <figure key={`${image.target}-${index}`}

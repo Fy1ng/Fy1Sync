@@ -120,6 +120,18 @@ describe('optional YouTube PO token script locator', () => {
     expect(await locateYouTubePotProvider({ STREAM_SYNC_POT_PLUGIN_DIR: f.file, STREAM_SYNC_POT_SERVER_HOME: f.root })).toBeUndefined()
   })
 
+  it('uses prepared development resources without changing packaged resource precedence', async () => {
+    const f = await fixture()
+    const providerDir = path.join(f.root, 'prepared-provider')
+    const plugin = path.join(providerDir, 'plugin'), server = path.join(providerDir, 'server')
+    await mkdir(plugin, { recursive: true })
+    await mkdir(path.join(server, 'build'), { recursive: true })
+    await writeFile(path.join(server, 'build', 'generate_once.js'), '// fixture only')
+    expect(await locateYouTubePotProvider({}, { providerDir })).toEqual({ pluginDir: plugin, serverHome: server })
+    expect(await locateYouTubePotProvider({}, { providerDir, bundledDir: path.join(f.root, 'broken-package') })).toBeUndefined()
+    expect(await locateYouTubePotProvider({ STREAM_SYNC_POT_PLUGIN_DIR: plugin }, { providerDir })).toBeUndefined()
+  })
+
   it.each(['relative', 'bad\0path', '/unsafe;path', '/unsafe,path', '/unsafe\npath'])('rejects invalid provider argument path %s', async candidate => {
     expect(await locateYouTubePotProvider({ STREAM_SYNC_POT_PLUGIN_DIR: candidate, STREAM_SYNC_POT_SERVER_HOME: candidate })).toBeUndefined()
   })

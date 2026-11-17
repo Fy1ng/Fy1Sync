@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { HudSize, HudStylePack, HudVariant } from '../../core/hudStylePack'
+import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
 
 export function LayoutSection({ pack, variant, canCreate, frameSize, onSelect, onCreate, onGenerate, onRename, onDelete }: {
   pack: HudStylePack; variant: HudVariant; canCreate: boolean; onSelect: (id: string) => void; onCreate: () => void
@@ -7,7 +8,7 @@ export function LayoutSection({ pack, variant, canCreate, frameSize, onSelect, o
   onGenerate: (height: 1440 | 1080) => void; onRename: (id: string) => string | null; onDelete: () => void
 }): React.ReactNode {
   const [id, setId] = useState(variant.id)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, errorDetail] = useErrorState(null)
   const multiple = pack.variants.filter(item => item.nativeSize.width === variant.nativeSize.width
     && item.nativeSize.height === variant.nativeSize.height).length > 1
   return <section className="rail-group layout-section" aria-label="布局管理">
@@ -23,7 +24,7 @@ export function LayoutSection({ pack, variant, canCreate, frameSize, onSelect, o
       <input className="text-input num" aria-label="布局 ID" spellCheck={false} value={id} onChange={event => { setId(event.target.value); setError(null) }} />
       <button type="submit" className="btn-quiet small" disabled={id === variant.id}>改名</button>
     </form>
-    {error && <p className="form-error" role="alert">{error}</p>}
+    {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
     <div className="layout-actions">
       <button type="button" className="btn-quiet small" disabled={!canCreate} onClick={onCreate}>新建布局</button>
       <button type="button" className="btn-quiet small is-danger" disabled={pack.variants.length <= 1} onClick={onDelete}>删除布局</button>

@@ -6,9 +6,93 @@
  */
 
 import { APP_ORIGIN, expect, test } from './electron'
-import { connectDanmaku, fixturesReady, loadBothFixtures, openPlayer, seekBoth, setCheckedByLabel, setPlaying, stressDanmaku } from './helpers'
+import { connectDanmaku, fixturesReady, loadBothFixtures, openPlayer, openSettings, seekBoth, setCheckedByLabel, setPlaying, stressDanmaku } from './helpers'
 import { parseStt, serializeStt, toChatMessage, toGiftMessage } from '../server/danmaku/douyuProtocol'
 import { SETTINGS_KEY } from '../src/app/settings'
+
+test('上滑阅读后每帧保留阅读位置, 新弹幕不会短暂闪到底部', async ({ page, electronApp }) => {
+  await openPlayer(page)
+  await connectDanmaku(page)
+  await setPlaying(page, false)
+  const list = page.getByRole('log', { name: '弹幕列表' })
+  const append = async (batch: number, count: number) => {
+    await electronApp.evaluate((_electron, { batch, count }) => {
+      const main = globalThis as typeof globalThis & { __streamSyncerTest: { emitDanmaku(room: string, event: string, data: unknown): number } }
+      main.__streamSyncerTest.emitDanmaku('288016', 'state', { room: '288016', state: 'connected' })
+      for (let index = 0; index < count; index++) main.__streamSyncerTest.emitDanmaku('288016', 'danmaku', {
+        id: `reading-${batch}-${index}`, text: `阅读验证 ${batch}-${index} ` + '需要完整换行的长消息'.repeat(index % 4 * 5),
+        username: '观众' + index, color: 0, level: 0, receivedAt: Date.now(), room: '288016', system: false,
+      })
+    }, { batch, count })
+  }
+  // Exercise append-only and append-with-trim against the same real virtualizer.
+  await append(0, 1800)
+  // Wait for renderer delivery, not just a pinned (possibly still short) viewport.
+  await expect(list.locator('.msg-text').filter({ hasText:'阅读验证 0-1799 ' })).toBeVisible()
+  await page.evaluate(() => document.fonts.ready)
+  await expect.poll(() => list.evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop)).toBeLessThanOrEqual(1)
+  await list.evaluate(node => { node.scrollTop = node.scrollHeight / 2 })
+  await expect.poll(() => list.evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop)).toBeGreaterThan(1000)
+  // Sample every rendering frame and every scroll event, so a one-frame excursion cannot
+  // hide behind a final-position assertion after the reading anchor has been restored.
+  await list.evaluate(node => {
+    const first = [...node.querySelectorAll<HTMLElement>('.msg')].find(row => row.getBoundingClientRect().top >= node.getBoundingClientRect().top)
+    if (!first) throw new Error('Reading anchor is missing')
+    const index = first.dataset.index!
+    const text = first.querySelector('.msg-text')!.textContent
+    const top = first.getBoundingClientRect().top
+    const samples: { gap: number; anchorTop: number | null; source: string }[] = []
+    let frame = 0
+    const sample = (source: string) => {
+      const anchor = [...node.querySelectorAll<HTMLElement>('.msg')].find(row => row.querySelector('.msg-text')!.textContent === text)
+      samples.push({ gap: node.scrollHeight - node.clientHeight - node.scrollTop, anchorTop: anchor?.getBoundingClientRect().top ?? null, source })
+    }
+    const tick = () => { sample('frame'); frame = requestAnimationFrame(tick) }
+    const scroll = () => sample('scroll')
+    node.addEventListener('scroll', scroll)
+    frame = requestAnimationFrame(tick)
+    Object.assign(window, { chatReadingProbe: { index, top, samples, stop: () => { cancelAnimationFrame(frame); node.removeEventListener('scroll', scroll) } } })
+  })
+  for (let batch = 1; batch <= 8; batch++) {
+    await append(batch, 60)
+    await page.waitForTimeout(70)
+  }
+  await expect(page.locator('.drawer-jump')).toBeVisible()
+  const probe = await page.evaluate(() => {
+    const probe = (window as typeof window & { chatReadingProbe: { top: number; samples: { gap: number; anchorTop: number | null; source: string }[]; stop(): void } }).chatReadingProbe
+    probe.stop()
+    return { top: probe.top, samples: probe.samples }
+  })
+  expect(probe.samples.filter(sample => sample.source === 'frame').length).toBeGreaterThan(8)
+  expect(probe.samples.filter(sample => sample.gap <= 1)).toEqual([])
+  expect(probe.samples.filter(sample => sample.anchorTop === null || Math.abs(sample.anchorTop - probe.top) > 2)).toEqual([])
+  await page.locator('.drawer-jump').click()
+  await expect.poll(() => list.evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop)).toBeLessThanOrEqual(1)
+})
+
+test('基础识别面板默认隐藏, 设置启用后每次打开仍默认收起', async ({ page }) => {
+  await openPlayer(page)
+  await connectDanmaku(page)
+  await expect(page.getByRole('region', { name: '基础识别', exact: true })).toHaveCount(0)
+  const settings = await openSettings(page, '对齐')
+  const toggle = settings.getByRole('switch', { name: /^显示基础识别面板/ })
+  await expect(toggle).not.toBeChecked()
+  await setCheckedByLabel(toggle)
+  await settings.getByRole('button', { name: '关闭', exact: true }).click()
+  const heading = page.getByRole('button', { name: '基础识别', exact: true })
+  await expect(heading).toHaveAttribute('aria-expanded', 'false')
+  await heading.click()
+  await expect(heading).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.getByRole('button', { name: '框选倒计时', exact: true })).toBeVisible()
+  const reopened = await openSettings(page, '对齐')
+  await setCheckedByLabel(reopened.getByRole('switch', { name: /^显示基础识别面板/ }), false)
+  await expect(page.getByRole('region', { name: '基础识别', exact: true })).toHaveCount(0)
+  await setCheckedByLabel(reopened.getByRole('switch', { name: /^显示基础识别面板/ }))
+  await reopened.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(heading).toHaveAttribute('aria-expanded', 'false')
+  const persisted = await page.evaluate(key => JSON.parse(localStorage.getItem(key)!), SETTINGS_KEY)
+  expect(persisted).toMatchObject({ recognitionMode: 'basic', basicRecognitionPanelVisible: true })
+})
 
 test('底部跟随在长消息批量到达, 历史淘汰和重新换行后仍可靠', async ({ page, electronApp }) => {
   await openPlayer(page)
@@ -269,11 +353,31 @@ test.describe('弹幕列表', () => {
         await list.evaluate(node => { node.scrollTop = node.scrollHeight })
         await expect.poll(fromEnd).toBeLessThanOrEqual(1)
         await page.waitForTimeout(300)
+        await list.evaluate(node => {
+          const samples: number[] = []
+          let leftEnd = false, frame = 0
+          const sample = () => {
+            const gap = node.scrollHeight - node.scrollTop - node.clientHeight
+            if (gap > 1) leftEnd = true
+            if (leftEnd) samples.push(gap)
+          }
+          const tick = () => { sample(); frame = requestAnimationFrame(tick) }
+          node.addEventListener('scroll', sample)
+          frame = requestAnimationFrame(tick)
+          Object.assign(window, { smallWheelProbe: { samples, stop: () => { cancelAnimationFrame(frame); node.removeEventListener('scroll', sample) } } })
+        })
         // A small wheel step, smaller than one row: the reader has moved and must not be pulled back.
         await page.mouse.wheel(0, -20)
         await expect.poll(fromEnd).toBeGreaterThan(1)
         await page.waitForTimeout(600)
         expect(await fromEnd()).toBeGreaterThan(1)
+        const samples = await page.evaluate(() => {
+          const probe = (window as typeof window & { smallWheelProbe: { samples: number[]; stop(): void } }).smallWheelProbe
+          probe.stop()
+          return probe.samples
+        })
+        expect(samples.length).toBeGreaterThan(8)
+        expect(samples.filter(gap => gap <= 1)).toEqual([])
       }
     } finally {
       await stop()

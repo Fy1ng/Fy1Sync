@@ -1,5 +1,5 @@
 import type { MediaDescriptor } from '../core/types'
-import { attachMedia, type MediaAttachment } from './hlsController'
+import { attachMedia, type MediaAttachment, type MediaError } from './hlsController'
 import { PlaybackControls } from './playbackControls'
 
 /** One extra stream owns one stable element; layout and draggable mounts are UI work. */
@@ -11,6 +11,8 @@ export class IndependentMedia {
   private generation = 0
   private disposed = false
   private live: boolean | undefined
+  private failure: MediaError | null = null
+  private readonly errorListeners = new Set<(error: MediaError | null) => void>()
   constructor(readonly id: string) {
     this.video = document.createElement('video')
     this.video.dataset.streamId = id
@@ -24,6 +26,16 @@ export class IndependentMedia {
     if (this.disposed || !container) { this.video.remove(); return }
     if (this.video.parentElement !== container) container.appendChild(this.video)
   }
+  error(): MediaError | null { return this.failure }
+  subscribeErrors(listener: (error: MediaError | null) => void): () => void {
+    this.errorListeners.add(listener)
+    listener(this.failure)
+    return () => { this.errorListeners.delete(listener) }
+  }
+  private publishError(error: MediaError | null): void {
+    this.failure = error
+    for (const listener of this.errorListeners) listener(error)
+  }
   async load(descriptor: MediaDescriptor): Promise<void> {
     if (this.disposed) throw new Error('播放会话已关闭')
     const revision = ++this.generation
@@ -31,11 +43,14 @@ export class IndependentMedia {
     this.attachment?.destroy()
     this.attachment = null
     this.live = undefined
+    this.publishError(null)
     const controller = new AbortController()
     this.abort = controller
-    const attachment = await attachMedia(this.video, descriptor, { onLiveHint: value => {
-      if (revision === this.generation) this.live = value
-    } }, controller.signal)
+    const attachment = await attachMedia(this.video, descriptor, {
+      onLiveHint: value => { if (revision === this.generation) this.live = value },
+      onError: error => { if (revision === this.generation && !this.disposed) this.publishError(error) },
+      onRecovered: () => { if (revision === this.generation && !this.disposed) this.publishError(null) },
+    }, controller.signal)
     if (revision !== this.generation || this.disposed) attachment.destroy()
     else this.attachment = attachment
   }
@@ -46,6 +61,7 @@ export class IndependentMedia {
     this.abort?.abort()
     this.attachment?.destroy()
     this.controls.dispose()
+    this.errorListeners.clear()
     this.video.pause()
     this.video.removeAttribute('src')
     this.video.load()

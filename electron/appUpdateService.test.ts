@@ -24,6 +24,14 @@ describe('application version precedence', () => {
 })
 
 describe('read-only application updates', () => {
+  it('provides redacted raw HTTP fields for an update failure', async () => {
+    const f = setup(Response.json({ message: 'API request limit exceeded', token: 'UPDATE_SECRET' },
+      { status: 429, statusText: 'Too Many Requests', headers: { 'retry-after': '60' } }))
+    const state = await f.service.check()
+    expect(state).toMatchObject({ phase: 'error', errorDetail: { status: 429, statusText: 'Too Many Requests',
+      retryAfter: '60', upstream: { message: 'API request limit exceeded' } } })
+    expect(JSON.stringify(state)).not.toContain('UPDATE_SECRET')
+  })
   it('makes no startup request, reports a validated update and retains text-only notes', async () => {
     const f = setup()
     expect(f.service.state().phase).toBe('idle'); expect(f.request).not.toHaveBeenCalled()

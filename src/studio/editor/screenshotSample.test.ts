@@ -39,7 +39,7 @@ describe('screenshot samples', () => {
     try {
       const file = new File([new Uint8Array([0, 1, 2])], 'broken.png', { type: 'image/png' })
       const result = await decodeScreenshot(file, () => 0, async () => { throw new Error('bad image') })
-      expect(result).toEqual({ ok: false, message: '无法解码这张截图' })
+      expect(result).toMatchObject({ ok: false, message: '无法解码这张截图', detail: { name: 'Error', message: 'bad image' } })
       expect((await decodeScreenshot(new File([new Uint8Array([1])], 'x.gif', { type: 'image/gif' }))).ok).toBe(false)
     } finally {
       globalThis.fetch = fetchSpy

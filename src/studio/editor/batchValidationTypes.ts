@@ -1,5 +1,6 @@
 import type { HudCueId, HudFieldId } from '../../core/hudStylePack'
 import type { HudContent, HudFieldResult, HudPhase, HudPresenceResult } from '../../core/hudWasm'
+import type { ErrorDetails } from '../../core/errorDetails'
 
 export type ValidationTarget = HudFieldId | HudCueId | 'organizer' | 'layout' | 'state' | 'frame'
 export interface ValidationRange { from: number; to: number; step: number }
@@ -8,6 +9,7 @@ export interface ValidationNote {
   target: ValidationTarget
   code: string
   message: string
+  detail?: ErrorDetails
 }
 export interface ValidationField {
   status: HudFieldResult['status']
@@ -59,6 +61,7 @@ export interface ValidationState {
   run: ValidationRun | null
   rows: ValidationRow[]
   error: string | null
+  errorDetail?: ErrorDetails | null
   preview: ValidationPreview | null
   previewBusy: boolean
   selectedIndex: number | null

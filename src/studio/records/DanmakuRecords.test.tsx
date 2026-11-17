@@ -59,6 +59,21 @@ afterEach(() => {
 
 const historyCalls = () => calls.filter((call) => call.method === 'queryDanmakuHistory').map((call) => call.args)
 
+it('shows the raw fields for history failures and the local validation message', async () => {
+  vi.mocked(window.streamSyncer!.invoke).mockImplementation((async (method: string) => method === 'queryDanmakuHistory'
+    ? { ok: false, code: 'HISTORY_503', message: '记录查询失败', detail: { status: 503, requestId: 'history-read', authorization: 'private-auth' } }
+    : { ok: true, value: { items: [], total: 0, page: 1, pageSize: 50, hasMore: false } }) as StreamSyncerBridge['invoke'])
+  render(<DanmakuRecordsSheet initialTab="history" room="9999" onClose={() => {}} onFill={() => {}} />)
+  fireEvent.click(await screen.findByRole('button', { name: '查看原始错误' }))
+  const details = screen.getByRole('region', { name: '原始错误信息' })
+  expect(JSON.parse(details.querySelector('code')!.textContent!)).toMatchObject({ code: 'HISTORY_503', detail: { requestId: 'history-read', authorization: '[redacted]' } })
+  fireEvent.change(screen.getByLabelText('用户 ID'), { target: { value: 'abc' } })
+  fireEvent.click(screen.getByRole('button', { name: '搜索' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('用户 ID 须为数字')
+  const region = screen.getByRole('region', { name: '原始错误信息' })
+  expect(JSON.parse(region.querySelector('code')!.textContent!)).toEqual({ message: '用户 ID 须为数字' })
+})
+
 describe('history', () => {
   it('searches the connected room by default and pages by 50', async () => {
     render(<DanmakuRecordsSheet initialTab="history" room="9999" onClose={() => {}} onFill={() => {}} />)
