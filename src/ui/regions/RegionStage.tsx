@@ -3,7 +3,7 @@ import type { Rect } from '../../core/imageOps'
 import type { RoiRect } from '../../core/profileSchema'
 import { FIT_VIEW, fitScale, focusRoi, panView, pictureRect, zoomAt, type Size, type StageView } from './stageViewport'
 
-export function EditorStage({ mediaSize, roi, resetKey, enabled, hidden, children }: {
+export function RegionStage({ mediaSize, roi, resetKey, enabled, hidden, children }: {
   mediaSize: Size
   roi: RoiRect
   resetKey: string
@@ -72,7 +72,7 @@ export function EditorStage({ mediaSize, roi, resetKey, enabled, hidden, childre
   }
 
   return <>
-    <div className={`editor-stage${view.zoom > 1 ? ' is-zoomed' : ''}${panning ? ' is-panning' : ''}`}
+    <div className={`region-stage${view.zoom > 1 ? ' is-zoomed' : ''}${panning ? ' is-panning' : ''}`}
       ref={hostRef} hidden={hidden} tabIndex={-1} aria-label="编辑画面"
       onPointerDownCapture={beginPan}
       onPointerMove={event => {
@@ -83,10 +83,10 @@ export function EditorStage({ mediaSize, roi, resetKey, enabled, hidden, childre
       onDoubleClick={event => { if (!(event.target as Element).closest('.roi-window:not(.is-readonly)')) reset() }}>
       {children(rect)}
     </div>
-    <div className="editor-view-tools" hidden={hidden}>
+    <div className="region-view-tools" hidden={hidden}>
       <button type="button" className="btn-quiet small" disabled={!ready} onClick={reset} title="双击画面空白处也可复位">适应窗口</button>
       <button type="button" className="btn-quiet small" disabled={!ready} onClick={() => update(focusRoi(mediaSize, viewport, roi))}>放大到当前框</button>
-      <span className="editor-zoom-value num" aria-label="画面缩放">{!ready ? '--' : Math.abs(scale - 1) < 0.005 ? '1:1' : `${scale.toFixed(2)}x`}</span>
+      <span className="region-zoom-value num" aria-label="画面缩放">{!ready ? '--' : Math.abs(scale - 1) < 0.005 ? '1:1' : `${scale.toFixed(2)}x`}</span>
       <span className="muted">滚轮缩放 / 拖空白处或中键平移 / 双击空白处复位</span>
     </div>
   </>

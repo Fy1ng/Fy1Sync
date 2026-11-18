@@ -18,6 +18,7 @@ const ASSET_NAME = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(?:js|css|wasm|woff2|png|jpg|
 const DEVICE_NAME = /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i
 const object = value => !!value && typeof value === 'object' && !Array.isArray(value)
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
+const DATA_SIGNER_FINGERPRINT = '382f23c7d15a6bdb8a173d124028b86784b05f2c30ebbdf9547fc3af4183343a'
 
 /** Publisher and installed client use the same signature, path and compatibility validators. */
 export async function loadOnlineUpdateValidators(workDir) {
@@ -409,9 +410,10 @@ export async function prepareOnlineUpdateRelease(options) {
   try { privateKey = createPrivateKey(await limitedFile(privateKeyPath, 16_384)) } catch { throw new Error('无法读取有效的应用更新发布私钥.') }
   const publicKey = publicKeyFor(privateKey)
   const source = validators.parseOnlineUpdateSource(await jsonFile(sourcePath, 16_384))
+  if (source && digest(Buffer.from(source.publicKey, 'base64')) === DATA_SIGNER_FINGERPRINT) {
+    throw new Error('应用代码更新不能使用数据发布密钥.')
+  }
   if (!source || source.publicKey !== publicKey) throw new Error('发布私钥与来源配置的公钥不匹配.')
-  const stylePackSource = JSON.parse(await readFile(path.join(projectRoot, 'packaging/stylepack-source.json'), 'utf8'))
-  if (stylePackSource?.publicKey === publicKey) throw new Error('应用代码更新必须使用独立签名密钥, 不能复用样式包密钥.')
   const pkg = JSON.parse(await readFile(path.join(projectRoot, 'package.json'), 'utf8'))
   const baseline = JSON.parse(await readFile(path.join(projectRoot, 'packaging/frontend-build.json'), 'utf8'))
   positive(baseline.revision, '内置前端 revision ')

@@ -1,23 +1,15 @@
-import { manualPackFixture } from '../test/profileFixture'
-import type { HudStylePack } from '../core/hudStylePack'
+
 /** IPC subscription tests keep filtering, media-time scheduling and profiles real. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MediaEngine } from '../media/mediaEngine'
 import { primeMediaElement } from '../test/setup'
-import { packBitmap } from '../core/bitmapCodec'
-import {
-  CLOCK_CHARS,
-  createEmptyProfile,
-  TEMPLATE_PIXELS,
-  type RecognitionProfile,
-} from '../core/profileSchema'
 import type { MediaDescriptor } from '../core/types'
 import { CHAT_HISTORY_LIMIT, Session } from './session'
 import type { StreamSyncerBridge } from '../../electron/contracts'
 import type { DanmakuEvent } from './apiClient'
-import { SETTINGS_KEY, type SettingsStorage } from './settings'
+import { type SettingsStorage } from './settings'
 import { parseStt, toChatMessage } from '../../server/danmaku/douyuProtocol'
 
 /** The only fake boundary is the typed preload, including its cancellation handle. */
@@ -64,19 +56,6 @@ function descriptor(): MediaDescriptor {
     loop: false,
     viaProxy: false,
   }
-}
-
-/** A profile the schema accepts as recognition-ready: every clock char has a sample. */
-function readyProfile(id = 'cs2/iem'): HudStylePack {
-  const templates: RecognitionProfile['templates'] = {}
-  CLOCK_CHARS.forEach((char, index) => {
-    const mask = new Uint8Array(TEMPLATE_PIXELS)
-    for (let pixel = 0; pixel < mask.length; pixel += 1) {
-      mask[pixel] = (pixel + index) % 3 === 0 ? 255 : 0
-    }
-    templates[char] = [{ id: `${char}-0`, data: packBitmap(mask), createdAt: 1 }]
-  })
-  return manualPackFixture({ ...createEmptyProfile(id, 'IEM 主舞台'), templates }, { width: 1920, height: 1080 })
 }
 
 const sessions: Session[] = []
@@ -589,132 +568,5 @@ describe('Session danmaku and sync', () => {
     engine.element('commentary').currentTime = 160
     expect(session.drainDanmaku()).toHaveLength(0)
     expect(session.flush().danmaku.dropped).toBeGreaterThan(0)
-  })
-})
-
-describe('Session profile selection', () => {
-  /** A session that comes up with a profile id already in storage, as after a reload. */
-  function bootedSession(profileId: string): Session {
-    const storage = memoryStorage()
-    storage.setItem(SETTINGS_KEY, JSON.stringify({ profileId, recognitionMode: 'style-pack' }))
-    const session = new Session({
-      engine: new MediaEngine(),
-      storage,
-      createSampler: () => null,
-    })
-    sessions.push(session)
-    return session
-  }
-
-  /** Answer the typed preset methods while leaving the rest of the preload intact. */
-  function stubApi(handlers: { list?: unknown; presets?: Record<string, unknown> }): { calls: string[] } {
-    const calls: string[] = []
-    const bridge = preload()
-    bridge.invoke = vi.fn(async (method: string, args?: { id: string }) => {
-      calls.push(method === 'getPreset' ? `getPreset:${args?.id}` : method)
-      if (method === 'listPresets') return { ok: true, value: handlers.list ?? { presets: [] } }
-      const found = handlers.presets?.[args?.id ?? '']
-      if (!found) return { ok: false, code: 'not-found', message: 'Preset not found' }
-      return { ok: true, value: found }
-    }) as StreamSyncerBridge['invoke']
-    vi.stubGlobal('streamSyncer', bridge)
-    return { calls }
-  }
-
-  it('fetches the chosen preset and applies it to both roles', async () => {
-    const profile = readyProfile()
-    stubApi({ presets: { 'cs2/iem': { profile, etag: 'abc' } } })
-    const { session } = await makeSession({ load: false })
-
-    await expect(session.selectProfile('cs2/iem')).resolves.toBe(true)
-    // Both roles share one profile: it is the same on-screen clock.
-    expect(session.profileFor('official')?.id).toBe('cs2/iem')
-    expect(session.profileFor('commentary')?.id).toBe('cs2/iem')
-    // And the id is persisted, because 返回播放器 is a real navigation.
-    expect(session.settings.profileId).toBe('cs2/iem')
-  })
-
-  it('passes the preset id as IPC data without URL escaping', async () => {
-    const { calls } = stubApi({ presets: { 'cs2/iem': { profile: readyProfile(), etag: 'a' } } })
-    const { session } = await makeSession({ load: false })
-    await session.selectProfile('cs2/iem')
-    expect(calls).toContain('getPreset:cs2/iem')
-  })
-
-  it('reports a failed fetch and keeps the previous profile', async () => {
-    stubApi({ presets: { 'cs2/iem': { profile: readyProfile(), etag: 'a' } } })
-    const { session } = await makeSession({ load: false })
-    await session.selectProfile('cs2/iem')
-
-    await expect(session.selectProfile('missing/one')).resolves.toBe(false)
-    expect(session.profileFor('official')?.id).toBe('cs2/iem')
-    // A stored id pointing at nothing must not be written over the working one.
-    expect(session.settings.profileId).toBe('cs2/iem')
-    expect(session.flush().notices[0]?.kind).toBe('error')
-  })
-
-  it('refuses a profile the schema rejects', async () => {
-    // The server validates on write, but a preset file can be hand-edited after that.
-    stubApi({ presets: { 'bad/one': { profile: { schemaVersion: 2, id: 'bad/one' }, etag: 'a' } } })
-    const { session } = await makeSession({ load: false })
-    session.setRecognitionMode('style-pack')
-    await expect(session.selectProfile('bad/one')).resolves.toBe(false)
-    expect(session.profileFor('official')).toBeNull()
-    expect(session.flush().notices[0]?.text).toContain('格式无效')
-  })
-
-  it('clears the selection for an empty id', async () => {
-    stubApi({ presets: { 'cs2/iem': { profile: readyProfile(), etag: 'a' } } })
-    const { session } = await makeSession({ load: false })
-    await session.selectProfile('cs2/iem')
-    await session.selectProfile('')
-    expect(session.profileFor('official')).toBeNull()
-    expect(session.settings.profileId).toBe('')
-  })
-
-  it('lists presets for the player picker', async () => {
-    stubApi({
-      list: {
-        presets: [{ id: 'cs2/iem', name: 'IEM', updatedAt: 1, etag: 'a', templateChars: 11 }],
-      },
-    })
-    const { session } = await makeSession({ load: false })
-    await session.refreshPresets()
-    expect(session.flush().presets).toHaveLength(1)
-    expect(session.flush().presets[0]?.name).toBe('IEM')
-  })
-
-  it('restores the stored selection on boot', async () => {
-    const profile = readyProfile()
-    stubApi({
-      list: {
-        presets: [{ id: 'cs2/iem', name: 'IEM', updatedAt: 1, etag: 'a', templateChars: 11 }],
-      },
-      presets: { 'cs2/iem': { profile, etag: 'a' } },
-    })
-    const session = bootedSession('cs2/iem')
-    await session.boot()
-    expect(session.profileFor('commentary')?.id).toBe('cs2/iem')
-  })
-
-  it('forgets a stored selection the server no longer has', async () => {
-    stubApi({ list: { presets: [] } })
-    const session = bootedSession('deleted/one')
-
-    await session.boot()
-    // Cleared silently: warning about it on every boot would be noise, not information.
-    expect(session.settings.profileId).toBe('')
-    expect(session.flush().notices).toHaveLength(0)
-  })
-
-  it('leaves the selection alone when the server is unreachable', async () => {
-    const bridge = preload()
-    vi.mocked(bridge.invoke).mockRejectedValue(new Error('channel closed'))
-    vi.stubGlobal('streamSyncer', bridge)
-    const session = bootedSession('cs2/iem')
-
-    await session.boot()
-    // A dead server is not evidence the preset is gone.
-    expect(session.settings.profileId).toBe('cs2/iem')
   })
 })

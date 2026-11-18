@@ -17,7 +17,7 @@
  * the duplicated cost is a few kilobytes of template masks.
  */
 
-import { captureRoi, isBasicClock, isHudPack, type ActiveProfile } from '../core/activeProfile'
+import { captureRoi, isBasicClock, type ActiveProfile } from '../core/activeProfile'
 import type { RecognitionProfile } from '../core/profileSchema'
 import { ClockJumpDetector, parseCountdown } from '../core/clockJump'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
@@ -26,7 +26,6 @@ import { RecognitionClient, type WorkerLike } from './client'
 import { FrameGrabber, startFrameLoop } from './frameGrabber'
 import type { BasicClockDiagnostic, BasicClockProgress, BasicClockVisualFrame, ResultMessage } from './protocol'
 import { RhythmSampler } from './rhythm'
-import { HudReplaySession, hudSyncOutcome } from './hudResult'
 
 export type OutcomeSink = (role: SourceRole, outcome: RecognitionOutcome) => void
 export type { BasicClockProgress, BasicClockVisualFrame } from './protocol'
@@ -90,8 +89,6 @@ interface RoleChannel {
   width: number
   height: number
   stopObserving: (() => void) | null
-  replay: HudReplaySession
-  variantId: string | null | undefined
   rhythm: RhythmSampler
   jumps: ClockJumpDetector
   pendingMoment: PendingTickMoment | null
@@ -127,7 +124,6 @@ function sameProfile(a: ActiveProfile | null, b: ActiveProfile): boolean {
     && a.roi?.w === b.roi?.w && a.roi?.h === b.roi?.h
     && a.searchRoi?.x === b.searchRoi?.x && a.searchRoi?.y === b.searchRoi?.y
     && a.searchRoi?.w === b.searchRoi?.w && a.searchRoi?.h === b.searchRoi?.h
-  if (isHudPack(a) || isHudPack(b)) return isHudPack(a) && isHudPack(b) && a.id === b.id && a.revision === b.revision && JSON.stringify(a) === JSON.stringify(b)
   return a.id === b.id && a.name === b.name && a.updatedAt === b.updatedAt
     && a.clockFormat === b.clockFormat && a.sampleFps === b.sampleFps && a.matchThreshold === b.matchThreshold
     && a.roi.x === b.roi.x && a.roi.y === b.roi.y && a.roi.w === b.roi.w && a.roi.h === b.roi.h
@@ -333,7 +329,7 @@ export class RecognitionSampler {
     if (!video || !profile) return null
 
     const channel = this.channelFor(role)
-    const fps = Math.max(1, Math.min(60, (isHudPack(profile) ? 30 : profile.sampleFps)))
+    const fps = Math.max(1, Math.min(60, profile.sampleFps))
     let activeLoop = true
     let lastBasicCapture = -Infinity
     let stableFrame: { mediaTime: number; epoch: number } | null = null
@@ -481,8 +477,6 @@ export class RecognitionSampler {
       width: 0,
       height: 0,
       stopObserving: null,
-      replay: new HudReplaySession(),
-      variantId: undefined,
       rhythm: new RhythmSampler(),
       jumps: new ClockJumpDetector(role),
       pendingMoment: null,
@@ -539,16 +533,7 @@ export class RecognitionSampler {
       else this.invalidateSource(channel)
       return
     }
-    if (message.hud && channel.variantId !== message.hud.variantId) {
-      const anchor = channel.frameAnchor
-      this.resetTiming(channel)
-      channel.frameAnchor = anchor
-      channel.frameAnchors = anchor ? [anchor] : []
-      channel.variantId = message.hud.variantId
-    }
-    const hud = message.hud ? channel.replay.observe(message.hud) : undefined
-    const current = hud ? { ...message, hud, outcome: hudSyncOutcome(hud, message.outcome) } : message
-    const outcome = this.atTickMoment(channel, current)
+    const outcome = this.atTickMoment(channel, message)
     const result = channel.jumps.push(outcome)
     if (outcome.status === 'success') channel.basicSync.readings += 1
     if (result.event) channel.basicSync.jumps += 1
@@ -588,8 +573,6 @@ export class RecognitionSampler {
     channel.grabber.cancel()
     channel.client.cancel()
     channel.configuredFor = null
-    channel.replay.reset()
-    channel.variantId = undefined
     this.resetTiming(channel)
     this.resetBasicProgress(channel)
     channel.recent = []

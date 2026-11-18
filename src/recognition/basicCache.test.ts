@@ -19,7 +19,7 @@ function cacheEngine(profile: BasicClockProfile = { ...BASIC_CLOCK_PROFILE, sear
         basic: { status: 'locked', mode: 'auto', roi, text: '1:23' }, debug: null,
       })) }
   }
-  const engine = new WasmWorkerEngine({ configure: () => '{}', recognize: () => '',
+  const engine = new WasmWorkerEngine({
     createBasicClockRecognizer: () => { const recognizer = createRecognizer(); instances.push(recognizer); return recognizer } }, () => 0, templates)
   engine.handle({ type: 'configure', generation: 1, profile })
   engine.handle(frame)

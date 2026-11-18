@@ -1,11 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect } from 'vitest'
-import { dispatch, initSync, RecognitionEngine } from './pkg/stream_syncer_wasm.js'
+import { dispatch, initSync } from './pkg/stream_syncer_wasm.js'
 
 // Tests instantiate the actual generated module from bytes, without a browser/fetch shim.
 initSync({ module: readFileSync(join(process.cwd(), 'src/wasm/pkg/stream_syncer_wasm_bg.wasm')) })
-export { RecognitionEngine as WasmRecognitionEngine }
 
 export const parityCounts: Record<string, number> = {}
 const parityFailures: string[] = []

@@ -1,11 +1,10 @@
 /**
- * Capture the built Studio and editor in real Electron windows with disposable profiles.
+ * Capture the built Studio player in real Electron windows with disposable profiles.
  * Run npm run build first, then npm run shots -- --out <directory>.
  * Each state is reported separately; failed states produce a non-zero exit code.
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { tmpdir } from 'node:os'
 import { resolve, join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { _electron, expect } from '@playwright/test'
@@ -17,7 +16,7 @@ if (outIndex >= 0 && (!argv[outIndex + 1] || argv[outIndex + 1].startsWith('--')
   throw new Error('--out 需要指定截图目录')
 }
 const outDir = resolve(outIndex >= 0 ? argv[outIndex + 1] : process.env.STREAM_SYNC_SHOTS_DIR
-  || join(tmpdir(), 'stream-syncer-ui-shots-' + randomUUID()))
+  || join(root, '.runtime-cache', 'ui-shots', 'captures-' + randomUUID()))
 const runtimeRoot = resolve(root, '.runtime-cache', 'ui-shots')
 const runtime = join(runtimeRoot, 'runtime-' + randomUUID())
 const VIEWPORTS = [
@@ -329,24 +328,6 @@ async function captureViewport(viewport) {
   }
 }
 
-async function captureAdmin() {
-  const { application, page } = await launch({ name: 'admin', width: 1440, height: 900 })
-  try {
-    await step(page, 'admin-01-editor', async () => {
-      await page.goto('app://app/admin')
-      await page.locator('.editor').waitFor()
-    })
-    await step(page, 'admin-02-screenshot-sample', async () => {
-      const frame = join(root, 'public', 'test-sources', 'frame-0-20.png')
-      await page.locator('main input[accept^="image/"]').setInputFiles(frame)
-      await page.locator('img.editor-media').waitFor()
-    })
-  } finally {
-    await application.close()
-    active.delete(application)
-  }
-}
-
 async function main() {
   await mkdir(outDir, { recursive: true })
   await mkdir(runtime, { recursive: true })
@@ -355,8 +336,6 @@ async function main() {
       try { await captureViewport(viewport) }
       catch (error) { results.push({ name: viewport.name, status: 'failed', message: String(error).split('\n')[0] }) }
     }
-    try { await captureAdmin() }
-    catch (error) { results.push({ name: 'admin', status: 'failed', message: String(error).split('\n')[0] }) }
   } finally {
     const closed = await Promise.allSettled([...active].map(application => application.close()))
     if (closed.some(result => result.status === 'rejected')) {

@@ -110,8 +110,8 @@ describe('app origin and document boundary', async () => {
     for (const raw of ['https://app/', 'app://evil/', 'app://app.evil/', 'app://app:80/', 'app://user@app/', 'file:///index.html', 'invalid']) expect(isAppOrigin(raw)).toBe(false)
   })
   it('permits only app document routes to receive IPC', async () => {
-    for (const raw of ['app://app/', 'app://app/index.html', 'app://app/admin', 'app://app/admin/']) expect(isAppDocument(raw)).toBe(true)
-    for (const raw of ['app://app/media/id', 'app://app/assets/app.js', 'app://app/api/health', 'https://example.com/']) expect(isAppDocument(raw)).toBe(false)
+    for (const raw of ['app://app/', 'app://app/index.html', 'app://app/pip', 'app://app/pip/']) expect(isAppDocument(raw)).toBe(true)
+    for (const raw of ['app://app/admin', 'app://app/admin/', 'app://app/media/id', 'app://app/assets/app.js', 'app://app/api/health', 'https://example.com/']) expect(isAppDocument(raw)).toBe(false)
   })
   it('uses a CSP without remote scripts, frames, JS eval or wildcard sources', async () => {
     expect(CONTENT_SECURITY_POLICY).toContain("default-src 'none'")

@@ -174,7 +174,7 @@ export function AppUpdateSettings(): React.ReactNode {
           onClick={() => void perform('rollback', () => apiClient.feature('rollbackFrontendUpdate', undefined))}>回退前端</button>
       </div>}
       <p className="muted">仅手动下载, 校验签名后才可使用. 前端包需匹配应用和通信接口版本, 主进程或权限变化仍需完整应用更新.</p>
-      <p className="muted">赛事样式包, 赛程与队标, 取流工具沿用各自的更新入口.</p>
+      <p className="muted">赛程与队标, 取流工具沿用各自的更新入口.</p>
       {notice && <p className="muted" role="status">{notice}</p>}
       {error && <div className="about-update-error">
         <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>

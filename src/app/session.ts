@@ -26,7 +26,6 @@ import {
 import { MediaEngine, type EngineState } from '../media/mediaEngine'
 import { RecognitionSampler } from '../recognition/sampler'
 import { createRecognitionWorker } from '../recognition/createWorker'
-import { parseHudStylePack } from '../core/hudStylePack'
 import { BASIC_CLOCK_PROFILE, type ActiveProfile, type BasicClockProfile } from '../core/activeProfile'
 import type { RoiRect } from '../core/profileSchema'
 import type { BasicClockProgress } from '../recognition/protocol'
@@ -34,7 +33,7 @@ import { basicClockSourceKey, findBasicClockMemory, forgetBasicClockMemory, reme
 import { getBasicClockSearchRoi } from '../core/basicClockSearch'
 import { AutoSyncController, type AutoSyncPhase, type AutoSyncRunResult } from '../sync/autoSync'
 import { FrameHashSampler } from '../sync/frameHashSampler'
-import { apiClient, type PresetSummary } from './apiClient'
+import { apiClient } from './apiClient'
 import type { AppSettings, RecognitionMode } from './settings'
 import { DEFAULT_SETTINGS, loadSettings, normalizeBasicClockRoi, saveSettings } from './settings'
 import type { BufferState } from '../../electron/bufferManager'
@@ -85,8 +84,6 @@ export interface SessionSnapshot {
   }
   profiles: Record<SourceRole, ActiveProfile | null>
   basicProgress: Record<SourceRole, BasicClockProgress | null>
-  /** Presets the server offers, so the player can pick one without opening the editor. */
-  presets: PresetSummary[]
   notices: Notice[]
   buffers: Record<SourceRole, BufferState | null>
   qualityBusy: Record<SourceRole, boolean>
@@ -158,7 +155,6 @@ export class Session {
   private bufferStates: Record<SourceRole, BufferState | null> = { official: null, commentary: null }
   private qualityBusy: Record<SourceRole, boolean> = { official: false, commentary: false }
   private sourceGeneration: Record<SourceRole, number> = { official: 0, commentary: 0 }
-  private profileRevision = 0
   private offsetBoundary = 0
   private offsetDrain: Promise<void> | null = null
   private pendingOffset: { target: number; boundary: number; finish: Array<(plan: OffsetPlan) => void>; fail: Array<(error: unknown) => void> } | null = null
@@ -172,10 +168,6 @@ export class Session {
   private playbackPending = 0
   private pipPresentationReduced = false
   private readonly pendingQualityWaits = new Set<() => void>()
-  private profileMap: Record<SourceRole, ActiveProfile | null> = {
-    official: null,
-    commentary: null,
-  }
   private basicProfiles: Record<SourceRole, BasicClockProfile> = { official: BASIC_CLOCK_PROFILE, commentary: BASIC_CLOCK_PROFILE }
   private readonly basicSearchRoi = getBasicClockSearchRoi()
   private basicSamplingProfiles: Record<SourceRole, BasicClockProfile> | null = null
@@ -197,8 +189,6 @@ export class Session {
     pending: 0,
     dropped: 0,
   }
-  private presetList: PresetSummary[] = []
-  private presetListRevision = 0
   private unsubscribeDanmaku: (() => void) | null = null
   private danmakuGeneration = 0
   private filter: CompiledDanmakuFilter
@@ -308,9 +298,7 @@ export class Session {
     this.applyAudioSettings()
     this.releaseFeatures = apiClient.subscribeFeatures(event => {
       if (this.disposed) return
-      if (event.topic === 'stylepacks-changed') {
-        void this.refreshPresets()
-      } else if (event.topic === 'danmaku-preferences' && event.data && typeof event.data === 'object') {
+      if (event.topic === 'danmaku-preferences' && event.data && typeof event.data === 'object') {
         this.configureDanmakuProcessing((event.data as { preferences?: unknown }).preferences)
       } else if (event.topic === 'pip' && event.data && typeof event.data === 'object') {
         const value = event.data as { phase?: string; options?: { lowPower?: boolean } }
@@ -388,7 +376,6 @@ export class Session {
       danmaku: { ...this.danmakuState, pending: stats.pending, dropped: stats.expired },
       profiles: { official: this.profileFor('official'), commentary: this.profileFor('commentary') },
       basicProgress: { ...this.basicProgressMap },
-      presets: this.presetList,
       notices: this.noticeList,
       buffers: { ...this.bufferStates },
       qualityBusy: { ...this.qualityBusy },
@@ -439,7 +426,6 @@ export class Session {
 
   profileFor(role: SourceRole): ActiveProfile | null {
     if (this.settingsValue.recognitionMode === 'frame-hash') return null
-    if (this.settingsValue.recognitionMode !== 'basic') return this.profileMap[role]
     return this.basicSamplingProfiles?.[role] ?? this.resolveBasicProfile(role)
   }
 
@@ -552,44 +538,19 @@ export class Session {
     this.basicProgressMap = { official: null, commentary: null }
   }
 
-  setProfile(role: SourceRole, profile: ActiveProfile | null): void {
-    ++this.profileRevision
-    ++this.autoRequestRevision
-    this.autoSync.cancel(false)
-    this.profileMap = { ...this.profileMap, [role]: profile }
-    this.notify()
-  }
-
-  /** Both roles share one countdown profile: it is the same on-screen clock. */
-  setProfileForAll(profile: ActiveProfile | null): void {
-    this.storeProfilesForAll(profile)
-  }
-
-  /** Restore a saved pack without changing the user's active recognition mode. */
-  private storeProfilesForAll(profile: ActiveProfile | null): void {
-    ++this.profileRevision
-    if (this.settingsValue.recognitionMode === 'style-pack') {
-      ++this.autoRequestRevision
-      this.autoSync.cancel(false)
-    }
-    this.profileMap = { official: profile, commentary: profile }
-    this.notify()
-  }
-
   private recognitionWindowSeconds(): number {
     return this.settingsValue.recognitionMode === 'basic'
       ? BASIC_DETECT_WINDOW_SECONDS : 9
   }
 
   setRecognitionMode(mode: RecognitionMode): void {
-    this.changeRecognitionMode(mode === 'style-pack' ? 'frame-hash' : mode, true)
+    this.changeRecognitionMode(mode)
   }
 
-  private changeRecognitionMode(mode: RecognitionMode, _restoreSavedPack: boolean): void {
+  private changeRecognitionMode(mode: RecognitionMode): void {
     if (mode === this.settingsValue.recognitionMode) return
     this.basicObservedRegions = { official: null, commentary: null }
     this.clearBasicSampling()
-    ++this.profileRevision
     ++this.autoRequestRevision
     this.autoSync.cancel(false)
     this.sampler?.dispose()
@@ -599,82 +560,12 @@ export class Session {
     this.autoSync.configure({ detectWindowSeconds: this.recognitionWindowSeconds() })
   }
 
-  /**
-   * Select a server preset by id and remember the choice.
-   *
-   * The editor's 应用到播放器 only reaches an in-memory session, and 返回播放器 is a real
-   * navigation that throws that session away — so without a persisted id the player would
-   * come up with no profile every time and automatic sync could never run.
-   */
-  async selectProfile(id: string): Promise<boolean> {
-    const revision = ++this.profileRevision
-    if (!id) {
-      this.updateSettings({ profileId: '' })
-      this.setProfileForAll(null)
-      return true
-    }
-    const profile = await this.fetchProfile(id, revision)
-    if (!profile || revision !== this.profileRevision || this.disposed) return false
-    this.updateSettings({ profileId: id })
-    this.setProfileForAll(profile)
-    return true
-  }
-
-  /**
-   * Fetch and re-validate one preset.
-   *
-   * The server validates on write, but a preset file can be edited by hand between then
-   * and now, and a malformed profile would fail inside the recognition worker where there
-   * is nowhere useful to report it. Imported files must satisfy the current style-pack contract.
-   */
-  private async fetchProfile(id: string, revision: number): Promise<ActiveProfile | null> {
-    const result = await apiClient.getPreset(id)
-    if (revision !== this.profileRevision || this.disposed) return null
-    if (!result.ok) {
-      this.notice('error', `识别场景 ${id} 载入失败：${result.message}`, result)
-      return null
-    }
-    const parsed = parseHudStylePack(result.value.profile)
-    if (!parsed.pack) {
-      const first = parsed.issues.find((issue) => issue.severity === 'error')
-      this.notice('error', `识别场景 ${id} 格式无效：${first?.message ?? '未知问题'}`, { issues: parsed.issues })
-      return null
-    }
-    return parsed.pack
-  }
-
-  /**
-   * Ask the server which presets exist, for the player's picker.
-   *
-   * Answers whether the list is now known. `boot` needs that distinction: an empty list
-   * and an unanswered request look identical in `presetList`, but only the first one is
-   * evidence that a stored preset is gone.
-   */
-  async refreshPresets(): Promise<boolean> {
-    if (this.disposed) return false
-    const revision = ++this.presetListRevision
-    const result = await apiClient.listPresets()
-    if (this.disposed) return false
-    if (revision !== this.presetListRevision) return false
-    if (!result.ok) return false
-    this.presetList = result.value.presets
-    this.notify()
-    return true
-  }
-
-  /**
-   * Startup work that needs the network: list the presets and restore the chosen one.
-   *
-   * Called once from the player page. A preset that has since been deleted clears the
-   * stored id rather than warning about it on every boot — but only when the server
-   * actually said so, or restarting while it is down would throw the choice away.
-   */
+  /** Restore playback observation, preferences and the persisted scheduler toggle. */
   async boot(): Promise<void> {
     this.startPlaybackObservation()
     void apiClient.feature('getDanmakuFeatures', undefined).then(result => {
       if (!this.disposed && result?.ok) this.configureDanmakuProcessing(result.value.preferences)
     })
-    const revision = this.profileRevision
     // Before the first await, so re-entering the page resumes on the spot instead of
     // waiting on the network. This is also what restores a *persisted* toggle: settings
     // reload with `autoSyncEnabled: true`, but only `setAutoSyncEnabled` ever armed the
@@ -683,26 +574,13 @@ export class Session {
     const parked = this.parkedDanmakuRoom
     this.parkedDanmakuRoom = null
     if (parked && !this.danmakuState.room) this.connectDanmaku(parked)
-    // Removing a media element from the document pauses it, so coming back from the
-    // editor finds both sides stopped although the session still means to play.
+    // A renderer remount can pause its media elements while the session still means to play.
     if (this.playingValue && SOURCE_ROLES.some((role) => this.engine.getState()[role].status === 'ready')) void this.setPlaying(true)
-    const listed = await this.refreshPresets()
-    if (revision !== this.profileRevision || this.disposed) return
-    const id = this.settingsValue.profileId
-    if (!id) return
-    if (SOURCE_ROLES.every(role => this.profileMap[role] !== null)) return
-    if (listed && !this.presetList.some((preset) => preset.id === id)) {
-      this.updateSettings({ profileId: '' })
-      return
-    }
-    const profile = await this.fetchProfile(id, revision)
-    if (profile && revision === this.profileRevision && !this.disposed) this.storeProfilesForAll(profile)
   }
 
   // ---------------------------------------------------------------- settings
 
   updateSettings(patch: Partial<AppSettings>): void {
-    if (patch.recognitionMode === 'style-pack') patch = { ...patch, recognitionMode: 'frame-hash' }
     if (patch.recognitionMode !== undefined || patch.frameHashRegions || patch.frameHashMasks) {
       this.autoSync.cancel(false)
       this.frameSampler?.dispose()
@@ -851,12 +729,18 @@ export class Session {
     const descriptor = this.sourceDescriptor(role)
     if (this.qualityBusy[role] || !descriptor?.sourceQualities?.some((option) => option.id === quality)
       || descriptor.sourceQuality === quality) return
-    // Keep the manually selected pack across quality changes. Its reference coordinates
-    // are scaled to the new video size by the shared HUD recognition path.
+    // Invalidate timing evidence before replacing the stream in either recognition mode.
     this.invalidateAutomaticWork(role)
     const generation = ++this.sourceGeneration[role]
     const wasPlaying = !this.engine.element(role).paused
     this.qualityBusy = { ...this.qualityBusy, [role]: true }
+    let ownsBusy = true
+    const releaseBusy = () => {
+      if (!ownsBusy) return
+      ownsBusy = false
+      this.qualityBusy = { ...this.qualityBusy, [role]: false }
+      this.notify()
+    }
     this.notify()
     try {
       const response = await apiClient.switchQuality(role, quality)
@@ -882,10 +766,11 @@ export class Session {
         try { await this.engine.element(role).play() }
         catch { this.notice('warn', '画质已切换, 请恢复播放后点击立即同步'); return }
       }
+      releaseBusy()
       const available = await this.waitForQualityFrames(role, loadedGeneration)
       if (this.disposed || loadedGeneration !== this.sourceGeneration[role]) return
-      if (!available || !SOURCE_ROLES.every((item) => this.profileFor(item))) {
-        this.notice('info', '画质已切换, 两路画面就绪并选择预设后请点击立即同步')
+      if (!available) {
+        this.notice('info', '画质已切换, 两路画面和缓冲就绪后请点击立即同步')
         return
       }
       if (SOURCE_ROLES.some((item) => this.engine.element(item).paused)) {
@@ -895,23 +780,19 @@ export class Session {
       const result = await this.executeSync(false)
       if (!result.applied) this.notice('warn', '画质已切换, 自动同步未完成, 请点击立即同步')
     } finally {
-      this.qualityBusy = { ...this.qualityBusy, [role]: false }
-      this.notify()
+      releaseBusy()
     }
   }
 
   private waitForQualityFrames(role: SourceRole, generation: number): Promise<boolean> {
-    const ready = () => SOURCE_ROLES.every((item) => this.engine.getState()[item].status === 'ready'
-      && this.engine.element(item).readyState >= 2)
+    const ready = () => SOURCE_ROLES.every((item) => this.isSyncReady(item))
     if (ready()) return Promise.resolve(true)
-    // No selected profile or other source means waiting cannot lead to synchronization.
-    if (!SOURCE_ROLES.every((item) => this.profileFor(item))
-      || SOURCE_ROLES.some((item) => this.engine.getState()[item].status === 'empty')) return Promise.resolve(false)
+    if (SOURCE_ROLES.some((item) => this.engine.getState()[item].status === 'empty')) return Promise.resolve(false)
     return new Promise((resolve) => {
       const finish = (result: boolean) => { clearTimeout(timer); off(); this.pendingQualityWaits.delete(cancel); resolve(result) }
       const cancel = () => finish(false)
       const timer = setTimeout(cancel, 20_000)
-      const off = this.engine.subscribe(() => {
+      const off = this.subscribe(() => {
         if (this.disposed || generation !== this.sourceGeneration[role] || ready()) {
           finish(!this.disposed && generation === this.sourceGeneration[role] && ready())
         }

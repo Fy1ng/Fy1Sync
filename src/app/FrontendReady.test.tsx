@@ -1,6 +1,7 @@
 import { act, cleanup, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FrontendReady } from './FrontendReady'
+import frontendBuild from '../../packaging/frontend-build.json'
 
 const api = vi.hoisted(() => ({ health: vi.fn(), feature: vi.fn() }))
 vi.mock('./apiClient', () => ({ apiClient: api }))
@@ -17,7 +18,7 @@ describe('frontend boot acknowledgement', () => {
     await act(() => vi.advanceTimersByTimeAsync(1999))
     expect(api.feature).not.toHaveBeenCalled()
     await act(() => vi.advanceTimersByTimeAsync(1))
-    expect(api.feature).toHaveBeenCalledExactlyOnceWith('reportFrontendReady', { bridgeVersion: 1 })
+    expect(api.feature).toHaveBeenCalledExactlyOnceWith('reportFrontendReady', { bridgeVersion: frontendBuild.bridgeVersion })
   })
   it('does not acknowledge a tree that failed or unmounted before it became healthy', async () => {
     const view = render(<FrontendReady />)

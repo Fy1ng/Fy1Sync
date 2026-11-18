@@ -63,7 +63,7 @@ export function resolveStaticPath(root: string, pathname: string): string | null
 
 export type StaticOptions = {
   root: string
-  /** Served for any unmatched path so client-side routes like /admin work on reload. */
+  /** Served for any unmatched path so client-side routes like /pip work on reload. */
   spaFallback?: string
 }
 
@@ -125,11 +125,12 @@ export async function serveStatic(request: Request, options: StaticOptions): Pro
     const index = join(direct, 'index.html')
     if (await statFile(index) === 'file') return sendFile(request, index, options.root)
   }
+  if (!options.spaFallback) return null
   const last = url.pathname.slice(url.pathname.lastIndexOf('/') + 1)
   if (last.includes('.') && !last.endsWith('.html')) return null
   // Reserved resource namespaces must never turn an unknown media ID into HTML.
   if (url.pathname.startsWith('/media/') || url.pathname.startsWith('/test-sources/')) return null
-  const shell = resolveStaticPath(options.root, `/${options.spaFallback ?? 'index.html'}`)
+  const shell = resolveStaticPath(options.root, `/${options.spaFallback}`)
   if (!shell || await statFile(shell) !== 'file') return null
   return sendFile(request, shell, options.root)
 }

@@ -29,8 +29,10 @@ describe('external web navigation without app privileges', () => {
 
   it('keeps internal navigation and does not launch executable schemes or grant a remote document browser access', async () => {
     const f = fixture(), preventDefault = vi.fn()
-    f.events.emit('will-navigate', { preventDefault }, 'app://app/admin')
+    f.events.emit('will-navigate', { preventDefault }, 'app://app/pip')
     expect(preventDefault).not.toHaveBeenCalled()
+    f.events.emit('will-navigate', { preventDefault }, 'app://app/admin')
+    expect(preventDefault).toHaveBeenCalledOnce()
     for (const url of ['file:///private', 'javascript:alert(1)', 'powershell:command', 'invalid']) f.popup(url)
     const remote = fixture('https://remote.invalid/')
     remote.popup('https://other.invalid/')

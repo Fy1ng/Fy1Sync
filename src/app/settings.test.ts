@@ -41,7 +41,7 @@ describe('mergeSettings', () => {
     saveSettings({ ...DEFAULT_SETTINGS, basicRecognitionPanelVisible: true }, storage)
     expect(loadSettings(storage)).toMatchObject({ basicRecognitionPanelVisible: true, recognitionMode: 'basic' })
     expect(mergeSettings({ basicRecognitionPanelVisible: false, recognitionMode: 'style-pack' }))
-      .toMatchObject({ basicRecognitionPanelVisible: false, recognitionMode: 'style-pack' })
+      .toMatchObject({ basicRecognitionPanelVisible: false, recognitionMode: 'frame-hash' })
   })
   it('caps silent speed correction below two seconds while retaining stricter saved thresholds', () => {
     expect(DEFAULT_SETTINGS.seekThresholdSeconds).toBe(2)
@@ -77,8 +77,8 @@ describe('mergeSettings', () => {
   })
 
   it('defaults old settings to basic recognition while retaining the saved style pack', () => {
-    expect(mergeSettings({ profileId: 'cs2/iem' })).toMatchObject({ recognitionMode: 'basic', profileId: 'cs2/iem' })
-    expect(mergeSettings({ recognitionMode: 'style-pack' }).recognitionMode).toBe('style-pack')
+    expect(mergeSettings({ profileId: 'cs2/iem' })).not.toHaveProperty('profileId')
+    expect(mergeSettings({ recognitionMode: 'style-pack' }).recognitionMode).toBe('frame-hash')
     for (const recognitionMode of [null, true, 'automatic', {}, []]) {
       expect(mergeSettings({ recognitionMode }).recognitionMode).toBe('basic')
     }
@@ -181,12 +181,6 @@ describe('mergeSettings', () => {
     expect(merged.danmaku.filter.blockedUsers).toEqual([])
   })
 
-  it('bounds the profile id, because it becomes a URL path segment', () => {
-    expect(mergeSettings({ profileId: 'cs2/iem' }).profileId).toBe('cs2/iem')
-    expect(mergeSettings({ profileId: 42 } as unknown).profileId).toBe('')
-    expect(mergeSettings({ profileId: 'x'.repeat(500) }).profileId).toHaveLength(200)
-  })
-
   it('never shares mutable structure with the defaults', () => {
     // A merged object that aliased DEFAULT_SETTINGS would let one session's edit leak
     // into the next `mergeSettings({})`.
@@ -225,16 +219,10 @@ describe('loadSettings', () => {
 
   it('round-trips through save', () => {
     const storage = fakeStorage()
-    saveSettings({ ...DEFAULT_SETTINGS, profileId: 'cs2/iem', smallStepSeconds: 0.1 }, storage)
+    saveSettings({ ...DEFAULT_SETTINGS, recognitionMode: 'frame-hash', smallStepSeconds: 0.1 }, storage)
     const restored = loadSettings(storage)
-    expect(restored.profileId).toBe('cs2/iem')
+    expect(restored.recognitionMode).toBe('frame-hash')
     expect(restored.smallStepSeconds).toBe(0.1)
-  })
-
-  it('remembers an explicit style-pack mode without discarding its selected pack', () => {
-    const storage = fakeStorage()
-    saveSettings({ ...DEFAULT_SETTINGS, recognitionMode: 'style-pack', profileId: 'cs2/iem' }, storage)
-    expect(loadSettings(storage)).toMatchObject({ recognitionMode: 'style-pack', profileId: 'cs2/iem' })
   })
 
   it('persists an explicitly enabled adaptive preference with the existing settings blob', () => {

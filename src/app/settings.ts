@@ -20,8 +20,8 @@ import { normalizeBasicClockMemory, type BasicClockMemoryEntry } from '../core/b
 export const SETTINGS_KEY = 'stream-sync.settings.v1'
 
 export type CameraUpscaleTier = 'off' | 'performance' | 'quality'
-/** style-pack is accepted only as a legacy input and normalized to frame-hash. */
-export type RecognitionMode = 'basic' | 'frame-hash' | 'style-pack'
+/** Previous saved mode values are normalized when settings are loaded. */
+export type RecognitionMode = 'basic' | 'frame-hash'
 
 export interface DanmakuSettings {
   enabled: boolean
@@ -63,14 +63,6 @@ export interface AppSettings {
   preferAdaptive: boolean
   cameraUpscale: CameraUpscaleTier
   /**
-   * Which recognition preset the player loads on boot, by id. Empty means none.
-   *
-   * The id rather than the profile: templates are the bulk of a profile and localStorage is
-   * a few megabytes, so caching them here would be the first thing to blow the quota. The
-   * player fetches the preset at startup instead.
-   */
-  profileId: string
-  /**
    * Experimental: anything that writes to Douyu as the viewer (sending, +1, mute, gifts, room
    * and batch tasks, badge renewal). Off by default; read-only Douyu features never depend on it.
    */
@@ -108,7 +100,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // On: YouTube's adaptive formats are where 1440p and up live; the HLS ladder stops lower.
   preferAdaptive: true,
   cameraUpscale: 'performance',
-  profileId: '',
   douyuWrites: false,
 }
 
@@ -192,7 +183,7 @@ export function mergeSettings(raw: unknown): AppSettings {
     // The sync design fixes the interval choices at 15/30/60 s.
     autoSyncIntervalSeconds: clamp(stored.autoSyncIntervalSeconds, 10, 600, 30),
     basicRecognitionPanelVisible: boolean(stored.basicRecognitionPanelVisible, defaults.basicRecognitionPanelVisible),
-    recognitionMode: stored.recognitionMode === 'style-pack' || stored.recognitionMode === 'frame-hash' ? 'frame-hash' : 'basic',
+    recognitionMode: (stored as Record<string, unknown>).recognitionMode === 'style-pack' || stored.recognitionMode === 'frame-hash' ? 'frame-hash' : 'basic',
     frameHashRegions: {
       official: normalizeBasicClockRoi(stored.frameHashRegions?.official) ?? { x: 0, y: 0, w: 1, h: 1 },
       commentary: normalizeBasicClockRoi(stored.frameHashRegions?.commentary) ?? { x: 0, y: 0, w: 1, h: 1 },
@@ -208,8 +199,6 @@ export function mergeSettings(raw: unknown): AppSettings {
     preferAdaptive: boolean(stored.preferAdaptive, defaults.preferAdaptive),
     cameraUpscale: stored.cameraUpscale === 'off' || stored.cameraUpscale === 'performance' || stored.cameraUpscale === 'quality'
       ? stored.cameraUpscale : defaults.cameraUpscale,
-    // Bounded because it goes into a URL path when the preset is fetched.
-    profileId: typeof stored.profileId === 'string' ? stored.profileId.slice(0, 200) : '',
     douyuWrites: boolean(stored.douyuWrites, defaults.douyuWrites),
   }
 }

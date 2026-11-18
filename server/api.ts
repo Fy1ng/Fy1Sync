@@ -19,7 +19,6 @@ import { mediaChild, mediaEntry, type MediaAccess } from './mediaAccess'
 import { DanmakuRelay } from './danmaku/relay'
 import { resolveStream, type PlatformKind, type ResolveResult } from './platforms'
 import { isYouTubeFormatFailure, isYouTubeRefusal, YOUTUBE_FORMAT_FAILURES, YOUTUBE_REFUSALS } from './platforms/youtube'
-import { fileNameFor, MAX_PRESET_BYTES, PresetStore } from './presetStore'
 import { checkUrlSyntax, ProxyError, safeFetch } from './safeFetch'
 import type { SourceRole } from '../src/core/types'
 import type { BufferState } from '../electron/bufferManager'
@@ -36,8 +35,6 @@ import { readPlatformBytes, readPlatformText } from './platformResponse'
 import { DouyuRenewalError, readRenewalRooms, readRenewalQuantities, type DouyuRenewalService } from './douyu/renewalService'
 import type { FeatureApi } from './featureApi'
 import type { FeatureCallContext, FeatureEvent } from '../electron/featureContracts'
-import type { StylePackSyncService } from '../electron/stylePackSync'
-import type { StylePackSyncState } from '../electron/stylePackSyncContracts'
 import type { DouyinMessageSender } from './douyin/messageSender'
 import { douyinMessageRoom, douyinMessageText } from '../src/core/douyinMessage'
 
@@ -69,7 +66,6 @@ export type DesktopServiceDeps = {
   douyuRenewal?: DouyuRenewalService
   douyinMessages?: Pick<DouyinMessageSender, 'state' | 'send'>
   features?: FeatureApi
-  stylePacks?: Pick<StylePackSyncService, 'list' | 'get' | 'state' | 'sync' | 'setSource' | 'subscribe'>
 }
 
 export type DesktopService = {
@@ -86,8 +82,7 @@ export type DesktopService = {
 }
 
 const MAX_INPUT_LENGTH = 8_192
-const MAX_TOKEN_LENGTH = 4_096
-const MAX_ARGS_BYTES = MAX_PRESET_BYTES + 16_384
+const MAX_ARGS_BYTES = 2 * 1_048_576 + 16_384
 const MAX_VALUE_DEPTH = 32
 
 function fail(code: string, message: string, detail?: unknown): ApiResult<never> {
@@ -118,14 +113,6 @@ function fields(args: unknown, required: string[], optional: string[] = []): arg
   return record(args)
     && required.every((key) => Object.hasOwn(args, key))
     && Object.keys(args).every((key) => required.includes(key) || optional.includes(key))
-}
-
-function optionalToken(args: Record<string, unknown>): boolean {
-  return args.token === undefined || (typeof args.token === 'string' && args.token.length <= MAX_TOKEN_LENGTH)
-}
-
-function validId(id: unknown): id is string {
-  return typeof id === 'string' && fileNameFor(id) !== null
 }
 
 function isPlatform(value: unknown): value is PlatformKind {
@@ -185,7 +172,6 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
       createSocket: (url, headers) => createNetworkSocket(url, 'douyin', { headers }),
     },
   })
-  const presets = new PresetStore(deps.dataDir)
   let disposed = false
   const resolveRoom = deps.resolveDouyuRoom ?? createDouyuRoomResolver(deps.proxy, deps.fetchImpl).resolve
 
@@ -196,9 +182,9 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
     subscribeBuffer: deps.acquisition ? (listener) => deps.acquisition!.subscribe(listener) : undefined,
     subscribeDouyuAccounts: deps.douyuAccounts ? listener => deps.douyuAccounts!.subscribeSnapshots(listener) : undefined,
     subscribeDouyuTasks: deps.douyuTasks ? listener => deps.douyuTasks!.subscribe(listener) : undefined,
-    subscribeFeatures: deps.features || deps.stylePacks ? listener => {
+    subscribeFeatures: deps.features ? listener => {
       const emit = (event: FeatureEvent) => { if (!disposed) listener(event) }
-      const releases = [deps.features?.subscribe(emit), deps.stylePacks?.subscribe(emit)]
+      const releases = [deps.features?.subscribe(emit)]
       return () => { for (const release of releases) release?.() }
     } : undefined,
     setDouyuRoom: deps.douyuTasks ? room => deps.douyuTasks!.setRoom(room) : undefined,
@@ -419,13 +405,6 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
             return { ok: true, value: { ok: true, version: appPackage.version, proxyEnabled: deps.proxy.enabled, danmakuRooms: relay.roomCount } }
           }
-          case 'verifyAdmin': {
-            if (!fields(args, ['token']) || typeof args.token !== 'string' || args.token.length > MAX_TOKEN_LENGTH) {
-              return fail('invalid-arguments', '编辑器验证参数无效')
-            }
-            // A trusted local editor replaces the web-server token gate.
-            return { ok: true, value: { ok: true } }
-          }
           case 'resolve': {
             if (!fields(args, ['input'], ['platform', 'role', 'quality', 'preferAdaptive'])) return fail('invalid-arguments', '媒体解析参数无效')
             if (typeof args.input !== 'string' || args.input.trim().length === 0) {
@@ -490,62 +469,6 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             if (!deps.acquisition) return fail('not-available', '账号服务不可用')
             if (method === 'login') return { ok: true, value: await deps.acquisition.login(args.platform) }
             await deps.acquisition.logout(args.platform)
-            return { ok: true, value: { ok: true } }
-          }
-          case 'listPresets': {
-            if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
-            const [local, cloud] = await Promise.all([presets.list(), deps.stylePacks?.list() ?? []])
-            const localIds = new Set(local.map(entry => entry.id))
-            const records = [...local, ...cloud.filter(entry => !localIds.has(entry.id))]
-            return { ok: true, value: { presets: records.map((entry) => ({
-              id: entry.id, name: entry.profile.name, updatedAt: entry.updatedAt,
-              etag: entry.etag, templateChars: Object.keys(entry.profile.variants[0]?.fields.clock?.glyphs ?? {}).length,
-              ...(!localIds.has(entry.id) ? { source: 'cloud' as const, revision: entry.profile.revision } : {}),
-            })) } }
-          }
-          case 'getStylePackSyncState':
-          case 'syncStylePacks': {
-            if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
-            const unavailable: StylePackSyncState = { source: 'github', availableSources: [], catalogRevision: null, phase: 'unconfigured', checkedAt: null, updatedAt: null,
-              installed: 0, downloaded: 0, incompatible: 0, message: '赛事样式包分发源尚未启用.' }
-            return { ok: true, value: deps.stylePacks
-              ? await (method === 'syncStylePacks' ? deps.stylePacks.sync() : deps.stylePacks.state()) : unavailable }
-          }
-          case 'setStylePackSyncSource': {
-            if (!fields(args, ['source']) || (args.source !== 'github' && args.source !== 'gitcode')) return fail('invalid-arguments', '请选择内置的样式包来源.')
-            if (!deps.stylePacks || !deps.stylePacks.state().availableSources.includes(args.source)) return fail('not-available', '该样式包来源尚未配置.')
-            if (deps.stylePacks.state().phase === 'syncing') return fail('busy', '正在刷新样式包, 请完成后再切换来源.')
-            try { return { ok: true, value: deps.stylePacks.setSource(args.source) } }
-            catch { return fail('source-save-failed', '样式包来源保存失败, 原设置未改变, 请重试.') }
-          }
-          case 'getPreset': {
-            if (!fields(args, ['id']) || !validId(args.id)) return fail('invalid-id', '预设 ID 无效')
-            const local = await presets.get(args.id)
-            const entry = local ?? await deps.stylePacks?.get(args.id)
-            if (!entry) return fail('not-found', '预设不存在')
-            return { ok: true, value: { profile: entry.profile, etag: entry.etag, ...(!local ? { source: 'cloud' as const } : {}) } }
-          }
-          case 'savePreset': {
-            if (!fields(args, ['id', 'profile'], ['token', 'etag']) || !optionalToken(args)
-              || (args.etag !== undefined && (typeof args.etag !== 'string' || args.etag.length > 128 || /[\r\n\0]/.test(args.etag)))) {
-              return fail('invalid-arguments', '预设保存参数无效')
-            }
-            if (!validId(args.id)) return fail('invalid-id', '预设 ID 无效')
-            const outcome = await presets.save(args.id, args.profile, args.etag as string | undefined)
-            if (!outcome.ok) {
-              switch (outcome.code) {
-                case 'invalid': return fail('invalid-profile', '配置校验未通过', { issues: outcome.issues })
-                case 'too-large': return fail('too-large', '预设超过大小上限')
-                case 'conflict': return fail('conflict', '预设已被其他会话修改', { currentEtag: outcome.currentEtag })
-                default: return fail('io-error', '无法写入预设')
-              }
-            }
-            return { ok: true, value: { id: outcome.record.id, etag: outcome.record.etag, updatedAt: outcome.record.updatedAt } }
-          }
-          case 'deletePreset': {
-            if (!fields(args, ['id'], ['token']) || !optionalToken(args)) return fail('invalid-arguments', '预设删除参数无效')
-            if (!validId(args.id)) return fail('invalid-id', '预设 ID 无效')
-            if (!await presets.remove(args.id)) return fail('not-found', '预设不存在')
             return { ok: true, value: { ok: true } }
           }
           default: return fail('not-found', '未知本地接口')

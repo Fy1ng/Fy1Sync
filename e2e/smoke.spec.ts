@@ -1,7 +1,6 @@
 /** Built desktop app smoke checks: the real shell, preload IPC and scheme guards. */
 
 import { APP_ORIGIN, expect, test, visibleE2eWindows } from './electron'
-import type { HudStylePack } from '../src/core/hudStylePack'
 import { closeSourceDialog, connectDanmaku, failOnPageError, invoke, loadBothFixtures, offsetReadout, openPlayer, openSourceDialog, revealOverlay, sourceDialog } from './helpers'
 
 test.describe('应用外壳', () => {
@@ -112,28 +111,6 @@ test.describe('应用外壳', () => {
     expect(consoleErrors, `控制台不应有错误：${consoleErrors.join(' | ')}`).toEqual([])
   })
 
-  test('进入播放器后只有「添加直播间」按钮会回到添加直播间, 空片源打开自己的面板', async ({ page }) => {
-    await openPlayer(page)
-    await revealOverlay(page)
-    const commentary = page.locator('.chip[data-role="commentary"]')
-    await expect(commentary).toHaveAttribute('data-status', 'empty')
-    await page.waitForTimeout(150)
-    await commentary.click()
-    const panel = page.getByRole('dialog', { name: '解说片源', exact: true })
-    await expect(panel).toBeVisible()
-    await expect(panel.getByRole('textbox', { name: '解说链接' })).toBeVisible()
-    await expect(sourceDialog(page)).toBeHidden()
-    await page.keyboard.press('Escape')
-    // Leaving for the editor and coming back is not a fresh start either.
-    await page.evaluate(() => { history.pushState(null, '', '/admin'); dispatchEvent(new PopStateEvent('popstate')) })
-    await page.evaluate(() => { history.pushState(null, '', '/'); dispatchEvent(new PopStateEvent('popstate')) })
-    await expect(page.locator('.studio')).toBeVisible()
-    await page.waitForTimeout(300)
-    await expect(sourceDialog(page)).toBeHidden()
-    await page.getByRole('button', { name: '添加直播间', exact: true }).click()
-    await expect(sourceDialog(page)).toBeVisible()
-  })
-
   test('弹幕列表的收起和展开状态在重新加载后保留', async ({ page }) => {
     await openPlayer(page)
     await loadBothFixtures(page)
@@ -195,7 +172,7 @@ test.describe('应用外壳', () => {
     expect(await offsetReadout(page)).toEqual({ requested: 0, applied: 0 })
     await expect(page.getByRole('button', { name: '回退画面', exact: true })).toBeDisabled()
     await expect(page.getByRole('button', { name: '快进画面', exact: true })).toBeDisabled()
-    await expect(page.getByRole('button', { name: '自动对齐', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: '准备中', exact: true })).toBeDisabled()
   })
 })
 
@@ -234,29 +211,12 @@ test.describe('主进程接口与安全边界', () => {
     expect(response.value).toMatchObject({ ok: false, failure: { code: 'unsupported-url' } })
   })
 
-  test('本机写入仍需通过主进程预设校验', async ({ page }) => {
-    const verified = await invoke(page, 'verifyAdmin', { token: '' })
-    expect(verified).toEqual({ ok: true, value: { ok: true } })
-    const rejected = await invoke(page, 'savePreset', {
-      id: 'smoke-should-fail',
-      profile: { kind: 'hud-style-pack', schemaVersion: 1, id: 'smoke-should-fail' } as HudStylePack,
-    })
-    expect(rejected.ok).toBe(false)
-    if (rejected.ok) throw new Error('Invalid profile was unexpectedly accepted')
-    expect(rejected.code).toBe('invalid-profile')
-    expect(rejected.detail).toHaveProperty('issues')
-    const stored = await invoke(page, 'getPreset', { id: 'smoke-should-fail' })
-    expect(stored.ok).toBe(false)
-  })
-
-  test('媒体路径拒绝凭据注入和未登记标识', async ({ page }) => {
+  test('无效媒体地址的错误不回显认证信息, 未登记的媒体标识不可用', async ({ page }) => {
     const response = await invoke(page, 'resolve', {
-      input: 'http://synthetic-user:synthetic-password@127.0.0.1:8080/secret', platform: 'direct',
+      input: 'http://synthetic-user:synthetic-password@/stream', platform: 'direct',
     })
-    expect(response.ok).toBe(false)
-    if (response.ok) throw new Error('Credential-bearing media URL was unexpectedly accepted')
-    expect(response.code).toBe('invalid-url')
-    expect(response.message).toBeTruthy()
+    expect(response).toMatchObject({ ok: true, value: { ok: false, failure: { code: 'unsupported-url' } } })
+    expect(JSON.stringify(response)).not.toMatch(/synthetic-user|synthetic-password/)
 
     const status = await page.evaluate(async () =>
       (await fetch('app://app/media/unregistered?url=http://127.0.0.1:9/secret')).status,

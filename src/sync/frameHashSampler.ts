@@ -73,7 +73,7 @@ export class FrameHashSampler {
         })
       }))
     }
-    this.options.onStatus('正在积累共同画面, 无需倒计时样式包')
+    this.options.onStatus('正在积累两路共同画面')
   }
 
   private post(message: HashRequest, transfer: Transferable[] = []): void { this.worker?.postMessage(message, transfer) }

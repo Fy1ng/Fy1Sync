@@ -1,4 +1,4 @@
-import { isBasicClock, isHudPack, captureRoi, type ActiveProfile } from '../core/activeProfile'
+import { isBasicClock, captureRoi, type ActiveProfile } from '../core/activeProfile'
 /**
  * Main-thread side of the recognition worker.
  *
@@ -9,7 +9,7 @@ import { isBasicClock, isHudPack, captureRoi, type ActiveProfile } from '../core
  *  - generations: any change to the profile, ROI or source bumps a counter, and
  *    results from an older generation are discarded rather than applied to the new
  *    configuration.
- *  - style packs keep the full frame for their configured HUD regions.
+ *  - basic clocks keep the full frame for automatic region discovery.
  */
 
 import type { RoiRect } from '../core/profileSchema'
@@ -142,7 +142,7 @@ export class RecognitionClient {
       worker.postMessage({
         type: 'configure',
         generation: this.generationValue,
-        profile: isHudPack(profile) || isBasicClock(profile) ? profile : { ...profile, roi: { ...FULL_FRAME_ROI } },
+        profile: isBasicClock(profile) ? profile : { ...profile, roi: { ...FULL_FRAME_ROI } },
         ...(preserveBasic ? { preserveBasic: true } : {}),
       })
     } catch (error) { this.failWorker(error instanceof Error ? error.message : String(error)) }

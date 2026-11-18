@@ -10,14 +10,6 @@ import type { DouyuTaskKind } from '../server/douyu/types'
 import { SETTINGS_KEY } from '../src/app/settings'
 import { APP_ORIGIN, expect } from './electron'
 
-/** Only the native file dialog is stubbed; authorization, hashing, IPC and streaming stay real. */
-export async function chooseEditorVideo(application: ElectronApplication, page: Page, file: string, button = '选择录像'): Promise<void> {
-  await application.evaluate(({ dialog }, selected) => {
-    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] })
-  }, file)
-  await page.getByRole('button', { name: button, exact: true }).click()
-}
-
 /** Use the actual preload bridge, retaining the transport result wrapper. */
 export async function invoke<K extends DesktopMethod>(
   page: Page,
@@ -41,14 +33,13 @@ export const FIXTURES = {
   official: '/test-sources/official.mp4',
   commentary: '/test-sources/commentary.mp4',
   commentaryHls: '/test-sources/commentary-hls/index.m3u8',
-  profile: '/test-sources/fixture-profile.json',
 } as const
 
 const fixtureDir = fileURLToPath(new URL('../public/test-sources/', import.meta.url))
 
 /** True when `npm run fixtures` has been run on this machine. */
 export function fixturesReady(): boolean {
-  return ['official.mp4', 'commentary.mp4', 'fixture-profile.json'].every((name) =>
+  return ['official.mp4', 'commentary.mp4'].every((name) =>
     existsSync(`${fixtureDir}${name}`),
   )
 }
@@ -183,7 +174,7 @@ export async function loadSource(
 }
 
 /** 设置 opens from its gear: in the top bar while the chat is closed, in the chat header otherwise. */
-export async function openSettingsSection(page: Page, section: '通用' | '账号' | '斗鱼' | '弹幕记录' | '房间数据' | '倒计时样式'): Promise<Locator> {
+export async function openSettingsSection(page: Page, section: '通用' | '账号' | '斗鱼' | '弹幕记录' | '房间数据' | '画面匹配'): Promise<Locator> {
   const settings = page.getByRole('dialog', { name: '设置', exact: true })
   if (!(await settings.isVisible())) {
     await closeSourceDialog(page)

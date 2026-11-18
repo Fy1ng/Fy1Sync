@@ -73,19 +73,12 @@ import { createBackendRuntime } from './backendRuntime'
 import type { SavedRoomMetadata } from './featureContracts'
 import { teamLogoResponse } from './teamLogoRoute'
 import { parseAppUpdateSource, type AppUpdateSource } from './appUpdateService'
-import { AdminMediaRoute } from './adminMediaRoute'
-import { YouTubeBrowseManager } from './ytBrowse'
-import { YouTubeImportJobManager } from './ytImport'
-import { installYouTubeAdminIpc } from './ytImportIpc'
-import { EditorProjectManager, installEditorProjectIpc } from './editorProject'
-import { parseStylePackSource, StylePackSyncService } from './stylePackSync'
 import { FeatureApi } from '../server/featureApi'
 import { FrontendUpdates } from './frontendUpdates'
 import { parseOnlineUpdateSource } from './onlineUpdateManifest'
 import { OnlineUpdateService } from './onlineUpdateService'
 import { createOnlineUpdateHandlers } from './onlineUpdateHandlers'
 import { launchApplicationInstaller, supportsApplicationInstall } from './applicationInstaller'
-import stylePackSource from '../packaging/stylepack-source.json'
 import onlineUpdateSource from '../packaging/online-update-source.json'
 import frontendBuild from '../packaging/frontend-build.json'
 import appPackage from '../package.json'
@@ -152,25 +145,8 @@ async function start(): Promise<void> {
   let backend: ReturnType<typeof createBackendRuntime> | undefined
   let pipWindow: BrowserWindow | null = null
   let handlers: ReturnType<typeof installIpcHandlers> | undefined
-  let youtubeAdmin: ReturnType<typeof installYouTubeAdminIpc> | undefined
-  let editorProjectIpc: ReturnType<typeof installEditorProjectIpc> | undefined
   let releaseEmbeddedLoginIpc: (() => void) | undefined
   let releaseLoginCardIpc: (() => void) | undefined
-  let youtubeBrowse: YouTubeBrowseManager | undefined
-  let youtubeImports: YouTubeImportJobManager | undefined
-  let youtubeImportsReady: Promise<void> = Promise.resolve()
-  let youtubeLoginTransitions = 0
-  const adminMedia = new AdminMediaRoute(join(userDataDir, 'admin-media'))
-  const editorProject = new EditorProjectManager({ userDataDirectory: userDataDir, beforeLoad: () => youtubeImportsReady, chooseFile: async () => {
-    if (!window) return null
-    const result = await dialog.showOpenDialog(window, { title: '选择比赛录像', properties: ['openFile'],
-      filters: [{ name: '视频', extensions: ['mp4', 'm4v', 'webm', 'mkv', 'mov'] }] })
-    return result.canceled ? null : result.filePaths[0] ?? null
-  } })
-  const resetYouTubeAdmin = async () => {
-    if (youtubeAdmin) await youtubeAdmin.reset()
-    else await Promise.all([youtubeBrowse?.close(), youtubeImports?.cancelAll()])
-  }
   // Releases are published on GitHub. Checks stay manual; E2E runs keep the unconfigured
   // state so no scenario reaches the network. backend.json may still point elsewhere.
   const defaultUpdateSource: AppUpdateSource | null = process.env.STREAM_SYNC_E2E === '1' ? null : { kind: 'github', owner: 'Fy1ng', repository: 'Fy1Sync' }
@@ -330,18 +306,12 @@ async function start(): Promise<void> {
         try { return await logins.login(platform) }
         finally { douyinMessages.invalidate(); relay.refreshPlatform('douyin') }
       }
-      if (platform !== 'youtube') return logins.login(platform)
-      youtubeLoginTransitions++
-      try { await resetYouTubeAdmin(); return await logins.login(platform) }
-      finally { youtubeLoginTransitions-- }
+      return logins.login(platform)
     },
     async logout(platform: LoginPlatform) {
       if (platform === 'douyu') return douyuAccounts ? douyuAccounts.logoutActive() : Promise.reject(new DouyuAccountError('storage-failed'))
       if (platform === 'douyin') { douyinMessages.invalidate(); try { await logins.logout(platform) } finally { douyinMessages.invalidate(); relay.refreshPlatform('douyin') } return }
-      if (platform !== 'youtube') return logins.logout(platform)
-      youtubeLoginTransitions++
-      try { await resetYouTubeAdmin(); await logins.logout(platform) }
-      finally { youtubeLoginTransitions-- }
+      return logins.logout(platform)
     },
     async loginStatus() {
       const status = await logins.loginStatus()
@@ -376,12 +346,6 @@ async function start(): Promise<void> {
         relay.refreshPlatform('douyu')
         return { accountId }
       }
-      if (platform === 'youtube') {
-        youtubeLoginTransitions++
-        try { await resetYouTubeAdmin(); await logins.importCookies(platform, cookies, identity, signal) }
-        finally { youtubeLoginTransitions-- }
-        return {}
-      }
       if (platform === 'douyin') douyinMessages.invalidate()
       try {
         const result = await logins.importCookies(platform, cookies, identity, signal)
@@ -410,18 +374,6 @@ async function start(): Promise<void> {
   const ytdlp = new YtDlpRunner({ electronPath: process.execPath, networkRuntimePath, cookies: logins, settings: toolSettings, toolContext,
     diagnostic: e2e ? event => { youtubeDiagnostics.push(event); if (youtubeDiagnostics.length > 100) youtubeDiagnostics.shift() } : undefined,
   })
-  youtubeBrowse = new YouTubeBrowseManager({
-    injectCookies: target => logins.injectYoutubeCookies(target),
-    changed: (ownerId, state) => { youtubeAdmin?.emit('yt-browse-state', state, ownerId) },
-  })
-  youtubeImports = new YouTubeImportJobManager({ userDataDirectory: userDataDir, electronPath: process.execPath,
-    mediaInput: (url, headers, network) => gateway.register(url, headers, network),
-    networkRuntimePath, cookies: logins, settings: toolSettings, toolContext, network: () => network.context('youtube'),
-    publish: (assetId, file) => adminMedia.register(assetId, file),
-    event: job => { youtubeAdmin?.emit('yt-import-progress', job) },
-  })
-  // Restore saved clips without holding up the first window.
-  youtubeImportsReady = youtubeImports.initialize().catch(() => { console.error('admin 素材目录不可用, 已保留原文件.') })
   const bufferDiagnostics: unknown[] = []
   const trackStats = () => ({ segments: 0, bytes: 0, firstSq: null as number | null, lastSq: null as number | null, gaps: 0, repeated: 0, maxHeadLag: 0 })
   const adaptiveStats = { rounds: 0, statuses: {} as Record<string, number>, httpErrors: 0, probes: 0, reconnects: 0, fallback: false,
@@ -598,42 +550,12 @@ async function start(): Promise<void> {
         onClosed: listener => { created.on('closed', listener); return () => created.removeListener('closed', listener) } }
     },
   })
-  const stylePackDataDir = process.env.STREAM_SYNC_DATA_DIR || userDataDir
-  let trustedStylePackSource: ReturnType<typeof parseStylePackSource> = null
-  let stylePackFixturePath: string | undefined
-  try {
-    trustedStylePackSource = parseStylePackSource(e2e ? null : stylePackSource)
-    // The offline harness owns this disposable file. Packaged applications never read it.
-    if (!app.isPackaged && offlineE2e) {
-      const fixturePath = join(stylePackDataDir, 'stylepack-fixture.json')
-      const text = await readFile(fixturePath, 'utf8').catch(error => {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ''
-        throw error
-      })
-      if (text) {
-        if (text.length > 4 * 1_048_576) throw new Error('Large style pack fixture')
-        trustedStylePackSource = parseStylePackSource(JSON.parse(text).source)
-        stylePackFixturePath = fixturePath
-      }
-    }
-  } catch { console.error('赛事样式包分发配置无效, 自动同步未启用.'); trustedStylePackSource = null }
-  const stylePacks = new StylePackSyncService({ dataDir: stylePackDataDir,
-    source: trustedStylePackSource, currentVersion: appPackage.version,
-    ...(stylePackFixturePath ? { resolve: async () => ['93.184.216.34'], request: (async input => {
-      const text = await readFile(stylePackFixturePath!, 'utf8')
-      if (text.length > 4 * 1_048_576) throw new Error('Large style pack fixture')
-      const fixture = JSON.parse(text) as { responses: Record<string, unknown>; fail?: boolean }
-      const url = input instanceof Request ? input.url : String(input)
-      if (fixture.fail || typeof fixture.responses?.[url] !== 'string') throw new Error('Offline style pack fixture unavailable')
-      return new Response(fixture.responses[url], { headers: { 'content-type': 'application/json' } })
-    }) as typeof fetch } : {}),
-  })
   let trustedOnlineUpdateSource: ReturnType<typeof parseOnlineUpdateSource> = null
   let onlineUpdateFixture: string | undefined
   try {
     trustedOnlineUpdateSource = parseOnlineUpdateSource(e2e ? null : onlineUpdateSource)
     if (!app.isPackaged && offlineE2e) {
-      const fixture = join(stylePackDataDir, 'online-update-fixture.json')
+      const fixture = join(process.env.STREAM_SYNC_DATA_DIR || userDataDir, 'online-update-fixture.json')
       const text = await readFile(fixture, 'utf8').catch(error => {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ''
         throw error
@@ -679,7 +601,7 @@ async function start(): Promise<void> {
     isPrimary: id => !!window && !window.isDestroyed() && window.webContents.id === id,
     apply: async kind => {
       if (kind === 'frontend') {
-        if (!await confirmUpdate('应用前端更新并重启', '即将结束当前播放并重启应用. 请确认编辑内容已保存. 新界面启动失败时会自动回退, 不会删除草稿或样式包.')) return false
+        if (!await confirmUpdate('应用前端更新并重启', '即将结束当前播放并重启应用. 新界面启动失败时会自动回退, 本机数据会保留.')) return false
         if (onlineUpdates.state().frontend.phase !== 'ready') return false
         restartForFrontend()
       } else {
@@ -690,7 +612,7 @@ async function start(): Promise<void> {
       return true
     },
     rollback: async () => {
-      if (!await confirmUpdate('回退前端并重启', '即将结束当前播放, 取消待应用的前端包并恢复之前的可用界面. 请确认编辑内容已保存. 赛事样式包和本机草稿不受影响.')) return false
+      if (!await confirmUpdate('回退前端并重启', '即将结束当前播放, 取消待应用的前端包并恢复之前的可用界面. 本机数据会保留.')) return false
       frontendUpdates.rollbackForRestart()
       restartForFrontend()
       return true
@@ -705,7 +627,7 @@ async function start(): Promise<void> {
   const service = createDesktopService({
     dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, resolveHuyaRoom,
     registerMedia: (url, access, headers) => media.register(url, headers, undefined, access), acquisition, decoderPreferences, networkPreferences: preferences, tools, diagnostics, douyuAccounts, douyuTasks, douyuRenewal,
-    features, stylePacks, douyinMessages,
+    features, douyinMessages,
   })
   session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
     callback(allowsAppPermission(permission, {
@@ -730,8 +652,6 @@ async function start(): Promise<void> {
       let response: Response | null
       if (url.pathname.startsWith('/media/')) response = await media.handle(request)
       else if (url.pathname.startsWith('/buffer/')) response = await buffer.handle(request)
-      else if (url.pathname.startsWith('/admin-media/')) response = await adminMedia.handle(request)
-      else if (url.pathname.startsWith('/editor-media/')) response = await editorProject.handle(request)
       else if (url.pathname.startsWith('/team-logo/')) response = teamLogoResponse(request, userDataDir, bundledLogoDir)
       else if (url.pathname.startsWith('/room-image/')) response = backend?.roomImages.response(request) ?? new Response(null, { status: 404 })
       else if (url.pathname === '/pip' || url.pathname === '/pip/') response = await serveStatic(new Request(APP_URL, { method: request.method }), { root: clientDir })
@@ -758,10 +678,6 @@ async function start(): Promise<void> {
   const contents = window.webContents
   const mainWindow = window
   if (hiddenTestWindows) { contents.setFrameRate(60); contents.startPainting() }
-  if (process.platform === 'darwin') contents.on('before-input-event', (_event, input) => {
-    // Let the editor handle annotation undo; editable text retains Chromium's native undo.
-    contents.setIgnoreMenuShortcuts(input.type === 'keyDown' && input.meta && !input.control && !input.alt && !input.shift && input.key.toLowerCase() === 'z')
-  })
   let bootRecovery: Promise<void> | null = null
   const recoverFrontend = (): Promise<void> | null => {
     if (!frontendUpdates.failBoot()) return bootRecovery
@@ -821,9 +737,6 @@ async function start(): Promise<void> {
       return event.topic === 'insights' && value.room === backend.pip.state().source?.sourceRoom
     },
   })
-  youtubeAdmin = installYouTubeAdminIpc(ipcMain, contents, { ownerWindow: mainWindow, browse: youtubeBrowse, imports: youtubeImports,
-    offline: offlineE2e, blocked: () => youtubeLoginTransitions > 0 })
-  editorProjectIpc = installEditorProjectIpc(ipcMain, contents, editorProject)
   releaseEmbeddedLoginIpc = installEmbeddedLoginIpc(ipcMain, contents, embeddedLogin)
   const releaseBrowserImportIpc = installBrowserImportIpc(ipcMain, contents, browserImports)
   releaseLoginCardIpc = installLoginCardIpc(ipcMain, embeddedLogin)
@@ -966,7 +879,6 @@ async function start(): Promise<void> {
     releaseOnlineUpdate()
     onlineUpdates.dispose()
     frontendUpdates.dispose()
-    stylePacks.dispose()
     releaseWindowState()
     mainWindow.removeListener('focus', refreshRuntime)
     mainWindow.removeListener('blur', refreshRuntime)
@@ -989,16 +901,11 @@ async function start(): Promise<void> {
     douyinMessages.dispose()
     douyuGatewayCoordinator.dispose()
     unwatchFile(index)
-    await youtubeAdmin?.dispose()
-    editorProjectIpc?.dispose()
     releaseEmbeddedLoginIpc?.()
     releaseBrowserImportIpc()
     browserImports.dispose()
     releaseLoginCardIpc?.()
     await embeddedLogin.dispose()
-    await youtubeImports?.dispose()
-    await youtubeBrowse?.close()
-    adminMedia.clear()
     handlers?.dispose()
     service.dispose()
     acquisition.dispose()
@@ -1022,7 +929,6 @@ async function start(): Promise<void> {
     if (recovery) await recovery
     else throw error
   }
-  if (!mainWindow.isDestroyed()) stylePacks.start()
 }
 if (primaryInstance) void app.whenReady().then(() => {
   if (hiddenTestWindows && process.platform === 'darwin') app.setActivationPolicy('prohibited')

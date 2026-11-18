@@ -14,7 +14,7 @@ export function isAppOrigin(raw: string): boolean {
 }
 export function isAppDocument(raw: string): boolean {
   if (!isAppOrigin(raw)) return false
-  return ['/', '/index.html', '/admin', '/admin/', '/pip', '/pip/'].includes(new URL(raw).pathname)
+  return ['/', '/index.html', '/pip', '/pip/'].includes(new URL(raw).pathname)
 }
 
 /** Only fullscreen and sanitized clipboard writes are needed, scoped to trusted app main frames. */

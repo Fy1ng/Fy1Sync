@@ -1,4 +1,3 @@
-import { validateLearnedProfile as validateProfile } from '../test/recognitionReference'
 import { describe, expect, it } from 'vitest'
 import { packBitmap } from './bitmapCodec'
 import {
@@ -14,7 +13,7 @@ import {
   roiToPixels,
   toGrayscale,
 } from './imageOps'
-import { TEMPLATE_HEIGHT, TEMPLATE_PIXELS, TEMPLATE_WIDTH, createEmptyProfile, type RecognitionProfile } from './profileSchema'
+import { TEMPLATE_HEIGHT, TEMPLATE_PIXELS, TEMPLATE_WIDTH, createEmptyProfile, profileReadiness, type RecognitionProfile } from './profileSchema'
 import { adjustGlyphBox, columnProjection, excludeGlyphBox, mergeGlyphBoxes, segmentGlyphs, splitGlyphBox } from './segmentation'
 import { compileTemplates, matchGlyph, recognizeFrame, scoreCoverage, scoreMasks } from '../test/recognitionReference'
 import { CLOCK_GLYPHS, createFrame, drawText, renderGlyphMask, type RgbaFrame } from '../test/glyphFont'
@@ -29,13 +28,13 @@ function buildProfile(scale: number, roi: RecognitionProfile['roi']): Recognitio
       { id: `${char}-0`, data: packBitmap(normalizeGlyph(glyph)), createdAt: 1 },
     ]
   }
-  const { profile, issues } = validateProfile({
+  const profile: RecognitionProfile = {
     ...createEmptyProfile('cs2/test', '测试场景'),
     roi,
     preprocess: PREPROCESS,
     templates,
-  })
-  if (!profile) throw new Error(`invalid test profile: ${JSON.stringify(issues)}`)
+  }
+  expect(profileReadiness(profile).ready).toBe(true)
   return profile
 }
 

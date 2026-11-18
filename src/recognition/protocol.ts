@@ -1,5 +1,4 @@
 import type { ActiveProfile } from '../core/activeProfile'
-import type { HudFrameResult } from '../core/hudWasm'
 /**
  * Worker protocol for clock recognition.
  *
@@ -112,7 +111,6 @@ export interface ResultMessage {
   frameIndex: number
   outcome: RecognitionOutcome
   debug: WorkerDebug | null
-  hud?: HudFrameResult
   basic?: BasicClockDiagnostic
   /** Worker-side processing time in ms, shown in the debug panel. */
   elapsedMs: number

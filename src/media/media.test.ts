@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Loader, LoaderCallbacks, LoaderConfiguration, LoaderContext, LoaderStats } from 'hls.js'
+import type { Loader, LoaderCallbacks, LoaderConfiguration, LoaderStats, PlaylistLoaderContext } from 'hls.js'
 
 import type { MediaDescriptor, Timebase } from '../core/types'
 import { attachMedia, hlsLoader, translateHlsError, type MediaError } from './hlsController'
@@ -304,6 +304,35 @@ describe('attachMedia HLS precedence', () => {
     viaProxy: false,
   })
 
+  function playlistFixture(playlists: Record<string, string>) {
+    const requests: Array<{ url: string; type: string; time: number }> = []
+    class PlaylistLoader implements Loader<PlaylistLoaderContext> {
+      context: PlaylistLoaderContext | null = null
+      stats: LoaderStats = {
+        aborted: false, loaded: 0, retry: 0, total: 0, chunkCount: 0, bwEstimate: 0,
+        loading: { start: 0, first: 0, end: 0 }, parsing: { start: 0, end: 0 }, buffering: { start: 0, first: 0, end: 0 },
+      }
+      load(context: PlaylistLoaderContext, _config: LoaderConfiguration, callbacks: LoaderCallbacks<PlaylistLoaderContext>): void {
+        this.context = context
+        this.stats.loading.start = performance.now()
+        // Browser transports resolve root-relative requests and return an absolute response URL.
+        const url = new URL(context.url, document.baseURI).href
+        requests.push({ url, type: context.type, time: this.stats.loading.start })
+        queueMicrotask(() => {
+          if (this.stats.aborted) return
+          const data = playlists[url]
+          if (!data) { callbacks.onError({ code: 404, text: 'fixture missing' }, context, null, this.stats); return }
+          this.stats.loaded = this.stats.total = data.length
+          this.stats.loading.first = this.stats.loading.end = performance.now()
+          callbacks.onSuccess({ url, data, code: 200 }, this.stats, context, null)
+        })
+      }
+      abort(): void { this.stats.aborted = true }
+      destroy(): void { this.abort() }
+    }
+    return { loader: PlaylistLoader, requests }
+  }
+
   const originalLoader = hlsLoader.load
   afterEach(() => {
     hlsLoader.load = originalLoader
@@ -346,32 +375,16 @@ describe('attachMedia HLS precedence', () => {
         '#EXT-X-DISCONTINUITY', '#EXT-X-MAP:URI="init_1.mp4"', '#EXTINF:2.000,', 'segment_1_000000011.m4s', '',
       ].join('\n'),
     }
-    class PlaylistLoader implements Loader<LoaderContext> {
-      context: LoaderContext | null = null
-      stats: LoaderStats = {
-        aborted: false, loaded: 0, retry: 0, total: 0, chunkCount: 0, bwEstimate: 0,
-        loading: { start: 0, first: 0, end: 0 }, parsing: { start: 0, end: 0 }, buffering: { start: 0, first: 0, end: 0 },
-      }
-      load(context: LoaderContext, _config: LoaderConfiguration, callbacks: LoaderCallbacks<LoaderContext>): void {
-        this.context = context
-        queueMicrotask(() => {
-          if (this.stats.aborted) return
-          const data = playlists[context.url]
-          if (!data) { callbacks.onError({ code: 404, text: 'fixture missing' }, context, null, this.stats); return }
-          this.stats.loaded = this.stats.total = data.length
-          callbacks.onSuccess({ url: context.url, data, code: 200 }, this.stats, context, null)
-        })
-      }
-      abort(): void { this.stats.aborted = true }
-      destroy(): void { this.abort() }
-    }
+    const fixture = playlistFixture(playlists)
     const { default: RealHls } = await import('hls.js')
     const real = new RealHls({
-      ...fake.configs[0] as ConstructorParameters<typeof RealHls>[0], loader: PlaylistLoader,
+      ...fake.configs[0] as ConstructorParameters<typeof RealHls>[0], loader: fixture.loader,
     })
     try {
       const details = await new Promise<import('hls.js').LevelDetails>((resolve, reject) => {
-        real.on(RealHls.Events.ERROR, (_event, data) => { if (data.fatal) reject(new Error(data.details)) })
+        // Loader exceptions are nonfatal in hls.js, but must fail this fixture
+        // immediately instead of leaving LEVEL_LOADED pending until timeout.
+        real.on(RealHls.Events.ERROR, (_event, data) => reject(new Error(data.details, { cause: data.error })))
         real.on(RealHls.Events.LEVEL_LOADED, (_event, data) => resolve(data.details))
         real.loadSource(base + 'master.m3u8')
       })
@@ -385,8 +398,71 @@ describe('attachMedia HLS precedence', () => {
       expect(details.fragments[0]?.initSegment?.url).toBe(base + 'init_0.mp4')
       expect(details.fragments[1]?.initSegment?.url).toBe(base + 'init_1.mp4')
       expect(details.fragments[1]?.cc).toBe((details.fragments[0]?.cc ?? 0) + 1)
+      expect(fixture.requests.map(({ url, type }) => ({ url, type }))).toEqual([
+        { url: base + 'master.m3u8', type: 'manifest' },
+        { url: base + 'index.m3u8', type: 'level' },
+      ])
     } finally { real.destroy() }
   })
+
+  it.each(['app://app/buffer/session/official/', '/buffer/session/official/'])(
+    'loads a direct local live playlist without postponing or duplicating its first refresh: %s', async base => {
+      const fake = fakeModule(true)
+      hlsLoader.load = () => Promise.resolve(fake.module as Awaited<ReturnType<typeof hlsLoader.load>>)
+      const source = base + 'index.m3u8'
+      await attachMedia(video(), { ...hlsDescriptor(), url: source })
+      vi.stubGlobal('MediaSource', { isTypeSupported: () => true })
+      const url = new URL(source, document.baseURI).href
+      const fixture = playlistFixture({ [url]: [
+        '#EXTM3U', '#EXT-X-VERSION:7', '#EXT-X-TARGETDURATION:2', '#EXT-X-MEDIA-SEQUENCE:10',
+        '#EXT-X-MAP:URI="init_0.mp4"', '#EXTINF:2,', 'segment_0_000000010.m4s',
+        '#EXTINF:2,', 'segment_0_000000011.m4s', '',
+      ].join('\n') })
+      const { default: RealHls } = await import('hls.js')
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'performance'] })
+      const real = new RealHls({
+        ...fake.configs[0] as ConstructorParameters<typeof RealHls>[0], loader: fixture.loader,
+      })
+      const errors: string[] = []
+      let parsedAsMaster = false
+      try {
+        const details = await new Promise<import('hls.js').LevelDetails>((resolve, reject) => {
+          real.on(RealHls.Events.ERROR, (_event, data) => {
+            errors.push(data.details)
+            reject(new Error(`${data.details} (${data.context?.url ?? data.url})`, { cause: data.error }))
+          })
+          real.on(RealHls.Events.MANIFEST_PARSED, () => { parsedAsMaster = real.levels[0]?.details === undefined })
+          real.on(RealHls.Events.LEVEL_LOADED, (_event, data) => resolve(data.details))
+          real.loadSource(source)
+        })
+        expect(parsedAsMaster).toBe(true)
+        expect(details.live).toBe(true)
+        expect(details.fragments).toHaveLength(2)
+        expect(details.fragments[0]?.initSegment?.url).toBe(new URL('init_0.mp4', url).href)
+        expect(fixture.requests).toEqual([
+          { url, type: 'manifest', time: 0 },
+          { url, type: 'level', time: 0 },
+        ])
+        await vi.advanceTimersByTimeAsync(1999)
+        expect(fixture.requests).toHaveLength(2)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(fixture.requests).toEqual([
+          { url, type: 'manifest', time: 0 },
+          { url, type: 'level', time: 0 },
+          { url, type: 'level', time: 2000 },
+        ])
+        await vi.advanceTimersByTimeAsync(999)
+        expect(fixture.requests).toHaveLength(3)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(fixture.requests.at(-1)).toEqual({ url, type: 'level', time: 3000 })
+        expect(fixture.requests).toHaveLength(4)
+        expect(errors).toEqual([])
+      } finally {
+        real.destroy()
+        vi.useRealTimers()
+      }
+    },
+  )
 
   it('keeps a deliberate rewind and rate nudge through real hls.js live-sync controllers', async () => {
     const fake = fakeModule(true)

@@ -2,9 +2,8 @@ import type { DomesticRouting } from '../server/networkPolicy'
 import type { MediaNetworkOptions } from '../server/mediaNetworkOptions'
 import type { NetworkPreferenceState } from './networkPreferences'
 import type {
-  ApiResult, HealthInfo, PresetRecord, PresetSummary, SavedPreset,
+  ApiResult, HealthInfo,
 } from '../src/app/apiClient'
-import type { HudStylePack } from '../src/core/hudStylePack'
 import type { ResolveResult } from '../server/platforms/types'
 import type { SourceRole } from '../src/core/types'
 import type { BufferState } from './bufferManager'
@@ -15,15 +14,12 @@ import type { AcquisitionDiagnosticReport } from './diagnosticContracts'
 import type { DouyuAccountsSnapshot, DouyuMessageInput, DouyuMessageOutcome, DouyuMessageSchedule, DouyuTasksSnapshot, DouyuTaskKind, DouyuTaskPolicy } from '../server/douyu/types'
 import type { DouyuRenewalTargetPage, DouyuRenewalPlan, DouyuRenewalResult, DouyuRenewalQuantity } from '../server/douyu/renewalTypes'
 import type { FeatureMethods, FeatureEvent } from './featureContracts'
-import type { YouTubeAdminMethods, YtBrowseState, YtImportJob } from './ytAdminContracts'
-import type { EditorProjectMethods } from './editorProjectContracts'
-import type { StylePackSourceId, StylePackSyncState } from './stylePackSyncContracts'
 import type { EmbeddedLoginMethods, EmbeddedLoginState } from './embeddedLoginContracts'
 import type { BrowserImportMethods } from './browserImportContracts'
 
 export interface WindowState { maximized: boolean; fullscreen: boolean; focused: boolean }
 
-export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods, EditorProjectMethods, EmbeddedLoginMethods, BrowserImportMethods {
+export interface DesktopMethods extends FeatureMethods, EmbeddedLoginMethods, BrowserImportMethods {
   getDouyinSendState: { args: undefined | { refresh: true }; result: import('../src/core/douyinMessage').DouyinSendState }
   sendDouyinMessage: { args: import('../src/core/douyinMessage').DouyinMessageInput; result: import('../src/core/douyinMessage').DouyinMessageOutcome }
   windowControl: { args: { action: 'minimize' | 'toggle-maximize' | 'close' }; result: WindowState }
@@ -60,7 +56,6 @@ export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods, Edi
   setNetworkPreferences: { args: { domesticRouting: DomesticRouting; media?: MediaNetworkOptions }; result: NetworkPreferenceState }
   getDecoderPreferences: { args: undefined; result: DecoderPreferenceState }
   setDecoderPreferences: { args: { mode: DecoderMode }; result: DecoderPreferenceState }
-  verifyAdmin: { args: { token: string }; result: { ok: true } }
   resolve: { args: { input: string; platform?: string; role?: SourceRole; quality?: string; preferAdaptive?: boolean }; result: ResolveResult }
   switchQuality: { args: { role: SourceRole; quality: string }; result: ResolveResult }
   stopBuffer: { args: { role: SourceRole }; result: { ok: true } }
@@ -68,13 +63,6 @@ export interface DesktopMethods extends FeatureMethods, YouTubeAdminMethods, Edi
   login: { args: { platform: LoginPlatform }; result: LoginResult }
   loginStatus: { args: undefined; result: LoginStatus }
   logout: { args: { platform: LoginPlatform }; result: { ok: true } }
-  listPresets: { args: undefined; result: { presets: PresetSummary[] } }
-  getStylePackSyncState: { args: undefined; result: StylePackSyncState }
-  syncStylePacks: { args: undefined; result: StylePackSyncState }
-  setStylePackSyncSource: { args: { source: StylePackSourceId }; result: StylePackSyncState }
-  getPreset: { args: { id: string }; result: PresetRecord }
-  savePreset: { args: { id: string; profile: HudStylePack; token?: string; etag?: string }; result: SavedPreset }
-  deletePreset: { args: { id: string; token?: string }; result: { ok: true } }
 }
 
 export type DesktopMethod = keyof DesktopMethods
@@ -89,8 +77,6 @@ export interface StreamSyncerBridge {
   subscribeDouyuTasks?(listener: (state: DouyuTasksSnapshot) => void): () => void
   subscribeFeatures?(listener: (event: FeatureEvent) => void): () => void
   subscribeEmbeddedLogin?(listener: (state: EmbeddedLoginState | null) => void): () => void
-  subscribeYtBrowseState?(listener: (state: YtBrowseState) => void): () => void
-  subscribeYtImportProgress?(listener: (job: YtImportJob) => void): () => void
   subscribeEmbeddedLogin?(listener: (state: EmbeddedLoginState | null) => void): () => void
 }
 

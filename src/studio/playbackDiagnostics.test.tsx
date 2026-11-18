@@ -14,10 +14,11 @@ beforeEach(() => {
   vi.useFakeTimers()
   session = new Session({ createSampler: () => null })
   const initial = session.flush()
-  snapshot = { ...initial, media: {
+  snapshot = { ...initial, autoSync: { ...initial.autoSync, ready: true }, media: {
     official: { ...initial.media.official, status: 'ready' },
     commentary: { ...initial.media.commentary, status: 'ready' },
   } }
+  vi.spyOn(session, 'snapshot', 'get').mockImplementation(() => snapshot)
 })
 afterEach(() => { session.dispose(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
@@ -35,6 +36,13 @@ describe('playback recovery controls', () => {
   it('does not render without a recovery prompt', () => {
     const view = render(<PlaybackRecoveryPrompt />)
     expect(view.container).toBeEmptyDOMElement()
+  })
+
+  it('waits for synchronization readiness before offering recovery', () => {
+    snapshot.playbackRecovery = { kind: 'stall', driftSeconds: 2 }
+    snapshot.autoSync.ready = false
+    render(<PlaybackRecoveryPrompt />)
+    expect(screen.getByRole('button', { name: '重新对齐' })).toBeDisabled()
   })
 
   it('disables recovery while alignment is running', () => {

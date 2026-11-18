@@ -4,20 +4,13 @@ import type { ApiResult } from '../src/app/apiClient'
 import type { BufferState } from './bufferManager'
 import type { DouyuAccountsSnapshot, DouyuTasksSnapshot } from '../server/douyu/types'
 import { FEATURE_METHODS, type FeatureEvent } from './featureContracts'
-import { YOUTUBE_ADMIN_METHODS, type YtBrowseState, type YtImportJob } from './ytAdminContracts'
-import { EDITOR_PROJECT_METHODS } from './editorProjectContracts'
 import { EMBEDDED_LOGIN_METHODS, type EmbeddedLoginState } from './embeddedLoginContracts'
 import { BROWSER_IMPORT_METHODS } from './browserImportContracts'
-
-const youtubeMethods = new Set<string>(YOUTUBE_ADMIN_METHODS)
-const editorMethods = new Set<string>(EDITOR_PROJECT_METHODS)
 const embeddedLoginMethods = new Set<string>(EMBEDDED_LOGIN_METHODS)
 const browserImportMethods = new Set<string>(BROWSER_IMPORT_METHODS)
 
 const methods = new Set<DesktopMethod>([
   ...FEATURE_METHODS,
-  ...YOUTUBE_ADMIN_METHODS,
-  ...EDITOR_PROJECT_METHODS,
   ...EMBEDDED_LOGIN_METHODS,
   ...BROWSER_IMPORT_METHODS,
   'windowControl', 'getWindowState',
@@ -25,9 +18,7 @@ const methods = new Set<DesktopMethod>([
   'sendDouyuMessage', 'openDouyuTaskRoom', 'getDouyinSendState', 'sendDouyinMessage',
   'getDouyuRenewalTargets', 'previewDouyuRenewal', 'executeDouyuRenewal', 'cancelDouyuRenewal',
   'getDouyuTasks', 'createDouyuTask', 'setDouyuTaskPolicy', 'startDouyuTask', 'pauseDouyuTask', 'removeDouyuTask', 'retainDouyuTaskRoom', 'closeDouyuTaskRoom',
-  'resolveDouyuRoom', 'health', 'verifyAdmin', 'resolve', 'listPresets', 'getPreset', 'savePreset', 'deletePreset',
-  'getStylePackSyncState', 'syncStylePacks', 'setStylePackSyncSource',
-  'switchQuality', 'stopBuffer', 'reconnectDanmaku', 'login', 'loginStatus', 'logout',
+  'resolveDouyuRoom', 'health', 'resolve', 'switchQuality', 'stopBuffer', 'reconnectDanmaku', 'login', 'loginStatus', 'logout',
   'getNetworkPreferences', 'setNetworkPreferences',
   'getDecoderPreferences', 'setDecoderPreferences',
   'getToolsStatus', 'getAcquisitionDiagnostics', 'updateYtdlp', 'restoreYtdlp',
@@ -42,7 +33,7 @@ const bridge: StreamSyncerBridge = {
     }
     const channel = browserImportMethods.has(method) ? 'stream-syncer:browser-import-invoke'
       : embeddedLoginMethods.has(method) ? 'stream-syncer:embedded-login-invoke'
-      : editorMethods.has(method) ? 'stream-syncer:editor-invoke' : youtubeMethods.has(method) ? 'stream-syncer:yt-invoke' : 'stream-syncer:invoke'
+      : 'stream-syncer:invoke'
     return ipcRenderer.invoke(channel, method, args) as Promise<ApiResult<DesktopMethods[K]['result']>>
   },
   subscribeDanmaku(room, listener) {
@@ -97,18 +88,6 @@ const bridge: StreamSyncerBridge = {
     }
     ipcRenderer.on('stream-syncer:features', receive)
     return () => { active = false; ipcRenderer.removeListener('stream-syncer:features', receive) }
-  },
-  subscribeYtBrowseState(listener) {
-    let active = true
-    const receive = (_event: unknown, state: YtBrowseState) => { if (active) listener(state) }
-    ipcRenderer.on('stream-syncer:yt-browse-state', receive)
-    return () => { active = false; ipcRenderer.removeListener('stream-syncer:yt-browse-state', receive) }
-  },
-  subscribeYtImportProgress(listener) {
-    let active = true
-    const receive = (_event: unknown, job: YtImportJob) => { if (active) listener(job) }
-    ipcRenderer.on('stream-syncer:yt-import-progress', receive)
-    return () => { active = false; ipcRenderer.removeListener('stream-syncer:yt-import-progress', receive) }
   },
   subscribeEmbeddedLogin(listener) {
     let active = true

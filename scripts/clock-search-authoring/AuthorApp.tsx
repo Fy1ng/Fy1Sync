@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { BasicClockSearchConfig } from '../../src/core/basicClockSearch'
 import type { RoiRect } from '../../src/core/profileSchema'
 import { BasicRegionSheet } from '../../src/studio/BasicRegionSheet'
-import { RoiWindow } from '../../src/studio/editor/RoiWindow'
+import { RoiWindow } from '../../src/ui/regions/RoiWindow'
 import './author.css'
 
 interface AuthorState { config: BasicClockSearchConfig; writable: boolean; configPath: string }

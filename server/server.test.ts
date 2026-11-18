@@ -1,35 +1,20 @@
 /** Service-level IPC contract tests. No test creates a listening socket. */
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import appPackage from '../package.json'
 import type { ApiResult } from '../src/app/apiClient'
-import { packBitmap } from '../src/core/bitmapCodec'
-import { TEMPLATE_PIXELS } from '../src/core/profileSchema'
-import { createEmptyHudStylePack } from '../src/core/hudStylePack'
 import { createDesktopService, createResolverDeps, sanitizedFailure, type DesktopService, type AcquisitionService } from './api'
 import { StreamFailureError } from './networkFailure'
 import { ProxyError } from './safeFetch'
 import { resolveConfig, type ProxyConfig } from './config'
 import { DanmakuRelay } from './danmaku/relay'
-import { MAX_PRESET_BYTES } from './presetStore'
 import { MAX_PLATFORM_RESPONSE_BYTES } from './platformResponse'
 
 // Public platform DNS is deterministic; no test contacts DNS or an upstream service.
 vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]) }))
-
-function sampleData(): string {
-  return packBitmap(Uint8Array.from({ length: TEMPLATE_PIXELS }, (_, index) => index % 3 === 0 ? 255 : 0))
-}
-
-function validProfile(overrides: Record<string, unknown> = {}) {
-  const pack = createEmptyHudStylePack('cs2/iem', 'IEM Countdown')
-  pack.bitmaps.s0 = { width: 32, height: 48, data: sampleData() }
-  pack.variants[0]!.fields.clock!.glyphs['0'] = ['s0']
-  return { ...pack, ...overrides }
-}
 
 function value<T = Record<string, any>>(result: ApiResult<unknown>): T {
   expect(result.ok).toBe(true)
@@ -187,18 +172,9 @@ describe('desktop main-process service', () => {
     expect(await service.invoke(method, undefined)).toMatchObject({ ok: false, code: 'not-found' })
   })
 
-  it.each(['health', 'listPresets'])('requires absent arguments for %s', async (method) => {
+  it.each(['health', 'getNetworkPreferences'])('requires absent arguments for %s', async (method) => {
     expect(await service.invoke(method, {})).toMatchObject({ ok: false, code: 'invalid-arguments' })
     expect(await service.invoke(method, null)).toMatchObject({ ok: false, code: 'invalid-arguments' })
-  })
-
-  it.each([null, [], 'bad', 42, { token: 12 }, {}, { token: '', extra: true }, { token: 'x'.repeat(4_097) }])('rejects malformed editor verification: %j', async (args) => {
-    expect(await service.invoke('verifyAdmin', args)).toMatchObject({ ok: false, code: 'invalid-arguments' })
-  })
-
-  it('accepts the trusted local editor without a shared secret', async () => {
-    expect(await service.invoke('verifyAdmin', { token: '' })).toEqual({ ok: true, value: { ok: true } })
-    expect(await service.invoke('verifyAdmin', { token: 'legacy-test-value' })).toEqual({ ok: true, value: { ok: true } })
   })
 
   it('rejects cyclic, executable and excessively deep argument values', async () => {
@@ -328,104 +304,6 @@ describe('desktop main-process service', () => {
       const result = await service.invoke('resolve', { input: '288016', platform: 'douyu' })
       expect(value(result)).toMatchObject({ ok: false, failure: { code: 'upstream-error' } })
       expect(JSON.stringify(result)).not.toContain('do-not-echo')
-    })
-  })
-
-  describe('preset operations', () => {
-    const save = (overrides: Record<string, unknown> = {}, etag?: string) => service.invoke('savePreset', { id: 'cs2/iem', profile: validProfile(overrides), etag })
-
-    it('starts with an empty list', async () => {
-      expect(value(await service.invoke('listPresets', undefined))).toEqual({ presets: [] })
-    })
-
-    it('creates and reads a nested preset id with an ETag', async () => {
-      const saved = value(await save())
-      expect(saved).toMatchObject({ id: 'cs2/iem', etag: expect.stringMatching(/^[0-9a-f]{32}$/), updatedAt: expect.any(Number) })
-      const read = value(await service.invoke('getPreset', { id: 'cs2/iem' }))
-      expect(read).toMatchObject({ profile: { id: 'cs2/iem', name: 'IEM Countdown' }, etag: saved.etag })
-    })
-
-    it('allows validated writes without a token for the trusted local editor', async () => {
-      expect((await save()).ok).toBe(true)
-      expect(await service.invoke('deletePreset', { id: 'cs2/iem' })).toEqual({ ok: true, value: { ok: true } })
-    })
-
-    it('accepts an optional legacy token but still validates its shape', async () => {
-      expect((await service.invoke('savePreset', { id: 'cs2/iem', profile: validProfile(), token: '' })).ok).toBe(true)
-      expect(await service.invoke('deletePreset', { id: 'cs2/iem', token: 12 })).toMatchObject({ ok: false, code: 'invalid-arguments' })
-    })
-
-    it('lists summaries without template bitmap payloads', async () => {
-      await save()
-      const result = value(await service.invoke('listPresets', undefined))
-      expect(result.presets).toHaveLength(1)
-      expect(result.presets[0]).toMatchObject({ id: 'cs2/iem', name: 'IEM Countdown', templateChars: 1 })
-      expect(JSON.stringify(result)).not.toContain(sampleData())
-    })
-
-    it('returns not-found for an unknown preset', async () => {
-      expect(await service.invoke('getPreset', { id: 'cs2/absent' })).toMatchObject({ ok: false, code: 'not-found' })
-    })
-
-    it('returns validation paths for an invalid profile', async () => {
-      expect(await save({ revision: 0 })).toMatchObject({
-        ok: false, code: 'invalid-profile', detail: { issues: expect.arrayContaining([expect.objectContaining({ path: 'revision' })]) },
-      })
-    })
-
-    it('returns currentEtag on a stale write and preserves newer data', async () => {
-      const first = value(await save())
-      const second = value(await save({ name: 'Second' }))
-      expect(second.etag).not.toBe(first.etag)
-      expect(await save({ name: 'Third' }, first.etag)).toMatchObject({ ok: false, code: 'conflict', detail: { currentEtag: second.etag } })
-      expect(value(await service.invoke('getPreset', { id: 'cs2/iem' })).profile.name).toBe('Second')
-    })
-
-    it('accepts the current ETag and returns the next one', async () => {
-      const first = value(await save())
-      const updated = value(await save({ name: 'Renamed' }, first.etag))
-      expect(updated.etag).not.toBe(first.etag)
-    })
-
-    it('rejects a profile larger than the preset limit', async () => {
-      expect(await save({ notes: 'x'.repeat(MAX_PRESET_BYTES) })).toMatchObject({ ok: false, code: 'too-large' })
-    })
-
-    it('rejects oversized IPC envelopes', async () => {
-      expect(await save({ notes: 'x'.repeat(MAX_PRESET_BYTES + 20_000) })).toMatchObject({ ok: false, code: 'too-large' })
-    })
-
-    it('deletes once and then reports the preset gone', async () => {
-      await save()
-      expect((await service.invoke('deletePreset', { id: 'cs2/iem' })).ok).toBe(true)
-      expect(await service.invoke('deletePreset', { id: 'cs2/iem' })).toMatchObject({ ok: false, code: 'not-found' })
-      expect(value(await service.invoke('listPresets', undefined)).presets).toEqual([])
-    })
-
-    it.each(['../escaped', 'cs2/../../escaped', 'a'.repeat(66), '', 'a\\b', 'a%2Fb'])('rejects unsafe preset ids on all operations: %s', async (id) => {
-      for (const method of ['getPreset', 'deletePreset', 'savePreset']) {
-        const args = method === 'savePreset' ? { id, profile: validProfile() } : { id }
-        expect(await service.invoke(method, args)).toMatchObject({ ok: false, code: 'invalid-id' })
-      }
-    })
-
-    it.each([{ id: 'cs2/iem' }, { id: 'cs2/iem', profile: validProfile(), extra: true }, { id: 'cs2/iem', profile: validProfile(), etag: 1 }, { id: 'cs2/iem', profile: validProfile(), token: [] }])('rejects malformed save envelopes', async (args) => {
-      expect(await service.invoke('savePreset', args)).toMatchObject({ ok: false, code: 'invalid-arguments' })
-    })
-
-    it('rejects a non-profile without disrupting subsequent calls', async () => {
-      expect(await service.invoke('savePreset', { id: 'cs2/iem', profile: [] })).toMatchObject({ ok: false, code: 'invalid-profile' })
-      expect(value(await service.invoke('health', undefined)).ok).toBe(true)
-    })
-
-    it('keeps I/O errors structured and hides local paths', async () => {
-      const file = join(dataDir, 'file-not-directory')
-      await writeFile(file, 'occupied', 'utf8')
-      const other = setup({ dataDir: file })
-      const result = await other.invoke('savePreset', { id: 'cs2/iem', profile: validProfile() })
-      expect(result).toMatchObject({ ok: false, code: 'io-error' })
-      expect(JSON.stringify(result)).not.toContain(dataDir)
-      other.dispose()
     })
   })
 

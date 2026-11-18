@@ -151,7 +151,7 @@ describe('Session snapshot', () => {
     sessions.push(session)
     expect(session.settings.smallStepSeconds).toBe(0.25)
     expect(session.settings.sidebarVisible).toBe(false)
-    expect(session.settings.profileId).toBe('cs2/iem')
+    expect(session.settings).not.toHaveProperty('profileId')
     expect(session.settings.recognitionMode).toBe('basic')
     expect(session.profileFor('official')).toMatchObject({ kind: 'basic-clock' })
     expect(session.profileFor('commentary')).toEqual(session.profileFor('official'))

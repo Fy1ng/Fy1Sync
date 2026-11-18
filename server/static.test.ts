@@ -233,13 +233,8 @@ describe('serveStatic', () => {
     expect(res.sentHeaders['cache-control']).toBe('no-cache')
   })
 
-  it('falls back to the shell for a client route so /admin survives a reload', async () => {
-    const res = fakeResponse()
-    const handled = await serveStatic(fakeRequest('/admin'), asServerResponse(res), { root })
-    expect(handled).toBe(true)
-    expect(res.status).toBe(200)
-    expect(res.sentHeaders['content-type']).toBe('text/html; charset=utf-8')
-    expect(res.body()).toContain('id="root"')
+  it.each(['/admin', '/admin/', '/admin-media/old', '/editor-media/old'])('does not serve the player shell for retired route %s', async pathname => {
+    expect(await serveAsset(fakeRequest(pathname), { root })).toBeNull()
   })
 
   it('declines a missing asset instead of answering it with HTML', async () => {
@@ -252,7 +247,7 @@ describe('serveStatic', () => {
 
   it('falls back for a missing .html path, which is still a document request', async () => {
     const res = fakeResponse()
-    expect(await serveStatic(fakeRequest('/some/page.html'), asServerResponse(res), { root })).toBe(true)
+    expect(await serveStatic(fakeRequest('/some/page.html'), asServerResponse(res), { root, spaFallback: 'index.html' })).toBe(true)
     expect(res.body()).toContain('id="root"')
   })
 
@@ -266,7 +261,7 @@ describe('serveStatic', () => {
 
   it('falls back for a directory without an index rather than listing it', async () => {
     const res = fakeResponse()
-    expect(await serveStatic(fakeRequest('/assets'), asServerResponse(res), { root })).toBe(true)
+    expect(await serveStatic(fakeRequest('/assets'), asServerResponse(res), { root, spaFallback: 'index.html' })).toBe(true)
     expect(res.body()).toContain('id="root"')
   })
 

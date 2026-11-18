@@ -886,7 +886,7 @@ describe('AutoSyncController profile guard', () => {
     expect(result.phase).toBe('failed')
     expect(result.failure).toMatchObject({
       kind: 'not-ready',
-      message: '样式包模式需要先选择手动提供的样式包, 再识别倒计时和自动对齐',
+      message: '倒计时识别尚未就绪, 请等待识别完成后重试',
     })
     // The point of the guard: no window spent, no seek issued, nothing blamed on the picture.
     expect(sampled).toBe(false)

@@ -43,7 +43,7 @@ async function frame(page: Page, roi: typeof exact) {
   const canvas = dialog.getByLabel('官方画面当前帧')
   await expect(canvas).toHaveJSProperty('width', real ? 3840 : 1280)
   await dialog.getByRole('button', { name: '重新绘制', exact: true }).click()
-  await expect(dialog.locator('.editor-stage')).not.toHaveClass(/is-zoomed/)
+  await expect(dialog.locator('.region-stage')).not.toHaveClass(/is-zoomed/)
   const bounds = await canvas.boundingBox()
   expect(bounds).not.toBeNull()
   await page.mouse.move(bounds!.x + bounds!.width * roi.x, bounds!.y + bounds!.height * roi.y)
@@ -53,11 +53,11 @@ async function frame(page: Page, roi: typeof exact) {
   {
     const original = await dialog.getByLabel('画面缩放').innerText()
     await dialog.getByRole('button', { name: '放大到当前框', exact: true }).click()
-    await expect(dialog.locator('.editor-stage')).toHaveClass(/is-zoomed/)
+    await expect(dialog.locator('.region-stage')).toHaveClass(/is-zoomed/)
     await expect(dialog.getByLabel('画面缩放')).not.toHaveText(original)
     await page.screenshot({ path: test.info().outputPath('shared-manual-zoom.png') })
     await dialog.getByRole('button', { name: '适应窗口', exact: true }).click()
-    await expect(dialog.locator('.editor-stage')).not.toHaveClass(/is-zoomed/)
+    await expect(dialog.locator('.region-stage')).not.toHaveClass(/is-zoomed/)
   }
   await dialog.getByRole('button', { name: '使用此范围', exact: true }).click()
   await expect(dialog).toBeHidden()

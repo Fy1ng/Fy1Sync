@@ -2,7 +2,6 @@
 
 import type { DesktopMethods, StreamSyncerBridge, WindowState } from '../../electron/contracts'
 import type { ResolveFailure, ResolvedStream } from '../../server/platforms/types'
-import type { HudPackIssue, HudStylePack } from '../core/hudStylePack'
 import type { SourceRole } from '../core/types'
 import type { BufferState } from '../../electron/bufferManager'
 import type { LoginPlatform } from '../../electron/login'
@@ -11,7 +10,6 @@ import type { DouyuAccountsSnapshot, DouyuTaskPolicy, DouyuTasksSnapshot } from 
 import type { DomesticRouting } from '../../server/networkPolicy'
 import type { MediaNetworkOptions } from '../../server/mediaNetworkOptions'
 import type { FeatureMethod, FeatureMethods, FeatureEvent } from '../../electron/featureContracts'
-import type { StylePackSourceId } from '../../electron/stylePackSyncContracts'
 import type { EmbeddedLoginState, EmbeddedLoginViewport } from '../../electron/embeddedLoginContracts'
 import { DOUYIN_LOGIN_CHANGED_EVENT } from '../core/douyinMessage'
 import { errorDetails } from '../core/errorDetails'
@@ -26,28 +24,6 @@ export interface HealthInfo {
   version: string
   proxyEnabled: boolean
   danmakuRooms: number
-}
-
-export interface PresetSummary {
-  id: string
-  name: string
-  updatedAt: number
-  etag: string
-  templateChars: number
-  source?: 'cloud'
-  revision?: number
-}
-
-export interface PresetRecord {
-  profile: HudStylePack
-  etag: string
-  source?: 'cloud'
-}
-
-export interface SavedPreset {
-  id: string
-  etag: string
-  updatedAt: number
 }
 
 export interface ApiClientOptions {
@@ -95,17 +71,9 @@ export class ApiClient {
   }
   getToolsStatus() { return this.request('getToolsStatus', undefined) }
   getAcquisitionDiagnostics() { return this.request('getAcquisitionDiagnostics', undefined) }
-  getStylePackSyncState() { return this.request('getStylePackSyncState', undefined) }
-  syncStylePacks() { return this.request('syncStylePacks', undefined) }
-  setStylePackSyncSource(source: StylePackSourceId) { return this.request('setStylePackSyncSource', { source }) }
   updateYtdlp() { return this.request('updateYtdlp', undefined) }
   restoreYtdlp(target: 'previous' | 'bundled') { return this.request('restoreYtdlp', { target }) }
   setDecoderPreferences(mode: DecoderMode) { return this.request('setDecoderPreferences', { mode }) }
-
-  /** Compatibility seam; main authorizes the local app frame rather than a token. */
-  verifyAdmin(token = ''): Promise<ApiResult<{ ok: true }>> {
-    return this.request('verifyAdmin', { token })
-  }
 
   /** A platform refusal remains distinct from an IPC transport failure. */
   resolve(
@@ -197,28 +165,6 @@ export class ApiClient {
     try { return this.bridge().subscribeWindowState?.(listener) ?? (() => {}) } catch { return () => {} }
   }
 
-  listPresets(): Promise<ApiResult<{ presets: PresetSummary[] }>> {
-    return this.request('listPresets', undefined)
-  }
-
-  getPreset(id: string): Promise<ApiResult<PresetRecord>> {
-    return this.request('getPreset', { id })
-  }
-
-  /** Pass the last loaded ETag so stale editors cannot overwrite another edit. */
-  savePreset(
-    id: string,
-    profile: HudStylePack,
-    token = '',
-    etag?: string,
-  ): Promise<ApiResult<SavedPreset>> {
-    return this.request('savePreset', { id, profile, token, etag })
-  }
-
-  deletePreset(id: string, token = ''): Promise<ApiResult<{ ok: true }>> {
-    return this.request('deletePreset', { id, token })
-  }
-
   /** Stop delivery before releasing the preload subscription, including queued events. */
   subscribeDanmaku(room: string, listener: (event: DanmakuEvent) => void): () => void {
     let active = true
@@ -231,16 +177,6 @@ export class ApiClient {
       unsubscribe()
     }
   }
-}
-
-/** Validation issues travel in the failure detail; verify their shape before display. */
-export function issuesFrom(detail: unknown): HudPackIssue[] {
-  const issues = (detail as { issues?: unknown } | undefined)?.issues
-  if (!Array.isArray(issues)) return []
-  return issues.filter((issue): issue is HudPackIssue => {
-    const candidate = issue as HudPackIssue | undefined
-    return typeof candidate?.path === 'string' && typeof candidate?.message === 'string'
-  })
 }
 
 export const apiClient = new ApiClient()

@@ -1,5 +1,5 @@
 import { expect, test } from './electron'
-import { connectDanmaku, fixturesReady, loadBothFixtures, openPlayer, openSettingsSection, openSourcePanel, setPlaying } from './helpers'
+import { connectDanmaku, fixturesReady, loadBothFixtures, openPlayer, openSourcePanel, setPlaying } from './helpers'
 import { SETTINGS_KEY } from '../src/app/settings'
 
 test('移除解说同时移除弹幕订阅和列表, 返回播放器不会恢复旧房间', async ({ page, electronApp }) => {
@@ -36,9 +36,8 @@ test('移除解说同时移除弹幕订阅和列表, 返回播放器不会恢复
   await expect.poll(() => emit('REMOVAL_LATE_EVENT')).toBe(0)
   expect(await page.evaluate(key => localStorage.getItem(key), SETTINGS_KEY)).toBe(savedSettings)
 
-  const settings = await openSettingsSection(page, '倒计时样式')
-  await settings.getByRole('link', { name: '打开倒计时样式编辑器', exact: true }).click()
-  await page.getByRole('link', { name: '返回播放器', exact: true }).click()
+  await page.reload()
+  await openPlayer(page)
   await expect(page.locator('.studio')).toBeVisible()
   expect(await emit('REMOVAL_PARKED_EVENT')).toBe(0)
   await expect(page.getByRole('log', { name: '弹幕列表' })).toHaveCount(0)

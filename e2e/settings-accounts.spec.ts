@@ -12,7 +12,7 @@ test('账号分区将五平台及斗鱼子页放在同一侧栏并记住选择',
     await openPlayer(running.page)
     const general = await openSettings(running.page, '对齐')
     const sections = general.getByRole('tablist', { name: '设置分区', exact: true })
-    await expect(sections.getByRole('tab')).toHaveText(['通用', '账号', '弹幕记录', '房间数据', '倒计时样式'])
+    await expect(sections.getByRole('tab')).toHaveText(['通用', '账号', '弹幕记录', '房间数据', '画面匹配'])
     for (const name of ['斗鱼', '哔哩哔哩', '虎牙', '抖音', 'YouTube']) {
       await expect(general.getByRole('tablist', { name: '通用', exact: true }).getByRole('tab', { name, exact: true })).toHaveCount(0)
     }

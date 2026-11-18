@@ -1,15 +1,10 @@
-import init, { BasicClockRecognizer, RecognitionEngine, TickMomentDetector, recognize_hud_frame } from './pkg/stream_syncer_wasm.js'
+import init, { BasicClockRecognizer } from './pkg/stream_syncer_wasm.js'
 import wasmUrl from './pkg/stream_syncer_wasm_bg.wasm?url'
 import type { WasmEngine } from '../recognition/backend'
 
 export async function loadWasmEngine(): Promise<WasmEngine> {
   await init({ module_or_path: wasmUrl })
-  const recognition = new RecognitionEngine()
   return {
-    recognizeHud: (...args) => recognize_hud_frame(...args),
-    configure: (profile) => recognition.configure(profile),
-    recognize: (...args) => recognition.recognize(...args),
-    createTickDetector: () => new TickMomentDetector(),
     createBasicClockRecognizer: (templates) => {
       const basic = new BasicClockRecognizer(templates)
       return { push: (...args) => basic.push(...args), reset: () => basic.reset(), resetTiming: () => basic.reset_timing(), free: () => basic.free(),

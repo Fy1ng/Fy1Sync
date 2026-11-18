@@ -1,6 +1,7 @@
 # Fy1Sync 项目约束
 
 - 这是 Fy1Sync 的独立仓库。主工作区是本目录（分支 `main`），界面工作区是同级目录 `../Fy1Sync-ui`（分支 `ui-redesign`，同一仓库的 worktree）。不要再在旧的 DouyuPlus1 子目录或 `DouyuPlus1-ui` 里开发。
+- 样式包与 `/admin` 编辑器保留在同级独立 worktree `../Fy1Sync-stylepack-admin`, 分支 `codex/stylepack-admin`. main 已移除这些功能, 相关代码和测试在该 worktree 维护.
 - 回复、文档、界面文案用中文；代码注释、标识符用英文。见 `CLAUDE.md`。
 - 文档目录为 `docs/`，交接文档在 `.local-handoff/`。
 - 测试数据只用临时目录和 `e2e/.data`。不读写、复制或迁移真实的 `%APPDATA%\Stream Syncer` / `%APPDATA%\Fy1Sync`。

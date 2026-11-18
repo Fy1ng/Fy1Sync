@@ -7,8 +7,6 @@ mod basic_clock;
 mod camera;
 mod image;
 mod matching;
-mod hud;
-mod hud_preprocess;
 mod profile;
 mod temporal;
 
@@ -18,8 +16,6 @@ pub use basic_clock::*;
 pub use camera::*;
 pub use image::*;
 pub use matching::*;
-pub use hud::*;
-pub use hud_preprocess::*;
 pub use profile::*;
 use serde_json::{json, Value};
 pub use temporal::*;
@@ -71,42 +67,6 @@ pub(crate) fn field_number(value: &Value, key: &str, fallback: f64) -> f64 {
         .filter(|v| !v.is_null())
         .map(number)
         .unwrap_or(fallback)
-}
-
-#[derive(Default)]
-pub struct Engine {
-    pack: Option<HudStylePack>,
-}
-impl Engine {
-    pub fn new() -> Self { Self::default() }
-    pub fn configure(&mut self, pack_json: &str) -> Result<Value, String> {
-        self.pack = None;
-        let pack = hud_pack_from_json(pack_json)?;
-        let readiness = hud_pack_readiness(&pack, &pack.variants[0].id);
-        self.pack = Some(pack);
-        Ok(readiness)
-    }
-    pub fn recognize(&self, rgba: &[u8], width: usize, height: usize,
-        media_time: f64, wall_time: f64, frame_index: f64, want_debug: bool) -> Value {
-        let Some(pack) = &self.pack else {
-            return json!({"outcome":{"status":"failed","reason":"no-profile"},"debug":null});
-        };
-        match recognize_hud_frame(rgba,width,height,pack,&pack.variants[0].id) {
-            Ok(result) => {
-                let (outcome,debug) = match result.fields.clock {
-                    HudFieldResult::Disabled{debug} => (json!({"status":"disabled"}),debug),
-                    HudFieldResult::Read{reading,debug} => (json!({"status":"success","reading":{
-                        "text":reading.text,"seconds":reading.value,"scores":reading.scores,"confidence":reading.confidence,
-                        "mediaTime":media_time,"wallTime":wall_time,"frameIndex":frame_index}}),debug),
-                    HudFieldResult::Failed{reason,debug} => (json!({"status":"failed","reason":reason}),debug),
-                    HudFieldResult::Absent{debug} => (json!({"status":"absent"}),debug),
-                    HudFieldResult::Indeterminate{reason,debug} => (json!({"status":"indeterminate","reason":reason}),debug),
-                };
-                json!({"outcome":outcome,"debug":if want_debug {serde_json::to_value(debug).unwrap()}else{Value::Null}})
-            },
-            Err(error) => json!({"outcome":{"status":"failed","reason":"decode-failed","detail":error},"debug":null}),
-        }
-    }
 }
 
 /// ECMAScript toFixed for the small decimal precisions used in diagnostics.

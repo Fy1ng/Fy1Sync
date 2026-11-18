@@ -31,7 +31,7 @@ import { PlatformAccount } from './login/PlatformAccount'
 import { refreshLoginStatus } from './login/status'
 import { AccountAvatar, BrowserImportButton, BrowserLoginImportProvider } from './login/BrowserLoginImport'
 
-export type SettingsSection = 'accounts' | 'records' | 'insights' | 'editor' | 'general'
+export type SettingsSection = 'accounts' | 'records' | 'insights' | 'frame-matching' | 'general'
 
 /** Where 设置 opens, and for 弹幕记录 which page and user. */
 export interface SettingsTarget { section: SettingsSection; account?: LoginPlatform; records?: { tab: RecordsTab; uid?: string } }
@@ -41,7 +41,7 @@ const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: 'accounts', label: '账号' },
   { id: 'records', label: '弹幕记录' },
   { id: 'insights', label: '房间数据' },
-  { id: 'editor', label: '画面匹配' },
+  { id: 'frame-matching', label: '画面匹配' },
 ]
 
 export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
@@ -82,7 +82,7 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
           {section === 'insights' && !huya && (room
             ? <RoomInsights room={room} />
             : <p className="settings-empty">连接斗鱼弹幕房间后显示房间数据</p>)}
-          {section === 'editor' && <div className="settings-page">
+          {section === 'frame-matching' && <div className="settings-page">
             <FrameHashSettings />
           </div>}
         </div>

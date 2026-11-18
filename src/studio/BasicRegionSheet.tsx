@@ -2,8 +2,8 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { contentRect, normalizeRoi, pointToFraction, type Rect } from '../core/imageOps'
 import type { RoiRect } from '../core/profileSchema'
-import { EditorStage } from './editor/EditorStage'
-import { RoiWindow } from './editor/RoiWindow'
+import { RegionStage } from '../ui/regions/RegionStage'
+import { RoiWindow } from '../ui/regions/RoiWindow'
 import { Sheet } from './kit'
 import { ErrorText, useErrorState } from '../ui/ErrorDetails'
 import { displayError } from '../core/errorDetails'
@@ -96,7 +96,7 @@ export function BasicRegionSheet({ video, sourceToken, initial, title, saveLabel
     if (event.button !== 0 || invalid || !size.width || (!drawing && (event.target as Element).closest('.roi-window'))) return
     const bounds = event.currentTarget.getBoundingClientRect()
     const fitted = contentRect(size.width, size.height, bounds.width, bounds.height)
-    // EditorStage owns blank-space panning when zoomed; new drawing begins in fit view.
+    // RegionStage owns blank-space panning when zoomed; new drawing begins in fit view.
     if (!bounds.width || !bounds.height || Math.abs(picture.width - fitted.width) > 1) return
     const value = { pointerId: event.pointerId, start: { x: 0, y: 0 }, bounds, picture }
     const start = point(event, value)
@@ -130,7 +130,7 @@ export function BasicRegionSheet({ video, sourceToken, initial, title, saveLabel
       <p className="basic-region-sheet__instructions">{instructions}</p>
       <p className="basic-region-sheet__instructions">适应窗口时可拖空白处画新框, 放大后拖动选框边角精调. 画面继续播放.</p>
       <div className="basic-region-sheet__stage-wrap">
-        <EditorStage mediaSize={size} roi={roi} resetKey={`${title}/${revision}`} enabled={size.width > 0 && !invalid} hidden={false}>
+        <RegionStage mediaSize={size} roi={roi} resetKey={`${title}/${revision}`} enabled={size.width > 0 && !invalid} hidden={false}>
           {picture => <div className={`basic-region-sheet__surface${drawing ? ' is-drawing' : ''}`}
             onPointerDown={event => begin(event, picture)} onPointerMove={move} onPointerUp={end}
             onPointerCancel={() => { drag.current = null; setDrawing(false) }}
@@ -140,7 +140,7 @@ export function BasicRegionSheet({ video, sourceToken, initial, title, saveLabel
             {size.width > 0 && <RoiWindow roi={roi} onChange={setRoi} videoWidth={size.width} videoHeight={size.height}
               contentBox={picture} readOnly={invalid || drawing} label="范围" />}
           </div>}
-        </EditorStage>
+        </RegionStage>
       </div>
       {problem && <p className="basic-region-sheet__problem" role="status">{problem === '正在读取当前画面...' ? problem : <ErrorText error={problemDetail ?? problem} message={problem} />}</p>}
       <div className="basic-region-sheet__actions">

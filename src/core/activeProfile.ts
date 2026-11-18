@@ -1,5 +1,4 @@
-/** Automatic clocks and imported style packs share a full-frame capture path. */
-import type { HudStylePack } from './hudStylePack'
+
 import type { RecognitionProfile, RoiRect } from './profileSchema'
 
 export interface BasicClockProfile {
@@ -18,16 +17,12 @@ export const BASIC_CLOCK_PROFILE: BasicClockProfile = {
   kind: 'basic-clock', id: 'basic-clock', name: '基础模式', sampleFps: 15,
 }
 
-export type ActiveProfile = HudStylePack | RecognitionProfile | BasicClockProfile
+export type ActiveProfile = RecognitionProfile | BasicClockProfile
 
 export function isBasicClock(profile: ActiveProfile): profile is BasicClockProfile {
   return 'kind' in profile && profile.kind === 'basic-clock'
 }
 
-export function isHudPack(profile: ActiveProfile): profile is HudStylePack {
-  return 'kind' in profile && profile.kind === 'hud-style-pack'
-}
-
 export function captureRoi(profile: ActiveProfile): RoiRect {
-  return isHudPack(profile) || isBasicClock(profile) ? { x: 0, y: 0, w: 1, h: 1 } : profile.roi
+  return isBasicClock(profile) ? { x: 0, y: 0, w: 1, h: 1 } : profile.roi
 }

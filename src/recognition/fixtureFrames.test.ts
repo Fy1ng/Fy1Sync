@@ -1,4 +1,3 @@
-import { validateLearnedProfile as validateProfile } from '../test/recognitionReference'
 /**
  * Recognition against real decoded video frames.
  *
@@ -11,9 +10,7 @@ import { validateLearnedProfile as validateProfile } from '../test/recognitionRe
  *
  * This sits in between: real frames from `public/test-sources`, decoded by ffmpeg, fed
  * straight into the pipeline in-process. Templates are taught here too, from the same
- * frames, the way the editor teaches them — a template rasterised by another machine's ffmpeg
- * would not match this machine's decode, which is also why `fixture-profile.json` ships with
- * none.
+ * frames, so the glyphs use the same decoder and rasterisation as the input.
  *
  * Skips when the fixtures or ffmpeg are missing, like the E2E specs do.
  */
@@ -169,9 +166,7 @@ describe.skipIf(!ready)('真实帧识别', () => {
       }
     }
 
-    const result = validateProfile({ ...seed, templates: collected })
-    if (!result.profile) throw new Error(`教出的档案不合法：${JSON.stringify(result.issues)}`)
-    profile = result.profile
+    profile = { ...seed, templates: collected }
     templates = compileTemplates(profile)
   })
 

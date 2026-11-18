@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Session } from './session'
 import { hlsLoader } from '../media/hlsController'
-import { createEmptyHudStylePack } from '../core/hudStylePack'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
 import type { RecognitionSampler } from '../recognition/sampler'
 import { primeMediaElement } from '../test/setup'
@@ -102,7 +101,6 @@ describe('playback recovery authorization', () => {
     let finish!: () => void
     const sample = vi.fn(() => new Promise<void>(resolve => { finish = resolve }))
     const h = await harness({ sampler: { sample, dispose() {} } as unknown as RecognitionSampler })
-    h.session.setProfileForAll(createEmptyHudStylePack('test'))
     h.session.setAutoSyncInterval(15)
     h.session.setAutoSyncEnabled(true)
     await h.stall(); await h.recover()
@@ -156,7 +154,6 @@ describe('playback recovery authorization', () => {
         primeMediaElement(video, { currentTime: video.currentTime + ms / 1000 * video.playbackRate })
       }
     })
-    h.session.setProfileForAll(createEmptyHudStylePack('test'))
     if (mode === 'recovery') h.session.setAutoSyncEnabled(true)
     const authorize = vi.spyOn(h.session.autoSync, 'authorize')
     await h.stall(); await h.recover()

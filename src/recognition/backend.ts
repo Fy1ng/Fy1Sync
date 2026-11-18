@@ -1,8 +1,6 @@
-/** Both automatic clocks and HUD style packs run through Rust/WASM. */
-import { isBasicClock, isHudPack, type ActiveProfile, type BasicClockProfile } from '../core/activeProfile'
+/** Automatic countdown recognition runs through Rust/WASM. */
+import { isBasicClock, type ActiveProfile, type BasicClockProfile } from '../core/activeProfile'
 import type { RoiRect } from '../core/profileSchema'
-import { hudFrameFromJson, type HudFrameResult } from '../core/hudWasm'
-import { hudClockOutcome } from './hudResult'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
 import { RecognitionEngine } from './engine'
 import { createBasicClockTemplates } from './basicTemplates'
@@ -16,11 +14,6 @@ export interface WorkerEngine {
   readonly backend: RecognitionBackend
   handle(request: WorkerRequest): WorkerResponse | null
 }
-export interface WasmTickDetector {
-  push(gray: Uint8Array, width: number, height: number, mediaTime: number): string
-  reset(): void
-  free(): void
-}
 export interface WasmBasicClockRecognizer {
   push(rgba: Uint8Array, width: number, height: number, mediaTime: number, wallTime: number, frameIndex: number, wantDebug: boolean): string
   reset(): void
@@ -31,10 +24,6 @@ export interface WasmBasicClockRecognizer {
   setRoiPreservingCache?(roiJson: string): void
 }
 export interface WasmEngine {
-  recognizeHud?(rgba: Uint8Array, width: number, height: number, packJson: string, variantId: string): string
-  configure(profileJson: string): string
-  recognize(rgba: Uint8Array, width: number, height: number, mediaTime: number, wallTime: number, frameIndex: number, wantDebug: boolean): string
-  createTickDetector?(): WasmTickDetector
   createBasicClockRecognizer?(templatesJson: string): WasmBasicClockRecognizer
 }
 function annotate(response: WorkerResponse | null, backend: RecognitionBackend): WorkerResponse | null {
@@ -44,8 +33,6 @@ function annotate(response: WorkerResponse | null, backend: RecognitionBackend):
   }
   return response
 }
-
-type DetectorState = { detector: WasmTickDetector; width: number; height: number; time: number; variantId?: string | null }
 type BasicState = { recognizer: WasmBasicClockRecognizer; width: number; height: number; time: number; confirmedRoi?: RoiRect }
 
 export class WasmWorkerEngine implements WorkerEngine {
@@ -53,7 +40,6 @@ export class WasmWorkerEngine implements WorkerEngine {
   private generation = -1
   private configured = false
   private profile: ActiveProfile | null = null
-  private readonly detectors = new Map<SourceRole, DetectorState>()
   private readonly basicRecognizers = new Map<SourceRole, BasicState>()
   private basicTemplates: string | null = null
   private basicSampleCount = 0
@@ -79,7 +65,6 @@ export class WasmWorkerEngine implements WorkerEngine {
         }
         this.configured = false
         this.profile = null
-        this.resetDetectors()
         if (!preserveBasic) this.clearBasicRecognizers()
         let readiness: { ready: boolean; missing: string[]; sampleCount: number }
         if (isBasicClock(request.profile)) {
@@ -94,8 +79,7 @@ export class WasmWorkerEngine implements WorkerEngine {
           }
           readiness = { ready: true, missing: [], sampleCount: this.basicSampleCount }
         } else {
-          if (!isHudPack(request.profile)) throw new Error('旧版倒计时配置已停用, 请重新制作样式包')
-          readiness = JSON.parse(this.wasm.configure(JSON.stringify(request.profile))) as typeof readiness
+          throw new Error('当前播放器仅支持基础倒计时识别配置')
         }
         this.generation = request.generation
         this.configured = true
@@ -104,7 +88,6 @@ export class WasmWorkerEngine implements WorkerEngine {
       }
       case 'cancel':
         this.generation = Math.max(this.generation, request.generation)
-        this.resetDetectors()
         for (const state of this.basicRecognizers.values()) {
           if (!request.preserveBasic) {
             state.recognizer.reset()
@@ -122,7 +105,6 @@ export class WasmWorkerEngine implements WorkerEngine {
         let outcome: RecognitionOutcome
         let debug: WorkerDebug | null = null
         let tickMoment: TickMoment | undefined
-        let hud: HudFrameResult | undefined
         let basic: BasicClockDiagnostic | undefined
         try {
           const pixels = validPixels(request)
@@ -139,20 +121,8 @@ export class WasmWorkerEngine implements WorkerEngine {
             if (basic && this.profile.searchRoi) basic.searchRoi = this.profile.searchRoi
             debug = request.wantDebug ? restoreBasicDebug(result.debug) : null
             tickMoment = result.tickMoment
-          } else if (this.profile && isHudPack(this.profile)) {
-            if (!this.wasm.recognizeHud) throw new Error('WASM 不支持样式包识别, 请重新构建应用')
-            hud = hudFrameFromJson(this.wasm.recognizeHud(pixels, request.width, request.height, JSON.stringify(this.profile), ''))
-            const detector = this.detectors.get(request.role)
-            if (detector && detector.variantId !== hud.variantId) {
-              detector.detector.reset()
-              detector.variantId = hud.variantId
-            }
-            const crop = hud.fields.clock.debug?.gray
-            if (crop) tickMoment = this.detectTick(request.role, crop.data, crop.width, crop.height, request.mediaTime, hud.variantId)
-            outcome = hudClockOutcome(hud, request)
-            debug = request.wantDebug ? hud.fields.clock.debug : null
           } else {
-            outcome = { status: 'failed', reason: 'no-profile', detail: '请手动选择样式包' }
+            outcome = { status: 'failed', reason: 'no-profile', detail: '基础倒计时识别尚未配置' }
           }
         } catch (error) {
           if (error instanceof WebAssembly.RuntimeError) return {
@@ -162,7 +132,7 @@ export class WasmWorkerEngine implements WorkerEngine {
         }
         return annotate({ type: 'result', generation: request.generation, role: request.role,
           frameIndex: request.frameIndex, outcome, debug, elapsedMs: this.now() - started,
-          ...(hud ? { hud } : {}), ...(basic ? { basic } : {}), ...(tickMoment ? { tickMoment } : {}) }, this.backend)
+          ...(basic ? { basic } : {}), ...(tickMoment ? { tickMoment } : {}) }, this.backend)
       }
       default: return null
     }
@@ -220,27 +190,6 @@ export class WasmWorkerEngine implements WorkerEngine {
     return !previous.roi && !!next.roi && next.roiOrigin === 'memory' && this.basicRecognizers.size > 0
       && [...this.basicRecognizers.values()].every(state => !!state.recognizer.setRoiPreservingCache
         && !!state.confirmedRoi && sameRoi(state.confirmedRoi, next.roi))
-  }
-
-  private detectTick(role: SourceRole, gray: Uint8Array, width: number, height: number, time: number, variantId?: string | null): TickMoment | undefined {
-    if (!this.wasm.createTickDetector) return undefined
-    let state = this.detectors.get(role)
-    if (!state) {
-      state = { detector: this.wasm.createTickDetector(), width, height, time: -Infinity, variantId }
-      this.detectors.set(role, state)
-    }
-    if (state.width !== width || state.height !== height || time <= state.time) state.detector.reset()
-    state.width = width
-    state.height = height
-    state.time = time
-    const moment = JSON.parse(state.detector.push(gray, width, height, time)) as (Omit<TickMoment, 'midpoint'> & { tickTime: number }) | null
-    return moment ? { lastUnchanged: moment.lastUnchanged, firstChanged: moment.firstChanged,
-      midpoint: moment.tickTime, change: moment.change, noiseFloor: moment.noiseFloor } : undefined
-  }
-
-  private resetDetectors(): void {
-    for (const { detector } of this.detectors.values()) detector.free()
-    this.detectors.clear()
   }
 }
 

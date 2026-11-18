@@ -9,12 +9,8 @@ import * as segmentation from '../core/segmentation'
 import * as sync from '../core/syncPlan'
 import * as template from '../test/recognitionReference'
 import type { ClockJumpEvent, MediaSnapshot, RecognitionOutcome, SourceRole } from '../core/types'
-import { manualPackFixture } from '../test/profileFixture'
-import { hudPackReadiness, type HudStylePack } from '../core/hudStylePack'
-import type { HudFrameResult } from '../core/hudWasm'
-import { recognize_hud_frame } from './pkg/stream_syncer_wasm.js'
 import { createFrame, drawText, renderGlyphMask } from '../test/glyphFont'
-import { assertExact, assertParityIntegrity, checkParity, parseWasmJson, WasmRecognitionEngine, wasmCall } from './test-helpers'
+import { assertExact, assertParityIntegrity, checkParity, wasmCall } from './test-helpers'
 
 const SEED = 0x51c0f17e
 const cases = (count: number) => Array.from({ length: count }, (_, index) => index)
@@ -249,88 +245,4 @@ describe('fixed-seed offsets and seek snapshots', () => {
   })
 })
 
-type EngineResult = { outcome: RecognitionOutcome | { status: 'indeterminate'; reason: string } | { status: 'absent' }; debug: unknown }
-function statelessClock(frame: ReturnType<typeof createFrame>, pack: HudStylePack,
-  meta: { mediaTime: number; wallTime: number; frameIndex: number }, wantDebug: boolean): EngineResult {
-  const result = JSON.parse(recognize_hud_frame(new Uint8Array(frame.data), frame.width, frame.height,
-    JSON.stringify(pack), pack.variants[0]!.id)) as HudFrameResult
-  const clock = result.fields.clock
-  const outcome: EngineResult['outcome'] = clock.status === 'read'
-    ? { status: 'success', reading: { text: clock.reading.text, seconds: clock.reading.value,
-      scores: clock.reading.scores, confidence: clock.reading.confidence, ...meta } }
-    : clock.status === 'failed'
-      ? { status: 'failed', reason: clock.reason as Extract<RecognitionOutcome, { status: 'failed' }>['reason'] }
-      : clock.status === 'indeterminate' ? { status: 'indeterminate', reason: clock.reason } : { status: 'absent' }
-  return { outcome, debug: wantDebug ? clock.debug : null }
-}
-
-describe('stateful and stateless HUD WASM entry points', () => {
-  it.each([
-    { frameIndex: 2 ** 32 + 17, mediaTime: 1, wallTime: 2 },
-    { frameIndex: -1, mediaTime: 1, wallTime: 2 },
-    { frameIndex: 1.5, mediaTime: 1, wallTime: 2 },
-    { frameIndex: -0, mediaTime: -0, wallTime: -0 },
-  ])('preserves numeric frame metadata $frameIndex', meta => {
-    const { frame, text, scale } = rendered(1, randomFor(6000))
-    const pack = manualPackFixture(profileAt(scale), { width: frame.width, height: frame.height })
-    const engine = new WasmRecognitionEngine()
-    try {
-      engine.configure(JSON.stringify(pack))
-      const result = parseWasmJson(engine.recognize(new Uint8Array(frame.data), frame.width, frame.height,
-        meta.mediaTime, meta.wallTime, meta.frameIndex, true)) as EngineResult
-      expect(result.outcome.status).toBe('success')
-      if (result.outcome.status === 'success') {
-        expect(result.outcome.reading).toMatchObject({ text, seconds: parseCountdown(text), ...meta })
-      }
-      assertExact('hud.engine.metadata', result, statelessClock(frame, pack, meta, true))
-    } finally { engine.free() }
-  })
-
-  it.each(cases(32))('engine vector %i', index => {
-    const random = randomFor(index + 5000)
-    const { frame, text } = rendered(index, random)
-    const profile = profileAt(integer(random, 2, 7))
-    profile.clockFormat = index % 4 === 0 ? 'ss' : 'm:ss'
-    profile.matchThreshold = 0.7
-    if (index % 8 === 0) delete profile.templates['5']
-    const pack = manualPackFixture(profile, { width: frame.width, height: frame.height })
-    const engine = new WasmRecognitionEngine()
-    try {
-      assertExact('hud.engine.configure', parseWasmJson(engine.configure(JSON.stringify(pack))), hudPackReadiness(pack))
-      for (const wantDebug of [false, true]) {
-        const meta = { mediaTime: random() * 1000, wallTime: random() * 100_000, frameIndex: index }
-        const result = parseWasmJson(engine.recognize(new Uint8Array(frame.data), frame.width, frame.height,
-          meta.mediaTime, meta.wallTime, meta.frameIndex, wantDebug)) as EngineResult
-        assertExact('hud.engine.recognize', result, statelessClock(frame, pack, meta, wantDebug))
-        if (index % 8 === 0) expect(result.outcome).toMatchObject({ status: 'failed', reason: 'insufficient-templates' })
-        else if (result.outcome.status === 'success') {
-          expect(result.outcome.reading).toMatchObject({ text, seconds: parseCountdown(text, profile.clockFormat), ...meta })
-        } else {
-          // Mismatched training and frame scales may reject a small glyph; they must never invent a reading.
-          expect(result.outcome).toMatchObject({ status: 'failed', reason: 'low-confidence' })
-        }
-        expect(result.debug === null).toBe(!wantDebug)
-      }
-      const changed = structuredClone(pack)
-      changed.variants[0]!.fields.clock!.glyphs = {}
-      expect(JSON.parse(engine.configure(JSON.stringify(changed))).ready).toBe(false)
-      expect(JSON.parse(engine.recognize(new Uint8Array(frame.data), frame.width, frame.height, 0, 0, 0, false)).outcome)
-        .toEqual({ status: 'failed', reason: 'insufficient-templates' })
-    } finally { engine.free() }
-  })
-
-  it('strictly validates reconfiguration and clears the previous configuration after rejection', () => {
-    const { frame, scale } = rendered(1, randomFor(6001))
-    const pack = manualPackFixture(profileAt(scale), { width: frame.width, height: frame.height })
-    const engine = new WasmRecognitionEngine()
-    try {
-      expect(JSON.parse(engine.configure(JSON.stringify(pack))).ready).toBe(true)
-      expect(() => engine.configure(JSON.stringify({ ...pack, extra: true }))).toThrow()
-      expect(JSON.parse(engine.recognize(new Uint8Array(frame.data), frame.width, frame.height, 0, 0, 0, true)))
-        .toEqual({ outcome: { status: 'failed', reason: 'no-profile' }, debug: null })
-      expect(() => engine.configure(JSON.stringify({ schemaVersion: 2, templates: {} }))).toThrow()
-    } finally { engine.free() }
-  })
-})
-
-afterAll(() => assertParityIntegrity('Fixed-seed image/sync parity and Rust HUD entry vectors seed=' + SEED))
+afterAll(() => assertParityIntegrity('Fixed-seed image/sync parity seed=' + SEED))

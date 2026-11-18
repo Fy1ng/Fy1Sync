@@ -109,7 +109,7 @@ describe('settings account navigation', () => {
   it('puts five platforms in 账号 and nests Douyu pages within the same sidebar', async () => {
     mount()
     const sections = screen.getByRole('tablist', { name: '设置分区' })
-    expect(within(sections).getAllByRole('tab').map(tab => tab.textContent)).toEqual(['通用', '账号', '弹幕记录', '房间数据', '倒计时样式'])
+    expect(within(sections).getAllByRole('tab').map(tab => tab.textContent)).toEqual(['通用', '账号', '弹幕记录', '房间数据', '画面匹配'])
     const general = screen.getByRole('tablist', { name: '通用' })
     for (const name of ['斗鱼', '哔哩哔哩', '虎牙', '抖音', 'YouTube']) expect(within(general).queryByRole('tab', { name })).toBeNull()
     section('账号')

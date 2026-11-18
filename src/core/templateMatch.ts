@@ -40,4 +40,4 @@ export function scoreCoverage(coverage: Uint8Array, template: Uint8Array): numbe
 }
 
 
-export type { HudGlyphMatch as GlyphMatch } from './hudWasm'
+export interface GlyphMatch { char: import('./profileSchema').ClockChar | null; score: number; runnerUpScore: number; sampleIndex: number }

@@ -232,22 +232,6 @@ describe('the studio', () => {
     expect(close).toHaveBeenCalledTimes(1)
   })
 
-  it('defaults alignment to basic mode and exposes the saved-pack selector only in style-pack mode', async () => {
-    const session = makeSession()
-    session.updateSettings({ profileId: 'saved/iem' })
-    render(<SessionProvider session={session}><AutoAlign /></SessionProvider>)
-    fireEvent.click(screen.getByRole('button', { name: '对齐选项' }))
-    expect(screen.getByRole('radio', { name: '基础模式' })).toBeChecked()
-    expect(screen.getByText(/自动查找 0:01-1:55/)).toHaveTextContent('同一回合的正式倒计时')
-    expect(screen.queryByRole('combobox', { name: '倒计时样式' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('radio', { name: '样式包模式' }))
-    await waitFor(() => expect(screen.getByRole('combobox', { name: '倒计时样式' })).toBeInTheDocument())
-    expect(session.settings.profileId).toBe('saved/iem')
-    fireEvent.click(screen.getByRole('radio', { name: '基础模式' }))
-    await waitFor(() => expect(screen.queryByRole('combobox', { name: '倒计时样式' })).not.toBeInTheDocument())
-    expect(session.settings.profileId).toBe('saved/iem')
-  })
-
   it('opens on the paste screen when nothing is loaded', async () => {
     renderStudio(makeSession())
     await flush()

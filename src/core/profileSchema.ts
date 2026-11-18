@@ -1,4 +1,4 @@
-/** Internal transient clock-learning model. Persisted assets use HudStylePack. */
+/** Internal clock-recognition model. */
 import type { CountdownFormat } from './clockJump'
 
 export const TEMPLATE_WIDTH = 32

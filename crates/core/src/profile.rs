@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-// Transient auto-learning model. Portable files use HudStylePack exclusively.
+// Transient clock recognition model.
 pub const CLOCK_CHARS: [&str; 11] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ":"];
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RoiRect {

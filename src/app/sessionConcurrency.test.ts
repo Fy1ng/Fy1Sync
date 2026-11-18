@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Session } from './session'
-import { apiClient } from './apiClient'
-import { createEmptyHudStylePack as createEmptyProfile } from '../core/hudStylePack'
 import { primeMediaElement } from '../test/setup'
 import type { RecognitionSampler } from '../recognition/sampler'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
@@ -167,7 +165,6 @@ describe('serialized manual offsets', () => {
       }
     } } as unknown as RecognitionSampler
     const session = await harness(sampler, () => readingAt)
-    session.setProfileForAll(createEmptyProfile('test', 'test'))
     const clock = holdSeeks(session.engine.element('official'))
     const automatic = session.syncNow()
     await tick()
@@ -215,93 +212,5 @@ describe('serialized manual offsets', () => {
     await Promise.all([first, pending])
     await tick()
     expect(session.offsetBusy).toBe(false)
-  })
-})
-
-describe('latest profile selection', () => {
-  it('refreshes cloud presets without changing either active profile or playback', async () => {
-    let emit!: Parameters<typeof apiClient.subscribeFeatures>[0]
-    vi.spyOn(apiClient, 'subscribeFeatures').mockImplementation(listener => { emit = listener; return () => {} })
-    const list = vi.spyOn(apiClient, 'listPresets').mockResolvedValue({ ok: true, value: { presets: [
-      { id: 'cloud/iem', name: 'IEM revision 2', etag: 'new', updatedAt: 2, templateChars: 11, source: 'cloud', revision: 2 },
-    ] } })
-    const session = await harness()
-    const profile = createEmptyProfile('cloud/iem', 'IEM revision 1')
-    session.setProfileForAll(profile)
-    const official = session.profileFor('official')
-    const commentary = session.profileFor('commentary')
-    const cancel = vi.spyOn(session.autoSync, 'cancel')
-    emit({ topic: 'stylepacks-changed', data: { revision: 2 } })
-    await tick()
-    expect(list).toHaveBeenCalledOnce()
-    expect(session.snapshot.presets[0]?.name).toBe('IEM revision 2')
-    expect(session.profileFor('official')).toBe(official)
-    expect(session.profileFor('commentary')).toBe(commentary)
-    expect(session.engine.element('official').currentTime).toBe(100)
-    expect(cancel).not.toHaveBeenCalled()
-  })
-
-  it('ignores stale preset lists and late cloud events after disposal', async () => {
-    let emit!: Parameters<typeof apiClient.subscribeFeatures>[0]
-    vi.spyOn(apiClient, 'subscribeFeatures').mockImplementation(listener => { emit = listener; return () => {} })
-    const session = await harness()
-    let finish!: (value: Awaited<ReturnType<typeof apiClient.listPresets>>) => void
-    const list = vi.spyOn(apiClient, 'listPresets')
-      .mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
-      .mockResolvedValue({ ok: true, value: { presets: [
-        { id: 'new', name: 'new', etag: 'new', templateChars: 11, updatedAt: 2 },
-      ] } })
-    const first = session.refreshPresets()
-    expect(await session.refreshPresets()).toBe(true)
-    finish({ ok: true, value: { presets: [] } })
-    expect(await first).toBe(false)
-    expect(session.snapshot.presets[0]?.id).toBe('new')
-    session.dispose()
-    emit({ topic: 'stylepacks-changed', data: { revision: 3 } })
-    expect(await session.refreshPresets()).toBe(false)
-    expect(list).toHaveBeenCalledTimes(2)
-  })
-
-  it('ignores a late preset response after selecting no profile', async () => {
-    const session = await harness()
-    let finish!: (value: Awaited<ReturnType<typeof apiClient.getPreset>>) => void
-    vi.spyOn(apiClient, 'getPreset').mockImplementation(() => new Promise(resolve => { finish = resolve }))
-    const loading = session.selectProfile('old')
-    await session.selectProfile('')
-    finish({ ok: true, value: { profile: createEmptyProfile('old'), etag: 'old' } })
-    expect(await loading).toBe(false)
-    expect(session.settings.profileId).toBe('')
-    expect(session.profileFor('official')).toBeNull()
-  })
-
-  it('does not restore the boot preset after a new explicit choice', async () => {
-    const session = await harness()
-    session.updateSettings({ profileId: 'boot' })
-    vi.spyOn(apiClient, 'listPresets').mockResolvedValue({ ok: true, value: { presets: [{ id: 'boot', name: 'boot', etag: 'boot', templateChars: 11, updatedAt: 1 }] } })
-    let finish!: (value: Awaited<ReturnType<typeof apiClient.getPreset>>) => void
-    vi.spyOn(apiClient, 'getPreset').mockImplementation(id => id === 'boot'
-      ? new Promise(resolve => { finish = resolve })
-      : Promise.resolve({ ok: true, value: { profile: createEmptyProfile(id), etag: id } }))
-    const boot = session.boot()
-    await tick()
-    await session.selectProfile('new')
-    finish({ ok: true, value: { profile: createEmptyProfile('boot'), etag: 'boot' } })
-    await boot
-    expect(session.settings.profileId).toBe('new')
-    expect(session.profileFor('official')?.id).toBe('new')
-  })
-
-  it('ignores an old boot list before starting a preset fetch', async () => {
-    const session = await harness()
-    session.updateSettings({ profileId: 'boot' })
-    let finish!: (value: Awaited<ReturnType<typeof apiClient.listPresets>>) => void
-    vi.spyOn(apiClient, 'listPresets').mockImplementation(() => new Promise(resolve => { finish = resolve }))
-    const fetch = vi.spyOn(apiClient, 'getPreset')
-    const boot = session.boot()
-    await session.selectProfile('')
-    finish({ ok: true, value: { presets: [] } })
-    await boot
-    expect(fetch).not.toHaveBeenCalled()
-    expect(session.settings.profileId).toBe('')
   })
 })

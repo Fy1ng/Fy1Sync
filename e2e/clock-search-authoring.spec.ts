@@ -62,7 +62,7 @@ test('制作工具仅显式保存时写入, 写后及重启锁定, reset才允�
     await page.mouse.move(box!.x + box!.width * .7, box!.y + box!.height * .25, { steps: 6 })
     await page.mouse.up()
     await dialog.getByRole('button', { name: '放大到当前框' }).click()
-    await expect(dialog.locator('.editor-stage')).toHaveClass(/is-zoomed/)
+    await expect(dialog.locator('.region-stage')).toHaveClass(/is-zoomed/)
     await page.screenshot({ path: testInfo.outputPath('author-range-zoom.png') })
     await dialog.getByRole('button', { name: '使用此区间' }).click()
     await expect(dialog).toBeHidden()

@@ -2,14 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Session } from './session'
 import { apiClient } from './apiClient'
 import { primeMediaElement } from '../test/setup'
-import { createEmptyHudStylePack } from '../core/hudStylePack'
 import type { MediaDescriptor } from '../core/types'
 
 let session: Session
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => { session?.dispose(); vi.useRealTimers() })
 
-async function harness(profile: boolean) {
+async function harness(_profile: boolean) {
   session = new Session({ createSampler: () => null })
   const source: MediaDescriptor = { kind: 'progressive', url: 'app://app/buffer/old.mp4', label: '直播', input: 'https://page.invalid',
     viaProxy: false, loop: false, sourceQuality: 'high', sourceQualities: [{ id: 'high', label: '高清' }, { id: 'low', label: '流畅' }] }
@@ -19,7 +18,6 @@ async function harness(profile: boolean) {
   await session.applyOffset(5)
   session.autoSync.authorize()
   await session.engine.setPlaying(true)
-  if (profile) session.setProfileForAll(createEmptyHudStylePack('test', 'Test'))
   const switchQuality = vi.spyOn(apiClient, 'switchQuality').mockResolvedValue({ ok: true, value: { ok: true, stream: {
     platform: 'youtube', kind: 'progressive', url: 'app://app/buffer/new.mp4', label: '新画质', channel: 'id', requiresProxy: false,
     quality: 'low', qualities: source.sourceQualities,
@@ -48,24 +46,6 @@ describe('quality restart synchronization', () => {
     expect(session.engine.element('official').paused).toBe(false)
   })
 
-  it('keeps a manually supplied pack and re-syncs with it after a switch', async () => {
-    const h = await harness(false)
-    const accepted = createEmptyHudStylePack('manual/iem', 'IEM')
-    session.setProfileForAll(accepted)
-    await session.changeSourceQuality('official', 'low')
-    expect(session.profileFor('official')).toBe(accepted)
-    expect(h.sync).toHaveBeenCalledTimes(1)
-  })
-
-  it('keeps the manually selected pack when a different source is loaded', async () => {
-    await harness(false)
-    const pack = createEmptyHudStylePack('manual/iem', 'IEM')
-    session.setProfile('official', pack)
-    await session.loadSource('official', { kind: 'progressive', url: 'app://app/media/other', label: '另一场', input: 'x',
-      viaProxy: false, loop: false })
-    expect(session.profileFor('official')).toBe(pack)
-  })
-
   it('re-syncs in basic mode without a manually supplied pack', async () => {
     const h = await harness(false)
     await session.changeSourceQuality('official', 'low')
@@ -73,12 +53,13 @@ describe('quality restart synchronization', () => {
     expect(h.sync).toHaveBeenCalledTimes(1)
   })
 
-  it('suggests immediate sync when style-pack mode has no profile', async () => {
+  it('re-syncs in frame matching mode after both sources are ready', async () => {
     const h = await harness(false)
-    session.setRecognitionMode('style-pack')
+    session.setRecognitionMode('frame-hash')
     await session.changeSourceQuality('official', 'low')
-    expect(h.sync).not.toHaveBeenCalled()
-    expect(session.flush().notices.some((notice) => notice.text.includes('立即同步'))).toBe(true)
+    expect(session.profileFor('official')).toBeNull()
+    expect(session.snapshot.autoSync.ready).toBe(true)
+    expect(h.sync).toHaveBeenCalledTimes(1)
   })
 
   it('suppresses duplicate requests and discards a late response after unloading', async () => {

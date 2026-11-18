@@ -173,7 +173,8 @@ export async function attachMedia(
   const localPlaylistLoader = localBuffer ? class implements Loader<PlaylistLoaderContext> {
     private readonly inner: Loader<PlaylistLoaderContext>
     constructor(config: HlsConfig) {
-      this.inner = new (Hls.DefaultConfig.pLoader ?? Hls.DefaultConfig.loader)(config) as Loader<PlaylistLoaderContext>
+      // Wrap the instance's transport so loader overrides also handle local playlists.
+      this.inner = new (config.loader ?? Hls.DefaultConfig.pLoader ?? Hls.DefaultConfig.loader)(config) as Loader<PlaylistLoaderContext>
     }
     get stats() { return this.inner.stats }
     get context() { return this.inner.context }

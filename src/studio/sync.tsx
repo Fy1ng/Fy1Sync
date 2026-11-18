@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { Session } from '../app/session'
-import { MAX_OFFSET_SECONDS, SOURCE_ROLES, type SourceRole } from '../core/types'
+import { MAX_OFFSET_SECONDS, type SourceRole } from '../core/types'
 import { HoldButton, Icon, Popover, Segmented, Switch, usePopover } from './kit'
 import { ErrorText } from '../ui/ErrorDetails'
 
@@ -288,7 +288,7 @@ export function PlaybackRecoveryPrompt(): React.ReactNode {
   const recovery = snapshot.playbackRecovery
   if (!recovery) return null
   const busy = session.autoSync.isRunning || session.offsetBusy
-  const ready = SOURCE_ROLES.every(role => snapshot.media[role].status === 'ready')
+  const ready = snapshot.autoSync.ready
   return (
     <div className="prompt" role="status">
       <span className="prompt-text">{recovery.kind === 'reconnect'

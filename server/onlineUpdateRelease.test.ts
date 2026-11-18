@@ -9,6 +9,7 @@ import { compareAppVersions } from '../electron/appUpdateService'
 import { parseOnlineUpdateSource, verifyOnlineUpdateCatalog, validateFrontendBundle } from '../electron/onlineUpdateManifest'
 import type { ApplicationUpdateEntry } from '../electron/onlineUpdateContracts'
 import appPackage from '../package.json'
+import frontendBuild from '../packaging/frontend-build.json'
 
 const validators: OnlineUpdateReleaseValidators = { parseOnlineUpdateSource, verifyOnlineUpdateCatalog, validateFrontendBundle, compareAppVersions }
 const html = '<!doctype html><html><head><script type="module" src="/assets/index-abcd1234.js"></script><link rel="stylesheet" href="/assets/index-abcd1234.css"></head><body><div id="root"></div></body></html>'
@@ -69,7 +70,7 @@ describe('offline signed application update publisher', () => {
     expect(verifyOnlineUpdateCatalog(envelope, result.source)).toEqual(result.catalog)
     const entry = result.catalog.frontend!
     const bytes = await readFile(path.join(options.destination, entry.path))
-    expect(entry).toMatchObject({ revision: 2, bridgeVersion: 1, bytes: bytes.length, sha256: sha(bytes), minAppVersion: appPackage.version, maxAppVersion: appPackage.version })
+    expect(entry).toMatchObject({ revision: 2, bridgeVersion: frontendBuild.bridgeVersion, bytes: bytes.length, sha256: sha(bytes), minAppVersion: appPackage.version, maxAppVersion: appPackage.version })
     const bundle = validateFrontendBundle(JSON.parse(bytes.toString('utf8')), entry)
     expect(bundle.files.map(file => file.path)).toEqual(['index.html', 'assets/index-abcd1234.css', 'assets/index-abcd1234.js'])
     expect(result.catalog.application).toBeNull()
@@ -100,11 +101,34 @@ describe('offline signed application update publisher', () => {
     expect(printed).toContain('不会输出')
   })
 
-  it('refuses a private key that does not match the built-in source configuration', async () => {
+  it('refuses a private key that does not match the selected application update source configuration', async () => {
     const another = await generateOnlineUpdateKeys(path.join(directory, 'another-private'))
     await expect(prepareOnlineUpdateRelease({ ...options, privateKeyPath: another.privatePath })).rejects.toThrow('公钥不匹配')
     await expect(readdir(options.destination)).rejects.toMatchObject({ code: 'ENOENT' })
   })
+
+  it('continues to reject the existing data signer without loading a separate distribution config', async () => {
+    const source = JSON.parse(await readFile(options.sourcePath, 'utf8'))
+    source.publicKey = 'MCowBQYDK2VwAyEAvDWfMqCa/ydLbw5OBfJMkq3hbZeUd4N2OyPs4cSYlSg='
+    await writeFile(options.sourcePath, JSON.stringify(source))
+    await expect(prepareOnlineUpdateRelease(options)).rejects.toThrow('不能使用数据发布密钥')
+    await expect(readdir(options.destination)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('prepares an installer-only release using the selected application update source configuration', async () => {
+    const app = await applicationOptions()
+    const result = await prepareOnlineUpdateRelease({ ...options, ...app, clientDirectory: undefined, revision: undefined })
+    expect(result.source).toEqual(parseOnlineUpdateSource(JSON.parse(await readFile(options.sourcePath, 'utf8'))))
+    expect(result.source.publicKey).toBe(keys.publicKey)
+    expect(result.catalog.frontend).toBeNull()
+    const envelope = JSON.parse(await readFile(result.manifestPath, 'utf8'))
+    expect(verifyOnlineUpdateCatalog(envelope, result.source)).toEqual(result.catalog)
+    const entry = result.catalog.application!
+    const installer = await readFile(app.installerPath!)
+    expect(entry).toMatchObject({ version: '0.3.0', bytes: installer.length, sha256: sha(installer) })
+    expect(await readFile(path.join(options.destination, 'installers', `${entry.sha256}.exe`))).toEqual(installer)
+    expect(await readdir(options.destination)).toEqual(['history', 'installers', 'manifest.json'])
+  }, 15_000)
 
   it('rejects unsafe directory relationships and preserves unrelated output', async () => {
     for (const destination of [directory, path.join(directory, 'private/release'), path.join(directory, 'config/release'), path.join(options.clientDirectory!, 'release')]) {

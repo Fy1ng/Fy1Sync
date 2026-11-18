@@ -17,14 +17,14 @@
  */
 
 import { spawn } from 'node:child_process'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, rm } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 
 const outDir = fileURLToPath(new URL('../public/test-sources/', import.meta.url))
 const ffmpeg = process.env.STREAM_SYNC_FIXTURE_FFMPEG?.trim() || process.env.STREAM_SYNC_FFMPEG?.trim() || 'ffmpeg'
 
-/** The ROI the fixture profile expects, as fractions of the frame. Keep in sync with the JSON below. */
+/** The synthetic countdown plate, expressed as fractions of the frame. */
 const ROI = { x: 0.42, y: 0.045, w: 0.16, h: 0.13 }
 const WIDTH = 1280
 const HEIGHT = 720
@@ -170,7 +170,7 @@ async function renderVideo(name, delay, label, countdownFrom = COUNTDOWN_FROM, d
   process.stdout.write(`  ${name}  countdown 0:${countdownFrom} → 0:00, 延迟 ${delay}s\n`)
 }
 
-/** A single frame, for the Profile Editor's template capture flow. */
+/** A single countdown frame for offline recognition checks. */
 async function renderStill(name, seconds) {
   const target = join(outDir, name)
   await run([
@@ -223,41 +223,6 @@ async function renderHls(dirName, sourceName) {
   process.stdout.write(`  ${dirName}/index.m3u8  HLS VOD\n`)
 }
 
-/** Glyphs are taught from decoded fixture frames through the editor's Rust entry point. */
-async function writeProfileStub() {
-  const profile = {
-    kind: 'hud-style-pack',
-    schemaVersion: 1,
-    id: 'fixture/countdown',
-    revision: 1,
-    name: '测试源倒计时',
-    bitmaps: {},
-    variants: [{
-      id: 'official-top-720',
-      nativeSize: { width: WIDTH, height: HEIGHT },
-      fields: {
-        clock: {
-          enabled: true,
-          roi: { x: Math.round(ROI.x * WIDTH), y: Math.round(ROI.y * HEIGHT), w: Math.round(ROI.w * WIDTH), h: Math.round(ROI.h * HEIGHT) },
-          preprocess: { mode: 'gray', scale: 1.4, threshold: 150, invert: false,
-            adaptive: { windowSize: 15, offset: 7 },
-            hsv: { hue: 0, tolerance: 15, saturationMin: 0.25, saturationMax: 1, valueMin: 0.03, valueMax: 1 } },
-          segment: { minColumnInk: 1, minGlyphWidth: 2, minGapWidth: 1, minInkRatio: 0.08 },
-          glyphs: {},
-          grammar: { kind: 'countdown', format: 'm:ss' },
-          match: { minScore: 0.82, minMargin: 0.03 },
-          gateCue: null,
-        },
-        scoreLeft: null, scoreRight: null,
-      },
-      cues: {}, states: {}, organizer: null,
-    }],
-  }
-  const target = join(outDir, 'fixture-profile.json')
-  await writeFile(target, `${JSON.stringify(profile, null, 2)}\n`, 'utf8')
-  process.stdout.write('  fixture-profile.json  样式包区域与预处理参数\n')
-}
-
 async function main() {
   await rm(outDir, { recursive: true, force: true })
   await mkdir(outDir, { recursive: true })
@@ -267,13 +232,12 @@ async function main() {
   await renderVideo('official.mp4', 0, 'OFFICIAL / clean feed')
   await renderVideo('commentary.mp4', 5, 'COMMENTARY / +5s')
   // Discovery and native ROI learning use separate live windows (12 seconds each).
-  // Keep the editor's original 20-second lessons unchanged, with longer media for this flow.
+  // Keep the short playback fixtures while providing longer media for native ROI learning.
   await renderVideo('auto-official.mp4', 0, 'OFFICIAL / native learning', 50, 56)
   await renderVideo('auto-commentary.mp4', 5, 'COMMENTARY / +5s', 50, 56)
   await renderStill('frame-0-20.png', 20)
   await renderStill('frame-0-05.png', 5)
   await renderHls('commentary-hls', 'commentary.mp4')
-  await writeProfileStub()
 
   process.stdout.write(
     [

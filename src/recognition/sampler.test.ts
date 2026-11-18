@@ -8,14 +8,12 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { createEmptyProfile, type RecognitionProfile } from '../core/profileSchema'
-import { createEmptyHudStylePack } from '../core/hudStylePack'
 import { BASIC_CLOCK_PROFILE, type ActiveProfile } from '../core/activeProfile'
 import type { RecognitionOutcome, SourceRole } from '../core/types'
 import type { WorkerLike } from './client'
 import { FrameGrabber, type AsyncGrabResult, type FramePresentationTiming } from './frameGrabber'
 import type { BasicClockProgress, ResultMessage, WorkerRequest, WorkerResponse } from './protocol'
 import { RecognitionSampler } from './sampler'
-import type { HudFrameResult } from '../core/hudWasm'
 import { ClockJumpDetector } from '../core/clockJump'
 
 function profileFor(overrides: Partial<RecognitionProfile> = {}): RecognitionProfile {
@@ -656,7 +654,7 @@ describe('RecognitionSampler', () => {
       if (kind === 'seek') video.dispatchEvent(new Event('seeking'))
       if (kind === 'source') video.src = 'replacement.mp4'
       if (kind === 'dimensions') Object.defineProperty(video, 'videoWidth', { value: 1280 })
-      if (kind === 'profile') active = createEmptyHudStylePack('manual/replacement', '手动样式')
+      if (kind === 'profile') active = { ...BASIC_CLOCK_PROFILE, roi: { x: .1, y: .1, w: .5, h: .5 } }
       await sample(11)
       const worker = bench.workers[0]!
       expect(worker.configures()).toHaveLength(kind === 'seek' ? 1 : 2)
@@ -1084,25 +1082,6 @@ describe('RecognitionSampler', () => {
     }
   })
 
-  it('discards a pending image-change midpoint when the HUD layout changes', async () => {
-    const video = fakeVideo()
-    const bench = harness({
-      video: role => role === 'official' ? video : null,
-      reply: frame => frame.mediaTime === 10.06 ? { status: 'failed', reason: 'low-confidence' }
-        : success(frame.mediaTime < 10.06 ? 30 : 29, frame.mediaTime, frame.wallTime),
-      metadata: frame => ({ hud: { ...replayHud('live'), variantId: frame.mediaTime < 10.09 ? 'top' : 'bottom' },
-        ...(frame.mediaTime === 10.06 ? {
-          tickMoment: { lastUnchanged: 10.03, firstChanged: 10.06, midpoint: 10.045, change: .2, noiseFloor: .01 },
-        } : {}) }),
-    })
-    try {
-      const run = bench.sampler.sample(30, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
-      for (const time of [10, 10.03, 10.06, 10.09]) await bench.loop.tick(time)
-      await run
-      expect(bench.outcomes.at(-1)?.outcome).toMatchObject({ status: 'success', reading: { seconds: 29, mediaTime: 10.09, wallTime: 1000 } })
-    } finally { bench.sampler.dispose(); bench.restore() }
-  })
-
   it('reduces recognition work between predicted ticks after two confirmed decrements', async () => {
     const bench = harness({
       reply: (frame) => success(30 - Math.floor(frame.mediaTime + 1e-9), frame.mediaTime, frame.wallTime),
@@ -1244,7 +1223,7 @@ describe('RecognitionSampler', () => {
         removeEventListener() {},
       }),
       video: (role) => (role === 'official' ? video : null),
-      profile: (role) => (role === 'official' ? createEmptyHudStylePack('custom/hd', 'HD', { width: 1920, height: 1080 }) : null),
+      profile: (role) => (role === 'official' ? createEmptyProfile('custom/hd', 'HD') : null),
       frameLoop: loop.frameLoop as never,
       onError: (role, message) => errors.push({ role, message }),
     })
@@ -1387,87 +1366,6 @@ function captured(mediaTime = 10, wallTime = 1000): AsyncGrabResult {
   return { ok: true, frame: { pixels: new Uint8ClampedArray(8 * 8 * 4), width: 8, height: 8,
     mediaTime, wallTime } }
 }
-
-function replayHud(content: HudFrameResult['content'], round = 17): HudFrameResult {
-  const read = (value: number) => ({ status: 'read' as const,
-    reading: { value, text: String(value), confidence: 1, scores: [1], source: 'derived' as const }, debug: null })
-  return { variantId: 'test', selectionReason: null, content, phase: 'active', fields: {
-    clock: read(30), scoreLeft: read(8), scoreRight: read(8), round: read(round),
-  }, cues: {}, states: {}, organizer: { status: 'not-matched', score: 0, debug: null } }
-}
-
-describe('HUD replay session wiring', () => {
-  it('retains replay across sampling windows and layout changes, releasing it after the round changes', async () => {
-    vi.useFakeTimers()
-    const video = eventfulVideo()
-    const bench = harness({ video: role => role === 'official' ? video : null,
-      metadata: frame => ({ hud: { ...replayHud(frame.mediaTime === 10 ? 'replay' : 'live', frame.mediaTime === 13 ? 18 : 17),
-        variantId: frame.mediaTime < 12 ? 'top' : 'bottom' } }) })
-    const sample = async (time: number) => {
-      const run = bench.sampler.sample(100, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
-      await bench.loop.tick(time)
-      await vi.advanceTimersByTimeAsync(100)
-      await run
-    }
-    try {
-      await sample(10)
-      await sample(11)
-      await sample(12)
-      await sample(13)
-      expect(bench.outcomes.map(entry => entry.outcome.status)).toEqual(['indeterminate', 'indeterminate', 'indeterminate', 'success'])
-      expect(bench.outcomes[1]!.outcome).toEqual({ status: 'indeterminate', reason: 'hud-replay' })
-    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
-  })
-
-  it.each(['seek', 'source', 'stream', 'dimensions', 'video'] as const)(
-    'returns to cold start after %s changes between windows', async kind => {
-      vi.useFakeTimers()
-      let video = eventfulVideo()
-      const bench = harness({ video: role => role === 'official' ? video : null,
-        metadata: frame => ({ hud: replayHud(frame.mediaTime === 10 ? 'replay' : 'live') }) })
-      const sample = async (time: number) => {
-        const run = bench.sampler.sample(100, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
-        await bench.loop.tick(time)
-        await vi.advanceTimersByTimeAsync(100)
-        await run
-      }
-      try {
-        await sample(10)
-        if (kind === 'seek') video.dispatchEvent(new Event('seeking'))
-        if (kind === 'source') video.src = 'replacement.mp4'
-        if (kind === 'stream') video.srcObject = {} as MediaStream
-        if (kind === 'dimensions') Object.defineProperty(video, 'videoWidth', { value: 1280 })
-        if (kind === 'video') video = eventfulVideo()
-        await sample(11)
-        expect(bench.outcomes.map(entry => entry.outcome.status)).toEqual(['indeterminate', 'success'])
-      } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
-    },
-  )
-
-  it.each(['seek', 'source', 'dimensions'] as const)('drops a replay worker reply after %s changes', async kind => {
-    vi.useFakeTimers()
-    const video = eventfulVideo()
-    let first = true
-    const bench = harness({ video: role => role === 'official' ? video : null,
-      metadata: () => {
-        if (!first) return { hud: replayHud('live') }
-        first = false
-        if (kind === 'seek') video.dispatchEvent(new Event('seeking'))
-        if (kind === 'source') video.src = 'replacement.mp4'
-        if (kind === 'dimensions') Object.defineProperty(video, 'videoWidth', { value: 1280 })
-        return { hud: replayHud('replay') }
-      } })
-    try {
-      const run = bench.sampler.sample(100, (role, outcome) => bench.outcomes.push({ role, outcome }), { aborted: false })
-      await bench.loop.tick(10)
-      expect(bench.outcomes).toEqual([])
-      await bench.loop.tick(11)
-      expect(bench.outcomes).toEqual([{ role: 'official', outcome: expect.objectContaining({ status: 'success' }) }])
-      await vi.advanceTimersByTimeAsync(100)
-      await run
-    } finally { bench.sampler.dispose(); bench.restore(); vi.useRealTimers() }
-  })
-})
 
 describe('asynchronous sampling acquisition', () => {
   it('drops a readback still in flight when its measurement window closes', async () => {

@@ -1,54 +1,6 @@
 #![forbid(unsafe_code)]
 //! Thin JSON/byte-array bridge; all algorithms live in stream-syncer-core.
-use stream_syncer_core::Engine;
 use wasm_bindgen::prelude::*;
-
-#[wasm_bindgen]
-pub struct RecognitionEngine {
-    inner: Engine,
-}
-#[wasm_bindgen]
-impl RecognitionEngine {
-    #[wasm_bindgen(constructor)]
-    pub fn new() -> Self {
-        Self {
-            inner: Engine::new(),
-        }
-    }
-    pub fn configure(&mut self, profile_json: &str) -> Result<String, JsValue> {
-        self.inner
-            .configure(profile_json)
-            .map(|v| v.to_string())
-            .map_err(|e| JsValue::from_str(&e))
-    }
-    pub fn recognize(
-        &self,
-        rgba: &[u8],
-        width: usize,
-        height: usize,
-        media_time: f64,
-        wall_time: f64,
-        frame_index: f64,
-        want_debug: bool,
-    ) -> String {
-        self.inner
-            .recognize(
-                rgba,
-                width,
-                height,
-                media_time,
-                wall_time,
-                frame_index,
-                want_debug,
-            )
-            .to_string()
-    }
-}
-impl Default for RecognitionEngine {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 #[wasm_bindgen]
 pub struct BasicClockRecognizer {
@@ -78,33 +30,6 @@ impl BasicClockRecognizer {
     }
 }
 
-#[wasm_bindgen]
-pub fn recognize_hud_frame(rgba:&[u8],width:usize,height:usize,pack_json:&str,variant_id:&str) -> Result<String,JsValue> {
-    let pack=stream_syncer_core::hud_pack_from_json(pack_json).map_err(|e|JsValue::from_str(&e))?;
-    let result=stream_syncer_core::recognize_hud_frame(rgba,width,height,&pack,variant_id).map_err(|e|JsValue::from_str(&e))?;
-    serde_json::to_string(&result).map_err(|e|JsValue::from_str(&e.to_string()))
-}
-
-#[wasm_bindgen]
-pub fn prepare_hud_glyphs(rgba:&[u8],width:usize,height:usize,pack_json:&str,variant_id:&str,field_id:&str,boxes_json:&str) -> Result<String,JsValue> {
-    let pack=stream_syncer_core::hud_pack_from_json(pack_json).map_err(|e|JsValue::from_str(&e))?;
-    let boxes=if boxes_json.is_empty(){None}else{Some(serde_json::from_str(boxes_json).map_err(|e|JsValue::from_str(&e.to_string()))?)};
-    let result=stream_syncer_core::prepare_hud_glyphs_with_boxes(rgba,width,height,&pack,variant_id,field_id,boxes).map_err(|e|JsValue::from_str(&e))?;
-    serde_json::to_string(&result).map_err(|e|JsValue::from_str(&e.to_string()))
-}
-#[wasm_bindgen]
-pub fn prepare_hud_cue(rgba:&[u8],width:usize,height:usize,pack_json:&str,variant_id:&str,cue_id:&str) -> Result<String,JsValue> {
-    let pack=stream_syncer_core::hud_pack_from_json(pack_json).map_err(|e|JsValue::from_str(&e))?;
-    let result=stream_syncer_core::prepare_hud_cue(rgba,width,height,&pack,variant_id,cue_id).map_err(|e|JsValue::from_str(&e))?;
-    serde_json::to_string(&result).map_err(|e|JsValue::from_str(&e.to_string()))
-}
-#[wasm_bindgen]
-pub fn recommend_hud_preprocess(rgba:&[u8],width:usize,height:usize,pack_json:&str,variant_id:&str,target_id:&str,request_json:&str) -> Result<String,JsValue> {
-    let pack=stream_syncer_core::hud_pack_from_json(pack_json).map_err(|e|JsValue::from_str(&e))?;
-    let request=serde_json::from_str::<stream_syncer_core::HudPreprocessRequest>(request_json).map_err(|e|JsValue::from_str(&e.to_string()))?;
-    let result=stream_syncer_core::recommend_hud_preprocess(rgba,width,height,&pack,variant_id,target_id,&request).map_err(|e|JsValue::from_str(&e))?;
-    serde_json::to_string(&result).map_err(|e|JsValue::from_str(&e.to_string()))
-}
 #[wasm_bindgen]
 pub fn dispatch(op: &str, input_json: &str) -> Result<String, JsValue> {
     let input = serde_json::from_str(input_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -196,25 +121,6 @@ impl Default for TickMomentDetector {
 }
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn engine_configure_json() {
-        let mut engine = super::RecognitionEngine::new();
-        let cases:serde_json::Value=serde_json::from_str(include_str!("../../../tests/fixtures/hud-style-pack/cases.json")).unwrap();
-        let p = &cases[0]["value"];
-        let ready = engine.configure(&p.to_string()).unwrap();
-        assert!(ready.contains("missing"));
-        // A different resolution is valid; incomplete templates remain the actual failure.
-        let result: serde_json::Value = serde_json::from_str(
-            &engine.recognize(&[0; 4], 1, 1, 0.0, 0.0, 0.0, false),
-        ).unwrap();
-        assert_eq!(result["outcome"]["reason"], "insufficient-templates");
-        assert!(result["debug"].is_null());
-
-        let malformed: serde_json::Value = serde_json::from_str(
-            &engine.recognize(&[0; 3], 1, 1, 0.0, 0.0, 0.0, false),
-        ).unwrap();
-        assert_eq!(malformed["outcome"]["reason"], "decode-failed");
-    }
     #[test]
     fn dispatch_json() {
         assert_eq!(

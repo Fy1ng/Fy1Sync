@@ -196,7 +196,7 @@ describe('共享基础识别侧栏', () => {
     const view = renderExpandedPanel()
     expect(screen.getByRole('button', { name: '框选倒计时' })).toBeDisabled()
     expect(screen.queryByRole('button', { name: '设置寻找区间' })).not.toBeInTheDocument()
-    state.snapshot = { ...state.snapshot, settings: { ...state.snapshot.settings, recognitionMode: 'style-pack' } }
+    state.snapshot = { ...state.snapshot, settings: { ...state.snapshot.settings, recognitionMode: 'frame-hash' } }
     view.rerender(<BasicRecognitionPanel />)
     expect(screen.queryByRole('region', { name: '基础识别' })).not.toBeInTheDocument()
     expect(session.setBasicPreviewEnabled).toHaveBeenLastCalledWith(false)
@@ -243,7 +243,7 @@ describe('共享基础识别侧栏', () => {
     fireEvent.click(screen.getByRole('button', { name: '放大到当前框' }))
     expect(screen.getByLabelText('画面缩放')).toHaveTextContent('4.00x')
     expect(canvas.style.width).not.toBe(initial)
-    const host = canvas.closest('.editor-stage')!
+    const host = canvas.closest('.region-stage')!
     fireEvent.wheel(host, { deltaY: 50, clientX: 400, clientY: 200 })
     fireEvent.click(screen.getByRole('button', { name: '适应窗口' }))
     expect(canvas.style.width).toBe(initial)
