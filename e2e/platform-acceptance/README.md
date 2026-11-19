@@ -22,6 +22,8 @@ npm run test:e2e -- e2e/platform-acceptance
 
 同平台双房增加 `STREAM_SYNC_P07_DOUYU_SECOND_URL`, 由操作者确认两条 URL 对应不同正式房号。跨平台双路使用斗鱼和 Twitch。六平台完成公共接线后, 可加 `STREAM_SYNC_P07_PUBLIC_STATUS=1` 检查访客的聊天权限、账号提示和房间数据。报告分开记录播放、权限或降级结果。
 
+没有抖音公开直播样本时, `douyin-guest.spec.ts` 仍可用离线夹具检查访客能接收消息, 但没有发送权限。完整候选设置 `STREAM_SYNC_P07_FULL_CANDIDATE=1`, 同时核对抖音房间数据的个人读数未知和福袋说明。
+
 ## 人工对照
 
 1. 固定 `P00-candidate.txt` 的完整 SHA。使用新建的测试应用资料和独立浏览器配置, 仅操作者正常登录。为账号记脱敏代号。选择正在直播的正式房间或视频场次, 检查该账号的权限、活动期限、任务剩余额度、当日重置时区和读数精度。记录只读入口、指标原名及单位。
