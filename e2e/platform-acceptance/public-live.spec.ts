@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { launchApplication } from '../electron'
-import { openPlayer, openSettingsSection, openSourcePanel, revealOverlay, setPlaying } from '../helpers'
+import { mediaTimes, openPlayer, openSettingsSection, openSourcePanel, revealOverlay, setPlaying } from '../helpers'
 
 const platforms = [
   { name: '斗鱼', variable: 'STREAM_SYNC_DOUYU_LIVE_URL', role: 'commentary' },
@@ -32,6 +32,15 @@ async function expectPlayback(page: Page, role: 'official' | 'commentary'): Prom
   await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime), { timeout: 20_000 }).toBeGreaterThan(before + 1)
 }
 
+async function setBilibiliPlaying(page: Page, playing: boolean): Promise<void> {
+  if ((await mediaTimes(page)).paused === !playing) return
+  const stage = await page.locator('main.theater').boundingBox()
+  if (!stage) throw new Error('没有播放舞台')
+  await page.mouse.move(stage.x + stage.width / 2, stage.y + stage.height / 2)
+  await page.locator('.dock .play').click()
+  await expect.poll(async () => (await mediaTimes(page)).paused).toBe(!playing)
+}
+
 async function expectGuestStatus(page: Page, platform: typeof platforms[number]['name']): Promise<void> {
   const drawer = page.getByRole('complementary', { name: '弹幕', exact: true })
   if (!(await drawer.isVisible())) {
@@ -53,12 +62,20 @@ async function expectGuestStatus(page: Page, platform: typeof platforms[number][
       hasText: platform === 'YouTube' ? /YouTube.*聊天不可用.*读取凭据/ : /Twitch.*聊天不可用.*读取授权/,
     })).toBeVisible()
   }
-  const settings = await openSettingsSection(page, '房间数据')
+  let settings
+  if (platform === '哔哩哔哩') {
+    await drawer.getByRole('button', { name: '设置', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: '设置', exact: true })
+    await dialog.getByRole('tab', { name: '房间数据', exact: true }).click()
+    settings = dialog.getByRole('tabpanel', { name: '房间数据', exact: true })
+  } else {
+    settings = await openSettingsSection(page, '房间数据')
+  }
   const expected = {
     斗鱼: [/官方今日观看/, /粉丝牌累计观看/, /未登录/],
     哔哩哔哩: [/全房观看计数/, /本房今日观看时长、累计观看时长和个人看播任务均未知/],
     抖音: [/本房官方今日和累计观看时长未知/, /普通福袋开奖时间是活动信息/],
-    虎牙: [/本房观看时长未验证/, /看过 可查询浏览记录/],
+    虎牙: [/本房官方今日及累计观看时长未验证/, /看过\s*可查询浏览记录/],
     YouTube: [/官方观看历史|观看历史/, /本场视频实际观看的分钟/, /estimatedMinutesWatched/],
     Twitch: [/本频道今日及累计观看/, /频道积分/, /连续观看/, /Drops 进度/, /Drops 权益/, /未核验/],
   } satisfies Record<typeof platform, RegExp[]>
@@ -79,9 +96,10 @@ test.describe('匿名平台直播 UI', () => {
         await openPlayer(app.page)
         await test.step('从可见片源入口载入, 确认播放后暂停', async () => {
           await loadPublicSource(app.page, role, url)
-          await setPlaying(app.page, true)
+          const setPlatformPlaying = name === '哔哩哔哩' ? setBilibiliPlaying : setPlaying
+          await setPlatformPlaying(app.page, true)
           await expectPlayback(app.page, role)
-          await setPlaying(app.page, false)
+          await setPlatformPlaying(app.page, false)
         })
         if (process.env.STREAM_SYNC_P07_PUBLIC_STATUS === '1') {
           await test.step('核对访客的聊天权限和个人观时降级', () => expectGuestStatus(app.page, name))
