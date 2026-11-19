@@ -118,6 +118,20 @@ describe('read-only followed room gateway', () => {
 })
 
 describe('room metadata, badge age and platform watch time', () => {
+  it.each(['daily', 'cumulative'])('refuses %s watch results when the authenticated account changes before the read returns', async kind => {
+    const f = setup([envelope({ uid: 42, rid: 100, watchTime: 4810476 }), envelope({ badgeLevel: 22 })])
+    f.request.mockImplementationOnce(async () => {
+      if (kind === 'daily') f.setCookie('acf_uid=43; acf_auth=other')
+      return Response.json(envelope({ uid: 42, rid: 100, todayWatch: 1123, watchTime: 4810476 }))
+    })
+    if (kind === 'cumulative') f.request.mockImplementationOnce(async () => {
+      f.setCookie('acf_uid=43; acf_auth=other')
+      return Response.json(envelope({ badgeLevel: 22 }))
+    })
+    const result = kind === 'daily' ? f.gateway.readWatchTime('a', '100', idle()) : f.gateway.readFansWatchTime('a', '100', idle())
+    await expect(result).rejects.toMatchObject({ code: 'login-required' })
+  })
+
   it('reads official cumulative badge time independently with main-owned authenticated UID and room binding', async () => {
     const f = setup([envelope({ uid: 42, rid: 6979222, watchTime: 4810476 }), envelope({ badgeLevel: 22 })])
     expect(await f.gateway.readFansWatchTime('a', '6979222', idle())).toMatchObject({

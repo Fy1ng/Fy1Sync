@@ -12,7 +12,8 @@ import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
 import { displayError, errorDetails, type DisplayError, type ErrorDetails } from '../../core/errorDetails'
 import { apiClient, type ApiResult } from '../../app/apiClient'
 import type { DouyuInsightsEvent, DouyuRankEntry, DouyuRoomInsights, DouyuWatchTime, DouyuFansWatchTime } from '../../../server/douyu/insightsTypes'
-import type { DouyuWatchState } from '../../../server/douyu/watchTypes'
+import { douyuWatchDay, type DouyuWatchRead, type DouyuWatchState } from '../../../server/douyu/watchTypes'
+import type { DouyuAccountsSnapshot } from '../../../server/douyu/types'
 import { Icon, Segmented, Sheet, SideTabs } from '../kit'
 import { formatCount, formatDuration, formatMinor, formatTime, UNKNOWN } from './format'
 import './insights.css'
@@ -30,8 +31,13 @@ const RANKS: { value: RankKey; label: string }[] = [
 /** Official watch time needs a signed-in current account; each reason it is missing is said. */
 type Watch =
   | { kind: 'loading' }
-  | { kind: 'value'; value: DouyuWatchTime }
-  | { kind: 'missing'; reason: string; detail?: ErrorDetails }
+  | { kind: 'value'; value: DouyuWatchTime; read?: DouyuWatchRead | null; baseline?: number | null }
+  | { kind: 'missing'; reason: string; detail?: ErrorDetails; read?: DouyuWatchRead }
+
+function accountScope(room: string, snapshot: DouyuAccountsSnapshot): string {
+  const active = snapshot.accounts.find(account => account.id === snapshot.activeAccountId)
+  return JSON.stringify([room, snapshot.revision, active?.id, active?.busy, active?.login.loggedIn])
+}
 
 const isInsightsEvent = (value: unknown): value is DouyuInsightsEvent =>
   !!value && typeof value === 'object' && typeof (value as { type?: unknown }).type === 'string'
@@ -85,12 +91,15 @@ export function RoomInsights({ room }: { room: string }): React.ReactNode {
   const [insights, setInsights] = useRemembered<DouyuRoomInsights | null>(`insights:${room}`, null)
   const [error, setError, errorDetail] = useErrorState('')
   const [refreshing, setRefreshing] = useState(false)
-  const [watch, setWatch] = useRemembered<Watch>(`insights:watch:${room}`, { kind: 'loading' })
+  const [watch, setWatch] = useState<Watch>({ kind: 'loading' })
   const [fansWatch, setFansWatch] = useState<DouyuFansWatchTime | null>(null)
+  const [fansRead, setFansRead] = useState<(DouyuWatchRead & { room: string }) | null>(null)
+  const [watchAccount, setWatchAccount] = useState<string | null | undefined>(undefined)
   const [fansWatchError, setFansWatchError, fansWatchErrorDetail] = useErrorState('')
   const { state: watchState, error: watchStateError } = useWatchState()
   const sequence = useRef(0)
   const watchSequence = useRef(0)
+  const watchScope = useRef<string | null>(null)
   const applied = useRef(0)
   const alive = useRef(true)
   const roomRef = useRef(room)
@@ -113,7 +122,10 @@ export function RoomInsights({ room }: { room: string }): React.ReactNode {
     let dirty = false
     let remotePending = false
     setError('')
+    watchScope.current = null
+    setWatch({ kind: 'loading' })
     setFansWatch(null)
+    setFansRead(null)
     // A busy room changes many times a second; one read at a time, plus one trailing read.
     const read = (remote = false): void => {
       if (!live) return
@@ -142,40 +154,67 @@ export function RoomInsights({ room }: { room: string }): React.ReactNode {
     })
     read()
     read(true)
-    const timer = setInterval(() => read(true), 60_000)
+    const unsubscribeAccounts = apiClient.subscribeDouyuAccounts(accounts => {
+      if (!live || watchScope.current === accountScope(room, accounts)) return
+      void readWatch(room, accounts)
+    })
+    const timer = setInterval(() => { read(true); void readWatch(room) }, 60_000)
     void readWatch(room)
-    return () => { live = false; alive.current = false; clearInterval(timer); unsubscribe() }
+    return () => { live = false; alive.current = false; clearInterval(timer); unsubscribe(); unsubscribeAccounts() }
   }, [room])
 
   const current = (target: string): boolean => alive.current && roomRef.current === target
 
-  async function readWatch(target: string): Promise<void> {
+  async function readWatch(target: string, snapshot?: DouyuAccountsSnapshot): Promise<void> {
     const mine = ++watchSequence.current
-    // A remembered figure stays up while it is read again; only a first read shows 正在读取.
-    setWatch((previous) => previous.kind === 'value' ? previous : { kind: 'loading' })
     setFansWatchError('')
-    const accounts = await apiClient.listDouyuAccounts().catch(caught => ({ ok: false as const, ...displayError(caught, '无法读取当前账号') }))
+    const accounts = snapshot ? { ok: true as const, value: snapshot }
+      : await apiClient.listDouyuAccounts().catch(caught => ({ ok: false as const, ...displayError(caught, '无法读取当前账号') }))
     if (!current(target) || mine !== watchSequence.current) return
-    if (!accounts.ok) { setWatch({ kind: 'missing', reason: accounts.message, detail: errorDetails(accounts) }); return }
+    const scope = accounts.ok ? accountScope(target, accounts.value) : null
+    if (!scope || scope !== watchScope.current) {
+      watchScope.current = scope
+      setWatch({ kind: 'loading' })
+      setFansWatch(null)
+      setFansRead(null)
+    }
+    if (!accounts.ok) { setWatchAccount(null); setWatch({ kind: 'missing', reason: accounts.message, detail: errorDetails(accounts) }); return }
     const active = accounts.value.accounts.find((account) => account.id === accounts.value.activeAccountId)
+    setWatchAccount(active?.login.loggedIn && !active.busy ? active.id : null)
     if (!active) { setWatch({ kind: 'missing', reason: '未设置当前账号' }); return }
-    if (!active.login.loggedIn) { setWatch({ kind: 'missing', reason: '当前账号未登录' }); return }
+    if (!active.login.loggedIn || active.busy) { setWatch({ kind: 'missing', reason: active.busy ? '等待读取当前账号' : '当前账号未登录' }); return }
+    const requestedDay = douyuWatchDay(Date.now())
     const [daily, cumulative] = await Promise.allSettled([
       apiClient.feature('getDouyuWatchTime', { accountId: active.id, room: target, refresh: true }),
       apiClient.feature('getDouyuFansWatchTime', { accountId: active.id, room: target, refresh: true }),
     ])
     if (!current(target) || mine !== watchSequence.current) return
-    if (cumulative.status === 'fulfilled' && cumulative.value.ok && cumulative.value.value.accountId === active.id && cumulative.value.value.room === target) setFansWatch(cumulative.value.value)
-    else {
-      setFansWatch(null)
+    const at = Date.now()
+    const bound = (value: DouyuWatchTime | DouyuFansWatchTime) => value.accountId === active.id && value.room === target
+    if (cumulative.status === 'fulfilled' && cumulative.value.ok && bound(cumulative.value.value)
+      && cumulative.value.value.source === 'douyu-fanshome-cumulative') {
+      const result = cumulative.value.value
+      setFansWatch(previous => result.seconds === null && previous?.seconds != null
+        ? { ...previous, badgeOwned: result.badgeOwned, badgeLevel: result.badgeLevel } : result)
+      setFansRead({ room: target, at, status: result.seconds === null ? 'missing' : 'available' })
+    } else {
+      setFansRead({ room: target, at, status: 'failed' })
       const failure = cumulative.status === 'rejected' ? cumulative.reason : cumulative.value
       setFansWatchError(displayError(failure, cumulative.status === 'fulfilled' && !cumulative.value.ok ? cumulative.value.message : '粉丝牌累计观看查询失败'))
     }
-    if (daily.status !== 'fulfilled') { setWatch({ kind: 'missing', reason: '官方今日观看查询失败', detail: errorDetails(daily.reason) }); return }
-    const result = daily.value
-    if (!result.ok) setWatch({ kind: 'missing', reason: result.message, detail: errorDetails(result) })
-    else if (result.value.room !== target) setWatch({ kind: 'missing', reason: '无法读取官方观看时长', detail: errorDetails(result) })
-    else setWatch({ kind: 'value', value: result.value })
+    const result = daily.status === 'fulfilled' && daily.value.ok ? daily.value.value : null
+    if (requestedDay !== douyuWatchDay(at)) return
+    if (result && bound(result) && result.source === 'douyu-today-watch' && result.seconds !== null) {
+      setWatch({ kind: 'value', value: result, read: { at, status: 'available' } })
+    } else {
+      const missing = !!(result && bound(result) && result.source === 'douyu-today-watch')
+      const failure = daily.status === 'rejected' ? daily.reason : daily.value
+      const read: DouyuWatchRead = { at, status: missing ? 'missing' : 'failed' }
+      setWatch(previous => previous.kind === 'value' && bound(previous.value) && douyuWatchDay(previous.value.checkedAt) === requestedDay
+        ? { ...previous, read }
+        : { kind: 'missing', reason: missing ? `平台未返回今日观看, 复查于 ${formatWatchTime(at)}.` : '官方今日观看查询失败',
+          detail: missing ? undefined : errorDetails(failure), read })
+    }
   }
 
   const refresh = (): void => {
@@ -202,7 +241,8 @@ export function RoomInsights({ room }: { room: string }): React.ReactNode {
         {watchStateError && <p className="form-error" role="alert"><ErrorText error={watchStateError.detail} message={watchStateError.message} /></p>}
         {fansWatchError && <p className="form-error" role="alert"><ErrorText error={fansWatchErrorDetail ?? fansWatchError} message={fansWatchError} /></p>}
         {!insights && !error && <p className="lane" role="status">正在读取房间数据</p>}
-        {insights && tab === 'overview' && <Overview insights={insights} watch={watch} watchState={watchState} fansWatch={fansWatch} />}
+        {insights && tab === 'overview' && <Overview insights={insights} watch={watch} watchState={watchState} watchAccount={watchAccount}
+          fansWatch={fansWatch} fansRead={fansRead?.room === room ? fansRead : null} />}
         {insights && tab === 'ranks' && <Ranks insights={insights} />}
       </div>
     </SideTabs>
@@ -221,20 +261,32 @@ function Stat({ label, value, note }: { label: string; value: string; note?: Rea
   )
 }
 
-function Overview({ insights, watch, watchState, fansWatch }: { insights: DouyuRoomInsights; watch: Watch; watchState: DouyuWatchState | null; fansWatch: DouyuFansWatchTime | null }): React.ReactNode {
+function Overview({ insights, watch, watchState, watchAccount, fansWatch, fansRead }: { insights: DouyuRoomInsights; watch: Watch;
+  watchState: DouyuWatchState | null; watchAccount?: string | null; fansWatch: DouyuFansWatchTime | null;
+  fansRead: DouyuWatchRead | null }): React.ReactNode {
   const { coverage, gifts, nobles } = insights
   const live = insights.live === true && insights.replay === false
   const unknownGifts = gifts.unknownValueCount > 0
   const giftValue = gifts.totalValueMinor !== null ? `${formatMinor(gifts.totalValueMinor)} 鱼翅` : UNKNOWN
   const updated = `更新于 ${formatTime(insights.checkedAt)}`
-  let officialWatch = watch
+  const accountAgrees = !watchState || watchAccount === undefined || watchAccount === watchState.accountId
+  const active = accountAgrees && watchState?.room === insights.room ? watchState : null
+  let officialWatch: Watch = watch
   if (watchState?.phase === 'login-required' || (watchState && !watchState.accountId)) {
     officialWatch = { kind: 'missing', reason: '当前账号未登录或未设置' }
-  } else if (watchState?.room === insights.room && watchState.accountId && watchState.officialSeconds !== null && watchState.checkedAt !== null) {
-    officialWatch = { kind: 'value', value: { accountId: watchState.accountId, room: insights.room,
-      seconds: watchState.officialSeconds, checkedAt: watchState.checkedAt, source: 'douyu-today-watch' } }
-  } else if (watchState && watch.kind === 'value' && watch.value.accountId !== watchState.accountId) {
-    officialWatch = { kind: 'missing', reason: '当前账号官方观看时长尚未读取' }
+  } else {
+    const manual = watch.kind === 'value' && watch.value.room === insights.room && (!watchState || watch.value.accountId === watchState.accountId) ? watch : null
+    const automatic = active?.accountId && active.checkedAt !== null && active.officialSeconds !== null
+      ? { accountId: active.accountId, room: insights.room, checkedAt: active.checkedAt, seconds: active.officialSeconds, source: 'douyu-today-watch' as const }
+      : null
+    const value = automatic && automatic.checkedAt >= (manual?.value.checkedAt ?? -1) ? automatic : manual?.value
+    if (value && douyuWatchDay(value.checkedAt) === douyuWatchDay(Date.now())) {
+      const manualRead = watch.kind === 'missing' && accountAgrees ? watch.read : manual?.read
+      const read = latestRead(active?.dailyRead, manualRead)
+      officialWatch = { kind: 'value', value, read, baseline: active?.baselineSeconds }
+    } else if (watch.kind === 'value') {
+      officialWatch = { kind: 'missing', reason: '当前账号官方观看时长尚未读取' }
+    }
   }
 
   return (
@@ -290,8 +342,9 @@ function Overview({ insights, watch, watchState, fansWatch }: { insights: DouyuR
           <Stat label="本地观看时长" value={formatDuration(insights.localWatchSeconds)}
             note={`来源：本应用实际播放记录 · ${updated}`} />
           <WatchStat watch={officialWatch} />
-          <FansWatchStat state={watchState} value={fansWatch} room={insights.room} />
-          <WatchSessionStat state={watchState} room={insights.room} />
+          <FansWatchStat state={active} value={accountAgrees ? fansWatch : null}
+            manualRead={accountAgrees && watchState?.phase !== 'login-required' ? fansRead : null} room={insights.room} />
+          <WatchSessionStat state={watchState?.phase === 'login-required' ? watchState : active} room={insights.room} />
         </dl>
         <p className="lane">本地观看时长只记录本应用中的实际播放，不计入斗鱼官方观看时长。</p>
       </section>
@@ -312,19 +365,42 @@ function WatchSessionStat({ state, room }: { state: DouyuWatchState | null; room
   return <Stat label="官方观时上报" value={phase ? labels[phase] : '尚未启动'} note={phase === 'failed' ? <ErrorText error={active} message={note} /> : note} />
 }
 
-function FansWatchStat({ state, value, room }: { state: DouyuWatchState | null; value: DouyuFansWatchTime | null; room: string }): React.ReactNode {
+function latestRead(first?: DouyuWatchRead | null, second?: DouyuWatchRead | null): DouyuWatchRead | null {
+  return second && second.at >= (first?.at ?? -1) ? second : first ?? null
+}
+
+const watchTimeFormat = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+})
+const formatWatchTime = (at: number | null): string => at === null ? UNKNOWN : `${watchTimeFormat.format(at)} (UTC+8)`
+
+function readNote(read: DouyuWatchRead | null | undefined): string {
+  if (!read || read.status === 'available') return ''
+  return ` 复查于 ${formatWatchTime(read.at)}, ${read.status === 'failed' ? '查询失败' : '平台未返回本项读数'}.`
+}
+
+function comparison(seconds: number | null, baseline: number | null | undefined, checkedAt: number | null, read?: DouyuWatchRead | null): string {
+  const lastValue = seconds === null ? '' : ` ${read && read.status !== 'available' ? '上次有效读数' : '官方原值'} ${seconds} 秒, 读取于 ${formatWatchTime(checkedAt)}.`
+  const delta = seconds !== null && baseline != null && seconds >= baseline && (!read || read.status === 'available')
+    ? ` 播放基线 ${baseline} 秒, 差额 ${seconds - baseline} 秒.` : ''
+  return `${lastValue}${delta}${readNote(read)}`
+}
+
+function FansWatchStat({ state, value, manualRead, room }: { state: DouyuWatchState | null; value: DouyuFansWatchTime | null;
+  manualRead: DouyuWatchRead | null; room: string }): React.ReactNode {
   const active = state?.room === room && state.phase !== 'login-required' ? state : null
   const accountValid = state?.phase !== 'login-required' && value?.room === room && (!state || value.accountId === state.accountId)
-  const seconds = active?.cumulativeCheckedAt !== null && active?.cumulativeCheckedAt !== undefined
-    ? active.cumulativeSeconds : accountValid ? value!.seconds : null
-  const owned = active?.cumulativeCheckedAt !== null && active?.cumulativeCheckedAt !== undefined
-    ? active.badgeOwned : accountValid ? value!.badgeOwned : null
-  const level = active?.cumulativeCheckedAt !== null && active?.cumulativeCheckedAt !== undefined
-    ? active.badgeLevel : accountValid ? value!.badgeLevel : null
+  const manual = accountValid ? value : null
+  const useActive = !!active && active.cumulativeCheckedAt !== null && active.cumulativeCheckedAt >= (manual?.checkedAt ?? -1)
+  const seconds = useActive ? active.cumulativeSeconds : manual?.seconds ?? null
+  const checkedAt = useActive ? active.cumulativeCheckedAt : manual?.checkedAt ?? null
+  const read = latestRead(active?.cumulativeRead, manualRead)
+  const usesManualBadge = !!manual && (manualRead?.at ?? manual.checkedAt) >= (active?.cumulativeRead?.at ?? -1)
+  const owned = read?.status === 'failed' ? null : usesManualBadge ? manual.badgeOwned : active?.badgeOwned ?? null
+  const level = usesManualBadge ? manual.badgeLevel : active?.badgeLevel ?? null
   const badge = owned === true ? `已持有${level === null ? '' : ` ${level} 级`}粉丝牌.` : owned === false ? '当前账号未持有此房间粉丝牌.' : '粉丝牌持有状态未确认.'
-  const baseline = active?.cumulativeBaselineSeconds === null || active?.cumulativeBaselineSeconds === undefined ? ''
-    : ` 本次基线 ${formatDuration(active.cumulativeBaselineSeconds)}, 增加 ${formatDuration(active.cumulativeIncrease)}.`
-  return <Stat label="粉丝牌累计观看" value={formatDuration(seconds)} note={`${badge}${baseline} 来源: 斗鱼粉丝家园累计观看.`} />
+  const detail = comparison(seconds, owned === true ? active?.cumulativeBaselineSeconds : null, checkedAt, read)
+  return <Stat label="粉丝牌累计观看" value={formatDuration(seconds)} note={`${badge}${detail} 来源为斗鱼粉丝家园累计观看.`} />
 }
 
 function WatchStat({ watch }: { watch: Watch }): React.ReactNode {
@@ -333,7 +409,7 @@ function WatchStat({ watch }: { watch: Watch }): React.ReactNode {
   const { seconds, checkedAt } = watch.value
   return (
     <Stat label="官方今日观看" value={formatDuration(seconds)}
-      note={`来源：斗鱼今日观看 · 更新于 ${formatTime(checkedAt)}${seconds === null ? ' · 平台未返回' : ''}`} />
+      note={`来源为斗鱼今日观看.${comparison(seconds, watch.baseline, checkedAt, watch.read)}`} />
   )
 }
 

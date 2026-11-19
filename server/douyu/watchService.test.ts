@@ -83,6 +83,17 @@ describe('real playback watch leases', () => {
     expect(f.service.snapshot().phase).toBe(gate === 'busy' ? 'login-required' : 'paused')
   })
 
+  it.each(['locked', 'suspended', 'busy'] as const)('needs new progress after leaving %s, even if media advanced during it', async gate => {
+    const f = fixture(); await f.start()
+    f.service.setContext({ ...f.context, [gate]: true })
+    await f.tick()
+    f.service.setContext(f.context)
+    await f.tick()
+    expect(f.run).toHaveBeenCalledTimes(1)
+    await f.tick()
+    expect(f.run).toHaveBeenCalledTimes(2)
+  })
+
   it('stops on pause, renderer loss and expired progress reports', async () => {
     const f = fixture(); await f.start()
     f.report(false)
@@ -110,6 +121,24 @@ describe('real playback watch leases', () => {
     expect(f.run).toHaveBeenCalledTimes(1)
     f.report(true, {}, '100', 'replacement')
     expect(f.service.snapshot().phase).toBe('paused')
+  })
+
+  it('keeps one lease and one byte window for same-room playback, with no lease for another room', async () => {
+    const f = fixture(); await f.start()
+    const pip = (room: string, currentTime: number, bytes: number) => f.service.report(2,
+      { role: 'official', playing: true, currentTime, decodedBytes: null, presentedFrames: null },
+      { room, bytes, cdn: 'pip-cdn', generation: '2' })
+    pip('100', 2, 1000)
+    await vi.advanceTimersByTimeAsync(2000)
+    f.report()
+    pip('100', 4, 2000)
+    expect(f.run).toHaveBeenCalledTimes(1)
+    expect(f.stats()).toEqual({ cdn: 'tct-h5', bytes: 2000 })
+    f.service.releaseSender(1)
+    expect(f.signal()?.aborted).toBe(false)
+    pip('200', 6, 3000)
+    expect(f.signal()?.aborted).toBe(true)
+    expect(f.service.snapshot().room).toBe('100')
   })
 
   it('cancels account ownership before switching away and requires fresh playback for the new account', async () => {
@@ -142,10 +171,60 @@ describe('real playback watch leases', () => {
   })
 
   it('cannot pass cumulative acceptance based on daily growth alone', async () => {
-    const f = fixture(); await f.start(); f.ack(); f.setSeconds(714)
-    for (let i = 0; i < 30; i++) await f.tick()
-    expect(f.service.snapshot()).toMatchObject({ phase: 'unverified', verifiedIncrease: 614, cumulativeIncrease: 0 })
+    const f = fixture()
+    f.service.setContext({ ...f.context, room: '6979222' })
+    f.setSeconds(789); f.setCumulative(4810476)
+    const tick = async (playing: boolean) => {
+      f.report(playing, {}, '6979222')
+      await vi.advanceTimersByTimeAsync(2_000)
+    }
+    await tick(false); await tick(true)
+    f.setSeconds(1123)
+    for (let index = 0; index < 30; index++) {
+      if (index % 5 === 0) f.ack()
+      await tick(true)
+    }
+    f.ack()
+    expect(f.service.snapshot()).toMatchObject({ phase: 'unverified', baselineSeconds: 789, officialSeconds: 1123, verifiedIncrease: 334,
+      cumulativeBaselineSeconds: 4810476, cumulativeSeconds: 4810476, cumulativeIncrease: 0, badgeOwned: true })
     expect(f.service.snapshot().reason).toContain('粉丝牌累计观时')
+  })
+
+  it('clears only the daily measurement at UTC+8 midnight, even while paused', async () => {
+    const f = fixture()
+    vi.setSystemTime(Date.parse('2026-11-19T15:59:55Z'))
+    await f.start()
+    f.report(false)
+    await vi.advanceTimersByTimeAsync(4_000)
+    expect(f.service.snapshot()).toMatchObject({ phase: 'paused', officialSeconds: null, baselineSeconds: null, dailyRead: null,
+      cumulativeSeconds: 1000, cumulativeBaselineSeconds: 1000, badgeOwned: true })
+  })
+
+  it('discards late reads across account changes, even when switching back to the same slot', async () => {
+    const f = fixture()
+    let finish!: (result: Awaited<ReturnType<typeof f.readCumulative>>) => void
+    f.readCumulative.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    await f.start()
+    f.service.setContext({ ...f.context, accountId: 'second', room: '200' })
+    f.service.setContext(f.context)
+    finish({ accountId: 'default', room: '100', checkedAt: Date.now(), seconds: 4810476, badgeOwned: true, badgeLevel: 22,
+      source: 'douyu-fanshome-cumulative' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.service.snapshot()).toMatchObject({ phase: 'paused', cumulativeSeconds: null, cumulativeRead: null })
+    await f.start()
+    expect(f.service.snapshot()).toMatchObject({ cumulativeSeconds: 1000, cumulativeBaselineSeconds: 1000 })
+  })
+
+  it('keeps previous valid readings and marks a failed or mismatched recheck independently', async () => {
+    const f = fixture(); await f.start(); f.ack()
+    const first = f.service.snapshot()
+    f.read.mockRejectedValueOnce(new Error('unavailable'))
+    f.readCumulative.mockResolvedValueOnce({ accountId: f.context.accountId!, room: '200', checkedAt: Date.now() + 60_000,
+      seconds: 4810476, badgeOwned: true, badgeLevel: 22, source: 'douyu-fanshome-cumulative' })
+    for (let i = 0; i < 30; i++) await f.tick()
+    expect(f.service.snapshot()).toMatchObject({ phase: 'unverified', officialSeconds: first.officialSeconds,
+      checkedAt: first.checkedAt, cumulativeSeconds: first.cumulativeSeconds, cumulativeCheckedAt: first.cumulativeCheckedAt,
+      dailyRead: { at: Date.now(), status: 'failed' }, cumulativeRead: { at: Date.now(), status: 'failed' }, cumulativeIncrease: 0 })
   })
   it('keeps cumulative baselines independent from daily rollovers and query failures', async () => {
     const f = fixture(); await f.start(); f.ack()
@@ -154,7 +233,8 @@ describe('real playback watch leases', () => {
     expect(f.service.snapshot()).toMatchObject({ cumulativeBaselineSeconds: 1000, cumulativeIncrease: 60, baselineSeconds: 5, phase: 'verified' })
     f.readCumulative.mockRejectedValue(new Error('unavailable'))
     for (let i = 0; i < 30; i++) await f.tick()
-    expect(f.service.snapshot()).toMatchObject({ phase: 'unverified', cumulativeSeconds: null, cumulativeIncrease: 0, badgeOwned: null })
+    expect(f.service.snapshot()).toMatchObject({ phase: 'unverified', cumulativeSeconds: 1060, cumulativeIncrease: 0,
+      cumulativeRead: { status: 'failed' } })
   })
 
   it('requires an owned badge and re-establishes the baseline after acquiring one', async () => {
@@ -170,7 +250,7 @@ describe('real playback watch leases', () => {
   it('leaves missing official records unverified and resets a declining daily counter', async () => {
     const f = fixture(); await f.start(); f.ack(); f.setSeconds(null)
     for (let i = 0; i < 30; i++) await f.tick()
-    expect(f.service.snapshot()).toMatchObject({ phase: 'unverified', officialSeconds: null, verifiedIncrease: 0 })
+    expect(f.service.snapshot()).toMatchObject({ phase: 'unverified', officialSeconds: 100, dailyRead: { status: 'missing' }, verifiedIncrease: 0 })
     f.setSeconds(5)
     for (let i = 0; i < 30; i++) await f.tick()
     expect(f.service.snapshot()).toMatchObject({ phase: 'unverified', baselineSeconds: 5, verifiedIncrease: 0 })
@@ -195,7 +275,7 @@ describe('real playback watch leases', () => {
     expect(f.service.snapshot().reason).toContain('尚未支持')
     f.service.setContext({ ...f.context, loggedIn: false })
     f.service.setContext(f.context)
-    await vi.advanceTimersByTimeAsync(0)
+    await f.start()
     expect(f.run).toHaveBeenCalledTimes(2)
   })
 })

@@ -1,7 +1,7 @@
 import { validDouyuRoom } from '../platforms/douyuRoom'
 import { DouyuGatewayCoordinator } from './gatewayCoordinator'
 import type { DouyuWatchTime, DouyuFansWatchTime } from './insightsTypes'
-import type { DouyuWatchPlaybackReport, DouyuWatchState } from './watchTypes'
+import { douyuWatchDay, type DouyuWatchPlaybackReport, type DouyuWatchState } from './watchTypes'
 import { abortable } from './actionHttp'
 
 export interface DouyuWatchContext {
@@ -31,14 +31,15 @@ const FRESH_MS = 7_000
 const QUERY_MS = 60_000
 const MAX_SAMPLES = 8
 const RETRY_MS = [1_000, 5_000, 15_000]
-const day = (at: number) => Math.floor((at + 8 * 60 * 60_000) / 86_400_000)
+const emptyDaily = { officialSeconds: null, baselineSeconds: null, verifiedIncrease: 0, checkedAt: null, dailyRead: null }
+const emptyCumulative = { cumulativeSeconds: null, cumulativeBaselineSeconds: null, cumulativeIncrease: 0,
+  cumulativeCheckedAt: null, cumulativeRead: null, badgeOwned: null, badgeLevel: null }
 
 /** Real playback grants a short lease. Upstream acknowledgements never imply official credit. */
 export class DouyuWatchService {
   private context: DouyuWatchContext = { accountId: null, room: null, loggedIn: false, busy: false, locked: true, suspended: false, live: null, replay: null }
-  private value: DouyuWatchState = { accountId: null, room: null, phase: 'idle', reason: null, officialSeconds: null,
-    baselineSeconds: null, verifiedIncrease: 0, checkedAt: null, lastHeartbeatAt: null,
-    cumulativeSeconds: null, cumulativeBaselineSeconds: null, cumulativeIncrease: 0, cumulativeCheckedAt: null, badgeOwned: null, badgeLevel: null }
+  private value: DouyuWatchState = { accountId: null, room: null, phase: 'idle', reason: null,
+    ...emptyDaily, ...emptyCumulative, lastHeartbeatAt: null }
   private readonly samples = new Map<string, Sample>()
   private readonly listeners = new Set<(state: DouyuWatchState) => void>()
   private readonly timer: ReturnType<typeof setInterval>
@@ -54,13 +55,13 @@ export class DouyuWatchService {
 
   constructor(private readonly options: DouyuWatchServiceOptions) {
     this.now = options.now ?? Date.now
-    this.observedDay = day(this.now())
+    this.observedDay = douyuWatchDay(this.now())
     this.releaseCoordinator = options.coordinator.subscribe(() => this.reconcile())
     this.timer = setInterval(() => this.reconcile(), 1_000)
     this.timer.unref?.()
   }
 
-  snapshot(): DouyuWatchState { return { ...this.value } }
+  snapshot(): DouyuWatchState { return structuredClone(this.value) }
   subscribe(listener: (state: DouyuWatchState) => void): () => void {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
@@ -77,21 +78,19 @@ export class DouyuWatchService {
     const room = context.room && validDouyuRoom(context.room) ? context.room : null
     const changed = context.accountId !== this.context.accountId || room !== this.context.room
     if (!this.context.loggedIn && context.loggedIn) { this.failures = 0; this.retryAt = 0 }
+    if (!context.loggedIn || context.busy || context.locked || context.suspended) this.samples.clear()
     this.context = { ...context, room }
     if (changed) {
       this.stop()
       this.samples.clear()
       this.failures = 0; this.retryAt = 0; this.queryAt = 0
-      this.observedDay = day(this.now())
-      this.update({ accountId: context.accountId, room, officialSeconds: null, baselineSeconds: null,
-        verifiedIncrease: 0, checkedAt: null, lastHeartbeatAt: null,
-        cumulativeSeconds: null, cumulativeBaselineSeconds: null, cumulativeIncrease: 0, cumulativeCheckedAt: null, badgeOwned: null, badgeLevel: null })
+      this.update({ accountId: context.accountId, room, ...emptyDaily, ...emptyCumulative, lastHeartbeatAt: null })
     }
     this.reconcile()
   }
 
   report(senderId: number, report: DouyuWatchPlaybackReport, source: DouyuWatchSource | null): DouyuWatchState {
-    if (this.disposed) return this.snapshot()
+    if (this.disposed || !this.context.loggedIn || this.context.busy || this.context.locked || this.context.suspended) return this.snapshot()
     const key = `${senderId}:${report.role}`
     if (!source || source.room !== this.context.room) {
       this.samples.delete(key)
@@ -131,8 +130,7 @@ export class DouyuWatchService {
     this.stop()
     this.samples.clear()
     this.failures = 0; this.retryAt = 0; this.queryAt = 0
-    this.update({ baselineSeconds: null, officialSeconds: null, verifiedIncrease: 0, checkedAt: null, lastHeartbeatAt: null,
-      cumulativeSeconds: null, cumulativeBaselineSeconds: null, cumulativeIncrease: 0, cumulativeCheckedAt: null, badgeOwned: null, badgeLevel: null })
+    this.update({ ...emptyDaily, ...emptyCumulative, lastHeartbeatAt: null })
   }
 
   private currentSample(): Sample | undefined {
@@ -149,6 +147,7 @@ export class DouyuWatchService {
 
   private reconcile(): void {
     if (this.disposed) return
+    this.checkDay()
     const { accountId, room } = this.context
     if (!room) { this.stop(); this.update({ phase: 'idle', reason: null }); return }
     if (!accountId || !this.context.loggedIn || this.context.busy) {
@@ -198,9 +197,11 @@ export class DouyuWatchService {
         },
         at => {
           if (!this.live(flight) || signal.aborted) return
-          flight.heartbeat = true
-          this.update({ phase: this.value.cumulativeIncrease > 0 && this.value.badgeOwned === true ? 'verified' : 'reporting',
-            reason: this.value.cumulativeIncrease > 0 && this.value.badgeOwned === true ? null : '观看心跳已收到回应, 等待粉丝牌累计观时核验.', lastHeartbeatAt: at })
+          if (!flight.heartbeat) {
+            flight.heartbeat = true
+            this.update({ phase: 'reporting', reason: '观看心跳已收到回应, 等待粉丝牌累计观时复查.' })
+          }
+          this.update({ lastHeartbeatAt: at })
         }))
       if (this.live(flight)) throw new Error('Watch gateway ended')
     } catch (error) {
@@ -221,57 +222,71 @@ export class DouyuWatchService {
     }
   }
 
+  private checkDay(): void {
+    const current = douyuWatchDay(this.now())
+    if (current === this.observedDay) return
+    this.observedDay = current
+    this.update(emptyDaily)
+  }
+
   private query(flight: Flight): Promise<void> {
     if (this.queryFlight) return this.queryFlight
     this.queryAt = this.now()
+    const startedAt = this.queryAt
     const signal = flight.controller.signal
     const promise = Promise.allSettled([
       abortable(Promise.resolve().then(() => this.options.readWatchTime(flight.accountId, flight.room, signal)), signal),
       abortable(Promise.resolve().then(() => this.options.readFansWatchTime(flight.accountId, flight.room, signal)), signal),
     ]).then(([daily, cumulative]) => {
       if (!this.live(flight)) return
-      if (daily.status === 'fulfilled') {
-        const result = daily.value
-        const valid = result.accountId === flight.accountId && result.room === flight.room && result.source === 'douyu-today-watch'
-          && Number.isSafeInteger(result.checkedAt) && result.checkedAt >= 0 && result.checkedAt <= this.now()
-          && (result.seconds === null || (Number.isSafeInteger(result.seconds) && result.seconds >= 0 && result.seconds <= 86_400))
-        if (valid) {
-          let baseline = this.value.baselineSeconds
-          if (day(this.now()) !== this.observedDay || (result.seconds !== null && baseline !== null && result.seconds < baseline)) {
-            baseline = null
-            this.observedDay = day(this.now())
-          }
-          if (baseline === null) baseline = result.seconds
-          const increase = result.seconds !== null && baseline !== null ? Math.max(0, result.seconds - baseline) : 0
-          this.update({ officialSeconds: result.seconds, baselineSeconds: baseline, verifiedIncrease: increase, checkedAt: result.checkedAt })
-        } else this.update({ officialSeconds: null, checkedAt: null, verifiedIncrease: 0 })
+      const at = this.now()
+      this.checkDay()
+      const valid = (result: DouyuWatchTime | DouyuFansWatchTime): boolean =>
+        result.accountId === flight.accountId && result.room === flight.room && Number.isSafeInteger(result.checkedAt)
+        && result.checkedAt >= startedAt && result.checkedAt <= at
+        && (result.seconds === null || (Number.isSafeInteger(result.seconds) && result.seconds >= 0))
+      if (douyuWatchDay(startedAt) === this.observedDay) {
+        const result = daily.status === 'fulfilled' ? daily.value : null
+        if (result && result.source === 'douyu-today-watch' && valid(result) && (result.seconds ?? 0) <= 86_400) {
+          this.applyDaily(result, at)
+        } else this.update({ dailyRead: { at, status: 'failed' }, verifiedIncrease: 0 })
       }
-      if (cumulative.status === 'fulfilled') {
-        const result = cumulative.value
-        if (result.accountId !== flight.accountId || result.room !== flight.room || result.source !== 'douyu-fanshome-cumulative'
-          || !Number.isSafeInteger(result.checkedAt) || result.checkedAt < 0 || result.checkedAt > this.now()
-          || (result.seconds !== null && (!Number.isSafeInteger(result.seconds) || result.seconds < 0))) throw new Error('Unconfirmed cumulative record')
-        let baseline = this.value.cumulativeBaselineSeconds
-        if (result.badgeOwned !== true || this.value.badgeOwned !== true) baseline = null
-        if (baseline === null || (result.seconds !== null && result.seconds < baseline)) baseline = result.seconds
-        const increase = result.seconds !== null && baseline !== null ? Math.max(0, result.seconds - baseline) : 0
-        const verified = increase > 0 && result.badgeOwned === true
-        this.update({ cumulativeSeconds: result.seconds, cumulativeBaselineSeconds: baseline, cumulativeIncrease: increase,
-          cumulativeCheckedAt: result.checkedAt, badgeOwned: result.badgeOwned, badgeLevel: result.badgeLevel,
-          ...(flight.heartbeat ? { phase: verified ? 'verified' : 'unverified', reason: verified ? null
-            : result.badgeOwned === false ? '当前账号未持有此房间粉丝牌, 累计观时尚未验收.'
-            : result.badgeOwned === null ? '粉丝牌持有状态未确认, 暂时无法验收累计观时.'
-            : result.seconds === null ? '平台未返回粉丝牌累计观时, 暂时无法验收.' : '尚未查询到粉丝牌累计观时增长.' } as const : {}) })
-      } else {
-        this.update({ cumulativeSeconds: null, cumulativeCheckedAt: null, cumulativeIncrease: 0, badgeOwned: null, badgeLevel: null,
-          ...(flight.heartbeat ? { phase: 'unverified', reason: '粉丝牌累计观时查询失败, 当前无法验收增长.' } as const : {}) })
-      }
-    }).catch(() => {
-      if (this.live(flight)) this.update({ cumulativeSeconds: null, cumulativeCheckedAt: null, cumulativeIncrease: 0, badgeOwned: null, badgeLevel: null,
+      const result = cumulative.status === 'fulfilled' ? cumulative.value : null
+      if (result && result.source === 'douyu-fanshome-cumulative' && valid(result)) this.applyCumulative(flight, result, at)
+      else this.update({ cumulativeRead: { at, status: 'failed' }, cumulativeIncrease: 0,
         ...(flight.heartbeat ? { phase: 'unverified', reason: '粉丝牌累计观时查询失败, 当前无法核验增长.' } as const : {}) })
     }).finally(() => { if (this.queryFlight === promise) this.queryFlight = null })
     this.queryFlight = promise
     return promise
+  }
+
+  private applyDaily(result: DouyuWatchTime, at: number): void {
+    const { seconds, checkedAt } = result
+    if (seconds === null) {
+      this.update({ dailyRead: { at, status: 'missing' }, verifiedIncrease: 0 })
+      return
+    }
+    const baseline = this.value.officialSeconds !== null && seconds < this.value.officialSeconds
+      ? seconds : Math.min(seconds, this.value.baselineSeconds ?? seconds)
+    this.update({ dailyRead: { at, status: 'available' }, officialSeconds: seconds, checkedAt,
+      baselineSeconds: baseline, verifiedIncrease: seconds - baseline })
+  }
+
+  private applyCumulative(flight: Flight, result: DouyuFansWatchTime, at: number): void {
+    const { seconds, checkedAt, badgeOwned, badgeLevel } = result
+    const owned = badgeOwned === true
+    const lastBaseline = owned && this.value.badgeOwned === true ? this.value.cumulativeBaselineSeconds : null
+    const rolledBack = seconds !== null && this.value.cumulativeSeconds !== null && seconds < this.value.cumulativeSeconds
+    const baseline = owned ? (rolledBack ? seconds : lastBaseline ?? seconds) : null
+    const increase = seconds !== null && baseline !== null ? seconds - baseline : 0
+    const reason = increase > 0 ? null
+      : badgeOwned === false ? '当前账号未持有此房间粉丝牌, 累计观时尚未验收.'
+        : badgeOwned === null ? '粉丝牌持有状态未确认, 暂时无法验收累计观时.'
+          : seconds === null ? '平台未返回粉丝牌累计观时, 暂时无法验收.' : '尚未查询到粉丝牌累计观时增长.'
+    this.update({ ...(seconds === null ? {} : { cumulativeSeconds: seconds, cumulativeCheckedAt: checkedAt }),
+      cumulativeRead: { at, status: seconds === null ? 'missing' : 'available' },
+      cumulativeBaselineSeconds: baseline, cumulativeIncrease: increase, badgeOwned, badgeLevel,
+      ...(flight.heartbeat ? { phase: increase > 0 ? 'verified' : 'unverified', reason } as const : {}) })
   }
 
   async dispose(): Promise<void> {
