@@ -1,0 +1,11 @@
+.douyu-lottery { padding: 12px 16px; border-bottom: 1px solid var(--line, #ffffff18); max-height: 42vh; overflow: auto; font-size: 12px; }
+.douyu-lottery-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.douyu-lottery-head .switch { gap: 8px; font-size: 11px; }
+.douyu-lottery p { margin: 8px 0; overflow-wrap: anywhere; }
+.douyu-lottery ul { padding-left: 18px; margin: 8px 0; }
+.douyu-lottery-prize { font-size: 14px; font-weight: 600; }
+.douyu-lottery-time time { font-variant-numeric: tabular-nums; font-size: 16px; margin-left: 6px; }
+.douyu-lottery-time small { display: block; margin-top: 3px; opacity: .65; }
+.douyu-lottery-command { white-space: pre-wrap; user-select: text; }
+.douyu-lottery-note { opacity: .7; line-height: 1.5; }
+.douyu-lottery-command-group summary { cursor: pointer; }

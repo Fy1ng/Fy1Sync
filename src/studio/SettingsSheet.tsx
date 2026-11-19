@@ -21,6 +21,7 @@ import { AppUpdateSettings } from './about/AppUpdate'
 import { CaptureSettings } from './capture/Capture'
 import { DouyuDesk } from './douyu/DouyuDesk'
 import { RoomInsights } from './insights/RoomInsights'
+import { PlatformRoomInsights } from './insights/PlatformRoomInsights'
 import { DanmakuRecords, type RecordsTab } from './records/DanmakuRecords'
 import { Segmented, Sheet, SideTabs, Switch } from './kit'
 import { PipSettings } from './pip/PipSettings'
@@ -78,16 +79,15 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
         <div className="settings-body" role="tabpanel" aria-label={SECTIONS.find((item) => item.id === section)?.label}>
           {section === 'general' && <General networkDraft={networkDraft} requestLeave={requestLeave} leave={leave} onContinue={() => setLeave(null)} />}
           {section === 'accounts' && <AccountSettings target={target} onWatch={(next) => { onWatch(next); onClose() }} />}
-          {huya && ['records', 'insights'].includes(section) && (
-            <p className="settings-empty">{section === 'records' ? '弹幕记录仅支持斗鱼' : '房间数据仅支持斗鱼'}</p>
-          )}
+          {huya && section === 'records' && <p className="settings-empty">弹幕记录仅支持斗鱼</p>}
           {section === 'records' && !huya && (
             <DanmakuRecords initialTab={target.records?.tab ?? 'history'} initialUid={target.records?.uid} room={room}
               onFill={(text) => { onFill(text); onClose() }} />
           )}
-          {section === 'insights' && !huya && (room
-            ? <RoomInsights room={room} />
-            : <p className="settings-empty">请先连接斗鱼弹幕</p>)}
+          {section === 'insights' && <>
+            {room && !huya && <RoomInsights room={room} />}
+            <PlatformRoomInsights room={room} />
+          </>}
           {section === 'frame-matching' && <div className="settings-page">
             <FrameHashSettings />
           </div>}

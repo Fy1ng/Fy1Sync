@@ -14,6 +14,7 @@ import { DanmakuPanel } from './DanmakuPanel'
 import { DanmakuStage } from './DanmakuStage'
 import { SettingsSheet } from './SettingsSheet'
 import type { MediaDescriptor } from '../core/types'
+import { primeMediaElement } from '../test/setup'
 
 const sessions: Session[] = []
 let relay: ((event: { event: string; data: unknown }) => void) | null = null
@@ -26,6 +27,14 @@ function makeSession(): Session {
 
 function mount(session: Session, children: React.ReactNode): void {
   render(<SessionProvider session={session}><SourceLoaderProvider>{children}</SourceLoaderProvider></SessionProvider>)
+}
+
+function readyOnLoad(session: Session) {
+  const load = session.loadSource.bind(session)
+  return vi.spyOn(session, 'loadSource').mockImplementation(async (role, source) => {
+    await load(role, { ...source, kind: 'progressive' })
+    primeMediaElement(session.engine.element(role))
+  })
 }
 
 beforeEach(() => {
@@ -51,10 +60,10 @@ afterEach(() => {
 describe('Huya sources', () => {
   it.each(['660000', 'kpl'])('connects the canonical Huya chat room after resolving a source: %s', async (room) => {
     const session = makeSession()
-    session.connectDanmaku('9999', true)
+    session.connectDanmaku('9999', 'official')
     const connect = vi.spyOn(session, 'connectDanmaku')
     const disconnect = vi.spyOn(session, 'disconnectDanmaku')
-    const load = vi.spyOn(session, 'loadSource').mockResolvedValue(undefined)
+    const load = readyOnLoad(session)
     const resolve = vi.spyOn(apiClient, 'resolve').mockResolvedValue({ ok: true, value: { ok: true, stream: {
       platform: 'huya', kind: 'hls', url: 'app://app/media/huya-session', label: '虎牙 660000',
       channel: '660000', sourceRoom: '660000', requiresProxy: false,
@@ -71,32 +80,44 @@ describe('Huya sources', () => {
     expect(resolve).toHaveBeenCalledWith(
       'https://www.huya.com/' + room, 'huya', 'commentary', undefined, true,
     )
-    await waitFor(() => expect(connect).toHaveBeenCalledWith('huya:660000', true))
+    await waitFor(() => expect(connect).toHaveBeenCalledWith('huya:660000', 'commentary', room))
     expect(disconnect).toHaveBeenCalled()
     expect(session.snapshot.danmaku.room).toBe('huya:660000')
   })
 
-  it('keeps a loaded Huya room selected and shows chat state without a manual Douyu room editor', async () => {
+  it('shows current Huya chat and can manually select another room', async () => {
     const session = makeSession()
     await act(async () => { await session.loadSource('commentary', {
       kind: 'test', url: '/test-sources/commentary.mp4', input: '660000', label: '虎牙 660000',
       loop: false, viaProxy: false, platform: 'huya', sourceRoom: '660000',
     }) })
-    session.connectDanmaku('huya:660000', true)
+    primeMediaElement(session.engine.element('commentary'))
+    await Promise.resolve()
     relay?.({ event: 'state', data: { state: 'connected', room: 'huya:660000' } })
     session.flush()
     mount(session, <SourceChip role="commentary" />)
     fireEvent.click(screen.getByRole('button', { name: /解说.*虎牙 660000/ }))
     expect(screen.getByRole('radio', { name: '虎牙' })).toBeChecked()
     expect(screen.getByText(/虎牙弹幕：已连接房间/)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '连接' })).toBeNull()
-    expect(screen.queryByLabelText('弹幕房间号')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '更换房间' }))
+    const field = screen.getByLabelText('弹幕房间号')
+    fireEvent.change(field, { target: { value: '777777' } })
+    fireEvent.submit(field.closest('form')!)
+    expect(session.hasManualDanmakuRoom()).toBe(true)
+    await waitFor(() => expect(session.snapshot.danmaku.room).toBe('777777'))
+    expect(screen.getByText('虎牙弹幕：未选择此房间')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '选择此房间弹幕' }))
+    expect(session.hasManualDanmakuRoom()).toBe(true)
+    await waitFor(() => expect(session.snapshot.danmaku.room).toBe('huya:660000'))
+    fireEvent.click(screen.getByRole('button', { name: '断开' }))
+    expect(session.hasManualDanmakuRoom()).toBe(false)
+    await waitFor(() => expect(session.snapshot.danmaku.room).toBeNull())
   })
 
   it.each(['660000', undefined])('connects a restored Huya descriptor, with or without a canonical source room: %s', async (sourceRoom) => {
     const session = makeSession()
     const connect = vi.spyOn(session, 'connectDanmaku')
-    vi.spyOn(session, 'loadSource').mockResolvedValue(undefined)
+    readyOnLoad(session)
     const descriptor: MediaDescriptor = { kind: 'hls', url: 'app://app/media/restored', input: 'https://www.huya.com/kpl',
       label: '虎牙 kpl', platform: 'huya', loop: false, viaProxy: false, ...(sourceRoom ? { sourceRoom } : {}) }
     function Restore(): React.ReactNode {
@@ -105,7 +126,7 @@ describe('Huya sources', () => {
     }
     mount(session, <Restore />)
     fireEvent.click(screen.getByRole('button', { name: 'restore' }))
-    await waitFor(() => expect(connect).toHaveBeenCalledWith(`huya:${sourceRoom ?? 'kpl'}`, true))
+    await waitFor(() => expect(connect).toHaveBeenCalledWith(`huya:${sourceRoom ?? 'kpl'}`, 'commentary', 'kpl'))
   })
 
   it('keeps Huya chat read-only in the drawer and its row menu while retaining copy and local blocking', async () => {
@@ -126,7 +147,7 @@ describe('Huya sources', () => {
     expect(screen.queryByRole('textbox')).toBeNull()
     expect(screen.queryByRole('button', { name: '发送' })).toBeNull()
     expect(screen.queryByRole('button', { name: /\+1/ })).toBeNull()
-    expect(screen.queryByRole('button', { name: '房间数据' })).toBeNull()
+    expect(screen.getByRole('button', { name: '房间数据' })).toBeVisible()
     expect(screen.queryByRole('button', { name: '弹幕记录与收藏' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /更多操作/ }))
     expect(screen.queryByRole('button', { name: /回复|收藏|禁言|历史弹幕|用户详情/ })).toBeNull()
@@ -182,7 +203,8 @@ describe('Huya sources', () => {
     const feature = vi.spyOn(apiClient, 'feature')
     mount(session, <SettingsSheet target={{ section }} room="huya:660000" onClose={() => {}} onWatch={() => {}} onFill={() => {}} />)
     await act(async () => { await Promise.resolve() })
-    expect(screen.getByText(section === 'records' ? '弹幕记录仅支持斗鱼' : '房间数据仅支持斗鱼')).toBeInTheDocument()
+    if (section === 'records') expect(screen.getByText('弹幕记录仅支持斗鱼')).toBeInTheDocument()
+    else expect(screen.getByRole('region', { name: /虎牙.*观看/ })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /赠送|签到|发送|创建任务/ })).toBeNull()
     expect(feature).not.toHaveBeenCalled()
   })

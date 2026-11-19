@@ -5,6 +5,7 @@ import { HuyaRoomClient } from './huyaRoomClient'
 import { safeFetchStream } from '../safeFetchStream'
 import { HuyaTarsReader, HuyaTarsWriter } from '../platforms/huyaWup'
 import fixtures from './fixtures/huya-synthetic.json'
+import { huyaOnTvWire } from '../platforms/fixtures/huyaOnTvFixture'
 import type { WebSocketLike } from './types'
 
 const metadata = { room: '660002', presenterUid: 12345n, topSid: 456n, subSid: 789n }
@@ -98,4 +99,33 @@ it('does not open either production source if a connecting observer closes the r
   client.connect()
   expect(client.state).toBe('closed')
   expect(createSource.mock.results.every(({ value }) => value.connect.mock.calls.length === 0)).toBe(true)
+})
+
+it('resolves and polls an activity when only slice connects', async () => {
+  const readPanel = vi.fn(async () => huyaOnTvWire({ presenter: metadata.presenterUid }))
+  const onSnapshot = vi.fn()
+  const client = new HuyaRoomClient(metadata.room, { onMessage() {}, onState() {} }, {
+    resolveRoom: async () => { throw new Error('cdnws metadata unavailable') },
+    slice: {
+      resolveRoom: async () => metadata,
+      requestSignal: async () => ({ url: 'https://fixture.p2p.huya.com/huyalive/chat-fixture.slice?placeholder',
+        host: 'fixture.p2p.huya.com', ttlSeconds: 300, issuedAt: Date.now(), expiresAt: Date.now() + 300_000, wsTime: 'placeholder' }),
+      stream: async (_url, _policy, { signal, onChunk }) => {
+        const chunk = slice(101)
+        onChunk(chunk)
+        if (signal && !signal.aborted) {
+          await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+        }
+        return { bytesRead: chunk.length, chunksRead: 1 }
+      },
+    },
+    onTv: { onSnapshot, readPanel },
+  })
+  try {
+    client.connect()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(client.state).toBe('connected')
+    expect(readPanel).toHaveBeenCalledExactlyOnceWith(metadata, expect.any(AbortSignal))
+    expect(onSnapshot).toHaveBeenLastCalledWith(expect.objectContaining({ room: 'huya:660002', status: 'active' }))
+  } finally { client.close() }
 })

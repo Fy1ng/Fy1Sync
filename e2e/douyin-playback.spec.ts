@@ -40,8 +40,8 @@ test.describe('opt-in Douyin playback through the source UI', () => {
 
     const panel = await openSourcePanel(page, 'commentary')
     await expect(panel.getByRole('status').filter({ hasText: '抖音弹幕：已连接房间' })).toBeVisible({ timeout: 60_000 })
-    await panel.getByRole('button', { name: '重连抖音弹幕', exact: true }).click()
-    await expect(panel.getByRole('button', { name: '重连抖音弹幕', exact: true })).toBeEnabled()
+    await panel.getByRole('button', { name: '重新连接此房间弹幕', exact: true }).click()
+    await expect(panel.getByRole('button', { name: '重新连接此房间弹幕', exact: true })).toBeEnabled()
     await expect(panel.getByRole('status').filter({ hasText: '抖音弹幕：已连接房间' })).toBeVisible({ timeout: 60_000 })
     await expect(panel.getByRole('textbox', { name: '弹幕房间' })).toHaveCount(0)
     await panel.getByRole('button', { name: '收藏', exact: true }).click()

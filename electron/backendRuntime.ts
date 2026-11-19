@@ -41,6 +41,7 @@ import { DouyuGatewayCoordinator } from '../server/douyu/gatewayCoordinator'
 import { DouyuWatchService, type DouyuWatchContext } from '../server/douyu/watchService'
 import { DouyuWatchGateway } from '../server/douyu/watchGateway'
 import type { DouyuWatchPlaybackReport } from '../server/douyu/watchTypes'
+import { DouyuLotteryReader, DouyuLotteryService } from '../server/douyu/douyuLottery'
 import { types as utilTypes } from 'node:util'
 
 export interface BackendRuntimeOptions {
@@ -57,6 +58,8 @@ export interface BackendRuntimeOptions {
   networkRuntimePath?: string
   watchEnabled?: boolean
   watchGateway?: Pick<DouyuWatchGateway, 'run'>
+  douyuLotteryReader?: Pick<DouyuLotteryReader, 'read'>
+  openDouyuLotteryExternal?: (url: string) => Promise<void>
   renewal?: DouyuRenewalService
   resolveRoom: ResolveDouyuRoom
   activityPreferences: ActivityPreferencesStore
@@ -165,6 +168,11 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
       if (!lifetime.signal.aborted && revision === watchContextRevision) { watchLogin = status.loggedIn; updateWatchContext() }
     }).catch(() => {})
   }
+  const pipWatchMatches = (source: ReturnType<typeof pip.state>['source'], room: string | null): boolean =>
+    !!room && source?.platform === 'douyu' && source.sourceRoom === room
+  const requireWatchRoom = (senderId: number | undefined, room: string | null): void => {
+    if (senderId === pip.windowId() && !pipWatchMatches(pip.state().source, room)) throw new FeatureApiError('room-changed')
+  }
   const reportWatch = (senderId: number, value: DouyuWatchPlaybackReport) =>
     watch.report(senderId, value, options.acquisition.watchSource?.(value.role) ?? null)
   refreshWatchLogin()
@@ -193,6 +201,9 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     const state = await required(options.sender).inspect(id, room, signal, 'balance')
     return { uid: state.uid, checkedAt: state.checkedAt, balances: { YUCHI: state.balance.gold, YUWAN: state.balance.silver } }
   })
+  const lottery = new DouyuLotteryService(options.douyuLotteryReader ?? new DouyuLotteryReader({
+    proxy: options.proxy, readCatalog: (target, signal) => purchase.readCatalog(target, signal),
+  }))
   const catalogFlights = new Map<string, Promise<DouyuGiftCatalog>>()
   const catalogAttempts = new Map<string, number>()
   const readCatalog = (room: string): Promise<DouyuGiftCatalog> => {
@@ -241,7 +252,22 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
       return { opened: true }
     },
     getStreamSessions: args => { noArgs(args); return streams.snapshot() },
-    getDouyuWatchState: args => { noArgs(args); return watch.snapshot() },
+    getDouyuWatchState: (args, context) => {
+      noArgs(args)
+      const state = watch.snapshot()
+      requireWatchRoom(context.senderId, state.room)
+      return state
+    },
+    getDouyuLottery: args => {
+      const target = room(fields(args, ['room']).room)
+      return lottery.read(target)
+    },
+    openDouyuLotteryRoom: async args => {
+      const value = fields(args, ['room', 'activityId'])
+      const url = lottery.officialUrl(room(value.room), string(value.activityId, 20))
+      await (options.openDouyuLotteryExternal ?? options.openExternal)(url)
+      return { opened: true }
+    },
     reportDouyuWatchPlayback: (args, context) => {
       const value = watchReportFields(args)
       if ((value.role !== 'official' && value.role !== 'commentary') || typeof value.playing !== 'boolean'
@@ -250,6 +276,7 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
         throw new FeatureApiError('invalid-arguments')
       }
       if (!Number.isSafeInteger(context.senderId)) throw new FeatureApiError('forbidden')
+      requireWatchRoom(context.senderId, watch.snapshot().room)
       return reportWatch(context.senderId!, value as unknown as DouyuWatchPlaybackReport)
     },
     openStreamSession: args => streams.open(args),
@@ -269,7 +296,7 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     reportEnhancedPip: (args, context) => {
       if (!Number.isSafeInteger(context.senderId)) throw new FeatureApiError('forbidden')
       const state = pip.report(context.senderId!, args)
-      if (state.streamId === 'official' || state.streamId === 'commentary') reportWatch(context.senderId!, {
+      if ((state.streamId === 'official' || state.streamId === 'commentary') && pipWatchMatches(state.source, watch.snapshot().room)) reportWatch(context.senderId!, {
         role: state.streamId, playing: args.ready && state.phase === 'ready' && args.playing,
         currentTime: args.mediaTime, presentedFrames: args.frameCount, decodedBytes: null,
       })
@@ -340,14 +367,16 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     // Other platforms never enter Douyu delivery tracking, history, catalogs or statistics.
     if (isReadOnlyDanmakuPlatform(event.platform)) return
     if (event.type === 'message' && (isReadOnlyDanmakuPlatform(event.message.platform) || isReadOnlyDanmakuRoom(event.message.room))) return
-    if (event.type === 'signal' && event.signal.platform === 'huya') return
     if (event.type === 'state' && isReadOnlyDanmakuRoom(event.room)) return
     if (event.type === 'message') { options.danmaku.observe(event.message); insights.observe(event.message) }
     else if (event.type === 'signal') {
-      if (event.signal.kind !== 'viewers') insights.signal(event.signal)
-      if (event.signal.kind === 'live') updateWatchContext()
+      const signal = event.signal
+      if (signal.platform === 'huya' || signal.platform === 'bilibili') return
+      insights.signal(signal)
+      if (signal.kind === 'live') updateWatchContext()
     }
     else {
+      lottery.connection(event.room, event.state === 'connected')
       insights.connection(event.room, event.state)
       if (event.state === 'connected' && Date.now() - (catalogAttempts.get(event.room) ?? 0) >= 60_000 && catalogFlights.size < 4) {
         if (catalogAttempts.size >= 64) catalogAttempts.delete(catalogAttempts.keys().next().value!)
@@ -360,14 +389,25 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     if ((state.role === 'official' || state.role === 'commentary') && ['starting', 'stopped', 'failed'].includes(state.state)) watch.releaseSource(state.role)
     if (pip.state().streamId === state.role && (state.state === 'starting' || state.state === 'stopped')) pip.close()
   }))
-  if (options.tasks) releases.push(options.tasks.subscribe(() => {
-    updateWatchContext()
-    refreshRoomStatus()
-    // Includes scheduled/manual writes and late settlement after cancellation. Clearing on
-    // other queue transitions is intentionally conservative; no write outcomes are cached.
-    readCache.invalidate()
-    if (pip.windowId() !== null) api.publish({ topic: 'pip', data: pip.state() })
-  }))
+  let lotteryRoom: string | null = null
+  const setLotteryRoom = (target: string | null): void => {
+    if (target === lotteryRoom) return
+    lotteryRoom = target
+    lottery.setRoom(target)
+    if (target) lottery.connection(target, options.relay.stateOf(target) === 'connected')
+  }
+  if (options.tasks) {
+    setLotteryRoom(options.tasks.snapshot().currentRoom)
+    releases.push(options.tasks.subscribe(state => {
+      setLotteryRoom(state.currentRoom)
+      updateWatchContext()
+      refreshRoomStatus()
+      // Includes scheduled/manual writes and late settlement after cancellation. Clearing on
+      // other queue transitions is intentionally conservative; no write outcomes are cached.
+      readCache.invalidate()
+      if (pip.windowId() !== null) api.publish({ topic: 'pip', data: pip.state() })
+    }))
+  }
   if (options.accounts) {
     let previous = options.accounts.activeAccountId
     releases.push(options.accounts.subscribe(event => {
@@ -386,12 +426,14 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
   }
   return {
     api, streams, pip, capture, automations, insights, watch, roomImages,
+    observeFixtureLotteryConnection: (target: string, connected: boolean) => lottery.connection(target, connected),
     observeFixture: (message: Parameters<DanmakuFeatures['observe']>[0]) => {
       if (isReadOnlyDanmakuPlatform(message.platform) || isReadOnlyDanmakuRoom(message.room)) return
       options.danmaku.observe(message); insights.observe(message)
     },
     async dispose() {
       lifetime.abort()
+      lottery.dispose()
       savedRoomsMonitor.dispose()
       await watch.dispose()
       if (!options.gatewayCoordinator) gatewayCoordinator.dispose()

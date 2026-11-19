@@ -45,7 +45,7 @@ test('弹幕列表和画面菜单通过真实剪贴板写入, 读取权限保持
     await item.hover({ force: true })
     const menu = page.getByRole('toolbar', { name: `弹幕操作：${STAGE_TEXT}`, exact: true })
     await expect(menu).toBeVisible()
-    await menu.getByRole('button', { name: '复制', exact: true }).click()
+    await menu.getByRole('button', { name: '复制', exact: true }).press('Enter')
     await expect.poll(() => electronApp.evaluate(async ({ clipboard }, expected) => await clipboard.readText() === expected, STAGE_TEXT)).toBe(true)
     await expect(page.getByText('弹幕已复制', { exact: true }).first()).toBeVisible()
     const readDenied = await page.evaluate(async () => {

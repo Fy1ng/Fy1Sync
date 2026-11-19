@@ -12,6 +12,7 @@ import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { parseSourceInput, toDescriptor } from '../core/mediaSources'
 import { basicClockFileKey } from '../core/basicClockMemory'
 import { parseDouyinInput } from '../core/douyinInput'
+import { douyinDanmakuRoom, parseRoomInput, roomFromInput, type RoomPlatform } from '../core/sourceDanmaku'
 import { SOURCE_ROLES, type MediaDescriptor, type PlatformId, type SourceRole } from '../core/types'
 import { lastSource, loadLastSources, saveLastSources, type LastSources } from '../app/lastSources'
 import type { LoginPlatform } from '../../electron/login'
@@ -49,54 +50,11 @@ export const PLATFORM_LABEL: Record<PlatformId, string> = {
   direct: '直链', file: '本地文件', test: '测试片源',
 }
 
-export type RoomPlatform = 'douyu' | 'bilibili' | 'huya' | 'douyin'
+export { douyinDanmakuRoom, parseRoomInput, roomFromInput, type RoomPlatform } from '../core/sourceDanmaku'
 
 /** What either side accepts: any side may play any source, so both say the same. */
 export const SOURCE_HINT = '粘贴直播间链接或输入房间号'
 export const SOURCE_KINDS = '未添加'
-
-/**
- * A room typed on its own rather than as a link: `6979222`, or with a platform in front,
- * `b 21452505` / `斗鱼9999` / `虎牙 kpl`. Bare identifiers need a platform (`platform: null`).
- */
-export function parseRoomInput(text: string): { room: string; platform: RoomPlatform | null } | null {
-  const value = text.trim()
-  if (/^[1-9]\d{0,19}$/.test(value)) return { room: value, platform: null }
-  const douyin = /^(?:douyin\s*[:：]?\s*|抖音\s*[:：]?\s*)([1-9]\d{0,19})$/i.exec(value)
-  if (douyin) return { room: douyin[1]!, platform: 'douyin' }
-  const huya = /^(?:(?:hy|huya)(?:\s*[:：]\s*|\s+)|虎牙\s*[:：]?\s*)([A-Za-z0-9_-]{1,64})$/i.exec(value)
-  if (huya) return { room: huya[1]!, platform: 'huya' }
-  const prefixed = /^(dy|douyu|斗鱼|b|bili|bilibili|b站|哔哩哔哩)\s*[:：]?\s*([1-9]\d{0,11})$/i.exec(value)
-  if (!prefixed) return /^(?=.*[A-Za-z_-])[A-Za-z0-9_-]{1,64}$/.test(value) ? { room: value, platform: null } : null
-  return { room: prefixed[2]!, platform: /^(dy|douyu|斗鱼)$/i.test(prefixed[1]!) ? 'douyu' : 'bilibili' }
-}
-
-/**
- * The room as the viewer wrote it. Douyu resolves a vanity number to the real room id, and
- * the real id is what the stream and the danmaku need — but it is not the number the viewer
- * knows the room by, so the display keeps what was typed.
- */
-export function roomFromInput(input: string | undefined): string | null {
-  if (!input) return null
-  const typed = parseRoomInput(input)
-  if (typed) return typed.room
-  const douyin = parseDouyinInput(input)
-  if (douyin) return douyin.kind === 'room' ? douyin.room : null
-  try {
-    const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(input) ? input : `https://${input}`)
-    if (/(^|\.)douyin\.com$|(^|\.)amemv\.com$/i.test(url.hostname)) return null
-    const rid = url.searchParams.get('rid')
-    if (rid && /^\d{1,12}$/.test(rid)) return rid
-    const segments = url.pathname.split('/').filter(Boolean).reverse()
-    const numeric = segments.find((part) => /^\d{1,12}$/.test(part))
-    if (numeric) return numeric
-    if (/(^|\.)douyu\.com$/i.test(url.hostname)) return segments.find((part) => /^[A-Za-z0-9_]{1,32}$/.test(part)) ?? null
-    if (/(^|\.)huya\.com$/i.test(url.hostname)) return segments.find((part) => /^[A-Za-z0-9_-]{1,64}$/.test(part)) ?? null
-    return null
-  } catch {
-    return null
-  }
-}
 
 /** How a loaded source is named in the top bar and on the intake screen. */
 export function sourceTitle(descriptor: MediaDescriptor): string {
@@ -118,15 +76,6 @@ export function sourceTitle(descriptor: MediaDescriptor): string {
   return `${platform} ${descriptor.label}`
 }
 
-/** Reflow sourceRoom is a live-session id; subscriptions require the public web room. */
-export function douyinDanmakuRoom(descriptor: Pick<MediaDescriptor, 'input' | 'danmakuRoom'>): string | null {
-  if (/^douyin:[1-9][0-9]{0,19}$/.test(descriptor.danmakuRoom ?? '')) return descriptor.danmakuRoom!
-  const parsed = parseDouyinInput(descriptor.input)
-  if (parsed?.kind === 'room') return `douyin:${parsed.room}`
-  const typed = parseRoomInput(descriptor.input)
-  return typed?.platform === 'douyin' ? `douyin:${typed.room}` : null
-}
-
 interface Loader {
   state: Record<SourceRole, RoleLoad>
   previousSources: LastSources
@@ -145,22 +94,16 @@ interface Loader {
   login: (role: SourceRole) => Promise<void>
   /** The danmaku room as the viewer knows it, while one is connected. */
   roomName: string | null
-  connectRoom: (room: string, name?: string, followsCommentary?: boolean) => void
+  connectRoom: (room: string, name?: string) => void
   disconnectRoom: () => void
 }
 
 const LoaderContext = createContext<Loader | null>(null)
 
-/** The room name as typed, kept across player mounts like the session that holds the room. */
-let rememberedAlias: string | null = null
-
 export function SourceLoaderProvider({ children }: { children: React.ReactNode }): React.ReactNode {
   const session = useSession()
   const [state, setState] = useState<Record<SourceRole, RoleLoad>>({ official: IDLE, commentary: IDLE })
-  const [roomAlias, setAlias] = useState<string | null>(() => rememberedAlias)
-  const setRoomAlias = useCallback((alias: string | null) => { rememberedAlias = alias; setAlias(alias) }, [])
   const snapshot = useSessionSnapshot()
-  const room = snapshot.danmaku.room
   const [previousSources, setPreviousSources] = useState(loadLastSources)
   const previous = useRef(previousSources)
   const [restoring, setRestoring] = useState(false)
@@ -190,28 +133,8 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     setPreviousSources(next)
   }, [snapshot.media.official.status, snapshot.media.official.descriptor, snapshot.media.commentary.status, snapshot.media.commentary.descriptor])
 
-  const connectRoom = useCallback((next: string, name?: string, followsCommentary = false) => {
-    // Set before connecting: the relay may swap the typed number for the real id.
-    setRoomAlias(name ?? next)
-    session.connectDanmaku(next, followsCommentary)
-  }, [session, setRoomAlias])
-  const disconnectRoom = useCallback(() => { setRoomAlias(null); session.disconnectDanmaku() }, [session, setRoomAlias])
-
-  const connectSourceRoom = useCallback((descriptor: MediaDescriptor) => {
-    if (session.hasManualDanmakuRoom()) return
-    if (descriptor.platform === 'douyin') {
-      const roomKey = douyinDanmakuRoom(descriptor)
-      if (roomKey) {
-        try { connectRoom(roomKey, roomKey.slice('douyin:'.length), true) }
-        catch (error) { session.notice('warn', '抖音弹幕连接失败，视频继续播放', error) }
-      }
-    } else if (descriptor.platform === 'huya') {
-      const sourceRoom = descriptor.sourceRoom ?? roomFromInput(descriptor.input)
-      if (sourceRoom) connectRoom(`huya:${sourceRoom}`, roomFromInput(descriptor.input) ?? sourceRoom, true)
-    } else if (descriptor.platform === 'douyu' && descriptor.danmakuRoom) {
-      connectRoom(descriptor.danmakuRoom, roomFromInput(descriptor.input) ?? descriptor.danmakuRoom, true)
-    }
-  }, [connectRoom, session])
+  const connectRoom = useCallback((next: string, name?: string) => { session.connectDanmaku(next, 'manual', name) }, [session])
+  const disconnectRoom = useCallback(() => { session.disconnectDanmaku() }, [session])
 
   // Loading is a request to watch: start playback rather than leave a loaded, still picture.
   const play = useCallback(() => { void session.setPlaying(true) }, [session])
@@ -237,19 +160,17 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     const request = {}
     loads.current[role] = request
     patch(role, { busy: true, problem: null, notes: [], login: null })
-    if (role === 'commentary') session.disconnectCommentaryDanmaku()
     try {
       const loading = session.loadSource(role, descriptor)
       const generation = session.sourceRevision(role)
       await loading
       if (!await finishAttachment(role, generation, request) || generation !== session.sourceRevision(role) || loads.current[role] !== request) return false
-      if (role === 'commentary') connectSourceRoom(descriptor)
       return true
     } catch (error) {
       if (loads.current[role] === request) patch(role, { problem: displayError(error, '片源载入失败，请重试') })
       return false
     } finally { if (loads.current[role] === request) patch(role, { busy: false }) }
-  }, [connectSourceRoom, finishAttachment, patch, session])
+  }, [finishAttachment, patch, session])
 
   /**
    * Offer a login for the load that asked. A step-down only needs one from someone not signed in;
@@ -285,7 +206,6 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     patch(role, { busy: true, problem: null, notes: [], login: null })
     let generation = session.beginSourceChange(role)
     const platformOf = parsed.platform
-    if (role === 'commentary' && platformOf === 'douyin') session.disconnectCommentaryDanmaku()
     try {
       const result = await apiClient.resolve(
         parsed.url, parsed.platform, role, undefined,
@@ -314,24 +234,22 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       // Douyu is asked for 原画 (rate 0); another rate back is the anonymous step-down.
       if (stream.platform === 'douyu' && stream.quality !== undefined && stream.quality !== '0') void offerLogin(role, 'douyu', generation, false)
       const descriptor: MediaDescriptor = {
-        ...toDescriptor(
-          { ...parsed, kind: stream.kind, label: stream.label },
+          ...toDescriptor(
+            { ...parsed, platform: stream.platform, kind: stream.kind, label: stream.label },
           { url: stream.url, viaProxy: stream.requiresProxy },
         ),
         input: webRoom ? `https://live.douyin.com/${webRoom}` : input.trim(),
         sourceQualities: stream.qualities,
         sourceQuality: stream.quality,
         sourceRoom: stream.sourceRoom ?? stream.danmakuRoom,
+        sourceChannel: stream.channel,
         danmakuRoom: stream.danmakuRoom,
       }
-      if (role === 'commentary') session.disconnectCommentaryDanmaku()
       const loading = session.loadSource(role, descriptor)
       generation = session.sourceRevision(role)
       await loading
       // Removal and a newer source both invalidate any room that accompanied this load.
       if (!await finishAttachment(role, generation, request) || generation !== session.sourceRevision(role) || loads.current[role] !== request) return false
-      // The commentary room's danmaku come along with it; nothing to set up separately.
-      if (role === 'commentary') connectSourceRoom(descriptor)
       return true
     } catch (error) {
       if (generation === session.sourceRevision(role) && loads.current[role] === request) patch(role, { problem: displayError(error, '片源载入失败，请重试') })
@@ -340,7 +258,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       session.endSourceChange(role, generation)
       if (loads.current[role] === request) patch(role, { busy: false })
     }
-  }, [connectSourceRoom, finishAttachment, loadDescriptor, offerLogin, patch, session])
+  }, [finishAttachment, loadDescriptor, offerLogin, patch, session])
 
   const login = useCallback(async (role: SourceRole) => {
     const platform = live.current[role].login
@@ -371,7 +289,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
 
   const clearProblem = useCallback((role: SourceRole) => patch(role, { problem: null }), [patch])
 
-  const roomName = room ? roomAlias ?? room : null
+  const roomName = snapshot.danmaku.roomName ?? snapshot.danmaku.room
   const restorePrevious = useCallback(async (): Promise<boolean> => {
     if (restoringRef.current) return false
     const saved = { ...previous.current }

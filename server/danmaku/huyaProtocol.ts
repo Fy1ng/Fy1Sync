@@ -2,7 +2,8 @@
 import { createHash } from 'node:crypto'
 import { HuyaTarsReader, HuyaTarsWriter } from '../platforms/huyaWup'
 import type { HuyaDanmakuRoom } from '../platforms/huyaDanmaku'
-import type { ChatMessage, RoomSignal } from './types'
+import { huyaSenderMetadata, readHuyaChatColor, type HuyaChatMessage } from './huyaMessage'
+import type { RoomSignal } from './types'
 
 export const MAX_HUYA_FRAME = 1_048_576
 const MAX_COLLECTION = 256
@@ -92,7 +93,7 @@ export type HuyaDecodeResult = {
   registered: boolean
   registrationFailed: boolean
   heartbeat: boolean
-  messages: ChatMessage[]
+  messages: HuyaChatMessage[]
   signals: Array<Extract<RoomSignal, { platform: 'huya' }>>
   unknownUris: number
   unknownUriCounts: Record<string, number>
@@ -106,8 +107,8 @@ function empty(): HuyaDecodeResult {
     unknownUriCounts: {}, batch: false, emptyFrame: false, malformed: false, malformedReason: null }
 }
 
-function push(uri: bigint, body: Uint8Array, pushId: bigint, room: string, now: number, result: HuyaDecodeResult) {
-  if (![1400n, 6501n, 6502n, 6507n, 8006n].includes(uri)) {
+function push(uri: bigint, body: Uint8Array, pushId: bigint, room: string, now: number, result: HuyaDecodeResult, presenterUid?: bigint) {
+  if (![1400n, 6298n, 6501n, 6502n, 6507n, 8006n].includes(uri)) {
     result.unknownUris++
     const key = String(uri)
     result.unknownUriCounts[key] = (result.unknownUriCounts[key] ?? 0) + 1
@@ -129,7 +130,25 @@ function push(uri: bigint, body: Uint8Array, pushId: bigint, room: string, now: 
     if (!(user instanceof Map)) throw invalid()
     const content = text(fields, 3, 4096)
     const username = text(user, 2, 256, '匿名') || '匿名'
-    if (content) result.messages.push({ ...base, id, text: content, username, system: false })
+    const format = fields.get(5), bullet = fields.get(6)
+    if (content) result.messages.push({ ...base, id, text: content, username, system: false, huyaChat: {
+      kind: 'text',
+      textColor: readHuyaChatColor(format instanceof Map ? format.get(0) : undefined),
+      bulletColor: readHuyaChatColor(bullet instanceof Map ? bullet.get(0) : undefined),
+      sender: huyaSenderMetadata(user.get(5)),
+    } })
+    return
+  }
+  if (uri === 6298n) {
+    const barrage = fields.get(1)
+    if (!(barrage instanceof Map) || presenterUid === undefined || presenterUid <= 0n
+      || fields.get(9) !== presenterUid || barrage.get(5) !== presenterUid) return
+    const content = text(barrage, 1, 4096)
+    const username = text(fields, 2, 256, '匿名') || '匿名'
+    if (content) result.messages.push({ ...base, id, text: content, username, system: false, huyaChat: {
+      kind: 'on-tv-barrage', textColor: null, bulletColor: null,
+      sender: huyaSenderMetadata(fields.get(3), text(fields, 5, 128), fields.get(6)),
+    } })
     return
   }
   // Real 6501 captures confirm tags 0/2/6/20; tag 5 is the presenter, not the sender.
@@ -175,7 +194,7 @@ export function decodeHuyaFrame(data: Uint8Array, room: string, now: number, opt
       result.heartbeat = int(rsp, 1) === 3n && text(rsp, 6, 128) === 'OnUserHeartBeat'
     } else if (cmd === 7n) {
       const message = new FieldsReader(bytes(outer, 1)).fields()
-      push(int(message, 1), bytes(message, 2), int(message, 5, 0n), room, now, result)
+      push(int(message, 1), bytes(message, 2), int(message, 5, 0n), room, now, result, options.presenterUid)
     } else if (cmd === 22n) {
       result.batch = true
       const batch = new FieldsReader(bytes(outer, 1)).fields()
@@ -183,7 +202,7 @@ export function decodeHuyaFrame(data: Uint8Array, room: string, now: number, opt
       if (!Array.isArray(list) || list.length > MAX_COLLECTION) throw invalid()
       for (const item of list) {
         if (!(item instanceof Map)) throw invalid()
-        push(int(item, 0), bytes(item, 1), int(item, 2, 0n), room, now, result)
+        push(int(item, 0), bytes(item, 1), int(item, 2, 0n), room, now, result, options.presenterUid)
       }
     }
     return result
@@ -191,12 +210,12 @@ export function decodeHuyaFrame(data: Uint8Array, room: string, now: number, opt
 }
 
 /** Both transports carry WSPushMessage without a WebSocketCommand wrapper. */
-export function decodeHuyaPush(data: Uint8Array, room: string, now: number): HuyaDecodeResult {
+export function decodeHuyaPush(data: Uint8Array, room: string, now: number, options: { presenterUid?: bigint } = {}): HuyaDecodeResult {
   const result = empty()
   try {
     if (data.length === 0 || data.length > MAX_HUYA_FRAME || !/^[1-9]\d{0,15}$/.test(room) || !Number.isFinite(now)) throw invalid()
     const message = new FieldsReader(data).fields()
-    push(int(message, 1), bytes(message, 2), int(message, 5, 0n), room, now, result)
+    push(int(message, 1), bytes(message, 2), int(message, 5, 0n), room, now, result, options.presenterUid)
     return result
   } catch { return { ...empty(), malformed: true, malformedReason: 'invalid-frame' } }
 }

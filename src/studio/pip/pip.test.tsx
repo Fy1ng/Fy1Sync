@@ -121,17 +121,19 @@ function presentFrame(): void {
 }
 
 describe('the PiP window', () => {
-  it.each(['bilibili', 'youtube', 'twitch', 'direct'] as const)('does not subscribe to Douyu or show a send bar for %s', async platform => {
+  it.each(['youtube', 'twitch'] as const)('does not subscribe to Douyu or show a send bar for %s', async platform => {
     install(pipState({ phase: 'ready', source: { ...pipState().source!, platform, danmakuRoom: '9999' } }))
     render(<PipPage />)
     await flush()
     expect(danmakuRooms).toEqual([])
     expect(screen.queryByLabelText('发送弹幕')).toBeNull()
     expect(invoked('activateDouyuRoom')).toHaveLength(0)
+    expect(screen.getByText(`${platform === 'youtube' ? 'YouTube' : 'Twitch'} 聊天不可用`)).toBeInTheDocument()
   })
 
   it.each([
     { platform: 'huya' as const, room: 'huya:9999' },
+    { platform: 'bilibili' as const, room: 'bilibili:9999' },
     { platform: 'douyin' as const, room: 'douyin:100' },
   ])('uses only namespaced read-only chat for $platform', async ({ platform, room }) => {
     install(pipState({ phase: 'ready', source: { ...pipState().source!, platform, danmakuRoom: room },
@@ -140,6 +142,40 @@ describe('the PiP window', () => {
     await flush()
     expect(danmakuRooms).toEqual([room])
     expect(screen.queryByLabelText('发送弹幕')).toBeNull()
+  })
+
+  it('uses the main-provided Douyu room for an associated direct source without showing the Douyu send bar', async () => {
+    install(pipState({ phase: 'ready', source: { ...pipState().source!, platform: 'direct', sourceRoom: '1111' } }))
+    render(<PipPage />)
+    await flush()
+    expect(danmakuRooms).toEqual(['9999'])
+    expect(screen.queryByLabelText('发送弹幕')).toBeNull()
+    expect(invoked('activateDouyuRoom')).toHaveLength(0)
+  })
+
+  it('does not choose a room for an unassociated direct source', async () => {
+    install(pipState({ phase: 'ready', source: { ...pipState().source!, platform: 'direct', sourceRoom: undefined, danmakuRoom: '9999' },
+      sendContext: { accountId: 'acc-1', room: null, canAttempt: false } }))
+    render(<PipPage />)
+    await flush()
+    expect(danmakuRooms).toEqual([])
+    expect(screen.queryByLabelText('发送弹幕')).toBeNull()
+  })
+
+  it('releases the old room and follows only the source supplied by main', async () => {
+    install(pipState({ phase: 'ready' }))
+    render(<PipPage />)
+    await flush()
+    push(pipState({ phase: 'ready', streamId: 'commentary', source: { ...pipState().source!, platform: 'bilibili', sourceRoom: '200' },
+      sendContext: { accountId: 'acc-1', room: null, canAttempt: false } }))
+    await flush()
+    expect(danmakuRooms).toEqual(['9999', 'bilibili:200'])
+    expect(danmakuReleases).toBe(1)
+    expect(screen.queryByLabelText('发送弹幕')).toBeNull()
+    push(pipState({ phase: 'closed', streamId: null, source: null, sendContext: { accountId: null, room: null, canAttempt: false } }))
+    await flush()
+    expect(danmakuRooms).toEqual(['9999', 'bilibili:200'])
+    expect(danmakuReleases).toBe(2)
   })
 
   it('reports ready only once frames are presented, then a pause as not playing', async () => {

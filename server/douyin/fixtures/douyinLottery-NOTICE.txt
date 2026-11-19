@@ -1,0 +1,14 @@
+普通福袋只读结构来自旧版 b115684 的官方组件核对, 2026-11-17.
+https://live.douyin.com/
+https://lf-webcast-platform.bytetos.com/obj/webcast-platform-cdn/webcast/douyin_live/chunks/LotteryShortTouchPlugin.dff12b10.js
+SHA256 15bc716f4281544496194e3b1ef55a38e66d342ba2e1c74e0f56c9bf850f892c
+https://lf-webcast-platform.bytetos.com/obj/webcast-platform-cdn/webcast/douyin_live/chunks/LotteryViewPlugin.74f2e12a.js
+SHA256 22553b0695e51ef10f7f3c2ead6f26fc31cf9fd4fca14bde745aa6b1fe8f2c60
+
+官网组件定义 GET /webcast/lottery/melon/lottery_info/, 返回 data.lottery_info.
+首次进入参数 room_id 和 query_from=1. 进行中=1, 虚拟币=1, 实物=2.
+倒计时使用 draw_time - current_time, 单位为秒. 旧版匿名查询只取得成功空响应.
+夹具中的房间、场次、活动、时间、奖品和条件均为合成值.
+一次只有一个有效指定评论条件时保留原始口令. 同文只能作为折叠线索.
+原始 WebSocket 活动消息方法及 chat_by 未经活跃活动帧核对.
+个人资格、任务进度、活动参加状态和中奖结果均无实样.

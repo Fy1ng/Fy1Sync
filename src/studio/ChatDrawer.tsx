@@ -8,7 +8,7 @@
  * messages are dropped from the front. A way back down is offered meanwhile.
  */
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { ErrorDetailsButton, ErrorText } from '../ui/ErrorDetails'
 import type { DisplayError } from '../core/errorDetails'
 import { useVirtualizer } from '@tanstack/react-virtual'
@@ -28,20 +28,29 @@ import { useChatFollow } from './useChatFollow'
 import { BasicRecognitionPanel } from './BasicRecognitionPanel'
 import { DouyinComposer } from './DouyinComposer'
 import { isReadOnlyDanmakuPlatform, isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
+import { DouyuLotteryCard, DouyuLotteryCommandGroup, type DouyuLotteryView } from './douyu/douyuLottery'
+import { BilibiliGiftLabel, BilibiliMessage, BilibiliSenderBadges, BilibiliSuperChatFeed } from './BilibiliMessage'
+import { DouyinDanmakuIdentity, DouyinDanmakuText } from './DouyinDanmakuContent'
+import { huyaChatColorHex } from '../core/huyaChat'
+import type { SourceRole } from '../core/types'
+import { BilibiliEmoteDirectory, RestrictedChatStatus } from './insights/PlatformRoomInsights'
 
 /** A one-line row; longer messages wrap and are measured. */
 const ROW = 30
 
-export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
+export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords, douyuLottery, platformActivities, restrictedChatSources = [] }: {
   onClose: () => void
   onOpenSettings: (section?: SettingsSection, account?: SettingsTarget['account']) => void
   onOpenRecords: (tab: RecordsTab, uid?: string) => void
+  douyuLottery?: DouyuLotteryView
+  platformActivities?: React.ReactNode
+  restrictedChatSources?: SourceRole[]
 }): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const { danmaku } = snapshot
   const connectionFailure = danmaku as typeof danmaku & { errorDetail?: unknown; detail?: unknown }
-  const readOnly = isReadOnlyDanmakuRoom(danmaku.room)
+  const readOnly = isReadOnlyDanmakuRoom(danmaku.room) || (!danmaku.room && restrictedChatSources.length > 0)
   const writes = useDouyuWrites()
   const composer = useComposer()
   const delivery = deliveryText(composer.delivery)
@@ -55,14 +64,24 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   const box = useRef<HTMLTextAreaElement | null>(null)
   const subscribe = useCallback((listener: () => void) => session.subscribeChat(listener), [session])
   const messages = useSyncExternalStore(subscribe, () => session.chatHistory())
+  const entries = useMemo(() => {
+    const result: { messages: DanmakuMessage[]; activityKey: string | null }[] = []
+    for (const message of messages) {
+      const activityKey = message.platformActivityKey ?? (message.douyuLotteryActivityId && message.room ? `${message.room}:${message.douyuLotteryActivityId}` : null)
+      const previous = result.at(-1)
+      if (previous && activityKey && previous.activityKey === activityKey) previous.messages.push(message)
+      else result.push({ messages: [message], activityKey })
+    }
+    return result
+  }, [messages])
   const total = useSyncExternalStore(subscribe, () => session.chatCount())
 
   const scroller = useRef<HTMLDivElement | null>(null)
   const virtualizer = useVirtualizer({
-    count: messages.length,
+    count: entries.length,
     getScrollElement: () => scroller.current,
     estimateSize: () => ROW,
-    getItemKey: (index) => messages[index]!.id,
+    getItemKey: (index) => entries[index]!.messages[0]!.id,
     overscan: 6,
     anchorTo: 'end',
     // Reading anchors still belong to the virtualizer; explicit follow intent handles the end.
@@ -72,9 +91,9 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
     // while the list is too short to scroll, since no scroll event fires, so the virtualizer
     // went on computing the visible range from that far-off offset. It kept only the newest row
     // plus overscan, and the rows above went missing while the list was still filling up.
-    initialOffset: () => Math.max(0, messages.length * ROW - (scroller.current?.clientHeight ?? 0)),
+    initialOffset: () => Math.max(0, entries.length * ROW - (scroller.current?.clientHeight ?? 0)),
   })
-  const { unread, jump, onScroll } = useChatFollow(scroller, virtualizer, total, messages.length, danmaku.room)
+  const { unread, jump, onScroll } = useChatFollow(scroller, virtualizer, total, entries.length, danmaku.room)
 
   // "回复" from the picture writes into the box; follow it there.
   useEffect(() => {
@@ -87,6 +106,36 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
 
   const rows = virtualizer.getVirtualItems()
   const composing = useRef(false)
+  const rowContents = (message: DanmakuMessage) => <>
+    <span className="msg-user">{message.user}</span>
+    <span className="msg-text" style={message.huyaChat ? { color: huyaChatColorHex(message.huyaChat.textColor) } : undefined}>
+      {message.platform === 'bilibili' ? <>
+        <BilibiliSenderBadges sender={message.bilibiliSender} />{' '}
+        {message.bilibiliGift ? <BilibiliGiftLabel gift={message.bilibiliGift} /> : <BilibiliMessage {...message} />}
+      </> : message.platform === 'douyin' ? <>
+        <DouyinDanmakuIdentity douyin={message.douyin} />{' '}
+        <DouyinDanmakuText text={message.text} douyin={message.douyin} />
+      </> : <>
+        {message.huyaChat?.kind === 'on-tv-barrage' && <small>上电视 </small>}
+        {message.huyaChat?.sender?.fansBadge?.name && <small>{message.huyaChat.sender.fansBadge.name} </small>}
+        {message.text}
+      </>}
+    </span>
+    {message.duplicateCount !== undefined && message.duplicateCount > 1 && (
+      <span className="msg-count num" title="相同弹幕的合并次数">×{message.duplicateCount}</span>
+    )}
+    {!message.system && !message.gift && !message.huyaGift && !message.bilibiliGift && (
+      <span className="msg-actions">
+        {writes && !readOnly && !isReadOnlyDanmakuPlatform(message.platform) && <button type="button" className="msg-plus" disabled={!composer.canSendText(message.text)}
+          aria-label={`+1：${message.text}`} title={composer.repeatProblem(message.text) ?? '发送相同内容'}
+          onClick={() => void composer.repeat(message.text)}>+1</button>}
+        <button type="button" className="msg-more" aria-label={`更多操作：${message.text}`} title="更多操作"
+          onClick={(event) => { setRowNote(null); const next = { message, anchor: event.currentTarget }; rowMenuRef.current = next; setRowMenu(next) }}>
+          <Icon name="more" />
+        </button>
+      </span>
+    )}
+  </>
 
   return (
     <aside className="drawer" aria-label="弹幕">
@@ -100,7 +149,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
           {!readOnly && <button type="button" className="icon-btn" onClick={() => onOpenRecords('history')} aria-label="弹幕记录与收藏" title="弹幕记录与收藏">
             <Icon name="history" />
           </button>}
-          {danmaku.room && !readOnly && (
+          {(danmaku.room || restrictedChatSources.length > 0) && (
             <button type="button" className="icon-btn" onClick={() => onOpenSettings('insights')} aria-label="房间数据" title="房间数据">
               <Icon name="stats" />
             </button>
@@ -115,6 +164,13 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
       </header>
 
       {snapshot.settings.recognitionMode === 'basic' && snapshot.settings.basicRecognitionPanelVisible && <BasicRecognitionPanel />}
+      {douyuLottery && <DouyuLotteryCard view={douyuLottery} />}
+      {platformActivities}
+      {danmaku.room?.startsWith('bilibili:') && <>
+        <BilibiliEmoteDirectory key={danmaku.room} room={danmaku.room} />
+        {danmaku.bilibiliSuperChats && <BilibiliSuperChatFeed room={danmaku.room} state={danmaku.bilibiliSuperChats} />}
+      </>}
+      {restrictedChatSources.map(role => <RestrictedChatStatus key={role} role={role} />)}
 
       <div className="drawer-feed">
         <div className="drawer-scroll" ref={scroller} role="log" aria-live="off" aria-label="弹幕列表" tabIndex={0}
@@ -124,32 +180,23 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
           }}>
           {messages.length === 0 ? (
             <p className="drawer-empty">
-              {danmaku.connected ? '已连接，暂无弹幕' : danmaku.room ? danmaku.error ? <ErrorText error={connectionFailure.errorDetail ?? connectionFailure.detail ?? { message: danmaku.error }} message={danmaku.error} /> : '正在连接…' : '请在「解说」中连接弹幕'}
+              {danmaku.connected ? '已连接，暂无弹幕' : danmaku.room ? danmaku.error ? <ErrorText error={connectionFailure.errorDetail ?? connectionFailure.detail ?? { message: danmaku.error }} message={danmaku.error} /> : '正在连接…' : restrictedChatSources.length > 0 ? null : '载入直播间后显示弹幕'}
             </p>
           ) : (
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
-              {rows.map((row) => { const message = messages[row.index]!; return (
-                <div key={row.key} data-index={row.index} ref={virtualizer.measureElement}
-                  className={`msg ${message.gift || message.huyaGift ? 'is-gift' : ''}`.trim()}
-                  style={{ transform: `translateY(${row.start}px)` }}>
-                  <span className="msg-user">{message.user}</span>
-                  <span className="msg-text">{message.text}</span>
-                  {message.duplicateCount !== undefined && message.duplicateCount > 1 && (
-                    <span className="msg-count num" title="相同弹幕的合并次数">×{message.duplicateCount}</span>
-                  )}
-                  {!message.gift && !message.huyaGift && (
-                    <span className="msg-actions">
-                      {writes && !readOnly && !isReadOnlyDanmakuPlatform(message.platform) && <button type="button" className="msg-plus" disabled={!composer.canSendText(message.text)}
-                        aria-label={`+1：${message.text}`} title={composer.repeatProblem(message.text) ?? '发送相同内容'}
-                        onClick={() => void composer.repeat(message.text)}>+1</button>}
-                      <button type="button" className="msg-more" aria-label={`更多操作：${message.text}`} title="更多操作"
-                        onClick={(event) => { setRowNote(null); const next = { message, anchor: event.currentTarget }; rowMenuRef.current = next; setRowMenu(next) }}>
-                        <Icon name="more" />
-                      </button>
-                    </span>
-                  )}
-                </div>
-              ) })}
+              {rows.map((row) => {
+                const entry = entries[row.index]!
+                const message = entry.messages[0]!
+                const position = { transform: `translateY(${row.start}px)` }
+                return entry.activityKey
+                  ? <div key={row.key} data-index={row.index} ref={virtualizer.measureElement} className="msg-group" style={position}>
+                    <DouyuLotteryCommandGroup count={entry.messages.length}>
+                      {entry.messages.map(item => <div className="msg" key={item.id}>{rowContents(item)}</div>)}
+                    </DouyuLotteryCommandGroup>
+                  </div>
+                  : <div key={row.key} data-index={row.index} ref={virtualizer.measureElement}
+                    className={`msg ${message.gift || message.huyaGift ? 'is-gift' : ''}`.trim()} style={position}>{rowContents(message)}</div>
+              })}
             </div>
           )}
         </div>

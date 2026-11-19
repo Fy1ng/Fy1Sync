@@ -1,17 +1,21 @@
 /** Platform-neutral receive-only danmaku contracts. */
 import type { DouyuGiftMetadata, DouyuSenderMetadata } from '../../src/core/types'
 import type { DouyuRoomSignal } from '../douyu/insightsTypes'
+import type { BilibiliMetadata } from '../../src/core/bilibiliMetadata'
+import type { BilibiliRoomSignal } from './bilibiliEvents'
+import type { DouyinMessageMetadata } from './douyinProtocol'
+import type { HuyaChatMetadata } from './huyaMessage'
 
-export type DanmakuPlatform = 'douyu' | 'huya' | 'douyin'
+export type DanmakuPlatform = 'douyu' | 'huya' | 'douyin' | 'bilibili'
 
 export function isReadOnlyDanmakuPlatform(platform: unknown): boolean {
-  return platform === 'huya' || platform === 'douyin'
+  return platform === 'huya' || platform === 'douyin' || platform === 'bilibili' || platform === 'youtube' || platform === 'twitch'
 }
 
 export function isReadOnlyDanmakuRoom(room: string | null | undefined): boolean {
-  return typeof room === 'string' && /^(?:huya|douyin):/.test(room)
+  return typeof room === 'string' && /^(?:huya|douyin|bilibili|youtube|twitch):/.test(room)
 }
-export type ChatMessage = {
+export type ChatMessage = BilibiliMetadata & {
   id: string
   text: string
   username: string
@@ -26,9 +30,12 @@ export type ChatMessage = {
   dms?: number
   gift?: DouyuGiftMetadata
   huyaGift?: { id: string; count: number; name?: string }
+  huyaChat?: HuyaChatMetadata
+  douyin?: DouyinMessageMetadata
 }
 
 export type RoomSignal = (DouyuRoomSignal & { platform?: 'douyu' })
+  | BilibiliRoomSignal
   | { platform: 'huya'; kind: 'viewers'; room: string; receivedAt: number; count: number; messageId?: string }
 export type DanmakuState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed'
 export type DanmakuClientEvents = {
@@ -58,7 +65,7 @@ export interface DanmakuClient {
 
 /** Internal room identities always include a platform; legacy callers still see bare Douyu IDs. */
 export function danmakuRoom(input: string): { platform: DanmakuPlatform; room: string; key: string; external: string } {
-  const platform = input.startsWith('douyin:') ? 'douyin' : input.startsWith('huya:') ? 'huya' : 'douyu'
+  const platform = input.startsWith('bilibili:') ? 'bilibili' : input.startsWith('douyin:') ? 'douyin' : input.startsWith('huya:') ? 'huya' : 'douyu'
   const room = input.startsWith(`${platform}:`) ? input.slice(platform.length + 1) : input
   return { platform, room, key: `${platform}:${room}`, external: platform === 'douyu' ? room : `${platform}:${room}` }
 }

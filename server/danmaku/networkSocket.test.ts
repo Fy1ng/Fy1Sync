@@ -35,6 +35,38 @@ const flush = () => new Promise<void>(resolve => setImmediate(resolve))
 afterEach(() => { mocks.sockets.length = 0; mocks.dispatchers.length = 0; vi.clearAllMocks() })
 
 describe('platform danmaku network transport', () => {
+  it.each(['wss://broadcastlv.chat.bilibili.com/sub', 'wss://broadcastlv.chat.bilibili.com:2245/sub'])
+    ('pins approved Bilibili endpoints and adds only the official origin: %s', async url => {
+      const resolve = vi.fn(async () => ['8.8.8.8'])
+      const socket = createNetworkSocket(url, 'bilibili', { network: direct, resolve })
+      await flush()
+      expect(resolve).toHaveBeenCalledExactlyOnceWith('broadcastlv.chat.bilibili.com')
+      expect(mocks.pinned).toHaveBeenCalledExactlyOnceWith('broadcastlv.chat.bilibili.com', ['8.8.8.8'])
+      expect(mocks.websocket).toHaveBeenCalledWith(url, { dispatcher: mocks.dispatchers[0], headers: { Origin: 'https://live.bilibili.com' } })
+      socket.close()
+      expect(mocks.dispatchers[0]!.destroy).toHaveBeenCalledOnce()
+    })
+
+  it.each(['wss://broadcastlv.chat.bilibili.com.evil.invalid/sub', 'wss://broadcastlv.chat.bilibili.com:80/sub',
+    'wss://broadcastlv.chat.bilibili.com/sub?token=synthetic', 'wss://broadcastlv.chat.bilibili.com/'])
+    ('rejects unapproved Bilibili addresses before routing or DNS: %s', url => {
+      const route = vi.fn(direct.route), resolve = vi.fn(async () => ['8.8.8.8'])
+      expect(() => createNetworkSocket(url, 'bilibili', { network: { route }, resolve })).toThrow()
+      expect(route).not.toHaveBeenCalled()
+      expect(resolve).not.toHaveBeenCalled()
+      expect(mocks.websocket).not.toHaveBeenCalled()
+    })
+
+  it('rejects caller-provided Bilibili account headers before routing or DNS', () => {
+    const route = vi.fn(direct.route), resolve = vi.fn(async () => ['8.8.8.8'])
+    expect(() => createNetworkSocket('wss://broadcastlv.chat.bilibili.com/sub', 'bilibili', {
+      network: { route }, resolve, headers: { Cookie: 'SESSDATA=synthetic' },
+    })).toThrow()
+    expect(route).not.toHaveBeenCalled()
+    expect(resolve).not.toHaveBeenCalled()
+    expect(mocks.websocket).not.toHaveBeenCalled()
+  })
+
   it('allows only the Douyin live push endpoint and an anonymous ttwid handshake', async () => {
     const url = 'wss://webcast100-ws-web-lf.douyin.com/webcast/im/push/v2/?room_id=9000000000000000001&signature=synthetic'
     const resolve = vi.fn(async () => ['8.8.8.8'])

@@ -53,9 +53,11 @@ export default function PipPage(): React.ReactNode {
 
   // Low power applies once the window is ready, the same moment main reads it.
   const reduced = state?.phase === 'ready' && state.options.lowPower
-  const room = active && source ? source.platform === 'douyin' ? source.danmakuRoom ?? null
-    : source.platform === 'huya' && source.sourceRoom ? `huya:${source.sourceRoom}`
-      : source.platform === 'douyu' ? source.sourceRoom ?? null : null : null
+  const room = active && source
+    ? source.platform === 'douyin' ? source.danmakuRoom ?? null
+      : (source.platform === 'huya' || source.platform === 'bilibili') && source.sourceRoom ? `${source.platform}:${source.sourceRoom}`
+        : source.platform === 'douyu' || source.platform === 'direct' ? state?.sendContext.room ?? null : null
+    : null
 
   const status = statusText(state, error, ready, sourceProblem ?? loadProblem?.message ?? null)
   const statusError = state?.phase === 'failed' ? pipFailure(state) : !state && error ? errorDetail ?? error
@@ -65,6 +67,8 @@ export default function PipPage(): React.ReactNode {
   return (
     <div className="pip-page" data-phase={state?.phase ?? 'loading'}>
       <div className="pip-video" ref={hostRef} />
+      {source?.platform === 'youtube' && <p className="pip-status">YouTube 聊天不可用</p>}
+      {source?.platform === 'twitch' && <p className="pip-status">Twitch 聊天不可用</p>}
       <PipDanmaku video={media?.video ?? null} room={room} preferences={preferences}
         drawing={!reduced} resetKey={reloads} onProblem={setDanmakuProblem} />
       {(status || (danmakuProblem && active) || preferenceError || reportProblem) && (

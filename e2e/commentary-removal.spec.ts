@@ -1,8 +1,8 @@
 import { expect, test } from './electron'
-import { connectDanmaku, fixturesReady, loadBothFixtures, openPlayer, openSourcePanel, setPlaying } from './helpers'
+import { connectDanmaku, disconnectDanmaku, fixturesReady, loadBothFixtures, openPlayer, openSourcePanel, setPlaying } from './helpers'
 import { SETTINGS_KEY } from '../src/app/settings'
 
-test('移除解说同时移除弹幕订阅和列表, 返回播放器不会恢复旧房间', async ({ page, electronApp }) => {
+test('移除两路片源保留手动房间, 主动断开后不恢复旧房间', async ({ page, electronApp }) => {
   test.skip(!fixturesReady(), 'Run npm run fixtures to create the isolated media sources')
   const emit = (text: string) => electronApp.evaluate((_electron, text) => {
     const main = globalThis as typeof globalThis & { __streamSyncerTest: { emitDanmaku(room: string, event: string, data: unknown): number } }
@@ -29,6 +29,10 @@ test('移除解说同时移除弹幕订阅和列表, 返回播放器不会恢复
   const commentary = await openSourcePanel(page, 'commentary')
   await commentary.getByRole('button', { name: '移除', exact: true }).click()
   await expect(page.locator('.chip[data-role="commentary"]')).toHaveAttribute('data-status', 'empty')
+  await expect(page.locator('.drawer')).toBeVisible()
+  expect(await emit('REMOVAL_COMMENTARY_KEEPS_CHAT')).toBe(1)
+  await expect(page.getByRole('log', { name: '弹幕列表' }).getByText('REMOVAL_COMMENTARY_KEEPS_CHAT', { exact: true })).toBeVisible()
+  await disconnectDanmaku(page)
   await expect(page.locator('.studio')).toHaveAttribute('data-chat', 'closed')
   await expect(page.getByRole('log', { name: '弹幕列表' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '展开弹幕', exact: true })).toHaveCount(0)

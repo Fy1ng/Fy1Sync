@@ -7,6 +7,7 @@ import type { FeatureEvent } from './featureContracts'
 import { CONTENT_SECURITY_POLICY, allowsAppPermission, isAppDocument, isAppOrigin } from './security'
 import type { BufferState } from './bufferManager'
 import type { DouyuTasksSnapshot } from '../server/douyu/types'
+import { PipManager } from './pipManager'
 
 function windowFixture(id = 1, url = 'app://app/') {
   return Object.assign(new EventEmitter(), { id, mainFrame: { url }, isDestroyed: () => false, send: vi.fn() }) as unknown as WebContents
@@ -49,6 +50,24 @@ function fixture(options: IpcHandlerOptions = {}) {
 }
 
 describe('app origin and document boundary', async () => {
+  it('canonicalizes Bilibili subscriptions without granting the Douyu task room', async () => {
+    const select = vi.fn()
+    const resolveBilibiliRoom = vi.fn(async () => '21452505')
+    const fixtureState = fixture({ resolveBilibiliRoom, onMainRoomChanged: select })
+    try {
+      await fixtureState.call('subscribe', '8888', '1')
+      expect(await fixtureState.call('subscribe', 'bilibili:25', '2')).toEqual({
+        ok: true, value: { ok: true, room: 'bilibili:21452505' },
+      })
+      expect(resolveBilibiliRoom).toHaveBeenCalledWith('25')
+      expect(fixtureState.subscribe).toHaveBeenLastCalledWith('bilibili:21452505', expect.any(Object))
+      expect(select).toHaveBeenLastCalledWith('bilibili:21452505')
+      expect(fixtureState.setRoom).toHaveBeenLastCalledWith(null)
+      await fixtureState.call('unsubscribe', '2')
+      expect(select).toHaveBeenLastCalledWith('8888')
+    } finally { fixtureState.installed.dispose() }
+  })
+
   it('requires the latest connected main-window Douyin subscription and revokes send permission on room changes', async () => {
     const f = fixture(), input = { room:'douyin:100', expectedUid:'12345', text:'测试' }
     expect(await f.call('invoke','sendDouyinMessage',input)).toMatchObject({ code:'room-not-subscribed' })
@@ -155,7 +174,8 @@ describe('Huya read-only subscription boundary', () => {
     expect(await f.call('invoke', 'reconnectDanmaku', { room: 'douyin:100' })).toEqual({ ok: true, value: { room: 'douyin:100' } })
     expect(f.reconnect).toHaveBeenCalledExactlyOnceWith('douyin:100')
     expect(await f.call('invoke', 'reconnectDanmaku', { room: 'douyin:200' })).toMatchObject({ code: 'room-not-subscribed' })
-    expect(await f.call('invoke', 'reconnectDanmaku', { room: '100' })).toMatchObject({ code: 'invalid-arguments' })
+    expect(await f.call('invoke', 'reconnectDanmaku', { room: '100' })).toEqual({ ok: true, value: { room: '100' } })
+    expect(f.reconnect.mock.calls).toEqual([['douyin:100'], ['100']])
     expect(await f.call('invoke', 'activateDouyuRoom', { room: 'douyin:100' })).toMatchObject({ code: 'invalid-arguments' })
     f.installed.dispose()
   })
@@ -657,6 +677,34 @@ describe('explicit multi-window IPC authority', () => {
 })
 
 describe('canonical room activation ownership', () => {
+  it.each(['huya', 'bilibili'] as const)('keeps %s PiP chat isolated from the main selection and Douyu sender', async platform => {
+    const pip = windowFixture(2, 'app://app/pip')
+    const selected = vi.fn()
+    const manager = new PipManager({
+      createWindow: () => ({ id: 2, load: async () => {}, show: () => {}, close: () => {}, resize: () => {}, onClosed: () => () => {} }),
+      source: () => ({ platform, sourceRoom: '100', channel: '100', label: platform,
+        url: '/test-sources/official.mp4', kind: 'progressive', requiresProxy: false }),
+      sendContext: () => ({ accountId: 'fixture', canAttempt: true }),
+    })
+    const f = fixture({ extraContents: [pip], onMainRoomChanged: selected, resolveBilibiliRoom: async room => room,
+      allowMethod: (id, method, args) => manager.permits(id, method, args),
+      allowRoom: (id, room) => manager.permitsRoom(id, room) })
+    try {
+      await manager.open('official')
+      await f.call('subscribe', '200', '1')
+      expect(await f.callFrom(pip, 'subscribe', `${platform}:100`, '1')).toMatchObject({ ok: true })
+      expect(selected).toHaveBeenCalledExactlyOnceWith('200')
+      expect(f.setRoom).toHaveBeenCalledExactlyOnceWith('200')
+      expect(await f.callFrom(pip, 'subscribe', '100', '2')).toMatchObject({ code: 'forbidden' })
+      expect(await f.callFrom(pip, 'invoke', 'activateDouyuRoom', { room: '100' })).toMatchObject({ code: 'forbidden' })
+      expect(await f.callFrom(pip, 'invoke', 'sendComposedDouyuMessage', { room: '100' })).toMatchObject({ code: 'forbidden' })
+      expect(f.service.invoke).not.toHaveBeenCalled()
+      expect(f.installed.emitDanmaku(`${platform}:100`, 'danmaku', { text: 'fixture' })).toBe(1)
+      await f.callFrom(pip, 'unsubscribe', '1')
+      expect(selected).toHaveBeenCalledTimes(1)
+    } finally { manager.dispose(); f.installed.dispose() }
+  })
+
   it('keeps PiP subscriptions and activation from switching the main task room', async () => {
     const pip = windowFixture(2, 'app://app/pip')
     const f = fixture({ extraContents: [pip], allowMethod: () => true, allowRoom: () => true })

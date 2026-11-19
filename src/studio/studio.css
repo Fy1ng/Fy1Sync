@@ -1939,6 +1939,30 @@ body,
   background: rgb(255 255 255 / 4%);
 }
 
+.studio .msg-group {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
+.studio .msg-group summary {
+  min-height: 30px;
+  padding: 6px 16px;
+}
+
+.studio .msg-group .msg { position: static; }
+
+.studio .drawer > .bili-sc-feed {
+  position: static;
+  flex: none;
+  width: auto;
+  max-height: 24vh;
+  overflow: auto;
+  margin: 6px 10px;
+  pointer-events: auto;
+}
+
 .studio .msg-user {
   flex: none;
   max-width: 36%;

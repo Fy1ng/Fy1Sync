@@ -54,4 +54,17 @@ describe('platform-neutral danmaku relay', () => {
     expect(f.observed).toHaveLength(3)
     f.relay.closeAll()
   })
+
+  it('immediately closes a released room only after its last window leaves', () => {
+    const f = fixture()
+    const releasePlayer = f.relay.subscribe('660002', subscriber())!
+    const releasePip = f.relay.subscribe('660002', subscriber())!
+    releasePlayer()
+    f.relay.closeIdleRoom('660002')
+    expect(f.clients[0]!.close).not.toHaveBeenCalled()
+    releasePip()
+    f.relay.closeIdleRoom('660002')
+    expect(f.clients[0]!.close).toHaveBeenCalledOnce()
+    expect(f.relay.roomCount).toBe(0)
+  })
 })

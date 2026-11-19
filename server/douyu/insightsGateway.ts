@@ -241,7 +241,10 @@ export class DouyuInsightsGateway {
   async readWatchTime(accountId: string, room: string, signal: AbortSignal): Promise<DouyuWatchTime> {
     if (!validDouyuRoom(room)) throw new DouyuInsightsError('invalid-arguments')
     return this.scope(accountId, signal, async context => {
-      const data = record(await this.json(`${ORIGIN}/japi/interactnc/web/fsjk/getCardTaskInfo?rid=${room}`, context))
+      const url = `${ORIGIN}/japi/interactnc/web/fsjk/getCardTaskInfo?rid=${room}`
+      const data = record(await this.json(url, context))
+      const checkedAt = this.now()
+      await this.credentials(context, url)
       // The card object uses rid=0 when no normal/super card is active, while todayWatch
       // still belongs to the requested rid. Verified with the same account requesting
       // two rooms on 2026-11-06: rid=0 returned 649 for one and 0 for the other.
@@ -253,7 +256,7 @@ export class DouyuInsightsGateway {
         .every(key => integer(data[key]) === 0)
       const confirmed = roomIdentity(data.rid) === room || emptyCard
       const seconds = confirmed ? integer(data.todayWatch) : null
-      return { accountId, room, checkedAt: this.now(), seconds: seconds !== null && seconds <= 86_400 ? seconds : null, source: 'douyu-today-watch' }
+      return { accountId, room, checkedAt, seconds: seconds !== null && seconds <= 86_400 ? seconds : null, source: 'douyu-today-watch' }
     })
   }
 
@@ -263,6 +266,7 @@ export class DouyuInsightsGateway {
       const credentials = await this.credentials(context, `${ORIGIN}/`)
       if (!credentials) throw new DouyuInsightsError('login-required')
       const data = record(await this.json(`${ORIGIN}/japi/interactnc/web/fanshome/fansinfo/myself?rid=${room}&uid=${encodeURIComponent(credentials.uid)}`, context))
+      const checkedAt = this.now()
       // Both response identities must match; renderer callers never provide the official UID.
       if (!data || roomIdentity(data.rid) !== room || identity(data.uid) !== credentials.uid) throw new DouyuInsightsError('invalid-data')
       const seconds = integer(data.watchTime)
@@ -280,7 +284,8 @@ export class DouyuInsightsGateway {
         active(context.signal)
         if (error instanceof DouyuInsightsError && ['login-required', 'verification-required'].includes(error.code)) throw error
       }
-      return { accountId, room, checkedAt: this.now(), seconds, badgeOwned, badgeLevel, source: 'douyu-fanshome-cumulative' }
+      await this.credentials(context, `${ORIGIN}/`)
+      return { accountId, room, checkedAt, seconds, badgeOwned, badgeLevel, source: 'douyu-fanshome-cumulative' }
     })
   }
 

@@ -1,0 +1,26 @@
+{
+  "provenance": {
+    "sampleDate": "2026-11-17",
+    "source": "https://wup.huya.com",
+    "servant": "revenueui",
+    "method": "getOnTVPanel",
+    "kind": "derived-reduced from a live nonempty response and a live empty response",
+    "redactions": "Presenter and activity ids, title, prize and time replaced. Identity, URLs, context, users and unused fields removed.",
+    "encoder": "Independent Python TARS encoder. Does not use production code."
+  },
+  "identity": {
+    "room": "99798",
+    "presenterUid": "1024",
+    "topSid": "0",
+    "subSid": "0"
+  },
+  "active": "000000bb10032c3c40015609726576656e75657569660c6765744f6e545650616e656c7d0001008e08000206001d0000010c0604745273701d00007a0a00012a0110001a061453796e746865746963204f6e5456207468656d651a061653796e746865746963207072697a652031206974656d0b2900030a0c1127100b0a0001120000c3500b0a000212000d6d800b31040050026900020a015a39100a0b0a015a39101e0b7c0b2a0110003100c5526b49d2c80b0b0b8c980ca80c",
+  "inactive": "0000004310032c3c40015609726576656e75657569660c6765744f6e545650616e656c7d00001708000206001d0000010c0604745273701d0000030a0c0b8c980ca80c",
+  "expected": {
+    "id": "4096",
+    "mode": 2,
+    "participation": 0,
+    "remaining": 197,
+    "endsAt": 1800000200000
+  }
+}

@@ -111,12 +111,14 @@ export class Acquisition implements AcquisitionService {
     if (generation !== this.generations.get(role) || this.disposed) return cancelled()
     let initial = true
     const selection: Selection = { input, platform, quality, preferAdaptive, stream: retainAdaptiveQualities(sameSource, first.stream) }
+    const reconnectInput = first.stream.platform === 'youtube' && /^[A-Za-z0-9_-]{11}$/.test(first.stream.channel)
+      ? `https://www.youtube.com/watch?v=${first.stream.channel}` : input
     const prepare = async (hlsOnly = false): Promise<BufferInput> => {
       const reuse = initial && !hlsOnly
       const reconnect = !reuse && detected === 'youtube' ? this.deps.diagnostics?.begin(role, hlsOnly ? 'hls-recovery' : 'reconnect') : undefined
       let resolved: ResolveResult
       try {
-        resolved = reuse ? first : await this.resolveInput(input, platform, hlsOnly ? 'auto' : quality, hlsOnly ? false : preferAdaptive, hlsOnly, selection.stream.sourceRoom, network, reconnect ?? diagnostic)
+        resolved = reuse ? first : await this.resolveInput(reconnectInput, platform, hlsOnly ? 'auto' : quality, hlsOnly ? false : preferAdaptive, hlsOnly, selection.stream.sourceRoom, network, reconnect ?? diagnostic)
         reconnect?.finish(resolved.ok ? 'resolved' : 'failed', resolved.ok
           ? { stage: 'resolve', status: 'resolved', adaptive: Boolean(resolved.stream.adaptive) }
           : { stage: 'resolve', status: 'failed', code: diagnosticCode(resolved.failure.reason ?? resolved.failure.code) })

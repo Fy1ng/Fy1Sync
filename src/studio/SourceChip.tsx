@@ -7,13 +7,13 @@
 
 import { useState } from 'react'
 import { ErrorText } from '../ui/ErrorDetails'
-import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import type { SourceRole } from '../core/types'
 import { bufferStatusText } from '../ui/bufferStatus'
 import { Icon, Popover, Segmented, usePopover } from './kit'
-import { douyinDanmakuRoom, LoginOffer, PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform, SOURCE_HINT } from './sources'
-import { isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
+import { LoginOffer, PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform, SOURCE_HINT } from './sources'
+import { sourceDanmakuRoom } from '../core/sourceDanmaku'
+import { danmakuRoom } from '../../server/danmaku/types'
 import { canSave, removeSavedRoom, saveRoom, savedFor, useSavedRooms, useSavedRoomsState, type SavedRoom } from './savedRooms'
 import { RoomSummary } from './favorites/Favorites'
 import { ReadError } from './ReadError'
@@ -70,11 +70,12 @@ function SourcePanel({ role, onDone, onSchedule }: {
   const [roomPlatform, setRoomPlatform] = useState<RoomPlatform>(state.descriptor?.platform === 'douyin' ? 'douyin' : state.descriptor?.platform === 'huya' ? 'huya' : state.descriptor?.platform === 'bilibili' ? 'bilibili' : 'douyu')
   const bareRoom = parseRoomInput(input)?.platform === null
   const buffer = snapshot.buffers[role]
-  const manualChat = session.hasManualDanmakuRoom()
-  const douyinChat = state.descriptor?.platform === 'douyin' && !manualChat
   const loadFile = (file: File): void => {
     void loader.loadFile(role, file).then(ok => { if (ok) onDone(); else setFailedFile(file) })
   }
+  const chat = sourceDanmakuRoom(state.descriptor)
+  const activeRoom = snapshot.danmaku.room
+  const selectedChat = chat !== null && session.isDanmakuRoom(chat.key)
 
   return (
     <div className="source-panel">
@@ -116,23 +117,15 @@ function SourcePanel({ role, onDone, onSchedule }: {
         ? <ErrorText error={buffer.failure ?? { reason: buffer.reason, message: bufferStatusText(buffer) }} message={bufferStatusText(buffer)} /> : bufferStatusText(buffer)}</p>}
       <PlaybackDiagnosticsPanel role={role} />
 
-      {role === 'commentary' && douyinChat && state.descriptor && <div>
-        <p className="muted" role="status">抖音弹幕：{snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
-          : snapshot.danmaku.error ? <ErrorText error={snapshot.danmaku.errorDetail ?? { message: snapshot.danmaku.error }} message={snapshot.danmaku.error} /> : (snapshot.danmaku.room ? `正在连接房间 ${loader.roomName}` : '未连接')}</p>
-        <button type="button" className="btn-quiet small" disabled={chatRetrying || !douyinDanmakuRoom(state.descriptor)} onClick={() => {
-          const roomKey = douyinDanmakuRoom(state.descriptor!)
-          if (!roomKey) return
-          if (snapshot.danmaku.room !== roomKey) { loader.connectRoom(roomKey, roomKey.slice('douyin:'.length), true); return }
-          setChatRetrying(true)
-          void apiClient.reconnectDanmaku(roomKey).then(result => {
-            if (!result.ok) session.notice('warn', result.message, result)
-          }).catch((error) => session.notice('warn', '抖音弹幕重连失败，请稍后重试', error)).finally(() => setChatRetrying(false))
-        }}>重连抖音弹幕</button>
-      </div>}
-      {role === 'commentary' && !douyinChat && (!manualChat && (state.descriptor?.platform === 'huya' || isReadOnlyDanmakuRoom(snapshot.danmaku.room))
-        ? <p className="muted" role="status">{snapshot.danmaku.room?.startsWith('douyin:') ? '抖音' : '虎牙'}弹幕：{snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
-          : snapshot.danmaku.room ? snapshot.danmaku.error ? <ErrorText error={snapshot.danmaku.errorDetail ?? { message: snapshot.danmaku.error }} message={snapshot.danmaku.error} /> : `正在连接房间 ${loader.roomName}` : '未连接'}</p>
-        : <DanmakuRoom />)}
+      {chat && !selectedChat && <p className="muted" role="status">{PLATFORM_LABEL[chat.platform]}弹幕：未选择此房间</p>}
+      <DanmakuRoom />
+      {chat && (!selectedChat || !session.hasManualDanmakuRoom()) && (
+        <button type="button" className="btn-quiet small" onClick={() => loader.connectRoom(chat.key, chat.name)}>选择此房间弹幕</button>
+      )}
+      {selectedChat && activeRoom && <button type="button" className="btn-quiet small" disabled={chatRetrying} onClick={() => {
+        setChatRetrying(true)
+        void session.retryDanmaku(chat.key).finally(() => setChatRetrying(false))
+      }}>重新连接此房间弹幕</button>}
       <div className="row-split panel-foot">
         <label className="btn-quiet small file-pick">
           <Icon name="file" /> 本地文件
@@ -189,12 +182,16 @@ function DanmakuRoom(): React.ReactNode {
   if (!editing) {
     return (
       <div className="row-split">
-        <span className="muted">
-          弹幕：{danmaku.connected ? `房间 ${roomName}` : danmaku.room ? `正在连接房间 ${roomName}` : '未连接'}
+        <span className="muted" role="status">
+          {danmaku.room ? `${PLATFORM_LABEL[danmakuRoom(danmaku.room).platform]}弹幕` : '弹幕'}：{
+            danmaku.connected ? `已连接房间 ${roomName}` : danmaku.error
+              ? <ErrorText error={danmaku.errorDetail} message={danmaku.error} />
+              : danmaku.room ? `正在连接房间 ${roomName}` : '未连接'}
         </span>
         <button type="button" className="btn-quiet small" onClick={() => setEditing(true)}>
           {danmaku.room ? '更换房间' : '连接'}
         </button>
+        {danmaku.room && <button type="button" className="btn-quiet small" onClick={disconnectRoom}>断开</button>}
       </div>
     )
   }
@@ -202,10 +199,10 @@ function DanmakuRoom(): React.ReactNode {
     <form className="link-row" onSubmit={(event) => {
       event.preventDefault()
       const value = room.trim()
-      if (value) { connectRoom(value); setEditing(false) }
+      if (/^[1-9]\d{0,11}$/.test(value)) { connectRoom(value); setEditing(false) }
     }}>
       <input value={room} autoFocus onChange={(event) => setRoom(event.target.value)} aria-label="弹幕房间号" placeholder="斗鱼房间号" />
-      <button type="submit" className="btn-solid" disabled={room.trim() === ''}>连接</button>
+      <button type="submit" className="btn-solid" disabled={!/^[1-9]\d{0,11}$/.test(room.trim())}>连接</button>
       {danmaku.room && (
         <button type="button" className="btn-quiet" onClick={() => { disconnectRoom(); setEditing(false) }}>断开</button>
       )}

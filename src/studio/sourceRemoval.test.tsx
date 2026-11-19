@@ -21,7 +21,7 @@ async function fixture() {
   const session = new Session({ createSampler: () => null })
   sessions.push(session)
   await session.loadSource('commentary', descriptor)
-  session.connectDanmaku('288016', true)
+  session.connectDanmaku('288016', 'commentary')
   let loader!: ReturnType<typeof useSourceLoader>
   function Controls() { loader = useSourceLoader(); return null }
   render(<SessionProvider session={session}><SourceLoaderProvider><Controls /></SourceLoaderProvider></SessionProvider>)
@@ -45,7 +45,7 @@ afterEach(() => {
 describe('commentary source removal races', () => {
   it.each(['douyu', 'huya'] as const)('disconnects chat following %s when changing to a direct link', async platform => {
     const f = await fixture()
-    act(() => { f.session.connectDanmaku(platform === 'douyu' ? '288016' : 'huya:288016', true) })
+    act(() => { f.session.connectDanmaku(platform === 'douyu' ? '288016' : 'huya:288016', 'commentary') })
     const before = f.session.engine.getState().commentary.descriptor
     let loading!: Promise<boolean>
     act(() => { loading = f.loader.loadInput('commentary', '/new.mp4') })
@@ -112,7 +112,7 @@ describe('commentary source removal races', () => {
     expect(f.connect).not.toHaveBeenCalled()
     expect(f.loader.state.commentary.busy).toBe(true)
     await act(async () => { second.resolve(stopped); primeMediaElement(f.session.engine.element('commentary')); await newer })
-    expect(f.connect).toHaveBeenCalledExactlyOnceWith('huya:222222', true)
+    expect(f.connect).toHaveBeenCalledExactlyOnceWith('huya:222222', 'commentary', 'old-room')
     expect(f.loader.state.commentary.busy).toBe(false)
     expect(f.session.flush().danmaku.room).toBe('huya:222222')
   })

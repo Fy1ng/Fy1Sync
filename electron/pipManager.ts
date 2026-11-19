@@ -63,7 +63,8 @@ export class PipManager {
     this.clearTimer = deps.clearTimer ?? (handle => clearTimeout(handle as ReturnType<typeof setTimeout>))
   }
   state(): PipState {
-    const room = this.value.source?.platform === 'douyu' ? this.value.source.sourceRoom ?? null : null
+    const platform = this.value.source?.platform
+    const room = platform === 'douyu' || platform === 'direct' ? this.value.source?.sourceRoom ?? null : null
     const sender = this.deps.sendContext?.(room) ?? { accountId: null, canAttempt: false }
     return structuredClone({ ...this.value, sendContext: { ...sender, canAttempt: room !== null && sender.canAttempt, room } })
   }
@@ -143,15 +144,18 @@ export class PipManager {
     if (method === 'reportDouyuWatchPlayback') return this.value.source?.platform === 'douyu' && value.role === this.value.streamId
     if (method === 'getStreamPlayback') return value.id === this.value.streamId
     if (method === 'reconnectDanmaku') return typeof value.room === 'string' && this.permitsRoom(senderId, value.room)
-    if (['activateDouyuRoom', 'sendComposedDouyuMessage', 'getDouyuRoomInsights', 'reportDouyuPlayback', 'getDanmakuRate', 'getDanmakuUserDetails'].includes(method)) return this.value.source?.platform === 'douyu' && value.room === this.value.source.sourceRoom
+    if (['activateDouyuRoom', 'sendComposedDouyuMessage', 'getDouyuRoomInsights', 'reportDouyuPlayback', 'getDanmakuRate', 'getDanmakuUserDetails'].includes(method)) {
+      const room = this.state().sendContext.room
+      return !!room && value.room === room
+    }
     return false
   }
   permitsRoom(senderId: number, room: string): boolean {
     const source = this.value.source
     const expected = source?.platform === 'douyin'
       ? (/^douyin:[1-9][0-9]{0,19}$/.test(source.danmakuRoom ?? '') ? source.danmakuRoom : null)
-      : source?.sourceRoom && (source.platform === 'douyu' || source.platform === 'huya')
-        ? (source.platform === 'huya' ? `huya:${source.sourceRoom}` : source.sourceRoom) : null
+      : source?.sourceRoom && (source.platform === 'huya' || source.platform === 'bilibili') ? `${source.platform}:${source.sourceRoom}`
+        : source?.platform === 'douyu' || source?.platform === 'direct' ? source.sourceRoom ?? null : null
     return senderId === this.window?.id && room === expected
   }
   dispose(): void { if (!this.disposed) { this.close(); this.disposed = true; this.listeners.clear() } }

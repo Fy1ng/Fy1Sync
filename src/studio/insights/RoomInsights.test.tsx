@@ -8,7 +8,8 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StreamSyncerBridge } from '../../../electron/contracts'
 import type { FeatureEvent } from '../../../electron/featureContracts'
-import type { DouyuRoomInsights } from '../../../server/douyu/insightsTypes'
+import type { DouyuFansWatchTime, DouyuRoomInsights } from '../../../server/douyu/insightsTypes'
+import type { DouyuAccountsSnapshot } from '../../../server/douyu/types'
 import type { DouyuWatchState } from '../../../server/douyu/watchTypes'
 
 const media = vi.hoisted(() => {
@@ -32,6 +33,7 @@ import { RoomInsightsSheet, useDanmakuRate, usePlaybackHeartbeat } from './RoomI
 type Call = { method: string; args: unknown }
 let calls: Call[] = []
 let listeners: Array<(event: FeatureEvent) => void> = []
+let accountListeners: Array<(snapshot: DouyuAccountsSnapshot) => void> = []
 let responses: Record<string, (args: unknown) => unknown> = {}
 
 const insights = (patch: Partial<DouyuRoomInsights> = {}): DouyuRoomInsights => ({
@@ -46,8 +48,9 @@ const insights = (patch: Partial<DouyuRoomInsights> = {}): DouyuRoomInsights => 
 
 const watchState = (patch: Partial<DouyuWatchState> = {}): DouyuWatchState => ({
   accountId: 'a1', room: '100', phase: 'unverified', reason: null, officialSeconds: null, baselineSeconds: null,
-  verifiedIncrease: 0, checkedAt: null, lastHeartbeatAt: null,
-  cumulativeSeconds: null, cumulativeBaselineSeconds: null, cumulativeIncrease: 0, cumulativeCheckedAt: null, badgeOwned: null, badgeLevel: null, ...patch,
+  verifiedIncrease: 0, checkedAt: null, dailyRead: null, lastHeartbeatAt: null,
+  cumulativeSeconds: null, cumulativeBaselineSeconds: null, cumulativeIncrease: 0, cumulativeCheckedAt: null, cumulativeRead: null,
+  badgeOwned: null, badgeLevel: null, ...patch,
 })
 
 it('keeps the raw cumulative-watch failure separate from healthy room statistics', async () => {
@@ -81,6 +84,7 @@ let videos: Record<'official' | 'commentary', ReturnType<typeof fakeVideo>>
 beforeEach(() => {
   calls = []
   listeners = []
+  accountListeners = []
   videos = { official: fakeVideo(), commentary: fakeVideo() }
   media.session.engine.element.mockImplementation((role: 'official' | 'commentary') => videos[role].video)
   responses = {
@@ -101,6 +105,10 @@ beforeEach(() => {
       return respond ? { ok: true, value: await respond(args) } : { ok: false, code: 'unexpected', message: 'unexpected' }
     }) as unknown as StreamSyncerBridge['invoke'],
     subscribeDanmaku: () => () => {},
+    subscribeDouyuAccounts: listener => {
+      accountListeners.push(listener)
+      return () => { accountListeners = accountListeners.filter(item => item !== listener) }
+    },
     subscribeFeatures: (listener: (event: FeatureEvent) => void) => {
       listeners.push(listener)
       return () => { listeners = listeners.filter((item) => item !== listener) }
@@ -123,7 +131,7 @@ describe('room insights sheet', () => {
     render(<RoomInsightsSheet room="100" onClose={() => {}} />)
     const group = await screen.findByRole('group', { name: '粉丝牌累计观看' })
     await within(group).findByText(/已持有 22 级粉丝牌/)
-    expect(group.textContent).not.toContain('本次基线')
+    expect(group.textContent).not.toContain('播放前')
     act(() => { for (const listener of listeners) listener({ topic: 'insights', data: { type: 'changed', room: '100' } }) })
     await waitFor(() => expect(named('getDouyuRoomInsights')).toHaveLength(2))
     expect(group.textContent).toContain('已持有 22 级粉丝牌')
@@ -220,15 +228,58 @@ describe('room insights sheet', () => {
   })
 
   it('updates official time from the latest query and clears the old account value on switching', async () => {
-    responses.getDouyuWatchTime = () => ({ accountId: 'a1', room: '100', checkedAt: 1, seconds: 60, source: 'douyu-today-watch' })
+    const now = Date.now()
+    responses.getDouyuWatchTime = () => ({ accountId: 'a1', room: '100', checkedAt: now, seconds: 60, source: 'douyu-today-watch' })
     render(<RoomInsightsSheet room="100" onClose={() => {}} />)
     const group = await screen.findByRole('group', { name: '官方今日观看' })
     await within(group).findByText('1 分 0 秒')
-    act(() => { for (const listener of listeners) listener({ topic: 'douyu-watch', data: watchState({ officialSeconds: 120, checkedAt: 2 }) }) })
+    act(() => { for (const listener of listeners) listener({ topic: 'douyu-watch', data: watchState({ officialSeconds: 120, checkedAt: now + 1 }) }) })
     expect(within(group).getByText('2 分 0 秒')).toBeInTheDocument()
     act(() => { for (const listener of listeners) listener({ topic: 'douyu-watch', data: watchState({ accountId: 'a2', room: null }) }) })
     expect(within(group).getByText('未知')).toBeInTheDocument()
     expect(within(group).getByText('当前账号官方观看时长尚未读取')).toBeInTheDocument()
+  })
+
+  it('shows exact, separate official values and zero cumulative difference after a paused refresh', async () => {
+    const now = Date.now() - 100
+    responses.getDouyuWatchState = () => watchState({ phase: 'paused', officialSeconds: 789, baselineSeconds: 789, checkedAt: now,
+      cumulativeSeconds: 4810476, cumulativeBaselineSeconds: 4810476, cumulativeCheckedAt: now, badgeOwned: true, badgeLevel: 22 })
+    responses.getDouyuWatchTime = () => ({ accountId: 'a1', room: '100', checkedAt: Date.now(), seconds: 1123, source: 'douyu-today-watch' })
+    responses.getDouyuFansWatchTime = () => ({ accountId: 'a1', room: '100', checkedAt: Date.now(), seconds: 4810476, badgeOwned: true,
+      badgeLevel: 22, source: 'douyu-fanshome-cumulative' })
+    render(<RoomInsightsSheet room="100" onClose={() => {}} />)
+    const daily = await screen.findByRole('group', { name: '官方今日观看' })
+    const cumulative = screen.getByRole('group', { name: '粉丝牌累计观看' })
+    await within(daily).findByText(/官方原值 1123 秒.*差额 334 秒/)
+    expect(within(cumulative).getByText(/官方原值 4810476 秒.*差额 0 秒/)).toBeInTheDocument()
+    responses.getDouyuFansWatchTime = () => { throw new Error('查询错误') }
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    await within(cumulative).findByText(/上次有效读数 4810476 秒.*复查于 .*查询失败/)
+    expect(within(cumulative).queryByText(/差额/)).toBeNull()
+    expect(screen.getByText('已暂停')).toBeInTheDocument()
+  })
+
+  it('discards a previous account response and re-reads the new account without resuming playback', async () => {
+    let finish!: (value: DouyuFansWatchTime) => void
+    responses.getDouyuFansWatchTime = args => {
+      const { accountId } = args as { accountId: string }
+      if (accountId === 'a1') return new Promise<DouyuFansWatchTime>(resolve => { finish = resolve })
+      return { accountId, room: '100', seconds: 1000, badgeOwned: true, badgeLevel: 2, checkedAt: Date.now(), source: 'douyu-fanshome-cumulative' }
+    }
+    render(<RoomInsightsSheet room="100" onClose={() => {}} />)
+    await waitFor(() => expect(named('getDouyuFansWatchTime')).toHaveLength(1))
+    await act(async () => {
+      for (const listener of accountListeners) listener({ revision: 2, activeAccountId: 'a2', accounts: [
+        { id: 'a2', active: true, busy: false, label: '账号 B', login: { loggedIn: true, cookieCount: 1, authKeysPresent: [],
+          expiresAt: null, hasSessionCookies: true } },
+      ] })
+      for (const listener of listeners) listener({ topic: 'douyu-watch', data: watchState({ accountId: 'a2', phase: 'paused' }) })
+      finish({ accountId: 'a1', room: '100', seconds: 4810476, badgeOwned: true, badgeLevel: 22, checkedAt: Date.now(), source: 'douyu-fanshome-cumulative' })
+    })
+    const group = screen.getByRole('group', { name: '粉丝牌累计观看' })
+    expect(within(group).getByText(/已持有 2 级粉丝牌.*1000 秒/)).toBeInTheDocument()
+    expect(group).not.toHaveTextContent('4810476')
+    expect(named('reportDouyuWatchPlayback')).toHaveLength(0)
   })
 
   it('keeps a pushed watch state when an older initial read answers later', async () => {

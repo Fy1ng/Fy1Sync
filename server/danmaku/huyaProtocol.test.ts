@@ -33,7 +33,7 @@ describe('Huya TARS receive-only protocol', () => {
   it('decodes chat with the nickname nested in sender tag 2 and nonzero sid', () => {
     const result = decodeHuyaFrame(frame('chat'), room.room, 1000)
     expect(result.malformed).toBe(false)
-    expect(result.messages).toEqual([{ id: 'huya:660002:1400:123', platform: 'huya', room: '660002', receivedAt: 1000,
+    expect(result.messages).toMatchObject([{ id: 'huya:660002:1400:123', platform: 'huya', room: '660002', receivedAt: 1000,
       color: 0, level: 0, text: 'hello danmaku', username: 'nickname', system: false }])
     expect(result.messages[0]).not.toHaveProperty('sender')
     expect(result.messages[0]).not.toHaveProperty('gift')

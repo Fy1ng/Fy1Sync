@@ -30,7 +30,9 @@ function fixture() {
   const tasks = { snapshot: () => structuredClone(state), subscribe: (listener: (snapshot: DouyuTasksSnapshot) => void) => { taskListeners.add(listener); return () => { taskListeners.delete(listener) } } }
   const source = { room: '100', cdn: 'tct-h5', generation: 'one', bytes: 1000 }
   let hasSource = true
-  const acquisition = { subscribe: () => () => {}, describe: () => null, watchSource: vi.fn(() => hasSource ? { ...source } : null) }
+  const acquisition = { subscribe: () => () => {}, describe: () => ({
+    url: 'app://app/buffer/commentary/index.m3u8', sourceRoom: source.room, kind: 'hls', platform: 'douyu',
+  }), watchSource: vi.fn(() => hasSource ? { ...source } : null) }
   const run = vi.fn(async (_id: string, _room: string, signal: AbortSignal) => new Promise<void>(resolve => {
     signal.addEventListener('abort', () => resolve(), { once: true }); if (signal.aborted) resolve()
   }))
@@ -49,7 +51,8 @@ function fixture() {
     danmaku: new DanmakuFeatures({ load: () => undefined, save() {} }),
     activityPreferences: new ActivityPreferencesStore({ load: () => undefined, save() {} }),
     resolveRoom: async (room: string) => ({ ok: true, identity: { room, inputRoom: room } }),
-    createPipWindow: vi.fn(), chooseCaptureDestination: async () => null, validatePng: () => false,
+    createPipWindow: () => ({ id: 2, load: async () => {}, show() {}, close() {}, resize() {}, onClosed: () => () => {} }),
+    chooseCaptureDestination: async () => null, validatePng: () => false,
     ffmpegPath: async () => '', openExternal: async () => {}, notifyLive() {},
   } as unknown as BackendRuntimeOptions
   const backend = createBackendRuntime(options)
@@ -58,10 +61,10 @@ function fixture() {
     if (path.dirname(root) !== temporaryRoot || !path.basename(root).startsWith('watch-backend-test-')) throw new Error('Unexpected fixture root')
     fs.rmSync(root, { recursive: true, force: true })
   })
-  const sample = (currentTime: number, overrides: Partial<DouyuWatchPlaybackReport> = {}) => backend.api.invoke('reportDouyuWatchPlayback', {
+  const sample = (currentTime: number, overrides: Partial<DouyuWatchPlaybackReport> = {}, senderId = 1) => backend.api.invoke('reportDouyuWatchPlayback', {
     role: 'commentary', playing: true, currentTime, decodedBytes: null, presentedFrames: null, ...overrides,
-  }, { senderId: 1 })
-  return { backend, run, sample, source, watchRead, roomRead, accounts, accountListeners, state, taskListeners,
+  }, { senderId })
+  return { backend, run, sample, source, acquisition, watchRead, roomRead, accounts, accountListeners, state, taskListeners,
     noSource: () => { hasSource = false } }
 }
 
@@ -118,6 +121,36 @@ describe('watch bridge source authority', () => {
     f.noSource()
     await vi.advanceTimersByTimeAsync(2000); await f.sample(5)
     expect(f.run).not.toHaveBeenCalled()
+  })
+
+  it('uses one gateway for same-room PiP playback and rejects watch queries after switching rooms', async () => {
+    const f = fixture(); await vi.advanceTimersByTimeAsync(0)
+    await f.backend.pip.open('commentary')
+    const pipSample = (mediaTime: number) => f.backend.api.invoke('reportEnhancedPip', {
+      ready: true, playing: true, mediaTime, frameCount: mediaTime,
+    }, { senderId: 2 })
+    await f.sample(1)
+    await pipSample(1)
+    await vi.advanceTimersByTimeAsync(2000)
+    await f.sample(3)
+    await pipSample(3)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.run).toHaveBeenCalledTimes(1)
+    expect(await f.backend.api.invoke('getDouyuWatchState', undefined, { senderId: 2 })).toMatchObject({
+      ok: true, value: { room: '100', accountId: 'default' },
+    })
+
+    await f.sample(3, { playing: false })
+    expect(f.run.mock.calls[0]![2].aborted).toBe(false)
+    f.state.currentRoom = '200'
+    for (const listener of f.taskListeners) listener(structuredClone(f.state))
+    expect(f.run.mock.calls[0]![2].aborted).toBe(true)
+    expect(await f.sample(5, {}, 2)).toMatchObject({ ok: false, code: 'room-changed' })
+    expect(await f.backend.api.invoke('getDouyuWatchState', undefined, { senderId: 2 })).toMatchObject({ ok: false, code: 'room-changed' })
+    expect(await f.backend.api.invoke('getDouyuWatchState', undefined, { senderId: 1 })).toMatchObject({ ok: true, value: { room: '200' } })
+    f.acquisition.watchSource.mockClear()
+    expect(await pipSample(5)).toMatchObject({ ok: true, value: { phase: 'ready' } })
+    expect(f.acquisition.watchSource).not.toHaveBeenCalled()
   })
 
   it('invalidates the same account generation and discards previous observed watch records', async () => {

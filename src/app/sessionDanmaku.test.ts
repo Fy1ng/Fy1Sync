@@ -7,10 +7,13 @@ import { MediaEngine } from '../media/mediaEngine'
 import { primeMediaElement } from '../test/setup'
 import type { MediaDescriptor } from '../core/types'
 import { CHAT_HISTORY_LIMIT, Session } from './session'
+import { apiClient } from './apiClient'
 import type { StreamSyncerBridge } from '../../electron/contracts'
 import type { DanmakuEvent } from './apiClient'
 import { type SettingsStorage } from './settings'
 import { parseStt, toChatMessage } from '../../server/danmaku/douyuProtocol'
+import { parseBilibiliRoomEvent } from '../../server/danmaku/bilibiliEvents'
+import { bilibiliReplay, bilibiliReplayRoom } from '../../server/danmaku/bilibiliReplayFixture'
 
 /** The only fake boundary is the typed preload, including its cancellation handle. */
 class StubDanmakuSubscription {
@@ -58,6 +61,12 @@ function descriptor(): MediaDescriptor {
   }
 }
 
+async function readySource(session: Session, role: 'official' | 'commentary', source: Partial<MediaDescriptor>): Promise<void> {
+  await session.loadSource(role, { ...descriptor(), ...source })
+  primeMediaElement(session.engine.element(role))
+  await Promise.resolve()
+}
+
 const sessions: Session[] = []
 
 async function makeSession(options: { commentaryTime?: number; load?: boolean } = {}): Promise<{
@@ -95,6 +104,42 @@ afterEach(() => {
 })
 
 describe('Session danmaku transport', () => {
+  it('keeps Bilibili metadata and rejects a replayed SC after a same-room removal', async () => {
+    const { session, engine } = await makeSession()
+    const room = `bilibili:${bilibiliReplayRoom}`
+    const now = Date.now()
+    session.connectDanmaku(room)
+    setPaused(engine.element('commentary'), true)
+    const source = StubDanmakuSubscription.instances[0]!
+    source.emit('state', { state: 'connected', room })
+    const inline = parseBilibiliRoomEvent(bilibiliReplay.inline, bilibiliReplayRoom, now)
+    source.emit('danmaku', inline)
+    expect(session.drainDanmaku()).toMatchObject([{ room, platform: 'bilibili', text: '你好[笑]', emotes: [{ text: '[笑]' }] }])
+
+    const superChat = parseBilibiliRoomEvent({ ...bilibiliReplay.superChat, data: { ...bilibiliReplay.superChat.data,
+      start_time: Math.floor(now / 1000), end_time: Math.floor(now / 1000) + 90,
+    } }, bilibiliReplayRoom, now)
+    source.emit('danmaku', superChat)
+    session.drainDanmaku()
+    expect(session.flush().danmaku.bilibiliSuperChats?.active).toHaveLength(1)
+    source.emit('room-signal', parseBilibiliRoomEvent(bilibiliReplay.deleteSuperChat, bilibiliReplayRoom, now))
+    source.emit('danmaku', superChat)
+    session.drainDanmaku()
+    expect(session.flush().danmaku.bilibiliSuperChats?.active).toHaveLength(0)
+  })
+
+  it('retains canonical room and arrival time across media delay, while rejecting another room', async () => {
+    const { session, engine } = await makeSession()
+    session.connectDanmaku('100')
+    const source = StubDanmakuSubscription.instances[0]!
+    source.emit('state', { state: 'connected', room: '200' })
+    source.emit('danmaku', { platform: 'douyu', room: '100', text: 'wrong room', receivedAt: 10 })
+    source.emit('danmaku', { platform: 'douyu', room: '200', text: '本房弹幕', receivedAt: 11 })
+
+    setPaused(engine.element('commentary'), true)
+    expect(session.drainDanmaku()).toMatchObject([{ text: '本房弹幕', room: '200', receivedAt: 11 }])
+  })
+
   it('delays Douyin chat with commentary and rejects cross-platform or wrong-room events', async () => {
     const { session, engine } = await makeSession({ commentaryTime: 100 })
     session.configureDanmakuProcessing({ filterSuspectedBots: true })
@@ -223,14 +268,19 @@ describe('Session danmaku transport', () => {
     vi.mocked(Math.random).mockRestore()
   })
 
-  it('reconnects the room that suspend parked when the player boots again', async () => {
+  it.each(['manual', 'official', 'commentary'] as const)('restores the %s room and its origin after suspend', async origin => {
     const { session } = await makeSession()
-    session.connectDanmaku('288016')
+    session.connectDanmaku('288016', origin, '88')
     session.suspend()
     expect(session.flush().danmaku.room).toBeNull()
     await session.boot()
     expect(StubDanmakuSubscription.instances.at(-1)?.room).toBe('288016')
-    expect(session.flush().danmaku.room).toBe('288016')
+    expect(session.flush().danmaku).toMatchObject({ room: '288016', roomName: '88' })
+    expect(session.hasManualDanmakuRoom()).toBe(origin === 'manual')
+    if (origin !== 'manual') {
+      session.unloadSource(origin)
+      expect(session.flush().danmaku.room).toBeNull()
+    }
   })
 
   it('does not bring back a room that was disconnected before leaving', async () => {
@@ -244,10 +294,22 @@ describe('Session danmaku transport', () => {
     expect(session.flush().danmaku.room).toBeNull()
   })
 
+  it('restores a canonical room without forgetting the playable source alias', async () => {
+    const { session } = await makeSession({ load: false })
+    await readySource(session, 'official', { platform: 'huya', input: 'https://www.huya.com/kpl', sourceRoom: 'kpl' })
+    StubDanmakuSubscription.instances.at(-1)!.emit('state', { state: 'connected', room: 'huya:660000' })
+    session.suspend()
+    await session.boot()
+    expect(StubDanmakuSubscription.instances.at(-1)?.room).toBe('huya:660000')
+    expect(session.isDanmakuRoom('huya:kpl')).toBe(true)
+    expect(session.flush().danmaku.roomName).toBe('kpl')
+    expect(session.hasManualDanmakuRoom()).toBe(false)
+  })
+
   it.each(['288016', 'huya:660000'])('removing commentary clears its %s chat, pending messages and late relay events', async room => {
     const { session } = await makeSession()
     session.updateSettings({ sidebarVisible: true })
-    session.connectDanmaku(room, true)
+    session.connectDanmaku(room, 'commentary')
     const subscription = StubDanmakuSubscription.instances.at(-1)!
     const platform = room.startsWith('huya:') ? 'huya' : 'douyu'
     subscription.emit('state', { room, state: 'connected' })
@@ -277,7 +339,7 @@ describe('Session danmaku transport', () => {
 
   it.each(['unload', 'disconnect'])('does not restore suspended chat after an explicit %s', async action => {
     const { session } = await makeSession()
-    session.connectDanmaku('288016', true)
+    session.connectDanmaku('288016', 'commentary')
     session.suspend()
     if (action === 'unload') session.unloadSource('commentary')
     else session.disconnectDanmaku()
@@ -292,7 +354,7 @@ describe('Session danmaku transport', () => {
     const { session } = await makeSession()
     await session.loadSource('official', { ...descriptor(), label: 'official' })
     session.updateSettings({ sidebarVisible: true })
-    session.connectDanmaku('288016')
+    session.connectDanmaku('288016', 'commentary')
     const subscription = StubDanmakuSubscription.instances.at(-1)!
     subscription.emit('state', { room: '288016', state: 'connected' })
     subscription.emit('danmaku', { text: 'keep this room', username: 'viewer' })
@@ -309,6 +371,109 @@ describe('Session danmaku transport', () => {
     expect(StubDanmakuSubscription.instances).toHaveLength(1)
     expect(StubDanmakuSubscription.instances[0]?.room).toBe('288016')
     expect(session.flush().danmaku.room).toBe('288016')
+  })
+
+  it.each([
+    ['douyu', { danmakuRoom: '601' }, '601'],
+    ['huya', { sourceRoom: '602' }, 'huya:602'],
+    ['douyin', { sourceRoom: '7000000000000000000', danmakuRoom: 'douyin:603' }, 'douyin:603'],
+    ['bilibili', { sourceRoom: '604', danmakuRoom: 'bilibili:604' }, 'bilibili:604'],
+  ] as const)('automatically connects the resolved %s picture room', async (platform, fields, room) => {
+    const { session } = await makeSession({ load: false })
+    await readySource(session, 'official', { platform, ...fields })
+    expect(session.flush().danmaku.room).toBe(room)
+    expect(StubDanmakuSubscription.instances.map(item => item.room)).toEqual([room])
+    expect(session.hasManualDanmakuRoom()).toBe(false)
+  })
+
+  it.each(['youtube', 'twitch', 'direct', 'file'] as const)('does not use incidental room metadata for %s', async platform => {
+    const { session } = await makeSession({ load: false })
+    await readySource(session, 'official', { platform, sourceRoom: '604', danmakuRoom: '604' })
+    expect(session.flush().danmaku.room).toBeNull()
+    expect(StubDanmakuSubscription.instances).toHaveLength(0)
+  })
+
+  it.each(['douyu', 'huya', 'douyin', 'bilibili'] as const)('does not connect a %s source without a room key', async platform => {
+    const { session } = await makeSession({ load: false })
+    await readySource(session, 'commentary', { platform, input: 'https://example.test/live' })
+    expect(StubDanmakuSubscription.instances).toHaveLength(0)
+  })
+
+  it('drops the old automatic room at replacement start and follows commentary until it is removed', async () => {
+    const { session } = await makeSession({ load: false })
+    await readySource(session, 'official', { platform: 'douyu', danmakuRoom: '601' })
+    const picture = StubDanmakuSubscription.instances.at(-1)!
+    const loading = session.loadSource('commentary', { ...descriptor(), platform: 'bilibili', danmakuRoom: 'bilibili:602' })
+    expect(picture.closed).toBe(true)
+    expect(session.flush().danmaku.room).toBeNull()
+    await loading
+    primeMediaElement(session.engine.element('commentary'))
+    await Promise.resolve()
+    expect(session.flush().danmaku.room).toBe('bilibili:602')
+    const commentary = StubDanmakuSubscription.instances.at(-1)!
+    await readySource(session, 'official', { platform: 'huya', sourceRoom: '603' })
+    expect(commentary.closed).toBe(false)
+    const noRoom = session.loadSource('commentary', { ...descriptor(), platform: 'direct' })
+    expect(commentary.closed).toBe(true)
+    await noRoom
+    primeMediaElement(session.engine.element('commentary'))
+    expect(session.flush().danmaku.room).toBeNull()
+    session.unloadSource('commentary')
+    expect(session.flush().danmaku.room).toBe('huya:603')
+    expect(StubDanmakuSubscription.instances.filter(item => !item.closed).map(item => item.room)).toEqual(['huya:603'])
+    session.unloadSource('official')
+    expect(session.flush().danmaku.room).toBeNull()
+  })
+
+  it('disconnects on an official replacement and resumes automatic selection only on a later load', async () => {
+    const { session } = await makeSession({ load: false })
+    await readySource(session, 'official', { platform: 'douyu', danmakuRoom: '601' })
+    const picture = StubDanmakuSubscription.instances.at(-1)!
+    const replacement = session.loadSource('official', { ...descriptor(), platform: 'douyu', danmakuRoom: '602' })
+    expect(picture.closed).toBe(true)
+    await replacement
+    primeMediaElement(session.engine.element('official'))
+    await Promise.resolve()
+    expect(session.flush().danmaku.room).toBe('602')
+    session.connectDanmaku('777')
+    session.disconnectDanmaku()
+    expect(session.hasManualDanmakuRoom()).toBe(false)
+    primeMediaElement(session.engine.element('official'))
+    await Promise.resolve()
+    expect(session.flush().danmaku.room).toBeNull()
+    await readySource(session, 'official', { platform: 'douyu', danmakuRoom: '603' })
+    expect(session.flush().danmaku.room).toBe('603')
+  })
+
+  it('retries only the selected room, including a missing subscription, without changing its origin', async () => {
+    const { session } = await makeSession({ load: false })
+    await readySource(session, 'official', { platform: 'huya', sourceRoom: '601' })
+    const retry = vi.spyOn(apiClient, 'reconnectDanmaku').mockResolvedValue({ ok: false, code: 'room-not-subscribed', message: '未连接' })
+    await session.retryDanmaku('602')
+    expect(retry).not.toHaveBeenCalled()
+    const previous = StubDanmakuSubscription.instances.at(-1)!
+    await session.retryDanmaku('huya:601')
+    expect(retry).toHaveBeenCalledExactlyOnceWith('huya:601')
+    expect(previous.closed).toBe(true)
+    expect(session.hasManualDanmakuRoom()).toBe(false)
+    expect(session.flush().danmaku.room).toBe('huya:601')
+    session.unloadSource('official')
+    expect(session.flush().danmaku.room).toBeNull()
+  })
+
+  it('keeps a manual room when either source is loaded, replaced or removed', async () => {
+    const { session } = await makeSession({ load: false })
+    session.connectDanmaku('bilibili:601')
+    const manual = StubDanmakuSubscription.instances.at(-1)!
+    await readySource(session, 'official', { platform: 'douyu', danmakuRoom: '602' })
+    await readySource(session, 'commentary', { platform: 'huya', sourceRoom: '603' })
+    await readySource(session, 'official', { platform: 'douyin', danmakuRoom: 'douyin:604' })
+    await readySource(session, 'commentary', { platform: 'direct' })
+    session.unloadSource('commentary')
+    session.unloadSource('official')
+    expect(manual.closed).toBe(false)
+    expect(StubDanmakuSubscription.instances).toEqual([manual])
+    expect(session.flush().danmaku.room).toBe('bilibili:601')
   })
 
   it('keeps room data intact without path encoding', async () => {

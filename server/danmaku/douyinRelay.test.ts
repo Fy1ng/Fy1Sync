@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DanmakuRelay } from './relay'
+import type { DouyinChatMessage } from './douyinProtocol'
 import type { DanmakuClientEvents } from './types'
 
 afterEach(() => vi.useRealTimers())
@@ -47,6 +48,25 @@ describe('Douyin receive session lifecycle', () => {
     relay.subscribe('douyin:100', { write, close() {} })
     expect(client.connect).toHaveBeenCalledTimes(2)
     expect(write.mock.calls.some(call => call[0] === 'danmaku')).toBe(false)
+    relay.closeAll()
+  })
+
+  it('preserves Douyin metadata and arrival time across observation, broadcast and replay', () => {
+    const { relay, clients } = fixture()
+    const write = vi.fn(), observed = vi.fn(), replay = vi.fn()
+    relay.observe(observed)
+    relay.subscribe('douyin:100', { write, close() {} })
+    const message: DouyinChatMessage = { platform: 'douyin', room: 'douyin:100', id: 'douyin:900:1', text: '[合成表情]', username: 'fixture',
+      color: 0, level: 32, receivedAt: 1234, system: false,
+      douyin: { roomId: '900', method: 'WebcastEmojiChatMessage', emoji: { id: '77', fallback: '[合成表情]', images: [] },
+        sender: { consumptionLevel: 32, liveFansClub: { name: '合成粉丝团', level: 8, anchorId: '800', membership: 'member', lit: true, currentRoom: true } } } }
+    const client = clients.get('douyin:100')!
+    client.events.onObservedMessage?.(message)
+    client.events.onMessage(message)
+    relay.subscribe('douyin:100', { write: replay, close() {} })
+    expect(observed).toHaveBeenCalledWith({ platform: 'douyin', type: 'message', message })
+    expect(write).toHaveBeenCalledWith('danmaku', message)
+    expect(replay).toHaveBeenCalledWith('danmaku', message)
     relay.closeAll()
   })
 })

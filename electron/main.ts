@@ -62,6 +62,12 @@ import { DouyinHttpLogin } from '../server/douyin/httpLogin'
 import { DouyinHttpLoginFixtures } from './douyinHttpLoginFixtures'
 import { DouyinMessageFixtures, type DouyinSendFixtureScenario } from './douyinMessageFixtures'
 import { DouyuGatewayCoordinator } from '../server/douyu/gatewayCoordinator'
+import { DouyuLotteryReader } from '../server/douyu/douyuLottery'
+import { registerPlatformRoomFeatures } from './platformRoomFeatures'
+import { bilibiliEmoteResponse } from './bilibiliEmoteRoute'
+import { readBilibiliRoomIdentity } from '../server/platforms/bilibiliWeb'
+import { readHuyaOnTvPanel } from '../server/platforms/huyaOnTv'
+import type { DouyuGiftCatalog } from '../server/douyu/inventoryTypes'
 import { DouyuBackpackGateway } from '../server/douyu/backpackGateway'
 import { DouyuRenewalService } from '../server/douyu/renewalService'
 import type { DouyuBackpackDonation } from '../server/douyu/renewalTypes'
@@ -298,6 +304,13 @@ async function start(): Promise<void> {
       console.error('斗鱼任务配置不可用, 原文件已保留.')
     }
   }
+  let platformRooms: ReturnType<typeof registerPlatformRoomFeatures> | undefined
+  let bilibiliLoginGeneration = 0
+  const refreshBilibili = () => {
+    bilibiliLoginGeneration++
+    platformRooms?.invalidateBilibili()
+    relay.refreshPlatform('bilibili')
+  }
   const playbackLogins = {
     async login(platform: LoginPlatform) {
       if (platform === 'douyu') return douyuAccounts ? douyuAccounts.loginActive() : Promise.reject(new DouyuAccountError('storage-failed'))
@@ -306,11 +319,19 @@ async function start(): Promise<void> {
         try { return await logins.login(platform) }
         finally { douyinMessages.invalidate(); relay.refreshPlatform('douyin') }
       }
+      if (platform === 'bilibili') {
+        refreshBilibili()
+        try { return await logins.login(platform) } finally { refreshBilibili() }
+      }
       return logins.login(platform)
     },
     async logout(platform: LoginPlatform) {
       if (platform === 'douyu') return douyuAccounts ? douyuAccounts.logoutActive() : Promise.reject(new DouyuAccountError('storage-failed'))
       if (platform === 'douyin') { douyinMessages.invalidate(); try { await logins.logout(platform) } finally { douyinMessages.invalidate(); relay.refreshPlatform('douyin') } return }
+      if (platform === 'bilibili') {
+        refreshBilibili()
+        try { return await logins.logout(platform) } finally { refreshBilibili() }
+      }
       return logins.logout(platform)
     },
     async loginStatus() {
@@ -353,6 +374,7 @@ async function start(): Promise<void> {
       } finally {
         if (platform === 'douyin') douyinMessages.invalidate()
         if (platform === 'huya' || platform === 'douyin') relay.refreshPlatform(platform)
+        if (platform === 'bilibili') refreshBilibili()
       }
     },
   })
@@ -460,7 +482,16 @@ async function start(): Promise<void> {
     if (offlineE2e) return Promise.reject(new Error('默认离线测试禁止真实虎牙房间查询'))
     return resolveHuyaDanmakuRoom(room, createResolverDeps(proxy, media.register).fetchText)
   }
-  const relay = new DanmakuRelay({ huya: { resolveRoom: resolveHuyaRoom },
+  const bilibiliCookieHeader = (url: string) => logins.loginInProgress('bilibili') ? Promise.resolve('') : playbackLogins.cookieHeader('bilibili', url)
+  const relay = new DanmakuRelay({ huya: { resolveRoom: resolveHuyaRoom, onTv: {
+    onSnapshot() {},
+    readPanel: (room, signal) => readHuyaOnTvPanel(room, signal, network.context('huya')),
+  } },
+    bilibili: {
+      cookieHeader: bilibiliCookieHeader,
+      createSocket: url => createNetworkSocket(url, 'bilibili', { network: network.context('bilibili') }),
+      ...(offlineE2e ? { resolveRoom: async () => { throw new Error('默认离线测试禁止真实 B 站弹幕查询') } } : {}),
+    },
     douyin: {
       resolveRoom: async webRoom => {
         if (douyinSendFixture?.enabled) return douyinSendFixture.room(webRoom)
@@ -505,11 +536,34 @@ async function start(): Promise<void> {
     })
   }
   preferences.onChanged = () => backend?.streams.refreshLimits()
+  let douyuLotteryFixture: { payload: unknown; catalog?: DouyuGiftCatalog } | undefined
+  const douyuLotteryOpened: string[] = []
+  const offlineLottery = offlineE2e && !app.isPackaged
+  const douyuLotteryReader = offlineLottery ? new DouyuLotteryReader({
+    proxy,
+    resolve: async () => ['8.8.8.8'],
+    fetchImpl: async (input, init) => {
+      const url = new URL(String(input))
+      if (init?.method !== 'GET' || url.origin !== 'https://www.douyu.com' || url.pathname !== '/member/lottery/activity_info') {
+        throw new Error('Unexpected offline lottery request')
+      }
+      return Response.json(douyuLotteryFixture?.payload ?? { error: 0, data: {} }, { headers: { Date: new Date().toUTCString() } })
+    },
+    readCatalog: async room => {
+      const catalog = douyuLotteryFixture?.catalog
+      if (catalog?.room !== room) throw new Error('Offline lottery catalog unavailable')
+      return catalog
+    },
+  }) : undefined
   if (danmakuFeatures && activityPreferences) backend = createBackendRuntime({
     userDataDir, bundledLogoDir, proxy, acquisition, relay, danmaku: danmakuFeatures, accounts: douyuAccounts, tasks: douyuTasks,
     sender: douyuMessageSender, renewal: douyuRenewal, resolveRoom: roomResolver.resolve, activityPreferences, ...backendConfig,
     maxExtraStreams: preferences.extraStreamLimit,
     gatewayCoordinator: douyuGatewayCoordinator, networkRuntimePath, watchEnabled: !offlineE2e,
+    douyuLotteryReader,
+    openDouyuLotteryExternal: offlineE2e ? async url => {
+      if (offlineLottery && douyuLotteryOpened.length < 32) douyuLotteryOpened.push(url)
+    } : undefined,
     roomMetadataCollector: offlineE2e ? async room => {
       const fixture = savedRoomFixtures.get(room.input)
       if (!fixture) throw new Error('Offline metadata fixture unavailable')
@@ -624,6 +678,21 @@ async function start(): Promise<void> {
       return accepted
     },
   }))
+  if (backend) platformRooms = registerPlatformRoomFeatures({
+    api: backend.api, relay, proxy, source: role => acquisition.describe(role), enabled: !offlineE2e,
+    network: platform => network.context(platform),
+    openExternal: async url => { if (!offlineE2e) await shell.openExternal(url) },
+    bilibiliCookieHeader,
+    bilibiliAccount: async () => {
+      const generation = bilibiliLoginGeneration
+      if (logins.loginInProgress('bilibili')) return null
+      const { bilibili } = await logins.loginStatus()
+      return bilibili.loggedIn && generation === bilibiliLoginGeneration && !logins.loginInProgress('bilibili') ? `bilibili-${generation}` : null
+    },
+  })
+  const releasePlatformSources = acquisition.subscribe(state => {
+    if ((state.role === 'official' || state.role === 'commentary') && ['starting', 'stopped', 'failed'].includes(state.state)) platformRooms?.sourceChanged()
+  })
   const service = createDesktopService({
     dataDir: process.env.STREAM_SYNC_DATA_DIR || userDataDir, proxy, relay, resolveDouyuRoom: roomResolver.resolve, resolveHuyaRoom,
     registerMedia: (url, access, headers) => media.register(url, headers, undefined, access), acquisition, decoderPreferences, networkPreferences: preferences, tools, diagnostics, douyuAccounts, douyuTasks, douyuRenewal,
@@ -654,6 +723,7 @@ async function start(): Promise<void> {
       else if (url.pathname.startsWith('/buffer/')) response = await buffer.handle(request)
       else if (url.pathname.startsWith('/team-logo/')) response = teamLogoResponse(request, userDataDir, bundledLogoDir)
       else if (url.pathname.startsWith('/room-image/')) response = backend?.roomImages.response(request) ?? new Response(null, { status: 404 })
+      else if (url.pathname === '/bilibili-emote') response = offlineE2e ? new Response(null, { status: 404 }) : await bilibiliEmoteResponse(request)
       else if (url.pathname === '/pip' || url.pathname === '/pip/') response = await serveStatic(new Request(APP_URL, { method: request.method }), { root: clientDir })
       else response = await serveStatic(request, { root: clientDir })
       if (!response) response = url.pathname === '/' ? missingClientResponse(clientDir) : new Response(null, { status: 404 })
@@ -725,7 +795,12 @@ async function start(): Promise<void> {
   refreshRuntime()
   handlers = installIpcHandlers(ipcMain, contents, service, {
     windowForContents: sender => BrowserWindow.fromWebContents(sender),
-    onWindowReleased: id => backend?.watch.releaseSender(id),
+    onWindowReleased: id => { backend?.watch.releaseSender(id); platformRooms?.releaseSender(id) },
+    onMainRoomChanged: room => platformRooms?.select(room),
+    resolveBilibiliRoom: async room => {
+      if (offlineE2e) throw new Error('默认离线测试禁止真实 B 站房间查询')
+      return (await readBilibiliRoomIdentity(room)).room
+    },
     allowMethod: (id, method, args) => backend?.pip.permits(id, method, args) === true,
     allowRoom: (id, room) => backend?.pip.permitsRoom(id, room) === true,
     allowEvent: (id, event) => {
@@ -734,7 +809,7 @@ async function start(): Promise<void> {
       const value = event.data && typeof event.data === 'object' ? event.data as Record<string, unknown> : {}
       if (event.topic === 'buffer') return value.role === backend.pip.state().streamId
       if (event.topic === 'douyu-watch') return backend.pip.state().source?.platform === 'douyu' && value.room === backend.pip.state().source?.sourceRoom
-      return event.topic === 'insights' && value.room === backend.pip.state().source?.sourceRoom
+      return event.topic === 'insights' && !!backend.pip.state().sendContext.room && value.room === backend.pip.state().sendContext.room
     },
   })
   releaseEmbeddedLoginIpc = installEmbeddedLoginIpc(ipcMain, contents, embeddedLogin)
@@ -848,8 +923,18 @@ async function start(): Promise<void> {
     } } : {}),
     emitDanmaku: (room: string, event: string, data: unknown) => {
       if (offlineE2e && event === 'danmaku') backend?.observeFixture(data as Parameters<DanmakuFeatures['observe']>[0])
+      if (offlineLottery && event === 'state' && /^[1-9]\d{0,11}$/.test(room)) {
+        backend?.observeFixtureLotteryConnection(room, (data as { state?: unknown } | null)?.state === 'connected')
+      }
       return handlers!.emitDanmaku(room, event, data)
     },
+    ...(offlineLottery ? {
+      setDouyuLotteryFixture(value: NonNullable<typeof douyuLotteryFixture>) {
+        douyuLotteryFixture = structuredClone(value)
+        douyuLotteryOpened.length = 0
+      },
+      getDouyuLotteryFixtureEvidence: () => ({ opened: [...douyuLotteryOpened] }),
+    } : {}),
     setDouyuRoomStatusFixture: (room: string, live: boolean, replay: boolean) => {
       if (!offlineE2e || !/^[1-9][0-9]{0,11}$/.test(room) || typeof live !== 'boolean' || typeof replay !== 'boolean') throw new Error('Invalid offline room status fixture')
       backend?.insights.signal({ kind: 'live', room, live, replay, receivedAt: Date.now() })
@@ -891,6 +976,8 @@ async function start(): Promise<void> {
     powerMonitor.removeListener('suspend', suspend)
     powerMonitor.removeListener('resume', resume)
     releaseAccountEvents?.()
+    releasePlatformSources()
+    platformRooms?.dispose()
     releasePipPresentation?.()
     await backend?.dispose()
     if (!backend) features.dispose()
