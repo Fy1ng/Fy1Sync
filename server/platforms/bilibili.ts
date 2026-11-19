@@ -8,6 +8,7 @@
 
 import { failure, MANUAL_URL_HINT, type ResolveResult, type ResolverDeps } from './types'
 import { StreamFailureError } from '../networkFailure'
+import { bilibiliRoomNumber } from '../../src/core/bilibiliMetadata'
 
 const PLAY_INFO_API =
   'https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo'
@@ -148,6 +149,7 @@ export async function resolveBilibili(
     notes.push(`请求${label(requested)}, 实际为${label(current)}. 可用画质由直播间返回, 不能据此判断登录状态.`)
   }
 
+  const confirmedRoom = bilibiliRoomNumber(payload.data.room_id)
   return {
     ok: true,
     stream: {
@@ -156,7 +158,7 @@ export async function resolveBilibili(
       kind: 'hls',
       label: `B 站直播 · ${room}`,
       channel: room,
-      sourceRoom: Number.isSafeInteger(payload.data?.room_id) && payload.data!.room_id! > 0 ? String(payload.data!.room_id) : room,
+      ...(confirmedRoom ? { sourceRoom: confirmedRoom, danmakuRoom: `bilibili:${confirmedRoom}` } : {}),
       requiresProxy: true,
       qualities: available.length ? available.map(qn => ({ id: String(qn), label: label(qn) })) : undefined,
       quality: current === undefined ? undefined : String(current),

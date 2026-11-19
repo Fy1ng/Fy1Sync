@@ -1,0 +1,16 @@
+.bilibili-lottery-cards { position: absolute; left: 18px; top: 72px; z-index: 8; display: flex; flex-direction: column; gap: 8px; max-width: min(360px, calc(100% - 36px)); }
+.bilibili-lottery-cards:empty { display: none; }
+.bilibili-lottery-card { color: var(--text, #eef0f6); background: rgba(20, 23, 34, .94); border: 1px solid rgba(255, 255, 255, .14); border-radius: 12px; box-shadow: 0 6px 28px rgba(0, 0, 0, .2); font-size: 12px; }
+.bilibili-lottery-card summary { cursor: pointer; padding: 10px 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.bilibili-lottery-card summary span { opacity: .65; }
+.bilibili-lottery-card summary strong { flex-basis: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+.bilibili-lottery-content { padding: 0 12px 12px; max-height: min(55vh, 480px); overflow: auto; overflow-wrap: anywhere; }
+.bilibili-lottery-content p { margin: 8px 0; line-height: 1.55; }
+.bilibili-lottery-content ul { padding-left: 18px; line-height: 1.6; }
+.bilibili-lottery-prize { font-size: 15px; font-weight: 600; }
+.bilibili-lottery-countdown { font-variant-numeric: tabular-nums; }
+.bilibili-lottery-reminders { display: flex; gap: 6px; align-items: center; margin: 12px 0; }
+.bilibili-lottery-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.bilibili-lottery-command { white-space: pre-wrap; overflow-wrap: anywhere; }
+.bilibili-lottery-message-clue { font-size: 12px; padding: 6px; border: 1px solid rgba(128, 128, 128, .4); border-radius: 6px; }
+.bilibili-lottery-message-clue summary { cursor: pointer; }

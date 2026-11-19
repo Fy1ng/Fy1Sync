@@ -34,7 +34,14 @@ describe('Bilibili actual upstream quality', () => {
   it('retains the canonical room identity for per-room camera settings', async () => {
     const payload = { ...fixture(), data: { ...fixture().data, room_id: 12345 } }
     const result = await resolveBilibili('live.bilibili.com/6', dependencies(undefined, payload))
-    expect(result).toMatchObject({ ok: true, stream: { sourceRoom: '12345' } })
+    expect(result).toMatchObject({ ok: true, stream: { sourceRoom: '12345', danmakuRoom: 'bilibili:12345' } })
+  })
+
+  it('keeps playback available without sending an unconfirmed room to chat', async () => {
+    const result = await resolveBilibili('live.bilibili.com/6', dependencies())
+    expect(result).toMatchObject({ ok: true, stream: { channel: '6' } })
+    expect(result.ok && result.stream).not.toHaveProperty('sourceRoom')
+    expect(result.ok && result.stream).not.toHaveProperty('danmakuRoom')
   })
 
   it('reads fresh main-only cookies for the complete official play-info URL and keeps credentials out of streams', async () => {
