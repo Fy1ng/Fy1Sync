@@ -20,7 +20,7 @@ npm run test:e2e -- e2e/platform-acceptance
 | YouTube | `STREAM_SYNC_YOUTUBE_LIVE_URL` |
 | Twitch | `STREAM_SYNC_TWITCH_LIVE_URL` |
 
-同平台双房增加 `STREAM_SYNC_P07_DOUYU_SECOND_URL`, 由操作者确认两条 URL 对应不同正式房号。跨平台双路使用斗鱼和 Twitch。匿名结果只计入取流与播放器验收。
+同平台双房增加 `STREAM_SYNC_P07_DOUYU_SECOND_URL`, 由操作者确认两条 URL 对应不同正式房号。跨平台双路使用斗鱼和 Twitch。六平台完成公共接线后, 可加 `STREAM_SYNC_P07_PUBLIC_STATUS=1` 检查访客的聊天权限、账号提示和房间数据。报告分开记录播放、权限或降级结果。
 
 ## 人工对照
 
