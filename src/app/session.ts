@@ -1359,7 +1359,8 @@ export class Session {
   }
 
   /** Park one relayed message. Public so tests and the mock generator can feed it. */
-  pushDanmaku(message: Pick<DanmakuMessage, 'text' | 'user' | 'color' | 'sender' | 'gift' | 'dms' | 'platform' | 'huyaGift' | 'system'>): void {
+  pushDanmaku(message: Pick<DanmakuMessage, 'text' | 'user' | 'color' | 'sender' | 'gift' | 'dms' | 'platform' | 'huyaGift' | 'system'>
+    & Partial<Pick<DanmakuMessage, 'receivedAt'>>): void {
     const huya = message.platform === 'huya'
     const readOnly = isReadOnlyDanmakuPlatform(message.platform)
     const sender = readOnly ? null : normalizeDouyuSender(message.sender)
@@ -1398,7 +1399,8 @@ export class Session {
       ...(huyaGift ? { huyaGift } : {}),
       ...(!readOnly && typeof message.dms === 'number' && Number.isFinite(message.dms) ? { dms: message.dms } : {}),
       scheduleTime,
-      receivedAt: this.now(),
+      room: this.danmakuState.room ?? undefined,
+      receivedAt: message.receivedAt ?? this.now(),
     })
   }
 
@@ -1407,13 +1409,16 @@ export class Session {
     const payload = data as Partial<ChatMessage>
     if (typeof payload.text !== 'string' || payload.text.length === 0) return
     const platform = payload.platform === 'douyin' ? 'douyin' : payload.platform === 'huya' ? 'huya' : 'douyu'
-    if (platform !== danmakuRoom(this.danmakuState.room ?? '').platform) return
+    if (platform !== danmakuRoom(this.danmakuState.room ?? '').platform
+      || (payload.room !== undefined && payload.room !== this.danmakuState.room)) return
     if (platform === 'douyin' && (payload.room !== this.danmakuState.room || payload.system || payload.gift || payload.huyaGift)) return
+    const receivedAt = typeof payload.receivedAt === 'number' && Number.isSafeInteger(payload.receivedAt) && payload.receivedAt >= 0
+      ? payload.receivedAt : undefined
     if (isReadOnlyDanmakuPlatform(platform)) {
       this.pushDanmaku({
         text: payload.text,
         user: typeof payload.username === 'string' ? payload.username.trim() || '匿名' : '匿名',
-        color: colorForIndex(0), platform,
+        color: colorForIndex(0), platform, receivedAt,
         ...(payload.system === true ? { system: true } : {}),
         ...(platform === 'huya' && payload.huyaGift !== undefined ? { huyaGift: payload.huyaGift } : {}),
       })
@@ -1426,7 +1431,7 @@ export class Session {
       text: payload.text,
       user: typeof payload.username === 'string' ? payload.username.trim() || '匿名' : '匿名',
       color: colorForIndex(typeof payload.color === 'number' ? payload.color : 0),
-      platform,
+      platform, receivedAt,
       ...(sender ? { sender } : {}),
       ...(gift ? { gift } : {}),
       ...(typeof payload.dms === 'number' && Number.isFinite(payload.dms) ? { dms: payload.dms } : {}),
@@ -1472,7 +1477,7 @@ export class Session {
     const visible: DanmakuMessage[] = []
     let merged = false
     for (const message of released) {
-      const result = this.danmakuProcessor.process({ ...message, room: this.danmakuState.room ?? undefined }, mediaTime)
+      const result = this.danmakuProcessor.process(message, mediaTime)
       if (result.kind === 'hide') continue
       if (result.kind === 'merge') {
         const update = (value: DanmakuMessage) => value.duplicateGroupId === result.groupId ? { ...value, duplicateCount: result.count } : value

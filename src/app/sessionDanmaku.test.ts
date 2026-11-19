@@ -95,6 +95,18 @@ afterEach(() => {
 })
 
 describe('Session danmaku transport', () => {
+  it('retains canonical room and arrival time across media delay, while rejecting another room', async () => {
+    const { session, engine } = await makeSession()
+    session.connectDanmaku('100')
+    const source = StubDanmakuSubscription.instances[0]!
+    source.emit('state', { state: 'connected', room: '200' })
+    source.emit('danmaku', { platform: 'douyu', room: '100', text: 'wrong room', receivedAt: 10 })
+    source.emit('danmaku', { platform: 'douyu', room: '200', text: '本房弹幕', receivedAt: 11 })
+
+    setPaused(engine.element('commentary'), true)
+    expect(session.drainDanmaku()).toMatchObject([{ text: '本房弹幕', room: '200', receivedAt: 11 }])
+  })
+
   it('delays Douyin chat with commentary and rejects cross-platform or wrong-room events', async () => {
     const { session, engine } = await makeSession({ commentaryTime: 100 })
     session.configureDanmakuProcessing({ filterSuspectedBots: true })
