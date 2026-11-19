@@ -62,6 +62,8 @@ import { DouyinHttpLogin } from '../server/douyin/httpLogin'
 import { DouyinHttpLoginFixtures } from './douyinHttpLoginFixtures'
 import { DouyinMessageFixtures, type DouyinSendFixtureScenario } from './douyinMessageFixtures'
 import { DouyuGatewayCoordinator } from '../server/douyu/gatewayCoordinator'
+import { DouyuLotteryReader } from '../server/douyu/douyuLottery'
+import type { DouyuGiftCatalog } from '../server/douyu/inventoryTypes'
 import { DouyuBackpackGateway } from '../server/douyu/backpackGateway'
 import { DouyuRenewalService } from '../server/douyu/renewalService'
 import type { DouyuBackpackDonation } from '../server/douyu/renewalTypes'
@@ -505,11 +507,34 @@ async function start(): Promise<void> {
     })
   }
   preferences.onChanged = () => backend?.streams.refreshLimits()
+  let douyuLotteryFixture: { payload: unknown; catalog?: DouyuGiftCatalog } | undefined
+  const douyuLotteryOpened: string[] = []
+  const offlineLottery = offlineE2e && !app.isPackaged
+  const douyuLotteryReader = offlineLottery ? new DouyuLotteryReader({
+    proxy,
+    resolve: async () => ['8.8.8.8'],
+    fetchImpl: async (input, init) => {
+      const url = new URL(String(input))
+      if (init?.method !== 'GET' || url.origin !== 'https://www.douyu.com' || url.pathname !== '/member/lottery/activity_info') {
+        throw new Error('Unexpected offline lottery request')
+      }
+      return Response.json(douyuLotteryFixture?.payload ?? { error: 0, data: {} }, { headers: { Date: new Date().toUTCString() } })
+    },
+    readCatalog: async room => {
+      const catalog = douyuLotteryFixture?.catalog
+      if (catalog?.room !== room) throw new Error('Offline lottery catalog unavailable')
+      return catalog
+    },
+  }) : undefined
   if (danmakuFeatures && activityPreferences) backend = createBackendRuntime({
     userDataDir, bundledLogoDir, proxy, acquisition, relay, danmaku: danmakuFeatures, accounts: douyuAccounts, tasks: douyuTasks,
     sender: douyuMessageSender, renewal: douyuRenewal, resolveRoom: roomResolver.resolve, activityPreferences, ...backendConfig,
     maxExtraStreams: preferences.extraStreamLimit,
     gatewayCoordinator: douyuGatewayCoordinator, networkRuntimePath, watchEnabled: !offlineE2e,
+    douyuLotteryReader,
+    openDouyuLotteryExternal: offlineE2e ? async url => {
+      if (offlineLottery && douyuLotteryOpened.length < 32) douyuLotteryOpened.push(url)
+    } : undefined,
     roomMetadataCollector: offlineE2e ? async room => {
       const fixture = savedRoomFixtures.get(room.input)
       if (!fixture) throw new Error('Offline metadata fixture unavailable')
@@ -848,8 +873,18 @@ async function start(): Promise<void> {
     } } : {}),
     emitDanmaku: (room: string, event: string, data: unknown) => {
       if (offlineE2e && event === 'danmaku') backend?.observeFixture(data as Parameters<DanmakuFeatures['observe']>[0])
+      if (offlineLottery && event === 'state' && /^[1-9]\d{0,11}$/.test(room)) {
+        backend?.observeFixtureLotteryConnection(room, (data as { state?: unknown } | null)?.state === 'connected')
+      }
       return handlers!.emitDanmaku(room, event, data)
     },
+    ...(offlineLottery ? {
+      setDouyuLotteryFixture(value: NonNullable<typeof douyuLotteryFixture>) {
+        douyuLotteryFixture = structuredClone(value)
+        douyuLotteryOpened.length = 0
+      },
+      getDouyuLotteryFixtureEvidence: () => ({ opened: [...douyuLotteryOpened] }),
+    } : {}),
     setDouyuRoomStatusFixture: (room: string, live: boolean, replay: boolean) => {
       if (!offlineE2e || !/^[1-9][0-9]{0,11}$/.test(room) || typeof live !== 'boolean' || typeof replay !== 'boolean') throw new Error('Invalid offline room status fixture')
       backend?.insights.signal({ kind: 'live', room, live, replay, receivedAt: Date.now() })

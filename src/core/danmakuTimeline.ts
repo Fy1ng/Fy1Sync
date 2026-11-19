@@ -26,6 +26,7 @@ export interface DanmakuMessage {
   /** Commentary media time (seconds) at which this message should appear. */
   scheduleTime: number
   room?: string
+  douyuLotteryActivityId?: string
   /** Wall clock (ms) the message was originally received. */
   receivedAt: number
   /** Only public server facts. A local identity badge is a separate render decision. */

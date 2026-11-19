@@ -191,6 +191,7 @@ export class Session {
   }
   private unsubscribeDanmaku: (() => void) | null = null
   private danmakuGeneration = 0
+  private matchDouyuLotteryCommand: ((message: Pick<ChatMessage, 'room' | 'text' | 'receivedAt'>) => string | null) | null = null
   private filter: CompiledDanmakuFilter
   private schedulerDeadline: number | null = null
   private progress = createPlaybackProgress()
@@ -384,12 +385,13 @@ export class Session {
     }
   }
 
-  notice(kind: Notice['kind'], text: string, detail?: unknown): void {
+  notice(kind: Notice['kind'], text: string, detail?: unknown): number {
     const entry: Notice = { id: ++this.noticeSeq, kind, text, at: this.now(),
       ...(kind !== 'info' ? { detail: errorDetails(detail ?? { message: text }) } : {}) }
     // Newest first, oldest dropped: the notice strip shows a few lines, not a log.
     this.noticeList = [entry, ...this.noticeList].slice(0, MAX_NOTICES)
     this.notify()
+    return entry.id
   }
 
   dismissNotice(id: number): void {
@@ -1359,8 +1361,12 @@ export class Session {
   }
 
   /** Park one relayed message. Public so tests and the mock generator can feed it. */
-  pushDanmaku(message: Pick<DanmakuMessage, 'text' | 'user' | 'color' | 'sender' | 'gift' | 'dms' | 'platform' | 'huyaGift' | 'system'>
-    & Partial<Pick<DanmakuMessage, 'receivedAt'>>): void {
+  setDouyuLotteryCommandMatcher(matcher: typeof this.matchDouyuLotteryCommand): void {
+    this.matchDouyuLotteryCommand = matcher
+  }
+
+  pushDanmaku(message: Pick<DanmakuMessage, 'text' | 'user' | 'color' | 'sender' | 'gift' | 'dms' | 'platform' | 'huyaGift' | 'system'
+    | 'douyuLotteryActivityId'> & Partial<Pick<DanmakuMessage, 'receivedAt'>>): void {
     const huya = message.platform === 'huya'
     const readOnly = isReadOnlyDanmakuPlatform(message.platform)
     const sender = readOnly ? null : normalizeDouyuSender(message.sender)
@@ -1397,6 +1403,7 @@ export class Session {
       ...(sender ? { sender } : {}),
       ...(gift ? { gift } : {}),
       ...(huyaGift ? { huyaGift } : {}),
+      ...(message.douyuLotteryActivityId ? { douyuLotteryActivityId: message.douyuLotteryActivityId } : {}),
       ...(!readOnly && typeof message.dms === 'number' && Number.isFinite(message.dms) ? { dms: message.dms } : {}),
       scheduleTime,
       room: this.danmakuState.room ?? undefined,
@@ -1427,11 +1434,14 @@ export class Session {
     const gift = normalizeDouyuGift(payload.gift)
     if ((payload.system === true || payload.gift !== undefined) && !gift) return
     const sender = normalizeDouyuSender(payload.sender)
+    const douyuLotteryActivityId = this.danmakuState.connected && !gift && typeof payload.room === 'string' && receivedAt !== undefined
+      ? this.matchDouyuLotteryCommand?.({ room: payload.room, text: payload.text, receivedAt }) : null
     this.pushDanmaku({
       text: payload.text,
       user: typeof payload.username === 'string' ? payload.username.trim() || '匿名' : '匿名',
       color: colorForIndex(typeof payload.color === 'number' ? payload.color : 0),
       platform, receivedAt,
+      ...(douyuLotteryActivityId ? { douyuLotteryActivityId } : {}),
       ...(sender ? { sender } : {}),
       ...(gift ? { gift } : {}),
       ...(typeof payload.dms === 'number' && Number.isFinite(payload.dms) ? { dms: payload.dms } : {}),

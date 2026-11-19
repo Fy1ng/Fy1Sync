@@ -8,7 +8,7 @@
  * messages are dropped from the front. A way back down is offered meanwhile.
  */
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { ErrorDetailsButton, ErrorText } from '../ui/ErrorDetails'
 import type { DisplayError } from '../core/errorDetails'
 import { useVirtualizer } from '@tanstack/react-virtual'
@@ -28,14 +28,16 @@ import { useChatFollow } from './useChatFollow'
 import { BasicRecognitionPanel } from './BasicRecognitionPanel'
 import { DouyinComposer } from './DouyinComposer'
 import { isReadOnlyDanmakuPlatform, isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
+import { DouyuLotteryCard, DouyuLotteryCommandGroup, type DouyuLotteryView } from './douyu/douyuLottery'
 
 /** A one-line row; longer messages wrap and are measured. */
 const ROW = 30
 
-export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
+export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords, douyuLottery }: {
   onClose: () => void
   onOpenSettings: (section?: SettingsSection, account?: SettingsTarget['account']) => void
   onOpenRecords: (tab: RecordsTab, uid?: string) => void
+  douyuLottery?: DouyuLotteryView
 }): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
@@ -54,14 +56,24 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   const box = useRef<HTMLTextAreaElement | null>(null)
   const subscribe = useCallback((listener: () => void) => session.subscribeChat(listener), [session])
   const messages = useSyncExternalStore(subscribe, () => session.chatHistory())
+  const entries = useMemo(() => {
+    const result: { messages: DanmakuMessage[]; activityKey: string | null }[] = []
+    for (const message of messages) {
+      const activityKey = message.douyuLotteryActivityId && message.room ? `${message.room}:${message.douyuLotteryActivityId}` : null
+      const previous = result.at(-1)
+      if (previous && activityKey && previous.activityKey === activityKey) previous.messages.push(message)
+      else result.push({ messages: [message], activityKey })
+    }
+    return result
+  }, [messages])
   const total = useSyncExternalStore(subscribe, () => session.chatCount())
 
   const scroller = useRef<HTMLDivElement | null>(null)
   const virtualizer = useVirtualizer({
-    count: messages.length,
+    count: entries.length,
     getScrollElement: () => scroller.current,
     estimateSize: () => ROW,
-    getItemKey: (index) => messages[index]!.id,
+    getItemKey: (index) => entries[index]!.messages[0]!.id,
     overscan: 6,
     anchorTo: 'end',
     // Reading anchors still belong to the virtualizer; explicit follow intent handles the end.
@@ -71,9 +83,9 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
     // while the list is too short to scroll, since no scroll event fires, so the virtualizer
     // went on computing the visible range from that far-off offset. It kept only the newest row
     // plus overscan, and the rows above went missing while the list was still filling up.
-    initialOffset: () => Math.max(0, messages.length * ROW - (scroller.current?.clientHeight ?? 0)),
+    initialOffset: () => Math.max(0, entries.length * ROW - (scroller.current?.clientHeight ?? 0)),
   })
-  const { unread, jump, onScroll } = useChatFollow(scroller, virtualizer, total, messages.length, danmaku.room)
+  const { unread, jump, onScroll } = useChatFollow(scroller, virtualizer, total, entries.length, danmaku.room)
 
   // "回复" from the picture writes into the box; follow it there.
   useEffect(() => {
@@ -86,6 +98,24 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
 
   const rows = virtualizer.getVirtualItems()
   const composing = useRef(false)
+  const rowContents = (message: DanmakuMessage) => <>
+    <span className="msg-user">{message.user}</span>
+    <span className="msg-text">{message.text}</span>
+    {message.duplicateCount !== undefined && message.duplicateCount > 1 && (
+      <span className="msg-count num" title="相同弹幕的合并次数">×{message.duplicateCount}</span>
+    )}
+    {!message.gift && !message.huyaGift && (
+      <span className="msg-actions">
+        {writes && !readOnly && !isReadOnlyDanmakuPlatform(message.platform) && <button type="button" className="msg-plus" disabled={!composer.canSendText(message.text)}
+          aria-label={`+1：${message.text}`} title={composer.repeatProblem(message.text) ?? '发送相同内容'}
+          onClick={() => void composer.repeat(message.text)}>+1</button>}
+        <button type="button" className="msg-more" aria-label={`更多操作：${message.text}`} title="更多操作"
+          onClick={(event) => { setRowNote(null); const next = { message, anchor: event.currentTarget }; rowMenuRef.current = next; setRowMenu(next) }}>
+          <Icon name="more" />
+        </button>
+      </span>
+    )}
+  </>
 
   return (
     <aside className="drawer" aria-label="弹幕">
@@ -114,6 +144,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
       </header>
 
       {snapshot.settings.recognitionMode === 'basic' && snapshot.settings.basicRecognitionPanelVisible && <BasicRecognitionPanel />}
+      {douyuLottery && <DouyuLotteryCard view={douyuLottery} />}
 
       <div className="drawer-feed">
         <div className="drawer-scroll" ref={scroller} role="log" aria-live="off" aria-label="弹幕列表" tabIndex={0}
@@ -127,28 +158,19 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
             </p>
           ) : (
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
-              {rows.map((row) => { const message = messages[row.index]!; return (
-                <div key={row.key} data-index={row.index} ref={virtualizer.measureElement}
-                  className={`msg ${message.gift || message.huyaGift ? 'is-gift' : ''}`.trim()}
-                  style={{ transform: `translateY(${row.start}px)` }}>
-                  <span className="msg-user">{message.user}</span>
-                  <span className="msg-text">{message.text}</span>
-                  {message.duplicateCount !== undefined && message.duplicateCount > 1 && (
-                    <span className="msg-count num" title="相同弹幕的合并次数">×{message.duplicateCount}</span>
-                  )}
-                  {!message.gift && !message.huyaGift && (
-                    <span className="msg-actions">
-                      {writes && !readOnly && !isReadOnlyDanmakuPlatform(message.platform) && <button type="button" className="msg-plus" disabled={!composer.canSendText(message.text)}
-                        aria-label={`+1：${message.text}`} title={composer.repeatProblem(message.text) ?? '发送相同内容'}
-                        onClick={() => void composer.repeat(message.text)}>+1</button>}
-                      <button type="button" className="msg-more" aria-label={`更多操作：${message.text}`} title="更多操作"
-                        onClick={(event) => { setRowNote(null); const next = { message, anchor: event.currentTarget }; rowMenuRef.current = next; setRowMenu(next) }}>
-                        <Icon name="more" />
-                      </button>
-                    </span>
-                  )}
-                </div>
-              ) })}
+              {rows.map((row) => {
+                const entry = entries[row.index]!
+                const message = entry.messages[0]!
+                const position = { transform: `translateY(${row.start}px)` }
+                return entry.activityKey
+                  ? <div key={row.key} data-index={row.index} ref={virtualizer.measureElement} className="msg-group" style={position}>
+                    <DouyuLotteryCommandGroup count={entry.messages.length}>
+                      {entry.messages.map(item => <div className="msg" key={item.id}>{rowContents(item)}</div>)}
+                    </DouyuLotteryCommandGroup>
+                  </div>
+                  : <div key={row.key} data-index={row.index} ref={virtualizer.measureElement}
+                    className={`msg ${message.gift || message.huyaGift ? 'is-gift' : ''}`.trim()} style={position}>{rowContents(message)}</div>
+              })}
             </div>
           )}
         </div>

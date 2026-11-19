@@ -11,6 +11,7 @@ import type { OnlineUpdateKind, OnlineUpdateSourceId, OnlineUpdateState } from '
 import { BACKEND_METHODS, type BackendMethods } from './backendContracts'
 import type { Cs2Schedule, StreamTitle, StreamTitleInput } from '../server/esports/types'
 import type { DouyuWatchPlaybackReport, DouyuWatchState } from '../server/douyu/watchTypes'
+import type { DouyuLotterySnapshot } from '../server/douyu/douyuLotteryTypes'
 export type { Cs2Schedule, Cs2Match, Cs2Team, Cs2Stream, StreamTitle, StreamTitleInput } from '../server/esports/types'
 
 /** This context is constructed by trusted IPC, never read from renderer arguments. */
@@ -87,6 +88,8 @@ export interface FeatureMethods extends BackendMethods {
   reportDouyuPlayback: { args: { room: string; playing: boolean }; result: DouyuRoomInsights }
   reportDouyuWatchPlayback: { args: DouyuWatchPlaybackReport; result: DouyuWatchState }
   getDouyuWatchState: { args: undefined; result: DouyuWatchState }
+  getDouyuLottery: { args: { room: string }; result: DouyuLotterySnapshot }
+  openDouyuLotteryRoom: { args: { room: string; activityId: string }; result: { opened: boolean } }
   setDouyuLiveNotifications: { args: DouyuLiveNotificationSettings; result: DouyuLiveNotificationState }
   /** What the main process is running now; a reloaded window starts from this, not from off. */
   getDouyuLiveNotifications: { args: undefined; result: DouyuLiveNotificationState }
@@ -115,6 +118,7 @@ export const FEATURE_METHODS = [
   'getDouyuBadgeAges', 'getDouyuMonthlySpending', 'getDouyuWatchTime', 'reportDouyuPlayback', 'setDouyuLiveNotifications', 'getDouyuLiveNotifications',
   'reportDouyuWatchPlayback', 'getDouyuWatchState',
   'getDouyuFansWatchTime',
+  'getDouyuLottery', 'openDouyuLotteryRoom',
   'checkAppUpdate', 'getAppUpdateState',
   'getOnlineUpdateState', 'setOnlineUpdateSource', 'checkOnlineUpdate', 'downloadOnlineUpdate',
   'cancelOnlineUpdate', 'applyOnlineUpdate', 'rollbackFrontendUpdate', 'reportFrontendReady',

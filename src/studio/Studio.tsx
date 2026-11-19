@@ -7,7 +7,8 @@
  * big picture and the small one relocates live elements instead of remounting them.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { apiClient } from '../app/apiClient'
 import { useDockFold, useFullscreen, useMediaMount, useOverlayVisibility, usePublishedHeight } from '../app/hooks'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { useCamera } from '../app/useCamera'
@@ -44,6 +45,7 @@ import './studio.css'
 import { remember, remembered } from '../app/remembered'
 import { EmbeddedLoginOverlay, useEmbeddedLoginState } from './login/EmbeddedLogin'
 import { Favorites } from './favorites/Favorites'
+import { useDouyuLottery } from './douyu/douyuLottery'
 
 /** Seconds per ←/→ press, and with Shift. */
 const SEEK_SMALL = 5
@@ -62,6 +64,20 @@ export function Studio(): React.ReactNode {
 function StudioView(): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
+  const chatRoom = snapshot.danmaku.room
+  const douyuRoom = chatRoom && /^[1-9][0-9]{0,11}$/.test(chatRoom) ? chatRoom : null
+  const lottery = useDouyuLottery(douyuRoom, snapshot.danmaku.connected, {
+    read: room => apiClient.feature('getDouyuLottery', { room }),
+    openOfficialRoom: (room, activityId) => apiClient.feature('openDouyuLotteryRoom', { room, activityId }),
+    notify: text => {
+      const id = session.notice('info', text)
+      return () => session.dismissNotice(id)
+    },
+  })
+  useLayoutEffect(() => {
+    session.setDouyuLotteryCommandMatcher(lottery.matchCommand)
+    return () => session.setDouyuLotteryCommandMatcher(null)
+  }, [session, lottery.matchCommand])
   const embeddedLogin = useEmbeddedLoginState()
   const root = useRef<HTMLDivElement | null>(null)
   const fullscreen = useFullscreen(root)
@@ -291,7 +307,8 @@ function StudioView(): React.ReactNode {
         </main>
 
         {chatOpen && (
-          <ChatDrawer onClose={() => setChat(false)} onOpenSettings={openSettings} onOpenRecords={openRecords} />
+          <ChatDrawer onClose={() => setChat(false)} onOpenSettings={openSettings} onOpenRecords={openRecords}
+            douyuLottery={douyuRoom ? lottery : undefined} />
         )}
 
         {favorites && <Favorites onClose={() => setFavorites(false)} />}
