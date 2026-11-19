@@ -165,6 +165,11 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
       if (!lifetime.signal.aborted && revision === watchContextRevision) { watchLogin = status.loggedIn; updateWatchContext() }
     }).catch(() => {})
   }
+  const pipWatchMatches = (source: ReturnType<typeof pip.state>['source'], room: string | null): boolean =>
+    !!room && source?.platform === 'douyu' && source.sourceRoom === room
+  const requireWatchRoom = (senderId: number | undefined, room: string | null): void => {
+    if (senderId === pip.windowId() && !pipWatchMatches(pip.state().source, room)) throw new FeatureApiError('room-changed')
+  }
   const reportWatch = (senderId: number, value: DouyuWatchPlaybackReport) =>
     watch.report(senderId, value, options.acquisition.watchSource?.(value.role) ?? null)
   refreshWatchLogin()
@@ -241,7 +246,12 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
       return { opened: true }
     },
     getStreamSessions: args => { noArgs(args); return streams.snapshot() },
-    getDouyuWatchState: args => { noArgs(args); return watch.snapshot() },
+    getDouyuWatchState: (args, context) => {
+      noArgs(args)
+      const state = watch.snapshot()
+      requireWatchRoom(context.senderId, state.room)
+      return state
+    },
     reportDouyuWatchPlayback: (args, context) => {
       const value = watchReportFields(args)
       if ((value.role !== 'official' && value.role !== 'commentary') || typeof value.playing !== 'boolean'
@@ -250,6 +260,7 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
         throw new FeatureApiError('invalid-arguments')
       }
       if (!Number.isSafeInteger(context.senderId)) throw new FeatureApiError('forbidden')
+      requireWatchRoom(context.senderId, watch.snapshot().room)
       return reportWatch(context.senderId!, value as unknown as DouyuWatchPlaybackReport)
     },
     openStreamSession: args => streams.open(args),
@@ -269,7 +280,7 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     reportEnhancedPip: (args, context) => {
       if (!Number.isSafeInteger(context.senderId)) throw new FeatureApiError('forbidden')
       const state = pip.report(context.senderId!, args)
-      if (state.streamId === 'official' || state.streamId === 'commentary') reportWatch(context.senderId!, {
+      if ((state.streamId === 'official' || state.streamId === 'commentary') && pipWatchMatches(state.source, watch.snapshot().room)) reportWatch(context.senderId!, {
         role: state.streamId, playing: args.ready && state.phase === 'ready' && args.playing,
         currentTime: args.mediaTime, presentedFrames: args.frameCount, decodedBytes: null,
       })
