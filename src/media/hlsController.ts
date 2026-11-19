@@ -380,14 +380,14 @@ export function translateHlsError(
       return {
         fatal: data.fatal, detail,
         message: `拉流被拒绝 (HTTP ${status})`,
-        hint: '播放地址通常带有有效期，请重新解析或改用本地代理。',
+        hint: '播放地址可能已过期，请重新载入片源。',
       }
     }
     if (data.details === 'manifestLoadError' || data.details === 'manifestParsingError') {
       return {
         fatal: data.fatal, detail,
         message: '无法加载播放列表',
-        hint: '检查地址是否有效，跨域来源需要通过本地代理。',
+        hint: '请检查地址是否有效，然后重新载入片源。',
       }
     }
     return {

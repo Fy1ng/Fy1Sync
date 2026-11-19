@@ -21,7 +21,6 @@ import { Icon } from '../kit'
 import { PipDanmaku } from './PipDanmaku'
 import { usePipLoad, usePipMedia, usePipReporter, usePipSource } from './pipPlayback'
 import { isPipState, pipFailure, useDanmakuPreferences, usePipState } from './pipState'
-import { isReadOnlyDanmakuPlatform } from '../../../server/danmaku/types'
 import './pip.css'
 
 const OUTCOME_MS = 4_000
@@ -54,7 +53,9 @@ export default function PipPage(): React.ReactNode {
 
   // Low power applies once the window is ready, the same moment main reads it.
   const reduced = state?.phase === 'ready' && state.options.lowPower
-  const room = active && source ? source.platform === 'douyin' ? source.danmakuRoom ?? null : state?.sendContext.room ?? null : null
+  const room = active && source ? source.platform === 'douyin' ? source.danmakuRoom ?? null
+    : source.platform === 'huya' && source.sourceRoom ? `huya:${source.sourceRoom}`
+      : source.platform === 'douyu' ? source.sourceRoom ?? null : null : null
 
   const status = statusText(state, error, ready, sourceProblem ?? loadProblem?.message ?? null)
   const statusError = state?.phase === 'failed' ? pipFailure(state) : !state && error ? errorDetail ?? error
@@ -75,7 +76,7 @@ export default function PipPage(): React.ReactNode {
         </p>
       )}
       <PipControls video={media?.video ?? null} state={state} apply={apply} />
-      {!isReadOnlyDanmakuPlatform(source?.platform) && <SendBar context={state?.sendContext ?? null} apply={apply} />}
+      {source?.platform === 'douyu' && <SendBar context={state?.sendContext ?? null} apply={apply} />}
     </div>
   )
 }

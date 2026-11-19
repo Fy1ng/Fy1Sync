@@ -159,6 +159,40 @@ describe('CaptureControls', () => {
 })
 
 describe('CaptureSettings', () => {
+  it.each(['failure', 'rejected', 'invalid'] as const)('retries a %s state read and enables the capture switch after recovery', async (failure) => {
+    const invoke = vi.mocked(window.streamSyncer!.invoke)
+    if (failure === 'rejected') invoke.mockRejectedValueOnce(new Error('read failed'))
+    else invoke.mockResolvedValueOnce((failure === 'failure'
+      ? { ok: false, code: 'unavailable', message: '截图状态读取失败' }
+      : { ok: true, value: {} }) as never)
+    render(<CaptureSettings />)
+    expect(screen.getByText('正在读取截图状态')).toBeInTheDocument()
+    const toggle = screen.getByRole('switch', { name: /启用截图与 GIF/ })
+    expect(toggle).toBeDisabled()
+    expect(await screen.findByRole('alert')).toHaveTextContent(failure === 'rejected' ? '无法连接应用主进程' : '截图状态读取失败')
+    expect(screen.queryByText('正在读取截图状态')).toBeNull()
+    expect(toggle).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toBeChecked()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(invoke.mock.calls.filter(([method]) => method === 'getCaptureState')).toHaveLength(2)
+  })
+
+  it('keeps a capture event newer than a pending retry response', async () => {
+    const invoke = vi.mocked(window.streamSyncer!.invoke)
+    invoke.mockResolvedValueOnce({ ok: false, code: 'unavailable', message: '读取失败' } as never)
+    render(<CaptureSettings />)
+    await screen.findByRole('alert')
+    let finish!: (value: { ok: true; value: ReturnType<typeof state> }) => void
+    invoke.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }) as never)
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    act(() => { for (const listener of listeners) listener({ topic: 'capture', data: state() }) })
+    await act(async () => finish({ ok: true, value: { settings: { version: 1, enabled: false }, recordings: [] } }))
+    expect(screen.getByRole('switch', { name: /启用截图与 GIF/ })).toBeChecked()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('switches capture on through setCaptureEnabled', async () => {
     enabled = false
     render(<CaptureSettings />)

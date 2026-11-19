@@ -5,6 +5,7 @@ import { apiClient } from '../app/apiClient'
 import { Session } from '../app/session'
 import { SessionProvider } from '../app/SessionContext'
 import type { MediaDescriptor } from '../core/types'
+import { primeMediaElement } from '../test/setup'
 import { Intake } from './Intake'
 import { SourceChip } from './SourceChip'
 import { douyinDanmakuRoom, LoginOffer, parseRoomInput, roomFromInput, sourceTitle, SourceLoaderProvider, useSourceLoader } from './sources'
@@ -69,7 +70,7 @@ describe('Douyin source selection and chat isolation', () => {
 
   it('offers Douyin for a bare room, resolves it with the selected platform, and preserves quality choices', async () => {
     const session = makeSession()
-    session.connectDanmaku('9999')
+    session.connectDanmaku('9999', true)
     const connect = vi.spyOn(session, 'connectDanmaku')
     const disconnect = vi.spyOn(session, 'disconnectDanmaku')
     const load = vi.spyOn(session, 'loadSource').mockResolvedValue(undefined)
@@ -85,7 +86,7 @@ describe('Douyin source selection and chat isolation', () => {
       sourceQuality: 'origin', sourceQualities: resolvedDouyin().value.stream.qualities,
     })))
     expect(resolve).toHaveBeenCalledWith('https://live.douyin.com/12345678901234567890', 'douyin', 'commentary', undefined, true)
-    expect(connect).toHaveBeenCalledExactlyOnceWith('douyin:12345')
+    await waitFor(() => expect(connect).toHaveBeenCalledExactlyOnceWith('douyin:12345', true))
     expect(disconnect).toHaveBeenCalled()
     expect(session.snapshot.danmaku.room).toBe('douyin:12345')
     expect(screen.queryByRole('button', { name: /登录抖音/ })).toBeNull()
@@ -93,7 +94,7 @@ describe('Douyin source selection and chat isolation', () => {
 
   it.each(['9999', 'huya:660000'])('clears previous chat even if Douyin resolution fails: %s', async previous => {
     const session = makeSession()
-    session.connectDanmaku(previous)
+    session.connectDanmaku(previous, true)
     const connect = vi.spyOn(session, 'connectDanmaku')
     vi.spyOn(apiClient, 'resolve').mockResolvedValue({ ok: false, code: 'test', message: '直播间未开播' })
     function Load(): React.ReactNode {
@@ -119,7 +120,7 @@ describe('Douyin source selection and chat isolation', () => {
     mount(session, <Load />)
     fireEvent.click(screen.getByRole('button', { name: 'load' }))
     await waitFor(() => expect(session.loadSource).toHaveBeenCalled())
-    expect(connect).toHaveBeenCalledExactlyOnceWith('douyin:12345')
+    await waitFor(() => expect(connect).toHaveBeenCalledExactlyOnceWith('douyin:12345', true))
     expect(login).not.toHaveBeenCalled()
   })
 
@@ -130,7 +131,8 @@ describe('Douyin source selection and chat isolation', () => {
       platform: 'douyin', sourceRoom: '7123456789012345678', danmakuRoom: 'douyin:12345', loop: false, viaProxy: false,
     }
     await act(async () => { await session.loadSource('commentary', descriptor) })
-    session.connectDanmaku('huya:660000')
+    primeMediaElement(session.engine.element('commentary'))
+    session.connectDanmaku('huya:660000', true)
     const connect = vi.spyOn(session, 'connectDanmaku')
     function Restore(): React.ReactNode {
       const loader = useSourceLoader()
@@ -143,6 +145,7 @@ describe('Douyin source selection and chat isolation', () => {
     expect(screen.getByRole('radio', { name: '抖音' })).toBeChecked()
     expect(screen.queryByLabelText('弹幕房间号')).toBeNull()
     expect(screen.queryByRole('button', { name: '连接' })).toBeNull()
+    expect(screen.queryByText(/需要登录时/)).toBeNull()
     expect(screen.getByText(/抖音弹幕: 正在连接房间 12345/)).toBeInTheDocument()
     const retry = vi.spyOn(apiClient, 'reconnectDanmaku').mockResolvedValue({ ok: true, value: { room: 'douyin:12345' } })
     fireEvent.click(screen.getByRole('button', { name: '重连抖音弹幕' }))
@@ -193,7 +196,10 @@ describe('Douyin source selection and chat isolation', () => {
 
   it('continues playback if the chat subscription fails', async () => {
     const session = makeSession()
-    vi.spyOn(session, 'loadSource').mockResolvedValue(undefined)
+    vi.spyOn(session, 'loadSource').mockImplementation(async (role, descriptor) => {
+      await session.engine.load(role, { ...descriptor, kind: 'progressive' })
+      primeMediaElement(session.engine.element(role))
+    })
     vi.spyOn(session, 'connectDanmaku').mockImplementation(() => { throw new Error('offline') })
     const play = vi.spyOn(session, 'setPlaying').mockResolvedValue(undefined)
     vi.spyOn(apiClient, 'resolve').mockResolvedValue(resolvedDouyin())
@@ -203,12 +209,13 @@ describe('Douyin source selection and chat isolation', () => {
     }
     mount(session, <Load />)
     fireEvent.click(screen.getByRole('button', { name: 'load' }))
+    await waitFor(() => expect(session.connectDanmaku).toHaveBeenCalled())
     await waitFor(() => expect(play).toHaveBeenCalledWith(true))
   })
 
   it('clears Douyin chat when switching commentary to a platform without accompanying chat', async () => {
     const session = makeSession()
-    session.connectDanmaku('douyin:12345')
+    session.connectDanmaku('douyin:12345', true)
     vi.spyOn(session, 'loadSource').mockResolvedValue(undefined)
     vi.spyOn(apiClient, 'resolve').mockResolvedValue({ ok: true, value: { ok: true, stream: {
       platform: 'youtube', kind: 'hls', url: 'app://app/media/youtube-session', label: 'YouTube', channel: 'abcdef', requiresProxy: false,
@@ -233,11 +240,11 @@ describe('Douyin source selection and chat isolation', () => {
     let loader!: ReturnType<typeof useSourceLoader>
     function Load(): React.ReactNode { loader = useSourceLoader(); return null }
     mount(session, <Load />)
-    let older!: Promise<void>
+    let older!: Promise<boolean>
     act(() => { older = loader.loadDescriptor('commentary', { ...descriptor, danmakuRoom: 'douyin:11111' }) })
     await act(async () => { await loader.loadDescriptor('commentary', { ...descriptor, danmakuRoom: 'douyin:22222' }) })
     await act(async () => { firstDone(); await older })
-    expect(connect).toHaveBeenCalledExactlyOnceWith('douyin:22222')
+    expect(connect).toHaveBeenCalledExactlyOnceWith('douyin:22222', true)
   })
 
   it('does not restore the old Douyin source when embedded login ends after a source change', async () => {

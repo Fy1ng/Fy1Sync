@@ -442,7 +442,7 @@ describe('a loaded source that never shows a picture', () => {
       expect(session.snapshot.notices.some((notice) => notice.text.includes('没有画面'))).toBe(false)
       await vi.advanceTimersByTimeAsync(2_000)
       const warned = session.snapshot.notices.filter((notice) => notice.text.includes('没有画面'))
-      expect(warned.map((notice) => notice.text)).toEqual([`${roleName('official')}已载入但没有画面，可在片源面板换一个画质或重新载入`])
+      expect(warned.map((notice) => notice.text)).toEqual([`${roleName('official')}已载入但没有画面。可在片源面板重新载入。`])
     } finally {
       vi.useRealTimers()
     }

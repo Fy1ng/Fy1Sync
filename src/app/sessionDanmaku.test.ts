@@ -247,7 +247,7 @@ describe('Session danmaku transport', () => {
   it.each(['288016', 'huya:660000'])('removing commentary clears its %s chat, pending messages and late relay events', async room => {
     const { session } = await makeSession()
     session.updateSettings({ sidebarVisible: true })
-    session.connectDanmaku(room)
+    session.connectDanmaku(room, true)
     const subscription = StubDanmakuSubscription.instances.at(-1)!
     const platform = room.startsWith('huya:') ? 'huya' : 'douyu'
     subscription.emit('state', { room, state: 'connected' })
@@ -277,7 +277,7 @@ describe('Session danmaku transport', () => {
 
   it.each(['unload', 'disconnect'])('does not restore suspended chat after an explicit %s', async action => {
     const { session } = await makeSession()
-    session.connectDanmaku('288016')
+    session.connectDanmaku('288016', true)
     session.suspend()
     if (action === 'unload') session.unloadSource('commentary')
     else session.disconnectDanmaku()

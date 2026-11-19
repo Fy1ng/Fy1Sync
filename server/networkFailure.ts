@@ -66,7 +66,7 @@ export function streamFailureHint(code: unknown): string | undefined {
   const failure = streamFailureForCode(code)
   if (!failure) return undefined
   if (failure.code === 'media-network-boundary') return '如需播放该本地来源, 请直接添加它的媒体地址, 授权不会扩展到其他本地服务.'
-  if (failure.stage === 'proxy') return '请确认代理软件已开启, 可在设置的网络选项中检查系统代理.'
+  if (failure.stage === 'proxy') return '请确认代理软件已开启，可在「设置 > 通用 > 网络」查看系统代理。'
   if (failure.code === 'dns-failed') return '请检查网络与 DNS 设置后重新加载.'
   if (failure.code === 'tls-certificate' || failure.code === 'tls-failed') return '请检查系统时间和网络证书设置后重试.'
   if (failure.stage === 'http') return '请确认直播仍在进行, 稍后重新加载或切换片源.'

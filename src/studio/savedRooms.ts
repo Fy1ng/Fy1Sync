@@ -10,6 +10,7 @@ import type { SavedRoom } from '../../electron/featureContracts'
 import type { MediaDescriptor, SourceRole } from '../core/types'
 import { sourceTitle } from './sources'
 import { savedRoomKey } from '../core/savedRoomIdentity'
+import { displayError } from '../core/errorDetails'
 
 export type { SavedRoom }
 
@@ -24,33 +25,52 @@ let rooms: SavedRoom[] | null = null
 let pending: Promise<void> | null = null
 let releaseEvents: (() => void) | null = null
 let revision = 0
+let readError = ''
+let loading = false
 const listeners = new Set<() => void>()
-const publish = (next: SavedRoom[]): void => { revision++; rooms = next; for (const listener of listeners) listener() }
+const notify = (): void => { for (const listener of listeners) listener() }
+const publish = (next: SavedRoom[]): void => { revision++; rooms = next; readError = ''; loading = false; notify() }
 
 function load(): Promise<void> {
+  if (pending) return pending
   const started = revision
-  pending ??= apiClient.feature('listSavedRooms', undefined).then((result) => {
-    if (result.ok && Array.isArray(result.value) && started === revision) publish(result.value)
-  }).catch(() => undefined).finally(() => { pending = null })
+  readError = ''
+  loading = true
+  notify()
+  const request = apiClient.feature('listSavedRooms', undefined).then((result) => {
+    if (started !== revision) return
+    if (result.ok && Array.isArray(result.value)) publish(result.value)
+    else readError = result.ok ? '收藏读取失败，请重试。' : displayError(result).message
+  }).catch(caught => {
+    if (started === revision) readError = displayError(caught, '收藏读取失败，请重试。').message
+  }).finally(() => {
+    if (pending === request) { pending = null; loading = false; notify() }
+  })
+  pending = request
   return pending
 }
 
-/** The saved rooms, newest first; `null` until the first read. Reads once per window. */
-export function useSavedRooms(): SavedRoom[] | null {
-  const [value, setValue] = useState(rooms)
+export function useSavedRoomsState(): { rooms: SavedRoom[] | null; error: string; loading: boolean; retry: () => void } {
+  const snapshot = () => ({ rooms, error: readError, loading })
+  const [value, setValue] = useState(snapshot)
   useEffect(() => {
-    const listener = (): void => setValue(rooms)
+    const listener = (): void => setValue(snapshot())
     listeners.add(listener)
     releaseEvents ??= apiClient.subscribeFeatures(event => {
       const value = event.data as { rooms?: SavedRoom[] } | null
       if (event.topic === 'saved-rooms' && Array.isArray(value?.rooms)) publish(value.rooms)
     })
-    if (rooms === null) void load()
-    else setValue(rooms)
+    if (rooms === null && !readError) void load()
+    listener()
     // Keep one subscription for the window even while every favorites panel is closed.
     return () => { listeners.delete(listener) }
   }, [])
-  return value
+  return { ...value, retry: () => { void load() } }
+}
+
+/** The saved rooms, newest first; `null` until the first successful read. */
+export function useSavedRooms(): SavedRoom[] | null {
+  return useSavedRoomsState().rooms
 }
 
 export function savedFor(list: readonly SavedRoom[] | null, role: SourceRole, descriptor: MediaDescriptor | null | undefined): SavedRoom | null {
@@ -98,6 +118,8 @@ export async function removeSavedRoom(id: string): Promise<string | null> {
 export function resetSavedRooms(): void {
   rooms = null
   pending = null
+  readError = ''
+  loading = false
   revision++
   releaseEvents?.()
   releaseEvents = null

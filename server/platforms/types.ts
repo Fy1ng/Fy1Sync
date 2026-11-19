@@ -109,4 +109,4 @@ export function failure(
 }
 
 export const MANUAL_URL_HINT =
-  '可在源设置中直接粘贴 m3u8 / mp4 地址（例如从播放器开发者工具的网络面板复制）。'
+  '也可在片源面板粘贴 m3u8 或 mp4 视频直链，再点击「载入」。'

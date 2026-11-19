@@ -129,8 +129,8 @@ export class BrowserLoginImport {
     const outcomes: BrowserImportOutcome[] = []
     try {
       for (const candidate of candidates as Candidate[]) {
-        importAbort(operation.controller.signal)
         try {
+          importAbort(operation.controller.signal)
           const identity = await this.options.verify(candidate.platform, candidate.cookies, operation.controller.signal)
           importAbort(operation.controller.signal)
           if (!identity || identity.uid !== candidate.identity.uid
@@ -141,9 +141,9 @@ export class BrowserLoginImport {
           outcomes.push({ platform: candidate.platform, imported: true, username: identity.username, ...saved,
             message: candidate.platform === 'douyin' && saved.signingReady === false ? '已导入登录态, 发送认证需要通过官方登录补齐.' : '登录态已导入.' })
         } catch (error) {
-          importAbort(operation.controller.signal)
           outcomes.push({ platform: candidate.platform, imported: false, username: candidate.identity.username,
-            message: error instanceof BrowserImportError ? error.message : `${IMPORT_PLATFORM_NAMES[candidate.platform]}登录态保存失败, 原有账号已保留.` })
+            message: operation.controller.signal.aborted ? '已取消，未导入。'
+              : error instanceof BrowserImportError ? error.message : `${IMPORT_PLATFORM_NAMES[candidate.platform]}登录态保存失败, 原有账号已保留.` })
         }
       }
       return { outcomes }
@@ -160,7 +160,7 @@ export class BrowserLoginImport {
     if (this.preview?.public.id === id) {
       this.preview.controller.abort()
       clearTimeout(this.preview.timer)
-      erase(this.preview.candidates)
+      if (!this.operation || this.operation.id !== id) erase(this.preview.candidates)
       this.preview = null
       cancelled = true
     }

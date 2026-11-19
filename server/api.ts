@@ -304,7 +304,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             if (message.accountId !== accounts.activeAccountId) return fail('no-active-account', '活动账号已变化, 请确认账号后重新操作')
             if (accounts.isBusy(message.accountId)) return fail('account-busy', '账号正在登录或退出, 请稍后发送')
             if (tasks.snapshot().currentRoom !== message.room) return fail('room-changed', '当前房间已变化, 请确认房间后重新操作')
-            if (!(await accounts.activeLoginStatus()).loggedIn) return fail('login-required', '请先在片源设置中登录当前斗鱼账号')
+            if (!(await accounts.activeLoginStatus()).loggedIn) return fail('login-required', '请先在「设置 > 账号 > 斗鱼」的账号页登录当前斗鱼账号。')
             if (disposed) return fail('service-closed', '本地服务已关闭')
             if (message.accountId !== accounts.activeAccountId || accounts.isBusy(message.accountId)) return fail('no-active-account', '账号状态已变化, 请确认后重新操作')
             return { ok: true, value: await tasks.sendMessage(message) }
@@ -481,7 +481,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
         // Tool errors contain only stable codes, never executable paths or child output.
         if (error instanceof Error && 'tool' in error && 'code' in error
           && ['tool-missing', 'tool-invalid-path', 'tool-not-executable'].includes(String(error.code))) {
-          return fail(String(error.code), `未找到可用的 ${String(error.tool)}, 请检查工具设置或环境变量`, detail)
+          return fail(String(error.code), `未找到可用的 ${String(error.tool)}，请检查应用安装是否完整或环境变量指定的工具路径。`, detail)
         }
         if (error instanceof Error && error.name === 'LoginError' && 'code' in error) {
           const messages: Record<string, string> = {

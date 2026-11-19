@@ -1,7 +1,7 @@
 import type { BufferState } from '../../electron/bufferManager'
 
 const reasons: Record<string, string> = {
-  'tool-missing': '未找到 ffmpeg, 请配置工具路径',
+  'tool-missing': '未找到 ffmpeg，请检查应用安装是否完整',
   'tool-invalid-path': 'ffmpeg 路径无效',
   'tool-not-executable': 'ffmpeg 无法执行',
   'buffer-write-failed': '无法写入本地缓冲, 请检查磁盘和目录权限',
@@ -17,7 +17,7 @@ type Stage = NonNullable<BufferState['failure']>['stage']
 /** Which step broke, and what the viewer can do about it. */
 const STAGES: Record<Stage, string> = {
   resolve: '解析直播间失败, 请确认正在直播后重新载入',
-  proxy: '连不上代理, 请确认代理软件已开启, 可在 设置 › 网络 查看系统代理',
+  proxy: '连不上代理，请确认代理软件已开启。可在「设置 > 通用 > 网络」查看系统代理',
   connect: '连不上直播服务器, YouTube 和 Twitch 需要代理',
   http: '直播服务器拒绝了请求',
   stall: '已连上但没有收到新的直播数据',

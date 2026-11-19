@@ -110,7 +110,7 @@ function resolveDirect(input: string): ResolveResult {
       channel: url.hostname,
       requiresProxy: false,
       notes: [
-        '直接加载。若因跨域失败或无法识别倒计时，可在源设置中改为经本地代理加载。',
+        '直接加载。若播放失败，请检查地址是否有效。',
       ],
     },
   }

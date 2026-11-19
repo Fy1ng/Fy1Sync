@@ -436,7 +436,7 @@ export class MediaEngine {
           fatal: true,
           message: error instanceof Error ? error.message : '加载失败',
           detail: errorDetails(error),
-          hint: '检查地址是否可访问，或改用媒体代理。',
+          hint: '请检查地址是否可访问，然后重新载入片源。',
         },
       }
       this.notify()
@@ -622,7 +622,7 @@ export class MediaEngine {
           fatal: false,
           message: '浏览器拒绝了自动播放。',
           detail: errorDetails(result.reason),
-          hint: '点击播放按钮，或在站点设置中允许该页面播放媒体。',
+          hint: '请点击「播放」重试。',
         },
       }
       this.notify()

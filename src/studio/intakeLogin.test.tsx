@@ -126,11 +126,11 @@ describe('the login offer on the intake screen', () => {
   })
 
   it.each([
-    ['bilibili', '哔哩哔哩', 'https://live.bilibili.com/21452505'],
-    ['huya', '虎牙', 'https://www.huya.com/kpl'],
-  ] as const)('offers and invokes %s sign-in only for an explicit authentication refusal', async (platform, name, input) => {
+    ['bilibili', '哔哩哔哩', 'https://live.bilibili.com/21452505', 'login-required', undefined],
+    ['huya', '虎牙', 'https://www.huya.com/kpl', 'restricted', 'sign-in'],
+  ] as const)('offers and invokes %s sign-in only for an explicit authentication refusal', async (platform, name, input, code, reason) => {
     const resolve = vi.spyOn(apiClient, 'resolve').mockResolvedValue({ ok: true, value: { ok: false, failure: {
-      code: 'restricted', reason: 'sign-in', message: '平台要求登录后观看.',
+      code, reason, message: '平台要求登录后观看.',
     } } })
     const login = vi.spyOn(apiClient, 'login').mockResolvedValue({ ok: false, code: 'login-cancelled', message: '登录已取消.' })
     mount()

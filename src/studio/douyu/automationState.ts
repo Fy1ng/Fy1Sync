@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiClient, type ApiResult } from '../../app/apiClient'
 import type { AutomationSnapshot } from '../../../electron/automationManager'
 import { failedLane, type Lane } from './useDouyu'
+import { displayError, type DisplayError } from '../../core/errorDetails'
 
 const IDLE: Lane = { pending: '', notice: '', error: '' }
 
@@ -19,9 +20,29 @@ export function useAutomations() {
   const [snapshot, setSnapshot] = useState<AutomationSnapshot | null>(null)
   const [lane, setLane] = useState<Lane>(IDLE)
   const [loading, setLoading] = useState(true)
+  const [readFailure, setReadFailure] = useState<DisplayError | null>(null)
+  const reading = useRef(false)
   const mounted = useRef(false)
   const busy = useRef(false)
   const revision = useRef(0)
+
+  const reload = useCallback(async (): Promise<void> => {
+    if (reading.current) return
+    reading.current = true
+    const before = revision.current
+    setLoading(true); setReadFailure(null)
+    try {
+      const result = await apiClient.feature('getDouyuAutomations', undefined)
+      if (!mounted.current || before !== revision.current) return
+      if (result.ok && validAutomations(result.value)) setSnapshot(result.value)
+      else setReadFailure(displayError(result, result.ok ? '无法读取批量任务' : undefined))
+    } catch (error) {
+      if (mounted.current && before === revision.current) setReadFailure(displayError(error, '无法读取批量任务'))
+    } finally {
+      reading.current = false
+      if (mounted.current) setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     mounted.current = true
@@ -30,13 +51,9 @@ export function useAutomations() {
       if (!live || event.topic !== 'automations' || !validAutomations(event.data)) return
       revision.current++
       setSnapshot(event.data)
+      setReadFailure(null); setLoading(false)
     })
-    const first = revision.current
-    void apiClient.feature('getDouyuAutomations', undefined).then((result) => {
-      if (!live) return
-      if (result.ok && validAutomations(result.value)) { if (first === revision.current) setSnapshot(result.value) }
-      else setLane(failedLane(result, result.ok ? '无法读取批量任务' : undefined))
-    }).catch(error => { if (live) setLane(failedLane(error, '无法读取批量任务')) }).finally(() => { if (live) setLoading(false) })
+    void reload()
     return () => { live = false; mounted.current = false; unsubscribe() }
   }, [])
 
@@ -55,6 +72,7 @@ export function useAutomations() {
       if (!result.ok) { setLane(failedLane(result)); return false }
       if (!validAutomations(result.value)) { setLane(failedLane(result, '无法读取批量任务')); return false }
       if (before === revision.current) setSnapshot(result.value)
+      setReadFailure(null)
       setLane({ ...IDLE, notice: done })
       return true
     } catch (error) {
@@ -65,5 +83,5 @@ export function useAutomations() {
     }
   }, [])
 
-  return { snapshot, lane, loading, act }
+  return { snapshot, lane, loading, readError: readFailure?.message ?? '', readDetail: readFailure?.detail, reload, act }
 }

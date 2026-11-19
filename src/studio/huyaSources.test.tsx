@@ -51,7 +51,7 @@ afterEach(() => {
 describe('Huya sources', () => {
   it.each(['660000', 'kpl'])('connects the canonical Huya chat room after resolving a source: %s', async (room) => {
     const session = makeSession()
-    session.connectDanmaku('9999')
+    session.connectDanmaku('9999', true)
     const connect = vi.spyOn(session, 'connectDanmaku')
     const disconnect = vi.spyOn(session, 'disconnectDanmaku')
     const load = vi.spyOn(session, 'loadSource').mockResolvedValue(undefined)
@@ -71,8 +71,8 @@ describe('Huya sources', () => {
     expect(resolve).toHaveBeenCalledWith(
       'https://www.huya.com/' + room, 'huya', 'commentary', undefined, true,
     )
-    expect(connect).toHaveBeenCalledWith('huya:660000')
-    expect(disconnect).toHaveBeenCalledOnce()
+    await waitFor(() => expect(connect).toHaveBeenCalledWith('huya:660000', true))
+    expect(disconnect).toHaveBeenCalled()
     expect(session.snapshot.danmaku.room).toBe('huya:660000')
   })
 
@@ -82,7 +82,7 @@ describe('Huya sources', () => {
       kind: 'test', url: '/test-sources/commentary.mp4', input: '660000', label: '虎牙 660000',
       loop: false, viaProxy: false, platform: 'huya', sourceRoom: '660000',
     }) })
-    session.connectDanmaku('huya:660000')
+    session.connectDanmaku('huya:660000', true)
     relay?.({ event: 'state', data: { state: 'connected', room: 'huya:660000' } })
     session.flush()
     mount(session, <SourceChip role="commentary" />)
@@ -105,7 +105,7 @@ describe('Huya sources', () => {
     }
     mount(session, <Restore />)
     fireEvent.click(screen.getByRole('button', { name: 'restore' }))
-    await waitFor(() => expect(connect).toHaveBeenCalledWith(`huya:${sourceRoom ?? 'kpl'}`))
+    await waitFor(() => expect(connect).toHaveBeenCalledWith(`huya:${sourceRoom ?? 'kpl'}`, true))
   })
 
   it('keeps Huya chat read-only in the drawer and its row menu while retaining copy and local blocking', async () => {

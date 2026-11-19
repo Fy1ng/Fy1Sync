@@ -90,7 +90,7 @@ export function SyncCapsule(): React.ReactNode {
   const state: StripState = running || session.offsetBusy ? 'working'
     : bufferLimited ? 'short'
       : incomplete || autoSync.phase === 'failed' ? 'failed'
-        : autoSync.phase === 'done' && autoSync.authorized ? 'locked'
+        : autoSync.phase === 'done' && autoSync.authorized && autoSync.lastResult?.applied && !autoSync.lastResult.dryRun ? 'locked'
           : 'idle'
 
   const magnitude = Math.abs(requested)

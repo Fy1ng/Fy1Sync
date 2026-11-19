@@ -30,6 +30,7 @@ import { isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
 import { PlatformAccount } from './login/PlatformAccount'
 import { refreshLoginStatus } from './login/status'
 import { AccountAvatar, BrowserImportButton, BrowserLoginImportProvider } from './login/BrowserLoginImport'
+import { ReadError } from './ReadError'
 
 export type SettingsSection = 'accounts' | 'records' | 'insights' | 'frame-matching' | 'general'
 
@@ -166,12 +167,24 @@ function YouTubeAccount(): React.ReactNode {
   const mounted = useMounted()
   // Shown from the last read at once; the read on open only brings it up to date.
   const [status, setStatus] = useRemembered<LoginStatus | null>('login-status', null)
+  const [checking, setChecking] = useState(() => status === null)
+  const [loadError, setLoadError, loadErrorDetail] = useErrorState()
+  const readRevision = useRef(0)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError, errorDetail] = useErrorState()
   const refresh = async (): Promise<void> => {
-    const next = await refreshLoginStatus((message, detail) => { if (mounted.current) { setMessage(''); setError({ message, detail }) } })
-    if (mounted.current && next) setStatus(next)
+    const started = ++readRevision.current
+    if (mounted.current) { setChecking(true); setLoadError('') }
+    let failed = false
+    const next = await refreshLoginStatus((message, detail) => {
+      failed = true
+      if (mounted.current && started === readRevision.current) setLoadError({ message, detail })
+    })
+    if (!mounted.current || started !== readRevision.current) return
+    if (next?.youtube) { setStatus(next); setLoadError('') }
+    else if (!failed) setLoadError('账号状态读取失败，请重试。')
+    setChecking(false)
   }
   useEffect(() => { void refresh() }, [])
 
@@ -198,17 +211,18 @@ function YouTubeAccount(): React.ReactNode {
       <div className="row-split">
         <span className="account-identity">
           {youtube?.nickname && <><AccountAvatar username={youtube.nickname} avatar={youtube.avatar} /><b>{youtube.nickname}</b></>}
-          {status === null ? '正在检查登录状态' : youtube?.loggedIn ? '已登录' : '未登录'}
+          {loadError ? '登录状态读取失败' : status === null ? '正在检查登录状态' : youtube?.loggedIn ? '已登录' : '未登录'}
           {youtube?.expiresAt ? <span className="muted">，{new Date(youtube.expiresAt * 1000).toLocaleDateString('zh-CN')} 到期</span> : null}
         </span>
         <span className="row-end">
           <BrowserImportButton platform="youtube" disabled={busy} />
           {youtube?.cookieCount ? <button type="button" className="btn-quiet small" disabled={busy} onClick={() => void act(true)}>退出</button> : null}
-          <button type="button" className="btn-solid small" disabled={busy || status === null} onClick={() => void act(false)}>{youtube?.loggedIn ? '重新登录' : '登录'}</button>
+          <button type="button" className="btn-solid small" disabled={busy || checking || status === null} onClick={() => void act(false)}>{youtube?.loggedIn ? '重新登录' : '登录'}</button>
         </span>
       </div>
       <p className="muted">出现「请确认你不是机器人」提示或观看会员直播时需要登录。</p>
       {message && <p className="muted" role="status">{message}</p>}
+      {loadError && <ReadError error={loadError} detail={loadErrorDetail} onRetry={() => void refresh()} />}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
       <Switch label="自动使用最高画质" detail="可用时直接载入 1440p、4K 等最高清晰度，网络较慢时可关闭"
         checked={settings.preferAdaptive} onChange={(preferAdaptive) => session.updateSettings({ preferAdaptive })} />
@@ -302,15 +316,15 @@ function AlignPrefs(): React.ReactNode {
         checked={settings.basicRecognitionPanelVisible} onChange={(visible) => session.updateSettings({ basicRecognitionPanelVisible: visible })} />
       <div className="field-stack">
         <span className="field-label">单击步长</span>
-        <Segmented label="单击步长" value={settings.smallStepSeconds}
-          onChange={(seconds) => session.updateSettings({ smallStepSeconds: seconds, largeStepSeconds: Math.max(seconds, settings.largeStepSeconds) })}
-          options={[0.1, 0.25, 0.5, 1].map((value) => ({ value, label: `${value} 秒` }))} />
-      </div>
-      <div className="field-stack">
-        <span className="field-label">长按或 Shift 步长</span>
-        <Segmented label="长按步长" value={settings.largeStepSeconds}
+        <Segmented label="单击步长" value={settings.largeStepSeconds}
           onChange={(seconds) => session.updateSettings({ largeStepSeconds: Math.max(seconds, settings.smallStepSeconds) })}
           options={[2, 5, 10].map((value) => ({ value, label: `${value} 秒` }))} />
+      </div>
+      <div className="field-stack">
+        <span className="field-label">按住 Shift 步长</span>
+        <Segmented label="按住 Shift 步长" value={settings.smallStepSeconds}
+          onChange={(seconds) => session.updateSettings({ smallStepSeconds: seconds, largeStepSeconds: Math.max(seconds, settings.largeStepSeconds) })}
+          options={[0.1, 0.25, 0.5, 1].map((value) => ({ value, label: `${value} 秒` }))} />
       </div>
       <div className="field-stack">
         <span className="field-label">识别时长</span>
@@ -388,17 +402,21 @@ function Network(): React.ReactNode {
   const [state, setState] = useRemembered<NetworkPreferenceState | null>('network', null)
   const [pending, setPending] = useState(() => state === null)
   const [error, setError, errorDetail] = useErrorState()
+  const [loadError, setLoadError, loadErrorDetail] = useErrorState()
   const [draft, setDraft] = useState<MediaNetworkOptions>({ ...DEFAULT_MEDIA_NETWORK })
-  useEffect(() => {
-    let live = true
-    void apiClient.getNetworkPreferences().then((result) => {
-      if (!live) return
+  const refresh = async (): Promise<void> => {
+    setPending(true)
+    setLoadError('')
+    try {
+      const result = await apiClient.getNetworkPreferences()
+      if (!mounted.current) return
       if (result.ok) { setState(result.value); setDraft({ ...DEFAULT_MEDIA_NETWORK, ...result.value.media }) }
-      else setError(result)
-      setPending(false)
-    })
-    return () => { live = false }
-  }, [])
+      else setLoadError(result)
+    } catch (caught) {
+      if (mounted.current) setLoadError(displayError(caught, '网络设置读取失败，请重试。'))
+    } finally { if (mounted.current) setPending(false) }
+  }
+  useEffect(() => { void refresh() }, [])
   const save = async (direct: boolean): Promise<void> => {
     if (pending || !state) return
     setPending(true)
@@ -428,7 +446,7 @@ function Network(): React.ReactNode {
     <Group title="网络">
       <div className="row-split">
         <span>系统代理</span>
-        <span className="muted">{proxy ? PROXY_NAME[proxy.type] : '正在读取'}</span>
+        <span className="muted">{loadError ? '读取失败' : proxy ? PROXY_NAME[proxy.type] : '正在读取'}</span>
       </div>
       {proxy?.fallbackReason === 'socks4-unsupported' && (
         <p className="note-warn">暂不支持 SOCKS4 代理, 请改用 HTTP 或 SOCKS5 代理. 不会自动改为直连.</p>
@@ -479,6 +497,7 @@ function Network(): React.ReactNode {
         <SourceNetworkRules rules={draft.sourceRules ?? []} disabled={pending || !state} onChange={rules => change('sourceRules', rules)} />
         <div className="row-end"><button type="submit" className="btn small" disabled={pending || !state}>保存取流网络设置</button></div>
       </form>
+      {loadError && <ReadError error={loadError} detail={loadErrorDetail} onRetry={() => void refresh()} />}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
     </Group>
   )
@@ -489,16 +508,20 @@ function Decoding(): React.ReactNode {
   const [state, setState] = useRemembered<DecoderPreferenceState | null>('decoder', null)
   const [pending, setPending] = useState(() => state === null)
   const [error, setError, errorDetail] = useErrorState()
-  useEffect(() => {
-    let live = true
-    void apiClient.getDecoderPreferences().then((result) => {
-      if (!live) return
+  const [loadError, setLoadError, loadErrorDetail] = useErrorState()
+  const refresh = async (): Promise<void> => {
+    setPending(true)
+    setLoadError('')
+    try {
+      const result = await apiClient.getDecoderPreferences()
+      if (!mounted.current) return
       if (result.ok) setState(result.value)
-      else setError(result)
-      setPending(false)
-    })
-    return () => { live = false }
-  }, [])
+      else setLoadError(result)
+    } catch (caught) {
+      if (mounted.current) setLoadError(displayError(caught, '解码设置读取失败，请重试。'))
+    } finally { if (mounted.current) setPending(false) }
+  }
+  useEffect(() => { void refresh() }, [])
   const save = async (software: boolean): Promise<void> => {
     if (pending || !state) return
     setPending(true)
@@ -512,10 +535,12 @@ function Decoding(): React.ReactNode {
   }
   return (
     <Group title="解码">
+      {!state && !loadError && <p className="muted" role="status">正在读取解码设置</p>}
       <Switch label="软件解码" detail="画面出现花屏、绿屏或黑屏时启用，重启应用后生效"
         checked={state?.mode === 'software'} disabled={pending || !state} onChange={(on) => void save(on)} />
       {state?.restartRequired && <p className="note-warn">重启后改为{modeName(state.mode)}，当前仍是{modeName(state.effectiveMode)}</p>}
       {state?.forcedByCommandLine && <p className="muted">启动参数强制了软件解码</p>}
+      {loadError && <ReadError error={loadError} detail={loadErrorDetail} onRetry={() => void refresh()} />}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
     </Group>
   )
@@ -529,24 +554,28 @@ export function Tools(): React.ReactNode {
   const [status, setStatus] = useRemembered<ToolsStatus | null>('tools-status', null)
   const [busy, setBusy] = useState(false)
   const [error, setError, errorDetail] = useErrorState()
+  const [loadError, setLoadError, loadErrorDetail] = useErrorState()
   const exportPending = useRef(false)
   const [exporting, setExporting] = useState(false)
   const [exportMessage, setExportMessage] = useState('')
   const [exportError, setExportError, exportErrorDetail] = useErrorState()
   const running = busy || (!!status && ['checking', 'downloading', 'verifying'].includes(status.update.phase))
-  useEffect(() => {
-    void apiClient.getToolsStatus().then((result) => {
+  const refresh = async (): Promise<void> => {
+    setLoadError('')
+    try {
+      const result = await apiClient.getToolsStatus()
       if (!mounted.current) return
-      if (result.ok && Array.isArray(result.value?.tools)) setStatus(result.value)
-      else if (!result.ok) setError(result)
-    })
-  }, [])
+      if (result.ok && Array.isArray(result.value?.tools) && result.value.update) setStatus(result.value)
+      else setLoadError(result.ok ? '取流工具状态读取失败，请重试。' : result)
+    } catch (caught) {
+      if (mounted.current) setLoadError(displayError(caught, '取流工具状态读取失败，请重试。'))
+    }
+  }
+  useEffect(() => { void refresh() }, [])
   useEffect(() => {
     if (!running) return
     const timer = setInterval(() => {
-      void apiClient.getToolsStatus().then((result) => {
-        if (mounted.current && result.ok && Array.isArray(result.value?.tools)) setStatus(result.value)
-      })
+      void refresh()
     }, 750)
     return () => clearInterval(timer)
   }, [running, mounted])
@@ -591,6 +620,8 @@ export function Tools(): React.ReactNode {
   }
   return (
     <Group title="取流工具">
+      {!status && !loadError && <p className="muted" role="status">正在读取取流工具状态</p>}
+      {status?.tools.length === 0 && !loadError && <p className="muted">暂无取流工具</p>}
       <dl className="facts">
         {status?.tools.map((tool) => (
           <div key={tool.name}><dt>{tool.name}</dt><dd className="num">{tool.version}<span className="muted"> · {SOURCE_NAME[tool.source]}</span></dd></div>
@@ -611,6 +642,7 @@ export function Tools(): React.ReactNode {
           {update.phase === 'downloading' && update.totalBytes > 0 ? ` ${Math.floor(update.downloadedBytes * 100 / update.totalBytes)}%` : ''}
         </p>
       )}
+      {loadError && <ReadError error={loadError} detail={loadErrorDetail} onRetry={() => void refresh()} />}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
       <p className="muted">请在出现问题后导出诊断报告, 文件不会自动上传.</p>
       <div className="row-end">

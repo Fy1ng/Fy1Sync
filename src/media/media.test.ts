@@ -229,13 +229,13 @@ describe('translateHlsError', () => {
       response: { code: 403 },
     })
     expect(error.message).toContain('403')
-    expect(error.hint).toContain('有效期')
+    expect(error.hint).toContain('可能已过期，请重新载入片源')
   })
 
   it('explains a missing playlist', () => {
     const error = translate({ fatal: true, type: 'networkError', details: 'manifestParsingError' })
     expect(error.message).toContain('播放列表')
-    expect(error.hint).toContain('代理')
+    expect(error.hint).toContain('检查地址是否有效，然后重新载入片源')
   })
 
   it('reports other network errors with their detail', () => {

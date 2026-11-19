@@ -21,6 +21,7 @@ import {
   EMPTY_LOOP, SELECTION_LABEL, TEMPLATE_LABEL, buildMessageSchedule, durationText, messageLines, templateLines, type LoopDraft,
 } from './taskMessage'
 import type { DouyuData } from './useDouyu'
+import { ReadError } from '../ReadError'
 import './tasks.css'
 
 const KIND: Record<DouyuTaskKind, string> = {
@@ -48,7 +49,7 @@ const when = (time: number): string => {
 }
 
 export function Tasks({ data, defaultRoom }: { data: DouyuData; defaultRoom: string | null }): React.ReactNode {
-  const { tasks, all, accounts, taskLane, loading } = data
+  const { tasks, all, accounts, taskLane, loading, tasksLoading, accountsReadError, tasksReadError, reloadAccounts, reloadTasks } = data
   const [creating, setCreating] = useState(false)
   const rooms = [...new Set([
     ...(tasks?.currentRoom ? [tasks.currentRoom] : []),
@@ -63,9 +64,12 @@ export function Tasks({ data, defaultRoom }: { data: DouyuData; defaultRoom: str
       {creating
         ? <NewTask data={data} defaultRoom={defaultRoom ?? tasks?.currentRoom ?? ''} onDone={() => setCreating(false)} />
         : <button type="button" className="btn-solid new-task" disabled={all.length === 0} onClick={() => setCreating(true)}>新任务</button>}
-      {all.length === 0 && !loading && <p className="muted">请先在「账号」中添加斗鱼账号。</p>}
+      {accountsReadError && <ReadError error={accountsReadError} detail={data.accountsReadDetail} onRetry={() => void reloadAccounts()} />}
+      {all.length === 0 && !loading && !accountsReadError && <p className="muted">请先在「账号」中添加斗鱼账号。</p>}
+      {tasksLoading && <p className="muted" role="status">正在读取房间任务</p>}
+      {tasksReadError && <ReadError error={tasksReadError} detail={data.tasksReadDetail} onRetry={() => void reloadTasks()} />}
 
-      {!loading && rooms.length === 0 && !creating && (
+      {!tasksLoading && !tasksReadError && tasks && rooms.length === 0 && !creating && (
         <p className="desk-empty">暂无任务。新建的任务默认暂停，点击「启动」后运行；关闭应用后全部停止。</p>
       )}
 

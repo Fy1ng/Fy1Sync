@@ -92,6 +92,8 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
 
   /** Any edit after a preview: the plan no longer describes what is on screen. */
   const invalidate = (): void => {
+    generation.current++
+    if (busy === 'plan') setBusy(null)
     if (livePlan.current && !livePlan.current.used) retire(livePlan.current.id)
     livePlan.current = null
     setPlan(null)

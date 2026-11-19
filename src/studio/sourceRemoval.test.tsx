@@ -5,6 +5,7 @@ import { apiClient } from '../app/apiClient'
 import { Session } from '../app/session'
 import { SessionProvider } from '../app/SessionContext'
 import type { MediaDescriptor } from '../core/types'
+import { primeMediaElement } from '../test/setup'
 import { SourceLoaderProvider, useSourceLoader } from './sources'
 
 function deferred<T>() {
@@ -20,7 +21,7 @@ async function fixture() {
   const session = new Session({ createSampler: () => null })
   sessions.push(session)
   await session.loadSource('commentary', descriptor)
-  session.connectDanmaku('288016')
+  session.connectDanmaku('288016', true)
   let loader!: ReturnType<typeof useSourceLoader>
   function Controls() { loader = useSourceLoader(); return null }
   render(<SessionProvider session={session}><SourceLoaderProvider><Controls /></SourceLoaderProvider></SessionProvider>)
@@ -42,6 +43,29 @@ afterEach(() => {
 })
 
 describe('commentary source removal races', () => {
+  it.each(['douyu', 'huya'] as const)('disconnects chat following %s when changing to a direct link', async platform => {
+    const f = await fixture()
+    act(() => { f.session.connectDanmaku(platform === 'douyu' ? '288016' : 'huya:288016', true) })
+    const before = f.session.engine.getState().commentary.descriptor
+    let loading!: Promise<boolean>
+    act(() => { loading = f.loader.loadInput('commentary', '/new.mp4') })
+    await waitFor(() => expect(f.session.engine.getState().commentary.descriptor).not.toBe(before))
+    await act(async () => { primeMediaElement(f.session.engine.element('commentary')); expect(await loading).toBe(true) })
+    expect(f.session.snapshot.danmaku.room).toBeNull()
+  })
+
+  it('keeps a manually chosen Douyu room when replacing or removing commentary', async () => {
+    const f = await fixture()
+    act(() => { f.loader.connectRoom('777777') })
+    let loading!: Promise<boolean>
+    act(() => { loading = f.loader.loadDescriptor('commentary', { ...descriptor, platform: 'huya', sourceRoom: '660000' }) })
+    await waitFor(() => expect(f.session.engine.getState().commentary.descriptor?.platform).toBe('huya'))
+    await act(async () => { primeMediaElement(f.session.engine.element('commentary')); expect(await loading).toBe(true) })
+    expect(f.session.snapshot.danmaku.room).toBe('777777')
+    await act(async () => f.session.unloadSource('commentary'))
+    expect(f.session.snapshot.danmaku.room).toBe('777777')
+  })
+
   it.each(['douyu', 'huya'] as const)('does not reconnect %s chat when removal overtakes a resolved source still loading', async platform => {
     const f = await fixture()
     const attachment = deferred<Awaited<ReturnType<typeof apiClient.stopBuffer>>>()
@@ -65,7 +89,7 @@ describe('commentary source removal races', () => {
     const f = await fixture()
     const attachment = deferred<Awaited<ReturnType<typeof apiClient.stopBuffer>>>()
     const stop = vi.spyOn(apiClient, 'stopBuffer').mockReturnValueOnce(attachment.promise).mockResolvedValue(stopped)
-    let loading!: Promise<void>
+    let loading!: Promise<boolean>
     act(() => { loading = f.loader.loadDescriptor('commentary', { ...descriptor, platform: 'huya', sourceRoom: '660000' }) })
     await waitFor(() => expect(stop).toHaveBeenCalledOnce())
     act(() => f.session.unloadSource('commentary'))
@@ -80,15 +104,15 @@ describe('commentary source removal races', () => {
     const first = deferred<Awaited<ReturnType<typeof apiClient.stopBuffer>>>()
     const second = deferred<Awaited<ReturnType<typeof apiClient.stopBuffer>>>()
     const stop = vi.spyOn(apiClient, 'stopBuffer').mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise).mockResolvedValue(stopped)
-    let older!: Promise<void>, newer!: Promise<void>
+    let older!: Promise<boolean>, newer!: Promise<boolean>
     act(() => { older = f.loader.loadDescriptor('commentary', { ...descriptor, platform: 'huya', sourceRoom: '111111' }) })
     act(() => { newer = f.loader.loadDescriptor('commentary', { ...descriptor, platform: 'huya', sourceRoom: '222222' }) })
     expect(stop).toHaveBeenCalledTimes(2)
     await act(async () => { first.resolve(stopped); await older })
     expect(f.connect).not.toHaveBeenCalled()
     expect(f.loader.state.commentary.busy).toBe(true)
-    await act(async () => { second.resolve(stopped); await newer })
-    expect(f.connect).toHaveBeenCalledExactlyOnceWith('huya:222222')
+    await act(async () => { second.resolve(stopped); primeMediaElement(f.session.engine.element('commentary')); await newer })
+    expect(f.connect).toHaveBeenCalledExactlyOnceWith('huya:222222', true)
     expect(f.loader.state.commentary.busy).toBe(false)
     expect(f.session.flush().danmaku.room).toBe('huya:222222')
   })

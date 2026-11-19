@@ -105,7 +105,10 @@ export function Timeline(): React.ReactNode {
         <input type="range" min={start} max={end} step={0.1} value={position} aria-label="播放进度"
           onChange={(event) => setDrag(Number(event.target.value))}
           onPointerUp={(event) => commit(Number(event.currentTarget.value))}
-          onKeyUp={(event) => commit(Number(event.currentTarget.value))} />
+          onKeyUp={(event) => {
+            if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(event.key)
+              && drag !== null && Number(event.currentTarget.value) !== state.currentTime) commit(Number(event.currentTarget.value))
+          }} />
       </div>
       <div className="timeline-meta">
         <span className="num">{clock(position - start)}</span>

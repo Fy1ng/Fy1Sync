@@ -39,6 +39,11 @@ export function useDouyu() {
   const [accountLane, setAccountLane] = useState<Lane>(IDLE)
   const [taskLane, setTaskLane] = useState<Lane>(IDLE)
   const [loading, setLoading] = useState(() => remembered('douyu:accounts') === undefined)
+  const [tasksLoading, setTasksLoading] = useState(() => remembered('douyu:tasks') === undefined)
+  const [accountsReadFailure, setAccountsReadFailure] = useState<DisplayError | null>(null)
+  const [tasksReadFailure, setTasksReadFailure] = useState<DisplayError | null>(null)
+  const accountsReading = useRef(false)
+  const tasksReading = useRef(false)
   const mounted = useRef(false)
   const accountBusy = useRef(false)
   const taskBusy = useRef(false)
@@ -52,35 +57,61 @@ export function useDouyu() {
     accountRevision.current = revision
     // An unmounted view's setState is dropped, so the remembered copy is written directly too.
     remember('douyu:accounts', next)
-    if (mounted.current) setAccounts(next)
+    if (mounted.current) { setAccounts(next); setAccountsReadFailure(null) }
     return true
   }, [setAccounts])
+
+  const reloadAccounts = useCallback(async (): Promise<void> => {
+    if (accountsReading.current) return
+    accountsReading.current = true
+    const revision = accountRevision.current
+    setLoading(true); setAccountsReadFailure(null)
+    try {
+      const result = await apiClient.listDouyuAccounts()
+      if (!mounted.current) return
+      if (result.ok && validAccounts(result.value)) takeAccounts(result.value)
+      else if (revision === accountRevision.current) setAccountsReadFailure(displayError(result, result.ok ? '无法读取斗鱼账号' : undefined))
+    } catch (error) {
+      if (mounted.current && revision === accountRevision.current) setAccountsReadFailure(displayError(error, '无法读取斗鱼账号'))
+    } finally {
+      accountsReading.current = false
+      if (mounted.current) setLoading(false)
+    }
+  }, [takeAccounts])
+
+  const reloadTasks = useCallback(async (): Promise<void> => {
+    if (tasksReading.current) return
+    tasksReading.current = true
+    const revision = taskRevision.current
+    setTasksLoading(true); setTasksReadFailure(null)
+    try {
+      const result = await apiClient.getDouyuTasks()
+      if (!mounted.current || revision !== taskRevision.current) return
+      if (result.ok && validTasks(result.value)) setTasks(result.value)
+      else setTasksReadFailure(displayError(result, result.ok ? '无法读取任务' : undefined))
+    } catch (error) {
+      if (mounted.current && revision === taskRevision.current) setTasksReadFailure(displayError(error, '无法读取任务'))
+    } finally {
+      tasksReading.current = false
+      if (mounted.current) setTasksLoading(false)
+    }
+  }, [setTasks])
 
   useEffect(() => {
     mounted.current = true
     let live = true
     // Subscribe before the first read, so a change in between is not missed.
     const unsubscribeAccounts = apiClient.subscribeDouyuAccounts((snapshot) => {
-      if (live && validAccounts(snapshot)) takeAccounts(snapshot)
+      if (live && validAccounts(snapshot)) { takeAccounts(snapshot); setLoading(false) }
     })
     const unsubscribe = apiClient.subscribeDouyuTasks((snapshot) => {
       if (!live || !validTasks(snapshot)) return
       taskRevision.current++
       setTasks(snapshot)
+      setTasksReadFailure(null); setTasksLoading(false)
     })
-    const firstTasks = taskRevision.current
-    void Promise.all([
-      apiClient.listDouyuAccounts().then((result) => {
-        if (!live) return
-        if (result.ok && validAccounts(result.value)) takeAccounts(result.value)
-        else setAccountLane(failedLane(result, result.ok ? '无法读取斗鱼账号' : undefined))
-      }).catch(error => { if (live) setAccountLane(failedLane(error, '无法读取斗鱼账号')) }),
-      apiClient.getDouyuTasks().then((result) => {
-        if (!live || firstTasks !== taskRevision.current) return
-        if (result.ok && validTasks(result.value)) setTasks(result.value)
-        else setTaskLane(failedLane(result, result.ok ? '无法读取任务' : undefined))
-      }).catch(error => { if (live && firstTasks === taskRevision.current) setTaskLane(failedLane(error, '无法读取任务')) }),
-    ]).finally(() => { if (live) setLoading(false) })
+    void reloadAccounts()
+    void reloadTasks()
     return () => { live = false; mounted.current = false; unsubscribe(); unsubscribeAccounts() }
   }, [])
 
@@ -130,6 +161,7 @@ export function useDouyu() {
       if (!result.ok) { setTaskLane(failedLane(result)); return false }
       if (!validTasks(result.value)) { setTaskLane(failedLane(result, '无法读取任务')); return false }
       if (revision === taskRevision.current) setTasks(result.value)
+      setTasksReadFailure(null)
       setTaskLane({ ...IDLE, notice: done })
       return true
     } catch (error) {
@@ -144,7 +176,10 @@ export function useDouyu() {
   const active = all.find((account) => account.id === accounts?.activeAccountId) ?? null
   const accountsBusy = accountLane.pending !== '' || all.some((account) => account.busy)
 
-  return { accounts, tasks, all, active, loading, accountLane, taskLane, accountsBusy, accountAction, taskAction }
+  return { accounts, tasks, all, active, loading, tasksLoading,
+    accountsReadError: accountsReadFailure?.message ?? '', accountsReadDetail: accountsReadFailure?.detail,
+    tasksReadError: tasksReadFailure?.message ?? '', tasksReadDetail: tasksReadFailure?.detail,
+    reloadAccounts, reloadTasks, accountLane, taskLane, accountsBusy, accountAction, taskAction }
 }
 
 export type DouyuData = ReturnType<typeof useDouyu>

@@ -3,7 +3,7 @@
  * reviewed plan is executed, by id; any edit retires the plan; leaving retires it too.
  */
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StreamSyncerBridge } from '../../../electron/contracts'
 import { Renewal } from './Renewal'
@@ -85,12 +85,68 @@ describe('badge renewal', () => {
     expect(screen.queryByRole('button', { name: '确认赠送' })).toBeNull()
   })
 
+  it.each(['room', 'quantity', 'allocation', 'override'])('rejects an in-flight preview after editing %s and allows a fresh preview', async (edit) => {
+    const bridge = window.streamSyncer!
+    const invoke = bridge.invoke
+    let finish: ((value: unknown) => void) | undefined
+    let pending = true
+    bridge.invoke = vi.fn((method: string, args: unknown) => {
+      if (method === 'previewDouyuRenewal' && pending) {
+        pending = false
+        return new Promise(resolve => { finish = resolve })
+      }
+      return invoke(method as never, args as never)
+    }) as StreamSyncerBridge['invoke']
+    render(<Renewal accountId="a1" accountLabel="主号" ready />)
+    fireEvent.click(screen.getByRole('button', { name: /粉丝牌/ }))
+    await screen.findByRole('checkbox', { name: /房间 100/ })
+    fireEvent.click(screen.getByRole('checkbox', { name: /房间 100/ }))
+    if (edit === 'override') fireEvent.click(screen.getByRole('radio', { name: '逐房数量' }))
+    fireEvent.click(screen.getByRole('button', { name: '生成核对单' }))
+    await waitFor(() => expect(finish).toBeDefined())
+    if (edit === 'room') fireEvent.click(screen.getByRole('checkbox', { name: /房间 200/ }))
+    if (edit === 'quantity') fireEvent.change(screen.getByRole('spinbutton', { name: '每个房间赠送数量' }), { target: { value: '2' } })
+    if (edit === 'allocation') fireEvent.click(screen.getByRole('radio', { name: '逐房数量' }))
+    if (edit === 'override') fireEvent.change(screen.getByRole('spinbutton', { name: '房间 100 的赠送数量' }), { target: { value: '3' } })
+    await act(async () => { finish!({ ok: true, value: planFor(['100'], 'obsolete') }) })
+    expect(screen.queryByRole('region', { name: '赠送预览' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '确认赠送' })).toBeNull()
+    expect(named('cancelDouyuRenewal')).toContainEqual({ method: 'cancelDouyuRenewal', args: { planId: 'obsolete' } })
+    expect(named('executeDouyuRenewal')).toEqual([])
+    expect(screen.getByRole('button', { name: '生成核对单' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: '生成核对单' }))
+    await screen.findByRole('region', { name: '赠送预览' })
+    expect(screen.getByRole('button', { name: '确认赠送' })).toBeEnabled()
+  })
+
   it('retires an unexecuted plan when the page closes', async () => {
     const view = render(<Renewal accountId="a1" accountLabel="主号" ready />)
     await toPlan()
     view.unmount()
     expect(named('cancelDouyuRenewal')).toEqual([{ method: 'cancelDouyuRenewal', args: { planId: 'p1' } }])
     expect(named('executeDouyuRenewal')).toEqual([])
+  })
+
+  it('stops remaining gifts when leaving the renewal pane to reach the write switch', async () => {
+    const bridge = window.streamSyncer!
+    const invoke = bridge.invoke
+    let finish: ((value: unknown) => void) | undefined
+    bridge.invoke = vi.fn((method: string, args: unknown) => {
+      if (method === 'executeDouyuRenewal') {
+        calls.push({ method, args })
+        return new Promise(resolve => { finish = resolve })
+      }
+      return invoke(method as never, args as never)
+    }) as StreamSyncerBridge['invoke']
+    const view = render(<Renewal accountId="a1" accountLabel="主号" ready />)
+    await toPlan()
+    fireEvent.click(screen.getByRole('button', { name: '确认赠送' }))
+    await waitFor(() => expect(finish).toBeDefined())
+    view.unmount()
+    expect(named('cancelDouyuRenewal')).toEqual([{ method: 'cancelDouyuRenewal', args: { planId: 'p1' } }])
+    await act(async () => { finish!({ ok: true, value: { planId: 'p1', status: 'cancelled', message: '', rows: [] } }) })
+    expect(named('executeDouyuRenewal')).toHaveLength(1)
+    expect(screen.queryByRole('region', { name: '赠送处理结果' })).toBeNull()
   })
 
   it('splits like stock equally, shows what stays in the backpack and why rooms are skipped', async () => {

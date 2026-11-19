@@ -19,6 +19,22 @@ beforeEach(() => {
 afterEach(() => session.dispose())
 
 describe('manual offset result feedback', () => {
+  it.each([
+    { dryRun: true, applied: false, authorized: true, aligned: false },
+    { dryRun: true, applied: true, authorized: true, aligned: false },
+    { dryRun: false, applied: false, authorized: true, aligned: false },
+    { dryRun: false, applied: true, authorized: false, aligned: false },
+    { dryRun: false, applied: true, authorized: true, aligned: true },
+  ])('only labels an applied alignment as locked: %j', ({ dryRun, applied, authorized, aligned }) => {
+    snapshot.requestedOffsetSeconds = snapshot.offsetSeconds
+    snapshot.autoSync = { ...snapshot.autoSync, phase: 'done', authorized,
+      lastResult: { phase: 'done', dryRun, applied, estimate: null, plan: null, failure: null, divergence: null,
+        samples: { official: 0, commentary: 0 }, jumps: { official: 0, commentary: 0 }, startedAt: 0, finishedAt: 1 } }
+    render(<SyncCapsule />)
+    expect(screen.queryByText('已对齐') !== null).toBe(aligned)
+    expect(screen.getByRole('group', { name: '对齐' })).toHaveAttribute('data-state', aligned ? 'locked' : 'idle')
+  })
+
   it('reports the observed seek residual without calling an unlimited move a buffer shortage', () => {
     render(<SyncCapsule />)
     expect(screen.queryByText(/缓冲不足/)).toBeNull()

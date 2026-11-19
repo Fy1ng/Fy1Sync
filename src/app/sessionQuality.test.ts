@@ -81,7 +81,15 @@ describe('quality restart synchronization', () => {
     h.sync.mockResolvedValue({ applied: false } as any)
     await session.changeSourceQuality('official', 'low')
     expect(h.sync).toHaveBeenCalledTimes(1)
-    expect(session.flush().notices.some((notice) => notice.text.includes('立即同步'))).toBe(true)
+    expect(session.flush().notices[0]?.text).toContain('点击「自动对齐」')
+  })
+
+  it('does not direct a single source to automatic alignment after changing quality', async () => {
+    const h = await harness(true)
+    session.unloadSource('commentary')
+    await session.changeSourceQuality('official', 'low')
+    expect(session.flush().notices[0]?.text).toBe('画质已切换。')
+    expect(h.sync).not.toHaveBeenCalled()
   })
 
   it('preserves pause and suggests sync after playback resumes', async () => {

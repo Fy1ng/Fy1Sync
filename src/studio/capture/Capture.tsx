@@ -8,13 +8,14 @@
  * IPC. The destination file is always chosen by the main process's own save dialog.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiClient } from '../../app/apiClient'
 import type { GifOptions, GifRecording, MediaCapture } from '../../../electron/mediaCapture'
 import { captureVideoFrame } from '../../media/frameCapture'
 import { Icon, Popover, Switch, usePopover } from '../kit'
 import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
 import { displayError, errorMessage, type ErrorDetails } from '../../core/errorDetails'
+import { ReadError } from '../ReadError'
 import './capture.css'
 
 type CaptureState = ReturnType<MediaCapture['state']>
@@ -31,25 +32,35 @@ function isCaptureState(value: unknown): value is CaptureState {
 }
 
 /** Subscribe first, then read the snapshot; an event that arrives first wins over it. */
-function useCaptureState(): [CaptureState | null, (state: CaptureState) => void, string, ErrorDetails | null] {
+function useCaptureState(): [CaptureState | null, (state: CaptureState) => void, string, ErrorDetails | null, () => void] {
   const [state, setState] = useState<CaptureState | null>(null)
   const [error, setError, errorDetail] = useErrorState('')
+  const mounted = useRef(false)
+  const revision = useRef(0)
+  const refresh = useCallback(async (): Promise<void> => {
+    const started = ++revision.current
+    setError('')
+    try {
+      const result = await apiClient.feature('getCaptureState', undefined)
+      if (!mounted.current || started !== revision.current) return
+      if (result.ok && isCaptureState(result.value)) setState(result.value)
+      else setError(result.ok ? '截图状态读取失败，请重试。' : result)
+    } catch (caught) {
+      if (mounted.current && started === revision.current) setError(displayError(caught, '读取截图状态失败，请重试。'))
+    }
+  }, [setError])
   useEffect(() => {
-    let live = true
-    let heard = false
+    mounted.current = true
     const off = apiClient.subscribeFeatures((event) => {
       if (event.topic !== 'capture' || !isCaptureState(event.data)) return
-      heard = true
+      revision.current++
       setState(event.data)
+      setError('')
     })
-    void apiClient.feature('getCaptureState', undefined).then((result) => {
-      if (!live || heard) return
-      if (result.ok && isCaptureState(result.value)) setState(result.value)
-      else if (!result.ok) setError(result)
-    }).catch(caught => { if (live && !heard) setError(displayError(caught, '读取截图状态失败, 请重试.')) })
-    return () => { live = false; off() }
-  }, [])
-  return [state, setState, error, errorDetail]
+    void refresh()
+    return () => { mounted.current = false; revision.current++; off() }
+  }, [refresh, setError])
+  return [state, setState, error, errorDetail, () => { void refresh() }]
 }
 
 const errorText = (error: unknown): string => error instanceof Error && error.message ? error.message : '当前视频帧不可用'
@@ -315,7 +326,7 @@ const FIELD_NAME = { fps: '帧率', seconds: '时长', width: '宽度' } as cons
 const FIELD_UNIT = { fps: '帧/秒', seconds: '秒', width: '像素' } as const
 
 export function CaptureSettings(): React.ReactNode {
-  const [state, setState, loadError, loadErrorDetail] = useCaptureState()
+  const [state, setState, loadError, loadErrorDetail, retry] = useCaptureState()
   const [pending, setPending] = useState(false)
   const [error, setError, errorDetail] = useErrorState('')
   const mounted = useRef(true)
@@ -336,10 +347,12 @@ export function CaptureSettings(): React.ReactNode {
 
   return (
     <>
+      {!state && !loadError && <p className="muted" role="status">正在读取截图状态</p>}
       <Switch label="启用截图与 GIF" checked={state?.settings.enabled === true} disabled={pending || !state}
         onChange={(enabled) => void toggle(enabled)} />
       <p className="muted">仅截取正在播放的画面，不截取桌面。</p>
-      {(error || loadError) && <p className="form-error" role="alert"><ErrorText error={error ? errorDetail ?? error : loadErrorDetail ?? loadError} message={error || loadError} /></p>}
+      {loadError && <ReadError error={loadError} detail={loadErrorDetail} onRetry={retry} />}
+      {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
     </>
   )
 }

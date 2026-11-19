@@ -32,6 +32,10 @@ export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
   const [role, setRole] = useState<SourceRole | null>(null)
   const [text, setText] = useState('')
   const [roomPlatform, setRoomPlatform] = useState<RoomPlatform | null>(null)
+  const [restoreSucceeded, setRestoreSucceeded] = useState(false)
+  const draftRevision = useRef(0)
+  const [pendingSubmissions, setPendingSubmissions] = useState(0)
+  const [fileAttempt, setFileAttempt] = useState<{ file: File; role: SourceRole; status: 'loading' | 'done' | 'failed' } | null>(null)
   const field = useRef<HTMLInputElement | null>(null)
   const picturesAtOpen = useRef<Record<SourceRole, number | null>>({
     official: media.official.firstFrame ? session.sourceRevision('official') : null,
@@ -40,6 +44,10 @@ export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
   const pictureVisible = SOURCE_ROLES.some(side => media[side].status === 'ready' && media[side].firstFrame
     && picturesAtOpen.current[side] !== session.sourceRevision(side))
   const anyLoaded = SOURCE_ROLES.some((side) => media[side].status !== 'empty')
+  const anyBusy = SOURCE_ROLES.some((side) => loader.state[side].busy)
+  const empty = SOURCE_ROLES.filter((side) => media[side].status === 'empty')
+  const fileRole = role ?? (empty.length === 1 ? empty[0]! : null)
+  const currentAttempt = fileAttempt?.file === pendingFile ? fileAttempt : null
   const bare = parseRoomInput(text)?.platform === null ? parseRoomInput(text)!.room : null
   const canSubmit = role !== null && text.trim() !== '' && (bare === null || roomPlatform !== null) && !loader.state[role].busy
 
@@ -52,33 +60,44 @@ export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
   }, [onClose])
   // Reveal the first picture while the other source and synchronization keep preparing.
   useEffect(() => {
-    if (pictureVisible) onClose()
-  }, [pictureVisible, onClose])
+    if ((pictureVisible || restoreSucceeded) && !text.trim() && !anyBusy && pendingSubmissions === 0 && !loader.restoring && (!pendingFile || currentAttempt?.status === 'done')) onClose()
+  }, [pictureVisible, restoreSucceeded, text, anyBusy, pendingSubmissions, loader.restoring, pendingFile, currentAttempt, onClose])
 
   const pick = (next: SourceRole): void => {
+    if (next !== role) draftRevision.current++
     setRole(next)
     loader.clearProblem(next)
   }
   const submit = (): void => {
     if (!canSubmit || !role) return
     const side = role
-    void loader.loadInput(side, text.trim(), bare !== null ? roomPlatform! : undefined).then((ok) => {
-      if (!ok) return
-      // Ready for the other side, if it is still empty.
-      const other = SOURCE_ROLES.find((next) => next !== side && media[next].status === 'empty')
-      if (other) setRole(other)
-    })
+    const revision = draftRevision.current
     setText('')
     setRoomPlatform(null)
+    setPendingSubmissions(count => count + 1)
+    void loader.loadInput(side, text.trim(), bare !== null ? roomPlatform! : undefined).then((ok) => {
+      if (revision !== draftRevision.current) return
+      if (!ok) {
+        setText(text)
+        setRoomPlatform(roomPlatform)
+        return
+      }
+      // Ready for the other side, if it is still empty.
+      const other = SOURCE_ROLES.find((next) => next !== side && session.snapshot.media[next].status === 'empty' && !loader.state[next].busy)
+      if (other) setRole(other)
+    }).finally(() => setPendingSubmissions(count => count - 1))
   }
 
-  // A file dropped on the window goes to the side being filled, or the only empty one.
+  const loadFile = (side: SourceRole, file: File): void => {
+    const attempt = { file, role: side, status: 'loading' as const }
+    setFileAttempt(attempt)
+    void loader.loadFile(side, file).then(ok => {
+      setFileAttempt(current => current === attempt ? { ...attempt, status: ok ? 'done' : 'failed' } : current)
+    })
+  }
   useEffect(() => {
-    if (!pendingFile) return
-    const empty = SOURCE_ROLES.filter((side) => media[side].status === 'empty')
-    const side = role ?? (empty.length === 1 ? empty[0]! : null)
-    if (side) void loader.loadFile(side, pendingFile)
-  }, [pendingFile])
+    if (pendingFile && !currentAttempt && fileRole && !loader.state[fileRole].busy) loadFile(fileRole, pendingFile)
+  }, [pendingFile, currentAttempt, fileRole, loader.state, loader.loadFile])
 
   const load = role ? loader.state[role] : null
   const previous = loader.previousSources ?? {}
@@ -92,7 +111,7 @@ export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
           <h1 className="intake-title">添加直播间</h1>
           <button type="button" className="btn-glass small intake-restore" disabled={loader.restoring || restorable.length === 0}
             title={restoreHint || '暂无可恢复的直播间'} onClick={() => {
-              void loader.restorePrevious().then(ok => { if (ok) onClose() })
+              void loader.restorePrevious().then(setRestoreSucceeded)
             }}><Icon name="history" />{loader.restoring ? '恢复中...' : '恢复上次'}</button>
         </div>
         {loader.restoreProblem && <p className="intake-error" role="alert">{loader.restoreProblem}</p>}
@@ -102,7 +121,7 @@ export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
 
         <form className="intake-field" data-disabled={role === null} onSubmit={(event) => { event.preventDefault(); submit() }}>
           <input ref={field} value={text} disabled={role === null}
-            onChange={(event) => { setText(event.target.value); if (role) loader.clearProblem(role) }}
+            onChange={(event) => { draftRevision.current++; setText(event.target.value); if (role) loader.clearProblem(role) }}
             aria-label="直播间链接" spellCheck={false} autoComplete="off"
             placeholder={role === null ? '先选择画面或解说' : SOURCE_HINT} />
           <button type="submit" className="intake-go" disabled={!canSubmit} aria-label="添加" title="添加（回车）">
@@ -116,12 +135,18 @@ export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
             {ROOM_PLATFORMS.map((platform) => (
               <button key={platform} type="button" role="radio" aria-checked={roomPlatform === platform}
                 className={roomPlatform === platform ? 'btn-solid small' : 'btn-glass small'}
-                onClick={() => { setRoomPlatform(platform); field.current?.focus() }}>{PLATFORM_LABEL[platform]}</button>
+                onClick={() => { if (platform !== roomPlatform) draftRevision.current++; setRoomPlatform(platform); field.current?.focus() }}>{PLATFORM_LABEL[platform]}</button>
             ))}
           </div>
         )}
 
         {load?.problem && <p className="intake-error" role="alert"><ErrorText error={load.problem} message={<>{load.problem.message}{load.problem.hint ? ` ${load.problem.hint}` : ''}</>} /></p>}
+
+        {pendingFile && !currentAttempt && !fileRole && <p className="muted" role="status">已拖入 {pendingFile.name}。请先选择画面或解说。</p>}
+        {currentAttempt?.status === 'failed' && <p className="intake-error">
+          {currentAttempt.file.name} 载入失败。 <button type="button" className="link-btn" disabled={loader.state[currentAttempt.role].busy}
+            onClick={() => loadFile(currentAttempt.role, currentAttempt.file)}>重试</button>
+        </p>}
 
         <div className="intake-actions">
           {media.official.status === 'empty' && !loader.state.official.busy && (

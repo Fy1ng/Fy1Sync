@@ -10,6 +10,26 @@ function fixture() {
   return { manager, window }
 }
 describe('restricted enhanced PiP shell', () => {
+  it.each(['bilibili', 'youtube', 'twitch', 'direct'] as const)('does not treat %s room IDs as Douyu chat or sender authority', async platform => {
+    const context = fixture()
+    const sender = vi.fn(() => ({ accountId: 'default', canAttempt: true }))
+    const manager = new PipManager({ createWindow: () => context.window, sendContext: sender, source: () => ({
+      url: 'app://app/buffer/a/official/b/index.m3u8', label: platform, platform, channel: '100', sourceRoom: '100',
+      danmakuRoom: '100', kind: 'hls', requiresProxy: false,
+    }) })
+    await manager.open('official')
+    expect(manager.state().sendContext).toMatchObject({ room: null, canAttempt: false })
+    expect(sender).not.toHaveBeenCalledWith('100')
+    for (const room of ['100', 'huya:100', 'douyin:100']) {
+      expect(manager.permitsRoom(2, room)).toBe(false)
+      expect(manager.permits(2, 'reconnectDanmaku', { room })).toBe(false)
+    }
+    for (const method of ['activateDouyuRoom', 'sendComposedDouyuMessage', 'getDouyuRoomInsights', 'reportDouyuPlayback', 'getDanmakuRate', 'getDanmakuUserDetails']) {
+      expect(manager.permits(2, method, { room: '100' })).toBe(false)
+    }
+    manager.dispose(); context.manager.dispose()
+  })
+
   it('preserves a redacted raw shell-loading failure and clears it after reopening', async () => {
     const f = fixture()
     f.window.load.mockRejectedValueOnce(Object.assign(new Error('load failed Cookie=PRIVATE_SESSION'), { code: 'ERR_FAILED' }))

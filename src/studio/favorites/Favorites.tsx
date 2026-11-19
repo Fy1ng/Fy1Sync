@@ -2,9 +2,10 @@ import { useState } from 'react'
 import { Sheet, Icon } from '../kit'
 import { useSession } from '../../app/SessionContext'
 import { PLATFORM_LABEL, ROLE_LABEL, useSourceLoader, type RoomPlatform } from '../sources'
-import { addSavedRoom, refreshSavedRooms, removeSavedRoom, useSavedRooms, type SavedRoom } from '../savedRooms'
+import { addSavedRoom, refreshSavedRooms, removeSavedRoom, useSavedRoomsState, type SavedRoom } from '../savedRooms'
 import type { PlatformId, SourceRole } from '../../core/types'
 import { savedRoomInput } from '../../core/savedRoomIdentity'
+import { ReadError } from '../ReadError'
 import './favorites.css'
 
 const PLATFORMS = ['douyu', 'bilibili', 'huya', 'douyin', 'twitch', 'youtube'] as const
@@ -38,7 +39,7 @@ export function RoomSummary({ room, showTimes = true }: { room: SavedRoom; showT
 }
 
 export function Favorites({ onClose }: { onClose: () => void }): React.ReactNode {
-  const rooms = useSavedRooms()
+  const { rooms, error: loadError, loading, retry } = useSavedRoomsState()
   const loader = useSourceLoader()
   const session = useSession()
   const [query, setQuery] = useState('')
@@ -98,7 +99,8 @@ export function Favorites({ onClose }: { onClose: () => void }): React.ReactNode
           <Icon name="refresh" />{working.has('all') ? '采集中' : '全部刷新'}</button>
       </div>
       {error && <p className="form-error" role="alert">{error}</p>}
-      {rooms === null ? <p role="status">正在读取收藏...</p> : !filtered.length ? <p className="favorites-empty">{rooms.length ? '没有匹配的收藏直播间.' : '还没有收藏. 未开播的直播间也可以收藏.'}</p> :
+      {loadError && <ReadError error={loadError} onRetry={retry} />}
+      {rooms === null ? (loading && <p role="status">正在读取收藏...</p>) : !filtered.length ? (!loadError && !loading && <p className="favorites-empty">{rooms.length ? '没有匹配的收藏直播间.' : '还没有收藏. 未开播的直播间也可以收藏.'}</p>) :
         <ul className="favorites-list" aria-label="收藏直播间列表">{filtered.map(room => <li key={room.id} className="favorite-card">
           <RoomSummary room={room} showTimes={false} />
           <RoomTimes room={room} />

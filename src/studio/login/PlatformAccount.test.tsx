@@ -30,6 +30,56 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 
 describe('single-platform account settings', () => {
+  it.each(['bilibili', 'huya'] as const)('does not mistake a failed %s read for logged out and allows retry', async (platform) => {
+    vi.mocked(apiClient.loginStatus).mockResolvedValueOnce({ ok: false, code: 'unavailable', message: '账号读取失败' })
+    render(<PlatformAccount platform={platform} />)
+    expect(screen.getByText('正在检查登录状态')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('账号读取失败')
+    expect(screen.getByText('登录状态读取失败')).toBeInTheDocument()
+    expect(screen.queryByText('正在检查登录状态')).toBeNull()
+    expect(screen.queryByText('未登录')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(await screen.findByText('未登录')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(apiClient.loginStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it('recovers from a rejected status read without displaying stale login status as current', async () => {
+    const view = render(<PlatformAccount platform="bilibili" />)
+    await screen.findByText('未登录')
+    view.unmount()
+    vi.mocked(apiClient.loginStatus).mockRejectedValueOnce(new Error('read failed'))
+    render(<PlatformAccount platform="bilibili" />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('暂时无法读取')
+    expect(screen.getByText('登录状态读取失败')).toBeInTheDocument()
+    expect(screen.queryByText('未登录')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(await screen.findByText('未登录')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('offers retry when the status response does not contain the requested platform', async () => {
+    vi.mocked(apiClient.loginStatus).mockResolvedValueOnce({ ok: true, value: { douyu: anonymous, youtube: anonymous } as LoginStatus })
+    render(<PlatformAccount platform="huya" />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('账号状态读取失败')
+    expect(screen.queryByText('未登录')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(await screen.findByText('未登录')).toBeInTheDocument()
+  })
+
+  it('does not turn a successful post-login refresh into a read error when the initial read finishes late', async () => {
+    let finish!: (value: ApiResult<LoginStatus>) => void
+    const initial = new Promise<ApiResult<LoginStatus>>(resolve => { finish = resolve })
+    vi.mocked(apiClient.loginStatus).mockReturnValueOnce(initial)
+    render(<PlatformAccount platform="bilibili" />)
+    fireEvent.click(screen.getByRole('button', { name: '登录' }))
+    expect(await screen.findByText('已登录')).toBeInTheDocument()
+    await act(async () => { finish({ ok: true, value: { ...status, bilibili: anonymous } }); await initial })
+    expect(screen.getByText('已登录')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByText('登录状态读取失败')).toBeNull()
+  })
+
   it.each(['bilibili', 'huya'] as const)('logs into %s and offers relogin and logout after completion', async (platform) => {
     render(<PlatformAccount platform={platform} />)
     expect(await screen.findByText('未登录')).toBeInTheDocument()

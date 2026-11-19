@@ -21,7 +21,7 @@ function pipState(patch: Partial<PipState> = {}): PipState {
   return {
     phase: 'opening',
     streamId: 'official',
-    source: { platform: 'direct', url: '/test-sources/official.mp4', kind: 'progressive', label: '测试', channel: 'x', requiresProxy: false, sourceRoom: '9999' },
+    source: { platform: 'douyu', url: '/test-sources/official.mp4', kind: 'progressive', label: '测试', channel: 'x', requiresProxy: false, sourceRoom: '9999' },
     options: { lowPower: false, recoverStalls: true, width: 480, height: 270 },
     audioOwner: 'main',
     recoveryRevision: 0,
@@ -121,6 +121,27 @@ function presentFrame(): void {
 }
 
 describe('the PiP window', () => {
+  it.each(['bilibili', 'youtube', 'twitch', 'direct'] as const)('does not subscribe to Douyu or show a send bar for %s', async platform => {
+    install(pipState({ phase: 'ready', source: { ...pipState().source!, platform, danmakuRoom: '9999' } }))
+    render(<PipPage />)
+    await flush()
+    expect(danmakuRooms).toEqual([])
+    expect(screen.queryByLabelText('发送弹幕')).toBeNull()
+    expect(invoked('activateDouyuRoom')).toHaveLength(0)
+  })
+
+  it.each([
+    { platform: 'huya' as const, room: 'huya:9999' },
+    { platform: 'douyin' as const, room: 'douyin:100' },
+  ])('uses only namespaced read-only chat for $platform', async ({ platform, room }) => {
+    install(pipState({ phase: 'ready', source: { ...pipState().source!, platform, danmakuRoom: room },
+      sendContext: { accountId: 'acc-1', room: null, canAttempt: false } }))
+    render(<PipPage />)
+    await flush()
+    expect(danmakuRooms).toEqual([room])
+    expect(screen.queryByLabelText('发送弹幕')).toBeNull()
+  })
+
   it('reports ready only once frames are presented, then a pause as not playing', async () => {
     install(pipState())
     const { container } = render(<StrictMode><PipPage /></StrictMode>)

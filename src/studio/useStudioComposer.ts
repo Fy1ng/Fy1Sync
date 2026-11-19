@@ -102,7 +102,7 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
       if (!mounted.current || version !== accountRevision.current) return
       if (!result.ok) {
         displayedAccount.current = null; setAccount(null)
-        setAccountError(displayError(result, '无法确认当前账号, 请在斗鱼账号中刷新状态.'))
+        setAccountError(displayError(result, '无法确认当前账号，请在「设置 > 账号 > 斗鱼」核对。'))
         return
       }
       if (!Array.isArray(result.value?.accounts)) throw new Error('Unavailable account snapshot', { cause: { code: 'invalid-account-snapshot' } })
@@ -121,7 +121,7 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
       if (!mounted.current || version !== accountRevision.current) return
       displayedAccount.current = null
       setAccount(null)
-      setAccountError(displayError(caught, '无法确认当前账号, 请在斗鱼账号中刷新状态.'))
+      setAccountError(displayError(caught, '无法确认当前账号，请在「设置 > 账号 > 斗鱼」核对。'))
     } finally {
       if (mounted.current && version === accountRevision.current) setLoading(false)
     }

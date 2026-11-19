@@ -5,6 +5,7 @@ import type { PlatformLoginStatus } from '../../electron/login'
 import type { DouyuAccountsSnapshot } from '../../server/douyu/types'
 import { Session } from '../app/session'
 import { SessionProvider } from '../app/SessionContext'
+import { apiClient } from '../app/apiClient'
 import { forgetAll } from '../app/remembered'
 import { SettingsSheet } from './SettingsSheet'
 import { DEFAULT_MEDIA_NETWORK } from '../../server/mediaNetworkOptions'
@@ -38,6 +39,7 @@ afterEach(() => {
   cleanup()
   for (const session of sessions.splice(0)) session.dispose()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 function mount(room: string | null = null, session?: Session): ReturnType<typeof render> & { session: Session } {
@@ -58,6 +60,63 @@ function douyuTab(name: string): HTMLElement {
 }
 
 describe('settings account navigation', () => {
+  it('lists the normal step first and updates the large and Shift step settings under their matching labels', async () => {
+    const { session } = mount()
+    const normal = screen.getByRole('radiogroup', { name: '单击步长' })
+    const fine = screen.getByRole('radiogroup', { name: '按住 Shift 步长' })
+    expect(normal.compareDocumentPosition(fine) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(within(normal).getByRole('radio', { name: `${session.settings.largeStepSeconds} 秒` })).toBeChecked()
+    expect(within(fine).getByRole('radio', { name: `${session.settings.smallStepSeconds} 秒` })).toBeChecked()
+    fireEvent.click(within(normal).getByRole('radio', { name: '10 秒' }))
+    expect(session.settings.largeStepSeconds).toBe(10)
+    await waitFor(() => expect(within(normal).getByRole('radio', { name: '10 秒' })).toBeChecked())
+    fireEvent.click(within(fine).getByRole('radio', { name: '0.25 秒' }))
+    expect(session.settings.smallStepSeconds).toBe(0.25)
+    expect(session.settings.largeStepSeconds).toBe(10)
+    expect(screen.queryByText('长按或 Shift 步长')).toBeNull()
+  })
+
+  it.each(['failure', 'rejected'] as const)('distinguishes a YouTube status %s from loading or logged out and retries in place', async (failure) => {
+    const read = vi.spyOn(apiClient, 'loginStatus')
+    if (failure === 'failure') read.mockResolvedValueOnce({ ok: false, code: 'unavailable', message: '账号读取失败' })
+    else read.mockRejectedValueOnce(new Error('read failed'))
+    mount()
+    section('账号')
+    platform('YouTube')
+    expect(screen.getByText('正在检查登录状态')).toBeInTheDocument()
+    expect(await screen.findByText('登录状态读取失败')).toBeInTheDocument()
+    expect(screen.queryByText('正在检查登录状态')).toBeNull()
+    expect(screen.queryByText('未登录')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(await screen.findByText('未登录')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByRole('button', { name: '登录' })).toBeEnabled()
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    { page: '网络', method: 'getNetworkPreferences' as const, loading: '正在读取', control: '保存取流网络设置',
+      value: { domesticRouting: 'direct', systemProxy: { type: 'direct' }, media: { ...DEFAULT_MEDIA_NETWORK } } },
+    { page: '解码', method: 'getDecoderPreferences' as const, loading: '正在读取解码设置', control: '软件解码',
+      value: { mode: 'auto', effectiveMode: 'auto', restartRequired: false, forcedByCommandLine: false } },
+  ].flatMap(item => (['failure', 'rejected'] as const).map(failure => ({ ...item, failure }))))('retries $failure $page settings reads without keeping a loading state', async ({ page, method, loading, control, value, failure }) => {
+    const read = vi.spyOn(apiClient, method)
+    if (failure === 'rejected') read.mockRejectedValueOnce(new Error('read failed'))
+    else read.mockResolvedValueOnce({ ok: false, code: 'unavailable', message: '读取失败' })
+    read.mockResolvedValueOnce({ ok: true, value } as never)
+    mount()
+    fireEvent.click(within(screen.getByRole('tablist', { name: '通用' })).getByRole('tab', { name: page }))
+    expect(screen.getByText(loading)).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('读取失败')
+    expect(screen.queryByText(loading)).toBeNull()
+    const element = screen.getByRole(page === '网络' ? 'button' : 'switch', { name: new RegExp('^' + control) })
+    expect(element).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await waitFor(() => expect(element).toBeEnabled())
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
   it('edits origin-bound headers and certificate trust without showing header values in the rule list', async () => {
     invoke.mockImplementationOnce(async () => ({ ok: true, value: { domesticRouting: 'direct', systemProxy: { type: 'direct' }, media: { ...DEFAULT_MEDIA_NETWORK } } }))
     mount()

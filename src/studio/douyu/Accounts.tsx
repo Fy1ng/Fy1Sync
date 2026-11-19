@@ -11,14 +11,17 @@ import type { DouyuAccountSummary } from '../../../server/douyu/types'
 import { LaneLine } from './DouyuDesk'
 import { accountName, accountState, type DouyuData } from './useDouyu'
 import { AccountAvatar, BrowserImportButton } from '../login/BrowserLoginImport'
+import { ReadError } from '../ReadError'
 
 export function Accounts({ data }: { data: DouyuData }): React.ReactNode {
-  const { all, accounts, loading, accountLane, accountsBusy, accountAction } = data
+  const { all, accounts, loading, accountsReadError, reloadAccounts, accountLane, accountsBusy, accountAction } = data
   const [label, setLabel] = useState('')
 
   return (
     <div className="desk-pane">
-      {!loading && all.length === 0 && <p className="desk-empty">暂无账号。填写名称并添加后即可登录。</p>}
+      {loading && <p className="muted" role="status">正在读取账号</p>}
+      {accountsReadError && <ReadError error={accountsReadError} detail={data.accountsReadDetail} onRetry={() => void reloadAccounts()} />}
+      {!loading && !accountsReadError && accounts && all.length === 0 && <p className="desk-empty">暂无账号。填写名称并添加后即可登录。</p>}
       <ul className="account-list" aria-label="斗鱼账号">
         {all.map((account) => (
           <AccountRow key={account.id} account={account} active={account.id === accounts?.activeAccountId}

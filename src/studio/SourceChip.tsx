@@ -14,8 +14,9 @@ import { bufferStatusText } from '../ui/bufferStatus'
 import { Icon, Popover, Segmented, usePopover } from './kit'
 import { douyinDanmakuRoom, LoginOffer, PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform, SOURCE_HINT } from './sources'
 import { isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
-import { canSave, removeSavedRoom, saveRoom, savedFor, useSavedRooms, type SavedRoom } from './savedRooms'
+import { canSave, removeSavedRoom, saveRoom, savedFor, useSavedRooms, useSavedRoomsState, type SavedRoom } from './savedRooms'
 import { RoomSummary } from './favorites/Favorites'
+import { ReadError } from './ReadError'
 
 export function SourceChip({ role, onSchedule, onShowPreview = null }: {
   role: SourceRole
@@ -65,9 +66,15 @@ function SourcePanel({ role, onDone, onSchedule }: {
   const load = loader.state[role]
   const [input, setInput] = useState(state.descriptor?.input ?? '')
   const [chatRetrying, setChatRetrying] = useState(false)
+  const [failedFile, setFailedFile] = useState<File | null>(null)
   const [roomPlatform, setRoomPlatform] = useState<RoomPlatform>(state.descriptor?.platform === 'douyin' ? 'douyin' : state.descriptor?.platform === 'huya' ? 'huya' : state.descriptor?.platform === 'bilibili' ? 'bilibili' : 'douyu')
   const bareRoom = parseRoomInput(input)?.platform === null
   const buffer = snapshot.buffers[role]
+  const manualChat = session.hasManualDanmakuRoom()
+  const douyinChat = state.descriptor?.platform === 'douyin' && !manualChat
+  const loadFile = (file: File): void => {
+    void loader.loadFile(role, file).then(ok => { if (ok) onDone(); else setFailedFile(file) })
+  }
 
   return (
     <div className="source-panel">
@@ -82,7 +89,10 @@ function SourcePanel({ role, onDone, onSchedule }: {
         </button>
       </form>
       <SavedList role={role} onPick={(room) => {
-        void loader.loadInput(role, room.input, room.platform === 'douyu' || room.platform === 'bilibili' || room.platform === 'huya' || room.platform === 'douyin' ? room.platform : undefined)
+        const platform = room.platform === 'douyu' || room.platform === 'bilibili' || room.platform === 'huya' || room.platform === 'douyin' ? room.platform : undefined
+        setInput(room.input)
+        if (platform) setRoomPlatform(platform)
+        void loader.loadInput(role, room.input, platform)
           .then((ok) => { if (ok) onDone() })
       }} />
       {role === 'official' && onSchedule && (
@@ -106,21 +116,20 @@ function SourcePanel({ role, onDone, onSchedule }: {
         ? <ErrorText error={buffer.failure ?? { reason: buffer.reason, message: bufferStatusText(buffer) }} message={bufferStatusText(buffer)} /> : bufferStatusText(buffer)}</p>}
       <PlaybackDiagnosticsPanel role={role} />
 
-      {role === 'commentary' && state.descriptor?.platform === 'douyin' && <div>
+      {role === 'commentary' && douyinChat && state.descriptor && <div>
         <p className="muted" role="status">抖音弹幕: {snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
           : snapshot.danmaku.error ? <ErrorText error={snapshot.danmaku.errorDetail ?? { message: snapshot.danmaku.error }} message={snapshot.danmaku.error} /> : (snapshot.danmaku.room ? `正在连接房间 ${loader.roomName}` : '未连接')}</p>
         <button type="button" className="btn-quiet small" disabled={chatRetrying || !douyinDanmakuRoom(state.descriptor)} onClick={() => {
           const roomKey = douyinDanmakuRoom(state.descriptor!)
           if (!roomKey) return
-          if (snapshot.danmaku.room !== roomKey) { loader.connectRoom(roomKey, roomKey.slice('douyin:'.length)); return }
+          if (snapshot.danmaku.room !== roomKey) { loader.connectRoom(roomKey, roomKey.slice('douyin:'.length), true); return }
           setChatRetrying(true)
           void apiClient.reconnectDanmaku(roomKey).then(result => {
             if (!result.ok) session.notice('warn', result.message, result)
           }).catch((error) => session.notice('warn', '抖音弹幕重连失败, 请稍后重试', error)).finally(() => setChatRetrying(false))
         }}>重连抖音弹幕</button>
-        <p className="muted">需要登录时, 请在设置 - 通用 - 抖音中登录, 然后重连弹幕.</p>
       </div>}
-      {role === 'commentary' && state.descriptor?.platform !== 'douyin' && (state.descriptor?.platform === 'huya' || isReadOnlyDanmakuRoom(snapshot.danmaku.room)
+      {role === 'commentary' && !douyinChat && (!manualChat && (state.descriptor?.platform === 'huya' || isReadOnlyDanmakuRoom(snapshot.danmaku.room))
         ? <p className="muted" role="status">{snapshot.danmaku.room?.startsWith('douyin:') ? '抖音' : '虎牙'}弹幕: {snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
           : snapshot.danmaku.room ? snapshot.danmaku.error ? <ErrorText error={snapshot.danmaku.errorDetail ?? { message: snapshot.danmaku.error }} message={snapshot.danmaku.error} /> : `正在连接房间 ${loader.roomName}` : '未连接'}</p>
         : <DanmakuRoom />)}
@@ -129,9 +138,13 @@ function SourcePanel({ role, onDone, onSchedule }: {
           <Icon name="file" /> 本地文件
           <input type="file" accept="video/*" disabled={load.busy} onChange={(event) => {
             const file = event.target.files?.[0]
-            if (file) void loader.loadFile(role, file).then(onDone)
+            event.target.value = ''
+            if (file) loadFile(file)
           }} />
         </label>
+        {failedFile && <button type="button" className="btn-quiet small" disabled={load.busy} onClick={() => loadFile(failedFile)}>
+          重试载入 {failedFile.name}
+        </button>}
         <SaveButton role={role} />
         {state.status !== 'empty' && (
           <button type="button" className="btn-quiet small is-danger" onClick={() => { session.unloadSource(role); onDone() }}>
@@ -226,9 +239,12 @@ function SaveButton({ role }: { role: SourceRole }): React.ReactNode {
 function SavedList({ role, onPick }: { role: SourceRole; onPick: (room: SavedRoom) => void }): React.ReactNode {
   const snapshot = useSessionSnapshot()
   const loader = useSourceLoader()
-  const rooms = (useSavedRooms() ?? []).filter((room) => room.role === role)
+  const saved = useSavedRoomsState()
+  if (saved.error) return <ReadError error={saved.error} onRetry={saved.retry} />
+  if (saved.rooms === null) return <p className="muted" role="status">正在读取收藏</p>
+  const rooms = saved.rooms.filter((room) => room.role === role)
   if (rooms.length === 0) return null
-  const current = snapshot.media[role].descriptor
+  const current = snapshot.media[role].status === 'ready' ? snapshot.media[role].descriptor : null
   return (
     <div className="saved" role="group" aria-label="收藏的直播间">
       <span className="muted">收藏</span>

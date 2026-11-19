@@ -148,7 +148,8 @@ export class Session {
   private playingValue = false
   private playbackIntentRevision = 0
   /** The danmaku room `suspend` disconnected, for `boot` to reconnect. */
-  private parkedDanmakuRoom: string | null = null
+  private danmakuFollowsCommentary = false
+  private parkedDanmakuRoom: { room: string; followsCommentary: boolean } | null = null
   private readonly pictureTimers = new Set<ReturnType<typeof setTimeout>>()
   private noticeSeq = 0
   private noticeList: Notice[] = []
@@ -573,7 +574,7 @@ export class Session {
     if (this.settingsValue.autoSyncEnabled) this.startScheduler()
     const parked = this.parkedDanmakuRoom
     this.parkedDanmakuRoom = null
-    if (parked && !this.danmakuState.room) this.connectDanmaku(parked)
+    if (parked && !this.danmakuState.room) this.connectDanmaku(parked.room, parked.followsCommentary)
     // A renderer remount can pause its media elements while the session still means to play.
     if (this.playingValue && SOURCE_ROLES.some((role) => this.engine.getState()[role].status === 'ready')) void this.setPlaying(true)
   }
@@ -704,7 +705,8 @@ export class Session {
       if (state.status === 'empty' || state.status === 'error' || state.firstFrame) return
       // Waiting for the user to press play is not a broken picture.
       if (state.paused && !this.playingValue) return
-      this.notice('warn', `${roleName(role)}已载入但没有画面，可在片源面板换一个画质或重新载入`)
+      const qualities = state.descriptor?.sourceQualities?.length || state.quality.length
+      this.notice('warn', `${roleName(role)}已载入但没有画面。${qualities > 1 ? '可在底栏切换清晰度，或在片源面板重新载入。' : '可在片源面板重新载入。'}`)
     }, PICTURE_TIMEOUT_MS)
     this.pictureTimers.add(timer)
     setTimeout(() => this.pictureTimers.delete(timer), PICTURE_TIMEOUT_MS + 1)
@@ -715,7 +717,7 @@ export class Session {
     this.invalidateAutomaticWork(role)
     ++this.sourceGeneration[role]
     this.changingSources.delete(role)
-    if (role === 'commentary') this.disconnectDanmaku()
+    if (role === 'commentary') this.disconnectCommentaryDanmaku()
     void apiClient.stopBuffer(role)
     this.bufferStates = { ...this.bufferStates, [role]: null }
     this.engine.unload(role)
@@ -762,23 +764,25 @@ export class Session {
         this.notice('warn', '画质切换后播放失败, 请重新加载片源')
         return
       }
+      const hasBothSources = SOURCE_ROLES.every(item => this.engine.getState()[item].status !== 'empty')
       if (wasPlaying) {
         try { await this.engine.element(role).play() }
-        catch { this.notice('warn', '画质已切换, 请恢复播放后点击立即同步'); return }
+        catch { this.notice('warn', hasBothSources ? '画质已切换，请恢复两路播放后点击「自动对齐」。' : '画质已切换，请恢复播放。'); return }
       }
       releaseBusy()
+      if (!hasBothSources) { this.notice('info', '画质已切换。'); return }
       const available = await this.waitForQualityFrames(role, loadedGeneration)
       if (this.disposed || loadedGeneration !== this.sourceGeneration[role]) return
       if (!available) {
-        this.notice('info', '画质已切换, 两路画面和缓冲就绪后请点击立即同步')
+        this.notice('info', '画质已切换，两路画面和缓冲就绪后请点击「自动对齐」。')
         return
       }
       if (SOURCE_ROLES.some((item) => this.engine.element(item).paused)) {
-        this.notice('info', '画质已切换, 请恢复两路播放后点击立即同步')
+        this.notice('info', '画质已切换，请恢复两路播放后点击「自动对齐」。')
         return
       }
       const result = await this.executeSync(false)
-      if (!result.applied) this.notice('warn', '画质已切换, 自动同步未完成, 请点击立即同步')
+      if (!result.applied) this.notice('warn', '画质已切换，未能自动对齐，请点击「自动对齐」。')
     } finally {
       releaseBusy()
     }
@@ -1318,8 +1322,9 @@ export class Session {
    * Subscribe through main's shared room relay. Messages are scheduled against
    * commentary media time so rewinding commentary also delays its danmaku.
    */
-  connectDanmaku(room: string): void {
+  connectDanmaku(room: string, followsCommentary = false): void {
     this.disconnectDanmaku()
+    this.danmakuFollowsCommentary = followsCommentary
     const generation = this.danmakuGeneration
     this.danmakuState = { ...this.danmakuState, room, error: null }
     try {
@@ -1343,7 +1348,16 @@ export class Session {
     this.notify()
   }
 
+  disconnectCommentaryDanmaku(): void {
+    if (this.danmakuFollowsCommentary || this.parkedDanmakuRoom?.followsCommentary) this.disconnectDanmaku()
+  }
+
+  hasManualDanmakuRoom(): boolean {
+    return this.danmakuState.room !== null ? !this.danmakuFollowsCommentary : this.parkedDanmakuRoom?.followsCommentary === false
+  }
+
   disconnectDanmaku(): void {
+    this.danmakuFollowsCommentary = false
     this.parkedDanmakuRoom = null
     this.danmakuGeneration += 1
     this.unsubscribeDanmaku?.()
@@ -1534,7 +1548,9 @@ export class Session {
   suspend(): void {
     this.stopPlaybackObservation()
     // Remembered so the next boot reconnects it: the room is part of what was loaded.
-    const parkedDanmakuRoom = this.danmakuState.room ?? this.parkedDanmakuRoom
+    const parkedDanmakuRoom = this.danmakuState.room
+      ? { room: this.danmakuState.room, followsCommentary: this.danmakuFollowsCommentary }
+      : this.parkedDanmakuRoom
     ++this.autoRequestRevision
     this.stopScheduler()
     // `false`: leaving the page is not the manual intervention that revokes auto-apply,

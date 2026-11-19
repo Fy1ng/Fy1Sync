@@ -11,6 +11,53 @@ function fixture() {
   return { data, service, write, scan: () => service.scan({ requestId: id, profileId: 'e'.repeat(32), platforms: ['douyu', 'bilibili', 'huya', 'douyin', 'youtube'] }) }
 }
 describe('browser login import transactions', () => {
+  it('returns one cancelled outcome per selection when cancelled before the first write', async () => {
+    const context = fixture()
+    const preview = await context.scan()
+    const pending = context.service.apply({ previewId: id, accountIds: preview.accounts.map(account => account.id) })
+    context.service.cancel(id)
+    const result = await pending
+    expect(result.outcomes).toHaveLength(5)
+    expect(result.outcomes.every(outcome => !outcome.imported && outcome.message === '已取消，未导入。')).toBe(true)
+    expect(context.write).not.toHaveBeenCalled()
+    context.service.dispose()
+  })
+
+  it('retains a completed write and stops every remaining item on cancellation', async () => {
+    const context = fixture()
+    const preview = await context.scan()
+    context.write.mockImplementationOnce(async () => { context.service.cancel(id); return { accountId: 'default' } })
+    const result = await context.service.apply({ previewId: id, accountIds: preview.accounts.map(account => account.id) })
+    expect(result.outcomes[0]).toMatchObject({ platform: 'douyu', imported: true, accountId: 'default' })
+    expect(result.outcomes.slice(1)).toHaveLength(4)
+    expect(result.outcomes.slice(1).every(outcome => !outcome.imported && outcome.message === '已取消，未导入。')).toBe(true)
+    expect(context.write).toHaveBeenCalledOnce()
+    context.service.dispose()
+  })
+
+  it('keeps in-flight cookie values until a write settles and reports its committed result', async () => {
+    const context = fixture()
+    let finish!: () => void
+    let captured: import('./cookies').BrowserCookie[] = []
+    const write: import('./browserLoginImport').BrowserLoginImportOptions['write'] = vi.fn(async (_platform, cookies) => {
+      captured = cookies
+      await new Promise<void>(resolve => { finish = resolve })
+      return { accountId: 'default' }
+    })
+    const service = new BrowserLoginImport({ supported: true, discover: context.data.discover, read: context.data.read, verify: context.data.verify, write })
+    const preview = await service.scan({ requestId: id, profileId: 'e'.repeat(32), platforms: ['douyu', 'youtube'] })
+    const pending = service.apply({ previewId: id, accountIds: preview.accounts.map(account => account.id) })
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+    service.cancel(id)
+    expect(captured.every(cookie => cookie.value.length > 0)).toBe(true)
+    finish()
+    const result = await pending
+    expect(result.outcomes).toMatchObject([{ platform: 'douyu', imported: true }, { platform: 'youtube', imported: false, message: '已取消，未导入。' }])
+    expect(captured.every(cookie => cookie.value === '')).toBe(true)
+    expect(write).toHaveBeenCalledOnce()
+    service.dispose(); context.service.dispose()
+  })
+
   it('returns only account previews and writes only selected, reverified accounts once', async () => {
     const f = fixture()
     const preview = await f.scan()

@@ -34,6 +34,44 @@ afterEach(() => { cleanup(); resetSavedRooms(); vi.unstubAllGlobals() })
 const publish = () => act(() => { for (const listener of listeners) listener({ topic: 'saved-rooms', data: { rooms: structuredClone(rooms) } }) })
 
 describe('favorite rooms panel', () => {
+  it.each(['failure', 'rejected', 'invalid'] as const)('keeps a %s list read separate from loading and empty, then retries', async (failure) => {
+    if (failure === 'rejected') invoke.mockRejectedValueOnce(new Error('read failed'))
+    else invoke.mockResolvedValueOnce((failure === 'failure'
+      ? { ok: false, code: 'unavailable', message: '收藏读取失败' }
+      : { ok: true, value: null }) as never)
+    const view = render(<Favorites onClose={() => {}} />)
+    expect(screen.getByText('正在读取收藏...')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent(failure === 'rejected' ? '无法连接应用主进程' : '收藏读取失败')
+    expect(screen.queryByText('正在读取收藏...')).toBeNull()
+    expect(screen.queryByText(/还没有收藏/)).toBeNull()
+    view.unmount()
+    render(<Favorites onClose={() => {}} />)
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(await screen.findByText('测试主播')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(invoke.mock.calls.filter(([method]) => method === 'listSavedRooms')).toHaveLength(2)
+  })
+
+  it('shows the empty state only after a successful empty list read', async () => {
+    rooms = []
+    render(<Favorites onClose={() => {}} />)
+    expect(screen.queryByText(/还没有收藏/)).toBeNull()
+    expect(await screen.findByText(/还没有收藏/)).toBeInTheDocument()
+    expect(screen.queryByText('正在读取收藏...')).toBeNull()
+    expect(screen.queryByRole('button', { name: '重试' })).toBeNull()
+  })
+
+  it('does not replace a pushed list with a failed older list read', async () => {
+    let finish!: (value: { ok: false; code: string; message: string }) => void
+    invoke.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    render(<Favorites onClose={() => {}} />)
+    publish()
+    await act(async () => finish({ ok: false, code: 'unavailable', message: '旧读取失败' }))
+    expect(screen.getByText('测试主播')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('keeps receiving background updates while the panel is closed', async () => {
     const view = render(<Favorites onClose={() => {}} />)
     await screen.findByText('测试主播')

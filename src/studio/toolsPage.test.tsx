@@ -7,6 +7,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StreamSyncerBridge } from '../../electron/contracts'
 import { Tools } from './SettingsSheet'
+import { forgetAll } from '../app/remembered'
 
 const { exportPlaybackDiagnostics } = vi.hoisted(() => ({ exportPlaybackDiagnostics: vi.fn() }))
 vi.mock('../app/SessionContext', () => ({ useSession: () => ({ exportPlaybackDiagnostics }) }))
@@ -26,9 +27,12 @@ function stub(source: 'bundled' | 'external' | 'PATH') {
   return invoke
 }
 
-beforeEach(() => exportPlaybackDiagnostics.mockReset().mockReturnValue({
-  version: 1, official: { samples: [], lastStall: null }, commentary: { samples: [], lastStall: null },
-}))
+beforeEach(() => {
+  forgetAll()
+  exportPlaybackDiagnostics.mockReset().mockReturnValue({
+    version: 1, official: { samples: [], lastStall: null }, commentary: { samples: [], lastStall: null },
+  })
+})
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 function download() {
@@ -41,6 +45,35 @@ function download() {
 }
 
 describe('取流工具', () => {
+  it.each(['failure', 'rejected', 'invalid'] as const)('offers retry for a %s status read without a loading or empty state', async (failure) => {
+    const invoke = stub('bundled')
+    if (failure === 'rejected') invoke.mockRejectedValueOnce(new Error('read failed'))
+    else invoke.mockResolvedValueOnce(failure === 'failure'
+      ? { ok: false, code: 'unavailable', message: '工具状态读取失败' }
+      : { ok: true, value: {} })
+    render(<Tools />)
+    expect(screen.getByText('正在读取取流工具状态')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent(failure === 'rejected' ? '无法连接应用主进程' : '读取失败')
+    expect(screen.queryByText('正在读取取流工具状态')).toBeNull()
+    expect(screen.queryByText('暂无取流工具')).toBeNull()
+    expect(screen.getByRole('button', { name: '更新 yt-dlp' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(await screen.findByText('8.1.3', { exact: false })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '更新 yt-dlp' })).toBeEnabled()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(invoke.mock.calls.filter(([method]) => method === 'getToolsStatus')).toHaveLength(2)
+  })
+
+  it('shows an empty status only after a successful empty tools read', async () => {
+    const invoke = stub('bundled')
+    invoke.mockResolvedValueOnce({ ok: true, value: { ...tools(), tools: [] } })
+    render(<Tools />)
+    expect(screen.queryByText('暂无取流工具')).toBeNull()
+    expect(await screen.findByText('暂无取流工具')).toBeInTheDocument()
+    expect(screen.queryByText('正在读取取流工具状态')).toBeNull()
+    expect(screen.queryByRole('button', { name: '重试' })).toBeNull()
+  })
+
   it('says nothing extra for the bundled ffmpeg', async () => {
     stub('bundled')
     render(<Tools />)

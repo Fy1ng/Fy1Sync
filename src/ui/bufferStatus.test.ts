@@ -4,7 +4,7 @@ import { bufferStatusText } from './bufferStatus'
 describe('bufferStatusText', () => {
   it('names the broken step instead of a generic failure', () => {
     expect(bufferStatusText({ role: 'official', state: 'failed', seconds: 0, failure: { stage: 'proxy', code: 'proxy-unreachable', message: 'x' } }))
-      .toBe('本地缓冲失败: 连不上代理, 请确认代理软件已开启, 可在 设置 › 网络 查看系统代理')
+      .toBe('本地缓冲失败: 连不上代理，请确认代理软件已开启。可在「设置 > 通用 > 网络」查看系统代理')
     expect(bufferStatusText({ role: 'official', state: 'failed', seconds: 0, failure: { stage: 'http', code: 'http-403', message: 'x', status: 403 } }))
       .toBe('本地缓冲失败: 直播服务器拒绝了请求 (HTTP 403)')
   })
@@ -16,6 +16,6 @@ describe('bufferStatusText', () => {
   })
 
   it('keeps the old reason text when main sends no stage', () => {
-    expect(bufferStatusText({ role: 'official', state: 'failed', seconds: 0, reason: 'tool-missing' })).toBe('本地缓冲失败: 未找到 ffmpeg, 请配置工具路径')
+    expect(bufferStatusText({ role: 'official', state: 'failed', seconds: 0, reason: 'tool-missing' })).toBe('本地缓冲失败: 未找到 ffmpeg，请检查应用安装是否完整')
   })
 })

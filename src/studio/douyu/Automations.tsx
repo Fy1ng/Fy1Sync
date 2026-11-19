@@ -21,6 +21,7 @@ import {
 import { useAutomations } from './automationState'
 import { LaneLine } from './DouyuDesk'
 import type { DouyuData } from './useDouyu'
+import { ReadError } from '../ReadError'
 import './automations.css'
 
 const POLICY: Record<DouyuTaskPolicy, string> = {
@@ -62,7 +63,7 @@ function optionText(task: AutomationView): string[] {
 }
 
 export function Automations({ data }: { data: DouyuData }): React.ReactNode {
-  const { snapshot, lane, loading, act } = useAutomations()
+  const { snapshot, lane, loading, readError, readDetail, reload, act } = useAutomations()
   const [creating, setCreating] = useState(false)
   const tasks = snapshot?.tasks ?? []
 
@@ -71,9 +72,12 @@ export function Automations({ data }: { data: DouyuData }): React.ReactNode {
       {creating
         ? <NewAutomation data={data} act={act} locked={!!lane.pending} onDone={() => setCreating(false)} />
         : <button type="button" className="btn-solid new-task" disabled={data.all.length === 0} onClick={() => setCreating(true)}>新建批量任务</button>}
-      {data.all.length === 0 && !data.loading && <p className="muted">请先在「账号」中添加斗鱼账号。</p>}
+      {data.accountsReadError && <ReadError error={data.accountsReadError} detail={data.accountsReadDetail} onRetry={() => void data.reloadAccounts()} />}
+      {data.all.length === 0 && !data.loading && !data.accountsReadError && <p className="muted">请先在「账号」中添加斗鱼账号。</p>}
+      {loading && <p className="muted" role="status">正在读取批量任务</p>}
+      {readError && <ReadError error={readError} detail={readDetail} onRetry={() => void reload()} />}
 
-      {!loading && tasks.length === 0 && !creating && (
+      {!loading && !readError && snapshot && tasks.length === 0 && !creating && (
         <p className="desk-empty">暂无批量任务。新建的任务默认暂停，点击「启动」后运行。</p>
       )}
 

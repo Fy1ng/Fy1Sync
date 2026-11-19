@@ -57,6 +57,9 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
   const live = useRef(true)
   const pending = useRef(false)
   const previewRef = useRef<BrowserImportPreview | null>(null)
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  const cancelling = useRef(false)
+  const [stopRequested, setStopRequested] = useState(false)
 
   const load = async (): Promise<void> => {
     if (pending.current) return
@@ -100,7 +103,7 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
   }
   const apply = async (): Promise<void> => {
     if (pending.current || !preview || !selected.length) return
-    pending.current = true; setPhase('importing'); setError('')
+    pending.current = true; cancelling.current = false; setStopRequested(false); setPhase('importing'); setError('')
     const target: DouyuImportTarget = douyuTarget === 'auto' ? { kind: 'auto' } : douyuTarget === 'new' ? { kind: 'new' }
       : { kind: 'existing', accountId: douyuTarget }
     try {
@@ -113,13 +116,30 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
       await refreshAccounts()
     } finally { pending.current = false }
   }
+  const close = (): void => {
+    if (phase !== 'importing') { onClose(); return }
+    if (cancelling.current) return
+    cancelling.current = true; setStopRequested(true); setError('')
+    void apiClient.cancelBrowserImport(previewRef.current?.id ?? request.id).then(result => {
+      if (live.current && !result.ok) { setError(result.message); cancelling.current = false; setStopRequested(false) }
+    }).catch(() => {
+      if (live.current) { setError('停止导入失败，请重试。'); cancelling.current = false; setStopRequested(false) }
+    })
+  }
+  useEffect(() => {
+    if (phase !== 'importing') return
+    const dialog = contentRef.current?.closest('dialog')
+    const cancel = (event: Event): void => { event.preventDefault(); close() }
+    dialog?.addEventListener('cancel', cancel)
+    return () => dialog?.removeEventListener('cancel', cancel)
+  }, [phase])
   const busy = phase === 'loading' || phase === 'scanning' || phase === 'importing'
   const choices = profiles.filter(profile => profile.browserName === browserName)
   const hasDouyu = preview?.accounts.some(account => account.platform === 'douyu' && selected.includes(account.id))
   const title = request.platform ? `从浏览器导入${IMPORT_PLATFORM_NAMES[request.platform]}登录态` : '批量导入登录态'
 
-  return <Sheet title={title} onClose={onClose}>
-    <div className="browser-import-dialog">
+  return <Sheet title={title} onClose={close}>
+    <div className="browser-import-dialog" ref={contentRef}>
       <p className="muted">选择已登录的浏览器和 Profile, 识别账号后导入到 Fy1Sync.</p>
       <div className="browser-import-selectors">
         <label>浏览器<select className="text-input" aria-label="浏览器" value={browserName} disabled={busy || !profiles.length}
@@ -156,18 +176,17 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
         {phase !== 'result' && <p className="muted">只导入勾选的账号. 其他平台会更新当前账号, 未通过验证的登录态不会保存.</p>}
       </>}
       {error && <p className="form-error" role="alert">{error}</p>}
-      {phase === 'importing' && <p role="status">正在导入所选登录态...</p>}
+      {phase === 'importing' && <p role="status">{stopRequested ? '正在停止剩余项，已导入项会保留在结果中。' : '正在导入所选登录态...'}</p>}
       {phase === 'result' && <div className="browser-import-results" role="status">
         {outcomes.map(outcome => <p key={outcome.platform} className={outcome.imported ? '' : 'form-error'}>
           <b>{IMPORT_PLATFORM_NAMES[outcome.platform]}</b>: {outcome.message}
         </p>)}
       </div>}
-      <div className="browser-import-footer">
-        <button type="button" className="btn-quiet small" onClick={onClose}>{phase === 'result' ? '关闭' : '取消'}</button>
-        {phase === 'result' ? <button type="button" className="btn-solid small" onClick={onClose}>完成</button>
-          : <button type="button" className="btn-solid small" disabled={busy || !preview || !selected.length || phase !== 'preview'}
-            onClick={() => void apply()}>{request.platform ? '导入登录态' : `导入所选登录态 (${selected.length})`}</button>}
-      </div>
+      {phase !== 'result' && <div className="browser-import-footer">
+        <button type="button" className="btn-quiet small" onClick={close} disabled={stopRequested}>取消</button>
+        <button type="button" className="btn-solid small" disabled={busy || !preview || !selected.length || phase !== 'preview'}
+          onClick={() => void apply()}>{request.platform ? '导入登录态' : `导入所选登录态 (${selected.length})`}</button>
+      </div>}
     </div>
   </Sheet>
 }
