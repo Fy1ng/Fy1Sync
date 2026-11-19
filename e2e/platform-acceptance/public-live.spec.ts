@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { launchApplication } from '../electron'
-import { loadSource, openPlayer, openSettingsSection, revealOverlay, setPlaying } from '../helpers'
+import { openPlayer, openSettingsSection, openSourcePanel, revealOverlay, setPlaying } from '../helpers'
 
 const platforms = [
   { name: '斗鱼', variable: 'STREAM_SYNC_DOUYU_LIVE_URL', role: 'commentary' },
@@ -10,6 +10,20 @@ const platforms = [
   { name: 'YouTube', variable: 'STREAM_SYNC_YOUTUBE_LIVE_URL', role: 'official' },
   { name: 'Twitch', variable: 'STREAM_SYNC_TWITCH_LIVE_URL', role: 'official' },
 ] as const
+
+async function loadPublicSource(page: Page, role: 'official' | 'commentary', url: string): Promise<void> {
+  const panel = await openSourcePanel(page, role)
+  await panel.getByRole('textbox', { name: role === 'official' ? '画面链接' : '解说链接', exact: true }).fill(url)
+  await panel.getByRole('button', { name: '载入', exact: true }).click()
+  const failure = panel.locator('.form-error[role="alert"]').first()
+  await expect.poll(async () => !(await panel.isVisible()) || await failure.isVisible(), {
+    timeout: 90_000, message: '应完成取流或显示片源载入错误',
+  }).toBe(true)
+  if (await failure.isVisible()) {
+    const message = (await failure.innerText()).replace(/https?:\/\/\S+/g, '[链接]').trim().slice(0, 250)
+    throw new Error(`片源载入失败: ${message}`)
+  }
+}
 
 async function expectPlayback(page: Page, role: 'official' | 'commentary'): Promise<void> {
   const video = page.locator(`video.media-element[data-role="${role}"]`)
@@ -64,7 +78,7 @@ test.describe('匿名平台直播 UI', () => {
       try {
         await openPlayer(app.page)
         await test.step('从可见片源入口载入, 确认播放后暂停', async () => {
-          await loadSource(app.page, role, url, 90_000)
+          await loadPublicSource(app.page, role, url)
           await setPlaying(app.page, true)
           await expectPlayback(app.page, role)
           await setPlaying(app.page, false)
@@ -91,8 +105,8 @@ test.describe('匿名平台直播 UI', () => {
       const app = await launchApplication(`p07-public-${pair.name}`, { liveNetwork: true })
       try {
         await openPlayer(app.page)
-        await loadSource(app.page, 'official', official, 90_000)
-        await loadSource(app.page, 'commentary', commentary, 90_000)
+        await loadPublicSource(app.page, 'official', official)
+        await loadPublicSource(app.page, 'commentary', commentary)
         await setPlaying(app.page, true)
         await Promise.all([expectPlayback(app.page, 'official'), expectPlayback(app.page, 'commentary')])
         await setPlaying(app.page, false)
