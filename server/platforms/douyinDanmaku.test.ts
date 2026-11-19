@@ -44,6 +44,20 @@ describe('main-only Douyin chat session resolver', () => {
     expect(vi.mocked(context.fetchPage!).mock.calls[1]![0]).toBe('https://ttwid.bytedance.com/ttwid/union/register/')
     expect(vi.mocked(context.fetchPage!).mock.calls[1]![1]).toMatchObject({ method: 'POST' })
   })
+  it('uses the official page owner ID as the current anchor when it is lossless', async () => {
+    const anchorId = '9000000000000000003'
+    const target = `\\"status\\":2,\\"owner\\":{\\"id_str\\":\\"${anchorId}\\"}`
+    const fetchPage = async (url: string) => ({ text: syntheticDouyinPage().replace('\\"status\\":2', target),
+      finalUrl: url, setCookie: ['ttwid=synthetic-anonymous; Path=/; Secure'] })
+    const result = await resolveDouyinDanmakuRoom(ids.webRoom, deps({ fetchPage }))
+    expect(result).toMatchObject({ roomId: ids.roomId, anchorId })
+    expect(result.userUniqueId).not.toBe(anchorId)
+    const invalid = async (url: string) => {
+      const page = await fetchPage(url)
+      return { ...page, text: page.text.replace(anchorId, '18446744073709551616') }
+    }
+    expect((await resolveDouyinDanmakuRoom(ids.webRoom, deps({ fetchPage: invalid }))).anchorId).toBeUndefined()
+  })
   it('rejects invalid rooms, conflicting page identities, offsite redirects and empty IM responses', async () => {
     await expect(resolveDouyinDanmakuRoom('100\r\nCookie:x', deps())).rejects.toThrow()
     await expect(resolveDouyinDanmakuRoom('100', deps({ cookieHeader: async () => 'x\r\nInjected:1' }))).rejects.toThrow()

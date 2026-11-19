@@ -1,8 +1,11 @@
 /** Receive-only Douyin client. Main injects the policy-checked header-capable socket factory. */
 import { douyinWebSocketRequest, type DouyinDanmakuRoom } from '../platforms/douyinDanmaku'
-import { decodeDouyinFrame, encodeDouyinHeartbeat, MAX_DOUYIN_FRAME } from './douyinProtocol'
+import { decodeDouyinFrame, encodeDouyinHeartbeat, MAX_DOUYIN_FRAME, type DouyinChatMessage } from './douyinProtocol'
 import { DouyinSigner } from './douyinSigner'
 import type { DanmakuClientEvents, DanmakuState, WebSocketLike } from './types'
+import type { DouyinLotterySnapshot } from '../../src/core/douyinLottery'
+
+export type DouyinLotteryRead = (metadata: DouyinDanmakuRoom, signal: AbortSignal) => Promise<DouyinLotterySnapshot>
 
 export interface DouyinDanmakuClientDeps {
   resolveRoom: (webRoom: string) => Promise<DouyinDanmakuRoom>
@@ -11,11 +14,16 @@ export interface DouyinDanmakuClientDeps {
   setTimer?: (fn: () => void, ms: number) => unknown
   clearTimer?: (handle: unknown) => void
 }
+export type DouyinDanmakuClientEvents = Omit<DanmakuClientEvents, 'onMessage' | 'onObservedMessage'> & {
+  onMessage: (message: DouyinChatMessage) => void
+  onObservedMessage?: (message: DouyinChatMessage) => void
+}
 export interface DouyinDanmakuDiagnostics { frames: number; malformedFrames: number; chats: number; unknownMessages: number; acknowledgements: number }
 
 export class DouyinDanmakuClient {
   private socket: WebSocketLike | null = null
   private metadata: DouyinDanmakuRoom | null = null
+  private lotteryScope: AbortController | null = null
   private generation = 0
   private resolving = false
   private closedByUser = false
@@ -34,7 +42,7 @@ export class DouyinDanmakuClient {
   private readonly setTimer: (fn: () => void, ms: number) => unknown
   private readonly clearTimer: (handle: unknown) => void
 
-  constructor(readonly room: string, private readonly events: DanmakuClientEvents, private readonly deps: DouyinDanmakuClientDeps) {
+  constructor(readonly room: string, private readonly events: DouyinDanmakuClientEvents, private readonly deps: DouyinDanmakuClientDeps) {
     if (!/^[1-9]\d{0,19}$/.test(room)) throw new Error('无效的抖音弹幕房间.')
     this.now = deps.now ?? Date.now
     this.setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
@@ -42,6 +50,21 @@ export class DouyinDanmakuClient {
   }
   get state(): DanmakuState { return this.stateValue }
   get diagnostics(): Readonly<DouyinDanmakuDiagnostics> { return { ...this.stats } }
+
+  async readLottery(read: DouyinLotteryRead, parent?: AbortSignal): Promise<DouyinLotterySnapshot | null> {
+    const metadata = this.metadata
+    if (this.stateValue !== 'connected' || !metadata || parent?.aborted) return null
+    const scope = this.lotteryScope ??= new AbortController()
+    const signal = parent ? AbortSignal.any([parent, scope.signal]) : scope.signal
+    try {
+      const snapshot = await read(metadata, signal)
+      if (signal.aborted || snapshot.room !== `douyin:${metadata.webRoom}` || snapshot.roomId !== metadata.roomId) return null
+      return snapshot
+    } catch (error) {
+      if (signal.aborted) return null
+      throw error
+    }
+  }
 
   connect(): void {
     if (this.socket || this.resolving) return
@@ -83,7 +106,7 @@ export class DouyinDanmakuClient {
     this.add('frames')
     const bytes = douyinBinaryFrame(raw)
     if (!bytes || bytes.length > MAX_DOUYIN_FRAME) { this.add('malformedFrames'); return }
-    const result = decodeDouyinFrame(bytes, this.room, metadata.roomId, this.now())
+    const result = decodeDouyinFrame(bytes, this.room, metadata.roomId, this.now(), metadata)
     if (result.malformed) { this.add('malformedFrames'); return }
     if (!result.valid) return
     this.add('unknownMessages', result.unknownMessages)
@@ -129,10 +152,13 @@ export class DouyinDanmakuClient {
   }
   private teardown(): void {
     this.generation++; this.watchdogRevision++
+    const lotteryScope = this.lotteryScope
+    this.lotteryScope = null
     for (const handle of [this.keepalive, this.watchdog, this.reconnect]) if (handle !== null) this.clearTimer(handle)
     this.keepalive = this.watchdog = this.reconnect = null
     const socket = this.socket
     this.socket = null; this.metadata = null; this.resolving = false; this.openedAt = null
+    lotteryScope?.abort()
     try { socket?.close() } catch { /* Already closed. */ }
   }
   private add(key: keyof DouyinDanmakuDiagnostics, value = 1): void { this.stats[key] = Math.min(Number.MAX_SAFE_INTEGER, this.stats[key] + value) }

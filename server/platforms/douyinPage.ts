@@ -12,6 +12,7 @@ export function douyinId(value: unknown): string | undefined {
 export interface DouyinRoomData {
   webRoom?: string
   roomId?: string
+  anchorId?: string
   status: unknown
   title?: unknown
   nickname?: unknown
@@ -82,6 +83,7 @@ class Models {
         const avatar = this.record(owner.avatar_thumb ?? owner.avatarThumb)
         return { webRoom: webRoom ?? expectedWebRoom,
           roomId: douyinId(this.value(info.roomId)) ?? douyinId(this.value(room.id_str)),
+          anchorId: douyinId(this.value(owner.id_str)),
           status: this.value(room.status), title: this.value(room.title),
           nickname: this.value(owner.nickname), avatarUrl: this.value(avatar.url_list ?? avatar.urlList) instanceof Array ? (this.value(avatar.url_list ?? avatar.urlList) as unknown[])[0] : undefined,
           startedAt: this.value(room.create_time ?? room.createTime),
@@ -93,6 +95,7 @@ class Models {
         const webRoom = douyinId(this.value(owner.webRid))
         if (expectedWebRoom && webRoom && expectedWebRoom !== webRoom) continue
         return { webRoom, roomId: douyinId(this.value(state.idStr)), status: this.value(state.status),
+          anchorId: douyinId(this.value(owner.idStr)),
           nickname: this.value(owner.nickname), avatarUrl: (this.value(this.record(owner.avatarThumb).urlList) as unknown[] | undefined)?.[0],
           startedAt: this.value(state.createTime),
           title: this.value(state.title), stream: normalizeDouyinStream(this.media(state.streamUrl)), h264: {} }

@@ -12,6 +12,7 @@ const cleanHeader = (input: unknown, max = 32_768): string => typeof input === '
 
 export interface DouyinDanmakuRoom {
   webRoom: string; roomId: string; userUniqueId: string
+  anchorId?: string
   /** Only a freshly acquired anonymous ttwid, never the full logged-in HTTP cookie header. */
   cookie: string
   userAgent: string; cursor: string; internalExt: string; pushServer: string; heartbeatMs: number
@@ -89,6 +90,7 @@ export async function resolveDouyinDanmakuRoom(webRoom: string, deps: DouyinDanm
   const response = decodeDouyinResponse(bytes)
   if (!response.cursor || !response.internalExt || !response.pushServer) throw invalid()
   return { webRoom, roomId: room.roomId, userUniqueId, cookie, userAgent: DOUYIN_USER_AGENT,
+    ...(room.anchorId && validId(room.anchorId) ? { anchorId: room.anchorId } : {}),
     cursor: response.cursor, internalExt: response.internalExt, pushServer: validateDouyinPushServer(response.pushServer), heartbeatMs: response.heartbeatMs }
 }
 

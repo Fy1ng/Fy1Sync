@@ -1,0 +1,63 @@
+P02 抖音接收协议补充依据及边界, 2026-11-19.
+
+本次仅复用 2026-11-17 留存的公开协议及官网 JS 缓存, 无联网采样, 无真实账号数据.
+测试消息全部在 douyinProtocolMetadata.test.ts 和 douyinClient.test.ts 中合成.
+
+字段定义参考:
+https://github.com/jwwsjlm/douyinlive-proto/blob/main/protobuf/new_douyin.proto
+离线 new_douyin.proto SHA256:
+d00e9d8dd59df4fc8925172d2a9d5fa9a129a96ee567bdff2e4a9e74deefa2ef
+原始来源及 MIT 授权沿用 fixtures/douyin-LICENSE.txt. 此文件未复制第三方实现.
+
+官网字段解码表, 与上述协议字段交叉核对:
+https://lf-webcast-platform.bytetos.com/obj/webcast-platform-cdn/webcast/douyin_live/chunks/live-schema-im.e322bd8a.js
+SHA256 232a3d3890052ebe868b4b14aca38918730285adbc0f623c77dc8bdaafbc783b
+ChatMessage.chat_by=20, EmojiChatMessage.emoji_id=3, emoji_content=4, default_content=5.
+Text.pieces=4, TextPiece.string_value=11, image_value=25, TextPieceImage.image=1.
+Image.url_list=1, height=3, width=4, content=8, is_animated=9.
+Image.Content.name=1, alternative_text=4. 不把背景图片当作表情.
+User.pay_grade=23, PayGrade.level=6. User.level=6 不作为消费等级.
+User.fans_club=24, FansClub.data=1, FansClubData.club_name=1, level=2,
+user_fans_club_status=3, anchor_id=6.
+GiftMessage.gift_id=2, fan_ticket_count=3, group_count=4, repeat_count=5,
+combo_count=6, user=7, to_user=8, repeat_end=9, group_id=11, gift=15,
+total_count=29, count=44. GiftStruct.id=5, combo=10, type=11,
+diamond_count=12, name=16.
+RoomMessage.content=2, roomMessageType=4, biz_scene=20.
+
+官网直播粉丝团状态枚举:
+https://lf-webcast-platform.bytetos.com/obj/webcast-platform-cdn/webcast/douyin_live/client-entry~1.8c002817.js
+SHA256 9d646f996a7aebbd83cd73c11ece40fd1deb32c9ec84447735f38faef38d6921
+NOT_FANS=0, FANS=1, DARK_FANS=2. 缺少状态字段或未知枚举保留 unknown/null.
+消费等级与直播粉丝团独立, 不推导购物粉丝团或发送权限.
+liveFansClub.currentRoom 仅在已核对的本场主播 anchorId 与消息 anchor_id 可比较时给出布尔值.
+resolver 从当前正式直播页面的 owner.id_str 读取主播 ID (移动页为 owner.idStr).
+字段缺失、无效或不能比对时 currentRoom=null. 调用方只把 currentRoom=true 的牌当作本房牌.
+仅解析 FansClub.data, prefer_data 多牌映射尚未验证, 不回填其他牌或账号缓存.
+
+表情保留 default_content 和图片替代文本. 资源缺失或 URL 不在允许的 HTTPS
+douyinpic.com/byteimg.com/bytetos.com 域名族内时用文本回退. 不请求图片或生成未知素材.
+普通文字中的 Unicode emoji 保持普通文字. ChatMessage.rtf_content/rtf_content_v2 的
+混合富文本及其布局尚未适配. 接收表情不证明当前账号可以发送原生图片表情.
+
+礼物 count/totalCount/groupCount/repeatCount/comboCount/fanTicketCount 是独立原始字段,
+全部使用十进制字符串保存 uint64, 缺失省略, 明确的零保留为 "0".
+unitDiamonds 仅来自匹配礼物 ID 的非负 GiftStruct.diamond_count.
+缺少连击计数语义, 累计范围和多收礼对象分配的实样, totalDiamonds 固定 null,
+valueReason 说明缺单价/计数语义未验证/礼物 ID 冲突. 不按数量判定单刷或组刷,
+不把 fan_ticket_count 当成抖币或人民币, 不累计重复推送的消费金额.
+to_user 仅表示该消息提供的收礼对象, 不默认是本房主播. 多收礼对象字段尚未适配.
+
+chatBy 只保留原始 chat_by, 未取得一键活动评论与手打同文的对应实帧,
+不映射活动类型, 不生成参与/中奖/观时进度, 不据此隐藏或折叠消息.
+plainTextExact 记录普通聊天内容是否在展示清洗前后相同, 被清洗的消息不参加准确口令匹配.
+WebcastRoomMessage 保留为系统消息, type/bizScene 仅为原始线索,
+不按文本推断普通福袋, 电商超级福袋, 红包或开奖状态.
+WebcastLotteryMessage/WebcastLuckyBoxMessage/WebcastEcomFansClubMessage 等保持未知方法,
+福袋 reader/model/filter/card 和官方账号观时依据由主任务独立处理.
+
+客户端仍只发送协议 heartbeat 和 ACK. 新的消息 metadata 通过 onObservedMessage
+和 onMessage 一起传递, 保留接收时网页房间与正式 roomId, 重连重新核对场次及主播上下文.
+公共 DTO/relay/IPC/UI 未在本子任务修改. 公共调用方可增加 douyin?: DouyinMessageMetadata,
+并原样传递到展示 DTO. 平台 metadata 与斗鱼 sender/gift 或虎牙 huyaGift 不混用.
+没有账号赠礼, 背包, 每日任务, 领取结果, 写权限或真实送达的验证结论.

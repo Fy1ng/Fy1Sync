@@ -10,7 +10,8 @@ describe('bounded Douyin receive protobuf', () => {
     expect(result).toMatchObject({ malformed: false, valid: true, heartbeatMs: 15_000 })
     expect(result.ack).toEqual(encodeDouyinAck(ids.logId, 'synthetic-header-internal'))
     expect(result.messages).toEqual([{ id: `douyin:${ids.roomId}:${ids.messageId}`, platform: 'douyin', room: 'douyin:100', receivedAt: 1234,
-      text: 'synthetic-chat', username: 'synthetic-viewer', color: 0xffffff, level: 0, system: false }])
+      text: 'synthetic-chat', username: 'synthetic-viewer', color: 0xffffff, level: 0, system: false,
+      douyin: { roomId: ids.roomId, method: 'WebcastChatMessage', plainTextExact: true } }])
     expect(JSON.stringify(result.messages)).not.toContain('synthetic-private-profile')
     expect(JSON.stringify(result.messages)).not.toContain('9000000000000000099')
   })
@@ -20,9 +21,9 @@ describe('bounded Douyin receive protobuf', () => {
     expect(decodeDouyinResponse(join(field(8, 18446744073709551615n))).heartbeatMs).toBe(60000)
     expect(decodeDouyinResponse(join(field(8, 1n))).heartbeatMs).toBe(10000)
   })
-  it('ignores gifts and other-room chat while accepting plain protobuf frames', () => {
-    const gift = join(field(1, 'WebcastGiftMessage'), field(2, Uint8Array.from([255])))
-    const result = decode(syntheticDouyinFrame({ compressed: false, messages: [gift, syntheticDouyinChat({ roomId: '999' })] }))
+  it('ignores unknown methods and other-room chat while accepting plain protobuf frames', () => {
+    const unknown = join(field(1, 'WebcastUnknownMessage'), field(2, Uint8Array.from([255])))
+    const result = decode(syntheticDouyinFrame({ compressed: false, messages: [unknown, syntheticDouyinChat({ roomId: '999' })] }))
     expect(result).toMatchObject({ malformed: false, valid: true, messages: [], unknownMessages: 1 })
   })
   it('recognizes only matching-room live-end control and never emits it as a chat', () => {

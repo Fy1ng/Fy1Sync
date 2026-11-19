@@ -1,0 +1,32 @@
+.douyin-lottery {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line, #34343c);
+  font-size: 12px;
+  max-height: 44vh;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.douyin-lottery header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.douyin-lottery p { margin: 7px 0; line-height: 1.5; overflow-wrap: anywhere; }
+.douyin-lottery ul { padding-left: 20px; margin: 8px 0; line-height: 1.6; }
+.douyin-lottery .switch { margin: 8px 0; }
+
+.douyin-lottery-open {
+  width: 100%;
+  border: 1px solid var(--line, #34343c);
+  border-radius: 6px;
+  padding: 7px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.douyin-lottery-open:hover:not(:disabled) { background: rgba(255, 255, 255, .07); }
