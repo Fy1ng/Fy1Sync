@@ -59,7 +59,7 @@ export class AutomationManager {
         for (const item of value.tasks) {
           const definition = readDefinition(item)
           if (this.tasks.has(definition.id)) throw new Error()
-          this.tasks.set(definition.id, this.view(definition, '应用已重启, 请手动启动'))
+          this.tasks.set(definition.id, this.view(definition, '应用已重启，请手动启动'))
         }
       }
     } catch { throw new AutomationError('storage-failed') }
@@ -72,7 +72,7 @@ export class AutomationManager {
       if (previous.activeAccountId && previous.activeAccountId !== snapshot.activeAccountId) this.invalidateAccount(previous.activeAccountId)
       if (this.flight) {
         const task = this.tasks.get(this.flight.id)
-        if (task && this.gate(task)) this.pause(task.id, '运行条件已变化, 请手动恢复')
+        if (task && this.gate(task)) this.pause(task.id, '运行条件已变化，请手动恢复')
       }
       this.pump()
     })
@@ -97,10 +97,10 @@ export class AutomationManager {
     task.status = 'queued'; task.reason = null; task.nextRunAt = null; task.progress = null
     this.pump(); return this.snapshot()
   }
-  pause(id: string, reason = '已暂停, 请手动启动'): AutomationSnapshot {
+  pause(id: string, reason = '已暂停，请手动启动'): AutomationSnapshot {
     const task = this.require(id)
     task.status = 'paused'; task.nextRunAt = null
-    task.reason = this.flight?.id === id && this.flight.dispatched ? reason + '. 已提交请求可能已处理, 请核对结果' : reason
+    task.reason = this.flight?.id === id && this.flight.dispatched ? reason + '。已提交请求可能已处理，请核对结果。' : reason
     if (this.flight?.id === id) this.flight.controller.abort()
     this.publish(); this.pump(); return this.snapshot()
   }
@@ -112,7 +112,7 @@ export class AutomationManager {
   }
   invalidateAccount(accountId: string): void {
     for (const task of this.tasks.values()) if (task.accountId === accountId && ['running', 'queued'].includes(task.status)) {
-      task.status = 'paused'; task.reason = '账号已变化, 请核对结果后手动启动'; task.nextRunAt = null
+      task.status = 'paused'; task.reason = '账号已变化，请核对结果后手动启动'; task.nextRunAt = null
       if (this.flight?.id === task.id) this.flight.controller.abort()
     }
     this.publish()
@@ -155,7 +155,7 @@ export class AutomationManager {
     }, flight.controller.signal).then(outcome => {
       if (this.disposed || flight.controller.signal.aborted || this.tasks.get(task.id) !== task) return
       if (outcome.status === 'busy') { task.status = 'queued'; task.nextRunAt = this.now() + 1_000; task.reason = '等待前一个账号请求结束'; return }
-      if (outcome.status !== 'completed') { task.status = 'waiting-user'; task.reason = '操作未确认完成, 请核对结果后手动恢复'; return }
+      if (outcome.status !== 'completed') { task.status = 'waiting-user'; task.reason = '操作未确认完成，请核对结果后手动恢复'; return }
       const result = readOutcome(outcome.value, this.now())
       task.progress = result.progress ? { ...result.progress } : null
       task.reason = result.status === 'succeeded' ? null : result.message
@@ -168,7 +168,7 @@ export class AutomationManager {
         }
       }
     }).catch(() => {
-      if (!flight.controller.signal.aborted && this.tasks.get(task.id) === task) { task.status = 'waiting-user'; task.reason = '操作结果不确定, 请核对后手动恢复' }
+      if (!flight.controller.signal.aborted && this.tasks.get(task.id) === task) { task.status = 'waiting-user'; task.reason = '操作结果不确定，请核对后手动恢复' }
     }).finally(() => { if (this.flight === flight) this.flight = null; this.publish(); this.pump() })
   }
   private gate(task: AutomationDefinition): string | null {

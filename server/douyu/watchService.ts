@@ -152,19 +152,19 @@ export class DouyuWatchService {
     const { accountId, room } = this.context
     if (!room) { this.stop(); this.update({ phase: 'idle', reason: null }); return }
     if (!accountId || !this.context.loggedIn || this.context.busy) {
-      this.stop(); this.update({ phase: 'login-required', reason: '请先登录当前斗鱼账号.' }); return
+      this.stop(); this.update({ phase: 'login-required', reason: '请先登录当前斗鱼账号' }); return
     }
     if (this.context.locked || this.context.suspended || !this.currentSample()) {
-      this.stop(); this.update({ phase: 'paused', reason: this.context.suspended ? '系统休眠, 观时会话已停止.'
-        : this.context.locked ? '系统锁屏, 观时会话已停止.' : '等待当前斗鱼房间的实际播放.' }); return
+      this.stop(); this.update({ phase: 'paused', reason: this.context.suspended ? '系统休眠，观时会话已停止'
+        : this.context.locked ? '系统锁屏，观时会话已停止' : '等待当前斗鱼房间的实际播放' }); return
     }
     if (this.context.live !== true || this.context.replay !== false) {
       this.stop(); this.update({ phase: 'paused', reason: this.context.replay === true
-        ? '当前房间为轮播, 观时会话已暂停.' : this.context.live === false
-          ? '当前房间未开播, 观时会话已暂停.' : '尚未确认房间为直播, 正在核对官方状态.' }); return
+        ? '当前房间为轮播，观时会话已暂停' : this.context.live === false
+          ? '当前房间未开播，观时会话已暂停' : '尚未确认房间为直播，正在核对官方状态' }); return
     }
     if (this.options.coordinator.isBusy(accountId)) {
-      this.stop(); this.update({ phase: 'yielding', reason: '账号网关正在处理其他操作, 观时会话暂时让出.' }); return
+      this.stop(); this.update({ phase: 'yielding', reason: '账号网关正在处理其他操作，观时会话暂时让出' }); return
     }
     if (this.flight) {
       if (!this.flight.controller.signal.aborted && this.flight.heartbeat && this.now() - this.queryAt >= QUERY_MS) void this.query(this.flight)
@@ -173,7 +173,7 @@ export class DouyuWatchService {
     if (this.failures > RETRY_MS.length || this.now() < this.retryAt) return
     const flight: Flight = { controller: new AbortController(), accountId, room, heartbeat: false, settled: Promise.resolve() }
     this.flight = flight
-    this.update({ phase: 'connecting', reason: '正在建立斗鱼观看会话, 官方观时尚未核验.' })
+    this.update({ phase: 'connecting', reason: '正在建立斗鱼观看会话，官方观时尚未核验' })
     flight.settled = this.start(flight)
   }
 
@@ -200,7 +200,7 @@ export class DouyuWatchService {
           if (!this.live(flight) || signal.aborted) return
           flight.heartbeat = true
           this.update({ phase: this.value.cumulativeIncrease > 0 && this.value.badgeOwned === true ? 'verified' : 'reporting',
-            reason: this.value.cumulativeIncrease > 0 && this.value.badgeOwned === true ? null : '观看心跳已收到回应, 等待粉丝牌累计观时核验.', lastHeartbeatAt: at })
+            reason: this.value.cumulativeIncrease > 0 && this.value.badgeOwned === true ? null : '观看心跳已收到回应，等待粉丝牌累计观时核验', lastHeartbeatAt: at })
         }))
       if (this.live(flight)) throw new Error('Watch gateway ended')
     } catch (error) {
@@ -211,9 +211,9 @@ export class DouyuWatchService {
         this.failures = unsupported || loginRequired ? RETRY_MS.length + 1 : this.failures + 1
         this.retryAt = this.now() + (RETRY_MS[this.failures - 1] ?? QUERY_MS)
         this.update({ phase: loginRequired ? 'login-required' : 'failed', reason: unsupported
-          ? '斗鱼返回了尚未支持的观看协议参数, 已停止上报. 官方观时增长尚未确认.'
-          : loginRequired ? '当前账号的观看鉴权信息缺失或已变化, 请重新登录.'
-          : '斗鱼观时连接未完成, 当前未确认官方观时增长.' })
+          ? '斗鱼返回了尚未支持的观看协议参数，已停止上报。官方观时增长尚未确认。'
+          : loginRequired ? '当前账号的观看鉴权信息缺失或已变化，请重新登录'
+          : '斗鱼观时连接未完成，当前未确认官方观时增长' })
       }
     } finally {
       if (this.flight === flight) this.flight = null
@@ -259,16 +259,16 @@ export class DouyuWatchService {
         this.update({ cumulativeSeconds: result.seconds, cumulativeBaselineSeconds: baseline, cumulativeIncrease: increase,
           cumulativeCheckedAt: result.checkedAt, badgeOwned: result.badgeOwned, badgeLevel: result.badgeLevel,
           ...(flight.heartbeat ? { phase: verified ? 'verified' : 'unverified', reason: verified ? null
-            : result.badgeOwned === false ? '当前账号未持有此房间粉丝牌, 累计观时尚未验收.'
-            : result.badgeOwned === null ? '粉丝牌持有状态未确认, 暂时无法验收累计观时.'
-            : result.seconds === null ? '平台未返回粉丝牌累计观时, 暂时无法验收.' : '尚未查询到粉丝牌累计观时增长.' } as const : {}) })
+            : result.badgeOwned === false ? '当前账号未持有此房间粉丝牌，累计观时尚未验收'
+            : result.badgeOwned === null ? '粉丝牌持有状态未确认，暂时无法验收累计观时'
+            : result.seconds === null ? '平台未返回粉丝牌累计观时，暂时无法验收' : '尚未查询到粉丝牌累计观时增长' } as const : {}) })
       } else {
         this.update({ cumulativeSeconds: null, cumulativeCheckedAt: null, cumulativeIncrease: 0, badgeOwned: null, badgeLevel: null,
-          ...(flight.heartbeat ? { phase: 'unverified', reason: '粉丝牌累计观时查询失败, 当前无法验收增长.' } as const : {}) })
+          ...(flight.heartbeat ? { phase: 'unverified', reason: '粉丝牌累计观时查询失败，当前无法验收增长' } as const : {}) })
       }
     }).catch(() => {
       if (this.live(flight)) this.update({ cumulativeSeconds: null, cumulativeCheckedAt: null, cumulativeIncrease: 0, badgeOwned: null, badgeLevel: null,
-        ...(flight.heartbeat ? { phase: 'unverified', reason: '粉丝牌累计观时查询失败, 当前无法核验增长.' } as const : {}) })
+        ...(flight.heartbeat ? { phase: 'unverified', reason: '粉丝牌累计观时查询失败，当前无法核验增长' } as const : {}) })
     }).finally(() => { if (this.queryFlight === promise) this.queryFlight = null })
     this.queryFlight = promise
     return promise

@@ -9,7 +9,7 @@ it('names the preference reset action that is available in the crash screen', ()
     render(<ErrorBoundary><Broken /></ErrorBoundary>)
     const crash = screen.getByRole('alert')
     const reset = within(crash).getByRole('button', { name: '清除偏好并刷新' })
-    expect(crash).toHaveTextContent(`点击下方的「${reset.textContent}」`)
+    expect(crash).toHaveTextContent(`点击「${reset.textContent}」`)
     expect(crash).not.toHaveTextContent('在设置里清除')
   } finally { log.mockRestore() }
 })

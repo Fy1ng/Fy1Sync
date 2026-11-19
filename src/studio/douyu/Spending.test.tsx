@@ -48,13 +48,13 @@ describe('monthly spending', () => {
     fireEvent.click(screen.getByRole('button', { name: '读取' }))
     const total = await screen.findByRole('group', { name: '本月合计' })
     expect(invoke).toHaveBeenCalledWith('getDouyuMonthlySpending', { accountId: 'a1' })
-    expect(total).toHaveTextContent('不将其相加')
+    expect(total).toHaveTextContent('账单可能重复，暂不合计')
     expect(total).not.toHaveTextContent('42.34')
     const gift = screen.getByRole('group', { name: '礼物消费记录' })
     expect(within(gift).getAllByText('12.34 元')).toHaveLength(2)
-    expect(gift).toHaveTextContent('已读取全部 2 页，共 3 笔')
+    expect(gift).toHaveTextContent('共 3 笔')
     const diamond = screen.getByRole('group', { name: '钻粉充值记录' })
-    expect(diamond).toHaveTextContent('仅读取部分 1 页，共 1 笔。分页未完成')
+    expect(diamond).toHaveTextContent('仅包含已读取的 1 笔；分页未完成')
     expect(screen.getByRole('button', { name: '刷新' })).toBeInTheDocument()
   })
 
@@ -68,7 +68,7 @@ describe('monthly spending', () => {
   it('needs a signed-in current account', () => {
     render(<Spending data={dataFor(false)} />)
     expect(screen.getByRole('button', { name: '读取' })).toBeDisabled()
-    expect(screen.getByText('当前账号未登录，无法读取消费记录。')).toBeInTheDocument()
+    expect(screen.getByText('当前账号未登录，无法读取消费记录')).toBeInTheDocument()
   })
 
   it('shows a read failure', async () => {

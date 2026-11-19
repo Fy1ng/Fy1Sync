@@ -125,7 +125,7 @@ describe('Yuba scoped requests and verified outcome', () => {
   ])('rejects missing, duplicate or invalid CSRF cookies before a write %#', async header => {
     const { actions, request } = setup({ cookieHeader: async (_account, url) => url === bindUrl ? mainCookie : header })
     const outcome = await actions.run(task, signal())
-    expect(outcome).toEqual({ status: 'waiting-user', message: '请登录鱼吧后再运行签到任务.' })
+    expect(outcome).toEqual({ status: 'waiting-user', message: '请登录鱼吧后再运行签到任务' })
     expect(request).toHaveBeenCalledOnce()
     expectPrivate(outcome)
   })
@@ -206,7 +206,7 @@ describe('Yuba group and protocol gates', () => {
   it.each([0, 2, null, undefined, false, 'unknown'])('does not implicitly join a group when membership is %s', async following => {
     const request = scripted(bind(), head({ is_follow: following }))
     const { actions } = setup({ request })
-    expect(await actions.run(task, signal())).toMatchObject({ status: 'waiting-user', message: expect.stringContaining('签到可能同时加入') })
+    expect(await actions.run(task, signal())).toMatchObject({ status: 'waiting-user', message: expect.stringContaining('签到可能加入该鱼吧') })
     expect(writeCount(request)).toBe(0)
     expect(request).toHaveBeenCalledTimes(2)
   })

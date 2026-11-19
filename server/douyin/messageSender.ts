@@ -21,8 +21,8 @@ const COOLDOWN_MS = 5_000
 const TIMEOUT_MS = 15_000
 const STATE_CACHE_MS = 15_000
 const STATE_FAILURE_CACHE_MS = 2_500
-const UNCERTAIN = '抖音发送结果无法确认. 请在官方直播间核对, 本次不会自动重发.'
-const SEND_UNAVAILABLE = '请重新登录一次以保存抖音发送认证. 登录完成后会自动核对官网签名材料.'
+const UNCERTAIN = '未能确认发送结果。请先到官方直播间核对，不要重复发送。'
+const SEND_UNAVAILABLE = '请重新登录抖音后再发送'
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 const validId = (value: unknown): value is string => typeof value === 'string' && /^[1-9]\d{0,19}$/.test(value) && BigInt(value) <= 0xffff_ffff_ffff_ffffn
 const outcome = (status: DouyinMessageOutcome['status'], message: string, nextAllowedAt: number | null = null, detail?: unknown): DouyinMessageOutcome => ({ status, message, nextAllowedAt,
@@ -93,7 +93,7 @@ export class DouyinMessageSender {
     if (!captured) return null
     const material=validateDouyinSigningMaterial(captured)
     if (material.cookieFingerprint!==douyinCookieFingerprint(header) || accountUid!==undefined && material.accountUid!==accountUid) {
-      throw Object.assign(new Error('抖音发送账号与签名材料不匹配.'),{code:'douyin-signing-material-invalid'})
+      throw Object.assign(new Error('暂时不能发送弹幕，请重新登录抖音'),{code:'douyin-signing-material-invalid'})
     }
     return {material,peerPublicKeyPem:await this.resources.peerPublicKey(signal)}
   }
@@ -145,14 +145,14 @@ export class DouyinMessageSender {
   async state(parent?: AbortSignal, refresh = false): Promise<DouyinSendState> {
     const signal = this.signal(parent), revision = this.revision
     let key: string | null = null
-    const busy = (): DouyinSendState => ({loggedIn:false,canSend:false,loginState:'authenticating',message:'抖音正在重新登录, 完成后将自动刷新发送账号.'})
+    const busy = (): DouyinSendState => ({loggedIn:false,canSend:false,loginState:'authenticating',message:'正在重新登录抖音'})
     try {
       if (this.deps.isLoginBusy?.()) return busy()
       const header = await this.header(DOUYIN_LOGIN_IDENTITY_URL, signal)
       if (this.deps.isLoginBusy?.()) return busy()
       if (revision !== this.revision || signal.aborted) throw new Error('Account changed')
       if (!hasAuthentication(header)) return { loggedIn:false,canSend:false,loginState:'signed-out',
-        message:'登录抖音后可核对账号和发送认证状态.' }
+        message:'登录抖音后可发送弹幕' }
       const authenticationKey = authentication(header)
       key = authenticationKey
       const cached = this.cachedState
@@ -180,7 +180,7 @@ export class DouyinMessageSender {
     } catch (error) {
       if (this.deps.isLoginBusy?.()) return busy()
       const value: DouyinSendState = { loggedIn:false,canSend:false,loginState:'unavailable',
-        message:'暂时无法核对抖音账号状态, 请检查网络并刷新后重试.',detail:diagnosticDetails(error) }
+        message:'暂时无法核对抖音账号状态，请检查网络并刷新后重试',detail:diagnosticDetails(error) }
       if (key !== null && revision === this.revision && !signal.aborted) {
         this.cachedState = { authentication:key,revision,value,expiresAt:this.now() + STATE_FAILURE_CACHE_MS }
       }
@@ -198,26 +198,26 @@ export class DouyinMessageSender {
     if (revision !== this.revision || authentication(header) !== authentication(sendHeader)) throw new Error('Account changed')
     const canSend = signing!==null || !preparationProblem && this.syntheticProtocolReady()
     if (identity.status === 'anonymous') return { loggedIn:false,canSend:false,loginState:'expired',
-      message:canSend ? '本地抖音 HTTP 会话未通过验证. 接口未确认登录, 请先刷新账号状态.' : SEND_UNAVAILABLE,
+      message:canSend ? '暂时无法确认登录，请刷新账号状态' : SEND_UNAVAILABLE,
       detail:diagnosticDetails({ ...identity.detail,...(canSend ? {} : {code:'douyin-signing-material-missing'}),
         ...(preparationProblem ? {preparation:diagnosticDetails(preparationProblem)} : {}) }) }
-    if (identity.status !== 'authenticated') return { loggedIn:false,canSend:false,loginState:'unavailable',message:'暂时无法确认抖音账号状态, 请刷新后重试.', detail: identity.detail }
+    if (identity.status !== 'authenticated') return { loggedIn:false,canSend:false,loginState:'unavailable',message:'暂时无法确认抖音账号状态，请刷新后重试', detail: identity.detail }
     if (signing && signing.material.accountUid!==identity.uid) return {loggedIn:true,canSend:false,loginState:'authenticated',uid:identity.uid,nickname:identity.nickname,
-      message:'抖音签名材料与当前账号不匹配, 请重新登录完成发送认证.',detail:diagnosticDetails({code:'douyin-signing-material-missing'})}
+      message:'请重新登录抖音后再发送',detail:diagnosticDetails({code:'douyin-signing-material-missing'})}
     // The SDK token can live on .bytedance.com instead of in the saved login cookies.
     // It is prepared anonymously only after an explicit send, never a login requirement.
     return { loggedIn: true, canSend,loginState:'authenticated', uid: identity.uid, nickname: identity.nickname,
-      message:canSend ? '抖音账号和本地发送认证已准备好, 仅发送普通文字弹幕.' : preparationProblem ? '抖音账号已确认, 签名材料暂时无法读取. 请刷新后重试.' : SEND_UNAVAILABLE,
+      message:canSend ? '可发送普通文字弹幕' : preparationProblem ? '已登录，暂时不能发送弹幕，请刷新后重试' : SEND_UNAVAILABLE,
       ...(canSend ? {} : { detail:preparationProblem ? diagnosticDetails(preparationProblem) : diagnosticDetails({ code:'douyin-signing-material-missing' }) }) }
   }
 
   async send(input: DouyinMessageInput, parent?: AbortSignal, current: () => boolean = () => true): Promise<DouyinMessageOutcome> {
     const text = douyinMessageText(input?.text)
-    if (!text || !douyinMessageRoom(input?.room) || !validId(input?.expectedUid)) return outcome('failed', '弹幕内容或抖音房间无效. 普通文字最多 50 字, 未发送弹幕.')
-    if (this.deps.isLoginBusy?.()) return outcome('waiting-user','抖音正在重新登录, 请等待登录完成. 未发送弹幕.')
-    if (this.lifetime.signal.aborted || parent?.aborted || !current()) return outcome('failed', '发送已取消. 未发送弹幕.')
-    if (this.active) return outcome('waiting-user', '上一条抖音发送仍在等待结果.')
-    if (this.nextAllowedAt !== null && this.nextAllowedAt > this.now()) return outcome('waiting-user', '请等待抖音发言冷却结束.', this.nextAllowedAt)
+    if (!text || !douyinMessageRoom(input?.room) || !validId(input?.expectedUid)) return outcome('failed', '弹幕内容或抖音房间无效。普通文字最多 50 字，未发送弹幕。')
+    if (this.deps.isLoginBusy?.()) return outcome('waiting-user','抖音正在重新登录，请等待登录完成。未发送弹幕。')
+    if (this.lifetime.signal.aborted || parent?.aborted || !current()) return outcome('failed', '发送已取消。未发送弹幕。')
+    if (this.active) return outcome('waiting-user', '上一条抖音发送仍在等待结果')
+    if (this.nextAllowedAt !== null && this.nextAllowedAt > this.now()) return outcome('waiting-user', '请等待抖音发言冷却结束', this.nextAllowedAt)
     const owner = new AbortController(), signal = this.signal(AbortSignal.any([owner.signal, ...(parent ? [parent] : [])]))
     this.active = owner
     const revision = this.revision
@@ -226,25 +226,25 @@ export class DouyinMessageSender {
     try {
       const identityHeader = await this.header(DOUYIN_LOGIN_IDENTITY_URL, signal)
       check()
-      if (!hasAuthentication(identityHeader)) return outcome('waiting-user', '请先登录抖音. 未发送弹幕.')
+      if (!hasAuthentication(identityHeader)) return outcome('waiting-user', '请先登录抖音。未发送弹幕。')
       const signing=await this.signingContext(identityHeader,signal,input.expectedUid)
       check()
-      if (!signing && !this.syntheticProtocolReady()) return outcome('waiting-user',`${SEND_UNAVAILABLE} 未发送弹幕.`,null,{code:'douyin-signing-material-missing'})
+      if (!signing && !this.syntheticProtocolReady()) return outcome('waiting-user',`${SEND_UNAVAILABLE}，本次未发送`,null,{code:'douyin-signing-material-missing'})
       const identity = await this.identity(identityHeader, signal,signing)
       check()
-      if (identity.status === 'anonymous') return outcome('waiting-user', '抖音身份接口未确认当前登录, 请刷新账号状态. 未发送弹幕.', null, identity.detail)
-      if (identity.status !== 'authenticated') return outcome('waiting-user', '暂时无法核对抖音发送账号, 请检查网络并刷新后重试. 未发送弹幕.', null, identity.detail)
-      if (identity.uid !== input.expectedUid) return outcome('waiting-user', '抖音发送账号已变化, 请刷新账号状态. 未发送弹幕.')
+      if (identity.status === 'anonymous') return outcome('waiting-user', '暂时无法确认登录，未发送弹幕。请刷新账号状态。', null, identity.detail)
+      if (identity.status !== 'authenticated') return outcome('waiting-user', '暂时无法核对抖音发送账号，请检查网络并刷新后重试。未发送弹幕。', null, identity.detail)
+      if (identity.uid !== input.expectedUid) return outcome('waiting-user', '抖音发送账号已变化，请刷新账号状态。未发送弹幕。')
       const webRoom = input.room.slice(7), pageUrl = `${ORIGIN}/${webRoom}`
       const pageHeader = await this.header(pageUrl, signal)
       check()
       if (authentication(pageHeader) !== authentication(identityHeader)) throw new Error('Account changed')
       const pageResponse = await this.request(pageUrl, pageHeader, signal,`${ORIGIN}/`,signing)
-      if (!pageResponse.ok) return outcome('failed', '无法核对抖音目标房间, 未发送弹幕.', null, await httpErrorDetails(pageResponse))
+      if (!pageResponse.ok) return outcome('failed', '无法核对抖音目标房间，未发送弹幕', null, await httpErrorDetails(pageResponse))
       const room = parseDouyinPage(await readPlatformText(pageResponse, signal), webRoom)
       check()
-      if (!room || room.webRoom !== webRoom || !validId(room.roomId)) return outcome('failed', '无法确认抖音房间身份, 未发送弹幕.')
-      if (room.status !== 2 && room.status !== '2') return outcome('waiting-user', '抖音房间当前未开播, 未发送弹幕.')
+      if (!room || room.webRoom !== webRoom || !validId(room.roomId)) return outcome('failed', '无法确认抖音房间身份，未发送弹幕')
+      if (room.status !== 2 && room.status !== '2') return outcome('waiting-user', '抖音房间当前未开播，未发送弹幕')
       let header = await this.header(SEND_URL, signal)
       check()
       if (authentication(header) !== authentication(identityHeader)) throw new Error('Account changed')
@@ -252,7 +252,7 @@ export class DouyinMessageSender {
       let token = storedToken && storedToken.length <= 4096 && /^[A-Za-z0-9_+/=-]+$/.test(storedToken) ? storedToken : ''
       if (!token) {
         try { token = await acquireDouyinHttpToken({...this.deps,userAgent:signing?.material.userAgent ?? this.userAgent}, signal) }
-        catch (error) { check(); return outcome('failed', '抖音发送准备失败, 暂时无法获取安全令牌. 请检查网络后重试, 未发送弹幕.', null, error) }
+        catch (error) { check(); return outcome('failed', '未发送弹幕，请检查网络后重试', null, error) }
         check()
         header = await this.header(SEND_URL, signal)
         check()
@@ -275,34 +275,34 @@ export class DouyinMessageSender {
       const challenge = !!(response.headers.get('bdturing-verify')?.trim() || response.headers.get('x-tt-verify-passport-decision')?.trim())
       if (challenge) {
         cancelBody(response)
-        return report(outcome('waiting-user', '抖音明确返回了安全验证指令. 请在官方页面处理并核对本次结果, 本次不会自动重发.', this.nextAllowedAt),'verification-required')
+        return report(outcome('waiting-user', '请在官方直播间完成验证并核对本次发送结果。不会自动重发。', this.nextAllowedAt),'verification-required')
       }
       if (response.status === 429) {
         const retry = response.headers.get('retry-after') ?? ''
         const seconds = /^\d{1,5}$/.test(retry) ? Math.max(5,Math.min(300,Number(retry))) : 30
         this.nextAllowedAt = Math.max(this.nextAllowedAt ?? 0,this.now() + seconds * 1000)
         const detail = await httpErrorDetails(response)
-        return report(outcome('waiting-user', '抖音限制了当前请求频率 (HTTP 429). 请等待冷却结束, 本次不会自动重发.',this.nextAllowedAt, detail),'rate-limited')
+        return report(outcome('waiting-user', '发送过于频繁，请稍后再试。不会自动重发。',this.nextAllowedAt, detail),'rate-limited')
       }
       const root = record(await readPayload(response, signal)), data = record(root.data)
       check()
       const platformCode = typeof root.status_code === 'number' && Number.isSafeInteger(root.status_code) ? root.status_code : undefined
-      if (data.shark_decision_conf) return report(outcome('waiting-user', '抖音明确返回了安全验证指令. 请在官方页面处理并核对本次结果, 本次不会自动重发.', this.nextAllowedAt),'verification-required',platformCode)
-      const errors: Record<number,string> = { 20003:'抖音发送接口未确认登录, 请刷新账号状态.', 50001:'抖音提示当前账号已被禁言.', 50004:'抖音拒绝了本次弹幕内容.', 50008:'抖音提示弹幕超过平台当前长度限制.', 40001:'抖音拒绝了本次发言权限.' }
+      if (data.shark_decision_conf) return report(outcome('waiting-user', '请在官方直播间完成验证并核对本次发送结果。不会自动重发。', this.nextAllowedAt),'verification-required',platformCode)
+      const errors: Record<number,string> = { 20003:'抖音发送接口未确认登录，请刷新账号状态', 50001:'抖音提示当前账号已被禁言', 50004:'抖音拒绝了本次弹幕内容', 50008:'抖音提示弹幕超过平台当前长度限制', 40001:'抖音拒绝了本次发言权限' }
       if (platformCode === 20003) this.cachedState = null
-      if (platformCode !== undefined && platformCode !== 0) return report(outcome('waiting-user', `${errors[platformCode] ?? '抖音未受理本次弹幕.'} (平台码 ${platformCode}, HTTP ${response.status}). 本次不会自动重发.`, this.nextAllowedAt,
+      if (platformCode !== undefined && platformCode !== 0) return report(outcome('waiting-user', `${errors[platformCode] ?? '抖音未受理本次弹幕'}。不会自动重发。`, this.nextAllowedAt,
         { status: response.status, statusText: response.statusText, platformCode, message: root.status_msg ?? root.message }),'platform-rejected',platformCode)
       if (!response.ok) return report(outcome('waiting-user', response.status === 403
-        ? '抖音发送请求被拒绝 (HTTP 403), 未返回明确的安全验证指令. 当前 HTTP 请求兼容性尚未通过验证, 本次不会自动重发.'
-        : `抖音发送接口返回 HTTP ${response.status}, 本次结果无法确认, 不会自动重发.`,this.nextAllowedAt),'http-rejected',platformCode)
+        ? '抖音拒绝了此次发送。不会自动重发。'
+        : `未能确认发送结果。请先到官方直播间核对，不要重复发送。`,this.nextAllowedAt),'http-rejected',platformCode)
       const id = validId(data.msg_id_str) ? data.msg_id_str : typeof data.msg_id === 'number' && Number.isSafeInteger(data.msg_id) && data.msg_id > 0 ? String(data.msg_id) : null
       const responseUser = record(data.user)
       if (root.status_code !== 0 || !id || data.content !== text
         || (responseUser.id_str !== undefined && responseUser.id_str !== identity.uid)
         || (data.room_id_str !== undefined && data.room_id_str !== room.roomId)) return report(outcome('waiting-user', UNCERTAIN, this.nextAllowedAt),'invalid-receipt',platformCode)
-      return { ...report(outcome('accepted', '抖音已返回消息回执, 尚未确认房间内显示. 本次不会自动重发.', this.nextAllowedAt),'receipt-received',platformCode), messageId:id }
+      return { ...report(outcome('accepted', '抖音已接收，等待直播间确认。不会自动重发。', this.nextAllowedAt),'receipt-received',platformCode), messageId:id }
     } catch (error) {
-      return outcome(dispatched ? 'waiting-user' : 'failed', dispatched ? UNCERTAIN : '无法完成抖音发送前检查, 未发送弹幕.', dispatched ? this.nextAllowedAt : null, error)
+      return outcome(dispatched ? 'waiting-user' : 'failed', dispatched ? UNCERTAIN : '无法完成抖音发送前检查，未发送弹幕', dispatched ? this.nextAllowedAt : null, error)
     } finally { if (this.active === owner) this.active = null }
   }
 }

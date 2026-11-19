@@ -175,7 +175,7 @@ function postsWithoutChallenge(request: ReturnType<typeof scripted>): boolean {
 describe('gift packet official protocol', () => {
   it('submits once with the exact scoped CSRF and confirms the later official result by GET', async () => {
     const { actions, request, cookieHeader, clock } = setup([packets(packet()), owner(), packetReceipt(), packets(packet()), packetReceipt()])
-    expect(await actions.run(task(), signal())).toEqual({ status: 'scheduled', message: '礼物红包参与已提交, 等待官方结果.', nextRunAt: NOW + 5_000 })
+    expect(await actions.run(task(), signal())).toEqual({ status: 'scheduled', message: '礼物红包参与已提交，等待官方结果', nextRunAt: NOW + 5_000 })
     clock.now += 5_000
     expect(await actions.run(task(), signal())).toMatchObject({ status: 'scheduled', message: expect.stringContaining('官方已确认') })
     expect(request.mock.calls.map(([url]) => String(url))).toEqual([packetList, roomUrl, packetGrab, packetList, packetResult])

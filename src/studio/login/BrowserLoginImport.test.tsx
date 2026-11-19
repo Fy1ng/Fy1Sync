@@ -32,14 +32,14 @@ afterEach(() => { cleanup(); vi.clearAllMocks() })
 
 async function begin(): Promise<HTMLElement> {
   render(<BrowserLoginImportProvider><BrowserImportButton batch /></BrowserLoginImportProvider>)
-  fireEvent.click(screen.getByRole('button', { name: '批量导入登录态' }))
-  await waitFor(() => expect(screen.getByRole('button', { name: '识别登录态' })).toBeEnabled())
-  fireEvent.click(screen.getByRole('button', { name: '识别登录态' }))
-  const button = await screen.findByRole('button', { name: '导入所选登录态 (2)' })
+  fireEvent.click(screen.getByRole('button', { name: '批量导入账号' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: '识别账号' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: '识别账号' }))
+  const button = await screen.findByRole('button', { name: '导入所选账号（2）' })
   await waitFor(() => expect(button).toBeEnabled())
   fireEvent.click(button)
-  await screen.findByText('正在导入所选登录态...')
-  return screen.getByRole('dialog', { name: '批量导入登录态' })
+  await screen.findByText('正在导入所选账号…')
+  return screen.getByRole('dialog', { name: '批量导入账号' })
 }
 
 describe('browser import cancellation results', () => {
@@ -50,14 +50,14 @@ describe('browser import cancellation results', () => {
     else fireEvent.click(within(dialog).getByRole('button', { name: trigger }))
     await waitFor(() => expect(apiClient.cancelBrowserImport).toHaveBeenCalledWith(previewId))
     expect(dialog).toBeInTheDocument()
-    expect(screen.getByText('正在停止剩余项，已导入项会保留在结果中。')).toBeInTheDocument()
+    expect(screen.getByText('正在停止剩余导入，已导入的账号会保留')).toBeInTheDocument()
     await act(async () => finish({ ok: true, value: { outcomes: [
       { platform: 'douyu', imported: true, message: '登录态已导入.' },
-      { platform: 'youtube', imported: false, message: '已取消，未导入。' },
+      { platform: 'youtube', imported: false, message: '已取消，未导入' },
     ] } }))
     expect(dialog).toBeInTheDocument()
     expect(screen.getByText('登录态已导入.', { exact: false })).toBeInTheDocument()
-    expect(screen.getByText('已取消，未导入。', { exact: false })).toBeInTheDocument()
+    expect(screen.getByText('已取消，未导入', { exact: false })).toBeInTheDocument()
     expect(dialog.querySelector('.browser-import-footer')).toBeNull()
     expect(within(dialog).getAllByRole('button', { name: '关闭' })).toHaveLength(1)
     expect(within(dialog).queryByRole('button', { name: '完成' })).toBeNull()
@@ -74,7 +74,7 @@ describe('browser import cancellation results', () => {
     expect(cancel).toBeEnabled()
     fireEvent.click(cancel)
     await waitFor(() => expect(apiClient.cancelBrowserImport).toHaveBeenCalledTimes(2))
-    await act(async () => finish({ ok: true, value: { outcomes: accounts.map(account => ({ platform: account.platform, imported: false, message: '已取消，未导入。' })) } }))
+    await act(async () => finish({ ok: true, value: { outcomes: accounts.map(account => ({ platform: account.platform, imported: false, message: '已取消，未导入' })) } }))
     expect(within(dialog).getByRole('button', { name: '关闭' })).toBeInTheDocument()
   })
 })

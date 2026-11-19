@@ -24,6 +24,15 @@ function setup() {
 afterEach(() => { monitors.splice(0).forEach(monitor => monitor.dispose()); vi.useRealTimers() })
 
 describe('saved room metadata lifecycle', () => {
+  it('does not claim there is previous metadata when the first refresh fails', async () => {
+    const f = setup()
+    f.collect.mockRejectedValueOnce(new Error('upstream timeout'))
+    await f.monitor.refresh()
+    expect(f.store.list()[0]).toMatchObject({ lastAttemptAt: NOW, refreshError: '暂未获取直播状态，可稍后刷新' })
+    expect(f.store.list()[0]!.metadata).toBeUndefined()
+    expect(f.reload().list()).toEqual(f.store.list())
+  })
+
   it('retains the full successful snapshot across failure and restart, then replaces it on success', async () => {
     const f = setup()
     await f.monitor.refresh()
@@ -31,7 +40,7 @@ describe('saved room metadata lifecycle', () => {
     vi.setSystemTime(NOW + 16_000)
     f.collect.mockRejectedValueOnce(new Error('upstream timeout with sensitive details'))
     await f.monitor.refresh()
-    expect(f.store.list()[0]).toMatchObject({ metadata: first, lastAttemptAt: NOW + 16_000, refreshError: expect.stringContaining('保留') })
+    expect(f.store.list()[0]).toMatchObject({ metadata: first, lastAttemptAt: NOW + 16_000, refreshError: '更新失败，显示上次信息' })
     expect(f.reload().list()).toEqual(f.store.list())
     vi.setSystemTime(NOW + 32_000)
     f.collect.mockResolvedValueOnce(metadata({ title: '下一场直播', status: 'offline', collectedAt: Date.now() }))

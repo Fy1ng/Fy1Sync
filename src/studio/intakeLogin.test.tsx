@@ -60,7 +60,7 @@ describe('the login offer on the intake screen', () => {
     const login = vi.spyOn(apiClient, 'login').mockImplementation(async () => { signedIn = true; return { ok: true, value: { cookieCount: 4, authKeysPresent: ['acf_uid'] } } })
     mount()
     await addDouyuRoom()
-    const offer = await screen.findByText('登录斗鱼可看最高画质')
+    const offer = await screen.findByText('登录后可尝试原画')
     fireEvent.click(offer.parentElement!.querySelector('button')!)
     await waitFor(() => expect(login).toHaveBeenCalledWith('douyu'))
     await waitFor(() => expect(resolve).toHaveBeenCalledTimes(2))
@@ -75,7 +75,7 @@ describe('the login offer on the intake screen', () => {
     await addDouyuRoom()
     await waitFor(() => expect(resolve).toHaveBeenCalled())
     await new Promise((done) => setTimeout(done, 20))
-    expect(screen.queryByText(/可看最高画质/)).toBeNull()
+    expect(screen.queryByText(/可尝试原画/)).toBeNull()
 
     cleanup()
     signedIn = false
@@ -84,7 +84,7 @@ describe('the login offer on the intake screen', () => {
     await addDouyuRoom()
     await waitFor(() => expect(resolve).toHaveBeenCalledTimes(2))
     await new Promise((done) => setTimeout(done, 20))
-    expect(screen.queryByText(/可看最高画质/)).toBeNull()
+    expect(screen.queryByText(/可尝试原画/)).toBeNull()
   })
 
   it('offers a YouTube login to retry when YouTube refuses without one', async () => {
@@ -94,7 +94,7 @@ describe('the login offer on the intake screen', () => {
     const field = screen.getByLabelText('直播间链接')
     fireEvent.change(field, { target: { value: 'https://www.youtube.com/watch?v=abcdefghijk' } })
     fireEvent.submit(field.closest('form')!)
-    expect(await screen.findByText('登录 YouTube 后重试')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '登录 YouTube 并重试' })).toBeInTheDocument()
   })
 
   it('offers a fresh login, not a first one, when a signed-in YouTube account is refused', async () => {
@@ -107,8 +107,7 @@ describe('the login offer on the intake screen', () => {
     const field = screen.getByLabelText('直播间链接')
     fireEvent.change(field, { target: { value: 'https://www.youtube.com/watch?v=abcdefghijk' } })
     fireEvent.submit(field.closest('form')!)
-    expect(await screen.findByText('重新登录 YouTube 后重试')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '重新登录' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '重新登录 YouTube 并重试' })).toBeInTheDocument()
   })
 
   it('offers no login for a region refusal, which signing in cannot lift', async () => {
@@ -122,7 +121,7 @@ describe('the login offer on the intake screen', () => {
     fireEvent.submit(field.closest('form')!)
     expect(await screen.findByText('此直播在当前网络所在的地区不可观看.')).toBeInTheDocument()
     await new Promise((done) => setTimeout(done, 20))
-    expect(screen.queryByText(/后重试|可看最高画质/)).toBeNull()
+    expect(screen.queryByText(/并重试|可尝试原画/)).toBeNull()
   })
 
   it.each([
@@ -132,17 +131,16 @@ describe('the login offer on the intake screen', () => {
     const resolve = vi.spyOn(apiClient, 'resolve').mockResolvedValue({ ok: true, value: { ok: false, failure: {
       code, reason, message: '平台要求登录后观看.',
     } } })
-    const login = vi.spyOn(apiClient, 'login').mockResolvedValue({ ok: false, code: 'login-cancelled', message: '登录已取消.' })
+    const login = vi.spyOn(apiClient, 'login').mockResolvedValue({ ok: false, code: 'login-cancelled', message: '登录已取消' })
     mount()
     fireEvent.click(screen.getByRole('radio', { name: /画面/ }))
     const field = screen.getByLabelText('直播间链接')
     fireEvent.change(field, { target: { value: input } })
     fireEvent.submit(field.closest('form')!)
-    expect(await screen.findByText(`登录${name}后重试`)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '登录' }))
+    fireEvent.click(await screen.findByRole('button', { name: `登录${name}并重试` }))
     await waitFor(() => expect(login).toHaveBeenCalledWith(platform))
     expect(resolve).toHaveBeenCalledTimes(1)
-    expect(screen.queryByText('登录已取消.')).toBeNull()
+    expect(screen.queryByText('登录已取消')).toBeNull()
   })
 
   it.each(['bilibili', 'huya'] as const)('does not call a quality fallback on %s an invalid login', async (platform) => {
@@ -156,6 +154,6 @@ describe('the login offer on the intake screen', () => {
     fireEvent.change(field, { target: { value: platform === 'bilibili' ? 'https://live.bilibili.com/21452505' : 'https://www.huya.com/kpl' } })
     fireEvent.submit(field.closest('form')!)
     await waitFor(() => expect(apiClient.resolve).toHaveBeenCalled())
-    expect(screen.queryByText(/登录.*后重试|可看最高画质/)).toBeNull()
+    expect(screen.queryByText(/登录.*并重试|可尝试原画/)).toBeNull()
   })
 })

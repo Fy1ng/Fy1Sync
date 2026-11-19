@@ -56,7 +56,7 @@ describe('serialized manual offsets', () => {
     expect(plan.limited).toBe(false)
     expect(plan.limitReason).toBeUndefined()
     expect(plan.seeks.find(seek => seek.role === 'commentary')).toMatchObject({ from: 95, to: 100, requested: 100, clamped: false, shortfall: 0 })
-    expect(session.flush().notices.some(notice => notice.text.includes('缓存长度不足'))).toBe(false)
+    expect(session.flush().notices.some(notice => notice.text.includes('缓冲不足'))).toBe(false)
   })
 
   it('records the actual later clamp when the live window becomes shorter during the first seek', async () => {
@@ -74,7 +74,7 @@ describe('serialized manual offsets', () => {
     expect(commentary.currentTime).toBe(98)
     expect(plan).toMatchObject({ effectiveOffset: 0, limited: true, limitReason: 'buffer-limit' })
     expect(plan.seeks.find(seek => seek.role === 'commentary')).toMatchObject({ from: 95, to: 98, requested: 100, clamped: true, shortfall: 2 })
-    expect(session.flush().notices.some(notice => notice.text.includes('缓存长度不足'))).toBe(true)
+    expect(session.flush().notices.some(notice => notice.text.includes('缓冲不足'))).toBe(true)
   })
 
   it('retains the observed peer advance as seek residual without calling it a buffer limit', async () => {
@@ -88,7 +88,7 @@ describe('serialized manual offsets', () => {
     const plan = await pending
     expect(plan).toMatchObject({ requestedOffset: 5, effectiveOffset: 5.3, limited: false })
     expect(session.flush()).toMatchObject({ requestedOffsetSeconds: 5, offsetSeconds: 5.3, appliedRewind: { official: 5.3, commentary: 0 } })
-    expect(session.flush().notices.some(notice => notice.text.includes('缓存长度不足'))).toBe(false)
+    expect(session.flush().notices.some(notice => notice.text.includes('缓冲不足'))).toBe(false)
   })
 
   it('finishes one seek and coalesces the remaining inputs to the latest target', async () => {

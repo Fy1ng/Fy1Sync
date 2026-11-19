@@ -39,8 +39,8 @@ async function chooseFile(page: Page, role: 'official' | 'commentary', file: str
 }
 async function frame(page: Page, roi: typeof exact) {
   await page.getByRole('button', { name: '框选倒计时', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: '倒计时范围 (两路共用)', exact: true })
-  const canvas = dialog.getByLabel('官方画面当前帧')
+  const dialog = page.getByRole('dialog', { name: '倒计时范围（两路共用）', exact: true })
+  const canvas = dialog.getByLabel('画面当前帧')
   await expect(canvas).toHaveJSProperty('width', real ? 3840 : 1280)
   await dialog.getByRole('button', { name: '重新绘制', exact: true }).click()
   await expect(dialog.locator('.region-stage')).not.toHaveClass(/is-zoomed/)
@@ -120,24 +120,23 @@ test('官方画面一次精确框选应用不同分辨率两路, 图像稳定且
   expect(await panel.getByRole('button', { name: '框选倒计时', exact: true }).count()).toBe(1)
   await page.evaluate(() => { (window as any).sharedClock = { configurations: [], boundaryConfigurations: [], results: [], errors: [], swaps: [] } })
   await frame(page, exact)
-  for (const label of ['官方画面基础识别', '国内解说基础识别']) await expect(page.getByRole('article', { name: label })).toContainText('手动范围')
+  for (const label of ['画面基础识别', '解说基础识别']) await expect(page.getByRole('article', { name: label })).toContainText('手动范围')
   await setPlaying(page, true)
   await page.keyboard.press('a')
   await expect(page.locator('.align-main.is-running')).toHaveCount(1)
-  const official = page.getByRole('article', { name: '官方画面基础识别' })
-  await expect(official.getByLabel('官方画面二值化结果')).toBeVisible({ timeout: 8000 })
+  const official = page.getByRole('article', { name: '画面基础识别' })
+  await expect(official.getByLabel('画面识别预览')).toBeVisible({ timeout: 8000 })
   await page.evaluate(() => {
     const state = window as any
     const card = document.querySelector('.basic-recognition__card[data-role="official"]')!
     state.sharedObserver = new MutationObserver(() => state.sharedClock.swaps.push({ canvases: card.querySelectorAll('canvas').length,
-      fullFrame: [...card.querySelectorAll('canvas')].some(canvas => canvas.getAttribute('aria-label')?.includes('寻找预览')) }))
+      fullFrame: [...card.querySelectorAll('canvas')].some(canvas => canvas.getAttribute('aria-label')?.includes('寻找范围')) }))
     state.sharedObserver.observe(card, { childList: true, subtree: true })
   })
   await Promise.all([
     expect(page.locator('.align-main.is-running')).toHaveCount(0, { timeout: 30_000 }),
     expect(page.locator('.toast').getByText('已自动对齐', { exact: true })).toBeVisible({ timeout:30_000 }),
   ])
-  await expect(official.locator('.basic-recognition__counts')).toContainText(/跳秒 [1-9]/)
   const manual = await page.evaluate(() => { (window as any).sharedObserver.disconnect(); return (window as any).sharedClock })
   expect(manual.errors).toEqual([])
   expect(manual.swaps.every((value: { canvases: number; fullFrame: boolean }) => value.canvases === 1 && !value.fullFrame)).toBe(true)

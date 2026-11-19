@@ -67,7 +67,7 @@ describe('anonymous Huya HTTP chat signal', () => {
   })
 
   it.each([0n, -1n, 0x8000_0000_0000_0000n, '1024', 1024])('rejects invalid presenter UID %s', input => {
-    expect(() => encodeHuyaChatSignalRequest(input as bigint)).toThrow('无法读取虎牙聊天流签名.')
+    expect(() => encodeHuyaChatSignalRequest(input as bigint)).toThrow('无法连接虎牙弹幕')
     expect(decodeHuyaChatSignalResponse(rawResponse(), input as bigint, fixture.now)).toBeNull()
   })
 
@@ -152,7 +152,7 @@ describe('anonymous Huya HTTP chat signal', () => {
     const guarded: typeof safeFetch = (url, config, options) => safeFetch(url, config, {
       ...options, resolve: async () => ['not-an-ip'], fetchImpl: network,
     })
-    await expect(requestHuyaChatSignal(uid, new AbortController().signal, { safeFetchImpl: guarded })).rejects.toThrow('无法读取虎牙聊天流签名.')
+    await expect(requestHuyaChatSignal(uid, new AbortController().signal, { safeFetchImpl: guarded })).rejects.toThrow('无法连接虎牙弹幕')
     expect(network).not.toHaveBeenCalled()
   })
 
@@ -160,16 +160,16 @@ describe('anonymous Huya HTTP chat signal', () => {
     for (const result of [{ response: new Response('private upstream failure', { status: 500 }), finalUrl: new URL('https://wup.huya.com') },
       { response: new Response(rawResponse()), finalUrl: new URL('https://other.huya.com') },
       { response: new Response('invalid'), finalUrl: new URL('https://wup.huya.com') }]) {
-      await expect(requestHuyaChatSignal(uid, new AbortController().signal, { safeFetchImpl: async () => result, now: () => fixture.now })).rejects.toThrow('无法读取虎牙聊天流签名.')
+      await expect(requestHuyaChatSignal(uid, new AbortController().signal, { safeFetchImpl: async () => result, now: () => fixture.now })).rejects.toThrow('无法连接虎牙弹幕')
     }
-    await expect(requestHuyaChatSignal(uid, new AbortController().signal, { safeFetchImpl: async () => { throw new Error(`${expectedUrl}; Cookie=secret`) } })).rejects.toThrow(/^无法读取虎牙聊天流签名\.$/)
+    await expect(requestHuyaChatSignal(uid, new AbortController().signal, { safeFetchImpl: async () => { throw new Error(`${expectedUrl}; Cookie=secret`) } })).rejects.toThrow(/^无法连接虎牙弹幕$/)
   })
 
   it.each(['65537', '9000000000', '-1', 'wat'])('rejects oversized or invalid advertised length %s and cancels the body', async advertised => {
     const cancel = vi.fn()
     const body = new ReadableStream<Uint8Array>({ cancel })
     const fetch: typeof safeFetch = async () => ({ response: new Response(body, { headers: { 'content-length': advertised } }), finalUrl: new URL('https://wup.huya.com') })
-    await expect(requestHuyaChatSignal(uid, new AbortController().signal, { safeFetchImpl: fetch })).rejects.toThrow('无法读取虎牙聊天流签名.')
+    await expect(requestHuyaChatSignal(uid, new AbortController().signal, { safeFetchImpl: fetch })).rejects.toThrow('无法连接虎牙弹幕')
     expect(cancel).toHaveBeenCalledOnce()
   })
 
@@ -178,7 +178,7 @@ describe('anonymous Huya HTTP chat signal', () => {
       const cancel = vi.fn()
       const body = new ReadableStream<Uint8Array>({ pull(controller) { controller.enqueue(new Uint8Array(oversized ? 65_537 : 0)) }, cancel })
       const fetch: typeof safeFetch = async () => ({ response: new Response(body), finalUrl: new URL('https://wup.huya.com') })
-      await expect(requestHuyaChatSignal(uid, new AbortController().signal, { safeFetchImpl: fetch })).rejects.toThrow('无法读取虎牙聊天流签名.')
+      await expect(requestHuyaChatSignal(uid, new AbortController().signal, { safeFetchImpl: fetch })).rejects.toThrow('无法连接虎牙弹幕')
       expect(cancel).toHaveBeenCalled()
     }
   })
@@ -187,7 +187,7 @@ describe('anonymous Huya HTTP chat signal', () => {
     vi.useFakeTimers()
     const fetch: typeof safeFetch = async () => new Promise(() => {})
     const request = requestHuyaChatSignal(uid, new AbortController().signal, { safeFetchImpl: fetch, timeoutMs: 50 })
-    const assertion = expect(request).rejects.toMatchObject({ name: 'AbortError', message: '虎牙聊天流签名请求已中止.' })
+    const assertion = expect(request).rejects.toMatchObject({ name: 'AbortError', message: '虎牙弹幕连接已取消' })
     await vi.advanceTimersByTimeAsync(50)
     await assertion
   })

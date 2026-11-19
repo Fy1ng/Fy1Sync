@@ -282,7 +282,7 @@ export class DouyinHttpLogin implements DouyinHttpLoginSession {
     if (token !== this.token) return { status: 'waiting' }
     const data = record(payload.data)
     if (data.error_code === 7) { this.pollUntil = this.now() + 30000; return { status: 'waiting' } }
-    if (this.verification(data)) return { status: 'verification-required', message: '请在抖音 App 完成登录验证后继续等待, 当前二维码会保留.' }
+    if (this.verification(data)) return { status: 'verification-required', message: '请在抖音 App 完成登录验证后继续等待，当前二维码会保留' }
     this.error(data, 'poll')
     if (data.status === 'new' || data.status === '1') return { status: 'waiting' }
     if (data.status === 'scanned' || data.status === '2') return { status: 'scanned' }
@@ -316,7 +316,7 @@ export class DouyinHttpLogin implements DouyinHttpLoginSession {
       // Reserve the official UI's SMS cooldown before dispatch; unknown outcomes must not invite repeats.
       if (sms) this.smsUntil = this.now() + 60000
       const payload = await this.passport(path, fields, { is_from_iesaccountsaas: '1' }), data = record(payload.data)
-      if (this.verification(data)) return { status: 'verification-required', message: '抖音要求额外安全验证, 请在抖音 App 完成后手动继续.' }
+      if (this.verification(data)) return { status: 'verification-required', message: '抖音要求额外安全验证，请在抖音 App 完成后手动继续' }
       this.error(data, this.requestStage(new URL(LOGIN + path)))
       if (sms) { this.smsUntil = this.now() + 60000; return { status: 'sms-sent', cooldownSeconds: 60 } }
       return await this.finish(typeof data.redirect_url === 'string' ? data.redirect_url : undefined, data)

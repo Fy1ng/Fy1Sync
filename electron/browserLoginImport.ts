@@ -78,15 +78,15 @@ export class BrowserLoginImport {
         const unavailable = (message: string) => ({ id, platform, state: 'unavailable' as const, cookieCount: cookies.length, message })
         if (!hasAuthenticationCookies(cookies, platform)) {
           for (const cookie of cookies) cookie.value = ''
-          if (read!.decryptionFailedPlatforms?.includes(platform)) return unavailable('平台凭据无法解密, 请检查 Windows 授权或使用官方登录.')
-          return { id, platform, state: 'signed-out' as const, cookieCount: cookies.length, message: '此 Profile 未保存可用登录态.' }
+          if (read!.decryptionFailedPlatforms?.includes(platform)) return unavailable('平台凭据无法解密，请检查 Windows 授权或使用官方登录')
+          return { id, platform, state: 'signed-out' as const, cookieCount: cookies.length, message: '请先在此浏览器用户中登录平台' }
         }
         try {
           const identity = await this.options.verify(platform, cookies, controller.signal)
           importAbort(controller.signal)
           if (!identity) {
             for (const cookie of cookies) cookie.value = ''
-            return { id, platform, state: 'signed-out' as const, cookieCount: cookies.length, message: '平台会话已失效, 请先在浏览器登录.' }
+            return { id, platform, state: 'signed-out' as const, cookieCount: cookies.length, message: '登录已失效，请先在浏览器重新登录' }
           }
           candidates.push({ id, platform, cookies, identity })
           return { id, platform, state: 'ready' as const, cookieCount: cookies.length,
@@ -94,7 +94,7 @@ export class BrowserLoginImport {
         } catch (error) {
           for (const cookie of cookies) cookie.value = ''
           importAbort(controller.signal)
-          return unavailable(error instanceof BrowserImportError ? error.message : '暂时无法确认平台登录态, 请重试.')
+          return unavailable(error instanceof BrowserImportError ? error.message : '暂时无法确认平台登录状态，请重试')
         }
       }))
       importAbort(controller.signal)
@@ -139,11 +139,11 @@ export class BrowserLoginImport {
           }
           const saved = await this.options.write(candidate.platform, candidate.cookies, identity, douyuTarget, operation.controller.signal)
           outcomes.push({ platform: candidate.platform, imported: true, username: identity.username, ...saved,
-            message: candidate.platform === 'douyin' && saved.signingReady === false ? '已导入登录态, 发送认证需要通过官方登录补齐.' : '登录态已导入.' })
+            message: candidate.platform === 'douyin' && saved.signingReady === false ? '已导入账号，但暂时不能发送弹幕，请重新登录' : '已导入账号' })
         } catch (error) {
           outcomes.push({ platform: candidate.platform, imported: false, username: candidate.identity.username,
-            message: operation.controller.signal.aborted ? '已取消，未导入。'
-              : error instanceof BrowserImportError ? error.message : `${IMPORT_PLATFORM_NAMES[candidate.platform]}登录态保存失败, 原有账号已保留.` })
+            message: operation.controller.signal.aborted ? '已取消，未导入'
+              : error instanceof BrowserImportError ? error.message : `${IMPORT_PLATFORM_NAMES[candidate.platform]}账号保存失败，原有账号已保留` })
         }
       }
       return { outcomes }

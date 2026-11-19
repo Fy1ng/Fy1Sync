@@ -112,7 +112,7 @@ describe('single-platform account settings', () => {
     render(<PlatformAccount platform="huya" />)
     await screen.findByText('未登录')
     fireEvent.click(screen.getByRole('button', { name: '登录' }))
-    expect(await screen.findByText('账号操作暂时失败, 请重试.')).toBeInTheDocument()
+    expect(await screen.findByText('账号操作暂时失败，请重试')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '登录' })).toBeEnabled()
   })
 })

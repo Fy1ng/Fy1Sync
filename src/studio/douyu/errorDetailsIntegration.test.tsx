@@ -67,7 +67,7 @@ describe('operation-owned error fields', () => {
     fireEvent.click(screen.getByRole('button', { name: '本地异常' }))
     const account = screen.getByRole('region', { name: '账号反馈' })
     fireEvent.click(await within(account).findByRole('button', { name: '查看原始错误' }))
-    expect(account).toHaveTextContent('操作未完成, 请重试')
+    expect(account).toHaveTextContent('操作未完成，请重试')
     expect(fields(within(account).getByRole('region', { name: '原始错误信息' }))).toMatchObject({ name: 'TypeError', message: 'local exception', code: 'LOCAL_READ' })
   })
 

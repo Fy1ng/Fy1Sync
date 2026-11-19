@@ -204,7 +204,7 @@ describe('activeQualityLabel', () => {
   })
 
   it('shows what automatic selected', () => {
-    expect(activeQualityLabel(options, -1, 0)).toBe('自动 (480p)')
+    expect(activeQualityLabel(options, -1, 0)).toBe('自动（480p）')
   })
 
   it('degrades gracefully when the level is unknown', () => {
@@ -240,19 +240,20 @@ describe('translateHlsError', () => {
 
   it('reports other network errors with their detail', () => {
     const error = translate({ fatal: false, type: 'networkError', details: 'fragLoadTimeOut' })
-    expect(error.message).toContain('fragLoadTimeOut')
+    expect(error.message).toBe('直播连接失败')
+    expect(error.detail?.details).toBe('fragLoadTimeOut')
     expect(error.fatal).toBe(false)
   })
 
   it('reports media errors as decode problems', () => {
     const error = translate({ fatal: true, type: 'mediaError', details: 'bufferStalledError' })
-    expect(error.message).toContain('解码错误')
+    expect(error.message).toBe('视频解码失败')
     expect(error.hint).toContain('恢复')
   })
 
   it('falls through for unknown error types', () => {
     const error = translate({ fatal: true, type: 'otherError', details: 'keySystemNoKeys' })
-    expect(error.message).toContain('播放器错误')
+    expect(error.message).toBe('播放器出错')
   })
 })
 

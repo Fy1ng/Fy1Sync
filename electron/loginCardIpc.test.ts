@@ -66,7 +66,7 @@ describe('local card exact-owner credential IPC', () => {
     const f = setup()
     f.controller.cardAction.mockRejectedValueOnce(new Error('password=fixture-private-secret'))
     const result = await f.invoke(f.event, 'action', { kind: 'password', username: 'fixture', password: 'fixture-private-secret', accepted: true })
-    expect(result).toMatchObject({ ok: false, message: '登录操作未完成, 请重试.' })
+    expect(result).toMatchObject({ ok: false, message: '登录操作未完成，请重试' })
     expect(JSON.stringify(result)).not.toContain('fixture-private-secret')
     f.release()
   })

@@ -44,9 +44,9 @@ export type DouyuInsightsErrorCode = 'invalid-arguments' | 'login-required' | 'v
 export class DouyuInsightsError extends Error {
   constructor(readonly code: DouyuInsightsErrorCode) {
     super({
-      'invalid-arguments': '查询参数无效.', 'login-required': '当前斗鱼账号未登录或登录信息已变化.',
-      'verification-required': '斗鱼要求在官方页面完成账号验证.', unavailable: '暂时无法安全读取斗鱼数据.',
-      'invalid-data': '斗鱼返回的数据不完整或无法确认.', busy: '数据查询较多, 请稍后重试.',
+      'invalid-arguments': '查询参数无效', 'login-required': '当前斗鱼账号未登录或登录信息已变化',
+      'verification-required': '斗鱼要求在官方页面完成账号验证', unavailable: '暂时无法安全读取斗鱼数据',
+      'invalid-data': '斗鱼返回的数据不完整或无法确认', busy: '数据查询较多，请稍后重试',
     }[code])
     this.name = 'DouyuInsightsError'
   }
@@ -163,13 +163,13 @@ export class DouyuInsightsGateway {
         try { data = record(await this.json(`${ORIGIN}/wgapi/livenc/liveweb/follow/list?page=${page}`, context)) }
         catch (error) {
           if (!pageCount || (error instanceof DouyuInsightsError && ['login-required', 'verification-required'].includes(error.code)) || context.signal.aborted) throw error
-          reason = '后续关注页读取失败, 已返回已核对部分.'; break
+          reason = '后续关注页读取失败，已返回已核对部分'; break
         }
         if (!data || !Array.isArray(data.list) || data.list.length > 200) throw new DouyuInsightsError('invalid-data')
         pageCount++
         const pages = integer(data.pageCount), total = integer(data.total)
         if (page === 1) { expectedPages = pages; expectedTotal = total }
-        else if (pages !== expectedPages || total !== expectedTotal) { reason = '关注列表在分页期间变化, 请刷新后重试.'; break }
+        else if (pages !== expectedPages || total !== expectedTotal) { reason = '关注列表在分页期间变化，请刷新后重试'; break }
         let invalid = false
         const next: DouyuFollowedRoom[] = []
         for (const raw of data.list) {
@@ -179,16 +179,16 @@ export class DouyuInsightsGateway {
             live: liveState(item.show_status), replay: binary(item.videoLoop), startedAt: epoch(item.show_time, this.now()),
             popularity: integer(item.online), url: `${ORIGIN}/${room}` })
         }
-        if (invalid) { reason = '关注页包含重复或无效房间, 完整性无法确认.'; break }
-        if (rooms.size + next.length > MAX_ROOMS) { reason = '关注数量超过本次读取上限.'; break }
+        if (invalid) { reason = '关注页包含重复或无效房间，完整性无法确认'; break }
+        if (rooms.size + next.length > MAX_ROOMS) { reason = '关注数量超过本次读取上限'; break }
         next.forEach(room => rooms.set(room.room, room))
-        if (expectedPages === null || expectedTotal === null) { reason = '官方响应未提供可核对的分页总数.'; break }
-        if (expectedPages === 0 && (expectedTotal !== 0 || rooms.size !== 0)) { reason = '关注分页总数与实际内容不一致.'; break }
+        if (expectedPages === null || expectedTotal === null) { reason = '官方响应未提供可核对的分页总数'; break }
+        if (expectedPages === 0 && (expectedTotal !== 0 || rooms.size !== 0)) { reason = '关注分页总数与实际内容不一致'; break }
         if (page >= expectedPages) {
-          if (rooms.size !== expectedTotal) reason = '关注总数与已取得的房间数不一致.'
+          if (rooms.size !== expectedTotal) reason = '关注总数与已取得的房间数不一致'
           break
         }
-        if (!next.length || page === MAX_PAGES) { reason = '关注列表未能在读取上限内完整返回.'; break }
+        if (!next.length || page === MAX_PAGES) { reason = '关注列表未能在读取上限内完整返回'; break }
       }
       return { accountId, checkedAt: this.now(), coverage: reason === null ? 'all-pages' : 'partial', pageCount, rooms: [...rooms.values()], reason }
     })
@@ -312,8 +312,8 @@ export class DouyuInsightsGateway {
       }
       return { accountId, checkedAt, month, timeZone: 'Asia/Shanghai', currency: 'CNY', unit: 'fen',
         sources: [gift.summary, diamond.summary], totalMinor, aggregation,
-        message: aggregation === 'complete' ? '本月消费已按已核对账单汇总.' : aggregation === 'partial'
-          ? '账单未完整返回, 各来源仅显示已取得的金额.' : '两个账单来源缺少共同订单标识, 无法排除重叠, 已分别显示金额.' }
+        message: aggregation === 'complete' ? '本月消费已按已核对账单汇总' : aggregation === 'partial'
+          ? '账单未完整返回，各来源仅显示已取得的金额' : '两个账单来源缺少共同订单标识，无法排除重叠，已分别显示金额' }
     })
   }
 
@@ -331,10 +331,10 @@ export class DouyuInsightsGateway {
       try { payload = await this.json(url.href, context) }
       catch (error) {
         if ((error instanceof DouyuInsightsError && ['login-required', 'verification-required'].includes(error.code)) || context.signal.aborted) throw error
-        reason = '该消费来源读取失败或被限流.'; break
+        reason = '该消费来源读取失败或被限流'; break
       }
       const list = source === 'gift-consumption' ? payload : record(payload)?.list
-      if (!Array.isArray(list) || list.length > 200) { reason = '消费列表形状无法确认.'; break }
+      if (!Array.isArray(list) || list.length > 200) { reason = '消费列表形状无法确认'; break }
       pageCount++
       let reachedEarlierMonth = false, invalid = false
       const parsed: LedgerEntry[] = []
@@ -359,16 +359,16 @@ export class DouyuInsightsGateway {
         const globalId = typeof order === 'string' && /^[A-Za-z0-9_-]{4,128}$/.test(order) ? order : null
         parsed.push({ id: key, globalId, amount: paid, category: source === 'gift-consumption' ? text(item.consumeTypeDesc, '其他') : '钻粉充值/续费' })
       }
-      if (invalid) { reason = '消费页包含重复记录或无法确认的金额.'; break }
-      if (entries.length + parsed.length > MAX_LEDGER_ROWS) { reason = '消费记录超过本次读取上限.'; break }
+      if (invalid) { reason = '消费页包含重复记录或无法确认的金额'; break }
+      if (entries.length + parsed.length > MAX_LEDGER_ROWS) { reason = '消费记录超过本次读取上限'; break }
       for (const item of parsed) { seen.add(item.id); entries.push(item) }
       if (list.length < 20 || reachedEarlierMonth) { finished = true; break }
       if (source === 'gift-consumption') {
         const next = identity(record(list[list.length - 1])?.id)
-        if (!next || next === cursor) { reason = '消费分页游标未前进.'; break }
+        if (!next || next === cursor) { reason = '消费分页游标未前进'; break }
         cursor = next
       }
-      if (page === MAX_PAGES) reason = '消费列表未能在读取上限内完整返回.'
+      if (page === MAX_PAGES) reason = '消费列表未能在读取上限内完整返回'
     }
     const categories = new Map<string, { category: string; amountMinor: number; entries: number }>()
     let amountMinor = 0

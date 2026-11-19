@@ -202,7 +202,7 @@ describe('Douyin isolated local card and official controller', () => {
       await vi.advanceTimersByTimeAsync(29_999)
       expect(f.controller.state()?.phase).not.toBe('failed')
       await vi.advanceTimersByTimeAsync(1)
-      expect(f.controller.state()).toMatchObject({ phase: 'failed', message: expect.stringContaining('尚未返回登录结果') })
+      expect(f.controller.state()).toMatchObject({ phase: 'failed', message: expect.stringContaining('登录超时') })
       expect(f.controller.cardState()).toMatchObject({ stage: 'failed', busy: false })
       expect(f.actions).toHaveLength(0)
 
@@ -512,7 +512,7 @@ describe('Douyin embedded LoginManager integration', () => {
   it('fails without a configured embedded driver instead of silently launching real Chrome', async () => {
     const findChrome = vi.fn(() => 'synthetic-chrome')
     const login = new LoginManager(root, { findChrome })
-    await expect(login.login('douyin')).rejects.toMatchObject({ code: 'login-failed', message: '抖音登录未完成, 请在应用内重试.' })
+    await expect(login.login('douyin')).rejects.toMatchObject({ code: 'login-failed', message: '抖音登录未完成，请在应用内重试' })
     expect(findChrome).not.toHaveBeenCalled()
     expect(fs.readdirSync(root)).toEqual([])
     await login.dispose()

@@ -62,7 +62,7 @@ describe('摄像头小窗', () => {
     const { save } = await open()
     tighten.mockResolvedValue({ roi: fitted, found: [true, true, true, true], ambiguous: true })
     fireEvent.click(screen.getByRole('button', { name: '贴边' }))
-    expect(await screen.findByRole('status')).toHaveTextContent('多个相近边界')
+    expect(await screen.findByRole('status')).toHaveTextContent('选框未改动')
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     expect(save).toHaveBeenLastCalledWith(rough)
     tighten.mockResolvedValue({ roi: fitted, found: [true, true, true, true], ambiguous: false })

@@ -146,7 +146,7 @@ describe('Douyin source selection and chat isolation', () => {
     expect(screen.queryByLabelText('弹幕房间号')).toBeNull()
     expect(screen.queryByRole('button', { name: '连接' })).toBeNull()
     expect(screen.queryByText(/需要登录时/)).toBeNull()
-    expect(screen.getByText(/抖音弹幕: 正在连接房间 12345/)).toBeInTheDocument()
+    expect(screen.getByText(/抖音弹幕：正在连接房间 12345/)).toBeInTheDocument()
     const retry = vi.spyOn(apiClient, 'reconnectDanmaku').mockResolvedValue({ ok: true, value: { room: 'douyin:12345' } })
     fireEvent.click(screen.getByRole('button', { name: '重连抖音弹幕' }))
     await waitFor(() => expect(retry).toHaveBeenCalledWith('douyin:12345'))
@@ -186,9 +186,9 @@ describe('Douyin source selection and chat isolation', () => {
     }
     mount(session, <Load />)
     fireEvent.click(screen.getByRole('button', { name: 'load' }))
-    await waitFor(() => expect(screen.getByText(signedIn ? '重新登录抖音后重试' : '登录抖音后重试')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('button', { name: signedIn ? '重新登录抖音并重试' : '登录抖音并重试' })).toBeInTheDocument())
     resolve.mockResolvedValue(resolvedDouyin())
-    fireEvent.click(screen.getByRole('button', { name: signedIn ? '重新登录' : '登录' }))
+    fireEvent.click(screen.getByRole('button', { name: signedIn ? '重新登录抖音并重试' : '登录抖音并重试' }))
     await waitFor(() => expect(resolve).toHaveBeenCalledTimes(2))
     expect(login).toHaveBeenCalledExactlyOnceWith('douyin')
     await waitFor(() => expect(session.snapshot.danmaku.room).toBe('douyin:12345'))
@@ -263,7 +263,7 @@ describe('Douyin source selection and chat isolation', () => {
     function Load(): React.ReactNode { loader = useSourceLoader(); return <LoginOffer role="commentary" /> }
     mount(session, <Load />)
     await act(async () => { await loader.loadInput('commentary', '12345', 'douyin') })
-    await waitFor(() => expect(screen.getByText('登录抖音后重试')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('button', { name: '登录抖音并重试' })).toBeInTheDocument())
     let loggingIn!: Promise<void>
     act(() => { loggingIn = loader.login('commentary') })
     await act(async () => { await loader.loadInput('commentary', 'https://www.youtube.com/watch?v=abcdef') })
@@ -285,7 +285,7 @@ describe('Douyin source selection and chat isolation', () => {
     function Load(): React.ReactNode { loader = useSourceLoader(); return <LoginOffer role="commentary" /> }
     mount(session, <Load />)
     await act(async () => { await loader.loadInput('commentary', '12345', 'douyin') })
-    await waitFor(() => expect(screen.getByText('登录抖音后重试')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('button', { name: '登录抖音并重试' })).toBeInTheDocument())
     await act(async () => { await loader.login('commentary') })
     expect(loader.state.commentary).toMatchObject({ problem: null, loggingIn: false, login: 'douyin' })
   })

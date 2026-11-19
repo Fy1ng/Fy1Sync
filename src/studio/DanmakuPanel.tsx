@@ -46,7 +46,7 @@ export function DanmakuPanel({ onClose }: { onClose: () => void }): React.ReactN
       </header>
       <div className="float-body">
         <Switch label="显示弹幕" checked={danmaku.enabled} onChange={(enabled) => set({ enabled })} />
-        <Switch label="显示礼物消息" detail="在弹幕列表中显示观众赠送的礼物" checked={danmaku.showGifts}
+        <Switch label="弹幕列表显示礼物" checked={danmaku.showGifts}
           onChange={(showGifts) => set({ showGifts })} />
 
         <Range label="字号" value={danmaku.fontSize} min={14} max={48} step={1} unit="px" onChange={(fontSize) => set({ fontSize })} />
@@ -80,13 +80,13 @@ export function DanmakuPanel({ onClose }: { onClose: () => void }): React.ReactN
             options={[{ value: 'all', label: '全部显示' }, { value: 'single', label: '只显示一条' }, { value: 'combo', label: '合并计数' }]} />
         </div>
         {prefs.duplicateMode !== 'all' && (
-          <Range label="合并窗口" value={prefs.duplicateWindowSeconds} min={1} max={30} step={1} unit=" 秒"
+          <Range label="重复判定时长" value={prefs.duplicateWindowSeconds} min={1} max={30} step={1} unit=" 秒"
             onChange={(duplicateWindowSeconds) => setPrefs({ duplicateWindowSeconds })} />
         )}
         {!readOnly && <>
-          <Switch label="过滤疑似机器人弹幕" detail="依据弹幕是否缺少平台评分字段判断，可能误过滤正常弹幕"
+          <Switch label="过滤疑似机器人弹幕" detail="可能误过滤正常弹幕"
             checked={prefs.filterSuspectedBots} onChange={(filterSuspectedBots) => setPrefs({ filterSuspectedBots })} />
-          <Switch label="用户详情" detail="在弹幕菜单中查看等级、贵族与粉丝牌"
+          <Switch label="在弹幕菜单显示用户详情"
             checked={prefs.showUserDetails} onChange={(showUserDetails) => setPrefs({ showUserDetails })} />
           {writes && <>
             <h3 className="float-sub">发送</h3>
@@ -150,7 +150,7 @@ function Affixes({ value, onProblem }: { value: MessageAffixes; onProblem: (prob
   }
   return (
     <>
-      <Switch label="前缀与后缀" detail="附加到手动发送的弹幕，+1 不附加" checked={value.enabled}
+      <Switch label="前缀与后缀" detail="仅手动发送时添加；+1 原样发送" checked={value.enabled}
         onChange={(enabled) => save({ enabled })} />
       {value.enabled && (
         <div className="affixes">

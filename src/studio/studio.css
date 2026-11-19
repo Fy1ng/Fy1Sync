@@ -1187,14 +1187,6 @@ body,
   visibility: visible;
 }
 
-.studio .capsule-nudge-hint {
-  font-size: 10px;
-  font-weight: 400;
-  line-height: 1;
-  color: var(--ash);
-  white-space: nowrap;
-}
-
 .studio .capsule-nudge:first-of-type {
   border-bottom-left-radius: var(--r);
 }
@@ -3356,10 +3348,6 @@ body,
   font-size: 12px;
   line-height: 1.6;
   color: var(--ash);
-}
-
-.studio .align-testing .tag {
-  margin-right: 6px;
 }
 
 .studio .align-beta {

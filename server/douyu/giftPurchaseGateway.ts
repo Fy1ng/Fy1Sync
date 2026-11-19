@@ -15,7 +15,7 @@ const validUid = (value: unknown): value is string => typeof value === 'string' 
 const zero = (value: unknown) => value === 0 || value === '0'
 const invalid = (): never => { throw new DouyuRenewalGatewayError('invalid-data') }
 const notSubmitted = (message: string): DouyuGiftReceipt => ({ status: 'not-submitted', message })
-const unknownReceipt = (): DouyuGiftReceipt => ({ status: 'unknown', message: '本次礼物可能已提交, 结果尚未确认. 请在官方房间核对, 不会自动重送.' })
+const unknownReceipt = (): DouyuGiftReceipt => ({ status: 'unknown', message: '本次礼物可能已提交，结果尚未确认。请在官方房间核对，不会自动重送。' })
 
 /** Gold is hundredths of a fish fin; silver is an integer fish-ball balance. */
 export function parseDouyuGiftBalance(uid: string, payload: unknown, checkedAt: number): DouyuGiftBalanceRead {
@@ -44,13 +44,13 @@ export function parseDouyuGiftCatalog(payload: unknown, room: string, checkedAt:
     const countLimit = inventoryInteger(gift.countLimit)
     const start = inventoryInteger(gift.startTime)
     const end = inventoryInteger(gift.endTime)
-    const reason = inventoryInteger(gift.donateStatus) !== 1 ? '当前不可赠送.'
-      : inventoryInteger(basic.giftType) !== 0 ? '特殊礼物用途或资格未核验.'
-        : inventoryInteger(basic.guardLevel) !== 0 || inventoryInteger(gift.fansLevel) !== 0 ? '礼物要求额外账号资格.'
-          : !unitPrice ? '币种或价格未知, 不允许购买.'
-            : skinId === null ? '礼物皮肤标识未知.'
-              : countLimit === null || inventoryInteger(gift.isBatchLimited) !== 0 ? '礼物数量限制尚未核验.'
-                : start === null || end === null || (start > 0 && start * 1000 > checkedAt) || (end > 0 && end * 1000 <= checkedAt) ? '礼物有效时段尚未满足.' : null
+    const reason = inventoryInteger(gift.donateStatus) !== 1 ? '当前不可赠送'
+      : inventoryInteger(basic.giftType) !== 0 ? '暂不支持购买此类礼物'
+        : inventoryInteger(basic.guardLevel) !== 0 || inventoryInteger(gift.fansLevel) !== 0 ? '礼物要求额外账号资格'
+          : !unitPrice ? '币种或价格未知，不允许购买'
+            : skinId === null ? '礼物信息不完整，请刷新或到斗鱼赠送'
+              : countLimit === null || inventoryInteger(gift.isBatchLimited) !== 0 ? '礼物数量限制尚未核验'
+                : start === null || end === null || (start > 0 && start * 1000 > checkedAt) || (end > 0 && end * 1000 <= checkedAt) ? '礼物有效时段尚未满足' : null
     return { giftId: String(id), name: inventoryName(gift.name), unitPrice, skinId: skinId ?? 0,
       countLimit, available: reason === null, unavailableReason: reason }
   })
@@ -75,7 +75,7 @@ function purchaseReceipt(payload: unknown, target: DouyuGiftPurchase): DouyuGift
   }
   // The official client only guarantees error=0 and a data object. Independent
   // balance reads in the plan service verify the expected accounting change.
-  return { status: 'receipt-received', message: '已收到斗鱼礼物回执, 正在核对余额. 榜单和亲密度到账仍需独立核对.' }
+  return { status: 'receipt-received', message: '已收到赠送回执，正在核对余额' }
 }
 
 export class DouyuGiftPurchaseGateway extends DouyuBackpackGateway {
@@ -128,19 +128,19 @@ export class DouyuGiftPurchaseGateway extends DouyuBackpackGateway {
         || inventoryInteger(fields.quantity) === null || Number(fields.quantity) < 1
         || inventoryInteger(fields.skinId) === null || inventoryInteger(fields.expectedBalance) === null
         || !['YUCHI', 'YUWAN'].includes(String(price.currency)) || inventoryInteger(price.amountMinor) === null || Number(price.amountMinor) < 1
-        || price.scale !== (price.currency === 'YUCHI' ? 100 : 1)) return notSubmitted('赠礼参数无效. 未提交购买.')
+        || price.scale !== (price.currency === 'YUCHI' ? 100 : 1)) return notSubmitted('赠礼参数无效。未提交购买。')
       const target: DouyuGiftPurchase = { accountId: fields.accountId, expectedUid: fields.expectedUid, room: String(fields.room), giftId: fields.giftId,
         quantity: Number(fields.quantity), skinId: Number(fields.skinId), expectedBalance: Number(fields.expectedBalance),
         unitPrice: giftMoney(price.currency as 'YUCHI' | 'YUWAN', Number(price.amountMinor)) }
       const cost = multiplyGiftMoney(target.unitPrice, target.quantity)
-      if (!cost || cost.amountMinor > target.expectedBalance) return notSubmitted('确认预算或余额不足. 未提交购买.')
+      if (!cost || cost.amountMinor > target.expectedBalance) return notSubmitted('确认预算或余额不足。未提交购买。')
       return await this.bounded(signal, async active => {
         const catalog = await this.readCatalog(target.room, active)
         const gift = catalog.items.find(item => item.giftId === target.giftId)
         if (!gift?.available || !samePrice(target.unitPrice, gift.unitPrice) || gift.skinId !== target.skinId
-          || (gift.countLimit !== null && gift.countLimit > 0 && target.quantity > gift.countLimit)) return notSubmitted('礼物价格或可赠状态已变化. 未提交购买.')
+          || (gift.countLimit !== null && gift.countLimit > 0 && target.quantity > gift.countLimit)) return notSubmitted('礼物价格或可赠状态已变化。未提交购买。')
         const balance = await this.readBalance(target.accountId, target.room, active)
-        if (balance.uid !== target.expectedUid || balance.balances[cost.currency] !== target.expectedBalance) return notSubmitted('账号或余额已变化. 未提交购买.')
+        if (balance.uid !== target.expectedUid || balance.balances[cost.currency] !== target.expectedBalance) return notSubmitted('账号或余额已变化。未提交购买。')
         const httpTarget = { accountId: target.accountId, expectedUid: target.expectedUid, room: target.room, method: 'POST' as const, url: PURCHASE_URL,
           body: new URLSearchParams({ giftId: target.giftId, giftCount: String(target.quantity), roomId: target.room, bizExt: '{"yzxq":{}}', skinId: String(target.skinId) }).toString() }
         const credentials = await this.credentials(httpTarget, active)
@@ -152,8 +152,8 @@ export class DouyuGiftPurchaseGateway extends DouyuBackpackGateway {
       })
     } catch {
       if (dispatched) return unknownReceipt()
-      if (signal.aborted) return notSubmitted('操作已取消. 未提交购买.')
-      return notSubmitted('价格, 余额或账号无法核对. 未提交购买.')
+      if (signal.aborted) return notSubmitted('操作已取消。未提交购买。')
+      return notSubmitted('价格，余额或账号无法核对。未提交购买。')
     }
   }
 

@@ -215,7 +215,7 @@ function SendBar({ context, apply }: {
       show(result.value, succeeded, result.value.message || (succeeded ? '已发送' : '发送未完成'))
       if (succeeded) setText(value => value === draft ? '' : value)
     } catch (caught) {
-      show(caught, false, '发送结果无法确认, 请在官方直播间核对.')
+      show(caught, false, '发送结果无法确认，请在官方直播间核对')
     } finally {
       if (mounted.current) setBusy(false)
     }

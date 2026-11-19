@@ -94,7 +94,7 @@ export class RecognitionClient {
 
   private readonly handleError = (event: Event): void => {
     const message =
-      event instanceof ErrorEvent && event.message ? event.message : '识别 Worker 发生错误'
+      event instanceof ErrorEvent && event.message ? event.message : '识别失败'
     this.failWorker(message)
   }
 

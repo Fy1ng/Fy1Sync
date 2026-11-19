@@ -6,7 +6,7 @@ import { DouyinSigner } from '../danmaku/douyinSigner'
 
 export const DOUYIN_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 const ORIGIN = 'https://live.douyin.com'
-const invalid = () => new Error('无法读取抖音弹幕连接信息.')
+const invalid = () => new Error('无法读取抖音弹幕连接信息')
 const validId = (input: string): boolean => /^[1-9]\d{0,19}$/.test(input) && BigInt(input) <= 0xffff_ffff_ffff_ffffn
 const cleanHeader = (input: unknown, max = 32_768): string => typeof input === 'string' && input.length <= max && !/[\x00-\x1f\x7f]/.test(input) ? input : ''
 
@@ -63,7 +63,7 @@ export async function resolveDouyinDanmakuRoom(webRoom: string, deps: DouyinDanm
   if (page.finalUrl !== `${ORIGIN}/${webRoom}` && page.finalUrl !== `${ORIGIN}/${webRoom}/`) throw invalid()
   const room = parseDouyinPage(page.text, webRoom)
   if (!room || room.webRoom !== webRoom || !room.roomId || !validId(room.roomId)) throw invalid()
-  if (room.status !== 2 && room.status !== '2') throw new Error('抖音直播间当前未开播.')
+  if (room.status !== 2 && room.status !== '2') throw new Error('抖音直播间当前未开播')
   // The page repeats its anonymous request identity. Conflicting identities are rejected.
   const ids = new Set([...page.text.matchAll(/\buser_unique_id\\?":\s*\\?"([1-9]\d{0,19})\\?"/g)].map(match => match[1]!))
   if (ids.size !== 1) throw invalid()

@@ -84,21 +84,21 @@ describe('followed rooms', () => {
     renderFollowing()
     await screen.findByRole('group', { name: /甲的直播间/ })
     expect(within(row(/甲的直播间/)).getByText('直播中')).toBeInTheDocument()
-    expect(within(row(/甲的直播间/)).getByText('开播时间未知 · 已播时长未知')).toBeInTheDocument()
+    expect(within(row(/甲的直播间/)).getByText('开播时间未知')).toBeInTheDocument()
     expect(within(row(/乙的直播间/)).getByText('未开播')).toBeInTheDocument()
-    expect(screen.getByText(/已读取全部 1 页/)).toBeInTheDocument()
+    expect(screen.getByText(/共 2 个房间/)).toBeInTheDocument()
     expect(named('getDouyuFollowedRooms')).toEqual([{ method: 'getDouyuFollowedRooms', args: { accountId: 'a1' } }])
   })
 
   it('says when only part of the list was read', async () => {
     responses.getDouyuFollowedRooms = () => ({ ok: true, value: followed({ coverage: 'partial', pageCount: 3, reason: '分页读取中断' }) })
     renderFollowing()
-    expect(await screen.findByText(/仅读取到部分关注列表（3 页/)).toHaveTextContent('分页读取中断')
+    expect(await screen.findByText(/关注列表未读全/)).toHaveTextContent('分页读取中断')
   })
 
   it('does not read without a signed-in account', async () => {
     renderFollowing(vi.fn(), dataFor(false))
-    expect(screen.getByText('当前账号未登录，无法读取关注列表。')).toBeInTheDocument()
+    expect(screen.getByText('当前账号未登录，无法读取关注列表')).toBeInTheDocument()
     await act(async () => {})
     expect(named('getDouyuFollowedRooms')).toEqual([])
   })
@@ -157,7 +157,7 @@ describe('live notifications', () => {
     await screen.findByRole('group', { name: /甲的直播间/ })
     fireEvent.click(screen.getByRole('switch', { name: /开播提醒/ }))
     await waitFor(() => expect(named('setDouyuLiveNotifications').map((call) => call.args)).toEqual([{ enabled: false }]))
-    expect(await screen.findByText('请在下方列表中选择需要提醒的房间。')).toBeInTheDocument()
+    expect(await screen.findByText('请在下方列表中选择需要提醒的房间')).toBeInTheDocument()
   })
 
   it('shows live notices and monitor errors from the insights topic', async () => {
@@ -172,8 +172,8 @@ describe('live notifications', () => {
     emit({ type: 'live', notification })
     const notices = screen.getByRole('list', { name: '开播通知' })
     expect(within(notices).getAllByText('乙的直播间（200） 已开播')).toHaveLength(1)
-    emit({ type: 'monitor-error', accountId: 'a1', message: '关注列表不完整, 本轮未生成开播提醒.' })
-    expect(screen.getByText(/监控状态: 关注列表不完整/)).toBeInTheDocument()
+    emit({ type: 'monitor-error', accountId: 'a1', message: '关注列表不完整，本轮未生成开播提醒' })
+    expect(screen.getByText(/关注列表不完整/)).toBeInTheDocument()
   })
 
   it('shows a reminder left running by an earlier load of this window as on, with its rooms', async () => {
@@ -181,7 +181,7 @@ describe('live notifications', () => {
     renderFollowing()
     await waitFor(() => expect(screen.getByRole('switch', { name: /开播提醒/ })).toBeChecked())
     expect(await screen.findByRole('checkbox', { name: '开播提醒 房间 200' })).toBeChecked()
-    expect(screen.getByText('已对所选 1 个房间开启提醒。')).toBeInTheDocument()
+    expect(screen.getByText('已对所选 1 个房间开启提醒')).toBeInTheDocument()
     // Reading never sends anything back.
     expect(named('setDouyuLiveNotifications')).toEqual([])
   })

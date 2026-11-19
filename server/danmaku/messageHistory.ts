@@ -26,13 +26,13 @@ const textValid = (value: unknown, limit: number): value is string => typeof val
 
 export function readHistoryQuery(raw: unknown = {}): Required<Pick<MessageHistoryQuery, 'query' | 'page' | 'pageSize'>> & Pick<MessageHistoryQuery, 'room' | 'uid'> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)
-    || ![Object.prototype, null].includes(Object.getPrototypeOf(raw) as object | null)) throw new Error('弹幕查询条件无效.')
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(raw) as object | null)) throw new Error('弹幕查询条件无效')
   const keys = ['room', 'uid', 'query', 'page', 'pageSize']
-  if (Reflect.ownKeys(raw).some(key => typeof key !== 'string' || !keys.includes(key))) throw new Error('弹幕查询条件无效.')
+  if (Reflect.ownKeys(raw).some(key => typeof key !== 'string' || !keys.includes(key))) throw new Error('弹幕查询条件无效')
   const values: Record<string, unknown> = {}
   for (const key of keys) {
     const field = Object.getOwnPropertyDescriptor(raw, key)
-    if (field && !('value' in field)) throw new Error('弹幕查询条件无效.')
+    if (field && !('value' in field)) throw new Error('弹幕查询条件无效')
     if (field) values[key] = field.value
   }
   const { room, uid } = values
@@ -41,7 +41,7 @@ export function readHistoryQuery(raw: unknown = {}): Required<Pick<MessageHistor
   const pageSize = values.pageSize ?? 50
   if ((room !== undefined && !roomValid(room)) || (uid !== undefined && !normalizeDouyuUid(uid))
     || !textValid(query, 200) || typeof page !== 'number' || !Number.isInteger(page) || page < 1 || page > 100_000
-    || typeof pageSize !== 'number' || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 200) throw new Error('弹幕查询条件无效.')
+    || typeof pageSize !== 'number' || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 200) throw new Error('弹幕查询条件无效')
   return { ...(room === undefined ? {} : { room: room as string }), ...(uid === undefined ? {} : { uid: uid as string }), query, page, pageSize }
 }
 
@@ -75,7 +75,7 @@ export class MessageHistory {
 
   constructor(options: { capacity?: number; now?: () => number } = {}) {
     this.capacity = options.capacity ?? 10_000
-    if (!Number.isInteger(this.capacity) || this.capacity < 1 || this.capacity > 50_000) throw new Error('弹幕历史容量无效.')
+    if (!Number.isInteger(this.capacity) || this.capacity < 1 || this.capacity > 50_000) throw new Error('弹幕历史容量无效')
     this.ring = new Array(this.capacity)
     this.now = options.now ?? Date.now
   }
@@ -112,7 +112,7 @@ export class MessageHistory {
   }
 
   rate(room: string): DanmakuRate {
-    if (!roomValid(room)) throw new Error('房间号无效.')
+    if (!roomValid(room)) throw new Error('房间号无效')
     const now = this.clock()
     const state = this.rates.get(room)
     if (!state) return { room, receivedLastMinute: 0, messagesPerMinute: 0, sampleSeconds: 0, since: null }
@@ -123,7 +123,7 @@ export class MessageHistory {
   }
 
   clear(room?: string): void {
-    if (room !== undefined && !roomValid(room)) throw new Error('房间号无效.')
+    if (room !== undefined && !roomValid(room)) throw new Error('房间号无效')
     const retained = room === undefined ? [] : this.entries().filter(message => message.room !== room)
     this.ring.fill(undefined)
     this.seen.clear()
@@ -146,7 +146,7 @@ export class MessageHistory {
 
   private clock(): number {
     const now = this.now()
-    if (!Number.isSafeInteger(now) || now < 0) throw new Error('弹幕统计时钟无效.')
+    if (!Number.isSafeInteger(now) || now < 0) throw new Error('弹幕统计时钟无效')
     if (now < this.lastClock) this.rates.clear()
     this.lastClock = now
     return now
@@ -169,6 +169,6 @@ export class MessageHistory {
 
 /** A fixed public destination only. Never accepts a caller-supplied URL or nickname lookup. */
 export function doseeingHistoryUrl(uid: string): string {
-  if (!normalizeDouyuUid(uid)) throw new Error('用户 ID 无效.')
+  if (!normalizeDouyuUid(uid)) throw new Error('用户 ID 无效')
   return 'https://www.doseeing.com/data/fan/' + uid + '?type=chat&dt=0'
 }

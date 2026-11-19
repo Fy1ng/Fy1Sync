@@ -125,10 +125,10 @@ describe.each<Mode>(['list', 'overlay'])('copy feedback from the %s menu', mode 
     else writeText.mockRejectedValue(new Error('Cannot write C:\\Users\\PRIVATE\\clipboard.txt'))
     const { session, notice } = await mountMenu(mode)
     fireEvent.click(screen.getByRole('button', { name: '复制' }))
-    await waitFor(() => expect(notice).toHaveBeenCalledExactlyOnceWith('warn', '复制失败, 请重试.', expect.any(Error)))
+    await waitFor(() => expect(notice).toHaveBeenCalledExactlyOnceWith('warn', '复制失败，请重试', expect.any(Error)))
     const notices = session.flush().notices
     expect(JSON.stringify(notices)).not.toContain('PRIVATE')
-    expect(notices.find(item => item.text === '复制失败, 请重试.')?.detail).toMatchObject({
+    expect(notices.find(item => item.text === '复制失败，请重试')?.detail).toMatchObject({
       name: 'Error', message: problem === 'missing' ? 'Clipboard text writing unavailable' : 'Cannot write [user]\\clipboard.txt',
     })
   })

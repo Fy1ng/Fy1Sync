@@ -143,7 +143,7 @@ describe('settings account navigation', () => {
     expect(screen.getByRole('switch', { name: '校验 HTTPS 代理证书' })).not.toBeChecked()
     expect(screen.getByRole('switch', { name: '允许媒体访问本机和局域网' })).toBeChecked()
     expect(screen.getByRole('spinbutton', { name: '请求超时秒数' })).toHaveValue(0)
-    fireEvent.change(screen.getByRole('combobox', { name: '取流出网方式' }), { target: { value: 'custom' } })
+    fireEvent.change(screen.getByRole('combobox', { name: '取流连接方式' }), { target: { value: 'custom' } })
     fireEvent.change(screen.getByRole('textbox', { name: '取流代理地址' }), { target: { value: 'socks5://127.0.0.1:1080' } })
     fireEvent.click(screen.getByRole('switch', { name: '校验取流服务器证书' }))
     fireEvent.change(screen.getByRole('spinbutton', { name: '请求超时秒数' }), { target: { value: '30' } })
@@ -234,6 +234,6 @@ describe('settings account navigation', () => {
       fireEvent.click(screen.getByRole('button', { name: '登录' }))
       await waitFor(() => expect(invoke).toHaveBeenCalledWith(method, args))
     }
-    expect(screen.queryByText('当前虎牙房间仅支持只读弹幕, 斗鱼操作与统计暂不可用')).toBeNull()
+    expect(screen.queryByText('弹幕记录仅支持斗鱼')).toBeNull()
   })
 })

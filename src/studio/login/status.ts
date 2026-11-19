@@ -16,7 +16,7 @@ export async function refreshLoginStatus(onError?: (message: string, detail?: Er
     remember('login-status', result.value)
     return result.value
   } catch (error) {
-    if (revision === readRevision) onError?.('账号状态暂时无法读取, 请重试.', errorDetails(error))
+    if (revision === readRevision) onError?.('账号状态暂时无法读取，请重试', errorDetails(error))
     return null
   }
 }

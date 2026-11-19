@@ -83,7 +83,7 @@ describe('Douyin chat and isolated sending', () => {
     mount(session, <DanmakuPanel onClose={() => {}} />)
     await act(async () => { await Promise.resolve() })
     expect(screen.getByRole('switch', { name: /显示弹幕/ })).toBeInTheDocument()
-    expect(screen.getByRole('switch', { name: /显示礼物消息/ })).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: /弹幕列表显示礼物/ })).toBeInTheDocument()
     expect(screen.queryByRole('switch', { name: /机器人|用户详情|前缀与后缀/ })).toBeNull()
     expect(screen.queryByText('发送')).toBeNull()
   })
@@ -117,7 +117,7 @@ describe('Douyin chat and isolated sending', () => {
     render(<SessionProvider session={session}><SettingsSheet target={{ section }} room="douyin:12345"
       onClose={() => {}} onWatch={() => {}} onFill={() => {}} /></SessionProvider>)
     await act(async () => { await Promise.resolve() })
-    expect(screen.getByText(/当前抖音房间暂不支持弹幕记录与房间统计/)).toBeInTheDocument()
+    expect(screen.getByText(section === 'records' ? '弹幕记录仅支持斗鱼' : '房间数据仅支持斗鱼')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /赠送|签到|发送|创建任务/ })).toBeNull()
     expect(feature).not.toHaveBeenCalled()
   })

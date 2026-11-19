@@ -56,7 +56,7 @@ require(${JSON.stringify(path.join(root, 'dist/electron/main.cjs'))});
     const exportButton = settings.getByRole('button', { name: '导出诊断报告', exact: true })
     await expect(exportButton).toBeEnabled()
     await exportButton.click()
-    await expect(settings).toContainText('诊断报告已生成, 请查看下载文件.')
+    await expect(settings).toContainText('诊断报告已导出')
     await expect.poll(() => page.evaluate(() => Boolean((window as typeof window & { __exportedReport?: unknown }).__exportedReport))).toBe(true)
     const report = await page.evaluate(() => (window as typeof window & { __exportedReport?: unknown }).__exportedReport)
     expect(report).toMatchObject({ schemaVersion: 1, acquisition: { app: { packaged: false },

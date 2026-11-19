@@ -35,7 +35,7 @@ beforeEach(() => {
         return { ok: true, value: { ...planFor(rooms, `p${++plans}`), totalQuantity: 3,
           rows: rooms.map((room, index) => index === 0
             ? { room, badgeName: room, status: 'ready', reason: null, gift: { propId: '268', name: '荧光棒', quantity: 3, stock: 7, expiresAt: null } }
-            : { room, badgeName: room, status: 'skipped', reason: '没有可核对的普通背包荧光棒, 本次跳过.', gift: null }),
+            : { room, badgeName: room, status: 'skipped', reason: '没有可核对的普通背包荧光棒，本次跳过', gift: null }),
           allocation: { mode: 'equal-per-prop', leftovers: [{ propId: '268', quantity: 1 }] } } }
       }
       if (method === 'getDouyuBadgeAges') {
@@ -46,7 +46,7 @@ beforeEach(() => {
       }
       if (method === 'executeDouyuRenewal') {
         const planId = (args as { planId: string }).planId
-        return { ok: true, value: { planId, status: 'completed', message: '', rows: [] } }
+        return { ok: true, value: { planId, status: 'completed', message: '赠送已处理，请到斗鱼核对粉丝牌是否续期', rows: [] } }
       }
       if (method === 'cancelDouyuRenewal') return { ok: true, value: { cancelled: true } }
       return { ok: false, message: 'unexpected' }
@@ -64,7 +64,7 @@ async function toPlan(): Promise<void> {
   await screen.findByRole('checkbox', { name: /房间 100/ })
   fireEvent.click(screen.getByRole('checkbox', { name: /房间 100/ }))
   fireEvent.click(screen.getByRole('button', { name: '生成核对单' }))
-  await screen.findByRole('region', { name: '赠送预览' })
+  await screen.findByRole('region', { name: '赠送核对单' })
 }
 
 describe('badge renewal', () => {
@@ -72,7 +72,10 @@ describe('badge renewal', () => {
     render(<Renewal accountId="a1" accountLabel="主号" ready />)
     await toPlan()
     fireEvent.click(screen.getByRole('button', { name: '确认赠送' }))
-    await screen.findByRole('region', { name: '赠送处理结果' })
+    const result = await screen.findByRole('region', { name: '赠送处理结果' })
+    expect(within(result).getByText('处理完成')).toBeInTheDocument()
+    expect(within(result).getByText('已送出，是否续上请到斗鱼确认')).toBeInTheDocument()
+    expect(within(result).queryByText('赠送已处理，请到斗鱼核对粉丝牌是否续期')).toBeNull()
     expect(named('executeDouyuRenewal')).toEqual([{ method: 'executeDouyuRenewal', args: { planId: 'p1' } }])
   })
 
@@ -81,7 +84,7 @@ describe('badge renewal', () => {
     await toPlan()
     fireEvent.click(screen.getByRole('checkbox', { name: /房间 200/ }))
     await waitFor(() => expect(named('cancelDouyuRenewal')).toEqual([{ method: 'cancelDouyuRenewal', args: { planId: 'p1' } }]))
-    expect(screen.queryByRole('region', { name: '赠送预览' })).toBeNull()
+    expect(screen.queryByRole('region', { name: '赠送核对单' })).toBeNull()
     expect(screen.queryByRole('button', { name: '确认赠送' })).toBeNull()
   })
 
@@ -109,13 +112,13 @@ describe('badge renewal', () => {
     if (edit === 'allocation') fireEvent.click(screen.getByRole('radio', { name: '逐房数量' }))
     if (edit === 'override') fireEvent.change(screen.getByRole('spinbutton', { name: '房间 100 的赠送数量' }), { target: { value: '3' } })
     await act(async () => { finish!({ ok: true, value: planFor(['100'], 'obsolete') }) })
-    expect(screen.queryByRole('region', { name: '赠送预览' })).toBeNull()
+    expect(screen.queryByRole('region', { name: '赠送核对单' })).toBeNull()
     expect(screen.queryByRole('button', { name: '确认赠送' })).toBeNull()
     expect(named('cancelDouyuRenewal')).toContainEqual({ method: 'cancelDouyuRenewal', args: { planId: 'obsolete' } })
     expect(named('executeDouyuRenewal')).toEqual([])
     expect(screen.getByRole('button', { name: '生成核对单' })).toBeEnabled()
     fireEvent.click(screen.getByRole('button', { name: '生成核对单' }))
-    await screen.findByRole('region', { name: '赠送预览' })
+    await screen.findByRole('region', { name: '赠送核对单' })
     expect(screen.getByRole('button', { name: '确认赠送' })).toBeEnabled()
   })
 
@@ -158,11 +161,11 @@ describe('badge renewal', () => {
     fireEvent.click(screen.getByRole('radio', { name: '同类库存均分' }))
     expect(screen.queryByRole('spinbutton', { name: '每个房间赠送数量' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '生成核对单' }))
-    const plan = await screen.findByRole('region', { name: '赠送预览' })
+    const plan = await screen.findByRole('region', { name: '赠送核对单' })
     expect(named('previewDouyuRenewalEqual')).toEqual([{ method: 'previewDouyuRenewalEqual', args: { accountId: 'a1', rooms: ['100', '200'] } }])
     expect(named('previewDouyuRenewal')).toEqual([])
     expect(plan.textContent).toContain('留在背包：荧光棒 × 1')
-    expect(plan.textContent).toContain('跳过: 没有可核对的普通背包荧光棒, 本次跳过.')
+    expect(plan.textContent).toContain('跳过：没有可核对的普通背包荧光棒，本次跳过')
 
     // Switching the allocation is an edit like any other.
     fireEvent.click(screen.getByRole('radio', { name: '统一数量' }))
@@ -179,7 +182,7 @@ describe('badge renewal', () => {
     fireEvent.click(screen.getByRole('radio', { name: '逐房数量' }))
     fireEvent.change(screen.getByRole('spinbutton', { name: '房间 100 的赠送数量' }), { target: { value: '4' } })
     fireEvent.click(screen.getByRole('button', { name: '生成核对单' }))
-    await screen.findByRole('region', { name: '赠送预览' })
+    await screen.findByRole('region', { name: '赠送核对单' })
     expect(named('previewDouyuRenewal')[0]!.args).toEqual({ accountId: 'a1', rooms: ['100'], quantity: 1, quantities: [{ room: '100', quantity: 4 }] })
   })
 
@@ -202,12 +205,12 @@ describe('badge renewal', () => {
     const unknownRow = within(section).getByText('乙').closest('tr')!
     expect(within(unknownRow).getAllByText('未知')).toHaveLength(2)
     expect(within(within(section).getByText('甲').closest('tr')!).getByText('30 天')).toBeInTheDocument()
-    expect(section.textContent).toContain('仅包含本次返回的一页')
+    expect(section.textContent).toContain('仅显示本次读取到的粉丝牌')
   })
 
   it('says what to do when the account is not signed in', () => {
     render(<Renewal accountId="a1" accountLabel="主号" ready={false} />)
-    expect(screen.getByText('请先登录 主号，登录后即可读取。')).toBeInTheDocument()
+    expect(screen.getByText('请先登录 主号，登录后即可读取')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /粉丝牌/ })).toBeDisabled()
   })
 })

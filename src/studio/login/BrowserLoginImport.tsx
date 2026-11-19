@@ -25,7 +25,7 @@ export function BrowserImportButton({ platform, accountId, disabled = false, bat
   const imports = useContext(ImportContext)
   return <button type="button" className={batch ? 'btn-quiet small browser-import-batch' : 'btn-quiet small'}
     disabled={disabled || !imports} onClick={() => imports?.open(platform, accountId)}>
-    {batch ? '批量导入登录态' : '从浏览器导入'}
+    {batch ? '批量导入账号' : '从浏览器导入'}
   </button>
 }
 export function AccountAvatar({ username, avatar }: { username: string; avatar?: string }): React.ReactNode {
@@ -123,7 +123,7 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
     void apiClient.cancelBrowserImport(previewRef.current?.id ?? request.id).then(result => {
       if (live.current && !result.ok) { setError(result.message); cancelling.current = false; setStopRequested(false) }
     }).catch(() => {
-      if (live.current) { setError('停止导入失败，请重试。'); cancelling.current = false; setStopRequested(false) }
+      if (live.current) { setError('停止导入失败，请重试'); cancelling.current = false; setStopRequested(false) }
     })
   }
   useEffect(() => {
@@ -136,31 +136,30 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
   const busy = phase === 'loading' || phase === 'scanning' || phase === 'importing'
   const choices = profiles.filter(profile => profile.browserName === browserName)
   const hasDouyu = preview?.accounts.some(account => account.platform === 'douyu' && selected.includes(account.id))
-  const title = request.platform ? `从浏览器导入${IMPORT_PLATFORM_NAMES[request.platform]}登录态` : '批量导入登录态'
+  const title = request.platform ? `从浏览器导入 ${IMPORT_PLATFORM_NAMES[request.platform]} 账号` : '批量导入账号'
 
   return <Sheet title={title} onClose={close}>
     <div className="browser-import-dialog" ref={contentRef}>
-      <p className="muted">选择已登录的浏览器和 Profile, 识别账号后导入到 Fy1Sync.</p>
       <div className="browser-import-selectors">
         <label>浏览器<select className="text-input" aria-label="浏览器" value={browserName} disabled={busy || !profiles.length}
           onChange={event => { reset(); setBrowserName(event.target.value); setProfileId(profiles.find(profile => profile.browserName === event.target.value)?.id ?? '') }}>
           {!profiles.length && <option value="">暂无浏览器</option>}
           {[...new Set(profiles.map(profile => profile.browserName))].map(name => <option key={name} value={name}>{name}</option>)}
         </select></label>
-        <label>Profile<select className="text-input" aria-label="Profile" value={profileId} disabled={busy || !choices.length}
+        <label>浏览器用户<select className="text-input" aria-label="浏览器用户" value={profileId} disabled={busy || !choices.length}
           onChange={event => { reset(); setProfileId(event.target.value) }}>
-          {!choices.length && <option value="">暂无 Profile</option>}
-          {choices.map(profile => <option key={profile.id} value={profile.id}>{profile.name}{profile.isDefault ? ' (默认)' : ''}</option>)}
+          {!choices.length && <option value="">暂无浏览器用户</option>}
+          {choices.map(profile => <option key={profile.id} value={profile.id}>{profile.name}{profile.isDefault ? '（默认）' : ''}</option>)}
         </select></label>
       </div>
-      {!supported && <p role="status">浏览器登录态导入目前支持 Windows.</p>}
-      {supported && !profiles.length && phase !== 'loading' && <p role="status">未发现 Chrome, Edge 或 Firefox 的 Profile. 请先在浏览器登录平台, 再刷新列表.</p>}
+      {!supported && <p role="status">仅支持在 Windows 导入浏览器账号</p>}
+      {supported && !profiles.length && phase !== 'loading' && <p role="status">未找到浏览器用户。打开 Chrome、Edge 或 Firefox 后，请刷新浏览器列表。</p>}
       <div className="browser-import-toolbar">
         <button type="button" className="btn-quiet small" disabled={busy} onClick={() => void load()}>刷新浏览器列表</button>
-        <button type="button" className="btn-solid small" disabled={busy || !profileId || !supported} onClick={() => void scan()}>识别登录态</button>
+        <button type="button" className="btn-solid small" disabled={busy || !profileId || !supported} onClick={() => void scan()}>识别账号</button>
       </div>
-      {phase === 'scanning' && <p role="status" className="browser-import-progress">正在读取并验证平台账号. 如 Windows 请求授权, 请在系统提示中完成授权.</p>}
-      {phase === 'loading' && <p role="status">正在查找浏览器 Profile...</p>}
+      {phase === 'scanning' && <p role="status" className="browser-import-progress">正在识别账号。如出现 Windows 授权提示，请完成授权。</p>}
+      {phase === 'loading' && <p role="status">正在查找浏览器用户…</p>}
       {preview && phase !== 'choose' && <>
         <div className="browser-import-list" aria-label="识别到的平台账号">
           {preview.accounts.map(account => <AccountChoice key={account.id} account={account}
@@ -170,13 +169,13 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
         {hasDouyu && phase !== 'result' && <label className="browser-import-target">斗鱼导入到
           <select className="text-input" aria-label="斗鱼导入到" value={douyuTarget} disabled={busy} onChange={event => setDouyuTarget(event.target.value)}>
             <option value="auto">自动匹配账号</option><option value="new">添加新账号</option>
-            {douyuAccounts.map(account => <option key={account.id} value={account.id}>更新: {account.login.nickname || account.label}</option>)}
+            {douyuAccounts.map(account => <option key={account.id} value={account.id}>替换：{account.login.nickname || account.label}</option>)}
           </select>
         </label>}
-        {phase !== 'result' && <p className="muted">只导入勾选的账号. 其他平台会更新当前账号, 未通过验证的登录态不会保存.</p>}
+        {phase !== 'result' && <p className="muted">除斗鱼外，导入会替换对应平台的当前账号</p>}
       </>}
       {error && <p className="form-error" role="alert">{error}</p>}
-      {phase === 'importing' && <p role="status">{stopRequested ? '正在停止剩余项，已导入项会保留在结果中。' : '正在导入所选登录态...'}</p>}
+      {phase === 'importing' && <p role="status">{stopRequested ? '正在停止剩余导入，已导入的账号会保留' : '正在导入所选账号…'}</p>}
       {phase === 'result' && <div className="browser-import-results" role="status">
         {outcomes.map(outcome => <p key={outcome.platform} className={outcome.imported ? '' : 'form-error'}>
           <b>{IMPORT_PLATFORM_NAMES[outcome.platform]}</b>: {outcome.message}
@@ -185,7 +184,7 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
       {phase !== 'result' && <div className="browser-import-footer">
         <button type="button" className="btn-quiet small" onClick={close} disabled={stopRequested}>取消</button>
         <button type="button" className="btn-solid small" disabled={busy || !preview || !selected.length || phase !== 'preview'}
-          onClick={() => void apply()}>{request.platform ? '导入登录态' : `导入所选登录态 (${selected.length})`}</button>
+          onClick={() => void apply()}>{request.platform ? '导入账号' : `导入所选账号（${selected.length}）`}</button>
       </div>}
     </div>
   </Sheet>

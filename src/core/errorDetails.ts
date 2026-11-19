@@ -89,7 +89,7 @@ export function errorDetails(value: unknown): ErrorDetails {
 /** Public summaries and original fields travel together, without a message-keyed global cache. */
 export function displayError(value: unknown, summary?: string): DisplayError {
   const detail = errorDetails(value)
-  return { message: summary ?? (typeof detail.message === 'string' ? detail.message : '操作失败, 请查看原始错误信息.'), detail }
+  return { message: summary ?? (typeof detail.message === 'string' ? detail.message : '操作未完成'), detail }
 }
 
 export function errorMessage(value: unknown): string {

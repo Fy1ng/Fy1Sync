@@ -95,7 +95,7 @@ export function Backpack({ data, room, canGive = true }: { data: DouyuData; room
       if (!snapshotOk(response.value, asked)) throw new Error('bad snapshot', { cause: response })
       setInventory(response.value)
     } catch (caught) {
-      if (mounted.current && mine === generation.current) setReadError(displayError(caught, '背包读取失败, 请重试. '))
+      if (mounted.current && mine === generation.current) setReadError(displayError(caught, '背包读取失败，请重试'))
     } finally {
       if (mounted.current && mine === generation.current) setReading(false)
     }
@@ -133,16 +133,16 @@ export function Backpack({ data, room, canGive = true }: { data: DouyuData; room
         <span className="muted">账号 <b>{active.label}</b></span>
       </div>
       {currentRoom && roomOk(roomText) && roomText !== currentRoom && (
-        <p className="note-warn">当前直播间为 {currentRoom}。赠送仅对当前直播间有效，其他房间的预览将被拒绝。</p>
+        <p className="note-warn">只能向当前直播间 {currentRoom} 赠送，请修改目标房间</p>
       )}
-      {roomText === '' && <p className="muted">请填写目标房间号，或先连接直播间。</p>}
+      {roomText === '' && <p className="muted">请填写目标房间号，或先连接直播间</p>}
 
       <section aria-label="背包库存" className="pack-stock">
         {readError && <p className="form-error" role="alert"><ErrorText error={readErrorDetail ?? readError} message={readError} /></p>}
-        {!inventory ? (!readError && <p className="muted">{reading ? '正在读取背包…' : '尚未读取背包。'}</p>) : (
+        {!inventory ? (!readError && <p className="muted">{reading ? '正在读取背包…' : '尚未读取背包'}</p>) : (
           <>
             <p className="muted num">房间 {inventory.room} · 读取于 {dateTime(inventory.checkedAt)}</p>
-            {inventory.items.length === 0 ? <p className="muted">背包中没有道具。</p> : (
+            {inventory.items.length === 0 ? <p className="muted">背包中没有道具</p> : (
               <div className="pack-scroll">
                 <table className="pack-table">
                   <thead>
@@ -151,7 +151,7 @@ export function Backpack({ data, room, canGive = true }: { data: DouyuData; room
                   <tbody>
                     {inventory.items.map((item) => (
                       <tr key={item.propId} data-off={!item.canGift}>
-                        <td>{item.name} <span className="muted num">{item.propId}</span></td>
+                        <td>{item.name}</td>
                         <td className="num">{item.quantity}</td>
                         <td className="num">{expiry(item.expiration)}</td>
                         <td className="num">{money(item.unitValue)}</td>

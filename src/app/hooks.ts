@@ -238,7 +238,7 @@ export function useFullscreen(target: React.RefObject<HTMLElement | null>): {
     const node = target.current
     if (!node) return
     setError(null)
-    const fail = (error: unknown = { code: 'fullscreen-unsupported' }) => { if (mounted.current) setError(displayError(error, '无法切换全屏. 请重试或使用窗口模式.')) }
+    const fail = (error: unknown = { code: 'fullscreen-unsupported' }) => { if (mounted.current) setError(displayError(error, '无法切换全屏。请重试或使用窗口模式。')) }
     try {
       if (document.fullscreenElement) void document.exitFullscreen().catch(fail)
       else if (node.requestFullscreen) void node.requestFullscreen().catch(fail)

@@ -30,13 +30,13 @@ export function parseDouyuRoom(input: string): string | null {
 }
 
 function fail(code: ResolveFailure['code'], message: string, detail?: unknown): DouyuRoomResult {
-  return { ok: false, failure: { code, message, hint: '请检查斗鱼数字房间号和网络后重试. 身份确认成功后可独立连接弹幕.', ...(detail === undefined ? {} : { detail: diagnosticDetails(detail) }) } }
+  return { ok: false, failure: { code, message, hint: '请检查斗鱼房间号和网络后重试', ...(detail === undefined ? {} : { detail: diagnosticDetails(detail) }) } }
 }
 const object = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
 
 /** The input route and vipId are aliases. Only the roomInfo.rid is authoritative. */
 export function parseDouyuRoomPage(page: string, inputRoom: string): DouyuRoomResult {
-  if (Buffer.byteLength(page) > MAX_PAGE_BYTES) return fail('upstream-error', '斗鱼房间身份响应超过上限.')
+  if (Buffer.byteLength(page) > MAX_PAGE_BYTES) return fail('upstream-error', '斗鱼直播间信息过大')
   const scripts = [...page.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)]
     .filter(match => {
       const attributes = [...match[1]!.matchAll(/(?:^|\s)([\w:-]+)\s*=\s*(["'])(.*?)\2/g)]
@@ -46,19 +46,19 @@ export function parseDouyuRoomPage(page: string, inputRoom: string): DouyuRoomRe
       }
       return value('id') === 'vike_pageContext' && value('type')?.toLowerCase() === 'application/json'
     })
-  if (scripts.length !== 1) return fail('upstream-error', '斗鱼房间身份暂时无法确认, 请重试.')
+  if (scripts.length !== 1) return fail('upstream-error', '暂时无法确认斗鱼直播间，请重试')
   try {
     const root = object(JSON.parse(scripts[0]![2]!, (key: string, value: unknown, context?: { source?: string }) => {
       if (key === 'rid' && typeof value === 'number' && context?.source && !/^[1-9][0-9]{0,11}$/.test(context.source)) throw new Error('Invalid numeric identity')
       return value
     }))
     const room = object(object(object(object(root?.pageProps)?.room)?.roomInfo)?.roomInfo)
-    if (!room) return fail('upstream-error', '斗鱼房间身份数据无效.')
-    if (Object.keys(room).length === 0) return fail('room-not-found', '斗鱼房间不存在.')
+    if (!room) return fail('upstream-error', '斗鱼直播间信息无效')
+    if (Object.keys(room).length === 0) return fail('room-not-found', '斗鱼房间不存在')
     const id = validDouyuRoom(room.rid)
-    if (!id) return fail('upstream-error', '斗鱼返回了无效的真实房间号.')
+    if (!id) return fail('upstream-error', '斗鱼返回的直播间信息无效')
     return { ok: true, identity: { room: id, inputRoom } }
-  } catch { return fail('upstream-error', '斗鱼房间身份数据无法读取.') }
+  } catch { return fail('upstream-error', '无法读取斗鱼直播间信息') }
 }
 
 export class DouyuRoomResolver {
@@ -67,7 +67,7 @@ export class DouyuRoomResolver {
   constructor(private readonly fetchPage: (room: string) => Promise<string>, private readonly options: { now?: () => number; ttlMs?: number; capacity?: number } = {}) {}
   readonly resolve: ResolveDouyuRoom = async input => {
     const id = parseDouyuRoom(input)
-    if (!id) return fail('unsupported-url', '无法识别斗鱼数字房间号.')
+    if (!id) return fail('unsupported-url', '无法识别斗鱼房间号')
     const now = (this.options.now ?? Date.now)()
     const cached = this.cache.get(id)
     if (cached && cached.expires > now) return { ok: true, identity: { room: cached.room, inputRoom: id } }
@@ -75,7 +75,7 @@ export class DouyuRoomResolver {
     const existing = this.pending.get(id)
     if (existing) return existing
     const capacity = this.options.capacity ?? 128
-    if (this.pending.size >= capacity) return fail('upstream-error', '房间身份查询繁忙, 请稍后重试.')
+    if (this.pending.size >= capacity) return fail('upstream-error', '直播间查询繁忙，请稍后重试')
     const lookup = (async (): Promise<DouyuRoomResult> => {
       try {
         const result = parseDouyuRoomPage(await this.fetchPage(id), id)
@@ -84,7 +84,7 @@ export class DouyuRoomResolver {
           this.cache.set(id, { room: result.identity.room, expires: (this.options.now ?? Date.now)() + (this.options.ttlMs ?? 60_000) })
         }
         return result
-      } catch (error) { if (error instanceof StreamFailureError) throw error; return fail('upstream-error', '请求斗鱼房间身份失败, 请检查网络后重试.', error) }
+      } catch (error) { if (error instanceof StreamFailureError) throw error; return fail('upstream-error', '查询斗鱼直播间失败，请检查网络后重试', error) }
     })()
     this.pending.set(id, lookup)
     try { return await lookup } finally { if (this.pending.get(id) === lookup) this.pending.delete(id) }

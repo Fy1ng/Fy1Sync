@@ -52,8 +52,8 @@ export const PLATFORM_LABEL: Record<PlatformId, string> = {
 export type RoomPlatform = 'douyu' | 'bilibili' | 'huya' | 'douyin'
 
 /** What either side accepts: any side may play any source, so both say the same. */
-export const SOURCE_HINT = '斗鱼, 哔哩哔哩, 虎牙, 抖音, YouTube, Twitch 链接或房间号'
-export const SOURCE_KINDS = '斗鱼, 哔哩哔哩, 虎牙, 抖音, YouTube, Twitch'
+export const SOURCE_HINT = '粘贴直播间链接或输入房间号'
+export const SOURCE_KINDS = '未添加'
 
 /**
  * A room typed on its own rather than as a link: `6979222`, or with a platform in front,
@@ -203,7 +203,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       const roomKey = douyinDanmakuRoom(descriptor)
       if (roomKey) {
         try { connectRoom(roomKey, roomKey.slice('douyin:'.length), true) }
-        catch (error) { session.notice('warn', '抖音弹幕连接失败, 视频继续播放', error) }
+        catch (error) { session.notice('warn', '抖音弹幕连接失败，视频继续播放', error) }
       }
     } else if (descriptor.platform === 'huya') {
       const sourceRoom = descriptor.sourceRoom ?? roomFromInput(descriptor.input)
@@ -246,7 +246,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       if (role === 'commentary') connectSourceRoom(descriptor)
       return true
     } catch (error) {
-      if (loads.current[role] === request) patch(role, { problem: displayError(error, '媒体载入失败, 请查看原始错误信息.') })
+      if (loads.current[role] === request) patch(role, { problem: displayError(error, '片源载入失败，请重试') })
       return false
     } finally { if (loads.current[role] === request) patch(role, { busy: false }) }
   }, [connectSourceRoom, finishAttachment, patch, session])
@@ -334,7 +334,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       if (role === 'commentary') connectSourceRoom(descriptor)
       return true
     } catch (error) {
-      if (generation === session.sourceRevision(role) && loads.current[role] === request) patch(role, { problem: displayError(error, '媒体载入失败, 请查看原始错误信息.') })
+      if (generation === session.sourceRevision(role) && loads.current[role] === request) patch(role, { problem: displayError(error, '片源载入失败，请重试') })
       return false
     } finally {
       session.endSourceChange(role, generation)
@@ -356,7 +356,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         return
       }
     } catch (error) {
-      if (stillCurrent()) patch(role, { problem: displayError(error, '登录暂时失败, 请重试.') })
+      if (stillCurrent()) patch(role, { problem: displayError(error, '登录暂时失败，请重试') })
       return
     } finally { patch(role, { loggingIn: false }) }
     if (again && stillCurrent()) await loadInput(role, again.input, again.platform)
@@ -386,11 +386,11 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         const source = saved[role]!
         const platform = ['douyu', 'bilibili', 'huya', 'douyin'].includes(source.platform) ? source.platform as RoomPlatform : undefined
         try { return await loadInput(role, source.input, platform) && session.snapshot.media[role].status !== 'error' ? null : role }
-        catch { patch(role, { busy: false, problem: { message: '载入失败, 请检查网络后重试.' } }); return role }
+        catch { patch(role, { busy: false, problem: { message: '载入失败，请检查网络后重试' } }); return role }
       }))
       const messages = failures.filter((role): role is SourceRole => role !== null)
-        .map(role => `${ROLE_LABEL[role]}: ${live.current[role].problem?.message ?? session.snapshot.media[role].error?.message ?? '恢复未完成, 请检查片源后重试.'}`)
-      if (messages.length) setRestoreProblem(messages.join(' '))
+        .map(role => `${ROLE_LABEL[role]}：${live.current[role].problem?.message ?? session.snapshot.media[role].error?.message ?? '恢复未完成，请检查片源后重试'}`)
+      if (messages.length) setRestoreProblem(messages.join('；'))
       return messages.length === 0
     } finally { restoringRef.current = false; setRestoring(false) }
   }, [loadInput, patch, session])
@@ -413,11 +413,11 @@ export function LoginOffer({ role }: { role: SourceRole }): React.ReactNode {
   if (!load.login || load.busy || load.loggingIn) return null
   const name = spaced(LOGIN_LABEL[load.login])
   // Without a problem this asks for a login only to get the top quality; with one, the login is needed to play.
-  const text = !load.problem && load.login !== 'douyin' ? `登录${name}可看最高画质` : load.signedIn ? `重新登录${name}后重试` : `登录${name}后重试`
+  const text = !load.problem && load.login !== 'douyin' ? '登录后可尝试原画' : null
   return (
     <span className="slot-login">
-      <span>{text}</span>
-      <button type="button" className="btn-solid small" onClick={() => void loader.login(role)}>{load.signedIn ? '重新登录' : '登录'}</button>
+      {text && <span>{text}</span>}
+      <button type="button" className="btn-solid small" onClick={() => void loader.login(role)}>{load.signedIn ? `重新登录${name}并重试` : `登录${name}并重试`}</button>
     </span>
   )
 }

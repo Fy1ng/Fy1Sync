@@ -29,7 +29,7 @@ export function ComposerProvider({ children }: { children: React.ReactNode }): R
   const { draft, setDraft } = composer
   const reply = useCallback((user: string) => {
     let mention: string
-    try { mention = buildReplyDraft(user, '') } catch (caught) { session.notice('warn', '回复对象无效, 请检查用户名.', caught); return }
+    try { mention = buildReplyDraft(user, '') } catch (caught) { session.notice('warn', '回复对象无效，请检查用户名', caught); return }
     setDraft(mention + draft.replace(/^@[^:：\s]+[:：]\s*/, ''))
     setFocusRequest((count) => count + 1)
   }, [draft, setDraft, session])

@@ -44,6 +44,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
   const readOnly = isReadOnlyDanmakuRoom(danmaku.room)
   const writes = useDouyuWrites()
   const composer = useComposer()
+  const delivery = deliveryText(composer.delivery)
   const { roomName } = useSourceLoader()
   const rate = useDanmakuRate(readOnly ? null : danmaku.room)
   // One menu for the whole list, anchored to the button it was opened from.
@@ -123,7 +124,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
           }}>
           {messages.length === 0 ? (
             <p className="drawer-empty">
-              {danmaku.connected ? '弹幕将随解说进度显示' : danmaku.room ? danmaku.error ? <ErrorText error={connectionFailure.errorDetail ?? connectionFailure.detail ?? { message: danmaku.error }} message={danmaku.error} /> : '正在连接...' : '载入斗鱼, 虎牙或抖音解说后显示弹幕'}
+              {danmaku.connected ? '已连接，暂无弹幕' : danmaku.room ? danmaku.error ? <ErrorText error={connectionFailure.errorDetail ?? connectionFailure.detail ?? { message: danmaku.error }} message={danmaku.error} /> : '正在连接…' : '请在「解说」中连接弹幕'}
             </p>
           ) : (
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
@@ -167,7 +168,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
         onLogin={() => onOpenSettings('accounts', 'douyin')} />}
       {writes && !readOnly && <form className="say" onSubmit={(event) => { event.preventDefault(); if (!composing.current) void composer.sendDraft() }}>
         <textarea ref={box} rows={1} value={composer.draft} disabled={!composer.canEdit} aria-label="弹幕内容"
-          placeholder={composer.canEdit ? '发送弹幕' : !composer.account?.loggedIn ? '登录斗鱼后可发送' : composer.needsRelogin ? '需要重新登录斗鱼' : danmaku.connected ? '正在准备…' : '连接弹幕后可发送'}
+          placeholder={composer.canEdit ? '发送弹幕' : '弹幕内容'}
           spellCheck={false}
           onChange={(event) => composer.setDraft(event.target.value)}
           onFocus={() => { void composer.refreshAccounts() }}
@@ -198,7 +199,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords }: {
         {composer.notice && <p className="say-note" data-state={composer.notice.status} role="status">{composer.notice.status === 'succeeded' ? composer.notice.message : <ErrorText error={composer.notice.detail ?? { status: composer.notice.status, message: composer.notice.message }} message={composer.notice.message} />}</p>}
         {composer.configurationError && <p className="say-note is-warn" role="alert"><ErrorText error={composer.configurationDetail ?? composer.configurationError} message={composer.configurationError} /></p>}
         {composer.deliveryError && <p className="say-note is-warn" role="alert"><ErrorText error={composer.deliveryErrorDetail ?? composer.deliveryError} message={composer.deliveryError} /></p>}
-        {deliveryText(composer.delivery) && <p className="say-note">{deliveryText(composer.delivery)}{composer.delivery && (composer.delivery.gateway === 'rejected' || composer.delivery.gateway === 'unknown' || composer.delivery.roomEcho === 'not-observed') && <ErrorDetailsButton error={composer.delivery} />}</p>}
+        {delivery && !(composer.notice?.status === 'succeeded' && delivery === composer.notice.message) && <p className="say-note">{delivery}{composer.delivery && (composer.delivery.gateway === 'rejected' || composer.delivery.gateway === 'unknown' || composer.delivery.roomEcho === 'not-observed') && <ErrorDetailsButton error={composer.delivery} />}</p>}
       </form>}
     </aside>
   )

@@ -33,7 +33,7 @@ describe('decoder preference IPC service', () => {
   it('rejects read parameters and sanitizes write failures', async () => {
     expect(await service.invoke('getDecoderPreferences', {})).toMatchObject({ ok: false, code: 'invalid-arguments' })
     vi.spyOn(preferences, 'set').mockRejectedValue(new Error('C:/private/user/file.json: access denied'))
-    expect(await service.invoke('setDecoderPreferences', { mode: 'software' })).toEqual({ ok: false, code: 'settings-write-failed', message: '解码设置保存失败, 请重试' })
+    expect(await service.invoke('setDecoderPreferences', { mode: 'software' })).toEqual({ ok: false, code: 'settings-write-failed', message: '解码设置保存失败，请重试' })
     expect(preferences.get().mode).toBe('auto')
   })
 })

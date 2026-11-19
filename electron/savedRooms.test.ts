@@ -54,10 +54,10 @@ describe('saved room storage', () => {
 
   it('does not permit renderer-supplied snapshots or remote image paths', () => {
     const f = fixture()
-    expect(() => f.store.save({ ...source, metadata: {} })).toThrow('参数无效')
+    expect(() => f.store.save({ ...source, metadata: {} })).toThrow('收藏信息无效')
     const room = f.store.save(source)
     expect(() => f.store.recordAttempt(room.id, 2000, { roomId: '6657', url: 'https://www.douyu.com/6657', nickname: '主播', title: '标题',
-      avatarUrl: 'https://evil.test/a.png', coverUrl: null, status: 'live', lastStartedAt: null, startTimeSource: null, collectedAt: 2000 })).toThrow('参数无效')
+      avatarUrl: 'https://evil.test/a.png', coverUrl: null, status: 'live', lastStartedAt: null, startTimeSource: null, collectedAt: 2000 })).toThrow('收藏信息无效')
     expect(f.store.list()[0]!.metadata).toBeUndefined()
   })
 
@@ -97,7 +97,7 @@ describe('saved room storage', () => {
     const f = fixture({ store: { load: () => value, save: next => { value = structuredClone(next) } } })
     for (let index = 1; index <= 100; index++) f.store.save({ ...source, input: String(index) })
     expect(f.store.list()).toHaveLength(100)
-    expect(() => f.store.save({ ...source, input: '101' })).toThrow('最多收藏100个直播间')
+    expect(() => f.store.save({ ...source, input: '101' })).toThrow('最多收藏 100 个直播间')
     expect(f.store.save({ ...source, input: '1', label: '已更新' }).label).toBe('已更新')
     expect(value?.rooms).toHaveLength(100)
   })
@@ -192,7 +192,7 @@ describe('saved room validation', () => {
     { label: '' }, { label: '字'.repeat(101) }, { label: 'bad\rlabel' }, { id: 'renderer-id' }, { savedAt: 0 },
   ])('rejects invalid source data %# before writing', patch => {
     const f = fixture()
-    expect(() => f.store.save({ ...source, ...patch })).toThrow('收藏直播间参数无效')
+    expect(() => f.store.save({ ...source, ...patch })).toThrow('收藏信息无效')
     expect(f.store.list()).toEqual([])
     expect(fs.existsSync(f.file)).toBe(false)
   })
@@ -201,13 +201,13 @@ describe('saved room validation', () => {
     const f = fixture(), getter = vi.fn(() => '6657')
     const input = { ...source }
     Object.defineProperty(input, 'input', { enumerable: true, get: getter })
-    expect(() => f.store.save(input)).toThrow('收藏直播间参数无效')
+    expect(() => f.store.save(input)).toThrow('收藏信息无效')
     expect(getter).not.toHaveBeenCalled()
   })
 
   it.each([null, [], {}, { id: '' }, { id: 'a'.repeat(161) }, { id: 'id\n' }, { id: 'id', extra: true }])(
     'rejects invalid removal parameters %#', input => {
-      expect(() => fixture().store.remove(input)).toThrow('收藏直播间参数无效')
+      expect(() => fixture().store.remove(input)).toThrow('收藏信息无效')
     },
   )
 })

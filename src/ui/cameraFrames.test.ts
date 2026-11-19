@@ -105,7 +105,7 @@ describe('local color camera sampling', () => {
   })
   it('does not train on repeated frozen frames and times out without modifying playback', async () => {
     const pending = sampleCameraFrames(video, rough, new AbortController().signal)
-    const rejected = expect(pending).rejects.toThrow('连续视频帧')
+    const rejected = expect(pending).rejects.toThrow('请等播放恢复后重新贴边')
     for (let i = 0; i < 4; i++) frame(0)
     await vi.advanceTimersByTimeAsync(2600)
     await rejected
@@ -125,7 +125,7 @@ describe('local color camera sampling', () => {
     controller.abort()
     await expect(pending).rejects.toThrow()
     paused = true
-    await expect(sampleCameraFrames(video, rough, new AbortController().signal)).rejects.toThrow('已暂停')
+    await expect(sampleCameraFrames(video, rough, new AbortController().signal)).rejects.toThrow('贴边需要解说播放')
     expect(() => cameraSamplingPlan(80, 60, { ...rough, x: -1 })).toThrow()
     expect(() => cameraSamplingPlan(80, 60, { ...rough, w: 0.001 })).toThrow()
   })

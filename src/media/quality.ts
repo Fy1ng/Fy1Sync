@@ -84,5 +84,5 @@ export function activeQualityLabel(
     return options.find((option) => option.level === selectedLevel)?.label ?? '未知'
   }
   const auto = options.find((option) => option.level === autoLevel)
-  return auto ? `自动 (${auto.label})` : '自动'
+  return auto ? `自动（${auto.label}）` : '自动'
 }

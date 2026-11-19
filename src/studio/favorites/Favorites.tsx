@@ -16,9 +16,8 @@ const time = (value: number): string => new Date(value).toLocaleString('zh-CN', 
 function RoomTimes({ room }: { room: SavedRoom }): React.ReactNode {
   const metadata = room.metadata
   return <span className="favorite-times">
-    <span className="favorite-facts">{metadata?.lastStartedAt != null
-      ? `${metadata.startTimeSource === 'observed' ? '本地检测开播' : '最近开播'}: ${time(metadata.lastStartedAt)}` : '最近开播: 未知'}</span>
-    <span className="favorite-facts">{metadata ? `采集于 ${time(metadata.collectedAt)}` : '尚未成功采集'}</span>
+    {metadata?.lastStartedAt != null && <span className="favorite-facts">{`${metadata.startTimeSource === 'observed' ? '首次检测到直播' : '最近开播'}：${time(metadata.lastStartedAt)}`}</span>}
+    <span className="favorite-facts">{metadata ? `更新于 ${time(metadata.collectedAt)}` : '直播状态待获取'}</span>
   </span>
 }
 
@@ -29,10 +28,9 @@ export function RoomSummary({ room, showTimes = true }: { room: SavedRoom; showT
     {metadata?.avatarUrl ? <img className="favorite-avatar" src={metadata.avatarUrl} alt="" loading="lazy" onLoad={event => { event.currentTarget.style.visibility = '' }} onError={event => { event.currentTarget.style.visibility = 'hidden' }} />
       : <span className="favorite-avatar favorite-placeholder" aria-hidden="true">{(metadata?.nickname || room.label).slice(0, 1)}</span>}
     <span className="favorite-copy">
-      <span className="favorite-name">{metadata?.nickname || room.label} <small>{PLATFORM_LABEL[room.platform as PlatformId] ?? room.platform}</small></span>
+      <span className="favorite-name">{metadata?.nickname || room.label} <small>{PLATFORM_LABEL[room.platform as PlatformId] ?? '其他平台'}</small></span>
       <span className="favorite-title">{metadata?.title || room.label}</span>
-      <span className="favorite-facts"><span className={`favorite-status is-${status}`}>{STATUS[status]}</span>
-        {room.refreshError && <span>上次采集缓存</span>}</span>
+      <span className="favorite-facts"><span className={`favorite-status is-${status}`}>{room.refreshError && metadata ? `上次更新时${STATUS[status]}` : STATUS[status]}</span></span>
       {showTimes && <RoomTimes room={room} />}
     </span>
   </span>
@@ -53,7 +51,7 @@ export function Favorites({ onClose }: { onClose: () => void }): React.ReactNode
     setWorking(previous => new Set(previous).add(key))
     setError(null)
     try { const problem = await operation(); if (problem) setError(problem) }
-    catch { setError('操作失败, 请稍后重试.') }
+    catch { setError('操作失败，请稍后重试') }
     finally { setWorking(previous => { const next = new Set(previous); next.delete(key); return next }) }
   }
   const watch = async (room: SavedRoom, target: SourceRole): Promise<void> => {
@@ -61,7 +59,7 @@ export function Favorites({ onClose }: { onClose: () => void }): React.ReactNode
     const ok = await loader.loadInput(target, source, ['douyu', 'bilibili', 'huya', 'douyin'].includes(room.platform) ? room.platform as RoomPlatform : undefined)
     if (ok) onClose()
     else {
-      const message = '直播间加载失败, 请检查开播状态或登录信息后重试.'
+      const message = '直播间载入失败，请检查开播状态或登录信息后重试'
       setError(message)
       session.notice('warn', message)
     }
@@ -84,7 +82,7 @@ export function Favorites({ onClose }: { onClose: () => void }): React.ReactNode
           {PLATFORMS.map(value => <option key={value} value={value}>{PLATFORM_LABEL[value]}</option>)}
         </select></label>
         <label className="favorites-input">直播间<input aria-label="收藏直播间链接或房间号" value={input} maxLength={500} onChange={event => setInput(event.target.value)}
-          placeholder={platform === 'youtube' ? 'YouTube 频道或直播链接, 视频 ID' : '直播间链接或房间号'} spellCheck={false} /></label>
+          placeholder={platform === 'youtube' ? 'YouTube 频道或直播链接，视频 ID' : '直播间链接或房间号'} spellCheck={false} /></label>
         <label>默认载入<select aria-label="收藏默认载入位置" value={role} onChange={event => setRole(event.target.value as SourceRole)}>
           <option value="official">画面</option><option value="commentary">解说</option>
         </select></label>
@@ -94,13 +92,13 @@ export function Favorites({ onClose }: { onClose: () => void }): React.ReactNode
         <select aria-label="筛选收藏平台" value={filter} onChange={event => setFilter(event.target.value)}><option value="all">全部平台</option>
           {PLATFORMS.map(value => <option key={value} value={value}>{PLATFORM_LABEL[value]}</option>)}
         </select>
-        <input aria-label="搜索收藏直播间" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索主播, 标题或房间号" />
+        <input aria-label="搜索收藏直播间" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索主播，标题或房间号" />
         <button type="button" className="btn-quiet" disabled={!rooms?.length || working.size > 0} onClick={() => void run('all', () => refreshSavedRooms())}>
-          <Icon name="refresh" />{working.has('all') ? '采集中' : '全部刷新'}</button>
+          <Icon name="refresh" />{working.has('all') ? '刷新中' : '全部刷新'}</button>
       </div>
       {error && <p className="form-error" role="alert">{error}</p>}
       {loadError && <ReadError error={loadError} onRetry={retry} />}
-      {rooms === null ? (loading && <p role="status">正在读取收藏...</p>) : !filtered.length ? (!loadError && !loading && <p className="favorites-empty">{rooms.length ? '没有匹配的收藏直播间.' : '还没有收藏. 未开播的直播间也可以收藏.'}</p>) :
+      {rooms === null ? (loading && <p role="status">正在读取收藏</p>) : !filtered.length ? (!loadError && !loading && <p className="favorites-empty">{rooms.length ? '没有匹配的收藏直播间' : '还没有收藏，未开播的房间也能添加'}</p>) :
         <ul className="favorites-list" aria-label="收藏直播间列表">{filtered.map(room => <li key={room.id} className="favorite-card">
           <RoomSummary room={room} showTimes={false} />
           <RoomTimes room={room} />
@@ -114,7 +112,6 @@ export function Favorites({ onClose }: { onClose: () => void }): React.ReactNode
             </div>
           </div>
         </li>)}</ul>}
-      <p className="muted">应用运行期间自动检测, 采集失败保留旧信息. 手动刷新间隔至少 15 秒.</p>
     </div>
   </Sheet>
 }

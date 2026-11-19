@@ -265,8 +265,8 @@ async function start(): Promise<void> {
             if (isDouyuActivityKind(task.kind)) {
               if (activityRunsFixture.length >= 128) throw new Error('Fixture activity limit reached')
               activityRunsFixture.push({ accountId: task.accountId, room: task.room, kind: task.kind })
-              if (activityFixtureOutcome === 'scheduled') return { status: 'scheduled', message: '离线活动状态: 等待官方时间', nextRunAt: Date.now() + 60_000 }
-              return { status: activityFixtureOutcome, message: activityFixtureOutcome === 'waiting-user' ? '离线活动状态: 请完成人工验证' : '离线活动测试完成' }
+              if (activityFixtureOutcome === 'scheduled') return { status: 'scheduled', message: '离线活动状态：等待官方时间', nextRunAt: Date.now() + 60_000 }
+              return { status: activityFixtureOutcome, message: activityFixtureOutcome === 'waiting-user' ? '离线活动状态：请完成人工验证' : '离线活动测试完成' }
             }
             return { status: 'succeeded', message: task.kind === 'yuba-sign' ? '离线鱼吧签到测试完成' : '离线签到测试完成' }
           }
@@ -286,7 +286,7 @@ async function start(): Promise<void> {
       douyuTasks.setActiveAccount(douyuAccounts.activeAccountId)
       releaseAccountEvents = douyuAccounts.subscribe(event => {
         if (event.type === 'invalidated') {
-          douyuTasks!.pauseAccount(event.accountId, '账号登录状态已变化, 请重新启动任务.')
+          douyuTasks!.pauseAccount(event.accountId, '账号登录状态已变化，请重新启动任务')
           douyuRenewal?.invalidate(event.accountId)
         }
         douyuTasks!.setActiveAccount(douyuAccounts!.activeAccountId)
@@ -601,18 +601,18 @@ async function start(): Promise<void> {
     isPrimary: id => !!window && !window.isDestroyed() && window.webContents.id === id,
     apply: async kind => {
       if (kind === 'frontend') {
-        if (!await confirmUpdate('应用前端更新并重启', '即将结束当前播放并重启应用. 新界面启动失败时会自动回退, 本机数据会保留.')) return false
+        if (!await confirmUpdate('应用界面更新并重启', '将结束播放并重启。新界面启动失败时会自动回退，本机数据保留。')) return false
         if (onlineUpdates.state().frontend.phase !== 'ready') return false
         restartForFrontend()
       } else {
-        if (!await confirmUpdate('安装完整应用更新', '即将退出应用并打开已校验的 Windows 安装向导. 请确认编辑内容已保存, 然后按向导完成升级. 不会静默安装, 也不会新增桌面快捷键.')) return false
+        if (!await confirmUpdate('安装完整应用更新', '将结束播放、退出应用并打开安装向导。是否继续？')) return false
         confirmedInstaller = { userDataDir, file: await onlineUpdates.installerPath() }
         lifecycleTimer = setTimeout(() => app.quit(), 100)
       }
       return true
     },
     rollback: async () => {
-      if (!await confirmUpdate('回退前端并重启', '即将结束当前播放, 取消待应用的前端包并恢复之前的可用界面. 本机数据会保留.')) return false
+      if (!await confirmUpdate('回退界面并重启', '将结束播放并重启，取消待应用更新并恢复上一版可用界面。本机数据保留。')) return false
       frontendUpdates.rollbackForRestart()
       restartForFrontend()
       return true
@@ -953,7 +953,7 @@ app.on('before-quit', (event) => {
     if (installer) await launchApplicationInstaller(installer.userDataDir, installer.file)
   })().catch(() => {
     if (installer) {
-      dialog.showErrorBox('完整应用更新未启动', '未能安全启动安装向导, 没有安装更新. 应用将重新启动, 请稍后重试.')
+      dialog.showErrorBox('完整应用更新未启动', '安装向导启动失败，未安装更新。应用将重新启动，请稍后重试。')
       app.relaunch()
     }
   }).finally(() => { shutdownComplete = true; app.quit() })

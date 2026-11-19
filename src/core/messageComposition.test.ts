@@ -11,15 +11,15 @@ describe('outgoing text composition', () => {
   })
 
   it('validates the composed text instead of truncating a tail or a reply', () => {
-    expect(() => composeMessage('a'.repeat(500), { affixes })).toThrow('组合后的弹幕')
-    expect(() => buildReplyDraft('viewer', 'a'.repeat(500))).toThrow('组合后的弹幕')
+    expect(() => composeMessage('a'.repeat(500), { affixes })).toThrow('算上前后缀后太长')
+    expect(() => buildReplyDraft('viewer', 'a'.repeat(500))).toThrow('算上前后缀后太长')
     expect(composeMessage('😀'.repeat(250))).toHaveLength(500)
     for (const value of ['\ud800', 'line\nline', 'a\u2028b', '\0', '  ']) expect(() => composeMessage(value)).toThrow()
   })
 
   it('refuses bidi overrides the main process would reject, before any send', () => {
     for (const mark of ['‪', '‮', '⁦', '⁩']) {
-      expect(() => composeMessage(`前${mark}后`, { mode: 'repeat' })).toThrow('弹幕包含不支持的字符')
+      expect(() => composeMessage(`前${mark}后`, { mode: 'repeat' })).toThrow('弹幕含不支持的字符')
     }
     expect(composeMessage('普通文字 +1', { mode: 'repeat' })).toBe('普通文字 +1')
   })

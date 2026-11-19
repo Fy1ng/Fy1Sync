@@ -50,11 +50,11 @@ export function DouyuWritesPane(): React.ReactNode {
       const failed = replies.find(reply => reply.status === 'rejected' || !reply.value.ok)
       if (failed) throw failed.status === 'rejected' ? failed.reason : failed.value
       const remaining = await runningTasks()
-      if (remaining.rooms.length + remaining.batches.length > 0) throw new Error('仍有任务未暂停，请重试。')
+      if (remaining.rooms.length + remaining.batches.length > 0) throw new Error('仍有任务未暂停，请重试')
       session.updateSettings({ douyuWrites: false })
       setClosingCount(null)
     } catch (caught) {
-      setError(displayError(caught, '关闭未完成，斗鱼写操作仍然开启。').message)
+      setError(displayError(caught, '关闭未完成，斗鱼写操作仍然开启').message)
     } finally {
       setBusy(false)
     }
@@ -62,12 +62,12 @@ export function DouyuWritesPane(): React.ReactNode {
 
   return (
     <div className="desk-pane">
-      <Switch label="斗鱼写操作（实验性）" detail="发送弹幕、+1、回复、禁言、赠礼、续牌，以及签到、鱼吧签到、定时弹幕、钓鱼、红包、宝箱任务"
+      <Switch label="斗鱼写操作（实验性）" detail="开启弹幕发送、赠礼和账号任务等功能"
         checked={on || asking} disabled={asking || busy || closingCount !== null}
         onChange={(checked) => { if (checked) setAsking(true); else void close(false) }} />
       {asking && (
         <div className="writes-confirm" role="group" aria-label="确认打开斗鱼写操作">
-          <p className="note-warn">这些操作会用你的斗鱼账号真实执行，可能触发平台风控或账号限制。它们尚未逐项验收，出现异常请立即关闭。</p>
+          <p className="note-warn">使用真实斗鱼账号，可能触发风控或账号限制。出现异常请关闭此开关，运行中的任务会暂停。</p>
           <span className="row-end">
             <button type="button" className="btn-quiet small" onClick={() => setAsking(false)}>取消</button>
             <button type="button" className="btn-solid small" onClick={() => { session.updateSettings({ douyuWrites: true }); setAsking(false) }}>确认打开</button>

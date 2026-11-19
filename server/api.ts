@@ -152,8 +152,8 @@ export function sanitizedFailure(result: ResolveResult): ResolveResult {
   return { ok: false, failure: {
     code: result.failure.code, message: messages[result.failure.code], detail,
     hint: result.failure.code === 'restricted' || result.failure.code === 'login-required'
-      ? '请在账号区域登录对应平台后重新加载, 或使用可播放的媒体地址'
-      : '请检查地址和直播状态, 或提供可播放的媒体地址',
+      ? '请在「设置 > 账号」登录后重新载入，也可粘贴视频直链'
+      : '请检查地址及开播状态，也可粘贴视频直链',
   } }
 }
 
@@ -216,7 +216,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
           }
           case 'listDouyuAccounts': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
-            if (!deps.douyuAccounts) return fail('not-available', '斗鱼账号配置不可用, 请检查本地配置后重试.')
+            if (!deps.douyuAccounts) return fail('not-available', '斗鱼账号配置不可用，请检查本地配置后重试')
             return { ok: true, value: await deps.douyuAccounts.snapshot() }
           }
           case 'addDouyuAccount': {
@@ -238,7 +238,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             const accounts = deps.douyuAccounts
             if (!accounts) return fail('not-available', '斗鱼账号配置不可用')
             if (!accounts.hasAccount(args.id)) return fail('account-not-found', '斗鱼账号不存在')
-            if (accounts.isBusy(args.id)) return fail('account-busy', '账号正在登录或退出, 请稍后重试.')
+            if (accounts.isBusy(args.id)) return fail('account-busy', '账号正在登录或退出，请稍后重试')
             if (method === 'removeDouyuAccount') {
               deps.douyuTasks?.removeAccount(args.id)
               return { ok: true, value: await accounts.remove(args.id) }
@@ -255,14 +255,14 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             const task = tasks.snapshot().tasks.find(item => item.id === args.id)
             if (!task || !isDouyuActivityKind(task.kind)) return fail('task-not-found', '活动任务不存在')
             if (task.accountId !== accounts.activeAccountId) return fail('no-active-account', '请先切换到任务所属账号')
-            if (accounts.isBusy(task.accountId)) return fail('account-busy', '该账号的官方窗口已打开, 请先完成并关闭窗口')
-            tasks.pause(task.id, '官方房间已打开, 完成人工处理后请手动启动任务.')
-            tasks.pauseAccount(task.accountId, '官方房间已打开, 完成人工处理后请手动启动任务.')
+            if (accounts.isBusy(task.accountId)) return fail('account-busy', '该账号的官方窗口已打开，请先完成并关闭窗口')
+            tasks.pause(task.id, '官方房间已打开，完成人工处理后请手动启动任务')
+            tasks.pauseAccount(task.accountId, '官方房间已打开，完成人工处理后请手动启动任务')
             return { ok: true, value: await accounts.openRoom(task.accountId, task.officialRoom ?? task.room, task.kind === 'auto-fish' ? 'fish-act' : 'room') }
           }
           case 'getDouyuTasks': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
-            if (!deps.douyuTasks) return fail('not-available', '斗鱼任务配置不可用, 原文件已保留.')
+            if (!deps.douyuTasks) return fail('not-available', '斗鱼任务配置不可用，原文件已保留')
             return { ok: true, value: deps.douyuTasks.snapshot() }
           }
           case 'getDouyuRenewalTargets':
@@ -280,13 +280,13 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             const originRoom = deps.douyuTasks.snapshot().currentRoom
             if (!(await accounts.activeLoginStatus()).loggedIn) return fail('login-required', '请先登录当前斗鱼账号')
             if (disposed) return fail('service-closed', '本地服务已关闭')
-            if (accounts.activeAccountId !== accountId || accounts.isBusy(accountId) || deps.douyuTasks.snapshot().currentRoom !== originRoom) return fail('account-changed', '账号或房间已变化, 请重新读取')
+            if (accounts.activeAccountId !== accountId || accounts.isBusy(accountId) || deps.douyuTasks.snapshot().currentRoom !== originRoom) return fail('account-changed', '账号或房间已变化，请重新读取')
             return { ok: true, value: preview ? await deps.douyuRenewal.preview(accountId, rooms!, quantity as number, quantities)
               : await deps.douyuRenewal.targets(accountId) }
           }
           case 'executeDouyuRenewal':
           case 'cancelDouyuRenewal': {
-            if (!fields(args, ['planId']) || typeof args.planId !== 'string' || !/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(args.planId)) return fail('invalid-arguments', '赠送预览标识无效')
+            if (!fields(args, ['planId']) || typeof args.planId !== 'string' || !/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(args.planId)) return fail('invalid-arguments', '核对单无效，请重新生成')
             if (!deps.douyuRenewal) return fail('not-available', '续牌赠送服务不可用')
             return { ok: true, value: method === 'executeDouyuRenewal' ? await deps.douyuRenewal.execute(args.planId) : deps.douyuRenewal.cancel(args.planId) }
           }
@@ -301,12 +301,12 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             const tasks = deps.douyuTasks
             const message = { accountId: args.accountId, room: args.room, text: args.text, color: Number(args.color) }
             if (!accounts || !tasks) return fail('not-available', '斗鱼发送服务不可用')
-            if (message.accountId !== accounts.activeAccountId) return fail('no-active-account', '活动账号已变化, 请确认账号后重新操作')
-            if (accounts.isBusy(message.accountId)) return fail('account-busy', '账号正在登录或退出, 请稍后发送')
-            if (tasks.snapshot().currentRoom !== message.room) return fail('room-changed', '当前房间已变化, 请确认房间后重新操作')
-            if (!(await accounts.activeLoginStatus()).loggedIn) return fail('login-required', '请先在「设置 > 账号 > 斗鱼」的账号页登录当前斗鱼账号。')
+            if (message.accountId !== accounts.activeAccountId) return fail('no-active-account', '当前账号已变化，请确认后重新操作')
+            if (accounts.isBusy(message.accountId)) return fail('account-busy', '账号正在登录或退出，请稍后发送')
+            if (tasks.snapshot().currentRoom !== message.room) return fail('room-changed', '当前房间已变化，请确认房间后重新操作')
+            if (!(await accounts.activeLoginStatus()).loggedIn) return fail('login-required', '请到「设置 > 账号 > 斗鱼」登录当前账号')
             if (disposed) return fail('service-closed', '本地服务已关闭')
-            if (message.accountId !== accounts.activeAccountId || accounts.isBusy(message.accountId)) return fail('no-active-account', '账号状态已变化, 请确认后重新操作')
+            if (message.accountId !== accounts.activeAccountId || accounts.isBusy(message.accountId)) return fail('no-active-account', '账号状态已变化，请确认后重新操作')
             return { ok: true, value: await tasks.sendMessage(message) }
           }
           case 'createDouyuTask': {
@@ -316,7 +316,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
               return fail('invalid-arguments', '任务参数无效')
             }
             const message = args.kind === 'message-loop' ? readMessageSchedule(args.message) : null
-            if (isDouyuActivityKind(args.kind) && args.repeatMinutes !== null) return fail('invalid-arguments', '活动任务按官方状态安排时间, 不接受重复周期')
+            if (isDouyuActivityKind(args.kind) && args.repeatMinutes !== null) return fail('invalid-arguments', '活动任务按官方状态安排时间，不接受重复周期')
             if (args.kind === 'message-loop' ? !message || args.repeatMinutes !== null
               : Object.hasOwn(args, 'message') || (args.repeatMinutes !== null && (!Number.isInteger(args.repeatMinutes) || Number(args.repeatMinutes) < 60 || Number(args.repeatMinutes) > 43200))) {
               return fail('invalid-arguments', '任务参数无效')
@@ -345,9 +345,9 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
               const task = deps.douyuTasks.snapshot().tasks.find(task => task.id === args.id)
               if (!task) return fail('task-not-found', '任务不存在')
               if (task.accountId !== deps.douyuAccounts.activeAccountId) return fail('no-active-account', '请先切换到任务所属账号')
-              if (deps.douyuAccounts.isBusy(task.accountId)) return fail('account-busy', '账号正在登录或退出, 请稍后启动任务.')
+              if (deps.douyuAccounts.isBusy(task.accountId)) return fail('account-busy', '账号正在登录或退出，请稍后启动任务')
               if (!(await deps.douyuAccounts.activeLoginStatus()).loggedIn) return fail('login-required', '请先登录当前斗鱼账号')
-              if (disposed || task.accountId !== deps.douyuAccounts.activeAccountId || deps.douyuAccounts.isBusy(task.accountId)) return fail('no-active-account', '账号状态已变化, 请重新操作')
+              if (disposed || task.accountId !== deps.douyuAccounts.activeAccountId || deps.douyuAccounts.isBusy(task.accountId)) return fail('no-active-account', '账号状态已变化，请重新操作')
               return { ok: true, value: deps.douyuTasks.start(args.id) }
             }
             return { ok: true, value: method === 'pauseDouyuTask' ? deps.douyuTasks.pause(args.id) : deps.douyuTasks.remove(args.id) }
@@ -399,7 +399,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             if (!fields(args, ['mode']) || !isDecoderMode(args.mode)) return fail('invalid-arguments', '解码设置参数无效')
             if (!deps.decoderPreferences) return fail('not-available', '解码设置不可用')
             try { return { ok: true, value: await deps.decoderPreferences.set(args.mode) } }
-            catch { return fail('settings-write-failed', '解码设置保存失败, 请重试') }
+            catch { return fail('settings-write-failed', '解码设置保存失败，请重试') }
           }
           case 'health': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
@@ -439,11 +439,11 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             if (!result.ok) return { ok: true, value: sanitizedFailure(result) }
             const rawUrl = registered.get(result.stream.url) ?? result.stream.url
             const target = checkUrlSyntax(rawUrl, mediaRequestPolicy(deps.proxy))
-            if (!target.ok) return fail(target.reason, streamFailureForCode(target.reason)?.message ?? '媒体地址被应用的安全策略拒绝.')
+            if (!target.ok) return fail(target.reason, streamFailureForCode(target.reason)?.message ?? '媒体地址被应用的安全策略拒绝')
             if (target.url.username || target.url.password) return fail('invalid-url', '媒体地址不能包含登录凭据')
             const url = deps.registerMedia(rawUrl, result.stream.mediaAccess, result.stream.headers)
             const { headers: _headers, adaptive: _adaptive, mediaAccess: _access, douyuWatchCdn: _cdn, ...publicStream } = result.stream
-            return { ok: true, value: { ok: true, stream: { ...publicStream, url, requiresProxy: false, notes: ['媒体通过本地主进程安全加载'] } } }
+            return { ok: true, value: { ok: true, stream: { ...publicStream, url, requiresProxy: false, notes: [] } } }
           }
           case 'switchQuality': {
             if (!fields(args, ['role', 'quality']) || !isRole(args.role) || typeof args.quality !== 'string'
@@ -481,16 +481,16 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
         // Tool errors contain only stable codes, never executable paths or child output.
         if (error instanceof Error && 'tool' in error && 'code' in error
           && ['tool-missing', 'tool-invalid-path', 'tool-not-executable'].includes(String(error.code))) {
-          return fail(String(error.code), `未找到可用的 ${String(error.tool)}，请检查应用安装是否完整或环境变量指定的工具路径。`, detail)
+          return fail(String(error.code), `找不到可用的 ${String(error.tool)}，请重新安装应用`, detail)
         }
         if (error instanceof Error && error.name === 'LoginError' && 'code' in error) {
           const messages: Record<string, string> = {
-            'chrome-not-found': '未找到系统 Chrome, 请安装 Chrome 后重试',
-            'login-busy': '登录操作正在进行, 请先完成当前登录页面',
+            'chrome-not-found': '未找到系统 Chrome，请安装 Chrome 后重试',
+            'login-busy': '登录操作正在进行，请先完成当前登录页面',
             'login-cancelled': '登录操作已取消',
-            'login-incomplete': '登录未完成, 未读取到平台认证 Cookie, 已保留原有登录数据.',
-            'login-failed': record(args) && args.platform === 'douyin' ? '抖音内嵌登录未完成, 请在应用内重试.' : '平台登录失败, 请关闭登录页面后重试',
-            'cookie-storage-failed': '登录信息保存失败, 请重试',
+            'login-incomplete': '登录未完成，原账号已保留，请重试',
+            'login-failed': record(args) && args.platform === 'douyin' ? '抖音内嵌登录未完成，请在应用内重试' : '平台登录失败，请关闭登录页面后重试',
+            'cookie-storage-failed': '登录信息保存失败，请重试',
           }
           return fail(String(error.code), messages[String(error.code)] ?? '账号操作失败', detail)
         }

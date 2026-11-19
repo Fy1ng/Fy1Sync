@@ -32,18 +32,18 @@ export type DouyuModerationExecutor = (context: DouyuAccountOperationContext,
 export interface DouyuModerationDependencies extends DouyuActionDependencies { runExclusive: DouyuModerationExecutor }
 
 const messages: Record<DouyuModerationCode, string> = {
-  allowed: '斗鱼已确认当前账号具有该房间的管理资格.',
-  'receipt-confirmed': '斗鱼已返回禁言成功回执.',
-  'permission-required': '斗鱼未授予当前账号在该房间禁言的权限.',
-  'login-required': '斗鱼登录信息缺失, 已变化或失效, 请重新登录该账号.',
-  'verification-required': '斗鱼要求人工验证, 请在当前账号的官方房间完成验证后核对操作结果.',
-  'rate-limited': '斗鱼限制了请求频率, 本次不会自动重试.',
-  'invalid-arguments': '房间, 账号, 昵称或禁言时长无效.',
-  cancelled: '禁言操作已取消, 已提交的请求请在官方房间核对, 本次不会自动重试.',
-  busy: '已有账号操作正在执行, 请等待结束后重试.',
-  unavailable: '当前账号或房间不满足执行条件, 未提交禁言请求.',
-  unconfirmed: '本次禁言结果尚无法确认, 请在官方房间核对, 本次不会自动重试.',
-  'request-failed': '无法完成斗鱼禁言请求, 请检查网络和官方房间状态.',
+  allowed: '斗鱼已确认当前账号具有该房间的管理资格',
+  'receipt-confirmed': '斗鱼已返回禁言成功回执',
+  'permission-required': '斗鱼未授予当前账号在该房间禁言的权限',
+  'login-required': '斗鱼登录信息缺失，已变化或失效，请重新登录该账号',
+  'verification-required': '斗鱼要求人工验证，请在当前账号的官方房间完成验证后核对操作结果',
+  'rate-limited': '斗鱼限制了请求频率，本次不会自动重试',
+  'invalid-arguments': '房间，账号，昵称或禁言时长无效',
+  cancelled: '禁言操作已取消，已提交的请求请在官方房间核对，本次不会自动重试',
+  busy: '已有账号操作正在执行，请等待结束后重试',
+  unavailable: '当前账号或房间不满足执行条件，未提交禁言请求',
+  unconfirmed: '禁言结果未确认，请到斗鱼核对，本次不自动重试',
+  'request-failed': '无法完成斗鱼禁言请求，请检查网络和官方房间状态',
 }
 const outcome = (code: DouyuModerationCode, submitted = false): DouyuModerationOutcome => ({
   status: code === 'receipt-confirmed' ? 'succeeded'

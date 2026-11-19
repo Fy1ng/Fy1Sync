@@ -21,10 +21,10 @@ const CREDENTIAL_FIELDS = new Set<string>(['acf_uid', 'acf_username', 'XSRF-TOKE
 
 type GatewayCode = 'login-required' | 'verification-required' | 'unavailable' | 'invalid-data'
 const ERROR_MESSAGES: Record<GatewayCode, string> = {
-  'login-required': '斗鱼登录信息缺失或已变化. 请重新登录该账号.',
-  'verification-required': '斗鱼要求官方账号验证. 请在官方页面完成验证.',
-  unavailable: '暂时无法安全访问斗鱼. 请稍后再试.',
-  'invalid-data': '斗鱼返回的数据不完整或无法确认.',
+  'login-required': '斗鱼登录信息缺失或已变化。请重新登录该账号。',
+  'verification-required': '斗鱼要求官方账号验证。请在官方页面完成验证。',
+  unavailable: '暂时无法安全访问斗鱼。请稍后再试。',
+  'invalid-data': '斗鱼返回的数据不完整或无法确认',
 }
 
 export class DouyuRenewalGatewayError extends Error {
@@ -125,14 +125,14 @@ function conflicts(value: Record<string, unknown>, expected: DouyuBackpackDonati
   return groups.some(([names, expectedValue]) => names.some(name => Object.hasOwn(value, name) && bindingValue(value[name]) !== expectedValue))
 }
 
-const unknownReceipt = (message = '背包赠送结果尚无法确认. 请在官方页面核对, 本次不会自动重试.'): DouyuBackpackReceipt => ({ status: 'unknown', message })
+const unknownReceipt = (message = '背包赠送结果尚无法确认。请在官方页面核对，本次不会自动重试。'): DouyuBackpackReceipt => ({ status: 'unknown', message })
 const notSubmitted = (message: string): DouyuBackpackReceipt => ({ status: 'not-submitted', message })
 
 function donationReceipt(payload: unknown, target: DouyuBackpackDonation, expectedPropType?: number): DouyuBackpackReceipt {
   const envelope = record(payload)
-  if (envelope?.result === 170001 || envelope?.result === '170001') return unknownReceipt('斗鱼要求官方账号验证. 请在官方页面核对本次赠送, 本次不会自动重试.')
-  if (envelope?.error === 16 || envelope?.error === '16') return unknownReceipt('斗鱼要求绑定手机号. 请在官方页面核对本次赠送, 本次不会自动重试.')
-  if (envelope?.error === 5821 || envelope?.error === '5821') return unknownReceipt('斗鱼提示账号异常. 请在官方页面核对本次赠送, 本次不会自动重试.')
+  if (envelope?.result === 170001 || envelope?.result === '170001') return unknownReceipt('斗鱼要求官方账号验证。请在官方页面核对本次赠送，本次不会自动重试。')
+  if (envelope?.error === 16 || envelope?.error === '16') return unknownReceipt('斗鱼要求绑定手机号。请在官方页面核对本次赠送，本次不会自动重试。')
+  if (envelope?.error === 5821 || envelope?.error === '5821') return unknownReceipt('斗鱼提示账号异常。请在官方页面核对本次赠送，本次不会自动重试。')
   if (!envelope || !Object.hasOwn(envelope, 'error') || !zero(envelope.error)) return unknownReceipt()
   if (['result', 'code'].some(name => Object.hasOwn(envelope, name) && !zero(envelope[name]))) return unknownReceipt()
   const data = dataObject(envelope.data)
@@ -141,7 +141,7 @@ function donationReceipt(payload: unknown, target: DouyuBackpackDonation, expect
   if (expectedPropType !== undefined && Object.hasOwn(used, 'propType') && bindingValue(used.propType) !== String(expectedPropType)) return unknownReceipt()
   if (data.messages !== undefined && (!Array.isArray(data.messages) || data.messages.some(item => typeof item !== 'string'))) return unknownReceipt()
   if ([envelope, data, used].some(value => conflicts(value, target))) return unknownReceipt()
-  return { status: 'receipt-received', message: '已收到斗鱼背包赠送回执. 这不代表续牌状态已确认.' }
+  return { status: 'receipt-received', message: '已收到斗鱼背包赠送回执' }
 }
 
 export class DouyuBackpackGateway {
@@ -186,14 +186,14 @@ export class DouyuBackpackGateway {
       const target = { accountId: input.accountId, expectedUid: input.expectedUid, room: input.room, propId: input.propId, quantity: input.quantity }
       const expected = structuredClone(input.expectedInventory)
       if (!validAccount(target.accountId) || !validUid(target.expectedUid) || !validDouyuRoom(target.room)
-        || !/^[1-9][0-9]{0,15}$/.test(target.propId) || !Number.isSafeInteger(target.quantity) || target.quantity < 1) return notSubmitted('赠送参数无效. 未提交背包赠送.')
+        || !/^[1-9][0-9]{0,15}$/.test(target.propId) || !Number.isSafeInteger(target.quantity) || target.quantity < 1) return notSubmitted('赠送参数无效。未提交背包赠送。')
       const before = await this.readBackpack(target.accountId, target.room, signal)
-      if (before.uid !== target.expectedUid) return notSubmitted('所选账号已变化. 未提交背包赠送.')
+      if (before.uid !== target.expectedUid) return notSubmitted('所选账号已变化。未提交背包赠送。')
       const item = parseDouyuInventory(before.payload, Date.now()).find(candidate => candidate.propId === target.propId)
       if (!item?.canGift || JSON.stringify(item) !== JSON.stringify(expected) || item.quantity < target.quantity
-        || (!item.batchSupported && target.quantity !== 1)) return notSubmitted('可赠库存或数量已变化. 未提交背包赠送.')
+        || (!item.batchSupported && target.quantity !== 1)) return notSubmitted('可赠库存或数量已变化。未提交背包赠送。')
       return await this.donateTarget(target, signal, false, item.propType!)
-    } catch { return notSubmitted(signal.aborted ? '赠送已取消. 未提交背包赠送.' : '无法确认可赠库存. 未提交背包赠送.') }
+    } catch { return notSubmitted(signal.aborted ? '赠送已取消。未提交背包赠送。' : '无法确认可赠库存。未提交背包赠送。') }
   }
 
   private async donateTarget(input: DouyuBackpackDonation, signal: AbortSignal, renewal: boolean, expectedPropType?: number): Promise<DouyuBackpackReceipt> {
@@ -202,8 +202,8 @@ export class DouyuBackpackGateway {
       target = { accountId: input.accountId, expectedUid: input.expectedUid, room: input.room, propId: input.propId, quantity: input.quantity }
       if (!validAccount(target.accountId) || !validUid(target.expectedUid) || typeof target.room !== 'string' || !validDouyuRoom(target.room)
         || (renewal ? !PROP_IDS.has(target.propId) : !/^[1-9][0-9]{0,15}$/.test(target.propId))
-        || !Number.isSafeInteger(target.quantity) || target.quantity < 1 || (renewal && target.quantity > 1_000)) return notSubmitted('赠送参数无效. 未提交背包赠送.')
-    } catch { return notSubmitted('赠送参数无效. 未提交背包赠送.') }
+        || !Number.isSafeInteger(target.quantity) || target.quantity < 1 || (renewal && target.quantity > 1_000)) return notSubmitted('赠送参数无效。未提交背包赠送。')
+    } catch { return notSubmitted('赠送参数无效。未提交背包赠送。') }
     let dispatched = false
     try {
       return await this.bounded(signal, async active => {
@@ -222,9 +222,9 @@ export class DouyuBackpackGateway {
       })
     } catch (error) {
       if (dispatched) return unknownReceipt()
-      if (signal.aborted) return notSubmitted('赠送已取消. 未提交背包赠送.')
+      if (signal.aborted) return notSubmitted('赠送已取消。未提交背包赠送。')
       const code = error instanceof DouyuRenewalGatewayError ? error.code : 'unavailable'
-      return notSubmitted(`${ERROR_MESSAGES[code]} 未提交背包赠送.`)
+      return notSubmitted(`${ERROR_MESSAGES[code].replace(/。$/, '')}。未提交背包赠送。`)
     }
   }
 

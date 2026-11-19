@@ -85,7 +85,7 @@ export class DouyuDanmakuClient {
       return
     }
     this.socket = socket
-    this.armWatchdog(socket, CONNECT_TIMEOUT_MS, '弹幕连接超时, 正在重新连接.')
+    this.armWatchdog(socket, CONNECT_TIMEOUT_MS, '弹幕连接超时，正在重新连接')
 
     // Every listener is bound to the socket that registered it. `teardown` calls
     // `socket.close()`, which makes the old socket emit `close` after we have already
@@ -96,7 +96,7 @@ export class DouyuDanmakuClient {
     socket.addEventListener('open', () => {
       if (!isCurrent()) return
       this.openedAt = this.now()
-      this.armWatchdog(socket, LOGIN_TIMEOUT_MS, '弹幕登录未收到有效回应, 正在重新连接.')
+      this.armWatchdog(socket, LOGIN_TIMEOUT_MS, '弹幕登录未收到有效回应，正在重新连接')
       if (!this.send(LOGIN_REQUEST(this.room)) || !isCurrent()) return
       if (!this.send(JOIN_GROUP_REQUEST(this.room)) || !isCurrent()) return
       this.startKeepalive()
@@ -133,14 +133,14 @@ export class DouyuDanmakuClient {
       if (this.socket !== socket || this.closedByUser) return
       const parsed = parseStt(payload)
       if (parsed.type === 'error') {
-        this.scheduleReconnect('斗鱼结束了弹幕连接, 正在重新连接.')
+        this.scheduleReconnect('斗鱼结束了弹幕连接，正在重新连接')
         return
       }
       if (['rid', 'roomid'].some(key => parsed[key] !== undefined && parsed[key] !== this.room)) continue
       const now = this.now()
       if (['loginres', 'mrkl', 'keeplive'].includes(parsed.type ?? '')) {
         if (['code', 'error'].some(key => parsed[key] !== undefined && parsed[key] !== '0')) {
-          this.scheduleReconnect('斗鱼未接受弹幕连接, 正在重新连接.')
+          this.scheduleReconnect('斗鱼未接受弹幕连接，正在重新连接')
           return
         }
         this.acceptInbound(socket, now)
@@ -184,7 +184,7 @@ export class DouyuDanmakuClient {
       socket.send(encodeFrame(payload))
       return true
     } catch {
-      if (this.socket === socket) this.scheduleReconnect('弹幕连接写入失败, 正在重新连接.')
+      if (this.socket === socket) this.scheduleReconnect('弹幕连接写入失败，正在重新连接')
       return false
     }
   }
@@ -205,7 +205,7 @@ export class DouyuDanmakuClient {
     // A connection that repeatedly opens and immediately drops must keep backing
     // off. Only valid traffic after a stable interval restores the initial delay.
     if (this.openedAt !== null && now - this.openedAt >= STABLE_CONNECTION_MS) this.attempts = 0
-    this.armWatchdog(socket, INBOUND_TIMEOUT_MS, '弹幕连接长时间未收到回应, 正在重新连接.')
+    this.armWatchdog(socket, INBOUND_TIMEOUT_MS, '弹幕连接长时间未收到回应，正在重新连接')
     if (this.stateValue !== 'connected') this.setState('connected')
   }
 

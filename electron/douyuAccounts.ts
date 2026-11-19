@@ -17,13 +17,13 @@ export type DouyuAccountErrorCode = 'invalid-arguments' | 'account-not-found' | 
 export class DouyuAccountError extends Error {
   constructor(readonly code: DouyuAccountErrorCode) {
     super({
-      'invalid-arguments': '账号参数无效, 名称需为1至40个字符.',
-      'account-not-found': '斗鱼账号不存在.',
-      'account-limit': '最多保存16个斗鱼账号.',
-      'account-busy': '账号正在登录或退出, 请稍后重试.',
-      'no-active-account': '请先选择当前斗鱼账号.',
-      'storage-failed': '斗鱼账号配置读写失败, 请重试.',
-      disposed: '斗鱼账号管理已关闭.',
+      'invalid-arguments': '账号参数无效，名称需为 1 至 40 个字符',
+      'account-not-found': '斗鱼账号不存在',
+      'account-limit': '最多保存 16 个斗鱼账号',
+      'account-busy': '账号正在登录或退出，请稍后重试',
+      'no-active-account': '请先选择当前斗鱼账号',
+      'storage-failed': '斗鱼账号配置读写失败，请重试',
+      disposed: '斗鱼账号管理已关闭',
     }[code])
   }
 }

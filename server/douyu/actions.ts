@@ -24,8 +24,8 @@ export interface DouyuActionDependencies {
 
 const waiting = (message: string): DouyuTaskOutcome => ({ status: 'waiting-user', message })
 const failed = (message: string): DouyuTaskOutcome => ({ status: 'failed', message })
-const unknownResult = () => waiting('斗鱼签到结果尚无法确认. 请在官方房间核对后再决定是否重试.')
-const loginRequired = () => waiting('斗鱼登录信息缺失或失效, 请重新登录该账号.')
+const unknownResult = () => waiting('斗鱼签到结果尚无法确认。请在官方房间核对后再决定是否重试。')
+const loginRequired = () => waiting('斗鱼登录信息缺失或失效，请重新登录该账号')
 
 /** Reject ambiguity and invalid header bytes instead of inventing token components. */
 function loginToken(header: string): string | null {
@@ -55,16 +55,16 @@ function loginToken(header: string): string | null {
  */
 function classifyResponse(status: number, payload: unknown): DouyuTaskOutcome {
   if (status === 401) return loginRequired()
-  if (status === 429) return waiting('斗鱼限制了请求频率. 请稍后在官方房间核对签到状态.')
+  if (status === 429) return waiting('斗鱼限制了请求频率。请稍后在官方房间核对签到状态。')
   const data = record(payload)
   const messages = [data?.msg, data?.message].filter((value): value is string => typeof value === 'string' && value.length <= 512)
   const message = messages.join(' ')
   if (/未登录|请.{0,8}登录|重新登录|登录.{0,8}(失效|过期)|not\s*logged|login\s*required|invalid[ _-]?token|token.{0,8}(expired|invalid)/i.test(message)) return loginRequired()
-  if (/验证码|人机验证|安全验证|滑块|geetest|captcha/i.test(message)) return waiting('斗鱼要求官方验证. 请在该账号的官方房间完成验证后核对签到状态.')
-  if (/未满足|不满足|无资格|没有资格|等级不足|粉丝等级|权限不足|无权限|not\s*eligible|permission\s*denied/i.test(message)) return waiting('斗鱼提示签到资格或权限不足. 请在官方房间查看要求.')
-  if (/已签到|已经签到|重复签到|already.{0,12}(check.?in|signed)/i.test(message)) return waiting('斗鱼提示今日已签到. 请在官方房间核对, 本次不会重复请求.')
-  if (status === 403) return waiting('斗鱼拒绝了签到请求. 请在官方房间确认登录状态, 资格和验证要求.')
-  if (status >= 400 && status < 500) return failed('斗鱼拒绝了本次签到请求. 请在官方房间查看状态.')
+  if (/验证码|人机验证|安全验证|滑块|geetest|captcha/i.test(message)) return waiting('斗鱼要求官方验证。请在该账号的官方房间完成验证后核对签到状态。')
+  if (/未满足|不满足|无资格|没有资格|等级不足|粉丝等级|权限不足|无权限|not\s*eligible|permission\s*denied/i.test(message)) return waiting('斗鱼提示签到资格或权限不足。请在官方房间查看要求。')
+  if (/已签到|已经签到|重复签到|already.{0,12}(check.?in|signed)/i.test(message)) return waiting('斗鱼提示今日已签到。请在官方房间核对，本次不会重复请求。')
+  if (status === 403) return waiting('斗鱼拒绝了签到请求。请在官方房间确认登录状态，资格和验证要求。')
+  if (status >= 400 && status < 500) return failed('斗鱼拒绝了本次签到请求。请在官方房间查看状态。')
   return unknownResult()
 }
 
@@ -83,11 +83,11 @@ export class DouyuActions {
     if (task.kind === 'auto-fish') return this.fishing.run(task, signal, options.fishing)
     if (task.kind === 'gift-packet' || task.kind === 'treasure-box') return this.rewards.run(task, signal, task.kind === 'treasure-box' ? options.treasure : undefined)
     if (task.kind === 'yuba-sign') return new DouyuYubaActions(this.deps).run(task, signal)
-    if (task.kind !== 'room-sign') return failed('该斗鱼任务类型尚未接入.')
-    if (!validDouyuRoom(task.room)) return failed('斗鱼真实房间号无效, 请重新确认房间.')
+    if (task.kind !== 'room-sign') return failed('该斗鱼任务类型尚未接入')
+    if (!validDouyuRoom(task.room)) return failed('斗鱼真实房间号无效，请重新确认房间')
     if (typeof task.accountId !== 'string' || !task.accountId || task.accountId.length > 128 || /[\s\x00-\x1f\x7f]/.test(task.accountId)) return loginRequired()
     const { proxy } = this.deps
-    if (!proxy.enabled || !hostAllowed(CHECK_IN_HOST, proxy.hosts)) return failed('斗鱼请求未启用或目标域名未获允许.')
+    if (!proxy.enabled || !hostAllowed(CHECK_IN_HOST, proxy.hosts)) return failed('当前无法连接斗鱼，未执行此操作')
     const timeoutMs = Number.isFinite(proxy.requestTimeoutMs) ? Math.max(1, Math.min(proxy.requestTimeoutMs, MAX_TIMEOUT_MS)) : MAX_TIMEOUT_MS
     const timeout = new AbortController()
     const timer = setTimeout(() => timeout.abort(), timeoutMs)
@@ -101,9 +101,9 @@ export class DouyuActions {
     } catch {
       if (signal.aborted) throw cancelled()
       if (dispatched) return waiting(timeout.signal.aborted
-        ? '斗鱼签到请求超时, 结果尚无法确认. 请在官方房间核对后再决定是否重试.'
-        : '斗鱼签到响应未能完整读取, 结果尚无法确认. 请在官方房间核对后再决定是否重试.')
-      return failed(timeout.signal.aborted ? '斗鱼请求准备超时, 未发送签到请求.' : '无法安全连接斗鱼, 未发送签到请求.')
+        ? '斗鱼签到请求超时，结果尚无法确认。请在官方房间核对后再决定是否重试。'
+        : '斗鱼签到响应未能完整读取，结果尚无法确认。请在官方房间核对后再决定是否重试。')
+      return failed(timeout.signal.aborted ? '斗鱼请求准备超时，未发送签到请求' : '无法安全连接斗鱼，未发送签到请求')
     } finally { clearTimeout(timer) }
   }
 

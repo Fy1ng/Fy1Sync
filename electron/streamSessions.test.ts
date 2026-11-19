@@ -48,10 +48,10 @@ describe('independent stream sessions', () => {
     await f.manager.dispose()
   })
   it.each([
-    [Object.assign(new Error('Cookie=PRIVATE https://signed.invalid/?token=PRIVATE'), { code: 'ENOTFOUND' }), '域名解析失败.'],
-    [new StreamFailureError({ stage: 'proxy', code: 'proxy-unreachable', message: 'original proxy failure' }), '代理不可达, 请检查系统代理.'],
-    [Object.assign(new Error('original certificate failure'), { code: 'CERT_HAS_EXPIRED' }), '服务器证书校验失败.'],
-    [{ status: 403, message: 'original HTTP failure' }, '服务器返回 HTTP 403.'],
+    [Object.assign(new Error('Cookie=PRIVATE https://signed.invalid/?token=PRIVATE'), { code: 'ENOTFOUND' }), '域名解析失败'],
+    [new StreamFailureError({ stage: 'proxy', code: 'proxy-unreachable', message: 'original proxy failure' }), '无法连接取流代理'],
+    [Object.assign(new Error('original certificate failure'), { code: 'CERT_HAS_EXPIRED' }), '服务器证书校验失败'],
+    [{ status: 403, message: 'original HTTP failure' }, '服务器返回 HTTP 403'],
   ])('preserves the classified acquisition failure without leaking diagnostics', async (error, message) => {
     const f = fixture()
     f.port.resolve.mockRejectedValueOnce(error)

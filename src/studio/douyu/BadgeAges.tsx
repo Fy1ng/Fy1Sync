@@ -49,7 +49,7 @@ export function BadgeAges({ accountId, ready }: { accountId: string | null; read
       if (!agesOk(response.value, asked)) throw new Error('bad ages', { cause: response })
       setAges(response.value)
     } catch (caught) {
-      if (mounted.current && mine === generation.current) setError(displayError(caught, '粉丝牌获取日期读取失败, 请重试. '))
+      if (mounted.current && mine === generation.current) setError(displayError(caught, '粉丝牌获取日期读取失败，请重试'))
     } finally {
       if (mounted.current && mine === generation.current) setReading(false)
     }
@@ -68,7 +68,7 @@ export function BadgeAges({ accountId, ready }: { accountId: string | null; read
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
       {ages && (
         <>
-          {ages.badges.length === 0 ? <p className="muted">返回页面中没有粉丝牌。</p> : (
+          {ages.badges.length === 0 ? <p className="muted">返回页面中没有粉丝牌</p> : (
             <div className="pack-scroll">
               <table className="pack-table">
                 <thead><tr><th>房间</th><th>牌名</th><th>获取日期</th><th>持有天数</th></tr></thead>
@@ -86,8 +86,7 @@ export function BadgeAges({ accountId, ready }: { accountId: string | null; read
             </div>
           )}
           <p className="muted">
-            来源为官方返回的粉丝牌页面，读取于 {dateTime(ages.checkedAt)}。仅包含本次返回的一页，可能不完整；
-            未返回日期的显示为未知。持有天数不代表粉丝牌当前有效。
+            读取于 {dateTime(ages.checkedAt)}。仅显示本次读取到的粉丝牌，可能不完整。持有天数不表示是否已续期。
           </p>
         </>
       )}

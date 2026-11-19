@@ -33,7 +33,7 @@ type ActiveAccount = { id: string; label: string; loggedIn: boolean; busy: boole
 type SendMode = 'message' | 'repeat'
 type SendOperation = { context: number; draftVersion: number | null }
 
-const UNCERTAIN = '发送结果无法确认。请在官方直播间核对后再决定是否重发。'
+const UNCERTAIN = '未能确认发送结果。请先到官方直播间核对，不要重复发送。'
 const DELIVERY_POLL_MS = 1500
 
 /**
@@ -48,7 +48,7 @@ export function credentialProblem(missing: readonly string[]): string {
     device ? '设备标识' : null,
     missing.some((name) => ['acf_auth_wl', 'acf_dmjwt_token', 'acf_ltkid', 'acf_biz', 'acf_stk'].includes(name)) ? '登录凭证' : null,
   ].filter(Boolean)
-  return `当前账号缺少发送弹幕所需的${parts.length ? parts.join('、') : '登录信息'}，请在斗鱼账号中重新登录。`
+  return `登录信息不完整${parts.length ? `：${parts.join('、')}` : ''}`
 }
 
 export function useStudioComposer({ connected, room }: { connected: boolean; room: string | null }) {
@@ -102,7 +102,7 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
       if (!mounted.current || version !== accountRevision.current) return
       if (!result.ok) {
         displayedAccount.current = null; setAccount(null)
-        setAccountError(displayError(result, '无法确认当前账号，请在「设置 > 账号 > 斗鱼」核对。'))
+        setAccountError(displayError(result, '无法确认当前账号，请在「设置 > 账号 > 斗鱼」核对'))
         return
       }
       if (!Array.isArray(result.value?.accounts)) throw new Error('Unavailable account snapshot', { cause: { code: 'invalid-account-snapshot' } })
@@ -121,7 +121,7 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
       if (!mounted.current || version !== accountRevision.current) return
       displayedAccount.current = null
       setAccount(null)
-      setAccountError(displayError(caught, '无法确认当前账号，请在「设置 > 账号 > 斗鱼」核对。'))
+      setAccountError(displayError(caught, '无法确认当前账号，请在「设置 > 账号 > 斗鱼」核对'))
     } finally {
       if (mounted.current && version === accountRevision.current) setLoading(false)
     }
@@ -187,10 +187,10 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
     return () => { live = false; off() }
   }, [])
 
-  const problem = !connected || !room || !/^[1-9]\d{0,11}$/.test(room) ? '连接斗鱼弹幕后才能发送。'
+  const problem = !connected || !room || !/^[1-9]\d{0,11}$/.test(room) ? '连接斗鱼弹幕后才能发送'
     : loading ? '正在读取当前斗鱼账号…'
-      : accountError || (!account?.loggedIn ? '请在斗鱼账号中登录并设为当前账号。'
-        : account.busy ? '账号正在处理登录操作，请稍后发送。'
+      : accountError || (!account?.loggedIn ? '请在斗鱼账号中登录并设为当前账号'
+        : account.busy ? '账号正在处理登录操作，请稍后发送'
           : account.canSend === false ? credentialProblem(account.missing) : null)
   const key = JSON.stringify([connected, room, account?.id, account?.loggedIn, account?.busy, account?.canSend])
   const currentContext = useRef({ key, account, room, problem })
@@ -219,10 +219,10 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
   const composed = useCallback((text: string, mode: SendMode): { text: string | null; problem: string | null; detail?: ErrorDetails } => {
     try {
       const value = composeMessage(text, { affixes, mode })
-      if (serverLimit !== null && value.length > serverLimit) return { text: value, problem: `超过平台当前允许的 ${serverLimit} 字。` }
+      if (serverLimit !== null && value.length > serverLimit) return { text: value, problem: `超过平台当前允许的 ${serverLimit} 字` }
       return { text: value, problem: null }
     } catch (error) {
-      return { text: null, problem: error instanceof MessageCompositionError ? error.message : '弹幕内容无效。', detail: errorDetails(error) }
+      return { text: null, problem: error instanceof MessageCompositionError ? error.message : '弹幕内容无效', detail: errorDetails(error) }
     }
   }, [affixes, serverLimit])
 
@@ -287,7 +287,7 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
   }, [composed, setDraft, watchDelivery])
 
   const remaining = nextAllowedAt === null ? 0 : Math.max(0, Math.ceil((nextAllowedAt - now) / 1000))
-  const blockedReason = problem || (pending ? '正在处理上一条发送…' : remaining > 0 ? `请在 ${remaining} 秒后发送。` : null)
+  const blockedReason = problem || (pending ? '正在处理上一条发送…' : remaining > 0 ? `请在 ${remaining} 秒后发送` : null)
   const draftComposition = composed(draft, 'message')
   const blockedDetail = !problem || loading || pending ? null : accountError ? accountErrorDetail
     : { code: !connected || !room ? 'danmaku-disconnected' : !account?.loggedIn ? 'login-required' : account.canSend === false ? 'missing-credentials' : 'account-busy', message: problem,
@@ -318,8 +318,8 @@ export type StudioComposer = ReturnType<typeof useStudioComposer>
 /** One line for the delivery record under the send box, or null when there is none. */
 export function deliveryText(evidence: DeliveryEvidence | null): string | null {
   if (!evidence) return null
-  if (roomEchoConfirmsSend(evidence)) return '发送成功 - 已在房间中显示'
-  const gateway = { pending: '等待平台受理', accepted: '平台已受理', rejected: '平台未受理', unknown: '平台受理情况未知' }[evidence.gateway]
-  const echo = { pending: '正在确认房间内显示', observed: '已在房间中显示', 'not-observed': '未在房间中观察到（不代表被屏蔽）' }[evidence.roomEcho]
+  if (roomEchoConfirmsSend(evidence)) return ROOM_OBSERVED_SEND_MESSAGE
+  const gateway = { pending: '等待平台接收', accepted: '平台已接收', rejected: '平台未接收', unknown: '未能确认平台是否接收' }[evidence.gateway] ?? '未能确认发送结果'
+  const echo = { pending: '等待房间确认', observed: '已在房间中显示', 'not-observed': '未能确认，请核对后再发' }[evidence.roomEcho] ?? '未能确认'
   return `${gateway} · ${echo}`
 }

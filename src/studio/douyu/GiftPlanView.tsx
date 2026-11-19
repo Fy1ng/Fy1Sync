@@ -7,7 +7,7 @@
 import type { DouyuGiftMoney, DouyuGiftResult, DouyuInventoryItem } from '../../../server/douyu/inventoryTypes'
 import { ErrorDetailsButton, ErrorText } from '../../ui/ErrorDetails'
 import { GIFT_RESULT, type GiftPlanHandle } from './giftPlan'
-import { UNKNOWN, dateTime, expiry, money, moneyBasis, secondsLeft, validMoney } from './giftFormat'
+import { UNKNOWN, dateTime, expiry, money, secondsLeft, validMoney } from './giftFormat'
 import './backpack.css'
 
 const ROW_STATE: Record<DouyuGiftResult['rows'][number]['status'], string> = {
@@ -35,11 +35,6 @@ function sumByCurrency(values: (DouyuGiftMoney | null)[]): { known: DouyuGiftMon
     known.set(value.currency, { ...value, amountMinor: (before?.amountMinor ?? 0) + value.amountMinor })
   }
   return { known: [...known.values()], unknown }
-}
-
-function Basis({ value }: { value: DouyuGiftMoney | null }): React.ReactNode {
-  const basis = moneyBasis(value)
-  return <>{money(value)}{basis && <span className="muted gift-basis">（{basis}）</span>}</>
 }
 
 export function GiftPlanView({ gift, accountLabel, currentRoom, ready, inventory }: {
@@ -73,14 +68,14 @@ export function GiftPlanView({ gift, accountLabel, currentRoom, ready, inventory
             <dt>目标</dt><dd className="num">房间 {plan.room}{currentRoom === plan.room ? <span className="muted">（当前直播间）</span> : null}</dd>
             {purchase && row ? (
               <>
-                <dt>礼物</dt><dd>{row.name} <span className="muted num">ID {row.giftId ?? UNKNOWN}</span></dd>
+                <dt>礼物</dt><dd>{row.name}</dd>
                 <dt>每次数量</dt><dd className="num">{row.quantity}</dd>
                 <dt>次数</dt><dd className="num">{plan.repeat}</dd>
                 <dt>总量</dt><dd className="num">{plan.totalQuantity}</dd>
                 <dt>间隔</dt><dd className="num">{plan.intervalMs} 毫秒</dd>
-                <dt>单价</dt><dd className="num"><Basis value={row.unitPrice} /></dd>
-                <dt>预算</dt><dd className="num"><Basis value={plan.budget} /></dd>
-                <dt>赠送前余额</dt><dd className="num"><Basis value={plan.balanceBefore} /></dd>
+                <dt>单价</dt><dd className="num">{money(row.unitPrice)}</dd>
+                <dt>预算</dt><dd className="num">{money(plan.budget)}</dd>
+                <dt>赠送前余额</dt><dd className="num">{money(plan.balanceBefore)}</dd>
               </>
             ) : (
               <>
@@ -107,7 +102,7 @@ export function GiftPlanView({ gift, accountLabel, currentRoom, ready, inventory
               <tbody>
                 {plan.rows.map((entry) => (
                   <tr key={entry.propId ?? entry.name}>
-                    <td>{entry.name} <span className="muted num">{entry.propId}</span></td>
+                    <td>{entry.name}</td>
                     <td className="num">{entry.quantity}</td>
                     <td className="num">{entry.repeat}</td>
                     <td className="num">{entry.stock ?? UNKNOWN}</td>
@@ -140,8 +135,8 @@ export function GiftPlanView({ gift, accountLabel, currentRoom, ready, inventory
                 {stopping ? '正在停止…' : '停止剩余'}
               </button>
             )}
-            {busy === 'give' && <span className="lane" role="status">正在赠送，结果返回前请勿关闭本页。</span>}
-            {used && busy !== 'give' && <span className="muted">此确认单已使用。如需再次赠送，请重新生成。</span>}
+            {busy === 'give' && <span className="lane" role="status">正在赠送，结果返回前请勿关闭本页</span>}
+            {used && busy !== 'give' && <span className="muted">确认单已使用，再次赠送需重新生成</span>}
           </div>
         </section>
       )}
@@ -150,7 +145,7 @@ export function GiftPlanView({ gift, accountLabel, currentRoom, ready, inventory
         <section aria-label="赠送结果" className="plan gift-result">
           <p>
             <b>{GIFT_RESULT[result.status]}</b>
-            {result.reason && <span className="muted">　{REASON[result.reason] ?? result.reason}</span>}
+            {result.reason && <span className="muted">　{REASON[result.reason] ?? '原因未知'}</span>}
             {(result.status === 'failed' || result.status === 'waiting-user') && <ErrorDetailsButton error={result} />}
           </p>
           <p className="num">已提交 {result.submittedQuantity} · 已收到回执 {result.confirmedQuantity}</p>
@@ -164,9 +159,9 @@ export function GiftPlanView({ gift, accountLabel, currentRoom, ready, inventory
               ))}
             </ul>
           )}
-          {unknownRows > 0 && <p className="note-warn">{unknownRows} 项结果未知，请在官方直播间核对。此处不会自动重新赠送。</p>}
+          {unknownRows > 0 && <p className="note-warn">{unknownRows} 项结果未确认，请到斗鱼核对，勿直接重送</p>}
           {result.message && <p className="muted">{result.message}</p>}
-          <p className="muted">收到回执不代表平台已完成全部处理；停止不会撤回已赠出的礼物。</p>
+          <p className="muted">停止只取消剩余赠送，已送出的礼物无法撤回</p>
         </section>
       )}
 

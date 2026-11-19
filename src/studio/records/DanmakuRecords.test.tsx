@@ -80,7 +80,7 @@ describe('history', () => {
     const list = await screen.findByRole('list', { name: '历史弹幕' })
     expect(within(list).getAllByRole('listitem')).toHaveLength(50)
     expect(historyCalls()[0]).toEqual({ room: '9999', query: '', page: 1, pageSize: 50 })
-    expect(screen.getByText(/仅包含本应用运行期间接收到的弹幕/)).toBeInTheDocument()
+    expect(screen.getByText(/仅记录本次运行收到的弹幕，重启后不保留/)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '下一页' }))
     await waitFor(() => expect(historyCalls().at(-1)).toEqual({ room: '9999', query: '', page: 2, pageSize: 50 }))

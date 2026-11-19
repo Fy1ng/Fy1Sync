@@ -126,7 +126,7 @@ export class SavedRoomsMonitor {
       this.failures.set(key, failures)
       this.nextAt.set(key, this.now() + Math.min(300_000, INTERVAL * 2 ** Math.min(failures - 1, 3)))
       for (const current of this.options.store.list().filter(item => this.key(item) === key)) {
-        try { this.options.store.recordAttempt(current.id, attemptedAt, '本次采集失败, 已保留上次成功采集的信息.') }
+        try { this.options.store.recordAttempt(current.id, attemptedAt, current.metadata ? '更新失败，显示上次信息' : '暂未获取直播状态，可稍后刷新') }
         catch { /* Persistence failures must not discard the in-memory last good snapshot. */ }
       }
     } finally {

@@ -132,7 +132,7 @@ export function RoiWindow({
       aria-readonly={readOnly}
       style={style}
       role="group"
-      aria-label={readOnly ? `${label ?? '字段'}识别区域, 只读` : '识别区域，方向键移动，Alt+方向键缩放'}
+      aria-label={readOnly ? `${label ?? '字段'}识别区域，只读` : '识别区域，方向键移动，Alt+方向键缩放'}
       tabIndex={readOnly ? undefined : 0}
       onKeyDown={readOnly ? undefined : onKeyDown}
       onPointerDown={beginDrag('move')}

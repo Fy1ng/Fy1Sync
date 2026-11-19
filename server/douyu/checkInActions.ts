@@ -46,9 +46,9 @@ export class DouyuCheckInActions {
   async run(raw: DouyuAutomationRequest, signal: AbortSignal): Promise<DouyuAutomationOutcome> {
     automationActive(signal)
     let task: DouyuAutomationRequest
-    try { task = readAutomationRequest(raw) } catch { return { status: 'failed', message: '斗鱼签到任务参数无效.' } }
-    if (!DOUYU_CHECK_IN_KINDS.includes(task.kind as typeof DOUYU_CHECK_IN_KINDS[number])) return { status: 'failed', message: '此任务不是签到任务.' }
-    if (this.busy) return { status: 'waiting-user', message: '上一项签到请求尚未结束, 请稍后恢复.' }
+    try { task = readAutomationRequest(raw) } catch { return { status: 'failed', message: '斗鱼签到任务参数无效' } }
+    if (!DOUYU_CHECK_IN_KINDS.includes(task.kind as typeof DOUYU_CHECK_IN_KINDS[number])) return { status: 'failed', message: '此任务不是签到任务' }
+    if (this.busy) return { status: 'waiting-user', message: '上一项签到请求尚未结束，请稍后恢复' }
     this.busy = true
     const timeout = automationTimeout(this.deps, signal)
     const context: AutomationContext = { task, signal: timeout.signal, submitted: false }
@@ -71,14 +71,14 @@ export class DouyuCheckInActions {
       if (task.kind === 'yuba-sign-all' && task.options.yubaMode === 'fast' && !batch.fastSubmitted) {
         await this.fastYuba(context, batch)
         batch.fastSubmitted = true
-        return this.next(batch, '极速签到已提交, 正在逐个核对官方鱼吧状态.')
+        return this.next(batch, '极速签到已提交，正在逐个核对官方鱼吧状态')
       }
       const target = batch.targets[batch.index]!
       const result = await this.item(context, batch, target)
       if (result === 'skipped') batch.skipped++
       // Supplementation can consume multiple existing cards, always one per step.
       if (result !== 'more') batch.index++
-      return batch.index >= batch.targets.length ? this.complete(batch) : this.next(batch, result === 'more' ? '已确认一张补签卡的使用结果, 等待下一步.' : '本项处理完成, 等待下一项签到.')
+      return batch.index >= batch.targets.length ? this.complete(batch) : this.next(batch, result === 'more' ? '已确认一张补签卡的使用结果，等待下一步' : '本项处理完成，等待下一项签到')
     } catch (error) {
       if (signal.aborted) throw cancelled()
       if (batch && context.submitted && !context.writeRefused) batch.evidence = 'unconfirmed'
@@ -92,7 +92,7 @@ export class DouyuCheckInActions {
   }
   private complete(batch: Batch): DouyuAutomationOutcome {
     return { status: 'succeeded', message: batch.evidence === 'receipt-received'
-      ? '本批已处理完毕, 已记录官方回执. 实际奖励和签到结果请以官方账户为准.' : '本批签到已完成官方状态核对.', progress: this.progress(batch) }
+      ? '本批已处理完毕，已记录官方回执。实际奖励和签到结果请以官方账户为准。' : '本批签到已完成官方状态核对', progress: this.progress(batch) }
   }
   private next(batch: Batch, message: string): DouyuAutomationOutcome {
     return { status: 'scheduled', message, nextRunAt: this.http.now() + NEXT_STEP_MS, progress: this.progress(batch) }

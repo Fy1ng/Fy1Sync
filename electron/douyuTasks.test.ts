@@ -158,7 +158,7 @@ describe('Douyu main-process task definitions', () => {
     expect(() => new DouyuTaskManager({ load: () => raw, save: vi.fn(), run: vi.fn() })).toThrow(DouyuTaskError)
     expect(getter).not.toHaveBeenCalled()
     expect(() => new DouyuTaskManager({ load: () => { throw new Error('COOKIE_PRIVATE') }, save: vi.fn(), run: vi.fn() }))
-      .toThrow('任务配置读取或保存失败, 请检查本地配置')
+      .toThrow('任务配置读取或保存失败，请检查本地配置')
     const roomGetter = vi.fn(() => '100')
     const rooms = Object.defineProperty(['100'], '0', { get: roomGetter })
     expect(() => new DouyuTaskManager({ load: () => stored([], rooms), save: vi.fn(), run: vi.fn() })).toThrow(DouyuTaskError)
@@ -692,7 +692,7 @@ describe('Douyu repeats and persistence failures', () => {
       close: () => h.manager.closeRoom('100'),
     }
     expect(operationMap[operation]).toThrow(expect.objectContaining({
-      code: 'storage-failed', message: expect.stringContaining('相关任务已停止, 配置修改未保存'),
+      code: 'storage-failed', message: expect.stringContaining('相关任务已停止，配置修改未保存'),
     }))
     expect(atSave).toEqual({
       aborted: true,

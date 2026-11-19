@@ -9,7 +9,7 @@ const domainAllowed = (value: string) => value === 'douyin.com' || /^[a-z0-9-]+(
 
 export class DouyinHttpCookieError extends Error {
   readonly code = 'douyin-http-cookie-invalid'
-  constructor() { super('抖音 HTTP 登录 Cookie 无效, 未返回凭据内容.') }
+  constructor() { super('抖音 HTTP 登录 Cookie 无效，未返回凭据内容') }
 }
 
 function target(raw: string): URL {

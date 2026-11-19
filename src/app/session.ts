@@ -223,7 +223,7 @@ export class Session {
           if (this.settingsValue.recognitionMode !== 'frame-hash') return null
           this.refreshFrameCapture()
           return this.frameSampler?.measure(request) ?? Promise.resolve({
-            samples: { official: 0, commentary: 0 }, message: '画面匹配尚未就绪, 请保持两路视频播放',
+            samples: { official: 0, commentary: 0 }, message: '画面匹配尚未就绪，请保持两路视频播放',
           })
         },
         sample: async (windowMs, onOutcome, signal) => {
@@ -278,7 +278,7 @@ export class Session {
       if (notice?.code === 'youtube-adaptive-fallback'
         && (previousNotice?.code !== notice.code || previousNotice.fromHeight !== notice.fromHeight
           || previousNotice.toHeight !== notice.toHeight)) {
-        this.notice('warn', `${notice.fromHeight}p 取流失败, 已回退到 ${notice.toHeight}p`)
+        this.notice('warn', `${notice.fromHeight}p 取流失败，已回退到 ${notice.toHeight}p`)
       }
       this.bufferStates = { ...this.bufferStates, [state.role]: state }
       this.notify()
@@ -514,7 +514,7 @@ export class Session {
   /** Both sources share the official picture's proportional countdown region. */
   setBasicClockRoi(roi: RoiRect | null): void {
     const normalized = normalizeBasicClockRoi(roi)
-    if (roi !== null && !normalized) { this.notice('warn', '框选范围无效, 请重新框选'); return }
+    if (roi !== null && !normalized) { this.notice('warn', '框选范围无效，请重新框选'); return }
     const memory = roi === null ? this.forgetCurrentClockMemories() : this.settingsValue.basicClockMemory
     this.invalidateBasicRegions()
     this.updateSettings({ basicClockRoi: normalized, basicClockMemory: memory })
@@ -677,7 +677,7 @@ export class Session {
       if (generation !== this.sourceGeneration[role] || this.disposed) return
       const state = this.engine.getState()[role]
       if (state.status === 'error') {
-        this.notice('error', `${roleName(role)}加载失败：${state.error?.message ?? '未知错误'}`, state.error)
+        this.notice('error', `${roleName(role)}载入失败：${state.error?.message ?? '未知错误'}`, state.error)
         return
       }
       // A new source starts at its own position, so whatever rewind the old one carried is
@@ -706,7 +706,7 @@ export class Session {
       // Waiting for the user to press play is not a broken picture.
       if (state.paused && !this.playingValue) return
       const qualities = state.descriptor?.sourceQualities?.length || state.quality.length
-      this.notice('warn', `${roleName(role)}已载入但没有画面。${qualities > 1 ? '可在底栏切换清晰度，或在片源面板重新载入。' : '可在片源面板重新载入。'}`)
+      this.notice('warn', `${roleName(role)}暂未出画面，${qualities > 1 ? '请切换清晰度或重新载入' : '请重新载入'}`)
     }, PICTURE_TIMEOUT_MS)
     this.pictureTimers.add(timer)
     setTimeout(() => this.pictureTimers.delete(timer), PICTURE_TIMEOUT_MS + 1)
@@ -761,28 +761,28 @@ export class Session {
       const loadedGeneration = this.sourceGeneration[role]
       if (this.engine.getState()[role].descriptor !== replacement || this.disposed) return
       if (this.engine.getState()[role].status === 'error') {
-        this.notice('warn', '画质切换后播放失败, 请重新加载片源')
+        this.notice('warn', '画质切换后播放失败，请重新载入片源')
         return
       }
       const hasBothSources = SOURCE_ROLES.every(item => this.engine.getState()[item].status !== 'empty')
       if (wasPlaying) {
         try { await this.engine.element(role).play() }
-        catch { this.notice('warn', hasBothSources ? '画质已切换，请恢复两路播放后点击「自动对齐」。' : '画质已切换，请恢复播放。'); return }
+        catch { this.notice('warn', hasBothSources ? '请恢复两路播放后点击「自动对齐」' : '画质已切换，请恢复播放'); return }
       }
       releaseBusy()
-      if (!hasBothSources) { this.notice('info', '画质已切换。'); return }
+      if (!hasBothSources) { this.notice('info', '画质已切换'); return }
       const available = await this.waitForQualityFrames(role, loadedGeneration)
       if (this.disposed || loadedGeneration !== this.sourceGeneration[role]) return
       if (!available) {
-        this.notice('info', '画质已切换，两路画面和缓冲就绪后请点击「自动对齐」。')
+        this.notice('info', '两路就绪后，请点击「自动对齐」')
         return
       }
       if (SOURCE_ROLES.some((item) => this.engine.element(item).paused)) {
-        this.notice('info', '画质已切换，请恢复两路播放后点击「自动对齐」。')
+        this.notice('info', '请恢复两路播放后点击「自动对齐」')
         return
       }
       const result = await this.executeSync(false)
-      if (!result.applied) this.notice('warn', '画质已切换，未能自动对齐，请点击「自动对齐」。')
+      if (!result.applied) this.notice('warn', '画质已切换，请点击「自动对齐」')
     } finally {
       releaseBusy()
     }
@@ -1065,9 +1065,9 @@ export class Session {
     plan.effectiveOffset = offsetFromRewind(this.applied)
 
     if (plan.limitReason === 'buffer-limit') {
-      this.notice('warn', '缓存长度不足，偏移已按可回退范围截断')
+      this.notice('warn', '缓冲不足，未完全调整')
     } else if (plan.limitReason === 'not-ready') {
-      this.notice('warn', '有源尚未就绪，偏移未完全应用')
+      this.notice('warn', '片源未就绪，未完全调整')
     }
 
     // A rewound commentary source is showing older content, so danmaku parked for the
@@ -1238,11 +1238,11 @@ export class Session {
     }
     const estimate = result.estimate
     if (!estimate) return
-    const total = estimate.totalOffsetSeconds.toFixed(2)
+    const difference = estimate.residualSeconds
     this.notice(
       'info',
       result.dryRun
-        ? `识别到目标偏移 ${total} 秒（未应用，实测差 ${estimate.residualSeconds.toFixed(2)} 秒）`
+        ? `仅测量，未调整；当前相差 ${Math.abs(difference).toFixed(2)} 秒`
         : '已自动对齐',
     )
   }
@@ -1341,7 +1341,7 @@ export class Session {
       this.danmakuState = {
         ...this.danmakuState,
         connected: false,
-        error: `弹幕连接失败: ${error instanceof Error ? error.message : String(error)}`,
+        error: `弹幕连接失败：${error instanceof Error ? error.message : String(error)}`,
         errorDetail: errorDetails(error),
       }
     }
@@ -1599,12 +1599,12 @@ function defaultSamplerFactory(session: Session): RecognitionSampler | null {
     clock: () => performance.now(),
     wantBasicDebug: () => session.basicPreviewEnabled,
     onBasicProgress: (role, progress) => session.receiveBasicProgress(role, progress),
-    onError: (role, message) => session.notice('warn', `${roleName(role)}识别线程错误：${message}`),
+    onError: (role, message) => session.notice('warn', `${roleName(role)}识别失败，可重试或切换模式`, { message }),
   })
 }
 
 export function roleName(role: SourceRole): string {
-  return role === 'official' ? '官方画面' : '国内解说'
+  return role === 'official' ? '画面' : '解说'
 }
 
 function sameRegion(left: RoiRect | null | undefined, right: RoiRect | null | undefined): boolean {

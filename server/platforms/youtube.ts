@@ -136,12 +136,12 @@ export type YouTubeRefusal = 'bot-check' | 'sign-in' | 'members-only' | 'age-res
 
 /** Wording per refusal, shown as is. src/studio/sources.tsx decides which ones a sign-in can lift. */
 export const YOUTUBE_REFUSALS: Record<YouTubeRefusal, { message: string; hint?: string }> = {
-  'bot-check': { message: 'YouTube 要求验证不是机器人, 当前网络暂时不能观看.', hint: '换一个代理节点, 或稍后重试.' },
-  'sign-in': { message: 'YouTube 要求登录后才能观看此直播.' },
-  'members-only': { message: '此直播仅限频道会员观看.', hint: '需要有该频道会员资格的 YouTube 账号.' },
-  'age-restricted': { message: '此直播有年龄限制.', hint: '需要已确认年龄的 YouTube 账号.' },
-  'geo-restricted': { message: '此直播在当前网络所在的地区不可观看.', hint: '换一个所在地区不同的代理节点后重试.' },
-  private: { message: '此直播未公开, 无法观看.' },
+  'bot-check': { message: 'YouTube 要求验证不是机器人，当前网络暂时不能观看', hint: '换一个代理节点，或稍后重试' },
+  'sign-in': { message: 'YouTube 要求登录后才能观看此直播' },
+  'members-only': { message: '此直播仅限频道会员观看', hint: '需要有该频道会员资格的 YouTube 账号' },
+  'age-restricted': { message: '此直播有年龄限制', hint: '需要已确认年龄的 YouTube 账号' },
+  'geo-restricted': { message: '此直播在当前网络所在的地区不可观看', hint: '换一个所在地区不同的代理节点后重试' },
+  private: { message: '此直播未公开，无法观看' },
 }
 
 export function isYouTubeRefusal(value: unknown): value is YouTubeRefusal {
@@ -151,20 +151,20 @@ export function isYouTubeRefusal(value: unknown): value is YouTubeRefusal {
 /** Fixed format failures survive sanitization without exposing extractor output. */
 export const YOUTUBE_FORMAT_FAILURES = {
   'youtube-formats-empty': {
-    message: 'YouTube 没有返回直播音视频格式.',
-    hint: '请重新解析. 若仍失败, 请反馈错误代码 YT-FORMATS-EMPTY 以及应用和 yt-dlp 版本.',
+    message: '这场直播暂时无法播放',
+    hint: '请重新载入',
   },
   'youtube-hls-separated': {
-    message: 'YouTube 本次返回了分离的直播音视频轨, 暂无法播放.',
-    hint: '请重新解析. 若仍失败, 请反馈错误代码 YT-HLS-SEPARATED 以及应用和 yt-dlp 版本.',
+    message: '这场直播暂时无法播放',
+    hint: '请重新载入',
   },
   'youtube-hls-unsupported': {
-    message: 'YouTube 返回的直播格式不符合播放要求.',
-    hint: '请反馈错误代码 YT-HLS-UNSUPPORTED 以及应用和 yt-dlp 版本.',
+    message: '这场直播暂时无法播放',
+    hint: '请重新载入',
   },
   'youtube-hls-missing': {
-    message: 'YouTube 已返回直播信息, 但没有适用于当前播放器的音视频流.',
-    hint: '请重新解析. 若仍失败, 请反馈错误代码 YT-HLS-MISSING 以及应用和 yt-dlp 版本.',
+    message: '这场直播暂时无法播放',
+    hint: '请重新载入',
   },
 } as const
 export type YouTubeFormatFailure = keyof typeof YOUTUBE_FORMAT_FAILURES
@@ -196,8 +196,8 @@ function refusalFor(message: string): YouTubeRefusal | undefined {
 
 export async function resolveYouTube(input: string, deps: ResolverDeps): Promise<ResolveResult> {
   const url = parseYouTubeUrl(input)
-  if (!url) return failure('unsupported-url', '请输入有效的 YouTube 直播视频或频道地址.', MANUAL_URL_HINT)
-  if (!deps.runYtDlp) return failure('upstream-error', 'YouTube 解析工具尚未配置.', '请配置 yt-dlp 和 Electron Node 运行时后重试.')
+  if (!url) return failure('unsupported-url', '请输入有效的 YouTube 直播视频或频道地址', MANUAL_URL_HINT)
+  if (!deps.runYtDlp) return failure('upstream-error', 'YouTube 取流工具不可用', '请检查应用安装是否完整')
   let info: unknown
   try { info = await deps.runYtDlp(url) }
   catch (error) {
@@ -207,13 +207,13 @@ export async function resolveYouTube(input: string, deps: ResolverDeps): Promise
     const refusal = refusalFor(message)
     if (refusal) return { ok: false, failure: { code: 'restricted', reason: refusal, ...YOUTUBE_REFUSALS[refusal], detail: diagnosticDetails(error) } }
     if (/not (?:currently )?live|recording is not available|live (?:event|stream) (?:has ended|will begin)|not broadcasting/i.test(message)) {
-      return failure('not-live', '该 YouTube 频道当前未开播.', MANUAL_URL_HINT, error)
+      return failure('not-live', '该 YouTube 频道当前未开播', MANUAL_URL_HINT, error)
     }
-    return failure('upstream-error', 'YouTube 直播解析失败.', '请检查网络, 登录状态和 yt-dlp 配置后重试.', error)
+    return failure('upstream-error', '暂时无法获取 YouTube 直播', '请检查网络和登录状态后重试', error)
   }
   const data = record(info)
   if (data.is_live !== true || (typeof data.live_status === 'string' && data.live_status !== 'is_live')) {
-    return failure('not-live', '该 YouTube 视频当前不是直播, 暂不支持点播或直播回放.', MANUAL_URL_HINT)
+    return failure('not-live', '该 YouTube 视频当前不是直播，暂不支持点播或直播回放', MANUAL_URL_HINT)
   }
   const hlsFormats = youtubeFormats(info)
   const adaptiveFormats = deps.hlsOnly ? [] : youtubeAdaptiveFormats(info, hlsFormats[0]?.height ?? 0)
@@ -221,7 +221,7 @@ export async function resolveYouTube(input: string, deps: ResolverDeps): Promise
   const formats = [...hlsFormats, ...adaptiveFormats]
     .sort((a, b) => b.height - a.height || b.fps - a.fps || b.tbr - a.tbr)
   const selected = selectYouTubeFormat(formats, deps.quality, deps.preferAdaptive)
-  if (!selected) return failure('unsupported-url', '当前 YouTube 直播不提供所选画质.', '请重新解析并选择列表中的画质.')
+  if (!selected) return failure('unsupported-url', '当前 YouTube 直播不提供所选画质', '请重新载入并选择可用画质')
   const qualities: QualityOption[] = formats.map((item) => ({ id: item.format_id, label: `${item.height}p${item.fps > 30 ? item.fps : ''}`, height: item.height, ...(item.fps ? { fps: item.fps } : {}), ...(item.adaptive ? { adaptive: true } : {}) }))
   // Titles and authenticated http_headers are deliberately excluded from IPC metadata.
   return { ok: true, stream: {
@@ -230,6 +230,6 @@ export async function resolveYouTube(input: string, deps: ResolverDeps): Promise
     ...(typeof data.channel_id === 'string' && /^UC[A-Za-z0-9_-]{22}$/.test(data.channel_id) ? { sourceRoom: data.channel_id } : {}),
     requiresProxy: true, qualities, quality: selected.format_id,
     ...(selected.adaptive ? { adaptive: selected.adaptive } : {}),
-    notes: ['直播地址会过期, 断流后将重新解析并恢复本地缓冲.'],
+    notes: [],
   } }
 }

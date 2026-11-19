@@ -151,7 +151,7 @@ export async function attachMedia(
     if (canPlayNativeHls(video)) return attachNative()
     handlers.onError?.({
       fatal: true,
-      message: `无法加载 HLS 播放器：${error instanceof Error ? error.message : String(error)}`,
+      message: '播放器启动失败',
       detail: errorDetails(error),
     })
     return { ...emptyAttachment(), destroy: owner.destroy }
@@ -164,7 +164,7 @@ export async function attachMedia(
     handlers.onError?.({
       fatal: true,
       message: '当前浏览器不支持 HLS 播放',
-      hint: '请使用 Chrome、Edge 或 Firefox 的最新版本。',
+      hint: '请使用 Chrome、Edge 或 Firefox 的最新版本',
     })
     return { ...emptyAttachment(), destroy: owner.destroy }
   }
@@ -285,7 +285,7 @@ export async function attachMedia(
     resetStability()
     const recoverable = data.type === Hls.ErrorTypes.NETWORK_ERROR || data.type === Hls.ErrorTypes.MEDIA_ERROR
     if (!recoverable || recoveries >= MAX_HLS_RECOVERIES) {
-      handlers.onError?.({ ...error, hint: '自动恢复未成功, 请重新加载片源.' })
+      handlers.onError?.({ ...error, hint: '自动恢复未成功，请重新载入片源' })
       owner.destroy()
       return
     }
@@ -299,7 +299,7 @@ export async function attachMedia(
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad()
       else hls.recoverMediaError()
     } catch {
-      if (owner.current()) handlers.onError?.({ ...error, hint: '自动恢复未成功, 请重新加载片源.' })
+      if (owner.current()) handlers.onError?.({ ...error, hint: '自动恢复未成功，请重新载入片源' })
       owner.destroy()
     }
   })
@@ -354,10 +354,10 @@ function nativeAttachment(video: HTMLVideoElement, url: string, owner: Attachmen
 
 function translateNativeError(code: number): MediaError | null {
   if (code === 1) return null // User/source cancellation is handled by the owner.
-  if (code === 2) return { fatal: true, message: '媒体读取失败.', hint: '检查网络或文件是否仍可访问, 然后重新加载片源.' }
-  if (code === 3) return { fatal: true, message: '媒体解码失败.', hint: '检查文件是否损坏, 或选择受支持的视频编码.' }
-  if (code === 4) return { fatal: true, message: '不支持该媒体格式或编码.', hint: '检查文件或地址, 并选择受支持的媒体格式.' }
-  return { fatal: true, message: '媒体播放失败.', hint: '请重新加载片源.' }
+  if (code === 2) return { fatal: true, message: '媒体读取失败', hint: '检查网络或文件是否仍可访问，然后重新载入片源' }
+  if (code === 3) return { fatal: true, message: '媒体解码失败', hint: '检查文件是否损坏，或选择受支持的视频编码' }
+  if (code === 4) return { fatal: true, message: '不支持该媒体格式或编码', hint: '检查文件或地址，并选择受支持的媒体格式' }
+  return { fatal: true, message: '媒体播放失败', hint: '请重新载入片源' }
 }
 
 interface HlsErrorData {
@@ -379,29 +379,29 @@ export function translateHlsError(
     if (status === 403 || status === 401) {
       return {
         fatal: data.fatal, detail,
-        message: `拉流被拒绝 (HTTP ${status})`,
-        hint: '播放地址可能已过期，请重新载入片源。',
+        message: `直播服务器拒绝连接（HTTP ${status}）`,
+        hint: '播放地址可能已过期，请重新载入片源',
       }
     }
     if (data.details === 'manifestLoadError' || data.details === 'manifestParsingError') {
       return {
         fatal: data.fatal, detail,
         message: '无法加载播放列表',
-        hint: '请检查地址是否有效，然后重新载入片源。',
+        hint: '请检查地址是否有效，然后重新载入片源',
       }
     }
     return {
       fatal: data.fatal, detail,
-      message: `网络错误：${data.details}${status ? ` (HTTP ${status})` : ''}`,
-      hint: data.fatal ? '正在重试加载。' : undefined,
+      message: `直播连接失败${status ? `（HTTP ${status}）` : ''}`,
+      hint: data.fatal ? '正在重试载入' : undefined,
     }
   }
   if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
     return {
       fatal: data.fatal, detail,
-      message: `解码错误：${data.details}`,
-      hint: data.fatal ? '正在尝试恢复缓冲。' : undefined,
+      message: '视频解码失败',
+      hint: data.fatal ? '正在尝试恢复缓冲' : undefined,
     }
   }
-  return { fatal: data.fatal, message: `播放器错误：${data.details}`, detail }
+  return { fatal: data.fatal, message: '播放器出错', detail }
 }

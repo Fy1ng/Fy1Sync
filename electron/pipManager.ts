@@ -91,7 +91,7 @@ export class PipManager {
     this.arm()
     try { await window.load() }
     catch (error) {
-      if (this.window === window) this.fail('画中画页面加载失败, 请关闭后重试', error)
+      if (this.window === window) this.fail('画中画页面载入失败，请关闭后重试', error)
     }
     return this.state()
   }
@@ -128,7 +128,7 @@ export class PipManager {
   /** A stalled renderer reloads its existing local playlist; it cannot replace a source. */
   recover(): PipState {
     if (!this.window || this.value.phase !== 'ready') return this.state()
-    if (this.value.recoveryAttempts >= 3) { this.fail('画中画恢复次数已用完, 请关闭后重新打开'); return this.state() }
+    if (this.value.recoveryAttempts >= 3) { this.fail('画中画恢复次数已用完，请关闭后重新打开'); return this.state() }
     this.value.recoveryAttempts++
     this.value.recoveryRevision++
     this.progressAt = this.now()
@@ -161,7 +161,7 @@ export class PipManager {
       this.timer = null
       if (!this.window || this.disposed || this.value.phase === 'failed') return
       const now = this.now()
-      if (this.value.phase === 'opening' && now - this.openedAt >= 20_000) this.fail('画中画未能及时开始播放, 请关闭后重试')
+      if (this.value.phase === 'opening' && now - this.openedAt >= 20_000) this.fail('画中画未能及时开始播放，请关闭后重试')
       else if (this.value.phase === 'ready' && now - this.reportAt >= 20_000) this.fail('画中画窗口已失去响应')
       else if (this.playing && this.value.options.recoverStalls && now - this.progressAt >= 12_000) this.recover()
       if (this.state().phase !== 'failed') this.arm()

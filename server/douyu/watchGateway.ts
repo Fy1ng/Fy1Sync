@@ -28,9 +28,9 @@ export interface DouyuWatchPlaybackStats { bytes: number; cdn: string }
 export type DouyuWatchGatewayErrorCode = 'invalid-arguments' | 'login-required' | 'account-changed' | 'protocol-unsupported' | 'network-error' | 'timeout'
 export class DouyuWatchGatewayError extends Error {
   constructor(readonly code: DouyuWatchGatewayErrorCode) {
-    super({ 'invalid-arguments': '斗鱼观看参数无效.', 'login-required': '请重新登录斗鱼账号.',
-      'account-changed': '斗鱼登录信息已变化.', 'protocol-unsupported': '斗鱼观看协议暂不支持, 已停止上报.',
-      'network-error': '斗鱼观看连接失败.', timeout: '斗鱼观看连接未及时回应.' }[code])
+    super({ 'invalid-arguments': '斗鱼观看参数无效', 'login-required': '请重新登录斗鱼账号',
+      'account-changed': '斗鱼登录信息已变化', 'protocol-unsupported': '斗鱼观看协议暂不支持，已停止上报',
+      'network-error': '斗鱼观看连接失败', timeout: '斗鱼观看连接未及时回应' }[code])
     this.name = 'DouyuWatchGatewayError'
   }
 }

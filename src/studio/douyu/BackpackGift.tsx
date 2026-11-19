@@ -84,11 +84,11 @@ export function BackpackGift({ accountId, room, inventory, gift, locked }: {
       {intervalMs === null && <p className="form-error"><ErrorText error="间隔请填写 0 到 60000 的整数" message="间隔请填写 0 到 60000 的整数" /></p>}
 
       {source === 'all' ? (
-        <p className="muted">按主进程本次读取的可赠库存全部赠送给目标房间。已过期、不支持或状态未知的道具列入排除项，背包不一定因此清空。</p>
+        <p className="muted">赠送全部可赠道具，无法赠送的道具留在背包，请核对下方确认单</p>
       ) : !inventory ? (
-        <p className="muted">读取库存后可选择道具。</p>
+        <p className="muted">读取库存后可选择道具</p>
       ) : giftable.length === 0 ? (
-        <p className="muted">当前库存中没有可赠道具。</p>
+        <p className="muted">当前库存中没有可赠道具</p>
       ) : (
         <ul className="gift-picks">
           {giftable.map((item) => {
@@ -96,7 +96,7 @@ export function BackpackGift({ accountId, room, inventory, gift, locked }: {
             const bad = text !== '' && wholeIn(text, 1, item.quantity) === null
             return (
               <li key={item.propId} data-on={text !== ''}>
-                <span className="gift-pick-name">{item.name} <span className="muted num">{item.propId}</span></span>
+                <span className="gift-pick-name">{item.name}</span>
                 <span className="muted num">库存 {item.quantity} · {expiry(item.expiration)}</span>
                 <input className="text-input num gift-qty" inputMode="numeric" value={text} placeholder="0" disabled={locked}
                   aria-label={`${item.name} 赠送数量`} aria-invalid={bad}
@@ -115,13 +115,13 @@ export function BackpackGift({ accountId, room, inventory, gift, locked }: {
         </ul>
       )}
       {source === 'pick' && badPick && <p className="form-error"><ErrorText error="数量须为 1 到当前库存之间的整数" message="数量须为 1 到当前库存之间的整数" /></p>}
-      {tooLong && <p className="form-error"><ErrorText error={`请求次数或总时长超出上限(${MAX_OPERATIONS} 次, 24 小时), 请减少数量或间隔`} /></p>}
+      {tooLong && <p className="form-error"><ErrorText error={`请求次数或总时长超出上限（${MAX_OPERATIONS} 次，24 小时），请减少数量或间隔`} /></p>}
       {!roomOk(room) && <p className="form-error"><ErrorText error="请填写有效的目标房间号" message="请填写有效的目标房间号" /></p>}
 
       <div className="gift-actions">
         <button type="button" className={gift.plan ? 'btn-quiet small' : 'btn-solid small'}
           disabled={!formOk || locked || !!gift.busy} onClick={preview}>
-          {gift.busy === 'plan' ? '生成中…' : gift.plan ? '重新生成预览' : '生成预览'}
+          {gift.busy === 'plan' ? '生成中…' : gift.plan ? '重新生成确认单' : '生成确认单'}
         </button>
       </div>
     </div>

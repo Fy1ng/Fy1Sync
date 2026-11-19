@@ -57,13 +57,13 @@ describe('platform metadata request limits', () => {
 
 describe('public stream failure wording', () => {
   it.each([
-    ['connect', 'dns-failed', '域名解析失败.'],
-    ['proxy', 'proxy-unreachable', '代理不可达, 请检查系统代理.'],
-    ['connect', 'tls-certificate', '服务器证书校验失败.'],
-    ['http', 'http-403', '服务器返回 HTTP 403.'],
-    ['connect', 'connection-timeout', '网络连接超时.'],
-    ['playback-not-ready', 'media-format-invalid', '媒体格式无效或返回的内容不是可播放视频.'],
-    ['resolve', 'policy-rejected', '媒体地址被应用的安全策略拒绝.'],
+    ['connect', 'dns-failed', '域名解析失败'],
+    ['proxy', 'proxy-unreachable', '无法连接取流代理'],
+    ['connect', 'tls-certificate', '服务器证书校验失败'],
+    ['http', 'http-403', '服务器返回 HTTP 403'],
+    ['connect', 'connection-timeout', '网络连接超时'],
+    ['playback-not-ready', 'media-format-invalid', '媒体格式无效或返回的内容不是可播放视频'],
+    ['resolve', 'policy-rejected', '媒体地址被应用的安全策略拒绝'],
   ] as const)('keeps %s/%s while discarding provider text', (stage, reason, message) => {
     const result = sanitizedFailure({ ok: false, failure: { code: 'upstream-error', stage, reason,
       message: 'Cookie=PRIVATE https://signed.invalid/?token=PRIVATE', hint: 'original provider hint' } })
@@ -190,9 +190,9 @@ describe('desktop main-process service', () => {
 
   describe('stream resolution and registration', () => {
     it.each([
-      [new ProxyError('dns-failed', 'Cookie=PRIVATE https://signed.invalid/?token=PRIVATE'), 'dns-failed', '域名解析失败.'],
-      [new ProxyError('too-many-redirects', 'redirect diagnostic'), 'too-many-redirects', '服务器重定向次数过多, 请稍后重试.'],
-      [new ProxyError('upstream-failed', 'upstream diagnostic'), 'upstream-failed', '媒体服务器请求失败, 请稍后重试.'],
+      [new ProxyError('dns-failed', 'Cookie=PRIVATE https://signed.invalid/?token=PRIVATE'), 'dns-failed', '域名解析失败'],
+      [new ProxyError('too-many-redirects', 'redirect diagnostic'), 'too-many-redirects', '服务器重定向次数过多，请稍后重试'],
+      [new ProxyError('upstream-failed', 'upstream diagnostic'), 'upstream-failed', '媒体服务器请求失败，请稍后重试'],
     ])('shows the actual resolve error without echoing sensitive diagnostics', async (error, code, message) => {
       const acquisition = { resolve: vi.fn(async () => { throw error }), switchQuality: vi.fn(async () => { throw error }) } as unknown as AcquisitionService
       const other = setup({ acquisition })
@@ -208,7 +208,7 @@ describe('desktop main-process service', () => {
       const acquisition = { resolve: vi.fn(async () => { throw new StreamFailureError({ stage: 'connect', code: 'tls-certificate', message: 'certificate diagnostic Cookie=PRIVATE' }) }) } as unknown as AcquisitionService
       const other = setup({ acquisition })
       const result = await other.invoke('resolve', { input: '6657', platform: 'douyu' })
-      expect(result).toMatchObject({ ok: true, value: { ok: false, failure: { stage: 'connect', reason: 'tls-certificate', message: '服务器证书校验失败.' } } })
+      expect(result).toMatchObject({ ok: true, value: { ok: false, failure: { stage: 'connect', reason: 'tls-certificate', message: '服务器证书校验失败' } } })
       expect(JSON.stringify(result)).not.toContain('PRIVATE')
       other.dispose()
     })

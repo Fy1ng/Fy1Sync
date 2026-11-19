@@ -68,11 +68,11 @@ export class WasmWorkerEngine implements WorkerEngine {
         if (!preserveBasic) this.clearBasicRecognizers()
         let readiness: { ready: boolean; missing: string[]; sampleCount: number }
         if (isBasicClock(request.profile)) {
-          if (!this.wasm.createBasicClockRecognizer) throw new Error('WASM 不支持基础倒计时识别, 请重新构建应用')
+          if (!this.wasm.createBasicClockRecognizer) throw new Error('WASM 不支持基础倒计时识别，请重新构建应用')
           if (!preserveBasic) {
             const templates = this.makeBasicTemplates()
             for (const char of '0123456789:') {
-              if (!templates[char]?.length) throw new Error('基础倒计时数字字形不可用, 可尝试画面匹配模式')
+              if (!templates[char]?.length) throw new Error('基础倒计时数字字形不可用，可尝试画面匹配模式')
             }
             this.basicTemplates = JSON.stringify(templates)
             this.basicSampleCount = Object.values(templates).reduce((count, samples) => count + samples.length, 0)
@@ -126,7 +126,7 @@ export class WasmWorkerEngine implements WorkerEngine {
           }
         } catch (error) {
           if (error instanceof WebAssembly.RuntimeError) return {
-            type: 'error', generation: request.generation, message: `识别计算失败: ${errorText(error)}`,
+            type: 'error', generation: request.generation, message: `识别计算失败：${errorText(error)}`,
           }
           outcome = { status: 'failed', reason: 'decode-failed', detail: errorText(error) }
         }
@@ -146,9 +146,9 @@ export class WasmWorkerEngine implements WorkerEngine {
       const basicProfile = this.profile && isBasicClock(this.profile) ? this.profile : null
       const roi = basicProfile?.roi
       try {
-        if (roi && !recognizer.setRoi) throw new Error(`WASM 不支持${basicProfile?.roiOrigin === 'memory' ? '记忆' : '手动'}倒计时区域, 请重新构建应用`)
+        if (roi && !recognizer.setRoi) throw new Error(`WASM 不支持${basicProfile?.roiOrigin === 'memory' ? '记忆' : '手动'}倒计时区域，请重新构建应用`)
         recognizer.setRoi?.(JSON.stringify(roi ?? null))
-        if (basicProfile?.searchRoi && !recognizer.setSearchRoi) throw new Error('WASM 不支持倒计时搜索范围, 请重新构建应用')
+        if (basicProfile?.searchRoi && !recognizer.setSearchRoi) throw new Error('WASM 不支持倒计时搜索范围，请重新构建应用')
         recognizer.setSearchRoi?.(JSON.stringify(basicProfile?.searchRoi ?? null))
       } catch (error) { recognizer.free(); throw error }
       state = { recognizer,
@@ -173,7 +173,7 @@ export class WasmWorkerEngine implements WorkerEngine {
   }
 
   private resetBasicTiming(state: BasicState): void {
-    if (!state.recognizer.resetTiming) throw new Error('WASM 不支持保留倒计时缓存, 请重新构建应用')
+    if (!state.recognizer.resetTiming) throw new Error('WASM 不支持保留倒计时缓存，请重新构建应用')
     state.recognizer.resetTiming()
     state.time = -Infinity
   }
@@ -243,7 +243,7 @@ export async function createWorkerEngine(options: {
       fallbackReason = errorText(error)
     }
   }
-  const engine = new RecognitionEngine(now, `倒计时识别需要 Rust/WASM, 无法加载: ${fallbackReason ?? '当前后端不可用'}`)
+  const engine = new RecognitionEngine(now, `倒计时识别需要 Rust/WASM，无法加载：${fallbackReason ?? '当前后端不可用'}`)
   options.report?.('typescript', fallbackReason)
   return { backend: 'typescript', handle: (request) => annotate(engine.handle(request), 'typescript') }
 }

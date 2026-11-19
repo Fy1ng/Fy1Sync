@@ -258,7 +258,7 @@ describe('one-use plan execution and reconciliation', () => {
     expect(h.trace).toEqual(['badges', 'stock:200:7', 'donate:200:2', 'stock:200:5', 'stock:300:5', 'donate:300:2', 'stock:300:3'])
     expect(result).toMatchObject({ status: 'completed', rows: [{ room: '200', quantity: 2, status: 'receipt-received' },
       { room: '300', quantity: 2, status: 'receipt-received' }] })
-    expect(result.message).toContain('续期效果仍需')
+    expect(result.message).toContain('请到斗鱼核对粉丝牌是否续期')
     expect(JSON.stringify(result)).not.toContain(UID)
     expect(JSON.stringify(result)).not.toContain(PRIVATE)
     await expect(h.service.execute(id)).rejects.toMatchObject({ code: 'stale-plan' })

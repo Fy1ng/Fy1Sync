@@ -5,7 +5,7 @@ import type { ResolverDeps } from './types'
 export type HuyaDanmakuRoom = { room: string; presenterUid: bigint; topSid: bigint; subSid: bigint }
 
 const MAX_PAGE = 2 * 1_048_576
-const invalid = () => new Error('无法读取虎牙弹幕房间信息.')
+const invalid = () => new Error('无法读取虎牙弹幕房间信息')
 const record = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 
 function identifier(value: unknown): bigint | null {

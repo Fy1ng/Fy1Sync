@@ -23,11 +23,6 @@ export function money(value: DouyuGiftMoney | null | undefined): string {
   return `${amount.toLocaleString('zh-CN', { maximumFractionDigits: 2 })} ${UNIT[value.currency]}`
 }
 
-/** The accounting behind a displayed amount, for confirmation pages. */
-export function moneyBasis(value: DouyuGiftMoney | null | undefined): string {
-  return validMoney(value) ? `${value.currency}，scale ${value.scale}，计价值 ${value.amountMinor}` : ''
-}
-
 export function dateTime(value: number | null | undefined): string {
   if (typeof value !== 'number') return UNKNOWN
   const date = new Date(value)

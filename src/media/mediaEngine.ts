@@ -434,9 +434,9 @@ export class MediaEngine {
         status: 'error',
         error: {
           fatal: true,
-          message: error instanceof Error ? error.message : '加载失败',
+          message: error instanceof Error ? error.message : '载入失败',
           detail: errorDetails(error),
-          hint: '请检查地址是否可访问，然后重新载入片源。',
+          hint: '请检查地址是否可访问，然后重新载入片源',
         },
       }
       this.notify()
@@ -620,9 +620,9 @@ export class MediaEngine {
         ...this.state[role],
         error: {
           fatal: false,
-          message: '浏览器拒绝了自动播放。',
+          message: '浏览器拒绝了自动播放',
           detail: errorDetails(result.reason),
-          hint: '请点击「播放」重试。',
+          hint: '请点击「播放」重试',
         },
       }
       this.notify()

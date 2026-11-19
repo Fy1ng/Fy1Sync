@@ -19,7 +19,7 @@ export class DouyuTaskError extends Error {
       'task-not-found': '未找到该任务',
       'task-limit': '任务数量已达到上限',
       'task-exists': '该账号在此房间已有相同任务',
-      'storage-failed': '任务配置读取或保存失败, 请检查本地配置',
+      'storage-failed': '任务配置读取或保存失败，请检查本地配置',
       disposed: '任务服务已关闭',
     }[code])
     this.name = 'DouyuTaskError'
@@ -62,8 +62,8 @@ const DEFINITION_KEYS = ['id', 'accountId', 'room', 'kind', 'policy', 'repeatMin
 const INPUT_KEYS = ['accountId', 'room', 'kind', 'policy', 'repeatMinutes']
 const MESSAGE_INPUT_KEYS = ['accountId', 'room', 'text', 'color']
 const OPERATION_CONTEXT_KEYS = ['accountId', 'originRoom', 'rooms']
-const FAILURE = '任务执行失败, 请检查登录状态后手动重试'
-const MESSAGE_FAILURE = '弹幕发送失败, 请检查当前账号与房间后手动重试'
+const FAILURE = '任务执行失败，请检查登录状态后手动重试'
+const MESSAGE_FAILURE = '弹幕发送失败，请检查当前账号与房间后手动重试'
 const UNSAFE_MESSAGE_TEXT = /[\x00-\x1f\x7f-\x9f\u2028\u2029\uD800-\uDFFF]/u
 
 /** Main owns the queue, lifecycle gates and cancellation of all account writes. */
@@ -94,7 +94,7 @@ export class DouyuTaskManager {
       if (raw === undefined) return
       const data = readStorage(raw)
       this.retainedRooms = new Set(data.retainedRooms)
-      for (const definition of data.tasks) this.tasks.set(definition.id, record(definition, '应用已重启, 请手动启动'))
+      for (const definition of data.tasks) this.tasks.set(definition.id, record(definition, '应用已重启，请手动启动'))
     } catch { throw new DouyuTaskError('storage-failed') }
   }
 
@@ -122,7 +122,7 @@ export class DouyuTaskManager {
   async sendMessage(raw: DouyuMessageInput): Promise<DouyuMessageOutcome> {
     this.ensureAlive()
     const input = readMessageInput(raw)
-    if (this.immediate) return failedMessage('已有一条手动弹幕正在发送或等待, 请等待当前请求结束')
+    if (this.immediate) return failedMessage('已有一条手动弹幕正在发送或等待，请等待当前请求结束')
     if (!this.messageAllowed(input)) return failedMessage('手动弹幕仅允许在当前账号和房间处于前台且未锁屏或休眠时发送')
     if (typeof this.options.sendMessage !== 'function') return failedMessage()
     return new Promise(resolve => {
@@ -203,7 +203,7 @@ export class DouyuTaskManager {
 
   pause(id: string, reason?: string): DouyuTasksSnapshot {
     const task = this.task(id)
-    this.stop(task, 'paused', readReason(reason, '已暂停, 请手动启动'))
+    this.stop(task, 'paused', readReason(reason, '已暂停，请手动启动'))
     this.refresh()
     return this.snapshot()
   }
@@ -223,13 +223,13 @@ export class DouyuTaskManager {
     if (next === this.activeAccountId) return
     const previous = this.activeAccountId
     this.activeAccountId = next
-    if (previous !== null) this.pauseMatching(previous, '已切换账号, 请手动启动')
+    if (previous !== null) this.pauseMatching(previous, '已切换账号，请手动启动')
     this.refresh()
   }
 
   pauseAccount(id: string, reason?: string): void {
     this.ensureAlive()
-    this.pauseMatching(readId(id), readReason(reason, '账号任务已暂停, 请手动启动'))
+    this.pauseMatching(readId(id), readReason(reason, '账号任务已暂停，请手动启动'))
     this.refresh()
   }
 
@@ -253,7 +253,7 @@ export class DouyuTaskManager {
     const previous = this.currentRoom
     this.currentRoom = next
     this.cancelImmediate()
-    if (previous !== null && !this.retainedRooms.has(previous)) this.stopRoom(previous, '已离开房间, 请手动启动', true)
+    if (previous !== null && !this.retainedRooms.has(previous)) this.stopRoom(previous, '已离开房间，请手动启动', true)
     this.refresh()
   }
 
@@ -270,7 +270,7 @@ export class DouyuTaskManager {
     if (!retain && this.currentRoom !== target) {
       if (this.immediate?.type === 'operation' && this.immediate.context.rooms.includes(target)) this.cancelImmediate()
       const affected = [...this.tasks.values()].filter(task => task.definition.room === target)
-      this.stopBeforeSave(affected, '房间任务已停止, 请手动启动')
+      this.stopBeforeSave(affected, '房间任务已停止，请手动启动')
       this.persistAfterStop(this.definitions(), next, affected)
     } else this.persist(this.definitions(), next)
     this.retainedRooms = next
@@ -283,7 +283,7 @@ export class DouyuTaskManager {
     const target = readRoom(room)
     const affected = [...this.tasks.values()].filter(task => task.definition.room === target)
     if (this.immediate && this.immediateHasRoom(this.immediate, target)) this.cancelImmediate()
-    this.stopBeforeSave(affected, '房间任务已停止, 请手动启动')
+    this.stopBeforeSave(affected, '房间任务已停止，请手动启动')
     if (this.retainedRooms.has(target)) {
       const next = new Set(this.retainedRooms)
       next.delete(target)
@@ -309,7 +309,7 @@ export class DouyuTaskManager {
     this.disposed = true
     this.clearWakeup()
     this.cancelImmediate()
-    for (const task of this.tasks.values()) this.stop(task, 'stopped', '应用已退出, 任务已停止')
+    for (const task of this.tasks.values()) this.stop(task, 'stopped', '应用已退出，任务已停止')
     this.publish()
     this.listeners.clear()
   }
@@ -340,11 +340,11 @@ export class DouyuTaskManager {
   private persistAfterStop(tasks: DouyuTaskDefinition[], rooms: Set<string>, stopped: TaskRecord[]): void {
     try { this.persist(tasks, rooms) }
     catch {
-      for (const task of stopped) task.reason = `${task.reason}. 配置修改未保存`
+      for (const task of stopped) task.reason = `${task.reason}。配置修改未保存。`
       this.publish()
       throw new DouyuTaskError('storage-failed', stopped.length
-        ? '相关任务已停止, 配置修改未保存, 请重试保存'
-        : '配置修改未保存, 请重试保存')
+        ? '相关任务已停止，配置修改未保存，请重试保存'
+        : '配置修改未保存，请重试保存')
     }
   }
 
@@ -375,7 +375,7 @@ export class DouyuTaskManager {
   private stop(task: TaskRecord, status: 'paused' | 'stopped', reason: string): void {
     const flight = this.flight?.type === 'task' && this.flight.task === task && !this.flight.cancelled ? this.flight : null
     task.status = status
-    task.reason = flight?.dispatched ? `${reason}. 请求可能已处理, 请确认结果后手动启动` : reason
+    task.reason = flight?.dispatched ? `${reason}。请求可能已处理，请确认结果后手动启动。` : reason
     task.nextRunAt = null
     this.queue = this.queue.filter(id => id !== task.definition.id)
     if (flight) {
@@ -387,8 +387,8 @@ export class DouyuTaskManager {
   private gate(task: TaskRecord): string | null {
     if (task.definition.accountId !== this.activeAccountId) return '等待切换到该账号'
     if (task.definition.room !== this.currentRoom && !this.retainedRooms.has(task.definition.room)) return '等待进入或保留该房间'
-    if (this.runtime.suspended) return '系统休眠中, 等待恢复'
-    if (this.runtime.locked && task.definition.policy !== 'background-locked') return '系统已锁屏, 等待解锁'
+    if (this.runtime.suspended) return '系统休眠中，等待恢复'
+    if (this.runtime.locked && task.definition.policy !== 'background-locked') return '系统已锁屏，等待解锁'
     if (!this.runtime.foreground && task.definition.policy === 'foreground') return '等待应用回到前台'
     return null
   }
@@ -444,8 +444,8 @@ export class DouyuTaskManager {
     if (!immediate || immediate.cancelled) return
     immediate.cancelled = true
     if (immediate.type === 'message') this.resolveMessage(immediate, immediate.dispatched
-      ? { status: 'waiting-user', message: '发送已取消, 请求可能已处理, 请核对结果后再手动发送', nextAllowedAt: null }
-      : failedMessage('手动发送已取消, 未发送弹幕'))
+      ? { status: 'waiting-user', message: '发送已取消，请求可能已处理，请核对结果后再手动发送', nextAllowedAt: null }
+      : failedMessage('手动发送已取消，未发送弹幕'))
     else this.resolveOperation(immediate, { status: 'cancelled', started: immediate.dispatched })
     immediate.controller.abort()
     // A dispatched request keeps both the input limit and the execution lane until it settles.

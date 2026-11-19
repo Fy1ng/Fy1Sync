@@ -38,15 +38,15 @@ export function automationEnvelope(raw: unknown, yuba = false): Record<string, u
 }
 
 const MESSAGES: Record<AutomationFaultCode, string> = {
-  login: '账号登录已失效或发生变化, 请在该账号的官方页面重新登录.',
-  verification: '官方要求人工验证, 请打开该账号的官方页面处理后手动恢复.',
-  'rate-limit': '官方限制了请求频率, 任务已暂停, 请稍后核对状态.',
-  eligibility: '官方参与条件未满足或当前活动未开放, 本次已停止.',
-  unavailable: '无法安全读取官方任务信息, 本次已停止.',
-  'invalid-response': '官方任务字段或返回结果无法确认, 本次已停止.',
-  'already-signed': '官方提示已经签到, 请核对状态后再继续.',
-  'unknown-result': '操作已可能提交, 结果尚无法确认. 本次不会自动重发, 请在官方页面核对.',
-  capacity: '任务数量或防重复记录已达到安全上限, 请结束当前批次后重新安排.',
+  login: '账号登录已失效或发生变化，请在该账号的官方页面重新登录',
+  verification: '官方要求人工验证，请打开该账号的官方页面处理后手动恢复',
+  'rate-limit': '官方限制了请求频率，任务已暂停，请稍后核对状态',
+  eligibility: '官方参与条件未满足或当前活动未开放，本次已停止',
+  unavailable: '无法安全读取官方任务信息，本次已停止',
+  'invalid-response': '无法确认当前任务信息，已暂停。请到斗鱼核对。',
+  'already-signed': '官方提示已经签到，请核对状态后再继续',
+  'unknown-result': '操作已可能提交，结果尚无法确认。本次不会自动重发，请在官方页面核对。',
+  capacity: '当前批次任务过多，请结束后重新安排',
 }
 
 export function automationFailure(error: unknown, submitted: boolean): DouyuAutomationOutcome {

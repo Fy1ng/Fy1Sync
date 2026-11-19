@@ -27,10 +27,10 @@ export function DouyinComposer({ room, connected, onLogin }: { room: string; con
     const revision = ++reading.current
     refreshing.current = true
     lastAutomaticRead.current = Date.now()
-    const result = await apiClient.getDouyinSendState(force).catch(caught => ({ ok: false as const, ...displayError(caught, '无法读取抖音账号状态, 请刷新后重试.') }))
+    const result = await apiClient.getDouyinSendState(force).catch(caught => ({ ok: false as const, ...displayError(caught, '无法读取抖音账号状态，请刷新后重试') }))
     if (revision === reading.current) refreshing.current = false
     if (!mounted.current || revision !== reading.current) return
-    const next: AccountState = result.ok ? result.value : { loggedIn:false, canSend:false, loginState:'unavailable', message:'无法读取抖音账号状态, 请刷新后重试.' }
+    const next: AccountState = result.ok ? result.value : { loggedIn:false, canSend:false, loginState:'unavailable', message:'无法读取抖音账号状态，请刷新后重试' }
     const uid = next.loggedIn ? next.uid ?? null : null
     const signedOut = next.loginState === 'signed-out' || !next.loginState && !next.loggedIn
     // A failed read is not an account transition. Preserve its draft and receipt until
@@ -81,7 +81,7 @@ export function DouyinComposer({ room, connected, onLogin }: { room: string; con
       if (value.status === 'accepted' && version.current === draftVersion) { version.current++; setDraft('') }
       else if (value.status !== 'accepted') void refresh(true)
     } catch (caught) {
-      if (mounted.current && context.current === operation) setNotice({ status:'waiting-user', message:'抖音发送结果无法确认. 请在官方直播间核对, 本次不会自动重发.', nextAllowedAt:null, detail:errorDetails(caught) })
+      if (mounted.current && context.current === operation) setNotice({ status:'waiting-user', message:'未能确认发送结果。请先到官方直播间核对，不要重复发送。', nextAllowedAt:null, detail:errorDetails(caught) })
     } finally { inFlight.current = false; if (mounted.current) setPending(false) }
   }
   const editable = connected && account?.loggedIn === true && account?.canSend === true
@@ -91,7 +91,7 @@ export function DouyinComposer({ room, connected, onLogin }: { room: string; con
   const needsSigningLogin = account?.detail?.code === 'douyin-signing-material-missing'
   return <form className="say" aria-label="抖音弹幕发送" onSubmit={event => { event.preventDefault(); if (!composing.current) void send() }}>
     <textarea rows={1} aria-label="抖音弹幕内容" value={draft} disabled={!editable} spellCheck={false}
-      placeholder={editable ? '发送抖音弹幕' : !connected ? '连接抖音弹幕后核对发送状态' : account?.loggedIn ? '抖音发送认证尚未完成' : '登录抖音后核对账号状态'}
+      placeholder="弹幕内容"
       onFocus={() => { void refresh() }}
       onChange={event => { version.current++; setDraft(event.target.value) }}
       onCompositionStart={() => { composing.current = true }} onCompositionEnd={() => { composing.current = false }}
@@ -101,18 +101,18 @@ export function DouyinComposer({ room, connected, onLogin }: { room: string; con
       }} />
     <button type="submit" className="say-send" disabled={blocked}>发送</button>
     <p className="say-meta">
-      {account?.loggedIn && <span>{account.canSend ? `以 ${account.nickname || '当前抖音账号'} 发送` : `当前抖音账号: ${account.nickname || '已验证'}`}</span>}
+      {account?.loggedIn && <span>{account.canSend ? `以 ${account.nickname || '当前抖音账号'} 发送` : `当前抖音账号：${account.nickname || '已验证'}`}</span>}
       {signingUnavailable && <button type="button" className="link-btn" onClick={onLogin}>抖音账号设置</button>}
-      {needsSigningLogin && <button type="button" className="link-btn" onClick={onLogin}>完成抖音发送认证</button>}
+      {needsSigningLogin && <button type="button" className="link-btn" onClick={onLogin}>重新登录抖音</button>}
       {account && !signingUnavailable && !needsSigningLogin && !account.loggedIn && account.loginState !== 'unavailable' && account.loginState !== 'authenticating'
         && <button type="button" className="link-btn" onClick={onLogin}>{account?.loggedIn || account?.loginState === 'expired' ? '重新登录抖音' : '登录抖音'}</button>}
       <button type="button" className="link-btn" onClick={() => { void refresh(true) }}>刷新账号</button>
       <span className="num">{draft.length}/{DOUYIN_MESSAGE_LIMIT}</span>
       {remaining > 0 && <span className="num">{remaining}s</span>}
     </p>
-    {invalid && <p className="say-note is-warn"><ErrorText error={{ code: 'invalid-message', message: `普通文字最多 ${DOUYIN_MESSAGE_LIMIT} 字, 不支持换行或控制字符.`, maximumUnits: DOUYIN_MESSAGE_LIMIT }} /></p>}
-    {!editable && <p className="say-note">{!connected ? '连接抖音弹幕后核对发送状态.' : account && account.loginState !== 'authenticating'
-      ? <ErrorText error={accountFailure ?? { loggedIn: account.loggedIn, canSend: account.canSend, loginState: account.loginState, message: account.message }} message={account.message} /> : '正在确认抖音发送账号.'}</p>}
+    {invalid && <p className="say-note is-warn"><ErrorText error={{ code: 'invalid-message', message: `请输入不超过 ${DOUYIN_MESSAGE_LIMIT} 字的单行弹幕`, maximumUnits: DOUYIN_MESSAGE_LIMIT }} /></p>}
+    {!editable && <p className="say-note">{!connected ? '弹幕未连接' : account && account.loginState !== 'authenticating'
+      ? <ErrorText error={accountFailure ?? { loggedIn: account.loggedIn, canSend: account.canSend, loginState: account.loginState, message: account.message }} message={account.message} /> : '正在检查账号'}</p>}
     {notice && <p className="say-note" data-state={notice.status} role="status">{notice.status === 'accepted' ? notice.message : <ErrorText error={notice.detail ?? notice.diagnostic ?? { status: notice.status, message: notice.message }} message={notice.message} />}</p>}
   </form>
 }

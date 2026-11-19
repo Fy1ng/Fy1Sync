@@ -208,7 +208,7 @@ describe('asynchronous frame acquisition', () => {
       const run = h.grabber.grabAsync(h.video, FULL_FRAME_ROI, 1)
       if (kind === 'timeout') await vi.advanceTimersByTimeAsync(1000)
       else h.grabber[kind]()
-      expect(await run).toMatchObject(kind === 'timeout' ? { ok: false, reason: 'decode-failed', detail: '抓帧读回超时, 请重试' }
+      expect(await run).toMatchObject(kind === 'timeout' ? { ok: false, reason: 'decode-failed', detail: '抓帧读回超时，请重试' }
         : { ok: false, skipped: true, reason: 'cancelled' })
       expect(h.grabber.busy).toBe(true)
       finish(h.bitmap)

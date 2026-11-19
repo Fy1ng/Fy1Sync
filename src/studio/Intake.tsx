@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { Icon } from './kit'
-import { LOGIN_LABEL, LoginOffer, PLATFORM_LABEL, ROLE_LABEL, SOURCE_HINT, SOURCE_KINDS, parseRoomInput, sourceTitle, spaced, useSourceLoader, type RoomPlatform } from './sources'
+import { LoginOffer, PLATFORM_LABEL, ROLE_LABEL, SOURCE_HINT, SOURCE_KINDS, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
 import { ErrorText } from '../ui/ErrorDetails'
 
 const ROOM_PLATFORMS: RoomPlatform[] = ['douyu', 'bilibili', 'huya', 'douyin']
@@ -102,7 +102,7 @@ export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
   const load = role ? loader.state[role] : null
   const previous = loader.previousSources ?? {}
   const restorable = SOURCE_ROLES.filter(side => previous[side] && !loader.state[side].busy && ['empty', 'error'].includes(media[side].status))
-  const restoreHint = SOURCE_ROLES.filter(side => previous[side]).map(side => `${ROLE_LABEL[side]}: ${previous[side]!.label || previous[side]!.input}`).join(' | ')
+  const restoreHint = SOURCE_ROLES.filter(side => previous[side]).map(side => `${ROLE_LABEL[side]}：${previous[side]!.label || previous[side]!.input}`).join('；')
 
   return (
     <div className="intake" role="dialog" aria-modal="true" aria-label="添加直播间">
@@ -112,7 +112,7 @@ export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
           <button type="button" className="btn-glass small intake-restore" disabled={loader.restoring || restorable.length === 0}
             title={restoreHint || '暂无可恢复的直播间'} onClick={() => {
               void loader.restorePrevious().then(setRestoreSucceeded)
-            }}><Icon name="history" />{loader.restoring ? '恢复中...' : '恢复上次'}</button>
+            }}><Icon name="history" />{loader.restoring ? '恢复中…' : '恢复上次'}</button>
         </div>
         {loader.restoreProblem && <p className="intake-error" role="alert">{loader.restoreProblem}</p>}
         <div className="intake-slots" role="radiogroup" aria-label="添加到">
@@ -140,11 +140,11 @@ export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
           </div>
         )}
 
-        {load?.problem && <p className="intake-error" role="alert"><ErrorText error={load.problem} message={<>{load.problem.message}{load.problem.hint ? ` ${load.problem.hint}` : ''}</>} /></p>}
+        {load?.problem && <p className="intake-error" role="alert"><ErrorText error={load.problem} message={<>{load.problem.message}{load.problem.hint ? `，${load.problem.hint}` : ''}</>} /></p>}
 
         {pendingFile && !currentAttempt && !fileRole && <p className="muted" role="status">已拖入 {pendingFile.name}。请先选择画面或解说。</p>}
         {currentAttempt?.status === 'failed' && <p className="intake-error">
-          {currentAttempt.file.name} 载入失败。 <button type="button" className="link-btn" disabled={loader.state[currentAttempt.role].busy}
+          {currentAttempt.file.name} 载入失败<button type="button" className="link-btn" disabled={loader.state[currentAttempt.role].busy}
             onClick={() => loadFile(currentAttempt.role, currentAttempt.file)}>重试</button>
         </p>}
 
@@ -153,10 +153,10 @@ export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
             <button type="button" className="intake-find" onClick={onSchedule}>
               <Icon name="trophy" />
               <span>CS2 赛程</span>
-              <small>按对阵选择官方直播，载入为画面</small>
+              <small>载入为画面</small>
             </button>
           )}
-          {onFavorites && <button type="button" className="intake-find" onClick={onFavorites}><Icon name="star" /><span>收藏直播间</span><small>查看主播资料和开播状态, 收藏未开播的房间</small></button>}
+          {onFavorites && <button type="button" className="intake-find" onClick={onFavorites}><Icon name="star" /><span>收藏夹</span></button>}
         </div>
 
         <p className="intake-foot">
@@ -180,7 +180,7 @@ function Slot({ role, selected, onPick }: { role: SourceRole; selected: boolean;
       <button type="button" className="slot-pick" role="radio" aria-checked={selected} onClick={onPick}>
         <span className="slot-role">{ROLE_LABEL[role]}</span>
         <span className="slot-what">
-          {load.loggingIn ? load.login === 'douyin' ? '在应用内完成抖音官方登录或验证, 成功后自动关闭' : `在登录窗口中登录${load.login ? spaced(LOGIN_LABEL[load.login]) : ''}，完成后关闭窗口`
+          {load.loggingIn ? '等待登录'
             : status === 'loading' ? '载入中…'
               : descriptor ? sourceTitle(descriptor)
                 : SOURCE_KINDS}

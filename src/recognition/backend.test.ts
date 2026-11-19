@@ -21,7 +21,7 @@ describe('Worker backend selection', () => {
     const engine = await createWorkerEngine({ load: async () => { throw new Error('CSP denied') }, now: () => 0, report })
     expect(engine.backend).toBe('typescript')
     expect(report).toHaveBeenCalledWith('typescript', 'CSP denied')
-    const reference = new RecognitionEngine(() => 0, '倒计时识别需要 Rust/WASM, 无法加载: CSP denied')
+    const reference = new RecognitionEngine(() => 0, '倒计时识别需要 Rust/WASM，无法加载：CSP denied')
     expect(engine.handle(configure)).toEqual(reference.handle(configure))
     expect(engine.handle(frame)).toEqual(reference.handle(frame))
   })
@@ -93,7 +93,7 @@ describe('basic countdown worker', () => {
     const bench = basicEngine()
     bench.engine.handle(frame)
     bench.instances[0]!.push.mockImplementation(() => { throw new WebAssembly.RuntimeError('unreachable') })
-    expect(bench.engine.handle({ ...frame, mediaTime: 1.1 })).toMatchObject({ type: 'error', message: '识别计算失败: unreachable' })
+    expect(bench.engine.handle({ ...frame, mediaTime: 1.1 })).toMatchObject({ type: 'error', message: '识别计算失败：unreachable' })
   })
 
   it('installs the selected manual ROI on each source and clears it when auto mode is selected', () => {

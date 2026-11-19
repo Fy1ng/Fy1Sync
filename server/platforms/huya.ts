@@ -89,7 +89,7 @@ export function parseHuyaQualities(value: unknown): QualityOption[] {
     if (!integer(item.iBitRate, 1_000_000) || seen.has(item.iBitRate)) return []
     if (item.iCodecType !== undefined && item.iCodecType !== 0) return []
     seen.add(item.iBitRate)
-    return [{ id: String(item.iBitRate), label: text(item.sDisplayName, 80).trim() || (item.iBitRate === 0 ? '原画' : `画质 ${item.iBitRate}`) }]
+    return [{ id: String(item.iBitRate), label: text(item.sDisplayName, 80).trim() || (item.iBitRate === 0 ? '原画' : '未知画质') }]
   })
 }
 
@@ -109,19 +109,19 @@ function mediaUrl(value: unknown): URL | null {
 
 /** Page fixtures are reduced and anonymized; raw pages/tokens must never be logged. */
 export function parseHuyaPage(rawPage: string, inputRoom: string): PageResult {
-  if (typeof rawPage !== 'string' || rawPage.length > MAX_PAGE) return failure('upstream-error', '虎牙房间页面过大或格式无效.', MANUAL_URL_HINT)
-  if (rawPage.includes('找不到这个主播')) return failure('room-not-found', '虎牙房间不存在.', '请检查房间号或复制主播的房间链接.')
-  if (/正在整改中|房间已被封禁|主播已被封禁/.test(rawPage)) return failure('restricted', '虎牙房间正在整改或受到访问限制.', '请在虎牙官网确认房间状态后重试.')
+  if (typeof rawPage !== 'string' || rawPage.length > MAX_PAGE) return failure('upstream-error', '虎牙房间页面过大或格式无效', MANUAL_URL_HINT)
+  if (rawPage.includes('找不到这个主播')) return failure('room-not-found', '虎牙房间不存在', '请检查房间号或复制主播的房间链接')
+  if (/正在整改中|房间已被封禁|主播已被封禁/.test(rawPage)) return failure('restricted', '虎牙房间正在整改或受到访问限制', '请在虎牙官网确认房间状态后重试')
   const page = rawPage.replace(/&quot;|&#34;|&#x22;/gi, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   const room = record(jsonAfter(page, /\bTT_ROOM_DATA\s*=\s*/, 65_536))
-  if (room.state !== 'ON' && room.state !== 'OFF' && room.state !== 'REPLAY') return failure('upstream-error', '无法读取虎牙开播状态.', MANUAL_URL_HINT)
-  if (room.state === 'OFF' || room.state === 'REPLAY' || room.isReplay === true || replayTitle(room.introduction)) return failure('not-live', '虎牙房间未开播或正在播放回放.', '请等待主播开播后重新加载.')
+  if (room.state !== 'ON' && room.state !== 'OFF' && room.state !== 'REPLAY') return failure('upstream-error', '无法读取虎牙开播状态', MANUAL_URL_HINT)
+  if (room.state === 'OFF' || room.state === 'REPLAY' || room.isReplay === true || replayTitle(room.introduction)) return failure('not-live', '虎牙房间未开播或正在播放回放', '请等待主播开播后重新载入')
   const canonical = roomId(room.profileRoom) ?? (/^[1-9]\d{0,15}$/.test(inputRoom) ? inputRoom : null)
-  if (!canonical) return failure('room-not-found', '无法确认虎牙真实房间号.', '请复制虎牙官网的数字房间链接后重试.')
+  if (!canonical) return failure('room-not-found', '无法确认虎牙直播间', '请复制虎牙官网的数字房间链接后重试')
   const stream = record(jsonAfter(page, /\bstream\s*:\s*/, 1_048_576))
   const data = Array.isArray(stream.data) && stream.data.length <= 100 ? record(stream.data[0]) : {}
   const live = record(data.gameLiveInfo)
-  if (replayTitle(live.introduction) || replayTitle(live.roomName)) return failure('not-live', '虎牙房间当前正在播放回放或重播.', '请切换到正在直播的房间.')
+  if (replayTitle(live.introduction) || replayTitle(live.roomName)) return failure('not-live', '虎牙房间当前正在播放回放或重播', '请切换到正在直播的房间')
   const qualities = parseHuyaQualities(stream.vMultiStreamInfo)
   const lines = Array.isArray(data.gameStreamInfoList) && data.gameStreamInfoList.length <= 100 ? data.gameStreamInfoList.flatMap((raw): Line[] => {
     const line = record(raw)
@@ -179,29 +179,29 @@ export function buildHuyaAuth(streamName: string, token: string, presenterUid: b
   return result.toString()
 }
 
-function resolved(room: string, url: URL, qualities: QualityOption[], quality: string, source: string, cdn: string, deps: ResolverDeps): ResolveResult {
+function resolved(room: string, url: URL, qualities: QualityOption[], quality: string, deps: ResolverDeps): ResolveResult {
   // Never include raw titles, tokens, headers or extractor output in public metadata.
   return { ok: true, stream: {
     platform: 'huya', url: deps.proxify(url.href), kind: 'progressive', label: `虎牙 ${room}`, channel: room, sourceRoom: room,
     requiresProxy: true, headers: { ...HEADERS }, qualities, quality,
-    notes: [`线路: ${cdn}. 令牌来源: ${source}.`, '画质名称和码率由虎牙提供. 断流后重新解析并签名.'],
+    notes: [],
   } }
 }
 
 /** yt-dlp is the last extractor fallback, never a media probe or a login path. */
 async function fallback(room: string, qualities: QualityOption[], deps: ResolverDeps, quality: string): Promise<ResolveResult> {
-  if (!deps.runYtDlp) return failure('needs-manual-url', '虎牙签名参数不可用, 且未配置备用解析工具.', MANUAL_URL_HINT)
+  if (!deps.runYtDlp) return failure('needs-manual-url', '暂时无法获取虎牙直播，请重试', MANUAL_URL_HINT)
   let data: Record<string, unknown>
   try { data = record(await deps.runYtDlp(`${REFERER}${room}`)) }
   catch (error) {
     if (error instanceof StreamFailureError) throw error
     const message = error instanceof Error ? error.message : ''
-    if (/offline|not.live|未开播/i.test(message)) return failure('not-live', '虎牙房间当前未开播.', '请等待主播开播后重新加载.', error)
-    if (/login|sign.in|forbidden|restricted|geo.restrict|登录|封禁|整改/i.test(message)) return failure('restricted', '虎牙限制了该房间或画质的访问.', '请在虎牙官网确认可播放状态. 备用解析工具使用匿名访问.', error)
-    return failure('upstream-error', '虎牙备用解析失败.', MANUAL_URL_HINT, error)
+    if (/offline|not.live|未开播/i.test(message)) return failure('not-live', '虎牙房间当前未开播', '请等待主播开播后重新载入', error)
+    if (/login|sign.in|forbidden|restricted|geo.restrict|登录|封禁|整改/i.test(message)) return failure('restricted', '虎牙限制了该房间或画质的访问', '请在虎牙官网确认是否可播放', error)
+    return failure('upstream-error', '暂时无法获取虎牙直播', MANUAL_URL_HINT, error)
   }
   // Some Huya extractor versions omit live/codec fields; the page already confirmed ON.
-  if (data.is_live === false || (typeof data.live_status === 'string' && data.live_status !== 'is_live') || replayTitle(data.title)) return failure('not-live', '虎牙房间当前不是直播.', MANUAL_URL_HINT)
+  if (data.is_live === false || (typeof data.live_status === 'string' && data.live_status !== 'is_live') || replayTitle(data.title)) return failure('not-live', '虎牙房间当前不是直播', MANUAL_URL_HINT)
   const candidates = Array.isArray(data.formats) && data.formats.length <= 1000 ? data.formats : []
   for (const raw of candidates) {
     const item = record(raw)
@@ -214,15 +214,15 @@ async function fallback(room: string, qualities: QualityOption[], deps: Resolver
     // Original quality omits ratio; some CDN lines reject an explicit ratio=0.
     if (rate === '0') url.searchParams.delete('ratio')
     else url.searchParams.set('ratio', rate)
-    return resolved(room, url, qualities.length ? qualities : [{ id: rate, label: rate === '0' ? '原画' : `画质 ${rate}` }], rate, 'yt-dlp', '备用线路', deps)
+    return resolved(room, url, qualities.length ? qualities : [{ id: rate, label: rate === '0' ? '原画' : '未知画质' }], rate, deps)
   }
-  return failure('needs-manual-url', '虎牙没有返回所选画质的可用 FLV 地址.', '请重新解析并选择可用画质, 或使用直接媒体地址.')
+  return failure('needs-manual-url', '虎牙未返回所选画质的播放地址', '请重新载入并选择可用画质，或使用视频直链')
 }
 
 export async function resolveHuya(input: string, deps: ResolverDeps): Promise<ResolveResult> {
   const inputRoom = parseHuyaRoom(input)
-  if (!inputRoom) return failure('unsupported-url', '无法识别虎牙房间号.', '支持 huya.com/数字或字符串房间号, 也可选择虎牙后输入房间号.')
-  if (deps.quality !== undefined && (!/^\d{1,7}$/.test(deps.quality) || Number(deps.quality) > 1_000_000)) return failure('unsupported-url', '虎牙画质编号无效.', '请从画质列表中重新选择.')
+  if (!inputRoom) return failure('unsupported-url', '无法识别虎牙房间号', '支持 huya.com/数字或字符串房间号，也可选择虎牙后输入房间号')
+  if (deps.quality !== undefined && (!/^\d{1,7}$/.test(deps.quality) || Number(deps.quality) > 1_000_000)) return failure('unsupported-url', '所选画质无效', '请从清晰度菜单重新选择')
   let page: PageResult
   try {
     const readRoomPage = async (room: string) => {
@@ -232,13 +232,12 @@ export async function resolveHuya(input: string, deps: ResolverDeps): Promise<Re
     }
     page = parseHuyaPage(await readRoomPage(inputRoom), inputRoom)
     if (page.ok && !/^\d+$/.test(inputRoom)) page = parseHuyaPage(await readRoomPage(page.room), page.room)
-  } catch (error) { if (error instanceof StreamFailureError) throw error; return failure('upstream-error', '请求虎牙房间页面失败.', MANUAL_URL_HINT, error) }
+  } catch (error) { if (error instanceof StreamFailureError) throw error; return failure('upstream-error', '请求虎牙房间页面失败', MANUAL_URL_HINT, error) }
   if (!page.ok) return page
   const quality = deps.quality ?? page.qualities[0]?.id ?? '0'
-  if (page.qualities.length && !page.qualities.some(option => option.id === quality)) return failure('unsupported-url', '虎牙当前不提供所选画质.', '请重新解析并选择列表中的画质.')
+  if (page.qualities.length && !page.qualities.some(option => option.id === quality)) return failure('unsupported-url', '虎牙当前不提供所选画质', '请重新载入并选择可用画质')
   for (const line of page.lines) {
     let auth: string | null = null
-    let source = 'Ex'
     try {
       if (deps.fetchBytes) {
         const token = decodeHuyaTokenResponse(await deps.fetchBytes('https://wup.huya.com', {
@@ -247,10 +246,10 @@ export async function resolveHuya(input: string, deps: ResolverDeps): Promise<Re
         if (token) auth = buildHuyaAuth(line.name, token, line.presenter, { now: deps.now })
       }
     } catch { /* Invalid/unavailable WUP tokens fall back without exposing upstream details. */ }
-    if (!auth) { source = 'AntiCode'; auth = buildHuyaAuth(line.name, line.antiCode, line.presenter, { now: deps.now }) }
+    if (!auth) { auth = buildHuyaAuth(line.name, line.antiCode, line.presenter, { now: deps.now }) }
     if (!auth) continue
     const url = new URL(`${line.base}/${line.name}.flv?${auth}&codec=264${quality === '0' ? '' : `&ratio=${quality}`}`)
-    return resolved(page.room, url, page.qualities, quality, source, line.cdn, deps)
+    return resolved(page.room, url, page.qualities, quality, deps)
   }
   return fallback(page.room, page.qualities, deps, quality)
 }

@@ -110,7 +110,7 @@ describe('platform danmaku network transport', () => {
     'wss://danmuproxy.douyu.com:8506/unexpected', 'wss://cdnws.api.huya.com/',
   ])('rejects unexpected endpoints before proxy resolution: %s', url => {
     const route = vi.fn(async (): Promise<NetworkRoute> => ({ kind: 'http', proxyUrl: 'http://127.0.0.1:7890' }))
-    expect(() => createNetworkSocket(url, 'douyu', { network: { route } })).toThrow('弹幕连接地址不在允许范围内.')
+    expect(() => createNetworkSocket(url, 'douyu', { network: { route } })).toThrow('弹幕连接地址不在允许范围内')
     expect(route).not.toHaveBeenCalled()
     expect(mocks.websocket).not.toHaveBeenCalled()
   })
@@ -120,7 +120,7 @@ describe('platform danmaku network transport', () => {
     const socket = createNetworkSocket(douyu, 'douyu', { network: direct, resolve: async () => ['not-an-ip'] })
     socket.addEventListener('error', error)
     await flush()
-    expect(error).toHaveBeenCalledWith({ message: '弹幕网络连接失败, 请检查出网设置.' })
+    expect(error).toHaveBeenCalledWith({ message: '弹幕网络连接失败，请检查出网设置' })
     expect(mocks.websocket).not.toHaveBeenCalled()
   })
 
@@ -131,7 +131,7 @@ describe('platform danmaku network transport', () => {
     socket.addEventListener('message', message)
     socket.addEventListener('close', close)
     socket.binaryType = 'blob'
-    expect(() => socket.send(new Uint8Array())).toThrow('弹幕连接尚未就绪.')
+    expect(() => socket.send(new Uint8Array())).toThrow('弹幕连接尚未就绪')
     await flush()
     const transport = mocks.sockets[0]!
     expect(transport.binaryType).toBe('blob')
@@ -143,7 +143,7 @@ describe('platform danmaku network transport', () => {
     expect(message).toHaveBeenCalledWith({ data })
     expect(transport.send).toHaveBeenCalledWith(data)
     transport.fire('close', { code: 1000, wasClean: true, reason: 'cookie=private signed?token=private' })
-    expect(close).toHaveBeenCalledWith({ code: 1000, wasClean: true, reason: '弹幕连接已断开.' })
+    expect(close).toHaveBeenCalledWith({ code: 1000, wasClean: true, reason: '弹幕连接已断开' })
     expect(mocks.dispatchers[0]!.destroy).toHaveBeenCalledOnce()
     socket.close()
     expect(mocks.dispatchers[0]!.destroy).toHaveBeenCalledOnce()
@@ -176,7 +176,7 @@ describe('platform danmaku network transport', () => {
     mocks.sockets[0]!.fire('error', { message: 'certificate cookie=private https://signed.invalid/?token=private' })
     mocks.sockets[0]!.fire('close', { reason: 'private' })
     await flush()
-    expect(error).toHaveBeenCalledExactlyOnceWith({ message: '弹幕网络连接失败, 请检查出网设置.' })
+    expect(error).toHaveBeenCalledExactlyOnceWith({ message: '弹幕网络连接失败，请检查出网设置' })
     expect(close).toHaveBeenCalledOnce()
     expect(JSON.stringify([error.mock.calls, close.mock.calls])).not.toContain('private')
     expect(mocks.dispatchers[0]!.destroy).toHaveBeenCalledOnce()

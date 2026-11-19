@@ -156,7 +156,7 @@ export async function syncLiveNotices(): Promise<void> {
  */
 export async function stopForAccountChange(): Promise<void> {
   const ok = await applyLiveNotices({ enabled: false, scope: state.scope, rooms: state.rooms, accountId: null })
-  if (ok) set({ stopped: '当前账号已变更，开播提醒已停止。' })
+  if (ok) set({ stopped: '当前账号已变更，开播提醒已停止' })
 }
 
 /** Scope and room choices made while the reminder is off; nothing is sent. */

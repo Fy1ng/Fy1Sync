@@ -88,9 +88,9 @@ it.each(['tasks', 'automations'] as const)('does not suggest adding an account a
   render(<Harness view={view} />)
   await act(async () => { finish!({ ok: false, code: 'account-read-failed', message: '无法读取账号' }) })
   expect(await screen.findByRole('alert')).toHaveTextContent('无法读取账号')
-  expect(screen.queryByText('请先在「账号」中添加斗鱼账号。')).toBeNull()
+  expect(screen.queryByText('请先在「账号」中添加斗鱼账号')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: '重试' }))
-  expect(await screen.findByText('请先在「账号」中添加斗鱼账号。')).toBeInTheDocument()
+  expect(await screen.findByText('请先在「账号」中添加斗鱼账号')).toBeInTheDocument()
 })
 
 it('accepts an account read whose main-process revision is newer than the intervening push', async () => {

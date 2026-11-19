@@ -23,9 +23,9 @@ const SOURCE_NAME: Record<DouyuSpendSource['source'], string> = {
 }
 
 const AGGREGATION_REASON: Record<DouyuMonthlySpending['aggregation'], string> = {
-  complete: '合计不可用。',
-  partial: '部分来源未能完整读取，不计算合计。',
-  unreconciled: '各来源之间无法核验是否重复记账，不将其相加作为合计。',
+  complete: '合计不可用',
+  partial: '账单未读全，暂不合计',
+  unreconciled: '账单可能重复，暂不合计',
 }
 
 const yuan = (minor: number | null): string => {
@@ -84,8 +84,8 @@ export function Spending({ data }: { data: DouyuData }): React.ReactNode {
         </button>
       </div>
 
-      {!account && <p className="lane">未设置当前账号，无法读取消费记录。</p>}
-      {account && !ready && <p className="lane">当前账号未登录，无法读取消费记录。</p>}
+      {!account && <p className="lane">未设置当前账号，无法读取消费记录</p>}
+      {account && !ready && <p className="lane">当前账号未登录，无法读取消费记录</p>}
       {loading && <p className="lane" role="status">正在读取本月消费</p>}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
 
@@ -97,10 +97,10 @@ export function Spending({ data }: { data: DouyuData }): React.ReactNode {
               ? <b className="num">{yuan(spending.totalMinor)}</b>
               : <span className="spending-missing">{AGGREGATION_REASON[spending.aggregation]}</span>}
           </div>
-          {spending.message && <p className="lane">{spending.aggregation === 'partial' ? <ErrorText error={spending} message={spending.message} /> : spending.message}</p>}
-          {spending.sources.length === 0 && <p className="lane">未返回任何消费来源。</p>}
+          {spending.message && spending.aggregation === 'partial' && <p className="lane"><ErrorText error={spending} message="" /></p>}
+          {spending.sources.length === 0 && <p className="lane">未返回任何消费来源</p>}
           {spending.sources.map((source) => <SourceBlock key={source.source} source={source} />)}
-          <p className="lane">金额单位为元，按斗鱼返回的分值换算；更新于 {formatTime(spending.checkedAt)}</p>
+          <p className="lane">更新于 {formatTime(spending.checkedAt)}</p>
         </>
       )}
     </section>
@@ -108,7 +108,7 @@ export function Spending({ data }: { data: DouyuData }): React.ReactNode {
 }
 
 function SourceBlock({ source }: { source: DouyuSpendSource }): React.ReactNode {
-  const name = SOURCE_NAME[source.source] ?? source.source
+  const name = SOURCE_NAME[source.source] ?? '其他消费记录'
   const complete = source.coverage === 'all-pages'
   return (
     <div className="spending-source" role="group" aria-label={name}>
@@ -117,8 +117,8 @@ function SourceBlock({ source }: { source: DouyuSpendSource }): React.ReactNode 
         <span className="num">{yuan(source.amountMinor)}{complete ? '' : '（已读取部分）'}</span>
       </div>
       <p className={complete ? 'lane' : 'spending-partial'}>
-        {complete ? '已读取全部' : '仅读取部分'} {source.pageCount} 页，共 {source.entries} 笔
-        {source.reason ? `。${source.reason}` : ''}
+        {complete ? `共 ${source.entries} 笔` : `仅包含已读取的 ${source.entries} 笔`}
+        {source.reason ? `；${source.reason}` : ''}
         {!complete && source.reason && <ErrorText error={source} message="" />}
       </p>
       {source.categories.length > 0 && (

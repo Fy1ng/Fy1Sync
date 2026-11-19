@@ -9,10 +9,10 @@ import type { DouyuGiftCurrency, DouyuGiftMoney, DouyuInventoryItem, DouyuInvent
 
 const MAX_SECONDS = 253_402_300_799
 const MESSAGES = {
-  'invalid-arguments': '背包查询参数无效.',
-  'invalid-data': '斗鱼背包数据无法完整核对, 请重新读取.',
-  'account-changed': '所选账号或房间已变化, 请重新读取.',
-  cancelled: '背包查询已取消.',
+  'invalid-arguments': '背包查询参数无效',
+  'invalid-data': '斗鱼背包数据无法完整核对，请重新读取',
+  'account-changed': '所选账号或房间已变化，请重新读取',
+  cancelled: '背包查询已取消',
 } as const
 
 export class DouyuInventoryError extends Error {
@@ -114,16 +114,16 @@ export function parseDouyuInventory(payload: unknown, now: number): DouyuInvento
         return count !== null && count > 0
       })
     }
-    const reason = propType === null ? '道具用途未知, 不可自动赠送.'
-      : propType === 5 ? '这是领取入口, 不是可赠库存.'
-        : propType >= 7 && propType <= 10 ? '这是兑换道具, 不执行兑换.'
-          : ![0, 1, 2].includes(propType) ? '此道具的通用赠送或财务语义尚未核验.'
-            : item.extPropType !== undefined && item.extPropType !== '' ? '这是特殊权益道具, 不可通用赠送.'
-              : isClick !== 1 ? '当前可用状态未确认, 不可赠送.'
-                : isValuable === null ? '价值属性未知, 不可赠送.'
-                  : quantity < 1 ? '没有可用库存.'
-                    : expiration.kind === 'unknown' ? '无法确认准确到期时间, 暂不可赠送.'
-                      : expiration.expiresAt !== null && expiration.expiresAt <= now + 5000 ? '已过期或即将过期, 不可赠送.' : null
+    const reason = propType === null ? '道具用途未知，不可自动赠送'
+      : propType === 5 ? '这是领取入口，不是可赠库存'
+        : propType >= 7 && propType <= 10 ? '这是兑换道具，不执行兑换'
+          : ![0, 1, 2].includes(propType) ? '暂不支持赠送此类道具，请到斗鱼使用'
+            : item.extPropType !== undefined && item.extPropType !== '' ? '这是特殊权益道具，不可通用赠送'
+              : isClick !== 1 ? '当前可用状态未确认，不可赠送'
+                : isValuable === null ? '价值属性未知，不可赠送'
+                  : quantity < 1 ? '没有可用库存'
+                    : expiration.kind === 'unknown' ? '无法确认准确到期时间，暂不可赠送'
+                      : expiration.expiresAt !== null && expiration.expiresAt <= now + 5000 ? '已过期或即将过期，不可赠送' : null
     return {
       propId: String(id), name: inventoryName(item.name), quantity, propType, isValuable, expiration,
       rawPrice, unitValue, totalValue: unitValue ? multiplyGiftMoney(unitValue, quantity) : null,
@@ -146,7 +146,7 @@ export function inventorySnapshot(accountId: string, room: string, checkedAt: nu
     quantity, knownValue: [...values].map(([currency, amount]) => giftMoney(currency, amount)),
     unvaluedItems: items.filter(item => item.totalValue === null && item.quantity > 0).length,
     knownIntimacy, unknownIntimacyItems: items.filter(item => item.intimacyTotal === null && item.quantity > 0).length,
-  }, message: '未提供的价值和亲密度显示为未知. 剩余天数仅供参考, 具体到期时间以斗鱼显示为准. 亲密度按道具标注显示, 实际到账以斗鱼为准; 金额未折算成人民币.' }
+  }, message: '价值以鱼翅或鱼丸计，亲密度以实际到账为准' }
 }
 
 export interface DouyuInventoryDependencies {

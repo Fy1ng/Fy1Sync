@@ -44,9 +44,9 @@ function useCaptureState(): [CaptureState | null, (state: CaptureState) => void,
       const result = await apiClient.feature('getCaptureState', undefined)
       if (!mounted.current || started !== revision.current) return
       if (result.ok && isCaptureState(result.value)) setState(result.value)
-      else setError(result.ok ? '截图状态读取失败，请重试。' : result)
+      else setError(result.ok ? '截图状态读取失败，请重试' : result)
     } catch (caught) {
-      if (mounted.current && started === revision.current) setError(displayError(caught, '读取截图状态失败，请重试。'))
+      if (mounted.current && started === revision.current) setError(displayError(caught, '读取截图状态失败，请重试'))
     }
   }, [setError])
   useEffect(() => {
@@ -112,7 +112,7 @@ export function CaptureControls({ source }: {
     if (mounted.current) setLive(null)
     void apiClient.feature('cancelGifRecording', { id: current.id }).then(result => {
       if (!result.ok) say(result, 'error')
-    }).catch(caught => say(displayError(caught, '取消录制失败, 请重试.'), 'error'))
+    }).catch(caught => say(displayError(caught, '取消录制失败，请重试'), 'error'))
   }
 
   // Leaving the player cancels whatever is being recorded or encoded.
@@ -160,7 +160,7 @@ export function CaptureControls({ source }: {
       if (!result.ok) say(result, 'error')
       else if (result.value.status === 'saved') say('截图已保存', 'ok')
       else say('已取消保存', 'plain')
-    } catch (caught) { say(displayError(caught, '截图保存失败, 请重试.'), 'error') }
+    } catch (caught) { say(displayError(caught, '截图保存失败，请重试'), 'error') }
     finally { if (mounted.current) setShooting(false) }
   }
 
@@ -185,7 +185,7 @@ export function CaptureControls({ source }: {
     if (!sourceRef.current()) { setFormError('当前没有可录制的画面'); return }
     setStarting(true)
     const begun = await apiClient.feature('beginGifRecording', options).catch(caught => {
-      if (mounted.current) setFormError(displayError(caught, '开始录制失败, 请重试.'))
+      if (mounted.current) setFormError(displayError(caught, '开始录制失败，请重试'))
       return null
     })
     if (mounted.current) setStarting(false)
@@ -209,7 +209,7 @@ export function CaptureControls({ source }: {
       let png: string
       try { png = captureVideoFrame(video, options.width) } catch (error) { abandon(current); say(displayError(error, errorText(error)), 'error'); return }
       const appended = await apiClient.feature('appendGifFrame', { id: current.id, index, png }).catch(caught => {
-        if (!current.cancelled) { abandon(current); say(displayError(caught, '录制帧保存失败, 请重试.'), 'error') }
+        if (!current.cancelled) { abandon(current); say(displayError(caught, '录制帧保存失败，请重试'), 'error') }
         return null
       })
       if (!appended) return
@@ -232,7 +232,7 @@ export function CaptureControls({ source }: {
 
     if (mounted.current) setLive({ id: current.id, frames: index, maxFrames, phase: 'encoding' })
     const finished = await apiClient.feature('finishGifRecording', { id: current.id }).catch(caught => {
-      if (!current.cancelled) { abandon(current); say(displayError(caught, 'GIF 保存失败, 请重试.'), 'error') }
+      if (!current.cancelled) { abandon(current); say(displayError(caught, 'GIF 保存失败，请重试'), 'error') }
       return null
     })
     if (!finished) return
@@ -265,7 +265,7 @@ export function CaptureControls({ source }: {
   const set = (key: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement>): void => {
     setForm((value) => ({ ...value, [key]: event.target.value }))
   }
-  const progress = live ? (live.phase === 'encoding' ? '编码中' : `录制中 ${live.frames}/${live.maxFrames}`) : ''
+  const progress = live ? (live.phase === 'encoding' ? '正在保存 GIF' : `录制中 ${live.frames}/${live.maxFrames}`) : ''
 
   return (
     <div className="capture-control">
@@ -283,13 +283,12 @@ export function CaptureControls({ source }: {
         {live ? (
           <>
             <div className="row-split">
-              <strong>{live.phase === 'encoding' ? '编码中' : '录制中'}</strong>
+              <strong>{live.phase === 'encoding' ? '正在保存 GIF' : '录制中'}</strong>
               {live.phase === 'recording' && <span className="num" aria-label="录制进度">{live.frames}/{live.maxFrames}</span>}
             </div>
             <div className="capture-meter" aria-hidden="true">
               <span style={{ width: `${live.phase === 'encoding' ? 100 : Math.round(live.frames * 100 / live.maxFrames)}%` }} />
             </div>
-            {live.phase === 'encoding' && <p className="muted">编码完成后将弹出保存对话框。</p>}
             <div className="row-end">
               <button type="button" className="btn-quiet small" onClick={cancel}>取消</button>
               {live.phase === 'recording' && (
@@ -309,7 +308,6 @@ export function CaptureControls({ source }: {
                 </span>
               </label>
             ))}
-            <p className="muted">帧率 1–15，时长 1–30 秒，宽度 160–1280 像素。</p>
             <div className="row-end">
               <button type="submit" className="btn-solid small" disabled={starting}>开始录制</button>
             </div>
@@ -341,7 +339,7 @@ export function CaptureSettings(): React.ReactNode {
       if (!mounted.current) return
       if (result.ok) setState(result.value)
       else setError(result)
-    } catch (caught) { if (mounted.current) setError(displayError(caught, '截图设置保存失败, 请重试.')) }
+    } catch (caught) { if (mounted.current) setError(displayError(caught, '截图设置保存失败，请重试')) }
     finally { if (mounted.current) setPending(false) }
   }
 
@@ -350,7 +348,7 @@ export function CaptureSettings(): React.ReactNode {
       {!state && !loadError && <p className="muted" role="status">正在读取截图状态</p>}
       <Switch label="启用截图与 GIF" checked={state?.settings.enabled === true} disabled={pending || !state}
         onChange={(enabled) => void toggle(enabled)} />
-      <p className="muted">仅截取正在播放的画面，不截取桌面。</p>
+      <p className="muted">只截取视频，不截取桌面</p>
       {loadError && <ReadError error={loadError} detail={loadErrorDetail} onRetry={retry} />}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
     </>

@@ -73,12 +73,12 @@ export function Automations({ data }: { data: DouyuData }): React.ReactNode {
         ? <NewAutomation data={data} act={act} locked={!!lane.pending} onDone={() => setCreating(false)} />
         : <button type="button" className="btn-solid new-task" disabled={data.all.length === 0} onClick={() => setCreating(true)}>新建批量任务</button>}
       {data.accountsReadError && <ReadError error={data.accountsReadError} detail={data.accountsReadDetail} onRetry={() => void data.reloadAccounts()} />}
-      {data.all.length === 0 && !data.loading && !data.accountsReadError && <p className="muted">请先在「账号」中添加斗鱼账号。</p>}
+      {data.all.length === 0 && !data.loading && !data.accountsReadError && <p className="muted">请先在「账号」中添加斗鱼账号</p>}
       {loading && <p className="muted" role="status">正在读取批量任务</p>}
       {readError && <ReadError error={readError} detail={readDetail} onRetry={() => void reload()} />}
 
       {!loading && !readError && snapshot && tasks.length === 0 && !creating && (
-        <p className="desk-empty">暂无批量任务。新建的任务默认暂停，点击「启动」后运行。</p>
+        <p className="desk-empty">暂无批量任务</p>
       )}
 
       {tasks.length > 0 && (
@@ -88,7 +88,7 @@ export function Automations({ data }: { data: DouyuData }): React.ReactNode {
       )}
 
       {tasks.length > 0 && (
-        <p className="muted automation-foot">暂停或删除不会撤回已提交的请求。应用重启后全部批量任务处于暂停状态。</p>
+        <p className="muted automation-foot">暂停或删除不会撤回已提交的操作。重启应用后，批量任务需手动启动。</p>
       )}
       <LaneLine lane={lane} />
     </div>
@@ -108,7 +108,7 @@ function AutomationRow({ task, data, act, locked }: { task: AutomationView; data
   const failure = task as AutomationView & { errorDetail?: unknown; detail?: unknown; code?: unknown }
 
   return (
-    <li className="task automation" data-status={task.status} role="group" aria-label={`${spec.label} (${account?.label ?? '账号不可用'})`}>
+    <li className="task automation" data-status={task.status} role="group" aria-label={`${spec.label} （${account?.label ?? '账号不可用'}）`}>
       <div className="task-main">
         <span className="task-kind">{spec.label}</span>
         <span className="task-status" data-status={task.status}>{STATUS[task.status]}</span>
@@ -119,7 +119,7 @@ function AutomationRow({ task, data, act, locked }: { task: AutomationView; data
       {progress && <Progress progress={progress} />}
 
       {task.reason && <p className="task-result" data-status={task.status}>{task.status === 'failed' || task.status === 'waiting-user' ? <ErrorText error={failure.errorDetail ?? failure.detail ?? { code: failure.code, message: task.reason }} message={task.reason} /> : task.reason}</p>}
-      {review && <p className="automation-review">结果需在官方页面人工核对，核对后再手动启动。</p>}
+      {review && <p className="automation-review">结果需在官方页面人工核对，核对后再手动启动</p>}
 
       {(task.lastRunAt !== null || task.nextRunAt !== null) && (
         <p className="muted num">
@@ -137,7 +137,7 @@ function AutomationRow({ task, data, act, locked }: { task: AutomationView; data
               onClick={() => void act('正在启动', () => apiClient.feature('startDouyuAutomation', { id: task.id }), '已启动')}>启动</button>}
         {confirming
           ? <span className="automation-confirm" role="group" aria-label="确认删除">
-              <span className="muted">删除后不可恢复，已提交的请求不会撤回。</span>
+              <span className="muted">删除不可恢复，已提交的操作不会撤回</span>
               <button type="button" className="btn-quiet small is-danger" disabled={locked}
                 onClick={() => void act('正在删除', () => apiClient.feature('removeDouyuAutomation', { id: task.id }), '已删除')
                   .then((ok) => { if (!ok) setConfirming(false) })}>确认删除</button>
@@ -146,7 +146,7 @@ function AutomationRow({ task, data, act, locked }: { task: AutomationView; data
           : <button type="button" className="btn-quiet small is-danger" disabled={locked} onClick={() => setConfirming(true)}>删除</button>}
       </div>
       {account && account.id !== data.accounts?.activeAccountId && !scheduled && (
-        <p className="muted">仅在 {account.label} 为当前账号时运行。</p>
+        <p className="muted">仅在 {account.label} 为当前账号时运行</p>
       )}
     </li>
   )
@@ -233,7 +233,7 @@ function NewAutomation({ data, act, locked, onDone }: { data: DouyuData; act: Ac
           </select>
         </label>
       </div>
-      <p className="muted automation-note">{spec.note}</p>
+      {spec.note && <p className="muted automation-note">{spec.note}</p>}
 
       <div className="field-stack">
         <span className="field-label">目标范围</span>
@@ -258,7 +258,7 @@ function NewAutomation({ data, act, locked, onDone }: { data: DouyuData; act: Ac
         </label>
       )}
       {draft.target === 'selected-rooms' && (
-        <IdList label="房间号列表" hint="填写数字房间号，以空格、逗号或换行分隔，最多 100 个。" value={draft.rooms} onChange={(value) => set('rooms', value)} />
+        <IdList label="房间号列表" hint="最多 100 个，用空格、逗号或换行分隔" value={draft.rooms} onChange={(value) => set('rooms', value)} />
       )}
 
       {spec.fields.includes('yuba') && (
@@ -267,12 +267,13 @@ function NewAutomation({ data, act, locked, onDone }: { data: DouyuData; act: Ac
           <Segmented label="鱼吧签到模式" value={draft.yubaMode} onChange={(value) => set('yubaMode', value)}
             options={(['normal', 'fast', 'supplement'] as const).filter((mode) => yubaModeAllowed(draft.target, mode))
               .map((value) => ({ value, label: YUBA_MODE_LABEL[value] }))} />
+          {draft.yubaMode === 'fast' && <span className="muted">极速签到后，未签到的鱼吧改为普通签到</span>}
           {draft.yubaMode === 'supplement' && (
             <label className="field-stack">
               <span className="field-label">补签卡最多使用数量</span>
               <input className="text-input num automation-short" type="number" min={1} max={100} value={draft.maxSupplementCards}
                 aria-label="补签卡最多使用数量" onChange={(event) => set('maxSupplementCards', event.target.value)} />
-              <span className="muted">仅消耗已有补签卡，不购买。</span>
+              <span className="muted">仅消耗已有补签卡，不购买</span>
             </label>
           )}
         </div>
@@ -285,10 +286,10 @@ function NewAutomation({ data, act, locked, onDone }: { data: DouyuData; act: Ac
         </div>
       )}
       {spec.fields.includes('postIds') && (
-        <IdList label="帖子 ID 列表" hint="填写官方鱼吧帖子的数字 ID，最多 100 个。" value={draft.postIds} onChange={(value) => set('postIds', value)} />
+        <IdList label="帖子 ID 列表" hint="最多 100 个，用空格、逗号或换行分隔" value={draft.postIds} onChange={(value) => set('postIds', value)} />
       )}
       {spec.fields.includes('followRooms') && (
-        <IdList label="关注房间号列表" hint="填写需要关注的数字房间号，最多 100 个。" value={draft.followRooms} onChange={(value) => set('followRooms', value)} />
+        <IdList label="关注房间号列表" hint="最多 100 个，用空格、逗号或换行分隔" value={draft.followRooms} onChange={(value) => set('followRooms', value)} />
       )}
       {spec.fields.includes('maxItems') && (
         <label className="field-stack">
@@ -312,7 +313,7 @@ function NewAutomation({ data, act, locked, onDone }: { data: DouyuData; act: Ac
           <label className="field-stack">
             <span className="field-label">重复间隔（分钟，60 至 43200）</span>
             <input className="text-input num automation-short" type="number" min={60} max={43200} value={draft.repeatMinutes}
-              aria-label="重复间隔(分钟)" onChange={(event) => set('repeatMinutes', event.target.value)} />
+              aria-label="重复间隔（分钟）" onChange={(event) => set('repeatMinutes', event.target.value)} />
           </label>
         )}
       </div>

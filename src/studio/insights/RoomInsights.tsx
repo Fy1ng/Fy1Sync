@@ -242,26 +242,25 @@ function Overview({ insights, watch, watchState, fansWatch }: { insights: DouyuR
       <section className="insights-section" aria-label="统计范围">
         <h3>统计范围</h3>
         <p className="lane">
-          仅包含本应用自 {formatTime(insights.observedSince)} 起接收到的匿名消息，不是房间的完整历史。
-          {insights.connected ? '' : '弹幕连接当前未建立。'}
+          仅统计自统计起点收到的弹幕和礼物，不是完整历史
+          {insights.connected ? '' : '；弹幕未连接'}
         </p>
         <dl className="stat-grid">
           <Stat label="统计起点" value={formatTime(insights.observedSince)} />
           <Stat label="连接中断" value={coverage.disconnected ? '有' : '无'} note={coverage.disconnected ? '中断期间的数据无法补齐' : undefined} />
-          <Stat label="丢弃事件" value={formatCount(coverage.droppedEvents)} />
-          <Stat label="发送者未知的事件" value={formatCount(coverage.unknownSenderEvents)} />
+          <Stat label="未计入的消息" value={formatCount(coverage.droppedEvents)} />
+          <Stat label="发送者未知的消息" value={formatCount(coverage.unknownSenderEvents)} />
         </dl>
-        {coverage.uniqueUsersTruncated && <p className="insights-warn">独立用户数量已达统计上限，人数为下限值。</p>}
+        {coverage.uniqueUsersTruncated && <p className="insights-warn">统计已达上限，实际人数可能更多</p>}
       </section>
 
       <section className="insights-section" aria-label="观众与互动">
         <h3>观众与互动</h3>
         <dl className="stat-grid">
-          <Stat label="观众人数" value={UNKNOWN} note="平台未提供可核验的观众人数，热度不计为观众" />
           <Stat label="独立发言人数" value={`${coverage.uniqueUsersTruncated ? '≥ ' : ''}${formatCount(insights.uniqueChatters)}`} />
           <Stat label="独立赠礼人数" value={`${coverage.uniqueUsersTruncated ? '≥ ' : ''}${formatCount(insights.uniqueGiftSenders)}`} />
           <Stat label="贵宾人数" value={nobles ? formatCount(nobles.count) : UNKNOWN}
-            note={nobles ? `官方快照，接收于 ${formatTime(nobles.receivedAt)}` : '未收到官方贵宾快照'} />
+            note={nobles ? `更新于 ${formatTime(nobles.receivedAt)}` : '暂未获取'} />
         </dl>
       </section>
 
@@ -274,26 +273,26 @@ function Overview({ insights, watch, watchState, fansWatch }: { insights: DouyuR
               ? `已知部分 ${formatMinor(gifts.knownValueMinor)} 鱼翅，${formatCount(gifts.unknownValueCount)} 件价格未知`
               : undefined} />
         </dl>
-        <p className="lane">按该房间官方礼物目录的鱼翅标称价格计算，不代表主播收入或观众实际支付金额。</p>
+        <p className="lane">按礼物标价统计，不代表实际支付或主播收入</p>
       </section>
 
       <section className="insights-section" aria-label="时长">
         <h3>时长</h3>
         <dl className="stat-grid">
-          <Stat label="开播状态" value={liveState(insights)} note={updated} />
+          <Stat label="开播状态" value={liveState(insights)} note={`来源：斗鱼房间信息，${updated}`} />
           <Stat label="已播时长" value={live ? formatDuration(insights.broadcastSeconds) : UNKNOWN}
-            note={live ? `来源：斗鱼房间信息 · ${updated}` : '仅在直播中且开播时间可核验时显示'} />
-          <Stat label="本次开播" value={live ? formatTime(insights.startedAt) : UNKNOWN} note="来源：斗鱼房间信息" />
-          <Stat label="上次开播" value={formatTime(insights.lastStartedAt)} note="来源：斗鱼房间信息" />
+            note={live ? (insights.startedAt === null ? '未提供开播时间' : undefined) : liveState(insights)} />
+          <Stat label="本次开播" value={live ? formatTime(insights.startedAt) : UNKNOWN} />
+          <Stat label="上次开播" value={formatTime(insights.lastStartedAt)} />
         </dl>
         <dl className="stat-grid">
           <Stat label="本地观看时长" value={formatDuration(insights.localWatchSeconds)}
-            note={`来源：本应用实际播放记录 · ${updated}`} />
+            note={updated} />
           <WatchStat watch={officialWatch} />
           <FansWatchStat state={watchState} value={fansWatch} room={insights.room} />
           <WatchSessionStat state={watchState} room={insights.room} />
         </dl>
-        <p className="lane">本地观看时长只记录本应用中的实际播放，不计入斗鱼官方观看时长。</p>
+        <p className="lane">本地记录与斗鱼官方观看时长分别统计</p>
       </section>
     </>
   )
@@ -307,8 +306,8 @@ function WatchSessionStat({ state, room }: { state: DouyuWatchState | null; room
   }
   const verified = active && active.cumulativeIncrease > 0 && active.badgeOwned === true
   const phase = active?.phase === 'verified' && !verified ? 'unverified' : active?.phase
-  const note = verified ? `本次粉丝牌累计观看增加 ${formatDuration(active.cumulativeIncrease)}. ${active.reason ?? ''}`
-    : active?.reason ?? '登录持有此房间粉丝牌的账号并实际播放后验证. 今日观看增长不能代替累计观时验收.'
+  const note = verified ? `本次粉丝牌累计观看增加 ${formatDuration(active.cumulativeIncrease)}`
+    : active?.reason ?? '登录持有此房间粉丝牌的账号后播放，可查看累计观看是否增加'
   return <Stat label="官方观时上报" value={phase ? labels[phase] : '尚未启动'} note={phase === 'failed' ? <ErrorText error={active} message={note} /> : note} />
 }
 
@@ -321,10 +320,8 @@ function FansWatchStat({ state, value, room }: { state: DouyuWatchState | null; 
     ? active.badgeOwned : accountValid ? value!.badgeOwned : null
   const level = active?.cumulativeCheckedAt !== null && active?.cumulativeCheckedAt !== undefined
     ? active.badgeLevel : accountValid ? value!.badgeLevel : null
-  const badge = owned === true ? `已持有${level === null ? '' : ` ${level} 级`}粉丝牌.` : owned === false ? '当前账号未持有此房间粉丝牌.' : '粉丝牌持有状态未确认.'
-  const baseline = active?.cumulativeBaselineSeconds === null || active?.cumulativeBaselineSeconds === undefined ? ''
-    : ` 本次基线 ${formatDuration(active.cumulativeBaselineSeconds)}, 增加 ${formatDuration(active.cumulativeIncrease)}.`
-  return <Stat label="粉丝牌累计观看" value={formatDuration(seconds)} note={`${badge}${baseline} 来源: 斗鱼粉丝家园累计观看.`} />
+  const badge = owned === true ? `已持有${level === null ? '' : ` ${level} 级`}粉丝牌` : owned === false ? '当前账号未持有此房间粉丝牌' : '粉丝牌持有状态未确认'
+  return <Stat label="粉丝牌累计观看" value={formatDuration(seconds)} note={badge} />
 }
 
 function WatchStat({ watch }: { watch: Watch }): React.ReactNode {
@@ -333,7 +330,7 @@ function WatchStat({ watch }: { watch: Watch }): React.ReactNode {
   const { seconds, checkedAt } = watch.value
   return (
     <Stat label="官方今日观看" value={formatDuration(seconds)}
-      note={`来源：斗鱼今日观看 · 更新于 ${formatTime(checkedAt)}${seconds === null ? ' · 平台未返回' : ''}`} />
+      note={seconds === null ? '平台未提供' : `更新于 ${formatTime(checkedAt)}`} />
   )
 }
 
@@ -352,12 +349,12 @@ function Ranks({ insights }: { insights: DouyuRoomInsights }): React.ReactNode {
     <section className="insights-section" aria-label="榜单">
       <div className="row-split">
         <Segmented label="榜单" value={which} options={RANKS} onChange={setWhich} />
-        <span className="muted">{ranks ? `接收于 ${formatTime(ranks.receivedAt)}` : '未收到榜单'}</span>
+        {ranks && <span className="muted">更新于 {formatTime(ranks.receivedAt)}</span>}
       </div>
-      <p className="lane">贡献值为平台榜单展示值（gold ÷ 100），不是金额。</p>
-      {!ranks && <p className="desk-empty">尚未收到该房间的榜单信号。</p>}
-      {ranks && list === null && <p className="desk-empty">未收到{RANKS.find((item) => item.value === which)!.label}。</p>}
-      {list && list.length === 0 && <p className="desk-empty">榜单为空。</p>}
+      <p className="lane">贡献值不是消费金额</p>
+      {!ranks && <p className="desk-empty">暂未获取榜单</p>}
+      {ranks && list === null && <p className="desk-empty">暂未获取{RANKS.find((item) => item.value === which)!.label}</p>}
+      {list && list.length === 0 && <p className="desk-empty">榜单为空</p>}
       {list && list.length > 0 && (
         <table className="rank-table">
           <thead>

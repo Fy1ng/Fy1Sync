@@ -55,7 +55,7 @@ export function ActivityOptions({ fishing, treasure }: { fishing: boolean; treas
       const full = normalize(result.value)
       setValue(full); setDelay(String(full.treasure.claimDelayMs)); setNotice('活动设置已保存')
     } catch (caught) {
-      if (mounted.current) setError(displayError(caught, '活动设置未保存, 请重试'))
+      if (mounted.current) setError(displayError(caught, '活动设置未保存，请重试'))
     } finally {
       if (mounted.current) setSaving(false)
     }
@@ -77,19 +77,19 @@ export function ActivityOptions({ fishing, treasure }: { fishing: boolean; treas
           <Segmented label="钓鱼时段" value={value.fishing.mode} disabled={saving}
             onChange={(mode) => void save({ ...value, fishing: { mode } })}
             options={[{ value: 'all', label: '全天' }, { value: 'contest', label: '仅大赛时段' }]} />
-          <p className="muted">大赛时段以官方赛程为准，仅限制开始新一轮钓鱼，已开始的一轮仍会收杆。</p>
+          <p className="muted">大赛时段仅限制开始新一轮，已开始的钓鱼仍会收杆</p>
         </div>
       )}
       {value && treasure && (
         <div className="field-stack">
-          <Switch label="跨房间领取宝箱" detail="仅领取官方列出的其他房间普通宝箱" checked={value.treasure.crossRoom} disabled={saving}
+          <Switch label="跨房间领取宝箱" detail="仅支持普通宝箱" checked={value.treasure.crossRoom} disabled={saving}
             onChange={(crossRoom) => void save({ ...value, treasure: { ...value.treasure, crossRoom } })} />
           {/* Not a <form>: this panel also sits inside the new-task form. */}
           <div className="task-activity-delay">
             <label className="field-stack">
               <span className="field-label">开启后延迟（毫秒，0 至 60000）</span>
               <input className="text-input num" type="number" min={0} max={60000} step={100} value={delay} disabled={saving}
-                aria-label="宝箱领取延迟(毫秒)" onChange={(event) => setDelay(event.target.value)}
+                aria-label="宝箱领取延迟（毫秒）" onChange={(event) => setDelay(event.target.value)}
                 onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); saveDelay() } }} />
             </label>
             <button type="button" className="btn-quiet small" disabled={saving || parsedDelay === null || !delayChanged}

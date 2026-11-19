@@ -164,7 +164,7 @@ describe('one-shot authenticated gateway handshake', () => {
     const { sender, sockets, cookieHeader, request } = setup()
     const result = await sender.send({ ...input, text: ' 中文 /@ \\ 😀 ' }, signal())
     const socket = sockets[0]!
-    expect(result).toEqual({ status: 'succeeded', message: '已收到斗鱼发送回执.', nextAllowedAt: BASE + 1_000 })
+    expect(result).toEqual({ status: 'succeeded', message: '已收到斗鱼发送回执', nextAllowedAt: BASE + 1_000 })
     expect(socket.sent.map(message => message.type)).toEqual(['loginreq', 'livreq', 'keeplive', 'lsigreq', 'chatmessage'])
     expect(socket.sent.find(message => message.type === 'lsigreq')?.sig).toBe('2eeb6330b795c2371584f4a4808bfc6f')
     expect(socket.messages).toHaveLength(1)
@@ -293,7 +293,7 @@ describe('structured limits and separately observed delivery', () => {
       socket.emit('close', {})
     } }, { deliveryTracker: tracker })
     const result = await sender.send(input, signal())
-    expect(result).toMatchObject({ status: 'succeeded', message: '已发送, 已在房间中显示.', deliveryId: 'observed-send', gatewayAccepted: false })
+    expect(result).toMatchObject({ status: 'succeeded', message: '已发送', deliveryId: 'observed-send', gatewayAccepted: false })
     expect(tracker.get('observed-send')).toMatchObject({ gateway: 'unknown', roomEcho: 'observed', messageId: 'room-echo' })
     expect(sockets[0]!.messages).toHaveLength(1)
     expect(result).not.toHaveProperty('deferredUntil')
@@ -311,7 +311,7 @@ describe('structured limits and separately observed delivery', () => {
     const pending = sender.send(input, signal())
     await flush()
     await vi.advanceTimersByTimeAsync(15_000)
-    expect(await pending).toMatchObject({ status: 'succeeded', message: '已发送, 已在房间中显示.', gatewayAccepted: false })
+    expect(await pending).toMatchObject({ status: 'succeeded', message: '已发送', gatewayAccepted: false })
     expect(tracker.get('observed-timeout')).toMatchObject({ gateway: 'unknown', roomEcho: 'observed' })
     expect(sockets[0]!.messages).toHaveLength(1)
   })
@@ -407,7 +407,7 @@ describe('server length and persistent cooldown', () => {
 describe('receipt matching and uncertain outcomes', () => {
   it.each([288, 356])('accepts only the confirmed code %s with CST or complete identity', async res => {
     const { sender } = setup({ ack: (message, socket) => socket.receive({ type: 'chatres', res, uid: '42', rid: '6979222', txt: message.content! }) })
-    expect(await sender.send(input, signal())).toMatchObject({ status: 'succeeded', message: '已收到斗鱼发送回执.' })
+    expect(await sender.send(input, signal())).toMatchObject({ status: 'succeeded', message: '已收到斗鱼发送回执' })
   })
   it.each<Fields>([{ cst: 'wrong' }, { uid: '99' }, { rid: '1' }, { txt: 'wrong-message' }, { sender: '99' }])('ignores a conflicting receipt before accepting the matching one %#', async conflict => {
     const { sender, sockets } = setup({ ack: (message, socket) => socket.receiveMany([
@@ -424,7 +424,7 @@ describe('receipt matching and uncertain outcomes', () => {
       : { type, res: 288, uid: '42', rid: '6979222', txt: message.content!, cst: message.cst! }) })
     const pending = sender.send(input, signal())
     await vi.advanceTimersByTimeAsync(15_000)
-    expect(await pending).toMatchObject({ status: 'waiting-user', message: expect.stringContaining('尚无法确认') })
+    expect(await pending).toMatchObject({ status: 'waiting-user', message: expect.stringContaining('发送结果未确认') })
     expect(sockets[0]!.messages).toHaveLength(1)
     expectClean(sockets[0]!)
   })
@@ -434,7 +434,7 @@ describe('receipt matching and uncertain outcomes', () => {
     expect(result.status).not.toBe('succeeded')
     expect(result).not.toHaveProperty('deferredUntil')
     if (res === 391) expect(result.message).toContain('官方账号验证')
-    if ([0, 363, 999].includes(res)) expect(result.message).toContain('尚无法确认')
+    if ([0, 363, 999].includes(res)) expect(result.message).toContain('发送结果未确认')
     expect(result.message).not.toContain('fixture-private')
     expect(sockets[0]!.messages).toHaveLength(1)
   })
@@ -444,7 +444,7 @@ describe('receipt matching and uncertain outcomes', () => {
   })
   it('treats disconnect after writing as unknown and does not reconnect', async () => {
     const { sender, sockets, createSocket } = setup({ ack: (_message, socket) => socket.emit('close', { code: 1006 }) })
-    expect(await sender.send(input, signal())).toMatchObject({ status: 'waiting-user', message: expect.stringContaining('尚无法确认') })
+    expect(await sender.send(input, signal())).toMatchObject({ status: 'waiting-user', message: expect.stringContaining('发送结果未确认') })
     expect(createSocket).toHaveBeenCalledOnce()
     expect(sockets[0]!.messages).toHaveLength(1)
     expectClean(sockets[0]!)
@@ -501,7 +501,7 @@ describe('network policy, input bounds and cancellation', () => {
     const controller = new AbortController()
     controller.abort(new Error('private-cancellation-reason'))
     const { sender, cookieHeader } = setup()
-    expect(await sender.send(input, controller.signal)).toMatchObject({ status: 'failed', message: '发送已取消. 未发送弹幕.' })
+    expect(await sender.send(input, controller.signal)).toMatchObject({ status: 'failed', message: '发送已取消。未发送弹幕。' })
     expect(cookieHeader).not.toHaveBeenCalled()
   })
   it('bounds a hung credential provider by the complete operation deadline', async () => {
@@ -537,7 +537,7 @@ describe('network policy, input bounds and cancellation', () => {
     controller.abort(new Error('private-upstream-secret'))
     const result = await pending
     expect(result.status).toBe(dispatched ? 'waiting-user' : 'failed')
-    expect(result.message).toContain(dispatched ? '尚无法确认' : '未发送')
+    expect(result.message).toContain(dispatched ? '发送结果未确认' : '未发送')
     expect(result.message).not.toContain('private')
     expect(result).not.toHaveProperty('deferredUntil')
     socket.receive({ type: 'chatres', res: 288, cst: socket.messages[0]?.cst ?? String(BASE) })

@@ -38,7 +38,7 @@ export class ErrorBoundary extends Component<Props, State> {
         <h1>页面出错了</h1>
         <p className="crash-message"><ErrorText error={error} /></p>
         <p className="crash-hint">
-          媒体元素仍在后台，刷新页面即可恢复。若反复出现，请点击下方的「清除偏好并刷新」。
+          请先刷新页面。若仍打不开，点击「清除偏好并刷新」，将重置音量、对齐和弹幕等播放器设置。
         </p>
         <div className="crash-actions">
           <button type="button" onClick={() => window.location.reload()}>

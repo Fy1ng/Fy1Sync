@@ -177,7 +177,7 @@ test('旧配置不恢复已移除的本地视觉, 普通弹幕设置和真实礼
   await expect(panel.getByRole('heading', { name: '弹幕', exact: true })).toBeVisible()
   await expect(panel.getByRole('button', { name: /斗鱼本地视觉/ })).toHaveCount(0)
   await expect(panel.getByRole('switch', { name: '显示弹幕', exact: true })).toBeChecked()
-  const gifts = panel.getByRole('switch', { name: /^显示礼物消息/ })
+  const gifts = panel.getByRole('switch', { name: /^弹幕列表显示礼物/ })
   await expect(gifts).not.toBeChecked()
   await setCheckedByLabel(gifts)
   const fontSize = panel.getByRole('slider', { name: '字号', exact: true })

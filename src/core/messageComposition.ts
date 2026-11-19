@@ -1,15 +1,15 @@
 export const MAX_COMPOSED_MESSAGE_UNITS = 500
 export const MAX_COMPOSED_MESSAGE_BYTES = 2_000
 // Same set the main process rejects (server/featureApi.ts boundedText), bidi overrides included:
-// they reorder what the room sees and would only come back as 扩展接口参数无效.
+// they reorder what the room sees and would only come back as 操作信息无效.
 const UNSAFE_TEXT = /[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]/
 const BROKEN_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/
 
 export type CompositionErrorCode = 'empty' | 'too-long' | 'invalid-text' | 'invalid-options'
 export class MessageCompositionError extends Error {
   constructor(readonly code: CompositionErrorCode) {
-    super({ empty: '请输入弹幕内容.', 'too-long': '组合后的弹幕超过本地 500 字符或 2000 字节上限.',
-      'invalid-text': '弹幕包含不支持的字符.', 'invalid-options': '弹幕文案配置无效.' }[code])
+    super({ empty: '请输入弹幕内容', 'too-long': '算上前后缀后太长，请缩短弹幕',
+      'invalid-text': '弹幕含不支持的字符，请改为单行文字', 'invalid-options': '请检查弹幕前后缀设置' }[code])
     this.name = 'MessageCompositionError'
   }
 }

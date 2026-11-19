@@ -156,7 +156,7 @@ export class Acquisition implements AcquisitionService {
       const { headers: _headers, adaptive: _adaptive, mediaAccess: _access, douyuWatchCdn: _cdn, ...publicStream } = selection.stream
       const publicSelection: ResolvedStream = {
         ...publicStream, url: local.url, kind: 'hls', requiresProxy: false,
-        notes: ['主进程转封装为本地 HLS, 默认保留最近 180 秒', ...(selection.stream.notes ?? [])],
+        notes: selection.stream.notes ?? [],
       }
       this.publicStreams.set(role, publicSelection)
       return { ok: true, stream: publicSelection }
@@ -178,7 +178,7 @@ export class Acquisition implements AcquisitionService {
   async switchQuality(role: StreamId, quality: string): Promise<ResolveResult> {
     const selected = this.selections.get(role)
     if (!selected || !selected.stream.qualities?.some((option) => option.id === quality)) {
-      return { ok: false, failure: { code: 'unsupported-url', message: '该片源没有此画质', hint: '请重新解析片源' } }
+      return { ok: false, failure: { code: 'unsupported-url', message: '该片源没有此画质', hint: '请重新载入片源' } }
     }
     return this.resolve(selected.input, selected.platform, role, quality, selected.preferAdaptive, selected.stream.sourceRoom)
   }
@@ -273,11 +273,11 @@ export class Acquisition implements AcquisitionService {
       let release = () => {}
       // Playback owns the wait budget; non-playback callers retain legacy defaults.
       const timeoutMs = this.deps.readyTimeoutMs ?? startupTimeoutMs ?? (adaptive ? 480_000 : 60_000)
-      const timer = timeoutMs > 0 ? setTimeout(() => { release(); reject(new StreamFailureError({ stage: 'playback-not-ready', code: 'first-video-timeout', message: '解析成功, 但视频片段尚未就绪' })) }, timeoutMs) : undefined
+      const timer = timeoutMs > 0 ? setTimeout(() => { release(); reject(new StreamFailureError({ stage: 'playback-not-ready', code: 'first-video-timeout', message: '等待直播画面超时，请重试' })) }, timeoutMs) : undefined
       release = this.deps.buffer.subscribe((state) => {
         if (!active || state.role !== role) return
         if (generation !== this.generations.get(role) || this.disposed) { clearTimeout(timer); release(); reject(new Error('片源已替换')); return }
-        if (state.state === 'failed') { clearTimeout(timer); release(); reject(new StreamFailureError(state.failure ?? { stage: 'playback-not-ready', code: state.reason ?? 'buffer-failed', message: '解析成功, 但拉流未能就绪' })) }
+        if (state.state === 'failed') { clearTimeout(timer); release(); reject(new StreamFailureError(state.failure ?? { stage: 'playback-not-ready', code: state.reason ?? 'buffer-failed', message: '无法获取直播画面，请重试' })) }
         else if ((state.state === 'buffering' || state.state === 'ready') && state.hasVideo === true
           && (state.completeSegments ?? 0) > 0 && state.seconds > 0) {
           clearTimeout(timer); release(); resolve()
@@ -314,7 +314,7 @@ function retainAdaptiveQualities(previous: ResolvedStream | undefined, current: 
 }
 
 function refusal(message: string): ResolveResult {
-  return { ok: false, failure: { code: 'upstream-error', message, hint: '检查后重新加载, 或使用本地文件' } }
+  return { ok: false, failure: { code: 'upstream-error', message, hint: '检查后重新载入，或使用本地文件' } }
 }
 
 function failedResult(failure: StreamFailure): ResolveResult {

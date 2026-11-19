@@ -27,9 +27,8 @@ export function FrameHashSettings(): React.ReactNode {
   const session = useSession()
   const { settings } = useSessionSnapshot()
   return <section className="group" aria-label="画面匹配设置"><h3>画面匹配</h3>
-    <p>比较两路相同视角的连续画面, 无需识别倒计时. 在对齐选项中选择画面匹配模式后, 保持两路播放以积累共同片段.</p>
-    <p className="muted">分别设置两路对应的比赛主体区域. 下方忽略区域相对于裁剪后的画面, 用于排除广告、摄像头或其他变化的贴片. 修改区域会清空已有匹配记录.</p>
-    {SOURCE_ROLES.map(role => <Region key={role} label={role === 'official' ? '官方画面区域' : '解说画面区域'}
+    <p className="muted">忽略区域按裁剪后的画面计算。修改区域后需重新匹配。</p>
+    {SOURCE_ROLES.map(role => <Region key={role} label={role === 'official' ? '画面区域' : '解说区域'}
       value={settings.frameHashRegions[role]} onChange={value => session.updateSettings({
         frameHashRegions: { ...settings.frameHashRegions, [role]: value },
       })} />)}

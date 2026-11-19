@@ -68,7 +68,7 @@ describe('sanitized stream failures', () => {
     expect(classifyFfmpegStderr('Error opening input: Immediate exit requested')).toBeUndefined()
   })
   it('reconstructs only recognized public failures and their actionable hints', () => {
-    expect(streamFailureForCode('http-503')).toEqual({ stage: 'http', code: 'http-503', status: 503, message: '服务器返回 HTTP 503.' })
+    expect(streamFailureForCode('http-503')).toEqual({ stage: 'http', code: 'http-503', status: 503, message: '服务器返回 HTTP 503' })
     expect(streamFailureForCode('http-407')).toMatchObject({ stage: 'proxy', code: 'proxy-rejected' })
     expect(streamFailureHint('dns-failed')).toContain('DNS')
     expect(streamFailureHint('proxy-unreachable')).toContain('代理')

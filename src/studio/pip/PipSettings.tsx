@@ -50,15 +50,15 @@ export function PipSettings(): React.ReactNode {
         <span>增强画中画</span>
         <span className="muted" role="status">{phase ? PHASE_TEXT[phase] : (error ? '状态不可用' : '正在读取')}</span>
       </div>
-      <Switch label="低功耗" detail="画中画打开期间暂停识别、定时同步与弹幕绘制"
+      <Switch label="低功耗" detail="暂停主窗口识别、自动对齐和小窗弹幕"
         checked={options?.lowPower ?? false} disabled={unavailable}
         onChange={(lowPower) => setOption({ lowPower })} />
-      <Switch label="卡顿时自动恢复" detail="画面 12 秒无进展时重新载入，最多 3 次"
+      <Switch label="卡顿时自动恢复" detail="卡顿时尝试重新载入"
         checked={options?.recoverStalls ?? true} disabled={unavailable}
         onChange={(recoverStalls) => setOption({ recoverStalls })} />
       {phase === 'ready' && (
         <div className="row-split">
-          <span className="muted">{state && state.recoveryAttempts > 0 ? `已恢复 ${state.recoveryAttempts} 次` : '画面卡住时可手动恢复'}</span>
+          <span className="muted">{state && state.recoveryAttempts > 0 ? `已恢复 ${state.recoveryAttempts} 次，剩余 ${Math.max(0, 3 - state.recoveryAttempts)} 次` : '剩余 3 次'}</span>
           <button type="button" className="btn-quiet small" disabled={busy}
             onClick={() => void run(() => apiClient.feature('recoverEnhancedPip', undefined))}>恢复画面</button>
         </div>

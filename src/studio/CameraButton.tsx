@@ -34,12 +34,12 @@ export function CameraButton({ camera, onFrame, upscale }: { camera: CameraContr
         </button>
         <button type="button" className="menu-item" onClick={() => { menu.close(); onFrame() }}>重新框选</button>
         {upscale?.supported && <div className="camera-upscale">
-          <span>超分</span>
-          <Segmented value={settings.cameraUpscale} label="摄像头超分" options={[
+          <span>小窗画质增强</span>
+          <Segmented value={settings.cameraUpscale} label="小窗画质增强" options={[
             { value: 'off', label: '关' }, { value: 'performance', label: '省电' }, { value: 'quality', label: '画质' },
           ]} onChange={cameraUpscale => session.updateSettings({ cameraUpscale })} />
-          {upscale.reason === 'overload' && <small>{upscale.tier === 'off' ? '已自动关闭' : '已自动降为省电'}</small>}
-          {upscale.reason === 'low-power' && settings.cameraUpscale !== 'off' && <small>低功耗模式下暂停</small>}
+          {upscale.reason === 'overload' && <small>{upscale.tier === 'off' ? '负载过高，已关闭增强' : '已切到省电'}</small>}
+          {upscale.reason === 'low-power' && settings.cameraUpscale !== 'off' && <small>画中画低功耗时暂停增强</small>}
           {(upscale.reason === 'device-lost' || upscale.reason === 'render-error') && <small>已回退原画</small>}
         </div>}
       </Popover>

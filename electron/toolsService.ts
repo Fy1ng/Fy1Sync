@@ -41,7 +41,7 @@ export class DesktopTools implements ToolsService {
     const externalProvider = !!(this.env.STREAM_SYNC_POT_PLUGIN_DIR || this.env.STREAM_SYNC_POT_SERVER_HOME)
     const externalYtdlp = toolOverride('yt-dlp', this.settings, this.env)
     const update = this.updater.state()
-    if (externalYtdlp && update.phase === 'ready') update.message = '下载版本已校验并保存. 当前外部 yt-dlp 配置仍优先, 原文件未替换.'
+    if (externalYtdlp && update.phase === 'ready') update.message = '更新已下载，当前仍使用自定义 yt-dlp'
     return { tools, provider: { available: !!provider, source: provider ? externalProvider ? 'external' : 'bundled' : 'none', version: provider ? externalProvider ? '外部配置' : toolsLock.providerVersion : '不可用' },
       update, externalYtdlp, fixturesAvailable: this.fixturesAvailable, bundledAvailable: !!this.context.bundledDir }
   }

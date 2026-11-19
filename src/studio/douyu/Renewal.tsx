@@ -118,7 +118,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
       setPicked((current) => current.filter((room) => rooms.has(room)))
       setOverrides((current) => Object.fromEntries(Object.entries(current).filter(([room]) => rooms.has(room))))
     } catch (caught) {
-      if (mounted.current && mine === generation.current) setError(displayError(caught, '无法读取粉丝牌, 请稍后重试'))
+      if (mounted.current && mine === generation.current) setError(displayError(caught, '无法读取粉丝牌，请稍后重试'))
     } finally {
       if (mounted.current && mine === generation.current) setBusy(null)
     }
@@ -169,7 +169,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
       setPlan(value)
       setNow(Date.now())
     } catch (caught) {
-      if (mounted.current && mine === generation.current) setError(displayError(caught, '核对单生成失败, 请稍后重试'))
+      if (mounted.current && mine === generation.current) setError(displayError(caught, '核对单生成失败，请稍后重试'))
     } finally {
       if (mounted.current && mine === generation.current) setBusy(null)
     }
@@ -192,7 +192,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
       if (!value || value.planId !== plan.id || !(value.status in RESULT) || !Array.isArray(value.rows)) throw new Error('bad result', { cause: response })
       setResult(value)
     } catch (caught) {
-      if (mounted.current && mine === generation.current) setError(displayError(caught, '无法确认结果. 请在官方背包和直播间中核对, 此处不会自动重试. '))
+      if (mounted.current && mine === generation.current) setError(displayError(caught, '无法确认结果。请在官方背包和直播间中核对，此处不会自动重试。'))
     } finally {
       if (running.current === plan.id) running.current = null
       if (mounted.current && mine === generation.current) { setBusy(null); setStopping(false) }
@@ -207,7 +207,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
       const response = await apiClient.cancelDouyuRenewal(id)
       if (mounted.current && running.current === id && !response.ok) { setError(response); setStopping(false) }
     } catch (caught) {
-      if (mounted.current && running.current === id) { setError(displayError(caught, '停止请求未确认, 请在结果返回后核对')); setStopping(false) }
+      if (mounted.current && running.current === id) { setError(displayError(caught, '停止请求未确认，请在结果返回后核对')); setStopping(false) }
     }
   }
 
@@ -218,14 +218,14 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
     && picked.some((room) => overrides[room] !== undefined && overrides[room] !== '' && amountOf(overrides[room]!) === null)
   const readyRows = plan?.rows.filter((row) => row.status === 'ready') ?? []
   const canGive = ready && !!plan && !livePlan.current?.used && !expired && plan.accountId === accountId && plan.totalQuantity > 0 && !busy
-  const propName = (propId: string): string => plan?.rows.find((row) => row.gift?.propId === propId)?.gift?.name ?? `道具 ${propId}`
+  const propName = (propId: string): string => plan?.rows.find((row) => row.gift?.propId === propId)?.gift?.name ?? '未知道具'
   const leftovers = plan?.allocation?.leftovers.filter((item) => item.quantity > 0) ?? []
 
-  if (!accountId) return <div className="desk-pane"><p className="desk-empty">请先在「账号」中登录并设置当前账号。</p></div>
+  if (!accountId) return <div className="desk-pane"><p className="desk-empty">请先在「账号」中登录并设置当前账号</p></div>
 
   return (
     <div className="desk-pane renewal">
-      <p className="muted">仅赠送背包中已有的荧光棒，不会购买或领取。赠送数量自行设定，1 个不一定足以续期。</p>
+      <p className="muted">仅用已有荧光棒，不购买或领取。请自行确定数量，1 个可能不足以续期。</p>
 
       <ol className="steps">
         <li className="step" data-done={page !== null}>
@@ -235,8 +235,8 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
               {busy === 'read' ? '读取中…' : page ? '重新读取' : `读取 ${accountLabel} 的粉丝牌`}
             </button>
           </div>
-          {!ready && !busy && <p className="muted">请先登录 {accountLabel}，登录后即可读取。</p>}
-          {page && page.coverage !== 'all-pages' && <p className="muted">以上为{page.coverage === 'official-snapshot' ? '官方当前快照' : '本次返回的一页'}，可能不包含全部粉丝牌。</p>}
+          {!ready && !busy && <p className="muted">请先登录 {accountLabel}，登录后即可读取</p>}
+          {page && page.coverage !== 'all-pages' && <p className="muted">粉丝牌可能未读全</p>}
         </li>
 
         {page && (
@@ -245,13 +245,13 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
               <h3>选择房间</h3>
               <span className="num muted">{picked.length}/{MAX_ROOMS}</span>
             </div>
-            {page.targets.length === 0 ? <p className="muted">没有可选的粉丝牌。</p> : (
+            {page.targets.length === 0 ? <p className="muted">没有可选的粉丝牌</p> : (
               <>
                 <div className="renew-mode">
                   <Segmented<Allocation> label="数量分配方式" value={allocation} options={ALLOCATIONS} disabled={locked}
                     onChange={(value) => { if (locked) return; invalidate(); setError(''); setAllocation(value) }} />
                 </div>
-                {allocation === 'equal' && <p className="muted">将背包中每种合格道具平均分给使用该道具的所选房间，单房最多 1000 个，余数留在背包。</p>}
+                {allocation === 'equal' && <p className="muted">按同类道具均分，每房最多 1000 个，余量留在背包</p>}
                 <div className="renew-tools">
                   <input type="search" className="text-input" value={filter} placeholder="房间号或牌子名" aria-label="筛选粉丝牌"
                     onChange={(event) => setFilter(event.target.value)} />
@@ -264,7 +264,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
                   </label>}
                 </div>
                 {base === null && <p className="form-error"><ErrorText error="请填写 1 到 1000 的整数" message="请填写 1 到 1000 的整数" /></p>}
-                {allocation === 'per-room' && <p className="muted">为所选房间分别填写数量，留空的房间按上方数量赠送。</p>}
+                {allocation === 'per-room' && <p className="muted">未填写数量的房间按上方默认数量赠送</p>}
                 <ul className="badges">
                   {shown.map((target) => {
                     const on = picked.includes(target.room)
@@ -274,7 +274,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
                       <li key={target.room} className="badge-row" data-on={on}>
                         <label className="badge-pick">
                           <input type="checkbox" checked={on} disabled={locked || (!on && picked.length >= MAX_ROOMS)}
-                            aria-label={`选择房间 ${target.room} (${target.badgeName})`}
+                            aria-label={`选择房间 ${target.room} （${target.badgeName}）`}
                             onChange={(event) => toggle(target.room, event.target.checked)} />
                           <span className="badge-name">{nameOf(target)}</span>
                           <span className="num muted">{target.room}</span>
@@ -314,7 +314,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
               </button>
             </div>
             {plan && (
-              <section aria-label="赠送预览" className="plan">
+              <section aria-label="赠送核对单" className="plan">
                 <p>用 <b className="num">{plan.totalQuantity}</b> 个背包道具，送给 <b className="num">{readyRows.length}</b> 个房间</p>
                 <ul className="plan-rows">
                   {plan.rows.map((row) => (
@@ -322,7 +322,7 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
                       <span>{nameOf(row)}</span>
                       {row.status === 'ready' && row.gift
                         ? <span className="num">{row.gift.name} × {row.gift.quantity}<span className="muted">（库存 {row.gift.stock}，{time(row.gift.expiresAt)}）</span></span>
-                        : <span className="muted"><ErrorText error={row} message={`跳过: ${row.reason ?? '当前无法赠送'}`} /></span>}
+                        : <span className="muted"><ErrorText error={row} message={`跳过：${row.reason ?? '当前无法赠送'}`} /></span>}
                     </li>
                   ))}
                 </ul>
@@ -354,8 +354,9 @@ export function Renewal({ accountId, accountLabel, ready }: { accountId: string 
             </div>
             {result && (
               <section aria-label="赠送处理结果" className="plan">
-                <p><b>{RESULT[result.status]}</b><span className="muted">　收到回执不代表续期成功</span>{(result.status === 'failed' || result.status === 'waiting-user') && <ErrorDetailsButton error={result} />}</p>
-                {result.message && <p className="muted">{result.message}</p>}
+                <p><b>{RESULT[result.status]}</b>{(result.status === 'failed' || result.status === 'waiting-user') && <ErrorDetailsButton error={result} />}</p>
+                {result.status === 'completed' ? <p className="muted">已送出，是否续上请到斗鱼确认</p>
+                  : result.message && <p className="muted">{result.message}</p>}
                 <ul className="plan-rows">
                   {result.rows.map((row) => (
                     <li key={row.room} data-state={row.status}>

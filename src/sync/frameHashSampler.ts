@@ -18,8 +18,8 @@ interface SamplerOptions {
 }
 const REASONS: Record<string, string> = {
   'short-window': '正在积累两路画面', 'no-candidates': '尚未找到共同画面',
-  'insufficient-sequence': '共同片段长度不足', 'ambiguous-sequence': '存在多个相似片段, 暂不调整',
-  'static-sequence': '画面变化不足, 暂不调整', 'inconsistent-motion': '画面变化对应不稳定, 暂不调整',
+  'insufficient-sequence': '共同片段长度不足', 'ambiguous-sequence': '存在多个相似片段，暂不调整',
+  'static-sequence': '画面变化不足，暂不调整', 'inconsistent-motion': '画面变化对应不稳定，暂不调整',
 }
 
 /** Reuses the player's video surfaces; retains only bounded signatures in a worker. */
@@ -48,7 +48,7 @@ export class FrameHashSampler {
       else if (result.type === 'error') { this.error = result.message; this.options.onStatus(result.message); this.pending?.resolve(null) }
       else if (this.pending?.id === result.id) this.pending.resolve(result)
     }
-    this.worker.onerror = () => { this.error = '画面匹配线程运行失败, 请切换模式后重试'; this.pending?.resolve(null); this.options.onStatus(this.error) }
+    this.worker.onerror = () => { this.error = '画面匹配失败，请切换模式后重试'; this.pending?.resolve(null); this.options.onStatus(this.error) }
     for (const role of SOURCE_ROLES) {
       const video = options.video(role)
       this.stops.push(startFrameLoop(video, 60, (media, timing) => {
@@ -73,7 +73,7 @@ export class FrameHashSampler {
         })
       }))
     }
-    this.options.onStatus('正在积累两路共同画面')
+    this.options.onStatus('正在寻找共同画面')
   }
 
   private post(message: HashRequest, transfer: Transferable[] = []): void { this.worker?.postMessage(message, transfer) }
@@ -84,7 +84,7 @@ export class FrameHashSampler {
     delete this.anchors[role]
     this.grabbers[role].cancel()
     this.post({ type: 'reset', role })
-    this.options.onStatus('画面时序已变化, 正在重新积累共同片段')
+    this.options.onStatus('正在重新寻找共同画面')
   }
   private playable(): boolean {
     return SOURCE_ROLES.every(role => {
@@ -111,18 +111,18 @@ export class FrameHashSampler {
     const started = performance.now()
     const epochs = SOURCE_ROLES.map(role => this.options.revision(role))
     const samples = { official: 0, commentary: 0 }
-    let message = '尚未取得足够的共同画面, 请继续播放后重试'
+    let message = '尚未取得足够的共同画面，请继续播放后重试'
     if (request.fresh) this.post({ type: 'fresh', since: started })
     try {
       const duration = Math.max(request.windowMs, request.fresh ? 6000 : 9000)
       while (performance.now() - started < duration) {
         if (request.signal.aborted || this.disposed) return { samples, message: '画面匹配已取消' }
-        if (!this.playable()) return { samples, message: '两路画面需要保持播放, 请等待缓冲完成后重试' }
+        if (!this.playable()) return { samples, message: '两路画面需要保持播放，请等待缓冲完成后重试' }
         if (this.error) return { samples, message: this.error }
         await new Promise(resolve => setTimeout(resolve, 500))
         if (request.signal.aborted || this.disposed) return { samples, message: '画面匹配已取消' }
         if (SOURCE_ROLES.some((role, i) => this.options.revision(role) !== epochs[i])) {
-          return { samples, message: '画面匹配期间发生换源或跳转, 请重试' }
+          return { samples, message: '画面匹配期间发生换源或跳转，请重试' }
         }
         const response = await this.query(request.fresh)
         if (!response || request.signal.aborted || this.disposed) continue
@@ -131,7 +131,7 @@ export class FrameHashSampler {
         if (match.status !== 'ok' || match.offset === undefined || (match.pairs?.length ?? 0) < 20
           || (match.span ?? 0) < 1.25 || (match.residual ?? Infinity) > (response.coarse ? 0.1 : 0.025)) {
           message = REASONS[match.reason ?? ''] ?? '未找到可靠的共同画面'
-          this.options.onStatus(`${message}, 已采集 ${samples.official}/${samples.commentary} 帧`)
+          this.options.onStatus(message)
           continue
         }
         const a = this.anchors.official, b = this.anchors.commentary
@@ -144,7 +144,7 @@ export class FrameHashSampler {
         const total = request.appliedOffsetSeconds + residual
         if (!Number.isFinite(total) || Math.abs(total) > 60) return { samples, message: '两路画面偏差超出 60 秒可调整范围' }
         const round = (value: number): number => Math.round(value * 1000) / 1000
-        this.options.onStatus(`已匹配 ${match.pairs!.length} 帧, 当前偏差 ${residual.toFixed(3)} 秒${response.coarse ? ', 校正后将精细复核' : ''}`)
+        this.options.onStatus('已找到共同画面')
         return { samples, estimate: {
           status: 'ok', residualSeconds: round(residual), totalOffsetSeconds: round(total),
           direction: Math.abs(total) <= 0.1 ? 'none' : total > 0 ? 'official' : 'commentary',

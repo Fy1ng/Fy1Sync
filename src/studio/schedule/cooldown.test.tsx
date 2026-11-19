@@ -1,4 +1,4 @@
-/** A refresh Liquipedia's 30-second limit turned away says so, counts down and frees itself. */
+/** A refresh blocked by Liquipedia's quota counts down on the button and frees itself. */
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StreamSyncerBridge } from '../../../electron/contracts'
@@ -8,7 +8,7 @@ import type { ApiResult } from '../../app/apiClient'
 
 const NOW = Date.parse('2026-10-30T06:30:00Z')
 const schedule = (over: Partial<Cs2Schedule> = {}): Cs2Schedule =>
-  ({ fetchedAt: NOW, source: 'liquipedia', attribution: '赛程数据来自 Liquipedia (CC-BY-SA 3.0)', stale: false, matches: [], ...over })
+  ({ fetchedAt: NOW, source: 'liquipedia', attribution: '赛程数据来自 Liquipedia（CC-BY-SA 3.0）', stale: false, matches: [], ...over })
 
 let reply: (args: unknown) => Cs2Schedule
 let verificationReply: () => Promise<ApiResult<{ opened: true }>>
@@ -37,12 +37,12 @@ describe('schedule refresh cooldown', () => {
     reply = (args) => (args as { refresh?: boolean } | undefined)?.refresh ? schedule({ refreshAt: NOW + 12_000 }) : schedule()
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: '刷新' })) })
     await settle()
-    expect(screen.getByRole('status')).toHaveTextContent('Liquipedia 限制每 30 秒刷新一次, 还需 12 秒')
+    expect(screen.queryByRole('status')).toBeNull()
     expect(screen.getByRole('button', { name: /12 秒后可刷新/ })).toBeDisabled()
     expect(screen.queryByRole('button', { name: '打开官网验证' })).toBeNull()
 
     await seconds(5)
-    expect(screen.getByRole('status')).toHaveTextContent('还需 7 秒')
+    expect(screen.getByRole('button', { name: '7 秒后可刷新' })).toBeDisabled()
 
     await seconds(7)
     expect(screen.queryByRole('status')).toBeNull()
@@ -57,9 +57,9 @@ describe('schedule refresh cooldown', () => {
     reply = (args) => (args as { refresh?: boolean } | undefined)?.refresh ? schedule({ refreshAt: Date.now() + 25_000 }) : schedule()
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: '刷新' })) })
     await settle()
-    expect(screen.getByRole('status')).toHaveTextContent('还需 25 秒')
+    expect(screen.getByRole('button', { name: '25 秒后可刷新' })).toBeDisabled()
     await seconds(12)
-    expect(screen.getByRole('status')).toHaveTextContent('还需 13 秒')
+    expect(screen.getByRole('button', { name: '13 秒后可刷新' })).toBeDisabled()
     expect(screen.getByRole('button', { name: /13 秒后可刷新/ })).toBeDisabled()
   })
 
@@ -68,7 +68,7 @@ describe('schedule refresh cooldown', () => {
     await settle()
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: '刷新' })) })
     await settle()
-    expect(screen.getByRole('status')).toHaveTextContent('已检查源数据, 赛程暂无变化')
+    expect(screen.getByRole('status')).toHaveTextContent('赛程暂无变化')
     expect(screen.queryByText(/还需 \d+ 秒/)).toBeNull()
     expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled()
   })
@@ -78,7 +78,7 @@ describe('schedule refresh cooldown', () => {
       errorDetail: { status: 429 }, refreshAt: NOW + 120_000, refreshReason: 'upstream-rate-limit' })
     const first = render(<ScheduleSheet onClose={() => {}} onWatch={() => {}} />)
     await settle()
-    expect(screen.getByRole('status')).toHaveTextContent('Liquipedia 返回 HTTP 429')
+    expect(screen.queryByRole('status')).toBeNull()
     expect(screen.getByRole('button', { name: '2 分钟后可刷新' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '打开官网验证' })).toBeEnabled()
     expect(screen.queryByText(/每 30 秒/)).toBeNull()
@@ -87,7 +87,7 @@ describe('schedule refresh cooldown', () => {
     await settle()
     expect(screen.getByRole('button', { name: '2 分钟后可刷新' })).toBeDisabled()
     await seconds(61)
-    expect(screen.getByRole('status')).toHaveTextContent('59 秒后重试')
+    expect(screen.getByRole('button', { name: '59 秒后可刷新' })).toBeDisabled()
     await seconds(59)
     expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled()
     expect(screen.getByRole('button', { name: '打开官网验证' })).toBeEnabled()
@@ -102,7 +102,7 @@ describe('schedule refresh cooldown', () => {
     await act(async () => { scheduleChanged() })
     await settle()
     expect(screen.getByRole('button', { name: '15 分钟后可刷新' })).toBeDisabled()
-    expect(screen.getByRole('status')).toHaveTextContent('HTTP 429')
+    expect(screen.queryByRole('status')).toBeNull()
     // A later successful snapshot can establish that another window has recovered.
     reply = () => schedule({ fetchedAt: NOW + 1_000 })
     await act(async () => { scheduleChanged() })
@@ -124,10 +124,10 @@ describe('schedule refresh cooldown', () => {
     const open = screen.getByRole('button', { name: '打开官网验证' })
     await act(async () => { fireEvent.click(open); fireEvent.click(open) })
     expect(invoke.mock.calls.filter(([method]) => method === 'openLiquipediaVerification')).toEqual([['openLiquipediaVerification', undefined]])
-    expect(screen.getByRole('button', { name: '正在打开官网...' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '正在打开官网' })).toBeDisabled()
     await act(async () => { finish() })
     const group = within(screen.getByRole('group', { name: 'Liquipedia 官网验证' }))
-    expect(group.getByRole('status')).toHaveTextContent('已在浏览器打开 Liquipedia')
+    expect(group.getByRole('status')).toHaveTextContent('官网已打开')
     expect(screen.getByRole('button', { name: '2 分钟后可刷新' })).toBeDisabled()
     expect(invoke.mock.calls.filter(([method]) => method === 'getCs2Schedule')).toHaveLength(callsBefore)
   })

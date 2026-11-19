@@ -19,17 +19,17 @@ export function tightenCamera(sample: CameraSample, signal: AbortSignal): Promis
       else resolve(value!)
     }
     const abort = () => finish(new DOMException('Cancelled', 'AbortError'))
-    const timer = setTimeout(() => finish(new Error('贴边分析超时, 选框未改动. 请缩小粗选范围后重试.')), 12_000)
+    const timer = setTimeout(() => finish(new Error('贴边分析超时，选框未改动。请缩小粗选范围后重试。')), 12_000)
     signal.addEventListener('abort', abort, { once: true })
     worker.onmessage = event => {
       try {
         if (event.data?.ok !== true) throw new Error()
         const result = parseCameraTightenResult(event.data.value, sample)
         finish(undefined, result)
-      } catch { finish(new Error('贴边分析失败, 选框未改动.')) }
+      } catch { finish(new Error('贴边分析失败，选框未改动')) }
     }
-    worker.onerror = () => finish(new Error('贴边分析失败, 选框未改动.'))
-    try { worker.postMessage(sample, [sample.frames.buffer]) } catch { finish(new Error('无法启动贴边分析, 选框未改动.')) }
+    worker.onerror = () => finish(new Error('贴边分析失败，选框未改动'))
+    try { worker.postMessage(sample, [sample.frames.buffer]) } catch { finish(new Error('无法启动贴边分析，选框未改动')) }
   })
 }
 

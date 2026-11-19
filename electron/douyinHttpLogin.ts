@@ -49,7 +49,7 @@ interface Attempt {
   reject: (error: LoginError) => void
 }
 
-const APP_VERIFICATION = '抖音要求额外验证, 请在抖音App完成验证后继续等待.'
+const APP_VERIFICATION = '请在抖音 App 完成验证，此窗口会继续等待'
 const FAILED = douyinHttpLoginFailureMessage(undefined)
 const safeHttpDetail = douyinHttpLoginFailureDetails
 
@@ -240,12 +240,12 @@ export class DouyinHttpLoginController {
     if (!this.current(a, revision)) return
     if (step.status === 'authenticated') {
       if (!/^[1-9][0-9]{0,31}$/.test(step.uid) || !hasAuthenticationCookies(step.cookies, 'douyin', this.now() / 1000)) {
-        this.fail(a, '未取得经验证且可用的抖音登录凭据, 请重试.')
+        this.fail(a, '未能确认抖音登录，请重试')
         return
       }
       this.clearPoll(a)
       a.busy = true
-      this.publish(a, { stage: 'checking', busy: true, message: '正在确认登录凭据.' }, { phase: 'verifying' })
+      this.publish(a, { stage: 'checking', busy: true, message: '正在确认登录状态' }, { phase: 'verifying' })
       // Capture is main-owned and must complete before the cookie result leaves this controller.
       if (step.snapshot && a.request.captureDouyinSigning) await a.request.captureDouyinSigning(step.snapshot)
       if (this.current(a, revision)) await this.finish(a, structuredClone(step.cookies))
@@ -255,7 +255,7 @@ export class DouyinHttpLoginController {
       const seconds = Number.isFinite(step.cooldownSeconds) ? Math.min(3600, Math.max(0, Math.ceil(step.cooldownSeconds))) : 60
       a.cooldownUntil = this.now() + seconds * 1000
       this.updateCooldown(a)
-      this.publish(a, { stage: 'form', busy: false, message: '验证码已发送, 请填写收到的短信验证码.' }, { phase: 'ready', message: undefined })
+      this.publish(a, { stage: 'form', busy: false, message: '验证码已发送，请填写收到的短信验证码' }, { phase: 'ready', message: undefined })
       return
     }
     if (step.status === 'verification-required') {
@@ -270,12 +270,12 @@ export class DouyinHttpLoginController {
     }
     if (step.status === 'scanned') {
       this.publish(a, { stage: 'form', busy: false, qr: { ...a.cardValue.qr, status: 'scanned' },
-        message: a.verificationRequired ? APP_VERIFICATION : '已扫码, 请在抖音App确认登录.' }, { phase: a.verificationRequired ? 'challenge' : 'ready' })
+        message: a.verificationRequired ? APP_VERIFICATION : '已扫码，请在抖音 App 确认登录' }, { phase: a.verificationRequired ? 'challenge' : 'ready' })
     } else if (step.status === 'waiting') {
       this.publish(a, { stage: 'form', busy: false, message: a.verificationRequired ? APP_VERIFICATION : undefined, errorDetail: undefined },
         { phase: a.verificationRequired ? 'challenge' : 'ready', errorDetail: undefined })
     } else {
-      this.fail(a, '未能确认抖音登录状态, 请重试.')
+      this.fail(a, '未能确认抖音登录状态，请重试')
     }
   }
   private fail(a: Attempt, message?: string, error?: unknown): void {
@@ -304,11 +304,11 @@ export class DouyinHttpLoginController {
   async cardAction(action: LoginCardAction): Promise<LoginCardResult> {
     try {
       const a = this.active
-      if (!a || !this.current(a)) return { ok: false, message: '登录页面已失效.' }
+      if (!a || !this.current(a)) return { ok: false, message: '登录页面已失效' }
       if (action.kind === 'cancel') { await this.cancel(a.id); return { ok: true } }
       if (action.kind === 'back') { await this.back(a.id); return { ok: true } }
       const qrOnlyBusy = a.busy && a.cardValue.stage === 'form' && a.cardValue.qr.status === 'loading'
-      if (a.busy && !(qrOnlyBusy && ['mode', 'prepare-sms'].includes(action.kind)) || ['loading', 'checking', 'submitting'].includes(a.cardValue.stage)) return { ok: false, message: '请先完成当前登录步骤.' }
+      if (a.busy && !(qrOnlyBusy && ['mode', 'prepare-sms'].includes(action.kind)) || ['loading', 'checking', 'submitting'].includes(a.cardValue.stage)) return { ok: false, message: '请先完成当前登录步骤' }
       if (action.kind === 'mode') {
         if (!['password', 'sms'].includes(action.mode)) return { ok: false }
         this.publish(a, { mode: action.mode })
@@ -317,19 +317,19 @@ export class DouyinHttpLoginController {
       if (action.kind === 'prepare-sms') {
         a.phonePrepared = action.accepted === true && validPhone(action.phone, action.countryCode)
         this.updateCooldown(a)
-        return { ok: a.phonePrepared, ...(a.phonePrepared ? {} : { message: '请填写有效的手机号和国家区号.' }) }
+        return { ok: a.phonePrepared, ...(a.phonePrepared ? {} : { message: '请填写有效的手机号和国家区号' }) }
       }
       if (action.kind === 'refresh-qr') return await this.refresh(a)
       if (action.kind !== 'password' && action.kind !== 'send-sms' && action.kind !== 'sms') {
-        return { ok: false, message: '请在抖音App完成验证, 或手动刷新二维码.' }
+        return { ok: false, message: '请在抖音 App 完成验证，或手动刷新二维码' }
       }
-      if (action.accepted !== true) return { ok: false, message: '请先阅读并同意平台协议.' }
+      if (action.accepted !== true) return { ok: false, message: '请先阅读并同意平台协议' }
       if (action.kind === 'password' ? !action.username.trim() || action.username.length > 254 || !action.password || action.password.length > 128
         : !validPhone(action.phone, action.countryCode) || action.kind === 'sms' && !/^[0-9]{6}$/.test(action.code.trim())) {
-        return { ok: false, message: '请填写有效的登录信息.' }
+        return { ok: false, message: '请填写有效的登录信息' }
       }
       if (action.kind === 'send-sms' && (!a.cardValue.sms.canSend || a.cooldownUntil > this.now())) {
-        return { ok: false, message: '请等待允许发送验证码.' }
+        return { ok: false, message: '请等待允许发送验证码' }
       }
       a.busy = true
       this.clearPoll(a)
@@ -342,7 +342,7 @@ export class DouyinHttpLoginController {
           ? session.loginPassword({ username: action.username.trim(), password: action.password })
           : action.kind === 'send-sms' ? session.sendSms({ phone: action.phone.trim(), countryCode: action.countryCode.trim() })
             : session.loginSms({ phone: action.phone.trim(), countryCode: action.countryCode.trim(), code: action.code.trim() }))
-        if (!step || !this.current(a, revision)) return { ok: false, message: '登录操作已取消.' }
+        if (!step || !this.current(a, revision)) return { ok: false, message: '登录操作已取消' }
         await this.applyStep(a, step, revision)
         return { ok: a.cardValue.stage !== 'failed' }
       } catch (error) {
@@ -368,7 +368,7 @@ export class DouyinHttpLoginController {
   private async refresh(a: Attempt, automatic = false): Promise<LoginCardResult> {
     if (a.cardValue.stage === 'failed') {
       await this.restart(a)
-      if (!this.current(a)) return { ok: false, message: '登录操作已取消.' }
+      if (!this.current(a)) return { ok: false, message: '登录操作已取消' }
       return a.ready ? { ok: true } : { ok: false, message: a.cardValue.message ?? FAILED, detail: a.cardValue.errorDetail }
     }
     a.busy = true
@@ -381,7 +381,7 @@ export class DouyinHttpLoginController {
     else this.publish(a, { stage: 'loading', busy: false, qr: { status: 'loading' }, message: undefined, errorDetail: undefined }, { phase: 'loading', message: undefined, errorDetail: undefined })
     try {
       const qr = await this.enqueue(a, revision, session => session.refreshQr())
-      if (!qr || !this.current(a, revision)) return { ok: false, message: '登录操作已取消.' }
+      if (!qr || !this.current(a, revision)) return { ok: false, message: '登录操作已取消' }
       this.showQr(a, qr, automatic)
       return { ok: true }
     } catch (error) {

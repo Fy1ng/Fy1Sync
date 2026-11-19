@@ -19,8 +19,8 @@ const text = (value: unknown, max: number): value is string => typeof value === 
 
 export class SavedRoomsError extends Error {
   constructor(readonly code: 'invalid-arguments' | 'room-limit' | 'storage-failed') {
-    super({ 'invalid-arguments': '收藏直播间参数无效.', 'room-limit': '最多收藏100个直播间, 请先删除部分收藏.',
-      'storage-failed': '直播间收藏保存失败, 请重试.' }[code])
+    super({ 'invalid-arguments': '收藏信息无效，请检查后重试', 'room-limit': '最多收藏 100 个直播间，请先取消部分收藏',
+      'storage-failed': '直播间收藏保存失败，请重试' }[code])
     this.name = 'SavedRoomsError'
   }
 }

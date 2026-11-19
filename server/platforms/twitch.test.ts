@@ -24,7 +24,7 @@ describe('Twitch upstream quality selection', () => {
     const result = await resolveTwitch('fixture_channel', dependencies())
     expect(result).toMatchObject({ ok: true, stream: {
       quality: 'chunked', qualities: [
-        { id: 'chunked', label: '1080p60 (原画)', height: 1080, fps: 60 },
+        { id: 'chunked', label: '1080p60（原画）', height: 1080, fps: 60 },
         { id: '720p30', label: '720p30', height: 720, fps: 30 },
       ],
     } })
@@ -51,7 +51,7 @@ describe('Twitch upstream quality selection', () => {
   it('falls back to the highest available rendition and explains a missing selection', async () => {
     const result = await resolveTwitch('fixture_channel', dependencies('removed'))
     expect(result).toMatchObject({ ok: true, stream: { quality: 'chunked' } })
-    expect(result.ok && result.stream.notes?.join(' ')).toContain('请求的 Twitch 画质当前不可用')
+    expect(result.ok && result.stream.notes?.join(' ')).toContain('所选画质不可用，已切换为 1080p60（原画）')
   })
 
   it('uses stable resolution IDs when a master omits VIDEO groups', () => {

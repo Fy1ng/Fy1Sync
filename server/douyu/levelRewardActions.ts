@@ -39,9 +39,9 @@ export class DouyuLevelRewardActions {
   async run(raw: DouyuAutomationRequest, signal: AbortSignal): Promise<DouyuAutomationOutcome> {
     automationActive(signal)
     let task: DouyuAutomationRequest
-    try { task = readAutomationRequest(raw) } catch { return { status: 'failed', message: '斗鱼任务参数无效.' } }
-    if (!DOUYU_LEVEL_REWARD_KINDS.includes(task.kind as typeof DOUYU_LEVEL_REWARD_KINDS[number])) return { status: 'failed', message: '此任务不是等级或奖励任务.' }
-    if (this.busy) return { status: 'waiting-user', message: '上一项任务请求尚未结束, 请稍后恢复.' }
+    try { task = readAutomationRequest(raw) } catch { return { status: 'failed', message: '斗鱼任务参数无效' } }
+    if (!DOUYU_LEVEL_REWARD_KINDS.includes(task.kind as typeof DOUYU_LEVEL_REWARD_KINDS[number])) return { status: 'failed', message: '此任务不是等级或奖励任务' }
+    if (this.busy) return { status: 'waiting-user', message: '上一项任务请求尚未结束，请稍后恢复' }
     this.busy = true
     const timeout = automationTimeout(this.deps, signal)
     const context: AutomationContext = { task, signal: timeout.signal, submitted: false }
@@ -57,7 +57,7 @@ export class DouyuLevelRewardActions {
         state = { definition, identity: binding, completed: 0, skipped: 0, index: 0, targets: null, current: null, evidence: 'none' }
         this.runs.set(task.taskId, state)
       }
-      if (state.completed >= (task.options.maxItems ?? 2_000)) return this.result(state, 'succeeded', '已达到本次设置的处理数量, 任务结束.')
+      if (state.completed >= (task.options.maxItems ?? 2_000)) return this.result(state, 'succeeded', '已达到本次设置的处理数量，任务结束')
       if (task.kind === 'level-reward') return await this.level(context, state)
       if (task.kind === 'watch-points') return await this.watch(context, state)
       if (task.kind === 'points-sign') return await this.pointsSign(context, state)
@@ -119,7 +119,7 @@ export class DouyuLevelRewardActions {
     const room = this.targetRoom(context)
     const before = await this.levelTasks(context, room)
     const task = before.find(item => item.finished && !item.claimed)
-    if (!task) { state.current = null; return this.result(state, 'scheduled', '暂无已完成且未领取的等级任务, 稍后重新检查.', POLL_MS) }
+    if (!task) { state.current = null; return this.result(state, 'scheduled', '暂无已完成且未领取的等级任务，稍后重新检查', POLL_MS) }
     state.current = task.id
     const key = this.guard(context, `${room}:${task.id}`)
     const result = automationEnvelope(await this.http.request(context, `${ORIGIN}/japi/tasksys/userLevelTask/getPrize`, {
@@ -134,7 +134,7 @@ export class DouyuLevelRewardActions {
     const after = await this.levelTasks(context, room)
     if (!after.some(item => item.id === task.id && item.claimed)) throw new AutomationFault('unknown-result')
     this.confirmed(key, state)
-    return this.result(state, 'scheduled', '已由官方状态确认领取等级任务奖励, 等待下一项.')
+    return this.result(state, 'scheduled', '已由官方状态确认领取等级任务奖励，等待下一项')
   }
 
   private async watched(context: AutomationContext, activity: DouyuPointsActivity): Promise<WatchTask[]> {
@@ -156,7 +156,7 @@ export class DouyuLevelRewardActions {
     state.points = await this.catalog.points(context)
     const tasks = await this.watched(context, state.points)
     const item = tasks.find(task => task.status === 2)
-    if (!item) { state.current = null; return this.result(state, 'scheduled', '暂无官方确认可领取的观看积分, 稍后检查.', 5 * POLL_MS) }
+    if (!item) { state.current = null; return this.result(state, 'scheduled', '暂无官方确认可领取的观看积分，稍后检查', 5 * POLL_MS) }
     state.current = item.id
     const key = this.guard(context, `${state.points.alias}:${item.start}:${item.id}`)
     const receipt = automationEnvelope(await this.http.request(context, `${ORIGIN}/wgapi/activitync/gametask/takeGift`, {
@@ -166,13 +166,13 @@ export class DouyuLevelRewardActions {
     const after = await this.watched(context, state.points)
     if (!after.some(task => task.id === item.id && task.start === item.start && task.status === 3)) throw new AutomationFault('unknown-result')
     this.confirmed(key, state)
-    return this.result(state, 'scheduled', '已由官方状态确认观看积分领取, 等待下一项.')
+    return this.result(state, 'scheduled', '已由官方状态确认观看积分领取，等待下一项')
   }
 
   private async pointsSign(context: AutomationContext, state: RunState): Promise<DouyuAutomationOutcome> {
     state.points = await this.catalog.points(context)
     const id = state.points.signAlias
-    if (this.attempts.get(this.key(context, id)) === 'confirmed') return this.result(state, 'succeeded', '本轮积分签到已收到官方回执, 不再重复提交.')
+    if (this.attempts.get(this.key(context, id)) === 'confirmed') return this.result(state, 'succeeded', '本轮积分签到已收到官方回执，不再重复提交')
     const key = this.guard(context, id)
     // Existing official cvl_csrf_token is required. No fabricated token or
     // useJiYan=false override is supplied to bypass an interactive challenge.
@@ -183,7 +183,7 @@ export class DouyuLevelRewardActions {
     if (Object.hasOwn(response, 'signAlias') && response.signAlias !== id) throw new AutomationFault('invalid-response')
     if (![response.is_signed, response.isSigned, response.signStatus].some(value => value === 1 || value === '1')) throw new AutomationFault('unknown-result')
     this.confirmed(key, state, 'receipt-received')
-    return this.result(state, 'succeeded', '积分签到已收到官方回执, 实际积分请以官方账户为准.')
+    return this.result(state, 'succeeded', '积分签到已收到官方回执，实际积分请以官方账户为准')
   }
 
   private async starRooms(context: AutomationContext): Promise<string[]> {
@@ -211,7 +211,7 @@ export class DouyuLevelRewardActions {
         } else state.targets = eligible.slice(0, Math.min(task.options.maxItems ?? 3, 100))
       }
     }
-    if (state.index >= state.targets.length) return this.result(state, 'succeeded', '本批任务已处理完毕, 任务奖励以官方状态为准.')
+    if (state.index >= state.targets.length) return this.result(state, 'succeeded', '本批任务已处理完毕，任务奖励以官方状态为准')
     const target = state.targets[state.index]!
     state.current = target
     if (task.kind === 'yuba-read') {
@@ -233,7 +233,7 @@ export class DouyuLevelRewardActions {
     } else await this.follow(context, state, target)
     state.index++
     return this.result(state, state.index >= state.targets.length ? 'succeeded' : 'scheduled', task.kind === 'yuba-read'
-      ? '已读取指定官方鱼吧文章. 阅读任务奖励是否完成以官方状态为准.' : '本项处理完成, 已保留原有关注关系.')
+      ? '已读取指定官方鱼吧文章。阅读任务奖励是否完成以官方状态为准。' : '本项处理完成，已保留原有关注关系')
   }
 
   private async followState(context: AutomationContext, target: string): Promise<number> {

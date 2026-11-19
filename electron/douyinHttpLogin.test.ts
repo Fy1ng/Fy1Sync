@@ -78,8 +78,8 @@ describe('local HTTP Douyin login controller', () => {
   })
 
   it.each([
-    { fields: { code: 'douyin-http-login-rejected', platformCode: 1101 }, text: '平台码 1101' },
-    { fields: { code: 'douyin-http-login-rejected', httpStatus: 403 }, text: 'HTTP 403' },
+    { fields: { code: 'douyin-http-login-rejected', platformCode: 1101 }, text: '抖音未接受此次登录' },
+    { fields: { code: 'douyin-http-login-rejected', httpStatus: 403 }, text: '抖音暂时无法完成登录' },
     { fields: { code: 'douyin-http-login-receipt-invalid' }, text: '结果不完整' },
   ])('shows $text consistently in the card and action result without suggesting a network failure', async ({ fields, text }) => {
     const f = setup({ pollMs: 5200 })
@@ -106,7 +106,7 @@ describe('local HTTP Douyin login controller', () => {
     f.session.poll.mockRejectedValueOnce(Object.assign(new Error('PRIVATE_HTTP'), { code: 'douyin-http-login-rejected', httpStatus: 403, requestStage: 'poll' }))
     await vi.advanceTimersByTimeAsync(5200)
     expect(f.controller.cardState()?.stage).toBe('failed')
-    expect(f.controller.cardState()?.message).toContain('HTTP 403')
+    expect(f.controller.cardState()?.message).toContain('抖音暂时无法完成登录')
     await vi.advanceTimersByTimeAsync(30_000)
     expect(f.session.poll).toHaveBeenCalledTimes(2)
   })
@@ -207,7 +207,7 @@ describe('local HTTP Douyin login controller', () => {
     f.session.poll.mockResolvedValueOnce({ status: 'verification-required', message: 'synthetic unsafe token' })
     f.begin(); await flush(); await vi.advanceTimersByTimeAsync(20)
     expect(f.controller.cardState()).toMatchObject({ stage: 'form', qr: { status: 'scanned' }, busy: false })
-    expect(f.controller.state()?.message).toContain('抖音App')
+    expect(f.controller.state()?.message).toContain('抖音 App')
     await vi.advanceTimersByTimeAsync(80)
     expect(f.session.sendSms).not.toHaveBeenCalled()
     expect(f.session.refreshQr).not.toHaveBeenCalled()

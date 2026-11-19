@@ -117,7 +117,7 @@ export async function resolveTwitch(
   if (!access?.value || !access.signature) {
     return failure(
       'not-live',
-      `频道 ${channel} 当前不在直播, 或该频道受限`,
+      `频道 ${channel} 当前不在直播，或该频道受限`,
       MANUAL_URL_HINT,
     )
   }
@@ -153,12 +153,9 @@ export async function resolveTwitch(
   // IDs come from VIDEO groups, so renewed signatures never change a selection.
   const options = variants?.filter((variant, index, all) => all.findIndex(item => item.id === variant.id) === index)
   const selected = options?.find(variant => variant.id === deps.quality) ?? options?.[0]
-  const notes = [
-    '通过本地代理加载, 避免跨域并允许读取画面像素用于倒计时识别.',
-    '播放地址带签名且会过期, 长时间挂机后如报 403 请重新解析.',
-  ]
+  const notes: string[] = []
   if (deps.quality && deps.quality !== 'auto' && selected?.id !== deps.quality) {
-    notes.push('请求的 Twitch 画质当前不可用, 已选择最高可用档位.')
+    notes.push(`所选画质不可用，已切换为${selected?.height ? ` ${selected.height}p${selected.fps || ''}${selected.id === 'chunked' ? '（原画）' : ''}` : '原画'}`)
   }
 
   return {
@@ -173,7 +170,7 @@ export async function resolveTwitch(
       requiresProxy: true,
       qualities: options?.map(variant => ({
         id: variant.id,
-        label: variant.height ? `${variant.height}p${variant.fps || ''}${variant.id === 'chunked' ? ' (原画)' : ''}` : '原画',
+        label: variant.height ? `${variant.height}p${variant.fps || ''}${variant.id === 'chunked' ? '（原画）' : ''}` : '原画',
         ...(variant.height ? { height: variant.height } : {}),
         ...(variant.fps ? { fps: variant.fps } : {}),
       })),

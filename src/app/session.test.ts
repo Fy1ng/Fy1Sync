@@ -379,8 +379,8 @@ describe('Session notices', () => {
 
 describe('roleName', () => {
   it('names both roles for the notice strip', () => {
-    expect(roleName('official')).toBe('官方画面')
-    expect(roleName('commentary')).toBe('国内解说')
+    expect(roleName('official')).toBe('画面')
+    expect(roleName('commentary')).toBe('解说')
   })
 })
 
@@ -439,10 +439,10 @@ describe('a loaded source that never shows a picture', () => {
       // 解说 presents a frame; 画面 never does.
       callbacks[1]!()
       await vi.advanceTimersByTimeAsync(14_000)
-      expect(session.snapshot.notices.some((notice) => notice.text.includes('没有画面'))).toBe(false)
+      expect(session.snapshot.notices.some((notice) => notice.text.includes('暂未出画面'))).toBe(false)
       await vi.advanceTimersByTimeAsync(2_000)
-      const warned = session.snapshot.notices.filter((notice) => notice.text.includes('没有画面'))
-      expect(warned.map((notice) => notice.text)).toEqual([`${roleName('official')}已载入但没有画面。可在片源面板重新载入。`])
+      const warned = session.snapshot.notices.filter((notice) => notice.text.includes('暂未出画面'))
+      expect(warned.map((notice) => notice.text)).toEqual([`${roleName('official')}暂未出画面，请重新载入`])
     } finally {
       vi.useRealTimers()
     }

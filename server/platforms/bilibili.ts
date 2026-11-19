@@ -73,8 +73,8 @@ export async function resolveBilibili(
   if (!room) {
     return failure(
       'unsupported-url',
-      '无法从输入中识别 B 站直播间号',
-      '支持形如 live.bilibili.com/房间号 的地址或直接输入房间号。',
+      '无法识别哔哩哔哩直播间号',
+      '支持形如 live.bilibili.com/房间号 的地址或直接输入房间号',
     )
   }
 
@@ -97,7 +97,7 @@ export async function resolveBilibili(
     if (error instanceof StreamFailureError) throw error
     return failure(
       'upstream-error',
-      '请求 B 站直播间信息失败',
+      '加载哔哩哔哩直播间信息失败',
       MANUAL_URL_HINT,
       error,
     )
@@ -108,14 +108,14 @@ export async function resolveBilibili(
   const payloadCode = payload.code ?? -1
   if (payloadCode !== 0) {
     // -101 is the explicit account-not-logged-in code; rendition caps are not identity errors.
-    if (payloadCode === -101) return failure('login-required', 'B站登录信息已失效或该直播间需要登录.', '请登录B站后重新加载片源.', { code: payloadCode, message: payload.message })
+    if (payloadCode === -101) return failure('login-required', '哔哩哔哩登录已失效或此直播需要登录', '请登录哔哩哔哩后重试', { code: payloadCode, message: payload.message })
     // Only the codes that really mean "no such room" are reported as such; everything else
     // (-400 bad request, -352 risk control, 网关 5xx mapped to a code) is our problem or
     // theirs, and telling the user the room does not exist would send them chasing nothing.
     const code = ROOM_NOT_FOUND_CODES.has(payloadCode) ? 'room-not-found' : 'upstream-error'
     return failure(
       code,
-      payload.message?.trim() || `B 站未返回直播间 ${room} 的播放信息`,
+      payload.message?.trim() || `哔哩哔哩未返回直播间 ${room} 的播放信息`,
       MANUAL_URL_HINT,
       { code: payloadCode, message: payload.message },
     )
@@ -138,14 +138,14 @@ export async function resolveBilibili(
   const descriptions = new Map((payload.data?.playurl_info?.playurl?.g_qn_desc ?? [])
     .filter(item => validQn(item.qn) && typeof item.desc === 'string' && item.desc.trim())
     .map(item => [item.qn!, item.desc!.trim().slice(0, 64)]))
-  const label = (qn: number) => descriptions.get(qn) ?? QUALITY_LABELS[qn] ?? `档位 ${qn}`
+  const label = (qn: number) => descriptions.get(qn) ?? QUALITY_LABELS[qn] ?? '未知画质'
   const current = validQn(selected.codec.current_qn) ? selected.codec.current_qn : undefined
   const available = [...new Set(renditions.flatMap(({ codec }) => [
     ...(codec.accept_qn?.filter(validQn) ?? []), ...(validQn(codec.current_qn) ? [codec.current_qn] : []),
   ]))].sort((a, b) => b - a)
-  const notes = ['播放地址带时效签名, 长时间后需要重新解析.']
+  const notes: string[] = []
   if (current !== undefined && current !== requested) {
-    notes.push(`请求${label(requested)}, 实际为${label(current)}. 可用画质由直播间返回, 不能据此判断登录状态.`)
+    notes.push(`所选画质不可用，已切换为${label(current)}`)
   }
 
   return {
@@ -154,7 +154,7 @@ export async function resolveBilibili(
       platform: 'bilibili',
       url: deps.proxify(selected.url),
       kind: 'hls',
-      label: `B 站直播 · ${room}`,
+      label: `哔哩哔哩直播 · ${room}`,
       channel: room,
       sourceRoom: Number.isSafeInteger(payload.data?.room_id) && payload.data!.room_id! > 0 ? String(payload.data!.room_id) : room,
       requiresProxy: true,

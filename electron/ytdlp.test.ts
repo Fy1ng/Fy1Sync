@@ -70,9 +70,9 @@ describe('isolated yt-dlp execution', () => {
   })
 
   it.each([
-    ['HTTP Error 403: Forbidden', '服务器返回 HTTP 403.'],
+    ['HTTP Error 403: Forbidden', '服务器返回 HTTP 403'],
     ['Room is not currently live', '虎牙房间当前未开播'],
-    ['Unable to download room', '虎牙取流失败, 请检查直播状态和网络'],
+    ['Unable to download room', '虎牙取流失败，请检查直播状态和网络'],
   ])('returns only a static Huya error after %s', async (stderr, message) => {
     const events: YtDlpDiagnostic[] = []
     const h = harness(event => events.push(event))

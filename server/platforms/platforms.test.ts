@@ -105,7 +105,7 @@ describe('resolveTwitch', () => {
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.failure.code).toBe('not-live')
-    expect(result.failure.hint).toContain('m3u8')
+    expect(result.failure.hint).toContain('视频直链')
   })
 
   it('reports upstream-error when the GQL call throws', async () => {
@@ -303,7 +303,7 @@ describe('resolveStream', () => {
     expect(result.ok).toBe(false)
     if (!result.ok) {
       expect(result.failure.code).toBe('unsupported-url')
-      expect(result.failure.hint).toContain('m3u8')
+      expect(result.failure.hint).toContain('视频直链')
     }
   })
 })

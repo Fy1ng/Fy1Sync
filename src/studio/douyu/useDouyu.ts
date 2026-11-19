@@ -139,7 +139,7 @@ export function useDouyu() {
       setAccountLane({ ...IDLE, notice: outcome })
       return true
     } catch (error) {
-      if (mounted.current) setAccountLane(failedLane(error, '操作未完成, 请重试'))
+      if (mounted.current) setAccountLane(failedLane(error, '操作未完成，请重试'))
       return false
     } finally {
       accountBusy.current = false
@@ -165,7 +165,7 @@ export function useDouyu() {
       setTaskLane({ ...IDLE, notice: done })
       return true
     } catch (error) {
-      if (mounted.current) setTaskLane(failedLane(error, '操作未完成, 请重试'))
+      if (mounted.current) setTaskLane(failedLane(error, '操作未完成，请重试'))
       return false
     } finally {
       taskBusy.current = false

@@ -29,7 +29,7 @@ export function installEmbeddedLoginIpc(ipc: Pick<IpcMain, 'handle' | 'removeHan
       else if (method === 'backEmbeddedLogin') await controller.back(id)
       else await controller.retry(id)
       return allowed() && trustedSender(event, owner) ? { ok: true, value: { ok: true } } : denied()
-    } catch { return { ok: false, code: 'login-failed', message: '登录页面暂时不可用, 请重试.' } }
+    } catch { return { ok: false, code: 'login-failed', message: '登录页面暂时不可用，请重试' } }
   })
   return () => { disposed = true; release(); ipc.removeHandler('stream-syncer:embedded-login-invoke') }
 }

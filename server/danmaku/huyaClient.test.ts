@@ -180,7 +180,7 @@ describe('Huya receive-only client', () => {
     const socket = await connect(context, false)
     socket.receive('registrationFailed')
     expect(context.client.state).toBe('reconnecting')
-    expect(context.events.onState).toHaveBeenLastCalledWith('reconnecting', '虎牙未接受弹幕注册, 正在重新连接.')
+    expect(context.events.onState).toHaveBeenLastCalledWith('reconnecting', '虎牙未接受弹幕注册，正在重新连接')
     expect(context.events.onMessage).not.toHaveBeenCalled()
     context.client.close()
   })
@@ -315,7 +315,7 @@ describe('Huya receive-only client', () => {
     socket.send = () => { throw new Error('token=secret') }
     await vi.advanceTimersByTimeAsync(60_000)
     expect(context.client.state).toBe('reconnecting')
-    expect(context.events.onState).toHaveBeenLastCalledWith('reconnecting', '虎牙弹幕连接写入失败, 正在重新连接.')
+    expect(context.events.onState).toHaveBeenLastCalledWith('reconnecting', '虎牙弹幕连接写入失败，正在重新连接')
     context.client.close()
   })
 })

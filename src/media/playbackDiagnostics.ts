@@ -87,11 +87,11 @@ const ERROR_DETAILS = new Set([
   'interstitialAssetItemError', 'internalException', 'aborted', 'attachMediaError', 'unknown',
 ])
 const HINTS: Record<PlaybackDiagnosticCategory, string> = {
-  production: '本地产片没推进, 播放列表末端暂未增长',
-  fetch: '本地有数据但播放器没拉到, 拉片尚未完成',
-  playback: '数据已到但画面不动, 请检查追加或播放进展',
-  thread: '界面线程繁忙, 此段观测不完整',
-  unknown: '证据不足, 暂时无法判断卡顿位置',
+  production: '直播数据未继续更新',
+  fetch: '播放器未收到新数据',
+  playback: '已收到数据但画面未更新',
+  thread: '应用繁忙，未能判断',
+  unknown: '暂未找到原因',
 }
 
 const finite = (value: number | null | undefined): number | null =>

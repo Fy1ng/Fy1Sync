@@ -114,14 +114,14 @@ describe('共享基础识别侧栏', () => {
     state.snapshot.profiles.official = { ...BASIC_CLOCK_PROFILE, searchRoi: search }
     const view = renderExpandedPanel()
     expect(session.setBasicPreviewEnabled).toHaveBeenLastCalledWith(true)
-    const card = screen.getByRole('article', { name: '官方画面基础识别' })
+    const card = screen.getByRole('article', { name: '画面基础识别' })
     expect(within(card).getByRole('status')).toHaveTextContent('正在寻找倒计时')
-    expect(within(card).getByLabelText('官方画面寻找预览')).toBeInTheDocument()
+    expect(within(card).getByLabelText('画面寻找范围')).toBeInTheDocument()
     const pixels = context.putImageData.mock.calls[0]![0] as ImageData
     expect([...pixels.data]).toEqual([0, 0, 0, 255, 255, 255, 255, 255, 128, 128, 128, 255, 64, 64, 64, 255])
     expect(context.strokeRect).toHaveBeenCalledWith(.2, .4, .6, .2)
     expect(context.strokeRect).toHaveBeenCalledWith(.1, .04, 1.8, .6)
-    expect(screen.getByText(/自动寻找区间由内置生产配置固定/)).toBeInTheDocument()
+    expect(screen.getByText('在蓝框内查找')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '基础识别' }))
     expect(session.setBasicPreviewEnabled).toHaveBeenLastCalledWith(false)
     view.unmount()
@@ -133,32 +133,43 @@ describe('共享基础识别侧栏', () => {
     const value = progress({ status: 'locked', text: '1:39', threshold: 180 }, binaryDebug())
     state.snapshot.basicProgress.official = value
     const view = renderExpandedPanel()
-    const card = screen.getByRole('article', { name: '官方画面基础识别' })
-    const canvas = within(card).getByLabelText('官方画面二值化结果')
+    const card = screen.getByRole('article', { name: '画面基础识别' })
+    const canvas = within(card).getByLabelText('画面识别预览')
     const draws = context.putImageData.mock.calls.length
     state.snapshot.basicProgress.official = { ...value, diagnostic: { status: 'searching', mode: 'auto', text: '0:01', mediaTime: 9 },
       debug: null, frameIndex: 10, receivedAt: Date.now(), sync: { readings: 7, jumps: 2, lastDrop: 'not-decrement' } }
     view.rerender(<BasicRecognitionPanel />)
-    expect(within(card).getByLabelText('官方画面二值化结果')).toBe(canvas)
+    expect(within(card).getByLabelText('画面识别预览')).toBe(canvas)
     expect(context.putImageData.mock.calls.length).toBe(draws)
-    expect(within(card).getByLabelText('官方画面识别读数')).toHaveTextContent('1:39')
-    expect(within(card).getByText(/上次采样 5.20s, 阈值 180/)).toBeInTheDocument()
-    expect(within(card).getByText(/有效读数 7, 跳秒 2, 读数未按秒递减/)).toBeInTheDocument()
+    expect(within(card).getByLabelText('画面识别读数')).toHaveTextContent('1:39')
+    expect(within(card).getByText('帧时间 5.20 秒，阈值 180')).toBeInTheDocument()
+    expect(within(card).getByText('有效读数 7，跳秒 2，读数未按秒递减')).toBeInTheDocument()
+  })
+
+  it('未知丢弃原因不显示内部枚举, 没有图时不显示帧信息', () => {
+    ready()
+    state.snapshot.basicProgress.official = { ...progress(), visual: undefined,
+      sync: { readings: 0, jumps: 0, lastDrop: 'future-reason' } }
+    renderExpandedPanel()
+    const card = within(screen.getByRole('article', { name: '画面基础识别' }))
+    expect(card.getByText('有效读数 0，跳秒 0，原因未知')).toBeInTheDocument()
+    expect(card.queryByText(/future-reason|帧时间|阈值/)).toBeNull()
+    expect(card.queryByLabelText('画面识别预览')).toBeNull()
   })
 
   it('新的寻找预览不替换最后完整二值快照, 清空数据后才清空图像', () => {
     ready()
     state.snapshot.basicProgress.official = progress({ status: 'locked', text: '1:39' }, binaryDebug())
     const view = renderExpandedPanel()
-    const card = screen.getByRole('article', { name: '官方画面基础识别' })
-    const canvas = within(card).getByLabelText('官方画面二值化结果')
+    const card = screen.getByRole('article', { name: '画面基础识别' })
+    const canvas = within(card).getByLabelText('画面识别预览')
     state.snapshot.basicProgress.official = progress({ status: 'searching', text: '0:02', mediaTime: 8 })
     view.rerender(<BasicRecognitionPanel />)
-    expect(within(card).getByLabelText('官方画面二值化结果')).toBe(canvas)
-    expect(within(card).getByLabelText('官方画面识别读数')).toHaveTextContent('1:39')
+    expect(within(card).getByLabelText('画面识别预览')).toBe(canvas)
+    expect(within(card).getByLabelText('画面识别读数')).toHaveTextContent('1:39')
     state.snapshot.basicProgress.official = null
     view.rerender(<BasicRecognitionPanel />)
-    expect(within(card).queryByLabelText('官方画面二值化结果')).not.toBeInTheDocument()
+    expect(within(card).queryByLabelText('画面识别预览')).not.toBeInTheDocument()
   })
 
   it('手动和记忆范围固定显示二值区域, 不在整帧和二值图之间切换', () => {
@@ -166,17 +177,17 @@ describe('共享基础识别侧栏', () => {
     state.snapshot.settings.basicClockRoi = roi
     state.snapshot.basicProgress.official = progress({ mode: 'manual' })
     const view = renderExpandedPanel()
-    const card = screen.getByRole('article', { name: '官方画面基础识别' })
+    const card = screen.getByRole('article', { name: '画面基础识别' })
     expect(within(card).getByText('手动范围')).toBeInTheDocument()
-    expect(within(card).queryByLabelText('官方画面寻找预览')).not.toBeInTheDocument()
-    expect(within(card).getByText('等待此范围的二值结果')).toBeInTheDocument()
+    expect(within(card).queryByLabelText('画面寻找范围')).not.toBeInTheDocument()
+    expect(within(card).queryByLabelText('画面识别预览')).toBeNull()
     state.snapshot.settings.basicClockRoi = null
     state.snapshot.profiles.official = { ...BASIC_CLOCK_PROFILE, roi, roiOrigin: 'memory' }
     state.snapshot.basicProgress.official = progress({ mode: 'memory' })
     view.rerender(<BasicRecognitionPanel />)
-    const remembered = screen.getByRole('article', { name: '官方画面基础识别' })
+    const remembered = screen.getByRole('article', { name: '画面基础识别' })
     expect(within(remembered).getByText('记忆范围')).toBeInTheDocument()
-    expect(within(remembered).queryByLabelText('官方画面寻找预览')).not.toBeInTheDocument()
+    expect(within(remembered).queryByLabelText('画面寻找范围')).not.toBeInTheDocument()
   })
 
   it('共享操作只出现一次, 生产寻找区间只读且没有编辑或恢复入口', () => {
@@ -237,7 +248,7 @@ describe('共享基础识别侧栏', () => {
   it('admin同款聚焦和滚轮缩放不会改变比例范围, 原始4K像素保留', async () => {
     const clock = { x: .48, y: .04, w: .03, h: .03 }
     await openRegion(clock, 3840, 2160)
-    const canvas = screen.getByLabelText('官方画面当前帧') as HTMLCanvasElement
+    const canvas = screen.getByLabelText('画面当前帧') as HTMLCanvasElement
     expect(canvas.width).toBe(3840); expect(canvas.height).toBe(2160)
     const initial = canvas.style.width
     fireEvent.click(screen.getByRole('button', { name: '放大到当前框' }))
@@ -265,7 +276,7 @@ describe('共享基础识别侧栏', () => {
   it('取消框选不修改任何范围', async () => {
     await openRegion()
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
-    expect(screen.queryByRole('dialog', { name: '倒计时范围 (两路共用)' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '倒计时范围（两路共用）' })).not.toBeInTheDocument()
     expect(session.setBasicClockRoi).not.toHaveBeenCalled()
   })
 
@@ -273,7 +284,7 @@ describe('共享基础识别侧栏', () => {
     await openRegion()
     fireEvent.click(screen.getByRole('button', { name: '放大到当前框' }))
     fireEvent.click(screen.getByRole('button', { name: '重新绘制' }))
-    const canvas = screen.getByLabelText('官方画面当前帧'), surface = canvas.parentElement!
+    const canvas = screen.getByLabelText('画面当前帧'), surface = canvas.parentElement!
     vi.spyOn(surface, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 960, height: 480, right: 960, bottom: 480, x: 0, y: 0, toJSON() {} })
     const pointer = (type: string, x: number, y: number): void => {
       const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y })

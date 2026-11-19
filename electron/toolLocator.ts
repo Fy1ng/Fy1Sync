@@ -23,7 +23,7 @@ const SETTING_KEYS = { ffmpeg: 'ffmpegPath', ffprobe: 'ffprobePath', 'yt-dlp': '
 /** Public errors deliberately omit local paths and inherited environment values. */
 export class ToolError extends Error {
   constructor(readonly code: ToolErrorCode, readonly tool: ToolName) {
-    super(code === 'tool-missing' ? `未找到 ${tool}，请检查应用安装是否完整，或通过环境变量 ${ENV_KEYS[tool]} 指定工具路径。` : `${tool} 工具路径无效或不可执行，请检查环境变量 ${ENV_KEYS[tool]} 和文件权限。`)
+    super(code === 'tool-missing' ? `找不到可用的 ${tool}，请重新安装应用` : `${tool} 无法运行，请检查文件权限或重新安装应用`)
     this.name = 'ToolError'
   }
   toJSON(): { code: ToolErrorCode; tool: ToolName; message: string } { return { code: this.code, tool: this.tool, message: this.message } }

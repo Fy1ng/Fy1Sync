@@ -96,7 +96,7 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
     const syncVolume = (): void => { setMuted(video.muted); setVolume(video.volume) }
     const onError = (): void => {
       setPlaybackFailed(true)
-      setPlaybackError(displayError(video.error ? { code: video.error.code, message: video.error.message } : { code: 'media-error' }, '播放失败, 请稍后重试'))
+      setPlaybackError(displayError(video.error ? { code: video.error.code, message: video.error.message } : { code: 'media-error' }, '播放失败，请稍后重试'))
     }
     const onPlaying = (): void => { setPlaybackFailed(false); setPlaybackError(null) }
     const onEnter = (): void => setNativePip(true)
@@ -153,7 +153,7 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
       if (entry.loadedKey !== key) return
       if (live) setAttached(true)
       void entry.media.video.play().catch(caught => {
-        if (live && entry.loadedKey === key) { setPlaybackFailed(true); setPlaybackError(displayError(caught, '播放失败, 请稍后重试')) }
+        if (live && entry.loadedKey === key) { setPlaybackFailed(true); setPlaybackError(displayError(caught, '播放失败，请稍后重试')) }
       })
     }
     void attach().catch(caught => { if (live) { setPlaybackFailed(true); setPlaybackError(displayError(caught, '播放来源载入失败')) } })
@@ -315,9 +315,9 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
         {(view.phase === 'opening' && !attached) || view.phase === 'failed' || playbackFailed || bufferFailed ? (
           <div className="xs-overlay">
             {view.phase === 'opening' && <span className="muted">正在载入</span>}
-            {view.phase === 'failed' && <span className="form-error"><ErrorText error={view.errorDetail ?? { phase: view.phase, message: view.error }} message={view.error ?? '载入失败, 请稍后重试'} /></span>}
-            {view.phase === 'ready' && playbackFailed && <span className="form-error"><ErrorText error={playbackDetail ?? { message: playbackError }} message={playbackError || '播放失败, 请稍后重试'} /></span>}
-            {view.phase === 'ready' && !playbackFailed && bufferFailed && <span className="form-error"><ErrorText error={view.buffer?.failure?.detail ?? view.buffer?.failure ?? { state: 'failed' }} message={view.buffer?.failure?.message ?? '缓冲失败, 请稍后重试'} /></span>}
+            {view.phase === 'failed' && <span className="form-error"><ErrorText error={view.errorDetail ?? { phase: view.phase, message: view.error }} message={view.error ?? '载入失败，请稍后重试'} /></span>}
+            {view.phase === 'ready' && playbackFailed && <span className="form-error"><ErrorText error={playbackDetail ?? { message: playbackError }} message={playbackError || '播放失败，请稍后重试'} /></span>}
+            {view.phase === 'ready' && !playbackFailed && bufferFailed && <span className="form-error"><ErrorText error={view.buffer?.failure?.detail ?? view.buffer?.failure ?? { state: 'failed' }} message={view.buffer?.failure?.message ?? '缓冲失败，请稍后重试'} /></span>}
             {canRetry && (
               <button type="button" className="btn-glass small" onClick={restart} disabled={busy}>
                 <Icon name="refresh" /> 重试
@@ -339,8 +339,8 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
           onChange={(event) => changeVolume(Number(event.target.value))} aria-label="音量" />
         {qualities.length > 1 && (
           <select className="xs-quality" value={stream?.quality ?? ''} disabled={busy || view.phase === 'opening'}
-            onChange={(event) => changeQuality(event.target.value)} aria-label="画质">
-            {!stream?.quality && <option value="" disabled>画质</option>}
+            onChange={(event) => changeQuality(event.target.value)} aria-label="清晰度">
+            {!stream?.quality && <option value="" disabled>清晰度</option>}
             {qualities.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
         )}
@@ -354,7 +354,7 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
         <button type="button" className={`btn-quiet small ${enhancedHere ? 'is-on' : ''}`.trim()} onClick={toggleEnhanced}
           disabled={busy || view.phase !== 'ready' || pip?.phase === 'opening'}
           aria-pressed={enhancedHere} title={enhancedHere ? '关闭增强画中画' : '增强画中画'}>
-          增强
+          画中画
         </button>
       </footer>
       {problem && <p className="form-error xs-problem" role="alert"><ErrorText error={problemDetail ?? problem} message={problem} /></p>}

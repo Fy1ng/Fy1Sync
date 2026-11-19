@@ -128,7 +128,7 @@ export function useGiftPlan(accountId: string | null) {
       setPlan(response.value)
       setNow(Date.now())
     } catch (caught) {
-      if (mounted.current && mine === generation.current) setError(displayError(caught, '预览未能生成，请重新生成。'))
+      if (mounted.current && mine === generation.current) setError(displayError(caught, '确认单生成失败，请重试'))
     } finally {
       if (mine === generation.current) phase.current = null
       if (mounted.current && mine === generation.current) setBusy(null)
@@ -169,7 +169,7 @@ export function useGiftPlan(accountId: string | null) {
       const response = await apiClient.feature('cancelDouyuGiftPlan', { planId: id })
       if (mounted.current && running.current === id && !response.ok) { setError(response); setStopping(false) }
     } catch (caught) {
-      if (mounted.current && running.current === id) { setError(displayError(caught, '停止请求未确认，请在结果返回后核对。')); setStopping(false) }
+      if (mounted.current && running.current === id) { setError(displayError(caught, '停止请求未确认，请在结果返回后核对')); setStopping(false) }
     }
   }, [stopping])
 

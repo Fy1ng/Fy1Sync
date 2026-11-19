@@ -40,7 +40,7 @@ function publish(state: OnlineUpdateState) {
   act(() => { for (const listener of listeners) listener({ topic: 'online-update', data: state }) })
 }
 const calls = (method: string) => invoke.mock.calls.filter(call => call[0] === method)
-const frontend = () => within(screen.getByRole('region', { name: '前端更新' }))
+const frontend = () => within(screen.getByRole('region', { name: '界面更新' }))
 const application = () => within(screen.getByRole('region', { name: '完整应用更新' }))
 
 beforeEach(() => {
@@ -110,14 +110,14 @@ describe('signed online update settings', () => {
   it('reads local state on mount without checking, downloading or installing', async () => {
     render(<AppUpdateSettings />)
     expect(await screen.findByText('0.2.0')).toBeInTheDocument()
-    expect(screen.getByText('r1')).toBeInTheDocument()
+    expect(screen.queryByText('通信接口版本')).toBeNull()
     expect(screen.getByRole('combobox', { name: '更新来源' })).toHaveValue('github')
     expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled()
     expect(invoke).toHaveBeenCalledExactlyOnceWith('getOnlineUpdateState', undefined)
     expect(screen.queryByRole('button', { name: '应用并重启' })).toBeNull()
     expect(screen.queryByRole('button', { name: '安装完整更新' })).toBeNull()
-    expect(screen.getByText(/不刷新当前画面/)).toBeInTheDocument()
-    expect(screen.getByText(/仅支持 Windows x64 已安装版/)).toBeInTheDocument()
+    expect(screen.getByText(/下次启动时生效/)).toBeInTheDocument()
+    expect(screen.getByText(/安装时将退出应用/)).toBeInTheDocument()
   })
 
   it('saves only the selected source and locks duplicate changes until it is saved', async () => {
@@ -146,13 +146,13 @@ describe('signed online update settings', () => {
     const button = screen.getByRole('button', { name: '检查更新' })
     fireEvent.click(button)
     fireEvent.click(button)
-    expect(screen.getByRole('button', { name: '正在检查...' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '正在检查…' })).toBeDisabled()
     expect(screen.getByRole('combobox', { name: '更新来源' })).toBeDisabled()
     expect(calls('checkOnlineUpdate')).toHaveLength(1)
     await act(async () => checked.resolve(success(available)))
-    expect(frontend().getByRole('button', { name: '下载前端更新' })).toBeEnabled()
+    expect(frontend().getByRole('button', { name: '下载界面更新' })).toBeEnabled()
     expect(application().getByRole('button', { name: '下载完整更新' })).toBeEnabled()
-    fireEvent.click(frontend().getByText('前端更新说明'))
+    fireEvent.click(frontend().getByText('界面更新说明'))
     expect(frontend().getByText(/<script>not executable<\/script>/)).toBeInTheDocument()
     expect(document.querySelector('script')).toBeNull()
     expect(calls('downloadOnlineUpdate')).toHaveLength(0)
@@ -161,13 +161,13 @@ describe('signed online update settings', () => {
   it.each(['frontend', 'application'] as const)('does not apply a downloaded %s update without another click', async kind => {
     current = structuredClone(available)
     render(<AppUpdateSettings />)
-    const label = kind === 'frontend' ? '下载前端更新' : '下载完整更新'
+    const label = kind === 'frontend' ? '下载界面更新' : '下载完整更新'
     fireEvent.click(await screen.findByRole('button', { name: label }))
     const apply = await screen.findByRole('button', { name: kind === 'frontend' ? '应用并重启' : '安装完整更新' })
     expect(calls('downloadOnlineUpdate')).toEqual([['downloadOnlineUpdate', { kind }]])
     expect(calls('applyOnlineUpdate')).toHaveLength(0)
     fireEvent.click(apply)
-    await screen.findByText('操作已取消, 当前应用继续运行.')
+    await screen.findByText('操作已取消')
     expect(calls('applyOnlineUpdate')).toEqual([['applyOnlineUpdate', { kind }]])
     expect(apply).toBeEnabled()
   })
@@ -177,14 +177,14 @@ describe('signed online update settings', () => {
     const confirmation = deferred<ApiResult<{ accepted: boolean }>>()
     handlers.set('rollbackFrontendUpdate', () => confirmation.promise)
     render(<AppUpdateSettings />)
-    const button = await screen.findByRole('button', { name: '回退前端' })
+    const button = await screen.findByRole('button', { name: '回退界面' })
     expect(calls('rollbackFrontendUpdate')).toHaveLength(0)
     fireEvent.click(button)
     fireEvent.click(button)
     expect(button).toBeDisabled()
     expect(calls('rollbackFrontendUpdate')).toHaveLength(1)
     await act(async () => confirmation.resolve(success({ accepted: false })))
-    expect(screen.getByText('r3')).toBeInTheDocument()
+    expect(screen.getByText('操作已取消')).toBeInTheDocument()
     expect(button).toBeEnabled()
   })
 
@@ -195,11 +195,11 @@ describe('signed online update settings', () => {
     handlers.set('downloadOnlineUpdate', () => download.promise)
     handlers.set('cancelOnlineUpdate', () => cancelled.promise)
     render(<AppUpdateSettings />)
-    fireEvent.click(await screen.findByRole('button', { name: '下载前端更新' }))
+    fireEvent.click(await screen.findByRole('button', { name: '下载界面更新' }))
     const progress: OnlineUpdateState = { ...available,
       frontend: { ...available.frontend, phase: 'downloading', downloadedBytes: 1_048_576, message: '正在下载前端.' } }
     publish(progress)
-    expect(frontend().getByRole('progressbar', { name: '前端更新下载进度' })).toHaveAttribute('value', '50')
+    expect(frontend().getByRole('progressbar', { name: '界面更新下载进度' })).toHaveAttribute('value', '50')
     expect(frontend().getByText('1.0 MB / 2.0 MB')).toBeInTheDocument()
     expect(application().getByRole('button', { name: '下载完整更新' })).toBeDisabled()
     const cancel = screen.getByRole('button', { name: '取消下载' })
@@ -207,10 +207,10 @@ describe('signed online update settings', () => {
     fireEvent.click(cancel)
     fireEvent.click(cancel)
     expect(calls('cancelOnlineUpdate')).toHaveLength(1)
-    expect(screen.getByRole('button', { name: '正在取消...' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '正在取消…' })).toBeDisabled()
     await act(async () => cancelled.resolve(success(available)))
     await act(async () => download.resolve(success(progress)))
-    expect(frontend().getByRole('button', { name: '下载前端更新' })).toBeEnabled()
+    expect(frontend().getByRole('button', { name: '下载界面更新' })).toBeEnabled()
     expect(screen.queryByRole('progressbar')).toBeNull()
     expect(calls('applyOnlineUpdate')).toHaveLength(0)
   })
@@ -238,7 +238,7 @@ describe('signed online update settings', () => {
     handlers.set('cancelOnlineUpdate', () => success(available))
     fireEvent.click(screen.getByRole('button', { name: '取消下载' }))
     await waitFor(() => expect(screen.queryByRole('button', { name: '取消下载' })).toBeNull())
-    expect(frontend().getByRole('button', { name: '下载前端更新' })).toBeEnabled()
+    expect(frontend().getByRole('button', { name: '下载界面更新' })).toBeEnabled()
     expect(calls('cancelOnlineUpdate')).toHaveLength(2)
   })
 
@@ -248,7 +248,7 @@ describe('signed online update settings', () => {
       application: { ...available.application, phase: 'incompatible', message: '此运行方式不支持应用内安装.' } }
     render(<AppUpdateSettings />)
     expect(await screen.findByRole('button', { name: '应用并重启' })).toBeEnabled()
-    expect(application().getByText('当前客户端不适用')).toBeInTheDocument()
+    expect(application().getByText('不适用于当前应用')).toBeInTheDocument()
     expect(application().queryByRole('button', { name: '下载完整更新' })).toBeNull()
     expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled()
     expect(screen.getByRole('combobox', { name: '更新来源' })).toHaveValue('github')
@@ -257,10 +257,10 @@ describe('signed online update settings', () => {
   it('does not invent usable sources for an unconfigured build', async () => {
     current = { ...base, phase: 'unconfigured', availableSources: [] }
     render(<AppUpdateSettings />)
-    expect(await screen.findByText('未配置签名发布源')).toBeInTheDocument()
+    expect(await screen.findByText('未配置更新来源')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '检查更新' })).toBeDisabled()
     expect(screen.getByRole('combobox', { name: '更新来源' })).toBeDisabled()
-    expect(screen.queryByRole('button', { name: '下载前端更新' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '下载界面更新' })).toBeNull()
     expect(invoke).toHaveBeenCalledTimes(1)
   })
 
@@ -272,7 +272,7 @@ describe('signed online update settings', () => {
     expect(screen.getByRole('combobox', { name: '更新来源' })).toHaveValue('gitcode')
     await act(async () => initial.resolve(success(base)))
     expect(screen.getByRole('combobox', { name: '更新来源' })).toHaveValue('gitcode')
-    expect(frontend().getByRole('button', { name: '下载前端更新' })).toBeEnabled()
+    expect(frontend().getByRole('button', { name: '下载界面更新' })).toBeEnabled()
   })
 
   it('does not overwrite a newer pushed state with an older operation result', async () => {
@@ -348,10 +348,10 @@ describe('signed online update settings', () => {
     fireEvent.click(button)
     fireEvent.click(button)
     expect(button).toBeDisabled()
-    expect(frontend().getByRole('button', { name: '下载前端更新' })).toBeDisabled()
+    expect(frontend().getByRole('button', { name: '下载界面更新' })).toBeDisabled()
     expect(calls('applyOnlineUpdate')).toHaveLength(1)
     await act(async () => confirmation.resolve(success({ accepted: true })))
-    expect(screen.queryByText('操作已取消, 当前应用继续运行.')).toBeNull()
+    expect(screen.queryByText('操作已取消')).toBeNull()
   })
 
   it('does not let unrelated feature events replace update state', async () => {

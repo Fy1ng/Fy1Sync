@@ -75,7 +75,7 @@ export async function resolveStream(
       return failure(
         'unsupported-url',
         '无法识别该输入属于哪个平台',
-        '支持 YouTube 直播, Twitch 频道, 斗鱼房间, 虎牙房间, B 站直播间, 抖音直播间, 或直接粘贴 m3u8 / mp4 / flv 地址.',
+        '支持 YouTube、Twitch、斗鱼、虎牙、哔哩哔哩、抖音链接或视频直链',
       )
   }
 }
@@ -109,9 +109,7 @@ function resolveDirect(input: string): ResolveResult {
       label: url.hostname,
       channel: url.hostname,
       requiresProxy: false,
-      notes: [
-        '直接加载。若播放失败，请检查地址是否有效。',
-      ],
+      notes: [],
     },
   }
 }

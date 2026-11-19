@@ -12,7 +12,7 @@ const INPUT: DouyuMessageInput = { accountId: 'default', room: '100', text: 'SYN
 const SIGN: CreateDouyuTask = { accountId: 'default', room: '100', kind: 'room-sign', policy: 'foreground', repeatMinutes: null }
 const SIGN_SUCCESS: DouyuTaskOutcome = { status: 'succeeded', message: '签到成功' }
 const SUCCESS: DouyuMessageOutcome = { status: 'succeeded', message: '发送成功', nextAllowedAt: null }
-const FAILURE: DouyuMessageOutcome = { status: 'failed', message: '弹幕发送失败, 请检查当前账号与房间后手动重试', nextAllowedAt: null }
+const FAILURE: DouyuMessageOutcome = { status: 'failed', message: '弹幕发送失败，请检查当前账号与房间后手动重试', nextAllowedAt: null }
 const managers: DouyuTaskManager[] = []
 
 interface Attempt<T, R> {

@@ -227,10 +227,10 @@ describe('extra stream windows', () => {
   it('switches quality and opens the enhanced window for this stream', async () => {
     renderStreams()
     await flush()
-    fireEvent.change(screen.getByLabelText('画质'), { target: { value: 'hd' } })
+    fireEvent.change(screen.getByLabelText('清晰度'), { target: { value: 'hd' } })
     await flush()
     expect(invoke).toHaveBeenCalledWith('switchStreamSessionQuality', { id: ID, quality: 'hd' })
-    fireEvent.click(screen.getByRole('button', { name: '增强' }))
+    fireEvent.click(screen.getByRole('button', { name: '画中画' }))
     await flush()
     expect(invoke).toHaveBeenCalledWith('openEnhancedPip', { id: ID })
   })

@@ -38,7 +38,7 @@ export class ApiClient {
 
   private bridge(): StreamSyncerBridge {
     const bridge = this.options.bridge ?? (typeof window !== 'undefined' ? window.streamSyncer : undefined)
-    if (!bridge) throw new Error('桌面通信接口不可用, 请从 Electron 应用启动')
+    if (!bridge) throw new Error('请在 Fy1Sync 桌面应用中打开')
     return bridge
   }
 
@@ -52,7 +52,7 @@ export class ApiClient {
       return {
         ok: false,
         code: 'ipc-error',
-        message: `无法连接应用主进程: ${error instanceof Error ? error.message : String(error)}`,
+        message: '无法连接 Fy1Sync，请重新启动应用',
         detail: errorDetails(error),
       }
     }

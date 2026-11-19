@@ -58,7 +58,7 @@ const keys = (value: Record<string, unknown>, allowed: string[]) => Reflect.ownK
 
 /** Validate and detach caller-owned objects before any async work begins. */
 export function readAutomationRequest(raw: unknown): DouyuAutomationRequest {
-  const invalid = (): never => { throw new Error('斗鱼自动任务参数无效.') }
+  const invalid = (): never => { throw new Error('斗鱼自动任务参数无效') }
   try {
     if (!plain(raw) || !keys(raw, ['taskId', 'accountId', 'target', 'kind', 'options'])
       || typeof raw.taskId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(raw.taskId)

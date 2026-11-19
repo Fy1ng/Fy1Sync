@@ -51,7 +51,7 @@ export function readDanmakuPreferences(raw: unknown): DanmakuPreferences | null 
 export function danmakuLaneHeight(fontSize: number, verticalGapPx: number): number {
   if (!Number.isFinite(fontSize) || fontSize < 8 || fontSize > 128
     || !Number.isFinite(verticalGapPx) || verticalGapPx < 0 || verticalGapPx > 64) {
-    throw new Error('弹幕字号或间距无效.')
+    throw new Error('弹幕字号或间距无效')
   }
   return fontSize + verticalGapPx
 }
@@ -86,14 +86,14 @@ export class DanmakuProcessor {
 
   constructor(preferences: DanmakuPreferences = { ...DEFAULT_DANMAKU_PREFERENCES }, capacity = 2_000) {
     const parsed = readDanmakuPreferences(preferences)
-    if (!parsed || !Number.isInteger(capacity) || capacity < 1 || capacity > 10_000) throw new Error('弹幕处理配置无效.')
+    if (!parsed || !Number.isInteger(capacity) || capacity < 1 || capacity > 10_000) throw new Error('弹幕处理配置无效')
     this.preferences = parsed
     this.capacity = capacity
   }
 
   configure(preferences: DanmakuPreferences): void {
     const parsed = readDanmakuPreferences(preferences)
-    if (!parsed) throw new Error('弹幕处理配置无效.')
+    if (!parsed) throw new Error('弹幕处理配置无效')
     this.preferences = parsed
     this.reset()
   }

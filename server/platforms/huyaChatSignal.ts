@@ -7,8 +7,8 @@ import { HuyaTarsReader as Reader, HuyaTarsWriter as Writer } from './huyaWup'
 const MAX_PACKET = 65_536
 const MAX_UID = 0x7fff_ffff_ffff_ffffn
 const SDK = 'hysdk-webh5&2610221812'
-const invalid = () => new Error('无法读取虎牙聊天流签名.')
-const cancelled = () => new DOMException('虎牙聊天流签名请求已中止.', 'AbortError')
+const invalid = () => new Error('无法连接虎牙弹幕')
+const cancelled = () => new DOMException('虎牙弹幕连接已取消', 'AbortError')
 
 /** Internal only: the signed URL and wsTime must never cross IPC or enter logs. */
 export type HuyaChatSignal = {

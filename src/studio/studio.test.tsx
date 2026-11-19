@@ -118,7 +118,7 @@ describe('the studio', () => {
     fireEvent.click(within(within(settings).getByRole('tablist', { name: '设置分区' })).getByRole('tab', { name: '账号' }))
     fireEvent.click(within(within(settings).getByRole('tablist', { name: '账号平台' })).getByRole('tab', { name: '哔哩哔哩' }))
     expect(await screen.findByText('哔哩哔哩账号')).toBeInTheDocument()
-    const login = vi.spyOn(apiClient, 'login').mockResolvedValue({ ok: false, code: 'login-cancelled', message: '登录已取消.' })
+    const login = vi.spyOn(apiClient, 'login').mockResolvedValue({ ok: false, code: 'login-cancelled', message: '登录已取消' })
     fireEvent.click(screen.getByRole('button', { name: '登录' }))
     await waitFor(() => expect(login).toHaveBeenCalledWith('bilibili'))
     act(() => {
@@ -132,7 +132,7 @@ describe('the studio', () => {
     expect(screen.queryByRole('dialog', { name: '哔哩哔哩登录' })).toBeNull()
   })
 
-  it('shows the adapting notice once per session across repeated alignment requests', async () => {
+  it('starts repeated alignment requests without an adapting notice', async () => {
     const session = makeSession()
     for (const role of ['official', 'commentary'] as const) {
       await session.loadSource(role, { kind: 'progressive', url: `https://example.test/${role}.mp4`,
@@ -145,7 +145,7 @@ describe('the studio', () => {
     startAutoAlign(session)
     startAutoAlign(session)
     await flush()
-    expect(notice.mock.calls.filter(([, text]) => text.startsWith('自动对齐适配中:'))).toHaveLength(1)
+    expect(notice).not.toHaveBeenCalled()
     expect(session.syncNow).toHaveBeenCalledTimes(2)
   })
 
@@ -192,7 +192,7 @@ describe('the studio', () => {
       expect(sync).not.toHaveBeenCalled()
       await act(async () => {
         expect(await session.autoSync.dryRun({ official: 0, commentary: 0 })).toMatchObject({
-          applied: false, failure: { kind: 'not-ready', message: '同步准备中, 请等待两路画面和缓冲就绪' },
+          applied: false, failure: { kind: 'not-ready', message: '请等待两路播放和缓冲就绪' },
         })
       })
       act(() => {

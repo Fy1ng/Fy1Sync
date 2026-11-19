@@ -26,10 +26,10 @@ export function createNetworkSocket(raw: string, platform: DanmakuPlatform, opti
     && url.pathname === '/webcast/im/push/v2/' && raw.length <= 32_768 && !/[\x00-\x20\x7f]/.test(raw)
   if (!expected || url.protocol !== 'wss:' || url.hostname !== expected.hostname || url.port !== expected.port
     || url.username || url.password || url.hash
-    || (platform === 'douyin' ? !douyinTarget : url.pathname !== '/' || url.search)) throw new Error('弹幕连接地址不在允许范围内.')
+    || (platform === 'douyin' ? !douyinTarget : url.pathname !== '/' || url.search)) throw new Error('弹幕连接地址不在允许范围内')
   let headers: Record<string, string> | undefined
   if (options.headers) {
-    if (platform !== 'douyin' || Object.keys(options.headers).length > 4) throw new Error('弹幕请求头不在允许范围内.')
+    if (platform !== 'douyin' || Object.keys(options.headers).length > 4) throw new Error('弹幕请求头不在允许范围内')
     headers = {}
     for (const [key, value] of Object.entries(options.headers)) {
       const name = key.toLowerCase()
@@ -37,7 +37,7 @@ export function createNetworkSocket(raw: string, platform: DanmakuPlatform, opti
         || /[\x00-\x1f\x7f]/.test(value) || Object.hasOwn(headers, name)
         || (name === 'origin' && value !== 'https://live.douyin.com')
         || (name === 'referer' && value !== 'https://live.douyin.com/')
-        || (name === 'cookie' && !/^ttwid=[^;\s]{1,4096}$/.test(value))) throw new Error('弹幕请求头不在允许范围内.')
+        || (name === 'cookie' && !/^ttwid=[^;\s]{1,4096}$/.test(value))) throw new Error('弹幕请求头不在允许范围内')
       headers[name] = value
     }
   }
@@ -61,7 +61,7 @@ export function createNetworkSocket(raw: string, platform: DanmakuPlatform, opti
     clearDeadline()
     const settle = settleAttempt
     settleAttempt = undefined
-    settle?.(new Error('弹幕连接已释放.'))
+    settle?.(new Error('弹幕连接已释放'))
     const owned = dispatcher
     dispatcher = undefined
     if (owned) void owned.destroy().catch(() => {})
@@ -72,8 +72,8 @@ export function createNetworkSocket(raw: string, platform: DanmakuPlatform, opti
     try { transport?.close() } catch { /* The connection may have failed before opening. */ }
     release()
     // Never expose a dispatcher error or a remote close reason that could contain credentials.
-    emit('error', { message: '弹幕网络连接失败, 请检查出网设置.' })
-    emit('close', { code: 1006, reason: '弹幕网络连接已断开.', wasClean: false })
+    emit('error', { message: '弹幕网络连接失败，请检查出网设置' })
+    emit('close', { code: 1006, reason: '弹幕网络连接已断开', wasClean: false })
   }
   const facade: WebSocketLike = {
     addEventListener(type, listener) {
@@ -82,7 +82,7 @@ export function createNetworkSocket(raw: string, platform: DanmakuPlatform, opti
       entries.add(listener)
     },
     send(data) {
-      if (stopped || !opened || !transport) throw new Error('弹幕连接尚未就绪.')
+      if (stopped || !opened || !transport) throw new Error('弹幕连接尚未就绪')
       transport.send(data)
     },
     close() {
@@ -106,7 +106,7 @@ export function createNetworkSocket(raw: string, platform: DanmakuPlatform, opti
       const route = routes[index]!
       if (route.kind === 'unsupported') {
         if (index + 1 < routes.length) continue
-        throw new Error('系统代理类型不受支持.')
+        throw new Error('系统代理类型不受支持')
       }
       clearDeadline()
       timer = setTimeout(fail, timeoutMs)
@@ -116,7 +116,7 @@ export function createNetworkSocket(raw: string, platform: DanmakuPlatform, opti
       const check = await checkUrl(target.href, { enabled: true, hosts: [expected.hostname], allowNonStandardPorts: platform === 'douyu',
         maxRedirects: 0, requestTimeoutMs: timeoutMs }, options.resolve, routeUsesRemoteDns(route))
       if (stopped) return
-      if (!check.ok) throw new Error('弹幕连接地址校验失败.')
+      if (!check.ok) throw new Error('弹幕连接地址校验失败')
       dispatcher = route.kind === 'direct' ? createPinnedDispatcher(url.hostname, check.addresses)
         : createProxyDispatcher(route, timeoutMs)
       if (stopped) { release(); return }
@@ -138,13 +138,13 @@ export function createNetworkSocket(raw: string, platform: DanmakuPlatform, opti
         socket.addEventListener('error', (event: { error?: unknown }) => {
           if (stopped || transport !== socket) return
           if (opened) fail()
-          else resolve(event.error ?? new Error('弹幕网络连接失败.'))
+          else resolve(event.error ?? new Error('弹幕网络连接失败'))
         })
         socket.addEventListener('close', (event: { code?: number; wasClean?: boolean }) => {
           if (stopped || transport !== socket) return
-          if (!opened) { resolve(new Error('弹幕连接建立失败.')); return }
+          if (!opened) { resolve(new Error('弹幕连接建立失败')); return }
           stopped = true; release()
-          emit('close', { code: event.code, wasClean: event.wasClean, reason: '弹幕连接已断开.' })
+          emit('close', { code: event.code, wasClean: event.wasClean, reason: '弹幕连接已断开' })
         })
       })
       if (stopped || opened) return

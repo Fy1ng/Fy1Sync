@@ -109,4 +109,4 @@ export function failure(
 }
 
 export const MANUAL_URL_HINT =
-  '也可在片源面板粘贴 m3u8 或 mp4 视频直链，再点击「载入」。'
+  '也可粘贴视频直链'

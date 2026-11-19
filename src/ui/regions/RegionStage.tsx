@@ -87,7 +87,7 @@ export function RegionStage({ mediaSize, roi, resetKey, enabled, hidden, childre
       <button type="button" className="btn-quiet small" disabled={!ready} onClick={reset} title="双击画面空白处也可复位">适应窗口</button>
       <button type="button" className="btn-quiet small" disabled={!ready} onClick={() => update(focusRoi(mediaSize, viewport, roi))}>放大到当前框</button>
       <span className="region-zoom-value num" aria-label="画面缩放">{!ready ? '--' : Math.abs(scale - 1) < 0.005 ? '1:1' : `${scale.toFixed(2)}x`}</span>
-      <span className="muted">滚轮缩放 / 拖空白处或中键平移 / 双击空白处复位</span>
+      <span className="muted">滚轮缩放，中键平移</span>
     </div>
   </>
 }

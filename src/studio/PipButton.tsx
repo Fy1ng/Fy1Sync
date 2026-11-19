@@ -69,6 +69,9 @@ export function PipButton(): React.ReactNode {
 
   if (!loaded) return null
   const enhancedOpen = pip !== null && pip.phase !== 'closed' && pip.phase !== 'failed'
+  const platform = media[enhancedRole].descriptor?.platform
+  const enhancedFeatures = platform === 'douyu' ? '弹幕与斗鱼发送'
+    : platform === 'douyin' || platform === 'huya' ? '只读弹幕' : '仅画面'
 
   const toggleNative = (): void => {
     setProblem(null)
@@ -104,8 +107,8 @@ export function PipButton(): React.ReactNode {
           <span className="menu-note">仅画面</span>
         </button>
         <button type="button" className="menu-item" onClick={() => void toggleEnhanced().catch(setProblem)} disabled={pip?.phase === 'opening'}>
-          {pip?.phase === 'opening' ? '正在打开…' : enhancedOpen ? '关闭增强画中画' : '增强画中画'}
-          <span className="menu-note">{enhancedRole === mainRole ? '含弹幕与发送' : '播放解说，含弹幕与发送'}</span>
+          {pip?.phase === 'opening' ? '正在打开' : enhancedOpen ? '关闭增强画中画' : '增强画中画'}
+          <span className="menu-note">{enhancedRole === mainRole ? enhancedFeatures : `播放解说，${enhancedFeatures}`}</span>
         </button>
         {problem && <p className="form-error" role="alert"><ErrorText error={problemDetail ?? problem} message={problem} /></p>}
       </Popover>

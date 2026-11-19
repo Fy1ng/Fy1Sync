@@ -43,7 +43,7 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
     let lastPaint = Number.NEGATIVE_INFINITY
     let lastWidth = 0
     let lastHeight = 0
-    setMessage('正在等待解说画面就绪...')
+    setMessage('正在等待解说画面就绪…')
     const stop = watchCameraFrames(video, () => {
       const { videoWidth: width, videoHeight: height } = video
       const changed = width !== lastWidth || height !== lastHeight
@@ -95,7 +95,7 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
       if (mounted.current && pending.current === controller) {
         pending.current = null
         setWorking(false)
-        setMessage('画面已变化, 请在稳定后重新贴边.')
+        setMessage('画面已变化，请在稳定后重新贴边')
       }
     }
     const events = ['pause', 'seeking', 'resize', 'emptied', 'loadstart', 'error', 'ended'] as const
@@ -105,7 +105,7 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
       const sample = await sampleCameraFrames(video, rough, controller.signal)
       const result = await tightenCamera(sample, controller.signal)
       if (!mounted.current || controller.signal.aborted) return
-      if (result.ambiguous) { setMessage('检测到多个相近边界, 选框未改动. 请缩小粗选范围, 尽量排除比分板或字幕后重试.'); return }
+      if (result.ambiguous) { setMessage('选框未改动。请缩小范围后重试，或手动调整。'); return }
       const edges = (r: RoiRect): number[] => [r.x * sourceWidth, r.y * sourceHeight, (r.x + r.w) * sourceWidth, (r.y + r.h) * sourceHeight]
       const before = edges(rough)
       const after = edges(result.roi)
@@ -114,9 +114,9 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
         && after[2]! <= before[2]! + 0.01 && after[3]! <= before[3]! + 0.01 && after[2]! > after[0]! && after[3]! > after[1]!
       const moved = inside ? result.found.filter((value, i) => value && Math.abs(after[i]! - before[i]!) >= 0.5).length : 0
       if (moved > 0) { setPrevious(rough); setRoi(result.roi) }
-      setMessage(moved === 0 ? '未识别到可靠边界, 选框未改动, 可手动调整.' : moved < 4 ? `已贴合 ${moved} 条边, 其余请手动调整.` : '四条边均已贴合, 请预览确认后保存.')
+      setMessage(moved === 0 ? '选框未改动，可手动调整' : moved < 4 ? '已部分贴边，其余可手动调整' : '已贴边，确认后可保存')
     } catch (error) {
-      if (mounted.current && !controller.signal.aborted) setMessage(error instanceof Error ? error.message : '贴边失败, 选框未改动.')
+      if (mounted.current && !controller.signal.aborted) setMessage(error instanceof Error ? error.message : '贴边失败，选框未改动')
     } finally {
       events.forEach((event) => video.removeEventListener(event, interrupt))
       if (mounted.current && pending.current === controller) { pending.current = null; setWorking(false) }
@@ -126,8 +126,8 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
   return (
     <Sheet title="摄像头小窗" onClose={onClose} wide>
       <div className="framing">
-        <p className="muted">裁剪范围和小窗位置会按直播间自动保存, 下次载入此直播间时自动恢复.</p>
-        <p className="muted">框住完整摄像头并略留外边距, 尽量排除字幕和比分板. 贴边使用约 2 秒连续彩色画面, 只向内收紧; 保存前可撤回.</p>
+        <p className="muted">保存后，下次载入此房间会恢复小窗</p>
+        <p className="muted">框住摄像头，留一点边。贴边只缩小选框，保存前可撤回。</p>
         <div className="framing-stage" ref={stage}>
           <canvas ref={setStill} className="framing-still" />
           {size.width > 0 && <RoiWindow roi={roi} onChange={change} videoWidth={size.width} videoHeight={size.height} hostRef={stage} />}
@@ -136,7 +136,7 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
         <div className="row-split">
           {onRemove ? <button type="button" className="btn-quiet is-danger" onClick={onRemove}>不再显示此房间的小窗</button> : <span />}
           <span className="row-end">
-            {previous && <button type="button" className="btn-quiet" disabled={working} onClick={() => { setRoi(previous); setPrevious(null); setMessage('已撤回本次贴边.'); }}>撤回贴边</button>}
+            {previous && <button type="button" className="btn-quiet" disabled={working} onClick={() => { setRoi(previous); setPrevious(null); setMessage('已撤回本次贴边'); }}>撤回贴边</button>}
             <button type="button" className="btn-quiet" disabled={size.width === 0 || working} onClick={() => void snap()}>
               {working ? '正在贴边…' : '贴边'}
             </button>

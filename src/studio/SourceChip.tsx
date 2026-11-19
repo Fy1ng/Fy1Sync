@@ -97,7 +97,7 @@ function SourcePanel({ role, onDone, onSchedule }: {
       }} />
       {role === 'official' && onSchedule && (
         <div className="row-split">
-          <span className="muted">CS2 赛事官方直播</span>
+          <span className="muted">从 CS2 赛程选直播</span>
           <button type="button" className="btn-quiet small" onClick={() => { onDone(); onSchedule() }}>打开赛程</button>
         </div>
       )}
@@ -106,7 +106,7 @@ function SourcePanel({ role, onDone, onSchedule }: {
           options={[{ value: 'douyu', label: PLATFORM_LABEL.douyu }, { value: 'bilibili', label: PLATFORM_LABEL.bilibili }, { value: 'huya', label: PLATFORM_LABEL.huya }, { value: 'douyin', label: PLATFORM_LABEL.douyin }]} />
       )}
       {load.problem && (
-        <p className="form-error" role="alert"><ErrorText error={load.problem} message={<>{load.problem.message}{load.problem.hint ? ` ${load.problem.hint}` : ''}</>} /></p>
+        <p className="form-error" role="alert"><ErrorText error={load.problem} message={<>{load.problem.message}{load.problem.hint ? `，${load.problem.hint}` : ''}</>} /></p>
       )}
       <LoginOffer role={role} />
       {state.status === 'error' && state.error && <p className="form-error"><ErrorText error={state.error} /></p>}
@@ -117,7 +117,7 @@ function SourcePanel({ role, onDone, onSchedule }: {
       <PlaybackDiagnosticsPanel role={role} />
 
       {role === 'commentary' && douyinChat && state.descriptor && <div>
-        <p className="muted" role="status">抖音弹幕: {snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
+        <p className="muted" role="status">抖音弹幕：{snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
           : snapshot.danmaku.error ? <ErrorText error={snapshot.danmaku.errorDetail ?? { message: snapshot.danmaku.error }} message={snapshot.danmaku.error} /> : (snapshot.danmaku.room ? `正在连接房间 ${loader.roomName}` : '未连接')}</p>
         <button type="button" className="btn-quiet small" disabled={chatRetrying || !douyinDanmakuRoom(state.descriptor)} onClick={() => {
           const roomKey = douyinDanmakuRoom(state.descriptor!)
@@ -126,11 +126,11 @@ function SourcePanel({ role, onDone, onSchedule }: {
           setChatRetrying(true)
           void apiClient.reconnectDanmaku(roomKey).then(result => {
             if (!result.ok) session.notice('warn', result.message, result)
-          }).catch((error) => session.notice('warn', '抖音弹幕重连失败, 请稍后重试', error)).finally(() => setChatRetrying(false))
+          }).catch((error) => session.notice('warn', '抖音弹幕重连失败，请稍后重试', error)).finally(() => setChatRetrying(false))
         }}>重连抖音弹幕</button>
       </div>}
       {role === 'commentary' && !douyinChat && (!manualChat && (state.descriptor?.platform === 'huya' || isReadOnlyDanmakuRoom(snapshot.danmaku.room))
-        ? <p className="muted" role="status">{snapshot.danmaku.room?.startsWith('douyin:') ? '抖音' : '虎牙'}弹幕: {snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
+        ? <p className="muted" role="status">{snapshot.danmaku.room?.startsWith('douyin:') ? '抖音' : '虎牙'}弹幕：{snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
           : snapshot.danmaku.room ? snapshot.danmaku.error ? <ErrorText error={snapshot.danmaku.errorDetail ?? { message: snapshot.danmaku.error }} message={snapshot.danmaku.error} /> : `正在连接房间 ${loader.roomName}` : '未连接'}</p>
         : <DanmakuRoom />)}
       <div className="row-split panel-foot">
@@ -164,7 +164,7 @@ export function PlaybackDiagnosticsPanel({ role }: { role: SourceRole }): React.
     <details>
       <summary>播放诊断</summary>
       <p className="muted">{stall
-        ? `最近卡顿 ${(stall.durationMs / 1000).toFixed(1)} 秒${stall.ongoing ? ' (尚未恢复)' : ''}. ${stall.hint}`
+        ? `最近卡顿 ${(stall.durationMs / 1000).toFixed(1)} 秒${stall.ongoing ? '（尚未恢复）' : ''}。${stall.hint}。`
         : '暂未记录到卡顿'}</p>
       <button type="button" className="btn-quiet small" onClick={() => {
         const blob = new Blob([JSON.stringify(session.exportPlaybackDiagnostics(), null, 2)], { type: 'application/json' })
@@ -228,7 +228,7 @@ function SaveButton({ role }: { role: SourceRole }): React.ReactNode {
         setBusy(true)
         void (saved ? removeSavedRoom(saved.id) : saveRoom(role, descriptor)).then(problem => {
           if (problem) session.notice('warn', problem)
-        }).catch(() => session.notice('warn', '收藏操作失败, 请稍后重试.')).finally(() => setBusy(false))
+        }).catch(() => session.notice('warn', '收藏操作失败，请稍后重试')).finally(() => setBusy(false))
       }}>
       <Icon name="star" />{saved ? '已收藏' : '收藏'}
     </button>

@@ -359,7 +359,7 @@ describe('AutoSyncController evidence completion', () => {
     })
     const result = await new AutoSyncController(fixture.deps, { maxCorrectionPasses: 0 }).run(applied)
     expect(result.failure?.kind).toBe('verify-failed')
-    expect(result.failure?.message).toContain('官方源跳秒时间不稳定')
+    expect(result.failure?.message).toContain('画面倒计时不稳定')
     expect(windows).toBe(2)
   })
 
@@ -478,7 +478,7 @@ describe('AutoSyncController', () => {
     const result = await controller.run(applied)
 
     expect(result.phase).toBe('failed')
-    expect(result.failure).toMatchObject({ kind: 'not-ready', message: '解说源尚未就绪' })
+    expect(result.failure).toMatchObject({ kind: 'not-ready', message: '解说尚未就绪' })
   })
 
   it('fails with no-samples when the window produced no frames', async () => {
@@ -506,7 +506,7 @@ describe('AutoSyncController', () => {
     expect(result.failure).toMatchObject({
       kind: 'rejected',
       reason: 'no-commentary-jump',
-      message: '解说源未捕获倒计时跳秒',
+      message: '没读到解说的倒计时',
     })
     expect(result.samples.commentary).toBe(1)
     expect(result.jumps.official).toBeGreaterThan(0)
@@ -518,7 +518,7 @@ describe('AutoSyncController', () => {
 
     const result = await controller.run(applied)
 
-    expect(result.failure).toMatchObject({ kind: 'seek-failed', message: '官方源跳转未生效' })
+    expect(result.failure).toMatchObject({ kind: 'seek-failed', message: '画面未能跳转' })
     expect(result.plan).not.toBeNull()
   })
 
@@ -616,7 +616,7 @@ describe('AutoSyncController', () => {
     const blocked = await controller.run(applied)
     expect(blocked.failure).toMatchObject({
       kind: 'unauthorized',
-      message: '手动调整后需要重新开启自动同步',
+      message: '请点击「自动对齐」恢复',
     })
 
     const measured = await controller.dryRun(applied)
@@ -640,7 +640,7 @@ describe('AutoSyncController', () => {
 
     const first = controller.run(applied)
     const second = await controller.run(applied)
-    expect(second.failure).toMatchObject({ kind: 'cancelled', message: '已有一次自动同步在进行中' })
+    expect(second.failure).toMatchObject({ kind: 'cancelled', message: '正在自动对齐' })
     expect(controller.isRunning).toBe(true)
     expect((await controller.run(applied)).failure?.kind).toBe('cancelled')
 
@@ -886,7 +886,7 @@ describe('AutoSyncController profile guard', () => {
     expect(result.phase).toBe('failed')
     expect(result.failure).toMatchObject({
       kind: 'not-ready',
-      message: '倒计时识别尚未就绪, 请等待识别完成后重试',
+      message: '倒计时识别尚未就绪，请等待识别完成后重试',
     })
     // The point of the guard: no window spent, no seek issued, nothing blamed on the picture.
     expect(sampled).toBe(false)

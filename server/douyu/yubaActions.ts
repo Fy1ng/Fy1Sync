@@ -17,10 +17,10 @@ const groupPage = (groupId: string) => `${YUBA_ORIGIN}/discussion/${groupId}/pos
 const waiting = (message: string): DouyuTaskOutcome => ({ status: 'waiting-user', message })
 const failed = (message: string): DouyuTaskOutcome => ({ status: 'failed', message })
 const succeeded = (message: string): DouyuTaskOutcome => ({ status: 'succeeded', message })
-const loginRequired = () => waiting('请登录鱼吧后再运行签到任务.')
-const unknownResult = () => waiting('鱼吧签到结果尚无法确认. 请在官方鱼吧核对后再决定是否重试.')
-const unknownPreflight = () => waiting('无法确认该鱼吧的账号状态, 未发送签到请求. 请在官方鱼吧核对.')
-const unavailableGroup = () => waiting('该房间的鱼吧未开放或已关闭. 请在官方房间确认, 本次未发送签到请求.')
+const loginRequired = () => waiting('请登录鱼吧后再运行签到任务')
+const unknownResult = () => waiting('鱼吧签到结果尚无法确认。请在官方鱼吧核对后再决定是否重试。')
+const unknownPreflight = () => waiting('无法确认该鱼吧的账号状态，未发送签到请求。请在官方鱼吧核对。')
+const unavailableGroup = () => waiting('该房间的鱼吧未开放或已关闭。请在官方房间确认，本次未发送签到请求。')
 
 type Target = Pick<DouyuTaskDefinition, 'accountId' | 'room'>
 type HttpResult = { status: number; payload: unknown } | { outcome: DouyuTaskOutcome }
@@ -62,18 +62,18 @@ function hasNoConflictingError(payload: Record<string, unknown>): boolean {
 /** Classification can only request human action, never infer a successful write. */
 function attention(status: number, value: unknown, dispatched: boolean): DouyuTaskOutcome | null {
   if (status === 401) return loginRequired()
-  if (status === 429) return waiting('鱼吧限制了请求频率. 请稍后在官方鱼吧核对签到状态.')
+  if (status === 429) return waiting('鱼吧限制了请求频率。请稍后在官方鱼吧核对签到状态。')
   const payload = record(value)
   const error = nonnegativeInteger(payload?.error)
   const code = nonnegativeInteger(payload?.status_code)
   if (code === 4250 || code === 4206 || error === 901 || error === 902 || error === 1022) return loginRequired()
-  if (code === 3004 || error === 3004) return waiting('鱼吧要求官方验证. 请在官方鱼吧完成验证后核对签到状态.')
+  if (code === 3004 || error === 3004) return waiting('鱼吧要求官方验证。请在官方鱼吧完成验证后核对签到状态。')
   if (code === 3002) return dispatched ? unknownResult() : unavailableGroup()
   const messages = [payload?.msg, payload?.message].filter((text): text is string => typeof text === 'string' && text.length <= 512).join(' ')
   if (/未登录|请.{0,8}登录|重新登录|登录.{0,8}(失效|过期)|not\s*logged|login\s*required|invalid[ _-]?token|token.{0,8}(expired|invalid)/i.test(messages)) return loginRequired()
-  if (/验证码|人机验证|安全验证|滑块|geetest|captcha/i.test(messages)) return waiting('鱼吧要求官方验证. 请在官方鱼吧完成验证后核对签到状态.')
-  if (/未满足|不满足|无资格|没有资格|等级不足|权限不足|无权限|not\s*eligible|permission\s*denied/i.test(messages)) return waiting('鱼吧签到资格或权限不足. 请在官方鱼吧查看要求.')
-  if (status === 403) return waiting('鱼吧拒绝了请求. 请在官方鱼吧确认登录状态, 资格和验证要求.')
+  if (/验证码|人机验证|安全验证|滑块|geetest|captcha/i.test(messages)) return waiting('鱼吧要求官方验证。请在官方鱼吧完成验证后核对签到状态。')
+  if (/未满足|不满足|无资格|没有资格|等级不足|权限不足|无权限|not\s*eligible|permission\s*denied/i.test(messages)) return waiting('鱼吧签到资格或权限不足。请在官方鱼吧查看要求。')
+  if (status === 403) return waiting('鱼吧拒绝了请求。请在官方鱼吧确认登录状态，资格和验证要求。')
   if (status < 200 || status >= 300) return dispatched ? unknownResult() : unknownPreflight()
   return null
 }
@@ -85,11 +85,11 @@ export class DouyuYubaActions {
   async run(task: DouyuTaskDefinition, signal: AbortSignal): Promise<DouyuTaskOutcome> {
     if (signal.aborted) throw cancelled()
     const { accountId, room, kind } = task
-    if (kind !== 'yuba-sign') return failed('该鱼吧任务类型尚未接入.')
-    if (!validDouyuRoom(room)) return failed('斗鱼真实房间号无效, 请重新确认房间.')
+    if (kind !== 'yuba-sign') return failed('该鱼吧任务类型尚未接入')
+    if (!validDouyuRoom(room)) return failed('斗鱼真实房间号无效，请重新确认房间')
     if (typeof accountId !== 'string' || !accountId || accountId.length > 128 || /[\s\x00-\x1f\x7f]/.test(accountId)) return loginRequired()
     const { proxy } = this.deps
-    if (!proxy.enabled || ![MAIN_HOST, YUBA_HOST].every(host => hostAllowed(host, proxy.hosts))) return failed('鱼吧请求未启用或目标域名未获允许.')
+    if (!proxy.enabled || ![MAIN_HOST, YUBA_HOST].every(host => hostAllowed(host, proxy.hosts))) return failed('当前无法连接鱼吧，本次未签到')
     const timeoutMs = Number.isFinite(proxy.requestTimeoutMs) ? Math.max(1, Math.min(proxy.requestTimeoutMs, MAX_TIMEOUT_MS)) : MAX_TIMEOUT_MS
     const timeout = new AbortController()
     const timer = setTimeout(() => timeout.abort(), timeoutMs)
@@ -101,9 +101,9 @@ export class DouyuYubaActions {
     } catch {
       if (signal.aborted) throw cancelled()
       if (dispatched) return waiting(timeout.signal.aborted
-        ? '鱼吧签到请求超时, 结果尚无法确认. 请在官方鱼吧核对后再决定是否重试.'
-        : '鱼吧签到响应未能完整读取, 结果尚无法确认. 请在官方鱼吧核对后再决定是否重试.')
-      return failed(timeout.signal.aborted ? '鱼吧请求准备超时, 未发送签到请求.' : '无法安全连接鱼吧, 未发送签到请求.')
+        ? '鱼吧签到请求超时，结果尚无法确认。请在官方鱼吧核对后再决定是否重试。'
+        : '鱼吧签到响应未能完整读取，结果尚无法确认。请在官方鱼吧核对后再决定是否重试。')
+      return failed(timeout.signal.aborted ? '鱼吧请求准备超时，未发送签到请求' : '无法安全连接鱼吧，未发送签到请求')
     } finally { clearTimeout(timer) }
   }
 
@@ -126,10 +126,10 @@ export class DouyuYubaActions {
 
     const before = await this.readHead(target.accountId, boundGroup, signal, false)
     if ('outcome' in before) return before.outcome
-    if (before.signed > 0) return succeeded('鱼吧今日已签到.')
+    if (before.signed > 0) return succeeded('鱼吧今日已签到')
     // Official 0xol72ne4hpw3 group store sign() sets isFollow=1 and increments
     // fansNum for a nonmember. Do not implicitly join a group through check-in.
-    if (before.following !== 1) return waiting('该账号尚未确认关注此鱼吧, 签到可能同时加入. 请在官方鱼吧自行处理, 本次未发送签到请求.')
+    if (before.following !== 1) return waiting('签到可能加入该鱼吧，请先到斗鱼确认。本次未签到。')
 
     // Official 0xol72ne4hpw3: POST /ybapi/topic/sign uses multipart FormData.
     // The separate request helper obtains X-CSRF-TOKEN from the acf_yb_t cookie.
@@ -150,7 +150,7 @@ export class DouyuYubaActions {
     // group's current account state; no failure path retries a write.
     const after = await this.readHead(target.accountId, boundGroup, signal, true)
     if ('outcome' in after) return after.outcome
-    return after.signed > 0 ? succeeded('鱼吧签到已由官方状态确认.') : unknownResult()
+    return after.signed > 0 ? succeeded('鱼吧签到已由官方状态确认') : unknownResult()
   }
 
   private async readHead(accountId: string, boundGroup: string, signal: AbortSignal, dispatched: boolean): Promise<HeadState | { outcome: DouyuTaskOutcome }> {
@@ -162,7 +162,7 @@ export class DouyuYubaActions {
     const data = record(payload?.data)
     const invalid = () => ({ outcome: dispatched ? unknownResult() : unknownPreflight() })
     if (payload?.status_code !== 200 || !hasNoConflictingError(payload) || !data) return invalid()
-    if (groupId(data.group_id) !== boundGroup) return { outcome: dispatched ? unknownResult() : waiting('房间与鱼吧信息不一致. 请在官方房间重新确认, 本次未发送签到请求.') }
+    if (groupId(data.group_id) !== boundGroup) return { outcome: dispatched ? unknownResult() : waiting('房间与鱼吧信息不一致。请在官方房间重新确认，本次未发送签到请求。') }
     const signed = nonnegativeInteger(data.is_signed)
     const experience = nonnegativeInteger(data.group_exp)
     if (signed === null || experience === null) return invalid()

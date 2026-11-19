@@ -34,7 +34,7 @@ async function mount(steps = { smallStepSeconds: 0.5, largeStepSeconds: 5 }) {
 }
 
 describe('manual alignment nudge controls', () => {
-  it('keeps the normal labels, shows the fine-adjustment hint and uses a large step for a click', async () => {
+  it('keeps the normal labels, describes fine adjustment in the tooltip and uses a large step for a click', async () => {
     const { back, forward, apply } = await mount()
     expect(back).toHaveClass('capsule-nudge')
     expect(back.querySelector('.capsule-nudge-label')).toHaveTextContent('回退画面')
@@ -43,8 +43,10 @@ describe('manual alignment nudge controls', () => {
       expect(button.querySelector('.capsule-nudge-step .icon path')?.getAttribute('d'))
         .toBe(button.querySelector('.capsule-nudge-label .icon path')?.getAttribute('d'))
     }
-    expect(back.querySelector('.capsule-nudge-hint')).toHaveTextContent('按住Shift微调')
-    expect(forward.querySelector('.capsule-nudge-hint')).toHaveTextContent('按住Shift微调')
+    expect(back).toHaveAttribute('title', expect.stringContaining('「,」或「[」键）；按住 Shift 微调'))
+    expect(forward).toHaveAttribute('title', expect.stringContaining('「.」或「]」键）；按住 Shift 微调'))
+    expect(back).not.toHaveTextContent('按住 Shift 微调')
+    expect(forward).not.toHaveTextContent('按住 Shift 微调')
     fireEvent.click(back)
     expect(apply).toHaveBeenLastCalledWith(5)
     fireEvent.click(forward, { shiftKey: true })

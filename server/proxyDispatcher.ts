@@ -52,7 +52,7 @@ class ManagedProxyDispatcher extends Dispatcher {
       else if (handler.onResponseError) Reflect.apply(handler.onResponseError, handler, [undefined, error])
     }
     const timer = this.timeoutMs > 0 ? setTimeout(() => {
-      const error = Object.assign(new Error('代理请求建立超时.'), { code: 'UND_ERR_PROXY_HANDSHAKE_TIMEOUT' })
+      const error = Object.assign(new Error('代理请求建立超时'), { code: 'UND_ERR_PROXY_HANDSHAKE_TIMEOUT' })
       cancel(error)
     // Let the connector report its marked TCP/DNS timeout before the broader
     // handshake deadline. A tunnel or source timeout must never trigger fallback.
@@ -61,7 +61,7 @@ class ManagedProxyDispatcher extends Dispatcher {
     // Fetch normally receives its abort callback only after the tunnel connects.
     // Register cancellation now so an abandoned SOCKS handshake cannot outlive it.
     const earlyConnect = typeof handler.onConnect === 'function' && typeof handler.onRequestStart !== 'function'
-    if (earlyConnect) handler.onConnect!((reason?: Error) => cancel(reason ?? Object.assign(new Error('代理请求已取消.'), { name: 'AbortError' })))
+    if (earlyConnect) handler.onConnect!((reason?: Error) => cancel(reason ?? Object.assign(new Error('代理请求已取消'), { name: 'AbortError' })))
     if (cancelled) return true
     const wrapped = new Proxy(handler, { get: (target, name) => {
       const original: unknown = Reflect.get(target, name)
@@ -72,7 +72,7 @@ class ManagedProxyDispatcher extends Dispatcher {
           // A connected socket now belongs to its pool; normal request abort
           // handles it. Pending handshakes remain owned by their dispatch only.
           owner.sockets.clear()
-          if (cancelled) abortTransport(Object.assign(new Error('代理请求已取消.'), { name: 'AbortError' }))
+          if (cancelled) abortTransport(Object.assign(new Error('代理请求已取消'), { name: 'AbortError' }))
           return
         }
         if (name === 'onRequestStart') owner.sockets.clear()
@@ -80,7 +80,7 @@ class ManagedProxyDispatcher extends Dispatcher {
         if (name === 'onHeaders' || name === 'onResponseStart' || name === 'onUpgrade' || name === 'onRequestUpgrade') clear()
         if (name === 'onComplete' || name === 'onResponseEnd' || name === 'onUpgrade' || name === 'onRequestUpgrade') finish()
         if (name === 'onError' || name === 'onResponseError') {
-          finish(); releasePending(new Error('代理连接已取消.'))
+          finish(); releasePending(new Error('代理连接已取消'))
         }
         return Reflect.apply(original, target, args)
       }
@@ -88,7 +88,7 @@ class ManagedProxyDispatcher extends Dispatcher {
     // The experimental SOCKS agent reads its pool limit from dispatch options.
     const settings = { ...options, connections: this.connections }
     try { return this.pending.run(owner, () => this.inner.dispatch(settings, wrapped)) }
-    catch (error) { finish(); releasePending(new Error('代理请求失败.')); throw error }
+    catch (error) { finish(); releasePending(new Error('代理请求失败')); throw error }
   }
   override close(): Promise<void>
   override close(callback: () => void): void
@@ -113,17 +113,17 @@ class ManagedProxyDispatcher extends Dispatcher {
     this.disposed = true
     for (const timer of this.timers) clearTimeout(timer)
     this.timers.clear()
-    for (const socket of this.sockets) socket.destroy(new Error('代理连接已关闭.'))
+    for (const socket of this.sockets) socket.destroy(new Error('代理连接已关闭'))
     this.sockets.clear()
   }
 }
 
 export function createProxyDispatcher(route: NetworkRoute, timeoutMs: number, connections = 1,
   tls: { verifyTls?: boolean; verifyProxyTls?: boolean } = {}, maxHeaderSize?: number): Dispatcher {
-  if ((route.kind !== 'http' && route.kind !== 'socks5') || !route.proxyUrl) throw new Error('系统代理类型不受支持.')
+  if ((route.kind !== 'http' && route.kind !== 'socks5') || !route.proxyUrl) throw new Error('系统代理类型不受支持')
   const proxy = new URL(route.proxyUrl)
   if (!(route.kind === 'http' ? ['http:', 'https:'] : ['socks5:']).includes(proxy.protocol)
-    || !proxy.hostname || !['', '/'].includes(proxy.pathname) || proxy.search || proxy.hash) throw new Error('系统代理地址无效.')
+    || !proxy.hostname || !['', '/'].includes(proxy.pathname) || proxy.search || proxy.hash) throw new Error('系统代理地址无效')
   const sockets = new Set<Socket>()
   const pending = new AsyncLocalStorage<PendingConnection>()
   const connect = buildConnector({ timeout: timeoutMs, rejectUnauthorized: tls.verifyProxyTls !== false, autoSelectFamily: true })

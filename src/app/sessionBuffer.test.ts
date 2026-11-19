@@ -33,7 +33,7 @@ describe('adaptive buffer notices', () => {
     receive({ ...state, state: 'ready', seconds: 18 })
     const snapshot = session!.flush()
     expect(snapshot.notices).toHaveLength(1)
-    expect(snapshot.notices[0]).toMatchObject({ kind: 'warn', text: '1440p 取流失败, 已回退到 1080p' })
+    expect(snapshot.notices[0]).toMatchObject({ kind: 'warn', text: '1440p 取流失败，已回退到 1080p' })
     expect(snapshot.buffers.official).toMatchObject({ state: 'ready', seconds: 18 })
   })
 
@@ -49,7 +49,7 @@ describe('adaptive buffer notices', () => {
     receive({ role: 'official', state: 'starting', seconds: 0 })
     receive(state)
     expect(session!.flush().notices).toHaveLength(2)
-    expect(session!.snapshot.notices[0]?.text).toBe('2160p 取流失败, 已回退到 720p')
+    expect(session!.snapshot.notices[0]?.text).toBe('2160p 取流失败，已回退到 720p')
   })
 
   it('updates displayed source quality to the best matching HLS option without reloading media', async () => {

@@ -225,7 +225,7 @@ describe('bounded HLS recovery', () => {
     hls.error()
     expect(hls.recoverMediaError).toHaveBeenCalledTimes(3)
     expect(hls.destroy).toHaveBeenCalledTimes(1)
-    expect(player.getState().official).toMatchObject({ status: 'error', error: { hint: expect.stringContaining('重新加载') } })
+    expect(player.getState().official).toMatchObject({ status: 'error', error: { hint: expect.stringContaining('重新载入') } })
     expect(player.snapshot('official')?.ready).toBe(false)
   })
 

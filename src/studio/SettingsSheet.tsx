@@ -55,7 +55,6 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
 }): React.ReactNode {
   const [section, setSection] = useState<SettingsSection>(target.section)
   const huya = isReadOnlyDanmakuRoom(room)
-  const readOnlyPlatform = room?.startsWith('douyin:') ? '抖音' : '虎牙'
   useEffect(() => setSection(target.section), [target])
   useEffect(() => { remember('settings:section', section) }, [section])
   return (
@@ -73,8 +72,7 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
           {section === 'general' && <General />}
           {section === 'accounts' && <AccountSettings target={target} onWatch={(next) => { onWatch(next); onClose() }} />}
           {huya && ['records', 'insights'].includes(section) && (
-            <p className="settings-empty">{room?.startsWith('douyin:') ? '当前抖音房间暂不支持弹幕记录与房间统计, 可在聊天栏手动发送普通文字弹幕.'
-              : `当前${readOnlyPlatform}房间仅支持只读弹幕, 斗鱼操作与统计暂不可用`}</p>
+            <p className="settings-empty">{section === 'records' ? '弹幕记录仅支持斗鱼' : '房间数据仅支持斗鱼'}</p>
           )}
           {section === 'records' && !huya && (
             <DanmakuRecords initialTab={target.records?.tab ?? 'history'} initialUid={target.records?.uid} room={room}
@@ -82,7 +80,7 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
           )}
           {section === 'insights' && !huya && (room
             ? <RoomInsights room={room} />
-            : <p className="settings-empty">连接斗鱼弹幕房间后显示房间数据</p>)}
+            : <p className="settings-empty">请先连接斗鱼弹幕</p>)}
           {section === 'frame-matching' && <div className="settings-page">
             <FrameHashSettings />
           </div>}
@@ -183,7 +181,7 @@ function YouTubeAccount(): React.ReactNode {
     })
     if (!mounted.current || started !== readRevision.current) return
     if (next?.youtube) { setStatus(next); setLoadError('') }
-    else if (!failed) setLoadError('账号状态读取失败，请重试。')
+    else if (!failed) setLoadError('账号状态读取失败，请重试')
     setChecking(false)
   }
   useEffect(() => { void refresh() }, [])
@@ -201,7 +199,7 @@ function YouTubeAccount(): React.ReactNode {
       }
       await refresh()
     } catch (error) {
-      if (mounted.current) { setMessage(''); setError(displayError(error, '账号操作暂时失败, 请重试.')) }
+      if (mounted.current) { setMessage(''); setError(displayError(error, '账号操作失败，请重试')) }
     } finally { if (mounted.current) setBusy(false) }
   }
   const youtube = status?.youtube
@@ -220,11 +218,11 @@ function YouTubeAccount(): React.ReactNode {
           <button type="button" className="btn-solid small" disabled={busy || checking || status === null} onClick={() => void act(false)}>{youtube?.loggedIn ? '重新登录' : '登录'}</button>
         </span>
       </div>
-      <p className="muted">出现「请确认你不是机器人」提示或观看会员直播时需要登录。</p>
+      <p className="muted">观看会员直播或提示需要验证时，请登录 YouTube</p>
       {message && <p className="muted" role="status">{message}</p>}
       {loadError && <ReadError error={loadError} detail={loadErrorDetail} onRetry={() => void refresh()} />}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
-      <Switch label="自动使用最高画质" detail="可用时直接载入 1440p、4K 等最高清晰度，网络较慢时可关闭"
+      <Switch label="自动使用最高画质" detail="网络较慢时可关闭"
         checked={settings.preferAdaptive} onChange={(preferAdaptive) => session.updateSettings({ preferAdaptive })} />
     </Group>
   )
@@ -249,15 +247,15 @@ function DouyinAccount(): React.ReactNode {
         if (!mounted.current) return
         if (verified.ok && typeof verified.value?.loggedIn==='boolean' && typeof verified.value?.canSend==='boolean') {
           setOnline(verified.value)
-          if (verified.value.loginState === 'unavailable') setError(displayError(verified.value, verified.value.message || '抖音登录状态暂时无法确认.'))
+          if (verified.value.loginState === 'unavailable') setError(displayError(verified.value, verified.value.message || '暂时无法确认抖音登录状态'))
         } else {
           setOnline(null)
-          setError(verified.ok ? displayError({ code: 'invalid-login-state' }, '抖音登录状态暂时无法确认.') : verified)
+          setError(verified.ok ? displayError({ code: 'invalid-login-state' }, '暂时无法确认抖音登录状态') : verified)
         }
       }
       else setError(result.ok ? '暂时无法读取抖音登录状态' : result)
     } catch (error) {
-      if (mounted.current) setError(displayError(error, '抖音登录状态读取失败, 请重试'))
+      if (mounted.current) setError(displayError(error, '抖音登录状态读取失败，请重试'))
     } finally { if (mounted.current) setChecking(false) }
   }
   useEffect(() => { void refresh() }, [])
@@ -265,7 +263,7 @@ function DouyinAccount(): React.ReactNode {
     if (busy) return
     setBusy(true)
     setError('')
-    setMessage(logout ? '' : '请在应用内完成抖音官方登录或验证, 成功后自动关闭')
+    setMessage(logout ? '' : '正在登录抖音')
     try {
       const result = logout ? await apiClient.logout('douyin') : await apiClient.login('douyin')
       if (!mounted.current) return
@@ -273,24 +271,23 @@ function DouyinAccount(): React.ReactNode {
       if (logout) setOnline({ loggedIn: false, canSend: false, loginState: 'signed-out', message: '已退出抖音' })
       if (logout && status) setStatus({ ...status, douyin: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false } })
       const signing=result.value as {signingReady?:boolean;signingProblem?:string}
-      setMessage(logout ? '已退出抖音, 已清除本地发送认证' : signing.signingReady===true
-        ? '抖音登录和签名材料已保存, 聊天栏将自动核对发送状态' : signing.signingReady===false
-          ? '抖音登录已完成, 本次未保存完整发送认证. 请查看账号状态和错误详情.' : '抖音登录已完成, 聊天栏将自动核对发送状态')
-      if (!logout && typeof signing.signingProblem==='string') setError({code:signing.signingProblem,message:'抖音发送认证保存未完成.'})
+      setMessage(logout ? '已退出抖音' : signing.signingReady===false
+        ? '已登录，但暂时不能发送弹幕，请重新登录' : '已登录，正在检查能否发送弹幕')
+      if (!logout && typeof signing.signingProblem==='string') setError({code:signing.signingProblem,message:'未能开启抖音弹幕发送'})
       await refresh()
     } catch (error) {
-      if (mounted.current) { setMessage(''); setError(displayError(error, '抖音账号操作失败, 请重试')) }
+      if (mounted.current) { setMessage(''); setError(displayError(error, '抖音账号操作失败，请重试')) }
     } finally { if (mounted.current) setBusy(false) }
   }
   const douyin = status?.douyin
   const loggedIn=online?.loggedIn === true
-  const label=checking ? '正在检查登录状态' : !online ? '登录状态暂时无法确认' : online.loginState==='expired' ? '本地会话未通过验证' : online.loginState==='unavailable' ? '登录状态暂时无法确认' : online.loginState==='authenticating' ? '正在登录' : loggedIn ? online.canSend ? '已登录' : '已登录, 发送尚未就绪' : '未登录'
+  const label=checking ? '正在检查登录状态' : !online ? '登录状态暂时无法确认' : online.loginState==='expired' ? '登录已失效' : online.loginState==='unavailable' ? '登录状态暂时无法确认' : online.loginState==='authenticating' ? '正在登录' : loggedIn ? online.canSend ? '已登录' : '已登录，暂不能发弹幕' : '未登录'
   return (
     <Group title="抖音">
       <div className="row-split">
         <span className="account-identity">{douyin?.nickname && <><AccountAvatar username={douyin.nickname} avatar={douyin.avatar} /><b>{douyin.nickname}</b></>}
           {checking && !douyin ? '正在检查登录状态' : !douyin ? '登录状态未知' : label}
-          {loggedIn && douyin?.expiresAt ? <span className="muted">, {new Date(douyin.expiresAt * 1000).toLocaleDateString('zh-CN')} 到期</span> : null}
+          {loggedIn && douyin?.expiresAt ? <span className="muted">，{new Date(douyin.expiresAt * 1000).toLocaleDateString('zh-CN')} 到期</span> : null}
         </span>
         <span className="row-end">
           <BrowserImportButton platform="douyin" disabled={busy} />
@@ -298,8 +295,7 @@ function DouyinAccount(): React.ReactNode {
           <button type="button" className="btn-solid small" disabled={busy || checking} onClick={() => void act(false)}>{douyin?.loggedIn || douyin?.authKeysPresent?.length ? '重新登录' : '登录'}</button>
         </span>
       </div>
-      <p className="muted">在应用内完成官方登录或验证, 成功后自动关闭. 扫码, 短信, 密码与验证码由隔离的抖音官方登录组件处理.</p>
-      <p className="muted">登录状态与发送认证分别核对. 完成官方登录后, 必要票据和配对私钥由主进程加密保存在本机, 用于本地 HTTP 签名. 退出或重新登录会清除旧发送认证.</p>
+      <p className="muted">退出或重新登录会清除原有的弹幕发送授权</p>
       {message && <p className="muted" role="status">{message}</p>}
       {error && <><p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>
         <button type="button" className="btn-quiet small" disabled={busy || checking} onClick={() => void refresh(true)}>重新检查登录状态</button></>}
@@ -312,7 +308,7 @@ function AlignPrefs(): React.ReactNode {
   const { settings } = useSessionSnapshot()
   return (
     <Group title="对齐">
-      <Switch label="显示基础识别面板" detail="在弹幕顶部显示识别状态和范围设置, 默认收起. 不影响基础倒计时识别与自动对齐."
+      <Switch label="显示基础识别面板" detail="在弹幕栏顶部显示识别状态和框选工具"
         checked={settings.basicRecognitionPanelVisible} onChange={(visible) => session.updateSettings({ basicRecognitionPanelVisible: visible })} />
       <div className="field-stack">
         <span className="field-label">单击步长</span>
@@ -327,18 +323,10 @@ function AlignPrefs(): React.ReactNode {
           options={[0.1, 0.25, 0.5, 1].map((value) => ({ value, label: `${value} 秒` }))} />
       </div>
       <div className="field-stack">
-        <span className="field-label">识别时长</span>
-        {settings.recognitionMode === 'basic' ? (
-          <p className="muted">基础模式载入后自动预识别, 最多观察 6 秒. 连续跳秒证据足够即可提前结束.</p>
-        ) : (
-          <p className="muted">画面匹配最多观察 9 秒. 延迟较大时需要先积累共同片段, 调整后会重新采集画面复核.</p>
-        )}
-      </div>
-      <div className="field-stack">
-        <span className="field-label">静默同步跳转阈值</span>
-        <Segmented label="静默同步跳转阈值" value={settings.seekThresholdSeconds} onChange={(seconds) => session.setSeekThreshold(seconds)}
+        <span className="field-label">保持对齐的跳转门槛</span>
+        <Segmented label="保持对齐的跳转门槛" value={settings.seekThresholdSeconds} onChange={(seconds) => session.setSeekThreshold(seconds)}
           options={[1, 1.5, 2].map((value) => ({ value, label: `${value} 秒` }))} />
-        <p className="muted">仅静默自动同步在差值小于阈值时使用变速. 手动同步需要调整时始终跳转.</p>
+        <p className="muted">定时对齐时，偏差小于此值会变速，不直接跳转</p>
       </div>
     </Group>
   )
@@ -370,13 +358,13 @@ function SourceNetworkRules({ rules, onChange, disabled }: { rules: MediaSourceR
       if (!validMediaSourceRule(rule)) throw new Error('source')
       onChange([...rules.filter(item => item.origin !== source), rule])
       setOrigin(''); setHeaders(''); setProblem('')
-    } catch { setProblem('请输入有效的 HTTP/HTTPS 来源, 请求头每行使用 名称: 值, 不要重复名称.') }
+    } catch { setProblem('请输入有效的 HTTP/HTTPS 来源。请求头每行使用「名称: 值」，名称不能重复。') }
   }
   return <div className="field-stack">
     <span className="field-label">按来源配置</span>
-    <p className="muted">请求头只发送给对应的协议, 域名和端口. 来源设置加入后, 点击下方保存按钮.</p>
+    <p className="muted">请求头仅发往此来源（协议、域名和端口）。加入后须点击「保存取流网络设置」。</p>
     {rules.map(rule => <div className="row-split" key={rule.origin}>
-      <span title={rule.origin} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rule.origin} ({Object.keys(rule.headers).length} 个请求头)</span>
+      <span title={rule.origin} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rule.origin}（{Object.keys(rule.headers).length} 个请求头）</span>
       <span className="row-end" style={{ flexShrink: 0 }}>
         <button className="btn-quiet small" type="button" aria-label={`编辑来源 ${rule.origin}`} disabled={disabled} onClick={() => {
           setOrigin(rule.origin); setHeaders(Object.entries(rule.headers).map(([name, value]) => `${name}: ${value}`).join('\n'))
@@ -391,7 +379,7 @@ function SourceNetworkRules({ rules, onChange, disabled }: { rules: MediaSourceR
       placeholder={'Referer: https://example.com/\nUser-Agent: MyPlayer'} onChange={event => setHeaders(event.target.value)} spellCheck={false} /></label>
     <Switch label="校验该来源服务器证书" checked={verifyTls} disabled={disabled} onChange={setVerifyTls} />
     <Switch label="校验该来源 HTTPS 代理证书" checked={verifyProxyTls} disabled={disabled} onChange={setVerifyProxyTls} />
-    <p className="muted">该来源的证书设置也用于携带登录信息的取流读取. 独立解析工具可能将两项校验联动执行.</p>
+    <p className="muted">此处的证书设置也适用于带登录信息的取流连接</p>
     <button className="btn-quiet small" type="button" disabled={disabled || !origin.trim()} onClick={apply}>加入来源设置</button>
     {problem && <p className="form-error" role="alert">{problem}</p>}
   </div>
@@ -413,7 +401,7 @@ function Network(): React.ReactNode {
       if (result.ok) { setState(result.value); setDraft({ ...DEFAULT_MEDIA_NETWORK, ...result.value.media }) }
       else setLoadError(result)
     } catch (caught) {
-      if (mounted.current) setLoadError(displayError(caught, '网络设置读取失败，请重试。'))
+      if (mounted.current) setLoadError(displayError(caught, '网络设置读取失败，请重试'))
     } finally { if (mounted.current) setPending(false) }
   }
   useEffect(() => { void refresh() }, [])
@@ -432,7 +420,7 @@ function Network(): React.ReactNode {
   const change = <K extends keyof MediaNetworkOptions>(key: K, value: MediaNetworkOptions[K]): void => setDraft(previous => ({ ...previous, [key]: value }))
   const saveMedia = async (): Promise<void> => {
     if (pending || !state) return
-    if (!validMediaNetwork(draft)) { setError('请检查代理地址和网络参数.'); return }
+    if (!validMediaNetwork(draft)) { setError('请检查代理地址和网络参数'); return }
     setPending(true)
     setError('')
     try {
@@ -449,22 +437,22 @@ function Network(): React.ReactNode {
         <span className="muted">{loadError ? '读取失败' : proxy ? PROXY_NAME[proxy.type] : '正在读取'}</span>
       </div>
       {proxy?.fallbackReason === 'socks4-unsupported' && (
-        <p className="note-warn">暂不支持 SOCKS4 代理, 请改用 HTTP 或 SOCKS5 代理. 不会自动改为直连.</p>
+        <p className="note-warn">不支持 SOCKS4，请改用 HTTP 或 SOCKS5 代理</p>
       )}
       {proxy?.fallbackReason === 'proxy-type-unsupported' && (
-        <p className="note-warn">系统代理类型不受支持, 请改用 HTTP 或 SOCKS5 代理. 不会自动改为直连.</p>
+        <p className="note-warn">不支持当前系统代理，请改用 HTTP 或 SOCKS5 代理</p>
       )}
-      {proxy?.fallbackReason === 'proxy-resolution-failed' && <p className="note-warn">无法读取系统代理, 可以在取流出网方式中选择直接连接或自定义代理.</p>}
-      <p className="muted">按平台出网时, YouTube 和 Twitch 使用系统代理.</p>
-      <Switch label="斗鱼、哔哩哔哩、虎牙直接连接" detail="开着代理时也不经过代理，避免被分到海外线路。下次载入直播间时生效"
+      {proxy?.fallbackReason === 'proxy-resolution-failed' && <p className="note-warn">无法读取系统代理，请检查系统代理设置</p>}
+      <p className="muted">选择「按平台连接」时，YouTube 和 Twitch 使用系统代理</p>
+      <Switch label="国内平台直接连接" detail="适用于按平台连接，下次载入直播间生效"
         checked={state?.domesticRouting === 'direct'} disabled={pending || !state} onChange={(on) => void save(on)} />
       <form className="field-stack" onSubmit={event => { event.preventDefault(); void saveMedia() }}>
         <span className="field-label">取流网络</span>
-        <p className="muted">默认允许任意媒体域名, 端口和内网来源, 不校验匿名取流证书. 修改后重新加载片源生效.</p>
+        <p className="muted">保存后需重新载入片源</p>
         <label className="field-stack">
-          <span>取流出网方式</span>
+          <span>取流连接方式</span>
           <select value={draft.routing} disabled={pending || !state} onChange={event => change('routing', event.target.value as MediaNetworkOptions['routing'])}>
-            <option value="platform">按平台出网</option><option value="system">全部使用系统代理</option>
+            <option value="platform">按平台连接</option><option value="system">全部使用系统代理</option>
             <option value="direct">全部直接连接</option><option value="custom">自定义代理</option>
           </select>
         </label>
@@ -472,7 +460,7 @@ function Network(): React.ReactNode {
           <span>取流代理地址</span>
           <input className="text-input" aria-label="取流代理地址" value={draft.proxyUrl} placeholder="http://127.0.0.1:7890" disabled={pending || !state}
             onChange={event => change('proxyUrl', event.target.value)} />
-          <small>支持 HTTP, HTTPS 和 SOCKS5, 可在地址中指定代理账号.</small>
+          <small>支持 HTTP、HTTPS 和 SOCKS5，可在地址中指定代理账号</small>
         </label>}
         <Switch label="代理连接失败后允许直连" checked={draft.fallbackDirect} disabled={pending || !state}
           onChange={value => change('fallbackDirect', value)} />
@@ -482,7 +470,7 @@ function Network(): React.ReactNode {
           onChange={value => change('verifyProxyTls', value)} />
         <Switch label="允许媒体访问本机和局域网" checked={draft.allowPrivate} disabled={pending || !state}
           onChange={value => change('allowPrivate', value)} />
-        <p className="muted">携带账号 Cookie 或 Token 的取流请求默认校验证书, 可以按来源指定其他策略. 登录与账号操作使用各自原有策略.</p>
+        <p className="muted">关闭校验会降低连接安全性。带登录信息的取流连接默认校验证书，可按来源修改。</p>
         {([
           ['maxRedirects', '重定向次数', 1], ['requestTimeoutMs', '请求超时秒数', 1000],
           ['startupTimeoutMs', '首次播放等待秒数', 1000], ['stallTimeoutMs', '断流等待秒数', 1000],
@@ -493,7 +481,7 @@ function Network(): React.ReactNode {
             value={(draft[key] ?? 0) / scale} disabled={pending || !state}
             onChange={event => change(key, (Number.isFinite(event.target.valueAsNumber) ? event.target.valueAsNumber : 0) * scale)} />
         </label>)}
-        <small>数值为 0 表示不设应用层上限. 重定向循环和无效媒体仍会报告错误.</small>
+        <small>0 表示不限</small>
         <SourceNetworkRules rules={draft.sourceRules ?? []} disabled={pending || !state} onChange={rules => change('sourceRules', rules)} />
         <div className="row-end"><button type="submit" className="btn small" disabled={pending || !state}>保存取流网络设置</button></div>
       </form>
@@ -518,7 +506,7 @@ function Decoding(): React.ReactNode {
       if (result.ok) setState(result.value)
       else setLoadError(result)
     } catch (caught) {
-      if (mounted.current) setLoadError(displayError(caught, '解码设置读取失败，请重试。'))
+      if (mounted.current) setLoadError(displayError(caught, '解码设置读取失败，请重试'))
     } finally { if (mounted.current) setPending(false) }
   }
   useEffect(() => { void refresh() }, [])
@@ -539,7 +527,7 @@ function Decoding(): React.ReactNode {
       <Switch label="软件解码" detail="画面出现花屏、绿屏或黑屏时启用，重启应用后生效"
         checked={state?.mode === 'software'} disabled={pending || !state} onChange={(on) => void save(on)} />
       {state?.restartRequired && <p className="note-warn">重启后改为{modeName(state.mode)}，当前仍是{modeName(state.effectiveMode)}</p>}
-      {state?.forcedByCommandLine && <p className="muted">启动参数强制了软件解码</p>}
+      {state?.forcedByCommandLine && <p className="muted">本次启动强制使用软件解码</p>}
       {loadError && <ReadError error={loadError} detail={loadErrorDetail} onRetry={() => void refresh()} />}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
     </Group>
@@ -566,9 +554,9 @@ export function Tools(): React.ReactNode {
       const result = await apiClient.getToolsStatus()
       if (!mounted.current) return
       if (result.ok && Array.isArray(result.value?.tools) && result.value.update) setStatus(result.value)
-      else setLoadError(result.ok ? '取流工具状态读取失败，请重试。' : result)
+      else setLoadError(result.ok ? '取流工具状态读取失败，请重试' : result)
     } catch (caught) {
-      if (mounted.current) setLoadError(displayError(caught, '取流工具状态读取失败，请重试。'))
+      if (mounted.current) setLoadError(displayError(caught, '取流工具状态读取失败，请重试'))
     }
   }
   useEffect(() => { void refresh() }, [])
@@ -601,7 +589,7 @@ export function Tools(): React.ReactNode {
     try {
       const result = await apiClient.getAcquisitionDiagnostics()
       if (!mounted.current) return
-      if (!result.ok) { setExportError(displayError(result, '诊断报告暂时无法生成, 请重试.')); return }
+      if (!result.ok) { setExportError(displayError(result, '诊断报告暂时无法生成，请重试')); return }
       const report = createFeedbackReport(result.value, session.exportPlaybackDiagnostics())
       const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' })
       url = URL.createObjectURL(blob)
@@ -609,9 +597,9 @@ export function Tools(): React.ReactNode {
       link.href = url
       link.download = 'Fy1Sync-diagnostics.json'
       link.click()
-      setExportMessage('诊断报告已生成, 请查看下载文件.')
+      setExportMessage('诊断报告已导出')
     } catch (error) {
-      if (mounted.current) setExportError(displayError(error, '诊断报告导出失败, 请重试.'))
+      if (mounted.current) setExportError(displayError(error, '诊断报告导出失败，请重试'))
     } finally {
       if (url) URL.revokeObjectURL(url)
       exportPending.current = false
@@ -627,9 +615,8 @@ export function Tools(): React.ReactNode {
           <div key={tool.name}><dt>{tool.name}</dt><dd className="num">{tool.version}<span className="muted"> · {SOURCE_NAME[tool.source]}</span></dd></div>
         ))}
       </dl>
-      <p className="muted">YouTube 无法打开直播时，可先更新 yt-dlp 后重试。</p>
       {status?.tools.some((tool) => tool.name === 'ffmpeg' && tool.source !== 'bundled') && (
-        <p className="note-warn">正在使用非内置的 ffmpeg。内置版本会校验直播地址的 HTTPS 证书，其他版本需要你自己确认这一点。</p>
+        <p className="note-warn">正在使用外部 ffmpeg，请确认它会校验 HTTPS 证书</p>
       )}
       <div className="row-end">
         <button type="button" className="btn-quiet small" disabled={running || !update?.previousVersion} onClick={() => void act('previous')}>恢复上一版本</button>
@@ -644,7 +631,7 @@ export function Tools(): React.ReactNode {
       )}
       {loadError && <ReadError error={loadError} detail={loadErrorDetail} onRetry={() => void refresh()} />}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
-      <p className="muted">请在出现问题后导出诊断报告, 文件不会自动上传.</p>
+      <p className="muted">诊断报告仅保存到本机</p>
       <div className="row-end">
         <button type="button" className="btn-quiet small" disabled={exporting} onClick={() => void exportReport()}>
           {exporting ? '正在导出' : '导出诊断报告'}

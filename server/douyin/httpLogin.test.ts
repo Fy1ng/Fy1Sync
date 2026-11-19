@@ -153,8 +153,8 @@ describe('pure HTTP passport login', () => {
   })
 
   it.each([
-    { response: () => new Response('PRIVATE_HTML', { status: 403 }), expected: { code: 'douyin-http-login-rejected', httpStatus: 403 }, text: 'HTTP 403' },
-    { response: () => Response.json({ data: { error_code: 1101, description: 'PRIVATE_DESCRIPTION' } }), expected: { code: 'douyin-http-login-rejected', platformCode: 1101 }, text: '平台码 1101' },
+    { response: () => new Response('PRIVATE_HTML', { status: 403 }), expected: { code: 'douyin-http-login-rejected', httpStatus: 403 }, text: '抖音暂时无法完成登录' },
+    { response: () => Response.json({ data: { error_code: 1101, description: 'PRIVATE_DESCRIPTION' } }), expected: { code: 'douyin-http-login-rejected', platformCode: 1101 }, text: '抖音未接受此次登录' },
     { response: () => new Response('PRIVATE_NOT_JSON'), expected: { code: 'douyin-http-login-receipt-invalid' }, text: '结果不完整' },
   ])('preserves $text on a failed credential request without labeling it a network failure or repeating it', async ({ response, expected, text }) => {
     const f = fixture()
@@ -187,7 +187,7 @@ describe('pure HTTP passport login', () => {
     Object.defineProperty(error, 'message', { get: getter })
     const detail = douyinHttpLoginFailureDetails(error)
     expect(detail).toEqual({ code: 'douyin-http-login-rejected', platformCode: 4031, requestStage: 'password-login' })
-    expect(douyinHttpLoginFailureMessage(detail)).toContain('平台码 4031')
+    expect(douyinHttpLoginFailureMessage(detail)).toContain('抖音未接受此次登录')
     expect(JSON.stringify(detail)).not.toContain('PRIVATE')
     expect(getter).not.toHaveBeenCalled()
     Object.defineProperty(error, 'code', { get: getter })
@@ -304,7 +304,7 @@ describe('pure HTTP passport login', () => {
     try {
       await f.session.initialize(); f.mode('rejected')
       try { await f.session.poll(); throw new Error('Expected platform rejection') }
-      catch (error) { expect(error).toMatchObject({ platformCode: 4031 }); expect(JSON.stringify(error)).not.toMatch(/synthetic|PRIVATE|cookie|ticket/); expect((error as Error).message).toContain('4031') }
+      catch (error) { expect(error).toMatchObject({ platformCode: 4031 }); expect(JSON.stringify(error)).not.toMatch(/synthetic|PRIVATE|cookie|ticket/); expect((error as Error).message).toContain('抖音未接受此次登录') }
     } finally { f.session.dispose() }
   })
 })

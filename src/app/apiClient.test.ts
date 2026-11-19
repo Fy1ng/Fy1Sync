@@ -27,7 +27,7 @@ describe('ApiClient IPC failures', () => {
     const result = await new ApiClient({ bridge }).health()
     expect(result).toMatchObject({ ok: false, code: 'ipc-error' })
     if (result.ok) throw new Error('expected failure')
-    expect(result.message).toContain('无法连接应用主进程')
+    expect(result.message).toContain('无法连接 Fy1Sync')
   })
 
   it('reports a missing preload without attempting HTTP', async () => {

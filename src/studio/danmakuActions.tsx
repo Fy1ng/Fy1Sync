@@ -82,7 +82,7 @@ export function DanmakuActionsProvider({ children, onOpenRecords }: {
         await navigator.clipboard.writeText(text)
         if (mounted.current && copyContext.current === context) session.notice('info', '弹幕已复制')
       } catch (caught) {
-        if (mounted.current && copyContext.current === context) session.notice('warn', '复制失败, 请重试.', caught)
+        if (mounted.current && copyContext.current === context) session.notice('warn', '复制失败，请重试', caught)
       }
     })().finally(() => {
       if (copyPending.current !== pending) return
@@ -150,7 +150,7 @@ function SenderDetails({ room, uid, name, onClose }: { room: string; uid: string
             <dt>粉丝牌</dt><dd>{d?.fansBadge ? <>{d.fansBadge.name} <span className="num">Lv.{d.fansBadge.level}</span>（房间 {d.fansBadge.room}）</> : unknown}</dd>
           </dl>
         )}
-        <p className="muted">仅显示本机收到的该用户弹幕中携带的公开信息。</p>
+        <p className="muted">信息来自本机收到的弹幕，可能不完整</p>
       </div>
     </Sheet>
   )
@@ -206,7 +206,7 @@ function MuteDialog({ room, message, onClose }: { room: string; message: Danmaku
           <dt>账号</dt><dd>{account?.label ?? '未设置'}</dd>
           <dt>用户</dt><dd>{message.user}</dd>
         </dl>
-        {!account?.loggedIn ? <p className="form-error"><ErrorText error="请先登录斗鱼账号并设为当前账号." /></p>
+        {!account?.loggedIn ? <p className="form-error"><ErrorText error="请先登录斗鱼账号并设为当前账号" /></p>
           : permission === null ? <p className="muted">正在向斗鱼确认管理权限…</p>
             : !permission.allowed ? <p className="form-error" role="alert"><ErrorText error={permissionFailure ?? permission} message={permission.message} /></p> : (
               <>

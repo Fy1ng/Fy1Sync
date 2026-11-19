@@ -33,11 +33,11 @@ export class DeliveryTracker {
     this.capacity = options.capacity ?? 256
     this.windowMs = options.windowMs ?? 15_000
     if (!Number.isInteger(this.capacity) || this.capacity < 1 || this.capacity > 2_000
-      || !Number.isInteger(this.windowMs) || this.windowMs < 1_000 || this.windowMs > 60_000) throw new Error('发送结果跟踪配置无效.')
+      || !Number.isInteger(this.windowMs) || this.windowMs < 1_000 || this.windowMs > 60_000) throw new Error('发送结果跟踪配置无效')
   }
 
   begin(input: DeliveryAttempt): string {
-    if (!input) throw new Error('发送结果跟踪参数无效.')
+    if (!input) throw new Error('发送结果跟踪参数无效')
     const sentAt = input.sentAt ?? this.now()
     const color = input.color ?? 0
     if (!input || typeof input.accountId !== 'string' || !input.accountId || input.accountId.length > 128
@@ -45,9 +45,9 @@ export class DeliveryTracker {
       || !/^[1-9][0-9]{0,11}$/.test(input.room) || !normalizeDouyuUid(input.uid)
       || typeof input.text !== 'string' || !input.text.trim() || input.text.length > 500
       || !Number.isSafeInteger(sentAt) || sentAt < 0 || sentAt > Number.MAX_SAFE_INTEGER - this.windowMs
-      || !Number.isInteger(color) || color < 0 || color > 6) throw new Error('发送结果跟踪参数无效.')
+      || !Number.isInteger(color) || color < 0 || color > 6) throw new Error('发送结果跟踪参数无效')
     const id = this.id()
-    if (typeof id !== 'string' || !id || id.length > 160 || this.records.has(id)) throw new Error('发送结果记录 ID 无效.')
+    if (typeof id !== 'string' || !id || id.length > 160 || this.records.has(id)) throw new Error('发送结果记录 ID 无效')
     if (this.records.size >= this.capacity) this.records.delete(this.records.keys().next().value!)
     this.records.set(id, { uid: input.uid, text: input.text, color, closed: false, view: {
       id, accountId: input.accountId, room: input.room, sentAt, deadlineAt: sentAt + this.windowMs,

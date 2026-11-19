@@ -107,7 +107,7 @@ describe('LoginManager', () => {
 
   it('masks browser exceptions that may contain credentials', async () => {
     const { manager } = fixture({ login: async () => { throw new Error('cookie=never-leak-this-value') } })
-    await expect(manager.login('youtube')).rejects.toMatchObject({ code: 'login-failed', message: '平台登录或账号读取失败, 请关闭此平台的登录页面后重试.' })
+    await expect(manager.login('youtube')).rejects.toMatchObject({ code: 'login-failed', message: '平台登录或账号读取失败，请关闭此平台的登录页面后重试' })
   })
 
   it.each([
@@ -222,8 +222,8 @@ describe('LoginManager', () => {
     const manager = new LoginManager(root, { chromeExecutable: 'test-chrome', driver })
     await manager.login('douyu')
     vi.spyOn(fs.promises, 'open').mockRejectedValue(new Error('private filesystem error and cookie data'))
-    await expect(manager.cookieHeader('douyu')).rejects.toMatchObject({ code: 'cookie-storage-failed', message: '登录信息保存失败, 请重试.' })
-    await expect(manager.loginStatus()).rejects.toMatchObject({ code: 'cookie-storage-failed', message: '登录信息保存失败, 请重试.' })
+    await expect(manager.cookieHeader('douyu')).rejects.toMatchObject({ code: 'cookie-storage-failed', message: '登录信息保存失败，请重试' })
+    await expect(manager.loginStatus()).rejects.toMatchObject({ code: 'cookie-storage-failed', message: '登录信息保存失败，请重试' })
     await manager.dispose()
   })
 

@@ -4,7 +4,7 @@ import { TextDecoder } from 'node:util'
 import { compareAppVersions } from './appUpdateService'
 import { UPDATE_LIMITS, type ApplicationUpdateDownload, type ApplicationUpdateEntry, type FrontendBundle, type FrontendUpdateEntry, type OnlineUpdateCatalog, type OnlineUpdateSource, type OnlineUpdateSourceId } from './onlineUpdateContracts'
 
-const invalid = () => new Error('在线更新来源, 签名或内容无效.')
+const invalid = () => new Error('在线更新来源，签名或内容无效')
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
 const exact = (value: Record<string, unknown>, keys: readonly string[]) => Object.keys(value).length === keys.length && Object.keys(value).every(key => keys.includes(key))
 const positive = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) > 0

@@ -27,7 +27,7 @@ export async function defaultResolveHuyaDanmakuRoom(room: string): Promise<HuyaD
       maxRedirects: 0, requestTimeoutMs: CONNECT_TIMEOUT_MS }, {
       headers: init?.headers as Record<string, string>, signal,
     })
-    if (!response.ok) { void response.body?.cancel().catch(() => {}); throw new Error('请求虎牙弹幕房间失败.') }
+    if (!response.ok) { void response.body?.cancel().catch(() => {}); throw new Error('请求虎牙弹幕房间失败') }
     return readPlatformText(response, signal)
   })
 }
@@ -74,7 +74,7 @@ export class HuyaDanmakuClient {
     this.resolving = true
     const generation = ++this.generation
     this.setState('connecting')
-    this.armWatchdog(CONNECT_TIMEOUT_MS, '虎牙弹幕房间解析超时, 正在重新连接.')
+    this.armWatchdog(CONNECT_TIMEOUT_MS, '虎牙弹幕房间解析超时，正在重新连接')
     void Promise.resolve().then(() => this.resolveRoom(this.room)).then(metadata => {
       if (generation !== this.generation || this.closedByUser) return
       this.resolving = false
@@ -84,20 +84,20 @@ export class HuyaDanmakuClient {
       const socket = this.createSocket(ENDPOINT)
       socket.binaryType = 'arraybuffer'
       this.socket = socket
-      this.armWatchdog(CONNECT_TIMEOUT_MS, '虎牙弹幕连接超时, 正在重新连接.')
+      this.armWatchdog(CONNECT_TIMEOUT_MS, '虎牙弹幕连接超时，正在重新连接')
       const current = () => this.socket === socket && generation === this.generation && !this.closedByUser
       socket.addEventListener('open', () => {
         if (!current()) return
         this.openedAt = this.now()
-        this.armWatchdog(CONNECT_TIMEOUT_MS, '虎牙弹幕注册未收到有效回应, 正在重新连接.')
+        this.armWatchdog(CONNECT_TIMEOUT_MS, '虎牙弹幕注册未收到有效回应，正在重新连接')
         if (this.send(registration)) this.startKeepalive()
       })
       socket.addEventListener('message', (event: { data: unknown }) => { if (current()) this.ingest(event.data) })
       // Never propagate a remote close reason, error text, raw frame or resolver error.
-      socket.addEventListener('error', () => { if (current()) this.scheduleReconnect('虎牙弹幕连接出错, 正在重新连接.') })
-      socket.addEventListener('close', () => { if (current()) this.scheduleReconnect('虎牙弹幕连接已断开, 正在重新连接.') })
+      socket.addEventListener('error', () => { if (current()) this.scheduleReconnect('虎牙弹幕连接出错，正在重新连接') })
+      socket.addEventListener('close', () => { if (current()) this.scheduleReconnect('虎牙弹幕连接已断开，正在重新连接') })
     }).catch(() => {
-      if (generation === this.generation && !this.closedByUser) this.scheduleReconnect('无法连接虎牙弹幕房间, 正在重新连接.')
+      if (generation === this.generation && !this.closedByUser) this.scheduleReconnect('无法连接虎牙弹幕房间，正在重新连接')
     })
   }
 
@@ -120,7 +120,7 @@ export class HuyaDanmakuClient {
       this.stats.unknownUriCounts[key] = Math.min(Number.MAX_SAFE_INTEGER, (this.stats.unknownUriCounts[key] ?? 0) + count)
     }
     if (result.batch) this.add('batches')
-    if (result.command === 17 && result.registrationFailed) { this.scheduleReconnect('虎牙未接受弹幕注册, 正在重新连接.'); return }
+    if (result.command === 17 && result.registrationFailed) { this.scheduleReconnect('虎牙未接受弹幕注册，正在重新连接'); return }
     if (result.command === 17 && result.registered) this.registered = true
     if (!this.registered) return
     if ((result.command === 17 && result.registered) || result.heartbeat || result.messages.length || result.signals.length) this.acceptInbound()
@@ -146,14 +146,14 @@ export class HuyaDanmakuClient {
 
   private acceptInbound(): void {
     if (this.openedAt !== null && this.now() - this.openedAt >= 30_000) this.attempts = 0
-    this.armWatchdog(INBOUND_TIMEOUT_MS, '虎牙弹幕长时间未收到回应, 正在重新连接.')
+    this.armWatchdog(INBOUND_TIMEOUT_MS, '虎牙弹幕长时间未收到回应，正在重新连接')
     if (this.stateValue !== 'connected') this.setState('connected')
   }
 
   private send(data: Uint8Array<ArrayBuffer>): boolean {
     if (!this.socket) return false
     try { this.socket.send(data); return true }
-    catch { this.scheduleReconnect('虎牙弹幕连接写入失败, 正在重新连接.'); return false }
+    catch { this.scheduleReconnect('虎牙弹幕连接写入失败，正在重新连接'); return false }
   }
 
   private startKeepalive(): void {

@@ -35,13 +35,13 @@ function submit() {
 
 describe('source failure explanations', () => {
   it('shows a DNS failure returned at the API boundary with DNS-specific help', async () => {
-    vi.spyOn(apiClient, 'resolve').mockResolvedValue({ ok: false, code: 'dns-failed', message: '域名解析失败.' })
+    vi.spyOn(apiClient, 'resolve').mockResolvedValue({ ok: false, code: 'dns-failed', message: '域名解析失败' })
     submit()
-    expect(await screen.findByRole('alert')).toHaveTextContent('域名解析失败. 请检查网络与 DNS 设置后重新加载.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('域名解析失败，请检查网络与 DNS 设置后重新载入')
     expect(screen.queryByText(/媒体地址未通过安全检查/)).not.toBeInTheDocument()
   })
   it.each([
-    ['proxy' as const, 'proxy-unreachable', '代理不可达, 请检查系统代理.', '请确认代理软件已开启'],
+    ['proxy' as const, 'proxy-unreachable', '无法连接取流代理', '请在「设置 > 通用 > 网络」检查代理设置'],
     ['connect' as const, 'tls-certificate', '服务器证书校验失败.', '请检查系统时间和网络证书设置'],
     ['playback-not-ready' as const, 'media-format-invalid', '媒体格式无效或返回的内容不是可播放视频.', '请切换画质或使用其他可播放片源'],
   ])('shows %s/%s and its relevant next step', async (stage, reason, message, hint) => {

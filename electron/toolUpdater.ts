@@ -32,13 +32,13 @@ export class UpdateError extends Error {
   constructor(readonly code: 'network' | 'limit' | 'release' | 'checksum' | 'verification' | 'storage' | 'busy', options?: ErrorOptions) { super(code, options) }
 }
 const messages: Record<UpdateError['code'], string> = {
-  network: '更新下载失败, 请检查网络后重试. 原版本仍可使用.',
-  limit: '更新内容超过安全限制, 已取消. 原版本仍可使用.',
-  release: '官方稳定版信息不符合预期, 已取消. 原版本仍可使用.',
-  checksum: '下载文件的 SHA256 校验失败, 未启用该版本.',
-  verification: '下载工具的版本验证失败, 未启用该版本.',
-  storage: '更新无法安全保存, 原版本仍可使用.',
-  busy: '更新正在进行, 请等待完成.',
+  network: '下载失败，请检查网络后重试。已保留原版本。',
+  limit: '更新内容超过限制，已取消并保留原版本',
+  release: '无法确认官方版本信息，已保留原版本',
+  checksum: '下载文件校验失败，未使用该更新',
+  verification: '下载工具的版本验证失败，未启用该版本',
+  storage: '更新保存失败，已保留原版本',
+  busy: '更新正在进行，请等待完成',
 }
 function entry(value: unknown): value is Entry {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
@@ -150,7 +150,7 @@ export class ManagedYtdlp implements ToolUpdaterService {
   private manifest: Manifest = { schema: 1 }
   private initialized?: Promise<void>
   private flight?: Promise<ToolUpdateState>
-  private status: ToolUpdateState = { phase: 'idle', downloadedBytes: 0, totalBytes: 0, message: '仅手动检查官方稳定版, 启动时不联网.' }
+  private status: ToolUpdateState = { phase: 'idle', downloadedBytes: 0, totalBytes: 0, message: '仅手动检查官方稳定版，启动时不联网' }
   constructor(userData: string, private readonly options: { transport?: Transport; verify?: (file: string) => Promise<string>; baselineVersion?: string; platform?: NodeJS.Platform; arch?: string } = {}) {
     this.userData = path.resolve(userData)
     this.root = path.join(userData, 'managed-tools', 'yt-dlp')
@@ -202,9 +202,9 @@ export class ManagedYtdlp implements ToolUpdaterService {
         const m = parseManagedManifest(text)
         const active = await this.valid(m.active), previous = await this.valid(m.previous)
         this.manifest = { schema: 1, ...(active ? { active: m.active } : m.active && previous ? { active: m.previous } : {}), ...((active || !m.active) && previous && m.active?.id !== m.previous?.id ? { previous: m.previous } : {}) }
-        if (m.active && !active) this.status.message = previous ? '已拒绝损坏的更新, 回退到上一版本.' : '已拒绝损坏的更新, 使用内置工具.'
+        if (m.active && !active) this.status.message = previous ? '已拒绝损坏的更新，回退到上一版本' : '已拒绝损坏的更新，使用内置工具'
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.status.message = '更新记录无效, 使用内置工具.'
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.status.message = '更新记录无效，使用内置工具'
       }
     })()
   }
@@ -215,7 +215,7 @@ export class ManagedYtdlp implements ToolUpdaterService {
     if (this.manifest.active) {
       const fallback = await this.valid(this.manifest.previous)
       this.manifest = { schema: 1, ...(fallback ? { active: this.manifest.previous } : {}) }
-      this.status.message = fallback ? '更新文件损坏, 已回退上一版本.' : '更新文件损坏, 已回退内置工具.'
+      this.status.message = fallback ? '更新文件损坏，已回退上一版本' : '更新文件损坏，已回退内置工具'
       return fallback
     }
     return undefined
@@ -240,13 +240,13 @@ export class ManagedYtdlp implements ToolUpdaterService {
       if (!this.assetName) throw new UpdateError('release')
       await this.init()
       await this.activePath()
-      this.status = { phase: 'checking', downloadedBytes: 0, totalBytes: 0, message: '正在检查 GitHub 官方稳定版...' }
+      this.status = { phase: 'checking', downloadedBytes: 0, totalBytes: 0, message: '正在检查 GitHub 官方稳定版…' }
       let info: ReturnType<typeof release>
       try { info = release(JSON.parse((await downloadBytes(API, MAX_JSON, this.options.transport)).toString('utf8')), this.assetName) }
       catch (error) { if (error instanceof UpdateError) throw error; throw new UpdateError('release', { cause: error }) }
       const current = this.manifest.active?.version ?? this.options.baselineVersion
       if (current && info.version.localeCompare(current, 'en', { numeric: true }) <= 0) {
-        this.status = { ...this.status, phase: 'current', message: '当前受控工具已是该稳定版或更新版本.' }
+        this.status = { ...this.status, phase: 'current', message: 'yt-dlp 已是最新可用版本' }
         return this.state()
       }
       const checksum = releaseChecksum((await downloadBytes(info.sums, MAX_SUMS, this.options.transport)).toString('utf8'), this.assetName)
@@ -254,7 +254,7 @@ export class ManagedYtdlp implements ToolUpdaterService {
       temporary = path.join(this.root, `download-${randomUUID()}.tmp`)
       const file = await open(temporary, 'wx', 0o700)
       const hash = createHash('sha256')
-      this.status = { phase: 'downloading', downloadedBytes: 0, totalBytes: info.size, downloadedVersion: info.version, message: '正在下载并计算 SHA256...' }
+      this.status = { phase: 'downloading', downloadedBytes: 0, totalBytes: info.size, downloadedVersion: info.version, message: '正在下载并校验…' }
       try {
         await officialDownload(info.exe, info.size, async bytes => {
           // FileHandle.write can be partial; writeFile with an open handle writes the complete chunk.
@@ -265,7 +265,7 @@ export class ManagedYtdlp implements ToolUpdaterService {
         await file.sync()
       } finally { await file.close() }
       if (this.status.downloadedBytes !== info.size || hash.digest('hex') !== checksum) throw new UpdateError('checksum')
-      this.status = { ...this.status, phase: 'verifying', message: 'SHA256 已通过, 正在验证工具版本...' }
+      this.status = { ...this.status, phase: 'verifying', message: '下载校验通过，正在验证工具…' }
       // Windows needs the native executable extension for CreateProcess.
       // Short opaque directory names also avoid Windows CreateProcess MAX_PATH failures.
       const id = randomUUID()
@@ -283,7 +283,7 @@ export class ManagedYtdlp implements ToolUpdaterService {
       const previous = this.manifest.active ?? this.manifest.previous
       await this.save({ schema: 1, active: { id, version: info.version, sha256: checksum }, ...(previous ? { previous } : {}) })
       committed = true
-      this.status = { ...this.status, phase: 'ready', message: `已验证 ${info.version}, 下次取流使用. 当前播放继续.` }
+      this.status = { ...this.status, phase: 'ready', message: `已更新至 ${info.version}，下次载入直播间生效` }
     } catch (error) {
       const code = error instanceof UpdateError ? error.code : 'storage'
       this.status = { ...this.status, phase: 'error', message: messages[code], errorDetail: diagnosticDetails(error) }
@@ -302,7 +302,7 @@ export class ManagedYtdlp implements ToolUpdaterService {
           if (!await this.valid(this.manifest.previous)) throw new UpdateError('verification')
           await this.save({ schema: 1, active: this.manifest.previous, ...(this.manifest.active ? { previous: this.manifest.active } : {}) })
         } else await this.save({ schema: 1, ...(this.manifest.active ? { previous: this.manifest.active } : {}) })
-        this.status = { phase: 'restored', downloadedBytes: 0, totalBytes: 0, message: '已恢复选择, 下次取流使用. 当前播放继续.' }
+        this.status = { phase: 'restored', downloadedBytes: 0, totalBytes: 0, message: '已恢复所选版本，下次载入直播间生效' }
       } catch (error) { this.status = { ...this.status, phase: 'error', message: messages.storage, errorDetail: diagnosticDetails(error) } }
       return this.state()
     })()

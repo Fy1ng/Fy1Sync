@@ -49,9 +49,9 @@ export class MediaGateway {
   constructor(private readonly config: ProxyConfig, private readonly options: MediaGatewayOptions = {}) {}
 
   async register(url: string, headers: Record<string, string> | undefined, network: NetworkContext, access?: MediaAccess): Promise<GatewayInput> {
-    if (this.closed) throw new Error('媒体转发服务已关闭.')
+    if (this.closed) throw new Error('媒体转发服务已关闭')
     const listener = await this.start()
-    if (this.closed) throw new Error('媒体转发服务已关闭.')
+    if (this.closed) throw new Error('媒体转发服务已关闭')
     // Isolate diagnostics per FFmpeg input while preserving its frozen route decisions.
     const lifetime = new AbortController()
     const inputNetwork: NetworkContext = { route: target => network.route(target), media: network.media,
@@ -89,7 +89,7 @@ export class MediaGateway {
       server.headersTimeout = 10_000
       server.requestTimeout = 15_000
       server.keepAliveTimeout = 1_000
-      const failed = () => { server.close(); reject(new Error('无法启动本地媒体转发服务.')) }
+      const failed = () => { server.close(); reject(new Error('无法启动本地媒体转发服务')) }
       server.once('error', failed)
       server.listen(0, '127.0.0.1', () => {
         server.removeListener('error', failed)

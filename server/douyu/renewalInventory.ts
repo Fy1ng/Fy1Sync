@@ -15,7 +15,7 @@ type HtmlElement = DefaultTreeAdapterTypes.Element
 
 export class RenewalInventoryError extends Error {
   constructor() {
-    super('斗鱼续牌列表或背包数据无法确认, 请刷新后重试.')
+    super('斗鱼续牌列表或背包数据无法确认，请刷新后重试')
     this.name = 'RenewalInventoryError'
   }
 }
@@ -204,13 +204,13 @@ function itemName(raw: unknown): string {
 function ineligibleReason(item: Omit<DouyuBackpackItem, 'eligible' | 'reason'>, nowMs: number): string | null {
   if (!['268', '2358'].includes(item.id) || !item.name.includes('荧光棒')) return '非本次荧光棒候选'
   if (item.propType === null) return '道具类型未确认'
-  if (item.propType === 5) return '领取入口, 不执行领取'
-  if (item.propType >= 7 && item.propType <= 10) return '兑换道具, 不用于本次赠送'
-  if (![0, 1, 2].includes(item.propType)) return '特殊或未知道具类型, 不用于本次赠送'
+  if (item.propType === 5) return '领取入口，不执行领取'
+  if (item.propType >= 7 && item.propType <= 10) return '兑换道具，不用于本次赠送'
+  if (![0, 1, 2].includes(item.propType)) return '特殊或未知道具类型，不用于本次赠送'
   if (item.isClick === null) return '使用状态未确认'
   if (item.isClick <= 0) return '当前不可使用'
   if (item.isValuable === null) return '价值属性未确认'
-  if (item.isValuable) return '有价值道具, 不用于本次赠送'
+  if (item.isValuable) return '有价值道具，不用于本次赠送'
   if (!item.count) return '库存不足'
   if (item.met === null) return '有效期未确认'
   if (item.met !== -1 && item.met * 1_000 <= nowMs + 5_000) return '已过期或即将过期'

@@ -18,11 +18,11 @@ export type LoginErrorCode = 'chrome-not-found' | 'login-busy' | 'login-cancelle
 export class LoginError extends Error {
   readonly detail?: import('../src/core/errorDetails').ErrorDetails
   constructor(readonly code: LoginErrorCode, platform?: LoginPlatform, cause?: unknown) {
-    super(platform === 'douyin' && code === 'login-failed' ? '抖音登录未完成, 请在应用内重试.' : { 'chrome-not-found': '未找到系统 Google Chrome, 请先安装 Chrome 后重试.',
-      'login-busy': '该平台正在登录, 请先关闭已有的登录页面.', 'login-cancelled': '登录已取消.',
-      'login-failed': '平台登录或账号读取失败, 请关闭此平台的登录页面后重试.',
-      'login-incomplete': '登录未完成, 未读取到平台认证 Cookie, 已保留原有登录数据.',
-      'cookie-storage-failed': '登录信息保存失败, 请重试.' }[code])
+    super(platform === 'douyin' && code === 'login-failed' ? '抖音登录未完成，请在应用内重试' : { 'chrome-not-found': '未找到系统 Google Chrome，请先安装 Chrome 后重试',
+      'login-busy': '该平台正在登录，请先关闭已有的登录页面', 'login-cancelled': '登录已取消',
+      'login-failed': '平台登录或账号读取失败，请关闭此平台的登录页面后重试',
+      'login-incomplete': '登录未完成，原账号已保留，请重试',
+      'cookie-storage-failed': '登录信息保存失败，请重试' }[code])
     this.name = 'LoginError'
     if (cause !== undefined) this.detail = diagnosticDetails(cause)
   }
@@ -446,7 +446,7 @@ export class LoginManager {
     if (this.disposed || this.loginInProgress('douyin') || !this.options.douyinSigning) return null
     if (this.signingBlocked) {
       if (this.signingProblem && this.signingProblem!=='douyin-signing-material-missing') {
-        throw Object.assign(new Error('抖音发送认证暂时不可用.'),{code:this.signingProblem})
+        throw Object.assign(new Error('暂时不能发送抖音弹幕'),{code:this.signingProblem})
       }
       return null
     }

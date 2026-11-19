@@ -4,7 +4,7 @@ import { dnsResolver, safeFetch, type Resolver } from '../server/safeFetch'
 import { networkContext } from '../server/networkPolicy'
 import { secureUpdateUrl } from './onlineUpdateManifest'
 
-const failure = () => new Error('在线更新下载失败或来源不安全.')
+const failure = () => new Error('在线更新下载失败或来源不安全')
 
 /** Bound injected transports, DNS and stream reads that do not observe AbortSignal. */
 export function updateBounded<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {

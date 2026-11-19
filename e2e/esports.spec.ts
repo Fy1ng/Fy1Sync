@@ -64,7 +64,7 @@ test('赛程页按赛事列出对阵, 点击直播流即关闭并在背后的画
 
   // Offline E2E refuses real platform acquisition, which stands in for a stream that will not play.
   const match = live.getByRole('listitem', { name: 'G2 Esports 对 DENDELE CS' })
-  await match.getByRole('button', { name: /^在YouTube观看 G2 Esports 对 DENDELE CS/ }).click()
+  await match.getByRole('button', { name: /^在 YouTube 观看 G2 Esports 对 DENDELE CS/ }).click()
   // The pick closes the sheet at once and the load, here failing, shows on the 画面 slot behind.
   await expect(sheet).toBeHidden()
   await expect(intake).toBeVisible()

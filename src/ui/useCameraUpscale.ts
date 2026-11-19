@@ -85,7 +85,7 @@ export function useCameraUpscale(config: CameraConfig, cssWidth: number, cssHeig
       onDowngrade: (next) => {
         if (cancelled) return
         limits.get(session)!.cap = next
-        session.notice('warn', next === 'off' ? '摄像头超分负载过高, 已关闭' : '摄像头超分负载过高, 已降为省电')
+        session.notice('warn', next === 'off' ? '摄像头超分负载过高，已关闭' : '摄像头超分负载过高，已降为省电')
         setRevision(value => value + 1)
       },
       onFailure: (reason) => {

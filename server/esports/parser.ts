@@ -23,7 +23,7 @@ function rawText(node: Node): string { return 'value' in node ? node.value : chi
 function text(node: Node): string { return rawText(node).replace(/\s+/g, ' ').trim() }
 
 export class ScheduleFormatError extends Error {
-  constructor(readonly selector: string) { super('赛程格式已变化, 暂时无法读取'); this.name = 'ScheduleFormatError' }
+  constructor(readonly selector: string) { super('赛程格式已变化，暂时无法读取'); this.name = 'ScheduleFormatError' }
 }
 const fail = (selector: string): never => { throw new ScheduleFormatError(selector) }
 function one(nodes: Node[], selector: string): Node { return nodes.length === 1 ? nodes[0]! : fail(selector) }

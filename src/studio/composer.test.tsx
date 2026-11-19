@@ -154,9 +154,9 @@ describe('the studio send box', () => {
     fireEvent.click(screen.getByText('draft'))
     fireEvent.click(screen.getByText('send'))
     await waitFor(() => expect(screen.getByTestId('notice')).toHaveAttribute('data-state', 'succeeded'))
-    expect(screen.getByTestId('notice')).toHaveTextContent('已发送, 已在房间中显示.')
+    expect(screen.getByTestId('notice')).toHaveTextContent('已发送')
     expect(screen.getByTestId('notice')).not.toHaveTextContent('核对')
-    expect(screen.getByTestId('delivery')).toHaveTextContent('发送成功 - 已在房间中显示')
+    expect(screen.getByTestId('delivery')).toHaveTextContent('已发送')
     expect(screen.getByTestId('gateway')).toHaveTextContent('unknown')
     expect(screen.getByTestId('draft').textContent).toBe('')
     expect(calls.filter(call => call.method === 'sendComposedDouyuMessage')).toHaveLength(1)
@@ -317,7 +317,7 @@ describe('the studio send box', () => {
     expect(calls.find((call) => call.method === 'sendComposedDouyuMessage')!.args)
       .toMatchObject({ accountId: 'default', room: '288016', text: '你好', mode: 'message' })
 
-    await waitFor(() => expect(screen.getByTestId('delivery')).toHaveTextContent('平台已受理 · 已在房间中显示'))
+    await waitFor(() => expect(screen.getByTestId('delivery')).toHaveTextContent('平台已接收 · 已在房间中显示'))
 
     fireEvent.click(screen.getByText('repeat'))
     await waitFor(() => expect(calls.filter((call) => call.method === 'sendComposedDouyuMessage')).toHaveLength(2))
@@ -330,7 +330,7 @@ describe('the studio send box', () => {
     renderProbe(await connectedSession())
     await waitFor(() => expect(screen.getByTestId('relogin')).toHaveTextContent('relogin'))
     expect(screen.getByTestId('state')).toHaveTextContent('not-ready')
-    expect(screen.getByTestId('blocked')).toHaveTextContent('缺少发送弹幕所需的设备标识')
+    expect(screen.getByTestId('blocked')).toHaveTextContent('登录信息不完整：设备标识')
     fireEvent.click(screen.getByText('repeat'))
     await act(async () => { await Promise.resolve() })
     expect(calls.some((call) => call.method === 'sendComposedDouyuMessage')).toBe(false)
@@ -377,7 +377,7 @@ describe('the studio send box', () => {
   })
 
   it("names missing credentials in the viewer's words, never as cookie names", () => {
-    expect(credentialProblem(['acf_uid', 'acf_username'])).toBe('当前账号缺少发送弹幕所需的用户编号、用户名，请在斗鱼账号中重新登录。')
+    expect(credentialProblem(['acf_uid', 'acf_username'])).toBe('登录信息不完整：用户编号、用户名')
     expect(credentialProblem(['acf_auth_wl', 'acf_dmjwt_token'])).toContain('登录凭证')
     expect(credentialProblem([])).toContain('登录信息')
     expect(credentialProblem(['acf_did', 'dy_did'])).not.toMatch(/acf_|dy_/)
@@ -385,7 +385,7 @@ describe('the studio send box', () => {
 
   it('says a missing room echo is not proof of being blocked', () => {
     expect(deliveryText({ id: 'd', accountId: 'a', room: 'r', sentAt: 0, deadlineAt: 0, gateway: 'accepted',
-      roomEcho: 'not-observed', observedAt: null, messageId: null })).toContain('不代表被屏蔽')
+      roomEcho: 'not-observed', observedAt: null, messageId: null })).toContain('未能确认，请核对后再发')
   })
 })
 

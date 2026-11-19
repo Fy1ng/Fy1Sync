@@ -58,7 +58,7 @@ it('keeps the raw cumulative-watch failure separate from healthy room statistics
   expect(details.querySelector('code')!.textContent).toContain('FANS_WATCH_READ')
   expect(details.querySelector('code')!.textContent).toContain('503')
   expect(screen.getByRole('group', { name: '独立发言人数' })).toHaveTextContent('12')
-  expect(within(screen.getByRole('group', { name: '观众人数' })).queryByRole('button')).toBeNull()
+  expect(screen.queryByRole('group', { name: '观众人数' })).toBeNull()
 })
 
 function fakeVideo() {
@@ -123,7 +123,7 @@ describe('room insights sheet', () => {
     render(<RoomInsightsSheet room="100" onClose={() => {}} />)
     const group = await screen.findByRole('group', { name: '粉丝牌累计观看' })
     await within(group).findByText(/已持有 22 级粉丝牌/)
-    expect(group.textContent).toContain('斗鱼粉丝家园累计观看')
+    expect(group.textContent).not.toContain('本次基线')
     act(() => { for (const listener of listeners) listener({ topic: 'insights', data: { type: 'changed', room: '100' } }) })
     await waitFor(() => expect(named('getDouyuRoomInsights')).toHaveLength(2))
     expect(group.textContent).toContain('已持有 22 级粉丝牌')
@@ -160,14 +160,15 @@ describe('room insights sheet', () => {
 
   it('shows values the platform did not give as 未知, not 0', async () => {
     render(<RoomInsightsSheet room="100" onClose={() => {}} />)
-    await screen.findByRole('group', { name: '观众人数' })
+    await screen.findByRole('group', { name: '贵宾人数' })
     await waitFor(() => expect(named('getDouyuWatchTime')).toHaveLength(1))
-    for (const label of ['观众人数', '贵宾人数', '目录标称价值', '已播时长', '本次开播', '上次开播', '官方今日观看']) {
+    expect(screen.queryByRole('group', { name: '观众人数' })).toBeNull()
+    for (const label of ['贵宾人数', '目录标称价值', '已播时长', '本次开播', '上次开播', '官方今日观看']) {
       const group = screen.getByRole('group', { name: label })
       expect(within(group).getByText('未知')).toBeInTheDocument()
     }
     expect(within(screen.getByRole('group', { name: '目录标称价值' })).getByText(/3 件价格未知/)).toBeInTheDocument()
-    expect(screen.getByText(/不是房间的完整历史/)).toBeInTheDocument()
+    expect(screen.getByText(/不是完整历史/)).toBeInTheDocument()
   })
 
   it('shows rank contribution as gold / 100 and never as money', async () => {
@@ -179,7 +180,7 @@ describe('room insights sheet', () => {
       },
     })
     render(<RoomInsightsSheet room="100" onClose={() => {}} />)
-    await screen.findByRole('group', { name: '观众人数' })
+    await screen.findByRole('group', { name: '贵宾人数' })
     fireEvent.click(screen.getByRole('tab', { name: '榜单' }))
     const table = screen.getByRole('table')
     expect(within(table).getByText('贡献值')).toBeInTheDocument()
@@ -187,12 +188,12 @@ describe('room insights sheet', () => {
     expect(within(table).getByText('未知')).toBeInTheDocument()
     expect(table.textContent).not.toContain('元')
     fireEvent.click(screen.getByRole('radio', { name: '周榜' }))
-    expect(screen.getByText('未收到周榜。')).toBeInTheDocument()
+    expect(screen.getByText('暂未获取周榜')).toBeInTheDocument()
   })
 
   it('re-reads the room when the main process says it changed, and refreshes on request', async () => {
     render(<RoomInsightsSheet room="100" onClose={() => {}} />)
-    await screen.findByRole('group', { name: '观众人数' })
+    await screen.findByRole('group', { name: '贵宾人数' })
     expect(named('refreshDouyuRoomInsights')).toHaveLength(1)
     responses.getDouyuRoomInsights = () => insights({ uniqueChatters: 40 })
     act(() => { for (const listener of listeners) listener({ topic: 'insights', data: { type: 'changed', room: '999' } }) })

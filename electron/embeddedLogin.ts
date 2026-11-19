@@ -177,7 +177,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     })
     attempt.timeout = setTimeout(() => { void this.finish(attempt, new LoginError('login-cancelled')) }, this.options.timeoutMs ?? 30 * 60_000)
     this.emit()
-    void this.prepare(attempt).catch(error => this.update(attempt, { phase: 'failed', message: '登录页面未能加载, 请检查网络后重试.', errorDetail: diagnosticDetails(error) }))
+    void this.prepare(attempt).catch(error => this.update(attempt, { phase: 'failed', message: '登录页面未能加载，请检查网络后重试', errorDetail: diagnosticDetails(error) }))
     return result
   }
 
@@ -268,8 +268,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     contents.setWindowOpenHandler(details => {
       if (loginRequestAllowed(attempt.request.platform, details.url, 'mainFrame')) {
         if (attempt.explicitOfficial || attempt.request.destination) this.showOfficial(attempt, '请在官方页面完成安全验证')
-        void contents.loadURL(details.url).catch(() => this.cardUpdate(attempt, { message: '验证页面未能打开, 请重试.' }))
-      } else this.update(attempt, { message: '验证页面无法在当前登录会话内打开, 请使用其他登录方式.' })
+        void contents.loadURL(details.url).catch(() => this.cardUpdate(attempt, { message: '验证页面未能打开，请重试' }))
+      } else this.update(attempt, { message: '验证页面无法在当前登录会话内打开，请使用其他登录方式' })
       return { action: 'deny' }
     })
     contents.on('will-attach-webview', event => event.preventDefault())
@@ -283,7 +283,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     const navigate = (event: { preventDefault(): void }, url: string, mainFrame: boolean) => {
       if (loginRequestAllowed(attempt.request.platform, url, mainFrame ? 'mainFrame' : 'subFrame')) return
       event.preventDefault()
-      if (mainFrame) this.update(attempt, { message: '请在卡片内使用扫码, 短信或密码登录.' })
+      if (mainFrame) this.update(attempt, { message: '请在卡片内使用扫码，短信或密码登录' })
     }
     contents.on('will-navigate', (event, url) => navigate(event, url, true))
     contents.on('will-frame-navigate', event => navigate(event, event.url, event.isMainFrame))
@@ -315,12 +315,12 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       attempt.showingOfficial = false
       attempt.explicitOfficial = false
       attempt.pendingAction = null
-      attempt.lastError = '登录页面已中断, 请重试.'
+      attempt.lastError = '登录页面已中断，请重试'
       this.cardUpdate(attempt, { stage: 'failed', busy: false, qr: { status: 'paused' }, sms: unavailableSms(), message: attempt.lastError })
       this.update(attempt, { phase: 'failed', presentation: 'form', message: attempt.lastError, errorDetail: diagnosticDetails(details) })
     })
     contents.on('did-fail-load', (_event, code, description, url, mainFrame) => {
-      if (mainFrame && code !== -3) this.update(attempt, { phase: 'failed', message: '登录页面未能加载, 请检查网络后重试.', errorDetail: diagnosticDetails({ code, description, url }) })
+      if (mainFrame && code !== -3) this.update(attempt, { phase: 'failed', message: '登录页面未能加载，请检查网络后重试', errorDetail: diagnosticDetails({ code, description, url }) })
     })
     const changed = (_event: unknown, cookie?: Partial<BrowserCookie>) => {
       if (attempt.request.platform !== 'douyin' || !cookie || ['sessionid', 'sessionid_ss'].includes(cookie.name ?? '')
@@ -389,7 +389,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       this.cardUpdate(attempt, { stage: 'loading', qr: { status: 'loading' }, sms: unavailableSms(), busy: false, verification: undefined, message: undefined })
       this.update(attempt, { phase: 'ready', presentation: 'form', message: undefined })
     } else this.update(attempt, { phase: 'loading', message: undefined })
-    this.startPageTimeout(attempt, '官网登录组件未能完成加载, 请重试.')
+    this.startPageTimeout(attempt, '官网登录组件未能完成加载，请重试')
     const destination = attempt.request.destination
     const url = destination === 'yuba' ? 'https://yuba.douyu.com/'
       : destination?.startsWith('room:') ? `https://www.douyu.com/${destination.slice(5)}`
@@ -398,7 +398,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     // Page subresources may keep loading; dom-ready can present the verified form sooner.
     try { await attempt.view.webContents.loadURL(url) }
     catch (error) {
-      if (this.current(attempt) && revision === attempt.loadRevision) this.update(attempt, { phase: 'failed', message: '登录页面未能加载, 请检查网络后重试.', errorDetail: diagnosticDetails(error) })
+      if (this.current(attempt) && revision === attempt.loadRevision) this.update(attempt, { phase: 'failed', message: '登录页面未能加载，请检查网络后重试', errorDetail: diagnosticDetails(error) })
       return
     }
     if (!this.current(attempt) || revision !== attempt.loadRevision) return
@@ -473,15 +473,15 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
           if (!attempt.submittedAt) attempt.submittedAt = Date.now()
           attempt.pendingAction ??= 'login'
           attempt.qrPaused = true
-          if (!attempt.pageTimeout) this.startPageTimeout(attempt, '抖音尚未返回登录结果, 请重试. 重试只会重新打开登录页面.')
+          if (!attempt.pageTimeout) this.startPageTimeout(attempt, '抖音登录超时，请重新打开登录页面')
           const message = '正在等待抖音处理登录'
           if (attempt.explicitOfficial) this.update(attempt, { message })
           else this.waitForPlatform(attempt, message)
         } else if (snapshot.challengePhase) {
           attempt.qrPaused = true
-          this.waitForPlatform(attempt, snapshot.challengePhase === 'passed' ? '人机验证已通过, 正在继续登录'
+          this.waitForPlatform(attempt, snapshot.challengePhase === 'passed' ? '人机验证已通过，正在继续登录'
             : snapshot.challengePhase === 'verifying' ? '正在等待人机验证结果'
-              : snapshot.challengePhase === 'unknown' ? '正在准备人机验证, 如无法显示可使用官方验证页面.' : '正在加载人机验证')
+              : snapshot.challengePhase === 'unknown' ? '正在准备人机验证，如无法显示可使用官方验证页面' : '正在加载人机验证')
         } else if (attempt.showingOfficial && !attempt.explicitOfficial) this.waitForPlatform(attempt, '正在继续登录')
         return
       }
@@ -506,10 +506,10 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
         }
         const pendingSubmission = !message && (attempt.pendingAction === 'verification' || attempt.pendingAction === 'sms') && attempt.submittedAt > 0
         if (!pendingSubmission) { attempt.submittedAt = 0; attempt.pendingAction = null }
-        const waitingMessage = attempt.verificationCompleted ? '安全验证已完成, 正在确认登录状态'
-          : pendingSubmission && Date.now() - attempt.submittedAt > 12_000 ? '平台仍在处理验证, 可使用官方验证页面查看进度.'
+        const waitingMessage = attempt.verificationCompleted ? '安全验证已完成，正在确认登录状态'
+          : pendingSubmission && Date.now() - attempt.submittedAt > 12_000 ? '平台仍在处理验证，可使用官方验证页面查看进度'
             : pendingSubmission ? '正在等待平台验证结果' : attempt.lastError ?? (waitingForCaptcha
-              ? attempt.captchaPreflight === 'failed' ? '人机验证准备失败, 请检查网络或使用官方验证页面.' : '正在准备人机验证, 请稍候.' : undefined)
+              ? attempt.captchaPreflight === 'failed' ? '人机验证准备失败，请检查网络或使用官方验证页面' : '正在准备人机验证，请稍候' : undefined)
         if (!attempt.explicitOfficial) {
           attempt.showingOfficial = false
           attempt.challenge = null
@@ -528,14 +528,14 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
           const protectedPage = await attempt.broker.presentChallenge(true)
           if (!this.current(attempt) || loadRevision !== attempt.loadRevision || actionRevision !== attempt.actionRevision) return
           if (protectedPage) this.showOfficial(attempt, '请完成人机验证')
-          else this.waitForPlatform(attempt, '正在准备人机验证, 如无法显示可使用官方验证页面.')
+          else this.waitForPlatform(attempt, '正在准备人机验证，如无法显示可使用官方验证页面')
         }
         else if (!attempt.returnedToForm) this.waitForPlatform(attempt, snapshot.page === 'challenge'
-          ? '正在准备人机验证, 如无法显示可使用官方验证页面.' : '平台正在继续登录, 可使用官方验证页面查看进度.')
+          ? '正在准备人机验证，如无法显示可使用官方验证页面' : '平台正在继续登录，可使用官方验证页面查看进度')
         else {
           const stage = attempt.cardValue.verification ? 'verification' : 'form'
-          this.cardUpdate(attempt, { stage, busy: false, message: '请继续完成人机验证后再提交.' })
-          this.update(attempt, { phase: 'ready', presentation: stage, message: '请继续完成人机验证后再提交.' })
+          this.cardUpdate(attempt, { stage, busy: false, message: '请继续完成人机验证后再提交' })
+          this.update(attempt, { phase: 'ready', presentation: stage, message: '请继续完成人机验证后再提交' })
         }
         return
       }
@@ -545,7 +545,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
         if ((sms.cooldownSeconds ?? 0) > 0) { attempt.pendingAction = null; attempt.submittedAt = 0 }
         else if (Date.now() - attempt.submittedAt > 12_000) {
           attempt.pendingAction = null; attempt.submittedAt = 0
-          attempt.lastError = '平台尚未确认验证码已发送, 请重试或查看官方页面.'
+          attempt.lastError = '平台尚未确认验证码已发送，请重试或查看官方页面'
         } else {
           this.waitForPlatform(attempt, '正在等待平台发送结果')
           return
@@ -557,9 +557,9 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
         return
       }
       if ((attempt.pendingAction === 'login' || attempt.pendingAction === 'verification') && attempt.submittedAt && !message) {
-        if (!attempt.pageTimeout) this.startPageTimeout(attempt, '平台尚未返回登录结果, 请重试. 重试只会重新打开登录页面.')
+        if (!attempt.pageTimeout) this.startPageTimeout(attempt, '登录超时，请重新打开登录页面')
         this.waitForPlatform(attempt, Date.now() - attempt.submittedAt > 12_000
-          ? '平台仍在处理登录, 可使用官方验证页面查看进度.' : '正在等待平台登录结果')
+          ? '平台仍在处理登录，可使用官方验证页面查看进度' : '正在等待平台登录结果')
         return
       }
       if (message) { attempt.submittedAt = 0; attempt.pendingAction = null }
@@ -647,7 +647,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       const matches = attempt.request.platform === 'douyin' || authenticationCookieUserId(cookies, attempt.request.platform) === identity.uid
       if (identity.status !== 'authenticated' || !identity.uid || !matches) {
         if (silent && identity.status === 'anonymous') { attempt.anonymousFingerprint=credentialFingerprint; attempt.anonymousCookieRevision=cookieRevision }
-        if (!silent) this.restoreCardAfterCheck(attempt, identity.status === 'anonymous' ? '请完成平台官网登录' : '暂时无法确认登录状态, 请稍后重试.')
+        if (!silent) this.restoreCardAfterCheck(attempt, identity.status === 'anonymous' ? '请完成平台官网登录' : '暂时无法确认登录状态，请稍后重试')
         if (finishWebsite) await this.finish(attempt, new LoginError('login-incomplete'))
         return
       }
@@ -676,7 +676,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       await this.finish(attempt, finalCookies)
     } catch {
       if (currentCheck()) {
-        if (!silent) this.restoreCardAfterCheck(attempt, '暂时无法确认登录状态, 请检查网络后重试.')
+        if (!silent) this.restoreCardAfterCheck(attempt, '暂时无法确认登录状态，请检查网络后重试')
         if (finishWebsite) await this.finish(attempt, new LoginError('login-incomplete'))
       }
     } finally { attempt.checking = false }
@@ -731,7 +731,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
         // A clipped or oversized challenge never silently turns into the complete website.
         this.restoreRemoteParent(attempt)
         attempt.view.setVisible(false)
-        if (visible) this.cardUpdate(attempt, { message: '当前窗口无法完整显示人机验证, 请放大窗口或使用官方验证页面.' })
+        if (visible) this.cardUpdate(attempt, { message: '当前窗口无法完整显示人机验证，请放大窗口或使用官方验证页面' })
         attempt.card?.setBounds(rectInWindow, visible)
         return
       }
@@ -798,7 +798,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
   async cardAction(action: LoginCardAction): Promise<LoginCardResult> {
     if (this.httpDouyin?.state()) return this.httpDouyin.cardAction(action)
     const attempt = this.active
-    if (!attempt || !this.current(attempt) || !attempt.card || !attempt.broker) return { ok: false, message: '登录页面已失效.' }
+    if (!attempt || !this.current(attempt) || !attempt.card || !attempt.broker) return { ok: false, message: '登录页面已失效' }
     if (action.kind === 'cancel') { await this.cancel(attempt.id); return { ok: true } }
     if (action.kind === 'official') {
       const revision = ++attempt.actionRevision
@@ -808,23 +808,23 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       attempt.view?.setVisible(false)
       attempt.challengeHost?.setVisible(false)
       const restored = await attempt.broker.presentChallenge(false)
-      if (!this.current(attempt) || revision !== attempt.actionRevision) return { ok: false, message: '登录操作已取消.' }
-      if (!restored) { attempt.explicitOfficial = false; this.waitForPlatform(attempt, '官方页面暂时无法显示, 请重试.'); return { ok: false } }
+      if (!this.current(attempt) || revision !== attempt.actionRevision) return { ok: false, message: '登录操作已取消' }
+      if (!restored) { attempt.explicitOfficial = false; this.waitForPlatform(attempt, '官方页面暂时无法显示，请重试'); return { ok: false } }
       this.showOfficial(attempt)
       return { ok: true }
     }
     if (action.kind === 'back') { await this.back(attempt.id); return { ok: true } }
-    if (attempt.actionBusy || attempt.cardValue.busy || attempt.showingOfficial || ['loading', 'submitting', 'checking'].includes(attempt.cardValue.stage)) return { ok: false, message: '请先完成当前登录步骤.' }
+    if (attempt.actionBusy || attempt.cardValue.busy || attempt.showingOfficial || ['loading', 'submitting', 'checking'].includes(attempt.cardValue.stage)) return { ok: false, message: '请先完成当前登录步骤' }
     const second = action.kind === 'second-send' || action.kind === 'second-submit'
-    if (second !== (attempt.cardValue.stage === 'verification')) return { ok: false, message: '当前验证步骤已变化, 请重试.' }
+    if (second !== (attempt.cardValue.stage === 'verification')) return { ok: false, message: '当前验证步骤已变化，请重试' }
     if (action.kind === 'second-send' && attempt.request.platform === 'bilibili' && attempt.captchaPreflight !== 'ready') {
-      return { ok: false, message: '人机验证尚未准备好, 请稍候.' }
+      return { ok: false, message: '人机验证尚未准备好，请稍候' }
     }
-    if ((action.kind === 'send-sms' || action.kind === 'second-send') && !attempt.cardValue.sms.canSend) return { ok: false, message: '请等待平台允许再次发送验证码.' }
+    if ((action.kind === 'send-sms' || action.kind === 'second-send') && !attempt.cardValue.sms.canSend) return { ok: false, message: '请等待平台允许再次发送验证码' }
     if (action.kind === 'refresh-qr') {
       attempt.lastQrSource = null
       const result = await attempt.broker.act(action)
-      if (!result.ok) return { ok: false, message: '当前二维码仍有效, 失效后再刷新.' }
+      if (!result.ok) return { ok: false, message: '当前二维码仍有效，失效后再刷新' }
       attempt.qrPaused = false
       attempt.lastError = undefined
       this.cardUpdate(attempt, { message: undefined })
@@ -848,11 +848,11 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       countryCode: attempt.request.platform === 'bilibili' ? action.countryCode.replace(/^\+/, '') : `+${action.countryCode.replace(/^\+/, '')}` }
     try {
       const result = await attempt.broker.act(payload)
-      if (!this.current(attempt) || revision !== attempt.actionRevision) return { ok: false, message: '登录操作已取消.' }
+      if (!this.current(attempt) || revision !== attempt.actionRevision) return { ok: false, message: '登录操作已取消' }
       if (!result.ok) {
         attempt.submittedAt = 0
         attempt.pendingAction = null
-        attempt.lastError = result.reason === 'invalid-input' ? '请检查账号, 密码或验证码的格式.' : '当前登录方式暂不可用, 可以使用官方验证页面.'
+        attempt.lastError = result.reason === 'invalid-input' ? '请检查账号，密码或验证码的格式' : '当前登录方式暂不可用，可以使用官方验证页面'
         const detail = diagnosticDetails({ ok: result.ok, reason: result.reason })
         this.cardUpdate(attempt, { stage: second ? 'verification' : 'form', busy: false, message: attempt.lastError, errorDetail: detail })
         return { ok: false, message: attempt.cardValue.message, detail }
@@ -885,7 +885,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     attempt.returnedToForm = true
     attempt.pendingAction = null
     const step = attempt.cardValue.verification ? 'verification' : 'form'
-    this.cardUpdate(attempt, { stage: step, busy: false, message: attempt.lastPage === 'challenge' ? '人机验证尚未完成, 可继续打开验证.' : undefined })
+    this.cardUpdate(attempt, { stage: step, busy: false, message: attempt.lastPage === 'challenge' ? '人机验证尚未完成，可继续打开验证' : undefined })
     this.update(attempt, { phase: 'ready', presentation: step === 'verification' ? 'verification' : 'form', message: undefined })
     await this.inspect(attempt)
   }
@@ -911,7 +911,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     attempt.actionBusy = false
     attempt.submittedAt = 0
     attempt.qrPaused = false
-    await this.load(attempt).catch(() => this.update(attempt, { phase: 'failed', message: '登录页面未能加载, 请检查网络后重试.' }))
+    await this.load(attempt).catch(() => this.update(attempt, { phase: 'failed', message: '登录页面未能加载，请检查网络后重试' }))
   }
 
   private async finish(attempt: Attempt, result: BrowserCookie[] | LoginError): Promise<void> {
@@ -965,11 +965,11 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
 }
 
 const PAGE_ERRORS = {
-  'invalid-credentials': '账号或密码不正确, 请检查后重试.',
-  'invalid-code': '验证码不正确或已失效, 请重试.',
-  'rate-limited': '操作过于频繁, 请稍后重试.',
-  network: '平台官网连接失败, 请检查网络后重试.',
-  unknown: '平台官网未能完成此步骤, 可以使用官方验证页面.',
+  'invalid-credentials': '账号或密码不正确，请检查后重试',
+  'invalid-code': '验证码不正确或已失效，请重试',
+  'rate-limited': '操作过于频繁，请稍后重试',
+  network: '平台官网连接失败，请检查网络后重试',
+  unknown: '平台官网未能完成此步骤，可以使用官方验证页面',
 } as const
 
 function unavailableSms(): LoginSmsState { return { canSend: false, cooldownSeconds: null } }

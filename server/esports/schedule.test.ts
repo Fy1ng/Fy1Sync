@@ -87,7 +87,7 @@ describe('Liquipedia fixture parsing', () => {
     expect(matches[0]).toMatchObject({ score: null, bestOf: 3 })
   })
   it('rejects non-API data and an empty unknown layout', () => {
-    expect(() => parseSchedule('<html>error</html>')).toThrow('赛程格式已变化, 暂时无法读取')
+    expect(() => parseSchedule('<html>error</html>')).toThrow('赛程格式已变化，暂时无法读取')
     expect(() => parseSchedule({ parse: { text: { '*': '<p>Changed markup</p>' } } })).toThrow(ScheduleFormatError)
   })
   it('filters inclusive -12h/+48h and sorts live first, then by start time', () => {
@@ -256,7 +256,7 @@ describe('shared schedule service', () => {
     const request = vi.fn<typeof fetch>().mockImplementation(async () => response(drifted))
     const { service } = create(request)
     const result = await service.getCs2Schedule()
-    expect(result).toMatchObject({ stale: true, error: '赛程格式已变化, 暂时无法读取', matches: [] })
+    expect(result).toMatchObject({ stale: true, error: '赛程格式已变化，暂时无法读取', matches: [] })
   })
   it('keeps the other matches and logs the one it skipped', async () => {
     const log = vi.fn()

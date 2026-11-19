@@ -141,7 +141,7 @@ describe('confirmed account operations share the single write lane', () => {
     const pending = h.manager.runAccountOperation(scope(), h.produce, freshSignal())
     await flush()
     expect(await h.manager.runAccountOperation(scope(), h.produce, freshSignal())).toEqual({ status: 'busy' })
-    expect(await h.manager.sendMessage(MESSAGE)).toMatchObject({ status: 'failed', message: '已有一条手动弹幕正在发送或等待, 请等待当前请求结束' })
+    expect(await h.manager.sendMessage(MESSAGE)).toMatchObject({ status: 'failed', message: '已有一条手动弹幕正在发送或等待，请等待当前请求结束' })
     expect(h.send).not.toHaveBeenCalled()
     if (phase === 'queued') { h.signs[0]!.resolve(SIGN_SUCCESS); await flush() }
     expect(h.produce).toHaveBeenCalledOnce()

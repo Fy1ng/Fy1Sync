@@ -1,6 +1,6 @@
 /**
  * The 定时弹幕 editor's draft and its translation into a `DouyuMessageSchedule`. Texts are
- * one per line; 自动文案 uses only the bundled local templates. The number of sends is
+ * one per line; 预设文案 uses only the bundled local templates. The number of sends is
  * never filled in for the viewer: either a count is typed, or 持续发送 is switched on.
  */
 
@@ -11,7 +11,7 @@ import {
 import { readMessageSchedule } from '../../../server/douyu/taskConfig'
 import type { DouyuMessageSchedule } from '../../../server/douyu/types'
 
-export const SELECTION_LABEL: Record<MessageSelection['mode'], string> = { sequential: '顺序', random: '随机', automatic: '自动文案' }
+export const SELECTION_LABEL: Record<MessageSelection['mode'], string> = { sequential: '顺序', random: '随机', automatic: '预设文案' }
 export const TEMPLATE_LABEL: Record<LocalMessageTemplate, string> = { cheer: '加油', thanks: '感谢', 'good-game': '精彩对局' }
 
 export interface LoopDraft {

@@ -21,7 +21,7 @@ export interface BasicRegionSheetProps {
   label?: string
 }
 
-export function BasicRegionSheet({ video, sourceToken, initial, title, saveLabel, onSave, onClose, instructions, label = '官方画面当前帧' }: BasicRegionSheetProps): React.ReactNode {
+export function BasicRegionSheet({ video, sourceToken, initial, title, saveLabel, onSave, onClose, instructions, label = '画面当前帧' }: BasicRegionSheetProps): React.ReactNode {
   const latest = useRef({ video, sourceToken })
   latest.current = { video, sourceToken }
   const [canvas, setCanvas] = useState<HTMLCanvasElement | null>(null)
@@ -48,19 +48,19 @@ export function BasicRegionSheet({ video, sourceToken, initial, title, saveLabel
     if (!canvas) return
     stopPaint()
     const active = latest.current.video, width = active.videoWidth, height = active.videoHeight
-    if (!width || !height || active.readyState < 2 || active.seeking) { setProblem('画面尚未就绪, 请等待后重新取帧.'); setInvalid(true); return }
-    if (!Number.isInteger(width) || !Number.isInteger(height) || width * height > 16_777_216) { setProblem('画面尺寸过大, 请换较低画质后重试.'); setInvalid(true); return }
+    if (!width || !height || active.readyState < 2 || active.seeking) { setProblem('画面尚未就绪，请等待后重新取帧'); setInvalid(true); return }
+    if (!Number.isInteger(width) || !Number.isInteger(height) || width * height > 16_777_216) { setProblem('画面尺寸过大，请换较低画质后重试'); setInvalid(true); return }
     const token = latest.current.sourceToken, source = active.currentSrc || active.src || '', object = active.srcObject
     const deadline = performance.now() + 1000
     captured.current = null
     setInvalid(true)
-    setProblem('正在读取当前画面...')
+    setProblem('正在读取当前画面…')
     const paint = (): void => {
       pendingPaint.current = null
       if (latest.current.video !== active || latest.current.sourceToken !== token
         || source !== (active.currentSrc || active.src || '') || object !== active.srcObject
         || active.videoWidth !== width || active.videoHeight !== height) {
-        setProblem('片源已改变, 请重新取帧后框选.'); return
+        setProblem('片源已改变，请重新取帧后框选'); return
       }
       try {
         // Zoom uses the original frame pixels, never an enlarged low-resolution thumbnail.
@@ -76,19 +76,19 @@ export function BasicRegionSheet({ video, sourceToken, initial, title, saveLabel
         }
         captured.current = { video: active, token, source, object, width, height }
         setSize({ width, height }); setInvalid(false); setProblem(null); setDrawing(false); setRevision(value => value + 1)
-      } catch (error) { setInvalid(true); setProblem(displayError(error, '无法读取当前画面, 请重新取帧.')) }
+      } catch (error) { setInvalid(true); setProblem(displayError(error, '无法读取当前画面，请重新取帧')) }
     }
     paint()
   }
   useEffect(() => { capture(); return stopPaint }, [canvas])
   useEffect(() => {
-    const invalidate = (): void => { stopPaint(); setInvalid(true); setDrawing(false); drag.current = null; setProblem('片源或画面尺寸已改变, 请重新取帧后框选.') }
+    const invalidate = (): void => { stopPaint(); setInvalid(true); setDrawing(false); drag.current = null; setProblem('片源或画面尺寸已改变，请重新取帧后框选') }
     for (const event of ['emptied', 'loadstart', 'resize']) video.addEventListener(event, invalidate)
     return () => { for (const event of ['emptied', 'loadstart', 'resize']) video.removeEventListener(event, invalidate) }
   }, [video])
   useEffect(() => {
     if (captured.current && (captured.current.token !== sourceToken || captured.current.video !== video)) {
-      setInvalid(true); setDrawing(false); drag.current = null; setProblem('片源已改变, 请重新取帧后框选.')
+      setInvalid(true); setDrawing(false); drag.current = null; setProblem('片源已改变，请重新取帧后框选')
     }
   }, [video, sourceToken])
   const point = (event: ReactPointerEvent, value: NonNullable<typeof drag.current>) => pointToFraction({ x: event.clientX - value.bounds.left, y: event.clientY - value.bounds.top }, value.picture)
@@ -119,16 +119,16 @@ export function BasicRegionSheet({ video, sourceToken, initial, title, saveLabel
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   }
   const save = (): void => {
-    if (invalid || !current()) { setInvalid(true); setProblem('片源或画面尺寸已改变, 请重新取帧后框选.'); return }
+    if (invalid || !current()) { setInvalid(true); setProblem('片源或画面尺寸已改变，请重新取帧后框选'); return }
     const selected = normalizeRoi(roi)
-    if (selected.w <= 0 || selected.h <= 0) { setProblem('请框出至少一个像素的有效范围.'); return }
+    if (selected.w <= 0 || selected.h <= 0) { setProblem('请框出至少一个像素的有效范围'); return }
     onSave(selected)
     onClose()
   }
   return <Sheet title={title} onClose={onClose} wide>
     <div className="basic-region-sheet">
       <p className="basic-region-sheet__instructions">{instructions}</p>
-      <p className="basic-region-sheet__instructions">适应窗口时可拖空白处画新框, 放大后拖动选框边角精调. 画面继续播放.</p>
+      <p className="basic-region-sheet__instructions">适应窗口时拖空白处可画新框，放大后可移动画面。直播继续播放。</p>
       <div className="basic-region-sheet__stage-wrap">
         <RegionStage mediaSize={size} roi={roi} resetKey={`${title}/${revision}`} enabled={size.width > 0 && !invalid} hidden={false}>
           {picture => <div className={`basic-region-sheet__surface${drawing ? ' is-drawing' : ''}`}
@@ -142,7 +142,7 @@ export function BasicRegionSheet({ video, sourceToken, initial, title, saveLabel
           </div>}
         </RegionStage>
       </div>
-      {problem && <p className="basic-region-sheet__problem" role="status">{problem === '正在读取当前画面...' ? problem : <ErrorText error={problemDetail ?? problem} message={problem} />}</p>}
+      {problem && <p className="basic-region-sheet__problem" role="status">{problem === '正在读取当前画面…' ? problem : <ErrorText error={problemDetail ?? problem} message={problem} />}</p>}
       <div className="basic-region-sheet__actions">
         <span>
           <button type="button" className="btn-quiet" onClick={capture}>重新取帧</button>

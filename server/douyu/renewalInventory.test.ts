@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { parseRenewalInventory, parseRenewalTargets, RenewalInventoryError } from './renewalInventory'
 
 const NOW = 1_800_000_000_000
-const ERROR = '斗鱼续牌列表或背包数据无法确认, 请刷新后重试.'
+const ERROR = '斗鱼续牌列表或背包数据无法确认，请刷新后重试'
 const candidate = (values: Record<string, unknown> = {}) => ({
   id: 268, name: '荧光棒', count: 12, met: NOW / 1_000 + 60, propType: 1, isClick: 1, isValuable: 0, ...values,
 })

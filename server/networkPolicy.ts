@@ -73,7 +73,7 @@ export class NetworkPolicy {
     const lookup = Promise.race([this.resolveProxy(url), new Promise<never>((_yes, no) => {
       timer = setTimeout(() => no(new Error('Proxy resolution timeout')), 15_000)
     })])
-    const value = lookup.then(parseProxyResult).catch(() => { throw new StreamFailureError({ stage: 'proxy', code: 'proxy-resolution-failed', message: '无法取得系统代理决策, 请检查系统代理设置.' }) }).finally(() => clearTimeout(timer))
+    const value = lookup.then(parseProxyResult).catch(() => { throw new StreamFailureError({ stage: 'proxy', code: 'proxy-resolution-failed', message: '无法取得系统代理决策，请检查系统代理设置' }) }).finally(() => clearTimeout(timer))
     if (this.cache.size >= 256) this.cache.delete(this.cache.keys().next().value!)
     this.cache.set(url, { expires: this.now() + this.ttlMs, value })
     void value.catch(() => { if (this.cache.get(url)?.value === value) this.cache.delete(url) })

@@ -81,14 +81,14 @@ describe('bounded playback diagnostics', () => {
 describe('evidence-based stall hints', () => {
   it('reports stalled local production only with exhausted data and unchanged edges', () => {
     const diagnostics = stalled()
-    expect(diagnostics.summary('official')).toMatchObject({ category: 'production', hint: expect.stringContaining('本地产片没推进') })
+    expect(diagnostics.summary('official')).toMatchObject({ category: 'production', hint: '直播数据未继续更新' })
     expect(stalled({ localBuffer: null }).summary('official')!.category).toBe('unknown')
     expect(stalled({ seekableEnd: null, playlistEnd: null }).summary('official')!.category).toBe('unknown')
   })
 
   it('reports local data not fetched only when a pending or failed request supports it', () => {
     expect(stalled({ seekableEnd: 20, playlistEnd: 20, fragment: { phase: 'loading', elapsedMs: 2000 } })
-      .summary('official')).toMatchObject({ category: 'fetch', hint: expect.stringContaining('本地有数据但播放器没拉到') })
+      .summary('official')).toMatchObject({ category: 'fetch', hint: '播放器未收到新数据' })
     expect(stalled({ seekableEnd: 20, playlistEnd: 20, error: { type: 'networkError', details: 'fragLoadError' } })
       .summary('official')!.category).toBe('fetch')
     expect(stalled({ seekableEnd: 20, playlistEnd: 20 }).summary('official')!.category).toBe('unknown')
@@ -102,7 +102,7 @@ describe('evidence-based stall hints', () => {
 
   it('reports data at the playhead or an unfinished append without claiming a decoding root cause', () => {
     expect(stalled({ buffered: [[0, 15]], readyState: 4 }).summary('official'))
-      .toMatchObject({ category: 'playback', hint: expect.stringContaining('数据已到但画面不动') })
+      .toMatchObject({ category: 'playback', hint: '已收到数据但画面未更新' })
     expect(stalled({ fragment: { phase: 'loaded', elapsedMs: 2000, start: 9, end: 11 } }).summary('official')!.category).toBe('playback')
     expect(stalled({ seekableEnd: 30, playlistEnd: 30, fragment: { phase: 'loaded', elapsedMs: 2000, start: 20, end: 22 } })
       .summary('official')!.category).toBe('unknown')
@@ -112,7 +112,7 @@ describe('evidence-based stall hints', () => {
 
   it('prioritizes a late renderer timer over apparent playback failure', () => {
     const diagnostics = stalled({ buffered: [[0, 30]], timerLateMs: 1200 })
-    expect(diagnostics.summary('official')).toMatchObject({ category: 'thread', hint: expect.stringContaining('界面线程繁忙') })
+    expect(diagnostics.summary('official')).toMatchObject({ category: 'thread', hint: '应用繁忙，未能判断' })
     diagnostics.record('official', sample(2500, { currentTime: 11 }))
     diagnostics.endStall('official')
     expect(diagnostics.summary('official')!.category).toBe('thread')

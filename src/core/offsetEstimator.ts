@@ -123,12 +123,12 @@ export function estimateOffset(
 }
 
 export const OFFSET_REJECTION_TEXT: Record<OffsetRejection, string> = {
-  'no-official-jump': '官方源未捕获倒计时跳秒',
-  'no-commentary-jump': '解说源未捕获倒计时跳秒',
-  'unstable-official': '官方源跳秒时间不稳定',
-  'unstable-commentary': '解说源跳秒时间不稳定',
-  'low-confidence': '识别置信度过低',
-  'out-of-range': '延迟差超出 ±60 秒范围',
+  'no-official-jump': '没读到画面的倒计时',
+  'no-commentary-jump': '没读到解说的倒计时',
+  'unstable-official': '画面倒计时不稳定',
+  'unstable-commentary': '解说倒计时不稳定',
+  'low-confidence': '没能确认倒计时，请检查选框',
+  'out-of-range': '两路相差超过 60 秒，无法对齐',
 }
 
 function round(value: number): number {

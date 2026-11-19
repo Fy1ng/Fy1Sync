@@ -26,4 +26,12 @@ describe('error detail controls', () => {
     expect(panel.textContent).toContain('503')
     expect(panel.textContent).not.toContain('429')
   })
+  it('shows a manual copy fallback when clipboard access fails', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('clipboard unavailable'))
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    render(<ErrorText error={{ message: '读取失败' }} />)
+    fireEvent.click(screen.getByRole('button', { name: '查看原始错误' }))
+    fireEvent.click(screen.getByRole('button', { name: '复制错误信息' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('复制失败，可选择下方内容手动复制')
+  })
 })

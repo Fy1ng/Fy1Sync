@@ -154,7 +154,7 @@ export function Following({ data, onWatch }: {
     <div className="desk-pane following">
       <section className="follow-notify" aria-label="开播提醒">
         <Switch label="开播提醒" checked={notify.enabled} disabled={!notify.synced || notify.pending || (!notify.enabled && needsAccount)}
-          detail="仅在应用运行期间检查；首次读取到的直播状态不视为开播" onChange={toggle} />
+          detail="应用运行时提醒新开播，已在直播的不重复提醒" onChange={toggle} />
         <div className="row-split">
           <span className="muted">提醒范围</span>
           <Segmented label="提醒范围" value={notify.scope} options={SCOPES} disabled={notify.pending}
@@ -185,21 +185,21 @@ export function Following({ data, onWatch }: {
         </button>
       </div>
 
-      {!account && <p className="desk-empty">未设置当前账号，无法读取关注列表。</p>}
-      {account && !ready && <p className="desk-empty">当前账号未登录，无法读取关注列表。</p>}
+      {!account && <p className="desk-empty">未设置当前账号，无法读取关注列表</p>}
+      {account && !ready && <p className="desk-empty">当前账号未登录，无法读取关注列表</p>}
       {loading && <p className="lane" role="status">{list ? '正在更新关注列表' : '正在读取关注列表'}</p>}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
 
       {list && (
         <p className={list.coverage === 'all-pages' ? 'lane' : 'follow-partial'}>
           {list.coverage === 'all-pages'
-            ? `共 ${rooms.length} 个房间，已读取全部 ${list.pageCount} 页。`
-            : `仅读取到部分关注列表（${list.pageCount} 页，${rooms.length} 个房间）。${list.reason ?? ''}`}
-          {' '}更新于 {formatTime(list.checkedAt)}
+            ? `共 ${rooms.length} 个房间`
+            : `关注列表未读全（${rooms.length} 个房间）${list.reason ? `，${list.reason}` : ''}`}
+          {' · '}更新于 {formatTime(list.checkedAt)}
           {list.coverage !== 'all-pages' && list.reason && <ErrorText error={list} message="" />}
         </p>
       )}
-      {list && rooms.length === 0 && <p className="desk-empty">关注列表为空。</p>}
+      {list && rooms.length === 0 && <p className="desk-empty">关注列表为空</p>}
 
       {rooms.length > 0 && (
         <ul className="follow-list" aria-label="关注的直播间">
@@ -218,7 +218,7 @@ export function Following({ data, onWatch }: {
                   {isLive(room) && (
                     <span className="muted">
                       {room.startedAt === null
-                        ? '开播时间未知 · 已播时长未知'
+                        ? '开播时间未知'
                         : `开播于 ${formatTime(room.startedAt)} · 已播 ${formatDuration((now - room.startedAt) / 1000)}`}
                     </span>
                   )}
@@ -252,17 +252,17 @@ function NotifyStatus({ ready }: { ready: boolean }): React.ReactNode {
   return (
     <>
       {notify.error && <p className="form-error" role="alert"><ErrorText error={notify.errorDetail ?? notify.error} message={notify.error} /></p>}
-      {notify.monitorError && <p className="form-error" role="alert"><ErrorText error={notify.monitorErrorDetail ?? notify.monitorError} message={`监控状态: ${notify.monitorError}`} /></p>}
+      {notify.monitorError && <p className="form-error" role="alert"><ErrorText error={notify.monitorErrorDetail ?? notify.monitorError} message={notify.monitorError} /></p>}
       {notify.stopped && <p className="lane" role="status">{notify.stopped}</p>}
-      {notify.scope === 'all' && !ready && <p className="lane">全部关注需要已登录的当前账号。</p>}
+      {notify.scope === 'all' && !ready && <p className="lane">全部关注需要已登录的当前账号</p>}
       {notify.scope === 'selected' && notify.rooms.length === 0 && (
-        <p className="lane">请在下方列表中选择需要提醒的房间。</p>
+        <p className="lane">请在下方列表中选择需要提醒的房间</p>
       )}
       {notify.enabled && notify.scope === 'selected' && notify.rooms.length > 0 && (
-        <p className="lane" role="status">已对所选 {notify.rooms.length} 个房间开启提醒。</p>
+        <p className="lane" role="status">已对所选 {notify.rooms.length} 个房间开启提醒</p>
       )}
       {notify.enabled && notify.scope === 'all' && notify.accountId && (
-        <p className="lane" role="status">已对当前账号的全部关注开启提醒，每 60 秒检查一次。</p>
+        <p className="lane" role="status">已对当前账号的全部关注开启提醒，每 60 秒检查一次</p>
       )}
     </>
   )

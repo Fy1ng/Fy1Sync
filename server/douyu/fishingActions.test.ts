@@ -134,7 +134,7 @@ describe('official free fishing flow', () => {
   it('scopes credentials per endpoint, starts once and confirms the inventory and active state', async () => {
     const { actions, request, cookieHeader } = setup()
     const result = await actions.run(task, signal())
-    expect(result).toEqual({ status: 'scheduled', message: '已由官方状态确认开始钓鱼, 等待本轮结束.', nextRunAt: NOW + 61_500 })
+    expect(result).toEqual({ status: 'scheduled', message: '已由官方状态确认开始钓鱼，等待本轮结束', nextRunAt: NOW + 61_500 })
     expect(request.mock.calls.map(([url]) => String(url))).toEqual([HOME_URL, CONFIG_URL, START_URL, CONFIRM_URL])
     expect(writes(request)).toHaveLength(1)
     for (const [url, init] of request.mock.calls) {
@@ -165,7 +165,7 @@ describe('official free fishing flow', () => {
   it('reels only an explicitly completed cast and confirms idle before scheduling another turn', async () => {
     const request = scripted(home(2), jsonp(), receipt(), home(0, { timeMs: NOW + 300 }))
     const { actions } = setup({ request })
-    expect(await actions.run(task, signal())).toEqual({ status: 'scheduled', message: '已由官方状态确认收杆, 等待下一轮免费钓鱼.', nextRunAt: NOW + 5_000 })
+    expect(await actions.run(task, signal())).toEqual({ status: 'scheduled', message: '已由官方状态确认收杆，等待下一轮免费钓鱼', nextRunAt: NOW + 5_000 })
     expect(request.mock.calls.map(([url]) => String(url))).toEqual([HOME_URL, CONFIG_URL, REEL_URL, CONFIRM_URL])
     expect(writes(request)).toHaveLength(1)
     expect(Object.fromEntries(new URLSearchParams(String(writes(request)[0]![1]?.body)))).toEqual({ ctn: 'synthetic/csrf+token', rid: '6979222' })

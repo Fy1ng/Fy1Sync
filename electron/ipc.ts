@@ -152,7 +152,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
       try {
         const result = await service.invoke(method, args, Object.freeze({ senderId:owner.contents.id, isCurrent:canSend }))
         return current() ? result : denied()
-      } catch (error) { return { ok:false, code:'internal-error', message:'抖音发送结果无法确认, 请在官方房间核对. 本次不会自动重发.', detail: diagnosticDetails(error) } }
+      } catch (error) { return { ok:false, code:'internal-error', message:'抖音发送结果无法确认，请在官方房间核对。本次不会自动重发。', detail: diagnosticDetails(error) } }
     }
     if (method === 'reconnectDanmaku') {
       const field = args && typeof args === 'object' && !Array.isArray(args) && Reflect.ownKeys(args).length === 1
@@ -166,7 +166,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
       try {
         return service.relay.reconnectRoom(room) && current() ? { ok: true, value: { room } }
           : { ok: false, code: 'room-not-subscribed', message: '该弹幕房间已经关闭' }
-      } catch (error) { return { ok: false, code: 'internal-error', message: '弹幕重连失败, 请稍后重试', detail: diagnosticDetails(error) } }
+      } catch (error) { return { ok: false, code: 'internal-error', message: '弹幕重连失败，请稍后重试', detail: diagnosticDetails(error) } }
     }
     if (method === 'activateDouyuRoom') {
       // This operation cannot be implemented in the service: only IPC knows subscription ownership.
@@ -252,7 +252,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
       return { ok: true, value: { ok: true, room: canonical } }
     } catch (error) {
       discard()
-      return { ok: false, code: 'upstream-error', message: '弹幕房间身份查询失败, 请重试', detail: diagnosticDetails(error) }
+      return { ok: false, code: 'upstream-error', message: '弹幕房间身份查询失败，请重试', detail: diagnosticDetails(error) }
     }
   })
   ipc.handle('stream-syncer:unsubscribe', (event, subscriptionId: unknown) => {
@@ -263,7 +263,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
     const key = keyFor(owner, subscriptionId), entry = subscriptions.get(key)
     subscriptions.delete(key)
     safeRelease(entry?.release)
-    try { syncTaskRoom() } catch (error) { return { ok: false, code: 'internal-error', message: '弹幕订阅已释放, 但操作房间更新失败', detail: diagnosticDetails(error) } }
+    try { syncTaskRoom() } catch (error) { return { ok: false, code: 'internal-error', message: '弹幕订阅已释放，但操作房间更新失败', detail: diagnosticDetails(error) } }
     return { ok: true, value: { ok: true } }
   })
   return {

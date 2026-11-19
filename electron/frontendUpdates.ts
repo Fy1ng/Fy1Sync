@@ -26,7 +26,7 @@ interface Options {
   bridgeVersion: number
   bundledRevision: number
 }
-const failure = () => new Error('前端更新缓存无效, 已保留原客户端和用户数据.')
+const failure = () => new Error('前端更新缓存无效，已保留原客户端和用户数据')
 const hashOf = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
 const isHash = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 const isReference = (value: unknown): value is string | null => value === null || isHash(value)
@@ -51,7 +51,7 @@ export class FrontendUpdates implements FrontendUpdatePort {
   private selection = emptySelection()
   private running: Release | null = null
   private phase: FrontendSnapshot['phase'] = 'bundled'
-  private message = '当前使用安装包内置界面.'
+  private message = '当前使用内置界面'
   private booted = false
   private disposed = false
 
@@ -64,7 +64,7 @@ export class FrontendUpdates implements FrontendUpdatePort {
       try {
         const raw = this.store.load()
         if (raw !== undefined) this.selection = parseSelection(raw)
-      } catch { this.phase = 'rolled-back'; this.message = '前端更新记录损坏, 已使用内置界面, 原记录和用户数据已保留.' }
+      } catch { this.phase = 'rolled-back'; this.message = '前端更新记录损坏，已使用内置界面，原记录和用户数据已保留' }
     }
   }
 
@@ -141,7 +141,7 @@ export class FrontendUpdates implements FrontendUpdatePort {
         blockedRevision: Math.max(this.selection.blockedRevision, this.revision(trial.candidate)) }
       try { this.save(next) } catch { this.selection = next }
       this.phase = 'rolled-back'
-      this.message = '上次前端启动未完成, 已自动回退到可用界面, 不会再次应用该版本.'
+      this.message = '上次新界面启动失败，已回退。此版本不会再次自动启用。'
       return this.clientDir()
     }
     this.running = this.usable(this.selection.active)
@@ -151,8 +151,8 @@ export class FrontendUpdates implements FrontendUpdatePort {
         blockedRevision: Math.max(this.selection.blockedRevision, this.revision(this.selection.active)) }
       try { this.save(next) } catch { this.selection = next }
       this.phase = 'rolled-back'
-      this.message = '缓存界面损坏或不兼容当前客户端, 已自动回退, 用户数据不受影响.'
-    } else if (this.running) { this.phase = 'current'; this.message = '当前使用已验签的前端更新.' }
+      this.message = '界面更新损坏或不兼容，已回退。本机数据保留。'
+    } else if (this.running) { this.phase = 'current'; this.message = '当前使用已更新的界面' }
 
     if (this.selection.pending) {
       const candidate = this.pendingAllowed(this.selection.pending) ? this.usable(this.selection.pending) : null
@@ -162,13 +162,13 @@ export class FrontendUpdates implements FrontendUpdatePort {
           this.save(next)
           this.running = candidate
           this.phase = 'trial'
-          this.message = '正在验证新界面能否正常启动, 失败将自动回退.'
-        } catch { this.message = '无法记录前端启动状态, 继续使用原界面.' }
+          this.message = '正在验证新界面能否正常启动，失败将自动回退'
+        } catch { this.message = '无法记录前端启动状态，继续使用原界面' }
       } else {
         const next: Selection = { ...this.selection, pending: null, blockedRevision: Math.max(this.selection.blockedRevision, this.revision(this.selection.pending)) }
         try { this.save(next) } catch { this.selection = next }
         this.phase = 'rolled-back'
-        this.message = '待应用的前端包损坏或不兼容, 已保留原界面.'
+        this.message = '待应用的前端包损坏或不兼容，已保留原界面'
       }
     }
     return this.clientDir()
@@ -270,7 +270,7 @@ export class FrontendUpdates implements FrontendUpdatePort {
     try {
       this.save({ ...this.selection, active: trial.candidate, previous: trial.previous, trial: null })
       this.phase = 'current'
-      this.message = '新界面已正常启动, 已保留上一版供回退.'
+      this.message = '新界面已正常启动，已保留上一版供回退'
       this.collect()
       return true
     } catch { return false }
@@ -286,7 +286,7 @@ export class FrontendUpdates implements FrontendUpdatePort {
     try { this.save(next) } catch { this.selection = next }
     this.running = fallback
     this.phase = 'rolled-back'
-    this.message = '新界面未能正常启动, 已自动回退, 不会再次应用该版本.'
+    this.message = '新界面启动失败，已回退。此版本不会再次自动启用。'
     return true
   }
 

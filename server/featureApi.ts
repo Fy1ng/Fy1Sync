@@ -19,26 +19,26 @@ export type FeatureHandler<K extends FeatureMethod> = (args: FeatureMethods[K]['
 export type FeatureHandlers = { [K in FeatureMethod]?: FeatureHandler<K> }
 export type WithFeatureAccount = <T>(accountId: string, run: (signal: AbortSignal) => T | Promise<T>) => Promise<T>
 const ERROR_TEXT = {
-  'invalid-arguments': '扩展接口参数无效.', 'not-available': '该后端服务尚不可用.', 'not-found': '未找到该功能或记录.',
-  'account-changed': '活动账号已变化, 请重新读取或操作.', 'account-busy': '账号正在登录或退出, 请稍后重试.',
-  'login-required': '请先登录当前斗鱼账号.', 'room-changed': '当前操作房间已变化, 请重新选择.',
-  forbidden: '当前窗口无权执行该操作.', cancelled: '操作已取消.', 'service-closed': '本地扩展服务已关闭.',
-  'favorite-limit': '本地弹幕收藏已达到容量上限, 请先删除部分收藏.',
-  'room-limit': '最多收藏100个直播间, 请先删除部分收藏.',
-  'storage-failed': '本地设置读取或保存失败, 请检查配置后重试.',
-  'account-not-found': '斗鱼账号不存在.', 'account-limit': '斗鱼账号数量已达到上限.',
-  'no-active-account': '请先选择当前斗鱼账号.', disposed: '本地服务已关闭.',
-  'task-not-found': '未找到该任务.', 'task-limit': '任务数量已达到上限.', 'task-exists': '该账号在此房间已有相同任务.',
-  empty: '请输入弹幕内容.', 'too-long': '组合后的弹幕超过本地 500 字符或 2000 字节上限.',
-  'invalid-text': '弹幕包含不支持的字符.', 'invalid-options': '弹幕文案配置无效.',
-  'verification-required': '请在斗鱼官方页面完成账号验证.', unavailable: '暂时无法安全读取或操作斗鱼数据.',
-  'invalid-data': '斗鱼返回的数据不完整或无法确认.', busy: '已有操作正在执行, 请稍后重试.',
-  disabled: '截图和 GIF 功能已关闭.', 'capture-busy': '已有 GIF 录制任务.',
-  'recording-not-found': 'GIF 录制不存在.', 'capture-failed': '图片保存或 GIF 编码失败.',
-  'stream-limit': '直播会话数量已达到上限.', 'stream-not-found': '直播会话不存在.',
-  'stream-cancelled': '直播会话已关闭.', 'source-unavailable': '直播源尚未就绪.',
-  'inventory-changed': '可赠库存已变化, 已停止后续赠送.', 'price-changed': '礼物价格或可赠状态已变化, 已停止后续赠送.',
-  'balance-changed': '余额未知, 不足或已变化, 已停止后续赠送.', 'stale-plan': '赠礼计划已过期或状态已变化, 请重新预览.',
+  'invalid-arguments': '操作信息无效', 'not-available': '此操作暂不可用，请稍后重试', 'not-found': '未找到该功能或记录',
+  'account-changed': '当前账号已变更，请重新确认', 'account-busy': '账号正在登录或退出，请稍后重试',
+  'login-required': '请先登录当前斗鱼账号', 'room-changed': '当前操作房间已变化，请重新选择',
+  forbidden: '当前窗口无权执行该操作', cancelled: '操作已取消', 'service-closed': '此操作暂不可用，请重新启动 Fy1Sync',
+  'favorite-limit': '本地弹幕收藏已达到容量上限，请先删除部分收藏',
+  'room-limit': '最多收藏 100 个直播间，请先取消部分收藏',
+  'storage-failed': '本地设置读取或保存失败，请检查配置后重试',
+  'account-not-found': '斗鱼账号不存在', 'account-limit': '斗鱼账号数量已达到上限',
+  'no-active-account': '请先选择当前斗鱼账号', disposed: '此操作暂不可用，请重新启动 Fy1Sync',
+  'task-not-found': '未找到该任务', 'task-limit': '任务数量已达到上限', 'task-exists': '该账号在此房间已有相同任务',
+  empty: '请输入弹幕内容', 'too-long': '算上前后缀后太长，请缩短弹幕',
+  'invalid-text': '弹幕含不支持的字符，请改为单行文字', 'invalid-options': '请检查弹幕前后缀设置',
+  'verification-required': '请在斗鱼官方页面完成账号验证', unavailable: '暂时无法安全读取或操作斗鱼数据',
+  'invalid-data': '斗鱼返回的数据不完整或无法确认', busy: '已有操作正在执行，请稍后重试',
+  disabled: '截图和 GIF 功能已关闭', 'capture-busy': '已有 GIF 录制任务',
+  'recording-not-found': '本次 GIF 录制已结束', 'capture-failed': '保存截图或 GIF 失败，请重试',
+  'stream-limit': '同时播放的直播太多，请关闭一路再试', 'stream-not-found': '此直播已关闭',
+  'stream-cancelled': '直播会话已关闭', 'source-unavailable': '直播源尚未就绪',
+  'inventory-changed': '可赠库存已变化，已停止后续赠送', 'price-changed': '礼物价格或可赠状态已变化，已停止后续赠送',
+  'balance-changed': '余额不足、无法确认或已变化，已停止后续赠送', 'stale-plan': '当前内容已失效，请重新生成',
 } as const
 export type FeatureErrorCode = keyof typeof ERROR_TEXT
 export class FeatureApiError extends Error {
@@ -86,7 +86,7 @@ export class FeatureApi {
       if ((name && 'value' in name && name.value === 'AbortError') || (!name && isError && error instanceof DOMException && error.name === 'AbortError')) {
         return { ok: false, code: 'cancelled', message: ERROR_TEXT.cancelled, detail }
       }
-      return { ok: false, code: 'internal-error', message: '本地服务无法完成此操作.', detail }
+      return { ok: false, code: 'internal-error', message: '本地服务无法完成此操作', detail }
     }
   }
   subscribe(listener: (event: FeatureEvent) => void): () => void {

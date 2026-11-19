@@ -193,7 +193,7 @@ describe('strict credentials and account continuity', () => {
     upstream.message = cookie
     const second = setup({ request: async () => { throw upstream } })
     const sanitized = await second.gateway.readBadges('account-one', signal()).catch(error => error as Error)
-    expect((sanitized as Error).message).toBe('暂时无法安全访问斗鱼. 请稍后再试.')
+    expect((sanitized as Error).message).toBe('暂时无法安全访问斗鱼。请稍后再试。')
   })
 })
 
@@ -202,7 +202,7 @@ describe('one fixed backpack donation and receipt-only success', () => {
     const { gateway, request, cookieHeader } = setup()
     const result = await gateway.donate({ ...donation, propId, quantity: 3 }, signal())
     expect(result.status).toBe('receipt-received')
-    expect(result.message).toContain('不代表续牌状态已确认')
+    expect(result.message).toBe('已收到斗鱼背包赠送回执')
     expect(request).toHaveBeenCalledOnce()
     const [url, init] = request.mock.calls[0]!
     expect(String(url)).toBe(donateUrl)

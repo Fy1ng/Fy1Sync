@@ -125,9 +125,9 @@ export const PLATFORM_NAME: Record<Cs2Stream['platform'], string> = { youtube: '
 
 /** Why a stream cannot be played yet, in the sheet's words. */
 export const MISSING_TEXT: Record<NonNullable<Cs2Stream['missing']>, string> = {
-  finding: '正在查找直播频道…',
-  unmatched: '没找到这场比赛的直播频道，请手动粘贴直播链接',
-  failed: '暂时无法读取直播频道',
+  finding: '正在查找直播频道',
+  unmatched: '未找到直播频道，可在添加直播间中粘贴链接',
+  failed: '直播频道读取失败',
 }
 
 /** Streams in the order worth offering: YouTube first, since it carries the higher qualities here. */

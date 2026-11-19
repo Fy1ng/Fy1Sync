@@ -63,7 +63,7 @@ test('赛程 HTTP 错误通过真实 IPC 展开并复制原始字段', async ({ 
   await expect(panel).toContainText('Rate Limited - Liquipedia')
   await expect(panel).toContainText('retryAfter')
   await expect(panel).not.toContainText('PRIVATE_TEST_TOKEN')
-  await expect(sheet).toContainText('来源读取于')
+  await expect(sheet).toContainText('读取于')
   const layout = await sheet.locator('.sched-empty-content').evaluate(node => ({
     top: node.getBoundingClientRect().top,
     buttonTop: node.querySelector('.error-details-toggle')!.getBoundingClientRect().top,

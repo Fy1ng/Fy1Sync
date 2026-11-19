@@ -35,8 +35,8 @@ export interface DanmakuFeaturesOptions {
 
 export class DanmakuFeaturesError extends Error {
   constructor(readonly code: 'invalid-arguments' | 'not-found' | 'favorite-limit' | 'storage-failed') {
-    super({ 'invalid-arguments': '弹幕功能参数无效.', 'not-found': '未找到该条弹幕收藏.',
-      'favorite-limit': '本地弹幕收藏已达到容量上限, 请先删除部分收藏.', 'storage-failed': '弹幕本地设置读取或保存失败, 原文件已保留.' }[code])
+    super({ 'invalid-arguments': '弹幕功能参数无效', 'not-found': '未找到该条弹幕收藏',
+      'favorite-limit': '本地弹幕收藏已达到容量上限，请先删除部分收藏', 'storage-failed': '弹幕本地设置读取或保存失败，原文件已保留' }[code])
     this.name = 'DanmakuFeaturesError'
   }
 }

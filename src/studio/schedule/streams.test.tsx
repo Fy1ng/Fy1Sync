@@ -15,7 +15,7 @@ function match(id: string, left: string, streams: Cs2Stream[]): Cs2Match {
     tournament: { name: 'Gamers Club Masters VII', stage: 'Playoffs', tier: 3, url: 'https://liquipedia.net/counterstrike/Gamers_Club/Masters/VII#Playoffs', logo: ICON } }
 }
 const schedule = (matches: Cs2Match[]): Cs2Schedule =>
-  ({ fetchedAt: NOW, source: 'liquipedia', attribution: '赛程数据来自 Liquipedia (CC-BY-SA 3.0)', stale: false, matches })
+  ({ fetchedAt: NOW, source: 'liquipedia', attribution: '赛程数据来自 Liquipedia（CC-BY-SA 3.0）', stale: false, matches })
 
 let invoke: ReturnType<typeof vi.fn>
 let reply: Cs2Schedule
@@ -52,11 +52,11 @@ describe('schedule streams', () => {
     expect(onClose).toHaveBeenCalled()
 
     expect(within(row('Finding')).getByRole('button', { name: /Twitch.*Gamers_Club/ })).toBeDisabled()
-    expect(within(row('Finding')).getByText('正在查找直播频道…')).toBeInTheDocument()
-    expect(within(row('Failed')).getByText('暂时无法读取直播频道')).toBeInTheDocument()
+    expect(within(row('Finding')).getByText('正在查找直播频道')).toBeInTheDocument()
+    expect(within(row('Failed')).getByText('直播频道读取失败')).toBeInTheDocument()
     fireEvent.click(within(row('Failed')).getByRole('button', { name: '查看原始错误' }))
     expect(within(row('Failed')).getByRole('region', { name: '原始错误信息' })).toHaveTextContent('429')
-    expect(within(row('Unmatched')).getByText('没找到这场比赛的直播频道，请手动粘贴直播链接')).toBeInTheDocument()
+    expect(within(row('Unmatched')).getByText('未找到直播频道，可在添加直播间中粘贴链接')).toBeInTheDocument()
 
     // Titles are asked for the matched channel only.
     const asked = invoke.mock.calls.filter(([method]) => method === 'getStreamTitles').map(([, args]) => args)

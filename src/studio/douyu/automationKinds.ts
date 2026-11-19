@@ -26,55 +26,55 @@ export const GROUP_LABEL: Record<KindGroup, string> = { sign: '签到', claim: '
 export const KIND_SPEC: Record<DouyuAutomationKind, KindSpec> = {
   'followed-room-sign': {
     label: '关注房间签到', group: 'sign', targets: ['followed-rooms'], fields: ['maxItems'],
-    note: '需完整读取该账号的全部关注列表，列表未读全时不执行。逐个房间签到，结果以官方状态为准。',
+    note: '关注列表未读全时暂停，请刷新关注列表后重试',
   },
   'yuba-sign-all': {
     label: '鱼吧签到', group: 'sign', targets: ['followed-yuba', 'group'], fields: ['yuba', 'maxItems'],
-    note: '极速签到仅适用于全部关注的鱼吧，完成后逐个核对，未签到的鱼吧改为普通签到。补签仅消耗已有补签卡，不购买。',
+    note: '',
   },
   'client-sign': {
     label: '客户端签到', group: 'sign', targets: ['account'], fields: [],
-    note: '仅针对所选账号，奖励以官方状态为准。',
+    note: '',
   },
   'arena-sign': {
     label: '右侧活动签到', group: 'sign', targets: ['room', 'selected-rooms', 'followed-rooms'], fields: ['arena', 'maxItems'],
-    note: '按官方当期活动配置执行，未找到有效活动时停止。',
+    note: '',
   },
   'fans-home-sign': {
     label: '粉丝家园签到', group: 'sign', targets: ['room', 'selected-rooms', 'followed-rooms'], fields: ['maxItems'],
-    note: '需具备官方资格。签到状态无法确认时转为人工核对。',
+    note: '',
   },
   'diamond-fans-sign': {
     label: '钻粉联赛签到', group: 'sign', targets: ['room', 'selected-rooms', 'followed-rooms'], fields: ['maxItems'],
-    note: '需具备官方资格。签到状态无法确认时转为人工核对。',
+    note: '',
   },
   'points-sign': {
     label: '积分签到', group: 'sign', targets: ['account'], fields: [],
-    note: '当前积分活动来源可能不可用，不可用时任务停止。',
+    note: '',
   },
   'anchor-star-sign': {
     label: '星推签到', group: 'sign', targets: ['room'], fields: ['maxItems'],
-    note: '默认最多处理 3 个官方榜单房间。',
+    note: '默认最多处理 3 个榜单房间',
   },
   'level-reward': {
     label: '等级任务奖励', group: 'claim', targets: ['room'], fields: ['maxItems'],
-    note: '仅领取官方已完成且未领取的等级任务奖励，每轮一项，领取后重新读取核对。',
+    note: '领取已完成且尚未领取的等级任务奖励',
   },
   'watch-points': {
     label: '观看积分', group: 'claim', targets: ['account'], fields: ['maxItems'],
-    note: '仅领取官方已完成的观看积分，不模拟观看过程。当前积分活动来源可能不可用。',
+    note: '领取已获得但尚未领取的观看积分',
   },
   'yuba-read': {
     label: '鱼吧阅读', group: 'task', targets: ['account'], fields: ['postIds', 'maxItems'],
-    note: '仅读取所填帖子，不保证获得阅读奖励。',
+    note: '读取所填鱼吧帖子',
   },
   'follow-task': {
     label: '关注任务', group: 'task', targets: ['account'], fields: ['followRooms', 'maxItems'],
-    note: '仅关注所填房间，已关注的房间跳过，不取消已有关注。',
+    note: '仅关注所填房间，不取消已有关注',
   },
   'anchor-star-follow': {
     label: '星推关注', group: 'task', targets: ['room'], fields: ['followRooms', 'maxItems'],
-    note: '仅关注所填房间，已关注的房间跳过，不取消已有关注。',
+    note: '仅关注所填房间，不取消已有关注',
   },
 }
 
@@ -90,7 +90,7 @@ export const TARGET_LABEL: Record<TargetChoice, string> = {
 }
 
 export const YUBA_MODE_LABEL = { normal: '普通', fast: '极速', supplement: '补签' } as const
-export const ARENA_LABEL = { actqzs: '右侧活动', cardArena: 'cardArena' } as const
+export const ARENA_LABEL = { actqzs: '右侧活动', cardArena: '卡牌活动' } as const
 
 export interface AutomationDraft {
   accountId: string

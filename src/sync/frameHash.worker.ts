@@ -52,7 +52,7 @@ self.onmessage = (event: MessageEvent<HashRequest>) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : '画面匹配失败'
     send({ type: 'error', message: message === 'insufficient visible area'
-      ? '忽略区域过大, 请至少保留四分之一画面' : message })
+      ? '忽略区域过大，请至少保留四分之一画面' : message })
     if (request.type === 'frame') send({ type: 'ack', role: request.role })
   }
 }

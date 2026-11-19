@@ -76,7 +76,7 @@ export function useAutomations() {
       setLane({ ...IDLE, notice: done })
       return true
     } catch (error) {
-      if (mounted.current) setLane(failedLane(error, '操作未完成, 请重试'))
+      if (mounted.current) setLane(failedLane(error, '操作未完成，请重试'))
       return false
     } finally {
       busy.current = false

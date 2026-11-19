@@ -44,7 +44,7 @@ export class MediaRegistry {
     this.registerResource(raw, headers, network, access ?? mediaEntry(raw), true)
 
   private registerResource(raw: string, headers: Record<string,string> | undefined, network: NetworkContext | undefined, access: MediaAccess, root = false): string {
-    if (this.closed) throw new Error('媒体读取服务已关闭.')
+    if (this.closed) throw new Error('媒体读取服务已关闭')
     const prepared = network?.media ? mediaUrlCredentials(raw, headers) : undefined
     const url = prepared?.url ?? new URL(raw)
     if (prepared && Object.keys(prepared.headers).length) headers = prepared.headers
@@ -135,7 +135,7 @@ export class MediaRegistry {
     const abort = () => controller.abort()
     request.signal.addEventListener('abort', abort, { once: true })
     if (request.signal.aborted) controller.abort()
-    const timeoutAbort = () => controller.abort(new DOMException('媒体读取超时.', 'TimeoutError'))
+    const timeoutAbort = () => controller.abort(new DOMException('媒体读取超时', 'TimeoutError'))
     const timeoutMs = (resource.network ?? this.deps.network)?.media?.requestTimeoutMs ?? this.deps.config.requestTimeoutMs
     let timeout = timeoutMs > 0 ? setTimeout(timeoutAbort, timeoutMs) : undefined
     let cleaned = false
@@ -189,7 +189,7 @@ export class MediaRegistry {
         playlist = sniffed.playlist && upstream.ok
         if (playlist && upstream.status === 206) {
           await upstreamBody?.cancel().catch(() => {})
-          throw new ProxyError('upstream-failed', '媒体服务器未返回完整的 HLS 播放列表.', 502)
+          throw new ProxyError('upstream-failed', '媒体服务器未返回完整的 HLS 播放列表', 502)
         }
       }
       if (!upstream.ok) notifyFailure({ status: upstream.status })
@@ -262,7 +262,7 @@ export class MediaRegistry {
       await upstream?.body?.cancel().catch(() => {})
       cleanup()
       if (error instanceof ProxyError) return errorResponse(error.status, error.reason, classifyNetworkFailure(error).message)
-      if (error instanceof MediaCapacityError) return errorResponse(503, 'media-capacity', '媒体登记内存容量已用尽, 请关闭不用的片源.')
+      if (error instanceof MediaCapacityError) return errorResponse(503, 'media-capacity', '媒体登记内存容量已用尽，请关闭不用的片源')
       if (error instanceof RangeError) return errorResponse(413, 'too-large', '媒体清单超过大小上限')
       return errorResponse(timedOut ? 504 : 502, timedOut ? 'upstream-timeout' : 'upstream-failed', '媒体读取失败')
     }
@@ -316,7 +316,7 @@ async function sniffPlaylist(body: ReadableStream<Uint8Array>): Promise<{ playli
   } catch (error) { await reader.cancel().catch(() => {}); throw error }
   if (!playlist && sample.length >= 512 && '#EXTM3U'.startsWith(new TextDecoder().decode(sample).replace(/^\uFEFF/, '').trimStart())) {
     await reader.cancel().catch(() => {})
-    throw new ProxyError('upstream-failed', '媒体响应头部超过可识别范围.', 502)
+    throw new ProxyError('upstream-failed', '媒体响应头部超过可识别范围', 502)
   }
   let index = 0
   return { playlist, body: new ReadableStream<Uint8Array>({

@@ -22,7 +22,7 @@ export { PARSE_INTERVAL_MS } from './liquipediaRateLimit'
 export const SCHEDULE_URL = 'https://liquipedia.net/counterstrike/api.php?' + new URLSearchParams({
   action: 'parse', format: 'json', prop: 'text', title: 'Liquipedia:Matches', text: '{{Liquipedia:Matches}}',
 })
-export const ATTRIBUTION = '赛程数据来自 Liquipedia (CC-BY-SA 3.0)'
+export const ATTRIBUTION = '赛程数据来自 Liquipedia（CC-BY-SA 3.0）'
 export const SCHEDULE_TTL_MS = 300_000
 const ACTIVE_SCHEDULE_TTL_MS = 60_000
 const SOON_WINDOW_MS = 15 * 60_000
@@ -34,8 +34,8 @@ export const TIER_RETRY_MS = 300_000
 export const CHANNEL_TTL_MS = 24 * 60 * 60_000
 export const CHANNEL_RETRY_MS = 300_000
 const MAX_BODY_BYTES = 2_000_000
-const UNAVAILABLE = '赛程暂时无法读取, 请稍后重试'
-const UPSTREAM_LIMITED = 'Liquipedia 请求受限 (HTTP 429), 已暂停请求并保留上次赛程. 冷却结束后将重试; 若官网也提示封禁, 请在相同网络和代理下按官网指引完成验证.'
+const UNAVAILABLE = '赛程暂时无法读取，请稍后重试'
+const UPSTREAM_LIMITED = '赛程更新受限，暂时显示上次结果'
 /** Refused for the 30-second parse quota; `at` is when the quota frees. */
 class RateLimited extends Error { constructor(readonly at: number) { super('Liquipedia parse quota') } }
 

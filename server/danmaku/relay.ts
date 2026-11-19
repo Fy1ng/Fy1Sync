@@ -177,8 +177,8 @@ export class DanmakuRelay {
     room.client = this.deps.createClient?.(identity.platform, identity.room, events)
       ?? (identity.platform === 'douyin'
         ? new DouyinDanmakuClient(identity.room, events, this.deps.douyin ?? {
-          resolveRoom: async () => { throw new Error('抖音弹幕服务尚未配置.') },
-          createSocket: () => { throw new Error('抖音弹幕服务尚未配置.') },
+          resolveRoom: async () => { throw new Error('抖音弹幕服务尚未配置') },
+          createSocket: () => { throw new Error('抖音弹幕服务尚未配置') },
         })
         : identity.platform === 'huya'
         ? new HuyaRoomClient(identity.room, events, { ...this.deps, ...this.deps.huya })

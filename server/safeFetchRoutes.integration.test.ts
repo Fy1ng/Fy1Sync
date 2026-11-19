@@ -218,7 +218,7 @@ describe('safeFetch with ordered system proxy candidates', () => {
         ...system(`${first.pac}; DIRECT`), resolve, fetchImpl, signal: AbortSignal.timeout(2000),
       })
     } catch (error) { rejected = error }
-    expect(rejected).toMatchObject({ failure: { stage: 'proxy', code: 'proxy-unreachable', message: '代理握手超时, 请检查系统代理.' } })
+    expect(rejected).toMatchObject({ failure: { stage: 'proxy', code: 'proxy-unreachable', message: '取流代理连接超时' } })
     expect(JSON.stringify(rejected)).not.toMatch(/PRIVATE|fixture\.invalid|127\.0\.0\.1/)
     expect(first.requests).toHaveLength(1)
     expect(resolve).not.toHaveBeenCalled()

@@ -35,7 +35,7 @@ export class DouyinDanmakuClient {
   private readonly clearTimer: (handle: unknown) => void
 
   constructor(readonly room: string, private readonly events: DanmakuClientEvents, private readonly deps: DouyinDanmakuClientDeps) {
-    if (!/^[1-9]\d{0,19}$/.test(room)) throw new Error('无效的抖音弹幕房间.')
+    if (!/^[1-9]\d{0,19}$/.test(room)) throw new Error('无效的抖音弹幕房间')
     this.now = deps.now ?? Date.now
     this.setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
     this.clearTimer = deps.clearTimer ?? (handle => clearTimeout(handle as never))
@@ -51,7 +51,7 @@ export class DouyinDanmakuClient {
     const generation = ++this.generation
     this.setState('connecting')
     if (generation !== this.generation || this.closedByUser) return
-    this.armWatchdog(30_000, '抖音弹幕房间解析超时, 正在重新连接.')
+    this.armWatchdog(30_000, '抖音弹幕房间解析超时，正在重新连接')
     void Promise.resolve().then(() => this.deps.resolveRoom(this.room)).then(metadata => {
       if (generation !== this.generation || this.closedByUser) return
       if (metadata.webRoom !== this.room) throw new Error('Invalid room identity')
@@ -62,18 +62,18 @@ export class DouyinDanmakuClient {
       const socket = this.deps.createSocket(request.url, request.headers)
       socket.binaryType = 'arraybuffer'
       this.socket = socket
-      this.armWatchdog(15_000, '抖音弹幕连接超时, 正在重新连接.')
+      this.armWatchdog(15_000, '抖音弹幕连接超时，正在重新连接')
       const current = () => this.socket === socket && generation === this.generation && !this.closedByUser
       socket.addEventListener('open', () => {
         if (!current()) return
         this.openedAt = this.now()
-        this.armWatchdog(15_000, '抖音弹幕未收到有效回应, 正在重新连接.')
+        this.armWatchdog(15_000, '抖音弹幕未收到有效回应，正在重新连接')
         if (this.send(encodeDouyinHeartbeat())) this.startKeepalive()
       })
       socket.addEventListener('message', (event: { data: unknown }) => { if (current()) this.ingest(event.data) })
-      socket.addEventListener('error', () => { if (current()) this.scheduleReconnect('抖音弹幕连接出错, 正在重新连接.') })
-      socket.addEventListener('close', () => { if (current()) this.scheduleReconnect('抖音弹幕连接已断开, 正在重新连接.') })
-    }).catch(() => { if (generation === this.generation && !this.closedByUser) this.scheduleReconnect('无法连接抖音弹幕房间, 请检查登录状态或出网设置.') })
+      socket.addEventListener('error', () => { if (current()) this.scheduleReconnect('抖音弹幕连接出错，正在重新连接') })
+      socket.addEventListener('close', () => { if (current()) this.scheduleReconnect('抖音弹幕连接已断开，正在重新连接') })
+    }).catch(() => { if (generation === this.generation && !this.closedByUser) this.scheduleReconnect('无法连接抖音弹幕房间，请检查登录状态或出网设置') })
   }
   close(): void { this.closedByUser = true; this.teardown(); this.seen.clear(); this.setState('closed') }
 
@@ -88,10 +88,10 @@ export class DouyinDanmakuClient {
     if (!result.valid) return
     this.add('unknownMessages', result.unknownMessages)
     if (result.ack) { if (!this.send(result.ack)) return; this.add('acknowledgements') }
-    if (result.liveEnded) { this.scheduleReconnect('抖音直播已结束, 正在等待重新开播.'); return }
+    if (result.liveEnded) { this.scheduleReconnect('抖音直播已结束，正在等待重新开播'); return }
     if (result.heartbeatMs) this.heartbeatMs = result.heartbeatMs
     if (this.now() - this.openedAt >= 30_000) this.attempts = 0
-    this.armWatchdog(135_000, '抖音弹幕长时间未收到回应, 正在重新连接.')
+    this.armWatchdog(135_000, '抖音弹幕长时间未收到回应，正在重新连接')
     if (this.stateValue !== 'connected') this.setState('connected')
     for (const message of result.messages) {
       if (this.socket !== socket || this.closedByUser) return
@@ -106,7 +106,7 @@ export class DouyinDanmakuClient {
   }
   private send(bytes: Uint8Array<ArrayBuffer>): boolean {
     if (!this.socket || bytes.length > 16_384) return false
-    try { this.socket.send(bytes); return true } catch { this.scheduleReconnect('抖音弹幕协议确认失败, 正在重新连接.'); return false }
+    try { this.socket.send(bytes); return true } catch { this.scheduleReconnect('抖音弹幕协议确认失败，正在重新连接'); return false }
   }
   private startKeepalive(): void {
     if (this.keepalive !== null) this.clearTimer(this.keepalive)

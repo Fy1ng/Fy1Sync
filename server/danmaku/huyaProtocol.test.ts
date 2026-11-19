@@ -157,7 +157,7 @@ describe('Huya public room metadata', () => {
     expect(await resolveHuyaDanmakuRoom('kpl', fetchText)).toEqual(room)
     expect(fetchText.mock.calls.map(call => call[0])).toEqual(['https://www.huya.com/kpl', 'https://www.huya.com/660002'])
     const changed = vi.fn().mockResolvedValueOnce(page()).mockResolvedValueOnce(page('999'))
-    await expect(resolveHuyaDanmakuRoom('kpl', changed)).rejects.toThrow('无法读取虎牙弹幕房间信息.')
+    await expect(resolveHuyaDanmakuRoom('kpl', changed)).rejects.toThrow('无法读取虎牙弹幕房间信息')
   })
 
   it.each(['', '../kpl', 'kpl?token=secret', 'https://www.huya.com/kpl', 'a'.repeat(65), '房间'])('rejects an unsafe room without requesting it', async input => {
@@ -170,7 +170,7 @@ describe('Huya public room metadata', () => {
     expect(() => parseHuyaDanmakuPage(page('660002', '1e100'), '660002')).toThrow()
     expect(() => parseHuyaDanmakuPage(page('660002', '1', ',"topSid":"0"'), '660002')).not.toThrow()
     expect(() => parseHuyaDanmakuPage('x'.repeat(2 * MAX_HUYA_FRAME + 1), '660002')).toThrow()
-    await expect(resolveHuyaDanmakuRoom('660002', async () => { throw new Error('Cookie=private; token=secret') })).rejects.toThrow('无法读取虎牙弹幕房间信息.')
-    await expect(resolveHuyaDanmakuRoom('660002', async () => page('999'))).rejects.toThrow('无法读取虎牙弹幕房间信息.')
+    await expect(resolveHuyaDanmakuRoom('660002', async () => { throw new Error('Cookie=private; token=secret') })).rejects.toThrow('无法读取虎牙弹幕房间信息')
+    await expect(resolveHuyaDanmakuRoom('660002', async () => page('999'))).rejects.toThrow('无法读取虎牙弹幕房间信息')
   })
 })

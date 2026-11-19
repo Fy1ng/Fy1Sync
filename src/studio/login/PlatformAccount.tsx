@@ -30,7 +30,7 @@ export function PlatformAccount({ platform }: { platform: 'bilibili' | 'huya' })
     })
     if (!mounted.current || started !== readRevision.current) return
     if (next?.[platform]) { setStatus(next); setLoadError('') }
-    else if (!failed) setLoadError('账号状态读取失败，请重试。')
+    else if (!failed) setLoadError('账号状态读取失败，请重试')
   }, [platform, setStatus, setLoadError])
   useEffect(() => {
     mounted.current = true
@@ -52,13 +52,13 @@ export function PlatformAccount({ platform }: { platform: 'bilibili' | 'huya' })
     try {
       const result = logout ? await apiClient.logout(platform) : await apiClient.login(platform)
       if (mounted.current) {
-        if (result.ok || result.code === 'login-cancelled') setMessage(result.ok ? (logout ? '已退出' : '已登录, 重新载入画面后生效') : '已取消登录')
+        if (result.ok || result.code === 'login-cancelled') setMessage(result.ok ? (logout ? '已退出' : '已登录，重新载入直播间后生效') : '已取消登录')
         else { setMessage(''); setError(result) }
       }
       // The remembered status must update even after this page has unmounted.
       await refresh()
     } catch (error) {
-      if (mounted.current) { setMessage(''); setError(displayError(error, '账号操作暂时失败, 请重试.')) }
+      if (mounted.current) { setMessage(''); setError(displayError(error, '账号操作暂时失败，请重试')) }
     } finally {
       pending.current = false
       if (mounted.current) setBusy(false)
@@ -80,7 +80,7 @@ export function PlatformAccount({ platform }: { platform: 'bilibili' | 'huya' })
           <button type="button" className="btn-solid small" disabled={busy} onClick={() => void act(false)}>{account?.loggedIn ? '重新登录' : '登录'}</button>
         </span>
       </div>
-      <p className="muted">使用扫码, 短信或密码登录. 登录后重新载入直播间, 以使用账号可用的画质.</p>
+      <p className="muted">登录后需重新载入直播间，才能使用账号画质</p>
       {message && <p className="muted" role="status">{message}</p>}
       {loadError && <ReadError error={loadError} detail={loadErrorDetail} onRetry={() => void refresh()} />}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}

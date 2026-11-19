@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-const pathFailure = () => new Error('账号数据路径无效.')
+const pathFailure = () => new Error('账号数据路径无效')
 
 export function powershellEnvironment(environment: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(environment).filter(([name]) => name.toLowerCase() !== 'psmodulepath'))

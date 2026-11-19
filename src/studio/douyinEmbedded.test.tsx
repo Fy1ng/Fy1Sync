@@ -68,7 +68,7 @@ describe('Douyin embedded login in the main studio', () => {
     fireEvent.click(panel.getByRole('button', { name: '登录' }))
     expect(login).toHaveBeenCalledExactlyOnceWith('douyin')
     expect(screen.getByRole('dialog', { name: '抖音登录' })).toHaveAttribute('aria-modal', 'true')
-    expect(screen.getByText('请在应用内完成抖音官方登录或验证, 成功后自动关闭')).toBeInTheDocument()
+    expect(screen.getByText('正在登录抖音')).toBeInTheDocument()
     fireEvent.keyDown(window, { code: 'Space', key: ' ' })
     expect(toggle).not.toHaveBeenCalled()
     fireEvent.keyDown(window, { code: 'Escape', key: 'Escape' })

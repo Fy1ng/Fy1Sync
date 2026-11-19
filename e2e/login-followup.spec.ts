@@ -290,7 +290,7 @@ test('验证码各动画和长等待保持统一表单, 仅交互面板裁剪且
     await local.locator('#official').click()
     await expect.poll(() => presentation(running.page)).toBe('official')
     expect(await views(running.application)).toMatchObject({ stable: true, localVisible: false, remoteVisible: true })
-    await running.page.getByRole('button', { name: /^(返回统一登录|返回登录)$/ }).click()
+    await running.page.getByRole('button', { name: /^(返回登录|返回登录)$/ }).click()
     await assertLocalWait(running.application, running.page, local)
     expect(await challengeState(running.application, original.remoteId)).toMatchObject({ phase: 'form', clicks: 1 })
     expect(await fixture(running.application)).toMatchObject({ submitted: 1, verified: 0, smsSent: 0 })

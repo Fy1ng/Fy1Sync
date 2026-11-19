@@ -59,7 +59,7 @@ describe('Bilibili actual upstream quality', () => {
   it('reports only explicit account-not-logged-in code as login-required without exposing upstream diagnostics', async () => {
     const deps = dependencies()
     deps.fetchJson = vi.fn(async () => ({ code: -101, message: 'PRIVATE_COOKIE=private-value' }))
-    expect(await resolveBilibili('12345', deps)).toMatchObject({ ok: false, failure: { code: 'login-required', hint: '请登录B站后重新加载片源.' } })
+    expect(await resolveBilibili('12345', deps)).toMatchObject({ ok: false, failure: { code: 'login-required', hint: '请登录哔哩哔哩后重试' } })
     expect(JSON.stringify(await resolveBilibili('12345', deps))).not.toContain('private-value')
   })
 
@@ -88,7 +88,7 @@ describe('Bilibili actual upstream quality', () => {
       ],
     } })
     expect(result.ok && result.stream.url).toBe('https://fixture.bilivideo.com/avc.m3u8?sig=fixture')
-    expect(result.ok && result.stream.notes?.join(' ')).toContain('请求蓝光, 实际为高清')
+    expect(result.ok && result.stream.notes?.join(' ')).toContain('所选画质不可用，已切换为高清')
     expect(result.ok && result.stream.notes?.join(' ')).not.toContain('未登录')
   })
 

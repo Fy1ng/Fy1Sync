@@ -85,13 +85,13 @@ export function parseSourceInput(raw: string): SourceParseResult {
   try {
     url = new URL(withScheme)
   } catch {
-    return { ok: false, reason: 'not-a-url', message: '无法解析这个地址，请检查是否输入完整' }
+    return { ok: false, reason: 'not-a-url', message: '地址无效，请检查是否输入完整' }
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     return {
       ok: false,
       reason: 'unsupported-scheme',
-      message: `不支持 ${url.protocol} 协议，请使用 http(s) 链接或本地文件`,
+      message: `不支持 ${url.protocol} 协议，请使用 HTTP/HTTPS 链接或本地文件`,
     }
   }
 
@@ -108,9 +108,9 @@ export function parseSourceInput(raw: string): SourceParseResult {
 
   if (host === 'live.bilibili.com') {
     const room = firstPathSegment(url)
-    if (!room || !/^\d+$/.test(room)) return { ok: false, reason: 'unsupported-page', message: 'B 站链接里没有房间号' }
+    if (!room || !/^\d+$/.test(room)) return { ok: false, reason: 'unsupported-page', message: '哔哩哔哩链接缺少房间号' }
     return { ok: true, platform: 'bilibili', kind: 'hls', url: `https://live.bilibili.com/${room}`,
-      needsResolve: true, suggestProxy: false, label: `B 站 / ${room}`, channel: room }
+      needsResolve: true, suggestProxy: false, label: `哔哩哔哩 / ${room}`, channel: room }
   }
 
   if (host === 'huya.com') {

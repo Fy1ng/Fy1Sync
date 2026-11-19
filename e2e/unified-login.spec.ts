@@ -183,7 +183,7 @@ test('统一登录二次验证不误成功, 官方接续保留会话且返回不
       expect((await state(local))?.stage).not.toBe('official')
       const waiting = await identity(running.application)
       expect(waiting).toMatchObject({ localId: before.localId, remoteId: before.remoteId, stable: true })
-      const returnButton = running.page.getByRole('button', { name: /^(返回统一登录|返回登录)$/ })
+      const returnButton = running.page.getByRole('button', { name: /^(返回登录|返回登录)$/ })
       await expect(returnButton).toBeHidden()
       await local.locator('#official').click()
       await expect.poll(async () => {

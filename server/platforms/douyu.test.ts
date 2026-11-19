@@ -73,13 +73,13 @@ describe('Douyu PC play API', () => {
   it('surfaces an API downgrade instead of claiming source quality was delivered', async () => {
     const result = await resolveDouyu('9999', deps({ fetchJson: async (url) => url.includes('getEncryption') ? { error: 0, data: encryption } : { ...play, data: { ...play.data, rate: 4 } } }))
     expect(result.ok && result.stream.quality).toBe('4')
-    expect(result.ok && result.stream.notes?.join('')).toContain('不同的画质')
+    expect(result.ok && result.stream.notes?.join('')).toContain('所选画质不可用，已切换为')
   })
 
   it.each([[102, 'not-live'], [101, 'room-not-found'], [403, 'restricted'], [999, 'upstream-error']])('classifies play error %i', async (error, code) => {
     const result = await resolveDouyu('9999', deps({ fetchJson: async (url) => url.includes('getEncryption') ? { error: 0, data: encryption } : { error, msg: 'upstream diagnostic https://signed.invalid/?cookie=secret' } }))
     expect(!result.ok && result.failure.code).toBe(code)
-    expect(!result.ok && result.failure.hint).toContain('9999')
+    expect(!result.ok && result.failure.hint).toContain('在解说片源中连接斗鱼弹幕')
     expect(JSON.stringify(result)).not.toContain('secret')
   })
 
@@ -103,10 +103,10 @@ describe('Douyu PC play API', () => {
     }
   })
 
-  it('keeps network errors private and the room id available for danmaku', async () => {
+  it('keeps network errors private and offers the independent danmaku entry', async () => {
     const result = await resolveDouyu('9999', deps({ fetchJson: async () => { throw new Error('Cookie: secret https://private.invalid/?token=secret') } }))
     expect(!result.ok && result.failure.code).toBe('upstream-error')
-    expect(!result.ok && result.failure.hint).toContain('9999')
+    expect(!result.ok && result.failure.hint).toContain('在解说片源中连接斗鱼弹幕')
     expect(JSON.stringify(result)).not.toMatch(/secret|private.invalid/)
   })
 
@@ -127,7 +127,7 @@ describe('Douyu PC play API', () => {
 describe('Douyu multirates and direct FLV', () => {
   it('deduplicates and validates rates without inferring dimensions from names', () => {
     expect(parseDouyuQualities([...multirates, multirates[0], { rate: -1 }, { rate: '4' }, { rate: 1, name: '  \r\n' }])).toEqual([
-      { id: '0', label: '原画2K60' }, { id: '4', label: '蓝光4M' }, { id: '3', label: '超清' }, { id: '2', label: '高清' }, { id: '1', label: '画质 1' },
+      { id: '0', label: '原画2K60' }, { id: '4', label: '蓝光4M' }, { id: '3', label: '超清' }, { id: '2', label: '高清' }, { id: '1', label: '未知画质' },
     ])
     expect(parseDouyuQualities(null)).toEqual([])
   })
@@ -150,7 +150,7 @@ describe('canonical Douyu acquisition identity', () => {
     }))
     expect(fetchJson.mock.calls[1]?.[0]).toBe('https://www.douyu.com/lapi/live/getH5PlayV1/6979222')
     expect(result).toMatchObject({ ok: true, stream: { label: '斗鱼 6979222', channel: '6979222', danmakuRoom: '6979222', sourceRoom: '6979222' } })
-    expect(result.ok && result.stream.notes?.join('')).toContain('6657 已解析为真实房间号 6979222')
+    expect(result.ok && result.stream.notes).toEqual([])
   })
   it('does not sign or request playback after a failed identity lookup', async () => {
     const fetchJson = vi.fn()

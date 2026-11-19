@@ -78,7 +78,7 @@ async function resetTelemetry(page: Page): Promise<void> {
 }
 
 function card(page: Page, role: SourceRole) {
-  return page.getByRole('article', { name: role === 'official' ? '官方画面基础识别' : '国内解说基础识别', exact: true })
+  return page.getByRole('article', { name: role === 'official' ? '画面基础识别' : '解说基础识别', exact: true })
 }
 
 async function chooseFile(page: Page, role: SourceRole, file: string | { name: string; mimeType: string; buffer: Buffer }): Promise<void> {
@@ -171,10 +171,10 @@ test('自动范围跨真实重启及blob变化复用, 共享手动框优先, 显
 
     // A new official-region selection overrides both source-specific memories.
     await page.getByRole('button', { name: '框选倒计时', exact: true }).click()
-    const dialog = page.getByRole('dialog', { name: '倒计时范围 (两路共用)', exact: true })
-    await expect(dialog.getByLabel('官方画面当前帧')).toHaveJSProperty('width', 1280)
+    const dialog = page.getByRole('dialog', { name: '倒计时范围（两路共用）', exact: true })
+    await expect(dialog.getByLabel('画面当前帧')).toHaveJSProperty('width', 1280)
     await dialog.getByRole('button', { name: '重新绘制', exact: true }).click()
-    const bounds = await dialog.getByLabel('官方画面当前帧').boundingBox()
+    const bounds = await dialog.getByLabel('画面当前帧').boundingBox()
     expect(bounds).not.toBeNull()
     await page.mouse.move(bounds!.x + bounds!.width * .05, bounds!.y + bounds!.height * .65)
     await page.mouse.down()
@@ -186,7 +186,7 @@ test('自动范围跨真实重启及blob变化复用, 共享手动框优先, 显
     await resetTelemetry(page)
     const manuallyOverridden = await align(page, false)
     expectModes(manuallyOverridden, { official: 'manual', commentary: 'manual' })
-    await expect(card(page, 'official')).toContainText('手动范围未读出倒计时')
+    await expect(card(page, 'official')).toContainText('没读到倒计时，请检查选框')
     expect(manuallyOverridden.results.filter(result => result.role === 'official').every(result => result.status !== 'locked')).toBe(true)
     expect(await memory(page)).toEqual(saved)
     reports.push({ phase: 'shared manual region overrides both remembered regions without relocating', cache: await memory(page), telemetry: manuallyOverridden })

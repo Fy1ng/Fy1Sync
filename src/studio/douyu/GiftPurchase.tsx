@@ -56,7 +56,7 @@ export function GiftPurchase({ accountId, room, gift, locked, ready }: {
         setGiftId('')
       }
     } catch (caught) {
-      if (mounted.current && mine === generation.current) setReadError(displayError(caught, '礼物目录读取失败, 请重试. '))
+      if (mounted.current && mine === generation.current) setReadError(displayError(caught, '礼物目录读取失败，请重试'))
     } finally {
       if (mounted.current && mine === generation.current) setReading(false)
     }
@@ -96,17 +96,17 @@ export function GiftPurchase({ accountId, room, gift, locked, ready }: {
         {catalog && <span className="muted num">房间 {catalog.room} · 读取于 {dateTime(catalog.checkedAt)}{catalog.onceLimit !== null ? ` · 单次上限 ${catalog.onceLimit}` : ''}</span>}
       </div>
       {readError && <p className="form-error" role="alert"><ErrorText error={readErrorDetail ?? readError} message={readError} /></p>}
-      <p className="muted">将以账号余额购买并赠送，不使用背包库存。价格以鱼翅（YUCHI，scale 100）或鱼丸（YUWAN，scale 1）计，均非人民币金额。</p>
+      <p className="muted">使用账号余额购买并赠送，不使用背包道具。价格单位为鱼翅或鱼丸。</p>
 
-      {catalog && (catalog.items.length === 0 ? <p className="muted">目录中没有礼物。</p> : (
+      {catalog && (catalog.items.length === 0 ? <p className="muted">目录中没有礼物</p> : (
         <ul className="gift-catalog" role="radiogroup" aria-label="礼物目录">
           {catalog.items.map((item) => (
             <li key={item.giftId} data-on={item.giftId === giftId} data-off={!item.available}>
               <label>
                 <input type="radio" name="gift-catalog" checked={item.giftId === giftId} disabled={locked || !item.available}
-                  aria-label={`${item.name}（ID ${item.giftId}）`}
+                  aria-label={item.name}
                   onChange={() => edit(() => setGiftId(item.giftId))} />
-                <span className="gift-pick-name">{item.name} <span className="muted num">ID {item.giftId}</span></span>
+                <span className="gift-pick-name">{item.name}</span>
                 <span className="num">{money(item.unitPrice)}</span>
                 <span className="muted">
                   {item.available ? '可赠' : item.unavailableReason || '当前不可赠'}

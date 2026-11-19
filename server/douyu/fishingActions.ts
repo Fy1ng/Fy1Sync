@@ -22,7 +22,7 @@ const homeUrl = (room: string, initial = true) => `${API}/homePage?rid=${room}&o
 const active = (signal: AbortSignal): void => { if (signal.aborted) throw cancelled() }
 const waiting = (message: string): DouyuTaskOutcome => ({ status: 'waiting-user', message })
 const failed = (message: string): DouyuTaskOutcome => ({ status: 'failed', message })
-const unconfirmed = () => waiting('本次钓鱼操作结果尚无法确认. 请在官方钓鱼页面核对, 任务已暂停且不会自动重试.')
+const unconfirmed = () => waiting('本次钓鱼操作结果尚无法确认。请在官方钓鱼页面核对，任务已暂停且不会自动重试。')
 
 type FaultCode = 'login' | 'verification' | 'rate' | 'eligibility' | 'data'
 class FishingFault extends Error {
@@ -30,11 +30,11 @@ class FishingFault extends Error {
 }
 const invalid = (): never => { throw new FishingFault() }
 const FAULT_MESSAGES: Record<FaultCode, string> = {
-  login: '斗鱼登录信息缺失, 失效或已变化. 请重新登录该账号.',
-  verification: '斗鱼要求官方验证. 请在官方页面完成验证后再启动钓鱼.',
-  rate: '斗鱼限制了请求频率. 钓鱼任务已暂停, 请稍后核对官方状态.',
-  eligibility: '该房间或账号的钓鱼资格尚未确认. 请在官方钓鱼页面查看要求.',
-  data: '无法确认当前钓鱼状态或免费鱼饵规则, 未发送操作请求. 请在官方钓鱼页面核对.',
+  login: '斗鱼登录信息缺失，失效或已变化。请重新登录该账号。',
+  verification: '斗鱼要求官方验证。请在官方页面完成验证后再启动钓鱼。',
+  rate: '斗鱼限制了请求频率。钓鱼任务已暂停，请稍后核对官方状态。',
+  eligibility: '该房间或账号的钓鱼资格尚未确认。请在官方钓鱼页面查看要求。',
+  data: '无法确认当前钓鱼状态或免费鱼饵规则，未发送操作请求。请在官方钓鱼页面核对。',
 }
 type Credentials = { uid: string; header: string; ccn: string | null; xsrf: string | null; fingerprint: string }
 type Target = Pick<DouyuTaskDefinition, 'accountId' | 'room'>
@@ -45,9 +45,9 @@ export interface DouyuFishingOptions { mode?: 'all' | 'contest' }
 
 export function readFishingOptions(raw: unknown = {}): DouyuFishingOptions {
   if (!raw || typeof raw !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(raw) as object | null)
-    || !Reflect.ownKeys(raw).every(key => key === 'mode' && Object.hasOwn(Object.getOwnPropertyDescriptor(raw, key)!, 'value'))) throw new Error('钓鱼设置无效.')
+    || !Reflect.ownKeys(raw).every(key => key === 'mode' && Object.hasOwn(Object.getOwnPropertyDescriptor(raw, key)!, 'value'))) throw new Error('钓鱼设置无效')
   const mode = (raw as DouyuFishingOptions).mode
-  if (mode !== undefined && mode !== 'all' && mode !== 'contest') throw new Error('钓鱼设置无效.')
+  if (mode !== undefined && mode !== 'all' && mode !== 'contest') throw new Error('钓鱼设置无效')
   return { mode: mode ?? 'all' }
 }
 
@@ -197,15 +197,15 @@ export class DouyuFishingActions {
   async run(task: DouyuTaskDefinition, signal: AbortSignal, rawOptions: DouyuFishingOptions = {}): Promise<DouyuTaskOutcome> {
     active(signal)
     let options: DouyuFishingOptions
-    try { options = readFishingOptions(rawOptions) } catch { return failed('钓鱼时段设置无效.') }
+    try { options = readFishingOptions(rawOptions) } catch { return failed('钓鱼时段设置无效') }
     const { accountId, room, kind } = task
-    if (kind !== 'auto-fish') return failed('该钓鱼任务类型尚未接入.')
-    if (typeof room !== 'string' || !validDouyuRoom(room)) return failed('斗鱼真实房间号无效, 请重新确认房间.')
+    if (kind !== 'auto-fish') return failed('该钓鱼任务类型尚未接入')
+    if (typeof room !== 'string' || !validDouyuRoom(room)) return failed('斗鱼真实房间号无效，请重新确认房间')
     if (typeof accountId !== 'string' || !accountId || accountId.length > 128 || /[\s\x00-\x1f\x7f]/.test(accountId)) return waiting(FAULT_MESSAGES.login)
-    if (!this.deps.proxy.enabled || !['www.douyu.com', 'webconf.douyucdn.cn'].every(host => hostAllowed(host, this.deps.proxy.hosts))) return failed('钓鱼请求未启用或目标域名未获允许.')
+    if (!this.deps.proxy.enabled || !['www.douyu.com', 'webconf.douyucdn.cn'].every(host => hostAllowed(host, this.deps.proxy.hosts))) return failed('当前无法连接斗鱼，未开始钓鱼')
     const scope = JSON.stringify([accountId, room])
     if (this.uncertain.has(scope)) return unconfirmed()
-    if (this.running) return waiting('上一轮钓鱼请求尚未结束, 请稍后恢复.')
+    if (this.running) return waiting('上一轮钓鱼请求尚未结束，请稍后恢复')
     this.running = true
     const timeout = new AbortController()
     const duration = Number.isFinite(this.deps.proxy.requestTimeoutMs) ? Math.max(1, Math.min(this.deps.proxy.requestTimeoutMs, MAX_TIMEOUT_MS)) : MAX_TIMEOUT_MS
@@ -238,13 +238,13 @@ export class DouyuFishingActions {
   private async perform(context: Context, signal: AbortSignal, dispatch: () => void, mode: 'all' | 'contest'): Promise<DouyuTaskOutcome> {
     const before = await this.readHome(context, signal)
     const sampledAt = (this.deps.now ?? Date.now)()
-    if (!before.role) return waiting('请先在官方钓鱼页面设置鱼娘形象, 本次未发送操作请求.')
-    if (before.state === 11 || before.state === 21) return waiting('官方自动钓鱼正在等待鱼饵. 请在官方页面处理后再启动任务.')
+    if (!before.role) return waiting('请先在官方钓鱼页面设置鱼娘形象，本次未发送操作请求')
+    if (before.state === 11 || before.state === 21) return waiting('官方自动钓鱼正在等待鱼饵。请在官方页面处理后再启动任务。')
     if (before.state === 10) {
-      if (before.autoEnd! <= before.serverNow) return waiting('官方自动钓鱼已结束. 请在官方钓鱼页面查看结果后再启动任务.')
-      return this.schedule('官方自动钓鱼进行中, 等待其结束.', before.autoEnd! - before.serverNow + 2_000)
+      if (before.autoEnd! <= before.serverNow) return waiting('官方自动钓鱼已结束。请在官方钓鱼页面查看结果后再启动任务。')
+      return this.schedule('官方自动钓鱼进行中，等待其结束', before.autoEnd! - before.serverNow + 2_000)
     }
-    if (before.state === 1 || before.state === 20) return this.schedule('钓鱼进行中, 等待官方状态更新.', before.end! - before.serverNow + 2_000)
+    if (before.state === 1 || before.state === 20) return this.schedule('钓鱼进行中，等待官方状态更新', before.end! - before.serverNow + 2_000)
 
     // Contest mode gates new casts. A cast already running is always allowed to
     // finish; leaving its caught fish unclaimed does not save another bait.
@@ -260,10 +260,10 @@ export class DouyuFishingActions {
       const now = (this.deps.now ?? Date.now)()
       const serverNow = before.serverNow + Math.max(0, now - sampledAt)
       if (stat !== 0) {
-        if (start * 1_000 <= serverNow) return this.schedule('比赛尚未开放, 等待官方公布下一场时段.')
-        return this.schedule('等待官方比赛时段开始后再使用免费鱼饵.', Math.min(start * 1_000 - serverNow, left > 0 ? left * 1_000 : MAX_WAIT))
+        if (start * 1_000 <= serverNow) return this.schedule('比赛尚未开放，等待官方公布下一场时段')
+        return this.schedule('等待官方比赛时段开始后再使用免费鱼饵', Math.min(start * 1_000 - serverNow, left > 0 ? left * 1_000 : MAX_WAIT))
       }
-      if (start * 1_000 > serverNow || end * 1_000 <= serverNow || left === 0) return this.schedule('官方比赛时段已更新, 稍后重新检查.')
+      if (start * 1_000 > serverNow || end * 1_000 <= serverNow || left === 0) return this.schedule('官方比赛时段已更新，稍后重新检查')
       if (Math.abs(end * 1_000 - serverNow - left * 1_000) > 5_000) return invalid()
       contestEnd = now + Math.min(end * 1_000 - serverNow, left * 1_000)
     }
@@ -271,8 +271,8 @@ export class DouyuFishingActions {
     let selected: Bait | undefined
     if (before.state === 0) {
       selected = before.baits.find(bait => bait.inUse === 1)
-      if (!selected || selected.id !== 1) return waiting('请先在官方钓鱼页面选用入门鱼饵. 本任务只使用已持有的免费入门鱼饵.')
-      if (selected.count < cost) return waiting('可用入门鱼饵不足, 钓鱼任务已暂停. 请在官方页面核对免费获取条件.')
+      if (!selected || selected.id !== 1) return waiting('请先在官方钓鱼页面选用入门鱼饵。本任务只使用已持有的免费入门鱼饵。')
+      if (selected.count < cost) return waiting('可用入门鱼饵不足，钓鱼任务已暂停。请在官方页面核对免费获取条件。')
     }
     const isStart = before.state === 0
     const result = envelope(parseJson(await this.request(context, isStart ? START_URL : REEL_URL, signal, {
@@ -298,9 +298,9 @@ export class DouyuFishingActions {
     if (isStart) {
       const bait = after.baits.find(item => item.id === 1 && item.inUse === 1)
       if (![1, 20].includes(after.state) || !after.role || after.start! < before.serverNow || after.end! <= after.serverNow || !bait || bait.count !== selected!.count - cost) return unconfirmed()
-      return this.schedule('已由官方状态确认开始钓鱼, 等待本轮结束.', after.end! - after.serverNow + 2_000)
+      return this.schedule('已由官方状态确认开始钓鱼，等待本轮结束', after.end! - after.serverNow + 2_000)
     }
-    return after.state === 0 ? this.schedule('已由官方状态确认收杆, 等待下一轮免费钓鱼.', MIN_WAIT) : unconfirmed()
+    return after.state === 0 ? this.schedule('已由官方状态确认收杆，等待下一轮免费钓鱼', MIN_WAIT) : unconfirmed()
   }
 
   private async credentials(context: Context, url: string, signal: AbortSignal): Promise<Credentials> {

@@ -489,7 +489,7 @@ describe('private local login-card transitions', () => {
     const f = setup()
     f.setSnapshot({ page: 'form', mode: 'password', qrStatus: 'unavailable', error: 'network' })
     f.begin()
-    await vi.waitFor(() => expect(f.controller.cardState()?.message).toBe('平台官网连接失败, 请检查网络后重试.'))
+    await vi.waitFor(() => expect(f.controller.cardState()?.message).toBe('平台官网连接失败，请检查网络后重试'))
     const previous = f.controller.cardState()?.message
     f.setAction(async () => {
       if (succeeds) f.setSnapshot({ page: 'form', mode: 'password', qrStatus: 'loading' })

@@ -384,7 +384,7 @@ test('赠礼编辑作废预览, 确认按有效 planId 执行且未知结果不�
   await expect(quantity).toBeVisible()
   await quantity.fill('1')
   await desk.getByRole('textbox', { name: /赠送间隔/ }).fill('0')
-  await desk.getByRole('button', { name: '生成预览', exact: true }).click()
+  await desk.getByRole('button', { name: '生成确认单', exact: true }).click()
   const plan = desk.getByRole('region', { name: '赠送确认单', exact: true })
   const confirmGift = async () => {
     // The real queue cancels account writes when its window loses foreground ownership.
@@ -398,7 +398,7 @@ test('赠礼编辑作废预览, 确认按有效 planId 执行且未知结果不�
   expect((await httpState(electronApp)).writes).toEqual([])
   await quantity.fill('2')
   await expect(plan).toHaveCount(0)
-  await desk.getByRole('button', { name: '生成预览', exact: true }).click()
+  await desk.getByRole('button', { name: '生成确认单', exact: true }).click()
   await expect(plan).toBeVisible()
   await confirmGift()
   const result = desk.getByRole('region', { name: '赠送结果', exact: true })
@@ -410,7 +410,7 @@ test('赠礼编辑作废预览, 确认按有效 planId 执行且未知结果不�
   await expect(desk.getByRole('button', { name: '刷新库存', exact: true })).toBeEnabled()
   await electronApp.evaluate(() => { (globalThis as typeof globalThis & { __studioHttpFixture: StudioHttpFixture }).__studioHttpFixture.unknownGift = true })
   await quantity.fill('1')
-  await desk.getByRole('button', { name: '生成预览', exact: true }).click()
+  await desk.getByRole('button', { name: '生成确认单', exact: true }).click()
   await confirmGift()
   await expect(result).toContainText('结果未知')
   await expect(plan.getByRole('button', { name: '确认赠送', exact: true })).toBeDisabled()

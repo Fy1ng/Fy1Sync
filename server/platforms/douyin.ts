@@ -9,7 +9,7 @@ const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 const HEADERS = { Referer: REFERER, 'User-Agent': USER_AGENT }
 const ANONYMOUS_SESSION = 'https://ttwid.bytedance.com/ttwid/union/register/'
 const WEB_ENTER = 'https://live.douyin.com/webcast/room/web/enter/'
-const RETRY_HINT = '请在抖音官网确认房间正在直播且可正常观看, 稍后重新加载.'
+const RETRY_HINT = '请在抖音官网确认房间正在直播且可正常观看，稍后重新载入'
 const KEY = /^[A-Za-z0-9_-]{1,64}$/
 const EXCLUDED = new Set(['ao', 'md', 'tsl'])
 const QUALITY_NAMES: Record<string, string> = { origin: '原画', uhd: '蓝光', hd: '超清', sd: '高清', ld: '标清', od: '原画', full_hd1: '原画', hd1: '超清', sd1: '高清', sd2: '标清' }
@@ -62,7 +62,7 @@ function sdkChoices(stream: JsonRecord): Choice[] {
     const advertisedFps = item.frame_rate ?? params.fps
     const fps = typeof advertisedFps === 'number' && advertisedFps > 0 && advertisedFps <= 240 ? advertisedFps : undefined
     const rank = typeof item.level === 'number' && Number.isFinite(item.level) ? item.level : QUALITY_RANK[id] ?? 0
-    return [{ id, label: cleanText(item.name, 64) || QUALITY_NAMES[id] || id, rank, flv, hls,
+    return [{ id, label: cleanText(item.name, 64) || QUALITY_NAMES[id] || '未知画质', rank, flv, hls,
       ...(height ? { height } : {}), ...(fps ? { fps } : {}) }]
   })
 }
@@ -83,19 +83,19 @@ function choicesFor(data: DouyinRoomData): Choice[] {
     const id = key.toLowerCase()
     if (!KEY.test(id) || EXCLUDED.has(id)) return []
     const flvUrl = mediaUrl(flv[key], 'flv'), hlsUrl = mediaUrl(hls[key], 'hls')
-    return flvUrl || hlsUrl ? [{ id, label: QUALITY_NAMES[id] ?? id, rank: QUALITY_RANK[id] ?? 0, flv: flvUrl, hls: hlsUrl }] : []
+    return flvUrl || hlsUrl ? [{ id, label: QUALITY_NAMES[id] ?? '未知画质', rank: QUALITY_RANK[id] ?? 0, flv: flvUrl, hls: hlsUrl }] : []
   }).sort((a, b) => b.rank - a.rank || a.id.localeCompare(b.id))
 }
 
 function fromRoom(data: DouyinRoomData, quality?: string): ResolveResult {
-  if (data.status === 4 || data.status === '4') return failure('not-live', '抖音直播间当前未开播.', '请等待主播开播后重新加载.')
-  if (data.status !== 2 && data.status !== '2') return failure('upstream-error', '无法确认抖音直播间的开播状态.', RETRY_HINT)
+  if (data.status === 4 || data.status === '4') return failure('not-live', '抖音直播间当前未开播', '请等待主播开播后重新载入')
+  if (data.status !== 2 && data.status !== '2') return failure('upstream-error', '无法确认抖音直播间的开播状态', RETRY_HINT)
   const choices = choicesFor(data)
-  if (!choices.length) return failure('needs-manual-url', '抖音直播间未返回可播放的视频流.', '当前仅支持可直接观看的视频直播. 可尝试其他房间或可用的媒体直链.')
+  if (!choices.length) return failure('needs-manual-url', '抖音直播间未返回可播放的视频流', '当前仅支持可直接观看的视频直播。可尝试其他房间或可用的媒体直链。')
   const selected = !quality || quality === 'auto' ? choices[0] : choices.find(item => item.id === quality)
-  if (!selected) return failure('unsupported-url', '抖音直播间已不提供所选画质.', '请重新加载房间, 然后从当前可用画质中选择.')
+  if (!selected) return failure('unsupported-url', '抖音直播间已不提供所选画质', '请重新载入房间，然后从当前可用画质中选择')
   const channel = data.webRoom ?? data.roomId
-  if (!channel) return failure('upstream-error', '无法确认抖音直播间身份.', RETRY_HINT)
+  if (!channel) return failure('upstream-error', '无法确认抖音直播间身份', RETRY_HINT)
   return { ok: true, stream: {
     platform: 'douyin', channel, sourceRoom: data.roomId ?? channel,
     url: selected.flv ?? selected.hls!, kind: selected.flv ? 'progressive' : 'hls',
@@ -147,25 +147,25 @@ async function apiRoom(webRoom: string, page: PlatformPage, deps: ResolverDeps):
 export async function resolveDouyin(input: string, deps: ResolverDeps): Promise<ResolveResult> {
   const selected = parseDouyinInput(input)
   if (!selected || (deps.quality !== undefined && !KEY.test(deps.quality))) {
-    return failure('unsupported-url', '无法识别抖音直播间或画质.', '请粘贴 live.douyin.com 的直播间地址或抖音直播分享链接.')
+    return failure('unsupported-url', '无法识别抖音直播间或画质', '请粘贴 live.douyin.com 的直播间地址或抖音直播分享链接')
   }
   try {
     let request = selected
     let page = await pageAt(request, deps)
     let target = parseDouyinInput(page.finalUrl)
-    if (!target || target.kind === 'share') return failure('unsupported-url', '分享链接没有指向可识别的抖音直播间.', '请从抖音直播间重新复制链接.')
+    if (!target || target.kind === 'share') return failure('unsupported-url', '分享链接没有指向可识别的抖音直播间', '请从抖音直播间重新复制链接')
     if (selected.kind === 'room' && (target.kind !== 'room' || target.room !== selected.room)) {
-      return failure('upstream-error', '抖音返回的房间与输入不一致.', RETRY_HINT)
+      return failure('upstream-error', '抖音返回的房间与输入不一致', RETRY_HINT)
     }
     let data = parseDouyinPage(page.text, target.kind === 'room' ? target.room : undefined)
     if (target.kind === 'reflow') {
-      if (!data || data.roomId !== target.room) return failure('upstream-error', '无法读取抖音直播分享信息.', '请复制该主播的 live.douyin.com 直播间地址后重试.')
+      if (!data || data.roomId !== target.room) return failure('upstream-error', '无法读取抖音直播分享信息', '请复制该主播的 live.douyin.com 直播间地址后重试')
       // A share identifies a past session. Follow the confirmed owner to their current room.
       if (data.webRoom) {
         request = { kind: 'room', room: data.webRoom, url: `${REFERER}${data.webRoom}` }
         page = await pageAt(request, deps)
         target = parseDouyinInput(page.finalUrl)
-        if (!target || target.kind !== 'room' || target.room !== request.room) return failure('upstream-error', '无法确认分享链接对应的当前直播间.', RETRY_HINT)
+        if (!target || target.kind !== 'room' || target.room !== request.room) return failure('upstream-error', '无法确认分享链接对应的当前直播间', RETRY_HINT)
         data = parseDouyinPage(page.text, target.room)
       } else return fromRoom(data, deps.quality)
     }
@@ -179,13 +179,13 @@ export async function resolveDouyin(input: string, deps: ResolverDeps): Promise<
       const api = await apiRoom(target.room, page, deps)
       if (api) return fromRoom(api, deps.quality)
     }
-    return pageFailure ?? failure('restricted', '抖音未返回可用的公开直播信息, 可能需要验证或暂时限制匿名访问.', RETRY_HINT)
+    return pageFailure ?? failure('restricted', '抖音未返回可用的公开直播信息，可能需要验证或暂时限制匿名访问', RETRY_HINT)
   } catch (error) {
     if (error instanceof StreamFailureError) {
-      if (error.failure.status === 404) return failure('room-not-found', '抖音直播间不存在或链接已失效.', '请检查房间号或重新复制直播链接.', error.failure.detail ?? error)
-      if (error.failure.status === 401 || error.failure.status === 403) return failure('restricted', '抖音暂时不允许访问此直播间.', RETRY_HINT, error.failure.detail ?? error)
+      if (error.failure.status === 404) return failure('room-not-found', '抖音直播间不存在或链接已失效', '请检查房间号或重新复制直播链接', error.failure.detail ?? error)
+      if (error.failure.status === 401 || error.failure.status === 403) return failure('restricted', '抖音暂时不允许访问此直播间', RETRY_HINT, error.failure.detail ?? error)
       throw error
     }
-    return failure('upstream-error', '读取抖音直播信息失败.', RETRY_HINT, error)
+    return failure('upstream-error', '读取抖音直播信息失败', RETRY_HINT, error)
   }
 }

@@ -12,8 +12,8 @@ export interface GifEncoderInput { directory: string; output: string; fps: numbe
 interface Job { view: GifRecording; directory: string; controller: AbortController; accepted: number; bytes: number; work: Promise<void> }
 export class CaptureError extends Error {
   constructor(readonly code: 'disabled' | 'invalid-arguments' | 'capture-busy' | 'recording-not-found' | 'cancelled' | 'capture-failed') {
-    super({ disabled: '截图和 GIF 功能已关闭', 'invalid-arguments': '截图或 GIF 参数无效', 'capture-busy': '已有 GIF 录制任务',
-      'recording-not-found': 'GIF 录制不存在', cancelled: '录制已取消', 'capture-failed': '图片保存或 GIF 编码失败' }[code])
+    super({ disabled: '截图与 GIF 功能已关闭', 'invalid-arguments': '截图或 GIF 设置无效', 'capture-busy': '正在截图或录制 GIF',
+      'recording-not-found': '录制已结束或取消，请重新录制', cancelled: '录制已取消', 'capture-failed': '截图保存或 GIF 生成失败' }[code])
   }
 }
 export interface MediaCaptureOptions {

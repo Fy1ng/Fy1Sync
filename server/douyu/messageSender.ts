@@ -144,21 +144,21 @@ export type DouyuExtendedMessageOutcome = DouyuMessageOutcome & {
 type MessageStepOutcome = DouyuTaskOutcome & { deferredUntil?: number; messageLimit?: DouyuMessageLimit }
 const failed = (message: string): DouyuTaskOutcome => ({ status: 'failed', message })
 const waiting = (message: string): DouyuTaskOutcome => ({ status: 'waiting-user', message })
-const needLogin = () => waiting('斗鱼登录信息缺失, 已变化或无法核对. 请重新登录该账号后再发送.')
-const cooling = () => waiting('斗鱼发言仍在冷却中. 请等待提示时间后再发送.')
+const needLogin = () => waiting('斗鱼登录信息缺失，已变化或无法核对。请重新登录该账号后再发送。')
+const cooling = () => waiting('斗鱼发言仍在冷却中。请等待提示时间后再发送。')
 const deferred = (until: number): MessageStepOutcome => ({ ...cooling(), deferredUntil: until })
-const uncertain = () => waiting('斗鱼发送结果尚无法确认. 请在官方房间核对, 本次不会自动重发.')
+const uncertain = () => waiting('发送结果未确认，请到斗鱼核对，本次不自动重发')
 
 const ERROR_MESSAGES: Record<number, string> = {
-  2: '斗鱼提示该账号已被禁言.',
-  5: '斗鱼提示该账号已被全站禁言.',
-  6: '斗鱼房间当前仅允许满足粉丝资格的账号发言.',
-  206: '斗鱼拒绝了本次发言操作.',
-  208: '斗鱼未找到本次发言的目标.',
-  289: '斗鱼限制了重复发言. 本次不会自动重发.',
-  290: '斗鱼限制了发言频率. 请等待冷却结束.',
-  308: '斗鱼拒绝了本次弹幕样式或特权请求.',
-  391: '斗鱼要求官方账号验证. 请手动完成验证后核对本次发言.',
+  2: '斗鱼提示该账号已被禁言',
+  5: '斗鱼提示该账号已被全站禁言',
+  6: '斗鱼房间当前仅允许满足粉丝资格的账号发言',
+  206: '斗鱼拒绝了本次发言操作',
+  208: '斗鱼未找到本次发言的目标',
+  289: '斗鱼限制了重复发言。本次不会自动重发。',
+  290: '斗鱼限制了发言频率。请等待冷却结束。',
+  308: '斗鱼拒绝了本次弹幕样式或特权请求',
+  391: '斗鱼要求官方账号验证。请手动完成验证后核对本次发言。',
 }
 
 export class DouyuMessageSender {
@@ -218,19 +218,19 @@ export class DouyuMessageSender {
     const room = input?.room
     const color = input?.color
     if (!text || typeof accountId !== 'string' || !accountId || accountId.length > 128 || /[\s\x00-\x1f\x7f]/.test(accountId) || typeof room !== 'string' || !validDouyuRoom(room) || !Number.isInteger(color) || color < 0 || color > 6) {
-      return { ...failed('弹幕内容, 账号, 房间或颜色无效. 未发送弹幕.'), nextAllowedAt: null }
+      return { ...failed('弹幕内容，账号，房间或颜色无效。未发送弹幕。'), nextAllowedAt: null }
     }
     const target: DouyuMessageInput = { accountId, room, text, color }
     const stateKey = JSON.stringify([accountId, room])
     let state = this.rooms.get(stateKey)
     const current = this.clock()
-    if (this.disposed || signal.aborted) return { ...failed('发送已取消. 未发送弹幕.'), nextAllowedAt: state?.nextAllowedAt ?? null }
-    if (this.active.has(accountId)) return { ...waiting('该账号已有一条发送正在等待结果.'), nextAllowedAt: state?.nextAllowedAt ?? null }
-    if (!this.deps.proxy.enabled || ![SITE_HOST, SOCKET_HOST].every(host => hostAllowed(host, this.deps.proxy.hosts))) return { ...failed('斗鱼发送目标未获网络策略允许. 未发送弹幕.'), nextAllowedAt: state?.nextAllowedAt ?? null }
+    if (this.disposed || signal.aborted) return { ...failed('发送已取消。未发送弹幕。'), nextAllowedAt: state?.nextAllowedAt ?? null }
+    if (this.active.has(accountId)) return { ...waiting('该账号已有一条发送正在等待结果'), nextAllowedAt: state?.nextAllowedAt ?? null }
+    if (!this.deps.proxy.enabled || ![SITE_HOST, SOCKET_HOST].every(host => hostAllowed(host, this.deps.proxy.hosts))) return { ...failed('当前无法连接斗鱼，未发送弹幕'), nextAllowedAt: state?.nextAllowedAt ?? null }
     if (state?.nextAllowedAt !== null && state?.nextAllowedAt !== undefined && state.nextAllowedAt > current) return { ...deferred(state.nextAllowedAt), nextAllowedAt: state.nextAllowedAt }
     if (!state) {
       for (const [key, old] of this.rooms) if ((old.nextAllowedAt ?? 0) <= current && (old.lastSentAt === null || old.lastSentAt < current - MAX_COOLDOWN_MS)) this.rooms.delete(key)
-      if (this.rooms.size >= MAX_ROOM_STATES) return { ...failed('暂时无法保存更多房间的发言冷却状态. 未发送弹幕.'), nextAllowedAt: null }
+      if (this.rooms.size >= MAX_ROOM_STATES) return { ...failed('暂时无法保存更多房间的发言冷却状态。未发送弹幕。'), nextAllowedAt: null }
       state = { lastSentAt: null, cooldownMs: null, nextAllowedAt: null }
       this.rooms.set(stateKey, state)
     }
@@ -247,8 +247,8 @@ export class DouyuMessageSender {
       outcome = await abortable(this.perform(target, state, context, combined, deadline), combined)
     } catch {
       outcome = context.dispatched ? uncertain() : failed(combined.aborted
-        ? timeout.signal.aborted ? '斗鱼发送准备超时. 未发送弹幕.' : '发送已取消. 未发送弹幕.'
-        : '无法安全完成斗鱼登录或发送准备. 未发送弹幕.')
+        ? timeout.signal.aborted ? '斗鱼发送准备超时。未发送弹幕。' : '发送已取消。未发送弹幕。'
+        : '无法安全完成斗鱼登录或发送准备。未发送弹幕。')
     } finally {
       context.closed = true
       context.cleanup?.()
@@ -403,7 +403,7 @@ export class DouyuMessageSender {
         return current !== null && Object.keys(credentials).every(name => current[name as keyof MessageCredentials] === credentials[name as keyof MessageCredentials])
       }
       const tooLong = (maximum: number): MessageStepOutcome => ({
-        ...failed('弹幕超过斗鱼当前允许的长度. 未发送弹幕.'),
+        ...failed('弹幕超过斗鱼当前允许的长度。未发送弹幕。'),
         messageLimit: { localMaximumUnits: 500, serverMaximumUnits: maximum,
           effectiveMaximumUnits: Math.min(500, maximum), receivedUnits: target.text.length },
       })
@@ -425,7 +425,7 @@ export class DouyuMessageSender {
         if (target.text.length > rules.maximum) { finish(tooLong(rules.maximum)); return }
         if (target.color !== 0) {
           if (!colorPalette) return
-          if (!colorPalette.has(target.color)) { finish(waiting('尚未取得斗鱼对该账号在当前房间使用所选颜色的确认. 未发送弹幕.')); return }
+          if (!colorPalette.has(target.color)) { finish(waiting('尚未取得斗鱼对该账号在当前房间使用所选颜色的确认。未发送弹幕。')); return }
         }
         const now = this.clock()
         const due = state.nextAllowedAt ?? now
@@ -468,14 +468,14 @@ export class DouyuMessageSender {
         if (inspection && authenticated) observeAccountRoom(inspection, message)
         if (message.type === 'error') {
           const code = unsigned(message.code, 1_000_000)
-          const detail = code === 59 ? '斗鱼提示该账号在其它位置登录, 连接已结束.' : code === 267 ? '斗鱼要求停止当前连接.' : '斗鱼拒绝或结束了当前登录连接.'
-          finish(waiting(`${detail} ${context.dispatched ? '本次发送结果尚无法确认, 请在官方房间核对.' : '未发送弹幕, 请在官方房间核对该账号.'}`))
+          const detail = code === 59 ? '斗鱼提示该账号在其它位置登录，连接已结束' : code === 267 ? '斗鱼要求停止当前连接' : '斗鱼拒绝或结束了当前登录连接'
+          finish(waiting(`${detail}。${context.dispatched ? '本次发送结果尚无法确认，请在官方房间核对。' : '未发送弹幕，请在官方房间核对该账号。'}`))
           return
         }
         if (message.type === 'loginres') {
           if (!loginSent || authenticated) throw new MessageProtocolError()
           if (message.userid !== credentials.uid || message.username !== credentials.username) { finish(needLogin()); return }
-          if ((message.npv !== undefined && message.npv !== '0') || message.is_illegal === '1') { finish(waiting('该账号尚未满足斗鱼官方发言条件. 未发送弹幕, 请在官方房间核对.')); return }
+          if ((message.npv !== undefined && message.npv !== '0') || message.is_illegal === '1') { finish(waiting('该账号尚未满足斗鱼官方发言条件。未发送弹幕，请在官方房间核对。')); return }
           authenticated = true
           write({ type: 'livreq', alg_ver: '1.0', key_ver: keys.login.version })
           const tick = Math.floor(this.clock() / 1_000)
@@ -520,12 +520,12 @@ export class DouyuMessageSender {
           }
           if (message.len !== undefined && (unsigned(message.len, 10_000) ?? 0) < 1) throw new MessageProtocolError()
           if ((code === 288 || code === 356) && ((target.color !== 0 && message.col === undefined) || (message.col !== undefined && unsigned(message.col, 6) !== target.color))) {
-            finish(waiting('斗鱼回执未确认所选弹幕颜色. 弹幕可能已发送, 请在官方房间核对, 本次不会自动重发.'))
-          } else if (code === 288 || code === 356) finish({ status: 'succeeded', message: '已收到斗鱼发送回执.' })
+            finish(waiting('斗鱼回执未确认所选弹幕颜色。弹幕可能已发送，请在官方房间核对，本次不会自动重发。'))
+          } else if (code === 288 || code === 356) finish({ status: 'succeeded', message: '已收到斗鱼发送回执' })
           else if (Object.hasOwn(ERROR_MESSAGES, code)) {
             const detail = ERROR_MESSAGES[code]!
             finish(match === 'unassociated'
-              ? waiting(`${detail} 本次发送结果尚无法确认, 请在官方房间核对.`)
+              ? waiting(`${detail.replace(/。$/, '')}。本次发送结果尚无法确认，请在官方房间核对。`)
               : code === 391 || code === 6 ? waiting(detail) : failed(detail))
           } else finish(uncertain())
           return

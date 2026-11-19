@@ -153,7 +153,7 @@ export class HuyaSliceClient implements DanmakuClient {
         this.stats.lastFailure = failure
         this.stats.reconnects = add(this.stats.reconnects)
         this.attempts = Math.min(this.attempts + 1, 6)
-        this.setState('reconnecting', '虎牙聊天流暂时不可用, 正在重新连接.')
+        this.setState('reconnecting', '虎牙聊天流暂时不可用，正在重新连接')
         if (current()) this.reconnect = this.setTimer(() => {
           this.reconnect = null
           this.connect()

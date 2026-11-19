@@ -121,7 +121,7 @@ export class HuyaRoomClient implements DanmakuClient {
     if (state === this.stateValue) return
     this.stateValue = state
     this.events.onState(state, state === 'connected' ? undefined
-      : state === 'connecting' ? '正在连接虎牙弹幕.' : '虎牙弹幕两路暂时不可用, 正在重新连接.')
+      : state === 'connecting' ? '正在连接虎牙弹幕' : '虎牙弹幕两路暂时不可用，正在重新连接')
   }
 
   private message(source: HuyaSource, message: ChatMessage): void {

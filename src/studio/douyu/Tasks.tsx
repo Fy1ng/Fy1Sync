@@ -29,10 +29,10 @@ const KIND: Record<DouyuTaskKind, string> = {
   'auto-fish': '钓鱼', 'gift-packet': '抢红包', 'treasure-box': '开宝箱',
 }
 const KIND_NOTE: Partial<Record<DouyuTaskKind, string>> = {
-  'yuba-sign': '请先在账号中登录鱼吧。仅签到已加入的鱼吧。',
-  'auto-fish': '仅使用现有免费鱼饵，不购买鱼饵。遇到验证时停止。',
-  'gift-packet': '不会为获取资格自动关注或赠送礼物。参与后以官方最终结果为准；抢到的红包礼物将按平台规则在到期时自动赠送给该主播。',
-  'treasure-box': '仅处理普通宝箱。遇到验证时停止，请在官方页面手动完成后重新启动。',
+  'yuba-sign': '请先登录鱼吧，仅签到已加入的鱼吧',
+  'auto-fish': '只用已有免费鱼饵，不购买。遇到验证时暂停。',
+  'gift-packet': '不会自动关注或送礼获取资格。红包礼物到期时会自动赠给该主播。',
+  'treasure-box': '仅领取普通宝箱。遇到验证时暂停，请到斗鱼处理后重新启动。',
 }
 const POLICY: Record<DouyuTaskPolicy, string> = {
   foreground: '仅窗口在前台时', 'background-unlocked': '未锁屏时', 'background-locked': '锁屏时也运行',
@@ -65,12 +65,12 @@ export function Tasks({ data, defaultRoom }: { data: DouyuData; defaultRoom: str
         ? <NewTask data={data} defaultRoom={defaultRoom ?? tasks?.currentRoom ?? ''} onDone={() => setCreating(false)} />
         : <button type="button" className="btn-solid new-task" disabled={all.length === 0} onClick={() => setCreating(true)}>新任务</button>}
       {accountsReadError && <ReadError error={accountsReadError} detail={data.accountsReadDetail} onRetry={() => void reloadAccounts()} />}
-      {all.length === 0 && !loading && !accountsReadError && <p className="muted">请先在「账号」中添加斗鱼账号。</p>}
+      {all.length === 0 && !loading && !accountsReadError && <p className="muted">请先在「账号」中添加斗鱼账号</p>}
       {tasksLoading && <p className="muted" role="status">正在读取房间任务</p>}
       {tasksReadError && <ReadError error={tasksReadError} detail={data.tasksReadDetail} onRetry={() => void reloadTasks()} />}
 
       {!tasksLoading && !tasksReadError && tasks && rooms.length === 0 && !creating && (
-        <p className="desk-empty">暂无任务。新建的任务默认暂停，点击「启动」后运行；关闭应用后全部停止。</p>
+        <p className="desk-empty">暂无任务</p>
       )}
 
       {rooms.map((room) => (
@@ -97,8 +97,7 @@ export function Tasks({ data, defaultRoom }: { data: DouyuData; defaultRoom: str
 
       {tasks && (
         <p className="muted desk-runtime">
-          应用当前{tasks.runtime.suspended ? '休眠中' : tasks.runtime.locked ? '处于锁屏' : tasks.runtime.foreground ? '在前台运行' : '在后台运行'}，
-          「仅窗口在前台时」的任务只在前台运行。
+          退出应用后任务停止，下次需手动启动。应用当前{tasks.runtime.suspended ? '休眠中' : tasks.runtime.locked ? '处于锁屏' : tasks.runtime.foreground ? '在前台运行' : '在后台运行'}。
         </p>
       )}
       <LaneLine lane={taskLane} />
@@ -115,7 +114,7 @@ function messageSummary(message: DouyuMessageSchedule): string {
 
 function MessageText({ message }: { message: DouyuMessageSchedule }): React.ReactNode {
   const selection = message.selection
-  if (selection?.mode === 'automatic') return <>{`自动文案（${TEMPLATE_LABEL[selection.template]}）`}</>
+  if (selection?.mode === 'automatic') return <>{`预设文案（${TEMPLATE_LABEL[selection.template]}）`}</>
   if (selection && selection.texts.length > 1) {
     return <>{selection.texts[0]}<span className="muted">{` 等 ${selection.texts.length} 条，${SELECTION_LABEL[selection.mode]}`}</span></>
   }
@@ -137,7 +136,7 @@ function TaskRow({ task, data, activeId }: { task: DouyuTaskView; data: DouyuDat
   const officialRoom = task.officialRoom ?? task.room
 
   return (
-    <li className="task" data-status={task.status} role="group" aria-label={`${kind} ${task.room} (${account?.label ?? '账号不可用'})`}>
+    <li className="task" data-status={task.status} role="group" aria-label={`${kind} ${task.room} （${account?.label ?? '账号不可用'}）`}>
       <div className="task-main">
         <span className="task-kind">{KIND[task.kind]}</span>
         <span className="task-status" data-status={task.status}>{STATUS[task.status]}</span>
@@ -288,13 +287,13 @@ function LoopEditor({ loop, edit }: { loop: LoopDraft; edit: <K extends keyof Lo
       {automatic
         ? (
           <div className="field-stack">
-            <span className="field-label">本地模板</span>
-            <Segmented label="自动文案模板" value={loop.template} onChange={(template: LocalMessageTemplate) => edit('template', template)}
+            <span className="field-label">预设模板</span>
+            <Segmented label="预设文案模板" value={loop.template} onChange={(template: LocalMessageTemplate) => edit('template', template)}
               options={(Object.keys(TEMPLATE_LABEL) as LocalMessageTemplate[]).map((value) => ({ value, label: TEMPLATE_LABEL[value] }))} />
             <ol className="task-template-preview" aria-label="模板预览">
               {templateLines(loop.template).map((line) => <li key={line}>{line}</li>)}
             </ol>
-            <p className="muted">按顺序轮换以上本地模板，不调用外部文本服务。</p>
+            <p className="muted">按顺序轮换</p>
           </div>
         )
         : (
@@ -302,19 +301,19 @@ function LoopEditor({ loop, edit }: { loop: LoopDraft; edit: <K extends keyof Lo
             <span className="field-label">发送内容（每行一条，最多 100 条）{count > 0 ? `　已填 ${count} 条` : ''}</span>
             <textarea className="text-input" rows={4} value={loop.lines} aria-label="发送内容"
               onChange={(event) => edit('lines', event.target.value)} />
-            {count > 1 && <span className="muted">{loop.mode === 'random' ? '每次随机选取一条。' : '按行顺序轮换，确认发送成功后才切换到下一条。'}</span>}
+            {count > 1 && loop.mode !== 'random' && <span className="muted">发送成功后切换到下一条</span>}
           </label>
         )}
 
       <div className="new-grid is-three">
         <label className="field-stack">
           <span className="field-label">发送间隔（秒）</span>
-          <input className="text-input num" type="number" min={1} max={86400} value={loop.interval} aria-label="发送间隔(秒)"
+          <input className="text-input num" type="number" min={1} max={86400} value={loop.interval} aria-label="发送间隔（秒）"
             onChange={(event) => edit('interval', event.target.value)} />
         </label>
         <label className="field-stack">
           <span className="field-label">启动延迟（秒）</span>
-          <input className="text-input num" type="number" min={0} max={86400} value={loop.delay} aria-label="启动延迟(秒)"
+          <input className="text-input num" type="number" min={0} max={86400} value={loop.delay} aria-label="启动延迟（秒）"
             onChange={(event) => edit('delay', event.target.value)} />
         </label>
         <label className="field-stack">
@@ -326,18 +325,18 @@ function LoopEditor({ loop, edit }: { loop: LoopDraft; edit: <K extends keyof Lo
       <Switch label="持续发送，直至暂停" checked={loop.unlimited} onChange={(unlimited) => edit('unlimited', unlimited)} />
 
       <div className="task-duration">
-        <Switch label="限制总时长" detail="从启动时开始计时，包含启动延迟" checked={loop.limitDuration}
+        <Switch label="限制总时长" detail="含启动延迟" checked={loop.limitDuration}
           onChange={(limitDuration) => edit('limitDuration', limitDuration)} />
         {loop.limitDuration && (
           <label className="field-stack">
             <span className="field-label">总时长（秒，1 至 86400）</span>
-            <input className="text-input num" type="number" min={1} max={86400} value={loop.duration} aria-label="总时长(秒)"
+            <input className="text-input num" type="number" min={1} max={86400} value={loop.duration} aria-label="总时长（秒）"
               onChange={(event) => edit('duration', event.target.value)} />
           </label>
         )}
       </div>
       {loop.unlimited && !loop.limitDuration && (
-        <p className="note-warn">未限制次数与总时长，任务将持续发送，直至手动暂停或出现未确认的结果。</p>
+        <p className="note-warn">任务将持续发送，请及时暂停</p>
       )}
 
       <div className="field-stack">
@@ -355,7 +354,7 @@ function LoopEditor({ loop, edit }: { loop: LoopDraft; edit: <K extends keyof Lo
             )
           })}
         </div>
-        <p className="muted">彩色弹幕需要账号已解锁对应颜色。仅在确认发送成功后计入次数，未确认的发送不会自动重试。</p>
+        <p className="muted">彩色弹幕需已解锁对应颜色。仅成功发送计次，结果未确认时暂停，不自动重发。</p>
       </div>
     </>
   )

@@ -18,7 +18,7 @@ describe('browser login import transactions', () => {
     context.service.cancel(id)
     const result = await pending
     expect(result.outcomes).toHaveLength(5)
-    expect(result.outcomes.every(outcome => !outcome.imported && outcome.message === '已取消，未导入。')).toBe(true)
+    expect(result.outcomes.every(outcome => !outcome.imported && outcome.message === '已取消，未导入')).toBe(true)
     expect(context.write).not.toHaveBeenCalled()
     context.service.dispose()
   })
@@ -30,7 +30,7 @@ describe('browser login import transactions', () => {
     const result = await context.service.apply({ previewId: id, accountIds: preview.accounts.map(account => account.id) })
     expect(result.outcomes[0]).toMatchObject({ platform: 'douyu', imported: true, accountId: 'default' })
     expect(result.outcomes.slice(1)).toHaveLength(4)
-    expect(result.outcomes.slice(1).every(outcome => !outcome.imported && outcome.message === '已取消，未导入。')).toBe(true)
+    expect(result.outcomes.slice(1).every(outcome => !outcome.imported && outcome.message === '已取消，未导入')).toBe(true)
     expect(context.write).toHaveBeenCalledOnce()
     context.service.dispose()
   })
@@ -52,7 +52,7 @@ describe('browser login import transactions', () => {
     expect(captured.every(cookie => cookie.value.length > 0)).toBe(true)
     finish()
     const result = await pending
-    expect(result.outcomes).toMatchObject([{ platform: 'douyu', imported: true }, { platform: 'youtube', imported: false, message: '已取消，未导入。' }])
+    expect(result.outcomes).toMatchObject([{ platform: 'douyu', imported: true }, { platform: 'youtube', imported: false, message: '已取消，未导入' }])
     expect(captured.every(cookie => cookie.value === '')).toBe(true)
     expect(write).toHaveBeenCalledOnce()
     service.dispose(); context.service.dispose()

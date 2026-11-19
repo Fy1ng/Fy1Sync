@@ -61,21 +61,21 @@ export type DouyuRewardOutcome = DouyuTaskOutcome & { officialRoom?: string }
 export function readRewardOptions(raw: unknown = {}): DouyuRewardOptions {
   if (!raw || typeof raw !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(raw) as object | null)
     || !Reflect.ownKeys(raw).every(key => typeof key === 'string' && ['crossRoom', 'claimDelayMs'].includes(key)
-      && Object.hasOwn(Object.getOwnPropertyDescriptor(raw, key)!, 'value'))) throw new Error('奖励设置无效.')
+      && Object.hasOwn(Object.getOwnPropertyDescriptor(raw, key)!, 'value'))) throw new Error('奖励设置无效')
   const value = raw as DouyuRewardOptions
   if (value.crossRoom !== undefined && typeof value.crossRoom !== 'boolean'
-    || value.claimDelayMs !== undefined && (!Number.isSafeInteger(value.claimDelayMs) || value.claimDelayMs < 0 || value.claimDelayMs > 60_000)) throw new Error('奖励设置无效.')
+    || value.claimDelayMs !== undefined && (!Number.isSafeInteger(value.claimDelayMs) || value.claimDelayMs < 0 || value.claimDelayMs > 60_000)) throw new Error('奖励设置无效')
   return { ...(value.crossRoom !== undefined ? { crossRoom: value.crossRoom } : {}), ...(value.claimDelayMs !== undefined ? { claimDelayMs: value.claimDelayMs } : {}) }
 }
 
 const messages: Record<RewardProblemCode, string> = {
-  login: '斗鱼登录信息缺失或已变化. 请在该账号的官方房间重新确认登录.',
-  verification: '斗鱼要求官方验证. 请在该账号的官方房间手动完成验证和核对结果, 再手动恢复任务.',
-  phone: '斗鱼要求绑定手机号. 请在该账号的官方房间自行处理, 再手动恢复任务.',
-  eligibility: '官方参与条件尚未满足或无法确认. 请在官方房间查看要求, 任务已暂停.',
-  invalid: '官方活动状态或回执无法确认. 请在官方房间核对, 本次不会自动重试领取.',
-  unavailable: '无法安全读取斗鱼活动状态. 请在官方房间核对后再恢复任务.',
-  capacity: '本次会话的活动防重复记录已达上限. 任务已暂停, 请在官方房间核对.',
+  login: '斗鱼登录信息缺失或已变化。请在该账号的官方房间重新确认登录。',
+  verification: '斗鱼要求官方验证。请在该账号的官方房间手动完成验证和核对结果，再手动恢复任务。',
+  phone: '斗鱼要求绑定手机号。请在该账号的官方房间自行处理，再手动恢复任务。',
+  eligibility: '官方参与条件尚未满足或无法确认。请在官方房间查看要求，任务已暂停。',
+  invalid: '官方活动状态或回执无法确认。请在官方房间核对，本次不会自动重试领取。',
+  unavailable: '无法安全读取斗鱼活动状态。请在官方房间核对后再恢复任务。',
+  capacity: '当前批次活动过多，任务已暂停。请到斗鱼核对已处理结果。',
 }
 
 /** One long-lived instance retains uncertain attempts; restarting the app never arms tasks. */
@@ -94,15 +94,15 @@ export class DouyuRewardActions {
   async run(task: DouyuTaskDefinition, signal: AbortSignal, rawOptions: DouyuRewardOptions = {}): Promise<DouyuRewardOutcome> {
     assertRewardActive(signal)
     let options: DouyuRewardOptions
-    try { options = readRewardOptions(rawOptions) } catch { return failed('奖励任务设置无效.') }
+    try { options = readRewardOptions(rawOptions) } catch { return failed('奖励任务设置无效') }
     const { accountId, room, kind } = task
-    if (kind !== 'gift-packet' && kind !== 'treasure-box') return failed('该奖励任务类型尚未接入.')
-    if (kind === 'gift-packet' && (options.crossRoom || options.claimDelayMs !== undefined)) return failed('红包任务不支持跨房宝箱设置.')
-    if (!validDouyuRoom(room)) return failed('斗鱼真实房间号无效, 请重新确认房间.')
+    if (kind !== 'gift-packet' && kind !== 'treasure-box') return failed('该奖励任务类型尚未接入')
+    if (kind === 'gift-packet' && (options.crossRoom || options.claimDelayMs !== undefined)) return failed('红包任务不支持跨房宝箱设置')
+    if (!validDouyuRoom(room)) return failed('斗鱼真实房间号无效，请重新确认房间')
     if (typeof accountId !== 'string' || !accountId || accountId.length > 128 || /[\s\x00-\x1f\x7f]/.test(accountId)) return waiting(messages.login)
-    if (!this.deps.proxy.enabled || !hostAllowed(HOST, this.deps.proxy.hosts)) return failed('斗鱼活动请求未启用或目标域名未获允许.')
-    if (!Number.isSafeInteger(this.now()) || this.now() < 0) return failed('本地时间无效, 活动任务已暂停.')
-    if (this.running) return waiting('上一轮活动请求尚未结束, 请稍后再恢复任务.')
+    if (!this.deps.proxy.enabled || !hostAllowed(HOST, this.deps.proxy.hosts)) return failed('当前无法连接斗鱼，未执行活动操作')
+    if (!Number.isSafeInteger(this.now()) || this.now() < 0) return failed('本地时间无效，活动任务已暂停')
+    if (this.running) return waiting('上一轮活动请求尚未结束，请稍后再恢复任务')
     this.running = true
     const timeout = new AbortController()
     const milliseconds = this.deps.proxy.requestTimeoutMs
@@ -119,8 +119,8 @@ export class DouyuRewardActions {
       // explicit user resume can re-enter this attempt; no challenge is retained.
       if (context.kind === 'treasure-box' && context.attempt && error instanceof RewardProblem && error.definiteRefusal) this.attempts.delete(context.attempt.key)
       if (context.dispatched && !['verification', 'phone', 'eligibility', 'login'].includes(code)) return annotate(waiting(timeout.signal.aborted
-        ? '领取请求已提交但超时, 结果无法确认. 请在官方房间核对, 不会自动重试同一活动.'
-        : '领取请求的结果无法确认. 请在官方房间核对, 不会自动重试同一活动.'))
+        ? '领取请求已提交但超时，结果无法确认。请在官方房间核对，不会自动重试同一活动。'
+        : '领取请求的结果无法确认。请在官方房间核对，不会自动重试同一活动。'))
       return annotate(waiting(messages[code]))
     } finally { clearTimeout(timer); this.running = false }
   }
@@ -149,7 +149,7 @@ export class DouyuRewardActions {
     const scope = this.scope(context)
     const pending = [...this.attempts.values()].find(attempt => attempt.scope === scope && attempt.state === 'pending-result')
     if (pending) return this.packetResult(context, pending)
-    if (data.list.length === 0) return this.scheduled('当前房间没有礼物红包, 稍后继续检查.')
+    if (data.list.length === 0) return this.scheduled('当前房间没有礼物红包，稍后继续检查')
     const candidates: Candidate[] = []
     const ids = new Set<string>()
     let restricted = false
@@ -170,7 +170,7 @@ export class DouyuRewardActions {
       candidate.fanRequired = join >= 2
       if (candidate.expiresAt !== null && candidate.expiresAt <= this.now()) continue
       const previous = this.attempts.get(this.key(context, id))
-      if (previous?.state === 'unknown' || previous?.state === 'submitted') return waiting('此礼物红包已有一次结果不明的参与请求. 请在官方房间核对, 不会自动重复提交.')
+      if (previous?.state === 'unknown' || previous?.state === 'submitted') return waiting('此礼物红包已有一次结果不明的参与请求。请在官方房间核对，不会自动重复提交。')
       if (!previous) candidates.push(candidate)
     }
     candidates.sort((left, right) => left.readyAt - right.readyAt)
@@ -178,25 +178,25 @@ export class DouyuRewardActions {
     // unrelated follow query. At most one room-specific query is needed otherwise.
     let event = candidates.find(candidate => !candidate.followRequired && !candidate.fanRequired && candidate.readyAt <= this.now()) ?? candidates[0]
     if (!event) return unconfirmedFans
-      ? waiting('此红包要求粉丝资格, 当前无法通过已核验的只读接口确认. 请在官方房间确认并自行参与.')
-      : restricted ? waiting('房间红包有额外参与条件. 请在官方房间确认并自行参与, 本次未执行附加操作.') : this.scheduled('本轮礼物红包已处理, 稍后继续检查新活动.')
-    if (event.readyAt > this.now()) return this.scheduled('礼物红包尚未开启, 等待官方开启时间.', event.readyAt)
+      ? waiting('此红包要求粉丝资格，当前无法通过已核验的只读接口确认。请在官方房间确认并自行参与。')
+      : restricted ? waiting('房间红包有额外参与条件。请在官方房间确认并自行参与，本次未执行附加操作。') : this.scheduled('本轮礼物红包已处理，稍后继续检查新活动')
+    if (event.readyAt > this.now()) return this.scheduled('礼物红包尚未开启，等待官方开启时间', event.readyAt)
     if (event.fanRequired && !await this.fanEligible(context)) {
       event = candidates.find(candidate => !candidate.followRequired && !candidate.fanRequired)
-      if (!event) return waiting('当前账号的认证粉丝资格未满足或尚未确认, 未参与此红包. 请在官方房间核对后手动恢复.')
-      if (event.readyAt > this.now()) return this.scheduled('等待无需粉丝条件的礼物红包开启.', event.readyAt)
+      if (!event) return waiting('当前账号的认证粉丝资格未满足或尚未确认，未参与此红包。请在官方房间核对后手动恢复。')
+      if (event.readyAt > this.now()) return this.scheduled('等待无需粉丝条件的礼物红包开启', event.readyAt)
     }
     if (event.followRequired && !await this.followed(context)) {
       event = candidates.find(candidate => !candidate.followRequired && !candidate.fanRequired)
-      if (!event) return waiting('官方确认该账号尚未关注此房间, 未参与要求关注的红包. 请在官方房间自行处理后再恢复任务.')
-      if (event.readyAt > this.now()) return this.scheduled('等待无需关注条件的礼物红包开启.', event.readyAt)
+      if (!event) return waiting('官方确认该账号尚未关注此房间，未参与要求关注的红包。请在官方房间自行处理后再恢复任务。')
+      if (event.readyAt > this.now()) return this.scheduled('等待无需关注条件的礼物红包开启', event.readyAt)
     }
 
     // The official UI excludes the room's anchor even for joinc=0.
     const roomResult = await this.request(context, `${ORIGIN}/betard/${context.room}`, undefined, 262_144)
     const room = record(record(roomResult.payload)?.room)
     if (!room || rewardId(room.room_id) !== context.room || !rewardId(room.owner_uid)) throw new RewardProblem('invalid')
-    if (rewardId(room.owner_uid) === context.credentials!.uid) return waiting('主播不能参与自己房间的礼物红包, 本次未发送领取请求.')
+    if (rewardId(room.owner_uid) === context.credentials!.uid) return waiting('主播不能参与自己房间的礼物红包，本次未发送领取请求')
     this.assertWindow(event)
     const result = await this.request(context, PACKET_GRAB, {
       event, encoding: 'form', fields: credentials => ({ activityid: event.id, ctn: this.csrf(credentials) }),
@@ -206,13 +206,13 @@ export class DouyuRewardActions {
     const success = rewardInteger(receipt.isSuc)
     if (success === 0) {
       context.attempt!.state = 'confirmed'
-      return this.scheduled('官方确认本次礼物红包未抢到, 稍后继续检查新活动.')
+      return this.scheduled('官方确认本次礼物红包未抢到，稍后继续检查新活动')
     }
     if (success !== 1) throw new RewardProblem('invalid')
     // Official checkGetRed waits for prpresult; get_prp_result is the read-only
     // counterpart. A grab acknowledgement alone is not a reward confirmation.
     context.attempt!.state = 'pending-result'
-    return this.scheduled('礼物红包参与已提交, 等待官方结果.', this.now() + MIN_DELAY)
+    return this.scheduled('礼物红包参与已提交，等待官方结果', this.now() + MIN_DELAY)
   }
 
   private async fanEligible(context: Context): Promise<boolean> {
@@ -268,7 +268,7 @@ export class DouyuRewardActions {
     const status = rewardInteger(receipt.isSuc)
     if (status !== 0 && status !== 1) throw new RewardProblem('invalid')
     attempt.state = 'confirmed'
-    return this.scheduled(status === 1 ? '官方已确认礼物红包结果, 奖励请在官方背包查看.' : '官方确认本次礼物红包未获得奖励, 稍后继续检查新活动.')
+    return this.scheduled(status === 1 ? '官方已确认礼物红包结果，奖励请在官方背包查看' : '官方确认本次礼物红包未获得奖励，稍后继续检查新活动')
   }
 
   private async boxes(context: Context): Promise<DouyuTaskOutcome> {
@@ -294,13 +294,13 @@ export class DouyuRewardActions {
     let event = candidates[0]
     if (!event) {
       this.boxRoutes.delete(routeKey)
-      return restricted ? waiting('当前宝箱有独立活动规则或参与要求. 请在官方房间查看并自行处理.') : this.scheduled('本轮普通弹幕宝箱已处理或已过期, 稍后继续检查.')
+      return restricted ? waiting('当前宝箱有独立活动规则或参与要求。请在官方房间查看并自行处理。') : this.scheduled('本轮普通弹幕宝箱已处理或已过期，稍后继续检查')
     }
     if (event.room !== context.room) {
       if (this.boxRoutes.size >= 256 && !this.boxRoutes.has(routeKey)) throw new RewardProblem('capacity')
       this.boxRoutes.set(routeKey, { room: event.room!, id: event.id, uid: context.credentials!.uid, fingerprint: context.credentials!.fingerprint })
       context.room = event.room!
-      if (event.readyAt > this.now()) return this.scheduled('跨房普通宝箱尚未开放, 等待后读取目标房间确认.', event.readyAt)
+      if (event.readyAt > this.now()) return this.scheduled('跨房普通宝箱尚未开放，等待后读取目标房间确认', event.readyAt)
       // Radar is discovery only. The target room must freshly list the same box
       // before its account-scoped write or manual verification destination.
       response = await this.request(context, `${BOX_PANEL}?rid=${context.room}`)
@@ -308,13 +308,13 @@ export class DouyuRewardActions {
       if (!rewardRoomMatches(data, context.room)) throw new RewardProblem('invalid')
       const listed = this.boxCandidates(data.list, response.serverNow, context.room, false, context.options.claimDelayMs ?? MIN_DELAY)
       const confirmed = listed.events.find(candidate => candidate.id === event!.id)
-      if (!confirmed) { this.boxRoutes.delete(routeKey); return this.scheduled('目标房间已没有雷达中的普通宝箱, 稍后重新检查.') }
+      if (!confirmed) { this.boxRoutes.delete(routeKey); return this.scheduled('目标房间已没有雷达中的普通宝箱，稍后重新检查') }
       event = confirmed
     }
     const previous = this.attempts.get(this.key(context, event.id))
-    if (previous?.state === 'unknown' || previous?.state === 'submitted') return waiting('此宝箱已有一次结果不明的领取请求. 请在官方房间核对, 不会自动重复提交.')
-    if (previous) { this.boxRoutes.delete(routeKey); return this.scheduled('此普通宝箱已处理, 稍后重新检查.') }
-    if (event.readyAt > this.now()) return this.scheduled('宝箱尚未到可领取时间, 等待官方开启时间.', event.readyAt)
+    if (previous?.state === 'unknown' || previous?.state === 'submitted') return waiting('此宝箱已有一次结果不明的领取请求。请在官方房间核对，不会自动重复提交。')
+    if (previous) { this.boxRoutes.delete(routeKey); return this.scheduled('此普通宝箱已处理，稍后重新检查') }
+    if (event.readyAt > this.now()) return this.scheduled('宝箱尚未到可领取时间，等待官方开启时间', event.readyAt)
     this.assertWindow(event)
     const result = await this.request(context, BOX_GRAB, {
       event, encoding: 'json', fields: credentials => {
@@ -328,7 +328,7 @@ export class DouyuRewardActions {
     if (prize === 0) {
       context.attempt!.state = 'confirmed'
       this.boxRoutes.delete(routeKey)
-      return this.scheduled('官方确认本次宝箱未获得奖励, 稍后继续检查新活动.')
+      return this.scheduled('官方确认本次宝箱未获得奖励，稍后继续检查新活动')
     }
     if (prize === 1) {
       if (!(rewardInteger(receipt.silverCount)! > 0) || (Object.hasOwn(receipt, 'silverBalance') && rewardInteger(receipt.silverBalance) === null)) throw new RewardProblem('invalid')
@@ -337,7 +337,7 @@ export class DouyuRewardActions {
     } else throw new RewardProblem('invalid')
     context.attempt!.state = 'confirmed'
     this.boxRoutes.delete(routeKey)
-    return this.scheduled('官方已返回宝箱奖励回执, 奖励请在官方账户查看.')
+    return this.scheduled('官方已返回宝箱奖励回执，奖励请在官方账户查看')
   }
 
   private boxCandidates(raw: unknown, serverNow: number, room: string, radar: boolean, delay: number): { events: Candidate[]; restricted: boolean } {

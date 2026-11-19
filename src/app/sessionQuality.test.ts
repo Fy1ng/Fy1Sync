@@ -88,7 +88,7 @@ describe('quality restart synchronization', () => {
     const h = await harness(true)
     session.unloadSource('commentary')
     await session.changeSourceQuality('official', 'low')
-    expect(session.flush().notices[0]?.text).toBe('画质已切换。')
+    expect(session.flush().notices[0]?.text).toBe('画质已切换')
     expect(h.sync).not.toHaveBeenCalled()
   })
 

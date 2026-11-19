@@ -28,7 +28,7 @@ describe('playback recovery controls', () => {
     const sync = vi.spyOn(session, 'syncNow').mockResolvedValue({} as AutoSyncRunResult)
     render(<PlaybackRecoveryPrompt />)
     expect(screen.getByRole('status')).toHaveTextContent(kind === 'stall'
-      ? '画面刚卡顿, 两路可能错开了约 2.0 秒' : '重新连接后, 两路可能错开了')
+      ? '画面刚卡顿，两路可能错开了约 2.0 秒' : '重新连接后，两路可能错开了')
     fireEvent.click(screen.getByRole('button', { name: '重新对齐' }))
     expect(sync).toHaveBeenCalledTimes(1)
   })
@@ -56,9 +56,9 @@ describe('playback recovery controls', () => {
 describe('source playback diagnostics', () => {
   it('shows the selected source stall duration and hint', () => {
     snapshot.playbackDiagnostics.official = { durationMs: 2500, category: 'fetch',
-      hint: '本地有数据但播放器没拉到', ongoing: false }
+      hint: '播放器未收到新数据', ongoing: false }
     render(<PlaybackDiagnosticsPanel role="official" />)
-    expect(screen.getByText(/最近卡顿 2.5 秒/)).toHaveTextContent('本地有数据但播放器没拉到')
+    expect(screen.getByText(/最近卡顿 2.5 秒/)).toHaveTextContent('播放器未收到新数据')
   })
 
   it('downloads both sources in one local JSON Blob', async () => {

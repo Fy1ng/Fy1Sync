@@ -125,16 +125,16 @@ function HistoryTab({ initialUid, room }: { initialUid?: string; room: string | 
         <button type="submit" className="btn-solid small" disabled={loading}>搜索</button>
       </form>
       <div className="row-split records-note">
-        <p className="muted">仅包含本应用运行期间接收到的弹幕，不是完整历史记录。</p>
+        <p className="muted">仅记录本次运行收到的弹幕，重启后不保留</p>
         {UID.test(uid) && (
-          <button type="button" className="btn-quiet small" onClick={() => void openExternal()} title="在浏览器中打开第三方公开页面">
+          <button type="button" className="btn-quiet small" onClick={() => void openExternal()} title="在浏览器打开">
             在 Doseeing 查看<span className="records-third">第三方</span>
           </button>
         )}
       </div>
       {external && <p className="form-error" role="alert"><ErrorText error={externalDetail ?? external} message={external} /></p>}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
-      {data?.truncated && <p className="muted">已超出本地容量 {data.capacity} 条，较早的记录已移除。</p>}
+      {data?.truncated && <p className="muted">已超出本地容量 {data.capacity} 条，较早的记录已移除</p>}
       {data && (data.items.length === 0
         ? <p className="records-empty">无匹配的弹幕</p>
         : (
@@ -144,7 +144,7 @@ function HistoryTab({ initialUid, room }: { initialUid?: string; room: string | 
                 <div className="records-meta">
                   <time className="num" dateTime={new Date(item.receivedAt).toISOString()}>{formatTime(item.receivedAt)}</time>
                   <span className="records-user">{item.username || '匿名'}</span>
-                  {item.sender?.uid && <span className="num muted">UID {item.sender.uid}</span>}
+                  {item.sender?.uid && <span className="num muted">用户 ID {item.sender.uid}</span>}
                   <span className="num muted">房间 {item.room}</span>
                 </div>
                 <p className="records-text">{item.text}</p>
@@ -203,7 +203,7 @@ function FavoriteRow({ item, onChanged, onRemoved, onFill }: {
       <div className="records-meta">
         <time className="num" dateTime={new Date(item.createdAt).toISOString()}>{formatTime(item.createdAt)}</time>
         {item.username && <span className="records-user">{item.username}</span>}
-        {item.uid && <span className="num muted">UID {item.uid}</span>}
+        {item.uid && <span className="num muted">用户 ID {item.uid}</span>}
         {item.room && <span className="num muted">房间 {item.room}</span>}
       </div>
       {editing ? (
@@ -274,7 +274,7 @@ function FavoritesTab({ onFill }: { onFill: (text: string) => void }): React.Rea
           placeholder="弹幕内容或用户名" aria-label="搜索收藏" />
         <button type="submit" className="btn-solid small" disabled={loading}>搜索</button>
       </form>
-      <p className="muted">收藏保存在本机，填入发送框后需手动发送。</p>
+      <p className="muted">仅保存在本机，填入不会自动发送</p>
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
       {data && (items.length === 0
         ? <p className="records-empty">{applied ? '无匹配的收藏' : '暂无收藏'}</p>

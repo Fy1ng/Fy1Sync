@@ -104,7 +104,7 @@ export class FrameGrabber {
         timer: setTimeout(() => {
           if (this.pending !== pending) return
           this.terminateWorker()
-          this.settle(pending, { ok: false, reason: 'decode-failed', detail: '抓帧读回超时, 请重试' })
+          this.settle(pending, { ok: false, reason: 'decode-failed', detail: '抓帧读回超时，请重试' })
         }, this.options.timeoutMs ?? 1000),
       }
       this.pending = pending
@@ -159,7 +159,7 @@ export class FrameGrabber {
 
   private readonly onWorkerError = (): void => {
     this.terminateWorker()
-    if (this.pending) this.settle(this.pending, { ok: false, reason: 'decode-failed', detail: '抓帧 Worker 运行失败, 请重试' })
+    if (this.pending) this.settle(this.pending, { ok: false, reason: 'decode-failed', detail: '抓帧 Worker 运行失败，请重试' })
   }
 
   private ensureWorker(): Worker {

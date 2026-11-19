@@ -267,7 +267,7 @@ export class AutoSyncController {
       // A refused caller owns no run state and must not unlock the active run.
       return {
         phase: 'failed', dryRun, estimate: null, plan: null, applied: false,
-        failure: { kind: 'cancelled', message: '已有一次自动同步在进行中' },
+        failure: { kind: 'cancelled', message: '正在自动对齐' },
         divergence: null, samples: { official: 0, commentary: 0 },
         jumps: { official: 0, commentary: 0 }, startedAt, finishedAt: this.now(),
       }
@@ -275,7 +275,7 @@ export class AutoSyncController {
     if (!dryRun && !this.authorized) {
       return this.fail(startedAt, dryRun, {
         kind: 'unauthorized',
-        message: '手动调整后需要重新开启自动同步',
+        message: '请点击「自动对齐」恢复',
       })
     }
 
@@ -291,12 +291,12 @@ export class AutoSyncController {
 
     try {
       if (this.deps.canStart && !this.deps.canStart()) {
-        return this.fail(startedAt, dryRun, { kind: 'not-ready', message: '同步准备中, 请等待两路画面和缓冲就绪' })
+        return this.fail(startedAt, dryRun, { kind: 'not-ready', message: '请等待两路播放和缓冲就绪' })
       }
       if (this.deps.hasProfile && !this.deps.hasProfile()) {
         return this.fail(startedAt, dryRun, {
           kind: 'not-ready',
-          message: '倒计时识别尚未就绪, 请等待识别完成后重试',
+          message: '倒计时识别尚未就绪，请等待识别完成后重试',
         })
       }
 
@@ -306,7 +306,7 @@ export class AutoSyncController {
         if (!snapshot?.ready) {
           return this.fail(startedAt, dryRun, {
             kind: 'not-ready',
-            message: role === 'official' ? '官方源尚未就绪' : '解说源尚未就绪',
+            message: role === 'official' ? '画面尚未就绪' : '解说尚未就绪',
           })
         }
       }
@@ -319,7 +319,7 @@ export class AutoSyncController {
         appliedOffsetSeconds: offsetFromRewind(applied),
       })
       if (this.stale(token)) {
-        return this.fail(startedAt, dryRun, { kind: 'cancelled', message: '自动同步已取消' }, {
+        return this.fail(startedAt, dryRun, { kind: 'cancelled', message: '已取消自动对齐' }, {
           samples,
           jumps,
         })
@@ -338,7 +338,7 @@ export class AutoSyncController {
 
       if (evidence.interrupted) {
         return this.fail(startedAt, dryRun, {
-          kind: 'not-ready', message: '识别期间播放发生暂停, 缓冲或跳转, 请稳定播放后重试',
+          kind: 'not-ready', message: '识别期间播放发生暂停，缓冲或跳转，请稳定播放后重试',
         }, { samples, jumps })
       }
 
@@ -361,7 +361,7 @@ export class AutoSyncController {
       }
       if (!evidence.readingsFresh || (evidence.endedEarly && !evidence.ready)) {
         return this.fail(startedAt, dryRun, {
-          kind: 'not-ready', message: '识别证据已过期或连续跳秒不足, 请重试',
+          kind: 'not-ready', message: '请等倒计时连续走动几秒后重试',
         }, { samples, jumps })
       }
       estimateValue = estimate
@@ -406,14 +406,14 @@ export class AutoSyncController {
       if (!aligned && !needsSeek) {
         const nudge = await this.applyRateNudge(residual, snapshots, applied, token, publishRewind)
         if (this.stale(token)) {
-          return this.fail(startedAt, dryRun, { kind: 'cancelled', message: '自动同步已取消' }, {
+          return this.fail(startedAt, dryRun, { kind: 'cancelled', message: '已取消自动对齐' }, {
             samples, jumps, estimate, plan, applied: true, appliedRewind: appliedValue,
           })
         }
         if (nudge.kind === 'failed') {
           return this.fail(startedAt, dryRun, {
             kind: 'verify-failed',
-            message: '播放进度未能收敛, 请检查暂停或缓冲状态',
+            message: '未能对齐，请等播放恢复后重试',
             divergence: Math.abs(nudge.error),
           }, { samples, jumps, estimate, plan, applied: true, appliedRewind: appliedValue, divergence: Math.abs(nudge.error) })
         }
@@ -443,7 +443,7 @@ export class AutoSyncController {
         }
         const confirmed = await this.seek(seek.role, currentSeek.to, mode)
         if (this.stale(token)) {
-          return this.fail(startedAt, dryRun, { kind: 'cancelled', message: '自动同步已取消' }, {
+          return this.fail(startedAt, dryRun, { kind: 'cancelled', message: '已取消自动对齐' }, {
             samples, jumps, estimate, plan, applied: true, appliedRewind: appliedValue,
           })
         }
@@ -470,7 +470,7 @@ export class AutoSyncController {
             dryRun,
             {
               kind: 'seek-failed',
-              message: seek.role === 'official' ? '官方源跳转未生效' : '解说源跳转未生效',
+              message: seek.role === 'official' ? '画面未能跳转' : '解说未能跳转',
             },
             { samples, jumps, estimate, plan, applied: true, appliedRewind: appliedValue },
           )
@@ -481,7 +481,7 @@ export class AutoSyncController {
       if (needsSeek && plan.limited) {
         return this.fail(startedAt, dryRun, {
           kind: plan.limitReason === 'buffer-limit' ? 'buffer-limit' : 'not-ready',
-          message: plan.limitReason === 'buffer-limit' ? '缓存长度不足, 偏移未完全应用' : '有源尚未就绪, 偏移未完全应用',
+          message: plan.limitReason === 'buffer-limit' ? '缓冲不足，未完全调整' : '片源未就绪，未完全调整',
         }, { samples, jumps, estimate, plan, applied: true, appliedRewind: appliedValue })
       }
 
@@ -691,7 +691,7 @@ export class AutoSyncController {
     let carried = initialApplied
     let divergence: number | null = null
     const update = (rewind: AppliedRewind): void => { carried = rewind; publish(rewind) }
-    const cancelled = (): AutoSyncFailure => ({ kind: 'cancelled', message: '自动同步已取消' })
+    const cancelled = (): AutoSyncFailure => ({ kind: 'cancelled', message: '已取消自动对齐' })
     const failed = (message: string): AutoSyncFailure => ({ kind: 'verify-failed', message, divergence: divergence ?? Infinity })
     const tolerance = this.options.maxDivergenceSeconds ?? DEFAULTS.maxDivergenceSeconds
     const passes = Math.max(0, Math.min(3, this.options.maxCorrectionPasses ?? DEFAULTS.maxCorrectionPasses))
@@ -701,7 +701,7 @@ export class AutoSyncController {
       const stable = await this.settlePlayback(token)
       if (this.stale(token)) return { divergence, failure: cancelled() }
       update(this.progressRewind(carried, beforeSettle))
-      if (!stable) return { divergence, failure: failed('复核时播放仍在暂停或缓冲, 尚未确认对齐') }
+      if (!stable) return { divergence, failure: failed('复核时播放仍在暂停或缓冲，尚未确认对齐') }
 
       const beforeSample = this.collectSnapshots()
       const estimateOptions = {
@@ -716,11 +716,11 @@ export class AutoSyncController {
       update(this.progressRewind(carried, beforeSample))
       if (evidence.frameFailure) {
         if (pass < passes) continue
-        return { divergence, failure: failed(`画面复核未通过: ${evidence.frameFailure}`) }
+        return { divergence, failure: failed(`画面复核未通过：${evidence.frameFailure}`) }
       }
       if (evidence.interrupted || !evidence.readingsFresh || (evidence.endedEarly && !evidence.ready)) {
         if (pass < passes) continue
-        return { divergence, failure: failed('复核期间播放发生缓冲或跳转, 尚未确认对齐') }
+        return { divergence, failure: failed('复核期间播放发生缓冲或跳转，尚未确认对齐') }
       }
       const fresh = evidence.fresh
       const measured = evidence.frameEstimate ?? estimateOffset(fresh.official, fresh.commentary, {
@@ -729,11 +729,11 @@ export class AutoSyncController {
       if (measured.status === 'rejected' || (!evidence.frameEstimate && (fresh.official.length < 2 || fresh.commentary.length < 2))) {
         if (pass < passes) continue
         const reason = evidence.frameFailure ?? (measured.status === 'rejected' ? OFFSET_REJECTION_TEXT[measured.reason] : '连续跳秒证据不足')
-        return { divergence, failure: failed(`复核未通过: ${reason}`) }
+        return { divergence, failure: failed(`复核未通过：${reason}`) }
       }
       divergence = Math.abs(measured.residualSeconds)
       if (divergence <= tolerance) return { divergence, failure: null }
-      if (pass === passes) return { divergence, failure: failed(`复核偏差 ${divergence.toFixed(2)} 秒, 尚未收敛`) }
+      if (pass === passes) return { divergence, failure: failed(`对齐后仍相差约 ${divergence.toFixed(2)} 秒，可手动调整`) }
 
       this.setPhase('applying')
       const snapshots = this.collectSnapshots()
@@ -742,7 +742,7 @@ export class AutoSyncController {
         const correction = await this.applyRateNudge(measured.residualSeconds, snapshots, carried, token, update)
         if (this.stale(token)) return { divergence, failure: cancelled() }
         if (correction.kind === 'failed') return { divergence: Math.abs(correction.error),
-          failure: failed('复核校正时播放进度未能收敛') }
+          failure: failed('未能确认对齐结果') }
         // Re-measure if a new stall changed the required correction during a nudge.
         continue
       }
@@ -752,7 +752,7 @@ export class AutoSyncController {
       for (const planned of plan.seeks) {
         const before = this.collectSnapshots()
         const currentPlan = planOffsetChange({ nextOffset: targetOffset, applied: carried, snapshots: before })
-        if (currentPlan.limited) return { divergence, failure: { kind: 'buffer-limit', message: '缓存长度不足, 无法完成复核校正' } }
+        if (currentPlan.limited) return { divergence, failure: { kind: 'buffer-limit', message: '缓存长度不足，无法完成复核校正' } }
         const seek = currentPlan.seeks.find(item => item.role === planned.role)
         if (!seek) continue
         const confirmed = await this.seek(seek.role, seek.to, mode)

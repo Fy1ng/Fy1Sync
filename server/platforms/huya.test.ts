@@ -133,7 +133,7 @@ describe('Huya quality metadata', () => {
       { iBitRate: 8000, sDisplayName: '蓝光', iCodecType: 1 }, { iBitRate: 8000, sDisplayName: '蓝光 H264', iCodecType: 0 },
       { iBitRate: '4000' }, { iBitRate: -1 }, { iBitRate: 1.5 }, { iBitRate: 1_000_001 }, null,
       { iBitRate: 4000, sDisplayName: 'x'.repeat(81) }, { iBitRate: 2000, sDisplayName: '错误\n名称' },
-    ])).toEqual([{ id: '0', label: '原画' }, { id: '8000', label: '蓝光 H264' }, { id: '4000', label: '画质 4000' }, { id: '2000', label: '画质 2000' }])
+    ])).toEqual([{ id: '0', label: '原画' }, { id: '8000', label: '蓝光 H264' }, { id: '4000', label: '未知画质' }, { id: '2000', label: '未知画质' }])
   })
   it.each([null, {}, 123, 'qualities', Array.from({ length: 101 }, () => ({ iBitRate: 0 }))])('bounds quality collections', value => {
     expect(parseHuyaQualities(value)).toEqual([])
@@ -258,7 +258,7 @@ describe('Huya resolver token fallback and media boundary', () => {
       const url = new URL(result.stream.url)
       expect(url.searchParams.get('codec')).toBe('264')
       expect(url.searchParams.get('ratio')).toBe(quality === '8000' ? '8000' : null)
-      expect(result.stream.notes?.join(' ')).toContain(`令牌来源: ${source}`)
+      expect(result.stream.notes).toEqual([])
     }
   })
   it('uses WUP Ex before AntiCode, selects the highest-priority eligible line and never probes media', async () => {
@@ -274,7 +274,7 @@ describe('Huya resolver token fallback and media boundary', () => {
     expect(url.pathname).toBe('/src/example-stream.flv')
     expect(url.searchParams.get('codec')).toBe('264')
     expect(url.searchParams.get('ratio')).toBe('8000')
-    expect(result.stream.notes?.join(' ')).toMatch(/线路: TX.*令牌来源: Ex/)
+    expect(result.stream.notes).toEqual([])
     expect(result.stream.danmakuRoom).toBeUndefined()
     expect(JSON.stringify(result.stream.notes)).not.toMatch(/wsSecret|abc123|Cookie/)
     expect(fetchBytes).toHaveBeenCalledExactlyOnceWith('https://wup.huya.com', expect.objectContaining({ method: 'POST', body: expect.any(Uint8Array), headers: expect.objectContaining({ Referer: 'https://www.huya.com/', 'Content-Type': 'application/octet-stream' }) }))
@@ -298,7 +298,7 @@ describe('Huya resolver token fallback and media boundary', () => {
     const result = await resolveHuya('123456', deps({ fetchBytes, runYtDlp }))
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.stream.notes?.join(' ')).toContain('令牌来源: AntiCode')
+    expect(result.stream.notes).toEqual([])
     expect(new URL(result.stream.url).searchParams.get('wsSecret')).toBe('f07971aeb7e7c3df1738dc5b20b5f68d')
     expect(runYtDlp).not.toHaveBeenCalled()
     expect(JSON.stringify(result)).not.toContain('PRIVATE')
@@ -308,7 +308,7 @@ describe('Huya resolver token fallback and media boundary', () => {
     const runYtDlp = vi.fn()
     const result = await resolveHuya('123456', deps({ fetchText: async () => page({}, [sampleLine({ sFlvAntiCode: 'invalid' }), sampleLine({ sCdnType: 'AL', iWebPriorityRate: 10, sFlvUrl: 'http://low.flv.huya.com/src' })]), fetchBytes, runYtDlp }))
     expect(result.ok && result.stream.url).toMatch(/^https:\/\/low\.flv\.huya\.com\//)
-    expect(result.ok && result.stream.notes?.join(' ')).toContain('线路: AL')
+    expect(result.ok && result.stream.notes).toEqual([])
     expect(fetchBytes).toHaveBeenCalledTimes(2)
     expect(runYtDlp).not.toHaveBeenCalled()
   })
@@ -328,7 +328,7 @@ describe('Huya resolver token fallback and media boundary', () => {
     expect(result).toMatchObject({ ok: true, stream: { quality: '8000', headers: { Referer: 'https://www.huya.com/' } } })
     if (!result.ok) return
     expect(result.stream.url).toBe('https://fallback.flv.huya.com/live.flv?wsSecret=PRIVATE&ratio=8000&codec=264')
-    expect(result.stream.notes?.join(' ')).toContain('令牌来源: yt-dlp')
+    expect(result.stream.notes).toEqual([])
     expect(result.stream.danmakuRoom).toBeUndefined()
     expect(events).toEqual(['Ex', 'yt-dlp'])
   })
@@ -379,7 +379,7 @@ describe('Huya resolver token fallback and media boundary', () => {
       is_live: null, live_status: null, formats: [{ vcodec: null, acodec: null,
         url: 'https://fallback.flv.huya.com/live.flv?wsSecret=fixture' }],
     }) }))
-    expect(result).toMatchObject({ ok: true, stream: { platform: 'huya', quality: '0', notes: expect.arrayContaining([expect.stringContaining('yt-dlp')]) } })
+    expect(result).toMatchObject({ ok: true, stream: { platform: 'huya', quality: '0', notes: [] } })
   })
   it('reports missing backup tools and never forwards page request diagnostics', async () => {
     expect(await resolveHuya('123456', deps({ fetchText: async () => page({}, []) }))).toMatchObject({ ok: false, failure: { code: 'needs-manual-url' } })

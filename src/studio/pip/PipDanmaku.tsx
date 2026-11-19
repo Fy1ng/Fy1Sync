@@ -101,7 +101,7 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
           const value = data as { state?: unknown; detail?: unknown }
           if (value.state === 'connected') problemRef.current(null)
           else if (value.state === 'closed') problemRef.current(displayError(data, typeof value.detail === 'string' ? value.detail : '弹幕连接已断开'))
-        } else if (event === 'error') problemRef.current(displayError(data, '弹幕连接中断, 正在重试'))
+        } else if (event === 'error') problemRef.current(displayError(data, '弹幕连接中断，正在重试'))
       })
     } catch (caught) {
       problemRef.current(displayError(caught, '弹幕连接失败'))

@@ -100,7 +100,7 @@ describe('creating an automation', () => {
 
     fireEvent.change(screen.getByLabelText('补签卡最多使用数量'), { target: { value: '5' } })
     fireEvent.click(screen.getByRole('radio', { name: '重复' }))
-    fireEvent.change(screen.getByLabelText('重复间隔(分钟)'), { target: { value: '720' } })
+    fireEvent.change(screen.getByLabelText('重复间隔（分钟）'), { target: { value: '720' } })
     fireEvent.click(screen.getByRole('button', { name: '创建' }))
     await waitFor(() => expect(created()).toHaveLength(1))
     expect(created()[0]!.args).toEqual({
@@ -131,7 +131,7 @@ describe('creating an automation', () => {
     chooseKind('arena-sign')
     fireEvent.click(screen.getByRole('radio', { name: '所选房间' }))
     fireEvent.change(screen.getByLabelText('房间号列表'), { target: { value: '100, 200\n300' } })
-    fireEvent.click(screen.getByRole('radio', { name: 'cardArena' }))
+    fireEvent.click(screen.getByRole('radio', { name: '卡牌活动' }))
     fireEvent.change(screen.getByLabelText('最多处理数量'), { target: { value: '3' } })
     fireEvent.click(screen.getByRole('radio', { name: '锁屏时也运行' }))
     fireEvent.click(screen.getByRole('button', { name: '创建' }))
@@ -190,35 +190,35 @@ const view = (patch: Partial<AutomationView>): AutomationView => ({
 describe('the automation list', () => {
   it('follows pushed snapshots and never invents a percentage for an unknown total', async () => {
     render(<Harness />)
-    await screen.findByText('暂无批量任务。新建的任务默认暂停，点击「启动」后运行。')
+    await screen.findByText('暂无批量任务')
     act(() => pushFeature({ topic: 'automations', data: { tasks: [
       view({ status: 'running', progress: { completed: 2, total: 5, skipped: 1, current: '房间 100', evidence: 'official-state' } }),
       view({ id: '00000000-0000-4000-8000-000000000002', kind: 'watch-points', target: { type: 'account' }, repeatMinutes: null,
-        status: 'waiting-user', reason: '操作未确认完成, 请核对结果后手动恢复',
+        status: 'waiting-user', reason: '操作未确认完成，请核对结果后手动恢复',
         progress: { completed: 1, total: null, skipped: 0, current: null, evidence: 'receipt-received' } }),
     ] } }))
-    const first = within(screen.getByRole('group', { name: '关注房间签到 (主号)' }))
+    const first = within(screen.getByRole('group', { name: '关注房间签到 （主号）' }))
     expect(first.getByText('已完成 2 / 5 · 跳过 1 · 当前 房间 100 · 官方状态已确认')).toBeInTheDocument()
     expect(first.getByRole('progressbar', { name: '完成进度' })).toHaveAttribute('max', '5')
     expect(first.getByText(/每 24 小时/)).toBeInTheDocument()
     expect(first.getByRole('button', { name: '暂停' })).toBeInTheDocument()
 
-    const second = within(screen.getByRole('group', { name: '观看积分 (主号)' }))
+    const second = within(screen.getByRole('group', { name: '观看积分 （主号）' }))
     expect(second.getByText(/已完成 1，总数未知/)).toBeInTheDocument()
     expect(second.queryByRole('progressbar')).toBeNull()
-    expect(second.getByText('操作未确认完成, 请核对结果后手动恢复')).toBeInTheDocument()
-    expect(second.getByText('结果需在官方页面人工核对，核对后再手动启动。')).toBeInTheDocument()
+    expect(second.getByText('操作未确认完成，请核对结果后手动恢复')).toBeInTheDocument()
+    expect(second.getByText('结果需在官方页面人工核对，核对后再手动启动')).toBeInTheDocument()
   })
 
   it('removes only after a confirmation', async () => {
     automations = [view({})]
     render(<Harness />)
-    const row = within(await screen.findByRole('group', { name: '关注房间签到 (主号)' }))
+    const row = within(await screen.findByRole('group', { name: '关注房间签到 （主号）' }))
     fireEvent.click(row.getByRole('button', { name: '删除' }))
     expect(calls.some((call) => call.method === 'removeDouyuAutomation')).toBe(false)
     fireEvent.click(row.getByRole('button', { name: '确认删除' }))
     await waitFor(() => expect(calls.filter((call) => call.method === 'removeDouyuAutomation'))
       .toEqual([{ method: 'removeDouyuAutomation', args: { id: '00000000-0000-4000-8000-000000000001' } }]))
-    await waitFor(() => expect(screen.queryByRole('group', { name: '关注房间签到 (主号)' })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('group', { name: '关注房间签到 （主号）' })).toBeNull())
   })
 })

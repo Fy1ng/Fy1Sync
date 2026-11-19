@@ -36,7 +36,7 @@ test('钓鱼, 红包和宝箱共享任务调度, 人工验证入口及重启暂�
     await expect.poll(async () => {
       const state = await invoke(app.page, 'getDouyuTasks', undefined)
       return state.ok ? state.value.tasks.slice(0, 2).map(task => task.lastResult) : []
-    }).toEqual(['离线活动状态: 等待官方时间', '离线活动状态: 等待官方时间'])
+    }).toEqual(['离线活动状态：等待官方时间', '离线活动状态：等待官方时间'])
     await app.application.evaluate(() => {
       (globalThis as typeof globalThis & { __streamSyncerTest: { setDouyuActivityFixtureOutcome(value: string): void } })
         .__streamSyncerTest.setDouyuActivityFixtureOutcome('waiting-user')

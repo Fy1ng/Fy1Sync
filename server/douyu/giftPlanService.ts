@@ -12,16 +12,16 @@ import type { DouyuGiftCatalog, DouyuGiftCatalogItem, DouyuGiftMoney, DouyuGiftP
 const PLAN_TTL_MS = 120_000
 const MAX_OPERATIONS = 10_000
 const MESSAGES = {
-  'invalid-arguments': '赠礼参数无效, 请重新选择.',
-  'invalid-data': '赠礼数据无法完整核对, 请重新预览.',
-  'account-changed': '所选账号或房间已变化, 请重新预览.',
-  'stale-plan': '赠礼计划已过期或状态已变化, 请重新预览.',
-  'inventory-changed': '可赠库存已变化, 已停止后续赠送.',
-  'price-changed': '礼物价格或可赠状态已变化, 已停止后续赠送.',
-  'balance-changed': '余额未知, 不足或已变化, 已停止后续赠送.',
-  unavailable: '当前没有可确认的赠礼条件.',
-  busy: '已有赠礼操作尚未结束.',
-  cancelled: '赠礼操作已取消.',
+  'invalid-arguments': '赠礼参数无效，请重新选择',
+  'invalid-data': '无法核对赠送信息，请重新生成确认单',
+  'account-changed': '所选账号或房间已变化，请重新生成确认单',
+  'stale-plan': '确认单已过期或状态已变化，请重新生成',
+  'inventory-changed': '可赠库存已变化，已停止后续赠送',
+  'price-changed': '礼物价格或可赠状态已变化，已停止后续赠送',
+  'balance-changed': '余额未知，不足或已变化，已停止后续赠送',
+  unavailable: '当前没有可确认的赠礼条件',
+  busy: '已有赠礼操作尚未结束',
+  cancelled: '赠礼操作已取消',
 } as const
 
 export class DouyuGiftPlanError extends Error {
@@ -173,7 +173,7 @@ export class DouyuGiftPlanService {
       const result = this.create({ accountId, room: input.room, kind: 'inventory', rows, totalQuantity, totalOperations, repeat: 1,
         intervalMs: input.intervalMs!, budget: null, balanceBefore: null,
         excludedItems: items.filter(item => !item.canGift).map(item => ({ propId: item.propId, name: item.name, quantity: item.quantity, reason: item.unavailableReason! })),
-        message: '按下列数量赠送已有可赠库存. 非通用物品保留. 不购买, 不领取, 库存不足时停止. 标称价值和亲密度不代表实际到账.' })
+        message: '仅赠送下列背包道具，不购买或领取。库存变化时停止剩余赠送。' })
       this.scope(accountId, input.room)
       if (signal.aborted) throw cancelled()
       this.plan = { public: copy(result), uid: before.uid, originRoom: input.room, inventory, gift: null, onceLimit: null }
@@ -197,7 +197,7 @@ export class DouyuGiftPlanService {
         rows: [{ propId: null, giftId: gift.giftId, name: gift.name, quantity: input.quantity, repeat: input.repeat, stock: null,
           expiresAt: null, unitPrice: gift.unitPrice, total: budget }], totalQuantity: input.quantity * input.repeat, totalOperations: input.repeat,
         budget, balanceBefore: giftMoney(budget.currency, available), excludedItems: [],
-        message: '确认后按所示次数, 间隔和总预算购买赠送. 每笔重新核对价格与余额, 变化或结果未知即停. 不充值或追加预算; 榜单与亲密度到账另行核对.' })
+        message: '按本页预算购买并赠送，不充值或追加预算。价格或余额变化，或结果未确认时停止剩余赠送。' })
       this.scope(accountId, input.room)
       if (signal.aborted) throw cancelled()
       this.plan = { public: copy(result), uid: balance.uid, originRoom: input.room, inventory: new Map(), gift: copy(gift), onceLimit: catalog.onceLimit }
@@ -246,7 +246,7 @@ export class DouyuGiftPlanService {
       }, execution.controller.signal)
       if (outcome.status === 'completed') return copy(outcome.value)
       return this.result(execution, outcome.status === 'cancelled' ? 'cancelled' : 'failed', outcome.status === 'cancelled'
-        ? '赠礼已停止. 可能已提交的项目需在官方房间核对, 不会自动重送.' : '执行队列未能开始或完成本次操作, 请重新预览.',
+        ? '赠送已停止。可能已送出的礼物请到斗鱼核对，不会自动重送。' : '本次赠送未能开始或完成，请重新生成确认单',
       outcome.status === 'cancelled' ? 'cancelled' : outcome.status === 'busy' ? 'queue-busy' : 'unavailable')
     } finally {
       clearTimeout(timer)
@@ -313,7 +313,7 @@ export class DouyuGiftPlanService {
         }
         this.ensureCurrent(plan, signal)
         const output: DouyuGiftResultRow = { propId: row.propId, giftId: row.giftId, name: row.name, quantity: row.quantity, repetition,
-          status: 'unknown', message: '本次请求可能已提交, 尚未完成核对.' }
+          status: 'unknown', message: '本次请求可能已提交，尚未完成核对' }
         execution.rows.push(output)
         // Never race a dispatched write: cancellation retains the shared slot until it settles.
         const receipt = row.propId ? await this.deps.gateway.donateInventory({ accountId: plan.public.accountId, expectedUid: plan.uid,
@@ -324,7 +324,7 @@ export class DouyuGiftPlanService {
         const receiptStatus = safeReceipt(receipt)
         if (receiptStatus !== 'receipt-received') {
           output.status = receiptStatus
-          output.message = receiptStatus === 'not-submitted' ? '此笔未提交, 后续操作已停止.' : '此笔结果未知, 后续操作已停止, 不会自动重送.'
+          output.message = receiptStatus === 'not-submitted' ? '此笔未提交，后续操作已停止' : '此笔结果未知，后续操作已停止，不会自动重送'
           return this.result(execution, receiptStatus === 'unknown' ? 'waiting-user' : 'failed', output.message, receiptStatus === 'unknown' ? 'unconfirmed' : 'unavailable')
         }
         if (row.propId) {
@@ -344,16 +344,16 @@ export class DouyuGiftPlanService {
           spent += cost!.amountMinor
         }
         output.status = 'receipt-received'
-        output.message = row.propId ? '已收到赠送回执, 库存变化已核对.' : '已收到赠送回执, 余额扣除已核对.'
+        output.message = row.propId ? '已收到赠送回执，库存变化已核对' : '已收到赠送回执，余额扣除已核对'
       }
-      return this.result(execution, 'completed', '计划内赠礼处理完成, 回执和库存或余额已核对. 榜单, 亲密度与续期效果仍需独立核对.')
+      return this.result(execution, 'completed', '赠送完成。榜单、亲密度和粉丝牌续期效果请到斗鱼核对。')
     } catch (error) {
       const issue = signal.aborted ? new DouyuGiftPlanError('cancelled') : problem(error)
       const submitted = execution.rows.some(row => row.status !== 'not-submitted')
       const reason: DouyuGiftResult['reason'] = issue.code === 'stale-plan' ? 'plan-changed'
         : ['inventory-changed', 'balance-changed', 'price-changed', 'account-changed', 'cancelled'].includes(issue.code) ? issue.code as DouyuGiftResult['reason']
           : submitted ? 'unconfirmed' : 'unavailable'
-      return this.result(execution, signal.aborted ? 'cancelled' : submitted ? 'waiting-user' : 'failed', `${issue.message} 已可能提交的项目不会自动重送.`, reason)
+      return this.result(execution, signal.aborted ? 'cancelled' : submitted ? 'waiting-user' : 'failed', `${issue.message}。已可能提交的项目不会自动重送。`, reason)
     }
   }
 }

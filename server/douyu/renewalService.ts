@@ -11,15 +11,15 @@ import type {
 } from './renewalTypes'
 
 const MESSAGES = {
-  'invalid-arguments': '续牌赠送参数无效.',
-  'account-changed': '账号状态已变化, 请重新读取目标并生成预览.',
-  'login-required': '请先登录当前斗鱼账号.',
-  'verification-required': '斗鱼要求官方验证, 请在该账号的官方页面完成后重试读取.',
-  unavailable: '无法读取续牌赠送所需的信息, 请到官方页面核对.',
-  'invalid-data': '斗鱼返回的信息无法安全确认.',
-  'stale-plan': '预览已失效或目标与库存已变化, 请重新生成预览.',
-  busy: '上一项操作仍在结束, 请稍后重新生成预览.',
-  cancelled: '操作已取消.',
+  'invalid-arguments': '续牌赠送参数无效',
+  'account-changed': '账号状态已变化，请重新读取粉丝牌并生成核对单',
+  'login-required': '请先登录当前斗鱼账号',
+  'verification-required': '斗鱼要求官方验证，请在该账号的官方页面完成后重试读取',
+  unavailable: '无法读取续牌赠送所需的信息，请到官方页面核对',
+  'invalid-data': '斗鱼返回的信息无法安全确认',
+  'stale-plan': '核对单已失效或目标与库存已变化，请重新生成',
+  busy: '上一项操作尚未结束，请稍后重新生成核对单',
+  cancelled: '操作已取消',
 } as const
 
 export class DouyuRenewalError extends Error {
@@ -139,7 +139,7 @@ export class DouyuRenewalService {
     return this.read(accountId, async signal => {
       const response = await this.deps.gateway.readBadges(accountId, signal)
       return { accountId, checkedAt: this.now(), coverage: 'returned-page', targets: parseRenewalTargets(response.html),
-        message: '仅显示本次返回页中可核对的粉丝牌. 不自动判定续期状态, 请手动选择需要处理的房间.' }
+        message: '仅显示本次返回页中可核对的粉丝牌。不自动判定续期状态，请手动选择需要处理的房间。' }
     })
   }
 
@@ -164,7 +164,7 @@ export class DouyuRenewalService {
         const target = targets.get(room)!
         const resolved = await abortable(this.deps.resolveRoom(room), signal)
         if (!resolved.ok || resolved.identity.room !== room) {
-          choices.push({ target, items: [], reason: '房间身份无法一致核对, 本次跳过.' })
+          choices.push({ target, items: [], reason: '房间身份无法一致核对，本次跳过' })
           continue
         }
         try {
@@ -180,7 +180,7 @@ export class DouyuRenewalService {
           if (signal.aborted) throw cancelled()
           const problem = translate(error)
           if (['account-changed', 'login-required', 'verification-required'].includes(problem.code)) throw problem
-          choices.push({ target, items: [], reason: '无法安全核对该房间的背包, 本次跳过.' })
+          choices.push({ target, items: [], reason: '无法安全核对该房间的背包，本次跳过' })
         }
       }
       if (signal.aborted) throw cancelled()
@@ -202,9 +202,9 @@ export class DouyuRenewalService {
         const eligible = eligibleItems(items)
         const item = equal ? count > 0 ? preferred : undefined : eligible.find(item => !inconsistent.has(item.id) && (remaining.get(item.id) ?? 0) >= count)
         if (!item) return { ...target, status: 'skipped', gift: null, reason: reason
-          ?? (eligible.some(item => inconsistent.has(item.id)) ? '跨房间的库存信息不一致, 请重新读取.'
-            : eligible.length ? equal ? '库存不足以向每个同类道具目标平均分配至少一个, 本次跳过.' : '剩余库存不足以完成指定数量, 本次跳过.'
-              : items.find(item => PREFERRED_PROPS.includes(item.id))?.reason ?? '没有可核对的普通背包荧光棒, 本次跳过.') }
+          ?? (eligible.some(item => inconsistent.has(item.id)) ? '跨房间的库存信息不一致，请重新读取'
+            : eligible.length ? equal ? '库存不足以向每个同类道具目标平均分配至少一个，本次跳过' : '剩余库存不足以完成指定数量，本次跳过'
+              : items.find(item => PREFERRED_PROPS.includes(item.id))?.reason ?? '没有可核对的普通背包荧光棒，本次跳过') }
         remaining.set(item.id, remaining.get(item.id)! - count)
         selected.set(target.room, copy(item))
         return { ...target, status: 'ready', gift: { propId: item.id, name: item.name, quantity: count, stock: item.count,
@@ -215,8 +215,8 @@ export class DouyuRenewalService {
       const createdAt = this.now()
       const plan: DouyuRenewalPlan = { id, accountId, createdAt, expiresAt: createdAt + PLAN_TTL_MS, rows,
         totalQuantity: rows.reduce((total, row) => total + (row.gift?.quantity ?? 0), 0),
-        message: equal ? '按同类道具可用库存平均分配, 余数和超过单房上限的部分留在背包. 赠送回执不等于续期效果已验证.'
-          : '仅使用下列已有背包库存, 不购买或领取. 数量由你确认, 赠送回执不等于续期效果已验证.',
+        message: equal ? '未分配的道具留在背包。赠送后请核对续期结果。'
+          : '仅用下列背包库存，不购买或领取。请确认数量，赠送后核对续期结果。',
         ...(equal ? { allocation: { mode: 'equal-per-prop' as const, leftovers: [...remaining].map(([propId, quantity]) => ({ propId, quantity })) } } : {}) }
       this.plan = { public: copy(plan), uid: page.uid, originRoom, selected, stocks }
       return copy(plan)
@@ -253,7 +253,7 @@ export class DouyuRenewalService {
     this.plan = null
     const execution: Execution = { plan, controller: new AbortController(), entered: false, settled: false,
       rows: plan.public.rows.map(row => ({ room: row.room, badgeName: row.badgeName, propName: row.gift?.name ?? null,
-        quantity: row.gift?.quantity ?? 0, status: row.status === 'skipped' ? 'skipped' : 'not-submitted', message: row.reason ?? '尚未提交.' })) }
+        quantity: row.gift?.quantity ?? 0, status: row.status === 'skipped' ? 'skipped' : 'not-submitted', message: row.reason ?? '尚未提交' })) }
     this.execution = execution
     const timer = setTimeout(() => execution.controller.abort(), EXECUTION_TIMEOUT_MS)
     try {
@@ -268,9 +268,9 @@ export class DouyuRenewalService {
       }, execution.controller.signal)
       if (outcome.status === 'completed') return copy(outcome.value)
       return this.result(execution, outcome.status === 'cancelled' ? 'cancelled' : 'failed', outcome.status === 'busy'
-        ? '执行队列正忙, 本次未开始赠送, 请稍后重新预览.'
-        : outcome.status === 'cancelled' ? outcome.started ? '操作已停止. 已可能提交的项目需要到官方房间核对, 不会自动重送.' : '操作在开始前已取消, 未提交赠送.'
-          : '未能安全完成操作. 请核对结果后重新预览, 不会自动重送.',
+        ? '当前正忙，本次未开始赠送，请稍后重新生成核对单'
+        : outcome.status === 'cancelled' ? outcome.started ? '操作已停止。已可能提交的项目需要到官方房间核对，不会自动重送。' : '操作在开始前已取消，未提交赠送'
+          : '未能完成操作。请核对结果后重新生成核对单，不会自动重送。',
       outcome.status === 'cancelled' ? 'cancelled' : outcome.status === 'busy' ? 'queue-busy' : 'unavailable')
     } finally {
       clearTimeout(timer)
@@ -316,13 +316,13 @@ export class DouyuRenewalService {
           || item.isClick !== approved.isClick || item.isValuable !== approved.isValuable) throw new DouyuRenewalError('stale-plan')
         // Until the awaited result proves otherwise, interruption cannot prove non-delivery.
         output.status = 'unknown'
-        output.message = '本次请求可能已提交, 尚未取得可核对结果.'
+        output.message = '本次请求可能已提交，尚未取得可核对结果'
         const receipt = await this.deps.gateway.donate({ accountId: plan.public.accountId, expectedUid: plan.uid,
           room: row.room, propId: item.id, quantity: row.gift.quantity }, signal)
         this.ensureCurrent(plan, signal)
         output.status = receipt.status
         output.message = receipt.message
-        if (receipt.status !== 'receipt-received') return this.result(execution, 'waiting-user', '赠送结果需要核对, 余下房间已停止. 不会自动重送.',
+        if (receipt.status !== 'receipt-received') return this.result(execution, 'waiting-user', '赠送结果需要核对，余下房间已停止。不会自动重送。',
           receipt.status === 'unknown' ? 'unconfirmed' : 'unavailable')
         const after = await this.deps.gateway.readBackpack(plan.public.accountId, row.room, signal)
         this.ensureCurrent(plan, signal)
@@ -331,20 +331,20 @@ export class DouyuRenewalService {
         const left = item.count - row.gift.quantity
         if ((afterItem?.count ?? 0) !== left) {
           output.status = 'unknown'
-          output.message = '已收到赠送回执, 但库存变化与计划不一致, 请在官方房间核对.'
-          return this.result(execution, 'waiting-user', '库存变化未能确认, 余下房间已停止, 不会自动补送.', 'inventory-changed')
+          output.message = '已收到赠送回执，但库存变化与计划不一致，请在官方房间核对'
+          return this.result(execution, 'waiting-user', '库存变化未能确认，余下房间已停止，不会自动补送', 'inventory-changed')
         }
         expectedStocks.set(item.id, left)
-        output.message = '已收到赠送回执, 库存数量已核对. 续期效果仍需到官方房间确认.'
+        output.message = '已收到赠送回执，库存数量已核对'
       }
-      return this.result(execution, 'completed', '赠送处理完成. 已收到回执的项目见下表, 粉丝牌续期效果仍需到官方房间核对.')
+      return this.result(execution, 'completed', '赠送已处理，请到斗鱼核对粉丝牌是否续期')
     } catch (error) {
       const submitted = execution.rows.some(row => row.status === 'unknown' || row.status === 'receipt-received')
       const status = signal.aborted ? 'cancelled' : submitted ? 'waiting-user' : 'failed'
       const problem = translate(error)
       const reason: DouyuRenewalResult['reason'] = signal.aborted ? 'cancelled' : problem.code === 'stale-plan' ? 'plan-changed'
         : problem.code === 'account-changed' || problem.code === 'login-required' ? 'account-changed' : submitted ? 'unconfirmed' : 'unavailable'
-      return this.result(execution, status, `${problem.message} 余下操作已停止, 已可能提交的项目不会自动重送.`, reason)
+      return this.result(execution, status, `${problem.message}。余下操作已停止，已可能提交的项目不会自动重送。`, reason)
     }
   }
 }

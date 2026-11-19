@@ -102,7 +102,7 @@ export function SyncCapsule(): React.ReactNode {
       <HoldButton
         className="capsule-nudge"
         label="回退画面"
-        title={`画面相对解说回退 ${step}s (, 或 [ 键, 按住Shift微调, 长按连续调整)`}
+        title={`回退 ${stepLabel}（「,」或「[」键）；按住 Shift 微调，长按连调`}
         disabled={!paired || requested >= MAX_OFFSET_SECONDS}
         onPointerEnter={event => modifier.update(event.shiftKey)}
         onStep={(_held, keys) => move('late', keys)}
@@ -111,7 +111,6 @@ export function SyncCapsule(): React.ReactNode {
           <span className="capsule-nudge-label"><Icon name="back" /><span>回退画面</span></span>
           <span className="capsule-nudge-step"><Icon name="back" /><span className="capsule-nudge-value">{stepLabel}</span></span>
         </span>
-        <small className="capsule-nudge-hint">按住Shift微调</small>
       </HoldButton>
 
       <div className="capsule-readout-wrap">
@@ -119,9 +118,9 @@ export function SyncCapsule(): React.ReactNode {
           aria-label={`${caption} ${magnitude.toFixed(1)} 秒，点击输入`}>
           <span className="capsule-value">{magnitude.toFixed(1)}</span>
           <span className="capsule-caption">
-            {state === 'short' ? `缓冲不足, 相差 ${Math.abs(shortfall).toFixed(1)}s`
+            {state === 'short' ? `缓冲不足，还差 ${Math.abs(shortfall).toFixed(1)} 秒未调`
               : state === 'failed' && incomplete ? snapshot.lastPlan?.limitReason === 'not-ready'
-                ? '片源尚未就绪' : `调整误差 ${Math.abs(shortfall).toFixed(1)}s`
+                ? '片源未就绪，未完全调整' : `还差 ${Math.abs(shortfall).toFixed(1)} 秒未调`
                 : state === 'locked' ? '已对齐' : caption}
           </span>
         </button>
@@ -133,7 +132,7 @@ export function SyncCapsule(): React.ReactNode {
       <HoldButton
         className="capsule-nudge"
         label="快进画面"
-        title={`画面相对解说快进 ${step}s (. 或 ] 键, 按住Shift微调, 长按连续调整)`}
+        title={`快进 ${stepLabel}（「.」或「]」键）；按住 Shift 微调，长按连调`}
         disabled={!paired || requested <= -MAX_OFFSET_SECONDS}
         onPointerEnter={event => modifier.update(event.shiftKey)}
         onStep={(_held, keys) => move('early', keys)}
@@ -142,7 +141,6 @@ export function SyncCapsule(): React.ReactNode {
           <span className="capsule-nudge-label"><span>快进画面</span><Icon name="forward" /></span>
           <span className="capsule-nudge-step"><span className="capsule-nudge-value">{stepLabel}</span><Icon name="forward" /></span>
         </span>
-        <small className="capsule-nudge-hint">按住Shift微调</small>
       </HoldButton>
     </div>
   )
@@ -184,20 +182,10 @@ function OffsetEditor({ value, onDone }: { value: number; onDone: () => void }):
 
 /** Event-specific HUD coverage and cross-resolution matching are still being adapted. */
 const AUTO_ALIGN_ADAPTING = true
-const AUTO_ALIGN_REASON = '各赛事的 HUD 布局, 字体和清晰度尚未全部适配, 回放, 暂停或切镜头也可能影响识别.'
-/** Both the button and its shortcut explain the same current limitations before a run. */
-const AUTO_ALIGN_LIMITS = `自动对齐适配中: ${AUTO_ALIGN_REASON} 请在同一回合的正式倒计时正常走动时同步; 不准时可手动微调.`
-const FRAME_ALIGN_REASON = '两路需要包含相同视角的共同画面, 静止、重复片段或遮挡过多时可能无法确认匹配.'
-const informedSessions = new WeakSet<Session>()
 
 /** 自动对齐 from its button or the A key. */
 export function startAutoAlign(session: Session): void {
   if (!session.snapshot.autoSync.ready) return
-  if (AUTO_ALIGN_ADAPTING && !informedSessions.has(session)) {
-    informedSessions.add(session)
-    session.notice('warn', session.settings.recognitionMode === 'frame-hash'
-      ? `画面匹配适配中: ${FRAME_ALIGN_REASON} 匹配失败时可继续播放后重试.` : AUTO_ALIGN_LIMITS)
-  }
   if (session.settings.recognitionMode === 'basic' && session.settings.basicRecognitionPanelVisible && !session.settings.sidebarVisible) session.updateSettings({ sidebarVisible: true })
   void session.syncNow()
 }
@@ -217,12 +205,12 @@ export function AutoAlign(): React.ReactNode {
       {running ? (
         <button type="button" className="align-main is-running" onClick={() => session.cancelAutoSync()}
           title="停止对齐">
-          <span className="align-phase">{autoSync.phase === 'sampling' && settings.recognitionMode === 'frame-hash' ? '匹配画面...' : PHASE[autoSync.phase]}</span>
+          <span className="align-phase">{autoSync.phase === 'sampling' && settings.recognitionMode === 'frame-hash' ? '匹配画面…' : PHASE[autoSync.phase]}</span>
           <Icon name="close" />
         </button>
       ) : (
         <button type="button" className="align-main" disabled={busy || !bothReady} onClick={() => startAutoAlign(session)}
-          title={bothReady ? (settings.recognitionMode === 'frame-hash' ? '匹配两路共同画面并自动对齐 (A)' : '识别两路画面中的比赛倒计时并自动对齐 (A)') : '同步准备中, 等待两路画面和缓冲就绪'}>
+          title={bothReady ? '自动对齐（A）' : '等待两路播放和缓冲就绪'}>
           {bothReady ? '自动对齐' : '准备中'}
           {bothReady && AUTO_ALIGN_ADAPTING && <span className="align-beta" aria-hidden="true">适配中</span>}
         </button>
@@ -233,15 +221,14 @@ export function AutoAlign(): React.ReactNode {
       </button>
       <Popover {...menu.popover} className="align-menu" label="对齐选项">
         {AUTO_ALIGN_ADAPTING && (
-          <p className="align-testing"><span className="tag">适配中</span>
-            {settings.recognitionMode === 'frame-hash' ? FRAME_ALIGN_REASON : AUTO_ALIGN_REASON} 对不上时用回退画面或快进画面微调, 也可点中间的秒数直接输入.</p>
+          <p className="align-testing">对不准时可手动微调，或直接点击秒数输入</p>
         )}
         <Switch label="比赛中保持对齐" detail={autoSync.nextRunInSeconds !== null ? `${Math.max(0, Math.round(autoSync.nextRunInSeconds))} 秒后再次对齐` : undefined}
           checked={settings.autoSyncEnabled} onChange={(checked) => session.setAutoSyncEnabled(checked)} />
         {settings.autoSyncEnabled && (
           <Segmented label="间隔" value={settings.autoSyncIntervalSeconds}
             onChange={(seconds) => session.setAutoSyncInterval(seconds)}
-            options={[15, 30, 60, 120].map((seconds) => ({ value: seconds, label: seconds < 60 ? `${seconds} 秒` : `${seconds / 60} 分` }))} />
+            options={[15, 30, 60, 120].map((seconds) => ({ value: seconds, label: seconds < 60 ? `${seconds} 秒` : `${seconds / 60} 分钟` }))} />
         )}
         {settings.autoSyncEnabled && !autoSync.authorized && (
           <p className="note-warn">已手动调整，自动对齐已暂停。点击「自动对齐」恢复。</p>
@@ -252,9 +239,9 @@ export function AutoAlign(): React.ReactNode {
           onChange={(mode) => session.setRecognitionMode(mode)}
           options={[{ value: 'basic', label: '基础模式' }, { value: 'frame-hash', label: '画面匹配' }]} />
         {settings.recognitionMode === 'basic' ? (
-          <p className="menu-meta">自动查找 0:01-1:55 的倒计时, 适用于 CS2 同一回合的正式倒计时. 首次识别需要观察几个跳秒, 未能确定唯一时钟时不会调整位置.</p>
+          <p className="menu-meta">两路需播放同一回合的 CS2 倒计时</p>
         ) : (
-          <div className="menu-meta" role="status"><p>匹配两路相同视角的共同画面. 区域和广告遮挡可在设置的画面匹配页调整.</p>
+          <div className="menu-meta" role="status"><p>两路需有相同视角，可在「画面匹配」设置中调整范围</p>
             <p>{session.frameSyncStatus}</p></div>
         )}
         <div className="row-split">
@@ -266,7 +253,7 @@ export function AutoAlign(): React.ReactNode {
         {result && (
           <p className="menu-meta">
             {result.failure ? <ErrorText error={result.failure} />
-              : result.estimate ? `上次测得偏差 ${result.estimate.totalOffsetSeconds.toFixed(2)} 秒${result.divergence !== null ? `，复核误差 ${result.divergence.toFixed(2)} 秒` : ''}`
+              : result.estimate ? `${result.dryRun ? '仅测量，未调整；' : ''}上次测得偏差 ${result.estimate.totalOffsetSeconds.toFixed(2)} 秒`
                 : '上次未能测得'}
           </p>
         )}
@@ -292,8 +279,8 @@ export function PlaybackRecoveryPrompt(): React.ReactNode {
   return (
     <div className="prompt" role="status">
       <span className="prompt-text">{recovery.kind === 'reconnect'
-        ? '重新连接后, 两路可能错开了'
-        : `画面刚卡顿, 两路可能错开了约 ${recovery.driftSeconds?.toFixed(1)} 秒`}</span>
+        ? '重新连接后，两路可能错开了'
+        : `画面刚卡顿，两路可能错开了约 ${recovery.driftSeconds?.toFixed(1)} 秒`}</span>
       <button type="button" className="btn-quiet small" disabled={busy || !ready}
         onClick={() => startAutoAlign(session)}>重新对齐</button>
     </div>

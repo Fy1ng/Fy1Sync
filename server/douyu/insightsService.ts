@@ -47,16 +47,16 @@ export class DouyuInsightsService {
   constructor(private readonly options: { gateway: Gateway; now?: () => number; onNotification?: (event: DouyuLiveNotification) => void }) {}
   private now(): number {
     const now = (this.options.now ?? Date.now)()
-    if (!Number.isSafeInteger(now) || now < 0) throw new Error('本地时间无效.')
+    if (!Number.isSafeInteger(now) || now < 0) throw new Error('本地时间无效')
     return now
   }
-  private check(): void { if (this.disposed) throw new Error('房间统计服务已关闭.') }
+  private check(): void { if (this.disposed) throw new Error('房间统计服务已关闭') }
   private get(room: string): ObservedRoom {
     this.check()
-    if (!validDouyuRoom(room)) throw new Error('房间号无效.')
+    if (!validDouyuRoom(room)) throw new Error('房间号无效')
     const existing = this.rooms.get(room)
     if (existing) return existing
-    if (this.rooms.size >= MAX_ROOMS) throw new Error('已达到房间统计数量上限.')
+    if (this.rooms.size >= MAX_ROOMS) throw new Error('已达到房间统计数量上限')
     const now = this.now()
     const value: DouyuRoomInsights = {
       room, observedSince: now, checkedAt: now, connected: false, live: null, replay: null,
@@ -133,15 +133,15 @@ export class DouyuInsightsService {
   /** Only the main-process catalog adapter may invoke this method. */
   setGiftPrices(prices: readonly DouyuGiftPrice[]): void {
     this.check()
-    if (!Array.isArray(prices) || prices.length > MAX_PRICES) throw new Error('礼物价格目录超过上限.')
+    if (!Array.isArray(prices) || prices.length > MAX_PRICES) throw new Error('礼物价格目录超过上限')
     const next = new Map<string, DouyuGiftPrice>()
     for (const price of prices) {
       if (!price || !['gift', 'prop'].includes(price.kind) || !normalizeDouyuUid(price.id) || price.currency !== 'YUCHI'
           || (price.room !== undefined && !validDouyuRoom(price.room)) ||
           !Number.isSafeInteger(price.amountMinor) || price.amountMinor < 0 || typeof price.source !== 'string' || !price.source || price.source.length > 256 ||
-          !Number.isSafeInteger(price.checkedAt) || price.checkedAt < 0 || price.checkedAt > this.now()) throw new Error('礼物价格目录无法确认.')
+          !Number.isSafeInteger(price.checkedAt) || price.checkedAt < 0 || price.checkedAt > this.now()) throw new Error('礼物价格目录无法确认')
       const key = `${price.room ?? '*'}:${price.kind}:${price.id}`
-      if (next.has(key)) throw new Error('礼物价格目录含重复项目.')
+      if (next.has(key)) throw new Error('礼物价格目录含重复项目')
       next.set(key, { ...price })
     }
     this.prices.clear()
@@ -223,13 +223,13 @@ export class DouyuInsightsService {
 
   /** Each session ID is assigned by main, not a caller-supplied elapsed-time counter. */
   reportPlayback(room: string, playing: boolean, sessionId = 'main'): DouyuRoomInsights {
-    if (typeof playing !== 'boolean' || !/^[A-Za-z0-9:_-]{1,128}$/.test(sessionId)) throw new Error('播放心跳参数无效.')
+    if (typeof playing !== 'boolean' || !/^[A-Za-z0-9:_-]{1,128}$/.test(sessionId)) throw new Error('播放心跳参数无效')
     const row = this.get(room), now = this.now()
     const interval = now - row.watchAt
     if (interval > 0 && interval <= HEARTBEAT_MS && [...row.playback.values()].some(session => session.playing && now - session.at <= HEARTBEAT_MS)) row.watchMs += interval
     row.watchAt = now
     for (const [id, session] of row.playback) if (now - session.at > HEARTBEAT_MS) row.playback.delete(id)
-    if (!row.playback.has(sessionId) && row.playback.size >= 16) throw new Error('该房间的播放会话数量超过上限.')
+    if (!row.playback.has(sessionId) && row.playback.size >= 16) throw new Error('该房间的播放会话数量超过上限')
     if (playing) row.playback.set(sessionId, { playing: true, at: now })
     else row.playback.delete(sessionId)
     this.notifyChanged(room)
@@ -243,7 +243,7 @@ export class DouyuInsightsService {
   }
   setNotifications(enabled: boolean, rooms: readonly string[] = []): void {
     this.check()
-    if (typeof enabled !== 'boolean' || !Array.isArray(rooms) || rooms.length > MAX_ROOMS || rooms.some(room => !validDouyuRoom(room))) throw new Error('开播提醒设置无效.')
+    if (typeof enabled !== 'boolean' || !Array.isArray(rooms) || rooms.length > MAX_ROOMS || rooms.some(room => !validDouyuRoom(room))) throw new Error('开播提醒设置无效')
     this.notifications = { enabled, rooms: new Set(rooms) }
   }
   private liveNotification(room: string, occurredAt: number, source: DouyuLiveNotification['source']): void {
@@ -260,7 +260,7 @@ export class DouyuInsightsService {
 
   startFollowMonitor(accountId: string, intervalMs = 60_000): void {
     this.check()
-    if (!/^[A-Za-z0-9-]{1,128}$/.test(accountId) || !Number.isFinite(intervalMs) || intervalMs < 60_000 || intervalMs > 15 * 60_000) throw new Error('关注监控参数无效.')
+    if (!/^[A-Za-z0-9-]{1,128}$/.test(accountId) || !Number.isFinite(intervalMs) || intervalMs < 60_000 || intervalMs > 15 * 60_000) throw new Error('关注监控参数无效')
     this.stopFollowMonitor()
     const monitor: Monitor = { accountId, controller: new AbortController(), intervalMs, states: new Map() }
     this.monitor = monitor
@@ -272,7 +272,7 @@ export class DouyuInsightsService {
       if (this.monitor !== monitor || this.disposed || monitor.controller.signal.aborted) return
       this.observeFollowed(result, monitor)
     } catch (error) {
-      if (this.monitor === monitor && !this.disposed && !monitor.controller.signal.aborted) this.emit({ type: 'monitor-error', accountId: monitor.accountId, message: '关注开播状态读取失败, 未生成新的开播提醒.', detail: diagnosticDetails(error) })
+      if (this.monitor === monitor && !this.disposed && !monitor.controller.signal.aborted) this.emit({ type: 'monitor-error', accountId: monitor.accountId, message: '关注开播状态读取失败，未生成新的开播提醒', detail: diagnosticDetails(error) })
     } finally {
       if (this.monitor === monitor && !this.disposed && !monitor.controller.signal.aborted) {
         monitor.timer = setTimeout(() => { void this.poll(monitor) }, monitor.intervalMs)
@@ -282,7 +282,7 @@ export class DouyuInsightsService {
   }
   private observeFollowed(result: DouyuFollowedRooms, monitor: Monitor): void {
     if (result.accountId !== monitor.accountId || result.coverage !== 'all-pages') {
-      this.emit({ type: 'monitor-error', accountId: monitor.accountId, message: '关注列表不完整, 本轮未生成开播提醒.' })
+      this.emit({ type: 'monitor-error', accountId: monitor.accountId, message: '关注列表不完整，本轮未生成开播提醒' })
       return
     }
     const next = new Map<string, boolean>()

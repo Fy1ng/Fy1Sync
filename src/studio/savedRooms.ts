@@ -40,9 +40,9 @@ function load(): Promise<void> {
   const request = apiClient.feature('listSavedRooms', undefined).then((result) => {
     if (started !== revision) return
     if (result.ok && Array.isArray(result.value)) publish(result.value)
-    else readError = result.ok ? '收藏读取失败，请重试。' : displayError(result).message
+    else readError = result.ok ? '收藏读取失败，请重试' : displayError(result).message
   }).catch(caught => {
-    if (started === revision) readError = displayError(caught, '收藏读取失败，请重试。').message
+    if (started === revision) readError = displayError(caught, '收藏读取失败，请重试').message
   }).finally(() => {
     if (pending === request) { pending = null; loading = false; notify() }
   })
@@ -92,7 +92,7 @@ export async function saveRoom(role: SourceRole, descriptor: MediaDescriptor): P
 
 export async function addSavedRoom(input: import('../../electron/featureContracts').SaveRoomInput): Promise<string | null> {
   const result = await apiClient.feature('saveRoom', input)
-  if (!result.ok) return result.message
+  if (!result.ok) return result.code === 'invalid-arguments' ? '请输入该平台的有效直播间链接或房间号' : result.message
   const current = rooms?.find(room => room.id === result.value.id)
   publish([current && (current.lastAttemptAt ?? 0) > (result.value.lastAttemptAt ?? 0) ? { ...current, label: result.value.label } : result.value,
     ...(rooms ?? []).filter(room => room.id !== result.value.id)])

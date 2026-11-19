@@ -14,7 +14,7 @@ test('斗鱼观时状态经过真实IPC展示, 未登录和伪造房间参数不
   const settings = await openSettingsSection(page, '房间数据')
   await expect(settings).toContainText('官方观时上报')
   await expect(settings).toContainText('粉丝牌累计观看')
-  await expect(settings).toContainText('请先登录当前斗鱼账号.')
+  await expect(settings).toContainText('请先登录当前斗鱼账号')
   const status = settings.getByRole('group', { name: '开播状态' })
   await expect(status).toContainText('直播或轮播状态未确认')
   for (const [live, replay, label] of [[true, false, '直播中'], [true, true, '轮播中'], [false, false, '未开播']] as const) {

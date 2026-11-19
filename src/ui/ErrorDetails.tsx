@@ -16,7 +16,7 @@ export function ErrorDetailsButton({ error, label = '查看原始错误', onOpen
     {open && <span id={id} className="error-details-panel" role="region" aria-label="原始错误信息">
       <span className="error-details-toolbar"><span>认证信息已脱敏</span><button type="button" onClick={() => {
         void Promise.resolve().then(() => navigator.clipboard.writeText(content)).then(() => { setCopied(true); setCopyError(null) }, error => {
-          setCopied(false); setCopyError(displayError(error, '复制失败, 可选择下方内容手动复制.'))
+          setCopied(false); setCopyError(displayError(error, '复制失败，可选择下方内容手动复制'))
         })
       }}>{copied ? '已复制' : '复制错误信息'}</button></span>
       {copyError && <span role="alert"><ErrorText error={copyError} /></span>}

@@ -16,7 +16,7 @@ export function loginCardHtml(): string {
         <p class="agreement">登录即表示同意<span id="platform-name">平台</span>的服务协议和隐私政策</p>
         <button id="submit-login" class="primary" type="submit">登录</button>
       </form>
-      <details class="protocol"><summary>平台协议说明</summary><p id="protocol-text">可在官方验证页面查看平台的服务协议和隐私政策.</p></details>
+      <details class="protocol"><summary>平台协议说明</summary><p id="protocol-text">请到官方验证页面查看服务协议和隐私政策</p></details>
     </section>
   </section>
   <section id="verification" class="verification" aria-label="安全验证" hidden><h2>安全验证</h2><p id="verification-description">请完成账号安全验证</p><p id="masked-target" class="masked"></p><form id="verification-form" novalidate autocomplete="off"><label id="verification-label" for="verification-code">验证码</label><div class="code-field"><input id="verification-code" type="text" inputmode="numeric" autocomplete="off" placeholder="请输入验证码" maxlength="16" data-secret><button id="second-send" type="button" class="code-send">发送验证码</button></div><button id="second-submit" class="primary" type="submit">继续</button></form><button id="verification-back" type="button" class="quiet">返回登录</button></section>
@@ -149,9 +149,8 @@ export const LOGIN_CARD_SCRIPT = String.raw`(() => {
     byId('mode-password').tabIndex = state.mode === 'password' ? 0 : -1;
     byId('mode-sms').tabIndex = state.mode === 'sms' ? 0 : -1;
     byId('platform-name').textContent = names[state.platform];
-    byId('qr-instruction').textContent = '使用' + names[state.platform] + '客户端扫码登录';
-    byId('protocol-text').textContent = '请遵守' + names[state.platform] + '的服务协议和隐私政策. '
-      + (state.transport === 'http' ? '可在抖音App中查看完整协议.' : '可在官方验证页面查看完整协议.');
+    byId('qr-instruction').textContent = '请用' + names[state.platform] + ' App 扫码';
+    byId('protocol-text').textContent = state.transport === 'http' ? '请到抖音 App 查看服务协议和隐私政策' : '请到官方验证页面查看服务协议和隐私政策';
     if (state.transport === 'http') { byId('username').placeholder = '请输入手机号'; byId('password').maxLength = 128; byId('sms-code').maxLength = 6; }
     const qr = state.qr || { status: 'unavailable' };
     const image = byId('qr-image');
@@ -160,7 +159,7 @@ export const LOGIN_CARD_SCRIPT = String.raw`(() => {
     if (showQr) { if (image.getAttribute('src') !== qr.image) image.src = qr.image; } else image.removeAttribute('src');
     byId('qr-wait').hidden = showQr;
     byId('qr-spinner').hidden = qr.status !== 'loading';
-    byId('qr-message').textContent = ({ loading: '正在加载二维码', ready: '二维码暂时不可用', scanned: '已扫码, 请在手机上确认', expired: '二维码已过期', unavailable: '二维码暂时不可用', paused: '扫码登录已暂停' })[qr.status] || '二维码暂时不可用';
+    byId('qr-message').textContent = ({ loading: '正在加载二维码', ready: '二维码暂时不可用', scanned: '已扫码，请在手机上确认', expired: '二维码已过期', unavailable: '二维码暂时不可用', paused: '扫码登录已暂停' })[qr.status] || '二维码暂时不可用';
     byId('refresh-qr').disabled = busy() || state.transport === 'http' && qr.status === 'loading';
     const verification = state.verification;
     byId('verification-description').textContent = verification && verification.kind === 'email' ? '请输入发送到绑定邮箱的验证码' : '请输入发送到绑定手机的验证码';
@@ -228,8 +227,8 @@ export const LOGIN_CARD_SCRIPT = String.raw`(() => {
         if ('code' in action) action.code = '';
       }
       const result = await request;
-      if (!disposed && at === operation && state && (state.stage === startedStage || state.stage === 'failed') && !result.ok) { localError = result.message || '操作未完成, 请重试.'; localErrorDetail = result.detail || { message: localError }; }
-    } catch (error) { if (!disposed && at === operation && state && (state.stage === startedStage || state.stage === 'failed')) { localError = '登录操作暂时失败, 请重试.'; localErrorDetail = error; } }
+      if (!disposed && at === operation && state && (state.stage === startedStage || state.stage === 'failed') && !result.ok) { localError = result.message || '操作未完成，请重试'; localErrorDetail = result.detail || { message: localError }; }
+    } catch (error) { if (!disposed && at === operation && state && (state.stage === startedStage || state.stage === 'failed')) { localError = '登录未完成，请重试'; localErrorDetail = error; } }
     finally { clearSecrets(); if (at === operation) { pending = false; if (!disposed) render(); } }
   };
   const invalid = text => { localError = text; localErrorDetail = { message: text }; say(text, true, localErrorDetail); };
@@ -272,25 +271,25 @@ export const LOGIN_CARD_SCRIPT = String.raw`(() => {
     if (busy()) return;
     if (state.mode === 'password') {
       const payload = { kind: 'password', username: byId('username').value.trim(), password: byId('password').value, accepted: true };
-      if (!payload.username || !payload.password) { payload.password = ''; invalid('请输入账号和密码.'); return; }
+      if (!payload.username || !payload.password) { payload.password = ''; invalid('请输入账号和密码'); return; }
       void dispatch(payload);
     } else {
       const payload = { kind: 'sms', ...phoneFields(), code: byId('sms-code').value.trim(), accepted: true };
-      if (!validPhone(payload) || !payload.code) { payload.code = ''; invalid('请填写正确的国家区号, 手机号和验证码.'); return; }
+      if (!validPhone(payload) || !payload.code) { payload.code = ''; invalid('请填写正确的国家区号、手机号和验证码'); return; }
       void dispatch(payload);
     }
   });
   byId('send-sms').addEventListener('click', () => {
     if (!canSendSms()) return;
     const fields = phoneFields();
-    if (!validPhone(fields)) { invalid('请填写正确的国家区号和手机号.'); return; }
+    if (!validPhone(fields)) { invalid('请填写正确的国家区号和手机号'); return; }
     void dispatch({ kind: 'send-sms', ...fields, accepted: true });
   });
   byId('verification-form').addEventListener('submit', event => {
     event.preventDefault();
     if (busy()) return;
     const payload = { kind: 'second-submit', code: byId('verification-code').value.trim() };
-    if (!payload.code) { invalid('请输入验证码.'); return; }
+    if (!payload.code) { invalid('请输入验证码'); return; }
     void dispatch(payload);
   });
   byId('second-send').addEventListener('click', () => { if (canSendSms()) void dispatch({ kind: 'second-send' }); });
@@ -304,8 +303,8 @@ export const LOGIN_CARD_SCRIPT = String.raw`(() => {
   const dispose = () => { if (disposed) return; disposed = true; clearTimeout(contactTimer); clearInputs(); byId('qr-image').removeAttribute('src'); release(); state = null; };
   window.addEventListener('pagehide', dispose);
   window.addEventListener('beforeunload', dispose);
-  if (!bridge) { clearInputs(); localError = '登录接口不可用, 请重新打开登录.'; say(localError, true); for (const button of document.querySelectorAll('button')) if (button.id !== 'error-toggle') button.disabled = true; return; }
+  if (!bridge) { clearInputs(); localError = '登录暂不可用，请重新打开登录页面'; say(localError, true); for (const button of document.querySelectorAll('button')) if (button.id !== 'error-toggle') button.disabled = true; return; }
   release = bridge.subscribe(next => { revision += 1; take(next); });
   const queriedAt = revision;
-  Promise.resolve(bridge.state()).then(next => { if (revision === queriedAt && !disposed) take(next); }).catch(error => { if (!disposed) { localError = '登录状态暂时不可用, 请重新打开登录.'; say(localError, true, error); } });
+  Promise.resolve(bridge.state()).then(next => { if (revision === queriedAt && !disposed) take(next); }).catch(error => { if (!disposed) { localError = '无法读取登录状态，请重新打开登录页面'; say(localError, true, error); } });
 })();`

@@ -53,7 +53,7 @@ describe('one-click source restoration', () => {
     resolver().mockImplementation(async (_input, platform) => platform === 'douyin' ? { ok: true, value: { ok: false, failure: { code: 'not-live', message: '该直播间未开播' } } }
       : { ok: true, value: { ok: true, stream: { platform: platform as PlatformKind, kind: 'progressive', url: '/test-sources/official.mp4', label: '官方', channel: '100', requiresProxy: false } } })
     fireEvent.click(screen.getByRole('button', { name: '恢复上次' }))
-    await screen.findByText('解说: 该直播间未开播')
+    await screen.findByText('解说：该直播间未开播')
     expect(loadLastSources()).toEqual(saved)
     expect(f.onClose).not.toHaveBeenCalled()
   })

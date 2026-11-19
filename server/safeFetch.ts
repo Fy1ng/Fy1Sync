@@ -96,7 +96,7 @@ async function resolveTarget(url: URL, resolve: Resolver, proxied: boolean): Pro
       }
     }
     if (!validAddresses(addresses)) {
-      return { ok: false, reason: 'dns-failed', detail: '域名没有返回有界且有效的 IP 地址.' }
+      return { ok: false, reason: 'dns-failed', detail: '域名没有返回有界且有效的 IP 地址' }
     }
   }
   // Retain an immutable snapshot of this lookup, not a resolver-owned array.
@@ -149,7 +149,7 @@ function validAddresses(addresses: unknown): addresses is string[] {
 
 /** The caller has already applied its HTTP or WebSocket address policy. */
 export function createPinnedDispatcher(hostname: string, addresses: readonly string[], timeoutMs = 15_000, keepAliveTimeout = 4_000, connections = 1, verifyTls = true, maxHeaderSize?: number): Agent {
-  if (!validAddresses(addresses)) throw new ProxyError('dns-failed', '无法固定已校验的连接地址.', 403)
+  if (!validAddresses(addresses)) throw new ProxyError('dns-failed', '无法固定已校验的连接地址', 403)
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
   const records = [...new Set(addresses)].map(address => ({ address, family: isIP(address) }))
   const reject = () => Object.assign(new Error('Unvalidated connection target'), { code: 'ENOTFOUND' })
@@ -236,7 +236,7 @@ export async function safeFetch(
 ): Promise<SafeFetchResult> {
   if (options.maxHeaderSize !== undefined && (!Number.isSafeInteger(options.maxHeaderSize)
     || options.maxHeaderSize < 4096 || options.maxHeaderSize > 256 * 1024)) {
-    throw new ProxyError('invalid-url', '响应头大小上限无效.', 400)
+    throw new ProxyError('invalid-url', '响应头大小上限无效', 400)
   }
   const doFetch = options.fetchImpl ?? fetch
   const resolve = options.resolve ?? dnsResolver
@@ -274,7 +274,7 @@ export async function safeFetch(
     const syntax = checkUrlSyntax(target, requestPolicy)
     if (!syntax.ok) throw new ProxyError(syntax.reason, syntax.detail, 403)
     const tls = mediaTlsPolicy(network.media, target, credentials)
-    if (network.media && visited.has(syntax.url.href)) throw new ProxyError('too-many-redirects', '重定向形成循环.', 502)
+    if (network.media && visited.has(syntax.url.href)) throw new ProxyError('too-many-redirects', '重定向形成循环', 502)
     // Unlimited redirects must not create an unlimited in-memory URL history.
     if (visited.size >= 256) visited.delete(visited.values().next().value!)
     visited.add(syntax.url.href)
@@ -286,12 +286,12 @@ export async function safeFetch(
       if (route.kind === 'unsupported') {
         if (hasNext) continue
         throw new StreamFailureError({ stage: 'proxy', code: route.reason === 'socks4-unsupported' ? 'socks4-unsupported' : 'proxy-type-unsupported',
-          message: route.reason === 'socks4-unsupported' ? '系统代理要求 SOCKS4, 当前不支持, 请在代理软件中改用 SOCKS5 或 HTTP.' : '系统代理类型不受支持, 请检查代理设置.' })
+          message: route.reason === 'socks4-unsupported' ? '系统代理要求 SOCKS4，当前不支持，请在代理软件中改用 SOCKS5 或 HTTP' : '系统代理类型不受支持，请检查代理设置' })
       }
       const check = await withSignal(() => resolveTarget(syntax.url, resolve, routeUsesRemoteDns(route)), signal)
       if (!check.ok) throw new ProxyError(check.reason, check.detail, 403)
       if (access && !network.media?.allowPrivate && !access.scope.permits(check.url, check.addresses, access.entry && hop === 0, false)) {
-        throw new ProxyError('media-network-boundary', '自动发现的媒体资源跨到了未授权的本机或局域网来源, 请手动添加该来源.', 403)
+        throw new ProxyError('media-network-boundary', '自动发现的媒体资源跨到了未授权的本机或局域网来源，请手动添加该来源', 403)
       }
       signal.throwIfAborted()
       const pooled = options.dispatcherPool !== undefined
@@ -320,7 +320,7 @@ export async function safeFetch(
         throw new StreamFailureError(classifyNetworkFailure(error, 'proxy'))
       }
     }
-    if (!response) throw new StreamFailureError({ stage: 'proxy', code: 'proxy-type-unsupported', message: '系统代理没有可用的连接候选.' })
+    if (!response) throw new StreamFailureError({ stage: 'proxy', code: 'proxy-type-unsupported', message: '系统代理没有可用的连接候选' })
 
     if (options.manualRedirect || !isRedirect(response.status)) {
       return { response, finalUrl: syntax.url }
@@ -336,7 +336,7 @@ export async function safeFetch(
       // A cross-origin 307/308 must not replay a credential-bearing POST body.
       if (network.media && !['GET', 'HEAD'].includes(method.toUpperCase())) {
         if ([307, 308].includes(response.status)) {
-          if (credentials && body !== undefined) throw new ProxyError('cross-origin-credentials', '无法向其他来源重放带凭据请求体的取流请求.', 403)
+          if (credentials && body !== undefined) throw new ProxyError('cross-origin-credentials', '无法向其他来源重放带凭据请求体的取流请求', 403)
         } else {
           method = 'GET'; body = undefined
           headers = Object.fromEntries(Object.entries(headers).filter(([name]) => !['content-type', 'content-length'].includes(name.toLowerCase())))

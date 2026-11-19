@@ -19,7 +19,7 @@ const MAX_METADATA_BYTES = 16 * 1_048_576
 /** yt-dlp uses socks5h to keep destination DNS at the proxy. */
 export function ytDlpProxyUrl(route: NetworkRoute): string {
   if (route.kind === 'direct') return ''
-  if (route.kind === 'unsupported') throw new StreamFailureError({ stage: 'proxy', code: 'proxy-type-unsupported', message: '系统代理类型不受支持, 请改用 HTTP 或 SOCKS5 代理.' })
+  if (route.kind === 'unsupported') throw new StreamFailureError({ stage: 'proxy', code: 'proxy-type-unsupported', message: '系统代理类型不受支持，请改用 HTTP 或 SOCKS5 代理' })
   try {
     const url = new URL(route.proxyUrl ?? '')
     if (route.kind === 'socks5') {
@@ -27,7 +27,7 @@ export function ytDlpProxyUrl(route: NetworkRoute): string {
       url.protocol = 'socks5h:'
     } else if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error()
     return route.kind === 'socks5' ? url.href : route.proxyUrl!
-  } catch { throw new StreamFailureError({ stage: 'proxy', code: 'proxy-type-unsupported', message: '系统代理地址无效, 请检查代理设置.' }) }
+  } catch { throw new StreamFailureError({ stage: 'proxy', code: 'proxy-type-unsupported', message: '系统代理地址无效，请检查代理设置' }) }
 }
 
 /** Only explicit proxy connection failures allow trying the next PAC candidate. */
@@ -37,7 +37,7 @@ export function ytDlpProxyConnectionFailure(stderr: string): boolean {
 }
 
 export function ytDlpProxyConnectionError(detail?: unknown): StreamFailureError {
-  const error = new StreamFailureError({ stage: 'proxy', code: 'proxy-unreachable', message: '代理不可达, 请检查系统代理.',
+  const error = new StreamFailureError({ stage: 'proxy', code: 'proxy-unreachable', message: '代理不可达，请检查系统代理',
     ...(detail === undefined ? {} : { detail: diagnosticDetails(detail) }) })
   markProxyConnectFailure(error)
   return error
@@ -137,7 +137,7 @@ function youtubeFailureLabel(stderr: string): string {
   if (/private video/i.test(stderr)) return 'YouTube private video'
   if (/sign in|login|required/i.test(stderr)) return 'YouTube sign in required'
   if (/not (?:currently )?live|recording is not available|live (?:event|stream) (?:has ended|will begin)/i.test(stderr)) return 'YouTube not currently live'
-  return 'YouTube 取流失败, 请检查直播状态和网络'
+  return 'YouTube 取流失败，请检查直播状态和网络'
 }
 
 /** Captured metadata is private and bounded; stderr is classified, never returned. */
@@ -204,7 +204,7 @@ export class YtDlpRunner {
           || !isProxyConnectFailure(error)) throw error
       }
     }
-    throw new StreamFailureError({ stage: 'proxy', code: 'proxy-type-unsupported', message: '系统代理没有可用的出网方式.' })
+    throw new StreamFailureError({ stage: 'proxy', code: 'proxy-type-unsupported', message: '系统代理没有可用的出网方式' })
   }
 
   private async runOnRoute(url: string, adaptive: boolean, proxyUrl: string, context: DiagnosticContext): Promise<unknown> {
@@ -350,7 +350,7 @@ export class YtDlpRunner {
         })
       } catch (error) {
         event({ status: 'failed', code: 'spawn-failed' })
-        reject(Object.assign(new Error('无法启动 yt-dlp, 请检查工具路径'), { detail: diagnosticDetails(error) }))
+        reject(Object.assign(new Error('无法启动 yt-dlp，请检查工具路径'), { detail: diagnosticDetails(error) }))
         return
       }
       this.children.add(child)
@@ -378,7 +378,7 @@ export class YtDlpRunner {
         settled = true
         finish()
         event({ status: 'failed', code: 'spawn-failed' })
-        reject(Object.assign(new Error('无法启动 yt-dlp, 请检查工具路径'), { detail: diagnosticDetails(error) }))
+        reject(Object.assign(new Error('无法启动 yt-dlp，请检查工具路径'), { detail: diagnosticDetails(error) }))
       })
       child.once('close', (code) => {
         if (settled) return
@@ -410,8 +410,8 @@ export class YtDlpRunner {
           event({ ...completed, status: 'failed', code: youtubeFailureCode(stderr), stopped: false })
           if (stage === 'huya') {
             reject(Object.assign(new Error(/sign in|login|required|forbidden|restricted|geo.restrict|登录|封禁|整改/i.test(stderr)
-              ? '虎牙访问受限, 当前暂不支持登录' : /not (?:currently )?live|offline|未开播/i.test(stderr)
-                ? '虎牙房间当前未开播' : '虎牙取流失败, 请检查直播状态和网络'), { detail: diagnosticDetails({ exitCode: code, stderr }) }))
+              ? '虎牙访问受限，当前暂不支持登录' : /not (?:currently )?live|offline|未开播/i.test(stderr)
+                ? '虎牙房间当前未开播' : '虎牙取流失败，请检查直播状态和网络'), { detail: diagnosticDetails({ exitCode: code, stderr }) }))
             return
           }
           reject(Object.assign(new Error(youtubeFailureLabel(stderr)), { detail: diagnosticDetails({ exitCode: code, stderr }) }))

@@ -62,11 +62,11 @@ describe('message loop', () => {
     await openForm('定时弹幕')
     fireEvent.change(screen.getByLabelText('发送内容'), { target: { value: '第一条\n\n 第二条 \n第三条' } })
     fireEvent.click(screen.getByRole('radio', { name: '随机' }))
-    fireEvent.change(screen.getByLabelText('发送间隔(秒)'), { target: { value: '30' } })
-    fireEvent.change(screen.getByLabelText('启动延迟(秒)'), { target: { value: '10' } })
+    fireEvent.change(screen.getByLabelText('发送间隔（秒）'), { target: { value: '30' } })
+    fireEvent.change(screen.getByLabelText('启动延迟（秒）'), { target: { value: '10' } })
     fireEvent.change(screen.getByLabelText('发送次数'), { target: { value: '5' } })
     fireEvent.click(screen.getByRole('switch', { name: /限制总时长/ }))
-    fireEvent.change(screen.getByLabelText('总时长(秒)'), { target: { value: '600' } })
+    fireEvent.change(screen.getByLabelText('总时长（秒）'), { target: { value: '600' } })
     fireEvent.click(screen.getByRole('checkbox', { name: '发送颜色 红' }))
     fireEvent.click(screen.getByRole('button', { name: '添加' }))
 
@@ -93,7 +93,7 @@ describe('message loop', () => {
 
     fireEvent.click(screen.getByRole('switch', { name: '持续发送，直至暂停' }))
     expect(screen.getByLabelText('发送次数')).toBeDisabled()
-    expect(screen.getByText(/未限制次数与总时长/)).toBeInTheDocument()
+    expect(screen.getByText('任务将持续发送，请及时暂停')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '添加' }))
     await waitFor(() => expect(named('createDouyuTask')).toHaveLength(1))
     const message = (named('createDouyuTask')[0]!.args as { message: DouyuMessageSchedule }).message
@@ -105,7 +105,7 @@ describe('message loop', () => {
   it('uses only the local templates for automatic texts and previews them', async () => {
     render(<Harness />)
     await openForm('定时弹幕')
-    fireEvent.click(screen.getByRole('radio', { name: '自动文案' }))
+    fireEvent.click(screen.getByRole('radio', { name: '预设文案' }))
     expect(screen.queryByLabelText('发送内容')).toBeNull()
     fireEvent.click(screen.getByRole('radio', { name: '感谢' }))
     const preview = within(screen.getByRole('list', { name: '模板预览' }))
@@ -135,7 +135,7 @@ describe('activity settings', () => {
     await waitFor(() => expect(named('setDouyuActivityOptions')).toHaveLength(1))
     expect(named('setDouyuActivityOptions')[0]!.args).toEqual({ version: 1, fishing: { mode: 'all' }, treasure: { crossRoom: true, claimDelayMs: 5000 } })
 
-    const delay = screen.getByLabelText('宝箱领取延迟(毫秒)')
+    const delay = screen.getByLabelText('宝箱领取延迟（毫秒）')
     await waitFor(() => expect(delay).toBeEnabled())
     fireEvent.change(delay, { target: { value: '60001' } })
     expect(screen.getByRole('button', { name: '保存延迟' })).toBeDisabled()
@@ -159,7 +159,7 @@ describe('task rows', () => {
       message: { text: '甲', colors: [0], intervalSeconds: 60, initialDelaySeconds: 0, maxRuns: 5, maxDurationSeconds: 1800,
         selection: { mode: 'sequential', texts: ['甲', '乙'], template: 'cheer' } } })]
     render(<Harness />)
-    const row = within(await screen.findByRole('group', { name: '发送任务 9999 (主号)' }))
+    const row = within(await screen.findByRole('group', { name: '发送任务 9999 （主号）' }))
     expect(row.getByText(/已发送 2 \/ 5/)).toHaveTextContent('截止 10/26 21:30')
     expect(row.getByText(/限时 30 分钟/)).toBeInTheDocument()
     expect(row.getByText(/等 2 条，顺序/)).toBeInTheDocument()
@@ -168,7 +168,7 @@ describe('task rows', () => {
   it('names the real official room of a waiting treasure box and opens it by task id', async () => {
     rows = [task({ kind: 'treasure-box', status: 'waiting-user', officialRoom: '777', reason: '需要官方验证' })]
     render(<Harness />)
-    const row = within(await screen.findByRole('group', { name: '开宝箱任务 9999 (主号)' }))
+    const row = within(await screen.findByRole('group', { name: '开宝箱任务 9999 （主号）' }))
     expect(row.getByText('需在官方页面处理：房间 777')).toBeInTheDocument()
     fireEvent.click(row.getByRole('button', { name: '打开官方页面' }))
     await waitFor(() => expect(named('openDouyuTaskRoom')).toEqual([{ method: 'openDouyuTaskRoom', args: { id: 't1' } }]))

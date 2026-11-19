@@ -20,7 +20,7 @@ export class PrivateJsonStore<T> {
       const stat = fs.lstatSync(this.file)
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_BYTES) throw new Error()
       return JSON.parse(fs.readFileSync(this.file, 'utf8')) as unknown
-    } catch { throw new Error('本地配置读取失败, 原文件已保留.') }
+    } catch { throw new Error('本地配置读取失败，原文件已保留') }
   }
 
   save(value: T): void {
@@ -42,7 +42,7 @@ export class PrivateJsonStore<T> {
       assertRegularPath(temporary, false)
       fs.renameSync(temporary, this.file)
       temporary = undefined
-    } catch { throw new Error('本地配置保存失败, 请重试.') }
+    } catch { throw new Error('本地配置保存失败，请重试') }
     finally {
       if (descriptor !== undefined) fs.closeSync(descriptor)
       if (temporary !== undefined) {

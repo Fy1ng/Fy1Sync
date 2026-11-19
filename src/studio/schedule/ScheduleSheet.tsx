@@ -77,7 +77,7 @@ export function ScheduleSheet({ onClose, onWatch }: {
     setSchedule(next)
     if (refresh && !next.stale && !result.value.refreshAt) {
       setRefreshMessage(before && JSON.stringify(before.matches) === JSON.stringify(next.matches)
-        ? '已检查源数据, 赛程暂无变化. 比分以直播画面为准.' : '已读取源数据.')
+        ? '赛程暂无变化' : '赛程已更新')
     }
     acceptCooldown(next, refresh)
   }
@@ -170,19 +170,14 @@ export function ScheduleSheet({ onClose, onWatch }: {
         )}
         <footer className="sched-foot">
           {refreshMessage && <p role="status">{refreshMessage}</p>}
-          {schedule?.stale && events.length > 0 && <p className="note-warn"><ErrorText error={schedule.errorDetail ?? { message: schedule.error, fetchedAt: schedule.fetchedAt, stale: true }} message={schedule.error ?? '赛程暂时无法更新，显示的是上次读取的结果'} /></p>}
-          {waitSeconds > 0 && <p className="sched-wait" role="status">{refreshBlock?.reason === 'upstream-rate-limit'
-            ? `Liquipedia 返回 HTTP 429, 请求已暂停, 约 ${retryLabel(waitSeconds)}后重试.`
-            : refreshBlock?.reason === 'retry' ? `赛程读取失败, 约 ${retryLabel(waitSeconds)}后重试.`
-              : `Liquipedia 限制每 30 秒刷新一次, 还需 ${waitSeconds} 秒`}</p>}
+          {schedule?.stale && events.length > 0 && <p className="note-warn"><ErrorText error={schedule.errorDetail ?? { message: schedule.error, fetchedAt: schedule.fetchedAt, stale: true }} message={schedule.error ?? '更新失败，显示上次赛程'} /></p>}
           {upstreamLimited && <LiquipediaVerification />}
           <span className="sched-source">
-            {schedule ? `${schedule.attribution} - ${schedule.fetchedAt > 0 ? `来源读取于 ${formatStart(schedule.fetchedAt, now)}` : '尚未成功读取来源'}` : '赛程数据来自 Liquipedia (CC-BY-SA 3.0)'}
+            {schedule ? `${schedule.attribution} - ${schedule.fetchedAt > 0 ? `读取于 ${formatStart(schedule.fetchedAt, now)}` : '暂未获取'}` : '赛程数据来自 Liquipedia（CC-BY-SA 3.0）'}
           </span>
           <button type="button" className="btn-quiet small" disabled={refreshing || waitSeconds > 0} onClick={() => void read(true)}>
             <Icon name="refresh" />{refreshing ? '正在刷新' : waitSeconds > 0 ? `${retryLabel(waitSeconds)}后可刷新` : '刷新'}
           </button>
-          {schedule && <p className="muted">读取时间不代表赛果更新时间.</p>}
         </footer>
       </div>
     </Sheet>
@@ -206,9 +201,9 @@ function LiquipediaVerification(): React.ReactNode {
       const result = await apiClient.feature('openLiquipediaVerification', undefined)
       if (!mounted.current) return
       if (result.ok) setOpened(true)
-      else setError(displayError(result, '无法打开官网验证页面, 请重试.'))
+      else setError(displayError(result, '无法打开官网验证页面，请重试'))
     } catch (caught) {
-      if (mounted.current) setError(displayError(caught, '无法打开官网验证页面, 请重试.'))
+      if (mounted.current) setError(displayError(caught, '无法打开官网验证页面，请重试'))
     } finally {
       pending.current = false
       if (mounted.current) setOpening(false)
@@ -217,10 +212,10 @@ function LiquipediaVerification(): React.ReactNode {
 
   return <div className="sched-verification" role="group" aria-label="Liquipedia 官网验证">
     <button type="button" className="btn-solid small" disabled={opening} onClick={() => void open()}>
-      <Icon name="link" />{opening ? '正在打开官网...' : '打开官网验证'}
+      <Icon name="link" />{opening ? '正在打开官网' : '打开官网验证'}
     </button>
-    <span className="muted">请使用与应用相同的网络和代理完成验证. 返回后仍按冷却时间重试.</span>
-    {opened && <p className="muted" role="status">已在浏览器打开 Liquipedia, 请按官网指引完成验证后返回赛程.</p>}
+    <span className="muted">如官网要求验证，请使用与应用相同的网络和代理；返回后按倒计时重试</span>
+    {opened && <p className="muted" role="status">官网已打开</p>}
     {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
   </div>
 }
@@ -279,7 +274,7 @@ function MatchRow({ match, titles, now, siblingsLive, onWatch }: {
       <div className="match-when">
         {match.state === 'live'
           ? <span className={awaitingScore ? 'muted' : 'match-live'}
-              title={awaitingScore ? '来源当前记录为 0:0, 尚不能确认实际比赛进度. 请以直播画面为准.' : undefined}>
+              title={awaitingScore ? '比分尚未更新，以直播画面为准' : undefined}>
               {awaitingScore ? '赛果待更新' : '直播中'}
             </span>
           : <span className="num">{formatStart(match.startsAt, now)}</span>}
@@ -311,7 +306,7 @@ function MatchRow({ match, titles, now, siblingsLive, onWatch }: {
             return (
               <button key={streamKey(stream)} type="button" className={primary ? 'btn-solid small' : 'btn-quiet small'}
                 disabled={!stream.url} onClick={() => onWatch(stream)}
-                aria-label={`在${PLATFORM_NAME[stream.platform]}观看 ${label}（${name}）`}
+                aria-label={`在 ${PLATFORM_NAME[stream.platform]} 观看 ${label}（${name}）`}
                 title={stream.missing ? MISSING_TEXT[stream.missing] : `${PLATFORM_NAME[stream.platform]} · ${name}${off ? ' · 未在直播' : ''}`}>
                 {PLATFORM_NAME[stream.platform]}
               </button>

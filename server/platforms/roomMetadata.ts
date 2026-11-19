@@ -25,7 +25,7 @@ const HOSTS: Record<string, string[]> = {
   twitch: ['gql.twitch.tv', 'static-cdn.jtvnw.net'],
   youtube: ['www.youtube.com', 'youtube.com', 'yt3.ggpht.com', 'yt3.googleusercontent.com', 'i.ytimg.com'],
 }
-const fail = (): never => { throw new Error('无法确认平台返回的直播间资料.') }
+const fail = (): never => { throw new Error('无法确认平台返回的直播间资料') }
 const text = (value: unknown, max = 500): string => typeof value === 'string' ? value.replace(/[\x00-\x1f\x7f-\x9f]/g, '').trim().slice(0, max) : ''
 const id = (value: unknown): string => typeof value === 'string' && /^[1-9]\d{0,19}$/.test(value) ? value
   : typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? String(value) : ''
@@ -300,7 +300,7 @@ export function createRoomMetadataCollector(options: { proxy: ProxyConfig; userD
         }
       }
       catch {
-        if (!target.endsWith('/live')) throw new Error('无法读取 YouTube 直播资料.')
+        if (!target.endsWith('/live')) throw new Error('无法读取 YouTube 直播资料')
         const streams = target.slice(0, -5) + '/streams'
         page = await read(streams)
         result = youtubeMetadata(page.text, streams, now)

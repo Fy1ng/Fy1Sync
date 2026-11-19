@@ -21,7 +21,7 @@ export function Accounts({ data }: { data: DouyuData }): React.ReactNode {
     <div className="desk-pane">
       {loading && <p className="muted" role="status">正在读取账号</p>}
       {accountsReadError && <ReadError error={accountsReadError} detail={data.accountsReadDetail} onRetry={() => void reloadAccounts()} />}
-      {!loading && !accountsReadError && accounts && all.length === 0 && <p className="desk-empty">暂无账号。填写名称并添加后即可登录。</p>}
+      {!loading && !accountsReadError && accounts && all.length === 0 && <p className="desk-empty">暂无账号</p>}
       <ul className="account-list" aria-label="斗鱼账号">
         {all.map((account) => (
           <AccountRow key={account.id} account={account} active={account.id === accounts?.activeAccountId}
@@ -60,11 +60,11 @@ function AccountRow({ account, active, locked, data }: {
   const who = shown || '斗鱼账号'
 
   const login = (): void => {
-    void accountAction(`请在登录卡片中登录 ${who}, 完成后将自动关闭`,
+    void accountAction(`请在登录卡片中登录 ${who}，完成后将自动关闭`,
       () => apiClient.loginDouyuAccount(account.id),
       snapshot => {
         const login = snapshot.accounts.find(item => item.id === account.id)?.login
-        return login?.loggedIn ? `${who} 已登录` : displayError({ code: 'login-incomplete', accountId: account.id, login }, `${who} 登录未完成, 请重试`)
+        return login?.loggedIn ? `${who} 已登录` : displayError({ code: 'login-incomplete', accountId: account.id, login }, `${who} 登录未完成，请重试`)
       })
   }
 
@@ -112,7 +112,7 @@ function AccountRow({ account, active, locked, data }: {
             {account.login.loggedIn ? '重新登录' : '登录'}
           </button>
           <button type="button" className="btn-quiet small" disabled={locked}
-            onClick={() => void accountAction(`请在卡片中打开 ${who} 的鱼吧, 完成后关闭页面`,
+            onClick={() => void accountAction(`请在卡片中打开 ${who} 的鱼吧，完成后关闭页面`,
               () => apiClient.loginDouyuYubaAccount(account.id), '鱼吧页面已关闭')}>
             登录鱼吧
           </button>
