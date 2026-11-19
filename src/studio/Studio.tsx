@@ -46,6 +46,7 @@ import { remember, remembered } from '../app/remembered'
 import { EmbeddedLoginOverlay, useEmbeddedLoginState } from './login/EmbeddedLogin'
 import { Favorites } from './favorites/Favorites'
 import { useDouyuLottery } from './douyu/douyuLottery'
+import { usePlatformRoomActivities } from './PlatformRoomActivities'
 
 /** Seconds per ←/→ press, and with Shift. */
 const SEEK_SMALL = 5
@@ -64,6 +65,11 @@ export function Studio(): React.ReactNode {
 function StudioView(): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
+  const platformRooms = usePlatformRoomActivities()
+  const restrictedChatSources = SOURCE_ROLES.filter(role => {
+    const source = snapshot.media[role]
+    return source.status === 'ready' && (source.descriptor?.platform === 'youtube' || source.descriptor?.platform === 'twitch')
+  })
   const chatRoom = snapshot.danmaku.room
   const douyuRoom = chatRoom && /^[1-9][0-9]{0,11}$/.test(chatRoom) ? chatRoom : null
   const lottery = useDouyuLottery(douyuRoom, snapshot.danmaku.connected, {
@@ -117,7 +123,7 @@ function StudioView(): React.ReactNode {
   const busyChrome = favorites || intake || tuning || settingsAt !== null || addingStream || scheduleOpen || onChrome || aligning || embeddedLogin !== null
   const chrome = useOverlayVisibility(3200, !snapshot.playing || busyChrome)
   // The drawer is the room's chat; with no room there is nothing to hold it open for.
-  const hasRoom = snapshot.danmaku.connected || snapshot.danmaku.room !== null
+  const hasRoom = snapshot.danmaku.connected || snapshot.danmaku.room !== null || platformRooms.hasBilibili || restrictedChatSources.length > 0
   const hasSidebar = hasRoom || (snapshot.settings.recognitionMode === 'basic' && snapshot.settings.basicRecognitionPanelVisible
     && SOURCE_ROLES.some(role => snapshot.media[role].status !== 'empty'))
   const chatOpen = snapshot.settings.sidebarVisible && hasSidebar
@@ -308,7 +314,7 @@ function StudioView(): React.ReactNode {
 
         {chatOpen && (
           <ChatDrawer onClose={() => setChat(false)} onOpenSettings={openSettings} onOpenRecords={openRecords}
-            douyuLottery={douyuRoom ? lottery : undefined} />
+            douyuLottery={douyuRoom ? lottery : undefined} platformActivities={platformRooms.cards} restrictedChatSources={restrictedChatSources} />
         )}
 
         {favorites && <Favorites onClose={() => setFavorites(false)} />}

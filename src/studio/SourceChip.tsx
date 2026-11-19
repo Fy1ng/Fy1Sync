@@ -13,7 +13,7 @@ import type { SourceRole } from '../core/types'
 import { bufferStatusText } from '../ui/bufferStatus'
 import { Icon, Popover, Segmented, usePopover } from './kit'
 import { douyinDanmakuRoom, LoginOffer, PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform, SOURCE_HINT } from './sources'
-import { isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
+import { danmakuRoom, isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
 import { canSave, removeSavedRoom, saveRoom, savedFor, useSavedRooms, type SavedRoom } from './savedRooms'
 import { RoomSummary } from './favorites/Favorites'
 
@@ -68,6 +68,11 @@ function SourcePanel({ role, onDone, onSchedule }: {
   const [roomPlatform, setRoomPlatform] = useState<RoomPlatform>(state.descriptor?.platform === 'douyin' ? 'douyin' : state.descriptor?.platform === 'huya' ? 'huya' : state.descriptor?.platform === 'bilibili' ? 'bilibili' : 'douyu')
   const bareRoom = parseRoomInput(input)?.platform === null
   const buffer = snapshot.buffers[role]
+  const source = state.descriptor
+  const chatKey = source?.sourceRoom && (source.platform === 'bilibili' || source.platform === 'huya')
+    ? `${source.platform}:${source.sourceRoom}` : null
+  const selectedReadOnlyRoom = isReadOnlyDanmakuRoom(snapshot.danmaku.room) && snapshot.danmaku.room
+  const selectedChatLabel = selectedReadOnlyRoom ? PLATFORM_LABEL[danmakuRoom(selectedReadOnlyRoom).platform] : null
 
   return (
     <div className="source-panel">
@@ -106,7 +111,7 @@ function SourcePanel({ role, onDone, onSchedule }: {
         ? <ErrorText error={buffer.failure ?? { reason: buffer.reason, message: bufferStatusText(buffer) }} message={bufferStatusText(buffer)} /> : bufferStatusText(buffer)}</p>}
       <PlaybackDiagnosticsPanel role={role} />
 
-      {role === 'commentary' && state.descriptor?.platform === 'douyin' && <div>
+      {state.descriptor?.platform === 'douyin' && <div>
         <p className="muted" role="status">抖音弹幕: {snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
           : snapshot.danmaku.error ? <ErrorText error={snapshot.danmaku.errorDetail ?? { message: snapshot.danmaku.error }} message={snapshot.danmaku.error} /> : (snapshot.danmaku.room ? `正在连接房间 ${loader.roomName}` : '未连接')}</p>
         <button type="button" className="btn-quiet small" disabled={chatRetrying || !douyinDanmakuRoom(state.descriptor)} onClick={() => {
@@ -120,9 +125,21 @@ function SourcePanel({ role, onDone, onSchedule }: {
         }}>重连抖音弹幕</button>
         <p className="muted">需要登录时, 请在设置 - 通用 - 抖音中登录, 然后重连弹幕.</p>
       </div>}
-      {role === 'commentary' && state.descriptor?.platform !== 'douyin' && (state.descriptor?.platform === 'huya' || isReadOnlyDanmakuRoom(snapshot.danmaku.room)
-        ? <p className="muted" role="status">{snapshot.danmaku.room?.startsWith('douyin:') ? '抖音' : '虎牙'}弹幕: {snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
-          : snapshot.danmaku.room ? snapshot.danmaku.error ? <ErrorText error={snapshot.danmaku.errorDetail ?? { message: snapshot.danmaku.error }} message={snapshot.danmaku.error} /> : `正在连接房间 ${loader.roomName}` : '未连接'}</p>
+      {chatKey && <div>
+        <p className="muted" role="status">{source?.platform === 'bilibili' ? 'B 站' : '虎牙'}弹幕: {
+          snapshot.danmaku.room !== chatKey ? '未选择此房间' : snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
+            : snapshot.danmaku.error || '正在连接'}</p>
+        <button type="button" className="btn-quiet small" onClick={() => loader.connectRoom(chatKey, source?.sourceRoom)}>
+          {snapshot.danmaku.room === chatKey ? '重新连接此房间弹幕' : '选择此房间弹幕'}
+        </button>
+      </div>}
+      {(source?.platform === 'youtube' || source?.platform === 'twitch') && <p className="muted" role="status">
+        {source.platform === 'youtube' ? 'YouTube 聊天读取凭据不可用.' : 'Twitch 聊天读取授权不可用.'}
+      </p>}
+      {role === 'commentary' && !chatKey && !['douyin', 'youtube', 'twitch'].includes(source?.platform ?? '') && (selectedReadOnlyRoom
+        ? <p className="muted" role="status">{selectedChatLabel}弹幕: {snapshot.danmaku.connected ? `已连接房间 ${loader.roomName}`
+          : snapshot.danmaku.error ? <ErrorText error={snapshot.danmaku.errorDetail ?? { message: snapshot.danmaku.error }} message={snapshot.danmaku.error} />
+            : `正在连接房间 ${loader.roomName}`}</p>
         : <DanmakuRoom />)}
       <div className="row-split panel-foot">
         <label className="btn-quiet small file-pick">

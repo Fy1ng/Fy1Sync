@@ -51,6 +51,6 @@ it('renders none, ended, stale and disconnected activity states', () => {
 
 it('keeps account watch evidence independent of the active panel', () => {
   render(<HuyaRoomWatchStatus room={room} />)
-  expect(screen.getByText('本房观看时长未验证')).toBeInTheDocument()
+  expect(screen.getByText('本房官方今日及累计观看时长未验证')).toBeInTheDocument()
   expect(screen.getByText(/看过 可查询浏览记录/)).toBeInTheDocument()
 })

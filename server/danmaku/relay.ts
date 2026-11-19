@@ -10,6 +10,10 @@
 import { DouyuDanmakuClient } from './douyuClient'
 import { DouyinDanmakuClient, type DouyinDanmakuClientDeps } from './douyinClient'
 import { HuyaRoomClient, type HuyaRoomClientDeps } from './huyaRoomClient'
+import { BilibiliDanmakuClient, type BilibiliDeps } from './bilibiliClient'
+import { BilibiliRoomMetrics, summarizeBilibiliRoom } from '../platforms/bilibiliRoomInsights'
+import type { BilibiliChatMessage } from './bilibiliEvents'
+import type { HuyaOnTvSnapshot } from '../platforms/huyaOnTv'
 import { danmakuRoom, type ChatMessage, type DanmakuClient, type DanmakuClientDeps,
   type DanmakuClientEvents, type DanmakuPlatform, type DanmakuState, type RoomSignal } from './types'
 
@@ -25,6 +29,7 @@ export type RawDanmakuEvent = { platform: DanmakuPlatform } & ({ type: 'message'
 export type DanmakuRelayDeps = DanmakuClientDeps & {
   huya?: HuyaRoomClientDeps
   douyin?: DouyinDanmakuClientDeps
+  bilibili?: BilibiliDeps
   createClient?: (platform: DanmakuPlatform, room: string, events: DanmakuClientEvents) => DanmakuClient
 }
 
@@ -42,12 +47,17 @@ type Room = {
   state: DanmakuState
   detail?: string
   idleTimer: unknown
+  huyaOnTv?: HuyaOnTvSnapshot
+  bilibiliObserved: BilibiliChatMessage[]
+  bilibiliTruncated: boolean
+  removedSuperChats: Set<string>
 }
 
 export class DanmakuRelay {
   private readonly rooms = new Map<string, Room>()
   private nextSubscriberId = 1
   private readonly observers = new Set<(event: RawDanmakuEvent) => void>()
+  private readonly bilibiliMetrics = new BilibiliRoomMetrics()
 
   constructor(private readonly deps: DanmakuRelayDeps = {}) {}
 
@@ -66,6 +76,20 @@ export class DanmakuRelay {
 
   subscriberCount(roomId: string): number {
     return this.rooms.get(danmakuRoom(roomId).key)?.subscribers.size ?? 0
+  }
+
+  activeDouyinClient(roomId: string): DouyinDanmakuClient | null {
+    const room = this.rooms.get(danmakuRoom(roomId).key)
+    return room?.subscribers.size && room.client instanceof DouyinDanmakuClient ? room.client : null
+  }
+
+  bilibiliRoomInsights(roomId: string) {
+    const room = this.rooms.get(roomId)
+    const now = Date.now()
+    const messages = room?.bilibiliObserved ?? []
+    const receivedLastMinute = messages.filter(message => message.receivedAt >= now - 60_000 && !message.system && !message.superChat && !message.bilibiliGift).length
+    return summarizeBilibiliRoom({ room: roomId, messages, rate: { receivedLastMinute }, capacity: REPLAY_LIMIT,
+      truncated: room?.bilibiliTruncated ?? false, checkedAt: now }, this.bilibiliMetrics.read(roomId))
   }
 
   /** Attach a transport-neutral subscriber. Returns null when the room cap is already reached. */
@@ -93,6 +117,7 @@ export class DanmakuRelay {
 
     try {
       entry.write('state', { room: identity.external, state: room.state, detail: room.detail })
+      if (room.huyaOnTv) entry.write('huya-on-tv', room.huyaOnTv)
       // Replay recent messages so a late subscriber's overlay is not empty for 30s.
       for (const message of room.recent) entry.write('danmaku', message)
     } catch {
@@ -128,6 +153,8 @@ export class DanmakuRelay {
     for (const room of this.rooms.values()) {
       if (!room.key.startsWith(`${platform}:`)) continue
       room.recent = []
+      room.bilibiliObserved = []
+      room.bilibiliTruncated = false
       room.client.close()
       if (room.subscribers.size > 0) room.client.connect()
     }
@@ -151,23 +178,43 @@ export class DanmakuRelay {
       recent: [],
       state: 'connecting',
       idleTimer: null,
+      bilibiliObserved: [],
+      bilibiliTruncated: false,
+      removedSuperChats: new Set(),
       client: null as unknown as DanmakuClient,
     }
     const normalize = (message: ChatMessage): ChatMessage => ({ ...message, platform: identity.platform, room: identity.external })
     const events: DanmakuClientEvents = {
       onMessage: (message) => {
+        if (identity.platform === 'bilibili' && (message.room !== identity.external
+          || (message.superChat && room.removedSuperChats.has(message.superChat.id)))) return
         message = normalize(message)
         room.recent.push(message)
         if (room.recent.length > REPLAY_LIMIT) room.recent.shift()
         this.broadcast(room, 'danmaku', message)
       },
-      onObservedMessage: message => this.observeRaw({ platform: identity.platform, type: 'message', message: normalize(message) }),
+      onObservedMessage: message => {
+        if (identity.platform === 'bilibili' && message.platform === 'bilibili' && message.room === identity.external) {
+          room.bilibiliObserved.push(message as BilibiliChatMessage)
+          if (room.bilibiliObserved.length > REPLAY_LIMIT) { room.bilibiliObserved.shift(); room.bilibiliTruncated = true }
+        }
+        this.observeRaw({ platform: identity.platform, type: 'message', message: normalize(message) })
+      },
       onSignal: signal => {
+        if (identity.platform === 'bilibili' && signal.room !== identity.external) return
         signal = { ...signal, platform: identity.platform, room: identity.external } as RoomSignal
+        if (signal.platform === 'bilibili') {
+          if (signal.kind === 'super-chat-delete') {
+            for (const id of signal.ids) room.removedSuperChats.add(id)
+            while (room.removedSuperChats.size > 512) room.removedSuperChats.delete(room.removedSuperChats.values().next().value!)
+            room.recent = room.recent.filter(message => !message.superChat || !room.removedSuperChats.has(message.superChat.id))
+          } else this.bilibiliMetrics.observe(signal)
+        }
         this.observeRaw({ platform: identity.platform, type: 'signal', signal })
         this.broadcast(room, 'room-signal', signal)
       },
       onState: (state, detail) => {
+        if (state !== 'connected') room.huyaOnTv = undefined
         room.state = state
         room.detail = detail
         this.observeRaw({ platform: identity.platform, type: 'state', room: identity.external, state })
@@ -181,7 +228,18 @@ export class DanmakuRelay {
           createSocket: () => { throw new Error('抖音弹幕服务尚未配置.') },
         })
         : identity.platform === 'huya'
-        ? new HuyaRoomClient(identity.room, events, { ...this.deps, ...this.deps.huya })
+        ? new HuyaRoomClient(identity.room, events, { ...this.deps, ...this.deps.huya,
+          onTv: this.deps.huya?.onTv && { ...this.deps.huya.onTv, onSnapshot: snapshot => {
+            if (snapshot.room !== identity.external || room.state !== 'connected') return
+            room.huyaOnTv = snapshot
+            this.deps.huya?.onTv?.onSnapshot(snapshot)
+            this.broadcast(room, 'huya-on-tv', snapshot)
+          } } })
+        : identity.platform === 'bilibili'
+        ? new BilibiliDanmakuClient(identity.room, events, this.deps.bilibili ?? {
+          resolveRoom: async () => { throw new Error('B 站弹幕暂不可用.') },
+          createSocket: () => { throw new Error('B 站弹幕暂不可用.') },
+        })
         : new DouyuDanmakuClient(identity.room, events, this.deps))
     this.rooms.set(identity.key, room)
     room.client.connect()

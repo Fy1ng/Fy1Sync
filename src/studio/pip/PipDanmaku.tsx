@@ -10,7 +10,7 @@
  * Motion, measuring and lanes are the main stage's `ScrollingLayer`.
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { displayError } from '../../core/errorDetails'
 import { apiClient } from '../../app/apiClient'
 import { AREA_FRACTION, type LaneLayout } from '../../core/danmakuLanes'
@@ -19,6 +19,11 @@ import { DanmakuTimeline, LiveEdgeClock, scheduleTimeFor, type DanmakuMessage } 
 import { readTimebase } from '../../media/timebase'
 import { colorForIndex } from '../../../server/danmaku/douyuProtocol'
 import { ScrollingLayer, type LayerEntry } from '../danmakuLayer'
+import { bilibiliColor, bilibiliId, copyBilibiliMetadata } from '../../core/bilibiliMetadata'
+import { createBilibiliSuperChatState, updateBilibiliSuperChats } from '../../core/bilibiliSuperChats'
+import { huyaChatColorHex, readHuyaChatMetadata } from '../../core/huyaChat'
+import { BilibiliSuperChatFeed, fillBilibiliMessage } from '../BilibiliMessage'
+import type { ChatMessage } from '../../../server/danmaku/types'
 
 const FONT_SIZE = 15
 /** Seconds a message takes to cross the window, whatever its width. */
@@ -38,6 +43,7 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
   onProblem: (problem: unknown) => void
 }): React.ReactNode {
   const hostRef = useRef<HTMLDivElement | null>(null)
+  const [superChats, setSuperChats] = useState(() => createBilibiliSuperChatState(''))
   const timeline = useRef(new DanmakuTimeline())
   const clock = useRef(new LiveEdgeClock())
   const processor = useRef(new DanmakuProcessor())
@@ -90,6 +96,7 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
   // The subscription: one room, released on change and on unmount.
   useEffect(() => {
     problemRef.current(null)
+    setSuperChats(createBilibiliSuperChatState(room ?? ''))
     if (!room || !video) return
     resetQueue()
     flush()
@@ -97,6 +104,15 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
     try {
       off = apiClient.subscribeDanmaku(room, ({ event, data }) => {
         if (event === 'danmaku') ingest(data)
+        else if (event === 'room-signal' && room.startsWith('bilibili:') && data && typeof data === 'object') {
+          const signal = data as { platform?: unknown; room?: unknown; kind?: unknown; ids?: unknown }
+          if (signal.platform === 'bilibili' && signal.room === room && signal.kind === 'super-chat-delete' && Array.isArray(signal.ids)) {
+            const ids = signal.ids.slice(0, 512).flatMap(id => bilibiliId(id) ?? [])
+            setSuperChats(current => updateBilibiliSuperChats(current, {
+              platform: 'bilibili', room: room as `bilibili:${string}`, kind: 'super-chat-delete', ids, receivedAt: Date.now(),
+            }, Date.now()))
+          }
+        }
         else if (event === 'state' && data && typeof data === 'object') {
           const value = data as { state?: unknown; detail?: unknown }
           if (value.state === 'connected') problemRef.current(null)
@@ -108,22 +124,26 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
     }
     function ingest(data: unknown): void {
       if (!drawingRef.current || !video || !data || typeof data !== 'object') return
-      const payload = data as { text?: unknown; username?: unknown; color?: unknown; system?: unknown; gift?: unknown; huyaGift?: unknown; dms?: unknown; platform?: unknown }
+      const payload = data as Partial<ChatMessage>
       // Gift and system notices are the main stage's business; this overlay is chat only.
-      if (typeof payload.text !== 'string' || !payload.text.trim() || payload.system === true || payload.gift !== undefined || payload.huyaGift !== undefined) return
+      if (typeof payload.text !== 'string' || !payload.text.trim() || payload.system === true || payload.gift !== undefined || payload.huyaGift !== undefined
+        || payload.bilibiliGift || payload.douyin?.gift || (payload.room !== undefined && payload.room !== room)) return
       const timebase = readTimebase(video)
       const scheduleTime = timebase
         ? scheduleTimeFor({ currentTime: video.currentTime, timebase }, { clock: clock.current, nowMs: Date.now() })
         : video.currentTime
+      const bilibili = payload.platform === 'bilibili' ? copyBilibiliMetadata(payload) : {}
+      const huyaColor = payload.platform === 'huya' ? huyaChatColorHex(readHuyaChatMetadata(payload.huyaChat)?.bulletColor) : undefined
       timeline.current.push({
         id: `p${++sequence.current}`,
-        text: payload.text,
+        text: payload.platform === 'douyin' ? payload.douyin?.emoji?.fallback || payload.text : payload.text,
         user: typeof payload.username === 'string' ? payload.username : '',
-        color: colorForIndex(typeof payload.color === 'number' ? payload.color : 0),
-        ...(payload.platform === 'huya' || payload.platform === 'douyin' ? { platform: payload.platform } : {}),
+        color: payload.platform === 'bilibili' ? bilibiliColor(payload.color) : huyaColor ?? colorForIndex(typeof payload.color === 'number' ? payload.color : 0),
+        ...(payload.platform ? { platform: payload.platform } : {}),
+        ...bilibili,
         ...(typeof payload.dms === 'number' && Number.isFinite(payload.dms) ? { dms: payload.dms } : {}),
         scheduleTime,
-        receivedAt: Date.now(),
+        receivedAt: Number.isSafeInteger(payload.receivedAt) ? payload.receivedAt! : Date.now(),
       })
     }
     return () => {
@@ -143,7 +163,8 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
       build: () => {
         const node = document.createElement('span')
         node.className = 'pip-dm'
-        node.textContent = message.text
+        if (message.platform === 'bilibili') fillBilibiliMessage(node, message.text, message)
+        else node.textContent = message.text
         if (message.color) node.style.color = message.color
         return node
       },
@@ -159,6 +180,13 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
       const released = video.paused ? timeline.current.releaseAll() : timeline.current.advance(mediaTime)
       const fresh: LayerEntry<Shown>[] = []
       for (const message of released) {
+        if (message.superChat && room?.startsWith('bilibili:')) {
+          setSuperChats(current => updateBilibiliSuperChats(current, {
+            ...copyBilibiliMetadata(message), id: message.id, text: message.text, username: message.user,
+            platform: 'bilibili', room: room as `bilibili:${string}`, color: 0, level: 0, system: false, receivedAt: message.receivedAt,
+          }, Date.now()))
+          continue
+        }
         const result = processor.current.process({ text: message.text, room: room ?? undefined, platform: message.platform, ...(message.dms !== undefined ? { dms: message.dms } : {}) }, mediaTime)
         if (result.kind === 'hide') continue
         if (result.kind === 'merge') {
@@ -183,5 +211,8 @@ export function PipDanmaku({ video, room, preferences, drawing, resetKey, onProb
 
   useEffect(() => () => flush(), [])
 
-  return <div className="pip-danmaku" ref={hostRef} aria-hidden="true" />
+  return <>
+    <div className="pip-danmaku" ref={hostRef} aria-hidden="true" />
+    {drawing && room?.startsWith('bilibili:') && <BilibiliSuperChatFeed room={room} state={superChats} />}
+  </>
 }

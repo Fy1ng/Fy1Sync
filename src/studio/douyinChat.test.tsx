@@ -69,7 +69,8 @@ describe('Douyin chat and isolated sending', () => {
     expect(screen.getByText('抖音聊天')).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name:'抖音弹幕内容' })).toBeDisabled()
     expect(screen.getByRole('button', { name:'发送' })).toBeDisabled()
-    expect(screen.queryByRole('button', { name: /\+1|房间数据|弹幕记录与收藏/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /\+1|弹幕记录与收藏/ })).toBeNull()
+    expect(screen.getByRole('button', { name: '房间数据' })).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: /更多操作/ }))
     expect(screen.queryByRole('button', { name: /回复|收藏|禁言|历史弹幕|用户详情/ })).toBeNull()
     expect(screen.getByRole('button', { name: '复制' })).toBeInTheDocument()
@@ -117,7 +118,7 @@ describe('Douyin chat and isolated sending', () => {
     render(<SessionProvider session={session}><SettingsSheet target={{ section }} room="douyin:12345"
       onClose={() => {}} onWatch={() => {}} onFill={() => {}} /></SessionProvider>)
     await act(async () => { await Promise.resolve() })
-    expect(screen.getByText(/当前抖音房间暂不支持弹幕记录与房间统计/)).toBeInTheDocument()
+    expect(screen.getByText(section === 'records' ? /当前房间的弹幕可在聊天抽屉查看/ : /本房官方今日和累计观看时长未知/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /赠送|签到|发送|创建任务/ })).toBeNull()
     expect(feature).not.toHaveBeenCalled()
   })

@@ -24,6 +24,8 @@ export interface IpcHandlerOptions {
   /** Buffer/task notifications use the topics "buffer" and "douyu-tasks". */
   allowEvent?: (senderId: number, event: FeatureEvent) => boolean
   onWindowReleased?: (senderId: number) => void
+  resolveBilibiliRoom?: (room: string) => Promise<string>
+  onMainRoomChanged?: (room: string | null) => void
 }
 interface WindowEntry { contents: WebContents; generation: number; unregister: () => void; detach: () => void }
 interface Subscription { owner: WindowEntry; id: string; room: string | null; release: () => void }
@@ -35,6 +37,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
   const subscriptions = new Map<string, Subscription>()
   let disposed = false
   let taskRoom: string | null = null
+  let selectedRoom: string | null = null
   const denied = () => ({ ok: false as const, code: 'forbidden', message: '仅允许已授权的本机应用窗口调用' })
   const cancelled = () => ({ ok: false as const, code: 'subscription-cancelled', message: '弹幕订阅已取消' })
   const validId = (id: unknown): id is string => typeof id === 'string' && /^[0-9]{1,12}$/.test(id)
@@ -76,8 +79,10 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
     let next: string | null = null
     if (!disposed) for (const entry of subscriptions.values()) if (entry.owner.contents === contents && entry.room !== null) {
       // The last selected subscription controls intent. Other platforms clear Douyu writes.
-      next = isReadOnlyDanmakuRoom(entry.room) ? null : entry.room
+      next = entry.room
     }
+    if (next !== selectedRoom) { selectedRoom = next; options.onMainRoomChanged?.(next) }
+    if (isReadOnlyDanmakuRoom(next)) next = null
     if (next === taskRoom) return
     service.setDouyuRoom?.(next)
     taskRoom = next
@@ -197,10 +202,12 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
     const owner = sender(event)
     if (!owner) return denied()
     const huya = typeof room === 'string' && room.startsWith('huya:')
+    const bilibili = typeof room === 'string' && room.startsWith('bilibili:')
     const douyin = typeof room === 'string' && room.startsWith('douyin:')
-    const input = typeof room === 'string' ? (huya || douyin || room.startsWith('douyu:') ? room.slice(room.indexOf(':') + 1) : room) : ''
+    const input = typeof room === 'string' ? (huya || douyin || bilibili || room.startsWith('douyu:') ? room.slice(room.indexOf(':') + 1) : room) : ''
     const parsed = douyin ? (/^[1-9][0-9]{0,19}$/.test(input) ? `douyin:${input}` : null)
-      : huya ? (/^[A-Za-z0-9_-]{1,64}$/.test(input) ? `huya:${input}` : null) : parseDouyuRoom(input)
+      : bilibili ? (/^[1-9]\d{0,11}$/.test(input) && options.resolveBilibiliRoom ? `bilibili:${input}` : null)
+        : huya ? (/^[A-Za-z0-9_-]{1,64}$/.test(input) ? `huya:${input}` : null) : parseDouyuRoom(input)
     if (!validId(subscriptionId) || typeof room !== 'string' || room.length > 8192 || !parsed) {
       return { ok: false, code: 'bad-room', message: '房间号或订阅标识无效' }
     }
@@ -223,6 +230,10 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
       if (douyin) {
         // A web room id is stable across live sessions. The client resolves its current session.
         canonical = `douyin:${input}`
+      } else if (bilibili) {
+        const formal = await options.resolveBilibiliRoom!(input)
+        if (!/^[1-9]\d{0,11}$/.test(formal)) throw new Error('B 站房间身份无效')
+        canonical = `bilibili:${formal}`
       } else if (huya) {
         const identity = await service.resolveHuyaRoom(input)
         if (!/^[1-9][0-9]{0,15}$/.test(identity.room)) throw new Error('虎牙房间身份无效')

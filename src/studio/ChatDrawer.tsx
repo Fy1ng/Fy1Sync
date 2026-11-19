@@ -29,21 +29,28 @@ import { BasicRecognitionPanel } from './BasicRecognitionPanel'
 import { DouyinComposer } from './DouyinComposer'
 import { isReadOnlyDanmakuPlatform, isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
 import { DouyuLotteryCard, DouyuLotteryCommandGroup, type DouyuLotteryView } from './douyu/douyuLottery'
+import { BilibiliGiftLabel, BilibiliMessage, BilibiliSenderBadges, BilibiliSuperChatFeed } from './BilibiliMessage'
+import { DouyinDanmakuIdentity, DouyinDanmakuText } from './DouyinDanmakuContent'
+import { huyaChatColorHex } from '../core/huyaChat'
+import type { SourceRole } from '../core/types'
+import { BilibiliEmoteDirectory, RestrictedChatStatus } from './insights/PlatformRoomInsights'
 
 /** A one-line row; longer messages wrap and are measured. */
 const ROW = 30
 
-export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords, douyuLottery }: {
+export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords, douyuLottery, platformActivities, restrictedChatSources = [] }: {
   onClose: () => void
   onOpenSettings: (section?: SettingsSection, account?: SettingsTarget['account']) => void
   onOpenRecords: (tab: RecordsTab, uid?: string) => void
   douyuLottery?: DouyuLotteryView
+  platformActivities?: React.ReactNode
+  restrictedChatSources?: SourceRole[]
 }): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const { danmaku } = snapshot
   const connectionFailure = danmaku as typeof danmaku & { errorDetail?: unknown; detail?: unknown }
-  const readOnly = isReadOnlyDanmakuRoom(danmaku.room)
+  const readOnly = isReadOnlyDanmakuRoom(danmaku.room) || (!danmaku.room && restrictedChatSources.length > 0)
   const writes = useDouyuWrites()
   const composer = useComposer()
   const { roomName } = useSourceLoader()
@@ -59,7 +66,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords, douyuLotter
   const entries = useMemo(() => {
     const result: { messages: DanmakuMessage[]; activityKey: string | null }[] = []
     for (const message of messages) {
-      const activityKey = message.douyuLotteryActivityId && message.room ? `${message.room}:${message.douyuLotteryActivityId}` : null
+      const activityKey = message.platformActivityKey ?? (message.douyuLotteryActivityId && message.room ? `${message.room}:${message.douyuLotteryActivityId}` : null)
       const previous = result.at(-1)
       if (previous && activityKey && previous.activityKey === activityKey) previous.messages.push(message)
       else result.push({ messages: [message], activityKey })
@@ -100,11 +107,23 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords, douyuLotter
   const composing = useRef(false)
   const rowContents = (message: DanmakuMessage) => <>
     <span className="msg-user">{message.user}</span>
-    <span className="msg-text">{message.text}</span>
+    <span className="msg-text" style={message.huyaChat ? { color: huyaChatColorHex(message.huyaChat.textColor) } : undefined}>
+      {message.platform === 'bilibili' ? <>
+        <BilibiliSenderBadges sender={message.bilibiliSender} />{' '}
+        {message.bilibiliGift ? <BilibiliGiftLabel gift={message.bilibiliGift} /> : <BilibiliMessage {...message} />}
+      </> : message.platform === 'douyin' ? <>
+        <DouyinDanmakuIdentity douyin={message.douyin} />{' '}
+        <DouyinDanmakuText text={message.text} douyin={message.douyin} />
+      </> : <>
+        {message.huyaChat?.kind === 'on-tv-barrage' && <small>上电视 </small>}
+        {message.huyaChat?.sender?.fansBadge?.name && <small>{message.huyaChat.sender.fansBadge.name} </small>}
+        {message.text}
+      </>}
+    </span>
     {message.duplicateCount !== undefined && message.duplicateCount > 1 && (
       <span className="msg-count num" title="相同弹幕的合并次数">×{message.duplicateCount}</span>
     )}
-    {!message.gift && !message.huyaGift && (
+    {!message.system && !message.gift && !message.huyaGift && !message.bilibiliGift && (
       <span className="msg-actions">
         {writes && !readOnly && !isReadOnlyDanmakuPlatform(message.platform) && <button type="button" className="msg-plus" disabled={!composer.canSendText(message.text)}
           aria-label={`+1：${message.text}`} title={composer.repeatProblem(message.text) ?? '发送相同内容'}
@@ -129,7 +148,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords, douyuLotter
           {!readOnly && <button type="button" className="icon-btn" onClick={() => onOpenRecords('history')} aria-label="弹幕记录与收藏" title="弹幕记录与收藏">
             <Icon name="history" />
           </button>}
-          {danmaku.room && !readOnly && (
+          {(danmaku.room || restrictedChatSources.length > 0) && (
             <button type="button" className="icon-btn" onClick={() => onOpenSettings('insights')} aria-label="房间数据" title="房间数据">
               <Icon name="stats" />
             </button>
@@ -145,6 +164,12 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords, douyuLotter
 
       {snapshot.settings.recognitionMode === 'basic' && snapshot.settings.basicRecognitionPanelVisible && <BasicRecognitionPanel />}
       {douyuLottery && <DouyuLotteryCard view={douyuLottery} />}
+      {platformActivities}
+      {danmaku.room?.startsWith('bilibili:') && <>
+        <BilibiliEmoteDirectory key={danmaku.room} room={danmaku.room} />
+        {danmaku.bilibiliSuperChats && <BilibiliSuperChatFeed room={danmaku.room} state={danmaku.bilibiliSuperChats} />}
+      </>}
+      {restrictedChatSources.map(role => <RestrictedChatStatus key={role} role={role} />)}
 
       <div className="drawer-feed">
         <div className="drawer-scroll" ref={scroller} role="log" aria-live="off" aria-label="弹幕列表" tabIndex={0}
@@ -154,7 +179,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords, douyuLotter
           }}>
           {messages.length === 0 ? (
             <p className="drawer-empty">
-              {danmaku.connected ? '弹幕将随解说进度显示' : danmaku.room ? danmaku.error ? <ErrorText error={connectionFailure.errorDetail ?? connectionFailure.detail ?? { message: danmaku.error }} message={danmaku.error} /> : '正在连接...' : '载入斗鱼, 虎牙或抖音解说后显示弹幕'}
+              {danmaku.connected ? '弹幕将随解说进度显示' : danmaku.room ? danmaku.error ? <ErrorText error={connectionFailure.errorDetail ?? connectionFailure.detail ?? { message: danmaku.error }} message={danmaku.error} /> : '正在连接...' : restrictedChatSources.length > 0 ? null : '载入斗鱼, B 站, 虎牙或抖音直播后显示弹幕'}
             </p>
           ) : (
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>

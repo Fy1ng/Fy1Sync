@@ -29,9 +29,11 @@ export function BilibiliRoomInsights({ room, data, watch, error, onOpenOfficialR
     {!snapshot && !error && <p>尚未读取房间数据.</p>}
     {snapshot && <p className="muted">弹幕和 SC 统计来自本应用保留的最近 {snapshot.capacity} 条记录. 全房计数取平台最近一次推送.</p>}
     <dl className="bili-insights-grid">{metrics.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+    {snapshot && <p className="muted">房间数据读取于 {new Date(snapshot.checkedAt).toLocaleString('zh-CN')}.</p>}
     {snapshot?.truncated && <p className="muted">记录容量已满, 较早数据已移除.</p>}
     <h4>个人看播</h4>
     <p className="muted">本房今日观看时长、累计观看时长和个人看播任务均未知. {reason}</p>
+    {evidence && <p className="muted">房间身份已于 {new Date(evidence.checkedAt).toLocaleString('zh-CN')} 核对.</p>}
     {onOpenOfficialRoom && <button type="button" onClick={onOpenOfficialRoom}>打开官方直播间</button>}
   </div>
 }

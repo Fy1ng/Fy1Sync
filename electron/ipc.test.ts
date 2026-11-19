@@ -49,6 +49,24 @@ function fixture(options: IpcHandlerOptions = {}) {
 }
 
 describe('app origin and document boundary', async () => {
+  it('canonicalizes Bilibili subscriptions without granting the Douyu task room', async () => {
+    const select = vi.fn()
+    const resolveBilibiliRoom = vi.fn(async () => '21452505')
+    const fixtureState = fixture({ resolveBilibiliRoom, onMainRoomChanged: select })
+    try {
+      await fixtureState.call('subscribe', '8888', '1')
+      expect(await fixtureState.call('subscribe', 'bilibili:25', '2')).toEqual({
+        ok: true, value: { ok: true, room: 'bilibili:21452505' },
+      })
+      expect(resolveBilibiliRoom).toHaveBeenCalledWith('25')
+      expect(fixtureState.subscribe).toHaveBeenLastCalledWith('bilibili:21452505', expect.any(Object))
+      expect(select).toHaveBeenLastCalledWith('bilibili:21452505')
+      expect(fixtureState.setRoom).toHaveBeenLastCalledWith(null)
+      await fixtureState.call('unsubscribe', '2')
+      expect(select).toHaveBeenLastCalledWith('8888')
+    } finally { fixtureState.installed.dispose() }
+  })
+
   it('requires the latest connected main-window Douyin subscription and revokes send permission on room changes', async () => {
     const f = fixture(), input = { room:'douyin:100', expectedUid:'12345', text:'测试' }
     expect(await f.call('invoke','sendDouyinMessage',input)).toMatchObject({ code:'room-not-subscribed' })

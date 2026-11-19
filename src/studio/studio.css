@@ -1961,6 +1961,16 @@ body,
 
 .studio .msg-group .msg { position: static; }
 
+.studio .drawer > .bili-sc-feed {
+  position: static;
+  flex: none;
+  width: auto;
+  max-height: 24vh;
+  overflow: auto;
+  margin: 6px 10px;
+  pointer-events: auto;
+}
+
 .studio .msg-user {
   flex: none;
   max-width: 36%;

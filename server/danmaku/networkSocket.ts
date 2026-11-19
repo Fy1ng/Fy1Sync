@@ -3,6 +3,7 @@ import { networkContext, routeCandidates, routeUsesRemoteDns, type NetworkContex
 import { checkUrl, createPinnedDispatcher, type Resolver } from '../safeFetch'
 import { createProxyDispatcher, isProxyConnectFailure } from '../proxyDispatcher'
 import type { DanmakuPlatform, WebSocketLike } from './types'
+import { isBilibiliDanmakuEndpoint } from './bilibiliClient'
 
 const ENDPOINTS = {
   douyu: { hostname: 'danmuproxy.douyu.com', port: '8506' },
@@ -20,14 +21,16 @@ export interface NetworkSocketOptions {
 /** Defer transport creation until the platform policy and direct DNS guard have settled. */
 export function createNetworkSocket(raw: string, platform: DanmakuPlatform, options: NetworkSocketOptions = {}): WebSocketLike {
   const url = new URL(raw)
-  const expected = platform === 'douyin' ? { hostname: url.hostname, port: '' } : ENDPOINTS[platform]
+  const expected = platform === 'bilibili' ? { hostname: url.hostname, port: url.port }
+    : platform === 'douyin' ? { hostname: url.hostname, port: '' } : ENDPOINTS[platform]
   const douyinTarget = platform === 'douyin'
     && /^webcast[1-9][0-9]{0,2}-ws-web-(?:lf|hl|lq)\.douyin\.com$/.test(url.hostname)
     && url.pathname === '/webcast/im/push/v2/' && raw.length <= 32_768 && !/[\x00-\x20\x7f]/.test(raw)
   if (!expected || url.protocol !== 'wss:' || url.hostname !== expected.hostname || url.port !== expected.port
     || url.username || url.password || url.hash
-    || (platform === 'douyin' ? !douyinTarget : url.pathname !== '/' || url.search)) throw new Error('弹幕连接地址不在允许范围内.')
-  let headers: Record<string, string> | undefined
+    || (platform === 'bilibili' ? !isBilibiliDanmakuEndpoint(raw)
+      : platform === 'douyin' ? !douyinTarget : url.pathname !== '/' || url.search)) throw new Error('弹幕连接地址不在允许范围内.')
+  let headers: Record<string, string> | undefined = platform === 'bilibili' ? { Origin: 'https://live.bilibili.com' } : undefined
   if (options.headers) {
     if (platform !== 'douyin' || Object.keys(options.headers).length > 4) throw new Error('弹幕请求头不在允许范围内.')
     headers = {}
@@ -113,7 +116,7 @@ export function createNetworkSocket(raw: string, platform: DanmakuPlatform, opti
       // Keep fixed endpoint validation while proxy DNS belongs to the selected route.
       const target = new URL(url)
       target.protocol = 'https:'
-      const check = await checkUrl(target.href, { enabled: true, hosts: [expected.hostname], allowNonStandardPorts: platform === 'douyu',
+      const check = await checkUrl(target.href, { enabled: true, hosts: [expected.hostname], allowNonStandardPorts: platform === 'douyu' || platform === 'bilibili',
         maxRedirects: 0, requestTimeoutMs: timeoutMs }, options.resolve, routeUsesRemoteDns(route))
       if (stopped) return
       if (!check.ok) throw new Error('弹幕连接地址校验失败.')

@@ -21,6 +21,7 @@ import { AppUpdateSettings } from './about/AppUpdate'
 import { CaptureSettings } from './capture/Capture'
 import { DouyuDesk } from './douyu/DouyuDesk'
 import { RoomInsights } from './insights/RoomInsights'
+import { PlatformRoomInsights } from './insights/PlatformRoomInsights'
 import { DanmakuRecords, type RecordsTab } from './records/DanmakuRecords'
 import { Segmented, Sheet, SideTabs, Switch } from './kit'
 import { PipSettings } from './pip/PipSettings'
@@ -54,7 +55,6 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
 }): React.ReactNode {
   const [section, setSection] = useState<SettingsSection>(target.section)
   const huya = isReadOnlyDanmakuRoom(room)
-  const readOnlyPlatform = room?.startsWith('douyin:') ? '抖音' : '虎牙'
   useEffect(() => setSection(target.section), [target])
   useEffect(() => { remember('settings:section', section) }, [section])
   return (
@@ -71,17 +71,15 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
         <div className="settings-body" role="tabpanel" aria-label={SECTIONS.find((item) => item.id === section)?.label}>
           {section === 'general' && <General />}
           {section === 'accounts' && <AccountSettings target={target} onWatch={(next) => { onWatch(next); onClose() }} />}
-          {huya && ['records', 'insights'].includes(section) && (
-            <p className="settings-empty">{room?.startsWith('douyin:') ? '当前抖音房间暂不支持弹幕记录与房间统计, 可在聊天栏手动发送普通文字弹幕.'
-              : `当前${readOnlyPlatform}房间仅支持只读弹幕, 斗鱼操作与统计暂不可用`}</p>
-          )}
+          {huya && section === 'records' && <p className="settings-empty">当前房间的弹幕可在聊天抽屉查看.</p>}
           {section === 'records' && !huya && (
             <DanmakuRecords initialTab={target.records?.tab ?? 'history'} initialUid={target.records?.uid} room={room}
               onFill={(text) => { onFill(text); onClose() }} />
           )}
-          {section === 'insights' && !huya && (room
-            ? <RoomInsights room={room} />
-            : <p className="settings-empty">连接斗鱼弹幕房间后显示房间数据</p>)}
+          {section === 'insights' && <>
+            {room && !huya && <RoomInsights room={room} />}
+            <PlatformRoomInsights room={room} />
+          </>}
           {section === 'frame-matching' && <div className="settings-page">
             <FrameHashSettings />
           </div>}

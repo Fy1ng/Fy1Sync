@@ -367,12 +367,13 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     // Other platforms never enter Douyu delivery tracking, history, catalogs or statistics.
     if (isReadOnlyDanmakuPlatform(event.platform)) return
     if (event.type === 'message' && (isReadOnlyDanmakuPlatform(event.message.platform) || isReadOnlyDanmakuRoom(event.message.room))) return
-    if (event.type === 'signal' && event.signal.platform === 'huya') return
     if (event.type === 'state' && isReadOnlyDanmakuRoom(event.room)) return
     if (event.type === 'message') { options.danmaku.observe(event.message); insights.observe(event.message) }
     else if (event.type === 'signal') {
-      if (event.signal.kind !== 'viewers') insights.signal(event.signal)
-      if (event.signal.kind === 'live') updateWatchContext()
+      const signal = event.signal
+      if (signal.platform === 'huya' || signal.platform === 'bilibili') return
+      insights.signal(signal)
+      if (signal.kind === 'live') updateWatchContext()
     }
     else {
       lottery.connection(event.room, event.state === 'connected')

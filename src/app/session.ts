@@ -39,6 +39,11 @@ import { DEFAULT_SETTINGS, loadSettings, normalizeBasicClockRoi, saveSettings } 
 import type { BufferState } from '../../electron/bufferManager'
 import { colorForIndex } from '../../server/danmaku/douyuProtocol'
 import { danmakuRoom, isReadOnlyDanmakuPlatform, type ChatMessage } from '../../server/danmaku/types'
+import { bilibiliColor, bilibiliId, copyBilibiliMetadata, type BilibiliMetadata } from '../core/bilibiliMetadata'
+import { createBilibiliSuperChatState, updateBilibiliSuperChats } from '../core/bilibiliSuperChats'
+import { huyaChatColorHex, readHuyaChatMetadata } from '../core/huyaChat'
+import { readHuyaOnTvSnapshot } from '../core/huyaOnTv'
+import type { HuyaOnTvSnapshot } from '../../server/platforms/huyaOnTv'
 import { normalizeDouyuGift, normalizeDouyuSender } from '../core/douyuMetadata'
 import { DanmakuProcessor, DEFAULT_DANMAKU_PREFERENCES, readDanmakuPreferences, type DanmakuPreferences } from '../core/danmakuProcessing'
 import { clampPlayableSeek } from '../media/timebase'
@@ -81,6 +86,9 @@ export interface SessionSnapshot {
     errorDetail?: ErrorDetails
     pending: number
     dropped: number
+    huyaOnTv?: HuyaOnTvSnapshot | null
+    bilibiliSuperChats?: ReturnType<typeof createBilibiliSuperChatState>
+    connectionRevision?: number
   }
   profiles: Record<SourceRole, ActiveProfile | null>
   basicProgress: Record<SourceRole, BasicClockProgress | null>
@@ -191,7 +199,9 @@ export class Session {
   }
   private unsubscribeDanmaku: (() => void) | null = null
   private danmakuGeneration = 0
+  private danmakuConnectionRevision = 0
   private matchDouyuLotteryCommand: ((message: Pick<ChatMessage, 'room' | 'text' | 'receivedAt'>) => string | null) | null = null
+  private matchPlatformActivity: ((message: ChatMessage) => string | null) | null = null
   private filter: CompiledDanmakuFilter
   private schedulerDeadline: number | null = null
   private progress = createPlaybackProgress()
@@ -756,7 +766,7 @@ export class Session {
       const replacement: MediaDescriptor = { ...descriptor, url: stream.url, kind: stream.kind,
         label: stream.label, sourceQualities: stream.qualities, sourceQuality: stream.quality,
         sourceRoom: stream.sourceRoom ?? descriptor.sourceRoom,
-        danmakuRoom: stream.danmakuRoom ?? descriptor.danmakuRoom }
+        danmakuRoom: stream.danmakuRoom ?? descriptor.danmakuRoom, sourceChannel: stream.channel ?? descriptor.sourceChannel }
       await this.loadSource(role, replacement)
       const loadedGeneration = this.sourceGeneration[role]
       if (this.engine.getState()[role].descriptor !== replacement || this.disposed) return
@@ -1329,8 +1339,16 @@ export class Session {
         if (generation !== this.danmakuGeneration) return
         if (event === 'danmaku') this.ingestDanmaku(data)
         else if (event === 'state') this.ingestDanmakuState(data)
+        else if (event === 'room-signal') this.ingestBilibiliSignal(data)
+        else if (event === 'huya-on-tv') {
+          const snapshot = readHuyaOnTvSnapshot(data, this.danmakuState.room)
+          if (snapshot && this.danmakuState.connected) {
+            this.danmakuState = { ...this.danmakuState, huyaOnTv: snapshot }
+            this.notify()
+          }
+        }
         else if (event === 'error') {
-          this.danmakuState = { ...this.danmakuState, connected: false, error: '弹幕连接中断，正在重试', errorDetail: errorDetails(data) }
+          this.danmakuState = { ...this.danmakuState, connected: false, huyaOnTv: null, bilibiliSuperChats: undefined, error: '弹幕连接中断，正在重试', errorDetail: errorDetails(data) }
           this.notify()
         }
       })
@@ -1365,8 +1383,25 @@ export class Session {
     this.matchDouyuLotteryCommand = matcher
   }
 
+  setPlatformActivityMatcher(matcher: typeof this.matchPlatformActivity): void {
+    this.matchPlatformActivity = matcher
+  }
+
+  private ingestBilibiliSignal(data: unknown): void {
+    const room = this.danmakuState.room
+    if (!room?.startsWith('bilibili:') || !data || typeof data !== 'object') return
+    const event = data as { platform?: unknown; kind?: unknown; room?: unknown; ids?: unknown }
+    if (event.platform !== 'bilibili' || event.kind !== 'super-chat-delete' || event.room !== room || !Array.isArray(event.ids)) return
+    const ids = event.ids.slice(0, 512).flatMap(id => bilibiliId(id) ?? [])
+    const state = this.danmakuState.bilibiliSuperChats ?? createBilibiliSuperChatState(room)
+    this.danmakuState.bilibiliSuperChats = updateBilibiliSuperChats(state, {
+      platform: 'bilibili', room: room as `bilibili:${string}`, kind: 'super-chat-delete', ids, receivedAt: this.now(),
+    }, this.now())
+    this.notify()
+  }
+
   pushDanmaku(message: Pick<DanmakuMessage, 'text' | 'user' | 'color' | 'sender' | 'gift' | 'dms' | 'platform' | 'huyaGift' | 'system'
-    | 'douyuLotteryActivityId'> & Partial<Pick<DanmakuMessage, 'receivedAt'>>): void {
+    | 'douyuLotteryActivityId' | 'platformActivityKey' | 'huyaChat' | 'douyin'> & BilibiliMetadata & Partial<Pick<DanmakuMessage, 'receivedAt'>>): void {
     const huya = message.platform === 'huya'
     const readOnly = isReadOnlyDanmakuPlatform(message.platform)
     const sender = readOnly ? null : normalizeDouyuSender(message.sender)
@@ -1377,8 +1412,10 @@ export class Session {
         ...(typeof message.huyaGift.name === 'string' && message.huyaGift.name.length <= 256 ? { name: message.huyaGift.name } : {}) } : null
     if (message.gift !== undefined && !gift) return
     if (message.huyaGift !== undefined && !huyaGift) return
-    if (message.system && !gift && !huyaGift) return
-    const isGift = !!gift || !!huyaGift
+    const bilibili = message.platform === 'bilibili' ? copyBilibiliMetadata(message) : {}
+    const isGift = !!gift || !!huyaGift || !!bilibili.bilibiliGift || message.douyin?.method === 'WebcastGiftMessage'
+    const announcement = message.douyin?.method === 'WebcastRoomMessage'
+    if (message.system && !isGift && !bilibili.superChat && !announcement) return
     if (isGift) {
       if (!this.settingsValue.danmaku.showGifts) return
       // Gift notices keep media-time alignment and user blocking, but are not chat text.
@@ -1399,10 +1436,14 @@ export class Session {
       user: message.user,
       color: message.color,
       ...(message.platform ? { platform: message.platform } : {}),
-      ...(isGift ? { system: true } : {}),
+      ...(isGift || announcement ? { system: true } : {}),
       ...(sender ? { sender } : {}),
       ...(gift ? { gift } : {}),
       ...(huyaGift ? { huyaGift } : {}),
+      ...bilibili,
+      ...(message.huyaChat ? { huyaChat: message.huyaChat } : {}),
+      ...(message.douyin ? { douyin: message.douyin } : {}),
+      ...(message.platformActivityKey ? { platformActivityKey: message.platformActivityKey } : {}),
       ...(message.douyuLotteryActivityId ? { douyuLotteryActivityId: message.douyuLotteryActivityId } : {}),
       ...(!readOnly && typeof message.dms === 'number' && Number.isFinite(message.dms) ? { dms: message.dms } : {}),
       scheduleTime,
@@ -1415,17 +1456,27 @@ export class Session {
     if (!data || typeof data !== 'object') return
     const payload = data as Partial<ChatMessage>
     if (typeof payload.text !== 'string' || payload.text.length === 0) return
-    const platform = payload.platform === 'douyin' ? 'douyin' : payload.platform === 'huya' ? 'huya' : 'douyu'
+    const platform = payload.platform ?? 'douyu'
     if (platform !== danmakuRoom(this.danmakuState.room ?? '').platform
       || (payload.room !== undefined && payload.room !== this.danmakuState.room)) return
-    if (platform === 'douyin' && (payload.room !== this.danmakuState.room || payload.system || payload.gift || payload.huyaGift)) return
+    if (platform === 'douyin' && (payload.room !== this.danmakuState.room || payload.gift || payload.huyaGift
+      || (payload.system && payload.douyin?.method !== 'WebcastGiftMessage' && payload.douyin?.method !== 'WebcastRoomMessage'))) return
     const receivedAt = typeof payload.receivedAt === 'number' && Number.isSafeInteger(payload.receivedAt) && payload.receivedAt >= 0
       ? payload.receivedAt : undefined
     if (isReadOnlyDanmakuPlatform(platform)) {
+      const bilibili = platform === 'bilibili' ? copyBilibiliMetadata(payload) : {}
+      const huya = platform === 'huya' ? readHuyaChatMetadata(payload.huyaChat) : null
+      const douyin = platform === 'douyin' && payload.douyin ? payload.douyin : undefined
+      const platformActivityKey = this.danmakuState.connected && receivedAt !== undefined && typeof payload.room === 'string'
+        ? this.matchPlatformActivity?.(payload as ChatMessage) : null
       this.pushDanmaku({
         text: payload.text,
         user: typeof payload.username === 'string' ? payload.username.trim() || '匿名' : '匿名',
-        color: colorForIndex(0), platform, receivedAt,
+        color: platform === 'bilibili' ? bilibiliColor(payload.color) : huyaChatColorHex(huya?.bulletColor) ?? colorForIndex(0), platform, receivedAt,
+        ...bilibili,
+        ...(huya ? { huyaChat: huya } : {}),
+        ...(douyin ? { douyin } : {}),
+        ...(platformActivityKey ? { platformActivityKey } : {}),
         ...(payload.system === true ? { system: true } : {}),
         ...(platform === 'huya' && payload.huyaGift !== undefined ? { huyaGift: payload.huyaGift } : {}),
       })
@@ -1456,12 +1507,16 @@ export class Session {
     const detail = typeof payload.detail === 'string' ? payload.detail : null
     const connected = state === 'connected'
     if (this.danmakuState.room?.startsWith('douyin:') && payload.room !== undefined && payload.room !== this.danmakuState.room) return
+    if (connected && !this.danmakuState.connected) this.danmakuConnectionRevision++
     this.danmakuState = {
       ...this.danmakuState,
       connected,
+      connectionRevision: this.danmakuConnectionRevision,
+      ...(!connected ? { huyaOnTv: null } : {}),
       ...(typeof payload.room === 'string'
         && (this.danmakuState.room?.startsWith('douyin:') ? /^douyin:[1-9][0-9]{0,19}$/
-          : this.danmakuState.room?.startsWith('huya:') ? /^huya:[1-9][0-9]{0,15}$/ : /^[1-9][0-9]{0,11}$/).test(payload.room)
+          : this.danmakuState.room?.startsWith('huya:') ? /^huya:[1-9][0-9]{0,15}$/
+            : this.danmakuState.room?.startsWith('bilibili:') ? /^bilibili:[1-9][0-9]{0,11}$/ : /^[1-9][0-9]{0,11}$/).test(payload.room)
         ? { room: payload.room } : {}),
       error: connected ? null : (detail ?? DANMAKU_STATE_TEXT[state] ?? this.danmakuState.error),
       errorDetail: connected ? undefined : errorDetails(payload.errorDetail ?? { state, detail: payload.detail }),
@@ -1487,6 +1542,16 @@ export class Session {
     const visible: DanmakuMessage[] = []
     let merged = false
     for (const message of released) {
+      if (message.superChat && message.room?.startsWith('bilibili:')) {
+        const room = message.room as `bilibili:${string}`
+        const state = this.danmakuState.bilibiliSuperChats ?? createBilibiliSuperChatState(room)
+        this.danmakuState.bilibiliSuperChats = updateBilibiliSuperChats(state, {
+          ...copyBilibiliMetadata(message), id: message.id, text: message.text, username: message.user,
+          platform: 'bilibili', room, color: 0, level: 0, system: false, receivedAt: message.receivedAt,
+        }, this.now())
+        this.notify()
+        continue
+      }
       const result = this.danmakuProcessor.process(message, mediaTime)
       if (result.kind === 'hide') continue
       if (result.kind === 'merge') {

@@ -80,7 +80,7 @@ function HuyaOnTvRoomCard({ room, snapshot, connected, reminders, onRemindersCha
 export function HuyaRoomWatchStatus({ room }: { room: string | null }) {
   if (!room || !/^huya:[1-9]\d{0,15}$/.test(room)) return null
   return <section className="huya-on-tv-card" aria-label="虎牙本房观看">
-    <strong>本房观看时长未验证</strong>
+    <strong>本房官方今日及累计观看时长未验证</strong>
     <p>当前没有可核验的个人观时读数. 虎牙 App 的 我的 &gt; 历史/收藏 &gt; 看过 可查询浏览记录.</p>
     <p>个人看播任务进度请在虎牙 App 的任务中心或活动页查看.</p>
   </section>

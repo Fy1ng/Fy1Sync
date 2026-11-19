@@ -296,6 +296,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         sourceQualities: stream.qualities,
         sourceQuality: stream.quality,
         sourceRoom: stream.sourceRoom ?? stream.danmakuRoom,
+        sourceChannel: stream.channel,
         danmakuRoom: stream.danmakuRoom,
       })
       generation = session.sourceRevision(role)
@@ -303,7 +304,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       // Removal and a newer source both invalidate any room that accompanied this load.
       if (generation !== session.sourceRevision(role) || loads.current[role] !== request) return false
       // The commentary room's danmaku come along with it; nothing to set up separately.
-      if (role === 'commentary') {
+      if (role === 'commentary' || !session.snapshot.danmaku.room && !session.snapshot.media.commentary.descriptor) {
         if (parsed.platform === 'douyin' || stream.platform === 'douyin') {
           const roomKey = douyinDanmakuRoom({ input, danmakuRoom: stream.danmakuRoom })
           if (roomKey) {

@@ -12,6 +12,10 @@ import { BACKEND_METHODS, type BackendMethods } from './backendContracts'
 import type { Cs2Schedule, StreamTitle, StreamTitleInput } from '../server/esports/types'
 import type { DouyuWatchPlaybackReport, DouyuWatchState } from '../server/douyu/watchTypes'
 import type { DouyuLotterySnapshot } from '../server/douyu/douyuLotteryTypes'
+import { BILIBILI_LOTTERY_METHODS, type BilibiliLotteryMethods } from '../src/core/bilibiliLottery'
+import type { BilibiliEmoteCatalog } from '../server/platforms/bilibiliEmotes'
+import type { BilibiliRoomSnapshot, BilibiliWatchEvidenceStatus } from '../server/platforms/bilibiliRoomInsights'
+import type { DouyinLotterySnapshot, DouyinLotteryTarget } from '../src/core/douyinLottery'
 export type { Cs2Schedule, Cs2Match, Cs2Team, Cs2Stream, StreamTitle, StreamTitleInput } from '../server/esports/types'
 
 /** This context is constructed by trusted IPC, never read from renderer arguments. */
@@ -50,7 +54,7 @@ export interface SavedRoomMetadata {
 }
 export type SaveRoomInput = Pick<SavedRoom, 'role' | 'input' | 'platform' | 'label'>
 
-export interface FeatureMethods extends BackendMethods {
+export interface FeatureMethods extends BackendMethods, BilibiliLotteryMethods {
   getCs2Schedule: { args: { refresh?: boolean } | undefined; result: Cs2Schedule }
   /** Open the fixed Liquipedia page in the user's browser for manual IP verification. */
   openLiquipediaVerification: { args: undefined; result: { opened: true } }
@@ -90,6 +94,14 @@ export interface FeatureMethods extends BackendMethods {
   getDouyuWatchState: { args: undefined; result: DouyuWatchState }
   getDouyuLottery: { args: { room: string }; result: DouyuLotterySnapshot }
   openDouyuLotteryRoom: { args: { room: string; activityId: string }; result: { opened: boolean } }
+  getBilibiliRoomInsights: { args: { room: string }; result: BilibiliRoomSnapshot }
+  getBilibiliWatchEvidence: { args: { room: string }; result: BilibiliWatchEvidenceStatus }
+  getBilibiliEmoteCatalog: { args: { room: string }; result: BilibiliEmoteCatalog }
+  openBilibiliRoomInfo: { args: { room: string }; result: { opened: boolean } }
+  getDouyinLottery: { args: { room: string }; result: DouyinLotterySnapshot | null }
+  openDouyinLotteryRoom: { args: DouyinLotteryTarget & { activityId: string }; result: { opened: boolean } }
+  openHuyaOnTvRoom: { args: { room: string }; result: { opened: boolean } }
+  openPlatformRoomInfo: { args: { role: 'official' | 'commentary'; entry: 'history' | 'time-watched' | 'channel' | 'drops' }; result: { opened: boolean } }
   setDouyuLiveNotifications: { args: DouyuLiveNotificationSettings; result: DouyuLiveNotificationState }
   /** What the main process is running now; a reloaded window starts from this, not from off. */
   getDouyuLiveNotifications: { args: undefined; result: DouyuLiveNotificationState }
@@ -119,6 +131,9 @@ export const FEATURE_METHODS = [
   'reportDouyuWatchPlayback', 'getDouyuWatchState',
   'getDouyuFansWatchTime',
   'getDouyuLottery', 'openDouyuLotteryRoom',
+  ...BILIBILI_LOTTERY_METHODS,
+  'getBilibiliRoomInsights', 'getBilibiliWatchEvidence', 'getBilibiliEmoteCatalog', 'openBilibiliRoomInfo',
+  'getDouyinLottery', 'openDouyinLotteryRoom', 'openHuyaOnTvRoom', 'openPlatformRoomInfo',
   'checkAppUpdate', 'getAppUpdateState',
   'getOnlineUpdateState', 'setOnlineUpdateSource', 'checkOnlineUpdate', 'downloadOnlineUpdate',
   'cancelOnlineUpdate', 'applyOnlineUpdate', 'rollbackFrontendUpdate', 'reportFrontendReady',

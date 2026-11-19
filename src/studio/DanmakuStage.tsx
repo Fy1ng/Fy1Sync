@@ -24,6 +24,7 @@ import { useComposer } from './composer'
 import { useDanmakuActions } from './danmakuActions'
 import { ScrollingLayer, type LayerEntry, type LayerItem } from './danmakuLayer'
 import { isReadOnlyDanmakuPlatform, isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
+import { fillBilibiliMessage } from './BilibiliMessage'
 
 type ActiveItem = LayerItem<DanmakuMessage>
 
@@ -147,7 +148,8 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
       build: () => {
         const node = document.createElement('span')
         node.className = 'danmaku-item'
-        node.textContent = message.text
+        if (message.platform === 'bilibili') fillBilibiliMessage(node, message.text, message)
+        else node.textContent = message.douyin?.emoji?.fallback || message.text
         if (message.duplicateGroupId) {
           const badge = document.createElement('span')
           badge.className = 'danmaku-count'
@@ -167,7 +169,7 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
     const released = session.drainDanmaku()
     const layer = layerRef.current
     if (!settingsRef.current.enabled || !layer) return
-    const scrolling = released.filter((message) => !message.gift && !message.huyaGift)
+    const scrolling = released.filter((message) => !message.system && !message.gift && !message.huyaGift && !message.bilibiliGift && !message.douyin?.gift)
     if (scrolling.length > 0) layer.spawn(scrolling.map(entryFor), nowMs)
     layer.sweep()
   })

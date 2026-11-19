@@ -30,6 +30,7 @@ export type MediaDescriptor = {
   sourceQuality?: string
   /** Confirmed room of this video, independent of the danmaku subscription. */
   sourceRoom?: string
+  sourceChannel?: string
   /** Stable, opaque local-file identity for clock-region memories; never a blob URL. */
   recognitionSourceKey?: string
   /** Platform-qualified chat identity. Never infer it from another platform's room id. */

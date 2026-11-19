@@ -11,6 +11,8 @@ import type { StreamSyncerBridge } from '../../electron/contracts'
 import type { DanmakuEvent } from './apiClient'
 import { type SettingsStorage } from './settings'
 import { parseStt, toChatMessage } from '../../server/danmaku/douyuProtocol'
+import { parseBilibiliRoomEvent } from '../../server/danmaku/bilibiliEvents'
+import { bilibiliReplay, bilibiliReplayRoom } from '../../server/danmaku/bilibiliReplayFixture'
 
 /** The only fake boundary is the typed preload, including its cancellation handle. */
 class StubDanmakuSubscription {
@@ -95,6 +97,30 @@ afterEach(() => {
 })
 
 describe('Session danmaku transport', () => {
+  it('keeps Bilibili metadata and rejects a replayed SC after a same-room removal', async () => {
+    const { session, engine } = await makeSession()
+    const room = `bilibili:${bilibiliReplayRoom}`
+    const now = Date.now()
+    session.connectDanmaku(room)
+    setPaused(engine.element('commentary'), true)
+    const source = StubDanmakuSubscription.instances[0]!
+    source.emit('state', { state: 'connected', room })
+    const inline = parseBilibiliRoomEvent(bilibiliReplay.inline, bilibiliReplayRoom, now)
+    source.emit('danmaku', inline)
+    expect(session.drainDanmaku()).toMatchObject([{ room, platform: 'bilibili', text: '你好[笑]', emotes: [{ text: '[笑]' }] }])
+
+    const superChat = parseBilibiliRoomEvent({ ...bilibiliReplay.superChat, data: { ...bilibiliReplay.superChat.data,
+      start_time: Math.floor(now / 1000), end_time: Math.floor(now / 1000) + 90,
+    } }, bilibiliReplayRoom, now)
+    source.emit('danmaku', superChat)
+    session.drainDanmaku()
+    expect(session.flush().danmaku.bilibiliSuperChats?.active).toHaveLength(1)
+    source.emit('room-signal', parseBilibiliRoomEvent(bilibiliReplay.deleteSuperChat, bilibiliReplayRoom, now))
+    source.emit('danmaku', superChat)
+    session.drainDanmaku()
+    expect(session.flush().danmaku.bilibiliSuperChats?.active).toHaveLength(0)
+  })
+
   it('retains canonical room and arrival time across media delay, while rejecting another room', async () => {
     const { session, engine } = await makeSession()
     session.connectDanmaku('100')
