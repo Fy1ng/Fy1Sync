@@ -1,5 +1,15 @@
 import { expect, test } from './electron'
-import { openSettings } from './helpers'
+import { openSettings, openSettingsSection } from './helpers'
+
+test('本地输入校验只提示如何修正，不提供原始错误', async ({ page }) => {
+  const settings = await openSettingsSection(page, '弹幕记录')
+  await settings.getByRole('tablist', { name: '弹幕记录', exact: true }).getByRole('tab', { name: '历史', exact: true }).click()
+  await settings.getByRole('textbox', { name: '用户 ID' }).fill('abc')
+  await settings.getByRole('button', { name: '搜索', exact: true }).click()
+  const validation = settings.getByRole('alert').filter({ hasText: '用户 ID 须为数字' })
+  await expect(validation).toBeVisible()
+  await expect(validation.getByRole('button', { name: '查看原始错误' })).toHaveCount(0)
+})
 
 test('赛程 HTTP 错误通过真实 IPC 展开并复制原始字段', async ({ electronApp, page }, testInfo) => {
   await page.getByRole('button', { name: /^CS2 赛程/ }).click()

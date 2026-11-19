@@ -6,10 +6,8 @@ import { displayError } from '../../core/errorDetails'
 import './about.css'
 
 const SOURCE: Record<OnlineUpdateSourceId, string> = { github: 'GitHub', gitcode: 'GitCode' }
-const ITEM_PHASE: Record<OnlineUpdateItemState['phase'], string> = {
-  unavailable: '暂无可用更新', current: '已是最新版本', available: '有可用更新',
-  incompatible: '不适用于当前应用', downloading: '正在下载', ready: '已下载并校验',
-  trial: '正在检查新界面', 'rolled-back': '已回退到可用界面', error: '更新未完成',
+const RELEASE_PAGE: Record<OnlineUpdateSourceId, string> = {
+  github: 'https://github.com/Fy1ng/Fy1Sync/releases', gitcode: 'https://gitcode.com/Fy1ng/Fy1Sync/releases',
 }
 type Operation = 'source' | 'check' | 'download-frontend' | 'download-application' | 'apply' | 'rollback' | 'read'
 type UpdateResult = ApiResult<OnlineUpdateState | { accepted: boolean }>
@@ -20,6 +18,14 @@ function formatTime(ms: number): string {
 function formatBytes(bytes: number): string { return `${(bytes / 1_048_576).toFixed(1)} MB` }
 function isDownloading(state: OnlineUpdateState | null): boolean {
   return state?.frontend.phase === 'downloading' || state?.application.phase === 'downloading'
+}
+function updateKind(state: OnlineUpdateState): OnlineUpdateKind | null {
+  for (const phase of [['downloading'], ['available', 'ready'], ['error']]) {
+    for (const kind of ['application', 'frontend'] as const) {
+      if (state[kind].version !== null && phase.includes(state[kind].phase)) return kind
+    }
+  }
+  return null
 }
 
 export function AppUpdateSettings(): React.ReactNode {
@@ -95,6 +101,7 @@ export function AppUpdateSettings(): React.ReactNode {
   const cancel = async (): Promise<void> => {
     const owner = lifetime.current
     if (!owner || cancelPending.current || (!isDownloading(state) && busy !== 'download-frontend' && busy !== 'download-application')) return
+    const target = busy === 'download-frontend' || state?.frontend.phase === 'downloading' ? 'frontend' : 'application'
     const token = {}
     cancelPending.current = token
     const submittedRevision = ++revision.current
@@ -105,6 +112,7 @@ export function AppUpdateSettings(): React.ReactNode {
       if (lifetime.current !== owner || cancelPending.current !== token) return
       if (result.ok) {
         if (submittedRevision === revision.current) setState(result.value)
+        if (result.value.phase === 'idle' && result.value[target].phase === 'available') setNotice('已取消下载')
       } else { setError(result); await reread(owner) }
     } catch (caught) {
       if (lifetime.current === owner && cancelPending.current === token) {
@@ -127,9 +135,22 @@ export function AppUpdateSettings(): React.ReactNode {
   const checking = busy === 'check' || state?.phase === 'checking'
   const disabled = !state || busy !== null || cancelling || checking || downloading
   const networkDisabled = disabled || state?.phase === 'unconfigured'
+  const kind = state ? busy === 'download-frontend' ? 'frontend' : busy === 'download-application' ? 'application' : updateKind(state) : null
+  const item = state && kind ? state[kind] : null
+  const total = item?.totalBytes != null && item.totalBytes > 0 ? item.totalBytes : null
   const status = busy === 'source' ? '正在保存来源…' : checking ? '正在检查更新…'
-    : state?.phase === 'unconfigured' ? '未配置更新来源' : state?.phase === 'error' ? '检查未完成'
-      : state ? state.checkedAt === null ? '尚未检查更新' : '更新检查已完成' : '正在读取更新状态…'
+    : state?.phase === 'unconfigured' ? '此版本不支持在线更新' : state?.phase === 'error' ? state.message || '更新未完成'
+      : downloading ? '正在下载并校验更新' : item?.phase === 'ready' ? '已下载并校验'
+        : kind ? '有可用更新' : state?.frontend.phase === 'trial' ? '正在检查新界面'
+          : state?.frontend.phase === 'rolled-back' ? state.frontend.message || '已回退到可用界面'
+            : state && (state.frontend.phase === 'error' || state.application.phase === 'error') ? '更新未完成'
+              : state && (state.frontend.phase === 'incompatible' || state.application.phase === 'incompatible') ? '在线更新不适用于当前应用'
+                : state ? state.checkedAt === null ? '尚未检查更新' : '已是最新版本' : '正在读取更新状态…'
+  const consequence = kind === 'application'
+    ? item?.phase === 'ready' ? '将结束播放、退出应用并打开安装向导' : '下载后需退出应用并打开安装向导'
+    : item?.phase === 'ready' ? '将结束播放并重启应用，启用新界面' : '下载后下次启动生效，也可立即重启应用'
+  const incompatible = state && (state.application.phase === 'incompatible' ? state.application
+    : !kind && state.frontend.phase === 'incompatible' ? state.frontend : null)
 
   return (
     <>
@@ -146,26 +167,49 @@ export function AppUpdateSettings(): React.ReactNode {
             disabled={!state?.availableSources.includes(source)}>{SOURCE[source]}</option>)}
         </select>
       </label>
-      <p className="muted">选择来源后，点击「检查更新」</p>
-      <div className="row-split">
-        <p className={`about-status is-${state?.phase ?? 'idle'}`} role="status">
-          {state?.phase === 'error' && !checking ? <ErrorText error={state.errorDetail ?? state} message={status} /> : status}
-          {state?.message && !checking && <span className="muted">{state.message}</span>}
-        </p>
-        <button type="button" className="btn-solid small" disabled={networkDisabled}
-          onClick={() => void perform('check', () => apiClient.feature('checkOnlineUpdate', undefined))}>{checking ? '正在检查…' : '检查更新'}</button>
-      </div>
-      {state && <div className="about-update-channels">
-        {(['frontend', 'application'] as const).map(kind => (
-          <UpdateChannel key={kind} kind={kind} item={state[kind]} disabled={disabled}
-            onDownload={() => void perform(`download-${kind}`, () => apiClient.feature('downloadOnlineUpdate', { kind }))}
-            onApply={() => void perform('apply', () => apiClient.feature('applyOnlineUpdate', { kind }))} />
-        ))}
-      </div>}
-      {downloading && <div className="row-end">
-        <button type="button" className="btn-quiet small" disabled={cancelling}
-          onClick={() => void cancel()}>{cancelling ? '正在取消…' : '取消下载'}</button>
-      </div>}
+      <section className="about-update" aria-label="应用更新">
+        <div className="row-split">
+          <p className={`about-status is-${state?.phase === 'error' ? 'error' : item?.phase ?? 'idle'}`} role="status">
+            {state?.phase === 'error' && !checking
+              ? <ErrorText error={state.errorDetail ?? { message: status }} message={status} /> : status}
+          </p>
+          <button type="button" className="btn-quiet small" disabled={networkDisabled}
+            onClick={() => void perform('check', () => apiClient.feature('checkOnlineUpdate', undefined))}>{checking ? '正在检查…' : '检查更新'}</button>
+        </div>
+        {kind && item && <div className="about-update-action">
+          <button type="button" className="btn-solid small" disabled={disabled}
+            onClick={() => void (item.phase === 'ready'
+              ? perform('apply', () => apiClient.feature('applyOnlineUpdate', { kind }))
+              : perform(`download-${kind}`, () => apiClient.feature('downloadOnlineUpdate', { kind })))}>更新到 {item.version}</button>
+          <p className="muted">{consequence}</p>
+        </div>}
+        {downloading && <div className="about-update-progress">
+          <progress aria-label="更新下载进度" max={100}
+            value={item?.phase === 'downloading' && total ? Math.min(100, Math.max(0, item.downloadedBytes / total * 100)) : undefined} />
+          <span className="num muted">{formatBytes(item?.downloadedBytes ?? 0)}{total ? ` / ${formatBytes(total)}` : ''}</span>
+          <button type="button" className="btn-quiet small" disabled={cancelling}
+            onClick={() => void cancel()}>{cancelling ? '正在取消…' : '取消下载'}</button>
+        </div>}
+        {state && (['frontend', 'application'] as const).map(failedKind => {
+          const failed = state[failedKind] as OnlineUpdateItemState & { errorDetail?: unknown }
+          if (failed.phase !== 'error') return null
+          const summary = `${failedKind === 'frontend' ? '界面更新' : '完整应用更新'}失败：${failed.message || '请重试'}`
+          return <p key={failedKind} className="form-error" role="alert">
+            <ErrorText error={failed.errorDetail ?? { message: summary }} message={summary} />
+          </p>
+        })}
+        {kind && state && (state.frontend.phase === 'trial' || state.frontend.phase === 'rolled-back') && <p className="about-status" role="status">
+          {state.frontend.phase === 'trial' ? '正在检查新界面' : state.frontend.message || '已回退到可用界面'}
+        </p>}
+        {(state?.phase === 'unconfigured' || incompatible) && <p className="muted">
+          {incompatible && <>{incompatible.message || '此更新不适用于当前应用'} </>}
+          <a href={RELEASE_PAGE[state?.source ?? 'github']} target="_blank" rel="noreferrer">从发布页下载完整应用</a>
+        </p>}
+        {item?.notes && <details className="about-notes">
+          <summary>更新说明</summary>
+          <pre>{item.notes}</pre>
+        </details>}
+      </section>
       {state?.canRollbackFrontend && <div className="row-split">
         <p className="muted">回退会重启应用，本机数据保留</p>
         <button type="button" className="btn-quiet small" disabled={disabled}
@@ -178,49 +222,5 @@ export function AppUpdateSettings(): React.ReactNode {
           onClick={() => void perform('read', () => apiClient.feature('getOnlineUpdateState', undefined))}>重新读取状态</button>
       </div>}
     </>
-  )
-}
-
-function UpdateChannel({ kind, item, disabled, onDownload, onApply }: {
-  kind: OnlineUpdateKind
-  item: OnlineUpdateItemState & { errorDetail?: unknown }
-  disabled: boolean
-  onDownload: () => void
-  onApply: () => void
-}): React.ReactNode {
-  const frontend = kind === 'frontend'
-  const title = frontend ? '界面更新' : '完整应用更新'
-  const canDownload = item.phase === 'available' || item.phase === 'error' && item.version !== null
-  const total = item.totalBytes !== null && item.totalBytes > 0 ? item.totalBytes : null
-  return (
-    <section className="about-update-channel" aria-label={title}>
-      <div className="row-split">
-        <div className="about-update-heading">
-          <h4>{title}</h4>
-          {item.version && <span className="num muted">{item.version}{frontend && item.revision !== null ? ` / r${item.revision}` : ''}</span>}
-        </div>
-        {canDownload && <button type="button" className="btn-solid small" disabled={disabled} onClick={onDownload}>
-          {frontend ? '下载界面更新' : '下载完整更新'}
-        </button>}
-        {item.phase === 'ready' && <button type="button" className="btn-solid small" disabled={disabled} onClick={onApply}>
-          {frontend ? '应用并重启' : '安装完整更新'}
-        </button>}
-      </div>
-      <p className={`about-status is-${item.phase}`} role="status">{item.phase === 'error' ? <ErrorText error={item.errorDetail ?? item} message={ITEM_PHASE[item.phase]} /> : ITEM_PHASE[item.phase]}
-        {item.message && <span className="muted">{item.message}</span>}
-      </p>
-      {item.phase === 'downloading' && <div className="about-update-progress">
-        <progress aria-label={`${title}下载进度`} max={100}
-          value={total ? Math.min(100, Math.max(0, item.downloadedBytes / total * 100)) : undefined} />
-        <span className="num muted">{formatBytes(item.downloadedBytes)}{total ? ` / ${formatBytes(total)}` : ''}</span>
-      </div>}
-      <p className="muted">{frontend
-        ? '下次启动时生效。新界面启动失败会自动回退。'
-        : '下载不影响播放，安装时将退出应用'}</p>
-      {item.notes && <details className="about-notes">
-        <summary>{title}说明</summary>
-        <pre>{item.notes}</pre>
-      </details>}
-    </section>
   )
 }

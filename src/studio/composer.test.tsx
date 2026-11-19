@@ -77,6 +77,7 @@ function Probe(): React.ReactNode {
       <span data-testid="draft">{composer.draft}</span>
       <span data-testid="notice" data-state={composer.notice?.status ?? ''}>{composer.notice?.message ?? ''}</span>
       <span data-testid="notice-fields">{JSON.stringify(composer.notice?.detail ?? null)}</span>
+      <span data-testid="draft-problem">{composer.draftProblem}</span>
       <span data-testid="draft-fields">{JSON.stringify(composer.draftErrorDetail ?? null)}</span>
       <span data-testid="gateway">{composer.delivery?.gateway ?? ''}</span>
       <button type="button" onClick={() => composer.setDraft('你好')}>draft</button>
@@ -102,7 +103,7 @@ function renderProbe(session: Session): void {
 }
 
 describe('the studio send box', () => {
-  it('keeps the full failure response and validates drafts without storing their contents in errors', async () => {
+  it('keeps the full failure response but reports local validation without diagnostics', async () => {
     const invoke = vi.mocked(window.streamSyncer!.invoke)
     const original = invoke.getMockImplementation()!
     invoke.mockImplementation((async (method: string, args: unknown) => method === 'sendComposedDouyuMessage'
@@ -111,8 +112,8 @@ describe('the studio send box', () => {
     renderProbe(await connectedSession())
     await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('ready'))
     fireEvent.click(screen.getByRole('button', { name: 'draft-invalid' }))
-    expect(JSON.parse(screen.getByTestId('draft-fields').textContent!)).toMatchObject({ name: 'MessageCompositionError', code: 'invalid-text' })
-    expect(screen.getByTestId('draft-fields').textContent).not.toContain('测试')
+    expect(screen.getByTestId('draft-problem')).toHaveTextContent('弹幕含不支持的字符，请改为单行文字')
+    expect(screen.getByTestId('draft-fields')).toHaveTextContent('null')
     fireEvent.click(screen.getByRole('button', { name: 'draft' }))
     fireEvent.click(screen.getByRole('button', { name: 'send' }))
     await waitFor(() => expect(screen.getByTestId('notice')).toHaveAttribute('data-state', 'failed'))

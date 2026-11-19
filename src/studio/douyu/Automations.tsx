@@ -112,7 +112,7 @@ function AutomationRow({ task, data, act, locked }: { task: AutomationView; data
       <div className="task-main">
         <span className="task-kind">{spec.label}</span>
         <span className="task-status" data-status={task.status}>{STATUS[task.status]}</span>
-        {(task.status === 'failed' || task.status === 'waiting-user') && !task.reason && <ErrorDetailsButton error={failure.errorDetail ?? failure.detail ?? { status: task.status }} />}
+        {(task.status === 'failed' || task.status === 'waiting-user') && !task.reason && <ErrorDetailsButton error={failure.errorDetail ?? failure.detail ?? { code: failure.code }} />}
         <span className="muted">{account?.label ?? '账号不可用'} · {details.join(' · ')}</span>
       </div>
 
@@ -318,7 +318,7 @@ function NewAutomation({ data, act, locked, onDone }: { data: DouyuData; act: Ac
         )}
       </div>
 
-      {tried && error && <p className="form-error" role="alert"><ErrorText error={check} message={error} /></p>}
+      {tried && error && <p className="form-error" role="alert">{error}</p>}
 
       <div className="row-end">
         <button type="button" className="btn-quiet" onClick={onDone}>取消</button>

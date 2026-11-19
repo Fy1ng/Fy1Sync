@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { displayError, errorDetails, ERROR_DETAIL_LIMITS } from './errorDetails'
+import { displayError, errorDetails, ERROR_DETAIL_LIMITS, hasAdditionalErrorDetails } from './errorDetails'
 
 describe('local error details', () => {
   it('retains the original exception, network code and cause beside a public summary', () => {
@@ -40,5 +40,28 @@ describe('local error details', () => {
   it('keeps redaction stable as the same fields cross main and renderer boundaries', () => {
     const first = errorDetails({ message: 'Cookie=secret', cause: { message: 'token=secret' } })
     expect(errorDetails(errorDetails(first))).toEqual(first)
+  })
+  it.each([
+    '内容不能为空',
+    { message: '内容不能为空' },
+    { ok: false, message: ' 内容不能为空 ', detail: { message: '内容不能为空', optional: null, items: [], token: 'secret-value' } },
+    { detail: { message: '内容不能为空' } },
+    undefined,
+  ])('does not treat a repeated summary or unusable fields as diagnostics: %j', value => {
+    expect(hasAdditionalErrorDetails(errorDetails(value), '内容不能为空')).toBe(false)
+  })
+  it.each([
+    { message: '读取失败', code: 'READ_FAILED' },
+    { message: '读取失败', detail: { status: 429 } },
+    { message: '读取失败', stage: 'download' },
+    { message: '读取失败', cause: { message: 'ECONNREFUSED' } },
+    { message: 'fetch failed' },
+    { ok: true, value: {} },
+  ])('recognizes fields or lower-level text not already visible: %j', value => {
+    expect(hasAdditionalErrorDetails(errorDetails(value), '读取失败')).toBe(true)
+  })
+  it('does not count redaction itself as a difference from the visible summary', () => {
+    const message = 'Cookie: sid=sample'
+    expect(hasAdditionalErrorDetails(errorDetails({ message }), message)).toBe(false)
   })
 })

@@ -70,8 +70,8 @@ it('shows the raw fields for history failures and the local validation message',
   fireEvent.change(screen.getByLabelText('用户 ID'), { target: { value: 'abc' } })
   fireEvent.click(screen.getByRole('button', { name: '搜索' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('用户 ID 须为数字')
-  const region = screen.getByRole('region', { name: '原始错误信息' })
-  expect(JSON.parse(region.querySelector('code')!.textContent!)).toEqual({ message: '用户 ID 须为数字' })
+  expect(screen.queryByRole('button', { name: '查看原始错误' })).toBeNull()
+  expect(screen.queryByRole('region', { name: '原始错误信息' })).toBeNull()
 })
 
 describe('history', () => {

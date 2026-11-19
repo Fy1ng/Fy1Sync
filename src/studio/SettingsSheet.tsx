@@ -54,22 +54,29 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
   onFill: (text: string) => void
 }): React.ReactNode {
   const [section, setSection] = useState<SettingsSection>(target.section)
+  const networkDraft = useRef<NetworkDraftStatus | null>(null)
+  const [leave, setLeave] = useState<(() => void) | null>(null)
+  const requestLeave = (action: () => void): void => {
+    if (networkDraft.current?.dirty || networkDraft.current?.pending) setLeave(() => action)
+    else { setLeave(null); action() }
+  }
+  const close = (): void => requestLeave(onClose)
   const huya = isReadOnlyDanmakuRoom(room)
-  useEffect(() => setSection(target.section), [target])
+  useEffect(() => { if (target.section !== section) requestLeave(() => setSection(target.section)) }, [target])
   useEffect(() => { remember('settings:section', section) }, [section])
   return (
-    <Sheet title="设置" onClose={onClose} wide>
-      <div className="settings">
+    <Sheet title="设置" onClose={close} wide>
+      <SettingsCloseGuard onClose={close}>
         <nav className="settings-tabs" role="tablist" aria-label="设置分区">
           {SECTIONS.map((item) => (
             <button key={item.id} type="button" role="tab" aria-selected={section === item.id}
-              className={section === item.id ? 'is-on' : undefined} onClick={() => setSection(item.id)}>
+              className={section === item.id ? 'is-on' : undefined} onClick={() => { if (item.id !== section) requestLeave(() => setSection(item.id)) }}>
               {item.label}
             </button>
           ))}
         </nav>
         <div className="settings-body" role="tabpanel" aria-label={SECTIONS.find((item) => item.id === section)?.label}>
-          {section === 'general' && <General />}
+          {section === 'general' && <General networkDraft={networkDraft} requestLeave={requestLeave} leave={leave} onContinue={() => setLeave(null)} />}
           {section === 'accounts' && <AccountSettings target={target} onWatch={(next) => { onWatch(next); onClose() }} />}
           {huya && ['records', 'insights'].includes(section) && (
             <p className="settings-empty">{section === 'records' ? '弹幕记录仅支持斗鱼' : '房间数据仅支持斗鱼'}</p>
@@ -85,9 +92,27 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
             <FrameHashSettings />
           </div>}
         </div>
-      </div>
+      </SettingsCloseGuard>
     </Sheet>
   )
+}
+
+function SettingsCloseGuard({ onClose, children }: { onClose: () => void; children: React.ReactNode }): React.ReactNode {
+  const root = useRef<HTMLDivElement | null>(null)
+  const latest = useRef(onClose)
+  latest.current = onClose
+  useEffect(() => {
+    const dialog = root.current?.closest('dialog')
+    if (!dialog) return
+    const cancel = (event: Event): void => {
+      if (event.target !== dialog) return
+      event.preventDefault()
+      latest.current()
+    }
+    dialog.addEventListener('cancel', cancel)
+    return () => dialog.removeEventListener('cancel', cancel)
+  }, [])
+  return <div className="settings" ref={root}>{children}</div>
 }
 
 const ACCOUNT_PLATFORMS: { id: LoginPlatform; label: string }[] = [
@@ -126,14 +151,22 @@ const GENERAL: { id: GeneralPage; label: string }[] = [
   { id: 'about', label: '关于' },
 ]
 
-function General(): React.ReactNode {
+interface NetworkDraftStatus { dirty: boolean; pending: boolean }
+interface NetworkNavigation {
+  networkDraft: React.RefObject<NetworkDraftStatus | null>
+  requestLeave: (action: () => void) => void
+  leave: (() => void) | null
+  onContinue: () => void
+}
+
+function General({ networkDraft, requestLeave, leave, onContinue }: NetworkNavigation): React.ReactNode {
   const [saved, setPage] = useRemembered<GeneralPage>('settings:general', 'align')
   const page = GENERAL.some(item => item.id === saved) ? saved : 'align'
   return (
-    <SideTabs label="通用" value={page} onChange={setPage} tabs={GENERAL}>
+    <SideTabs label="通用" value={page} onChange={next => { if (next !== page) requestLeave(() => setPage(next)) }} tabs={GENERAL}>
       <div className="settings-page">
         {page === 'align' && <AlignPrefs />}
-        {page === 'network' && <Network />}
+        {page === 'network' && <Network networkDraft={networkDraft} leave={leave} onContinue={onContinue} />}
         {page === 'decoding' && <Decoding />}
         {page === 'pip' && <Group title="画中画"><PipSettings /></Group>}
         {page === 'capture' && <Group title="截图与 GIF"><CaptureSettings /></Group>}
@@ -339,102 +372,170 @@ const PROXY_NAME: Record<NetworkPreferenceState['systemProxy']['type'], string> 
   direct: '未设置，直接连接', HTTP: 'HTTP 代理', SOCKS: 'SOCKS 代理', PAC: '自动配置脚本（PAC）',
 }
 
-function SourceNetworkRules({ rules, onChange, disabled }: { rules: MediaSourceRule[]; onChange: (rules: MediaSourceRule[]) => void; disabled: boolean }): React.ReactNode {
-  const [origin, setOrigin] = useState('')
-  const [headers, setHeaders] = useState('')
-  const [verifyTls, setVerifyTls] = useState(true)
-  const [verifyProxyTls, setVerifyProxyTls] = useState(true)
-  const [problem, setProblem] = useState('')
-  const apply = () => {
-    try {
-      const source = new URL(origin.trim()).origin
-      const pairs = headers.split(/\r?\n/).filter(line => line.trim()).map(line => {
-        const colon = line.indexOf(':')
-        if (colon < 1) throw new Error('header')
-        return [line.slice(0, colon).trim(), line.slice(colon + 1).trim()] as const
-      })
-      if (new Set(pairs.map(([name]) => name.toLowerCase())).size !== pairs.length) throw new Error('duplicate header')
-      const rule = { origin: source, headers: Object.fromEntries(pairs), verifyTls, verifyProxyTls }
-      if (!validMediaSourceRule(rule)) throw new Error('source')
-      onChange([...rules.filter(item => item.origin !== source), rule])
-      setOrigin(''); setHeaders(''); setProblem('')
-    } catch { setProblem('请输入有效的 HTTP/HTTPS 来源。请求头每行使用「名称: 值」，名称不能重复。') }
-  }
+interface SourceRuleDraft { origin: string; headers: string; verifyTls: boolean; verifyProxyTls: boolean }
+const EMPTY_SOURCE_DRAFT: SourceRuleDraft = { origin: '', headers: '', verifyTls: true, verifyProxyTls: true }
+const SOURCE_PROBLEM = '请输入有效的 HTTP/HTTPS 来源，请求头每行使用「名称: 值」，名称不能重复'
+
+function sourceDraftRule(editor: SourceRuleDraft): MediaSourceRule {
+  const source = new URL(editor.origin.trim())
+  if (source.protocol !== 'http:' && source.protocol !== 'https:') throw new Error('source')
+  const pairs = editor.headers.split(/\r?\n/).filter(line => line.trim()).map(line => {
+    const colon = line.indexOf(':')
+    if (colon < 1) throw new Error('header')
+    return [line.slice(0, colon).trim(), line.slice(colon + 1).trim()] as const
+  })
+  if (new Set(pairs.map(([name]) => name.toLowerCase())).size !== pairs.length) throw new Error('duplicate header')
+  const rule = { origin: source.origin, headers: Object.fromEntries(pairs), verifyTls: editor.verifyTls, verifyProxyTls: editor.verifyProxyTls }
+  if (!validMediaSourceRule(rule)) throw new Error('source')
+  return rule
+}
+
+function withSourceRule(media: MediaNetworkOptions, rule: MediaSourceRule): MediaNetworkOptions {
+  return { ...media, sourceRules: [...(media.sourceRules ?? []).filter(item => item.origin !== rule.origin), rule] }
+}
+
+function networkDraftKey(domesticRouting: NetworkPreferenceState['domesticRouting'], media: MediaNetworkOptions): string {
+  return JSON.stringify({ domesticRouting, media: { ...DEFAULT_MEDIA_NETWORK, ...media,
+    sourceRules: [...(media.sourceRules ?? [])].sort((first, second) => first.origin.localeCompare(second.origin)).map(rule => ({ ...rule,
+      headers: Object.fromEntries(Object.entries(rule.headers).sort(([first], [second]) => first.localeCompare(second))),
+    })),
+  } })
+}
+
+function SourceNetworkRules({ rules, onChange, disabled, editor, onEdit, onAdd, problem, originInput }: {
+  rules: MediaSourceRule[]; onChange: (rules: MediaSourceRule[]) => void; disabled: boolean
+  editor: SourceRuleDraft; onEdit: (editor: SourceRuleDraft) => void; onAdd: () => void; problem: string
+  originInput: React.RefObject<HTMLInputElement | null>
+}): React.ReactNode {
+  const change = <K extends keyof SourceRuleDraft>(key: K, value: SourceRuleDraft[K]): void => onEdit({ ...editor, [key]: value })
   return <div className="field-stack">
     <span className="field-label">按来源配置</span>
-    <p className="muted">请求头仅发往此来源（协议、域名和端口）。加入后须点击「保存取流网络设置」。</p>
+    <p className="muted">请求头仅发往此来源（协议、域名和端口），点击保存时一并保存编辑框内容</p>
     {rules.map(rule => <div className="row-split" key={rule.origin}>
       <span title={rule.origin} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rule.origin}（{Object.keys(rule.headers).length} 个请求头）</span>
       <span className="row-end" style={{ flexShrink: 0 }}>
         <button className="btn-quiet small" type="button" aria-label={`编辑来源 ${rule.origin}`} disabled={disabled} onClick={() => {
-          setOrigin(rule.origin); setHeaders(Object.entries(rule.headers).map(([name, value]) => `${name}: ${value}`).join('\n'))
-          setVerifyTls(rule.verifyTls); setVerifyProxyTls(rule.verifyProxyTls)
+          onEdit({ origin: rule.origin, headers: Object.entries(rule.headers).map(([name, value]) => `${name}: ${value}`).join('\n'),
+            verifyTls: rule.verifyTls, verifyProxyTls: rule.verifyProxyTls })
         }}>编辑</button>
-        <button className="btn-quiet small" type="button" aria-label={`移除来源 ${rule.origin}`} disabled={disabled} onClick={() => onChange(rules.filter(item => item.origin !== rule.origin))}>移除</button>
+        <button className="btn-quiet small" type="button" aria-label={`移除来源 ${rule.origin}`} disabled={disabled} onClick={() => {
+          onChange(rules.filter(item => item.origin !== rule.origin))
+          if (URL.parse(editor.origin.trim())?.origin === rule.origin) onEdit({ ...EMPTY_SOURCE_DRAFT })
+        }}>移除</button>
       </span>
     </div>)}
-    <label className="field-stack"><span>来源地址</span><input className="text-input" value={origin} disabled={disabled}
-      placeholder="https://example.com:8443" onChange={event => setOrigin(event.target.value)} /></label>
-    <label className="field-stack"><span>来源请求头</span><textarea className="text-input" value={headers} disabled={disabled} rows={4}
-      placeholder={'Referer: https://example.com/\nUser-Agent: MyPlayer'} onChange={event => setHeaders(event.target.value)} spellCheck={false} /></label>
-    <Switch label="校验该来源服务器证书" checked={verifyTls} disabled={disabled} onChange={setVerifyTls} />
-    <Switch label="校验该来源 HTTPS 代理证书" checked={verifyProxyTls} disabled={disabled} onChange={setVerifyProxyTls} />
+    <label className="field-stack"><span>来源地址</span><input className="text-input" ref={originInput} value={editor.origin} disabled={disabled}
+      aria-invalid={!!problem} placeholder="https://example.com:8443" onChange={event => change('origin', event.target.value)} /></label>
+    <label className="field-stack"><span>来源请求头</span><textarea className="text-input" value={editor.headers} disabled={disabled} rows={4}
+      aria-invalid={!!problem} placeholder={'Referer: https://example.com/\nUser-Agent: MyPlayer'} onChange={event => change('headers', event.target.value)} spellCheck={false} /></label>
+    <Switch label="校验该来源服务器证书" checked={editor.verifyTls} disabled={disabled} onChange={value => change('verifyTls', value)} />
+    <Switch label="校验该来源 HTTPS 代理证书" checked={editor.verifyProxyTls} disabled={disabled} onChange={value => change('verifyProxyTls', value)} />
     <p className="muted">此处的证书设置也适用于带登录信息的取流连接</p>
-    <button className="btn-quiet small" type="button" disabled={disabled || !origin.trim()} onClick={apply}>加入来源设置</button>
+    <button className="btn-quiet small" type="button" disabled={disabled || !editor.origin.trim()} onClick={onAdd}>加入来源设置</button>
     {problem && <p className="form-error" role="alert">{problem}</p>}
   </div>
 }
 
-function Network(): React.ReactNode {
+function Network({ networkDraft, leave, onContinue }: Pick<NetworkNavigation, 'networkDraft' | 'leave' | 'onContinue'>): React.ReactNode {
   const mounted = useMounted()
   const [state, setState] = useRemembered<NetworkPreferenceState | null>('network', null)
-  const [pending, setPending] = useState(() => state === null)
+  const [pending, setPending] = useState(true)
+  const [loaded, setLoaded] = useState(false)
   const [error, setError, errorDetail] = useErrorState()
   const [loadError, setLoadError, loadErrorDetail] = useErrorState()
-  const [draft, setDraft] = useState<MediaNetworkOptions>({ ...DEFAULT_MEDIA_NETWORK })
+  const [draft, setDraft] = useState<MediaNetworkOptions>(() => ({ ...DEFAULT_MEDIA_NETWORK, ...state?.media }))
+  const [domesticRouting, setDomesticRouting] = useState<NetworkPreferenceState['domesticRouting']>(() => state?.domesticRouting ?? 'direct')
+  const [editor, setEditor] = useState<SourceRuleDraft>({ ...EMPTY_SOURCE_DRAFT })
+  const [sourceProblem, setSourceProblem] = useState('')
+  const [message, setMessage] = useState('')
+  const originInput = useRef<HTMLInputElement | null>(null)
+  const saving = useRef(false)
+  const hasSourceDraft = !!editor.origin.trim() || !!editor.headers.trim() || !editor.verifyTls || !editor.verifyProxyTls
+  let candidate = draft
+  let invalidSource = false
+  if (hasSourceDraft) {
+    try { candidate = withSourceRule(draft, sourceDraftRule(editor)) }
+    catch { invalidSource = true }
+  }
+  const dirty = loaded && !!state && (invalidSource || networkDraftKey(domesticRouting, candidate) !== networkDraftKey(state.domesticRouting, { ...DEFAULT_MEDIA_NETWORK, ...state.media }))
+  networkDraft.current = { dirty, pending: saving.current }
+  useEffect(() => () => { networkDraft.current = null }, [networkDraft])
+  const reset = (value: NetworkPreferenceState): void => {
+    setDraft({ ...DEFAULT_MEDIA_NETWORK, ...value.media })
+    setDomesticRouting(value.domesticRouting)
+    setEditor({ ...EMPTY_SOURCE_DRAFT })
+    setSourceProblem('')
+    setError('')
+  }
   const refresh = async (): Promise<void> => {
     setPending(true)
     setLoadError('')
     try {
       const result = await apiClient.getNetworkPreferences()
       if (!mounted.current) return
-      if (result.ok) { setState(result.value); setDraft({ ...DEFAULT_MEDIA_NETWORK, ...result.value.media }) }
+      if (result.ok) { setState(result.value); reset(result.value); setLoaded(true) }
       else setLoadError(result)
     } catch (caught) {
       if (mounted.current) setLoadError(displayError(caught, '网络设置读取失败，请重试'))
     } finally { if (mounted.current) setPending(false) }
   }
   useEffect(() => { void refresh() }, [])
-  const save = async (direct: boolean): Promise<void> => {
-    if (pending || !state) return
-    setPending(true)
-    setError('')
-    try {
-      const result = await apiClient.setNetworkPreferences(direct ? 'direct' : 'system')
-      if (!mounted.current) return
-      if (result.ok) setState(result.value)
-      else setError(result)
-    } finally { if (mounted.current) setPending(false) }
-  }
   const proxy = state?.systemProxy
-  const change = <K extends keyof MediaNetworkOptions>(key: K, value: MediaNetworkOptions[K]): void => setDraft(previous => ({ ...previous, [key]: value }))
-  const saveMedia = async (): Promise<void> => {
-    if (pending || !state) return
-    if (!validMediaNetwork(draft)) { setError('请检查代理地址和网络参数'); return }
+  const change = <K extends keyof MediaNetworkOptions>(key: K, value: MediaNetworkOptions[K]): void => {
+    setDraft(previous => ({ ...previous, [key]: value })); setMessage(''); setError('')
+  }
+  const addSource = (): void => {
+    try {
+      setDraft(withSourceRule(draft, sourceDraftRule(editor)))
+      setEditor({ ...EMPTY_SOURCE_DRAFT }); setSourceProblem(''); setMessage(''); setError('')
+    } catch { setSourceProblem(SOURCE_PROBLEM); originInput.current?.focus() }
+  }
+  const discard = (): void => { if (state) reset(state); setMessage('') }
+  const saveMedia = async (): Promise<boolean> => {
+    if (pending || !state || saving.current || !dirty) return false
+    if (invalidSource) { setSourceProblem(SOURCE_PROBLEM); originInput.current?.focus(); return false }
+    if (!validMediaNetwork({ ...DEFAULT_MEDIA_NETWORK, sourceRules: candidate.sourceRules })) {
+      setSourceProblem('来源设置总大小超出限制，请减少请求头内容'); originInput.current?.focus(); return false
+    }
+    if (!validMediaNetwork(candidate)) { setError('请检查代理地址和网络参数'); return false }
+    saving.current = true
+    networkDraft.current = { dirty, pending: true }
     setPending(true)
     setError('')
+    setSourceProblem('')
+    setMessage('')
     try {
-      const result = await apiClient.setNetworkPreferences(state.domesticRouting, draft)
-      if (!mounted.current) return
-      if (result.ok) { setState(result.value); setDraft({ ...DEFAULT_MEDIA_NETWORK, ...result.value.media }) }
+      const result = await apiClient.setNetworkPreferences(domesticRouting, candidate)
+      if (!mounted.current) return false
+      if (result.ok) { setState(result.value); reset(result.value); setMessage('网络设置已保存'); return true }
       else setError(result)
-    } finally { if (mounted.current) setPending(false) }
+      return false
+    } catch (caught) {
+      if (mounted.current) setError(displayError(caught, '网络设置保存失败，请重试'))
+      return false
+    } finally { saving.current = false; if (mounted.current) setPending(false) }
+  }
+  const finishLeave = async (save: boolean): Promise<void> => {
+    if (saving.current) return
+    const action = leave
+    const success = save ? !dirty || await saveMedia() : true
+    if (!save) discard()
+    onContinue()
+    if (success) action?.()
   }
   return (
     <Group title="网络">
+      {leave && <div className="writes-confirm" role="alertdialog" aria-label="未保存的网络设置">
+        <p>{pending ? '正在保存网络设置' : dirty ? '网络设置有未保存改动' : '网络设置已保存'}</p>
+        <div className="row-end">
+          <button className="btn-solid small" type="button" disabled={pending} onClick={() => void finishLeave(true)}>保存</button>
+          <button className="btn-quiet small" type="button" disabled={pending} onClick={() => void finishLeave(false)}>放弃</button>
+          <button className="btn-quiet small" type="button" disabled={pending} onClick={() => { onContinue(); originInput.current?.focus() }} autoFocus>继续编辑</button>
+        </div>
+      </div>}
       <div className="row-split">
         <span>系统代理</span>
-        <span className="muted">{loadError ? '读取失败' : proxy ? PROXY_NAME[proxy.type] : '正在读取'}</span>
+        <span className="muted">{loadError ? '读取失败' : !loaded ? '正在读取' : proxy ? PROXY_NAME[proxy.type] : '正在读取'}</span>
       </div>
       {proxy?.fallbackReason === 'socks4-unsupported' && (
         <p className="note-warn">不支持 SOCKS4，请改用 HTTP 或 SOCKS5 代理</p>
@@ -444,8 +545,9 @@ function Network(): React.ReactNode {
       )}
       {proxy?.fallbackReason === 'proxy-resolution-failed' && <p className="note-warn">无法读取系统代理，请检查系统代理设置</p>}
       <p className="muted">选择「按平台连接」时，YouTube 和 Twitch 使用系统代理</p>
-      <Switch label="国内平台直接连接" detail="适用于按平台连接，下次载入直播间生效"
-        checked={state?.domesticRouting === 'direct'} disabled={pending || !state} onChange={(on) => void save(on)} />
+      {loaded && state && <>
+      <Switch label="国内平台直接连接" detail="适用于按平台连接，保存后下次载入直播间生效"
+        checked={domesticRouting === 'direct'} disabled={pending} onChange={on => { setDomesticRouting(on ? 'direct' : 'system'); setMessage(''); setError('') }} />
       <form className="field-stack" onSubmit={event => { event.preventDefault(); void saveMedia() }}>
         <span className="field-label">取流网络</span>
         <p className="muted">保存后需重新载入片源</p>
@@ -482,9 +584,15 @@ function Network(): React.ReactNode {
             onChange={event => change(key, (Number.isFinite(event.target.valueAsNumber) ? event.target.valueAsNumber : 0) * scale)} />
         </label>)}
         <small>0 表示不限</small>
-        <SourceNetworkRules rules={draft.sourceRules ?? []} disabled={pending || !state} onChange={rules => change('sourceRules', rules)} />
-        <div className="row-end"><button type="submit" className="btn small" disabled={pending || !state}>保存取流网络设置</button></div>
+        <SourceNetworkRules rules={draft.sourceRules ?? []} disabled={pending} onChange={rules => change('sourceRules', rules)} editor={editor}
+          onEdit={next => { setEditor(next); setSourceProblem(''); setMessage(''); setError('') }} onAdd={addSource} problem={sourceProblem} originInput={originInput} />
+        <div className="row-end">
+          <button type="button" className="btn-quiet small" disabled={pending || (!dirty && !hasSourceDraft)} onClick={discard}>放弃改动</button>
+          <button type="submit" className="btn small" disabled={pending || !dirty}>保存取流网络设置</button>
+        </div>
       </form>
+      </>}
+      {message && <p className="muted" role="status">{message}</p>}
       {loadError && <ReadError error={loadError} detail={loadErrorDetail} onRetry={() => void refresh()} />}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
     </Group>

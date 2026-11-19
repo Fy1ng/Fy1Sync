@@ -97,3 +97,23 @@ export function errorMessage(value: unknown): string {
   if (typeof value === 'string') return value
   return displayError(value).message
 }
+
+const DETAIL_PLACEHOLDERS = new Set([REDACTED, '[omitted]', '[accessor omitted]', '[unavailable]', '[circular]', '[truncated]', '未提供原始错误信息'])
+
+export function hasAdditionalErrorDetails(fields: ErrorDetails, summary?: string): boolean {
+  const visible = summary === undefined || !summary.trim() ? fields.message : summary
+  const normalized = typeof visible === 'string' ? redactErrorText(visible).trim() : ''
+  const hasValue = (value: ErrorDetailValue): boolean => {
+    if (value === null) return false
+    if (typeof value === 'string') {
+      const text = value.trim()
+      return text !== '' && text !== normalized && !DETAIL_PLACEHOLDERS.has(text)
+    }
+    if (Array.isArray(value)) return value.some(hasValue)
+    if (typeof value === 'object') {
+      return Object.entries(value).some(([key, entry]) => !(key === 'ok' && entry === false) && hasValue(entry))
+    }
+    return true
+  }
+  return hasValue(fields)
+}

@@ -110,9 +110,9 @@ export function DouyinComposer({ room, connected, onLogin }: { room: string; con
       <span className="num">{draft.length}/{DOUYIN_MESSAGE_LIMIT}</span>
       {remaining > 0 && <span className="num">{remaining}s</span>}
     </p>
-    {invalid && <p className="say-note is-warn"><ErrorText error={{ code: 'invalid-message', message: `请输入不超过 ${DOUYIN_MESSAGE_LIMIT} 字的单行弹幕`, maximumUnits: DOUYIN_MESSAGE_LIMIT }} /></p>}
+    {invalid && <p className="say-note is-warn">请输入不超过 {DOUYIN_MESSAGE_LIMIT} 字的单行弹幕</p>}
     {!editable && <p className="say-note">{!connected ? '弹幕未连接' : account && account.loginState !== 'authenticating'
-      ? <ErrorText error={accountFailure ?? { loggedIn: account.loggedIn, canSend: account.canSend, loginState: account.loginState, message: account.message }} message={account.message} /> : '正在检查账号'}</p>}
-    {notice && <p className="say-note" data-state={notice.status} role="status">{notice.status === 'accepted' ? notice.message : <ErrorText error={notice.detail ?? notice.diagnostic ?? { status: notice.status, message: notice.message }} message={notice.message} />}</p>}
+      ? <ErrorText error={accountFailure ?? account.message} message={account.message} /> : '正在检查账号'}</p>}
+    {notice && <p className="say-note" data-state={notice.status} role="status">{notice.status === 'accepted' ? notice.message : <ErrorText error={notice.detail ?? notice.diagnostic ?? notice.message} message={notice.message} />}</p>}
   </form>
 }

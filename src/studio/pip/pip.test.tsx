@@ -188,13 +188,15 @@ describe('the PiP window', () => {
   })
 
   it('keeps the send bar off with a reason when sending may not be attempted', async () => {
-    install(pipState({ phase: 'ready', sendContext: { accountId: 'acc-1', room: '9999', canAttempt: false } }))
+    install(pipState({ phase: 'ready', sendContext: { accountId: null, room: '9999', canAttempt: false } }))
     render(<PipPage />)
     await flush()
     const input = screen.getByLabelText('发送弹幕')
     expect(input).toBeDisabled()
-    expect(input).toHaveAttribute('placeholder', '当前不可发送')
+    expect(input).toHaveAttribute('placeholder', '未登录斗鱼账号')
     expect(screen.getByRole('button', { name: '发送' })).toBeDisabled()
+    expect(screen.getByText('未登录斗鱼账号')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '查看原始错误' })).toBeNull()
     expect(sendBlock({ accountId: null, room: '9999', canAttempt: true })).toBe('未登录斗鱼账号')
     expect(sendBlock({ accountId: 'a', room: null, canAttempt: true })).toBe('未关联斗鱼直播间')
   })

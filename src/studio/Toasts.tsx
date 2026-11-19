@@ -34,7 +34,7 @@ export function Toasts(): React.ReactNode {
     <div className="toasts" role="status" aria-live="polite">
       {[...latest.values()].slice(0, 3).map((notice) => (
         <div key={notice.id} className={`toast is-${notice.kind}`}>
-          <span>{notice.text}{notice.kind !== 'info' && <ErrorDetailsButton error={notice.detail ?? { message: notice.text }} onOpenChange={open => setExpanded(current => {
+          <span>{notice.text}{notice.kind !== 'info' && notice.detail && <ErrorDetailsButton error={notice.detail} summary={notice.text} onOpenChange={open => setExpanded(current => {
             const next = new Set([...current].filter(id => notices.some(notice => notice.id === id)))
             if (open) next.add(notice.id); else next.delete(notice.id)
             return next

@@ -1,14 +1,15 @@
 import { useCallback, useId, useState } from 'react'
-import { displayError, errorDetails, errorMessage, type DisplayError, type ErrorDetails as ErrorFields } from '../core/errorDetails'
+import { displayError, errorDetails, errorMessage, hasAdditionalErrorDetails, type DisplayError, type ErrorDetails as ErrorFields } from '../core/errorDetails'
 import './errorDetails.css'
 
 /** Each error owns its fields, so concurrent operations with the same summary cannot be confused. */
-export function ErrorDetailsButton({ error, label = '查看原始错误', onOpenChange }: { error: unknown; label?: string; onOpenChange?: (open: boolean) => void }): React.ReactNode {
+export function ErrorDetailsButton({ error, summary, label = '查看原始错误', onOpenChange }: { error: unknown; summary?: string; label?: string; onOpenChange?: (open: boolean) => void }): React.ReactNode {
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const [copyError, setCopyError] = useState<DisplayError | null>(null)
   const id = useId()
   const fields = errorDetails(error)
+  if (!hasAdditionalErrorDetails(fields, summary)) return null
   const content = JSON.stringify(fields, null, 2)
   return <span className="error-details" onClick={event => event.stopPropagation()}>
     <button type="button" className="error-details-toggle" aria-expanded={open} aria-controls={id}
@@ -27,7 +28,7 @@ export function ErrorDetailsButton({ error, label = '查看原始错误', onOpen
 
 /** Phrasing content: safe inside existing paragraphs, inline status rows and toast text. */
 export function ErrorText({ error, message }: { error: unknown; message?: React.ReactNode }): React.ReactNode {
-  return <>{message ?? errorMessage(error)} <ErrorDetailsButton error={error} /></>
+  return <>{message ?? errorMessage(error)} <ErrorDetailsButton error={error} summary={typeof message === 'string' ? message : undefined} /></>
 }
 
 export interface ErrorSetter {

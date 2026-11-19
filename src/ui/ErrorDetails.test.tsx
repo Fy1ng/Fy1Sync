@@ -5,6 +5,17 @@ import { ErrorText } from './ErrorDetails'
 
 afterEach(cleanup)
 describe('error detail controls', () => {
+  it('renders ordinary prompts and repeated wrapped summaries as text alone', () => {
+    render(<>
+      <p><ErrorText error="内容不能为空" /></p>
+      <p><ErrorText error={{ message: '未登录斗鱼账号' }} /></p>
+      <p><ErrorText error={{ ok: false, detail: { message: '请重新载入片源' } }} message="请重新载入片源" /></p>
+    </>)
+    expect(screen.getByText('内容不能为空')).toBeInTheDocument()
+    expect(screen.getByText('未登录斗鱼账号')).toBeInTheDocument()
+    expect(screen.getByText('请重新载入片源')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '查看原始错误' })).toBeNull()
+  })
   it('keeps details collapsed until requested and copies the redacted fields', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
@@ -29,7 +40,7 @@ describe('error detail controls', () => {
   it('shows a manual copy fallback when clipboard access fails', async () => {
     const writeText = vi.fn().mockRejectedValue(new Error('clipboard unavailable'))
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
-    render(<ErrorText error={{ message: '读取失败' }} />)
+    render(<ErrorText error={{ message: '读取失败', cause: { message: 'connection refused' } }} />)
     fireEvent.click(screen.getByRole('button', { name: '查看原始错误' }))
     fireEvent.click(screen.getByRole('button', { name: '复制错误信息' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('复制失败，可选择下方内容手动复制')

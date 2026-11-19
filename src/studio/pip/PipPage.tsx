@@ -225,8 +225,8 @@ function SendBar({ context, apply }: {
     <form className="pip-send" data-outcome={outcome ? 'shown' : undefined}
       onSubmit={(event) => { event.preventDefault(); void send() }}>
       {outcome && <p className={`pip-outcome ${outcome.ok ? '' : 'is-bad'}`.trim()} role="status">{outcome.ok ? outcome.text : <ErrorText error={outcome.detail ?? outcome.text} message={outcome.text} />}</p>}
-      {validation && <p className="pip-outcome is-bad" role="alert"><ErrorText error={validation.detail} message={validation.message} /></p>}
-      {block && context && <p className="pip-send-block"><ErrorText error={{ message: block }} /></p>}
+      {validation && <p className="pip-outcome is-bad" role="alert">{validation.message}</p>}
+      {block && context && <p className="pip-send-block">{block}</p>}
       <div className="pip-send-row">
         <input className="pip-input" type="text" aria-label="发送弹幕" maxLength={500}
           placeholder={block ?? '发送弹幕'} value={text} disabled={!!block}

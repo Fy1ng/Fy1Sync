@@ -6,9 +6,10 @@ import type { DouyuAccountsSnapshot } from '../../server/douyu/types'
 import { Session } from '../app/session'
 import { SessionProvider } from '../app/SessionContext'
 import { apiClient } from '../app/apiClient'
-import { forgetAll } from '../app/remembered'
+import { forgetAll, remember } from '../app/remembered'
 import { SettingsSheet } from './SettingsSheet'
 import { DEFAULT_MEDIA_NETWORK } from '../../server/mediaNetworkOptions'
+import type { NetworkPreferenceState } from '../../electron/networkPreferences'
 
 const anonymous: PlatformLoginStatus = { loggedIn: false, cookieCount: 0, authKeysPresent: [], hasSessionCookies: false, expiresAt: null }
 const accounts: DouyuAccountsSnapshot = { revision: 1, activeAccountId: 'default', accounts: [
@@ -42,11 +43,11 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function mount(room: string | null = null, session?: Session): ReturnType<typeof render> & { session: Session } {
+function mount(room: string | null = null, session?: Session, onClose: () => void = () => {}): ReturnType<typeof render> & { session: Session } {
   const current = session ?? new Session({ createSampler: () => null })
   if (!session) sessions.push(current)
   const view = render(<SessionProvider session={current}><SettingsSheet target={{ section: 'general' }} room={room}
-    onClose={() => {}} onWatch={() => {}} onFill={() => {}} /></SessionProvider>)
+    onClose={onClose} onWatch={() => {}} onFill={() => {}} /></SessionProvider>)
   return { ...view, session: current }
 }
 function section(name: string): void {
@@ -58,6 +59,305 @@ function platform(name: string): void {
 function douyuTab(name: string): HTMLElement {
   return within(screen.getByRole('tablist', { name: '斗鱼' })).getByRole('tab', { name: new RegExp('^' + name) })
 }
+
+function generalPage(name: string): void {
+  fireEvent.click(within(screen.getByRole('tablist', { name: '通用' })).getByRole('tab', { name }))
+}
+
+const networkPreferences: NetworkPreferenceState = { domesticRouting: 'direct', systemProxy: { type: 'direct' }, media: { ...DEFAULT_MEDIA_NETWORK } }
+
+async function mountNetwork(onClose: () => void = () => {}): Promise<ReturnType<typeof mount>> {
+  vi.spyOn(apiClient, 'getNetworkPreferences').mockResolvedValue({ ok: true, value: networkPreferences })
+  const view = mount(null, undefined, onClose)
+  generalPage('网络')
+  await screen.findByRole('textbox', { name: '来源地址' })
+  return view
+}
+
+describe('network settings draft', () => {
+  it.each([false, true])('hides editable values until the first read with cached state %s completes', async cached => {
+    if (cached) remember('network', { ...networkPreferences, media: { ...DEFAULT_MEDIA_NETWORK, routing: 'custom', proxyUrl: 'http://cached.invalid:7890' } })
+    let complete!: (result: { ok: true; value: NetworkPreferenceState }) => void
+    vi.spyOn(apiClient, 'getNetworkPreferences').mockImplementation(() => new Promise(resolve => { complete = resolve }))
+    mount()
+    generalPage('网络')
+    expect(screen.getByText('正在读取')).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: '取流连接方式' })).toBeNull()
+    expect(screen.queryByRole('switch', { name: /^国内平台直接连接/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: '保存取流网络设置' })).toBeNull()
+    await act(async () => complete({ ok: true, value: { ...networkPreferences, domesticRouting: 'system', media: { ...DEFAULT_MEDIA_NETWORK, routing: 'custom', proxyUrl: 'socks5://fresh.invalid:1080' } } }))
+    expect(screen.getByRole('switch', { name: /^国内平台直接连接/ })).not.toBeChecked()
+    expect(screen.getByRole('textbox', { name: '取流代理地址' })).toHaveValue('socks5://fresh.invalid:1080')
+    expect(screen.getByRole('button', { name: '保存取流网络设置' })).toBeDisabled()
+  })
+
+  it('keeps cached values hidden after a failed read and refreshes them on retry', async () => {
+    remember('network', { ...networkPreferences, media: { ...DEFAULT_MEDIA_NETWORK, requestTimeoutMs: 99000 } })
+    vi.spyOn(apiClient, 'getNetworkPreferences')
+      .mockResolvedValueOnce({ ok: false, code: 'read-failed', message: '读取失败' })
+      .mockResolvedValueOnce({ ok: true, value: networkPreferences })
+    mount()
+    generalPage('网络')
+    await screen.findByRole('alert')
+    expect(screen.queryByRole('spinbutton', { name: '请求超时秒数' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(await screen.findByRole('spinbutton', { name: '请求超时秒数' })).toHaveValue(0)
+  })
+
+  it('saves domestic routing with the rest of the draft only when it differs and reports success in place', async () => {
+    const save = vi.spyOn(apiClient, 'setNetworkPreferences').mockResolvedValue({ ok: true, value: { ...networkPreferences, domesticRouting: 'system', media: { ...DEFAULT_MEDIA_NETWORK, requestTimeoutMs: 30000 } } })
+    await mountNetwork()
+    const button = screen.getByRole('button', { name: '保存取流网络设置' })
+    const direct = screen.getByRole('switch', { name: /^国内平台直接连接/ })
+    expect(button).toBeDisabled()
+    expect(screen.getByRole('button', { name: '放弃改动' })).toBeDisabled()
+    fireEvent.click(direct)
+    expect(button).toBeEnabled()
+    expect(save).not.toHaveBeenCalled()
+    fireEvent.click(direct)
+    expect(button).toBeDisabled()
+    fireEvent.click(direct)
+    fireEvent.change(screen.getByRole('spinbutton', { name: '请求超时秒数' }), { target: { value: '30' } })
+    fireEvent.click(button)
+    expect(await screen.findByText('网络设置已保存')).toBeInTheDocument()
+    expect(save).toHaveBeenCalledExactlyOnceWith('system', { ...DEFAULT_MEDIA_NETWORK, requestTimeoutMs: 30000 })
+    expect(button).toBeDisabled()
+    fireEvent.click(direct)
+    expect(screen.queryByText('网络设置已保存')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '放弃改动' }))
+    expect(direct).not.toBeChecked()
+    expect(button).toBeDisabled()
+  })
+
+  it('discards media, added rules and unadded editor content back to the saved state', async () => {
+    await mountNetwork()
+    fireEvent.click(screen.getByRole('switch', { name: /^国内平台直接连接/ }))
+    fireEvent.change(screen.getByRole('textbox', { name: '来源地址' }), { target: { value: 'https://first.invalid' } })
+    fireEvent.click(screen.getByRole('button', { name: '加入来源设置' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '来源地址' }), { target: { value: 'https://second.invalid' } })
+    fireEvent.change(screen.getByRole('spinbutton', { name: '请求超时秒数' }), { target: { value: '40' } })
+    fireEvent.click(screen.getByRole('button', { name: '放弃改动' }))
+    expect(screen.getByRole('switch', { name: /^国内平台直接连接/ })).toBeChecked()
+    expect(screen.getByRole('textbox', { name: '来源地址' })).toHaveValue('')
+    expect(screen.getByRole('spinbutton', { name: '请求超时秒数' })).toHaveValue(0)
+    expect(screen.queryByRole('button', { name: '编辑来源 https://first.invalid' })).toBeNull()
+    expect(screen.getByRole('button', { name: '保存取流网络设置' })).toBeDisabled()
+  })
+
+  it('includes a valid unadded source in the same save and clears it only on success', async () => {
+    const rule = { origin: 'https://media.invalid:8443', headers: { Referer: 'https://media.invalid/' }, verifyTls: false, verifyProxyTls: true }
+    const save = vi.spyOn(apiClient, 'setNetworkPreferences').mockResolvedValue({ ok: true, value: { ...networkPreferences, media: { ...DEFAULT_MEDIA_NETWORK, sourceRules: [rule] } } })
+    await mountNetwork()
+    fireEvent.change(screen.getByRole('textbox', { name: '来源地址' }), { target: { value: rule.origin + '/live' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '来源请求头' }), { target: { value: 'Referer: https://media.invalid/' } })
+    fireEvent.click(screen.getByRole('switch', { name: '校验该来源服务器证书' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存取流网络设置' }))
+    await screen.findByText('网络设置已保存')
+    expect(save).toHaveBeenCalledExactlyOnceWith('direct', { ...DEFAULT_MEDIA_NETWORK, sourceRules: [rule] })
+    expect(screen.getByRole('textbox', { name: '来源地址' })).toHaveValue('')
+    expect(screen.getByRole('textbox', { name: '来源请求头' })).toHaveValue('')
+    expect(screen.getByRole('button', { name: '编辑来源 ' + rule.origin })).toBeInTheDocument()
+  })
+
+  it.each([
+    { origin: '', headers: 'Referer: https://media.invalid/' },
+    { origin: 'file:///synthetic', headers: '' },
+    { origin: 'blob:https://media.invalid/synthetic', headers: '' },
+    { origin: 'https://media.invalid', headers: 'invalid header' },
+    { origin: 'https://media.invalid', headers: 'Referer: first\nreferer: second' },
+  ])('stops saving for an invalid unadded source $origin $headers', async ({ origin, headers }) => {
+    const save = vi.spyOn(apiClient, 'setNetworkPreferences')
+    await mountNetwork()
+    fireEvent.change(screen.getByRole('spinbutton', { name: '请求超时秒数' }), { target: { value: '30' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '来源地址' }), { target: { value: origin } })
+    fireEvent.change(screen.getByRole('textbox', { name: '来源请求头' }), { target: { value: headers } })
+    fireEvent.click(screen.getByRole('button', { name: '保存取流网络设置' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('请输入有效的 HTTP/HTTPS 来源')
+    expect(screen.getByRole('textbox', { name: '来源地址' })).toHaveValue(origin)
+    expect(screen.getByRole('textbox', { name: '来源请求头' })).toHaveValue(headers)
+    expect(screen.getByRole('spinbutton', { name: '请求超时秒数' })).toHaveValue(30)
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('reports an oversized source collection at the editor without saving', async () => {
+    const sourceRules = Array.from({ length: 8 }, (_, index) => ({ origin: `https://source-${index}.invalid`,
+      headers: { 'X-Fixture': 'a'.repeat(64000) }, verifyTls: true, verifyProxyTls: true }))
+    vi.spyOn(apiClient, 'getNetworkPreferences').mockResolvedValue({ ok: true, value: { ...networkPreferences, media: { ...DEFAULT_MEDIA_NETWORK, sourceRules } } })
+    const save = vi.spyOn(apiClient, 'setNetworkPreferences')
+    mount()
+    generalPage('网络')
+    const origin = await screen.findByRole('textbox', { name: '来源地址' })
+    fireEvent.change(origin, { target: { value: 'https://incoming.invalid' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '来源请求头' }), { target: { value: `X-Fixture: ${'b'.repeat(20000)}` } })
+    fireEvent.click(screen.getByRole('button', { name: '保存取流网络设置' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('来源设置总大小超出限制')
+    expect(origin).toHaveFocus()
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it.each(['result', 'rejected'] as const)('keeps the whole draft and editor after a %s save failure and permits retry', async failure => {
+    const save = vi.spyOn(apiClient, 'setNetworkPreferences')
+    if (failure === 'result') save.mockResolvedValueOnce({ ok: false, code: 'write-failed', message: '网络设置保存失败' })
+    else save.mockRejectedValueOnce(new Error('synthetic write failure'))
+    await mountNetwork()
+    fireEvent.click(screen.getByRole('switch', { name: /^国内平台直接连接/ }))
+    fireEvent.change(screen.getByRole('textbox', { name: '来源地址' }), { target: { value: 'https://media.invalid/live' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '来源请求头' }), { target: { value: 'Referer: https://media.invalid/' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存取流网络设置' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('网络设置保存失败')
+    expect(screen.getByRole('switch', { name: /^国内平台直接连接/ })).not.toBeChecked()
+    expect(screen.getByRole('textbox', { name: '来源地址' })).toHaveValue('https://media.invalid/live')
+    expect(screen.getByRole('textbox', { name: '来源请求头' })).toHaveValue('Referer: https://media.invalid/')
+    expect(screen.getByRole('button', { name: '保存取流网络设置' })).toBeEnabled()
+    const media = { ...DEFAULT_MEDIA_NETWORK, sourceRules: [{ origin: 'https://media.invalid', headers: { Referer: 'https://media.invalid/' }, verifyTls: true, verifyProxyTls: true }] }
+    save.mockResolvedValueOnce({ ok: true, value: { ...networkPreferences, domesticRouting: 'system', media } })
+    fireEvent.click(screen.getByRole('button', { name: '保存取流网络设置' }))
+    await screen.findByText('网络设置已保存')
+    expect(save).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('treats editing an unchanged saved rule as unchanged even when header or rule order differs', async () => {
+    const first = { origin: 'https://first.invalid', headers: { Zebra: 'last', Alpha: 'first' }, verifyTls: true, verifyProxyTls: true }
+    const second = { origin: 'https://second.invalid', headers: {}, verifyTls: true, verifyProxyTls: true }
+    vi.spyOn(apiClient, 'getNetworkPreferences').mockResolvedValue({ ok: true, value: { ...networkPreferences, media: { ...DEFAULT_MEDIA_NETWORK, sourceRules: [first, second] } } })
+    mount()
+    generalPage('网络')
+    fireEvent.click(await screen.findByRole('button', { name: '编辑来源 ' + first.origin }))
+    expect(screen.getByRole('button', { name: '保存取流网络设置' })).toBeDisabled()
+    fireEvent.change(screen.getByRole('textbox', { name: '来源请求头' }), { target: { value: 'Alpha: first\nZebra: last' } })
+    fireEvent.click(screen.getByRole('button', { name: '加入来源设置' }))
+    expect(screen.getByRole('button', { name: '保存取流网络设置' })).toBeDisabled()
+    generalPage('对齐')
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+  })
+
+  it('removes an edited source without silently adding it back on save', async () => {
+    const rule = { origin: 'https://media.invalid', headers: {}, verifyTls: true, verifyProxyTls: true }
+    vi.spyOn(apiClient, 'getNetworkPreferences').mockResolvedValue({ ok: true, value: { ...networkPreferences, media: { ...DEFAULT_MEDIA_NETWORK, sourceRules: [rule] } } })
+    const save = vi.spyOn(apiClient, 'setNetworkPreferences').mockResolvedValue({ ok: true, value: networkPreferences })
+    mount()
+    generalPage('网络')
+    fireEvent.click(await screen.findByRole('button', { name: '编辑来源 ' + rule.origin }))
+    fireEvent.change(screen.getByRole('textbox', { name: '来源地址' }), { target: { value: rule.origin + '/live' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '来源请求头' }), { target: { value: 'Referer: synthetic' } })
+    fireEvent.click(screen.getByRole('button', { name: '移除来源 ' + rule.origin }))
+    expect(screen.getByRole('textbox', { name: '来源地址' })).toHaveValue('')
+    fireEvent.click(screen.getByRole('button', { name: '保存取流网络设置' }))
+    await screen.findByText('网络设置已保存')
+    expect(save).toHaveBeenCalledExactlyOnceWith('direct', { ...DEFAULT_MEDIA_NETWORK, sourceRules: [] })
+  })
+})
+
+describe('network settings leaving confirmation', () => {
+  it('does not retain a stale confirmation when changes are reverted before navigating', async () => {
+    await mountNetwork()
+    const direct = screen.getByRole('switch', { name: /^国内平台直接连接/ })
+    fireEvent.click(direct)
+    generalPage('对齐')
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    fireEvent.click(direct)
+    generalPage('对齐')
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    generalPage('网络')
+    await screen.findByRole('textbox', { name: '来源地址' })
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(screen.getByRole('button', { name: '保存取流网络设置' })).toBeDisabled()
+  })
+
+  it.each(['section', 'page', 'close', 'escape', 'native-escape', 'backdrop'] as const)('keeps drafts in place and offers continue or discard for %s', async path => {
+    const close = vi.fn()
+    await mountNetwork(close)
+    fireEvent.change(screen.getByRole('textbox', { name: '来源地址' }), { target: { value: 'https://unadded.invalid' } })
+    const dialog = screen.getByRole('dialog', { name: '设置' })
+    const navigate = (): void => {
+      if (path === 'section') section('画面匹配')
+      else if (path === 'page') generalPage('解码')
+      else if (path === 'close') fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+      else if (path === 'escape') fireEvent.keyDown(screen.getByRole('textbox', { name: '来源地址' }), { key: 'Escape' })
+      else {
+        const cancel = new Event('cancel', { cancelable: true })
+        fireEvent(dialog, cancel)
+        expect(cancel.defaultPrevented).toBe(true)
+      }
+    }
+    navigate()
+    expect(screen.getByRole('alertdialog', { name: '未保存的网络设置' })).toBeInTheDocument()
+    expect(close).not.toHaveBeenCalled()
+    expect(screen.getByRole('textbox', { name: '来源地址' })).toHaveValue('https://unadded.invalid')
+    fireEvent.click(screen.getByRole('button', { name: '继续编辑' }))
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    navigate()
+    fireEvent.click(screen.getByRole('button', { name: '放弃' }))
+    await waitFor(() => {
+      if (path === 'section') expect(screen.getByRole('tabpanel', { name: '画面匹配' })).toBeInTheDocument()
+      else if (path === 'page') expect(screen.getByRole('tabpanel', { name: '解码' })).toBeInTheDocument()
+      else expect(close).toHaveBeenCalledTimes(1)
+    })
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+  })
+
+  it('saves the unadded editor and domestic routing before completing a page switch', async () => {
+    const rule = { origin: 'https://media.invalid', headers: {}, verifyTls: true, verifyProxyTls: true }
+    const save = vi.spyOn(apiClient, 'setNetworkPreferences').mockResolvedValue({ ok: true, value: { ...networkPreferences, domesticRouting: 'system', media: { ...DEFAULT_MEDIA_NETWORK, sourceRules: [rule] } } })
+    await mountNetwork()
+    fireEvent.click(screen.getByRole('switch', { name: /^国内平台直接连接/ }))
+    fireEvent.change(screen.getByRole('textbox', { name: '来源地址' }), { target: { value: rule.origin } })
+    generalPage('对齐')
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await screen.findByRole('radiogroup', { name: '单击步长' })
+    expect(save).toHaveBeenCalledExactlyOnceWith('system', { ...DEFAULT_MEDIA_NETWORK, sourceRules: [rule] })
+  })
+
+  it.each(['invalid-source', 'save-failure'] as const)('keeps editing after %s blocks save-and-close', async failure => {
+    const close = vi.fn()
+    const save = vi.spyOn(apiClient, 'setNetworkPreferences').mockResolvedValue({ ok: false, code: 'write-failed', message: '网络设置保存失败' })
+    await mountNetwork(close)
+    const origin = failure === 'invalid-source' ? 'invalid' : 'https://media.invalid'
+    fireEvent.change(screen.getByRole('textbox', { name: '来源地址' }), { target: { value: origin } })
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(screen.getByRole('alert')).toHaveTextContent(failure === 'invalid-source' ? '请输入有效的 HTTP/HTTPS 来源' : '网络设置保存失败')
+    expect(screen.getByRole('textbox', { name: '来源地址' })).toHaveValue(origin)
+    expect(close).not.toHaveBeenCalled()
+    if (failure === 'invalid-source') expect(save).not.toHaveBeenCalled()
+    else expect(save).toHaveBeenCalledTimes(1)
+  })
+
+  it('blocks native close while a save is pending and prevents duplicate saves', async () => {
+    const close = vi.fn()
+    let complete!: (result: { ok: true; value: NetworkPreferenceState }) => void
+    const save = vi.spyOn(apiClient, 'setNetworkPreferences').mockImplementation(() => new Promise(resolve => { complete = resolve }))
+    await mountNetwork(close)
+    fireEvent.click(screen.getByRole('switch', { name: /^国内平台直接连接/ }))
+    fireEvent.click(screen.getByRole('button', { name: '保存取流网络设置' }))
+    const cancel = new Event('cancel', { cancelable: true })
+    fireEvent(screen.getByRole('dialog', { name: '设置' }), cancel)
+    expect(cancel.defaultPrevented).toBe(true)
+    expect(close).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled()
+    expect(save).toHaveBeenCalledTimes(1)
+    await act(async () => complete({ ok: true, value: { ...networkPreferences, domesticRouting: 'system' } }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(close).toHaveBeenCalledTimes(1))
+    expect(save).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes a clean settings sheet through native cancel without prompting and ignores nested dialogs', async () => {
+    const close = vi.fn()
+    await mountNetwork(close)
+    const dialog = screen.getByRole('dialog', { name: '设置' })
+    const nested = document.createElement('dialog')
+    dialog.append(nested)
+    fireEvent(nested, new Event('cancel', { bubbles: true, cancelable: true }))
+    expect(close).not.toHaveBeenCalled()
+    nested.remove()
+    fireEvent(dialog, new Event('cancel', { cancelable: true }))
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+  })
+})
 
 describe('settings account navigation', () => {
   it('lists the normal step first and updates the large and Shift step settings under their matching labels', async () => {
@@ -109,10 +409,11 @@ describe('settings account navigation', () => {
     expect(screen.getByText(loading)).toBeInTheDocument()
     expect(await screen.findByRole('alert')).toHaveTextContent('读取失败')
     expect(screen.queryByText(loading)).toBeNull()
-    const element = screen.getByRole(page === '网络' ? 'button' : 'switch', { name: new RegExp('^' + control) })
-    expect(element).toBeDisabled()
+    if (page === '网络') expect(screen.queryByRole('button', { name: control })).toBeNull()
+    else expect(screen.getByRole('switch', { name: new RegExp('^' + control) })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: '重试' }))
-    await waitFor(() => expect(element).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('switch', { name: page === '网络' ? /^国内平台直接连接/ : new RegExp('^' + control) })).toBeEnabled())
+    if (page === '网络') expect(screen.getByRole('button', { name: control })).toBeDisabled()
     expect(screen.queryByRole('alert')).toBeNull()
     expect(read).toHaveBeenCalledTimes(2)
   })
@@ -121,7 +422,7 @@ describe('settings account navigation', () => {
     invoke.mockImplementationOnce(async () => ({ ok: true, value: { domesticRouting: 'direct', systemProxy: { type: 'direct' }, media: { ...DEFAULT_MEDIA_NETWORK } } }))
     mount()
     fireEvent.click(within(screen.getByRole('tablist', { name: '通用' })).getByRole('tab', { name: '网络' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '保存取流网络设置' })).not.toBeDisabled())
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '来源地址' })).toBeEnabled())
     fireEvent.change(screen.getByRole('textbox', { name: '来源地址' }), { target: { value: 'https://media.invalid:8443/live' } })
     fireEvent.change(screen.getByRole('textbox', { name: '来源请求头' }), { target: { value: 'Authorization: Bearer synthetic\nReferer: https://media.invalid/' } })
     fireEvent.click(screen.getByRole('switch', { name: '校验该来源服务器证书' }))
@@ -138,7 +439,7 @@ describe('settings account navigation', () => {
     invoke.mockImplementationOnce(async () => ({ ok: true, value: { domesticRouting: 'direct', systemProxy: { type: 'direct' }, media: { ...DEFAULT_MEDIA_NETWORK } } }))
     mount()
     fireEvent.click(within(screen.getByRole('tablist', { name: '通用' })).getByRole('tab', { name: '网络' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '保存取流网络设置' })).not.toBeDisabled())
+    await waitFor(() => expect(screen.getByRole('combobox', { name: '取流连接方式' })).toBeEnabled())
     expect(screen.getByRole('switch', { name: '校验取流服务器证书' })).not.toBeChecked()
     expect(screen.getByRole('switch', { name: '校验 HTTPS 代理证书' })).not.toBeChecked()
     expect(screen.getByRole('switch', { name: '允许媒体访问本机和局域网' })).toBeChecked()

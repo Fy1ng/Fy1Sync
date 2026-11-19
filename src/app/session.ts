@@ -387,7 +387,7 @@ export class Session {
 
   notice(kind: Notice['kind'], text: string, detail?: unknown): void {
     const entry: Notice = { id: ++this.noticeSeq, kind, text, at: this.now(),
-      ...(kind !== 'info' ? { detail: errorDetails(detail ?? { message: text }) } : {}) }
+      ...(kind !== 'info' && detail != null ? { detail: errorDetails(detail) } : {}) }
     // Newest first, oldest dropped: the notice strip shows a few lines, not a log.
     this.noticeList = [entry, ...this.noticeList].slice(0, MAX_NOTICES)
     this.notify()

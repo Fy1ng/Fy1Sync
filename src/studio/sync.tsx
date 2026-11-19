@@ -171,7 +171,7 @@ function OffsetEditor({ value, onDone }: { value: number; onDone: () => void }):
           placeholder="0" onChange={(event) => setText(event.target.value)} />
         <span>秒</span>
       </label>
-      {!valid && <p className="form-error"><ErrorText error={{ code: 'invalid-offset', message: `请输入 0 到 ${MAX_OFFSET_SECONDS} 之间的数值` }} /></p>}
+      {!valid && <p className="form-error">请输入 0 到 {MAX_OFFSET_SECONDS} 之间的数值</p>}
       <div className="row-end">
         <button type="button" className="btn-quiet" onClick={() => { void session.resetOffset(); onDone() }}>清零</button>
         <button type="submit" className="btn-solid" disabled={!valid}>应用</button>

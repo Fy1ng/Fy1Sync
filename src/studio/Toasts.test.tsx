@@ -8,6 +8,16 @@ vi.mock('../app/SessionContext', () => ({ useSession: () => state.session, useSe
 afterEach(() => { cleanup(); vi.useRealTimers(); state.session.dismissNotice.mockClear() })
 
 describe('error notifications', () => {
+  it('does not add a diagnostic action to warnings or errors without additional details', () => {
+    state.notices = [
+      { id: 3, kind: 'warn', text: '缓冲不足，未完全调整', at: 3 },
+      { id: 2, kind: 'error', text: '读取失败', at: 2, detail: { message: '读取失败' } },
+      { id: 1, kind: 'info', text: '已载入', at: 1 },
+    ]
+    render(<Toasts />)
+    expect(screen.getAllByRole('button', { name: '关闭提示' })).toHaveLength(3)
+    expect(screen.queryByRole('button', { name: '查看原始错误' })).toBeNull()
+  })
   it('keeps an expanded warning available while its original fields are being read', () => {
     vi.useFakeTimers()
     state.notices = [{ id: 1, kind: 'warn', text: '读取失败', at: 1, detail: { status: 429 } }]

@@ -187,7 +187,8 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
     return () => { live = false; off() }
   }, [])
 
-  const problem = !connected || !room || !/^[1-9]\d{0,11}$/.test(room) ? '连接斗鱼弹幕后才能发送'
+  const hasRoom = connected && !!room && /^[1-9]\d{0,11}$/.test(room)
+  const problem = !hasRoom ? '连接斗鱼弹幕后才能发送'
     : loading ? '正在读取当前斗鱼账号…'
       : accountError || (!account?.loggedIn ? '请在斗鱼账号中登录并设为当前账号'
         : account.busy ? '账号正在处理登录操作，请稍后发送'
@@ -222,7 +223,8 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
       if (serverLimit !== null && value.length > serverLimit) return { text: value, problem: `超过平台当前允许的 ${serverLimit} 字` }
       return { text: value, problem: null }
     } catch (error) {
-      return { text: null, problem: error instanceof MessageCompositionError ? error.message : '弹幕内容无效', detail: errorDetails(error) }
+      return error instanceof MessageCompositionError ? { text: null, problem: error.message }
+        : { text: null, problem: '弹幕内容无效', detail: errorDetails(error) }
     }
   }, [affixes, serverLimit])
 
@@ -289,9 +291,9 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
   const remaining = nextAllowedAt === null ? 0 : Math.max(0, Math.ceil((nextAllowedAt - now) / 1000))
   const blockedReason = problem || (pending ? '正在处理上一条发送…' : remaining > 0 ? `请在 ${remaining} 秒后发送` : null)
   const draftComposition = composed(draft, 'message')
-  const blockedDetail = !problem || loading || pending ? null : accountError ? accountErrorDetail
-    : { code: !connected || !room ? 'danmaku-disconnected' : !account?.loggedIn ? 'login-required' : account.canSend === false ? 'missing-credentials' : 'account-busy', message: problem,
-      ...(account?.canSend === false ? { missingCredentialFields: account.missing } : {}) }
+  const blockedDetail = !hasRoom || !problem || loading || pending ? null : accountError ? accountErrorDetail
+    : account?.loggedIn && !account.busy && account.canSend === false && account.missing?.length
+      ? { code: 'missing-credentials', message: problem, missingCredentialFields: account.missing } : null
   return {
     account, room, draft, setDraft, pending, notice, delivery, remaining, blockedReason, refreshAccounts, affixes,
     blockedDetail, configurationError, configurationDetail, deliveryError, deliveryErrorDetail,
@@ -307,7 +309,7 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
     lengthLimit: serverLimit ?? 500,
     canSendText: (text: string) => !blockedReason && !composed(text, 'repeat').problem,
     repeatProblem: (text: string) => blockedReason || composed(text, 'repeat').problem,
-    repeatErrorDetail: (text: string) => blockedDetail ?? composed(text, 'repeat').detail ?? (composed(text, 'repeat').problem ? { message: composed(text, 'repeat').problem } : null),
+    repeatErrorDetail: (text: string) => blockedDetail ?? composed(text, 'repeat').detail ?? null,
     sendDraft: () => send(draftRef.current, 'message', true),
     repeat: (text: string) => send(text, 'repeat', false),
   }
