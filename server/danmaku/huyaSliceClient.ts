@@ -33,7 +33,7 @@ export class HuyaSliceClient implements DanmakuClient {
   private reconnect: unknown = null
   private stageTimer: unknown = null
   private generation = 0
-  private feedingGeneration: number | null = null
+  private feeding: { generation: number; presenterUid: bigint } | null = null
   private attempts = 0
   private stopped = true
   private stateValue: DanmakuState = 'idle'
@@ -43,7 +43,7 @@ export class HuyaSliceClient implements DanmakuClient {
     unknownUriCounts: {} as Record<string, number>, signatureTtlSeconds: 0,
     connectionAgeSeconds: 0, connectedBeyondTtl: false, lastFailure: null as Failure | null }
 
-  constructor(readonly room: string, private readonly events: DanmakuClientEvents, deps: HuyaSliceClientDeps = {}) {
+  constructor(readonly room: string, private readonly events: DanmakuClientEvents, private readonly deps: HuyaSliceClientDeps = {}) {
     this.resolveRoom = deps.resolveRoom ?? defaultResolveHuyaDanmakuRoom
     this.requestSignal = deps.requestSignal ?? requestHuyaChatSignal
     this.stream = deps.stream ?? safeFetchStream
@@ -89,6 +89,8 @@ export class HuyaSliceClient implements DanmakuClient {
       const metadata = await this.deadline(() => this.resolveRoom(this.room), controller)
       if (!current()) return
       if (metadata.room !== this.room) throw new Error('Invalid room identity')
+      this.deps.onRoomResolved?.(metadata)
+      if (controller.signal.aborted) return
       failure = 'signature'
       if (this.stats.signatureRequests > 0) this.stats.resigns = add(this.stats.resigns)
       this.stats.signatureRequests = add(this.stats.signatureRequests)
@@ -120,9 +122,9 @@ export class HuyaSliceClient implements DanmakuClient {
           }
           this.stats.bytes = add(this.stats.bytes, chunk.byteLength)
           this.stats.chunks = add(this.stats.chunks)
-          this.feedingGeneration = generation
+          this.feeding = { generation, presenterUid: metadata.presenterUid }
           try { this.parser.feed(chunk) }
-          finally { this.feedingGeneration = null }
+          finally { this.feeding = null }
           if (!current() || this.parser.diagnostics.packets <= baselinePackets) return
           this.stats.connectionAgeSeconds = Math.max(0, Math.floor((this.now() - openedAt) / 1000))
           if (this.now() >= signature.expiresAt) this.stats.connectedBeyondTtl = true
@@ -186,9 +188,11 @@ export class HuyaSliceClient implements DanmakuClient {
   }
 
   private push(data: Uint8Array): void {
-    const generation = this.feedingGeneration
+    const feeding = this.feeding
+    if (!feeding) return
+    const { generation, presenterUid } = feeding
     if (generation !== this.generation || this.stopped || !this.controller || this.controller.signal.aborted) return
-    const result = decodeHuyaPush(data, this.room, this.now())
+    const result = decodeHuyaPush(data, this.room, this.now(), { presenterUid })
     if (result.malformed) { this.stats.malformedPushes = add(this.stats.malformedPushes); return }
     this.stats.unknownUris = add(this.stats.unknownUris, result.unknownUris)
     for (const [uri, count] of Object.entries(result.unknownUriCounts)) {

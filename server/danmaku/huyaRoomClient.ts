@@ -1,6 +1,8 @@
 /** Two independent anonymous transports, one bounded room timeline. */
 import { HuyaDanmakuClient, type HuyaDanmakuClientDeps } from './huyaClient'
 import { HuyaSliceClient, type HuyaSliceClientDeps } from './huyaSliceClient'
+import { HuyaOnTvClient, type HuyaOnTvClientDeps } from './huyaOnTvClient'
+import { readHuyaOnTvPanel, type HuyaOnTvSnapshot } from '../platforms/huyaOnTv'
 import type { ChatMessage, DanmakuClient, DanmakuClientEvents, DanmakuState, RoomSignal } from './types'
 
 export type HuyaSource = 'cdnws' | 'slice'
@@ -9,6 +11,7 @@ type SourceClient = DanmakuClient & { readonly diagnostics?: unknown }
 export type HuyaRoomClientDeps = HuyaDanmakuClientDeps & {
   slice?: HuyaSliceClientDeps
   createSource?: (source: HuyaSource, events: DanmakuClientEvents) => SourceClient
+  onTv?: { onSnapshot: (snapshot: HuyaOnTvSnapshot) => void; readPanel?: HuyaOnTvClientDeps['readPanel'] }
 }
 const WINDOW_MS = 10 * 60_000
 const MAX_SEEN = 8192
@@ -19,6 +22,7 @@ type Received = { chats: number; gifts: number; signals: number }
 const add = (n: number, count = 1) => Math.min(Number.MAX_SAFE_INTEGER, n + count)
 
 export class HuyaRoomClient implements DanmakuClient {
+  private readonly onTv: HuyaOnTvClient | null
   private readonly sources: Record<HuyaSource, SourceClient>
   private readonly states: Record<HuyaSource, DanmakuState> = { cdnws: 'idle', slice: 'idle' }
   private readonly received: Record<HuyaSource, Received> = {
@@ -46,6 +50,9 @@ export class HuyaRoomClient implements DanmakuClient {
 
   constructor(readonly room: string, private readonly events: DanmakuClientEvents, deps: HuyaRoomClientDeps = {}) {
     this.now = deps.now ?? Date.now
+    this.onTv = deps.onTv ? new HuyaOnTvClient(room, deps.onTv.onSnapshot, {
+      ...deps, readPanel: deps.onTv.readPanel ?? readHuyaOnTvPanel,
+    }) : null
     const create = (source: HuyaSource): SourceClient => {
       const callbacks: DanmakuClientEvents = {
         onMessage: () => {},
@@ -53,9 +60,14 @@ export class HuyaRoomClient implements DanmakuClient {
         onSignal: signal => { if (this.active) this.signal(source, signal) },
         onState: state => { if (this.active) { this.states[source] = state; this.publishState() } },
       }
+      const sourceDeps = source === 'slice' ? { ...deps, ...deps.slice } : deps
+      const transportDeps: HuyaSliceClientDeps = { ...sourceDeps, onRoomResolved: metadata => {
+        if (this.active) this.onTv?.setIdentity(metadata)
+        sourceDeps.onRoomResolved?.(metadata)
+      } }
       return deps.createSource?.(source, callbacks) ?? (source === 'cdnws'
-        ? new HuyaDanmakuClient(room, callbacks, deps)
-        : new HuyaSliceClient(room, callbacks, { ...deps, ...deps.slice }))
+        ? new HuyaDanmakuClient(room, callbacks, transportDeps)
+        : new HuyaSliceClient(room, callbacks, transportDeps))
     }
     this.sources = { cdnws: create('cdnws'), slice: create('slice') }
   }
@@ -104,6 +116,7 @@ export class HuyaRoomClient implements DanmakuClient {
     if (!this.active && this.stateValue === 'closed') return
     this.active = false
     this.generation++
+    this.onTv?.close()
     for (const source of ['cdnws', 'slice'] as const) {
       try { this.sources[source].close() } catch { /* Independent teardown. */ }
       this.states[source] = 'closed'
@@ -122,6 +135,7 @@ export class HuyaRoomClient implements DanmakuClient {
     this.stateValue = state
     this.events.onState(state, state === 'connected' ? undefined
       : state === 'connecting' ? '正在连接虎牙弹幕.' : '虎牙弹幕两路暂时不可用, 正在重新连接.')
+    if (this.active && this.stateValue === state) this.onTv?.setConnected(state === 'connected')
   }
 
   private message(source: HuyaSource, message: ChatMessage): void {

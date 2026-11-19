@@ -13,7 +13,10 @@ const INBOUND_TIMEOUT_MS = 135_000
 const MAX_GIFTS_PER_SECOND = 12
 const MAX_UNKNOWN_URI_KEYS = 64
 
-export type HuyaDanmakuClientDeps = DanmakuClientDeps & { resolveRoom?: (room: string) => Promise<HuyaDanmakuRoom> }
+export type HuyaDanmakuClientDeps = DanmakuClientDeps & {
+  resolveRoom?: (room: string) => Promise<HuyaDanmakuRoom>
+  onRoomResolved?: (room: HuyaDanmakuRoom) => void
+}
 export type HuyaDanmakuDiagnostics = {
   frames: number; malformedFrames: number; unknownUris: number; chats: number; gifts: number; viewerSignals: number; batches: number
   emptyFrames: number; nonBinaryFrames: number; unknownUriCounts: Record<string, number>
@@ -56,7 +59,7 @@ export class HuyaDanmakuClient {
   private readonly setTimer: (fn: () => void, ms: number) => unknown
   private readonly clearTimer: (handle: unknown) => void
 
-  constructor(readonly room: string, private readonly events: DanmakuClientEvents, deps: HuyaDanmakuClientDeps = {}) {
+  constructor(readonly room: string, private readonly events: DanmakuClientEvents, private readonly deps: HuyaDanmakuClientDeps = {}) {
     this.createSocket = deps.createSocket ?? (url => createNetworkSocket(url, 'huya'))
     this.resolveRoom = deps.resolveRoom ?? defaultResolveHuyaDanmakuRoom
     this.now = deps.now ?? Date.now
@@ -80,6 +83,8 @@ export class HuyaDanmakuClient {
       this.resolving = false
       if (metadata.room !== this.room) throw new Error('Invalid room identity')
       const registration = encodeHuyaRegistration(metadata)
+      this.deps.onRoomResolved?.(metadata)
+      if (generation !== this.generation || this.closedByUser) return
       this.presenterUid = metadata.presenterUid
       const socket = this.createSocket(ENDPOINT)
       socket.binaryType = 'arraybuffer'
