@@ -9,6 +9,8 @@ const validTitle = (value: unknown): value is string => typeof value === 'string
   && !/[\x00-\x1f\x7f\\|#?]/.test(value) && !value.split('/').some(segment => !segment || segment === '.' || segment === '..')
   && !value.split('/')[0]!.includes(':')
 
+export { CATEGORY_TIERS, validTitle as validTournamentTitle }
+
 /** A wiki path is an identity, not a tournament name. Never accept another origin or namespace. */
 export function normalizeTournamentPath(value: string): string | null {
   if (!value || value.length > 2_000 || /[\x00-\x20\x7f\\]/.test(value)

@@ -1,0 +1,141 @@
+{
+  "batchcomplete": true,
+  "query": {
+    "normalized": [
+      {
+        "fromencoded": false,
+        "from": "PGL/2026/Singapore/Stage_1",
+        "to": "PGL/2026/Singapore/Stage 1"
+      },
+      {
+        "fromencoded": false,
+        "from": "PLAYzone/RUSH_Brno/2026",
+        "to": "PLAYzone/RUSH Brno/2026"
+      }
+    ],
+    "pages": [
+      {
+        "pageid": 382553,
+        "ns": 0,
+        "title": "PGL/2026/Singapore/Stage 1",
+        "revisions": [
+          {
+            "slots": {
+              "main": {
+                "contentmodel": "wikitext",
+                "contentformat": "text/x-wiki",
+                "content": "{{DISPLAYTITLE:PGL Major Singapore 2026: Stage 1}}\n{{PGL Major 2026 Tabs}}<!--\n|tickername=PGL Major Singapore 2026: Stage 1\n-->{{HiddenDataBox\n|name=PGL Major Singapore 2026: Stage 1\n|tickername=PGL Major Singapore 2026\n|liquipediatier=S-Tier\n|sdate=2026-11-24\n|edate=2026-11-27\n}}\n\n{{Matchlist|id=qYes0iRpTj|width=380px|collapsed=false|title=Round 1 Matches|matchsection=Round 1\n|M1header=November 24, 2026\n|{{Match\n\t|opponent1={{TeamOpponent|heroic}}|opponent2={{TeamOpponent|imp}}\n\t|date=November 24, 2026 - 12:00 {{Abbr/SGT}} |finished=\n\t|twitch=PGL |youtube=PGL |kick=PGL\n\t|map1={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=|vod=}}\n\t|hltv=2400494\n\t}}\n|{{Match\n\t|opponent1={{TeamOpponent|9z}}|opponent2={{TeamOpponent|lvg}}\n\t|date=November 24, 2026 - 12:00 {{Abbr/SGT}} |finished=\n\t|twitch=PGL CS2 |youtube=PGL |kick=PGL CS2\n\t|map1={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=|vod=}}\n\t|hltv=2400495\n\t}}\n}}\n\n{{Matchlist|id=LP7mmVSfz0|width=380px|collapsed=false|title=Round 2 High Matches|matchsection=Round 2\n|M1header=November 24, 2026\n|{{Match\n\t|opponent1={{TeamOpponent|}}|opponent2={{TeamOpponent|}}\n\t|date= |finished=\n\t|twitch=PGL |youtube=PGL |kick=PGL\n\t|map1={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=|vod=}}\n\t|hltv=\n\t}}\n}}\n"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "pageid": 345115,
+        "ns": 0,
+        "title": "PGL/2026/Singapore",
+        "revisions": [
+          {
+            "slots": {
+              "main": {
+                "contentmodel": "wikitext",
+                "contentformat": "text/x-wiki",
+                "content": "{{DISPLAYTITLE:PGL Major Singapore 2026}}\n{{Majors Navbox}}<br/>\n{{PGL Major 2026 Tabs}}\n{{Infobox league\n|name=PGL Major Singapore 2026\n|image=PGL Major Singapore 2026 lightmode.png\n|imagedark=PGL Major Singapore 2026 darkmode.png\n|icon=PGL Major Singapore 2026 icon lightmode.png\n|icondark=PGL Major Singapore 2026 icon darkmode.png\n|organizer=PGL\n|type=Offline\n|prizepoolusd=1,250,000\n|liquipediatier=S-Tier\n|publishertier=Major\n|country=Singapore\n|city=Kallang\n|venue=[https://www.thekallang.com.sg/venues-facilities/singapore-indoor-stadium Singapore Indoor Stadium]\n|venuedesc=Playoffs\n|sdate=2026-11-24\n|edate=2026-12-13\n|web=https://www.pglesports.com/cs2/pgl-major-singapore-2026/\n|sponsor=\n|rulebook=https://github.com/ValveSoftware/counter-strike_rules_and_regs/blob/main/major-supplemental-rulebook.md\n|twitter=pglesports\n|facebook=pgl\n|instagram=pgl_cs2\n|youtube=PGL\n|twitch=PGL\n|kick=PGL\n|game=cs2\n|map1=Ancient\n|map2=Anubis\n|map3=Cache\n|map4=Dust II\n|map5=Inferno\n|map6=Mirage\n|map7=Nuke\n|team_number=32\n|previous=Intel Extreme Masters/2026/Cologne{{!}}IEM Cologne 2026\n|next=FiReSPORTS/Major/2027/Buenos Aires{{!}}FiRe Buenos Aires 2027\n}}\n\n===Streams===\n<section begin=\"streams\"/>{{box|start|padding=2em}}\n<section begin=\"streams-primary\"/>{{Streams|title=Primary\n|lang1=usuk |twitch1=PGL|youtube1=PGL|ytmultiple1=true|kick1=PGL|facebook1=PGL\n|lang2=ru |twitch2=\n|lang3=cn |huya3=\n}}<section end=\"streams-primary\"/>\n{{box|break}}\n{{Streams|title=Secondary\n|lang1=usuk |twitch1=pgl_cs2|youtube1=PGL|ytmultiple1=true|kick1=PGLCS2\n|lang2=ru |twitch2=\n|lang3=cn |huya3=\n}}\n{{box|end}}<section end=\"streams\"/>\n"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "pageid": 362798,
+        "ns": 0,
+        "title": "PGL/2026/Bucharest",
+        "revisions": [
+          {
+            "timestamp": "2026-07-20T06:00:14Z",
+            "slots": {
+              "main": {
+                "contentmodel": "wikitext",
+                "contentformat": "text/x-wiki",
+                "content": "{{DISPLAYTITLE:PGL Bucharest 2026}}\n{{PGL Navbox}}<br>\n{{PGL Bucharest 2026 Tabs}}\n{{Infobox league\n|name=PGL Bucharest 2026\n|image=PGL Bucharest 2026 lightmode.png\n|imagedark=PGL Bucharest 2026 darkmode.png\n|icon=PGL Bucharest 2026 icon lightmode.png\n|icondark=PGL Bucharest 2026 icon darkmode.png\n|organizer=PGL\n|type=Offline\n|country=Romania\n|city=Bucharest\n|venue=PGL Studio\n|prizepoolusd=1,250,000\n|liquipediatier=A-Tier\n|publishertier=Tier 1\n|sdate=2026-04-04\n|edate=2026-04-11\n|web=https://www.pglesports.com/cs2/pgl-bucharest-2026/\n|rulebook=\n|twitter=pglesports\n|facebook=pgl\n|instagram=pglesports\n|youtube=PGL\n|twitch=PGL\n|kick=PGL\n|sponsor=\n|game=cs2\n|map1=Ancient\n|map2=Anubis\n|map3=Dust II\n|map4=Inferno\n|map5=Mirage\n|map6=Nuke\n|map7=Overpass\n|team_number=16\n|previous=PGL/2026/Cluj-Napoca{{!}}Cluj-Napoca 2026\n|next=PGL/2026/Astana{{!}}Astana 2026\n}}\n\n{{Matchlist|id=baSnGAMkEU|width=380px|collapsed=false|title=Round 2 High Matches|matchsection=Round 2\n|M1header=April 5, 2026\n|{{Match\n\t|opponent1={{TeamOpponent|fut}}|opponent2={{TeamOpponent|nrg}}\n\t|date=April 5, 2026 - 10:00 {{Abbr/EEST}} |finished=true\n\t|twitch=PGL|youtube=PGL/SL7HSvnChgw|kick=PGL\n\t|map1={{Map|map=Ancient|finished=true\n\t\t|t1firstside=ct|t1t=3|t1ct=10|t2t=2|t2ct=1\n\t\t|stats=225804|vod=https://youtu.be/Ij_GZp96V58&t=36}}\n\t|map2={{Map|map=Nuke|finished=true\n\t\t|t1firstside=t|t1t=10|t1ct=3|t2t=0|t2ct=2\n\t\t|stats=225807|vod=https://youtu.be/Ij_GZp96V58&t=1792}}\n\t|map3={{Map|map=Mirage|finished=skip}}\n\t|hltv=2393011\n\t}}\n}}\n{{Matchlist|id=1Bfk5Tv8uW|width=380px|collapsed=false|title=Round 2 Low Matches|matchsection=Round 2\n|M1header=April 5, 2026\n|{{Match\n\t|opponent1={{TeamOpponent|3dmax}}|opponent2={{TeamOpponent|voca}}\n\t|date=April 5, 2026 - 10:00 {{Abbr/EEST}} |finished=true\n\t|twitch=PGL CS2|youtube=PGL/HisidZ23hYA|kick=PGL CS2\n\t|map1={{Map|map=Dust II|finished=true\n\t\t|t1firstside=ct|t1t=1|t1ct=9|t2t=3|t2ct=10\n\t\t|stats=225805|vod=https://youtu.be/rOK4UbKPA8U&t=30}}\n\t|map2={{Map|map=Anubis|finished=true\n\t\t|t1firstside=ct|t1t=7|t1ct=6|t2t=6|t2ct=2\n\t\t|stats=225811|vod=https://youtu.be/rOK4UbKPA8U&t=3017}}\n\t|map3={{Map|map=Ancient|finished=true\n\t\t|t1firstside=ct|t1t=7|t1ct=5|t2t=7|t2ct=5\n\t\t|o1t1firstside=t|o1t1t=2|o1t1ct=1|o1t2t=2|o1t2ct=1\n\t\t|o2t1firstside=ct|o2t1t=2|o2t1ct=2|o2t2t=1|o2t2ct=0\n\t\t|stats=225820|vod=https://youtu.be/rOK4UbKPA8U&t=5615}}\n\t|hltv=2393012\n\t}}\n}}\n"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "pageid": 381373,
+        "ns": 0,
+        "title": "PLAYzone/RUSH Brno/2026",
+        "revisions": [
+          {
+            "slots": {
+              "main": {
+                "contentmodel": "wikitext",
+                "contentformat": "text/x-wiki",
+                "content": "{{DISPLAYTITLE:RUSH:Brno 2026}}\n{{PLAYzone Navbox}}<br>\n{{Infobox league\n|name=RUSH:Brno 2026\n|image=RUSH Brno 2026 allmode.png\n|icon=PLAYzone 2022 icon allmode.png\n|series=Tipsport Cup\n|organizer=PLAYzone\n|type=Offline\n|country=Czech Republic\n|country2=Czech Republic\n|city=Prague\n|city2=Brno\n|venue=[https://www.playzonearena.cz Vodafone PLAYzone Arena]\n|venuedesc=Group Stage\n|venue2=[https://www.bvv.cz BVV Trade Fairs]\n|venue2desc=Playoffs\n|prizepool=30,000\n|localcurrency=eur\n|liquipediatier=B-Tier\n|publishertier=Tier 2\n|sdate=2026-11-17\n|edate=2026-11-22\n|web=https://events.playzone.cz/en/events/tipsport-rush-brno-2026/\n|web2=\n|bracket=\n|rulebook=https://www.playzone.cz/tipsport-cs-circuit-official-rulebook\n|instagram=playzonecz\n|twitch=playzonecz\n|twitter=PLAYzonecz\n|facebook=playzonecz\n|youtube=PLAYzoneczsk\n|sponsor=[https://www.tipsport.cz Tipsport]<br>[https://www.hal3000.cz HAL3000]<br>[https://www.aorus.com AORUS]<br>[https://kfc.cz KFC]\n|game=cs2\n|map1=Ancient\n|map2=Anubis\n|map3=Cache\n|map4=Dust II\n|map5=Inferno\n|map6=Mirage\n|map7=Nuke\n|team_number=8\n}}\n\n{{Matchlist|id=ILWMVKbm6b|gsl=losersfirst|width=400px|collapsed=true|attached=true|title=Group A Matches\n|{{Match\n\t|opponent1={{TeamOpponent|sinners}}|opponent2={{TeamOpponent|nexus}}\n\t|date=November 17, 2026 - 11:20 {{Abbr/CET}} |finished=true\n\t|twitch=PLAYzoneUP |youtube=PLAYzone\n\t|map1={{Map|map=Ancient|finished=true\n\t\t|t1firstside=ct|t1t=4|t1ct=9|t2t=3|t2ct=1\n\t\t|stats=244547}}\n\t|map2={{Map|map=Mirage|finished=true\n\t\t|t1firstside=t|t1t=6|t1ct=7|t2t=2|t2ct=6\n\t\t|stats=244550}}\n\t|map3={{Map|map=Dust II|finished=skip}}\n\t|hltv=2400518\n\t}}\n}}\n{{Bracket|Bracket/4L2DS|id=D6D1YQrgTJ\n\n<!-- Quarterfinals -->\n|R1M1={{Match\n\t|opponent1={{TeamOpponent|nv}}|opponent2={{TeamOpponent|nexus}}\n\t|date=November 20, 2026 - 16:00 {{Abbr/CET}} |finished=\n\t|twitch=PLAYzoneUP |youtube=PLAYzone\n\t|map1={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=}}\n\t|map2={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=}}\n\t|map3={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=}}\n\t|hltv=2400526\n\t}}\n|R1M2={{Match\n\t|opponent1={{TeamOpponent|sinners}}|opponent2={{TeamOpponent|metizport}}\n\t|date=November 20, 2026 - 19:00 {{Abbr/CET}} |finished=\n\t|twitch=PLAYzoneUP |youtube=PLAYzone\n\t|map1={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=}}\n\t|map2={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=}}\n\t|map3={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=}}\n\t|hltv=2400527\n\t}}\n\n<!-- Semifinals -->\n|R2M1={{Match\n\t|opponent1={{TeamOpponent|alliance}}|opponent2={{TeamOpponent|}}\n\t|date=November 21, 2026 - 14:00 {{Abbr/CET}} |finished=\n\t|twitch=PLAYzoneUP |youtube=PLAYzone\n\t|map1={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=}}\n\t|map2={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=}}\n\t|map3={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=}}\n\t|hltv=2400528\n\t}}\n|R2M2={{Match\n\t|opponent1={{TeamOpponent|bbl}}|opponent2={{TeamOpponent|}}\n\t|date=November 21, 2026 - 17:00 {{Abbr/CET}} |finished=\n\t|twitch=PLAYzoneUP |youtube=PLAYzone\n\t|map1={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=}}\n\t|map2={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=}}\n\t|map3={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=}}\n\t|hltv=2400529\n\t}}\n\n<!-- Grand Final -->\n|R3M1={{Match\n\t|opponent1={{TeamOpponent|}}|opponent2={{TeamOpponent|}}\n\t|date=November 22, 2026 - 16:00 {{Abbr/CET}} |finished=\n\t|twitch=PLAYzoneUP |youtube=PLAYzone\n\t|map1={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=}}\n\t|map2={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=}}\n\t|map3={{Map|map=|finished=\n\t\t|t1firstside=|t1t=|t1ct=|t2t=|t2ct=\n\t\t|stats=}}\n\t|hltv=2400530\n\t}}\n}}\n==Additional Content==\n===Streams===\n{{Streams\n|lang1=usuk|twitch1=playzoneup|youtube1=PLAYzoneczsk|ytmultiple1=true\n|lang2=cz|twitch2=playzonecz|youtube2=PLAYzoneczsk|ytmultiple2=true\n}}\n"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "pageid": 382109,
+        "ns": 0,
+        "title": "NODWIN Gaming/Clutch Series/14",
+        "revisions": [
+          {
+            "revid": 3472308,
+            "parentid": 3472286,
+            "timestamp": "2026-11-20T16:08:18Z",
+            "slots": {
+              "main": {
+                "contentmodel": "wikitext",
+                "contentformat": "text/x-wiki",
+                "content": "{{DISPLAYTITLE:NODWIN Clutch Series #14}}\n{{Tabs static\n|name1=Main Event |link1=NODWIN Gaming/Clutch Series/14\n|name2=Play-In |link2=NODWIN Gaming/Clutch Series/14/Play-In\n}}\n{{Infobox league\n|name=NODWIN Clutch Series #14\n|image=NODWIN Clutch Series 14 lightmode.png\n|imagedark=NODWIN Clutch Series 14 darkmode.png\n|icon=NODWIN Gaming icon allmode.png\n|organizer=NODWIN Gaming\n|sponsor=\n|type=Online\n|country=Europe\n|prizepoolusd=30,000\n|liquipediatier=B-Tier\n|publishertier=Tier 2\n|sdate=2026-11-10\n|edate=2026-11-23\n|twitter=Nodwin_CS2\n|kick=nodwin_cs2\n|rulebook=\n|game=cs2\n|map1=Ancient\n|map2=Anubis\n|map3=Cache\n|map4=Dust II\n|map5=Inferno\n|map6=Mirage\n|map7=Nuke\n|team_number=24\n|previous=NODWIN Gaming/Clutch Series/13{{!}}Clutch Series #13\n|next=NODWIN Gaming/Clutch Series/15{{!}}Clutch Series #15\n}}\n\n{{Matchlist|id=BZD1DbTtpK|width=380px|collapsed=false|title=Round 1 Matches|matchsection=Round 1\n|M1header=November 10, 2026\n|{{Match\n\t|opponent1={{TeamOpponent|brute}}|opponent2={{TeamOpponent|illyrians}}\n\t|date=November 10, 2026 - 10:00 {{Abbr/CET}} |finished=true\n\t|kick=Nodwin CS\n\t|map1={{Map|map=Dust II|finished=true\n\t\t|t1firstside=t|t1t=7|t1ct=5|t2t=7|t2ct=5\n\t\t|o1t1firstside=ct|o1t1t=1|o1t1ct=1|o1t2t=2|o1t2ct=2\n\t\t|stats=244011}}\n\t|map2={{Map|map=Inferno|finished=true\n\t\t|t1firstside=t|t1t=6|t1ct=2|t2t=7|t2ct=6\n\t\t|stats=244013}}\n\t|map3={{Map|map=Mirage|finished=skip}}\n\t|hltv=2400327\n\t}}\n}}\n"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "pageid": 376983,
+        "ns": 0,
+        "title": "CCT/2026/Europe/Series 14",
+        "revisions": [
+          {
+            "revid": 3472282,
+            "parentid": 3472270,
+            "timestamp": "2026-11-20T15:06:12Z",
+            "slots": {
+              "main": {
+                "contentmodel": "wikitext",
+                "contentformat": "text/x-wiki",
+                "content": "{{DISPLAYTITLE:CCT Europe 2026 Series #14}}\n{{CCT Navbox}}<br>\n{{CCT 2026 Tabs|eu}}\n{{Infobox league\n|name=CCT Europe 2026 Series #14\n|image=CCT 2024 Europe allmode.png\n|icon=CCT 2024 Europe icon allmode.png\n|tickername=CCT EU 2026 Series #14\n|organizer=CCT\n|organizer-link=Champion of Champions Tour\n|series=Champion of Champions Tour\n|abbreviation=CCT Europe\n|shortname=Series #14\n|type=Online\n|country=Europe\n|prizepoolusd=25,000\n|liquipediatier=B-Tier\n|publishertier=Tier 2\n|sdate=2026-11-10\n|edate=2026-11-22\n|web=https://cctour.gg/cct-2026-europe/\n|rulebook=https://drive.google.com/file/d/1jwjc4U7bnwICaWGCoGTtlafeACh060Vy\n|twitter=CCT_CS\n|kick=cct_cs2\n|youtube=channel/UCrN2GuYzV7D8hcyMrq7ImUA\n|sponsor=[https://www.grid.gg/ GRID]<br/>[https://hellcase.com Hellcase]<br/>[https://skin.place/ Skin Place]<br/>[https://stake.com/ Stake]\n|game=cs2\n|map1=Ancient\n|map2=Anubis\n|map3=Cache\n|map4=Dust II\n|map5=Inferno\n|map6=Mirage\n|map7=Nuke\n|team_number=24\n}}\n\n{{Matchlist|id=4rZvCMRUtT|width=380px|collapsed=false|title=Round 1 Matches|matchsection=Round 1\n|M1header=November 10, 2026\n|{{Match\n\t|opponent1={{TeamOpponent|baks}}|opponent2={{TeamOpponent|azuolas}}\n\t|date=November 10, 2026 - 10:00 {{Abbr/CET}} |finished=true\n\t|kick=CCT Counter-Strike 2\n\t|map1={{Map|map=Inferno|finished=true\n\t\t|t1firstside=ct|t1t=3|t1ct=10|t2t=2|t2ct=0\n\t\t|stats=244009}}\n\t|map2={{Map|map=Ancient|finished=true\n\t\t|t1firstside=t|t1t=12|t1ct=1|t2t=0|t2ct=0\n\t\t|stats=244010}}\n\t|map3={{Map|map=Nuke|finished=skip}}\n\t|hltv=2400233\n\t}}\n}}\n"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "pageid": 381765,
+        "ns": 0,
+        "title": "Elisa/Open Suomi/Season 14",
+        "revisions": [
+          {
+            "revid": 3472090,
+            "parentid": 3472066,
+            "timestamp": "2026-11-19T19:52:11Z",
+            "slots": {
+              "main": {
+                "contentmodel": "wikitext",
+                "contentformat": "text/x-wiki",
+                "content": "{{DISPLAYTITLE:Elisa Open Suomi Season 14}}\n{{Elisa Navbox}}<br>\n{{Tabs static\n|name1=Overview |link1=Elisa/Open Suomi/Season 14\n|name2=Open Qualifier #1 |link2=Elisa/Open Suomi/Season 14/Qualifier/1\n|name3=Open Qualifier #2 |link3=Elisa/Open Suomi/Season 14/Qualifier/2\n|name4=Open Qualifier #3 |link4=Elisa/Open Suomi/Season 14/Qualifier/3\n}}\n{{Infobox league|darkmodeforced=true\n|name=Elisa Open Suomi Season 14\n|image=Elisa Open Suomi Season 14 darkmode.png\n|icondark=Elisa Esports icon darkmode.png\n|icon=Elisa Esports icon lightmode.png\n|organizer=Elisa Esports\n|type=Online\n|country=Finland\n|prizepool=5,000\n|localcurrency=eur\n|liquipediatier=C-Tier\n|publishertier=Tier 2\n|sdate=2026-11-02\n|edate=2026-11-29\n|web=https://elisaesports.com/\n|twitter=ElisaEsportsFI\n|twitch=elisaviihdesport\n|youtube=@elisaesports\n|kick=elisaesports_fi\n|instagram=elisaesports\n|sponsor=\n|game=cs2\n|map1=Ancient\n|map2=Anubis\n|map3=Cache\n|map4=Dust II\n|map5=Inferno\n|map6=Mirage\n|map7=Nuke\n|team_number=8\n|previous=Elisa/Open Suomi/Season 13{{!}}Season 13\n|next=Elisa/Open Suomi/Season 15{{!}}Season 15\n}}\n\n==Additional Content==\n===Streams===\n{{Streams\n|lang1=fi|twitch1=elisaviihdesport|youtube1=@elisaesports\n}}\n"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
