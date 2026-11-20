@@ -7,6 +7,7 @@ import { EsportsService, SCHEDULE_TTL_MS } from './schedule'
 import { cooldownRound, DEFAULT_COOLDOWN_MS, LiquipediaRateLimit, PARSE_INTERVAL_MS, pause } from './liquipediaRateLimit'
 import { TeamLogoCache } from './teamLogos'
 import { installNetworkPolicy, NetworkPolicy } from '../networkPolicy'
+import { PinnedDispatcherPool } from '../safeFetch'
 
 const NOW = Date.parse('2026-10-26T20:00:00Z')
 const isParse = (input: unknown) => new URL(String(input)).searchParams.get('action') === 'parse'
@@ -14,7 +15,7 @@ const ok = (input: unknown) => Response.json(isParse(input) ? fixture : { query:
 const limited = (retryAfter?: string) => new Response('<title>Rate Limited - Liquipedia</title>',
   { status: 429, statusText: 'Too Many Requests', headers: { 'content-type': 'text/html', ...(retryAfter ? { 'retry-after': retryAfter } : {}) } })
 
-describe('Liquipedia upstream cooldown', () => {
+describe('Liquipedia request deadlines and upstream cooldown', () => {
   let root: string
   const services: EsportsService[] = []
   beforeEach(async () => {
@@ -34,6 +35,59 @@ describe('Liquipedia upstream cooldown', () => {
   }
 
   const openVerification = (service: EsportsService) => service.openLiquipediaVerification(async () => {})
+
+  it('accepts a schedule response just before 60 seconds and gives the system proxy dispatcher the same budget', async () => {
+    installNetworkPolicy(new NetworkPolicy(async () => 'PROXY 127.0.0.1:7890', () => 'system'))
+    const dispatcher = vi.spyOn(PinnedDispatcherPool.prototype, 'get')
+    try {
+      const request = vi.fn<typeof fetch>(async (input, init) => {
+        await pause(59_999, init!.signal!)
+        return ok(input)
+      })
+      const service = create(request)
+      const pending = service.getCs2Schedule()
+      await vi.advanceTimersByTimeAsync(59_999)
+      const result = await pending
+      expect(result).toMatchObject({ fetchedAt: NOW + 59_999, stale: false })
+      expect(result.matches.length).toBeGreaterThan(0)
+      expect(request).toHaveBeenCalledOnce()
+      expect(dispatcher.mock.calls[0]?.[2]).toBe(60_000)
+      expect(JSON.parse(await readFile(join(root, 'events', 'liquipedia.json'), 'utf8')).fetchedAt).toBe(result.fetchedAt)
+    } finally { dispatcher.mockRestore() }
+  })
+
+  it('aborts a schedule response that would arrive after the full 60 seconds', async () => {
+    const request = vi.fn<typeof fetch>(async (input, init) => {
+      await pause(60_001, init!.signal!)
+      return ok(input)
+    })
+    const service = create(request)
+    const pending = service.getCs2Schedule()
+    await vi.advanceTimersByTimeAsync(59_999)
+    const signal = request.mock.calls[0]![1]!.signal!
+    expect(signal.aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(signal.reason).toMatchObject({ name: 'TimeoutError', message: 'Metadata request timed out' })
+    expect(await pending).toMatchObject({ fetchedAt: 0, stale: true, refreshAt: NOW + 60_000 + SCHEDULE_TTL_MS, refreshReason: 'retry' })
+    expect(request).toHaveBeenCalledOnce()
+  })
+
+  it('still aborts a tier query at 15 seconds', async () => {
+    const request = vi.fn<typeof fetch>(async (input, init) => {
+      if (!isParse(input)) await pause(15_001, init!.signal!)
+      return ok(input)
+    })
+    const service = create(request)
+    await service.getCs2Schedule()
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(request).toHaveBeenCalledTimes(2)
+    const [input, init] = request.mock.calls[1]!
+    expect(new URL(String(input)).searchParams.get('action')).toBe('query')
+    await vi.advanceTimersByTimeAsync(14_999)
+    expect(init!.signal!.aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(init!.signal!.reason).toMatchObject({ name: 'TimeoutError', message: 'Metadata request timed out' })
+  })
 
   it('requires the browser handoff, waits for the parse quota, then clears the cooldown in all readers and reschedules background refresh', async () => {
     const request = vi.fn<typeof fetch>(async input => ok(input)).mockResolvedValueOnce(limited())
@@ -84,6 +138,23 @@ describe('Liquipedia upstream cooldown', () => {
     expect((await result).verificationResult).toBe('recovered')
   })
 
+  it('accepts a response 59,999 ms after the verification request gets its parse slot', async () => {
+    const request = vi.fn<typeof fetch>(async (input, init) => {
+      await pause(59_999, init!.signal!)
+      return ok(input)
+    }).mockResolvedValueOnce(limited())
+    const service = create(request)
+    const { verification } = await service.getCs2Schedule()
+    await openVerification(service)
+    const retry = service.refreshCs2ScheduleAfterVerification({ round: verification!.round })
+    await vi.advanceTimersByTimeAsync(PARSE_INTERVAL_MS - 1)
+    expect(request).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(request).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(59_999)
+    expect(await retry).toMatchObject({ fetchedAt: NOW + PARSE_INTERVAL_MS + 59_999, stale: false, verificationResult: 'recovered' })
+  })
+
   it('opens a new, independently confirmed round on a second 429 and honors its Retry-After', async () => {
     const request = vi.fn<typeof fetch>(async input => ok(input)).mockResolvedValueOnce(limited()).mockResolvedValueOnce(limited('90'))
     const service = create(request)
@@ -117,7 +188,7 @@ describe('Liquipedia upstream cooldown', () => {
     const { round } = blocked.verification!
     await openVerification(service)
     const retry = service.refreshCs2ScheduleAfterVerification({ round })
-    await vi.advanceTimersByTimeAsync(PARSE_INTERVAL_MS + (failure === 'timeout' ? 15_000 : 0))
+    await vi.advanceTimersByTimeAsync(PARSE_INTERVAL_MS + (failure === 'timeout' ? 60_000 : 0))
     expect(await retry).toMatchObject({ verificationResult: 'failed', refreshAt: blocked.refreshAt, verification: { round, used: true } })
     await openVerification(service)
     expect((await service.refreshCs2ScheduleAfterVerification({ round })).verificationResult).toBe('not-attempted')

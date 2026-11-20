@@ -34,6 +34,7 @@ export const TIER_RETRY_MS = 300_000
 export const CHANNEL_TTL_MS = 24 * 60 * 60_000
 export const CHANNEL_RETRY_MS = 300_000
 const MAX_BODY_BYTES = 2_000_000
+const SCHEDULE_REQUEST_TIMEOUT_MS = 60_000
 const UNAVAILABLE = '赛程暂时无法读取，请稍后重试'
 const UPSTREAM_LIMITED = '赛程更新受限，暂时显示上次结果'
 /** Refused for the 30-second parse quota; `at` is when the quota frees. */
@@ -497,9 +498,11 @@ export class EsportsService {
   }
   private async fetchMetadata(url: string, parse: boolean, verification?: { round: string; limited: boolean }): Promise<unknown> {
     if (!verification) this.rateLimit.throwIfCooling()
+    const config = metadataConfig()
+    if (url === SCHEDULE_URL) config.requestTimeoutMs = SCHEDULE_REQUEST_TIMEOUT_MS
     const transport = new AbortController()
     const signal = AbortSignal.any([this.lifetime.signal, transport.signal])
-    const timeout = () => setTimeout(() => transport.abort(new DOMException('Metadata request timed out', 'TimeoutError')), 15_000)
+    const timeout = () => setTimeout(() => transport.abort(new DOMException('Metadata request timed out', 'TimeoutError')), config.requestTimeoutMs)
     let timer = timeout()
     let startedAt = this.now()
     let dispatched = false
@@ -511,7 +514,7 @@ export class EsportsService {
       this.notify('schedule-updated')
     }
     try {
-      const result = await safeFetch(url, metadataConfig(), {
+      const result = await safeFetch(url, config, {
         signal, resolve: this.options.resolve, dispatcherPool: this.pool,
         headers: { 'User-Agent': metadataUserAgent(this.options.version), 'Accept-Encoding': 'gzip', Accept: 'application/json' },
         fetchImpl: async (input, init) => {
