@@ -4,6 +4,7 @@ import type { StreamSyncerBridge } from '../../../electron/contracts'
 import type { FeatureEvent } from '../../../electron/featureContracts'
 import { Accounts } from './Accounts'
 import { Automations } from './Automations'
+import { useAutomations } from './automationState'
 import { Tasks } from './Tasks'
 import { useDouyu } from './useDouyu'
 
@@ -42,9 +43,10 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 function Harness({ view }: { view: typeof cases[number]['view'] }): React.ReactNode {
   const data = useDouyu()
+  const automations = useAutomations(view === 'automations')
   if (view === 'accounts') return <Accounts data={data} />
   if (view === 'tasks') return <Tasks data={data} defaultRoom={null} />
-  return <Automations data={data} />
+  return <Automations data={data} state={automations} />
 }
 
 describe.each(cases)('$view read state', ({ view, method, loading, empty }) => {

@@ -40,12 +40,11 @@ test('斗鱼账号隔离, 任务控制和重启暂停经过实际 Electron 界�
     await connectDanmaku(running.page, '6657')
     await expect.poll(async () => (await tasks(running.page)).currentRoom).toBe('6979222')
     const form = await openTaskForm(running.page, 'room-sign', '6657', true)
-    await form.getByRole('button', { name: '添加', exact: true }).click()
+    await form.getByRole('button', { name: '添加并启动', exact: true }).click()
     const taskName = '签到任务 6979222 （测试账号）'
     const task = tools.getByRole('group', { name: taskName, exact: true })
-    await expect(task).toHaveAttribute('data-status', 'paused')
-    expect((await tasks(running.page)).tasks[0]).toMatchObject({ room: '6979222', policy: 'background-locked', repeatMinutes: 1440, lastRunAt: null })
-    await task.getByRole('button', { name: '启动', exact: true }).click()
+    await expect(task).toHaveAttribute('data-status', 'queued')
+    expect((await tasks(running.page)).tasks[0]).toMatchObject({ room: '6979222', policy: 'background-locked', repeatMinutes: 1440 })
     await expect(task).toContainText('离线签到测试完成')
     expect((await tasks(running.page)).tasks[0]?.nextRunAt).toBeGreaterThan(Date.now())
 
@@ -67,6 +66,8 @@ test('斗鱼账号隔离, 任务控制和重启暂停经过实际 Electron 界�
     await openDouyuTab(running.page, '房间任务')
     await expect(task).toContainText('已停止')
     await task.getByRole('button', { name: '启动', exact: true }).click()
+    await expect(task.getByText('已启动', { exact: true })).toBeVisible()
+    await expect(tools.getByText('已启动', { exact: true })).toHaveCount(1)
     await expect.poll(async () => (await tasks(running.page)).tasks[0]?.nextRunAt).not.toBeNull()
 
     await openDouyuTab(running.page, '账号')
@@ -132,6 +133,8 @@ test('斗鱼账号隔离, 任务控制和重启暂停经过实际 Electron 界�
     await remove.click()
     await expect(cancel).toBeFocused()
     await confirm.click()
+    await expect(restoredTask.getByText('已删除', { exact: true })).toBeVisible()
+    await expect(remove).toHaveCount(0)
     await expect(restoredTask).toHaveCount(0)
     await expect(reopenedTasks).toBeVisible()
     await expect.poll(async () => (await tasks(running.page)).tasks).toEqual([])

@@ -31,11 +31,11 @@ function Harness(): React.ReactNode {
   const data = useDouyu()
   return <>
     <button onClick={() => void data.accountAction('读取中', async () => ({ ok: false, code: 'ACCOUNT_401', message: '处理失败', detail: { status: 401, traceId: 'account-read', cookie: 'secret-cookie' } }), '完成')}>账号失败</button>
-    <button onClick={() => void data.taskAction('读取中', async () => ({ ok: false, code: 'TASK_502', message: '处理失败', detail: { status: 502, traceId: 'task-read' } }), '完成')}>任务失败</button>
+    <button onClick={() => void data.taskActions.act('读取中', async () => ({ ok: false, code: 'TASK_502', message: '处理失败', detail: { status: 502, traceId: 'task-read' } }), '完成')}>任务失败</button>
     <button onClick={() => void data.accountAction('读取中', async () => ({ ok: true, value: accounts }), '账号已读取')}>账号成功</button>
     <button onClick={() => void data.accountAction('读取中', async () => { throw Object.assign(new TypeError('local exception'), { code: 'LOCAL_READ' }) }, '完成')}>本地异常</button>
     <section aria-label="账号反馈"><LaneLine lane={data.accountLane} /></section>
-    <section aria-label="任务反馈"><LaneLine lane={data.taskLane} /></section>
+    <section aria-label="任务反馈"><LaneLine lane={data.taskActions.lane} /></section>
   </>
 }
 

@@ -2,7 +2,7 @@ import { test } from '@playwright/test'
 import { expect, launchApplication } from './electron'
 import { invoke, openDouyuTab, openPlayerWithDouyuWrites, openTaskForm, setCheckedByLabel } from './helpers'
 
-test('鱼吧登录入口和签到任务通过受限 IPC, 重启后保持暂停', async ({}, testInfo) => {
+test('本房间鱼吧签到与批量鱼吧签到入口区分, 房间任务通过受限 IPC 并在重启后保持暂停', async ({}, testInfo) => {
   test.setTimeout(90_000)
   const running = await launchApplication('douyu-yuba')
   try {
@@ -21,11 +21,14 @@ test('鱼吧登录入口和签到任务通过受限 IPC, 重启后保持暂停',
     await expect(tools).toContainText('鱼吧页面已关闭')
     await expect(account).toContainText('已登录')
     const form = await openTaskForm(running.page, 'yuba-sign', '9999', true)
-    await form.getByRole('button', { name: '添加', exact: true }).click()
-    const task = tools.getByRole('group', { name: '鱼吧签到任务 9999 (默认账号)', exact: true })
+    await form.getByRole('button', { name: '仅添加', exact: true }).click()
+    await expect(tools.getByText('已添加', { exact: true })).toBeVisible()
+    const task = tools.getByRole('group', { name: '本房间鱼吧签到任务 9999 （默认账号）', exact: true })
     await expect(task).toHaveAttribute('data-status', 'paused')
     await setCheckedByLabel(tools.getByRole('region', { name: '任务房间 9999', exact: true }).getByRole('switch', { name: '离开该房间后继续', exact: true }))
     await task.getByRole('button', { name: '启动', exact: true }).click()
+    await expect(task.getByText('已启动', { exact: true })).toBeVisible()
+    await expect(tools.getByText('已启动', { exact: true })).toHaveCount(1)
     await expect(task).toContainText('离线鱼吧签到测试完成')
     const state = await invoke(running.page, 'getDouyuTasks', undefined)
     expect(state).toMatchObject({ ok: true, value: { tasks: [{ kind: 'yuba-sign', room: '9999', repeatMinutes: 1440, status: 'queued' }] } })
@@ -33,10 +36,23 @@ test('鱼吧登录入口和签到任务通过受限 IPC, 重启后保持暂停',
     expect(state.value.tasks[0]?.nextRunAt).toBeGreaterThan(Date.now())
 
     const roomForm = await openTaskForm(running.page, 'room-sign', '9999', true)
-    await roomForm.getByRole('button', { name: '添加', exact: true }).click()
-    await expect(tools.getByRole('group', { name: '签到任务 9999 (默认账号)', exact: true })).toHaveAttribute('data-status', 'paused')
+    await roomForm.getByRole('button', { name: '仅添加', exact: true }).click()
+    await expect(tools.getByRole('group', { name: '签到任务 9999 （默认账号）', exact: true })).toHaveAttribute('data-status', 'paused')
     await task.scrollIntoViewIfNeeded()
     await running.page.screenshot({ path: testInfo.outputPath('douyu-yuba-tasks.png'), fullPage: true })
+
+    const batchTools = await openDouyuTab(running.page, '批量任务')
+    await batchTools.getByRole('button', { name: '新建批量任务', exact: true }).click()
+    const batchForm = batchTools.getByRole('form', { name: '新建批量任务', exact: true })
+    await batchForm.getByRole('combobox', { name: '批量任务类型', exact: true }).selectOption({ label: '批量鱼吧签到' })
+    await expect(batchForm.getByRole('combobox', { name: '批量任务类型', exact: true })).toHaveValue('yuba-sign-all')
+    await expect(batchForm.getByRole('radiogroup', { name: '目标范围', exact: true })
+      .getByRole('radio', { name: '全部关注鱼吧', exact: true })).toBeChecked()
+    await expect(batchForm.getByRole('button', { name: '添加并启动', exact: true })).toBeVisible()
+    await expect(batchForm.getByRole('button', { name: '仅添加', exact: true })).toBeVisible()
+    await setCheckedByLabel(batchForm.getByRole('radiogroup', { name: '目标范围', exact: true })
+      .getByRole('radio', { name: '指定鱼吧', exact: true }))
+    await expect(batchForm.getByRole('textbox', { name: '鱼吧 ID', exact: true })).toBeVisible()
 
     await running.restart()
     const restored = await invoke(running.page, 'getDouyuTasks', undefined)

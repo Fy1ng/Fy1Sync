@@ -1,6 +1,6 @@
 /**
- * Room tasks: check-ins, scheduled danmaku and the room activities. A task is created
- * paused and runs only after 启动; quitting the app stops everything, and nothing restarts
+ * Room tasks: check-ins, scheduled danmaku and the room activities. Starting a task is
+ * explicit; quitting the app stops everything, and nothing restarts
  * on its own next time. Tasks are grouped by room because a room is what the viewer thinks
  * in — "the stuff I have running in 9999".
  */
@@ -15,18 +15,18 @@ import {
 } from '../../../server/douyu/types'
 import type { LocalMessageTemplate, MessageSelection } from '../../core/messageComposition'
 import { Segmented, Switch } from '../kit'
-import { LaneLine } from './DouyuDesk'
+import { LaneLine, startsOnSubmit, TaskFormButtons } from './DouyuDesk'
 import { ActivityOptions } from './taskActivityOptions'
 import {
   EMPTY_LOOP, SELECTION_LABEL, TEMPLATE_LABEL, buildMessageSchedule, durationText, messageLines, templateLines, type LoopDraft,
 } from './taskMessage'
-import type { DouyuData } from './useDouyu'
+import { roomTaskStartBlock, type DouyuData } from './useDouyu'
 import { ReadError } from '../ReadError'
 import { InlineConfirm } from '../InlineConfirm'
 import './tasks.css'
 
 const KIND: Record<DouyuTaskKind, string> = {
-  'room-sign': '直播间签到', 'yuba-sign': '鱼吧签到', 'message-loop': '定时弹幕',
+  'room-sign': '直播间签到', 'yuba-sign': '本房间鱼吧签到', 'message-loop': '定时弹幕',
   'auto-fish': '钓鱼', 'gift-packet': '抢红包', 'treasure-box': '开宝箱',
 }
 const KIND_NOTE: Partial<Record<DouyuTaskKind, string>> = {
@@ -50,13 +50,13 @@ const when = (time: number): string => {
 }
 
 export function Tasks({ data, defaultRoom }: { data: DouyuData; defaultRoom: string | null }): React.ReactNode {
-  const { tasks, all, accounts, taskLane, loading, tasksLoading, accountsReadError, tasksReadError, reloadAccounts, reloadTasks } = data
+  const { tasks, all, accounts, taskActions, loading, tasksLoading, accountsReadError, tasksReadError, reloadAccounts, reloadTasks } = data
   const [creating, setCreating] = useState(false)
   const rooms = [...new Set([
     ...(tasks?.currentRoom ? [tasks.currentRoom] : []),
     ...(tasks?.retainedRooms ?? []),
-    ...(tasks?.tasks.map((task) => task.room) ?? []),
-  ])].filter((room) => tasks?.tasks.some((task) => task.room === room) || tasks?.retainedRooms.includes(room))
+    ...taskActions.rows.map(({ task }) => task.room),
+  ])].filter((room) => taskActions.rows.some(({ task }) => task.room === room) || tasks?.retainedRooms.includes(room))
   const hasFishing = !!tasks?.tasks.some((task) => task.kind === 'auto-fish')
   const hasTreasure = !!tasks?.tasks.some((task) => task.kind === 'treasure-box')
 
@@ -81,14 +81,14 @@ export function Tasks({ data, defaultRoom }: { data: DouyuData; defaultRoom: str
             {room === tasks?.currentRoom && <span className="tag">正在观看</span>}
             <span className="room-keep">
               <Switch label="离开该房间后继续" checked={tasks?.retainedRooms.includes(room) ?? false}
-                disabled={!!taskLane.pending}
-                onChange={(retain) => void data.taskAction('正在保存', () => apiClient.retainDouyuTaskRoom(room, retain),
+                disabled={taskActions.busy}
+                onChange={(retain) => void taskActions.act('正在保存', () => apiClient.retainDouyuTaskRoom(room, retain),
                   retain ? `离开房间 ${room} 后任务继续` : `离开房间 ${room} 后任务停止`)} />
             </span>
           </header>
           <ul className="task-list">
-            {tasks?.tasks.filter((task) => task.room === room).map((task) => (
-              <TaskRow key={task.id} task={task} data={data} activeId={accounts?.activeAccountId ?? null} />
+            {taskActions.rows.filter(({ task }) => task.room === room).map(({ task, removed }) => (
+              <TaskRow key={task.id} task={task} removed={removed} data={data} activeId={accounts?.activeAccountId ?? null} />
             ))}
           </ul>
         </section>
@@ -101,7 +101,7 @@ export function Tasks({ data, defaultRoom }: { data: DouyuData; defaultRoom: str
           退出应用后任务停止，下次需手动启动。应用当前{tasks.runtime.suspended ? '休眠中' : tasks.runtime.locked ? '处于锁屏' : tasks.runtime.foreground ? '在前台运行' : '在后台运行'}。
         </p>
       )}
-      <LaneLine lane={taskLane} />
+      <LaneLine lane={taskActions.lane} />
     </div>
   )
 }
@@ -122,22 +122,28 @@ function MessageText({ message }: { message: DouyuMessageSchedule }): React.Reac
   return <>{message.text}</>
 }
 
-function TaskRow({ task, data, activeId }: { task: DouyuTaskView; data: DouyuData; activeId: string | null }): React.ReactNode {
-  const { all, taskAction, accountAction, accountsBusy, taskLane } = data
+function TaskRow({ task, removed, data, activeId }: { task: DouyuTaskView; removed: boolean; data: DouyuData; activeId: string | null }): React.ReactNode {
+  const { all, taskActions, accountsBusy } = data
   const account = all.find((item) => item.id === task.accountId)
-  const blocked = !account ? '账号已删除' : account.id !== activeId ? `请先在账号中将 ${account.label} 设为当前账号`
-    : !account.login.loggedIn ? `请先登录 ${account.label}` : ''
-  const locked = !!taskLane.pending
+  const blocked = roomTaskStartBlock(account, activeId)
+  const locked = taskActions.busy
   const running = scheduled(task)
   const activity = isDouyuActivityKind(task.kind)
   const kind = activity ? `${KIND[task.kind]}任务` : task.kind === 'message-loop' ? '发送任务'
-    : task.kind === 'yuba-sign' ? '鱼吧签到任务' : '签到任务'
+    : task.kind === 'yuba-sign' ? `${KIND[task.kind]}任务` : '签到任务'
   const message = task.message
   const waiting = task.status === 'waiting-user'
   const officialRoom = task.officialRoom ?? task.room
+  const label = `${kind} ${task.room} （${account?.label ?? '账号不可用'}）`
+  const feedback = <LaneLine lane={taskActions.rowLane(task.id)} onDismiss={() => taskActions.dismiss(task.id)} />
+
+  if (removed) return <li className="task" role="group" aria-label={label}>
+    <div className="task-main"><span className="task-kind">{KIND[task.kind]}</span><span className="muted">{account?.label ?? '账号不可用'}</span></div>
+    {feedback}
+  </li>
 
   return (
-    <li className="task" data-status={task.status} role="group" aria-label={`${kind} ${task.room} （${account?.label ?? '账号不可用'}）`}>
+    <li className="task" data-status={task.status} role="group" aria-label={label}>
       <div className="task-main">
         <span className="task-kind">{KIND[task.kind]}</span>
         <span className="task-status" data-status={task.status}>{STATUS[task.status]}</span>
@@ -160,7 +166,7 @@ function TaskRow({ task, data, activeId }: { task: DouyuTaskView; data: DouyuDat
           {task.deadlineAt !== undefined && `截止 ${when(task.deadlineAt)}`}
         </p>
       )}
-      {task.reason && <p className="task-result">{task.status === 'failed' || task.status === 'waiting-user' ? <ErrorText error={task.errorDetail} message={task.reason} /> : task.reason}</p>}
+      {task.reason && task.reason !== '尚未启动' && <p className="task-result">{task.status === 'failed' || task.status === 'waiting-user' ? <ErrorText error={task.errorDetail} message={task.reason} /> : task.reason}</p>}
       {task.lastResult && task.lastResult !== task.reason && <p className="task-result">{task.status === 'failed' || task.status === 'waiting-user' ? <ErrorText error={task.errorDetail} message={task.lastResult} /> : task.lastResult}</p>}
       {activity && (waiting || (task.officialRoom !== undefined && task.officialRoom !== task.room)) && (
         <p className="task-official">
@@ -177,31 +183,31 @@ function TaskRow({ task, data, activeId }: { task: DouyuTaskView; data: DouyuDat
       <div className="task-actions">
         {running || waiting
           ? <button type="button" className="btn-quiet small" disabled={locked}
-              onClick={() => void taskAction('正在暂停', () => apiClient.pauseDouyuTask(task.id), '已暂停')}>暂停</button>
+              onClick={() => void taskActions.act('正在暂停', () => apiClient.pauseDouyuTask(task.id), '已暂停', task.id)}>暂停</button>
           : <button type="button" className="btn-solid small" disabled={locked || accountsBusy || !!blocked} title={blocked || undefined}
-              onClick={() => void taskAction('正在启动', () => apiClient.startDouyuTask(task.id), '已启动')}>启动</button>}
+              onClick={() => void taskActions.act('正在启动', () => data.startRoomTask(task), '已启动', task.id)}>启动</button>}
         {activity && (
           <button type="button" className="btn-quiet small" disabled={locked || accountsBusy || task.accountId !== activeId}
-            onClick={() => void accountAction('请在打开的官方窗口中处理，完成后关闭该窗口',
-              () => apiClient.openDouyuTaskRoom(task.id), '官方窗口已关闭，请核对结果后手动启动')}>
+            onClick={() => void data.openTaskRoom(task.id)}>
             {waiting ? '打开官方页面' : task.kind === 'auto-fish' ? '打开官方钓鱼' : '打开官方房间'}
           </button>
         )}
         <select className="task-policy" value={task.policy} disabled={locked}
           aria-label={`房间 ${task.room} 的 ${account?.label ?? '未知账号'} ${KIND[task.kind]}运行条件`}
-          onChange={(event) => void taskAction('正在保存', () => apiClient.setDouyuTaskPolicy(task.id, event.target.value as DouyuTaskPolicy), '已保存')}>
+          onChange={(event) => void taskActions.act('正在保存', () => apiClient.setDouyuTaskPolicy(task.id, event.target.value as DouyuTaskPolicy), '已保存', task.id)}>
           {Object.entries(POLICY).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
         <InlineConfirm label="删除" confirmLabel="确认删除" disabled={locked}
-          onConfirm={() => taskAction('正在删除', () => apiClient.removeDouyuTask(task.id), '已删除')} />
+          onConfirm={() => taskActions.remove(task, () => apiClient.removeDouyuTask(task.id))} />
       </div>
+      {feedback}
       {blocked && !running && <p className="muted">{blocked}</p>}
     </li>
   )
 }
 
 function NewTask({ data, defaultRoom, onDone }: { data: DouyuData; defaultRoom: string; onDone: () => void }): React.ReactNode {
-  const { all, active, taskAction, taskLane } = data
+  const { all, active, taskActions } = data
   const [kind, setKind] = useState<DouyuTaskKind>('room-sign')
   const [room, setRoom] = useState(defaultRoom)
   const [accountId, setAccountId] = useState(active?.id ?? all[0]?.id ?? '')
@@ -213,20 +219,20 @@ function NewTask({ data, defaultRoom, onDone }: { data: DouyuData; defaultRoom: 
   const isActivity = isDouyuActivityKind(kind)
   const built = isMessage ? buildMessageSchedule(loop) : null
   const messageError = built && 'error' in built ? built.error : null
-  const ready = !!accountId && room.trim() !== '' && !taskLane.pending
+  const ready = !!accountId && room.trim() !== '' && !taskActions.busy
   const edit = <K extends keyof LoopDraft>(key: K, value: LoopDraft[K]): void => setLoop((current) => ({ ...current, [key]: value }))
 
   return (
     <form className="new-form" onSubmit={(event) => {
-      event.preventDefault()
+      const start = startsOnSubmit(event)
       setTried(true)
       if (!ready || messageError) return
       const message = built && 'schedule' in built ? built.schedule : undefined
-      void taskAction('正在添加', () => apiClient.createDouyuTask({
+      void taskActions.add(() => apiClient.createDouyuTask({
         accountId, roomInput: room.trim(), kind, policy,
         repeatMinutes: !isMessage && !isActivity && daily ? 1440 : null,
         ...(message ? { message } : {}),
-      }), '已添加，点击「启动」开始运行').then((ok) => { if (ok) onDone() })
+      }), start ? data.startRoomTask : undefined).then((ok) => { if (ok) onDone() })
     }}>
       <div className="field-stack">
         <span className="field-label">任务类型</span>
@@ -265,10 +271,7 @@ function NewTask({ data, defaultRoom, onDone }: { data: DouyuData; defaultRoom: 
       {isMessage && <LoopEditor loop={loop} edit={edit} />}
       {isMessage && tried && messageError && <p className="form-error" role="alert">{messageError}</p>}
 
-      <div className="row-end">
-        <button type="button" className="btn-quiet" onClick={onDone}>取消</button>
-        <button type="submit" className="btn-solid" disabled={!ready}>添加</button>
-      </div>
+      <TaskFormButtons disabled={!ready} onCancel={onDone} />
     </form>
   )
 }

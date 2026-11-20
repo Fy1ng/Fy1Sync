@@ -6,24 +6,20 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { apiClient, type ApiResult } from '../../app/apiClient'
+import { apiClient } from '../../app/apiClient'
 import type { AutomationSnapshot } from '../../../electron/automationManager'
-import { failedLane, type Lane } from './useDouyu'
 import { displayError, type DisplayError } from '../../core/errorDetails'
-
-const IDLE: Lane = { pending: '', notice: '', error: '' }
+import { useTaskActions } from './taskActions'
 
 export const validAutomations = (value: unknown): value is AutomationSnapshot =>
   !!value && typeof value === 'object' && Array.isArray((value as AutomationSnapshot).tasks)
 
-export function useAutomations() {
+export function useAutomations(enabled = true) {
   const [snapshot, setSnapshot] = useState<AutomationSnapshot | null>(null)
-  const [lane, setLane] = useState<Lane>(IDLE)
   const [loading, setLoading] = useState(true)
   const [readFailure, setReadFailure] = useState<DisplayError | null>(null)
   const reading = useRef(false)
   const mounted = useRef(false)
-  const busy = useRef(false)
   const revision = useRef(0)
 
   const reload = useCallback(async (): Promise<void> => {
@@ -46,6 +42,11 @@ export function useAutomations() {
 
   useEffect(() => {
     mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+
+  useEffect(() => {
+    if (!enabled) return
     let live = true
     const unsubscribe = apiClient.subscribeFeatures((event) => {
       if (!live || event.topic !== 'automations' || !validAutomations(event.data)) return
@@ -54,34 +55,11 @@ export function useAutomations() {
       setReadFailure(null); setLoading(false)
     })
     void reload()
-    return () => { live = false; mounted.current = false; unsubscribe() }
-  }, [])
+    return () => { live = false; unsubscribe() }
+  }, [enabled, reload])
 
-  const act = useCallback(async (
-    pending: string,
-    work: () => Promise<ApiResult<AutomationSnapshot>>,
-    done: string,
-  ): Promise<boolean> => {
-    if (busy.current) return false
-    busy.current = true
-    const before = revision.current
-    setLane({ pending, notice: '', error: '' })
-    try {
-      const result = await work()
-      if (!mounted.current) return false
-      if (!result.ok) { setLane(failedLane(result)); return false }
-      if (!validAutomations(result.value)) { setLane(failedLane(result, '无法读取批量任务')); return false }
-      if (before === revision.current) setSnapshot(result.value)
-      setReadFailure(null)
-      setLane({ ...IDLE, notice: done })
-      return true
-    } catch (error) {
-      if (mounted.current) setLane(failedLane(error, '操作未完成，请重试'))
-      return false
-    } finally {
-      busy.current = false
-    }
-  }, [])
+  const actions = useTaskActions({ snapshot, valid: validAutomations, revision, mounted, invalidMessage: '无法读取批量任务',
+    apply: (value) => { if (value) setSnapshot(value); setReadFailure(null) } })
 
-  return { snapshot, lane, loading, readError: readFailure?.message ?? '', readDetail: readFailure?.detail, reload, act }
+  return { snapshot, actions, loading, readError: readFailure?.message ?? '', readDetail: readFailure?.detail, reload }
 }

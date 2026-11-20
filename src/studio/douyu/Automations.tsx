@@ -1,6 +1,6 @@
 /**
  * Account, Yuba and batch automations (handoff items 43-51): check-ins, reward claims and
- * explicit follow/read tasks. Every automation is created paused and runs only after 启动;
+ * explicit follow/read tasks. Starting an automation is explicit;
  * the main process owns the schedule and the single account-write lane, so nothing here
  * keeps its own timer or posts to the platform. A receipt is not shown as a confirmed
  * result, and an unknown total never becomes a percentage.
@@ -19,7 +19,8 @@ import {
   buildAutomationRequest, yubaModeAllowed, type AutomationDraft, type KindGroup, type TargetChoice,
 } from './automationKinds'
 import { useAutomations } from './automationState'
-import { LaneLine } from './DouyuDesk'
+import { withTaskWrites } from './taskActions'
+import { LaneLine, startsOnSubmit, TaskFormButtons } from './DouyuDesk'
 import type { DouyuData } from './useDouyu'
 import { ReadError } from '../ReadError'
 import { InlineConfirmButtons } from '../InlineConfirm'
@@ -63,42 +64,47 @@ function optionText(task: AutomationView): string[] {
   return parts
 }
 
-export function Automations({ data }: { data: DouyuData }): React.ReactNode {
-  const { snapshot, lane, loading, readError, readDetail, reload, act } = useAutomations()
+type AutomationState = ReturnType<typeof useAutomations>
+type Actions = AutomationState['actions']
+
+function startAutomation(data: DouyuData, task: AutomationView): Promise<ApiResult<AutomationSnapshot>> {
+  return withTaskWrites(data.writesEnabled, () => apiClient.feature('startDouyuAutomation', { id: task.id }))
+}
+
+export function Automations({ data, state }: { data: DouyuData; state: AutomationState }): React.ReactNode {
+  const { snapshot, actions, loading, readError, readDetail, reload } = state
   const [creating, setCreating] = useState(false)
-  const tasks = snapshot?.tasks ?? []
+  const { rows } = actions
 
   return (
     <div className="desk-pane automations">
       {creating
-        ? <NewAutomation data={data} act={act} locked={!!lane.pending} onDone={() => setCreating(false)} />
+        ? <NewAutomation data={data} actions={actions} onDone={() => setCreating(false)} />
         : <button type="button" className="btn-solid new-task" disabled={data.all.length === 0} onClick={() => setCreating(true)}>新建批量任务</button>}
       {data.accountsReadError && <ReadError error={data.accountsReadError} detail={data.accountsReadDetail} onRetry={() => void data.reloadAccounts()} />}
       {data.all.length === 0 && !data.loading && !data.accountsReadError && <p className="muted">请先在「账号」中添加斗鱼账号</p>}
       {loading && <p className="muted" role="status">正在读取批量任务</p>}
       {readError && <ReadError error={readError} detail={readDetail} onRetry={() => void reload()} />}
 
-      {!loading && !readError && snapshot && tasks.length === 0 && !creating && (
+      {!loading && !readError && snapshot && rows.length === 0 && !creating && (
         <p className="desk-empty">暂无批量任务</p>
       )}
 
-      {tasks.length > 0 && (
+      {rows.length > 0 && (
         <ul className="task-list" aria-label="批量任务">
-          {tasks.map((task) => <AutomationRow key={task.id} task={task} data={data} act={act} locked={!!lane.pending} />)}
+          {rows.map(({ task, removed }) => <AutomationRow key={task.id} task={task} removed={removed} data={data} actions={actions} />)}
         </ul>
       )}
 
-      {tasks.length > 0 && (
+      {!!snapshot?.tasks.length && (
         <p className="muted automation-foot">暂停或删除不会撤回已提交的操作。重启应用后，批量任务需手动启动。</p>
       )}
-      <LaneLine lane={lane} />
+      <LaneLine lane={actions.lane} />
     </div>
   )
 }
 
-type Act = ReturnType<typeof useAutomations>['act']
-
-function AutomationRow({ task, data, act, locked }: { task: AutomationView; data: DouyuData; act: Act; locked: boolean }): React.ReactNode {
+function AutomationRow({ task, removed, data, actions }: { task: AutomationView; removed: boolean; data: DouyuData; actions: Actions }): React.ReactNode {
   const spec = KIND_SPEC[task.kind]
   const account = data.all.find((item) => item.id === task.accountId)
   const [confirming, setConfirming] = useState(false)
@@ -107,9 +113,17 @@ function AutomationRow({ task, data, act, locked }: { task: AutomationView; data
   const review = task.status === 'waiting-user' || progress?.evidence === 'receipt-received' || progress?.evidence === 'unconfirmed'
   const details = [targetText(task.target), ...optionText(task), repeatText(task.repeatMinutes), POLICY[task.policy]]
   const failure = task as AutomationView & { errorDetail?: unknown; detail?: unknown; code?: unknown }
+  const { act, busy: locked } = actions
+  const label = `${spec.label} （${account?.label ?? '账号不可用'}）`
+  const feedback = <LaneLine lane={actions.rowLane(task.id)} onDismiss={() => actions.dismiss(task.id)} />
+
+  if (removed) return <li className="task automation" role="group" aria-label={label}>
+    <div className="task-main"><span className="task-kind">{spec.label}</span><span className="muted">{account?.label ?? '账号不可用'}</span></div>
+    {feedback}
+  </li>
 
   return (
-    <li className="task automation" data-status={task.status} role="group" aria-label={`${spec.label} （${account?.label ?? '账号不可用'}）`}>
+    <li className="task automation" data-status={task.status} role="group" aria-label={label}>
       <div className="task-main">
         <span className="task-kind">{spec.label}</span>
         <span className="task-status" data-status={task.status}>{STATUS[task.status]}</span>
@@ -119,7 +133,7 @@ function AutomationRow({ task, data, act, locked }: { task: AutomationView; data
 
       {progress && <Progress progress={progress} />}
 
-      {task.reason && <p className="task-result" data-status={task.status}>{task.status === 'failed' || task.status === 'waiting-user' ? <ErrorText error={failure.errorDetail ?? failure.detail ?? { code: failure.code, message: task.reason }} message={task.reason} /> : task.reason}</p>}
+      {task.reason && task.reason !== '尚未启动' && <p className="task-result" data-status={task.status}>{task.status === 'failed' || task.status === 'waiting-user' ? <ErrorText error={failure.errorDetail ?? failure.detail ?? { code: failure.code, message: task.reason }} message={task.reason} /> : task.reason}</p>}
       {review && <p className="automation-review">结果需在官方页面人工核对，核对后再手动启动</p>}
 
       {(task.lastRunAt !== null || task.nextRunAt !== null) && (
@@ -133,18 +147,19 @@ function AutomationRow({ task, data, act, locked }: { task: AutomationView; data
       <div className="task-actions">
         {scheduled
           ? <button type="button" className="btn-quiet small" disabled={locked}
-              onClick={() => void act('正在暂停', () => apiClient.feature('pauseDouyuAutomation', { id: task.id }), '已暂停')}>暂停</button>
+              onClick={() => void act('正在暂停', () => apiClient.feature('pauseDouyuAutomation', { id: task.id }), '已暂停', task.id)}>暂停</button>
           : <button type="button" className="btn-solid small" disabled={locked || !account} title={account ? undefined : '账号已删除'}
-              onClick={() => void act('正在启动', () => apiClient.feature('startDouyuAutomation', { id: task.id }), '已启动')}>启动</button>}
+              onClick={() => void act('正在启动', () => startAutomation(data, task), '已启动', task.id)}>启动</button>}
         {confirming
           ? <span className="automation-confirm" role="group" aria-label="确认删除">
               <span className="muted">删除不可恢复，已提交的操作不会撤回</span>
               <InlineConfirmButtons label="确认删除" disabled={locked} cancelDisabled={false}
-                onConfirm={() => void act('正在删除', () => apiClient.feature('removeDouyuAutomation', { id: task.id }), '已删除')
+                onConfirm={() => void actions.remove(task, () => apiClient.feature('removeDouyuAutomation', { id: task.id }))
                   .then((ok) => { if (!ok) setConfirming(false) })} onCancel={() => setConfirming(false)} />
             </span>
           : <button type="button" className="btn-quiet small is-danger" disabled={locked} onClick={() => setConfirming(true)}>删除</button>}
       </div>
+      {feedback}
       {account && account.id !== data.accounts?.activeAccountId && !scheduled && (
         <p className="muted">仅在 {account.label} 为当前账号时运行</p>
       )}
@@ -170,7 +185,7 @@ function Progress({ progress }: { progress: DouyuAutomationProgress }): React.Re
 
 const GROUPS: KindGroup[] = ['sign', 'claim', 'task']
 
-function NewAutomation({ data, act, locked, onDone }: { data: DouyuData; act: Act; locked: boolean; onDone: () => void }): React.ReactNode {
+function NewAutomation({ data, actions, onDone }: { data: DouyuData; actions: Actions; onDone: () => void }): React.ReactNode {
   const { all, active, tasks } = data
   const [draft, setDraft] = useState<AutomationDraft>({
     accountId: active?.id ?? all[0]?.id ?? '', kind: 'followed-room-sign', target: 'followed-rooms',
@@ -194,9 +209,9 @@ function NewAutomation({ data, act, locked, onDone }: { data: DouyuData; act: Ac
   const check = buildAutomationRequest(draft.target === 'room' ? { ...draft, room: draft.room.trim() ? '1' : '' } : draft)
   const error = 'error' in check ? check.error : null
 
-  const submit = (): void => {
+  const submit = (start: boolean): void => {
     setTried(true)
-    if (error || locked) return
+    if (error || actions.busy) return
     const work = async (): Promise<ApiResult<AutomationSnapshot>> => {
       let room = draft.room
       if (draft.target === 'room') {
@@ -209,11 +224,11 @@ function NewAutomation({ data, act, locked, onDone }: { data: DouyuData; act: Ac
       if ('error' in built) return { ok: false, code: 'invalid-arguments', message: built.error }
       return apiClient.feature('createDouyuAutomation', built.request)
     }
-    void act('正在创建', work, '已创建，当前为暂停，点击「启动」后运行').then((ok) => { if (ok) onDone() })
+    void actions.add(work, start ? (task) => startAutomation(data, task) : undefined).then((ok) => { if (ok) onDone() })
   }
 
   return (
-    <form className="new-form automation-form" aria-label="新建批量任务" onSubmit={(event) => { event.preventDefault(); submit() }}>
+    <form className="new-form automation-form" aria-label="新建批量任务" onSubmit={(event) => submit(startsOnSubmit(event))}>
       <div className="new-grid">
         <label className="field-stack">
           <span className="field-label">任务类型</span>
@@ -264,7 +279,7 @@ function NewAutomation({ data, act, locked, onDone }: { data: DouyuData; act: Ac
       {spec.fields.includes('yuba') && (
         <div className="field-stack">
           <span className="field-label">签到模式</span>
-          <Segmented label="鱼吧签到模式" value={draft.yubaMode} onChange={(value) => set('yubaMode', value)}
+          <Segmented label={`${spec.label}模式`} value={draft.yubaMode} onChange={(value) => set('yubaMode', value)}
             options={(['normal', 'fast', 'supplement'] as const).filter((mode) => yubaModeAllowed(draft.target, mode))
               .map((value) => ({ value, label: YUBA_MODE_LABEL[value] }))} />
           {draft.yubaMode === 'fast' && <span className="muted">极速签到后，未签到的鱼吧改为普通签到</span>}
@@ -320,10 +335,7 @@ function NewAutomation({ data, act, locked, onDone }: { data: DouyuData; act: Ac
 
       {tried && error && <p className="form-error" role="alert">{error}</p>}
 
-      <div className="row-end">
-        <button type="button" className="btn-quiet" onClick={onDone}>取消</button>
-        <button type="submit" className="btn-solid" disabled={locked}>创建</button>
-      </div>
+      <TaskFormButtons disabled={actions.busy} onCancel={onDone} />
     </form>
   )
 }

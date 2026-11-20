@@ -29,7 +29,7 @@ export const KIND_SPEC: Record<DouyuAutomationKind, KindSpec> = {
     note: '关注列表未读全时暂停，请刷新关注列表后重试',
   },
   'yuba-sign-all': {
-    label: '鱼吧签到', group: 'sign', targets: ['followed-yuba', 'group'], fields: ['yuba', 'maxItems'],
+    label: '批量鱼吧签到', group: 'sign', targets: ['followed-yuba', 'group'], fields: ['yuba', 'maxItems'],
     note: '',
   },
   'client-sign': {

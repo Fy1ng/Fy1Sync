@@ -4,8 +4,8 @@
  * it is touched mid-match.
  */
 
-import { useSessionSnapshot } from '../../app/SessionContext'
-import { SideTabs, type SideTabNavigation } from '../kit'
+import { useSession, useSessionSnapshot } from '../../app/SessionContext'
+import { Icon, SideTabs, type SideTabNavigation } from '../kit'
 import type { LoginPlatform } from '../../../electron/login'
 import { Accounts } from './Accounts'
 import { Automations } from './Automations'
@@ -14,7 +14,9 @@ import { Following } from './Following'
 import { Renewal } from './Renewal'
 import { Spending } from './Spending'
 import { Tasks } from './Tasks'
-import { accountName, useDouyu, type Lane } from './useDouyu'
+import { accountName, useDouyu } from './useDouyu'
+import { useAutomations } from './automationState'
+import type { Lane } from './taskActions'
 import { useRemembered } from '../../app/remembered'
 import { DouyuWritesPane, useDouyuWrites } from '../douyuWrites'
 import { ErrorText } from '../../ui/ErrorDetails'
@@ -38,12 +40,14 @@ export function DouyuDesk({ onWatch, platformNavigation, accountAside }: {
   platformNavigation?: SideTabNavigation<LoginPlatform>
   accountAside?: React.ReactNode
 }): React.ReactNode {
-  const data = useDouyu()
+  const session = useSession()
+  const data = useDouyu(() => session.snapshot.settings.douyuWrites)
   const { danmaku } = useSessionSnapshot()
   // Back on the page last open; a first visit starts on 账号, as before.
   const [remembered, setTab] = useRemembered<Tab>('douyu:tab', 'accounts')
   const writes = useDouyuWrites()
   const shown = !writes && WRITE_TABS.has(remembered) ? 'accounts' : remembered
+  const automations = useAutomations(shown === 'automations')
   const active = data.active
   const room = danmaku.room?.startsWith('huya:') ? null : danmaku.room
 
@@ -63,7 +67,7 @@ export function DouyuDesk({ onWatch, platformNavigation, accountAside }: {
           {shown === 'accounts' && <><Accounts data={data} /><Spending data={data} /></>}
           {shown === 'following' && <Following data={data} onWatch={onWatch} />}
           {shown === 'tasks' && <Tasks data={data} defaultRoom={room} />}
-          {shown === 'automations' && <Automations data={data} />}
+          {shown === 'automations' && <Automations data={data} state={automations} />}
           {shown === 'backpack' && <Backpack data={data} room={room} canGive={writes} />}
           {shown === 'renewal' && (
             <Renewal accountId={active?.id ?? null} accountLabel={active?.label ?? ''}
@@ -75,9 +79,25 @@ export function DouyuDesk({ onWatch, platformNavigation, accountAside }: {
   )
 }
 
-/** The one line of feedback under a pane: what is happening, what happened, or what failed. */
-export function LaneLine({ lane }: { lane: Lane }): React.ReactNode {
-  if (lane.error) return <p className="form-error" role="alert"><ErrorText error={lane.errorDetail ?? lane.error} message={lane.error} /></p>
+/** Progress, outcome or failure for a pane or a task row. */
+export function LaneLine({ lane, onDismiss }: { lane: Lane; onDismiss?: () => void }): React.ReactNode {
+  if (lane.error) return <p className="form-error" role="alert">
+    <ErrorText error={lane.errorDetail ?? lane.error} message={lane.error} />
+    {onDismiss && <button type="button" className="btn-quiet small" aria-label="关闭提示" title="关闭提示" onClick={onDismiss}><Icon name="close" /></button>}
+  </p>
   if (lane.pending || lane.notice) return <p className="lane" role="status">{lane.pending || lane.notice}</p>
   return null
+}
+
+export function TaskFormButtons({ disabled, onCancel }: { disabled: boolean; onCancel: () => void }): React.ReactNode {
+  return <div className="row-end">
+    <button type="button" className="btn-quiet" onClick={onCancel}>取消</button>
+    <button type="submit" className="btn-solid" disabled={disabled}>添加并启动</button>
+    <button type="submit" className="btn-quiet" value="add-only" disabled={disabled}>仅添加</button>
+  </div>
+}
+
+export function startsOnSubmit(event: React.FormEvent<HTMLFormElement>): boolean {
+  event.preventDefault()
+  return (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') !== 'add-only'
 }

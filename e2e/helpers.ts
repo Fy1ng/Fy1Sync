@@ -219,7 +219,7 @@ export async function openTaskForm(page: Page, kind: DouyuTaskKind, room: string
   await desk.getByRole('button', { name: '新任务', exact: true }).click()
   const form = desk.locator('.new-form')
   const names: Record<DouyuTaskKind, string> = {
-    'room-sign': '直播间签到', 'yuba-sign': '鱼吧签到', 'message-loop': '定时弹幕',
+    'room-sign': '直播间签到', 'yuba-sign': '本房间鱼吧签到', 'message-loop': '定时弹幕',
     'auto-fish': '钓鱼', 'gift-packet': '抢红包', 'treasure-box': '开宝箱',
   }
   await setCheckedByLabel(form.getByRole('radiogroup', { name: '任务类型', exact: true }).getByRole('radio', { name: names[kind], exact: true }))

@@ -8,15 +8,18 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StreamSyncerBridge } from '../../../electron/contracts'
 import type { FeatureEvent } from '../../../electron/featureContracts'
-import type { AutomationView } from '../../../electron/automationManager'
+import type { AutomationSnapshot, AutomationView, CreateAutomation } from '../../../electron/automationManager'
+import type { ApiResult } from '../../app/apiClient'
 import { readAutomationRequest } from '../../../server/douyu/automationTypes'
 import { Automations } from './Automations'
+import { useAutomations } from './automationState'
 import { useDouyu } from './useDouyu'
 
 type Call = { method: string; args: unknown }
 let calls: Call[] = []
 let pushFeature: (event: FeatureEvent) => void = () => {}
 let automations: AutomationView[] = []
+let startAutomation: (id: string) => Promise<ApiResult<AutomationSnapshot>>
 
 const accounts = {
   activeAccountId: 'a1',
@@ -28,15 +31,25 @@ const tasks = { activeAccountId: 'a1', currentRoom: '6979222', retainedRooms: []
 beforeEach(() => {
   calls = []
   automations = []
+  startAutomation = async (id) => {
+    automations = automations.map((task) => task.id === id ? { ...task, status: 'queued', reason: null } : task)
+    return { ok: true, value: { tasks: automations } }
+  }
   vi.stubGlobal('streamSyncer', {
     invoke: vi.fn(async (method: string, args: unknown) => {
       calls.push({ method, args })
       if (method === 'listDouyuAccounts') return { ok: true, value: accounts }
       if (method === 'getDouyuTasks') return { ok: true, value: tasks }
       if (method === 'getDouyuAutomations') return { ok: true, value: { tasks: automations } }
-      if (method === 'createDouyuAutomation') return { ok: true, value: { tasks: automations } }
-      if (method === 'removeDouyuAutomation') return { ok: true, value: { tasks: [] } }
-      if (method === 'startDouyuAutomation') return { ok: true, value: { tasks: automations } }
+      if (method === 'createDouyuAutomation') {
+        automations = [...automations, view({ ...args as CreateAutomation, id: 'new-automation', reason: '尚未启动' })]
+        return { ok: true, value: { tasks: automations } }
+      }
+      if (method === 'removeDouyuAutomation') {
+        automations = automations.filter((task) => task.id !== (args as { id: string }).id)
+        return { ok: true, value: { tasks: automations } }
+      }
+      if (method === 'startDouyuAutomation') return startAutomation((args as { id: string }).id)
       if (method === 'resolveDouyuRoom') {
         const input = (args as { input: string }).input
         return { ok: true, value: { ok: true, identity: { room: input === '9999' ? '6979222' : input, inputRoom: input } } }
@@ -49,11 +62,12 @@ beforeEach(() => {
   } satisfies StreamSyncerBridge)
 })
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
-function Harness(): React.ReactNode {
-  const data = useDouyu()
-  return <Automations data={data} />
+function Harness({ showing = true }: { showing?: boolean }): React.ReactNode {
+  const data = useDouyu(() => true)
+  const state = useAutomations(showing)
+  return showing ? <Automations data={data} state={state} /> : null
 }
 
 const created = (): Call[] => calls.filter((call) => call.method === 'createDouyuAutomation')
@@ -79,35 +93,87 @@ describe('creating an automation', () => {
     render(<Harness />)
     const form = await openForm()
     expect(within(form).getByLabelText('批量任务账号')).toHaveValue('a1')
-    fireEvent.click(within(form).getByRole('button', { name: '创建' }))
+    fireEvent.click(within(form).getByRole('button', { name: '仅添加' }))
     await waitFor(() => expect(created()).toHaveLength(1))
     expect(created()[0]!.args).toEqual({
       accountId: 'a1', kind: 'followed-room-sign', target: { type: 'batch', source: 'followed-rooms' },
       options: {}, policy: 'foreground', repeatMinutes: null,
     })
     expectAccepted(created()[0]!.args)
-    expect(await screen.findByText('已创建，当前为暂停，点击「启动」后运行')).toBeInTheDocument()
+    expect(await screen.findByText('已添加')).toBeInTheDocument()
+    const row = within(screen.getByRole('group', { name: '关注房间签到 （主号）' }))
+    expect(row.getByText('暂停')).toBeInTheDocument()
+    expect(row.queryByText('尚未启动')).toBeNull()
+    expect(row.queryByRole('status')).toBeNull()
+    expect(calls.some((call) => call.method === 'startDouyuAutomation')).toBe(false)
+  })
+
+  it('starts the newly created automation and reports progress and success only in its row', async () => {
+    automations = [view({ kind: 'points-sign', target: { type: 'account' } })]
+    let resolveStart!: (result: ApiResult<AutomationSnapshot>) => void
+    const pending = new Promise<ApiResult<AutomationSnapshot>>((resolve) => { resolveStart = resolve })
+    const succeed = startAutomation
+    startAutomation = () => pending
+    render(<Harness />)
+    await screen.findByRole('group', { name: '积分签到 （主号）' })
+    const form = await openForm()
+    await act(async () => fireEvent.click(within(form).getByRole('button', { name: '添加并启动' })))
+    const row = within(screen.getByRole('group', { name: '关注房间签到 （主号）' }))
+    const other = within(screen.getByRole('group', { name: '积分签到 （主号）' }))
+    expect(screen.getAllByRole('status')).toEqual([row.getByRole('status')])
+    expect(row.getByRole('status')).toHaveTextContent('正在启动')
+    expect(other.getByRole('button', { name: '启动' })).toBeDisabled()
+    expect(calls.filter((call) => call.method === 'startDouyuAutomation')).toEqual([
+      { method: 'startDouyuAutomation', args: { id: 'new-automation' } },
+    ])
+    await act(async () => resolveStart(await succeed('new-automation')))
+    expect(screen.getAllByRole('status')).toEqual([row.getByRole('status')])
+    expect(row.getByRole('status')).toHaveTextContent('已启动')
+    expect(row.getByRole('button', { name: '暂停' })).toBeEnabled()
+  })
+
+  it('keeps the created automation and its start failure after switching tabs', async () => {
+    startAutomation = vi.fn(startAutomation).mockResolvedValueOnce({ ok: false, code: 'account-changed', message: '请先切换到任务所属账号' })
+    const desk = render(<Harness />)
+    const form = await openForm()
+    fireEvent.change(within(form).getByLabelText('批量任务账号'), { target: { value: 'a2' } })
+    fireEvent.click(within(form).getByRole('button', { name: '添加并启动' }))
+    const groupName = { name: '关注房间签到 （小号）' }
+    const row = within(await screen.findByRole('group', groupName))
+    expect(await row.findByRole('alert')).toHaveTextContent('已添加，但未能启动：请先切换到任务所属账号')
+    expect(row.getByText('暂停')).toBeInTheDocument()
+    expect(screen.queryByRole('form', { name: '新建批量任务' })).toBeNull()
+    desk.rerender(<Harness showing={false} />)
+    desk.rerender(<Harness />)
+    const reopened = within(await screen.findByRole('group', groupName))
+    expect(reopened.getByRole('alert')).toHaveTextContent('已添加，但未能启动')
+    fireEvent.click(reopened.getByRole('button', { name: '启动' }))
+    await waitFor(() => expect(reopened.getByRole('status')).toHaveTextContent('已启动'))
+    expect(reopened.queryByRole('alert')).toBeNull()
+    expect(created()).toHaveLength(1)
   })
 
   it('requires an explicit card limit for supplement sign-in', async () => {
     render(<Harness />)
     await openForm()
     chooseKind('yuba-sign-all')
+    expect(screen.getByRole('option', { name: '批量鱼吧签到', selected: true })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('radio', { name: '补签' }))
-    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    fireEvent.click(screen.getByRole('button', { name: '添加并启动' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('补签卡最多使用数量')
     expect(created()).toHaveLength(0)
 
     fireEvent.change(screen.getByLabelText('补签卡最多使用数量'), { target: { value: '5' } })
     fireEvent.click(screen.getByRole('radio', { name: '重复' }))
     fireEvent.change(screen.getByLabelText('重复间隔（分钟）'), { target: { value: '720' } })
-    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    fireEvent.click(screen.getByRole('button', { name: '仅添加' }))
     await waitFor(() => expect(created()).toHaveLength(1))
     expect(created()[0]!.args).toEqual({
       accountId: 'a1', kind: 'yuba-sign-all', target: { type: 'batch', source: 'followed-yuba' },
       options: { yubaMode: 'supplement', maxSupplementCards: 5 }, policy: 'foreground', repeatMinutes: 720,
     })
     expectAccepted(created()[0]!.args)
+    expect(await screen.findByRole('group', { name: '批量鱼吧签到 （主号）' })).toBeInTheDocument()
   })
 
   it('offers fast sign-in only for all followed Yuba groups', async () => {
@@ -119,7 +185,7 @@ describe('creating an automation', () => {
     expect(screen.queryByRole('radio', { name: '极速' })).toBeNull()
     expect(screen.getByRole('radio', { name: '普通' })).toBeChecked()
     fireEvent.change(screen.getByLabelText('鱼吧 ID'), { target: { value: '12345' } })
-    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    fireEvent.click(screen.getByRole('button', { name: '仅添加' }))
     await waitFor(() => expect(created()).toHaveLength(1))
     expect(created()[0]!.args).toMatchObject({ target: { type: 'group', groupId: '12345' }, options: { yubaMode: 'normal' } })
     expectAccepted(created()[0]!.args)
@@ -134,7 +200,7 @@ describe('creating an automation', () => {
     fireEvent.click(screen.getByRole('radio', { name: '卡牌活动' }))
     fireEvent.change(screen.getByLabelText('最多处理数量'), { target: { value: '3' } })
     fireEvent.click(screen.getByRole('radio', { name: '锁屏时也运行' }))
-    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    fireEvent.click(screen.getByRole('button', { name: '仅添加' }))
     await waitFor(() => expect(created()).toHaveLength(1))
     expect(created()[0]!.args).toEqual({
       accountId: 'a1', kind: 'arena-sign', target: { type: 'batch', source: 'selected-rooms', rooms: ['100', '200', '300'] },
@@ -148,7 +214,7 @@ describe('creating an automation', () => {
     await openForm()
     chooseKind('follow-task')
     fireEvent.change(screen.getByLabelText('关注房间号列表'), { target: { value: '100 100' } })
-    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    fireEvent.click(screen.getByRole('button', { name: '仅添加' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('编号存在重复')
     expect(created()).toHaveLength(0)
   })
@@ -159,7 +225,7 @@ describe('creating an automation', () => {
     chooseKind('anchor-star-follow')
     fireEvent.change(screen.getByLabelText('目标房间号'), { target: { value: '9999' } })
     fireEvent.change(screen.getByLabelText('关注房间号列表'), { target: { value: '300' } })
-    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    fireEvent.click(screen.getByRole('button', { name: '仅添加' }))
     await waitFor(() => expect(created()).toHaveLength(1))
     expect(created()[0]!.args).toEqual({
       accountId: 'a1', kind: 'anchor-star-follow', target: { type: 'room', room: '6979222' },
@@ -174,7 +240,7 @@ describe('creating an automation', () => {
     chooseKind('points-sign')
     expect(screen.queryByLabelText('最多处理数量')).toBeNull()
     fireEvent.change(screen.getByLabelText('批量任务账号'), { target: { value: 'a2' } })
-    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    fireEvent.click(screen.getByRole('button', { name: '仅添加' }))
     await waitFor(() => expect(created()).toHaveLength(1))
     expect(created()[0]!.args).toEqual({ accountId: 'a2', kind: 'points-sign', target: { type: 'account' }, options: {}, policy: 'foreground', repeatMinutes: null })
     expectAccepted(created()[0]!.args)
@@ -216,9 +282,13 @@ describe('the automation list', () => {
     const row = within(await screen.findByRole('group', { name: '关注房间签到 （主号）' }))
     fireEvent.click(row.getByRole('button', { name: '删除' }))
     expect(calls.some((call) => call.method === 'removeDouyuAutomation')).toBe(false)
-    fireEvent.click(row.getByRole('button', { name: '确认删除' }))
-    await waitFor(() => expect(calls.filter((call) => call.method === 'removeDouyuAutomation'))
-      .toEqual([{ method: 'removeDouyuAutomation', args: { id: '00000000-0000-4000-8000-000000000001' } }]))
-    await waitFor(() => expect(screen.queryByRole('group', { name: '关注房间签到 （主号）' })).toBeNull())
+    vi.useFakeTimers()
+    await act(async () => fireEvent.click(row.getByRole('button', { name: '确认删除' })))
+    expect(calls.filter((call) => call.method === 'removeDouyuAutomation'))
+      .toEqual([{ method: 'removeDouyuAutomation', args: { id: '00000000-0000-4000-8000-000000000001' } }])
+    expect(row.getByRole('status')).toHaveTextContent('已删除')
+    expect(row.queryByRole('button')).toBeNull()
+    act(() => vi.advanceTimersByTime(3000))
+    expect(screen.queryByRole('group', { name: '关注房间签到 （主号）' })).toBeNull()
   })
 })
