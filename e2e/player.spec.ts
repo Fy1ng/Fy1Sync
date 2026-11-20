@@ -137,7 +137,7 @@ test.describe('双路播放与手动同步', () => {
     await expect(page.locator('.pip-mount video')).toHaveAttribute('data-role', 'official')
   })
 
-  test('手动偏移把解说回退到指定位置', async ({ page }) => {
+  test('手动偏移让画面相对解说提前', async ({ page }) => {
     await openPlayer(page)
     await loadBothFixtures(page)
 
@@ -159,13 +159,13 @@ test.describe('双路播放与手动同步', () => {
       .poll(async () => (await mediaTimes(page)).lag, { timeout: 15_000 })
       .toBeGreaterThan(before.lag + 0.6)
 
-    // 目标 and 实际 agree here: a VOD fixture at t=12 has the head-room to absorb it.
+    // The requested and applied offsets agree: the VOD fixture has room to rewind at 12 seconds.
     const readout = await offsetReadout(page)
     expect(readout.applied).toBeCloseTo(-1, 1)
     await expect(alignment).not.toHaveAttribute('data-state', 'short')
 
     await alignment.locator('.capsule-readout').click()
-    await page.getByRole('dialog', { name: '输入延后时间' }).getByRole('button', { name: '清零', exact: true }).click()
+    await page.getByRole('dialog', { name: '输入画面偏移' }).getByRole('button', { name: '清零', exact: true }).click()
     await expect
       .poll(async () => (await offsetReadout(page)).requested, { timeout: 15_000 })
       .toBeCloseTo(0, 2)

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { Session, type SessionSnapshot } from '../app/session'
 import { SyncCapsule } from './sync'
 
@@ -19,6 +19,37 @@ beforeEach(() => {
 afterEach(() => session.dispose())
 
 describe('manual offset result feedback', () => {
+  it.each([
+    { offset: 2.5, caption: '画面延后', seconds: '2.5' },
+    { offset: -2.5, caption: '画面提前', seconds: '2.5' },
+    { offset: 0, caption: '未调整', seconds: '0.0' },
+  ])('shows $caption in the visible and accessible readout for $offset', ({ offset, caption, seconds }) => {
+    snapshot.requestedOffsetSeconds = snapshot.offsetSeconds = offset
+    render(<SyncCapsule />)
+
+    const readout = within(screen.getByRole('button', { name: `${caption} ${seconds} 秒，点击输入` }))
+    expect(readout.getByText(caption)).toBeVisible()
+    expect(readout.getByText(seconds)).toBeVisible()
+  })
+
+  it.each([
+    { label: '画面延后', offset: 2.5 },
+    { label: '画面提前', offset: -2.5 },
+  ])('applies $offset when entering an offset with $label selected', ({ label, offset }) => {
+    snapshot.requestedOffsetSeconds = snapshot.offsetSeconds = 0
+    const apply = vi.spyOn(session, 'applyOffset').mockResolvedValue(snapshot.lastPlan!)
+    render(<SyncCapsule />)
+
+    fireEvent.click(screen.getByRole('button', { name: '未调整 0.0 秒，点击输入' }))
+    const dialog = within(screen.getByRole('dialog', { name: '输入画面偏移' }))
+    const direction = within(dialog.getByRole('radiogroup', { name: '画面偏移方向' }))
+    fireEvent.click(direction.getByRole('radio', { name: label }))
+    fireEvent.change(dialog.getByRole('textbox', { name: '秒数' }), { target: { value: '2.5' } })
+    fireEvent.click(dialog.getByRole('button', { name: '应用' }))
+
+    expect(apply).toHaveBeenCalledExactlyOnceWith(offset)
+  })
+
   it.each([
     { dryRun: true, applied: false, authorized: true, aligned: false },
     { dryRun: true, applied: true, authorized: true, aligned: false },

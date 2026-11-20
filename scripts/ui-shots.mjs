@@ -229,7 +229,7 @@ async function captureViewport(viewport) {
     await step(page, prefix + '-07-offset-editor', async () => {
       await reveal(page)
       await page.locator('.capsule-readout').click()
-      await page.getByRole('dialog', { name: '输入延后时间', exact: true }).waitFor()
+      await page.getByRole('dialog', { name: '输入画面偏移', exact: true }).waitFor()
     })
     const camera = await step(page, prefix + '-08-camera-framing', async () => {
       await reveal(page)

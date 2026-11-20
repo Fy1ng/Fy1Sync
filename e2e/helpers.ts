@@ -383,13 +383,13 @@ export async function setPlaying(page: Page, playing: boolean): Promise<void> {
 }
 
 /**
- * The capsule names the delayed side and reports any unfulfilled part of the request.
+ * The capsule names the picture offset direction and reports any unfulfilled part of the request.
  * These are display-precision values; mediaTimes is the independent playback evidence.
  */
 export async function offsetReadout(page: Page): Promise<{ requested: number; applied: number }> {
   const label = await page.locator('.capsule-readout').getAttribute('aria-label') ?? ''
   const magnitude = Number.parseFloat(label.match(/[\d.]+/)?.[0] ?? '0')
-  const direction = label.startsWith('解说延后') ? -1 : 1
+  const direction = label.startsWith('画面提前') ? -1 : 1
   const caption = await page.locator('.capsule-caption').innerText()
   const shortfall = Number.parseFloat(caption.match(/相差 ([\d.]+)s/)?.[1] ?? '0')
   return { requested: direction * magnitude || 0, applied: direction * (magnitude - shortfall) || 0 }

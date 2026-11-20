@@ -1,10 +1,8 @@
 /**
  * Lining the two streams up.
  *
- * The controls are named after what the viewer notices, not what the program does: the
- * commentator shouts before the play happens on screen — "解说早了" — or after it — "解说晚
- * 了". Everything is phrased from the voice's side because the voice is what people are
- * listening to while their eyes are on the picture.
+ * The controls describe the picture's position relative to the commentary, regardless
+ * of which stream is held back to achieve it.
  *
  * Underneath, a positive offset holds the official picture back and a negative one holds
  * the commentary back (see Session.applyOffset).
@@ -95,7 +93,7 @@ export function SyncCapsule(): React.ReactNode {
           : 'idle'
 
   const magnitude = Math.abs(requested)
-  const caption = magnitude < 0.005 ? '未调整' : requested > 0 ? '画面延后' : '解说延后'
+  const caption = magnitude < 0.005 ? '未调整' : requested > 0 ? '画面延后' : '画面提前'
 
   return (
     <div className="capsule" data-state={state} role="group" aria-label="对齐">
@@ -125,7 +123,7 @@ export function SyncCapsule(): React.ReactNode {
                 : state === 'locked' ? '已对齐' : caption}
           </span>
         </button>
-        <Popover {...editor.popover} className="offset-editor" label="输入延后时间">
+        <Popover {...editor.popover} className="offset-editor" label="输入画面偏移">
           <OffsetEditor value={requested} onDone={editor.close} />
         </Popover>
       </div>
@@ -147,7 +145,7 @@ export function SyncCapsule(): React.ReactNode {
   )
 }
 
-/** An exact value: which side waits, and for how long. */
+/** An exact picture offset: its direction and magnitude. */
 function OffsetEditor({ value, onDone }: { value: number; onDone: () => void }): React.ReactNode {
   const session = useSession()
   const [side, setSide] = useState<SourceRole>(value >= 0 ? 'official' : 'commentary')
@@ -165,8 +163,8 @@ function OffsetEditor({ value, onDone }: { value: number; onDone: () => void }):
 
   return (
     <form onSubmit={(event) => { event.preventDefault(); apply() }} className="offset-form">
-      <Segmented label="延后哪一路" value={side} onChange={setSide}
-        options={[{ value: 'official', label: '画面延后' }, { value: 'commentary', label: '解说延后' }]} />
+      <Segmented label="画面偏移方向" value={side} onChange={setSide}
+        options={[{ value: 'official', label: '画面延后' }, { value: 'commentary', label: '画面提前' }]} />
       <label className="offset-seconds">
         <input ref={input} inputMode="decimal" value={text} aria-label="秒数" aria-invalid={!valid}
           placeholder="0" onChange={(event) => setText(event.target.value)} />

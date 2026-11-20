@@ -1,6 +1,6 @@
 /**
  * The studio's own rules: which side a pasted link goes to, how the crossfader splits two
- * volumes, and which way "解说早了 / 解说晚了" moves the offset. Mounted under StrictMode for
+ * volumes, and which way "回退画面 / 快进画面" moves the offset. Mounted under StrictMode for
  * the same reason the player always has been — the media mounts must survive a remount.
  */
 
