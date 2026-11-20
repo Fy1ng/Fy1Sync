@@ -23,11 +23,11 @@ export function twitchUserId(value: unknown): string | null {
 
 export class TwitchApiError extends Error {
   constructor(readonly status: number | null) {
-    super(status === 401 ? 'Twitch OAuth 授权无效或已过期.'
-      : status === 403 ? 'Twitch 授权范围或频道权限不足.'
-      : status === 429 ? 'Twitch API 请求过于频繁.'
-      : status === null ? '无法读取 Twitch API.'
-      : `Twitch API 返回异常 (${status}).`)
+    super(status === 401 ? 'Twitch OAuth 授权无效或已过期'
+      : status === 403 ? 'Twitch 授权范围或频道权限不足'
+      : status === 429 ? 'Twitch API 请求过于频繁'
+      : status === null ? '无法读取 Twitch API'
+      : `Twitch API 返回异常（${status}）`)
   }
 }
 

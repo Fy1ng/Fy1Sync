@@ -14,7 +14,7 @@ export type BilibiliEmoteCatalog = {
 }
 
 export function parseBilibiliEmotePackages(raw: unknown): BilibiliEmoteCatalog['packages'] {
-  if (!Array.isArray(raw)) throw new BilibiliWebError('unavailable', 'B 站未返回可用的表情目录.')
+  if (!Array.isArray(raw)) throw new BilibiliWebError('unavailable', '哔哩哔哩未返回可用的表情目录')
   return raw.slice(0, 64).flatMap(item => {
     const group = bilibiliObject(item)
     const name = bilibiliText(group.pkg_name, 100)
@@ -34,8 +34,8 @@ export function parseBilibiliEmotePackages(raw: unknown): BilibiliEmoteCatalog['
 export async function readBilibiliEmoteCatalog(
   room: string, accountRef: string, cookieHeader: BilibiliCookieHeader, signal?: AbortSignal,
 ): Promise<BilibiliEmoteCatalog> {
-  if (!bilibiliRoomNumber(room)) throw new BilibiliWebError('unavailable', 'B 站房间号无效.')
-  if (!accountRef) throw new BilibiliWebError('login-required', '请先登录 B 站.')
+  if (!bilibiliRoomNumber(room)) throw new BilibiliWebError('unavailable', '哔哩哔哩房间号无效')
+  if (!accountRef) throw new BilibiliWebError('login-required', '请先登录哔哩哔哩')
   const data = await fetchBilibiliWebData(`https://api.live.bilibili.com/xlive/web-ucenter/v2/emoticon/GetEmoticons?platform=pc&room_id=${room}`, { cookieHeader, signal })
   return {
     platform: 'bilibili', room, accountRef, checkedAt: Date.now(), sendPermission: 'unverified',

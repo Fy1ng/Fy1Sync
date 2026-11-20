@@ -245,8 +245,8 @@ export class DanmakuRelay {
           } } })
         : identity.platform === 'bilibili'
         ? new BilibiliDanmakuClient(identity.room, events, this.deps.bilibili ?? {
-          resolveRoom: async () => { throw new Error('B 站弹幕暂不可用.') },
-          createSocket: () => { throw new Error('B 站弹幕暂不可用.') },
+          resolveRoom: async () => { throw new Error('哔哩哔哩弹幕暂不可用') },
+          createSocket: () => { throw new Error('哔哩哔哩弹幕暂不可用') },
         })
         : new DouyuDanmakuClient(identity.room, events, this.deps))
     this.rooms.set(identity.key, room)

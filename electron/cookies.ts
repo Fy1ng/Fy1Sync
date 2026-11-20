@@ -181,7 +181,7 @@ export function authenticationCookieUserId(cookies: BrowserCookie[], platform: C
 }
 
 const MAX_COOKIE_FILE_BYTES = 4 * 1024 * 1024
-const STORAGE_FAILURE_MESSAGE = '账号数据读写失败, 未返回任何 cookie 数据.'
+const STORAGE_FAILURE_MESSAGE = '账号数据读写失败，未返回任何 cookie 数据'
 const storageFailure = () => new Error(STORAGE_FAILURE_MESSAGE)
 class CookieReplacementBusy extends Error {
   constructor() { super(STORAGE_FAILURE_MESSAGE) }

@@ -15,7 +15,7 @@ export function summarizeBilibiliRoom(input: {
   checkedAt: number
 }, metrics: RoomMetrics = {}) {
   const { room, rate, capacity, truncated, checkedAt } = input
-  if (!room.startsWith('bilibili:') || !bilibiliRoomNumber(room.slice(9))) throw new Error('B 站房间号无效.')
+  if (!room.startsWith('bilibili:') || !bilibiliRoomNumber(room.slice(9))) throw new Error('哔哩哔哩房间号无效')
   const items = input.messages.filter(message => message.platform === 'bilibili' && message.room === room && !message.system)
   const chats = items.filter(message => !message.superChat && !message.bilibiliGift)
   const superChats = items.flatMap(message => message.superChat ?? [])

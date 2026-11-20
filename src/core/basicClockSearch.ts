@@ -8,7 +8,7 @@ export interface BasicClockSearchConfig {
   roi: RoiRect | null
 }
 
-const ERROR_PREFIX = '生产寻找区间配置无效: '
+const ERROR_PREFIX = '生产寻找区间配置无效：'
 
 function invalid(reason: string): never { throw new Error(ERROR_PREFIX + reason) }
 
@@ -40,7 +40,7 @@ export function parseBasicClockSearchConfig(raw: unknown): BasicClockSearchConfi
       if (config.roi !== null) invalid('未设定时 roi 必须为 null')
       return { schemaVersion: 1, configured: false, roi: null }
     }
-    const values = fields(config.roi, ['x', 'y', 'w', 'h'], 'roi')
+    const values = fields(config.roi, ['x', 'y', 'w', 'h'], 'roi ')
     if (![values.x, values.y, values.w, values.h].every(value => typeof value === 'number' && Number.isFinite(value))) {
       invalid('roi 坐标必须为有限数值')
     }

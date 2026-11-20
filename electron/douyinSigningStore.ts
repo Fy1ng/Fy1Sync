@@ -15,9 +15,9 @@ export interface DouyinSigningProtection {
 export type DouyinSigningStoreErrorCode = 'douyin-signing-store-failed' | 'douyin-signing-store-cancelled' | 'douyin-signing-protection-unavailable'
 export class DouyinSigningStoreError extends Error {
   constructor(readonly code: DouyinSigningStoreErrorCode = 'douyin-signing-store-failed') {
-    super(code === 'douyin-signing-store-cancelled' ? '抖音签名材料操作已取消.'
-      : code === 'douyin-signing-protection-unavailable' ? '系统加密保护不可用, 未保存或返回抖音签名材料.'
-      : '抖音签名材料读写失败, 未返回私密数据.')
+    super(code === 'douyin-signing-store-cancelled' ? '抖音签名材料操作已取消'
+      : code === 'douyin-signing-protection-unavailable' ? '系统加密保护不可用，未保存或返回抖音签名材料'
+      : '抖音签名材料读写失败，未返回私密数据')
     this.name = 'DouyinSigningStoreError'
   }
 }

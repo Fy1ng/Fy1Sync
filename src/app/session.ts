@@ -1219,7 +1219,7 @@ export class Session {
 
   private cancelledSyncResult(): AutoSyncRunResult {
     return { phase: 'failed', dryRun: false, estimate: null, plan: null, applied: false,
-      failure: { kind: 'cancelled', message: '自动同步已取消' }, divergence: null,
+      failure: { kind: 'cancelled', message: '自动对齐已取消' }, divergence: null,
       samples: { official: 0, commentary: 0 }, jumps: { official: 0, commentary: 0 },
       startedAt: this.now(), finishedAt: this.now() }
   }

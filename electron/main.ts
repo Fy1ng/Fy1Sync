@@ -490,7 +490,7 @@ async function start(): Promise<void> {
     bilibili: {
       cookieHeader: bilibiliCookieHeader,
       createSocket: url => createNetworkSocket(url, 'bilibili', { network: network.context('bilibili') }),
-      ...(offlineE2e ? { resolveRoom: async () => { throw new Error('默认离线测试禁止真实 B 站弹幕查询') } } : {}),
+      ...(offlineE2e ? { resolveRoom: async () => { throw new Error('默认离线测试禁止真实哔哩哔哩弹幕查询') } } : {}),
     },
     douyin: {
       resolveRoom: async webRoom => {
@@ -798,7 +798,7 @@ async function start(): Promise<void> {
     onWindowReleased: id => { backend?.watch.releaseSender(id); platformRooms?.releaseSender(id) },
     onMainRoomChanged: room => platformRooms?.select(room),
     resolveBilibiliRoom: async room => {
-      if (offlineE2e) throw new Error('默认离线测试禁止真实 B 站房间查询')
+      if (offlineE2e) throw new Error('默认离线测试禁止真实哔哩哔哩房间查询')
       return (await readBilibiliRoomIdentity(room)).room
     },
     allowMethod: (id, method, args) => backend?.pip.permits(id, method, args) === true,

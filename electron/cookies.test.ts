@@ -117,7 +117,7 @@ describe('private cookie storage', () => {
   })
 
   it.each(['\nsecret', '\tsecret', '\0secret', 'a;b', 'a b'])('rejects unsafe cookie fields with a fixed error', value => {
-    expect(() => store().write('youtube', [cookie({ value })])).toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    expect(() => store().write('youtube', [cookie({ value })])).toThrow('账号数据读写失败，未返回任何 cookie 数据')
     expect(fs.existsSync(path.join(root, 'cookies', 'youtube.txt'))).toBe(false)
   })
 
@@ -126,7 +126,7 @@ describe('private cookie storage', () => {
     manager.write('youtube', [cookie()])
     const previous = fs.readFileSync(path.join(root, 'cookies', 'youtube.txt'), 'utf8')
     vi.spyOn(fs, 'fsyncSync').mockImplementationOnce(() => { throw new Error('secret must not escape') })
-    expect(() => manager.write('youtube', [cookie({ value: 'replacement' })])).toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    expect(() => manager.write('youtube', [cookie({ value: 'replacement' })])).toThrow('账号数据读写失败，未返回任何 cookie 数据')
     expect(fs.readFileSync(path.join(root, 'cookies', 'youtube.txt'), 'utf8')).toBe(previous)
     expect(fs.readdirSync(path.join(root, 'cookies'))).toEqual(['youtube.txt'])
   })
@@ -157,7 +157,7 @@ describe('private cookie storage', () => {
     const controller = new AbortController()
     const replace = vi.spyOn(fs, 'renameSync').mockImplementation(() => { throw Object.assign(new Error('private'), { code: 'EPERM' }) })
     const pending = manager.writeAsync('youtube', [cookie({ value: 'new-session' })], controller.signal)
-    const rejected = expect(pending).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    const rejected = expect(pending).rejects.toThrow('账号数据读写失败，未返回任何 cookie 数据')
     controller.abort()
     await rejected
     expect(replace).toHaveBeenCalledOnce()
@@ -171,13 +171,13 @@ describe('private cookie storage', () => {
     const rename = fs.renameSync
     vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => { throw Object.assign(new Error('busy'), { code: 'EPERM' }) }).mockImplementation(rename)
     const stale = manager.writeAsync('youtube', [cookie({ value: 'stale-replacement' })])
-    const rejected = expect(stale).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    const rejected = expect(stale).rejects.toThrow('账号数据读写失败，未返回任何 cookie 数据')
     manager.write('youtube', [cookie({ value: 'newer-session' })])
     await rejected
     expect(fs.readFileSync(path.join(root, 'cookies', 'youtube.txt'), 'utf8')).toContain('newer-session')
     vi.mocked(fs.renameSync).mockImplementationOnce(() => { throw Object.assign(new Error('busy'), { code: 'EPERM' }) })
     const pending = manager.writeAsync('youtube', [cookie({ value: 'late-session' })])
-    const cancelled = expect(pending).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    const cancelled = expect(pending).rejects.toThrow('账号数据读写失败，未返回任何 cookie 数据')
     manager.logout('youtube')
     await cancelled
     expect(fs.existsSync(path.join(root, 'cookies', 'youtube.txt'))).toBe(false)
@@ -187,16 +187,16 @@ describe('private cookie storage', () => {
     const manager = store()
     manager.write('youtube', [cookie({ value: 'old-session' })])
     const replace = vi.spyOn(fs, 'renameSync').mockImplementation(() => { throw Object.assign(new Error('private'), { code: 'EACCES' }) })
-    await expect(manager.writeAsync('youtube', [cookie({ value: 'new-session' })])).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    await expect(manager.writeAsync('youtube', [cookie({ value: 'new-session' })])).rejects.toThrow('账号数据读写失败，未返回任何 cookie 数据')
     expect(replace).toHaveBeenCalledTimes(6)
     expect(fs.readFileSync(path.join(root, 'cookies', 'youtube.txt'), 'utf8')).toContain('old-session')
     expect(fs.readdirSync(path.join(root, 'cookies'))).toEqual(['youtube.txt'])
     replace.mockClear()
     const sync = vi.spyOn(fs, 'fsyncSync').mockImplementationOnce(() => { throw Object.assign(new Error('private'), { code: 'EPERM' }) })
-    await expect(manager.writeAsync('youtube', [cookie({ value: 'new-session' })])).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    await expect(manager.writeAsync('youtube', [cookie({ value: 'new-session' })])).rejects.toThrow('账号数据读写失败，未返回任何 cookie 数据')
     expect(sync).toHaveBeenCalledOnce()
     expect(replace).not.toHaveBeenCalled()
-    await expect(manager.writeAsync('youtube', [cookie({ value: 'unsafe\nvalue' })])).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    await expect(manager.writeAsync('youtube', [cookie({ value: 'unsafe\nvalue' })])).rejects.toThrow('账号数据读写失败，未返回任何 cookie 数据')
     expect(sync).toHaveBeenCalledOnce()
   })
 
@@ -204,7 +204,7 @@ describe('private cookie storage', () => {
     const manager = store()
     manager.write('youtube', [cookie()])
     fs.writeFileSync(path.join(root, 'cookies', 'youtube.txt'), '# Netscape HTTP Cookie File\nsecret-invalid-fields\n')
-    await expect(manager.status()).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    await expect(manager.status()).rejects.toThrow('账号数据读写失败，未返回任何 cookie 数据')
   })
 
   it('omits expired cookies and limits Douyu headers to matching domain/path', async () => {
@@ -443,7 +443,7 @@ describe('cookie path boundary', () => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'cookie-tests-outside-'))
     try {
       fs.symlinkSync(outside, path.join(root, 'cookies'), process.platform === 'win32' ? 'junction' : 'dir')
-      expect(() => store().write('youtube', [cookie()])).toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+      expect(() => store().write('youtube', [cookie()])).toThrow('账号数据读写失败，未返回任何 cookie 数据')
       expect(fs.readdirSync(outside)).toEqual([])
     } finally { fs.rmSync(outside, { recursive: true, force: true }) }
   })

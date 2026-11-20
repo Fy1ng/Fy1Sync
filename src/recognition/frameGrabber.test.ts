@@ -127,7 +127,7 @@ describe('worker pixel readback', () => {
         throw new DOMException('Security: source is not origin-clean', 'SecurityError')
       })
       expect(h.reader.read({ ...h.request, id: 2 })).toMatchObject({ id: 2, ok: false, reason: 'canvas-tainted',
-        detail: '画布被跨域视频污染，无法读取像素。请通过本地代理加载该源。' })
+        detail: '画布被跨域视频污染，无法读取像素。请通过本地代理载入该源。' })
       expect(h.close).toHaveBeenCalledOnce()
       h.reader.read({ ...h.request, id: 3 })
       expect(h.canvases).toHaveBeenCalledTimes(2)
@@ -243,7 +243,7 @@ describe('asynchronous frame acquisition', () => {
     try {
       h.capture.mockRejectedValueOnce(new DOMException('Cross-origin video', 'SecurityError'))
       expect(await h.grabber.grabAsync(h.video, FULL_FRAME_ROI)).toMatchObject({ ok: false, reason: 'canvas-tainted',
-        detail: '画布被跨域视频污染，无法读取像素。请通过本地代理加载该源。' })
+        detail: '画布被跨域视频污染，无法读取像素。请通过本地代理载入该源。' })
       const run = h.grabber.grabAsync(h.video, FULL_FRAME_ROI)
       await Promise.resolve()
       const id = h.postMessage.mock.calls[0]![0].id

@@ -25,7 +25,7 @@ export async function fetchBilibiliWebData(url: string, options: {
   const target = new URL(url)
   if (target.protocol !== 'https:' || !hosts.includes(target.hostname)
     || target.username || target.password || target.port || target.hash) {
-    throw new BilibiliWebError('unavailable', 'B 站接口地址无效.')
+    throw new BilibiliWebError('unavailable', '哔哩哔哩接口地址无效')
   }
   const timeout = AbortSignal.timeout(15_000)
   const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout
@@ -42,16 +42,16 @@ export async function fetchBilibiliWebData(url: string, options: {
   if (response.ok && (payload.code === 0 || (options.allowAnonymousNav && payload.code === -101))) {
     return bilibiliObject(payload.data)
   }
-  if (payload.code === -101) throw new BilibiliWebError('login-required', '请先登录 B 站.')
-  throw new BilibiliWebError('unavailable', 'B 站接口暂不可用.')
+  if (payload.code === -101) throw new BilibiliWebError('login-required', '请先登录哔哩哔哩')
+  throw new BilibiliWebError('unavailable', '哔哩哔哩接口暂不可用')
 }
 
 export async function readBilibiliRoomIdentity(room: string, signal?: AbortSignal): Promise<BilibiliRoomIdentity> {
-  if (!bilibiliRoomNumber(room)) throw new BilibiliWebError('unavailable', 'B 站房间号无效.')
+  if (!bilibiliRoomNumber(room)) throw new BilibiliWebError('unavailable', '哔哩哔哩房间号无效')
   const data = await fetchBilibiliWebData(`https://api.live.bilibili.com/room/v1/Room/room_init?id=${room}`, { signal })
   const canonical = bilibiliRoomNumber(data.room_id)
   if (!canonical || (canonical !== room && bilibiliRoomNumber(data.short_id) !== room) || bilibiliCount(data.live_status, 2) === undefined) {
-    throw new BilibiliWebError('unavailable', 'B 站未返回可核对的房间.')
+    throw new BilibiliWebError('unavailable', '哔哩哔哩未返回可核对的房间')
   }
   const live = data.live_status === 1
   const start = bilibiliCount(data.live_time, 9_999_999_999)

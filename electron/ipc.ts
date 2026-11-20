@@ -232,7 +232,7 @@ export function installIpcHandlers(ipc: Pick<IpcMain, 'handle' | 'removeHandler'
         canonical = `douyin:${input}`
       } else if (bilibili) {
         const formal = await options.resolveBilibiliRoom!(input)
-        if (!/^[1-9]\d{0,11}$/.test(formal)) throw new Error('B 站房间身份无效')
+        if (!/^[1-9]\d{0,11}$/.test(formal)) throw new Error('哔哩哔哩房间身份无效')
         canonical = `bilibili:${formal}`
       } else if (huya) {
         const identity = await service.resolveHuyaRoom(input)

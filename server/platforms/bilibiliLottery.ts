@@ -30,7 +30,7 @@ export function bilibiliLotteryRoom(input: unknown): string | null {
 }
 
 export function bilibiliLotteryOfficialUrl(room: string): string {
-  if (!numericRoom(room)) throw new Error('B站房间号无效.')
+  if (!numericRoom(room)) throw new Error('哔哩哔哩房间号无效')
   return `https://live.bilibili.com/${room}`
 }
 
@@ -102,7 +102,7 @@ export class BilibiliLotteryGateway {
       headers: { Referer: 'https://live.bilibili.com/', ...(cookie ? { Cookie: cookie } : {}) },
     })
     if (response.status === 412 || response.status === 429) { await response.body?.cancel(); return { raw: { code: -352 }, date: null, elapsed: 0 } }
-    if (!response.ok || !response.body) { await response.body?.cancel(); throw new Error('B站活动读取失败.') }
+    if (!response.ok || !response.body) { await response.body?.cancel(); throw new Error('哔哩哔哩活动读取失败') }
     const reader = response.body.getReader()
     const chunks: Uint8Array[] = []
     let bytes = 0
@@ -114,7 +114,7 @@ export class BilibiliLotteryGateway {
         const next = await reader.read()
         if (next.done) break
         bytes += next.value.byteLength
-        if (bytes > LIMIT) throw new Error('B站活动响应超过大小限制.')
+        if (bytes > LIMIT) throw new Error('哔哩哔哩活动响应超过大小限制')
         chunks.push(next.value)
       }
       active.throwIfAborted()

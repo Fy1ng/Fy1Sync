@@ -22,7 +22,7 @@ export function readbackFailure(error: unknown, readingPixels = false): {
   return {
     ok: false,
     reason: security || readingPixels ? 'canvas-tainted' : 'decode-failed',
-    detail: security ? '画布被跨域视频污染，无法读取像素。请通过本地代理加载该源。' : message,
+    detail: security ? '画布被跨域视频污染，无法读取像素。请通过本地代理载入该源。' : message,
   }
 }
 

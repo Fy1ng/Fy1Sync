@@ -23,7 +23,7 @@ export interface HuyaOnTvSnapshot {
 }
 const MAX_PACKET = 65_536
 const MAX_ITEMS = 128
-const invalid = () => new Error('虎牙上电视数据暂不可用.')
+const invalid = () => new Error('虎牙上电视数据暂不可用')
 type Value = bigint | string | Uint8Array | Map<number, Value> | Value[]
 type Fields = Map<number, Value>
 class OnTvReader extends HuyaTarsReader {

@@ -85,7 +85,7 @@ describe('Douyin cookie authentication and scopes', () => {
     const storage = store()
     const cookie = authCookie({ expirationDate: expiry })
     expect(hasAuthenticationCookies([cookie], 'douyin', now)).toBe(false)
-    expect(() => storage.write('douyin', [cookie])).toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    expect(() => storage.write('douyin', [cookie])).toThrow('账号数据读写失败，未返回任何 cookie 数据')
     expect(fs.existsSync(path.join(root, 'cookies', 'douyin.txt'))).toBe(false)
   })
 
@@ -128,7 +128,7 @@ describe('Douyin cookie authentication and scopes', () => {
     'https://live.douyin.com\\123', 'https://live.douyin.com/\n'])('rejects credential export outside the exact allowlist (%s)', async url => {
     const storage = store()
     storage.write('douyin', [authCookie()])
-    await expect(storage.cookieHeader('douyin', url)).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    await expect(storage.cookieHeader('douyin', url)).rejects.toThrow('账号数据读写失败，未返回任何 cookie 数据')
   })
 
   it('returns an empty header without stored cookies and masks storage errors', async () => {
@@ -136,8 +136,8 @@ describe('Douyin cookie authentication and scopes', () => {
     expect(await storage.cookieHeader('douyin', liveUrl)).toBe('')
     storage.write('douyin', [authCookie()])
     vi.spyOn(fs.promises, 'open').mockRejectedValue(new Error('synthetic-private-session and private path'))
-    await expect(storage.cookieHeader('douyin', liveUrl)).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
-    await expect(storage.status()).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    await expect(storage.cookieHeader('douyin', liveUrl)).rejects.toThrow('账号数据读写失败，未返回任何 cookie 数据')
+    await expect(storage.status()).rejects.toThrow('账号数据读写失败，未返回任何 cookie 数据')
   })
 
   it('refuses corrupted stored cookie domains rather than returning their values', async () => {
@@ -145,7 +145,7 @@ describe('Douyin cookie authentication and scopes', () => {
     storage.write('douyin', [authCookie()])
     const file = path.join(root, 'cookies', 'douyin.txt')
     fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('.douyin.com', '.outside.invalid'))
-    await expect(storage.cookieHeader('douyin', liveUrl)).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    await expect(storage.cookieHeader('douyin', liveUrl)).rejects.toThrow('账号数据读写失败，未返回任何 cookie 数据')
   })
 
   it('logs out only the verified Douyin profile and cookie file', async () => {
@@ -186,7 +186,7 @@ describe('Douyin cookie authentication and scopes', () => {
     const storage = store()
     storage.write('douyin', [authCookie(), authCookie({ name: 'sessionid_ss' })])
     const set = vi.fn(async () => { storage.logout('douyin') })
-    await expect(storage.injectDouyinCookies({ cookies: { set } })).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    await expect(storage.injectDouyinCookies({ cookies: { set } })).rejects.toThrow('账号数据读写失败，未返回任何 cookie 数据')
     expect(set).toHaveBeenCalledOnce()
   })
 
@@ -198,7 +198,7 @@ describe('Douyin cookie authentication and scopes', () => {
       fs.writeFileSync(path.join(outside, 'sentinel.txt'), 'preserve')
       fs.rmdirSync(profile)
       fs.symlinkSync(outside, profile, process.platform === 'win32' ? 'junction' : 'dir')
-      expect(() => storage.logout('douyin')).toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+      expect(() => storage.logout('douyin')).toThrow('账号数据读写失败，未返回任何 cookie 数据')
       expect(fs.readFileSync(path.join(outside, 'sentinel.txt'), 'utf8')).toBe('preserve')
     } finally { fs.rmSync(outside, { recursive: true, force: true }) }
   })
@@ -208,7 +208,7 @@ describe('Douyin cookie authentication and scopes', () => {
     storage.write('douyin', [authCookie()])
     const release = pauseOpen()
     const pending = storage.cookieHeader('douyin', liveUrl)
-    const rejected = expect(pending).rejects.toThrow('账号数据读写失败, 未返回任何 cookie 数据.')
+    const rejected = expect(pending).rejects.toThrow('账号数据读写失败，未返回任何 cookie 数据')
     if (action === 'write') storage.write('douyin', [authCookie({ value: 'new-session' })])
     else storage.logout('douyin')
     release()

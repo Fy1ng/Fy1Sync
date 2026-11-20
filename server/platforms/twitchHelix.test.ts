@@ -36,7 +36,7 @@ describe('Twitch official Helix readback adapter', () => {
     const helix = new TwitchHelix(fetch, oauth)
     const signal = new AbortController().signal
     await expect(helix.validateUser(signal)).rejects.toMatchObject({ status: 401 })
-    await expect(helix.channel('fixture_room', signal)).rejects.toMatchObject({ status: 403, message: 'Twitch 授权范围或频道权限不足.' })
+    await expect(helix.channel('fixture_room', signal)).rejects.toMatchObject({ status: 403, message: 'Twitch 授权范围或频道权限不足' })
     expect(fetch.mock.calls[0]?.[1]).toMatchObject({ headers: { Authorization: `OAuth ${oauth.accessToken}` } })
   })
 

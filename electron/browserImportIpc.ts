@@ -6,7 +6,7 @@ import type { BrowserLoginImport } from './browserLoginImport'
 export function installBrowserImportIpc(ipc: Pick<IpcMain, 'handle' | 'removeHandler'>, owner: WebContents, imports: BrowserLoginImport): () => void {
   const channel = 'stream-syncer:browser-import-invoke'
   ipc.handle(channel, async (event, method: unknown, args: unknown) => {
-    if (!trustedSender(event, owner)) return { ok: false, code: 'forbidden', message: '仅允许应用主窗口导入浏览器登录态' }
+    if (!trustedSender(event, owner)) return { ok: false, code: 'forbidden', message: '仅允许应用主窗口从浏览器导入账号' }
     try {
       let value: unknown
       if (method === 'listBrowserImportProfiles' && args === undefined) value = await imports.sources()

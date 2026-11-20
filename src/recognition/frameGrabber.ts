@@ -261,7 +261,7 @@ export class FrameGrabber {
         reason: 'canvas-tainted',
         detail:
           error instanceof Error && /secur/iu.test(error.message)
-            ? '画布被跨域视频污染，无法读取像素。请通过本地代理加载该源。'
+            ? '画布被跨域视频污染，无法读取像素。请通过本地代理载入该源。'
             : (error instanceof Error ? error.message : String(error)),
       }
     }

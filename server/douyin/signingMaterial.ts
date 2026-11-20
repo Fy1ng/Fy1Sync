@@ -41,7 +41,7 @@ export interface DouyinSigningLookup {
 
 export class DouyinSigningMaterialError extends Error {
   readonly code = 'douyin-signing-material-invalid'
-  constructor() { super('抖音发送签名材料缺失或不匹配.') }
+  constructor() { super('抖音发送签名材料缺失或不匹配') }
 }
 
 const text = (value: unknown, max: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= max

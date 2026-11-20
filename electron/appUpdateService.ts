@@ -32,7 +32,7 @@ function version(value: unknown): ParsedVersion | null {
 /** SemVer precedence, including numeric prerelease identifiers and ignored build metadata. */
 export function compareAppVersions(left: string, right: string): -1 | 0 | 1 {
   const a = version(left), b = version(right)
-  if (!a || !b) throw new Error('应用版本号无效.')
+  if (!a || !b) throw new Error('应用版本号无效')
   for (let index = 0; index < 3; index++) if (a.numbers[index] !== b.numbers[index]) return a.numbers[index]! < b.numbers[index]! ? -1 : 1
   if (!a.prerelease.length || !b.prerelease.length) return a.prerelease.length === b.prerelease.length ? 0 : a.prerelease.length ? -1 : 1
   for (let index = 0; index < Math.max(a.prerelease.length, b.prerelease.length); index++) {
@@ -48,35 +48,35 @@ export function compareAppVersions(left: string, right: string): -1 | 0 | 1 {
 }
 
 function https(value: unknown): URL {
-  if (typeof value !== 'string' || value.length > 2_048 || /[\x00-\x20\x7f]/.test(value)) throw new Error('更新来源配置无效.')
+  if (typeof value !== 'string' || value.length > 2_048 || /[\x00-\x20\x7f]/.test(value)) throw new Error('更新来源配置无效')
   let url: URL
-  try { url = new URL(value) } catch { throw new Error('更新来源配置无效.') }
-  if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash || !url.hostname.includes('.')) throw new Error('更新来源配置无效.')
+  try { url = new URL(value) } catch { throw new Error('更新来源配置无效') }
+  if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash || !url.hostname.includes('.')) throw new Error('更新来源配置无效')
   return url
 }
 
 export function parseAppUpdateSource(raw: unknown): AppUpdateSource | null {
   if (raw === null || raw === undefined) return null
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('更新来源配置无效.')
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('更新来源配置无效')
   const source = raw as Record<string, unknown>
   if (source.kind === 'github') {
     if (Object.keys(source).some(key => !['kind', 'owner', 'repository'].includes(key)) ||
         typeof source.owner !== 'string' || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,98}[A-Za-z0-9])?$/.test(source.owner) ||
-        typeof source.repository !== 'string' || !/^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,99}$/.test(source.repository)) throw new Error('更新来源配置无效.')
+        typeof source.repository !== 'string' || !/^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,99}$/.test(source.repository)) throw new Error('更新来源配置无效')
     return { kind: 'github', owner: source.owner, repository: source.repository }
   }
   if (source.kind === 'manifest') {
-    if (Object.keys(source).some(key => !['kind', 'manifestUrl', 'releaseOrigin'].includes(key))) throw new Error('更新来源配置无效.')
+    if (Object.keys(source).some(key => !['kind', 'manifestUrl', 'releaseOrigin'].includes(key))) throw new Error('更新来源配置无效')
     const manifest = https(source.manifestUrl)
     let releaseOrigin: string | undefined
     if (source.releaseOrigin !== undefined) {
       const release = https(source.releaseOrigin)
-      if (release.pathname !== '/' || release.search) throw new Error('更新发布站点配置无效.')
+      if (release.pathname !== '/' || release.search) throw new Error('更新发布站点配置无效')
       releaseOrigin = release.origin
     }
     return { kind: 'manifest', manifestUrl: manifest.href, ...(releaseOrigin ? { releaseOrigin } : {}) }
   }
-  throw new Error('更新来源配置无效.')
+  throw new Error('更新来源配置无效')
 }
 
 function policy(host: string): ProxyConfig {
@@ -84,7 +84,7 @@ function policy(host: string): ProxyConfig {
 }
 function bounded<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
-    const abort = () => { signal.removeEventListener('abort', abort); reject(new Error('更新检查已取消.')) }
+    const abort = () => { signal.removeEventListener('abort', abort); reject(new Error('更新检查已取消')) }
     if (signal.aborted) { void promise.catch(() => {}); abort(); return }
     signal.addEventListener('abort', abort, { once: true })
     promise.then(value => { signal.removeEventListener('abort', abort); if (signal.aborted) abort(); else resolve(value) }, error => { signal.removeEventListener('abort', abort); reject(error) })
@@ -118,7 +118,7 @@ export class AppUpdateService {
   private disposed = false
 
   constructor(private readonly options: { currentVersion: string; source: AppUpdateSource | null; request?: typeof fetch; resolve?: Resolver; now?: () => number }) {
-    if (!version(options.currentVersion)) throw new Error('应用版本号无效.')
+    if (!version(options.currentVersion)) throw new Error('应用版本号无效')
     this.currentVersion = options.currentVersion
     this.source = parseAppUpdateSource(options.source)
     this.status = { phase: this.source ? 'idle' : 'unconfigured', currentVersion: this.currentVersion,
@@ -127,7 +127,7 @@ export class AppUpdateService {
   }
   state(): AppUpdateState { return structuredClone(this.status) }
   check(): Promise<AppUpdateState> {
-    if (this.disposed) return Promise.resolve({ ...this.state(), phase: 'error', message: '应用更新服务已关闭.' })
+    if (this.disposed) return Promise.resolve({ ...this.state(), phase: 'error', message: '应用更新服务已关闭' })
     if (!this.source) return Promise.resolve(this.state())
     if (this.flight) return this.flight
     this.status = { ...this.status, phase: 'checking', latestVersion: null, releaseUrl: null, releaseNotes: null, message: '正在检查应用版本.' }
@@ -180,7 +180,7 @@ export class AppUpdateService {
         checkedAt: now(), message: available ? '发现新的应用版本, 可查看发布页.' : '未发现比当前版本更新的发布版本.' }
     } catch (error) {
       this.status = { phase: 'error', currentVersion: this.currentVersion, latestVersion: null, releaseUrl: null,
-        releaseNotes: null, checkedAt: now(), message: this.disposed ? '应用更新服务已关闭.' : '应用更新检查失败或发布信息无法确认, 请稍后重试.', errorDetail: diagnosticDetails(error) }
+        releaseNotes: null, checkedAt: now(), message: this.disposed ? '应用更新服务已关闭' : '应用更新检查失败或发布信息无法确认，请稍后重试', errorDetail: diagnosticDetails(error) }
     } finally { clearTimeout(timer) }
     return this.state()
   }

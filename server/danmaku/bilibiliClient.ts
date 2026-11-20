@@ -47,12 +47,12 @@ export async function resolveBilibiliDanmaku(room: string, cookieHeader?: Bilibi
   const knownVisitor = /(?:^|;\s*)buvid3=([^;]+)/.exec(cookie)?.[1]
   const fingerprint = knownVisitor ? undefined : await fetchBilibiliWebData('https://api.bilibili.com/x/frontend/finger/spi', { signal })
   const buvid = knownVisitor ?? fingerprint?.b_3
-  if (typeof buvid !== 'string' || !/^[a-zA-Z0-9-]{1,128}$/.test(buvid)) throw new Error('无法获取 B 站访客标识.')
+  if (typeof buvid !== 'string' || !/^[a-zA-Z0-9-]{1,128}$/.test(buvid)) throw new Error('无法获取哔哩哔哩访客标识')
   if (!knownVisitor) cookie += `${cookie ? '; ' : ''}buvid3=${buvid}`
   const nav = await fetchBilibiliWebData('https://api.bilibili.com/x/web-interface/nav', { signal, allowAnonymousNav: true })
   const keys = bilibiliObject(nav.wbi_img)
   const seed = [keys.img_url, keys.sub_url].map(url => typeof url === 'string' ? url.split('/').pop()!.split('.')[0] : '').join('')
-  if (!/^[0-9a-f]{64}$/i.test(seed)) throw new Error('无法获取 B 站弹幕签名.')
+  if (!/^[0-9a-f]{64}$/i.test(seed)) throw new Error('无法获取哔哩哔哩弹幕签名')
   const key = MIXIN.map(index => seed[index]).join('').slice(0, 32)
   const query = signBilibili({ id: identity.room, type: '0', web_location: '444.8', wts: String(Math.floor(Date.now() / 1000)) }, key)
   const info = await fetchBilibiliWebData(`${DANMAKU_INFO}?${query}`, { signal, cookieHeader: async () => cookie })
@@ -62,7 +62,7 @@ export async function resolveBilibiliDanmaku(room: string, cookieHeader?: Bilibi
     return typeof host.host === 'string' && [443, 2245].includes(Number(host.wss_port))
       ? `wss://${host.host}:${host.wss_port}/sub` : ''
   }).filter(isBilibiliDanmakuEndpoint).sort((first, second) => Number(new URL(first).port !== '') - Number(new URL(second).port !== ''))[0]
-  if (!endpoint || typeof info.token !== 'string' || !info.token || info.token.length > 8192) throw new Error('无法获取 B 站弹幕服务器.')
+  if (!endpoint || typeof info.token !== 'string' || !info.token || info.token.length > 8192) throw new Error('无法获取哔哩哔哩弹幕服务器')
   const user = Number(bilibiliId(/(?:^|;\s*)DedeUserID=(\d+)/.exec(cookie)?.[1]) ?? 0)
   return { room: identity.room, token: info.token, endpoint, uid: Number.isSafeInteger(user) ? user : 0, buvid }
 }
@@ -127,7 +127,7 @@ export class BilibiliDanmakuClient {
     const resolve = this.deps.resolveRoom ?? ((room: string, signal: AbortSignal) => resolveBilibiliDanmaku(room, this.deps.cookieHeader, signal))
     void Promise.resolve().then(() => resolve(this.room, session.signal)).then(meta => {
       if (session.signal.aborted) return
-      if (!bilibiliRoomNumber(meta.room) || !isBilibiliDanmakuEndpoint(meta.endpoint)) throw new Error('B 站弹幕地址无效.')
+      if (!bilibiliRoomNumber(meta.room) || !isBilibiliDanmakuEndpoint(meta.endpoint)) throw new Error('哔哩哔哩弹幕地址无效')
       const socket = this.deps.createSocket(meta.endpoint)
       this.socket = socket
       socket.binaryType = 'arraybuffer'

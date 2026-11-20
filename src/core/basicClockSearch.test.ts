@@ -20,7 +20,7 @@ describe('author-defined clock search bounds', () => {
       { ...configured, roi: null }, { ...configured, configured: false },
       { schemaVersion: 1, configured: false }, { ...configured, userOverride: true },
       { ...configured, roi: { ...roi, threshold: 150 } }]) {
-      expect(() => parseBasicClockSearchConfig(raw)).toThrow(/^生产寻找区间配置无效: /)
+      expect(() => parseBasicClockSearchConfig(raw)).toThrow(/^生产寻找区间配置无效：/)
     }
   })
 
@@ -31,7 +31,7 @@ describe('author-defined clock search bounds', () => {
       { ...roi, w: Number.NaN }, { ...roi, h: Infinity }, { ...roi, x: .99 }, { ...roi, y: .99 },
     ]
     for (const value of regions) expect(() => parseBasicClockSearchConfig({ ...configured, roi: value }))
-      .toThrow(/^生产寻找区间配置无效: /)
+      .toThrow(/^生产寻找区间配置无效：/)
   })
 
   it('rejects dynamic, symbolic or nonplain input fields without evaluating accessors', () => {
@@ -41,7 +41,7 @@ describe('author-defined clock search bounds', () => {
     const instance = Object.assign(new Date(), configured)
     const hostile = new Proxy({}, { ownKeys() { throw new Error('unexpected internal detail') } })
     for (const raw of [dynamic, symbolic, instance, hostile]) {
-      expect(() => parseBasicClockSearchConfig(raw)).toThrow(/^生产寻找区间配置无效: /)
+      expect(() => parseBasicClockSearchConfig(raw)).toThrow(/^生产寻找区间配置无效：/)
     }
     expect(getter).not.toHaveBeenCalled()
   })
