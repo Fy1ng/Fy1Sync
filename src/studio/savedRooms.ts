@@ -81,7 +81,7 @@ export function savedFor(list: readonly SavedRoom[] | null, role: SourceRole, de
 }
 
 export async function saveRoom(role: SourceRole, descriptor: MediaDescriptor): Promise<string | null> {
-  if (!canSave(descriptor)) return '本地文件不能收藏'
+  if (!canSave(descriptor)) return '此片源不能收藏'
   const result = await apiClient.feature('saveRoom', { role, input: descriptor.input, platform: descriptor.platform!, label: sourceTitle(descriptor) })
   if (!result.ok) return result.message
   const current = rooms?.find(room => room.id === result.value.id)

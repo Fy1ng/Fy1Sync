@@ -14,7 +14,6 @@ const saved: SavedRoom = { id: 'saved', role: 'official', platform: 'huya', inpu
 beforeEach(() => {
   resetSavedRooms()
   vi.stubGlobal('streamSyncer', { invoke: vi.fn(async () => ({ ok: true, value: {} })) })
-  vi.stubGlobal('URL', class extends URL { static override createObjectURL = vi.fn(() => 'blob:local-file') })
   vi.spyOn(apiClient, 'feature').mockImplementation(async (method) => ({ ok: true, value: method === 'listSavedRooms' ? [saved] : {} }) as never)
   session = new Session({ createSampler: () => null })
 })
@@ -25,7 +24,6 @@ function mount(children: React.ReactNode) {
 }
 
 const direct = '/clip.mp4'
-const file = new File(['video'], 'dropped.mp4', { type: 'video/mp4' })
 const resolveFailure = { ok: false as const, code: 'test', message: '载入失败' }
 
 function deferResolveFailure() {
@@ -37,24 +35,21 @@ function deferResolveFailure() {
 }
 
 describe('source attachment and intake drafts', () => {
-  it.each([false, true])('leaves the source panel open after a rejected attachment (local=%s) and retries in place', async (local) => {
+  it('leaves the source panel open after a rejected direct attachment and retries in place', async () => {
     mount(<SourceChip role="official" />)
     fireEvent.click(screen.getByRole('button', { name: '画面：未载入' }))
     const field = screen.getByRole('textbox', { name: '画面链接' })
     const load = vi.spyOn(session, 'loadSource')
-    if (local) fireEvent.change(screen.getByLabelText('本地文件'), { target: { files: [file] } })
-    else {
-      fireEvent.change(field, { target: { value: direct } })
-      fireEvent.click(screen.getByRole('button', { name: '载入' }))
-    }
+    fireEvent.change(field, { target: { value: direct } })
+    fireEvent.click(screen.getByRole('button', { name: '载入' }))
     const video = session.engine.element('official')
     await waitFor(() => expect(session.engine.getState().official.attachMode).toBeTruthy())
     act(() => {
       Object.defineProperty(video, 'error', { configurable: true, value: { code: 4, message: 'not decodable' } })
       video.dispatchEvent(new Event('error'))
     })
-    const retry = await screen.findByRole('button', { name: local ? '重试载入 dropped.mp4' : '载入' })
-    expect(field).toHaveValue(local ? '' : direct)
+    const retry = await screen.findByRole('button', { name: '载入' })
+    expect(field).toHaveValue(direct)
     fireEvent.click(retry)
     await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
     await act(async () => { primeMediaElement(video) })
@@ -96,7 +91,7 @@ describe('source attachment and intake drafts', () => {
   it('clears a submitted bare room immediately and restores it and its platform on failure', async () => {
     const { resolve, fail } = deferResolveFailure()
     const close = vi.fn()
-    mount(<Intake onClose={close} onSchedule={() => {}} pendingFile={null} />)
+    mount(<Intake onClose={close} onSchedule={() => {}} />)
     fireEvent.click(screen.getByRole('radio', { name: /画面/ }))
     const field = screen.getByRole('textbox', { name: '直播间链接' })
     fireEvent.change(field, { target: { value: '12345' } })
@@ -116,7 +111,7 @@ describe('source attachment and intake drafts', () => {
 
   it.each(['edit', 'switch', 'switch-back'] as const)('does not restore an old submission after a draft %s', async (mode) => {
     const { fail } = deferResolveFailure()
-    mount(<Intake onClose={vi.fn()} onSchedule={() => {}} pendingFile={null} />)
+    mount(<Intake onClose={vi.fn()} onSchedule={() => {}} />)
     fireEvent.click(screen.getByRole('radio', { name: /^画面/ }))
     const field = screen.getByRole('textbox', { name: '直播间链接' })
     fireEvent.change(field, { target: { value: '12345' } })
@@ -148,7 +143,7 @@ describe('source attachment and intake drafts', () => {
   it.each(['draft', 'loading'] as const)('does not close for a first frame with the other side %s', async mode => {
     const close = vi.fn()
     const { resolve, fail } = deferResolveFailure()
-    mount(<Intake onClose={close} onSchedule={() => {}} pendingFile={null} />)
+    mount(<Intake onClose={close} onSchedule={() => {}} />)
     const field = screen.getByRole('textbox', { name: '直播间链接' })
     fireEvent.click(screen.getByRole('radio', { name: /解说/ }))
     fireEvent.change(field, { target: { value: mode === 'draft' ? direct : '12345' } })
@@ -172,14 +167,11 @@ describe('source attachment and intake drafts', () => {
     expect(close).not.toHaveBeenCalled()
   })
 
-  it('holds a dropped file until the viewer chooses a side', async () => {
-    const load = vi.spyOn(session, 'loadSource')
-    mount(<Intake onClose={vi.fn()} onSchedule={() => {}} pendingFile={file} />)
-    expect(screen.getByText('已拖入 dropped.mp4。请先选择画面或解说。')).toBeInTheDocument()
-    expect(load).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('radio', { name: /解说/ }))
-    await waitFor(() => expect(load).toHaveBeenCalledExactlyOnceWith('commentary', expect.objectContaining({ input: file.name })))
-    await act(async () => { primeMediaElement(session.engine.element('commentary')) })
-    expect(screen.queryByText(/请先选择画面或解说/)).toBeNull()
+  it('offers no local file picker or drop instructions in either entry point', async () => {
+    const { container } = mount(<><Intake onClose={vi.fn()} onSchedule={() => {}} /><SourceChip role="official" /></>)
+    fireEvent.click(screen.getByRole('button', { name: '画面：未载入' }))
+    expect(container.querySelector('input[type="file"]')).toBeNull()
+    expect(screen.queryByText('本地文件')).toBeNull()
+    expect(screen.queryByText(/支持将视频文件拖入窗口|已拖入/)).toBeNull()
   })
 })

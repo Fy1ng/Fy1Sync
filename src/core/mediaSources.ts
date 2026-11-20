@@ -66,17 +66,11 @@ export function parseSourceInput(raw: string): SourceParseResult {
     }
   }
 
-  // blob:/data: carry no `//` after the scheme, so they must be handled before
-  // the "add a missing scheme" normalisation below.
   if (/^(blob|data):/iu.test(input)) {
     return {
-      ok: true,
-      platform: 'file',
-      kind: 'file',
-      url: input,
-      needsResolve: false,
-      suggestProxy: false,
-      label: '本地文件',
+      ok: false,
+      reason: 'unsupported-scheme',
+      message: '请使用 HTTP/HTTPS 链接',
     }
   }
 
@@ -91,7 +85,7 @@ export function parseSourceInput(raw: string): SourceParseResult {
     return {
       ok: false,
       reason: 'unsupported-scheme',
-      message: `不支持 ${url.protocol} 协议，请使用 HTTP/HTTPS 链接或本地文件`,
+      message: `不支持 ${url.protocol} 协议，请使用 HTTP/HTTPS 链接`,
     }
   }
 

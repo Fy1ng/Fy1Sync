@@ -1,21 +1,18 @@
-/** The file/blob route must play smoothly before recognition is explicitly requested. */
+/** Recording test sources must play smoothly before recognition is explicitly requested. */
 import { fileURLToPath } from 'node:url'
 import { expect, test } from './electron'
-import { openAlignOptions, openPlayer, revealOverlay, seekBoth, setCheckedByLabel, setPlaying, waitForBothReady } from './helpers'
+import { openAlignOptions, openPlayer, seekBoth, setCheckedByLabel, setPlaying, waitForBothReady } from './helpers'
+import { loadRecordingSource } from './recordingSources'
 
-test('本地文件在两种识别模式空闲时均正常播放, 不启动识别 Worker', async ({ page, electronApp }) => {
+test('录像测试片源在两种识别模式空闲时均正常播放, 不启动识别 Worker', async ({ page, electronApp }) => {
   test.setTimeout(90_000)
   const recognitionWorkers: string[] = []
   page.on('worker', worker => { if (worker.url().includes('recognition.worker')) recognitionWorkers.push(worker.url()) })
   await openPlayer(page)
   for (const role of ['official', 'commentary'] as const) {
-    await revealOverlay(page)
-    await page.locator(`.chip[data-role="${role}"]`).click()
-    const panel = page.getByRole('dialog', { name: role === 'official' ? '画面片源' : '解说片源', exact: true })
     const file = (role === 'official' ? process.env.STREAM_SYNC_PLAYBACK_OFFICIAL : process.env.STREAM_SYNC_PLAYBACK_COMMENTARY)
       || fileURLToPath(new URL(`../public/test-sources/auto-${role}.mp4`, import.meta.url))
-    await panel.locator('input[type="file"]').setInputFiles(file)
-    await expect(panel).toBeHidden()
+    await loadRecordingSource(page, role, file)
   }
   await waitForBothReady(page)
   await seekBoth(page, 8, 8)
@@ -28,7 +25,7 @@ test('本地文件在两种识别模式空闲时均正常播放, 不启动识别
   media.on('Media.playerPropertiesChanged', event => decoderProperties.push(event))
   await media.send('Media.enable')
   const reports = []
-  for (const mode of ['基础模式', '样式包模式']) {
+  for (const mode of ['基础模式', '画面匹配']) {
     const options = await openAlignOptions(page)
     await setCheckedByLabel(options.getByRole('radio', { name: mode, exact: true }))
     await page.keyboard.press('Escape')
@@ -54,7 +51,7 @@ test('本地文件在两种识别模式空闲时均正常播放, 不启动识别
     reports.push({ mode, ...measurements })
     expect(recognitionWorkers).toHaveLength(0)
   }
-  await test.info().attach('local-file-playback', { body: JSON.stringify({ gpu, decoderProperties, reports }, null, 2), contentType: 'application/json' })
+  await test.info().attach('recording-source-playback', { body: JSON.stringify({ gpu, decoderProperties, reports }, null, 2), contentType: 'application/json' })
   for (const report of reports) for (const video of report.videos) {
     expect(video.advanced, JSON.stringify(report)).toBeGreaterThan(3.5)
     expect(video.totalFrames - video.droppedFrames, JSON.stringify(report)).toBeGreaterThan(75)

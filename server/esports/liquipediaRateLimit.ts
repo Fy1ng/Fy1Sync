@@ -9,7 +9,14 @@ export const MAX_COOLDOWN_BACKOFF_MS = 6 * 60 * 60_000
 const HTTP_ATTEMPT = 'liquipedia-http-attempt.json'
 const PARSE_ATTEMPT = 'liquipedia-attempt.json'
 
-export interface LiquipediaCooldown { at: number; until: number; count: number; retryAfter?: string }
+export interface LiquipediaCooldown { at: number; until: number; count: number; retryAfter?: string; retryAfterUntil?: number; id?: string }
+export const cooldownRound = (value: LiquipediaCooldown): string => value.id ?? `${value.at}:${value.until}:${value.count}`
+export function verificationNotBefore(value: LiquipediaCooldown): number {
+  if (value.retryAfterUntil !== undefined) return value.retryAfterUntil
+  if (value.retryAfter && retryAfterDelay(value.retryAfter, value.at) !== null) return value.until
+  return value.at
+}
+export class VerificationRoundEnded extends Error {}
 export class LiquipediaCoolingDown extends Error {
   readonly status = 429
   readonly code = 'liquipedia-rate-limited'
@@ -39,7 +46,11 @@ function cooldownValue(value: unknown): LiquipediaCooldown | null {
   const raw = value as Record<string, unknown>, at = timestamp(raw.at), until = timestamp(raw.until)
   if (until < at || !Number.isInteger(raw.count) || Number(raw.count) < 1 || Number(raw.count) > 16
     || (raw.retryAfter !== undefined && (typeof raw.retryAfter !== 'string' || raw.retryAfter.length > 256))) throw new Error('Invalid Liquipedia cooldown')
-  return { at, until, count: Number(raw.count), ...(typeof raw.retryAfter === 'string' ? { retryAfter: raw.retryAfter } : {}) }
+  const retryAfterUntil = raw.retryAfterUntil === undefined ? undefined : timestamp(raw.retryAfterUntil)
+  if (retryAfterUntil !== undefined && retryAfterUntil > until) throw new Error('Invalid Liquipedia upstream deadline')
+  if (raw.id !== undefined && (typeof raw.id !== 'string' || !/^[a-f\d-]{36}$/.test(raw.id))) throw new Error('Invalid Liquipedia cooldown ID')
+  return { at, until, count: Number(raw.count), ...(typeof raw.retryAfter === 'string' ? { retryAfter: raw.retryAfter } : {}),
+    ...(retryAfterUntil === undefined ? {} : { retryAfterUntil }), ...(typeof raw.id === 'string' ? { id: raw.id } : {}) }
 }
 
 function readJson(file: string): Record<string, unknown> | null {
@@ -83,6 +94,7 @@ export function pause(ms: number, signal: AbortSignal): Promise<void> {
 export class LiquipediaRateLimit {
   private readonly directory: string
   private localCooldown: LiquipediaCooldown | null = null
+  private readonly pendingCooldowns = new Map<string, LiquipediaCooldown>()
   constructor(userDataDir: string, private readonly now: () => number = Date.now) {
     this.directory = join(resolve(userDataDir), 'events')
   }
@@ -98,10 +110,19 @@ export class LiquipediaRateLimit {
 
   /** Shared by schedule, category lookups, channel lookups and images, including after restart. */
   cooldown(): LiquipediaCooldown | null {
-    let stored: LiquipediaCooldown | null = null
-    try { stored = this.timestamps().cooldown } catch { /* Invalid reservations still refuse dispatch in reserve(). */ }
-    const value = stored && (!this.localCooldown || stored.until >= this.localCooldown.until) ? stored : this.localCooldown
+    try { this.localCooldown = this.timestamps().cooldown } catch { /* Invalid reservations still refuse dispatch in reserve(). */ }
+    const value = this.effectiveCooldown(this.localCooldown)
     return value && value.until > this.now() ? { ...value } : null
+  }
+
+  private effectiveCooldown(stored: LiquipediaCooldown | null): LiquipediaCooldown | null {
+    let value = stored
+    const now = this.now()
+    for (const [id, pending] of this.pendingCooldowns) {
+      if (pending.until <= now) this.pendingCooldowns.delete(id)
+      else if (!value || pending.until >= value.until) value = pending
+    }
+    return value
   }
 
   throwIfCooling(): void {
@@ -112,12 +133,13 @@ export class LiquipediaRateLimit {
   delay(parse = false): number {
     try {
       const now = timestamp(this.now()), last = this.timestamps()
-      // The legacy parse record also represents an HTTP request made before migration.
-      const httpTimes = [last.http, last.parse].filter((value): value is number => value !== null)
-      const httpDelay = httpTimes.length ? Math.max(...httpTimes) + LIQUIPEDIA_INTERVAL_MS - now : 0
-      return Math.max(0, httpDelay, parse && last.parse !== null ? last.parse + PARSE_INTERVAL_MS - now : 0,
-        (last.cooldown?.until ?? 0) - now, (this.localCooldown?.until ?? 0) - now)
+      return Math.max(this.slotDelay(last, now, parse), (this.effectiveCooldown(last.cooldown)?.until ?? 0) - now)
     } catch { return parse ? PARSE_INTERVAL_MS : LIQUIPEDIA_INTERVAL_MS }
+  }
+
+  private slotDelay(last: RequestTimes, now: number, parse: boolean): number {
+    const http = Math.max(last.http ?? -LIQUIPEDIA_INTERVAL_MS, last.parse ?? -LIQUIPEDIA_INTERVAL_MS)
+    return Math.max(0, http + LIQUIPEDIA_INTERVAL_MS - now, parse && last.parse !== null ? last.parse + PARSE_INTERVAL_MS - now : 0)
   }
 
   private locked<T>(run: () => T): T | undefined {
@@ -151,43 +173,88 @@ export class LiquipediaRateLimit {
       ...(last.parse === null ? {} : { parseAt: last.parse }), ...(last.cooldown ? { cooldown: last.cooldown } : {}) })
   }
 
+  private recordSlot(last: RequestTimes, now: number, parse: boolean): void {
+    this.save({ ...last, http: now, parse: parse ? now : last.parse })
+    if (parse) atomicJson(this.directory, PARSE_ATTEMPT, { at: now })
+  }
+
   reserve(parse = false): boolean {
     if (this.cooldown()) return false
     return this.locked(() => {
       const now = timestamp(this.now()), last = this.timestamps()
-      const http = Math.max(last.http ?? -LIQUIPEDIA_INTERVAL_MS, last.parse ?? -LIQUIPEDIA_INTERVAL_MS)
-      if ((last.cooldown && last.cooldown.until > now) || now - http < LIQUIPEDIA_INTERVAL_MS
-        || (parse && last.parse !== null && now - last.parse < PARSE_INTERVAL_MS)) return false
+      if ((last.cooldown && last.cooldown.until > now) || this.slotDelay(last, now, parse) > 0) return false
       // Keep both quotas in this atomic record so a crash between writes cannot lose the parse quota.
-      this.save({ ...last, http: now, parse: parse ? now : last.parse })
-      if (parse) atomicJson(this.directory, PARSE_ATTEMPT, { at: now })
+      this.recordSlot(last, now, parse)
       return true
     }) ?? false
   }
 
   async rateLimited(retryAfter: string | null, signal: AbortSignal, serverDate?: string | null): Promise<LiquipediaCooldown> {
     const at = timestamp(this.now())
+    const id = randomUUID()
     const delay = retryAfterDelay(retryAfter, at, serverDate)
     const next = (previous: LiquipediaCooldown | null): LiquipediaCooldown => {
       const count = Math.min(16, (previous?.count ?? 0) + 1)
       const backoff = Math.min(MAX_COOLDOWN_BACKOFF_MS, (delay ?? DEFAULT_COOLDOWN_MS) * 2 ** (count - 1))
       const until = Math.min(8_640_000_000_000_000, at + Math.max(PARSE_INTERVAL_MS, delay ?? 0, backoff))
-      return { at, until: Math.max(previous?.until ?? 0, until), count,
+      const retryAfterUntil = Math.max(previous ? verificationNotBefore(previous) : 0,
+        Math.min(8_640_000_000_000_000, at + (delay ?? 0)))
+      return { id, at, until: Math.max(previous?.until ?? 0, until), count, retryAfterUntil,
         ...(retryAfter && retryAfter.length <= 256 ? { retryAfter } : {}) }
     }
-    let previous: LiquipediaCooldown | null = this.localCooldown
-    try { previous = this.timestamps().cooldown ?? (previous && previous.until > at ? previous : null) } catch { /* Retain a local block even when storage fails. */ }
-    // Pause this process before waiting for the cross-process mutex.
-    this.localCooldown = next(previous)
+    this.pendingCooldowns.set(id, next(this.cooldown()))
     for (;;) {
       const saved = this.locked(() => {
         const last = this.timestamps(), cooldown = next(last.cooldown)
         this.save({ ...last, cooldown })
         return cooldown
       })
-      if (saved) { this.localCooldown = saved; return { ...saved } }
+      if (saved) {
+        this.pendingCooldowns.delete(id)
+        this.localCooldown = saved
+        return { ...saved }
+      }
       signal.throwIfAborted()
       await pause(100, signal)
+    }
+  }
+
+  async waitForVerification(round: string, signal: AbortSignal): Promise<void> {
+    for (;;) {
+      signal.throwIfAborted()
+      if (!this.isVerificationRound(round)) throw new VerificationRoundEnded()
+      const delay = this.locked(() => {
+        const now = timestamp(this.now()), last = this.timestamps(), value = last.cooldown
+        if (!value || value.until <= now || cooldownRound(value) !== round) return -1
+        const wait = Math.max(this.slotDelay(last, now, true), verificationNotBefore(value) - now)
+        if (wait === 0) this.recordSlot(last, now, true)
+        return wait
+      })
+      if (delay === -1) throw new VerificationRoundEnded()
+      if (delay === 0) return
+      await pause(Math.max(25, delay ?? 0), signal)
+    }
+  }
+
+  isVerificationRound(round: string): boolean {
+    const value = this.cooldown()
+    return this.pendingCooldowns.size === 0 && value !== null && cooldownRound(value) === round
+  }
+
+  async succeededVerification(round: string, signal: AbortSignal): Promise<boolean> {
+    for (;;) {
+      signal.throwIfAborted()
+      this.effectiveCooldown(null)
+      if (this.pendingCooldowns.size) return false
+      const cleared = this.locked(() => {
+        const last = this.timestamps()
+        if (!last.cooldown || cooldownRound(last.cooldown) !== round) return false
+        this.save({ ...last, cooldown: null })
+        this.localCooldown = null
+        return true
+      })
+      if (cleared !== undefined) return cleared
+      await pause(25, signal)
     }
   }
 

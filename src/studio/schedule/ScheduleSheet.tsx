@@ -18,7 +18,7 @@ import { apiClient } from '../../app/apiClient'
 import type { Cs2Match, Cs2Schedule, Cs2Stream, StreamTitle } from '../../../electron/featureContracts'
 import { Icon, Sheet, SideTabs } from '../kit'
 import { eventPath, formatStart, groupEvents, matchStage, MISSING_TEXT, orderedStreams, PLATFORM_NAME, streamKey, streamTitle, tierLabel, titleKey, titleRequests, type EventGroup } from './model'
-import { lastSchedule, onSchedule, readSchedule, scheduleChanged } from './store'
+import { lastSchedule, onSchedule, readSchedule, refreshScheduleAfterVerification, scheduleChanged } from './store'
 import './schedule.css'
 import { useRemembered } from '../../app/remembered'
 import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
@@ -39,6 +39,7 @@ export function ScheduleSheet({ onClose, onWatch }: {
   const [schedule, setSchedule] = useState<Cs2Schedule | null>(lastSchedule)
   const [failure, setFailure, failureDetail] = useErrorState()
   const [refreshing, setRefreshing] = useState(false)
+  const [verifying, setVerifying] = useState(false)
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null)
   const [refreshBlock, setRefreshBlock] = useState<RefreshBlock | null>(() => {
     const value = lastSchedule()
@@ -49,7 +50,8 @@ export function ScheduleSheet({ onClose, onWatch }: {
     setRefreshBlock(previous => {
       const at = value.refreshAt
       if (typeof at === 'number' && Number.isFinite(at) && at > Date.now()) {
-        return { at: Math.max(previous?.at ?? 0, at), reason: value.refreshReason ?? 'parse-quota', fetchedAt: value.fetchedAt }
+        return { at: explicit || value.verification ? at : Math.max(previous?.at ?? 0, at),
+          reason: value.refreshReason ?? 'parse-quota', fetchedAt: value.fetchedAt }
       }
       if (explicit || (previous && previous.reason !== 'parse-quota' && !value.stale && value.fetchedAt > previous.fetchedAt)) return null
       return previous
@@ -82,6 +84,26 @@ export function ScheduleSheet({ onClose, onWatch }: {
     acceptCooldown(next, refresh)
   }
 
+  const retryAfterVerification = async (round: string): Promise<void> => {
+    setVerifying(true)
+    setRefreshMessage(null)
+    try {
+      const result = await refreshScheduleAfterVerification(round)
+      if (!alive.current) return
+      setNow(Date.now())
+      if (!result.ok) { setFailure(result); return }
+      const next = lastSchedule() ?? result.value
+      acceptCooldown(next, true)
+      switch (result.value.verificationResult) {
+        case 'recovered':
+          if (!next.verification) setRefreshMessage('赛程已更新')
+          break
+        case 'rate-limited': setRefreshMessage('验证未对应用的请求生效，仍受 Liquipedia 限流'); break
+        case 'failed': setRefreshMessage('未能读取赛程，冷却未解除'); break
+      }
+    } finally { if (alive.current) setVerifying(false) }
+  }
+
   // Count down once a second while held back, and free the button when the time comes.
   const waitSeconds = refreshAt === null ? 0 : Math.max(0, Math.ceil((refreshAt - now) / 1000))
   useEffect(() => {
@@ -103,7 +125,8 @@ export function ScheduleSheet({ onClose, onWatch }: {
   }, [])
 
   const events = useMemo(() => groupEvents(schedule), [schedule])
-  const upstreamLimited = schedule?.refreshReason === 'upstream-rate-limit' || (schedule?.stale && schedule.errorDetail?.status === 429)
+  const upstreamLimited = waitSeconds > 0 && (schedule?.refreshReason === 'upstream-rate-limit' || (schedule?.stale && schedule.errorDetail?.status === 429))
+  const verification = schedule?.verification
   const current = events.find((group) => group.key === eventKey) ?? events[0]
   useEffect(() => { if (current && current.key !== eventKey) setEventKey(current.key) }, [current, eventKey])
 
@@ -171,11 +194,12 @@ export function ScheduleSheet({ onClose, onWatch }: {
         <footer className="sched-foot">
           {refreshMessage && <p role="status">{refreshMessage}</p>}
           {schedule?.stale && events.length > 0 && <p className="note-warn"><ErrorText error={schedule.errorDetail ?? { message: schedule.error, fetchedAt: schedule.fetchedAt, stale: true }} message={schedule.error ?? '更新失败，显示上次赛程'} /></p>}
-          {upstreamLimited && <LiquipediaVerification />}
+          {upstreamLimited && <LiquipediaVerification key={verification?.round} attempt={verification}
+            waiting={verifying} now={now} onRetry={retryAfterVerification} />}
           <span className="sched-source">
             {schedule ? `${schedule.attribution} - ${schedule.fetchedAt > 0 ? `读取于 ${formatStart(schedule.fetchedAt, now)}` : '暂未获取'}` : '赛程数据来自 Liquipedia（CC-BY-SA 3.0）'}
           </span>
-          <button type="button" className="btn-quiet small" disabled={refreshing || waitSeconds > 0} onClick={() => void read(true)}>
+          <button type="button" className="btn-quiet small" disabled={refreshing || verifying || waitSeconds > 0} onClick={() => void read(true)}>
             <Icon name="refresh" />{refreshing ? '正在刷新' : waitSeconds > 0 ? `${retryLabel(waitSeconds)}后可刷新` : '刷新'}
           </button>
         </footer>
@@ -185,7 +209,9 @@ export function ScheduleSheet({ onClose, onWatch }: {
 }
 
 /** Browser handoff is explicit and does not reset request quotas or infer verification success. */
-function LiquipediaVerification(): React.ReactNode {
+function LiquipediaVerification({ attempt, waiting, now, onRetry }: {
+  attempt: Cs2Schedule['verification']; waiting: boolean; now: number; onRetry: (round: string) => Promise<void>
+}): React.ReactNode {
   const [opening, setOpening] = useState(false)
   const [opened, setOpened] = useState(false)
   const [error, setError, errorDetail] = useErrorState()
@@ -210,12 +236,17 @@ function LiquipediaVerification(): React.ReactNode {
     }
   }
 
+  const untilUpstream = !!attempt && attempt.notBefore > now
   return <div className="sched-verification" role="group" aria-label="Liquipedia 官网验证">
-    <button type="button" className="btn-solid small" disabled={opening} onClick={() => void open()}>
+    <button type="button" className="btn-solid small" disabled={opening || waiting} onClick={() => void open()}>
       <Icon name="link" />{opening ? '正在打开官网' : '打开官网验证'}
     </button>
-    <span className="muted">如官网要求验证，请使用与应用相同的网络和代理；返回后按倒计时重试</span>
-    {opened && <p className="muted" role="status">官网已打开</p>}
+    {opened && attempt && <button type="button" className="btn-quiet small" disabled={waiting || untilUpstream || attempt.used}
+      onClick={() => void onRetry(attempt.round)}>
+      <Icon name="refresh" />{waiting ? '正在等待刷新' : attempt.used ? '本轮已尝试'
+        : untilUpstream ? `最早可试：${new Date(attempt.notBefore).toLocaleString('zh-CN', { hour12: false })}` : '已完成验证，立即刷新'}
+    </button>}
+    <span className="muted">如官网要求验证，请使用与应用相同的网络和代理，完成后返回刷新</span>
     {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
   </div>
 }

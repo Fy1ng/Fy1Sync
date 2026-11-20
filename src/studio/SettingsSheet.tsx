@@ -650,6 +650,7 @@ const SOURCE_NAME = { external: '自定义', managed: '已更新', bundled: '内
 
 export function Tools(): React.ReactNode {
   const session = useSession()
+  const { playbackDiagnostics } = useSessionSnapshot()
   const mounted = useMounted()
   const [status, setStatus] = useRemembered<ToolsStatus | null>('tools-status', null)
   const [busy, setBusy] = useState(false)
@@ -743,6 +744,15 @@ export function Tools(): React.ReactNode {
       )}
       {loadError && <ReadError error={loadError} detail={loadErrorDetail} onRetry={() => void refresh()} />}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
+      {(playbackDiagnostics.official || playbackDiagnostics.commentary) && <dl className="facts">
+        {(['official', 'commentary'] as const).map(role => {
+          const stall = playbackDiagnostics[role]
+          return stall && <div key={role}>
+            <dt>{role === 'official' ? '画面' : '解说'}最近卡顿</dt>
+            <dd>{(stall.durationMs / 1000).toFixed(1)} 秒{stall.ongoing ? '（尚未恢复）' : ''}，{stall.hint}</dd>
+          </div>
+        })}
+      </dl>}
       <p className="muted">诊断报告仅保存到本机</p>
       <div className="row-end">
         <button type="button" className="btn-quiet small" disabled={exporting} onClick={() => void exportReport()}>

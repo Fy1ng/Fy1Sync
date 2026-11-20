@@ -238,10 +238,9 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     getCs2Schedule: args => esports.getCs2Schedule(args),
     openLiquipediaVerification: async args => {
       noArgs(args)
-      // Blocked visitors see Liquipedia's own verification form on this public page.
-      await options.openExternal('https://liquipedia.net/counterstrike/Liquipedia:Matches')
-      return { opened: true }
+      return esports.openLiquipediaVerification(() => options.openExternal('https://liquipedia.net/counterstrike/Liquipedia:Matches'))
     },
+    refreshCs2ScheduleAfterVerification: args => esports.refreshCs2ScheduleAfterVerification(args),
     getStreamTitles: args => esports.getStreamTitles(args),
     setCs2ScheduleFocus: args => esports.setScheduleFocus(args),
     openAppReleasePage: async args => {

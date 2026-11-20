@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { expect, test } from './electron'
-import { mediaTimes, openAlignOptions, openPlayer, openSettingsSection, openSourcePanel, revealOverlay, seekBoth, setPlaying, waitForBothReady } from './helpers'
+import { mediaTimes, openAlignOptions, openPlayer, openSettingsSection, revealOverlay, seekBoth, setPlaying, waitForBothReady } from './helpers'
+import { loadRecordingSource } from './recordingSources'
 
 test('播放器可切换画面匹配并恢复设置, 旧编辑器接口不再暴露', async ({ page }) => {
   await openPlayer(page)
@@ -43,9 +44,7 @@ test('画面匹配校正同一运动画面的已知偏差, 并用新画面复核
   ], { windowsHide: true, timeout: 30_000 })
   await openPlayer(page)
   for (const role of ['official', 'commentary'] as const) {
-    const panel = await openSourcePanel(page, role)
-    await panel.locator('input[type="file"]').setInputFiles(file)
-    await expect(panel).toBeHidden()
+    await loadRecordingSource(page, role, file)
   }
   await waitForBothReady(page)
   await setPlaying(page, false)

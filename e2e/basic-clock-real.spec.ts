@@ -1,7 +1,8 @@
 /** Optional real-recording regression. Both roles use the same recording, within one round. */
 import { writeFile } from 'node:fs/promises'
 import { expect, test } from './electron'
-import { openAlignOptions, openPlayer, revealOverlay, seekBoth, setPlaying, waitForBothReady } from './helpers'
+import { openAlignOptions, openPlayer, seekBoth, setPlaying, waitForBothReady } from './helpers'
+import { loadRecordingSource } from './recordingSources'
 
 // Optional source-relative crop isolates glyph recognition from automatic discovery.
 const fixedRoi = process.env.STREAM_SYNC_REAL_CLOCK_ROI ? JSON.parse(process.env.STREAM_SYNC_REAL_CLOCK_ROI) : null
@@ -56,15 +57,9 @@ test(`真实录像从 ${officialStart}/${commentaryStart} 秒识别跳秒并对�
   }, fixedRoi)
   await openPlayer(page)
   for (const role of ['official', 'commentary'] as const) {
-    // Moving away guarantees a fresh mouse event when the dock has auto-hidden.
-    await page.mouse.move(1, 1)
-    await revealOverlay(page)
-    await page.locator(`.chip[data-role="${role}"]`).click()
-    const panel = page.getByRole('dialog', { name: role === 'official' ? '画面片源' : '解说片源', exact: true })
-    await panel.locator('input[type="file"]').setInputFiles(role === 'commentary'
+    await loadRecordingSource(page, role, role === 'commentary'
       ? process.env.STREAM_SYNC_REAL_CLOCK_COMMENTARY_VIDEO || process.env.STREAM_SYNC_REAL_CLOCK_VIDEO!
       : process.env.STREAM_SYNC_REAL_CLOCK_VIDEO!)
-    await expect(panel).toBeHidden()
   }
   await waitForBothReady(page)
   await setPlaying(page, false)

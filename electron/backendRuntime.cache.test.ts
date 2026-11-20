@@ -99,6 +99,9 @@ describe('Liquipedia verification browser handoff', () => {
     const cooldown = await limiter.rateLimited('120', new AbortController().signal)
     const reservation = fs.readFileSync(path.join(f.root, 'events', 'liquipedia-http-attempt.json'), 'utf8')
     expect(f.openExternal).not.toHaveBeenCalled()
+    expect(await f.runtime.api.invoke('refreshCs2ScheduleAfterVerification', { round: cooldown.id })).toMatchObject({
+      ok: true, value: { verificationResult: 'not-attempted', refreshReason: 'upstream-rate-limit' },
+    })
     expect(await f.runtime.api.invoke('openLiquipediaVerification', undefined)).toEqual({ ok: true, value: { opened: true } })
     expect(f.openExternal).toHaveBeenCalledExactlyOnceWith('https://liquipedia.net/counterstrike/Liquipedia:Matches')
     expect(limiter.cooldown()).toEqual(cooldown)
@@ -109,6 +112,7 @@ describe('Liquipedia verification browser handoff', () => {
     const f = fixture()
     for (const args of [{ url: 'https://example.com' }, { url: 'file:///C:/private' }, null, 'https://liquipedia.net/unblock']) {
       expect(await f.runtime.api.invoke('openLiquipediaVerification', args)).toMatchObject({ ok: false, code: 'invalid-arguments' })
+      expect(await f.runtime.api.invoke('refreshCs2ScheduleAfterVerification', args)).toMatchObject({ ok: false, code: 'invalid-arguments' })
     }
     expect(f.openExternal).not.toHaveBeenCalled()
     f.openExternal.mockRejectedValueOnce(Object.assign(new Error('Browser launch failed'), { code: 'EACCES' }))

@@ -33,6 +33,8 @@ export interface Cs2Schedule {
   /** Earliest permitted retry, including shared upstream cooldowns. */
   refreshAt?: number
   refreshReason?: 'parse-quota' | 'upstream-rate-limit' | 'retry'
+  verification?: { round: string; notBefore: number; used: boolean }
+  verificationResult?: 'recovered' | 'rate-limited' | 'failed' | 'not-attempted'
   matches: Cs2Match[]
 }
 /**

@@ -29,12 +29,6 @@ function keyFor(platform: string, identity: string): string {
   return `clock-v1:${platform}:${sourceHash(identity)}`
 }
 
-export function basicClockFileKey(file: Pick<File, 'name' | 'size' | 'lastModified'>): string {
-  if (!file.name || file.name.length > 1024 || !Number.isSafeInteger(file.size) || file.size < 0
-    || !Number.isSafeInteger(file.lastModified) || file.lastModified < 0) return ''
-  return keyFor('file', JSON.stringify([file.name, file.size, file.lastModified]))
-}
-
 function sourceUrl(input: string): URL | null {
   try {
     if (!/^https?:\/\//i.test(input) && !/^(?:[^:/?#]+\.[^:/?#]+|localhost)(?::\d+)?(?:[/?#]|$)/i.test(input)) return null

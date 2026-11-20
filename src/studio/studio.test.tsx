@@ -223,7 +223,7 @@ describe('the studio', () => {
     session.flush()
     const close = vi.fn()
     render(<SessionProvider session={session}><SourceLoaderProvider>
-      <Intake onClose={close} pendingFile={null} onSchedule={() => {}} />
+      <Intake onClose={close} onSchedule={() => {}} />
     </SourceLoaderProvider></SessionProvider>)
     await flush()
     expect(screen.getByRole('dialog', { name: '添加直播间' })).toBeInTheDocument()
@@ -237,6 +237,41 @@ describe('the studio', () => {
     await flush()
     expect(screen.getByRole('dialog', { name: '添加直播间' })).toBeInTheDocument()
     expect(screen.getByLabelText('直播间链接')).toBeInTheDocument()
+  })
+
+  it.each(['intake', 'player'] as const)('ignores file drops across the %s and prevents file navigation', async mode => {
+    const session = makeSession()
+    const load = vi.spyOn(session, 'loadSource')
+    const resolve = vi.spyOn(apiClient, 'resolve')
+    try {
+      const { container } = renderStudio(session)
+      await flush()
+      if (mode === 'player') fireEvent.click(screen.getByRole('button', { name: '跳过' }))
+      const targets = [container.querySelector('video')!, document.body]
+      if (mode === 'intake') targets.push(screen.getByRole('textbox', { name: '直播间链接' }))
+      for (const target of targets) {
+        const dataTransfer = { types: ['Files'], files: [new File(['video'], 'dropped.mp4', { type: 'video/mp4' })] }
+        expect(fireEvent.dragOver(target, { dataTransfer })).toBe(false)
+        expect(fireEvent.drop(target, { dataTransfer })).toBe(false)
+      }
+      expect(load).not.toHaveBeenCalled()
+      expect(resolve).not.toHaveBeenCalled()
+      expect(session.snapshot.media.official.status).toBe('empty')
+      expect(session.snapshot.media.commentary.status).toBe('empty')
+      expect(screen.queryByText(/已拖入|dropped.mp4/)).toBeNull()
+      expect(screen.queryByRole('dialog', { name: '添加直播间' }) !== null).toBe(mode === 'intake')
+    } finally {
+      load.mockRestore()
+      resolve.mockRestore()
+    }
+  })
+
+  it('leaves text drag events alone and releases file guards on unmount', async () => {
+    const { unmount } = renderStudio(makeSession())
+    await flush()
+    expect(fireEvent.drop(document.body, { dataTransfer: { types: ['text/plain'], files: [] } })).toBe(true)
+    unmount()
+    expect(fireEvent.drop(document.body, { dataTransfer: { types: ['Files'], files: [] } })).toBe(true)
   })
 
   it('mounts both media elements and keeps them through a StrictMode remount', async () => {

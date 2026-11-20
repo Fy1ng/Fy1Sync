@@ -22,7 +22,7 @@ function fixture() {
   let loader!: ReturnType<typeof useSourceLoader>
   function Reader() { loader = useSourceLoader(); return null }
   const onClose = vi.fn()
-  render(<SessionProvider session={session}><SourceLoaderProvider><Reader /><Intake onClose={onClose} onSchedule={() => {}} pendingFile={null} /></SourceLoaderProvider></SessionProvider>)
+  render(<SessionProvider session={session}><SourceLoaderProvider><Reader /><Intake onClose={onClose} onSchedule={() => {}} /></SourceLoaderProvider></SessionProvider>)
   return { session, onClose, get loader() { return loader } }
 }
 function resolver() {

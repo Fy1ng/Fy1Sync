@@ -10,7 +10,6 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { parseSourceInput, toDescriptor } from '../core/mediaSources'
-import { basicClockFileKey } from '../core/basicClockMemory'
 import { parseDouyinInput } from '../core/douyinInput'
 import { douyinDanmakuRoom, parseRoomInput, roomFromInput, type RoomPlatform } from '../core/sourceDanmaku'
 import { SOURCE_ROLES, type MediaDescriptor, type PlatformId, type SourceRole } from '../core/types'
@@ -87,7 +86,6 @@ interface Loader {
    * a bare number is Douyu's. Resolves false when nothing was loaded.
    */
   loadInput: (role: SourceRole, input: string, platform?: RoomPlatform) => Promise<boolean>
-  loadFile: (role: SourceRole, file: File) => Promise<boolean>
   loadDescriptor: (role: SourceRole, descriptor: MediaDescriptor) => Promise<boolean>
   clearProblem: (role: SourceRole) => void
   /** Sign in for `state[role].login`, then load the same input again. */
@@ -280,13 +278,6 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     if (again && stillCurrent()) await loadInput(role, again.input, again.platform)
   }, [loadInput, patch, session])
 
-  const loadFile = useCallback((role: SourceRole, file: File) => loadDescriptor(role, {
-    // An object URL keeps the file local; nothing is uploaded.
-    kind: 'file', url: URL.createObjectURL(file), input: file.name, label: file.name,
-    recognitionSourceKey: basicClockFileKey(file),
-    loop: false, viaProxy: false, platform: 'file',
-  }), [loadDescriptor])
-
   const clearProblem = useCallback((role: SourceRole) => patch(role, { problem: null }), [patch])
 
   const roomName = snapshot.danmaku.roomName ?? snapshot.danmaku.room
@@ -313,8 +304,8 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     } finally { restoringRef.current = false; setRestoring(false) }
   }, [loadInput, patch, session])
 
-  const value = useMemo(() => ({ state, previousSources, restoring, restoreProblem, restorePrevious, loadInput, loadFile, loadDescriptor, clearProblem, login, roomName, connectRoom, disconnectRoom }),
-    [state, previousSources, restoring, restoreProblem, restorePrevious, loadInput, loadFile, loadDescriptor, clearProblem, login, roomName, connectRoom, disconnectRoom])
+  const value = useMemo(() => ({ state, previousSources, restoring, restoreProblem, restorePrevious, loadInput, loadDescriptor, clearProblem, login, roomName, connectRoom, disconnectRoom }),
+    [state, previousSources, restoring, restoreProblem, restorePrevious, loadInput, loadDescriptor, clearProblem, login, roomName, connectRoom, disconnectRoom])
   return <LoaderContext.Provider value={value}>{children}</LoaderContext.Provider>
 }
 

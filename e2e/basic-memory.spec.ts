@@ -1,12 +1,13 @@
 /** Automatic regions survive a real process restart and remain separate from manual authority. */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import type { Page } from '@playwright/test'
 import type { SourceRole } from '../src/core/types'
 import { SETTINGS_KEY } from '../src/app/settings'
 import { expect, launchApplication, test } from './electron'
-import { openPlayer, openSettings, revealOverlay, seekBoth, setCheckedByLabel, setPlaying, waitForBothReady } from './helpers'
+import { openPlayer, openSettings, seekBoth, setCheckedByLabel, setPlaying, waitForBothReady } from './helpers'
+import { loadRecordingSource } from './recordingSources'
 
 const fixtureDirectory = process.env.STREAM_SYNC_BASIC_FIXTURE_DIR || fileURLToPath(new URL('../public/test-sources/', import.meta.url))
 const officialFile = path.join(fixtureDirectory,'auto-official.mp4')
@@ -81,17 +82,9 @@ function card(page: Page, role: SourceRole) {
   return page.getByRole('article', { name: role === 'official' ? '画面基础识别' : '解说基础识别', exact: true })
 }
 
-async function chooseFile(page: Page, role: SourceRole, file: string | { name: string; mimeType: string; buffer: Buffer }): Promise<void> {
-  await revealOverlay(page)
-  await page.locator(`.chip[data-role="${role}"]`).click()
-  const panel = page.getByRole('dialog', { name: role === 'official' ? '画面片源' : '解说片源', exact: true })
-  await panel.locator('input[type="file"]').setInputFiles(file)
-  await expect(panel).toBeHidden()
-}
-
-async function loadFiles(page: Page): Promise<Record<SourceRole, string>> {
-  await chooseFile(page, 'official', officialFile)
-  await chooseFile(page, 'commentary', commentaryFile)
+async function loadRecordings(page: Page): Promise<Record<SourceRole, string>> {
+  await loadRecordingSource(page, 'official', officialFile)
+  await loadRecordingSource(page, 'commentary', commentaryFile)
   await waitForBothReady(page)
   await setPlaying(page, false)
   await seekBoth(page, 8, 8)
@@ -129,7 +122,7 @@ function expectModes(value: Telemetry, expected: Record<SourceRole, RegionMode>)
   }
 }
 
-test('自动范围跨真实重启及blob变化复用, 共享手动框优先, 显式重找重置当前两路', async ({}, testInfo) => {
+test('自动范围跨真实重启复用, 共享手动框优先, 显式重找重置当前两路', async ({}, testInfo) => {
   test.skip(!existsSync(officialFile) || !existsSync(commentaryFile), '缺少长倒计时测试源')
   test.setTimeout(150_000)
   const running = await launchApplication('basic clock memory', { softwareVideo: true })
@@ -138,7 +131,7 @@ test('自动范围跨真实重启及blob变化复用, 共享手动框优先, 显
     let page = running.page
     await installTelemetry(page)
     await openPlayer(page)
-    const firstUrls = await loadFiles(page)
+    const firstUrls = await loadRecordings(page)
     const first = await align(page, true)
     expectModes(first, { official: 'auto', commentary: 'auto' })
     // Learning a region must not reconfigure the worker halfway through this run.
@@ -154,11 +147,10 @@ test('自动范围跨真实重启及blob变化复用, 共享手动框优先, 显
     await installTelemetry(page)
     await openPlayer(page)
     expect(await memory(page)).toEqual(saved)
-    const secondUrls = await loadFiles(page)
+    const secondUrls = await loadRecordings(page)
     for (const role of roles) {
-      expect(firstUrls[role]).toMatch(/^blob:/)
-      expect(secondUrls[role]).toMatch(/^blob:/)
-      expect(secondUrls[role]).not.toBe(firstUrls[role])
+      expect(firstUrls[role]).toContain(`/test-sources/e2e-recordings/${role}.mp4`)
+      expect(secondUrls[role]).toBe(firstUrls[role])
       await expect(card(page, role)).toContainText('记忆范围')
     }
     const reused = await align(page, true)
@@ -166,7 +158,7 @@ test('自动范围跨真实重启及blob变化复用, 共享手动框优先, 显
     expect(reused.configurations.filter(configuration => configuration.kind === 'basic-clock')).toHaveLength(2)
     expect(reused.results.some(result => result.status === 'locked' && result.role === 'official')).toBe(true)
     expect(reused.results.some(result => result.status === 'locked' && result.role === 'commentary')).toBe(true)
-    reports.push({ phase: 'restarted process, changed blobs, fixed remembered regions', cache: await memory(page), telemetry: reused })
+    reports.push({ phase: 'restarted process, fixed remembered regions', cache: await memory(page), telemetry: reused })
     await page.screenshot({ path: testInfo.outputPath('remembered-regions.png') })
 
     // A new official-region selection overrides both source-specific memories.
@@ -200,8 +192,8 @@ test('自动范围跨真实重启及blob变化复用, 共享手动框优先, 显
     await expect.poll(async () => (await memory(page)).length).toBe(2)
     reports.push({ phase: 'explicit reacquisition clears memories for the current source pair', cache: await memory(page), telemetry: reacquired })
 
-    // A different file identity must not inherit a same-role remembered ROI.
-    await chooseFile(page, 'official', { name: 'different-recording.mp4', mimeType: 'video/mp4', buffer: readFileSync(officialFile) })
+    // A different recording source must not inherit a same-role remembered ROI.
+    await loadRecordingSource(page, 'official', officialFile, 'different-recording')
     await expect(card(page, 'official')).toContainText('自动范围')
     await expect(card(page, 'official')).not.toContainText('记忆范围')
     await expect(card(page, 'commentary')).toContainText('记忆范围')

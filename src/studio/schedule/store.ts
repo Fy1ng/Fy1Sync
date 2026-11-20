@@ -20,8 +20,16 @@ const readers = new Set<(schedule: Cs2Schedule) => void>()
 /** Read the schedule; a plain read joins one already in flight. */
 export function readSchedule(refresh = false): Promise<ApiResult<Cs2Schedule>> {
   if (!refresh && pending) return pending
+  return keepSchedule(apiClient.feature('getCs2Schedule', refresh ? { refresh: true } : undefined))
+}
+
+export function refreshScheduleAfterVerification(round: string): Promise<ApiResult<Cs2Schedule>> {
+  return keepSchedule(apiClient.feature('refreshCs2ScheduleAfterVerification', { round }))
+}
+
+function keepSchedule(request: Promise<ApiResult<Cs2Schedule>>): Promise<ApiResult<Cs2Schedule>> {
   const order = ++issued
-  const run = apiClient.feature('getCs2Schedule', refresh ? { refresh: true } : undefined).then((result) => {
+  const run = request.then((result) => {
     if (result.ok && order > kept) {
       kept = order
       latest = result.value

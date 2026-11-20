@@ -316,7 +316,7 @@ function retainAdaptiveQualities(previous: ResolvedStream | undefined, current: 
 }
 
 function refusal(message: string): ResolveResult {
-  return { ok: false, failure: { code: 'upstream-error', message, hint: '检查后重新载入，或使用本地文件' } }
+  return { ok: false, failure: { code: 'upstream-error', message, hint: '检查后重新载入，或使用媒体直链' } }
 }
 
 function failedResult(failure: StreamFailure): ResolveResult {

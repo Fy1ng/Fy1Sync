@@ -19,6 +19,10 @@ function all(node: Node, predicate: (node: Node) => boolean): Node[] {
   return found
 }
 const byClass = (node: Node, name: string): Node[] => all(node, n => hasClass(n, name))
+const tickerCard = 'match-ticker-card'
+const legacyCard = 'match-info'
+const isMatchCard = (node: Node): boolean => hasClass(node, tickerCard) || hasClass(node, legacyCard)
+const directDivs = (node: Node): Element[] => children(node).filter((child): child is Element => element(child) && child.tagName === 'div')
 function rawText(node: Node): string { return 'value' in node ? node.value : children(node).map(rawText).join('') }
 function text(node: Node): string { return rawText(node).replace(/\s+/g, ' ').trim() }
 
@@ -41,10 +45,11 @@ function team(node: Node): Cs2Team {
   }
   const name = one(names, '.match-info-header-opponent .name')
   const anchors = children(name).filter(n => element(n) && n.tagName === 'a' && attr(n, 'title') !== undefined)
-  if (anchors.length === 0 && text(name) === 'TBD') return { name: 'TBD', short: null, logo: null }
+  const dynamicShort = byClass(name, 'team-shortname')[0]
+  if (anchors.length === 0 && text(dynamicShort ?? name) === 'TBD') return { name: 'TBD', short: null, logo: null }
   const anchor = one(anchors, '.name > a[title]')
   const full = bounded((attr(anchor, 'title') ?? '').replace(/ \(page does not exist\)$/, ''), '.name > a[title]')
-  const short = bounded(text(anchor), '.name > a[title] text')
+  const short = bounded(text(dynamicShort ?? anchor), '.name > a[title] text')
   return { name: full, short: short === full ? null : short, logo: null }
 }
 
@@ -76,7 +81,7 @@ export function teamLogoPath(node: Node): string | null {
 
 /** The event's icon beside its name, from the tournament container only. Optional: none is fine. */
 export function eventLogoPath(node: Node): string | null {
-  const container = byClass(node, 'match-info-tournament')
+  const container = byClass(node, hasClass(node, tickerCard) ? 'match-ticker-card-tournament' : 'match-info-tournament')
   return container.length === 1 ? iconPath(byClass(container[0]!, 'league-icon-small-image')) : null
 }
 
@@ -88,7 +93,7 @@ function tier(node: Node): Cs2Match['tournament']['tier'] {
       ?? (attr(current, 'data-filter-group') === 'filterbuttons-liquipediatier' ? attr(current, 'data-filter-category') : undefined)
     if (raw !== undefined) return /^(?:[1-4]|-1)$/.test(raw) ? Number(raw) as 1 | 2 | 3 | 4 | -1 : null
     const parent: Node | null = 'parentNode' in current ? current.parentNode : null
-    if (!parent || byClass(parent, 'match-info').length !== 1) break
+    if (!parent || all(parent, isMatchCard).length !== 1) break
     current = parent
   }
   return null
@@ -138,8 +143,8 @@ export function parseSchedule(payload: unknown, logoPaths?: Map<string, string>,
   onSkip?: (selector: string) => void): Cs2Match[] {
   const html = (payload as { parse?: { text?: { '*'?: unknown } } } | null)?.parse?.text?.['*']
   if (typeof html !== 'string' || html.length > 2_000_000) return fail('parse.text.*')
-  const nodes = byClass(parse(html), 'match-info')
-  if (!nodes.length || nodes.length > 500) return fail('.match-info')
+  const nodes = all(parse(html), isMatchCard)
+  if (!nodes.length || nodes.length > 500) return fail('.match-ticker-card or .match-info')
   const skipped: string[] = []
   const matches = nodes.flatMap((node): Cs2Match[] => {
     const pending = new Map<string, string>()
@@ -160,14 +165,7 @@ export function parseSchedule(payload: unknown, logoPaths?: Map<string, string>,
   return matches
 }
 
-function parseMatch(node: Node, logoPaths: Map<string, string>): Cs2Match {
-  const timer = one(byClass(node, 'timer-object'), '.timer-object[data-timestamp]')
-  const rawTime = attr(timer, 'data-timestamp') ?? ''
-  const startsAt = Number(rawTime) * 1000
-  if (!/^\d{9,11}$/.test(rawTime) || !Number.isSafeInteger(startsAt)) return fail('.timer-object[data-timestamp]')
-  const opponents = byClass(node, 'match-info-header-opponent')
-  if (opponents.length !== 2) return fail('.match-info-header-opponent')
-  const teams: [Cs2Team, Cs2Team] = [team(opponents[0]!), team(opponents[1]!)]
+function legacyScoreboard(node: Node): { score: Cs2Match['score']; bestOf: number | null; stage: null } {
   const scoreText = text(one(byClass(node, 'match-info-header-scoreholder-upper'), '.match-info-header-scoreholder-upper')).replace(/\s/g, '')
   const parsedScore = /^(\d{1,2}):(\d{1,2})$/.exec(scoreText)
   // A bare divider (both score cells empty) is a match without a score yet, like 'vs'.
@@ -178,18 +176,47 @@ function parseMatch(node: Node, logoPaths: Map<string, string>): Cs2Match {
   const bestOfText = lower.length ? text(lower[0]!) : ''
   const bo = /^\(Bo(\d{1,2})\)$/i.exec(bestOfText)
   if (bestOfText && !bo) return fail('.match-info-header-scoreholder-lower bestOf')
-  const bestOf = bo ? Number(bo[1]) : null
-  const tournamentNode = one(byClass(node, 'match-info-tournament-name'), '.match-info-tournament-name')
-  const tournamentLink = one(all(tournamentNode, n => element(n) && n.tagName === 'a' && attr(n, 'href') !== undefined), '.match-info-tournament-name a[href]')
-  const titleNode = one(all(tournamentLink, n => element(n) && n.tagName === 'span'), '.match-info-tournament-name span')
-  const fullName = bounded(text(titleNode), '.match-info-tournament-name span')
+  return { score, bestOf: bo ? Number(bo[1]) : null, stage: null }
+}
+
+function tickerScoreboard(node: Node, opponents: Node[]): { score: Cs2Match['score']; bestOf: number | null; stage: string | null } {
+  const cells = opponents.map(opponent => text(one(directDivs(opponent).filter(child => !hasClass(child, 'block-team')),
+    '.match-ticker-card__opponent score')))
+  const forfeited = cells.includes('W') && cells.includes('FF')
+  const score: Cs2Match['score'] = forfeited || cells.every(value => !value) ? null
+    : cells.every(value => /^\d{1,2}$/.test(value)) ? [Number(cells[0]), Number(cells[1])]
+      : fail('.match-ticker-card__opponent score')
+  const header = one(byClass(node, 'match-ticker-card__header'), '.match-ticker-card__header')
+  const label = text(one(directDivs(header), '.match-ticker-card__header > div'))
+  const format = /^(?:(.+) - )?Bo(\d{1,2})$/i.exec(label)
+  return { score, bestOf: format ? Number(format[2]) : null,
+    stage: format?.[1] ?? (!format && label ? bounded(label, '.match-ticker-card__header stage') : null) }
+}
+
+function parseMatch(node: Node, logoPaths: Map<string, string>): Cs2Match {
+  const ticker = hasClass(node, tickerCard)
+  const timer = one(byClass(node, 'timer-object'), '.timer-object[data-timestamp]')
+  const rawTime = attr(timer, 'data-timestamp') ?? ''
+  const startsAt = Number(rawTime) * 1000
+  if (!/^\d{9,11}$/.test(rawTime) || !Number.isSafeInteger(startsAt)) return fail('.timer-object[data-timestamp]')
+  const opponentClass = ticker ? 'match-ticker-card__opponent' : 'match-info-header-opponent'
+  const opponents = byClass(node, opponentClass)
+  if (opponents.length !== 2) return fail(`.${opponentClass}`)
+  const teams: [Cs2Team, Cs2Team] = [team(opponents[0]!), team(opponents[1]!)]
+  const { score, bestOf, stage: headerStage } = ticker ? tickerScoreboard(node, opponents) : legacyScoreboard(node)
+  const tournamentClass = ticker ? 'match-ticker-card-tournament-name' : 'match-info-tournament-name'
+  const tournamentNode = one(byClass(node, tournamentClass), `.${tournamentClass}`)
+  const tournamentLink = one(all(tournamentNode, n => element(n) && n.tagName === 'a' && attr(n, 'href') !== undefined), `.${tournamentClass} a[href]`)
+  const titleNode = ticker ? tournamentLink : one(all(tournamentLink, n => element(n) && n.tagName === 'span'), `.${tournamentClass} span`)
+  const fullName = bounded(text(titleNode), `.${tournamentClass} text`)
   const href = attr(tournamentLink, 'href') ?? ''
-  if (!href.startsWith('/counterstrike/') || /[\x00-\x20\\]/.test(href)) return fail('.match-info-tournament-name a[href]')
+  if (!href.startsWith('/counterstrike/') || /[\x00-\x20\\]/.test(href)) return fail(`.${tournamentClass} a[href]`)
   const url = new URL(href, 'https://liquipedia.net').href
-  const split = fullName.lastIndexOf(' - ')
+  const split = ticker ? -1 : fullName.lastIndexOf(' - ')
   const name = split < 0 ? fullName : fullName.slice(0, split)
-  const stage = split < 0 ? null : fullName.slice(split + 3) || null
-  const finished = attr(timer, 'data-finished') === 'finished' || byClass(node, 'match-info-header-winner').length > 0
+  const stage = split < 0 ? headerStage : fullName.slice(split + 3) || null
+  const finished = attr(timer, 'data-finished') === 'finished' || (ticker ? opponents.some(opponent => hasClass(opponent, 'winner'))
+    : byClass(node, 'match-info-header-winner').length > 0)
   const state: Cs2Match['state'] = finished ? 'finished' : score ? 'live' : 'upcoming'
   const id = createHash('sha256').update(JSON.stringify([url, startsAt, ...teams.map(t => t.name)])).digest('hex').slice(0, 24)
   const result: Cs2Match = { id, startsAt, state, teams, score, bestOf, tournament: { name, stage, tier: tier(node), url, logo: null }, streams: streams(node) }

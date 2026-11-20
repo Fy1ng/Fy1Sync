@@ -357,7 +357,6 @@ const PATHS = {
   swap: <path d="M7 8.5h11l-3-3M17 15.5H6l3 3" />,
   chevron: <path d="m7.5 10 4.5 4.5 4.5-4.5" />,
   link: <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />,
-  file: <path d="M7 3.5h6.5L18.5 8.5V19a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5ZM13.5 3.5v5h5" />,
   back: <path d="m14.5 6-6 6 6 6" />,
   forward: <path d="m9.5 6 6 6-6 6" />,
   pip: <><rect x="3.5" y="5" width="17" height="14" rx="1.5" /><rect x="12" y="11.5" width="6.5" height="5" rx="0.8" fill="currentColor" stroke="none" /></>,

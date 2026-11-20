@@ -65,13 +65,9 @@ function SourcePanel({ role, onDone, onSchedule }: {
   const load = loader.state[role]
   const [input, setInput] = useState(state.descriptor?.input ?? '')
   const [chatRetrying, setChatRetrying] = useState(false)
-  const [failedFile, setFailedFile] = useState<File | null>(null)
   const [roomPlatform, setRoomPlatform] = useState<RoomPlatform>(state.descriptor?.platform === 'douyin' ? 'douyin' : state.descriptor?.platform === 'huya' ? 'huya' : state.descriptor?.platform === 'bilibili' ? 'bilibili' : 'douyu')
   const bareRoom = parseRoomInput(input)?.platform === null
   const buffer = snapshot.buffers[role]
-  const loadFile = (file: File): void => {
-    void loader.loadFile(role, file).then(ok => { if (ok) onDone(); else setFailedFile(file) })
-  }
   const chat = sourceDanmakuRoom(state.descriptor)
   const activeRoom = snapshot.danmaku.room
   const selectedChat = chat !== null && session.isDanmakuRoom(chat.key)
@@ -114,7 +110,6 @@ function SourcePanel({ role, onDone, onSchedule }: {
 
       {buffer && <p className="muted">{buffer.failure || buffer.state === 'failed'
         ? <ErrorText error={buffer.failure ?? { reason: buffer.reason, message: bufferStatusText(buffer) }} message={bufferStatusText(buffer)} /> : bufferStatusText(buffer)}</p>}
-      <PlaybackDiagnosticsPanel role={role} />
 
       {chat && !selectedChat && <p className="muted" role="status">{PLATFORM_LABEL[chat.platform]}弹幕：未选择此房间</p>}
       <DanmakuRoom />
@@ -126,17 +121,6 @@ function SourcePanel({ role, onDone, onSchedule }: {
         void session.retryDanmaku(chat.key).finally(() => setChatRetrying(false))
       }}>重新连接此房间弹幕</button>}
       <div className="row-split panel-foot">
-        <label className="btn-quiet small file-pick">
-          <Icon name="file" /> 本地文件
-          <input type="file" accept="video/*" disabled={load.busy} onChange={(event) => {
-            const file = event.target.files?.[0]
-            event.target.value = ''
-            if (file) loadFile(file)
-          }} />
-        </label>
-        {failedFile && <button type="button" className="btn-quiet small" disabled={load.busy} onClick={() => loadFile(failedFile)}>
-          重试载入 {failedFile.name}
-        </button>}
         <SaveButton role={role} />
         {state.status !== 'empty' && (
           <button type="button" className="btn-quiet small is-danger" onClick={() => { session.unloadSource(role); onDone() }}>
@@ -145,29 +129,6 @@ function SourcePanel({ role, onDone, onSchedule }: {
         )}
       </div>
     </div>
-  )
-}
-
-export function PlaybackDiagnosticsPanel({ role }: { role: SourceRole }): React.ReactNode {
-  const session = useSession()
-  const snapshot = useSessionSnapshot()
-  const stall = snapshot.playbackDiagnostics[role]
-  return (
-    <details>
-      <summary>播放诊断</summary>
-      <p className="muted">{stall
-        ? `最近卡顿 ${(stall.durationMs / 1000).toFixed(1)} 秒${stall.ongoing ? '（尚未恢复）' : ''}。${stall.hint}。`
-        : '暂未记录到卡顿'}</p>
-      <button type="button" className="btn-quiet small" onClick={() => {
-        const blob = new Blob([JSON.stringify(session.exportPlaybackDiagnostics(), null, 2)], { type: 'application/json' })
-        const url = URL.createObjectURL(blob)
-        const link = document.createElement('a')
-        link.href = url
-        link.download = 'Fy1Sync-playback-diagnostics.json'
-        link.click()
-        URL.revokeObjectURL(url)
-      }}>导出播放诊断</button>
-    </details>
   )
 }
 

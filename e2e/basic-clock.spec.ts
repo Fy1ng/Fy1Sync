@@ -9,9 +9,10 @@ import { promisify } from 'node:util'
 import { type Page } from '@playwright/test'
 import { expect, test } from './electron'
 import {
-  mediaTimes, offsetReadout, openAlignOptions, openPlayer, openSourcePanel,
+  mediaTimes, offsetReadout, openAlignOptions, openPlayer,
   revealOverlay, seekBoth, setPlaying, waitForBothReady,
 } from './helpers'
+import { loadRecordingSource } from './recordingSources'
 
 const runFile = promisify(execFile)
 const searchConfig = JSON.parse(readFileSync(new URL('../src/recognition/basicSearchRegion.json', import.meta.url), 'utf8')) as {
@@ -58,9 +59,7 @@ async function prepareLongClocks(): Promise<void> {
 
 async function loadLongClocks(page: Page): Promise<void> {
   for (const role of ['official', 'commentary'] as const) {
-    const panel = await openSourcePanel(page, role)
-    await panel.locator('input[type="file"]').setInputFiles(join(sourceDir, `auto-${role}.mp4`))
-    await expect(panel).toBeHidden()
+    await loadRecordingSource(page, role, join(sourceDir, `auto-${role}.mp4`))
   }
   await page.keyboard.press('Escape')
   await waitForBothReady(page)

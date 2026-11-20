@@ -25,7 +25,7 @@ function submit() {
   const session = new Session({ createSampler: () => null })
   sessions.push(session)
   render(<SessionProvider session={session}><SourceLoaderProvider>
-    <Intake onClose={() => {}} onSchedule={() => {}} pendingFile={null} />
+    <Intake onClose={() => {}} onSchedule={() => {}} />
   </SourceLoaderProvider></SessionProvider>)
   fireEvent.click(screen.getByRole('radio', { name: /画面/ }))
   const field = screen.getByLabelText('直播间链接')

@@ -65,7 +65,7 @@ describe('Douyin source selection and chat isolation', () => {
     result.value.stream.danmakuRoom = 'douyin:214495728391'
     const resolve = vi.spyOn(apiClient, 'resolve').mockResolvedValue(result)
     const input = '5- #在抖音，记录美好生活#【黑羽（三角洲行动）】正在直播，来和我一起支持Ta吧。复制下方链接，打开【抖音】，直接观看直播！ https://v.douyin.com/NKM8SvW_MGA/ 0@7.com :2pm'
-    mount(session, <Intake onClose={() => {}} onSchedule={() => {}} pendingFile={null} />)
+    mount(session, <Intake onClose={() => {}} onSchedule={() => {}} />)
     fireEvent.click(screen.getByRole('radio', { name: role === 'official' ? /画面/ : /解说/ }))
     const field = screen.getByLabelText('直播间链接')
     fireEvent.change(field, { target: { value: input } })
@@ -83,7 +83,7 @@ describe('Douyin source selection and chat isolation', () => {
     const disconnect = vi.spyOn(session, 'disconnectDanmaku')
     const load = readyOnLoad(session)
     const resolve = vi.spyOn(apiClient, 'resolve').mockResolvedValue(resolvedDouyin())
-    mount(session, <Intake onClose={() => {}} onSchedule={() => {}} pendingFile={null} />)
+    mount(session, <Intake onClose={() => {}} onSchedule={() => {}} />)
     fireEvent.click(screen.getByRole('radio', { name: /解说/ }))
     const field = screen.getByLabelText('直播间链接')
     fireEvent.change(field, { target: { value: '12345678901234567890' } })

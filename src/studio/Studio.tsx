@@ -89,7 +89,6 @@ function StudioView(): React.ReactNode {
   const nudge = useNudge()
   const [intake, setIntake] = useState(false)
   const [favorites, setFavorites] = useState(false)
-  const [droppedFile, setDroppedFile] = useState<File | null>(null)
   const [settingsAt, setSettingsAt] = useState<SettingsTarget | null>(null)
   // The gear reopens 设置 where it was left; links that name a section go there.
   const openSettings = useCallback((section?: SettingsSection, account?: SettingsTarget['account']) =>
@@ -146,12 +145,12 @@ function StudioView(): React.ReactNode {
   useEffect(() => {
     const media = session.snapshot.media
     // 添加直播间 greets a fresh start only; once the viewer is in the player, only its button
-    // brings it back (not an empty side, a dropped file or a return from the editor).
+    // brings it back (not an empty side or a return from the editor).
     // `studio:entered` lives for the window, so it survives the editor round trip, not a reload.
     if (!remembered('studio:entered') && media.official.status === 'empty' && media.commentary.status === 'empty') setIntake(true)
   }, [session])
 
-  const closeIntake = useCallback(() => { remember('studio:entered', true); setIntake(false); setDroppedFile(null) }, [])
+  const closeIntake = useCallback(() => { remember('studio:entered', true); setIntake(false) }, [])
 
   // One side alone belongs on the big screen, not in the corner over an empty picture. The
   // swap made for that is undone once the empty side arrives; a swap the viewer made is kept.
@@ -199,22 +198,25 @@ function StudioView(): React.ReactNode {
     return () => window.removeEventListener('keydown', onKey)
   }, [embeddedLogin, fullscreen, nudge, session, setChat])
 
+  useEffect(() => {
+    const ignoreFiles = (event: DragEvent): void => {
+      if (!event.dataTransfer?.types.includes('Files') && !event.dataTransfer?.files.length) return
+      event.preventDefault()
+      event.stopPropagation()
+    }
+    window.addEventListener('dragover', ignoreFiles, true)
+    window.addEventListener('drop', ignoreFiles, true)
+    return () => {
+      window.removeEventListener('dragover', ignoreFiles, true)
+      window.removeEventListener('drop', ignoreFiles, true)
+    }
+  }, [])
+
   return (
     <div
       className="studio"
       ref={root}
       data-chat={chatOpen ? 'open' : 'closed'}
-      onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) event.preventDefault() }}
-      onDrop={(event) => {
-        const file = event.dataTransfer.files[0]
-        if (!file) return
-        event.preventDefault()
-        if (intake) { setDroppedFile(file); return }
-        // In the player a file goes straight to a side: an empty one, else the big picture.
-        const media = session.snapshot.media
-        const target = SOURCE_ROLES.find((role) => media[role].status === 'empty' && !loader.state[role].busy) ?? mainRole
-        void loader.loadFile(target, file)
-      }}
     >
       <DanmakuActionsProvider onOpenRecords={openRecords}>
         <main className="theater" ref={theater} data-chrome={chrome.visible ? 'on' : 'off'} {...chrome.handlers}>
@@ -305,7 +307,7 @@ function StudioView(): React.ReactNode {
           )}
 
           {tuning && <DanmakuPanel onClose={() => setTuning(false)} />}
-          {intake && <Intake onClose={closeIntake} pendingFile={droppedFile} onSchedule={() => setScheduleFrom('intake')} onFavorites={() => setFavorites(true)} />}
+          {intake && <Intake onClose={closeIntake} onSchedule={() => setScheduleFrom('intake')} onFavorites={() => setFavorites(true)} />}
         </main>
 
         {chatOpen && (

@@ -7,7 +7,7 @@ import { FeatureApiError } from '../featureApi'
 import { PinnedDispatcherPool, safeFetch, type Resolver } from '../safeFetch'
 import { currentMatches, parseSchedule, ScheduleFormatError, validEntry, validTwitchLogin } from './parser'
 import { normalizeTournamentPath, queryTournamentTiers, type TournamentTier } from './tiers'
-import { DispatchTurns, LiquipediaCoolingDown, LiquipediaRateLimit, pause } from './liquipediaRateLimit'
+import { cooldownRound, DispatchTurns, LiquipediaCoolingDown, LiquipediaRateLimit, pause, verificationNotBefore, VerificationRoundEnded } from './liquipediaRateLimit'
 import { channelLinksUrl, eventChannels, matchChannel, type EventChannels } from './streamChannels'
 import type { Cs2ScheduleEvent } from '../../electron/featureContracts'
 import type { Cs2Match, Cs2Schedule, StreamTitle, StreamTitleInput } from './types'
@@ -199,6 +199,8 @@ export class EsportsService {
   private logoTimer: ReturnType<typeof setInterval> | undefined
   private eventTimer: ReturnType<typeof setTimeout> | undefined
   private refreshTimer: ReturnType<typeof setTimeout> | undefined
+  private openedVerificationRound: string | undefined
+  private usedVerificationRound: string | undefined
   /** When a parse was last tried, so a failed one waits a whole interval before the next. */
   private attemptedAt = -Infinity
   private lastFailure: { message: string; detail: ReturnType<typeof diagnosticDetails>; failedAt: number; retryAt: number } | null = null
@@ -248,12 +250,14 @@ export class EsportsService {
     return { fetchedAt: this.cache?.fetchedAt ?? 0, source: 'liquipedia', attribution: ATTRIBUTION,
       stale: !!error || !this.cache || now - this.cache.fetchedAt >= this.scheduleTtl() || now < this.cache.fetchedAt,
       ...(error ? { error } : {}), ...(errorDetail === undefined ? {} : { errorDetail: diagnosticDetails(errorDetail) }),
+      ...(cooldown ? { verification: { round: cooldownRound(cooldown), notBefore: verificationNotBefore(cooldown),
+        used: this.usedVerificationRound === cooldownRound(cooldown) } } : {}),
       ...(refreshAt !== undefined ? { refreshAt, ...(refreshReason ? { refreshReason } : {}) } : {}), matches }
   }
   getCs2Schedule(raw?: { refresh?: boolean }): Promise<Cs2Schedule> {
     const args = scheduleArguments(raw)
     this.lifetime.signal.throwIfAborted()
-    if (this.flight) return this.flight.then(value => structuredClone(value))
+    if (this.flight && !this.rateLimit.cooldown()) return this.flight.then(value => structuredClone(value))
     const fromDisk = this.disk.load()
     if (fromDisk && (!this.cache || fromDisk.fetchedAt > this.cache.fetchedAt)) {
       this.cache = fromDisk
@@ -271,15 +275,35 @@ export class EsportsService {
       this.scheduleBackgroundRefresh()
       return Promise.resolve(this.snapshot())
     }
-    const work = this.refresh().finally(() => {
+    const work = this.startRefresh()
+    // Cold starts can paint old data immediately. A later read joins the same refresh.
+    if (first && this.cache && !args?.refresh) { void work; return Promise.resolve(this.snapshot()) }
+    return work.then(value => structuredClone(value))
+  }
+  async openLiquipediaVerification(open: () => Promise<void>): Promise<{ opened: true }> {
+    const cooldown = this.rateLimit.cooldown()
+    await open()
+    if (cooldown && this.rateLimit.isVerificationRound(cooldownRound(cooldown))) this.openedVerificationRound = cooldownRound(cooldown)
+    return { opened: true }
+  }
+  refreshCs2ScheduleAfterVerification(raw: { round: string }): Promise<Cs2Schedule> {
+    if (!object(raw) || Object.keys(raw).length !== 1 || typeof raw.round !== 'string' || !/^[a-f\d:-]{1,64}$/.test(raw.round)) return invalid()
+    const { round } = raw
+    this.lifetime.signal.throwIfAborted()
+    if (this.flight || this.openedVerificationRound !== round || this.usedVerificationRound === round || !this.rateLimit.isVerificationRound(round)) {
+      return Promise.resolve({ ...this.snapshot(), verificationResult: 'not-attempted' })
+    }
+    this.usedVerificationRound = round
+    return this.startRefresh(round).then(value => structuredClone(value))
+  }
+  private startRefresh(round?: string): Promise<Cs2Schedule> {
+    const work = this.refresh(round).finally(() => {
       if (this.flight === work) this.flight = undefined
       this.scheduleTierRefresh()
       this.scheduleBackgroundRefresh()
     })
     this.flight = work
-    // Cold starts can paint old data immediately. A later read joins the same refresh.
-    if (first && this.cache && !args?.refresh) { void work; return Promise.resolve(this.snapshot()) }
-    return work.then(value => structuredClone(value))
+    return work
   }
   /** Only an active event being viewed needs minute-level reads; closed sheets keep the background cadence. */
   private scheduleTtl(): number {
@@ -293,6 +317,7 @@ export class EsportsService {
   private scheduleBackgroundRefresh(): void {
     if (this.lifetime.signal.aborted) return
     clearTimeout(this.refreshTimer)
+    if (this.flight) return
     const interval = this.scheduleTtl()
     const last = Math.max(this.cache?.fetchedAt ?? -Infinity, this.attemptedAt)
     // Capped at one interval, so a clock moved backwards cannot push the next read out for hours.
@@ -470,48 +495,62 @@ export class EsportsService {
       await pause(25, signal)
     }
   }
-  private async fetchMetadata(url: string, parse: boolean): Promise<unknown> {
-    this.rateLimit.throwIfCooling()
-    const signal = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(15_000)])
+  private async fetchMetadata(url: string, parse: boolean, verification?: { round: string; limited: boolean }): Promise<unknown> {
+    if (!verification) this.rateLimit.throwIfCooling()
+    const transport = new AbortController()
+    const signal = AbortSignal.any([this.lifetime.signal, transport.signal])
+    const timeout = () => setTimeout(() => transport.abort(new DOMException('Metadata request timed out', 'TimeoutError')), 15_000)
+    let timer = timeout()
     let startedAt = this.now()
-    let quotaError: RateLimited | LiquipediaCoolingDown | undefined
-    const result = await safeFetch(url, metadataConfig(), {
-      signal, resolve: this.options.resolve, dispatcherPool: this.pool,
-      headers: { 'User-Agent': metadataUserAgent(this.options.version), 'Accept-Encoding': 'gzip', Accept: 'application/json' },
-      fetchImpl: async (input, init) => {
-        // Reserve immediately before dispatch; slow proxy/DNS decisions cannot bunch requests.
-        try {
-          if (parse) await this.parseSlot(signal)
-          else await this.turns.wait('tier', signal)
-          this.rateLimit.throwIfCooling()
-        } catch (error) {
-          if (error instanceof RateLimited || error instanceof LiquipediaCoolingDown) quotaError = error
-          throw error
-        }
-        startedAt = this.now()
-        const response = await (this.options.request ?? fetch)(input, init)
-        if (response.status === 429) {
-          await this.rateLimit.rateLimited(response.headers.get('retry-after'), signal, response.headers.get('date'))
-          this.scheduleBackgroundRefresh()
-          this.notify('schedule-updated')
-        }
-        return response
-      },
-    }).catch(error => { throw quotaError ?? error })
-    try {
-      const payload = await readJson(result.response)
-      this.rateLimit.succeeded(startedAt)
-      return payload
-    } catch (error) {
-      const detail = diagnosticDetails(error), upstream = detail.upstream
-      if (result.response.status !== 429 && upstream && typeof upstream === 'object' && !Array.isArray(upstream)
-        && (upstream.code === 'ratelimited' || upstream.code === 'rate-limited')) {
-        await this.rateLimit.rateLimited(result.response.headers.get('retry-after'), signal, result.response.headers.get('date'))
-        this.scheduleBackgroundRefresh()
-        this.notify('schedule-updated')
-      }
-      throw error
+    let dispatched = false
+    let quotaError: RateLimited | LiquipediaCoolingDown | VerificationRoundEnded | undefined
+    const recordLimit = async (response: Response) => {
+      if (verification) verification.limited = true
+      await this.rateLimit.rateLimited(response.headers.get('retry-after'), signal, response.headers.get('date'))
+      this.scheduleBackgroundRefresh()
+      this.notify('schedule-updated')
     }
+    try {
+      const result = await safeFetch(url, metadataConfig(), {
+        signal, resolve: this.options.resolve, dispatcherPool: this.pool,
+        headers: { 'User-Agent': metadataUserAgent(this.options.version), 'Accept-Encoding': 'gzip', Accept: 'application/json' },
+        fetchImpl: async (input, init) => {
+          // Reserve immediately before dispatch; slow proxy/DNS decisions cannot bunch requests.
+          try {
+            if (verification) {
+              if (dispatched) throw new Error('Verification request already dispatched')
+              clearTimeout(timer)
+              await this.rateLimit.waitForVerification(verification.round, signal)
+              signal.throwIfAborted()
+              timer = timeout()
+              if (!this.rateLimit.isVerificationRound(verification.round)) throw new VerificationRoundEnded()
+            } else {
+              if (parse) await this.parseSlot(signal)
+              else await this.turns.wait('tier', signal)
+              this.rateLimit.throwIfCooling()
+            }
+          } catch (error) {
+            if (error instanceof RateLimited || error instanceof LiquipediaCoolingDown || error instanceof VerificationRoundEnded) quotaError = error
+            throw error
+          }
+          startedAt = this.now()
+          dispatched = true
+          const response = await (this.options.request ?? fetch)(input, init)
+          if (response.status === 429) await recordLimit(response)
+          return response
+        },
+      }).catch(error => { throw quotaError ?? error })
+      try {
+        const payload = await readJson(result.response)
+        if (!verification) this.rateLimit.succeeded(startedAt)
+        return payload
+      } catch (error) {
+        const upstream = diagnosticDetails(error).upstream
+        if (result.response.status !== 429 && upstream && typeof upstream === 'object' && !Array.isArray(upstream)
+          && (upstream.code === 'ratelimited' || upstream.code === 'rate-limited')) await recordLimit(result.response)
+        throw error
+      }
+    } finally { clearTimeout(timer) }
   }
   private async refreshTiers(): Promise<void> {
     const cached = this.disk.loadTiers(), now = this.now()
@@ -534,22 +573,27 @@ export class EsportsService {
     if (result.failed.length) (this.options.log ?? console.warn)(`Liquipedia tier query failed for ${result.failed.length} tournament paths`)
     if (changed) this.notify('tiers-updated')
   }
-  private async refresh(): Promise<Cs2Schedule> {
+  private async refresh(round?: string): Promise<Cs2Schedule> {
     this.attemptedAt = this.now()
+    const verification = round ? { round, limited: false } : undefined
     try {
-      const payload = await this.fetchMetadata(SCHEDULE_URL, true)
+      const payload = await this.fetchMetadata(SCHEDULE_URL, true, verification)
       const logoPaths = new Map<string, string>()
       const matches = parseSchedule(payload, logoPaths,
         selector => (this.options.log ?? console.warn)(`Liquipedia match skipped: ${selector}`)), fetchedAt = this.now()
       const changed = this.cache !== null && JSON.stringify(this.cache.matches) !== JSON.stringify(matches)
       this.disk.save(payload, fetchedAt)
+      const verified = round === undefined || await this.rateLimit.succeededVerification(round,
+        AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(2_000)]))
       const recovered = this.lastFailure !== null
-      this.lastFailure = null
+      if (verified || !this.rateLimit.cooldown()) this.lastFailure = null
       this.cache = { fetchedAt, matches, logoPaths }
-      if (changed || recovered) this.notify('schedule-updated')
-      return this.snapshot()
+      if (changed || recovered || verification) this.notify('schedule-updated')
+      const value = this.snapshot()
+      return verification ? { ...value, verificationResult: value.verification ? 'not-attempted' : 'recovered' } : value
     } catch (error) {
       if (this.lifetime.signal.aborted) throw this.lifetime.signal.reason
+      if (error instanceof VerificationRoundEnded) return { ...this.snapshot(), verificationResult: 'not-attempted' }
       if (error instanceof RateLimited) {
         if (this.lastFailure) this.lastFailure.retryAt = Math.max(this.lastFailure.retryAt, error.at)
         return this.snapshot(this.lastFailure?.message ?? (this.cache ? undefined : UNAVAILABLE), error.at, this.lastFailure?.detail ?? error, 'parse-quota')
@@ -559,7 +603,8 @@ export class EsportsService {
       const message = cooldown || error instanceof LiquipediaCoolingDown ? UPSTREAM_LIMITED : error instanceof ScheduleFormatError ? error.message : UNAVAILABLE
       this.lastFailure = { message, detail: diagnosticDetails(error), failedAt: this.now(), retryAt: cooldown?.until ?? this.now() + SCHEDULE_TTL_MS }
       this.notify('schedule-updated')
-      return this.snapshot(message, this.lastFailure.retryAt, error, cooldown ? 'upstream-rate-limit' : 'retry')
+      const value = this.snapshot(message, this.lastFailure.retryAt, error, cooldown ? 'upstream-rate-limit' : 'retry')
+      return verification ? { ...value, verificationResult: verification.limited ? 'rate-limited' : 'failed' } : value
     }
   }
   async getStreamTitles(raw: { streams: StreamTitleInput[] }): Promise<StreamTitle[]> {

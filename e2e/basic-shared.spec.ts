@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import type { Page } from '@playwright/test'
 import { expect, test } from './electron'
-import { loadSource, openPlayer, openSettings, revealOverlay, seekBoth, setCheckedByLabel, setPlaying, waitForBothReady } from './helpers'
+import { loadSource, openPlayer, openSettings, seekBoth, setCheckedByLabel, setPlaying, waitForBothReady } from './helpers'
+import { loadRecordingSource } from './recordingSources'
 
 const run = promisify(execFile)
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -30,13 +31,6 @@ test.afterAll(async () => {
   if (fixtureRoot && path.dirname(path.resolve(fixtureRoot)) === path.join(root, 'e2e', '.data')) await rm(fixtureRoot, { recursive: true, force: true })
 })
 
-async function chooseFile(page: Page, role: 'official' | 'commentary', file: string): Promise<void> {
-  await revealOverlay(page)
-  await page.locator('.chip[data-role="' + role + '"]').click()
-  const dialog = page.getByRole('dialog', { name: role === 'official' ? '画面片源' : '解说片源', exact: true })
-  await dialog.locator('input[type="file"]').setInputFiles(file)
-  await expect(dialog).toBeHidden()
-}
 async function frame(page: Page, roi: typeof exact) {
   await page.getByRole('button', { name: '框选倒计时', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '倒计时范围（两路共用）', exact: true })
@@ -100,9 +94,9 @@ test('官方画面一次精确框选应用不同分辨率两路, 图像稳定且
   })
   await openPlayer(page)
   expect(await page.evaluate(() => typeof (window as unknown as Record<string, unknown>).clockSearchAuthor)).toBe('undefined')
-  if (real) await chooseFile(page, 'official', process.env.STREAM_SYNC_SHARED_OFFICIAL!)
+  if (real) await loadRecordingSource(page, 'official', process.env.STREAM_SYNC_SHARED_OFFICIAL!)
   else await loadSource(page, 'official', '/test-sources/auto-official.mp4')
-  await chooseFile(page, 'commentary', commentaryFile)
+  await loadRecordingSource(page, 'commentary', commentaryFile)
   await waitForBothReady(page)
   await setPlaying(page, false)
   await seekBoth(page, real ? 10 : 8, real ? 5 : 8)

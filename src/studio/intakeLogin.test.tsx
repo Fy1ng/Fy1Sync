@@ -16,7 +16,7 @@ function mount(): Session {
   sessions.push(session)
   vi.spyOn(session, 'loadSource').mockResolvedValue(undefined)
   render(<SessionProvider session={session}><SourceLoaderProvider>
-    <Intake onClose={() => {}} onSchedule={() => {}} pendingFile={null} />
+    <Intake onClose={() => {}} onSchedule={() => {}} />
   </SourceLoaderProvider></SessionProvider>)
   return session
 }

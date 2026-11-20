@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fixture from './fixtures/liquipedia-matches.json'
+import tickerFixture from './fixtures/liquipedia-match-ticker.json'
 import { currentMatches, parseSchedule, ScheduleFormatError } from './parser'
 import { CHANNEL_RETRY_MS, EsportsService, PARSE_INTERVAL_MS, SCHEDULE_TTL_MS, TITLE_TTL_MS, TIER_TTL_MS, TIER_NULL_TTL_MS, TIER_RETRY_MS, scheduleArguments, streamTitleArguments, titleStage } from './schedule'
 import { normalizeTournamentPath } from './tiers'
@@ -18,6 +19,30 @@ const response = (value: unknown = fixture) => new Response(JSON.stringify(value
 const change = (from: string, to: string) => ({ parse: { text: { '*': fixture.parse.text['*'].replace(from, to) } } })
 
 describe('Liquipedia fixture parsing', () => {
+  it('reads the current ticker cards with their scores, stages, dynamic team names and icons', () => {
+    const logos = new Map<string, string>()
+    const matches = parseSchedule(tickerFixture, logos)
+    expect(matches).toHaveLength(7)
+    expect(matches[0]).toMatchObject({ startsAt: 1795165200000, state: 'upcoming', score: null, bestOf: 3, streams: [],
+      teams: [{ name: 'EYEBALLERS', short: 'EYE' }, { name: 'WOPA Esport', short: 'WOPA' }],
+      tournament: { name: 'United21 Season 58', stage: 'Playoffs', tier: null,
+        url: 'https://liquipedia.net/counterstrike/United21/Season_58#Playoffs' } })
+    expect(matches[1]).toMatchObject({ bestOf: 5, tournament: { stage: null }, teams: [{ name: 'Sangal Esports' }, { name: 'TBD', short: null }] })
+    expect(matches[2]).toMatchObject({ bestOf: 1, tournament: { name: 'PGL Major Singapore 2026', stage: 'Round 1' } })
+    expect(matches[3]).toMatchObject({ state: 'finished', score: [1, 2] })
+    expect(matches[4]).toMatchObject({ state: 'finished', score: [2, 1], tournament: { stage: 'Group B' }, streams: [] })
+    expect(matches[5]).toMatchObject({ state: 'finished', score: null, teams: [{ short: 'NAVI Jr.' }, { short: null }] })
+    expect(matches[6]!.teams[0]).toMatchObject({ name: 'Aimclub (Romanian team)', short: 'Aimclub' })
+    expect(logos.get(`${matches[0]!.id}:1`)).toMatch(/darkmode/i)
+    expect(logos.get(`${matches[2]!.id}:event`)).toMatch(/darkmode/i)
+  })
+  it('retains a live score and supported stream in a synthetic ticker variation', () => {
+    const html = tickerFixture.parse.text['*'].replace('</span></div><div></div></div>', '</span></div><div>0</div></div>')
+      .replace('</span></div><div></div></div>', '</span></div><div>1</div></div>')
+      .replaceAll('/kick/United21', '/youtube/United21/sx5tneE-ILg')
+    expect(parseSchedule({ parse: { text: { '*': html } } })[0]).toMatchObject({ state: 'live', score: [0, 1],
+      streams: [{ platform: 'youtube', url: 'https://www.youtube.com/watch?v=sx5tneE-ILg' }] })
+  })
   it('reads real live, upcoming, TBD and finished matches, with stable identities and their stream entries', () => {
     const matches = parseSchedule(fixture)
     expect(matches).toHaveLength(9)

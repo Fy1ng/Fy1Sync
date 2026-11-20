@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  BASIC_CLOCK_MEMORY_LIMIT, basicClockFileKey, basicClockSourceKey, findBasicClockMemory,
+  BASIC_CLOCK_MEMORY_LIMIT, basicClockSourceKey, findBasicClockMemory,
   forgetBasicClockMemory, normalizeBasicClockMemory, rememberBasicClock, type BasicClockMemoryEntry,
 } from './basicClockMemory'
 import type { MediaDescriptor } from './types'
@@ -58,17 +58,14 @@ describe('clock memory source identity', () => {
     expect(basicClockSourceKey(source('/test-sources/../private.mp4'))).toBeNull()
   })
 
-  it('keys files from metadata across blob lifetimes and refuses filename-only fallback', () => {
-    const metadata = { name: '赛事录像.mkv', size: 123456, lastModified: 1720000000000 }
-    const key = basicClockFileKey(metadata)
-    const first = source(metadata.name, { kind: 'file', platform: 'file', recognitionSourceKey: key, url: 'blob:app://app/first' })
+  it('retains opaque stored file keys without accepting filenames or blob URLs as identities', () => {
+    const key = 'clock-v1:file:0123456789abcdef'
+    const first = source('赛事录像.mkv', { kind: 'file', platform: 'file', recognitionSourceKey: key, url: 'blob:app://app/first' })
     expect(basicClockSourceKey(first)).toBe(key)
-    expect(basicClockSourceKey({ ...first, url: 'blob:app://app/restarted', recognitionSourceKey: basicClockFileKey({ ...metadata }) })).toBe(key)
-    expect(basicClockFileKey({ ...metadata, size: metadata.size + 1 })).not.toBe(key)
-    expect(basicClockFileKey({ ...metadata, lastModified: metadata.lastModified + 1 })).not.toBe(key)
+    expect(basicClockSourceKey({ ...first, url: 'blob:app://app/restarted' })).toBe(key)
     expect(basicClockSourceKey({ ...first, recognitionSourceKey: undefined })).toBeNull()
-    expect(basicClockSourceKey({ ...first, recognitionSourceKey: metadata.name })).toBeNull()
-    expect(key).not.toContain(metadata.name)
+    expect(basicClockSourceKey({ ...first, recognitionSourceKey: first.input })).toBeNull()
+    expect(normalizeBasicClockMemory([{ key, roi, aspectRatio: 16 / 9, updatedAt: 1000 }])).toHaveLength(1)
     expect(basicClockSourceKey(source('blob:app://app/first'))).toBeNull()
     expect(basicClockSourceKey(source('display label only'))).toBeNull()
     expect(basicClockSourceKey(null)).toBeNull()

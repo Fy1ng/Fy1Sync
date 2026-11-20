@@ -53,7 +53,10 @@ require(${JSON.stringify(path.join(root, 'dist/electron/main.cjs'))});
     const settings = page.getByRole('dialog', { name: '设置', exact: true })
     await settings.getByRole('tab', { name: '通用', exact: true }).click()
     await settings.getByRole('tab', { name: '取流工具', exact: true }).click()
+    await expect(settings.getByText(/最近卡顿|暂未记录到卡顿/)).toHaveCount(0)
+    await expect(settings.getByRole('button', { name: '导出播放诊断', exact: true })).toHaveCount(0)
     const exportButton = settings.getByRole('button', { name: '导出诊断报告', exact: true })
+    await expect(exportButton).toHaveCount(1)
     await expect(exportButton).toBeEnabled()
     await exportButton.click()
     await expect(settings).toContainText('诊断报告已导出')
@@ -62,7 +65,10 @@ require(${JSON.stringify(path.join(root, 'dist/electron/main.cjs'))});
     expect(report).toMatchObject({ schemaVersion: 1, acquisition: { app: { packaged: false },
       attempts: [{ id: 1, role: 'official', status: 'failed', events: expect.arrayContaining([
         expect.objectContaining({ stage: 'resolve', status: 'failed', code: 'tool-not-executable' }),
-      ]) }] }, playback: { official: { sampleCount: expect.any(Number) } } })
+      ]) }] }, playback: {
+        official: { sampleCount: expect.any(Number), lastStall: null },
+        commentary: { sampleCount: expect.any(Number), lastStall: null },
+      } })
     const text = JSON.stringify(report)
     expect(text).not.toMatch(/PRIVATE_PATH|abcdefghijk|Cookie|userData|https:\/\/|proxyUrl|stderr/)
     expect(text).not.toContain(directory)

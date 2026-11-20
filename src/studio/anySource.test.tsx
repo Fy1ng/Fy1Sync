@@ -27,7 +27,7 @@ function mount(): Session {
   const session = new Session({ createSampler: () => null })
   sessions.push(session)
   render(<SessionProvider session={session}><SourceLoaderProvider>
-    <Intake onClose={() => {}} onSchedule={() => {}} pendingFile={null} />
+    <Intake onClose={() => {}} onSchedule={() => {}} />
   </SourceLoaderProvider></SessionProvider>)
   return session
 }

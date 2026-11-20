@@ -17,9 +17,8 @@ import { ErrorText } from '../ui/ErrorDetails'
 
 const ROOM_PLATFORMS: RoomPlatform[] = ['douyu', 'bilibili', 'huya', 'douyin']
 
-export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
+export function Intake({ onClose, onSchedule, onFavorites }: {
   onClose: () => void
-  pendingFile: File | null
   /** Open 赛程, to pick the official broadcast by match. */
   onSchedule: () => void
   onFavorites?: () => void
@@ -35,7 +34,6 @@ export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
   const [restoreSucceeded, setRestoreSucceeded] = useState(false)
   const draftRevision = useRef(0)
   const [pendingSubmissions, setPendingSubmissions] = useState(0)
-  const [fileAttempt, setFileAttempt] = useState<{ file: File; role: SourceRole; status: 'loading' | 'done' | 'failed' } | null>(null)
   const field = useRef<HTMLInputElement | null>(null)
   const picturesAtOpen = useRef<Record<SourceRole, number | null>>({
     official: media.official.firstFrame ? session.sourceRevision('official') : null,
@@ -45,9 +43,6 @@ export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
     && picturesAtOpen.current[side] !== session.sourceRevision(side))
   const anyLoaded = SOURCE_ROLES.some((side) => media[side].status !== 'empty')
   const anyBusy = SOURCE_ROLES.some((side) => loader.state[side].busy)
-  const empty = SOURCE_ROLES.filter((side) => media[side].status === 'empty')
-  const fileRole = role ?? (empty.length === 1 ? empty[0]! : null)
-  const currentAttempt = fileAttempt?.file === pendingFile ? fileAttempt : null
   const bare = parseRoomInput(text)?.platform === null ? parseRoomInput(text)!.room : null
   const canSubmit = role !== null && text.trim() !== '' && (bare === null || roomPlatform !== null) && !loader.state[role].busy
 
@@ -60,8 +55,8 @@ export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
   }, [onClose])
   // Reveal the first picture while the other source and synchronization keep preparing.
   useEffect(() => {
-    if ((pictureVisible || restoreSucceeded) && !text.trim() && !anyBusy && pendingSubmissions === 0 && !loader.restoring && (!pendingFile || currentAttempt?.status === 'done')) onClose()
-  }, [pictureVisible, restoreSucceeded, text, anyBusy, pendingSubmissions, loader.restoring, pendingFile, currentAttempt, onClose])
+    if ((pictureVisible || restoreSucceeded) && !text.trim() && !anyBusy && pendingSubmissions === 0 && !loader.restoring) onClose()
+  }, [pictureVisible, restoreSucceeded, text, anyBusy, pendingSubmissions, loader.restoring, onClose])
 
   const pick = (next: SourceRole): void => {
     if (next !== role) draftRevision.current++
@@ -87,17 +82,6 @@ export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
       if (other) setRole(other)
     }).finally(() => setPendingSubmissions(count => count - 1))
   }
-
-  const loadFile = (side: SourceRole, file: File): void => {
-    const attempt = { file, role: side, status: 'loading' as const }
-    setFileAttempt(attempt)
-    void loader.loadFile(side, file).then(ok => {
-      setFileAttempt(current => current === attempt ? { ...attempt, status: ok ? 'done' : 'failed' } : current)
-    })
-  }
-  useEffect(() => {
-    if (pendingFile && !currentAttempt && fileRole && !loader.state[fileRole].busy) loadFile(fileRole, pendingFile)
-  }, [pendingFile, currentAttempt, fileRole, loader.state, loader.loadFile])
 
   const load = role ? loader.state[role] : null
   const previous = loader.previousSources ?? {}
@@ -142,12 +126,6 @@ export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
 
         {load?.problem && <p className="intake-error" role="alert"><ErrorText error={load.problem} message={<>{load.problem.message}{load.problem.hint ? `，${load.problem.hint}` : ''}</>} /></p>}
 
-        {pendingFile && !currentAttempt && !fileRole && <p className="muted" role="status">已拖入 {pendingFile.name}。请先选择画面或解说。</p>}
-        {currentAttempt?.status === 'failed' && <p className="intake-error">
-          {currentAttempt.file.name} 载入失败<button type="button" className="link-btn" disabled={loader.state[currentAttempt.role].busy}
-            onClick={() => loadFile(currentAttempt.role, currentAttempt.file)}>重试</button>
-        </p>}
-
         <div className="intake-actions">
           {media.official.status === 'empty' && !loader.state.official.busy && (
             <button type="button" className="intake-find" onClick={onSchedule}>
@@ -156,11 +134,10 @@ export function Intake({ onClose, pendingFile, onSchedule, onFavorites }: {
               <small>载入为画面</small>
             </button>
           )}
-          {onFavorites && <button type="button" className="intake-find" onClick={onFavorites}><Icon name="star" /><span>收藏夹</span></button>}
+          {onFavorites && <button type="button" className="intake-find intake-find-single" onClick={onFavorites}><Icon name="star" /><span>收藏夹</span></button>}
         </div>
 
         <p className="intake-foot">
-          <span>支持将视频文件拖入窗口</span>
           <button type="button" className="link-btn intake-skip" onClick={onClose}>{anyLoaded ? '开始观看' : '跳过'}</button>
         </p>
       </div>

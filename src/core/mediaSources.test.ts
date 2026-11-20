@@ -104,10 +104,10 @@ describe('parseSourceInput', () => {
     expect(result.needsResolve).toBe(false)
   })
 
-  it('accepts blob URLs from the file picker', () => {
-    const result = expectOk('blob:http://127.0.0.1:5173/8f7c')
-    expect(result.kind).toBe('file')
-    expect(result.platform).toBe('file')
+  it.each(['blob:http://127.0.0.1:5173/8f7c', 'data:video/mp4;base64,AAAA', 'file:///C:/video.mp4'])('rejects local media inputs: %s', input => {
+    const result = parseSourceInput(input)
+    expect(result).toMatchObject({ ok: false, reason: 'unsupported-scheme' })
+    if (!result.ok) expect(result.message).not.toContain('本地文件')
   })
 
   it('rejects an empty input', () => {

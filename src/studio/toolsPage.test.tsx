@@ -8,9 +8,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StreamSyncerBridge } from '../../electron/contracts'
 import { Tools } from './SettingsSheet'
 import { forgetAll } from '../app/remembered'
+import type { SessionSnapshot } from '../app/session'
 
-const { exportPlaybackDiagnostics } = vi.hoisted(() => ({ exportPlaybackDiagnostics: vi.fn() }))
-vi.mock('../app/SessionContext', () => ({ useSession: () => ({ exportPlaybackDiagnostics }) }))
+const { exportPlaybackDiagnostics, playbackDiagnostics } = vi.hoisted(() => ({
+  exportPlaybackDiagnostics: vi.fn(),
+  playbackDiagnostics: { official: null, commentary: null } as SessionSnapshot['playbackDiagnostics'],
+}))
+vi.mock('../app/SessionContext', () => ({
+  useSession: () => ({ exportPlaybackDiagnostics }),
+  useSessionSnapshot: () => ({ playbackDiagnostics }),
+}))
 
 function tools(source: 'bundled' | 'external' | 'PATH' = 'bundled') {
   return { tools: [{ name: 'ffmpeg', source, version: '8.1.3', available: true }], fixturesAvailable: false,
@@ -29,6 +36,8 @@ function stub(source: 'bundled' | 'external' | 'PATH') {
 
 beforeEach(() => {
   forgetAll()
+  playbackDiagnostics.official = null
+  playbackDiagnostics.commentary = null
   exportPlaybackDiagnostics.mockReset().mockReturnValue({
     version: 1, official: { samples: [], lastStall: null }, commentary: { samples: [], lastStall: null },
   })
@@ -45,6 +54,46 @@ function download() {
 }
 
 describe('取流工具', () => {
+  it('shows no stall text or separate playback export before a stall exists', async () => {
+    stub('bundled')
+    render(<Tools />)
+    await screen.findByText('内置', { exact: false })
+    expect(screen.queryByText(/最近卡顿|暂未记录到卡顿/)).toBeNull()
+    expect(screen.queryByRole('button', { name: '导出播放诊断' })).toBeNull()
+    expect(screen.getAllByRole('button', { name: '导出诊断报告' })).toHaveLength(1)
+    expect(exportPlaybackDiagnostics).not.toHaveBeenCalled()
+  })
+
+  it.each(['official', 'commentary'] as const)('shows only the %s stall when the other source has no record', async role => {
+    stub('bundled')
+    playbackDiagnostics[role] = { durationMs: 2500, category: 'fetch', hint: '播放器未收到新数据', ongoing: false }
+    render(<Tools />)
+    await screen.findByText('内置', { exact: false })
+    const label = role === 'official' ? '画面最近卡顿' : '解说最近卡顿'
+    const otherLabel = role === 'official' ? '解说最近卡顿' : '画面最近卡顿'
+    expect(screen.getByText(label).closest('div')).toHaveTextContent('2.5 秒，播放器未收到新数据')
+    expect(screen.queryByText(otherLabel)).toBeNull()
+    expect(screen.queryByText(/尚未恢复|暂未记录到卡顿/)).toBeNull()
+  })
+
+  it('shows both source stalls and follows recovery and cleared records', async () => {
+    stub('bundled')
+    playbackDiagnostics.official = { durationMs: 2500, category: 'fetch', hint: '播放器未收到新数据', ongoing: false }
+    playbackDiagnostics.commentary = { durationMs: 4100, category: 'playback', hint: '已收到数据但画面未更新', ongoing: true }
+    const view = render(<Tools />)
+    await screen.findByText('内置', { exact: false })
+    expect(screen.getByText('画面最近卡顿').closest('div')).toHaveTextContent('2.5 秒，播放器未收到新数据')
+    expect(screen.getByText('解说最近卡顿').closest('div')).toHaveTextContent('4.1 秒（尚未恢复），已收到数据但画面未更新')
+    playbackDiagnostics.commentary = { ...playbackDiagnostics.commentary, durationMs: 5200, ongoing: false }
+    view.rerender(<Tools />)
+    expect(screen.getByText('解说最近卡顿').closest('div')).toHaveTextContent('5.2 秒，已收到数据但画面未更新')
+    expect(screen.queryByText(/尚未恢复/)).toBeNull()
+    playbackDiagnostics.official = null
+    playbackDiagnostics.commentary = null
+    view.rerender(<Tools />)
+    expect(screen.queryByText(/最近卡顿|暂未记录到卡顿/)).toBeNull()
+  })
+
   it.each(['failure', 'rejected', 'invalid'] as const)('offers retry for a %s status read without a loading or empty state', async (failure) => {
     const invoke = stub('bundled')
     if (failure === 'rejected') invoke.mockRejectedValueOnce(new Error('read failed'))
@@ -131,6 +180,33 @@ describe('取流工具', () => {
     expect(invoke.mock.calls.filter(([method]) => method === 'getAcquisitionDiagnostics')).toHaveLength(1)
     await act(async () => finish({ ok: true, value: { attempts: [] } }))
     expect(screen.getByRole('button', { name: '导出诊断报告' })).toBeEnabled()
+  })
+
+  it('exports both sources latest playback samples and stalls through the existing report button', async () => {
+    stub('bundled')
+    exportPlaybackDiagnostics.mockReturnValue({ version: 1,
+      official: { samples: [{ at: 1000, currentTime: 20, readyState: 2, paused: false, seeking: false,
+        bufferAhead: 0.1, droppedFramesDelta: 3, timerLateMs: 100 }],
+        lastStall: { durationMs: 2500, category: 'fetch', ongoing: false, hint: 'PRIVATE_STALL_HINT' } },
+      commentary: { samples: [{ at: 2000, currentTime: 21, readyState: 4, paused: false, seeking: false,
+        bufferAhead: 4, droppedFramesDelta: 0, timerLateMs: 0 }],
+        lastStall: { durationMs: 4100, category: 'playback', ongoing: true, hint: 'PRIVATE_STALL_HINT' } },
+    })
+    const { create } = download()
+    render(<Tools />)
+    fireEvent.click(screen.getByRole('button', { name: '导出诊断报告' }))
+    await screen.findByText('诊断报告已导出')
+    expect(exportPlaybackDiagnostics).toHaveBeenCalledOnce()
+    const blob = create.mock.calls[0]![0] as unknown as Blob
+    const report = JSON.parse(await blob.text())
+    expect(report.playback).toMatchObject({
+      official: { sampleCount: 1, latest: { at: 1000, currentTime: 20, bufferAhead: 0.1 },
+        lastStall: { durationMs: 2500, category: 'fetch', ongoing: false } },
+      commentary: { sampleCount: 1, latest: { at: 2000, currentTime: 21, bufferAhead: 4 },
+        lastStall: { durationMs: 4100, category: 'playback', ongoing: true } },
+    })
+    expect(JSON.stringify(report)).not.toContain('PRIVATE_STALL_HINT')
+    expect(screen.queryByRole('button', { name: '导出播放诊断' })).toBeNull()
   })
 
   it('downloads a failed pre-playback attempt without needing a loaded media source', async () => {

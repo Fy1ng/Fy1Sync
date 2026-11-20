@@ -667,24 +667,6 @@ body,
   border-top: 1px solid var(--line);
 }
 
-.studio .file-pick {
-  position: relative;
-  overflow: hidden;
-  cursor: pointer;
-}
-
-.studio .file-pick input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.studio .file-pick:focus-within {
-  outline: 2px solid var(--chalk);
-  outline-offset: 2px;
-}
-
 .studio .more-menu {
   top: calc(100% + 8px);
   right: 0;
@@ -3302,6 +3284,7 @@ body,
 .studio .intake-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
   gap: 12px;
   width: 100%;
 }
@@ -3351,6 +3334,10 @@ body,
 .studio .intake-find span {
   font-size: 15px;
   font-weight: 600;
+}
+
+.studio .intake-find-single span {
+  grid-row: span 2;
 }
 
 .studio .intake-find small {

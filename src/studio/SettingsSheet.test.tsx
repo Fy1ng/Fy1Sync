@@ -69,6 +69,33 @@ function shortcutRow(action: string): ReturnType<typeof within> {
   return within(screen.getByRole('rowheader', { name: action }).closest('tr')!)
 }
 
+describe('playback diagnostics settings', () => {
+  it('shows both stall summaries only in general tools without another export button', async () => {
+    const current = new Session({ createSampler: () => null })
+    sessions.push(current)
+    const initial = current.snapshot
+    vi.spyOn(current, 'snapshot', 'get').mockReturnValue({ ...initial, playbackDiagnostics: {
+      official: { durationMs: 2500, category: 'fetch', hint: '播放器未收到新数据', ongoing: false },
+      commentary: { durationMs: 4100, category: 'playback', hint: '已收到数据但画面未更新', ongoing: true },
+    } })
+    invoke.mockResolvedValueOnce({ ok: true, value: {
+      tools: [], fixturesAvailable: false, provider: { available: true, source: 'bundled' },
+      update: { phase: 'idle', message: '', downloadedBytes: 0, totalBytes: 0 },
+    } })
+    mount(null, current)
+    expect(screen.queryByText(/最近卡顿/)).toBeNull()
+    generalPage('取流工具')
+    const tools = within(screen.getByRole('region', { name: '取流工具' }))
+    await tools.findByText('暂无取流工具')
+    expect(tools.getByText('画面最近卡顿').closest('div')).toHaveTextContent('2.5 秒，播放器未收到新数据')
+    expect(tools.getByText('解说最近卡顿').closest('div')).toHaveTextContent('4.1 秒（尚未恢复），已收到数据但画面未更新')
+    expect(tools.getAllByRole('button', { name: '导出诊断报告' })).toHaveLength(1)
+    expect(tools.queryByRole('button', { name: '导出播放诊断' })).toBeNull()
+    generalPage('对齐')
+    expect(screen.queryByText(/最近卡顿/)).toBeNull()
+  })
+})
+
 describe('player shortcut settings', () => {
   it('lists all nine player actions after the alignment tab and shows the actual steps', async () => {
     mount()

@@ -101,7 +101,7 @@ describe('durable Liquipedia request quotas', () => {
     const limiter = new LiquipediaRateLimit(root), start = Date.now()
     expect(limiter.reserve(true)).toBe(true)
     const cooldown = await limiter.rateLimited('120', new AbortController().signal)
-    expect(cooldown).toEqual({ at: start, until: start + 120_000, count: 1, retryAfter: '120' })
+    expect(cooldown).toMatchObject({ at: start, until: start + 120_000, count: 1, retryAfter: '120', retryAfterUntil: start + 120_000 })
     const restarted = new LiquipediaRateLimit(root)
     await vi.advanceTimersByTimeAsync(60_000)
     expect(restarted.delay()).toBe(60_000)
