@@ -143,6 +143,18 @@ curl -I https://schedule.fy1ng.cn/v1/cs2/schedule
 
 标准输出记录启动, 实际赛程上游刷新的成功或失败结果, 线上格式过滤计数的变化和关闭. 不记录访问日志, 客户端 IP, 请求 URL, 响应正文或上游页面. 部署者应保持其他入口和基础设施的日志策略与此约定一致.
 
+## 被 Liquipedia 限流时
+
+中转收到 429 后自动进入冷却 (15 分钟起, 逐次加倍, 最长 6 小时), 期间继续提供上一次的赛程, `/healthz` 的 `cooldownUntil` 给出到期时间. 多数情况等冷却结束即可.
+
+Liquipedia 的临时封禁可以由被封的 IP 自己完成人机验证来解除. 服务器上没有浏览器, 需要时在自己的电脑上经 SSH 让浏览器从 VPS 的出口访问:
+
+```sh
+ssh -D 1080 -N <VPS>
+```
+
+把浏览器的 SOCKS5 代理设为 `127.0.0.1:1080`, 打开 <https://liquipedia.net/counterstrike/Liquipedia:Matches> 完成验证, 然后断开这条连接. 中转不会自动处理验证. 不要为绕过限流更换出口 IP: 条款要求同一时间只用一个 IP, 反复触发临时封禁可能变成永久封禁.
+
 ## 数据来源
 
 赛程数据来自 [Liquipedia](https://liquipedia.net/counterstrike/), 遵守 [API 使用条款](https://liquipedia.net/api-terms-of-use), 数据署名保持现有 `ATTRIBUTION`, 许可为 [CC-BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/). 队标和图标的权利归相应权利人, 以来源说明为准. 所有请求复用连接, 支持 gzip, 固定一个出口 IP 并尽量长时间复用缓存.
