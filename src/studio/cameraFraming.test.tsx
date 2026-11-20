@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Session } from '../app/session'
 import { SessionProvider } from '../app/SessionContext'
+import { CameraStore, DEFAULT_CAMERA_WINDOW } from '../app/camera'
 import { primeMediaElement } from '../test/setup'
 import { CameraFraming } from './CameraFraming'
 
@@ -45,7 +46,7 @@ describe('摄像头小窗', () => {
 
   const rough = { x: 0.1, y: 0.2, w: 0.4, h: 0.4 }
   const fitted = { x: 0.12, y: 0.22, w: 0.35, h: 0.35 }
-  async function open() {
+  async function open(onRemove: (() => boolean) | null = null) {
     const session = new Session({ createSampler: () => null })
     sessions.push(session)
     const video = session.engine.element('commentary')
@@ -53,10 +54,53 @@ describe('摄像头小窗', () => {
     primeMediaElement(video, { duration: 60, currentTime: 3 })
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D)
     const save = vi.fn()
-    render(<SessionProvider session={session}><CameraFraming initial={rough} onSave={save} onRemove={null} onClose={() => {}} /></SessionProvider>)
+    const close = vi.fn()
+    render(<SessionProvider session={session}><CameraFraming initial={rough} onSave={save} onRemove={onRemove} onClose={close} /></SessionProvider>)
     await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled())
-    return { save, video }
+    return { save, video, close }
   }
+
+  it('confirms removal in place, keeping the crop and placement after a failed write', async () => {
+    const memory = new Map<string, string>()
+    const storage = {
+      getItem: (key: string) => memory.get(key) ?? null,
+      setItem: vi.fn((key: string, value: string) => { memory.set(key, value) }),
+    }
+    const room = 'douyu:9999'
+    const config = { crop: rough, window: { ...DEFAULT_CAMERA_WINDOW, x: 0.4, y: 0.3 }, enabled: true, updatedAt: 1 }
+    const store = new CameraStore(storage)
+    store.set(room, config)
+    storage.setItem.mockImplementationOnce(() => { throw new Error('storage full') })
+    const remove = vi.fn(() => store.remove(room))
+    const { close } = await open(remove)
+    const button = (name: string) => screen.getByRole('button', { name })
+    const trigger = '删除此房间的小窗设置'
+
+    fireEvent.click(button(trigger))
+    expect(remove).not.toHaveBeenCalled()
+    expect(button('取消')).toHaveFocus()
+    fireEvent.click(button('取消'))
+    expect(button(trigger)).toHaveFocus()
+    fireEvent.click(button(trigger))
+    expect(fireEvent.keyDown(button('取消'), { key: 'Escape' })).toBe(false)
+    expect(button(trigger)).toBeInTheDocument()
+    expect(close).not.toHaveBeenCalled()
+    expect(remove).not.toHaveBeenCalled()
+
+    fireEvent.click(button(trigger))
+    fireEvent.click(button('确认删除'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('小窗设置删除失败，请重试')
+    expect(button(trigger)).toBeEnabled()
+    expect(store.get(room)).toEqual(config)
+    expect(new CameraStore(storage).get(room)).toEqual(config)
+
+    fireEvent.click(button(trigger))
+    expect(remove).toHaveBeenCalledTimes(1)
+    fireEvent.click(button('确认删除'))
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    expect(remove).toHaveBeenCalledTimes(2)
+    expect(new CameraStore(storage).get(room)).toBeNull()
+  })
 
   it('keeps ambiguous results unchanged and lets the viewer undo an accepted fit before saving', async () => {
     const { save } = await open()

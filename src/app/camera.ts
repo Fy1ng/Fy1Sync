@@ -148,17 +148,20 @@ export class CameraStore {
     this.persist()
   }
 
-  remove(room: string): void {
+  remove(room: string): boolean {
     // Keep legacy aliases intact, but never resurrect them over explicit removal.
-    this.rooms = { ...this.rooms, [room]: null }
-    this.persist()
+    const next = { ...this.rooms, [room]: null }
+    if (!this.persist(next)) return false
+    this.rooms = next
+    return true
   }
 
-  private persist(): void {
+  private persist(rooms = this.rooms): boolean {
     try {
-      this.storage?.setItem(CAMERA_STORAGE_KEY, JSON.stringify(this.rooms))
+      this.storage?.setItem(CAMERA_STORAGE_KEY, JSON.stringify(rooms))
+      return true
     } catch {
-      // A full quota must not interrupt playback; the crop simply is not remembered.
+      return false
     }
   }
 }

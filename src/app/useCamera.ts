@@ -31,7 +31,7 @@ export interface CameraControls {
   save: (crop: RoiRect) => void
   setWindow: (window: CameraWindow) => void
   setEnabled: (enabled: boolean) => void
-  remove: () => void
+  remove: () => boolean
 }
 
 export function useCamera(): CameraControls {
@@ -48,10 +48,9 @@ export function useCamera(): CameraControls {
   const config = useMemo(() => store().getCompatible(room, cameraLegacyKeys(descriptor)), [room, descriptor, revision])
   const available = snapshot.media.commentary.status === 'ready'
 
-  const write = useCallback((next: CameraConfig | null) => {
+  const write = useCallback((next: CameraConfig) => {
     if (!room) return
-    if (next) store().set(room, { ...next, updatedAt: Date.now() })
-    else store().remove(room)
+    store().set(room, { ...next, updatedAt: Date.now() })
     setRevision((n) => n + 1)
   }, [room, descriptor])
 
@@ -62,6 +61,10 @@ export function useCamera(): CameraControls {
     save: (crop) => write({ crop, window: config?.window ?? DEFAULT_CAMERA_WINDOW, enabled: true, updatedAt: 0 }),
     setWindow: (window) => { if (config) write({ ...config, window }) },
     setEnabled: (enabled) => { if (config) write({ ...config, enabled }) },
-    remove: () => write(null),
+    remove: () => {
+      if (!room || !store().remove(room)) return false
+      setRevision((n) => n + 1)
+      return true
+    },
   }
 }

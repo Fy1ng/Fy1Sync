@@ -164,6 +164,9 @@ test('统一登录二次验证不误成功, 官方接续保留会话且返回不
     evidence.push({ scenario: 'second-factor', counters })
 
     await account.getByRole('button', { name: '退出', exact: true }).click()
+    await expect(account.getByRole('button', { name: '取消', exact: true })).toBeFocused()
+    await account.getByRole('button', { name: '确认退出', exact: true }).click()
+    await expect(settings).toBeVisible()
     await expect.poll(() => loggedIn(running.page)).toBe(false)
     for (const selected of ['challenge', 'unknown'] as const) {
       await scenario(running.application, selected)

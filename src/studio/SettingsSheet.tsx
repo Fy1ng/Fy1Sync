@@ -32,6 +32,7 @@ import { PlatformAccount } from './login/PlatformAccount'
 import { refreshLoginStatus } from './login/status'
 import { AccountAvatar, BrowserImportButton, BrowserLoginImportProvider } from './login/BrowserLoginImport'
 import { ReadError } from './ReadError'
+import { InlineConfirm } from './InlineConfirm'
 
 export type SettingsSection = 'accounts' | 'records' | 'insights' | 'frame-matching' | 'general'
 
@@ -247,7 +248,7 @@ function YouTubeAccount(): React.ReactNode {
         </span>
         <span className="row-end">
           <BrowserImportButton platform="youtube" disabled={busy} />
-          {youtube?.cookieCount ? <button type="button" className="btn-quiet small" disabled={busy} onClick={() => void act(true)}>退出</button> : null}
+          {youtube?.cookieCount ? <InlineConfirm label="退出" confirmLabel="确认退出" disabled={busy} danger={false} onConfirm={() => act(true)} /> : null}
           <button type="button" className="btn-solid small" disabled={busy || checking || status === null} onClick={() => void act(false)}>{youtube?.loggedIn ? '重新登录' : '登录'}</button>
         </span>
       </div>
@@ -324,7 +325,7 @@ function DouyinAccount(): React.ReactNode {
         </span>
         <span className="row-end">
           <BrowserImportButton platform="douyin" disabled={busy} />
-          {douyin?.cookieCount ? <button type="button" className="btn-quiet small" disabled={busy || checking} onClick={() => void act(true)}>退出</button> : null}
+          {douyin?.cookieCount ? <InlineConfirm label="退出" confirmLabel="确认退出" disabled={busy || checking} danger={false} onConfirm={() => act(true)} /> : null}
           <button type="button" className="btn-solid small" disabled={busy || checking} onClick={() => void act(false)}>{douyin?.loggedIn || douyin?.authKeysPresent?.length ? '重新登录' : '登录'}</button>
         </span>
       </div>

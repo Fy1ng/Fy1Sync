@@ -11,12 +11,13 @@ import type { RoiRect } from '../core/profileSchema'
 import { RoiWindow } from '../ui/regions/RoiWindow'
 import { sampleCameraFrames, watchCameraFrames } from '../ui/cameraFrames'
 import { tightenCamera } from '../ui/cameraTighten'
+import { InlineConfirm } from './InlineConfirm'
 import { Sheet } from './kit'
 
 export function CameraFraming({ initial, onSave, onRemove, onClose }: {
   initial: RoiRect | null
   onSave: (crop: RoiRect) => void
-  onRemove: (() => void) | null
+  onRemove: (() => boolean) | null
   onClose: () => void
 }): React.ReactNode {
   const session = useSession()
@@ -28,6 +29,7 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
   const [roi, setRoi] = useState<RoiRect>(initial ?? { x: 0.02, y: 0.4, w: 0.16, h: 0.2 })
   const [working, setWorking] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const [removeFailed, setRemoveFailed] = useState(false)
   const [previous, setPrevious] = useState<RoiRect | null>(null)
   const mounted = useRef(false)
   const pending = useRef<AbortController | null>(null)
@@ -132,9 +134,11 @@ export function CameraFraming({ initial, onSave, onRemove, onClose }: {
           <canvas ref={setStill} className="framing-still" />
           {size.width > 0 && <RoiWindow roi={roi} onChange={change} videoWidth={size.width} videoHeight={size.height} hostRef={stage} />}
         </div>
-        {message && <p className="muted" role="status">{message}</p>}
+        {removeFailed ? <p className="form-error" role="alert">小窗设置删除失败，请重试</p>
+          : message && <p className="muted" role="status">{message}</p>}
         <div className="row-split">
-          {onRemove ? <button type="button" className="btn-quiet is-danger" onClick={onRemove}>不再显示此房间的小窗</button> : <span />}
+          {onRemove ? <InlineConfirm label="删除此房间的小窗设置" confirmLabel="确认删除" small={false}
+            onConfirm={async () => setRemoveFailed(!onRemove())} /> : <span />}
           <span className="row-end">
             {previous && <button type="button" className="btn-quiet" disabled={working} onClick={() => { setRoi(previous); setPrevious(null); setMessage('已撤回本次贴边'); }}>撤回贴边</button>}
             <button type="button" className="btn-quiet" disabled={size.width === 0 || working} onClick={() => void snap()}>

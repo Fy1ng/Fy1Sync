@@ -22,6 +22,7 @@ import { useAutomations } from './automationState'
 import { LaneLine } from './DouyuDesk'
 import type { DouyuData } from './useDouyu'
 import { ReadError } from '../ReadError'
+import { InlineConfirmButtons } from '../InlineConfirm'
 import './automations.css'
 
 const POLICY: Record<DouyuTaskPolicy, string> = {
@@ -138,10 +139,9 @@ function AutomationRow({ task, data, act, locked }: { task: AutomationView; data
         {confirming
           ? <span className="automation-confirm" role="group" aria-label="确认删除">
               <span className="muted">删除不可恢复，已提交的操作不会撤回</span>
-              <button type="button" className="btn-quiet small is-danger" disabled={locked}
-                onClick={() => void act('正在删除', () => apiClient.feature('removeDouyuAutomation', { id: task.id }), '已删除')
-                  .then((ok) => { if (!ok) setConfirming(false) })}>确认删除</button>
-              <button type="button" className="btn-quiet small" onClick={() => setConfirming(false)}>取消</button>
+              <InlineConfirmButtons label="确认删除" disabled={locked} cancelDisabled={false}
+                onConfirm={() => void act('正在删除', () => apiClient.feature('removeDouyuAutomation', { id: task.id }), '已删除')
+                  .then((ok) => { if (!ok) setConfirming(false) })} onCancel={() => setConfirming(false)} />
             </span>
           : <button type="button" className="btn-quiet small is-danger" disabled={locked} onClick={() => setConfirming(true)}>删除</button>}
       </div>

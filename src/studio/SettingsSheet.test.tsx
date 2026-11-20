@@ -64,6 +64,65 @@ function generalPage(name: string): void {
   fireEvent.click(within(screen.getByRole('tablist', { name: '通用' })).getByRole('tab', { name }))
 }
 
+describe('account logout confirmation', () => {
+  it.each([
+    ['youtube', 'YouTube'], ['douyin', '抖音'], ['bilibili', '哔哩哔哩'], ['huya', '虎牙'],
+  ] as const)('confirms %s logout in place and allows retry after failure', async (id, name) => {
+    const signedOut = { douyu: anonymous, youtube: anonymous, douyin: anonymous, bilibili: anonymous, huya: anonymous }
+    const loginStatus = vi.spyOn(apiClient, 'loginStatus').mockResolvedValue({ ok: true, value: {
+      ...signedOut, [id]: { ...anonymous, loggedIn: true, cookieCount: 1 },
+    } })
+    vi.spyOn(apiClient, 'getDouyinSendState').mockResolvedValue({ ok: true, value: {
+      loggedIn: true, canSend: true, loginState: 'authenticated', message: '已登录',
+    } })
+    let fail!: () => void
+    const logout = vi.spyOn(apiClient, 'logout')
+      .mockImplementationOnce(() => new Promise(resolve => {
+        fail = () => resolve({ ok: false, code: 'logout-failed', message: '退出失败，请重试' })
+      }))
+      .mockImplementation(async () => {
+        loginStatus.mockResolvedValue({ ok: true, value: signedOut })
+        return { ok: true, value: { ok: true } }
+      })
+    const close = vi.fn()
+    mount(null, undefined, close)
+    section('账号')
+    platform(name)
+    const button = (label: string) => screen.getByRole('button', { name: label })
+    await waitFor(() => expect(button('退出')).toBeEnabled())
+
+    fireEvent.click(button('退出'))
+    expect(logout).not.toHaveBeenCalled()
+    expect(button('取消')).toHaveFocus()
+    fireEvent.click(button('取消'))
+    expect(button('退出')).toHaveFocus()
+    fireEvent.click(button('退出'))
+    button('重新登录').focus()
+    expect(fireEvent.keyDown(button('重新登录'), { key: 'Escape' })).toBe(false)
+    expect(button('退出')).toHaveFocus()
+    expect(close).not.toHaveBeenCalled()
+    expect(logout).not.toHaveBeenCalled()
+
+    fireEvent.click(button('退出'))
+    fireEvent.click(button('确认退出'))
+    expect(button('确认退出')).toBeDisabled()
+    expect(button('取消')).toBeDisabled()
+    expect(logout).toHaveBeenCalledExactlyOnceWith(id)
+    await act(async () => fail())
+    expect(screen.getByRole('alert')).toHaveTextContent('退出失败，请重试')
+    expect(button('退出')).toBeEnabled()
+    expect(screen.queryByRole('button', { name: '确认退出' })).toBeNull()
+
+    fireEvent.click(button('退出'))
+    expect(logout).toHaveBeenCalledTimes(1)
+    fireEvent.click(button('确认退出'))
+    await waitFor(() => expect(screen.queryByRole('button', { name: '确认退出' })).toBeNull())
+    expect(screen.queryByRole('button', { name: '退出' })).toBeNull()
+    expect(logout.mock.calls).toEqual([[id], [id]])
+    expect(close).not.toHaveBeenCalled()
+  })
+})
+
 const networkPreferences: NetworkPreferenceState = { domesticRouting: 'direct', systemProxy: { type: 'direct' }, media: { ...DEFAULT_MEDIA_NETWORK } }
 
 async function mountNetwork(onClose: () => void = () => {}): Promise<ReturnType<typeof mount>> {

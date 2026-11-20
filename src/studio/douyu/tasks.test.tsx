@@ -4,7 +4,7 @@
  * confirmed sends, the deadline and the real official room to handle.
  */
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StreamSyncerBridge } from '../../../electron/contracts'
 import { readMessageSchedule } from '../../../server/douyu/taskConfig'
@@ -15,6 +15,7 @@ import { useDouyu } from './useDouyu'
 type Call = { method: string; args: unknown }
 let calls: Call[] = []
 let rows: DouyuTaskView[] = []
+let removeTask: () => Promise<unknown>
 let preferences = { version: 1, fishing: { mode: 'all' }, treasure: { crossRoom: false, claimDelayMs: 5000 } }
 
 const accounts = { activeAccountId: 'a1', accounts: [{ id: 'a1', label: '主号', active: true, busy: false, login: { loggedIn: true } }] }
@@ -23,12 +24,14 @@ const snapshot = () => ({ activeAccountId: 'a1', currentRoom: '9999', retainedRo
 beforeEach(() => {
   calls = []
   rows = []
+  removeTask = async () => { rows = []; return { ok: true, value: snapshot() } }
   preferences = { version: 1, fishing: { mode: 'all' }, treasure: { crossRoom: false, claimDelayMs: 5000 } }
   vi.stubGlobal('streamSyncer', {
     invoke: vi.fn(async (method: string, args: unknown) => {
       calls.push({ method, args })
       if (method === 'listDouyuAccounts') return { ok: true, value: accounts }
       if (method === 'getDouyuTasks' || method === 'createDouyuTask') return { ok: true, value: snapshot() }
+      if (method === 'removeDouyuTask') return removeTask()
       if (method === 'getDouyuActivityOptions') return { ok: true, value: preferences }
       if (method === 'setDouyuActivityOptions') { preferences = structuredClone(args) as typeof preferences; return { ok: true, value: preferences } }
       if (method === 'openDouyuTaskRoom') return { ok: true, value: accounts }
@@ -163,6 +166,45 @@ const task = (patch: Partial<DouyuTaskView>): DouyuTaskView => ({
 })
 
 describe('task rows', () => {
+  it('only removes after confirmation and resets after a failed request', async () => {
+    rows = [task({})]
+    let fail!: () => void
+    const succeed = removeTask
+    removeTask = vi.fn(succeed).mockImplementationOnce(() => new Promise(resolve => {
+      fail = () => resolve({ ok: false, code: 'remove-failed', message: '任务删除失败' })
+    }))
+    render(<Harness />)
+    const row = within(await screen.findByRole('group', { name: '签到任务 9999 （主号）' }))
+    const open = () => fireEvent.click(row.getByRole('button', { name: '删除' }))
+    const cancel = () => row.getByRole('button', { name: '取消' })
+    const confirm = () => row.getByRole('button', { name: '确认删除' })
+
+    open()
+    expect(named('removeDouyuTask')).toHaveLength(0)
+    expect(cancel()).toHaveFocus()
+    fireEvent.click(cancel())
+    expect(row.getByRole('button', { name: '删除' })).toHaveFocus()
+    open()
+    expect(fireEvent.keyDown(cancel(), { key: 'Escape' })).toBe(false)
+    expect(row.queryByRole('button', { name: '确认删除' })).toBeNull()
+    expect(named('removeDouyuTask')).toHaveLength(0)
+
+    open()
+    fireEvent.click(confirm())
+    expect(confirm()).toBeDisabled()
+    expect(cancel()).toBeDisabled()
+    expect(named('removeDouyuTask')).toEqual([{ method: 'removeDouyuTask', args: { id: 't1' } }])
+    await act(async () => fail())
+    expect(screen.getByRole('alert')).toHaveTextContent('任务删除失败')
+    expect(row.queryByRole('button', { name: '确认删除' })).toBeNull()
+
+    open()
+    expect(named('removeDouyuTask')).toHaveLength(1)
+    fireEvent.click(confirm())
+    expect(await screen.findByText('暂无任务')).toBeInTheDocument()
+    expect(named('removeDouyuTask')).toHaveLength(2)
+  })
+
   it('shows confirmed sends and the deadline of a message loop', async () => {
     const deadline = new Date(2026, 9, 26, 21, 30).getTime()
     rows = [task({ kind: 'message-loop', status: 'running', completedRuns: 2, deadlineAt: deadline,

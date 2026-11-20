@@ -331,7 +331,11 @@ function StudioView(): React.ReactNode {
             key={camera.room}
             initial={camera.config?.crop ?? null}
             onSave={(crop) => { camera.save(crop); setFraming(false) }}
-            onRemove={camera.config ? () => { camera.remove(); setFraming(false) } : null}
+            onRemove={camera.config ? () => {
+              if (!camera.remove()) return false
+              setFraming(false)
+              return true
+            } : null}
             onClose={() => setFraming(false)}
           />
         )}

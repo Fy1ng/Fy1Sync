@@ -7,6 +7,7 @@ import { AccountAvatar, BrowserImportButton } from './BrowserLoginImport'
 import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
 import { displayError } from '../../core/errorDetails'
 import { ReadError } from '../ReadError'
+import { InlineConfirm } from '../InlineConfirm'
 
 const NAME = { bilibili: '哔哩哔哩', huya: '虎牙' } as const
 
@@ -76,7 +77,7 @@ export function PlatformAccount({ platform }: { platform: 'bilibili' | 'huya' })
         </span>
         <span className="row-end">
           <BrowserImportButton platform={platform} disabled={busy} />
-          {account?.cookieCount ? <button type="button" className="btn-quiet small" disabled={busy} onClick={() => void act(true)}>退出</button> : null}
+          {account?.cookieCount ? <InlineConfirm label="退出" confirmLabel="确认退出" disabled={busy} danger={false} onConfirm={() => act(true)} /> : null}
           <button type="button" className="btn-solid small" disabled={busy} onClick={() => void act(false)}>{account?.loggedIn ? '重新登录' : '登录'}</button>
         </span>
       </div>

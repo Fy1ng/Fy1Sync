@@ -14,6 +14,7 @@ import { apiClient } from '../../app/apiClient'
 import type { MessageHistoryPage, MessageHistoryQuery } from '../../../server/danmaku/messageHistory'
 import type { FavoriteDanmaku, FavoriteDanmakuPage } from '../../../electron/danmakuFeatures'
 import { Sheet, SideTabs } from '../kit'
+import { InlineConfirmButtons } from '../InlineConfirm'
 import './records.css'
 
 export type RecordsTab = 'history' | 'favorites'
@@ -223,8 +224,8 @@ function FavoriteRow({ item, onChanged, onRemoved, onFill }: {
         ) : confirming ? (
           <>
             <span className="muted">确认删除此收藏？</span>
-            <button type="button" className="btn-quiet small" disabled={busy} onClick={() => setConfirming(false)}>取消</button>
-            <button type="button" className="btn-quiet small is-danger" disabled={busy} onClick={() => void remove()}>确认删除</button>
+            <InlineConfirmButtons label="确认删除" cancelFirst disabled={busy}
+              onCancel={() => setConfirming(false)} onConfirm={() => void remove()} />
           </>
         ) : (
           <>

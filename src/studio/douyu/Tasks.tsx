@@ -22,6 +22,7 @@ import {
 } from './taskMessage'
 import type { DouyuData } from './useDouyu'
 import { ReadError } from '../ReadError'
+import { InlineConfirm } from '../InlineConfirm'
 import './tasks.css'
 
 const KIND: Record<DouyuTaskKind, string> = {
@@ -191,8 +192,8 @@ function TaskRow({ task, data, activeId }: { task: DouyuTaskView; data: DouyuDat
           onChange={(event) => void taskAction('正在保存', () => apiClient.setDouyuTaskPolicy(task.id, event.target.value as DouyuTaskPolicy), '已保存')}>
           {Object.entries(POLICY).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
-        <button type="button" className="btn-quiet small is-danger" disabled={locked}
-          onClick={() => void taskAction('正在删除', () => apiClient.removeDouyuTask(task.id), '已删除')}>删除</button>
+        <InlineConfirm label="删除" confirmLabel="确认删除" disabled={locked}
+          onConfirm={() => taskAction('正在删除', () => apiClient.removeDouyuTask(task.id), '已删除')} />
       </div>
       {blocked && !running && <p className="muted">{blocked}</p>}
     </li>

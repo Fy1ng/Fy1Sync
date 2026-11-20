@@ -87,6 +87,7 @@ describe('single-platform account settings', () => {
     await waitFor(() => expect(apiClient.login).toHaveBeenCalledWith(platform))
     expect(await screen.findByRole('button', { name: '重新登录' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '退出' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认退出' }))
     await waitFor(() => expect(apiClient.logout).toHaveBeenCalledWith(platform))
     expect(await screen.findByText('未登录')).toBeInTheDocument()
   })
