@@ -22,6 +22,7 @@ import {
   offsetReadout,
   openCameraFraming,
   openPlayer,
+  openSettings,
   revealOverlay,
   seekBoth,
   setPlaying,
@@ -29,6 +30,74 @@ import {
   stubDanmakuStream,
   waitForBothReady,
 } from './helpers'
+
+test('离线快捷键录入可取消和改绑, 弹幕开关及提示同步并可恢复默认', async ({ page, electronApp }) => {
+  const offline = await electronApp.evaluate(() => process.env.STREAM_SYNC_OFFLINE_E2E === '1')
+  test.skip(!offline, '快捷键测试使用离线配置')
+  await openPlayer(page)
+  await revealOverlay(page)
+  const danmakuButton = page.locator('.dock .dm-toggle')
+  await expect(danmakuButton).toHaveAttribute('title', '弹幕（D）')
+  await expect(danmakuButton).toHaveAttribute('aria-pressed', 'true')
+  await danmakuButton.focus()
+  await page.keyboard.press('d')
+  await expect(danmakuButton).toHaveAttribute('aria-pressed', 'false')
+  await page.keyboard.press('d')
+  await expect(danmakuButton).toHaveAttribute('aria-pressed', 'true')
+
+  const settings = await openSettings(page, '快捷键')
+  const shortcutsTab = settings.getByRole('tablist', { name: '通用', exact: true })
+    .getByRole('tab', { name: '快捷键', exact: true })
+  await expect(shortcutsTab).toHaveAttribute('aria-selected', 'true')
+  const danmakuRow = settings.getByRole('row').filter({ hasText: '开关弹幕' })
+  const defaultBinding = danmakuRow.getByRole('button', { name: '开关弹幕：修改 D', exact: true })
+  const reboundBinding = danmakuRow.getByRole('button', { name: '开关弹幕：修改 K', exact: true })
+  const recording = danmakuRow.getByText('按下新按键', { exact: true })
+
+  await defaultBinding.click()
+  await expect(recording).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(settings).toBeVisible()
+  await expect(shortcutsTab).toHaveAttribute('aria-selected', 'true')
+  await expect(recording).toBeHidden()
+  await expect(defaultBinding).toBeVisible()
+  await expect(danmakuButton).toHaveAttribute('title', '弹幕（D）')
+
+  await defaultBinding.click()
+  await expect(recording).toBeVisible()
+  await page.keyboard.press('k')
+  await expect(recording).toBeHidden()
+  await expect(reboundBinding).toBeVisible()
+  await expect(settings).toBeVisible()
+  await expect(danmakuButton).toHaveAttribute('title', '弹幕（K）')
+  await expect(danmakuButton).toHaveAttribute('aria-pressed', 'true')
+  await settings.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(settings).toBeHidden()
+  await revealOverlay(page)
+  await danmakuButton.focus()
+  await page.keyboard.press('d')
+  await expect(danmakuButton).toHaveAttribute('aria-pressed', 'true')
+  await page.keyboard.press('k')
+  await expect(danmakuButton).toHaveAttribute('aria-pressed', 'false')
+  await page.keyboard.press('k')
+  await expect(danmakuButton).toHaveAttribute('aria-pressed', 'true')
+
+  await openSettings(page, '快捷键')
+  await expect(reboundBinding).toBeVisible()
+  await settings.getByRole('button', { name: '恢复默认', exact: true }).click()
+  await expect(defaultBinding).toBeVisible()
+  await expect(danmakuButton).toHaveAttribute('title', '弹幕（D）')
+  await settings.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(settings).toBeHidden()
+  await revealOverlay(page)
+  await danmakuButton.focus()
+  await page.keyboard.press('k')
+  await expect(danmakuButton).toHaveAttribute('aria-pressed', 'true')
+  await page.keyboard.press('d')
+  await expect(danmakuButton).toHaveAttribute('aria-pressed', 'false')
+  await page.keyboard.press('d')
+  await expect(danmakuButton).toHaveAttribute('aria-pressed', 'true')
+})
 
 test.describe('双路播放与手动同步', () => {
   test.skip(!fixturesReady(), '缺少测试源，先运行 npm run fixtures')

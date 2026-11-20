@@ -11,6 +11,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { apiClient } from '../app/apiClient'
 import { useDockFold, useFullscreen, useMediaMount, useOverlayVisibility, usePublishedHeight } from '../app/hooks'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
+import { SEEK_SHORTCUT_STEPS, shortcutActionFor, shortcutTitle } from '../app/shortcuts'
 import { useCamera } from '../app/useCamera'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { CameraOverlay } from '../ui/CameraOverlay'
@@ -47,10 +48,6 @@ import { EmbeddedLoginOverlay, useEmbeddedLoginState } from './login/EmbeddedLog
 import { Favorites } from './favorites/Favorites'
 import { useDouyuLottery } from './douyu/douyuLottery'
 import { usePlatformRoomActivities } from './PlatformRoomActivities'
-
-/** Seconds per ←/→ press, and with Shift. */
-const SEEK_SMALL = 5
-const SEEK_LARGE = 30
 
 export function Studio(): React.ReactNode {
   return (
@@ -175,33 +172,32 @@ function StudioView(): React.ReactNode {
     const onKey = (event: KeyboardEvent): void => {
       if (embeddedLogin || event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return
       const target = event.target
-      if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return
-      const step = nudgeStepFor(event.shiftKey, snapshot.settings.smallStepSeconds, snapshot.settings.largeStepSeconds)
-      // ←/→ move the main picture only, like its time line and 回到直播; the alignment readout
-      // follows what the move did. The alignment itself is nudged with , and .
+      if (target instanceof Element && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), dialog, [role="dialog"], [role="alertdialog"]')) return
+      const { shortcuts, smallStepSeconds, largeStepSeconds } = session.settings
+      const action = shortcutActionFor(shortcuts, event.code)
+      if (!action) return
+      event.preventDefault()
+      const step = nudgeStepFor(event.shiftKey, smallStepSeconds, largeStepSeconds)
+      const seekStep = event.shiftKey ? SEEK_SHORTCUT_STEPS.shift : SEEK_SHORTCUT_STEPS.normal
       const seek = (seconds: number): void => {
         const role = session.snapshot.mainRole
         if (session.snapshot.media[role].status !== 'empty') void session.seekPlayback(role, seconds)
       }
-      switch (event.code) {
-        case 'Space': event.preventDefault(); void session.togglePlaying(); break
-        case 'ArrowLeft': event.preventDefault(); seek(event.shiftKey ? -SEEK_LARGE : -SEEK_SMALL); break
-        case 'ArrowRight': event.preventDefault(); seek(event.shiftKey ? SEEK_LARGE : SEEK_SMALL); break
-        // , and . sit under < and >: picture back, picture forward, like the two buttons.
-        case 'Comma':
-        case 'BracketLeft': event.preventDefault(); nudge('late', step); break
-        case 'Period':
-        case 'BracketRight': event.preventDefault(); nudge('early', step); break
-        case 'KeyA': startAutoAlign(session); break
-        case 'KeyD': session.updateDanmakuSettings({ enabled: !session.settings.danmaku.enabled }); break
-        case 'KeyC': setChat(!session.settings.sidebarVisible); break
-        case 'KeyF': fullscreen.toggle(); break
-        default: return
+      switch (action) {
+        case 'togglePlayback': void session.togglePlaying(); break
+        case 'seekBack': seek(-seekStep); break
+        case 'seekForward': seek(seekStep); break
+        case 'nudgeBack': nudge('late', step); break
+        case 'nudgeForward': nudge('early', step); break
+        case 'autoAlign': startAutoAlign(session); break
+        case 'toggleDanmaku': session.updateDanmakuSettings({ enabled: !session.settings.danmaku.enabled }); break
+        case 'toggleSidebar': setChat(!session.settings.sidebarVisible); break
+        case 'toggleFullscreen': fullscreen.toggle(); break
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [embeddedLogin, fullscreen, nudge, session, setChat, snapshot.settings.largeStepSeconds, snapshot.settings.smallStepSeconds])
+  }, [embeddedLogin, fullscreen, nudge, session, setChat])
 
   return (
     <div
@@ -262,7 +258,7 @@ function StudioView(): React.ReactNode {
             {!chatOpen && (
               <div className="topbar-tools">
                 {hasSidebar && (
-                  <button type="button" className="icon-btn glass" onClick={() => setChat(true)} aria-label="展开弹幕" title="弹幕列表（C）">
+                  <button type="button" className="icon-btn glass" onClick={() => setChat(true)} aria-label="展开弹幕" title={shortcutTitle('弹幕列表', snapshot.settings.shortcuts.toggleSidebar)}>
                     <Icon name="chat" />
                   </button>
                 )}
@@ -295,7 +291,7 @@ function StudioView(): React.ReactNode {
                 <PipButton />
                 <DanmakuSwitch onTune={() => setTuning((open) => !open)} />
                 <button type="button" className="icon-btn" onClick={fullscreen.toggle} aria-pressed={fullscreen.active}
-                  aria-label={fullscreen.active ? '退出全屏' : '全屏'} title={`${fullscreen.active ? '退出全屏' : '全屏'}（F）`}>
+                  aria-label={fullscreen.active ? '退出全屏' : '全屏'} title={shortcutTitle(fullscreen.active ? '退出全屏' : '全屏', snapshot.settings.shortcuts.toggleFullscreen)}>
                   <Icon name={fullscreen.active ? 'shrink' : 'expand'} />
                 </button>
               </div>

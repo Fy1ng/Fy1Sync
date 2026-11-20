@@ -16,6 +16,7 @@ import { normalizeSteps } from '../ui/controls/manualOffset'
 import type { RoiRect } from '../core/profileSchema'
 import type { SourceRole } from '../core/types'
 import { normalizeBasicClockMemory, type BasicClockMemoryEntry } from '../core/basicClockMemory'
+import { DEFAULT_SHORTCUTS, normalizeShortcuts, type ShortcutBindings } from './shortcuts'
 
 export const SETTINGS_KEY = 'stream-sync.settings.v1'
 
@@ -46,6 +47,7 @@ export interface AppSettings {
   smallStepSeconds: number
   /** Step of the outer ◀◀ / ▶▶ buttons, seconds; never below the small step. */
   largeStepSeconds: number
+  shortcuts: ShortcutBindings
   danmaku: DanmakuSettings
   autoSyncEnabled: boolean
   autoSyncIntervalSeconds: number
@@ -76,6 +78,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   audioRole: 'commentary',
   smallStepSeconds: 0.5,
   largeStepSeconds: 5,
+  shortcuts: DEFAULT_SHORTCUTS,
   danmaku: {
     enabled: true,
     fontSize: 24,
@@ -165,6 +168,7 @@ export function mergeSettings(raw: unknown): AppSettings {
     },
     audioRole: stored.audioRole === 'official' ? 'official' : 'commentary',
     ...steps(stored),
+    shortcuts: normalizeShortcuts(stored.shortcuts),
     danmaku: {
       enabled: boolean(danmaku.enabled, defaults.danmaku.enabled),
       fontSize: clamp(danmaku.fontSize, 12, 56, defaults.danmaku.fontSize),

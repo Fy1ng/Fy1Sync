@@ -362,6 +362,79 @@ describe('the studio', () => {
     fireEvent.keyDown(window, { code: 'BracketRight' })
     await waitFor(() => expect(apply).toHaveBeenCalledTimes(4))
     expect(Number(apply.mock.calls.at(-1)![0]) - previous).toBe(-session.settings.largeStepSeconds)
+
+    await act(async () => session.updateSettings({
+      shortcuts: { ...session.settings.shortcuts, seekBack: ['KeyJ'], nudgeForward: ['KeyK'] },
+      smallStepSeconds: 0.25, largeStepSeconds: 10,
+    }))
+    fireEvent.keyDown(window, { code: 'ArrowLeft', shiftKey: true })
+    fireEvent.keyDown(window, { code: 'Period', shiftKey: true })
+    expect(seek).toHaveBeenCalledTimes(3)
+    expect(apply).toHaveBeenCalledTimes(4)
+    fireEvent.keyDown(window, { code: 'KeyJ', shiftKey: true })
+    expect(seek).toHaveBeenLastCalledWith('commentary', -30)
+    const beforeFine = Number(apply.mock.calls.at(-1)![0])
+    fireEvent.keyDown(window, { code: 'KeyK', shiftKey: true })
+    await waitFor(() => expect(apply).toHaveBeenCalledTimes(5))
+    expect(Number(apply.mock.calls.at(-1)![0]) - beforeFine).toBe(-0.25)
+  })
+
+  it('consumes a recorded key before player dispatch and immediately uses the new binding and tooltip', async () => {
+    const session = makeSession()
+    renderStudio(session)
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: '跳过' }))
+    const danmaku = screen.getByRole('button', { name: '弹' })
+    expect(danmaku).toHaveAttribute('title', '弹幕（D）')
+    expect(danmaku).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    const dialog = screen.getByRole('dialog', { name: '设置' })
+    fireEvent.click(within(dialog).getByRole('tab', { name: '快捷键' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: '全屏：修改 F' }))
+    expect(fireEvent.keyDown(window, { code: 'KeyD' })).toBe(false)
+    expect(within(dialog).getByText('D 已被「开关弹幕」占用')).toBeInTheDocument()
+    expect(danmaku).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: '开关弹幕：修改 D' }))
+    await act(async () => { fireEvent.keyDown(window, { key: 'j', code: 'KeyK' }) })
+    expect(danmaku).toHaveAttribute('title', '弹幕（K）')
+    expect(danmaku).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭' }))
+    fireEvent.keyDown(window, { code: 'KeyD' })
+    expect(danmaku).toHaveAttribute('aria-pressed', 'true')
+    await act(async () => { fireEvent.keyDown(window, { code: 'KeyK' }) })
+    expect(danmaku).toHaveAttribute('aria-pressed', 'false')
+    await act(async () => session.updateSettings({ shortcuts: { ...session.settings.shortcuts, toggleDanmaku: [] } }))
+    expect(danmaku).toHaveAttribute('title', '弹幕')
+    fireEvent.keyDown(window, { code: 'KeyK' })
+    expect(danmaku).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('does not dispatch shortcuts from editable fields, dialogs, modifier chords or embedded login', async () => {
+    const session = makeSession()
+    renderStudio(session)
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: '跳过' }))
+    render(<>
+      <input aria-label="输入框" />
+      <div tabIndex={0} contentEditable="plaintext-only" data-testid="editable" />
+      <div role="dialog"><button type="button">对话框内按钮</button></div>
+    </>)
+    const code = 'KeyD'
+    for (const target of [screen.getByRole('textbox', { name: '输入框' }), screen.getByTestId('editable'), screen.getByRole('button', { name: '对话框内按钮' })]) {
+      target.focus()
+      fireEvent.keyDown(target, { code })
+      expect(session.settings.danmaku.enabled).toBe(true)
+    }
+    for (const modifiers of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }]) {
+      fireEvent.keyDown(window, { code, ...modifiers })
+      expect(session.settings.danmaku.enabled).toBe(true)
+    }
+    act(() => {
+      for (const listener of embeddedLoginListeners) listener({ id: 'shortcut-guard', platform: 'bilibili', purpose: 'login', phase: 'loading' })
+    })
+    fireEvent.keyDown(window, { code })
+    expect(session.settings.danmaku.enabled).toBe(true)
   })
 
   it('sends a dragged time line through the session, for the main picture only', async () => {

@@ -33,6 +33,7 @@ import { refreshLoginStatus } from './login/status'
 import { AccountAvatar, BrowserImportButton, BrowserLoginImportProvider } from './login/BrowserLoginImport'
 import { ReadError } from './ReadError'
 import { InlineConfirm } from './InlineConfirm'
+import { ShortcutSettings } from './ShortcutSettings'
 
 export type SettingsSection = 'accounts' | 'records' | 'insights' | 'frame-matching' | 'general'
 
@@ -141,9 +142,10 @@ function AccountPages({ target, onWatch }: { target: SettingsTarget; onWatch: (r
   </SideTabs>
 }
 
-type GeneralPage = 'align' | 'network' | 'decoding' | 'pip' | 'capture' | 'tools' | 'about'
+type GeneralPage = 'align' | 'shortcuts' | 'network' | 'decoding' | 'pip' | 'capture' | 'tools' | 'about'
 const GENERAL: { id: GeneralPage; label: string }[] = [
   { id: 'align', label: '对齐' },
+  { id: 'shortcuts', label: '快捷键' },
   { id: 'network', label: '网络' },
   { id: 'decoding', label: '解码' },
   { id: 'pip', label: '画中画' },
@@ -167,6 +169,7 @@ function General({ networkDraft, requestLeave, leave, onContinue }: NetworkNavig
     <SideTabs label="通用" value={page} onChange={next => { if (next !== page) requestLeave(() => setPage(next)) }} tabs={GENERAL}>
       <div className="settings-page">
         {page === 'align' && <AlignPrefs />}
+        {page === 'shortcuts' && <ShortcutSettings />}
         {page === 'network' && <Network networkDraft={networkDraft} leave={leave} onContinue={onContinue} />}
         {page === 'decoding' && <Decoding />}
         {page === 'pip' && <Group title="画中画"><PipSettings /></Group>}

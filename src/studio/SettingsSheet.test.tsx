@@ -7,6 +7,7 @@ import { Session } from '../app/session'
 import { SessionProvider } from '../app/SessionContext'
 import { apiClient } from '../app/apiClient'
 import { forgetAll, remember } from '../app/remembered'
+import { DEFAULT_SETTINGS, loadSettings } from '../app/settings'
 import { SettingsSheet } from './SettingsSheet'
 import { DEFAULT_MEDIA_NETWORK } from '../../server/mediaNetworkOptions'
 import type { NetworkPreferenceState } from '../../electron/networkPreferences'
@@ -63,6 +64,110 @@ function douyuTab(name: string): HTMLElement {
 function generalPage(name: string): void {
   fireEvent.click(within(screen.getByRole('tablist', { name: '通用' })).getByRole('tab', { name }))
 }
+
+function shortcutRow(action: string): ReturnType<typeof within> {
+  return within(screen.getByRole('rowheader', { name: action }).closest('tr')!)
+}
+
+describe('player shortcut settings', () => {
+  it('lists all nine player actions after the alignment tab and shows the actual steps', async () => {
+    mount()
+    const tabs = within(screen.getByRole('tablist', { name: '通用' })).getAllByRole('tab')
+    expect(tabs.slice(0, 3).map(tab => tab.textContent)).toEqual(['对齐', '快捷键', '网络'])
+    await act(async () => { fireEvent.click(screen.getByRole('radio', { name: '10 秒' })) })
+    await act(async () => { fireEvent.click(screen.getByRole('radio', { name: '0.25 秒' })) })
+    generalPage('快捷键')
+    const expected = [
+      ['播放／暂停', '空格'], ['主画面后退', '←'], ['主画面前进', '→'],
+      ['回退画面', ',', '['], ['快进画面', '.', ']'], ['自动对齐', 'A'],
+      ['开关弹幕', 'D'], ['展开／收起弹幕栏', 'C'], ['全屏', 'F'],
+    ] as const
+    expect(screen.getAllByRole('rowheader').map(header => header.textContent)).toEqual(expected.map(([action]) => action))
+    for (const [action, ...keys] of expected) {
+      for (const key of keys) expect(shortcutRow(action).getByRole('button', { name: `${action}：修改 ${key}` })).toHaveTextContent(key)
+    }
+    for (const action of ['主画面后退', '主画面前进']) {
+      expect(shortcutRow(action).getByText('5 秒')).toBeInTheDocument()
+      expect(shortcutRow(action).getByText('Shift：30 秒')).toBeInTheDocument()
+    }
+    for (const action of ['回退画面', '快进画面']) {
+      expect(shortcutRow(action).getByText('10 秒')).toBeInTheDocument()
+      expect(shortcutRow(action).getByText('Shift：0.25 秒')).toBeInTheDocument()
+    }
+  })
+
+  it('rejects reserved keys and chords, and Escape cancels recording without closing the sheet', () => {
+    const onClose = vi.fn()
+    const { session } = mount(null, undefined, onClose)
+    generalPage('快捷键')
+    const row = shortcutRow('开关弹幕')
+    const button = row.getByRole('button', { name: '开关弹幕：修改 D' })
+    fireEvent.click(button)
+    expect(button).toHaveFocus()
+    for (const key of [
+      { code: 'Tab' }, { code: 'Enter' }, { code: 'NumpadEnter' }, { code: 'ShiftLeft' },
+      { code: 'ControlRight' }, { code: 'AltLeft' }, { code: 'MetaRight' }, { code: 'Unidentified' },
+      { code: 'KeyK', ctrlKey: true }, { code: 'KeyK', altKey: true },
+      { code: 'KeyK', metaKey: true }, { code: 'KeyK', shiftKey: true },
+    ]) {
+      fireEvent.keyDown(button, key)
+      expect(session.settings.shortcuts).toEqual(DEFAULT_SETTINGS.shortcuts)
+      expect(row.getByText('按下新按键')).toBeInTheDocument()
+    }
+    expect(row.getByRole('alert')).toHaveTextContent('不能绑定此按键')
+    expect(fireEvent.keyDown(button, { code: 'Escape', key: 'Escape' })).toBe(false)
+    expect(onClose).not.toHaveBeenCalled()
+    expect(row.queryByText('按下新按键')).not.toBeInTheDocument()
+    expect(button).toHaveTextContent('D')
+    expect(fireEvent.keyDown(button, { code: 'Escape', key: 'Escape', repeat: true })).toBe(false)
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('warns about a conflict in the edited row and transfers only the confirmed key', async () => {
+    const { session } = mount()
+    generalPage('快捷键')
+    const row = shortcutRow('开关弹幕')
+    const button = row.getByRole('button', { name: '开关弹幕：修改 D' })
+    fireEvent.click(button)
+    fireEvent.keyDown(button, { code: 'Comma' })
+    expect(row.getByRole('status')).toHaveTextContent(', 已被「回退画面」占用')
+    expect(session.settings.shortcuts).toEqual(DEFAULT_SETTINGS.shortcuts)
+    fireEvent.click(row.getByRole('button', { name: '取消' }))
+    expect(session.settings.shortcuts).toEqual(DEFAULT_SETTINGS.shortcuts)
+    expect(row.queryByRole('status')).not.toBeInTheDocument()
+    fireEvent.click(button)
+    fireEvent.keyDown(button, { code: 'Comma' })
+    await act(async () => { fireEvent.click(row.getByRole('button', { name: '替换' })) })
+    expect(row.getByRole('button', { name: '开关弹幕：修改 ,' })).toBeInTheDocument()
+    expect(shortcutRow('回退画面').getByRole('button', { name: '回退画面：修改 [' })).toBeInTheDocument()
+    expect(loadSettings().shortcuts).toMatchObject({ nudgeBack: ['BracketLeft'], toggleDanmaku: ['Comma'] })
+  })
+
+  it('clears individual keys, accepts two distinct keys and restores defaults immediately', async () => {
+    const { session } = mount()
+    await act(async () => session.updateSettings({ largeStepSeconds: 10 }))
+    generalPage('快捷键')
+    const row = shortcutRow('回退画面')
+    await act(async () => { fireEvent.click(row.getByRole('button', { name: '回退画面：清除 ,' })) })
+    expect(session.settings.shortcuts.nudgeBack).toEqual(['BracketLeft'])
+    await act(async () => { fireEvent.click(row.getByRole('button', { name: '回退画面：清除 [' })) })
+    expect(loadSettings().shortcuts.nudgeBack).toEqual([])
+    const empty = row.getByRole('button', { name: '回退画面：添加按键（未设置）' })
+    expect(empty).toHaveTextContent('未设置')
+    fireEvent.click(empty)
+    await act(async () => { fireEvent.keyDown(empty, { code: 'KeyJ' }) })
+    const add = row.getByRole('button', { name: '回退画面：添加按键' })
+    fireEvent.click(add)
+    fireEvent.keyDown(add, { code: 'KeyJ' })
+    expect(row.getByRole('alert')).toHaveTextContent('此动作已绑定 J')
+    await act(async () => { fireEvent.keyDown(add, { code: 'KeyK' }) })
+    expect(loadSettings().shortcuts.nudgeBack).toEqual(['KeyJ', 'KeyK'])
+    expect(row.queryByRole('button', { name: /添加按键/ })).not.toBeInTheDocument()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '恢复默认' })) })
+    expect(loadSettings()).toMatchObject({ shortcuts: DEFAULT_SETTINGS.shortcuts, largeStepSeconds: 10 })
+    expect(row.getByRole('button', { name: '回退画面：修改 ,' })).toBeInTheDocument()
+  })
+})
 
 describe('account logout confirmation', () => {
   it.each([

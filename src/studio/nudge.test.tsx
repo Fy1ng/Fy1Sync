@@ -43,8 +43,8 @@ describe('manual alignment nudge controls', () => {
       expect(button.querySelector('.capsule-nudge-step .icon path')?.getAttribute('d'))
         .toBe(button.querySelector('.capsule-nudge-label .icon path')?.getAttribute('d'))
     }
-    expect(back).toHaveAttribute('title', expect.stringContaining('「,」或「[」键）；按住 Shift 微调'))
-    expect(forward).toHaveAttribute('title', expect.stringContaining('「.」或「]」键）；按住 Shift 微调'))
+    expect(back).toHaveAttribute('title', '回退 5s（,、[）；按住 Shift 微调，长按连调')
+    expect(forward).toHaveAttribute('title', '快进 5s（.、]）；按住 Shift 微调，长按连调')
     expect(back).not.toHaveTextContent('按住 Shift 微调')
     expect(forward).not.toHaveTextContent('按住 Shift 微调')
     fireEvent.click(back)
@@ -53,6 +53,15 @@ describe('manual alignment nudge controls', () => {
     expect(apply).toHaveBeenLastCalledWith(4.5)
     fireEvent.click(forward)
     expect(apply).toHaveBeenLastCalledWith(-0.5)
+  })
+
+  it('shows the current nudge keys and omits the key hint when unbound', async () => {
+    const { back, forward } = await mount()
+    await act(async () => session.updateSettings({
+      shortcuts: { ...session.settings.shortcuts, nudgeBack: ['KeyJ', 'ArrowDown'], nudgeForward: [] },
+    }))
+    expect(back).toHaveAttribute('title', '回退 5s（J、↓）；按住 Shift 微调，长按连调')
+    expect(forward).toHaveAttribute('title', '快进 5s；按住 Shift 微调，长按连调')
   })
 
   it('updates both displayed step values immediately when Shift changes while hovered', async () => {

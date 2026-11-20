@@ -13,6 +13,7 @@ import { ErrorDetailsButton, ErrorText } from '../ui/ErrorDetails'
 import type { DisplayError } from '../core/errorDetails'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
+import { shortcutTitle } from '../app/shortcuts'
 import type { DanmakuMessage } from '../core/danmakuTimeline'
 import { useComposer } from './composer'
 import { useDouyuWrites } from './douyuWrites'
@@ -158,7 +159,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords, douyuLotter
             <Icon name="gear" />
           </button>
         </span>
-        <button type="button" className="icon-btn" onClick={onClose} aria-label="收起弹幕" title="收起（C）">
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="收起弹幕" title={shortcutTitle('收起', snapshot.settings.shortcuts.toggleSidebar)}>
           <Icon name="close" />
         </button>
       </header>

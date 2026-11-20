@@ -3237,6 +3237,64 @@ body,
   border-top: 0;
 }
 
+.studio .shortcut-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.studio .shortcut-table th,
+.studio .shortcut-table td {
+  padding: 8px 8px 8px 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+.studio .shortcut-table thead th {
+  color: var(--ash);
+  font-size: 12px;
+}
+
+.studio .shortcut-table th[scope='row'] {
+  font-weight: 600;
+}
+
+.studio .shortcut-keys,
+.studio .shortcut-key,
+.studio .shortcut-conflict,
+.studio .shortcut-steps {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.studio .shortcut-key {
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+
+.studio .shortcut-key > .btn {
+  min-width: 36px;
+  white-space: nowrap;
+}
+
+.studio .shortcut-key .shortcut-recording {
+  border-color: var(--accent);
+}
+
+.studio .shortcut-conflict {
+  margin-top: 6px;
+}
+
+.studio .shortcut-conflict p {
+  flex-basis: 100%;
+}
+
+.studio .shortcut-steps span {
+  white-space: nowrap;
+}
+
 .studio .side-panel > .insights-body {
   display: flex;
   flex-direction: column;

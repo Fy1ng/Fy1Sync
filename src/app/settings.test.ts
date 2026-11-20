@@ -31,6 +31,32 @@ function fakeStorage(initial?: string): SettingsStorage & { value: string | null
 }
 
 describe('mergeSettings', () => {
+  it('uses all of the original player shortcuts by default', () => {
+    expect(loadSettings(fakeStorage()).shortcuts).toEqual({
+      togglePlayback: ['Space'], seekBack: ['ArrowLeft'], seekForward: ['ArrowRight'],
+      nudgeBack: ['Comma', 'BracketLeft'], nudgeForward: ['Period', 'BracketRight'],
+      autoAlign: ['KeyA'], toggleDanmaku: ['KeyD'], toggleSidebar: ['KeyC'], toggleFullscreen: ['KeyF'],
+    })
+  })
+
+  it('round-trips custom and empty shortcut bindings', () => {
+    const storage = fakeStorage()
+    const shortcuts = { ...DEFAULT_SETTINGS.shortcuts, togglePlayback: ['KeyP', 'Numpad0'], toggleDanmaku: [] }
+    saveSettings({ ...DEFAULT_SETTINGS, shortcuts }, storage)
+    expect(loadSettings(storage).shortcuts).toEqual(shortcuts)
+  })
+
+  it('falls back for malformed shortcuts without creating duplicate ownership', () => {
+    for (const toggleDanmaku of [null, 'KeyD', [5], ['Unidentified'], ['KeyAA'], ['Ctrl+KeyD'],
+      ['Escape'], ['Tab'], ['Enter'], ['NumpadEnter'], ['ShiftLeft'], ['AltRight'], ['ControlLeft'], ['MetaRight'],
+      ['KeyJ', 'KeyJ'], ['KeyJ', 'KeyK', 'KeyL']]) {
+      const storage = fakeStorage(JSON.stringify({ shortcuts: { toggleDanmaku, seekForward: ['KeyV'], unknown: ['KeyG'] } }))
+      expect(loadSettings(storage).shortcuts).toEqual({ ...DEFAULT_SETTINGS.shortcuts, seekForward: ['KeyV'] })
+    }
+    expect(mergeSettings({ shortcuts: { seekBack: ['KeyJ'], seekForward: ['KeyJ'], toggleDanmaku: ['KeyA'] } }).shortcuts)
+      .toEqual({ ...DEFAULT_SETTINGS.shortcuts, seekBack: ['KeyJ'], toggleDanmaku: ['KeyA'], autoAlign: [] })
+  })
+
   it('hides optional recognition diagnostics by default and persists the toggle independently', () => {
     expect(DEFAULT_SETTINGS.basicRecognitionPanelVisible).toBe(false)
     expect(mergeSettings({ recognitionMode: 'basic' }).basicRecognitionPanelVisible).toBe(false)

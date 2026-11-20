@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from 'react'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
+import { shortcutTitle } from '../app/shortcuts'
 import { seekableRange } from '../core/syncPlan'
 import { latestPlayableTime } from '../media/timebase'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
@@ -126,11 +127,11 @@ export function Timeline(): React.ReactNode {
 
 export function PlayButton(): React.ReactNode {
   const session = useSession()
-  const { playing, media } = useSessionSnapshot()
+  const { playing, media, settings } = useSessionSnapshot()
   const nothing = media.official.status === 'empty' && media.commentary.status === 'empty'
   return (
     <button type="button" className="play" disabled={nothing} onClick={() => void session.togglePlaying()}
-      aria-label={playing ? '暂停' : '播放'} title={`${playing ? '暂停' : '播放'}（空格）`}>
+      aria-label={playing ? '暂停' : '播放'} title={shortcutTitle(playing ? '暂停' : '播放', settings.shortcuts.togglePlayback)}>
       <Icon name={playing ? 'pause' : 'play'} />
     </button>
   )
@@ -143,7 +144,7 @@ export function DanmakuSwitch({ onTune }: { onTune: () => void }): React.ReactNo
   return (
     <div className="dm-switch">
       <button type="button" className={`dm-toggle ${on ? 'is-on' : ''}`.trim()} aria-pressed={on}
-        onClick={() => session.updateDanmakuSettings({ enabled: !on })} title="弹幕（D）">
+        onClick={() => session.updateDanmakuSettings({ enabled: !on })} title={shortcutTitle('弹幕', settings.shortcuts.toggleDanmaku)}>
         弹
       </button>
       <button type="button" className="icon-btn" onClick={onTune} aria-label="弹幕设置" title="弹幕设置">

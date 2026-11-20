@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
+import { shortcutTitle } from '../app/shortcuts'
 import type { Session } from '../app/session'
 import { MAX_OFFSET_SECONDS, type SourceRole } from '../core/types'
 import { HoldButton, Icon, Popover, Segmented, Switch, usePopover } from './kit'
@@ -102,7 +103,7 @@ export function SyncCapsule(): React.ReactNode {
       <HoldButton
         className="capsule-nudge"
         label="回退画面"
-        title={`回退 ${stepLabel}（「,」或「[」键）；按住 Shift 微调，长按连调`}
+        title={`${shortcutTitle(`回退 ${stepLabel}`, settings.shortcuts.nudgeBack)}；按住 Shift 微调，长按连调`}
         disabled={!paired || requested >= MAX_OFFSET_SECONDS}
         onPointerEnter={event => modifier.update(event.shiftKey)}
         onStep={(_held, keys) => move('late', keys)}
@@ -132,7 +133,7 @@ export function SyncCapsule(): React.ReactNode {
       <HoldButton
         className="capsule-nudge"
         label="快进画面"
-        title={`快进 ${stepLabel}（「.」或「]」键）；按住 Shift 微调，长按连调`}
+        title={`${shortcutTitle(`快进 ${stepLabel}`, settings.shortcuts.nudgeForward)}；按住 Shift 微调，长按连调`}
         disabled={!paired || requested <= -MAX_OFFSET_SECONDS}
         onPointerEnter={event => modifier.update(event.shiftKey)}
         onStep={(_held, keys) => move('early', keys)}
@@ -183,7 +184,6 @@ function OffsetEditor({ value, onDone }: { value: number; onDone: () => void }):
 /** Event-specific HUD coverage and cross-resolution matching are still being adapted. */
 const AUTO_ALIGN_ADAPTING = true
 
-/** 自动对齐 from its button or the A key. */
 export function startAutoAlign(session: Session): void {
   if (!session.snapshot.autoSync.ready) return
   if (session.settings.recognitionMode === 'basic' && session.settings.basicRecognitionPanelVisible && !session.settings.sidebarVisible) session.updateSettings({ sidebarVisible: true })
@@ -210,7 +210,7 @@ export function AutoAlign(): React.ReactNode {
         </button>
       ) : (
         <button type="button" className="align-main" disabled={busy || !bothReady} onClick={() => startAutoAlign(session)}
-          title={bothReady ? '自动对齐（A）' : '等待两路播放和缓冲就绪'}>
+          title={bothReady ? shortcutTitle('自动对齐', settings.shortcuts.autoAlign) : '等待两路播放和缓冲就绪'}>
           {bothReady ? '自动对齐' : '准备中'}
           {bothReady && AUTO_ALIGN_ADAPTING && <span className="align-beta" aria-hidden="true">适配中</span>}
         </button>
