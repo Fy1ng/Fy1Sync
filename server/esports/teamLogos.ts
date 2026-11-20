@@ -2,9 +2,9 @@ import { createHash, randomUUID } from 'node:crypto'
 import { lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { metadataUserAgent } from '../appIdentity'
-import { metadataConfig } from '../config'
 import { ProxyError, safeFetch, type Resolver } from '../safeFetch'
 import { DispatchTurns, LiquipediaCoolingDown, LiquipediaRateLimit, retryAfterDelay } from './liquipediaRateLimit'
+import { liquipediaConfig } from './metadataIo'
 
 export const LOGO_REFRESH_MS = 7 * 24 * 60 * 60_000
 export const LOGO_REFRESH_STEP_MS = 30_000
@@ -41,9 +41,9 @@ export function logoFormat(bytes: Uint8Array): Extension | null {
   return null
 }
 
-function directory(root: string, create = false): string | null {
+function directory(root: string, create = false, folder = 'logos'): string | null {
   let current = resolve(root)
-  for (const part of ['', 'events', 'logos']) {
+  for (const part of ['', 'events', folder]) {
     if (part) current = join(current, part)
     try {
       if (create) { try { mkdirSync(current, { mode: 0o700 }) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error } }
@@ -76,9 +76,9 @@ function checked(dir: string, key: string): Checked | null {
 /** Disk images have no expiration; timestamps only control background checks. */
 export function readTeamLogo(root: string, key: string, _now = Date.now(), bundledLogoDir?: string): Logo | null {
   if (!LOGO_KEY.test(key)) return null
-  for (const source of [root, bundledLogoDir]) {
+  for (const [source, folder] of [[root, 'relay-logos'], [root, 'logos'], [bundledLogoDir, 'logos']]) {
     if (!source) continue
-    const dir = directory(source)
+    const dir = directory(source, false, folder)
     if (!dir) continue
     const preferred = checked(dir, key)?.extension
     const extensions = [...new Set([preferred, ...Object.keys(FORMATS)])].filter((ext): ext is Extension => !!ext)
@@ -96,6 +96,19 @@ function atomicFile(dir: string, name: string, bytes: Uint8Array | string): void
     writeFileSync(temporary, bytes, { flag: 'wx', mode: 0o600 })
     renameSync(temporary, join(dir, name))
   } finally { try { unlinkSync(temporary) } catch { /* Already renamed. */ } }
+}
+
+function saveLogo(dir: string, key: string, bytes: Uint8Array, state: Checked, changed: boolean): void {
+  if (changed) atomicFile(dir, `${key}.${state.extension}`, bytes)
+  atomicFile(dir, `${key}.checked.json`, JSON.stringify(state))
+}
+
+export function writeRelayTeamLogo(root: string, key: string, bytes: Uint8Array, sha256: string, now: number): void {
+  const extension = logoFormat(bytes)
+  if (!LOGO_KEY.test(key) || bytes.byteLength > LOGO_MAX_BYTES || !extension || hash(bytes) !== sha256) throw new Error('Invalid relay logo')
+  const dir = directory(root, true, 'relay-logos')
+  if (!dir) throw new Error('Invalid team logo directory')
+  saveLogo(dir, key, bytes, { checkedAt: now, sha256, extension }, true)
 }
 
 /**
@@ -155,6 +168,7 @@ interface Dependencies {
   userDataDir: string
   bundledLogoDir?: string
   version: string
+  userAgent?: string
   request?: typeof fetch
   resolve?: Resolver
   now?: () => number
@@ -286,8 +300,7 @@ export class TeamLogoCache {
           const previous = this.read(key), sha256 = hash(result.bytes)
           const dir = directory(this.options.userDataDir, true)
           if (!dir) throw new InvalidLogo('Invalid team logo directory')
-          if (previous?.sha256 !== sha256) atomicFile(dir, `${key}.${result.ext}`, result.bytes)
-          atomicFile(dir, `${key}.checked.json`, JSON.stringify({ checkedAt: this.now(), sha256, extension: result.ext }))
+          saveLogo(dir, key, result.bytes, { checkedAt: this.now(), sha256, extension: result.ext }, previous?.sha256 !== sha256)
           if (previous?.sha256 !== sha256) { try { this.options.onUpdated?.() } catch { /* Notification failures cannot invalidate the image. */ } }
         })
         return
@@ -318,7 +331,7 @@ export class TeamLogoCache {
     let startedAt = this.now()
     let quotaError: LiquipediaCoolingDown | YieldRefresh | undefined
     try {
-      const { response, finalUrl } = await safeFetch(`https://liquipedia.net${path}`, metadataConfig(), {
+      const { response, finalUrl } = await safeFetch(`https://liquipedia.net${path}`, liquipediaConfig(), {
         signal,
         resolve: this.options.resolve,
         fetchImpl: async (input, init) => {
@@ -341,7 +354,7 @@ export class TeamLogoCache {
           }
           return response
         },
-        headers: { 'User-Agent': metadataUserAgent(this.options.version), 'Accept-Encoding': 'gzip', Accept: 'image/png,image/jpeg,image/webp' },
+        headers: { 'User-Agent': this.options.userAgent ?? metadataUserAgent(this.options.version), 'Accept-Encoding': 'gzip', Accept: 'image/png,image/jpeg,image/webp' },
       }).catch(error => { throw quotaError ?? error })
       if (response.status === 429) {
         await response.body?.cancel().catch(() => {})

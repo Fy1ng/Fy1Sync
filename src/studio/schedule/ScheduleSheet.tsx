@@ -6,10 +6,10 @@
  * into 进行中 / 即将开始 / 已结束. Each match lists the streams it can be watched on, with
  * the broadcast's own title when it is known, so two stages of one event can be told apart.
  * Picking a stream loads it as 画面 and closes the sheet. A stream that names no video waits
- * for main to find its channel on the event page; until then its button is off and the row
+ * for the relay to find its channel on the event page; until then its button is off and the row
  * says why.
  *
- * The data is Liquipedia's (CC-BY-SA 3.0); main rate-limits and caches it, and the footer
+ * The data is Liquipedia's (CC-BY-SA 3.0). Main reads and caches it from the relay, and the footer
  * says where it came from and how old it is.
  */
 
@@ -26,7 +26,7 @@ import { displayError } from '../../core/errorDetails'
 
 /** How often the open sheet asks again. Main serves its cache in between, so this is cheap. */
 const POLL_MS = 60_000
-type RefreshBlock = { at: number; reason: NonNullable<Cs2Schedule['refreshReason']>; fetchedAt: number }
+type RefreshBlock = { at: number; reason: NonNullable<Cs2Schedule['refreshReason']> }
 const retryLabel = (seconds: number): string => seconds >= 3600 ? `${Math.ceil(seconds / 3600)} 小时`
   : seconds >= 60 ? `${Math.ceil(seconds / 60)} 分钟` : `${seconds} 秒`
 
@@ -44,16 +44,16 @@ export function ScheduleSheet({ onClose, onWatch }: {
   const [refreshBlock, setRefreshBlock] = useState<RefreshBlock | null>(() => {
     const value = lastSchedule()
     return value?.refreshAt && value.refreshAt > Date.now()
-      ? { at: value.refreshAt, reason: value.refreshReason ?? 'parse-quota', fetchedAt: value.fetchedAt } : null
+      ? { at: value.refreshAt, reason: value.refreshReason ?? 'parse-quota' } : null
   })
   const acceptCooldown = useCallback((value: Cs2Schedule, explicit = false): void => {
     setRefreshBlock(previous => {
       const at = value.refreshAt
       if (typeof at === 'number' && Number.isFinite(at) && at > Date.now()) {
-        return { at: explicit || value.verification ? at : Math.max(previous?.at ?? 0, at),
-          reason: value.refreshReason ?? 'parse-quota', fetchedAt: value.fetchedAt }
+        const reason = value.refreshReason ?? 'parse-quota'
+        return { at: explicit || reason !== 'parse-quota' ? at : Math.max(previous?.at ?? 0, at), reason }
       }
-      if (explicit || (previous && previous.reason !== 'parse-quota' && !value.stale && value.fetchedAt > previous.fetchedAt)) return null
+      if (explicit || (previous && previous.reason !== 'parse-quota' && !value.error)) return null
       return previous
     })
   }, [])
@@ -125,7 +125,7 @@ export function ScheduleSheet({ onClose, onWatch }: {
   }, [])
 
   const events = useMemo(() => groupEvents(schedule), [schedule])
-  const upstreamLimited = waitSeconds > 0 && (schedule?.refreshReason === 'upstream-rate-limit' || (schedule?.stale && schedule.errorDetail?.status === 429))
+  const upstreamLimited = waitSeconds > 0 && schedule?.refreshReason === 'upstream-rate-limit'
   const verification = schedule?.verification
   const current = events.find((group) => group.key === eventKey) ?? events[0]
   useEffect(() => { if (current && current.key !== eventKey) setEventKey(current.key) }, [current, eventKey])
@@ -193,8 +193,8 @@ export function ScheduleSheet({ onClose, onWatch }: {
         )}
         <footer className="sched-foot">
           {refreshMessage && <p role="status">{refreshMessage}</p>}
-          {schedule?.stale && events.length > 0 && <p className="note-warn"><ErrorText error={schedule.errorDetail ?? { message: schedule.error, fetchedAt: schedule.fetchedAt, stale: true }} message={schedule.error ?? '更新失败，显示上次赛程'} /></p>}
-          {upstreamLimited && <LiquipediaVerification key={verification?.round} attempt={verification}
+          {schedule?.stale && (events.length > 0 || (schedule.fetchedAt > 0 && !schedule.error)) && <p className="note-warn"><ErrorText error={schedule.errorDetail ?? { message: schedule.error, fetchedAt: schedule.fetchedAt, stale: true }} message={schedule.error ?? '赛程数据已过期，暂时显示上次结果'} /></p>}
+          {upstreamLimited && verification && <LiquipediaVerification key={verification.round} attempt={verification}
             waiting={verifying} now={now} onRetry={retryAfterVerification} />}
           <span className="sched-source">
             {schedule ? `${schedule.attribution} - ${schedule.fetchedAt > 0 ? `读取于 ${formatStart(schedule.fetchedAt, now)}` : '暂未获取'}` : '赛程数据来自 Liquipedia（CC-BY-SA 3.0）'}

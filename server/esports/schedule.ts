@@ -1,11 +1,8 @@
-import { lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
-import { randomUUID } from 'node:crypto'
+import { mkdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { metadataUserAgent } from '../appIdentity'
-import { metadataConfig } from '../config'
-import { FeatureApiError } from '../featureApi'
 import { PinnedDispatcherPool, safeFetch, type Resolver } from '../safeFetch'
-import { currentMatches, parseSchedule, ScheduleFormatError, validEntry, validTwitchLogin } from './parser'
+import { currentMatches, parseSchedule, ScheduleFormatError } from './parser'
 import { normalizeTournamentPath, queryTournamentTiers, type TournamentTier } from './tiers'
 import { cooldownRound, DispatchTurns, LiquipediaCoolingDown, LiquipediaRateLimit, pause, verificationNotBefore, VerificationRoundEnded } from './liquipediaRateLimit'
 import { channelLinksUrl, eventChannels, matchChannel, type EventChannels } from './streamChannels'
@@ -13,9 +10,13 @@ import type { Cs2ScheduleEvent } from '../../electron/featureContracts'
 import type { Cs2Match, Cs2Schedule, StreamTitle, StreamTitleInput } from './types'
 import { TeamLogoCache } from './teamLogos'
 import { diagnosticDetails } from '../errorDetails'
-import { httpErrorDetails } from '../httpError'
+import { atomicJson, liquipediaConfig, readBounded, readJson, SCHEDULE_UNAVAILABLE as UNAVAILABLE, UPSTREAM_LIMITED } from './metadataIo'
+import { scheduleArguments, scheduleFocusArguments, verificationRoundArgument } from './scheduleArguments'
+import { StreamTitles } from './streamTitles'
 
 export { PARSE_INTERVAL_MS } from './liquipediaRateLimit'
+export { scheduleArguments, scheduleFocusArguments } from './scheduleArguments'
+export { streamTitleArguments, titleStage, TITLE_TTL_MS } from './streamTitles'
 
 // Parse the transclusion instead of reusing the shared page parser cache. Individual
 // widgets can still return old match data; a fresh API read does not prove fresh scores.
@@ -26,17 +27,14 @@ export const ATTRIBUTION = '赛程数据来自 Liquipedia（CC-BY-SA 3.0）'
 export const SCHEDULE_TTL_MS = 300_000
 const ACTIVE_SCHEDULE_TTL_MS = 60_000
 const SOON_WINDOW_MS = 15 * 60_000
-export const TITLE_TTL_MS = 120_000
+const RECENT_START_MS = 30 * 60_000
 export const TIER_TTL_MS = 24 * 60 * 60_000
 export const TIER_NULL_TTL_MS = 6 * 60 * 60_000
 export const TIER_RETRY_MS = 300_000
 /** An event's channels are read again after a day, or five minutes after a failed read. */
 export const CHANNEL_TTL_MS = 24 * 60 * 60_000
 export const CHANNEL_RETRY_MS = 300_000
-const MAX_BODY_BYTES = 2_000_000
 const SCHEDULE_REQUEST_TIMEOUT_MS = 60_000
-const UNAVAILABLE = '赛程暂时无法读取，请稍后重试'
-const UPSTREAM_LIMITED = '赛程更新受限，暂时显示上次结果'
 /** Refused for the 30-second parse quota; `at` is when the quota frees. */
 class RateLimited extends Error { constructor(readonly at: number) { super('Liquipedia parse quota') } }
 
@@ -49,26 +47,22 @@ interface Dependencies {
   userDataDir: string
   bundledLogoDir?: string
   version: string
+  userAgent?: string
+  offline?: boolean
+  activeScheduleTtlMs?: number
   now?: () => number
   request?: typeof fetch
   resolve?: Resolver
   log?: (message: string) => void
   onEvent?: (event: Cs2ScheduleEvent) => void
+  onRefresh?: (schedule: Cs2Schedule) => void
   /** Disable background images in parse-only tests. Production always creates a cache. */
   logos?: TeamLogoCache | null
 }
 
-function readBounded(file: string): string {
-  const stat = lstatSync(file)
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_BODY_BYTES) throw new Error('Invalid metadata cache')
-  return readFileSync(file, 'utf8')
-}
-function atomicJson(directory: string, name: string, value: unknown): void {
-  const temporary = join(directory, `${name}.${randomUUID()}.tmp`)
-  try {
-    writeFileSync(temporary, JSON.stringify(value), { flag: 'wx', mode: 0o600 })
-    renameSync(temporary, join(directory, name))
-  } finally { try { unlinkSync(temporary) } catch { /* Already renamed, or never created. */ } }
+export function isActiveScheduleMatch(match: Cs2Match, now: number): boolean {
+  return match.state === 'live' || (match.state === 'upcoming'
+    && match.startsAt >= now - RECENT_START_MS && match.startsAt <= now + SOON_WINDOW_MS)
 }
 
 /** Persistent schedule payload and path-level tier metadata shared across windows. */
@@ -108,83 +102,6 @@ class ScheduleDisk {
   }
 }
 
-async function readJson(response: Response): Promise<unknown> {
-  if (response.status !== 200 || response.redirected || !response.body) {
-    const detail = await httpErrorDetails(response)
-    throw Object.assign(new Error('Metadata response unavailable'), detail)
-  }
-  const reader = response.body.getReader(), chunks: Uint8Array[] = []
-  let length = 0
-  try {
-    for (;;) {
-      const part = await reader.read()
-      if (part.done) break
-      length += part.value.byteLength
-      if (length > MAX_BODY_BYTES) throw new Error('Metadata response too large')
-      chunks.push(part.value)
-    }
-    const payload: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'))
-    if (object(payload) && payload.error) throw Object.assign(new Error('Metadata API returned an error'), { upstream: diagnosticDetails(payload.error) })
-    return payload
-  } catch (error) { await reader.cancel().catch(() => {}); throw error }
-  finally { reader.releaseLock() }
-}
-
-// A single budget covers concurrent calls from every service/window in this process.
-let titleActive = 0
-const titleWaiters: Array<() => void> = []
-async function titleSlot<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {
-  if (titleActive >= 4) await new Promise<void>(resolve => titleWaiters.push(resolve))
-  else titleActive++
-  try { signal.throwIfAborted(); return await run() }
-  finally {
-    const next = titleWaiters.shift()
-    if (next) next()
-    else titleActive--
-  }
-}
-
-export function titleStage(title: string): string | null {
-  const markers = new Set<string>()
-  const bracket = /^\s*\[([A-D])\](?:\s|$)/i.exec(title)
-  if (bracket) markers.add(bracket[1]!.toUpperCase())
-  for (const match of title.matchAll(/\b(?:stream|stage)\s+([A-D])\b|\b([A-D])\s+(?:stream|stage)\b/gi)) markers.add((match[1] ?? match[2])!.toUpperCase())
-  if (/\bmain\s+(?:stream|stage)\b|主舞台/i.test(title)) markers.add('主舞台')
-  if (/\bsecondary\s+(?:stream|stage)\b|副舞台/i.test(title)) markers.add('副舞台')
-  return markers.size === 1 ? [...markers][0]! : null
-}
-function cleanTitle(raw: unknown): string | null {
-  return typeof raw === 'string' && raw.trim() && raw.length <= 2_000 && !/[\x00-\x1f\x7f]/.test(raw) ? raw.trim() : null
-}
-const object = (raw: unknown): raw is Record<string, unknown> => !!raw && typeof raw === 'object' && !Array.isArray(raw)
-const invalid = (): never => { throw new FeatureApiError('invalid-arguments') }
-
-export function scheduleArguments(raw: unknown): { refresh?: boolean } | undefined {
-  if (raw === undefined) return undefined
-  if (!object(raw) || Object.keys(raw).some(k => k !== 'refresh') || (raw.refresh !== undefined && typeof raw.refresh !== 'boolean')) return invalid()
-  return raw as { refresh?: boolean }
-}
-/** The event 赛程 shows, as a Liquipedia path such as `/counterstrike/PGL/2026/Masters`; never a full URL. */
-export function scheduleFocusArguments(raw: unknown): { eventPath: string | null } {
-  if (!object(raw) || Object.keys(raw).length !== 1 || !Object.hasOwn(raw, 'eventPath')) return invalid()
-  const value = raw.eventPath
-  if (value === null) return { eventPath: null }
-  if (typeof value !== 'string' || value.length > 500 || !value.startsWith('/counterstrike/') || /[?#\\]/.test(value)) return invalid()
-  return { eventPath: value }
-}
-export function streamTitleArguments(raw: unknown): { streams: StreamTitleInput[] } {
-  if (!object(raw) || Object.keys(raw).length !== 1 || !Array.isArray(raw.streams) || raw.streams.length > 12) return invalid()
-  const streams = raw.streams.map(value => {
-    if (!object(value) || Object.keys(value).length !== 3 || !Object.hasOwn(value, 'videoId')
-      || (value.platform !== 'youtube' && value.platform !== 'twitch')
-      || !(value.platform === 'twitch' ? validTwitchLogin(value.channel) : validEntry(value.channel))
-      || (value.videoId !== null && (typeof value.videoId !== 'string' || !/^[A-Za-z0-9_-]{11}$/.test(value.videoId)))
-      || (value.platform === 'twitch' && value.videoId !== null)) return invalid()
-    return { platform: value.platform, channel: value.channel, videoId: value.videoId } as StreamTitleInput
-  })
-  return { streams }
-}
-
 export class EsportsService {
   private readonly now: () => number
   private readonly disk: ScheduleDisk
@@ -210,19 +127,19 @@ export class EsportsService {
   private booted = false
   /** The event 赛程 shows, normalized; its crests are fetched right after the live ones. */
   private focus: string | null = null
-  private readonly titles = new Map<string, { at: number; value: StreamTitle }>()
-  private readonly titleFlights = new Map<string, Promise<StreamTitle>>()
+  private readonly titles: StreamTitles
   /** The channels linked from each event page, by normalized event path, in memory only. */
   private readonly channels = new Map<string, CachedChannels>()
   private readonly channelFlights = new Map<string, Promise<void>>()
   constructor(private readonly options: Dependencies) {
     this.now = options.now ?? Date.now
+    this.titles = new StreamTitles(options, this.now, this.lifetime.signal, this.pool)
     this.disk = new ScheduleDisk(options.userDataDir)
     this.rateLimit = new LiquipediaRateLimit(options.userDataDir, this.now)
     this.turns = new DispatchTurns(this.rateLimit)
     this.logos = options.logos === undefined ? new TeamLogoCache({ ...options, rateLimit: this.rateLimit, turns: this.turns,
       onUpdated: () => this.notify('logos-updated') }) : options.logos
-    if (this.logos) {
+    if (this.logos && !options.offline) {
       // Recompute the visible time window even while no renderer is reading snapshots.
       this.logoTimer = setInterval(() => this.enqueueLogos(), 30_000)
       this.logoTimer.unref?.()
@@ -240,7 +157,7 @@ export class EsportsService {
     }
     const cached = this.disk.loadTiers()
     const matches = structuredClone(currentMatches(this.cache?.matches ?? [], now))
-    this.updateActiveLogos(matches)
+    if (!this.options.offline) this.updateActiveLogos(matches)
     for (const match of matches) {
       const path = normalizeTournamentPath(match.tournament.url)
       match.tournament.tier = path === null ? null : cached.entries[path]?.tier ?? null
@@ -264,6 +181,7 @@ export class EsportsService {
       this.cache = fromDisk
       if (this.lastFailure && fromDisk.fetchedAt > this.lastFailure.failedAt && fromDisk.fetchedAt <= this.now()) this.lastFailure = null
     }
+    if (this.options.offline) return Promise.resolve(this.snapshot())
     const first = !this.booted
     this.booted = true
     const cooldown = this.rateLimit.cooldown()
@@ -288,10 +206,9 @@ export class EsportsService {
     return { opened: true }
   }
   refreshCs2ScheduleAfterVerification(raw: { round: string }): Promise<Cs2Schedule> {
-    if (!object(raw) || Object.keys(raw).length !== 1 || typeof raw.round !== 'string' || !/^[a-f\d:-]{1,64}$/.test(raw.round)) return invalid()
-    const { round } = raw
+    const round = verificationRoundArgument(raw)
     this.lifetime.signal.throwIfAborted()
-    if (this.flight || this.openedVerificationRound !== round || this.usedVerificationRound === round || !this.rateLimit.isVerificationRound(round)) {
+    if (this.options.offline || this.flight || this.openedVerificationRound !== round || this.usedVerificationRound === round || !this.rateLimit.isVerificationRound(round)) {
       return Promise.resolve({ ...this.snapshot(), verificationResult: 'not-attempted' })
     }
     this.usedVerificationRound = round
@@ -310,9 +227,12 @@ export class EsportsService {
   private scheduleTtl(): number {
     if (!this.focus || !this.cache) return SCHEDULE_TTL_MS
     const now = this.now()
+    const activeTtl = this.options.activeScheduleTtlMs
     const active = currentMatches(this.cache.matches, now).some(match =>
-      normalizeTournamentPath(match.tournament.url) === this.focus && match.state !== 'finished' && match.startsAt <= now + SOON_WINDOW_MS)
-    return active ? ACTIVE_SCHEDULE_TTL_MS : SCHEDULE_TTL_MS
+      normalizeTournamentPath(match.tournament.url) === this.focus && (activeTtl === undefined
+        ? match.state !== 'finished' && match.startsAt <= now + SOON_WINDOW_MS
+        : isActiveScheduleMatch(match, now)))
+    return active ? activeTtl ?? ACTIVE_SCHEDULE_TTL_MS : SCHEDULE_TTL_MS
   }
   /** Refresh when due after the last fetch or failed try, without changing shared request quotas. */
   private scheduleBackgroundRefresh(): void {
@@ -336,8 +256,9 @@ export class EsportsService {
    * behind its streams are looked up. Only events on the current schedule count.
    */
   setScheduleFocus(raw: { eventPath: string | null }): { updated: true } {
-    const { eventPath } = scheduleFocusArguments(raw)
+    const { eventPath } = scheduleFocusArguments(raw, 2_000)
     this.lifetime.signal.throwIfAborted()
+    if (this.options.offline) return { updated: true }
     const path = eventPath === null ? null : normalizeTournamentPath(eventPath)
     this.focus = path !== null && this.tournamentPaths().includes(path) ? path : null
     if (this.booted) this.scheduleBackgroundRefresh()
@@ -360,7 +281,7 @@ export class EsportsService {
     if (!waiting) return
     const work = (async () => {
       for (let page = path, depth = 0; ; depth++) {
-        const found = eventChannels(await this.fetchMetadata(channelLinksUrl(page), false))
+        const found = eventChannels(await this.fetchMetadata(channelLinksUrl(page), 'channel'))
         const slash = page.lastIndexOf('/')
         if (found.twitch.length || found.youtube.length || depth >= 2 || slash < 0) return found
         page = page.slice(0, slash)
@@ -496,9 +417,9 @@ export class EsportsService {
       await pause(25, signal)
     }
   }
-  private async fetchMetadata(url: string, parse: boolean, verification?: { round: string; limited: boolean }): Promise<unknown> {
+  private async fetchMetadata(url: string, kind: 'parse' | 'tier' | 'channel', verification?: { round: string; limited: boolean }): Promise<unknown> {
     if (!verification) this.rateLimit.throwIfCooling()
-    const config = metadataConfig()
+    const config = liquipediaConfig()
     if (url === SCHEDULE_URL) config.requestTimeoutMs = SCHEDULE_REQUEST_TIMEOUT_MS
     const transport = new AbortController()
     const signal = AbortSignal.any([this.lifetime.signal, transport.signal])
@@ -516,7 +437,7 @@ export class EsportsService {
     try {
       const result = await safeFetch(url, config, {
         signal, resolve: this.options.resolve, dispatcherPool: this.pool,
-        headers: { 'User-Agent': metadataUserAgent(this.options.version), 'Accept-Encoding': 'gzip', Accept: 'application/json' },
+        headers: { 'User-Agent': this.options.userAgent ?? metadataUserAgent(this.options.version), 'Accept-Encoding': 'gzip', Accept: 'application/json' },
         fetchImpl: async (input, init) => {
           // Reserve immediately before dispatch; slow proxy/DNS decisions cannot bunch requests.
           try {
@@ -528,8 +449,12 @@ export class EsportsService {
               timer = timeout()
               if (!this.rateLimit.isVerificationRound(verification.round)) throw new VerificationRoundEnded()
             } else {
-              if (parse) await this.parseSlot(signal)
-              else await this.turns.wait('tier', signal)
+              if (kind === 'parse') await this.parseSlot(signal)
+              else if (kind === 'channel') {
+                clearTimeout(timer)
+                await this.turns.wait('tier', signal)
+                timer = timeout()
+              } else await this.turns.wait('tier', signal)
               this.rateLimit.throwIfCooling()
             }
           } catch (error) {
@@ -559,7 +484,7 @@ export class EsportsService {
     const cached = this.disk.loadTiers(), now = this.now()
     const paths = this.tournamentPaths().filter(path => this.tierDelay(cached.entries[path], now) === 0)
     if (!paths.length) return
-    const result = await queryTournamentTiers(paths, url => this.fetchMetadata(url, false))
+    const result = await queryTournamentTiers(paths, url => this.fetchMetadata(url, 'tier'))
     if (this.lifetime.signal.aborted) return
     const updates: Record<string, CachedTier> = Object.create(null) as Record<string, CachedTier>
     const previous = this.disk.loadTiers()
@@ -580,7 +505,7 @@ export class EsportsService {
     this.attemptedAt = this.now()
     const verification = round ? { round, limited: false } : undefined
     try {
-      const payload = await this.fetchMetadata(SCHEDULE_URL, true, verification)
+      const payload = await this.fetchMetadata(SCHEDULE_URL, 'parse', verification)
       const logoPaths = new Map<string, string>()
       const matches = parseSchedule(payload, logoPaths,
         selector => (this.options.log ?? console.warn)(`Liquipedia match skipped: ${selector}`)), fetchedAt = this.now()
@@ -593,6 +518,7 @@ export class EsportsService {
       this.cache = { fetchedAt, matches, logoPaths }
       if (changed || recovered || verification) this.notify('schedule-updated')
       const value = this.snapshot()
+      this.reportRefresh(value)
       return verification ? { ...value, verificationResult: value.verification ? 'not-attempted' : 'recovered' } : value
     } catch (error) {
       if (this.lifetime.signal.aborted) throw this.lifetime.signal.reason
@@ -607,56 +533,15 @@ export class EsportsService {
       this.lastFailure = { message, detail: diagnosticDetails(error), failedAt: this.now(), retryAt: cooldown?.until ?? this.now() + SCHEDULE_TTL_MS }
       this.notify('schedule-updated')
       const value = this.snapshot(message, this.lastFailure.retryAt, error, cooldown ? 'upstream-rate-limit' : 'retry')
+      if (!(error instanceof LiquipediaCoolingDown)) this.reportRefresh(value)
       return verification ? { ...value, verificationResult: verification.limited ? 'rate-limited' : 'failed' } : value
     }
   }
-  async getStreamTitles(raw: { streams: StreamTitleInput[] }): Promise<StreamTitle[]> {
-    const { streams } = streamTitleArguments(raw)
-    this.lifetime.signal.throwIfAborted()
-    const unique = new Map(streams.map(stream => [JSON.stringify([stream.platform, stream.channel, stream.videoId]), stream]))
-    return Promise.all([...unique].map(async ([key, stream]) => {
-      const cached = this.titles.get(key), now = this.now()
-      if (cached && now >= cached.at && now - cached.at < TITLE_TTL_MS) return structuredClone(cached.value)
-      let work = this.titleFlights.get(key)
-      if (!work) {
-        work = titleSlot(this.lifetime.signal, () => this.fetchTitle(stream)).then(value => {
-          if (this.titles.size >= 256) this.titles.delete(this.titles.keys().next().value!)
-          this.titles.set(key, { at: this.now(), value }); return value
-        }).finally(() => { this.titleFlights.delete(key) })
-        this.titleFlights.set(key, work)
-      }
-      return structuredClone(await work)
-    }))
+  private reportRefresh(schedule: Cs2Schedule): void {
+    try { this.options.onRefresh?.(schedule) } catch { /* An observer cannot invalidate cached metadata. */ }
   }
-  private async fetchTitle(stream: StreamTitleInput): Promise<StreamTitle> {
-    const fallback: StreamTitle = { ...stream, title: null, stage: null, live: null }
-    // oEmbed cannot resolve a channel's current live video or its live state.
-    if (stream.platform === 'youtube' && stream.videoId === null) return fallback
-    try {
-      const url = stream.platform === 'youtube'
-        ? 'https://www.youtube.com/oembed?' + new URLSearchParams({ url: `https://www.youtube.com/watch?v=${stream.videoId}`, format: 'json' })
-        : 'https://gql.twitch.tv/gql'
-      const signal = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(15_000)])
-      const result = await safeFetch(url, metadataConfig(), { signal, resolve: this.options.resolve, dispatcherPool: this.pool,
-        fetchImpl: this.options.request,
-        headers: { 'User-Agent': metadataUserAgent(this.options.version), Accept: 'application/json', 'Accept-Encoding': 'gzip',
-          ...(stream.platform === 'twitch' ? { 'Client-ID': 'kimne78kx3ncx6brgo4mv6wki5h1ko', 'Content-Type': 'application/json' } : {}) },
-        ...(stream.platform === 'twitch' ? { method: 'POST', body: JSON.stringify({ operationName: 'StreamTitle',
-          query: 'query StreamTitle($login: String!) { user(login: $login) { stream { title type } } }', variables: { login: stream.channel } }) } : {}),
-      })
-      const data = await readJson(result.response)
-      if (!object(data)) return fallback
-      if (stream.platform === 'youtube') {
-        const title = cleanTitle(data.title)
-        return { ...fallback, title, stage: title ? titleStage(title) : null }
-      }
-      if (data.errors || !object(data.data) || !object(data.data.user)) return fallback
-      const liveStream = data.data.user.stream
-      if (liveStream === null) return { ...fallback, live: false }
-      if (!object(liveStream) || typeof liveStream.type !== 'string') return fallback
-      const title = cleanTitle(liveStream.title)
-      return { ...fallback, title, stage: title ? titleStage(title) : null, live: liveStream.type === 'live' }
-    } catch { return fallback }
+  getStreamTitles(raw: { streams: StreamTitleInput[] }): Promise<StreamTitle[]> {
+    return this.titles.get(raw)
   }
   async dispose(): Promise<void> {
     this.lifetime.abort()
@@ -667,8 +552,7 @@ export class EsportsService {
     this.pendingEvents.clear()
     await this.logos?.dispose()
     await this.pool.dispose()
-    await Promise.allSettled([this.flight, this.tierFlight, ...this.titleFlights.values(), ...this.channelFlights.values()])
-    this.titles.clear()
+    await Promise.allSettled([this.flight, this.tierFlight, this.titles.dispose(), ...this.channelFlights.values()])
     this.channels.clear()
   }
 }

@@ -10,6 +10,7 @@ import { normalizeTournamentPath } from './tiers'
 import { LIQUIPEDIA_INTERVAL_MS } from './liquipediaRateLimit'
 import type { TeamLogoCache } from './teamLogos'
 import { DEFAULT_PROXY_HOSTS, hostAllowed, metadataConfig } from '../config'
+import { liquipediaConfig } from './metadataIo'
 import type { StreamTitleInput } from './types'
 
 const NOW = Date.parse('2026-10-26T20:00:00Z')
@@ -297,7 +298,8 @@ describe('shared schedule service', () => {
     const { service, request } = create()
     await service.getCs2Schedule()
     expect(request.mock.calls[0]![1]?.headers).toMatchObject({ 'User-Agent': 'Fy1Sync/0.1.3 (local desktop app; sync@fy1ng.cn)', 'Accept-Encoding': 'gzip' })
-    expect(hostAllowed('liquipedia.net', metadataConfig().hosts)).toBe(true)
+    expect(hostAllowed('liquipedia.net', metadataConfig().hosts)).toBe(false)
+    expect(hostAllowed('liquipedia.net', liquipediaConfig().hosts)).toBe(true)
     expect(hostAllowed('liquipedia.net', DEFAULT_PROXY_HOSTS)).toBe(false)
     expect(request.mock.calls[0]![1]?.redirect).toBe('manual')
   })

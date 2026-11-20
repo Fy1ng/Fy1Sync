@@ -1,6 +1,7 @@
 import { StreamFailureError } from './networkFailure'
 import type { PlatformKind } from './platforms/types'
 import { DEFAULT_MEDIA_NETWORK, type MediaNetworkOptions } from './mediaNetworkOptions'
+import { SCHEDULE_RELAY_HOST } from './config'
 
 export type DomesticRouting = 'direct' | 'system'
 export interface NetworkRoute {
@@ -13,7 +14,10 @@ export interface NetworkContext { route(url: string): Promise<NetworkRoute>; med
 export interface ProxySummary { type: 'direct' | 'HTTP' | 'SOCKS' | 'PAC'; fallbackReason?: string }
 export const directNetwork: NetworkContext = { route: async () => ({ kind: 'direct' }) }
 const DOMESTIC = /(^|\.)(douyu\.com|douyucdn[23]?\.cn|dyscdn\.com|edgesrv\.com|douyuscdn\.com|bytefcdnrd\.com|bilibili\.com|bilivideo\.com|hdslb\.com|huya\.com|msstatic\.com|douyin\.com|amemv\.com|douyincdn\.com)$/i
-export function domesticTarget(raw: string): boolean { try { return DOMESTIC.test(new URL(raw).hostname) } catch { return false } }
+export function domesticTarget(raw: string): boolean {
+  try { const { hostname } = new URL(raw); return hostname === SCHEDULE_RELAY_HOST || DOMESTIC.test(hostname) }
+  catch { return false }
+}
 
 /** Preserve Chromium's ordered alternatives. Never invent a DIRECT fallback. */
 export function parseProxyResult(result: string): NetworkRoute {

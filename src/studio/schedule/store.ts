@@ -2,7 +2,7 @@
  * The last schedule this window has read, kept outside the sheet so the sheet opens on data.
  *
  * The studio reads once at start-up; the sheet paints from what is here and asks again. Main
- * caches and rate-limits Liquipedia, so the early read costs no extra request.
+ * reads and caches Liquipedia schedule data from the relay.
  */
 
 import { apiClient, type ApiResult } from '../../app/apiClient'

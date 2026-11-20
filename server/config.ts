@@ -54,7 +54,8 @@ export const DEFAULT_PROXY_HOSTS = [
 ]
 
 /** Metadata only. These hosts do not grant renderer/media-proxy access. */
-export const METADATA_HOSTS = ['liquipedia.net', 'www.youtube.com', 'gql.twitch.tv'] as const
+export const SCHEDULE_RELAY_HOST = 'schedule.fy1ng.cn'
+export const METADATA_HOSTS = [SCHEDULE_RELAY_HOST, 'www.youtube.com', 'gql.twitch.tv'] as const
 export function metadataConfig(): ProxyConfig {
   return { enabled: true, hosts: [...METADATA_HOSTS], allowNonStandardPorts: false,
     maxRedirects: 0, requestTimeoutMs: 15_000 }

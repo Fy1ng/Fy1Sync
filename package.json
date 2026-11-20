@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "node scripts/start-dev.mjs",
     "build": "npm run build:wasm && npm run typecheck && vite build && node scripts/build-electron.mjs",
+    "build:relay": "node scripts/build-relay.mjs",
     "start": "node scripts/start-electron.mjs",
     "start:frame-sync-test": "node scripts/start-frame-sync-test.mjs",
     "configure:clock-search": "node scripts/configure-clock-search.mjs",

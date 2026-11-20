@@ -99,9 +99,10 @@ describe('Liquipedia verification browser handoff', () => {
     const cooldown = await limiter.rateLimited('120', new AbortController().signal)
     const reservation = fs.readFileSync(path.join(f.root, 'events', 'liquipedia-http-attempt.json'), 'utf8')
     expect(f.openExternal).not.toHaveBeenCalled()
-    expect(await f.runtime.api.invoke('refreshCs2ScheduleAfterVerification', { round: cooldown.id })).toMatchObject({
-      ok: true, value: { verificationResult: 'not-attempted', refreshReason: 'upstream-rate-limit' },
-    })
+    const result = await f.runtime.api.invoke('refreshCs2ScheduleAfterVerification', { round: cooldown.id })
+    expect(result).toMatchObject({ ok: true, value: { verificationResult: 'not-attempted', fetchedAt: 0 } })
+    expect(result).not.toHaveProperty('value.verification')
+    expect(result).not.toHaveProperty('value.refreshReason')
     expect(await f.runtime.api.invoke('openLiquipediaVerification', undefined)).toEqual({ ok: true, value: { opened: true } })
     expect(f.openExternal).toHaveBeenCalledExactlyOnceWith('https://liquipedia.net/counterstrike/Liquipedia:Matches')
     expect(limiter.cooldown()).toEqual(cooldown)

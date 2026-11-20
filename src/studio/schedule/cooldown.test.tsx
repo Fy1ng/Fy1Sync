@@ -85,7 +85,7 @@ describe('schedule refresh cooldown', () => {
     await settle()
     expect(screen.queryByRole('status')).toBeNull()
     expect(screen.getByRole('button', { name: '2 分钟后可刷新' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '打开官网验证' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: '打开官网验证' })).toBeNull()
     expect(screen.queryByText(/每 30 秒/)).toBeNull()
     first.unmount()
     render(<ScheduleSheet onClose={() => {}} onWatch={() => {}} />)
@@ -97,6 +97,17 @@ describe('schedule refresh cooldown', () => {
     expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled()
     expect(screen.queryByRole('button', { name: '打开官网验证' })).toBeNull()
     expect(screen.queryByText('已解除限制')).toBeNull()
+  })
+
+  it('shows cached age and retry for a relay HTTP 429 without suggesting verification', async () => {
+    reply = () => schedule({ stale: true, error: '赛程暂时无法读取，请稍后重试', errorDetail: { status: 429 },
+      refreshAt: NOW + 30_000, refreshReason: 'retry' })
+    render(<ScheduleSheet onClose={() => {}} onWatch={() => {}} />)
+    await settle()
+    expect(screen.getByText(/读取于/)).toBeInTheDocument()
+    expect(screen.getByText('赛程暂时无法读取，请稍后重试')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '30 秒后可刷新' })).toBeDisabled()
+    expect(screen.queryByRole('group', { name: 'Liquipedia 官网验证' })).toBeNull()
   })
 
   it('reflects an upstream cooldown arriving through a background schedule notification', async () => {

@@ -236,3 +236,4 @@ macOS 当前未配置 Developer ID 签名或公证, 首次打开可能需要在�
 Fy1Sync 按 [GPL-3.0-or-later](https://github.com/Fy1ng/Fy1Sync/blob/main/LICENSE) 发布. FFmpeg, yt-dlp, PO token provider 和字体等组件保留各自许可, 详见 [第三方声明](https://github.com/Fy1ng/Fy1Sync/blob/main/packaging/THIRD-PARTY-NOTICES.md); 发布包内也提供相关许可与源码材料.
 
 CS2 赛程信息来自 [Liquipedia](https://liquipedia.net/counterstrike/Liquipedia:Matches), 按 [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/) 使用. 战队名称与队标的权利属于各自权利人.
+新版本的赛程和队标经由项目维护者运行的中转服务器 `schedule.fy1ng.cn` 获取, 该服务器不记录访问日志. 直播标题仍由应用直接向 YouTube / Twitch 读取.

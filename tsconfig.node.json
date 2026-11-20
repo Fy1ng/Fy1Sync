@@ -12,6 +12,7 @@
   },
   "include": [
     "server",
+    "relay",
     "scripts",
     "vite.config.ts",
     "vitest.config.ts",
