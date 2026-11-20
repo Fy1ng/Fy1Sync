@@ -17,10 +17,13 @@ test('移除两路片源保留手动房间, 主动断开后不恢复旧房间', 
   await expect(page.getByRole('log', { name: '弹幕列表' }).getByText('REMOVAL_OLD_ROOM', { exact: true }).first()).toBeVisible()
 
   await page.getByRole('button', { name: '隐藏小画面', exact: true }).click()
+  const showPreview = page.getByRole('button', { name: '显示小画面', exact: true })
+  await expect(showPreview).toBeVisible()
   await expect(page.locator('.drawer')).toBeVisible()
   const official = await openSourcePanel(page, 'official')
   await official.getByRole('button', { name: '移除', exact: true }).click()
   await expect(page.locator('.chip[data-role="official"]')).toHaveAttribute('data-status', 'empty')
+  await expect(showPreview).toHaveCount(0)
   await expect(page.locator('.drawer')).toBeVisible()
   expect(await emit('REMOVAL_OFFICIAL_KEEPS_CHAT')).toBe(1)
   await expect(page.getByRole('log', { name: '弹幕列表' }).getByText('REMOVAL_OFFICIAL_KEEPS_CHAT', { exact: true })).toBeVisible()

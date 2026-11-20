@@ -22,7 +22,6 @@ export function SourceChip({ role, onSchedule, onShowPreview = null }: {
   role: SourceRole
   /** Open 赛程; offered on the picture's panel. */
   onSchedule?: () => void
-  /** Set while this side's small picture is hidden; offered when the pointer rests on the chip. */
   onShowPreview?: (() => void) | null
 }): React.ReactNode {
   const snapshot = useSessionSnapshot()
@@ -34,7 +33,7 @@ export function SourceChip({ role, onSchedule, onShowPreview = null }: {
   const where = descriptor ? sourceTitle(descriptor) : '未载入'
 
   return (
-    <div className={`chip-wrap${onShowPreview && !panel.open ? ' has-drop' : ''}`}>
+    <div className="chip-wrap">
       <button type="button" className="chip" data-role={role} data-status={status}
         {...panel.trigger} aria-label={`${ROLE_LABEL[role]}：${where}`}>
         <span className="chip-dot" aria-hidden="true" />
@@ -42,10 +41,10 @@ export function SourceChip({ role, onSchedule, onShowPreview = null }: {
         <span className="chip-where">{where}</span>
         {snapshot.mainRole === role && state.status !== 'empty' && <span className="chip-main" title="当前为主画面">主画面</span>}
       </button>
-      {onShowPreview && !panel.open && (
-        <div className="chip-drop">
-          <button type="button" className="btn-glass small" onClick={onShowPreview}>显示小画面</button>
-        </div>
+      {onShowPreview && (
+        <button type="button" className="icon-btn glass small" aria-label="显示小画面" title="显示小画面" onClick={onShowPreview}>
+          <Icon name="pip" />
+        </button>
       )}
       <Popover {...panel.popover} className="source-pop" label={`${ROLE_LABEL[role]}片源`}>
         <SourcePanel role={role} onDone={panel.close} onSchedule={onSchedule} />

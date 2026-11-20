@@ -246,6 +246,42 @@ describe('the studio', () => {
     expect(roles).toEqual(['commentary', 'official'])
   })
 
+  it('offers a hidden preview beside its source chip until restored or removed', async () => {
+    const session = makeSession()
+    for (const role of ['official', 'commentary'] as const) {
+      await session.loadSource(role, { kind: 'test', url: `/test-sources/${role}.mp4`, input: role, label: role, loop: true, viaProxy: false, platform: 'test' })
+    }
+    session.flush()
+    renderStudio(session)
+    await flush()
+
+    const hidePreview = { name: '隐藏小画面' }
+    const showPreview = { name: '显示小画面' }
+    const source = screen.getByRole('button', { name: /^解说：/ })
+    expect(screen.queryByRole('button', showPreview)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', hidePreview))
+    expect(screen.queryByRole('button', hidePreview)).not.toBeInTheDocument()
+    const restore = screen.getByRole('button', showPreview)
+    expect(restore).toBeVisible()
+    expect(restore).toHaveAttribute('title', '显示小画面')
+    expect(source.nextElementSibling).toBe(restore)
+
+    fireEvent.click(restore)
+    expect(screen.getByRole('button', { name: '将解说切换为主画面' })).toBeVisible()
+    expect(screen.queryByRole('button', showPreview)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', hidePreview))
+    fireEvent.click(source)
+    expect(source).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('button', showPreview)).toBeVisible()
+
+    const panel = screen.getByRole('dialog', { name: '解说片源' })
+    fireEvent.click(within(panel).getByRole('button', { name: '移除' }))
+    await waitFor(() => expect(source).toHaveAttribute('data-status', 'empty'))
+    expect(screen.queryByRole('button', showPreview)).not.toBeInTheDocument()
+  })
+
   it('can be skipped into an empty player, with a way back to adding sources', async () => {
     renderStudio(makeSession())
     await flush()

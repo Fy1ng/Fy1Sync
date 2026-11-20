@@ -560,9 +560,18 @@ body,
   min-width: 0;
 }
 
-.studio .chip-wrap,
 .studio .more {
   position: relative;
+}
+
+.studio .chip-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.studio .chip-wrap > .icon-btn {
+  flex: none;
 }
 
 .studio .chip {
@@ -634,40 +643,6 @@ body,
   color: var(--ink);
   background: var(--chalk);
   border-radius: 4px;
-}
-
-/* A hidden small picture is brought back from its chip: the button drops below it while
-   the pointer is on the chip, or keyboard focus is inside. The padding bridges the gap so
-   moving down onto the button keeps the hover. */
-.studio .chip-drop {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  z-index: 61;
-  padding-top: 6px;
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-4px);
-  transition: opacity 140ms var(--ease), transform 140ms var(--ease), visibility 0s linear 140ms;
-}
-
-.studio .chip-wrap.has-drop:is(:hover, :focus-within) .chip-drop {
-  opacity: 1;
-  visibility: visible;
-  transform: none;
-  transition: opacity 140ms var(--ease), transform 140ms var(--ease), visibility 0s;
-}
-
-.studio .chip-drop .btn-glass {
-  white-space: nowrap;
-  background: var(--smoke-deep);
-  border: 1px solid var(--line-2);
-  border-radius: 14px;
-  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
-}
-
-.studio .chip-drop .btn-glass:hover {
-  background: rgb(40 40 44 / 95%);
 }
 
 .studio .source-pop {
