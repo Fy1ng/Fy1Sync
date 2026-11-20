@@ -17,6 +17,36 @@ const CASCADE = 28
 const TOP_CLEARANCE = 64
 const EDGE = 20
 
+export type SplitDirection = 'side-by-side' | 'stacked'
+export type StreamLayoutMode = SplitDirection | 'custom' | 'floating'
+export interface StreamLayoutPreference { mode: StreamLayoutMode; direction: SplitDirection; ratio: number }
+
+const PREFERENCE_KEY = 'studio.extraStreams.view.v1'
+const DEFAULT_PREFERENCE: StreamLayoutPreference = { mode: 'side-by-side', direction: 'side-by-side', ratio: 0.5 }
+const DIVIDER_SIZE = 8
+
+type Arrangement = { kind: 'single' } | { kind: 'floating' } | {
+  kind: 'split'; direction: SplitDirection; divider: number; ratio: number; min: number; max: number; streamShare: number
+}
+
+export function arrangeStreams(preference: StreamLayoutPreference, count: number, bounds: Bounds): Arrangement {
+  if (!count) return { kind: 'single' }
+  if (preference.mode === 'floating') return { kind: 'floating' }
+  const custom = preference.mode === 'custom'
+  const direction = preference.mode === 'custom' ? preference.direction : preference.mode
+  const axis = direction === 'side-by-side' ? 'w' : 'h'
+  const divider = custom ? DIVIDER_SIZE : 0
+  const space = bounds[axis] - divider
+  const min = space > 0 ? Math.min(0.5, MIN_SIZE[axis] / space) : 0.5
+  const max = 1 - min
+  const ratio = custom ? Math.min(max, Math.max(min, preference.ratio)) : 0.5
+  return { kind: 'split', direction, divider, ratio, min, max, streamShare: 1 / count }
+}
+
+export function selectLayoutMode(preference: StreamLayoutPreference, mode: StreamLayoutMode): StreamLayoutPreference {
+  return { ...preference, mode, direction: mode === 'side-by-side' || mode === 'stacked' ? mode : preference.direction }
+}
+
 /** Keep a rectangle inside the theater. A zero-sized theater (not yet measured) clamps nothing. */
 export function clampRect(rect: Rect, bounds: Bounds): Rect {
   if (bounds.w <= 0 || bounds.h <= 0) return rect
@@ -60,6 +90,24 @@ const isRect = (value: unknown): value is Rect => {
 
 function storage(): Storage | null {
   try { return window.localStorage } catch { return null }
+}
+
+export function readLayoutPreference(): StreamLayoutPreference {
+  try {
+    const saved = JSON.parse(storage()?.getItem(PREFERENCE_KEY) ?? 'null') as Partial<StreamLayoutPreference> | null
+    const { mode, direction, ratio } = saved ?? {}
+    return selectLayoutMode({
+      ...DEFAULT_PREFERENCE,
+      direction: direction === 'stacked' ? direction : 'side-by-side',
+      ratio: typeof ratio === 'number' && Number.isFinite(ratio) && ratio >= 0 && ratio <= 1 ? ratio : DEFAULT_PREFERENCE.ratio,
+    }, mode === 'stacked' || mode === 'custom' || mode === 'floating' ? mode : DEFAULT_PREFERENCE.mode)
+  } catch {
+    return { ...DEFAULT_PREFERENCE }
+  }
+}
+
+export function writeLayoutPreference(preference: StreamLayoutPreference): void {
+  try { storage()?.setItem(PREFERENCE_KEY, JSON.stringify(preference)) } catch { /* Privacy mode or quota. */ }
 }
 
 export function readLayout(): Layout {

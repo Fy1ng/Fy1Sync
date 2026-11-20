@@ -1,11 +1,65 @@
 /*
- * Extra live rooms as floating windows over the theater (handoff item 01).
- *
- * The layer covers the theater but takes no pointer events itself, so the main picture and
- * the danmaku underneath stay reachable between windows. It sits above the danmaku (5) and
- * below the small picture (20) and the top bar and dock (40); its own stacking context keeps
- * the raised-window order from leaking into the rest of the theater.
+ * Extra live rooms share the stage with the primary pane, or float over the danmaku (5)
+ * and below the small picture (20) with the original window stacking order.
  */
+
+.studio .streams-stage {
+  position: absolute;
+  inset: 0;
+}
+
+.studio .streams-primary {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.studio .theater:has(> .streams-stage[data-split]) {
+  display: flex;
+  flex-direction: column;
+}
+
+.studio .theater:has(> .streams-stage[data-split]) > :is(.topbar, .dock) {
+  position: relative;
+  flex: none;
+  padding-block: 8px;
+}
+
+.studio .streams-stage[data-split] {
+  position: relative;
+  display: grid;
+  flex: 1;
+  min-height: 0;
+}
+
+.studio .streams-stage[data-split='side-by-side'] {
+  grid-template: minmax(0, 1fr) / minmax(0, var(--xs-primary)) var(--xs-divider) minmax(0, var(--xs-secondary));
+}
+
+.studio .streams-stage[data-split='stacked'] {
+  grid-template: minmax(0, var(--xs-primary)) var(--xs-divider) minmax(0, var(--xs-secondary)) / minmax(0, 1fr);
+}
+
+.studio .streams-stage[data-split] .streams-primary {
+  --bar-clearance: 0px;
+  overflow: hidden;
+  container-type: size;
+}
+
+.studio .streams-stage[data-split] .pip {
+  bottom: 16px;
+  width: min(clamp(180px, 22%, 320px), calc((100cqh - 32px) * 16 / 9), calc(100% - 32px));
+}
+
+.studio .xs-divider {
+  background: var(--panel-2);
+  touch-action: none;
+  user-select: none;
+}
+
+.studio .xs-divider[aria-orientation='vertical']:not([aria-disabled='true']) { cursor: col-resize; }
+.studio .xs-divider[aria-orientation='horizontal']:not([aria-disabled='true']) { cursor: row-resize; }
+.studio .xs-divider:not([aria-disabled='true']):is(:hover, :focus-visible) { background: var(--ash-2); }
 
 .studio .extra-streams {
   position: absolute;
@@ -16,6 +70,26 @@
 
 .studio .extra-streams > * {
   pointer-events: auto;
+}
+
+.studio .xs-split-streams {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  cursor: auto;
+}
+
+.studio .streams-stage[data-split='side-by-side'] .xs-split-streams {
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: max(160px, var(--xs-stream-share));
+}
+
+.studio .streams-stage[data-split='stacked'] .xs-split-streams {
+  grid-template-rows: minmax(0, 1fr);
+  grid-auto-flow: column;
+  grid-auto-columns: max(220px, var(--xs-stream-share));
 }
 
 .studio .xs-state-error {
@@ -72,7 +146,7 @@
   overflow: hidden;
   background: var(--smoke-deep);
   border: 1px solid var(--line);
-  border-radius: var(--r);
+  border-radius: 0;
   box-shadow: 0 14px 40px rgb(0 0 0 / 55%);
   outline: none;
   transition: box-shadow 140ms var(--ease), border-color 140ms var(--ease);
@@ -87,6 +161,18 @@
   box-shadow: 0 0 0 2px var(--chalk), 0 14px 40px rgb(0 0 0 / 55%);
 }
 
+.studio .xs-split-streams .xs-window {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  box-shadow: none;
+}
+
+.studio .xs-split-streams .xs-window:focus-visible {
+  outline: 2px solid var(--chalk);
+  outline-offset: -2px;
+}
+
 .studio .xs-window.is-moving {
   transition: none;
   user-select: none;
@@ -99,9 +185,12 @@
   height: 32px;
   padding: 0 2px 0 10px;
   flex: none;
+  user-select: none;
+}
+
+.studio .extra-streams .xs-head {
   cursor: grab;
   touch-action: none;
-  user-select: none;
 }
 
 .studio .xs-window.is-moving .xs-head {
@@ -212,6 +301,17 @@
   height: 36px;
   /* Clear of the corner grip. */
   padding: 0 14px 0 6px;
+  flex: none;
+}
+
+.studio .xs-split-streams .xs-controls {
+  height: auto;
+  min-height: 36px;
+  flex-wrap: wrap;
+  padding: 4px 6px;
+}
+
+.studio .xs-split-streams .xs-controls > :not(.xs-spacer) {
   flex: none;
 }
 

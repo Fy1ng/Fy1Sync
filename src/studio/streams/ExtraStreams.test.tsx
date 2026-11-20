@@ -12,7 +12,8 @@ import type { StreamSyncerBridge } from '../../../electron/contracts'
 import type { FeatureEvent } from '../../../electron/featureContracts'
 import type { StreamSessionView, StreamSessionsSnapshot } from '../../../electron/streamSessions'
 import { ExtraStreams, openInputFor } from './ExtraStreams'
-import { MAX_ENTRIES, boundLayout, clampRect, pruneLayout, readLayout, resizedRect, writeLayout } from './layout'
+import { MAX_ENTRIES, arrangeStreams, boundLayout, clampRect, pruneLayout, readLayout, readLayoutPreference, resizedRect,
+  selectLayoutMode, writeLayout, writeLayoutPreference } from './layout'
 import type { MediaError } from '../../media/hlsController'
 
 const fakes = vi.hoisted(() => ({ created: [] as FakeMediaShape[] }))
@@ -143,6 +144,64 @@ describe('extra stream windows', () => {
     expect(fakes.created).toHaveLength(1)
     expect(fakes.created[0]!.load).toHaveBeenCalledTimes(1)
     expect(windowFor(ID)).toHaveClass('is-selected')
+  })
+
+  it('switches through all layouts without remounting video or losing the old window position', async () => {
+    const legacyKey = 'studio.extraStreams.layout.v1'
+    const legacy = JSON.stringify({ [ID]: { x: 35, y: 80, w: 300, h: 200 } })
+    localStorage.setItem(legacyKey, legacy)
+    const { container } = renderStreams(true)
+    await flush()
+    const node = windowFor(ID)
+    const video = node.querySelector('video')
+    const stage = container.querySelector('.streams-stage')
+    expect(stage).toHaveAttribute('data-split', 'side-by-side')
+    expect(screen.getByRole('radio', { name: '左右分屏' })).toBeChecked()
+    expect(node.querySelector('.xs-resize')).toBeNull()
+
+    fireEvent.click(screen.getByRole('radio', { name: '上下分屏' }))
+    expect(stage).toHaveAttribute('data-split', 'stacked')
+    fireEvent.click(screen.getByRole('radio', { name: '自定义' }))
+    expect(screen.getByRole('separator', { name: '分屏分隔线' })).toHaveAttribute('aria-orientation', 'horizontal')
+    fireEvent.click(screen.getByRole('radio', { name: '悬浮窗' }))
+    expect(stage).not.toHaveAttribute('data-split')
+    expect(node.querySelector('.xs-resize')).not.toBeNull()
+    expect(node).toHaveStyle({ left: '35px', top: '80px', width: '300px', height: '200px' })
+    expect(localStorage.getItem(legacyKey)).toBe(legacy)
+    expect(windowFor(ID)).toBe(node)
+    expect(windowFor(ID).querySelector('video')).toBe(video)
+    expect(fakes.created[0]!.load).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps old positions intact when the first session snapshot is empty', async () => {
+    const legacyKey = 'studio.extraStreams.layout.v1'
+    const legacy = JSON.stringify({ [ID]: { x: 35, y: 80, w: 300, h: 200 } })
+    localStorage.setItem(legacyKey, legacy)
+    sessions = []
+    const { container } = renderStreams(true)
+    await flush()
+    fireEvent.click(screen.getByRole('radio', { name: '上下分屏' }))
+    expect(container.querySelector('.streams-stage')).not.toHaveAttribute('data-split')
+    expect(localStorage.getItem(legacyKey)).toBe(legacy)
+  })
+
+  it('adjusts and remembers the custom divider within the measured stage', async () => {
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(1008)
+    vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(608)
+    const { unmount } = renderStreams(true)
+    await flush()
+    fireEvent.click(screen.getByRole('radio', { name: '自定义' }))
+    const divider = screen.getByRole('separator', { name: '分屏分隔线' })
+    expect(divider).toHaveAttribute('aria-orientation', 'vertical')
+    fireEvent.keyDown(divider, { key: 'ArrowLeft' })
+    expect(divider).toHaveAttribute('aria-valuenow', '48')
+    fireEvent.keyDown(divider, { key: 'End' })
+    expect(divider).toHaveAttribute('aria-valuenow', '78')
+    unmount()
+    renderStreams(true)
+    await flush()
+    expect(screen.getByRole('radio', { name: '自定义' })).toBeChecked()
+    expect(screen.getByRole('separator', { name: '分屏分隔线' })).toHaveAttribute('aria-valuenow', '78')
   })
 
   it('ignores an initial read that answers after a newer push', async () => {
@@ -329,5 +388,53 @@ describe('window layout', () => {
     expect(Object.keys(readLayout())).toHaveLength(MAX_ENTRIES)
     const kept = pruneLayout({ [ID]: { x: 0, y: 0, w: 300, h: 200 }, [ID_2]: { x: 0, y: 0, w: 300, h: 200 } }, new Set([ID]))
     expect(Object.keys(kept)).toEqual([ID])
+  })
+})
+
+describe('split layout', () => {
+  const bounds = { w: 1008, h: 648 }
+  const initial = { mode: 'side-by-side', direction: 'side-by-side', ratio: 0.5 } as const
+
+  it('uses the whole stage without streams, independently of the saved mode', () => {
+    for (const mode of ['side-by-side', 'stacked', 'custom', 'floating'] as const) {
+      expect(arrangeStreams(selectLayoutMode(initial, mode), 0, bounds)).toEqual({ kind: 'single' })
+    }
+  })
+
+  it.each(['side-by-side', 'stacked'] as const)('splits 50/50 in %s mode and shares only the extra pane', (mode) => {
+    const preference = selectLayoutMode({ ...initial, ratio: 0.65 }, mode)
+    expect(arrangeStreams(preference, 1, bounds)).toMatchObject({ kind: 'split', direction: mode, divider: 0, ratio: 0.5, streamShare: 1 })
+    expect(arrangeStreams(preference, 4, bounds)).toMatchObject({ kind: 'split', direction: mode, divider: 0, ratio: 0.5, streamShare: 0.25 })
+  })
+
+  it('uses floating positions instead of dividing the stage', () => {
+    expect(arrangeStreams(selectLayoutMode(initial, 'floating'), 4, bounds)).toEqual({ kind: 'floating' })
+  })
+
+  it('keeps the last direction and clamps the visible ratio, without changing the preference', () => {
+    const custom = selectLayoutMode({ ...initial, ratio: 0.9 }, 'custom')
+    expect(arrangeStreams(custom, 3, bounds)).toMatchObject({ direction: 'side-by-side', divider: 8, ratio: 0.78, min: 0.22, max: 0.78, streamShare: 1 / 3 })
+    const stacked = selectLayoutMode(selectLayoutMode(initial, 'stacked'), 'floating')
+    const above = selectLayoutMode({ ...stacked, ratio: 0.1 }, 'custom')
+    expect(arrangeStreams(above, 2, bounds)).toMatchObject({ direction: 'stacked', ratio: 0.25, min: 0.25, max: 0.75, streamShare: 0.5 })
+    expect(arrangeStreams(custom, 1, { w: 400, h: 648 })).toMatchObject({ ratio: 0.5, min: 0.5, max: 0.5 })
+    expect(arrangeStreams(above, 1, { w: 1008, h: 300 })).toMatchObject({ ratio: 0.5, min: 0.5, max: 0.5 })
+    expect(arrangeStreams(custom, 1, { w: 2208, h: 648 })).toMatchObject({ ratio: 0.9 })
+  })
+
+  it('defaults missing or invalid preferences and round-trips all modes without touching old positions', () => {
+    const legacy = { [ID]: { x: 12, y: 65, w: 280, h: 160 } }
+    writeLayout(legacy)
+    expect(readLayoutPreference()).toEqual(initial)
+    for (const mode of ['side-by-side', 'stacked', 'custom', 'floating'] as const) {
+      const preference = selectLayoutMode({ ...initial, direction: 'stacked', ratio: 0.65 }, mode)
+      writeLayoutPreference(preference)
+      expect(readLayoutPreference()).toEqual(preference)
+    }
+    expect(readLayout()).toEqual(legacy)
+    localStorage.setItem('studio.extraStreams.view.v1', '{')
+    expect(readLayoutPreference()).toEqual(initial)
+    localStorage.setItem('studio.extraStreams.view.v1', JSON.stringify({ mode: 'grid', ratio: 2 }))
+    expect(readLayoutPreference()).toEqual(initial)
   })
 })

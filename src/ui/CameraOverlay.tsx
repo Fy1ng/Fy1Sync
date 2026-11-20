@@ -25,10 +25,11 @@ interface Props {
   onWindow: (window: CameraWindow) => void
   /** The stage the overlay is placed in; positions are fractions of its box. */
   stageRef: React.RefObject<HTMLDivElement | null>
+  fitStage?: boolean
   onUpscaleState?: (state: CameraUpscaleState) => void
 }
 
-export function CameraOverlay({ config, onWindow, stageRef, onUpscaleState }: Props): React.ReactNode {
+export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, onUpscaleState }: Props): React.ReactNode {
   const session = useSession()
   const canvas = useRef<HTMLCanvasElement | null>(null)
   const [stage, setStage] = useState({ width: 0, height: 0 })
@@ -40,7 +41,6 @@ export function CameraOverlay({ config, onWindow, stageRef, onUpscaleState }: Pr
     next: CameraWindow | null
     frame: number | null
   } | null>(null)
-  const win = draft ?? config.window
 
   useEffect(() => () => {
     if (drag.current?.frame != null) cancelAnimationFrame(drag.current.frame)
@@ -65,6 +65,7 @@ export function CameraOverlay({ config, onWindow, stageRef, onUpscaleState }: Pr
   })()
   // Crop fractions are of the video frame, so the on-screen aspect is crop aspect x frame aspect.
   const screenAspect = aspect * videoAspect
+  const win = draft ?? (fitStage ? clampWindow(config.window, stage, screenAspect) : config.window)
   const widthPx = win.width * stage.width
   const heightPx = widthPx / screenAspect
   const upscale = useCameraUpscale(config, widthPx, heightPx)

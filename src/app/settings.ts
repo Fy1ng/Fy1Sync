@@ -187,7 +187,7 @@ export function mergeSettings(raw: unknown): AppSettings {
     // The sync design fixes the interval choices at 15/30/60 s.
     autoSyncIntervalSeconds: clamp(stored.autoSyncIntervalSeconds, 10, 600, 30),
     basicRecognitionPanelVisible: boolean(stored.basicRecognitionPanelVisible, defaults.basicRecognitionPanelVisible),
-    recognitionMode: (stored as Record<string, unknown>).recognitionMode === 'style-pack' || stored.recognitionMode === 'frame-hash' ? 'frame-hash' : 'basic',
+    recognitionMode: stored.recognitionMode === 'frame-hash' ? 'frame-hash' : 'basic',
     frameHashRegions: {
       official: normalizeBasicClockRoi(stored.frameHashRegions?.official) ?? { x: 0, y: 0, w: 1, h: 1 },
       commentary: normalizeBasicClockRoi(stored.frameHashRegions?.commentary) ?? { x: 0, y: 0, w: 1, h: 1 },

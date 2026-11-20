@@ -105,6 +105,7 @@ function StudioView(): React.ReactNode {
   const composer = useComposer()
   usePlaybackHeartbeat()
   const theater = useRef<HTMLDivElement | null>(null)
+  const primary = useRef<HTMLDivElement | null>(null)
   const dock = useRef<HTMLElement | null>(null)
   // The picture-in-picture, the danmaku panel and the local gift effects all keep clear of
   // the dock, whose height changes as it folds into two rows on a narrow window.
@@ -220,27 +221,6 @@ function StudioView(): React.ReactNode {
     >
       <DanmakuActionsProvider onOpenRecords={openRecords}>
         <main className="theater" ref={theater} data-chrome={chrome.visible ? 'on' : 'off'} {...chrome.handlers}>
-          <div className="theater-main" ref={mountMain} data-role={mainRole} />
-          <DanmakuStage onReply={() => setChat(true)} />
-          <ExtraStreams adding={addingStream} onAddingChange={setAddingStream} />
-          {camera.available && camera.config && <CameraOverlay key={camera.room} config={camera.config} onWindow={camera.setWindow} stageRef={theater} onUpscaleState={setCameraUpscale} />}
-
-          {snapshot.media[otherRole].status !== 'empty' && !previewHidden ? (
-            <div className="pip" data-role={otherRole}>
-              <button type="button" className="pip-swap" onClick={() => session.swapRoles()}
-                aria-label={`将${ROLE_LABEL[otherRole]}切换为主画面`} title="切换为主画面">
-                <span className="pip-mount" ref={mountOther} />
-                <span className="pip-label">{ROLE_LABEL[otherRole]}</span>
-              </button>
-              <button type="button" className="pip-hide" onClick={() => setPreviewHidden(true)} aria-label="隐藏小画面">
-                <Icon name="close" />
-              </button>
-            </div>
-          ) : (
-            // The other element still needs a parent while hidden, or it would be detached.
-            <span className="pip-parked" ref={mountOther} aria-hidden="true" />
-          )}
-
           <header className="topbar" {...chromeHover}>
             <div className="topbar-sources">
               <button type="button" className="icon-btn glass small" aria-label="收藏直播间" title="收藏直播间" onClick={() => setFavorites(true)}><Icon name="star" /></button>
@@ -271,6 +251,36 @@ function StudioView(): React.ReactNode {
             )}
           </header>
 
+          <ExtraStreams adding={addingStream} onAddingChange={setAddingStream} primaryRef={primary}>
+            {(split) => <>
+              <div className="theater-main" ref={mountMain} data-role={mainRole} />
+              <DanmakuStage onReply={() => setChat(true)} />
+              {camera.available && camera.config && <CameraOverlay key={camera.room} config={camera.config} onWindow={camera.setWindow} stageRef={primary} fitStage={split} onUpscaleState={setCameraUpscale} />}
+
+              {snapshot.media[otherRole].status !== 'empty' && !previewHidden ? (
+                <div className="pip" data-role={otherRole}>
+                  <button type="button" className="pip-swap" onClick={() => session.swapRoles()}
+                    aria-label={`将${ROLE_LABEL[otherRole]}切换为主画面`} title="切换为主画面">
+                    <span className="pip-mount" ref={mountOther} />
+                    <span className="pip-label">{ROLE_LABEL[otherRole]}</span>
+                  </button>
+                  <button type="button" className="pip-hide" onClick={() => setPreviewHidden(true)} aria-label="隐藏小画面">
+                    <Icon name="close" />
+                  </button>
+                </div>
+              ) : (
+                // The other element still needs a parent while hidden, or it would be detached.
+                <span className="pip-parked" ref={mountOther} aria-hidden="true" />
+              )}
+
+              {empty && !intake && (
+                <div className="theater-empty">
+                  <button type="button" className="btn-glass" onClick={() => setIntake(true)}>添加直播间</button>
+                </div>
+              )}
+            </>}
+          </ExtraStreams>
+
           <Toasts />
           {fullscreen.error && <p className="toast is-error floating-error" role="alert"><ErrorText error={fullscreen.errorDetail ?? fullscreen.error} message={fullscreen.error} /></p>}
 
@@ -299,12 +309,6 @@ function StudioView(): React.ReactNode {
               </div>
             </div>
           </footer>
-
-          {empty && !intake && (
-            <div className="theater-empty">
-              <button type="button" className="btn-glass" onClick={() => setIntake(true)}>添加直播间</button>
-            </div>
-          )}
 
           {tuning && <DanmakuPanel onClose={() => setTuning(false)} />}
           {intake && <Intake onClose={closeIntake} onSchedule={() => setScheduleFrom('intake')} onFavorites={() => setFavorites(true)} />}

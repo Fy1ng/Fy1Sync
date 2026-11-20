@@ -67,7 +67,7 @@ describe('mergeSettings', () => {
     saveSettings({ ...DEFAULT_SETTINGS, basicRecognitionPanelVisible: true }, storage)
     expect(loadSettings(storage)).toMatchObject({ basicRecognitionPanelVisible: true, recognitionMode: 'basic' })
     expect(mergeSettings({ basicRecognitionPanelVisible: false, recognitionMode: 'style-pack' }))
-      .toMatchObject({ basicRecognitionPanelVisible: false, recognitionMode: 'frame-hash' })
+      .toMatchObject({ basicRecognitionPanelVisible: false, recognitionMode: 'basic' })
   })
   it('caps silent speed correction below two seconds while retaining stricter saved thresholds', () => {
     expect(DEFAULT_SETTINGS.seekThresholdSeconds).toBe(2)
@@ -102,9 +102,10 @@ describe('mergeSettings', () => {
     expect(mergeSettings({ basicClockSearchRoi: other })).not.toHaveProperty('basicClockSearchRoi')
   })
 
-  it('defaults old settings to basic recognition while retaining the saved style pack', () => {
+  it('reads the removed style-pack mode as basic while retaining frame-hash recognition', () => {
     expect(mergeSettings({ profileId: 'cs2/iem' })).not.toHaveProperty('profileId')
-    expect(mergeSettings({ recognitionMode: 'style-pack' }).recognitionMode).toBe('frame-hash')
+    expect(mergeSettings({ recognitionMode: 'style-pack' }).recognitionMode).toBe('basic')
+    expect(mergeSettings({ recognitionMode: 'frame-hash' }).recognitionMode).toBe('frame-hash')
     for (const recognitionMode of [null, true, 'automatic', {}, []]) {
       expect(mergeSettings({ recognitionMode }).recognitionMode).toBe('basic')
     }
@@ -219,6 +220,16 @@ describe('mergeSettings', () => {
 })
 
 describe('loadSettings', () => {
+  it.each([
+    ['style-pack', 'basic'],
+    ['frame-hash', 'frame-hash'],
+  ])('reads stored %s as %s without rewriting the saved blob', (recognitionMode, expectedMode) => {
+    const saved = JSON.stringify({ recognitionMode, autoSyncEnabled: true })
+    const storage = fakeStorage(saved)
+    expect(loadSettings(storage)).toMatchObject({ recognitionMode: expectedMode, autoSyncEnabled: true })
+    expect(storage.value).toBe(saved)
+  })
+
   it('reads a stored blob through the merge', () => {
     const storage = fakeStorage(JSON.stringify({ largeStepSeconds: 15, volume: { official: 9 } }))
     const settings = loadSettings(storage)

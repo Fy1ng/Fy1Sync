@@ -1,8 +1,8 @@
 import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
 import { displayError } from '../../core/errorDetails'
 /**
- * One extra live room as a floating window over the theater: dragged by its header, sized
- * from its corner, its own quality, volume, picture-in-picture and seek.
+ * One extra live room with its own quality, volume, picture-in-picture and seek. As a
+ * floating window it is dragged by its header and sized from its corner.
  *
  * The video inside is not React's. It belongs to the registry's `IndependentMedia` for this
  * id and is only moved into the window's container, so nothing done to the window — moving
@@ -56,11 +56,9 @@ const isField = (target: EventTarget | null): boolean =>
 
 type Gesture = { mode: 'move' | 'resize'; pointerId: number; x: number; y: number; start: Rect }
 
-export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, onSelect, onRect, onView, onClosed, onPip }: {
+export function StreamWindow({ view, placement, selected, pip, registry, onSelect, onRect, onView, onClosed, onPip }: {
   view: StreamSessionView
-  rect: Rect
-  bounds: Bounds
-  z: number
+  placement: { rect: Rect; bounds: Bounds; z: number } | null
   selected: boolean
   pip: PipState | null
   registry: MediaRegistry
@@ -247,19 +245,19 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
   }
 
   const begin = (mode: Gesture['mode']) => (event: React.PointerEvent<HTMLElement>): void => {
-    if (event.button !== 0) return
+    if (!placement || event.button !== 0) return
     if (mode === 'move' && event.target instanceof Element && event.target.closest('button, select, input')) return
     event.preventDefault()
     event.currentTarget.setPointerCapture?.(event.pointerId)
-    gesture.current = { mode, pointerId: event.pointerId, x: event.clientX, y: event.clientY, start: rect }
+    gesture.current = { mode, pointerId: event.pointerId, x: event.clientX, y: event.clientY, start: placement.rect }
     latest.current = null
   }
   const move = (event: React.PointerEvent<HTMLElement>): void => {
     const active = gesture.current
-    if (!active || active.pointerId !== event.pointerId) return
+    if (!placement || !active || active.pointerId !== event.pointerId) return
     const dx = event.clientX - active.x
     const dy = event.clientY - active.y
-    const next = active.mode === 'move' ? movedRect(active.start, dx, dy, bounds) : resizedRect(active.start, dx, dy, bounds)
+    const next = active.mode === 'move' ? movedRect(active.start, dx, dy, placement.bounds) : resizedRect(active.start, dx, dy, placement.bounds)
     latest.current = next
     setDraft(next)
   }
@@ -275,7 +273,7 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
   }
   const gestureHandlers = { onPointerMove: move, onPointerUp: end, onPointerCancel: end }
 
-  const shown = draft ?? rect
+  const shown = placement ? draft ?? placement.rect : null
   const title = streamTitle(view)
   const status = statusOf(view, playbackFailed)
   const qualities = stream?.qualities ?? []
@@ -284,8 +282,8 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
 
   return (
     <section
-      className={`xs-window ${selected ? 'is-selected' : ''} ${draft ? 'is-moving' : ''}`.trim()}
-      style={{ left: shown.x, top: shown.y, width: shown.w, height: shown.h, zIndex: z }}
+      className={`xs-window ${selected ? 'is-selected' : ''} ${placement && draft ? 'is-moving' : ''}`.trim()}
+      style={placement && shown ? { left: shown.x, top: shown.y, width: shown.w, height: shown.h, zIndex: placement.z } : undefined}
       tabIndex={0}
       role="group"
       aria-label={`${title.platform ? `${title.platform} ` : ''}${title.room}`}
@@ -300,7 +298,7 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
         }
       }}
     >
-      <header className="xs-head" onPointerDown={begin('move')} {...gestureHandlers}>
+      <header className="xs-head" {...(placement ? { onPointerDown: begin('move'), ...gestureHandlers } : {})}>
         <span className="xs-dot" data-tone={status.tone} aria-hidden="true" />
         {title.platform && <span className="xs-platform">{title.platform}</span>}
         <span className="xs-room">{title.room}</span>
@@ -359,7 +357,7 @@ export function StreamWindow({ view, rect, bounds, z, selected, pip, registry, o
       </footer>
       {problem && <p className="form-error xs-problem" role="alert"><ErrorText error={problemDetail ?? problem} message={problem} /></p>}
 
-      <span className="xs-resize" onPointerDown={begin('resize')} {...gestureHandlers} aria-hidden="true" />
+      {placement && <span className="xs-resize" onPointerDown={begin('resize')} {...gestureHandlers} aria-hidden="true" />}
     </section>
   )
 }
