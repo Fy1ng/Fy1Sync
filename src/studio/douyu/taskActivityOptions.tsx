@@ -10,6 +10,7 @@ import { displayError } from '../../core/errorDetails'
 import { apiClient } from '../../app/apiClient'
 import type { ActivityPreferences } from '../../../electron/activityPreferences'
 import { Segmented, Switch } from '../kit'
+import { formatMsAsSeconds, parseSecondsToMs, SECONDS_INPUT_ERROR } from './durationSeconds'
 
 type Full = { version: 1; fishing: { mode: 'all' | 'contest' }; treasure: { crossRoom: boolean; claimDelayMs: number } }
 
@@ -21,11 +22,6 @@ const normalize = (value: ActivityPreferences): Full => ({
     claimDelayMs: Number.isSafeInteger(value.treasure?.claimDelayMs) ? value.treasure.claimDelayMs! : 5_000,
   },
 })
-const validDelay = (text: string): number | null => {
-  const value = Number(text)
-  return text.trim() !== '' && Number.isInteger(value) && value >= 0 && value <= 60_000 ? value : null
-}
-
 export function ActivityOptions({ fishing, treasure }: { fishing: boolean; treasure: boolean }): React.ReactNode {
   const [value, setValue] = useState<Full | null>(null)
   const [delay, setDelay] = useState('')
@@ -40,7 +36,7 @@ export function ActivityOptions({ fishing, treasure }: { fishing: boolean; treas
       if (!mounted.current) return
       if (!result.ok) { setError(result); return }
       const full = normalize(result.value)
-      setValue(full); setDelay(String(full.treasure.claimDelayMs))
+      setValue(full); setDelay(formatMsAsSeconds(full.treasure.claimDelayMs))
     }).catch(caught => { if (mounted.current) setError(displayError(caught, '无法读取活动设置')) })
     return () => { mounted.current = false }
   }, [])
@@ -53,7 +49,7 @@ export function ActivityOptions({ fishing, treasure }: { fishing: boolean; treas
       if (!mounted.current) return
       if (!result.ok) { setError(result); return }
       const full = normalize(result.value)
-      setValue(full); setDelay(String(full.treasure.claimDelayMs)); setNotice('活动设置已保存')
+      setValue(full); setDelay(formatMsAsSeconds(full.treasure.claimDelayMs)); setNotice('活动设置已保存')
     } catch (caught) {
       if (mounted.current) setError(displayError(caught, '活动设置未保存，请重试'))
     } finally {
@@ -61,7 +57,7 @@ export function ActivityOptions({ fishing, treasure }: { fishing: boolean; treas
     }
   }
 
-  const parsedDelay = validDelay(delay)
+  const parsedDelay = parseSecondsToMs(delay)
   const delayChanged = value !== null && parsedDelay !== value.treasure.claimDelayMs
   const saveDelay = (): void => {
     if (value && parsedDelay !== null && delayChanged) void save({ ...value, treasure: { ...value.treasure, claimDelayMs: parsedDelay } })
@@ -87,15 +83,15 @@ export function ActivityOptions({ fishing, treasure }: { fishing: boolean; treas
           {/* Not a <form>: this panel also sits inside the new-task form. */}
           <div className="task-activity-delay">
             <label className="field-stack">
-              <span className="field-label">开启后延迟（毫秒，0 至 60000）</span>
-              <input className="text-input num" type="number" min={0} max={60000} step={100} value={delay} disabled={saving}
-                aria-label="宝箱领取延迟（毫秒）" onChange={(event) => setDelay(event.target.value)}
+              <span className="field-label">开启后延迟（秒，0 至 60）</span>
+              <input className="text-input num" inputMode="decimal" value={delay} disabled={saving}
+                aria-label="宝箱领取延迟（秒）" aria-invalid={parsedDelay === null} onChange={(event) => setDelay(event.target.value)}
                 onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); saveDelay() } }} />
             </label>
             <button type="button" className="btn-quiet small" disabled={saving || parsedDelay === null || !delayChanged}
               onClick={saveDelay}>保存延迟</button>
           </div>
-          {parsedDelay === null && <p className="form-error"><ErrorText error="延迟须为 0 至 60000 的整数" message="延迟须为 0 至 60000 的整数" /></p>}
+          {parsedDelay === null && <p className="form-error"><ErrorText error={SECONDS_INPUT_ERROR} message={SECONDS_INPUT_ERROR} /></p>}
         </div>
       )}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}

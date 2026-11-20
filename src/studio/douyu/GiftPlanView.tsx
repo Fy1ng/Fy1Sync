@@ -8,6 +8,7 @@ import type { DouyuGiftMoney, DouyuGiftResult, DouyuInventoryItem } from '../../
 import { ErrorDetailsButton, ErrorText } from '../../ui/ErrorDetails'
 import { GIFT_RESULT, type GiftPlanHandle } from './giftPlan'
 import { UNKNOWN, dateTime, expiry, money, secondsLeft, validMoney } from './giftFormat'
+import { formatMsAsSeconds } from './durationSeconds'
 import './backpack.css'
 
 const ROW_STATE: Record<DouyuGiftResult['rows'][number]['status'], string> = {
@@ -72,7 +73,7 @@ export function GiftPlanView({ gift, accountLabel, currentRoom, ready, inventory
                 <dt>每次数量</dt><dd className="num">{row.quantity}</dd>
                 <dt>次数</dt><dd className="num">{plan.repeat}</dd>
                 <dt>总量</dt><dd className="num">{plan.totalQuantity}</dd>
-                <dt>间隔</dt><dd className="num">{plan.intervalMs} 毫秒</dd>
+                <dt>间隔</dt><dd className="num">{formatMsAsSeconds(plan.intervalMs)} 秒</dd>
                 <dt>单价</dt><dd className="num">{money(row.unitPrice)}</dd>
                 <dt>预算</dt><dd className="num">{money(plan.budget)}</dd>
                 <dt>赠送前余额</dt><dd className="num">{money(plan.balanceBefore)}</dd>
@@ -81,7 +82,7 @@ export function GiftPlanView({ gift, accountLabel, currentRoom, ready, inventory
               <>
                 <dt>道具总数</dt><dd className="num">{plan.totalQuantity}</dd>
                 <dt>请求次数</dt><dd className="num">{plan.totalOperations}</dd>
-                <dt>间隔</dt><dd className="num">{plan.intervalMs} 毫秒</dd>
+                <dt>间隔</dt><dd className="num">{formatMsAsSeconds(plan.intervalMs)} 秒</dd>
                 <dt>标称价值</dt>
                 <dd className="num">
                   {value && value.known.length ? value.known.map(money).join('，') : '无已知价值'}

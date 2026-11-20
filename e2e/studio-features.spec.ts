@@ -383,7 +383,9 @@ test('赠礼编辑作废预览, 确认按有效 planId 执行且未知结果不�
   const quantity = desk.getByRole('textbox', { name: '离线验收道具 赠送数量', exact: true })
   await expect(quantity).toBeVisible()
   await quantity.fill('1')
-  await desk.getByRole('textbox', { name: /赠送间隔/ }).fill('0')
+  const interval = desk.getByRole('textbox', { name: '赠送间隔（秒）', exact: true })
+  await expect(interval).toHaveValue('1')
+  await interval.fill('0.5')
   await desk.getByRole('button', { name: '生成确认单', exact: true }).click()
   const plan = desk.getByRole('region', { name: '赠送确认单', exact: true })
   const confirmGift = async () => {
@@ -395,6 +397,7 @@ test('赠礼编辑作废预览, 确认按有效 planId 执行且未知结果不�
     await plan.getByRole('button', { name: '确认赠送', exact: true }).click()
   }
   await expect(plan).toBeVisible()
+  await expect(plan.getByText('0.5 秒', { exact: true })).toBeVisible()
   expect((await httpState(electronApp)).writes).toEqual([])
   await quantity.fill('2')
   await expect(plan).toHaveCount(0)

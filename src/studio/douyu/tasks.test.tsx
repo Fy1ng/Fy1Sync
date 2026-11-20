@@ -129,20 +129,30 @@ describe('activity settings', () => {
   })
 
   it('sends the whole object for the treasure switch and the claim delay', async () => {
+    preferences.treasure.claimDelayMs = 500
     render(<Harness />)
     await openForm('开宝箱')
+    const delay = await screen.findByLabelText('宝箱领取延迟（秒）')
+    expect(delay).toHaveValue('0.5')
     fireEvent.click(await screen.findByRole('switch', { name: /跨房间领取宝箱/ }))
     await waitFor(() => expect(named('setDouyuActivityOptions')).toHaveLength(1))
-    expect(named('setDouyuActivityOptions')[0]!.args).toEqual({ version: 1, fishing: { mode: 'all' }, treasure: { crossRoom: true, claimDelayMs: 5000 } })
+    expect(named('setDouyuActivityOptions')[0]!.args).toEqual({ version: 1, fishing: { mode: 'all' }, treasure: { crossRoom: true, claimDelayMs: 500 } })
 
-    const delay = screen.getByLabelText('宝箱领取延迟（毫秒）')
     await waitFor(() => expect(delay).toBeEnabled())
-    fireEvent.change(delay, { target: { value: '60001' } })
-    expect(screen.getByRole('button', { name: '保存延迟' })).toBeDisabled()
-    fireEvent.change(delay, { target: { value: '8000' } })
-    fireEvent.click(screen.getByRole('button', { name: '保存延迟' }))
+    const save = screen.getByRole('button', { name: '保存延迟' })
+    for (const invalid of ['60.001', '0.0001', 'abc']) {
+      fireEvent.change(delay, { target: { value: invalid } })
+      expect(delay).toBeInvalid()
+      expect(screen.getByText('请输入 0 至 60 秒，最多 3 位小数。')).toBeInTheDocument()
+      expect(save).toBeDisabled()
+      fireEvent.keyDown(delay, { key: 'Enter' })
+    }
+    expect(named('setDouyuActivityOptions')).toHaveLength(1)
+    fireEvent.change(delay, { target: { value: '8.290' } })
+    fireEvent.click(save)
     await waitFor(() => expect(named('setDouyuActivityOptions')).toHaveLength(2))
-    expect(named('setDouyuActivityOptions')[1]!.args).toEqual({ version: 1, fishing: { mode: 'all' }, treasure: { crossRoom: true, claimDelayMs: 8000 } })
+    expect(named('setDouyuActivityOptions')[1]!.args).toEqual({ version: 1, fishing: { mode: 'all' }, treasure: { crossRoom: true, claimDelayMs: 8290 } })
+    await waitFor(() => expect(delay).toHaveValue('8.29'))
     expect(named('createDouyuTask')).toHaveLength(0)
   })
 })

@@ -31,9 +31,9 @@ const inventory: DouyuInventorySnapshot = {
   totals: { quantity: 7, knownValue: [{ currency: 'YUWAN', amountMinor: 500, scale: 1 }], unvaluedItems: 1, knownIntimacy: 5, unknownIntimacyItems: 1 },
 }
 
-const inventoryPlan = (id: string, quantity: number): DouyuGiftPlan => ({
+const inventoryPlan = (id: string, quantity: number, intervalMs: number): DouyuGiftPlan => ({
   id, accountId: 'a1', room: '100', kind: 'inventory', createdAt: Date.now(), expiresAt: Date.now() + 120_000,
-  intervalMs: 1000, totalQuantity: quantity, totalOperations: 1, repeat: 1, budget: null, balanceBefore: null,
+  intervalMs, totalQuantity: quantity, totalOperations: 1, repeat: 1, budget: null, balanceBefore: null,
   rows: [{ propId: '268', giftId: null, name: '荧光棒', quantity, repeat: 1, stock: 5, expiresAt: 1_800_000_000_000,
     unitPrice: { currency: 'YUWAN', amountMinor: 100, scale: 1 }, total: { currency: 'YUWAN', amountMinor: 100 * quantity, scale: 1 } }],
   excludedItems: [{ propId: '777', name: '神秘道具', quantity: 2, reason: '类型不受支持' }], message: '',
@@ -58,8 +58,8 @@ beforeEach(() => {
       calls.push({ method, args })
       if (method === 'getDouyuInventory') return { ok: true, value: inventory }
       if (method === 'previewDouyuInventoryGift') {
-        const { input } = args as { input: { selection: 'all' | { quantity: number }[] } }
-        return { ok: true, value: inventoryPlan(`g${++plans}`, input.selection === 'all' ? 5 : input.selection[0]!.quantity) }
+        const { input } = args as { input: { selection: 'all' | { quantity: number }[]; intervalMs: number } }
+        return { ok: true, value: inventoryPlan(`g${++plans}`, input.selection === 'all' ? 5 : input.selection[0]!.quantity, input.intervalMs) }
       }
       if (method === 'getDouyuGiftCatalog') {
         return { ok: true, value: { room: '100', checkedAt: 1, onceLimit: null, items: [
@@ -132,6 +132,8 @@ describe('gifting from the backpack', () => {
     expect(named('previewDouyuInventoryGift')[0]!.args).toEqual({
       accountId: 'a1', input: { room: '100', selection: [{ propId: '268', quantity: 2 }], intervalMs: 1000 },
     })
+    expect(screen.getByRole('textbox', { name: '赠送间隔（秒）' })).toHaveValue('1')
+    expect(within(screen.getByRole('region', { name: '赠送确认单' })).getByText('1 秒')).toBeInTheDocument()
     const confirm = screen.getByRole('button', { name: '确认赠送' })
     fireEvent.click(confirm)
     fireEvent.click(confirm)
@@ -163,7 +165,7 @@ describe('gifting from the backpack', () => {
     fireEvent.change(screen.getByRole('textbox', { name: '目标房间号' }), { target: { value: '100' } })
     fireEvent.click(screen.getByRole('button', { name: '生成确认单' }))
     await screen.findByRole('region', { name: '赠送确认单' })
-    fireEvent.change(screen.getByRole('textbox', { name: '赠送间隔（毫秒）' }), { target: { value: '2000' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '赠送间隔（秒）' }), { target: { value: '2' } })
     await waitFor(() => expect(named('cancelDouyuGiftPlan').map((call) => call.args)).toEqual([{ planId: 'g1' }, { planId: 'g2' }]))
     expect(screen.queryByRole('button', { name: '确认赠送' })).toBeNull()
   })
@@ -187,9 +189,19 @@ describe('gifting from the backpack', () => {
       rows: [{ propId: '268', giftId: null, name: '荧光棒', quantity: 5, repetition: 1, status: 'unknown', message: '' }] })
     await openPack()
     fireEvent.click(screen.getByRole('radio', { name: '全部可赠道具' }))
-    fireEvent.click(screen.getByRole('button', { name: '生成确认单' }))
+    const interval = screen.getByRole('textbox', { name: '赠送间隔（秒）' })
+    const preview = screen.getByRole('button', { name: '生成确认单' })
+    fireEvent.change(interval, { target: { value: '0.0001' } })
+    expect(interval).toBeInvalid()
+    expect(screen.getByText('请输入 0 至 60 秒，最多 3 位小数。')).toBeInTheDocument()
+    expect(preview).toBeDisabled()
+    fireEvent.change(interval, { target: { value: '1.001' } })
+    fireEvent.click(preview)
     const plan = await screen.findByRole('region', { name: '赠送确认单' })
-    expect((named('previewDouyuInventoryGift')[0]!.args as { input: { selection: unknown } }).input.selection).toBe('all')
+    expect(named('previewDouyuInventoryGift')[0]!.args).toEqual({
+      accountId: 'a1', input: { room: '100', selection: 'all', intervalMs: 1001 },
+    })
+    expect(within(plan).getByText('1.001 秒')).toBeInTheDocument()
     expect(within(plan).getByText(/类型不受支持/)).toBeInTheDocument()
     fireEvent.click(within(plan).getByRole('button', { name: '确认赠送' }))
     const result = await screen.findByRole('region', { name: '赠送结果' })
@@ -211,8 +223,14 @@ describe('buying and sending gifts', () => {
     expect(screen.getByRole('button', { name: '生成确认单' })).toBeDisabled()
     fireEvent.change(screen.getByRole('textbox', { name: '每次数量' }), { target: { value: '2' } })
     fireEvent.change(screen.getByRole('textbox', { name: '赠送次数' }), { target: { value: '3' } })
-    fireEvent.change(screen.getByRole('textbox', { name: '购买赠送间隔（毫秒）' }), { target: { value: '500' } })
-    fireEvent.click(screen.getByRole('button', { name: '生成确认单' }))
+    const interval = screen.getByRole('textbox', { name: '购买赠送间隔（秒）' })
+    const preview = screen.getByRole('button', { name: '生成确认单' })
+    expect(interval).toHaveValue('1')
+    fireEvent.change(interval, { target: { value: 'abc' } })
+    expect(interval).toBeInvalid()
+    expect(preview).toBeDisabled()
+    fireEvent.change(interval, { target: { value: '0.500' } })
+    fireEvent.click(preview)
     return screen.findByRole('region', { name: '赠送确认单' })
   }
 
@@ -229,7 +247,7 @@ describe('buying and sending gifts', () => {
     expect(facts['每次数量']).toBe('2')
     expect(facts['次数']).toBe('3')
     expect(facts['总量']).toBe('6')
-    expect(facts['间隔']).toBe('500 毫秒')
+    expect(facts['间隔']).toBe('0.5 秒')
     expect(facts['单价']).toContain('10 鱼翅')
     expect(facts['单价']).toBe('10 鱼翅')
     expect(facts['预算']).toContain('60 鱼翅')

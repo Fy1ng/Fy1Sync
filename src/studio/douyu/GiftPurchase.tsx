@@ -12,6 +12,7 @@ import { apiClient } from '../../app/apiClient'
 import type { DouyuGiftCatalog, DouyuGiftPlan } from '../../../server/douyu/inventoryTypes'
 import { planShapeOk, type GiftPlanHandle } from './giftPlan'
 import { dateTime, money, roomOk, wholeIn } from './giftFormat'
+import { formatMsAsSeconds, parseSecondsToMs, SECONDS_INPUT_ERROR } from './durationSeconds'
 import './backpack.css'
 
 const MAX_REPEAT = 10_000
@@ -30,7 +31,7 @@ export function GiftPurchase({ accountId, room, gift, locked, ready }: {
   const [giftId, setGiftId] = useState('')
   const [quantity, setQuantity] = useState('')
   const [repeat, setRepeat] = useState('')
-  const [gap, setGap] = useState('1000')
+  const [gap, setGap] = useState(() => formatMsAsSeconds(1_000))
   const mounted = useRef(false)
   const generation = useRef(0)
 
@@ -66,7 +67,7 @@ export function GiftPurchase({ accountId, room, gift, locked, ready }: {
   const limit = chosen && chosen.countLimit !== null && chosen.countLimit > 0 ? chosen.countLimit : null
   const perSend = wholeIn(quantity, 1, limit ?? Number.MAX_SAFE_INTEGER)
   const times = wholeIn(repeat, 1, MAX_REPEAT)
-  const intervalMs = wholeIn(gap, 0, 60_000)
+  const intervalMs = parseSecondsToMs(gap)
   const tooLong = times !== null && intervalMs !== null && intervalMs * (times - 1) > MAX_SPAN_MS
   const tooMany = perSend !== null && times !== null && !Number.isSafeInteger(perSend * times)
   const formOk = roomOk(room) && !!chosen?.available && perSend !== null && times !== null && intervalMs !== null && !tooLong && !tooMany
@@ -132,15 +133,15 @@ export function GiftPurchase({ accountId, room, gift, locked, ready }: {
           </label>
           <label className="gift-field">
             <span>间隔</span>
-            <input className="text-input num" inputMode="numeric" value={gap} disabled={locked} aria-label="购买赠送间隔（毫秒）"
+            <input className="text-input num" inputMode="decimal" value={gap} disabled={locked} aria-label="购买赠送间隔（秒）"
               aria-invalid={intervalMs === null} onChange={(event) => { const next = event.target.value; edit(() => setGap(next)) }} />
-            <span>毫秒</span>
+            <span>秒</span>
           </label>
         </div>
       )}
       {catalog && quantity !== '' && perSend === null && <p className="form-error"><ErrorText error={`每次数量须为${limit ? ` 1 到 ${limit} ` : '正'}整数`} /></p>}
       {catalog && repeat !== '' && times === null && <p className="form-error"><ErrorText error={`次数须为 1 到 ${MAX_REPEAT} 的整数`} /></p>}
-      {catalog && intervalMs === null && <p className="form-error"><ErrorText error="间隔须为 0 到 60000 的整数" message="间隔须为 0 到 60000 的整数" /></p>}
+      {catalog && intervalMs === null && <p className="form-error"><ErrorText error={SECONDS_INPUT_ERROR} message={SECONDS_INPUT_ERROR} /></p>}
       {(tooLong || tooMany) && <p className="form-error"><ErrorText error="计划总时长不得超过 24 小时，总量须在可计算范围内" message="计划总时长不得超过 24 小时，总量须在可计算范围内" /></p>}
       {!roomOk(room) && <p className="form-error"><ErrorText error="请填写有效的目标房间号" message="请填写有效的目标房间号" /></p>}
 

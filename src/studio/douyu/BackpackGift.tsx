@@ -11,6 +11,7 @@ import type { DouyuGiftPlan, DouyuInventorySnapshot } from '../../../server/douy
 import { Segmented } from '../kit'
 import { planShapeOk, type GiftPlanHandle } from './giftPlan'
 import { expiry, roomOk, wholeIn } from './giftFormat'
+import { formatMsAsSeconds, parseSecondsToMs, SECONDS_INPUT_ERROR } from './durationSeconds'
 import './backpack.css'
 
 type Source = 'pick' | 'all'
@@ -26,7 +27,7 @@ export function BackpackGift({ accountId, room, inventory, gift, locked }: {
 }): React.ReactNode {
   const [source, setSource] = useState<Source>('pick')
   const [picks, setPicks] = useState<Record<string, string>>({})
-  const [gap, setGap] = useState('1000')
+  const [gap, setGap] = useState(() => formatMsAsSeconds(1_000))
 
   const giftable = inventory?.items.filter((item) => item.canGift && item.quantity > 0) ?? []
 
@@ -39,7 +40,7 @@ export function BackpackGift({ accountId, room, inventory, gift, locked }: {
     })
   }, [inventory])
 
-  const intervalMs = wholeIn(gap, 0, 60_000)
+  const intervalMs = parseSecondsToMs(gap)
   const chosen = giftable.filter((item) => (picks[item.propId] ?? '') !== '')
   const badPick = chosen.some((item) => wholeIn(picks[item.propId]!, 1, item.quantity) === null)
   const selection = chosen.map((item) => ({ propId: item.propId, quantity: wholeIn(picks[item.propId]!, 1, item.quantity) ?? 0 }))
@@ -76,12 +77,12 @@ export function BackpackGift({ accountId, room, inventory, gift, locked }: {
           onChange={(value) => edit(() => setSource(value))} />
         <label className="gift-field">
           <span>间隔</span>
-          <input className="text-input num" inputMode="numeric" value={gap} disabled={locked} aria-label="赠送间隔（毫秒）"
+          <input className="text-input num" inputMode="decimal" value={gap} disabled={locked} aria-label="赠送间隔（秒）"
             aria-invalid={intervalMs === null} onChange={(event) => { const next = event.target.value; edit(() => setGap(next)) }} />
-          <span>毫秒</span>
+          <span>秒</span>
         </label>
       </div>
-      {intervalMs === null && <p className="form-error"><ErrorText error="间隔请填写 0 到 60000 的整数" message="间隔请填写 0 到 60000 的整数" /></p>}
+      {intervalMs === null && <p className="form-error"><ErrorText error={SECONDS_INPUT_ERROR} message={SECONDS_INPUT_ERROR} /></p>}
 
       {source === 'all' ? (
         <p className="muted">赠送全部可赠道具，无法赠送的道具留在背包，请核对下方确认单</p>
