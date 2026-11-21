@@ -1,11 +1,17 @@
 import { CONTACT_EMAIL } from '../server/appIdentity'
-import { EsportsService } from '../server/esports/schedule'
+import { EsportsService, SCHEDULE_TTL_MS } from '../server/esports/schedule'
 import { toRelaySchedule } from '../server/esports/relayProtocol'
 import type { Cs2Schedule } from '../server/esports/types'
 import { scheduleFocuses, focusArgument } from './focus'
 import { RelayHttp } from './http'
 
 export const RELAY_POLL_MS = 20_000
+
+// On 2026-11-21, Liquipedia temporarily banned the relay's egress IP for hours after
+// about half an hour at a 2-minute cadence (14 parse requests). All clients share
+// that IP, so keeping scores a few minutes behind is preferable to another ban.
+const RELAY_ACTIVE_SCHEDULE_TTL_MS = SCHEDULE_TTL_MS
+
 type UpstreamOptions = ConstructorParameters<typeof EsportsService>[0]
 interface Options extends Pick<UpstreamOptions, 'request' | 'resolve' | 'logos'> {
   dataDir: string
@@ -35,7 +41,7 @@ export class ScheduleRelay {
       request: options.request, resolve: options.resolve,
       userAgent: `Fy1Sync-schedule-relay/${options.version} (https://github.com/Fy1ng/Fy1Sync; ${CONTACT_EMAIL})` }
     this.service = new EsportsService({ ...dependencies,
-      logos: options.logos, offline: !!options.offline, activeScheduleTtlMs: 120_000,
+      logos: options.logos, offline: !!options.offline, activeScheduleTtlMs: RELAY_ACTIVE_SCHEDULE_TTL_MS,
       log: () => {},
       onRefresh: schedule => {
         if (this.stopped) return

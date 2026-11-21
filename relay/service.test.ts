@@ -76,7 +76,7 @@ describe('relay upstream lifecycle', () => {
     expect((await localRequest(port, '/v1/cs2/schedule', 'GET', { 'If-None-Match': initial.headers.etag! })).status).toBe(304)
   })
 
-  it.each([['active', 120_000], ['idle', SCHEDULE_TTL_MS]] as const)('polls the upstream schedule on the %s cadence', async (mode, interval) => {
+  it.each(['active', 'idle'] as const)('uses the background schedule cadence in %s mode', async mode => {
     const original = fixture.parse.text['*']
     const payload = mode === 'active' ? fixture : { parse: { text: {
       '*': original.replace(/class="timer-object[^"]*"/g, '$& data-finished="finished"'),
@@ -89,11 +89,11 @@ describe('relay upstream lifecycle', () => {
     const relay = create(request)
     await relay.start('127.0.0.1', 0)
     await relay.poll()
-    await vi.advanceTimersByTimeAsync(interval - 1)
+    await vi.advanceTimersByTimeAsync(SCHEDULE_TTL_MS - 1)
     expect(parses).toEqual([NOW])
     await vi.advanceTimersByTimeAsync(1)
     await relay.poll()
-    expect(parses).toEqual([NOW, NOW + interval])
+    expect(parses).toEqual([NOW, NOW + SCHEDULE_TTL_MS])
   })
 
   it('queues all waiting channel lookups in one poll and spaces their actual requests', async () => {
