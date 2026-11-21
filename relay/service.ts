@@ -1,3 +1,4 @@
+import { getDefaultAutoSelectFamilyAttemptTimeout } from 'node:net'
 import { CONTACT_EMAIL } from '../server/appIdentity'
 import { diagnosticDetails } from '../server/errorDetails'
 import { EsportsService, SCHEDULE_TTL_MS } from '../server/esports/schedule'
@@ -161,7 +162,8 @@ export class ScheduleRelay {
 
   async start(host = '127.0.0.1', port = 5081): Promise<number> {
     const boundPort = await this.http.listen(host, port)
-    this.log(JSON.stringify({ type: 'started', host, port: boundPort, offline: !!this.options.offline }))
+    this.log(JSON.stringify({ type: 'started', host, port: boundPort, offline: !!this.options.offline,
+      autoSelectFamilyAttemptTimeoutMs: getDefaultAutoSelectFamilyAttemptTimeout() }))
     this.timer = setInterval(() => { void this.poll() }, RELAY_POLL_MS)
     this.timer.unref?.()
     void this.poll()

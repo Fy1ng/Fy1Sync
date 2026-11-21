@@ -1,9 +1,14 @@
+import { setDefaultAutoSelectFamilyAttemptTimeout } from 'node:net'
 import { resolve } from 'node:path'
 import { version } from '../package.json'
 import { ScheduleRelay } from './service'
 
 const port = Number(process.env.RELAY_PORT ?? '5081')
 if (!Number.isInteger(port) || port < 0 || port > 65_535) throw new Error('Invalid RELAY_PORT')
+// Upstream IPv4 handshakes from the relay VPS took 205 to 246 ms, close to Node's
+// 250 ms default. Allow time for retransmits before falling back to IPv6, which
+// has no default route on the VPS.
+setDefaultAutoSelectFamilyAttemptTimeout(5_000)
 const relay = new ScheduleRelay({ dataDir: resolve(process.env.RELAY_DATA_DIR ?? './data'), version,
   offline: process.env.RELAY_OFFLINE !== undefined })
 const stop = () => {

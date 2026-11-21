@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { getDefaultAutoSelectFamilyAttemptTimeout } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -55,6 +56,8 @@ describe('relay upstream lifecycle', () => {
     expect(agent).toBe('Fy1Sync-schedule-relay/0.4.1 (https://github.com/Fy1ng/Fy1Sync; sync@fy1ng.cn)')
     await relay.poll()
     const entries = log.mock.calls.map(([value]) => JSON.parse(value))
+    expect(entries[0]).toEqual({ type: 'started', host: '127.0.0.1', port, offline: false,
+      autoSelectFamilyAttemptTimeoutMs: getDefaultAutoSelectFamilyAttemptTimeout() })
     expect(entries.filter(value => value.type === 'upstream-result')).toEqual([
       { type: 'upstream-result', ok: true, fetchedAt: NOW, matches: currentMatches(parseSchedule(fixture), NOW).length, cooldownUntil: null },
     ])
