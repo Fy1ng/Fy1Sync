@@ -143,6 +143,8 @@ curl -I https://schedule.fy1ng.cn/v1/cs2/schedule
 
 标准输出记录启动, 实际赛程上游刷新的成功或失败结果, 线上格式过滤计数的变化和关闭. 不记录访问日志, 客户端 IP, 请求 URL, 响应正文或上游页面. 部署者应保持其他入口和基础设施的日志策略与此约定一致.
 
+失败的 `upstream-result` 用 `errorKind` 区分请求超时 (`timeout`), 网络故障 (`network`, 看 `code`), 上游非 200 (`http`, 看 `status`), 上游 API 错误 (`api`, 有可用的错误码时看 `code`), 赛程格式变化 (`format`, 看 `selector`) 和其他异常 (`other`, 看 `name`; 请求被安全请求层拒绝或中断时另有 `detail`). `reason` 为固定标识, `cooldownUntil` 表示限流冷却到期时间. `parse-skipped` 仅在成功解析的赛程之间跳过的选择器集合变化时记录, 每行最多列出 8 个; `[]` 表示不再跳过比赛.
+
 ## 被 Liquipedia 限流时
 
 中转收到 429 后自动进入冷却 (15 分钟起, 逐次加倍, 最长 6 小时), 期间继续提供上一次的赛程, `/healthz` 的 `cooldownUntil` 给出到期时间. 多数情况等冷却结束即可.

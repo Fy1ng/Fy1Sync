@@ -29,8 +29,8 @@ describe('relay upstream lifecycle', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  function create(request: typeof fetch, offline = false, log: (message: string) => void = () => {}) {
-    const relay = new ScheduleRelay({ dataDir: root, version: '0.4.1', request, resolve: async () => ['93.184.216.34'],
+  function create(request: typeof fetch, offline = false, log: (message: string) => void = () => {}, resolve = async () => ['93.184.216.34']) {
+    const relay = new ScheduleRelay({ dataDir: root, version: '0.4.1', request, resolve,
       logos: null, offline, log })
     relays.push(relay)
     return relay
@@ -149,6 +149,128 @@ describe('relay upstream lifecycle', () => {
     expect(loggedCounts()).toEqual([{ type: 'wire-skipped', matches: 1, streams: 0 }, { type: 'wire-skipped', matches: 0, streams: 0 }])
   })
 
+  const bodyMarker = 'DO_NOT_LOG_UPSTREAM_BODY'
+  const queryMarker = 'DO_NOT_LOG_QUERY_VALUE'
+  const headerMarker = 'DO_NOT_LOG_UPSTREAM_HEADER'
+  const contaminatedId = `Ab\r\n\t\x1b\u2028\u4e2d${'c'.repeat(130)}`
+  const validId = `Ab${'c'.repeat(118)}`
+
+  it.each([
+    { scenario: 'HTTP error', response: () => Response.json({ error: { code: bodyMarker, info: bodyMarker } },
+      { status: 503, statusText: headerMarker, headers: { 'Retry-After': headerMarker } }), expected: { errorKind: 'http', status: 503 } },
+    { scenario: 'API error', response: () => Response.json({ error: { code: 'badvalue', info: bodyMarker } }),
+      expected: { errorKind: 'api', code: 'badvalue' } },
+    { scenario: 'API rate limit', response: () => Response.json({ error: { code: 'ratelimited', info: bodyMarker } }),
+      expected: { errorKind: 'api', code: 'ratelimited', reason: 'upstream-rate-limit' } },
+    { scenario: 'long API code', response: () => Response.json({ error: { code: contaminatedId } }),
+      expected: { errorKind: 'api', code: validId } },
+    { scenario: 'URL in API code', response: () => Response.json({ error: { code: `/path?value=${queryMarker}` } }),
+      expected: { errorKind: 'api' }, absent: 'code' },
+    { scenario: 'unexpected JSON shape', response: () => Response.json({ text: bodyMarker }),
+      expected: { errorKind: 'format', selector: 'parse.text.*' } },
+    { scenario: 'changed HTML layout', response: () => Response.json({ parse: { text: { '*': `<div>${bodyMarker}</div>` } } }),
+      expected: { errorKind: 'format', selector: '.match-ticker-card or .match-info' } },
+    { scenario: 'invalid JSON', response: () => new Response(`<html>${bodyMarker}</html>`),
+      expected: { errorKind: 'other', name: 'SyntaxError' } },
+    { scenario: 'fetch failure without a code', response: () => { throw new TypeError(bodyMarker) },
+      expected: { errorKind: 'other', name: 'TypeError' }, absent: 'detail' },
+    { scenario: 'safeFetch refusal', response: () => { throw Object.assign(new Error(bodyMarker), { name: 'ProxyError', reason: 'upstream-failed' }) },
+      expected: { errorKind: 'other', name: 'ProxyError', detail: 'upstream-failed' } },
+    { scenario: 'long error name', response: () => { throw Object.assign(new Error(bodyMarker), { name: contaminatedId }) },
+      expected: { errorKind: 'other', name: validId } },
+  ])('logs a bounded summary for $scenario', async ({ response, expected, absent }) => {
+    const request = vi.fn<typeof fetch>(async () => response())
+    const log = vi.fn<(message: string) => void>()
+    await create(request, false, log).poll()
+    expect(request).toHaveBeenCalledTimes(1)
+    const lines = log.mock.calls.map(([line]) => line)
+    const results = lines.map(line => JSON.parse(line)).filter(entry => entry.type === 'upstream-result')
+    expect(results).toHaveLength(1)
+    expect(results[0]).toMatchObject({ ok: false, fetchedAt: 0, matches: 0, ...expected })
+    if (absent) expect(results[0]).not.toHaveProperty(absent)
+    for (const line of lines) {
+      expect(line).toMatch(/^[\x20-\x7e]+$/)
+      expect(line).not.toContain(bodyMarker)
+      expect(line).not.toContain(queryMarker)
+      expect(line).not.toContain(headerMarker)
+    }
+  })
+
+  it.each(['headers', 'body'])('logs the actual schedule timeout while waiting for %s', async phase => {
+    const request = vi.fn<typeof fetch>(async (_input, init) => {
+      const signal = init!.signal!
+      if (phase === 'headers') return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+      })
+      return new Response(new ReadableStream({ start(controller) {
+        signal.addEventListener('abort', () => controller.error(new DOMException('Aborted', 'AbortError')), { once: true })
+      } }))
+    })
+    const log = vi.fn<(message: string) => void>()
+    const pending = create(request, false, log).poll()
+    await vi.advanceTimersByTimeAsync(59_999)
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(log).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    await pending
+    expect(log.mock.calls.map(([line]) => JSON.parse(line))).toContainEqual({ type: 'upstream-result', ok: false,
+      fetchedAt: 0, matches: 0, reason: 'schedule-unavailable', errorKind: 'timeout', name: 'TimeoutError', cooldownUntil: null })
+  })
+
+  it.each(['ECONNRESET', 'ETIMEDOUT', 'UND_ERR_SOCKET'])('logs the underlying %s network code', async code => {
+    const underlying = Object.assign(new Error(bodyMarker), { code })
+    const cause = code === 'ETIMEDOUT' ? new AggregateError([underlying]) : underlying
+    const request = vi.fn<typeof fetch>(async () => { throw new TypeError('fetch failed', { cause }) })
+    const log = vi.fn<(message: string) => void>()
+    await create(request, false, log).poll()
+    expect(log.mock.calls.map(([line]) => JSON.parse(line))).toContainEqual({ type: 'upstream-result', ok: false,
+      fetchedAt: 0, matches: 0, reason: 'schedule-unavailable', errorKind: 'network', code, cooldownUntil: null })
+    expect(log.mock.calls.flat().join('')).not.toContain(bodyMarker)
+  })
+
+  it('keeps the DNS code when URL validation fails before dispatch', async () => {
+    const request = vi.fn<typeof fetch>()
+    const log = vi.fn<(message: string) => void>()
+    await create(request, false, log, async () => { throw Object.assign(new Error(bodyMarker), { code: 'ENOTFOUND' }) }).poll()
+    expect(request).not.toHaveBeenCalled()
+    expect(log.mock.calls.map(([line]) => JSON.parse(line))).toContainEqual({ type: 'upstream-result', ok: false,
+      fetchedAt: 0, matches: 0, reason: 'schedule-unavailable', errorKind: 'network', code: 'ENOTFOUND', cooldownUntil: null })
+    expect(log.mock.calls.flat().join('')).not.toContain(bodyMarker)
+  })
+
+  it('logs one sorted set of parse skips only when it changes across parsed schedules', async () => {
+    const cards = fixture.parse.text['*'].split(/(?=<div class="match-info">)/)
+    const opponent = 'match-info-header-opponent'
+    const score = 'match-info-header-scoreholder-upper'
+    const brokenCard = (index: number, selector: string) => cards[index]!.replaceAll(`class="${selector}"`, 'class="wrong"')
+    const withSkips = (first = opponent, second = score) => [brokenCard(0, first), brokenCard(1, second), ...cards.slice(2)]
+    let html: string | null = withSkips().join('')
+    const request = vi.fn<typeof fetch>(async input => {
+      if (!isParse(input)) return Response.json({ query: { pages: [] } })
+      return html === null ? new Response(bodyMarker, { status: 503 }) : Response.json({ parse: { text: { '*': html } } })
+    })
+    const log = vi.fn<(message: string) => void>()
+    const relay = create(request, false, log)
+    const updates = () => log.mock.calls.map(([line]) => JSON.parse(line)).filter(entry => entry.type === 'parse-skipped')
+    await relay.poll()
+    const first = { type: 'parse-skipped', selectors: [`.${opponent}`, `.${score}`] }
+    expect(updates()).toEqual([first])
+    for (const next of [[...withSkips(score, opponent), brokenCard(2, opponent)].join(''), null, withSkips().join('')]) {
+      html = next
+      await vi.advanceTimersByTimeAsync(SCHEDULE_TTL_MS)
+      await relay.poll()
+      expect(updates()).toEqual([first])
+    }
+    html = [brokenCard(0, opponent), ...cards.slice(1)].join('')
+    await vi.advanceTimersByTimeAsync(SCHEDULE_TTL_MS)
+    await relay.poll()
+    html = cards.join('')
+    await vi.advanceTimersByTimeAsync(SCHEDULE_TTL_MS)
+    await relay.poll()
+    expect(updates()).toEqual([first, { type: 'parse-skipped', selectors: [`.${opponent}`] }, { type: 'parse-skipped', selectors: [] }])
+    expect(log.mock.calls.flat().join('')).not.toContain(bodyMarker)
+  })
+
   it('retains previously fetched schedule data and publishes an upstream cooldown after a 429', async () => {
     let limited = false
     const request = vi.fn<typeof fetch>(async input => isParse(input)
@@ -220,7 +342,7 @@ describe('relay upstream lifecycle', () => {
     await relay.start('127.0.0.1', 0)
     await relay.poll()
     expect(log.mock.calls.map(([value]) => JSON.parse(value))).toContainEqual({ type: 'upstream-result', ok: false,
-      reason: 'refresh-loop-failed', error: 'Error' })
+      reason: 'refresh-loop-failed', errorKind: 'other', name: 'Error' })
     const poll = vi.spyOn(relay, 'poll')
     await vi.advanceTimersByTimeAsync(RELAY_POLL_MS)
     await relay.poll()

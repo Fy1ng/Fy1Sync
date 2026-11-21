@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { metadataUserAgent } from '../appIdentity'
-import { PinnedDispatcherPool, safeFetch, type Resolver } from '../safeFetch'
+import { dnsResolver, PinnedDispatcherPool, ProxyError, safeFetch, type Resolver } from '../safeFetch'
 import { currentMatches, parseSchedule, ScheduleFormatError } from './parser'
 import { normalizeTournamentPath, queryTournamentTiers, type TournamentTier } from './tiers'
 import { cooldownRound, DispatchTurns, LiquipediaCoolingDown, LiquipediaRateLimit, pause, verificationNotBefore, VerificationRoundEnded } from './liquipediaRateLimit'
@@ -428,6 +428,9 @@ export class EsportsService {
     let startedAt = this.now()
     let dispatched = false
     let quotaError: RateLimited | LiquipediaCoolingDown | VerificationRoundEnded | undefined
+    const observeParse = kind === 'parse' && this.options.onRefresh !== undefined
+    const resolveHost = this.options.resolve ?? dnsResolver
+    let dnsError: unknown
     const recordLimit = async (response: Response) => {
       if (verification) verification.limited = true
       await this.rateLimit.rateLimited(response.headers.get('retry-after'), signal, response.headers.get('date'))
@@ -436,7 +439,10 @@ export class EsportsService {
     }
     try {
       const result = await safeFetch(url, config, {
-        signal, resolve: this.options.resolve, dispatcherPool: this.pool,
+        signal, dispatcherPool: this.pool,
+        resolve: observeParse ? async hostname => {
+          try { return await resolveHost(hostname) } catch (error) { dnsError = error; throw error }
+        } : this.options.resolve,
         headers: { 'User-Agent': this.options.userAgent ?? metadataUserAgent(this.options.version), 'Accept-Encoding': 'gzip', Accept: 'application/json' },
         fetchImpl: async (input, init) => {
           // Reserve immediately before dispatch; slow proxy/DNS decisions cannot bunch requests.
@@ -467,12 +473,16 @@ export class EsportsService {
           if (response.status === 429) await recordLimit(response)
           return response
         },
-      }).catch(error => { throw quotaError ?? error })
+      }).catch(error => {
+        if (dnsError !== undefined && error instanceof ProxyError && error.reason === 'dns-failed') Object.assign(error, { cause: dnsError })
+        throw quotaError ?? error
+      })
       try {
         const payload = await readJson(result.response)
         if (!verification) this.rateLimit.succeeded(startedAt)
         return payload
       } catch (error) {
+        if (observeParse && result.response.status === 200 && transport.signal.aborted) throw transport.signal.reason
         const upstream = diagnosticDetails(error).upstream
         if (result.response.status !== 429 && upstream && typeof upstream === 'object' && !Array.isArray(upstream)
           && (upstream.code === 'ratelimited' || upstream.code === 'rate-limited')) await recordLimit(result.response)
