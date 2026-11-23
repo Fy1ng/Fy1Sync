@@ -16,6 +16,7 @@ import { composeMessage } from '../../core/messageComposition'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiClient } from '../../app/apiClient'
+import { loadSettings, SETTINGS_KEY } from '../../app/settings'
 import type { PipState } from '../../../electron/pipManager'
 import { Icon } from '../kit'
 import { PipDanmaku } from './PipDanmaku'
@@ -34,8 +35,25 @@ export function sendBlock(context: PipState['sendContext'] | null | undefined): 
   return null
 }
 
+/**
+ * 斗鱼写操作 is kept in the player's settings. This window has no Session, so it reads the
+ * stored value and follows changes made in the main window through storage events.
+ */
+function useDouyuWrites(): boolean {
+  const [on, setOn] = useState(() => loadSettings().douyuWrites)
+  useEffect(() => {
+    const read = (event: StorageEvent): void => {
+      if (event.key === null || event.key === SETTINGS_KEY) setOn(loadSettings().douyuWrites)
+    }
+    window.addEventListener('storage', read)
+    return () => window.removeEventListener('storage', read)
+  }, [])
+  return on
+}
+
 export default function PipPage(): React.ReactNode {
   const { state, error, errorDetail, apply } = usePipState()
+  const writes = useDouyuWrites()
   const [preferenceError, setPreferenceError, preferenceDetail] = useErrorState()
   const preferences = useDanmakuPreferences(setPreferenceError)
   const media = usePipMedia()
@@ -80,7 +98,7 @@ export default function PipPage(): React.ReactNode {
         </p>
       )}
       <PipControls video={media?.video ?? null} state={state} apply={apply} />
-      {source?.platform === 'douyu' && <SendBar context={state?.sendContext ?? null} apply={apply} />}
+      {writes && source?.platform === 'douyu' && <SendBar context={state?.sendContext ?? null} apply={apply} />}
     </div>
   )
 }
