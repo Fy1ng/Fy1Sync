@@ -211,7 +211,17 @@ describe('passive Douyin signing capture', () => {
     expect(page.calls.filter(call => call.method === 'Runtime.evaluate')).toHaveLength(1)
   })
 
-  it.each(['https://live.douyin.com.evil.example/', 'https://www.douyin.com/', 'http://live.douyin.com/', 'https://live.douyin.com/login'])('does not read storage on an unapproved main page: %s', async mainUrl => {
+  it('reads the official login page that signed the account in, still binding the material to the live origin', async () => {
+    const page = harness({ mainUrl: 'https://www.douyin.com/login_page?service=https%3A%2F%2Flive.douyin.com%2F' })
+    const snapshot = await page.capture()
+    expect(snapshot).not.toBeNull()
+    expect(snapshot!.origin).toBe('https://live.douyin.com')
+    expect(parseDouyinSigningSnapshot(snapshot!).clientCertificate).toBe(clientCert)
+  })
+
+  it.each(['https://live.douyin.com.evil.example/', 'https://www.douyin.com/', 'http://live.douyin.com/', 'https://live.douyin.com/login',
+    'https://www.douyin.com/login_page/next', 'http://www.douyin.com/login_page', 'https://user@www.douyin.com/login_page',
+    'https://login.douyin.com/login_page', 'https://www.douyin.com.evil.example/login_page'])('does not read storage on an unapproved main page: %s', async mainUrl => {
     const page = harness({ mainUrl })
     expect(await page.capture()).toBeNull()
     expect(page.calls).toEqual([])

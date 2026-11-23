@@ -197,8 +197,10 @@ async function start(): Promise<void> {
   const douyinHttpLoginFixtures = !app.isPackaged && offlineE2e ? new DouyinHttpLoginFixtures() : null
   const embeddedLogin = new EmbeddedLoginController({ owner: () => window, domesticRouting: preferences.domesticRouting,
     cardPreload: join(__dirname, 'login-card-preload.cjs'),
-    douyinHttp: { createSession: signal => new DouyinHttpLogin({ signal, proxy, network: () => network.context('douyin'),
-      ...(douyinHttpLoginFixtures ? { fetchImpl: douyinHttpLoginFixtures.transport(signal), resolve: async () => ['93.184.216.34'] } : {}) }) },
+    // Douyin logins run on the official login page, which follows the platform's own protocol
+    // changes. The main-owned HTTP flow is kept, but only the offline suite still drives it.
+    ...(douyinHttpLoginFixtures ? { douyinHttp: { createSession: (signal: AbortSignal) => new DouyinHttpLogin({ signal, proxy, network: () => network.context('douyin'),
+      fetchImpl: douyinHttpLoginFixtures.transport(signal), resolve: async () => ['93.184.216.34'] }) } } : {}),
     fixture: async (request, browserSession) => {
       if (request.platform === 'douyin') await douyinEmbeddedLoginFixtures?.configure(request, browserSession)
       else await embeddedLoginFixtures?.configure(request, browserSession)

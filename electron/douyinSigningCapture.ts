@@ -35,10 +35,13 @@ function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
+/** The live page, or the official login page that created the same account-wide key pair. */
 function mainPageAllowed(value: string): boolean {
   try {
     const url = new URL(value)
-    return url.origin === DOUYIN_SIGNING_ORIGIN && url.pathname === '/' && !url.username && !url.password
+    if (url.username || url.password) return false
+    return url.origin === DOUYIN_SIGNING_ORIGIN && url.pathname === '/'
+      || url.origin === 'https://www.douyin.com' && url.pathname === '/login_page'
   } catch { return false }
 }
 
