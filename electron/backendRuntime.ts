@@ -103,9 +103,10 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
   const withAccount = options.accounts ? createFeatureAccountGuard(options.accounts, lifetime.signal)
     : async <T>(_id: string, _run: (signal: AbortSignal) => T | Promise<T>): Promise<T> => { throw new FeatureApiError('not-available') }
   const streams = new StreamSessions(options.acquisition, options.maxExtraStreams)
+  let verifiedAccountId: string | null = null
   const pip = new PipManager({ createWindow: options.createPipWindow, source: id => streams.describe(id), sendContext: room => {
     const state = options.tasks?.snapshot()
-    const id = options.accounts?.activeAccountId ?? null
+    const id = options.accounts?.activeAccountId === verifiedAccountId ? verifiedAccountId : null
     return { accountId: id, canAttempt: !!id && !!room && state?.currentRoom === room && state.runtime.foreground
       && !state.runtime.locked && !state.runtime.suspended && !options.accounts?.isBusy(id) }
   } })
@@ -124,7 +125,6 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     readWatchTime: (id, room, signal) => insightsGateway.readWatchTime(id, room, signal),
     readFansWatchTime: (id, room, signal) => insightsGateway.readFansWatchTime(id, room, signal),
   })
-  let watchLogin = false
   let watchContextRevision = 0
   let monitoredRoom: string | null = null
   let roomStatusController: AbortController | null = null
@@ -135,7 +135,7 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     const room = state?.currentRoom ?? null
     const roomInfo = room ? insights.snapshot(room) : null
     const context: DouyuWatchContext = { accountId: options.accounts?.activeAccountId ?? null, room: state?.currentRoom ?? null,
-      loggedIn: watchLogin, busy: !!options.accounts?.activeAccountId && options.accounts.isBusy(options.accounts.activeAccountId),
+      loggedIn: !!verifiedAccountId && verifiedAccountId === options.accounts?.activeAccountId, busy: !!options.accounts?.activeAccountId && options.accounts.isBusy(options.accounts.activeAccountId),
       locked: state?.runtime.locked ?? true, suspended: state?.runtime.suspended ?? false,
       live: roomInfo?.live ?? null, replay: roomInfo?.replay ?? null }
     watch.setContext(context)
@@ -159,13 +159,18 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     }).finally(() => { if (roomStatusRead === promise) roomStatusRead = null })
     roomStatusRead = promise
   }
-  const refreshWatchLogin = () => {
-    const revision = ++watchContextRevision
-    watchLogin = false
+  const setVerifiedAccount = (id: string | null) => {
+    verifiedAccountId = id
     updateWatchContext()
-    if (!options.accounts) return
+    if (pip.windowId() !== null) api.publish({ topic: 'pip', data: pip.state() })
+  }
+  const refreshActiveLogin = () => {
+    const revision = ++watchContextRevision
+    const id = options.accounts?.activeAccountId
+    setVerifiedAccount(null)
+    if (!options.accounts || !id) return
     void options.accounts.activeLoginStatus().then(status => {
-      if (!lifetime.signal.aborted && revision === watchContextRevision) { watchLogin = status.loggedIn; updateWatchContext() }
+      if (!lifetime.signal.aborted && revision === watchContextRevision && id === options.accounts?.activeAccountId && status.loggedIn) setVerifiedAccount(id)
     }).catch(() => {})
   }
   const pipWatchMatches = (source: ReturnType<typeof pip.state>['source'], room: string | null): boolean =>
@@ -175,7 +180,7 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
   }
   const reportWatch = (senderId: number, value: DouyuWatchPlaybackReport) =>
     watch.report(senderId, value, options.acquisition.watchSource?.(value.role) ?? null)
-  refreshWatchLogin()
+  refreshActiveLogin()
   refreshRoomStatus()
   const roomStatusTimer = setInterval(refreshRoomStatus, 60_000)
   roomStatusTimer.unref?.()
@@ -411,7 +416,7 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     let previous = options.accounts.activeAccountId
     releases.push(options.accounts.subscribe(event => {
       if (event.type === 'invalidated') watch.invalidateAccount(event.accountId)
-      refreshWatchLogin()
+      refreshActiveLogin()
       readCache.invalidate()
       const next = options.accounts!.activeAccountId
       const invalidated = event.type === 'invalidated' ? event.accountId : previous !== next ? previous : null

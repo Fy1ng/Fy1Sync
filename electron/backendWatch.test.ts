@@ -69,6 +69,28 @@ function fixture() {
 }
 
 describe('watch bridge source authority', () => {
+  it('revokes PiP sending for a signed-out default slot and ignores stale login results', async () => {
+    const fixtureState = fixture()
+    await vi.advanceTimersByTimeAsync(0)
+    await fixtureState.backend.pip.open('commentary')
+    const context = () => fixtureState.backend.pip.state().sendContext
+    const changed = () => { for (const listener of fixtureState.accountListeners) listener({ type: 'changed' }) }
+    expect(context()).toMatchObject({ accountId: 'default', canAttempt: true })
+    let complete!: (status: { loggedIn: boolean }) => void
+    vi.spyOn(fixtureState.accounts, 'activeLoginStatus')
+      .mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+      .mockResolvedValueOnce({ loggedIn: false }).mockResolvedValueOnce({ loggedIn: true })
+    changed()
+    expect(context()).toMatchObject({ accountId: null, canAttempt: false })
+    changed()
+    complete({ loggedIn: true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(context()).toMatchObject({ accountId: null, canAttempt: false })
+    changed()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(context()).toMatchObject({ accountId: 'default', canAttempt: true })
+  })
+
   it('refreshes room status without the data sheet and stops watching when the stream becomes replay', async () => {
     const f = fixture(); await vi.advanceTimersByTimeAsync(0)
     await f.sample(1); await vi.advanceTimersByTimeAsync(2000); await f.sample(3); await vi.advanceTimersByTimeAsync(0)
