@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CookieStore, cookieDomainAllowed, hasAuthenticationCookies, isLoginPlatform } from './cookies'
+import { CookieStore, cookieDomainAllowed, hasAuthenticationCookies, isLoginPlatform, validAccountIdentity } from './cookies'
 import { messageCredentials } from '../server/douyu/messageProtocol'
 import type { BrowserCookie } from './cookies'
 import { containedPath, powershellEnvironment, privateDirectory } from './privateStorage'
@@ -459,5 +459,88 @@ describe('cookie path boundary', () => {
     const environment = { PSModulePath: 'pwsh7-modules', psMODULEpath: 'also-remove', KEEP: 'unchanged' }
     expect(powershellEnvironment(environment)).toEqual({ KEEP: 'unchanged' })
     expect(environment.PSModulePath).toBe('pwsh7-modules')
+  })
+})
+
+describe('display identity of a saved login', () => {
+  const avatar = 'data:image/png;base64,c3ludGhldGlj'
+  const saved: BrowserCookie[] = [
+    { domain: '.bilibili.com', path: '/', name: 'DedeUserID', value: '42', secure: true, httpOnly: false, expirationDate: now + 600, sameSite: 'lax' },
+    { domain: '.bilibili.com', path: '/', name: 'SESSDATA', value: 'synthetic-private-ticket', secure: true, httpOnly: true, expirationDate: now + 600 },
+    { domain: 'live.bilibili.com', path: '/room', name: 'LIVE_ONLY', value: 'host-only', hostOnly: true, session: true },
+  ]
+  const file = () => path.join(root, 'cookies', 'bilibili.txt')
+  const cookieLines = () => fs.readFileSync(file(), 'utf8').split('\n').filter(line => !line.startsWith('# Fy1Sync-Account'))
+
+  it('adds the identity and writes every credential back exactly as it was', async () => {
+    const cookies = store()
+    cookies.write('bilibili', saved)
+    const before = cookieLines()
+    const resolve = vi.fn(async (_cookies: BrowserCookie[]) => ({ username: '测试昵称', uid: '42', avatar }))
+    expect(await cookies.attachIdentity('bilibili', resolve)).toBe(true)
+    expect(cookieLines()).toEqual(before)
+    expect(resolve.mock.calls[0]![0].map(cookie => cookie.name)).toEqual(['DedeUserID', 'SESSDATA', 'LIVE_ONLY'])
+    expect((await cookies.status()).bilibili).toMatchObject({ loggedIn: true, cookieCount: 3, nickname: '测试昵称', avatar })
+  })
+
+  it('leaves a login alone when its identity is complete, it is signed out or it cannot be identified', async () => {
+    const cookies = store()
+    const resolve = vi.fn(async () => ({ username: '新昵称', avatar }))
+    expect(await cookies.attachIdentity('bilibili', resolve)).toBe(false)
+    cookies.write('bilibili', [saved[2]!])
+    expect(await cookies.attachIdentity('bilibili', resolve)).toBe(false)
+    cookies.write('bilibili', saved, { username: '原昵称', avatar })
+    expect(await cookies.attachIdentity('bilibili', resolve)).toBe(false)
+    expect(resolve).not.toHaveBeenCalled()
+    cookies.write('bilibili', saved)
+    const before = fs.readFileSync(file(), 'utf8')
+    expect(await cookies.attachIdentity('bilibili', async () => undefined)).toBe(false)
+    expect(fs.readFileSync(file(), 'utf8')).toBe(before)
+  })
+
+  it('completes a recorded identity that has no avatar, and only with the same account', async () => {
+    const cookies = store()
+    cookies.write('bilibili', saved, { username: '原昵称', uid: '42' })
+    const before = cookieLines()
+    expect(await cookies.attachIdentity('bilibili', async () => ({ username: '仍然没有头像', uid: '42' }))).toBe(false)
+    expect(await cookies.attachIdentity('bilibili', async () => ({ username: '另一个账号', uid: '43', avatar }))).toBe(false)
+    expect((await cookies.status()).bilibili).toMatchObject({ nickname: '原昵称' })
+    expect((await cookies.status()).bilibili.avatar).toBeUndefined()
+    expect(await cookies.attachIdentity('bilibili', async () => ({ username: '当前昵称', uid: '42', avatar }))).toBe(true)
+    expect((await cookies.status()).bilibili).toMatchObject({ nickname: '当前昵称', avatar })
+    expect(cookieLines()).toEqual(before)
+  })
+
+  it('shows the name from the Douyu cookie over a recorded one, and keeps the recorded avatar', async () => {
+    const cookies = store()
+    const douyu: BrowserCookie[] = [...['acf_uid', 'acf_auth', 'acf_biz', 'acf_stk', 'acf_ct', 'acf_ltkid'].map(name => cookie({ domain: '.douyu.com', name, value: name === 'acf_uid' ? '42' : 'synthetic' })),
+      cookie({ domain: '.douyu.com', name: 'acf_nickname', value: encodeURIComponent('当前斗鱼昵称') })]
+    cookies.write('douyu', douyu, { username: '斗鱼账号', uid: '42', avatar })
+    expect((await cookies.status()).douyu).toMatchObject({ loggedIn: true, nickname: '当前斗鱼昵称', avatar })
+    cookies.write('douyu', douyu.slice(0, 6), { username: '记录的昵称', uid: '42', avatar })
+    expect((await cookies.status()).douyu).toMatchObject({ loggedIn: true, nickname: '记录的昵称', avatar })
+  })
+
+  it('never writes over credentials that changed while the identity was being resolved', async () => {
+    const cookies = store()
+    cookies.write('bilibili', saved)
+    const newer = saved.map(cookie => cookie.name === 'SESSDATA' ? { ...cookie, value: 'newer-ticket' } : cookie)
+    expect(await cookies.attachIdentity('bilibili', async () => { cookies.write('bilibili', newer); return { username: '旧账号' } })).toBe(false)
+    expect(fs.readFileSync(file(), 'utf8')).toContain('newer-ticket')
+    expect((await cookies.status()).bilibili.nickname).toBeUndefined()
+    expect(await cookies.attachIdentity('bilibili', async () => { cookies.logout('bilibili'); return { username: '旧账号' } })).toBe(false)
+    expect(fs.existsSync(file())).toBe(false)
+    cookies.write('bilibili', saved)
+    expect(await cookies.attachIdentity('bilibili', async () => ({ username: '旧账号' }), () => false)).toBe(false)
+    expect((await cookies.status()).bilibili.nickname).toBeUndefined()
+  })
+
+  it('accepts only identities that storage can keep', () => {
+    expect(validAccountIdentity({ username: '测试昵称', uid: '42', avatar })).toEqual({ username: '测试昵称', uid: '42', avatar })
+    expect(validAccountIdentity({ username: '只有昵称' })).toEqual({ username: '只有昵称' })
+    for (const value of [null, undefined, 'name', {}, { username: '' }, { username: 'x'.repeat(81) }, { username: 'a\nb' }, { username: 'a', uid: 'has space' },
+      { username: 'a', avatar: 'https://example.invalid/a.png' }, { username: 'a', avatar: 'data:image/png;base64,' + 'A'.repeat(96 * 1024) }, { username: 'a', extra: true }]) {
+      expect(validAccountIdentity(value)).toBeUndefined()
+    }
   })
 })

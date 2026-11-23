@@ -52,6 +52,10 @@ function accountIdentity(value: unknown): BrowserAccountIdentity {
       || !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(identity.avatar))) throw storageFailure()
   return { ...identity }
 }
+/** A display identity that storage accepts, or undefined. A rejected one must never fail a login. */
+export function validAccountIdentity(value: unknown): BrowserAccountIdentity | undefined {
+  try { return value ? accountIdentity(value) : undefined } catch { return undefined }
+}
 function readAccountIdentity(text: string): BrowserAccountIdentity | undefined {
   const lines = text.split(/\r?\n/).filter(line => line.startsWith('# Fy1Sync-Account'))
   if (lines.length > 1 || lines.length === 1 && !lines[0]!.startsWith(ACCOUNT_PREFIX)) throw storageFailure()
@@ -375,6 +379,24 @@ export class CookieStore {
     throw storageFailure()
   }
 
+  /**
+   * Add a display identity to a saved login that has none, or an avatar to one that lacks it.
+   * The credentials are written back unchanged, and only if nothing replaced them meanwhile.
+   */
+  async attachIdentity(platform: LoginPlatform, resolve: (cookies: BrowserCookie[]) => Promise<BrowserAccountIdentity | undefined>,
+    current: () => boolean = () => true): Promise<boolean> {
+    const loaded = await this.read(platform)
+    const known = loaded?.identity
+    if (!loaded || known?.avatar || !hasAuthenticationCookies(loaded.cookies, platform, this.now())) return false
+    const revision = this.revisions[platform]
+    const identity = await resolve(loaded.cookies.map(cookie => ({ ...cookie })))
+    if (!identity || !current() || revision !== this.revisions[platform]) return false
+    // A recorded identity is only ever completed with an avatar, never swapped for another account.
+    if (known && (!identity.avatar || known.uid !== undefined && identity.uid !== undefined && known.uid !== identity.uid)) return false
+    this.write(platform, loaded.cookies, identity)
+    return true
+  }
+
   private summary(platform: LoginPlatform, cookies: StoredCookie[], identity?: BrowserAccountIdentity): PlatformLoginStatus {
     const known: readonly string[] = LOGIN_PLATFORMS[platform].authKeys
     const auth = cookies.filter(cookie => platform === 'douyin' ? isDouyinAuthenticationCookie(cookie, this.now()) : known.includes(cookie.name) && cookie.value.length > 0)
@@ -384,8 +406,9 @@ export class CookieStore {
     return { cookieCount: cookies.length, authKeysPresent: known.filter(key => present.has(key)), loggedIn,
       expiresAt: expiries.length ? Math.min(...expiries) : null, hasSessionCookies: auth.some(cookie => cookie.expires === 0),
       ...(platform === 'douyu' ? messageCredentialStatus(platformHeader(cookies, new URL('https://www.douyu.com/'))) : {}),
-      ...(identity ? { nickname: identity.username, ...(identity.avatar ? { avatar: identity.avatar } : {}) }
-        : platform === 'douyu' && loggedIn ? douyuNickname(cookies) : {}) }
+      ...(identity ? { nickname: identity.username, ...(identity.avatar ? { avatar: identity.avatar } : {}) } : {}),
+      // Douyu keeps the current display name in its own cookie; a recorded identity adds the avatar.
+      ...(platform === 'douyu' && loggedIn ? douyuNickname(cookies) : {}) }
   }
 
   async status(): Promise<LoginStatus> {
