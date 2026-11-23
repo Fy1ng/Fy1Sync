@@ -1927,6 +1927,14 @@ body,
   pointer-events: auto;
 }
 
+/* The lottery cards are styled as a floating group; mounted in the drawer they join its flow
+   instead of being drawn over the picture. */
+.studio .drawer > .bilibili-lottery-cards {
+  position: static;
+  flex: none;
+  max-width: none;
+}
+
 .studio .msg-user {
   flex: none;
   max-width: 36%;
