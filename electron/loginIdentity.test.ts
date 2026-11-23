@@ -18,6 +18,9 @@ describe('official login identity parsing', () => {
     expect(parseLoginIdentity('bilibili', { code: 0, data: { isLogin: true, mid: 42, uname: '测试账号' } })).toEqual({ status: 'authenticated', uid: '42', nickname: '测试账号' })
     expect(parseLoginIdentity('huya', { isLogined: true, uid: '42', userNick: '测试账号', userName: 'private-phone-number' })).toEqual({ status: 'authenticated', uid: '42', nickname: '测试账号' })
     expect(parseLoginIdentity('douyu', { error: 0, msg: { uid: '42', info: { uid: 42, nickname: '测试账号' } } })).toEqual({ status: 'authenticated', uid: '42', nickname: '测试账号' })
+    // The member endpoint as observed on 2026-11-23 abbreviates the name and carries no uid inside info.
+    expect(parseLoginIdentity('douyu', { error: 0, msg: { uid: 42, info: { nn: '缩写昵称', icon: 'avatar_v3/202011/0123456789abcdef0123456789abcdef', it: 1 } } }))
+      .toEqual({ status: 'authenticated', uid: '42', nickname: '缩写昵称' })
   })
 
   it('rejects conflicting status, missing fields, truthy flags and unrelated payloads', () => {
