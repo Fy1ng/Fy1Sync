@@ -273,18 +273,20 @@ function DouyinAccount(): React.ReactNode {
   const [message, setMessage] = useState('')
   const [error, setError, errorDetail] = useErrorState()
   const [online,setOnline] = useState<DouyinSendState|null>(null)
-  const refresh = async (force = false): Promise<void> => {
+  /** Resolves with the verified send state, or null when it could not be read. */
+  const refresh = async (force = false): Promise<DouyinSendState | null> => {
     setChecking(true)
     try {
       const result = await apiClient.loginStatus()
-      if (!mounted.current) return
+      if (!mounted.current) return null
       if (result.ok && result.value?.douyin) {
         setStatus(result.value); setError('')
         const verified=await apiClient.getDouyinSendState(force)
-        if (!mounted.current) return
+        if (!mounted.current) return null
         if (verified.ok && typeof verified.value?.loggedIn==='boolean' && typeof verified.value?.canSend==='boolean') {
           setOnline(verified.value)
           if (verified.value.loginState === 'unavailable') setError(displayError(verified.value, verified.value.message || '暂时无法确认抖音登录状态'))
+          return verified.value
         } else {
           setOnline(null)
           setError(verified.ok ? displayError({ code: 'invalid-login-state' }, '暂时无法确认抖音登录状态') : verified)
@@ -294,6 +296,7 @@ function DouyinAccount(): React.ReactNode {
     } catch (error) {
       if (mounted.current) setError(displayError(error, '抖音登录状态读取失败，请重试'))
     } finally { if (mounted.current) setChecking(false) }
+    return null
   }
   useEffect(() => { void refresh() }, [])
   const act = async (logout: boolean): Promise<void> => {
@@ -311,7 +314,10 @@ function DouyinAccount(): React.ReactNode {
       setMessage(logout ? '已退出抖音' : signing.signingReady===false
         ? '已登录，但暂时不能发送弹幕，请重新登录' : '已登录，正在检查能否发送弹幕')
       if (!logout && typeof signing.signingProblem==='string') setError({code:signing.signingProblem,message:'未能开启抖音弹幕发送'})
-      await refresh()
+      const verified = await refresh(!logout)
+      // The "checking" line describes work in progress; replace it with what the check found.
+      if (!logout && mounted.current) setMessage(verified?.loggedIn !== true ? ''
+        : verified.canSend ? '已登录，可以发送弹幕' : '已登录，但暂时不能发送弹幕，请重新登录')
     } catch (error) {
       if (mounted.current) { setMessage(''); setError(displayError(error, '抖音账号操作失败，请重试')) }
     } finally { if (mounted.current) setBusy(false) }

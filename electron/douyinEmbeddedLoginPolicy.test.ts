@@ -33,6 +33,22 @@ describe('Douyin embedded login network boundary', () => {
     expect(loginRequestAllowed('douyin', 'https://live.douyin.com/stream', 'media')).toBe(false)
     expect(loginRequestAllowed('douyin', 'https://v.douyin.com/api', 'xhr')).toBe(false)
   })
+  it('lets the official page prepare its own risk token without opening the host to other requests', () => {
+    for (const path of ['/web/r/token', '/web/common']) {
+      expect(loginRequestAllowed('douyin', `https://mssdk.bytedance.com${path}?ms_appid=6383`, 'xhr')).toBe(true)
+      expect(loginRequestAllowed('douyin', `https://mssdk.bytedance.com${path}`, 'other')).toBe(true)
+      expect(loginRequestAllowed('douyin', `https://mssdk.bytedance.com${path}`, 'script')).toBe(false)
+      expect(loginRequestAllowed('douyin', `https://mssdk.bytedance.com${path}`, 'mainFrame')).toBe(false)
+      expect(loginRequestAllowed('douyin', `https://mssdk.bytedance.com${path}`, 'subFrame')).toBe(false)
+    }
+    expect(loginRequestAllowed('douyin', 'https://mssdk.bytedance.com/web/report', 'xhr')).toBe(false)
+    expect(loginRequestAllowed('douyin', 'https://mssdk.bytedance.com/web/common/extra', 'xhr')).toBe(false)
+    expect(loginRequestAllowed('douyin', 'https://evil.mssdk.bytedance.com/web/common', 'xhr')).toBe(false)
+    expect(loginRequestAllowed('douyin', 'https://mssdk.bytedance.com.evil.example/web/common', 'xhr')).toBe(false)
+    expect(loginRequestAllowed('douyin', 'https://www.bytedance.com/web/common', 'xhr')).toBe(false)
+    expect(loginRequestAllowed('douyu', 'https://mssdk.bytedance.com/web/common', 'xhr')).toBe(false)
+  })
+
   it('loads observed desktop authentication SDKs without allowing parent-domain wildcards', () => {
     for (const url of [
       'https://lf-c-flwb.bytetos.com/obj/rc-client-security/web/glue/sdk-glue.js',

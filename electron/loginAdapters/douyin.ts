@@ -4,10 +4,18 @@ import type { LoginCardAction, LoginPageActionResult, LoginPageAdapter, LoginPag
 export const DOUYIN_QR_POLL_PATHS = ['/passport/web/check_qrconnect/'] as const
 export const DOUYIN_QR_CREATE_PATHS = ['/passport/web/get_qrcode/'] as const
 export const DOUYIN_QR_EXPIRE_PATHS = ['/passport/web/expire_qrcode/'] as const
+/**
+ * The dedicated official login page, with the live site as its return address. It shows the form
+ * at once, where the live home page only opens its login panel long after loading.
+ */
+export const DOUYIN_LOGIN_ENTRY_URL = 'https://www.douyin.com/login_page?service=https%3A%2F%2Flive.douyin.com%2F'
 
 function inspectDouyin(): LoginPageSnapshot {
   const url = new URL(location.href)
-  if (url.origin !== 'https://live.douyin.com' || url.pathname !== '/' || url.username || url.password) return { page: 'unknown' }
+  // A finished login returns to the live page, which shares the login page's panel markup.
+  const loginPage = url.origin === 'https://www.douyin.com' && url.pathname === '/login_page'
+  const livePage = url.origin === 'https://live.douyin.com' && url.pathname === '/'
+  if (!loginPage && !livePage || url.username || url.password) return { page: 'unknown' }
   const visible = (element: Element | null | undefined): boolean => {
     if (!element || (element instanceof HTMLInputElement && element.type === 'hidden')) return false
     for (let node: Element | null = element; node; node = node.parentElement) {
@@ -74,7 +82,8 @@ function inspectDouyin(): LoginPageSnapshot {
   if (submit!.textContent?.trim() !== '登录') return { page: 'loading', qrStatus: 'paused',
     ...(submit!.classList.contains('qOAoUpHW') ? { submissionPending: true as const } : {}) }
   const snapshot: LoginPageSnapshot = { page: 'form', mode, qrStatus: 'loading', sms: { canSend: false, cooldownSeconds: null } }
-  const qrBox = root.querySelector('#douyin_login_comp_scan_code_qrcode')
+  // The login page nests its code under a differently named container than the live panel.
+  const qrBox = root.querySelector('#douyin_login_comp_scan_code_qrcode') ?? root.querySelector('#douyin_login_comp_scan_code #animate_qrcode_container')
   if (!qrBox) snapshot.qrStatus = 'unavailable'
   const qr = qrBox && (Array.from(qrBox.querySelectorAll('img,canvas')).find(visible))
   if (qr) {
@@ -139,8 +148,8 @@ async function actDouyin(action: LoginCardAction, inspect: () => LoginPageSnapsh
     if (action.kind === 'mode') {
       if (!['password', 'sms'].includes(action.mode)) return { ok: false, reason: 'invalid-input' }
       if (snapshot.mode === action.mode) return { ok: true }
-      const tab = action.mode === 'sms' ? root.querySelector<HTMLElement>('#douyin_login_comp_mobile_title')
-        : Array.from(root.querySelectorAll<HTMLElement>('span')).find(node => visible(node) && node.textContent?.trim() === '密码登录')
+      const label = (text: string) => Array.from(root.querySelectorAll<HTMLElement>('span')).find(node => visible(node) && node.textContent?.trim() === text)
+      const tab = action.mode === 'sms' ? root.querySelector<HTMLElement>('#douyin_login_comp_mobile_title') ?? label('验证码登录') : label('密码登录')
       if (!available(tab ?? null)) return { ok: false, reason: 'not-ready' }
       tab!.click()
       return { ok: true }
@@ -206,32 +215,9 @@ async function actDouyin(action: LoginCardAction, inspect: () => LoginPageSnapsh
   } catch { return { ok: false, reason: 'not-ready' } }
 }
 
-async function prepareDouyin(): Promise<LoginPageActionResult> {
-  if (location.origin !== 'https://live.douyin.com' || location.pathname !== '/') return { ok: false, reason: 'unsupported' }
-  if (document.querySelector('#login-panel-new, #douyin-login-new-id, #douyin_login_new')) return { ok: true }
-  const visible = (element: Element): boolean => {
-    for (let node: Element | null = element; node; node = node.parentElement) { const style = getComputedStyle(node)
-      if (node.hasAttribute('hidden') || node.getAttribute('aria-hidden') === 'true' || style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0') return false }
-    const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0
-  }
-  const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('button.semi-button.semi-button-primary')).filter(node => node.textContent?.trim() === '登录' && visible(node))
-  if (buttons.length !== 1 || buttons[0]!.disabled) return { ok: false, reason: 'not-ready' }
-  const key = 'data-fy1sync-douyin-login-open-ms'
-  const previous = document.documentElement.getAttribute(key)
-  if (previous && Date.now() - Number(previous) < 2000) return { ok: false, reason: 'not-ready' }
-  document.documentElement.setAttribute(key, String(Date.now()))
-  const button = buttons[0]!
-  // Live uses lazy hydration. Prepare its normal hover/focus path before clicking once.
-  button.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
-  button.dispatchEvent(new Event('pointerover', { bubbles: true }))
-  button.focus(); await new Promise(resolve => setTimeout(resolve, 300))
-  if (!button.isConnected || location.origin !== 'https://live.douyin.com' || location.pathname !== '/') return { ok: false, reason: 'not-ready' }
-  button.click(); await new Promise(resolve => setTimeout(resolve, 100))
-  return document.querySelector('#login-panel-new, #douyin-login-new-id, #douyin_login_new') ? { ok: true } : { ok: false, reason: 'not-ready' }
-}
-
 function presentDouyinChallenge(enabled: boolean): LoginPageActionResult {
-  if (location.origin !== 'https://live.douyin.com' || location.pathname !== '/') return { ok: false, reason: 'unsupported' }
+  if (!(location.origin === 'https://www.douyin.com' && location.pathname === '/login_page')
+    && !(location.origin === 'https://live.douyin.com' && location.pathname === '/')) return { ok: false, reason: 'unsupported' }
   const marker = 'data-fy1sync-douyin-challenge-only', path = 'data-fy1sync-douyin-challenge-path', root = 'data-fy1sync-douyin-challenge-root', styleId = 'fy1sync-douyin-challenge-paint'
   document.documentElement.removeAttribute(marker)
   for (const element of document.querySelectorAll(`[${path}],[${root}]`)) { element.removeAttribute(path); element.removeAttribute(root) }
@@ -255,12 +241,17 @@ function presentDouyinChallenge(enabled: boolean): LoginPageActionResult {
 }
 
 export const douyinLoginAdapter: LoginPageAdapter = {
-  entryUrl: 'https://live.douyin.com/',
-  acceptsFrame(raw) { try { const url = new URL(raw); return url.origin === 'https://live.douyin.com' && url.pathname === '/' && !url.username && !url.password } catch { return false } },
+  entryUrl: DOUYIN_LOGIN_ENTRY_URL,
+  acceptsFrame(raw) {
+    try {
+      const url = new URL(raw)
+      if (url.username || url.password) return false
+      return url.origin === 'https://www.douyin.com' && url.pathname === '/login_page' || url.origin === 'https://live.douyin.com' && url.pathname === '/'
+    } catch { return false }
+  },
   // Observed hidden no-captcha and storage documents receive no account actions.
   acceptsChallengeFrame: () => false,
   inspectScript: `(${inspectDouyin.toString()})()`,
-  prepareScript: `(${prepareDouyin.toString()})()`,
   presentationScript: enabled => `(${presentDouyinChallenge.toString()})(${enabled})`,
   actionScript(action) {
     const encoded = JSON.stringify(action).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029')

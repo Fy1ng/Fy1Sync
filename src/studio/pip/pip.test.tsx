@@ -12,6 +12,7 @@ import type { StreamSyncerBridge } from '../../../electron/contracts'
 import type { FeatureEvent } from '../../../electron/featureContracts'
 import type { PipState } from '../../../electron/pipManager'
 import { primeMediaElement } from '../../test/setup'
+import { SETTINGS_KEY } from '../../app/settings'
 import PipPage, { sendBlock } from './PipPage'
 import { PipSettings } from './PipSettings'
 
@@ -95,7 +96,15 @@ function push(state: PipState): void {
 
 const flush = (): Promise<void> => act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)))
 
+/** Store 斗鱼写操作 the way the player does, and tell this window as another window would. */
+function setDouyuWrites(on: boolean, announce = false): void {
+  window.localStorage.setItem(SETTINGS_KEY, JSON.stringify({ douyuWrites: on }))
+  if (announce) act(() => { window.dispatchEvent(new StorageEvent('storage', { key: SETTINGS_KEY })) })
+}
+
 beforeEach(() => {
+  // The send bar belongs to 斗鱼写操作; the tests of the bar itself run with it on.
+  setDouyuWrites(true)
   calls = []
   featureListeners = new Set()
   featureReleases = 0
@@ -221,6 +230,29 @@ describe('the PiP window', () => {
     render(<PipPage />)
     await flush()
     expect(danmakuRooms).toEqual(['9999'])
+  })
+
+  it('hides the send bar while 斗鱼写操作 is off, for a signed-in account too', async () => {
+    window.localStorage.removeItem(SETTINGS_KEY)
+    install(pipState({ phase: 'ready', sendContext: { accountId: 'acc-1', room: '9999', canAttempt: true } }))
+    render(<PipPage />)
+    await flush()
+    expect(danmakuRooms).toEqual(['9999'])
+    expect(screen.queryByLabelText('发送弹幕')).toBeNull()
+    expect(screen.queryByRole('button', { name: '发送' })).toBeNull()
+    expect(invoked('sendComposedDouyuMessage')).toHaveLength(0)
+  })
+
+  it('follows 斗鱼写操作 when the main window turns it on and off', async () => {
+    setDouyuWrites(false)
+    install(pipState({ phase: 'ready', sendContext: { accountId: 'acc-1', room: '9999', canAttempt: true } }))
+    render(<PipPage />)
+    await flush()
+    expect(screen.queryByLabelText('发送弹幕')).toBeNull()
+    setDouyuWrites(true, true)
+    expect(screen.getByLabelText('发送弹幕')).toBeEnabled()
+    setDouyuWrites(false, true)
+    expect(screen.queryByLabelText('发送弹幕')).toBeNull()
   })
 
   it('keeps the send bar off with a reason when sending may not be attempted', async () => {

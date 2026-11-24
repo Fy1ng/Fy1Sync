@@ -197,14 +197,32 @@ async function start(): Promise<void> {
   const douyinHttpLoginFixtures = !app.isPackaged && offlineE2e ? new DouyinHttpLoginFixtures() : null
   const embeddedLogin = new EmbeddedLoginController({ owner: () => window, domesticRouting: preferences.domesticRouting,
     cardPreload: join(__dirname, 'login-card-preload.cjs'),
-    douyinHttp: { createSession: signal => new DouyinHttpLogin({ signal, proxy, network: () => network.context('douyin'),
-      ...(douyinHttpLoginFixtures ? { fetchImpl: douyinHttpLoginFixtures.transport(signal), resolve: async () => ['93.184.216.34'] } : {}) }) },
+    // Douyin logins run on the official login page, which follows the platform's own protocol
+    // changes. The main-owned HTTP flow is kept, but only the offline suite still drives it.
+    ...(douyinHttpLoginFixtures ? { douyinHttp: { createSession: (signal: AbortSignal) => new DouyinHttpLogin({ signal, proxy, network: () => network.context('douyin'),
+      fetchImpl: douyinHttpLoginFixtures.transport(signal), resolve: async () => ['93.184.216.34'] }) } } : {}),
     fixture: async (request, browserSession) => {
       if (request.platform === 'douyin') await douyinEmbeddedLoginFixtures?.configure(request, browserSession)
       else await embeddedLoginFixtures?.configure(request, browserSession)
     } })
+  // One reader serves browser imports and in-app logins: the official identity endpoint, then a
+  // 64-pixel copy of the avatar. It sends no account action.
+  const identityVerifier = browserIdentityVerifier(async (platform, url, init) => {
+    const headers = Object.fromEntries(new Headers(init.headers).entries())
+    const result = await safeFetch(url, { ...proxy, hosts: [new URL(url).hostname], maxRedirects: 0 }, {
+      method: init.method, headers, ...(typeof init.body === 'string' ? { body: init.body } : {}),
+      signal: init.signal ?? undefined, manualRedirect: true, network: network.context(platform),
+      ...(platform === 'youtube' ? { maxHeaderSize: 256 * 1024 } : {}),
+    })
+    return result.response
+  }, bytes => {
+    const image = nativeImage.createFromBuffer(Buffer.from(bytes))
+    return image.isEmpty() ? undefined : image.resize({ width: 64, height: 64, quality: 'good' }).toDataURL()
+  })
   const createLogin = (directory: string) => new LoginManager(directory, {
     driver: browserLogin,
+    // The offline suite has no platform to ask.
+    ...(offlineE2e ? {} : { identify: identityVerifier }),
     ...(resolve(directory)===resolve(userDataDir) ? {douyinSigning} : {}),
     embeddedDriver: { async login(request) {
       const { platform, signal, destination } = request
@@ -348,18 +366,7 @@ async function start(): Promise<void> {
     ...(browserImportFixtures ? { discover: browserImportFixtures.discover } : {}),
     read: browserImportFixtures?.read ?? browserCookieReader({ executable: app.isPackaged
       ? join(process.resourcesPath, 'native', 'browser-credentials.exe') : join(__dirname, '..', 'native', 'browser-credentials.exe') }),
-    verify: browserImportFixtures?.verify ?? browserIdentityVerifier(async (platform, url, init) => {
-      const headers = Object.fromEntries(new Headers(init.headers).entries())
-      const result = await safeFetch(url, { ...proxy, hosts: [new URL(url).hostname], maxRedirects: 0 }, {
-        method: init.method, headers, ...(typeof init.body === 'string' ? { body: init.body } : {}),
-        signal: init.signal ?? undefined, manualRedirect: true, network: network.context(platform),
-        ...(platform === 'youtube' ? { maxHeaderSize: 256 * 1024 } : {}),
-      })
-      return result.response
-    }, bytes => {
-      const image = nativeImage.createFromBuffer(Buffer.from(bytes))
-      return image.isEmpty() ? undefined : image.resize({ width: 64, height: 64, quality: 'good' }).toDataURL()
-    }),
+    verify: browserImportFixtures?.verify ?? identityVerifier,
     write: async (platform, cookies, identity, target, signal) => {
       if (platform === 'douyu') {
         if (!douyuAccounts) throw new DouyuAccountError('storage-failed')

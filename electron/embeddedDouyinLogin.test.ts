@@ -7,10 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserCookie } from './cookies'
 import type { LoginCardAction, LoginPageSnapshot } from './loginCardContracts'
 import type { LocalLoginCard, LoginCardViewOptions } from './loginCardView'
+import type { DouyinSigningSnapshot } from '../server/douyin/signingMaterial'
 
-const fixedAdapter = vi.hoisted(() => ({ entryUrl: 'https://live.douyin.com/',
-  acceptsFrame: (raw: string) => raw === 'https://live.douyin.com/',
-  inspectScript: 'SYNTHETIC_INSPECT', prepareScript: 'SYNTHETIC_PREPARE',
+const LOGIN_PAGE = 'https://www.douyin.com/login_page?service=https%3A%2F%2Flive.douyin.com%2F'
+const LIVE_PAGE = 'https://live.douyin.com/'
+const fixedAdapter = vi.hoisted(() => ({ entryUrl: 'https://www.douyin.com/login_page?service=https%3A%2F%2Flive.douyin.com%2F',
+  acceptsFrame: (raw: string) => ['https://www.douyin.com/login_page?service=https%3A%2F%2Flive.douyin.com%2F', 'https://live.douyin.com/'].includes(raw),
+  inspectScript: 'SYNTHETIC_INSPECT',
   presentationScript: (challengeOnly: boolean) => `SYNTHETIC_PRESENT_${challengeOnly}`,
   actionScript: (action: LoginCardAction) => `SYNTHETIC_ACTION(${JSON.stringify(action)})`,
 }))
@@ -21,6 +24,9 @@ vi.mock('electron', () => ({ session: {}, WebContentsView: class {}, View: class
   toDataURL: () => 'data:image/png;base64,c3ludGhldGljLXFyLWltYWdl',
 })) } }))
 vi.mock('./loginAdapters', () => ({ LOGIN_ADAPTERS: { douyin: fixedAdapter } }))
+const signingCapture = vi.hoisted(() => ({ read: vi.fn(async (): Promise<unknown> => null) }))
+vi.mock('./douyinSigningCapture', async original => ({ ...await original<typeof import('./douyinSigningCapture')>(),
+  captureDouyinSigningSnapshot: signingCapture.read }))
 
 import { EmbeddedLoginController } from './embeddedLogin'
 import { LoginManager } from './login'
@@ -56,7 +62,7 @@ function setup(timeoutMs = 5000, options: { initialSnapshot?: LoginPageSnapshot;
     closeAllConnections: vi.fn(async () => {}), clearStorageData: vi.fn(async () => {}), clearCache: vi.fn(async () => {}),
     fetch: vi.fn(async (): Promise<Response> => new Response(JSON.stringify({ status: 'unknown' }))),
   })
-  const remoteContents = Object.assign(new EventEmitter(), { id: 42, mainFrame: { url: '' }, isDestroyed: () => false,
+  const remoteContents = Object.assign(new EventEmitter(), { id: 42, mainFrame: { url: '' }, getURL: (): string => remoteContents.mainFrame.url, isDestroyed: () => false,
     close: vi.fn(), capturePage: vi.fn(async () => ({})), getZoomFactor: () => 1,
     getUserAgent: () => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Fy1Sync/0.3.2 HeadlessChrome/148.0.0.0 Electron/44.0.0 Safari/537.36',
     setUserAgent: vi.fn(),
@@ -93,7 +99,8 @@ function setup(timeoutMs = 5000, options: { initialSnapshot?: LoginPageSnapshot;
     cardPreload: '/synthetic/login-card-preload.cjs', createSession, createView, createCard, pollMs: options.pollMs ?? 10, checkTimeoutMs: 1000, timeoutMs })
   controllers.push(controller)
   return { controller, owner, ownerContents, remoteContents, browserSession, jar, view, card, cardContents, createSession, createView, createCard, actions,
-    begin: (signal = new AbortController().signal) => { const pending = controller.login({ platform: 'douyin', signal }); void pending.catch(() => {}); return pending },
+    begin: (signal = new AbortController().signal, captureDouyinSigning?: (snapshot: DouyinSigningSnapshot) => Promise<void>) => {
+      const pending = controller.login({ platform: 'douyin', signal, ...(captureDouyinSigning ? { captureDouyinSigning } : {}) }); void pending.catch(() => {}); return pending },
     setCookies: (value: BrowserCookie[]) => { cookies = value }, setActionReply: (reply: () => Promise<unknown>) => { actionReply = reply },
     setSnapshot: (value: LoginPageSnapshot) => { snapshot = value; remoteContents.emit('dom-ready') },
     request: (url: string, resourceType = 'xhr') => { const result = vi.fn(); request?.({ url, resourceType }, result); return result.mock.calls[0]?.[0] },
@@ -391,6 +398,7 @@ describe('Douyin isolated local card and official controller', () => {
     expect(f.actions).toHaveLength(1)
     expect(f.request('wss://frontier100-normal.zijieapi.com/ws', 'webSocket')).toEqual({ cancel: true })
     expect(f.request('https://live.douyin.com/passport/web/check_qrconnect/')).toEqual({ cancel: true })
+    expect(f.request('https://www.douyin.com/passport/web/check_qrconnect/')).toEqual({ cancel: true })
     expect(f.actions[0]).toContain(secret)
     if ('password' in action) expect(action.password).toBe('')
     if ('code' in action) expect(action.code).toBe('')
@@ -486,6 +494,143 @@ describe('Douyin isolated local card and official controller', () => {
     expect(f.card.hide).toHaveBeenCalled()
     expect(f.owner.contentView.addChildView.mock.calls.length).toBeGreaterThanOrEqual(3)
     expect(f.actions).toHaveLength(0)
+  })
+})
+
+describe('sending material after signing in on the official login page', () => {
+  const material = { accountUid: '1001', origin: 'https://live.douyin.com' } as unknown as DouyinSigningSnapshot
+  const identified = async () => new Response(JSON.stringify({ status_code: 0, data: { id_str: '1001' } }))
+  beforeEach(() => { vi.useFakeTimers(); signingCapture.read.mockReset().mockResolvedValue(null) })
+
+  /** The card is open on the login page; `signIn` makes the session authenticated the way a finished login does. */
+  function opened(withMaterial = true) {
+    const f = setup(120_000, { navigationEvents: true, pollMs: 400 })
+    const captured = vi.fn(async (_snapshot: DouyinSigningSnapshot) => {})
+    let settled: BrowserCookie[] | undefined
+    const pending = f.begin(undefined, withMaterial ? captured : undefined)
+    void pending.then(value => { settled = value }, () => {})
+    const signIn = () => { f.setCookies([auth]); f.browserSession.fetch.mockImplementation(identified) }
+    /** The official page leaving for the live site on its own, as it does about a second after signing in. */
+    const redirect = (url = LIVE_PAGE) => {
+      const event = { preventDefault: vi.fn() }
+      f.remoteContents.emit('will-navigate', event, url)
+      return event.preventDefault
+    }
+    return { f, captured, pending, settled: () => settled, signIn, redirect }
+  }
+
+  it('holds the page on its own redirect and reads the material where the login happened', async () => {
+    const { f, captured, pending, signIn, redirect } = opened()
+    await vi.advanceTimersByTimeAsync(500)
+    signIn()
+    signingCapture.read.mockResolvedValue(material)
+    const prevented = redirect()
+    expect(prevented).toHaveBeenCalledOnce()
+    expect(f.controller.cardState()).toMatchObject({ busy: true, message: '正在确认登录状态' })
+    await vi.advanceTimersByTimeAsync(200)
+    expect(await pending).toEqual([auth])
+    expect(captured).toHaveBeenCalledExactlyOnceWith(material)
+    expect(f.remoteContents.getURL()).toBe(LOGIN_PAGE)
+    expect(f.remoteContents.loadURL).not.toHaveBeenCalledWith(LIVE_PAGE)
+    expect(f.browserSession.fetch).toHaveBeenCalledOnce()
+  })
+
+  it('confirms a login whose cookies arrive just after the redirect was held', async () => {
+    const { f, captured, pending, signIn, redirect } = opened()
+    await vi.advanceTimersByTimeAsync(500)
+    signingCapture.read.mockResolvedValue(material)
+    expect(redirect()).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(600)
+    expect(f.browserSession.fetch).not.toHaveBeenCalled()
+    signIn()
+    await vi.advanceTimersByTimeAsync(400)
+    expect(await pending).toEqual([auth])
+    expect(captured).toHaveBeenCalledExactlyOnceWith(material)
+    expect(f.remoteContents.loadURL).not.toHaveBeenCalledWith(LIVE_PAGE)
+  })
+
+  it('lets the page continue when no login is confirmed in time, without holding it again', async () => {
+    const { f, captured, settled, redirect } = opened()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(redirect()).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1400)
+    expect(f.remoteContents.loadURL).not.toHaveBeenCalledWith(LIVE_PAGE)
+    await vi.advanceTimersByTimeAsync(400)
+    expect(f.remoteContents.loadURL.mock.calls.filter(([url]) => url === LIVE_PAGE)).toHaveLength(1)
+    expect(settled()).toBeUndefined()
+    expect(captured).not.toHaveBeenCalled()
+    expect(f.controller.state()).not.toBeNull()
+    expect(redirect('https://live.douyin.com/next')).not.toHaveBeenCalled()
+  })
+
+  it('waits a bounded time on the login page, then saves the login without sending material', async () => {
+    const { f, captured, pending, settled, signIn, redirect } = opened()
+    await vi.advanceTimersByTimeAsync(500)
+    signIn()
+    expect(redirect()).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(300)
+    expect(f.controller.cardState()).toMatchObject({ busy: true, message: '已登录，正在开启弹幕发送' })
+    expect(f.controller.state()).toMatchObject({ phase: 'verifying', message: '已登录，正在开启弹幕发送' })
+    await vi.advanceTimersByTimeAsync(4500)
+    expect(settled()).toBeUndefined()
+    expect(f.controller.cardState()).toMatchObject({ busy: true, message: '已登录，正在开启弹幕发送' })
+    await vi.advanceTimersByTimeAsync(4000)
+    expect(await pending).toEqual([auth])
+    expect(captured).not.toHaveBeenCalled()
+    expect(f.remoteContents.loadURL).not.toHaveBeenCalledWith(LIVE_PAGE)
+    expect(f.controller.state()).toBeNull()
+  })
+
+  it('picks up material that the page finishes writing during the wait', async () => {
+    const { captured, pending, signIn, redirect } = opened()
+    await vi.advanceTimersByTimeAsync(500)
+    signIn()
+    redirect()
+    await vi.advanceTimersByTimeAsync(300)
+    expect(captured).not.toHaveBeenCalled()
+    signingCapture.read.mockResolvedValue(material)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(await pending).toEqual([auth])
+    expect(captured).toHaveBeenCalledExactlyOnceWith(material)
+  })
+
+  it('does not fail a confirmed login when a later page load fails', async () => {
+    const { f, captured, pending, signIn, redirect } = opened()
+    await vi.advanceTimersByTimeAsync(500)
+    signIn()
+    redirect()
+    await vi.advanceTimersByTimeAsync(300)
+    f.remoteContents.emit('did-fail-load', {}, -106, 'ERR_INTERNET_DISCONNECTED', LIVE_PAGE, true)
+    expect(f.controller.state()?.phase).not.toBe('failed')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(await pending).toEqual([auth])
+    expect(captured).not.toHaveBeenCalled()
+  })
+
+  it('still reports a login page that fails to load before any login', async () => {
+    const { f } = opened()
+    await vi.advanceTimersByTimeAsync(500)
+    f.remoteContents.emit('did-fail-load', {}, -106, 'ERR_INTERNET_DISCONNECTED', LOGIN_PAGE, true)
+    expect(f.controller.state()).toMatchObject({ phase: 'failed', message: '登录页面未能加载，请检查网络后重试' })
+  })
+
+  it.each([
+    ['a login that does not ask for sending material', false, LIVE_PAGE, LOGIN_PAGE],
+    ['a reload of the login page itself', true, 'https://www.douyin.com/login_page?service=https%3A%2F%2Fwww.douyin.com%2F', LOGIN_PAGE],
+    ['a navigation that starts on the live page', true, 'https://live.douyin.com/next', LIVE_PAGE],
+  ] as const)('does not hold %s', async (_name, withMaterial, target, from) => {
+    const { f, redirect } = opened(withMaterial)
+    await vi.advanceTimersByTimeAsync(500)
+    f.remoteContents.mainFrame.url = from
+    expect(redirect(target)).not.toHaveBeenCalled()
+  })
+
+  it('still refuses a destination outside the official sites instead of holding it', async () => {
+    const { f, redirect } = opened()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(redirect('https://example.invalid/after-login')).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(f.remoteContents.loadURL).not.toHaveBeenCalledWith('https://example.invalid/after-login')
   })
 })
 

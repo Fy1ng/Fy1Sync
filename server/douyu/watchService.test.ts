@@ -266,6 +266,34 @@ describe('real playback watch leases', () => {
     expect(JSON.stringify(f.service.snapshot())).not.toContain('synthetic sensitive payload')
   })
 
+  it('keeps reconnecting when each session was healthy before the gateway stopped answering', async () => {
+    const f = fixture()
+    // Each session acknowledges two heartbeats, then ends the way a heartbeat timeout does.
+    f.run.mockImplementation(async (_account, _room, signal, _stats, ack) => {
+      ack(Date.now())
+      await vi.advanceTimersByTimeAsync(0)
+      ack(Date.now())
+      if (signal.aborted) return
+      throw Object.assign(new Error('Heartbeat was not answered'), { code: 'timeout' })
+    })
+    await f.start()
+    for (let i = 0; i < 40; i++) await f.tick()
+    expect(f.run.mock.calls.length).toBeGreaterThan(8)
+    expect(f.service.snapshot().lastHeartbeatAt).not.toBeNull()
+  })
+
+  it('still bounds a gateway that drops every session after its first acknowledgement', async () => {
+    const f = fixture()
+    f.run.mockImplementation(async (_account, _room, _signal, _stats, ack) => {
+      ack(Date.now())
+      throw Object.assign(new Error('Dropped after login'), { code: 'network-error' })
+    })
+    await f.start()
+    for (let i = 0; i < 60; i++) await f.tick()
+    expect(f.run).toHaveBeenCalledTimes(4)
+    expect(f.service.snapshot()).toMatchObject({ phase: 'failed' })
+  })
+
   it('stops retrying a known unsupported protocol and can recover after explicit login renewal', async () => {
     const f = fixture()
     f.run.mockRejectedValue(Object.assign(new Error('Unsupported fixture'), { code: 'protocol-unsupported' }))

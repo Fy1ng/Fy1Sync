@@ -74,5 +74,6 @@ export function parseLoginIdentity(platform: EmbeddedLoginPlatform, payload: unk
   const info = record(msg.info)
   if (!info && msg.info !== undefined && msg.info !== null && msg.info !== 0) return { status: 'unknown' }
   if (info?.uid !== undefined && positiveUid(info.uid) !== uid) return { status: 'unknown' }
-  return { status: 'authenticated', uid, ...nickname(info?.nickname) }
+  // The member endpoint abbreviates the display name to nn.
+  return { status: 'authenticated', uid, ...nickname(info?.nickname ?? info?.nn) }
 }

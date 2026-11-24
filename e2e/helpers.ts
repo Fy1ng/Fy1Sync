@@ -248,7 +248,10 @@ export async function connectDanmaku(page: Page, room = '288016'): Promise<void>
   await panel.getByRole('button', { name: /^(连接|更换房间)$/ }).click()
   await panel.getByRole('textbox', { name: '弹幕房间号' }).fill(room)
   await panel.getByRole('button', { name: '连接', exact: true }).click()
-  await expect(panel.getByText(new RegExp('房间 ' + room))).toBeVisible()
+  const roomLabel = new RegExp(`房间 ${room}$`)
+  const drawerTitle = page.getByRole('complementary', { name: '弹幕', exact: true }).locator('.drawer-title')
+  await expect.poll(async () => await panel.getByRole('status').filter({ hasText: roomLabel }).first().isVisible()
+    || await drawerTitle.filter({ hasText: roomLabel }).isVisible()).toBe(true)
   await page.keyboard.press('Escape')
   await expect(panel).toBeHidden()
 }

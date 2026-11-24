@@ -19,6 +19,8 @@ const RESOURCE_HOSTS: readonly string[] = ['lf-webcast-platform.bytetos.com', 'l
   'lf-rc1.yhgfb-cn-static.com', 'lf-rc2.yhgfb-cn-static.com', 'lf-cdn-tos.bytescm.com', 'lf-c-flwb.bytetos.com', 'lf-security.bytegoofy.com',
   'lf3-config.bytetcc.com']
 const QR_WEBSOCKETS = ['frontier100-normal.zijieapi.com']
+// The official page's own risk SDK prepares its anonymous token here before a QR code or SMS.
+const RISK_TOKEN_PATHS = new Set(['/web/r/token', '/web/common'])
 const SECOND_VERIFICATION_SCRIPT = '/ucenter_web/app/second_verification_web/dist/index.umd.production.js'
 const VERIFICATION_API_PATHS = new Set([
   '/passport/safe/get_verify_ways/', '/passport/safe/pack_verify_ways_data/', '/passport/safe/query_decision/',
@@ -77,6 +79,7 @@ function douyinLoginRequestAllowed(platform: EmbeddedLoginPlatform, raw: string,
   // The account SDK loads this only when a login response requires additional verification.
   if (url.hostname === 'auth.zijieapi.com') return url.pathname === SECOND_VERIFICATION_SCRIPT && resourceType === 'script'
   if (url.hostname === 'verify.zijieapi.com') return VERIFICATION_API_PATHS.has(url.pathname) && ['xhr', 'other'].includes(resourceType)
+  if (url.hostname === 'mssdk.bytedance.com') return RISK_TOKEN_PATHS.has(url.pathname) && ['xhr', 'other'].includes(resourceType)
   return belongs(url.hostname, RESOURCES[platform]) || RESOURCE_HOSTS.includes(url.hostname)
 }
 

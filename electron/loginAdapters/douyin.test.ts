@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DOUYIN_QR_CREATE_PATHS, DOUYIN_QR_POLL_PATHS, douyinLoginAdapter } from './douyin'
+import { DOUYIN_LOGIN_ENTRY_URL, DOUYIN_QR_CREATE_PATHS, DOUYIN_QR_POLL_PATHS, douyinLoginAdapter } from './douyin'
 import type { LoginCardAction, LoginPageActionResult, LoginPageSnapshot } from '../loginCardContracts'
 
 type TestDOM = { window: Window & typeof globalThis }
@@ -54,6 +54,30 @@ function fixture(mode: 'sms' | 'password' = 'sms', checkbox = false) {
   document.querySelector('#douyin_login_comp_scan_code_qrcode_expired')!.addEventListener('click', refreshed)
   changeMode(mode)
   return { dom, document, sent, submitted, refreshed, changed, phone, code, area, send,
+    inspect: () => dom.window.eval(douyinLoginAdapter.inspectScript) as LoginPageSnapshot,
+    act: (action: LoginCardAction) => dom.window.eval(douyinLoginAdapter.actionScript(action)) as Promise<LoginPageActionResult> }
+}
+/** Markup of the dedicated official login page as observed on 2026-11-23: no ids on the tabs or the QR image. */
+function loginPageFixture(url = DOUYIN_LOGIN_ENTRY_URL) {
+  const agreement = '<div aria-label="登录即代表同意用户协议和隐私政策"><span>登录即代表同意</span><a>用户协议</a><a>隐私政策</a></div>'
+  const phone = '<div id="douyin_login_comp_normal_input_id"><input type="text" name="web-login-area-code-input" role="combobox" value="+86"><input id="normal-input" name="normal-input" type="tel" placeholder="请输入手机号"></div>'
+  const dom = new JSDOM(`<div id="douyin-login-new-id"><article id="douyin_login_comp_flat_panel"><div id="douyin_login_landing_flat_container">
+    <div><span class="C6OZQwMA">扫码登录</span><div id="douyin_login_comp_scan_code"><div id="animate_qrcode_container"><div>如何扫码</div><div id="qr-slot"></div><div id="default_scan_code_guide"></div></div></div></div>
+    <div><div id="tabs"><span>验证码登录</span><span>密码登录</span></div><div id="panel-slot"></div></div></div></article></div>
+    <template id="sms"><div id="douyin_login_comp_mobile_code">${phone}<div id="douyin_login_comp_button_input_id"><div><input id="button-input" name="button-input" type="tel" placeholder="请输入验证码"></div><span class="gKXDWaPG KX2Mhb6E" tabindex="0" aria-live="off">获取验证码</span></div>
+      <div id="douyin_login_comp_btn_id" class="r7j70rK2 zcAEoiw0">登录</div>${agreement}</div></template>
+    <template id="password"><div id="douyin_login_comp_account_pwd">${phone}<div class="password_input"><div id="douyin_login_comp_normal_input_id"><input id="normal-input" name="normal-input" type="password" placeholder="请输入密码"></div></div>
+      <div id="douyin_login_comp_btn_id" class="r7j70rK2 zcAEoiw0">登录</div>${agreement}</div></template>`, { url, runScripts: 'outside-only' })
+  windows.push(dom)
+  const document = dom.window.document
+  vi.spyOn(dom.window.Element.prototype, 'getBoundingClientRect').mockReturnValue({ x: 370, y: 345, width: 179, height: 179, top: 345, left: 370, bottom: 524, right: 549, toJSON: () => ({}) })
+  // The official page renders one panel at a time and replaces it when a tab is clicked.
+  const show = (mode: 'sms' | 'password') => document.querySelector('#panel-slot')!.replaceChildren(document.querySelector<HTMLTemplateElement>(`#${mode}`)!.content.cloneNode(true))
+  const [smsTab, passwordTab] = Array.from(document.querySelectorAll<HTMLElement>('#tabs span'))
+  smsTab!.addEventListener('click', () => show('sms')); passwordTab!.addEventListener('click', () => show('password'))
+  show('sms')
+  return { dom, document,
+    showQr: () => { document.querySelector('#qr-slot')!.innerHTML = '<img alt="" aria-label="二维码" tabindex="0" src="data:image/png;base64,c3ludGhldGlj">' },
     inspect: () => dom.window.eval(douyinLoginAdapter.inspectScript) as LoginPageSnapshot,
     act: (action: LoginCardAction) => dom.window.eval(douyinLoginAdapter.actionScript(action)) as Promise<LoginPageActionResult> }
 }
@@ -239,20 +263,42 @@ describe('Douyin official DOM adapter', () => {
     expect(await f.act({ kind: 'refresh-qr' })).toEqual({ ok: true }); expect(f.refreshed).toHaveBeenCalledTimes(1)
     expect(DOUYIN_QR_POLL_PATHS).toEqual(['/passport/web/check_qrconnect/'])
     expect(DOUYIN_QR_CREATE_PATHS).toEqual(['/passport/web/get_qrcode/'])
-    expect(douyinLoginAdapter.acceptsFrame('https://live.douyin.com/')).toBe(true)
-    for (const raw of ['http://live.douyin.com/', 'https://user@live.douyin.com/', 'https://live.douyin.com:8443/', 'https://live.douyin.com.evil.invalid/', 'https://live.douyin.com/100', 'https://lf-rc1.yhgfb-cn-static.com/obj/rc-verifycenter/rmc-nocaptcha/1.0.0.52/index.html']) expect(douyinLoginAdapter.acceptsFrame(raw)).toBe(false)
+    expect(douyinLoginAdapter.entryUrl).toBe('https://www.douyin.com/login_page?service=https%3A%2F%2Flive.douyin.com%2F')
+    for (const raw of [DOUYIN_LOGIN_ENTRY_URL, 'https://www.douyin.com/login_page', 'https://live.douyin.com/']) expect(douyinLoginAdapter.acceptsFrame(raw)).toBe(true)
+    for (const raw of ['https://www.douyin.com/', 'https://www.douyin.com/login_page/next', 'https://user@www.douyin.com/login_page', 'https://www.douyin.com:8443/login_page',
+      'https://login.douyin.com/', 'https://sso.douyin.com/', 'http://live.douyin.com/', 'https://user@live.douyin.com/', 'https://live.douyin.com:8443/', 'https://live.douyin.com.evil.invalid/', 'https://live.douyin.com/100', 'https://lf-rc1.yhgfb-cn-static.com/obj/rc-verifycenter/rmc-nocaptcha/1.0.0.52/index.html']) expect(douyinLoginAdapter.acceptsFrame(raw)).toBe(false)
   })
-  it('prepares only the official login component, retries lazy hydration, and never fills or submits controls', async () => {
-    vi.useFakeTimers()
-    const f = fixture(); f.document.querySelector('#login-panel-new')!.remove()
-    f.document.body.insertAdjacentHTML('beforeend', '<button class="semi-button semi-button-primary">登录</button>')
-    f.document.body.insertAdjacentHTML('beforeend', '<div style="visibility:hidden"><button class="semi-button semi-button-primary">登录</button></div>')
-    const clicked = vi.fn(() => f.document.body.insertAdjacentHTML('beforeend', '<div id="login-panel-new"></div>'))
-    f.document.querySelector('button')!.addEventListener('click', clicked)
-    const result = f.dom.window.eval(douyinLoginAdapter.prepareScript!) as Promise<LoginPageActionResult>
-    await vi.advanceTimersByTimeAsync(500)
-    expect(await result).toEqual({ ok: true })
-    await expect(f.dom.window.eval(douyinLoginAdapter.prepareScript!)).resolves.toEqual({ ok: true })
-    expect(clicked).toHaveBeenCalledTimes(1); expect(f.sent).not.toHaveBeenCalled(); expect(f.submitted).not.toHaveBeenCalled()
+  describe('dedicated login page', () => {
+    it('recognizes the form before its QR code exists, then reads the code without a prepare step', () => {
+      const f = loginPageFixture()
+      expect(douyinLoginAdapter.prepareScript).toBeUndefined()
+      expect(f.inspect()).toMatchObject({ page: 'form', mode: 'sms', qrStatus: 'loading', sms: { canSend: false, cooldownSeconds: null } })
+      expect(f.inspect().qr).toBeUndefined()
+      f.showQr()
+      expect(f.inspect()).toMatchObject({ page: 'form', mode: 'sms', qrStatus: 'ready',
+        qr: { src: 'data:image/png;base64,c3ludGhldGlj', rect: { x: 370, y: 345, width: 179, height: 179 } } })
+    })
+    it('switches between its unlabeled SMS and password tabs by caption', async () => {
+      const f = loginPageFixture(); f.showQr()
+      expect(await f.act({ kind: 'mode', mode: 'password' })).toEqual({ ok: true })
+      expect(f.inspect()).toMatchObject({ page: 'form', mode: 'password', qrStatus: 'ready' })
+      expect(await f.act({ kind: 'mode', mode: 'sms' })).toEqual({ ok: true })
+      expect(f.inspect()).toMatchObject({ page: 'form', mode: 'sms' })
+    })
+    it('fills its phone field and shields a challenge the same way as the live panel', async () => {
+      const f = loginPageFixture()
+      expect(await f.act({ kind: 'prepare-sms', countryCode: '+86', phone: '13800000000', accepted: true })).toEqual({ ok: true })
+      expect(f.document.querySelector<HTMLInputElement>('#douyin_login_comp_mobile_code input[type="tel"][name="normal-input"]')!.value).toBe('13800000000')
+      f.document.body.insertAdjacentHTML('beforeend', '<div id="captcha_container"><img src="data:image/png;base64,c3ludGhldGlj"></div>')
+      expect(f.inspect()).toMatchObject({ page: 'challenge', qrStatus: 'paused' })
+      expect(f.dom.window.eval(douyinLoginAdapter.presentationScript!(true))).toEqual({ ok: true })
+      expect(f.document.querySelector('#captcha_container')!.hasAttribute('data-fy1sync-douyin-challenge-root')).toBe(true)
+    })
+    it.each(['https://www.douyin.com/', 'https://www.douyin.com/login_page/next', 'https://login.douyin.com/login_page'])('ignores the same markup on %s', async url => {
+      const f = loginPageFixture(url); f.showQr()
+      expect(f.inspect()).toEqual({ page: 'unknown' })
+      expect(await f.act({ kind: 'mode', mode: 'password' })).toEqual({ ok: false, reason: 'not-ready' })
+      expect(f.dom.window.eval(douyinLoginAdapter.presentationScript!(true))).toEqual({ ok: false, reason: 'unsupported' })
+    })
   })
 })

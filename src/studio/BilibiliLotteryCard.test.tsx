@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 import type { BilibiliLotteryClient, BilibiliLotterySnapshot } from '../core/bilibiliLottery'
 import { BilibiliLotteryCard, BilibiliLotteryCards, type BilibiliLotterySource } from './BilibiliLotteryCard'
 import { BilibiliLotteryReplayMessages } from './BilibiliLotteryMessageClue'
@@ -22,6 +23,35 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks() })
 const expandCard = () => { (document.querySelector('.bilibili-lottery-card') as HTMLDetailsElement).open = true }
+
+/** Every rule of a stylesheet that names the card group, as it is written in the source. */
+function cardGroupRules(file: string): string {
+  const css = readFileSync(new URL(file, import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+  return [...css.matchAll(/[^{}]*\{[^{}]*\}/g)].map(match => match[0]).filter(rule => rule.split('{')[0]!.includes('.bilibili-lottery-cards')).join('\n')
+}
+
+describe('Bilibili lottery cards in the chat drawer', () => {
+  const withStyles = (run: () => void): void => {
+    const style = document.createElement('style')
+    // The component's own rules first, then the player's, as a browser's cascade resolves them.
+    style.textContent = cardGroupRules('./bilibiliLottery.css') + '\n' + cardGroupRules('./studio.css')
+    document.head.append(style)
+    try { run() } finally { style.remove() }
+  }
+
+  it('joins the drawer flow instead of floating over the picture', () => withStyles(() => {
+    render(<div className="studio"><aside className="drawer"><BilibiliLotteryCards sources={[source()]} client={client} /></aside></div>)
+    const group = document.querySelector('.drawer > .bilibili-lottery-cards')!
+    expect(group).not.toBeNull()
+    expect(getComputedStyle(group).position).toBe('static')
+    expect(getComputedStyle(group).maxWidth).toBe('none')
+  }))
+
+  it('keeps its floating placement outside the drawer', () => withStyles(() => {
+    render(<div className="studio"><BilibiliLotteryCards sources={[source()]} client={client} /></div>)
+    expect(getComputedStyle(document.querySelector('.bilibili-lottery-cards')!).position).toBe('absolute')
+  }))
+})
 
 describe('Bilibili lottery card and lifecycle hook', () => {
   it('renders escaped prize, exact candidates and fixed official entry with reminders off', async () => {

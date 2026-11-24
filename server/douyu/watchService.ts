@@ -200,6 +200,10 @@ export class DouyuWatchService {
           if (!flight.heartbeat) {
             flight.heartbeat = true
             this.update({ phase: 'reporting', reason: '观看连接已建立，等待核对粉丝牌累计观时' })
+          } else {
+            // A session that outlives a full heartbeat interval was healthy. A later drop starts a
+            // new retry budget; only connections that never get this far stay bounded.
+            this.failures = 0; this.retryAt = 0
           }
           this.update({ lastHeartbeatAt: at })
         }))

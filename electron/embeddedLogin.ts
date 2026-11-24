@@ -66,6 +66,10 @@ interface Attempt {
   anonymousCookieRevision: number
   initialized: boolean
   preparing: Promise<void> | null
+  /** Set once a verified Douyin login starts waiting for its sending material; 0 before that. */
+  signingDeadline: number
+  /** Destination of a main-frame navigation paused until the login behind it is checked. */
+  heldRedirect: string | null
 }
 
 export interface EmbeddedLoginOptions {
@@ -161,7 +165,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       state: { id, platform: request.platform, purpose: request.destination ? 'website' : 'login', phase: 'loading',
         ...(request.accountLabel ? { accountLabel: request.accountLabel.slice(0, 80) } : {}) },
       removeListeners: [], timeout: null, pageTimeout: null, poll: null, renderPulse: null, rendering: false, cookieTimer: null, checking: false, closing: false,
-      cookieRevision: 0, loadRevision: 0, nextCheck: 0, anonymousFingerprint:null, anonymousCookieRevision:-1, initialized: false, preparing: null,
+      cookieRevision: 0, loadRevision: 0, nextCheck: 0, anonymousFingerprint:null, anonymousCookieRevision:-1, initialized: false, preparing: null, signingDeadline: 0, heldRedirect: null,
     }
     this.active = attempt
     const cancel = () => { void this.finish(attempt, new LoginError('login-cancelled')) }
@@ -280,13 +284,16 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       if (['f5', 'f12'].includes(key) || (input.control || input.meta) && ['r', 'o', 'p', 's'].includes(key)
         || (input.control || input.meta) && input.shift && ['i', 'j', 'c'].includes(key)) event.preventDefault()
     })
-    const navigate = (event: { preventDefault(): void }, url: string, mainFrame: boolean) => {
-      if (loginRequestAllowed(attempt.request.platform, url, mainFrame ? 'mainFrame' : 'subFrame')) return
+    const navigate = (event: { preventDefault(): void }, url: string, mainFrame: boolean, started = false) => {
+      if (loginRequestAllowed(attempt.request.platform, url, mainFrame ? 'mainFrame' : 'subFrame')) {
+        if (started && mainFrame && this.holdDouyinRedirect(attempt, url)) event.preventDefault()
+        return
+      }
       event.preventDefault()
       if (mainFrame) this.update(attempt, { message: '请在卡片内使用扫码，短信或密码登录' })
     }
-    contents.on('will-navigate', (event, url) => navigate(event, url, true))
-    contents.on('will-frame-navigate', event => navigate(event, event.url, event.isMainFrame))
+    contents.on('will-navigate', (event, url) => navigate(event, url, true, true))
+    contents.on('will-frame-navigate', event => navigate(event, event.url, event.isMainFrame, true))
     contents.on('will-redirect', (event, url, _inPlace, mainFrame) => navigate(event, url, mainFrame))
     contents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
       if (mainFrame && !inPlace) {
@@ -298,7 +305,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
         attempt.nativeVerification = false
         attempt.captchaPreflight = 'waiting'
         attempt.captchaPreRequest = null
-        if (attempt.card && !attempt.explicitOfficial) this.waitForPlatform(attempt, '正在继续登录')
+        if (attempt.card && !attempt.explicitOfficial) this.waitForPlatform(attempt, attempt.signingDeadline ? SIGNING_WAIT_MESSAGE : '正在继续登录', attempt.signingDeadline > 0)
       }
     })
     contents.on('dom-ready', () => {
@@ -320,6 +327,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
       this.update(attempt, { phase: 'failed', presentation: 'form', message: attempt.lastError, errorDetail: diagnosticDetails(details) })
     })
     contents.on('did-fail-load', (_event, code, description, url, mainFrame) => {
+      // The login itself is already verified; a live page that cannot load only costs the sending material.
+      if (mainFrame && code !== -3 && attempt.signingDeadline) { attempt.signingDeadline = 1; attempt.nextCheck = 0; return }
       if (mainFrame && code !== -3) this.update(attempt, { phase: 'failed', message: '登录页面未能加载，请检查网络后重试', errorDetail: diagnosticDetails({ code, description, url }) })
     })
     const changed = (_event: unknown, cookie?: Partial<BrowserCookie>) => {
@@ -383,6 +392,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
     attempt.lastError = undefined
     attempt.anonymousFingerprint = null
     attempt.anonymousCookieRevision = -1
+    attempt.signingDeadline = 0
+    attempt.heldRedirect = null
     if (attempt.card) {
       attempt.showingOfficial = false
       attempt.explicitOfficial = false
@@ -451,6 +462,8 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
 
   private async inspect(attempt: Attempt): Promise<void> {
     if (!this.current(attempt) || !attempt.broker || attempt.inspecting || attempt.actionBusy || attempt.state.phase === 'failed') return
+    // A login being checked, or a verified one waiting for its sending material, must not reopen the form.
+    if (attempt.signingDeadline || attempt.heldRedirect) return
     attempt.inspecting = true
     const loadRevision = attempt.loadRevision
     const actionRevision = attempt.actionRevision
@@ -668,6 +681,7 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
         const checkedCookies=await this.boundedCookies(attempt,signal)
         if (!currentCheck() || authenticationFingerprint(checkedCookies,'douyin')!==credentialFingerprint) return
         if (cookieServerData!==undefined && douyinBrowserSigningServerData(checkedCookies)!==cookieServerData) return
+        if (!snapshot && this.awaitDouyinSigning(attempt)) return
         if (snapshot) await attempt.request.captureDouyinSigning(snapshot)
         if (!currentCheck()) return
         await this.finish(attempt,checkedCookies)
@@ -680,6 +694,57 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
         if (finishWebsite) await this.finish(attempt, new LoginError('login-incomplete'))
       }
     } finally { attempt.checking = false }
+  }
+
+  /**
+   * The official login page keeps the key that authorizes sending in its own storage and leaves
+   * for the live site about a second after signing in; the live page holds no copy. Pause that
+   * redirect so the login can be confirmed and the key read where it was created.
+   */
+  private holdDouyinRedirect(attempt: Attempt, url: string): boolean {
+    if (attempt.heldRedirect) return attempt.heldRedirect === url
+    if (attempt.request.platform !== 'douyin' || !attempt.request.captureDouyinSigning || attempt.request.destination
+      || attempt.signingDeadline || !this.current(attempt) || !attempt.view) return false
+    try {
+      const from = new URL(attempt.view.webContents.getURL()), to = new URL(url)
+      if (from.origin !== 'https://www.douyin.com' || from.pathname !== '/login_page') return false
+      if (to.origin === from.origin && to.pathname === from.pathname) return false
+    } catch { return false }
+    attempt.heldRedirect = url
+    this.waitForPlatform(attempt, '正在确认登录状态', true)
+    void this.settleHeldRedirect(attempt, url)
+    return true
+  }
+
+  private async settleHeldRedirect(attempt: Attempt, url: string): Promise<void> {
+    const held = () => this.current(attempt) && attempt.heldRedirect === url
+    const started = Date.now()
+    attempt.nextCheck = 0
+    // Authentication cookies can trail the page's redirect by a moment. Only the first identity
+    // request is forced; one already in flight may finish, within the bound of one check.
+    while (held() && !attempt.signingDeadline) {
+      const waited = Date.now() - started
+      if (waited >= HELD_REDIRECT_MS && !attempt.checking || waited >= HELD_REDIRECT_LIMIT_MS) break
+      if (!attempt.checking) await this.check(attempt)
+      if (!held() || attempt.signingDeadline) break
+      await new Promise(resolve => setTimeout(resolve, 150))
+    }
+    // Confirmed logins finish from this page. Anything else continues where the page was going.
+    if (!held() || attempt.signingDeadline) return
+    attempt.heldRedirect = null
+    void attempt.view?.webContents.loadURL(url).catch(() => {})
+  }
+
+  /**
+   * A confirmed login waits a bounded time for sending material that the page may still be
+   * writing. Returns false once the login should be saved without it.
+   */
+  private awaitDouyinSigning(attempt: Attempt): boolean {
+    if (!attempt.view || attempt.view.webContents.isDestroyed()) return false
+    if (attempt.signingDeadline) return Date.now() < attempt.signingDeadline
+    attempt.signingDeadline = Date.now() + SIGNING_WAIT_MS
+    this.waitForPlatform(attempt, SIGNING_WAIT_MESSAGE, true)
+    return true
   }
 
   private restoreCardAfterCheck(attempt: Attempt, message: string): void {
@@ -964,6 +1029,11 @@ export class EmbeddedLoginController implements EmbeddedLoginDriver {
   }
 }
 
+const SIGNING_WAIT_MS = 6000
+const HELD_REDIRECT_MS = 1500
+const HELD_REDIRECT_LIMIT_MS = 10_000
+const SIGNING_WAIT_MESSAGE = '已登录，正在开启弹幕发送'
+
 const PAGE_ERRORS = {
   'invalid-credentials': '账号或密码不正确，请检查后重试',
   'invalid-code': '验证码不正确或已失效，请重试',
@@ -998,7 +1068,7 @@ function isQrPolling(platform: EmbeddedLoginRequest['platform'], raw: string): b
   try {
     const url = new URL(raw)
     if (platform === 'douyin') return url.protocol === 'wss:' && url.hostname === 'frontier100-normal.zijieapi.com'
-      || url.origin === 'https://live.douyin.com' && url.pathname === '/passport/web/check_qrconnect/'
+      || ['https://www.douyin.com', 'https://live.douyin.com'].includes(url.origin) && url.pathname === '/passport/web/check_qrconnect/'
     return platform === 'bilibili' ? url.hostname === 'passport.bilibili.com' && url.pathname === '/x/passport-login/web/qrcode/poll'
       : platform === 'douyu' ? url.hostname === 'passport.douyu.com' && url.pathname === '/japi/scan/auth'
         : url.hostname === 'udblgn.huya.com' && url.pathname === '/qrLgn/tryQrLogin'

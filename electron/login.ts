@@ -3,7 +3,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import type { Readable, Writable } from 'node:stream'
-import { CookieStore, hasAuthenticationCookies, isLoginPlatform, LOGIN_PLATFORMS, douyinBrowserCookieFingerprint } from './cookies'
+import { CookieStore, hasAuthenticationCookies, isLoginPlatform, LOGIN_PLATFORMS, douyinBrowserCookieFingerprint, validAccountIdentity } from './cookies'
 import type { BrowserCookie, BrowserAccountIdentity, CookieHeaderPlatform, CookieStoreOptions, LoginCookieSession, LoginPlatform, LoginResult, LoginStatus, YoutubeCookieSession } from './cookies'
 import { powershellEnvironment } from './privateStorage'
 import type { EmbeddedLoginDriver } from './embeddedLoginContracts'
@@ -38,7 +38,12 @@ export interface LoginManagerOptions extends CookieStoreOptions {
   findChrome?: () => string | undefined
   store?: CookieStore
   douyinSigning?: Pick<DouyinSigningStore,'save'|'load'|'clear'|'dispose'>
+  /** Reads the nickname and avatar of the account behind verified cookies; null when signed out. */
+  identify?: (platform: LoginPlatform, cookies: BrowserCookie[], signal: AbortSignal) => Promise<unknown>
 }
+const IDENTIFIED_PLATFORMS: readonly LoginPlatform[] = ['douyu', 'bilibili', 'huya', 'douyin']
+const IDENTITY_TIMEOUT_MS = 4000
+const IDENTITY_RETRY_SECONDS = 300
 
 export function findSystemChrome(environment: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
   const candidates = platform === 'win32' ? [
@@ -308,6 +313,9 @@ export class LoginManager {
   private disposed = false
   private signingBlocked = false
   private signingProblem: string | undefined
+  private readonly identityLookups = new Map<LoginPlatform, Promise<void>>()
+  /** Earliest time, in seconds, of the next identity lookup; Infinity once the saved account is settled. */
+  private readonly identityRetryAt = new Map<LoginPlatform, number>()
 
   constructor(userDataDirectory: string, private readonly options: LoginManagerOptions = {}) {
     this.store = options.store ?? new CookieStore(userDataDirectory, options)
@@ -321,6 +329,7 @@ export class LoginManager {
       || /[\x00-\x1f\x7f]/.test(accountLabel))) return Promise.reject(new LoginError('login-failed'))
     if (this.operations.has(platform) || this.loggingOut.has(platform)) return Promise.reject(new LoginError('login-busy'))
     this.revisions[platform]++
+    this.identityRetryAt.delete(platform)
     const revision = this.revisions[platform]
     const controller = new AbortController()
     const promise = (async () => {
@@ -358,9 +367,14 @@ export class LoginManager {
         cancelled(controller.signal)
         if (this.disposed || this.loggingOut.has(platform) || revision !== this.revisions[platform]) throw new LoginError('login-cancelled')
         if (!hasAuthenticationCookies(cookies, platform, this.options.now?.())) throw new LoginError('login-incomplete')
+        // Best effort: the login is already verified, so a missing nickname or avatar never fails it.
+        const identity = await this.lookupIdentity(platform, cookies, controller.signal)
+        cancelled(controller.signal)
+        if (this.disposed || this.loggingOut.has(platform) || revision !== this.revisions[platform]) throw new LoginError('login-cancelled')
+        this.identityRetryAt.set(platform, identity ? Infinity : this.seconds() + IDENTITY_RETRY_SECONDS)
         try {
           const result = await this.store.writeAsync(platform, cookies, controller.signal,
-            () => !this.disposed && !this.loggingOut.has(platform) && revision === this.revisions[platform])
+            () => !this.disposed && !this.loggingOut.has(platform) && revision === this.revisions[platform], identity)
           if (platform==='douyin' && signing) {
             const current=()=>!this.disposed && !this.loggingOut.has(platform) && revision===this.revisions[platform]
             let ready=false
@@ -401,7 +415,46 @@ export class LoginManager {
   }
 
   async loginStatus(): Promise<LoginStatus> {
+    await this.backfillIdentities()
     try { return await this.store.status() } catch (error) { throw new LoginError('cookie-storage-failed', undefined, error) }
+  }
+
+  private seconds(): number { return this.options.now?.() ?? Date.now() / 1000 }
+
+  private async lookupIdentity(platform: LoginPlatform, cookies: BrowserCookie[], signal?: AbortSignal): Promise<BrowserAccountIdentity | undefined> {
+    const identify = this.options.identify
+    if (!identify || !IDENTIFIED_PLATFORMS.includes(platform)) return undefined
+    const timeout = AbortSignal.timeout(IDENTITY_TIMEOUT_MS)
+    try { return validAccountIdentity(await identify(platform, structuredClone(cookies), signal ? AbortSignal.any([signal, timeout]) : timeout)) }
+    catch { return undefined }
+  }
+
+  /** Logins saved before identities were recorded get theirs on a later status read. */
+  private async backfillIdentities(): Promise<void> {
+    if (!this.options.identify || this.disposed) return
+    await Promise.all(IDENTIFIED_PLATFORMS.map(platform => this.backfillIdentity(platform)))
+  }
+
+  private backfillIdentity(platform: LoginPlatform): Promise<void> {
+    const pending = this.identityLookups.get(platform)
+    if (pending) return pending
+    const started = this.seconds()
+    if (this.loginInProgress(platform) || (this.identityRetryAt.get(platform) ?? 0) > started) return Promise.resolve()
+    const revision = this.revisions[platform]
+    const current = () => !this.disposed && !this.loginInProgress(platform) && revision === this.revisions[platform]
+    const work = (async () => {
+      let failed = false
+      try {
+        await this.store.attachIdentity(platform, async cookies => {
+          try { return validAccountIdentity(await this.options.identify!(platform, cookies, AbortSignal.timeout(IDENTITY_TIMEOUT_MS))) }
+          catch { failed = true; return undefined }
+        }, current)
+      } catch { failed = true }
+      // A definite answer holds until the account changes; a failed lookup may be repeated later.
+      if (current()) this.identityRetryAt.set(platform, failed ? started + IDENTITY_RETRY_SECONDS : Infinity)
+    })().finally(() => { this.identityLookups.delete(platform) })
+    this.identityLookups.set(platform, work)
+    return work
   }
 
   /** Only a main-owned, online-verified import reaches this writer; it shares login/logout ownership. */
@@ -409,6 +462,7 @@ export class LoginManager {
     if (!isLoginPlatform(platform) || this.disposed || signal?.aborted) return Promise.reject(new LoginError('login-cancelled'))
     if (this.loginInProgress(platform)) return Promise.reject(new LoginError('login-busy'))
     if (!hasAuthenticationCookies(cookies, platform, this.options.now?.())) return Promise.reject(new LoginError('login-incomplete'))
+    this.identityRetryAt.set(platform, Infinity)
     const revision = ++this.revisions[platform]
     const controller = new AbortController()
     const abort = () => controller.abort()
@@ -497,6 +551,7 @@ export class LoginManager {
   async logout(platform: LoginPlatform): Promise<void> {
     if (!isLoginPlatform(platform)) throw new LoginError('login-cancelled')
     this.revisions[platform]++
+    this.identityRetryAt.delete(platform)
     this.loggingOut.add(platform)
     try {
       const operation = this.operations.get(platform)

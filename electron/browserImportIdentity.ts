@@ -91,9 +91,14 @@ export function importAvatarUrl(platform: LoginPlatform, value: unknown): string
     return url.href
   } catch { return undefined }
 }
+/** Douyu's member endpoint names the avatar as a path on its image host, without size or extension. */
+function douyuIcon(value: unknown): string | undefined {
+  return typeof value === 'string' && /^avatar(?:_v3)?(?:\/[A-Za-z0-9_-]{1,64}){1,6}$/.test(value)
+    ? `https://apic.douyucdn.cn/upload/${value}_middle.jpg` : undefined
+}
 function avatar(platform: LoginPlatform, body: any): string | undefined {
   const value = platform === 'bilibili' ? body.data?.face : platform === 'huya' ? body.userLogo
-    : platform === 'douyu' ? body.msg?.info?.avatar?.small ?? body.msg?.info?.avatar ?? body.msg?.info?.avatar_url
+    : platform === 'douyu' ? body.msg?.info?.avatar?.small ?? body.msg?.info?.avatar ?? body.msg?.info?.avatar_url ?? douyuIcon(body.msg?.info?.icon)
       : body.data?.avatar_thumb?.url_list?.[0] ?? body.data?.avatar_medium?.url_list?.[0]
   return importAvatarUrl(platform, value)
 }
@@ -109,6 +114,33 @@ export function browserIdentityVerifier(fetchImpl: ImportFetch,
       const image = thumbnail(bytes)
       return typeof image === 'string' && image.startsWith('data:image/png;base64,') && image.length <= 96 * 1024 ? image : undefined
     } catch { importAbort(signal); return undefined }
+  }
+  /**
+   * Huya's login check leaves the avatar empty. Its own site header reads it from this public
+   * lookup by uid, which needs and receives no credentials.
+   */
+  async function huyaAvatar(uid: string, signal: AbortSignal): Promise<string | undefined> {
+    try {
+      const response = await fetchImpl('huya', `https://user.huya.com/user/getUserInfo?uid=${uid}`,
+        { method: 'GET', redirect: 'error', signal, credentials: 'omit', headers: { Accept: 'application/json' } })
+      if (!response.ok) { await response.body?.cancel().catch(() => {}); return undefined }
+      const data = JSON.parse(await readPlatformText(response, signal))?.data
+      return data && String(data.uid) === uid ? importAvatarUrl('huya', data.avatar) : undefined
+    } catch { importAbort(signal); return undefined }
+  }
+  /**
+   * Huya's login check can leave the display name empty. Its site header then reads this second
+   * endpoint on every page load, and falls back to the login name; do the same, in that order.
+   */
+  async function huyaNickname(headers: Record<string, string>, loginName: unknown, signal: AbortSignal): Promise<string | undefined> {
+    try {
+      const response = await fetchImpl('huya', 'https://l.huya.com/udb_web/udbport2.php?m=HuyaOutside&do=checkUserNick', { method: 'GET', headers, signal, redirect: 'error' })
+      if (response.ok) {
+        const found = text(JSON.parse(await readPlatformText(response, signal))?.userNick)
+        if (found) return found
+      } else await response.body?.cancel().catch(() => {})
+    } catch { importAbort(signal) }
+    return text(loginName)
   }
   return async (platform, cookies, parentSignal) => {
     importAbort(parentSignal)
@@ -128,8 +160,10 @@ export function browserIdentityVerifier(fetchImpl: ImportFetch,
         if (identity.status === 'anonymous') return null
         if (identity.status !== 'authenticated' || !identity.uid
           || platform !== 'douyin' && authenticationCookieUserId(cookies, platform) !== identity.uid) throw new Error()
-        const image = await getAvatar(platform, avatar(platform, payload), signal)
-        return { uid: identity.uid, username: identity.nickname || `${IMPORT_PLATFORM_NAMES[platform]}账号`, ...(image ? { avatar: image } : {}) }
+        const avatarAddress = avatar(platform, payload) ?? (platform === 'huya' ? await huyaAvatar(identity.uid, signal) : undefined)
+        const image = await getAvatar(platform, avatarAddress, signal)
+        const nickname = identity.nickname || (platform === 'huya' ? await huyaNickname(headers, payload?.userName, signal) : undefined)
+        return { uid: identity.uid, username: nickname || `${IMPORT_PLATFORM_NAMES[platform]}账号`, ...(image ? { avatar: image } : {}) }
       }
       const config = youtubeJson(source, 'config')
       if (config?.LOGGED_IN === false) return null

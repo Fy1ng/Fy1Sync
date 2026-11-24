@@ -608,3 +608,133 @@ describe('system Chrome pipe login', () => {
     expect(killTree).toHaveBeenCalledWith(manual)
   })
 })
+
+describe('nickname and avatar of in-app logins', () => {
+  const avatar = 'data:image/png;base64,c3ludGhldGlj'
+  let clock = 2_000_000_000
+  const ticket = (platform: 'douyu' | 'bilibili' | 'huya' | 'douyin', value = 'fixture-private-ticket'): BrowserCookie[] => {
+    const names = platform === 'douyu' ? ['acf_uid', 'acf_auth'] : platform === 'bilibili' ? ['DedeUserID', 'SESSDATA'] : platform === 'huya' ? ['udb_uid', 'udb_biztoken'] : ['sessionid']
+    return names.map((name, index) => ({ domain: `.${platform}.com`, path: '/', name, value: names.length > 1 && !index ? '42' : value, session: true, secure: true, httpOnly: true }))
+  }
+  type Identify = NonNullable<ConstructorParameters<typeof LoginManager>[1]>['identify']
+  function identified(identify: Identify, platform: 'douyu' | 'bilibili' | 'huya' | 'douyin' = 'bilibili') {
+    const embeddedDriver = { login: vi.fn<EmbeddedLoginDriver['login']>(async () => ticket(platform)) }
+    return { embeddedDriver, manager: new LoginManager(root, { embeddedDriver, identify, now: () => clock }) }
+  }
+  beforeEach(() => { clock = 2_000_000_000 })
+
+  it.each(['douyu', 'bilibili', 'huya', 'douyin'] as const)('records the %s account identity with the login it belongs to', async platform => {
+    const identify = vi.fn(async () => ({ username: '测试昵称', uid: '42', avatar }))
+    const { manager } = identified(identify, platform)
+    const result = await manager.login(platform)
+    expect(identify).toHaveBeenCalledExactlyOnceWith(platform, ticket(platform), expect.any(AbortSignal))
+    expect((await manager.loginStatus())[platform]).toMatchObject({ loggedIn: true, nickname: '测试昵称', avatar })
+    expect(identify).toHaveBeenCalledOnce()
+    expect(JSON.stringify(result)).not.toMatch(/测试昵称|c3ludGhldGlj/)
+    await manager.dispose()
+  })
+
+  it.each<[string, () => Promise<unknown>]>([
+    ['fails', async () => { throw new Error('PRIVATE network detail') }],
+    ['reports the account as signed out', async () => null],
+    ['returns something storage would reject', async () => ({ username: 'a\nb', avatar: 'https://example.invalid/a.png' })],
+  ])('still saves the login when the lookup %s', async (_name, identify) => {
+    const { manager } = identified(vi.fn(identify))
+    expect(await manager.login('bilibili')).toMatchObject({ cookieCount: 2 })
+    const status = (await manager.loginStatus()).bilibili
+    expect(status.loggedIn).toBe(true)
+    expect(status.nickname).toBeUndefined()
+    await manager.dispose()
+  })
+
+  it('does not wait on a lookup that never answers', async () => {
+    vi.useFakeTimers()
+    try {
+      const identify = vi.fn((_platform: string, _cookies: BrowserCookie[], signal: AbortSignal) => new Promise<never>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+      }))
+      const { manager } = identified(identify)
+      const login = manager.login('bilibili')
+      await vi.advanceTimersByTimeAsync(4100)
+      expect(await login).toMatchObject({ cookieCount: 2 })
+      expect(identify.mock.calls[0]![2].aborted).toBe(true)
+      await manager.dispose()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('does not look up YouTube, and keeps logins without a reader unchanged', async () => {
+    const identify = vi.fn(async () => ({ username: '不应出现' }))
+    const manager = new LoginManager(root, { driver: { login: vi.fn(async () => cookies) }, chromeExecutable: 'test-chrome', identify, now: () => clock })
+    await manager.login('youtube')
+    expect((await manager.loginStatus()).youtube.nickname).toBeUndefined()
+    expect(identify).not.toHaveBeenCalled()
+    await manager.dispose()
+    const plain = new LoginManager(root, { embeddedDriver: { login: vi.fn(async () => ticket('huya')) } })
+    await plain.login('huya')
+    expect((await plain.loginStatus()).huya).toMatchObject({ loggedIn: true })
+    await plain.dispose()
+  })
+
+  it('gives a login saved before identities were recorded its identity on the next status read, once', async () => {
+    new CookieStore(root, { now: () => clock }).write('huya', ticket('huya'))
+    new CookieStore(root, { now: () => clock }).write('bilibili', ticket('bilibili'))
+    const identify = vi.fn(async (platform: string) => ({ username: `${platform} 昵称`, avatar }))
+    const { manager } = identified(identify)
+    const [first, second] = await Promise.all([manager.loginStatus(), manager.loginStatus()])
+    expect(first.huya).toMatchObject({ loggedIn: true, nickname: 'huya 昵称', avatar })
+    expect(second.bilibili).toMatchObject({ loggedIn: true, nickname: 'bilibili 昵称', avatar })
+    expect(first.douyu.nickname).toBeUndefined()
+    await manager.loginStatus()
+    expect(identify.mock.calls.map(([platform]) => platform).sort()).toEqual(['bilibili', 'huya'])
+    await manager.dispose()
+  })
+
+  it('repeats a failed lookup only after a pause, and a settled one not at all', async () => {
+    new CookieStore(root, { now: () => clock }).write('huya', ticket('huya'))
+    new CookieStore(root, { now: () => clock }).write('bilibili', ticket('bilibili'))
+    const identify = vi.fn(async (platform: string): Promise<unknown> => { if (platform === 'huya') throw new Error('offline'); return null })
+    const { manager } = identified(identify)
+    await manager.loginStatus()
+    await manager.loginStatus()
+    expect(identify).toHaveBeenCalledTimes(2)
+    clock += 299
+    await manager.loginStatus()
+    expect(identify).toHaveBeenCalledTimes(2)
+    clock += 2
+    identify.mockImplementation(async () => ({ username: '恢复后的昵称' }))
+    const status = await manager.loginStatus()
+    expect(identify.mock.calls.map(([platform]) => platform)).toEqual(expect.arrayContaining(['huya']))
+    expect(identify).toHaveBeenCalledTimes(3)
+    expect(status.huya.nickname).toBe('恢复后的昵称')
+    expect(status.bilibili.nickname).toBeUndefined()
+    await manager.dispose()
+  })
+
+  it('looks the account up again after it changes, and never attaches an identity to a newer login', async () => {
+    new CookieStore(root, { now: () => clock }).write('bilibili', ticket('bilibili', 'old-ticket'))
+    let release!: (value: unknown) => void
+    const identify = vi.fn<NonNullable<Identify>>(() => new Promise(resolve => { release = resolve }))
+    const { manager, embeddedDriver } = identified(identify)
+    const reading = manager.loginStatus()
+    await vi.waitFor(() => expect(identify).toHaveBeenCalledOnce())
+    embeddedDriver.login.mockResolvedValueOnce(ticket('bilibili', 'new-ticket'))
+    identify.mockResolvedValueOnce({ username: '新账号' })
+    await manager.login('bilibili')
+    release({ username: '旧账号' })
+    await reading
+    expect((await manager.loginStatus()).bilibili.nickname).toBe('新账号')
+    await manager.logout('bilibili')
+    expect((await manager.loginStatus()).bilibili).toMatchObject({ loggedIn: false })
+    expect(identify).toHaveBeenCalledTimes(2)
+    await manager.dispose()
+  })
+
+  it('keeps the identity that a browser import verified', async () => {
+    const identify = vi.fn(async () => ({ username: '不应覆盖' }))
+    const { manager } = identified(identify)
+    await manager.importCookies('bilibili', ticket('bilibili'), { username: '导入的昵称', uid: '42' })
+    expect((await manager.loginStatus()).bilibili.nickname).toBe('导入的昵称')
+    expect(identify).not.toHaveBeenCalled()
+    await manager.dispose()
+  })
+})

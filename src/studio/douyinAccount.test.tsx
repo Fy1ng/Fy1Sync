@@ -53,8 +53,43 @@ describe('Douyin current account settings', () => {
     fireEvent.click(panel.getByRole('button', { name: '登录' }))
     await waitFor(() => expect(panel.getByText('已登录')).toBeInTheDocument())
     expect(login).toHaveBeenCalledExactlyOnceWith('douyin')
-    expect(panel.getByText(/正在检查能否发送弹幕/)).toBeInTheDocument()
+    await waitFor(() => expect(panel.getByText('已登录，可以发送弹幕')).toBeInTheDocument())
+    expect(panel.queryByText(/正在检查能否发送弹幕/)).toBeNull()
+    expect(apiClient.getDouyinSendState).toHaveBeenLastCalledWith(true)
     expect(panel.getByRole('button', { name: '重新登录' })).toBeEnabled()
+  })
+
+  it('shows the checking line only while the check runs, then what the check found', async () => {
+    let finish!: (value: Awaited<ReturnType<typeof apiClient.getDouyinSendState>>) => void
+    vi.spyOn(apiClient, 'login').mockImplementation(async () => {
+      vi.mocked(apiClient.loginStatus).mockResolvedValue({ ok: true, value: status({ loggedIn: true, cookieCount: 3, authKeysPresent: ['sessionid'] }) })
+      vi.mocked(apiClient.getDouyinSendState).mockImplementation(() => new Promise(resolve => { finish = resolve }))
+      return { ok: true, value: { cookieCount: 3, authKeysPresent: ['sessionid'], signingReady: true } }
+    })
+    mount()
+    const panel = within(screen.getByRole('region', { name: '抖音' }))
+    await waitFor(() => expect(panel.getByRole('button', { name: '登录' })).toBeEnabled())
+    fireEvent.click(panel.getByRole('button', { name: '登录' }))
+    await waitFor(() => expect(panel.getByText('已登录，正在检查能否发送弹幕')).toBeInTheDocument())
+    finish({ ok: true, value: { loggedIn: true, canSend: false, loginState: 'authenticated', message: '已登录' } })
+    await waitFor(() => expect(panel.getByText('已登录，但暂时不能发送弹幕，请重新登录')).toBeInTheDocument())
+    expect(panel.queryByText(/正在检查能否发送弹幕/)).toBeNull()
+    expect(panel.getByText('已登录，暂不能发弹幕')).toBeInTheDocument()
+  })
+
+  it('drops the checking line when the check cannot confirm the login', async () => {
+    vi.spyOn(apiClient, 'login').mockImplementation(async () => {
+      vi.mocked(apiClient.loginStatus).mockResolvedValue({ ok: true, value: status({ loggedIn: true, cookieCount: 3, authKeysPresent: ['sessionid'] }) })
+      vi.mocked(apiClient.getDouyinSendState).mockResolvedValue({ ok: true, value: { loggedIn: false, canSend: false, loginState: 'unavailable', message: '暂时无法核对抖音账号状态，请检查网络并刷新后重试' } })
+      return { ok: true, value: { cookieCount: 3, authKeysPresent: ['sessionid'], signingReady: true } }
+    })
+    mount()
+    const panel = within(screen.getByRole('region', { name: '抖音' }))
+    await waitFor(() => expect(panel.getByRole('button', { name: '登录' })).toBeEnabled())
+    fireEvent.click(panel.getByRole('button', { name: '登录' }))
+    await waitFor(() => expect(panel.getByRole('alert')).toHaveTextContent('暂时无法核对抖音账号状态'))
+    await waitFor(() => expect(panel.queryByText(/正在检查能否发送弹幕/)).toBeNull())
+    expect(panel.queryByText(/可以发送弹幕/)).toBeNull()
   })
 
   it('allows expired sessions to log in again and clears the current account on logout', async () => {
