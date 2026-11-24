@@ -1,4 +1,7 @@
 /** Only a generated minimal application and verified tool resources enter the release. */
+const hasMacSigningCertificate = [process.env.CSC_LINK, process.env.CSC_NAME, process.env.CSC_KEYCHAIN]
+  .some(value => typeof value === 'string' && value.trim().length > 0)
+
 module.exports = {
   appId: 'cn.fy1ng.fy1sync',
   productName: 'Fy1Sync',
@@ -28,8 +31,12 @@ module.exports = {
     target: ['dmg', 'zip'],
     artifactName: 'Fy1Sync-${version}-mac-${arch}.${ext}',
     icon: 'packaging/icon-source.png', category: 'public.app-category.entertainment',
-    // Normal electron-builder identity/notarization environment variables remain available.
-    hardenedRuntime: true,
+    // Fall back to offline ad-hoc bundle signing so modified Electron bundles never keep a broken seal,
+    // while preserving normal Developer ID + Hardened Runtime signing when CSC_* credentials are supplied.
+    ...(hasMacSigningCertificate ? { hardenedRuntime: true } : { identity: '-', hardenedRuntime: false, timestamp: 'none' }),
+    // Resources are sealed into CodeResources when signing Fy1Sync.app; avoid overwriting PyInstaller yt-dlp
+    // or attaching per-file extended-attribute signatures to static assets.
+    signIgnore: [hasMacSigningCertificate ? '\\.app/Contents/Resources/(?!tools/ffmpeg/)' : '\\.app/Contents/Resources/'],
     extraFiles: [
       { from: 'node_modules/electron/dist/LICENSE', to: 'LICENSE.electron.txt' },
       { from: 'node_modules/electron/dist/LICENSES.chromium.html', to: 'LICENSES.chromium.html' },

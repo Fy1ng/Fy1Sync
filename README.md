@@ -83,10 +83,10 @@ Fy1Sync 把这两路直播放进同一个播放器:
 
 播放要用到的 FFmpeg 和 yt-dlp 已经打在安装包里, 不用自己装. 国内访问 GitHub 较慢时, 可以到 [GitCode 镜像](https://gitcode.com/Fy1ng/Fy1Sync/releases) 看看有没有同一版本.
 
-**第一次打开时系统可能会拦一下.** 安装包目前没有代码签名, 这是正常现象:
+**第一次打开时系统可能会拦一下.** 安装包目前未配置付费证书签名与公证, 这是正常现象:
 
 - **Windows**: 出现 SmartScreen 提示时, 点 **更多信息**, 再点 **仍要运行**.
-- **macOS**: 首次打开可能被 Gatekeeper 拦下. 到 **系统设置 → 隐私与安全性** 里确认来源后再打开.
+- **macOS**: 首次打开可能被 Gatekeeper 拦下. 若提示无法验证开发者, 到 **系统设置 → 隐私与安全性** 里确认来源后再打开; 若在 Apple 芯片 (M1–M4) 或 macOS 15 及以上提示 **“Fy1Sync”已损坏, 无法打开**, 先将 `Fy1Sync.app` 拖入 **应用程序 (`Applications`)** 文件夹, 再打开 **终端 (`Terminal`)** 执行 `xattr -rd com.apple.quarantine /Applications/Fy1Sync.app` 后打开 (`v0.5.0` 及更早版本请执行 `xattr -rd com.apple.quarantine /Applications/Fy1Sync.app && codesign --force --deep --sign - /Applications/Fy1Sync.app`).
 - **Linux**: 构建基线是 Ubuntu 22.04 (glibc 2.35), 需要桌面图形环境. AppImage 可能需要 FUSE 2, 也可以加 `--appimage-extract-and-run` 运行, 或改用 `tar.gz`.
 
 每个版本都附带 `SHA256SUMS.txt`, 可以用它核对下载的文件.

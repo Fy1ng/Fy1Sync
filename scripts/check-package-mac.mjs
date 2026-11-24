@@ -89,6 +89,14 @@ export async function preflightMacZip(file, expected) {
   }
 }
 
+export async function assertMacBundleSignature(directory, run = macRun, options) {
+  await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=2', directory], options)
+  const details = await run('/usr/bin/codesign', ['--display', '--verbose=2', directory], options)
+  assert(/^Identifier=cn\.fy1ng\.fy1sync$/m.test(details) && /^Info\.plist entries=\d+$/m.test(details) && /^Sealed Resources\b/m.test(details),
+    'macOS application bundle signature is missing or still bound to upstream Electron')
+  return /^Signature=adhoc$/m.test(details) ? 'adhoc' : 'certificate'
+}
+
 async function checkSignedTool(file, entry, temporary) {
   const actual = await fileIdentity(file)
   if (actual.size === entry.size && actual.sha256 === entry.sha256) return 'original'
@@ -123,6 +131,7 @@ export async function checkMacPackage() {
   const plist = JSON.parse(await macRun('/usr/bin/plutil', ['-convert', 'json', '-o', '-', path.join(directory, 'Contents', 'Info.plist')]))
   assert(plist.CFBundleIdentifier === 'cn.fy1ng.fy1sync' && plist.CFBundleShortVersionString === version, 'macOS bundle metadata differs')
   assert(plist.LSMinimumSystemVersion === macMinimumSystemVersion, 'macOS bundle minimum system version differs')
+  const bundleSignature = await assertMacBundleSignature(directory)
   for (const name of ['LICENSE.electron.txt', 'LICENSES.chromium.html']) assert((await stat(path.join(directory, 'Contents', name))).size > 0, 'Electron license missing from macOS app')
   const lock = JSON.parse(await readFile(path.join(resources, 'tools', 'tools-lock.json'), 'utf8'))
   assert(lock.target === target.target && lock.ffmpegRuntimeOrigin === 'native-local-build', 'macOS packaged tools platform/architecture differs')
@@ -165,6 +174,7 @@ export async function checkMacPackage() {
       try {
         await macRun('/usr/bin/hdiutil', ['attach', '-readonly', '-nobrowse', '-noautoopen', '-mountpoint', mount, file], { cwd: temporary })
         compareMacTrees(tree, await fingerprintMacApp(path.join(mount, 'Fy1Sync.app')))
+        await assertMacBundleSignature(path.join(mount, 'Fy1Sync.app'), macRun, { cwd: temporary })
       } finally {
         await macRun('/usr/bin/hdiutil', ['detach', mount], { cwd: temporary })
       }
@@ -176,11 +186,12 @@ export async function checkMacPackage() {
       await macRun('/usr/bin/ditto', ['-x', '-k', file, extracted], { cwd: temporary })
       assert(JSON.stringify((await readdir(extracted)).sort()) === JSON.stringify(['Fy1Sync.app']), 'macOS ZIP must contain only Fy1Sync.app')
       compareMacTrees(tree, await fingerprintMacApp(path.join(extracted, 'Fy1Sync.app')))
+      await assertMacBundleSignature(path.join(extracted, 'Fy1Sync.app'), macRun, { cwd: temporary })
       artifact.contents = { entries: tree.size, status: 'matches-unpacked-app' }
     }
     artifacts.push(artifact)
   }
-  const report = { target: target.target, asarEntries: asar.length, toolFiles: actualTools.length, signatureChanges, artifacts,
+  const report = { target: target.target, bundleSignature, asarEntries: asar.length, toolFiles: actualTools.length, signatureChanges, artifacts,
     ffmpegBuildId: lock.ffmpegBuildId, status: 'local-evaluation-only', validation: 'macOS-native', runtimeSmoke: 'passed' }
   const evidence = process.env.STREAM_SYNC_PACKAGE_EVIDENCE ? path.resolve(root, process.env.STREAM_SYNC_PACKAGE_EVIDENCE) : temporary
   assert(evidence.startsWith(path.join(root, '.runtime-cache') + path.sep), 'Package evidence must stay under .runtime-cache')

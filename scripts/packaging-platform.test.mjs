@@ -81,6 +81,50 @@ test('builder keeps Windows targets and exposes architecture-labelled macOS DMG/
   assert.ok(config.files.includes('electron/login-card-preload.cjs'))
 })
 
+test('macOS builder config defaults to valid ad-hoc signing and switches cleanly for real certificates', async () => {
+  const req = createRequire(import.meta.url)
+  const configPath = req.resolve('../electron-builder.config.cjs')
+  const { validateConfiguration } = req('../node_modules/app-builder-lib/out/util/config/config.js')
+  const { log } = req('../node_modules/builder-util')
+  const loadWithEnv = overrides => {
+    const saved = { CSC_LINK: process.env.CSC_LINK, CSC_NAME: process.env.CSC_NAME, CSC_KEYCHAIN: process.env.CSC_KEYCHAIN }
+    try {
+      for (const key of Object.keys(saved)) delete process.env[key]
+      Object.assign(process.env, overrides)
+      delete req.cache[configPath]
+      return req(configPath)
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+      delete req.cache[configPath]
+    }
+  }
+  const adhoc = loadWithEnv({})
+  await validateConfiguration({ ...adhoc }, log)
+  assert.equal(adhoc.mac.identity, '-')
+  assert.equal(adhoc.mac.hardenedRuntime, false)
+  assert.equal(adhoc.mac.timestamp, 'none')
+  const adhocIgnore = new RegExp(adhoc.mac.signIgnore[0])
+  assert.equal(adhocIgnore.test('/tmp/Fy1Sync.app'), false)
+  assert.equal(adhocIgnore.test('/tmp/Fy1Sync.app/Contents/MacOS/Fy1Sync'), false)
+  assert.equal(adhocIgnore.test('/tmp/Fy1Sync.app/Contents/Frameworks/Fy1Sync Helper.app'), false)
+  assert.equal(adhocIgnore.test('/tmp/Fy1Sync.app/Contents/Resources/tools/yt-dlp'), true)
+  assert.equal(adhocIgnore.test('/tmp/Fy1Sync.app/Contents/Resources/tools/ffmpeg/ffmpeg'), true)
+
+  const signed = loadWithEnv({ CSC_LINK: 'certificate.p12' })
+  await validateConfiguration({ ...signed }, log)
+  assert.equal(signed.mac.identity, undefined)
+  assert.equal(signed.mac.hardenedRuntime, true)
+  assert.equal(signed.mac.timestamp, undefined)
+  const signedIgnore = new RegExp(signed.mac.signIgnore[0])
+  assert.equal(signedIgnore.test('/tmp/Fy1Sync.app/Contents/Resources/tools/yt-dlp'), true)
+  assert.equal(signedIgnore.test('/tmp/Fy1Sync.app/Contents/Resources/team-logos/events/logos/a.png'), true)
+  assert.equal(signedIgnore.test('/tmp/Fy1Sync.app/Contents/Resources/tools/ffmpeg/ffmpeg'), false)
+  assert.equal(signedIgnore.test('/tmp/Fy1Sync.app/Contents/Resources/tools/ffmpeg/libavcodec.62.dylib'), false)
+})
+
 test('downloaded CommonJS builder helpers execute beneath an ESM source project', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'fy1sync-builder-cache-'))
   try {

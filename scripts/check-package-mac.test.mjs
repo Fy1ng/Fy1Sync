@@ -4,7 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { crc32 } from 'node:zlib'
 import test from 'node:test'
-import { compareMacTrees, preflightMacZip } from './check-package-mac.mjs'
+import { assertMacBundleSignature, compareMacTrees, preflightMacZip } from './check-package-mac.mjs'
 
 function zip(entries) {
   const local = [], central = []
@@ -63,4 +63,37 @@ test('macOS ZIP checks reject traversal, unlisted members and changed links befo
       await assert.rejects(preflightMacZip(file, expected))
     }
   } finally { await rm(temporary, { recursive: true, force: true }) }
+})
+
+test('macOS bundle signature check enforces deep strict codesign and application bundle identity', async () => {
+  const calls = []
+  const makeRunner = displayOutput => async (executable, args, options) => {
+    calls.push({ executable, args, options })
+    if (args.includes('--verify')) return ''
+    if (args.includes('--display')) return displayOutput
+    throw new Error('Unexpected command')
+  }
+  const adhocDisplay = [
+    'Executable=/tmp/Fy1Sync.app/Contents/MacOS/Fy1Sync',
+    'Identifier=cn.fy1ng.fy1sync',
+    'Format=app bundle with Mach-O thin (arm64)',
+    'Signature=adhoc',
+    'Info.plist entries=31',
+    'Sealed Resources version=2 rules=13 files=5890',
+  ].join('\n')
+  assert.equal(await assertMacBundleSignature('/tmp/Fy1Sync.app', makeRunner(adhocDisplay), { cwd: '/tmp' }), 'adhoc')
+  assert.deepEqual(calls[0], { executable: '/usr/bin/codesign', args: ['--verify', '--deep', '--strict', '--verbose=2', '/tmp/Fy1Sync.app'], options: { cwd: '/tmp' } })
+  assert.deepEqual(calls[1], { executable: '/usr/bin/codesign', args: ['--display', '--verbose=2', '/tmp/Fy1Sync.app'], options: { cwd: '/tmp' } })
+
+  const certDisplay = adhocDisplay.replace('Signature=adhoc', 'Signature size=9051\nAuthority=Developer ID Application: Example (TEAM123456)')
+  assert.equal(await assertMacBundleSignature('/tmp/Fy1Sync.app', makeRunner(certDisplay)), 'certificate')
+
+  for (const broken of [
+    adhocDisplay.replace('Identifier=cn.fy1ng.fy1sync', 'Identifier=com.github.Electron'),
+    adhocDisplay.replace('Info.plist entries=31', 'Info.plist=not bound'),
+    adhocDisplay.replace('Sealed Resources version=2 rules=13 files=5890', ''),
+  ]) {
+    await assert.rejects(assertMacBundleSignature('/tmp/Fy1Sync.app', makeRunner(broken)), /bundle signature/)
+  }
+  await assert.rejects(assertMacBundleSignature('/tmp/Fy1Sync.app', async () => { throw new Error('a sealed resource is missing or invalid') }), /sealed resource/)
 })
