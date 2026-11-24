@@ -8,7 +8,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::thread;
 use std::time::Instant;
-use stream_syncer_core::{dispatch, ClockJumpDetector, Engine};
+use stream_syncer_core::{
+    compile_templates, dispatch, profile_readiness, recognize_frame, ClockJumpDetector,
+    RecognitionProfile,
+};
 
 const HELP: &str = "离线录像识别工具\n\nstream-syncer-cli recognize --profile <json> --video <file> [--from s] [--to s] [--fps n]\nstream-syncer-cli offset --profile <json> --official <file> --commentary <file> [--from s] [--to s] [--fps n]\n\n样式包必须手动提供, 不支持自动定位或学习.\n所有命令支持 --ffmpeg path, --duration s 可替代 --to.\n--from 默认 0, --fps 默认 30, --to 为不含终点的结束时间.\nffmpeg 来源: --ffmpeg, STREAM_SYNC_FFMPEG, PATH. ffprobe 使用同目录程序.\n输出为 JSONL, 时间是文件相对秒数.\n两路录像起点不自动对齐, 不推测墙上时钟或录制开始时间差.\n";
 
@@ -259,8 +262,10 @@ fn recognize_video(
     source: &str,
     writer: &mut impl Write,
 ) -> Result<Vec<Value>, String> {
-    let mut engine = Engine::new();
-    let readiness = engine.configure(profile)?;
+    let parsed_profile: RecognitionProfile =
+        serde_json::from_str(profile).map_err(|error| format!("识别配置无效: {error}"))?;
+    let readiness = profile_readiness(&parsed_profile);
+    let templates = compile_templates(&parsed_profile);
     let (width, height) = dimensions(&options.ffmpeg, video)?;
     let frame_bytes = width
         .checked_mul(height)
@@ -325,14 +330,18 @@ fn recognize_video(
         while read_frame(&mut stdout, &mut frame)? {
             let media_time = options.from + frames as f64 / options.fps;
             let clock = Instant::now();
-            let recognition = engine.recognize(
+            let recognition = recognize_frame(
                 &frame,
                 width,
                 height,
-                media_time,
-                media_time * 1000.0,
-                frames as f64,
-                false,
+                &parsed_profile,
+                &templates,
+                &json!({
+                    "mediaTime": media_time,
+                    "wallTime": media_time * 1000.0,
+                    "frameIndex": frames as f64,
+                }),
+                &json!({}),
             );
             recognition_ms += clock.elapsed().as_secs_f64() * 1000.0;
             let outcome = &recognition["outcome"];
