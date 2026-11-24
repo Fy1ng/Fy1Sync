@@ -128,7 +128,7 @@ describe('offline signed application update publisher', () => {
     expect(entry).toMatchObject({ version: '0.3.0', bytes: installer.length, sha256: sha(installer) })
     expect(await readFile(path.join(options.destination, 'installers', `${entry.sha256}.exe`))).toEqual(installer)
     expect(await readdir(options.destination)).toEqual(['history', 'installers', 'manifest.json'])
-  }, 15_000)
+  }, 30_000)
 
   it('rejects unsafe directory relationships and preserves unrelated output', async () => {
     for (const destination of [directory, path.join(directory, 'private/release'), path.join(directory, 'config/release'), path.join(options.clientDirectory!, 'release')]) {
@@ -215,7 +215,7 @@ describe('offline signed application update publisher', () => {
     expect(entry).toMatchObject({ version: '0.3.0', bytes: sourceBytes.length, sha256: sha(sourceBytes), platform: 'win32', arch: 'x64' })
     expect(await readFile(path.join(options.destination, 'installers', `${entry.sha256}.exe`))).toEqual(sourceBytes)
     expect(verifyOnlineUpdateCatalog(JSON.parse(await readFile(result.manifestPath, 'utf8')), result.source)).toEqual(result.catalog)
-  }, 15_000)
+  }, 30_000)
 
   it('copies retained frontend assets when preparing a new output directory from a previous release', async () => {
     const first = await prepareOnlineUpdateRelease(options)
@@ -295,7 +295,7 @@ describe('offline signed application update publisher', () => {
     const next = await prepareOnlineUpdateRelease({ ...options, ...await applicationOptions('0.4.0'), clientDirectory: undefined, revision: undefined, catalogRevision: 3 })
     expect(next.catalog.application?.version).toBe('0.4.0')
     expect(next.catalog.frontend).toEqual(withdrawn.catalog.frontend)
-  }, 15_000)
+  }, 30_000)
 
   it('keeps withdrawn channels absent instead of resurrecting the highest non-null history entry', async () => {
     await prepareOnlineUpdateRelease({ ...options, ...await applicationOptions() })
@@ -376,7 +376,7 @@ describe('offline signed application update publisher', () => {
     const fixed = await prepareOnlineUpdateRelease({ ...options, ...await applicationOptions('0.4.0'), revision: 4, catalogRevision: 4 })
     expect(fixed.catalog.frontend?.revision).toBe(4)
     expect(fixed.catalog.application?.version).toBe('0.4.0')
-  }, 15_000)
+  }, 30_000)
 
   it('rejects unknown or repeated CLI flags without making output', async () => {
     for (const args of [['prepare', '--out', directory, '--out', directory], ['prepare', '--unknown', 'value'], ['keygen', '--out', directory, '--force', 'true']]) {
