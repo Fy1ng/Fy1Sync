@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="470" viewBox="0 0 1200 470" role="img" aria-labelledby="title desc">
+  <title id="title">Fy1Sync 运行时结构</title>
+  <desc id="desc">渲染进程里是 React 界面, hls.js 播放器和运行 Rust 核心 (WASM) 的识别 Worker; 界面通过 preload 白名单和 IPC 调用主进程. 主进程负责平台解析, 账号, 弹幕, 用 FFmpeg 把直播流封装成本地 HLS 缓冲, 再经 app 协议交回播放器, 并管理内置工具和更新.</desc>
+  <defs><pattern id="ash" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)"><rect width="7.0" height="14" fill="#64635f"/></pattern></defs>
+  <rect width="1200" height="470" rx="24" fill="#0d0d0f"/>
+  <rect x="1" y="1" width="1198" height="468" rx="23" fill="none" stroke="#2b2b30" stroke-width="2"/>
+  <rect x="40" y="76" width="312" height="362" rx="16" fill="#18181b" stroke="#2b2b30" stroke-width="1.5"/>
+  <text x="44" y="56" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="22" font-weight="700" fill="#f3f0ea">渲染进程</text>
+  <text x="348" y="56" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="18" font-weight="400" fill="#64635f" text-anchor="end">沙箱 · 无 Node 权限</text>
+  <rect x="512" y="76" width="312" height="362" rx="16" fill="#18181b" stroke="#2b2b30" stroke-width="1.5"/>
+  <text x="516" y="56" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="22" font-weight="700" fill="#f3f0ea">主进程</text>
+  <text x="820" y="56" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="18" font-weight="400" fill="#64635f" text-anchor="end">Electron</text>
+  <rect x="968" y="76" width="192" height="362" rx="16" fill="#18181b" stroke="#2b2b30" stroke-width="1.5"/>
+  <text x="972" y="56" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="22" font-weight="700" fill="#f3f0ea">外部</text>
+  <rect x="60" y="112" width="272" height="78" rx="10" fill="#212125" stroke="#3a3a40" stroke-width="1.3"/>
+  <text x="78" y="145" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="21" font-weight="700" fill="#f3f0ea">React 界面</text>
+  <text x="78" y="172" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="18" font-weight="400" fill="#9a9893">播放器 · 设置 · 弹幕</text>
+  <rect x="60" y="224" width="272" height="78" rx="10" fill="#212125" stroke="#3a3a40" stroke-width="1.3"/>
+  <text x="78" y="257" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="21" font-weight="700" fill="#f3f0ea">hls.js 播放</text>
+  <text x="78" y="284" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="18" font-weight="400" fill="#9a9893">画面和解说各一路</text>
+  <rect x="60" y="336" width="272" height="78" rx="10" fill="#212125" stroke="#3a3a40" stroke-width="1.3"/>
+  <text x="78" y="369" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="21" font-weight="700" fill="#f3f0ea">识别 Worker</text>
+  <text x="78" y="396" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="18" font-weight="400" fill="#9a9893">运行 Rust 核心 (WASM)</text>
+  <rect x="532" y="112" width="272" height="78" rx="10" fill="#212125" stroke="#3a3a40" stroke-width="1.3"/>
+  <text x="550" y="145" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="21" font-weight="700" fill="#f3f0ea">平台与账号</text>
+  <text x="550" y="172" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="18" font-weight="400" fill="#9a9893">解析直播间 · 弹幕 · 登录</text>
+  <rect x="532" y="224" width="272" height="78" rx="10" fill="#212125" stroke="#3a3a40" stroke-width="1.3"/>
+  <text x="550" y="257" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="21" font-weight="700" fill="#f3f0ea">FFmpeg 缓冲</text>
+  <text x="550" y="284" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="18" font-weight="400" fill="#9a9893">封装成本地 HLS 分片</text>
+  <rect x="532" y="336" width="272" height="78" rx="10" fill="#212125" stroke="#3a3a40" stroke-width="1.3"/>
+  <text x="550" y="369" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="21" font-weight="700" fill="#f3f0ea">内置工具与更新</text>
+  <text x="550" y="396" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="18" font-weight="400" fill="#9a9893">yt-dlp · FFmpeg · 更新校验</text>
+  <rect x="988" y="112" width="152" height="78" rx="10" fill="#212125" stroke="#3a3a40" stroke-width="1.3"/>
+  <text x="1006" y="145" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="21" font-weight="700" fill="#f3f0ea">直播平台</text>
+  <text x="1006" y="172" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="18" font-weight="400" fill="#9a9893">取流 · 弹幕</text>
+  <rect x="988" y="336" width="152" height="78" rx="10" fill="#212125" stroke="#3a3a40" stroke-width="1.3"/>
+  <text x="1006" y="369" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="21" font-weight="700" fill="#f3f0ea">更新源</text>
+  <text x="1006" y="396" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="18" font-weight="400" fill="#9a9893">GitHub 等</text>
+  <path d="M332,142.0 L524.8,142.0" stroke="#64635f" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M523,136.42 L532,142.0 L523,147.58 Z" fill="#64635f"/>
+  <path d="M532,160.0 L339.2,160.0" stroke="#64635f" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M341,154.42 L332,160.0 L341,165.58 Z" fill="#64635f"/>
+  <text x="432" y="129.0" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, monospace" font-size="18" font-weight="400" fill="#9a9893" text-anchor="middle">preload</text>
+  <text x="432" y="185.0" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, monospace" font-size="18" font-weight="400" fill="#9a9893" text-anchor="middle">IPC</text>
+  <path d="M532,263.0 L339.2,263.0" stroke="#64635f" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M341,257.42 L332,263.0 L341,268.58 Z" fill="#64635f"/>
+  <text x="432" y="250.0" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, monospace" font-size="18" font-weight="400" fill="#9a9893" text-anchor="middle">app:// 协议</text>
+  <path d="M804,151.0 L980.8,151.0" stroke="#64635f" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M979,145.42 L988,151.0 L979,156.58 Z" fill="#64635f"/>
+  <path d="M1064,190 V263.0 H820" stroke="#64635f" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <path d="M828,263.0 L811.2,263.0" stroke="#64635f" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M813,257.42 L804,263.0 L813,268.58 Z" fill="#64635f"/>
+  <text x="896" y="250.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="18" font-weight="400" fill="#9a9893" text-anchor="middle">媒体流</text>
+  <path d="M804,375.0 L980.8,375.0" stroke="#64635f" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M979,369.42 L988,375.0 L979,380.58 Z" fill="#64635f"/>
+  <path d="M196,302 L196,328.8" stroke="#64635f" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M190.42,327 L196,336 L201.58,327 Z" fill="#64635f"/>
+  <text x="210" y="326" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="18" font-weight="400" fill="#9a9893">抓帧</text>
+</svg>

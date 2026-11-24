@@ -1,239 +1,370 @@
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="Fy1Sync: 画面与解说, 同一刻. 将赛事画面, 主播解说和弹幕对齐的跨平台桌面播放器.">
+  <img src="assets/readme/hero.svg" width="100%" alt="Fy1Sync: 看官方画面, 听主播解说, 把两路直播对到同一秒. 支持 Windows, macOS 和 Linux, 开源 GPL-3.0-or-later.">
 </p>
-
-# Fy1Sync
-
-**看官方赛事画面, 听喜欢的主播解说, 让弹幕跟上正在发生的这一刻.**
-
-Fy1Sync 是一款支持 Windows, macOS 和 Linux 的桌面播放器. 将两路直播或录像放进同一个窗口, 分别选择画面和声音, 再通过提前或延后画面把它们对齐. 主要观赛场景是 CS2, 也可以手动组合其他内容的片源.
-
-[下载安装](#下载安装) · [开始观看](#开始观看) · [接入范围](#接入范围) · [使用边界](#使用边界) · [从源码运行](#从源码运行)
 
 <p align="center">
-  <img src="./assets/readme/player.webp" width="100%" alt="Fy1Sync 当前观赛界面: 主画面, 解说小窗, 独立音量, 5 秒手动偏移和右侧弹幕列表. 使用本地合成片源与测试弹幕.">
+  给电竞观众用的桌面播放器: 一边放官方比赛画面, 一边放你喜欢的主播解说,<br>
+  自动算出两路直播差了几秒, 把快的那一路延后, 让画面, 解说和弹幕落在同一时刻.
 </p>
-
-*界面截图使用当前代码渲染, 片源与弹幕均为离线测试数据, 不代表真实赛事或自动对齐效果.*
-
-## 为一次观赛准备好
-
-| 想做什么 | Fy1Sync 提供的方式 |
-| --- | --- |
-| 看赛事原画, 听另一位主播解说 | 两路片源独立载入, 主画面与小窗可切换, 两路音量分别调节 |
-| 解说先喊出来, 或画面已经打完 | 回退或快进画面进行微调, 也可选择 `画面延后` 或 `画面提前` 并输入秒数 |
-| 不想让弹幕提前剧透 | 斗鱼和虎牙弹幕按解说侧的延后排队显示, 可调样式与屏蔽规则 |
-| 让 CS2 两路画面自动找同一时刻 | 默认自动查找并识别比赛倒计时, 支持单次或定时对齐, **目前仍在测试** |
-| 留住主播反应, 同时看清比赛 | 从解说画面框选摄像头小窗, 调整位置与缩放, 可选画质增强 |
-| 顺手看其他直播, 或把画面放到桌面角落 | 额外直播浮窗和增强画中画; 额外直播独立播放, 不加入双路对齐 |
-| 查比赛或留下一段画面 | CS2 赛程入口, 截图和 GIF 导出; 截图与 GIF 需先在设置中启用 |
-
-斗鱼的账号, 关注, 背包, 弹幕记录和房间数据集中放在设置里. 发送弹幕, 赠礼, 房间任务, 批量任务和粉丝牌等账号操作属于默认关闭的实验功能, 详见[使用边界](#使用边界).
-
-## 下载安装
-
-当前发布版本为 `v0.4.1`, 完善多平台内嵌登录, 抖音分享链接解析和斗鱼观时状态, 提供 Windows, macOS 和 Linux 安装包与便携包. 各平台使用 GitHub CI 原生构建并检查. [版本说明与 SHA256 校验文件](https://github.com/Fy1ng/Fy1Sync/releases/tag/v0.4.1).
-
-macOS 已加入 Apple Silicon `arm64` 和 Intel `x64` 的本机开发与 DMG/ZIP 构建入口, 要求 macOS 13 Ventura 或更新版本, 见[从源码运行](#从源码运行). 当前 Releases 中的上述版本仍以 Windows 发布包为准; macOS 原生构建, 安装和签名验收需要在对应 Mac 上完成.
-
-| 版本 | 使用方式 |
-| --- | --- |
-| [Windows x64 安装包](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.1/Fy1Sync-0.4.1-win-x64-nsis.exe) | NSIS 安装向导, 支持覆盖升级 |
-| [Windows x64 免安装版](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.1/Fy1Sync-0.4.1-win-x64-portable.zip) | 解压整个目录后运行 `Fy1Sync.exe` |
-| [macOS Intel x64](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.1/Fy1Sync-0.4.1-mac-x64.dmg) / [Apple Silicon arm64](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.1/Fy1Sync-0.4.1-mac-arm64.dmg) | DMG 安装包, macOS 13+; 发布页同时提供 ZIP |
-| [Linux x64](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.1/Fy1Sync-0.4.1-linux-x64.deb) / [Linux arm64](https://github.com/Fy1ng/Fy1Sync/releases/download/v0.4.1/Fy1Sync-0.4.1-linux-arm64.deb) | DEB 安装包; 发布页同时提供 AppImage 和 tar.gz |
-
-[查看全部 Releases](https://github.com/Fy1ng/Fy1Sync/releases) / [GitCode 下载镜像](https://gitcode.com/Fy1ng/Fy1Sync/releases). 请区分应用版本与单独发布的 FFmpeg 构建资源.
-
-发布包已带上取流和转码所需的工具资源, 普通使用无需安装 Node.js 或 Rust. 斗鱼、哔哩哔哩、虎牙和抖音通过应用内的登录窗口登录, 左侧扫码, 右侧短信或密码. 需要二次验证时在窗口内继续, 复杂验证显示官方页面. YouTube 登录需要安装 [Google Chrome](https://www.google.com/chrome/), 在应用打开的独立窗口中自行完成登录.
-
-当前源码已加入 Windows 浏览器账号导入. 在设置 > 账号侧栏底部点击 `批量导入账号`, 或在对应平台点击 `从浏览器导入`. 选择 Chrome、Edge 或 Firefox 及其浏览器用户, 点击 `识别账号` 后勾选导入. 支持斗鱼、哔哩哔哩、虎牙、抖音和 YouTube; 斗鱼按平台 UID 匹配已保存账号, 也可指定替换已有账号. 除斗鱼外, 导入会替换对应平台的当前账号. Chrome 或 Edge 读取需要时请求 Windows 授权, 浏览器用户被占用时需完全退出浏览器后重试. 登录失效后可重新导入. 导入抖音账号后, 需要重新登录才能发送弹幕. 此功能尚未发布到上述 `v0.4.1` 安装包.
-
-## 开始观看
-
-1. **添加画面和解说.** 在起始页粘贴直播间链接, 按回车添加. YouTube / Twitch 默认放到画面侧, 斗鱼 / 哔哩哔哩 / 虎牙默认放到解说侧. 输入裸房间号时选择所属平台; 直链按提示选择放置位置. 也可以从 CS2 赛程选择官方直播.
-2. **决定看哪一路, 听哪一路.** 默认播放解说侧声音, 官方侧静音. 点击小画面可切换主画面, 两路音量可以单独调整.
-3. **把发生的时刻对上.** 解说比画面晚, 就回退画面; 解说比画面早, 就快进画面. 也可以点击中间的秒数, 选择 `画面延后` 或 `画面提前` 并输入秒数. 当前允许设置的相对偏移范围为 `-60` 到 `+60` 秒, 实际可调整量取决于已积累的缓冲或录像范围.
-4. **再尝试自动对齐.** 默认基础模式会自动寻找时钟并验证连续递减, 适用于两路同一回合的正式倒计时. 对齐选项中的画面匹配模式可比较两路相同视角的连续画面, 无需倒计时. 保持两路播放以积累共同片段, 区域和广告遮挡可在设置的画面匹配页调整. 对不上时继续使用手动微调.
-
-在设置 > 通用 > 对齐开启 `显示基础识别面板` 后, 可以查看倒计时识别预览, 录像直链也支持. 只需在画面一路框选一次倒计时, 两路共用该范围. 手动范围会保留, 点击 `自动重新寻找` 可恢复自动定位.
-
-基础模式在任意一路载入并开始稳定播放后立即预识别, 不必等待另一片源或手动同步. 首次识别的 6 秒和复核的 4 秒都是观察上限, 两路连续跳秒, 新鲜度和播放状态满足要求即可提前结束. 首次同步可使用当前片源仍然新鲜的预识别结果, 跳转后必须重新取得两次连续跳秒.
-
-手动点击自动对齐时, 需要调整就直接跳转, 跳转期间短暂暂停两路并一起恢复, 避免解码等待抵消校正; 只有静默定时同步或播放恢复同步, 且差值小于 2 秒时才允许有限调速, 更严格的已保存阈值仍生效. 跳转后等待两路恢复连续播放, 再复核倒计时, 最多追加两轮校正, 两路速率在完成或取消后恢复正常. 直播补片和缓冲可能延长对齐时间; 若复核时缺少新画面或连续跳秒, 不提示对齐成功. 当前默认复核门限为 0.15 秒, 这是本次识别证据的接受条件, 不代表所有直播源都能达到该精度.
-
-自动寻找区间由应用制作时固定, 手动框选优先. 识别预览和对应的倒计时读数来自同一帧.
-
-自动识别确认后会按片源和画面比例记住范围, 重启后在记忆范围内直接识别并验证跳秒, 无需再次全画面寻找. 手动范围始终优先; 记忆范围未能识别时可重新框选或点击"自动重新寻找". 记忆仅保存在本机, 最多保留 64 条.
-
-同一会话内, 片源和清晰度不变时保留已确认的位置, 字形模板和二值化参数. 暂停, 缓冲, 跳转, 变速和取消同步只清除时间证据; 片源, 画面尺寸或识别范围改变后才重新建立相应缓存. 预识别不会更换直播流或清晰度.
 
 <p align="center">
-  <img src="./assets/readme/intake.webp" width="100%" alt="添加直播间界面: 一个输入框接收直播链接或房间号, 下方分别显示画面侧和解说侧的载入状态.">
+  <a href="https://github.com/Fy1ng/Fy1Sync/releases/latest"><img src="assets/readme/download.svg" width="210" alt="下载最新版"></a>
 </p>
 
-斗鱼和虎牙的解说源会尝试同时连接对应房间弹幕. 弹幕延后跟随解说侧的时间调整, 并非逐条识别画面内容; 网络重连, 回放或平台本身的延迟仍可能影响观感.
+<p align="center">
+  <a href="https://github.com/Fy1ng/Fy1Sync/releases/latest"><img src="https://img.shields.io/github/v/release/Fy1ng/Fy1Sync?style=flat-square&label=%E6%9C%80%E6%96%B0%E7%89%88&labelColor=18181b&color=f3f0ea" alt="最新版本"></a>
+  <a href="https://github.com/Fy1ng/Fy1Sync/releases"><img src="https://img.shields.io/github/downloads/Fy1ng/Fy1Sync/total?style=flat-square&label=%E4%B8%8B%E8%BD%BD&labelColor=18181b&color=f3f0ea" alt="累计下载量"></a>
+  <a href="https://github.com/Fy1ng/Fy1Sync/releases"><img src="https://img.shields.io/github/release-date/Fy1ng/Fy1Sync?style=flat-square&label=%E6%9C%80%E8%BF%91%E5%8F%91%E5%B8%83&labelColor=18181b&color=6fd3a8" alt="最近一次发布的日期"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF-GPL--3.0--or--later-f3f0ea?style=flat-square&labelColor=18181b" alt="许可: GPL-3.0-or-later"></a>
+</p>
 
-### 常用操作
+<p align="center">
+  Windows · macOS · Linux　|　斗鱼 · 哔哩哔哩 · 虎牙 · 抖音 · YouTube · Twitch<br>
+  积极开发中, 目前是 0.x 版本　|　自动对齐目前适配 CS2, 其他游戏可以手动对齐
+</p>
 
-| 按键 | 操作 |
-| --- | --- |
-| `Space` | 播放 / 暂停 |
-| `Left` / `Right` | 当前主画面后退 / 前进 5 秒 |
-| `Shift + Left` / `Shift + Right` | 当前主画面后退 / 前进 30 秒 |
-| `,` / `.` | 回退 / 快进画面, 调整两路相对偏移 |
-| `Shift + ,` / `Shift + .` | 使用小步长微调相对偏移 |
-| `A` | 尝试自动对齐 |
-| `D` / `C` | 切换画面弹幕 / 弹幕侧栏 |
-| `F` | 切换全屏 |
+<p align="center">
+  <a href="#三步开始">三步开始</a> ·
+  <a href="#能做什么">能做什么</a> ·
+  <a href="#支持的平台">支持的平台</a> ·
+  <a href="#不适合的情况">不适合的情况</a> ·
+  <a href="#常见问题">常见问题</a> ·
+  <a href="#给开发者">给开发者</a>
+</p>
 
-相对偏移默认单次调整 `5` 秒, 按住 `Shift` 时微调 `0.5` 秒, 可在设置的通用分区中调整. 回退画面和快进画面按钮同样支持按住 `Shift` 微调. 输入框或对话框获得焦点时, 播放器快捷键不会抢占输入.
+<p align="center">
+  <img src="assets/readme/before-after.webp" width="100%" alt="同一个播放器的两张截图. 对齐前: 画面的回合倒计时是 1:41, 解说是 1:46, 解说比画面慢 5 秒. 对齐后: 两路都是 1:32.">
+</p>
 
-## 接入范围
+<p align="center"><sub>以上是应用里的真实截图, 对齐由应用自己完成. 片源是带标注的合成演示画面, 不是真实赛事.</sub></p>
 
-**支持直播播放, 不代表同时支持该平台的弹幕与账号功能.**
+## 这是什么
 
-| 来源 | 直播或媒体播放 | 弹幕与账号功能 |
+看比赛时, 很多人习惯开着官方直播的画面, 再听自己喜欢的主播解说. 麻烦在于两路直播的延迟不一样: 解说已经在喊, 你这边的画面还没开枪; 或者画面先出了结果, 解说晚几秒才到.
+
+Fy1Sync 把这两路直播放进同一个播放器:
+
+- **画面** 一路, **解说** 一路, 可以来自不同平台, 音量各自调, 有多个画质档位时清晰度也各自选.
+- 点一下 **自动对齐**, 应用会算出两路差了几秒, 把快的那一路延后. 识别结果不可靠时它不会乱调, 你也可以随时手动微调.
+- 默认显示解说所在直播间的弹幕, 飘在画面上或放在侧栏, 并且跟着解说的播放时间走.
+
+自动对齐目前针对 CS2 (读画面顶部的回合倒计时), 其他游戏可以手动对齐. 它只负责"看", 不是推流或开播工具.
+
+## 和手动对时间相比
+
+不装任何东西也能做到类似的事: 开两个浏览器标签页, 把其中一个暂停几秒. 两种做法的差别:
+
+| | 两个标签页手动暂停 | Fy1Sync |
 | --- | --- | --- |
-| YouTube | 直播链接, 支持可用画质选择; 高画质取决于源与网络 | 账号登录用于取流, 未接入聊天弹幕 |
-| Twitch | 频道直播 | 未接入聊天弹幕 |
-| 斗鱼 | 直播间链接或房间号 | 接收弹幕, 提供账号与房间工具; 写操作需另行开启 |
-| 虎牙 | 直播间链接或房间号 | 只读弹幕, 内嵌登录用于取流; 不支持斗鱼式的账号操作与统计 |
-| 哔哩哔哩直播 | 直播间链接或房间号 | 内嵌登录用于取流, 未接入弹幕 |
-| 抖音直播 | 公开直播间链接, 整段分享文案或选择抖音后输入网页房间号; 支持含 `_` / `-` 的短链接及可用画质选择, 解析后可收藏正式直播间地址 | 接收文字弹幕; 本地 HTTP 普通文字发送已接入官网票据签名, 真实平台受理仍待手动验收 |
-| 媒体直链 | HLS `.m3u8` 与可解码的视频直链 | 可与另一侧片源组合, 不自带平台账号功能 |
+| 时间差怎么得到 | 凭感觉试 | 从两路画面里读回合倒计时, 或比对两路画面, 算出秒数 |
+| 调整精度 | 取决于手速 | 默认步长 5 秒或 0.5 秒, 也可直接输入秒数 (到 0.01 秒) |
+| 直播卡顿或重连之后 | 重新试 | 检测到可能错开时会提示, 可一键重新对齐, 或开启定时复查 |
+| 弹幕 | 跟着各自的网页, 和延后的解说对不上 | 跟着解说的播放时间显示 |
+| 安装成本 | 无 | 要装一个应用 (Windows 安装包约 190 MB) |
+| 适用内容 | 网页能播的都行, 包括点播 | 六个直播平台正在进行的直播, 以及媒体直链 |
 
-直接粘贴 `.mpd` 的 DASH 链接目前不支持. YouTube 自适应取流由内部流程处理, 不等于通用 DASH 直链支持. 文件扩展名也不保证编码可播放, 仍取决于内置 FFmpeg 和 Chromium 的解码能力.
+如果你只是偶尔看一场, 或者要看的是点播回放, 手动暂停就够了.
 
-抖音支持 `live.douyin.com/<网页房间号>` 和 `v.douyin.com` 直播分享. 分享链接中的长场次 ID 与网页房间号不同, 会在确认主播身份后查找当前场次. 取流优先读取公开页面数据, 必要时使用本次新生成的匿名会话读取房间接口, 不执行网页脚本. 直播支持载入画面或解说、同屏观看, 有多个画质档位时可从 `清晰度` 菜单切换. 旧场次即使保留流地址也不会被当作正在直播.
+## 三步开始
 
-抖音登录位于设置 > 账号 > 抖音, 在本地卡片中扫码或使用短信/密码. 二维码和登录操作由主进程直接请求固定的官方 HTTP 接口, 签名与会话参数在本地生成, 不加载官网登录页面或浏览器 SDK. 平台要求额外验证时保留当前二维码, 提示在抖音 App 完成, 不自动发送短信或重交密码. 应用核对有效登录凭据和直播账号身份后自动关闭卡片, 保存本机登录状态. 输入仅存在于隔离的本地卡片及主进程请求中, 播放器只接收登录阶段. 登录凭据仅用于固定的抖音登录和直播接口, 不发送给媒体 CDN 或弹幕 WebSocket. 匿名状态也会尝试获取直播和弹幕, 需要验证或访问授权的房间仍可能无法载入. 登录或退出后刷新弹幕会话, 视频需要重新载入以使用新的登录状态.
+<p align="center">
+  <img src="assets/readme/steps.svg" width="100%" alt="三步开始: 下载安装, 贴上画面和解说两条链接, 点自动对齐.">
+</p>
 
-抖音解说源会自动接收当前房间的文字弹幕, 按解说进度延后显示, 支持过滤, 去重, 复制和本地屏蔽; 弹幕连接失败不影响直播播放. 房间面板可手动重连, 增强画中画也可显示同房间弹幕. 暂不接入礼物通知, 账号任务或斗鱼式历史统计.
+### 1. 下载安装
 
-抖音聊天栏已接入本地 HTTP 普通文字发送. 主进程为每次登录生成独立 P-256 配对密钥, 仅接受官方 HTTPS 回执中与该公钥匹配的票据, 核对当前直播账号后使用系统凭据保护加密保存; Windows 使用 DPAPI, 系统加密不可用时不保存明文. 旧版仅保存 Cookie 的登录状态需要手动重新登录一次以完成发送认证. 材料绑定当前账号和登录会话, 退出或重新登录时清除旧材料. 每次发送前核对官方账号身份与当前直播间, 在本地生成票据请求签名和 PageGuard, 再发送一次 HTTP 请求. 普通文字上限为 50 个 UTF-16 单位, 常见 emoji 占 2 个单位. 安全验证, 请求拒绝或回执不明时均不自动重发. 自动化验证覆盖离线合成请求, 加密保存和退出清除; 匿名 HTTP 取码和轮询已验证, 真实账号登录受理及弹幕显示仍需手动验收.
+到 [Releases 页面](https://github.com/Fy1ng/Fy1Sync/releases/latest) 按系统选一个文件 (文件名前面都带 `Fy1Sync-版本号-`):
 
-媒体直链支持任意域名, HTTP/HTTPS 非标准端口和本机/局域网服务. 默认允许播放列表及重定向访问其他媒体来源, 包括其他内网主机和端口. 可以在设置的网络页关闭内网媒体访问.
+| 系统 | 推荐下载 | 免安装的选择 |
+| --- | --- | --- |
+| Windows (x64) | `win-x64-nsis.exe` | `win-x64-portable.zip` |
+| macOS 13 及以上, Apple 芯片 | `mac-arm64.dmg` | `mac-arm64.zip` |
+| macOS 13 及以上, Intel | `mac-x64.dmg` | `mac-x64.zip` |
+| Linux x64 | `linux-x64.deb` | `linux-x64.AppImage`, `linux-x64.tar.gz` |
+| Linux arm64 | `linux-arm64.deb` | `linux-arm64.AppImage`, `linux-arm64.tar.gz` |
 
-无扩展名的 HTTP/HTTPS 媒体地址会根据实际响应识别 HLS 或其他媒体. 支持 URL 中明确提供的用户名和密码, 认证信息只用于对应来源, 不出现在返回的播放地址中. 网络设置可按协议, 域名和端口配置 Referer, User-Agent, Authorization 等请求头及证书策略. 跨域跳转和分片读取会移除原站凭据后继续, 用户为目标来源设置的请求头独立匹配. 应用界面中的普通外部链接和新窗口请求交给系统浏览器打开.
+播放要用到的 FFmpeg 和 yt-dlp 已经打在安装包里, 不用自己装. 国内访问 GitHub 较慢时, 可以到 [GitCode 镜像](https://gitcode.com/Fy1ng/Fy1Sync/releases) 看看有没有同一版本.
 
-设置的网络页支持按平台出网, 全部使用系统代理, 全部直连或指定 HTTP/HTTPS/SOCKS5 代理, 也可明确允许代理连接失败后直连. 默认保留原有平台出网方式和 PAC 候选顺序, 不自行改变出口. SOCKS4 尚不支持. 重定向次数, 请求超时, 首次播放等待, 断流等待, 重试次数和同屏直播数量均可设置, 默认 0 表示不设应用层上限. 停止或换源会取消旧请求.
+**第一次打开时系统可能会拦一下.** 安装包目前没有代码签名, 这是正常现象:
 
-## 使用边界
+- **Windows**: 出现 SmartScreen 提示时, 点 **更多信息**, 再点 **仍要运行**.
+- **macOS**: 首次打开可能被 Gatekeeper 拦下. 到 **系统设置 → 隐私与安全性** 里确认来源后再打开.
+- **Linux**: 构建基线是 Ubuntu 22.04 (glibc 2.35), 需要桌面图形环境. AppImage 可能需要 FUSE 2, 也可以加 `--appimage-extract-and-run` 运行, 或改用 `tar.gz`.
 
-- **自动对齐仍在测试.** 基础模式仅识别亮字暗底的 `m:ss` 或 `mm:ss` 倒计时, 读数范围为 CS2 正式回合的 `0:01-1:55`, 使用前须确认两路处于同一回合的正式倒计时. 画面匹配模式需要两路包含相同视角的共同片段, 大延迟需要先积累历史, 静止、循环或大量遮挡可能无法匹配. 两种模式在证据不足时均不调整位置, 调整后会重新取样复核. 不承诺每场比赛均可识别或达到逐帧锁定, 手动调整仍是必要的后备方式.
-- **对齐通过等待实现.** 应用让较快的一路等待. `画面提前` 是相对于解说而言, 并不会跳到尚未接收到的内容. 缓冲不够时需先等待; 多路高画质播放会增加带宽, 内存和解码负担.
-- **平台状态会影响取流.** 登录状态, 地区限制, 平台改版和接口风控均可能导致某个来源暂时不可用. YouTube 提示验证身份或内容需要授权时, 请先登录有观看权限的账号. 应用不提供网络线路.
-- **账号写操作默认关闭.** 斗鱼设置中的实验性开关控制发送, 赠礼, 续牌及任务等入口. 开启后会使用真实账号执行操作, 可能消耗礼物或余额, 也可能触发平台限制. 关闭开关会隐藏入口, **不会自动停止已经运行的任务**, 应先手动暂停.
-- **桌面发布覆盖 Windows x64, macOS x64/arm64 和 Linux x64/arm64.** Windows 提供 NSIS/ZIP, macOS 提供 DMG/ZIP, Linux 提供 DEB/AppImage/tar.gz. 内置精简 FFmpeg 不覆盖全部媒体格式. macOS 最低版本为 13, Linux 构建基线为 Ubuntu 22.04 / glibc 2.35.
+每个版本都附带 `SHA256SUMS.txt`, 可以用它核对下载的文件.
 
-登录信息保存在本机. 不要分享含账号资料或来源认证头的应用数据目录. 匿名取流默认不校验目标服务器和 HTTPS 代理证书, 可以在网络设置中分别开启. 携带账号 Cookie 或 Token 的取流读取默认校验证书, 用户可为特定来源明确覆盖. 登录, 账号操作与更新请求沿用原有校验. YouTube 解析工具会联动执行目标和代理证书策略, 配置登录来源的两项校验均关闭后也可跳过证书检查. 来源请求头由应用网络层按来源发送, 不作为独立解析工具的全局请求头转发.
+### 2. 添加画面和解说
+
+打开应用会看到 **添加直播间**:
+
+1. 选 **画面**, 粘贴比赛官方直播的链接, 按回车.
+2. 选 **解说**, 粘贴主播直播间的链接, 按回车. 只知道数字房间号也行: 输入数字, 先点一下它属于哪个平台, 再按回车.
+
+添加完画面后这个界面如果自动收起了, 点播放器顶部的 **解说** 继续添加就行.
+
+不想找链接的话, 点 **CS2 赛程**, 从正在进行的比赛里挑一场有直播链接的, 直接载入为画面.
+
+<p align="center">
+  <img src="assets/readme/intake.webp" width="49%" alt="添加直播间界面: 已选中解说, 输入房间号 6657 后, 下方出现斗鱼, 哔哩哔哩, 虎牙, 抖音四个平台供选择.">
+  <img src="assets/readme/schedule.webp" width="49%" alt="CS2 赛程界面: 左侧是赛事列表, 右侧列出进行中的比赛, 每场比赛后面有 YouTube 和 Twitch 的载入按钮.">
+</p>
+
+<p align="center"><sub>赛程截图里是演示数据.</sub></p>
+
+### 3. 对齐
+
+两路都播起来之后, 用底栏中间的 **自动对齐** (按钮显示 **准备中** 说明还在缓冲, 稍等一下):
+
+- 等两边都在播同一回合, 画面上的回合倒计时在正常走, 点 **自动对齐** (默认快捷键 `A`).
+- 中间的读数显示 **已对齐** 就完成了.
+- 没对上? 用 **回退画面** 和 **快进画面** 手动调, 默认每点一次 5 秒, 按住 `Shift` 再点是 0.5 秒. 解说比画面慢就回退画面, 解说比画面快就快进画面. 也可以点中间的秒数直接输入.
+
+## 能做什么
+
+> [!NOTE]
+> 带 **下个版本** 标记的功能已经在 `main` 分支里, 还没有包含在 v0.4.1 安装包中.
+
+<p align="center">
+  <img src="assets/readme/player.webp" width="100%" alt="Fy1Sync 主界面: 中间是比赛画面, 右下角是解说的小画面, 底栏有回退画面, 偏移读数, 快进画面和自动对齐, 右侧是弹幕栏.">
+</p>
+
+**看**
+
+- 画面和解说各一路, 小画面可以随时切换成主画面, 也可以隐藏.
+- **同屏观看** 更多直播间: 应用内的悬浮窗, 以及左右分屏, 上下分屏和自定义比例 <sup>下个版本</sup>.
+- **画中画**: 系统画中画不带弹幕; 增强画中画是应用自己的小窗, 可以带弹幕.
+- **框选主播摄像头**: 从解说画面里裁出主播的摄像头单独显示.
+- 截图和 GIF 录制 (默认关闭, 在 **设置 → 通用 → 截图与 GIF** 里打开).
+
+**对齐**
+
+- 自动对齐有 **基础模式** 和 **画面匹配** <sup>下个版本</sup> 两种识别方式, 见 [对齐是怎么做到的](#对齐是怎么做到的).
+- **仅测量**: 只告诉你差了几秒, 不动播放.
+- **比赛中保持对齐**: 打开后每隔 15 秒, 30 秒, 1 分钟或 2 分钟自动复查一次.
+- 手动回退, 快进, 或者直接输入秒数.
+
+**弹幕**
+
+- 斗鱼, 虎牙, 抖音和哔哩哔哩 <sup>下个版本</sup> 的弹幕可以飘在画面上, 也可以放在侧栏.
+- 可以调样式, 过滤, 屏蔽用户.
+- 抽奖, 福袋这类房间活动会显示成卡片, 可以开启提醒 <sup>下个版本</sup>.
+
+**找比赛, 记直播间**
+
+- **CS2 赛程**: 按赛事看进行中, 即将开始和已结束的比赛 (数据来自 Liquipedia).
+- **收藏**: 收藏常看的直播间, 一键载入为画面或解说. 独立的收藏夹页面可以搜索, 看谁在播 <sup>下个版本</sup>.
+- **恢复上次** <sup>下个版本</sup>: 一键读回上次看的画面和解说.
+
+**顺手的小事**
+
+- 快捷键都可以在 **设置 → 通用 → 快捷键** 里改 <sup>下个版本</sup>.
+- 手动 **检查更新**, 更新源可选 GitHub 或 GitCode. 应用不会在后台自己检查或下载.
+
+<p align="center">
+  <img src="assets/readme/align-options.webp" width="49%" alt="对齐选项面板: 比赛中保持对齐开关, 基础模式和画面匹配两种识别模式, 以及仅测量按钮.">
+  <img src="assets/readme/shortcuts.webp" width="49%" alt="设置里的快捷键页面: 播放暂停, 主画面后退和前进, 回退画面, 快进画面等动作及其按键.">
+</p>
+
+## 支持的平台
+
+| 平台 | 当画面或解说 | 弹幕 | 登录 |
+| --- | --- | --- | --- |
+| 斗鱼 | 可以 | 可以看; 发送等操作是实验功能, 默认关闭 | 可选 |
+| 哔哩哔哩 | 可以 | 只能看 <sup>下个版本</sup> | 可选 |
+| 虎牙 | 可以 | 只能看 | 可选 |
+| 抖音 | 可以 | 可以看; 登录后可以发送文字弹幕 <sup>下个版本</sup> | 可选 |
+| YouTube | 可以 (仅直播) | 暂不支持 | 可选 |
+| Twitch | 可以 | 暂不支持 | 无 |
+
+- 两路可以来自不同平台, 比如 YouTube 的官方画面配斗鱼的解说.
+- 大多数公开直播不登录就能看. 登录主要用于更高画质, 会员直播, 以及各平台的账号功能.
+- 除了直播间, 也可以直接粘贴 HTTP/HTTPS 的媒体直链.
+- 平台接口随时可能变化, 某个房间, 地区或画质暂时打不开是可能的. 遇到了欢迎提 [Issue](https://github.com/Fy1ng/Fy1Sync/issues).
+
+## 对齐是怎么做到的
+
+<p align="center">
+  <img src="assets/readme/align.svg" width="100%" alt="对齐流程: 画面和解说两路直播, 经过基础模式 (读回合倒计时, 目前针对 CS2) 或画面匹配 (比对相同视角的画面), 算出时间差, 把较快的一路延后, 复核通过后显示已对齐.">
+</p>
+
+两路直播里其实有同一个"时钟", 只要找到它, 就能算出两边差了多少:
+
+- **基础模式** 读画面里的回合倒计时. 两路要在播同一回合, 目前针对 CS2 的正式回合倒计时, 还在继续适配.
+- **画面匹配** <sup>下个版本</sup> 不看倒计时, 直接比对两路画面本身. 两路需要有相同视角的画面 (比如解说转播的就是官方画面); 如果解说画面被摄像头或贴图挡住了一部分, 可以在 **设置 → 画面匹配** 里裁剪范围或加忽略区域.
+
+算出时间差后, 应用把较快的一路延后, 再用新的画面复核一遍, 通过才显示 **已对齐**. 识别不稳, 或者找到多个相似片段时, 它不会调整, 并告诉你原因.
+
+另外两点: 一路直播也能单独看, 但对齐需要两路; 手动调整之后, 自动对齐会暂停, 再点一次 **自动对齐** 恢复. 其他限制见 [不适合的情况](#不适合的情况).
+
+默认快捷键 (可以在设置里改 <sup>下个版本</sup>):
+
+| 动作 | 按键 |
+| --- | --- |
+| 自动对齐 | `A` |
+| 回退画面 / 快进画面 | `,` 或 `[` / `.` 或 `]` (按住 `Shift` 为小步) |
+| 播放／暂停 | `空格` |
+| 主画面后退 / 前进 | `←` / `→` (5 秒, 按住 `Shift` 为 30 秒) |
+| 开关弹幕 | `D` |
+| 展开／收起弹幕栏 | `C` |
+| 全屏 | `F` |
+
+## 不适合的情况
+
+- **点播和回放**: 直播平台只支持正在进行的直播, 不支持 YouTube 点播和直播回放. 下个版本起也不再提供打开本地视频文件的入口 (v0.4.1 还可以).
+- **CS2 以外的游戏想全自动**: 倒计时识别目前只适配 CS2. 其他游戏在当前版本只能手动对齐; 下个版本的画面匹配要求两路有相同视角的画面, 机位完全不同或只有声音相同时仍然只能手动.
+- **两路差得太多**: 偏移最多 60 秒, 实际还取决于已经缓冲了多久.
+- **想看到最快的直播**: 对齐靠的是把较快的一路延后, 对齐后你看到的内容会比它晚几秒.
+- **想看 YouTube 或 Twitch 的聊天**: 暂时不显示.
+- **想要自动更新**: 应用不会自动检查更新. 在应用里升级完整版本只支持 Windows 安装版; 便携版, macOS 和 Linux 需要到发布页下载新版本.
+
+## 常见问题
 
 <details>
-<summary>播放不正常时先检查</summary>
+<summary>一定要登录吗?</summary>
 
-- 无法载入: 确认房间正在直播, 链接属于上表支持的来源, 并检查登录与网络状态.
-- YouTube 取流失效: 可在设置的取流工具页面检查和更新 yt-dlp, 或恢复上一版本 / 随包版本.
-- 有声音但画面异常: 在通用设置的解码页面尝试软件解码, 按界面提示重启应用后生效.
-- 对齐后仍有偏差: 回到手动微调, 重新确认两路是否是同一比分和同一直播片段.
+<br>
+
+不用. 大多数公开直播可以直接看, 也可以直接对齐. 不登录时, 部分直播可能取不到原画这样的高画质. 登录入口在 **设置 → 账号**.
 
 </details>
 
-## 从源码运行
+<details>
+<summary>自动对齐一直失败怎么办?</summary>
 
-技术栈为 Electron + React + TypeScript, 识别核心使用 Rust / WebAssembly, 并保留 TypeScript 后备实现. 图形界面通过 Electron 启动, 不提供独立的浏览器部署模式.
+<br>
 
-准备 [Node.js 22.12.0 或更新版本](https://nodejs.org/en/download) 和 [Rust 工具链](https://www.rust-lang.org/tools/install). Windows x64 还需要 Rust 要求的 C++ 构建环境. 以下 Windows 命令使用 PowerShell:
+先看提示说的是什么:
 
-```powershell
-git clone https://github.com/Fy1ng/Fy1Sync.git
-cd Fy1Sync
-npm ci
-rustup target add wasm32-unknown-unknown
+- 提示没读到倒计时, 或倒计时不稳定: 等两边都进入同一回合, 倒计时连续走几秒后再试. 回放镜头里, 或者比赛暂停倒计时不走的时候, 通常识别不出来.
+- 提示尚未找到共同画面: 画面匹配需要先播放一小段来积累画面, 等一会儿再点. 一直找不到的话, 可能是两路的视角本来就不一样.
+- 提示两路相差超过 60 秒: 超出了可调范围, 可以重新载入其中一路后再试.
 
-# Prepare the locked Windows media tools and YouTube token provider.
-npm run tools:prepare
-$env:STREAM_SYNC_FFMPEG = (Resolve-Path ".packaging/tools/ffmpeg/ffmpeg.exe").Path
-$env:STREAM_SYNC_FFPROBE = (Resolve-Path ".packaging/tools/ffmpeg/ffprobe.exe").Path
-$env:STREAM_SYNC_YTDLP = (Resolve-Path ".packaging/tools/yt-dlp.exe").Path
-$env:STREAM_SYNC_POT_PLUGIN_DIR = (Resolve-Path ".packaging/tools/provider/plugin").Path
-$env:STREAM_SYNC_POT_SERVER_HOME = (Resolve-Path ".packaging/tools/provider/server").Path
+都不行的话直接手动调: 盯住一个明显的瞬间 (比如回合结束), 用 **回退画面** 和 **快进画面** 调到一致.
 
-npm run dev
-```
+</details>
 
-macOS 需要 macOS 13 或更新版本和 Xcode Command Line Tools, 可先运行 `xcode-select --install` 安装. 最低系统版本来自项目固定的 [Electron 44 平台要求](https://github.com/electron/electron/blob/v44.9.3/docs/breaking-changes.md#removed-macos-12-support). 使用与目标 CPU 架构一致的 Node.js, 在 Mac 上重新安装依赖; Apple Silicon 推荐使用原生 arm64 终端. 以下命令使用系统终端的 zsh/bash:
+<details>
+<summary>画面花屏, 绿屏或黑屏?</summary>
 
-```sh
-git clone https://github.com/Fy1ng/Fy1Sync.git
-cd Fy1Sync
-npm ci
-rustup target add wasm32-unknown-unknown
+<br>
 
-# Build the locked native media tools and prepare the YouTube token provider.
-npm run tools:prepare
-export STREAM_SYNC_FFMPEG="$PWD/.packaging/tools/ffmpeg/ffmpeg"
-export STREAM_SYNC_FFPROBE="$PWD/.packaging/tools/ffmpeg/ffprobe"
-export STREAM_SYNC_YTDLP="$PWD/.packaging/tools/yt-dlp"
-export STREAM_SYNC_POT_PLUGIN_DIR="$PWD/.packaging/tools/provider/plugin"
-export STREAM_SYNC_POT_SERVER_HOME="$PWD/.packaging/tools/provider/server"
+到 **设置 → 通用 → 解码** 打开 **软件解码**, 重启应用后生效.
 
-npm run dev
-```
+</details>
 
-首次运行会在项目内准备固定版本的 `wasm-bindgen-cli` 并编译 WASM. 上述工具准备过程需要下载构建输入, 可使用后续保留的本地缓存.
+<details>
+<summary>某个直播间打不开?</summary>
 
-macOS 使用左上角原生窗口按钮和系统菜单. 关闭最后一个窗口会结束当前播放并释放后台资源, 应用保留在 Dock, 点击 Dock 图标或菜单中的"显示主窗口"可重新打开; `Cmd+Q` 完全退出. 文本输入保留系统的编辑快捷键. YouTube 登录支持 `/Applications` 或用户 `~/Applications` 中的 Google Chrome.
+<br>
 
-在对应 Mac 上运行 `npm run package:mac`, 产物位于 `.release/`, 名称为 `Fy1Sync-<version>-mac-<arch>.dmg` 和 `.zip`. `--arm64` / `--x64` 参数只接受当前 Node 的架构, 两个架构分别在对应环境构建. macOS 完整客户端升级使用新的应用包; 应用内手动更新 yt-dlp 会选择官方 macOS Universal 版本. FFmpeg 构建输入, 许可材料, 签名/公证配置和实机验证边界见 [macOS 构建说明](packaging/ffmpeg/README.md#macos-本机构建和打包).
+先确认它正在直播, 并且在浏览器里能正常观看. 会员专享的直播需要先登录对应平台; 有地区限制的直播取决于你的网络. 仍然不行的话, 到 **设置 → 通用 → 取流工具** 里 **导出诊断报告**, 附在 [Issue](https://github.com/Fy1ng/Fy1Sync/issues) 里. 报告只保存到你的电脑, 不会自动上传.
 
+</details>
 
-首次运行会在项目内准备固定版本的 `wasm-bindgen-cli` 并编译 WASM. 上述工具准备过程需要下载构建输入, 可使用后续保留的本地缓存.
+<details>
+<summary>怎么更新?</summary>
 
+<br>
 
-Linux 需要 Ubuntu 22.04 或更新的兼容桌面系统, 以及与目标 CPU 一致的 Node.js. 构建工具可用以下命令安装:
+**设置 → 通用 → 关于 → 检查更新**. Windows 安装版可以在应用里升级, 其他情况请到发布页下载新版本.
 
-```sh
-sudo apt-get update
-sudo apt-get install -y build-essential pkg-config libgnutls28-dev patchelf libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libatspi2.0-0 libuuid1 libsecret-1-0 libgbm1 libasound2
-npm ci
-rustup target add wasm32-unknown-unknown
-npm run package:linux
-```
+另外, **设置 → 通用 → 取流工具** 里可以单独更新 yt-dlp. YouTube 突然打不开时可以先试这个.
 
-产物位于 `.release/`, 文件名为 `Fy1Sync-<version>-linux-<arch>.deb`, `.AppImage`, `.tar.gz`. 工具设置与 macOS 相同, 都使用无 `.exe` 后缀的媒体工具. DEB 声明系统依赖; AppImage/tar.gz 需要本机提供 GTK 3, NSS, ALSA, GBM, GnuTLS 30 等桌面运行库. AppImage 可安装 FUSE 2 或使用 `--appimage-extract-and-run`. 解压运行包仍使用系统的用户数据目录.
+</details>
 
-发布流程见 [.github/workflows/release.yml](.github/workflows/release.yml). 推送与 `package.json` 版本相同的 `v<version>` 标签后, CI 先在单个任务中准备队标以保证请求间隔, 再分别在 Windows x64, Mac Intel, Mac Apple Silicon, Linux x64 和 Linux arm64 原生 runner 上构建. 完整的 12 个包均通过校验和打包应用启动检查后才发布 GitHub Release 与 `SHA256SUMS.txt`. 手动运行工作流只构建和保留 Actions 产物.
+## 隐私与数据
 
-macOS 当前未配置 Developer ID 签名或公证, 首次打开可能需要在系统安全设置中确认来源. 原生 CI 检查覆盖构建主机上的启动, 媒体工具和归档内容, 不代表所有系统版本和硬件均完成实机验收.
+- 应用没有接入自己的统计或崩溃上报. 诊断报告只在你手动导出时生成, 并且只保存在本机.
+- 登录信息只保存在你的电脑上, 应用只把它发给对应的平台. 需要知道的是: 各平台的登录 Cookie 以明文文件保存在应用数据目录里, 所以不要把这个目录发给别人.
+- 应用会直接连接你观看的直播平台. 登录斗鱼并观看斗鱼直播间时, 应用会按平台的规则向斗鱼上报观看时长, 用于平台自己的观时统计.
+- 斗鱼的发送弹幕, 送礼, 签到任务这些主动操作账号的功能是实验性的, 默认关闭, 需要你在 **设置 → 账号 → 斗鱼 → 实验性** 里手动打开.
+- Windows 安装版正常卸载时, 会保留你的设置和登录信息.
+- 下个版本起, CS2 赛程和队标经由项目维护者运行的中转服务器 `schedule.fy1ng.cn` 获取, 该服务器不记录访问日志.
 
-| 命令 | 用途 |
+---
+
+## 给开发者
+
+Fy1Sync 是一个 Electron 应用: 界面用 React 和 TypeScript, 倒计时识别的核心用 Rust 写成, 编译为 WebAssembly 在 Worker 里运行. 采用 [GPL-3.0-or-later](LICENSE) 许可.
+
+| | |
 | --- | --- |
-| `npm run build` | 构建 WASM, 检查类型, 构建前端与 Electron 主进程 |
-| `npm run configure:clock-search` | 启动独立制作工具, 一次设定生产寻找区间 |
-| `npm start` | 启动已构建的桌面应用 |
-| `npm test` | 运行单元测试 |
-| `cargo test --workspace` | 运行 Rust 测试 |
-| `npm run test:e2e` | 运行 Electron 端到端测试 |
-| `npm run package:linux` | 在原生 Linux x64/arm64 主机上构建并检查 DEB/AppImage/tar.gz |
-| `npm run package:smoke` | 使用隔离目录启动并检查当前平台的打包应用 |
-| `npm run package:win` | 准备工具并构建 Windows x64 安装包与免安装包 |
-| `npm run package:mac` | 在 Mac 上准备原生工具, 构建当前架构 DMG/ZIP 并检查内容 |
-| `npm run package:check` | 按当前平台检查本地打包结果 |
-| `npm run package:check:mac` | 在 Mac 上复验当前架构的应用包和工具 |
-| `npm run test:packaging` | 运行打包平台选择, Mach-O 和归档校验的离线测试 |
+| 桌面外壳 | Electron 44 |
+| 界面 | React 19, TypeScript 6, Vite 8 |
+| 播放 | hls.js, 由主进程用 FFmpeg 把直播流封装成本地 HLS 缓冲 |
+| 识别核心 | Rust → WebAssembly (wasm-bindgen 0.2.105) |
+| 取流工具 | 内置 FFmpeg / ffprobe 和 yt-dlp |
+| 测试 | Vitest, Playwright (驱动真实 Electron 窗口), cargo test |
 
-端到端测试默认以 Electron 离屏渲染隐藏主窗口和增强画中画, 静音运行, 不抢占桌面焦点. 离屏模式保持视频帧和动画推进, 不依赖屏幕上的可见窗口. 依赖原生全屏, 窗口按钮或真实前台焦点的专属测试默认跳过; 只有显式设置 `STREAM_SYNC_E2E_VISIBLE=1` 才显示测试窗口并运行这些项目. 测试资料始终使用隔离目录. 可用 `npm run test:e2e -- e2e/hidden-windows.spec.ts` 检查隐藏窗口下的界面, IPC 和画中画运行.
+### 结构
 
-制作工具只读取本地样例录像, 不运行识别. 框选并点击"写入生产配置"后保存到 `src/recognition/basicSearchRegion.json`, 后续构建固定使用该区间. 写入后工具锁定, 如需重新制作可运行 `npm run configure:clock-search -- --reset`. 工具和写入接口不会打包进正式应用.
+<p align="center">
+  <img src="assets/readme/architecture.svg" width="100%" alt="运行时结构: 渲染进程里是 React 界面, hls.js 播放和运行 Rust 核心 (WASM) 的识别 Worker; 界面通过 preload 白名单和 IPC 调用主进程. 主进程负责平台解析, 账号, 弹幕, 用 FFmpeg 把直播流封装成本地 HLS 缓冲, 再经 app 协议交回播放器, 并管理内置工具和更新.">
+</p>
 
-`src/studio/` 是观赛界面, `src/sync/` 管理对齐流程, `crates/core/` 实现识别算法, `electron/` 管理桌面能力, `server/platforms/` 和 `server/danmaku/` 负责平台接入. 贡献前请阅读 [AGENTS.md](https://github.com/Fy1ng/Fy1Sync/blob/main/AGENTS.md), 使用隔离的测试资料, 避免触碰真实账号数据或执行真实账号操作.
+- **渲染进程** 开启沙箱和上下文隔离, 没有 Node 权限, 只能通过 preload 暴露的白名单接口发起 IPC 调用.
+- **主进程** 负责解析直播间, 管理账号和弹幕连接. 直播流经 FFmpeg 封装成本地 HLS 分片, 再通过应用自己的 `app://` 协议交给 hls.js 播放.
+- **识别** 在渲染进程抓帧, 交给 Worker 里的 WASM 模块读倒计时; 画面匹配另有独立的 Worker.
 
-主工作区 `Fy1Sync/` 使用 `main` 分支, 维护播放器, 基础倒计时识别和画面匹配对齐. 样式包及 `/admin` 编辑器已从 main 移除, 保留在同一仓库的独立 worktree `../Fy1Sync-stylepack-admin`, 分支为 `codex/stylepack-admin`, 用于继续维护相关代码和测试. 界面 worktree `../Fy1Sync-ui` 使用 `ui-redesign` 分支. 进行相应开发时应进入对应工作区.
+| 目录 | 内容 |
+| --- | --- |
+| `src/` | React 界面, 会话状态, 播放, 对齐, 弹幕, Worker 与 WASM 加载 |
+| `electron/` | 主进程: 窗口, preload 和 IPC, 安全边界, 账号, 缓冲, 更新 |
+| `server/` | 主进程调用的平台解析, 网络, 弹幕和赛程模块 (不是独立服务) |
+| `crates/` | Rust 识别核心, WASM 接口, 离线 CLI, Windows 浏览器凭据助手 |
+| `e2e/` | Playwright 驱动 Electron 的端到端场景 |
+| `scripts/` | 构建, 打包, 测试素材和发布检查脚本 |
+| `packaging/` | 安装器资源, 工具版本锁, 第三方声明, 版本说明 |
 
-## 许可与致谢
+### 从源码运行
 
-Fy1Sync 按 [GPL-3.0-or-later](https://github.com/Fy1ng/Fy1Sync/blob/main/LICENSE) 发布. FFmpeg, yt-dlp, PO token provider 和字体等组件保留各自许可, 详见 [第三方声明](https://github.com/Fy1ng/Fy1Sync/blob/main/packaging/THIRD-PARTY-NOTICES.md); 发布包内也提供相关许可与源码材料.
+需要:
+
+- Node.js 22.12 或更高 (CI 使用 24.15.0)
+- Rust 工具链, 并添加 WebAssembly 目标
+
+```bash
+rustup target add wasm32-unknown-unknown
+git clone https://github.com/Fy1ng/Fy1Sync.git
+cd Fy1Sync
+npm ci
+npm run dev
+```
+
+`npm run dev` 会先构建 WASM 和主进程, 再启动 Electron. 本地还没有指定版本的 `wasm-bindgen-cli` 时, 会先用 cargo 安装一次, 要多等一会儿.
+
+开发模式不带内置工具. 要播放真实直播, 需要自己准备 FFmpeg 和 ffprobe (YouTube 还需要 yt-dlp), 放进 `PATH`, 或者用环境变量 `STREAM_SYNC_FFMPEG`, `STREAM_SYNC_FFPROBE`, `STREAM_SYNC_YTDLP` 指定绝对路径.
+
+### 常用命令
+
+| 命令 | 作用 |
+| --- | --- |
+| `npm run dev` | 开发模式, 监听前端改动 |
+| `npm run build` | 完整构建: WASM, 类型检查, 前端, 主进程 |
+| `npm start` | 启动已经构建好的应用 |
+| `npm test` | 单元测试 (Vitest) |
+| `npm run test:e2e` | 端到端测试 (Playwright + Electron), 需要先 `npm run build` |
+| `npm run typecheck` | 前端, 主进程, E2E 三套类型检查 |
+| `npm run fixtures` | 生成合成测试片源, 需要完整版 FFmpeg |
+| `npm run package:win` / `package:mac` / `package:linux` | 在对应系统上打安装包 |
+
+### 测试
+
+- 355 个单元测试文件 (`src/`, `server/`, `electron/`), 用 Vitest 运行.
+- 69 个端到端场景文件, 由 Playwright 驱动真实的 Electron 窗口. 默认完全离线, 每次运行使用独立的临时数据目录, 不会碰你的真实账号和设置.
+- Rust 核心用 `cargo test --workspace --locked`.
+- 识别相关的测试素材由脚本合成, 不随仓库提交. 跑完整的端到端测试前先执行 `npm run fixtures`, 否则一部分场景会跳过, 一部分会失败.
+
+### 发布
+
+推送 `v<版本号>` 标签会触发 [发布流程](.github/workflows/release.yml): 在 Windows, macOS (Intel 和 Apple 芯片) 和 Linux (x64 和 arm64) 的原生环境里各自构建, 启动检查通过后, 把 12 个安装包和免安装包, 连同 `SHA256SUMS.txt`, 发布到 GitHub Releases. 每个版本的说明在 [`packaging/releases/`](packaging/releases).
+
+### 参与
+
+发现问题或有想法, 欢迎提 [Issue](https://github.com/Fy1ng/Fy1Sync/issues). 提交代码前请先跑一遍 `npm run typecheck` 和 `npm test`.
+
+## 许可
+
+Fy1Sync 以 [GPL-3.0-or-later](LICENSE) 发布. 随包分发的 FFmpeg, yt-dlp 等第三方组件各有自己的许可, 见 [第三方声明](packaging/THIRD-PARTY-NOTICES.md).
 
 CS2 赛程信息来自 [Liquipedia](https://liquipedia.net/counterstrike/Liquipedia:Matches), 按 [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/) 使用. 战队名称与队标的权利属于各自权利人.
-新版本的赛程和队标经由项目维护者运行的中转服务器 `schedule.fy1ng.cn` 获取, 该服务器不记录访问日志. 直播标题仍由应用直接向 YouTube / Twitch 读取.
