@@ -132,7 +132,7 @@ export async function checkMacPackage() {
   assert(plist.CFBundleIdentifier === 'cn.fy1ng.fy1sync' && plist.CFBundleShortVersionString === version, 'macOS bundle metadata differs')
   assert(plist.LSMinimumSystemVersion === macMinimumSystemVersion, 'macOS bundle minimum system version differs')
   const bundleSignature = await assertMacBundleSignature(directory)
-  for (const name of ['LICENSE.electron.txt', 'LICENSES.chromium.html']) assert((await stat(path.join(directory, 'Contents', name))).size > 0, 'Electron license missing from macOS app')
+  for (const name of ['LICENSE.electron.txt', 'LICENSES.chromium.html']) assert((await stat(path.join(resources, name))).size > 0, 'Electron license missing from macOS app')
   const lock = JSON.parse(await readFile(path.join(resources, 'tools', 'tools-lock.json'), 'utf8'))
   assert(lock.target === target.target && lock.ffmpegRuntimeOrigin === 'native-local-build', 'macOS packaged tools platform/architecture differs')
   assert(lock.minimumSystemVersion === macMinimumSystemVersion, 'macOS packaged tools minimum system version differs')

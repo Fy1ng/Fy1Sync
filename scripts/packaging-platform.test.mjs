@@ -106,6 +106,8 @@ test('macOS builder config defaults to valid ad-hoc signing and switches cleanly
   assert.equal(adhoc.mac.identity, '-')
   assert.equal(adhoc.mac.hardenedRuntime, false)
   assert.equal(adhoc.mac.timestamp, 'none')
+  assert.equal(adhoc.mac.extraFiles, undefined)
+  assert.deepEqual(adhoc.mac.extraResources.map(entry => entry.to), ['LICENSE.electron.txt', 'LICENSES.chromium.html'])
   const adhocIgnore = new RegExp(adhoc.mac.signIgnore[0])
   assert.equal(adhocIgnore.test('/tmp/Fy1Sync.app'), false)
   assert.equal(adhocIgnore.test('/tmp/Fy1Sync.app/Contents/MacOS/Fy1Sync'), false)

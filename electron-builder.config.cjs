@@ -37,7 +37,9 @@ module.exports = {
     // Resources are sealed into CodeResources when signing Fy1Sync.app; avoid overwriting PyInstaller yt-dlp
     // or attaching per-file extended-attribute signatures to static assets.
     signIgnore: [hasMacSigningCertificate ? '\\.app/Contents/Resources/(?!tools/ffmpeg/)' : '\\.app/Contents/Resources/'],
-    extraFiles: [
+    // Keep Electron/Chromium license files under Contents/Resources/ rather than Contents/,
+    // because macOS codesign rejects loose non-code files placed directly inside Contents/.
+    extraResources: [
       { from: 'node_modules/electron/dist/LICENSE', to: 'LICENSE.electron.txt' },
       { from: 'node_modules/electron/dist/LICENSES.chromium.html', to: 'LICENSES.chromium.html' },
     ],
