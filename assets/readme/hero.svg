@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="430" viewBox="0 0 1200 430" role="img" aria-labelledby="title desc">
   <title id="title">Fy1Sync</title>
-  <desc id="desc">Fy1Sync 把官方比赛画面和主播解说两路直播对到同一秒: 解说原本慢 5 秒, 对齐后两路时间一致.</desc>
+  <desc id="desc">Fy1Sync 把官方比赛画面和主播解说两路直播对到同一秒: 解说原本慢 7.7 秒, 对齐后两路时间一致.</desc>
   <defs><pattern id="lock" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)"><rect width="7.0" height="14" fill="#6fd3a8"/></pattern><pattern id="drift" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)"><rect width="7.0" height="14" fill="#f0b03f"/></pattern><pattern id="ash" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)"><rect width="7.0" height="14" fill="#64635f"/></pattern></defs>
   <rect width="1200" height="430" rx="28" fill="#0d0d0f"/>
   <rect x="1" y="1" width="1198" height="428" rx="27" fill="none" stroke="#2b2b30" stroke-width="2"/>
@@ -15,7 +15,7 @@
   <rect x="632" y="54" width="504" height="322" rx="18" fill="#18181b" stroke="#2b2b30" stroke-width="1.5"/>
   <circle cx="666" cy="111" r="5" fill="#f3f0ea"/>
   <text x="682" y="119" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="22" font-weight="700" fill="#f3f0ea">画面</text>
-  <text x="1108" y="120" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, monospace" font-size="26" font-weight="600" fill="#f3f0ea" text-anchor="end">1:32</text>
+  <text x="1108" y="120" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, monospace" font-size="26" font-weight="600" fill="#f3f0ea" text-anchor="end">1:11</text>
   <rect x="660" y="132" width="448" height="34" rx="8" fill="#212125"/>
   <path d="M676,141 V157" stroke="#3a3a40" stroke-width="2"/>
   <path d="M712,141 V157" stroke="#3a3a40" stroke-width="2"/>
@@ -31,7 +31,7 @@
   <path d="M1072,141 V157" stroke="#3a3a40" stroke-width="2"/>
   <circle cx="666" cy="203" r="5" fill="#f3f0ea"/>
   <text x="682" y="211" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="22" font-weight="700" fill="#f3f0ea">解说</text>
-  <text x="1108" y="212" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, monospace" font-size="26" font-weight="600" fill="#f3f0ea" text-anchor="end">1:32</text>
+  <text x="1108" y="212" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, monospace" font-size="26" font-weight="600" fill="#f3f0ea" text-anchor="end">1:11</text>
   <rect x="660" y="224" width="448" height="34" rx="8" fill="#212125"/>
   <path d="M676,233 V249" stroke="#3a3a40" stroke-width="2"/>
   <path d="M712,233 V249" stroke="#3a3a40" stroke-width="2"/>
@@ -45,11 +45,11 @@
   <path d="M1000,233 V249" stroke="#3a3a40" stroke-width="2"/>
   <path d="M1036,233 V249" stroke="#3a3a40" stroke-width="2"/>
   <path d="M1072,233 V249" stroke="#3a3a40" stroke-width="2"/>
-  <rect x="796" y="228" width="180" height="26" rx="5" fill="url(#drift)" fill-opacity=".55"/>
-  <path d="M796,220 V262" stroke="#f0b03f" stroke-width="2.5" stroke-dasharray="5 5"/>
-  <text x="886.0" y="286" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="20" font-weight="600" fill="#f0b03f" text-anchor="middle">对齐前慢 5 秒</text>
-  <path d="M976,120 V264" stroke="#6fd3a8" stroke-width="3.5" stroke-linecap="round"/>
-  <rect x="932" y="74" width="88" height="30" rx="15" fill="#6fd3a8"/>
-  <text x="976" y="95" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="18" font-weight="700" fill="#0d0d0f" text-anchor="middle">已对齐</text>
-  <clipPath id="cap660302"><rect x="660" y="302" width="448" height="56" rx="10"/></clipPath><rect x="660" y="302" width="448" height="56" rx="10" fill="#0d0d0f" stroke="#3a3a40" stroke-width="1.5"/><rect x="660" y="302" width="448" height="8" fill="url(#lock)" clip-path="url(#cap660302)"/><path d="M690.2,326.8 L681.8,334.0 L690.2,341.2" stroke="#64635f" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M1077.8,326.8 L1086.2,334.0 L1077.8,341.2" stroke="#64635f" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/><text x="884.0" y="344.8" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, monospace" font-size="30" font-weight="700" fill="#f3f0ea" text-anchor="middle">5.0</text>
+  <rect x="748" y="228" width="252" height="26" rx="5" fill="url(#drift)" fill-opacity=".55"/>
+  <path d="M748,220 V262" stroke="#f0b03f" stroke-width="2.5" stroke-dasharray="5 5"/>
+  <text x="874.0" y="286" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="20" font-weight="600" fill="#f0b03f" text-anchor="middle">对齐前慢 7.7 秒</text>
+  <path d="M1000,120 V264" stroke="#6fd3a8" stroke-width="3.5" stroke-linecap="round"/>
+  <rect x="956" y="74" width="88" height="30" rx="15" fill="#6fd3a8"/>
+  <text x="1000" y="95" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="18" font-weight="700" fill="#0d0d0f" text-anchor="middle">已对齐</text>
+  <clipPath id="cap660302"><rect x="660" y="302" width="448" height="56" rx="10"/></clipPath><rect x="660" y="302" width="448" height="56" rx="10" fill="#0d0d0f" stroke="#3a3a40" stroke-width="1.5"/><rect x="660" y="302" width="448" height="8" fill="url(#lock)" clip-path="url(#cap660302)"/><path d="M690.2,326.8 L681.8,334.0 L690.2,341.2" stroke="#64635f" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M1077.8,326.8 L1086.2,334.0 L1077.8,341.2" stroke="#64635f" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/><text x="884.0" y="344.8" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, monospace" font-size="30" font-weight="700" fill="#f3f0ea" text-anchor="middle">7.7</text>
 </svg>
