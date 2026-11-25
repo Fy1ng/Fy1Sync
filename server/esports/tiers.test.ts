@@ -3,14 +3,15 @@ import { normalizeTournamentPath, queryTournamentTiers } from './tiers'
 
 const page = (title: string, categories?: string[]) => ({ title, ...(categories ? { categories: categories.map(title => ({ title })) } : {}) })
 const category = (tier: string) => `Category:${tier}-Tier Tournaments`
+const tournamentCategory = 'Category:Tournaments'
 const response = (...pages: unknown[]) => ({ query: { pages } })
 const titles = (url: string) => new URL(url).searchParams.get('titles')!.split('|')
 
 // Every network response in this suite is synthetic.
 describe('Liquipedia tournament category queries', () => {
-  it('queries only the four exact categories with at most 50 distinct titles per request', async () => {
+  it('queries the tournament marker and four tier categories with at most 50 distinct titles per request', async () => {
     const paths = Array.from({ length: 103 }, (_, index) => `Cup/${index}`)
-    const request = vi.fn(async (url: string) => response(...titles(url).map(title => page(title, [category('B')]))))
+    const request = vi.fn(async (url: string) => response(...titles(url).map(title => page(title, [tournamentCategory, category('B')]))))
     const result = await queryTournamentTiers([...paths, paths[0]!], request)
     expect(request.mock.calls.map(([url]) => titles(url).length)).toEqual([50, 50, 3])
     expect(result.tiers.size).toBe(103)
@@ -19,7 +20,8 @@ describe('Liquipedia tournament category queries', () => {
     for (const [url] of request.mock.calls) {
       expect(new URL(url).origin).toBe('https://liquipedia.net')
       expect(Object.fromEntries(new URL(url).searchParams)).toMatchObject({ action: 'query', format: 'json', formatversion: '2',
-        prop: 'categories', redirects: '1', cllimit: 'max', clcategories: ['S', 'A', 'B', 'C'].map(category).join('|') })
+        prop: 'categories', redirects: '1', cllimit: 'max',
+        clcategories: [tournamentCategory, ...['S', 'A', 'B', 'C'].map(category)].join('|') })
     }
   })
 
@@ -57,10 +59,10 @@ describe('Liquipedia tournament category queries', () => {
   })
 
   it.each([
-    ['no categories', undefined],
-    ['unrelated categories', ['Category:Women Tournaments', 'Category:S-Tier Tournament', 'Category:A-Tier Tournaments/2026']],
+    ['unclassified tournament category only', [tournamentCategory]],
+    ['unrelated categories on a standalone tournament', [tournamentCategory, 'Category:Women Tournaments', 'Category:S-Tier Tournament', 'Category:A-Tier Tournaments/2026']],
     ['conflicting categories', [category('S'), category('A')]],
-  ])('returns null without parent fallback for an existing page with %s', async (_label, categories) => {
+  ])('returns null without parent fallback for an existing standalone page with %s', async (_label, categories) => {
     const request = vi.fn(async () => response(page('Cup/2026/Qualifier', categories)))
     const result = await queryTournamentTiers(['Cup/2026/Qualifier'], request)
     expect(result.tiers.get('Cup/2026/Qualifier')).toBeNull()
@@ -73,17 +75,24 @@ describe('Liquipedia tournament category queries', () => {
     expect((await queryTournamentTiers(['Cup'], request)).tiers.get('Cup')).toBe(1)
   })
 
-  it('falls back only for missing pages, deduplicating shared parents', async () => {
-    const request = vi.fn(async (url: string) => response(...titles(url).map(title => title === 'PGL/2026/Masters'
-      ? page(title, [category('S')]) : { title, missing: true })))
-    const paths = ['PGL/2026/Masters/Group Stage', 'PGL/2026/Masters/Playoffs/Final']
+  it('falls back for missing pages and existing non-tournament stage subpages, deduplicating shared parents', async () => {
+    const request = vi.fn(async (url: string) => response(...titles(url).map(title =>
+      title === 'PGL/2026/Masters' || title === 'PGL/2026/Singapore'
+        ? page(title, [tournamentCategory, category('S')])
+        : title.startsWith('PGL/2026/Singapore/')
+          ? page(title, ['Category:Pages storing into original game table', 'Category:Pages storing into original match table'])
+          : { title, missing: true })))
+    const paths = ['PGL/2026/Masters/Group Stage', 'PGL/2026/Masters/Playoffs/Final',
+      'PGL/2026/Singapore/Stage_1', 'PGL/2026/Singapore/Stage_2']
     const result = await queryTournamentTiers(paths, request)
-    expect([...result.tiers]).toEqual(paths.map(path => [path, 1]))
+    expect(Object.fromEntries(result.tiers)).toEqual(Object.fromEntries(paths.map(path => [path, 1])))
     expect(request.mock.calls.flatMap(([url]) => titles(url)).filter(title => title === 'PGL/2026/Masters')).toHaveLength(1)
+    expect(request.mock.calls.flatMap(([url]) => titles(url)).filter(title => title === 'PGL/2026/Singapore')).toHaveLength(1)
   })
 
   it('never removes more than two path segments and stops at a single-segment title', async () => {
-    const request = vi.fn(async (url: string) => response(...titles(url).map(title => ({ title, missing: true }))))
+    const request = vi.fn(async (url: string) => response(...titles(url).map(title =>
+      title === 'Root' ? page(title) : { title, missing: true })))
     const result = await queryTournamentTiers(['Cup/2026/Stage/Final/Map', 'Root'], request)
     expect([...result.tiers]).toEqual([['Root', null], ['Cup/2026/Stage/Final/Map', null]])
     expect(request.mock.calls.map(([url]) => titles(url))).toEqual([
@@ -91,10 +100,11 @@ describe('Liquipedia tournament category queries', () => {
     ])
   })
 
-  it('stops missing-page fallback at an existing unclassified parent', async () => {
-    const request = vi.fn(async (url: string) => titles(url)[0] === 'Cup/2026/Stage'
-      ? response({ title: 'Cup/2026/Stage', missing: true }) : response(page('Cup/2026')))
-    expect((await queryTournamentTiers(['Cup/2026/Stage'], request)).tiers.get('Cup/2026/Stage')).toBeNull()
+  it('stops fallback at an existing unclassified standalone parent', async () => {
+    const request = vi.fn(async (url: string) => titles(url)[0] === 'Cup/2026/Stage_1'
+      ? response(page('Cup/2026/Stage_1', ['Category:Pages storing into original match table']))
+      : response(page('Cup/2026', [tournamentCategory])))
+    expect((await queryTournamentTiers(['Cup/2026/Stage_1'], request)).tiers.get('Cup/2026/Stage_1')).toBeNull()
     expect(request).toHaveBeenCalledTimes(2)
   })
 

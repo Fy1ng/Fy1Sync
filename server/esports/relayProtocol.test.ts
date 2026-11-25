@@ -54,7 +54,9 @@ describe('relay schedule conversion', () => {
       if (params.get('prop') === 'extlinks') return Response.json({ query: { pages: [{ extlinks: [
         'https://www.twitch.tv/PGL', 'https://www.twitch.tv/pgl_cs2', youtubeLink,
       ].map(url => ({ url })) }] } })
-      return Response.json({ query: { pages: (params.get('titles') ?? '').split('|').map(title => ({ title })) } })
+      return Response.json({ query: { pages: (params.get('titles') ?? '').split('|').map(title => ({
+        title, categories: [{ title: 'Category:Tournaments' }],
+      })) } })
     })
     const service = new EsportsService({ userDataDir: directory, version: '0.4.1', request,
       resolve: async () => ['93.184.216.34'], logos: null, log: () => {} })

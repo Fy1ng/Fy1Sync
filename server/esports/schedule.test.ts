@@ -372,7 +372,8 @@ describe('background tournament query cache', () => {
       if (broken) throw new Error('offline')
       return response({ query: { pages: titles.map(title => {
         const tier = resolveTier(title)
-        return { title, ...(tier === null ? {} : { categories: [{ title: `Category:${'SABC'[tier - 1]}-Tier Tournaments` }] }) }
+        return { title, categories: [{ title: 'Category:Tournaments' },
+          ...(tier === null ? [] : [{ title: `Category:${'SABC'[tier - 1]}-Tier Tournaments` }])] }
       }) } })
     })
     const service = new EsportsService({ userDataDir: directory, version: '0.1.3', request, logos,
@@ -385,7 +386,7 @@ describe('background tournament query cache', () => {
   const seed = async (tier: number | null, fetchedAt = Date.now()) => {
     const { mkdir } = await import('node:fs/promises')
     await mkdir(join(directory, 'events'), { recursive: true })
-    await writeFile(join(directory, 'events', 'tiers.json'), JSON.stringify({ schema: 2,
+    await writeFile(join(directory, 'events', 'tiers.json'), JSON.stringify({ schema: 3,
       entries: Object.fromEntries([...new Set(parseSchedule(fixture).map(match => normalizeTournamentPath(match.tournament.url)!))].map(path => [path, { tier, fetchedAt }])) }))
   }
   beforeEach(async () => {
@@ -413,7 +414,7 @@ describe('background tournament query cache', () => {
     expect(enriched.fetchedAt).toBe(first.fetchedAt)
     expect(first.matches[0]!.tournament.tier).toBeNull()
     expect(events).toEqual([{ topic: 'cs2-schedule', data: { type: 'tiers-updated' }, at: NOW + 2_000 }])
-    expect((await stored()).schema).toBe(2)
+    expect((await stored()).schema).toBe(3)
   })
   it.each([[1, TIER_TTL_MS], [null, TIER_NULL_TTL_MS]] as const)('expires %s results at their exact TTL and keeps fresh entries across restarts', async (tier, ttl) => {
     await seed(tier)
@@ -432,19 +433,48 @@ describe('background tournament query cache', () => {
     expect(calls.filter(call => call.action === 'query')).toHaveLength(1)
     expect(events).toHaveLength(0)
   })
-  it('makes no tier request when all current paths are fresh and replaces schema 1', async () => {
+  it('makes no tier request when all current paths are fresh and replaces older schemas', async () => {
     await seed(3)
     const first = create()
     expect((await first.service.getCs2Schedule()).matches.every(match => match.tournament.tier === 3)).toBe(true)
     await vi.advanceTimersByTimeAsync(10_000)
     expect(calls).toHaveLength(1)
     await first.service.dispose()
-    await writeFile(join(directory, 'events', 'tiers.json'), JSON.stringify({ schema: 1, nextPage: 0, pages: {} }))
-    const next = create()
-    expect((await next.service.getCs2Schedule()).matches.every(match => match.tournament.tier === null)).toBe(true)
-    await vi.advanceTimersByTimeAsync(0)
-    expect((await stored()).schema).toBe(2)
-    expect(calls.filter(call => call.action === 'query')).toHaveLength(1)
+    for (const legacy of [{ schema: 1, nextPage: 0, pages: {} }, { schema: 2, entries: { 'PGL/2026/Masters': { tier: null, fetchedAt: NOW } } }]) {
+      calls.length = 0
+      await writeFile(join(directory, 'events', 'tiers.json'), JSON.stringify(legacy))
+      await rm(join(directory, 'events', 'liquipedia.json'), { force: true })
+      await rm(join(directory, 'events', 'liquipedia-attempt.json'), { force: true })
+      await rm(join(directory, 'events', 'liquipedia-http-attempt.json'), { force: true })
+      const next = create()
+      expect((await next.service.getCs2Schedule()).matches.every(match => match.tournament.tier === null)).toBe(true)
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect((await stored()).schema).toBe(3)
+      expect(calls.filter(call => call.action === 'query')).toHaveLength(1)
+      await next.service.dispose()
+    }
+  })
+  it('inherits the parent tournament tier for an existing stage subpage such as PGL Major Singapore Stage 1', async () => {
+    vi.setSystemTime(1795496400_000)
+    const request = vi.fn<typeof fetch>(async input => {
+      const params = new URL(String(input)).searchParams
+      if (params.get('action') === 'parse') return response(tickerFixture)
+      const titles = params.get('titles')!.split('|')
+      return response({ query: {
+        normalized: titles.includes('PGL/2026/Singapore/Stage_1') ? [{ from: 'PGL/2026/Singapore/Stage_1', to: 'PGL/2026/Singapore/Stage 1' }] : [],
+        pages: titles.map(title => title === 'PGL/2026/Singapore/Stage_1'
+          ? { title: 'PGL/2026/Singapore/Stage 1', categories: [{ title: 'Category:Pages storing into original match table' }] }
+          : { title, categories: [{ title: 'Category:Tournaments' }, { title: title === 'PGL/2026/Singapore' ? 'Category:S-Tier Tournaments' : 'Category:C-Tier Tournaments' }] }),
+      } })
+    })
+    const service = new EsportsService({ userDataDir: directory, version: '0.1.3', request, logos: null,
+      resolve: async () => ['93.184.216.34'], log: () => {}, onEvent: event => events.push({ ...event, at: Date.now() }) })
+    services.push(service)
+    await service.getCs2Schedule()
+    await vi.advanceTimersByTimeAsync(4_000)
+    const major = (await service.getCs2Schedule()).matches.find(item => item.tournament.name === 'PGL Major Singapore 2026')
+    expect(major?.tournament.tier).toBe(1)
+    expect((await stored()).entries['PGL/2026/Singapore/Stage_1']).toMatchObject({ tier: 1 })
   })
   it('retains old values on failure and retries the same paths only after five minutes', async () => {
     await seed(2, NOW - TIER_TTL_MS)
@@ -837,7 +867,7 @@ describe('channels behind the streams of the event 赛程 shows', () => {
         const links = pages[title]
         return response({ query: { pages: [links ? { ns: 0, title, extlinks: links.map(url => ({ url })) } : { ns: 0, title, missing: true }] } })
       }
-      return response({ query: { pages: title.split('|').map(page => ({ title: page })) } })
+      return response({ query: { pages: title.split('|').map(page => ({ title: page, categories: [{ title: 'Category:Tournaments' }] })) } })
     })
     const service = new EsportsService({ userDataDir: directory, version: '0.1.3', request, logos: null, resolve: async () => ['93.184.216.34'],
       log: () => {}, onEvent: event => events.push(event.data.type) })

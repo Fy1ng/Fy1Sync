@@ -43,7 +43,7 @@ export const tierRank = (tier: Cs2Match['tournament']['tier']): number => TIER_R
 export const TIER_LABEL: Record<string, string> = { '1': 'S', '2': 'A', '3': 'B', '4': 'C', '-1': '其他' }
 export const tierLabel = (tier: Cs2Match['tournament']['tier']): string | null => TIER_LABEL[String(tier)] ?? null
 
-/** Events by tier (S first), then those with a match on now, then by the earliest thing still to happen. */
+/** Live events first (by tier, S first), then non-live events (by tier, S first), then by the earliest thing still to happen. */
 export function groupEvents(schedule: Cs2Schedule | null): EventGroup[] {
   const groups = new Map<string, EventGroup>()
   for (const match of schedule?.matches ?? []) {
@@ -53,6 +53,7 @@ export function groupEvents(schedule: Cs2Schedule | null): EventGroup[] {
       group = { key, name: match.tournament.name, tier: match.tournament.tier, logo: null, live: [], upcoming: [], finished: [] }
       groups.set(key, group)
     }
+    group.tier ??= match.tournament.tier
     group.logo ??= match.tournament.logo
     group[match.state].push(match)
   }
@@ -63,8 +64,8 @@ export function groupEvents(schedule: Cs2Schedule | null): EventGroup[] {
     group.finished.sort((a, b) => b.startsAt - a.startsAt)
   }
   return [...groups.values()].sort((a, b) =>
-    tierRank(a.tier) - tierRank(b.tier)
-    || Number(b.live.length > 0) - Number(a.live.length > 0)
+    Number(b.live.length > 0) - Number(a.live.length > 0)
+    || tierRank(a.tier) - tierRank(b.tier)
     || soonest(a) - soonest(b))
 }
 

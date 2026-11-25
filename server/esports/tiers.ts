@@ -1,7 +1,8 @@
 export type TournamentTier = 1 | 2 | 3 | 4
 
+const TOURNAMENT_CATEGORY = 'Category:Tournaments'
 const CATEGORY_TIERS = { S: 1, A: 2, B: 3, C: 4 } as const
-const CATEGORIES = Object.keys(CATEGORY_TIERS).map(tier => `Category:${tier}-Tier Tournaments`).join('|')
+const CATEGORIES = [TOURNAMENT_CATEGORY, ...Object.keys(CATEGORY_TIERS).map(tier => `Category:${tier}-Tier Tournaments`)].join('|')
 const API_URL = 'https://liquipedia.net/counterstrike/api.php'
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
 const titleKey = (title: string): string => title.replaceAll('_', ' ')
@@ -26,8 +27,8 @@ export function normalizeTournamentPath(value: string): string | null {
   } catch { return null }
 }
 
-interface PageCategories { missing: boolean; tiers: Set<TournamentTier> }
-interface TierPage { missing: boolean; tier: TournamentTier | null }
+interface PageCategories { missing: boolean; tournament: boolean; tiers: Set<TournamentTier> }
+interface TierPage { standalone: boolean; tier: TournamentTier | null }
 
 /** Consume every category continuation before deciding whether a page is unclassified or conflicting. */
 async function queryBatch(paths: readonly string[], request: (url: string) => Promise<unknown>): Promise<Map<string, TierPage>> {
@@ -61,9 +62,10 @@ async function queryBatch(paths: readonly string[], request: (url: string) => Pr
       const key = titleKey(page.title), missing = page.missing === true
       let current = pages.get(key)
       if (current && current.missing !== missing) throw new Error('Inconsistent tier query page')
-      if (!current) { current = { missing, tiers: new Set() }; pages.set(key, current) }
+      if (!current) { current = { missing, tournament: false, tiers: new Set() }; pages.set(key, current) }
       for (const category of page.categories ?? []) {
         if (!object(category) || typeof category.title !== 'string') throw new Error('Invalid tier query category')
+        if (category.title === TOURNAMENT_CATEGORY) { current.tournament = true; continue }
         const match = /^Category:([SABC])-Tier Tournaments$/.exec(category.title)
         if (match) current.tiers.add(CATEGORY_TIERS[match[1] as keyof typeof CATEGORY_TIERS])
       }
@@ -88,12 +90,13 @@ async function queryBatch(paths: readonly string[], request: (url: string) => Pr
     }
     const page = pages.get(key)
     if (!page) throw new Error('Missing requested tier query page')
-    result.set(titleKey(path), { missing: page.missing, tier: page.tiers.size === 1 ? [...page.tiers][0]! : null })
+    const standalone = !page.missing && (page.tournament || page.tiers.size > 0)
+    result.set(titleKey(path), { standalone, tier: page.tiers.size === 1 ? [...page.tiers][0]! : null })
   }
   return result
 }
 
-/** Only a genuinely missing page can inherit a parent, at most two segments above the original path. */
+/** Missing pages and non-tournament stage subpages inherit a parent, at most two segments above the original path. */
 export async function queryTournamentTiers(paths: readonly string[], request: (url: string) => Promise<unknown>): Promise<{
   tiers: Map<string, TournamentTier | null>; failed: string[]
 }> {
@@ -115,7 +118,7 @@ export async function queryTournamentTiers(paths: readonly string[], request: (u
     for (const [original, state] of pending) {
       const page = known.get(titleKey(state.path))
       if (!page) { failed.add(original); pending.delete(original); continue }
-      if (!page.missing) { tiers.set(original, page.tier); pending.delete(original); continue }
+      if (page.standalone) { tiers.set(original, page.tier); pending.delete(original); continue }
       const slash = state.path.lastIndexOf('/')
       if (state.depth >= 2 || slash < 0) { tiers.set(original, null); pending.delete(original); continue }
       pending.set(original, { path: state.path.slice(0, slash), depth: state.depth + 1 })

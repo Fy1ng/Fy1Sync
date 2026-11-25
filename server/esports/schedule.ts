@@ -38,11 +38,12 @@ const SCHEDULE_REQUEST_TIMEOUT_MS = 60_000
 /** Refused for the 30-second parse quota; `at` is when the quota frees. */
 class RateLimited extends Error { constructor(readonly at: number) { super('Liquipedia parse quota') } }
 
+const TIER_CACHE_SCHEMA = 3
 interface CachedSchedule { fetchedAt: number; matches: Cs2Match[]; logoPaths: Map<string, string> }
 interface CachedTier { tier: TournamentTier | null; fetchedAt: number | null; retryAt?: number }
-interface CachedTiers { schema: 2; entries: Record<string, CachedTier> }
+interface CachedTiers { schema: typeof TIER_CACHE_SCHEMA; entries: Record<string, CachedTier> }
 interface CachedChannels extends EventChannels { at: number; failed: boolean; errorDetail?: import('../../src/core/errorDetails').ErrorDetails }
-const emptyTiers = (): CachedTiers => ({ schema: 2, entries: Object.create(null) as Record<string, CachedTier> })
+const emptyTiers = (): CachedTiers => ({ schema: TIER_CACHE_SCHEMA, entries: Object.create(null) as Record<string, CachedTier> })
 interface Dependencies {
   userDataDir: string
   bundledLogoDir?: string
@@ -82,9 +83,9 @@ class ScheduleDisk {
     const result = emptyTiers()
     try {
       const value = JSON.parse(readBounded(join(this.directory, 'tiers.json'))) as CachedTiers
-      if (value.schema !== 2 || !value.entries || typeof value.entries !== 'object' || Array.isArray(value.entries)) return result
+      if (value.schema !== TIER_CACHE_SCHEMA || !value.entries || typeof value.entries !== 'object' || Array.isArray(value.entries)) return result
       for (const [path, entry] of Object.entries(value.entries)) {
-        // Ignore malformed entries independently. A schema-1 table is never reused.
+        // Ignore malformed entries independently. Older schema tables are never reused.
         if (path.length > 2_000 || normalizeTournamentPath('/counterstrike/' + path.split('/').map(encodeURIComponent).join('/')) !== path
           || !entry || (entry.tier !== null && ![1, 2, 3, 4].includes(entry.tier))
           || (entry.fetchedAt !== null && (!Number.isSafeInteger(entry.fetchedAt) || entry.fetchedAt < 0))

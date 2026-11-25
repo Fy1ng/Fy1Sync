@@ -39,15 +39,58 @@ describe('groupEvents', () => {
     expect(groups[0]!.upcoming).toHaveLength(2)
   })
 
-  it('sorts by tier first, so an S-tier event leads even with nothing on now', () => {
+  it('orders all non-live events by tier, then by time', () => {
     const groups = groupEvents(schedule([
-      match('b-live', { event: 'B/Cup', tier: 3, state: 'live' }),
-      match('s', { event: 'Major/2026', tier: 1, startsAt: at + 86_400_000 }),
-      match('misc', { event: 'Misc/Cup', tier: -1, state: 'live' }),
-      match('unknown', { event: 'Unknown/Cup', tier: null, state: 'live' }),
-      match('a', { event: 'A/Cup', tier: 2 }),
+      match('unknown', { event: 'Unknown/Cup', tier: null, startsAt: at + 1_000 }),
+      match('c', { event: 'C/Cup', tier: 4, startsAt: at + 2_000 }),
+      match('s-late', { event: 'PGL/2026/Singapore/Stage_1', tier: 1, startsAt: at + 86_400_000 }),
+      match('misc', { event: 'Misc/Cup', tier: -1, startsAt: at + 3_000 }),
+      match('b', { event: 'B/Cup', tier: 3, startsAt: at + 4_000 }),
+      match('a', { event: 'A/Cup', tier: 2, startsAt: at + 5_000 }),
+      match('s-early', { event: 'IEM/2026', tier: 1, startsAt: at + 600_000 }),
     ]))
-    expect(groups.map((group) => group.tier)).toEqual([1, 2, 3, -1, null])
+    expect(groups.map((group) => [group.name, group.tier])).toEqual([
+      ['IEM 2026', 1],
+      ['PGL 2026 Singapore Stage_1', 1],
+      ['A Cup', 2],
+      ['B Cup', 3],
+      ['C Cup', 4],
+      ['Misc Cup', -1],
+      ['Unknown Cup', null],
+    ])
+  })
+
+  it('orders all live events by tier, then by time', () => {
+    const groups = groupEvents(schedule([
+      match('c', { event: 'United21/Season_59', tier: 4, state: 'live', startsAt: at - 900_000 }),
+      match('unknown', { event: 'Unknown/Cup', tier: null, state: 'live', startsAt: at - 800_000 }),
+      match('b', { event: 'B/Cup', tier: 3, state: 'live', startsAt: at - 700_000 }),
+      match('s', { event: 'PGL/2026/Singapore/Stage_1', tier: 1, state: 'live', startsAt: at - 100_000 }),
+      match('misc', { event: 'Misc/Cup', tier: -1, state: 'live', startsAt: at - 600_000 }),
+      match('a', { event: 'A/Cup', tier: 2, state: 'live', startsAt: at - 500_000 }),
+    ]))
+    expect(groups.map((group) => group.tier)).toEqual([1, 2, 3, 4, -1, null])
+  })
+
+  it('puts live events ahead of non-live events and orders each section by tier', () => {
+    const groups = groupEvents(schedule([
+      match('c-upcoming', { event: 'United21/Season_59', tier: 4, startsAt: at + 1_800_000 }),
+      match('unknown-live', { event: 'Unknown/Live', tier: null, state: 'live' }),
+      match('s-upcoming', { event: 'IEM/2026', tier: 1, startsAt: at + 86_400_000 }),
+      match('b-live', { event: 'B/Live', tier: 3, state: 'live' }),
+      match('misc-live', { event: 'Misc/Live', tier: -1, state: 'live' }),
+      match('s-live', { event: 'PGL/2026/Singapore/Stage_1', tier: 1, state: 'live' }),
+      match('a-upcoming', { event: 'A/Upcoming', tier: 2, startsAt: at + 3_600_000 }),
+    ]))
+    expect(groups.map((group) => [group.live.length > 0, group.tier])).toEqual([
+      [true, 1],
+      [true, 3],
+      [true, -1],
+      [true, null],
+      [false, 1],
+      [false, 2],
+      [false, 4],
+    ])
   })
 
   it('labels tiers the way Liquipedia names them', () => {
