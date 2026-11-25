@@ -544,21 +544,21 @@ export function buildFfmpegArgs(input: BufferInput, directory: string, runId: nu
     if (!['webm', 'mp4'].includes(input.adaptive.videoContainer)) throw new Error('invalid adaptive input')
     if (audioInput !== 'pipe:3' && !/^\\\\\.\\pipe\\stream-syncer-[a-f0-9-]+$/.test(audioInput)) throw new Error('invalid audio pipe')
     return ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-progress', 'pipe:1', '-stats_period', '0.5',
-      '-protocol_whitelist', 'pipe', '-thread_queue_size', '512', '-analyzeduration', '1000000', '-probesize', '1048576',
+      '-protocol_whitelist', 'pipe', '-analyzeduration', '1000000', '-probesize', '1048576',
       '-f', input.adaptive.videoContainer === 'webm' ? 'matroska' : 'mov', '-i', 'pipe:0',
-      '-protocol_whitelist', audioInput === 'pipe:3' ? 'pipe' : 'file', '-thread_queue_size', '512',
+      '-protocol_whitelist', audioInput === 'pipe:3' ? 'pipe' : 'file',
       '-analyzeduration', '1000000', '-probesize', '1048576', '-f', 'mov', '-i', audioInput,
-      '-map', '0:v:0', '-map', '1:a:0', ...hlsOutput(directory, runId, true)]
+      '-map', '0:v:0', '-map', '1:a:0', ...hlsOutput(directory, runId, true, true)]
   }
   const dual = Boolean(input.audioUrl)
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-progress', 'pipe:1', '-stats_period', '0.5']
-  args.push(...buildInputArgs(input.url, input, dual))
-  if (input.audioUrl) args.push(...buildInputArgs(input.audioUrl, input, true))
-  args.push(...(dual ? ['-map', '0:v:0', '-map', '1:a:0'] : ['-map', '0:v:0?', '-map', '0:a:0?']), ...hlsOutput(directory, runId, forceFmp4 || dual))
+  args.push(...buildInputArgs(input.url, input))
+  if (input.audioUrl) args.push(...buildInputArgs(input.audioUrl, input))
+  args.push(...(dual ? ['-map', '0:v:0', '-map', '1:a:0'] : ['-map', '0:v:0?', '-map', '0:a:0?']), ...hlsOutput(directory, runId, forceFmp4 || dual, dual))
   return args
 }
 
-function buildInputArgs(rawUrl: string, input: BufferInput, dual: boolean): string[] {
+function buildInputArgs(rawUrl: string, input: BufferInput): string[] {
   const url = new URL(rawUrl)
   const local = url.protocol === 'file:' && input.realtime === true
   if ((!local && !['http:', 'https:'].includes(url.protocol)) || url.username || url.password || /[\r\n\0]/.test(rawUrl)) throw new Error('invalid input')
@@ -567,7 +567,6 @@ function buildInputArgs(rawUrl: string, input: BufferInput, dual: boolean): stri
   // This build reads http_proxy only. Explicit input options and a cleaned child
   // environment keep the selected route independent from inherited proxy variables.
   args.push('-protocol_whitelist', local ? 'file,crypto' : 'http,https,tcp,tls,crypto,httpproxy')
-  if (dual) args.push('-thread_queue_size', '512')
   // Do not enable ffmpeg HTTP reconnect options: a signed Huya FLV URL is single-use.
   // EOF and stalls return to launch(), which asks acquisition for a newly signed URL.
   if (!local) {
@@ -599,13 +598,15 @@ function buildInputArgs(rawUrl: string, input: BufferInput, dual: boolean): stri
   return args
 }
 
-function hlsOutput(directory: string, runId: number, fmp4: boolean): string[] {
+function hlsOutput(directory: string, runId: number, fmp4: boolean, dual = false): string[] {
   // ffmpeg's hls muxer finds the directory of the init segment by searching the playlist path
   // for '/' only. With Windows backslashes it finds none and writes init_<n>.mp4 into the
   // process working directory instead of the buffer, and the player can never load it.
   // Forward slashes are valid Windows paths and keep every output next to the playlist.
   const dir = process.platform === 'win32' ? directory.replace(/\\/g, '/') : directory
+  // In FFmpeg 9+, -thread_queue_size is an output muxer option (also accepted on output in FFmpeg 8).
   return ['-c', 'copy', '-sn', '-dn',
+    ...(dual ? ['-thread_queue_size', '512'] : []),
     ...(fmp4 ? ['-bsf:a', 'aac_adtstoasc'] : []),
     '-f', 'hls', '-hls_time', '2', '-hls_list_size', String(RAW_MANIFEST_SEGMENTS), '-hls_flags', 'temp_file+program_date_time+omit_endlist',
     ...(fmp4 ? ['-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', `init_${runId}.mp4`] : []),
