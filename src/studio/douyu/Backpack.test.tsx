@@ -121,6 +121,25 @@ describe('backpack inventory', () => {
     expect(screen.getByText('当前账号未登录。请在「账号」中登录后使用背包。')).toBeInTheDocument()
     expect(calls).toEqual([])
   })
+
+  it('waits for a valid target room instead of sending an empty-room inventory request', async () => {
+    const disconnected: DouyuData = {
+      ...dataFor(true),
+      tasks: { activeAccountId: 'a1', currentRoom: null, retainedRooms: [], tasks: [] } as unknown as DouyuData['tasks'],
+    }
+    render(<Backpack data={disconnected} room={null} />)
+    expect(screen.getByText('请填写目标房间号，或先连接直播间')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '刷新库存' })).toBeDisabled()
+    expect(calls).toEqual([])
+
+    fireEvent.change(screen.getByRole('textbox', { name: '目标房间号' }), { target: { value: '100' } })
+    expect(calls).toEqual([])
+    const refresh = screen.getByRole('button', { name: '刷新库存' })
+    expect(refresh).toBeEnabled()
+    fireEvent.click(refresh)
+    await screen.findByText('神秘道具')
+    expect(named('getDouyuInventory')).toEqual([{ method: 'getDouyuInventory', args: { accountId: 'a1', room: '100' } }])
+  })
 })
 
 describe('gifting from the backpack', () => {

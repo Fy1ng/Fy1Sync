@@ -20,6 +20,7 @@ import type { Lane } from './taskActions'
 import { useRemembered } from '../../app/remembered'
 import { DouyuWritesPane, useDouyuWrites } from '../douyuWrites'
 import { ErrorText } from '../../ui/ErrorDetails'
+import { isReadOnlyDanmakuRoom } from '../../../server/danmaku/types'
 
 type Tab = 'accounts' | 'following' | 'tasks' | 'automations' | 'backpack' | 'renewal' | 'experimental'
 /** Pages that only write to Douyu; hidden until 斗鱼写操作 is on. */
@@ -49,7 +50,7 @@ export function DouyuDesk({ onWatch, platformNavigation, accountAside }: {
   const shown = !writes && WRITE_TABS.has(remembered) ? 'accounts' : remembered
   const automations = useAutomations(shown === 'automations')
   const active = data.active
-  const room = danmaku.room?.startsWith('huya:') ? null : danmaku.room
+  const room = isReadOnlyDanmakuRoom(danmaku.room) ? null : danmaku.room
 
   return (
     <SideTabs label="斗鱼" value={shown} onChange={setTab} parentNavigation={platformNavigation}

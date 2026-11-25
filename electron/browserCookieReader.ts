@@ -86,7 +86,7 @@ export function browserCookieReader(helper: CredentialHelperOptions): BrowserCoo
           skipped++; continue
         }
         const name = String(row.name ?? '')
-        if (!value || value.length > 32768 || /[\x00-\x20\x7f;]/.test(value)
+        if (!value || value.length > 32768 || /[^\x21-\x7e]|;/.test(value)
           || !/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name)) { skipped++; continue }
         cookies.push({ domain: host, path: String(row.path || '/'), name, value,
           hostOnly: !host.startsWith('.'), secure: Boolean(row[firefox ? 'isSecure' : 'is_secure']),

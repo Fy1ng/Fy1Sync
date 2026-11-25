@@ -365,6 +365,12 @@ describe('fishing credentials and bounded transport', () => {
     expectPrivate(result)
   })
 
+  it('ignores commas and JSON in unrelated browser cookies', async () => {
+    const request = scripted(home(2), jsonp(), receipt(), home(0))
+    const browserHeader = `${COOKIE}; Hm_lvt_test=1761000000,1762000000; dy_teen_mode={"status":0}`
+    expect((await setup({ request, cookieHeader: async () => browserHeader }).actions.run(task, signal())).status).toBe('scheduled')
+  })
+
   it.each([
     COOKIE.replace('acf_uid=42', 'acf_uid=43'), COOKIE.replace('synthetic-auth', 'synthetic-other-auth'),
     COOKIE.replace('acf_ccn=synthetic%2Fcsrf%2Btoken; ', ''),

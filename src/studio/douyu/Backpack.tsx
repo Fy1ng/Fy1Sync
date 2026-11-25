@@ -37,9 +37,11 @@ export function Backpack({ data, room, canGive = true }: { data: DouyuData; room
   const loggedIn = !!active?.login.loggedIn
   const ready = loggedIn && !data.accountsBusy
   const currentRoom = data.tasks?.currentRoom ?? room ?? null
+  const connectedRoom = currentRoom && roomOk(currentRoom) ? currentRoom : null
 
   const gift = useGiftPlan(accountId)
-  const [roomText, setRoomText] = useState(room ?? '')
+  const [roomText, setRoomText] = useState(connectedRoom ?? '')
+  const targetRoom = roomText === '' ? connectedRoom : roomOk(roomText) ? roomText : null
   // Per account: reopening shows the last backpack at once; it is read again on open as before.
   const [inventory, setInventory] = useRemembered<DouyuInventorySnapshot | null>(accountId ? `douyu:inventory:${accountId}` : null, null)
   const [reading, setReading] = useState(false)
@@ -76,20 +78,21 @@ export function Backpack({ data, room, canGive = true }: { data: DouyuData; room
   shownRoom.current = roomText
   const giving = gift.busy === 'give'
   useEffect(() => {
-    const next = room ?? ''
+    const next = connectedRoom ?? ''
     if (edited.current || giving || shownRoom.current === next) return
     discard()
     setRoomText(next)
-  }, [room, giving, discard])
+  }, [connectedRoom, giving, discard])
 
-  const load = async (): Promise<void> => {
-    if (!accountId || !ready || gift.busy === 'give') return
+  const load = async (roomOverride?: string): Promise<void> => {
+    const askedRoom = roomOverride ?? targetRoom
+    if (!accountId || !ready || !askedRoom || gift.busy === 'give') return
     discard()
     const mine = ++generation.current
     const asked = accountId
     setReading(true); setReadError('')
     try {
-      const response = await apiClient.feature('getDouyuInventory', { accountId: asked, ...(roomOk(roomText) ? { room: roomText } : {}) })
+      const response = await apiClient.feature('getDouyuInventory', { accountId: asked, room: askedRoom })
       if (!mounted.current || mine !== generation.current) return
       if (!response.ok) { setReadError(response); return }
       if (!snapshotOk(response.value, asked)) throw new Error('bad snapshot', { cause: response })
@@ -101,14 +104,15 @@ export function Backpack({ data, room, canGive = true }: { data: DouyuData; room
     }
   }
 
-  const readKey = accountId && ready ? `${accountId}:${active?.login.nickname ?? ''}:${active?.login.expiresAt ?? ''}` : null
-  // Reading is harmless, so the backpack is read once when the page opens for an account.
+  const autoTarget = !edited.current ? connectedRoom : null
+  const readKey = accountId && ready && autoTarget ? `${accountId}:${active?.login.nickname ?? ''}:${active?.login.expiresAt ?? ''}:${autoTarget}` : null
+  // Reading is harmless, so the backpack is read once when a connected room is available for an account.
   useEffect(() => {
-    if (!readKey) { autoRead.current = null; return }
+    if (!readKey || !autoTarget) { if (!accountId || !ready) autoRead.current = null; return }
     if (autoRead.current === readKey) return
     autoRead.current = readKey
-    void load()
-  }, [readKey]) // load reads the latest room; it is not a trigger
+    void load(autoTarget)
+  }, [readKey, autoTarget, accountId, ready]) // load reads the latest room; it is not a trigger
 
   if (!active) return <div className="desk-pane"><p className="desk-empty">未设置当前账号。请在「账号」中设置。</p></div>
   if (!loggedIn) return <div className="desk-pane"><p className="desk-empty">当前账号未登录。请在「账号」中登录后使用背包。</p></div>
@@ -129,7 +133,7 @@ export function Backpack({ data, room, canGive = true }: { data: DouyuData; room
               setRoomText(event.target.value.trim())
             }} />
         </label>
-        <button type="button" className="btn-quiet small" disabled={!ready || reading || gift.busy === 'give'} onClick={() => void load()}>
+        <button type="button" className="btn-quiet small" disabled={!ready || !targetRoom || reading || gift.busy === 'give'} onClick={() => void load()}>
           {reading ? '读取中…' : '刷新库存'}
         </button>
         <span className="muted">账号 <b>{active.label}</b></span>

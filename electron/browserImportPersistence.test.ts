@@ -56,4 +56,16 @@ describe('browser import persistence through existing account ownership', () => 
     await expect(accounts.importCookies(douyu('84'), { uid: '84', username: 'invalid\nname' }, { kind: 'new' })).rejects.toThrow()
     expect((await accounts.snapshot()).accounts).toHaveLength(1)
   })
+  it('reuses a signed-out default slot with anonymous cookies and activates an import when no account was active', async () => {
+    const directory = root(); const defaultLogin = login(directory)
+    const accounts = new DouyuAccountManager(directory, { defaultLogin, createLogin: login }); managers.push(accounts)
+    ;(defaultLogin as unknown as { store: { write: (platform: 'douyu', cookies: BrowserCookie[]) => void } }).store
+      .write('douyu', [{ domain: '.douyu.com', path: '/', name: 'dy_did', value: '1'.repeat(32), session: true }])
+    expect(await accounts.importCookies(douyu('42'), { uid: '42', username: '复用默认' })).toBe('default')
+    expect(accounts.activeAccountId).toBe('default')
+    await accounts.remove('default')
+    expect(accounts.activeAccountId).toBeNull()
+    const created = await accounts.importCookies(douyu('84'), { uid: '84', username: '新建并激活' })
+    expect(accounts.activeAccountId).toBe(created)
+  })
 })

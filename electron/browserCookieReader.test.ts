@@ -24,16 +24,17 @@ describe('Firefox browser Cookie reader', () => {
     insert.run('.bilibili.com', 'DedeUserID', '42', '/', expiry, 1, 0, 1, '')
     insert.run('.bilibili.com', 'container', 'synthetic', '/', expiry, 1, 0, 0, '^userContextId=1')
     insert.run('.bilibili.com', 'expired', 'synthetic', '/', 1n, 1, 0, 0, '')
+    insert.run('.bilibili.com', 'non_ascii', '中文值', '/', expiry, 1, 0, 0, '')
     insert.run('.notbilibili.com', 'SESSDATA', 'unrelated', '/', expiry, 1, 0, 0, '')
     const profile: DiscoveredBrowserProfile = { id: 'f'.repeat(32), browser: 'firefox', browserName: 'Firefox', name: 'test', isDefault: true, directory, database: file }
     const result = await browserCookieReader({ executable: 'not-used' })(profile, ['bilibili'], new AbortController().signal)
     expect(result.cookies).toHaveLength(2)
-    expect(result.skipped).toBe(2)
+    expect(result.skipped).toBe(3)
     expect(result.cookies[0]).toMatchObject({ name: 'SESSDATA', httpOnly: true, secure: true,
       expirationDate: Number(expiry / 1000n), sameSite: 'lax', hostOnly: false })
     insert.run('.bilibili.com', 'LIVE', 'new-cookie', '/', expiry, 1, 0, 0, '')
     expect((await browserCookieReader({ executable: 'not-used' })(profile, ['bilibili'], new AbortController().signal)).cookies).toHaveLength(3)
-    expect(database.prepare('SELECT COUNT(*) AS n FROM moz_cookies').get()?.n).toBe(6)
+    expect(database.prepare('SELECT COUNT(*) AS n FROM moz_cookies').get()?.n).toBe(7)
   })
   it('rejects cancelled reads before opening a browser database', async () => {
     const controller = new AbortController(); controller.abort()

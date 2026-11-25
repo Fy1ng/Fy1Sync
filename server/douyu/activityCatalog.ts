@@ -112,15 +112,22 @@ export function automationRecipient(context: AutomationContext, receipt: Record<
   if (['error', 'code', 'result'].some(name => Object.hasOwn(receipt, name) && automationNumber(receipt[name]) !== 0)) throw new AutomationFault('invalid-response')
 }
 
+const AUTOMATION_COOKIE_FIELDS = new Set([
+  'acf_uid', 'acf_auth', 'acf_auth_wl', 'acf_dmjwt_token', 'acf_stk', 'acf_ltkid', 'acf_biz', 'acf_ct',
+  'acf_ccn', 'acf_yb_t', 'cvl_csrf_token',
+])
+
 function cookieFields(header: string): Map<string, string> {
   if (!header || header.length > 32_768 || !/^[\x20-\x7e]+$/.test(header)) throw new AutomationFault('login')
   const fields = new Map<string, string>()
   for (const part of header.split(';')) {
     if (!part.trim()) continue
     const separator = part.indexOf('=')
-    const name = part.slice(0, separator).trim()
+    const name = separator < 1 ? '' : part.slice(0, separator).trim()
+    if (!/^[!#$%&'*+.^_`|~A-Za-z0-9-]+$/.test(name)) throw new AutomationFault('login')
+    if (!AUTOMATION_COOKIE_FIELDS.has(name)) continue
     const encoded = part.slice(separator + 1).trim()
-    if (separator < 1 || !/^[!#$%&'*+.^_`|~A-Za-z0-9-]+$/.test(name) || /[\s\x00-\x1f\x7f"\\,;]/.test(encoded) || fields.has(name)) throw new AutomationFault('login')
+    if (/[\s\x00-\x1f\x7f"\\,;]/.test(encoded) || fields.has(name)) throw new AutomationFault('login')
     let value: string
     try { value = decodeURIComponent(encoded) } catch { throw new AutomationFault('login') }
     if (value.length > 8_192 || /[\x00-\x1f\x7f]/.test(value)) throw new AutomationFault('login')

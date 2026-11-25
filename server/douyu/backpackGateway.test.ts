@@ -152,6 +152,7 @@ describe('strict credentials and account continuity', () => {
   it.each([
     'acf_uid=42; acf_auth_wl=fixture-auth', 'acf_uid=42; acf_dmjwt_token=fixture.jwt.token',
     'acf_uid=42; acf_stk=fixture-stk; acf_ltkid=9; acf_biz=1',
+    `${cookie}; Hm_lvt_test=1761000000,1762000000; dy_teen_mode={"status":0}`,
   ])('accepts recognized existing authentication material without inventing more %#', async header => {
     const { gateway } = setup({ cookieHeader: async () => header })
     expect(await gateway.readBadges('account-one', signal())).toEqual({ uid: '42', html })

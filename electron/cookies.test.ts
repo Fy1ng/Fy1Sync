@@ -215,6 +215,7 @@ describe('private cookie storage', () => {
       cookie({ domain: 'other.douyu.com', name: 'OTHER' }),
       cookie({ domain: '.douyu.com', name: 'WRONG_PATH', path: '/member' }),
       cookie({ domain: '.douyu.com', name: 'EXPIRED', expirationDate: now - 1 }),
+      cookie({ domain: '.douyu.com', name: 'NON_ASCII', value: '中文' }),
     ])
     expect(await manager.cookieHeader('douyu')).toBe('acf_auth=valid; dy_did=did')
   })

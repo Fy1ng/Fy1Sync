@@ -258,8 +258,9 @@ export class DouyuAccountManager {
         if (await manager.savedUserId?.('douyu') === identity.uid) { id = account.id; break }
       }
       if (!id && target.kind === 'auto' && this.registry.accounts.some(account => account.id === 'default') && !this.busy.has('default')) {
-        const status = (await this.manager('default').loginStatus()).douyu
-        if (!status.cookieCount) id = 'default'
+        const defaultManager = this.manager('default')
+        const status = (await defaultManager.loginStatus()).douyu
+        if (!status.loggedIn && !(await defaultManager.savedUserId?.('douyu'))) id = 'default'
       }
     }
     if (signal?.aborted) throw new LoginError('login-cancelled')
@@ -276,6 +277,7 @@ export class DouyuAccountManager {
         if (!manager.importCookies) throw new DouyuAccountError('storage-failed')
         await manager.importCookies('douyu', cookies, identity, signal)
       })
+      if (this.activeAccountId === null) await this.activate(selected)
       return selected
     } catch (error) {
       if (created) {

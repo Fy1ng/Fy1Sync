@@ -33,12 +33,13 @@ export function rewardCredentials(header: unknown): RewardCredentials {
     if (separator < 1) return invalid()
     const name = part.slice(0, separator).trim()
     const raw = part.slice(separator + 1).trim()
-    if (!/^[!#$%&'*+.^_`|~A-Za-z0-9-]+$/.test(name) || /[\s\x00-\x1f\x7f"\\,;]/.test(raw)) return invalid()
+    if (!/^[!#$%&'*+.^_`|~A-Za-z0-9-]+$/.test(name)) return invalid()
     if (!CREDENTIAL_FIELDS.has(name)) continue
+    if (/[\s\x00-\x1f\x7f"\\,;]/.test(raw)) return invalid()
     let value: string
     try { value = decodeURIComponent(raw) } catch { return invalid() }
     if (value.length > 8_192 || /[\x00-\x1f\x7f-\x9f]/.test(value) || /^(null|undefined)$/i.test(value)) return invalid()
-    if (name !== 'acf_username' && value && !/^[A-Za-z0-9._~+\/=:-]+$/.test(value)) return invalid()
+    if (name !== 'acf_username' && value && !/^[A-Za-z0-9._~+%\/=|:-]+$/.test(value)) return invalid()
     // Douyu can set the same device ID on both the parent domain and the exact host.
     // Equal device values are unambiguous; conflicting devices and duplicate auth stay rejected.
     if (fields.has(name) && (name !== 'dy_did' || fields.get(name) !== value)) return invalid()
@@ -49,10 +50,10 @@ export function rewardCredentials(header: unknown): RewardCredentials {
   const csrf = fields.get('acf_ccn') || null
   const device = fields.get('dy_did') || null
   const xsrf = fields.get('XSRF-TOKEN') || null
-  if ([csrf, xsrf].some(value => value !== null && !/^[A-Za-z0-9._~+\/=:-]{1,2048}$/.test(value))) return invalid()
+  if ([csrf, xsrf].some(value => value !== null && !/^[A-Za-z0-9._~+%\/=|:-]{1,2048}$/.test(value))) return invalid()
   if (device !== null && !/^[A-Za-z0-9_-]{8,128}$/.test(device)) return invalid()
-  // Store only a digest when a result needs a subsequent scheduled read.
-  const fingerprint = createHash('sha256').update(JSON.stringify([uid, ...AUTH_FIELDS.map(name => fields.get(name) ?? ''), csrf, device, xsrf])).digest('hex')
+  // Store only a digest when a result needs a subsequent scheduled read; XSRF cookies may be path-scoped.
+  const fingerprint = createHash('sha256').update(JSON.stringify([uid, ...AUTH_FIELDS.map(name => fields.get(name) ?? ''), csrf, device])).digest('hex')
   return { uid, header, csrf, device, xsrf, fingerprint }
 }
 

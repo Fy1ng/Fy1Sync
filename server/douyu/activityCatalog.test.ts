@@ -97,4 +97,11 @@ describe('automation transport boundary', () => {
     const { http } = setup([new Response('fixture-private-upstream', { status: 302, headers: { location: 'https://evil.test/' } })])
     await expect(http.request(context(), 'https://www.douyu.com/test')).rejects.toMatchObject({ reason: 'too-many-redirects' })
   })
+
+  it('ignores commas, JSON and raw percent signs in unrelated browser cookies', async () => {
+    const browserCookie = `${COOKIE}; Hm_lvt_test=1761000000,1762000000; dy_teen_mode={"status":0}; raw_pct=50%`
+    const { http, request } = setup([Response.json({ error: 0, data: {} })], { cookieHeader: async () => browserCookie })
+    await expect(http.request(context(), 'https://www.douyu.com/test')).resolves.toEqual({ error: 0, data: {} })
+    expect(request).toHaveBeenCalledTimes(1)
+  })
 })

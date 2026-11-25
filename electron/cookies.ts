@@ -101,7 +101,8 @@ function selectedCookies<T extends BrowserCookie>(cookies: T[], target: URL): T[
 }
 
 function platformHeader(cookies: StoredCookie[], target: URL): string {
-  return selectedCookies(cookies, target).map(cookie => `${cookie.name}=${cookie.value}`).join('; ')
+  return selectedCookies(cookies, target).filter(cookie => !/[^\x21-\x7e]|;/.test(cookie.value))
+    .map(cookie => `${cookie.name}=${cookie.value}`).join('; ')
 }
 
 /** Bind the same domain/path selection that the persisted current-user request will use. */

@@ -55,19 +55,20 @@ function credentialsFrom(header: unknown): Credentials {
     if (separator < 1) throw new DouyuRenewalGatewayError('login-required')
     const name = part.slice(0, separator).trim()
     const rawValue = part.slice(separator + 1).trim()
-    if (!/^[!#$%&'*+.^_`|~A-Za-z0-9-]+$/.test(name) || /[\s\x00-\x1f\x7f"\\,;]/.test(rawValue)) throw new DouyuRenewalGatewayError('login-required')
+    if (!/^[!#$%&'*+.^_`|~A-Za-z0-9-]+$/.test(name)) throw new DouyuRenewalGatewayError('login-required')
     if (!CREDENTIAL_FIELDS.has(name)) continue
+    if (/[\s\x00-\x1f\x7f"\\,;]/.test(rawValue)) throw new DouyuRenewalGatewayError('login-required')
     if (fields.has(name)) throw new DouyuRenewalGatewayError('login-required')
     let value: string
     try { value = decodeURIComponent(rawValue) } catch { throw new DouyuRenewalGatewayError('login-required') }
     if (value.length > 8_192 || /[\x00-\x1f\x7f-\x9f]/.test(value) || /^(null|undefined)$/i.test(value)) throw new DouyuRenewalGatewayError('login-required')
-    if ((AUTH_FIELDS as readonly string[]).includes(name) && value && !/^[A-Za-z0-9._~+\/=:-]+$/.test(value)) throw new DouyuRenewalGatewayError('login-required')
+    if ((AUTH_FIELDS as readonly string[]).includes(name) && value && !/^[A-Za-z0-9._~+%\/=|:-]+$/.test(value)) throw new DouyuRenewalGatewayError('login-required')
     fields.set(name, value)
   }
   const uid = fields.get('acf_uid')
   if (!validUid(uid) || !(fields.get('acf_auth') || fields.get('acf_auth_wl') || fields.get('acf_dmjwt_token') || (fields.get('acf_stk') && fields.get('acf_ltkid') && fields.get('acf_biz')))) throw new DouyuRenewalGatewayError('login-required')
   const xsrf = fields.get('XSRF-TOKEN') ?? null
-  if (xsrf !== null && (!/^[A-Za-z0-9._~+\/=:-]{1,2048}$/.test(xsrf))) throw new DouyuRenewalGatewayError('login-required')
+  if (xsrf !== null && (!/^[A-Za-z0-9._~+%\/=|:-]{1,2048}$/.test(xsrf))) throw new DouyuRenewalGatewayError('login-required')
   return { uid, header, xsrf, fingerprint: JSON.stringify([uid, ...AUTH_FIELDS.map(field => fields.get(field) ?? '')]) }
 }
 

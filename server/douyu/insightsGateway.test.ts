@@ -16,7 +16,7 @@ function setup(responses: Array<unknown | Error>, options: { now?: number; inval
     if (response === undefined) throw new Error('unexpected request')
     return response instanceof Response ? response : Response.json(response)
   })
-  const cookieHeader = vi.fn(async () => cookie)
+  const cookieHeader = vi.fn(async (_accountId: string, _url: string) => cookie)
   const gateway = new DouyuInsightsGateway({ proxy: resolveConfig({}).proxy, request, cookieHeader,
     resolve: async () => [options.invalidDns ? 'not-an-ip' : '8.8.8.8'], now: () => options.now ?? NOW })
   return { gateway, request, cookieHeader, setCookie: (value: string) => { cookie = value } }
@@ -70,6 +70,18 @@ describe('read-only followed room gateway', () => {
     expect(await f.gateway.readFollowedRooms('a', idle())).toMatchObject({ coverage: 'all-pages', rooms: [] })
     expect(await f.gateway.readWatchTime('a', '100', idle())).toMatchObject({ seconds: 123 })
     expect(f.request).toHaveBeenCalledTimes(2)
+  })
+  it('accepts browser-imported cookies containing commas, JSON, quotes and path-scoped XSRF tokens', async () => {
+    const f = setup([
+      envelope({ pageCount: 0, total: 0, list: [] }),
+      envelope({ uid: 42, rid: 6979222, watchTime: 4810476 }),
+      envelope({ badgeLevel: 22 }),
+    ])
+    const browserCookies = `${COOKIE}; Hm_lvt_e99aee90ec1b2106afe7ec3b199020a7=1761000000,1762000000; dy_teen_mode={"status":0,"tip":"off"}`
+    f.cookieHeader.mockImplementation(async (_account, url) =>
+      url.includes('/japi/') ? `${browserCookies}; XSRF-TOKEN=eyJpdiI6ImFiYyJ9%7Csig` : browserCookies)
+    expect(await f.gateway.readFollowedRooms('a', idle())).toMatchObject({ coverage: 'all-pages', rooms: [] })
+    expect(await f.gateway.readFansWatchTime('a', '6979222', idle())).toMatchObject({ seconds: 4810476, badgeOwned: true, badgeLevel: 22 })
   })
   it('still checks credential continuity between distinct pagination requests', async () => {
     const f = setup([envelope({ pageCount: 2, total: 2, list: [followed('100')] })])

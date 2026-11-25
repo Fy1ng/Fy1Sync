@@ -32,7 +32,7 @@ function cookies(header: string): Map<string, string> {
   if (typeof header !== 'string' || header.length > 32_768 || /[\x00-\x1f\x7f]/.test(header)) throw new Error('Invalid credentials')
   const values = new Map<string, string>()
   for (const part of header.split(';')) {
-    const match = /^\s*([A-Za-z0-9_-]+)=([^;\s]*)\s*$/.exec(part)
+    const match = /^\s*([!#$%&'*+.^_`|~A-Za-z0-9-]+)=([^;\s]*)\s*$/.exec(part)
     if (!match) { if (part.trim()) throw new Error('Invalid credentials'); continue }
     if (values.has(match[1]!)) throw new Error('Ambiguous credentials')
     values.set(match[1]!, match[2]!)

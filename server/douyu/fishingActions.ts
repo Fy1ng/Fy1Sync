@@ -72,12 +72,13 @@ function credentialsFrom(header: unknown): Credentials {
     if (separator < 1) throw new FishingFault('login')
     const name = part.slice(0, separator).trim()
     const raw = part.slice(separator + 1).trim()
-    if (!/^[!#$%&'*+.^_`|~A-Za-z0-9-]+$/.test(name) || /[\s\x00-\x1f\x7f"\\,;]/.test(raw)) throw new FishingFault('login')
+    if (!/^[!#$%&'*+.^_`|~A-Za-z0-9-]+$/.test(name)) throw new FishingFault('login')
     if (!CREDENTIAL_FIELDS.has(name)) continue
+    if (/[\s\x00-\x1f\x7f"\\,;]/.test(raw)) throw new FishingFault('login')
     if (fields.has(name)) throw new FishingFault('login')
     let value: string
     try { value = decodeURIComponent(raw) } catch { throw new FishingFault('login') }
-    if (value.length > 8_192 || !/^[A-Za-z0-9._~+\/=:-]*$/.test(value) || /^(null|undefined)$/i.test(value)) throw new FishingFault('login')
+    if (value.length > 8_192 || !/^[A-Za-z0-9._~+%\/=|:-]*$/.test(value) || /^(null|undefined)$/i.test(value)) throw new FishingFault('login')
     fields.set(name, value)
   }
   const uid = fields.get('acf_uid')
