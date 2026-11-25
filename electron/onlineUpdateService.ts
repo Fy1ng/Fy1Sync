@@ -283,7 +283,9 @@ export class OnlineUpdateService {
       } else {
         this.phase = 'error'
         this.errorDetail = diagnosticDetails(error)
+        const unpublished = kind === 'check' && (error as { status?: unknown })?.status === 404
         this.message = this.cacheInvalid ? '本地更新切换未能安全完成。已停止在线更新，下次启动不会启用已撤回的前端包。'
+          : unpublished ? '所选来源尚未发布在线更新清单。已保留原版本，可切换来源或前往发布页下载安装包。'
           : `${kind === 'check' ? '更新检查' : '更新下载或校验'}失败。已保留原版本和已验证缓存，请重试或手动选择其他来源。`
       }
     }).then(() => {

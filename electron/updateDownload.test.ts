@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NetworkPolicy, installNetworkPolicy } from '../server/networkPolicy'
-import { isPublicUpdateAddress, readUpdateDownload, streamUpdateDownload } from './updateDownload'
+import { isUsableUpdateAddress, readUpdateDownload, streamUpdateDownload } from './updateDownload'
 
 const url = 'https://updates.example.org/file.json'
 const options = () => ({ signal: new AbortController().signal, limit: 1024, resolve: async () => ['93.184.216.34'] })
@@ -19,31 +19,44 @@ describe('executable update downloads', () => {
     expect(init?.headers).not.toHaveProperty('Authorization')
   })
 
-  it.each(['0.0.0.0', '10.1.2.3', '127.0.0.1', '100.64.0.1', '169.254.169.254', '172.31.255.255', '192.168.1.5', '192.0.2.1', '198.19.0.1', '198.51.100.7', '203.0.113.9', '224.0.0.1', '255.255.255.255', '::', '::1', 'fc00::1', 'fe80::1', '::ffff:127.0.0.1', '2001:db8::1', '3fff::1', '3fff:fff::1', '2002:7f00:1::', 'invalid-address'])('refuses non-public DNS address %s before any request', async address => {
-    expect(isPublicUpdateAddress(address)).toBe(false)
+  it.each(['0.0.0.0', '0.1.2.3', '224.0.0.1', '239.255.255.250', '255.255.255.255', '::', '0:0:0:0:0:0:0:0', '::ffff:0.0.0.0', '::ffff:224.0.0.1', 'ff02::1', 'fe80::1%eth0', 'invalid-address'])('refuses non-unicast or unspecified DNS address %s before any request', async address => {
+    expect(isUsableUpdateAddress(address)).toBe(false)
     const request = vi.fn()
-    await expect(readUpdateDownload(url, { ...options(), resolve: async () => [address], request })).rejects.toThrow()
+    await expect(readUpdateDownload(url, { ...options(), resolve: async () => [address], request })).rejects.toThrow('在线更新域名解析结果无效')
     expect(request).not.toHaveBeenCalled()
   })
 
-  it('validates every DNS answer, including mixed public/private answers', async () => {
-    expect(isPublicUpdateAddress('93.184.216.34')).toBe(true)
-    expect(isPublicUpdateAddress('2606:4700:4700::1111')).toBe(true)
-    expect(isPublicUpdateAddress('2001:4860:4860::8888')).toBe(true)
+  it('accepts arbitrary unicast Fake-IP / TUN / NAT64 ranges on direct routes while rejecting mixed unspecified answers', async () => {
+    for (const address of ['93.184.216.34', '198.18.0.54', '198.19.255.254', '28.0.0.1', '100.64.0.1', '10.0.0.2', '172.16.0.2', '192.168.1.2', '127.0.0.1', '2606:4700:4700::1111', '2001:4860:4860::8888', 'fc00::1', 'fd12:3456::1', '64:ff9b::198.18.0.54', '::1']) {
+      expect(isUsableUpdateAddress(address)).toBe(true)
+    }
+    for (const fakeIp of ['198.18.0.54', '28.0.0.1', '100.64.0.1', '10.0.0.2', 'fc00::1']) {
+      const request = vi.fn(async () => new Response('abc'))
+      expect((await readUpdateDownload(url, { ...options(), resolve: async () => [fakeIp], request })).toString()).toBe('abc')
+      expect(request).toHaveBeenCalledOnce()
+    }
     const request = vi.fn()
-    await expect(readUpdateDownload(url, { ...options(), resolve: async () => ['93.184.216.34', '127.0.0.1'], request })).rejects.toThrow()
+    await expect(readUpdateDownload(url, { ...options(), resolve: async () => ['93.184.216.34', '0.0.0.0'], request })).rejects.toThrow('在线更新域名解析结果无效')
     expect(request).not.toHaveBeenCalled()
   })
 
-  it('does not bypass the public-address guard when using the configured HTTP proxy', async () => {
-    const route = vi.fn(async () => 'PROXY 127.0.0.1:8080')
-    installNetworkPolicy(new NetworkPolicy(route, () => 'system'))
-    const request = vi.fn(async () => new Response('abc'))
-    await expect(readUpdateDownload(url, { ...options(), resolve: async () => ['10.0.0.1'], request })).rejects.toThrow()
-    expect(request).not.toHaveBeenCalled()
-    expect(route).not.toHaveBeenCalled()
-    expect((await readUpdateDownload(url, { ...options(), request })).toString()).toBe('abc')
-    expect(route).toHaveBeenCalledOnce()
+  it('delegates DNS resolution to configured HTTP and SOCKS5 proxies while enforcing origin allowlists', async () => {
+    for (const proxyRule of ['PROXY 127.0.0.1:8080', 'SOCKS5 127.0.0.1:1080']) {
+      const route = vi.fn(async () => proxyRule)
+      installNetworkPolicy(new NetworkPolicy(route, () => 'system'))
+      const resolve = vi.fn(async () => ['0.0.0.0'])
+      const request = vi.fn(async () => new Response('abc'))
+      expect((await readUpdateDownload(url, { ...options(), resolve, request })).toString()).toBe('abc')
+      expect(route).toHaveBeenCalledOnce()
+      expect(resolve).not.toHaveBeenCalled()
+    }
+  })
+
+  it('reports HTTP 404 distinctly from generic upstream status errors', async () => {
+    await expect(readUpdateDownload(url, { ...options(), request: async () => new Response('Not Found', { status: 404, statusText: 'Not Found' }) }))
+      .rejects.toMatchObject({ message: '所选更新源尚未发布更新清单或文件不存在（HTTP 404）', status: 404 })
+    await expect(readUpdateDownload(url, { ...options(), request: async () => new Response('Unavailable', { status: 503, statusText: 'Service Unavailable' }) }))
+      .rejects.toMatchObject({ message: '在线更新请求失败（HTTP 503）', status: 503 })
   })
 
   it('never redirects catalogs or frontend containers', async () => {
@@ -62,7 +75,7 @@ describe('executable update downloads', () => {
     await expect(readUpdateDownload(url, { ...options(), request, redirectOrigins: [] })).rejects.toThrow()
     expect(request).toHaveBeenCalledTimes(1)
     request.mockClear()
-    await expect(readUpdateDownload(url, { ...options(), request, redirectOrigins: ['https://cdn.example.org'], resolve: async host => host === 'cdn.example.org' ? ['192.168.1.1'] : ['93.184.216.34'] })).rejects.toThrow()
+    await expect(readUpdateDownload(url, { ...options(), request, redirectOrigins: ['https://cdn.example.org'], resolve: async host => host === 'cdn.example.org' ? ['0.0.0.0'] : ['93.184.216.34'] })).rejects.toThrow('在线更新域名解析结果无效')
     expect(request).toHaveBeenCalledTimes(1)
   })
 

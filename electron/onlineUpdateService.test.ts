@@ -94,6 +94,17 @@ describe('signed online update service', () => {
     expect(JSON.stringify(result)).not.toContain('SIGNED_UPDATE_SECRET')
     expect(f.stage).not.toHaveBeenCalled()
   })
+  it('explains unpublished 404 manifests without claiming the app is up to date', async () => {
+    const f = await fixture()
+    f.replies.set(f.source.mirrors[0]!.manifestUrl, () => new Response('404: Not Found', { status: 404, statusText: 'Not Found' }))
+    const result = await f.service.check()
+    expect(result).toMatchObject({
+      phase: 'error',
+      checkedAt: null,
+      message: '所选来源尚未发布在线更新清单。已保留原版本，可切换来源或前往发布页下载安装包。',
+      errorDetail: { status: 404, statusText: 'Not Found' },
+    })
+  })
   it('does not contact the network until a manual check and never downloads as part of checking', async () => {
     const f = await fixture()
     expect(f.request).not.toHaveBeenCalled()
