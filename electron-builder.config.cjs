@@ -34,14 +34,22 @@ module.exports = {
     // Fall back to offline ad-hoc bundle signing so modified Electron bundles never keep a broken seal,
     // while preserving normal Developer ID + Hardened Runtime signing when CSC_* credentials are supplied.
     ...(hasMacSigningCertificate ? { hardenedRuntime: true } : { identity: '-', hardenedRuntime: false, timestamp: 'none' }),
-    // Resources are sealed into CodeResources when signing Fy1Sync.app; avoid overwriting PyInstaller yt-dlp
-    // or attaching per-file extended-attribute signatures to static assets.
-    signIgnore: [hasMacSigningCertificate ? '\\.app/Contents/Resources/(?!tools/ffmpeg/)' : '\\.app/Contents/Resources/'],
+    // Resources are sealed into CodeResources when signing Fy1Sync.app; sign nested yt-dlp and FFmpeg Mach-O
+    // binaries when a real certificate is configured (required for Apple notarization), while skipping
+    // per-file extended-attribute signatures on static assets and preserving ad-hoc tool hashes otherwise.
+    signIgnore: [hasMacSigningCertificate ? '\\.app/Contents/Resources/(?!tools/(?:yt-dlp$|ffmpeg/))' : '\\.app/Contents/Resources/'],
     // Keep Electron/Chromium license files under Contents/Resources/ rather than Contents/,
     // because macOS codesign rejects loose non-code files placed directly inside Contents/.
     extraResources: [
       { from: 'node_modules/electron/dist/LICENSE', to: 'LICENSE.electron.txt' },
       { from: 'node_modules/electron/dist/LICENSES.chromium.html', to: 'LICENSES.chromium.html' },
+    ],
+  },
+  dmg: hasMacSigningCertificate ? {} : {
+    background: 'packaging/dmg-background.png',
+    contents: [
+      { x: 140, y: 110, type: 'file', name: 'Fy1Sync.app' },
+      { x: 400, y: 110, type: 'link', path: '/Applications' },
     ],
   },
   linux: {

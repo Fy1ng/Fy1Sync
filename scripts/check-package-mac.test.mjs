@@ -3,8 +3,9 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { crc32 } from 'node:zlib'
+import { createHash } from 'node:crypto'
 import test from 'node:test'
-import { assertMacBundleSignature, compareMacTrees, preflightMacZip } from './check-package-mac.mjs'
+import { assertMacBundleSignature, checkSignedTool, compareMacTrees, preflightMacZip, verifyQuarantineClearance } from './check-package-mac.mjs'
 
 function zip(entries) {
   const local = [], central = []
@@ -96,4 +97,43 @@ test('macOS bundle signature check enforces deep strict codesign and application
     await assert.rejects(assertMacBundleSignature('/tmp/Fy1Sync.app', makeRunner(broken)), /bundle signature/)
   }
   await assert.rejects(assertMacBundleSignature('/tmp/Fy1Sync.app', async () => { throw new Error('a sealed resource is missing or invalid') }), /sealed resource/)
+})
+
+test('quarantine clearance and tool signature checks verify strict codesign on every Mach-O payload', async () => {
+  const calls = []
+  const adhocDisplay = [
+    'Executable=/tmp/Fy1Sync.app/Contents/MacOS/Fy1Sync',
+    'Identifier=cn.fy1ng.fy1sync',
+    'Signature=adhoc',
+    'Info.plist entries=31',
+    'Sealed Resources version=2 rules=13 files=5890',
+  ].join('\n')
+  const runner = async (executable, args, options) => {
+    calls.push({ executable, args, options })
+    if (args.includes('--display')) return adhocDisplay
+    return ''
+  }
+  assert.equal(await verifyQuarantineClearance('/tmp/Fy1Sync.app', runner, { cwd: '/tmp' }), 'adhoc')
+  assert.deepEqual(calls.slice(0, 3).map(item => [item.executable, item.args]), [
+    ['/usr/bin/xattr', ['-w', 'com.apple.quarantine', '0081;00000000;Safari;', '/tmp/Fy1Sync.app']],
+    ['/usr/bin/xattr', ['-cr', '/tmp/Fy1Sync.app']],
+    ['/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=2', '/tmp/Fy1Sync.app']],
+  ])
+
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'fy1sync-mac-tool-'))
+  try {
+    const toolPath = path.join(temporary, 'yt-dlp')
+    const bytes = Buffer.from('macho-payload')
+    await writeFile(toolPath, bytes)
+    const sha256 = createHash('sha256').update(bytes).digest('hex')
+    const verifyCalls = []
+    const mode = await checkSignedTool(toolPath, { file: 'yt-dlp', size: bytes.length, sha256 }, temporary, async (executable, args) => {
+      verifyCalls.push([executable, args])
+      return ''
+    })
+    assert.equal(mode, 'original')
+    assert.deepEqual(verifyCalls, [['/usr/bin/codesign', ['--verify', '--strict', toolPath]]])
+  } finally {
+    await rm(temporary, { recursive: true, force: true })
+  }
 })

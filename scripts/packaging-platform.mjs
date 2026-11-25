@@ -78,6 +78,24 @@ export function macRuntimeFiles(lock) {
   return ['ffmpeg', 'ffprobe', ...Object.entries(lock.abi).map(([name, abi]) => `lib${name}.${abi.split('.')[0]}.dylib`)].sort()
 }
 
+export function macPackagingEnvironment(base = process.env, root) {
+  const env = { ...base }
+  for (const key of Object.keys(env)) {
+    if (/^(?:CSC_|APPLE_)/.test(key) && typeof env[key] === 'string' && env[key].trim().length === 0) {
+      delete env[key]
+    }
+  }
+  const hasSigningCertificate = [env.CSC_LINK, env.CSC_NAME, env.CSC_KEYCHAIN]
+    .some(value => typeof value === 'string' && value.trim().length > 0)
+  env.CSC_IDENTITY_AUTO_DISCOVERY = hasSigningCertificate ? 'true' : (env.CSC_IDENTITY_AUTO_DISCOVERY ?? 'false')
+  if (root) {
+    env.ELECTRON_BUILDER_CACHE = path.join(root, '.packaging', 'builder-cache')
+    env.ELECTRON_CACHE = path.join(root, '.packaging', 'electron-cache')
+    env.npm_config_cache = path.join(root, '.packaging', 'npm-cache')
+  }
+  return env
+}
+
 export function npmCliPath(environment = process.env, executable = process.execPath) {
   const candidates = [environment.npm_execpath,
     path.join(path.dirname(executable), 'node_modules', 'npm', 'bin', 'npm-cli.js'),

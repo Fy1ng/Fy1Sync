@@ -6,7 +6,8 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { macCapabilities, macConfigure, macMinimumSystemVersion, macNativeBuildEnvironment, macRuntimeFiles, nativeMacArch, npmCliPath, packagingTarget, prepareBuilderCache, validateToolAsset } from './packaging-platform.mjs'
+import { macCapabilities, macConfigure, macMinimumSystemVersion, macNativeBuildEnvironment, macPackagingEnvironment, macRuntimeFiles, nativeMacArch, npmCliPath, packagingTarget, prepareBuilderCache, validateToolAsset } from './packaging-platform.mjs'
+import { assertProviderDependencies } from './provider-dependencies.mjs'
 
 const lock = JSON.parse(await readFile(new URL('../packaging/ffmpeg/build-lock.json', import.meta.url), 'utf8'))
 const config = createRequire(import.meta.url)('../electron-builder.config.cjs')
@@ -109,6 +110,11 @@ test('macOS builder config defaults to valid ad-hoc signing and switches cleanly
   assert.equal(adhoc.mac.timestamp, 'none')
   assert.equal(adhoc.mac.extraFiles, undefined)
   assert.deepEqual(adhoc.mac.extraResources.map(entry => entry.to), ['LICENSE.electron.txt', 'LICENSES.chromium.html'])
+  assert.equal(adhoc.dmg.background, 'packaging/dmg-background.png')
+  assert.deepEqual(adhoc.dmg.contents, [
+    { x: 140, y: 110, type: 'file', name: 'Fy1Sync.app' },
+    { x: 400, y: 110, type: 'link', path: '/Applications' },
+  ])
   const adhocIgnore = new RegExp(adhoc.mac.signIgnore[0])
   assert.equal(adhocIgnore.test('/tmp/Fy1Sync.app'), false)
   assert.equal(adhocIgnore.test('/tmp/Fy1Sync.app/Contents/MacOS/Fy1Sync'), false)
@@ -121,11 +127,65 @@ test('macOS builder config defaults to valid ad-hoc signing and switches cleanly
   assert.equal(signed.mac.identity, undefined)
   assert.equal(signed.mac.hardenedRuntime, true)
   assert.equal(signed.mac.timestamp, undefined)
+  assert.deepEqual(signed.dmg, {})
   const signedIgnore = new RegExp(signed.mac.signIgnore[0])
-  assert.equal(signedIgnore.test('/tmp/Fy1Sync.app/Contents/Resources/tools/yt-dlp'), true)
+  assert.equal(signedIgnore.test('/tmp/Fy1Sync.app/Contents/Resources/tools/yt-dlp'), false)
+  assert.equal(signedIgnore.test('/tmp/Fy1Sync.app/Contents/Resources/tools/yt-dlp-LICENSE.txt'), true)
   assert.equal(signedIgnore.test('/tmp/Fy1Sync.app/Contents/Resources/team-logos/events/logos/a.png'), true)
   assert.equal(signedIgnore.test('/tmp/Fy1Sync.app/Contents/Resources/tools/ffmpeg/ffmpeg'), false)
   assert.equal(signedIgnore.test('/tmp/Fy1Sync.app/Contents/Resources/tools/ffmpeg/libavcodec.62.dylib'), false)
+
+  const bg1x = await readFile(fileURLPath('../packaging/dmg-background.png'))
+  const bg2x = await readFile(fileURLPath('../packaging/dmg-background@2x.png'))
+  const parsePngMetrics = bytes => {
+    assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a')
+    const width = bytes.readUInt32BE(16), height = bytes.readUInt32BE(20)
+    let cursor = 8, ppmX = 0, ppmY = 0, unit = 0
+    while (cursor + 12 <= bytes.length) {
+      const length = bytes.readUInt32BE(cursor), type = bytes.toString('ascii', cursor + 4, cursor + 8)
+      if (type === 'pHYs') {
+        ppmX = bytes.readUInt32BE(cursor + 8)
+        ppmY = bytes.readUInt32BE(cursor + 12)
+        unit = bytes.readUInt8(cursor + 16)
+      }
+      assert.equal(['tEXt', 'zTXt', 'iTXt', 'tIME'].includes(type), false, 'Unexpected metadata chunk: ' + type)
+      cursor += length + 12
+    }
+    return { width, height, ppmX, ppmY, unit }
+  }
+  const m1 = parsePngMetrics(bg1x), m2 = parsePngMetrics(bg2x)
+  assert.deepEqual(m1, { width: 540, height: 436, ppmX: 2835, ppmY: 2835, unit: 1 })
+  assert.deepEqual(m2, { width: 1080, height: 872, ppmX: 5670, ppmY: 5670, unit: 1 })
+})
+
+test('macOS packaging environment strips blank CI secrets and enables identity auto-discovery for CSC_LINK', async () => {
+  const withoutSecrets = macPackagingEnvironment({
+    CSC_IDENTITY_AUTO_DISCOVERY: 'false',
+    CSC_LINK: '',
+    CSC_KEY_PASSWORD: '   ',
+    APPLE_ID: '',
+  }, '/repo')
+  assert.equal(withoutSecrets.CSC_LINK, undefined)
+  assert.equal(withoutSecrets.CSC_KEY_PASSWORD, undefined)
+  assert.equal(withoutSecrets.APPLE_ID, undefined)
+  assert.equal(withoutSecrets.CSC_IDENTITY_AUTO_DISCOVERY, 'false')
+
+  const withCert = macPackagingEnvironment({
+    CSC_IDENTITY_AUTO_DISCOVERY: 'false',
+    CSC_LINK: 'base64-p12',
+    APPLE_ID: '',
+  }, '/repo')
+  assert.equal(withCert.CSC_LINK, 'base64-p12')
+  assert.equal(withCert.APPLE_ID, undefined)
+  assert.equal(withCert.CSC_IDENTITY_AUTO_DISCOVERY, 'true')
+
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'fy1sync-provider-native-'))
+  try {
+    await writeFile(path.join(tempDir, 'addon.dylib'), 'macho')
+    await assert.rejects(assertProviderDependencies(tempDir), /addon\.dylib/)
+  } finally {
+    await rm(tempDir, { recursive: true, force: true })
+  }
 })
 
 test('downloaded CommonJS builder helpers execute beneath an ESM source project', async () => {

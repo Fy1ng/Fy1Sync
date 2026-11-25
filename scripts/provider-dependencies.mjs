@@ -8,7 +8,7 @@ export async function assertProviderDependencies(directory) {
     for (const entry of await readdir(folder, { withFileTypes: true })) {
       const relative = prefix + entry.name
       if (entry.isSymbolicLink()) throw new Error('Symlink in provider dependencies: ' + relative)
-      if ((entry.isDirectory() && entry.name.toLowerCase() === 'canvas') || /\.(node|dll)$/i.test(entry.name)) forbidden.push(relative)
+      if ((entry.isDirectory() && entry.name.toLowerCase() === 'canvas') || /\.(node|dll|dylib|so)$/i.test(entry.name)) forbidden.push(relative)
       if (entry.isDirectory()) await walk(path.join(folder, entry.name), relative + '/')
     }
   }

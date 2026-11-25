@@ -97,14 +97,20 @@ export async function assertMacBundleSignature(directory, run = macRun, options)
   return /^Signature=adhoc$/m.test(details) ? 'adhoc' : 'certificate'
 }
 
-async function checkSignedTool(file, entry, temporary) {
+export async function verifyQuarantineClearance(directory, run = macRun, options) {
+  await run('/usr/bin/xattr', ['-w', 'com.apple.quarantine', '0081;00000000;Safari;', directory], options)
+  await run('/usr/bin/xattr', ['-cr', directory], options)
+  return await assertMacBundleSignature(directory, run, options)
+}
+
+export async function checkSignedTool(file, entry, temporary, run = macRun) {
+  await run('/usr/bin/codesign', ['--verify', '--strict', file])
   const actual = await fileIdentity(file)
   if (actual.size === entry.size && actual.sha256 === entry.sha256) return 'original'
   assert(Number.isSafeInteger(entry.unsignedSize) && /^[a-f0-9]{64}$/.test(entry.unsignedSha256), 'Missing canonical signed-tool inventory')
-  await macRun('/usr/bin/codesign', ['--verify', '--strict', file])
   const copy = path.join(temporary, path.basename(file) + '.unsigned')
   await cp(file, copy)
-  await macRun('/usr/bin/codesign', ['--remove-signature', copy])
+  await run('/usr/bin/codesign', ['--remove-signature', copy])
   const canonical = await fileIdentity(copy)
   await rm(copy, { force: true })
   assert(canonical.size === entry.unsignedSize && canonical.sha256 === entry.unsignedSha256, 'Packaged tool payload differs after removing code signature: ' + entry.file)
@@ -185,11 +191,19 @@ export async function checkMacPackage() {
       await mkdir(extracted)
       await macRun('/usr/bin/ditto', ['-x', '-k', file, extracted], { cwd: temporary })
       assert(JSON.stringify((await readdir(extracted)).sort()) === JSON.stringify(['Fy1Sync.app']), 'macOS ZIP must contain only Fy1Sync.app')
-      compareMacTrees(tree, await fingerprintMacApp(path.join(extracted, 'Fy1Sync.app')))
-      await assertMacBundleSignature(path.join(extracted, 'Fy1Sync.app'), macRun, { cwd: temporary })
-      artifact.contents = { entries: tree.size, status: 'matches-unpacked-app' }
+      const extractedApp = path.join(extracted, 'Fy1Sync.app')
+      compareMacTrees(tree, await fingerprintMacApp(extractedApp))
+      await assertMacBundleSignature(extractedApp, macRun, { cwd: temporary })
+      await verifyQuarantineClearance(extractedApp, macRun, { cwd: temporary })
+      artifact.contents = { entries: tree.size, status: 'matches-unpacked-app', quarantineClearance: 'verified' }
     }
     artifacts.push(artifact)
+  }
+  const notarizationConfigured = [process.env.APPLE_ID, process.env.APPLE_API_KEY, process.env.APPLE_KEYCHAIN_PROFILE]
+    .some(value => typeof value === 'string' && value.trim().length > 0)
+  if (bundleSignature === 'certificate' && notarizationConfigured) {
+    await macRun('/usr/bin/xcrun', ['stapler', 'validate', directory], { cwd: temporary })
+    await macRun('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=2', directory], { cwd: temporary })
   }
   const report = { target: target.target, bundleSignature, asarEntries: asar.length, toolFiles: actualTools.length, signatureChanges, artifacts,
     ffmpegBuildId: lock.ffmpegBuildId, status: 'local-evaluation-only', validation: 'macOS-native', runtimeSmoke: 'passed' }

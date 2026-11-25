@@ -2,18 +2,14 @@ import { spawn } from 'node:child_process'
 import { mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { nativeMacArch, npmCliPath, prepareBuilderCache } from './packaging-platform.mjs'
+import { macPackagingEnvironment, nativeMacArch, npmCliPath, prepareBuilderCache } from './packaging-platform.mjs'
 import { machoArchitectures } from './build-ffmpeg-mac.mjs'
 import { prepareElectron } from './prepare-electron.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const target = nativeMacArch(process.argv.slice(2))
 await prepareElectron()
-const environment = { ...process.env,
-  ELECTRON_BUILDER_CACHE: path.join(root, '.packaging', 'builder-cache'),
-  ELECTRON_CACHE: path.join(root, '.packaging', 'electron-cache'),
-  npm_config_cache: path.join(root, '.packaging', 'npm-cache'),
-}
+const environment = macPackagingEnvironment(process.env, root)
 const electronMetadata = JSON.parse(await readFile(path.join(root, 'node_modules', 'electron', 'package.json'), 'utf8'))
 const { devDependencies } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
 if (electronMetadata.version !== devDependencies.electron) throw new Error('Electron 版本与项目固定版本不一致, 请在 macOS 本机运行 npm ci')

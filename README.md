@@ -86,7 +86,7 @@ Fy1Sync 把这两路直播放进同一个播放器:
 **第一次打开时系统可能会拦一下.** 安装包目前未配置付费证书签名与公证, 这是正常现象:
 
 - **Windows**: 出现 SmartScreen 提示时, 点 **更多信息**, 再点 **仍要运行**.
-- **macOS**: 首次打开可能被 Gatekeeper 拦下. 若提示无法验证开发者, 到 **系统设置 → 隐私与安全性** 里确认来源后再打开; 若在 Apple 芯片 (M1–M4) 或 macOS 15 及以上提示 **“Fy1Sync”已损坏, 无法打开**, 先将 `Fy1Sync.app` 拖入 **应用程序 (`Applications`)** 文件夹, 再打开 **终端 (`Terminal`)** 执行 `xattr -rd com.apple.quarantine /Applications/Fy1Sync.app` 后打开 (`v0.5.0` 及更早版本请执行 `xattr -rd com.apple.quarantine /Applications/Fy1Sync.app && codesign --force --deep --sign - /Applications/Fy1Sync.app`).
+- **macOS**: 先将 `Fy1Sync.app` 拖入 **应用程序 (`Applications`)** 文件夹 (不要在 `.dmg` 挂载窗口内直接打开; 下载 `.zip` 也请先解压并拖入 `Applications`). 首次打开若提示 **“Fy1Sync”已损坏, 无法打开** (未购买苹果付费证书导致的系统默认拦截, `.dmg` 和 `.zip` 均只需首次处理一次), 打开 **终端 (`Terminal`)** 执行 `xattr -cr /Applications/Fy1Sync.app` 后再打开即可 (若放在其他位置, 输入 `xattr -cr ` 加空格后将应用拖入终端回车; `v0.5.0` 及更早旧版需额外执行 `codesign --force --deep --sign - /Applications/Fy1Sync.app`); 若提示无法验证开发者, 到 **系统设置 → 隐私与安全性** 点击 **仍要打开**.
 - **Linux**: 构建基线是 Ubuntu 22.04 (glibc 2.35), 需要桌面图形环境. AppImage 可能需要 FUSE 2, 也可以加 `--appimage-extract-and-run` 运行, 或改用 `tar.gz`.
 
 每个版本都附带 `SHA256SUMS.txt`, 可以用它核对下载的文件.
