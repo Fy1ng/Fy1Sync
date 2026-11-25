@@ -156,6 +156,22 @@
   touch-action: none;
 }
 
+.roi-window--mask {
+  border: 1.5px dashed color-mix(in srgb, var(--warn) 78%, var(--accent));
+  background: repeating-linear-gradient(-45deg, rgb(240 176 63 / 24%) 0 6px, rgb(13 13 15 / 50%) 6px 12px);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 65%);
+}
+
+.roi-window--mask.is-selected {
+  z-index: 2;
+  border: 1.5px solid var(--warn);
+  background: repeating-linear-gradient(-45deg, rgb(240 176 63 / 34%) 0 6px, rgb(13 13 15 / 56%) 6px 12px);
+}
+
+.roi-window--mask .roi-handle {
+  background: var(--warn);
+}
+
 .roi-window:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;

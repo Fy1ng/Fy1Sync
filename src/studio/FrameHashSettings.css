@@ -1,0 +1,210 @@
+.fh-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.fh-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.fh-hint {
+  margin: 0;
+  color: var(--ash);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.fh-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+@media (max-width: 720px) {
+  .fh-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.fh-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fh-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.fh-card-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fh-card-title strong {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.fh-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #0a0a0c;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.fh-stage.is-limit {
+  cursor: default;
+}
+
+.fh-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.fh-canvas--cropped {
+  object-fit: fill;
+}
+
+.fh-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  color: var(--ash-2);
+  font-size: 12px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.fh-mask-ghost {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px dashed rgb(240 176 63 / 70%);
+  background: repeating-linear-gradient(-45deg, rgb(240 176 63 / 18%) 0 5px, rgb(13 13 15 / 38%) 5px 10px);
+  pointer-events: none;
+}
+
+.fh-masks-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.fh-mask-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.fh-mask-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  padding: 0 4px 0 10px;
+  font-size: 12px;
+  background: rgb(255 255 255 / 7%);
+  border: 1px solid transparent;
+  border-radius: 999px;
+}
+
+.fh-mask-chip.is-selected {
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+}
+
+.fh-mask-chip-select {
+  height: 100%;
+  padding: 0 4px 0 0;
+  font-size: 12px;
+}
+
+.fh-mask-chip-remove {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: var(--ash);
+  border-radius: 50%;
+}
+
+.fh-mask-chip-remove:hover {
+  color: var(--chalk);
+  background: rgb(255 255 255 / 12%);
+}
+
+.fh-mask-chip-remove .icon {
+  width: 12px;
+  height: 12px;
+}
+
+.fh-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.fh-details {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.fh-summary {
+  cursor: pointer;
+  color: var(--ash);
+  font-size: 12px;
+  font-weight: 600;
+  user-select: none;
+  padding: 4px 0;
+}
+
+.fh-summary:hover {
+  color: var(--chalk);
+}
+
+.fh-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 10px;
+}
+
+.fh-number-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.fh-mask-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

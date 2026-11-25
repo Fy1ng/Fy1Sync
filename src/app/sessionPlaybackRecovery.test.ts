@@ -164,6 +164,7 @@ describe('playback recovery authorization', () => {
     expect(result?.applied).toBe(true)
     expect(authorize).toHaveBeenCalledTimes(mode === 'explicit' ? 1 : 0)
     expect(h.session.flush().playbackRecovery).toBeNull()
+    expect(h.session.flush().notices.some(notice => notice.text === '已自动对齐')).toBe(mode === 'explicit')
   })
 
   it.each(['pip', 'changing', 'seek', 'quality'] as const)('discards observation across %s and rebuilds its baseline', async mode => {

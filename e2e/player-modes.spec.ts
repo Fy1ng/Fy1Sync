@@ -4,7 +4,7 @@ import { expect, test } from './electron'
 import { mediaTimes, openAlignOptions, openPlayer, openSettingsSection, revealOverlay, seekBoth, setPlaying, waitForBothReady } from './helpers'
 import { loadRecordingSource } from './recordingSources'
 
-test('播放器可切换画面匹配并恢复设置, 旧编辑器接口不再暴露', async ({ page }) => {
+test('播放器可切换画面匹配、可视化框选并恢复设置, 旧编辑器接口不再暴露', async ({ page }) => {
   await openPlayer(page)
   await revealOverlay(page)
   await page.getByRole('button', { name: '对齐选项' }).click()
@@ -12,12 +12,27 @@ test('播放器可切换画面匹配并恢复设置, 旧编辑器接口不再暴
   await page.getByRole('radio', { name: '画面匹配' }).locator('..').click()
   await expect(page.getByRole('radio', { name: '画面匹配' })).toBeChecked()
   await expect(page.getByRole('radio', { name: '样式包模式' })).toHaveCount(0)
-  await page.keyboard.press('Escape')
-  const settings = await openSettingsSection(page, '画面匹配')
-  const region = settings.getByRole('spinbutton', { name: '画面区域左侧百分比' })
-  await region.fill('10')
+  await page.getByRole('button', { name: '调整匹配区域', exact: true }).click()
+  const settings = page.getByRole('dialog', { name: '设置', exact: true })
+  await expect(settings.getByRole('tabpanel', { name: '画面匹配', exact: true })).toBeVisible()
+
+  // Visually drag a crop box on the official canvas.
+  const officialStage = settings.getByLabel('画面裁剪画布')
+  const bounds = await officialStage.boundingBox()
+  expect(bounds).not.toBeNull()
+  await page.mouse.move(bounds!.x + bounds!.width * 0.1, bounds!.y + bounds!.height * 0.1)
+  await page.mouse.down()
+  await page.mouse.move(bounds!.x + bounds!.width * 0.9, bounds!.y + bounds!.height * 0.9, { steps: 5 })
+  await page.mouse.up()
+
   await settings.getByRole('button', { name: '添加忽略区域' }).click()
+  await expect(settings.getByRole('group', { name: '画面画布忽略区域 1' })).toBeVisible()
+  await expect(settings.getByRole('group', { name: '解说画布忽略区域 1' })).toBeVisible()
+
+  await settings.getByText('精确百分比微调', { exact: true }).click()
+  await expect(settings.getByRole('spinbutton', { name: '画面区域左侧百分比' })).toHaveValue('10')
   await expect(settings.getByRole('spinbutton', { name: '忽略区域 1顶部百分比' })).toBeVisible()
+
   const rejected = await page.evaluate(async () => {
     const bridge = window.streamSyncer!
     return Promise.all(['savePreset', 'syncStylePacks', 'editorProjectLoad', 'ytBrowseOpen'].map(method =>
@@ -30,6 +45,7 @@ test('播放器可切换画面匹配并恢复设置, 旧编辑器接口不再暴
   await page.reload()
   await openPlayer(page)
   const restored = await openSettingsSection(page, '画面匹配')
+  await restored.getByText('精确百分比微调', { exact: true }).click()
   await expect(restored.getByRole('spinbutton', { name: '画面区域左侧百分比' })).toHaveValue('10')
   await expect(restored.getByRole('spinbutton', { name: '忽略区域 1顶部百分比' })).toBeVisible()
   await expect(restored.getByRole('link', { name: /编辑器/ })).toHaveCount(0)

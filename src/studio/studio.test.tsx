@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Session } from '../app/session'
 import { SessionProvider } from '../app/SessionContext'
+import type { RecognitionSampler } from '../recognition/sampler'
 import type { StreamSyncerBridge } from '../../electron/contracts'
 import type { EmbeddedLoginState } from '../../electron/embeddedLoginContracts'
 import { primeMediaElement } from '../test/setup'
@@ -147,6 +148,80 @@ describe('the studio', () => {
     await flush()
     expect(notice).not.toHaveBeenCalled()
     expect(session.syncNow).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the player chrome hidden during shortcut, pointer-leave and scheduled alignment runs', async () => {
+    vi.useFakeTimers()
+    try {
+      let releaseSample!: () => void
+      const session = new Session({
+        createSampler: () => ({
+          sample: () => new Promise<void>(resolve => { releaseSample = resolve }),
+          dispose: vi.fn(),
+        }) as unknown as RecognitionSampler,
+      })
+      sessions.push(session)
+      for (const role of ['official', 'commentary'] as const) {
+        await session.loadSource(role, { kind: 'progressive', url: `https://example.test/${role}.mp4`,
+          input: `${role}.mp4`, label: role, loop: false, viaProxy: false })
+        primeMediaElement(session.engine.element(role), { duration: 600, currentTime: 100 })
+      }
+      await session.setPlaying(true)
+      session.flush()
+
+      const { container } = renderStudio(session)
+      await act(async () => { await vi.advanceTimersByTimeAsync(50) })
+      const theater = container.querySelector('main.theater') as HTMLElement
+      // Let the initial 3.2 s idle timer hide the chrome.
+      await act(async () => { await vi.advanceTimersByTimeAsync(3500) })
+      expect(theater).toHaveAttribute('data-chrome', 'off')
+
+      // Pressing shortcut A (even when focus sits inside .theater) must not reveal chrome.
+      theater.tabIndex = -1
+      theater.focus()
+      await act(async () => {
+        fireEvent.keyDown(theater, { code: 'KeyA', key: 'a', bubbles: true })
+        await vi.advanceTimersByTimeAsync(50)
+      })
+      expect(session.snapshot.autoSync.phase).toBe('sampling')
+      expect(theater).toHaveAttribute('data-chrome', 'off')
+
+      // Moving pointer into theater reveals chrome; leaving hides it immediately even while sampling.
+      fireEvent.pointerMove(theater)
+      expect(theater).toHaveAttribute('data-chrome', 'on')
+      fireEvent.pointerLeave(theater)
+      expect(theater).toHaveAttribute('data-chrome', 'off')
+
+      await act(async () => {
+        session.cancelAutoSync()
+        releaseSample?.()
+        await vi.advanceTimersByTimeAsync(50)
+      })
+      expect(theater).toHaveAttribute('data-chrome', 'off')
+
+      // Scheduled periodic alignment also runs without waking the dock or topbar.
+      session.setAutoSyncInterval(15)
+      session.setAutoSyncEnabled(true)
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_100) })
+      expect(session.snapshot.autoSync.phase).toBe('sampling')
+      expect(theater).toHaveAttribute('data-chrome', 'off')
+      session.cancelAutoSync()
+      releaseSample?.()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('opens frame-matching settings directly from the alignment options menu', async () => {
+    const session = makeSession()
+    session.setRecognitionMode('frame-hash')
+    renderStudio(session)
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: '跳过' }))
+    fireEvent.click(screen.getByRole('button', { name: '对齐选项' }))
+    fireEvent.click(screen.getByRole('button', { name: '调整匹配区域' }))
+    const dialog = await screen.findByRole('dialog', { name: '设置' })
+    expect(within(dialog).getByRole('tabpanel', { name: '画面匹配' })).toBeInTheDocument()
   })
 
   it('reveals the first presented picture while the other source is still absent', async () => {

@@ -1255,7 +1255,7 @@ export class Session {
         ? result.estimate.totalOffsetSeconds : offsetFromRewind(this.applied)
       this.planValue = result.plan
     }
-    this.reportAutoResult(result)
+    if (authorize) this.reportAutoResult(result)
     this.notify()
     return result
   }

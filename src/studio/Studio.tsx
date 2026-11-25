@@ -110,6 +110,7 @@ function StudioView({ settingsAt, setSettingsAt }: {
   const composer = useComposer()
   usePlaybackHeartbeat()
   const theater = useRef<HTMLDivElement | null>(null)
+  const topbar = useRef<HTMLElement | null>(null)
   const primary = useRef<HTMLDivElement | null>(null)
   const dock = useRef<HTMLElement | null>(null)
   // The picture-in-picture, the danmaku panel and the local gift effects all keep clear of
@@ -120,11 +121,28 @@ function StudioView({ settingsAt, setSettingsAt }: {
   // The bars stay while the pointer rests on them, still or not.
   const [onChrome, setOnChrome] = useState(false)
   const chromeHover = { onPointerEnter: () => setOnChrome(true), onPointerLeave: () => setOnChrome(false) }
+  useEffect(() => {
+    const node = theater.current
+    if (!node) return
+    // Closing a top-layer popover under the pointer hides the child without firing pointerleave on its bar.
+    const syncHover = (event: Event): void => {
+      if ((event as ToggleEvent).newState === 'closed' && !topbar.current?.matches(':hover') && !dock.current?.matches(':hover')) {
+        setOnChrome(false)
+      }
+    }
+    node.addEventListener('toggle', syncHover, true)
+    return () => node.removeEventListener('toggle', syncHover, true)
+  }, [])
 
-  const aligning = snapshot.autoSync.phase !== 'idle' && snapshot.autoSync.phase !== 'done' && snapshot.autoSync.phase !== 'failed'
   const switchingQuality = snapshot.qualityBusy.official || snapshot.qualityBusy.commentary
-  const busyChrome = favorites || intake || tuning || settingsAt !== null || addingStream || scheduleOpen || onChrome || aligning || switchingQuality || embeddedLogin !== null
+  const busyChrome = favorites || intake || tuning || settingsAt !== null || addingStream || scheduleOpen || onChrome || switchingQuality || embeddedLogin !== null
   const chrome = useOverlayVisibility(3200, !snapshot.playing || busyChrome)
+  const isSilentAlignKey = (event: React.KeyboardEvent<HTMLElement>): boolean => {
+    if (embeddedLogin || event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return false
+    const target = event.target
+    if (target instanceof Element && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), dialog, [role="dialog"], [role="alertdialog"]')) return false
+    return shortcutActionFor(snapshot.settings.shortcuts, event.code) === 'autoAlign'
+  }
   // The drawer is the room's chat; with no room there is nothing to hold it open for.
   const hasRoom = snapshot.danmaku.connected || snapshot.danmaku.room !== null || platformRooms.hasBilibili || restrictedChatSources.length > 0
   const hasSidebar = hasRoom || (snapshot.settings.recognitionMode === 'basic' && snapshot.settings.basicRecognitionPanelVisible
@@ -248,8 +266,13 @@ function StudioView({ settingsAt, setSettingsAt }: {
       data-chat={chatOpen ? 'open' : 'closed'}
     >
       <DanmakuActionsProvider onOpenRecords={openRecords}>
-        <main className="theater" ref={theater} data-chrome={chrome.visible ? 'on' : 'off'} {...chrome.handlers}>
-          <header className="topbar" {...chromeHover}>
+        <main className="theater" ref={theater} data-chrome={chrome.visible ? 'on' : 'off'} {...chrome.handlers}
+          onPointerMove={(event) => {
+            if (onChrome && !(event.target instanceof Element && event.target.closest('.topbar, .dock'))) setOnChrome(false)
+            chrome.handlers.onPointerMove()
+          }}
+          onKeyDown={(event) => { if (!isSilentAlignKey(event)) chrome.handlers.onKeyDown() }}>
+          <header className="topbar" ref={topbar} {...chromeHover}>
             <div className="topbar-sources">
               <button type="button" className="icon-btn glass small" aria-label="收藏直播间" title="收藏直播间" onClick={() => setFavorites(true)}><Icon name="star" /></button>
               {SOURCE_ROLES.map((role) => (
@@ -332,7 +355,7 @@ function StudioView({ settingsAt, setSettingsAt }: {
               </div>
               <div className="dock-center">
                 <SyncCapsule />
-                <AutoAlign />
+                <AutoAlign onOpenFrameSettings={() => openSettings('frame-matching')} />
               </div>
               <div className="dock-right">
                 <QualityMenu />

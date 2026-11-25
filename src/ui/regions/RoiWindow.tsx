@@ -30,6 +30,7 @@ interface DragState {
 export function RoiWindow({
   roi,
   onChange,
+  onCommit,
   videoWidth,
   videoHeight,
   /** Element the ROI is drawn over; used to measure the painted picture box. */
@@ -37,20 +38,38 @@ export function RoiWindow({
   contentBox,
   readOnly = false,
   label,
+  ariaLabel,
+  variant = 'crop',
+  unit = 'px',
+  bodyDraggable = true,
+  selected = false,
+  onSelect,
+  onDelete,
 }: {
   roi: RoiRect
   onChange: (roi: RoiRect) => void
+  onCommit?: (roi: RoiRect) => void
   videoWidth: number
   videoHeight: number
   hostRef?: React.RefObject<HTMLDivElement | null>
   contentBox?: Rect
   readOnly?: boolean
   label?: string
+  ariaLabel?: string
+  variant?: 'crop' | 'mask'
+  unit?: 'px' | 'percent'
+  bodyDraggable?: boolean
+  selected?: boolean
+  onSelect?: () => void
+  onDelete?: () => void
 }): React.ReactNode {
   const [measured, setBox] = useState<Rect>({ x: 0, y: 0, width: 0, height: 0 })
   const box = contentBox ?? measured
   const minimum = { w: videoWidth > 0 ? 1 / videoWidth : 0.01, h: videoHeight > 0 ? 1 / videoHeight : 0.01 }
   const dragRef = useRef<DragState | null>(null)
+  const latestRef = useRef<RoiRect>(roi)
+  const dirtyRef = useRef(false)
+  latestRef.current = roi
 
   // The picture box changes on resize, on fullscreen, and when metadata finally tells us
   // the intrinsic size. A ResizeObserver covers the first two; `videoWidth` in the dep
@@ -71,8 +90,10 @@ export function RoiWindow({
     if (event.button !== 0 || readOnly || box.width <= 0 || box.height <= 0) return
     event.preventDefault()
     event.stopPropagation()
+    onSelect?.()
     event.currentTarget.closest<HTMLElement>('.roi-window')?.focus({ preventScroll: true })
-    event.currentTarget.setPointerCapture(event.pointerId)
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    dirtyRef.current = false
     dragRef.current = {
       mode,
       startX: event.clientX,
@@ -87,18 +108,31 @@ export function RoiWindow({
     if (!drag) return
     const dx = (event.clientX - drag.startX) / drag.content.width
     const dy = (event.clientY - drag.startY) / drag.content.height
-    onChange(applyDrag(drag.origin, drag.mode, dx, dy, minimum))
+    const next = applyDrag(drag.origin, drag.mode, dx, dy, minimum)
+    latestRef.current = next
+    dirtyRef.current = true
+    onChange(next)
   }
 
   const endDrag = (event: ReactPointerEvent<HTMLElement>): void => {
     if (!dragRef.current) return
     dragRef.current = null
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    if (dirtyRef.current) {
+      dirtyRef.current = false
+      onCommit?.(latestRef.current)
     }
   }
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if ((event.key === 'Delete' || event.key === 'Backspace') && onDelete) {
+      event.preventDefault()
+      event.stopPropagation()
+      onDelete()
+      return
+    }
     if (box.width <= 0) return
     const step = event.shiftKey ? NUDGE_PX_FAST : NUDGE_PX
     if (videoWidth <= 0 || videoHeight <= 0) return
@@ -113,7 +147,10 @@ export function RoiWindow({
     if (!next) return
     event.preventDefault()
     event.stopPropagation()
-    onChange(clampRoi(next, minimum))
+    const clamped = clampRoi(next, minimum)
+    latestRef.current = clamped
+    onChange(clamped)
+    onCommit?.(clamped)
   }
 
   if (box.width <= 0 || box.height <= 0) return null
@@ -123,25 +160,32 @@ export function RoiWindow({
     top: `${box.y + roi.y * box.height}px`,
     width: `${Math.max(2, roi.w * box.width)}px`,
     height: `${Math.max(2, roi.h * box.height)}px`,
+    ...(bodyDraggable ? {} : { cursor: 'crosshair' }),
   }
+
+  const sizeText = unit === 'percent'
+    ? `${Math.round(roi.w * 100)}%×${Math.round(roi.h * 100)}%`
+    : `${Math.round(roi.w * videoWidth)}×${Math.round(roi.h * videoHeight)}`
+  const showHandles = !readOnly && (variant !== 'mask' || selected)
 
   return (
     <div
-      className={`roi-window${readOnly ? ' is-readonly' : ''}`}
+      className={`roi-window${variant === 'mask' ? ' roi-window--mask' : ''}${selected ? ' is-selected' : ''}${readOnly ? ' is-readonly' : ''}`}
       data-field={label}
       aria-readonly={readOnly}
       style={style}
       role="group"
-      aria-label={readOnly ? `${label ?? '字段'}识别区域，只读` : '识别区域，方向键移动，Alt+方向键缩放'}
+      aria-label={ariaLabel ?? (readOnly ? `${label ?? '字段'}识别区域，只读` : '识别区域，方向键移动，Alt+方向键缩放')}
       tabIndex={readOnly ? undefined : 0}
+      onFocus={readOnly ? undefined : onSelect}
       onKeyDown={readOnly ? undefined : onKeyDown}
-      onPointerDown={beginDrag('move')}
-      onPointerMove={continueDrag}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
-      onLostPointerCapture={endDrag}
+      onPointerDown={bodyDraggable ? beginDrag('move') : undefined}
+      onPointerMove={bodyDraggable ? continueDrag : undefined}
+      onPointerUp={bodyDraggable ? endDrag : undefined}
+      onPointerCancel={bodyDraggable ? endDrag : undefined}
+      onLostPointerCapture={bodyDraggable ? endDrag : undefined}
     >
-      {!readOnly && HANDLES.map((handle) => (
+      {showHandles && HANDLES.map((handle) => (
         <span
           key={handle}
           className={`roi-handle roi-handle-${handle}`}
@@ -153,7 +197,7 @@ export function RoiWindow({
         />
       ))}
       <span className="roi-size">
-        {label ? `${label} ` : ''}{Math.round(roi.w * videoWidth)}×{Math.round(roi.h * videoHeight)}
+        {label ? `${label} ` : ''}{sizeText}
       </span>
     </div>
   )

@@ -185,7 +185,7 @@ export function startAutoAlign(session: Session): void {
   void session.syncNow()
 }
 
-export function AutoAlign(): React.ReactNode {
+export function AutoAlign({ onOpenFrameSettings }: { onOpenFrameSettings?: () => void } = {}): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const menu = usePopover()
@@ -239,6 +239,11 @@ export function AutoAlign(): React.ReactNode {
           <button type="button" className="btn-quiet" disabled={busy || !bothReady} onClick={() => void session.measureOnce()}>
             仅测量
           </button>
+          {settings.recognitionMode === 'frame-hash' && onOpenFrameSettings && (
+            <button type="button" className="btn-quiet" onClick={() => { menu.close(); onOpenFrameSettings() }}>
+              调整匹配区域
+            </button>
+          )}
         </div>
 
         {result && (

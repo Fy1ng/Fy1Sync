@@ -19,19 +19,17 @@ async function load(page: import('@playwright/test').Page): Promise<void> {
 test.describe('侧栏基础识别', () => {
   test.setTimeout(120_000)
 
-  test('显示实际二值图, 对齐中保留工具栏, 适配提示仅首次出现且成功提示简洁', async ({ page }) => {
+  test('显示实际二值图, 快捷键对齐保持底栏静默不弹出且成功提示简洁', async ({ page }) => {
     await openPlayer(page)
     await load(page)
     await expect(page.getByRole('region', { name: '基础识别', exact: true })).toBeVisible()
     await expect(page.getByRole('log', { name: '弹幕列表' })).toBeVisible()
     await setPlaying(page, true)
-    await page.keyboard.press('a')
-    const adapting = page.locator('.toast').filter({ hasText: '自动对齐适配中:' })
-    await expect(adapting).toBeVisible()
-    await expect(page.locator('.align-main.is-running')).toHaveCount(1)
     await page.mouse.move(4, 4)
-    await page.waitForTimeout(3500)
-    await expect(page.locator('main.theater')).toHaveAttribute('data-chrome', 'on')
+    await expect(page.locator('main.theater')).toHaveAttribute('data-chrome', 'off', { timeout: 6000 })
+    await page.keyboard.press('a')
+    await expect(page.locator('.align-main.is-running')).toHaveCount(1)
+    await expect(page.locator('main.theater')).toHaveAttribute('data-chrome', 'off')
     const binary = page.getByRole('article', { name: '画面基础识别' }).getByLabel('画面识别预览')
     await expect(binary).toBeVisible()
     const pixels = await binary.evaluate((node: HTMLCanvasElement) => {
@@ -46,11 +44,11 @@ test.describe('侧栏基础识别', () => {
     expect(pixels.dark).toBeGreaterThan(0)
     await expect(page.locator('.align-main.is-running')).toHaveCount(0, { timeout: 25_000 })
     await expect(page.locator('.toast').getByText('已自动对齐', { exact: true })).toBeVisible()
+    await expect(page.locator('main.theater')).toHaveAttribute('data-chrome', 'off')
     await page.screenshot({ path: test.info().outputPath('basic-sidebar.png') })
-    if (await adapting.isVisible()) await adapting.getByRole('button', { name: '关闭提示' }).click()
     await page.keyboard.press('a')
     await expect(page.locator('.align-main.is-running')).toHaveCount(1)
-    await expect(adapting).toHaveCount(0)
+    await expect(page.locator('main.theater')).toHaveAttribute('data-chrome', 'off')
     await expect(page.locator('.align-main.is-running')).toHaveCount(0, { timeout: 25_000 })
   })
 

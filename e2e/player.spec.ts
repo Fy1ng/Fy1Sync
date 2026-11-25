@@ -251,6 +251,39 @@ test.describe('弹幕叠加层', () => {
     await expect(page.locator('.theater')).toHaveAttribute('data-chrome', 'off', { timeout: 6000 })
   })
 
+  test('快捷键触发对齐与定时保持对齐期间底栏保持隐藏不自动弹出', async ({ page }) => {
+    await openPlayer(page)
+    await loadBothFixtures(page)
+    await seekBoth(page, 3, 3)
+    await setPlaying(page, true)
+
+    await revealOverlay(page)
+    await page.getByRole('button', { name: '对齐选项', exact: true }).click()
+    const menu = page.getByRole('dialog', { name: '对齐选项', exact: true })
+    await menu.getByRole('switch', { name: /^比赛中保持对齐/ }).locator('..').click()
+    await menu.getByRole('radio', { name: '15 秒', exact: true }).locator('..').click()
+    await page.keyboard.press('Escape')
+    await expect(menu).toBeHidden()
+
+    // Move pointer off the dock onto the video and wait for idle hide.
+    await page.mouse.move(200, 200)
+    await expect(page.locator('.theater')).toHaveAttribute('data-chrome', 'off', { timeout: 6000 })
+    await expect(page.locator('.dock')).toHaveCSS('opacity', '0')
+
+    // Pressing shortcut A starts alignment while keeping the dock & progress bar hidden.
+    await page.keyboard.press('a')
+    await expect(page.locator('.align-main.is-running')).toHaveCount(1)
+    await expect(page.locator('.theater')).toHaveAttribute('data-chrome', 'off')
+    await expect(page.locator('.dock')).toHaveCSS('opacity', '0')
+    await expect(page.locator('.align-main.is-running')).toHaveCount(0, { timeout: 25_000 })
+    await expect(page.locator('.theater')).toHaveAttribute('data-chrome', 'off')
+
+    // Wait across the 15 s periodic re-alignment tick and verify chrome never pops up.
+    await expect(page.locator('.align-main.is-running')).toHaveCount(1, { timeout: 18_000 })
+    await expect(page.locator('.theater')).toHaveAttribute('data-chrome', 'off')
+    await expect(page.locator('.dock')).toHaveCSS('opacity', '0')
+  })
+
   test('窄窗口下底栏各组不重叠', async ({ page }) => {
     await openPlayer(page)
     await loadBothFixtures(page)
