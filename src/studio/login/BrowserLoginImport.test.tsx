@@ -47,7 +47,7 @@ async function begin(): Promise<HTMLElement> {
 }
 
 describe('browser import cancellation results', () => {
-  it.each(['douyu', 'bilibili', 'huya', 'douyin', 'youtube'] as const)('verifies and confirms a pasted Cookie for %s', async platform => {
+  it.each(['douyu', 'bilibili', 'huya', 'douyin', 'youtube', 'twitch'] as const)('verifies and confirms a pasted Cookie for %s', async platform => {
     vi.mocked(apiClient.previewManualCookies).mockImplementation(async args => ({ ok: true, value: {
       id: args.requestId, profile, expiresAt: Date.now() + 300000,
       accounts: [{ id: 'd'.repeat(32), platform, state: 'ready', username: '手动账号', cookieCount: 2 }],

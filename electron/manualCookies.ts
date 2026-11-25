@@ -31,7 +31,7 @@ export function parseManualCookies(input: unknown, platform: LoginPlatform, now 
       rows = header.split(';').filter(part => part.trim()).map(part => {
         const index = part.indexOf('=')
         if (index < 1) throw invalid()
-        return { domain: `.${platform}.com`, path: '/', secure: true, session: true,
+        return { domain: platform === 'twitch' ? '.twitch.tv' : `.${platform}.com`, path: '/', secure: true, session: true,
           name: part.slice(0, index).trim(), value: part.slice(index + 1).trim() }
       })
     }
