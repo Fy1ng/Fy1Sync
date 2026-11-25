@@ -92,19 +92,19 @@ NODE_MIRROR='<可达镜像站主机名>'
 NODE_AMD64_DIGEST='sha256:<官方 linux/amd64 摘要>'
 sudo docker pull "${NODE_MIRROR}/library/node@${NODE_AMD64_DIGEST}"
 sudo docker tag "${NODE_MIRROR}/library/node@${NODE_AMD64_DIGEST}" node:24-bookworm-slim
-sudo docker build -f relay/Dockerfile -t fy1sync-schedule-relay:0.5.1 .
-printf 'RELAY_TAG=0.5.1\n' | sudo tee .env
+sudo docker build -f relay/Dockerfile -t fy1sync-schedule-relay:0.6.0 .
+printf 'RELAY_TAG=0.6.0\n' | sudo tee .env
 sudo docker compose -p fy1sync-schedule-relay up -d --pull never
 ```
 
-示例使用标签 `0.5.1`, 部署时按实际产物选择标签. 基础镜像已存在于本地, 构建时不加 `--pull`, Compose 启动使用 `--pull never`.
+示例使用标签 `0.6.0`, 部署时按实际产物选择标签. 基础镜像已存在于本地, 构建时不加 `--pull`, Compose 启动使用 `--pull never`.
 
-更新时先在本机运行 `npm run build:relay`, 将新的 `dist/relay/relay.cjs` 传到相同路径, 然后在 VPS 重新构建镜像, 换标签并重建容器. 以下以 `0.5.1-relay-r1` 为新标签示例:
+更新时先在本机运行 `npm run build:relay`, 将新的 `dist/relay/relay.cjs` 传到相同路径, 然后在 VPS 重新构建镜像, 换标签并重建容器. 以下以 `0.6.0-relay-r1` 为新标签示例:
 
 ```sh
 cd /opt/fy1sync-schedule-relay
-sudo docker build -f relay/Dockerfile -t fy1sync-schedule-relay:0.5.1-relay-r1 .
-printf 'RELAY_TAG=0.5.1-relay-r1\n' | sudo tee .env
+sudo docker build -f relay/Dockerfile -t fy1sync-schedule-relay:0.6.0-relay-r1 .
+printf 'RELAY_TAG=0.6.0-relay-r1\n' | sudo tee .env
 sudo docker compose -p fy1sync-schedule-relay up -d --pull never
 ```
 
