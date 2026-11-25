@@ -27,7 +27,7 @@ function numeric(value: string | undefined): number {
 export function hlsVariants(body: string, baseUrl: string | URL): HlsRendition[] | null {
   const lines = body.replace(/^\uFEFF/, '').trim().split(/\r?\n/).map(line => line.trim())
   if (lines[0] !== '#EXTM3U') throw invalid()
-  const variants: HlsRendition[] = []
+  const variants: Array<HlsRendition & { portrait: boolean }> = []
   let streams = 0
   for (let index = 1; index < lines.length; index++) {
     const line = lines[index]!
@@ -45,22 +45,29 @@ export function hlsVariants(body: string, baseUrl: string | URL): HlsRendition[]
     const size = resolution?.match(/^([1-9]\d{0,4})x([1-9]\d{0,4})$/)
     if (resolution && !size) throw invalid()
     const codecs = data.get('CODECS') ?? ''
+    const width = size ? Number(size[1]) : 0
+    const height = size ? Number(size[2]) : 0
+    const video = data.get('VIDEO') ?? data.get('STABLE-VARIANT-ID')
     // Twitch includes an audio-only rendition in the same master. Never buffer it
     // as video, even when the server lists it first or gives it a large bandwidth.
-    if (!size && !/(?:^|,)(?:avc1|avc3|hvc1|hev1|vp09|vp9|av01)(?:\.|,|$)/i.test(codecs)) continue
-    const height = size ? Number(size[2]) : 0
+    if ((!size && !/(?:^|,)(?:avc1|avc3|hvc1|hev1|vp09|vp9|av01)(?:\.|,|$)/i.test(codecs))
+      || video === 'audio_only' || video === 'audio') continue
     const fps = numeric(data.get('FRAME-RATE'))
-    const video = data.get('VIDEO')
     const id = video && /^[A-Za-z0-9_.-]{1,64}$/.test(video) ? video : `video-${height}p${fps}`
-    variants.push({ id, url: url.href, width: size ? Number(size[1]) : 0, height,
-      fps, bandwidth: numeric(data.get('BANDWIDTH')) })
+    const groups = (data.get('IVS-GROUPS') ?? '').split(',').map(group => group.trim().toLowerCase())
+    const portrait = groups.includes('portrait') || (width > 0 && height > width)
+    variants.push({ id, url: url.href, width, height, fps, bandwidth: numeric(data.get('BANDWIDTH')), portrait })
   }
   if (!streams) {
     if (!lines.some(line => line.startsWith('#EXT-X-TARGETDURATION:'))) throw invalid()
     return null
   }
   if (!variants.length) throw invalid()
-  return variants.sort((a, b) => b.height - a.height || b.fps - a.fps || b.width - a.width || b.bandwidth - a.bandwidth)
+  const hasLandscape = variants.some(variant => !variant.portrait)
+  const filtered = hasLandscape ? variants.filter(variant => !variant.portrait) : variants
+  return filtered
+    .sort((a, b) => b.height - a.height || b.fps - a.fps || b.width - a.width || b.bandwidth - a.bandwidth)
+    .map(({ portrait: _portrait, ...variant }) => variant)
 }
 
 export function highestHlsVariant(body: string, baseUrl: string | URL): HlsVariant | null {

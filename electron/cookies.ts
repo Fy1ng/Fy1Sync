@@ -9,8 +9,8 @@ import type { CookiesSetDetails } from 'electron'
 export interface LoginCookieSession { cookies: { set(details: CookiesSetDetails): Promise<void> } }
 export type YoutubeCookieSession = LoginCookieSession
 
-export type LoginPlatform = 'youtube' | 'douyu' | 'bilibili' | 'huya' | 'douyin'
-export type CookieHeaderPlatform = Exclude<LoginPlatform, 'youtube'>
+export type LoginPlatform = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'huya' | 'douyin'
+export type CookieHeaderPlatform = Exclude<LoginPlatform, 'youtube' | 'twitch'>
 export interface LoginResult { cookieCount: number; authKeysPresent: string[]; signingReady?: boolean; signingProblem?: string }
 export interface PlatformLoginStatus extends LoginResult {
   loggedIn: boolean
@@ -153,6 +153,7 @@ export function douyinBrowserSigningServerProofs(cookies: BrowserCookie[], now=D
 export const LOGIN_PLATFORMS = {
   douyin: { url: 'https://live.douyin.com/', authKeys: ['sessionid', 'sessionid_ss'] },
   youtube: { url: 'https://www.youtube.com', authKeys: ['SAPISID', '__Secure-3PSID', '__Secure-1PSID', 'SID', 'HSID', 'SSID'] },
+  twitch: { url: 'https://www.twitch.tv/login', apiUrl: 'https://gql.twitch.tv/gql', authKeys: ['auth-token'] },
   douyu: { url: 'https://www.douyu.com', apiUrl: 'https://www.douyu.com/lapi/live/getH5PlayV1/',
     authKeys: ['acf_uid', 'acf_auth', 'acf_auth_wl', 'acf_dmjwt_token', 'acf_ltkid', 'acf_biz', 'acf_stk'] },
   bilibili: { url: 'https://www.bilibili.com', apiUrl: 'https://api.bilibili.com/x/web-interface/nav', authKeys: ['SESSDATA', 'DedeUserID'] },
@@ -177,10 +178,22 @@ function isDouyinAuthenticationCookie(cookie: BrowserCookie, now: number): boole
     && scopedCookies([cookie], new URL(LOGIN_PLATFORMS.douyin.url)).length > 0
 }
 
+/** Main-only Twitch web OAuth token selected under the same domain/path rules as outbound requests. */
+export function twitchAuthToken(cookies: BrowserCookie[], now = Date.now() / 1000): string | undefined {
+  if (!Array.isArray(cookies)) return undefined
+  const eligible = cookies.filter(cookie => cookie && typeof cookie.domain === 'string' && cookieDomainAllowed(cookie.domain, 'twitch')
+    && typeof cookie.name === 'string' && typeof cookie.value === 'string' && (cookie.path === undefined || typeof cookie.path === 'string')
+    && (cookie.session || cookie.expirationDate === undefined || (Number.isFinite(cookie.expirationDate) && cookie.expirationDate > now)))
+  const token = selectedCookies(eligible, new URL(LOGIN_PLATFORMS.twitch.apiUrl)).find(cookie => cookie.name === 'auth-token')?.value
+    ?? selectedCookies(eligible, new URL('https://www.twitch.tv/')).find(cookie => cookie.name === 'auth-token')?.value
+  return typeof token === 'string' && /^[A-Za-z0-9]{20,128}$/.test(token) ? token : undefined
+}
+
 /** Presence means locally usable credential material, not verified server identity. */
 export function hasAuthenticationCookies(cookies: BrowserCookie[], platform: LoginPlatform, now = Date.now() / 1000): boolean {
   if (!isLoginPlatform(platform) || !Array.isArray(cookies)) return false
   if (platform === 'douyin') return cookies.some(cookie => isDouyinAuthenticationCookie(cookie, now))
+  if (platform === 'twitch') return Boolean(twitchAuthToken(cookies, now))
   const eligible = cookies.filter(cookie => cookie && typeof cookie.domain === 'string' && cookieDomainAllowed(cookie.domain, platform)
     && typeof cookie.name === 'string' && typeof cookie.value === 'string' && (cookie.path === undefined || typeof cookie.path === 'string')
     && (cookie.session || cookie.expirationDate === undefined || (Number.isFinite(cookie.expirationDate) && cookie.expirationDate > now)))
@@ -216,14 +229,14 @@ class CookieReplacementBusy extends Error {
 }
 const sameFile = (before: fs.Stats, after: fs.Stats): boolean => after.isFile() && !after.isSymbolicLink()
   && before.ino === after.ino && before.dev === after.dev && before.size === after.size && before.mtimeMs === after.mtimeMs
-export function isLoginPlatform(value: unknown): value is LoginPlatform { return value === 'youtube' || value === 'douyu' || value === 'bilibili' || value === 'huya' || value === 'douyin' }
+export function isLoginPlatform(value: unknown): value is LoginPlatform { return value === 'youtube' || value === 'twitch' || value === 'douyu' || value === 'bilibili' || value === 'huya' || value === 'douyin' }
 
 export function cookieDomainAllowed(domain: string, platform: LoginPlatform): boolean {
   const host = domain.replace(/^\./, '').toLowerCase()
   if (host.length > 253 || !host.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label) && label.length <= 63)) return false
   if (platform === 'youtube' && (host === 'google.com' || host === 'accounts.google.com' || host.endsWith('.accounts.google.com'))) return true
   if (!isLoginPlatform(platform)) return false
-  const base = `${platform}.com`
+  const base = platform === 'twitch' ? 'twitch.tv' : `${platform}.com`
   return host === base || host.endsWith(`.${base}`)
 }
 
@@ -269,7 +282,7 @@ export interface CookieStoreOptions { now?: () => number }
 /** Cookie values are private to the main process; public methods return fixed metadata only. */
 export class CookieStore {
   private readonly now: () => number
-  private readonly revisions: Record<LoginPlatform, number> = { youtube: 0, douyu: 0, bilibili: 0, huya: 0, douyin: 0 }
+  private readonly revisions: Record<LoginPlatform, number> = { youtube: 0, twitch: 0, douyu: 0, bilibili: 0, huya: 0, douyin: 0 }
   readonly root: string
 
   constructor(userDataDirectory: string, options: CookieStoreOptions = {}) {
@@ -423,7 +436,9 @@ export class CookieStore {
 
   private summary(platform: LoginPlatform, cookies: StoredCookie[], identity?: BrowserAccountIdentity): PlatformLoginStatus {
     const known: readonly string[] = LOGIN_PLATFORMS[platform].authKeys
-    const auth = cookies.filter(cookie => platform === 'douyin' ? isDouyinAuthenticationCookie(cookie, this.now()) : known.includes(cookie.name) && cookie.value.length > 0)
+    const auth = cookies.filter(cookie => platform === 'douyin' ? isDouyinAuthenticationCookie(cookie, this.now())
+      : platform === 'twitch' ? cookie.name === 'auth-token' && /^[A-Za-z0-9]{20,128}$/.test(cookie.value)
+        : known.includes(cookie.name) && cookie.value.length > 0)
     const expiries = auth.map(cookie => cookie.expires).filter(expiry => expiry > 0)
     const present = new Set(auth.map(cookie => cookie.name))
     const loggedIn = hasAuthenticationCookies(cookies, platform, this.now())
@@ -508,6 +523,19 @@ export class CookieStore {
     const loaded = await this.read(platform)
     if (revision !== this.revisions[platform]) throw storageFailure()
     return platformHeader(loaded?.cookies ?? [], target)
+  }
+
+  async twitchAuthorization(requestUrl: string = LOGIN_PLATFORMS.twitch.apiUrl): Promise<string> {
+    if (typeof requestUrl !== 'string' || /[\\\x00-\x20\x7f]/.test(requestUrl)) throw storageFailure()
+    let target: URL
+    try { target = new URL(requestUrl) } catch { throw storageFailure() }
+    if (target.protocol !== 'https:' || target.username || target.password || target.port
+      || target.hostname !== 'gql.twitch.tv' || target.pathname !== '/gql' || target.search || target.hash) throw storageFailure()
+    const revision = this.revisions.twitch
+    const loaded = await this.read('twitch')
+    if (revision !== this.revisions.twitch) throw storageFailure()
+    const token = twitchAuthToken(loaded?.cookies ?? [], this.now())
+    return token ? `OAuth ${token}` : ''
   }
 
   async withTemporaryCookies<T>(platform: 'youtube', callback: (file?: string) => Promise<T>): Promise<T> {

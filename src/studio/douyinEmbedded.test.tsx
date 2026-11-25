@@ -13,7 +13,7 @@ const sessions: Session[] = []
 const listeners = new Set<(state: EmbeddedLoginState | null) => void>()
 const attempt: EmbeddedLoginState = { id: 'douyin-attempt', platform: 'douyin', purpose: 'login', phase: 'ready', presentation: 'form' }
 const loggedOut = { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false }
-const status = (loggedIn: boolean): LoginStatus => ({ youtube: loggedOut, douyu: loggedOut, bilibili: loggedOut, huya: loggedOut,
+const status = (loggedIn: boolean): LoginStatus => ({ youtube: loggedOut, twitch: loggedOut, douyu: loggedOut, bilibili: loggedOut, huya: loggedOut,
   douyin: { ...loggedOut, loggedIn, cookieCount: loggedIn ? 1 : 0, authKeysPresent: loggedIn ? ['sessionid'] : [] } })
 
 function emit(value: EmbeddedLoginState | null): void {

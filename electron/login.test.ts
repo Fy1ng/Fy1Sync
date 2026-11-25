@@ -62,6 +62,24 @@ describe('LoginManager', () => {
     await manager.dispose()
   })
 
+  it('uses Chrome login for Twitch even when embeddedDriver is configured, attaches identity, and invalidates OAuth on logout', async () => {
+    const twitchCookies: BrowserCookie[] = [{ domain: '.twitch.tv', path: '/', name: 'auth-token', value: '0123456789abcdefghijklmnopqrst', secure: true, session: true }]
+    const driver = { login: vi.fn(async () => twitchCookies) }
+    const embeddedDriver = { login: vi.fn(async () => []) }
+    const identify = vi.fn(async () => ({ uid: '42', username: 'twitch_viewer' }))
+    const manager = new LoginManager(root, { driver, embeddedDriver, identify, chromeExecutable: 'test-chrome' })
+    expect(await manager.login('twitch')).toEqual({ cookieCount: 1, authKeysPresent: ['auth-token'] })
+    expect(embeddedDriver.login).not.toHaveBeenCalled()
+    expect(driver.login).toHaveBeenCalledWith('test-chrome', path.join(root, 'browser-profile', 'twitch'), 'twitch', expect.any(AbortSignal), undefined)
+    expect(identify).toHaveBeenCalledExactlyOnceWith('twitch', twitchCookies, expect.any(AbortSignal))
+    expect((await manager.loginStatus()).twitch).toMatchObject({ loggedIn: true, nickname: 'twitch_viewer', authKeysPresent: ['auth-token'] })
+    expect(await manager.twitchAuthorization('https://gql.twitch.tv/gql')).toBe('OAuth 0123456789abcdefghijklmnopqrst')
+    await manager.logout('twitch')
+    expect(await manager.twitchAuthorization('https://gql.twitch.tv/gql')).toBe('')
+    expect((await manager.loginStatus()).twitch).toMatchObject({ loggedIn: false })
+    await manager.dispose()
+  })
+
   it('reuses the Douyu profile for Yuba and preserves cookie request scopes', async () => {
     const douyuCookies: BrowserCookie[] = [
       { domain: 'www.douyu.com', path: '/', name: 'acf_auth', value: 'synthetic-main', hostOnly: true, session: true },

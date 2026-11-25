@@ -75,6 +75,7 @@ describe('private cookie storage', () => {
     manager.write('youtube', [cookie(), cookie({ name: 'SID', expirationDate: now + 20 }), cookie({ name: 'HSID', session: true }), cookie({ name: 'SSID', expirationDate: now - 1 })])
     expect(await manager.status()).toEqual({
       youtube: { loggedIn: true, cookieCount: 3, authKeysPresent: ['SAPISID', 'SID', 'HSID'], expiresAt: now + 20, hasSessionCookies: true },
+      twitch: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false },
       douyu: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false,
         canSend: false, missingCredentialFields: ['acf_uid', 'acf_did', 'dy_did', 'did', 'acf_username', 'acf_auth_wl', 'acf_dmjwt_token', 'acf_ltkid', 'acf_biz', 'acf_stk'] },
       douyin: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false },
@@ -423,7 +424,41 @@ describe('domestic platform cookie isolation', () => {
     for (const url of ['https://bilibili.com/', 'https://cdn.huya.com/', 'https://a.msstatic.com/']) await expect(manager.cookieHeader('huya', url)).rejects.toThrow('未返回任何 cookie 数据')
     expect(isLoginPlatform('bilibili')).toBe(true)
     expect(isLoginPlatform('huya')).toBe(true)
+    expect(isLoginPlatform('twitch')).toBe(true)
     expect(isLoginPlatform('outside')).toBe(false)
+  })
+
+  it('validates Twitch auth-token cookies and exports OAuth headers only to gql.twitch.tv/gql', async () => {
+    const manager = store()
+    const validToken = '0123456789abcdefghijklmnopqrst'
+    for (const invalid of ['short', 'null', 'undefined', 'token-with-dash-is-not-alnum-00', 'a'.repeat(129)]) {
+      expect(hasAuthenticationCookies([cookie({ domain: '.twitch.tv', name: 'auth-token', value: invalid })], 'twitch', now)).toBe(false)
+    }
+    for (const badHost of ['twitch.com', '.twitch.com', 'twitch.tv.evil', 'eviltwitch.tv']) {
+      expect(cookieDomainAllowed(badHost, 'twitch')).toBe(false)
+    }
+    for (const goodHost of ['twitch.tv', '.twitch.tv', 'www.twitch.tv', 'gql.twitch.tv']) {
+      expect(cookieDomainAllowed(goodHost, 'twitch')).toBe(true)
+    }
+    manager.write('twitch', [cookie({ domain: '.twitch.tv', name: 'unique_id', value: 'anon1234567890123456' })])
+    expect((await manager.status()).twitch).toMatchObject({ loggedIn: false, cookieCount: 1, authKeysPresent: [] })
+    expect(await manager.twitchAuthorization()).toBe('')
+
+    manager.write('twitch', [cookie({ domain: '.twitch.tv', name: 'auth-token', value: validToken })], { uid: '42', username: 'twitch_user' })
+    expect((await manager.status()).twitch).toMatchObject({ loggedIn: true, cookieCount: 1, authKeysPresent: ['auth-token'], nickname: 'twitch_user' })
+    expect(await manager.twitchAuthorization('https://gql.twitch.tv/gql')).toBe(`OAuth ${validToken}`)
+    expect(JSON.stringify(await manager.status())).not.toContain(validToken)
+    for (const badUrl of [
+      'https://usher.ttvnw.net/api/channel/hls/pgl.m3u8',
+      'https://www.twitch.tv/',
+      'http://gql.twitch.tv/gql',
+      'https://gql.twitch.tv:8443/gql',
+      'https://user@gql.twitch.tv/gql',
+      'https://gql.twitch.tv/gql?extra=1',
+      'https://gql.twitch.tv/other',
+    ]) {
+      await expect(manager.twitchAuthorization(badUrl)).rejects.toThrow('未返回任何 cookie 数据')
+    }
   })
 
   it('stops injection between cookie writes when the owner is invalidated', async () => {

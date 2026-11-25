@@ -94,6 +94,8 @@ export type ResolverDeps = {
   douyinCookieHeader?: (requestUrl: string) => Promise<string>
   /** Main-only capability; read fresh scoped credentials only for fixed platform metadata URLs. */
   cookieHeader?: (platform: 'bilibili' | 'huya', requestUrl: string) => Promise<string>
+  /** Main-only capability; read fresh OAuth header only for Twitch's GraphQL token endpoint. */
+  twitchAuthorization?: (requestUrl: string) => Promise<string>
   quality?: string
   preferAdaptive?: boolean
   /** User-supplied headers for an explicit direct media stream. */

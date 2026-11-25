@@ -32,11 +32,12 @@ function harness(overrides: Partial<ConstructorParameters<typeof Acquisition>[0]
   }
   const logins = {
     cookieHeader: vi.fn(async (_platform: 'douyu' | 'bilibili' | 'huya' | 'douyin', _url?: string) => ''),
+    twitchAuthorization: vi.fn(async (_url?: string) => ''),
     login: vi.fn(async (_platform: LoginPlatform) => ({ cookieCount: 2, authKeysPresent: [] as string[] })),
     logout: vi.fn(async (_platform: LoginPlatform) => {}),
     loginStatus: vi.fn(async (): Promise<LoginStatus> => {
       const empty = { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false }
-      return { youtube: { ...empty }, douyu: { ...empty }, bilibili: { ...empty }, huya: { ...empty }, douyin: { ...empty } }
+      return { youtube: { ...empty }, twitch: { ...empty }, douyu: { ...empty }, bilibili: { ...empty }, huya: { ...empty }, douyin: { ...empty } }
     }),
   }
   const runYtDlp = vi.fn(async () => ({ is_live: true, id: 'abcdefghijk', live_status: 'is_live', formats: [
@@ -50,15 +51,15 @@ function harness(overrides: Partial<ConstructorParameters<typeof Acquisition>[0]
 }
 
 describe('main acquisition boundary', () => {
-  it.each(['youtube', 'douyu', 'bilibili', 'huya'] as const)('supports %s login and logout through the validated service API', async platform => {
+  it.each(['youtube', 'twitch', 'douyu', 'bilibili', 'huya'] as const)('supports %s login and logout through the validated service API', async platform => {
     const h = harness()
     const service = createDesktopService({ dataDir: '.', proxy: h.proxy, registerMedia: () => '', acquisition: h.acquisition })
     expect(await service.invoke('login', { platform })).toMatchObject({ ok: true, value: { cookieCount: 2 } })
     expect(h.logins.login).toHaveBeenCalledExactlyOnceWith(platform)
     expect(await service.invoke('logout', { platform })).toMatchObject({ ok: true, value: { ok: true } })
     expect(h.logins.logout).toHaveBeenCalledExactlyOnceWith(platform)
-    expect(await service.invoke('loginStatus', undefined)).toMatchObject({ ok: true, value: { youtube: {}, douyu: {}, bilibili: {}, huya: {} } })
-    for (const invalid of ['twitch', 'direct', 'huya.com', '../bilibili']) expect(await service.invoke('login', { platform: invalid })).toMatchObject({ ok: false, code: 'invalid-arguments' })
+    expect(await service.invoke('loginStatus', undefined)).toMatchObject({ ok: true, value: { youtube: {}, twitch: {}, douyu: {}, bilibili: {}, huya: {} } })
+    for (const invalid of ['direct', 'huya.com', '../bilibili', 'twitch.tv']) expect(await service.invoke('login', { platform: invalid })).toMatchObject({ ok: false, code: 'invalid-arguments' })
     service.dispose()
   })
 
@@ -118,7 +119,42 @@ describe('main acquisition boundary', () => {
     expect(JSON.stringify(result)).not.toMatch(/PRIVATE|ttvnw/)
     second = true
     expect((await h.reconnect()).url).toBe('https://video.ttvnw.net/redirected/high.m3u8?signature=PRIVATE_NEW')
+    expect(h.inputs[0]?.fmp4).toBe(true)
     expect(h.runYtDlp).not.toHaveBeenCalled()
+  })
+
+  it('passes Twitch OAuth only to gql.twitch.tv, unlocks 1440p60 fMP4 buffering, and refreshes OAuth on reconnect', async () => {
+    const calls: Array<{ url: string; auth: string | null }> = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      calls.push({ url, auth: new Headers(init?.headers).get('Authorization') })
+      if (url === 'https://gql.twitch.tv/gql') return Response.json({ data: { streamPlaybackAccessToken: { value: 'PRIVATE_TOKEN', signature: 'PRIVATE_SIG' } } })
+      return new Response([
+        '#EXTM3U',
+        '#EXT-X-STREAM-INF:BANDWIDTH=9200000,RESOLUTION=2560x1440,FRAME-RATE=60,CODECS="hev1.1.6.L150.90,mp4a.40.2",STABLE-VARIANT-ID="1440p60"',
+        'https://video.ttvnw.net/1440p60.m3u8?sig=PRIVATE_SIG',
+        '#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,FRAME-RATE=60,CODECS="avc1.64002A,mp4a.40.2",STABLE-VARIANT-ID="1080p60"',
+        'https://video.ttvnw.net/1080p60.m3u8?sig=PRIVATE_SIG',
+      ].join('\n'))
+    })
+    const mediaInput = vi.fn(async (rawUrl: string) => ({ url: 'http://127.0.0.1:4321/media/11111111-1111-4111-8111-111111111111', proxyUrl: '', rawUrl }))
+    const h = harness({ fetchImpl, mediaInput })
+    h.logins.twitchAuthorization.mockResolvedValueOnce('OAuth FIRST_PRIVATE_OAUTH_0000000000').mockResolvedValueOnce('OAuth SECOND_PRIVATE_OAUTH_000000000')
+    const result = await h.acquisition.resolve('twitch.tv/pgl', 'twitch', 'official')
+    expect(result).toMatchObject({ ok: true, stream: { platform: 'twitch', quality: '1440p60' } })
+    expect(h.logins.twitchAuthorization).toHaveBeenCalledExactlyOnceWith('https://gql.twitch.tv/gql')
+    expect(calls[0]).toEqual({ url: 'https://gql.twitch.tv/gql', auth: 'OAuth FIRST_PRIVATE_OAUTH_0000000000' })
+    expect(calls[1]?.auth).toBeNull()
+    expect(new URL(calls[1]!.url).searchParams.get('supported_codecs')).toBe('av1,h265,h264')
+    expect(h.inputs[0]).toMatchObject({ fmp4: true, gatewayHls: true })
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE|OAUTH/)
+    expect(JSON.stringify(mediaInput.mock.calls)).not.toMatch(/OAUTH/)
+    await h.reconnect()
+    expect(calls.filter(call => call.url === 'https://gql.twitch.tv/gql').map(call => call.auth)).toEqual([
+      'OAuth FIRST_PRIVATE_OAUTH_0000000000',
+      'OAuth SECOND_PRIVATE_OAUTH_000000000',
+    ])
+    h.acquisition.dispose()
   })
 
   it.each(['https://video.ttvnw.net:8443/live.m3u8', 'https://video.ttvnw.net:8080/live.m3u8'])('accepts a non-standard Twitch rendition port for buffering: %s', async uri => {

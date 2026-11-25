@@ -61,7 +61,7 @@ export const BROWSER_IMPORT_METHODS = [
   'listBrowserImportProfiles', 'previewBrowserLogins', 'importBrowserLogins', 'closeImportBrowser', 'cancelBrowserImport',
 ] as const satisfies readonly (keyof BrowserImportMethods)[]
 
-export const IMPORT_PLATFORMS: readonly LoginPlatform[] = ['douyu', 'bilibili', 'huya', 'douyin', 'youtube']
+export const IMPORT_PLATFORMS: readonly LoginPlatform[] = ['douyu', 'bilibili', 'huya', 'douyin', 'youtube', 'twitch']
 export const IMPORT_PLATFORM_NAMES: Record<LoginPlatform, string> = {
-  douyu: '斗鱼', bilibili: '哔哩哔哩', huya: '虎牙', douyin: '抖音', youtube: 'YouTube',
+  douyu: '斗鱼', bilibili: '哔哩哔哩', huya: '虎牙', douyin: '抖音', youtube: 'YouTube', twitch: 'Twitch',
 }

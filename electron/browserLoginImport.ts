@@ -78,7 +78,7 @@ export class BrowserLoginImport {
   async scan(value: unknown): Promise<BrowserImportPreview> {
     this.available()
     if (!exact(value, ['requestId', 'profileId', 'platforms']) || !validId(value.requestId) || !validId(value.profileId)
-      || !Array.isArray(value.platforms) || !value.platforms.length || value.platforms.length > 5
+      || !Array.isArray(value.platforms) || !value.platforms.length || value.platforms.length > IMPORT_PLATFORMS.length
       || value.platforms.some(platform => !IMPORT_PLATFORMS.includes(platform))
       || new Set(value.platforms).size !== value.platforms.length) throw invalid()
     if (this.operation) throw new BrowserImportError('browser-import-busy')
@@ -149,7 +149,7 @@ export class BrowserLoginImport {
   async apply(value: unknown): Promise<{ outcomes: BrowserImportOutcome[] }> {
     this.available()
     if (!exact(value, ['previewId', 'accountIds'], ['douyuTarget']) || !validId(value.previewId)
-      || !Array.isArray(value.accountIds) || !value.accountIds.length || value.accountIds.length > 5
+      || !Array.isArray(value.accountIds) || !value.accountIds.length || value.accountIds.length > IMPORT_PLATFORMS.length
       || value.accountIds.some(id => !validId(id)) || new Set(value.accountIds).size !== value.accountIds.length) throw invalid()
     const douyuTarget = target(value.douyuTarget)
     if (this.operation) throw new BrowserImportError('browser-import-busy')

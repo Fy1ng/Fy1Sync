@@ -18,7 +18,7 @@ const accounts: DouyuAccountsSnapshot = { revision: 1, activeAccountId: 'default
 ] }
 const sessions: Session[] = []
 const invoke = vi.fn(async (method: string): Promise<unknown> => {
-  if (method === 'loginStatus') return { ok: true, value: { douyu: anonymous, bilibili: anonymous, huya: anonymous, youtube: anonymous } }
+  if (method === 'loginStatus') return { ok: true, value: { douyu: anonymous, bilibili: anonymous, huya: anonymous, youtube: anonymous, twitch: anonymous } }
   if (method === 'listDouyuAccounts') return { ok: true, value: accounts }
   if (method === 'getDouyuTasks') return { ok: true, value: { activeAccountId: 'default', retainedRooms: [], currentRoom: null,
     runtime: { foreground: true, locked: false, suspended: false }, tasks: [1, 2].map(id => ({
@@ -198,9 +198,9 @@ describe('player shortcut settings', () => {
 
 describe('account logout confirmation', () => {
   it.each([
-    ['youtube', 'YouTube'], ['douyin', '抖音'], ['bilibili', '哔哩哔哩'], ['huya', '虎牙'],
+    ['youtube', 'YouTube'], ['twitch', 'Twitch'], ['douyin', '抖音'], ['bilibili', '哔哩哔哩'], ['huya', '虎牙'],
   ] as const)('confirms %s logout in place and allows retry after failure', async (id, name) => {
-    const signedOut = { douyu: anonymous, youtube: anonymous, douyin: anonymous, bilibili: anonymous, huya: anonymous }
+    const signedOut = { douyu: anonymous, youtube: anonymous, twitch: anonymous, douyin: anonymous, bilibili: anonymous, huya: anonymous }
     const loginStatus = vi.spyOn(apiClient, 'loginStatus').mockResolvedValue({ ok: true, value: {
       ...signedOut, [id]: { ...anonymous, loggedIn: true, cookieCount: 1 },
     } })
@@ -567,13 +567,15 @@ describe('settings account navigation', () => {
     expect(screen.queryByText('长按或 Shift 步长')).toBeNull()
   })
 
-  it.each(['failure', 'rejected'] as const)('distinguishes a YouTube status %s from loading or logged out and retries in place', async (failure) => {
+  it.each([
+    ['YouTube', 'failure'], ['YouTube', 'rejected'], ['Twitch', 'failure'], ['Twitch', 'rejected'],
+  ] as const)('distinguishes a %s status %s from loading or logged out and retries in place', async (tabName, failure) => {
     const read = vi.spyOn(apiClient, 'loginStatus')
     if (failure === 'failure') read.mockResolvedValueOnce({ ok: false, code: 'unavailable', message: '账号读取失败' })
     else read.mockRejectedValueOnce(new Error('read failed'))
     mount()
     section('账号')
-    platform('YouTube')
+    platform(tabName)
     expect(screen.getByText('正在检查登录状态')).toBeInTheDocument()
     expect(await screen.findByText('登录状态读取失败')).toBeInTheDocument()
     expect(screen.queryByText('正在检查登录状态')).toBeNull()
@@ -657,17 +659,17 @@ describe('settings account navigation', () => {
     expect(session.settings.recognitionMode).toBe('basic')
     expect(sync).not.toHaveBeenCalled()
   })
-  it('puts five platforms in 账号 and nests Douyu pages within the same sidebar', async () => {
+  it('puts six platforms in 账号 and nests Douyu pages within the same sidebar', async () => {
     mount()
     const sections = screen.getByRole('tablist', { name: '设置分区' })
     expect(within(sections).getAllByRole('tab').map(tab => tab.textContent)).toEqual(['通用', '账号', '弹幕记录', '房间数据', '画面匹配'])
     const general = screen.getByRole('tablist', { name: '通用' })
-    for (const name of ['斗鱼', '哔哩哔哩', '虎牙', '抖音', 'YouTube']) expect(within(general).queryByRole('tab', { name })).toBeNull()
+    for (const name of ['斗鱼', '哔哩哔哩', '虎牙', '抖音', 'YouTube', 'Twitch']) expect(within(general).queryByRole('tab', { name })).toBeNull()
     section('账号')
     platform('斗鱼')
     const platforms = screen.getByRole('tablist', { name: '账号平台' })
     const directTabs = within(platforms).getAllByRole('tab').filter(tab => tab.closest('[role="tablist"]') === platforms)
-    expect(directTabs.map(tab => tab.textContent)).toEqual(['斗鱼', '哔哩哔哩', '虎牙', '抖音', 'YouTube'])
+    expect(directTabs.map(tab => tab.textContent)).toEqual(['斗鱼', '哔哩哔哩', '虎牙', '抖音', 'YouTube', 'Twitch'])
     const subnav = screen.getByRole('tablist', { name: '斗鱼' })
     const sidebar = platforms.closest('.side-nav')
     expect(sidebar).not.toBeNull()
@@ -720,6 +722,7 @@ describe('settings account navigation', () => {
       ['哔哩哔哩', 'login', { platform: 'bilibili' }],
       ['虎牙', 'login', { platform: 'huya' }],
       ['YouTube', 'login', { platform: 'youtube' }],
+      ['Twitch', 'login', { platform: 'twitch' }],
     ] as const) {
       platform(name)
       await waitFor(() => expect(screen.getByRole('button', { name: '登录' })).toBeEnabled())

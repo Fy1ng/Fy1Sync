@@ -202,4 +202,15 @@ describe('browser login import transactions', () => {
     expect(snapshotRef?.serverData).toBe('')
     service.dispose(); f.service.dispose()
   })
+
+  it('scans and imports all six platforms including Twitch in a single batch', async () => {
+    const f = fixture()
+    const preview = await f.service.scan({ requestId: id, profileId: 'e'.repeat(32), platforms: ['douyu', 'bilibili', 'huya', 'douyin', 'youtube', 'twitch'] })
+    expect(preview.accounts).toHaveLength(6)
+    expect(preview.accounts.find(account => account.platform === 'twitch')).toMatchObject({ state: 'ready', username: '测试 Twitch 账号' })
+    const result = await f.service.apply({ previewId: id, accountIds: preview.accounts.map(account => account.id) })
+    expect(result.outcomes).toHaveLength(6)
+    expect(result.outcomes.find(item => item.platform === 'twitch')).toMatchObject({ imported: true, username: '测试 Twitch 账号' })
+    f.service.dispose()
+  })
 })

@@ -10,7 +10,7 @@ import { SettingsSheet } from './SettingsSheet'
 const sessions: Session[] = []
 const loggedOut: PlatformLoginStatus = { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false }
 function status(douyin: Partial<PlatformLoginStatus> = {}): LoginStatus {
-  return { youtube: loggedOut, douyu: loggedOut, bilibili: loggedOut, huya: loggedOut, douyin: { ...loggedOut, ...douyin } }
+  return { youtube: loggedOut, twitch: loggedOut, douyu: loggedOut, bilibili: loggedOut, huya: loggedOut, douyin: { ...loggedOut, ...douyin } }
 }
 function mount(): void {
   const session = new Session({ createSampler: () => null })

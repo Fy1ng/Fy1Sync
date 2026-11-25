@@ -20,7 +20,7 @@ let status: LoginStatus
 
 beforeEach(() => {
   forgetAll()
-  status = { douyu: anonymous, youtube: anonymous, douyin: anonymous, bilibili: anonymous, huya: anonymous }
+  status = { douyu: anonymous, youtube: anonymous, twitch: anonymous, douyin: anonymous, bilibili: anonymous, huya: anonymous }
   vi.mocked(apiClient.loginStatus).mockImplementation(async () => ({ ok: true, value: status }))
   vi.mocked(apiClient.login).mockImplementation(async (platform) => {
     status = { ...status, [platform]: signedIn }

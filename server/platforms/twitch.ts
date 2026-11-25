@@ -90,12 +90,14 @@ export async function resolveTwitch(
   }
 
   let token: TokenResponse
+  const authorization = await deps.twitchAuthorization?.(GQL_ENDPOINT)
   try {
     token = (await deps.fetchJson(GQL_ENDPOINT, {
       method: 'POST',
       headers: {
         'client-id': WEB_CLIENT_ID,
         'content-type': 'application/json',
+        ...(authorization ? { Authorization: authorization } : {}),
       },
       body: JSON.stringify({
         operationName: 'PlaybackAccessToken',
@@ -104,6 +106,9 @@ export async function resolveTwitch(
       }),
     })) as TokenResponse
   } catch (error) {
+    if (authorization && error instanceof StreamFailureError && error.failure.status === 401) {
+      return failure('login-required', 'Twitch 登录已失效', '请重新登录 Twitch 后重试', error.failure.detail ?? error)
+    }
     if (error instanceof StreamFailureError) throw error
     return failure(
       'upstream-error',
@@ -129,12 +134,13 @@ export async function resolveTwitch(
     fast_bread: 'false',
     p: String(Math.floor(Math.random() * 9_999_999)),
     play_session_id: randomHex(32),
+    platform: 'web',
     player_backend: 'mediaplayer',
     playlist_include_framerate: 'true',
     reassignments_supported: 'true',
     sig: access.signature,
     token: access.value,
-    supported_codecs: 'avc1',
+    supported_codecs: 'av1,h265,h264',
     cdm: 'wv',
     player_version: '1.32.0',
   })

@@ -21,7 +21,7 @@ function tempRoot(): string {
 function fakeLogin(loggedIn = false, nickname?: string) {
   const empty = { cookieCount: 0, authKeysPresent: [] as string[], loggedIn: false, expiresAt: null, hasSessionCookies: false }
   const status: LoginStatus = {
-    youtube: { ...empty },
+    youtube: { ...empty }, twitch: { ...empty },
     douyu: { ...empty, loggedIn, ...(loggedIn && nickname ? { nickname } : {}) },
     bilibili: { ...empty }, huya: { ...empty }, douyin: { ...empty },
   }

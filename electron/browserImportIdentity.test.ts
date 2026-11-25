@@ -137,6 +137,36 @@ describe('import identity verification and avatars', () => {
       .resolves.toEqual({ username: '频道名称' })
     expect(fetch).toHaveBeenCalledTimes(2)
   })
+  it('verifies Twitch currentUser via GQL OAuth header, omits credentials for avatars, and treats 401 or null user as signed out', async () => {
+    const token = '0123456789abcdefghijklmnopqrst'
+    const calls: Array<{ url: string; auth: string | null; credentials?: RequestCredentials }> = []
+    const fetch = vi.fn(async (_platform, url: string, init: RequestInit) => {
+      calls.push({ url, auth: new Headers(init.headers).get('Authorization'), credentials: init.credentials })
+      if (url === 'https://gql.twitch.tv/gql') {
+        expect(init.method).toBe('POST')
+        expect(new Headers(init.headers).get('Client-Id')).toBe('kimne78kx3ncx6brgo4mv6wki5h1ko')
+        return new Response(JSON.stringify({ data: { currentUser: {
+          id: '123456', login: 'pgl_viewer', displayName: 'PGL_Viewer',
+          profileImageURL: 'https://static-cdn.jtvnw.net/jtv_user_pictures/example-profile_image-300x300.png',
+        } } }))
+      }
+      return new Response(new Uint8Array([1, 2]), { headers: { 'Content-Type': 'image/png' } })
+    })
+    const verify = browserIdentityVerifier(fetch, () => 'data:image/png;base64,AQ==')
+    const twitchCookies = cookies('.twitch.tv', { 'auth-token': token })
+    await expect(verify('twitch', twitchCookies, new AbortController().signal))
+      .resolves.toEqual({ uid: '123456', username: 'PGL_Viewer', avatar: 'data:image/png;base64,AQ==' })
+    expect(calls).toEqual([
+      { url: 'https://gql.twitch.tv/gql', auth: `OAuth ${token}`, credentials: undefined },
+      { url: 'https://static-cdn.jtvnw.net/jtv_user_pictures/example-profile_image-300x300.png', auth: null, credentials: 'omit' },
+    ])
+    fetch.mockImplementationOnce(async () => new Response('{"error":"Unauthorized"}', { status: 401 }))
+    await expect(verify('twitch', twitchCookies, new AbortController().signal)).resolves.toBeNull()
+    fetch.mockImplementationOnce(async () => new Response(JSON.stringify({ data: { currentUser: null } })))
+    await expect(verify('twitch', twitchCookies, new AbortController().signal)).resolves.toBeNull()
+    expect(importAvatarUrl('twitch', 'https://static-cdn.jtvnw.net/jtv_user_pictures/a.png')).toBe('https://static-cdn.jtvnw.net/jtv_user_pictures/a.png')
+    expect(importAvatarUrl('twitch', 'https://evil.invalid/a.png')).toBeUndefined()
+  })
   it('accepts only HTTPS platform avatar origins and never arbitrary renderer URLs', () => {
     for (const value of ['http://localhost/image', 'https://127.0.0.1/image', 'file:///secret.png', 'data:image/svg+xml,test',
       'https://i0.hdslb.com.evil.test/image', 'https://user:password@i0.hdslb.com/image', 'https://i0.hdslb.com:444/image']) {

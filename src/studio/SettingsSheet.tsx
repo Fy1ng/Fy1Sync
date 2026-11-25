@@ -124,6 +124,7 @@ const ACCOUNT_PLATFORMS: { id: LoginPlatform; label: string }[] = [
   { id: 'huya', label: '虎牙' },
   { id: 'douyin', label: '抖音' },
   { id: 'youtube', label: 'YouTube' },
+  { id: 'twitch', label: 'Twitch' },
 ]
 
 function AccountSettings({ target, onWatch }: { target: SettingsTarget; onWatch: (room: string) => void }): React.ReactNode {
@@ -138,7 +139,7 @@ function AccountPages({ target, onWatch }: { target: SettingsTarget; onWatch: (r
   if (platform === 'douyu') return <DouyuDesk onWatch={onWatch} platformNavigation={navigation} accountAside={aside} />
   return <SideTabs {...navigation} aside={aside}>
     <div className="settings-page">
-      {platform === 'youtube' ? <YouTubeAccount /> : platform === 'douyin' ? <DouyinAccount /> : <PlatformAccount key={platform} platform={platform} />}
+      {platform === 'youtube' ? <YouTubeAccount /> : platform === 'twitch' ? <TwitchAccount /> : platform === 'douyin' ? <DouyinAccount /> : <PlatformAccount key={platform} platform={platform} />}
     </div>
   </SideTabs>
 }
@@ -288,6 +289,96 @@ function YouTubeAccount(): React.ReactNode {
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
       <Switch label="自动使用最高画质" detail="网络较慢时可关闭"
         checked={settings.preferAdaptive} onChange={(preferAdaptive) => session.updateSettings({ preferAdaptive })} />
+    </Group>
+  )
+}
+
+function TwitchAccount(): React.ReactNode {
+  const mounted = useMounted()
+  const [status, setStatus] = useRemembered<LoginStatus | null>('login-status', null)
+  const [checking, setChecking] = useState(() => status === null)
+  const [loadError, setLoadError, loadErrorDetail] = useErrorState()
+  const readRevision = useRef(0)
+  const pending = useRef(false)
+  const previousStatus = useRef(status)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError, errorDetail] = useErrorState()
+  const refresh = async (): Promise<void> => {
+    const started = ++readRevision.current
+    if (mounted.current) { setChecking(true); setLoadError('') }
+    let failed = false
+    const next = await refreshLoginStatus((message, detail) => {
+      failed = true
+      if (mounted.current && started === readRevision.current) setLoadError({ message, detail })
+    })
+    if (!mounted.current || started !== readRevision.current) return
+    if (next?.twitch) { setStatus(next); setLoadError('') }
+    else if (!failed) setLoadError('账号状态读取失败，请重试')
+    setChecking(false)
+  }
+  useEffect(() => {
+    if (status !== previousStatus.current) {
+      previousStatus.current = status
+      if (status?.twitch) { setLoadError(''); setChecking(false) }
+    }
+  }, [status, setLoadError])
+  useEffect(() => {
+    void refresh()
+    let refreshQueued = false
+    const scheduleRefresh = (): void => {
+      if (pending.current || refreshQueued) return
+      refreshQueued = true
+      queueMicrotask(() => {
+        refreshQueued = false
+        if (!mounted.current || pending.current) return
+        setError('')
+        setMessage('')
+        void refresh()
+      })
+    }
+    return subscribeLoginStateChanged(({ platforms }) => {
+      if (!platforms || platforms.includes('twitch')) scheduleRefresh()
+    })
+  }, [])
+
+  const act = async (logout: boolean): Promise<void> => {
+    if (pending.current || busy) return
+    pending.current = true
+    setBusy(true)
+    setError('')
+    setMessage(logout ? '' : '请在弹出的 Chrome 窗口中登录，完成后关闭该窗口')
+    try {
+      const result = logout ? await apiClient.logout('twitch') : await apiClient.login('twitch')
+      if (mounted.current) {
+        if (result.ok || result.code === 'login-cancelled') setMessage(result.ok ? (logout ? '已退出' : '已登录，重新载入画面后生效') : '已取消登录')
+        else { setMessage(''); setError(result) }
+      }
+      await refresh()
+    } catch (error) {
+      if (mounted.current) { setMessage(''); setError(displayError(error, '账号操作失败，请重试')) }
+    } finally { pending.current = false; if (mounted.current) setBusy(false) }
+  }
+  const twitch = status?.twitch
+
+  return (
+    <Group title="Twitch">
+      <div className="row-split">
+        <span className="account-identity">
+          {twitch?.nickname && <><AccountAvatar username={twitch.nickname} avatar={twitch.avatar} /><b>{twitch.nickname}</b></>}
+          {loadError ? '登录状态读取失败' : status === null ? '正在检查登录状态' : twitch?.loggedIn ? '已登录' : '未登录'}
+          {twitch?.expiresAt ? <span className="muted">，{new Date(twitch.expiresAt * 1000).toLocaleDateString('zh-CN')} 到期</span> : null}
+        </span>
+        <span className="row-end">
+          <BrowserImportButton platform="twitch" disabled={busy} />
+          {twitch?.cookieCount ? <InlineConfirm label="退出" confirmLabel="确认退出" disabled={busy} danger={false} onConfirm={() => act(true)} /> : null}
+          <button type="button" className="btn-solid small" disabled={busy || checking || status === null} onClick={() => void act(false)}>{twitch?.loggedIn ? '重新登录' : '登录'}</button>
+        </span>
+      </div>
+      <p className="muted">获取 1440P 及以上画质直播流时，请登录或从浏览器导入 Twitch 账号</p>
+      {message && <p className="muted" role="status">{message}</p>}
+      {loadError && <ReadError error={loadError} detail={loadErrorDetail} onRetry={() => void refresh()} />}
+      {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
     </Group>
   )
 }

@@ -41,7 +41,7 @@ export interface LoginManagerOptions extends CookieStoreOptions {
   /** Reads the nickname and avatar of the account behind verified cookies; null when signed out. */
   identify?: (platform: LoginPlatform, cookies: BrowserCookie[], signal: AbortSignal) => Promise<unknown>
 }
-const IDENTIFIED_PLATFORMS: readonly LoginPlatform[] = ['douyu', 'bilibili', 'huya', 'douyin']
+const IDENTIFIED_PLATFORMS: readonly LoginPlatform[] = ['douyu', 'bilibili', 'huya', 'douyin', 'twitch']
 const IDENTITY_TIMEOUT_MS = 4000
 const IDENTITY_RETRY_SECONDS = 300
 
@@ -289,7 +289,7 @@ export class ChromeLoginDriver implements BrowserLoginDriver {
 
   async login(executable: string, profile: string, platform: LoginPlatform, signal: AbortSignal, destination?: LoginDestination): Promise<BrowserCookie[]> {
     cancelled(signal)
-    if ((platform !== 'youtube' && platform !== 'douyu' && platform !== 'douyin') || !isLoginDestination(platform, destination)) throw new LoginError('login-failed')
+    if ((platform !== 'youtube' && platform !== 'twitch' && platform !== 'douyu' && platform !== 'douyin') || !isLoginDestination(platform, destination)) throw new LoginError('login-failed')
     const url = destination === 'yuba' ? 'https://yuba.douyu.com/'
       : destination?.startsWith('room:') ? `https://www.douyu.com/${destination.slice(5)}`
       : destination?.startsWith('fish-act:') ? `https://www.douyu.com/pages/fish-act?rid=${destination.slice(9)}` : LOGIN_PLATFORMS[platform].url
@@ -309,7 +309,7 @@ export class LoginManager {
   private readonly driver: BrowserLoginDriver
   private readonly operations = new Map<LoginPlatform, { controller: AbortController; promise: Promise<LoginResult> }>()
   private readonly loggingOut = new Set<LoginPlatform>()
-  private readonly revisions: Record<LoginPlatform, number> = { youtube: 0, douyu: 0, bilibili: 0, huya: 0, douyin: 0 }
+  private readonly revisions: Record<LoginPlatform, number> = { youtube: 0, twitch: 0, douyu: 0, bilibili: 0, huya: 0, douyin: 0 }
   private disposed = false
   private signingBlocked = false
   private signingProblem: string | undefined
@@ -342,7 +342,7 @@ export class LoginManager {
           catch (error) { this.signingProblem='douyin-signing-store-failed'; throw new LoginError('cookie-storage-failed',platform,error) }
         }
         let cookies: BrowserCookie[]
-        if (platform !== 'youtube' && this.options.embeddedDriver) {
+        if (platform !== 'youtube' && platform !== 'twitch' && this.options.embeddedDriver) {
           cookies = await this.options.embeddedDriver.login({ platform, signal: controller.signal, destination, accountLabel,
             ...(platform==='douyin' && signing ? {captureDouyinSigning:async (snapshot: DouyinSigningSnapshot) => {
               if (!controller.signal.aborted && revision===this.revisions[platform] && !this.disposed) signingSnapshot=structuredClone(snapshot)
@@ -545,6 +545,19 @@ export class LoginManager {
     } catch (error) {
       if (!current()) return ''
       throw new LoginError('cookie-storage-failed', platform, error)
+    }
+  }
+
+  async twitchAuthorization(requestUrl?: string): Promise<string> {
+    if (this.disposed || this.loggingOut.has('twitch')) return ''
+    const revision = this.revisions.twitch
+    const current = () => !this.disposed && !this.loggingOut.has('twitch') && revision === this.revisions.twitch
+    try {
+      const header = await this.store.twitchAuthorization(requestUrl)
+      return current() ? header : ''
+    } catch (error) {
+      if (!current()) return ''
+      throw new LoginError('cookie-storage-failed', 'twitch', error)
     }
   }
 

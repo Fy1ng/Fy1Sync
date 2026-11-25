@@ -28,11 +28,12 @@ test('bulk browser import previews names and avatars, imports selected accounts 
   await expect(dialog.getByLabel('导入YouTube', { exact: true })).toBeChecked()
   await dialog.getByLabel('导入YouTube', { exact: true }).uncheck()
   await dialog.getByLabel('导入抖音', { exact: true }).uncheck()
-  await dialog.getByRole('button', { name: '导入所选账号（3）', exact: true }).click()
+  await dialog.getByRole('button', { name: '导入所选账号（4）', exact: true }).click()
   await expect(dialog.locator('.browser-import-results')).toContainText('已导入账号')
   const status = await page.evaluate(async () => window.streamSyncer!.invoke('loginStatus', undefined))
   expect(status).toMatchObject({ ok: true, value: { douyu: { loggedIn: true, nickname: '测试斗鱼账号' },
-    bilibili: { loggedIn: true, nickname: '测试哔哩哔哩账号' }, huya: { loggedIn: true }, youtube: { loggedIn: false }, douyin: { loggedIn: false } } })
+    bilibili: { loggedIn: true, nickname: '测试哔哩哔哩账号' }, huya: { loggedIn: true },
+    twitch: { loggedIn: true, nickname: '测试 Twitch 账号' }, youtube: { loggedIn: false }, douyin: { loggedIn: false } } })
   expect(JSON.stringify(status)).not.toContain('synthetic-session')
   await dialog.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(settings.getByText('测试斗鱼账号', { exact: true })).toBeVisible()
@@ -45,7 +46,7 @@ test('bulk browser import previews names and avatars, imports selected accounts 
 test('each platform opens a scoped import and unavailable accounts cannot be imported', async ({ page, electronApp }) => {
   await enable(electronApp, 'mixed')
   const settings = await accounts(page)
-  for (const platform of ['哔哩哔哩', '虎牙', '抖音', 'YouTube']) {
+  for (const platform of ['哔哩哔哩', '虎牙', '抖音', 'YouTube', 'Twitch']) {
     await settings.getByRole('tab', { name: platform, exact: true }).click()
     await settings.getByRole('button', { name: '从浏览器导入', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: `从浏览器导入 ${platform} 账号`, exact: true })
@@ -55,7 +56,7 @@ test('each platform opens a scoped import and unavailable accounts cannot be imp
     await dialog.getByRole('button', { name: '取消', exact: true }).click()
   }
   const status = await page.evaluate(async () => window.streamSyncer!.invoke('loginStatus', undefined))
-  expect(status).toMatchObject({ ok: true, value: { bilibili: { loggedIn: false }, huya: { loggedIn: false }, douyin: { loggedIn: false }, youtube: { loggedIn: false } } })
+  expect(status).toMatchObject({ ok: true, value: { bilibili: { loggedIn: false }, huya: { loggedIn: false }, douyin: { loggedIn: false }, youtube: { loggedIn: false }, twitch: { loggedIn: false } } })
 })
 
 test('locked browser and cancelled Windows authorization retain the original login and allow retry', async ({ page, electronApp }) => {
@@ -64,7 +65,7 @@ test('locked browser and cancelled Windows authorization retain the original log
   await settings.getByRole('button', { name: '批量导入账号', exact: true }).click()
   let dialog = page.getByRole('dialog', { name: '批量导入账号', exact: true })
   await dialog.getByRole('button', { name: '识别账号', exact: true }).click()
-  await expect(dialog.getByRole('alert')).toContainText('完全关闭')
+  await expect(dialog.getByRole('alert')).toContainText('完全退出浏览器后重试')
   await dialog.getByRole('button', { name: '取消', exact: true }).click()
   await enable(electronApp, 'uac-cancelled')
   await settings.getByRole('button', { name: '批量导入账号', exact: true }).click()

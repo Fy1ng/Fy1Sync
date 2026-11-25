@@ -32,7 +32,7 @@ beforeEach(() => {
   youtubeSignedIn = false
   vi.stubGlobal('streamSyncer', {
     invoke: vi.fn(async (method: string) => {
-      if (method === 'loginStatus') return { ok: true, value: { douyu: { loggedIn: signedIn }, youtube: { loggedIn: youtubeSignedIn }, bilibili: { loggedIn: signedIn }, huya: { loggedIn: signedIn } } }
+      if (method === 'loginStatus') return { ok: true, value: { douyu: { loggedIn: signedIn }, youtube: { loggedIn: youtubeSignedIn }, twitch: { loggedIn: signedIn }, bilibili: { loggedIn: signedIn }, huya: { loggedIn: signedIn } } }
       if (method === 'getToolsStatus') return { ok: true, value: { tools: [], fixturesAvailable: false } }
       return { ok: true, value: { presets: [] } }
     }) as StreamSyncerBridge['invoke'],
@@ -174,5 +174,22 @@ describe('the login offer on the intake screen', () => {
 
     await waitFor(() => expect(resolve).toHaveBeenCalledTimes(2))
     expect(resolve.mock.calls[1]![0]).toBe('https://live.bilibili.com/21452505')
+  })
+
+  it('offers Twitch re-authentication on expired Twitch login and retries automatically on browser import', async () => {
+    signedIn = true
+    const resolve = vi.spyOn(apiClient, 'resolve')
+      .mockResolvedValueOnce({ ok: true, value: { ok: false, failure: { code: 'login-required', message: '平台要求登录或登录信息已失效' } } })
+      .mockResolvedValueOnce({ ok: true, value: { ok: true, stream: { ...stepDown.value.stream, platform: 'twitch', quality: '1440p60' } } })
+    mount()
+    fireEvent.click(screen.getByRole('radio', { name: /画面/ }))
+    const field = screen.getByLabelText('直播间链接')
+    fireEvent.change(field, { target: { value: 'https://www.twitch.tv/pgl' } })
+    fireEvent.submit(field.closest('form')!)
+    expect(await screen.findByRole('button', { name: '重新登录 Twitch 并重试' })).toBeInTheDocument()
+
+    notifyLoginStateChanged(['twitch'], 'import')
+    await waitFor(() => expect(resolve).toHaveBeenCalledTimes(2))
+    expect(resolve.mock.calls[1]![0]).toBe('https://www.twitch.tv/pgl')
   })
 })

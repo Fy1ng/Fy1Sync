@@ -40,8 +40,9 @@ export class BrowserImportFixtures {
         huya: { udb_uid: '42', udb_biztoken: 'synthetic-session' },
         douyin: { sessionid: 'synthetic-session', sessionid_ss: 'synthetic-session' },
         youtube: { SID: 'synthetic-session', SAPISID: 'synthetic-session' },
+        twitch: { 'auth-token': '0123456789abcdefghijklmnopqrst' },
       }
-      return Object.entries(fields[platform]).map(([name, value]): BrowserCookie => ({ domain: `.${platform}.com`,
+      return Object.entries(fields[platform]).map(([name, value]): BrowserCookie => ({ domain: platform === 'twitch' ? '.twitch.tv' : `.${platform}.com`,
         path: '/', secure: true, httpOnly: true, session: true, name, value }))
     }), skipped: 0, ...(platforms.includes('douyin') && this.scenario !== 'mixed'
       ? { douyinStorage: [{ origin: 'https://www.douyin.com', source: 'local-storage' as const, values: syntheticDouyinSdkStorage() }] }
@@ -52,6 +53,6 @@ export class BrowserImportFixtures {
     this.verifyCount++
     if (this.scenario === 'mixed' && platform === 'douyin') throw new BrowserImportError('browser-import-verification-failed')
     return { uid: '42', username: { douyu: '测试斗鱼账号', bilibili: '测试哔哩哔哩账号', huya: '测试虎牙账号',
-      douyin: '测试抖音账号', youtube: '测试 YouTube 账号' }[platform], avatar }
+      douyin: '测试抖音账号', youtube: '测试 YouTube 账号', twitch: '测试 Twitch 账号' }[platform], avatar }
   }
 }

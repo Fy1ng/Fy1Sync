@@ -34,10 +34,10 @@ export interface RoleLoad {
 }
 
 const IDLE: RoleLoad = { busy: false, problem: null, notes: [], login: null, signedIn: false, loggingIn: false }
-const LOGIN_PLATFORMS: ReadonlySet<PlatformId> = new Set(['douyu', 'youtube', 'bilibili', 'huya', 'douyin'])
+const LOGIN_PLATFORMS: ReadonlySet<PlatformId> = new Set(['douyu', 'youtube', 'twitch', 'bilibili', 'huya', 'douyin'])
 const canLogin = (platform: PlatformId): platform is LoginPlatform => LOGIN_PLATFORMS.has(platform)
 
-export const LOGIN_LABEL: Record<LoginPlatform, string> = { douyu: '斗鱼', youtube: 'YouTube', bilibili: '哔哩哔哩', huya: '虎牙', douyin: '抖音' }
+export const LOGIN_LABEL: Record<LoginPlatform, string> = { douyu: '斗鱼', youtube: 'YouTube', twitch: 'Twitch', bilibili: '哔哩哔哩', huya: '虎牙', douyin: '抖音' }
 
 /** A Latin name sits in Chinese with a space either side, as elsewhere: 登录 YouTube 后重试. */
 export const spaced = (name: string): string => /^[A-Za-z]/.test(name) ? ` ${name} ` : name
@@ -237,7 +237,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         const hint = streamFailureHint(failure.reason) ?? failure.hint
         patch(role, { problem: { message: failure.message, hint, detail: errorDetails(failure) } })
         // Only an explicit authentication refusal offers Bilibili/Huya sign-in.
-        const signInCanHelp = SIGN_IN_REFUSALS.has(failure.reason ?? '') || (!failure.reason && (platformOf === 'douyu' || platformOf === 'youtube'))
+        const signInCanHelp = SIGN_IN_REFUSALS.has(failure.reason ?? '') || (!failure.reason && (platformOf === 'douyu' || platformOf === 'youtube' || platformOf === 'twitch'))
         if (canLogin(platformOf) && (failure.code === 'login-required' || (failure.code === 'restricted' && (signInCanHelp || platformOf === 'douyin')))) void offerLogin(role, platformOf, generation, true)
         return false
       }

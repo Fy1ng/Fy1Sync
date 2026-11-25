@@ -35,6 +35,10 @@ describe('Firefox browser Cookie reader', () => {
     insert.run('.bilibili.com', 'LIVE', 'new-cookie', '/', expiry, 1, 0, 0, '')
     expect((await browserCookieReader({ executable: 'not-used' })(profile, ['bilibili'], new AbortController().signal)).cookies).toHaveLength(3)
     expect(database.prepare('SELECT COUNT(*) AS n FROM moz_cookies').get()?.n).toBe(7)
+    insert.run('.twitch.tv', 'auth-token', '0123456789abcdefghijklmnopqrst', '/', expiry, 1, 0, 1, '')
+    insert.run('.twitch.com', 'auth-token', 'wrong-tld-must-not-match000000', '/', expiry, 1, 0, 1, '')
+    const twitchRead = await browserCookieReader({ executable: 'not-used' })(profile, ['twitch'], new AbortController().signal)
+    expect(twitchRead.cookies).toEqual([expect.objectContaining({ domain: '.twitch.tv', name: 'auth-token' })])
   })
   it('rejects cancelled reads before opening a browser database', async () => {
     const controller = new AbortController(); controller.abort()

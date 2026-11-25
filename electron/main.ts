@@ -363,6 +363,7 @@ async function start(): Promise<void> {
     cookieHeader: (platform: EmbeddedLoginPlatform, url?: string) => platform === 'douyu'
       ? douyuAccounts ? douyuAccounts.activeCookieHeader(url) : Promise.resolve('')
       : logins.cookieHeader(platform, url),
+    twitchAuthorization: (url?: string) => logins.twitchAuthorization(url),
   }
   const browserImports = new BrowserLoginImport({
     supported: process.platform === 'win32' || !!browserImportFixtures,

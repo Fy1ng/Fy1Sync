@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { hasAuthenticationCookies, authenticationCookieUserId, type BrowserCookie, type LoginPlatform } from './cookies'
+import { hasAuthenticationCookies, authenticationCookieUserId, twitchAuthToken, type BrowserCookie, type LoginPlatform } from './cookies'
 import { loginIdentityUrl, parseLoginIdentity } from './loginIdentity'
 import { readPlatformBytes, readPlatformText } from '../server/platformResponse'
 import { BrowserImportError, importAbort } from './browserImportError'
@@ -9,6 +9,8 @@ export interface ImportedIdentity { uid?: string; username: string; avatar?: str
 export type BrowserIdentityVerifier = (platform: LoginPlatform, cookies: BrowserCookie[], signal: AbortSignal) => Promise<ImportedIdentity | null>
 export type ImportFetch = (platform: LoginPlatform, url: string, init: RequestInit) => Promise<Response>
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36'
+const TWITCH_WEB_CLIENT_ID = 'kimne78kx3ncx6brgo4mv6wki5h1ko'
+const TWITCH_GQL_URL = 'https://gql.twitch.tv/gql'
 
 export function importCookieHeader(cookies: BrowserCookie[], target: URL): string {
   const selected = new Map<string, BrowserCookie>()
@@ -80,7 +82,7 @@ function youtubeJson(html: string, name: 'config' | 'data'): any {
 const AVATAR_DOMAINS: Record<LoginPlatform, readonly string[]> = {
   douyu: ['douyucdn.cn', 'douyu.com'], huya: ['huya.com', 'huyaimg.com', 'yyimg.com', 'msstatic.com'],
   bilibili: ['hdslb.com'], douyin: ['douyinpic.com', 'douyincdn.com', 'byteimg.com', 'pstatp.com'],
-  youtube: ['ggpht.com', 'googleusercontent.com'],
+  youtube: ['ggpht.com', 'googleusercontent.com'], twitch: ['jtvnw.net', 'twitchcdn.net'],
 }
 export function importAvatarUrl(platform: LoginPlatform, value: unknown): string | undefined {
   if (typeof value !== 'string' || value.length > 2048) return undefined
@@ -146,6 +148,38 @@ export function browserIdentityVerifier(fetchImpl: ImportFetch,
     importAbort(parentSignal)
     if (!hasAuthenticationCookies(cookies, platform)) return null
     const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(20000)])
+    if (platform === 'twitch') {
+      const token = twitchAuthToken(cookies)
+      if (!token) return null
+      try {
+        const response = await fetchImpl('twitch', TWITCH_GQL_URL, {
+          method: 'POST', redirect: 'error', signal,
+          headers: {
+            'Client-Id': TWITCH_WEB_CLIENT_ID,
+            Authorization: `OAuth ${token}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            'User-Agent': USER_AGENT,
+          },
+          body: JSON.stringify({ query: 'query { currentUser { id login displayName profileImageURL(width: 300) } }' }),
+        })
+        if (response.status === 401) { await response.body?.cancel().catch(() => {}); return null }
+        if (!response.ok) { await response.body?.cancel().catch(() => {}); throw new Error() }
+        const payload = JSON.parse(await readPlatformText(response, signal)) as Record<string, any>
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error()
+        if (payload.data && typeof payload.data === 'object' && payload.data.currentUser === null && !payload.errors) return null
+        const user = payload.data?.currentUser
+        if (!user || typeof user !== 'object' || Array.isArray(user)) throw new Error()
+        const uid = typeof user.id === 'string' && /^[1-9]\d{0,29}$/.test(user.id) ? user.id : undefined
+        if (!uid) throw new Error()
+        const image = await getAvatar('twitch', importAvatarUrl('twitch', user.profileImageURL), signal)
+        const username = text(user.displayName) ?? text(user.login) ?? 'Twitch 账号'
+        return { uid, username, ...(image ? { avatar: image } : {}) }
+      } catch {
+        importAbort(parentSignal)
+        throw new BrowserImportError('browser-import-verification-failed')
+      }
+    }
     const target = new URL(platform === 'youtube' ? 'https://www.youtube.com/account' : loginIdentityUrl(platform))
     const header = importCookieHeader(cookies, target)
     const headers = { Cookie: header, 'User-Agent': USER_AGENT, Accept: platform === 'youtube' ? 'text/html' : 'application/json, text/plain, */*',

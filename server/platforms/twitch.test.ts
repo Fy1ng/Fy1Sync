@@ -83,4 +83,48 @@ describe('Twitch upstream quality selection', () => {
     expect(JSON.stringify(result)).not.toContain('PRIVATE')
     if (!result.ok) expect(result.failure.detail?.message).toBeDefined()
   })
+
+  it('sends OAuth header to GQL, advertises modern codecs, selects 1440p60 HEVC over portrait, and reports expired tokens', async () => {
+    const enhancedMaster = [
+      '#EXTM3U',
+      '#EXT-X-STREAM-INF:BANDWIDTH=9224531,CODECS="hev1.1.6.L150.90.0.0.0.0.0,mp4a.40.2",RESOLUTION=2560x1440,FRAME-RATE=60.000,STABLE-VARIANT-ID="1440p60",IVS-GROUPS="landscape"',
+      'https://video.ttvnw.net/1440p60.m3u8?sig=fixture',
+      '#EXT-X-STREAM-INF:BANDWIDTH=5224532,CODECS="hev1.1.6.L123.90.0.0.0.0.0,mp4a.40.2",RESOLUTION=1080x1920,FRAME-RATE=60.000,STABLE-VARIANT-ID="1080p60-portrait",IVS-GROUPS="portrait"',
+      'https://video.ttvnw.net/1080p60-portrait.m3u8?sig=fixture',
+      '#EXT-X-STREAM-INF:BANDWIDTH=7635509,CODECS="avc1.4D402A,mp4a.40.2",RESOLUTION=1920x1080,FRAME-RATE=60.000,STABLE-VARIANT-ID="1080p60",IVS-GROUPS="landscape"',
+      'https://video.ttvnw.net/1080p60.m3u8?sig=fixture',
+      '#EXT-X-STREAM-INF:BANDWIDTH=210452,CODECS="mp4a.40.2",STABLE-VARIANT-ID="audio_only",IVS-GROUPS="landscape,portrait"',
+      'https://video.ttvnw.net/audio_only.m3u8?sig=fixture',
+    ].join('\n')
+    let usherUrl = ''
+    const deps = dependencies()
+    deps.twitchAuthorization = vi.fn(async () => 'OAuth SECRET_TWITCH_OAUTH_TOKEN_0000')
+    deps.fetchJson = vi.fn(async (_url, init) => {
+      expect(new Headers(init?.headers).get('Authorization')).toBe('OAuth SECRET_TWITCH_OAUTH_TOKEN_0000')
+      return { data: { streamPlaybackAccessToken: { signature: 'fixture', value: 'token' } } }
+    })
+    deps.fetchText = vi.fn(async url => { usherUrl = url; return enhancedMaster })
+    const result = await resolveTwitch('fixture_channel', deps)
+    expect(deps.twitchAuthorization).toHaveBeenCalledExactlyOnceWith('https://gql.twitch.tv/gql')
+    const usherParams = new URL(usherUrl).searchParams
+    expect(usherParams.get('supported_codecs')).toBe('av1,h265,h264')
+    expect(usherParams.get('platform')).toBe('web')
+    expect(result).toMatchObject({ ok: true, stream: {
+      quality: '1440p60',
+      url: 'https://video.ttvnw.net/1440p60.m3u8?sig=fixture',
+      qualities: [
+        { id: '1440p60', label: '1440p60', height: 1440, fps: 60 },
+        { id: '1080p60', label: '1080p60', height: 1080, fps: 60 },
+      ],
+    } })
+    expect(JSON.stringify(result)).not.toContain('SECRET_TWITCH_OAUTH_TOKEN_0000')
+
+    deps.fetchJson = async () => {
+      throw new StreamFailureError({ stage: 'http', code: 'http-401', status: 401, message: 'HTTP 401' })
+    }
+    await expect(resolveTwitch('fixture_channel', deps)).resolves.toMatchObject({
+      ok: false,
+      failure: { code: 'login-required' },
+    })
+  })
 })

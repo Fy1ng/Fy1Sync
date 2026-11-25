@@ -31,7 +31,7 @@ export class Acquisition implements AcquisitionService {
   private disposed = false
   constructor(private readonly deps: {
     buffer: Pick<BufferManager, 'start' | 'stop' | 'subscribe'>
-    logins: Pick<LoginManager, 'login' | 'loginStatus' | 'logout' | 'cookieHeader'>
+    logins: Pick<LoginManager, 'login' | 'loginStatus' | 'logout' | 'cookieHeader'> & { twitchAuthorization?: (requestUrl?: string) => Promise<string> }
     runYtDlp: (url: string, adaptive?: boolean, network?: NetworkContext, diagnostic?: (event: YtDlpDiagnostic) => void) => Promise<unknown>
     diagnostics?: AcquisitionDiagnosticRecorder
     proxy: ProxyConfig
@@ -151,7 +151,7 @@ export class Acquisition implements AcquisitionService {
         readFailure: (media?.readFailure || audioMedia?.readFailure) ? () => media?.readFailure?.() ?? audioMedia?.readFailure?.() : undefined,
         headers: media ? undefined : resolved.stream.headers
           ?? (!media && resolved.stream.platform === 'bilibili' ? { Referer: 'https://live.bilibili.com/' } : undefined),
-        ...(resolved.stream.platform === 'direct' || resolved.stream.audioUrl ? { fmp4: true } : {}),
+        ...(resolved.stream.platform === 'direct' || resolved.stream.platform === 'twitch' || resolved.stream.audioUrl ? { fmp4: true } : {}),
         ...(resolved.stream.adaptive ? { adaptive: resolved.stream.adaptive } : {}),
         qualityHeight: resolved.stream.qualities?.find(option => option.id === resolved.stream.quality)?.height,
         ...(fallbackHeight ? { fallbackFromHeight: fallbackHeight } : {}),
@@ -263,6 +263,9 @@ export class Acquisition implements AcquisitionService {
         ? (cookiePlatform, requestUrl) => cookiePlatform === detected ? this.deps.logins.cookieHeader(cookiePlatform, requestUrl) : Promise.resolve('')
         : undefined,
       douyinCookieHeader: detected === 'douyin' ? requestUrl => this.deps.logins.cookieHeader('douyin', requestUrl) : undefined,
+      twitchAuthorization: detected === 'twitch' && this.deps.logins.twitchAuthorization
+        ? requestUrl => this.deps.logins.twitchAuthorization!(requestUrl)
+        : undefined,
     }, platform)
     if (!result.ok) return sanitizedFailure(result)
     if (network.media && result.stream.platform === 'direct') {

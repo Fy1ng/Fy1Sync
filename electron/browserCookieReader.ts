@@ -18,7 +18,7 @@ export type BrowserCookieReadFunction = (profile: DiscoveredBrowserProfile, plat
 function allowed(host: string, platforms: readonly LoginPlatform[]): boolean {
   const base = host.replace(/^\./, '').toLowerCase()
   return platforms.some(platform => {
-    const domains = platform === 'youtube' ? ['youtube.com', 'google.com'] : [`${platform}.com`]
+    const domains = platform === 'youtube' ? ['youtube.com', 'google.com'] : platform === 'twitch' ? ['twitch.tv'] : [`${platform}.com`]
     return domains.some(domain => base === domain || base.endsWith(`.${domain}`))
   })
 }
@@ -57,7 +57,7 @@ export function browserCookieReader(helper: CredentialHelperOptions): BrowserCoo
       if (!Number.isInteger(schema) || schema < 0) throw new BrowserImportError('browser-import-decryption-failed')
       const column = firefox ? 'host' : 'host_key'
       const table = firefox ? 'moz_cookies' : 'cookies'
-      const bases = platforms.flatMap(platform => platform === 'youtube' ? ['youtube.com', 'google.com'] : [`${platform}.com`])
+      const bases = platforms.flatMap(platform => platform === 'youtube' ? ['youtube.com', 'google.com'] : platform === 'twitch' ? ['twitch.tv'] : [`${platform}.com`])
       const predicate = bases.map(() => `(${column} IN (?, ?) OR ${column} LIKE ?)`).join(' OR ')
       const statement = database.prepare(`SELECT * FROM ${table} WHERE ${predicate} LIMIT 5001`)
       statement.setReadBigInts(true)
