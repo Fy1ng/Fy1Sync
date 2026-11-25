@@ -32,7 +32,7 @@ import type { RoiRect } from '../core/profileSchema'
 import type { BasicClockProgress } from '../recognition/protocol'
 import { basicClockSourceKey, findBasicClockMemory, forgetBasicClockMemory, rememberBasicClock } from '../core/basicClockMemory'
 import { getBasicClockSearchRoi } from '../core/basicClockSearch'
-import { AutoSyncController, type AutoSyncPhase, type AutoSyncRunResult } from '../sync/autoSync'
+import { AutoSyncController, type AutoSyncFailure, type AutoSyncPhase, type AutoSyncRunResult } from '../sync/autoSync'
 import { FrameHashSampler } from '../sync/frameHashSampler'
 import { apiClient } from './apiClient'
 import type { AppSettings, RecognitionMode } from './settings'
@@ -99,6 +99,8 @@ export interface SessionSnapshot {
   qualityBusy: Record<SourceRole, boolean>
   playbackRecovery: { kind: 'stall' | 'reconnect'; driftSeconds: number | null } | null
   playbackDiagnostics: Record<SourceRole, PlaybackStallSummary | null>
+  /** A room refresh (re-resolve and reload) is in progress. */
+  refreshing: boolean
 }
 
 export interface Notice {
@@ -126,6 +128,15 @@ const MAX_NOTICES = 6
 const BASIC_DETECT_WINDOW_SECONDS = 6
 /** How long a loaded source may play without presenting a frame before it is reported. */
 const PICTURE_TIMEOUT_MS = 15_000
+/** Minimum time between two automatic room refreshes, so a dead room cannot reload in a loop. */
+export const AUTO_REFRESH_COOLDOWN_MS = 120_000
+/**
+ * Failures that a fresh producer can plausibly fix. A cancelled or unauthorized run says
+ * nothing about the rooms, so it neither counts nor resets the streak.
+ */
+const REFRESHABLE_FAILURES: ReadonlySet<AutoSyncFailure['kind']> = new Set([
+  'frame-match', 'rejected', 'no-samples', 'not-ready', 'seek-failed', 'verify-failed', 'buffer-limit', 'rate-unavailable',
+])
 
 /** Relay states worth surfacing. `connected` is the absence of a problem, so it has no text. */
 const DANMAKU_STATE_TEXT: Record<string, string> = {
@@ -221,6 +232,14 @@ export class Session {
   private continuity = { official: 0, commentary: 0 }
   private observationRevision = { official: 0, commentary: 0 }
   private reconnectPending = false
+  /** Re-resolves one role's room; registered by the source loader, which owns resolving. */
+  private sourceRefresher: ((role: SourceRole) => Promise<boolean>) | null = null
+  /** Tried before a refresh: switch to a backup picture the commentary is actually showing. */
+  private candidateRecovery: (() => Promise<boolean>) | null = null
+  private refreshBusy = false
+  private consecutiveSyncFailures = 0
+  private lastAutoRefreshAt = -Infinity
+  private countedResult: AutoSyncRunResult | null = null
   private readonly changingSources = new Set<SourceRole>()
   private snapshotValue: SessionSnapshot
   private notifyQueued = false
@@ -315,6 +334,11 @@ export class Session {
         this.requestedOffset = result.failure?.kind === 'buffer-limit' && result.estimate
           ? result.estimate.totalOffsetSeconds : offsetFromRewind(this.applied)
       }
+      // Scheduled runs never pass through executeSync, so the streak is kept here.
+      if ((phase === 'done' || phase === 'failed') && result && !result.dryRun && result !== this.countedResult) {
+        this.countedResult = result
+        this.trackSyncOutcome(result)
+      }
       this.notify()
     })
     this.snapshotValue = this.buildSnapshot()
@@ -404,6 +428,7 @@ export class Session {
       qualityBusy: { ...this.qualityBusy },
       playbackRecovery: this.playbackRecovery,
       playbackDiagnostics: { official: this.diagnostics.summary('official'), commentary: this.diagnostics.summary('commentary') },
+      refreshing: this.refreshBusy,
     }
   }
 
@@ -818,7 +843,16 @@ export class Session {
   }
 
   private waitForQualityFrames(role: SourceRole, generation: number): Promise<boolean> {
+    return this.waitForSyncReady({ [role]: generation })
+  }
+
+  /**
+   * Wait until both sides can be measured. Any listed side replaced again meanwhile (a newer
+   * load, a removal) ends the wait with false: that change owns what happens next.
+   */
+  private waitForSyncReady(generations: Partial<Record<SourceRole, number>>): Promise<boolean> {
     const ready = () => SOURCE_ROLES.every((item) => this.isSyncReady(item))
+    const current = () => SOURCE_ROLES.every(item => generations[item] === undefined || generations[item] === this.sourceGeneration[item])
     if (ready()) return Promise.resolve(true)
     if (SOURCE_ROLES.some((item) => this.engine.getState()[item].status === 'empty')) return Promise.resolve(false)
     return new Promise((resolve) => {
@@ -826,12 +860,101 @@ export class Session {
       const cancel = () => finish(false)
       const timer = setTimeout(cancel, 20_000)
       const off = this.subscribe(() => {
-        if (this.disposed || generation !== this.sourceGeneration[role] || ready()) {
-          finish(!this.disposed && generation === this.sourceGeneration[role] && ready())
-        }
+        if (this.disposed || !current() || ready()) finish(!this.disposed && current() && ready())
       })
       this.pendingQualityWaits.add(cancel)
     })
+  }
+
+  /** The source loader owns resolving; it registers how to re-resolve and reload one side. */
+  setSourceRefresher(refresher: ((role: SourceRole) => Promise<boolean>) | null): void {
+    this.sourceRefresher = refresher
+  }
+
+  /**
+   * Re-resolve and reload the given rooms (a fresh stream address from the platform), then
+   * make one synchronization attempt once both sides are ready again. Empty sides are
+   * skipped. Resolves true when every refreshed side came back.
+   */
+  async refreshSources(roles: readonly SourceRole[] = SOURCE_ROLES, options: { realign?: boolean } = {}): Promise<boolean> {
+    const refresher = this.sourceRefresher
+    const targets = roles.filter(role => this.engine.getState()[role].status !== 'empty' && this.sourceDescriptor(role))
+    if (!refresher || this.refreshBusy || this.disposed || !targets.length) return false
+    this.refreshBusy = true
+    this.notify()
+    try {
+      const results = await Promise.all(targets.map(role => refresher(role).catch(() => false)))
+      if (this.disposed) return false
+      const ok = results.every(Boolean)
+      if (!ok) this.notice('warn', '直播间刷新未完成，请检查片源后重试')
+      else this.notice('info', '直播间已刷新')
+      if (ok && options.realign !== false) await this.realignWhenReady()
+      return ok
+    } finally {
+      this.refreshBusy = false
+      this.notify()
+    }
+  }
+
+  /** After 画面 was switched to a backup picture: align once both sides are ready. */
+  realignAfterSwitch(): Promise<void> {
+    return this.realignWhenReady()
+  }
+
+  /** Registered by the source loader: switch to the backup picture the commentary shows. */
+  setCandidateRecovery(recovery: (() => Promise<boolean>) | null): void {
+    this.candidateRecovery = recovery
+  }
+
+  /**
+   * Count consecutive matching failures; at the configured limit, first try a backup picture,
+   * then re-resolve both rooms. A cooldown keeps a dead stream from refreshing in a loop.
+   */
+  private trackSyncOutcome(result: AutoSyncRunResult): void {
+    if (!result.failure) {
+      if (result.applied) this.consecutiveSyncFailures = 0
+      return
+    }
+    if (!REFRESHABLE_FAILURES.has(result.failure.kind)) return
+    this.consecutiveSyncFailures += 1
+    const limit = this.settingsValue.autoRefreshFailures
+    if (limit <= 0 || this.consecutiveSyncFailures < limit || this.refreshBusy || this.disposed) return
+    const now = Date.now()
+    if (now - this.lastAutoRefreshAt < AUTO_REFRESH_COOLDOWN_MS) return
+    this.lastAutoRefreshAt = now
+    this.consecutiveSyncFailures = 0
+    void this.recoverFromFailures(limit)
+  }
+
+  private async recoverFromFailures(limit: number): Promise<void> {
+    const recovery = this.settingsValue.autoPickCandidate ? this.candidateRecovery : null
+    if (recovery && await recovery().catch(() => false)) {
+      if (!this.disposed) this.notice('info', '已切换到解说当前使用的画面')
+      return
+    }
+    if (this.disposed) return
+    this.notice('info', `连续 ${limit} 次对齐失败，正在刷新直播间`)
+    await this.refreshSources()
+  }
+
+  /**
+   * After sides were replaced: wait for both to be measurable, then make one silent
+   * synchronization attempt. Without auto-apply authorization this only says what to press.
+   */
+  private async realignWhenReady(): Promise<void> {
+    if (SOURCE_ROLES.some(role => this.engine.getState()[role].status === 'empty')) return
+    const generations = { ...this.sourceGeneration }
+    const available = await this.waitForSyncReady(generations)
+    if (this.disposed || SOURCE_ROLES.some(role => generations[role] !== this.sourceGeneration[role])) return
+    if (!available || SOURCE_ROLES.some(role => this.engine.element(role).paused)) {
+      this.notice('info', '两路就绪并播放后，请点击「自动对齐」')
+      return
+    }
+    if (!this.autoSync.autoApplyAuthorized) {
+      this.notice('info', '请点击「自动对齐」重新对齐')
+      return
+    }
+    await this.executeSync(false)
   }
 
   swapRoles(): void {
@@ -945,6 +1068,8 @@ export class Session {
       // Manual input wins over a scheduled run, and revokes its authorization: after a
       // human moves the slider the scheduler must not quietly overwrite that choice.
       this.autoSync.cancel(true)
+      // A human took over; earlier failures no longer say anything about the streams.
+      this.consecutiveSyncFailures = 0
       this.interruptedAutomaticSeek ??= this.automaticSeek
       ++this.autoRequestRevision
     }
@@ -1306,6 +1431,8 @@ export class Session {
   }
 
   private invalidateAutomaticWork(role: SourceRole): void {
+    // A replaced side starts a new streak; failures against the old stream say nothing now.
+    this.consecutiveSyncFailures = 0
     this.frameSampler?.dispose()
     this.frameSampler = null
     this.clearBasicSampling()

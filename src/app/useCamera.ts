@@ -5,7 +5,7 @@
 
 import { useCallback, useMemo, useState } from 'react'
 import { useSessionSnapshot } from './SessionContext'
-import { CameraStore, cameraRoomKey, cameraLegacyKeys, DEFAULT_CAMERA_WINDOW, type CameraConfig, type CameraWindow } from './camera'
+import { CameraStore, cameraRoomKey, cameraLegacyKeys, DEFAULT_CAMERA_WINDOW, type CameraConfig, type CameraMode, type CameraWindow } from './camera'
 import type { RoiRect } from '../core/profileSchema'
 
 let sharedStore: CameraStore | null = null
@@ -31,6 +31,7 @@ export interface CameraControls {
   save: (crop: RoiRect) => void
   setWindow: (window: CameraWindow) => void
   setEnabled: (enabled: boolean) => void
+  setMode: (mode: CameraMode) => void
   remove: () => boolean
 }
 
@@ -58,9 +59,10 @@ export function useCamera(): CameraControls {
     room,
     config,
     available,
-    save: (crop) => write({ crop, window: config?.window ?? DEFAULT_CAMERA_WINDOW, enabled: true, updatedAt: 0 }),
+    save: (crop) => write({ crop, window: config?.window ?? DEFAULT_CAMERA_WINDOW, enabled: true, ...(config?.mode ? { mode: config.mode } : {}), updatedAt: 0 }),
     setWindow: (window) => { if (config) write({ ...config, window }) },
     setEnabled: (enabled) => { if (config) write({ ...config, enabled }) },
+    setMode: (mode) => { if (config) write({ ...config, mode, enabled: true }) },
     remove: () => {
       if (!room || !store().remove(room)) return false
       setRevision((n) => n + 1)

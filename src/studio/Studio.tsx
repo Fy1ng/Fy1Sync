@@ -36,6 +36,7 @@ import { setNoticeSink, syncLiveNotices } from './douyu/followingNotices'
 import { SettingsSheet, type SettingsSection, type SettingsTarget } from './SettingsSheet'
 import { SourceChip } from './SourceChip'
 import { SourceLoaderProvider, ROLE_LABEL, useSourceLoader } from './sources'
+import { CandidateProvider } from './streams/candidates'
 import { ADD_STREAM_POPOVER, ExtraStreams } from './streams/ExtraStreams'
 import { AutoAlign, nudgeStepFor, PlaybackRecoveryPrompt, startAutoAlign, SyncCapsule, useNudge } from './sync'
 import { useComposer } from './composer'
@@ -52,9 +53,11 @@ import { usePlatformRoomActivities } from './PlatformRoomActivities'
 export function Studio(): React.ReactNode {
   return (
     <SourceLoaderProvider>
-      <ComposerProvider>
-        <StudioView />
-      </ComposerProvider>
+      <CandidateProvider>
+        <ComposerProvider>
+          <StudioView />
+        </ComposerProvider>
+      </CandidateProvider>
     </SourceLoaderProvider>
   )
 }
@@ -117,7 +120,9 @@ function StudioView(): React.ReactNode {
   const chromeHover = { onPointerEnter: () => setOnChrome(true), onPointerLeave: () => setOnChrome(false) }
 
   const aligning = snapshot.autoSync.phase !== 'idle' && snapshot.autoSync.phase !== 'done' && snapshot.autoSync.phase !== 'failed'
-  const busyChrome = favorites || intake || tuning || settingsAt !== null || addingStream || scheduleOpen || onChrome || aligning || embeddedLogin !== null
+  // With revealChromeWhileAligning off, a running alignment leaves the bars (and the timeline) hidden.
+  const revealForAlign = aligning && snapshot.settings.revealChromeWhileAligning
+  const busyChrome = favorites || intake || tuning || settingsAt !== null || addingStream || scheduleOpen || onChrome || revealForAlign || embeddedLogin !== null
   const chrome = useOverlayVisibility(3200, !snapshot.playing || busyChrome)
   // The drawer is the room's chat; with no room there is nothing to hold it open for.
   const hasRoom = snapshot.danmaku.connected || snapshot.danmaku.room !== null || platformRooms.hasBilibili || restrictedChatSources.length > 0
@@ -190,6 +195,7 @@ function StudioView(): React.ReactNode {
         case 'nudgeBack': nudge('late', step); break
         case 'nudgeForward': nudge('early', step); break
         case 'autoAlign': startAutoAlign(session); break
+        case 'refreshSources': void session.refreshSources(); break
         case 'toggleDanmaku': session.updateDanmakuSettings({ enabled: !session.settings.danmaku.enabled }); break
         case 'toggleSidebar': setChat(!session.settings.sidebarVisible); break
         case 'toggleFullscreen': fullscreen.toggle(); break
@@ -302,6 +308,11 @@ function StudioView(): React.ReactNode {
                 <CaptureControls source={() => session.engine.element(session.snapshot.mainRole)} />
                 <PipButton />
                 <DanmakuSwitch onTune={() => setTuning((open) => !open)} />
+                <button type="button" className="icon-btn" onClick={() => void session.refreshSources()}
+                  disabled={empty || snapshot.refreshing} aria-busy={snapshot.refreshing || undefined}
+                  aria-label="刷新直播间" title={shortcutTitle(snapshot.refreshing ? '正在刷新直播间' : '刷新直播间', snapshot.settings.shortcuts.refreshSources)}>
+                  <Icon name="refresh" />
+                </button>
                 <button type="button" className="icon-btn" onClick={fullscreen.toggle} aria-pressed={fullscreen.active}
                   aria-label={fullscreen.active ? '退出全屏' : '全屏'} title={shortcutTitle(fullscreen.active ? '退出全屏' : '全屏', snapshot.settings.shortcuts.toggleFullscreen)}>
                   <Icon name={fullscreen.active ? 'shrink' : 'expand'} />

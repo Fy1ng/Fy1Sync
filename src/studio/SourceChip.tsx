@@ -17,6 +17,76 @@ import { danmakuRoom } from '../../server/danmaku/types'
 import { canSave, removeSavedRoom, saveRoom, savedFor, useSavedRooms, useSavedRoomsState, type SavedRoom } from './savedRooms'
 import { RoomSummary } from './favorites/Favorites'
 import { ReadError } from './ReadError'
+import { MAX_CANDIDATES, useCandidates } from './streams/candidates'
+
+/**
+ * 备选画面: other official streams the commentary might switch to. Each can be made the
+ * picture by hand; in 画面匹配 mode the switch can also happen on its own.
+ */
+function CandidateList(): React.ReactNode {
+  const controls = useCandidates()
+  const snapshot = useSessionSnapshot()
+  const [text, setText] = useState('')
+  const [platform, setPlatform] = useState<RoomPlatform>('douyu')
+  const [adding, setAdding] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+  if (!controls) return null
+  const bareRoom = parseRoomInput(text)?.platform === null
+  const frameMode = snapshot.settings.recognitionMode === 'frame-hash'
+
+  return (
+    <section className="candidate-list" aria-label="备选画面">
+      <div className="row-split">
+        <span>备选画面</span>
+        <span className="muted">{controls.candidates.length}/{MAX_CANDIDATES}</span>
+      </div>
+      <p className="muted">
+        {frameMode && snapshot.settings.autoPickCandidate
+          ? '画面匹配模式下会自动识别解说正在使用的画面'
+          : '解说换到另一场比赛时，可一键换成对应画面；画面匹配模式下可自动识别'}
+      </p>
+      {controls.candidates.map((candidate) => (
+        <div key={candidate.id} className="row-split candidate-item">
+          <span className="candidate-label" title={candidate.label}>
+            {candidate.label}
+            {candidate.phase === 'opening' && <span className="muted">（打开中）</span>}
+            {candidate.phase === 'failed' && <span className="form-error">（{candidate.error ?? '打开失败'}）</span>}
+          </span>
+          <span className="candidate-actions">
+            <button type="button" className="btn-quiet small" disabled={controls.busy || candidate.phase !== 'ready'}
+              onClick={() => void controls.promote(candidate.id)}>设为画面</button>
+            <button type="button" className="btn-quiet small is-danger" disabled={controls.busy}
+              onClick={() => void controls.remove(candidate.id)}>移除</button>
+          </span>
+        </div>
+      ))}
+      {!controls.full && (
+        <form className="link-row" onSubmit={(event) => {
+          event.preventDefault()
+          if (adding || !text.trim()) return
+          setAdding(true)
+          setProblem(null)
+          void controls.add(text, bareRoom ? platform : undefined).then((failure) => {
+            setAdding(false)
+            if (failure) setProblem(failure)
+            else setText('')
+          })
+        }}>
+          <input value={text} onChange={(event) => setText(event.target.value)} aria-label="备选画面链接"
+            placeholder="添加备选画面链接或房间号" spellCheck={false} />
+          <button type="submit" className="btn-quiet small" disabled={adding || text.trim() === ''}>
+            {adding ? '添加中' : '添加'}
+          </button>
+        </form>
+      )}
+      {bareRoom && (
+        <Segmented label="房间号所属平台" value={platform} onChange={setPlatform}
+          options={[{ value: 'douyu', label: PLATFORM_LABEL.douyu }, { value: 'bilibili', label: PLATFORM_LABEL.bilibili }, { value: 'huya', label: PLATFORM_LABEL.huya }, { value: 'douyin', label: PLATFORM_LABEL.douyin }]} />
+      )}
+      {problem && <p className="form-error" role="alert">{problem}</p>}
+    </section>
+  )
+}
 
 export function SourceChip({ role, onSchedule, onShowPreview = null }: {
   role: SourceRole
@@ -101,6 +171,8 @@ function SourcePanel({ role, onDone, onSchedule }: {
         <Segmented label="房间号所属平台" value={roomPlatform} onChange={setRoomPlatform}
           options={[{ value: 'douyu', label: PLATFORM_LABEL.douyu }, { value: 'bilibili', label: PLATFORM_LABEL.bilibili }, { value: 'huya', label: PLATFORM_LABEL.huya }, { value: 'douyin', label: PLATFORM_LABEL.douyin }]} />
       )}
+      {/* Right under the main link so it is found without scrolling; backups may be added before 画面 is. */}
+      {role === 'official' && <CandidateList />}
       {load.problem && (
         <p className="form-error" role="alert"><ErrorText error={load.problem} message={<>{load.problem.message}{load.problem.hint ? `，${load.problem.hint}` : ''}</>} /></p>
       )}
@@ -122,6 +194,12 @@ function SourcePanel({ role, onDone, onSchedule }: {
       }}>重新连接此房间弹幕</button>}
       <div className="row-split panel-foot">
         <SaveButton role={role} />
+        {state.status !== 'empty' && (
+          <button type="button" className="btn-quiet small" disabled={load.busy || session.snapshot.refreshing}
+            onClick={() => void session.refreshSources([role])}>
+            刷新直播间
+          </button>
+        )}
         {state.status !== 'empty' && (
           <button type="button" className="btn-quiet small is-danger" onClick={() => { session.unloadSource(role); onDone() }}>
             移除

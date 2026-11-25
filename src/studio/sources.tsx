@@ -85,7 +85,7 @@ interface Loader {
    * Resolve and load whatever was typed. `platform` settles a bare room number; without it
    * a bare number is Douyu's. Resolves false when nothing was loaded.
    */
-  loadInput: (role: SourceRole, input: string, platform?: RoomPlatform) => Promise<boolean>
+  loadInput: (role: SourceRole, input: string, platform?: RoomPlatform, quality?: string) => Promise<boolean>
   loadDescriptor: (role: SourceRole, descriptor: MediaDescriptor) => Promise<boolean>
   clearProblem: (role: SourceRole) => void
   /** Sign in for `state[role].login`, then load the same input again. */
@@ -186,7 +186,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     }
   }, [patch, session])
 
-  const loadInput = useCallback(async (role: SourceRole, input: string, platform?: RoomPlatform): Promise<boolean> => {
+  const loadInput = useCallback(async (role: SourceRole, input: string, platform?: RoomPlatform, quality?: string): Promise<boolean> => {
     const typed = parseRoomInput(input)
     const roomPlatform = typed?.platform ?? platform
     const roomInput = typed && roomPlatform === 'douyin' ? `https://live.douyin.com/${typed.room}`
@@ -206,7 +206,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     const platformOf = parsed.platform
     try {
       const result = await apiClient.resolve(
-        parsed.url, parsed.platform, role, undefined,
+        parsed.url, parsed.platform, role, quality,
         session.settings.preferAdaptive || undefined,
       )
       if (generation !== session.sourceRevision(role)) return false
@@ -277,6 +277,24 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     } finally { patch(role, { loggingIn: false }) }
     if (again && stillCurrent()) await loadInput(role, again.input, again.platform)
   }, [loadInput, patch, session])
+
+  /**
+   * Fetch a fresh stream address for what this side is playing and load it again, at the
+   * quality it has now. A direct link or a file has nothing to re-resolve and is reloaded as is.
+   */
+  const refresh = useCallback(async (role: SourceRole): Promise<boolean> => {
+    const descriptor = session.snapshot.media[role].descriptor
+    if (!descriptor || live.current[role].busy) return false
+    const resolvable = descriptor.input && descriptor.platform && !['direct', 'file', 'test'].includes(descriptor.platform)
+    if (!resolvable) return loadDescriptor(role, descriptor)
+    const platform = ['douyu', 'bilibili', 'huya', 'douyin'].includes(descriptor.platform!) ? descriptor.platform as RoomPlatform : undefined
+    return loadInput(role, descriptor.input, platform, descriptor.sourceQuality)
+  }, [loadDescriptor, loadInput, session])
+
+  useEffect(() => {
+    session.setSourceRefresher(refresh)
+    return () => session.setSourceRefresher(null)
+  }, [refresh, session])
 
   const clearProblem = useCallback((role: SourceRole) => patch(role, { problem: null }), [patch])
 

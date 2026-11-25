@@ -11,7 +11,7 @@ import { Icon, Popover, Segmented, usePopover } from './kit'
 export function CameraButton({ camera, onFrame, upscale }: { camera: CameraControls; onFrame: () => void; upscale?: CameraUpscaleState }): React.ReactNode {
   const menu = usePopover()
   const session = useSession()
-  const { settings } = useSessionSnapshot()
+  const { settings, mainRole } = useSessionSnapshot()
   if (!camera.available) return null
   const config = camera.config
   // Nothing framed yet: one press opens the framing sheet, with no menu in between.
@@ -30,8 +30,15 @@ export function CameraButton({ camera, onFrame, upscale }: { camera: CameraContr
       </button>
       <Popover {...menu.popover} className="camera-menu" label="主播摄像头">
         <button type="button" className="menu-item" onClick={() => { menu.close(); camera.setEnabled(!config.enabled) }}>
-          {config.enabled ? '隐藏摄像头小窗' : '显示摄像头小窗'}
+          {config.enabled ? '隐藏主播摄像头' : '显示主播摄像头'}
         </button>
+        <div className="camera-upscale">
+          <span>显示方式</span>
+          <Segmented value={config.mode ?? 'window'} label="显示方式" options={[
+            { value: 'window', label: '悬浮窗' }, { value: 'inplace', label: '画面透传' },
+          ]} onChange={mode => camera.setMode(mode)} />
+          {config.mode === 'inplace' && <small>{mainRole === 'commentary' ? '解说为主画面时无需透传' : '按框选位置替换主画面对应区域'}</small>}
+        </div>
         <button type="button" className="menu-item" onClick={() => { menu.close(); onFrame() }}>重新框选</button>
         {upscale?.supported && <div className="camera-upscale">
           <span>小窗画质增强</span>

@@ -96,7 +96,8 @@ export function ExtraStreams({ adding, onAddingChange, primaryRef, children }: {
     return () => observer.disconnect()
   }, [])
 
-  const sessions = (snapshot?.sessions ?? []).filter((view) => EXTRA_ID.test(view.id) && !closed.current.has(view.id))
+  // Backup pictures (备选画面) are extra sessions too, but they play out of sight, not in a window.
+  const sessions = (snapshot?.sessions ?? []).filter((view) => EXTRA_ID.test(view.id) && view.role !== 'candidate' && !closed.current.has(view.id))
   const idsKey = sessions.map((view) => view.id).join(',')
   const arrangement = arrangeStreams(preference, sessions.length, bounds)
   const split = arrangement.kind === 'split' ? arrangement : null
