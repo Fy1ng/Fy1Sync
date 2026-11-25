@@ -230,6 +230,8 @@ describe('explicit yt-dlp and provider route ownership', () => {
 
   it.each([
     ['HTTP Error 403: Forbidden', 'http', 'http-403'],
+    ['HTTP Error 407: Proxy Authentication Required', 'proxy', 'proxy-rejected'],
+    ['WARNING: [youtube] abcdefghijk: PO Token required\nERROR: Unable to download webpage: HTTP Error 429: Too Many Requests', 'http', 'http-429'],
     ['certificate verify failed', 'connect', 'tls-certificate'],
   ])('preserves target HTTP or certificate failure through the selected proxy: %s', async (text, stage, code) => {
     const h = harness()

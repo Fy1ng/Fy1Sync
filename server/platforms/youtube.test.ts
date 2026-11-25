@@ -3,7 +3,7 @@ import fixture from './fixtures/youtube-live.json'
 import adaptiveFixture from './fixtures/youtube-adaptive-live.json'
 import { detectPlatform, resolveStream } from './index'
 import { sanitizedFailure } from '../api'
-import { parseYouTubeUrl, resolveYouTube, selectYouTubeFormat, YOUTUBE_FORMAT_FAILURES, YOUTUBE_REFUSALS, youtubeAdaptiveFormats, youtubeFormats } from './youtube'
+import { parseYouTubeUrl, resolveYouTube, selectYouTubeFormat, YOUTUBE_FORMAT_FAILURES, YOUTUBE_REFUSALS, youtubeAdaptiveFormats, youtubeFormats, youtubeSeparatedHlsFormats } from './youtube'
 import type { ResolverDeps } from './types'
 
 function deps(overrides: Partial<ResolverDeps> = {}): ResolverDeps {
@@ -125,6 +125,73 @@ describe('YouTube optional adaptive formats', () => {
     for (const patch of [{ vcodec: 'h264' }, { ext: 'mp4' }, { protocol: 'm3u8_native' }, { acodec: 'opus' }]) {
       expect(youtubeAdaptiveFormats({ formats: [{ ...source, ...patch }, audio] }, 1080)).toEqual([])
     }
+  })
+})
+
+describe('YouTube separated HLS formats', () => {
+  const visionOsInfo = {
+    id: 'abcdefghijk',
+    is_live: true,
+    live_status: 'is_live',
+    formats: [
+      { format_id: '233', protocol: 'm3u8_native', ext: 'mp4', vcodec: 'none', acodec: null, source_preference: 0, url: 'https://manifest.googlevideo.com/api/manifest/hls_playlist/itag/233/index.m3u8' },
+      { format_id: '234', protocol: 'm3u8_native', ext: 'mp4', vcodec: 'none', acodec: null, source_preference: 1, url: 'https://manifest.googlevideo.com/api/manifest/hls_playlist/itag/234/index.m3u8' },
+      { format_id: '234-1', protocol: 'm3u8_native', ext: 'mp4', vcodec: 'none', acodec: null, source_preference: -2, language_preference: 0, url: 'https://manifest.googlevideo.com/api/manifest/hls_playlist/itag/234-1/index.m3u8' },
+      { format_id: '232', protocol: 'm3u8_native', ext: 'mp4', height: 720, fps: 30, vcodec: 'avc1.4D401F', acodec: 'none', tbr: 2969, url: 'https://manifest.googlevideo.com/api/manifest/hls_playlist/itag/232/index.m3u8' },
+      { format_id: '270', protocol: 'm3u8_native', ext: 'mp4', height: 1080, fps: 30, vcodec: 'avc1.640028', acodec: 'none', tbr: 5421, url: 'https://manifest.googlevideo.com/api/manifest/hls_playlist/itag/270/index.m3u8' },
+      { format_id: '614', protocol: 'm3u8_native', ext: 'mp4', height: 1080, fps: 30, vcodec: 'vp09.00.40.08', acodec: 'none', tbr: 6200, url: 'https://manifest.googlevideo.com/api/manifest/hls_playlist/itag/614/index.m3u8' },
+      { format_id: '620', protocol: 'm3u8_native', ext: 'mp4', height: 1440, fps: 60, vcodec: 'vp09.00.50.08', acodec: 'none', tbr: 9500, url: 'https://manifest.googlevideo.com/api/manifest/hls_playlist/itag/620/index.m3u8' },
+      { format_id: '999', protocol: 'm3u8_native', ext: 'mp4', height: 2160, fps: 60, vcodec: 'hev1.1.6.L150', acodec: 'none', tbr: 15000, url: 'https://manifest.googlevideo.com/api/manifest/hls_playlist/itag/999/index.m3u8' },
+    ],
+  }
+
+  it('pairs visionos separated HLS video and audio tracks, prefers default high audio and H.264 at <=1080p', async () => {
+    const result = await resolveYouTube('youtu.be/abcdefghijk', deps({ runYtDlp: async () => visionOsInfo }))
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.stream.quality).toBe('270')
+    expect(result.stream.url).toContain('/itag/270/')
+    expect(result.stream.audioUrl).toContain('/itag/234/')
+    expect(result.stream.adaptive).toBeUndefined()
+    expect(result.stream.qualities).toEqual([
+      { id: '620', label: '1440p60', height: 1440, fps: 60 },
+      { id: '270', label: '1080p', height: 1080, fps: 30 },
+      { id: '232', label: '720p', height: 720, fps: 30 },
+    ])
+  })
+
+  it('selects >1080p separated HLS when preferAdaptive is set and keeps separated HLS available during hlsOnly recovery', async () => {
+    const high = await resolveYouTube('youtu.be/abcdefghijk', deps({ preferAdaptive: true, runYtDlp: async () => visionOsInfo }))
+    expect(high).toMatchObject({ ok: true, stream: { quality: '620', audioUrl: expect.stringContaining('/itag/234/') } })
+    const hlsOnly = await resolveYouTube('youtu.be/abcdefghijk', deps({ hlsOnly: true, runYtDlp: async () => visionOsInfo }))
+    expect(hlsOnly).toMatchObject({ ok: true, stream: { quality: '270', audioUrl: expect.stringContaining('/itag/234/') } })
+  })
+
+  it('prefers language_preference and itag 234 over 233, and rejects unsupported audio codecs', () => {
+    const multiLang = {
+      formats: [
+        { format_id: '234-dub', protocol: 'm3u8_native', vcodec: 'none', acodec: null, source_preference: 1, language_preference: 0, url: 'https://manifest.googlevideo.com/dub.m3u8' },
+        { format_id: '234-orig', protocol: 'm3u8_native', vcodec: 'none', acodec: null, source_preference: 1, language_preference: 10, url: 'https://manifest.googlevideo.com/orig.m3u8' },
+        { format_id: '270', protocol: 'm3u8_native', height: 1080, fps: 30, vcodec: 'avc1.640028', acodec: 'none', tbr: 5000, url: 'https://manifest.googlevideo.com/270.m3u8' },
+      ],
+    }
+    expect(youtubeSeparatedHlsFormats(multiLang, 0)[0]?.audioUrl).toBe('https://manifest.googlevideo.com/orig.m3u8')
+    const opusOnly = {
+      formats: [
+        { format_id: '251', protocol: 'm3u8_native', vcodec: 'none', acodec: 'opus', url: 'https://manifest.googlevideo.com/251.m3u8' },
+        { format_id: '270', protocol: 'm3u8_native', height: 1080, fps: 30, vcodec: 'avc1.640028', acodec: 'none', tbr: 5000, url: 'https://manifest.googlevideo.com/270.m3u8' },
+      ],
+    }
+    expect(youtubeSeparatedHlsFormats(opusOnly, 0)).toEqual([])
+  })
+
+  it('keeps muxed HLS for <=1080p while exposing higher separated HLS renditions', async () => {
+    const mixed = { ...fixture, formats: [...fixture.formats, ...visionOsInfo.formats] }
+    const auto = await resolveYouTube('youtu.be/abcdefghijk', deps({ runYtDlp: async () => mixed }))
+    expect(auto).toMatchObject({ ok: true, stream: { quality: '301' } })
+    if (auto.ok) expect(auto.stream.audioUrl).toBeUndefined()
+    const higher = await resolveYouTube('youtu.be/abcdefghijk', deps({ quality: '620', runYtDlp: async () => mixed }))
+    expect(higher).toMatchObject({ ok: true, stream: { quality: '620', audioUrl: expect.stringContaining('/itag/234/') } })
   })
 })
 

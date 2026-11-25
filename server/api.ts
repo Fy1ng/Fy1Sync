@@ -457,7 +457,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             if (!target.ok) return fail(target.reason, streamFailureForCode(target.reason)?.message ?? '媒体地址被应用的安全策略拒绝')
             if (target.url.username || target.url.password) return fail('invalid-url', '媒体地址不能包含登录凭据')
             const url = deps.registerMedia(rawUrl, result.stream.mediaAccess, result.stream.headers)
-            const { headers: _headers, adaptive: _adaptive, mediaAccess: _access, douyuWatchCdn: _cdn, ...publicStream } = result.stream
+            const { headers: _headers, audioUrl: _audioUrl, adaptive: _adaptive, mediaAccess: _access, douyuWatchCdn: _cdn, ...publicStream } = result.stream
             return { ok: true, value: { ok: true, stream: { ...publicStream, url, requiresProxy: false, notes: [] } } }
           }
           case 'switchQuality': {

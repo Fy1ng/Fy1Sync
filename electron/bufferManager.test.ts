@@ -502,6 +502,19 @@ describe('ffmpeg argument and manifest boundaries', () => {
     'http://127.0.0.1:12345/media/11111111-1111-4111-8111-111111111111#fragment',
   ])('rejects a non-capability input claiming the local HLS relaxation: %s', url => {
     expect(() => buildFfmpegArgs({ url, gatewayHls: true }, '/buffer', 0)).toThrow('invalid gateway HLS input')
+    expect(() => buildFfmpegArgs({ url: 'http://127.0.0.1:12345/media/11111111-1111-4111-8111-111111111111', audioUrl: url, gatewayHls: true }, '/buffer', 0)).toThrow('invalid gateway HLS input')
+  })
+  it('builds dual-input fMP4 copy args for separated gateway HLS streams', () => {
+    const video = 'http://127.0.0.1:12345/media/11111111-1111-4111-8111-111111111111'
+    const audio = 'http://127.0.0.1:12345/media/22222222-2222-4222-8222-222222222222'
+    const args = buildFfmpegArgs({ url: video, audioUrl: audio, gatewayHls: true, proxyUrl: '' }, '/buffer', 2)
+    expect(args.filter(arg => arg === '-i')).toHaveLength(2)
+    expect(args.filter(arg => arg === '-extension_picky')).toHaveLength(2)
+    expect(args.filter(arg => arg === '-thread_queue_size')).toHaveLength(2)
+    expect(args.filter(arg => arg === '-protocol_whitelist')).toHaveLength(2)
+    expect(args).toContain(video)
+    expect(args).toContain(audio)
+    expect(args).toEqual(expect.arrayContaining(['-map', '0:v:0', '-map', '1:a:0', '-bsf:a', 'aac_adtstoasc', '-hls_segment_type', 'fmp4']))
   })
   it('rejects header injection', () => {
     expect(() => buildFfmpegArgs({ url: 'https://cdn.example/live', headers: { Referer: 'https://example.com/\r\nCookie: injected' } }, '/buffer', 0)).toThrow()
@@ -563,6 +576,27 @@ describe('fMP4 output on the real ffmpeg', () => {
     } finally {
       await rm(directory, { recursive: true, force: true })
       await rm(elsewhere, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(!available)('remuxes separated video and audio inputs into fMP4 HLS segments', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'syncer-fmp4-dual-'))
+    try {
+      const video = path.join(directory, 'video.ts')
+      const audio = path.join(directory, 'audio.ts')
+      execFileSync(fixtureFfmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=30',
+        '-t', '4.5', '-an', '-c:v', 'libx264', '-g', '60', '-f', 'mpegts', video], { cwd: directory, windowsHide: true, timeout: 15_000, stdio: 'pipe' })
+      execFileSync(fixtureFfmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
+        '-t', '4.5', '-vn', '-c:a', 'aac', '-f', 'mpegts', audio], { cwd: directory, windowsHide: true, timeout: 15_000, stdio: 'pipe' })
+      const args = buildFfmpegArgs({ url: pathToFileURL(video).href, audioUrl: pathToFileURL(audio).href, realtime: true }, directory, 4)
+        .filter(arg => arg !== '-re')
+      execFileSync(ffmpeg, args, { cwd: directory, windowsHide: true, timeout: 15_000, stdio: 'pipe' })
+      const playlist = parseHlsSegments(await readFile(path.join(directory, 'raw_4.m3u8'), 'utf8'))
+      expect(playlist.segments.reduce((sum, segment) => sum + segment.duration, 0)).toBeGreaterThanOrEqual(4)
+      expect(playlist.segments.every(segment => segment.init === 'init_4.mp4')).toBe(true)
+    } finally {
+      if (path.dirname(directory) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith('syncer-fmp4-dual-')) throw new Error('Invalid fixture cleanup path')
+      await rm(directory, { recursive: true, force: true })
     }
   })
 })

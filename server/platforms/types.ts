@@ -38,6 +38,8 @@ export type ResolvedStream = {
   quality?: string
   /** Main-process-only input headers. Strip these before crossing IPC. */
   headers?: Record<string, string>
+  /** Main-process-only companion HLS audio playlist URL. Strip before crossing IPC. */
+  audioUrl?: string
   /** Main-process-only signed inputs. Strip these before crossing IPC. */
   adaptive?: { videoUrl: string; audioUrl: string; videoContainer: 'webm' | 'mp4'; height: number }
 }

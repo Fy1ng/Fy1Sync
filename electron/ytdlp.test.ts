@@ -5,7 +5,7 @@ import { YOUTUBE_METADATA_TEMPLATE, YtDlpRunner, type YtDlpDiagnostic } from './
 import { locateYouTubePotProvider } from './toolLocator'
 import adaptiveFixture from '../server/platforms/fixtures/youtube-adaptive-live.json'
 import { prepareScriptOnlyPotPlugin } from './potPlugin'
-import { youtubeAdaptiveFormats, youtubeFormats } from '../server/platforms/youtube'
+import { youtubeAdaptiveFormats, youtubeFormats, youtubeSeparatedHlsFormats } from '../server/platforms/youtube'
 
 vi.mock('./toolLocator', async (actual) => ({ ...await actual<object>(), locateTool: vi.fn(async () => '/tools/yt-dlp.exe'), locateYouTubePotProvider: vi.fn(async () => undefined) }))
 vi.mock('./potPlugin', () => ({ prepareScriptOnlyPotPlugin: vi.fn() }))
@@ -149,6 +149,7 @@ describe('isolated yt-dlp execution', () => {
     ['This video is not available in your country', 'YouTube geo restricted'],
     ['Join this channel to get access to members-only content', 'YouTube members only'],
     ['Private video. Sign in if you have been granted access', 'YouTube private video'],
+    ['WARNING: [youtube] RaTTf_zsK1s: Unable to download webpage: HTTP Error 429: Too Many Requests\nERROR: [youtube] RaTTf_zsK1s: Sign in to confirm you\u2019re not a bot.', 'YouTube bot check'],
   ])('labels %s as "%s" without the extractor text', async (stderr, label) => {
     const h = harness()
     const pending = h.runner.resolve('https://www.youtube.com/watch?v=abcdefghijk')
@@ -381,6 +382,44 @@ describe('optional yt-dlp PO token script integration', () => {
     await vi.waitFor(() => expect(h.run('hls-fallback')).toBeDefined())
     h.finish('hls-fallback', 0, hlsOnly)
     expect(youtubeFormats(await pending)).toHaveLength(2)
+    expect(h.children).toHaveLength(2)
+  })
+
+  it('accepts playable separated HLS from the default client without an extra Safari retry', async () => {
+    const separatedOnly = {
+      id: 'abcdefghijk',
+      is_live: true,
+      live_status: 'is_live',
+      formats: [
+        { format_id: '234', protocol: 'm3u8_native', ext: 'mp4', vcodec: 'none', acodec: null, source_preference: 1, url: 'https://media.example.invalid/youtube/234.m3u8' },
+        { format_id: '270', protocol: 'm3u8_native', ext: 'mp4', height: 1080, fps: 30, vcodec: 'avc1.640028', acodec: 'none', tbr: 5421, url: 'https://media.example.invalid/youtube/270.m3u8' },
+      ],
+    }
+    const h = forked()
+    const pending = h.runner.resolve(url)
+    await vi.waitFor(() => expect(h.children).toHaveLength(1))
+    h.finish('hls', 0, separatedOnly)
+    expect(youtubeSeparatedHlsFormats(await pending, 0).map(format => format.format_id)).toEqual(['270'])
+    expect(h.children).toHaveLength(1)
+  })
+
+  it('merges separated HLS video and audio recovered from the Safari fallback', async () => {
+    const separatedOnly = {
+      id: 'abcdefghijk',
+      is_live: true,
+      live_status: 'is_live',
+      formats: [
+        { format_id: '234', protocol: 'm3u8_native', ext: 'mp4', vcodec: 'none', acodec: null, source_preference: 1, url: 'https://media.example.invalid/youtube/234.m3u8' },
+        { format_id: '270', protocol: 'm3u8_native', ext: 'mp4', height: 1080, fps: 30, vcodec: 'avc1.640028', acodec: 'none', tbr: 5421, url: 'https://media.example.invalid/youtube/270.m3u8' },
+      ],
+    }
+    const h = forked()
+    const pending = h.runner.resolve(url)
+    await vi.waitFor(() => expect(h.children).toHaveLength(1))
+    h.finish('hls', 0, videoOnly)
+    await vi.waitFor(() => expect(h.run('hls-fallback')).toBeDefined())
+    h.finish('hls-fallback', 0, separatedOnly)
+    expect(youtubeSeparatedHlsFormats(await pending, 0)).toMatchObject([{ format_id: '270', audioUrl: 'https://media.example.invalid/youtube/234.m3u8' }])
     expect(h.children).toHaveLength(2)
   })
 

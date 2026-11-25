@@ -210,6 +210,40 @@ describe('main acquisition boundary', () => {
     expect(h.listeners.size).toBe(0)
   })
 
+  it('registers both video and audio playlists for separated YouTube HLS and keeps audioUrl out of IPC', async () => {
+    const released: string[] = []
+    const mediaInput = vi.fn(async (rawUrl: string) => ({
+      url: rawUrl.includes('/270.m3u8')
+        ? 'http://127.0.0.1:4321/media/11111111-1111-4111-8111-111111111111'
+        : 'http://127.0.0.1:4321/media/22222222-2222-4222-8222-222222222222',
+      proxyUrl: '',
+      release: () => { released.push(rawUrl) },
+    }))
+    const runYtDlp = vi.fn(async () => ({
+      is_live: true,
+      id: 'abcdefghijk',
+      live_status: 'is_live',
+      formats: [
+        { format_id: '234', protocol: 'm3u8_native', ext: 'mp4', vcodec: 'none', acodec: null, source_preference: 1, url: 'https://manifest.googlevideo.com/234.m3u8?signature=PRIVATE_AUDIO' },
+        { format_id: '270', protocol: 'm3u8_native', ext: 'mp4', height: 1080, fps: 30, vcodec: 'avc1.640028', acodec: 'none', tbr: 5421, url: 'https://manifest.googlevideo.com/270.m3u8?signature=PRIVATE_VIDEO' },
+      ],
+    }))
+    const h = harness({ runYtDlp, mediaInput })
+    const result = await h.acquisition.resolve('https://www.youtube.com/watch?v=abcdefghijk', 'youtube', 'official')
+    expect(result).toMatchObject({ ok: true, stream: { kind: 'hls', quality: '270', url: expect.stringContaining('app://app/buffer/') } })
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE|audioUrl|googlevideo/)
+    expect(h.inputs[0]).toMatchObject({
+      url: 'http://127.0.0.1:4321/media/11111111-1111-4111-8111-111111111111',
+      audioUrl: 'http://127.0.0.1:4321/media/22222222-2222-4222-8222-222222222222',
+      gatewayHls: true,
+      fmp4: true,
+    })
+    expect(mediaInput).toHaveBeenCalledTimes(2)
+    await h.reconnect()
+    expect(released).toHaveLength(2)
+    h.acquisition.dispose()
+  })
+
   it('resolves again on reconnect and on each role quality change', async () => {
     const h = harness()
     await h.acquisition.resolve('https://www.youtube.com/watch?v=abcdefghijk', 'youtube', 'official')

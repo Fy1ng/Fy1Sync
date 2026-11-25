@@ -135,14 +135,23 @@ export class Acquisition implements AcquisitionService {
       const headers = resolved.stream.headers
         ?? (resolved.stream.platform === 'bilibili' ? { Referer: 'https://live.bilibili.com/' } : undefined)
       const media = !resolved.stream.adaptive && this.deps.mediaInput ? await this.deps.mediaInput(resolved.stream.url, headers, network, resolved.stream.mediaAccess) : undefined
+      let audioMedia: typeof media
+      if (!resolved.stream.adaptive && resolved.stream.audioUrl && this.deps.mediaInput) {
+        try { audioMedia = await this.deps.mediaInput(resolved.stream.audioUrl, headers, network, resolved.stream.mediaAccess) }
+        catch (error) { media?.release?.(); throw error }
+      }
       selection.mediaRelease?.()
-      selection.mediaRelease = media?.release
-      selection.readBytes = media?.readBytes
+      selection.mediaRelease = (media?.release || audioMedia?.release) ? () => { media?.release?.(); audioMedia?.release?.() } : undefined
+      selection.readBytes = (media?.readBytes || audioMedia?.readBytes) ? () => (media?.readBytes?.() ?? 0) + (audioMedia?.readBytes?.() ?? 0) : undefined
       selection.mediaRevision = (selection.mediaRevision ?? 0) + 1
       const route = media ? undefined : await network.route(resolved.stream.url)
-      return { url: media?.url ?? resolved.stream.url, gatewayHls: Boolean(media && resolved.stream.kind === 'hls'), network, proxyUrl: media?.proxyUrl ?? route?.proxyUrl ?? '', readFailure: media?.readFailure, headers: media ? undefined : resolved.stream.headers
-        ?? (!media && resolved.stream.platform === 'bilibili' ? { Referer: 'https://live.bilibili.com/' } : undefined),
-        ...(resolved.stream.platform === 'direct' ? { fmp4: true } : {}),
+      return { url: media?.url ?? resolved.stream.url,
+        ...(resolved.stream.audioUrl ? { audioUrl: audioMedia?.url ?? resolved.stream.audioUrl } : {}),
+        gatewayHls: Boolean(media && resolved.stream.kind === 'hls'), network, proxyUrl: media?.proxyUrl ?? route?.proxyUrl ?? '',
+        readFailure: (media?.readFailure || audioMedia?.readFailure) ? () => media?.readFailure?.() ?? audioMedia?.readFailure?.() : undefined,
+        headers: media ? undefined : resolved.stream.headers
+          ?? (!media && resolved.stream.platform === 'bilibili' ? { Referer: 'https://live.bilibili.com/' } : undefined),
+        ...(resolved.stream.platform === 'direct' || resolved.stream.audioUrl ? { fmp4: true } : {}),
         ...(resolved.stream.adaptive ? { adaptive: resolved.stream.adaptive } : {}),
         qualityHeight: resolved.stream.qualities?.find(option => option.id === resolved.stream.quality)?.height,
         ...(fallbackHeight ? { fallbackFromHeight: fallbackHeight } : {}),
@@ -158,7 +167,7 @@ export class Acquisition implements AcquisitionService {
       await readiness.promise
       if (generation !== this.generations.get(role) || this.disposed) return cancelled()
       this.selections.set(role, selection)
-      const { headers: _headers, adaptive: _adaptive, mediaAccess: _access, douyuWatchCdn: _cdn, ...publicStream } = selection.stream
+      const { headers: _headers, audioUrl: _audioUrl, adaptive: _adaptive, mediaAccess: _access, douyuWatchCdn: _cdn, ...publicStream } = selection.stream
       const publicSelection: ResolvedStream = {
         ...publicStream, url: local.url, kind: 'hls', requiresProxy: false,
         notes: selection.stream.notes ?? [],
@@ -265,9 +274,11 @@ export class Acquisition implements AcquisitionService {
       }
     }
     // Actual media connections own DNS and route validation; do not resolve the same target here.
-    const checked = checkUrlSyntax(result.stream.url, mediaRequestPolicy(this.deps.proxy))
-    if (!checked.ok) throw new ProxyError(checked.reason, '媒体地址未通过安全检查')
-    if (checked.url.username || checked.url.password) throw new ProxyError('invalid-url', '媒体地址不能包含登录凭据')
+    for (const raw of [result.stream.url, ...(result.stream.audioUrl ? [result.stream.audioUrl] : [])]) {
+      const checked = checkUrlSyntax(raw, mediaRequestPolicy(this.deps.proxy))
+      if (!checked.ok) throw new ProxyError(checked.reason, '媒体地址未通过安全检查')
+      if (checked.url.username || checked.url.password) throw new ProxyError('invalid-url', '媒体地址不能包含登录凭据')
+    }
     if (result.stream.adaptive) {
       for (const raw of [result.stream.adaptive.videoUrl, result.stream.adaptive.audioUrl]) {
         const target = checkUrlSyntax(raw, { ...this.deps.proxy, hosts: ['*.googlevideo.com'], allowNonStandardPorts: false })

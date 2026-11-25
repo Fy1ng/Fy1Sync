@@ -16,7 +16,7 @@ import { hasSensitiveHeaders } from '../server/safeFetch'
 export { cleanProxyEnvironment } from '../server/networkPolicy'
 
 export type Role = BufferRole
-export interface BufferInput { url: string; headers?: Record<string, string>; realtime?: boolean; adaptive?: AdaptiveSource; qualityHeight?: number; fallbackFromHeight?: number; proxyUrl?: string; network?: NetworkContext; readFailure?: () => StreamFailure | undefined; gatewayHls?: boolean; fmp4?: boolean }
+export interface BufferInput { url: string; audioUrl?: string; headers?: Record<string, string>; realtime?: boolean; adaptive?: AdaptiveSource; qualityHeight?: number; fallbackFromHeight?: number; proxyUrl?: string; network?: NetworkContext; readFailure?: () => StreamFailure | undefined; gatewayHls?: boolean; fmp4?: boolean }
 export interface BufferNotice { code: 'youtube-adaptive-fallback'; fromHeight: number; toHeight: number }
 export type BufferPhase = 'starting' | 'buffering' | 'ready' | 'stalled' | 'reconnecting' | 'failed' | 'stopped'
 export interface BufferState { role: Role; state: BufferPhase; seconds: number; attempt?: number; retryInMs?: number; reason?: string; notice?: BufferNotice; failure?: StreamFailure; retriesRemaining?: number; hasVideo?: boolean; completeSegments?: number }
@@ -532,14 +532,24 @@ export function buildFfmpegArgs(input: BufferInput, directory: string, runId: nu
       '-analyzeduration', '1000000', '-probesize', '1048576', '-f', 'mov', '-i', audioInput,
       '-map', '0:v:0', '-map', '1:a:0', ...hlsOutput(directory, runId, true)]
   }
-  const url = new URL(input.url)
-  const local = url.protocol === 'file:' && input.realtime === true
-  if ((!local && !['http:', 'https:'].includes(url.protocol)) || url.username || url.password || /[\r\n\0]/.test(input.url)) throw new Error('invalid input')
+  const dual = Boolean(input.audioUrl)
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-progress', 'pipe:1', '-stats_period', '0.5']
+  args.push(...buildInputArgs(input.url, input, dual))
+  if (input.audioUrl) args.push(...buildInputArgs(input.audioUrl, input, true))
+  args.push(...(dual ? ['-map', '0:v:0', '-map', '1:a:0'] : ['-map', '0:v:0?', '-map', '0:a:0?']), ...hlsOutput(directory, runId, forceFmp4 || dual))
+  return args
+}
+
+function buildInputArgs(rawUrl: string, input: BufferInput, dual: boolean): string[] {
+  const url = new URL(rawUrl)
+  const local = url.protocol === 'file:' && input.realtime === true
+  if ((!local && !['http:', 'https:'].includes(url.protocol)) || url.username || url.password || /[\r\n\0]/.test(rawUrl)) throw new Error('invalid input')
+  const args: string[] = []
   if (input.realtime) args.push('-re')
   // This build reads http_proxy only. Explicit input options and a cleaned child
   // environment keep the selected route independent from inherited proxy variables.
   args.push('-protocol_whitelist', local ? 'file,crypto' : 'http,https,tcp,tls,crypto,httpproxy')
+  if (dual) args.push('-thread_queue_size', '512')
   // Do not enable ffmpeg HTTP reconnect options: a signed Huya FLV URL is single-use.
   // EOF and stalls return to launch(), which asks acquisition for a newly signed URL.
   if (!local) {
@@ -567,7 +577,7 @@ export function buildFfmpegArgs(input: BufferInput, directory: string, runId: nu
     // may relax the HLS demuxer's filename heuristic; remote inputs retain it.
     args.push('-f', 'hls', '-extension_picky', '0')
   }
-  args.push('-i', local ? fileURLToPath(url) : input.url, '-map', '0:v:0?', '-map', '0:a:0?', ...hlsOutput(directory, runId, forceFmp4))
+  args.push('-i', local ? fileURLToPath(url) : rawUrl)
   return args
 }
 

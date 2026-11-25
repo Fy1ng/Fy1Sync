@@ -6,14 +6,14 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import path from 'node:path'
 import { locateTool, locateYouTubePotProvider, type ToolSettings, type ToolContext, type YouTubePotProvider } from './toolLocator'
 import { killProcessTree } from './bufferManager'
-import { youtubeAdaptiveFormats, youtubeFormats } from '../server/platforms/youtube'
+import { youtubeAdaptiveFormats, youtubeFormats, youtubeSeparatedHlsFormats } from '../server/platforms/youtube'
 import { prepareScriptOnlyPotPlugin, type PrivatePotPlugin } from './potPlugin'
 import { DIAGNOSTIC_CODES, type DiagnosticCode, type DiagnosticEvent, type DiagnosticFormatSummary } from './diagnosticContracts'
 import { isProxyConnectFailure, markProxyConnectFailure } from '../server/proxyDispatcher'
 
 // Keep the fields consumed by the selectors, without huge fragment/subtitle histories.
 // yt-dlp's dictionary projection runs before the data reaches the bounded parent pipe.
-export const YOUTUBE_METADATA_TEMPLATE = '{"metadata":%(.{id,is_live,live_status})j,"formats":%(formats.:.{format_id,url,protocol,height,fps,tbr,vcodec,acodec,ext})j}'
+export const YOUTUBE_METADATA_TEMPLATE = '{"metadata":%(.{id,is_live,live_status})j,"formats":%(formats.:.{format_id,url,protocol,height,fps,tbr,vcodec,acodec,ext,source_preference,language_preference})j}'
 const MAX_METADATA_BYTES = 16 * 1_048_576
 
 /** yt-dlp uses socks5h to keep destination DNS at the proxy. */
@@ -119,7 +119,7 @@ function youtubeFailureCode(stderr: string): DiagnosticCode {
   if (/members.only/i.test(stderr)) return 'members-only'
   if (/geo.restricted|available in your country|available from your location/i.test(stderr)) return 'geo-restricted'
   if (/private video/i.test(stderr)) return 'private'
-  if (/sign in|login|required/i.test(stderr)) return 'sign-in'
+  if (/sign.?in|log.?in|authentication required/i.test(stderr)) return 'sign-in'
   if (/not (?:currently )?live|recording is not available|live (?:event|stream) (?:has ended|will begin)/i.test(stderr)) return 'not-live'
   return 'extractor-failed'
 }
@@ -135,9 +135,14 @@ function youtubeFailureLabel(stderr: string): string {
   if (/members.only/i.test(stderr)) return 'YouTube members only'
   if (/geo.restricted|available in your country|available from your location/i.test(stderr)) return 'YouTube geo restricted'
   if (/private video/i.test(stderr)) return 'YouTube private video'
-  if (/sign in|login|required/i.test(stderr)) return 'YouTube sign in required'
+  if (/sign.?in|log.?in|authentication required/i.test(stderr)) return 'YouTube sign in required'
   if (/not (?:currently )?live|recording is not available|live (?:event|stream) (?:has ended|will begin)/i.test(stderr)) return 'YouTube not currently live'
   return 'YouTube 取流失败，请检查直播状态和网络'
+}
+
+function fatalStderr(stderr: string): string {
+  const errors = stderr.split(/\r?\n/).filter(line => /^\s*ERROR:/i.test(line)).join('\n')
+  return errors || stderr
 }
 
 /** Captured metadata is private and bounded; stderr is classified, never returned. */
@@ -277,6 +282,7 @@ export class YtDlpRunner {
     const metadata = info as Record<string, unknown>
     if (metadata.is_live !== true || (typeof metadata.live_status === 'string' && metadata.live_status !== 'is_live')
       || typeof metadata.id !== 'string' || !/^[a-zA-Z0-9_-]{11}$/.test(metadata.id) || youtubeFormats(info).length
+      || youtubeSeparatedHlsFormats(info, 0).length
       || (adaptive && youtubeAdaptiveFormats(info, 0).length)) return info
     let plugin: PrivatePotPlugin | undefined
     try {
@@ -401,7 +407,23 @@ export class YtDlpRunner {
             event({ ...completed, status: 'failed', code: 'proxy-unreachable', stopped: false })
             reject(ytDlpProxyConnectionError({ exitCode: code, stderr })); return
           }
-          const classified = classifyFfmpegStderr(stderr)
+          const fatal = fatalStderr(stderr)
+          const classified = classifyFfmpegStderr(fatal) ?? classifyFfmpegStderr(stderr)
+          const ytCode = stage === 'huya' ? 'extractor-failed' : youtubeFailureCode(fatal) !== 'extractor-failed'
+            ? youtubeFailureCode(fatal) : youtubeFailureCode(stderr)
+          if (classified?.stage === 'proxy') {
+            const failure = proxyUrl ? classifyNetworkFailure(new Error(stderr), 'proxy') : classified
+            event({ ...completed, status: 'failed', code: fixedCode(failure.code, 'extractor-failed'), stopped: false })
+            reject(new StreamFailureError(failure)); return
+          }
+          // An explicit YouTube refusal (such as bot-check) takes precedence over earlier
+          // non-fatal webpage warnings like HTTP 429 so the UI can offer sign-in or node switching.
+          if (stage !== 'huya' && ytCode !== 'extractor-failed') {
+            event({ ...completed, status: 'failed', code: ytCode, stopped: false })
+            reject(Object.assign(new Error(youtubeFailureLabel(fatal) !== 'YouTube 取流失败，请检查直播状态和网络'
+              ? youtubeFailureLabel(fatal) : youtubeFailureLabel(stderr)), { detail: diagnosticDetails({ exitCode: code, stderr }) }))
+            return
+          }
           if (classified) {
             const failure = proxyUrl ? classifyNetworkFailure(new Error(stderr), 'proxy') : classified
             event({ ...completed, status: 'failed', code: fixedCode(failure.code, 'extractor-failed'), stopped: false })
@@ -481,7 +503,20 @@ export function mergeAdaptiveFormats(hlsInfo: unknown, adaptiveInfo: unknown): u
     ]
     best = recovered[0]
   }
-  const accepted = youtubeAdaptiveFormats(adaptiveInfo, best?.height ?? 0)
+  let bestSeparated = best ? undefined : youtubeSeparatedHlsFormats({ ...hls, formats: baseFormats }, 0)[0]
+  if (!best && !bestSeparated) {
+    const recoveredSeparated = youtubeSeparatedHlsFormats(adaptiveInfo, 0)
+    if (recoveredSeparated.length) {
+      const recoveredIds = new Set(recoveredSeparated.map(format => format.format_id))
+      const audioUrl = recoveredSeparated[0]!.audioUrl
+      const extraSeparated = (adaptive.formats as Record<string, unknown>[]).filter(format =>
+        recoveredIds.has(String(format?.format_id)) || format?.url === audioUrl)
+      const extraSeparatedIds = new Set(extraSeparated.map(format => String(format?.format_id)))
+      baseFormats = [...baseFormats.filter(format => !extraSeparatedIds.has(String(format?.format_id))), ...extraSeparated]
+      bestSeparated = recoveredSeparated[0]
+    }
+  }
+  const accepted = youtubeAdaptiveFormats(adaptiveInfo, Math.max(best?.height ?? 0, bestSeparated?.height ?? 0))
   if (!accepted.length) return baseFormats === hls.formats ? hlsInfo : { ...hls, formats: baseFormats }
   const ids = new Set(accepted.flatMap((format) => [format.format_id]))
   const audioUrl = accepted[0]!.adaptive!.audioUrl

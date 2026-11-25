@@ -47,6 +47,7 @@ export type YouTubeFormat = {
   tbr: number
   vcodec: string
   acodec: string
+  audioUrl?: string
   adaptive?: ResolvedStream['adaptive']
 }
 
@@ -58,6 +59,29 @@ function number(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
 }
 
+function signedNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function validFormatId(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-zA-Z0-9_.-]{1,100}$/.test(value)
+}
+
+function httpUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  try {
+    const url = new URL(value)
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password
+  } catch { return false }
+}
+
+function separatedVideoCodecRank(vcodec: string, height: number): number {
+  if (/^(?:avc1|h264)/i.test(vcodec)) return height <= 1080 ? 3 : 2
+  if (/^vp0?9(?:\.|$)/i.test(vcodec)) return height <= 1080 ? 2 : 3
+  if (/^av01(?:\.|$)/i.test(vcodec)) return 1
+  return 0
+}
+
 /** P2 uses muxed H.264/AAC HLS so one copy-only ffmpeg input retains both tracks. */
 export function youtubeFormats(info: unknown): YouTubeFormat[] {
   const formats = record(info).formats
@@ -65,18 +89,50 @@ export function youtubeFormats(info: unknown): YouTubeFormat[] {
   const seen = new Set<string>()
   return formats.flatMap((raw): YouTubeFormat[] => {
     const item = record(raw)
-    if (typeof item.format_id !== 'string' || !/^[a-zA-Z0-9_.-]{1,100}$/.test(item.format_id) || seen.has(item.format_id)) return []
+    if (!validFormatId(item.format_id) || seen.has(item.format_id)) return []
     if (typeof item.protocol !== 'string' || !/^m3u8(?:_native)?$/.test(item.protocol)) return []
     if (typeof item.vcodec !== 'string' || !/^(?:avc1|h264)/i.test(item.vcodec)) return []
     if (typeof item.acodec !== 'string' || !/^(?:mp4a|aac)/i.test(item.acodec)) return []
-    if (typeof item.url !== 'string' || !number(item.height)) return []
-    try {
-      const url = new URL(item.url)
-      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return []
-    } catch { return [] }
+    if (!httpUrl(item.url) || !number(item.height)) return []
     seen.add(item.format_id)
     return [{ format_id: item.format_id, url: item.url, protocol: item.protocol, height: number(item.height), fps: number(item.fps), tbr: number(item.tbr), vcodec: item.vcodec, acodec: item.acodec }]
   }).sort((a, b) => b.height - a.height || b.fps - a.fps || b.tbr - a.tbr)
+}
+
+/** Pair separated HLS video/audio renditions (e.g. visionos) for copy-only dual-input fMP4 muxing. */
+export function youtubeSeparatedHlsFormats(info: unknown, bestMuxedHeight: number): YouTubeFormat[] {
+  const source = record(info).formats
+  if (!Array.isArray(source)) return []
+  const hls = source.map(record).filter(item => validFormatId(item.format_id)
+    && typeof item.protocol === 'string' && /^m3u8(?:_native)?$/.test(item.protocol)
+    && httpUrl(item.url))
+  const audio = hls.filter(item => item.vcodec === 'none'
+    && (item.acodec == null || item.acodec === '' || item.acodec === 'unknown'
+      || (typeof item.acodec === 'string' && /^(?:mp4a|aac)/i.test(item.acodec))))
+    .sort((a, b) => signedNumber(b.language_preference) - signedNumber(a.language_preference)
+      || signedNumber(b.source_preference) - signedNumber(a.source_preference)
+      || Number(/^234(?:-|$)/.test(String(b.format_id))) - Number(/^234(?:-|$)/.test(String(a.format_id)))
+      || number(b.tbr) - number(a.tbr))[0]
+  if (!audio || !httpUrl(audio.url)) return []
+  const audioUrl = audio.url
+  const audioCodec = typeof audio.acodec === 'string' && audio.acodec && audio.acodec !== 'unknown' ? audio.acodec : 'mp4a'
+  const candidates = hls.filter(item => number(item.height) > bestMuxedHeight && item.acodec === 'none'
+    && typeof item.vcodec === 'string' && separatedVideoCodecRank(item.vcodec, number(item.height)) > 0)
+    .sort((a, b) => number(b.height) - number(a.height) || number(b.fps) - number(a.fps)
+      || separatedVideoCodecRank(String(b.vcodec), number(b.height)) - separatedVideoCodecRank(String(a.vcodec), number(a.height))
+      || number(b.tbr) - number(a.tbr))
+  const seenKeys = new Set<string>()
+  const seenIds = new Set<string>()
+  return candidates.flatMap((item): YouTubeFormat[] => {
+    const id = item.format_id as string
+    const key = `${number(item.height)}:${number(item.fps)}`
+    if (seenKeys.has(key) || seenIds.has(id) || !httpUrl(item.url)) return []
+    seenKeys.add(key)
+    seenIds.add(id)
+    return [{ format_id: id, url: item.url, protocol: item.protocol as string,
+      height: number(item.height), fps: number(item.fps), tbr: number(item.tbr),
+      vcodec: item.vcodec as string, acodec: audioCodec, audioUrl }]
+  })
 }
 
 /** Signed adaptive inputs stay private and are accepted only from YouTube's media hosts. */
@@ -121,7 +177,10 @@ export function youtubeAdaptiveFormats(info: unknown, bestHlsHeight: number): Yo
 /** A quality can be the exposed format id, or a requested height/fps such as 720p60. */
 export function selectYouTubeFormat(formats: YouTubeFormat[], requested?: string, preferAdaptive = false): YouTubeFormat | undefined {
   if (!requested || requested === 'auto') return preferAdaptive ? formats[0]
-    : formats.find(item => !item.adaptive) ?? formats.find(item => item.height <= 1080) ?? formats[0]
+    : formats.find(item => !item.adaptive && !item.audioUrl)
+      ?? formats.find(item => !item.adaptive && item.height <= 1080)
+      ?? formats.find(item => item.height <= 1080)
+      ?? formats[0]
   const exact = formats.find((item) => item.format_id === requested)
   if (exact) return exact
   const size = requested.match(/^(\d{2,4})p(?:(\d{1,3}(?:\.\d+)?))?$/i)
@@ -216,19 +275,22 @@ export async function resolveYouTube(input: string, deps: ResolverDeps): Promise
     return failure('not-live', '该 YouTube 视频当前不是直播，暂不支持点播或直播回放', MANUAL_URL_HINT)
   }
   const hlsFormats = youtubeFormats(info)
-  const adaptiveFormats = deps.hlsOnly ? [] : youtubeAdaptiveFormats(info, hlsFormats[0]?.height ?? 0)
-  if (!hlsFormats.length && !adaptiveFormats.length) return formatFailure(info)
-  const formats = [...hlsFormats, ...adaptiveFormats]
+  const separatedHlsFormats = youtubeSeparatedHlsFormats(info, hlsFormats[0]?.height ?? 0)
+  const bestHlsHeight = Math.max(hlsFormats[0]?.height ?? 0, separatedHlsFormats[0]?.height ?? 0)
+  const adaptiveFormats = deps.hlsOnly ? [] : youtubeAdaptiveFormats(info, bestHlsHeight)
+  if (!hlsFormats.length && !separatedHlsFormats.length && !adaptiveFormats.length) return formatFailure(info)
+  const formats = [...hlsFormats, ...separatedHlsFormats, ...adaptiveFormats]
     .sort((a, b) => b.height - a.height || b.fps - a.fps || b.tbr - a.tbr)
   const selected = selectYouTubeFormat(formats, deps.quality, deps.preferAdaptive)
   if (!selected) return failure('unsupported-url', '当前 YouTube 直播不提供所选画质', '请重新载入并选择可用画质')
   const qualities: QualityOption[] = formats.map((item) => ({ id: item.format_id, label: `${item.height}p${item.fps > 30 ? item.fps : ''}`, height: item.height, ...(item.fps ? { fps: item.fps } : {}), ...(item.adaptive ? { adaptive: true } : {}) }))
   // Titles and authenticated http_headers are deliberately excluded from IPC metadata.
   return { ok: true, stream: {
-    platform: 'youtube', url: deps.proxify(selected.adaptive ? hlsFormats[0]?.url ?? selected.url : selected.url), kind: 'hls', label: 'YouTube 直播',
+    platform: 'youtube', url: deps.proxify(selected.adaptive ? hlsFormats[0]?.url ?? separatedHlsFormats[0]?.url ?? selected.url : selected.url), kind: 'hls', label: 'YouTube 直播',
     channel: typeof data.id === 'string' && VIDEO_ID.test(data.id) ? data.id : url,
     ...(typeof data.channel_id === 'string' && /^UC[A-Za-z0-9_-]{22}$/.test(data.channel_id) ? { sourceRoom: data.channel_id } : {}),
     requiresProxy: true, qualities, quality: selected.format_id,
+    ...(selected.audioUrl ? { audioUrl: selected.audioUrl } : {}),
     ...(selected.adaptive ? { adaptive: selected.adaptive } : {}),
     notes: [],
   } }
