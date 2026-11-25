@@ -4,21 +4,21 @@ import { spawn } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import type { Readable, Writable } from 'node:stream'
 import { CookieStore, hasAuthenticationCookies, isLoginPlatform, LOGIN_PLATFORMS, douyinBrowserCookieFingerprint, validAccountIdentity } from './cookies'
-import type { BrowserCookie, BrowserAccountIdentity, CookieHeaderPlatform, CookieStoreOptions, LoginCookieSession, LoginPlatform, LoginResult, LoginStatus, TemporaryCookieControls, YoutubeCookieSession } from './cookies'
-import { powershellEnvironment } from './privateStorage'
+import type { BrowserCookie, BrowserAccountIdentity, CookieHeaderPlatform, CookieStoreOptions, LoginBrowserKind, LoginCookieSession, LoginPlatform, LoginResult, LoginStatus, TemporaryCookieControls, YoutubeCookieSession } from './cookies'
+import { assertRegularPath, containedPath, powershellEnvironment } from './privateStorage'
 import type { EmbeddedLoginDriver } from './embeddedLoginContracts'
 import { diagnosticDetails } from '../server/errorDetails'
 import { douyinCookieFingerprint, parseDouyinSigningSnapshot, type DouyinSigningLookup, type DouyinSigningMaterial, type DouyinSigningSnapshot } from '../server/douyin/signingMaterial'
 import type { DouyinSigningStore } from './douyinSigningStore'
 
-export type { LoginPlatform, LoginResult, LoginSource, LoginStatus, PlatformLoginStatus } from './cookies'
+export type { LoginBrowserKind, LoginPlatform, LoginResult, LoginSource, LoginStatus, PlatformLoginStatus } from './cookies'
 export type LoginDestination = 'yuba' | `room:${string}` | `fish-act:${string}`
 
 export type LoginErrorCode = 'chrome-not-found' | 'login-busy' | 'login-cancelled' | 'login-failed' | 'login-incomplete' | 'cookie-storage-failed'
 export class LoginError extends Error {
   readonly detail?: import('../src/core/errorDetails').ErrorDetails
   constructor(readonly code: LoginErrorCode, platform?: LoginPlatform, cause?: unknown) {
-    super(platform === 'douyin' && code === 'login-failed' ? '抖音登录未完成，请在应用内重试' : { 'chrome-not-found': '未找到系统 Google Chrome，请先安装 Chrome 后重试',
+    super(platform === 'douyin' && code === 'login-failed' ? '抖音登录未完成，请在应用内重试' : { 'chrome-not-found': '未找到系统 Chrome、Edge 或 Firefox 浏览器，请先安装其中之一后重试',
       'login-busy': '该平台正在登录，请先关闭已有的登录页面', 'login-cancelled': '登录已取消',
       'login-failed': '平台登录或账号读取失败，请关闭此平台的登录页面后重试',
       'login-incomplete': '登录未完成，原账号已保留，请重试',
@@ -28,14 +28,20 @@ export class LoginError extends Error {
   }
 }
 
+export interface SystemLoginBrowser {
+  kind: LoginBrowserKind
+  executable: string
+}
+
 export interface BrowserLoginDriver {
-  login(executable: string, profile: string, platform: LoginPlatform, signal: AbortSignal, destination?: LoginDestination): Promise<BrowserCookie[]>
+  login(executable: string, profile: string, platform: LoginPlatform, signal: AbortSignal, destination?: LoginDestination, browser?: LoginBrowserKind): Promise<BrowserCookie[]>
 }
 export interface LoginManagerOptions extends CookieStoreOptions {
   driver?: BrowserLoginDriver
   embeddedDriver?: EmbeddedLoginDriver
   chromeExecutable?: string
   findChrome?: () => string | undefined
+  findBrowser?: () => SystemLoginBrowser | undefined
   store?: CookieStore
   douyinSigning?: Pick<DouyinSigningStore,'save'|'load'|'clear'|'dispose'>
   /** Reads the nickname and avatar of the account behind verified cookies; null when signed out. */
@@ -45,21 +51,73 @@ const IDENTIFIED_PLATFORMS: readonly LoginPlatform[] = ['douyu', 'bilibili', 'hu
 const IDENTITY_TIMEOUT_MS = 4000
 const IDENTITY_RETRY_SECONDS = 300
 
+function firstInstalledExecutable(candidates: readonly string[]): string | undefined {
+  return candidates.find(candidate => { try { return fs.statSync(candidate).isFile() } catch { return false } })
+}
+
 export function findSystemChrome(environment: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
   const candidates = platform === 'win32' ? [
-    path.join(environment.ProgramFiles || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    path.join(environment['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    ...(environment.LOCALAPPDATA ? [path.join(environment.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe')] : []),
+    path.win32.join(environment.ProgramFiles || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    path.win32.join(environment['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    ...(environment.LOCALAPPDATA ? [path.win32.join(environment.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe')] : []),
   ] : platform === 'darwin' ? [
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     ...(environment.HOME && path.posix.isAbsolute(environment.HOME)
       ? [path.posix.join(environment.HOME, 'Applications/Google Chrome.app/Contents/MacOS/Google Chrome')] : []),
   ]
     : ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/opt/google/chrome/chrome']
-  return candidates.find(candidate => { try { return fs.statSync(candidate).isFile() } catch { return false } })
+  return firstInstalledExecutable(candidates)
+}
+
+export function findSystemEdge(environment: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
+  const candidates = platform === 'win32' ? [
+    path.win32.join(environment['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    path.win32.join(environment.ProgramFiles || 'C:\\Program Files', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    ...(environment.LOCALAPPDATA ? [path.win32.join(environment.LOCALAPPDATA, 'Microsoft', 'Edge', 'Application', 'msedge.exe')] : []),
+  ] : platform === 'darwin' ? [
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    ...(environment.HOME && path.posix.isAbsolute(environment.HOME)
+      ? [path.posix.join(environment.HOME, 'Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge')] : []),
+  ]
+    : ['/usr/bin/microsoft-edge', '/usr/bin/microsoft-edge-stable', '/opt/microsoft/msedge/msedge']
+  return firstInstalledExecutable(candidates)
+}
+
+export function findSystemFirefox(environment: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
+  const candidates = platform === 'win32' ? [
+    path.win32.join(environment.ProgramFiles || 'C:\\Program Files', 'Mozilla Firefox', 'firefox.exe'),
+    path.win32.join(environment['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Mozilla Firefox', 'firefox.exe'),
+    ...(environment.LOCALAPPDATA ? [path.win32.join(environment.LOCALAPPDATA, 'Mozilla Firefox', 'firefox.exe')] : []),
+  ] : platform === 'darwin' ? [
+    '/Applications/Firefox.app/Contents/MacOS/firefox',
+    ...(environment.HOME && path.posix.isAbsolute(environment.HOME)
+      ? [path.posix.join(environment.HOME, 'Applications/Firefox.app/Contents/MacOS/firefox')] : []),
+  ]
+    : ['/usr/bin/firefox', '/opt/firefox/firefox']
+  return firstInstalledExecutable(candidates)
+}
+
+export function findSystemBrowser(environment: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): SystemLoginBrowser | undefined {
+  const chrome = findSystemChrome(environment, platform)
+  if (chrome) return { kind: 'chrome', executable: chrome }
+  const edge = findSystemEdge(environment, platform)
+  if (edge) return { kind: 'edge', executable: edge }
+  const firefox = findSystemFirefox(environment, platform)
+  if (firefox) return { kind: 'firefox', executable: firefox }
+  return undefined
 }
 
 const CHROME_FLAGS = ['--no-first-run', '--no-default-browser-check', '--disable-sync', '--disable-background-mode']
+const FIREFOX_PREFS = [
+  'user_pref("browser.shell.checkDefaultBrowser", false);',
+  'user_pref("datareporting.policy.dataSubmissionPolicyBypassNotification", true);',
+  'user_pref("trailhead.firstrun.didSeeAboutWelcome", true);',
+  'user_pref("browser.aboutwelcome.enabled", false);',
+  'user_pref("browser.startup.homepage_override.mstone", "ignore");',
+  'user_pref("browser.tabs.warnOnClose", false);',
+  'user_pref("browser.warnOnQuitShortcut", false);',
+  '',
+].join('\n')
 type SpawnChrome = (executable: string, args: string[], options: SpawnOptions) => ChildProcess
 export interface ChromeLoginDriverOptions {
   spawn?: SpawnChrome
@@ -287,19 +345,102 @@ export class ChromeLoginDriver implements BrowserLoginDriver {
     }
   }
 
-  async login(executable: string, profile: string, platform: LoginPlatform, signal: AbortSignal, destination?: LoginDestination): Promise<BrowserCookie[]> {
+  private prepareFirefoxProfile(profile: string): void {
+    try {
+      const root = path.resolve(profile)
+      fs.mkdirSync(root, { recursive: true })
+      assertRegularPath(root, true)
+      const prefs = containedPath(root, path.join(root, 'user.js'))
+      if (fs.existsSync(prefs)) assertRegularPath(prefs, false)
+      fs.writeFileSync(prefs, FIREFOX_PREFS, { encoding: 'utf8', mode: 0o600 })
+      assertRegularPath(prefs, false)
+    } catch (error) {
+      throw new LoginError('cookie-storage-failed', undefined, error)
+    }
+  }
+
+  private async readFirefoxCookies(profile: string, platform: LoginPlatform, signal: AbortSignal): Promise<BrowserCookie[]> {
+    const attempts = Math.max(1, Math.min(10, this.options.cookieReadAttempts ?? 4))
+    const root = path.resolve(profile)
+    const databaseFile = containedPath(root, path.join(root, 'cookies.sqlite'))
+    const { DatabaseSync } = await import('node:sqlite')
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      cancelled(signal)
+      let selected: BrowserCookie[] | undefined
+      if (fs.existsSync(databaseFile)) {
+        let database: InstanceType<typeof DatabaseSync> | undefined
+        try {
+          const stat = fs.lstatSync(databaseFile)
+          if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 256 * 1024 * 1024) throw new LoginError('login-failed')
+          database = new DatabaseSync(databaseFile, { readOnly: true })
+          database.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=2000')
+          const schemaRow = database.prepare('PRAGMA user_version').get()
+          const schema = Number(schemaRow?.user_version)
+          if (!Number.isInteger(schema) || schema < 0) throw new LoginError('login-failed')
+          const statement = database.prepare('SELECT host, name, value, path, expiry, isSecure, isHttpOnly, sameSite, originAttributes FROM moz_cookies LIMIT 50001')
+          statement.setReadBigInts(true)
+          const rows = statement.all()
+          if (rows.length > 50_000) throw new LoginError('login-failed')
+          selected = []
+          for (const row of rows) {
+            if (String(row.originAttributes ?? '')) continue
+            const host = String(row.host ?? '')
+            const name = String(row.name ?? '')
+            const value = String(row.value ?? '')
+            if (!host || !name || !value || value.length > 32_768 || /[\x00-\x20\x7f;]/.test(value)
+              || !/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name)) continue
+            const rawExpiry = typeof row.expiry === 'bigint' ? row.expiry : typeof row.expiry === 'number' ? BigInt(Math.trunc(row.expiry)) : 0n
+            const seconds = rawExpiry > 0n ? Number(schema >= 16 ? rawExpiry / 1000n : rawExpiry) : 0
+            const expirationDate = Number.isSafeInteger(seconds) && seconds > 0 ? seconds : undefined
+            const sameSiteNum = Number(row.sameSite)
+            selected.push({
+              domain: host,
+              name,
+              value,
+              path: String(row.path || '/'),
+              httpOnly: Boolean(row.isHttpOnly),
+              secure: Boolean(row.isSecure),
+              hostOnly: !host.startsWith('.'),
+              session: expirationDate === undefined,
+              ...(expirationDate !== undefined ? { expirationDate } : {}),
+              ...(sameSiteNum === 2 ? { sameSite: 'strict' as const }
+                : sameSiteNum === 1 ? { sameSite: 'lax' as const }
+                  : sameSiteNum === 0 ? { sameSite: 'no_restriction' as const } : {}),
+            })
+          }
+        } catch (error) {
+          if (error instanceof LoginError) throw error
+          throw new LoginError('login-failed', platform, error)
+        } finally {
+          database?.close()
+        }
+      }
+      if (selected && hasAuthenticationCookies(selected, platform)) return selected
+      if (attempt < attempts) await delay(this.options.cookieRetryMs ?? 750, signal)
+    }
+    throw new LoginError('login-incomplete')
+  }
+
+  async login(executable: string, profile: string, platform: LoginPlatform, signal: AbortSignal, destination?: LoginDestination, browser: LoginBrowserKind = 'chrome'): Promise<BrowserCookie[]> {
     cancelled(signal)
     if ((platform !== 'youtube' && platform !== 'twitch' && platform !== 'douyu' && platform !== 'douyin') || !isLoginDestination(platform, destination)) throw new LoginError('login-failed')
+    if (browser !== 'chrome' && browser !== 'edge' && browser !== 'firefox') throw new LoginError('login-failed')
     const url = destination === 'yuba' ? 'https://yuba.douyu.com/'
       : destination?.startsWith('room:') ? `https://www.douyu.com/${destination.slice(5)}`
       : destination?.startsWith('fish-act:') ? `https://www.douyu.com/pages/fish-act?rid=${destination.slice(9)}` : LOGIN_PLATFORMS[platform].url
-    const child = this.spawn(executable, [`--user-data-dir=${profile}`, ...CHROME_FLAGS, '--new-window', url], {
+    if (browser === 'firefox') this.prepareFirefoxProfile(profile)
+    const args = browser === 'firefox'
+      ? ['-profile', profile, '-no-remote', url]
+      : [`--user-data-dir=${profile}`, ...CHROME_FLAGS, '--new-window', url]
+    const child = this.spawn(executable, args, {
       shell: false, detached: this.platform !== 'win32', windowsHide: false, stdio: 'ignore',
     })
     try { await this.waitForLoginWindow(child, signal) }
     finally { await this.killTree(child) }
     await delay(this.options.releaseDelayMs ?? 1_500, signal)
-    return await this.readCookies(executable, profile, platform, signal)
+    return browser === 'firefox'
+      ? await this.readFirefoxCookies(profile, platform, signal)
+      : await this.readCookies(executable, profile, platform, signal)
   }
 }
 
@@ -358,13 +499,21 @@ export class LoginManager {
           })
         } else {
           if (platform === 'bilibili' || platform === 'huya' || platform === 'douyin' && !this.options.driver) throw new LoginError('login-failed')
-          const executable = this.options.chromeExecutable ?? (this.options.findChrome ?? findSystemChrome)()
-          if (!executable) throw new LoginError('chrome-not-found')
+          const browser: SystemLoginBrowser | undefined = this.options.chromeExecutable
+            ? { kind: 'chrome', executable: this.options.chromeExecutable }
+            : this.options.findBrowser
+              ? this.options.findBrowser()
+              : this.options.findChrome
+                ? (() => { const found = this.options.findChrome(); return found ? { kind: 'chrome', executable: found } : undefined })()
+                : findSystemBrowser()
+          if (!browser) throw new LoginError('chrome-not-found')
           let profile: string
           try {
-            profile = platform === 'youtube' ? this.store.resetProfile('youtube') : this.store.prepareProfile(platform)
+            profile = platform === 'youtube' ? this.store.resetProfile('youtube', browser.kind) : this.store.prepareProfile(platform, browser.kind)
           } catch (error) { throw new LoginError('cookie-storage-failed', platform, error) }
-          cookies = await this.driver.login(executable, profile, platform, controller.signal, destination)
+          cookies = browser.kind === 'chrome'
+            ? await this.driver.login(browser.executable, profile, platform, controller.signal, destination)
+            : await this.driver.login(browser.executable, profile, platform, controller.signal, destination, browser.kind)
         }
         cancelled(controller.signal)
         if (this.disposed || this.loggingOut.has(platform) || revision !== this.revisions[platform]) throw new LoginError('login-cancelled')

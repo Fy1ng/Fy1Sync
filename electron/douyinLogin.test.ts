@@ -253,7 +253,7 @@ describe('Douyin login lifecycle', () => {
     const login = manager(driver)
     expect(await login.login('douyin')).toEqual({ cookieCount: 1, authKeysPresent: [name] })
     expect(driver.login).toHaveBeenCalledWith('synthetic-chrome', path.join(root, 'browser-profile', 'douyin'), 'douyin', expect.any(AbortSignal), undefined)
-    expect((await login.loginStatus()).douyin).toEqual({ loggedIn: true, cookieCount: 1,
+    expect((await login.loginStatus()).douyin).toEqual({ loggedIn: true, loginSource: 'official', cookieCount: 1,
       authKeysPresent: [name], expiresAt: null, hasSessionCookies: true })
     expect(JSON.stringify(await login.loginStatus())).not.toContain('synthetic-private-session')
     await login.dispose()

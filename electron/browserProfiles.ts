@@ -51,6 +51,7 @@ export async function discoverBrowserProfiles(environment: BrowserProfileEnviron
     ['edge', 'Microsoft Edge', 'Microsoft/Edge/User Data'],
     ['edge', 'Microsoft Edge Beta', 'Microsoft/Edge Beta/User Data'],
     ['edge', 'Microsoft Edge Dev', 'Microsoft/Edge Dev/User Data'],
+    ['edge', 'Microsoft Edge Canary', 'Microsoft/Edge SxS/User Data'],
     ['chrome', 'Google Chrome', 'Google/Chrome/User Data'],
     ['chrome', 'Google Chrome Beta', 'Google/Chrome Beta/User Data'],
     ['chrome', 'Google Chrome Dev', 'Google/Chrome Dev/User Data'],

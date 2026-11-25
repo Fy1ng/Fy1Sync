@@ -49,6 +49,15 @@ describe('browser process target resolution', () => {
       expectedUserDataDir: 'c:\\users\\alice\\appdata\\local\\microsoft\\edge beta\\user data',
     })
     expect(resolveBrowserProcessTarget({
+      browser: 'edge',
+      browserName: 'Microsoft Edge Canary',
+      directory: 'C:\\Users\\Alice\\AppData\\Local\\Microsoft\\Edge SxS\\User Data\\Default',
+    })).toEqual({
+      imageName: 'msedge.exe',
+      requiredPathFragment: '\\microsoft\\edge sxs\\',
+      expectedUserDataDir: 'c:\\users\\alice\\appdata\\local\\microsoft\\edge sxs\\user data',
+    })
+    expect(resolveBrowserProcessTarget({
       browser: 'chrome',
       browserName: 'Google Chrome Canary',
       directory: 'C:\\Users\\Alice\\AppData\\Local\\Google\\Chrome SxS\\User Data\\Default',

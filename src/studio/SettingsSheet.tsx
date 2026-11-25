@@ -255,7 +255,7 @@ function YouTubeAccount(): React.ReactNode {
     pending.current = true
     setBusy(true)
     setError('')
-    setMessage(logout ? '' : '请在弹出的 Chrome 窗口中登录，完成后关闭该窗口')
+    setMessage(logout ? '' : '请在弹出的浏览器窗口中登录，完成后关闭该窗口')
     try {
       const result = logout ? await apiClient.logout('youtube') : await apiClient.login('youtube')
       if (mounted.current) {
@@ -283,7 +283,7 @@ function YouTubeAccount(): React.ReactNode {
           <button type="button" className="btn-solid small" disabled={busy || checking || status === null} onClick={() => void act(false)}>{youtube?.loggedIn ? '重新登录' : '登录'}</button>
         </span>
       </div>
-      <p className="muted">观看会员直播或提示需要验证时，请登录 YouTube</p>
+      <p className="muted">观看会员直播或提示需要验证时，请登录 YouTube（支持系统 Chrome、Edge 或 Firefox 独立窗口）</p>
       {message && <p className="muted" role="status">{message}</p>}
       {loadError && <ReadError error={loadError} detail={loadErrorDetail} onRetry={() => void refresh()} />}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}
@@ -347,7 +347,7 @@ function TwitchAccount(): React.ReactNode {
     pending.current = true
     setBusy(true)
     setError('')
-    setMessage(logout ? '' : '请在弹出的 Chrome 窗口中登录，完成后关闭该窗口')
+    setMessage(logout ? '' : '请在弹出的浏览器窗口中登录，完成后关闭该窗口')
     try {
       const result = logout ? await apiClient.logout('twitch') : await apiClient.login('twitch')
       if (mounted.current) {
@@ -375,7 +375,7 @@ function TwitchAccount(): React.ReactNode {
           <button type="button" className="btn-solid small" disabled={busy || checking || status === null} onClick={() => void act(false)}>{twitch?.loggedIn ? '重新登录' : '登录'}</button>
         </span>
       </div>
-      <p className="muted">获取 1440P 及以上画质直播流时，请登录或从浏览器导入 Twitch 账号</p>
+      <p className="muted">获取 1440P 及以上画质直播流时，请登录或从浏览器导入 Twitch 账号（支持 Chrome、Edge、Firefox）</p>
       {message && <p className="muted" role="status">{message}</p>}
       {loadError && <ReadError error={loadError} detail={loadErrorDetail} onRetry={() => void refresh()} />}
       {error && <p className="form-error" role="alert"><ErrorText error={errorDetail ?? error} message={error} /></p>}

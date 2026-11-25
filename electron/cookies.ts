@@ -10,6 +10,7 @@ export interface LoginCookieSession { cookies: { set(details: CookiesSetDetails)
 export type YoutubeCookieSession = LoginCookieSession
 
 export type LoginPlatform = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'huya' | 'douyin'
+export type LoginBrowserKind = 'chrome' | 'edge' | 'firefox'
 export type CookieHeaderPlatform = Exclude<LoginPlatform, 'youtube' | 'twitch'>
 export type LoginSource = 'official' | 'browser-import'
 export interface LoginResult { cookieCount: number; authKeysPresent: string[]; signingReady?: boolean; signingProblem?: string }
@@ -364,17 +365,23 @@ export class CookieStore {
     this.now = options.now ?? (() => Date.now() / 1000)
   }
 
-  prepareProfile(platform: LoginPlatform): string {
+  private profileDirectory(platform: LoginPlatform, browser: LoginBrowserKind = 'chrome'): string {
+    if (!isLoginPlatform(platform) || (browser !== 'chrome' && browser !== 'edge' && browser !== 'firefox')) throw storageFailure()
+    return browser === 'chrome'
+      ? path.join(this.root, 'browser-profile', platform)
+      : path.join(this.root, 'browser-profile', browser, platform)
+  }
+
+  prepareProfile(platform: LoginPlatform, browser: LoginBrowserKind = 'chrome'): string {
     try {
-      if (!isLoginPlatform(platform)) throw storageFailure()
-      return privateDirectory(this.root, path.join(this.root, 'browser-profile', platform))
+      return privateDirectory(this.root, this.profileDirectory(platform, browser))
     } catch { throw storageFailure() }
   }
 
-  resetProfile(platform: 'youtube'): string {
+  resetProfile(platform: 'youtube', browser: LoginBrowserKind = 'chrome'): string {
     try {
       if (platform !== 'youtube') throw storageFailure()
-      const profile = containedPath(this.root, path.join(this.root, 'browser-profile', platform))
+      const profile = containedPath(this.root, this.profileDirectory(platform, browser))
       if (fs.existsSync(profile)) {
         assertRegularPath(profile, true)
         fs.rmSync(profile, { recursive: true, force: true })
@@ -732,10 +739,12 @@ export class CookieStore {
         assertRegularPath(file, false)
         fs.unlinkSync(file)
       }
-      const profile = containedPath(this.root, path.join(this.root, 'browser-profile', platform))
-      if (fs.existsSync(profile)) {
-        assertRegularPath(profile, true)
-        fs.rmSync(profile, { recursive: true, force: true })
+      for (const browser of ['chrome', 'edge', 'firefox'] as const) {
+        const profile = containedPath(this.root, this.profileDirectory(platform, browser))
+        if (fs.existsSync(profile)) {
+          assertRegularPath(profile, true)
+          fs.rmSync(profile, { recursive: true, force: true })
+        }
       }
     } catch { throw storageFailure() }
   }

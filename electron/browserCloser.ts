@@ -31,6 +31,7 @@ const CHANNEL_TARGETS: Record<string, Omit<BrowserProcessTarget, 'expectedUserDa
   'Microsoft Edge': { imageName: 'msedge.exe', excludedPathFragments: EDGE_NON_STABLE },
   'Microsoft Edge Beta': { imageName: 'msedge.exe', requiredPathFragment: '\\microsoft\\edge beta\\' },
   'Microsoft Edge Dev': { imageName: 'msedge.exe', requiredPathFragment: '\\microsoft\\edge dev\\' },
+  'Microsoft Edge Canary': { imageName: 'msedge.exe', requiredPathFragment: '\\microsoft\\edge sxs\\' },
   'Google Chrome': { imageName: 'chrome.exe', excludedPathFragments: CHROME_NON_STABLE },
   'Google Chrome Beta': { imageName: 'chrome.exe', requiredPathFragment: '\\google\\chrome beta\\' },
   'Google Chrome Dev': { imageName: 'chrome.exe', requiredPathFragment: '\\google\\chrome dev\\' },

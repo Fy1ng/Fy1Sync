@@ -731,4 +731,20 @@ describe('settings account navigation', () => {
     }
     expect(screen.queryByText('弹幕记录仅支持斗鱼')).toBeNull()
   })
+
+  it('shows browser-neutral standalone login prompts and Edge/Chrome/Firefox import hints for YouTube and Twitch', async () => {
+    let resolveLogin!: (value: { ok: false; code: string; message: string }) => void
+    vi.spyOn(apiClient, 'login').mockImplementation(() => new Promise(resolve => { resolveLogin = resolve }))
+    mount()
+    section('账号')
+    for (const name of ['YouTube', 'Twitch'] as const) {
+      platform(name)
+      const importBtn = await screen.findByRole('button', { name: '从浏览器导入' })
+      expect(importBtn).toHaveAttribute('title', expect.stringContaining('Edge'))
+      await waitFor(() => expect(screen.getByRole('button', { name: '登录' })).toBeEnabled())
+      fireEvent.click(screen.getByRole('button', { name: '登录' }))
+      expect(screen.getByRole('status')).toHaveTextContent('请在弹出的浏览器窗口中登录，完成后关闭该窗口')
+      await act(async () => resolveLogin({ ok: false, code: 'login-cancelled', message: '已取消登录' }))
+    }
+  })
 })

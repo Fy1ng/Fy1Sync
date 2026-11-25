@@ -29,6 +29,7 @@ export function BrowserImportButton({ platform, accountId, disabled = false, bat
 }): React.ReactNode {
   const imports = useContext(ImportContext)
   return <button type="button" className={batch ? 'btn-quiet small browser-import-batch' : 'btn-quiet small'}
+    title="支持从 Edge、Chrome 或 Firefox 导入已登录账号"
     disabled={disabled || !imports} onClick={() => imports?.open(platform, accountId)}>
     {batch ? '批量导入账号' : '从浏览器导入'}
   </button>

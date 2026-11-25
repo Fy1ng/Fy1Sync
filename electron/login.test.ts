@@ -145,9 +145,49 @@ describe('LoginManager', () => {
   it('classifies missing Chrome and can retry without a stale operation', async () => {
     const driver = { login: vi.fn(async () => cookies) }
     const manager = new LoginManager(root, { driver, findChrome: () => undefined })
-    await expect(manager.login('youtube')).rejects.toMatchObject({ code: 'chrome-not-found' })
+    await expect(manager.login('youtube')).rejects.toMatchObject({
+      code: 'chrome-not-found',
+      message: expect.stringMatching(/Chrome.*Edge.*Firefox/),
+    })
     await expect(manager.login('youtube')).rejects.toMatchObject({ code: 'chrome-not-found' })
     expect(driver.login).not.toHaveBeenCalled()
+  })
+
+  it('isolates Edge and Firefox login profiles from Chrome and removes all browser profiles on logout', async () => {
+    const twitchCookies: BrowserCookie[] = [{ domain: '.twitch.tv', path: '/', name: 'auth-token', value: '0123456789abcdefghijklmnopqrst', secure: true, session: true }]
+    const driver = { login: vi.fn<BrowserLoginDriver['login']>(async (_exec, profile, platform) => {
+      fs.writeFileSync(path.join(profile, 'marker.txt'), platform)
+      return platform === 'twitch' ? twitchCookies : cookies
+    }) }
+    let currentBrowser: { kind: 'chrome' | 'edge' | 'firefox'; executable: string } = { kind: 'edge', executable: 'C:\\Edge\\msedge.exe' }
+    const manager = new LoginManager(root, { driver, findBrowser: () => currentBrowser })
+
+    await manager.login('youtube')
+    expect(driver.login).toHaveBeenLastCalledWith('C:\\Edge\\msedge.exe', path.join(root, 'browser-profile', 'edge', 'youtube'), 'youtube', expect.any(AbortSignal), undefined, 'edge')
+
+    await manager.login('twitch')
+    const edgeTwitchProfile = path.join(root, 'browser-profile', 'edge', 'twitch')
+    expect(driver.login).toHaveBeenLastCalledWith('C:\\Edge\\msedge.exe', edgeTwitchProfile, 'twitch', expect.any(AbortSignal), undefined, 'edge')
+
+    currentBrowser = { kind: 'firefox', executable: 'C:\\Firefox\\firefox.exe' }
+    await manager.login('twitch')
+    const firefoxTwitchProfile = path.join(root, 'browser-profile', 'firefox', 'twitch')
+    expect(driver.login).toHaveBeenLastCalledWith('C:\\Firefox\\firefox.exe', firefoxTwitchProfile, 'twitch', expect.any(AbortSignal), undefined, 'firefox')
+
+    currentBrowser = { kind: 'chrome', executable: 'C:\\Chrome\\chrome.exe' }
+    await manager.login('twitch')
+    const chromeTwitchProfile = path.join(root, 'browser-profile', 'twitch')
+    expect(driver.login).toHaveBeenLastCalledWith('C:\\Chrome\\chrome.exe', chromeTwitchProfile, 'twitch', expect.any(AbortSignal), undefined)
+
+    expect(fs.existsSync(edgeTwitchProfile)).toBe(true)
+    expect(fs.existsSync(firefoxTwitchProfile)).toBe(true)
+    expect(fs.existsSync(chromeTwitchProfile)).toBe(true)
+
+    await manager.logout('twitch')
+    expect(fs.existsSync(edgeTwitchProfile)).toBe(false)
+    expect(fs.existsSync(firefoxTwitchProfile)).toBe(false)
+    expect(fs.existsSync(chromeTwitchProfile)).toBe(false)
+    await manager.dispose()
   })
 
   it('masks browser exceptions that may contain credentials', async () => {
@@ -657,6 +697,45 @@ describe('system Chrome pipe login', () => {
     controller.abort()
     await expect(pending).rejects.toMatchObject({ code: 'login-cancelled' })
     expect(killTree).toHaveBeenCalledWith(manual)
+  })
+
+  it('launches Firefox with an isolated profile and reads SQLite cookies without remote debugging', async () => {
+    const { DatabaseSync } = await import('node:sqlite')
+    const profile = path.join(root, 'firefox-login-profile')
+    const manual = fakeChild(201)
+    const expirySeconds = Math.floor(Date.now() / 1000) + 3600
+    const spawn = vi.fn((_executable: string, _args: string[]) => {
+      const db = new DatabaseSync(path.join(profile, 'cookies.sqlite'))
+      db.exec('PRAGMA journal_mode=WAL; PRAGMA user_version=17; CREATE TABLE moz_cookies(host TEXT,name TEXT,value TEXT,path TEXT,expiry INTEGER,isSecure INTEGER,isHttpOnly INTEGER,sameSite INTEGER,originAttributes TEXT)')
+      const insert = db.prepare('INSERT INTO moz_cookies VALUES(?,?,?,?,?,?,?,?,?)')
+      insert.run('.youtube.com', 'LOGIN_INFO', 'firefox-login-info', '/', BigInt(expirySeconds) * 1000n, 1, 1, 1, '')
+      insert.run('.youtube.com', 'SAPISID', 'firefox-sapisid', '/', BigInt(expirySeconds) * 1000n, 1, 0, 2, '')
+      insert.run('.youtube.com', 'ISOLATED', 'skip-container', '/', BigInt(expirySeconds) * 1000n, 1, 0, 0, '^userContextId=1')
+      db.close()
+      queueMicrotask(() => { Object.assign(manual, { exitCode: 0 }); manual.emit('exit', 0, null) })
+      return manual
+    })
+    const driver = new ChromeLoginDriver({ spawn, killTree: async () => {}, platform: 'win32', windowPollMs: 1, releaseDelayMs: 0 })
+    const result = await driver.login('firefox.exe', profile, 'youtube', new AbortController().signal, undefined, 'firefox')
+    expect(spawn).toHaveBeenCalledExactlyOnceWith('firefox.exe', ['-profile', profile, '-no-remote', 'https://www.youtube.com'], expect.objectContaining({ shell: false }))
+    expect(fs.readFileSync(path.join(profile, 'user.js'), 'utf8')).toContain('browser.shell.checkDefaultBrowser')
+    expect(result).toEqual([
+      { domain: '.youtube.com', name: 'LOGIN_INFO', value: 'firefox-login-info', path: '/', httpOnly: true, secure: true, hostOnly: false, session: false, expirationDate: expirySeconds, sameSite: 'lax' },
+      { domain: '.youtube.com', name: 'SAPISID', value: 'firefox-sapisid', path: '/', httpOnly: false, secure: true, hostOnly: false, session: false, expirationDate: expirySeconds, sameSite: 'strict' },
+    ])
+  })
+
+  it('rejects an incomplete Firefox login when cookies.sqlite was not populated', async () => {
+    const profile = path.join(root, 'firefox-empty-profile')
+    const manual = fakeChild(202)
+    const spawn = vi.fn(() => {
+      queueMicrotask(() => { Object.assign(manual, { exitCode: 0 }); manual.emit('exit', 0, null) })
+      return manual
+    })
+    const driver = new ChromeLoginDriver({ spawn, killTree: async () => {}, platform: 'win32', windowPollMs: 1, releaseDelayMs: 0, cookieReadAttempts: 2, cookieRetryMs: 1 })
+    await expect(driver.login('firefox.exe', profile, 'twitch', new AbortController().signal, undefined, 'firefox'))
+      .rejects.toMatchObject({ code: 'login-incomplete' })
+    expect(spawn).toHaveBeenCalledOnce()
   })
 })
 

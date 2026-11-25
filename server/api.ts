@@ -501,7 +501,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
         }
         if (error instanceof Error && error.name === 'LoginError' && 'code' in error) {
           const messages: Record<string, string> = {
-            'chrome-not-found': '未找到系统 Chrome，请安装 Chrome 后重试',
+            'chrome-not-found': '未找到系统 Chrome、Edge 或 Firefox 浏览器，请先安装其中之一后重试',
             'login-busy': '登录操作正在进行，请先完成当前登录页面',
             'login-cancelled': '登录操作已取消',
             'login-incomplete': '登录未完成，原账号已保留，请重试',
