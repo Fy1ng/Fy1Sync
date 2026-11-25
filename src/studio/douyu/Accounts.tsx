@@ -15,7 +15,6 @@ import { ReadError } from '../ReadError'
 
 export function Accounts({ data }: { data: DouyuData }): React.ReactNode {
   const { all, accounts, loading, accountsReadError, reloadAccounts, accountLane, accountsBusy, accountAction } = data
-  const [label, setLabel] = useState('')
 
   return (
     <div className="desk-pane">
@@ -29,16 +28,12 @@ export function Accounts({ data }: { data: DouyuData }): React.ReactNode {
         ))}
       </ul>
 
-      <form className="add-row" onSubmit={(event) => {
-        event.preventDefault()
-        const name = label.trim()
-        if (!name) return
-        void accountAction('正在添加', () => apiClient.addDouyuAccount(name), `已添加 ${name}`).then((ok) => { if (ok) setLabel('') })
-      }}>
-        <input className="text-input" value={label} maxLength={40} placeholder="新账号名称，例如「小号」"
-          aria-label="新账号名称" disabled={accountsBusy} onChange={(event) => setLabel(event.target.value)} />
-        <button type="submit" className="btn-quiet" disabled={accountsBusy || !label.trim()}>添加账号</button>
-      </form>
+      <div className="add-row">
+        <button type="button" className="btn-quiet" disabled={accountsBusy}
+          onClick={() => void accountAction('正在添加', () => apiClient.addDouyuAccount(), '已添加账号')}>
+          添加账号
+        </button>
+      </div>
 
       <LaneLine lane={accountLane} />
       {all.length === 0 && <div className="row-end"><BrowserImportButton platform="douyu" disabled={accountsBusy} /></div>}
@@ -53,8 +48,7 @@ function AccountRow({ account, active, locked, data }: {
   data: DouyuData
 }): React.ReactNode {
   const { accountAction } = data
-  const [mode, setMode] = useState<'idle' | 'rename' | 'remove'>('idle')
-  const [name, setName] = useState(account.label)
+  const [removing, setRemoving] = useState(false)
   const shown = accountName(account)
   // Spoken in notices; an unnamed account is just 斗鱼账号.
   const who = shown || '斗鱼账号'
@@ -71,35 +65,20 @@ function AccountRow({ account, active, locked, data }: {
   return (
     <li className="account" data-active={active} role="group" aria-label={`斗鱼账号 ${account.label}`}>
       <div className="account-main">
-        {mode === 'rename' ? (
-          <form className="inline-form" onSubmit={(event) => {
-            event.preventDefault()
-            const value = name.trim()
-            if (!value) return
-            void accountAction('正在重命名', () => apiClient.renameDouyuAccount(account.id, value), '已重命名').then((ok) => { if (ok) setMode('idle') })
-          }}>
-            <input className="text-input" value={name} autoFocus maxLength={40} aria-label="账号名称" onChange={(event) => setName(event.target.value)} />
-            <button type="submit" className="btn-solid small" disabled={locked || !name.trim()}>保存</button>
-            <button type="button" className="btn-quiet small" onClick={() => setMode('idle')}>取消</button>
-          </form>
-        ) : (
-          <>
-            {account.login.avatar && <AccountAvatar username={shown || account.label} avatar={account.login.avatar} />}
-            {shown && <span className="account-name">{shown}</span>}
-            {active && <span className="tag">当前使用</span>}
-            <span className="muted">{accountState(account)}</span>
-          </>
-        )}
+        {account.login.avatar && <AccountAvatar username={shown || account.label} avatar={account.login.avatar} />}
+        {shown && <span className="account-name">{shown}</span>}
+        {active && <span className="tag">当前使用</span>}
+        <span className="muted">{accountState(account)}</span>
       </div>
 
-      {mode === 'remove' ? (
+      {removing ? (
         <div className="account-actions">
           <span className="note-warn">删除该账号及其任务？</span>
           <button type="button" className="btn-quiet small is-danger" disabled={locked}
             onClick={() => void accountAction('正在删除', () => apiClient.removeDouyuAccount(account.id), `已删除 ${who}`)}>删除</button>
-          <button type="button" className="btn-quiet small" onClick={() => setMode('idle')}>取消</button>
+          <button type="button" className="btn-quiet small" onClick={() => setRemoving(false)}>取消</button>
         </div>
-      ) : mode === 'idle' && (
+      ) : (
         <div className="account-actions">
           <BrowserImportButton platform="douyu" accountId={account.id} disabled={locked} />
           {!active && (
@@ -116,12 +95,11 @@ function AccountRow({ account, active, locked, data }: {
               () => apiClient.loginDouyuYubaAccount(account.id), '鱼吧页面已关闭')}>
             登录鱼吧
           </button>
-          <button type="button" className="btn-quiet small" disabled={locked} onClick={() => { setName(account.label); setMode('rename') }}>重命名</button>
           <button type="button" className="btn-quiet small" disabled={locked || (!account.login.loggedIn && account.login.cookieCount === 0)}
             onClick={() => void accountAction('正在退出', () => apiClient.logoutDouyuAccount(account.id), `${who} 已退出`)}>
             退出
           </button>
-          <button type="button" className="btn-quiet small is-danger" disabled={locked} onClick={() => setMode('remove')}>删除</button>
+          <button type="button" className="btn-quiet small is-danger" disabled={locked} onClick={() => setRemoving(true)}>删除</button>
         </div>
       )}
     </li>

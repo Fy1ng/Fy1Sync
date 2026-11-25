@@ -7,7 +7,7 @@ import type { DouyuAccountsSnapshot } from '../server/douyu/types'
 import type { BrowserCookie, BrowserAccountIdentity } from './cookies'
 import type { DouyuImportTarget } from './browserImportContracts'
 
-type AccountRecord = { id: string; label: string; createdAt: number }
+type AccountRecord = { id: string; createdAt: number }
 interface AccountStorage { version: 1; accounts: AccountRecord[]; activeAccountId: string | null }
 type AccountLogin = Pick<LoginManager, 'login' | 'loginStatus' | 'logout' | 'cookieHeader' | 'dispose'>
   & Partial<Pick<LoginManager, 'importCookies' | 'savedUserId'>>
@@ -17,7 +17,7 @@ export type DouyuAccountErrorCode = 'invalid-arguments' | 'account-not-found' | 
 export class DouyuAccountError extends Error {
   constructor(readonly code: DouyuAccountErrorCode) {
     super({
-      'invalid-arguments': '账号参数无效，名称需为 1 至 40 个字符',
+      'invalid-arguments': '账号参数无效',
       'account-not-found': '斗鱼账号不存在',
       'account-limit': '最多保存 16 个斗鱼账号',
       'account-busy': '账号正在登录或退出，请稍后重试',
@@ -32,14 +32,18 @@ export function isDouyuAccountId(value: unknown): value is string {
   return typeof value === 'string' && (value === 'default' || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value))
 }
 
-function labelOf(value: unknown): string {
-  if (typeof value !== 'string' || !value.trim() || value.trim().length > 40 || /[\x00-\x1f\x7f]/.test(value)) throw new DouyuAccountError('invalid-arguments')
-  return value.trim()
+function defaultAccountLabel(id: string, index: number): string {
+  return id === 'default' ? '默认账号' : `账号 ${Math.max(1, index + 1)}`
+}
+
+function validLegacyLabel(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= 40
+    && value.trim() === value && !/[\x00-\x1f\x7f]/.test(value)
 }
 
 function initialStorage(now: number): AccountStorage {
   // Keep the original profile and cookies in place, including its existing login session.
-  return { version: 1, activeAccountId: 'default', accounts: [{ id: 'default', label: '默认账号', createdAt: now }] }
+  return { version: 1, activeAccountId: 'default', accounts: [{ id: 'default', createdAt: now }] }
 }
 
 function readStorage(raw: unknown, now: number): AccountStorage {
@@ -50,14 +54,15 @@ function readStorage(raw: unknown, now: number): AccountStorage {
     || !Array.isArray(value.accounts) || value.accounts.length > 16) throw new DouyuAccountError('storage-failed')
   const ids = new Set<string>()
   for (const record of value.accounts) {
-    if (!record || typeof record !== 'object' || Array.isArray(record)
-      || Object.keys(record).some(key => !['id', 'label', 'createdAt'].includes(key))
-      || !isDouyuAccountId(record.id) || ids.has(record.id) || !Number.isSafeInteger(record.createdAt) || record.createdAt < 0) throw new DouyuAccountError('storage-failed')
-    try { if (labelOf(record.label) !== record.label) throw new Error() } catch { throw new DouyuAccountError('storage-failed') }
-    ids.add(record.id)
+    const entry = record as AccountRecord & { label?: unknown }
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)
+      || Object.keys(entry).some(key => !['id', 'label', 'createdAt'].includes(key))
+      || !isDouyuAccountId(entry.id) || ids.has(entry.id) || !Number.isSafeInteger(entry.createdAt) || entry.createdAt < 0
+      || (entry.label !== undefined && !validLegacyLabel(entry.label))) throw new DouyuAccountError('storage-failed')
+    ids.add(entry.id)
   }
   if (value.activeAccountId !== null && !ids.has(value.activeAccountId)) throw new DouyuAccountError('storage-failed')
-  return structuredClone(value)
+  return { version: 1, activeAccountId: value.activeAccountId, accounts: value.accounts.map(({ id, createdAt }) => ({ id, createdAt })) }
 }
 
 const emptyLogin = (): PlatformLoginStatus => ({ loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false })
@@ -177,10 +182,13 @@ export class DouyuAccountManager {
       const revision = this.snapshotRevision
       const current = this.registry
       try {
-        const accounts = await Promise.all(current.accounts.map(async account => ({
-          id: account.id, label: account.label, active: account.id === current.activeAccountId,
-          busy: this.busy.has(account.id), login: (await this.manager(account.id).loginStatus()).douyu,
-        })))
+        const accounts = await Promise.all(current.accounts.map(async (account, index) => {
+          const login = (await this.manager(account.id).loginStatus()).douyu
+          return {
+            id: account.id, label: (login.loggedIn && login.nickname) || defaultAccountLabel(account.id, index),
+            active: account.id === current.activeAccountId, busy: this.busy.has(account.id), login,
+          }
+        }))
         this.check()
         if (revision !== this.snapshotRevision) continue
         return { revision, activeAccountId: current.activeAccountId, accounts }
@@ -192,20 +200,18 @@ export class DouyuAccountManager {
     }
   }
 
-  async add(label: string): Promise<DouyuAccountsSnapshot> {
+  private labelFor(id: string): string {
+    this.check(id)
+    const index = this.registry.accounts.findIndex(account => account.id === id)
+    return defaultAccountLabel(id, index)
+  }
+
+  async add(): Promise<DouyuAccountsSnapshot> {
     this.check()
-    const normalized = labelOf(label)
     if (this.registry.accounts.length >= 16) throw new DouyuAccountError('account-limit')
     const id = (this.options.id ?? randomUUID)()
     if (!isDouyuAccountId(id) || id === 'default' || this.hasAccount(id)) throw new DouyuAccountError('invalid-arguments')
-    this.save({ ...this.registry, accounts: [...this.registry.accounts, { id, label: normalized, createdAt: (this.options.now ?? Date.now)() }] })
-    return this.snapshot()
-  }
-
-  async rename(id: string, label: string): Promise<DouyuAccountsSnapshot> {
-    this.check(id)
-    const normalized = labelOf(label)
-    this.save({ ...this.registry, accounts: this.registry.accounts.map(account => account.id === id ? { ...account, label: normalized } : account) })
+    this.save({ ...this.registry, accounts: [...this.registry.accounts, { id, createdAt: (this.options.now ?? Date.now)() }] })
     return this.snapshot()
   }
 
@@ -233,7 +239,7 @@ export class DouyuAccountManager {
   }
 
   async login(id: string): Promise<DouyuAccountsSnapshot> {
-    const label = this.check(id)!.label
+    const label = this.labelFor(id)
     await this.credentialOperation(id, manager => manager.login('douyu', undefined, label))
     return this.snapshot()
   }
@@ -259,7 +265,7 @@ export class DouyuAccountManager {
     if (signal?.aborted) throw new LoginError('login-cancelled')
     if (!id) {
       const previous = new Set(this.registry.accounts.map(account => account.id))
-      await this.add(identity.username.slice(0, 40))
+      await this.add()
       id = this.registry.accounts.find(account => !previous.has(account.id))?.id
       if (!id) throw new DouyuAccountError('storage-failed')
       created = true
@@ -284,7 +290,7 @@ export class DouyuAccountManager {
   }
 
   async loginYuba(id: string): Promise<DouyuAccountsSnapshot> {
-    const label = this.check(id)!.label
+    const label = this.labelFor(id)
     await this.credentialOperation(id, manager => manager.login('douyu', 'yuba', label))
     return this.snapshot()
   }
@@ -293,7 +299,7 @@ export class DouyuAccountManager {
     if (typeof room !== 'string' || !/^[1-9][0-9]{0,11}$/.test(room)) throw new DouyuAccountError('invalid-arguments')
     if (page !== 'room' && page !== 'fish-act') throw new DouyuAccountError('invalid-arguments')
     if (this.activeAccountId !== id) throw new DouyuAccountError('no-active-account')
-    const label = this.check(id)!.label
+    const label = this.labelFor(id)
     await this.credentialOperation(id, manager => manager.login('douyu', `${page}:${room}`, label))
     return this.snapshot()
   }

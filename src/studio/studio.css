@@ -2314,15 +2314,10 @@ body,
   gap: 4px;
 }
 
-.studio .inline-form,
 .studio .add-row {
   display: flex;
   align-items: center;
   gap: 6px;
-}
-
-.studio .add-row .text-input {
-  max-width: 320px;
 }
 
 .studio .new-task {

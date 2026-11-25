@@ -129,8 +129,7 @@ export class ApiClient {
     try { return this.bridge().subscribeEmbeddedLogin?.(listener) ?? (() => {}) } catch { return () => {} }
   }
   listDouyuAccounts() { return this.request('listDouyuAccounts', undefined) }
-  addDouyuAccount(label: string) { return this.request('addDouyuAccount', { label }) }
-  renameDouyuAccount(id: string, label: string) { return this.request('renameDouyuAccount', { id, label }) }
+  addDouyuAccount() { return this.request('addDouyuAccount', undefined) }
   async loginDouyuAccount(id: string) {
     const result = await this.request('loginDouyuAccount', { id })
     if (result.ok) notifyLoginStateChanged(['douyu'], 'login')

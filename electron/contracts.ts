@@ -25,8 +25,7 @@ export interface DesktopMethods extends FeatureMethods, EmbeddedLoginMethods, Br
   windowControl: { args: { action: 'minimize' | 'toggle-maximize' | 'close' }; result: WindowState }
   getWindowState: { args: undefined; result: WindowState }
   listDouyuAccounts: { args: undefined; result: DouyuAccountsSnapshot }
-  addDouyuAccount: { args: { label: string }; result: DouyuAccountsSnapshot }
-  renameDouyuAccount: { args: { id: string; label: string }; result: DouyuAccountsSnapshot }
+  addDouyuAccount: { args: undefined; result: DouyuAccountsSnapshot }
   loginDouyuAccount: { args: { id: string }; result: DouyuAccountsSnapshot }
   loginDouyuYubaAccount: { args: { id: string }; result: DouyuAccountsSnapshot }
   openDouyuTaskRoom: { args: { id: string }; result: DouyuAccountsSnapshot }

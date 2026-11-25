@@ -184,13 +184,11 @@ export function useDouyu(writesEnabled: () => boolean = () => false) {
 export type DouyuData = ReturnType<typeof useDouyu>
 
 /**
- * What an account is called on screen: its Douyu name once signed in. The built-in first
- * account's placeholder label is not a name, so before login it shows only its state; a
- * label the viewer gave is kept.
+ * What an account is called on screen: its Douyu name once signed in, and nothing before
+ * login so unnamed accounts never show a placeholder or custom label.
  */
-export function accountName(account: { id: string; label: string; login: { loggedIn: boolean; nickname?: string } }): string {
-  if (account.login.loggedIn && account.login.nickname) return account.login.nickname
-  return account.id === 'default' && account.label === '默认账号' ? '' : account.label
+export function accountName(account: { login: { loggedIn: boolean; nickname?: string } }): string {
+  return account.login.loggedIn && account.login.nickname ? account.login.nickname : ''
 }
 
 export function accountState(account: { busy: boolean; login: { loggedIn: boolean; canSend?: boolean; expiresAt?: number | null } }): string {

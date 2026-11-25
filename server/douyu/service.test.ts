@@ -127,7 +127,7 @@ it('refuses opening absent, non-activity or inactive-account task rooms', async 
   await f.service.invoke('createDouyuTask', input)
   const sign = f.tasks.snapshot().tasks[0]!
   expect(await f.service.invoke('openDouyuTaskRoom', { id: sign.id })).toMatchObject({ ok: false, code: 'task-not-found' })
-  await f.accounts.add('另一账号')
+  await f.accounts.add()
   await f.service.invoke('createDouyuTask', { ...input, accountId, kind: 'gift-packet' })
   const packet = f.tasks.snapshot().tasks[1]!
   expect(await f.service.invoke('openDouyuTaskRoom', { id: packet.id })).toMatchObject({ ok: false, code: 'no-active-account' })
@@ -337,7 +337,9 @@ it('pauses old-account tasks on activation and never silently transfers their ow
   f.run.mockImplementation(() => new Promise(resolve => { settle = resolve }))
   await f.service.invoke('startDouyuTask', { id })
   await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce())
-  await f.service.invoke('addDouyuAccount', { label: '第二个' })
+  expect(await f.service.invoke('addDouyuAccount', { label: '第二个' })).toMatchObject({ ok: false, code: 'invalid-arguments' })
+  expect(await f.service.invoke('renameDouyuAccount', { id: 'default', label: '新名称' })).toMatchObject({ ok: false, code: 'not-found' })
+  await f.service.invoke('addDouyuAccount', undefined)
   expect(await f.service.invoke('activateDouyuAccount', { id: accountId })).toMatchObject({ ok: true })
   expect(f.tasks.snapshot().tasks[0]).toMatchObject({ accountId: 'default', status: 'paused' })
   settle({ status: 'succeeded', message: 'late' })
@@ -347,7 +349,7 @@ it('pauses old-account tasks on activation and never silently transfers their ow
 
 it('removes the selected account and its task definitions only', async () => {
   const f = fixture()
-  await f.accounts.add('第二个')
+  await f.accounts.add()
   await f.service.invoke('createDouyuTask', input)
   await f.service.invoke('createDouyuTask', { ...input, accountId })
   expect(await f.service.invoke('removeDouyuAccount', { id: accountId })).toMatchObject({ ok: true })

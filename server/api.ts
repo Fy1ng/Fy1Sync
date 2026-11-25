@@ -220,14 +220,9 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             return { ok: true, value: await deps.douyuAccounts.snapshot() }
           }
           case 'addDouyuAccount': {
-            if (!fields(args, ['label']) || typeof args.label !== 'string') return fail('invalid-arguments', '账号名称无效')
+            if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
             if (!deps.douyuAccounts) return fail('not-available', '斗鱼账号配置不可用')
-            return { ok: true, value: await deps.douyuAccounts.add(args.label) }
-          }
-          case 'renameDouyuAccount': {
-            if (!fields(args, ['id', 'label']) || !isDouyuAccountId(args.id) || typeof args.label !== 'string') return fail('invalid-arguments', '账号参数无效')
-            if (!deps.douyuAccounts) return fail('not-available', '斗鱼账号配置不可用')
-            return { ok: true, value: await deps.douyuAccounts.rename(args.id, args.label) }
+            return { ok: true, value: await deps.douyuAccounts.add() }
           }
           case 'loginDouyuAccount':
           case 'loginDouyuYubaAccount':

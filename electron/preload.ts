@@ -14,7 +14,7 @@ const methods = new Set<DesktopMethod>([
   ...EMBEDDED_LOGIN_METHODS,
   ...BROWSER_IMPORT_METHODS,
   'windowControl', 'getWindowState',
-  'listDouyuAccounts', 'addDouyuAccount', 'renameDouyuAccount', 'loginDouyuAccount', 'loginDouyuYubaAccount', 'activateDouyuAccount', 'logoutDouyuAccount', 'removeDouyuAccount',
+  'listDouyuAccounts', 'addDouyuAccount', 'loginDouyuAccount', 'loginDouyuYubaAccount', 'activateDouyuAccount', 'logoutDouyuAccount', 'removeDouyuAccount',
   'sendDouyuMessage', 'openDouyuTaskRoom', 'getDouyinSendState', 'sendDouyinMessage',
   'getDouyuRenewalTargets', 'previewDouyuRenewal', 'executeDouyuRenewal', 'cancelDouyuRenewal',
   'getDouyuTasks', 'createDouyuTask', 'setDouyuTaskPolicy', 'startDouyuTask', 'pauseDouyuTask', 'removeDouyuTask', 'retainDouyuTaskRoom', 'closeDouyuTaskRoom',

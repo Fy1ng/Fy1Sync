@@ -25,11 +25,13 @@ test('斗鱼账号隔离, 任务控制和重启暂停经过实际 Electron 界�
     })
     await openPlayerWithDouyuWrites(running.page)
     const tools = await openDouyuTab(running.page, '账号')
-    await expect(tools.locator('.desk-who')).toHaveText('未登录')
-    await tools.getByLabel('新账号名称', { exact: true }).fill('测试账号')
+    await expect(tools.getByRole('group', { name: '斗鱼账号 默认账号', exact: true })).toContainText('未登录')
+    await expect(tools.getByLabel('新账号名称', { exact: true })).toHaveCount(0)
+    await expect(tools.getByRole('button', { name: '重命名', exact: true })).toHaveCount(0)
     await tools.getByRole('button', { name: '添加账号', exact: true }).click()
-    const added = tools.getByRole('group', { name: '斗鱼账号 测试账号', exact: true })
+    const added = tools.getByRole('group', { name: '斗鱼账号 账号 2', exact: true })
     await expect(added).toBeVisible()
+    await expect(added.getByRole('button', { name: '重命名', exact: true })).toHaveCount(0)
     await added.getByRole('button', { name: '设为当前', exact: true }).click()
     await expect(added).toContainText('当前使用')
     await added.getByRole('button', { name: '登录', exact: true }).click()
@@ -41,7 +43,7 @@ test('斗鱼账号隔离, 任务控制和重启暂停经过实际 Electron 界�
     await expect.poll(async () => (await tasks(running.page)).currentRoom).toBe('6979222')
     const form = await openTaskForm(running.page, 'room-sign', '6657', true)
     await form.getByRole('button', { name: '添加并启动', exact: true }).click()
-    const taskName = '签到任务 6979222 （测试账号）'
+    const taskName = '签到任务 6979222 （账号 2）'
     const task = tools.getByRole('group', { name: taskName, exact: true })
     await expect(task).toHaveAttribute('data-status', 'queued')
     expect((await tasks(running.page)).tasks[0]).toMatchObject({ room: '6979222', policy: 'background-locked', repeatMinutes: 1440 })
@@ -100,7 +102,9 @@ test('斗鱼账号隔离, 任务控制和重启暂停经过实际 Electron 界�
     await running.restart()
     await openPlayerWithDouyuWrites(running.page)
     const reopened = await openDouyuTab(running.page, '账号')
-    await expect(reopened.locator('.desk-who')).toContainText('测试账号')
+    const reopenedAdded = reopened.getByRole('group', { name: '斗鱼账号 账号 2', exact: true })
+    await expect(reopenedAdded).toContainText('当前使用')
+    await expect(reopenedAdded).toContainText('已登录')
     const restored = await tasks(running.page)
     expect(restored.tasks).toHaveLength(1)
     expect(restored.tasks[0]).toMatchObject({ status: 'paused', nextRunAt: null, lastRunAt: null })
@@ -108,7 +112,7 @@ test('斗鱼账号隔离, 任务控制和重启暂停经过实际 Electron 界�
     const accountState = await invoke(running.page, 'listDouyuAccounts', undefined)
     expect(accountState).toMatchObject({ ok: true, value: { accounts: [
       { id: 'default', active: false, login: { loggedIn: false } },
-      { label: '测试账号', active: true, login: { loggedIn: true } },
+      { label: '账号 2', active: true, login: { loggedIn: true } },
     ] } })
     const reopenedTasks = await openDouyuTab(running.page, '房间任务')
     const restoredTask = reopenedTasks.getByRole('group', { name: taskName, exact: true })

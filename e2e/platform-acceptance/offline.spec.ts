@@ -62,9 +62,8 @@ test('单房播放, 暂停和换账号后分别展示本地、房间与两个官
   await expect(settings.getByRole('group', { name: '官方观时上报', exact: true })).not.toContainText('粉丝牌累计观时已增长')
 
   const accounts = await openDouyuTab(page, '账号')
-  await accounts.getByLabel('新账号名称', { exact: true }).fill('P07 隔离账号')
   await accounts.getByRole('button', { name: '添加账号', exact: true }).click()
-  const second = accounts.getByRole('group', { name: '斗鱼账号 P07 隔离账号', exact: true })
+  const second = accounts.getByRole('group', { name: '斗鱼账号 账号 2', exact: true })
   await second.getByRole('button', { name: '登录', exact: true }).click()
   await expect(second).toContainText('已登录')
   await second.getByRole('button', { name: '设为当前', exact: true }).click()

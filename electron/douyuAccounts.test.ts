@@ -18,15 +18,23 @@ function tempRoot(): string {
   roots.push(root)
   return root
 }
-function fakeLogin(loggedIn = false) {
+function fakeLogin(loggedIn = false, nickname?: string) {
   const empty = { cookieCount: 0, authKeysPresent: [] as string[], loggedIn: false, expiresAt: null, hasSessionCookies: false }
-  const status: LoginStatus = { youtube: { ...empty }, douyu: { ...empty, loggedIn }, bilibili: { ...empty }, huya: { ...empty }, douyin: { ...empty } }
+  const status: LoginStatus = {
+    youtube: { ...empty },
+    douyu: { ...empty, loggedIn, ...(loggedIn && nickname ? { nickname } : {}) },
+    bilibili: { ...empty }, huya: { ...empty }, douyin: { ...empty },
+  }
   return {
-    login: vi.fn(async () => { status.douyu = { ...empty, cookieCount: 1, loggedIn: true, authKeysPresent: ['acf_uid'] }; return { cookieCount: 1, authKeysPresent: ['acf_uid'] } }),
+    login: vi.fn(async () => { status.douyu = { ...empty, cookieCount: 1, loggedIn: true, authKeysPresent: ['acf_uid'], ...(nickname ? { nickname } : {}) }; return { cookieCount: 1, authKeysPresent: ['acf_uid'] } }),
     loginStatus: vi.fn(async () => structuredClone(status)),
     logout: vi.fn(async () => { status.douyu = { ...empty } }),
     cookieHeader: vi.fn(async (_platform: CookieHeaderPlatform, _url?: string) => 'synthetic=value'),
     dispose: vi.fn(async () => {}),
+    setNickname(next?: string) {
+      if (next) status.douyu.nickname = next
+      else delete status.douyu.nickname
+    },
   }
 }
 function fixture(initial?: unknown) {
@@ -54,22 +62,27 @@ afterEach(async () => {
 })
 
 describe('Douyu account isolation', () => {
-  it('captures the initiating registry label even when renamed during login', async () => {
-    const f = fixture()
-    let finish!: (result: { cookieCount: number; authKeysPresent: string[] }) => void
-    f.defaultLogin.login.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
-    const pending = f.manager.login('default')
-    await f.manager.rename('default', '新名称')
+  it('uses Douyu nickname in snapshots when signed in, falls back to numbered labels, and strips legacy stored labels', async () => {
+    const f = fixture({
+      version: 1,
+      activeAccountId: 'default',
+      accounts: [
+        { id: 'default', label: '旧主号', createdAt: 10 },
+        { id: a, label: '旧小号', createdAt: 20 },
+      ],
+    })
+    expect((await f.manager.snapshot()).accounts.map(item => item.label)).toEqual(['默认账号', '账号 2'])
+    f.defaultLogin.setNickname('解说甲')
+    expect((await f.manager.snapshot()).accounts.map(item => item.label)).toEqual(['解说甲', '账号 2'])
+    await f.manager.logout('default')
+    expect((await f.manager.snapshot()).accounts.map(item => item.label)).toEqual(['默认账号', '账号 2'])
+    await f.manager.login('default')
     expect(f.defaultLogin.login).toHaveBeenCalledExactlyOnceWith('douyu', undefined, '默认账号')
-    finish({ cookieCount: 1, authKeysPresent: ['acf_uid'] })
-    expect((await pending).accounts[0]!.label).toBe('新名称')
-    await f.manager.loginYuba('default')
-    expect(f.defaultLogin.login).toHaveBeenLastCalledWith('douyu', 'yuba', '新名称')
   })
 
   it('opens a canonical room only in the active account profile and invalidates pending work', async () => {
     const f = fixture()
-    await f.manager.add('第二个')
+    await f.manager.add()
     const events: string[] = []
     f.manager.subscribe(event => { if (event.type === 'invalidated') events.push(event.accountId) })
     await expect(f.manager.openRoom(a, '9999')).rejects.toMatchObject({ code: 'no-active-account' })
@@ -95,21 +108,21 @@ describe('Douyu account isolation', () => {
     const release = f.manager.subscribeSnapshots(snapshot => received.push(snapshot))
     await vi.waitFor(() => expect(received).toHaveLength(1))
     expect(received[0]).toMatchObject({ revision: 0, accounts: [{ busy: false, login: { loggedIn: true } }] })
-    await f.manager.rename('default', '新名称')
-    await vi.waitFor(() => expect(received.at(-1)).toMatchObject({ revision: 1, accounts: [{ label: '新名称' }] }))
+    await f.manager.add()
+    await vi.waitFor(() => expect(received.at(-1)).toMatchObject({ revision: 1, accounts: [{ id: 'default', label: '默认账号' }, { id: a, label: '账号 2' }] }))
     let finish!: (value: { cookieCount: number; authKeysPresent: string[] }) => void
     f.defaultLogin.login.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
     const login = f.manager.login('default')
-    await vi.waitFor(() => expect(received.at(-1)).toMatchObject({ revision: 2, accounts: [{ busy: true }] }))
+    await vi.waitFor(() => expect(received.at(-1)).toMatchObject({ revision: 2, accounts: [{ id: 'default', busy: true }, { id: a, busy: false }] }))
     finish({ cookieCount: 1, authKeysPresent: ['acf_uid'] })
     await login
-    await vi.waitFor(() => expect(received.at(-1)).toMatchObject({ revision: 4, accounts: [{ busy: false, login: { loggedIn: true } }] }))
+    await vi.waitFor(() => expect(received.at(-1)).toMatchObject({ revision: 4, accounts: [{ id: 'default', busy: false, login: { loggedIn: true } }, { id: a }] }))
     await f.manager.logout('default')
-    await vi.waitFor(() => expect(received.at(-1)).toMatchObject({ revision: 7, accounts: [{ busy: false, login: { loggedIn: false } }] }))
+    await vi.waitFor(() => expect(received.at(-1)).toMatchObject({ revision: 7, accounts: [{ id: 'default', busy: false, login: { loggedIn: false } }, { id: a }] }))
     expect(received.every((snapshot, i) => i === 0 || snapshot.revision > received[i - 1]!.revision)).toBe(true)
     release()
     const count = received.length
-    await f.manager.add('独立账号')
+    await f.manager.add()
     await new Promise<void>(resolve => setImmediate(resolve))
     expect(received).toHaveLength(count)
   })
@@ -131,19 +144,19 @@ describe('Douyu account isolation', () => {
     let finish!: (value: LoginStatus) => void
     f.defaultLogin.loginStatus.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
     const pending = f.manager.snapshot()
-    await f.manager.rename('default', '最新名称')
+    await f.manager.add()
     await f.manager.logout('default')
     finish(original)
-    await expect(pending).resolves.toMatchObject({ revision: 4, accounts: [{ label: '最新名称', busy: false, login: { loggedIn: false } }] })
+    await expect(pending).resolves.toMatchObject({ revision: 4, accounts: [{ id: 'default', label: '默认账号', busy: false, login: { loggedIn: false } }, { id: a, label: '账号 2' }] })
 
     let finishInitial!: (value: LoginStatus) => void
     f.defaultLogin.loginStatus.mockImplementationOnce(() => new Promise(resolve => { finishInitial = resolve }))
     const received: DouyuAccountsSnapshot[] = []
     f.manager.subscribeSnapshots(snapshot => received.push(snapshot))
-    await f.manager.rename('default', '再次更新')
+    await f.manager.activate(a)
     finishInitial(original)
     await vi.waitFor(() => expect(received).toHaveLength(1))
-    expect(received[0]).toMatchObject({ revision: 5, accounts: [{ label: '再次更新', login: { loggedIn: false } }] })
+    expect(received[0]).toMatchObject({ revision: 6, activeAccountId: a, accounts: [{ id: 'default', active: false, login: { loggedIn: false } }, { id: a, active: true }] })
   })
 
   it('guards unsubscribe and disposal while an initial snapshot is pending', async () => {
@@ -178,9 +191,10 @@ describe('Douyu account isolation', () => {
 
   it('uses distinct private roots, activates one account and never copies the old login', async () => {
     const f = fixture()
-    await f.manager.add('赛事账号')
-    await f.manager.add('备用账号')
+    await f.manager.add()
+    await f.manager.add()
     expect([...f.created.keys()]).toEqual([path.join(f.root, 'douyu', 'account-data', a), path.join(f.root, 'douyu', 'account-data', b)])
+    expect((await f.manager.snapshot()).accounts.map(account => account.label)).toEqual(['默认账号', '账号 2', '账号 3'])
     expect((await f.manager.activate(a)).accounts.filter(account => account.active).map(account => account.id)).toEqual([a])
     expect(await f.manager.activeLoginStatus()).toMatchObject({ loggedIn: false })
     await f.manager.login(a)
@@ -192,14 +206,14 @@ describe('Douyu account isolation', () => {
 
   it('opens Yuba through each existing account manager without changing the active account', async () => {
     const f = fixture()
-    await f.manager.add('第二个')
+    await f.manager.add()
     const login = f.created.get(path.join(f.root, 'douyu', 'account-data', a))!
     await f.manager.login(a)
     expect(await f.manager.loginYuba(a)).toMatchObject({ activeAccountId: 'default', accounts: [
       { id: 'default', active: true }, { id: a, active: false, login: { loggedIn: true } },
     ] })
-    expect(login.login).toHaveBeenNthCalledWith(1, 'douyu', undefined, '第二个')
-    expect(login.login).toHaveBeenNthCalledWith(2, 'douyu', 'yuba', '第二个')
+    expect(login.login).toHaveBeenNthCalledWith(1, 'douyu', undefined, '账号 2')
+    expect(login.login).toHaveBeenNthCalledWith(2, 'douyu', 'yuba', '账号 2')
     expect(f.created.size).toBe(1)
     expect(f.defaultLogin.login).not.toHaveBeenCalled()
     await f.manager.loginYuba('default')
@@ -209,7 +223,7 @@ describe('Douyu account isolation', () => {
 
   it('invalidates the old account on activation and before replacing login information', async () => {
     const f = fixture()
-    await f.manager.add('第二个')
+    await f.manager.add()
     const events: unknown[] = []
     f.manager.subscribe(event => events.push(event))
     await f.manager.activate(a)
@@ -225,7 +239,7 @@ describe('Douyu account isolation', () => {
 
   it('rejects a stale credential read after switching accounts', async () => {
     const f = fixture()
-    await f.manager.add('第二个')
+    await f.manager.add()
     let finish!: (header: string) => void
     f.defaultLogin.cookieHeader.mockImplementation(() => new Promise(resolve => { finish = resolve }))
     const pending = f.manager.cookieHeader('default', 'https://www.douyu.com/')
@@ -299,7 +313,7 @@ describe('Douyu account isolation', () => {
 
   it('removes only the selected account and leaves the current account intact', async () => {
     const f = fixture()
-    await f.manager.add('第二个')
+    await f.manager.add()
     const removed = [...f.created.values()][0]!
     expect(await f.manager.remove(a)).toMatchObject({ activeAccountId: 'default', accounts: [{ id: 'default' }] })
     expect(removed.logout).toHaveBeenCalledWith('douyu')
@@ -309,23 +323,29 @@ describe('Douyu account isolation', () => {
 
   it('does not change active identity when saving its registry fails', async () => {
     const f = fixture()
-    await f.manager.add('第二个')
+    await f.manager.add()
     f.store.save.mockImplementation(() => { throw new Error('synthetic-secret-path') })
     await expect(f.manager.activate(a)).rejects.toMatchObject({ code: 'storage-failed' })
     expect(f.manager.activeAccountId).toBe('default')
   })
 
-  it.each([null, {}, { version: 2, accounts: [], activeAccountId: null }, { version: 1, accounts: [], activeAccountId: 'default' }])('preserves malformed stored data (%j) by refusing to load', raw => {
+  it.each([
+    null,
+    {},
+    { version: 2, accounts: [], activeAccountId: null },
+    { version: 1, accounts: [], activeAccountId: 'default' },
+    { version: 1, accounts: [{ id: 'default', label: 'bad\nname', createdAt: 1 }], activeAccountId: 'default' },
+  ])('preserves malformed stored data (%j) by refusing to load', raw => {
     const store = { load: () => raw, save: vi.fn() }
     expect(() => new DouyuAccountManager(tempRoot(), { defaultLogin: fakeLogin(), store })).toThrow('斗鱼账号配置读写失败')
     expect(store.save).not.toHaveBeenCalled()
   })
 
-  it('validates labels and identifiers without accessing an external path', async () => {
+  it('validates identifiers without accessing an external path', async () => {
+    const invalid = new DouyuAccountManager(tempRoot(), { defaultLogin: fakeLogin(), id: () => '../outside' })
+    managers.push(invalid)
+    await expect(invalid.add()).rejects.toMatchObject({ code: 'invalid-arguments' })
     const f = fixture()
-    for (const label of ['', ' '.repeat(3), 'x'.repeat(41), 'bad\nname']) {
-      await expect(f.manager.add(label)).rejects.toMatchObject({ code: 'invalid-arguments' })
-    }
     await expect(f.manager.login('../outside')).rejects.toMatchObject({ code: 'account-not-found' })
     await expect(f.manager.loginYuba('../outside')).rejects.toMatchObject({ code: 'account-not-found' })
     expect(f.created.size).toBe(0)
@@ -333,11 +353,11 @@ describe('Douyu account isolation', () => {
 
   it('disposes only owned profiles and rejects new operations afterwards', async () => {
     const f = fixture()
-    await f.manager.add('第二个')
+    await f.manager.add()
     await f.manager.dispose()
     expect([...f.created.values()][0]!.dispose).toHaveBeenCalledOnce()
     expect(f.defaultLogin.dispose).not.toHaveBeenCalled()
-    await expect(f.manager.add('新的')).rejects.toMatchObject({ code: 'disposed' })
+    await expect(f.manager.add()).rejects.toMatchObject({ code: 'disposed' })
     await expect(f.manager.loginYuba(a)).rejects.toMatchObject({ code: 'disposed' })
   })
 })
