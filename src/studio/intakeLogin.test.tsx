@@ -111,6 +111,27 @@ describe('the login offer on the intake screen', () => {
     expect(await screen.findByRole('button', { name: '重新登录 YouTube 并重试' })).toBeInTheDocument()
   })
 
+  it('surfaces invalidated YouTube login wording, refreshes login status, and offers re-login without anonymous retry', async () => {
+    youtubeSignedIn = false
+    const resolve = vi.spyOn(apiClient, 'resolve').mockResolvedValue({ ok: true, value: { ok: false, failure: {
+      code: 'restricted',
+      reason: 'cookies-invalidated',
+      message: 'YouTube 登录状态已失效，请重新登录',
+      hint: '如从日常浏览器导入，浏览器后台轮换会使登录态失效，建议使用独立窗口登录',
+    } } })
+    const statusSpy = vi.spyOn(apiClient, 'loginStatus')
+    mount()
+    fireEvent.click(screen.getByRole('radio', { name: /画面/ }))
+    const field = screen.getByLabelText('直播间链接')
+    fireEvent.change(field, { target: { value: 'https://www.youtube.com/watch?v=abcdefghijk' } })
+    fireEvent.submit(field.closest('form')!)
+    expect(await screen.findByText(/YouTube 登录状态已失效，请重新登录/)).toBeInTheDocument()
+    expect(screen.getByText(/浏览器后台轮换会使登录态失效/)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '登录 YouTube 并重试' })).toBeInTheDocument()
+    expect(resolve).toHaveBeenCalledTimes(1)
+    expect(statusSpy).toHaveBeenCalled()
+  })
+
   it('offers no login for a region refusal, which signing in cannot lift', async () => {
     vi.spyOn(apiClient, 'resolve').mockResolvedValue({ ok: true, value: { ok: false, failure: {
       code: 'restricted', reason: 'geo-restricted', message: '此直播在当前网络所在的地区不可观看.',

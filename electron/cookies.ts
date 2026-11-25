@@ -11,9 +11,11 @@ export type YoutubeCookieSession = LoginCookieSession
 
 export type LoginPlatform = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'huya' | 'douyin'
 export type CookieHeaderPlatform = Exclude<LoginPlatform, 'youtube' | 'twitch'>
+export type LoginSource = 'official' | 'browser-import'
 export interface LoginResult { cookieCount: number; authKeysPresent: string[]; signingReady?: boolean; signingProblem?: string }
 export interface PlatformLoginStatus extends LoginResult {
   loggedIn: boolean
+  loginSource?: LoginSource
   /** Douyu gateway readiness, distinct from website authentication. No values leave main. */
   canSend?: boolean
   missingCredentialFields?: string[]
@@ -23,6 +25,10 @@ export interface PlatformLoginStatus extends LoginResult {
   /** Earliest persistent authentication-cookie expiry, as Unix seconds. */
   expiresAt: number | null
   hasSessionCookies: boolean
+}
+export interface TemporaryCookieControls {
+  invalidate(): void
+  sync(): { hadAuth: boolean; hasAuth: boolean }
 }
 export type LoginStatus = Record<LoginPlatform, PlatformLoginStatus>
 export interface BrowserCookie {
@@ -40,6 +46,7 @@ export interface BrowserCookie {
 interface StoredCookie extends BrowserCookie { subdomains: boolean; expires: number; path: string }
 export interface BrowserAccountIdentity { username: string; uid?: string; avatar?: string }
 const ACCOUNT_PREFIX = '# Fy1Sync-Account\t'
+const LOGIN_SOURCE_PREFIX = '# Fy1Sync-Login-Source\t'
 
 function accountIdentity(value: unknown): BrowserAccountIdentity {
   if (!value || typeof value !== 'object' || Array.isArray(value)
@@ -60,6 +67,14 @@ function readAccountIdentity(text: string): BrowserAccountIdentity | undefined {
   const lines = text.split(/\r?\n/).filter(line => line.startsWith('# Fy1Sync-Account'))
   if (lines.length > 1 || lines.length === 1 && !lines[0]!.startsWith(ACCOUNT_PREFIX)) throw storageFailure()
   return lines.length ? accountIdentity(JSON.parse(lines[0]!.slice(ACCOUNT_PREFIX.length))) : undefined
+}
+function readLoginSource(text: string): LoginSource | undefined {
+  const lines = text.split(/\r?\n/).filter(line => line.startsWith('# Fy1Sync-Login-Source'))
+  if (lines.length > 1 || lines.length === 1 && !lines[0]!.startsWith(LOGIN_SOURCE_PREFIX)) throw storageFailure()
+  if (!lines.length) return undefined
+  const value = lines[0]!.slice(LOGIN_SOURCE_PREFIX.length)
+  if (value !== 'official' && value !== 'browser-import') throw storageFailure()
+  return value
 }
 
 /** The one cookie value allowed out of main: a display name, decoded and bounded. */
@@ -152,7 +167,7 @@ export function douyinBrowserSigningServerProofs(cookies: BrowserCookie[], now=D
 
 export const LOGIN_PLATFORMS = {
   douyin: { url: 'https://live.douyin.com/', authKeys: ['sessionid', 'sessionid_ss'] },
-  youtube: { url: 'https://www.youtube.com', authKeys: ['SAPISID', '__Secure-3PSID', '__Secure-1PSID', 'SID', 'HSID', 'SSID'] },
+  youtube: { url: 'https://www.youtube.com', authKeys: ['LOGIN_INFO', 'SAPISID', '__Secure-1PAPISID', '__Secure-3PAPISID', '__Secure-3PSID', '__Secure-1PSID', 'SID', 'HSID', 'SSID'] },
   twitch: { url: 'https://www.twitch.tv/login', apiUrl: 'https://gql.twitch.tv/gql', authKeys: ['auth-token'] },
   douyu: { url: 'https://www.douyu.com', apiUrl: 'https://www.douyu.com/lapi/live/getH5PlayV1/',
     authKeys: ['acf_uid', 'acf_auth', 'acf_auth_wl', 'acf_dmjwt_token', 'acf_ltkid', 'acf_biz', 'acf_stk'] },
@@ -199,8 +214,12 @@ export function hasAuthenticationCookies(cookies: BrowserCookie[], platform: Log
     && (cookie.session || cookie.expirationDate === undefined || (Number.isFinite(cookie.expirationDate) && cookie.expirationDate > now)))
   const validValue = (cookie: BrowserCookie) => cookie.value.length > 0 && cookie.value.length <= 32_768
     && !/[\x00-\x20\x7f;]/.test(cookie.value) && !/^(null|undefined)$/i.test(cookie.value)
-  const known: readonly string[] = LOGIN_PLATFORMS[platform].authKeys
-  if (platform === 'youtube') return eligible.some(cookie => known.includes(cookie.name) && validValue(cookie))
+  if (platform === 'youtube') {
+    // Match yt-dlp's _has_auth_cookies: YouTube clears LOGIN_INFO when rotating/invalidating cookies
+    // while leaving 3PAPISID/google.com cookies intact, so google.com or sid-only cookies are signed out.
+    const fields = new Map(selectedCookies(eligible, new URL('https://www.youtube.com/')).filter(validValue).map(cookie => [cookie.name, cookie.value]))
+    return fields.has('LOGIN_INFO') && ['SAPISID', '__Secure-1PAPISID', '__Secure-3PAPISID'].some(key => fields.has(key))
+  }
   const scope = platform === 'douyu' ? LOGIN_PLATFORMS.douyu.url : LOGIN_PLATFORMS[platform].apiUrl
   const fields = new Map(selectedCookies(eligible, new URL(scope)).filter(validValue).map(cookie => [cookie.name, cookie.value]))
   const uid = fields.get(platform === 'bilibili' ? 'DedeUserID' : platform === 'huya' ? 'udb_uid' : 'acf_uid')
@@ -277,6 +296,61 @@ function parseCookies(text: string, platform: LoginPlatform, now: number): Store
   return cookies
 }
 
+function parseYtDlpCookies(text: string, now: number, previous: StoredCookie[], invalidated: boolean): BrowserCookie[] | null {
+  if (Buffer.byteLength(text, 'utf8') > MAX_COOKIE_FILE_BYTES || !/^# Netscape HTTP Cookie File\r?\n/.test(text)) return null
+  const exactPrior = new Map<string, StoredCookie>()
+  const domainPrior = new Map<string, StoredCookie>()
+  for (const cookie of previous) {
+    exactPrior.set(`${cookie.domain}\t${cookie.subdomains}\t${cookie.path}\t${cookie.name}`, cookie)
+    if (!domainPrior.has(`${cookie.domain}\t${cookie.name}`)) domainPrior.set(`${cookie.domain}\t${cookie.name}`, cookie)
+  }
+  const cookies: BrowserCookie[] = []
+  for (let line of text.split(/\r?\n/)) {
+    const httpOnlyPrefix = line.startsWith('#HttpOnly_')
+    if (httpOnlyPrefix) line = line.slice(10)
+    else if (!line || line.startsWith('#')) continue
+    const fields = line.split('\t')
+    if (fields.length !== 7) return null
+    const [rawDomain, rawSubdomains, cookiePath, rawSecure, rawExpiry, name, value] = fields
+    if (!name || !rawDomain || value === undefined || !cookiePath) continue
+    if (!cookieDomainAllowed(rawDomain, 'youtube')) continue
+    if (!/^(TRUE|FALSE)$/.test(rawSubdomains!) || !/^(TRUE|FALSE)$/.test(rawSecure!)
+      || !cookiePath.startsWith('/') || /[\x00-\x20\x7f]/.test(cookiePath)
+      || !/^[!#$%&'*+.^_`|~a-z0-9-]+$/i.test(name) || /[\x00-\x20\x7f;]/.test(value)) continue
+    if (rawExpiry !== '' && !/^\d+(?:\.\d+)?$/.test(rawExpiry!)) return null
+    const expires = rawExpiry === '' ? 0 : Math.floor(Number(rawExpiry))
+    if (!Number.isSafeInteger(expires) || expires < 0) return null
+    if (expires > 0 && expires <= now) continue
+    if (invalidated && name === 'LOGIN_INFO') continue
+    const normalizedDomain = rawDomain.replace(/^\./, '').toLowerCase()
+    const subdomains = rawSubdomains === 'TRUE'
+    const prior = exactPrior.get(`${normalizedDomain}\t${subdomains}\t${cookiePath}\t${name}`)
+      ?? domainPrior.get(`${normalizedDomain}\t${name}`)
+    cookies.push({
+      domain: subdomains ? `.${normalizedDomain}` : normalizedDomain,
+      path: cookiePath,
+      secure: rawSecure === 'TRUE',
+      httpOnly: httpOnlyPrefix || (prior?.httpOnly ?? false),
+      hostOnly: !subdomains,
+      session: expires === 0,
+      ...(expires > 0 ? { expirationDate: expires } : {}),
+      ...(prior?.sameSite !== undefined ? { sameSite: prior.sameSite } : {}),
+      name,
+      value,
+    })
+  }
+  return cookies
+}
+
+function cookieListSignature(cookies: readonly BrowserCookie[]): string {
+  return cookies.map(cookie => {
+    const subdomains = cookie.hostOnly === undefined ? cookie.domain.startsWith('.') : !cookie.hostOnly
+    const domain = cookie.domain.replace(/^\./, '').toLowerCase()
+    const expiry = cookie.session || !cookie.expirationDate ? 0 : Math.floor(cookie.expirationDate)
+    return `${domain}\t${subdomains ? 1 : 0}\t${cookie.path || '/'}\t${cookie.secure ? 1 : 0}\t${cookie.httpOnly ? 1 : 0}\t${cookie.sameSite ?? ''}\t${expiry}\t${cookie.name}\t${cookie.value}`
+  }).sort().join('\n')
+}
+
 export interface CookieStoreOptions { now?: () => number }
 
 /** Cookie values are private to the main process; public methods return fixed metadata only. */
@@ -297,6 +371,18 @@ export class CookieStore {
     } catch { throw storageFailure() }
   }
 
+  resetProfile(platform: 'youtube'): string {
+    try {
+      if (platform !== 'youtube') throw storageFailure()
+      const profile = containedPath(this.root, path.join(this.root, 'browser-profile', platform))
+      if (fs.existsSync(profile)) {
+        assertRegularPath(profile, true)
+        fs.rmSync(profile, { recursive: true, force: true })
+      }
+      return privateDirectory(this.root, profile)
+    } catch { throw storageFailure() }
+  }
+
   private get directory(): string {
     return privateDirectory(this.root, path.join(this.root, 'cookies'))
   }
@@ -306,7 +392,7 @@ export class CookieStore {
     return containedPath(this.root, path.join(this.root, 'cookies', `${platform}.txt`))
   }
 
-  private async read(platform: LoginPlatform): Promise<{ text: string; cookies: StoredCookie[]; identity?: BrowserAccountIdentity } | undefined> {
+  private async read(platform: LoginPlatform): Promise<{ text: string; cookies: StoredCookie[]; identity?: BrowserAccountIdentity; loginSource?: LoginSource } | undefined> {
     try {
       const revision = this.revisions[platform]
       const file = this.target(platform)
@@ -334,18 +420,22 @@ export class CookieStore {
       if (revision !== this.revisions[platform]) throw storageFailure()
       containedPath(this.root, file)
       if (!sameFile(before, fs.lstatSync(file))) throw storageFailure()
-      return { text, cookies: parseCookies(text, platform, this.now()), identity: readAccountIdentity(text) }
+      return { text, cookies: parseCookies(text, platform, this.now()), identity: readAccountIdentity(text), loginSource: readLoginSource(text) }
     } catch { throw storageFailure() }
   }
 
-  write(platform: LoginPlatform, cookies: BrowserCookie[], identity?: BrowserAccountIdentity): LoginResult {
+  write(platform: LoginPlatform, cookies: BrowserCookie[], identity?: BrowserAccountIdentity, loginSource?: LoginSource): LoginResult {
     let temporary: string | undefined
     let descriptor: number | undefined
     try {
-      if (!isLoginPlatform(platform) || !Array.isArray(cookies) || cookies.length > 50_000) throw storageFailure()
+      if (!isLoginPlatform(platform) || !Array.isArray(cookies) || cookies.length > 50_000
+        || (loginSource !== undefined && loginSource !== 'official' && loginSource !== 'browser-import')) throw storageFailure()
       this.revisions[platform]++
       const lines = ['# Netscape HTTP Cookie File', '# Fy1Sync private login data. Do not share this file.', '']
-      if (identity) lines.splice(2, 0, ACCOUNT_PREFIX + JSON.stringify(accountIdentity(identity)))
+      const headers: string[] = []
+      if (identity) headers.push(ACCOUNT_PREFIX + JSON.stringify(accountIdentity(identity)))
+      if (loginSource) headers.push(LOGIN_SOURCE_PREFIX + loginSource)
+      if (headers.length) lines.splice(2, 0, ...headers)
       for (const cookie of cookies) {
         if (!cookie || typeof cookie.domain !== 'string' || !cookieDomainAllowed(cookie.domain, platform)) continue
         for (const key of ['hostOnly', 'secure', 'httpOnly', 'session'] as const) {
@@ -394,14 +484,15 @@ export class CookieStore {
   }
 
   /** Bounded local persistence retry. This never repeats a platform login or account action. */
-  async writeAsync(platform: LoginPlatform, cookies: BrowserCookie[], signal?: AbortSignal, current: () => boolean = () => true, identity?: BrowserAccountIdentity): Promise<LoginResult> {
-    if (!isLoginPlatform(platform) || !Array.isArray(cookies) || cookies.length > 50_000) throw storageFailure()
+  async writeAsync(platform: LoginPlatform, cookies: BrowserCookie[], signal?: AbortSignal, current: () => boolean = () => true, identity?: BrowserAccountIdentity, loginSource?: LoginSource): Promise<LoginResult> {
+    if (!isLoginPlatform(platform) || !Array.isArray(cookies) || cookies.length > 50_000
+      || (loginSource !== undefined && loginSource !== 'official' && loginSource !== 'browser-import')) throw storageFailure()
     let snapshot: BrowserCookie[]
     try { snapshot = structuredClone(cookies) } catch { throw storageFailure() }
     let revision = this.revisions[platform]
     for (let attempt = 0; attempt < 6; attempt++) {
       if (signal?.aborted || !current() || revision !== this.revisions[platform]) throw storageFailure()
-      try { return identity ? this.write(platform, snapshot, identity) : this.write(platform, snapshot) }
+      try { return this.write(platform, snapshot, identity, loginSource) }
       catch (error) {
         if (!(error instanceof CookieReplacementBusy) || attempt === 5) throw error
         revision++
@@ -430,11 +521,11 @@ export class CookieStore {
     if (!identity || !current() || revision !== this.revisions[platform]) return false
     // A recorded identity is only ever completed with an avatar, never swapped for another account.
     if (known && (!identity.avatar || known.uid !== undefined && identity.uid !== undefined && known.uid !== identity.uid)) return false
-    this.write(platform, loaded.cookies, identity)
+    this.write(platform, loaded.cookies, identity, loaded.loginSource)
     return true
   }
 
-  private summary(platform: LoginPlatform, cookies: StoredCookie[], identity?: BrowserAccountIdentity): PlatformLoginStatus {
+  private summary(platform: LoginPlatform, cookies: StoredCookie[], identity?: BrowserAccountIdentity, loginSource?: LoginSource): PlatformLoginStatus {
     const known: readonly string[] = LOGIN_PLATFORMS[platform].authKeys
     const auth = cookies.filter(cookie => platform === 'douyin' ? isDouyinAuthenticationCookie(cookie, this.now())
       : platform === 'twitch' ? cookie.name === 'auth-token' && /^[A-Za-z0-9]{20,128}$/.test(cookie.value)
@@ -443,7 +534,8 @@ export class CookieStore {
     const present = new Set(auth.map(cookie => cookie.name))
     const loggedIn = hasAuthenticationCookies(cookies, platform, this.now())
     return { cookieCount: cookies.length, authKeysPresent: known.filter(key => present.has(key)), loggedIn,
-      expiresAt: expiries.length ? Math.min(...expiries) : null, hasSessionCookies: auth.some(cookie => cookie.expires === 0),
+      ...(loggedIn && loginSource ? { loginSource } : {}),
+      expiresAt: loggedIn && expiries.length ? Math.min(...expiries) : null, hasSessionCookies: auth.some(cookie => cookie.expires === 0),
       ...(platform === 'douyu' ? messageCredentialStatus(platformHeader(cookies, new URL('https://www.douyu.com/'))) : {}),
       ...(identity ? { nickname: identity.username, ...(identity.avatar ? { avatar: identity.avatar } : {}) } : {}),
       // Douyu keeps the current display name in its own cookie; a recorded identity adds the avatar.
@@ -453,7 +545,7 @@ export class CookieStore {
   async status(): Promise<LoginStatus> {
     return Object.fromEntries(await Promise.all((Object.keys(LOGIN_PLATFORMS) as LoginPlatform[]).map(async platform => {
       const loaded = await this.read(platform)
-      return [platform, this.summary(platform, loaded?.cookies ?? [], loaded?.identity)]
+      return [platform, this.summary(platform, loaded?.cookies ?? [], loaded?.identity, loaded?.loginSource)]
     }))) as LoginStatus
   }
 
@@ -538,10 +630,13 @@ export class CookieStore {
     return token ? `OAuth ${token}` : ''
   }
 
-  async withTemporaryCookies<T>(platform: 'youtube', callback: (file?: string) => Promise<T>): Promise<T> {
+  async withTemporaryCookies<T>(platform: 'youtube', callback: (file?: string, controls?: TemporaryCookieControls) => Promise<T>, current: () => boolean = () => true): Promise<T> {
     const revision = this.revisions.youtube
     let directory: string | undefined
     let temporary: string | undefined
+    let loaded: Awaited<ReturnType<CookieStore['read']>>
+    let invalidated = false
+    let syncedOutcome: { hadAuth: boolean; hasAuth: boolean } | undefined
     const cleanup = () => {
       if (!directory) return
       try {
@@ -551,10 +646,50 @@ export class CookieStore {
         directory = undefined
       } catch { throw storageFailure() }
     }
+    const syncTemporary = (): { hadAuth: boolean; hasAuth: boolean } => {
+      if (syncedOutcome) return syncedOutcome
+      const now = this.now()
+      const hadAuth = Boolean(loaded && hasAuthenticationCookies(loaded.cookies, 'youtube', now))
+      let hasAuth = hadAuth && !invalidated
+      if (!temporary || !loaded || revision !== this.revisions.youtube || !current()) {
+        syncedOutcome = { hadAuth, hasAuth }
+        return syncedOutcome
+      }
+      try {
+        containedPath(this.root, temporary)
+        assertRegularPath(temporary, false)
+        const stat = fs.lstatSync(temporary)
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_COOKIE_FILE_BYTES) {
+          syncedOutcome = { hadAuth, hasAuth }
+          return syncedOutcome
+        }
+        const nextText = fs.readFileSync(temporary, 'utf8')
+        if (!invalidated && nextText === loaded.text) {
+          syncedOutcome = { hadAuth, hasAuth: hadAuth }
+          return syncedOutcome
+        }
+        const merged = parseYtDlpCookies(nextText, now, loaded.cookies, invalidated)
+        if (!merged) {
+          if (invalidated && revision === this.revisions.youtube && current()) {
+            const stripped = loaded.cookies.filter(cookie => cookie.name !== 'LOGIN_INFO')
+            this.write('youtube', stripped)
+            hasAuth = false
+          }
+          syncedOutcome = { hadAuth, hasAuth }
+          return syncedOutcome
+        }
+        hasAuth = hasAuthenticationCookies(merged, 'youtube', now)
+        if ((invalidated || cookieListSignature(merged) !== cookieListSignature(loaded.cookies))
+          && revision === this.revisions.youtube && current()) {
+          this.write('youtube', merged, hasAuth ? loaded.identity : undefined, hasAuth ? loaded.loginSource : undefined)
+        }
+      } catch { /* Interrupted or busy local sync must never mask extraction results or leak paths. */ }
+      syncedOutcome = { hadAuth, hasAuth }
+      return syncedOutcome
+    }
     // A normal app exit also removes a copy held by an interrupted extraction.
     const onExit = () => { try { cleanup() } catch { /* Never log cookie-related errors. */ } }
     try {
-      let loaded: Awaited<ReturnType<CookieStore['read']>>
       try {
         if (platform !== 'youtube') throw storageFailure()
         loaded = await this.read(platform)
@@ -576,9 +711,14 @@ export class CookieStore {
         }
       } catch { throw storageFailure() }
       if (revision !== this.revisions.youtube) throw storageFailure()
-      return await callback(temporary)
+      const controls: TemporaryCookieControls | undefined = temporary ? {
+        invalidate: () => { invalidated = true; syncedOutcome = undefined },
+        sync: syncTemporary,
+      } : undefined
+      return await callback(temporary, controls)
     } finally {
       process.removeListener('exit', onExit)
+      syncTemporary()
       cleanup()
     }
   }

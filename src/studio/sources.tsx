@@ -18,7 +18,7 @@ import { lastSource, loadLastSources, saveLastSources, type LastSources } from '
 import type { LoginPlatform } from '../../electron/login'
 import { streamFailureHint } from '../../server/networkFailure'
 import { displayError, errorDetails, type ErrorDetails } from '../core/errorDetails'
-import { subscribeLoginStateChanged } from '../core/loginEvents'
+import { notifyLoginStateChanged, subscribeLoginStateChanged } from '../core/loginEvents'
 import { refreshLoginStatus } from './login/status'
 
 export interface RoleLoad {
@@ -43,7 +43,7 @@ export const LOGIN_LABEL: Record<LoginPlatform, string> = { douyu: '斗鱼', you
 export const spaced = (name: string): string => /^[A-Za-z]/.test(name) ? ` ${name} ` : name
 
 /** YouTube refusals a sign-in can lift. A region or a private video is not about who is watching. */
-const SIGN_IN_REFUSALS = new Set(['bot-check', 'sign-in', 'members-only', 'age-restricted'])
+const SIGN_IN_REFUSALS = new Set(['cookies-invalidated', 'bot-check', 'sign-in', 'members-only', 'age-restricted'])
 
 export const ROLE_LABEL: Record<SourceRole, string> = { official: '画面', commentary: '解说' }
 
@@ -236,6 +236,9 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         // A proxy that cannot be reached is not the platform's fault; say which to check.
         const hint = streamFailureHint(failure.reason) ?? failure.hint
         patch(role, { problem: { message: failure.message, hint, detail: errorDetails(failure) } })
+        if (platformOf === 'youtube' && failure.reason === 'cookies-invalidated') {
+          void refreshLoginStatus().then(() => notifyLoginStateChanged(['youtube'], 'logout'))
+        }
         // Only an explicit authentication refusal offers Bilibili/Huya sign-in.
         const signInCanHelp = SIGN_IN_REFUSALS.has(failure.reason ?? '') || (!failure.reason && (platformOf === 'douyu' || platformOf === 'youtube' || platformOf === 'twitch'))
         if (canLogin(platformOf) && (failure.code === 'login-required' || (failure.code === 'restricted' && (signInCanHelp || platformOf === 'douyin')))) void offerLogin(role, platformOf, generation, true)

@@ -12,7 +12,10 @@ import { CookieStore } from './cookies'
 import type { EmbeddedLoginDriver, EmbeddedLoginRequest } from './embeddedLoginContracts'
 
 let root: string
-const cookies: BrowserCookie[] = [{ domain: '.youtube.com', path: '/', name: 'SAPISID', value: 'never-leak-this-value', session: true }]
+const cookies: BrowserCookie[] = [
+  { domain: '.youtube.com', path: '/', name: 'LOGIN_INFO', value: 'never-leak-this-login', session: true },
+  { domain: '.youtube.com', path: '/', name: 'SAPISID', value: 'never-leak-this-value', session: true },
+]
 const invalidDestinations = [
   { platform: 'douyu', destination: 'https://outside.example/' },
   { platform: 'douyu', destination: 'https://yuba.douyu.com/' },
@@ -55,10 +58,34 @@ function pauseOpen(): () => void {
 describe('LoginManager', () => {
   it('launches the dedicated platform profile and returns only safe metadata', async () => {
     const { manager, driver } = fixture()
-    expect(await manager.login('youtube')).toEqual({ cookieCount: 1, authKeysPresent: ['SAPISID'] })
+    expect(await manager.login('youtube')).toEqual({ cookieCount: 2, authKeysPresent: ['LOGIN_INFO', 'SAPISID'] })
     expect(driver.login).toHaveBeenCalledWith('test-chrome', path.join(root, 'browser-profile', 'youtube'), 'youtube', expect.any(AbortSignal), undefined)
-    expect(await manager.loginStatus()).toMatchObject({ youtube: { loggedIn: true, hasSessionCookies: true } })
-    expect(JSON.stringify(await manager.loginStatus())).not.toContain('never-leak-this-value')
+    expect(await manager.loginStatus()).toMatchObject({ youtube: { loggedIn: true, loginSource: 'official', hasSessionCookies: true } })
+    expect(JSON.stringify(await manager.loginStatus())).not.toMatch(/never-leak-this/)
+    await manager.dispose()
+  })
+
+  it('cleans stale YouTube Chrome profile state before login and distinguishes official vs browser-import loginSource', async () => {
+    const profileDir = path.join(root, 'browser-profile', 'youtube')
+    fs.mkdirSync(profileDir, { recursive: true })
+    fs.writeFileSync(path.join(profileDir, 'Cookies'), 'stale-rotated-state')
+    const driver = { login: vi.fn(async (_executable: string, profile: string) => {
+      expect(fs.existsSync(path.join(profile, 'Cookies'))).toBe(false)
+      return cookies
+    }) }
+    const manager = new LoginManager(root, { driver, chromeExecutable: 'test-chrome' })
+    await manager.login('youtube')
+    expect((await manager.loginStatus()).youtube).toMatchObject({ loggedIn: true, loginSource: 'official' })
+
+    await manager.importCookies('youtube', cookies, { username: '浏览器频道' })
+    expect((await manager.loginStatus()).youtube).toMatchObject({ loggedIn: true, loginSource: 'browser-import', nickname: '浏览器频道' })
+
+    // Legacy files without # Fy1Sync-Login-Source infer official vs browser-import from recorded identity.
+    const store = new CookieStore(root)
+    store.write('youtube', cookies)
+    expect((await manager.loginStatus()).youtube).toMatchObject({ loggedIn: true, loginSource: 'official' })
+    store.write('youtube', cookies, { username: '旧版导入频道' })
+    expect((await manager.loginStatus()).youtube).toMatchObject({ loggedIn: true, loginSource: 'browser-import' })
     await manager.dispose()
   })
 
@@ -131,8 +158,9 @@ describe('LoginManager', () => {
   it.each([
     [],
     [{ domain: '.youtube.com', name: 'PREF', value: 'synthetic-pref' }],
+    [{ domain: '.youtube.com', name: 'SAPISID', value: 'missing-login-info' }],
     [{ domain: '.outside.example', name: 'SAPISID', value: 'synthetic-wrong-domain' }],
-    [{ domain: '.youtube.com', name: 'SAPISID', value: 'synthetic-expired', expirationDate: 1 }],
+    [{ domain: '.youtube.com', name: 'LOGIN_INFO', value: 'synthetic-login' }, { domain: '.youtube.com', name: 'SAPISID', value: 'synthetic-expired', expirationDate: 1 }],
     [{ domain: '.youtube.com', name: 'SAPISID', value: '' }],
   ].map(missing => ({ missing })))('preserves an existing cookie file when export lacks valid authentication (%j)', async ({ missing }) => {
     const driver = { login: vi.fn<BrowserLoginDriver['login']>().mockResolvedValueOnce(cookies).mockResolvedValueOnce(missing) }
@@ -434,6 +462,7 @@ describe('system Chrome pipe login', () => {
       if (command.method === 'Browser.close') { Object.assign(headless, { exitCode: 0 }); headless.emit('exit', 0, null) }
       if (command.id === 1) queueMicrotask(() => headless.reader.write(JSON.stringify({ id: 1, result: { cookies: [
         { domain, path: '/', name, value: 'secret', expires: 2_000_000_000, secure: true },
+        ...(platform === 'youtube' ? [{ domain, path: '/', name: 'LOGIN_INFO', value: 'secret-login', expires: 2_000_000_000, secure: true }] : []),
         ...(platform === 'douyu' ? [{ domain, path: '/', name: 'acf_uid', value: '42', expires: 2_000_000_000, secure: true }] : []),
       ] } }) + '\0'))
     })
@@ -447,6 +476,8 @@ describe('system Chrome pipe login', () => {
     const result = await driver.login('chrome', '/private/profile', platform, new AbortController().signal, destination)
     expect(result).toEqual([{ domain, path: '/', name, value: 'secret', expirationDate: 2_000_000_000,
       secure: true, httpOnly: false, hostOnly: false, session: false },
+    ...(platform === 'youtube' ? [{ domain, path: '/', name: 'LOGIN_INFO', value: 'secret-login', expirationDate: 2_000_000_000,
+      secure: true, httpOnly: false, hostOnly: false, session: false }] : []),
     ...(platform === 'douyu' ? [{ domain, path: '/', name: 'acf_uid', value: '42', expirationDate: 2_000_000_000,
       secure: true, httpOnly: false, hostOnly: false, session: false }] : [])])
     expect(spawn).toHaveBeenCalledTimes(2)
@@ -457,6 +488,7 @@ describe('system Chrome pipe login', () => {
     expect(manualArgs.some(argument => argument.includes('remote-debugging'))).toBe(false)
     const exportArgs = spawn.mock.calls[1]![1]
     expect(exportArgs).toContain('--remote-debugging-pipe')
+    expect(exportArgs).toContain('--disable-background-networking')
     expect(exportArgs.some(argument => argument.includes('remote-debugging-port'))).toBe(false)
     for (const call of spawn.mock.calls) {
       expect(call[1]).toContain('--user-data-dir=/private/profile')
@@ -524,6 +556,7 @@ describe('system Chrome pipe login', () => {
       if (command.method === 'Browser.close') { Object.assign(headless, { exitCode: 0 }); headless.emit('exit', 0, null); return }
       ids.push(command.id)
       queueMicrotask(() => headless.reader.write(JSON.stringify({ id: command.id, result: { cookies: command.id < 3 ? [] : [
+        { domain: '.youtube.com', name: 'LOGIN_INFO', value: 'synthetic-login', session: true },
         { domain: '.youtube.com', name: 'SAPISID', value: 'synthetic', session: true },
       ] } }) + '\0'))
     })
@@ -533,7 +566,7 @@ describe('system Chrome pipe login', () => {
       return manual
     })
     const driver = new ChromeLoginDriver({ spawn, killTree: async () => {}, platform: 'win32', windowPollMs: 1, releaseDelayMs: 0, cookieRetryMs: 1 })
-    await expect(driver.login('chrome', '/private/profile', 'youtube', new AbortController().signal)).resolves.toMatchObject([{ name: 'SAPISID' }])
+    await expect(driver.login('chrome', '/private/profile', 'youtube', new AbortController().signal)).resolves.toMatchObject([{ name: 'LOGIN_INFO' }, { name: 'SAPISID' }])
     expect(ids).toEqual([1, 2, 3])
     expect(spawn).toHaveBeenCalledTimes(2)
   })
@@ -544,7 +577,7 @@ describe('system Chrome pipe login', () => {
       const manual = fakeChild(101)
       const headless = fakeChild(102)
       headless.writer.on('data', (chunk: Buffer) => {
-        if (chunk.toString().includes('Storage.getCookies')) queueMicrotask(() => headless.reader.write('{"id":1,"result":{"cookies":[{"domain":".youtube.com","name":"SAPISID","value":"synthetic"}]}}\0'))
+        if (chunk.toString().includes('Storage.getCookies')) queueMicrotask(() => headless.reader.write('{"id":1,"result":{"cookies":[{"domain":".youtube.com","name":"LOGIN_INFO","value":"synthetic-login"},{"domain":".youtube.com","name":"SAPISID","value":"synthetic"}]}}\0'))
       })
       const killTree = vi.fn(async (child: ChildProcess) => { Object.assign(child, { exitCode: 0 }); child.emit('exit', 0, null) })
       const spawn = vi.fn((_executable: string, args: string[]) => {
@@ -557,7 +590,7 @@ describe('system Chrome pipe login', () => {
       await vi.advanceTimersByTimeAsync(100)
       expect(killTree).not.toHaveBeenCalledWith(headless)
       await vi.advanceTimersByTimeAsync(500)
-      await expect(pending).resolves.toMatchObject([{ name: 'SAPISID' }])
+      await expect(pending).resolves.toMatchObject([{ name: 'LOGIN_INFO' }, { name: 'SAPISID' }])
       expect(killTree).toHaveBeenCalledWith(headless)
     } finally { vi.useRealTimers() }
   })
@@ -567,7 +600,7 @@ describe('system Chrome pipe login', () => {
     const headless = fakeChild(102)
     const query = Object.assign(fakeChild(103), { stdout: new PassThrough() })
     headless.writer.on('data', (chunk: Buffer) => {
-      if (chunk.toString().includes('Storage.getCookies')) queueMicrotask(() => headless.reader.write('{"id":1,"result":{"cookies":[{"domain":".youtube.com","name":"SAPISID","value":"synthetic"}]}}\0'))
+      if (chunk.toString().includes('Storage.getCookies')) queueMicrotask(() => headless.reader.write('{"id":1,"result":{"cookies":[{"domain":".youtube.com","name":"LOGIN_INFO","value":"synthetic-login"},{"domain":".youtube.com","name":"SAPISID","value":"synthetic"}]}}\0'))
       else { Object.assign(headless, { exitCode: 0 }); headless.emit('exit', 0, null) }
     })
     let queryStarted!: () => void
@@ -586,7 +619,7 @@ describe('system Chrome pipe login', () => {
     Object.assign(manual, { exitCode: 0 })
     manual.emit('exit', 0, null)
     query.emit('close', 0, null)
-    await expect(pending).resolves.toMatchObject([{ name: 'SAPISID' }])
+    await expect(pending).resolves.toMatchObject([{ name: 'LOGIN_INFO' }, { name: 'SAPISID' }])
   })
 
   it('allows a resident Chrome tree to be terminated after its window closes', async () => {
@@ -595,7 +628,7 @@ describe('system Chrome pipe login', () => {
       const manual = fakeChild(101)
       const headless = fakeChild(102)
       headless.writer.on('data', (chunk: Buffer) => {
-        if (chunk.toString().includes('Storage.getCookies')) headless.reader.write('{"id":1,"result":{"cookies":[{"domain":".youtube.com","name":"SAPISID","value":"synthetic"}]}}\0')
+        if (chunk.toString().includes('Storage.getCookies')) headless.reader.write('{"id":1,"result":{"cookies":[{"domain":".youtube.com","name":"LOGIN_INFO","value":"synthetic-login"},{"domain":".youtube.com","name":"SAPISID","value":"synthetic"}]}}\0')
         else { Object.assign(headless, { exitCode: 0 }); headless.emit('exit', 0, null) }
       })
       const hasWindow = vi.fn().mockReturnValueOnce(true).mockReturnValue(false)
@@ -609,7 +642,7 @@ describe('system Chrome pipe login', () => {
       await vi.advanceTimersByTimeAsync(8_000)
       expect(killTree).not.toHaveBeenCalled()
       await vi.advanceTimersByTimeAsync(10_000)
-      await expect(pending).resolves.toMatchObject([{ name: 'SAPISID' }])
+      await expect(pending).resolves.toMatchObject([{ name: 'LOGIN_INFO' }, { name: 'SAPISID' }])
       expect(spawn).toHaveBeenCalledTimes(2)
       expect(killTree).toHaveBeenCalledWith(manual)
     } finally { vi.useRealTimers() }

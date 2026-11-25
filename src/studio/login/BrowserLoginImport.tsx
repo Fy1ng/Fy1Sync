@@ -1,14 +1,18 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { apiClient } from '../../app/apiClient'
-import { remember } from '../../app/remembered'
+import { remember, remembered } from '../../app/remembered'
 import { Sheet } from '../kit'
 import { refreshLoginStatus } from './status'
 import { notifyLoginStateChanged } from '../../core/loginEvents'
-import type { LoginPlatform } from '../../../electron/cookies'
+import type { LoginPlatform, LoginStatus } from '../../../electron/cookies'
 import { IMPORT_PLATFORMS, IMPORT_PLATFORM_NAMES, type BrowserImportAccount, type BrowserImportOutcome,
   type BrowserImportPreview, type BrowserImportProfile, type DouyuImportTarget } from '../../../electron/browserImportContracts'
 import type { DouyuAccountSummary } from '../../../server/douyu/types'
 import './browserImport.css'
+
+function hasOfficialYoutubeLogin(status: LoginStatus | null | undefined): boolean {
+  return Boolean(status?.youtube?.loggedIn && status.youtube.loginSource === 'official')
+}
 
 interface ImportRequest { id: string; platform?: LoginPlatform; accountId?: string }
 const ImportContext = createContext<{ open: (platform?: LoginPlatform, accountId?: string) => void } | null>(null)
@@ -57,6 +61,8 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
   const [errorCode, setErrorCode] = useState('')
   const [notice, setNotice] = useState('')
   const [confirmClose, setConfirmClose] = useState(false)
+  const [confirmYoutubeId, setConfirmYoutubeId] = useState<string | null>(null)
+  const [youtubeOfficialLogin, setYoutubeOfficialLogin] = useState(() => hasOfficialYoutubeLogin(remembered<LoginStatus>('login-status')))
   const [outcomes, setOutcomes] = useState<BrowserImportOutcome[]>([])
   const [douyuAccounts, setDouyuAccounts] = useState<DouyuAccountSummary[]>([])
   const [douyuTarget, setDouyuTarget] = useState(request.accountId ?? 'auto')
@@ -68,13 +74,32 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
   const closeTriggerRef = useRef<HTMLButtonElement | null>(null)
   const cancelCloseRef = useRef<HTMLButtonElement | null>(null)
   const restoreCloseFocusRef = useRef(false)
+  const youtubeCheckboxRef = useRef<HTMLInputElement | null>(null)
+  const cancelYoutubeConfirmRef = useRef<HTMLButtonElement | null>(null)
+  const restoreYoutubeFocusRef = useRef(false)
   const cancelling = useRef(false)
   const [stopRequested, setStopRequested] = useState(false)
+
+  const readYoutubeOfficialLogin = async (): Promise<boolean> => {
+    if (request.platform && request.platform !== 'youtube') return false
+    try {
+      const result = await apiClient.loginStatus()
+      if (result.ok && result.value?.youtube) {
+        remember('login-status', result.value)
+        const official = hasOfficialYoutubeLogin(result.value)
+        if (live.current) setYoutubeOfficialLogin(official)
+        return official
+      }
+    } catch { /* Fall back to last remembered login status. */ }
+    const rememberedOfficial = hasOfficialYoutubeLogin(remembered<LoginStatus>('login-status'))
+    if (live.current) setYoutubeOfficialLogin(rememberedOfficial)
+    return rememberedOfficial
+  }
 
   const load = async (): Promise<void> => {
     if (pending.current) return
     pending.current = true
-    setPhase('loading'); setError(''); setErrorCode(''); setNotice(''); setConfirmClose(false)
+    setPhase('loading'); setError(''); setErrorCode(''); setNotice(''); setConfirmClose(false); setConfirmYoutubeId(null)
     try {
       const result = await apiClient.listBrowserImportProfiles()
       if (!live.current) return
@@ -87,6 +112,7 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
   useEffect(() => {
     live.current = true
     void load()
+    void readYoutubeOfficialLogin()
     if (!request.platform || request.platform === 'douyu') void apiClient.listDouyuAccounts().then(result => {
       if (live.current && result.ok) setDouyuAccounts(result.value.accounts)
     })
@@ -106,12 +132,26 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
     }
   }, [confirmClose])
 
+  useLayoutEffect(() => {
+    if (confirmYoutubeId) {
+      cancelYoutubeConfirmRef.current?.focus()
+    } else if (restoreYoutubeFocusRef.current) {
+      restoreYoutubeFocusRef.current = false
+      youtubeCheckboxRef.current?.focus()
+    }
+  }, [confirmYoutubeId])
+
   useEffect(() => {
-    if (!confirmClose) return
+    if (!confirmClose && !confirmYoutubeId) return
     const dialog = contentRef.current?.closest('dialog')
     const dismiss = (event: Event): void => {
       event.preventDefault()
       event.stopPropagation()
+      if (confirmYoutubeId) {
+        restoreYoutubeFocusRef.current = true
+        setConfirmYoutubeId(null)
+        return
+      }
       restoreCloseFocusRef.current = true
       setConfirmClose(false)
     }
@@ -124,21 +164,33 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
       dialog?.removeEventListener('keydown', onKey, true)
       dialog?.removeEventListener('cancel', dismiss)
     }
-  }, [confirmClose])
+  }, [confirmClose, confirmYoutubeId])
 
   const reset = (): void => {
     if (previewRef.current) void apiClient.cancelBrowserImport(previewRef.current.id)
-    previewRef.current = null; setPreview(null); setSelected([]); setError(''); setErrorCode(''); setNotice(''); setConfirmClose(false); setOutcomes([]); setPhase('choose')
+    previewRef.current = null; setPreview(null); setSelected([]); setError(''); setErrorCode(''); setNotice(''); setConfirmClose(false); setConfirmYoutubeId(null); setOutcomes([]); setPhase('choose')
   }
   const cancelCloseConfirm = (): void => {
     restoreCloseFocusRef.current = true
     setConfirmClose(false)
+  }
+  const cancelYoutubeConfirm = (): void => {
+    restoreYoutubeFocusRef.current = true
+    setConfirmYoutubeId(null)
+  }
+  const confirmYoutubeSelect = (): void => {
+    if (!confirmYoutubeId) return
+    const id = confirmYoutubeId
+    restoreYoutubeFocusRef.current = true
+    setConfirmYoutubeId(null)
+    setSelected(current => current.includes(id) ? current : [...current, id])
   }
   const closeBrowser = async (): Promise<void> => {
     if (pending.current || !profileId) return
     pending.current = true
     restoreCloseFocusRef.current = false
     setConfirmClose(false)
+    setConfirmYoutubeId(null)
     const previousPhase = phase === 'preview' || phase === 'result' ? phase : 'choose'
     const closeRequestId = crypto.randomUUID()
     closeRequestIdRef.current = closeRequestId
@@ -159,20 +211,25 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
   const scan = async (): Promise<void> => {
     if (pending.current || !profileId) return
     pending.current = true
-    setPhase('scanning'); setError(''); setErrorCode(''); setNotice(''); setConfirmClose(false); setOutcomes([])
+    setPhase('scanning'); setError(''); setErrorCode(''); setNotice(''); setConfirmClose(false); setConfirmYoutubeId(null); setOutcomes([])
     try {
-      const result = await apiClient.previewBrowserLogins({ requestId: request.id, profileId,
-        platforms: request.platform ? [request.platform] : [...IMPORT_PLATFORMS] })
+      const [result, officialYoutube] = await Promise.all([
+        apiClient.previewBrowserLogins({ requestId: request.id, profileId,
+          platforms: request.platform ? [request.platform] : [...IMPORT_PLATFORMS] }),
+        readYoutubeOfficialLogin(),
+      ])
       if (!live.current) { if (result.ok) void apiClient.cancelBrowserImport(result.value.id); return }
       if (!result.ok) { setError(result.message); setErrorCode(result.code); setPhase('choose'); return }
       previewRef.current = result.value; setPreview(result.value)
-      setSelected(result.value.accounts.filter(account => account.state === 'ready').map(account => account.id))
+      setSelected(result.value.accounts
+        .filter(account => account.state === 'ready' && !(account.platform === 'youtube' && officialYoutube))
+        .map(account => account.id))
       setPhase('preview')
     } finally { pending.current = false }
   }
   const apply = async (): Promise<void> => {
     if (pending.current || !preview || !selected.length) return
-    pending.current = true; cancelling.current = false; setStopRequested(false); setPhase('importing'); setError(''); setErrorCode(''); setNotice(''); setConfirmClose(false)
+    pending.current = true; cancelling.current = false; setStopRequested(false); setPhase('importing'); setError(''); setErrorCode(''); setNotice(''); setConfirmClose(false); setConfirmYoutubeId(null)
     const target: DouyuImportTarget = douyuTarget === 'auto' ? { kind: 'auto' } : douyuTarget === 'new' ? { kind: 'new' }
       : { kind: 'existing', accountId: douyuTarget }
     try {
@@ -232,7 +289,7 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
           <button type="button" ref={closeTriggerRef}
             className={suggestClose ? 'btn-quiet small is-danger' : 'btn-quiet small'}
             disabled={busy || !profileId || !supported}
-            onClick={() => { setNotice(''); setConfirmClose(true) }}>关闭浏览器</button>
+            onClick={() => { setNotice(''); setConfirmYoutubeId(null); setConfirmClose(true) }}>关闭浏览器</button>
           <button type="button" className="btn-solid small" disabled={busy || !profileId || !supported} onClick={() => void scan()}>识别账号</button>
         </div>
       </div>
@@ -251,8 +308,29 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
         <div className="browser-import-list" aria-label="识别到的平台账号">
           {preview.accounts.map(account => <AccountChoice key={account.id} account={account}
             checked={selected.includes(account.id)} disabled={busy || phase === 'result'}
-            onChange={checked => setSelected(current => checked ? [...current, account.id] : current.filter(id => id !== account.id))} />)}
+            officialWarning={account.platform === 'youtube' && youtubeOfficialLogin}
+            onChange={(checked, input) => {
+              if (!checked) {
+                if (confirmYoutubeId === account.id) setConfirmYoutubeId(null)
+                setSelected(current => current.filter(id => id !== account.id))
+                return
+              }
+              if (account.platform === 'youtube' && youtubeOfficialLogin) {
+                youtubeCheckboxRef.current = input
+                setConfirmClose(false)
+                setConfirmYoutubeId(account.id)
+                return
+              }
+              setSelected(current => current.includes(account.id) ? current : [...current, account.id])
+            }} />)}
         </div>
+        {confirmYoutubeId && phase === 'preview' && <div className="writes-confirm browser-import-close-confirm" role="alertdialog" aria-label="确认勾选 YouTube 浏览器导入">
+          <p className="note-warn">检测到已有官方登录态，不建议使用浏览器导入。日常浏览器在后台会自动轮换 Google 登录凭据，导入后很容易失效并触发真人验证。</p>
+          <span className="row-end">
+            <button type="button" ref={cancelYoutubeConfirmRef} className="btn-quiet small" disabled={busy} onClick={cancelYoutubeConfirm}>暂不勾选</button>
+            <button type="button" className="btn-solid small is-danger" disabled={busy} onClick={confirmYoutubeSelect}>确认勾选</button>
+          </span>
+        </div>}
         {hasDouyu && phase !== 'result' && <label className="browser-import-target">斗鱼导入到
           <select className="text-input" aria-label="斗鱼导入到" value={douyuTarget} disabled={busy} onChange={event => setDouyuTarget(event.target.value)}>
             <option value="auto">自动匹配账号</option><option value="new">添加新账号</option>
@@ -277,17 +355,19 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
   </Sheet>
 }
 
-function AccountChoice({ account, checked, disabled, onChange }: {
-  account: BrowserImportAccount; checked: boolean; disabled: boolean; onChange: (checked: boolean) => void
+function AccountChoice({ account, checked, disabled, officialWarning = false, onChange }: {
+  account: BrowserImportAccount; checked: boolean; disabled: boolean; officialWarning?: boolean
+  onChange: (checked: boolean, input: HTMLInputElement | null) => void
 }): React.ReactNode {
   const name = IMPORT_PLATFORM_NAMES[account.platform]
   const username = account.username || name
+  const note = account.message ?? (officialWarning && account.state === 'ready' ? '已有官方登录态，不建议使用浏览器导入' : undefined)
   return <label className={`browser-import-account ${account.state === 'ready' ? '' : 'is-unavailable'}`}>
     <input type="checkbox" aria-label={`导入${name}`} checked={checked} disabled={disabled || account.state !== 'ready'}
-      onChange={event => onChange(event.target.checked)} />
+      onChange={event => onChange(event.target.checked, event.currentTarget)} />
     <AccountAvatar username={username} avatar={account.avatar} />
     <span className="browser-import-account-text"><b>{name}</b><span>{account.username || (account.state === 'signed-out' ? '未登录' : '暂时无法确认')}</span>
-      {account.message && <small>{account.message}</small>}</span>
+      {note && <small>{note}</small>}</span>
     <span className="browser-import-account-state">{account.state === 'ready' ? '已验证' : account.state === 'signed-out' ? '未登录' : '不可用'}</span>
   </label>
 }

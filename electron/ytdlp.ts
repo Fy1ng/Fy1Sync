@@ -43,12 +43,25 @@ export function ytDlpProxyConnectionError(detail?: unknown): StreamFailureError 
   return error
 }
 
+export interface YoutubeCookieControls {
+  invalidate(): void
+  sync(): { hadAuth: boolean; hasAuth: boolean }
+}
+
 export interface YoutubeCookieAccess {
-  withTemporaryCookies<T>(platform: 'youtube', callback: (path?: string) => Promise<T>): Promise<T>
+  withTemporaryCookies<T>(platform: 'youtube', callback: (path?: string, controls?: YoutubeCookieControls) => Promise<T>): Promise<T>
 }
 
 export interface YtDlpDiagnostic extends Omit<DiagnosticEvent, 'at'> {}
-type DiagnosticContext = { emit: (event: Omit<YtDlpDiagnostic, 'extractionId'>) => void; media?: Readonly<MediaNetworkOptions>; credentialed?: boolean; signal?: AbortSignal; sourceUrl?: string }
+type DiagnosticContext = {
+  emit: (event: Omit<YtDlpDiagnostic, 'extractionId'>) => void
+  media?: Readonly<MediaNetworkOptions>
+  credentialed?: boolean
+  onCookiesInvalidated?: () => void
+  cookiesInvalidated?: () => boolean
+  signal?: AbortSignal
+  sourceUrl?: string
+}
 type ChildStage = 'hls' | 'hls-fallback' | 'adaptive' | 'huya'
 const fixedCodes = new Set<string>(DIAGNOSTIC_CODES)
 
@@ -104,13 +117,22 @@ function observedToken(formats: unknown[]): boolean {
 /** Classify diagnostics without retaining paths, cookies, tokens or upstream URLs. */
 function warningCodes(stderr: string): NonNullable<YtDlpDiagnostic['warnings']> {
   return [
-    [/sign in|not a bot|login|required|members.only|private video/i, 'authentication'],
+    [/sign in|not a bot|login|required|members.only|private video|cookies are no longer valid/i, 'authentication'],
     [/po.?token|pot provider|bgutil/i, 'token-provider'],
     [/javascript|js challenge|challenge solver|js runtime/i, 'javascript-runtime'],
     [/timed?\s*out|timeout|connection|unable to download|HTTP Error/i, 'network'],
     [/no.*formats|requested format|only images/i, 'formats-unavailable'],
     [/no module|cannot find module|module.not.found|ENOENT/i, 'runtime-dependency'],
   ].flatMap(([pattern, code]) => (pattern as RegExp).test(stderr) ? [code as NonNullable<YtDlpDiagnostic['warnings']>[number]] : [])
+}
+
+function youtubeCookiesInvalidated(stderr: string): boolean {
+  return /cookies are no longer valid|likely been rotated in the browser/i.test(stderr)
+}
+
+function isCookiesInvalidatedError(error: unknown): boolean {
+  return (error instanceof Error && error.message === 'YouTube cookies invalidated')
+    || Boolean(error && typeof error === 'object' && 'code' in error && (error as { code?: unknown }).code === 'cookies-invalidated')
 }
 
 function youtubeFailureCode(stderr: string): DiagnosticCode {
@@ -227,8 +249,18 @@ export class YtDlpRunner {
     const provider = adaptive ? await locateYouTubePotProvider(this.options.env, this.options.toolContext) : undefined
     context.emit({ stage: 'provider', status: !adaptive ? 'skipped' : provider ? 'available' : 'unavailable',
       providerConfigured: Boolean(provider), providerOutcome: adaptive && provider ? 'unconfirmed' : 'not-requested' })
-    return this.options.cookies.withTemporaryCookies('youtube', async (cookiePath) => {
-      context = { ...context, credentialed: Boolean(cookiePath) }
+    return this.options.cookies.withTemporaryCookies('youtube', async (cookiePath, controls) => {
+      let invalidated = false
+      const markInvalidated = () => {
+        invalidated = true
+        controls?.invalidate()
+      }
+      context = {
+        ...context,
+        credentialed: Boolean(cookiePath),
+        onCookiesInvalidated: markInvalidated,
+        cookiesInvalidated: () => invalidated,
+      }
       if (this.disposed) throw new Error('取流服务已关闭')
       const args = [
         '--ignore-config', '--no-cache-dir', '--no-playlist', '--no-progress',
@@ -237,43 +269,58 @@ export class YtDlpRunner {
         '--no-remote-components', '--skip-download', '--print', YOUTUBE_METADATA_TEMPLATE,
         ...(cookiePath ? ['--cookies', cookiePath] : []), '--', url,
       ]
-      if (provider) {
-        let plugin: PrivatePotPlugin | undefined
-        try {
-          plugin = await prepareScriptOnlyPotPlugin(provider.pluginDir)
-          context.emit({ stage: 'provider', status: 'prepared', client: 'default', providerConfigured: true, providerOutcome: 'unconfirmed' })
-          const providerArgs = [
-            '--no-plugin-dirs', '--plugin-dirs', plugin.pluginDir,
-            '--extractor-args', `youtubepot-bgutilscript:server_home=${provider.serverHome}`,
-          ]
-          // Default clients can return both HLS and adaptive pairs in one extraction.
-          // Keep the web-only compatibility retry for clients that still omit the pairs.
-          const extract = (client: 'default' | 'web', stage: ChildStage) => this.runChild(executable,
-            [...args.slice(0, -2), ...providerArgs, '--extractor-args', `youtube:player_client=${client};formats=incomplete`, ...args.slice(-2)],
-            stage, proxyUrl, context)
-          let info: unknown
-          let providerFailed = false
-          try { info = await extract('default', 'hls') } catch (error) {
-            if (this.disposed) throw new Error('yt-dlp 超时或已取消')
-            if (isProxyConnectFailure(error)) throw error
-            // A broken provider must not disable the plain, cookie-aware HLS path.
-            providerFailed = true
-            info = await this.runChild(executable, args, 'hls', proxyUrl, context)
-          }
-          if (!providerFailed && !youtubeAdaptiveFormats(info, 0).length) {
-            try { info = mergeAdaptiveFormats(info, await extract('web', 'adaptive')) } catch {
+      try {
+        if (provider) {
+          let plugin: PrivatePotPlugin | undefined
+          try {
+            plugin = await prepareScriptOnlyPotPlugin(provider.pluginDir)
+            context.emit({ stage: 'provider', status: 'prepared', client: 'default', providerConfigured: true, providerOutcome: 'unconfirmed' })
+            const providerArgs = [
+              '--no-plugin-dirs', '--plugin-dirs', plugin.pluginDir,
+              '--extractor-args', `youtubepot-bgutilscript:server_home=${provider.serverHome}`,
+            ]
+            // Default clients can return both HLS and adaptive pairs in one extraction.
+            // Keep the web-only compatibility retry for clients that still omit the pairs.
+            const extract = (client: 'default' | 'web', stage: ChildStage) => this.runChild(executable,
+              [...args.slice(0, -2), ...providerArgs, '--extractor-args', `youtube:player_client=${client};formats=incomplete`, ...args.slice(-2)],
+              stage, proxyUrl, context)
+            let info: unknown
+            let providerFailed = false
+            try { info = await extract('default', 'hls') } catch (error) {
               if (this.disposed) throw new Error('yt-dlp 超时或已取消')
+              if (isProxyConnectFailure(error) || invalidated || isCookiesInvalidatedError(error)) throw error
+              // A broken provider must not disable the plain, cookie-aware HLS path.
+              providerFailed = true
+              info = await this.runChild(executable, args, 'hls', proxyUrl, context)
             }
+            if (!providerFailed && !youtubeAdaptiveFormats(info, 0).length) {
+              try { info = mergeAdaptiveFormats(info, await extract('web', 'adaptive')) } catch (error) {
+                if (this.disposed) throw new Error('yt-dlp 超时或已取消')
+                if (invalidated || isCookiesInvalidatedError(error)) markInvalidated()
+              }
+            }
+            return await this.recoverHls(executable, args, info, proxyUrl, adaptive, context, providerFailed ? undefined : provider)
+          } catch (error) {
+            if (plugin) throw error
+            context.emit({ stage: 'provider', status: 'failed', client: 'web', code: 'provider-prepare-failed', providerConfigured: true, providerOutcome: 'warning' })
+            context.emit({ stage: 'adaptive', status: 'skipped', client: 'web', code: 'provider-prepare-failed', providerConfigured: true, providerOutcome: 'warning' })
+          } finally { await plugin?.dispose() }
+        }
+        context.emit({ stage: 'adaptive', status: 'skipped', client: 'web', providerConfigured: false, providerOutcome: 'not-requested' })
+        return await this.recoverHls(executable, args, await this.runChild(executable, args, 'hls', proxyUrl, context), proxyUrl, adaptive, context)
+      } catch (error) {
+        if (cookiePath && controls && !isCookiesInvalidatedError(error)) {
+          const synced = controls.sync()
+          if (synced.hadAuth && !synced.hasAuth && error instanceof Error
+            && /^YouTube (?:bot check|sign in required|members only|age restricted)$/.test(error.message)) {
+            throw Object.assign(new Error('YouTube cookies invalidated'), {
+              code: 'cookies-invalidated',
+              ...('detail' in error ? { detail: (error as { detail?: unknown }).detail } : {}),
+            })
           }
-          return this.recoverHls(executable, args, info, proxyUrl, adaptive, context, providerFailed ? undefined : provider)
-        } catch (error) {
-          if (plugin) throw error
-          context.emit({ stage: 'provider', status: 'failed', client: 'web', code: 'provider-prepare-failed', providerConfigured: true, providerOutcome: 'warning' })
-          context.emit({ stage: 'adaptive', status: 'skipped', client: 'web', code: 'provider-prepare-failed', providerConfigured: true, providerOutcome: 'warning' })
-        } finally { await plugin?.dispose() }
+        }
+        throw error
       }
-      context.emit({ stage: 'adaptive', status: 'skipped', client: 'web', providerConfigured: false, providerOutcome: 'not-requested' })
-      return this.recoverHls(executable, args, await this.runChild(executable, args, 'hls', proxyUrl, context), proxyUrl, adaptive, context)
     })
   }
 
@@ -391,6 +438,9 @@ export class YtDlpRunner {
         settled = true
         finish()
         const warnings = warningCodes(stderr)
+        if (stage !== 'huya' && context.credentialed && youtubeCookiesInvalidated(stderr)) {
+          context.onCookiesInvalidated?.()
+        }
         const completed = { exitCode: Number.isSafeInteger(code) ? code : null, warnings,
           providerOutcome: warnings.includes('token-provider') ? 'warning' as const : providerConfigured ? 'unconfirmed' as const : 'not-requested' as const }
         if (stopReason === 'output-limit') {
@@ -415,6 +465,14 @@ export class YtDlpRunner {
             const failure = proxyUrl ? classifyNetworkFailure(new Error(stderr), 'proxy') : classified
             event({ ...completed, status: 'failed', code: fixedCode(failure.code, 'extractor-failed'), stopped: false })
             reject(new StreamFailureError(failure)); return
+          }
+          if (stage !== 'huya' && context.credentialed && (youtubeCookiesInvalidated(stderr) || context.cookiesInvalidated?.())) {
+            event({ ...completed, status: 'failed', code: 'cookies-invalidated', stopped: false })
+            reject(Object.assign(new Error('YouTube cookies invalidated'), {
+              code: 'cookies-invalidated',
+              detail: diagnosticDetails({ exitCode: code, stderr }),
+            }))
+            return
           }
           // An explicit YouTube refusal (such as bot-check) takes precedence over earlier
           // non-fatal webpage warnings like HTTP 429 so the UI can offer sign-in or node switching.

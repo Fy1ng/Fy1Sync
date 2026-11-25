@@ -35,6 +35,8 @@ describe('private cookie storage', () => {
   it('round-trips HttpOnly and injects host, path, secure, expiry and session semantics in main only', async () => {
     const manager = store()
     manager.write('youtube', [
+      cookie({ name: 'LOGIN_INFO', httpOnly: true }),
+      cookie({ name: '__Secure-3PAPISID', httpOnly: false }),
       cookie({ httpOnly: true, path: '/watch' }),
       cookie({ domain: 'www.youtube.com', hostOnly: true, name: 'SID', session: true, httpOnly: true, secure: false }),
       cookie({ domain: '.google.com', name: 'HSID', secure: true, httpOnly: false }),
@@ -43,6 +45,8 @@ describe('private cookie storage', () => {
     const logs = [vi.spyOn(console, 'log'), vi.spyOn(console, 'warn'), vi.spyOn(console, 'error')]
     await expect(manager.injectYoutubeCookies({ cookies: { set } })).resolves.toBeUndefined()
     expect(set.mock.calls).toEqual([
+      [{ url: 'https://youtube.com/', domain: '.youtube.com', path: '/', name: 'LOGIN_INFO', value: 'test-private-value', secure: true, httpOnly: true, expirationDate: now + 60 }],
+      [{ url: 'https://youtube.com/', domain: '.youtube.com', path: '/', name: '__Secure-3PAPISID', value: 'test-private-value', secure: true, httpOnly: false, expirationDate: now + 60 }],
       [{ url: 'https://youtube.com/watch', domain: '.youtube.com', path: '/watch', name: 'SAPISID', value: 'test-private-value', secure: true, httpOnly: true, expirationDate: now + 60 }],
       [{ url: 'http://www.youtube.com/', path: '/', name: 'SID', value: 'test-private-value', secure: false, httpOnly: true }],
       [{ url: 'https://google.com/', domain: '.google.com', path: '/', name: 'HSID', value: 'test-private-value', secure: true, httpOnly: false, expirationDate: now + 60 }],
@@ -58,6 +62,10 @@ describe('private cookie storage', () => {
     expect(set).not.toHaveBeenCalled()
     manager.write('youtube', [cookie({ httpOnly: true })])
     await expect(manager.injectYoutubeCookies({ cookies: { set } })).rejects.toThrow('未返回任何 cookie 数据')
+    expect(set).not.toHaveBeenCalled()
+    manager.write('youtube', [cookie({ name: 'LOGIN_INFO', httpOnly: true }), cookie({ httpOnly: true })])
+    await expect(manager.injectYoutubeCookies({ cookies: { set } })).rejects.toThrow('未返回任何 cookie 数据')
+    expect(set).toHaveBeenCalledOnce()
   })
 
   it('atomically writes a platform-filtered Netscape file and returns metadata only', () => {
@@ -72,9 +80,15 @@ describe('private cookie storage', () => {
 
   it('reports valid auth keys and earliest persistent expiry without values', async () => {
     const manager = store()
-    manager.write('youtube', [cookie(), cookie({ name: 'SID', expirationDate: now + 20 }), cookie({ name: 'HSID', session: true }), cookie({ name: 'SSID', expirationDate: now - 1 })])
+    manager.write('youtube', [
+      cookie({ name: 'LOGIN_INFO', expirationDate: now + 120 }),
+      cookie(),
+      cookie({ name: 'SID', expirationDate: now + 20 }),
+      cookie({ name: 'HSID', session: true }),
+      cookie({ name: 'SSID', expirationDate: now - 1 }),
+    ], undefined, 'official')
     expect(await manager.status()).toEqual({
-      youtube: { loggedIn: true, cookieCount: 3, authKeysPresent: ['SAPISID', 'SID', 'HSID'], expiresAt: now + 20, hasSessionCookies: true },
+      youtube: { loggedIn: true, loginSource: 'official', cookieCount: 4, authKeysPresent: ['LOGIN_INFO', 'SAPISID', 'SID', 'HSID'], expiresAt: now + 20, hasSessionCookies: true },
       twitch: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false },
       douyu: { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false,
         canSend: false, missingCredentialFields: ['acf_uid', 'acf_did', 'dy_did', 'did', 'acf_username', 'acf_auth_wl', 'acf_dmjwt_token', 'acf_ltkid', 'acf_biz', 'acf_stk'] },
@@ -324,6 +338,130 @@ describe('private cookie storage', () => {
     release()
     await rejected
     expect(fs.existsSync(path.join(moved, 'douyu.txt'))).toBe(true)
+  })
+
+  it('requires YouTube LOGIN_INFO plus an active PAPISID/SAPISID cookie on youtube.com', async () => {
+    const manager = store()
+    for (const key of ['SAPISID', '__Secure-1PAPISID', '__Secure-3PAPISID'] as const) {
+      expect(hasAuthenticationCookies([cookie({ name: 'LOGIN_INFO' }), cookie({ name: key })], 'youtube', now)).toBe(true)
+    }
+    for (const incomplete of [
+      [cookie({ name: 'SAPISID' }), cookie({ name: 'SID' })],
+      [cookie({ name: 'LOGIN_INFO' }), cookie({ name: 'SID' })],
+      [cookie({ domain: '.google.com', name: 'LOGIN_INFO' }), cookie({ domain: '.google.com', name: 'SAPISID' })],
+      [cookie({ name: 'LOGIN_INFO', path: '/feed' }), cookie({ name: 'SAPISID' })],
+    ]) {
+      expect(hasAuthenticationCookies(incomplete, 'youtube', now)).toBe(false)
+    }
+    manager.write('youtube', [cookie({ name: 'SAPISID', expirationDate: now + 300 }), cookie({ name: 'SID', expirationDate: now + 300 })], { username: '残留频道' }, 'browser-import')
+    expect((await manager.status()).youtube).toEqual({
+      loggedIn: false,
+      cookieCount: 2,
+      authKeysPresent: ['SAPISID', 'SID'],
+      expiresAt: null,
+      hasSessionCookies: false,
+      nickname: '残留频道',
+    })
+  })
+
+  it('persists yt-dlp rotated cookies from withTemporaryCookies while preserving attributes, identity and loginSource', async () => {
+    const manager = store()
+    manager.write('youtube', [
+      cookie({ name: 'LOGIN_INFO', value: 'orig-login', httpOnly: true, sameSite: 'lax', expirationDate: now + 600 }),
+      cookie({ name: 'SAPISID', value: 'orig-sapisid', httpOnly: false, sameSite: 'no_restriction', expirationDate: now + 600 }),
+      cookie({ name: '__Secure-1PSIDTS', value: 'old-psidts', httpOnly: true, expirationDate: now + 60 }),
+    ], { username: '官方登录频道', uid: 'UC123456' }, 'official')
+
+    await manager.withTemporaryCookies('youtube', async file => {
+      // YoutubeDL.save_cookies() writes plain 7-column Netscape rows without #HttpOnly_ or custom comments.
+      fs.writeFileSync(file!, [
+        '# Netscape HTTP Cookie File',
+        `.youtube.com\tTRUE\t/\tTRUE\t${now + 600}\tLOGIN_INFO\torig-login`,
+        `.youtube.com\tTRUE\t/\tTRUE\t${now + 600}\tSAPISID\torig-sapisid`,
+        `.youtube.com\tTRUE\t/\tTRUE\t${now + 900}\t__Secure-1PSIDTS\trotated-psidts`,
+        `.youtube.com\tTRUE\t/\tTRUE\t${now + 900}\tSIDCC\trotated-sidcc`,
+        `.evil.invalid\tTRUE\t/\tTRUE\t${now + 900}\tSTEAL\tignored`,
+      ].join('\n') + '\n', 'utf8')
+    })
+
+    const saved = fs.readFileSync(path.join(root, 'cookies', 'youtube.txt'), 'utf8')
+    expect(saved).toContain('rotated-psidts')
+    expect(saved).toContain('rotated-sidcc')
+    expect(saved).not.toContain('old-psidts')
+    expect(saved).not.toContain('evil.invalid')
+    expect(saved).toContain('#HttpOnly_.youtube.com')
+    expect((await manager.status()).youtube).toMatchObject({
+      loggedIn: true,
+      loginSource: 'official',
+      nickname: '官方登录频道',
+      cookieCount: 4,
+    })
+    const set = vi.fn(async (_details: unknown) => {})
+    await manager.injectYoutubeCookies({ cookies: { set } })
+    expect(set).toHaveBeenCalledWith(expect.objectContaining({ name: 'LOGIN_INFO', httpOnly: true, sameSite: 'lax' }))
+    expect(set).toHaveBeenCalledWith(expect.objectContaining({ name: 'SAPISID', sameSite: 'no_restriction' }))
+  })
+
+  it('persists server-side cookie invalidation from withTemporaryCookies and never overwrites a newer login', async () => {
+    const manager = store()
+    const valid = [
+      cookie({ name: 'LOGIN_INFO', value: 'active-login', httpOnly: true, expirationDate: now + 600 }),
+      cookie({ name: 'SAPISID', value: 'active-sapisid', expirationDate: now + 600 }),
+    ]
+    manager.write('youtube', valid, { username: '导入频道' }, 'browser-import')
+
+    // Case 1: yt-dlp clears LOGIN_INFO via Set-Cookie during extraction.
+    await manager.withTemporaryCookies('youtube', async file => {
+      fs.writeFileSync(file!, `# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t${now + 600}\tSAPISID\tactive-sapisid\n`, 'utf8')
+    })
+    expect((await manager.status()).youtube).toEqual({
+      loggedIn: false,
+      cookieCount: 1,
+      authKeysPresent: ['SAPISID'],
+      expiresAt: null,
+      hasSessionCookies: false,
+    })
+
+    // Case 2: yt-dlp logs cookie invalidation warning and controls.invalidate() is triggered.
+    manager.write('youtube', valid, { username: '官方频道' }, 'official')
+    await expect(manager.withTemporaryCookies('youtube', async (_file, controls) => {
+      controls!.invalidate()
+      throw new Error('cookies invalidated')
+    })).rejects.toThrow('cookies invalidated')
+    expect((await manager.status()).youtube).toMatchObject({ loggedIn: false, expiresAt: null })
+    expect((await manager.status()).youtube.loginSource).toBeUndefined()
+    expect((await manager.status()).youtube.nickname).toBeUndefined()
+
+    // Case 3: A newer login completed mid-extraction is never clobbered by stale write-back.
+    manager.write('youtube', valid, { username: '旧登录' }, 'browser-import')
+    await manager.withTemporaryCookies('youtube', async (file, controls) => {
+      controls!.invalidate()
+      fs.writeFileSync(file!, `# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t${now + 600}\tSAPISID\tstale\n`, 'utf8')
+      manager.write('youtube', [
+        cookie({ name: 'LOGIN_INFO', value: 'fresh-login', expirationDate: now + 900 }),
+        cookie({ name: 'SAPISID', value: 'fresh-sapisid', expirationDate: now + 900 }),
+      ], { username: '新官方登录' }, 'official')
+    })
+    expect((await manager.status()).youtube).toMatchObject({
+      loggedIn: true,
+      loginSource: 'official',
+      nickname: '新官方登录',
+    })
+    expect(fs.readFileSync(path.join(root, 'cookies', 'youtube.txt'), 'utf8')).toContain('fresh-login')
+  })
+
+  it('resets only the selected browser profile directory while keeping saved cookies', () => {
+    const manager = store()
+    manager.write('youtube', [cookie({ name: 'LOGIN_INFO' }), cookie()])
+    const ytProfile = manager.prepareProfile('youtube')
+    const dyProfile = manager.prepareProfile('douyu')
+    fs.writeFileSync(path.join(ytProfile, 'StaleState'), 'stale')
+    fs.writeFileSync(path.join(dyProfile, 'KeepState'), 'keep')
+    expect(manager.resetProfile('youtube')).toBe(ytProfile)
+    expect(fs.existsSync(path.join(ytProfile, 'StaleState'))).toBe(false)
+    expect(fs.existsSync(ytProfile)).toBe(true)
+    expect(fs.existsSync(path.join(dyProfile, 'KeepState'))).toBe(true)
+    expect(fs.existsSync(path.join(root, 'cookies', 'youtube.txt'))).toBe(true)
   })
 })
 

@@ -28,10 +28,19 @@ describe('local error details', () => {
     expect(() => JSON.stringify(errorDetails(new Proxy({}, { ownKeys() { throw new Error('blocked') } })))).not.toThrow()
   })
   it('redacts platform credentials and native JSON input previews in renderer errors', () => {
-    const detail = errorDetails({ SESSDATA: 'session-value', privateKey: 'key-value', message: 'SESSDATA=inline-session; PRIVATE_COOKIE=inline-cookie; SAPISID=inline-auth',
-      cause: new SyntaxError('Unexpected token \'P\', "PRIVATE secret response" is not valid JSON') })
+    const detail = errorDetails({
+      SESSDATA: 'session-value',
+      LOGIN_INFO: 'youtube-login-value',
+      __Secure_1PSIDTS: 'ignored',
+      '__Secure-1PSIDTS': 'youtube-psidts-value',
+      privateKey: 'key-value',
+      message: 'SESSDATA=inline-session; PRIVATE_COOKIE=inline-cookie; SAPISID=inline-auth; LOGIN_INFO=inline-login; SIDCC=inline-sidcc; __Secure-1PSIDTS=inline-psidts',
+      cause: new SyntaxError('Unexpected token \'P\', "PRIVATE secret response" is not valid JSON'),
+    })
     const serialized = JSON.stringify(detail)
-    for (const value of ['session-value', 'key-value', 'inline-session', 'inline-cookie', 'inline-auth', 'PRIVATE secret']) expect(serialized).not.toContain(value)
+    for (const value of ['session-value', 'youtube-login-value', 'youtube-psidts-value', 'key-value', 'inline-session', 'inline-cookie', 'inline-auth', 'inline-login', 'inline-sidcc', 'inline-psidts', 'PRIVATE secret']) {
+      expect(serialized).not.toContain(value)
+    }
     expect(serialized).toContain('SyntaxError')
   })
   it('retains native DOM exception fields when a browser operation is denied', () => {

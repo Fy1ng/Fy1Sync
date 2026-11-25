@@ -127,15 +127,34 @@ describe('import identity verification and avatars', () => {
   })
   it('supports current YouTube account menu names and avatars using only a read operation', async () => {
     const fetch = vi.fn(async (_platform, url: string, init: RequestInit) => {
-      if (url.endsWith('/account')) return new Response('ytcfg.set({"EXPERIMENT_FLAGS":{"test":true}}); ytcfg.set({"LOGGED_IN":true,"SESSION_INDEX":0,"INNERTUBE_CONTEXT":{"client":{"clientVersion":"test"}}}); var ytInitialData={};')
+      if (url.endsWith('/account')) {
+        const headers = new Headers()
+        headers.append('Set-Cookie', '__Secure-1PSIDTS=rotated-psidts; Domain=.youtube.com; Path=/; Secure; HttpOnly')
+        headers.append('Set-Cookie', 'STEAL=ignored; Domain=.evil.invalid; Path=/; Secure')
+        return new Response('ytcfg.set({"EXPERIMENT_FLAGS":{"test":true}}); ytcfg.set({"LOGGED_IN":true,"SESSION_INDEX":0,"INNERTUBE_CONTEXT":{"client":{"clientVersion":"test"}}}); var ytInitialData={};', { headers })
+      }
       expect(url).toContain('/account/account_menu')
       expect(init.method).toBe('POST')
-      return new Response(JSON.stringify({ menu: { activeAccountHeaderRenderer: { accountName: { simpleText: '频道名称' } } } }))
+      expect(new Headers(init.headers).get('Cookie')).toContain('__Secure-1PSIDTS=rotated-psidts')
+      const headers = new Headers()
+      headers.append('Set-Cookie', 'SIDCC=rotated-sidcc; Domain=.youtube.com; Path=/; Secure')
+      return new Response(JSON.stringify({ menu: { activeAccountHeaderRenderer: { accountName: { simpleText: '频道名称' } } } }), { headers })
     })
     const verify = browserIdentityVerifier(fetch, () => undefined)
-    await expect(verify('youtube', cookies('.youtube.com', { SID: 'synthetic', SAPISID: 'synthetic' }), new AbortController().signal))
+    const candidate = cookies('.youtube.com', { LOGIN_INFO: 'synthetic', SID: 'synthetic', SAPISID: 'synthetic', '__Secure-1PSIDTS': 'stale' })
+    await expect(verify('youtube', candidate, new AbortController().signal))
       .resolves.toEqual({ username: '频道名称' })
+    expect(candidate.find(item => item.name === '__Secure-1PSIDTS')?.value).toBe('rotated-psidts')
+    expect(candidate.find(item => item.name === 'SIDCC')?.value).toBe('rotated-sidcc')
+    expect(candidate.some(item => item.domain.includes('evil.invalid'))).toBe(false)
     expect(fetch).toHaveBeenCalledTimes(2)
+
+    // If YouTube clears LOGIN_INFO via Set-Cookie during verification, treat the rotated session as signed out.
+    fetch.mockImplementationOnce(async () => new Response('ytcfg.set({"LOGGED_IN":true});', {
+      headers: { 'Set-Cookie': 'LOGIN_INFO=deleted; Max-Age=0; Domain=.youtube.com; Path=/; Secure; HttpOnly' },
+    }))
+    await expect(verify('youtube', cookies('.youtube.com', { LOGIN_INFO: 'stale', SAPISID: 'synthetic' }), new AbortController().signal))
+      .resolves.toBeNull()
   })
   it('verifies Twitch currentUser via GQL OAuth header, omits credentials for avatars, and treats 401 or null user as signed out', async () => {
     const token = '0123456789abcdefghijklmnopqrst'

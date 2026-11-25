@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { hasAuthenticationCookies, authenticationCookieUserId, twitchAuthToken, type BrowserCookie, type LoginPlatform } from './cookies'
+import { cookieDomainAllowed, hasAuthenticationCookies, authenticationCookieUserId, twitchAuthToken, type BrowserCookie, type LoginPlatform } from './cookies'
 import { loginIdentityUrl, parseLoginIdentity } from './loginIdentity'
 import { readPlatformBytes, readPlatformText } from '../server/platformResponse'
 import { BrowserImportError, importAbort } from './browserImportError'
@@ -11,6 +11,93 @@ export type ImportFetch = (platform: LoginPlatform, url: string, init: RequestIn
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36'
 const TWITCH_WEB_CLIENT_ID = 'kimne78kx3ncx6brgo4mv6wki5h1ko'
 const TWITCH_GQL_URL = 'https://gql.twitch.tv/gql'
+
+export function applySetCookieHeaders(cookies: BrowserCookie[], setCookies: readonly string[], requestUrl: URL,
+  platform: LoginPlatform, now = Date.now() / 1000): void {
+  if (!setCookies.length) return
+  const host = requestUrl.hostname.toLowerCase()
+  const defaultPath = (() => {
+    const pathname = requestUrl.pathname || '/'
+    if (!pathname.startsWith('/') || pathname === '/') return '/'
+    const slash = pathname.lastIndexOf('/')
+    return slash <= 0 ? '/' : pathname.slice(0, slash)
+  })()
+  for (const raw of setCookies) {
+    if (typeof raw !== 'string' || !raw || raw.length > 40960) continue
+    const parts = raw.split(';')
+    const first = parts[0] ?? ''
+    const eq = first.indexOf('=')
+    if (eq <= 0) continue
+    const name = first.slice(0, eq).trim()
+    const value = first.slice(eq + 1).trim()
+    if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name) || value.length > 32768 || /[\x00-\x20\x7f;]/.test(value)) continue
+    let hostOnly = true
+    let normalizedDomain = host
+    let cookiePath = defaultPath
+    let secure = false
+    let httpOnly = false
+    let sameSite: BrowserCookie['sameSite']
+    let maxAge: number | undefined
+    let expiresAt: number | undefined
+    let rejected = false
+    for (let index = 1; index < parts.length; index++) {
+      const part = parts[index]!.trim()
+      if (!part) continue
+      const sep = part.indexOf('=')
+      const attrName = (sep < 0 ? part : part.slice(0, sep)).trim().toLowerCase()
+      const attrVal = sep < 0 ? '' : part.slice(sep + 1).trim()
+      if (attrName === 'domain') {
+        if (!attrVal) continue
+        const candidate = attrVal.replace(/^\./, '').toLowerCase()
+        if (!(host === candidate || host.endsWith(`.${candidate}`)) || !cookieDomainAllowed(candidate, platform)) {
+          rejected = true; break
+        }
+        hostOnly = false
+        normalizedDomain = candidate
+      } else if (attrName === 'path') {
+        if (attrVal.startsWith('/') && !/[\x00-\x20\x7f]/.test(attrVal)) cookiePath = attrVal
+      } else if (attrName === 'secure') {
+        secure = true
+      } else if (attrName === 'httponly') {
+        httpOnly = true
+      } else if (attrName === 'samesite') {
+        const lower = attrVal.toLowerCase()
+        sameSite = lower === 'none' ? 'no_restriction' : lower === 'lax' ? 'lax' : lower === 'strict' ? 'strict' : undefined
+      } else if (attrName === 'max-age' && /^-?\d+$/.test(attrVal)) {
+        const delta = Number(attrVal)
+        if (Number.isSafeInteger(delta)) maxAge = Math.floor(now) + delta
+      } else if (attrName === 'expires' && attrVal) {
+        const parsed = Date.parse(attrVal)
+        if (Number.isFinite(parsed)) expiresAt = Math.floor(parsed / 1000)
+      }
+    }
+    if (rejected || !cookieDomainAllowed(normalizedDomain, platform)) continue
+    const effectiveExpiry = maxAge !== undefined ? maxAge : expiresAt
+    const matchIndex = cookies.findIndex(cookie =>
+      cookie.domain.replace(/^\./, '').toLowerCase() === normalizedDomain
+      && (cookie.hostOnly ?? !cookie.domain.startsWith('.')) === hostOnly
+      && (cookie.path || '/') === cookiePath
+      && cookie.name === name)
+    if ((effectiveExpiry !== undefined && effectiveExpiry <= now) || value === '' || (platform === 'youtube' && name === 'LOGIN_INFO' && /^deleted$/i.test(value))) {
+      if (matchIndex >= 0) cookies.splice(matchIndex, 1)
+      continue
+    }
+    const next: BrowserCookie = {
+      domain: hostOnly ? normalizedDomain : `.${normalizedDomain}`,
+      path: cookiePath,
+      name,
+      value,
+      hostOnly,
+      secure,
+      httpOnly,
+      session: effectiveExpiry === undefined,
+      ...(effectiveExpiry !== undefined ? { expirationDate: effectiveExpiry } : {}),
+      ...(sameSite !== undefined ? { sameSite } : {}),
+    }
+    if (matchIndex >= 0) cookies[matchIndex] = next
+    else cookies.push(next)
+  }
+}
 
 export function importCookieHeader(cookies: BrowserCookie[], target: URL): string {
   const selected = new Map<string, BrowserCookie>()
@@ -186,6 +273,7 @@ export function browserIdentityVerifier(fetchImpl: ImportFetch,
       'Accept-Language': 'zh-CN,zh;q=0.9', Referer: platform === 'douyin' ? 'https://live.douyin.com/' : `${target.origin}/` }
     try {
       const response = await fetchImpl(platform, target.href, { method: 'GET', headers, signal, redirect: 'error' })
+      if (platform === 'youtube') applySetCookieHeaders(cookies, response.headers.getSetCookie?.() ?? [], target, platform)
       if (!response.ok) throw new Error()
       const source = await readPlatformText(response, signal)
       if (platform !== 'youtube') {
@@ -200,12 +288,12 @@ export function browserIdentityVerifier(fetchImpl: ImportFetch,
         return { uid: identity.uid, username: nickname || `${IMPORT_PLATFORM_NAMES[platform]}账号`, ...(image ? { avatar: image } : {}) }
       }
       const config = youtubeJson(source, 'config')
-      if (config?.LOGGED_IN === false) return null
+      if (config?.LOGGED_IN === false || !hasAuthenticationCookies(cookies, 'youtube')) return null
       if (config?.LOGGED_IN !== true) throw new Error()
       let account = find(youtubeJson(source, 'data'), 'activeAccountHeaderRenderer')
         ?? find(youtubeJson(source, 'data'), 'accountHeaderRenderer')
       // These POST endpoints only read account presentation; they never select or create an account.
-      const sapisid = cookies.find(cookie => cookie.name === 'SAPISID' && cookie.domain.endsWith('youtube.com'))?.value
+      const sapisid = cookies.find(cookie => (cookie.name === 'SAPISID' || cookie.name === '__Secure-3PAPISID') && cookie.domain.endsWith('youtube.com'))?.value
       if (!account && sapisid && typeof config.INNERTUBE_CONTEXT?.client?.clientVersion === 'string') {
         const timestamp = Math.floor(Date.now() / 1000)
         const hash = createHash('sha1').update(`${timestamp} ${sapisid} ${target.origin}`).digest('hex')
@@ -216,23 +304,27 @@ export function browserIdentityVerifier(fetchImpl: ImportFetch,
             'X-Youtube-Client-Version': context.client.clientVersion,
             ...(typeof context.client.visitorData === 'string' ? { 'X-Goog-Visitor-Id': context.client.visitorData } : {}),
           }
-          const menu = await fetchImpl(platform, `${target.origin}/youtubei/v1/account/account_menu?prettyPrint=false&alt=json`, {
+          const menuUrl = new URL(`${target.origin}/youtubei/v1/account/account_menu?prettyPrint=false&alt=json`)
+          const menu = await fetchImpl(platform, menuUrl.href, {
             method: 'POST', redirect: 'error', signal,
-            headers: { ...headers, Accept: 'application/json', 'Content-Type': 'application/json', Origin: target.origin,
+            headers: { ...headers, Cookie: importCookieHeader(cookies, menuUrl), Accept: 'application/json', 'Content-Type': 'application/json', Origin: target.origin,
               Authorization: `SAPISIDHASH ${timestamp}_${hash}`, 'X-Goog-AuthUser': String(Number(config.SESSION_INDEX) || 0), ...clientHeaders },
             body: JSON.stringify({ context }),
           })
+          applySetCookieHeaders(cookies, menu.headers.getSetCookie?.() ?? [], menuUrl, platform)
           if (menu.ok) {
             const data = JSON.parse(await readPlatformText(menu, signal))
             account = find(data, 'activeAccountHeaderRenderer') ?? find(data, 'accountHeaderRenderer')
           } else await menu.body?.cancel().catch(() => {})
           if (!account) {
-            const list = await fetchImpl(platform, `${target.origin}/youtubei/v1/account/accounts_list?prettyPrint=false&alt=json`, {
+            const listUrl = new URL(`${target.origin}/youtubei/v1/account/accounts_list?prettyPrint=false&alt=json`)
+            const list = await fetchImpl(platform, listUrl.href, {
               method: 'POST', redirect: 'error', signal,
-              headers: { ...headers, Accept: 'application/json', 'Content-Type': 'application/json', Origin: target.origin,
+              headers: { ...headers, Cookie: importCookieHeader(cookies, listUrl), Accept: 'application/json', 'Content-Type': 'application/json', Origin: target.origin,
                 Authorization: `SAPISIDHASH ${timestamp}_${hash}`, 'X-Goog-AuthUser': String(Number(config.SESSION_INDEX) || 0), ...clientHeaders },
               body: JSON.stringify({ context }),
             })
+            applySetCookieHeaders(cookies, list.headers.getSetCookie?.() ?? [], listUrl, platform)
             if (list.ok) account = selectedYoutubeAccount(JSON.parse(await readPlatformText(list, signal)))
             else await list.body?.cancel().catch(() => {})
           }

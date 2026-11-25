@@ -39,7 +39,7 @@ export class BrowserImportFixtures {
         bilibili: { DedeUserID: '42', SESSDATA: 'synthetic-session' },
         huya: { udb_uid: '42', udb_biztoken: 'synthetic-session' },
         douyin: { sessionid: 'synthetic-session', sessionid_ss: 'synthetic-session' },
-        youtube: { SID: 'synthetic-session', SAPISID: 'synthetic-session' },
+        youtube: { LOGIN_INFO: 'synthetic-login', SID: 'synthetic-session', SAPISID: 'synthetic-session' },
         twitch: { 'auth-token': '0123456789abcdefghijklmnopqrst' },
       }
       return Object.entries(fields[platform]).map(([name, value]): BrowserCookie => ({ domain: platform === 'twitch' ? '.twitch.tv' : `.${platform}.com`,

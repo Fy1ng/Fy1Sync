@@ -9,7 +9,7 @@ export function diagnosticDetails(value: unknown): ErrorDetails {
     if (++nodes > 256) return '[truncated]'
     if (typeof raw === 'string') return raw.slice(0, ERROR_DETAIL_LIMITS.string * 2)
       .replace(/\b((?:set-cookie|cookie|authorization|proxy-authorization)\s*=\s*)[^\r\n]*/gi, '$1[redacted]')
-      .replace(/(["']?(?:[\w-]{0,128}(?:cookie|auth|session|token|password|passwd|secret|ticket|credential)[\w-]{0,128}|SESSDATA|SAPISID|SID|HSID|SSID|APISID|DedeUserID|udb_biztoken)["']?\s*[:=]\s*)(?:\[redacted\]|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&}\]]+)/gi, '$1[redacted]')
+      .replace(/(["']?(?:[\w-]{0,128}(?:cookie|auth|session|token|password|passwd|secret|ticket|credential)[\w-]{0,128}|SESSDATA|SAPISID|LOGIN_INFO|SIDCC|__Secure-[13]P(?:APISID|SID(?:TS|CC)?)|SID|HSID|SSID|APISID|DedeUserID|udb_biztoken)["']?\s*[:=]\s*)(?:\[redacted\]|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&}\]]+)/gi, '$1[redacted]')
     if (!raw || typeof raw !== 'object') return raw
     if (utilTypes.isProxy(raw)) return '[proxy omitted]'
     if (seen.has(raw)) return '[circular]'

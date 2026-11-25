@@ -4,7 +4,7 @@ export type ErrorDetails = { [key: string]: ErrorDetailValue }
 export interface DisplayError { message: string; detail?: ErrorDetails }
 export const ERROR_DETAIL_LIMITS = { depth: 5, keys: 32, items: 16, string: 4096, total: 16384 } as const
 
-const SECRET_KEY = /(?:auth|cookie|password|passwd|secret|token|api.?key|csrf|credential|session|signature|ticket|private.?key|^sign$|^sid$|^sessdata$|^sapisid$|^hsid$|^ssid$|^apisid$|^access.?key$)/i
+const SECRET_KEY = /(?:auth|cookie|password|passwd|secret|token|api.?key|csrf|credential|session|signature|ticket|private.?key|^sign$|^sid$|^sessdata$|^sapisid$|^hsid$|^ssid$|^apisid$|^login_info$|^sidcc$|^__secure-[13]p(?:apisid|sid(?:ts|cc)?)$|^access.?key$)/i
 const OMIT_KEY = /^(?:request|response|config|options|headers|socket|connection|agent|dispatcher|env|environment|process)$/i
 const REDACTED = '[redacted]'
 
@@ -22,7 +22,7 @@ export function redactErrorText(value: string): string {
     })
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9+/_=.-]+/gi, '$1 ' + REDACTED)
     .replace(/\b(?:set-cookie|cookie|authorization|proxy-authorization)\s*[:=]\s*[^\r\n]*/gi, match => match.slice(0, match.search(/[:=]/) + 1) + ' ' + REDACTED)
-    .replace(/(["']?(?:[\w-]{0,128}(?:cookie|auth|session|token|password|passwd|secret|ticket|credential|api[_-]?key|csrf|signature|private[_-]?key)[\w-]{0,128}|SESSDATA|SAPISID|SID|HSID|SSID|APISID|sign)["']?\s*[:=]\s*)(?:\[redacted\]|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&}\]]+)/gi, '$1' + REDACTED)
+    .replace(/(["']?(?:[\w-]{0,128}(?:cookie|auth|session|token|password|passwd|secret|ticket|credential|api[_-]?key|csrf|signature|private[_-]?key)[\w-]{0,128}|SESSDATA|SAPISID|SIDCC|SID|HSID|SSID|APISID|LOGIN_INFO|__Secure-[13]P(?:APISID|SID(?:TS|CC)?)|sign)["']?\s*[:=]\s*)(?:\[redacted\]|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&}\]]+)/gi, '$1' + REDACTED)
     .replace(/Unexpected token[^\r\n]* is not valid JSON/g, 'Unexpected token [input omitted] is not valid JSON')
     .replace(/\b[A-Z]:[\\/]Users[\\/][^\\/\s]+/gi, '[user]')
     .replace(/\/(?:home|Users)\/[^/\s]+/g, '[user]')

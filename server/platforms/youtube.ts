@@ -191,10 +191,11 @@ export function selectYouTubeFormat(formats: YouTubeFormat[], requested?: string
 }
 
 /** Why YouTube refused a stream, as fixed categories. Extractor text never reaches the UI. */
-export type YouTubeRefusal = 'bot-check' | 'sign-in' | 'members-only' | 'age-restricted' | 'geo-restricted' | 'private'
+export type YouTubeRefusal = 'cookies-invalidated' | 'bot-check' | 'sign-in' | 'members-only' | 'age-restricted' | 'geo-restricted' | 'private'
 
 /** Wording per refusal, shown as is. src/studio/sources.tsx decides which ones a sign-in can lift. */
 export const YOUTUBE_REFUSALS: Record<YouTubeRefusal, { message: string; hint?: string }> = {
+  'cookies-invalidated': { message: 'YouTube 登录状态已失效，请重新登录', hint: '如从日常浏览器导入，浏览器后台轮换会使登录态失效，建议使用独立窗口登录' },
   'bot-check': { message: 'YouTube 要求验证不是机器人，当前网络暂时不能观看', hint: '换一个代理节点，或稍后重试' },
   'sign-in': { message: 'YouTube 要求登录后才能观看此直播' },
   'members-only': { message: '此直播仅限频道会员观看', hint: '需要有该频道会员资格的 YouTube 账号' },
@@ -244,6 +245,7 @@ function formatFailure(info: unknown): Extract<ResolveResult, { ok: false }> {
 
 /** Order matters: "Sign in to confirm you're not a bot" and "...confirm your age" are sign-in messages too. */
 function refusalFor(message: string): YouTubeRefusal | undefined {
+  if (/cookies invalidated|cookies are no longer valid/i.test(message)) return 'cookies-invalidated'
   if (/age.restricted|confirm your age/i.test(message)) return 'age-restricted'
   if (/not a bot|bot check/i.test(message)) return 'bot-check'
   if (/members.only/i.test(message)) return 'members-only'

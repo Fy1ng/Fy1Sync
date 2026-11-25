@@ -257,6 +257,7 @@ describe('YouTube recorded live formats', () => {
   })
 
   it.each([
+    ['YouTube cookies invalidated', 'cookies-invalidated'],
     ['Sign in to confirm you are not a bot', 'bot-check'],
     ['Sign in to confirm your age', 'age-restricted'],
     ['Join this channel to get access to members-only content', 'members-only'],
@@ -271,6 +272,8 @@ describe('YouTube recorded live formats', () => {
   it('keeps the fixed refusal wording across the IPC boundary and hides any other text', () => {
     expect(sanitizedFailure({ ok: false, failure: { code: 'restricted', reason: 'bot-check', message: 'Cookie=secret' } }))
       .toMatchObject({ ok: false, failure: { code: 'restricted', reason: 'bot-check', ...YOUTUBE_REFUSALS['bot-check'] } })
+    expect(sanitizedFailure({ ok: false, failure: { code: 'restricted', reason: 'cookies-invalidated', message: 'LOGIN_INFO=secret' } }))
+      .toMatchObject({ ok: false, failure: { code: 'restricted', reason: 'cookies-invalidated', ...YOUTUBE_REFUSALS['cookies-invalidated'] } })
     expect(JSON.stringify(sanitizedFailure({ ok: false, failure: { code: 'restricted', message: 'Cookie=secret' } }))).not.toMatch(/secret/)
   })
 

@@ -275,7 +275,7 @@ function YouTubeAccount(): React.ReactNode {
         <span className="account-identity">
           {youtube?.nickname && <><AccountAvatar username={youtube.nickname} avatar={youtube.avatar} /><b>{youtube.nickname}</b></>}
           {loadError ? '登录状态读取失败' : status === null ? '正在检查登录状态' : youtube?.loggedIn ? '已登录' : '未登录'}
-          {youtube?.expiresAt ? <span className="muted">，{new Date(youtube.expiresAt * 1000).toLocaleDateString('zh-CN')} 到期</span> : null}
+          {youtube?.loggedIn && youtube.expiresAt ? <span className="muted">，{new Date(youtube.expiresAt * 1000).toLocaleDateString('zh-CN')} 到期</span> : null}
         </span>
         <span className="row-end">
           <BrowserImportButton platform="youtube" disabled={busy} />

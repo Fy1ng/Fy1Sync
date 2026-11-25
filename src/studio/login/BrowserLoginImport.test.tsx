@@ -1,6 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiClient, type ApiResult } from '../../app/apiClient'
+import { forgetAll } from '../../app/remembered'
+import type { LoginStatus } from '../../../electron/cookies'
 import type { BrowserImportOutcome, BrowserImportPreview } from '../../../electron/browserImportContracts'
 import { BrowserImportButton, BrowserLoginImportProvider } from './BrowserLoginImport'
 
@@ -30,7 +32,7 @@ beforeEach(() => {
   vi.mocked(apiClient.cancelBrowserImport).mockResolvedValue({ ok: true, value: { cancelled: true } })
   vi.mocked(apiClient.loginStatus).mockResolvedValue({ ok: false, code: 'fixture', message: '测试状态' })
 })
-afterEach(() => { cleanup(); vi.clearAllMocks() })
+afterEach(() => { cleanup(); forgetAll(); vi.clearAllMocks() })
 
 async function begin(): Promise<HTMLElement> {
   render(<BrowserLoginImportProvider><BrowserImportButton batch /></BrowserLoginImportProvider>)
@@ -158,5 +160,108 @@ describe('browser close confirmation in import dialog', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: '关闭浏览器' }))
     fireEvent.click(within(dialog).getByRole('button', { name: '确认关闭' }))
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('未能完全关闭对应浏览器')
+  })
+})
+
+describe('official YouTube login protection in browser import', () => {
+  const signedOut = { loggedIn: false, cookieCount: 0, authKeysPresent: [], expiresAt: null, hasSessionCookies: false }
+  const makeStatus = (youtube: Partial<LoginStatus['youtube']>): LoginStatus => ({
+    youtube: { ...signedOut, ...youtube },
+    twitch: signedOut,
+    douyu: signedOut,
+    bilibili: signedOut,
+    huya: signedOut,
+    douyin: signedOut,
+  })
+
+  it('leaves YouTube unchecked by default when an official login exists and requires secondary confirmation on check', async () => {
+    vi.mocked(apiClient.loginStatus).mockResolvedValue({
+      ok: true,
+      value: makeStatus({ loggedIn: true, loginSource: 'official', cookieCount: 4, authKeysPresent: ['LOGIN_INFO', 'SAPISID'] }),
+    })
+    render(<BrowserLoginImportProvider><BrowserImportButton batch /></BrowserLoginImportProvider>)
+    fireEvent.click(screen.getByRole('button', { name: '批量导入账号' }))
+    const dialog = await screen.findByRole('dialog', { name: '批量导入账号' })
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '识别账号' })).toBeEnabled())
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '识别账号' }))
+    const douyuBox = await within(dialog).findByRole('checkbox', { name: '导入斗鱼' })
+    const youtubeBox = within(dialog).getByRole('checkbox', { name: '导入YouTube' })
+    expect(douyuBox).toBeChecked()
+    expect(youtubeBox).not.toBeChecked()
+    expect(within(dialog).getByText('已有官方登录态，不建议使用浏览器导入')).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '导入所选账号（1）' })).toBeEnabled()
+
+    // Clicking YouTube opens secondary confirmation without checking it yet.
+    fireEvent.click(youtubeBox)
+    expect(youtubeBox).not.toBeChecked()
+    const confirmBox = within(dialog).getByRole('alertdialog', { name: '确认勾选 YouTube 浏览器导入' })
+    expect(confirmBox).toHaveTextContent('检测到已有官方登录态，不建议使用浏览器导入')
+    expect(within(confirmBox).getByRole('button', { name: '暂不勾选' })).toHaveFocus()
+
+    // Escape dismisses only the secondary confirmation and keeps YouTube unchecked.
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+    expect(dialog).toBeInTheDocument()
+    expect(youtubeBox).not.toBeChecked()
+    expect(youtubeBox).toHaveFocus()
+
+    // Clicking cancel button also keeps YouTube unchecked.
+    fireEvent.click(youtubeBox)
+    fireEvent.click(within(dialog).getByRole('button', { name: '暂不勾选' }))
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+    expect(youtubeBox).not.toBeChecked()
+
+    // Confirming checks YouTube and updates the selected count.
+    fireEvent.click(youtubeBox)
+    fireEvent.click(within(dialog).getByRole('button', { name: '确认勾选' }))
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+    expect(youtubeBox).toBeChecked()
+    expect(within(dialog).getByRole('button', { name: '导入所选账号（2）' })).toBeEnabled()
+  })
+
+  it('protects single-platform YouTube import when official login is active, while keeping browser-import sessions checked by default', async () => {
+    vi.mocked(apiClient.previewBrowserLogins).mockImplementation(async args => ({
+      ok: true,
+      value: { id: args.requestId, profile, expiresAt: Date.now() + 300000, accounts: [accounts[1]!] },
+    }))
+    vi.mocked(apiClient.loginStatus).mockResolvedValueOnce({
+      ok: true,
+      value: makeStatus({ loggedIn: true, loginSource: 'official', cookieCount: 4, authKeysPresent: ['LOGIN_INFO', 'SAPISID'] }),
+    }).mockResolvedValueOnce({
+      ok: true,
+      value: makeStatus({ loggedIn: true, loginSource: 'official', cookieCount: 4, authKeysPresent: ['LOGIN_INFO', 'SAPISID'] }),
+    })
+
+    const { unmount } = render(<BrowserLoginImportProvider><BrowserImportButton platform="youtube" /></BrowserLoginImportProvider>)
+    fireEvent.click(screen.getByRole('button', { name: '从浏览器导入' }))
+    const dialog = await screen.findByRole('dialog', { name: '从浏览器导入 YouTube 账号' })
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '识别账号' })).toBeEnabled())
+    fireEvent.click(within(dialog).getByRole('button', { name: '识别账号' }))
+
+    const youtubeBox = await within(dialog).findByRole('checkbox', { name: '导入YouTube' })
+    const importButton = within(dialog).getByRole('button', { name: '导入账号' })
+    expect(youtubeBox).not.toBeChecked()
+    expect(importButton).toBeDisabled()
+
+    fireEvent.click(youtubeBox)
+    fireEvent.click(within(dialog).getByRole('button', { name: '确认勾选' }))
+    expect(youtubeBox).toBeChecked()
+    expect(importButton).toBeEnabled()
+    unmount()
+    forgetAll()
+
+    // When existing YouTube login came from browser-import, default selection stays checked without confirmation.
+    vi.mocked(apiClient.loginStatus).mockResolvedValue({
+      ok: true,
+      value: makeStatus({ loggedIn: true, loginSource: 'browser-import', cookieCount: 4, authKeysPresent: ['LOGIN_INFO', 'SAPISID'] }),
+    })
+    render(<BrowserLoginImportProvider><BrowserImportButton platform="youtube" /></BrowserLoginImportProvider>)
+    fireEvent.click(screen.getByRole('button', { name: '从浏览器导入' }))
+    const secondDialog = await screen.findByRole('dialog', { name: '从浏览器导入 YouTube 账号' })
+    await waitFor(() => expect(within(secondDialog).getByRole('button', { name: '识别账号' })).toBeEnabled())
+    fireEvent.click(within(secondDialog).getByRole('button', { name: '识别账号' }))
+    expect(await within(secondDialog).findByRole('checkbox', { name: '导入YouTube' })).toBeChecked()
+    expect(within(secondDialog).queryByRole('alertdialog')).toBeNull()
   })
 })

@@ -4,14 +4,14 @@ import { spawn } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import type { Readable, Writable } from 'node:stream'
 import { CookieStore, hasAuthenticationCookies, isLoginPlatform, LOGIN_PLATFORMS, douyinBrowserCookieFingerprint, validAccountIdentity } from './cookies'
-import type { BrowserCookie, BrowserAccountIdentity, CookieHeaderPlatform, CookieStoreOptions, LoginCookieSession, LoginPlatform, LoginResult, LoginStatus, YoutubeCookieSession } from './cookies'
+import type { BrowserCookie, BrowserAccountIdentity, CookieHeaderPlatform, CookieStoreOptions, LoginCookieSession, LoginPlatform, LoginResult, LoginStatus, TemporaryCookieControls, YoutubeCookieSession } from './cookies'
 import { powershellEnvironment } from './privateStorage'
 import type { EmbeddedLoginDriver } from './embeddedLoginContracts'
 import { diagnosticDetails } from '../server/errorDetails'
 import { douyinCookieFingerprint, parseDouyinSigningSnapshot, type DouyinSigningLookup, type DouyinSigningMaterial, type DouyinSigningSnapshot } from '../server/douyin/signingMaterial'
 import type { DouyinSigningStore } from './douyinSigningStore'
 
-export type { LoginPlatform, LoginResult, LoginStatus, PlatformLoginStatus } from './cookies'
+export type { LoginPlatform, LoginResult, LoginSource, LoginStatus, PlatformLoginStatus } from './cookies'
 export type LoginDestination = 'yuba' | `room:${string}` | `fish-act:${string}`
 
 export type LoginErrorCode = 'chrome-not-found' | 'login-busy' | 'login-cancelled' | 'login-failed' | 'login-incomplete' | 'cookie-storage-failed'
@@ -202,7 +202,7 @@ export class ChromeLoginDriver implements BrowserLoginDriver {
 
   private async readCookies(executable: string, profile: string, platform: LoginPlatform, signal: AbortSignal): Promise<BrowserCookie[]> {
     cancelled(signal)
-    const child = this.spawn(executable, [`--user-data-dir=${profile}`, ...CHROME_FLAGS, '--headless=new', '--remote-debugging-pipe', 'about:blank'], {
+    const child = this.spawn(executable, [`--user-data-dir=${profile}`, ...CHROME_FLAGS, '--disable-background-networking', '--headless=new', '--remote-debugging-pipe', 'about:blank'], {
       shell: false, detached: this.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'],
     })
     let closeRequested = false
@@ -361,7 +361,9 @@ export class LoginManager {
           const executable = this.options.chromeExecutable ?? (this.options.findChrome ?? findSystemChrome)()
           if (!executable) throw new LoginError('chrome-not-found')
           let profile: string
-          try { profile = this.store.prepareProfile(platform) } catch (error) { throw new LoginError('cookie-storage-failed', platform, error) }
+          try {
+            profile = platform === 'youtube' ? this.store.resetProfile('youtube') : this.store.prepareProfile(platform)
+          } catch (error) { throw new LoginError('cookie-storage-failed', platform, error) }
           cookies = await this.driver.login(executable, profile, platform, controller.signal, destination)
         }
         cancelled(controller.signal)
@@ -374,7 +376,7 @@ export class LoginManager {
         this.identityRetryAt.set(platform, identity ? Infinity : this.seconds() + IDENTITY_RETRY_SECONDS)
         try {
           const result = await this.store.writeAsync(platform, cookies, controller.signal,
-            () => !this.disposed && !this.loggingOut.has(platform) && revision === this.revisions[platform], identity)
+            () => !this.disposed && !this.loggingOut.has(platform) && revision === this.revisions[platform], identity, 'official')
           if (platform==='douyin' && signing) {
             const current=()=>!this.disposed && !this.loggingOut.has(platform) && revision===this.revisions[platform]
             let ready=false
@@ -416,7 +418,14 @@ export class LoginManager {
 
   async loginStatus(): Promise<LoginStatus> {
     await this.backfillIdentities()
-    try { return await this.store.status() } catch (error) { throw new LoginError('cookie-storage-failed', undefined, error) }
+    try {
+      const status = await this.store.status()
+      // Legacy YouTube files predate Fy1Sync-Login-Source: only browser imports recorded an account header.
+      if (status.youtube.loggedIn && !status.youtube.loginSource) {
+        status.youtube = { ...status.youtube, loginSource: status.youtube.nickname ? 'browser-import' : 'official' }
+      }
+      return status
+    } catch (error) { throw new LoginError('cookie-storage-failed', undefined, error) }
   }
 
   private seconds(): number { return this.options.now?.() ?? Date.now() / 1000 }
@@ -471,7 +480,7 @@ export class LoginManager {
     const current = () => !this.disposed && !this.loggingOut.has(platform) && revision === this.revisions[platform]
     const promise = (async () => {
       try {
-        const result = await this.store.writeAsync(platform, cookies, controller.signal, current, identity)
+        const result = await this.store.writeAsync(platform, cookies, controller.signal, current, identity, 'browser-import')
         if (platform === 'douyin' && this.options.douyinSigning) {
           this.signingBlocked = true
           this.signingProblem = undefined
@@ -561,13 +570,14 @@ export class LoginManager {
     }
   }
 
-  async withTemporaryCookies<T>(platform: 'youtube', callback: (file?: string) => Promise<T>): Promise<T> {
+  async withTemporaryCookies<T>(platform: 'youtube', callback: (file?: string, controls?: TemporaryCookieControls) => Promise<T>): Promise<T> {
     if (this.disposed || this.loggingOut.has(platform)) throw new LoginError('login-cancelled')
     const revision = this.revisions[platform]
-    return await this.store.withTemporaryCookies(platform, async file => {
-      if (this.disposed || this.loggingOut.has(platform) || revision !== this.revisions[platform]) throw new LoginError('login-cancelled')
-      return callback(file)
-    })
+    const current = () => !this.disposed && !this.loggingOut.has(platform) && revision === this.revisions[platform]
+    return await this.store.withTemporaryCookies(platform, async (file, controls) => {
+      if (!current()) throw new LoginError('login-cancelled')
+      return callback(file, controls)
+    }, current)
   }
 
   /** Session cookies stay entirely in main and are invalidated by login changes. */

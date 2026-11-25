@@ -5,7 +5,7 @@ export const DIAGNOSTIC_STATUSES = ['started', 'available', 'unavailable', 'prep
 export const DIAGNOSTIC_WARNINGS = ['authentication', 'token-provider', 'javascript-runtime', 'network', 'formats-unavailable', 'runtime-dependency'] as const
 export const DIAGNOSTIC_CODES = [
   'unsupported-url', 'not-live', 'room-not-found', 'upstream-error', 'restricted', 'needs-manual-url',
-  'bot-check', 'sign-in', 'members-only', 'age-restricted', 'geo-restricted', 'private',
+  'cookies-invalidated', 'bot-check', 'sign-in', 'members-only', 'age-restricted', 'geo-restricted', 'private',
   'youtube-formats-empty', 'youtube-hls-separated', 'youtube-hls-unsupported', 'youtube-hls-missing',
   'tool-missing', 'tool-invalid-path', 'tool-not-executable', 'provider-prepare-failed',
   'extractor-failed', 'invalid-metadata', 'spawn-failed', 'runtime-unavailable', 'timeout', 'output-limit',

@@ -492,6 +492,57 @@ describe('optional yt-dlp PO token script integration', () => {
     expect(pluginCleanup).not.toHaveBeenCalled()
   })
 
+  it('marks rotated YouTube cookies invalidated immediately without plain or anonymous retries', async () => {
+    vi.mocked(locateYouTubePotProvider).mockResolvedValue(provider)
+    const events: YtDlpDiagnostic[] = []
+    const invalidate = vi.fn()
+    const sync = vi.fn(() => ({ hadAuth: true, hasAuth: false }))
+    const children: ChildProcess[] = []
+    const launch = vi.fn(() => {
+      const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter(), kill: vi.fn() }) as unknown as ChildProcess
+      children.push(child)
+      return child
+    }) as unknown as typeof spawn
+    const runner = new YtDlpRunner({
+      electronPath: '/electron.exe',
+      networkRuntimePath: '/application/runtime/network-runtime.cjs',
+      cookies: { withTemporaryCookies: vi.fn(async (_platform, callback) => callback('/private/copy.txt', { invalidate, sync })) },
+      spawn: launch,
+      env: { PATH: 'kept' },
+      timeoutMs: 1000,
+      diagnostic: event => events.push(event),
+    })
+
+    const pending = runner.resolve(url)
+    const rejected = expect(pending).rejects.toMatchObject({ message: 'YouTube cookies invalidated', code: 'cookies-invalidated' })
+    await vi.waitFor(() => expect(children).toHaveLength(1))
+    children[0]!.stderr!.emit('data', Buffer.from(
+      'WARNING: [youtube] The provided YouTube account cookies are no longer valid. They have likely been rotated in the browser as a security measure.\n'
+      + 'ERROR: [youtube] abcdefghijk: Sign in to confirm you\u2019re not a bot. LOGIN_INFO=SECRET',
+    ))
+    children[0]!.emit('close', 1)
+    await rejected
+    expect(invalidate).toHaveBeenCalledOnce()
+    expect(children).toHaveLength(1)
+    expect(events).toContainEqual(expect.objectContaining({ stage: 'hls', status: 'failed', code: 'cookies-invalidated', warnings: ['authentication'] }))
+    expect(events).toContainEqual(expect.objectContaining({ stage: 'resolve', status: 'failed', code: 'cookies-invalidated' }))
+    expect(JSON.stringify(events)).not.toMatch(/SECRET|LOGIN_INFO|rotated/)
+  })
+
+  it('upgrades bot-check failure to cookies-invalidated when cookie sync detects cleared authentication', async () => {
+    const h = harness()
+    const invalidate = vi.fn()
+    const sync = vi.fn(() => ({ hadAuth: true, hasAuth: false }))
+    h.cookies.withTemporaryCookies.mockImplementationOnce(async (_platform, callback) => callback('/private/copy.txt', { invalidate, sync }))
+    const pending = h.runner.resolve(url)
+    const rejected = expect(pending).rejects.toMatchObject({ message: 'YouTube cookies invalidated', code: 'cookies-invalidated' })
+    await vi.waitFor(() => expect(h.launch).toHaveBeenCalledOnce())
+    h.child.stderr!.emit('data', Buffer.from('ERROR: [youtube] abcdefghijk: Sign in to confirm you are not a bot'))
+    h.child.emit('close', 1)
+    await rejected
+    expect(sync).toHaveBeenCalledOnce()
+  })
+
   it('skips provider discovery and preparation for an explicit HLS-only retry', async () => {
     vi.mocked(locateYouTubePotProvider).mockResolvedValue(provider)
     const h = harness()
