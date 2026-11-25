@@ -826,6 +826,74 @@ body,
   border-radius: 4px;
 }
 
+.studio .pip-ad-badge {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--drift);
+  background: var(--smoke-deep);
+  border: 1px solid color-mix(in srgb, var(--drift) 40%, transparent);
+  border-radius: 4px;
+}
+
+.studio .commercial-banner {
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(640px, calc(100% - 32px));
+  padding: 7px 8px 7px 14px;
+  font-size: 13px;
+  color: var(--chalk);
+  background: var(--smoke-deep);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--line-2);
+  border-radius: 18px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+  transform: translateX(-50%);
+  transition: top 220ms var(--ease);
+  animation: pop-in 180ms var(--ease);
+}
+
+.studio .theater[data-chrome='off']:not(:has(.pop[data-open])) .commercial-banner,
+.studio .streams-stage[data-split] .commercial-banner {
+  top: 16px;
+}
+
+.studio .commercial-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--drift);
+}
+
+.studio .commercial-banner button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--ash);
+  border-radius: 50%;
+}
+
+.studio .commercial-banner button:hover {
+  color: var(--chalk);
+  background: rgb(255 255 255 / 10%);
+}
+
+.studio .commercial-banner button .icon {
+  width: 13px;
+  height: 13px;
+}
+
 .studio .pip-hide {
   position: absolute;
   top: 6px;

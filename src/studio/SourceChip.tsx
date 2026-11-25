@@ -10,6 +10,7 @@ import { ErrorActionRow, ErrorText } from '../ui/ErrorDetails'
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { draftFromDirectOptions, EMPTY_DIRECT_DRAFT, hasDirectOptions, parseDirectDraft, type DirectStreamDraft } from '../core/directStream'
+import { isCommercialBreakActive, TWITCH_COMMERCIAL_BREAK_NOTICE } from '../core/commercialBreak'
 import type { SourceRole } from '../core/types'
 import { bufferStatusText } from '../ui/bufferStatus'
 import { DirectStreamFields } from './DirectStreamFields'
@@ -156,6 +157,14 @@ function SourcePanel({ role, onDone, onSchedule, previewToggle }: {
           </ErrorActionRow>
         </div>
       ) : <p className="muted">{bufferStatusText(buffer)}</p>)}
+      {isCommercialBreakActive({
+        platform: state.descriptor?.platform,
+        status: state.status,
+        commercialBreak: buffer?.commercialBreak,
+        bufferSeconds: buffer?.seconds,
+        currentTime: state.currentTime,
+        timebase: state.timebase,
+      }) && <p className="note-warn" role="status">{TWITCH_COMMERCIAL_BREAK_NOTICE}</p>}
 
       {chat && !selectedChat && <p className="muted" role="status">{PLATFORM_LABEL[chat.platform]}弹幕：未选择此房间</p>}
       <DanmakuRoom />

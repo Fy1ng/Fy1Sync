@@ -8,6 +8,7 @@ import { MediaRegistry } from '../server/mediaProxy'
 import { classifyNetworkFailure, type StreamFailure } from '../server/networkFailure'
 import type { NetworkContext } from '../server/networkPolicy'
 import type { MediaAccess } from '../server/mediaAccess'
+import { detectTwitchCommercialBreak } from '../server/platforms/twitchCommercial'
 import type { Resolver } from '../server/safeFetch'
 import { isAppOrigin } from './security'
 
@@ -18,6 +19,8 @@ export interface GatewayInput {
   readFailure: () => StreamFailure | undefined
   /** Main-only cumulative observed media bytes for this input and its HLS children. */
   readBytes: () => number
+  /** Whether the latest media playlist on this input's context is in a stitched commercial break. */
+  readCommercialBreak: () => boolean
   release: () => void
 }
 interface Listener { server: Server; registry: MediaRegistry; origin: string; host: string }
@@ -46,6 +49,7 @@ export class MediaGateway {
   private readonly requests = new Set<AbortController>()
   private readonly failures = new WeakMap<NetworkContext, StreamFailure>()
   private readonly byteCounts = new WeakMap<NetworkContext, number>()
+  private readonly commercialBreaks = new WeakMap<NetworkContext, boolean>()
   constructor(private readonly config: ProxyConfig, private readonly options: MediaGatewayOptions = {}) {}
 
   async register(url: string, headers: Record<string, string> | undefined, network: NetworkContext, access?: MediaAccess): Promise<GatewayInput> {
@@ -62,6 +66,7 @@ export class MediaGateway {
       proxyUrl: '',
       readFailure: () => { const failure = this.failures.get(inputNetwork); return failure ? { ...failure } : undefined },
       readBytes: () => this.byteCounts.get(inputNetwork) ?? 0,
+      readCommercialBreak: () => this.commercialBreaks.get(inputNetwork) === true,
       release: () => lifetime.abort(),
     }
   }
@@ -102,6 +107,11 @@ export class MediaGateway {
           onFailure: (failure, network) => { if (network) this.failures.set(network, { ...failure }) },
           onBytes: (bytes, network) => {
             if (network) this.byteCounts.set(network, Math.min(Number.MAX_SAFE_INTEGER, (this.byteCounts.get(network) ?? 0) + bytes))
+          },
+          onPlaylist: ({ body }, network) => {
+            if (!network) return
+            const active = detectTwitchCommercialBreak(body)
+            if (active !== null) this.commercialBreaks.set(network, active)
           },
         })
         listener = { server, registry, origin, host }

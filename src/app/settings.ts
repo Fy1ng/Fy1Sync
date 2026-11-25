@@ -31,6 +31,8 @@ export interface DanmakuSettings {
   speed: number
   opacity: number
   area: DanmakuArea
+  /** Explicit upper bound on visible danmaku lines; 0 means unlimited (follow `area`). */
+  maxLines: number
   /** Fraction of incoming messages to keep, 0..1. */
   density: number
   filter: DanmakuFilterSettings
@@ -87,6 +89,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     speed: 160,
     opacity: 0.9,
     area: 'half',
+    maxLines: 0,
     density: 1,
     filter: { ...DEFAULT_FILTER_SETTINGS },
     showGifts: false,
@@ -141,6 +144,13 @@ function area(value: unknown): DanmakuArea {
     : DEFAULT_SETTINGS.danmaku.area
 }
 
+function maxLines(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_SETTINGS.danmaku.maxLines
+  const rounded = Math.round(value)
+  if (rounded <= 0) return 0
+  return Math.min(500, rounded)
+}
+
 function steps(stored: Partial<AppSettings>): Pick<AppSettings, 'smallStepSeconds' | 'largeStepSeconds'> {
   const { small, large } = normalizeSteps(stored.smallStepSeconds, stored.largeStepSeconds, {
     small: DEFAULT_SETTINGS.smallStepSeconds,
@@ -178,6 +188,7 @@ export function mergeSettings(raw: unknown): AppSettings {
       speed: clamp(danmaku.speed, 40, 480, defaults.danmaku.speed),
       opacity: clamp(danmaku.opacity, 0.1, 1, defaults.danmaku.opacity),
       area: area(danmaku.area),
+      maxLines: maxLines(danmaku.maxLines),
       density: clamp(danmaku.density, 0.05, 1, defaults.danmaku.density),
       filter: {
         blockedPatterns: strings(filter.blockedPatterns),

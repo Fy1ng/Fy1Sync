@@ -9,24 +9,50 @@
  * the saved value coming back as the source of truth.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useState, type RefObject } from 'react'
 import { ErrorText, useErrorState } from '../ui/ErrorDetails'
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
-import type { DanmakuPreferences } from '../core/danmakuProcessing'
+import { maxDanmakuLanes } from '../core/danmakuLanes'
+import { danmakuLaneHeight, type DanmakuPreferences } from '../core/danmakuProcessing'
 import type { MessageAffixes } from '../core/messageComposition'
 import { useComposer } from './composer'
 import { Icon, Range, Segmented, Switch } from './kit'
 import { isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
 
-export function DanmakuPanel({ onClose }: { onClose: () => void }): React.ReactNode {
+const FALLBACK_STAGE_HEIGHT_PX = 720
+
+function fallbackStageHeight(): number {
+  return typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerHeight : FALLBACK_STAGE_HEIGHT_PX
+}
+
+export function DanmakuPanel({ onClose, stageRef }: {
+  onClose: () => void
+  stageRef?: RefObject<HTMLElement | null>
+}): React.ReactNode {
   const session = useSession()
   const { settings, danmakuPreferences: prefs, danmaku: connection } = useSessionSnapshot()
   const readOnly = isReadOnlyDanmakuRoom(connection.room)
   const danmaku = settings.danmaku
   const writes = settings.douyuWrites
   const composer = useComposer()
+  const [stageHeight, setStageHeight] = useState<number>(fallbackStageHeight)
   const [problem, setProblem, problemDetail] = useErrorState(null)
+
+  useLayoutEffect(() => {
+    const target = stageRef?.current
+      ?? (typeof document !== 'undefined' ? document.querySelector<HTMLElement>('.danmaku-stage') : null)
+    const measure = (): void => {
+      const measured = target?.clientHeight ?? 0
+      setStageHeight(measured > 0 ? measured : fallbackStageHeight())
+    }
+    measure()
+    if (!target || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [stageRef])
+
   const setPrefs = (patch: Partial<DanmakuPreferences>): void => {
     setProblem(null)
     void apiClient.feature('setDanmakuPreferences', patch).then((result) => {
@@ -36,6 +62,10 @@ export function DanmakuPanel({ onClose }: { onClose: () => void }): React.ReactN
   }
   const set = session.updateDanmakuSettings.bind(session)
   const invalid = new Map(session.invalidPatterns.map((entry) => [entry.source, entry.message]))
+  const laneHeight = danmakuLaneHeight(danmaku.fontSize, prefs.verticalGapPx)
+  const maxStageLines = maxDanmakuLanes(stageHeight, laneHeight)
+  const unlimitedSlot = maxStageLines + 1
+  const lineSliderValue = danmaku.maxLines <= 0 ? unlimitedSlot : Math.min(danmaku.maxLines, maxStageLines)
 
   return (
     <aside className="float-panel" aria-label="弹幕设置"
@@ -58,9 +88,12 @@ export function DanmakuPanel({ onClose }: { onClose: () => void }): React.ReactN
           onChange={(value) => set({ density: value / 100 })} />
         <div className="field-stack">
           <span className="field-label">占用画面</span>
-          <Segmented label="占用画面" value={danmaku.area} onChange={(area) => set({ area })}
+          <Segmented label="占用画面" value={danmaku.area} onChange={(area) => set({ area, maxLines: 0 })}
             options={[{ value: 'quarter', label: '顶部' }, { value: 'half', label: '上半屏' }, { value: 'full', label: '全屏' }]} />
         </div>
+        <Range label="最大行数" value={lineSliderValue} min={1} max={unlimitedSlot} step={1} unit="行"
+          format={(v) => v >= unlimitedSlot ? '不限' : `${v} 行`}
+          onChange={(v) => set({ maxLines: v >= unlimitedSlot ? 0 : v })} />
         <Switch label="弹幕浮于摄像头上方" checked={danmaku.danmakuOverCamera}
           onChange={(danmakuOverCamera) => set({ danmakuOverCamera })} />
 

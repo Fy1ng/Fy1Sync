@@ -25,6 +25,8 @@ export interface MediaDeps {
   onFailure?: (failure: StreamFailure, network?: NetworkContext) => void
   /** Observed media bytes delivered to the consumer, excluding rewritten playlists. */
   onBytes?: (bytes: number, network?: NetworkContext) => void
+  /** Decoded HLS playlist body before URI rewriting, scoped to the request's network context. */
+  onPlaylist?: (playlist: { url: string | URL; body: string }, network?: NetworkContext) => void
 }
 type Resource = { url: string; touched: number; headers?: Record<string,string>; network?: NetworkContext; access: MediaAccess; identity: string; children: Set<string>; readers: number }
 
@@ -216,6 +218,7 @@ export class MediaRegistry {
         const body = new TextDecoder().decode(bytes)
         cleanup()
         if (shouldRewrite(result.finalUrl, type, body)) {
+          try { this.deps.onPlaylist?.({ url: result.finalUrl, body }, resource.network ?? this.deps.network) } catch { /* Diagnostics cannot interrupt media delivery. */ }
           const nextChildren = new Set<string>()
           let rewritten: string
           try {

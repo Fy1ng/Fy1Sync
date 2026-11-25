@@ -4,6 +4,7 @@ import {
   DanmakuLaneAllocator,
   PinnedSlotAllocator,
   estimateTextWidth,
+  maxDanmakuLanes,
 } from './danmakuLanes'
 import { compileDanmakuFilter } from './danmakuFilter'
 
@@ -248,6 +249,20 @@ describe('DanmakuLaneAllocator', () => {
     const allocator = new DanmakuLaneAllocator(layout)
     allocator.setLayout({ ...layout, areaHeight: 60 })
     expect(allocator.laneCount).toBe(2)
+  })
+
+  it('caps lane count with maxLanes while respecting full-stage capacity', () => {
+    expect(maxDanmakuLanes(1080, 34)).toBe(31)
+    expect(maxDanmakuLanes(0, 34)).toBe(1)
+    expect(new DanmakuLaneAllocator({ ...layout, maxLanes: 3 }).laneCount).toBe(3)
+    expect(new DanmakuLaneAllocator({ ...layout, maxLanes: 0 }).laneCount).toBe(10)
+    expect(new DanmakuLaneAllocator({ ...layout, areaHeight: 95, maxLanes: 8 }).laneCount).toBe(3)
+    const allocator = new DanmakuLaneAllocator(layout)
+    allocator.setLayout({ ...layout, maxLanes: 2 })
+    expect(allocator.laneCount).toBe(2)
+    expect(allocator.allocateScroll(0, 200)?.lane).toBe(0)
+    expect(allocator.allocateScroll(0, 200)?.lane).toBe(1)
+    expect(allocator.allocateScroll(0, 200)).toBeNull()
   })
 })
 

@@ -70,7 +70,15 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
     const settings = settingsRef.current
     const { width, height } = sizeRef.current
     const laneHeight = danmakuLaneHeight(settings.fontSize, gapRef.current)
-    return { laneHeight, areaHeight: Math.max(laneHeight, height * AREA_FRACTION[settings.area]), width, speed: settings.speed }
+    const customLines = settings.maxLines > 0
+    const areaHeight = Math.max(laneHeight, customLines ? height : height * AREA_FRACTION[settings.area])
+    return {
+      laneHeight,
+      areaHeight,
+      ...(customLines ? { maxLanes: settings.maxLines } : {}),
+      width,
+      speed: settings.speed,
+    }
   }, [])
 
   const cancelLeave = (): void => {
@@ -119,7 +127,7 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
   }, [layoutFor])
 
   useEffect(() => { layerRef.current?.setLayout(layoutFor(), performance.now()) },
-    [danmaku.fontSize, danmaku.area, danmaku.speed, snapshot.danmakuPreferences.verticalGapPx, layoutFor])
+    [danmaku.fontSize, danmaku.area, danmaku.maxLines, danmaku.speed, snapshot.danmakuPreferences.verticalGapPx, layoutFor])
 
   // "合并计数" raises the count of a message already on screen; follow it there.
   useEffect(() => session.subscribeChat(() => {

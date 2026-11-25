@@ -11,7 +11,9 @@ import { displayError } from '../../core/errorDetails'
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { apiClient } from '../../app/apiClient'
+import { isCommercialBreakActive, TWITCH_COMMERCIAL_BREAK_NOTICE } from '../../core/commercialBreak'
 import type { PlaybackSeekResult } from '../../media/playbackControls'
+import { readTimebase } from '../../media/timebase'
 import type { PipState } from '../../../electron/pipManager'
 import type { StreamSessionView } from '../../../electron/streamSessions'
 import { Icon } from '../kit'
@@ -34,7 +36,7 @@ export function streamTitle(view: StreamSessionView): { platform: string | null;
   return { platform, room }
 }
 
-function statusOf(view: StreamSessionView, playbackFailed: boolean): { tone: 'wait' | 'ok' | 'bad'; text: string } {
+function statusOf(view: StreamSessionView, playbackFailed: boolean, commercialBreak: boolean): { tone: 'wait' | 'ok' | 'bad'; text: string } {
   if (view.phase === 'opening') return { tone: 'wait', text: '载入中' }
   if (view.phase === 'failed') return { tone: 'bad', text: '载入失败' }
   if (playbackFailed) return { tone: 'bad', text: '播放失败' }
@@ -42,6 +44,7 @@ function statusOf(view: StreamSessionView, playbackFailed: boolean): { tone: 'wa
   if (buffer === 'reconnecting') return { tone: 'wait', text: '重新连接中' }
   if (buffer === 'stalled') return { tone: 'wait', text: '数据停滞' }
   if (buffer === 'failed') return { tone: 'bad', text: '缓冲失败' }
+  if (commercialBreak) return { tone: 'wait', text: '广告时段' }
   return { tone: 'ok', text: '直播' }
 }
 
@@ -87,6 +90,7 @@ export function StreamWindow({ view, placement, selected, pip, registry, onSelec
   const [busy, setBusy] = useState(false)
   const [problem, setProblem, problemDetail] = useErrorState()
   const [notice, setNotice] = useState<string | null>(null)
+  const [commercialActive, setCommercialActive] = useState(false)
 
   // Move the stable element into this window and follow what it does.
   useLayoutEffect(() => {
@@ -163,6 +167,32 @@ export function StreamWindow({ view, placement, selected, pip, registry, onSelec
   }, [id, registry, view.phase, stream?.url, stream?.kind, stream?.quality])
 
   useEffect(() => () => { if (noticeTimer.current) clearTimeout(noticeTimer.current) }, [])
+
+  const commercialBreak = view.buffer?.commercialBreak
+  const bufferSeconds = view.buffer?.seconds
+  useEffect(() => {
+    if (stream?.platform !== 'twitch' || !commercialBreak || view.phase === 'failed' || playbackFailed) {
+      setCommercialActive(false)
+      return
+    }
+    const entry = registry.peek(id)
+    const video = entry?.media.video
+    const evaluate = (): void => {
+      setCommercialActive(isCommercialBreakActive({
+        platform: stream.platform,
+        status: view.phase === 'ready' ? 'ready' : 'loading',
+        commercialBreak,
+        bufferSeconds,
+        currentTime: video?.currentTime,
+        timebase: video ? readTimebase(video) : null,
+      }))
+    }
+    evaluate()
+    if (!video) return
+    const events = ['loadedmetadata', 'timeupdate', 'seeked', 'playing'] as const
+    for (const name of events) video.addEventListener(name, evaluate)
+    return () => { for (const name of events) video.removeEventListener(name, evaluate) }
+  }, [id, registry, stream?.platform, view.phase, playbackFailed, commercialBreak, bufferSeconds])
 
   const media = (): MediaEntry | null => registry.peek(id)
 
@@ -280,7 +310,7 @@ export function StreamWindow({ view, placement, selected, pip, registry, onSelec
 
   const shown = placement ? draft ?? placement.rect : null
   const title = streamTitle(view)
-  const status = statusOf(view, playbackFailed)
+  const status = statusOf(view, playbackFailed, commercialActive)
   const qualities = stream?.qualities ?? []
   const loginStatus = useLoginStatus(qualities.some((option) => option.requiresLogin))
   const signedIn = isLoginPlatformKey(stream?.platform) && Boolean(loginStatus?.[stream.platform]?.loggedIn)
@@ -332,6 +362,9 @@ export function StreamWindow({ view, placement, selected, pip, registry, onSelec
             )}
           </div>
         ) : null}
+        {commercialActive && !notice && !playbackError && (
+          <span className="xs-notice xs-commercial-notice" role="status">{TWITCH_COMMERCIAL_BREAK_NOTICE}</span>
+        )}
         {notice && <span className="xs-notice" role="status">{notice}</span>}
         {playbackError && !playbackFailed && <span className="xs-notice" role="alert"><ErrorText error={playbackDetail ?? playbackError} message={playbackError} /></span>}
       </div>

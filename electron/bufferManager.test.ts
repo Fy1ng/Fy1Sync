@@ -156,6 +156,27 @@ describe('BufferManager', () => {
     expect(f.current().seconds).toBe(4.5)
     expect(await (await f.manager.handle(new Request(url))).text()).toContain('#EXTINF:3.000000,')
   })
+  it('tracks stitched commercial break segment ranges and drops them once evicted', async () => {
+    let ad = true
+    const f = await fixture({ retainSeconds: 6 })
+    await start(f, vi.fn(async () => ({ url: 'https://cdn.example/twitch.m3u8', readCommercialBreak: () => ad })))
+    await writeManifest(f, 0, [2, 2])
+    await f.clock.advance(100)
+    await until(() => f.current().state === 'ready')
+    expect(f.current().commercialBreak).toEqual({ live: true, ranges: [[0, 4]] })
+
+    ad = false
+    await writeManifest(f, 0, [2, 2, 2, 2])
+    await f.clock.advance(100)
+    await until(() => f.current().seconds === 6)
+    // First 2 s ad segment shifted out under retainSeconds=6; remaining window has 2 s ad + 4 s live.
+    expect(f.current().commercialBreak).toEqual({ live: false, ranges: [[0, 2]] })
+
+    await writeManifest(f, 0, [2, 2, 2, 2, 2])
+    await f.clock.advance(100)
+    await until(() => f.current().completeSegments === 3 && f.current().commercialBreak === undefined)
+    expect(f.current()).not.toHaveProperty('commercialBreak')
+  })
   it('requires video packet progress even when sealed audio-only segments exist', async () => {
     const f = await fixture()
     await start(f)

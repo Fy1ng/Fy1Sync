@@ -16,10 +16,16 @@ import { hasSensitiveHeaders } from '../server/safeFetch'
 export { cleanProxyEnvironment } from '../server/networkPolicy'
 
 export type Role = BufferRole
-export interface BufferInput { url: string; audioUrl?: string; headers?: Record<string, string>; realtime?: boolean; adaptive?: AdaptiveSource; qualityHeight?: number; fallbackFromHeight?: number; proxyUrl?: string; network?: NetworkContext; readFailure?: () => StreamFailure | undefined; gatewayHls?: boolean; fmp4?: boolean }
+export interface BufferCommercialBreak {
+  /** Whether the upstream live edge is currently inside a stitched commercial break. */
+  live: boolean
+  /** Contiguous [startSeconds, endSeconds] offsets within the published buffer window. */
+  ranges: [number, number][]
+}
+export interface BufferInput { url: string; audioUrl?: string; headers?: Record<string, string>; realtime?: boolean; adaptive?: AdaptiveSource; qualityHeight?: number; fallbackFromHeight?: number; proxyUrl?: string; network?: NetworkContext; readFailure?: () => StreamFailure | undefined; readCommercialBreak?: () => boolean; gatewayHls?: boolean; fmp4?: boolean }
 export interface BufferNotice { code: 'youtube-adaptive-fallback'; fromHeight: number; toHeight: number }
 export type BufferPhase = 'starting' | 'buffering' | 'ready' | 'stalled' | 'reconnecting' | 'failed' | 'stopped'
-export interface BufferState { role: Role; state: BufferPhase; seconds: number; attempt?: number; retryInMs?: number; reason?: string; notice?: BufferNotice; failure?: StreamFailure; retriesRemaining?: number; hasVideo?: boolean; completeSegments?: number }
+export interface BufferState { role: Role; state: BufferPhase; seconds: number; attempt?: number; retryInMs?: number; reason?: string; notice?: BufferNotice; commercialBreak?: BufferCommercialBreak; failure?: StreamFailure; retriesRemaining?: number; hasVideo?: boolean; completeSegments?: number }
 export interface BufferChild {
   pid?: number
   once(event: 'error', listener: (error: Error) => void): unknown
@@ -50,13 +56,14 @@ export interface BufferManagerOptions {
   adaptiveTransport?: typeof adaptiveTransport
 }
 export interface HlsSegment { uri: string; duration: number; programDateTime?: string; discontinuity?: boolean; init?: string }
-interface Segment extends HlsSegment { sequence: number }
+interface Segment extends HlsSegment { sequence: number; commercialBreak?: boolean }
 interface Run {
   id: number; child?: BufferChild; exited: boolean; finishing: boolean; lastSequence: number
   poll?: unknown; refresh?: Promise<void>; finishTask?: Promise<void>; lastProgress: number; firstProgress?: number
   abort?: AbortController; transport?: AdaptiveTransport; pulling?: Promise<void>
   startedAt: number; lastPacketProgress: number; frame: number; outputTime: number; hasVideo: boolean; failure?: StreamFailure; proxy: boolean
   readFailure?: () => StreamFailure | undefined
+  readCommercialBreak?: () => boolean
 }
 interface RoleSession {
   role: Role; generation: string; directory: string; resolve: (hlsOnly?: boolean) => Promise<BufferInput>; cancelled: boolean
@@ -188,11 +195,14 @@ export class BufferManager {
   }
   private emit(session: RoleSession, state: BufferPhase, extra: Partial<BufferState> = {}): void {
     if (!this.current(session)) return
+    const commercialBreak = commercialBreakFor(session)
     this.notify({ role: session.role, state, seconds: duration(session.segments),
       hasVideo: session.run?.hasVideo ?? false, completeSegments: session.segments.length,
       ...(Number.isFinite(this.retryLimit(session)) ? { retriesRemaining: Math.max(0, this.retryLimit(session) - session.attempts)
         + (session.adaptiveHeight && !session.hlsOnly ? Math.max(0, this.adaptiveFailures - session.adaptiveAttempts) : 0) } : {}),
-      ...(session.notice ? { notice: session.notice } : {}), ...extra })
+      ...(session.notice ? { notice: session.notice } : {}),
+      ...(commercialBreak ? { commercialBreak } : {}),
+      ...extra })
   }
   private notify(state: BufferState): void {
     if (JSON.stringify(this.states.get(state.role)) === JSON.stringify(state)) return
@@ -247,6 +257,7 @@ export class BufferManager {
       run.startedAt = run.lastPacketProgress = run.lastProgress
       run.proxy = Boolean(input.proxyUrl)
       run.readFailure = input.readFailure
+      run.readCommercialBreak = input.readCommercialBreak
       const child: BufferChild = (this.options.spawn ?? spawn)(tool, args, {
         shell: false, windowsHide: true, detached: process.platform !== 'win32',
         env: cleanProxyEnvironment(process.env),
@@ -330,7 +341,10 @@ export class BufferManager {
         run.failure ??= classifyNetworkFailure(undefined, readyBefore ? 'stall' : 'playback-not-ready')
         this.emit(session, 'stalled', { failure: run.failure })
         await this.finish(session, run, readyBefore ? 'upstream-stalled' : 'playback-not-ready')
-      } else this.schedulePoll(session, run)
+      } else {
+        if (run.readCommercialBreak) this.emit(session, this.isReady(session, run) ? 'ready' : 'buffering')
+        this.schedulePoll(session, run)
+      }
     } catch { this.fail(session, 'buffer-write-failed') }
   }
   private refresh(session: RoleSession, run: Run): Promise<void> {
@@ -351,6 +365,7 @@ export class BufferManager {
     }
     if (!this.current(session, run)) return
     const parsed = parseHlsSegments(raw)
+    const inCommercialBreak = run.readCommercialBreak?.() === true
     let added = false
     for (let index = 0; index < parsed.segments.length; index++) {
       const sourceSequence = parsed.sequence + index
@@ -361,7 +376,7 @@ export class BufferManager {
       // A published EXTINF must refer to a real, nonempty file closed by temp_file.
       const sealed = await stat(path.join(session.directory, segment.uri))
       if (!sealed.isFile() || sealed.size === 0) throw new Error('empty or missing sealed segment')
-      session.segments.push({ ...segment, sequence: session.nextSequence++, discontinuity: segment.discontinuity || (run.lastSequence < 0 && session.nextSequence > 1) })
+      session.segments.push({ ...segment, sequence: session.nextSequence++, discontinuity: segment.discontinuity || (run.lastSequence < 0 && session.nextSequence > 1), ...(inCommercialBreak ? { commercialBreak: true } : {}) })
       run.lastSequence = sourceSequence
       added = true
     }
@@ -594,6 +609,22 @@ function hlsOutput(directory: string, runId: number, fmp4: boolean): string[] {
     '-hls_segment_filename', path.posix.join(dir, `segment_${runId}_%09d.${fmp4 ? 'm4s' : 'ts'}`), path.posix.join(dir, `raw_${runId}.m3u8`)]
 }
 function duration(segments: HlsSegment[]): number { return Math.round(segments.reduce((total, segment) => total + segment.duration, 0) * 1_000_000) / 1_000_000 }
+function commercialBreakFor(session: RoleSession): BufferCommercialBreak | undefined {
+  const live = session.run && !session.run.finishing ? session.run.readCommercialBreak?.() === true : false
+  const ranges: [number, number][] = []
+  let cursor = 0
+  for (const segment of session.segments) {
+    const next = Math.round((cursor + segment.duration) * 1_000) / 1_000
+    if (segment.commercialBreak) {
+      const last = ranges.at(-1)
+      if (last && Math.abs(last[1] - cursor) < 1e-3) last[1] = next
+      else ranges.push([cursor, next])
+    }
+    cursor = next
+  }
+  if (!live && ranges.length === 0) return undefined
+  return { live, ranges }
+}
 function positive(value: number): number { if (!Number.isFinite(value) || value <= 0) throw new Error('invalid buffer timing'); return value }
 function assertRole(role: Role): void { if (!isStreamId(role)) throw new Error('无效的播放会话') }
 

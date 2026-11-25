@@ -294,6 +294,17 @@
   pointer-events: none;
 }
 
+.studio .xs-notice.xs-commercial-notice {
+  max-width: calc(100% - 20px);
+  padding: 5px 12px;
+  color: var(--drift);
+  background: var(--smoke-deep);
+  border: 1px solid color-mix(in srgb, var(--drift) 36%, transparent);
+  border-radius: 10px;
+  white-space: normal;
+  text-align: center;
+}
+
 .studio .xs-controls {
   display: flex;
   align-items: center;

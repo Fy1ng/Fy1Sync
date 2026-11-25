@@ -23,10 +23,18 @@ export interface LaneLayout {
   laneHeight: number
   /** Usable height in px for danmaku. */
   areaHeight: number
+  /** Optional explicit cap on visible lanes; <= 0 or omitted follows `areaHeight`. */
+  maxLanes?: number
   /** Container width in px. */
   width: number
   /** Scroll speed in px/s. */
   speed: number
+}
+
+/** Maximum lanes that fit top-to-bottom within `height` (at least 1). */
+export function maxDanmakuLanes(height: number, laneHeight: number): number {
+  if (!Number.isFinite(height) || height <= 0 || !Number.isFinite(laneHeight) || laneHeight <= 0) return 1
+  return Math.max(1, Math.floor(height / laneHeight))
 }
 
 export interface LaneAssignment {
@@ -120,8 +128,11 @@ export class DanmakuLaneAllocator {
   }
 
   private resizeLanes(): void {
-    const { areaHeight, laneHeight } = this.layout
-    const count = laneHeight > 0 ? Math.max(1, Math.floor(areaHeight / laneHeight)) : 1
+    const { areaHeight, laneHeight, maxLanes } = this.layout
+    const byArea = maxDanmakuLanes(areaHeight, laneHeight)
+    const count = maxLanes !== undefined && Number.isFinite(maxLanes) && maxLanes > 0
+      ? Math.max(1, Math.min(byArea, Math.floor(maxLanes)))
+      : byArea
     if (count === this.freeAt.length) return
     const next = new Array<number>(count).fill(0)
     for (let lane = 0; lane < Math.min(count, this.freeAt.length); lane += 1) {

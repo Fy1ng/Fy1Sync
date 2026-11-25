@@ -36,7 +36,7 @@ export class Acquisition implements AcquisitionService {
     diagnostics?: AcquisitionDiagnosticRecorder
     proxy: ProxyConfig
     network?: (platform: PlatformKind | null) => NetworkContext
-    mediaInput?: (url: string, headers: Record<string,string> | undefined, network: NetworkContext, access?: MediaAccess) => Promise<{url:string;proxyUrl:string;readFailure?:()=>StreamFailure|undefined;readBytes?:()=>number;release?:()=>void}>
+    mediaInput?: (url: string, headers: Record<string,string> | undefined, network: NetworkContext, access?: MediaAccess) => Promise<{url:string;proxyUrl:string;readFailure?:()=>StreamFailure|undefined;readBytes?:()=>number;readCommercialBreak?:()=>boolean;release?:()=>void}>
     fetchImpl?: typeof fetch
     resolveDouyuRoom?: ResolveDouyuRoom
     dns?: Resolver
@@ -149,6 +149,7 @@ export class Acquisition implements AcquisitionService {
         ...(resolved.stream.audioUrl ? { audioUrl: audioMedia?.url ?? resolved.stream.audioUrl } : {}),
         gatewayHls: Boolean(media && resolved.stream.kind === 'hls'), network, proxyUrl: media?.proxyUrl ?? route?.proxyUrl ?? '',
         readFailure: (media?.readFailure || audioMedia?.readFailure) ? () => media?.readFailure?.() ?? audioMedia?.readFailure?.() : undefined,
+        ...(resolved.stream.platform === 'twitch' && media?.readCommercialBreak ? { readCommercialBreak: media.readCommercialBreak } : {}),
         headers: media ? undefined : resolved.stream.headers
           ?? (!media && resolved.stream.platform === 'bilibili' ? { Referer: 'https://live.bilibili.com/' } : undefined),
         ...(resolved.stream.platform === 'direct' || resolved.stream.platform === 'twitch' || resolved.stream.audioUrl ? { fmp4: true } : {}),

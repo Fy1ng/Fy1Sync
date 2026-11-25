@@ -13,6 +13,7 @@ import { useDockFold, useFullscreen, useMediaMount, useOverlayVisibility, usePub
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { SEEK_SHORTCUT_STEPS, shortcutActionFor, shortcutTitle } from '../app/shortcuts'
 import { useCamera } from '../app/useCamera'
+import { isCommercialBreakActive, TWITCH_COMMERCIAL_BREAK_NOTICE } from '../core/commercialBreak'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { CameraOverlay } from '../ui/CameraOverlay'
 import { INITIAL_UPSCALE_STATE } from '../ui/useCameraUpscale'
@@ -133,6 +134,28 @@ function StudioView({ settingsAt, setSettingsAt }: {
 
   const mainRole = snapshot.mainRole
   const otherRole: SourceRole = mainRole === 'official' ? 'commentary' : 'official'
+  const mainMedia = snapshot.media[mainRole]
+  const otherMedia = snapshot.media[otherRole]
+  const mainCommercialBreak = isCommercialBreakActive({
+    platform: mainMedia.descriptor?.platform,
+    status: mainMedia.status,
+    commercialBreak: snapshot.buffers[mainRole]?.commercialBreak,
+    bufferSeconds: snapshot.buffers[mainRole]?.seconds,
+    currentTime: mainMedia.currentTime,
+    timebase: mainMedia.timebase,
+  })
+  const otherCommercialBreak = isCommercialBreakActive({
+    platform: otherMedia.descriptor?.platform,
+    status: otherMedia.status,
+    commercialBreak: snapshot.buffers[otherRole]?.commercialBreak,
+    bufferSeconds: snapshot.buffers[otherRole]?.seconds,
+    currentTime: otherMedia.currentTime,
+    timebase: otherMedia.timebase,
+  })
+  const [commercialDismissed, setCommercialDismissed] = useState(false)
+  useEffect(() => {
+    if (!mainCommercialBreak) setCommercialDismissed(false)
+  }, [mainCommercialBreak, mainRole, mainMedia.descriptor?.url])
   const mountMain = useMediaMount(mainRole)
   const mountOther = useMediaMount(otherRole)
   const empty = snapshot.media.official.status === 'empty' && snapshot.media.commentary.status === 'empty'
@@ -262,6 +285,15 @@ function StudioView({ settingsAt, setSettingsAt }: {
             {(split) => <>
               <div className="theater-main" ref={mountMain} data-role={mainRole} />
               <DanmakuStage onReply={() => setChat(true)} />
+              {mainCommercialBreak && !commercialDismissed && (
+                <div className="commercial-banner" role="status" aria-live="polite">
+                  <span className="commercial-dot" aria-hidden="true" />
+                  <span>{TWITCH_COMMERCIAL_BREAK_NOTICE}</span>
+                  <button type="button" aria-label="关闭广告提示" onClick={() => setCommercialDismissed(true)}>
+                    <Icon name="close" />
+                  </button>
+                </div>
+              )}
               {camera.available && camera.config && <CameraOverlay key={camera.room} config={camera.config} onWindow={camera.setWindow} stageRef={primary} fitStage={split} onUpscaleState={setCameraUpscale} />}
 
               {snapshot.media[otherRole].status !== 'empty' && !previewHidden ? (
@@ -270,6 +302,7 @@ function StudioView({ settingsAt, setSettingsAt }: {
                   mountRef={mountOther}
                   stageRef={primary}
                   fitStage={split}
+                  commercialBreak={otherCommercialBreak}
                   onSwap={() => session.swapRoles()}
                   onHide={() => setPreviewHidden(true)}
                 />
@@ -315,7 +348,7 @@ function StudioView({ settingsAt, setSettingsAt }: {
             </div>
           </footer>
 
-          {tuning && <DanmakuPanel onClose={() => setTuning(false)} />}
+          {tuning && <DanmakuPanel stageRef={primary} onClose={() => setTuning(false)} />}
           {intake && <Intake onClose={closeIntake} onSchedule={() => setScheduleFrom('intake')} onFavorites={() => setFavorites(true)} />}
         </main>
 

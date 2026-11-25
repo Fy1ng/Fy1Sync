@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSession } from '../app/SessionContext'
+import { TWITCH_COMMERCIAL_BREAK_BADGE, TWITCH_COMMERCIAL_BREAK_NOTICE } from '../core/commercialBreak'
 import type { SourceRole } from '../core/types'
 import {
   clampAspectWindow,
@@ -68,6 +69,7 @@ export function PreviewPip({
   mountRef,
   stageRef,
   fitStage = false,
+  commercialBreak = false,
   onSwap,
   onHide,
 }: {
@@ -75,6 +77,7 @@ export function PreviewPip({
   mountRef: (node: HTMLDivElement | null) => void
   stageRef: React.RefObject<HTMLDivElement | null>
   fitStage?: boolean
+  commercialBreak?: boolean
   onSwap: () => void
   onHide: () => void
 }): React.ReactNode {
@@ -332,6 +335,9 @@ export function PreviewPip({
         title="切换为主画面"
       >
         <span className="pip-mount" ref={mountRef} />
+        {commercialBreak && (
+          <span className="pip-ad-badge" title={TWITCH_COMMERCIAL_BREAK_NOTICE}>{TWITCH_COMMERCIAL_BREAK_BADGE}</span>
+        )}
         <span className="pip-label">{ROLE_LABEL[role]}</span>
       </button>
       <button type="button" className="pip-hide" onClick={onHide} aria-label="隐藏小画面" title="隐藏小画面">

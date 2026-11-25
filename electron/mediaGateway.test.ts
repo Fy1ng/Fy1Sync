@@ -102,6 +102,26 @@ describe('FFmpeg controlled media gateway', () => {
     expect(second.readBytes()).toBe(0)
   })
 
+  it('tracks stitched commercial breaks per input context and clears when live segments resume', async () => {
+    let ad = true
+    const upstream = vi.fn(async () => new Response(
+      ad
+        ? '#EXTM3U\n#EXT-X-DATERANGE:ID="stitched-ad-1",CLASS="twitch-stitched-ad",START-DATE="2026-11-25T14:00:00.000Z",DURATION=15\n#EXTINF:2.0,Amazon\nad.ts\n'
+        : '#EXTM3U\n#EXTINF:2.0,live\nlive.ts\n',
+      { headers: { 'content-type': 'application/vnd.apple.mpegurl' } },
+    )) as unknown as typeof fetch
+    const media = gateway(upstream)
+    const first = await media.register(target, undefined, context())
+    const second = await media.register(target, undefined, context())
+    expect(first.readCommercialBreak()).toBe(false)
+    await local(first.url)
+    expect(first.readCommercialBreak()).toBe(true)
+    expect(second.readCommercialBreak()).toBe(false)
+    ad = false
+    await local(first.url)
+    expect(first.readCommercialBreak()).toBe(false)
+  })
+
   it('exposes only opaque loopback capabilities and rewrites every nested media target', async () => {
     const network = context()
     const upstream = vi.fn(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {

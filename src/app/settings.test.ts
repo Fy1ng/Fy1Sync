@@ -195,14 +195,27 @@ describe('mergeSettings', () => {
   })
 
   it('rejects enum values it does not know', () => {
-    const merged = mergeSettings({
+    expect(mergeSettings({
       audioRole: 'both',
       smallStepSeconds: 'tiny',
       danmaku: { area: 'everywhere' },
-    } as unknown)
-    expect(merged.audioRole).toBe('commentary')
-    expect(merged.smallStepSeconds).toBe(DEFAULT_SETTINGS.smallStepSeconds)
-    expect(merged.danmaku.area).toBe(DEFAULT_SETTINGS.danmaku.area)
+    } as unknown)).toMatchObject({
+      audioRole: 'commentary',
+      smallStepSeconds: DEFAULT_SETTINGS.smallStepSeconds,
+      danmaku: { area: DEFAULT_SETTINGS.danmaku.area, maxLines: 0 },
+    })
+  })
+
+  it('normalizes custom danmaku maxLines while keeping 0 as unlimited for legacy blobs', () => {
+    expect(DEFAULT_SETTINGS.danmaku.maxLines).toBe(0)
+    expect(mergeSettings({ danmaku: { area: 'quarter' } }).danmaku.maxLines).toBe(0)
+    expect(mergeSettings({ danmaku: { maxLines: 3 } }).danmaku.maxLines).toBe(3)
+    expect(mergeSettings({ danmaku: { maxLines: 4.6 } }).danmaku.maxLines).toBe(5)
+    expect(mergeSettings({ danmaku: { maxLines: -2 } }).danmaku.maxLines).toBe(0)
+    expect(mergeSettings({ danmaku: { maxLines: 9999 } }).danmaku.maxLines).toBe(500)
+    for (const bad of [null, '3', true, Number.NaN, Number.POSITIVE_INFINITY, {}, []]) {
+      expect(mergeSettings({ danmaku: { maxLines: bad } } as unknown).danmaku.maxLines).toBe(0)
+    }
   })
 
   it('only accepts the two offered detection windows', () => {
