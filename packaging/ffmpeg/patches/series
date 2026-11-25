@@ -1,1 +1,1 @@
-tls-default-verify.patch
+# Upstream FFmpeg 9.x enables TLS peer certificate verification by default.

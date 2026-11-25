@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "buildId": "8.1.3-5c4f5744cd-fy1sync.1",
-  "revision": "n8.1.3-23-g5c4f5744cd",
+  "buildId": "9.1-74e4393595-fy1sync.1",
+  "revision": "n9.1",
   "extraVersion": "fy1sync.1",
-  "commit": "5c4f5744cd60943125a78db692b728210102f255",
-  "sourceDateEpoch": 1783296000,
+  "commit": "74e4393595cf2b5857f0da925c4e0dd74ea306e5",
+  "sourceDateEpoch": 1795132800,
   "locale": "C",
   "timezone": "UTC",
   "jobs": 8,
@@ -12,10 +12,10 @@
   "assets": [
     {
       "id": "ffmpeg",
-      "file": "ffmpeg-5c4f5744cd60943125a78db692b728210102f255.tar.gz",
-      "url": "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/5c4f5744cd60943125a78db692b728210102f255",
-      "size": 16922668,
-      "sha256": "a34b707c67140a37ddd11c5475fa09135301a7c667f1d78c5702d544bba6ce77"
+      "file": "ffmpeg-74e4393595cf2b5857f0da925c4e0dd74ea306e5.tar.gz",
+      "url": "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/74e4393595cf2b5857f0da925c4e0dd74ea306e5",
+      "size": 18036608,
+      "sha256": "4ae3618b0d38a14bb8f86a6b90de63c4b6b55d4de8e812a4900d07d2188b54de"
     },
     {
       "id": "zlib",
@@ -67,14 +67,7 @@
       "sha256": "9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74"
     }
   ],
-  "patches": [
-    {
-      "file": "patches/tls-default-verify.patch",
-      "url": "repo:packaging/ffmpeg/patches/tls-default-verify.patch",
-      "size": 295,
-      "sha256": "3a7a285b13b2b6b1c860f5a4318148d2784c1282486c36f8be07e70518086009"
-    }
-  ],
+  "patches": [],
   "configure": [
     "--target-os=mingw32",
     "--arch=x86_64",
@@ -184,6 +177,7 @@
     ],
     "filter": [
       "aformat",
+      "alphamerge",
       "anull",
       "atrim",
       "crop",
@@ -216,13 +210,13 @@
     "VERSION3": 0
   },
   "runtimeFiles": [
-    "avcodec-62.dll",
-    "avfilter-11.dll",
-    "avformat-62.dll",
-    "avutil-60.dll",
+    "avcodec-63.dll",
+    "avfilter-12.dll",
+    "avformat-63.dll",
+    "avutil-61.dll",
     "ffmpeg.exe",
     "ffprobe.exe",
-    "swscale-9.dll"
+    "swscale-10.dll"
   ],
   "systemImports": [
     "bcrypt.dll",
@@ -247,11 +241,11 @@
     "api-ms-win-crt-utility-l1-1-0.dll"
   ],
   "abi": {
-    "avutil": "60.26.103",
-    "avcodec": "62.28.103",
-    "avformat": "62.12.103",
-    "avfilter": "11.14.103",
-    "swscale": "9.5.103"
+    "avutil": "61.19.100",
+    "avcodec": "63.24.100",
+    "avformat": "63.16.100",
+    "avfilter": "12.8.100",
+    "swscale": "10.5.100"
   },
   "toolchain": {
     "node": "24.15.0",

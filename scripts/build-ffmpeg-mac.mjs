@@ -199,7 +199,7 @@ export async function verifyMacRuntime(directory, lock, arch, task) {
     else if (kind === 'filter') names = [...text.matchAll(/^\s*[TSC.]{2,3}\s+(\w+)\s+\S+->/gm)].map(match => match[1])
     else names = [...text.matchAll(/^\s*[VAS][A-Z.]{5}\s+(\w+)\s+/gm)].map(match => match[1])
     names = [...new Set(names)].sort()
-    const expected = [...capabilities[kind], ...(kind === 'filter' ? ['abuffer', 'abuffersink', 'buffer', 'buffersink'] : [])].sort()
+    const expected = [...capabilities[kind], ...(kind === 'filter' ? ['abuffer', 'abuffersink', 'buffer', 'buffersink'] : kind === 'bsf' ? ['sink', 'source'] : [])].sort()
     assert(json(names) === json(expected), 'Native FFmpeg runtime capability differs: ' + kind)
     runtimeCapabilities[kind] = names
     evidence[kind + '.txt'] = text
@@ -303,7 +303,7 @@ export async function buildMacFfmpeg(args = process.argv.slice(2)) {
     inputs[id] = await ensureInput(entry, paths.cache, work, environment)
     console.log('已验证固定源码: ' + entry.file)
   }
-  const series = (await readFile(path.join(repo, 'packaging', 'ffmpeg', 'patches', 'series'), 'utf8')).trim().split(/\r?\n/)
+  const series = (await readFile(path.join(repo, 'packaging', 'ffmpeg', 'patches', 'series'), 'utf8')).split(/\r?\n/).map(s => s.trim()).filter(s => s && !s.startsWith('#'))
   assert(json(series) === json(lock.patches.map(patch => path.basename(patch.file))), 'Patch series differs from source lock')
   for (const patch of lock.patches) await verifyIdentity(path.join(repo, 'packaging', 'ffmpeg', patch.file), patch)
   if (args.includes('--download-only')) return

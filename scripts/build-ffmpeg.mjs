@@ -141,7 +141,7 @@ async function build(temp) {
   await extract(lockedTar, inputs.zlib, `${root}/zlib-unpack`, env);
   await fs.rename(`${root}/zlib-unpack/zlib-1.3.2`, `${root}/zlib-source`);
   await extract(lockedTar, inputs.mingwSource, `${root}/mingw-source`, env);
-  const series = (await fs.readFile(path.join(lockDir, 'patches/series'), 'utf8')).trim().split(/\r?\n/);
+  const series = (await fs.readFile(path.join(lockDir, 'patches/series'), 'utf8')).split(/\r?\n/).map(s => s.trim()).filter(s => s && !s.startsWith('#'));
   assert(json(series) === json(lock.patches.map(p => path.basename(p.file))), 'Patch series differs from lock');
   for (const patch of lock.patches) await run(`${gitBin}/patch.exe`, ['--batch', '--fuzz=0', '-p1', '-i', path.join(lockDir, patch.file)], { cwd: `${root}/ffmpeg-source`, env, log: `${root}/logs/${path.basename(patch.file)}.txt` });
   // All configure paths are relative, so a second neutral root gets identical buildconf.
@@ -284,7 +284,7 @@ async function assertions(root, tools, env) {
     else if (kind === 'filter') names = [...output.matchAll(/^\s*[TSC.]{2,3}\s+(\w+)\s+\S+->/gm)].map(m => m[1]);
     else names = [...output.matchAll(/^\s*[VAS][A-Z.]{5}\s+(\w+)\s+/gm)].map(m => m[1]);
     names = [...new Set(names)].sort();
-    const expected = [...lock.capabilities[kind], ...(kind === 'filter' ? ['abuffer', 'abuffersink', 'buffer', 'buffersink'] : [])].sort();
+    const expected = [...lock.capabilities[kind], ...(kind === 'filter' ? ['abuffer', 'abuffersink', 'buffer', 'buffersink'] : kind === 'bsf' ? ['sink', 'source'] : [])].sort();
     assert(json(names) === json(expected), `Runtime ${kind} differs: ${json(names)}`);
     runtimeCapabilities[kind] = names;
   }

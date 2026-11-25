@@ -266,7 +266,7 @@ const manifest = JSON.parse(await readFile(path.join(downloads, manifestName), '
 if (manifest.schemaVersion !== 1 || manifest.buildId !== lock.ffmpegBuildId || manifest.revision + '-' + manifest.extraVersion !== lock.ffmpegVersion) throw new Error('FFmpeg manifest build identity mismatch')
 const runtimeName = nativeBuild?.runtimeName ?? 'fy1sync-ffmpeg-' + lock.ffmpegBuildId + '-win-x64.zip'
 const sourceName = nativeBuild?.sourceName ?? 'fy1sync-ffmpeg-' + lock.ffmpegBuildId + '-source.zip'
-const runtimeFiles = nativeBuild ? manifest.assertions.files.map(entry => entry.name).sort() : ['avcodec-62.dll', 'avfilter-11.dll', 'avformat-62.dll', 'avutil-60.dll', 'ffmpeg.exe', 'ffprobe.exe', 'swscale-9.dll']
+const runtimeFiles = nativeBuild ? manifest.assertions.files.map(entry => entry.name).sort() : ['avcodec-63.dll', 'avfilter-12.dll', 'avformat-63.dll', 'avutil-61.dll', 'ffmpeg.exe', 'ffprobe.exe', 'swscale-10.dll']
 await extractManifestArchive(runtimeName, path.join(output, 'ffmpeg'), manifest, runtimeFiles)
 const ffmpegSource = await extractManifestArchive(sourceName, path.join(work, 'ffmpeg-source'), manifest)
 const provider = await extract('provider-source.tar.gz', path.join(work, 'provider'), 'bgutil-ytdlp-pot-provider-2.0.2')

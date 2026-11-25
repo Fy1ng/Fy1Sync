@@ -77,7 +77,7 @@ export async function verifyLinuxRuntime(directory, lock, arch, task) {
     else if (['demuxer', 'muxer'].includes(kind)) names = [...text.matchAll(/^\s*[D.E ]{1,3}\s+(\w+)(?:,\S+)*\s+/gm)].map(match => match[1])
     else if (kind === 'filter') names = [...text.matchAll(/^\s*[TSC.]{2,3}\s+(\w+)\s+\S+->/gm)].map(match => match[1])
     else names = [...text.matchAll(/^\s*[VAS][A-Z.]{5}\s+(\w+)\s+/gm)].map(match => match[1])
-    assert(json([...new Set(names)].sort()) === json([...capabilities[kind], ...(kind === 'filter' ? ['abuffer', 'abuffersink', 'buffer', 'buffersink'] : [])].sort()), 'Linux FFmpeg capability differs: ' + kind)
+    assert(json([...new Set(names)].sort()) === json([...capabilities[kind], ...(kind === 'filter' ? ['abuffer', 'abuffersink', 'buffer', 'buffersink'] : kind === 'bsf' ? ['sink', 'source'] : [])].sort()), 'Linux FFmpeg capability differs: ' + kind)
     evidence[kind + '.txt'] = text
   }
   const fixture = await writeFfmpegFixtures(path.join(task, 'fixtures'))
@@ -117,7 +117,7 @@ export async function buildLinuxFfmpeg(args = process.argv.slice(2)) {
   await mkdir(paths.cache, { recursive: true })
   const inputs = {}
   for (const id of ['ffmpeg', 'zlib']) inputs[id] = await ensureInput(lock.assets.find(asset => asset.id === id), paths.cache, work, env)
-  const series = (await readFile(path.join(root, 'packaging', 'ffmpeg', 'patches', 'series'), 'utf8')).trim().split(/\r?\n/)
+  const series = (await readFile(path.join(root, 'packaging', 'ffmpeg', 'patches', 'series'), 'utf8')).split(/\r?\n/).map(s => s.trim()).filter(s => s && !s.startsWith('#'))
   assert(json(series) === json(lock.patches.map(patch => path.basename(patch.file))), 'Linux patch series differs')
   for (const patch of lock.patches) await verifyIdentity(path.join(root, 'packaging', 'ffmpeg', patch.file), patch)
   if (args.includes('--download-only')) return

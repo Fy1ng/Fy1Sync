@@ -22,8 +22,8 @@ test('ELF parser rejects truncated, wrong-endian, 32-bit and unsupported executa
 })
 
 test('Linux runtime requires origin-relative loading and rejects undeclared or absolute dependencies', () => {
-  const valid = ' (NEEDED) Shared library: [libavcodec.so.62]\n (NEEDED) Shared library: [libc.so.6]\n (RUNPATH) Library runpath: [$ORIGIN]'
-  assert.deepEqual(assertLinuxDependencies(valid, linuxRuntimeFiles(lock)), ['libavcodec.so.62', 'libc.so.6'])
+  const valid = ' (NEEDED) Shared library: [libavcodec.so.63]\n (NEEDED) Shared library: [libc.so.6]\n (RUNPATH) Library runpath: [$ORIGIN]'
+  assert.deepEqual(assertLinuxDependencies(valid, linuxRuntimeFiles(lock)), ['libavcodec.so.63', 'libc.so.6'])
   for (const invalid of [valid.replace('$ORIGIN', '/tmp/build'), valid.replace('libc.so.6', '/tmp/libc.so.6'), valid.replace('libc.so.6', 'libunknown.so'), valid.replace(' (RUNPATH) Library runpath: [$ORIGIN]', ''), valid + '\n (RPATH) Library rpath: [/tmp]']) {
     assert.throws(() => assertLinuxDependencies(invalid, linuxRuntimeFiles(lock)))
   }

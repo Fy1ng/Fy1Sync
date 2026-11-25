@@ -42,9 +42,9 @@ npm run package:mac
 
 `package:mac` 完成工具准备, 队标准备, 项目构建, 最小应用预备, electron-builder DMG/ZIP 生成和包内容检查. `npm run package:mac -- --arm64` 或 `--x64` 只接受当前 Node 的同一架构, 不交叉编译或生成 universal 包. 包名为 `Fy1Sync-<version>-mac-<arch>.dmg` 和 `.zip`. `npm run package:check:mac` 可复验当前架构产物, `npm run package:check` 会按宿主平台分流. 包检查报告写入 `.runtime-cache/check-package-mac-*/`.
 
-macOS FFmpeg 直接读取原有 `build-lock.json` 中的 FFmpeg commit, zlib 1.3.2 源码及有序 TLS 补丁, 每项核对原有 size/SHA256. 只下载这两个固定源码输入, 不使用 Homebrew 或 PATH 内的 FFmpeg, 不下载 Windows 工具链. `--download-only` 可只校验缓存和源码. 官方 `yt-dlp_macos` 的固定版本, size 和 SHA256 单独记录在 `packaging/tools-mac-lock.json`; 它在包内命名为 `tools/yt-dlp`. provider 沿用原始源码, 固定插件和 patched npm lock, 使用 `npm ci --omit=dev --ignore-scripts`, 保留完整匹配源码和许可.
+macOS FFmpeg 直接读取原有 `build-lock.json` 中的 FFmpeg commit, zlib 1.3.2 源码及有序补丁列表, 每项核对原有 size/SHA256. 只下载这两个固定源码输入, 不使用 Homebrew 或 PATH 内的 FFmpeg, 不下载 Windows 工具链. `--download-only` 可只校验缓存和源码. 官方 `yt-dlp_macos` 的固定版本, size 和 SHA256 单独记录在 `packaging/tools-mac-lock.json`; 它在包内命名为 `tools/yt-dlp`. provider 沿用原始源码, 固定插件和 patched npm lock, 使用 `npm ci --omit=dev --ignore-scripts`, 保留完整匹配源码和许可.
 
-原生构建只调用 `/usr/bin/clang`, make, ar, ranlib, patch, tar, curl, otool 及 Apple SDK 工具. zlib 静态编译并执行 `make test`, FFmpeg 继续采用 LGPL 2.1+ 共享库. 媒体组件集合沿用锁内配置. HTTPS 使用 macOS Secure Transport 和系统信任库, 并保留证书默认校验补丁. Secure Transport 不提供 DTLS, 所以 macOS 明确不启用 Windows Schannel 自动带入的 `dtls` 和 `udp`; 应用使用的 HTTP/HTTPS/HLS 不受影响. 两种 CPU 均关闭汇编以使用系统 clang 完成基线构建, 避免额外引入未锁定的 NASM; 不开启 GPL/nonfree/version3 或其他自动探测库.
+原生构建只调用 `/usr/bin/clang`, make, ar, ranlib, patch, tar, curl, otool 及 Apple SDK 工具. zlib 静态编译并执行 `make test`, FFmpeg 继续采用 LGPL 2.1+ 共享库. 媒体组件集合沿用锁内配置. HTTPS 使用 macOS Secure Transport 和系统信任库, 并核对证书校验默认开启. Secure Transport 不提供 DTLS, 所以 macOS 明确不启用 Windows Schannel 自动带入的 `dtls` 和 `udp`; 应用使用的 HTTP/HTTPS/HLS 不受影响. 两种 CPU 均关闭汇编以使用系统 clang 完成基线构建, 避免额外引入未锁定的 NASM; 不开启 GPL/nonfree/version3 或其他自动探测库.
 
 `packaging/tools-mac-lock.json` 将最低系统版本固定为 `13.0`, electron-builder 使用同一字段写入应用的 `LSMinimumSystemVersion`. 所有 zlib/FFmpeg configure, make 和 clang 探针均继承 `MACOSX_DEPLOYMENT_TARGET=13.0`; zlib 的 `CFLAGS`/`LDFLAGS` 和 FFmpeg 的 `--extra-cflags`/`--extra-ldflags` 还明确指定 `-mmacosx-version-min=13.0`, 避免构建机器的较新系统版本隐式提高运行要求. 每个 FFmpeg 运行文件的 Mach-O 最低系统版本由 `otool -l` 读取并核对为 13.0, 实际 load commands 保留在源码材料证据中.
 

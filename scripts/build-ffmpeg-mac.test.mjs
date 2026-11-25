@@ -56,8 +56,8 @@ test('Mach-O inspection rejects PE, truncated or conflicting CPU tables and sign
 })
 
 test('native dependencies allow only bundled ABI libraries and Apple system libraries', () => {
-  const allowed = ['ffmpeg', 'libavcodec.62.dylib']
-  const native = '/tmp/ffmpeg:\n\t@rpath/libavcodec.62.dylib (compatibility version 62.0.0, current version 62.28.103)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\n\t/System/Library/Frameworks/Security.framework/Versions/A/Security (compatibility version 1.0.0)'
+  const allowed = ['ffmpeg', 'libavcodec.63.dylib']
+  const native = '/tmp/ffmpeg:\n\t@rpath/libavcodec.63.dylib (compatibility version 63.0.0, current version 63.24.100)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\n\t/System/Library/Frameworks/Security.framework/Versions/A/Security (compatibility version 1.0.0)'
   assert.equal(assertMacDependencies(native, allowed).length, 3)
   for (const dependency of ['/opt/homebrew/lib/libssl.dylib', '/Users/name/private/libz.dylib', '@rpath/libunknown.dylib', '@loader_path/../lib.dylib']) assert.throws(() => assertMacDependencies('/tmp/ffmpeg:\n\t' + dependency + ' (compatibility version 1.0.0)', allowed))
 })

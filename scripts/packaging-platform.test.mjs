@@ -70,7 +70,7 @@ test('macOS configure keeps the locked LGPL/media settings and changes only nati
   assert.deepEqual(macCapabilities(lock).protocol, ['crypto', 'file', 'http', 'httpproxy', 'https', 'pipe', 'tcp', 'tls'])
   assert.deepEqual(macCapabilities(lock).decoder, lock.capabilities.decoder)
   assert.equal(macRuntimeFiles(lock).length, 7)
-  assert.ok(macRuntimeFiles(lock).includes('libavcodec.62.dylib'))
+  assert.ok(macRuntimeFiles(lock).includes('libavcodec.63.dylib'))
 })
 
 test('builder keeps Windows targets and exposes architecture-labelled macOS DMG/ZIP', () => {
@@ -133,7 +133,7 @@ test('macOS builder config defaults to valid ad-hoc signing and switches cleanly
   assert.equal(signedIgnore.test('/tmp/Fy1Sync.app/Contents/Resources/tools/yt-dlp-LICENSE.txt'), true)
   assert.equal(signedIgnore.test('/tmp/Fy1Sync.app/Contents/Resources/team-logos/events/logos/a.png'), true)
   assert.equal(signedIgnore.test('/tmp/Fy1Sync.app/Contents/Resources/tools/ffmpeg/ffmpeg'), false)
-  assert.equal(signedIgnore.test('/tmp/Fy1Sync.app/Contents/Resources/tools/ffmpeg/libavcodec.62.dylib'), false)
+  assert.equal(signedIgnore.test('/tmp/Fy1Sync.app/Contents/Resources/tools/ffmpeg/libavcodec.63.dylib'), false)
 
   const bg1x = await readFile(fileURLPath('../packaging/dmg-background.png'))
   const bg2x = await readFile(fileURLPath('../packaging/dmg-background@2x.png'))
@@ -181,6 +181,12 @@ test('macOS packaging environment strips blank CI secrets and enables identity a
 
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'fy1sync-provider-native-'))
   try {
+    await mkdir(path.join(tempDir, 'quickjs-wasi', 'extensions', 'url'), { recursive: true })
+    await writeFile(path.join(tempDir, 'quickjs-wasi', 'extensions', 'url', 'url.so'), Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]))
+    await assertProviderDependencies(tempDir)
+    await writeFile(path.join(tempDir, 'quickjs-wasi', 'extensions', 'url', 'elf.so'), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]))
+    await assert.rejects(assertProviderDependencies(tempDir), /elf\.so/)
+    await rm(path.join(tempDir, 'quickjs-wasi', 'extensions', 'url', 'elf.so'))
     await writeFile(path.join(tempDir, 'addon.dylib'), 'macho')
     await assert.rejects(assertProviderDependencies(tempDir), /addon\.dylib/)
   } finally {
