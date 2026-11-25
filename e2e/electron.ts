@@ -22,6 +22,7 @@ export interface RunningApplication {
 /** Launch the built application with a disposable profile and data directory. */
 export async function launchApplication(label: string, options: { softwareVideo?: boolean; liveNetwork?: boolean
   onlineUpdates?: { source: OnlineUpdateSource; responses: Record<string, string> }
+  seedUserData?: (userDataDir: string) => Promise<void> | void
 } = {}): Promise<RunningApplication> {
   const dataDir = path.join(testDataRoot, randomUUID().slice(0, 12))
   await mkdir(dataDir, { recursive: true })
@@ -50,6 +51,10 @@ export async function launchApplication(label: string, options: { softwareVideo?
     await rename(temporary, fixture)
   }
   if (options.onlineUpdates) await setOnlineUpdateResponses(options.onlineUpdates.responses)
+  if (options.seedUserData) {
+    await mkdir(env.STREAM_SYNC_USER_DATA_DIR!, { recursive: true })
+    await options.seedUserData(env.STREAM_SYNC_USER_DATA_DIR!)
+  }
 
   let application: ElectronApplication | undefined
   let page: Page

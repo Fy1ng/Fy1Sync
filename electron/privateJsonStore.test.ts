@@ -44,3 +44,30 @@ it('rejects paths escaping the selected app data root', () => {
   const f = fixture()
   expect(() => new PrivateJsonStore(f.root, '../outside.json')).toThrow()
 })
+it('quarantines corrupt regular files with bounded backup retention and refuses symlinks', () => {
+  const f = fixture()
+  const dir = path.join(f.root, 'douyu')
+  fs.mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, 'state.json')
+
+  for (let i = 1; i <= 5; i++) {
+    fs.writeFileSync(file, `\u0000corrupt-${i}`)
+    const backup = f.store.quarantineCorrupt(1_700_000_000_000 + i)
+    expect(backup).toMatch(/^state\.json\.corrupt-\d+-[0-9a-f]{8}\.bak$/)
+    expect(f.store.load()).toBeUndefined()
+  }
+
+  const backups = fs.readdirSync(dir).filter(name => name.startsWith('state.json.corrupt-'))
+  expect(backups).toHaveLength(3)
+  f.store.save({ recovered: true })
+  expect(f.store.load()).toEqual({ recovered: true })
+
+  if (process.platform !== 'win32') {
+    const outside = path.join(f.root, 'target.json')
+    fs.writeFileSync(outside, 'keep')
+    fs.rmSync(file)
+    fs.symlinkSync(outside, file)
+    expect(f.store.quarantineCorrupt()).toBeNull()
+    expect(fs.readFileSync(outside, 'utf8')).toBe('keep')
+  }
+})

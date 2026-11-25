@@ -207,4 +207,26 @@ describe('authenticated frontend activation', () => {
     expect(next.snapshot().staged).toBeNull()
     expect(fs.readdirSync(path.join(f.root, 'online-updates/frontend/releases'))).toEqual([])
   })
+
+  it('falls back to the bundled client and blocks an already-confirmed release if it crashes at boot', async () => {
+    const f = fixture(), initial = f.open()
+    initial.beginBoot()
+    const second = await stage(initial, release(2))
+    const trial = f.open()
+    expect(trial.beginBoot()).toContain(second.entry.sha256)
+    expect(trial.confirmHealthy(1)).toBe(true)
+
+    const current = f.open()
+    expect(current.beginBoot()).toContain(second.entry.sha256)
+    expect(current.snapshot()).toMatchObject({ phase: 'current', currentRevision: 2 })
+    expect(current.failBoot()).toBe(false)
+    expect(current.fallbackToBundledOnCrash()).toBe(true)
+    expect(current.clientDir()).toBe(f.bundledClientDir)
+    expect(current.snapshot()).toMatchObject({ phase: 'rolled-back', currentRevision: 1, blockedRevision: 2 })
+    expect(current.fallbackToBundledOnCrash()).toBe(false)
+
+    const restarted = f.open()
+    expect(restarted.beginBoot()).toBe(f.bundledClientDir)
+    expect(restarted.snapshot()).toMatchObject({ currentRevision: 1, blockedRevision: 2 })
+  })
 })

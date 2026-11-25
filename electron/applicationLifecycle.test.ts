@@ -132,4 +132,66 @@ describe('application window lifecycle', () => {
     expect(fallbackExit).toHaveBeenCalledWith(1)
     expect(formatStartupFailureDialog(undefined).content).not.toContain('原因：')
   })
+
+  it('bounds hung shutdown cleanup via shutdownTimeoutMs without blocking process exit', async () => {
+    const hung = new Promise<void>(() => {})
+    const onShutdownTimeout = vi.fn()
+    const lifecycle = new ApplicationLifecycle({
+      window: () => null,
+      start: async () => {},
+      dispose: () => hung,
+      shutdownTimeoutMs: 25,
+      onShutdownTimeout,
+    })
+    const first = lifecycle.quit()
+    const second = lifecycle.quit()
+    expect(first).toBe(second)
+    await first
+    expect(onShutdownTimeout).toHaveBeenCalledTimes(1)
+  })
+
+  it('includes sanitized log path and handles interactive safe-restart and fallback recovery dialogs', () => {
+    const formatted = formatStartupFailureDialog(new Error('渲染进程异常退出'), {
+      logFilePath: 'C:\\Users\\Alice\\AppData\\Roaming\\Fy1Sync\\logs\\startup.log',
+    })
+    expect(formatted.content).toContain('诊断日志：[user]\\AppData\\Roaming\\Fy1Sync\\logs\\startup.log')
+    expect(formatted.content).not.toContain('Alice')
+
+    const onSafeRestart = vi.fn()
+    const safeExit = vi.fn()
+    createStartupFailureReporter({
+      log: () => {},
+      logFilePath: 'C:\\Users\\Alice\\AppData\\Roaming\\Fy1Sync\\logs\\startup.log',
+      showRecoveryDialog: dialog => {
+        expect(dialog.content).toContain('诊断日志：')
+        return 'safe-restart'
+      },
+      onSafeRestart,
+      exit: safeExit,
+    })(new Error('load failed'))
+    expect(onSafeRestart).toHaveBeenCalledTimes(1)
+    expect(safeExit).toHaveBeenCalledWith(0)
+
+    const onOpenLogs = vi.fn()
+    const logsExit = vi.fn()
+    createStartupFailureReporter({
+      log: () => {},
+      showRecoveryDialog: () => 'open-logs',
+      onOpenLogs,
+      exit: logsExit,
+    })(new Error('load failed'))
+    expect(onOpenLogs).toHaveBeenCalledTimes(1)
+    expect(logsExit).toHaveBeenCalledWith(1)
+
+    const fallbackBox = vi.fn()
+    const preReadyExit = vi.fn()
+    createStartupFailureReporter({
+      log: () => {},
+      showRecoveryDialog: () => { throw new Error('app-not-ready') },
+      showErrorBox: fallbackBox,
+      exit: preReadyExit,
+    })(new Error('pre-ready failure'))
+    expect(fallbackBox).toHaveBeenCalledTimes(1)
+    expect(preReadyExit).toHaveBeenCalledWith(1)
+  })
 })

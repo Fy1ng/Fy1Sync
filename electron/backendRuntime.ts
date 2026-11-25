@@ -75,6 +75,7 @@ export interface BackendRuntimeOptions {
   roomMetadataCollector?: RoomMetadataCollector
   roomMetadataEnabled?: boolean
   esportsResolve?: Resolver
+  onDiagnostic?: (event: string, error?: unknown, fields?: Record<string, unknown>) => void
 }
 
 export function createBackendRuntime(options: BackendRuntimeOptions) {
@@ -82,7 +83,15 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
   const api = new FeatureApi()
   const esports = new RelayScheduleService({ userDataDir: options.userDataDir, bundledLogoDir: options.bundledLogoDir,
     version: appPackage.version, resolve: options.esportsResolve, onEvent: event => api.publish(event) })
-  const savedRooms = new SavedRoomsStore(options.userDataDir)
+  let savedRooms: SavedRoomsStore
+  try {
+    savedRooms = new SavedRoomsStore(options.userDataDir)
+  } catch (error) {
+    options.onDiagnostic?.('saved-rooms-store-degraded', error)
+    savedRooms = new SavedRoomsStore(options.userDataDir, {
+      store: { load: () => undefined, save: () => { throw new Error('storage-unavailable') } },
+    })
+  }
   const roomImages = new SavedRoomImages(options.userDataDir)
   let imagesPrunedAt = 0
   const savedRoomsMonitor = new SavedRoomsMonitor({ store: savedRooms,
@@ -112,10 +121,28 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     return { accountId: id, canAttempt: !!id && !!room && state?.currentRoom === room && state.runtime.foreground
       && !state.runtime.locked && !state.runtime.suspended && !options.accounts?.isBusy(id) }
   } })
-  const captureStore = new PrivateJsonStore<CaptureSettings>(options.userDataDir, 'capture/settings.json')
-  const capture = new MediaCapture({ root: options.userDataDir, load: () => captureStore.load(), save: value => captureStore.save(value),
-    chooseDestination: options.chooseCaptureDestination, validatePng: options.validatePng,
-    encode: async (input, signal) => encodeGifWithFfmpeg(await options.ffmpegPath(), input, signal) })
+  let captureStore: PrivateJsonStore<CaptureSettings> | undefined
+  let capture: MediaCapture
+  try {
+    captureStore = new PrivateJsonStore<CaptureSettings>(options.userDataDir, 'capture/settings.json')
+    capture = new MediaCapture({ root: options.userDataDir, load: () => captureStore!.load(), save: value => captureStore!.save(value),
+      chooseDestination: options.chooseCaptureDestination, validatePng: options.validatePng,
+      encode: async (input, signal) => encodeGifWithFfmpeg(await options.ffmpegPath(), input, signal) })
+  } catch (error) {
+    const backup = captureStore?.quarantineCorrupt() ?? null
+    options.onDiagnostic?.('capture-settings-recovered', error, { backup })
+    capture = new MediaCapture({
+      root: options.userDataDir,
+      load: () => undefined,
+      save: value => {
+        if (!captureStore) throw new Error('capture-store-unavailable')
+        captureStore.save(value)
+      },
+      chooseDestination: options.chooseCaptureDestination,
+      validatePng: options.validatePng,
+      encode: async (input, signal) => encodeGifWithFfmpeg(await options.ffmpegPath(), input, signal),
+    })
+  }
   const update = new AppUpdateService({ currentVersion: appPackage.version, source: options.updateSource ?? null })
   const insightsGateway = new DouyuInsightsGateway({ proxy: options.proxy, cookieHeader })
   const insights = new DouyuInsightsService({ gateway: insightsGateway, onNotification: options.notifyLive })
@@ -196,13 +223,37 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     readFollowedRooms: (id: string, signal: AbortSignal) => insightsGateway.readFollowedRooms(id, signal) }
   const checkIns = new DouyuCheckInActions(actionDeps)
   const rewards = new DouyuLevelRewardActions(actionDeps)
-  const automationStore = new PrivateJsonStore<AutomationStorage>(options.userDataDir, 'douyu/automations.json')
-  const automations = options.tasks ? new AutomationManager({ queue: options.tasks,
-    load: () => automationStore.load(), save: value => automationStore.save(value),
-    run: (request, signal) => (DOUYU_CHECK_IN_KINDS as readonly string[]).includes(request.kind)
-      ? checkIns.run(request, signal) : rewards.run(request, signal),
-    forget: id => { checkIns.forget(id); rewards.forget(id) },
-  }) : undefined
+  let automationStore: PrivateJsonStore<AutomationStorage> | undefined
+  let automations: AutomationManager | undefined
+  if (options.tasks) {
+    try {
+      automationStore = new PrivateJsonStore<AutomationStorage>(options.userDataDir, 'douyu/automations.json')
+      automations = new AutomationManager({ queue: options.tasks,
+        load: () => automationStore!.load(), save: value => automationStore!.save(value),
+        run: (request, signal) => (DOUYU_CHECK_IN_KINDS as readonly string[]).includes(request.kind)
+          ? checkIns.run(request, signal) : rewards.run(request, signal),
+        forget: id => { checkIns.forget(id); rewards.forget(id) },
+      })
+    } catch (error) {
+      const backup = automationStore?.quarantineCorrupt() ?? null
+      options.onDiagnostic?.('douyu-automations-recovered', error, { backup })
+      try {
+        automations = new AutomationManager({
+          queue: options.tasks,
+          load: () => undefined,
+          save: value => {
+            if (!automationStore) throw new Error('automation-store-unavailable')
+            automationStore.save(value)
+          },
+          run: (request, signal) => (DOUYU_CHECK_IN_KINDS as readonly string[]).includes(request.kind)
+            ? checkIns.run(request, signal) : rewards.run(request, signal),
+          forget: id => { checkIns.forget(id); rewards.forget(id) },
+        })
+      } catch {
+        automations = undefined
+      }
+    }
+  }
   const backpack = new DouyuBackpackGateway({ proxy: options.proxy, cookieHeader })
   const purchase = new DouyuGiftPurchaseGateway({ proxy: options.proxy, cookieHeader }, async (id, room, signal) => {
     const state = await required(options.sender).inspect(id, room, signal, 'balance')

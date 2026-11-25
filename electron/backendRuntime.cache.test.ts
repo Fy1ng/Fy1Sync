@@ -242,4 +242,57 @@ describe('saved-room runtime integration', () => {
       .toMatchObject({ ok: false, code: 'invalid-arguments' })
     expect(await f.invoke('listSavedRooms', undefined)).toEqual([])
   })
+
+  it('recovers cleanly when capture/settings.json and douyu/automations.json are corrupted on disk', async () => {
+    const root = fs.mkdtempSync(path.join(runtimeRoot, 'backend-cache-test-'))
+    fs.mkdirSync(path.join(root, 'capture'), { recursive: true })
+    fs.mkdirSync(path.join(root, 'douyu'), { recursive: true })
+    fs.writeFileSync(path.join(root, 'capture', 'settings.json'), '\u0000\u0000{corrupt-capture')
+    fs.writeFileSync(path.join(root, 'douyu', 'automations.json'), '{corrupt-automations')
+
+    const diagnostics: string[] = []
+    const relay = new DanmakuRelay({ createClient: () => { throw new Error('No real relay connections in this fixture') } })
+    const taskPort = {
+      snapshot: (): DouyuTasksSnapshot => ({
+        activeAccountId: 'default', currentRoom: '100', retainedRooms: [], tasks: [],
+        runtime: { foreground: true, locked: false, suspended: false },
+      }),
+      subscribe: () => () => {},
+      runAccountOperation: async <T>(_ctx: unknown, run: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal) => run(signal ?? new AbortController().signal),
+    }
+    const accountPort = {
+      activeAccountId: 'default',
+      isBusy: () => false,
+      activeLoginStatus: async () => ({ loggedIn: true }),
+      cookieHeader: async () => '',
+      subscribe: () => () => {},
+    }
+    const runtime = createBackendRuntime({
+      userDataDir: root,
+      proxy: resolveConfig({}).proxy,
+      relay,
+      danmaku: new DanmakuFeatures({ load: () => undefined, save() {} }),
+      accounts: accountPort as unknown as BackendRuntimeOptions['accounts'],
+      tasks: taskPort as unknown as BackendRuntimeOptions['tasks'],
+      acquisition: { subscribe: () => () => {}, describe: () => null } as unknown as BackendRuntimeOptions['acquisition'],
+      resolveRoom: async (room: string) => ({ ok: true as const, identity: { room, inputRoom: room } }),
+      activityPreferences: new ActivityPreferencesStore({ load: () => undefined, save() {} }),
+      createPipWindow: vi.fn(),
+      chooseCaptureDestination: async () => null,
+      validatePng: () => false,
+      ffmpegPath: async () => '',
+      openExternal: async () => {},
+      notifyLive() {},
+      onDiagnostic: event => { diagnostics.push(event) },
+    })
+    fixtures.push({ root, dispose: async () => { relay.closeAll(); await runtime.dispose() } })
+
+    expect(diagnostics).toEqual(expect.arrayContaining(['capture-settings-recovered', 'douyu-automations-recovered']))
+    expect(fs.readdirSync(path.join(root, 'capture')).some(name => name.startsWith('settings.json.corrupt-'))).toBe(true)
+    expect(fs.readdirSync(path.join(root, 'douyu')).some(name => name.startsWith('automations.json.corrupt-'))).toBe(true)
+
+    expect(await runtime.api.invoke('getCaptureState', undefined)).toMatchObject({ ok: true, value: { settings: { enabled: false } } })
+    expect(await runtime.api.invoke('setCaptureEnabled', { enabled: true })).toMatchObject({ ok: true, value: { settings: { enabled: true } } })
+    expect(await runtime.api.invoke('getDouyuAutomations', undefined)).toMatchObject({ ok: true })
+  })
 })

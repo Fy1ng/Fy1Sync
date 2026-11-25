@@ -1,6 +1,8 @@
 /** Built desktop app smoke checks: the real shell, preload IPC and scheme guards. */
 
-import { APP_ORIGIN, expect, test, visibleE2eWindows } from './electron'
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { APP_ORIGIN, expect, launchApplication, test, visibleE2eWindows } from './electron'
 import { closeSourceDialog, connectDanmaku, failOnPageError, invoke, loadBothFixtures, offsetReadout, openPlayer, openSourceDialog, revealOverlay, sourceDialog } from './helpers'
 
 test.describe('应用外壳', () => {
@@ -235,5 +237,58 @@ test.describe('主进程接口与安全边界', () => {
     expect(rejected.code).toBe('unknown-method')
     const status = await page.evaluate(async () => (await fetch('app://app/api/definitely-not-a-route')).status)
     expect(status).toBe(404)
+  })
+
+  test('userData 存在 GPU 崩溃记录与损坏配置文件时自动自愈启动并保留凭据目录', async () => {
+    let seededUserData = ''
+    const running = await launchApplication('startup-selfheal', {
+      async seedUserData(userDataDir) {
+        seededUserData = userDataDir
+        await mkdir(path.join(userDataDir, 'GPUCache'), { recursive: true })
+        await writeFile(path.join(userDataDir, 'GPUCache', 'corrupt.bin'), 'corrupt-shader')
+        await mkdir(path.join(userDataDir, 'cookies'), { recursive: true })
+        await writeFile(path.join(userDataDir, 'cookies', 'keep.txt'), 'preserved')
+        await mkdir(path.join(userDataDir, 'capture'), { recursive: true })
+        await mkdir(path.join(userDataDir, 'douyu'), { recursive: true })
+        await writeFile(path.join(userDataDir, 'capture', 'settings.json'), '\u0000{corrupt-capture')
+        await writeFile(path.join(userDataDir, 'douyu', 'automations.json'), '{corrupt-automations')
+        await writeFile(path.join(userDataDir, 'douyu', 'danmaku-features.json'), '{corrupt-danmaku')
+        await writeFile(path.join(userDataDir, 'douyu', 'activity-preferences.json'), '{corrupt-activity')
+        await writeFile(path.join(userDataDir, 'backend.json'), '{corrupt-backend')
+        await writeFile(path.join(userDataDir, 'startup-state.json'), JSON.stringify({
+          version: 1,
+          uncleanBoots: 1,
+          gpuCrashCount: 2,
+          rendererCrashCount: 0,
+          disableHardwareAcceleration: false,
+          lastStage: 'window-created',
+          updatedAt: Date.now(),
+        }))
+      },
+    })
+    try {
+      await expect(running.page.locator('.studio')).toBeVisible()
+      // Backend runtime and capture feature stay operational despite all five corrupted JSON files.
+      const captureState = await running.page.evaluate(() =>
+        window.streamSyncer!.invoke('getCaptureState', undefined),
+      )
+      expect(captureState).toMatchObject({ ok: true, value: { settings: { enabled: false } } })
+
+      // Corrupt shader entry inside GPUCache was purged before Chromium booted, while cookies remained untouched.
+      await expect(stat(path.join(seededUserData, 'GPUCache', 'corrupt.bin'))).rejects.toThrow()
+      expect(await readFile(path.join(seededUserData, 'cookies', 'keep.txt'), 'utf8')).toBe('preserved')
+
+      // Corrupt JSON files were quarantined with .corrupt-*.bak suffixes.
+      expect((await readdir(path.join(seededUserData, 'capture'))).some(name => name.startsWith('settings.json.corrupt-'))).toBe(true)
+      expect((await readdir(path.join(seededUserData, 'douyu'))).some(name => name.startsWith('danmaku-features.json.corrupt-'))).toBe(true)
+      expect((await readdir(seededUserData)).some(name => name.startsWith('backend.json.corrupt-'))).toBe(true)
+
+      // Startup log recorded self-healing diagnostics.
+      const startupLog = await readFile(path.join(seededUserData, 'logs', 'startup.log'), 'utf8')
+      expect(startupLog).toContain('boot-begin')
+      expect(startupLog).toContain('boot-self-healed')
+    } finally {
+      await running.close()
+    }
   })
 })

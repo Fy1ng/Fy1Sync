@@ -6,7 +6,7 @@ import { MediaGateway } from './mediaGateway'
 import './networkRuntime'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, protocol, session, shell, safeStorage } from 'electron'
 import { join, resolve } from 'node:path'
-import { mkdirSync, watchFile, unwatchFile } from 'node:fs'
+import { existsSync, mkdirSync, watchFile, unwatchFile } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { createDouyuRoomResolver } from '../server/platforms/douyuRoom'
@@ -85,6 +85,8 @@ import { parseOnlineUpdateSource } from './onlineUpdateManifest'
 import { OnlineUpdateService } from './onlineUpdateService'
 import { createOnlineUpdateHandlers } from './onlineUpdateHandlers'
 import { launchApplicationInstaller, supportsApplicationInstall } from './applicationInstaller'
+import { createCrashLogger, type CrashLogger } from './crashLogger'
+import { StartupGuard, purgeTransientChromiumCaches } from './startupGuard'
 import onlineUpdateSource from '../packaging/online-update-source.json'
 import frontendBuild from '../packaging/frontend-build.json'
 import appPackage from '../package.json'
@@ -112,27 +114,132 @@ if (process.env.STREAM_SYNC_USER_DATA_DIR) {
 // still runs alongside the installed app. A second launch brings the first window forward.
 const primaryInstance = app.requestSingleInstanceLock()
 if (!primaryInstance) app.quit()
-app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
-const decoderPreferences = new DecoderPreferences(app.getPath('userData'),
-  app.commandLine.hasSwitch('disable-accelerated-video-decode'))
-if (decoderPreferences.get().effectiveMode === 'software') {
-  app.commandLine.appendSwitch('disable-accelerated-video-decode')
+const noopCrashLogger: CrashLogger = { logDir: '', logFilePath: '', info() {}, warn() {}, error() {} }
+const crashLogger: CrashLogger = primaryInstance ? createCrashLogger(app.getPath('userData')) : noopCrashLogger
+const startupGuard = primaryInstance
+  ? new StartupGuard(app.getPath('userData'), {
+    forceHardwareAcceleration: app.commandLine.hasSwitch('enable-hardware-acceleration'),
+    forceDisableGpu: app.commandLine.hasSwitch('disable-gpu') || process.env.STREAM_SYNC_DISABLE_GPU === '1',
+  })
+  : null
+if (startupGuard) {
+  const bootDecision = startupGuard.beginBoot()
+  if (bootDecision.disableHardwareAcceleration) {
+    app.disableHardwareAcceleration()
+    app.commandLine.appendSwitch('disable-accelerated-video-decode')
+  }
+  crashLogger.info('boot-begin', {
+    version: appPackage.version,
+    electron: process.versions.electron,
+    platform: process.platform,
+    arch: process.arch,
+    packaged: app.isPackaged,
+    disableHardwareAcceleration: bootDecision.disableHardwareAcceleration,
+    selfHealed: bootDecision.selfHealed,
+    cachesPurged: bootDecision.cachesPurged,
+    uncleanBoots: bootDecision.state.uncleanBoots,
+    gpuCrashCount: bootDecision.state.gpuCrashCount,
+    rendererCrashCount: bootDecision.state.rendererCrashCount,
+  })
+  if (bootDecision.selfHealed) {
+    crashLogger.warn('boot-self-healed', undefined, {
+      cachesPurged: bootDecision.cachesPurged,
+      disableHardwareAcceleration: bootDecision.disableHardwareAcceleration,
+    })
+  }
+}
+let decoderPreferences!: DecoderPreferences
+if (primaryInstance) {
+  app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+  decoderPreferences = new DecoderPreferences(app.getPath('userData'),
+    app.commandLine.hasSwitch('disable-accelerated-video-decode'))
+  if (decoderPreferences.get().effectiveMode === 'software') {
+    app.commandLine.appendSwitch('disable-accelerated-video-decode')
+  }
 }
 let window: BrowserWindow | null = null
 let dispose: (() => Promise<void>) | undefined
 let confirmedInstaller: { userDataDir: string; file: string } | undefined
-const lifecycle = new ApplicationLifecycle({ window: () => window, start, dispose: () => dispose?.(), present: !hiddenTestWindows })
+let quitting = false
+let shutdownComplete = false
+let relaunchAfterQuit = false
+let fatalSessionCrash = false
+const lifecycle = new ApplicationLifecycle({
+  window: () => window,
+  start,
+  dispose: () => dispose?.(),
+  present: !hiddenTestWindows,
+  shutdownTimeoutMs: 5_000,
+  onShutdownTimeout: () => crashLogger.warn('shutdown-timeout', undefined, { timeoutMs: 5_000 }),
+})
 const reportStartupFailure = createStartupFailureReporter({
   e2e: process.env.STREAM_SYNC_E2E === '1',
+  logFilePath: crashLogger.logFilePath || undefined,
+  logError: error => {
+    fatalSessionCrash = true
+    crashLogger.error('startup-failure', error)
+  },
   showErrorBox: (title, content) => dialog.showErrorBox(title, content),
+  showRecoveryDialog: ({ title, content }) => {
+    if (!app.isReady()) throw new Error('app-not-ready')
+    const response = dialog.showMessageBoxSync({
+      type: 'error',
+      title,
+      message: title,
+      detail: content,
+      buttons: ['清理缓存并以兼容模式重启', '打开日志目录并退出', '退出'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    })
+    return response === 0 ? 'safe-restart' : response === 1 ? 'open-logs' : 'exit'
+  },
+  onSafeRestart: () => {
+    const purged = startupGuard?.prepareSafeRestart() ?? []
+    crashLogger.warn('manual-safe-restart', undefined, { cachesPurged: purged })
+    app.relaunch()
+  },
+  onOpenLogs: () => {
+    if (crashLogger.logFilePath && existsSync(crashLogger.logFilePath)) shell.showItemInFolder(crashLogger.logFilePath)
+    else if (crashLogger.logDir) void shell.openPath(crashLogger.logDir)
+  },
   exit: code => app.exit(code),
 })
 const showMainWindow = () => {
   if (!primaryInstance || !app.isReady()) return
   void lifecycle.activate().catch(reportStartupFailure)
 }
-app.on('second-instance', showMainWindow)
-app.on('activate', showMainWindow)
+if (primaryInstance) {
+  app.on('second-instance', () => {
+    if (quitting) {
+      relaunchAfterQuit = true
+      crashLogger.info('second-instance-queued-relaunch')
+      return
+    }
+    showMainWindow()
+  })
+  app.on('activate', showMainWindow)
+  app.on('child-process-gone', (_event, details) => {
+    crashLogger.error('child-process-gone', undefined, {
+      type: details.type,
+      reason: details.reason,
+      exitCode: details.exitCode,
+      serviceName: details.serviceName,
+      name: details.name,
+    })
+    if (details.type === 'GPU' && (details.reason === 'crashed' || details.reason === 'launch-failed' || details.reason === 'oom')) {
+      startupGuard?.recordGpuCrash()
+    }
+  })
+  process.on('unhandledRejection', reason => {
+    crashLogger.error('unhandled-rejection', reason)
+  })
+  process.on('uncaughtException', error => {
+    crashLogger.error('uncaught-exception', error)
+    if (quitting) return
+    reportStartupFailure(error)
+  })
+}
 
 async function start(): Promise<void> {
   const bundledClientDir = resolve(__dirname, '../client')
@@ -148,8 +255,8 @@ async function start(): Promise<void> {
   const gateway = new MediaGateway(proxy)
   const userDataDir = app.getPath('userData')
   const bundledLogoDir = app.isPackaged ? join(process.resourcesPath, 'team-logos') : undefined
-  let danmakuFeatures: DanmakuFeatures | undefined
-  let activityPreferences: ActivityPreferencesStore | undefined
+  let danmakuFeatures: DanmakuFeatures
+  let activityPreferences: ActivityPreferencesStore
   let backend: ReturnType<typeof createBackendRuntime> | undefined
   let pipWindow: BrowserWindow | null = null
   let handlers: ReturnType<typeof installIpcHandlers> | undefined
@@ -159,11 +266,40 @@ async function start(): Promise<void> {
   // state so no scenario reaches the network. backend.json may still point elsewhere.
   const defaultUpdateSource: AppUpdateSource | null = process.env.STREAM_SYNC_E2E === '1' ? null : { kind: 'github', owner: 'Fy1ng', repository: 'Fy1Sync' }
   let backendConfig: { maxExtraStreams: number; updateSource: AppUpdateSource | null } = { maxExtraStreams: 0, updateSource: defaultUpdateSource }
+  let danmakuStore: PrivateJsonStore<DanmakuFeaturesStorage> | undefined
   try {
-    const danmakuStore = new PrivateJsonStore<DanmakuFeaturesStorage>(userDataDir, 'douyu/danmaku-features.json')
-    danmakuFeatures = new DanmakuFeatures({ load: () => danmakuStore.load(), save: value => danmakuStore.save(value) })
-    activityPreferences = new ActivityPreferencesStore(new PrivateJsonStore<ActivityPreferences>(userDataDir, 'douyu/activity-preferences.json'))
-    const raw = new PrivateJsonStore<{ version: 1; maxExtraStreams?: number; updateSource?: unknown }>(userDataDir, 'backend.json').load()
+    danmakuStore = new PrivateJsonStore<DanmakuFeaturesStorage>(userDataDir, 'douyu/danmaku-features.json')
+    danmakuFeatures = new DanmakuFeatures({ load: () => danmakuStore!.load(), save: value => danmakuStore!.save(value) })
+  } catch (error) {
+    const backup = danmakuStore?.quarantineCorrupt() ?? null
+    crashLogger.warn('danmaku-features-config-recovered', error, { backup })
+    danmakuFeatures = new DanmakuFeatures({
+      load: () => undefined,
+      save: value => {
+        if (!danmakuStore) throw new Error('danmaku-store-unavailable')
+        danmakuStore.save(value)
+      },
+    })
+  }
+  let activityStore: PrivateJsonStore<ActivityPreferences> | undefined
+  try {
+    activityStore = new PrivateJsonStore<ActivityPreferences>(userDataDir, 'douyu/activity-preferences.json')
+    activityPreferences = new ActivityPreferencesStore(activityStore)
+  } catch (error) {
+    const backup = activityStore?.quarantineCorrupt() ?? null
+    crashLogger.warn('activity-preferences-config-recovered', error, { backup })
+    activityPreferences = new ActivityPreferencesStore({
+      load: () => undefined,
+      save: value => {
+        if (!activityStore) throw new Error('activity-store-unavailable')
+        activityStore.save(value)
+      },
+    })
+  }
+  let backendStore: PrivateJsonStore<{ version: 1; maxExtraStreams?: number; updateSource?: unknown }> | undefined
+  try {
+    backendStore = new PrivateJsonStore<{ version: 1; maxExtraStreams?: number; updateSource?: unknown }>(userDataDir, 'backend.json')
+    const raw = backendStore.load()
     if (raw !== undefined) {
       if (!raw || typeof raw !== 'object' || (raw as { version?: unknown }).version !== 1
         || Object.keys(raw).some(key => !['version', 'maxExtraStreams', 'updateSource'].includes(key))) throw new Error('Invalid backend configuration')
@@ -172,7 +308,10 @@ async function start(): Promise<void> {
       if (!Number.isSafeInteger(maxExtraStreams) || maxExtraStreams < 0) throw new Error('Invalid stream limit')
       backendConfig = { maxExtraStreams, updateSource: value.updateSource === undefined ? defaultUpdateSource : value.updateSource === null ? null : parseAppUpdateSource(value.updateSource) }
     }
-  } catch { console.error('扩展功能本地配置不可用, 原文件已保留.'); danmakuFeatures = undefined; activityPreferences = undefined }
+  } catch (error) {
+    const backup = backendStore?.quarantineCorrupt() ?? null
+    crashLogger.warn('backend-config-recovered', error, { backup })
+  }
   const toolSettings: ToolSettings = await readFile(join(userDataDir, 'tools.json'), 'utf8')
     .then((text) => {
       const value = JSON.parse(text) as ToolSettings
@@ -193,7 +332,9 @@ async function start(): Promise<void> {
   const renewalDonationsFixture: Array<Omit<DouyuBackpackDonation, 'expectedUid'>> = []
   const browserLogin = new ChromeLoginDriver()
   mkdirSync(userDataDir,{recursive:true})
-  const douyinSigning=new DouyinSigningStore(userDataDir,{protection:safeStorage})
+  let douyinSigning: DouyinSigningStore | undefined
+  try { douyinSigning = new DouyinSigningStore(userDataDir, { protection: safeStorage }) }
+  catch (error) { crashLogger.warn('douyin-signing-store-unavailable', error) }
   const embeddedLoginFixtures = !app.isPackaged && offlineE2e ? new EmbeddedLoginFixtures() : null
   const douyinEmbeddedLoginFixtures = !app.isPackaged && offlineE2e ? new DouyinEmbeddedLoginFixtures() : null
   const douyinHttpLoginFixtures = !app.isPackaged && offlineE2e ? new DouyinHttpLoginFixtures() : null
@@ -225,7 +366,7 @@ async function start(): Promise<void> {
     driver: browserLogin,
     // The offline suite has no platform to ask.
     ...(offlineE2e ? {} : { identify: identityVerifier }),
-    ...(resolve(directory)===resolve(userDataDir) ? {douyinSigning} : {}),
+    ...(douyinSigning && resolve(directory)===resolve(userDataDir) ? {douyinSigning} : {}),
     embeddedDriver: { async login(request) {
       const { platform, signal, destination } = request
       if (!app.isPackaged && offlineE2e && douyuToolsFixture && platform === 'douyu') {
@@ -272,7 +413,7 @@ async function start(): Promise<void> {
   let douyuRenewal: DouyuRenewalService | undefined
   let releaseAccountEvents: (() => void) | undefined
   try { douyuAccounts = new DouyuAccountManager(userDataDir, { defaultLogin: logins, createLogin }) }
-  catch { console.error('斗鱼账号配置不可用, 原文件已保留.') }
+  catch (error) { crashLogger.warn('douyu-accounts-config-unavailable', error); console.error('斗鱼账号配置不可用, 原文件已保留.') }
   if (douyuAccounts) {
     try {
       const taskStore = new PrivateJsonStore<DouyuTaskStorage>(userDataDir, 'douyu/tasks.json')
@@ -318,10 +459,11 @@ async function start(): Promise<void> {
         }
         douyuTasks!.setActiveAccount(douyuAccounts!.activeAccountId)
       })
-    } catch {
+    } catch (error) {
       douyuTasks?.dispose()
       douyuMessageSender?.dispose()
       douyuTasks = undefined
+      crashLogger.warn('douyu-tasks-config-unavailable', error)
       console.error('斗鱼任务配置不可用, 原文件已保留.')
     }
   }
@@ -390,7 +532,9 @@ async function start(): Promise<void> {
       }
     },
   })
-  const providerCacheHome = privateDirectory(userDataDir, join(userDataDir, 'provider-cache'))
+  let providerCacheHome: string | undefined
+  try { providerCacheHome = privateDirectory(userDataDir, join(userDataDir, 'provider-cache')) }
+  catch (error) { crashLogger.warn('provider-cache-dir-unavailable', error) }
   const toolContext = {
     ...(app.isPackaged ? { bundledDir: join(process.resourcesPath, 'tools') }
       : { providerDir: resolve(__dirname, '../../.packaging/tools/provider') }),
@@ -567,11 +711,12 @@ async function start(): Promise<void> {
       return catalog
     },
   }) : undefined
-  if (danmakuFeatures && activityPreferences) backend = createBackendRuntime({
+  backend = createBackendRuntime({
     userDataDir, bundledLogoDir, proxy, acquisition, relay, danmaku: danmakuFeatures, accounts: douyuAccounts, tasks: douyuTasks,
     sender: douyuMessageSender, renewal: douyuRenewal, resolveRoom: roomResolver.resolve, activityPreferences, ...backendConfig,
     maxExtraStreams: preferences.extraStreamLimit,
     gatewayCoordinator: douyuGatewayCoordinator, networkRuntimePath, watchEnabled: !offlineE2e,
+    onDiagnostic: (event, error, fields) => crashLogger.warn(event, error, fields),
     douyuLotteryReader,
     openDouyuLotteryExternal: offlineE2e ? async url => {
       if (offlineLottery && douyuLotteryOpened.length < 32) douyuLotteryOpened.push(url)
@@ -686,7 +831,10 @@ async function start(): Promise<void> {
     },
     healthy: bridgeVersion => {
       const accepted = frontendUpdates.confirmHealthy(bridgeVersion)
-      if (accepted && frontendBootTimer) { clearTimeout(frontendBootTimer); frontendBootTimer = undefined }
+      if (accepted) {
+        if (frontendBootTimer) { clearTimeout(frontendBootTimer); frontendBootTimer = undefined }
+        startupGuard?.markHealthy()
+      }
       publishOnlineUpdate()
       return accepted
     },
@@ -747,7 +895,7 @@ async function start(): Promise<void> {
     } catch { return new Response('资源读取失败', { status: 500 }) }
   })
   window = new BrowserWindow({
-    show: !hiddenTestWindows,
+    show: false,
     ...(hiddenTestWindows ? { skipTaskbar: true, focusable: false, fullscreenable: false } : {}),
     width: 1440, height: 900, minWidth: 800, minHeight: 600,
     title: 'Fy1Sync', ...mainWindowChrome(process.platform),
@@ -758,21 +906,50 @@ async function start(): Promise<void> {
       nodeIntegration: false, webSecurity: true, backgroundThrottling: false, offscreen: hiddenTestWindows,
     },
   })
+  startupGuard?.markWindowCreated()
   const contents = window.webContents
   const mainWindow = window
   if (hiddenTestWindows) { contents.setFrameRate(60); contents.startPainting() }
+  let bootCompleted = false
+  let retriedBundledLoad = false
+  let healthyBootTimer: ReturnType<typeof setTimeout> | undefined
   let bootRecovery: Promise<void> | null = null
   const recoverFrontend = (): Promise<void> | null => {
-    if (!frontendUpdates.failBoot()) return bootRecovery
+    if (bootRecovery) return bootRecovery
+    if (contents.isDestroyed()) return null
+    const rolledBack = frontendUpdates.failBoot() || frontendUpdates.fallbackToBundledOnCrash()
+    if (!rolledBack && retriedBundledLoad) return null
     if (frontendBootTimer) { clearTimeout(frontendBootTimer); frontendBootTimer = undefined }
-    clientDir = frontendUpdates.clientDir()
-    publishOnlineUpdate()
-    bootRecovery = contents.loadURL(APP_URL)
-    void bootRecovery.catch(() => console.error('回退界面加载失败, 请重新启动应用.'))
-    return bootRecovery
+    if (rolledBack) {
+      clientDir = frontendUpdates.clientDir()
+      publishOnlineUpdate()
+      crashLogger.warn('frontend-rolled-back-on-failure', undefined, {
+        client: clientDir === bundledClientDir ? 'bundled' : 'cached',
+      })
+    } else {
+      retriedBundledLoad = true
+      crashLogger.warn('bundled-frontend-cache-clear-retry')
+    }
+    const attempt = (async () => {
+      if (!rolledBack) {
+        await session.defaultSession.clearCache().catch(() => {})
+        purgeTransientChromiumCaches(userDataDir, ['Code Cache', 'Cache'])
+      }
+      await contents.loadURL(APP_URL)
+    })()
+    bootRecovery = attempt
+    void attempt.catch(error => {
+      crashLogger.error('frontend-recovery-load-failed', error)
+      console.error('回退界面加载失败, 请重新启动应用.')
+    }).finally(() => {
+      if (bootRecovery === attempt) bootRecovery = null
+    })
+    return attempt
   }
-  contents.on('did-fail-load', (_event, code, _description, _url, isMainFrame) => {
-    if (isMainFrame && code !== -3) void recoverFrontend()
+  contents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
+    if (!isMainFrame || code === -3) return
+    crashLogger.warn('did-fail-load', undefined, { code, description })
+    if (bootCompleted) void recoverFrontend()
   })
   const releaseWindowState = subscribeWindowState(mainWindow)
   const releasePipPresentation = backend?.pip.subscribe(state => {
@@ -964,7 +1141,22 @@ async function start(): Promise<void> {
   contents.on('will-attach-webview', (event) => event.preventDefault())
   contents.on('render-process-gone', (_event, details) => {
     console.error(`Renderer exited: ${details.reason}, exitCode ${details.exitCode}`)
-    void recoverFrontend()
+    crashLogger.error('render-process-gone', undefined, { reason: details.reason, exitCode: details.exitCode })
+    if (quitting || details.reason === 'clean-exit' || details.reason === 'killed') return
+    if (healthyBootTimer) { clearTimeout(healthyBootTimer); healthyBootTimer = undefined }
+    startupGuard?.recordRendererCrash()
+    if (!bootCompleted) return
+    const recovery = recoverFrontend()
+    if (!recovery) {
+      if (!mainWindow.isDestroyed()) mainWindow.hide()
+      reportStartupFailure(new Error(`渲染进程异常退出 (${details.reason}, exitCode ${details.exitCode})`))
+      return
+    }
+    void recovery.catch(() => {
+      if (quitting) return
+      if (!mainWindow.isDestroyed()) mainWindow.hide()
+      reportStartupFailure(new Error(`渲染进程恢复失败 (${details.reason}, exitCode ${details.exitCode})`))
+    })
   })
   const index = join(clientDir, 'index.html')
   if (process.env.STREAM_SYNC_DEV === '1') {
@@ -973,6 +1165,7 @@ async function start(): Promise<void> {
   let cleanup: Promise<void> | undefined
   dispose = () => cleanup ??= (async () => {
     if (frontendBootTimer) clearTimeout(frontendBootTimer)
+    if (healthyBootTimer) clearTimeout(healthyBootTimer)
     if (lifecycleTimer) clearTimeout(lifecycleTimer)
     releaseOnlineUpdate()
     onlineUpdates.dispose()
@@ -1029,32 +1222,42 @@ async function start(): Promise<void> {
     if (recovery) await recovery
     else throw error
   }
+  bootCompleted = true
+  healthyBootTimer = setTimeout(() => {
+    healthyBootTimer = undefined
+    startupGuard?.markHealthy()
+    crashLogger.info('boot-healthy')
+  }, 3_000)
+  healthyBootTimer.unref?.()
 }
-if (primaryInstance) void app.whenReady().then(() => {
-  if (hiddenTestWindows && process.platform === 'darwin') app.setActivationPolicy('prohibited')
-  const template = applicationMenu(process.platform, showMainWindow)
-  Menu.setApplicationMenu(template ? Menu.buildFromTemplate(template) : null)
-  showMainWindow()
-}).catch(reportStartupFailure)
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
-let quitting = false
-let shutdownComplete = false
-app.on('before-quit', (event) => {
-  if (shutdownComplete) return
-  if (quitting) { event.preventDefault(); return }
-  event.preventDefault()
-  quitting = true
-  // NSIS may close a running application after a short grace period. Finish all data and
-  // media cleanup first; never let an installer race the asynchronous normal shutdown.
-  const installer = confirmedInstaller
-  confirmedInstaller = undefined
-  void (async () => {
-    await lifecycle.quit()
-    if (installer) await launchApplicationInstaller(installer.userDataDir, installer.file)
-  })().catch(() => {
-    if (installer) {
-      dialog.showErrorBox('完整应用更新未启动', '安装向导启动失败，未安装更新。应用将重新启动，请稍后重试。')
-      app.relaunch()
-    }
-  }).finally(() => { shutdownComplete = true; app.quit() })
-})
+if (primaryInstance) {
+  void app.whenReady().then(() => {
+    if (hiddenTestWindows && process.platform === 'darwin') app.setActivationPolicy('prohibited')
+    const template = applicationMenu(process.platform, showMainWindow)
+    Menu.setApplicationMenu(template ? Menu.buildFromTemplate(template) : null)
+    showMainWindow()
+  }).catch(reportStartupFailure)
+  app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
+  app.on('before-quit', (event) => {
+    if (shutdownComplete) return
+    if (quitting) { event.preventDefault(); return }
+    event.preventDefault()
+    quitting = true
+    // NSIS may close a running application after a short grace period. Finish all data and
+    // media cleanup first; never let an installer race the asynchronous normal shutdown.
+    const installer = confirmedInstaller
+    confirmedInstaller = undefined
+    void (async () => {
+      await lifecycle.quit()
+      if (!fatalSessionCrash) startupGuard?.markCleanExit()
+      if (installer) await launchApplicationInstaller(installer.userDataDir, installer.file)
+      else if (relaunchAfterQuit) app.relaunch()
+    })().catch((error) => {
+      crashLogger.error('before-quit-error', error)
+      if (installer) {
+        dialog.showErrorBox('完整应用更新未启动', '安装向导启动失败，未安装更新。应用将重新启动，请稍后重试。')
+        app.relaunch()
+      }
+    }).finally(() => { shutdownComplete = true; app.quit() })
+  })
+}

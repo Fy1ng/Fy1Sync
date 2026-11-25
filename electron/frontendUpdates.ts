@@ -290,6 +290,25 @@ export class FrontendUpdates implements FrontendUpdatePort {
     return true
   }
 
+  /** Emergency fallback to the immutable bundled client if an already-active online release crashes at boot. */
+  fallbackToBundledOnCrash(): boolean {
+    if (this.disposed || !this.running) return false
+    const failedRevision = this.running.entry.revision
+    const next: Selection = {
+      schemaVersion: 1,
+      active: null,
+      previous: null,
+      pending: null,
+      trial: null,
+      blockedRevision: Math.max(this.selection.blockedRevision, failedRevision, this.revision(this.selection.pending)),
+    }
+    try { this.save(next) } catch { this.selection = next }
+    this.running = null
+    this.phase = 'rolled-back'
+    this.message = '已更新界面加载异常，已自动回退至安装包内置界面。'
+    return true
+  }
+
   /** The caller obtains explicit native confirmation and restarts after this succeeds. */
   rollbackForRestart(): void {
     if (this.disposed || !this.snapshot().canRollback) throw failure()
