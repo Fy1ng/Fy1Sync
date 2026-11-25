@@ -51,6 +51,12 @@ export interface AppSettings {
   danmaku: DanmakuSettings
   autoSyncEnabled: boolean
   autoSyncIntervalSeconds: number
+  /** Consecutive failed alignments before both rooms are re-resolved and reloaded; 0 disables. */
+  autoRefreshFailures: number
+  /** Whether a running alignment forces the top bar and dock (with its timeline) into view. */
+  revealChromeWhileAligning: boolean
+  /** Let frame matching switch the picture to the backup room the commentary is showing. */
+  autoPickCandidate: boolean
   recognitionMode: RecognitionMode
   /** Show the optional recognition diagnostics above the chat; recognition itself stays enabled. */
   basicRecognitionPanelVisible: boolean
@@ -91,6 +97,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   autoSyncEnabled: false,
   autoSyncIntervalSeconds: 30,
+  autoRefreshFailures: 3,
+  revealChromeWhileAligning: true,
+  autoPickCandidate: true,
   recognitionMode: 'basic',
   basicRecognitionPanelVisible: false,
   frameHashRegions: { official: { x: 0, y: 0, w: 1, h: 1 }, commentary: { x: 0, y: 0, w: 1, h: 1 } },
@@ -186,6 +195,9 @@ export function mergeSettings(raw: unknown): AppSettings {
     autoSyncEnabled: boolean(stored.autoSyncEnabled, defaults.autoSyncEnabled),
     // The sync design fixes the interval choices at 15/30/60 s.
     autoSyncIntervalSeconds: clamp(stored.autoSyncIntervalSeconds, 10, 600, 30),
+    autoRefreshFailures: Math.round(clamp(stored.autoRefreshFailures, 0, 10, defaults.autoRefreshFailures)),
+    revealChromeWhileAligning: boolean(stored.revealChromeWhileAligning, defaults.revealChromeWhileAligning),
+    autoPickCandidate: boolean(stored.autoPickCandidate, defaults.autoPickCandidate),
     basicRecognitionPanelVisible: boolean(stored.basicRecognitionPanelVisible, defaults.basicRecognitionPanelVisible),
     recognitionMode: stored.recognitionMode === 'frame-hash' ? 'frame-hash' : 'basic',
     frameHashRegions: {

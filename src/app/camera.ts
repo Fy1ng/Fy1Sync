@@ -25,11 +25,19 @@ export interface CameraWindow {
   border: number
 }
 
+/**
+ * `window`: a floating, draggable window. `inplace` (画面透传): the crop is drawn over the main
+ * picture at the very spot it was framed, replacing that part of the picture.
+ */
+export type CameraMode = 'window' | 'inplace'
+
 export interface CameraConfig {
   /** Crop on the commentary picture, fractions of the video frame. */
   crop: RoiRect
   window: CameraWindow
   enabled: boolean
+  /** Absent on configs saved before 画面透传 existed; read as `window`. */
+  mode?: CameraMode
   updatedAt: number
 }
 
@@ -68,7 +76,12 @@ function normalizeConfig(raw: unknown): CameraConfig | null {
   const r = raw as Partial<CameraConfig>
   const crop = normalizeCrop(r.crop)
   if (!crop) return null
-  return { crop, window: normalizeWindow(r.window), enabled: r.enabled !== false, updatedAt: clamp(r.updatedAt, 0, Number.MAX_SAFE_INTEGER, 0) }
+  return {
+    crop, window: normalizeWindow(r.window), enabled: r.enabled !== false,
+    // Only the non-default mode is stored, so configs saved before it existed read back unchanged.
+    ...(r.mode === 'inplace' ? { mode: 'inplace' as const } : {}),
+    updatedAt: clamp(r.updatedAt, 0, Number.MAX_SAFE_INTEGER, 0),
+  }
 }
 
 interface CameraSource { platform?: string; sourceRoom?: string; danmakuRoom?: string | null; label?: string; input?: string }

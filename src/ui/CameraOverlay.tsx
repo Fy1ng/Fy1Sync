@@ -14,9 +14,10 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useSession } from '../app/SessionContext'
+import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { useAnimationFrame } from '../app/hooks'
 import type { CameraConfig, CameraWindow } from '../app/camera'
+import type { RoiRect } from '../core/profileSchema'
 import { normalizeWindow } from '../app/camera'
 import { useCameraUpscale, type CameraUpscaleState } from './useCameraUpscale'
 
@@ -31,6 +32,7 @@ interface Props {
 
 export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, onUpscaleState }: Props): React.ReactNode {
   const session = useSession()
+  const { mainRole } = useSessionSnapshot()
   const canvas = useRef<HTMLCanvasElement | null>(null)
   const [stage, setStage] = useState({ width: 0, height: 0 })
   const [draft, setDraft] = useState<CameraWindow | null>(null)
@@ -66,8 +68,19 @@ export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, on
   // Crop fractions are of the video frame, so the on-screen aspect is crop aspect x frame aspect.
   const screenAspect = aspect * videoAspect
   const win = draft ?? (fitStage ? clampWindow(config.window, stage, screenAspect) : config.window)
-  const widthPx = win.width * stage.width
-  const heightPx = widthPx / screenAspect
+  // 画面透传: the crop covers the same spot of the main picture instead of floating. With the
+  // commentary itself as the main picture there is nothing to replace.
+  const inplace = config.mode === 'inplace'
+  const passthrough = inplace && mainRole !== 'commentary'
+  const [place, setPlace] = useState<InplaceRect | null>(null)
+  useAnimationFrame(() => {
+    const node = stageRef.current
+    const video = session.engine.element(mainRole)
+    const next = node && video ? inplaceRect(node, video, config.crop) : null
+    setPlace(previous => sameRect(previous, next) ? previous : next)
+  }, config.enabled && passthrough)
+  const widthPx = passthrough ? place?.width ?? 0 : win.width * stage.width
+  const heightPx = passthrough ? place?.height ?? 0 : widthPx / screenAspect
   const upscale = useCameraUpscale(config, widthPx, heightPx)
   const { mode, tier, reason, supported } = upscale.state
   useEffect(() => {
@@ -141,6 +154,18 @@ export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, on
   }
 
   if (!config.enabled || stage.width <= 0) return null
+  if (inplace) {
+    if (!passthrough || !place || place.width < 1 || place.height < 1) return null
+    return (
+      <div className="camera-overlay is-inplace" data-upscale-mode={mode} data-upscale-tier={tier} data-upscale-reason={reason}
+        aria-hidden="true"
+        style={{ left: `${place.left}px`, top: `${place.top}px`, width: `${place.width}px`, height: `${place.height}px` }}>
+        <canvas ref={canvas} className="camera-canvas" style={{ visibility: mode === 'webgpu' ? 'hidden' : undefined }} />
+        {upscale.active && <canvas key={upscale.canvasKey} ref={upscale.canvas} className="camera-canvas camera-canvas-gpu"
+          style={{ visibility: mode === 'webgpu' ? undefined : 'hidden' }} />}
+      </div>
+    )
+  }
   return (
     <div
       ref={box}
@@ -178,6 +203,31 @@ export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, on
       />
     </div>
   )
+}
+
+export interface InplaceRect { left: number; top: number; width: number; height: number }
+
+/**
+ * Where a crop (fractions of a video frame) lands on the stage when it is laid over the main
+ * picture: the element box minus the object-fit: contain letterbox, in stage pixels.
+ */
+export function inplaceRect(stage: HTMLElement, video: HTMLVideoElement, crop: RoiRect): InplaceRect | null {
+  if (!video.videoWidth || !video.videoHeight) return null
+  const s = stage.getBoundingClientRect()
+  const v = video.getBoundingClientRect()
+  if (v.width <= 0 || v.height <= 0) return null
+  const scale = Math.min(v.width / video.videoWidth, v.height / video.videoHeight)
+  const w = video.videoWidth * scale
+  const h = video.videoHeight * scale
+  const x = v.left - s.left + (v.width - w) / 2
+  const y = v.top - s.top + (v.height - h) / 2
+  return { left: x + crop.x * w, top: y + crop.y * h, width: crop.w * w, height: crop.h * h }
+}
+
+function sameRect(a: InplaceRect | null, b: InplaceRect | null): boolean {
+  if (!a || !b) return a === b
+  return Math.abs(a.left - b.left) < 0.5 && Math.abs(a.top - b.top) < 0.5
+    && Math.abs(a.width - b.width) < 0.5 && Math.abs(a.height - b.height) < 0.5
 }
 
 /** Keep the whole window on the stage. */

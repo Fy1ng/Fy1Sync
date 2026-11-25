@@ -3418,3 +3418,35 @@ body,
   border: 1px solid currentColor;
   border-radius: 3px;
 }
+
+/* 备选画面 list inside the 画面 source panel. */
+.studio .candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.studio .candidate-item {
+  gap: 8px;
+}
+
+.studio .candidate-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio .candidate-actions {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+
+/* The 画面 panel grew a 备选画面 section; keep it inside the window. */
+.studio .source-pop {
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+}

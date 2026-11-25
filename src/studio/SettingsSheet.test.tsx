@@ -97,7 +97,7 @@ describe('playback diagnostics settings', () => {
 })
 
 describe('player shortcut settings', () => {
-  it('lists all nine player actions after the alignment tab and shows the actual steps', async () => {
+  it('lists all ten player actions after the alignment tab and shows the actual steps', async () => {
     mount()
     const tabs = within(screen.getByRole('tablist', { name: '通用' })).getAllByRole('tab')
     expect(tabs.slice(0, 3).map(tab => tab.textContent)).toEqual(['对齐', '快捷键', '网络'])
@@ -106,7 +106,7 @@ describe('player shortcut settings', () => {
     generalPage('快捷键')
     const expected = [
       ['播放／暂停', '空格'], ['主画面后退', '←'], ['主画面前进', '→'],
-      ['回退画面', ',', '['], ['快进画面', '.', ']'], ['自动对齐', 'A'],
+      ['回退画面', ',', '['], ['快进画面', '.', ']'], ['自动对齐', 'A'], ['刷新直播间', 'R'],
       ['开关弹幕', 'D'], ['展开／收起弹幕栏', 'C'], ['全屏', 'F'],
     ] as const
     expect(screen.getAllByRole('rowheader').map(header => header.textContent)).toEqual(expected.map(([action]) => action))

@@ -35,8 +35,20 @@ describe('mergeSettings', () => {
     expect(loadSettings(fakeStorage()).shortcuts).toEqual({
       togglePlayback: ['Space'], seekBack: ['ArrowLeft'], seekForward: ['ArrowRight'],
       nudgeBack: ['Comma', 'BracketLeft'], nudgeForward: ['Period', 'BracketRight'],
-      autoAlign: ['KeyA'], toggleDanmaku: ['KeyD'], toggleSidebar: ['KeyC'], toggleFullscreen: ['KeyF'],
+      autoAlign: ['KeyA'], refreshSources: ['KeyR'], toggleDanmaku: ['KeyD'], toggleSidebar: ['KeyC'], toggleFullscreen: ['KeyF'],
     })
+  })
+
+  it('defaults and clamps the refresh, chrome and backup-picture settings', () => {
+    const defaults = loadSettings(fakeStorage())
+    expect(defaults.autoRefreshFailures).toBe(3)
+    expect(defaults.revealChromeWhileAligning).toBe(true)
+    expect(defaults.autoPickCandidate).toBe(true)
+    const storage = fakeStorage(JSON.stringify({ autoRefreshFailures: 42.4, revealChromeWhileAligning: false, autoPickCandidate: 'yes' }))
+    const merged = loadSettings(storage)
+    expect(merged.autoRefreshFailures).toBe(10)
+    expect(merged.revealChromeWhileAligning).toBe(false)
+    expect(merged.autoPickCandidate).toBe(true)
   })
 
   it('round-trips custom and empty shortcut bindings', () => {

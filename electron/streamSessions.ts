@@ -7,10 +7,16 @@ import { sanitizedFailure } from '../server/api'
 import { classifyNetworkFailure } from '../server/networkFailure'
 import { displayMediaInput, MAX_MEDIA_INPUT_LENGTH } from '../src/core/mediaInput'
 
-export interface OpenStreamInput { input: string; platform?: PlatformKind; quality?: string; preferAdaptive?: boolean }
+/**
+ * `candidate` marks a backup picture: an extra stream the renderer keeps playing out of sight
+ * so it can be compared with the commentary and swapped in, instead of showing it in a window.
+ */
+export type StreamSessionRole = 'candidate'
+export interface OpenStreamInput { input: string; platform?: PlatformKind; quality?: string; preferAdaptive?: boolean; role?: StreamSessionRole }
 export interface StreamSessionView {
   id: StreamId
   input: string
+  role?: StreamSessionRole
   phase: 'opening' | 'ready' | 'failed'
   stream: ResolvedStream | null
   buffer: BufferState | null
@@ -59,7 +65,8 @@ export class StreamSessions {
     if (limit > 0 && this.sessions.size >= limit) throw new StreamSessionError('stream-limit')
     const id = this.id()
     if (!isExtraStreamId(id) || this.sessions.has(id)) throw new StreamSessionError('invalid-arguments')
-    const runtime: Runtime = { revision: 0, view: { id, input: displayMediaInput(input.input), phase: 'opening', stream: null, buffer: null, error: null } }
+    const runtime: Runtime = { revision: 0, view: { id, input: displayMediaInput(input.input), ...(input.role ? { role: input.role } : {}),
+      phase: 'opening', stream: null, buffer: null, error: null } }
     this.sessions.set(id, runtime)
     this.publish()
     return this.acquire(runtime, () => this.acquisition.resolve(input.input, input.platform, id, input.quality, input.preferAdaptive))
@@ -130,11 +137,13 @@ export class StreamSessions {
 export function readOpenStream(raw: unknown): OpenStreamInput {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new StreamSessionError('invalid-arguments')
   const value = raw as Record<string, unknown>
-  if (Object.keys(value).some(k => !['input', 'platform', 'quality', 'preferAdaptive'].includes(k))
+  if (Object.keys(value).some(k => !['input', 'platform', 'quality', 'preferAdaptive', 'role'].includes(k))
+    || (value.role !== undefined && value.role !== 'candidate')
     || typeof value.input !== 'string' || !value.input.trim() || value.input.length > MAX_MEDIA_INPUT_LENGTH
     || (value.platform !== undefined && !['youtube', 'twitch', 'douyu', 'bilibili', 'huya', 'douyin', 'direct'].includes(String(value.platform)))
     || (value.quality !== undefined && (typeof value.quality !== 'string' || !value.quality || value.quality.length > 128))
     || (value.preferAdaptive !== undefined && typeof value.preferAdaptive !== 'boolean')) throw new StreamSessionError('invalid-arguments')
   return { input: value.input.trim(), ...(value.platform ? { platform: value.platform as PlatformKind } : {}),
-    ...(value.quality ? { quality: value.quality as string } : {}), ...(value.preferAdaptive !== undefined ? { preferAdaptive: value.preferAdaptive as boolean } : {}) }
+    ...(value.quality ? { quality: value.quality as string } : {}), ...(value.preferAdaptive !== undefined ? { preferAdaptive: value.preferAdaptive as boolean } : {}),
+    ...(value.role ? { role: 'candidate' as const } : {}) }
 }

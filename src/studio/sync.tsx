@@ -184,7 +184,7 @@ const AUTO_ALIGN_ADAPTING = true
 
 export function startAutoAlign(session: Session): void {
   if (!session.snapshot.autoSync.ready) return
-  if (session.settings.recognitionMode === 'basic' && session.settings.basicRecognitionPanelVisible && !session.settings.sidebarVisible) session.updateSettings({ sidebarVisible: true })
+  if (session.settings.recognitionMode === 'basic' && session.settings.basicRecognitionPanelVisible && session.settings.revealChromeWhileAligning && !session.settings.sidebarVisible) session.updateSettings({ sidebarVisible: true })
   void session.syncNow()
 }
 
@@ -231,6 +231,15 @@ export function AutoAlign(): React.ReactNode {
         {settings.autoSyncEnabled && !autoSync.authorized && (
           <p className="note-warn">已手动调整，自动对齐已暂停。点击「自动对齐」恢复。</p>
         )}
+        <Segmented label="失败后刷新" value={settings.autoRefreshFailures}
+          onChange={(autoRefreshFailures) => session.updateSettings({ autoRefreshFailures })}
+          options={[0, 2, 3, 5].map((count) => ({ value: count, label: count === 0 ? '关闭' : `${count} 次` }))} />
+        <Switch label="对齐时显示进度条" detail="关闭后对齐期间不再弹出顶栏和底栏"
+          checked={settings.revealChromeWhileAligning}
+          onChange={(revealChromeWhileAligning) => session.updateSettings({ revealChromeWhileAligning })} />
+        <Switch label="自动识别解说画面" detail="多个画面来源时，按画面匹配切换到解说正在使用的那一路"
+          checked={settings.autoPickCandidate}
+          onChange={(autoPickCandidate) => session.updateSettings({ autoPickCandidate })} />
 
         <div className="menu-rule" />
         <Segmented label="识别模式" value={settings.recognitionMode}
@@ -281,6 +290,8 @@ export function PlaybackRecoveryPrompt(): React.ReactNode {
         : `画面刚卡顿，两路可能错开了约 ${recovery.driftSeconds?.toFixed(1)} 秒`}</span>
       <button type="button" className="btn-quiet small" disabled={busy || !ready}
         onClick={() => startAutoAlign(session)}>重新对齐</button>
+      <button type="button" className="btn-quiet small" disabled={busy || snapshot.refreshing}
+        onClick={() => void session.refreshSources()}>刷新直播间</button>
     </div>
   )
 }

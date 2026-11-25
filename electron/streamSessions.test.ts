@@ -112,6 +112,16 @@ describe('independent stream sessions', () => {
     expect(f.port.stop).not.toHaveBeenCalled()
     await f.manager.dispose()
   })
+  it('marks backup pictures and rejects any other session role', async () => {
+    const f = fixture()
+    const view = await f.manager.open({ input: 'backup', role: 'candidate' })
+    expect(view.role).toBe('candidate')
+    expect(f.manager.snapshot().sessions[0]).toMatchObject({ role: 'candidate' })
+    await expect(f.manager.open({ input: 'x', role: 'official' as 'candidate' })).rejects.toMatchObject({ code: 'invalid-arguments' })
+    const plain = await f.manager.open({ input: 'plain' })
+    expect(plain).not.toHaveProperty('role')
+    await f.manager.dispose()
+  })
   it('returns detached snapshots and bounds concurrent resource reservations', async () => {
     const f = fixture()
     await Promise.all(['1', '2', '3', '4'].map(input => f.manager.open({ input })))
