@@ -1,11 +1,18 @@
 import fs from 'node:fs/promises'
-import { cookieDomainAllowed, LOGIN_PLATFORMS, type BrowserCookie, type LoginPlatform } from './cookies'
+import { cookieDomainAllowed, hasAuthenticationCookies, LOGIN_PLATFORMS, type BrowserCookie, type LoginPlatform } from './cookies'
 import type { DiscoveredBrowserProfile } from './browserProfiles'
 import { BrowserImportError, importAbort } from './browserImportError'
 import { readBrowserKeys, type CredentialHelperOptions } from './browserCredentialHelper'
 import { chromiumCookieValue, chromiumMasterKey } from './browserCookieCrypto'
+import { eraseBrowserWebStorage, readBrowserWebStorage, type BrowserOriginStorageEntry } from './browserWebStorage'
+import { DOUYIN_SIGNING_IDB, DOUYIN_SIGNING_STORAGE_KEYS } from './douyinSigningCapture'
 
-export interface BrowserCookieRead { cookies: BrowserCookie[]; skipped: number; decryptionFailedPlatforms?: LoginPlatform[] }
+export interface BrowserCookieRead {
+  cookies: BrowserCookie[]
+  skipped: number
+  decryptionFailedPlatforms?: LoginPlatform[]
+  douyinStorage?: BrowserOriginStorageEntry[]
+}
 export type BrowserCookieReadFunction = (profile: DiscoveredBrowserProfile, platforms: readonly LoginPlatform[], signal: AbortSignal) => Promise<BrowserCookieRead>
 
 function allowed(host: string, platforms: readonly LoginPlatform[]): boolean {
@@ -33,9 +40,10 @@ export function browserCookieReader(helper: CredentialHelperOptions): BrowserCoo
     let database: import('node:sqlite').DatabaseSync | undefined
     let master: Buffer | undefined
     let material: Awaited<ReturnType<typeof readBrowserKeys>> | undefined
-    const cookies: BrowserCookie[] = []
-    const decryptionFailures = new Set<LoginPlatform>()
-    let skipped = 0
+      const cookies: BrowserCookie[] = []
+      const decryptionFailures = new Set<LoginPlatform>()
+      let douyinStorage: BrowserOriginStorageEntry[] | undefined
+      let skipped = 0
     try {
       const { DatabaseSync } = await import('node:sqlite')
       const stat = await fs.lstat(profile.database)
@@ -95,9 +103,24 @@ export function browserCookieReader(helper: CredentialHelperOptions): BrowserCoo
           sameSite: sameSite(row[firefox ? 'sameSite' : 'samesite']) })
       }
       importAbort(signal)
-      return { cookies, skipped, decryptionFailedPlatforms: [...decryptionFailures] }
+      if (platforms.includes('douyin') && hasAuthenticationCookies(cookies, 'douyin')) {
+        douyinStorage = await readBrowserWebStorage(profile, {
+          hostSuffix: 'douyin.com',
+          keys: DOUYIN_SIGNING_STORAGE_KEYS,
+          idbDatabase: DOUYIN_SIGNING_IDB.database,
+          idbStore: DOUYIN_SIGNING_IDB.store,
+        }, signal)
+      }
+      importAbort(signal)
+      return {
+        cookies,
+        skipped,
+        decryptionFailedPlatforms: [...decryptionFailures],
+        ...(douyinStorage?.length ? { douyinStorage } : {}),
+      }
     } catch (error) {
       for (const cookie of cookies) cookie.value = ''
+      eraseBrowserWebStorage(douyinStorage)
       if (error instanceof BrowserImportError) throw error
       const code = (error as NodeJS.ErrnoException).code
       if (code === 'ENOENT') throw new BrowserImportError('browser-import-profile-missing')

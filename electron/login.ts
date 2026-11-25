@@ -458,7 +458,8 @@ export class LoginManager {
   }
 
   /** Only a main-owned, online-verified import reaches this writer; it shares login/logout ownership. */
-  importCookies(platform: LoginPlatform, cookies: BrowserCookie[], identity: BrowserAccountIdentity, signal?: AbortSignal): Promise<LoginResult> {
+  importCookies(platform: LoginPlatform, cookies: BrowserCookie[], identity: BrowserAccountIdentity,
+    signal?: AbortSignal, douyinSigning?: DouyinSigningSnapshot | null): Promise<LoginResult> {
     if (!isLoginPlatform(platform) || this.disposed || signal?.aborted) return Promise.reject(new LoginError('login-cancelled'))
     if (this.loginInProgress(platform)) return Promise.reject(new LoginError('login-busy'))
     if (!hasAuthenticationCookies(cookies, platform, this.options.now?.())) return Promise.reject(new LoginError('login-incomplete'))
@@ -473,10 +474,34 @@ export class LoginManager {
         const result = await this.store.writeAsync(platform, cookies, controller.signal, current, identity)
         if (platform === 'douyin' && this.options.douyinSigning) {
           this.signingBlocked = true
-          this.signingProblem = 'douyin-signing-material-missing'
+          this.signingProblem = undefined
+          let cleared = true
           try { await this.options.douyinSigning.clear(controller.signal, current) }
-          catch { this.signingProblem = 'douyin-signing-store-failed' }
-          return { ...result, signingReady: false, signingProblem: this.signingProblem }
+          catch { cleared = false; this.signingProblem = 'douyin-signing-store-failed' }
+          if (cleared && douyinSigning) {
+            try {
+              if (!identity.uid || douyinSigning.accountUid !== identity.uid
+                || douyinSigning.cookieFingerprint !== douyinBrowserCookieFingerprint(cookies, this.options.now?.())) {
+                this.signingProblem = 'douyin-signing-material-missing'
+              } else {
+                const material = parseDouyinSigningSnapshot(douyinSigning)
+                await this.options.douyinSigning.save(material, controller.signal, current)
+                if (controller.signal.aborted || !current()) throw new LoginError('login-cancelled')
+                this.signingBlocked = false
+                this.signingProblem = undefined
+                this.revisions[platform]++
+                return { ...result, signingReady: true }
+              }
+            } catch (error) {
+              if (controller.signal.aborted || !current()) throw new LoginError('login-cancelled')
+              const code = typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : ''
+              this.signingProblem = /^douyin-(?:signing|ticket)-[a-z-]{1,60}$/.test(code) ? code : 'douyin-signing-store-failed'
+            }
+          } else if (cleared) {
+            this.signingProblem = 'douyin-signing-material-missing'
+          }
+          this.revisions[platform]++
+          return { ...result, signingReady: false, ...(this.signingProblem ? { signingProblem: this.signingProblem } : {}) }
         }
         return result
       } catch (error) {

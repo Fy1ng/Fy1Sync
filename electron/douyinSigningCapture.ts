@@ -5,6 +5,8 @@ import {
   type DouyinSigningCaptureContext,
   type DouyinSigningSnapshot,
 } from '../server/douyin/signingMaterial'
+import { signDouyinTicketHeaders } from '../server/douyin/ticketSigner'
+import type { BrowserOriginStorageEntry } from './browserWebStorage'
 
 // Fixed URLs and storage schema from the official 2722.06f25cc9.js SDK snapshot.
 // Do not accept a caller-supplied origin, namespace, storage key or JavaScript.
@@ -15,11 +17,14 @@ export const DOUYIN_SIGNING_STORAGE_FRAMES = [
   'https://lf-zt.douyin.com/obj/uc-assets/zt/@byted/x-storage-web/4.0.5/dist/latest/index.html',
 ] as const
 
-const STORAGE_KEYS = [
+export const DOUYIN_SIGNING_STORAGE_KEYS = [
   'security-sdk/s_sdk_crypt_sdk',
   'security-sdk/s_sdk_sign_data_key/web_protect',
   'security-sdk/s_sdk_cert_key',
 ] as const
+export const DOUYIN_SIGNING_IDB = { database: 'secure-store', store: 'cryptvalues' } as const
+
+const STORAGE_KEYS = DOUYIN_SIGNING_STORAGE_KEYS
 const MAX_VALUE = 32768
 const MAX_RESPONSE = 196608
 const MAX_FRAMES = 8
@@ -242,4 +247,96 @@ export async function captureDouyinSigningSnapshot(
     signal.removeEventListener('abort', cancel)
     debug.removeListener('message', onMessage)
   }
+}
+
+function unwrapStoredValue(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw || raw.length > MAX_VALUE) return ''
+  try {
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return ''
+    const obj = parsed as Record<string, unknown>
+    if (typeof obj.data === 'string' && obj.data.length <= MAX_VALUE) return obj.data
+    if (obj.data && typeof obj.data === 'object' && !Array.isArray(obj.data)) {
+      const encoded = JSON.stringify(obj.data)
+      return encoded.length <= MAX_VALUE ? encoded : ''
+    }
+    if ('ec_privateKey' in obj || 'ticket' in obj) return raw
+    return ''
+  } catch { return '' }
+}
+
+function originPriority(origin: string): number {
+  if (origin === 'https://live.douyin.com') return 0
+  if (origin === 'https://www.douyin.com') return 1
+  if (origin === 'https://lf-zt.douyin.com') return 2
+  return 3
+}
+
+function usableSnapshot(bundle: StorageBundle, context: DouyinSigningCaptureContext, serverOverride?: string): DouyinSigningSnapshot | null {
+  for (const candidate of bundle.certificate ? [bundle, { ...bundle, certificate: '' }] : [bundle]) {
+    const snapshot = snapshotFrom(candidate, context, serverOverride)
+    if (!snapshot) continue
+    try {
+      const material = parseDouyinSigningSnapshot(snapshot)
+      signDouyinTicketHeaders(material, `${DOUYIN_SIGNING_ORIGIN}/webcast/room/chat/`, 1_700_000_000)
+      return snapshot
+    } catch { /* Try next candidate. */ }
+  }
+  return null
+}
+
+/** Match imported Douyin Web Storage entries against the authenticated session and server proof. */
+export function matchDouyinSigningStorage(
+  entries: readonly BrowserOriginStorageEntry[],
+  context: DouyinSigningCaptureContext,
+  cookieServerProofs: readonly string[] = [],
+): DouyinSigningSnapshot | null {
+  const binding = { accountUid: context.accountUid, cookieFingerprint: context.cookieFingerprint, userAgent: context.userAgent }
+  if (typeof binding.accountUid !== 'string' || !/^[1-9]\d{0,19}$/.test(binding.accountUid) || BigInt(binding.accountUid) > 0xffff_ffff_ffff_ffffn
+    || typeof binding.cookieFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(binding.cookieFingerprint) || typeof binding.userAgent !== 'string'
+    || binding.userAgent.length > 512 || /[\x00-\x1f\x7f]/.test(binding.userAgent)) return null
+
+  const sorted = [...entries].sort((a, b) =>
+    originPriority(a.origin) - originPriority(b.origin)
+    || (a.source === b.source ? 0 : a.source === 'local-storage' ? -1 : 1))
+
+  const bundles: StorageBundle[] = sorted.map(entry => ({
+    cryptData: unwrapStoredValue(entry.values[STORAGE_KEYS[0]]),
+    serverData: unwrapStoredValue(entry.values[STORAGE_KEYS[1]]),
+    certificate: unwrapStoredValue(entry.values[STORAGE_KEYS[2]]),
+  })).filter(bundle => Boolean(bundle.cryptData || bundle.serverData))
+
+  if (!bundles.length) return null
+
+  for (const proof of cookieServerProofs) {
+    if (typeof proof !== 'string' || !proof || proof.length > MAX_VALUE) continue
+    for (const bundle of bundles) {
+      if (!bundle.cryptData) continue
+      const matched = usableSnapshot(bundle, binding, proof)
+      if (matched) return matched
+    }
+  }
+
+  for (const bundle of bundles) {
+    if (!bundle.cryptData || !bundle.serverData) continue
+    const matched = usableSnapshot(bundle, binding)
+    if (matched) return matched
+  }
+
+  for (const cryptBundle of bundles) {
+    if (!cryptBundle.cryptData) continue
+    for (const serverBundle of bundles) {
+      if (!serverBundle.serverData || serverBundle === cryptBundle) continue
+      const matched = usableSnapshot({ ...cryptBundle, serverData: serverBundle.serverData }, binding)
+      if (matched) return matched
+    }
+  }
+  return null
+}
+
+export function eraseDouyinSigningSnapshot(snapshot: DouyinSigningSnapshot | null | undefined): void {
+  if (!snapshot) return
+  snapshot.cryptData = ''
+  snapshot.serverData = ''
+  if (snapshot.certificate !== undefined) snapshot.certificate = ''
 }

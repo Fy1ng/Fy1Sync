@@ -88,4 +88,27 @@ describe('verified login and encrypted-signing lifecycle integration',()=>{
     await expect(f.manager.logout('douyin')).rejects.toMatchObject({code:'cookie-storage-failed'})
     expect((await new CookieStore(root).status()).douyin.loggedIn).toBe(false)
   })
+  it('persists matched browser-imported signing material and unlocks Douyin danmaku sending',async()=>{
+    const f=setup()
+    const importedSnapshot={...snapshot(),accountUid:'42'}
+    const result=await f.manager.importCookies('douyin',[cookie],{uid:'42',username:'浏览器账号'},undefined,importedSnapshot)
+    expect(result).toMatchObject({signingReady:true,authKeysPresent:['sessionid']})
+    expect(f.signing.clear).toHaveBeenCalledOnce()
+    expect(f.signing.save).toHaveBeenCalledOnce()
+    const header=await f.manager.cookieHeader('douyin','https://live.douyin.com/webcast/user/me/')
+    const loaded=await f.manager.douyinSigningMaterial(header,undefined,'42')
+    expect(loaded).not.toBeNull()
+    expect(loaded?.accountUid).toBe('42')
+  })
+  it('clears previous signing material and reports signingReady=false when browser import lacks a matching key',async()=>{
+    const f=setup()
+    await f.manager.login('douyin')
+    expect(f.signing.save).toHaveBeenCalledOnce()
+    const nextCookie:BrowserCookie={...cookie,value:'synthetic-imported-without-key'}
+    const result=await f.manager.importCookies('douyin',[nextCookie],{uid:'42',username:'仅Cookie账号'})
+    expect(result).toMatchObject({signingReady:false,signingProblem:'douyin-signing-material-missing'})
+    const header=await f.manager.cookieHeader('douyin','https://live.douyin.com/webcast/user/me/')
+    expect(await f.manager.douyinSigningMaterial(header,undefined,'42')).toBeNull()
+    expect((await f.manager.loginStatus()).douyin).toMatchObject({loggedIn:true,nickname:'仅Cookie账号'})
+  })
 })

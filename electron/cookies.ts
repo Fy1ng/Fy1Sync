@@ -115,16 +115,39 @@ export function douyinBrowserCookieFingerprint(cookies: BrowserCookie[], now=Dat
 
 /** Server proof from the outgoing Cookie scope, used only in main to bind the captured private key. */
 export function douyinBrowserSigningServerData(cookies: BrowserCookie[], now=Date.now()/1000): string|undefined {
+  return parseDouyinServerDataCookie(selectedDouyinServerCookie(cookies,'https://live.douyin.com/webcast/user/me/',now))
+}
+
+function parseDouyinServerDataCookie(raw: string|undefined): string|undefined {
   try {
-    const eligible=cookies.filter(cookie=>cookieDomainAllowed(cookie.domain,'douyin')
-      && (cookie.expirationDate===undefined || cookie.expirationDate===0 || cookie.expirationDate>now))
-    const raw=selectedCookies(eligible,new URL('https://live.douyin.com/webcast/user/me/')).find(cookie=>cookie.name==='bd_ticket_guard_server_data')?.value
     if (!raw || raw.length>32768) return undefined
     const decoded=JSON.parse(Buffer.from(decodeURIComponent(raw),'base64').toString('utf8')) as Record<string,unknown>
     if (!decoded || typeof decoded!=='object' || !['ticket','ts_sign','client_cert'].every(key=>typeof decoded[key]==='string')) return undefined
     return JSON.stringify({ticket:decoded.ticket,ts_sign:decoded.ts_sign,client_cert:decoded.client_cert,
       ...(typeof decoded.aes_sign_safari==='string' ? {aes_sign_safari:decoded.aes_sign_safari} : {})})
   } catch { return undefined }
+}
+
+function selectedDouyinServerCookie(cookies: BrowserCookie[], targetUrl: string, now: number): string|undefined {
+  const eligible=cookies.filter(cookie=>cookieDomainAllowed(cookie.domain,'douyin')
+    && (cookie.expirationDate===undefined || cookie.expirationDate===0 || cookie.expirationDate>now))
+  return selectedCookies(eligible,new URL(targetUrl)).find(cookie=>cookie.name==='bd_ticket_guard_server_data')?.value
+}
+
+/** Ordered server-proof candidates across Douyin subdomains for imported browser profiles. */
+export function douyinBrowserSigningServerProofs(cookies: BrowserCookie[], now=Date.now()/1000): string[] {
+  const seen=new Set<string>()
+  const add=(raw: string|undefined)=>{ const parsed=parseDouyinServerDataCookie(raw); if (parsed) seen.add(parsed) }
+  for (const url of ['https://live.douyin.com/webcast/user/me/','https://www.douyin.com/','https://login.douyin.com/','https://sso.douyin.com/']) {
+    add(selectedDouyinServerCookie(cookies,url,now))
+  }
+  for (const cookie of cookies) {
+    if (cookie.name==='bd_ticket_guard_server_data' && cookieDomainAllowed(cookie.domain,'douyin')
+      && (cookie.expirationDate===undefined || cookie.expirationDate===0 || cookie.expirationDate>now)) {
+      add(cookie.value)
+    }
+  }
+  return [...seen]
 }
 
 export const LOGIN_PLATFORMS = {

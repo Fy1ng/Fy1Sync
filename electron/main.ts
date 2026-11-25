@@ -363,11 +363,12 @@ async function start(): Promise<void> {
   }
   const browserImports = new BrowserLoginImport({
     supported: process.platform === 'win32' || !!browserImportFixtures,
+    userAgent: douyinBrowserUserAgent(app.userAgentFallback),
     ...(browserImportFixtures ? { discover: browserImportFixtures.discover, closeBrowser: browserImportFixtures.closeBrowser } : {}),
     read: browserImportFixtures?.read ?? browserCookieReader({ executable: app.isPackaged
       ? join(process.resourcesPath, 'native', 'browser-credentials.exe') : join(__dirname, '..', 'native', 'browser-credentials.exe') }),
     verify: browserImportFixtures?.verify ?? identityVerifier,
-    write: async (platform, cookies, identity, target, signal) => {
+    write: async (platform, cookies, identity, target, signal, options) => {
       if (platform === 'douyu') {
         if (!douyuAccounts) throw new DouyuAccountError('storage-failed')
         const accountId = await douyuAccounts.importCookies(cookies, identity, target, signal)
@@ -376,7 +377,7 @@ async function start(): Promise<void> {
       }
       if (platform === 'douyin') douyinMessages.invalidate()
       try {
-        const result = await logins.importCookies(platform, cookies, identity, signal)
+        const result = await logins.importCookies(platform, cookies, identity, signal, options?.douyinSigning)
         return result.signingReady === undefined ? {} : { signingReady: result.signingReady }
       } finally {
         if (platform === 'douyin') douyinMessages.invalidate()

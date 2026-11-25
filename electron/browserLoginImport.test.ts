@@ -178,4 +178,28 @@ describe('browser login import transactions', () => {
     await expect(pending).rejects.toMatchObject({ code: 'browser-import-cancelled' })
     service.dispose(); f.service.dispose()
   })
+
+  it('forwards matched Douyin signing material on import and erases it after apply or cancel', async () => {
+    const f = fixture()
+    let receivedCrypt = ''
+    let snapshotRef: import('../server/douyin/signingMaterial').DouyinSigningSnapshot | null | undefined
+    const write: import('./browserLoginImport').BrowserLoginImportOptions['write'] = vi.fn(async (_platform, _cookies, _identity, _target, _signal, options) => {
+      snapshotRef = options?.douyinSigning
+      receivedCrypt = options?.douyinSigning?.cryptData ?? ''
+      return { signingReady: Boolean(options?.douyinSigning) }
+    })
+    const service = new BrowserLoginImport({
+      supported: true, discover: f.data.discover, read: f.data.read, verify: f.data.verify, write,
+    })
+    const preview = await service.scan({ requestId: id, profileId: 'e'.repeat(32), platforms: ['douyin'] })
+    expect(JSON.stringify(preview)).not.toMatch(/PRIVATE KEY|synthetic-ticket/)
+    const result = await service.apply({ previewId: id, accountIds: [preview.accounts[0]!.id] })
+    expect(receivedCrypt).toContain('PRIVATE KEY')
+    expect(result.outcomes).toEqual([
+      { platform: 'douyin', imported: true, username: '测试抖音账号', signingReady: true, message: '已导入账号' },
+    ])
+    expect(snapshotRef?.cryptData).toBe('')
+    expect(snapshotRef?.serverData).toBe('')
+    service.dispose(); f.service.dispose()
+  })
 })

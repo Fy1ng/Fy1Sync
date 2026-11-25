@@ -1,15 +1,29 @@
 import { randomUUID } from 'node:crypto'
-import { cookieDomainAllowed, hasAuthenticationCookies, type BrowserCookie, type LoginPlatform } from './cookies'
+import { cookieDomainAllowed, douyinBrowserCookieFingerprint, douyinBrowserSigningServerProofs,
+  hasAuthenticationCookies, type BrowserCookie, type LoginPlatform } from './cookies'
 import type { BrowserCookieReadFunction } from './browserCookieReader'
+import { eraseBrowserWebStorage } from './browserWebStorage'
 import { browserCloser, type BrowserCloseFunction } from './browserCloser'
 import { discoverBrowserProfiles, publicBrowserProfile, type DiscoveredBrowserProfile } from './browserProfiles'
 import { BrowserImportError, importAbort } from './browserImportError'
 import type { BrowserIdentityVerifier, ImportedIdentity } from './browserImportIdentity'
+import { eraseDouyinSigningSnapshot, matchDouyinSigningStorage } from './douyinSigningCapture'
+import { douyinBrowserUserAgent } from '../server/douyin/httpContext'
+import type { DouyinSigningSnapshot } from '../server/douyin/signingMaterial'
 import { IMPORT_PLATFORMS, IMPORT_PLATFORM_NAMES, type BrowserImportCloseResult, type BrowserImportPreview,
   type BrowserImportOutcome, type BrowserImportSources, type DouyuImportTarget } from './browserImportContracts'
 
-interface Candidate { id: string; platform: LoginPlatform; cookies: BrowserCookie[]; identity: ImportedIdentity }
+interface Candidate {
+  id: string
+  platform: LoginPlatform
+  cookies: BrowserCookie[]
+  identity: ImportedIdentity
+  douyinSigning?: DouyinSigningSnapshot | null
+}
 interface Preview { public: BrowserImportPreview; candidates: Candidate[]; controller: AbortController; timer: ReturnType<typeof setTimeout> }
+export interface BrowserImportWriteOptions {
+  douyinSigning?: DouyinSigningSnapshot | null
+}
 export interface BrowserLoginImportOptions {
   supported?: boolean
   discover?: () => Promise<DiscoveredBrowserProfile[]>
@@ -17,7 +31,9 @@ export interface BrowserLoginImportOptions {
   read: BrowserCookieReadFunction
   verify: BrowserIdentityVerifier
   write: (platform: LoginPlatform, cookies: BrowserCookie[], identity: ImportedIdentity,
-    target: DouyuImportTarget | undefined, signal: AbortSignal) => Promise<Pick<BrowserImportOutcome, 'accountId' | 'signingReady'>>
+    target: DouyuImportTarget | undefined, signal: AbortSignal,
+    options?: BrowserImportWriteOptions) => Promise<Pick<BrowserImportOutcome, 'accountId' | 'signingReady'>>
+  userAgent?: string
   now?: () => number
 }
 const validId = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9-]{32,36}$/.test(value)
@@ -35,7 +51,12 @@ function target(value: unknown): DouyuImportTarget | undefined {
   }
   throw invalid()
 }
-function erase(candidates: Candidate[]): void { for (const candidate of candidates) for (const cookie of candidate.cookies) cookie.value = '' }
+function erase(candidates: Candidate[]): void {
+  for (const candidate of candidates) {
+    for (const cookie of candidate.cookies) cookie.value = ''
+    eraseDouyinSigningSnapshot(candidate.douyinSigning)
+  }
+}
 
 /** Preview secrets are bounded, short-lived, and owned solely by the trusted main window. */
 export class BrowserLoginImport {
@@ -90,7 +111,18 @@ export class BrowserLoginImport {
             for (const cookie of cookies) cookie.value = ''
             return { id, platform, state: 'signed-out' as const, cookieCount: cookies.length, message: '登录已失效，请先在浏览器重新登录' }
           }
-          candidates.push({ id, platform, cookies, identity })
+          let douyinSigning: DouyinSigningSnapshot | null = null
+          if (platform === 'douyin' && identity.uid && read!.douyinStorage?.length) {
+            try {
+              const nowSeconds = this.now() / 1000
+              douyinSigning = matchDouyinSigningStorage(read!.douyinStorage, {
+                accountUid: identity.uid,
+                cookieFingerprint: douyinBrowserCookieFingerprint(cookies, nowSeconds),
+                userAgent: douyinBrowserUserAgent(this.options.userAgent),
+              }, douyinBrowserSigningServerProofs(cookies, nowSeconds))
+            } catch { douyinSigning = null }
+          }
+          candidates.push({ id, platform, cookies, identity, ...(douyinSigning ? { douyinSigning } : {}) })
           return { id, platform, state: 'ready' as const, cookieCount: cookies.length,
             username: identity.username, ...(identity.avatar ? { avatar: identity.avatar } : {}) }
         } catch (error) {
@@ -107,7 +139,10 @@ export class BrowserLoginImport {
       return structuredClone(result)
     } catch (error) { erase(candidates); throw error }
     finally {
-      if (read) for (const cookie of read.cookies) cookie.value = ''
+      if (read) {
+        for (const cookie of read.cookies) cookie.value = ''
+        eraseBrowserWebStorage(read.douyinStorage)
+      }
       if (this.operation === operation) this.operation = null
     }
   }
@@ -139,7 +174,9 @@ export class BrowserLoginImport {
             || identity.uid === undefined && identity.username !== candidate.identity.username) {
             throw new BrowserImportError('browser-import-verification-failed')
           }
-          const saved = await this.options.write(candidate.platform, candidate.cookies, identity, douyuTarget, operation.controller.signal)
+          const saved = candidate.douyinSigning
+            ? await this.options.write(candidate.platform, candidate.cookies, identity, douyuTarget, operation.controller.signal, { douyinSigning: candidate.douyinSigning })
+            : await this.options.write(candidate.platform, candidate.cookies, identity, douyuTarget, operation.controller.signal)
           outcomes.push({ platform: candidate.platform, imported: true, username: identity.username, ...saved,
             message: candidate.platform === 'douyin' && saved.signingReady === false ? '已导入账号，但暂时不能发送弹幕，请重新登录' : '已导入账号' })
         } catch (error) {

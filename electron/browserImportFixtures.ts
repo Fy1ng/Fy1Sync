@@ -5,6 +5,7 @@ import type { BrowserCookieReadFunction } from './browserCookieReader'
 import type { BrowserCloseFunction } from './browserCloser'
 import type { BrowserIdentityVerifier } from './browserImportIdentity'
 import { BrowserImportError } from './browserImportError'
+import { syntheticDouyinSdkStorage } from '../server/douyin/fixtures/signingFixture'
 
 export type BrowserImportFixtureScenario = 'accounts' | 'mixed' | 'locked' | 'close-failed' | 'uac-cancelled' | 'no-profiles'
 const avatar = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=='
@@ -42,7 +43,9 @@ export class BrowserImportFixtures {
       }
       return Object.entries(fields[platform]).map(([name, value]): BrowserCookie => ({ domain: `.${platform}.com`,
         path: '/', secure: true, httpOnly: true, session: true, name, value }))
-    }), skipped: 0 }
+    }), skipped: 0, ...(platforms.includes('douyin') && this.scenario !== 'mixed'
+      ? { douyinStorage: [{ origin: 'https://www.douyin.com', source: 'local-storage' as const, values: syntheticDouyinSdkStorage() }] }
+      : {}) }
   }
   verify: BrowserIdentityVerifier = async (platform, _cookies, signal) => {
     if (signal.aborted) throw new BrowserImportError('browser-import-cancelled')
