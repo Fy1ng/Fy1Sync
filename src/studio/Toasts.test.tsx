@@ -8,6 +8,18 @@ vi.mock('../app/SessionContext', () => ({ useSession: () => state.session, useSe
 afterEach(() => { cleanup(); vi.useRealTimers(); state.session.dismissNotice.mockClear() })
 
 describe('error notifications', () => {
+  it('hides alignment notices during quiet fullscreen playback and keeps other warnings visible', () => {
+    state.notices = [
+      { id: 2, kind: 'warn', text: '没读到画面的倒计时', at: 2, source: 'auto-sync' },
+      { id: 1, kind: 'warn', text: '片源载入失败', at: 1 },
+    ]
+    const view = render(<Toasts hideAutoSync />)
+    expect(screen.queryByText('没读到画面的倒计时')).not.toBeInTheDocument()
+    expect(screen.getByText('片源载入失败')).toBeVisible()
+    view.rerender(<Toasts />)
+    expect(screen.getByText('没读到画面的倒计时')).toBeVisible()
+  })
+
   it('does not add a diagnostic action to warnings or errors without additional details', () => {
     state.notices = [
       { id: 3, kind: 'warn', text: '缓冲不足，未完全调整', at: 3 },

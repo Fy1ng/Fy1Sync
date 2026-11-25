@@ -210,6 +210,43 @@ describe('the studio', () => {
     } finally { subscribe.mockRestore() }
   })
 
+  it('keeps fullscreen controls hidden when alignment starts and restores them on pointer movement', async () => {
+    const session = makeSession()
+    session.updateSettings({ recognitionMode: 'basic', basicRecognitionPanelVisible: true, sidebarVisible: false })
+    const initial = session.snapshot
+    const snapshot = vi.spyOn(session, 'snapshot', 'get').mockReturnValue({
+      ...initial, playing: true, autoSync: { ...initial.autoSync, ready: true },
+      media: {
+        official: { ...initial.media.official, status: 'ready' },
+        commentary: { ...initial.media.commentary, status: 'ready' },
+      },
+    })
+    const sync = vi.spyOn(session, 'syncNow').mockResolvedValue({} as Awaited<ReturnType<Session['syncNow']>>)
+    const originalFullscreen = Object.getOwnPropertyDescriptor(document, 'fullscreenElement')
+    try {
+      const view = renderStudio(session)
+      const theater = view.container.querySelector('main.theater')!
+      Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: view.container.querySelector('.studio') })
+      await act(async () => { fireEvent(document, new Event('fullscreenchange')) })
+      fireEvent.pointerLeave(theater)
+      expect(theater).toHaveAttribute('data-chrome', 'off')
+
+      fireEvent.keyDown(theater, { code: 'KeyA' })
+      expect(sync).toHaveBeenCalledOnce()
+      expect(session.settings.sidebarVisible).toBe(false)
+      snapshot.mockReturnValue({ ...session.snapshot, autoSync: { ...session.snapshot.autoSync, phase: 'sampling' } })
+      view.rerender(<StrictMode><SessionProvider session={session}><Studio /></SessionProvider></StrictMode>)
+      expect(theater).toHaveAttribute('data-chrome', 'off')
+
+      fireEvent.pointerMove(theater)
+      expect(theater).toHaveAttribute('data-chrome', 'on')
+    } finally {
+      if (originalFullscreen) Object.defineProperty(document, 'fullscreenElement', originalFullscreen)
+      else Reflect.deleteProperty(document, 'fullscreenElement')
+      snapshot.mockRestore()
+    }
+  })
+
   it('keeps an explicitly reopened source dialog available while an existing picture is visible', async () => {
     const session = makeSession()
     let present!: () => void

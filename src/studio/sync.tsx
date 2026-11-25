@@ -182,13 +182,13 @@ function OffsetEditor({ value, onDone }: { value: number; onDone: () => void }):
 /** Event-specific HUD coverage and cross-resolution matching are still being adapted. */
 const AUTO_ALIGN_ADAPTING = true
 
-export function startAutoAlign(session: Session): void {
+export function startAutoAlign(session: Session, showRecognitionPanel = true): void {
   if (!session.snapshot.autoSync.ready) return
-  if (session.settings.recognitionMode === 'basic' && session.settings.basicRecognitionPanelVisible && !session.settings.sidebarVisible) session.updateSettings({ sidebarVisible: true })
+  if (showRecognitionPanel && session.settings.recognitionMode === 'basic' && session.settings.basicRecognitionPanelVisible && !session.settings.sidebarVisible) session.updateSettings({ sidebarVisible: true })
   void session.syncNow()
 }
 
-export function AutoAlign(): React.ReactNode {
+export function AutoAlign({ showRecognitionPanel = true }: { showRecognitionPanel?: boolean }): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const menu = usePopover()
@@ -207,7 +207,7 @@ export function AutoAlign(): React.ReactNode {
           <Icon name="close" />
         </button>
       ) : (
-        <button type="button" className="align-main" disabled={busy || !bothReady} onClick={() => startAutoAlign(session)}
+        <button type="button" className="align-main" disabled={busy || !bothReady} onClick={() => startAutoAlign(session, showRecognitionPanel)}
           title={bothReady ? shortcutTitle('自动对齐', settings.shortcuts.autoAlign) : '等待两路播放和缓冲就绪'}>
           {bothReady ? '自动对齐' : '准备中'}
           {bothReady && AUTO_ALIGN_ADAPTING && <span className="align-beta" aria-hidden="true">适配中</span>}

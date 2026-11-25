@@ -117,7 +117,8 @@ function StudioView(): React.ReactNode {
   const chromeHover = { onPointerEnter: () => setOnChrome(true), onPointerLeave: () => setOnChrome(false) }
 
   const aligning = snapshot.autoSync.phase !== 'idle' && snapshot.autoSync.phase !== 'done' && snapshot.autoSync.phase !== 'failed'
-  const busyChrome = favorites || intake || tuning || settingsAt !== null || addingStream || scheduleOpen || onChrome || aligning || embeddedLogin !== null
+  const busyChrome = favorites || intake || tuning || settingsAt !== null || addingStream || scheduleOpen
+    || onChrome || (aligning && !fullscreen.active) || embeddedLogin !== null
   const chrome = useOverlayVisibility(3200, !snapshot.playing || busyChrome)
   // The drawer is the room's chat; with no room there is nothing to hold it open for.
   const hasRoom = snapshot.danmaku.connected || snapshot.danmaku.room !== null || platformRooms.hasBilibili || restrictedChatSources.length > 0
@@ -189,7 +190,7 @@ function StudioView(): React.ReactNode {
         case 'seekForward': seek(seekStep); break
         case 'nudgeBack': nudge('late', step); break
         case 'nudgeForward': nudge('early', step); break
-        case 'autoAlign': startAutoAlign(session); break
+        case 'autoAlign': startAutoAlign(session, !fullscreen.active); break
         case 'toggleDanmaku': session.updateDanmakuSettings({ enabled: !session.settings.danmaku.enabled }); break
         case 'toggleSidebar': setChat(!session.settings.sidebarVisible); break
         case 'toggleFullscreen': fullscreen.toggle(); break
@@ -220,7 +221,11 @@ function StudioView(): React.ReactNode {
       data-chat={chatOpen ? 'open' : 'closed'}
     >
       <DanmakuActionsProvider onOpenRecords={openRecords}>
-        <main className="theater" ref={theater} data-chrome={chrome.visible ? 'on' : 'off'} {...chrome.handlers}>
+        <main className="theater" ref={theater} data-chrome={chrome.visible ? 'on' : 'off'} {...chrome.handlers}
+          onKeyDown={(event) => {
+            if (fullscreen.active && shortcutActionFor(snapshot.settings.shortcuts, event.code) === 'autoAlign') return
+            chrome.handlers.onKeyDown()
+          }}>
           <header className="topbar" {...chromeHover}>
             <div className="topbar-sources">
               <button type="button" className="icon-btn glass small" aria-label="收藏直播间" title="收藏直播间" onClick={() => setFavorites(true)}><Icon name="star" /></button>
@@ -281,7 +286,7 @@ function StudioView(): React.ReactNode {
             </>}
           </ExtraStreams>
 
-          <Toasts />
+          <Toasts hideAutoSync={fullscreen.active && !chrome.visible} />
           {fullscreen.error && <p className="toast is-error floating-error" role="alert"><ErrorText error={fullscreen.errorDetail ?? fullscreen.error} message={fullscreen.error} /></p>}
 
           <footer className="dock" ref={dock} {...chromeHover}>
@@ -294,7 +299,7 @@ function StudioView(): React.ReactNode {
               </div>
               <div className="dock-center">
                 <SyncCapsule />
-                <AutoAlign />
+                <AutoAlign showRecognitionPanel={!fullscreen.active} />
               </div>
               <div className="dock-right">
                 <QualityMenu />

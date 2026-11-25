@@ -107,6 +107,7 @@ export interface Notice {
   text: string
   at: number
   detail?: ErrorDetails
+  source?: 'auto-sync'
 }
 
 type DanmakuSelection = { room: string; origin: SourceRole | 'manual'; name?: string; canonicalRoom?: string }
@@ -407,8 +408,9 @@ export class Session {
     }
   }
 
-  notice(kind: Notice['kind'], text: string, detail?: unknown): number {
+  notice(kind: Notice['kind'], text: string, detail?: unknown, source?: Notice['source']): number {
     const entry: Notice = { id: ++this.noticeSeq, kind, text, at: this.now(),
+      ...(source ? { source } : {}),
       ...(kind !== 'info' && detail != null ? { detail: errorDetails(detail) } : {}) }
     // Newest first, oldest dropped: the notice strip shows a few lines, not a log.
     this.noticeList = [entry, ...this.noticeList].slice(0, MAX_NOTICES)
@@ -1262,7 +1264,7 @@ export class Session {
 
   private reportAutoResult(result: AutoSyncRunResult): void {
     if (result.failure) {
-      this.notice(result.failure.kind === 'cancelled' ? 'info' : 'warn', result.failure.message, result.failure)
+      this.notice(result.failure.kind === 'cancelled' ? 'info' : 'warn', result.failure.message, result.failure, 'auto-sync')
       return
     }
     const estimate = result.estimate
@@ -1273,6 +1275,7 @@ export class Session {
       result.dryRun
         ? `仅测量，未调整；当前相差 ${Math.abs(difference).toFixed(2)} 秒`
         : '已自动对齐',
+      undefined, 'auto-sync',
     )
   }
 

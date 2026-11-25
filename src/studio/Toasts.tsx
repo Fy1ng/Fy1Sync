@@ -11,7 +11,7 @@ import { ErrorDetailsButton } from '../ui/ErrorDetails'
 
 const LIFETIME_MS = { info: 3500, warn: 9000, error: 0 } as const
 
-export function Toasts(): React.ReactNode {
+export function Toasts({ hideAutoSync = false }: { hideAutoSync?: boolean }): React.ReactNode {
   const session = useSession()
   const { notices } = useSessionSnapshot()
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set())
@@ -27,6 +27,7 @@ export function Toasts(): React.ReactNode {
   // The same warning fired twice in a row is one thing to read, not two.
   const latest = new Map<string, typeof notices[number]>()
   for (const notice of notices) {
+    if (hideAutoSync && notice.source === 'auto-sync' && !expanded.has(notice.id)) continue
     const key = JSON.stringify([notice.kind, notice.text, notice.detail])
     if (!latest.has(key)) latest.set(key, notice)
   }
