@@ -28,13 +28,31 @@ FunctionEnd
 
 !macro customInit
   ${If} ${isForAllUsers}
+    ${IfNot} ${Silent}
+      MessageBox MB_OK|MB_ICONSTOP "Fy1Sync 仅支持当前用户安装，请移除 /allusers 参数后重试。"
+    ${EndIf}
     SetErrorLevel 2
     Quit
   ${EndIf}
-  StrLen $R8 $INSTDIR
+  StrCpy $R7 $INSTDIR
+  ${IfNot} ${Silent}
+    ${StrContains} $R8 "${APP_FILENAME}" $R7
+    ${If} $R8 == ""
+      StrCpy $R7 "$R7\${APP_FILENAME}"
+    ${EndIf}
+  ${EndIf}
+  StrLen $R8 $R7
   ${If} $R8 > ${STREAM_SYNC_MAX_INSTALL_DIR}
-    SetErrorLevel 2
-    Quit
+    ${If} ${Silent}
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    ${If} ${isUpdated}
+      MessageBox MB_OK|MB_ICONSTOP "当前安装目录超过 ${STREAM_SYNC_MAX_INSTALL_DIR} 个字符，无法完整覆盖升级：$\r$\n$R7$\r$\n$\r$\n请直接运行安装包并选择较短的安装目录。"
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    MessageBox MB_OK|MB_ICONEXCLAMATION "默认安装目录超过 ${STREAM_SYNC_MAX_INSTALL_DIR} 个字符：$\r$\n$R7$\r$\n$\r$\n请在接下来的安装向导中选择较短的安装目录。"
   ${EndIf}
 !macroend
 

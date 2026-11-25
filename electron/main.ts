@@ -22,7 +22,7 @@ import { APP_URL, CONTENT_SECURITY_POLICY, allowsAppPermission, isAppOrigin } fr
 import { installIpcHandlers } from './ipc'
 import { getWindowState, subscribeWindowState } from './windowControls'
 import { applicationMenu, mainWindowChrome } from './applicationMenu'
-import { ApplicationLifecycle } from './applicationLifecycle'
+import { ApplicationLifecycle, createStartupFailureReporter } from './applicationLifecycle'
 import { BufferManager } from './bufferManager'
 import { pullAdaptive, AdaptivePullError } from './adaptivePuller'
 import { ChromeLoginDriver, LoginManager, type LoginPlatform } from './login'
@@ -122,12 +122,14 @@ let window: BrowserWindow | null = null
 let dispose: (() => Promise<void>) | undefined
 let confirmedInstaller: { userDataDir: string; file: string } | undefined
 const lifecycle = new ApplicationLifecycle({ window: () => window, start, dispose: () => dispose?.(), present: !hiddenTestWindows })
+const reportStartupFailure = createStartupFailureReporter({
+  e2e: process.env.STREAM_SYNC_E2E === '1',
+  showErrorBox: (title, content) => dialog.showErrorBox(title, content),
+  exit: code => app.exit(code),
+})
 const showMainWindow = () => {
   if (!primaryInstance || !app.isReady()) return
-  void lifecycle.activate().catch(() => {
-    console.error('应用启动失败, 请检查构建产物和数据目录')
-    app.exit(1)
-  })
+  void lifecycle.activate().catch(reportStartupFailure)
 }
 app.on('second-instance', showMainWindow)
 app.on('activate', showMainWindow)
@@ -1030,7 +1032,7 @@ if (primaryInstance) void app.whenReady().then(() => {
   const template = applicationMenu(process.platform, showMainWindow)
   Menu.setApplicationMenu(template ? Menu.buildFromTemplate(template) : null)
   showMainWindow()
-})
+}).catch(reportStartupFailure)
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
 let quitting = false
 let shutdownComplete = false

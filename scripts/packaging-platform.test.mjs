@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { macCapabilities, macConfigure, macMinimumSystemVersion, macNativeBuildEnvironment, macRuntimeFiles, nativeMacArch, npmCliPath, packagingTarget, prepareBuilderCache, validateToolAsset } from './packaging-platform.mjs'
 
 const lock = JSON.parse(await readFile(new URL('../packaging/ffmpeg/build-lock.json', import.meta.url), 'utf8'))
@@ -148,3 +149,99 @@ test('npm CLI discovery uses a real npm entry without shell command construction
   assert.equal(npmCliPath({ npm_execpath: current }, '/missing/node'), current)
   assert.throws(() => npmCliPath({ npm_execpath: '/missing/npm-cli.js' }, '/missing/node'))
 })
+
+test('NSIS customInit never silently quits interactive launches on long default paths', async () => {
+  const installerNshPath = fileURLPath('../packaging/installer.nsh')
+  const installerNsh = await readFile(installerNshPath, 'utf8')
+  const customInitMatch = installerNsh.match(/!macro customInit\r?\n([\s\S]*?)!macroend/)
+  assert.ok(customInitMatch, 'customInit macro must exist')
+  const customInit = customInitMatch[1]
+  assert.match(customInit, /\$\{If\}\s+\$\{isForAllUsers\}[\s\S]*?\$\{IfNot\}\s+\$\{Silent\}\s*\r?\n\s*MessageBox\s+MB_OK\|MB_ICONSTOP/)
+  assert.match(customInit, /\$\{If\}\s+\$R8\s*>\s*\$\{STREAM_SYNC_MAX_INSTALL_DIR\}[\s\S]*?\$\{If\}\s+\$\{Silent\}\s*\r?\n\s*SetErrorLevel\s+2\s*\r?\n\s*Quit\s*\r?\n\s*\$\{EndIf\}/)
+  assert.match(customInit, /\$\{If\}\s+\$\{isUpdated\}\s*\r?\n\s*MessageBox\s+MB_OK\|MB_ICONSTOP[\s\S]*?Quit\s*\r?\n\s*\$\{EndIf\}/)
+  assert.match(customInit, /MessageBox\s+MB_OK\|MB_ICONEXCLAMATION/)
+
+  if (process.platform !== 'win32') return
+  const makensis = await findCachedFile(fileURLPath('../.packaging/builder-cache'), full => path.basename(full) === 'makensis.exe')
+  const pluginsDir = await findCachedFile(fileURLPath('../.packaging/builder-cache'), full => path.basename(full) === 'StdUtils.dll' && full.includes('x86-unicode'))
+  if (!makensis || !pluginsDir) return
+
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'fy1sync-nsis-init-'))
+  try {
+    await mkdir(path.join(tempRoot, '.packaging'), { recursive: true })
+    await writeFile(path.join(tempRoot, '.packaging', 'install-path-limit.nsh'), '!define STREAM_SYNC_MAX_INSTALL_DIR 100\n')
+    const nsisInclude = fileURLPath('../node_modules/app-builder-lib/templates/nsis/include')
+    const outExe = path.join(tempRoot, 'harness.exe')
+    const scriptPath = path.join(tempRoot, 'harness.nsi')
+    const script = [
+      'Unicode true',
+      'RequestExecutionLevel user',
+      'InstallDir "$LOCALAPPDATA\\Programs\\Fy1Sync"',
+      `OutFile "${outExe}"`,
+      `!addincludedir "${nsisInclude}"`,
+      `!addplugindir /x86-unicode "${path.dirname(pluginsDir)}"`,
+      `!include "${path.join(nsisInclude, 'StdUtils.nsh')}"`,
+      '!macro _isUpdated _a _b _t _f',
+      '  ${StdUtils.TestParameter} $R9 "updated"',
+      '  StrCmp "$R9" "true" `${_t}` `${_f}`',
+      '!macroend',
+      '!define isUpdated `"" isUpdated ""`',
+      '!macro _isForAllUsers _a _b _t _f',
+      '  ${StdUtils.TestParameter} $R9 "allusers"',
+      '  StrCmp "$R9" "true" `${_t}` `${_f}`',
+      '!macroend',
+      '!define isForAllUsers `"" isForAllUsers ""`',
+      `!include "${installerNshPath}"`,
+      '!include "MUI2.nsh"',
+      '!include "StrContains.nsh"',
+      'Var isForceCurrentInstall',
+      'Var newDesktopLink',
+      'Var oldDesktopLink',
+      'Var appExe',
+      '!insertmacro customHeader',
+      'Function .onInit',
+      '  !insertmacro customInit',
+      'FunctionEnd',
+      'Section "noop"',
+      'SectionEnd',
+      '',
+    ].join('\n')
+    await writeFile(scriptPath, script)
+    const compile = spawnSync(makensis, [
+      `-DPROJECT_DIR=${tempRoot}`,
+      '-DAPP_FILENAME=Fy1Sync',
+      '-DAPP_DESCRIPTION=Fy1Sync',
+      '-DAPP_ID=cn.fy1ng.fy1sync',
+      scriptPath,
+    ], { encoding: 'utf8', windowsHide: true })
+    assert.equal(compile.status, 0, compile.stderr || compile.stdout)
+
+    const shortRun = spawnSync(outExe, ['/S', '/D=C:\\Fy1Sync'], { windowsHide: true })
+    assert.equal(shortRun.status, 0)
+    const longRun = spawnSync(outExe, ['/S', `/D=C:\\${'a'.repeat(105)}\\Fy1Sync`], { windowsHide: true })
+    assert.equal(longRun.status, 2)
+    const allUsersRun = spawnSync(outExe, ['/S', '/allusers', '/D=C:\\Fy1Sync'], { windowsHide: true })
+    assert.equal(allUsersRun.status, 2)
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true })
+  }
+})
+
+function fileURLPath(relative) {
+  return fileURLToPath(new URL(relative, import.meta.url))
+}
+
+async function findCachedFile(dir, predicate) {
+  let entries
+  try { entries = await readdir(dir, { withFileTypes: true }) } catch { return null }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      const nested = await findCachedFile(full, predicate)
+      if (nested) return nested
+    } else if (predicate(full)) {
+      return full
+    }
+  }
+  return null
+}

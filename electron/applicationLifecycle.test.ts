@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ApplicationLifecycle } from './applicationLifecycle'
+import { ApplicationLifecycle, createStartupFailureReporter, formatStartupFailureDialog } from './applicationLifecycle'
 
 function deferred() {
   let resolve!: () => void
@@ -89,5 +89,47 @@ describe('application window lifecycle', () => {
     cleaning.resolve()
     await rejected
     expect(f.start).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows a sanitized native startup error dialog outside E2E and exits once', () => {
+    const log = vi.fn()
+    const showErrorBox = vi.fn()
+    const exit = vi.fn()
+    const report = createStartupFailureReporter({ log, showErrorBox, exit })
+
+    report(Object.assign(
+      new Error('EACCES: permission denied, mkdir C:\\Users\\Alice\\AppData\\Roaming\\Fy1Sync Cookie: SESSDATA=secret123'),
+      { code: 'EACCES' },
+    ))
+    report(new Error('second failure ignored'))
+
+    expect(log).toHaveBeenCalledTimes(1)
+    expect(log).toHaveBeenCalledWith('应用启动失败, 请检查构建产物和数据目录')
+    expect(showErrorBox).toHaveBeenCalledTimes(1)
+    const [title, content] = showErrorBox.mock.calls[0]!
+    expect(title).toBe('Fy1Sync 启动失败')
+    expect(content).toContain('应用无法完成初始化')
+    expect(content).toContain('[user]\\AppData\\Roaming\\Fy1Sync')
+    expect(content).not.toContain('Alice')
+    expect(content).not.toContain('secret123')
+    expect(exit).toHaveBeenCalledTimes(1)
+    expect(exit).toHaveBeenCalledWith(1)
+  })
+
+  it('suppresses blocking modal dialogs in E2E mode and tolerates dialog or stderr failures', () => {
+    const e2eShow = vi.fn()
+    const e2eExit = vi.fn()
+    createStartupFailureReporter({ e2e: true, log: () => {}, showErrorBox: e2eShow, exit: e2eExit })(new Error('账号数据路径无效'))
+    expect(e2eShow).not.toHaveBeenCalled()
+    expect(e2eExit).toHaveBeenCalledWith(1)
+
+    const fallbackExit = vi.fn()
+    createStartupFailureReporter({
+      log: () => { throw new Error('broken pipe') },
+      showErrorBox: () => { throw new Error('headless') },
+      exit: fallbackExit,
+    })(null)
+    expect(fallbackExit).toHaveBeenCalledWith(1)
+    expect(formatStartupFailureDialog(undefined).content).not.toContain('原因：')
   })
 })
