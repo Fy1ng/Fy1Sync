@@ -137,11 +137,78 @@ export function orderedStreams(match: Cs2Match): Cs2Stream[] {
   return [...match.streams].sort((a, b) => rank[a.platform] - rank[b.platform])
 }
 
+export const SCHEDULE_STALE_MS = 15 * 60_000
+export const SCHEDULE_OVERNIGHT_MS = 60 * 60_000
+export const REFRESH_BACKOFF_MS = [500, 1_000, 3_000] as const
+export const REFRESH_RESET_MS = 10_000
+export const BEIJING_OFFSET_MINUTES = 480
+
+/** Silent manual refresh throttle: 500ms -> 1s -> 3s on consecutive clicks, resetting after 10s idle. */
+export function createRefreshThrottle() {
+  let step = 0
+  let cooldownUntil = -Infinity
+  let lastClickAt = -Infinity
+  return {
+    tryAcquire(now: number): ((completedAt?: number) => void) | null {
+      if (now - lastClickAt >= REFRESH_RESET_MS || now < lastClickAt) {
+        step = 0
+        cooldownUntil = -Infinity
+      }
+      lastClickAt = now
+      if (now < cooldownUntil) return null
+      const delay = REFRESH_BACKOFF_MS[Math.min(step, REFRESH_BACKOFF_MS.length - 1)]!
+      step = Math.min(step + 1, REFRESH_BACKOFF_MS.length)
+      cooldownUntil = now + delay
+      return (completedAt = now) => {
+        cooldownUntil = Math.max(cooldownUntil, completedAt + delay)
+      }
+    },
+  }
+}
+
+export function isScheduleStale(schedule: Cs2Schedule | null, now: number): boolean {
+  return !!schedule && (schedule.stale || (schedule.fetchedAt > 0 && (now - schedule.fetchedAt > SCHEDULE_STALE_MS || now < schedule.fetchedAt)))
+}
+
+export function isScheduleOvernight(schedule: Cs2Schedule | null, now: number): boolean {
+  return !!schedule && schedule.fetchedAt > 0 && (now - schedule.fetchedAt > SCHEDULE_OVERNIGHT_MS || now < schedule.fetchedAt)
+}
+
+export function utcOffsetMinutes(at: number): number {
+  const offset = -new Date(at).getTimezoneOffset()
+  return Object.is(offset, -0) ? 0 : offset
+}
+
+export function formatUtcOffset(at: number): string {
+  const total = utcOffsetMinutes(at)
+  if (total === 0) return 'UTC+0'
+  const sign = total > 0 ? '+' : '-'
+  const abs = Math.abs(total)
+  const hours = Math.floor(abs / 60)
+  const minutes = abs % 60
+  return minutes === 0 ? `UTC${sign}${hours}` : `UTC${sign}${hours}:${String(minutes).padStart(2, '0')}`
+}
+
+export function isBeijingTimeZone(at: number): boolean {
+  return utcOffsetMinutes(at) === BEIJING_OFFSET_MINUTES
+}
+
+function formatClock(date: Date): string {
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+export function formatFullStart(at: number): string {
+  const date = new Date(at)
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${formatClock(date)}（${formatUtcOffset(at)}）`
+}
+
 export function formatStart(at: number, now: number): string {
   const date = new Date(at)
   const today = new Date(now)
-  const time = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
-  const days = Math.round((new Date(date.toDateString()).getTime() - new Date(today.toDateString()).getTime()) / 86_400_000)
+  const time = formatClock(date)
+  const startOfDay = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())
+  const startOfToday = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())
+  const days = Math.round((startOfDay - startOfToday) / 86_400_000)
   if (days === 0) return time
   if (days === 1) return `明天 ${time}`
   if (days === -1) return `昨天 ${time}`

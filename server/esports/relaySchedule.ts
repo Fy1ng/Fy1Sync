@@ -4,6 +4,7 @@ import { metadataUserAgent } from '../appIdentity'
 import { metadataConfig, SCHEDULE_RELAY_HOST } from '../config'
 import { diagnosticDetails } from '../errorDetails'
 import { httpErrorDetails } from '../httpError'
+import { classifyNetworkFailure } from '../networkFailure'
 import { directNetwork } from '../networkPolicy'
 import { PinnedDispatcherPool, safeFetch, type Resolver } from '../safeFetch'
 import type { Cs2ScheduleEvent } from '../../electron/featureContracts'
@@ -20,12 +21,44 @@ const CACHE_FILE = 'relay-schedule.json'
 const SCHEDULE_MAX_BYTES = 4_000_000
 const READ_MIN_MS = 60_000
 const POLL_MS = 300_000
-const REFRESH_MIN_MS = 10_000
-const STALE_MS = 15 * 60_000
+export const REFRESH_BACKOFF_MS = [500, 1_000, 3_000] as const
+export const REFRESH_RESET_MS = 10_000
+export const STALE_MS = 15 * 60_000
+export const OVERNIGHT_CACHE_MS = 60 * 60_000
 const LOGO_RETRY_MS = 10 * 60_000
 const LOGO_CONCURRENCY = 4
 const loopbackOverride = /^http:\/\/(?:127\.0\.0\.1|localhost):[1-9][0-9]{0,4}\/?$/i
 const strongEtag = (value: unknown): string | null => typeof value === 'string' && /^"[\x21\x23-\x7e]{1,128}"$/.test(value) ? value : null
+
+export function scheduleFailureMessage(error: unknown): string {
+  if (error && typeof error === 'object') {
+    const rawStatus = (error as { status?: unknown; statusCode?: unknown }).status ?? (error as { statusCode?: unknown }).statusCode
+    // Distinguish genuine HTTP responses (captured by httpErrorDetails with statusText) from synthetic ProxyError(status=403/502).
+    const isHttpResponse = typeof (error as { statusText?: unknown }).statusText === 'string'
+    if (isHttpResponse && typeof rawStatus === 'number' && Number.isInteger(rawStatus)) {
+      if (rawStatus === 429) return '赛程请求过于频繁，请稍后重试'
+      if (rawStatus === 502 || rawStatus === 503 || rawStatus === 504) return `赛程服务正在维护或同步中（HTTP ${rawStatus}），请稍后重试`
+      if (rawStatus >= 500 && rawStatus <= 599) return `赛程服务异常（HTTP ${rawStatus}），请稍后重试`
+      if (rawStatus >= 400 && rawStatus <= 499) return `赛程请求被拒绝（HTTP ${rawStatus}），请检查网络或更新应用`
+    }
+    if (error instanceof SyntaxError) return '赛程返回数据异常，请检查网络环境或尝试更新应用'
+    const message = (error as { message?: unknown }).message
+    if (message === 'Invalid relay schedule' || message === 'Metadata response too large') {
+      return '赛程返回数据异常，请检查网络环境或尝试更新应用'
+    }
+  }
+  const classified = classifyNetworkFailure(error, 'connect')
+  if (classified.code === 'dns-failed') return '赛程读取失败：域名解析异常，请检查网络或 DNS 设置'
+  if (classified.code === 'tls-certificate' || classified.code === 'tls-failed') {
+    return '赛程读取失败：安全连接或证书校验异常，请检查系统时间与网络环境'
+  }
+  if (classified.code === 'connection-timeout') return '赛程读取失败：网络连接超时，请检查网络连接后重试'
+  if (classified.code === 'connection-refused') return '赛程读取失败：网络连接被拒绝，请检查防火墙或网络设置'
+  if (classified.code === 'redirect-limit') return '赛程读取失败：连接被异常跳转，请检查网络是否需要认证'
+  if (classified.stage === 'proxy') return '赛程读取失败：代理连接异常，请检查网络代理设置'
+  if (classified.stage === 'connect') return '赛程读取失败：网络连接异常，请检查网络连接后重试'
+  return SCHEDULE_UNAVAILABLE
+}
 
 export function scheduleRelayOrigin(raw: string | undefined): string {
   try {
@@ -62,8 +95,12 @@ export class RelayScheduleService {
   private flight: Promise<void> | undefined
   private attemptedAt = -Infinity
   private nextPoll = -Infinity
+  private refreshStep = 0
+  private refreshCooldownUntil = -Infinity
+  private lastRefreshInputAt = -Infinity
   private failures = 0
   private failure: Cs2Schedule['errorDetail']
+  private failureMessage: string | undefined
   private published = ''
   private readonly logoFlights = new Map<string, Promise<void>>()
   private readonly logoFailures = new Map<string, number>()
@@ -92,9 +129,10 @@ export class RelayScheduleService {
     config.hosts = [this.origin.hostname.replace(/^\[|\]$/g, '')]
     config.allowNonStandardPorts = !!this.origin.port
     const signal = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(config.requestTimeoutMs)])
+    // Schedule and team logos always connect directly to the relay, independent of system proxy or domestic routing toggles.
     const { response } = await safeFetch(new URL(path, this.origin).href, config, {
-      signal, dispatcherPool: this.pool, fetchImpl: this.options.request,
-      ...(local ? { network: directNetwork, resolve: async () => ['127.0.0.1'] } : { resolve: this.options.resolve }),
+      signal, dispatcherPool: this.pool, fetchImpl: this.options.request, network: directNetwork,
+      resolve: local ? async () => ['127.0.0.1'] : this.options.resolve,
       headers: { 'User-Agent': metadataUserAgent(this.options.version), Accept: accept, 'Accept-Encoding': 'gzip',
         ...(etag ? { 'If-None-Match': etag } : {}) },
     })
@@ -104,16 +142,47 @@ export class RelayScheduleService {
   getCs2Schedule(raw?: { refresh?: boolean }): Promise<Cs2Schedule> {
     const refresh = scheduleArguments(raw)?.refresh === true
     this.lifetime.signal.throwIfAborted()
-    const now = this.now(), elapsed = now - this.attemptedAt
-    const interval = refresh ? REFRESH_MIN_MS : READ_MIN_MS
-    const tooSoon = this.failures ? now < this.nextPoll : elapsed >= 0 && elapsed < interval
-    if (!this.flight && !tooSoon) {
-      clearTimeout(this.timer)
-      this.timer = undefined
-      this.attemptedAt = now
-      this.flight = this.refresh().finally(() => { this.flight = undefined })
+    const now = this.now()
+    const fromDisk = !this.cache ? this.load() : null
+    if (fromDisk && (!this.cache || fromDisk.schedule.fetchedAt > this.cache.schedule.fetchedAt)) {
+      this.cache = fromDisk
     }
-    if (this.flight && (refresh || !this.cache)) return this.flight.then(() => this.snapshot())
+    if (refresh) {
+      if (now - this.lastRefreshInputAt >= REFRESH_RESET_MS || now < this.lastRefreshInputAt) {
+        this.refreshStep = 0
+        this.refreshCooldownUntil = -Infinity
+      }
+      this.lastRefreshInputAt = now
+      if (now >= this.refreshCooldownUntil) {
+        const delay = REFRESH_BACKOFF_MS[Math.min(this.refreshStep, REFRESH_BACKOFF_MS.length - 1)]!
+        this.refreshStep = Math.min(this.refreshStep + 1, REFRESH_BACKOFF_MS.length)
+        this.refreshCooldownUntil = now + delay
+        if (!this.flight) {
+          clearTimeout(this.timer)
+          this.timer = undefined
+          this.attemptedAt = now
+          this.flight = this.refresh().finally(() => {
+            this.refreshCooldownUntil = Math.max(this.refreshCooldownUntil, this.now() + delay)
+            this.flight = undefined
+          })
+        } else {
+          void this.flight.finally(() => {
+            this.refreshCooldownUntil = Math.max(this.refreshCooldownUntil, this.now() + delay)
+          })
+        }
+      }
+    } else {
+      const elapsed = now - this.attemptedAt
+      const tooSoon = this.failures ? now < this.nextPoll : elapsed >= 0 && elapsed < READ_MIN_MS
+      if (!this.flight && !tooSoon) {
+        clearTimeout(this.timer)
+        this.timer = undefined
+        this.attemptedAt = now
+        this.flight = this.refresh().finally(() => { this.flight = undefined })
+      }
+    }
+    const expiredCache = !this.cache || now - this.cache.schedule.fetchedAt > OVERNIGHT_CACHE_MS || now < this.cache.schedule.fetchedAt
+    if (this.flight && (refresh || expiredCache)) return this.flight.then(() => this.snapshot())
     return Promise.resolve(this.snapshot())
   }
 
@@ -122,8 +191,8 @@ export class RelayScheduleService {
     const cooldown = schedule?.upstream.limitedUntil ?? 0
     const limited = cooldown > now
     return { fetchedAt, source: schedule?.source ?? 'liquipedia', attribution: schedule?.attribution ?? '赛程数据来自 Liquipedia（CC-BY-SA 3.0）',
-      stale: !!this.failure || !schedule || now - fetchedAt > STALE_MS || limited,
-      ...(this.failure ? { error: SCHEDULE_UNAVAILABLE, errorDetail: this.failure, refreshAt: this.nextPoll, refreshReason: 'retry' as const }
+      stale: !!this.failure || !schedule || now - fetchedAt > STALE_MS || now < fetchedAt || limited,
+      ...(this.failure ? { error: this.failureMessage ?? SCHEDULE_UNAVAILABLE, errorDetail: this.failure, refreshAt: this.nextPoll, refreshReason: 'retry' as const }
         : limited ? { error: UPSTREAM_LIMITED, errorDetail: diagnosticDetails({ status: 429 }), refreshAt: cooldown, refreshReason: 'upstream-rate-limit' as const } : {}) }
   }
 
@@ -154,10 +223,12 @@ export class RelayScheduleService {
       }
       this.failures = 0
       this.failure = undefined
+      this.failureMessage = undefined
     } catch (error) {
       if (this.lifetime.signal.aborted) return
       this.failures = Math.min(this.failures + 1, 5)
       this.failure = diagnosticDetails(error)
+      this.failureMessage = scheduleFailureMessage(error)
     }
     if (this.lifetime.signal.aborted) return
     const delay = this.failures ? Math.min(30_000 * 2 ** (this.failures - 1), 300_000) : POLL_MS

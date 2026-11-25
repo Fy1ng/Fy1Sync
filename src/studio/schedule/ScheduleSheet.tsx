@@ -13,11 +13,11 @@
  * says where it came from and how old it is.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiClient } from '../../app/apiClient'
 import type { Cs2Match, Cs2Schedule, Cs2Stream, StreamTitle } from '../../../electron/featureContracts'
 import { Icon, Sheet, SideTabs } from '../kit'
-import { eventPath, formatStart, groupEvents, matchStage, MISSING_TEXT, orderedStreams, PLATFORM_NAME, streamKey, streamTitle, tierLabel, titleKey, titleRequests, type EventGroup } from './model'
+import { createRefreshThrottle, eventPath, formatFullStart, formatStart, formatUtcOffset, groupEvents, isBeijingTimeZone, isScheduleOvernight, isScheduleStale, matchStage, MISSING_TEXT, orderedStreams, PLATFORM_NAME, streamKey, streamTitle, tierLabel, titleKey, titleRequests, type EventGroup } from './model'
 import { lastSchedule, onSchedule, readSchedule, refreshScheduleAfterVerification, scheduleChanged } from './store'
 import './schedule.css'
 import { useRemembered } from '../../app/remembered'
@@ -26,62 +26,62 @@ import { displayError } from '../../core/errorDetails'
 
 /** How often the open sheet asks again. Main serves its cache in between, so this is cheap. */
 const POLL_MS = 60_000
-type RefreshBlock = { at: number; reason: NonNullable<Cs2Schedule['refreshReason']> }
-const retryLabel = (seconds: number): string => seconds >= 3600 ? `${Math.ceil(seconds / 3600)} 小时`
-  : seconds >= 60 ? `${Math.ceil(seconds / 60)} 分钟` : `${seconds} 秒`
 
 export function ScheduleSheet({ onClose, onWatch }: {
   onClose: () => void
   /** Load this stream as 画面. Progress and failure show behind the sheet, on the 画面 slot. */
   onWatch: (url: string) => void
 }): React.ReactNode {
-  // Open on what the start-up read found; the read below only brings it up to date.
-  const [schedule, setSchedule] = useState<Cs2Schedule | null>(lastSchedule)
+  // Open immediately on recent cached data; if the cache is over an hour old (e.g. overnight), wait for fresh data first.
+  const [schedule, setSchedule] = useState<Cs2Schedule | null>(() => {
+    const cached = lastSchedule()
+    return cached && !isScheduleOvernight(cached, Date.now()) ? cached : null
+  })
   const [failure, setFailure, failureDetail] = useErrorState()
   const [refreshing, setRefreshing] = useState(false)
   const [verifying, setVerifying] = useState(false)
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null)
-  const [refreshBlock, setRefreshBlock] = useState<RefreshBlock | null>(() => {
-    const value = lastSchedule()
-    return value?.refreshAt && value.refreshAt > Date.now()
-      ? { at: value.refreshAt, reason: value.refreshReason ?? 'parse-quota' } : null
-  })
-  const acceptCooldown = useCallback((value: Cs2Schedule, explicit = false): void => {
-    setRefreshBlock(previous => {
-      const at = value.refreshAt
-      if (typeof at === 'number' && Number.isFinite(at) && at > Date.now()) {
-        const reason = value.refreshReason ?? 'parse-quota'
-        return { at: explicit || reason !== 'parse-quota' ? at : Math.max(previous?.at ?? 0, at), reason }
-      }
-      if (explicit || (previous && previous.reason !== 'parse-quota' && !value.error)) return null
-      return previous
-    })
-  }, [])
-  const refreshAt = refreshBlock?.at ?? null
   // The chosen event and the titles read so far survive closing the sheet.
   const [eventKey, setEventKey] = useRemembered<string | null>('schedule:event', null)
   const [titles, setTitles] = useRemembered<Map<string, StreamTitle>>('schedule:titles', new Map())
   const [now, setNow] = useState(Date.now)
   const alive = useRef(true)
+  const refreshingRef = useRef(false)
+  const refreshThrottle = useRef(createRefreshThrottle())
   const titleRun = useRef(0)
 
   const read = async (refresh: boolean): Promise<void> => {
-    const before = lastSchedule()
-    if (refresh) { setRefreshing(true); setRefreshMessage(null) }
-    const result = await readSchedule(refresh)
-    if (!alive.current) return
-    if (refresh) setRefreshing(false)
-    setNow(Date.now())
-    if (!result.ok) { setFailure(result); return }
-    setFailure(null)
-    // The store rejects out-of-order replies; an older sheet read must not undo that.
-    const next = lastSchedule() ?? result.value
-    setSchedule(next)
-    if (refresh && !next.stale && !result.value.refreshAt) {
-      setRefreshMessage(before && JSON.stringify(before.matches) === JSON.stringify(next.matches)
-        ? '赛程暂无变化' : '赛程已更新')
+    let completeThrottle: ((completedAt?: number) => void) | null = null
+    if (refresh) {
+      if (refreshingRef.current) return
+      completeThrottle = refreshThrottle.current.tryAcquire(Date.now())
+      if (!completeThrottle) return
+      refreshingRef.current = true
+      setRefreshing(true)
+      setRefreshMessage(null)
     }
-    acceptCooldown(next, refresh)
+    try {
+      const before = lastSchedule()
+      const result = await readSchedule(refresh)
+      const completedAt = Date.now()
+      completeThrottle?.(completedAt)
+      if (!alive.current) return
+      setNow(completedAt)
+      if (!result.ok) { setFailure(result); return }
+      setFailure(null)
+      // The store rejects out-of-order replies; an older sheet read must not undo that.
+      const next = lastSchedule() ?? result.value
+      setSchedule(next)
+      if (refresh && !isScheduleStale(next, completedAt) && !result.value.refreshAt) {
+        setRefreshMessage(before && JSON.stringify(before.matches) === JSON.stringify(next.matches)
+          ? '赛程暂无变化' : '赛程已更新')
+      }
+    } finally {
+      if (refresh) {
+        refreshingRef.current = false
+        if (alive.current) setRefreshing(false)
+      }
+    }
   }
 
   const retryAfterVerification = async (round: string): Promise<void> => {
@@ -93,7 +93,7 @@ export function ScheduleSheet({ onClose, onWatch }: {
       setNow(Date.now())
       if (!result.ok) { setFailure(result); return }
       const next = lastSchedule() ?? result.value
-      acceptCooldown(next, true)
+      setSchedule(next)
       switch (result.value.verificationResult) {
         case 'recovered':
           if (!next.verification) setRefreshMessage('赛程已更新')
@@ -104,14 +104,15 @@ export function ScheduleSheet({ onClose, onWatch }: {
     } finally { if (alive.current) setVerifying(false) }
   }
 
-  // Count down once a second while held back, and free the button when the time comes.
-  const waitSeconds = refreshAt === null ? 0 : Math.max(0, Math.ceil((refreshAt - now) / 1000))
+  const verification = schedule?.verification
+  const upstreamLimited = schedule?.refreshReason === 'upstream-rate-limit'
+    && (schedule.refreshAt === undefined || schedule.refreshAt > now)
+  const verificationWaitUntil = verification && verification.notBefore > now ? verification.notBefore : null
   useEffect(() => {
-    if (refreshAt === null) return
-    if (refreshAt <= Date.now()) { setRefreshBlock(null); return }
-    const timer = window.setTimeout(() => setNow(Date.now()), 1000 - (Date.now() % 1000) || 1000)
+    if (verificationWaitUntil === null) return
+    const timer = window.setTimeout(() => setNow(Date.now()), Math.min(1_000, Math.max(1, verificationWaitUntil - Date.now())))
     return () => window.clearTimeout(timer)
-  }, [refreshAt, now])
+  }, [verificationWaitUntil, now])
 
   useEffect(() => {
     alive.current = true
@@ -119,14 +120,15 @@ export function ScheduleSheet({ onClose, onWatch }: {
     const timer = window.setInterval(() => void read(false), POLL_MS)
     // Main says when tiers and crests land and the store reads again (once more if a read was
     // in flight); take every schedule it keeps rather than waiting for the next poll.
-    const offRead = onSchedule((value) => { if (alive.current) { setFailure(null); setSchedule(value); acceptCooldown(value) } })
+    const offRead = onSchedule((value) => { if (alive.current) { setNow(Date.now()); setFailure(null); setSchedule(value) } })
     const off = apiClient.subscribeFeatures((event) => { if (event.topic === 'cs2-schedule') scheduleChanged() })
     return () => { alive.current = false; window.clearInterval(timer); off(); offRead() }
   }, [])
 
   const events = useMemo(() => groupEvents(schedule), [schedule])
-  const upstreamLimited = waitSeconds > 0 && schedule?.refreshReason === 'upstream-rate-limit'
-  const verification = schedule?.verification
+  const stale = isScheduleStale(schedule, now)
+  const tzOffset = formatUtcOffset(now)
+  const beijingTz = isBeijingTimeZone(now)
   const current = events.find((group) => group.key === eventKey) ?? events[0]
   useEffect(() => { if (current && current.key !== eventKey) setEventKey(current.key) }, [current, eventKey])
 
@@ -174,9 +176,24 @@ export function ScheduleSheet({ onClose, onWatch }: {
     }
   })
 
+  const staleNotice = stale && schedule ? (
+    schedule.error
+      ? <>
+          <ErrorText error={schedule.errorDetail ?? { message: schedule.error, fetchedAt: schedule.fetchedAt, stale: true }} message={schedule.error} />
+          {schedule.fetchedAt > 0 && <span className="sched-stale-age">（当前显示 {formatStart(schedule.fetchedAt, now)} 的上次结果）</span>}
+        </>
+      : <ErrorText error={schedule.errorDetail ?? { fetchedAt: schedule.fetchedAt, stale: true }}
+          message={schedule.fetchedAt > 0 ? `赛程数据已过期（上次读取于 ${formatStart(schedule.fetchedAt, now)}），暂时显示上次结果` : '赛程数据已过期，暂时显示上次结果'} />
+  ) : null
+
   return (
     <Sheet title="赛程" onClose={onClose} wide>
       <div className="sched">
+        {events.length > 0 && (failure || staleNotice) && (
+          <p className="sched-banner note-warn">
+            {failure ? <ErrorText error={failureDetail ?? failure} message={failure} /> : staleNotice}
+          </p>
+        )}
         {events.length === 0 ? (
           <div className="sched-empty">
             <div className="sched-empty-content">
@@ -193,14 +210,16 @@ export function ScheduleSheet({ onClose, onWatch }: {
         )}
         <footer className="sched-foot">
           {refreshMessage && <p role="status">{refreshMessage}</p>}
-          {schedule?.stale && (events.length > 0 || (schedule.fetchedAt > 0 && !schedule.error)) && <p className="note-warn"><ErrorText error={schedule.errorDetail ?? { message: schedule.error, fetchedAt: schedule.fetchedAt, stale: true }} message={schedule.error ?? '赛程数据已过期，暂时显示上次结果'} /></p>}
+          {events.length === 0 && !failure && !schedule?.error && staleNotice && <p className="note-warn">{staleNotice}</p>}
+          {!beijingTz && <p className="note-warn">当前比赛时间按系统时区 {tzOffset} 显示（非北京时间 UTC+8，如有偏差请检查系统时区设置）</p>}
           {upstreamLimited && verification && <LiquipediaVerification key={verification.round} attempt={verification}
             waiting={verifying} now={now} onRetry={retryAfterVerification} />}
           <span className="sched-source">
             {schedule ? `${schedule.attribution} - ${schedule.fetchedAt > 0 ? `读取于 ${formatStart(schedule.fetchedAt, now)}` : '暂未获取'}` : '赛程数据来自 Liquipedia（CC-BY-SA 3.0）'}
+            {' · '}{beijingTz ? '北京时间（UTC+8）' : `系统时区（${tzOffset}）`}
           </span>
-          <button type="button" className="btn-quiet small" disabled={refreshing || verifying || waitSeconds > 0} onClick={() => void read(true)}>
-            <Icon name="refresh" />{refreshing ? '正在刷新' : waitSeconds > 0 ? `${retryLabel(waitSeconds)}后可刷新` : '刷新'}
+          <button type="button" className="btn-quiet small" disabled={refreshing || verifying} onClick={() => void read(true)}>
+            <Icon name="refresh" />{refreshing ? '正在刷新' : '刷新'}
           </button>
         </footer>
       </div>
@@ -302,14 +321,22 @@ function MatchRow({ match, titles, now, siblingsLive, onWatch }: {
   const waiting = streams.some((stream) => stream.url) ? null : streams.find((stream) => stream.missing)?.missing ?? null
   return (
     <li className="match" data-state={match.state} aria-label={label}>
-      <div className="match-when">
+      <div className="match-when" title={`计划开赛：${formatFullStart(match.startsAt)}`}>
         {match.state === 'live'
-          ? <span className={awaitingScore ? 'muted' : 'match-live'}
-              title={awaitingScore ? '比分尚未更新，以直播画面为准' : undefined}>
-              {awaitingScore ? '赛果待更新' : '直播中'}
-            </span>
-          : <span className="num">{formatStart(match.startsAt, now)}</span>}
-        {match.bestOf && <span className="match-bo">BO{match.bestOf}</span>}
+          ? <>
+              <span className={awaitingScore ? 'muted' : 'match-live'}
+                title={awaitingScore ? '比分尚未更新，以直播画面为准' : undefined}>
+                {awaitingScore ? '赛果待更新' : '直播中'}
+              </span>
+              <span className="match-when-meta">
+                <span className="match-when-sub num">{formatStart(match.startsAt, now)}</span>
+                {match.bestOf && <span className="match-bo">BO{match.bestOf}</span>}
+              </span>
+            </>
+          : <>
+              <span className="num">{formatStart(match.startsAt, now)}</span>
+              {match.bestOf && <span className="match-bo">BO{match.bestOf}</span>}
+            </>}
       </div>
       <div className="match-teams">
         <span className={`match-team${winner === 0 ? ' is-win' : ''}`}><TeamName team={left} /></span>

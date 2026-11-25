@@ -126,7 +126,8 @@ export function createProxyDispatcher(route: NetworkRoute, timeoutMs: number, co
     || !proxy.hostname || !['', '/'].includes(proxy.pathname) || proxy.search || proxy.hash) throw new Error('系统代理地址无效')
   const sockets = new Set<Socket>()
   const pending = new AsyncLocalStorage<PendingConnection>()
-  const connect = buildConnector({ timeout: timeoutMs, rejectUnauthorized: tls.verifyProxyTls !== false, autoSelectFamily: true })
+  const connect = buildConnector({ timeout: timeoutMs, rejectUnauthorized: tls.verifyProxyTls !== false, autoSelectFamily: true,
+    autoSelectFamilyAttemptTimeout: Math.min(Math.max(timeoutMs, 250), 3_000) })
   const tracked: buildConnector.connector = (options, callback) => {
     const owner = pending.getStore()
     if (owner?.cancelled) { queueMicrotask(() => callback(owner.cancelled!, null)); return }

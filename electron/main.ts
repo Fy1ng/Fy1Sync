@@ -581,6 +581,7 @@ async function start(): Promise<void> {
       if (!fixture) throw new Error('Offline metadata fixture unavailable')
       return { ...structuredClone(fixture), collectedAt: Date.now() }
     } : undefined,
+    esportsResolve: offlineE2e ? async () => ['93.184.216.34'] : undefined,
     ffmpegPath: () => locateTool('ffmpeg', toolSettings, process.env, toolContext),
     validatePng: bytes => { const value = nativeImage.createFromBuffer(bytes); return !value.isEmpty() },
     chooseCaptureDestination: async kind => {

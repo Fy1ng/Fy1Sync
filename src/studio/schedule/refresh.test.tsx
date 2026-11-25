@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StreamSyncerBridge } from '../../../electron/contracts'
 import type { Cs2Schedule } from '../../../electron/featureContracts'
+import { formatStart } from './model'
 import { ScheduleSheet } from './ScheduleSheet'
 
 const NOW = Date.parse('2026-11-02T04:00:00Z')
@@ -48,7 +49,7 @@ describe('schedule match refresh', () => {
     expect(match()).toHaveAttribute('data-state', 'live')
   })
 
-  it('continues showing nonzero live scores as live progress', async () => {
+  it('continues showing nonzero live scores and retains the scheduled start time while live', async () => {
     read = async () => {
       const value = schedule()
       value.matches[0]!.score = [1, 0]
@@ -57,8 +58,34 @@ describe('schedule match refresh', () => {
     render(<ScheduleSheet onClose={() => {}} onWatch={() => {}} />)
     await settle()
     expect(within(match()).getByText('直播中')).toBeInTheDocument()
+    expect(within(match()).getByText(formatStart(NOW - 3600_000, NOW))).toBeInTheDocument()
     expect(within(match()).queryByText('赛果待更新')).toBeNull()
     expect(match().querySelector('.match-score')).toHaveTextContent('1:0')
+  })
+
+  it('waits for fresh data instead of flashing an overnight cached schedule on open', async () => {
+    const { readSchedule } = await import('./store')
+    read = async () => ({
+      ...schedule(),
+      fetchedAt: NOW - 2 * 3600_000,
+      matches: [{ ...schedule().matches[0]!, startsAt: NOW + 3600_000, state: 'upcoming', score: null }],
+    })
+    await readSchedule()
+    let release!: (value: Cs2Schedule) => void
+    const updatedStart = NOW + 3 * 3600_000
+    read = () => new Promise(resolve => { release = resolve })
+    render(<ScheduleSheet onClose={() => {}} onWatch={() => {}} />)
+    expect(screen.getByText('正在读取赛程')).toBeInTheDocument()
+    expect(screen.queryByText(formatStart(NOW + 3600_000, NOW))).toBeNull()
+    await act(async () => {
+      release({
+        ...schedule(),
+        fetchedAt: NOW,
+        matches: [{ ...schedule().matches[0]!, startsAt: updatedStart, state: 'upcoming', score: null }],
+      })
+    })
+    await settle()
+    expect(screen.getByText(formatStart(updatedStart, NOW))).toBeInTheDocument()
   })
 
   it('keeps the new match status and score when an earlier opening read resolves after manual refresh', async () => {

@@ -6,8 +6,8 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { teamLogoResponse } from '../../electron/teamLogoRoute'
 import { metadataConfig } from '../config'
-import { NetworkPolicy } from '../networkPolicy'
-import { RelayScheduleService, scheduleRelayOrigin } from './relaySchedule'
+import { NetworkPolicy, installNetworkPolicy } from '../networkPolicy'
+import { OVERNIGHT_CACHE_MS, RelayScheduleService, scheduleFailureMessage, scheduleRelayOrigin } from './relaySchedule'
 import { LOGO_MAX_BYTES, readTeamLogo } from './teamLogos'
 import type { RelayLogo, RelayMatch, RelaySchedule } from './relayProtocol'
 
@@ -133,18 +133,72 @@ describe('relay client', () => {
     const { service } = setup(request)
     expect(await service.getCs2Schedule()).toMatchObject({ fetchedAt: NOW, matches: [{ id: 'first' }] })
     await vi.advanceTimersByTimeAsync(0)
-    expect(await service.getCs2Schedule()).toMatchObject({ fetchedAt: NOW, stale: true, error: '赛程暂时无法读取，请稍后重试',
+    expect(await service.getCs2Schedule()).toMatchObject({ fetchedAt: NOW, stale: true,
+      error: '赛程读取失败：网络连接异常，请检查网络连接后重试',
       errorDetail: { message: 'offline' }, refreshAt: NOW + 30_000, refreshReason: 'retry', matches: [{ id: 'first' }] })
     await vi.advanceTimersByTimeAsync(30_000)
-    expect(await service.getCs2Schedule()).toMatchObject({ stale: true, matches: [{ id: 'first' }], errorDetail: { message: 'Invalid relay schedule' } })
+    expect(await service.getCs2Schedule()).toMatchObject({ stale: true, matches: [{ id: 'first' }],
+      error: '赛程返回数据异常，请检查网络环境或尝试更新应用', errorDetail: { message: 'Invalid relay schedule' } })
     expect(disk()).toEqual({ origin: ORIGIN, receivedAt: NOW, etag: ETAG, schedule: wire() })
   })
 
-  it('enforces the ten-second manual floor and coalesces concurrent reads', async () => {
+  it('waits for a fresh fetch when disk cache is over an hour old and falls back to it on failure', async () => {
+    const oldTime = NOW - OVERNIGHT_CACHE_MS - 1
+    mkdirSync(join(root, 'events'), { recursive: true })
+    writeFileSync(join(root, 'events', 'relay-schedule.json'), JSON.stringify({
+      origin: ORIGIN, receivedAt: oldTime, etag: ETAG,
+      schedule: wire({ fetchedAt: oldTime, generatedAt: oldTime, matches: [match('yesterday-12', { startsAt: NOW + 3_600_000 })] }),
+    }))
+    let release!: (value: Response) => void
+    const request = vi.fn<typeof fetch>(() => new Promise(resolve => { release = resolve }))
+    const { service } = setup(request)
+    const resolved = vi.fn()
+    const reading = service.getCs2Schedule().then(resolved)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(resolved).not.toHaveBeenCalled()
+    release(response(wire({ matches: [match('today-14', { startsAt: NOW + 10_800_000 })] })))
+    await reading
+    expect(resolved).toHaveBeenCalledWith(expect.objectContaining({
+      stale: false, fetchedAt: NOW, matches: [expect.objectContaining({ id: 'today-14' })],
+    }))
+
+    // When offline, an overnight cache still serves as fallback once the refresh attempt fails.
+    await service.dispose()
+    writeFileSync(join(root, 'events', 'relay-schedule.json'), JSON.stringify({
+      origin: ORIGIN, receivedAt: oldTime, etag: ETAG,
+      schedule: wire({ fetchedAt: oldTime, generatedAt: oldTime, matches: [match('fallback-old', { startsAt: NOW + 3_600_000 })] }),
+    }))
+    const offlineService = setup(async () => { throw Object.assign(new Error('timed out'), { name: 'TimeoutError' }) }).service
+    const fallback = await offlineService.getCs2Schedule()
+    expect(fallback).toMatchObject({
+      stale: true, fetchedAt: oldTime,
+      error: '赛程读取失败：网络连接超时，请检查网络连接后重试',
+      matches: [expect.objectContaining({ id: 'fallback-old' })],
+    })
+  })
+
+  it('classifies relay failure reasons into specific user-facing messages', () => {
+    expect(scheduleFailureMessage(new DOMException('Request timed out', 'TimeoutError')))
+      .toBe('赛程读取失败：网络连接超时，请检查网络连接后重试')
+    expect(scheduleFailureMessage(Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' })))
+      .toBe('赛程读取失败：域名解析异常，请检查网络或 DNS 设置')
+    expect(scheduleFailureMessage(Object.assign(new Error('certificate has expired'), { code: 'CERT_HAS_EXPIRED' })))
+      .toBe('赛程读取失败：安全连接或证书校验异常，请检查系统时间与网络环境')
+    expect(scheduleFailureMessage(Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' })))
+      .toBe('赛程读取失败：网络连接被拒绝，请检查防火墙或网络设置')
+    expect(scheduleFailureMessage({ status: 503, statusText: 'Service Unavailable' }))
+      .toBe('赛程服务正在维护或同步中（HTTP 503），请稍后重试')
+    expect(scheduleFailureMessage({ status: 429, statusText: 'Too Many Requests' }))
+      .toBe('赛程请求过于频繁，请稍后重试')
+    expect(scheduleFailureMessage(new SyntaxError('Unexpected token <')))
+      .toBe('赛程返回数据异常，请检查网络环境或尝试更新应用')
+  })
+
+  it('throttles manual refreshes silently at 500ms -> 1s -> 3s, resets after 10s idle, and coalesces concurrent reads', async () => {
     let release!: (result: Response) => void
     const request = vi.fn<typeof fetch>().mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
-      .mockResolvedValueOnce(response(wire({ matches: [match('next')] })))
-    const { service, onEvent } = setup(request)
+      .mockImplementation(async () => response(wire({ matches: [match(`call-${request.mock.calls.length}`)] })))
+    const { service } = setup(request)
     const settled = vi.fn()
     const replies = [service.getCs2Schedule(), service.getCs2Schedule({ refresh: true }), service.getCs2Schedule()]
     void replies[0]!.then(settled)
@@ -154,36 +208,65 @@ describe('relay client', () => {
       expect(settled).not.toHaveBeenCalled()
     } finally { release(response()) }
     expect(await Promise.all(replies)).toEqual(Array(3).fill(await replies[0]))
-    await vi.advanceTimersByTimeAsync(9_999)
+
+    // 500ms first step
+    await vi.advanceTimersByTimeAsync(499)
     await service.getCs2Schedule({ refresh: true })
     expect(request).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(1)
-    expect(await service.getCs2Schedule({ refresh: true })).toMatchObject({ matches: [{ id: 'next' }] })
+    expect(await service.getCs2Schedule({ refresh: true })).toMatchObject({ matches: [{ id: 'call-2' }] })
     expect(request).toHaveBeenCalledTimes(2)
-    expect(onEvent).toHaveBeenCalledTimes(2)
+
+    // 1s second step
+    await vi.advanceTimersByTimeAsync(999)
+    await service.getCs2Schedule({ refresh: true })
+    expect(request).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(await service.getCs2Schedule({ refresh: true })).toMatchObject({ matches: [{ id: 'call-3' }] })
+    expect(request).toHaveBeenCalledTimes(3)
+
+    // 3s third step
+    await vi.advanceTimersByTimeAsync(2_999)
+    await service.getCs2Schedule({ refresh: true })
+    expect(request).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(await service.getCs2Schedule({ refresh: true })).toMatchObject({ matches: [{ id: 'call-4' }] })
+    expect(request).toHaveBeenCalledTimes(4)
+
+    // 10s idle resets back to 500ms
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(await service.getCs2Schedule({ refresh: true })).toMatchObject({ matches: [{ id: 'call-5' }] })
+    expect(request).toHaveBeenCalledTimes(5)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(await service.getCs2Schedule({ refresh: true })).toMatchObject({ matches: [{ id: 'call-6' }] })
+    expect(request).toHaveBeenCalledTimes(6)
   })
 
-  it('retries failed polls with capped backoff, resets on success and clears timers on dispose', async () => {
-    const request = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({ error: 'not-ready' }, { status: 503, headers: { 'Retry-After': '30' } }))
+  it('retries failed background polls with capped backoff while keeping manual refresh unlocked', async () => {
+    const request = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({ error: 'not-ready' }, { status: 503, statusText: 'Service Unavailable', headers: { 'Retry-After': '30' } }))
     const { service } = setup(request)
     let current = NOW
     for (const [index, delay] of [30_000, 60_000, 120_000, 240_000, 300_000, 300_000].entries()) {
       expect(await service.getCs2Schedule()).toMatchObject({ stale: true, refreshAt: current + delay, refreshReason: 'retry',
+        error: '赛程服务正在维护或同步中（HTTP 503），请稍后重试',
         errorDetail: { status: 503, retryAfter: '30' } })
       await vi.advanceTimersByTimeAsync(delay - 1)
-      await service.getCs2Schedule({ refresh: true })
+      await service.getCs2Schedule()
       expect(request).toHaveBeenCalledTimes(index + 1)
-      if (index === 5) request.mockResolvedValueOnce(response())
+      if (index === 5) request.mockResolvedValueOnce(response(wire({ fetchedAt: current + delay, matches: [match('first', { startsAt: current + delay })] })))
       await vi.advanceTimersByTimeAsync(1)
       current += delay
     }
-    expect(await service.getCs2Schedule()).toMatchObject({ stale: true, matches: [{ id: 'first' }] })
+    expect(await service.getCs2Schedule()).toMatchObject({ stale: false, matches: [{ id: 'first' }] })
     await vi.advanceTimersByTimeAsync(300_000)
-    expect(await service.getCs2Schedule()).toMatchObject({ refreshAt: current + 330_000 })
+    current += 300_000
+    // Next background poll fails again, but an explicit manual refresh can immediately recover without waiting 30s.
+    expect(await service.getCs2Schedule()).toMatchObject({ stale: true, refreshAt: current + 30_000 })
+    request.mockResolvedValueOnce(response(wire({ fetchedAt: current + 1_000, matches: [match('recovered', { startsAt: current + 1_000 })] })))
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(await service.getCs2Schedule({ refresh: true })).toMatchObject({ stale: false, matches: [{ id: 'recovered' }] })
     await service.dispose()
     expect(vi.getTimerCount()).toBe(0)
-    await vi.advanceTimersByTimeAsync(600_000)
-    expect(request).toHaveBeenCalledTimes(8)
   })
 
   it('marks old and cooling schedules stale, never offering verification or forcing network via compatibility methods', async () => {
@@ -316,15 +399,26 @@ describe('relay network policy', () => {
     }
   })
 
-  it('defaults the production relay to direct without changing system mode or foreign hosts', async () => {
-    const proxy = vi.fn(async () => 'PROXY proxy.invalid:8080')
-    let mode: 'direct' | 'system' = 'direct'
+  it('keeps the production relay always direct even in system mode while stream titles still follow the proxy', async () => {
+    const proxy = vi.fn(async () => 'SOCKS4 broken.invalid:1080')
+    let mode: 'direct' | 'system' = 'system'
     const policy = new NetworkPolicy(proxy, () => mode)
-    expect(await policy.context().route(ORIGIN)).toEqual({ kind: 'direct' })
-    expect(proxy).not.toHaveBeenCalled()
-    expect(await policy.context().route('https://www.youtube.com')).toMatchObject({ kind: 'http' })
-    expect(await policy.context().route('https://another.fy1ng.cn')).toMatchObject({ kind: 'http' })
-    mode = 'system'
-    expect(await policy.context().route(ORIGIN)).toMatchObject({ kind: 'http' })
+    installNetworkPolicy(policy)
+    try {
+      expect(await policy.context().route(ORIGIN)).toEqual({ kind: 'direct' })
+      mode = 'direct'
+      expect(await policy.context().route(ORIGIN)).toEqual({ kind: 'direct' })
+      expect(proxy).not.toHaveBeenCalled()
+      mode = 'system'
+      // Even with an unsupported SOCKS4 system proxy active, schedule fetch succeeds via directNetwork.
+      const request = vi.fn<typeof fetch>(async () => response())
+      const { service } = setup(request)
+      expect(await service.getCs2Schedule()).toMatchObject({ stale: false, matches: [{ id: 'first' }] })
+      expect(proxy).not.toHaveBeenCalled()
+      expect(await policy.context().route('https://www.youtube.com')).toMatchObject({ kind: 'unsupported', reason: 'socks4-unsupported' })
+      expect(await policy.context().route('https://another.fy1ng.cn')).toMatchObject({ kind: 'unsupported', reason: 'socks4-unsupported' })
+    } finally {
+      installNetworkPolicy(new NetworkPolicy(async () => 'DIRECT', () => 'direct'))
+    }
   })
 })

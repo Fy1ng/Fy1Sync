@@ -23,55 +23,43 @@ test('赛程 HTTP 错误通过真实 IPC 展开并复制原始字段', async ({ 
     if (process.env.STREAM_SYNC_OFFLINE_E2E !== '1' || !profile.startsWith(root + path.sep)) throw new Error('Disposable offline profile required')
     const directory = path.join(profile, 'events')
     await fs.mkdir(directory, { recursive: true })
-    // Reset only this disposable profile's synthetic quota; no upstream request is sent.
-    await fs.writeFile(path.join(directory, 'liquipedia-http-attempt.json'), JSON.stringify({ at: 0, parseAt: 0 }))
-    await fs.writeFile(path.join(directory, 'liquipedia-attempt.json'), JSON.stringify({ at: 0 }))
-    // Simulate another window's successful cache refresh after the initial offline failure.
-    // Historical matches keep this test in the empty current-window layout.
-    const payload = JSON.parse(await fs.readFile(path.join(process.cwd(), 'server/esports/fixtures/liquipedia-matches.json'), 'utf8'))
-    await fs.writeFile(path.join(directory, 'liquipedia.json'), JSON.stringify({ schema: 1, fetchedAt: Date.now(), payload }))
+    const now = Date.now()
+    // Historical match outside the -12h/+48h window keeps the empty-window layout while recording fetchedAt.
+    await fs.writeFile(path.join(directory, 'relay-schedule.json'), JSON.stringify({
+      origin: 'https://schedule.fy1ng.cn',
+      receivedAt: now,
+      etag: '"error-detail-fixture"',
+      schedule: {
+        schema: 1,
+        fetchedAt: now,
+        generatedAt: now,
+        source: 'liquipedia',
+        attribution: '赛程数据来自 Liquipedia（CC-BY-SA 3.0）',
+        upstream: { limitedUntil: null },
+        matches: [],
+      },
+    }))
     const original = globalThis.fetch
     const counter = globalThis as typeof globalThis & { __errorDetailRequests?: number }
     counter.__errorDetailRequests = 0
     globalThis.fetch = async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : String(input))
-      if (url.hostname !== 'liquipedia.net') return original(input, init)
+      if (url.hostname !== 'schedule.fy1ng.cn') return original(input, init)
       counter.__errorDetailRequests!++
-      return new Response('<title>Rate Limited - Liquipedia</title><input name="token" value="PRIVATE_TEST_TOKEN">',
-        { status: 429, statusText: 'Too Many Requests', headers: { 'content-type': 'text/html', 'retry-after': '60' } })
+      return new Response('<title>Service Unavailable</title><input name="token" value="PRIVATE_TEST_TOKEN">',
+        { status: 503, statusText: 'Service Unavailable', headers: { 'content-type': 'text/html', 'retry-after': '60' } })
     }
   })
   await sheet.getByRole('button', { name: '关闭', exact: true }).click()
   await page.getByRole('button', { name: /^CS2 赛程/ }).click()
   await sheet.getByRole('button', { name: '刷新', exact: true }).click()
   await expect.poll(() => electronApp.evaluate(() => (globalThis as typeof globalThis & { __errorDetailRequests?: number }).__errorDetailRequests)).toBe(1)
-  await expect(sheet.getByRole('button', { name: /后可刷新/ })).toBeDisabled()
-  const blocked = await page.evaluate(() => window.streamSyncer!.invoke('getCs2Schedule', { refresh: true }))
-  expect(blocked).toMatchObject({ ok: true, value: { refreshReason: 'upstream-rate-limit' } })
-  expect(await electronApp.evaluate(() => (globalThis as typeof globalThis & { __errorDetailRequests?: number }).__errorDetailRequests)).toBe(1)
-  await electronApp.evaluate(({ shell }) => {
-    if (process.env.STREAM_SYNC_OFFLINE_E2E !== '1') throw new Error('Offline test required')
-    const state = globalThis as typeof globalThis & { __verificationUrls?: string[] }
-    state.__verificationUrls = []
-    // Verify the real renderer/preload/main handoff without launching a browser or contacting Liquipedia.
-    shell.openExternal = async url => { state.__verificationUrls!.push(url) }
-  })
-  const verify = sheet.getByRole('button', { name: '打开官网验证', exact: true })
-  await expect(verify).toBeEnabled()
-  expect(await electronApp.evaluate(() => (globalThis as typeof globalThis & { __verificationUrls?: string[] }).__verificationUrls)).toEqual([])
-  await verify.click()
-  const verification = sheet.getByRole('group', { name: 'Liquipedia 官网验证' })
-  await expect(verification.getByRole('button', { name: /^最早可试：/ })).toBeDisabled()
-  expect(await electronApp.evaluate(() => (globalThis as typeof globalThis & { __verificationUrls?: string[] }).__verificationUrls))
-    .toEqual(['https://liquipedia.net/counterstrike/Liquipedia:Matches'])
-  const afterHandoff = await page.evaluate(() => window.streamSyncer!.invoke('getCs2Schedule', { refresh: true }))
-  expect(afterHandoff.ok && afterHandoff.value.refreshAt).toBe(blocked.ok && blocked.value.refreshAt)
-  await expect(sheet.getByRole('button', { name: /后可刷新/ })).toBeDisabled()
-  expect(await electronApp.evaluate(() => (globalThis as typeof globalThis & { __errorDetailRequests?: number }).__errorDetailRequests)).toBe(1)
+  await expect(sheet).toContainText('赛程服务正在维护或同步中（HTTP 503），请稍后重试')
+  await expect(sheet.getByRole('button', { name: '刷新', exact: true })).toBeEnabled()
   await sheet.getByRole('button', { name: '查看原始错误' }).click()
   const panel = sheet.getByRole('region', { name: '原始错误信息' })
-  await expect(panel).toContainText('429')
-  await expect(panel).toContainText('Rate Limited - Liquipedia')
+  await expect(panel).toContainText('503')
+  await expect(panel).toContainText('Service Unavailable')
   await expect(panel).toContainText('retryAfter')
   await expect(panel).not.toContainText('PRIVATE_TEST_TOKEN')
   await expect(sheet).toContainText('读取于')
@@ -86,7 +74,7 @@ test('赛程 HTTP 错误通过真实 IPC 展开并复制原始字段', async ({ 
   })
   await panel.getByRole('button', { name: '复制错误信息' }).click()
   await expect(panel.getByRole('button', { name: '已复制' })).toBeVisible()
-  expect(await page.evaluate(() => (window as typeof window & { __copiedError?: string }).__copiedError)).toContain('429')
+  expect(await page.evaluate(() => (window as typeof window & { __copiedError?: string }).__copiedError)).toContain('503')
   await page.screenshot({ path: testInfo.outputPath('schedule-error-details.png') })
   await sheet.getByRole('button', { name: '收起原始错误' }).click()
   await expect(panel).toBeHidden()
@@ -103,7 +91,7 @@ test('工具更新失败可查看原始异常且保留普通提示', async ({ el
   const update = section.getByRole('button', { name: '更新 yt-dlp', exact: true })
   await expect(update).toBeEnabled()
   await update.click()
-  await expect(section).toContainText('更新下载失败')
+  await expect(section).toContainText('下载失败，请检查网络后重试')
   await section.getByRole('button', { name: '查看原始错误' }).click()
   const panel = section.getByRole('region', { name: '原始错误信息' })
   await expect(panel).toContainText('Offline fixture network failure')

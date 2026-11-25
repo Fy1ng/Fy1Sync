@@ -14,8 +14,12 @@ export interface NetworkContext { route(url: string): Promise<NetworkRoute>; med
 export interface ProxySummary { type: 'direct' | 'HTTP' | 'SOCKS' | 'PAC'; fallbackReason?: string }
 export const directNetwork: NetworkContext = { route: async () => ({ kind: 'direct' }) }
 const DOMESTIC = /(^|\.)(douyu\.com|douyucdn[23]?\.cn|dyscdn\.com|edgesrv\.com|douyuscdn\.com|bytefcdnrd\.com|bilibili\.com|bilivideo\.com|hdslb\.com|huya\.com|msstatic\.com|douyin\.com|amemv\.com|douyincdn\.com)$/i
+export function scheduleRelayTarget(raw: string): boolean {
+  try { return new URL(raw).hostname.toLowerCase() === SCHEDULE_RELAY_HOST }
+  catch { return false }
+}
 export function domesticTarget(raw: string): boolean {
-  try { const { hostname } = new URL(raw); return hostname === SCHEDULE_RELAY_HOST || DOMESTIC.test(hostname) }
+  try { const { hostname } = new URL(raw); return DOMESTIC.test(hostname) }
   catch { return false }
 }
 
@@ -89,6 +93,7 @@ export class NetworkPolicy {
     const memo = new Map<string, Promise<NetworkRoute>>()
     const domesticPlatform = platform === 'douyu' || platform === 'bilibili' || platform === 'huya' || platform === 'douyin'
     return { route: (url) => {
+      if (scheduleRelayTarget(url)) return directNetwork.route(url)
       if (domesticMode === 'direct' && (domesticPlatform || domesticTarget(url))) return directNetwork.route(url)
       let value = memo.get(url)
       if (!value) { value = this.system(url); if (memo.size >= 1024) memo.delete(memo.keys().next().value!); memo.set(url, value); void value.catch(() => { if (memo.get(url) === value) memo.delete(url) }) }

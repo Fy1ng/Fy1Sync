@@ -72,6 +72,22 @@ describe('system proxy route policy', () => {
       .toMatchObject({ kind: 'http' })
   })
 
+  it('keeps the schedule relay direct regardless of domestic routing while foreign metadata follows the system proxy', async () => {
+    let mode: DomesticRouting = 'direct'
+    const resolve = vi.fn(async () => 'PROXY 127.0.0.1:3128')
+    const policy = new NetworkPolicy(resolve, () => mode)
+    for (const next of ['direct', 'system'] as const) {
+      mode = next
+      const context = policy.context()
+      expect(await context.route('https://schedule.fy1ng.cn/v1/cs2/schedule')).toEqual({ kind: 'direct' })
+      expect(await context.route('https://schedule.fy1ng.cn/v1/cs2/logos/abc')).toEqual({ kind: 'direct' })
+    }
+    expect(resolve).not.toHaveBeenCalled()
+    expect(await policy.context().route('https://www.youtube.com/oembed?format=json')).toMatchObject({ kind: 'http' })
+    expect(await policy.context().route('https://gql.twitch.tv/gql')).toMatchObject({ kind: 'http' })
+    expect(await policy.context().route('https://another.fy1ng.cn/')).toMatchObject({ kind: 'http' })
+  })
+
   it('applies domestic domain defaults when no platform is attached', async () => {
     const resolve = vi.fn(async () => 'PROXY 127.0.0.1:3128')
     const context = new NetworkPolicy(resolve, () => 'direct').context()

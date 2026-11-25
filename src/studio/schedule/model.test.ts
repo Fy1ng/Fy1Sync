@@ -1,7 +1,7 @@
 /** Grouping the schedule by event and telling the two stages of one event apart. */
 import { describe, expect, it } from 'vitest'
 import type { Cs2Match, Cs2Schedule, StreamTitle } from '../../../electron/featureContracts'
-import { eventPath, formatStart, groupEvents, matchStage, orderedStreams, stageLabel, streamTitle, tierLabel, titleKey, titleRequests } from './model'
+import { createRefreshThrottle, eventPath, formatStart, formatUtcOffset, groupEvents, isBeijingTimeZone, isScheduleOvernight, isScheduleStale, matchStage, orderedStreams, SCHEDULE_OVERNIGHT_MS, SCHEDULE_STALE_MS, stageLabel, streamTitle, tierLabel, titleKey, titleRequests } from './model'
 
 const at = Date.parse('2026-10-27T10:00:00Z')
 function match(id: string, over: Partial<Cs2Match> & { event?: string; tier?: Cs2Match['tournament']['tier']; logo?: string | null } = {}): Cs2Match {
@@ -166,13 +166,66 @@ describe('stages', () => {
   })
 })
 
-describe('formatStart', () => {
-  it('says today, tomorrow and yesterday plainly', () => {
+describe('formatStart and timezone helpers', () => {
+  it('says today, tomorrow, yesterday and midnight hours plainly without 24:xx', () => {
     const now = new Date(2026, 9, 27, 12, 0).getTime()
+    expect(formatStart(new Date(2026, 9, 27, 0, 5).getTime(), now)).toBe('00:05')
     expect(formatStart(new Date(2026, 9, 27, 19, 30).getTime(), now)).toBe('19:30')
+    expect(formatStart(new Date(2026, 9, 28, 0, 0).getTime(), now)).toBe('明天 00:00')
     expect(formatStart(new Date(2026, 9, 28, 1, 0).getTime(), now)).toBe('明天 01:00')
     expect(formatStart(new Date(2026, 9, 26, 23, 0).getTime(), now)).toBe('昨天 23:00')
     expect(formatStart(new Date(2026, 9, 30, 9, 5).getTime(), now)).toBe('10月30日 09:05')
+  })
+
+  it('formats UTC offsets and detects non-Beijing system timezones', () => {
+    const spy = { restore: () => {} }
+    const original = Date.prototype.getTimezoneOffset
+    spy.restore = () => { Date.prototype.getTimezoneOffset = original }
+    try {
+      Date.prototype.getTimezoneOffset = () => -480
+      expect(formatUtcOffset(at)).toBe('UTC+8')
+      expect(isBeijingTimeZone(at)).toBe(true)
+
+      Date.prototype.getTimezoneOffset = () => -600
+      expect(formatUtcOffset(at)).toBe('UTC+10')
+      expect(isBeijingTimeZone(at)).toBe(false)
+
+      Date.prototype.getTimezoneOffset = () => 0
+      expect(formatUtcOffset(at)).toBe('UTC+0')
+      expect(isBeijingTimeZone(at)).toBe(false)
+
+      Date.prototype.getTimezoneOffset = () => 300
+      expect(formatUtcOffset(at)).toBe('UTC-5')
+
+      Date.prototype.getTimezoneOffset = () => -330
+      expect(formatUtcOffset(at)).toBe('UTC+5:30')
+    } finally {
+      spy.restore()
+    }
+  })
+
+  it('computes real-time stale and overnight thresholds from fetchedAt', () => {
+    const fresh = schedule([])
+    expect(isScheduleStale(fresh, at + SCHEDULE_STALE_MS)).toBe(false)
+    expect(isScheduleStale(fresh, at + SCHEDULE_STALE_MS + 1)).toBe(true)
+    expect(isScheduleOvernight(fresh, at + SCHEDULE_OVERNIGHT_MS)).toBe(false)
+    expect(isScheduleOvernight(fresh, at + SCHEDULE_OVERNIGHT_MS + 1)).toBe(true)
+  })
+
+  it('steps silent refresh cooldown 500ms -> 1s -> 3s and resets after 10s idle', () => {
+    const throttle = createRefreshThrottle()
+    expect(throttle.tryAcquire(0)).toBeTypeOf('function')
+    expect(throttle.tryAcquire(499)).toBeNull()
+    expect(throttle.tryAcquire(500)).toBeTypeOf('function')
+    expect(throttle.tryAcquire(1_499)).toBeNull()
+    expect(throttle.tryAcquire(1_500)).toBeTypeOf('function')
+    expect(throttle.tryAcquire(4_499)).toBeNull()
+    expect(throttle.tryAcquire(4_500)).toBeTypeOf('function')
+    expect(throttle.tryAcquire(7_499)).toBeNull()
+    // 10s without clicks resets back to the 500ms step.
+    expect(throttle.tryAcquire(17_500)).toBeTypeOf('function')
+    expect(throttle.tryAcquire(17_999)).toBeNull()
+    expect(throttle.tryAcquire(18_000)).toBeTypeOf('function')
   })
 })
 

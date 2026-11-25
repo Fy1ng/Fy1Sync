@@ -32,6 +32,7 @@ import { DouyuGiftPlanService } from '../server/douyu/giftPlanService'
 import type { ResolveDouyuRoom } from '../server/platforms/douyuRoom'
 import appPackage from '../package.json'
 import { RelayScheduleService } from '../server/esports/relaySchedule'
+import type { Resolver } from '../server/safeFetch'
 import { DouyuReadCache } from '../server/douyu/readCache'
 import { SavedRoomsStore } from './savedRooms'
 import { SavedRoomsMonitor, type RoomMetadataCollector } from './savedRoomsMonitor'
@@ -73,13 +74,14 @@ export interface BackendRuntimeOptions {
   notifyLive: (event: DouyuLiveNotification) => void
   roomMetadataCollector?: RoomMetadataCollector
   roomMetadataEnabled?: boolean
+  esportsResolve?: Resolver
 }
 
 export function createBackendRuntime(options: BackendRuntimeOptions) {
   const lifetime = new AbortController()
   const api = new FeatureApi()
   const esports = new RelayScheduleService({ userDataDir: options.userDataDir, bundledLogoDir: options.bundledLogoDir,
-    version: appPackage.version, onEvent: event => api.publish(event) })
+    version: appPackage.version, resolve: options.esportsResolve, onEvent: event => api.publish(event) })
   const savedRooms = new SavedRoomsStore(options.userDataDir)
   const roomImages = new SavedRoomImages(options.userDataDir)
   let imagesPrunedAt = 0
