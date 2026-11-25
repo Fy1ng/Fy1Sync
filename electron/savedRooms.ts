@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { validateDirectHeaders } from '../src/core/directStream'
 import { parseSourceInput } from '../src/core/mediaSources'
 import { parseDouyinInput } from '../src/core/douyinInput'
 import type { SavedRoom, SavedRoomMetadata, SaveRoomInput } from './featureContracts'
@@ -41,9 +42,15 @@ function fields(raw: unknown, allowed: readonly string[]): Record<string, unknow
 }
 
 function content(raw: unknown): SaveRoomInput {
-  const value = fields(raw, ['role', 'input', 'platform', 'label'])
-  if ((value.role !== 'official' && value.role !== 'commentary') || !text(value.input, 500)
-    || !text(value.label, 100) || typeof value.platform !== 'string' || !PLATFORMS.has(value.platform)) {
+  const value = fields(raw, ['role', 'input', 'platform', 'label', 'headers'])
+  if ((value.role !== 'official' && value.role !== 'commentary')
+    || typeof value.platform !== 'string' || !PLATFORMS.has(value.platform)
+    || !text(value.input, value.platform === 'direct' ? 4096 : 500)
+    || !text(value.label, 100)) {
+    throw new SavedRoomsError('invalid-arguments')
+  }
+  const headers = validateDirectHeaders(value.headers)
+  if (headers === null || (value.headers !== undefined && value.platform !== 'direct')) {
     throw new SavedRoomsError('invalid-arguments')
   }
   let input = value.input.trim()
@@ -61,7 +68,13 @@ function content(raw: unknown): SaveRoomInput {
   if (!parsed.ok || parsed.platform !== value.platform || !PLATFORMS.has(parsed.platform)) {
     throw new SavedRoomsError('invalid-arguments')
   }
-  return { role: value.role, input: value.input, platform: value.platform, label: value.label }
+  return {
+    role: value.role,
+    input: value.input,
+    platform: value.platform,
+    label: value.label,
+    ...(headers ? { headers } : {}),
+  }
 }
 
 function storedRooms(raw: unknown): SavedRoom[] {
@@ -74,8 +87,14 @@ function storedRooms(raw: unknown): SavedRoom[] {
   for (let index = 0; index < value.rooms.length; index++) {
     const descriptor = Object.getOwnPropertyDescriptor(value.rooms, String(index))
     if (!descriptor || !('value' in descriptor)) throw new Error()
-    const record = fields(descriptor.value, ['id', 'role', 'input', 'platform', 'label', 'savedAt', 'metadata', 'lastAttemptAt', 'refreshError'])
-    const source = content({ role: record.role, input: record.input, platform: record.platform, label: record.label })
+    const record = fields(descriptor.value, ['id', 'role', 'input', 'platform', 'label', 'headers', 'savedAt', 'metadata', 'lastAttemptAt', 'refreshError'])
+    const source = content({
+      role: record.role,
+      input: record.input,
+      platform: record.platform,
+      label: record.label,
+      ...(record.headers !== undefined ? { headers: record.headers } : {}),
+    })
     const key = JSON.stringify([source.role, source.platform, source.input])
     if (!text(record.id, 160) || ids.has(record.id) || sources.has(key)
       || typeof record.savedAt !== 'number' || !Number.isSafeInteger(record.savedAt) || record.savedAt < 0) throw new Error()
@@ -126,7 +145,9 @@ export class SavedRoomsStore {
     const existing = this.rooms.find(room => room.role === source.role && room.platform === source.platform
       && (savedRoomKey(room.platform, room.input) === key || (room.metadata && savedRoomKey(room.platform, room.metadata.url) === key)))
     if (existing) {
-      const updated = { ...existing, label: source.label }
+      const updated: SavedRoom = { ...existing, label: source.label }
+      if (source.headers) updated.headers = source.headers
+      else delete updated.headers
       this.persist(this.rooms.map(room => room.id === existing.id ? updated : room))
       return structuredClone(updated)
     }

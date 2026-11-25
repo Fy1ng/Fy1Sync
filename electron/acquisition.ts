@@ -4,7 +4,9 @@ import { createResolverDeps, sanitizedFailure } from '../server/api'
 import { mediaRequestPolicy, type ProxyConfig } from '../server/config'
 import type { MediaAccess } from '../server/mediaAccess'
 import { probeMediaKind } from '../server/mediaProbe'
+import { inspectDirectHlsStream } from '../server/platforms/directHls'
 import { detectPlatform, resolveStream, type PlatformKind, type ResolveResult, type ResolvedStream } from '../server/platforms'
+import type { DirectStreamOptions } from '../src/core/directStream'
 import { checkUrlSyntax, ProxyError, type Resolver } from '../server/safeFetch'
 import { networkContext, type NetworkContext } from '../server/networkPolicy'
 import { StreamFailureError, classifyNetworkFailure, type StreamFailure } from '../server/networkFailure'
@@ -15,7 +17,7 @@ import type { YtDlpDiagnostic } from './ytdlp'
 import type { AcquisitionDiagnosticRecorder, DiagnosticAttemptSink } from './diagnosticContracts'
 import { diagnosticCode } from './diagnosticSanitizer'
 
-type Selection = { input: string; platform?: PlatformKind; quality?: string; preferAdaptive?: boolean; stream: ResolvedStream; readBytes?: () => number; mediaRevision?: number; mediaRelease?: () => void }
+type Selection = { input: string; platform?: PlatformKind; quality?: string; preferAdaptive?: boolean; direct?: DirectStreamOptions; stream: ResolvedStream; readBytes?: () => number; mediaRevision?: number; mediaRelease?: () => void }
 
 /** Only main-produced, checked inputs can reach the buffer's ffmpeg spawner. */
 export class Acquisition implements AcquisitionService {
@@ -42,10 +44,10 @@ export class Acquisition implements AcquisitionService {
     ensureTools?: (platform: PlatformKind | null) => Promise<void>
   }) {}
 
-  async resolve(input: string, platform: PlatformKind | undefined, role: StreamId, quality?: string, preferAdaptive = false, confirmedRoom?: string): Promise<ResolveResult> {
+  async resolve(input: string, platform: PlatformKind | undefined, role: StreamId, quality?: string, preferAdaptive = false, direct?: DirectStreamOptions, confirmedRoom?: string): Promise<ResolveResult> {
     const diagnostic = detectPlatform(input, platform) === 'youtube' ? this.deps.diagnostics?.begin(role) : undefined
     try {
-      const result = await this.resolveAttempt(input, platform, role, quality, preferAdaptive, confirmedRoom, diagnostic)
+      const result = await this.resolveAttempt(input, platform, role, quality, preferAdaptive, direct, confirmedRoom, diagnostic)
       diagnostic?.finish(result.ok ? 'resolved' : 'failed', result.ok
         ? { stage: 'buffer', status: 'resolved' }
         : { stage: 'resolve', status: 'failed', code: diagnosticCode(result.failure.reason ?? result.failure.code) })
@@ -56,7 +58,7 @@ export class Acquisition implements AcquisitionService {
     }
   }
 
-  private async resolveAttempt(input: string, platform: PlatformKind | undefined, role: StreamId, quality?: string, preferAdaptive = false, confirmedRoom?: string, diagnostic?: DiagnosticAttemptSink): Promise<ResolveResult> {
+  private async resolveAttempt(input: string, platform: PlatformKind | undefined, role: StreamId, quality?: string, preferAdaptive = false, direct?: DirectStreamOptions, confirmedRoom?: string, diagnostic?: DiagnosticAttemptSink): Promise<ResolveResult> {
     const cancelled = () => {
       diagnostic?.finish('cancelled', { stage: 'resolve', status: 'cancelled', code: 'cancelled' })
       return refusal('片源操作已被替换')
@@ -76,7 +78,7 @@ export class Acquisition implements AcquisitionService {
       this.selections.delete(role)
       const stream: ResolvedStream = {
         platform: 'direct', channel: 'fixture', kind: input.endsWith('.m3u8') ? 'hls' : 'progressive',
-        url: input, label: '本地测试源', requiresProxy: false,
+        url: input, label: direct?.label ?? '本地测试源', requiresProxy: false,
       }
       this.publicStreams.set(role, stream)
       return { ok: true, stream }
@@ -97,7 +99,7 @@ export class Acquisition implements AcquisitionService {
       network = { ...routeNetwork, signal: routeNetwork.signal ? AbortSignal.any([owner.signal, routeNetwork.signal]) : owner.signal }
     }
     let first: ResolveResult
-    try { first = await this.resolveInput(input, platform, quality, preferAdaptive, false, confirmedRoom, network, diagnostic) }
+    try { first = await this.resolveInput(input, platform, quality, preferAdaptive, false, confirmedRoom, network, diagnostic, direct) }
     catch (error) { if (error instanceof ProxyError && error.reason !== 'dns-failed') throw error; return failedResult(classifyNetworkFailure(error, 'resolve')) }
     // A previously offered adaptive id can disappear when provider setup falls back
     // to the old extractor mode. Preserve playback instead of rejecting that switch.
@@ -110,7 +112,7 @@ export class Acquisition implements AcquisitionService {
     if (detected !== 'youtube') await this.deps.ensureTools?.(detected)
     if (generation !== this.generations.get(role) || this.disposed) return cancelled()
     let initial = true
-    const selection: Selection = { input, platform, quality, preferAdaptive, stream: retainAdaptiveQualities(sameSource, first.stream) }
+    const selection: Selection = { input, platform, quality, preferAdaptive, ...(direct ? { direct } : {}), stream: retainAdaptiveQualities(sameSource, first.stream) }
     const reconnectInput = first.stream.platform === 'youtube' && /^[A-Za-z0-9_-]{11}$/.test(first.stream.channel)
       ? `https://www.youtube.com/watch?v=${first.stream.channel}` : input
     const prepare = async (hlsOnly = false): Promise<BufferInput> => {
@@ -118,7 +120,7 @@ export class Acquisition implements AcquisitionService {
       const reconnect = !reuse && detected === 'youtube' ? this.deps.diagnostics?.begin(role, hlsOnly ? 'hls-recovery' : 'reconnect') : undefined
       let resolved: ResolveResult
       try {
-        resolved = reuse ? first : await this.resolveInput(reconnectInput, platform, hlsOnly ? 'auto' : quality, hlsOnly ? false : preferAdaptive, hlsOnly, selection.stream.sourceRoom, network, reconnect ?? diagnostic)
+        resolved = reuse ? first : await this.resolveInput(reconnectInput, platform, hlsOnly ? 'auto' : quality, hlsOnly ? false : preferAdaptive, hlsOnly, selection.stream.sourceRoom, network, reconnect ?? diagnostic, selection.direct)
         reconnect?.finish(resolved.ok ? 'resolved' : 'failed', resolved.ok
           ? { stage: 'resolve', status: 'resolved', adaptive: Boolean(resolved.stream.adaptive) }
           : { stage: 'resolve', status: 'failed', code: diagnosticCode(resolved.failure.reason ?? resolved.failure.code) })
@@ -140,6 +142,7 @@ export class Acquisition implements AcquisitionService {
       const route = media ? undefined : await network.route(resolved.stream.url)
       return { url: media?.url ?? resolved.stream.url, gatewayHls: Boolean(media && resolved.stream.kind === 'hls'), network, proxyUrl: media?.proxyUrl ?? route?.proxyUrl ?? '', readFailure: media?.readFailure, headers: media ? undefined : resolved.stream.headers
         ?? (!media && resolved.stream.platform === 'bilibili' ? { Referer: 'https://live.bilibili.com/' } : undefined),
+        ...(resolved.stream.platform === 'direct' ? { fmp4: true } : {}),
         ...(resolved.stream.adaptive ? { adaptive: resolved.stream.adaptive } : {}),
         qualityHeight: resolved.stream.qualities?.find(option => option.id === resolved.stream.quality)?.height,
         ...(fallbackHeight ? { fallbackFromHeight: fallbackHeight } : {}),
@@ -182,7 +185,7 @@ export class Acquisition implements AcquisitionService {
     if (!selected || !selected.stream.qualities?.some((option) => option.id === quality)) {
       return { ok: false, failure: { code: 'unsupported-url', message: '该片源没有此画质', hint: '请重新载入片源' } }
     }
-    return this.resolve(selected.input, selected.platform, role, quality, selected.preferAdaptive, selected.stream.sourceRoom)
+    return this.resolve(selected.input, selected.platform, role, quality, selected.preferAdaptive, selected.direct, selected.stream.sourceRoom)
   }
 
   async stop(role: StreamId): Promise<void> {
@@ -233,14 +236,17 @@ export class Acquisition implements AcquisitionService {
   async restart(role: StreamId): Promise<ResolveResult> {
     const selected = this.selections.get(role)
     if (!selected) return refusal('播放会话尚未就绪')
-    return this.resolve(selected.input, selected.platform, role, selected.quality, selected.preferAdaptive, selected.stream.sourceRoom)
+    return this.resolve(selected.input, selected.platform, role, selected.quality, selected.preferAdaptive, selected.direct, selected.stream.sourceRoom)
   }
 
-  private async resolveInput(input: string, platform?: PlatformKind, quality?: string, preferAdaptive = false, hlsOnly = false, confirmedRoom?: string, network: NetworkContext = networkContext(detectPlatform(input, platform)), diagnostic?: DiagnosticAttemptSink): Promise<ResolveResult> {
+  private async resolveInput(input: string, platform?: PlatformKind, quality?: string, preferAdaptive = false, hlsOnly = false, confirmedRoom?: string, network: NetworkContext = networkContext(detectPlatform(input, platform)), diagnostic?: DiagnosticAttemptSink, direct?: DirectStreamOptions): Promise<ResolveResult> {
     const resolver = createResolverDeps(this.deps.proxy, (url) => url, this.deps.fetchImpl, network)
     const detected = detectPlatform(input, platform)
     const result = await resolveStream(input, {
-      ...resolver, quality, preferAdaptive, hlsOnly, resolveDouyuRoom: this.deps.resolveDouyuRoom ?? createDouyuRoomResolver(this.deps.proxy, this.deps.fetchImpl, this.deps.dns, network).resolve,
+      ...resolver, quality, preferAdaptive, hlsOnly,
+      ...(direct?.headers ? { directHeaders: direct.headers } : {}),
+      ...(direct?.label ? { directLabel: direct.label } : {}),
+      resolveDouyuRoom: this.deps.resolveDouyuRoom ?? createDouyuRoomResolver(this.deps.proxy, this.deps.fetchImpl, this.deps.dns, network).resolve,
       ...(confirmedRoom ? { douyuRoomIdentity: { room: confirmedRoom, inputRoom: confirmedRoom } } : {}),
       runYtDlp: url => diagnostic ? this.deps.runYtDlp(url, !hlsOnly, network, event => diagnostic.record(event)) : this.deps.runYtDlp(url, !hlsOnly, network),
       douyuCookie: detected === 'douyu' ? await this.deps.logins.cookieHeader('douyu') : undefined,
@@ -250,8 +256,13 @@ export class Acquisition implements AcquisitionService {
       douyinCookieHeader: detected === 'douyin' ? requestUrl => this.deps.logins.cookieHeader('douyin', requestUrl) : undefined,
     }, platform)
     if (!result.ok) return sanitizedFailure(result)
-    if (network.media && result.stream.platform === 'direct' && !/\.(?:m3u8?|mp4|m4v|webm|ogv|mov|mkv|flv|ts)$/i.test(new URL(result.stream.url).pathname)) {
-      result.stream.kind = await probeMediaKind(result.stream.url, result.stream.headers, this.deps.proxy, network, this.deps.fetchImpl)
+    if (network.media && result.stream.platform === 'direct') {
+      if (!/\.(?:m3u8?|mp4|m4v|m4s|webm|ogv|mov|mkv|flv|xs|ts|m2ts|aac)$/i.test(new URL(result.stream.url).pathname)) {
+        result.stream.kind = await probeMediaKind(result.stream.url, result.stream.headers, this.deps.proxy, network, this.deps.fetchImpl)
+      }
+      if (result.stream.kind === 'hls') {
+        result.stream = await inspectDirectHlsStream(result.stream, quality, this.deps.proxy, network, this.deps.fetchImpl)
+      }
     }
     // Actual media connections own DNS and route validation; do not resolve the same target here.
     const checked = checkUrlSyntax(result.stream.url, mediaRequestPolicy(this.deps.proxy))

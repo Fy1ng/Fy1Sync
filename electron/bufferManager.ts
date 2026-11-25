@@ -16,7 +16,7 @@ import { hasSensitiveHeaders } from '../server/safeFetch'
 export { cleanProxyEnvironment } from '../server/networkPolicy'
 
 export type Role = BufferRole
-export interface BufferInput { url: string; headers?: Record<string, string>; realtime?: boolean; adaptive?: AdaptiveSource; qualityHeight?: number; fallbackFromHeight?: number; proxyUrl?: string; network?: NetworkContext; readFailure?: () => StreamFailure | undefined; gatewayHls?: boolean }
+export interface BufferInput { url: string; headers?: Record<string, string>; realtime?: boolean; adaptive?: AdaptiveSource; qualityHeight?: number; fallbackFromHeight?: number; proxyUrl?: string; network?: NetworkContext; readFailure?: () => StreamFailure | undefined; gatewayHls?: boolean; fmp4?: boolean }
 export interface BufferNotice { code: 'youtube-adaptive-fallback'; fromHeight: number; toHeight: number }
 export type BufferPhase = 'starting' | 'buffering' | 'ready' | 'stalled' | 'reconnecting' | 'failed' | 'stopped'
 export interface BufferState { role: Role; state: BufferPhase; seconds: number; attempt?: number; retryInMs?: number; reason?: string; notice?: BufferNotice; failure?: StreamFailure; retriesRemaining?: number; hasVideo?: boolean; completeSegments?: number }
@@ -237,7 +237,7 @@ export class BufferManager {
         if (!this.current(session, run)) { run.transport.close(); return }
       }
       let args: string[]
-      try { args = buildFfmpegArgs(input, session.directory, run.id, run.transport?.audioInput, Boolean(session.adaptiveHeight)) } catch (error) {
+      try { args = buildFfmpegArgs(input, session.directory, run.id, run.transport?.audioInput, Boolean(session.adaptiveHeight || input.fmp4)) } catch (error) {
         run.failure = classifyNetworkFailure(error, 'resolve')
         if (input.adaptive) await this.finish(session, run, 'invalid-buffer-input')
         else this.fail(session, 'invalid-buffer-input')

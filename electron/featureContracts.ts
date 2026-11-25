@@ -34,6 +34,7 @@ export interface SavedRoom {
   platform: string
   label: string
   savedAt: number
+  headers?: Record<string, string>
   metadata?: SavedRoomMetadata
   lastAttemptAt?: number
   refreshError?: string | null
@@ -52,7 +53,7 @@ export interface SavedRoomMetadata {
   startTimeSource: 'platform' | 'observed' | null
   collectedAt: number
 }
-export type SaveRoomInput = Pick<SavedRoom, 'role' | 'input' | 'platform' | 'label'>
+export type SaveRoomInput = Pick<SavedRoom, 'role' | 'input' | 'platform' | 'label' | 'headers'>
 
 export interface FeatureMethods extends BackendMethods, BilibiliLotteryMethods {
   getCs2Schedule: { args: { refresh?: boolean } | undefined; result: Cs2Schedule }

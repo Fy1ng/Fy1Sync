@@ -35,6 +35,10 @@ export type MediaDescriptor = {
   recognitionSourceKey?: string
   /** Platform-qualified chat identity. Never infer it from another platform's room id. */
   danmakuRoom?: string
+  /** User-supplied HTTP headers for a direct stream, kept in session for saving/editing. */
+  directHeaders?: Record<string, string>
+  /** True when `label` was explicitly named by the user rather than derived from hostname. */
+  customLabel?: boolean
 }
 
 export type PlatformId = 'youtube' | 'twitch' | 'douyu' | 'bilibili' | 'huya' | 'douyin' | 'direct' | 'file' | 'test'

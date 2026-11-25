@@ -5,6 +5,7 @@ import type {
   ApiResult, HealthInfo,
 } from '../src/app/apiClient'
 import type { ResolveResult } from '../server/platforms/types'
+import type { DirectStreamOptions } from '../src/core/directStream'
 import type { SourceRole } from '../src/core/types'
 import type { BufferState } from './bufferManager'
 import type { LoginPlatform, LoginResult, LoginStatus } from './login'
@@ -55,7 +56,7 @@ export interface DesktopMethods extends FeatureMethods, EmbeddedLoginMethods, Br
   setNetworkPreferences: { args: { domesticRouting: DomesticRouting; media?: MediaNetworkOptions }; result: NetworkPreferenceState }
   getDecoderPreferences: { args: undefined; result: DecoderPreferenceState }
   setDecoderPreferences: { args: { mode: DecoderMode }; result: DecoderPreferenceState }
-  resolve: { args: { input: string; platform?: string; role?: SourceRole; quality?: string; preferAdaptive?: boolean }; result: ResolveResult }
+  resolve: { args: { input: string; platform?: string; role?: SourceRole; quality?: string; preferAdaptive?: boolean; direct?: DirectStreamOptions }; result: ResolveResult }
   switchQuality: { args: { role: SourceRole; quality: string }; result: ResolveResult }
   stopBuffer: { args: { role: SourceRole }; result: { ok: true } }
   reconnectDanmaku: { args: { room: string }; result: { room: string } }

@@ -11,8 +11,11 @@ import { displayError } from '../../core/errorDetails'
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react'
 import { apiClient } from '../../app/apiClient'
+import { EMPTY_DIRECT_DRAFT, hasDirectOptions, parseDirectDraft, type DirectStreamDraft, type DirectStreamOptions } from '../../core/directStream'
+import { parseSourceInput } from '../../core/mediaSources'
 import type { PipState } from '../../../electron/pipManager'
 import type { OpenStreamInput, StreamSessionView, StreamSessionsSnapshot } from '../../../electron/streamSessions'
+import { DirectStreamFields } from '../DirectStreamFields'
 import { Popover, Segmented } from '../kit'
 import { PLATFORM_LABEL, parseRoomInput, type RoomPlatform } from '../sources'
 import { arrangeStreams, clampRect, defaultRect, pruneLayout, readLayout, readLayoutPreference, selectLayoutMode,
@@ -251,10 +254,20 @@ export function ExtraStreams({ adding, onAddingChange, primaryRef, children }: {
 }
 
 /** What to send for what was typed: a bare room needs its platform, a link speaks for itself. */
-export function openInputFor(text: string, roomPlatform: RoomPlatform): OpenStreamInput {
+export function openInputFor(text: string, roomPlatform: RoomPlatform, direct?: DirectStreamOptions): OpenStreamInput {
   const typed = parseRoomInput(text)
   if (typed) return { input: typed.room, platform: typed.platform ?? roomPlatform }
-  return { input: text.trim() }
+  const trimmed = text.trim()
+  const parsed = parseSourceInput(trimmed)
+  if (parsed.ok && parsed.platform === 'direct') {
+    const normalized = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : parsed.url
+    return {
+      input: normalized,
+      ...(normalized !== trimmed || hasDirectOptions(direct) ? { platform: 'direct' } : {}),
+      ...(hasDirectOptions(direct) ? { direct } : {}),
+    }
+  }
+  return { input: trimmed }
 }
 
 function AddStreamForm({ full, mode, onModeChange, onOpened }: {
@@ -265,6 +278,8 @@ function AddStreamForm({ full, mode, onModeChange, onOpened }: {
 }): React.ReactNode {
   const [text, setText] = useState('')
   const [roomPlatform, setRoomPlatform] = useState<RoomPlatform>('douyu')
+  const [directDraft, setDirectDraft] = useState<DirectStreamDraft>({ ...EMPTY_DIRECT_DRAFT })
+  const [directOpen, setDirectOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [problem, setProblem, problemDetail] = useErrorState()
   const bareRoom = parseRoomInput(text)?.platform === null
@@ -273,9 +288,15 @@ function AddStreamForm({ full, mode, onModeChange, onOpened }: {
     <form className="xs-add-form" onSubmit={(event) => {
       event.preventDefault()
       if (busy || full || !text.trim()) return
+      const parsedDirect = parseDirectDraft(directDraft)
+      if (!parsedDirect.ok) {
+        setProblem(parsedDirect.message)
+        setDirectOpen(true)
+        return
+      }
       setBusy(true)
       setProblem(null)
-      void apiClient.feature('openStreamSession', openInputFor(text, roomPlatform)).then((result) => {
+      void apiClient.feature('openStreamSession', openInputFor(text, roomPlatform, parsedDirect.options)).then((result) => {
         setBusy(false)
         if (result.ok) onOpened(result.value)
         else setProblem(result)
@@ -286,12 +307,22 @@ function AddStreamForm({ full, mode, onModeChange, onOpened }: {
         options={[{ value: 'side-by-side', label: '左右分屏' }, { value: 'stacked', label: '上下分屏' },
           { value: 'custom', label: '自定义' }, { value: 'floating', label: '悬浮窗' }]} />
       <div className="link-row">
-        <input value={text} autoFocus spellCheck={false} onChange={(event) => setText(event.target.value)}
-          aria-label="直播间房间号或链接" placeholder="直播间链接或房间号" />
+        <input value={text} autoFocus spellCheck={false} onChange={(event) => { setText(event.target.value); setProblem(null) }}
+          aria-label="直播间房间号或链接" placeholder="直播间链接、房间号或 m3u8 / flv 直链" />
         <button type="submit" className="btn-solid" disabled={busy || full || text.trim() === ''}>
           {busy ? '打开中' : '打开'}
         </button>
       </div>
+      {!bareRoom && (
+        <DirectStreamFields
+          input={text}
+          draft={directDraft}
+          open={directOpen}
+          disabled={busy || full}
+          onToggle={() => setDirectOpen(open => !open)}
+          onChange={next => { setDirectDraft(next); setProblem(null) }}
+        />
+      )}
       {bareRoom && (
         <Segmented label="房间号所属平台" value={roomPlatform} onChange={setRoomPlatform}
           options={[{ value: 'douyu', label: PLATFORM_LABEL.douyu }, { value: 'bilibili', label: PLATFORM_LABEL.bilibili }, { value: 'huya', label: PLATFORM_LABEL.huya }, { value: 'douyin', label: PLATFORM_LABEL.douyin }]} />

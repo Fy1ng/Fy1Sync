@@ -27,7 +27,9 @@ const NOTICE_MS = 1600
 
 export function streamTitle(view: StreamSessionView): { platform: string | null; room: string } {
   const platform = view.stream ? PLATFORM_LABEL[view.stream.platform] : null
-  const room = roomFromInput(view.input) ?? view.stream?.channel ?? view.input
+  const room = view.stream?.platform === 'direct'
+    ? (view.stream.label || view.stream.channel || view.input)
+    : (roomFromInput(view.input) ?? view.stream?.channel ?? view.input)
   return { platform, room }
 }
 

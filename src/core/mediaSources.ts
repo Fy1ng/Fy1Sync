@@ -32,9 +32,9 @@ export interface SourceRejection {
 
 export type SourceParseResult = SourceClassification | SourceRejection
 
-const HLS_PATTERN = /\.m3u8(\?|$)/iu
+const HLS_PATTERN = /\.(m3u8|m3u)(\?|$)/iu
 const DASH_PATTERN = /\.mpd(\?|$)/iu
-const PROGRESSIVE_PATTERN = /\.(mp4|m4v|webm|ogv|mov|mkv|flv|ts)(\?|$)/iu
+const PROGRESSIVE_PATTERN = /\.(mp4|m4v|m4s|webm|ogv|mov|mkv|flv|xs|ts|m2ts|aac)(\?|$)/iu
 
 export function parseSourceInput(raw: string): SourceParseResult {
   const input = raw.trim()

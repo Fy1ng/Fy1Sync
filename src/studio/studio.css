@@ -662,6 +662,78 @@ body,
   gap: 6px;
 }
 
+.studio .direct-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.studio .intake-body > .direct-options {
+  margin-top: -12px;
+}
+
+.studio .direct-options-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 26px;
+  font-size: 12px;
+}
+
+.studio .direct-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio .direct-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--lock);
+  background: color-mix(in srgb, var(--lock) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--lock) 36%, transparent);
+  border-radius: 999px;
+}
+
+.studio .direct-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.studio .direct-toggle .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.studio .direct-toggle.is-active {
+  color: var(--chalk);
+  background: rgb(255 255 255 / 12%);
+}
+
+.studio .direct-options-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgb(255 255 255 / 4%);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.studio .direct-options-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
 .studio .panel-foot {
   padding-top: 10px;
   border-top: 1px solid var(--line);

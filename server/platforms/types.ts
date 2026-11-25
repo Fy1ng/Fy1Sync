@@ -94,6 +94,10 @@ export type ResolverDeps = {
   cookieHeader?: (platform: 'bilibili' | 'huya', requestUrl: string) => Promise<string>
   quality?: string
   preferAdaptive?: boolean
+  /** User-supplied headers for an explicit direct media stream. */
+  directHeaders?: Record<string, string>
+  /** User-supplied display name for an explicit direct media stream. */
+  directLabel?: string
   /** Internal retry constraint after adaptive playback fails, never accepted from IPC. */
   hlsOnly?: boolean
   now?: () => number

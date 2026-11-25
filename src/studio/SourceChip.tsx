@@ -7,11 +7,14 @@
 
 import { useState } from 'react'
 import { ErrorText } from '../ui/ErrorDetails'
+import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
+import { draftFromDirectOptions, EMPTY_DIRECT_DRAFT, hasDirectOptions, parseDirectDraft, type DirectStreamDraft } from '../core/directStream'
 import type { SourceRole } from '../core/types'
 import { bufferStatusText } from '../ui/bufferStatus'
+import { DirectStreamFields } from './DirectStreamFields'
 import { Icon, Popover, Segmented, usePopover } from './kit'
-import { LoginOffer, PLATFORM_LABEL, ROLE_LABEL, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform, SOURCE_HINT } from './sources'
+import { LoginOffer, PLATFORM_LABEL, ROLE_LABEL, parseDanmakuRoomInput, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform, SOURCE_HINT } from './sources'
 import { sourceDanmakuRoom } from '../core/sourceDanmaku'
 import { danmakuRoom } from '../../server/danmaku/types'
 import { canSave, removeSavedRoom, saveRoom, savedFor, useSavedRooms, useSavedRoomsState, type SavedRoom } from './savedRooms'
@@ -64,6 +67,15 @@ function SourcePanel({ role, onDone, onSchedule }: {
   const state = snapshot.media[role]
   const load = loader.state[role]
   const [input, setInput] = useState(state.descriptor?.input ?? '')
+  const initialDirect = state.descriptor?.platform === 'direct'
+    ? draftFromDirectOptions({
+        ...(state.descriptor.customLabel ? { label: state.descriptor.label } : {}),
+        ...(state.descriptor.directHeaders ? { headers: state.descriptor.directHeaders } : {}),
+      })
+    : { ...EMPTY_DIRECT_DRAFT }
+  const [directDraft, setDirectDraft] = useState<DirectStreamDraft>(initialDirect)
+  const [directOpen, setDirectOpen] = useState(false)
+  const [directProblem, setDirectProblem] = useState<string | null>(null)
   const [chatRetrying, setChatRetrying] = useState(false)
   const [roomPlatform, setRoomPlatform] = useState<RoomPlatform>(state.descriptor?.platform === 'douyin' ? 'douyin' : state.descriptor?.platform === 'huya' ? 'huya' : state.descriptor?.platform === 'bilibili' ? 'bilibili' : 'douyu')
   const bareRoom = parseRoomInput(input)?.platform === null
@@ -76,19 +88,46 @@ function SourcePanel({ role, onDone, onSchedule }: {
     <div className="source-panel">
       <form className="link-row" onSubmit={(event) => {
         event.preventDefault()
-        void loader.loadInput(role, input, bareRoom ? roomPlatform : undefined).then((ok) => { if (ok) onDone() })
+        const parsedDirect = parseDirectDraft(directDraft)
+        if (!parsedDirect.ok) {
+          setDirectProblem(parsedDirect.message)
+          setDirectOpen(true)
+          return
+        }
+        setDirectProblem(null)
+        void loader.loadInput(
+          role,
+          input,
+          bareRoom ? roomPlatform : undefined,
+          ...(hasDirectOptions(parsedDirect.options) ? [parsedDirect.options] : []),
+        ).then((ok) => { if (ok) onDone() })
       }}>
-        <input value={input} onChange={(event) => setInput(event.target.value)} aria-label={`${ROLE_LABEL[role]}链接`}
+        <input value={input} onChange={(event) => { setInput(event.target.value); setDirectProblem(null) }} aria-label={`${ROLE_LABEL[role]}链接`}
           placeholder={SOURCE_HINT} spellCheck={false} />
         <button type="submit" className="btn-solid" disabled={load.busy || input.trim() === ''}>
           {load.busy ? '载入中' : '载入'}
         </button>
       </form>
+      {!bareRoom && (
+        <DirectStreamFields
+          input={input}
+          draft={directDraft}
+          open={directOpen}
+          disabled={load.busy}
+          onToggle={() => setDirectOpen(open => !open)}
+          onChange={next => { setDirectDraft(next); setDirectProblem(null) }}
+        />
+      )}
+      {directProblem && <p className="form-error" role="alert">{directProblem}</p>}
       <SavedList role={role} onPick={(room) => {
         const platform = room.platform === 'douyu' || room.platform === 'bilibili' || room.platform === 'huya' || room.platform === 'douyin' ? room.platform : undefined
+        const directOptions = room.platform === 'direct'
+          ? { ...(room.label ? { label: room.label } : {}), ...(room.headers ? { headers: room.headers } : {}) }
+          : undefined
         setInput(room.input)
         if (platform) setRoomPlatform(platform)
-        void loader.loadInput(role, room.input, platform)
+        if (directOptions) setDirectDraft(draftFromDirectOptions(directOptions))
+        void loader.loadInput(role, room.input, platform, ...(hasDirectOptions(directOptions) ? [directOptions] : []))
           .then((ok) => { if (ok) onDone() })
       }} />
       {role === 'official' && onSchedule && (
@@ -138,6 +177,11 @@ function DanmakuRoom(): React.ReactNode {
   const { roomName, connectRoom, disconnectRoom } = useSourceLoader()
   const [editing, setEditing] = useState(false)
   const [room, setRoom] = useState('')
+  const [platform, setPlatform] = useState<RoomPlatform>('douyu')
+  const [resolving, setResolving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const bare = parseRoomInput(room)?.platform === null
+  const parsed = parseDanmakuRoomInput(room, platform)
 
   if (!editing) {
     return (
@@ -156,17 +200,46 @@ function DanmakuRoom(): React.ReactNode {
     )
   }
   return (
-    <form className="link-row" onSubmit={(event) => {
-      event.preventDefault()
-      const value = room.trim()
-      if (/^[1-9]\d{0,11}$/.test(value)) { connectRoom(value); setEditing(false) }
-    }}>
-      <input value={room} autoFocus onChange={(event) => setRoom(event.target.value)} aria-label="弹幕房间号" placeholder="斗鱼房间号" />
-      <button type="submit" className="btn-solid" disabled={!/^[1-9]\d{0,11}$/.test(room.trim())}>连接</button>
-      {danmaku.room && (
-        <button type="button" className="btn-quiet" onClick={() => { disconnectRoom(); setEditing(false) }}>断开</button>
+    <div className="field-stack">
+      <form className="link-row" onSubmit={(event) => {
+        event.preventDefault()
+        if (!parsed || resolving) return
+        setError(null)
+        if (parsed.douyuLookup) {
+          setResolving(true)
+          void apiClient.resolveDouyuRoom(parsed.douyuLookup).then(result => {
+            if (!result.ok) {
+              setError(result.message)
+            } else if (!result.value.ok) {
+              setError(result.value.failure.message)
+            } else {
+              connectRoom(result.value.identity.room, parsed.name)
+              setEditing(false)
+            }
+          }).catch(() => setError('弹幕房间查询失败，请重试')).finally(() => setResolving(false))
+          return
+        }
+        connectRoom(parsed.key, parsed.platform === 'douyu' ? undefined : parsed.name)
+        setEditing(false)
+      }}>
+        <input value={room} autoFocus onChange={(event) => { setRoom(event.target.value); setError(null) }}
+          aria-label="弹幕房间号" placeholder="房间号或斗鱼/B站/虎牙/抖音链接" />
+        <button type="submit" className="btn-solid" disabled={!parsed || resolving}>{resolving ? '查询中' : '连接'}</button>
+        {danmaku.room && (
+          <button type="button" className="btn-quiet" onClick={() => { disconnectRoom(); setEditing(false) }}>断开</button>
+        )}
+      </form>
+      {bare && (
+        <Segmented label="弹幕房间所属平台" value={platform} onChange={next => { setPlatform(next); setError(null) }}
+          options={[
+            { value: 'douyu', label: PLATFORM_LABEL.douyu },
+            { value: 'bilibili', label: PLATFORM_LABEL.bilibili },
+            { value: 'huya', label: PLATFORM_LABEL.huya },
+            { value: 'douyin', label: PLATFORM_LABEL.douyin },
+          ]} />
       )}
-    </form>
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </div>
   )
 }
 

@@ -2,6 +2,7 @@
 
 import type { DesktopMethods, StreamSyncerBridge, WindowState } from '../../electron/contracts'
 import type { ResolveFailure, ResolvedStream } from '../../server/platforms/types'
+import type { DirectStreamOptions } from '../core/directStream'
 import type { SourceRole } from '../core/types'
 import type { BufferState } from '../../electron/bufferManager'
 import type { LoginPlatform } from '../../electron/login'
@@ -83,10 +84,12 @@ export class ApiClient {
     role?: SourceRole,
     quality?: string,
     preferAdaptive?: boolean,
+    direct?: DirectStreamOptions,
   ): Promise<ApiResult<{ ok: true; stream: ResolvedStream } | { ok: false; failure: ResolveFailure }>> {
     return this.request('resolve', {
       input, platform, ...(role ? { role } : {}), ...(quality ? { quality } : {}),
       ...(preferAdaptive !== undefined ? { preferAdaptive } : {}),
+      ...(direct ? { direct } : {}),
     })
   }
 

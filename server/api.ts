@@ -2,6 +2,7 @@
 
 import { isDomesticRouting, type NetworkPreferencesService } from '../electron/networkPreferences'
 import { timeoutSignal, validMediaNetwork } from './mediaNetworkOptions'
+import { validateDirectOptions, type DirectStreamOptions } from '../src/core/directStream'
 import { MAX_MEDIA_INPUT_LENGTH } from '../src/core/mediaInput'
 import { types as utilTypes } from 'node:util'
 import { diagnosticDetails } from './errorDetails'
@@ -17,7 +18,7 @@ import type { ApiResult } from '../src/app/apiClient'
 import { mediaRequestPolicy, type ProxyConfig } from './config'
 import { mediaChild, mediaEntry, type MediaAccess } from './mediaAccess'
 import { DanmakuRelay } from './danmaku/relay'
-import { resolveStream, type PlatformKind, type ResolveResult } from './platforms'
+import { detectPlatform, resolveStream, type PlatformKind, type ResolveResult } from './platforms'
 import { isYouTubeFormatFailure, isYouTubeRefusal, YOUTUBE_FORMAT_FAILURES, YOUTUBE_REFUSALS } from './platforms/youtube'
 import { checkUrlSyntax, ProxyError, safeFetch } from './safeFetch'
 import type { SourceRole } from '../src/core/types'
@@ -39,7 +40,7 @@ import type { DouyinMessageSender } from './douyin/messageSender'
 import { douyinMessageRoom, douyinMessageText } from '../src/core/douyinMessage'
 
 export interface AcquisitionService {
-  resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string, preferAdaptive?: boolean): Promise<ResolveResult>
+  resolve(input: string, platform: PlatformKind | undefined, role: SourceRole, quality?: string, preferAdaptive?: boolean, direct?: DirectStreamOptions): Promise<ResolveResult>
   switchQuality(role: SourceRole, quality: string): Promise<ResolveResult>
   stop(role: SourceRole): Promise<void>
   subscribe(listener: (state: BufferState) => void): () => void
@@ -401,7 +402,7 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             return { ok: true, value: { ok: true, version: appPackage.version, proxyEnabled: deps.proxy.enabled, danmakuRooms: relay.roomCount } }
           }
           case 'resolve': {
-            if (!fields(args, ['input'], ['platform', 'role', 'quality', 'preferAdaptive'])) return fail('invalid-arguments', '媒体解析参数无效')
+            if (!fields(args, ['input'], ['platform', 'role', 'quality', 'preferAdaptive', 'direct'])) return fail('invalid-arguments', '媒体解析参数无效')
             if (typeof args.input !== 'string' || args.input.trim().length === 0) {
               return fail('missing-input', '缺少要解析的地址或频道名')
             }
@@ -411,15 +412,29 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
               || (args.quality !== undefined && (typeof args.quality !== 'string' || args.quality.length > 128))) {
               return fail('invalid-arguments', '媒体地址过长或平台参数无效')
             }
+            const directOptions = validateDirectOptions(args.direct)
+            if (directOptions === null) {
+              return fail('invalid-arguments', '直链参数或请求头格式无效')
+            }
             const input = args.input.trim()
-            if (deps.acquisition) return { ok: true, value: sanitizedFailure(await deps.acquisition.resolve(
-              input, args.platform as PlatformKind | undefined, args.role as SourceRole ?? 'official', args.quality as string | undefined,
-              ...(args.preferAdaptive === undefined ? [] : [args.preferAdaptive as boolean]),
-            )) }
+            if (directOptions && detectPlatform(input, args.platform as PlatformKind | undefined) !== 'direct') {
+              return fail('invalid-arguments', '仅纯直播流直链支持自定义请求头与名称')
+            }
+            if (deps.acquisition) {
+              const role = args.role as SourceRole ?? 'official'
+              const platform = args.platform as PlatformKind | undefined
+              const quality = args.quality as string | undefined
+              const resolved = directOptions
+                ? await deps.acquisition.resolve(input, platform, role, quality, args.preferAdaptive as boolean | undefined, directOptions)
+                : args.preferAdaptive !== undefined
+                  ? await deps.acquisition.resolve(input, platform, role, quality, args.preferAdaptive as boolean)
+                  : await deps.acquisition.resolve(input, platform, role, quality)
+              return { ok: true, value: sanitizedFailure(resolved) }
+            }
             if (fixturePath(input) && (args.platform === undefined || args.platform === 'direct')) {
               return { ok: true, value: { ok: true, stream: {
                 platform: 'direct', url: input, kind: /\.m3u8?$/.test(input) ? 'hls' : 'progressive',
-                label: '本地测试源', channel: 'fixture', requiresProxy: false,
+                label: directOptions?.label ?? '本地测试源', channel: 'fixture', requiresProxy: false,
               } } }
             }
             // Resolution owns this lookup only until it has checked the returned target.
@@ -429,7 +444,12 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
               registered.set(opaque, url)
               return opaque
             }
-            const resolverDeps = { ...createResolverDeps(deps.proxy, register, deps.fetchImpl), resolveDouyuRoom: resolveRoom }
+            const resolverDeps = {
+              ...createResolverDeps(deps.proxy, register, deps.fetchImpl),
+              resolveDouyuRoom: resolveRoom,
+              ...(directOptions?.headers ? { directHeaders: directOptions.headers } : {}),
+              ...(directOptions?.label ? { directLabel: directOptions.label } : {}),
+            }
             const result = await resolveStream(input, resolverDeps, args.platform as PlatformKind | undefined)
             if (!result.ok) return { ok: true, value: sanitizedFailure(result) }
             const rawUrl = registered.get(result.stream.url) ?? result.stream.url

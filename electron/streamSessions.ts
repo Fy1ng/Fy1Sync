@@ -2,12 +2,13 @@ import { randomUUID } from 'node:crypto'
 import type { Acquisition } from './acquisition'
 import type { BufferState } from './bufferManager'
 import { isExtraStreamId, isStreamId, type StreamId } from './streamIdentity'
-import type { PlatformKind, ResolvedStream, ResolveResult } from '../server/platforms'
+import { detectPlatform, type PlatformKind, type ResolvedStream, type ResolveResult } from '../server/platforms'
 import { sanitizedFailure } from '../server/api'
 import { classifyNetworkFailure } from '../server/networkFailure'
+import { validateDirectOptions, type DirectStreamOptions } from '../src/core/directStream'
 import { displayMediaInput, MAX_MEDIA_INPUT_LENGTH } from '../src/core/mediaInput'
 
-export interface OpenStreamInput { input: string; platform?: PlatformKind; quality?: string; preferAdaptive?: boolean }
+export interface OpenStreamInput { input: string; platform?: PlatformKind; quality?: string; preferAdaptive?: boolean; direct?: DirectStreamOptions }
 export interface StreamSessionView {
   id: StreamId
   input: string
@@ -62,7 +63,9 @@ export class StreamSessions {
     const runtime: Runtime = { revision: 0, view: { id, input: displayMediaInput(input.input), phase: 'opening', stream: null, buffer: null, error: null } }
     this.sessions.set(id, runtime)
     this.publish()
-    return this.acquire(runtime, () => this.acquisition.resolve(input.input, input.platform, id, input.quality, input.preferAdaptive))
+    return this.acquire(runtime, () => input.direct
+      ? this.acquisition.resolve(input.input, input.platform, id, input.quality, input.preferAdaptive, input.direct)
+      : this.acquisition.resolve(input.input, input.platform, id, input.quality, input.preferAdaptive))
   }
   async switchQuality(id: StreamId, quality: string): Promise<StreamSessionView> {
     this.alive()
@@ -130,11 +133,18 @@ export class StreamSessions {
 export function readOpenStream(raw: unknown): OpenStreamInput {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new StreamSessionError('invalid-arguments')
   const value = raw as Record<string, unknown>
-  if (Object.keys(value).some(k => !['input', 'platform', 'quality', 'preferAdaptive'].includes(k))
+  if (Object.keys(value).some(k => !['input', 'platform', 'quality', 'preferAdaptive', 'direct'].includes(k))
     || typeof value.input !== 'string' || !value.input.trim() || value.input.length > MAX_MEDIA_INPUT_LENGTH
     || (value.platform !== undefined && !['youtube', 'twitch', 'douyu', 'bilibili', 'huya', 'douyin', 'direct'].includes(String(value.platform)))
     || (value.quality !== undefined && (typeof value.quality !== 'string' || !value.quality || value.quality.length > 128))
     || (value.preferAdaptive !== undefined && typeof value.preferAdaptive !== 'boolean')) throw new StreamSessionError('invalid-arguments')
-  return { input: value.input.trim(), ...(value.platform ? { platform: value.platform as PlatformKind } : {}),
-    ...(value.quality ? { quality: value.quality as string } : {}), ...(value.preferAdaptive !== undefined ? { preferAdaptive: value.preferAdaptive as boolean } : {}) }
+  const direct = validateDirectOptions(value.direct)
+  if (direct === null) throw new StreamSessionError('invalid-arguments')
+  const trimmed = value.input.trim()
+  const platform = value.platform as PlatformKind | undefined
+  if (direct && detectPlatform(trimmed, platform) !== 'direct') throw new StreamSessionError('invalid-arguments')
+  return { input: trimmed, ...(platform ? { platform } : {}),
+    ...(value.quality ? { quality: value.quality as string } : {}),
+    ...(value.preferAdaptive !== undefined ? { preferAdaptive: value.preferAdaptive as boolean } : {}),
+    ...(direct ? { direct } : {}) }
 }

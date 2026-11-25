@@ -10,7 +10,9 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
+import { EMPTY_DIRECT_DRAFT, hasDirectOptions, parseDirectDraft, type DirectStreamDraft } from '../core/directStream'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
+import { DirectStreamFields } from './DirectStreamFields'
 import { Icon } from './kit'
 import { LoginOffer, PLATFORM_LABEL, ROLE_LABEL, SOURCE_HINT, SOURCE_KINDS, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
 import { ErrorText } from '../ui/ErrorDetails'
@@ -31,6 +33,9 @@ export function Intake({ onClose, onSchedule, onFavorites }: {
   const [role, setRole] = useState<SourceRole | null>(null)
   const [text, setText] = useState('')
   const [roomPlatform, setRoomPlatform] = useState<RoomPlatform | null>(null)
+  const [directDraft, setDirectDraft] = useState<DirectStreamDraft>({ ...EMPTY_DIRECT_DRAFT })
+  const [directOpen, setDirectOpen] = useState(false)
+  const [directProblem, setDirectProblem] = useState<string | null>(null)
   const [restoreSucceeded, setRestoreSucceeded] = useState(false)
   const draftRevision = useRef(0)
   const [pendingSubmissions, setPendingSubmissions] = useState(0)
@@ -61,20 +66,40 @@ export function Intake({ onClose, onSchedule, onFavorites }: {
   const pick = (next: SourceRole): void => {
     if (next !== role) draftRevision.current++
     setRole(next)
+    setDirectProblem(null)
     loader.clearProblem(next)
   }
   const submit = (): void => {
     if (!canSubmit || !role) return
+    const parsedDirect = parseDirectDraft(directDraft)
+    if (!parsedDirect.ok) {
+      setDirectProblem(parsedDirect.message)
+      setDirectOpen(true)
+      return
+    }
+    setDirectProblem(null)
     const side = role
     const revision = draftRevision.current
+    const submittedText = text
+    const submittedPlatform = roomPlatform
+    const submittedDraft = directDraft
     setText('')
     setRoomPlatform(null)
+    setDirectDraft({ ...EMPTY_DIRECT_DRAFT })
+    setDirectOpen(false)
     setPendingSubmissions(count => count + 1)
-    void loader.loadInput(side, text.trim(), bare !== null ? roomPlatform! : undefined).then((ok) => {
+    void loader.loadInput(
+      side,
+      submittedText.trim(),
+      bare !== null ? submittedPlatform! : undefined,
+      ...(hasDirectOptions(parsedDirect.options) ? [parsedDirect.options] : []),
+    ).then((ok) => {
       if (revision !== draftRevision.current) return
       if (!ok) {
-        setText(text)
-        setRoomPlatform(roomPlatform)
+        setText(submittedText)
+        setRoomPlatform(submittedPlatform)
+        setDirectDraft(submittedDraft)
+        if (hasDirectOptions(parsedDirect.options)) setDirectOpen(true)
         return
       }
       // Ready for the other side, if it is still empty.
@@ -105,13 +130,24 @@ export function Intake({ onClose, onSchedule, onFavorites }: {
 
         <form className="intake-field" data-disabled={role === null} onSubmit={(event) => { event.preventDefault(); submit() }}>
           <input ref={field} value={text} disabled={role === null}
-            onChange={(event) => { draftRevision.current++; setText(event.target.value); if (role) loader.clearProblem(role) }}
+            onChange={(event) => { draftRevision.current++; setText(event.target.value); setDirectProblem(null); if (role) loader.clearProblem(role) }}
             aria-label="直播间链接" spellCheck={false} autoComplete="off"
             placeholder={role === null ? '先选择画面或解说' : SOURCE_HINT} />
           <button type="submit" className="intake-go" disabled={!canSubmit} aria-label="添加" title="添加（回车）">
             <Icon name="enter" />
           </button>
         </form>
+
+        {role !== null && bare === null && (
+          <DirectStreamFields
+            input={text}
+            draft={directDraft}
+            open={directOpen}
+            disabled={Boolean(load?.busy)}
+            onToggle={() => setDirectOpen(open => !open)}
+            onChange={next => { draftRevision.current++; setDirectDraft(next); setDirectProblem(null) }}
+          />
+        )}
 
         {bare !== null && role !== null && (
           <div className="intake-ask" role="radiogroup" aria-label="选择房间号所属平台">
@@ -124,6 +160,7 @@ export function Intake({ onClose, onSchedule, onFavorites }: {
           </div>
         )}
 
+        {directProblem && <p className="intake-error" role="alert">{directProblem}</p>}
         {load?.problem && <p className="intake-error" role="alert"><ErrorText error={load.problem} message={<>{load.problem.message}{load.problem.hint ? `，${load.problem.hint}` : ''}</>} /></p>}
 
         <div className="intake-actions">

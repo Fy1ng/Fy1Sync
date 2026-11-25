@@ -1,6 +1,8 @@
 .studio .favorites-body { padding: 0 24px 24px; display: flex; flex-direction: column; gap: 16px; min-height: 0; overflow-y: auto; }
 .studio .favorites-body p { margin: 0; }
 .studio .favorites-add { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; padding: 16px; border: 1px solid #ffffff16; border-radius: 12px; background: #ffffff04; }
+.studio .favorites-direct { flex: 1 1 100%; width: 100%; }
+.studio .favorites-body textarea { width: 100%; box-sizing: border-box; border: 1px solid #ffffff22; border-radius: 7px; background-color: #17171b; color: #eee; padding: 7px 10px; font: inherit; resize: vertical; }
 .studio .favorites-add label { display: grid; gap: 6px; font-size: 12px; color: #aaa; }
 .studio .favorites-input { flex: 1; min-width: 180px; }
 .studio .favorites-body input, .studio .favorites-body select { min-height: 36px; box-sizing: border-box; border: 1px solid #ffffff22; border-radius: 7px; background-color: #17171b; color: #eee; padding: 7px 10px; font: inherit; }

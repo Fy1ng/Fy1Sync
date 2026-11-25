@@ -9,6 +9,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
+import { hasDirectOptions, validateDirectOptions, type DirectStreamOptions } from '../core/directStream'
 import { parseSourceInput, toDescriptor } from '../core/mediaSources'
 import { parseDouyinInput } from '../core/douyinInput'
 import { douyinDanmakuRoom, parseRoomInput, roomFromInput, type RoomPlatform } from '../core/sourceDanmaku'
@@ -51,15 +52,18 @@ export const PLATFORM_LABEL: Record<PlatformId, string> = {
   direct: '直链', file: '本地文件', test: '测试片源',
 }
 
-export { douyinDanmakuRoom, parseRoomInput, roomFromInput, type RoomPlatform } from '../core/sourceDanmaku'
+export { douyinDanmakuRoom, parseDanmakuRoomInput, parseRoomInput, roomFromInput, type RoomPlatform } from '../core/sourceDanmaku'
 
 /** What either side accepts: any side may play any source, so both say the same. */
-export const SOURCE_HINT = '粘贴直播间链接或输入房间号'
+export const SOURCE_HINT = '粘贴直播间链接、房间号或 m3u8 / flv 直播流地址'
 export const SOURCE_KINDS = '未添加'
 
 /** How a loaded source is named in the top bar and on the intake screen. */
 export function sourceTitle(descriptor: MediaDescriptor): string {
   const platform = descriptor.platform ? PLATFORM_LABEL[descriptor.platform] : ''
+  if (descriptor.platform === 'direct' && descriptor.customLabel) {
+    return descriptor.label
+  }
   if (descriptor.platform === 'douyin') {
     const input = parseDouyinInput(descriptor.input)
     const typed = parseRoomInput(descriptor.input)
@@ -87,7 +91,7 @@ interface Loader {
    * Resolve and load whatever was typed. `platform` settles a bare room number; without it
    * a bare number is Douyu's. Resolves false when nothing was loaded.
    */
-  loadInput: (role: SourceRole, input: string, platform?: RoomPlatform) => Promise<boolean>
+  loadInput: (role: SourceRole, input: string, platform?: RoomPlatform, direct?: DirectStreamOptions) => Promise<boolean>
   loadDescriptor: (role: SourceRole, descriptor: MediaDescriptor) => Promise<boolean>
   clearProblem: (role: SourceRole) => void
   /** Sign in for `state[role].login`, then load the same input again. */
@@ -112,7 +116,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
   const live = useRef(state)
   const loads = useRef<Partial<Record<SourceRole, object>>>({})
   // What each side last asked for, so a login can retry it as typed.
-  const asked = useRef<Partial<Record<SourceRole, { input: string; platform?: RoomPlatform }>>>({})
+  const asked = useRef<Partial<Record<SourceRole, { input: string; platform?: RoomPlatform; direct?: DirectStreamOptions }>>>({})
   const patch = useCallback((role: SourceRole, next: Partial<RoleLoad>) => {
     live.current = { ...live.current, [role]: { ...live.current[role], ...next } }
     setState(live.current)
@@ -188,18 +192,27 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
     }
   }, [patch, session])
 
-  const loadInput = useCallback(async (role: SourceRole, input: string, platform?: RoomPlatform): Promise<boolean> => {
+  const loadInput = useCallback(async (role: SourceRole, input: string, platform?: RoomPlatform, rawDirect?: DirectStreamOptions): Promise<boolean> => {
+    const validatedDirect = validateDirectOptions(rawDirect)
+    if (validatedDirect === null) {
+      patch(role, { problem: { message: '直链名称或请求头格式无效，请检查后重试' }, login: null })
+      return false
+    }
     const typed = parseRoomInput(input)
     const roomPlatform = typed?.platform ?? platform
     const roomInput = typed && roomPlatform === 'douyin' ? `https://live.douyin.com/${typed.room}`
       : typed && roomPlatform === 'huya' ? `https://www.huya.com/${typed.room}` : typed ? typed.room : input
     let parsed = parseSourceInput(roomInput)
     if (!parsed.ok) { patch(role, { problem: { message: parsed.message }, login: null }); return false }
-    asked.current[role] = { input, platform }
+    const direct = parsed.platform === 'direct' ? validatedDirect : undefined
+    asked.current[role] = { input, platform, ...(direct ? { direct } : {}) }
     if (typed && roomPlatform === 'bilibili') {
       parsed = { ...parsed, platform: 'bilibili', label: `${PLATFORM_LABEL.bilibili} ${typed.room}` }
     }
-    if (!parsed.needsResolve) return loadDescriptor(role, toDescriptor(parsed))
+    if (!parsed.needsResolve) {
+      const base = toDescriptor(parsed)
+      return loadDescriptor(role, direct?.label ? { ...base, label: direct.label, customLabel: true } : base)
+    }
 
     const request = {}
     loads.current[role] = request
@@ -210,6 +223,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       const result = await apiClient.resolve(
         parsed.url, parsed.platform, role, undefined,
         session.settings.preferAdaptive || undefined,
+        ...(hasDirectOptions(direct) ? [direct] : []),
       )
       if (generation !== session.sourceRevision(role)) return false
       if (!result.ok) {
@@ -244,6 +258,8 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         sourceRoom: stream.sourceRoom ?? stream.danmakuRoom,
         sourceChannel: stream.channel,
         danmakuRoom: stream.danmakuRoom,
+        ...(stream.platform === 'direct' && direct?.headers ? { directHeaders: direct.headers } : {}),
+        ...(stream.platform === 'direct' && direct?.label ? { customLabel: true } : {}),
       }
       const loading = session.loadSource(role, descriptor)
       generation = session.sourceRevision(role)
@@ -278,7 +294,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       if (stillCurrent()) patch(role, { problem: displayError(error, '登录暂时失败，请重试') })
       return
     } finally { patch(role, { loggingIn: false }) }
-    if (again && stillCurrent()) await loadInput(role, again.input, again.platform)
+    if (again && stillCurrent()) await loadInput(role, again.input, again.platform, ...(again.direct ? [again.direct] : []))
   }, [loadInput, patch, session])
 
   useEffect(() => {
@@ -305,7 +321,7 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         if (generation !== session.sourceRevision(role) || asked.current[role] !== again) continue
         const currentLoad = live.current[role]
         if (currentLoad.login !== platform || currentLoad.busy || currentLoad.loggingIn) continue
-        if (currentLoad.problem && again) void loadInput(role, again.input, again.platform)
+        if (currentLoad.problem && again) void loadInput(role, again.input, again.platform, ...(again.direct ? [again.direct] : []))
         else patch(role, { login: null, signedIn: true })
       }
     }
@@ -339,7 +355,13 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
       const failures = await Promise.all(roles.map(async role => {
         const source = saved[role]!
         const platform = ['douyu', 'bilibili', 'huya', 'douyin'].includes(source.platform) ? source.platform as RoomPlatform : undefined
-        try { return await loadInput(role, source.input, platform) && session.snapshot.media[role].status !== 'error' ? null : role }
+        const directOptions = source.platform === 'direct' && source.customLabel && source.label
+          ? { label: source.label }
+          : undefined
+        try {
+          return await loadInput(role, source.input, platform, ...(directOptions ? [directOptions] : []))
+            && session.snapshot.media[role].status !== 'error' ? null : role
+        }
         catch { patch(role, { busy: false, problem: { message: '载入失败，请检查网络后重试' } }); return role }
       }))
       const messages = failures.filter((role): role is SourceRole => role !== null)

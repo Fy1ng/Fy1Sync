@@ -15,7 +15,7 @@ import { displayError } from '../core/errorDetails'
 export type { SavedRoom }
 
 /** Platforms whose link can be loaded again; files and fixtures have nothing to keep. */
-const KEEPABLE = new Set(['youtube', 'twitch', 'douyu', 'bilibili', 'huya', 'douyin'])
+const KEEPABLE = new Set(['youtube', 'twitch', 'douyu', 'bilibili', 'huya', 'douyin', 'direct'])
 
 export function canSave(descriptor: MediaDescriptor | null | undefined): descriptor is MediaDescriptor {
   return !!descriptor && !!descriptor.input && KEEPABLE.has(descriptor.platform ?? '')
@@ -82,10 +82,19 @@ export function savedFor(list: readonly SavedRoom[] | null, role: SourceRole, de
 
 export async function saveRoom(role: SourceRole, descriptor: MediaDescriptor): Promise<string | null> {
   if (!canSave(descriptor)) return '此片源不能收藏'
-  const result = await apiClient.feature('saveRoom', { role, input: descriptor.input, platform: descriptor.platform!, label: sourceTitle(descriptor) })
+  const label = descriptor.platform === 'direct' && descriptor.customLabel
+    ? descriptor.label
+    : sourceTitle(descriptor)
+  const result = await apiClient.feature('saveRoom', {
+    role,
+    input: descriptor.input,
+    platform: descriptor.platform!,
+    label,
+    ...(descriptor.platform === 'direct' && descriptor.directHeaders ? { headers: descriptor.directHeaders } : {}),
+  })
   if (!result.ok) return result.message
   const current = rooms?.find(room => room.id === result.value.id)
-  publish([current && (current.lastAttemptAt ?? 0) > (result.value.lastAttemptAt ?? 0) ? { ...current, label: result.value.label } : result.value,
+  publish([current && (current.lastAttemptAt ?? 0) > (result.value.lastAttemptAt ?? 0) ? { ...current, label: result.value.label, ...(result.value.headers ? { headers: result.value.headers } : {}) } : result.value,
     ...(rooms ?? []).filter(room => room.id !== result.value.id)])
   return null
 }

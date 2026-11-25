@@ -64,3 +64,64 @@ export function sourceDanmakuRoom(source: MediaDescriptor | null): { key: string
   }
   return null
 }
+
+/**
+ * Parse a manual danmaku room input from URL, platform-prefixed text, or bare room identifier.
+ * Bare numeric rooms keep Douyu's historical unprefixed format when `fallbackPlatform === 'douyu'`.
+ */
+export function parseDanmakuRoomInput(
+  raw: string,
+  fallbackPlatform: RoomPlatform = 'douyu',
+): { key: string; name: string; platform: RoomPlatform; douyuLookup?: string } | null {
+  const value = raw.trim()
+  if (!value || value.length > 4096 || /[\x00-\x1f\x7f]/.test(value)) return null
+
+  const typed = parseRoomInput(value)
+  if (typed) {
+    const platform = typed.platform ?? fallbackPlatform
+    if (platform === 'douyu') {
+      if (/^[1-9]\d{0,11}$/.test(typed.room)) return { key: typed.room, name: typed.room, platform: 'douyu' }
+      return { key: typed.room, name: typed.room, platform: 'douyu', douyuLookup: typed.room }
+    }
+    if (platform === 'bilibili') {
+      return /^[1-9]\d{0,11}$/.test(typed.room) ? { key: `bilibili:${typed.room}`, name: typed.room, platform: 'bilibili' } : null
+    }
+    if (platform === 'huya') {
+      return /^[A-Za-z0-9_-]{1,64}$/.test(typed.room) ? { key: `huya:${typed.room}`, name: typed.room, platform: 'huya' } : null
+    }
+    if (platform === 'douyin') {
+      return /^[1-9]\d{0,19}$/.test(typed.room) ? { key: `douyin:${typed.room}`, name: typed.room, platform: 'douyin' } : null
+    }
+  }
+
+  const douyin = parseDouyinInput(value)
+  if (douyin?.kind === 'room') {
+    return { key: `douyin:${douyin.room}`, name: douyin.room, platform: 'douyin' }
+  }
+
+  let url: URL
+  try {
+    url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(value) ? value : `https://${value}`)
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+  const host = url.hostname.toLowerCase().replace(/^www\./, '').replace(/^m\./, '')
+  if (host === 'live.bilibili.com') {
+    const room = url.pathname.split('/').filter(Boolean)[0]
+    return room && /^[1-9]\d{0,11}$/.test(room) ? { key: `bilibili:${room}`, name: room, platform: 'bilibili' } : null
+  }
+  if (host === 'huya.com' && ['huya.com', 'www.huya.com', 'm.huya.com'].includes(url.hostname.toLowerCase())) {
+    const room = /^\/([A-Za-z0-9_-]{1,64})\/?$/.exec(url.pathname)?.[1]
+    return room ? { key: `huya:${room}`, name: room, platform: 'huya' } : null
+  }
+  if (host === 'douyu.com' || host.endsWith('.douyu.com')) {
+    const rid = url.searchParams.get('rid')
+    if (rid && /^[1-9]\d{0,11}$/.test(rid)) return { key: rid, name: rid, platform: 'douyu' }
+    const segment = url.pathname.split('/').filter(Boolean)[0]
+    if (!segment || !/^[A-Za-z0-9_-]{1,32}$/.test(segment)) return null
+    if (/^[1-9]\d{0,11}$/.test(segment)) return { key: segment, name: segment, platform: 'douyu' }
+    return { key: segment, name: segment, platform: 'douyu', douyuLookup: url.href }
+  }
+  return null
+}

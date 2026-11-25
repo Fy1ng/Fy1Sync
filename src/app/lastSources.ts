@@ -3,7 +3,7 @@ import { savedRoomInput } from '../core/savedRoomIdentity'
 import type { MediaDescriptor, PlatformId, SourceRole } from '../core/types'
 
 export const LAST_SOURCES_STORAGE_KEY = 'stream-sync.last-sources.v1'
-export interface LastSource { input: string; platform: PlatformId; label: string }
+export interface LastSource { input: string; platform: PlatformId; label: string; customLabel?: boolean }
 export type LastSources = Partial<Record<SourceRole, LastSource>>
 type StoragePort = Pick<Storage, 'getItem' | 'setItem'>
 const PLATFORMS = new Set(['youtube', 'twitch', 'douyu', 'bilibili', 'huya', 'douyin', 'direct', 'test'])
@@ -33,7 +33,8 @@ function validate(raw: unknown): LastSource | null {
   }
   const parsed = parseSourceInput(input)
   if (!parsed.ok || parsed.platform !== value.platform) return null
-  return { input, platform: value.platform, label: value.label.replace(/[\x00-\x1f\x7f]/g, '') }
+  const customLabel = value.platform === 'direct' && value.customLabel === true ? true : undefined
+  return { input, platform: value.platform, label: value.label.replace(/[\x00-\x1f\x7f]/g, ''), ...(customLabel ? { customLabel } : {}) }
 }
 
 /** Store only reusable user inputs, never resolved media URLs, headers or session cookies. */
@@ -43,7 +44,12 @@ export function lastSource(descriptor: MediaDescriptor): LastSource | null {
   const platform = descriptor.platform ?? (parsed.ok ? parsed.platform : 'direct')
   const input = platform === 'youtube' && /^UC[A-Za-z0-9_-]{22}$/.test(descriptor.sourceRoom ?? '')
     ? `https://www.youtube.com/channel/${descriptor.sourceRoom}/live` : descriptor.input
-  return validate({ input, platform, label: descriptor.label.slice(0, 200) })
+  return validate({
+    input,
+    platform,
+    label: descriptor.label.slice(0, 200),
+    ...(platform === 'direct' && descriptor.customLabel ? { customLabel: true } : {}),
+  })
 }
 
 export function loadLastSources(port: StoragePort | null = storage()): LastSources {

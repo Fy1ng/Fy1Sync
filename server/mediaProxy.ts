@@ -157,9 +157,15 @@ export class MediaRegistry {
         if (value) headers[name] = value
       }
       const host = new URL(resource.url).hostname
-      if (/(^|\.)(douyucdn[23]?\.cn|dyscdn\.com|douyu\.com)$/.test(host)) headers.referer = 'https://www.douyu.com/'
-      if (/(^|\.)(bilivideo\.com|hdslb\.com)$/.test(host)) headers.referer = 'https://live.bilibili.com/'
-      Object.assign(headers, resource.headers)
+      if (/(^|\.)(douyucdn[23]?\.cn|dyscdn\.com|douyu\.com)$/i.test(host)) headers.referer = 'https://www.douyu.com/'
+      if (/(^|\.)(bilivideo\.com|hdslb\.com)$/i.test(host)) headers.referer = 'https://live.bilibili.com/'
+      if (/(^|\.)huya\.com$/i.test(host)) headers.referer = 'https://www.huya.com/'
+      for (const [name, value] of Object.entries(resource.headers ?? {})) {
+        for (const existing of Object.keys(headers)) {
+          if (existing.toLowerCase() === name.toLowerCase()) delete headers[existing]
+        }
+        headers[name] = value
+      }
       // FFmpeg probes HTTP inputs with Range. Playlists need a complete body so
       // every nested URL can be replaced before reaching the local consumer.
       if (request.method === 'GET' && shouldRewrite(resource.url, null)) delete headers.range

@@ -13,7 +13,7 @@ import { mediaUrlCredentials } from '../mediaCredentials'
 export type { PlatformKind, QualityOption, ResolveResult, ResolvedStream, ResolverDeps } from './types'
 export { parseBilibiliRoom, parseDouyuRoom, parseHuyaRoom, parseTwitchChannel, parseYouTubeUrl }
 
-const MEDIA_EXTENSIONS = ['.m3u8', '.m3u', '.mp4', '.flv', '.webm', '.mov', '.mkv', '.ts']
+const MEDIA_EXTENSIONS = ['.m3u8', '.m3u', '.mp4', '.m4v', '.m4s', '.flv', '.xs', '.webm', '.mov', '.mkv', '.ts', '.m2ts', '.aac']
 
 /** Which resolver an input belongs to. `explicit` lets the UI override the guess. */
 export function detectPlatform(input: string, explicit?: PlatformKind): PlatformKind | null {
@@ -33,7 +33,7 @@ export function detectPlatform(input: string, explicit?: PlatformKind): Platform
   if (/(^|\.)twitch\.tv$/.test(host)) return 'twitch'
   if (/(^|\.)douyu\.com$/.test(host)) return 'douyu'
   if (/(^|\.)bilibili\.com$/.test(host)) return 'bilibili'
-  if (/(^|\.)huya\.com$/.test(host)) return 'huya'
+  if (['huya.com', 'www.huya.com', 'm.huya.com'].includes(host)) return 'huya'
   if (['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be', 'www.youtu.be'].includes(host)) return 'youtube'
   return /^https?:\/\//i.test(trimmed) ? 'direct' : null
 }
@@ -70,7 +70,7 @@ export async function resolveStream(
     case 'douyin':
       return resolveDouyin(input, deps)
     case 'direct':
-      return resolveDirect(input)
+      return resolveDirect(input, deps)
     default:
       return failure(
         'unsupported-url',
@@ -86,11 +86,13 @@ export async function resolveStream(
  * data path. The client retries via the proxy when a direct load fails or the canvas
  * ends up tainted.
  */
-function resolveDirect(input: string): ResolveResult {
+function resolveDirect(input: string, deps?: Partial<Pick<ResolverDeps, 'directHeaders' | 'directLabel'>>): ResolveResult {
+  const raw = input.trim()
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : (!raw.startsWith('/') && raw.includes('/') ? `https://${raw}` : raw)
   let url: URL
   let headers: Record<string, string>
   try {
-    ;({ url, headers } = mediaUrlCredentials(input.trim()))
+    ;({ url, headers } = mediaUrlCredentials(withScheme, deps?.directHeaders))
   } catch {
     return failure('unsupported-url', '不是合法的媒体地址')
   }
@@ -99,6 +101,7 @@ function resolveDirect(input: string): ResolveResult {
   }
   const path = url.pathname.toLowerCase()
   const isHls = path.endsWith('.m3u8') || path.endsWith('.m3u')
+  const label = deps?.directLabel?.trim() || url.hostname
   return {
     ok: true,
     stream: {
@@ -106,7 +109,7 @@ function resolveDirect(input: string): ResolveResult {
       url: url.toString(),
       ...(Object.keys(headers).length ? { headers } : {}),
       kind: isHls ? 'hls' : 'progressive',
-      label: url.hostname,
+      label,
       channel: url.hostname,
       requiresProxy: false,
       notes: [],
