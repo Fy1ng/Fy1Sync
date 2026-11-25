@@ -6,6 +6,7 @@ import { refreshLoginStatus } from './status'
 import { AccountAvatar, BrowserImportButton } from './BrowserLoginImport'
 import { ErrorText, useErrorState } from '../../ui/ErrorDetails'
 import { displayError } from '../../core/errorDetails'
+import { subscribeLoginStateChanged } from '../../core/loginEvents'
 import { ReadError } from '../ReadError'
 import { InlineConfirm } from '../InlineConfirm'
 
@@ -21,6 +22,7 @@ export function PlatformAccount({ platform }: { platform: 'bilibili' | 'huya' })
   const mounted = useRef(false)
   const pending = useRef(false)
   const readRevision = useRef(0)
+  const previousStatus = useRef(status)
   const refresh = useCallback(async (): Promise<void> => {
     const started = ++readRevision.current
     if (mounted.current) setLoadError('')
@@ -34,15 +36,36 @@ export function PlatformAccount({ platform }: { platform: 'bilibili' | 'huya' })
     else if (!failed) setLoadError('账号状态读取失败，请重试')
   }, [platform, setStatus, setLoadError])
   useEffect(() => {
+    if (status !== previousStatus.current) {
+      previousStatus.current = status
+      if (status?.[platform]) setLoadError('')
+    }
+  }, [platform, status, setLoadError])
+  useEffect(() => {
     mounted.current = true
     void refresh()
     let active = false
+    let refreshQueued = false
+    const scheduleRefresh = (): void => {
+      if (pending.current || refreshQueued) return
+      refreshQueued = true
+      queueMicrotask(() => {
+        refreshQueued = false
+        if (!mounted.current || pending.current) return
+        setError('')
+        setMessage('')
+        void refresh()
+      })
+    }
     const release = apiClient.subscribeEmbeddedLogin((state) => {
-      if (active && (!state || state.platform !== platform || state.purpose !== 'login')) void refresh()
+      if (active && (!state || state.platform !== platform || state.purpose !== 'login') && !pending.current) void refresh()
       active = state?.platform === platform && state.purpose === 'login'
     })
-    return () => { mounted.current = false; release() }
-  }, [platform, refresh])
+    const releaseLogin = subscribeLoginStateChanged(({ platforms }) => {
+      if (!platforms || platforms.includes(platform)) scheduleRefresh()
+    })
+    return () => { mounted.current = false; release(); releaseLogin() }
+  }, [platform, refresh, setError])
 
   const act = async (logout: boolean): Promise<void> => {
     if (pending.current) return

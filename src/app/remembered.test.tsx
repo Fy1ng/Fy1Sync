@@ -43,4 +43,29 @@ describe('useRemembered', () => {
     expect(remembered('douyu:following:1')).toBeUndefined()
     expect(remembered('schedule:event')).toBe('z')
   })
+
+  it('updates already-mounted subscribers immediately when remember or forget runs', () => {
+    render(<>
+      <Probe id="shared" />
+      <span data-testid="mirror"><Mirror id="shared" /></span>
+    </>)
+    expect(screen.getByRole('button')).toHaveTextContent('empty')
+    expect(screen.getByTestId('mirror')).toHaveTextContent('empty')
+
+    act(() => remember('probe:shared', 'imported'))
+    expect(screen.getByRole('button')).toHaveTextContent('imported')
+    expect(screen.getByTestId('mirror')).toHaveTextContent('imported')
+
+    act(() => screen.getByRole('button').click())
+    expect(screen.getByTestId('mirror')).toHaveTextContent('read shared')
+
+    act(() => forget('probe:'))
+    expect(screen.getByRole('button')).toHaveTextContent('empty')
+    expect(screen.getByTestId('mirror')).toHaveTextContent('empty')
+  })
 })
+
+function Mirror({ id }: { id: string }): React.ReactNode {
+  const [value] = useRemembered<string>(`probe:${id}`, 'empty')
+  return value
+}

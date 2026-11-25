@@ -3,6 +3,7 @@ import { apiClient } from '../../app/apiClient'
 import { remember } from '../../app/remembered'
 import { Sheet } from '../kit'
 import { refreshLoginStatus } from './status'
+import { notifyLoginStateChanged } from '../../core/loginEvents'
 import type { LoginPlatform } from '../../../electron/cookies'
 import { IMPORT_PLATFORMS, IMPORT_PLATFORM_NAMES, type BrowserImportAccount, type BrowserImportOutcome,
   type BrowserImportPreview, type BrowserImportProfile, type DouyuImportTarget } from '../../../electron/browserImportContracts'
@@ -36,10 +37,12 @@ export function AccountAvatar({ username, avatar }: { username: string; avatar?:
   </span>
 }
 
-async function refreshAccounts(): Promise<void> {
-  await refreshLoginStatus()
-  const result = await apiClient.listDouyuAccounts()
+async function refreshAccounts(outcomes?: readonly BrowserImportOutcome[]): Promise<DouyuAccountSummary[] | null> {
+  const imported = outcomes?.filter(outcome => outcome.imported).map(outcome => outcome.platform) ?? []
+  const [, result] = await Promise.all([refreshLoginStatus(), apiClient.listDouyuAccounts()])
   if (result.ok) remember('douyu:accounts', result.value)
+  if (imported.length > 0) notifyLoginStateChanged(imported, 'import')
+  return result.ok ? result.value.accounts : null
 }
 
 function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onClose: () => void }): React.ReactNode {
@@ -175,11 +178,12 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
     try {
       const result = await apiClient.importBrowserLogins({ previewId: preview.id, accountIds: selected,
         ...(preview.accounts.some(account => account.platform === 'douyu' && selected.includes(account.id)) ? { douyuTarget: target } : {}) })
+      const refreshedDouyu = await refreshAccounts(result.ok ? result.value.outcomes : undefined)
       if (live.current) {
+        if (refreshedDouyu) setDouyuAccounts(refreshedDouyu)
         if (result.ok) { setOutcomes(result.value.outcomes); setPhase('result') }
         else { setError(result.message); setErrorCode(result.code); setPhase('preview') }
       }
-      await refreshAccounts()
     } finally { pending.current = false }
   }
   const close = (): void => {

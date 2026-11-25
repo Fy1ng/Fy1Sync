@@ -371,6 +371,29 @@ describe('the studio send box', () => {
     await waitFor(() => expect(screen.getByTestId('draft')).toHaveTextContent(''))
   })
 
+  it('immediately enables sending when the active Douyu account logs in or imports credentials', async () => {
+    handlers.listDouyuAccounts = () => ({
+      activeAccountId: 'default',
+      accounts: [{ id: 'default', label: '主号', active: true, busy: false, login: { loggedIn: false } }],
+    })
+    let pushAccounts!: (snapshot: unknown) => void
+    const bridge = window.streamSyncer as unknown as { subscribeDouyuAccounts: (listener: (snapshot: unknown) => void) => () => void }
+    bridge.subscribeDouyuAccounts = (listener) => { pushAccounts = listener; return () => {} }
+    renderProbe(await connectedSession())
+    await waitFor(() => expect(screen.getByTestId('blocked')).toHaveTextContent('请在斗鱼账号中登录并设为当前账号'))
+    expect(screen.getByTestId('state')).toHaveTextContent('not-ready')
+
+    await act(async () => {
+      pushAccounts({
+        revision: 1,
+        activeAccountId: 'default',
+        accounts: [{ id: 'default', label: '导入斗鱼号', active: true, busy: false, login: { loggedIn: true, canSend: true } }],
+      })
+    })
+    expect(screen.getByTestId('state')).toHaveTextContent('ready')
+    expect(screen.getByTestId('blocked')).toHaveTextContent('')
+  })
+
   it('treats an absent canSend as able to try, for an older main process', async () => {
     renderProbe(await connectedSession())
     await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('ready'))

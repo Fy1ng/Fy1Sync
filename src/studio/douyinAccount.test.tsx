@@ -148,4 +148,79 @@ describe('Douyin current account settings', () => {
     await waitFor(() => expect(panel.queryByRole('alert')).toBeNull())
     expect(panel.getByRole('button', { name: '登录' })).toBeEnabled()
   })
+
+  it('immediately refreshes the open Douyin and YouTube account pages after browser login import', async () => {
+    const profileId = 'e'.repeat(32)
+    const douyinCandidateId = 'd'.repeat(32)
+    const youtubeCandidateId = 'y'.repeat(32)
+    const profile = { id: profileId, browser: 'edge' as const, browserName: 'Microsoft Edge', name: '个人', isDefault: true }
+    vi.spyOn(apiClient, 'listBrowserImportProfiles').mockResolvedValue({ ok: true, value: { supported: true, profiles: [profile] } })
+    vi.spyOn(apiClient, 'listDouyuAccounts').mockResolvedValue({ ok: true, value: { accounts: [], activeAccountId: null, revision: 0 } })
+    vi.spyOn(apiClient, 'cancelBrowserImport').mockResolvedValue({ ok: true, value: { cancelled: true } })
+    vi.spyOn(apiClient, 'previewBrowserLogins').mockImplementation(async (args) => ({
+      ok: true,
+      value: {
+        id: args.requestId,
+        profile,
+        expiresAt: Date.now() + 300_000,
+        accounts: args.platforms.includes('douyin')
+          ? [{ id: douyinCandidateId, platform: 'douyin', state: 'ready', username: '导入抖音号', avatar: 'data:image/png;base64,AQ==', cookieCount: 3 }]
+          : [{ id: youtubeCandidateId, platform: 'youtube', state: 'ready', username: '导入 YouTube 号', avatar: 'data:image/png;base64,AQ==', cookieCount: 3 }],
+      },
+    }))
+    let currentStatus = status()
+    vi.mocked(apiClient.loginStatus).mockImplementation(async () => ({ ok: true, value: currentStatus }))
+    vi.spyOn(apiClient, 'importBrowserLogins').mockImplementation(async (args) => {
+      if (args.accountIds.includes(douyinCandidateId)) {
+        currentStatus = {
+          ...currentStatus,
+          douyin: { ...loggedOut, loggedIn: true, cookieCount: 3, authKeysPresent: ['sessionid'], nickname: '导入抖音号', avatar: 'data:image/png;base64,AQ==' },
+        }
+        vi.mocked(apiClient.getDouyinSendState).mockResolvedValue({
+          ok: true,
+          value: { loggedIn: true, canSend: false, loginState: 'authenticated', message: '已登录' },
+        })
+        return { ok: true, value: { outcomes: [{ platform: 'douyin', imported: true, username: '导入抖音号', signingReady: false, message: '已导入账号，但暂时不能发送弹幕，请重新登录' }] } }
+      }
+      currentStatus = {
+        ...currentStatus,
+        youtube: { ...loggedOut, loggedIn: true, cookieCount: 3, authKeysPresent: ['SAPISID'], nickname: '导入 YouTube 号', avatar: 'data:image/png;base64,AQ==' },
+      }
+      return { ok: true, value: { outcomes: [{ platform: 'youtube', imported: true, username: '导入 YouTube 号', message: '已导入账号' }] } }
+    })
+
+    mount()
+    const douyinPanel = within(screen.getByRole('region', { name: '抖音' }))
+    await waitFor(() => expect(douyinPanel.getByText('未登录')).toBeInTheDocument())
+
+    fireEvent.click(douyinPanel.getByRole('button', { name: '从浏览器导入' }))
+    const douyinDialog = await screen.findByRole('dialog', { name: '从浏览器导入 抖音 账号' })
+    await waitFor(() => expect(within(douyinDialog).getByRole('button', { name: '识别账号' })).toBeEnabled())
+    fireEvent.click(within(douyinDialog).getByRole('button', { name: '识别账号' }))
+    fireEvent.click(await within(douyinDialog).findByRole('button', { name: '导入账号' }))
+    await within(douyinDialog).findByText(/已导入账号/)
+    fireEvent.click(within(douyinDialog).getByRole('button', { name: '关闭' }))
+
+    await waitFor(() => expect(douyinPanel.getByText('已登录，暂不能发弹幕')).toBeInTheDocument())
+    expect(douyinPanel.getByText('导入抖音号')).toBeInTheDocument()
+    expect(douyinPanel.getByRole('button', { name: '重新登录' })).toBeEnabled()
+    expect(douyinPanel.getByRole('button', { name: '退出' })).toBeEnabled()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'YouTube' }))
+    const youtubePanel = within(screen.getByRole('region', { name: 'YouTube' }))
+    await waitFor(() => expect(youtubePanel.getByText('未登录')).toBeInTheDocument())
+
+    fireEvent.click(youtubePanel.getByRole('button', { name: '从浏览器导入' }))
+    const youtubeDialog = await screen.findByRole('dialog', { name: '从浏览器导入 YouTube 账号' })
+    await waitFor(() => expect(within(youtubeDialog).getByRole('button', { name: '识别账号' })).toBeEnabled())
+    fireEvent.click(within(youtubeDialog).getByRole('button', { name: '识别账号' }))
+    fireEvent.click(await within(youtubeDialog).findByRole('button', { name: '导入账号' }))
+    await within(youtubeDialog).findByText(/已导入账号/)
+    fireEvent.click(within(youtubeDialog).getByRole('button', { name: '关闭' }))
+
+    await waitFor(() => expect(youtubePanel.getByText('已登录')).toBeInTheDocument())
+    expect(youtubePanel.getByText('导入 YouTube 号')).toBeInTheDocument()
+    expect(youtubePanel.getByRole('button', { name: '重新登录' })).toBeEnabled()
+    expect(youtubePanel.getByRole('button', { name: '退出' })).toBeEnabled()
+  })
 })

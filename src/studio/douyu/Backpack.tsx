@@ -101,12 +101,14 @@ export function Backpack({ data, room, canGive = true }: { data: DouyuData; room
     }
   }
 
+  const readKey = accountId && ready ? `${accountId}:${active?.login.nickname ?? ''}:${active?.login.expiresAt ?? ''}` : null
   // Reading is harmless, so the backpack is read once when the page opens for an account.
   useEffect(() => {
-    if (!accountId || !ready || autoRead.current === accountId) return
-    autoRead.current = accountId
+    if (!readKey) { autoRead.current = null; return }
+    if (autoRead.current === readKey) return
+    autoRead.current = readKey
     void load()
-  }, [accountId, ready]) // load reads the latest room; it is not a trigger
+  }, [readKey]) // load reads the latest room; it is not a trigger
 
   if (!active) return <div className="desk-pane"><p className="desk-empty">未设置当前账号。请在「账号」中设置。</p></div>
   if (!loggedIn) return <div className="desk-pane"><p className="desk-empty">当前账号未登录。请在「账号」中登录后使用背包。</p></div>

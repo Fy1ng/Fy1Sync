@@ -52,7 +52,7 @@ export function Spending({ data }: { data: DouyuData }): React.ReactNode {
     setError('')
     setLoading(false)
     return () => { generation.current++ }
-  }, [accountId, ready])
+  }, [accountId, ready, account?.busy, account?.login.nickname])
 
   const read = (): void => {
     if (!accountId || !ready) return

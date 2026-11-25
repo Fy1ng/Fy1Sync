@@ -40,10 +40,17 @@ export function useDouyu(writesEnabled: () => boolean = () => false) {
   const mounted = useRef(false)
   const accountBusy = useRef(false)
   const latestAccounts = useRef(accounts)
+  latestAccounts.current = accounts
   const taskRevision = useRef(0)
   // Main's snapshot revision: a snapshot older than the one shown is dropped, so a slow first
   // read cannot overwrite a pushed one. -1 until anything has landed.
   const accountRevision = useRef(-1)
+  useEffect(() => {
+    if (accounts && typeof accounts.revision === 'number' && accounts.revision > accountRevision.current) {
+      accountRevision.current = accounts.revision
+    }
+    if (accounts !== null && loading && !accountsReading.current) setLoading(false)
+  }, [accounts, loading])
   const takeAccounts = useCallback((next: DouyuAccountsSnapshot): boolean => {
     const revision = typeof next.revision === 'number' ? next.revision : accountRevision.current + 1
     if (revision < accountRevision.current) return false

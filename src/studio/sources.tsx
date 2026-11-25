@@ -17,6 +17,8 @@ import { lastSource, loadLastSources, saveLastSources, type LastSources } from '
 import type { LoginPlatform } from '../../electron/login'
 import { streamFailureHint } from '../../server/networkFailure'
 import { displayError, errorDetails, type ErrorDetails } from '../core/errorDetails'
+import { subscribeLoginStateChanged } from '../core/loginEvents'
+import { refreshLoginStatus } from './login/status'
 
 export interface RoleLoad {
   busy: boolean
@@ -271,11 +273,54 @@ export function SourceLoaderProvider({ children }: { children: React.ReactNode }
         if (stillCurrent()) patch(role, { problem: result.code === 'login-cancelled' ? null : displayError(result) })
         return
       }
+      void refreshLoginStatus()
     } catch (error) {
       if (stillCurrent()) patch(role, { problem: displayError(error, '登录暂时失败，请重试') })
       return
     } finally { patch(role, { loggingIn: false }) }
     if (again && stillCurrent()) await loadInput(role, again.input, again.platform)
+  }, [loadInput, patch, session])
+
+  useEffect(() => {
+    let active = true
+    let queued = false
+    let pendingPlatforms: Set<LoginPlatform> | 'all' | null = null
+    const flush = async (): Promise<void> => {
+      const scope = pendingPlatforms
+      pendingPlatforms = null
+      queued = false
+      if (!active || !scope) return
+      const candidates = SOURCE_ROLES.flatMap((role) => {
+        const currentLoad = live.current[role]
+        const platform = currentLoad.login
+        if (!platform || currentLoad.busy || currentLoad.loggingIn) return []
+        if (scope !== 'all' && !scope.has(platform)) return []
+        return [{ role, platform, generation: session.sourceRevision(role), again: asked.current[role] }]
+      })
+      if (!candidates.length) return
+      const status = await apiClient.loginStatus().catch(() => null)
+      if (!active || !status?.ok) return
+      for (const { role, platform, generation, again } of candidates) {
+        if (!status.value?.[platform]?.loggedIn) continue
+        if (generation !== session.sourceRevision(role) || asked.current[role] !== again) continue
+        const currentLoad = live.current[role]
+        if (currentLoad.login !== platform || currentLoad.busy || currentLoad.loggingIn) continue
+        if (currentLoad.problem && again) void loadInput(role, again.input, again.platform)
+        else patch(role, { login: null, signedIn: true })
+      }
+    }
+    return subscribeLoginStateChanged(({ platforms, action }) => {
+      if (action === 'logout') return
+      if (!platforms) pendingPlatforms = 'all'
+      else if (pendingPlatforms !== 'all') {
+        pendingPlatforms ??= new Set()
+        for (const platform of platforms) pendingPlatforms.add(platform)
+      }
+      if (!queued) {
+        queued = true
+        queueMicrotask(() => { void flush() })
+      }
+    })
   }, [loadInput, patch, session])
 
   const clearProblem = useCallback((role: SourceRole) => patch(role, { problem: null }), [patch])

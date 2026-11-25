@@ -12,6 +12,7 @@ import type { MediaNetworkOptions } from '../../server/mediaNetworkOptions'
 import type { FeatureMethod, FeatureMethods, FeatureEvent } from '../../electron/featureContracts'
 import type { EmbeddedLoginState, EmbeddedLoginViewport } from '../../electron/embeddedLoginContracts'
 import { DOUYIN_LOGIN_CHANGED_EVENT } from '../core/douyinMessage'
+import { notifyLoginStateChanged } from '../core/loginEvents'
 import { errorDetails } from '../core/errorDetails'
 import type { BrowserImportMethods } from '../../electron/browserImportContracts'
 
@@ -96,6 +97,7 @@ export class ApiClient {
   async login(platform: LoginPlatform) {
     const result = await this.request('login', { platform })
     if (platform === 'douyin' && typeof window !== 'undefined') window.dispatchEvent(new Event(DOUYIN_LOGIN_CHANGED_EVENT))
+    if (result.ok) notifyLoginStateChanged([platform], 'login')
     return result
   }
   loginStatus() { return this.request('loginStatus', undefined) }
@@ -104,15 +106,18 @@ export class ApiClient {
   closeImportBrowser(input: BrowserImportMethods['closeImportBrowser']['args']) { return this.request('closeImportBrowser', input) }
   async importBrowserLogins(input: BrowserImportMethods['importBrowserLogins']['args']) {
     const result = await this.request('importBrowserLogins', input)
-    if (typeof window !== 'undefined' && result.ok && result.value.outcomes.some(outcome => outcome.platform === 'douyin' && outcome.imported)) {
+    const imported = result.ok ? result.value.outcomes.filter(outcome => outcome.imported).map(outcome => outcome.platform) : []
+    if (typeof window !== 'undefined' && imported.includes('douyin')) {
       window.dispatchEvent(new Event(DOUYIN_LOGIN_CHANGED_EVENT))
     }
+    if (imported.length > 0) notifyLoginStateChanged(imported, 'import')
     return result
   }
   cancelBrowserImport(id: string) { return this.request('cancelBrowserImport', { id }) }
   async logout(platform: LoginPlatform) {
     const result = await this.request('logout', { platform })
     if (platform === 'douyin' && typeof window !== 'undefined') window.dispatchEvent(new Event(DOUYIN_LOGIN_CHANGED_EVENT))
+    if (result.ok) notifyLoginStateChanged([platform], 'logout')
     return result
   }
   getEmbeddedLogin() { return this.request('getEmbeddedLogin', undefined) }
@@ -126,7 +131,11 @@ export class ApiClient {
   listDouyuAccounts() { return this.request('listDouyuAccounts', undefined) }
   addDouyuAccount(label: string) { return this.request('addDouyuAccount', { label }) }
   renameDouyuAccount(id: string, label: string) { return this.request('renameDouyuAccount', { id, label }) }
-  loginDouyuAccount(id: string) { return this.request('loginDouyuAccount', { id }) }
+  async loginDouyuAccount(id: string) {
+    const result = await this.request('loginDouyuAccount', { id })
+    if (result.ok) notifyLoginStateChanged(['douyu'], 'login')
+    return result
+  }
   loginDouyuYubaAccount(id: string) { return this.request('loginDouyuYubaAccount', { id }) }
   openDouyuTaskRoom(id: string) { return this.request('openDouyuTaskRoom', { id }) }
   sendDouyuMessage(input: DesktopMethods['sendDouyuMessage']['args']) { return this.request('sendDouyuMessage', input) }
@@ -134,9 +143,21 @@ export class ApiClient {
   previewDouyuRenewal(input: DesktopMethods['previewDouyuRenewal']['args']) { return this.request('previewDouyuRenewal', input) }
   executeDouyuRenewal(planId: string) { return this.request('executeDouyuRenewal', { planId }) }
   cancelDouyuRenewal(planId: string) { return this.request('cancelDouyuRenewal', { planId }) }
-  activateDouyuAccount(id: string) { return this.request('activateDouyuAccount', { id }) }
-  logoutDouyuAccount(id: string) { return this.request('logoutDouyuAccount', { id }) }
-  removeDouyuAccount(id: string) { return this.request('removeDouyuAccount', { id }) }
+  async activateDouyuAccount(id: string) {
+    const result = await this.request('activateDouyuAccount', { id })
+    if (result.ok) notifyLoginStateChanged(['douyu'], 'account')
+    return result
+  }
+  async logoutDouyuAccount(id: string) {
+    const result = await this.request('logoutDouyuAccount', { id })
+    if (result.ok) notifyLoginStateChanged(['douyu'], 'logout')
+    return result
+  }
+  async removeDouyuAccount(id: string) {
+    const result = await this.request('removeDouyuAccount', { id })
+    if (result.ok) notifyLoginStateChanged(['douyu'], 'logout')
+    return result
+  }
   getDouyuTasks() { return this.request('getDouyuTasks', undefined) }
   createDouyuTask(input: DesktopMethods['createDouyuTask']['args']) { return this.request('createDouyuTask', input) }
   setDouyuTaskPolicy(id: string, policy: DouyuTaskPolicy) { return this.request('setDouyuTaskPolicy', { id, policy }) }

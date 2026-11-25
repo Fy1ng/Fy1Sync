@@ -47,7 +47,8 @@ export function Following({ data, onWatch }: {
 }): React.ReactNode {
   const account = data.active
   const accountId = account?.id ?? null
-  const ready = !!account?.login.loggedIn
+  const ready = !!account?.login.loggedIn && !account.busy
+  const loginKey = accountId && ready ? `${accountId}:${account?.login.nickname ?? ''}:${account?.login.expiresAt ?? ''}` : null
   const notify = useLiveNotices()
 
   // Per account: reopening shows the last list at once and reads it again quietly.
@@ -92,7 +93,7 @@ export function Following({ data, onWatch }: {
       setLoading(false)
       setError(displayError(caught, '无法读取关注列表'))
     })
-  }, [accountId, ready])
+  }, [accountId, ready, loginKey])
 
   useEffect(() => {
     setNotes({})

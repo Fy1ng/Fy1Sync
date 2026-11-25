@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StreamSyncerBridge } from '../../electron/contracts'
 import { apiClient } from '../app/apiClient'
+import { notifyLoginStateChanged } from '../core/loginEvents'
 import { Session } from '../app/session'
 import { SessionProvider } from '../app/SessionContext'
 import { Intake } from './Intake'
@@ -155,5 +156,23 @@ describe('the login offer on the intake screen', () => {
     fireEvent.submit(field.closest('form')!)
     await waitFor(() => expect(apiClient.resolve).toHaveBeenCalled())
     expect(screen.queryByText(/登录.*并重试|可尝试原画/)).toBeNull()
+  })
+
+  it('automatically retries a login-blocked room when login state is imported or completed in settings', async () => {
+    const resolve = vi.spyOn(apiClient, 'resolve')
+      .mockResolvedValueOnce({ ok: true, value: { ok: false, failure: { code: 'login-required', message: '平台要求登录后观看.' } } })
+      .mockResolvedValueOnce({ ok: true, value: { ok: true, stream: { ...stepDown.value.stream, platform: 'bilibili', quality: '0' } } })
+    mount()
+    fireEvent.click(screen.getByRole('radio', { name: /画面/ }))
+    const field = screen.getByLabelText('直播间链接')
+    fireEvent.change(field, { target: { value: 'https://live.bilibili.com/21452505' } })
+    fireEvent.submit(field.closest('form')!)
+    expect(await screen.findByRole('button', { name: '登录哔哩哔哩并重试' })).toBeInTheDocument()
+
+    signedIn = true
+    notifyLoginStateChanged(['bilibili'], 'import')
+
+    await waitFor(() => expect(resolve).toHaveBeenCalledTimes(2))
+    expect(resolve.mock.calls[1]![0]).toBe('https://live.bilibili.com/21452505')
   })
 })

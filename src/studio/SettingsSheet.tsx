@@ -16,7 +16,8 @@ import type { NetworkPreferenceState } from '../../electron/networkPreferences'
 import { DEFAULT_MEDIA_NETWORK, validMediaNetwork, validMediaSourceRule, type MediaNetworkOptions, type MediaSourceRule } from '../../server/mediaNetworkOptions'
 import type { LoginPlatform, LoginStatus } from '../../electron/login'
 import type { ToolsStatus } from '../../electron/toolsService'
-import type { DouyinSendState } from '../core/douyinMessage'
+import { DOUYIN_LOGIN_CHANGED_EVENT, type DouyinSendState } from '../core/douyinMessage'
+import { subscribeLoginStateChanged } from '../core/loginEvents'
 import { AppUpdateSettings } from './about/AppUpdate'
 import { CaptureSettings } from './capture/Capture'
 import { DouyuDesk } from './douyu/DouyuDesk'
@@ -205,6 +206,8 @@ function YouTubeAccount(): React.ReactNode {
   const [checking, setChecking] = useState(() => status === null)
   const [loadError, setLoadError, loadErrorDetail] = useErrorState()
   const readRevision = useRef(0)
+  const pending = useRef(false)
+  const previousStatus = useRef(status)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError, errorDetail] = useErrorState()
@@ -221,10 +224,34 @@ function YouTubeAccount(): React.ReactNode {
     else if (!failed) setLoadError('账号状态读取失败，请重试')
     setChecking(false)
   }
-  useEffect(() => { void refresh() }, [])
+  useEffect(() => {
+    if (status !== previousStatus.current) {
+      previousStatus.current = status
+      if (status?.youtube) { setLoadError(''); setChecking(false) }
+    }
+  }, [status, setLoadError])
+  useEffect(() => {
+    void refresh()
+    let refreshQueued = false
+    const scheduleRefresh = (): void => {
+      if (pending.current || refreshQueued) return
+      refreshQueued = true
+      queueMicrotask(() => {
+        refreshQueued = false
+        if (!mounted.current || pending.current) return
+        setError('')
+        setMessage('')
+        void refresh()
+      })
+    }
+    return subscribeLoginStateChanged(({ platforms }) => {
+      if (!platforms || platforms.includes('youtube')) scheduleRefresh()
+    })
+  }, [])
 
   const act = async (logout: boolean): Promise<void> => {
-    if (busy) return
+    if (pending.current || busy) return
+    pending.current = true
     setBusy(true)
     setError('')
     setMessage(logout ? '' : '请在弹出的 Chrome 窗口中登录，完成后关闭该窗口')
@@ -237,7 +264,7 @@ function YouTubeAccount(): React.ReactNode {
       await refresh()
     } catch (error) {
       if (mounted.current) { setMessage(''); setError(displayError(error, '账号操作失败，请重试')) }
-    } finally { if (mounted.current) setBusy(false) }
+    } finally { pending.current = false; if (mounted.current) setBusy(false) }
   }
   const youtube = status?.youtube
 
@@ -273,16 +300,19 @@ function DouyinAccount(): React.ReactNode {
   const [message, setMessage] = useState('')
   const [error, setError, errorDetail] = useErrorState()
   const [online,setOnline] = useState<DouyinSendState|null>(null)
+  const pending = useRef(false)
+  const readRevision = useRef(0)
   /** Resolves with the verified send state, or null when it could not be read. */
   const refresh = async (force = false): Promise<DouyinSendState | null> => {
+    const started = ++readRevision.current
     setChecking(true)
     try {
       const result = await apiClient.loginStatus()
-      if (!mounted.current) return null
+      if (!mounted.current || started !== readRevision.current) return null
       if (result.ok && result.value?.douyin) {
         setStatus(result.value); setError('')
         const verified=await apiClient.getDouyinSendState(force)
-        if (!mounted.current) return null
+        if (!mounted.current || started !== readRevision.current) return null
         if (verified.ok && typeof verified.value?.loggedIn==='boolean' && typeof verified.value?.canSend==='boolean') {
           setOnline(verified.value)
           if (verified.value.loginState === 'unavailable') setError(displayError(verified.value, verified.value.message || '暂时无法确认抖音登录状态'))
@@ -294,13 +324,36 @@ function DouyinAccount(): React.ReactNode {
       }
       else setError(result.ok ? '暂时无法读取抖音登录状态' : result)
     } catch (error) {
-      if (mounted.current) setError(displayError(error, '抖音登录状态读取失败，请重试'))
-    } finally { if (mounted.current) setChecking(false) }
+      if (mounted.current && started === readRevision.current) setError(displayError(error, '抖音登录状态读取失败，请重试'))
+    } finally { if (mounted.current && started === readRevision.current) setChecking(false) }
     return null
   }
-  useEffect(() => { void refresh() }, [])
+  useEffect(() => {
+    void refresh()
+    let refreshQueued = false
+    const scheduleRefresh = (): void => {
+      if (pending.current || refreshQueued) return
+      refreshQueued = true
+      queueMicrotask(() => {
+        refreshQueued = false
+        if (!mounted.current || pending.current) return
+        setError('')
+        setMessage('')
+        void refresh(true)
+      })
+    }
+    window.addEventListener(DOUYIN_LOGIN_CHANGED_EVENT, scheduleRefresh)
+    const releaseLogin = subscribeLoginStateChanged(({ platforms }) => {
+      if (!platforms || platforms.includes('douyin')) scheduleRefresh()
+    })
+    return () => {
+      window.removeEventListener(DOUYIN_LOGIN_CHANGED_EVENT, scheduleRefresh)
+      releaseLogin()
+    }
+  }, [])
   const act = async (logout: boolean): Promise<void> => {
-    if (busy) return
+    if (pending.current || busy) return
+    pending.current = true
     setBusy(true)
     setError('')
     setMessage(logout ? '' : '正在登录抖音')
@@ -320,7 +373,7 @@ function DouyinAccount(): React.ReactNode {
         : verified.canSend ? '已登录，可以发送弹幕' : '已登录，但暂时不能发送弹幕，请重新登录')
     } catch (error) {
       if (mounted.current) { setMessage(''); setError(displayError(error, '抖音账号操作失败，请重试')) }
-    } finally { if (mounted.current) setBusy(false) }
+    } finally { pending.current = false; if (mounted.current) setBusy(false) }
   }
   const douyin = status?.douyin
   const loggedIn=online?.loggedIn === true

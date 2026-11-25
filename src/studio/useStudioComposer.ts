@@ -22,8 +22,9 @@ import { apiClient } from '../app/apiClient'
 import { composeMessage, DEFAULT_MESSAGE_AFFIXES, MessageCompositionError, type MessageAffixes } from '../core/messageComposition'
 import type { DanmakuFeaturesSnapshot } from '../../electron/danmakuFeatures'
 import type { DeliveryEvidence } from '../../server/danmaku/deliveryTracker'
-import type { DouyuMessageOutcome, DouyuTasksSnapshot } from '../../server/douyu/types'
+import type { DouyuAccountsSnapshot, DouyuMessageOutcome, DouyuTasksSnapshot } from '../../server/douyu/types'
 import { ROOM_OBSERVED_SEND_MESSAGE, roomEchoConfirmsSend } from '../core/douyuDelivery'
+import { subscribeLoginStateChanged } from '../core/loginEvents'
 
 /**
  * `canSend` is main's own check of the send credentials, which is stricter than the website
@@ -90,6 +91,20 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
     setNextAllowedAt(null)
   }, [])
 
+  const applyAccountsSnapshot = useCallback((snapshot: DouyuAccountsSnapshot) => {
+    const selected = snapshot.accounts.find((item) => item.id === snapshot.activeAccountId)
+    const current = selected && typeof selected.id === 'string' && typeof selected.label === 'string'
+      ? { id: selected.id, label: selected.label, loggedIn: selected.login?.loggedIn === true, busy: selected.busy === true,
+        canSend: typeof selected.login?.canSend === 'boolean' ? selected.login.canSend : null,
+        missing: Array.isArray(selected.login?.missingCredentialFields)
+          ? selected.login.missingCredentialFields.filter((name: unknown): name is string => typeof name === 'string' && /^[A-Za-z_]{1,32}$/.test(name))
+          : [] }
+      : null
+    displayedAccount.current = current
+    setAccount(current)
+    setAccountError('')
+  }, [setAccountError])
+
   const refreshAccounts = useCallback(async () => {
     if (!mounted.current) return
     const version = ++accountRevision.current
@@ -106,17 +121,7 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
         return
       }
       if (!Array.isArray(result.value?.accounts)) throw new Error('Unavailable account snapshot', { cause: { code: 'invalid-account-snapshot' } })
-      const selected = result.value.accounts.find((item) => item.id === result.value.activeAccountId)
-      const current = selected && typeof selected.id === 'string' && typeof selected.label === 'string'
-        ? { id: selected.id, label: selected.label, loggedIn: selected.login?.loggedIn === true, busy: selected.busy === true,
-          canSend: typeof selected.login?.canSend === 'boolean' ? selected.login.canSend : null,
-          missing: Array.isArray(selected.login?.missingCredentialFields)
-            ? selected.login.missingCredentialFields.filter((name: unknown): name is string => typeof name === 'string' && /^[A-Za-z_]{1,32}$/.test(name))
-            : [] }
-        : null
-      displayedAccount.current = current
-      setAccount(current)
-      setAccountError('')
+      applyAccountsSnapshot(result.value)
     } catch (caught) {
       if (!mounted.current || version !== accountRevision.current) return
       displayedAccount.current = null
@@ -125,7 +130,7 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
     } finally {
       if (mounted.current && version === accountRevision.current) setLoading(false)
     }
-  }, [])
+  }, [applyAccountsSnapshot, setAccountError])
 
   // Accounts, and the active account switching underneath an open draft.
   useEffect(() => {
@@ -148,9 +153,25 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
       }
       if (refresh || changed) { requestedAccounts = true; void refreshAccounts() }
     }
+    const unsubscribeAccounts = apiClient.subscribeDouyuAccounts((snapshot) => {
+      if (!active || !snapshot || !Array.isArray(snapshot.accounts)) return
+      const previous = taskAccount.current
+      const next = snapshot.activeAccountId ?? null
+      taskAccount.current = next
+      const changed = (previous !== undefined && previous !== next)
+        || (displayedAccount.current !== null && displayedAccount.current.id !== next)
+      if (changed) resetContext()
+      accountRevision.current++
+      requestedAccounts = true
+      applyAccountsSnapshot(snapshot)
+      setLoading(false)
+    })
     const unsubscribe = apiClient.subscribeDouyuTasks((snapshot) => {
       taskRevision.current++
       applyTaskAccount(snapshot, true)
+    })
+    const unsubscribeLogin = subscribeLoginStateChanged(({ platforms }) => {
+      if (active && (!platforms || platforms.includes('douyu'))) void refreshAccounts()
     })
     if (!requestedAccounts) void refreshAccounts()
     void apiClient.getDouyuTasks().then((result) => {
@@ -165,10 +186,12 @@ export function useStudioComposer({ connected, room }: { connected: boolean; roo
       taskRevision.current++
       contextVersion.current++
       deliveryWatch.current++
+      unsubscribeAccounts()
       unsubscribe()
+      unsubscribeLogin()
       window.removeEventListener('focus', refresh)
     }
-  }, [refreshAccounts, resetContext])
+  }, [applyAccountsSnapshot, refreshAccounts, resetContext])
 
   // Prefix and suffix: subscribe first, then read, and let a newer event win.
   useEffect(() => {
