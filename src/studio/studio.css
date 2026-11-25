@@ -2782,7 +2782,9 @@ body,
 
 .studio .quality-menu {
   margin: 10px 0;
-  width: 168px;
+  min-width: 168px;
+  width: max-content;
+  max-width: 224px;
   max-height: min(60vh, 420px);
   overflow-y: auto;
   gap: 0;
@@ -2801,6 +2803,10 @@ body,
 
 .studio .quality-item {
   position: relative;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
   padding-left: 26px;
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
@@ -2817,6 +2823,25 @@ body,
   margin-top: -3px;
   border-radius: 50%;
   background: var(--chalk);
+}
+
+.studio .quality-item.is-on:disabled::before {
+  background: var(--ash-2);
+}
+
+.studio .quality-tag {
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ash-2);
+  white-space: nowrap;
+}
+
+.studio .quality-hint {
+  margin: 2px 0 0;
+  padding: 4px 10px 6px;
+  font-size: 11px;
+  color: var(--ash);
 }
 
 .studio .camera-control {

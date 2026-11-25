@@ -15,6 +15,7 @@ import type { PlaybackSeekResult } from '../../media/playbackControls'
 import type { PipState } from '../../../electron/pipManager'
 import type { StreamSessionView } from '../../../electron/streamSessions'
 import { Icon } from '../kit'
+import { isLoginPlatformKey, useLoginStatus } from '../login/status'
 import { NATIVE_REASON } from '../PipButton'
 import { pipFailure } from '../pip/pipState'
 import { PLATFORM_LABEL, roomFromInput } from '../sources'
@@ -188,6 +189,8 @@ export function StreamWindow({ view, placement, selected, pip, registry, onSelec
   }
 
   const changeQuality = (quality: string): void => {
+    const target = (stream?.qualities ?? []).find((option) => option.id === quality)
+    if (!target || quality === stream?.quality || isOptionLocked(target)) return
     void run(() => apiClient.feature('switchStreamSessionQuality', { id, quality }), onView)
   }
   const restart = (): void => {
@@ -279,6 +282,10 @@ export function StreamWindow({ view, placement, selected, pip, registry, onSelec
   const title = streamTitle(view)
   const status = statusOf(view, playbackFailed)
   const qualities = stream?.qualities ?? []
+  const loginStatus = useLoginStatus(qualities.some((option) => option.requiresLogin))
+  const signedIn = isLoginPlatformKey(stream?.platform) && Boolean(loginStatus?.[stream.platform]?.loggedIn)
+  const isOptionLocked = (option: { id: string; requiresLogin?: boolean }): boolean =>
+    Boolean(option.requiresLogin && !signedIn && option.id !== stream?.quality)
   const bufferFailed = view.buffer?.state === 'failed'
   const canRetry = view.phase === 'failed' || playbackFailed || bufferFailed
 
@@ -341,7 +348,14 @@ export function StreamWindow({ view, placement, selected, pip, registry, onSelec
           <select className="xs-quality" value={stream?.quality ?? ''} disabled={busy || view.phase === 'opening'}
             onChange={(event) => changeQuality(event.target.value)} aria-label="清晰度">
             {!stream?.quality && <option value="" disabled>清晰度</option>}
-            {qualities.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+            {qualities.map((option) => {
+              const locked = isOptionLocked(option)
+              return (
+                <option key={option.id} value={option.id} disabled={locked}>
+                  {locked ? `${option.label}（需登录）` : option.label}
+                </option>
+              )
+            })}
           </select>
         )}
         <span className="xs-spacer" />

@@ -11,6 +11,8 @@ export type QualityOption = {
   height?: number
   fps?: number
   adaptive?: boolean
+  /** True when selecting this rendition requires a signed-in platform account. */
+  requiresLogin?: boolean
 }
 
 export type ResolvedStream = {

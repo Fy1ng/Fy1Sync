@@ -90,9 +90,10 @@ export async function resolveBilibili(
   })
 
   let payload: PlayInfoResponse
+  let cookie: string | undefined
   try {
     const requestUrl = `${PLAY_INFO_API}?${params.toString()}`
-    const cookie = await deps.cookieHeader?.('bilibili', requestUrl)
+    cookie = await deps.cookieHeader?.('bilibili', requestUrl)
     payload = (await deps.fetchJson(requestUrl, cookie ? { headers: { Cookie: cookie } } : undefined)) as PlayInfoResponse
   } catch (error) {
     if (error instanceof StreamFailureError) throw error
@@ -160,7 +161,11 @@ export async function resolveBilibili(
       channel: room,
       ...(confirmedRoom ? { sourceRoom: confirmedRoom, danmakuRoom: `bilibili:${confirmedRoom}` } : {}),
       requiresProxy: true,
-      qualities: available.length ? available.map(qn => ({ id: String(qn), label: label(qn) })) : undefined,
+      qualities: available.length ? available.map(qn => ({
+        id: String(qn),
+        label: label(qn),
+        ...(!cookie && current !== undefined && qn !== current ? { requiresLogin: true } : {}),
+      })) : undefined,
       quality: current === undefined ? undefined : String(current),
       notes,
     },

@@ -91,9 +91,13 @@ describe('Bilibili actual upstream quality', () => {
     expect(new URL(vi.mocked(deps.fetchJson).mock.calls[0]![0]).searchParams.get('qn')).toBe('400')
     expect(result).toMatchObject({ ok: true, stream: {
       quality: '150', qualities: [
-        { id: '10000', label: '原画' }, { id: '400', label: '蓝光' }, { id: '250', label: '超清' }, { id: '150', label: '高清' },
+        { id: '10000', label: '原画', requiresLogin: true },
+        { id: '400', label: '蓝光', requiresLogin: true },
+        { id: '250', label: '超清', requiresLogin: true },
+        { id: '150', label: '高清' },
       ],
     } })
+    expect(result.ok && result.stream.qualities?.[3]).not.toHaveProperty('requiresLogin')
     expect(result.ok && result.stream.url).toBe('https://fixture.bilivideo.com/avc.m3u8?sig=fixture')
     expect(result.ok && result.stream.notes?.join(' ')).toContain('所选画质不可用，已切换为高清')
     expect(result.ok && result.stream.notes?.join(' ')).not.toContain('未登录')

@@ -10,14 +10,18 @@
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { Popover, usePopover } from './kit'
+import { isLoginPlatformKey, useLoginStatus } from './login/status'
 import { ROLE_LABEL } from './sources'
 
-interface Choice { key: string; label: string; on: boolean; pick: () => void }
-interface Side { role: SourceRole; busy: boolean; choices: Choice[]; current: string }
+interface Choice { key: string; label: string; on: boolean; disabled?: boolean; badge?: string; pick: () => void }
+interface Side { role: SourceRole; busy: boolean; choices: Choice[]; current: string; hint?: string }
 
 function useSides(): Side[] {
   const session = useSession()
   const snapshot = useSessionSnapshot()
+  const needsLoginStatus = SOURCE_ROLES.some((role) =>
+    snapshot.media[role].descriptor?.sourceQualities?.some((option) => option.requiresLogin))
+  const loginStatus = useLoginStatus(needsLoginStatus)
   const order: SourceRole[] = [snapshot.mainRole, ...SOURCE_ROLES.filter((role) => role !== snapshot.mainRole)]
   return order.flatMap((role): Side[] => {
     const state = snapshot.media[role]
@@ -25,17 +29,35 @@ function useSides(): Side[] {
     const sourced = state.descriptor?.sourceQualities ?? []
     if (sourced.length > 0) {
       const selected = state.descriptor?.sourceQuality ?? ''
+      if (sourced.length === 1) {
+        const only = sourced[0]!
+        return [{
+          role,
+          busy: snapshot.qualityBusy[role],
+          current: only.label,
+          hint: '当前直播间仅提供此画质',
+          choices: [{ key: only.id, label: only.label, on: true, disabled: true, pick: () => {} }],
+        }]
+      }
+      const platform = state.descriptor?.platform
+      const signedIn = isLoginPlatformKey(platform) && Boolean(loginStatus?.[platform]?.loggedIn)
       return [{
         role,
         busy: snapshot.qualityBusy[role],
         current: sourced.find((option) => option.id === selected)?.label ?? '清晰度',
-        choices: sourced.map((option) => ({
-          key: option.id, label: option.label, on: option.id === selected,
-          pick: () => void session.changeSourceQuality(role, option.id),
-        })),
+        choices: sourced.map((option) => {
+          const locked = Boolean(option.requiresLogin && !signedIn && option.id !== selected)
+          return {
+            key: option.id,
+            label: option.label,
+            on: option.id === selected,
+            ...(locked ? { disabled: true, badge: '需登录' } : {}),
+            pick: () => { if (!locked) void session.changeSourceQuality(role, option.id) },
+          }
+        }),
       }]
     }
-    if (state.quality.length > 1) {
+    if (state.quality.length > 2) {
       return [{
         role,
         busy: false,
@@ -76,11 +98,13 @@ function SideQuality({ side, main }: { side: Side; main: boolean }): React.React
         <p className="menu-heading">{label}</p>
         {side.choices.map((choice) => (
           <button type="button" key={choice.key} role="menuitemradio" aria-checked={choice.on}
-            className={`menu-item quality-item${choice.on ? ' is-on' : ''}`} disabled={side.busy}
-            onClick={() => { choice.pick(); menu.close() }}>
-            {choice.label}
+            className={`menu-item quality-item${choice.on ? ' is-on' : ''}`} disabled={side.busy || choice.disabled}
+            onClick={() => { if (side.busy || choice.disabled) return; choice.pick(); menu.close() }}>
+            <span>{choice.label}</span>
+            {choice.badge && <span className="quality-tag">{choice.badge}</span>}
           </button>
         ))}
+        {side.hint && <p className="quality-hint">{side.hint}</p>}
       </Popover>
     </div>
   )

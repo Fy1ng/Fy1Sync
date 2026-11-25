@@ -126,8 +126,18 @@ export async function resolveDouyu(input: string, deps: ResolverDeps): Promise<R
     url = new URL(`${base.replace(/\/$/, '')}/${live.replace(/^\//, '')}`)
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('invalid URL')
   } catch { return failure('needs-manual-url', '斗鱼未返回可用的 HTTP 直播地址', roomHint) }
-  const qualities = parseDouyuQualities(data.multirates)
+  const parsedQualities = parseDouyuQualities(data.multirates)
   const returnedRate = typeof data.rate === 'number' && Number.isInteger(data.rate) ? String(data.rate) : requestedRate
+  const diamondRates = new Set(Array.isArray(data.multirates) ? data.multirates.slice(0, 100).flatMap((raw) => {
+    const item = record(raw)
+    return item.diamondFan === 1 && typeof item.rate === 'number' && Number.isInteger(item.rate) ? [String(item.rate)] : []
+  }) : [])
+  const anonymousCapIndex = parsedQualities.findIndex(option => option.id === '4')
+  const qualities = cookie ? parsedQualities : parsedQualities.map((option, index) => (
+    option.id !== returnedRate && ((anonymousCapIndex > 0 && index < anonymousCapIndex) || diamondRates.has(option.id))
+      ? { ...option, requiresLogin: true }
+      : option
+  ))
   const notes: string[] = []
   const cdn = typeof data.rtmp_cdn === 'string' ? data.rtmp_cdn : typeof data.cdn === 'string' ? data.cdn : undefined
   if (returnedRate !== requestedRate) notes.push(`所选画质不可用，已切换为${qualities.find(option => option.id === returnedRate)?.label ?? '未知画质'}`)

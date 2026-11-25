@@ -277,7 +277,9 @@ export class DouyuAccountManager {
         if (!manager.importCookies) throw new DouyuAccountError('storage-failed')
         await manager.importCookies('douyu', cookies, identity, signal)
       })
-      if (this.activeAccountId === null) await this.activate(selected)
+      const shouldActivate = this.activeAccountId === null
+        || (!this.busy.has(this.activeAccountId) && !(await this.activeLoginStatus()).loggedIn)
+      if (shouldActivate) await this.activate(selected)
       return selected
     } catch (error) {
       if (created) {
@@ -354,7 +356,7 @@ export class DouyuAccountManager {
 
   async activeCookieHeader(requestUrl?: string): Promise<string> {
     const id = this.activeAccountId
-    if (!id) return ''
+    if (!id || this.busy.has(id)) return ''
     return this.cookieHeader(id, requestUrl)
   }
 

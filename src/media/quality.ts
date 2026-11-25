@@ -26,14 +26,14 @@ export const AUTO_QUALITY: QualityOption = { level: -1, label: '自动' }
 function labelFor(level: RawLevel): string {
   if (level.height && level.height > 0) return `${level.height}p`
   if (level.name) return level.name
-  if (level.bitrate && level.bitrate > 0) return `${Math.round(level.bitrate / 1000)} kbps`
+  if (level.bitrate && level.bitrate >= 1000) return `${Math.round(level.bitrate / 1000)} kbps`
   return '未知'
 }
 
 function detailFor(level: RawLevel): string | undefined {
   const parts: string[] = []
   if (level.width && level.height) parts.push(`${level.width}×${level.height}`)
-  if (level.bitrate && level.bitrate > 0) parts.push(`${Math.round(level.bitrate / 1000)} kbps`)
+  if (level.bitrate && level.bitrate >= 1000) parts.push(`${Math.round(level.bitrate / 1000)} kbps`)
   return parts.length > 0 ? parts.join(' · ') : undefined
 }
 

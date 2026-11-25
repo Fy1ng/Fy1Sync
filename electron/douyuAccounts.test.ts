@@ -268,6 +268,7 @@ describe('Douyu account isolation', () => {
     await expect(f.manager.remove('default')).rejects.toMatchObject({ code: 'account-busy' })
     await expect(f.manager.activate('default')).rejects.toMatchObject({ code: 'account-busy' })
     await expect(f.manager.cookieHeader('default', 'https://yuba.douyu.com/')).rejects.toMatchObject({ code: 'no-active-account' })
+    expect(await f.manager.activeCookieHeader('https://www.douyu.com/')).toBe('')
     finishLogin({ cookieCount: 1, authKeysPresent: ['acf_uid'] })
     await pending
     expect(f.manager.isBusy('default')).toBe(false)

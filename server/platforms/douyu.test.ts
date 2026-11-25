@@ -74,6 +74,34 @@ describe('Douyu PC play API', () => {
     const result = await resolveDouyu('9999', deps({ fetchJson: async (url) => url.includes('getEncryption') ? { error: 0, data: encryption } : { ...play, data: { ...play.data, rate: 4 } } }))
     expect(result.ok && result.stream.quality).toBe('4')
     expect(result.ok && result.stream.notes?.join('')).toContain('所选画质不可用，已切换为')
+    expect(result.ok && result.stream.qualities).toEqual([
+      { id: '0', label: '原画2K60', requiresLogin: true },
+      { id: '4', label: '蓝光4M' },
+      { id: '3', label: '超清' },
+      { id: '2', label: '高清' },
+    ])
+  })
+
+  it('marks tiers above 蓝光4M as login-only when anonymous, while keeping rooms without 蓝光4M unlocked', async () => {
+    const gated = await resolveDouyu('9999', deps({ quality: '3', fetchJson: async (url) => url.includes('getEncryption')
+      ? { error: 0, data: encryption }
+      : { ...play, data: { ...play.data, rate: 3, multirates: [{ name: '原画2K60', rate: 0 }, { name: '蓝光8M', rate: 8 }, { name: '蓝光4M', rate: 4 }, { name: '超清', rate: 3 }, { name: '高清', rate: 2 }] } } }))
+    expect(gated.ok && gated.stream.qualities).toEqual([
+      { id: '0', label: '原画2K60', requiresLogin: true },
+      { id: '8', label: '蓝光8M', requiresLogin: true },
+      { id: '4', label: '蓝光4M' },
+      { id: '3', label: '超清' },
+      { id: '2', label: '高清' },
+    ])
+
+    const openRoom = await resolveDouyu('12882186', deps({ fetchJson: async (url) => url.includes('getEncryption')
+      ? { error: 0, data: encryption }
+      : { ...play, data: { ...play.data, rate: 0, multirates: [{ name: '原画1080P60', rate: 0 }, { name: '超清', rate: 3 }, { name: '高清', rate: 2 }] } } }))
+    expect(openRoom.ok && openRoom.stream.qualities).toEqual([
+      { id: '0', label: '原画1080P60' },
+      { id: '3', label: '超清' },
+      { id: '2', label: '高清' },
+    ])
   })
 
   it.each([[102, 'not-live'], [101, 'room-not-found'], [403, 'restricted'], [999, 'upstream-error']])('classifies play error %i', async (error, code) => {

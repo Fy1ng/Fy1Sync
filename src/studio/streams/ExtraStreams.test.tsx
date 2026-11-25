@@ -294,6 +294,65 @@ describe('extra stream windows', () => {
     expect(invoke).toHaveBeenCalledWith('openEnhancedPip', { id: ID })
   })
 
+  it('disables login-gated qualities in extra stream windows until the platform signs in', async () => {
+    let douyuLoggedIn = false
+    sessions = [view(ID, {
+      stream: {
+        platform: 'douyu', url: `/media/${ID}.m3u8`, kind: 'hls', label: '斗鱼 6829849', channel: '6829849', requiresProxy: false,
+        qualities: [
+          { id: '0', label: '原画1080P60', requiresLogin: true },
+          { id: '4', label: '蓝光4M' },
+          { id: '3', label: '超清' },
+        ],
+        quality: '4',
+      },
+    })]
+    invoke.mockImplementation(async (method: string, args: unknown) => {
+      if (method === 'getStreamSessions') return { ok: true, value: snapshot() }
+      if (method === 'getEnhancedPip') return { ok: true, value: { phase: 'closed', streamId: null } }
+      if (method === 'loginStatus') {
+        return {
+          ok: true,
+          value: {
+            douyu: { loggedIn: douyuLoggedIn },
+            youtube: { loggedIn: false },
+            twitch: { loggedIn: false },
+            bilibili: { loggedIn: false },
+            huya: { loggedIn: false },
+            douyin: { loggedIn: false },
+          },
+        }
+      }
+      if (method === 'switchStreamSessionQuality') return { ok: true, value: sessions[0] }
+      return { ok: false, code: 'unexpected', message: `${method}:${JSON.stringify(args)}` }
+    })
+
+    const { notifyLoginStateChanged } = await import('../../core/loginEvents')
+    renderStreams()
+    await flush()
+
+    const select = screen.getByLabelText('清晰度') as HTMLSelectElement
+    const options = within(select).getAllByRole('option') as HTMLOptionElement[]
+    expect(options.map((item) => ({ text: item.textContent, disabled: item.disabled }))).toEqual([
+      { text: '原画1080P60（需登录）', disabled: true },
+      { text: '蓝光4M', disabled: false },
+      { text: '超清', disabled: false },
+    ])
+
+    fireEvent.change(select, { target: { value: '0' } })
+    await flush()
+    expect(invoke).not.toHaveBeenCalledWith('switchStreamSessionQuality', expect.anything())
+
+    douyuLoggedIn = true
+    act(() => notifyLoginStateChanged(['douyu'], 'login'))
+    await waitFor(() => expect((within(select).getAllByRole('option')[0] as HTMLOptionElement).disabled).toBe(false))
+    expect(within(select).getAllByRole('option')[0]!.textContent).toBe('原画1080P60')
+
+    fireEvent.change(select, { target: { value: '0' } })
+    await flush()
+    expect(invoke).toHaveBeenCalledWith('switchStreamSessionQuality', { id: ID, quality: '0' })
+  })
+
   it('starts muted and unmutes from its own button', async () => {
     renderStreams()
     await flush()

@@ -117,7 +117,8 @@ function StudioView(): React.ReactNode {
   const chromeHover = { onPointerEnter: () => setOnChrome(true), onPointerLeave: () => setOnChrome(false) }
 
   const aligning = snapshot.autoSync.phase !== 'idle' && snapshot.autoSync.phase !== 'done' && snapshot.autoSync.phase !== 'failed'
-  const busyChrome = favorites || intake || tuning || settingsAt !== null || addingStream || scheduleOpen || onChrome || aligning || embeddedLogin !== null
+  const switchingQuality = snapshot.qualityBusy.official || snapshot.qualityBusy.commentary
+  const busyChrome = favorites || intake || tuning || settingsAt !== null || addingStream || scheduleOpen || onChrome || aligning || switchingQuality || embeddedLogin !== null
   const chrome = useOverlayVisibility(3200, !snapshot.playing || busyChrome)
   // The drawer is the room's chat; with no room there is nothing to hold it open for.
   const hasRoom = snapshot.danmaku.connected || snapshot.danmaku.room !== null || platformRooms.hasBilibili || restrictedChatSources.length > 0
