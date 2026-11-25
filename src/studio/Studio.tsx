@@ -50,16 +50,20 @@ import { useDouyuLottery } from './douyu/douyuLottery'
 import { usePlatformRoomActivities } from './PlatformRoomActivities'
 
 export function Studio(): React.ReactNode {
+  const [settingsAt, setSettingsAt] = useState<SettingsTarget | null>(null)
   return (
-    <SourceLoaderProvider>
+    <SourceLoaderProvider onOpenSettings={setSettingsAt}>
       <ComposerProvider>
-        <StudioView />
+        <StudioView settingsAt={settingsAt} setSettingsAt={setSettingsAt} />
       </ComposerProvider>
     </SourceLoaderProvider>
   )
 }
 
-function StudioView(): React.ReactNode {
+function StudioView({ settingsAt, setSettingsAt }: {
+  settingsAt: SettingsTarget | null
+  setSettingsAt: React.Dispatch<React.SetStateAction<SettingsTarget | null>>
+}): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
   const platformRooms = usePlatformRoomActivities()
@@ -89,7 +93,6 @@ function StudioView(): React.ReactNode {
   const nudge = useNudge()
   const [intake, setIntake] = useState(false)
   const [favorites, setFavorites] = useState(false)
-  const [settingsAt, setSettingsAt] = useState<SettingsTarget | null>(null)
   // The gear reopens 设置 where it was left; links that name a section go there.
   const openSettings = useCallback((section?: SettingsSection, account?: SettingsTarget['account']) =>
     setSettingsAt({ section: section ?? remembered<SettingsSection>('settings:section') ?? 'general', ...(account ? { account } : {}) }), [])

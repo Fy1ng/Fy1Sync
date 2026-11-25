@@ -213,4 +213,63 @@ describe('the login offer on the intake screen', () => {
     await waitFor(() => expect(resolve).toHaveBeenCalledTimes(2))
     expect(resolve.mock.calls[1]![0]).toBe('https://www.twitch.tv/pgl')
   })
+
+  it('recommends Twitch login by default for anonymous Twitch streams to unlock top quality', async () => {
+    signedIn = false
+    const resolve = vi.spyOn(apiClient, 'resolve').mockResolvedValue({
+      ok: true,
+      value: {
+        ok: true,
+        stream: {
+          platform: 'twitch',
+          kind: 'hls',
+          url: 'app://app/media/twitch',
+          label: 'Twitch · pgl',
+          channel: 'pgl',
+          requiresProxy: false,
+          quality: '1080p60',
+          qualities: [{ id: '1080p60', label: '1080p60' }],
+        },
+      },
+    })
+    const login = vi.spyOn(apiClient, 'login').mockImplementation(async () => {
+      signedIn = true
+      return { ok: true, value: { cookieCount: 2, authKeysPresent: ['auth-token'] } }
+    })
+    mount()
+    fireEvent.click(screen.getByRole('radio', { name: /画面/ }))
+    const field = screen.getByLabelText('直播间链接')
+    fireEvent.change(field, { target: { value: 'https://www.twitch.tv/pgl' } })
+    fireEvent.submit(field.closest('form')!)
+    expect(await screen.findByText('登录后可获取最高清画质')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '登录 Twitch' }))
+    await waitFor(() => expect(login).toHaveBeenCalledWith('twitch'))
+    await waitFor(() => expect(resolve).toHaveBeenCalledTimes(2))
+  })
+
+  it('shows login and network buttons on the same row without raw-error toggle on YouTube bot-check', async () => {
+    youtubeSignedIn = false
+    vi.spyOn(apiClient, 'resolve').mockResolvedValue({
+      ok: true,
+      value: {
+        ok: false,
+        failure: {
+          code: 'restricted',
+          reason: 'bot-check',
+          message: 'YouTube 要求验证不是机器人，当前网络暂时不能观看',
+          hint: '换一个代理节点，或稍后重试',
+        },
+      },
+    })
+    mount()
+    fireEvent.click(screen.getByRole('radio', { name: /画面/ }))
+    const field = screen.getByLabelText('直播间链接')
+    fireEvent.change(field, { target: { value: 'https://www.youtube.com/watch?v=abcdefghijk' } })
+    fireEvent.submit(field.closest('form')!)
+    const loginBtn = await screen.findByRole('button', { name: '登录 YouTube 并重试' })
+    const netBtn = screen.getByRole('button', { name: '网络设置' })
+    expect(loginBtn.parentElement).toBe(netBtn.parentElement)
+    expect(loginBtn.parentElement).toHaveClass('error-action-row')
+    expect(screen.queryByRole('button', { name: '查看原始错误' })).toBeNull()
+  })
 })

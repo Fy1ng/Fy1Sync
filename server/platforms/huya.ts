@@ -111,7 +111,7 @@ function mediaUrl(value: unknown): URL | null {
 export function parseHuyaPage(rawPage: string, inputRoom: string): PageResult {
   if (typeof rawPage !== 'string' || rawPage.length > MAX_PAGE) return failure('upstream-error', '虎牙房间页面过大或格式无效', MANUAL_URL_HINT)
   if (rawPage.includes('找不到这个主播')) return failure('room-not-found', '虎牙房间不存在', '请检查房间号或复制主播的房间链接')
-  if (/正在整改中|房间已被封禁|主播已被封禁/.test(rawPage)) return failure('restricted', '虎牙房间正在整改或受到访问限制', '请在虎牙官网确认房间状态后重试')
+  if (/正在整改中|房间已被封禁|主播已被封禁/.test(rawPage)) return { ok: false, failure: { code: 'restricted', reason: 'room-banned', message: '虎牙房间正在整改或受到访问限制', hint: '请在虎牙官网确认房间状态后重试' } }
   const page = rawPage.replace(/&quot;|&#34;|&#x22;/gi, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   const room = record(jsonAfter(page, /\bTT_ROOM_DATA\s*=\s*/, 65_536))
   if (room.state !== 'ON' && room.state !== 'OFF' && room.state !== 'REPLAY') return failure('upstream-error', '无法读取虎牙开播状态', MANUAL_URL_HINT)

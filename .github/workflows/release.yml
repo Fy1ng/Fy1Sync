@@ -225,10 +225,30 @@ jobs:
           merge-multiple: true
           path: .release-final/
       - run: node scripts/release-artifacts.mjs .release-final
+      - name: Render release notes with direct download buttons
+        run: node scripts/render-release-notes.mjs --out .runtime-cache/RELEASE-NOTES.md
       - name: Publish versioned release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="$(node -p 'require("./package.json").version')"
-          gh release create "$GITHUB_REF_NAME" .release-final/* --verify-tag --draft --title "Fy1Sync $version" --notes-file "packaging/releases/$version.md"
+          gh release create "$GITHUB_REF_NAME" .release-final/* --verify-tag --draft --title "Fy1Sync $version" --notes-file ".runtime-cache/RELEASE-NOTES.md"
           gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+      - name: Sync release to GitCode mirror
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          if [ -n "$GITCODE_TOKEN" ]; then
+            askpass="$(mktemp)"
+            chmod 700 "$askpass"
+            cat <<'EOF' > "$askpass"
+          #!/usr/bin/env sh
+          case "$1" in
+            *Username*) printf '%s\n' "oauth2" ;;
+            *) printf '%s\n' "$GITCODE_TOKEN" ;;
+          esac
+          EOF
+            GIT_TERMINAL_PROMPT=0 GIT_ASKPASS="$askpass" git push https://gitcode.com/Fy1ng/Fy1Sync.git "HEAD:refs/heads/main" "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME" || GIT_TERMINAL_PROMPT=0 GIT_ASKPASS="$askpass" git push https://gitcode.com/Fy1ng/Fy1Sync.git "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+            rm -f "$askpass"
+          fi
+          node scripts/sync-gitcode-release.mjs --dir .release-final --notes-file .runtime-cache/RELEASE-NOTES.md --target-commitish "${GITHUB_SHA}" --if-configured

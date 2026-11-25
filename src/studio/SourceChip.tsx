@@ -6,7 +6,7 @@
  */
 
 import { useState } from 'react'
-import { ErrorText } from '../ui/ErrorDetails'
+import { ErrorActionRow, ErrorText } from '../ui/ErrorDetails'
 import { apiClient } from '../app/apiClient'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { draftFromDirectOptions, EMPTY_DIRECT_DRAFT, hasDirectOptions, parseDirectDraft, type DirectStreamDraft } from '../core/directStream'
@@ -14,7 +14,7 @@ import type { SourceRole } from '../core/types'
 import { bufferStatusText } from '../ui/bufferStatus'
 import { DirectStreamFields } from './DirectStreamFields'
 import { Icon, Popover, Segmented, usePopover } from './kit'
-import { LoginOffer, PLATFORM_LABEL, ROLE_LABEL, parseDanmakuRoomInput, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform, SOURCE_HINT } from './sources'
+import { LoginOffer, PLATFORM_LABEL, ROLE_LABEL, SourceIssue, parseDanmakuRoomInput, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform, SOURCE_HINT } from './sources'
 import { sourceDanmakuRoom } from '../core/sourceDanmaku'
 import { danmakuRoom } from '../../server/danmaku/types'
 import { canSave, removeSavedRoom, saveRoom, savedFor, useSavedRooms, useSavedRoomsState, type SavedRoom } from './savedRooms'
@@ -140,15 +140,20 @@ function SourcePanel({ role, onDone, onSchedule }: {
         <Segmented label="房间号所属平台" value={roomPlatform} onChange={setRoomPlatform}
           options={[{ value: 'douyu', label: PLATFORM_LABEL.douyu }, { value: 'bilibili', label: PLATFORM_LABEL.bilibili }, { value: 'huya', label: PLATFORM_LABEL.huya }, { value: 'douyin', label: PLATFORM_LABEL.douyin }]} />
       )}
-      {load.problem && (
-        <p className="form-error" role="alert"><ErrorText error={load.problem} message={<>{load.problem.message}{load.problem.hint ? `，${load.problem.hint}` : ''}</>} /></p>
-      )}
-      <LoginOffer role={role} />
-      {state.status === 'error' && state.error && <p className="form-error"><ErrorText error={state.error} /></p>}
+      <SourceIssue role={role} className="form-error" />
+      {!load.problem && !(state.status === 'error' && state.error) && <LoginOffer role={role} />}
       {load.notes.map((note) => <p key={note} className="muted">{note}</p>)}
 
-      {buffer && <p className="muted">{buffer.failure || buffer.state === 'failed'
-        ? <ErrorText error={buffer.failure ?? { reason: buffer.reason, message: bufferStatusText(buffer) }} message={bufferStatusText(buffer)} /> : bufferStatusText(buffer)}</p>}
+      {buffer && (buffer.failure || buffer.state === 'failed' ? (
+        <div className="source-issue muted">
+          <p className="source-issue-text">{bufferStatusText(buffer)}</p>
+          <ErrorActionRow error={buffer.failure ?? { reason: buffer.reason, message: bufferStatusText(buffer) }} summary={bufferStatusText(buffer)}>
+            {!load.problem && !(state.status === 'error' && state.error) && (
+              <button type="button" className="btn-quiet small" disabled={load.busy} onClick={() => void loader.retry(role)}>重试</button>
+            )}
+          </ErrorActionRow>
+        </div>
+      ) : <p className="muted">{bufferStatusText(buffer)}</p>)}
 
       {chat && !selectedChat && <p className="muted" role="status">{PLATFORM_LABEL[chat.platform]}弹幕：未选择此房间</p>}
       <DanmakuRoom />

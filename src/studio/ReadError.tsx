@@ -1,8 +1,10 @@
-import { ErrorText } from '../ui/ErrorDetails'
+import { ErrorActionRow } from '../ui/ErrorDetails'
 
 export function ReadError({ error, onRetry, detail }: { error: string; onRetry: () => void; detail?: unknown }): React.ReactNode {
-  return <div>
-    <p className="form-error" role="alert"><ErrorText error={detail ?? error} message={error} /></p>
-    <button type="button" className="btn-quiet small" onClick={onRetry}>重试</button>
+  return <div className="field-stack" role="alert">
+    <p className="form-error">{error}</p>
+    <ErrorActionRow error={detail ?? error} summary={error}>
+      <button type="button" className="btn-quiet small" onClick={onRetry}>重试</button>
+    </ErrorActionRow>
   </div>
 }

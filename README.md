@@ -8,7 +8,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Fy1ng/Fy1Sync/releases/latest"><img src="assets/readme/download.svg" width="210" alt="下载最新版"></a>
+  <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.5.1/Fy1Sync-0.5.1-win-x64-nsis.exe"><img src="https://img.shields.io/badge/Windows%20%E5%AE%89%E8%A3%85%E7%89%88-.exe%20%E7%9B%B4%E9%93%BE%E4%B8%8B%E8%BD%BD-6fd3a8?style=for-the-badge&labelColor=18181b" alt="下载 Windows 安装包 (.exe)"></a>
+  <a href="https://gitcode.com/Fy1ng/Fy1Sync/releases/download/v0.5.1/Fy1Sync-0.5.1-win-x64-nsis.exe"><img src="https://img.shields.io/badge/Windows%20%E5%9B%BD%E5%86%85%E4%B8%8B%E8%BD%BD-GitCode%20%E9%95%9C%E5%83%8F-6fd3a8?style=for-the-badge&labelColor=18181b" alt="从 GitCode 国内镜像下载 Windows 安装包"></a>
+  <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.5.1/Fy1Sync-0.5.1-win-x64-portable.zip"><img src="https://img.shields.io/badge/Windows%20%E5%85%8D%E5%AE%89%E8%A3%85-.zip%20%E4%BE%BF%E6%90%BA%E7%89%88-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 Windows 便携包 (.zip)"></a><br>
+  <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.5.1/Fy1Sync-0.5.1-mac-arm64.dmg"><img src="https://img.shields.io/badge/macOS%20Apple%20%E8%8A%AF%E7%89%87-.dmg-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 macOS Apple 芯片安装包 (.dmg)"></a>
+  <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.5.1/Fy1Sync-0.5.1-mac-x64.dmg"><img src="https://img.shields.io/badge/macOS%20Intel-.dmg-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 macOS Intel 安装包 (.dmg)"></a>
+  <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.5.1/Fy1Sync-0.5.1-linux-x64.deb"><img src="https://img.shields.io/badge/Linux%20x64-.deb-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 Linux x64 deb 安装包"></a>
+  <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.5.1/Fy1Sync-0.5.1-linux-x64.AppImage"><img src="https://img.shields.io/badge/Linux%20x64-.AppImage-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 Linux x64 AppImage"></a>
+  <a href="https://gitcode.com/Fy1ng/Fy1Sync/releases"><img src="https://img.shields.io/badge/%E5%85%A8%E5%B9%B3%E5%8F%B0%E5%9B%BD%E5%86%85%E9%95%9C%E5%83%8F-GitCode%20%E5%8F%91%E5%B8%83%E9%A1%B5-f3f0ea?style=for-the-badge&labelColor=18181b" alt="前往 GitCode 国内镜像发布页"></a>
 </p>
 
 <p align="center">
@@ -81,7 +88,7 @@ Fy1Sync 把这两路直播放进同一个播放器:
 | Linux x64 | `linux-x64.deb` | `linux-x64.AppImage`, `linux-x64.tar.gz` |
 | Linux arm64 | `linux-arm64.deb` | `linux-arm64.AppImage`, `linux-arm64.tar.gz` |
 
-播放要用到的 FFmpeg 和 yt-dlp 已经打在安装包里, 不用自己装. 国内访问 GitHub 较慢时, 可以到 [GitCode 镜像](https://gitcode.com/Fy1ng/Fy1Sync/releases) 看看有没有同一版本.
+播放要用到的 FFmpeg 和 yt-dlp 已经打在安装包里, 不用自己装. GitHub 发布页底部文件超过 10 个会默认折叠 Windows 安装包, 直接点页面顶部的下载按钮即可; 国内访问 GitHub 较慢时, 直接点上方的国内下载按钮或前往 [GitCode 镜像](https://gitcode.com/Fy1ng/Fy1Sync/releases).
 
 **第一次打开时系统可能会拦一下.** 安装包目前未配置付费证书签名与公证, 这是正常现象:
 
@@ -100,7 +107,7 @@ Fy1Sync 把这两路直播放进同一个播放器:
 
 添加完画面后这个界面如果自动收起了, 点播放器顶部的 **解说** 继续添加就行.
 
-不想找链接的话, 点 **CS2 赛程**, 从正在进行的比赛里挑一场有直播链接的, 直接载入为画面.
+不想找链接的话, 点 **CS2 赛程**, 从正在进行的比赛里一键选择官方直播载入为画面 (赛程直播来自 YouTube / Twitch, 国内网络需开启系统代理; 不开代理时可直接粘贴虎牙, 哔哩哔哩, 斗鱼或抖音的赛事官方直播间).
 
 <p align="center">
   <img src="assets/readme/intake.webp" width="49%" alt="添加直播间界面: 已选中解说, 输入房间号 6657 后, 下方出现斗鱼, 哔哩哔哩, 虎牙, 抖音四个平台供选择.">
@@ -167,7 +174,7 @@ Fy1Sync 把这两路直播放进同一个播放器:
 | 虎牙 | 可以 | 只能看 | 可选 |
 | 抖音 | 可以 | 可以看; 登录后可以发送文字弹幕 | 可选 |
 | YouTube | 可以 (仅直播) | 暂不支持 | 可选 |
-| Twitch | 可以 | 暂不支持 | 无 |
+| Twitch | 可以 | 暂不支持 | 可选 |
 
 - 两路可以来自不同平台, 比如 YouTube 的官方画面配斗鱼的解说.
 - 大多数公开直播不登录就能看. 登录主要用于更高画质, 会员直播, 以及各平台的账号功能.
@@ -213,11 +220,21 @@ Fy1Sync 把这两路直播放进同一个播放器:
 ## 常见问题
 
 <details>
+<summary>需要开启代理吗? 官方高清比赛流去哪找?</summary>
+
+<br>
+
+- **国内平台免代理**: 虎牙, 哔哩哔哩, 斗鱼, 抖音的赛事官方直播间与主播直播间均直接连接, 不需要代理.
+- **海外官方流需代理**: **CS2 赛程** 一键载入的直播以及手动粘贴的 YouTube, Twitch 链接, 在国内网络下需要开启系统代理 (**设置 → 通用 → 网络** 默认按平台分流, 开启代理时国内平台仍保持直连).
+
+</details>
+
+<details>
 <summary>一定要登录吗?</summary>
 
 <br>
 
-不用. 大多数公开直播可以直接看, 也可以直接对齐. 不登录时, 部分直播可能取不到原画这样的高画质. 登录入口在 **设置 → 账号**.
+不用. 大多数公开直播可以直接看, 也可以直接对齐. 不登录时, 斗鱼, 哔哩哔哩, 虎牙, Twitch 等平台可能拿不到原画或最高画质; 直播间遇到画质受限或验证提示时, 直接点提示旁的 **登录** 按钮即可, 也可前往 **设置 → 账号**.
 
 </details>
 

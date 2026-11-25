@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, cleanup } from '@testing-library/react'
 import { afterEach } from 'vitest'
-import { ErrorText } from './ErrorDetails'
+import { ErrorActionRow, ErrorText } from './ErrorDetails'
 
 afterEach(cleanup)
 describe('error detail controls', () => {
@@ -44,5 +44,42 @@ describe('error detail controls', () => {
     fireEvent.click(screen.getByRole('button', { name: '查看原始错误' }))
     fireEvent.click(screen.getByRole('button', { name: '复制错误信息' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('复制失败，可选择下方内容手动复制')
+  })
+
+  it('suppresses raw error toggle for self-explanatory A1-A15 outcomes while keeping B1-B11 inspectable', () => {
+    const basicCases = [
+      { code: 'not-live', message: '直播当前未开始', detail: { code: 102 } },
+      { code: 'room-not-found', message: '未找到该直播间', detail: { code: 1 } },
+      { code: 'unsupported-url', message: '无法识别该地址', hint: '请检查输入' },
+      { code: 'login-required', message: '需要登录', detail: { code: -101 } },
+      { code: 'restricted', reason: 'bot-check', message: 'YouTube 要求验证不是机器人', detail: { code: 'bot-check' } },
+      { code: 'restricted', reason: 'geo-restricted', message: '所在地区不可观看', detail: { reason: 'geo-restricted' } },
+      { code: 'restricted', reason: 'room-banned', message: '直播间正在整改', detail: { reason: 'room-banned' } },
+      { code: 'upstream-error', reason: 'socks4-unsupported', message: '不支持 SOCKS4', detail: { code: 'socks4-unsupported' } },
+      { code: 'upstream-error', reason: 'media-network-boundary', message: '未授权局域网', detail: { code: 'media-network-boundary' } },
+      { kind: 'no-samples', message: '尚未读到倒计时' },
+      { kind: 'rejected', reason: 'no-official-jump', message: '尚未识别稳定跳变' },
+      { code: 'browser-import-browser-in-use', message: '浏览器正在使用中' },
+      { code: 'chrome-not-found', message: '未找到 Chrome' },
+    ]
+    for (const err of basicCases) {
+      render(<ErrorText error={err} message={err.message} />)
+      expect(screen.queryByRole('button', { name: '查看原始错误' })).toBeNull()
+      cleanup()
+    }
+
+    render(
+      <ErrorActionRow error={{ code: 'upstream-error', stage: 'proxy', reason: 'proxy-unreachable', message: '无法连接代理', detail: { errno: 'ECONNREFUSED' } }} summary="无法连接代理">
+        <button type="button">网络设置</button>
+        <button type="button">重试</button>
+      </ErrorActionRow>,
+    )
+    const row = screen.getByRole('button', { name: '网络设置' }).parentElement!
+    expect(row).toHaveClass('error-action-row')
+    expect(row).toContainElement(screen.getByRole('button', { name: '重试' }))
+    expect(row).toContainElement(screen.getByRole('button', { name: '查看原始错误' }))
+    fireEvent.click(screen.getByRole('button', { name: '查看原始错误' }))
+    expect(row).not.toContainElement(screen.getByRole('region', { name: '原始错误信息' }))
+    expect(screen.getByRole('region', { name: '原始错误信息' }).textContent).toContain('ECONNREFUSED')
   })
 })

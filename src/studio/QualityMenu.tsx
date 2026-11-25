@@ -11,7 +11,7 @@ import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { Popover, usePopover } from './kit'
 import { isLoginPlatformKey, useLoginStatus } from './login/status'
-import { ROLE_LABEL } from './sources'
+import { LOGIN_LABEL, ROLE_LABEL, spaced, useOptionalSourceLoader } from './sources'
 
 interface Choice { key: string; label: string; on: boolean; disabled?: boolean; badge?: string; pick: () => void }
 interface Side { role: SourceRole; busy: boolean; choices: Choice[]; current: string; hint?: string }
@@ -86,6 +86,9 @@ export function QualityMenu(): React.ReactNode {
 
 function SideQuality({ side, main }: { side: Side; main: boolean }): React.ReactNode {
   const menu = usePopover()
+  const loader = useOptionalSourceLoader()
+  const load = loader?.state[side.role]
+  const loginPlatform = load && !load.problem && !load.busy && !load.loggingIn ? load.login : null
   const label = `${ROLE_LABEL[side.role]}清晰度`
   return (
     <div className="quality-control" data-role={side.role}>
@@ -105,6 +108,17 @@ function SideQuality({ side, main }: { side: Side; main: boolean }): React.React
           </button>
         ))}
         {side.hint && <p className="quality-hint">{side.hint}</p>}
+        {loginPlatform && loader && (
+          <>
+            <div className="menu-rule" />
+            <div className="quality-login-row">
+              <span className="menu-meta">{loginPlatform === 'twitch' ? '登录后可获取最高清画质' : '登录后可尝试原画'}</span>
+              <button type="button" className="btn-solid small" onClick={() => { menu.close(); void loader.login(side.role) }}>
+                {loginPlatform === 'twitch' ? '登录 Twitch' : `登录${spaced(LOGIN_LABEL[loginPlatform])}`}
+              </button>
+            </div>
+          </>
+        )}
       </Popover>
     </div>
   )

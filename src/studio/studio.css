@@ -1666,11 +1666,49 @@ body,
 
 .studio .slot-login {
   display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   font-size: 12px;
   color: var(--drift);
+}
+
+.studio .slot-login-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio .slot-login > button {
+  flex: none;
+  white-space: nowrap;
+}
+
+.studio .source-issue {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.studio .source-issue-text {
+  margin: 0;
+}
+
+.studio .quality-login-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.studio .quality-login-row > button {
+  flex: none;
+  white-space: nowrap;
 }
 
 .studio .slot-role {

@@ -150,11 +150,17 @@ export function sanitizedFailure(result: ResolveResult): ResolveResult {
     restricted: '平台限制了此媒体的访问',
     'needs-manual-url': '平台没有提供可播放地址',
   }
+  const preservedReason = reason === 'room-banned' || reason === 'sign-in' ? reason : undefined
   return { ok: false, failure: {
-    code: result.failure.code, message: messages[result.failure.code], detail,
-    hint: result.failure.code === 'restricted' || result.failure.code === 'login-required'
-      ? '请在「设置 > 账号」登录后重新载入，也可粘贴视频直链'
-      : '请检查地址及开播状态，也可粘贴视频直链',
+    code: result.failure.code,
+    ...(preservedReason ? { reason: preservedReason } : {}),
+    message: preservedReason === 'room-banned' ? '直播间正在整改或已被封禁' : messages[result.failure.code],
+    detail,
+    hint: preservedReason === 'room-banned'
+      ? '请在对应平台官网确认直播间状态'
+      : result.failure.code === 'restricted' || result.failure.code === 'login-required'
+        ? '请在「设置 > 账号」登录后重新载入，也可粘贴视频直链'
+        : '请检查地址及开播状态，也可粘贴视频直链',
   } }
 }
 

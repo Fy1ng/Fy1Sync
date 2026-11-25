@@ -119,3 +119,10 @@ node scripts/online-update-release.mjs prepare `
 撤回单个通道时省略该通道制作参数并添加 `--drop-frontend` 或 `--drop-application`, 同时提高清单 revision. 省略通道本身表示保留, 不是删除. 撤回清单阻止新下载, 不远程删除用户已装版本或本地草稿. 已经安装的问题前端由客户端回退, 后续修复必须用更高的前端 revision 发布. 不为回滚整体应用默默降低安装版本.
 
 `node scripts/online-update-release.mjs --help` 可查看参数. 此工具始终只准备本地分发文件, 不自行推送源码或发布更新.
+
+## 桌面安装包发布说明与 GitCode 镜像同步
+
+GitHub Release 发布流程 (`.github/workflows/release.yml`) 在上传 12 个安装包与 `SHA256SUMS.txt` 前, 会运行 `node scripts/render-release-notes.mjs --out .runtime-cache/RELEASE-NOTES.md`, 基于 `packaging/releases/<版本>.md` 自动置顶各平台安装包下载按钮 (含 GitHub 与 GitCode 国内直链) 和三步上手说明. 更新 `package.json` 版本号时, 需同步更新 `README.md` 首屏下载按钮中的版本号 (`npm run test:packaging` 会自动校验两者一致).
+
+若仓库配置了 `GITCODE_TOKEN` Secret, 发布工作流会在 GitHub Release 发布后自动推送标签并调用 `node scripts/sync-gitcode-release.mjs` 将全部 13 个产物同步到 GitCode Releases; 本地补传可执行 `GITCODE_TOKEN=<令牌> npm run release:gitcode -- --dir .release --notes-file .runtime-cache/RELEASE-NOTES.md`.
+

@@ -270,7 +270,7 @@ export async function resolveYouTube(input: string, deps: ResolverDeps): Promise
     if (/not (?:currently )?live|recording is not available|live (?:event|stream) (?:has ended|will begin)|not broadcasting/i.test(message)) {
       return failure('not-live', '该 YouTube 频道当前未开播', MANUAL_URL_HINT, error)
     }
-    return failure('upstream-error', '暂时无法获取 YouTube 直播', '请检查网络和登录状态后重试', error)
+    return failure('upstream-error', '暂时无法获取 YouTube 直播', '请确认代理可用，也可更新 yt-dlp 或登录 YouTube 后重试', error)
   }
   const data = record(info)
   if (data.is_live !== true || (typeof data.live_status === 'string' && data.live_status !== 'is_live')) {

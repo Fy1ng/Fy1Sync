@@ -1,8 +1,12 @@
 .error-details { display: inline; font-size: 12px; font-weight: 400; }
-.error-details-toggle { appearance: none; border: 0; padding: 2px 4px; margin-inline-start: 4px; background: transparent; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.error-details-toggle { appearance: none; border: 0; padding: 2px 4px; margin-inline-start: 4px; background: transparent; color: inherit; font: inherit; font-size: 12px; font-weight: 400; white-space: nowrap; flex-shrink: 0; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.error-action-row { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 8px; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.error-action-row::-webkit-scrollbar { display: none; }
+.error-action-row > button { flex: none; white-space: nowrap; }
+.error-action-row > .error-details-toggle { margin-inline-start: 0; }
 .error-details-toggle:focus-visible, .error-details-toolbar button:focus-visible, .error-details-code:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .error-details-panel { display: block; max-width: min(100%, 52rem); margin-block: 8px; padding: 10px; border: 1px solid currentColor; border-radius: 8px; background: var(--panel, #141920); color: var(--text, #e3e8ef); overflow-wrap: anywhere; text-align: left; }
 .error-details-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding-block-end: 8px; font-size: 11px; opacity: .85; }
-.error-details-toolbar button { border: 1px solid currentColor; border-radius: 5px; padding: 3px 8px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.error-details-toolbar button { border: 1px solid currentColor; border-radius: 5px; padding: 3px 8px; background: transparent; color: inherit; font: inherit; white-space: nowrap; flex-shrink: 0; cursor: pointer; }
 .error-details-code { display: block; max-height: 18rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.6 Consolas, monospace; user-select: text; }
 .toast:has(.error-details-panel) { max-width: min(52rem, calc(100vw - 32px)); align-items: flex-start; }

@@ -14,8 +14,7 @@ import { EMPTY_DIRECT_DRAFT, hasDirectOptions, parseDirectDraft, type DirectStre
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { DirectStreamFields } from './DirectStreamFields'
 import { Icon } from './kit'
-import { LoginOffer, PLATFORM_LABEL, ROLE_LABEL, SOURCE_HINT, SOURCE_KINDS, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
-import { ErrorText } from '../ui/ErrorDetails'
+import { LoginOffer, PLATFORM_LABEL, ROLE_LABEL, SOURCE_HINT, SOURCE_KINDS, SourceIssue, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform } from './sources'
 
 const ROOM_PLATFORMS: RoomPlatform[] = ['douyu', 'bilibili', 'huya', 'douyin']
 
@@ -161,14 +160,14 @@ export function Intake({ onClose, onSchedule, onFavorites }: {
         )}
 
         {directProblem && <p className="intake-error" role="alert">{directProblem}</p>}
-        {load?.problem && <p className="intake-error" role="alert"><ErrorText error={load.problem} message={<>{load.problem.message}{load.problem.hint ? `，${load.problem.hint}` : ''}</>} /></p>}
+        {role !== null && <SourceIssue role={role} className="intake-error" />}
 
         <div className="intake-actions">
           {media.official.status === 'empty' && !loader.state.official.busy && (
             <button type="button" className="intake-find" onClick={onSchedule}>
               <Icon name="trophy" />
               <span>CS2 赛程</span>
-              <small>载入为画面</small>
+              <small>支持一键选择直播间</small>
             </button>
           )}
           {onFavorites && <button type="button" className="intake-find intake-find-single" onClick={onFavorites}><Icon name="star" /><span>收藏夹</span></button>}
@@ -201,11 +200,8 @@ function Slot({ role, selected, onPick }: { role: SourceRole; selected: boolean;
         </span>
       </button>
       {/* The side being filled shows its problem under the field instead. */}
-      {!selected && (load.problem || (state.status === 'error' && state.error)) && (
-        <span className="slot-error" role="alert"><ErrorText error={load.problem ?? state.error} /></span>
-      )}
-      {selected && !load.problem && state.status === 'error' && state.error && <span className="slot-error" role="alert"><ErrorText error={state.error} /></span>}
-      <LoginOffer role={role} />
+      {!selected && <SourceIssue role={role} className="slot-error" />}
+      {!load.problem && !(state.status === 'error' && state.error) && <LoginOffer role={role} />}
     </div>
   )
 }

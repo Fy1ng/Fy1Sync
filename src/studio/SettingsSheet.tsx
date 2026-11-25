@@ -37,9 +37,10 @@ import { InlineConfirm } from './InlineConfirm'
 import { ShortcutSettings } from './ShortcutSettings'
 
 export type SettingsSection = 'accounts' | 'records' | 'insights' | 'frame-matching' | 'general'
+export type GeneralPage = 'align' | 'shortcuts' | 'network' | 'decoding' | 'pip' | 'capture' | 'tools' | 'about'
 
 /** Where 设置 opens, and for 弹幕记录 which page and user. */
-export interface SettingsTarget { section: SettingsSection; account?: LoginPlatform; records?: { tab: RecordsTab; uid?: string } }
+export interface SettingsTarget { section: SettingsSection; general?: GeneralPage; account?: LoginPlatform; records?: { tab: RecordsTab; uid?: string } }
 
 const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: 'general', label: '通用' },
@@ -80,7 +81,7 @@ export function SettingsSheet({ target, room, onClose, onWatch, onFill }: {
           ))}
         </nav>
         <div className="settings-body" role="tabpanel" aria-label={SECTIONS.find((item) => item.id === section)?.label}>
-          {section === 'general' && <General networkDraft={networkDraft} requestLeave={requestLeave} leave={leave} onContinue={() => setLeave(null)} />}
+          {section === 'general' && <General target={target} networkDraft={networkDraft} requestLeave={requestLeave} leave={leave} onContinue={() => setLeave(null)} />}
           {section === 'accounts' && <AccountSettings target={target} onWatch={(next) => { onWatch(next); onClose() }} />}
           {huya && section === 'records' && <p className="settings-empty">弹幕记录仅支持斗鱼</p>}
           {section === 'records' && !huya && (
@@ -144,7 +145,6 @@ function AccountPages({ target, onWatch }: { target: SettingsTarget; onWatch: (r
   </SideTabs>
 }
 
-type GeneralPage = 'align' | 'shortcuts' | 'network' | 'decoding' | 'pip' | 'capture' | 'tools' | 'about'
 const GENERAL: { id: GeneralPage; label: string }[] = [
   { id: 'align', label: '对齐' },
   { id: 'shortcuts', label: '快捷键' },
@@ -158,15 +158,17 @@ const GENERAL: { id: GeneralPage; label: string }[] = [
 
 interface NetworkDraftStatus { dirty: boolean; pending: boolean }
 interface NetworkNavigation {
+  target: SettingsTarget
   networkDraft: React.RefObject<NetworkDraftStatus | null>
   requestLeave: (action: () => void) => void
   leave: (() => void) | null
   onContinue: () => void
 }
 
-function General({ networkDraft, requestLeave, leave, onContinue }: NetworkNavigation): React.ReactNode {
-  const [saved, setPage] = useRemembered<GeneralPage>('settings:general', 'align')
+function General({ target, networkDraft, requestLeave, leave, onContinue }: NetworkNavigation): React.ReactNode {
+  const [saved, setPage] = useRemembered<GeneralPage>('settings:general', target.general ?? 'align')
   const page = GENERAL.some(item => item.id === saved) ? saved : 'align'
+  useEffect(() => { if (target.general) setPage(target.general) }, [target, setPage])
   return (
     <SideTabs label="通用" value={page} onChange={next => { if (next !== page) requestLeave(() => setPage(next)) }} tabs={GENERAL}>
       <div className="settings-page">

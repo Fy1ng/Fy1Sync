@@ -100,20 +100,100 @@ export function errorMessage(value: unknown): string {
 
 const DETAIL_PLACEHOLDERS = new Set([REDACTED, '[omitted]', '[accessor omitted]', '[unavailable]', '[circular]', '[truncated]', '未提供原始错误信息'])
 
+/**
+ * Self-explanatory user/state outcomes (A1-A15) that never need raw JSON diagnostics.
+ * Technical, network, HTTP, codec, tool, update, and crash errors (B1-B11) remain inspectable.
+ */
+const BASIC_ERROR_CODES = new Set([
+  // Stream state & input validation (A3, A6-A9)
+  'not-live', 'room-not-found', 'unsupported-url', 'missing-input', 'invalid-arguments',
+  'too-large', 'invalid-url', 'bad-scheme', 'login-required',
+  // Explicit proxy/LAN toggles (A10, A11)
+  'socks4-unsupported', 'proxy-type-unsupported', 'media-network-boundary',
+  // Cancellation, busy & context transitions (A13)
+  'cancelled', 'login-cancelled', 'login-busy', 'login-incomplete',
+  'account-busy', 'account-changed', 'no-active-account', 'room-changed', 'busy',
+  // Self-explanatory browser import & Chrome checks (A14)
+  'chrome-not-found', 'browser-import-unsupported', 'browser-import-profile-missing',
+  'browser-import-browser-in-use', 'browser-import-uac-cancelled', 'browser-import-cancelled',
+  'browser-import-invalid-request', 'browser-import-busy', 'browser-import-preview-expired',
+  'browser-import-close-failed',
+  // Permission gate (A15)
+  'forbidden',
+])
+
+const BASIC_RESTRICTED_REASONS = new Set([
+  'cookies-invalidated', 'bot-check', 'sign-in', 'members-only',
+  'age-restricted', 'geo-restricted', 'private', 'room-banned',
+])
+
+const BASIC_SOURCE_REJECTION_REASONS = new Set([
+  'empty', 'not-a-url', 'unsupported-scheme', 'unsupported-page',
+])
+
+const BASIC_AUTOSYNC_KINDS = new Set([
+  'no-samples', 'rejected', 'frame-match', 'not-ready', 'buffer-limit', 'cancelled', 'unauthorized',
+])
+
+function readPlainField(target: unknown, key: string): unknown {
+  if (!target || typeof target !== 'object' || Array.isArray(target)) return undefined
+  const descriptor = Object.getOwnPropertyDescriptor(target, key)
+  return descriptor && 'value' in descriptor ? descriptor.value : undefined
+}
+
+export function isBasicSelfExplanatoryError(raw: unknown): boolean {
+  if (raw === null || raw === undefined || typeof raw === 'string') return true
+  if (typeof raw !== 'object' || Array.isArray(raw)) return false
+
+  const code = readPlainField(raw, 'code')
+  const reason = readPlainField(raw, 'reason')
+  const kind = readPlainField(raw, 'kind')
+  const nestedDetail = readPlainField(raw, 'detail')
+  const nestedCode = readPlainField(nestedDetail, 'code')
+  const nestedReason = readPlainField(nestedDetail, 'reason')
+
+  if (typeof kind === 'string' && BASIC_AUTOSYNC_KINDS.has(kind)) return true
+  if (typeof reason === 'string' && BASIC_SOURCE_REJECTION_REASONS.has(reason) && readPlainField(raw, 'ok') === false) return true
+  if (typeof code === 'string' && BASIC_ERROR_CODES.has(code)) return true
+  if (typeof reason === 'string' && BASIC_ERROR_CODES.has(reason)) return true
+  if (typeof nestedCode === 'string' && BASIC_ERROR_CODES.has(nestedCode)) return true
+  if (typeof nestedReason === 'string' && BASIC_ERROR_CODES.has(nestedReason)) return true
+
+  if (code === 'restricted' || nestedCode === 'restricted') {
+    const effectiveReason = typeof reason === 'string' ? reason : typeof nestedReason === 'string' ? nestedReason : ''
+    if (!effectiveReason || BASIC_RESTRICTED_REASONS.has(effectiveReason)) return true
+  }
+  return false
+}
+
 export function hasAdditionalErrorDetails(fields: ErrorDetails, summary?: string): boolean {
   const visible = summary === undefined || !summary.trim() ? fields.message : summary
   const normalized = typeof visible === 'string' ? redactErrorText(visible).trim() : ''
-  const hasValue = (value: ErrorDetailValue): boolean => {
+  const hintText = typeof fields.hint === 'string' ? redactErrorText(fields.hint).trim() : ''
+  const matchesVisible = (text: string): boolean => {
+    if (!text) return true
+    if (text === normalized || text === hintText) return true
+    if (normalized && hintText && normalized.includes(text) && (text === redactErrorText(String(fields.message ?? '')).trim() || text === hintText)) return true
+    return false
+  }
+  const hasValue = (value: ErrorDetailValue, key?: string): boolean => {
     if (value === null) return false
+    if (key === 'ok' && value === false) return false
+    if (key === 'hint' && typeof value === 'string' && normalized.includes(redactErrorText(value).trim())) return false
     if (typeof value === 'string') {
       const text = value.trim()
-      return text !== '' && text !== normalized && !DETAIL_PLACEHOLDERS.has(text)
+      return text !== '' && !matchesVisible(text) && !DETAIL_PLACEHOLDERS.has(text)
     }
-    if (Array.isArray(value)) return value.some(hasValue)
+    if (Array.isArray(value)) return value.some(item => hasValue(item))
     if (typeof value === 'object') {
-      return Object.entries(value).some(([key, entry]) => !(key === 'ok' && entry === false) && hasValue(entry))
+      return Object.entries(value).some(([childKey, entry]) => hasValue(entry, childKey))
     }
     return true
   }
   return hasValue(fields)
+}
+
+export function shouldShowErrorDetails(raw: unknown, fields: ErrorDetails = errorDetails(raw), summary?: string): boolean {
+  if (isBasicSelfExplanatoryError(raw)) return false
+  return hasAdditionalErrorDetails(fields, summary)
 }
