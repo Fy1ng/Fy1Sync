@@ -39,7 +39,7 @@ export function Toasts(): React.ReactNode {
             if (open) next.add(notice.id); else next.delete(notice.id)
             return next
           })} />}</span>
-          <button type="button" aria-label="关闭提示" onClick={() => session.dismissNotice(notice.id)}><Icon name="close" /></button>
+          <button type="button" className="toast-dismiss" aria-label="关闭提示" onClick={() => session.dismissNotice(notice.id)}><Icon name="close" /></button>
         </div>
       ))}
     </div>

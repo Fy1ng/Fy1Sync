@@ -826,6 +826,10 @@ body,
   grid-area: right;
 }
 
+.studio .dock-row[data-fold='three'] .dock-right {
+  flex-wrap: wrap;
+}
+
 .studio .play {
   display: grid;
   place-items: center;
@@ -1401,23 +1405,28 @@ body,
   background: var(--tally);
 }
 
-.studio .toast button {
+.studio .toast .toast-dismiss {
   display: grid;
   place-items: center;
+  flex: none;
   width: 22px;
   height: 22px;
   color: var(--ash);
   border-radius: 50%;
 }
 
-.studio .toast button:hover {
+.studio .toast .toast-dismiss:hover {
   color: var(--chalk);
   background: rgb(255 255 255 / 10%);
 }
 
-.studio .toast button .icon {
+.studio .toast .toast-dismiss .icon {
   width: 13px;
   height: 13px;
+}
+
+.studio .toast .error-details-toggle {
+  white-space: nowrap;
 }
 
 .studio .floating-error {
@@ -2685,6 +2694,7 @@ body,
 
 .studio .quality-pair {
   display: flex;
+  flex: none;
   gap: 4px;
   margin-right: 4px;
 }
@@ -2696,6 +2706,7 @@ body,
 .studio .quality-btn {
   display: inline-flex;
   align-items: baseline;
+  white-space: nowrap;
   gap: 5px;
   height: 28px;
   padding: 0 8px;
