@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { expect, test } from './electron'
 import { fixturesReady, invoke, loadBothFixtures, mediaTimes, openSettings, setPlaying } from './helpers'
 import { toolFilename } from '../electron/toolPlatform'
+import toolsLock from '../packaging/tools-lock.json'
 const fixture = fileURLToPath(new URL(`../.packaging/tools/${toolFilename('yt-dlp')}`, import.meta.url))
 test('工具更新离线回归并保留播放', async ({ page, electronApp }) => {
   test.skip(!existsSync(fixture), 'Run npm run tools:prepare to create the pinned offline executable fixture')
@@ -35,7 +36,7 @@ test('工具更新离线回归并保留播放', async ({ page, electronApp }) =>
   await expect.poll(async () => { const r = await invoke(page, 'getToolsStatus', undefined); return r.ok ? r.value.update.phase : 'ipc-error' }).toBe('ready')
   await expect(update).toBeEnabled()
   const after = await invoke(page, 'getToolsStatus', undefined)
-  expect(after.ok && after.value.update.activeVersion).toBe('2026.10.21')
+  expect(after.ok && after.value.update.activeVersion).toBe(toolsLock.ytdlpVersion)
   await section.getByRole('button', { name: '恢复内置版本' }).click()
   await expect(section.getByRole('status')).toContainText('已恢复选择')
   await configure('network-error')

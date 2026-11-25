@@ -50,6 +50,7 @@ export interface DesktopMethods extends FeatureMethods, EmbeddedLoginMethods, Br
   getToolsStatus: { args: undefined; result: ToolsStatus }
   getAcquisitionDiagnostics: { args: undefined; result: AcquisitionDiagnosticReport }
   updateYtdlp: { args: undefined; result: ToolsStatus }
+  cancelYtdlpUpdate: { args: undefined; result: ToolsStatus }
   restoreYtdlp: { args: { target: 'previous' | 'bundled' }; result: ToolsStatus }
   health: { args: undefined; result: HealthInfo }
   getNetworkPreferences: { args: undefined; result: NetworkPreferenceState }

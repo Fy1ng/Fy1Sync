@@ -74,6 +74,7 @@ export class ApiClient {
   getToolsStatus() { return this.request('getToolsStatus', undefined) }
   getAcquisitionDiagnostics() { return this.request('getAcquisitionDiagnostics', undefined) }
   updateYtdlp() { return this.request('updateYtdlp', undefined) }
+  cancelYtdlpUpdate() { return this.request('cancelYtdlpUpdate', undefined) }
   restoreYtdlp(target: 'previous' | 'bundled') { return this.request('restoreYtdlp', { target }) }
   setDecoderPreferences(mode: DecoderMode) { return this.request('setDecoderPreferences', { mode }) }
 

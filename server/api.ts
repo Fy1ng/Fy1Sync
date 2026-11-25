@@ -366,10 +366,11 @@ export function createDesktopService(deps: DesktopServiceDeps): DesktopService {
             return { ok: true, value: await deps.diagnostics.report() }
           }
           case 'getToolsStatus':
-          case 'updateYtdlp': {
+          case 'updateYtdlp':
+          case 'cancelYtdlpUpdate': {
             if (args !== undefined) return fail('invalid-arguments', '此接口不接受参数')
             if (!deps.tools) return fail('not-available', '工具管理不可用')
-            return { ok: true, value: await (method === 'getToolsStatus' ? deps.tools.status() : deps.tools.update()) }
+            return { ok: true, value: await (method === 'getToolsStatus' ? deps.tools.status() : method === 'updateYtdlp' ? deps.tools.update() : deps.tools.cancelUpdate()) }
           }
           case 'restoreYtdlp': {
             if (!fields(args, ['target']) || (args.target !== 'previous' && args.target !== 'bundled')) return fail('invalid-arguments', '恢复工具参数无效')

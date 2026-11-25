@@ -3468,3 +3468,88 @@ body,
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
 }
+
+.studio .tool-update-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, rgb(255 255 255 / 3.5%), rgb(255 255 255 / 1.5%));
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.studio .tool-update-head,
+.studio .tool-update-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.studio .tool-update-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--chalk);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio .tool-update-pct {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--lock);
+  font-variant-numeric: tabular-nums;
+}
+
+.studio .tool-progress-track {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  background: rgb(255 255 255 / 8%);
+  border-radius: 999px;
+}
+
+.studio .tool-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--lock) 72%, var(--chalk)), var(--lock));
+  border-radius: 999px;
+  box-shadow: 0 0 10px rgb(111 211 168 / 28%);
+  transition: width 240ms var(--ease);
+}
+
+.studio .tool-progress-track.is-indeterminate .tool-progress-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 36%;
+  transition: none;
+  animation: tool-progress-slide 1.35s var(--ease) infinite;
+}
+
+@keyframes tool-progress-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+.studio .tool-update-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.studio .tool-update-speed {
+  color: var(--chalk);
+  opacity: 0.82;
+}
+
+.studio .tool-update-foot > button {
+  flex-shrink: 0;
+}

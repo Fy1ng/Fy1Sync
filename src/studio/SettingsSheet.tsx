@@ -707,19 +707,32 @@ function Decoding(): React.ReactNode {
 
 const SOURCE_NAME = { external: '自定义', managed: '已更新', bundled: '内置', PATH: '系统' } as const
 
+function formatToolBytes(bytes: number): string {
+  if (bytes < 1_048_576) return `${Math.max(0, Math.round(bytes / 1024))} KB`
+  return `${(bytes / 1_048_576).toFixed(1)} MB`
+}
+
+function formatToolSpeed(bytesPerSecond: number): string {
+  if (bytesPerSecond < 1024) return `${Math.round(bytesPerSecond)} B/s`
+  if (bytesPerSecond < 1_048_576) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`
+  return `${(bytesPerSecond / 1_048_576).toFixed(2)} MB/s`
+}
+
 export function Tools(): React.ReactNode {
   const session = useSession()
   const { playbackDiagnostics } = useSessionSnapshot()
   const mounted = useMounted()
   const [status, setStatus] = useRemembered<ToolsStatus | null>('tools-status', null)
-  const [busy, setBusy] = useState(false)
+  const [action, setAction] = useState<'update' | 'restore' | null>(null)
+  const [cancelling, setCancelling] = useState(false)
   const [error, setError, errorDetail] = useErrorState()
   const [loadError, setLoadError, loadErrorDetail] = useErrorState()
   const exportPending = useRef(false)
   const [exporting, setExporting] = useState(false)
   const [exportMessage, setExportMessage] = useState('')
   const [exportError, setExportError, exportErrorDetail] = useErrorState()
-  const running = busy || (!!status && ['checking', 'downloading', 'verifying'].includes(status.update.phase))
+  const updating = action === 'update' || (!!status && ['checking', 'downloading', 'verifying'].includes(status.update.phase))
+  const running = action !== null || updating
   const refresh = async (): Promise<void> => {
     setLoadError('')
     try {
@@ -733,24 +746,46 @@ export function Tools(): React.ReactNode {
   }
   useEffect(() => { void refresh() }, [])
   useEffect(() => {
-    if (!running) return
+    if (!updating) return
     const timer = setInterval(() => {
       void refresh()
-    }, 750)
+    }, 400)
     return () => clearInterval(timer)
-  }, [running, mounted])
+  }, [updating, mounted])
   const act = async (target?: 'previous' | 'bundled'): Promise<void> => {
-    if (busy) return
-    setBusy(true)
+    if (running) return
+    setAction(target ? 'restore' : 'update')
     setError('')
     try {
       const result = target ? await apiClient.restoreYtdlp(target) : await apiClient.updateYtdlp()
       if (!mounted.current) return
       if (result.ok) setStatus(result.value)
       else setError(result)
-    } finally { if (mounted.current) setBusy(false) }
+    } finally { if (mounted.current) setAction(null) }
+  }
+  const cancel = async (): Promise<void> => {
+    if (!updating || cancelling) return
+    setCancelling(true)
+    setError('')
+    try {
+      const result = await apiClient.cancelYtdlpUpdate()
+      if (!mounted.current) return
+      if (result.ok) setStatus(result.value)
+      else setError(result)
+    } catch (caught) {
+      if (mounted.current) setError(displayError(caught, '取消更新失败，请重试'))
+    } finally { if (mounted.current) setCancelling(false) }
   }
   const update = status?.update
+  const determinate = update?.phase === 'verifying' || (update?.phase === 'downloading' && update.totalBytes > 0)
+  const percent = update?.phase === 'verifying'
+    ? 100
+    : update?.phase === 'downloading' && update.totalBytes > 0
+      ? Math.min(100, Math.max(0, Math.floor(update.downloadedBytes * 100 / update.totalBytes)))
+      : undefined
+  const progressTitle = update?.phase === 'downloading'
+    ? (update.downloadedVersion ? `正在下载 yt-dlp ${update.downloadedVersion}` : update.message || '正在下载…')
+    : update?.phase === 'verifying' ? '正在校验 yt-dlp…' : update?.message || '正在检查更新…'
   const exportReport = async (): Promise<void> => {
     if (exportPending.current) return
     exportPending.current = true
@@ -795,10 +830,39 @@ export function Tools(): React.ReactNode {
         <button type="button" className="btn-quiet small" disabled={running || !update?.activeVersion} onClick={() => void act('bundled')}>恢复内置版本</button>
         <button type="button" className="btn-solid small" disabled={running || !status} onClick={() => void act()}>更新 yt-dlp</button>
       </div>
-      {update && update.phase !== 'idle' && (
+      {updating ? (
+        <div className="tool-update-card">
+          <div className="tool-update-head">
+            <span className="tool-update-title" role="status">{progressTitle}</span>
+            {percent !== undefined && <span className="tool-update-pct num">{percent}%</span>}
+          </div>
+          <div
+            className={`tool-progress-track${determinate ? '' : ' is-indeterminate'}`}
+            role="progressbar"
+            aria-label="yt-dlp 更新进度"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percent}
+          >
+            <div className="tool-progress-fill" style={percent !== undefined ? { width: `${percent}%` } : undefined} />
+          </div>
+          <div className="tool-update-foot">
+            <span className="tool-update-stats num muted">
+              {update?.phase === 'downloading' ? (
+                <>
+                  <span>{formatToolBytes(update.downloadedBytes)}{update.totalBytes > 0 ? ` / ${formatToolBytes(update.totalBytes)}` : ''}</span>
+                  {update.bytesPerSecond && update.bytesPerSecond > 0 ? <span className="tool-update-speed">{formatToolSpeed(update.bytesPerSecond)}</span> : null}
+                </>
+              ) : update?.phase === 'verifying' ? '校验签名与可执行版本' : '正在连接 GitHub 官方发布源'}
+            </span>
+            <button type="button" className="btn-quiet small" disabled={cancelling} onClick={() => void cancel()}>
+              {cancelling ? '正在取消…' : '取消'}
+            </button>
+          </div>
+        </div>
+      ) : update && update.phase !== 'idle' && (
         <p className="muted" role="status">
           {update.phase === 'error' ? <ErrorText error={update.errorDetail ?? { message: update.message }} message={update.message} /> : update.message}
-          {update.phase === 'downloading' && update.totalBytes > 0 ? ` ${Math.floor(update.downloadedBytes * 100 / update.totalBytes)}%` : ''}
         </p>
       )}
       {loadError && <ReadError error={loadError} detail={loadErrorDetail} onRetry={() => void refresh()} />}

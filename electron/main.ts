@@ -44,7 +44,7 @@ import { YtDlpRunner, type YtDlpDiagnostic } from './ytdlp'
 import { AcquisitionDiagnostics } from './acquisitionDiagnostics'
 import { locateTool, type ToolSettings } from './toolLocator'
 import { DecoderPreferences } from './decoderPreferences'
-import { ManagedYtdlp } from './toolUpdater'
+import { createOfficialToolTransport, ManagedYtdlp } from './toolUpdater'
 import { ytdlpReleaseAsset } from './toolPlatform'
 import { DesktopTools } from './toolsService'
 import toolsLock from '../packaging/tools-lock.json'
@@ -260,8 +260,9 @@ async function start(): Promise<void> {
     session.defaultSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (_details, callback) => callback({ cancel: true }))
   }
   let fixtureRequest: ((url: string) => Promise<Response>) | undefined
+  const toolUpdateTransport = createOfficialToolTransport({ network: () => network.context() })
   const managedYtdlp = new ManagedYtdlp(userDataDir, { baselineVersion: app.isPackaged ? toolsLock.ytdlpVersion : undefined,
-    transport: (url, init) => fixtureRequest ? fixtureRequest(url) : globalThis.fetch(url, init),
+    transport: (url, init) => fixtureRequest ? fixtureRequest(url) : toolUpdateTransport(url, init),
   })
   mkdirSync(userDataDir, { recursive: true })
   let douyuAccounts: DouyuAccountManager | undefined

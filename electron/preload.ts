@@ -21,7 +21,7 @@ const methods = new Set<DesktopMethod>([
   'resolveDouyuRoom', 'health', 'resolve', 'switchQuality', 'stopBuffer', 'reconnectDanmaku', 'login', 'loginStatus', 'logout',
   'getNetworkPreferences', 'setNetworkPreferences',
   'getDecoderPreferences', 'setDecoderPreferences',
-  'getToolsStatus', 'getAcquisitionDiagnostics', 'updateYtdlp', 'restoreYtdlp',
+  'getToolsStatus', 'getAcquisitionDiagnostics', 'updateYtdlp', 'cancelYtdlpUpdate', 'restoreYtdlp',
 ])
 let nextSubscription = 0
 

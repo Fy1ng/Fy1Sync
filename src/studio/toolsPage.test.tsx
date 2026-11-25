@@ -291,4 +291,31 @@ describe('取流工具', () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('updateYtdlp', undefined))
     expect(screen.getByRole('button', { name: '导出诊断报告' })).toBeEnabled()
   })
+
+  it('shows progress bar, size, speed and cancel button while downloading yt-dlp', async () => {
+    const invoke = stub('bundled')
+    let cancelled = false
+    invoke.mockImplementation(async method => {
+      if (method === 'cancelYtdlpUpdate') {
+        cancelled = true
+        return { ok: true, value: { ...tools(), update: { phase: 'cancelled', message: '已取消更新，已保留原版本', downloadedBytes: 0, totalBytes: 0 } } }
+      }
+      return { ok: true, value: { ...tools(), update: cancelled
+        ? { phase: 'cancelled', message: '已取消更新，已保留原版本', downloadedBytes: 0, totalBytes: 0 }
+        : { phase: 'downloading', message: '正在下载并校验…', downloadedVersion: '2026.11.23', downloadedBytes: 5 * 1_048_576, totalBytes: 20 * 1_048_576, bytesPerSecond: 2.5 * 1_048_576 } } }
+    })
+    render(<Tools />)
+    const bar = await screen.findByRole('progressbar', { name: 'yt-dlp 更新进度' })
+    expect(bar).toHaveAttribute('aria-valuenow', '25')
+    expect(screen.getByText('正在下载 yt-dlp 2026.11.23')).toBeInTheDocument()
+    expect(screen.getByText('25%')).toBeInTheDocument()
+    expect(screen.getByText('5.0 MB / 20.0 MB')).toBeInTheDocument()
+    expect(screen.getByText('2.50 MB/s')).toBeInTheDocument()
+    const cancel = screen.getByRole('button', { name: '取消' })
+    expect(cancel).toBeEnabled()
+    fireEvent.click(cancel)
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('cancelYtdlpUpdate', undefined))
+    expect(await screen.findByText('已取消更新，已保留原版本')).toBeInTheDocument()
+    expect(screen.queryByRole('progressbar')).toBeNull()
+  })
 })

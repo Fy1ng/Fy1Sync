@@ -16,6 +16,7 @@ export interface ToolsStatus {
 export interface ToolsService {
   status(): Promise<ToolsStatus>
   update(): Promise<ToolsStatus>
+  cancelUpdate(): Promise<ToolsStatus>
   restore(target: 'previous' | 'bundled'): Promise<ToolsStatus>
 }
 export class DesktopTools implements ToolsService {
@@ -46,5 +47,6 @@ export class DesktopTools implements ToolsService {
       update, externalYtdlp, fixturesAvailable: this.fixturesAvailable, bundledAvailable: !!this.context.bundledDir }
   }
   async update(): Promise<ToolsStatus> { await this.updater.update(); return this.status() }
+  async cancelUpdate(): Promise<ToolsStatus> { await this.updater.cancel(); return this.status() }
   async restore(target: 'previous' | 'bundled'): Promise<ToolsStatus> { await this.updater.restore(target); return this.status() }
 }

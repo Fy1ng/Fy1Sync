@@ -4,13 +4,13 @@
   "minimumSystemVersion": "13.0",
   "ffmpegBuild": "packaging/ffmpeg/build-lock.json",
   "ffmpegRuntimeOrigin": "native-local-build",
-  "ytdlpVersion": "2026.10.21",
+  "ytdlpVersion": "2026.11.23",
   "assets": [
     {
       "name": "yt-dlp_macos",
-      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.21/yt-dlp_macos",
-      "sha256": "7a6fe71d7d680f1fb0ac18d4949873d77db2859e90017c0f44bd94b23be4ee40",
-      "size": 37180736
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.23/yt-dlp_macos",
+      "sha256": "57654854886d0398a798895aadf5173e2749fbb5e249b9f3728022ab376e11fb",
+      "size": 37478576
     }
   ]
 }

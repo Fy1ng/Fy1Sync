@@ -2,7 +2,7 @@
   "schema": 1,
   "target": "win32-x64",
   "ffmpegVersion": "n8.1.3-23-g5c4f5744cd-fy1sync.1",
-  "ytdlpVersion": "2026.10.21",
+  "ytdlpVersion": "2026.11.23",
   "providerVersion": "2.0.2",
   "assets": [
     {
@@ -25,15 +25,15 @@
     },
     {
       "name": "yt-dlp.exe",
-      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.21/yt-dlp.exe",
-      "sha256": "33121d192d706e62f684a06f80918e3f3a8ba52ac3a65213b6951c39c7d9f555",
-      "size": 17880111
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.23/yt-dlp.exe",
+      "sha256": "622ed48023cac1daa52a3bf3a6ac38f03514de214b5f0fa069389fd0f6d17e5c",
+      "size": 23627865
     },
     {
       "name": "yt-dlp-source.tar.gz",
-      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.21/yt-dlp.tar.gz",
-      "sha256": "5f1e419f76e49c996061511ef9eacce50d4aa4959c34480539562e9e1295708d",
-      "size": 6028705
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.23/yt-dlp.tar.gz",
+      "sha256": "8f757547e94c723415fd82bb5da857d8e1b24be2e34218890dfaac134907723e",
+      "size": 6020329
     },
     {
       "name": "provider-source.tar.gz",

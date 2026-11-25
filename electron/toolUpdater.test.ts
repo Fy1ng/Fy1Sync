@@ -4,7 +4,7 @@ import { access, chmod, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm,
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ManagedYtdlp, officialDownload, parseManagedManifest, releaseChecksum } from './toolUpdater'
+import { createOfficialToolTransport, ManagedYtdlp, officialDownload, parseManagedManifest, releaseChecksum } from './toolUpdater'
 import { ytdlpReleaseAsset } from './toolPlatform'
 
 vi.mock('node:fs/promises', async importOriginal => {
@@ -341,6 +341,92 @@ describe('official bounded downloads', () => {
       await vi.advanceTimersByTimeAsync(60_001)
       await assertion
     } finally { vi.useRealTimers() }
+  })
+  it('keeps an actively streaming download alive past 60s when chunks arrive within the idle window', async () => {
+    vi.useFakeTimers()
+    try {
+      const received: Buffer[] = []
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          controller.enqueue(new Uint8Array([1, 2]))
+          await new Promise(resolve => setTimeout(resolve, 45_000))
+          controller.enqueue(new Uint8Array([3, 4]))
+          await new Promise(resolve => setTimeout(resolve, 45_000))
+          controller.enqueue(new Uint8Array([5, 6]))
+          controller.close()
+        },
+      })
+      const pending = officialDownload('https://github.com/file', 10, async chunk => { received.push(chunk) }, async () => new Response(stream, { status: 200, headers: { 'content-length': '6' } }))
+      await vi.advanceTimersByTimeAsync(95_000)
+      await pending
+      expect(Buffer.concat(received)).toEqual(Buffer.from([1, 2, 3, 4, 5, 6]))
+    } finally { vi.useRealTimers() }
+  })
+  it('routes official GitHub downloads and redirects through the configured system proxy', async () => {
+    const routes: string[] = []
+    const dispatchers: unknown[] = []
+    const transport = createOfficialToolTransport({
+      network: () => ({
+        route: async target => {
+          routes.push(target)
+          return { kind: 'http', proxyUrl: 'http://127.0.0.1:7890' }
+        },
+      }),
+      fetchImpl: async (input, init) => {
+        dispatchers.push((init as { dispatcher?: unknown } | undefined)?.dispatcher)
+        const target = String(input)
+        if (target === 'https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.23/yt-dlp.exe') {
+          return new Response(null, { status: 302, headers: { location: 'https://release-assets.githubusercontent.com/yt-dlp.exe' } })
+        }
+        return new Response('ok', { status: 200, headers: { 'content-length': '2' } })
+      },
+    })
+    const received: Buffer[] = []
+    await officialDownload('https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.23/yt-dlp.exe', 10, async chunk => { received.push(chunk) }, transport)
+    expect(Buffer.concat(received).toString()).toBe('ok')
+    expect(routes).toEqual([
+      'https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.23/yt-dlp.exe',
+      'https://release-assets.githubusercontent.com/yt-dlp.exe',
+    ])
+    expect(dispatchers).toHaveLength(2)
+    expect(dispatchers.every(Boolean)).toBe(true)
+  })
+  it('cancels an active download, cleans temporary files and preserves the previous version', async () => {
+    const f = await fixture()
+    const previous = await f.updater.update()
+    expect(previous.phase).toBe('ready')
+    const activeBefore = await f.updater.activePath()
+    let releaseSecond!: () => void
+    const started = new Promise<void>(resolve => { releaseSecond = resolve })
+    const nextVersion = '2026.11.23'
+    const payload = Buffer.alloc(1024 * 64, 7)
+    const transport = vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith('/releases/latest')) {
+        return Response.json({ tag_name: nextVersion, draft: false, prerelease: false, assets: [
+          { name: 'yt-dlp.exe', size: payload.length, browser_download_url: `https://github.com/yt-dlp/yt-dlp/releases/download/${nextVersion}/yt-dlp.exe` },
+          { name: 'SHA2-256SUMS', size: 128, browser_download_url: `https://github.com/yt-dlp/yt-dlp/releases/download/${nextVersion}/SHA2-256SUMS` },
+        ] })
+      }
+      if (url.endsWith('/SHA2-256SUMS')) return new Response(`${createHash('sha256').update(payload).digest('hex')}  yt-dlp.exe\n`)
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(payload.subarray(0, 4096))
+          releaseSecond()
+          init.signal?.addEventListener('abort', () => { try { controller.error(new Error('aborted')) } catch {} }, { once: true })
+        },
+      })
+      return new Response(stream, { status: 200, headers: { 'content-length': String(payload.length) } })
+    })
+    const updater = new ManagedYtdlp(f.root, { ...f.options, transport, verify: async () => nextVersion })
+    const running = updater.update()
+    await started
+    const cancelled = await updater.cancel()
+    const finished = await running
+    expect(cancelled.phase).toBe('cancelled')
+    expect(finished.phase).toBe('cancelled')
+    expect(cancelled.message).toContain('取消')
+    expect(cancelled.errorDetail).toBeUndefined()
+    expect(await updater.activePath()).toBe(activeBefore)
   })
   it.each(['yt-dlp.exe', 'yt-dlp_macos', 'yt-dlp_x86.exe', 'yt-dlp_arm64.exe'] as const)('requires exactly one strictly named checksum for %s', asset => {
     const hash = 'a'.repeat(64)
