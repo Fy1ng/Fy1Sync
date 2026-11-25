@@ -205,6 +205,8 @@ describe('the studio', () => {
         session.flush()
       })
       expect(screen.getByRole('button', { name: '自动对齐' })).toBeEnabled()
+      expect(screen.queryByText('适配中')).toBeNull()
+      expect(screen.queryByText(/对不准时可手动微调/)).toBeNull()
       fireEvent.click(screen.getByRole('button', { name: '自动对齐' }))
       expect(sync).toHaveBeenCalledTimes(1)
     } finally { subscribe.mockRestore() }

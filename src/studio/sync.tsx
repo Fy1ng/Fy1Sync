@@ -179,9 +179,6 @@ function OffsetEditor({ value, onDone }: { value: number; onDone: () => void }):
   )
 }
 
-/** Event-specific HUD coverage and cross-resolution matching are still being adapted. */
-const AUTO_ALIGN_ADAPTING = true
-
 export function startAutoAlign(session: Session): void {
   if (!session.snapshot.autoSync.ready) return
   if (session.settings.recognitionMode === 'basic' && session.settings.basicRecognitionPanelVisible && !session.settings.sidebarVisible) session.updateSettings({ sidebarVisible: true })
@@ -210,7 +207,6 @@ export function AutoAlign(): React.ReactNode {
         <button type="button" className="align-main" disabled={busy || !bothReady} onClick={() => startAutoAlign(session)}
           title={bothReady ? shortcutTitle('自动对齐', settings.shortcuts.autoAlign) : '等待两路播放和缓冲就绪'}>
           {bothReady ? '自动对齐' : '准备中'}
-          {bothReady && AUTO_ALIGN_ADAPTING && <span className="align-beta" aria-hidden="true">适配中</span>}
         </button>
       )}
       <button type="button" className="align-more" {...menu.trigger} aria-label="对齐选项"
@@ -218,9 +214,6 @@ export function AutoAlign(): React.ReactNode {
         <Icon name="chevron" />
       </button>
       <Popover {...menu.popover} className="align-menu" label="对齐选项">
-        {AUTO_ALIGN_ADAPTING && (
-          <p className="align-testing">对不准时可手动微调，或直接点击秒数输入</p>
-        )}
         <Switch label="比赛中保持对齐" detail={autoSync.nextRunInSeconds !== null ? `${Math.max(0, Math.round(autoSync.nextRunInSeconds))} 秒后再次对齐` : undefined}
           checked={settings.autoSyncEnabled} onChange={(checked) => session.setAutoSyncEnabled(checked)} />
         {settings.autoSyncEnabled && (
