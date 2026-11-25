@@ -6,19 +6,30 @@
  * of the existing element preserves the original video for sync and recognition.
  * WebGPU optionally upscales that crop; the fallback retains the original 2D drawing.
  *
- * Dragging the body moves the window; the corner handle resizes it (height follows the
- * crop's aspect). A move is a transform written straight to the node, so the compositor
- * carries it and React renders once, on release; a resize changes the canvas size and goes
- * through React, at most once a frame. Arrow keys move it, Shift+arrows by more. Position and size are stored as
- * fractions of the stage so fullscreen and window resizes keep it in the same place.
+ * By default the visual picture sits beneath the scrolling danmaku layer while the 8 edge
+ * and corner resize handles sit above it:
+ * - Edges and corners always resize cleanly without being interrupted by passing danmaku.
+ * - Hovering a danmaku over the camera body still pauses it and opens its action menu.
+ * - Pressing and dragging anywhere on the camera body — even starting right on a danmaku
+ *   text — releases the danmaku and drags the camera window smoothly.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useSession } from '../app/SessionContext'
+import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { useAnimationFrame } from '../app/hooks'
 import type { CameraConfig, CameraWindow } from '../app/camera'
 import { normalizeWindow } from '../app/camera'
+import {
+  clampAspectWindow,
+  DRAG_THRESHOLD_PX,
+  RELEASE_DANMAKU_HOVER_EVENT,
+  RESIZE_HANDLES,
+  resizeAspectWindow,
+  type ResizeHandle,
+} from './floatingWindow'
 import { useCameraUpscale, type CameraUpscaleState } from './useCameraUpscale'
+
+const CAMERA_WIDTH_BOUNDS = { min: 0.08, max: 0.6 } as const
 
 interface Props {
   config: CameraConfig
@@ -31,21 +42,35 @@ interface Props {
 
 export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, onUpscaleState }: Props): React.ReactNode {
   const session = useSession()
+  const { settings } = useSessionSnapshot()
+  const belowDanmaku = settings.danmaku.danmakuOverCamera
   const canvas = useRef<HTMLCanvasElement | null>(null)
   const [stage, setStage] = useState({ width: 0, height: 0 })
   const [draft, setDraft] = useState<CameraWindow | null>(null)
   const box = useRef<HTMLDivElement | null>(null)
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  const handlesRef = useRef<HTMLDivElement | null>(null)
   const drag = useRef<{
-    mode: 'move' | 'resize'; x: number; y: number; origin: CameraWindow
+    mode: 'move' | ResizeHandle
+    pointerId: number
+    x: number
+    y: number
+    origin: CameraWindow
     /** Where the window would land now; committed on release. */
     next: CameraWindow | null
     frame: number | null
   } | null>(null)
 
+  const clearStageDragging = useCallback(() => {
+    stageRef.current?.removeAttribute('data-window-dragging')
+    box.current?.removeAttribute('data-dragging')
+  }, [stageRef])
+
   useEffect(() => () => {
     if (drag.current?.frame != null) cancelAnimationFrame(drag.current.frame)
     drag.current = null
-  }, [])
+    clearStageDragging()
+  }, [clearStageDragging])
 
   useEffect(() => {
     const node = stageRef.current
@@ -93,44 +118,165 @@ export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, on
     target.getContext('2d')?.drawImage(video, sx, sy, sw, sh, 0, 0, width, height)
   }, config.enabled && mode !== 'webgpu')
 
-  const begin = (mode: 'move' | 'resize') => (event: React.PointerEvent<HTMLElement>): void => {
-    if (event.button !== 0) return
-    event.preventDefault()
-    event.stopPropagation()
-    event.currentTarget.setPointerCapture?.(event.pointerId)
-    drag.current = { mode, x: event.clientX, y: event.clientY, origin: win, next: null, frame: null }
+  const applyTranslate = (tx: number, ty: number): void => {
+    const value = tx === 0 && ty === 0 ? '' : `translate(${tx}px, ${ty}px)`
+    if (bodyRef.current) bodyRef.current.style.transform = value
+    if (handlesRef.current) handlesRef.current.style.transform = value
   }
-  const move = (event: React.PointerEvent<HTMLElement>): void => {
+
+  const stepGesture = useCallback((clientX: number, clientY: number): void => {
     const state = drag.current
-    if (!state || stage.width <= 0) return
-    const dx = (event.clientX - state.x) / stage.width
-    const dy = (event.clientY - state.y) / stage.height
-    const next = clampWindow(state.mode === 'move'
-      ? { ...state.origin, x: state.origin.x + dx, y: state.origin.y + dy }
-      : { ...state.origin, width: state.origin.width + dx }, stage, screenAspect)
+    if (!state || stage.width <= 0 || stage.height <= 0) return
+    const dxPx = clientX - state.x
+    const dyPx = clientY - state.y
+    const next = state.mode === 'move'
+      ? clampWindow({ ...state.origin, x: state.origin.x + dxPx / stage.width, y: state.origin.y + dyPx / stage.height }, stage, screenAspect)
+      : clampWindow(resizeAspectWindow(state.origin, state.mode, dxPx, dyPx, stage, screenAspect, CAMERA_WIDTH_BOUNDS), stage, screenAspect)
     state.next = next
     if (state.mode === 'move') {
-      const node = box.current
-      if (node) node.style.transform = `translate(${(next.x - state.origin.x) * stage.width}px, ${(next.y - state.origin.y) * stage.height}px)`
+      applyTranslate((next.x - state.origin.x) * stage.width, (next.y - state.origin.y) * stage.height)
       return
     }
     state.frame ??= requestAnimationFrame(() => {
       state.frame = null
       if (drag.current === state && state.next) setDraft(state.next)
     })
-  }
+  }, [stage, screenAspect])
+
   const end = useCallback((): void => {
     const state = drag.current
     if (!state) return
     drag.current = null
     if (state.frame !== null) cancelAnimationFrame(state.frame)
     // Left and top take over from the transform before the next paint, so nothing jumps.
-    if (box.current) box.current.style.transform = ''
+    applyTranslate(0, 0)
+    clearStageDragging()
     setDraft(null)
     if (state.next) onWindow(state.next)
-  }, [onWindow])
+  }, [clearStageDragging, onWindow])
+
+  const markDragging = useCallback((): void => {
+    stageRef.current?.setAttribute('data-window-dragging', 'true')
+    box.current?.setAttribute('data-dragging', 'true')
+    window.dispatchEvent(new Event(RELEASE_DANMAKU_HOVER_EVENT))
+  }, [stageRef])
+
+  const begin = (gestureMode: 'move' | ResizeHandle) => (event: React.PointerEvent<HTMLElement>): void => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    try { event.currentTarget.setPointerCapture?.(event.pointerId) } catch { /* Synthetic pointer in tests. */ }
+    markDragging()
+    drag.current = { mode: gestureMode, pointerId: event.pointerId, x: event.clientX, y: event.clientY, origin: win, next: null, frame: null }
+  }
+
+  const move = (event: React.PointerEvent<HTMLElement>): void => {
+    if (!drag.current || drag.current.pointerId !== event.pointerId) return
+    stepGesture(event.clientX, event.clientY)
+  }
+
+  // Keep hover affordance steady and hand off press-and-drag when a scrolling danmaku sits over the camera body.
+  const latestWin = useRef(win)
+  latestWin.current = win
+  useEffect(() => {
+    const stageNode = stageRef.current
+    if (!stageNode || !config.enabled || stage.width <= 0) return
+
+    let pending: { pointerId: number; x: number; y: number; origin: CameraWindow } | null = null
+
+    const insideCamera = (clientX: number, clientY: number): boolean => {
+      const rect = box.current?.getBoundingClientRect()
+      return !!rect && rect.width > 0 && rect.height > 0
+        && clientX >= rect.left && clientX <= rect.right
+        && clientY >= rect.top && clientY <= rect.bottom
+    }
+
+    const syncPointerInside = (event: PointerEvent): void => {
+      const overlayNode = box.current
+      if (!overlayNode) return
+      const target = event.target
+      const overHigherWindow = target instanceof Element && target.closest('.pip, .extra-streams, .dm-menu') !== null
+      if (!overHigherWindow && insideCamera(event.clientX, event.clientY)) {
+        overlayNode.setAttribute('data-pointer-inside', 'true')
+      } else {
+        overlayNode.removeAttribute('data-pointer-inside')
+      }
+    }
+
+    const clearPointerInside = (): void => {
+      box.current?.removeAttribute('data-pointer-inside')
+    }
+
+    const onWindowMove = (event: PointerEvent): void => {
+      if (pending && event.pointerId === pending.pointerId) {
+        if (Math.hypot(event.clientX - pending.x, event.clientY - pending.y) < DRAG_THRESHOLD_PX) return
+        const started = pending
+        pending = null
+        markDragging()
+        try { bodyRef.current?.setPointerCapture?.(event.pointerId) } catch { /* Fallback window listeners stay active. */ }
+        drag.current = { mode: 'move', pointerId: event.pointerId, x: started.x, y: started.y, origin: started.origin, next: null, frame: null }
+        stepGesture(event.clientX, event.clientY)
+        return
+      }
+      if (drag.current && drag.current.pointerId === event.pointerId) {
+        stepGesture(event.clientX, event.clientY)
+      }
+    }
+
+    const onWindowEnd = (event: PointerEvent): void => {
+      if (pending && event.pointerId === pending.pointerId) {
+        pending = null
+      }
+      if (drag.current && drag.current.pointerId === event.pointerId) {
+        end()
+      }
+    }
+
+    const onStagePointerDown = (event: PointerEvent): void => {
+      if (!belowDanmaku || event.button !== 0 || drag.current) return
+      const target = event.target
+      if (!(target instanceof Element) || !target.closest('.danmaku-item') || target.closest('.dm-menu')) return
+      if (!insideCamera(event.clientX, event.clientY)) return
+      pending = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, origin: latestWin.current }
+    }
+
+    stageNode.addEventListener('pointermove', syncPointerInside)
+    stageNode.addEventListener('pointerleave', clearPointerInside)
+    stageNode.addEventListener('pointerdown', onStagePointerDown)
+    window.addEventListener('pointermove', onWindowMove)
+    window.addEventListener('pointerup', onWindowEnd)
+    window.addEventListener('pointercancel', onWindowEnd)
+    return () => {
+      pending = null
+      clearPointerInside()
+      stageNode.removeEventListener('pointermove', syncPointerInside)
+      stageNode.removeEventListener('pointerleave', clearPointerInside)
+      stageNode.removeEventListener('pointerdown', onStagePointerDown)
+      window.removeEventListener('pointermove', onWindowMove)
+      window.removeEventListener('pointerup', onWindowEnd)
+      window.removeEventListener('pointercancel', onWindowEnd)
+    }
+  }, [belowDanmaku, config.enabled, end, markDragging, stage.width, stageRef, stepGesture])
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === '+' || event.key === '=' || event.key === '-' || event.key === '_') {
+      const grow = event.key === '+' || event.key === '='
+      const step = event.shiftKey ? 0.04 : 0.015
+      event.preventDefault()
+      event.stopPropagation()
+      onWindow(clampWindow({ ...win, width: win.width + (grow ? step : -step) }, stage, screenAspect))
+      return
+    }
+    if (event.altKey) {
+      const step = event.shiftKey ? 0.04 : 0.015
+      const widthDelta = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? step
+        : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -step : 0
+      if (!widthDelta) return
+      event.preventDefault()
+      event.stopPropagation()
+      onWindow(clampWindow({ ...win, width: win.width + widthDelta }, stage, screenAspect))
+      return
+    }
     const step = event.shiftKey ? 0.05 : 0.01
     const delta: Record<string, [number, number]> = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }
     const d = delta[event.key]
@@ -141,41 +287,57 @@ export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, on
   }
 
   if (!config.enabled || stage.width <= 0) return null
+  const innerRadius = Math.max(0, win.radius - win.border)
   return (
     <div
       ref={box}
       className="camera-overlay"
+      data-below-danmaku={belowDanmaku || undefined}
       data-upscale-mode={mode}
       data-upscale-tier={tier}
       data-upscale-reason={reason}
       role="group"
-      aria-label="主播摄像头小窗，拖动移动，右下角缩放，方向键微调"
+      aria-label="主播摄像头小窗，拖动移动，四边或四角缩放，方向键微调"
       tabIndex={0}
       style={{
         left: `${win.x * stage.width}px`,
         top: `${win.y * stage.height}px`,
         width: `${widthPx}px`,
         height: `${heightPx}px`,
-        borderRadius: `${win.radius}px`,
-        borderWidth: `${win.border}px`,
       }}
-      onPointerDown={begin('move')}
-      onPointerMove={move}
-      onPointerUp={end}
-      onPointerCancel={end}
       onKeyDown={onKeyDown}
     >
-      <canvas ref={canvas} className="camera-canvas" style={{ visibility: mode === 'webgpu' ? 'hidden' : undefined, borderRadius: `${Math.max(0, win.radius - win.border)}px` }} />
-      {upscale.active && <canvas key={upscale.canvasKey} ref={upscale.canvas} className="camera-canvas camera-canvas-gpu"
-        style={{ visibility: mode === 'webgpu' ? undefined : 'hidden', borderRadius: `${Math.max(0, win.radius - win.border)}px` }} />}
-      <span
-        className="camera-resize"
-        aria-hidden="true"
-        onPointerDown={begin('resize')}
+      <div
+        ref={bodyRef}
+        className="camera-body"
+        style={{
+          borderRadius: `${win.radius}px`,
+          borderWidth: `${win.border}px`,
+        }}
+        onPointerDown={begin('move')}
         onPointerMove={move}
         onPointerUp={end}
         onPointerCancel={end}
-      />
+        onLostPointerCapture={end}
+      >
+        <canvas ref={canvas} className="camera-canvas" style={{ visibility: mode === 'webgpu' ? 'hidden' : undefined, borderRadius: `${innerRadius}px` }} />
+        {upscale.active && <canvas key={upscale.canvasKey} ref={upscale.canvas} className="camera-canvas camera-canvas-gpu"
+          style={{ visibility: mode === 'webgpu' ? undefined : 'hidden', borderRadius: `${innerRadius}px` }} />}
+      </div>
+      <div ref={handlesRef} className="camera-handles" aria-hidden="true">
+        {RESIZE_HANDLES.map((handle) => (
+          <span
+            key={handle}
+            className={`camera-handle camera-handle-${handle}${handle === 'se' ? ' camera-resize' : ''}`}
+            data-handle={handle}
+            onPointerDown={begin(handle)}
+            onPointerMove={move}
+            onPointerUp={end}
+            onPointerCancel={end}
+            onLostPointerCapture={end}
+          />
+        ))}
+      </div>
     </div>
   )
 }
@@ -183,15 +345,5 @@ export function CameraOverlay({ config, onWindow, stageRef, fitStage = false, on
 /** Keep the whole window on the stage. */
 export function clampWindow(win: CameraWindow, stage: { width: number; height: number }, screenAspect: number): CameraWindow {
   const next = normalizeWindow(win)
-  if (stage.width <= 0 || stage.height <= 0) return next
-  const heightFraction = (next.width * stage.width / screenAspect) / stage.height
-  // A very tall crop can be taller than the stage at the minimum width; shrink to fit.
-  const width = heightFraction > 0.95 ? next.width * (0.95 / heightFraction) : next.width
-  const h = Math.min(0.95, heightFraction)
-  return {
-    ...next,
-    width,
-    x: Math.min(Math.max(0, next.x), Math.max(0, 1 - width)),
-    y: Math.min(Math.max(0, next.y), Math.max(0, 1 - h)),
-  }
+  return clampAspectWindow(next, stage, screenAspect, CAMERA_WIDTH_BOUNDS)
 }

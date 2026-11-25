@@ -25,6 +25,7 @@ import { useDanmakuActions } from './danmakuActions'
 import { ScrollingLayer, type LayerEntry, type LayerItem } from './danmakuLayer'
 import { isReadOnlyDanmakuPlatform, isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
 import { fillBilibiliMessage } from './BilibiliMessage'
+import { RELEASE_DANMAKU_HOVER_EVENT } from '../ui/floatingWindow'
 
 type ActiveItem = LayerItem<DanmakuMessage>
 
@@ -140,6 +141,10 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
   useEffect(() => { if (!danmaku.enabled) flush() }, [danmaku.enabled, flush])
   useEffect(() => { flush() }, [snapshot.danmaku.room, flush])
   useEffect(() => flush, [flush])
+  useEffect(() => {
+    window.addEventListener(RELEASE_DANMAKU_HOVER_EVENT, release)
+    return () => window.removeEventListener(RELEASE_DANMAKU_HOVER_EVENT, release)
+  }, [release])
 
   const entryFor = (message: DanmakuMessage): LayerEntry<DanmakuMessage> => {
     const settings = settingsRef.current
@@ -183,6 +188,7 @@ export function DanmakuStage({ onReply }: { onReply: () => void }): React.ReactN
     event.clientX - (hostRef.current?.getBoundingClientRect().left ?? 0)
 
   const onPointerOver = (event: React.PointerEvent): void => {
+    if (event.buttons !== 0 || hostRef.current?.closest('[data-window-dragging]')) return
     const item = itemAt(event.target)
     if (!item) return
     cancelLeave()

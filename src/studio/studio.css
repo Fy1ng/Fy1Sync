@@ -771,10 +771,16 @@ body,
   aspect-ratio: 16 / 9;
   border-radius: var(--r);
   box-shadow: 0 12px 36px rgb(0 0 0 / 60%);
+  user-select: none;
+  touch-action: none;
   transition: bottom 220ms var(--ease);
 }
 
-.studio .theater[data-chrome='off']:not(:has(.pop[data-open])) .pip {
+.studio .pip[data-placed='true'] {
+  transition: none;
+}
+
+.studio .theater[data-chrome='off']:not(:has(.pop[data-open])) .pip:not([data-placed='true']) {
   bottom: 16px;
 }
 
@@ -783,8 +789,19 @@ body,
   inset: 0;
   overflow: hidden;
   background: #000;
+  border: 1px solid var(--line-2);
   border-radius: inherit;
   outline-offset: 3px;
+  touch-action: none;
+  transition: border-color 140ms var(--ease);
+}
+
+.studio .pip:is(:hover, :focus-within, [data-dragging='true']) .pip-swap {
+  border-color: rgb(255 255 255 / 45%);
+}
+
+.studio .pip[data-dragging='true'] .pip-swap {
+  cursor: grabbing;
 }
 
 .studio .pip-mount {
@@ -813,12 +830,16 @@ body,
   position: absolute;
   top: 6px;
   right: 6px;
+  z-index: 9;
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
-  background: rgb(0 0 0 / 60%);
+  width: 28px;
+  height: 28px;
+  background: var(--smoke-deep);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--line-2);
   border-radius: 50%;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 45%);
   opacity: 0;
 }
 
@@ -827,9 +848,23 @@ body,
   height: 14px;
 }
 
+.studio .theater[data-chrome='off']:not(:has(.pop[data-open])) .pip:not(:hover):not(:focus-within) .pip-hide {
+  pointer-events: none;
+}
+
+.studio .theater[data-chrome='on'] .pip-hide {
+  opacity: 0.78;
+}
+
 .studio .pip:hover .pip-hide,
+.studio .pip-hide:hover,
 .studio .pip-hide:focus-visible {
   opacity: 1;
+}
+
+.studio .pip-hide:hover {
+  background: rgb(42 42 46 / 95%);
+  border-color: rgb(255 255 255 / 32%);
 }
 
 /* ---------- dock ---------- */
@@ -2888,9 +2923,16 @@ body,
 
 .studio .camera-menu {
   margin: 10px 0;
-  width: 180px;
+  width: 224px;
   gap: 0;
   padding: 6px;
+}
+
+.studio .camera-options {
+  display: grid;
+  gap: 10px;
+  padding: 8px;
+  border-top: 1px solid var(--line);
 }
 
 .studio .camera-upscale {
@@ -3104,6 +3146,10 @@ body,
 .studio .danmaku-stage .danmaku-item {
   pointer-events: auto;
   cursor: default;
+}
+
+.studio [data-window-dragging] .danmaku-stage .danmaku-item {
+  pointer-events: none;
 }
 
 .studio .danmaku-stage .danmaku-item.is-held {

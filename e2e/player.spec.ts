@@ -324,7 +324,7 @@ test.describe('片源画质和摄像头入口', () => {
     expect(roughW).toBeGreaterThan(300)
     expect(roughH).toBeGreaterThan(270)
     await dialog.getByRole('button', { name: '贴边', exact: true }).click()
-    await expect(dialog.getByRole('status')).toContainText('四条边均已贴合', { timeout: 15_000 })
+    await expect(dialog.getByRole('status')).toContainText('已贴边，确认后可保存', { timeout: 15_000 })
 
     // The tightened box, read back off the window's size label (video pixels).
     const size = await dialog.locator('.roi-size').textContent()
@@ -340,7 +340,7 @@ test.describe('片源画质和摄像头入口', () => {
     await revealOverlay(page)
     await page.locator('.dock').getByRole('button', { name: '主播摄像头', exact: true }).click()
     await expect(page.getByRole('dialog', { name: '主播摄像头', exact: true }).getByRole('button', { name: '隐藏摄像头小窗', exact: true })).toBeVisible()
-    const upscale = page.getByRole('radiogroup', { name: '摄像头超分', exact: true })
+    const upscale = page.getByRole('radiogroup', { name: '小窗画质增强', exact: true })
     if (await upscale.count()) await setCheckedByLabel(upscale.getByRole('radio', { name: '关', exact: true }))
     await page.keyboard.press('Escape')
     await expect(overlay.locator('canvas')).toHaveCount(1)
@@ -431,5 +431,128 @@ test.describe('片源画质和摄像头入口', () => {
     // Escape dismisses it, so the menu never traps a keyboard user inside the overlay.
     await page.keyboard.press('Escape')
     await expect(panel).toHaveCount(0)
+  })
+
+  test('弹幕默认浮于摄像头上方且悬停与拖拽互不冲突, 摄像头与副画面均支持八向缩放与记忆', async ({ page, electronApp }) => {
+    await stubDanmakuStream(electronApp, Array.from({ length: 8 }, (_, index) =>
+      `这是一条飘过摄像头小窗正上方的测试弹幕内容第${index + 1}条`,
+    ))
+    await openPlayer(page)
+    await loadBothFixtures(page)
+    await seekBoth(page, 3, 3)
+    await setPlaying(page, true)
+    await connectDanmaku(page)
+
+    const dialog = await openCameraFraming(page)
+    await dialog.getByRole('button', { name: '保存', exact: true }).click()
+    const overlay = page.locator('.camera-overlay')
+    await expect(overlay).toBeVisible()
+    await expect(overlay).toHaveAttribute('data-below-danmaku', 'true')
+    await expect(overlay.locator('button')).toHaveCount(0)
+    await expect(overlay.locator('.camera-handle')).toHaveCount(8)
+
+    // Place camera below the top bar so scrolling danmaku lanes cross directly over its body.
+    const cam0 = (await overlay.boundingBox())!
+    await page.mouse.move(cam0.x + cam0.width / 2, cam0.y + cam0.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(cam0.x + cam0.width / 2 + 160, cam0.y + cam0.height / 2 + 70, { steps: 6 })
+    await page.mouse.up()
+    const cam1 = (await overlay.boundingBox())!
+
+    // All 8 resize handles sit above the danmaku layer in real Chromium hit-testing.
+    const nwBox = (await overlay.locator('.camera-handle-nw').boundingBox())!
+    expect(await page.evaluate(({ x, y }) => {
+      const hit = document.elementFromPoint(x, y)
+      return hit?.classList.contains('camera-handle-nw') ?? false
+    }, { x: nwBox.x + nwBox.width / 2, y: nwBox.y + nwBox.height / 2 })).toBe(true)
+
+    // Resize camera from the west (left) edge: right edge stays anchored while width grows.
+    const westBox = (await overlay.locator('.camera-handle-w').boundingBox())!
+    await page.mouse.move(westBox.x + westBox.width / 2, westBox.y + westBox.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(westBox.x - 50, westBox.y + westBox.height / 2, { steps: 6 })
+    await page.mouse.up()
+    const camResized = (await overlay.boundingBox())!
+    expect(camResized.width).toBeGreaterThan(cam1.width + 35)
+    expect(Math.abs((camResized.x + camResized.width) - (cam1.x + cam1.width))).toBeLessThan(4)
+
+    // Find a scrolling danmaku item overlapping the camera body and aim toward its trailing side.
+    let overlap: { x: number; y: number } | null = null
+    await expect.poll(async () => {
+      overlap = await page.evaluate(() => {
+        const cam = document.querySelector('.camera-overlay')?.getBoundingClientRect()
+        if (!cam) return null
+        for (const node of document.querySelectorAll<HTMLElement>('.danmaku-stage .danmaku-item')) {
+          const r = node.getBoundingClientRect()
+          const ox = Math.max(cam.left + 16, r.left + 12)
+          const oxEnd = Math.min(cam.right - 16, r.right - 12)
+          const oy = Math.max(cam.top + 16, r.top + 4)
+          const oyEnd = Math.min(cam.bottom - 16, r.bottom - 4)
+          if (oxEnd - ox > 60 && oyEnd - oy > 8) {
+            const x = ox + (oxEnd - ox) * 0.8
+            const y = (oy + oyEnd) / 2
+            const hit = document.elementFromPoint(x, y)
+            if (hit?.closest('.danmaku-item')) return { x, y }
+          }
+        }
+        return null
+      })
+      return overlap
+    }, { timeout: 20_000 }).not.toBeNull()
+
+    // 1) Hovering that danmaku right over the camera pauses it and opens its action menu.
+    await page.mouse.move(overlap!.x, overlap!.y)
+    const dmToolbar = page.getByRole('toolbar', { name: /^弹幕操作/ })
+    await expect(dmToolbar).toBeVisible()
+
+    // 2) Pressing and dragging right on that danmaku releases the menu and drags the camera!
+    const beforeHandoff = (await overlay.boundingBox())!
+    await page.mouse.down()
+    await page.mouse.move(overlap!.x + 90, overlap!.y + 70, { steps: 8 })
+    await expect(dmToolbar).toHaveCount(0)
+    await page.mouse.up()
+    const afterHandoff = (await overlay.boundingBox())!
+    expect(afterHandoff.x - beforeHandoff.x).toBeGreaterThan(60)
+    expect(afterHandoff.y - beforeHandoff.y).toBeGreaterThan(40)
+
+    // Secondary preview (.pip): concise tooltip, drag without swapping, 8-way resize, and reload persistence.
+    await revealOverlay(page)
+    const pip = page.locator('.pip')
+    const pipHide = pip.getByRole('button', { name: '隐藏小画面', exact: true })
+    await expect(pipHide).toHaveAttribute('title', '隐藏小画面')
+    await expect(pip.locator('.pip-handle')).toHaveCount(8)
+
+    const pip0 = (await pip.boundingBox())!
+    await page.mouse.move(pip0.x + pip0.width / 2, pip0.y + pip0.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(pip0.x + pip0.width / 2 - 160, pip0.y + pip0.height / 2 - 90, { steps: 8 })
+    await page.mouse.up()
+    await expect(page.locator('.theater-main')).toHaveAttribute('data-role', 'official')
+    const pipMoved = (await pip.boundingBox())!
+    expect(pip0.x - pipMoved.x).toBeGreaterThan(120)
+
+    const pipNw = (await pip.locator('.pip-handle-nw').boundingBox())!
+    await page.mouse.move(pipNw.x + pipNw.width / 2, pipNw.y + pipNw.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(pipNw.x - 60, pipNw.y - 30, { steps: 6 })
+    await page.mouse.up()
+    const pipSized = (await pip.boundingBox())!
+    expect(pipSized.width).toBeGreaterThan(pipMoved.width + 35)
+
+    // Source panel offers concise "显示小画面" switch without extra notes.
+    await revealOverlay(page)
+    await page.locator('.chip[data-role="commentary"]').click()
+    const sourcePanel = page.getByRole('dialog', { name: '解说片源', exact: true })
+    await expect(sourcePanel.getByRole('switch', { name: '显示小画面', exact: true })).toBeChecked()
+    await expect(sourcePanel).not.toContainText('保留声音')
+    await page.keyboard.press('Escape')
+
+    await page.reload()
+    await expect(page.locator('.studio')).toBeVisible()
+    await loadBothFixtures(page)
+    await connectDanmaku(page)
+    const pipRestored = (await page.locator('.pip').boundingBox())!
+    expect(Math.abs(pipRestored.x - pipSized.x)).toBeLessThan(5)
+    expect(Math.abs(pipRestored.width - pipSized.width)).toBeLessThan(5)
   })
 })

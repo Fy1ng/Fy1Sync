@@ -46,7 +46,7 @@
   container-type: size;
 }
 
-.studio .streams-stage[data-split] .pip {
+.studio .streams-stage[data-split] .pip:not([data-placed='true']) {
   bottom: 16px;
   width: min(clamp(180px, 22%, 320px), calc((100cqh - 32px) * 16 / 9), calc(100% - 32px));
 }

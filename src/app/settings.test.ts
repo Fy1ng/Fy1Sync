@@ -121,6 +121,18 @@ describe('mergeSettings', () => {
     }
   })
 
+  it('floats danmaku above the camera overlay by default and persists explicit toggles', () => {
+    expect(DEFAULT_SETTINGS.danmaku.danmakuOverCamera).toBe(true)
+    expect(mergeSettings({}).danmaku.danmakuOverCamera).toBe(true)
+    expect(mergeSettings({ danmaku: { danmakuOverCamera: false } }).danmaku.danmakuOverCamera).toBe(false)
+    for (const invalid of [null, 'false', 0, {}, []]) {
+      expect(mergeSettings({ danmaku: { danmakuOverCamera: invalid } }).danmaku.danmakuOverCamera).toBe(true)
+    }
+    const storage = fakeStorage()
+    saveSettings({ ...DEFAULT_SETTINGS, danmaku: { ...DEFAULT_SETTINGS.danmaku, danmakuOverCamera: false } }, storage)
+    expect(loadSettings(storage).danmaku.danmakuOverCamera).toBe(false)
+  })
+
   it('returns defaults for an empty or absent blob', () => {
     expect(mergeSettings({})).toEqual(DEFAULT_SETTINGS)
     expect(mergeSettings(null)).toEqual(DEFAULT_SETTINGS)

@@ -36,6 +36,8 @@ export interface DanmakuSettings {
   filter: DanmakuFilterSettings
   /** Viewers' gift notices in the chat list. Off by default: in a busy room they bury the chat. */
   showGifts: boolean
+  /** Float scrolling danmaku above the streamer camera overlay so the camera does not block text. */
+  danmakuOverCamera: boolean
 }
 
 export interface AppSettings {
@@ -88,6 +90,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     density: 1,
     filter: { ...DEFAULT_FILTER_SETTINGS },
     showGifts: false,
+    danmakuOverCamera: true,
   },
   autoSyncEnabled: false,
   autoSyncIntervalSeconds: 30,
@@ -182,6 +185,7 @@ export function mergeSettings(raw: unknown): AppSettings {
         maxLength: clamp(filter.maxLength, 0, 500, 0),
       },
       showGifts: boolean(danmaku.showGifts, defaults.danmaku.showGifts),
+      danmakuOverCamera: boolean(danmaku.danmakuOverCamera, defaults.danmaku.danmakuOverCamera),
     },
     autoSyncEnabled: boolean(stored.autoSyncEnabled, defaults.autoSyncEnabled),
     // The sync design fixes the interval choices at 15/30/60 s.

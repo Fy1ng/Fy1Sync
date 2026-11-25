@@ -13,7 +13,7 @@ import { draftFromDirectOptions, EMPTY_DIRECT_DRAFT, hasDirectOptions, parseDire
 import type { SourceRole } from '../core/types'
 import { bufferStatusText } from '../ui/bufferStatus'
 import { DirectStreamFields } from './DirectStreamFields'
-import { Icon, Popover, Segmented, usePopover } from './kit'
+import { Icon, Popover, Segmented, Switch, usePopover } from './kit'
 import { LoginOffer, PLATFORM_LABEL, ROLE_LABEL, SourceIssue, parseDanmakuRoomInput, parseRoomInput, sourceTitle, useSourceLoader, type RoomPlatform, SOURCE_HINT } from './sources'
 import { sourceDanmakuRoom } from '../core/sourceDanmaku'
 import { danmakuRoom } from '../../server/danmaku/types'
@@ -21,11 +21,12 @@ import { canSave, removeSavedRoom, saveRoom, savedFor, useSavedRooms, useSavedRo
 import { RoomSummary } from './favorites/Favorites'
 import { ReadError } from './ReadError'
 
-export function SourceChip({ role, onSchedule, onShowPreview = null }: {
+export function SourceChip({ role, onSchedule, onShowPreview = null, previewToggle = null }: {
   role: SourceRole
   /** Open 赛程; offered on the picture's panel. */
   onSchedule?: () => void
   onShowPreview?: (() => void) | null
+  previewToggle?: { visible: boolean; onChange: (visible: boolean) => void } | null
 }): React.ReactNode {
   const snapshot = useSessionSnapshot()
   const loader = useSourceLoader()
@@ -50,16 +51,17 @@ export function SourceChip({ role, onSchedule, onShowPreview = null }: {
         </button>
       )}
       <Popover {...panel.popover} className="source-pop" label={`${ROLE_LABEL[role]}片源`}>
-        <SourcePanel role={role} onDone={panel.close} onSchedule={onSchedule} />
+        <SourcePanel role={role} onDone={panel.close} onSchedule={onSchedule} previewToggle={previewToggle} />
       </Popover>
     </div>
   )
 }
 
-function SourcePanel({ role, onDone, onSchedule }: {
+function SourcePanel({ role, onDone, onSchedule, previewToggle }: {
   role: SourceRole
   onSchedule?: () => void
   onDone: () => void
+  previewToggle: { visible: boolean; onChange: (visible: boolean) => void } | null
 }): React.ReactNode {
   const session = useSession()
   const snapshot = useSessionSnapshot()
@@ -164,6 +166,9 @@ function SourcePanel({ role, onDone, onSchedule }: {
         setChatRetrying(true)
         void session.retryDanmaku(chat.key).finally(() => setChatRetrying(false))
       }}>重新连接此房间弹幕</button>}
+      {previewToggle && (
+        <Switch label="显示小画面" checked={previewToggle.visible} onChange={previewToggle.onChange} />
+      )}
       <div className="row-split panel-foot">
         <SaveButton role={role} />
         {state.status !== 'empty' && (

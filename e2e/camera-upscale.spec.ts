@@ -18,7 +18,7 @@ async function selectTier(page: Page, label: string): Promise<void> {
   const trigger = page.locator('.dock').getByRole('button', { name: '主播摄像头', exact: true })
   await trigger.focus()
   await trigger.press('Enter')
-  await setCheckedByLabel(page.getByRole('radiogroup', { name: '摄像头超分' }).getByRole('radio', { name: label, exact: true }))
+  await setCheckedByLabel(page.getByRole('radiogroup', { name: '小窗画质增强' }).getByRole('radio', { name: label, exact: true }))
   await page.keyboard.press('Escape')
 }
 
@@ -47,7 +47,7 @@ test.describe('摄像头超分', () => {
       })).toBe(true)
       await revealOverlay(page)
       await page.locator('.dock').getByRole('button', { name: '主播摄像头', exact: true }).click()
-      await expect(page.getByRole('radiogroup', { name: '摄像头超分' })).toHaveCount(0)
+      await expect(page.getByRole('radiogroup', { name: '小窗画质增强' })).toHaveCount(0)
     })
   }
 

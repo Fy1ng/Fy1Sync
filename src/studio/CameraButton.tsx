@@ -1,14 +1,25 @@
 /**
  * The streamer camera window, from the dock's right corner: frame it on the commentary
- * picture, then show or hide the window it floats in. Only there while the commentary plays.
+ * picture, then show, hide or size the window it floats in. Only there while the commentary plays.
  */
 
 import type { CameraControls } from '../app/useCamera'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
+import { clampWindow } from '../ui/CameraOverlay'
 import type { CameraUpscaleState } from '../ui/useCameraUpscale'
-import { Icon, Popover, Segmented, usePopover } from './kit'
+import { Icon, Popover, Range, Segmented, Switch, usePopover } from './kit'
 
-export function CameraButton({ camera, onFrame, upscale }: { camera: CameraControls; onFrame: () => void; upscale?: CameraUpscaleState }): React.ReactNode {
+export function CameraButton({
+  camera,
+  onFrame,
+  upscale,
+  stageRef,
+}: {
+  camera: CameraControls
+  onFrame: () => void
+  upscale?: CameraUpscaleState
+  stageRef?: React.RefObject<HTMLElement | null>
+}): React.ReactNode {
   const menu = usePopover()
   const session = useSession()
   const { settings } = useSessionSnapshot()
@@ -22,6 +33,16 @@ export function CameraButton({ camera, onFrame, upscale }: { camera: CameraContr
       </button>
     )
   }
+
+  const resizeFromMenu = (percent: number): void => {
+    const stageNode = stageRef?.current
+    const stage = { width: stageNode?.clientWidth ?? 0, height: stageNode?.clientHeight ?? 0 }
+    const video = session.engine.element('commentary')
+    const videoAspect = video?.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9
+    const cropAspect = config.crop.h > 0 ? config.crop.w / config.crop.h : 16 / 9
+    camera.setWindow(clampWindow({ ...config.window, width: percent / 100 }, stage, cropAspect * videoAspect))
+  }
+
   return (
     <div className="camera-control">
       <button type="button" className={`icon-btn ${config.enabled ? 'is-on' : ''}`.trim()} {...menu.trigger}
@@ -33,6 +54,12 @@ export function CameraButton({ camera, onFrame, upscale }: { camera: CameraContr
           {config.enabled ? '隐藏摄像头小窗' : '显示摄像头小窗'}
         </button>
         <button type="button" className="menu-item" onClick={() => { menu.close(); onFrame() }}>重新框选</button>
+        <div className="camera-options">
+          <Range label="小窗大小" value={Math.round(config.window.width * 100)} min={8} max={60} step={1} unit="%"
+            onChange={resizeFromMenu} />
+          <Switch label="弹幕浮于小窗上方" checked={settings.danmaku.danmakuOverCamera}
+            onChange={danmakuOverCamera => session.updateDanmakuSettings({ danmakuOverCamera })} />
+        </div>
         {upscale?.supported && <div className="camera-upscale">
           <span>小窗画质增强</span>
           <Segmented value={settings.cameraUpscale} label="小窗画质增强" options={[

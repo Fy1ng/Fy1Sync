@@ -28,6 +28,7 @@ import { usePlaybackHeartbeat } from './insights/RoomInsights'
 import { Intake } from './Intake'
 import { Icon, popoverTrigger } from './kit'
 import { PipButton } from './PipButton'
+import { PreviewPip } from './PreviewPip'
 import type { RecordsTab } from './records/DanmakuRecords'
 import { ScheduleSheet } from './schedule/ScheduleSheet'
 import { prefetchSchedule } from './schedule/store'
@@ -35,7 +36,7 @@ import { ErrorText } from '../ui/ErrorDetails'
 import { setNoticeSink, syncLiveNotices } from './douyu/followingNotices'
 import { SettingsSheet, type SettingsSection, type SettingsTarget } from './SettingsSheet'
 import { SourceChip } from './SourceChip'
-import { SourceLoaderProvider, ROLE_LABEL, useSourceLoader } from './sources'
+import { SourceLoaderProvider, useSourceLoader } from './sources'
 import { ADD_STREAM_POPOVER, ExtraStreams } from './streams/ExtraStreams'
 import { AutoAlign, nudgeStepFor, PlaybackRecoveryPrompt, startAutoAlign, SyncCapsule, useNudge } from './sync'
 import { useComposer } from './composer'
@@ -232,7 +233,9 @@ function StudioView({ settingsAt, setSettingsAt }: {
                 <SourceChip key={role} role={role}
                   onSchedule={role === 'official' ? () => setScheduleFrom('source') : undefined}
                   onShowPreview={previewHidden && role === otherRole && snapshot.media[role].status !== 'empty'
-                    ? () => setPreviewHidden(false) : null} />
+                    ? () => setPreviewHidden(false) : null}
+                  previewToggle={role === otherRole && snapshot.media[role].status !== 'empty'
+                    ? { visible: !previewHidden, onChange: (visible) => setPreviewHidden(!visible) } : null} />
               ))}
               <button type="button" className="icon-btn glass small"
                 {...popoverTrigger(ADD_STREAM_POPOVER, addingStream, () => setAddingStream((open) => !open))}
@@ -262,16 +265,14 @@ function StudioView({ settingsAt, setSettingsAt }: {
               {camera.available && camera.config && <CameraOverlay key={camera.room} config={camera.config} onWindow={camera.setWindow} stageRef={primary} fitStage={split} onUpscaleState={setCameraUpscale} />}
 
               {snapshot.media[otherRole].status !== 'empty' && !previewHidden ? (
-                <div className="pip" data-role={otherRole}>
-                  <button type="button" className="pip-swap" onClick={() => session.swapRoles()}
-                    aria-label={`将${ROLE_LABEL[otherRole]}切换为主画面`} title="切换为主画面">
-                    <span className="pip-mount" ref={mountOther} />
-                    <span className="pip-label">{ROLE_LABEL[otherRole]}</span>
-                  </button>
-                  <button type="button" className="pip-hide" onClick={() => setPreviewHidden(true)} aria-label="隐藏小画面">
-                    <Icon name="close" />
-                  </button>
-                </div>
+                <PreviewPip
+                  role={otherRole}
+                  mountRef={mountOther}
+                  stageRef={primary}
+                  fitStage={split}
+                  onSwap={() => session.swapRoles()}
+                  onHide={() => setPreviewHidden(true)}
+                />
               ) : (
                 // The other element still needs a parent while hidden, or it would be detached.
                 <span className="pip-parked" ref={mountOther} aria-hidden="true" />
@@ -302,7 +303,7 @@ function StudioView({ settingsAt, setSettingsAt }: {
               </div>
               <div className="dock-right">
                 <QualityMenu />
-                <CameraButton camera={camera} onFrame={() => setFraming(true)} upscale={cameraUpscale} />
+                <CameraButton camera={camera} onFrame={() => setFraming(true)} upscale={cameraUpscale} stageRef={primary} />
                 <CaptureControls source={() => session.engine.element(session.snapshot.mainRole)} />
                 <PipButton />
                 <DanmakuSwitch onTune={() => setTuning((open) => !open)} />

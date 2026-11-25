@@ -61,6 +61,8 @@ export function DanmakuPanel({ onClose }: { onClose: () => void }): React.ReactN
           <Segmented label="占用画面" value={danmaku.area} onChange={(area) => set({ area })}
             options={[{ value: 'quarter', label: '顶部' }, { value: 'half', label: '上半屏' }, { value: 'full', label: '全屏' }]} />
         </div>
+        <Switch label="弹幕浮于摄像头上方" checked={danmaku.danmakuOverCamera}
+          onChange={(danmakuOverCamera) => set({ danmakuOverCamera })} />
 
         <h3 className="float-sub">屏蔽</h3>
         <Chips label="关键词" placeholder="回车添加，支持正则表达式" values={danmaku.filter.blockedPatterns} invalid={invalid}
