@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Session } from './session'
 import { hlsLoader } from '../media/hlsController'
-import type { RecognitionOutcome, SourceRole } from '../core/types'
-import type { RecognitionSampler } from '../recognition/sampler'
+import type { FrameMeasureRequest, FrameMeasurement } from '../sync/frameHashSampler'
 import { primeMediaElement } from '../test/setup'
 
 const sessions: Session[] = []
@@ -45,8 +44,8 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function harness(options: { hls?: boolean; sampler?: RecognitionSampler; readingClock?: () => number } = {}) {
-  const session = new Session({ createSampler: () => options.sampler ?? null, readingClock: options.readingClock })
+async function harness(options: { hls?: boolean; measureFrames?: (request: FrameMeasureRequest) => Promise<FrameMeasurement>; readingClock?: () => number } = {}) {
+  const session = new Session({ measureFrames: options.measureFrames, readingClock: options.readingClock })
   sessions.push(session)
   for (const role of ['official', 'commentary'] as const) {
     await session.loadSource(role, { ...source, kind: options.hls ? 'hls' : 'progressive' })
@@ -99,14 +98,16 @@ describe('playback recovery authorization', () => {
 
   it('shares the running gate with a simultaneous scheduler tick', async () => {
     let finish!: () => void
-    const sample = vi.fn(() => new Promise<void>(resolve => { finish = resolve }))
-    const h = await harness({ sampler: { sample, dispose() {} } as unknown as RecognitionSampler })
+    const measureFrames = vi.fn(() => new Promise<FrameMeasurement>(resolve => {
+      finish = () => resolve({ samples: { official: 0, commentary: 0 }, message: '画面匹配已取消' })
+    }))
+    const h = await harness({ measureFrames })
     h.session.setAutoSyncInterval(15)
     h.session.setAutoSyncEnabled(true)
     await h.stall(); await h.recover()
-    expect(sample).toHaveBeenCalledTimes(1)
+    expect(measureFrames).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(15_000)
-    expect(sample).toHaveBeenCalledTimes(1)
+    expect(measureFrames).toHaveBeenCalledTimes(1)
     await h.session.applyOffset(0)
     expect(h.session.autoSync.autoApplyAuthorized).toBe(false)
     finish(); await tick()
@@ -136,18 +137,26 @@ describe('playback recovery authorization', () => {
   })
 
   it.each(['explicit', 'recovery'] as const)('clears the prompt after successful %s alignment', async mode => {
-    let baseline: Record<SourceRole, number> | undefined
-    let readingAt = 0
-    const sampler = { dispose() {}, async sample(_window: number, emit: (role: SourceRole, outcome: RecognitionOutcome) => void) {
-      baseline ??= { official: h.session.engine.element('official').currentTime, commentary: h.session.engine.element('commentary').currentTime }
-      for (const role of ['official', 'commentary'] as const) for (let index = 0; index < 3; index++) for (let stable = 0; stable < 2; stable++) {
-        emit(role, { status: 'success', reading: { text: `0:${59 - index}`, seconds: 59 - index,
-          scores: [0.95], confidence: 0.95, mediaTime: 100 + index + stable / 30,
-          wallTime: (readingAt = 1000 + index * 1000 + stable * 1000 / 30 + (role === 'commentary' ? 5000 : 0)
-            + (baseline[role] - h.session.engine.element(role).currentTime) * 1000), frameIndex: index * 2 + stable } })
+    const measureFrames = async (request: FrameMeasureRequest): Promise<FrameMeasurement> => {
+      const residual = request.fresh ? 0 : 4 - request.appliedOffsetSeconds
+      const total = request.appliedOffsetSeconds + residual
+      return {
+        samples: { official: 24, commentary: 24 },
+        estimate: {
+          status: 'ok',
+          residualSeconds: residual,
+          totalOffsetSeconds: total,
+          direction: Math.abs(total) <= 0.1 ? 'none' : total > 0 ? 'official' : 'commentary',
+          rewindSeconds: Math.abs(total) <= 0.1 ? 0 : Math.abs(total),
+          confidence: 0.96,
+          officialAnchorSpread: 0.01,
+          commentaryAnchorSpread: 0.01,
+          officialEvents: 24,
+          commentaryEvents: 24,
+        },
       }
-    } } as unknown as RecognitionSampler
-    const h = await harness({ sampler, readingClock: () => readingAt })
+    }
+    const h = await harness({ measureFrames })
     vi.spyOn(h.session.autoSync as unknown as { sleep(ms: number): Promise<void> }, 'sleep').mockImplementation(async ms => {
       for (const role of ['official', 'commentary'] as const) {
         const video = h.session.engine.element(role)

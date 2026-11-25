@@ -193,6 +193,7 @@ export async function attachMedia(
       } })
     }
   } : undefined
+  const maxRecoveries = localBuffer ? 12 : MAX_HLS_RECOVERIES
   const hls = new Hls({
     ...(localPlaylistLoader ? { pLoader: localPlaylistLoader } : {}),
     // Low latency is not the goal: a stable, seekable buffer is, because sync
@@ -203,10 +204,11 @@ export async function attachMedia(
     // hls.js only accepts liveMaxLatencyDurationCount together with an explicit
     // liveSyncDurationCount below it (it throws on construction otherwise), so the
     // default of 3 is spelled out.
-    liveSyncDurationCount: 3,
+    liveSyncDurationCount: localBuffer ? 4 : 3,
     liveMaxLatencyDurationCount: Infinity,
     maxLiveSyncPlaybackRate: 1,
-    maxBufferLength: 30,
+    maxBufferLength: localBuffer ? 60 : 30,
+    maxMaxBufferLength: localBuffer ? 120 : 60,
     enableWorker: true,
   })
   owner.cleanups.push(() => hls.destroy())
@@ -284,7 +286,7 @@ export async function attachMedia(
     if (!data.fatal) { handlers.onError?.(error); return }
     resetStability()
     const recoverable = data.type === Hls.ErrorTypes.NETWORK_ERROR || data.type === Hls.ErrorTypes.MEDIA_ERROR
-    if (!recoverable || recoveries >= MAX_HLS_RECOVERIES) {
+    if (!recoverable || recoveries >= maxRecoveries) {
       handlers.onError?.({ ...error, hint: '自动恢复未成功，请重新载入片源' })
       owner.destroy()
       return

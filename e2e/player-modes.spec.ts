@@ -9,8 +9,6 @@ test('播放器可切换画面匹配、可视化框选并恢复设置, 旧编辑
   await revealOverlay(page)
   await page.getByRole('button', { name: '对齐选项' }).click()
   await expect(page.getByRole('radio', { name: '基础模式' })).toBeChecked()
-  await page.getByRole('radio', { name: '画面匹配' }).locator('..').click()
-  await expect(page.getByRole('radio', { name: '画面匹配' })).toBeChecked()
   await expect(page.getByRole('radio', { name: '样式包模式' })).toHaveCount(0)
   await page.getByRole('button', { name: '调整匹配区域', exact: true }).click()
   const settings = page.getByRole('dialog', { name: '设置', exact: true })

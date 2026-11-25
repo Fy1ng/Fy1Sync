@@ -5,7 +5,7 @@ import { Readable } from 'node:stream'
 import { isStreamId, type StreamId } from './streamIdentity'
 
 export type BufferRole = StreamId
-interface ActiveRole { generation: string; directory: string }
+interface ActiveRole { generation: string; directory: string; verified?: Promise<{ sessionRoot: string; directory: string } | null> }
 const TOKEN = /^[a-zA-Z0-9_-]{1,128}$/
 const FILE = /^(?:index\.m3u8|segment_\d+_\d{9}\.(?:ts|m4s)|init_\d+\.mp4)$/
 
@@ -23,6 +23,15 @@ export class BufferRoute {
   deactivate(role: BufferRole): void { this.roles.delete(role) }
   clear(): void { this.roles.clear() }
 
+  private verifyBase(active: ActiveRole): Promise<{ sessionRoot: string; directory: string } | null> {
+    active.verified ??= Promise.all([realpath(this.sessionRoot), realpath(active.directory), lstat(active.directory)])
+      .then(([sessionRoot, directory, dirInfo]) => {
+        if (dirInfo.isSymbolicLink() || path.relative(path.resolve(this.sessionRoot), sessionRoot) !== '' || !inside(sessionRoot, directory)) return null
+        return { sessionRoot, directory }
+      }).catch(() => { active.verified = undefined; return null })
+    return active.verified
+  }
+
   async handle(request: Request): Promise<Response> {
     if (!['GET', 'HEAD'].includes(request.method)) return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } })
     let url: URL
@@ -37,10 +46,10 @@ export class BufferRoute {
     if (!inside(active.directory, candidate)) return new Response(null, { status: 403 })
     let handle: Awaited<ReturnType<typeof open>> | undefined
     try {
-      const [sessionRoot, directory, filename, fileInfo, dirInfo] = await Promise.all([
-        realpath(this.sessionRoot), realpath(active.directory), realpath(candidate), lstat(candidate), lstat(active.directory),
+      const [base, filename, fileInfo] = await Promise.all([
+        this.verifyBase(active), realpath(candidate), lstat(candidate),
       ])
-      if (fileInfo.isSymbolicLink() || dirInfo.isSymbolicLink() || path.relative(path.resolve(this.sessionRoot), sessionRoot) !== '' || !inside(sessionRoot, directory) || !inside(directory, filename)) return new Response(null, { status: 403 })
+      if (!base || fileInfo.isSymbolicLink() || !inside(base.directory, filename)) return new Response(null, { status: 403 })
       if (this.roles.get(role) !== active) return new Response(null, { status: 404 })
       handle = await open(candidate, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
       const info = await handle.stat()

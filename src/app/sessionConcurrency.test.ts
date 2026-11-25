@@ -1,22 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Session } from './session'
 import { primeMediaElement } from '../test/setup'
-import type { RecognitionSampler } from '../recognition/sampler'
-import type { RecognitionOutcome, SourceRole } from '../core/types'
+import type { FrameMeasureRequest, FrameMeasurement } from '../sync/frameHashSampler'
 
 const sessions: Session[] = []
 const source = { kind: 'test' as const, url: '/test-sources/test.mp4', input: 'test', label: 'test', loop: false, viaProxy: false }
 const tick = async () => { for (let i = 0; i < 15; i++) await Promise.resolve() }
 afterEach(() => { sessions.splice(0).forEach(session => session.dispose()); vi.restoreAllMocks() })
 
-async function harness(sampler: RecognitionSampler | null = null, readingClock?: () => number) {
-  const session = new Session({ createSampler: () => sampler, readingClock })
+async function harness(measureFrames?: (request: FrameMeasureRequest) => Promise<FrameMeasurement>) {
+  const session = new Session({ measureFrames })
   sessions.push(session)
   for (const role of ['official', 'commentary'] as const) {
     await session.loadSource(role, source)
     primeMediaElement(session.engine.element(role), { currentTime: 100, duration: 600 })
   }
-  if (sampler) await session.setPlaying(true)
+  if (measureFrames) await session.setPlaying(true)
   return session
 }
 
@@ -156,15 +155,21 @@ describe('serialized manual offsets', () => {
   })
 
   it('accounts for a cancelled automatic seek before starting manual adjustment', async () => {
-    let readingAt = 0
-    const sampler = { dispose() {}, async sample(_window: number, emit: (role: SourceRole, outcome: RecognitionOutcome) => void) {
-      for (const role of ['official', 'commentary'] as const) for (let index = 0; index < 3; index++) for (let stable = 0; stable < 2; stable++) {
-        emit(role, { status: 'success', reading: { text: `0:${59 - index}`, seconds: 59 - index,
-          scores: [0.95], confidence: 0.95, mediaTime: 100 + index + stable / 30,
-          wallTime: (readingAt = 1000 + index * 1000 + stable * 1000 / 30 + (role === 'commentary' ? 5000 : 0)), frameIndex: index * 2 + stable } })
-      }
-    } } as unknown as RecognitionSampler
-    const session = await harness(sampler, () => readingAt)
+    const session = await harness(async () => ({
+      samples: { official: 24, commentary: 24 },
+      estimate: {
+        status: 'ok',
+        residualSeconds: 5,
+        totalOffsetSeconds: 5,
+        direction: 'official',
+        rewindSeconds: 5,
+        confidence: 0.96,
+        officialAnchorSpread: 0.01,
+        commentaryAnchorSpread: 0.01,
+        officialEvents: 24,
+        commentaryEvents: 24,
+      },
+    }))
     const clock = holdSeeks(session.engine.element('official'))
     const automatic = session.syncNow()
     await tick()

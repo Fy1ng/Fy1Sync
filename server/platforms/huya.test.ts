@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
-import { buildHuyaAuth, parseHuyaPage, parseHuyaQualities, parseHuyaRoom, resolveHuya, rotateHuyaUid } from './huya'
+import { buildHuyaAuth, parseHuyaLiveSummary, parseHuyaPage, parseHuyaQualities, parseHuyaRoom, resolveHuya, rotateHuyaUid } from './huya'
 import { detectPlatform, resolveStream } from './index'
 import type { ResolverDeps } from './types'
 
@@ -103,7 +103,7 @@ describe('Huya bounded page metadata', () => {
   it.each([
     { sCdnType: 'hy' }, { sCdnType: 'HUYA' }, { sCdnType: 'HYZJ' }, { sCdnType: 'A'.repeat(17) },
     { sStreamName: 'a'.repeat(257) }, { sStreamName: '../escape' }, { sStreamName: 123 },
-    { iWebPriorityRate: '100' }, { iWebPriorityRate: -1 }, { iWebPriorityRate: 1_000_001 },
+    { iWebPriorityRate: '100' }, { iWebPriorityRate: -101 }, { iWebPriorityRate: 1_000_001 },
     { sFlvUrlSuffix: 'm3u8' }, { sFlvUrl: 'file:///live' },
     { sFlvUrl: 'https://user:secret@flv.huya.com/live' },
     { sFlvUrl: 'https://flv.huya.com/live?secret=fixture' }, { sFlvUrl: 'https://flv.huya.com/live#secret' },
@@ -123,6 +123,35 @@ describe('Huya bounded page metadata', () => {
       const raw = '<script>var TT_ROOM_DATA = {"state":"ON","profileRoom":123456}; var player = {stream: ' + stream + '};</script>'
       expect(parseHuyaPage(raw, '123456')).toMatchObject({ ok: true, lines: [], qualities: [] })
     }
+  })
+  it('retains negative-priority standby direct CDNs behind positive-priority lines and rotates lines on reconnect', async () => {
+    const raw = page(
+      { profileRoom: 825801, introduction: 'NIP vs Liquid PGL新加坡Major2026' },
+      [
+        sampleLine({ sCdnType: 'AL', iWebPriorityRate: -1, sFlvUrl: 'http://aldirect.flv.huya.com/src' }),
+        sampleLine({ sCdnType: 'TX', iWebPriorityRate: 70, sFlvUrl: 'http://tx.flv.huya.com/src' }),
+        sampleLine({ sCdnType: 'HS', iWebPriorityRate: 30, sFlvUrl: 'http://hs.flv.huya.com/src' }),
+      ],
+      [{ iBitRate: 0, sDisplayName: '原画' }],
+      { nick: '完美世界电竞频道一', introduction: 'NIP vs Liquid PGL新加坡Major2026 Stage1' },
+    )
+    const parsed = parseHuyaPage(raw, '825801')
+    expect(parsed).toMatchObject({ ok: true, lines: [{ cdn: 'TX', priority: 70 }, { cdn: 'HS', priority: 30 }, { cdn: 'AL', priority: -1 }] })
+    expect(parseHuyaLiveSummary(raw, '825801')).toEqual({
+      room: '825801', nickname: '完美世界电竞频道一', title: 'NIP vs Liquid PGL新加坡Major2026 Stage1',
+    })
+    expect(parseHuyaLiveSummary(page({ state: 'OFF' }), '825801')).toBeNull()
+    expect(parseHuyaLiveSummary(page({ introduction: '【重播】决赛' }), '825801')).toBeNull()
+
+    const fetchText = vi.fn(async () => raw)
+    const first = await resolveHuya('825801', deps({ fetchText }))
+    const second = await resolveHuya('825801', deps({ fetchText, lineAttempt: 1 }))
+    const third = await resolveHuya('825801', deps({ fetchText, lineAttempt: 2 }))
+    const fourth = await resolveHuya('825801', deps({ fetchText, lineAttempt: 3 }))
+    expect(first.ok && new URL(first.stream.url).hostname).toBe('tx.flv.huya.com')
+    expect(second.ok && new URL(second.stream.url).hostname).toBe('hs.flv.huya.com')
+    expect(third.ok && new URL(third.stream.url).hostname).toBe('aldirect.flv.huya.com')
+    expect(fourth.ok && new URL(fourth.stream.url).hostname).toBe('tx.flv.huya.com')
   })
 })
 

@@ -31,6 +31,7 @@ import { DouyuGiftPurchaseGateway } from '../server/douyu/giftPurchaseGateway'
 import { DouyuGiftPlanService } from '../server/douyu/giftPlanService'
 import type { ResolveDouyuRoom } from '../server/platforms/douyuRoom'
 import appPackage from '../package.json'
+import { HuyaOfficialStreamMatcher } from '../server/esports/huyaOfficialMatch'
 import { RelayScheduleService } from '../server/esports/relaySchedule'
 import type { Resolver } from '../server/safeFetch'
 import { DouyuReadCache } from '../server/douyu/readCache'
@@ -83,6 +84,8 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
   const api = new FeatureApi()
   const esports = new RelayScheduleService({ userDataDir: options.userDataDir, bundledLogoDir: options.bundledLogoDir,
     version: appPackage.version, resolve: options.esportsResolve, onEvent: event => api.publish(event) })
+  const huyaOfficial = new HuyaOfficialStreamMatcher({ userDataDir: options.userDataDir,
+    version: appPackage.version, getSchedule: () => esports.getCs2Schedule() })
   let savedRooms: SavedRoomsStore
   try {
     savedRooms = new SavedRoomsStore(options.userDataDir)
@@ -301,6 +304,7 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
     refreshCs2ScheduleAfterVerification: args => esports.refreshCs2ScheduleAfterVerification(args),
     getStreamTitles: args => esports.getStreamTitles(args),
     setCs2ScheduleFocus: args => esports.setScheduleFocus(args),
+    findHuyaOfficialStream: args => huyaOfficial.find(args),
     openAppReleasePage: async args => {
       noArgs(args)
       const url = update.state().releaseUrl
@@ -498,7 +502,7 @@ export function createBackendRuntime(options: BackendRuntimeOptions) {
       for (const release of releases) release()
       pip.dispose(); automations?.dispose(); gifts?.dispose(); inventory?.dispose(); insights.dispose(); update.dispose()
       api.dispose()
-      await Promise.all([capture.dispose(), streams.dispose(), esports.dispose()])
+      await Promise.all([capture.dispose(), streams.dispose(), esports.dispose(), huyaOfficial.dispose()])
     },
   }
 }

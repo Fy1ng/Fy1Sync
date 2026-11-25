@@ -1,7 +1,7 @@
 import type { NetworkContext } from '../server/networkPolicy'
 import { StreamFailureError } from '../server/networkFailure'
 import type { Writable } from 'node:stream'
-import { safeFetch, type Resolver } from '../server/safeFetch'
+import { PinnedDispatcherPool, safeFetch, type Resolver } from '../server/safeFetch'
 import type { ProxyConfig } from '../server/config'
 
 /** Signed source URLs stay in main-process memory and must never enter state or IPC. */
@@ -40,9 +40,10 @@ export interface AdaptivePullOptions {
 const SEGMENT_MS = 5000
 const BEHIND_HEAD = 2
 const MAX_ATTEMPTS = 3
+const DEFAULT_SEGMENT_TIMEOUT_MS = 15_000
 const policy: ProxyConfig = {
   enabled: true, hosts: ['*.googlevideo.com'], allowNonStandardPorts: false,
-  maxRedirects: 3, requestTimeoutMs: 20_000,
+  maxRedirects: 3, requestTimeoutMs: DEFAULT_SEGMENT_TIMEOUT_MS,
 }
 
 function requireMediaUrl(raw: string | URL | Request): URL {
@@ -136,13 +137,16 @@ function writeBytes(stream: Writable, bytes: Buffer, signal: AbortSignal): Promi
 export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePullOptions): Promise<void> {
   requireMediaUrl(source.videoUrl)
   requireMediaUrl(source.audioUrl)
-  const timeoutMs = options.requestTimeoutMs ?? options.network?.media?.requestTimeoutMs ?? policy.requestTimeoutMs
-  const maxAttempts = options.network?.media ? options.network.media.reconnectAttempts || Infinity : MAX_ATTEMPTS
+  const configuredTimeoutMs = options.network?.media?.requestTimeoutMs
+  const timeoutMs = options.requestTimeoutMs ?? (configuredTimeoutMs && configuredTimeoutMs > 0 ? configuredTimeoutMs : policy.requestTimeoutMs)
+  const configuredRetries = options.network?.media?.reconnectAttempts
+  const maxAttempts = configuredRetries && configuredRetries > 0 ? Math.min(configuredRetries, 6) : MAX_ATTEMPTS
   const maxBytes = options.maxSegmentBytes ?? 32 * 1024 * 1024
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 2_147_483_647
     || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 128 * 1024 * 1024) {
     throw new AdaptivePullError('adaptive-request-failed')
   }
+  const dispatcherPool = options.fetchImpl ? undefined : new PinnedDispatcherPool({ connections: 4 })
   const controller = new AbortController()
   const signal = AbortSignal.any([controller.signal, options.signal, ...(options.network?.signal ? [options.network.signal] : [])])
   const now = options.now ?? Date.now
@@ -168,6 +172,7 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
           const { response } = await safeFetch(url.toString(), policy, {
             fetchImpl: checkedFetch, network: options.network, resolve: options.resolve, signal: requestSignal,
             headers: { Accept: '*/*' },
+            ...(dispatcherPool && attempt === 0 ? { dispatcherPool, connectionScope: base } : {}),
           })
           if (response.status === 403 || response.status === 410) {
             void response.body?.cancel().catch(() => {})
@@ -202,7 +207,7 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
         if (safe.code !== 'adaptive-request-failed' && safe.code !== 'adaptive-aborted') throw safe
         if (attempt === maxAttempts - 1) throw new AdaptivePullError('adaptive-request-failed', safe.status)
       } finally { clearTimeout(timer) }
-      await wait(Math.min(attempt + 1, 30) * 500, signal)
+      await wait(Math.min(attempt + 1, 6) * 350, signal)
     }
     throw new AdaptivePullError('adaptive-request-failed')
   }
@@ -247,6 +252,7 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
   } finally {
     controller.abort()
     await production?.catch(() => {})
+    await dispatcherPool?.dispose().catch(() => {})
     options.video.removeListener('error', onPipeError)
     options.audio.removeListener('error', onPipeError)
   }

@@ -57,17 +57,11 @@ describe('mergeSettings', () => {
       .toEqual({ ...DEFAULT_SETTINGS.shortcuts, seekBack: ['KeyJ'], toggleDanmaku: ['KeyA'], autoAlign: [] })
   })
 
-  it('hides optional recognition diagnostics by default and persists the toggle independently', () => {
-    expect(DEFAULT_SETTINGS.basicRecognitionPanelVisible).toBe(false)
-    expect(mergeSettings({ recognitionMode: 'basic' }).basicRecognitionPanelVisible).toBe(false)
-    for (const invalid of [null, 'true', 1, {}, []]) {
-      expect(mergeSettings({ basicRecognitionPanelVisible: invalid }).basicRecognitionPanelVisible).toBe(false)
-    }
-    const storage = fakeStorage()
-    saveSettings({ ...DEFAULT_SETTINGS, basicRecognitionPanelVisible: true }, storage)
-    expect(loadSettings(storage)).toMatchObject({ basicRecognitionPanelVisible: true, recognitionMode: 'basic' })
-    expect(mergeSettings({ basicRecognitionPanelVisible: false, recognitionMode: 'style-pack' }))
-      .toMatchObject({ basicRecognitionPanelVisible: false, recognitionMode: 'basic' })
+  it('drops removed basicRecognitionPanelVisible and normalizes any saved recognition mode to frame-hash', () => {
+    expect(DEFAULT_SETTINGS.recognitionMode).toBe('frame-hash')
+    expect(mergeSettings({ basicRecognitionPanelVisible: true })).not.toHaveProperty('basicRecognitionPanelVisible')
+    expect(mergeSettings({ recognitionMode: 'basic' }).recognitionMode).toBe('frame-hash')
+    expect(mergeSettings({ recognitionMode: 'style-pack' }).recognitionMode).toBe('frame-hash')
   })
   it('caps silent speed correction below two seconds while retaining stricter saved thresholds', () => {
     expect(DEFAULT_SETTINGS.seekThresholdSeconds).toBe(2)
@@ -102,12 +96,13 @@ describe('mergeSettings', () => {
     expect(mergeSettings({ basicClockSearchRoi: other })).not.toHaveProperty('basicClockSearchRoi')
   })
 
-  it('reads the removed style-pack mode as basic while retaining frame-hash recognition', () => {
+  it('normalizes legacy and malformed recognition modes to frame-hash', () => {
     expect(mergeSettings({ profileId: 'cs2/iem' })).not.toHaveProperty('profileId')
-    expect(mergeSettings({ recognitionMode: 'style-pack' }).recognitionMode).toBe('basic')
+    expect(mergeSettings({ recognitionMode: 'style-pack' }).recognitionMode).toBe('frame-hash')
+    expect(mergeSettings({ recognitionMode: 'basic' }).recognitionMode).toBe('frame-hash')
     expect(mergeSettings({ recognitionMode: 'frame-hash' }).recognitionMode).toBe('frame-hash')
     for (const recognitionMode of [null, true, 'automatic', {}, []]) {
-      expect(mergeSettings({ recognitionMode }).recognitionMode).toBe('basic')
+      expect(mergeSettings({ recognitionMode }).recognitionMode).toBe('frame-hash')
     }
   })
 
@@ -246,7 +241,8 @@ describe('mergeSettings', () => {
 
 describe('loadSettings', () => {
   it.each([
-    ['style-pack', 'basic'],
+    ['style-pack', 'frame-hash'],
+    ['basic', 'frame-hash'],
     ['frame-hash', 'frame-hash'],
   ])('reads stored %s as %s without rewriting the saved blob', (recognitionMode, expectedMode) => {
     const saved = JSON.stringify({ recognitionMode, autoSyncEnabled: true })

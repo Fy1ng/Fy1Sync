@@ -497,8 +497,6 @@ function AlignPrefs(): React.ReactNode {
   const { settings } = useSessionSnapshot()
   return (
     <Group title="对齐">
-      <Switch label="显示基础识别面板" detail="在弹幕栏顶部显示识别状态和框选工具"
-        checked={settings.basicRecognitionPanelVisible} onChange={(visible) => session.updateSettings({ basicRecognitionPanelVisible: visible })} />
       <div className="field-stack">
         <span className="field-label">单击步长</span>
         <Segmented label="单击步长" value={settings.largeStepSeconds}

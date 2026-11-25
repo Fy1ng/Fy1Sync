@@ -107,6 +107,21 @@ describe('BufferManager', () => {
     expect(privateArgs[privateArgs.indexOf('-tls_verify') + 1]).toBe('1')
   })
 
+  it('recovers from a mid-stream stall under DEFAULT_MEDIA_NETWORK once video has started', async () => {
+    const f = await fixture({ stallTimeoutMs: 10_000 })
+    const network = { route: async () => ({ kind: 'direct' as const }), media: DEFAULT_MEDIA_NETWORK }
+    await start(f, vi.fn(async () => ({ url: 'https://cdn.example/live.m3u8', network })))
+    await writeManifest(f, 0, [2, 2])
+    f.children[0]!.stdout.write('frame=120\nout_time_us=4000000\n')
+    await f.clock.advance(100)
+    await until(() => f.current().state === 'ready')
+    await f.clock.advance(25_000)
+    await until(() => f.current().state === 'reconnecting')
+    expect(f.states.some(state => state.state === 'stalled')).toBe(true)
+    await f.clock.advance(1000)
+    await until(() => f.children.length === 2)
+  })
+
   it('honors a user-selected finite playback retry budget', async () => {
     const f = await fixture()
     const network = { route: async () => ({ kind: 'direct' as const }), media: { ...DEFAULT_MEDIA_NETWORK, reconnectAttempts: 1 } }

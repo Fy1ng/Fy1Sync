@@ -46,16 +46,8 @@ describe('quality restart synchronization', () => {
     expect(session.engine.element('official').paused).toBe(false)
   })
 
-  it('re-syncs in basic mode without a manually supplied pack', async () => {
-    const h = await harness(false)
-    await session.changeSourceQuality('official', 'low')
-    expect(session.profileFor('official')?.id).toBe('basic-clock')
-    expect(h.sync).toHaveBeenCalledTimes(1)
-  })
-
   it('re-syncs in frame matching mode after both sources are ready', async () => {
     const h = await harness(false)
-    session.setRecognitionMode('frame-hash')
     await session.changeSourceQuality('official', 'low')
     expect(session.profileFor('official')).toBeNull()
     expect(session.snapshot.autoSync.ready).toBe(true)

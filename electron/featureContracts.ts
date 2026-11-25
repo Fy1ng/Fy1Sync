@@ -9,14 +9,14 @@ import type { DouyuRoomInsights, DouyuFollowedRooms, DouyuBadgeAges, DouyuMonthl
 import type { AppUpdateState } from './appUpdateService'
 import type { OnlineUpdateKind, OnlineUpdateSourceId, OnlineUpdateState } from './onlineUpdateContracts'
 import { BACKEND_METHODS, type BackendMethods } from './backendContracts'
-import type { Cs2Schedule, StreamTitle, StreamTitleInput } from '../server/esports/types'
+import type { Cs2Schedule, HuyaOfficialLookupInput, HuyaOfficialMatch, StreamTitle, StreamTitleInput } from '../server/esports/types'
 import type { DouyuWatchPlaybackReport, DouyuWatchState } from '../server/douyu/watchTypes'
 import type { DouyuLotterySnapshot } from '../server/douyu/douyuLotteryTypes'
 import { BILIBILI_LOTTERY_METHODS, type BilibiliLotteryMethods } from '../src/core/bilibiliLottery'
 import type { BilibiliEmoteCatalog } from '../server/platforms/bilibiliEmotes'
 import type { BilibiliRoomSnapshot, BilibiliWatchEvidenceStatus } from '../server/platforms/bilibiliRoomInsights'
 import type { DouyinLotterySnapshot, DouyinLotteryTarget } from '../src/core/douyinLottery'
-export type { Cs2Schedule, Cs2Match, Cs2Team, Cs2Stream, StreamTitle, StreamTitleInput } from '../server/esports/types'
+export type { Cs2Schedule, Cs2Match, Cs2Team, Cs2Stream, HuyaOfficialLookupInput, HuyaOfficialMatch, StreamTitle, StreamTitleInput } from '../server/esports/types'
 
 /** This context is constructed by trusted IPC, never read from renderer arguments. */
 export interface FeatureCallContext { readonly senderId?: number }
@@ -63,6 +63,7 @@ export interface FeatureMethods extends BackendMethods, BilibiliLotteryMethods {
   getStreamTitles: { args: { streams: StreamTitleInput[] }; result: StreamTitle[] }
   /** The event 赛程 shows, as a Liquipedia path; its missing crests are fetched next. */
   setCs2ScheduleFocus: { args: { eventPath: string | null }; result: { updated: true } }
+  findHuyaOfficialStream: { args: HuyaOfficialLookupInput; result: HuyaOfficialMatch | null }
   listSavedRooms: { args: undefined; result: SavedRoom[] }
   saveRoom: { args: SaveRoomInput; result: SavedRoom }
   removeSavedRoom: { args: { id: string }; result: { removed: boolean } }
@@ -123,7 +124,7 @@ export type FeatureMethod = keyof FeatureMethods
 /** One whitelist shared by preload and the feature dispatcher. */
 export const FEATURE_METHODS = [
   ...BACKEND_METHODS,
-  'getCs2Schedule', 'openLiquipediaVerification', 'refreshCs2ScheduleAfterVerification', 'getStreamTitles', 'setCs2ScheduleFocus',
+  'getCs2Schedule', 'openLiquipediaVerification', 'refreshCs2ScheduleAfterVerification', 'getStreamTitles', 'setCs2ScheduleFocus', 'findHuyaOfficialStream',
   'listSavedRooms', 'saveRoom', 'removeSavedRoom', 'refreshSavedRooms',
   'activateDouyuRoom', 'getDanmakuFeatures', 'setDanmakuPreferences', 'setMessageAffixes',
   'queryDanmakuHistory', 'queryDanmakuFavorites', 'addDanmakuFavorite', 'updateDanmakuFavorite', 'removeDanmakuFavorite',

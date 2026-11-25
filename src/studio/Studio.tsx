@@ -39,7 +39,7 @@ import { SettingsSheet, type SettingsSection, type SettingsTarget } from './Sett
 import { SourceChip } from './SourceChip'
 import { SourceLoaderProvider, useSourceLoader } from './sources'
 import { ADD_STREAM_POPOVER, ExtraStreams } from './streams/ExtraStreams'
-import { AutoAlign, nudgeStepFor, PlaybackRecoveryPrompt, startAutoAlign, SyncCapsule, useNudge } from './sync'
+import { AutoAlign, HuyaFallbackPrompt, nudgeStepFor, PlaybackRecoveryPrompt, startAutoAlign, SyncCapsule, useNudge } from './sync'
 import { useComposer } from './composer'
 import { Toasts } from './Toasts'
 import { QualityMenu } from './QualityMenu'
@@ -145,8 +145,7 @@ function StudioView({ settingsAt, setSettingsAt }: {
   }
   // The drawer is the room's chat; with no room there is nothing to hold it open for.
   const hasRoom = snapshot.danmaku.connected || snapshot.danmaku.room !== null || platformRooms.hasBilibili || restrictedChatSources.length > 0
-  const hasSidebar = hasRoom || (snapshot.settings.recognitionMode === 'basic' && snapshot.settings.basicRecognitionPanelVisible
-    && SOURCE_ROLES.some(role => snapshot.media[role].status !== 'empty'))
+  const hasSidebar = hasRoom
   const chatOpen = snapshot.settings.sidebarVisible && hasSidebar
   const setChat = useCallback((open: boolean) => session.updateSettings({ sidebarVisible: open }), [session])
 
@@ -346,6 +345,7 @@ function StudioView({ settingsAt, setSettingsAt }: {
           {fullscreen.error && <p className="toast is-error floating-error" role="alert"><ErrorText error={fullscreen.errorDetail ?? fullscreen.error} message={fullscreen.error} /></p>}
 
           <footer className="dock" ref={dock} {...chromeHover}>
+            <HuyaFallbackPrompt />
             <PlaybackRecoveryPrompt />
             <Timeline />
             <div className="dock-row" ref={dockRow} data-fold={dockFold}>

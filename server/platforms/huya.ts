@@ -18,6 +18,7 @@ const random = () => randomBytes(4).readUInt32BE() / 0x1_0000_0000
 const record = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 const text = (value: unknown, max: number): string => typeof value === 'string' && value.length <= max && !/[\x00-\x1f\x7f]/.test(value) ? value : ''
 const integer = (value: unknown, max: number): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= max
+const priorityRate = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= -100 && value <= 1_000_000
 
 export function parseHuyaRoom(input: string): string | null {
   if (typeof input !== 'string' || input.length > 8192) return null
@@ -107,6 +108,26 @@ function mediaUrl(value: unknown): URL | null {
   } catch { return null }
 }
 
+export type HuyaLiveSummary = { room: string; nickname: string; title: string }
+
+/** Lightweight live status & title summary for matching tournament stages without exposing stream tokens. */
+export function parseHuyaLiveSummary(rawPage: string, inputRoom: string): HuyaLiveSummary | null {
+  if (typeof rawPage !== 'string' || rawPage.length > MAX_PAGE) return null
+  if (rawPage.includes('找不到这个主播') || /正在整改中|房间已被封禁|主播已被封禁/.test(rawPage)) return null
+  const page = rawPage.replace(/&quot;|&#34;|&#x22;/gi, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  const room = record(jsonAfter(page, /\bTT_ROOM_DATA\s*=\s*/, 65_536))
+  if (room.state !== 'ON' || room.isReplay === true || replayTitle(room.introduction)) return null
+  const canonical = roomId(room.profileRoom) ?? (/^[1-9]\d{0,15}$/.test(inputRoom) ? inputRoom : null)
+  if (!canonical) return null
+  const stream = record(jsonAfter(page, /\bstream\s*:\s*/, 1_048_576))
+  const data = Array.isArray(stream.data) && stream.data.length <= 100 ? record(stream.data[0]) : {}
+  const live = record(data.gameLiveInfo)
+  if (replayTitle(live.introduction) || replayTitle(live.roomName)) return null
+  const nickname = (text(live.nick, 120) || text(room.nick, 120)).trim()
+  const title = (text(live.introduction, 300) || text(room.introduction, 300) || text(live.roomName, 300)).trim()
+  return { room: canonical, nickname, title }
+}
+
 /** Page fixtures are reduced and anonymized; raw pages/tokens must never be logged. */
 export function parseHuyaPage(rawPage: string, inputRoom: string): PageResult {
   if (typeof rawPage !== 'string' || rawPage.length > MAX_PAGE) return failure('upstream-error', '虎牙房间页面过大或格式无效', MANUAL_URL_HINT)
@@ -130,9 +151,9 @@ export function parseHuyaPage(rawPage: string, inputRoom: string): PageResult {
     const base = mediaUrl(line.sFlvUrl)
     const presenter = uid(line.lPresenterUid)
     if (!/^[A-Z0-9_-]{1,16}$/.test(cdn) || ['HY', 'HUYA', 'HYZJ'].includes(cdn) || !STREAM.test(name)
-      || !integer(line.iWebPriorityRate, 1_000_000) || line.sFlvUrlSuffix !== 'flv' || !base || base.search || presenter === null) return []
+      || !priorityRate(line.iWebPriorityRate) || line.sFlvUrlSuffix !== 'flv' || !base || base.search || presenter === null) return []
     return [{ cdn, name, priority: line.iWebPriorityRate, base: base.href.replace(/\/$/, ''), antiCode: text(line.sFlvAntiCode, MAX_TOKEN), presenter }]
-  }).sort((a, b) => b.priority - a.priority) : []
+  }).sort((a, b) => (a.priority < 0 ? 1 : 0) - (b.priority < 0 ? 1 : 0) || b.priority - a.priority) : []
   return { ok: true, room: canonical, lines, qualities }
 }
 
@@ -236,7 +257,11 @@ export async function resolveHuya(input: string, deps: ResolverDeps): Promise<Re
   if (!page.ok) return page
   const quality = deps.quality ?? page.qualities[0]?.id ?? '0'
   if (page.qualities.length && !page.qualities.some(option => option.id === quality)) return failure('unsupported-url', '虎牙当前不提供所选画质', '请重新载入并选择可用画质')
-  for (const line of page.lines) {
+  const lineCount = page.lines.length
+  const startOffset = lineCount > 0 && typeof deps.lineAttempt === 'number' && Number.isSafeInteger(deps.lineAttempt) && deps.lineAttempt > 0
+    ? deps.lineAttempt % lineCount : 0
+  for (let index = 0; index < lineCount; index++) {
+    const line = page.lines[(startOffset + index) % lineCount]!
     let auth: string | null = null
     try {
       if (deps.fetchBytes) {

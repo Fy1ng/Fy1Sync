@@ -25,18 +25,13 @@ import {
   type OffsetPlan,
 } from '../core/syncPlan'
 import { MediaEngine, type EngineState } from '../media/mediaEngine'
-import { RecognitionSampler } from '../recognition/sampler'
-import { createRecognitionWorker } from '../recognition/createWorker'
-import { BASIC_CLOCK_PROFILE, type ActiveProfile, type BasicClockProfile } from '../core/activeProfile'
-import type { RoiRect } from '../core/profileSchema'
-import type { BasicClockProgress } from '../recognition/protocol'
-import { basicClockSourceKey, findBasicClockMemory, forgetBasicClockMemory, rememberBasicClock } from '../core/basicClockMemory'
-import { getBasicClockSearchRoi } from '../core/basicClockSearch'
+import type { ActiveProfile } from '../core/activeProfile'
 import { AutoSyncController, type AutoSyncPhase, type AutoSyncRunResult } from '../sync/autoSync'
-import { FrameHashSampler } from '../sync/frameHashSampler'
+import { FrameHashSampler, type FrameMeasureRequest, type FrameMeasurement } from '../sync/frameHashSampler'
 import { apiClient } from './apiClient'
-import type { AppSettings, RecognitionMode } from './settings'
-import { DEFAULT_SETTINGS, loadSettings, normalizeBasicClockRoi, saveSettings } from './settings'
+import type { AppSettings } from './settings'
+import { DEFAULT_SETTINGS, loadSettings, saveSettings } from './settings'
+import type { HuyaOfficialMatch } from '../../electron/featureContracts'
 import type { BufferState } from '../../electron/bufferManager'
 import { colorForIndex } from '../../server/danmaku/douyuProtocol'
 import { danmakuRoom, isReadOnlyDanmakuPlatform, type ChatMessage } from '../../server/danmaku/types'
@@ -93,11 +88,11 @@ export interface SessionSnapshot {
     connectionRevision?: number
   }
   profiles: Record<SourceRole, ActiveProfile | null>
-  basicProgress: Record<SourceRole, BasicClockProgress | null>
   notices: Notice[]
   buffers: Record<SourceRole, BufferState | null>
   qualityBusy: Record<SourceRole, boolean>
   playbackRecovery: { kind: 'stall' | 'reconnect'; driftSeconds: number | null } | null
+  huyaFallbackPrompt: (HuyaOfficialMatch & { role: SourceRole; sourceKey: string }) | null
   playbackDiagnostics: Record<SourceRole, PlaybackStallSummary | null>
 }
 
@@ -114,16 +109,20 @@ type DanmakuSelection = { room: string; origin: SourceRole | 'manual'; name?: st
 export interface SessionOptions {
   engine?: MediaEngine
   storage?: Parameters<typeof loadSettings>[0]
-  /** Injected so tests can drive the sampler without a real worker. */
-  createSampler?: (session: Session) => RecognitionSampler | null
+  /** Retained as a no-op option so existing non-recognition test harnesses require no churn. */
+  createSampler?: (session: Session) => unknown
+  /** Optional deterministic frame-matching seam for unit tests without a Web Worker. */
+  measureFrames?: (request: FrameMeasureRequest) => Promise<FrameMeasurement>
   now?: () => number
   /** Timestamp domain used by injected recognition outcomes. */
   readingClock?: () => number
 }
 
 const MAX_NOTICES = 6
-/** Safety ceiling for discovery; sufficient fresh evidence ends the window early. */
-const BASIC_DETECT_WINDOW_SECONDS = 6
+const FRAME_MATCH_WINDOW_SECONDS = 9
+const PROXY_INSTABILITY_WINDOW_MS = 120_000
+const PROXY_INSTABILITY_THRESHOLD = 2
+const BUFFER_REVIVAL_COOLDOWN_MS = 2_500
 /** How long a loaded source may play without presenting a frame before it is reported. */
 const PICTURE_TIMEOUT_MS = 15_000
 
@@ -145,9 +144,8 @@ export class Session {
   private readonly liveEdge = new LiveEdgeClock()
   private pausedClock: { media: number; wall: number } | null = null
 
-  private sampler: RecognitionSampler | null = null
   private autoRequestRevision = 0
-  private samplerFactory: ((session: Session) => RecognitionSampler | null) | null
+  private readonly measureFramesOverride?: (request: FrameMeasureRequest) => Promise<FrameMeasurement>
   private settingsValue: AppSettings
   private readonly storage: SessionOptions['storage']
   private readonly now: () => number
@@ -183,17 +181,13 @@ export class Session {
   private playbackPending = 0
   private pipPresentationReduced = false
   private readonly pendingQualityWaits = new Set<() => void>()
-  private basicProfiles: Record<SourceRole, BasicClockProfile> = { official: BASIC_CLOCK_PROFILE, commentary: BASIC_CLOCK_PROFILE }
-  private readonly basicSearchRoi = getBasicClockSearchRoi()
-  private basicSamplingProfiles: Record<SourceRole, BasicClockProfile> | null = null
-  private basicSamplingContexts: Record<SourceRole, { key: string | null; revision: number } | null> = { official: null, commentary: null }
-  private basicWarmupContexts: typeof this.basicSamplingContexts = { official: null, commentary: null }
-  private basicObservedRegions: Record<SourceRole, { roi: RoiRect; key: string; revision: number; width: number; height: number } | null> = {
-    official: null, commentary: null,
-  }
-  private basicWarmupEnabled = true
-  private basicProgressMap: SessionSnapshot['basicProgress'] = { official: null, commentary: null }
-  private basicPreviewEnabledValue = false
+  private readonly revivingBuffer = new Set<SourceRole>()
+  private readonly lastBufferRevivalAt: Record<SourceRole, number> = { official: -Infinity, commentary: -Infinity }
+  private readonly pendingCodecFallbackRemount = new Set<SourceRole>()
+  private readonly proxyInstabilityAt: Record<SourceRole, number[]> = { official: [], commentary: [] }
+  private huyaFallbackPromptValue: SessionSnapshot['huyaFallbackPrompt'] = null
+  private readonly dismissedHuyaPrompts = new Set<string>()
+  private readonly queriedHuyaPrompts = new Set<string>()
   private chatLog: DanmakuMessage[] = []
   private chatTotal = 0
   private readonly chatListeners = new Set<() => void>()
@@ -232,42 +226,21 @@ export class Session {
     this.now = options.now ?? (() => Date.now())
     this.settingsValue = loadSettings(this.storage)
     this.filter = compileDanmakuFilter(this.settingsValue.danmaku.filter)
-    this.samplerFactory = options.createSampler ?? defaultSamplerFactory
+    this.measureFramesOverride = options.measureFrames
 
     this.autoSync = new AutoSyncController(
       {
         measureFrames: request => {
-          if (this.settingsValue.recognitionMode !== 'frame-hash') return null
+          if (this.measureFramesOverride) return this.measureFramesOverride(request)
           this.refreshFrameCapture()
           return this.frameSampler?.measure(request) ?? Promise.resolve({
             samples: { official: 0, commentary: 0 }, message: '画面匹配尚未就绪，请保持两路视频播放',
           })
         },
-        sample: async (windowMs, onOutcome, signal) => {
-          if (this.settingsValue.recognitionMode === 'basic') {
-            // A learned region becomes active next run; never reconfigure a sampling window mid-run.
-            this.basicSamplingProfiles = {
-              official: this.resolveBasicProfile('official'), commentary: this.resolveBasicProfile('commentary'),
-            }
-            for (const role of SOURCE_ROLES) this.basicSamplingContexts[role] = {
-              key: basicClockSourceKey(this.engine.getState()[role].descriptor), revision: this.sourceGeneration[role],
-            }
-          }
-          try {
-            const sampler = this.ensureSampler()
-            if (!sampler) return
-            this.notify()
-            await sampler.sample(windowMs, onOutcome, signal,
-              this.settingsValue.recognitionMode === 'basic' && this.autoSync.phase === 'sampling')
-          } finally {
-            this.clearBasicSampling()
-            this.refreshBasicWarmup()
-            this.notify()
-          }
-        },
+        sample: async () => {},
         snapshot: (role) => this.engine.snapshot(role),
         canStart: () => SOURCE_ROLES.every(role => this.isSyncReady(role)),
-        hasProfile: () => this.settingsValue.recognitionMode === 'frame-hash' || SOURCE_ROLES.every((role) => this.profileFor(role) !== null),
+        hasProfile: () => true,
         seek: (role, target) => this.seekAutomatically(role, target, false),
         seekManual: (role, target) => this.seekAutomatically(role, target, true),
         setPlaybackRate: (role, rate) => { this.engine.element(role).playbackRate = rate },
@@ -281,7 +254,7 @@ export class Session {
         readingClock: options.readingClock ?? (() => performance.now()),
       },
       {
-        detectWindowSeconds: this.recognitionWindowSeconds(),
+        detectWindowSeconds: FRAME_MATCH_WINDOW_SECONDS,
         schedulerIntervalSeconds: this.settingsValue.autoSyncIntervalSeconds,
         seekThresholdSeconds: this.settingsValue.seekThresholdSeconds,
       },
@@ -289,26 +262,40 @@ export class Session {
 
     this.engine.subscribe(() => {
       if (this.pendingAutoDanmaku && !this.suspended && !this.changingSources.has(this.autoDanmakuRole())) this.syncAutoDanmaku()
-      this.refreshBasicWarmup()
+      for (const role of SOURCE_ROLES) this.maybeReviveLocalBuffer(role)
       this.refreshFrameCapture()
       this.notify()
     })
     this.releaseBuffer = apiClient.subscribeBuffer((state) => {
       if (state.role !== 'official' && state.role !== 'commentary') return
-      const previousNotice = this.bufferStates[state.role]?.notice
+      const previousState = this.bufferStates[state.role]
+      const previousNotice = previousState?.notice
       const notice = state.notice
-      if (notice?.code === 'youtube-adaptive-fallback'
+      const isNewFallback = notice?.code === 'youtube-adaptive-fallback'
         && (previousNotice?.code !== notice.code || previousNotice.fromHeight !== notice.fromHeight
-          || previousNotice.toHeight !== notice.toHeight)) {
+          || previousNotice.toHeight !== notice.toHeight)
+      if (isNewFallback && notice) {
         this.notice('warn', `${notice.fromHeight}p 取流失败，已回退到 ${notice.toHeight}p`)
+        const current = this.engine.getState()[state.role].descriptor
+        if (current?.kind === 'hls' && current.url.includes('/buffer/')) {
+          this.pendingCodecFallbackRemount.add(state.role)
+        }
       }
       this.bufferStates = { ...this.bufferStates, [state.role]: state }
+      if (previousState?.state === 'ready' && (state.state === 'reconnecting' || state.state === 'stalled')) {
+        this.recordProxyInstability(state.role)
+      }
+      if (state.state === 'ready' && this.pendingCodecFallbackRemount.delete(state.role)) {
+        const descriptor = this.sourceDescriptor(state.role)
+        if (descriptor) void this.reviveLocalBuffer(state.role, descriptor)
+      } else {
+        this.maybeReviveLocalBuffer(state.role)
+      }
       this.notify()
     })
     this.autoSync.onPhaseChange(phase => {
       const result = this.autoSync.result
       this.resetPlaybackObservation()
-      this.refreshBasicWarmup()
       if (phase === 'done' && result?.applied && !result.failure && !result.dryRun) this.playbackRecovery = null
       if ((phase === 'done' || phase === 'failed') && result?.plan && result.appliedRewind && result.failure?.kind !== 'cancelled') {
         this.planValue = result.plan
@@ -397,12 +384,12 @@ export class Session {
       mainRole: this.mainRoleValue,
       playing: this.playingValue,
       danmaku: { ...this.danmakuState, pending: stats.pending, dropped: stats.expired },
-      profiles: { official: this.profileFor('official'), commentary: this.profileFor('commentary') },
-      basicProgress: { ...this.basicProgressMap },
+      profiles: { official: null, commentary: null },
       notices: this.noticeList,
       buffers: { ...this.bufferStates },
       qualityBusy: { ...this.qualityBusy },
       playbackRecovery: this.playbackRecovery,
+      huyaFallbackPrompt: this.huyaFallbackPromptValue,
       playbackDiagnostics: { official: this.diagnostics.summary('official'), commentary: this.diagnostics.summary('commentary') },
     }
   }
@@ -421,14 +408,8 @@ export class Session {
     this.notify()
   }
 
-  private ensureSampler(): RecognitionSampler | null {
-    if (this.sampler || !this.samplerFactory) return this.sampler
-    this.sampler = this.samplerFactory(this)
-    return this.sampler
-  }
-
   private refreshFrameCapture(): void {
-    const enabled = !this.disposed && this.settingsValue.recognitionMode === 'frame-hash'
+    const enabled = !this.disposed
       && typeof Worker !== 'undefined' && this.changingSources.size === 0
       && SOURCE_ROLES.every(role => this.engine.getState()[role].status === 'ready')
     if (!enabled) {
@@ -444,144 +425,101 @@ export class Session {
         return `${this.sourceGeneration[role]}:${state.observationRevision}:${state.discontinuities}`
       },
       config: () => ({ regions: this.settingsValue.frameHashRegions, masks: this.settingsValue.frameHashMasks }),
+      paused: () => this.pipPresentationReduced || SOURCE_ROLES.some(role => this.changingSources.has(role)
+        || this.qualityBusy[role] || (this.bufferStates[role] !== null && this.bufferStates[role]!.state !== 'ready')),
       onStatus: status => { this.frameStatus = status; this.notify() },
     })
   }
 
-  profileFor(role: SourceRole): ActiveProfile | null {
-    if (this.settingsValue.recognitionMode === 'frame-hash') return null
-    return this.basicSamplingProfiles?.[role] ?? this.resolveBasicProfile(role)
+  profileFor(_role: SourceRole): ActiveProfile | null {
+    return null
   }
 
-  private resolveBasicProfile(role: SourceRole): BasicClockProfile {
-    const manual = this.settingsValue.basicClockRoi
-    const searchRoi = this.basicSearchRoi
-    const video = this.engine.element(role)
-    const key = basicClockSourceKey(this.engine.getState()[role].descriptor)
-    const observed = this.basicObservedRegions[role]
-    const currentRegion = observed && observed.key === key && observed.revision === this.sourceGeneration[role]
-      && observed.width === video.videoWidth && observed.height === video.videoHeight
-      && (!searchRoi || regionContains(searchRoi, observed.roi)) ? observed.roi : null
-    const remembered = manual ? null : findBasicClockMemory(this.settingsValue.basicClockMemory,
-      key, video.videoWidth, video.videoHeight)
-    const memory = remembered && (!searchRoi || regionContains(searchRoi, remembered.roi)) ? remembered : null
-    // Shared persisted memory is a cold-start hint. A live worker's own verified
-    // envelope must not be replaced by another role reading the same source.
-    const roi = manual ?? currentRegion ?? memory?.roi
-    const origin = manual ? 'manual' : roi ? 'memory' : undefined
-    const cached = this.basicProfiles[role]
-    if (!roi && !searchRoi) return (this.basicProfiles[role] = BASIC_CLOCK_PROFILE)
-    if (cached.roiOrigin !== origin || !sameRegion(cached.roi, roi) || !sameRegion(cached.searchRoi, searchRoi)) {
-      this.basicProfiles[role] = { ...BASIC_CLOCK_PROFILE,
-        ...(roi ? { roi: { ...roi }, roiOrigin: origin } : {}), ...(searchRoi ? { searchRoi: { ...searchRoi } } : {}) }
-    }
-    return this.basicProfiles[role]
+  private maybeReviveLocalBuffer(role: SourceRole): void {
+    if (this.disposed || this.changingSources.has(role) || this.qualityBusy[role] || this.revivingBuffer.has(role)) return
+    const mediaState = this.engine.getState()[role]
+    const buffer = this.bufferStates[role]
+    const descriptor = this.sourceDescriptor(role)
+    if (!descriptor?.url.includes('/buffer/') || mediaState.status !== 'error' || buffer?.state !== 'ready') return
+    if (this.now() - this.lastBufferRevivalAt[role] < BUFFER_REVIVAL_COOLDOWN_MS) return
+    void this.reviveLocalBuffer(role, descriptor)
   }
 
-  private clearBasicSampling(): void {
-    this.basicSamplingProfiles = null
-    this.basicSamplingContexts = { official: null, commentary: null }
+  private async reviveLocalBuffer(role: SourceRole, descriptor: MediaDescriptor): Promise<void> {
+    if (this.revivingBuffer.has(role) || this.disposed) return
+    const generation = this.sourceGeneration[role]
+    const shouldPlay = this.playingValue
+    this.revivingBuffer.add(role)
+    this.lastBufferRevivalAt[role] = this.now()
+    try {
+      await this.engine.load(role, descriptor)
+      if (this.disposed || generation !== this.sourceGeneration[role]) return
+      this.applyAudioSettings()
+      if (shouldPlay && this.engine.getState()[role].status !== 'error') {
+        await this.engine.element(role).play().catch(() => {})
+      }
+      this.notify()
+    } finally {
+      this.revivingBuffer.delete(role)
+    }
   }
 
-  private refreshBasicWarmup(): void {
-    if (this.disposed) return
-    const roles: SourceRole[] = []
-    const enabled = this.basicWarmupEnabled && !this.pipPresentationReduced
-      && this.settingsValue.recognitionMode === 'basic'
-    const media = this.engine.getState()
-    for (const role of SOURCE_ROLES) {
-      const video = this.engine.element(role)
-      const usable = enabled && media[role].status === 'ready' && !this.changingSources.has(role)
-        && !this.qualityBusy[role] && !this.engine.playbackSample(role).busy
-        && video.readyState >= 3 && !video.paused && !video.seeking && !video.ended
-        && video.videoWidth > 0 && video.videoHeight > 0
-      this.basicWarmupContexts[role] = usable
-        ? { key: basicClockSourceKey(media[role].descriptor), revision: this.sourceGeneration[role] } : null
-      if (usable) roles.push(role)
+  private recordProxyInstability(role: SourceRole): void {
+    if (this.disposed || this.changingSources.has(role) || this.qualityBusy[role]) return
+    const descriptor = this.sourceDescriptor(role)
+    if (!descriptor || (descriptor.platform !== 'youtube' && descriptor.platform !== 'twitch')) return
+    const now = this.now()
+    const recent = this.proxyInstabilityAt[role].filter(at => now - at <= PROXY_INSTABILITY_WINDOW_MS)
+    if (recent.length > 0 && now - recent[recent.length - 1]! < 1_500) return
+    recent.push(now)
+    this.proxyInstabilityAt[role] = recent
+    if (recent.length < PROXY_INSTABILITY_THRESHOLD) return
+
+    const qualities = descriptor.sourceQualities ?? []
+    const currentOption = qualities.find(option => option.id === descriptor.sourceQuality)
+    const currentHeight = currentOption?.height ?? this.engine.element(role).videoHeight
+    if (currentHeight > 1080) {
+      // Quality floor is strictly 1080p; never auto-downgrade to 720p or lower.
+      const target1080 = qualities
+        .filter(option => option.height === 1080 && option.id !== descriptor.sourceQuality)
+        .sort((a, b) => Number(!b.adaptive) - Number(!a.adaptive) || (b.fps ?? 0) - (a.fps ?? 0))[0]
+      if (target1080) {
+        this.proxyInstabilityAt[role] = []
+        this.notice('warn', `当前代理连接不稳，已自动切换至 ${target1080.label} 以保持流畅`)
+        void this.changeSourceQuality(role, target1080.id)
+        return
+      }
     }
-    const sampler = roles.length ? this.ensureSampler() : this.sampler
-    if (!sampler?.setBackgroundRoles) {
-      this.basicWarmupContexts = { official: null, commentary: null }
-      return
-    }
-    sampler?.setBackgroundRoles?.(roles, this.autoSync.isRunning || !!this.automaticSeek
-      || !!this.offsetDrain || this.playbackPending > 0)
+
+    const sourceKey = `${descriptor.platform}:${descriptor.sourceChannel ?? descriptor.input}`
+    if (this.dismissedHuyaPrompts.has(sourceKey) || this.queriedHuyaPrompts.has(sourceKey)
+      || this.huyaFallbackPromptValue?.sourceKey === sourceKey) return
+    this.queriedHuyaPrompts.add(sourceKey)
+    const generation = this.sourceGeneration[role]
+    void apiClient.feature('findHuyaOfficialStream', {
+      platform: descriptor.platform,
+      input: descriptor.input,
+      ...(descriptor.sourceChannel ? { channel: descriptor.sourceChannel } : {}),
+    }).then(result => {
+      if (this.disposed || generation !== this.sourceGeneration[role] || this.dismissedHuyaPrompts.has(sourceKey)) return
+      if (!result.ok || !result.value) return
+      this.huyaFallbackPromptValue = { ...result.value, role, sourceKey }
+      this.notify()
+    }).catch(() => {})
   }
 
-  get basicPreviewEnabled(): boolean { return this.basicPreviewEnabledValue }
-
-  setBasicPreviewEnabled(enabled: boolean): void { this.basicPreviewEnabledValue = enabled }
-
-  receiveBasicProgress(role: SourceRole, progress: BasicClockProgress): void {
-    if (this.disposed || this.settingsValue.recognitionMode !== 'basic') return
-    this.basicProgressMap = { ...this.basicProgressMap, [role]: progress }
-    const { diagnostic } = progress
-    const context = this.basicSamplingContexts[role] ?? this.basicWarmupContexts[role]
-    const size = diagnostic.inputSize
-    const roi = normalizeBasicClockRoi(diagnostic.roi)
-    if (diagnostic.mode === 'auto' && diagnostic.status === 'locked' && roi && size && context?.key
-      && context.revision === this.sourceGeneration[role] && this.basicSamplingProfiles?.[role].roi === undefined
-      && context.key === basicClockSourceKey(this.engine.getState()[role].descriptor)
-      && Number.isFinite(size.width) && Number.isFinite(size.height) && size.width > 0 && size.height > 0) {
-      const video = this.engine.element(role)
-      this.basicObservedRegions[role] = { roi: { ...roi }, key: context.key, revision: context.revision,
-        width: video.videoWidth, height: video.videoHeight }
-      const memory = rememberBasicClock(this.settingsValue.basicClockMemory, {
-        key: context.key, roi, aspectRatio: size.width / size.height, updatedAt: this.now(),
-      })
-      if (memory !== this.settingsValue.basicClockMemory) this.updateSettings({ basicClockMemory: memory })
-    }
+  dismissHuyaFallbackPrompt(): void {
+    if (!this.huyaFallbackPromptValue) return
+    this.dismissedHuyaPrompts.add(this.huyaFallbackPromptValue.sourceKey)
+    this.huyaFallbackPromptValue = null
     this.notify()
   }
 
-  /** Both sources share the official picture's proportional countdown region. */
-  setBasicClockRoi(roi: RoiRect | null): void {
-    const normalized = normalizeBasicClockRoi(roi)
-    if (roi !== null && !normalized) { this.notice('warn', '框选范围无效，请重新框选'); return }
-    const memory = roi === null ? this.forgetCurrentClockMemories() : this.settingsValue.basicClockMemory
-    this.invalidateBasicRegions()
-    this.updateSettings({ basicClockRoi: normalized, basicClockMemory: memory })
-  }
-
-  private forgetCurrentClockMemories() {
-    let memory = this.settingsValue.basicClockMemory
-    for (const role of SOURCE_ROLES) {
-      const video = this.engine.element(role)
-      memory = forgetBasicClockMemory(memory, basicClockSourceKey(this.engine.getState()[role].descriptor), video.videoWidth, video.videoHeight)
-    }
-    return memory
-  }
-
-  private invalidateBasicRegions(): void {
-    this.basicObservedRegions = { official: null, commentary: null }
-    this.clearBasicSampling()
-    ++this.autoRequestRevision
-    this.autoSync.cancel(false)
-    this.sampler?.dispose()
-    this.sampler = null
-    this.basicProgressMap = { official: null, commentary: null }
-  }
-
-  private recognitionWindowSeconds(): number {
-    return this.settingsValue.recognitionMode === 'basic'
-      ? BASIC_DETECT_WINDOW_SECONDS : 9
-  }
-
-  setRecognitionMode(mode: RecognitionMode): void {
-    this.changeRecognitionMode(mode)
-  }
-
-  private changeRecognitionMode(mode: RecognitionMode): void {
-    if (mode === this.settingsValue.recognitionMode) return
-    this.basicObservedRegions = { official: null, commentary: null }
-    this.clearBasicSampling()
-    ++this.autoRequestRevision
-    this.autoSync.cancel(false)
-    this.sampler?.dispose()
-    this.sampler = null
-    this.basicProgressMap = { official: null, commentary: null }
-    this.updateSettings({ recognitionMode: mode })
-    this.autoSync.configure({ detectWindowSeconds: this.recognitionWindowSeconds() })
+  acceptHuyaFallbackPrompt(): void {
+    if (!this.huyaFallbackPromptValue) return
+    this.dismissedHuyaPrompts.add(this.huyaFallbackPromptValue.sourceKey)
+    this.huyaFallbackPromptValue = null
+    this.notify()
   }
 
   /** Restore playback observation, preferences and the persisted scheduler toggle. */
@@ -683,7 +621,6 @@ export class Session {
     if (generation !== this.sourceGeneration[role] || !this.changingSources.delete(role)) return
     this.syncAutoDanmaku()
     this.resetPlaybackObservation()
-    this.refreshBasicWarmup()
     this.notify()
   }
   sourceRevision(role: SourceRole): number { return this.sourceGeneration[role] }
@@ -887,7 +824,6 @@ export class Session {
     } else {
       if (this.settingsValue.autoSyncEnabled) this.startScheduler()
     }
-    this.refreshBasicWarmup()
     this.notify()
   }
   private navigatePlayback(role: SourceRole, move: number | 'live' | { to: number }): Promise<boolean> {
@@ -1152,24 +1088,18 @@ export class Session {
 
   private startPlaybackObservation(): void {
     if (this.observationTimer !== null || this.disposed) return
-    this.basicWarmupEnabled = true
-    this.refreshBasicWarmup()
     this.observationAt = null
     this.observationTimer = setInterval(() => this.observePlayback(), 500)
   }
 
   private stopPlaybackObservation(): void {
     ++this.playbackIntentRevision
-    this.basicWarmupEnabled = false
-    this.basicWarmupContexts = { official: null, commentary: null }
-    this.sampler?.setBackgroundRoles?.([])
     if (this.observationTimer !== null) clearInterval(this.observationTimer)
     this.observationTimer = null
     this.resetPlaybackObservation()
   }
 
   private observePlayback(): void {
-    this.refreshBasicWarmup()
     const at = this.now()
     const timerLateMs = this.observationAt === null ? 0 : Math.max(0, at - this.observationAt - 500)
     this.observationAt = at
@@ -1185,7 +1115,12 @@ export class Session {
       // A source's diagnostic clock remains useful when its peer is absent or paused.
       const individual = observePlaybackProgress(this.diagnosticProgress[role], { at, official: sample, commentary: sample }, observing)
       this.diagnosticProgress[role] = individual.state
-      if (individual.started.length) this.diagnostics.startStall(role)
+      if (individual.started.length) {
+        this.diagnostics.startStall(role)
+        if (observing && this.playingValue && !sample.paused && !sample.seeking && !sample.ended) {
+          this.recordProxyInstability(role)
+        }
+      }
       if (individual.ended.length || !observing || sample.paused || sample.seeking || sample.ended
         || timerLateMs > 1000) this.diagnostics.endStall(role)
       if (paired && !sample.paused && !sample.seeking && !sample.ended
@@ -1227,7 +1162,6 @@ export class Session {
   /** Measure only. Allowed even when auto-apply has been revoked. */
   async measureOnce(): Promise<AutoSyncRunResult> {
     const result = await this.autoSync.dryRun(this.applied)
-    this.refreshBasicWarmup()
     this.reportAutoResult(result)
     return result
   }
@@ -1245,7 +1179,6 @@ export class Session {
       || (!authorize && !this.autoSync.autoApplyAuthorized)) return this.cancelledSyncResult()
     if (authorize) this.autoSync.authorize()
     const result = await this.autoSync.run(this.applied, authorize ? 'manual' : 'silent')
-    this.refreshBasicWarmup()
     if (revision !== this.autoRequestRevision || this.disposed) return result
     if (result.appliedRewind || result.applied) {
       // The controller seeked through the engine, so the engine is authoritative for
@@ -1296,7 +1229,7 @@ export class Session {
   /** 2 s or 3 s, per the sync design: long enough to catch a tick, short enough to feel live. */
   setDetectWindow(seconds: number): void {
     this.updateSettings({ detectWindowSeconds: seconds })
-    this.autoSync.configure({ detectWindowSeconds: this.recognitionWindowSeconds() })
+    this.autoSync.configure({ detectWindowSeconds: FRAME_MATCH_WINDOW_SECONDS })
   }
 
   setSeekThreshold(seconds: number): void {
@@ -1308,11 +1241,9 @@ export class Session {
   private invalidateAutomaticWork(role: SourceRole): void {
     this.frameSampler?.dispose()
     this.frameSampler = null
-    this.clearBasicSampling()
-    this.basicWarmupContexts[role] = null
-    this.basicObservedRegions[role] = null
-    this.sampler?.invalidate?.(role)
-    this.basicProgressMap = { ...this.basicProgressMap, [role]: null }
+    this.pendingCodecFallbackRemount.delete(role)
+    this.proxyInstabilityAt[role] = []
+    if (this.huyaFallbackPromptValue?.role === role) this.huyaFallbackPromptValue = null
     this.playbackRecovery = null
     this.diagnostics.reset(role)
     this.continuity[role] = 0
@@ -1734,43 +1665,13 @@ export class Session {
     this.disconnectDanmaku()
     this.autoSync.dispose()
     this.frameSampler?.dispose()
-    this.sampler?.dispose()
     this.engine.dispose()
     this.listeners.clear()
   }
 }
 
-/**
- * The real sampler: one worker per role, reading the engine's own elements.
- *
- * `video` resolves at sample time rather than being captured, so a source swapped
- * between runs is picked up without rebuilding the sampler.
- */
-function defaultSamplerFactory(session: Session): RecognitionSampler | null {
-  if (typeof Worker === 'undefined') return null
-  return new RecognitionSampler({
-    createWorker: createRecognitionWorker,
-    video: (role) => session.engine.element(role),
-    profile: (role) => session.profileFor(role),
-    clock: () => performance.now(),
-    wantBasicDebug: () => session.basicPreviewEnabled,
-    onBasicProgress: (role, progress) => session.receiveBasicProgress(role, progress),
-    onError: (role, message) => session.notice('warn', `${roleName(role)}识别失败，可重试或切换模式`, { message }),
-  })
-}
-
 export function roleName(role: SourceRole): string {
   return role === 'official' ? '画面' : '解说'
-}
-
-function sameRegion(left: RoiRect | null | undefined, right: RoiRect | null | undefined): boolean {
-  return left === right || (!left && !right) || (!!left && !!right
-    && left.x === right.x && left.y === right.y && left.w === right.w && left.h === right.h)
-}
-
-function regionContains(outer: RoiRect, inner: RoiRect): boolean {
-  return inner.x >= outer.x - 1e-9 && inner.y >= outer.y - 1e-9
-    && inner.x + inner.w <= outer.x + outer.w + 1e-9 && inner.y + inner.h <= outer.y + outer.h + 1e-9
 }
 
 /** Re-exported so components do not each import from three modules. */

@@ -112,15 +112,20 @@ export class Acquisition implements AcquisitionService {
     if (detected !== 'youtube') await this.deps.ensureTools?.(detected)
     if (generation !== this.generations.get(role) || this.disposed) return cancelled()
     let initial = true
+    let reconnectAttempt = 0
     const selection: Selection = { input, platform, quality, preferAdaptive, ...(direct ? { direct } : {}), stream: retainAdaptiveQualities(sameSource, first.stream) }
     const reconnectInput = first.stream.platform === 'youtube' && /^[A-Za-z0-9_-]{11}$/.test(first.stream.channel)
       ? `https://www.youtube.com/watch?v=${first.stream.channel}` : input
     const prepare = async (hlsOnly = false): Promise<BufferInput> => {
       const reuse = initial && !hlsOnly
+      const attemptIndex = reuse ? 0 : ++reconnectAttempt
       const reconnect = !reuse && detected === 'youtube' ? this.deps.diagnostics?.begin(role, hlsOnly ? 'hls-recovery' : 'reconnect') : undefined
       let resolved: ResolveResult
       try {
-        resolved = reuse ? first : await this.resolveInput(reconnectInput, platform, hlsOnly ? 'auto' : quality, hlsOnly ? false : preferAdaptive, hlsOnly, selection.stream.sourceRoom, network, reconnect ?? diagnostic, selection.direct)
+        const targetQuality = hlsOnly && detected === 'youtube'
+          ? (quality && quality !== 'auto' && (selection.stream.qualities?.find(o => o.id === quality)?.height ?? Infinity) <= 1080 ? quality : '1080p')
+          : (hlsOnly ? 'auto' : quality)
+        resolved = reuse ? first : await this.resolveInput(reconnectInput, platform, targetQuality, hlsOnly ? false : preferAdaptive, hlsOnly, selection.stream.sourceRoom, network, reconnect ?? diagnostic, selection.direct, attemptIndex)
         reconnect?.finish(resolved.ok ? 'resolved' : 'failed', resolved.ok
           ? { stage: 'resolve', status: 'resolved', adaptive: Boolean(resolved.stream.adaptive) }
           : { stage: 'resolve', status: 'failed', code: diagnosticCode(resolved.failure.reason ?? resolved.failure.code) })
@@ -249,11 +254,12 @@ export class Acquisition implements AcquisitionService {
     return this.resolve(selected.input, selected.platform, role, selected.quality, selected.preferAdaptive, selected.direct, selected.stream.sourceRoom)
   }
 
-  private async resolveInput(input: string, platform?: PlatformKind, quality?: string, preferAdaptive = false, hlsOnly = false, confirmedRoom?: string, network: NetworkContext = networkContext(detectPlatform(input, platform)), diagnostic?: DiagnosticAttemptSink, direct?: DirectStreamOptions): Promise<ResolveResult> {
+  private async resolveInput(input: string, platform?: PlatformKind, quality?: string, preferAdaptive = false, hlsOnly = false, confirmedRoom?: string, network: NetworkContext = networkContext(detectPlatform(input, platform)), diagnostic?: DiagnosticAttemptSink, direct?: DirectStreamOptions, lineAttempt = 0): Promise<ResolveResult> {
     const resolver = createResolverDeps(this.deps.proxy, (url) => url, this.deps.fetchImpl, network)
     const detected = detectPlatform(input, platform)
     const result = await resolveStream(input, {
       ...resolver, quality, preferAdaptive, hlsOnly,
+      ...(lineAttempt > 0 ? { lineAttempt } : {}),
       ...(direct?.headers ? { directHeaders: direct.headers } : {}),
       ...(direct?.label ? { directLabel: direct.label } : {}),
       resolveDouyuRoom: this.deps.resolveDouyuRoom ?? createDouyuRoomResolver(this.deps.proxy, this.deps.fetchImpl, this.deps.dns, network).resolve,

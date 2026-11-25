@@ -72,9 +72,9 @@ describe('explicit yt-dlp and provider route ownership', () => {
     await vi.waitFor(() => expect(h.launches).toHaveLength(1))
     const args = h.launches[0]!.args
     expect(args.includes('--no-check-certificates')).toBe(!cookiePath)
-    expect(args).not.toContain('--socket-timeout')
-    expect(args[args.indexOf('--retries') + 1]).toBe('infinite')
-    expect(args[args.indexOf('--extractor-retries') + 1]).toBe('infinite')
+    expect(args[args.indexOf('--socket-timeout') + 1]).toBe('20')
+    expect(args[args.indexOf('--retries') + 1]).toBe('2')
+    expect(args[args.indexOf('--extractor-retries') + 1]).toBe('2')
     expect((h.launches[0]!.options.env ?? {}).NODE_TLS_REJECT_UNAUTHORIZED).toBeUndefined()
     owner.abort()
     expect(await pending).toBeInstanceOf(Error)

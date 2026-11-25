@@ -106,6 +106,8 @@ export type ResolverDeps = {
   directLabel?: string
   /** Internal retry constraint after adaptive playback fails, never accepted from IPC. */
   hlsOnly?: boolean
+  /** Internal CDN rotation index on reconnect, never accepted from IPC. */
+  lineAttempt?: number
   now?: () => number
 }
 

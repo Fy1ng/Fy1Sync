@@ -360,11 +360,13 @@ export class YtDlpRunner {
         if (['--socket-timeout', '--retries', '--extractor-retries'].includes(args[index]!)) { index++; continue }
         filtered.push(args[index]!)
       }
+      const socketTimeoutSeconds = media.requestTimeoutMs > 0 ? media.requestTimeoutMs / 1000 : 20
+      const stepRetries = media.reconnectAttempts > 0 ? String(Math.min(media.reconnectAttempts, 5)) : '2'
       args = [
         ...(!tls.verifyTls && !tls.verifyProxyTls ? ['--no-check-certificates'] : []),
-        ...(media.requestTimeoutMs > 0 ? ['--socket-timeout', String(media.requestTimeoutMs / 1000)] : []),
-        '--retries', media.reconnectAttempts ? String(media.reconnectAttempts) : 'infinite',
-        '--extractor-retries', media.reconnectAttempts ? String(media.reconnectAttempts) : 'infinite', ...filtered,
+        '--socket-timeout', String(socketTimeoutSeconds),
+        '--retries', stepRetries,
+        '--extractor-retries', stepRetries, ...filtered,
       ]
     }
     const client = stage === 'adaptive' ? 'web' : stage === 'hls-fallback' ? 'web_safari' : stage === 'huya' ? 'huya' : 'default'
@@ -413,7 +415,9 @@ export class YtDlpRunner {
         stdout = ''
         void this.terminate(child)
       }
-      const timeoutMs = this.options.timeoutMs ?? context.media?.startupTimeoutMs ?? 120_000
+      const configuredTimeoutMs = context.media?.startupTimeoutMs && context.media.startupTimeoutMs > 0
+        ? context.media.startupTimeoutMs : 120_000
+      const timeoutMs = this.options.timeoutMs ?? configuredTimeoutMs
       const timer = timeoutMs > 0 ? setTimeout(() => stop('timeout'), timeoutMs) : undefined
       const abort = () => stop('cancelled')
       context.signal?.addEventListener('abort', abort, { once: true })

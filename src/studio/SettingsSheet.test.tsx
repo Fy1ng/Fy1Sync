@@ -646,18 +646,9 @@ describe('settings account navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存取流网络设置' }))
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('setNetworkPreferences', { domesticRouting: 'direct', media }))
   })
-  it('toggles the optional recognition panel without changing recognition mode or running sync', async () => {
-    const { session } = mount()
-    const sync = vi.spyOn(session, 'syncNow')
-    const toggle = screen.getByRole('switch', { name: /^显示基础识别面板/ })
-    expect(toggle).not.toBeChecked()
-    fireEvent.click(toggle)
-    await waitFor(() => expect(toggle).toBeChecked())
-    expect(session.settings).toMatchObject({ basicRecognitionPanelVisible: true, recognitionMode: 'basic' })
-    fireEvent.click(toggle)
-    await waitFor(() => expect(toggle).not.toBeChecked())
-    expect(session.settings.recognitionMode).toBe('basic')
-    expect(sync).not.toHaveBeenCalled()
+  it('omits the removed basic recognition panel switch from 对齐 settings', () => {
+    mount()
+    expect(screen.queryByRole('switch', { name: /^显示基础识别面板/ })).toBeNull()
   })
   it('puts six platforms in 账号 and nests Douyu pages within the same sidebar', async () => {
     mount()

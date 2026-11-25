@@ -47,3 +47,15 @@ export interface StreamTitle extends StreamTitleInput {
   stage: string | null
   live: boolean | null
 }
+export interface HuyaOfficialLookupInput {
+  platform: 'youtube' | 'twitch'
+  input: string
+  channel?: string
+}
+export interface HuyaOfficialMatch {
+  room: string
+  url: string
+  nickname: string
+  title: string
+  tournament?: string
+}

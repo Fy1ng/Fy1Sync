@@ -107,4 +107,124 @@ describe('adaptive buffer notices', () => {
       expect(session!.flush().media.official.descriptor?.sourceQuality).toBe('308')
     }
   })
+
+  it('revives an errored local buffer attachment automatically once the backend buffer returns to ready', async () => {
+    const receive = subscribe()
+    const descriptor: MediaDescriptor = {
+      kind: 'progressive', url: 'app://app/buffer/session/official/capability/index.m3u8',
+      input: 'https://www.youtube.com/watch?v=abcdefghijk', label: 'YouTube 直播', platform: 'youtube',
+      viaProxy: false, loop: false,
+    }
+    await session!.loadSource('official', descriptor)
+    await session!.setPlaying(true)
+    receive({ role: 'official', state: 'reconnecting', seconds: 8 })
+    // Simulate fatal media/network error tearing down player during reconnect.
+    const video = session!.engine.element('official')
+    Object.defineProperty(video, 'error', { configurable: true, value: { code: 3, message: 'decode failed' } })
+    video.dispatchEvent(new Event('error'))
+    expect(session!.engine.getState().official.status).toBe('error')
+    Object.defineProperty(video, 'error', { configurable: true, value: null })
+
+    const load = vi.spyOn(session!.engine, 'load')
+    receive({ role: 'official', state: 'ready', seconds: 14, hasVideo: true, completeSegments: 4 })
+    await vi.waitFor(() => expect(load).toHaveBeenCalledWith('official', expect.objectContaining({ url: descriptor.url })))
+    expect(session!.engine.getState().official.status).not.toBe('error')
+  })
+
+  it('enforces a 1080p downgrade floor on proxy instability and prompts for Huya official stream when 1080p still lags', async () => {
+    let clock = 1_000
+    let receive!: (state: BufferState) => void
+    vi.spyOn(apiClient, 'subscribeBuffer').mockImplementation(listener => { receive = listener; return () => {} })
+    const switchQuality = vi.spyOn(apiClient, 'switchQuality').mockResolvedValue({
+      ok: true,
+      value: {
+        ok: true,
+        stream: {
+          platform: 'youtube',
+          kind: 'progressive',
+          url: 'app://app/buffer/session/official/next/index.m3u8',
+          label: 'YouTube 直播',
+          channel: 'abcdefghijk',
+          requiresProxy: false,
+          quality: '301',
+          qualities: [
+            { id: '308', label: '1440p60', adaptive: true, height: 1440, fps: 60 },
+            { id: '301', label: '1080p60', height: 1080, fps: 60 },
+            { id: '298', label: '720p60', height: 720, fps: 60 },
+          ],
+        },
+      },
+    })
+    const feature = vi.spyOn(apiClient, 'feature').mockImplementation((async (method: string) => {
+      if (method === 'findHuyaOfficialStream') {
+        return {
+          ok: true,
+          value: {
+            room: '825801',
+            url: 'https://www.huya.com/825801',
+            nickname: '完美世界电竞频道一',
+            title: 'NIP vs Liquid PGL新加坡Major2026',
+            tournament: 'PGL Major Singapore 2026',
+          },
+        }
+      }
+      return { ok: false, code: 'not-found', message: 'unused' }
+    }) as typeof apiClient.feature)
+
+    session = new Session({ storage: { getItem: () => null, setItem() {} }, now: () => clock })
+    await session.loadSource('official', {
+      kind: 'progressive',
+      url: 'app://app/buffer/session/official/initial/index.m3u8',
+      input: 'https://www.youtube.com/watch?v=abcdefghijk',
+      sourceChannel: 'abcdefghijk',
+      label: 'YouTube 直播',
+      platform: 'youtube',
+      viaProxy: false,
+      loop: false,
+      sourceQuality: '308',
+      sourceQualities: [
+        { id: '308', label: '1440p60', adaptive: true, height: 1440, fps: 60 },
+        { id: '301', label: '1080p60', height: 1080, fps: 60 },
+        { id: '298', label: '720p60', height: 720, fps: 60 },
+      ],
+    })
+
+    // Two instability transitions on 1440p -> steps down to 1080p60, never 720p60.
+    receive({ role: 'official', state: 'ready', seconds: 10 })
+    clock += 5_000
+    receive({ role: 'official', state: 'reconnecting', seconds: 8 })
+    receive({ role: 'official', state: 'ready', seconds: 12 })
+    clock += 5_000
+    receive({ role: 'official', state: 'stalled', seconds: 10 })
+    await vi.waitFor(() => expect(switchQuality).toHaveBeenCalledExactlyOnceWith('official', '301'))
+    expect(feature).not.toHaveBeenCalledWith('findHuyaOfficialStream', expect.anything())
+
+    // Wait for quality switch to settle at 1080p60, then lag twice more -> never drops to 720p60; prompts for Huya!
+    await vi.waitFor(() => expect(session!.flush().qualityBusy.official).toBe(false))
+    expect(session.flush().media.official.descriptor?.sourceQuality).toBe('301')
+
+    receive({ role: 'official', state: 'ready', seconds: 10 })
+    clock += 5_000
+    receive({ role: 'official', state: 'reconnecting', seconds: 8 })
+    receive({ role: 'official', state: 'ready', seconds: 12 })
+    clock += 5_000
+    receive({ role: 'official', state: 'reconnecting', seconds: 8 })
+
+    await vi.waitFor(() => expect(session!.flush().huyaFallbackPrompt).toMatchObject({
+      role: 'official',
+      room: '825801',
+      nickname: '完美世界电竞频道一',
+      url: 'https://www.huya.com/825801',
+    }))
+    expect(switchQuality).toHaveBeenCalledTimes(1)
+
+    // Dismissing hides the prompt and suppresses repeat queries for the same broadcast.
+    session.dismissHuyaFallbackPrompt()
+    expect(session.flush().huyaFallbackPrompt).toBeNull()
+    clock += 5_000
+    receive({ role: 'official', state: 'ready', seconds: 12 })
+    clock += 5_000
+    receive({ role: 'official', state: 'reconnecting', seconds: 8 })
+    expect(session.flush().huyaFallbackPrompt).toBeNull()
+  })
 })

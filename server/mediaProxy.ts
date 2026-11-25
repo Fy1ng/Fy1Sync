@@ -138,7 +138,9 @@ export class MediaRegistry {
     request.signal.addEventListener('abort', abort, { once: true })
     if (request.signal.aborted) controller.abort()
     const timeoutAbort = () => controller.abort(new DOMException('媒体读取超时', 'TimeoutError'))
-    const timeoutMs = (resource.network ?? this.deps.network)?.media?.requestTimeoutMs ?? this.deps.config.requestTimeoutMs
+    const configuredTimeout = (resource.network ?? this.deps.network)?.media?.requestTimeoutMs
+    const timeoutMs = configuredTimeout === undefined ? this.deps.config.requestTimeoutMs
+      : configuredTimeout > 0 ? configuredTimeout : 20_000
     let timeout = timeoutMs > 0 ? setTimeout(timeoutAbort, timeoutMs) : undefined
     let cleaned = false
     const cleanup = () => {

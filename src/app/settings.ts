@@ -21,8 +21,8 @@ import { DEFAULT_SHORTCUTS, normalizeShortcuts, type ShortcutBindings } from './
 export const SETTINGS_KEY = 'stream-sync.settings.v1'
 
 export type CameraUpscaleTier = 'off' | 'performance' | 'quality'
-/** Previous saved mode values are normalized when settings are loaded. */
-export type RecognitionMode = 'basic' | 'frame-hash'
+/** Previous saved mode values are normalized to frame-hash when settings are loaded. */
+export type RecognitionMode = 'frame-hash'
 
 export interface DanmakuSettings {
   enabled: boolean
@@ -56,8 +56,6 @@ export interface AppSettings {
   autoSyncEnabled: boolean
   autoSyncIntervalSeconds: number
   recognitionMode: RecognitionMode
-  /** Show the optional recognition diagnostics above the chat; recognition itself stays enabled. */
-  basicRecognitionPanelVisible: boolean
   frameHashRegions: Record<SourceRole, RoiRect>
   frameHashMasks: RoiRect[]
   basicClockRoi: RoiRect | null
@@ -97,8 +95,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   autoSyncEnabled: false,
   autoSyncIntervalSeconds: 30,
-  recognitionMode: 'basic',
-  basicRecognitionPanelVisible: false,
+  recognitionMode: 'frame-hash',
   frameHashRegions: { official: { x: 0, y: 0, w: 1, h: 1 }, commentary: { x: 0, y: 0, w: 1, h: 1 } },
   frameHashMasks: [],
   basicClockRoi: null,
@@ -201,8 +198,7 @@ export function mergeSettings(raw: unknown): AppSettings {
     autoSyncEnabled: boolean(stored.autoSyncEnabled, defaults.autoSyncEnabled),
     // The sync design fixes the interval choices at 15/30/60 s.
     autoSyncIntervalSeconds: clamp(stored.autoSyncIntervalSeconds, 10, 600, 30),
-    basicRecognitionPanelVisible: boolean(stored.basicRecognitionPanelVisible, defaults.basicRecognitionPanelVisible),
-    recognitionMode: stored.recognitionMode === 'frame-hash' ? 'frame-hash' : 'basic',
+    recognitionMode: 'frame-hash',
     frameHashRegions: {
       official: normalizeBasicClockRoi(stored.frameHashRegions?.official) ?? { x: 0, y: 0, w: 1, h: 1 },
       commentary: normalizeBasicClockRoi(stored.frameHashRegions?.commentary) ?? { x: 0, y: 0, w: 1, h: 1 },

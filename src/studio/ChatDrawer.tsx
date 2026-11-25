@@ -26,7 +26,6 @@ import { useSourceLoader } from './sources'
 import { deliveryText } from './useStudioComposer'
 import { remember } from '../app/remembered'
 import { useChatFollow } from './useChatFollow'
-import { BasicRecognitionPanel } from './BasicRecognitionPanel'
 import { DouyinComposer } from './DouyinComposer'
 import { isReadOnlyDanmakuPlatform, isReadOnlyDanmakuRoom } from '../../server/danmaku/types'
 import { DouyuLotteryCard, DouyuLotteryCommandGroup, type DouyuLotteryView } from './douyu/douyuLottery'
@@ -164,7 +163,6 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords, douyuLotter
         </button>
       </header>
 
-      {snapshot.settings.recognitionMode === 'basic' && snapshot.settings.basicRecognitionPanelVisible && <BasicRecognitionPanel />}
       {douyuLottery && <DouyuLotteryCard view={douyuLottery} />}
       {platformActivities}
       {danmaku.room?.startsWith('bilibili:') && <>

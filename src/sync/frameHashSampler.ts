@@ -14,6 +14,7 @@ interface SamplerOptions {
   video(role: SourceRole): HTMLVideoElement
   revision(role: SourceRole): string
   config(): FrameHashConfig
+  paused?(): boolean
   onStatus(status: string): void
 }
 const REASONS: Record<string, string> = {
@@ -48,15 +49,15 @@ export class FrameHashSampler {
       else if (result.type === 'error') { this.error = result.message; this.options.onStatus(result.message); this.pending?.resolve(null) }
       else if (this.pending?.id === result.id) this.pending.resolve(result)
     }
-    this.worker.onerror = () => { this.error = '画面匹配失败，请切换模式后重试'; this.pending?.resolve(null); this.options.onStatus(this.error) }
+    this.worker.onerror = () => { this.error = '画面匹配失败，请重新载入后重试'; this.pending?.resolve(null); this.options.onStatus(this.error) }
     for (const role of SOURCE_ROLES) {
       const video = options.video(role)
       this.stops.push(startFrameLoop(video, 60, (media, timing) => {
-        if (this.disposed || this.error) return
+        if (this.disposed || this.error || options.paused?.()) return
         const revision = options.revision(role)
         const epoch = `${revision}:${video.videoWidth}x${video.videoHeight}`
         if (epoch !== this.epoch[role]) this.invalidate(role, epoch)
-        if (video.paused || video.seeking || video.ended || video.readyState < 3) return
+        if (!this.playable()) return
         const wall = performance.now()
         const presented = timing ? wall + timing.expectedDisplayTime - timing.callbackTime : wall
         this.anchors[role] = { media, wall: presented, rate: video.playbackRate, epoch }

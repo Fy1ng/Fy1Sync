@@ -1,37 +1,35 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Session } from './session'
-import type { RecognitionOutcome, SourceRole } from '../core/types'
-import type { RecognitionSampler } from '../recognition/sampler'
 import { primeMediaElement } from '../test/setup'
 import type { AutoSyncRunResult } from '../sync/autoSync'
+import type { FrameMeasureRequest, FrameMeasurement } from '../sync/frameHashSampler'
 
 let session: Session
 afterEach(() => { session?.dispose(); vi.useRealTimers(); vi.restoreAllMocks() })
 const source = { kind: 'progressive' as const, url: 'https://example.test/source.mp4', label: '测试', input: '测试', loop: false, viaProxy: false }
 
 async function harness(position = 100) {
-  let readingAt = 0
-  const sample = vi.fn(async (_window: number, emit: (role: SourceRole, outcome: RecognitionOutcome) => void) => {
-    for (const role of ['official', 'commentary'] as const) {
-      for (let index = 0; index < 3; index++) for (let stable = 0; stable < 2; stable++) {
-        emit(role, { status: 'success', reading: {
-          text: `0:${59 - index}`, seconds: 59 - index, scores: [0.95], confidence: 0.95,
-          mediaTime: position + index + stable / 30,
-          wallTime: 1000 + index * 1000 + stable * 1000 / 30 + (role === 'commentary' ? 5000 : 0)
-            + (position - session.engine.element(role).currentTime) * 1000,
-          frameIndex: index * 2 + stable,
-        } })
-      }
+  const measureFrames = vi.fn(async (request: FrameMeasureRequest): Promise<FrameMeasurement> => {
+    if (request.signal.aborted) return { samples: { official: 0, commentary: 0 }, message: '画面匹配已取消' }
+    const residual = request.fresh ? 0 : 5 - request.appliedOffsetSeconds
+    const total = request.appliedOffsetSeconds + residual
+    return {
+      samples: { official: 24, commentary: 24 },
+      estimate: {
+        status: 'ok',
+        residualSeconds: residual,
+        totalOffsetSeconds: total,
+        direction: Math.abs(total) <= 0.1 ? 'none' : total > 0 ? 'official' : 'commentary',
+        rewindSeconds: Math.abs(total) <= 0.1 ? 0 : Math.abs(total),
+        confidence: 0.96,
+        officialAnchorSpread: 0.01,
+        commentaryAnchorSpread: 0.01,
+        officialEvents: 24,
+        commentaryEvents: 24,
+      },
     }
   })
-  session = new Session({
-    readingClock: () => readingAt,
-    createSampler: () => ({ sample: (window: number, emit: (role: SourceRole, outcome: RecognitionOutcome) => void) =>
-      sample(window, (role, outcome) => {
-        if (outcome.status === 'success') readingAt = outcome.reading.wallTime
-        emit(role, outcome)
-      }), dispose: vi.fn() }) as unknown as RecognitionSampler,
-  })
+  session = new Session({ measureFrames })
   await session.loadSource('official', source)
   await session.loadSource('commentary', source)
   for (const role of ['official', 'commentary'] as const) {
@@ -47,10 +45,10 @@ async function harness(position = 100) {
       primeMediaElement(video, { currentTime: video.currentTime + ms / 1000 * video.playbackRate })
     }
   })
-  return { sample }
+  return { measureFrames }
 }
 
-describe('countdown synchronization lifecycle', () => {
+describe('frame-matching synchronization lifecycle', () => {
   it.each([false, true])('holds both playheads during manual seek and respects a later user pause: %s', async userPauses => {
     await harness()
     const original = session.engine.seek.bind(session.engine)
@@ -77,64 +75,39 @@ describe('countdown synchronization lifecycle', () => {
     for (const role of ['official', 'commentary'] as const) expect(session.engine.element(role).paused).toBe(false)
   })
 
-  it('invalidates a running measurement when its recognition mode changes', async () => {
+  it('invalidates a running measurement when frame-hash region settings change', async () => {
     const h = await harness()
     let finish!: () => void
     const started = new Promise<void>(resolve => {
-      h.sample.mockImplementationOnce(async () => {
+      h.measureFrames.mockImplementationOnce(async () => {
         resolve()
         await new Promise<void>(done => { finish = done })
+        return { samples: { official: 0, commentary: 0 }, message: '画面匹配已取消' }
       })
     })
     const seek = vi.spyOn(session.engine, 'seek')
     const pending = session.measureOnce()
     await started
-    session.setRecognitionMode('frame-hash')
+    session.updateSettings({ frameHashRegions: { official: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 }, commentary: { x: 0, y: 0, w: 1, h: 1 } } })
     finish()
     expect((await pending).failure?.kind).toBe('cancelled')
     expect(seek).not.toHaveBeenCalled()
     expect(session.profileFor('official')).toBeNull()
   })
 
-  it('does not apply an offset when basic recognition cannot read a clock', async () => {
-    const h = await harness()
-    session.setRecognitionMode('basic')
-    h.sample.mockImplementationOnce(async (_window, emit) => {
-      for (const role of ['official', 'commentary'] as const) emit(role, { status: 'failed', reason: 'no-candidates' })
-    })
-    const seek = vi.spyOn(session.engine, 'seek')
-    const result = await session.syncNow()
-    expect(result.failure?.kind).toBe('rejected')
-    expect(result.applied).toBe(false)
-    expect(seek).not.toHaveBeenCalled()
-  })
-
-  it.each([
-    { status: 'failed', reason: 'low-confidence' },
-    { status: 'failed', reason: 'blank-frame' },
-    { status: 'failed', reason: 'insufficient-templates' },
-    { status: 'absent' },
-    { status: 'indeterminate', reason: 'basic-clock-confirming' },
-    { status: 'success', reading: { text: '0:20', seconds: 20, confidence: 0.7, scores: [0.7], mediaTime: 100, wallTime: 1000, frameIndex: 1 } },
-  ] satisfies RecognitionOutcome[])('keeps basic recognition on unreliable readings ($status) and recovers on fresh evidence', async outcome => {
+  it('does not apply an offset when frame matching cannot find common frames and recovers on fresh evidence', async () => {
     const h = await harness()
     const seek = vi.spyOn(session.engine, 'seek')
-    h.sample.mockImplementationOnce(async (_window, emit) => {
-      for (const role of ['official', 'commentary'] as const) emit(role, outcome)
-    })
+    h.measureFrames.mockResolvedValueOnce({ samples: { official: 10, commentary: 10 }, message: '尚未找到共同画面' })
     const result = await session.syncNow()
-    expect(result.failure?.kind).toBe('rejected')
+    expect(result.failure?.kind).toBe('frame-match')
     expect(result.applied).toBe(false)
-    expect(result.samples).toEqual({ official: 1, commentary: 1 })
     expect(seek).not.toHaveBeenCalled()
-    expect(h.sample).toHaveBeenCalledTimes(1)
-    for (const role of ['official', 'commentary'] as const) expect(session.profileFor(role)).toMatchObject({ kind: 'basic-clock' })
 
     const recovered = await session.syncNow()
     expect(recovered.phase).toBe('done')
     expect(recovered.applied).toBe(true)
     expect(session.flush().notices[0]?.text).toBe('已自动对齐')
-    for (const role of ['official', 'commentary'] as const) expect(session.profileFor(role)).toMatchObject({ kind: 'basic-clock' })
   })
 
   it('ignores a cancelled sampling window that finishes late', async () => {
@@ -142,10 +115,10 @@ describe('countdown synchronization lifecycle', () => {
     await session.measureOnce()
     let finish!: () => void
     const started = new Promise<void>(resolve => {
-      h.sample.mockImplementationOnce(async (_window, emit) => {
+      h.measureFrames.mockImplementationOnce(async () => {
         resolve()
         await new Promise<void>(done => { finish = done })
-        for (const role of ['official', 'commentary'] as const) emit(role, { status: 'failed', reason: 'low-confidence' })
+        return { samples: { official: 5, commentary: 5 }, message: '尚未找到共同画面' }
       })
     })
     const pending = session.syncNow()
@@ -191,5 +164,4 @@ describe('countdown synchronization lifecycle', () => {
     await pending
     expect(session.flush().appliedRewind.official).toBe(0)
   })
-
 })

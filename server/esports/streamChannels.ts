@@ -8,6 +8,7 @@
  * with the entry by name.
  */
 
+import { parseHuyaRoom } from '../platforms/huya'
 import { parseTwitchChannel } from '../platforms/twitch'
 import { parseYouTubeUrl } from '../platforms/youtube'
 
@@ -72,6 +73,33 @@ export function eventChannels(payload: unknown): EventChannels {
     }
   }
   return result
+}
+
+/** Canonical Huya rooms linked on a tournament page, in the page's stream-table order. */
+export function eventHuyaRooms(payload: unknown): string[] {
+  const pages = (payload as { query?: { pages?: unknown } } | null)?.query?.pages
+  if (!Array.isArray(pages) || (payload as { error?: unknown }).error !== undefined) throw new Error('Invalid channel links response')
+  const rooms: string[] = []
+  const seen = new Set<string>()
+  for (const page of pages) {
+    const links = (page as { extlinks?: unknown } | null)?.extlinks
+    if (links === undefined) continue
+    if (!Array.isArray(links)) throw new Error('Invalid channel links response')
+    for (const link of links.slice(0, 500)) {
+      const raw = (link as { url?: unknown } | null)?.url
+      if (typeof raw !== 'string' || raw.length > 2_000) continue
+      let parsedUrl: URL
+      try { parsedUrl = new URL(raw) } catch { continue }
+      if (!['huya.com', 'www.huya.com', 'm.huya.com'].includes(parsedUrl.hostname.toLowerCase())) continue
+      const room = parseHuyaRoom(raw)
+      if (!room) continue
+      const key = room.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      rooms.push(room)
+    }
+  }
+  return rooms
 }
 
 /** Letters and digits only, lower case: `PGL_CS2`, `PGL CS2` and `pgl_cs2` read the same. */

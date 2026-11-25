@@ -18,6 +18,7 @@ import type { Session } from '../app/session'
 import { MAX_OFFSET_SECONDS, type SourceRole } from '../core/types'
 import { HoldButton, Icon, Popover, Segmented, Switch, usePopover } from './kit'
 import { ErrorText } from '../ui/ErrorDetails'
+import { useSourceLoader } from './sources'
 
 const clampOffset = (value: number): number =>
   Math.round(Math.min(MAX_OFFSET_SECONDS, Math.max(-MAX_OFFSET_SECONDS, value)) * 100) / 100
@@ -181,7 +182,6 @@ function OffsetEditor({ value, onDone }: { value: number; onDone: () => void }):
 
 export function startAutoAlign(session: Session): void {
   if (!session.snapshot.autoSync.ready) return
-  if (session.settings.recognitionMode === 'basic' && session.settings.basicRecognitionPanelVisible && !session.settings.sidebarVisible) session.updateSettings({ sidebarVisible: true })
   void session.syncNow()
 }
 
@@ -200,7 +200,7 @@ export function AutoAlign({ onOpenFrameSettings }: { onOpenFrameSettings?: () =>
       {running ? (
         <button type="button" className="align-main is-running" onClick={() => session.cancelAutoSync()}
           title="停止对齐">
-          <span className="align-phase">{autoSync.phase === 'sampling' && settings.recognitionMode === 'frame-hash' ? '匹配画面…' : PHASE[autoSync.phase]}</span>
+          <span className="align-phase">{PHASE[autoSync.phase]}</span>
           <Icon name="close" />
         </button>
       ) : (
@@ -226,15 +226,8 @@ export function AutoAlign({ onOpenFrameSettings }: { onOpenFrameSettings?: () =>
         )}
 
         <div className="menu-rule" />
-        <Segmented label="识别模式" value={settings.recognitionMode}
-          onChange={(mode) => session.setRecognitionMode(mode)}
-          options={[{ value: 'basic', label: '基础模式' }, { value: 'frame-hash', label: '画面匹配' }]} />
-        {settings.recognitionMode === 'basic' ? (
-          <p className="menu-meta">两路需播放同一回合的 CS2 倒计时</p>
-        ) : (
-          <div className="menu-meta" role="status"><p>两路需有相同视角，可在「画面匹配」设置中调整范围</p>
-            <p>{session.frameSyncStatus}</p></div>
-        )}
+        <div className="menu-meta" role="status"><p>两路需有相同视角，可在「画面匹配」设置中调整范围</p>
+          <p>{session.frameSyncStatus}</p></div>
         <div className="row-split">
           <button type="button" className="btn-quiet" disabled={busy || !bothReady} onClick={() => void session.measureOnce()}>
             仅测量
@@ -259,10 +252,31 @@ export function AutoAlign({ onOpenFrameSettings }: { onOpenFrameSettings?: () =>
 }
 
 const PHASE: Record<string, string> = {
-  sampling: '识别倒计时…',
+  sampling: '匹配画面…',
   estimating: '计算中…',
   applying: '调整中…',
   verifying: '复核中…',
+}
+
+export function HuyaFallbackPrompt(): React.ReactNode {
+  const session = useSession()
+  const snapshot = useSessionSnapshot()
+  const loader = useSourceLoader()
+  const prompt = snapshot.huyaFallbackPrompt
+  if (!prompt) return null
+  const busy = loader.state[prompt.role].busy || snapshot.qualityBusy[prompt.role]
+  return (
+    <div className="prompt" role="status" aria-label="切换虎牙官方流提示">
+      <span className="prompt-text">当前代理观看较卡，是否切换至虎牙官方流（{prompt.nickname}）？</span>
+      <button type="button" className="btn-solid small" disabled={busy}
+        onClick={() => {
+          session.acceptHuyaFallbackPrompt()
+          void loader.loadInput(prompt.role, prompt.url, 'huya')
+        }}>切换虎牙官方流</button>
+      <button type="button" className="btn-quiet small" disabled={busy}
+        onClick={() => session.dismissHuyaFallbackPrompt()}>暂不切换</button>
+    </div>
+  )
 }
 
 export function PlaybackRecoveryPrompt(): React.ReactNode {

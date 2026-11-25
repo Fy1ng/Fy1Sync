@@ -328,16 +328,19 @@ export class BufferManager {
       await this.refresh(session, run)
       if (!this.current(session, run) || run.finishing) return
       const now = this.clock.now()
+      const readyBefore = run.hasVideo && run.lastSequence >= 0
       // Copy mode closes a segment only at the next keyframe. Active packet progress
       // protects long GOPs, while a separate sealing deadline bounds broken muxers.
+      // Once playback has produced media, always enforce a bounded mid-stream stall check
+      // even when startup/request limits are set to 0 (unlimited), so half-open connections reconnect.
       const lastDuration = session.segments.at(-1)?.duration ?? 0
-      const stallMs = session.media?.stallTimeoutMs ?? this.stallMs
+      const configuredStall = session.media?.stallTimeoutMs
+      const stallMs = configuredStall === undefined ? this.stallMs : configuredStall > 0 ? configuredStall : (readyBefore ? this.stallMs : 0)
       const firstSegmentMs = session.media?.startupTimeoutMs ?? this.firstSegmentMs
       const sealBudget = run.lastSequence < 0 ? firstSegmentMs : stallMs > 0 ? Math.max(stallMs, lastDuration * 2000 + 10_000) : 0
       const idle = stallMs > 0 && now - Math.max(run.lastProgress, run.lastPacketProgress) >= stallMs
       const unsealed = sealBudget > 0 && now - (run.lastSequence < 0 ? run.startedAt : run.lastProgress) >= sealBudget
       if (idle || unsealed) {
-        const readyBefore = run.hasVideo && run.lastSequence >= 0
         run.failure ??= classifyNetworkFailure(undefined, readyBefore ? 'stall' : 'playback-not-ready')
         this.emit(session, 'stalled', { failure: run.failure })
         await this.finish(session, run, readyBefore ? 'upstream-stalled' : 'playback-not-ready')
