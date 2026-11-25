@@ -1,6 +1,8 @@
 .studio .browser-import-batch { width: 100%; padding: 8px 4px; text-align: center; white-space: nowrap; }
 .studio .browser-import-dialog { padding: 4px 24px 20px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; min-height: 0; }
 .studio .browser-import-dialog p { margin: 0; }
+.studio .browser-import-dialog > label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.studio .browser-import-dialog textarea { width: 100%; resize: vertical; min-height: 120px; font-family: monospace; }
 .studio .browser-import-selectors { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .studio .browser-import-selectors label, .studio .browser-import-target { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--ash); }
 .studio .browser-import-selectors select, .studio .browser-import-target select { width: 100%; min-width: 0; color: var(--chalk); }

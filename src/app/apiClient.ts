@@ -108,6 +108,7 @@ export class ApiClient {
   listBrowserImportProfiles() { return this.request('listBrowserImportProfiles', undefined) }
   previewBrowserLogins(input: BrowserImportMethods['previewBrowserLogins']['args']) { return this.request('previewBrowserLogins', input) }
   closeImportBrowser(input: BrowserImportMethods['closeImportBrowser']['args']) { return this.request('closeImportBrowser', input) }
+  previewManualCookies(input: BrowserImportMethods['previewManualCookies']['args']) { return this.request('previewManualCookies', input) }
   async importBrowserLogins(input: BrowserImportMethods['importBrowserLogins']['args']) {
     const result = await this.request('importBrowserLogins', input)
     const imported = result.ok ? result.value.outcomes.filter(outcome => outcome.imported).map(outcome => outcome.platform) : []

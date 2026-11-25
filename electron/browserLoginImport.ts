@@ -6,6 +6,7 @@ import { eraseBrowserWebStorage } from './browserWebStorage'
 import { browserCloser, type BrowserCloseFunction } from './browserCloser'
 import { discoverBrowserProfiles, publicBrowserProfile, type DiscoveredBrowserProfile } from './browserProfiles'
 import { BrowserImportError, importAbort } from './browserImportError'
+import { parseManualCookies } from './manualCookies'
 import type { BrowserIdentityVerifier, ImportedIdentity } from './browserImportIdentity'
 import { eraseDouyinSigningSnapshot, matchDouyinSigningStorage } from './douyinSigningCapture'
 import { douyinBrowserUserAgent } from '../server/douyin/httpContext'
@@ -65,9 +66,9 @@ export class BrowserLoginImport {
   private disposed = false
   constructor(private readonly options: BrowserLoginImportOptions) {}
   private now(): number { return (this.options.now ?? Date.now)() }
-  private available(): void {
+  private available(requireSupport = true): void {
     if (this.disposed) throw new BrowserImportError('browser-import-cancelled')
-    if (!(this.options.supported ?? process.platform === 'win32')) throw new BrowserImportError('browser-import-unsupported')
+    if (requireSupport && !(this.options.supported ?? process.platform === 'win32')) throw new BrowserImportError('browser-import-unsupported')
   }
   private async profiles(): Promise<DiscoveredBrowserProfile[]> { return (this.options.discover ?? discoverBrowserProfiles)() }
   async sources(): Promise<BrowserImportSources> {
@@ -146,8 +147,37 @@ export class BrowserLoginImport {
       if (this.operation === operation) this.operation = null
     }
   }
+  async scanManual(value: unknown): Promise<BrowserImportPreview> {
+    this.available(false)
+    if (!exact(value, ['requestId', 'platform', 'text']) || !validId(value.requestId)
+      || !IMPORT_PLATFORMS.includes(value.platform as LoginPlatform)) throw invalid()
+    if (this.operation) throw new BrowserImportError('browser-import-busy')
+    if (this.preview) this.cancel(this.preview.public.id)
+    const platform = value.platform as LoginPlatform
+    const cookies = parseManualCookies(value.text, platform)
+    const operation = { id: value.requestId, controller: new AbortController() }
+    this.operation = operation
+    let retained = false
+    try {
+      const identity = await this.options.verify(platform, cookies, operation.controller.signal)
+      importAbort(operation.controller.signal)
+      if (!identity) throw new BrowserImportError('manual-cookie-expired')
+      const id = randomUUID()
+      const result: BrowserImportPreview = { id: operation.id, expiresAt: this.now() + 5 * 60 * 1000,
+        profile: { id: operation.id, browser: 'chrome', browserName: '手动导入', name: 'Cookie', isDefault: false },
+        accounts: [{ id, platform, state: 'ready', cookieCount: cookies.length, username: identity.username, ...(identity.avatar ? { avatar: identity.avatar } : {}) }] }
+      const timer = setTimeout(() => this.cancel(result.id), 5 * 60 * 1000)
+      timer.unref?.()
+      this.preview = { public: result, candidates: [{ id, platform, cookies, identity }], controller: operation.controller, timer }
+      retained = true
+      return structuredClone(result)
+    } finally {
+      if (!retained) for (const cookie of cookies) cookie.value = ''
+      if (this.operation === operation) this.operation = null
+    }
+  }
   async apply(value: unknown): Promise<{ outcomes: BrowserImportOutcome[] }> {
-    this.available()
+    this.available(false)
     if (!exact(value, ['previewId', 'accountIds'], ['douyuTarget']) || !validId(value.previewId)
       || !Array.isArray(value.accountIds) || !value.accountIds.length || value.accountIds.length > IMPORT_PLATFORMS.length
       || value.accountIds.some(id => !validId(id)) || new Set(value.accountIds).size !== value.accountIds.length) throw invalid()

@@ -42,6 +42,10 @@ export interface BrowserImportCloseResult {
   browserName: string
 }
 export interface BrowserImportMethods {
+  previewManualCookies: {
+    args: { requestId: string; platform: LoginPlatform; text: string }
+    result: BrowserImportPreview
+  }
   listBrowserImportProfiles: { args: undefined; result: BrowserImportSources }
   previewBrowserLogins: {
     args: { requestId: string; profileId: string; platforms: LoginPlatform[] }
@@ -58,6 +62,7 @@ export interface BrowserImportMethods {
   cancelBrowserImport: { args: { id: string }; result: { cancelled: boolean } }
 }
 export const BROWSER_IMPORT_METHODS = [
+  'previewManualCookies',
   'listBrowserImportProfiles', 'previewBrowserLogins', 'importBrowserLogins', 'closeImportBrowser', 'cancelBrowserImport',
 ] as const satisfies readonly (keyof BrowserImportMethods)[]
 

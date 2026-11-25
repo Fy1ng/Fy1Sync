@@ -14,12 +14,12 @@ function hasOfficialYoutubeLogin(status: LoginStatus | null | undefined): boolea
   return Boolean(status?.youtube?.loggedIn && status.youtube.loginSource === 'official')
 }
 
-interface ImportRequest { id: string; platform?: LoginPlatform; accountId?: string }
-const ImportContext = createContext<{ open: (platform?: LoginPlatform, accountId?: string) => void } | null>(null)
+interface ImportRequest { id: string; platform?: LoginPlatform; accountId?: string; manual?: boolean }
+const ImportContext = createContext<{ open: (platform?: LoginPlatform, accountId?: string, manual?: boolean) => void } | null>(null)
 
 export function BrowserLoginImportProvider({ children }: { children: React.ReactNode }): React.ReactNode {
   const [request, setRequest] = useState<ImportRequest | null>(null)
-  return <ImportContext.Provider value={{ open: (platform, accountId) => setRequest({ id: crypto.randomUUID(), platform, accountId }) }}>
+  return <ImportContext.Provider value={{ open: (platform, accountId, manual) => setRequest({ id: crypto.randomUUID(), platform, accountId, manual }) }}>
     {children}
     {request && <BrowserImportDialog key={request.id} request={request} onClose={() => setRequest(null)} />}
   </ImportContext.Provider>
@@ -28,11 +28,12 @@ export function BrowserImportButton({ platform, accountId, disabled = false, bat
   platform?: LoginPlatform; accountId?: string; disabled?: boolean; batch?: boolean
 }): React.ReactNode {
   const imports = useContext(ImportContext)
-  return <button type="button" className={batch ? 'btn-quiet small browser-import-batch' : 'btn-quiet small'}
+  return <><button type="button" className={batch ? 'btn-quiet small browser-import-batch' : 'btn-quiet small'}
     title="支持从 Edge、Chrome 或 Firefox 导入已登录账号"
     disabled={disabled || !imports} onClick={() => imports?.open(platform, accountId)}>
     {batch ? '批量导入账号' : '从浏览器导入'}
-  </button>
+  </button>{platform && <button type="button" className="btn-quiet small" disabled={disabled || !imports}
+    onClick={() => imports?.open(platform, accountId, true)}>导入 Cookie</button>}</>
 }
 export function AccountAvatar({ username, avatar }: { username: string; avatar?: string }): React.ReactNode {
   const [failed, setFailed] = useState(false)
@@ -54,7 +55,9 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
   const [profiles, setProfiles] = useState<BrowserImportProfile[]>([])
   const [browserName, setBrowserName] = useState('')
   const [profileId, setProfileId] = useState('')
-  const [phase, setPhase] = useState<'loading' | 'choose' | 'closing' | 'scanning' | 'preview' | 'importing' | 'result'>('loading')
+  const [phase, setPhase] = useState<'loading' | 'choose' | 'closing' | 'scanning' | 'preview' | 'importing' | 'result'>(request.manual ? 'choose' : 'loading')
+  const [cookieText, setCookieText] = useState('')
+  const fileRevision = useRef(0)
   const [supported, setSupported] = useState(true)
   const [preview, setPreview] = useState<BrowserImportPreview | null>(null)
   const [selected, setSelected] = useState<string[]>([])
@@ -112,13 +115,14 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
   }
   useEffect(() => {
     live.current = true
-    void load()
+    if (!request.manual) void load()
     void readYoutubeOfficialLogin()
     if (!request.platform || request.platform === 'douyu') void apiClient.listDouyuAccounts().then(result => {
       if (live.current && result.ok) setDouyuAccounts(result.value.accounts)
     })
     return () => {
       live.current = false
+      fileRevision.current++
       void apiClient.cancelBrowserImport(request.id)
       if (closeRequestIdRef.current) void apiClient.cancelBrowserImport(closeRequestIdRef.current)
     }
@@ -210,22 +214,27 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
     }
   }
   const scan = async (): Promise<void> => {
-    if (pending.current || !profileId) return
+    if (pending.current || (request.manual ? !cookieText.trim() : !profileId)) return
     pending.current = true
     setPhase('scanning'); setError(''); setErrorCode(''); setNotice(''); setConfirmClose(false); setConfirmYoutubeId(null); setOutcomes([])
     try {
       const [result, officialYoutube] = await Promise.all([
-        apiClient.previewBrowserLogins({ requestId: request.id, profileId,
+        request.manual && request.platform
+          ? apiClient.previewManualCookies({ requestId: request.id, platform: request.platform, text: cookieText })
+          : apiClient.previewBrowserLogins({ requestId: request.id, profileId,
           platforms: request.platform ? [request.platform] : [...IMPORT_PLATFORMS] }),
         readYoutubeOfficialLogin(),
       ])
       if (!live.current) { if (result.ok) void apiClient.cancelBrowserImport(result.value.id); return }
       if (!result.ok) { setError(result.message); setErrorCode(result.code); setPhase('choose'); return }
       previewRef.current = result.value; setPreview(result.value)
+      if (request.manual) setCookieText('')
       setSelected(result.value.accounts
         .filter(account => account.state === 'ready' && !(account.platform === 'youtube' && officialYoutube))
         .map(account => account.id))
       setPhase('preview')
+    } catch {
+      if (live.current) { setError('账号验证失败，请检查网络后重试'); setPhase('choose') }
     } finally { pending.current = false }
   }
   const apply = async (): Promise<void> => {
@@ -242,6 +251,8 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
         if (result.ok) { setOutcomes(result.value.outcomes); setPhase('result') }
         else { setError(result.message); setErrorCode(result.code); setPhase('preview') }
       }
+    } catch {
+      if (live.current) { setError('账号导入失败，请重试'); setPhase('preview') }
     } finally { pending.current = false }
   }
   const close = (): void => {
@@ -266,10 +277,36 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
   const selectedProfile = profiles.find(profile => profile.id === profileId) ?? null
   const suggestClose = errorCode === 'browser-import-browser-in-use' || errorCode === 'browser-import-timeout'
   const hasDouyu = preview?.accounts.some(account => account.platform === 'douyu' && selected.includes(account.id))
-  const title = request.platform ? `从浏览器导入 ${IMPORT_PLATFORM_NAMES[request.platform]} 账号` : '批量导入账号'
+  const title = request.manual && request.platform ? `导入 ${IMPORT_PLATFORM_NAMES[request.platform]} Cookie`
+    : request.platform ? `从浏览器导入 ${IMPORT_PLATFORM_NAMES[request.platform]} 账号` : '批量导入账号'
+
+  const readFile = async (file: File | undefined): Promise<void> => {
+    const revision = ++fileRevision.current
+    if (!file) return
+    reset(); setCookieText('')
+    if (file.size > 1024 * 1024) { setError('Cookie 文件不能超过 1 MB'); return }
+    try {
+      const text = await file.text()
+      if (live.current && revision === fileRevision.current) setCookieText(text)
+    } catch { if (live.current && revision === fileRevision.current) setError('Cookie 文件读取失败，请重新选择') }
+  }
 
   return <Sheet title={title} onClose={close}>
     <div className="browser-import-dialog" ref={contentRef}>
+      {request.manual ? <>
+        {phase === 'choose' && <>
+          <label>Cookie 文本<textarea className="text-input" aria-label="Cookie 文本" rows={7} value={cookieText} disabled={busy}
+            spellCheck={false} autoComplete="off" onChange={event => { fileRevision.current++; setCookieText(event.target.value); setError('') }}
+            placeholder="粘贴 Cookie: name=value; name2=value2，或 JSON / Netscape cookies.txt 内容" /></label>
+          <label>选择 Cookie 文件<input type="file" aria-label="选择 Cookie 文件" accept=".txt,.json" disabled={busy}
+            onChange={event => { void readFile(event.target.files?.[0]); event.target.value = '' }} /></label>
+          <p className="muted">支持 Cookie 请求头、JSON 和 Netscape cookies.txt，最多 1 MB。请求头按所选平台保存为会话 Cookie，无法确定原始有效期。</p>
+          <button type="button" className="btn-solid small" disabled={busy || !cookieText.trim()} onClick={() => void scan()}>验证账号</button>
+        </>}
+        {phase === 'scanning' && <p role="status">正在验证账号…</p>}
+        {request.platform === 'douyin' && <p className="muted">仅导入 Cookie 无法补全弹幕发送授权，需通过登录补全设备签名授权</p>}
+        {phase === 'preview' && <button type="button" className="btn-quiet small" onClick={reset}>重新输入 Cookie</button>}
+      </> : <>
       <div className="browser-import-selectors">
         <label>浏览器<select className="text-input" aria-label="浏览器" value={browserName} disabled={busy || !profiles.length}
           onChange={event => { reset(); setBrowserName(event.target.value); setProfileId(profiles.find(profile => profile.browserName === event.target.value)?.id ?? '') }}>
@@ -305,6 +342,7 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
       {phase === 'scanning' && <p role="status" className="browser-import-progress">正在识别账号。如出现 Windows 授权提示，请完成授权。</p>}
       {phase === 'loading' && <p role="status">正在查找浏览器用户…</p>}
       {notice && !busy && <p role="status" className="browser-import-notice">{notice}</p>}
+      </>}
       {preview && phase !== 'choose' && <>
         <div className="browser-import-list" aria-label="识别到的平台账号">
           {preview.accounts.map(account => <AccountChoice key={account.id} account={account}
@@ -350,7 +388,7 @@ function BrowserImportDialog({ request, onClose }: { request: ImportRequest; onC
       {phase !== 'result' && <div className="browser-import-footer">
         <button type="button" className="btn-quiet small" onClick={close} disabled={stopRequested}>取消</button>
         <button type="button" className="btn-solid small" disabled={busy || !preview || !selected.length || phase !== 'preview'}
-          onClick={() => void apply()}>{request.platform ? '导入账号' : `导入所选账号（${selected.length}）`}</button>
+          onClick={() => void apply()}>{request.manual ? '确认导入' : request.platform ? '导入账号' : `导入所选账号（${selected.length}）`}</button>
       </div>}
     </div>
   </Sheet>

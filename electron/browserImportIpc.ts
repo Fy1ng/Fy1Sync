@@ -11,6 +11,7 @@ export function installBrowserImportIpc(ipc: Pick<IpcMain, 'handle' | 'removeHan
       let value: unknown
       if (method === 'listBrowserImportProfiles' && args === undefined) value = await imports.sources()
       else if (method === 'previewBrowserLogins') value = await imports.scan(args)
+      else if (method === 'previewManualCookies') value = await imports.scanManual(args)
       else if (method === 'importBrowserLogins') value = await imports.apply(args)
       else if (method === 'closeImportBrowser') value = await imports.closeBrowser(args)
       else if (method === 'cancelBrowserImport' && args && typeof args === 'object' && !Array.isArray(args)
