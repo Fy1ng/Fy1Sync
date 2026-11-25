@@ -10,5 +10,5 @@ export type HashRequest =
   | { type: 'match'; id: number; fresh: boolean }
 export type HashResponse =
   | { type: 'ack'; role: SourceRole }
-  | { type: 'result'; id: number; match: HashMatch; counts: Record<SourceRole, number>; coarse: boolean }
+  | { type: 'result'; id: number; match: HashMatch; counts: Record<SourceRole, number>; historySpan: Record<SourceRole, number>; coarse: boolean }
   | { type: 'error'; message: string }

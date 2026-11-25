@@ -22,6 +22,8 @@ import {
   clampOffset,
   offsetFromRewind,
   planOffsetChange,
+  rewindForOffset,
+  seekableRange,
   type OffsetPlan,
 } from '../core/syncPlan'
 import { MediaEngine, type EngineState } from '../media/mediaEngine'
@@ -42,8 +44,12 @@ import { readHuyaOnTvSnapshot } from '../core/huyaOnTv'
 import type { HuyaOnTvSnapshot } from '../../server/platforms/huyaOnTv'
 import { normalizeDouyuGift, normalizeDouyuSender } from '../core/douyuMetadata'
 import { DanmakuProcessor, DEFAULT_DANMAKU_PREFERENCES, readDanmakuPreferences, type DanmakuPreferences } from '../core/danmakuProcessing'
-import { clampPlayableSeek } from '../media/timebase'
-import { latestPlayableTime } from '../media/playbackControls'
+import {
+  clampLiveUserSeek,
+  LIVE_SMOOTH_CATCHUP_MAX_SECONDS,
+  LIVE_SMOOTH_CATCHUP_RATE,
+  liveSyncTarget,
+} from '../media/timebase'
 import { createPlaybackProgress, observePlaybackProgress } from '../media/playbackProgress'
 import { PlaybackDiagnostics, type PlaybackStallSummary } from '../media/playbackDiagnostics'
 import { errorDetails, type ErrorDetails } from '../core/errorDetails'
@@ -75,6 +81,8 @@ export interface SessionSnapshot {
   /** Which slot each role occupies. Swapping these never remounts an element. */
   mainRole: SourceRole
   playing: boolean
+  /** True while smoothly accelerating at 1.25x to catch up to the buffered live tail. */
+  liveCatchingUp: boolean
   danmaku: {
     connected: boolean
     room: string | null
@@ -179,6 +187,13 @@ export class Session {
   private readonly danmakuProcessor = new DanmakuProcessor()
   private playbackDrain: Promise<unknown> = Promise.resolve()
   private playbackPending = 0
+  private liveCatchup: {
+    roles: SourceRole[]
+    generations: Record<SourceRole, number>
+    preserveAlignment: boolean
+    startedAt: number
+    timer: ReturnType<typeof setInterval>
+  } | null = null
   private pipPresentationReduced = false
   private readonly pendingQualityWaits = new Set<() => void>()
   private readonly revivingBuffer = new Set<SourceRole>()
@@ -383,6 +398,7 @@ export class Session {
       },
       mainRole: this.mainRoleValue,
       playing: this.playingValue,
+      liveCatchingUp: this.liveCatchup !== null,
       danmaku: { ...this.danmakuState, pending: stats.pending, dropped: stats.expired },
       profiles: { official: null, commentary: null },
       notices: this.noticeList,
@@ -612,6 +628,7 @@ export class Session {
   }
 
   beginSourceChange(role: SourceRole): number {
+    this.cancelLiveCatchup()
     this.invalidateAutomaticWork(role)
     this.changingSources.add(role)
     this.disconnectAutoDanmakuForChange(role)
@@ -626,6 +643,7 @@ export class Session {
   sourceRevision(role: SourceRole): number { return this.sourceGeneration[role] }
 
   async loadSource(role: SourceRole, descriptor: MediaDescriptor): Promise<void> {
+    this.cancelLiveCatchup()
     this.invalidateOffsetRequests()
     this.invalidateAutomaticWork(role)
     const generation = ++this.sourceGeneration[role]
@@ -678,6 +696,7 @@ export class Session {
 
   unloadSource(role: SourceRole): void {
     const reevaluateDanmaku = role === this.autoDanmakuRole() || this.automaticDanmakuOrigin() === role
+    this.cancelLiveCatchup()
     this.invalidateOffsetRequests()
     this.invalidateAutomaticWork(role)
     ++this.sourceGeneration[role]
@@ -785,6 +804,7 @@ export class Session {
   // ---------------------------------------------------------------- playback
 
   async setPlaying(playing: boolean): Promise<void> {
+    if (!playing) this.cancelLiveCatchup()
     ++this.playbackIntentRevision
     this.playingValue = playing
     await this.engine.setPlaying(playing)
@@ -802,23 +822,193 @@ export class Session {
     return this.setPlaying(!this.playingValue)
   }
 
+  /** True when both streams are ready and carrying an active manual or verified alignment. */
+  isPairAligned(): boolean {
+    const media = this.engine.getState()
+    if (media.official.status !== 'ready' || media.commentary.status !== 'ready') return false
+    const offset = offsetFromRewind(this.applied)
+    const autoLocked = this.autoSync.phase === 'done' && this.autoSync.autoApplyAuthorized
+      && this.autoSync.result?.applied === true && !this.autoSync.result.dryRun
+    return autoLocked || Math.abs(offset) >= 0.05 || Math.abs(this.requestedOffset) >= 0.05
+  }
+
+  /** Real buffered live target for one role; null for VOD or unready media. */
+  roleLiveTarget(role: SourceRole): number | null {
+    const state = this.engine.getState()[role]
+    const snap = this.engine.snapshot(role)
+    if (!snap?.ready || snap.timebase.kind !== 'live') return null
+    const video = this.engine.element(role)
+    return liveSyncTarget(snap.timebase, {
+      bufferedEnd: currentBufferedEnd(video),
+      livePosition: this.engine.livePosition(role),
+      currentTime: snap.currentTime,
+      localBuffer: Boolean(state.descriptor?.url.includes('/buffer/')),
+    })
+  }
+
+  private canSmoothCatchup(roles: SourceRole[], gapSeconds: number): boolean {
+    return gapSeconds > 0.15 && gapSeconds <= LIVE_SMOOTH_CATCHUP_MAX_SECONDS && roles.every(role => {
+      const state = this.engine.getState()[role]
+      const video = this.engine.element(role)
+      const bufferedEnd = currentBufferedEnd(video)
+      return state.status === 'ready' && !video.paused && !video.seeking && !video.ended
+        && video.readyState >= 3 && bufferedEnd !== null && bufferedEnd - video.currentTime >= Math.min(gapSeconds, 0.6)
+    })
+  }
+
+  private startLiveCatchup(roles: SourceRole[], preserveAlignment: boolean): void {
+    this.cancelLiveCatchup(false)
+    this.playbackRecovery = null
+    this.resetPlaybackObservation()
+    if (preserveAlignment) {
+      this.autoSync.cancel(false)
+      ++this.autoRequestRevision
+    } else {
+      this.autoSync.cancel(true)
+      ++this.autoRequestRevision
+      this.invalidateOffsetRequests()
+    }
+    for (const role of roles) {
+      try { this.engine.element(role).playbackRate = LIVE_SMOOTH_CATCHUP_RATE } catch { /* ignore detached */ }
+    }
+    const generations = { official: this.sourceGeneration.official, commentary: this.sourceGeneration.commentary }
+    const timer = setInterval(() => this.tickLiveCatchup(), 80)
+    this.liveCatchup = { roles, generations, preserveAlignment, startedAt: this.now(), timer }
+    this.notify()
+  }
+
+  private tickLiveCatchup(): void {
+    const active = this.liveCatchup
+    if (!active || this.disposed) { this.cancelLiveCatchup(); return }
+    const invalid = active.roles.some(role => {
+      const video = this.engine.element(role)
+      return this.sourceGeneration[role] !== active.generations[role]
+        || video.paused || video.seeking || video.ended
+    })
+    if (invalid || this.now() - active.startedAt > 20_000) {
+      this.finishLiveCatchup()
+      return
+    }
+    const gaps = active.roles.map(role => {
+      const target = this.roleLiveTarget(role)
+      return target === null ? 0 : Math.max(0, target - this.engine.element(role).currentTime)
+    })
+    const remaining = active.preserveAlignment ? Math.min(...gaps) : (gaps[0] ?? 0)
+    const starved = active.roles.some(role => {
+      const video = this.engine.element(role)
+      const bufferedEnd = currentBufferedEnd(video)
+      return bufferedEnd === null || bufferedEnd - video.currentTime < 0.2
+    })
+    if (remaining <= 0.15 || starved) this.finishLiveCatchup()
+  }
+
+  private finishLiveCatchup(): void {
+    const active = this.liveCatchup
+    if (!active) return
+    clearInterval(active.timer)
+    this.liveCatchup = null
+    for (const role of active.roles) {
+      if (this.sourceGeneration[role] === active.generations[role]) {
+        try { this.engine.element(role).playbackRate = 1 } catch { /* ignore detached */ }
+      }
+    }
+    if (!active.preserveAlignment && active.roles.length === 1) {
+      const role = active.roles[0]!
+      if (this.sourceGeneration[role] === active.generations[role]) {
+        this.applied = { ...this.applied, [role]: 0 }
+        this.requestedOffset = offsetFromRewind(this.applied)
+      }
+    }
+    const commentary = this.engine.snapshot('commentary')
+    if (commentary) this.timeline.handleSeek(commentary.currentTime)
+    this.resetPlaybackObservation()
+    this.notify()
+  }
+
+  cancelLiveCatchup(notify = true): void {
+    const active = this.liveCatchup
+    if (!active) return
+    clearInterval(active.timer)
+    this.liveCatchup = null
+    for (const role of active.roles) {
+      try { this.engine.element(role).playbackRate = 1 } catch { /* ignore detached */ }
+    }
+    this.resetPlaybackObservation()
+    if (notify) this.notify()
+  }
+
   /** Manual playback navigation also invalidates automatic sync and updates its bookkeeping. */
   seekPlayback(role: SourceRole, deltaSeconds: number): Promise<boolean> {
     if (!Number.isFinite(deltaSeconds) || Math.abs(deltaSeconds) > 86_400) return Promise.resolve(false)
     return this.navigatePlayback(role, deltaSeconds)
+  }
+  /** Linked keyboard seek (← / →): moves both streams together so an aligned pair stays aligned. */
+  seekLinkedPlayback(deltaSeconds: number): Promise<boolean> {
+    if (!Number.isFinite(deltaSeconds) || Math.abs(deltaSeconds) > 86_400 || Math.abs(deltaSeconds) < 0.001) {
+      return Promise.resolve(false)
+    }
+    const media = this.engine.getState()
+    const officialLoaded = media.official.status !== 'empty' && Boolean(this.engine.snapshot('official')?.ready)
+    const commentaryLoaded = media.commentary.status !== 'empty' && Boolean(this.engine.snapshot('commentary')?.ready)
+    if (officialLoaded && commentaryLoaded) return this.navigateLinkedPlayback(deltaSeconds)
+    const singleRole: SourceRole | null = media[this.mainRoleValue].status !== 'empty'
+      ? this.mainRoleValue
+      : SOURCE_ROLES.find(role => media[role].status !== 'empty') ?? null
+    return singleRole ? this.seekPlayback(singleRole, deltaSeconds) : Promise.resolve(false)
   }
   /** A point picked on the time line, kept in the same bookkeeping as a relative seek. */
   seekPlaybackTo(role: SourceRole, target: number): Promise<boolean> {
     if (!Number.isFinite(target)) return Promise.resolve(false)
     return this.navigatePlayback(role, { to: target })
   }
-  returnPlaybackToLive(role: SourceRole): Promise<boolean> { return this.navigatePlayback(role, 'live') }
+  /**
+   * DouyuEx-style "同步时间":
+   * - Single / unaligned: catches `role` up to its real buffered tail (1.25x within 4s, seek above 4s).
+   * - Paired & aligned: advances both streams together by their shared headroom, preserving alignment.
+   */
+  syncPlaybackToLive(role: SourceRole = this.mainRoleValue, options: { immediate?: boolean } = {}): Promise<boolean> {
+    const immediate = options.immediate || this.liveCatchup !== null
+    if (this.isPairAligned()) {
+      const targetO = this.roleLiveTarget('official')
+      const targetC = this.roleLiveTarget('commentary')
+      if (targetO !== null && targetC !== null) {
+        const gapO = Math.max(0, targetO - this.engine.element('official').currentTime)
+        const gapC = Math.max(0, targetC - this.engine.element('commentary').currentTime)
+        const sharedGap = Math.min(gapO, gapC)
+        if (sharedGap <= 0.15) {
+          this.cancelLiveCatchup()
+          return Promise.resolve(false)
+        }
+        if (!immediate && this.canSmoothCatchup(['official', 'commentary'], sharedGap)) {
+          this.startLiveCatchup(['official', 'commentary'], true)
+          return Promise.resolve(true)
+        }
+        this.cancelLiveCatchup(false)
+        return this.navigateLinkedPlayback(sharedGap, { silentAtEdge: true })
+      }
+    }
+    const target = this.roleLiveTarget(role)
+    if (target === null) return Promise.resolve(false)
+    const gap = target - this.engine.element(role).currentTime
+    if (gap <= 0.15) {
+      this.cancelLiveCatchup()
+      return Promise.resolve(false)
+    }
+    if (!immediate && this.canSmoothCatchup([role], gap)) {
+      this.startLiveCatchup([role], false)
+      return Promise.resolve(true)
+    }
+    this.cancelLiveCatchup(false)
+    return this.navigatePlayback(role, 'live')
+  }
+  returnPlaybackToLive(role: SourceRole): Promise<boolean> { return this.syncPlaybackToLive(role) }
   /** Native PiP owns presentation; stop expensive recognition while the opt-in mode is active. */
   setPresentationReduced(reduced: boolean): void {
     if (this.disposed || this.pipPresentationReduced === reduced) return
     this.pipPresentationReduced = reduced
     this.resetPlaybackObservation()
     if (reduced) {
+      this.cancelLiveCatchup(false)
       this.stopScheduler()
       this.autoSync.cancel(false)
     } else {
@@ -826,9 +1016,114 @@ export class Session {
     }
     this.notify()
   }
+  private navigateLinkedPlayback(deltaSeconds: number, options: { silentAtEdge?: boolean } = {}): Promise<boolean> {
+    if (this.disposed || this.playbackPending >= 32) return Promise.resolve(false)
+    const generations = { official: this.sourceGeneration.official, commentary: this.sourceGeneration.commentary }
+    this.cancelLiveCatchup(false)
+    this.playbackRecovery = null
+    this.resetPlaybackObservation()
+    this.autoSync.cancel(false)
+    ++this.autoRequestRevision
+    this.invalidateOffsetRequests()
+    const automatic = this.automaticSeek
+    const offsets = this.offsetDrain
+    ++this.playbackPending
+    const operation = this.playbackDrain.then(async () => {
+      if (automatic) { await automatic.done; automatic.capture() }
+      if (offsets) await offsets
+      if (this.disposed || SOURCE_ROLES.some(role => generations[role] !== this.sourceGeneration[role])) return false
+      const snapO = this.engine.snapshot('official')
+      const snapC = this.engine.snapshot('commentary')
+      if (!snapO?.ready || !snapC?.ready) return false
+      const bounds = (role: SourceRole, snap: NonNullable<typeof snapO>) => {
+        const range = seekableRange(snap.timebase)
+        if (snap.timebase.kind !== 'live') return range
+        const video = this.engine.element(role)
+        const state = this.engine.getState()[role]
+        const end = clampLiveUserSeek(snap.timebase.seekableEnd, snap.timebase, {
+          bufferedEnd: currentBufferedEnd(video),
+          livePosition: this.engine.livePosition(role),
+          currentTime: snap.currentTime,
+          localBuffer: Boolean(state.descriptor?.url.includes('/buffer/')),
+        }).target
+        return { start: range.start, end }
+      }
+      const rangeO = bounds('official', snapO)
+      const rangeC = bounds('commentary', snapC)
+      let actualDelta: number
+      if (deltaSeconds < 0) {
+        const backO = Math.max(0, snapO.currentTime - rangeO.start)
+        const backC = Math.max(0, snapC.currentTime - rangeC.start)
+        actualDelta = -Math.min(Math.abs(deltaSeconds), backO, backC)
+        if (Math.abs(actualDelta) < 0.05) {
+          if (!options.silentAtEdge) this.notice('info', '已到可回看起点')
+          return false
+        }
+      } else {
+        const fwdO = Math.max(0, rangeO.end - snapO.currentTime)
+        const fwdC = Math.max(0, rangeC.end - snapC.currentTime)
+        actualDelta = Math.min(deltaSeconds, fwdO, fwdC)
+        if (actualDelta < 0.15) {
+          if (!options.silentAtEdge) {
+            const heldBack = Math.max(fwdO, fwdC) >= 1
+            this.notice('info', heldBack ? '已在最新同步进度；调两路快慢请用中间对齐按钮' : '已到直播最新处')
+          }
+          return false
+        }
+      }
+      const beforeO = snapO.currentTime
+      const beforeC = snapC.currentTime
+      const priorOffset = offsetFromRewind(this.applied)
+      const priorRequested = this.requestedOffset
+      const intent = this.playbackIntentRevision
+      const held = SOURCE_ROLES.map(candidate => ({
+        role: candidate,
+        video: this.engine.element(candidate),
+        generation: this.sourceGeneration[candidate],
+      })).filter(item => !item.video.paused)
+      for (const item of held) {
+        try { item.video.pause() } catch { /* ignore detached */ }
+      }
+      let okO = false
+      let okC = false
+      let afterO = beforeO
+      let afterC = beforeC
+      try {
+        ;[okO, okC] = await Promise.all([
+          this.engine.seek('official', beforeO + actualDelta),
+          this.engine.seek('commentary', beforeC + actualDelta),
+        ])
+        afterO = this.engine.snapshot('official')?.currentTime ?? beforeO
+        afterC = this.engine.snapshot('commentary')?.currentTime ?? beforeC
+      } finally {
+        if (!this.disposed && intent === this.playbackIntentRevision) {
+          await Promise.allSettled(held.filter(item =>
+            item.generation === this.sourceGeneration[item.role]
+            && item.video === this.engine.element(item.role),
+          ).map(async item => item.video.play()))
+        }
+      }
+      if (this.disposed || SOURCE_ROLES.some(role => generations[role] !== this.sourceGeneration[role])) return false
+      const drift = (afterC - beforeC) - (afterO - beforeO)
+      if (Math.abs(drift) >= 0.05) {
+        const nextOffset = clampOffset(priorOffset + drift)
+        this.applied = rewindForOffset(nextOffset)
+        this.requestedOffset = offsetFromRewind(this.applied)
+      } else {
+        this.requestedOffset = priorRequested
+      }
+      this.timeline.handleSeek(afterC)
+      this.danmakuProcessor.reset()
+      this.notify()
+      return okO && okC
+    }).finally(() => { this.playbackPending-- })
+    this.playbackDrain = operation.catch(() => {})
+    return operation
+  }
   private navigatePlayback(role: SourceRole, move: number | 'live' | { to: number }): Promise<boolean> {
     if (!SOURCE_ROLES.includes(role) || this.disposed || this.playbackPending >= 32) return Promise.resolve(false)
     const generation = this.sourceGeneration[role]
+    this.cancelLiveCatchup(false)
     this.playbackRecovery = null
     this.resetPlaybackObservation()
     this.autoSync.cancel(true); ++this.autoRequestRevision
@@ -842,14 +1137,26 @@ export class Session {
       if (this.disposed || generation !== this.sourceGeneration[role]) return false
       const before = this.engine.snapshot(role)
       if (!before?.ready) return false
-      const requested = move === 'live' ? latestPlayableTime(before.timebase, this.engine.livePosition(role))
+      const video = this.engine.element(role)
+      const state = this.engine.getState()[role]
+      const liveOptions = {
+        bufferedEnd: currentBufferedEnd(video),
+        livePosition: this.engine.livePosition(role),
+        currentTime: before.currentTime,
+        localBuffer: Boolean(state.descriptor?.url.includes('/buffer/')),
+      }
+      const requested = move === 'live' ? liveSyncTarget(before.timebase, liveOptions)
         : typeof move === 'number' ? before.currentTime + move : move.to
       if (requested === null) return false
-      const target = clampPlayableSeek(requested, before.timebase, this.engine.livePosition(role)).target
+      const target = move === 'live'
+        ? requested
+        : clampLiveUserSeek(requested, before.timebase, liveOptions).target
+      if (move === 'live' && target <= before.currentTime + 0.05) return false
       const capture = this.captureSeekMovement(role)
       const reached = await this.engine.seek(role, target)
       if (this.disposed || generation !== this.sourceGeneration[role]) return false
       capture()
+      if (move === 'live') this.applied = { ...this.applied, [role]: 0 }
       this.requestedOffset = offsetFromRewind(this.applied)
       const commentary = this.engine.snapshot('commentary')
       if (commentary) this.timeline.handleSeek(commentary.currentTime)
@@ -875,6 +1182,7 @@ export class Session {
 
   applyOffset(nextOffset: number, options: { fromAuto?: boolean } = {}): Promise<OffsetPlan> {
     nextOffset = clampOffset(nextOffset)
+    this.cancelLiveCatchup(false)
     if (!options.fromAuto) {
       this.playbackRecovery = null
       this.resetPlaybackObservation()
@@ -1030,7 +1338,7 @@ export class Session {
     plan.effectiveOffset = offsetFromRewind(this.applied)
 
     if (plan.limitReason === 'buffer-limit') {
-      this.notice('warn', '缓冲不足，未完全调整')
+      this.notice('warn', describeBufferLimit(plan))
     } else if (plan.limitReason === 'not-ready') {
       this.notice('warn', '片源未就绪，未完全调整')
     }
@@ -1069,7 +1377,7 @@ export class Session {
 
   private canObservePlayback(): boolean {
     return !this.disposed && !this.pipPresentationReduced && !this.autoSync.isRunning
-      && !this.automaticSeek && !this.offsetDrain && this.playbackPending === 0
+      && !this.automaticSeek && !this.offsetDrain && this.playbackPending === 0 && !this.liveCatchup
       && this.changingSources.size === 0 && !SOURCE_ROLES.some(role => this.qualityBusy[role]
         || this.engine.playbackSample(role).busy)
   }
@@ -1161,6 +1469,7 @@ export class Session {
 
   /** Measure only. Allowed even when auto-apply has been revoked. */
   async measureOnce(): Promise<AutoSyncRunResult> {
+    this.cancelLiveCatchup(false)
     const result = await this.autoSync.dryRun(this.applied)
     this.reportAutoResult(result)
     return result
@@ -1173,6 +1482,7 @@ export class Session {
   /** Recovery shares the controller's scheduler gate, without granting authorization. */
   private async executeSync(authorize: boolean): Promise<AutoSyncRunResult> {
     if (!authorize && (!this.autoSync.autoApplyAuthorized || this.autoSync.isRunning)) return this.cancelledSyncResult()
+    this.cancelLiveCatchup(false)
     const revision = ++this.autoRequestRevision
     if (this.offsetDrain) await this.offsetDrain
     if (revision !== this.autoRequestRevision || this.disposed
@@ -1631,6 +1941,7 @@ export class Session {
    */
   suspend(): void {
     this.suspended = true
+    this.cancelLiveCatchup(false)
     this.stopPlaybackObservation()
     // Remembered so the next boot reconnects it: the room is part of what was loaded.
     const parkedDanmakuRoom = this.danmakuSelection
@@ -1650,6 +1961,7 @@ export class Session {
   /** Tear the session down for good. Only its owner may call this. */
   dispose(): void {
     if (this.disposed) return
+    this.cancelLiveCatchup(false)
     this.stopPlaybackObservation()
     this.releaseFeatures?.()
     this.invalidateOffsetRequests()
@@ -1672,6 +1984,26 @@ export class Session {
 
 export function roleName(role: SourceRole): string {
   return role === 'official' ? '画面' : '解说'
+}
+
+function currentBufferedEnd(video: HTMLVideoElement): number | null {
+  const { buffered, currentTime } = video
+  if (!buffered || buffered.length === 0) return null
+  for (let index = 0; index < buffered.length; index += 1) {
+    if (currentTime >= buffered.start(index) - 0.25 && currentTime <= buffered.end(index)) {
+      return buffered.end(index)
+    }
+  }
+  return null
+}
+
+function describeBufferLimit(plan: OffsetPlan): string {
+  const clamped = plan.seeks.find(seek => seek.clamped)
+  const who = clamped ? roleName(clamped.role) : ''
+  const missing = Math.abs(plan.requestedOffset - plan.effectiveOffset)
+  return missing >= 0.1
+    ? `${who}缓冲不足，还差 ${missing.toFixed(1)} 秒未调完，继续播放等一会儿再试（请勿刷新）`
+    : `${who}缓冲不足，未完全调整，继续播放等一会儿再试（请勿刷新）`
 }
 
 /** Re-exported so components do not each import from three modules. */

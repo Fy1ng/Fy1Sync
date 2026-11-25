@@ -94,7 +94,7 @@ export function SyncCapsule(): React.ReactNode {
           : 'idle'
 
   const magnitude = Math.abs(requested)
-  const caption = magnitude < 0.005 ? '未调整' : requested > 0 ? '画面延后' : '画面提前'
+  const caption = magnitude < 0.005 ? '未调整' : requested > 0 ? '画面延后' : '解说延后'
 
   return (
     <div className="capsule" data-state={state} role="group" aria-label="对齐">
@@ -102,14 +102,17 @@ export function SyncCapsule(): React.ReactNode {
       <HoldButton
         className="capsule-nudge"
         label="回退画面"
-        title={`${shortcutTitle(`回退 ${stepLabel}`, settings.shortcuts.nudgeBack)}；按住 Shift 微调，长按连调`}
+        title={`${shortcutTitle(`回退画面 ${stepLabel}`, settings.shortcuts.nudgeBack, settings.shortcutsEnabled)}；按住 Shift 微调，长按连调`}
         disabled={!paired || requested >= MAX_OFFSET_SECONDS}
         onPointerEnter={event => modifier.update(event.shiftKey)}
         onStep={(_held, keys) => move('late', keys)}
       >
         <span className="capsule-nudge-main" aria-hidden="true">
-          <span className="capsule-nudge-label"><Icon name="back" /><span>回退画面</span></span>
-          <span className="capsule-nudge-step"><Icon name="back" /><span className="capsule-nudge-value">{stepLabel}</span></span>
+          <Icon name="back" />
+          <span className="capsule-nudge-copy">
+            <span className="capsule-nudge-label">回退画面</span>
+            <span className="capsule-nudge-step" data-fine={modifier.shift || undefined}><span className="capsule-nudge-value">{stepLabel}</span></span>
+          </span>
         </span>
       </HoldButton>
 
@@ -131,22 +134,25 @@ export function SyncCapsule(): React.ReactNode {
 
       <HoldButton
         className="capsule-nudge"
-        label="快进画面"
-        title={`${shortcutTitle(`快进 ${stepLabel}`, settings.shortcuts.nudgeForward)}；按住 Shift 微调，长按连调`}
+        label="回退解说"
+        title={`${shortcutTitle(`回退解说 ${stepLabel}`, settings.shortcuts.nudgeForward, settings.shortcutsEnabled)}；按住 Shift 微调，长按连调`}
         disabled={!paired || requested <= -MAX_OFFSET_SECONDS}
         onPointerEnter={event => modifier.update(event.shiftKey)}
         onStep={(_held, keys) => move('early', keys)}
       >
         <span className="capsule-nudge-main" aria-hidden="true">
-          <span className="capsule-nudge-label"><span>快进画面</span><Icon name="forward" /></span>
-          <span className="capsule-nudge-step"><span className="capsule-nudge-value">{stepLabel}</span><Icon name="forward" /></span>
+          <span className="capsule-nudge-copy">
+            <span className="capsule-nudge-label">回退解说</span>
+            <span className="capsule-nudge-step" data-fine={modifier.shift || undefined}><span className="capsule-nudge-value">{stepLabel}</span></span>
+          </span>
+          <Icon name="forward" />
         </span>
       </HoldButton>
     </div>
   )
 }
 
-/** An exact picture offset: its direction and magnitude. */
+/** An exact alignment offset: which stream waits and by how many seconds. */
 function OffsetEditor({ value, onDone }: { value: number; onDone: () => void }): React.ReactNode {
   const session = useSession()
   const [side, setSide] = useState<SourceRole>(value >= 0 ? 'official' : 'commentary')
@@ -155,6 +161,15 @@ function OffsetEditor({ value, onDone }: { value: number; onDone: () => void }):
   useEffect(() => { input.current?.select() }, [])
   const seconds = Number(text.replace('，', '.').trim() || '0')
   const valid = Number.isFinite(seconds) && seconds >= 0 && seconds <= MAX_OFFSET_SECONDS
+
+  const stepDraft = (delta: number): void => {
+    const base = valid ? seconds : 0
+    const next = clampOffset((side === 'official' ? base : -base) + (side === 'official' ? delta : -delta))
+    const nextSide: SourceRole = next === 0 ? side : next > 0 ? 'official' : 'commentary'
+    const abs = Math.abs(next)
+    setSide(nextSide)
+    setText(abs === 0 ? '0' : abs.toFixed(2).replace(/\.?0+$/, ''))
+  }
 
   const apply = (): void => {
     if (!valid) return
@@ -165,12 +180,20 @@ function OffsetEditor({ value, onDone }: { value: number; onDone: () => void }):
   return (
     <form onSubmit={(event) => { event.preventDefault(); apply() }} className="offset-form">
       <Segmented label="画面偏移方向" value={side} onChange={setSide}
-        options={[{ value: 'official', label: '画面延后' }, { value: 'commentary', label: '画面提前' }]} />
+        options={[{ value: 'official', label: '画面延后' }, { value: 'commentary', label: '解说延后' }]} />
+      <p className="muted offset-hint">哪边快了就延后哪边</p>
       <label className="offset-seconds">
         <input ref={input} inputMode="decimal" value={text} aria-label="秒数" aria-invalid={!valid}
           placeholder="0" onChange={(event) => setText(event.target.value)} />
         <span>秒</span>
       </label>
+      <div className="offset-quick" role="group" aria-label="快捷步进">
+        {([-5, -0.5, 0.5, 5] as const).map((delta) => (
+          <button key={delta} type="button" className="btn-quiet small" onClick={() => stepDraft(delta)}>
+            {delta > 0 ? `+${delta}s` : `${delta}s`}
+          </button>
+        ))}
+      </div>
       {!valid && <p className="form-error">请输入 0 到 {MAX_OFFSET_SECONDS} 之间的数值</p>}
       <div className="row-end">
         <button type="button" className="btn-quiet" onClick={() => { void session.resetOffset(); onDone() }}>清零</button>
@@ -205,7 +228,7 @@ export function AutoAlign({ onOpenFrameSettings }: { onOpenFrameSettings?: () =>
         </button>
       ) : (
         <button type="button" className="align-main" disabled={busy || !bothReady} onClick={() => startAutoAlign(session)}
-          title={bothReady ? shortcutTitle('自动对齐', settings.shortcuts.autoAlign) : '等待两路播放和缓冲就绪'}>
+          title={bothReady ? shortcutTitle('自动对齐', settings.shortcuts.autoAlign, settings.shortcutsEnabled) : '等待两路播放和缓冲就绪'}>
           {bothReady ? '自动对齐' : '准备中'}
         </button>
       )}

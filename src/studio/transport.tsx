@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react'
 import { useSession, useSessionSnapshot } from '../app/SessionContext'
 import { shortcutTitle } from '../app/shortcuts'
 import { seekableRange } from '../core/syncPlan'
-import { latestPlayableTime } from '../media/timebase'
+import { liveSyncTarget } from '../media/timebase'
 import { SOURCE_ROLES, type SourceRole } from '../core/types'
 import { Icon } from './kit'
 import { ROLE_LABEL } from './sources'
@@ -70,8 +70,9 @@ function Volume({ role }: { role: SourceRole }): React.ReactNode {
 }
 
 /**
- * The main picture's time line. A live stream's axis is its seekable window. Dragging it and
- * 回到直播 move the main picture only, like ←/→; the alignment readout follows the move.
+ * The main picture's time line. Dragging reaches right up to the buffered tail without
+ * snapping back. "同步时间" catches up smoothly at 1.25x within 4 s or jumps above 4 s,
+ * and preserves the relative offset when both streams are already aligned.
  */
 export function Timeline(): React.ReactNode {
   const session = useSession()
@@ -87,9 +88,31 @@ export function Timeline(): React.ReactNode {
   const start = range.start
   const end = Math.max(range.end, start + 0.1)
   const position = drag ?? state.currentTime
-  // Measured from where 回到直播 lands, a few segments behind the newest frame, so the button
-  // goes away once it has done its job.
-  const behind = Math.max(0, (latestPlayableTime(timebase, state.livePosition) ?? end) - state.currentTime)
+
+  const roleBehind = (candidate: SourceRole): number | null => {
+    const media = snapshot.media[candidate]
+    if (!media.isLive || !media.timebase || media.timebase.kind !== 'live') return null
+    const target = liveSyncTarget(media.timebase, {
+      bufferedEnd: media.bufferedEnd,
+      livePosition: media.livePosition,
+      currentTime: media.currentTime,
+      localBuffer: Boolean(media.descriptor?.url.includes('/buffer/')),
+    })
+    return target === null ? null : Math.max(0, target - media.currentTime)
+  }
+
+  const autoLocked = snapshot.autoSync.phase === 'done' && snapshot.autoSync.authorized
+    && snapshot.autoSync.lastResult?.applied === true && !snapshot.autoSync.lastResult.dryRun
+  const pairedAligned = snapshot.media.official.status === 'ready'
+    && snapshot.media.commentary.status === 'ready'
+    && (autoLocked || Math.abs(snapshot.offsetSeconds) >= 0.05 || Math.abs(snapshot.requestedOffsetSeconds) >= 0.05)
+
+  const officialBehind = roleBehind('official')
+  const commentaryBehind = roleBehind('commentary')
+  const behind = pairedAligned && officialBehind !== null && commentaryBehind !== null
+    ? Math.min(officialBehind, commentaryBehind)
+    : (roleBehind(role) ?? 0)
+
   const pct = (value: number): string => `${Math.min(100, Math.max(0, ((value - start) / (end - start)) * 100))}%`
   // Through the session, so the seek cancels automatic alignment and is counted in the offset.
   // The thumb stays where it was dropped until the seek settles, unless a newer drag took over.
@@ -114,11 +137,25 @@ export function Timeline(): React.ReactNode {
       <div className="timeline-meta">
         <span className="num">{clock(position - start)}</span>
         {state.isLive ? (
-          behind < 2
-            ? <span className="live-tag">直播</span>
-            : <button type="button" className="live-tag is-behind" onClick={() => void session.returnPlaybackToLive(role)}>
-                落后 {behind.toFixed(0)} 秒 · 回到直播
-              </button>
+          snapshot.liveCatchingUp ? (
+            <button type="button" className="live-tag is-catching-up"
+              onClick={() => void session.syncPlaybackToLive(role, { immediate: true })}
+              title="正在加速追赶缓存末端，点击立即跳转">
+              同步中 1.25×
+            </button>
+          ) : behind < 1.5 ? (
+            <button type="button" className="live-tag"
+              onClick={() => void session.syncPlaybackToLive(role)}
+              title={pairedAligned ? '两路已在最新同步进度（点击同步时间）' : '已在最新直播进度（点击同步时间）'}>
+              直播
+            </button>
+          ) : (
+            <button type="button" className="live-tag is-behind"
+              onClick={() => void session.syncPlaybackToLive(role)}
+              title={pairedAligned ? '保持当前对齐差值，两路一起追到最新进度' : '追到已缓存的最新直播进度（4 秒内平滑加速）'}>
+              落后 {Math.max(1, Math.round(behind))} 秒 · 同步时间
+            </button>
+          )
         ) : <span className="num">{clock(end - start)}</span>}
       </div>
     </div>
@@ -131,7 +168,7 @@ export function PlayButton(): React.ReactNode {
   const nothing = media.official.status === 'empty' && media.commentary.status === 'empty'
   return (
     <button type="button" className="play" disabled={nothing} onClick={() => void session.togglePlaying()}
-      aria-label={playing ? '暂停' : '播放'} title={shortcutTitle(playing ? '暂停' : '播放', settings.shortcuts.togglePlayback)}>
+      aria-label={playing ? '暂停' : '播放'} title={shortcutTitle(playing ? '暂停' : '播放', settings.shortcuts.togglePlayback, settings.shortcutsEnabled)}>
       <Icon name={playing ? 'pause' : 'play'} />
     </button>
   )
@@ -144,7 +181,7 @@ export function DanmakuSwitch({ onTune }: { onTune: () => void }): React.ReactNo
   return (
     <div className="dm-switch">
       <button type="button" className={`dm-toggle ${on ? 'is-on' : ''}`.trim()} aria-pressed={on}
-        onClick={() => session.updateDanmakuSettings({ enabled: !on })} title={shortcutTitle('弹幕', settings.shortcuts.toggleDanmaku)}>
+        onClick={() => session.updateDanmakuSettings({ enabled: !on })} title={shortcutTitle('弹幕', settings.shortcuts.toggleDanmaku, settings.shortcutsEnabled)}>
         弹
       </button>
       <button type="button" className="icon-btn" onClick={onTune} aria-label="弹幕设置" title="弹幕设置">

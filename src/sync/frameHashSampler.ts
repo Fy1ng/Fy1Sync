@@ -18,9 +18,23 @@ interface SamplerOptions {
   onStatus(status: string): void
 }
 const REASONS: Record<string, string> = {
-  'short-window': '正在积累两路画面', 'no-candidates': '尚未找到共同画面',
-  'insufficient-sequence': '共同片段长度不足', 'ambiguous-sequence': '存在多个相似片段，暂不调整',
-  'static-sequence': '画面变化不足，暂不调整', 'inconsistent-motion': '画面变化对应不稳定，暂不调整',
+  'short-window': '暂未对上，若两路差几十秒请多播一会儿再试',
+  'no-candidates': '暂未对上，若两路差几十秒请多播一会儿再试',
+  'insufficient-sequence': '暂未对上，若两路差几十秒请多播一会儿再试',
+  'ambiguous-sequence': '画面存在多个相似片段，请等进入比赛画面后再试',
+  'static-sequence': '当前画面静止，请等比赛画面走动后再试',
+  'inconsistent-motion': '两路画面变化不一致，请确认是同一局同视角比赛',
+}
+
+function describeRejection(reason: string | undefined, historySpan: Record<SourceRole, number>): string {
+  if (reason === 'ambiguous-sequence' || reason === 'static-sequence' || reason === 'inconsistent-motion') {
+    return REASONS[reason]!
+  }
+  const minSpan = Math.min(historySpan.official, historySpan.commentary)
+  if (minSpan >= 50) {
+    return '未找到相同画面，请确认两路是同一局同视角比赛（差值不超过 60 秒）'
+  }
+  return REASONS[reason ?? ''] ?? '暂未对上，若两路差几十秒请多播一会儿再试'
 }
 
 /** Reuses the player's video surfaces; retains only bounded signatures in a worker. */
@@ -131,7 +145,7 @@ export class FrameHashSampler {
         const match = response.match
         if (match.status !== 'ok' || match.offset === undefined || (match.pairs?.length ?? 0) < 20
           || (match.span ?? 0) < 1.25 || (match.residual ?? Infinity) > (response.coarse ? 0.1 : 0.025)) {
-          message = REASONS[match.reason ?? ''] ?? '未找到可靠的共同画面'
+          message = describeRejection(match.reason, response.historySpan ?? { official: 0, commentary: 0 })
           this.options.onStatus(message)
           continue
         }
@@ -143,7 +157,14 @@ export class FrameHashSampler {
         const currentB = b.media + (wall - b.wall) / 1000 * b.rate
         const residual = currentA - currentB - match.offset
         const total = request.appliedOffsetSeconds + residual
-        if (!Number.isFinite(total) || Math.abs(total) > 60) return { samples, message: '两路画面偏差超出 60 秒可调整范围' }
+        if (!Number.isFinite(total) || Math.abs(total) > 60) {
+          return {
+            samples,
+            message: Number.isFinite(total)
+              ? `两路相差约 ${Math.round(Math.abs(total))} 秒（最多支持 60 秒），请确认是同一局或先同步时间`
+              : '两路偏差超出 60 秒可调整范围，请确认是同一局或先同步时间',
+          }
+        }
         const round = (value: number): number => Math.round(value * 1000) / 1000
         this.options.onStatus('已找到共同画面')
         return { samples, estimate: {

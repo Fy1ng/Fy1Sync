@@ -104,9 +104,10 @@ describe('player shortcut settings', () => {
     await act(async () => { fireEvent.click(screen.getByRole('radio', { name: '10 秒' })) })
     await act(async () => { fireEvent.click(screen.getByRole('radio', { name: '0.25 秒' })) })
     generalPage('快捷键')
+    expect(screen.getByRole('switch', { name: '启用快捷键' })).toBeChecked()
     const expected = [
       ['播放／暂停', '空格'], ['主画面后退', '←'], ['主画面前进', '→'],
-      ['回退画面', ',', '['], ['快进画面', '.', ']'], ['自动对齐', 'A'],
+      ['回退画面', ',', '['], ['回退解说', '.', ']'], ['自动对齐', 'A'],
       ['开关弹幕', 'D'], ['展开／收起弹幕栏', 'C'], ['全屏', 'F'],
     ] as const
     expect(screen.getAllByRole('rowheader').map(header => header.textContent)).toEqual(expected.map(([action]) => action))
@@ -117,7 +118,7 @@ describe('player shortcut settings', () => {
       expect(shortcutRow(action).getByText('5 秒')).toBeInTheDocument()
       expect(shortcutRow(action).getByText('Shift：30 秒')).toBeInTheDocument()
     }
-    for (const action of ['回退画面', '快进画面']) {
+    for (const action of ['回退画面', '回退解说']) {
       expect(shortcutRow(action).getByText('10 秒')).toBeInTheDocument()
       expect(shortcutRow(action).getByText('Shift：0.25 秒')).toBeInTheDocument()
     }
@@ -170,10 +171,16 @@ describe('player shortcut settings', () => {
     expect(loadSettings().shortcuts).toMatchObject({ nudgeBack: ['BracketLeft'], toggleDanmaku: ['Comma'] })
   })
 
-  it('clears individual keys, accepts two distinct keys and restores defaults immediately', async () => {
+  it('clears individual keys, accepts two distinct keys, toggles shortcuts on/off and restores defaults immediately', async () => {
     const { session } = mount()
     await act(async () => session.updateSettings({ largeStepSeconds: 10 }))
     generalPage('快捷键')
+    const toggle = screen.getByRole('switch', { name: '启用快捷键' })
+    expect(toggle).toBeChecked()
+    await act(async () => { fireEvent.click(toggle) })
+    expect(loadSettings().shortcutsEnabled).toBe(false)
+    await act(async () => { fireEvent.click(toggle) })
+    expect(loadSettings().shortcutsEnabled).toBe(true)
     const row = shortcutRow('回退画面')
     await act(async () => { fireEvent.click(row.getByRole('button', { name: '回退画面：清除 ,' })) })
     expect(session.settings.shortcuts.nudgeBack).toEqual(['BracketLeft'])

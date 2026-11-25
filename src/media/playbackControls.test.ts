@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { latestPlayableTime, PlaybackControls } from './playbackControls'
-import { clampPlayableSeek } from './timebase'
+import { clampLiveUserSeek, clampPlayableSeek, liveSyncTarget } from './timebase'
 import { IndependentMedia } from './independentMedia'
 
 function fixture(livePosition: () => number | null = () => null) {
@@ -33,14 +33,30 @@ describe('where 回到直播 lands', () => {
     expect(clampPlayableSeek(130, live)).toEqual({ target: 130, clamped: false, shortfall: 0 })
     expect(clampPlayableSeek(599, { kind: 'vod', duration: 600 })).toEqual({ target: 599, clamped: false, shortfall: 0 })
   })
+  it('syncs to the real buffered tail without snapping backwards behind currentTime', () => {
+    // Even if hls.js liveSyncPosition sits 18s back due to a long GOP, a buffered tail at 150 lands at 149.5.
+    expect(liveSyncTarget(live, { bufferedEnd: 150, livePosition: 132, currentTime: 140 })).toBe(149.5)
+    // Never moves backwards when already ahead of the safety margin.
+    expect(liveSyncTarget(live, { bufferedEnd: 150, livePosition: 132, currentTime: 149.8 })).toBe(149.8)
+    // Allows dragging right into the buffered bar on the right without snapping back to 132.
+    expect(clampLiveUserSeek(149, live, { bufferedEnd: 150, livePosition: 132, currentTime: 140 }))
+      .toEqual({ target: 149, clamped: false, shortfall: 0 })
+  })
 })
 describe('headless playback controls', () => {
-  it('clamps relative seeks and returns to live without remounting', async () => {
+  it('clamps relative seeks and returns to live without remounting or rewinding buffered streams', async () => {
     const { video, controls } = fixture()
     expect(await controls.seekBy(-50)).toMatchObject({ ok: true, target: 100, clamped: true })
     expect(await controls.seekBy(20)).toMatchObject({ ok: true, target: 120, clamped: false })
     expect(await controls.returnToLive()).toMatchObject({ ok: true, target: 144 })
     expect(video.currentTime).toBe(144)
+    // With real buffered media up to 150, returnToLive advances to 149.5 and never rewinds when at 149.7.
+    Object.defineProperty(video, 'buffered', { configurable: true, get: () => ({ length: 1, start: () => 100, end: () => 150 }) })
+    expect(await controls.returnToLive()).toMatchObject({ ok: true, target: 149.5 })
+    expect(video.currentTime).toBe(149.5)
+    video.currentTime = 149.7
+    expect(await controls.returnToLive()).toMatchObject({ ok: true, target: 149.7 })
+    expect(video.currentTime).toBe(149.7)
     controls.dispose()
   })
   it('returns to the sync point its attachment reports', async () => {

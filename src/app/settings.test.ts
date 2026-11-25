@@ -39,11 +39,15 @@ describe('mergeSettings', () => {
     })
   })
 
-  it('round-trips custom and empty shortcut bindings', () => {
+  it('round-trips custom and empty shortcut bindings and the shortcuts master toggle', () => {
     const storage = fakeStorage()
     const shortcuts = { ...DEFAULT_SETTINGS.shortcuts, togglePlayback: ['KeyP', 'Numpad0'], toggleDanmaku: [] }
-    saveSettings({ ...DEFAULT_SETTINGS, shortcuts }, storage)
-    expect(loadSettings(storage).shortcuts).toEqual(shortcuts)
+    expect(loadSettings(storage).shortcutsEnabled).toBe(true)
+    saveSettings({ ...DEFAULT_SETTINGS, shortcutsEnabled: false, shortcuts }, storage)
+    expect(loadSettings(storage)).toMatchObject({ shortcutsEnabled: false, shortcuts })
+    for (const invalid of [null, 'false', 0, {}, []]) {
+      expect(mergeSettings({ shortcutsEnabled: invalid }).shortcutsEnabled).toBe(true)
+    }
   })
 
   it('falls back for malformed shortcuts without creating duplicate ownership', () => {

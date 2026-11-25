@@ -6,7 +6,7 @@
  */
 
 import { APP_ORIGIN, expect, test } from './electron'
-import { connectDanmaku, fixturesReady, loadBothFixtures, openPlayer, openSettings, seekBoth, setCheckedByLabel, setPlaying, stressDanmaku } from './helpers'
+import { connectDanmaku, fixturesReady, loadBothFixtures, openPlayer, seekBoth, setCheckedByLabel, setPlaying, stressDanmaku } from './helpers'
 import { parseStt, serializeStt, toChatMessage, toGiftMessage } from '../server/danmaku/douyuProtocol'
 import { SETTINGS_KEY } from '../src/app/settings'
 

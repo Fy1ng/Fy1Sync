@@ -4,7 +4,7 @@ import {
   DEFAULT_SHORTCUTS, isShortcutCode, MAX_SHORTCUT_KEYS, SEEK_SHORTCUT_STEPS, SHORTCUT_ACTIONS,
   SHORTCUT_LABELS, shortcutActionFor, shortcutKeyLabel, type ShortcutAction,
 } from '../app/shortcuts'
-import { Icon } from './kit'
+import { Icon, Switch } from './kit'
 
 type Slot = { action: ShortcutAction; index: number }
 type Edit = Slot & (
@@ -72,6 +72,8 @@ export function ShortcutSettings(): React.ReactNode {
         session.updateSettings({ shortcuts: DEFAULT_SHORTCUTS })
       }}>恢复默认</button>
     </div>
+    <Switch label="启用快捷键" checked={settings.shortcutsEnabled}
+      onChange={(shortcutsEnabled) => { setEdit(null); session.updateSettings({ shortcutsEnabled }) }} />
     <table className="shortcut-table">
       <thead><tr><th scope="col">动作</th><th scope="col">按键</th><th scope="col">步长</th></tr></thead>
       <tbody>{SHORTCUT_ACTIONS.map(action => {

@@ -138,7 +138,7 @@ function StudioView({ settingsAt, setSettingsAt }: {
   const busyChrome = favorites || intake || tuning || settingsAt !== null || addingStream || scheduleOpen || onChrome || switchingQuality || embeddedLogin !== null
   const chrome = useOverlayVisibility(3200, !snapshot.playing || busyChrome)
   const isSilentAlignKey = (event: React.KeyboardEvent<HTMLElement>): boolean => {
-    if (embeddedLogin || event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return false
+    if (!snapshot.settings.shortcutsEnabled || embeddedLogin || event.defaultPrevented || event.ctrlKey || event.metaKey) return false
     const target = event.target
     if (target instanceof Element && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), dialog, [role="dialog"], [role="alertdialog"]')) return false
     return shortcutActionFor(snapshot.settings.shortcuts, event.code) === 'autoAlign'
@@ -215,7 +215,7 @@ function StudioView({ settingsAt, setSettingsAt }: {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (embeddedLogin || event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return
+      if (!session.settings.shortcutsEnabled || embeddedLogin || event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return
       const target = event.target
       if (target instanceof Element && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), dialog, [role="dialog"], [role="alertdialog"]')) return
       const { shortcuts, smallStepSeconds, largeStepSeconds } = session.settings
@@ -292,7 +292,7 @@ function StudioView({ settingsAt, setSettingsAt }: {
             {!chatOpen && (
               <div className="topbar-tools">
                 {hasSidebar && (
-                  <button type="button" className="icon-btn glass" onClick={() => setChat(true)} aria-label="展开弹幕" title={shortcutTitle('弹幕列表', snapshot.settings.shortcuts.toggleSidebar)}>
+                  <button type="button" className="icon-btn glass" onClick={() => setChat(true)} aria-label="展开弹幕" title={shortcutTitle('弹幕列表', snapshot.settings.shortcuts.toggleSidebar, snapshot.settings.shortcutsEnabled)}>
                     <Icon name="chat" />
                   </button>
                 )}
@@ -364,7 +364,7 @@ function StudioView({ settingsAt, setSettingsAt }: {
                 <PipButton />
                 <DanmakuSwitch onTune={() => setTuning((open) => !open)} />
                 <button type="button" className="icon-btn" onClick={fullscreen.toggle} aria-pressed={fullscreen.active}
-                  aria-label={fullscreen.active ? '退出全屏' : '全屏'} title={shortcutTitle(fullscreen.active ? '退出全屏' : '全屏', snapshot.settings.shortcuts.toggleFullscreen)}>
+                  aria-label={fullscreen.active ? '退出全屏' : '全屏'} title={shortcutTitle(fullscreen.active ? '退出全屏' : '全屏', snapshot.settings.shortcuts.toggleFullscreen, snapshot.settings.shortcutsEnabled)}>
                   <Icon name={fullscreen.active ? 'shrink' : 'expand'} />
                 </button>
               </div>

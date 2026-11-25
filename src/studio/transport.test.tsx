@@ -60,4 +60,60 @@ describe('timeline keyboard commits', () => {
     fireEvent.pointerUp(slider)
     expect(session.seekPlaybackTo).toHaveBeenCalledExactlyOnceWith('official', 40)
   })
+
+  it('does not falsely report lag when official is held back for alignment while commentary is at live edge', () => {
+    snapshot = {
+      ...snapshot,
+      offsetSeconds: 12,
+      requestedOffsetSeconds: 12,
+      media: {
+        official: {
+          ...snapshot.media.official,
+          status: 'ready',
+          isLive: true,
+          currentTime: 187.5,
+          bufferedEnd: 200,
+          timebase: { kind: 'live', seekableStart: 20, seekableEnd: 200 },
+        },
+        commentary: {
+          ...snapshot.media.commentary,
+          status: 'ready',
+          isLive: true,
+          currentTime: 99.3,
+          bufferedEnd: 100,
+          timebase: { kind: 'live', seekableStart: 0, seekableEnd: 100 },
+        },
+      },
+    }
+    render(<Timeline />)
+    expect(screen.getByRole('button', { name: '直播' })).toBeInTheDocument()
+    expect(screen.queryByText(/落后/)).toBeNull()
+  })
+
+  it('offers 同步时间 when genuinely behind buffered tail and shows 同步中 1.25× while catching up', () => {
+    const syncLive = vi.spyOn(session, 'syncPlaybackToLive').mockResolvedValue(true)
+    snapshot = {
+      ...snapshot,
+      media: {
+        ...snapshot.media,
+        official: {
+          ...snapshot.media.official,
+          status: 'ready',
+          isLive: true,
+          currentTime: 193,
+          bufferedEnd: 200,
+          timebase: { kind: 'live', seekableStart: 20, seekableEnd: 200 },
+        },
+      },
+    }
+    const { rerender } = render(<Timeline />)
+    const syncBtn = screen.getByRole('button', { name: /同步时间/ })
+    expect(syncBtn).toHaveTextContent('落后 7 秒 · 同步时间')
+    fireEvent.click(syncBtn)
+    expect(syncLive).toHaveBeenCalledWith('official')
+
+    snapshot = { ...snapshot, liveCatchingUp: true }
+    rerender(<Timeline />)
+    expect(screen.getByRole('button', { name: '同步中 1.25×' })).toBeInTheDocument()
+  })
 })

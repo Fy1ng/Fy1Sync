@@ -1117,8 +1117,16 @@ body,
   background: var(--ash);
 }
 
-.studio .live-tag.is-behind:hover {
+.studio .live-tag:hover {
   background: rgb(255 255 255 / 16%);
+}
+
+.studio .live-tag.is-catching-up {
+  color: var(--lock);
+}
+
+.studio .live-tag.is-catching-up::before {
+  background: var(--lock);
 }
 
 /* Balance: a crossfader between picture sound and the voice. */
@@ -1296,13 +1304,20 @@ body,
 }
 
 .studio .capsule-nudge-main {
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.studio .capsule-nudge-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.15;
 }
 
 .studio .capsule-nudge-label,
 .studio .capsule-nudge-step {
-  grid-area: 1 / 1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1310,20 +1325,20 @@ body,
   white-space: nowrap;
 }
 
+.studio .capsule-nudge-label {
+  font-size: 12px;
+}
+
 .studio .capsule-nudge-step {
-  visibility: hidden;
-  font: inherit;
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ash);
   font-variant-numeric: tabular-nums;
 }
 
-.studio .capsule-nudge:hover .capsule-nudge-label,
-.studio .capsule-nudge:focus-visible .capsule-nudge-label {
-  visibility: hidden;
-}
-
-.studio .capsule-nudge:hover .capsule-nudge-step,
-.studio .capsule-nudge:focus-visible .capsule-nudge-step {
-  visibility: visible;
+.studio .capsule-nudge-step[data-fine] {
+  color: var(--lock);
 }
 
 .studio .capsule-nudge:first-of-type {
@@ -1403,7 +1418,18 @@ body,
 .studio .offset-form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+}
+
+.studio .offset-hint {
+  margin: -4px 0 0;
+  font-size: 12px;
+}
+
+.studio .offset-quick {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .studio .offset-seconds {

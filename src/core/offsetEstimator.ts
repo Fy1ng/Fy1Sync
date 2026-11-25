@@ -128,7 +128,7 @@ export const OFFSET_REJECTION_TEXT: Record<OffsetRejection, string> = {
   'unstable-official': '画面倒计时不稳定',
   'unstable-commentary': '解说倒计时不稳定',
   'low-confidence': '没能确认倒计时，请检查选框',
-  'out-of-range': '两路相差超过 60 秒，无法对齐',
+  'out-of-range': '两路相差超过 60 秒，请确认是同一局或先同步时间',
 }
 
 function round(value: number): number {

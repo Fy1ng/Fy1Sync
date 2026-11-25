@@ -3,7 +3,7 @@ export const SHORTCUT_LABELS = {
   seekBack: '主画面后退',
   seekForward: '主画面前进',
   nudgeBack: '回退画面',
-  nudgeForward: '快进画面',
+  nudgeForward: '回退解说',
   autoAlign: '自动对齐',
   toggleDanmaku: '开关弹幕',
   toggleSidebar: '展开／收起弹幕栏',
@@ -52,8 +52,8 @@ export function shortcutKeyLabel(code: string): string {
   return code.replace(/^(?:Key|Digit)/, '')
 }
 
-export function shortcutTitle(title: string, codes: readonly string[]): string {
-  return codes.length ? `${title}（${codes.map(shortcutKeyLabel).join('、')}）` : title
+export function shortcutTitle(title: string, codes: readonly string[], enabled = true): string {
+  return enabled && codes.length ? `${title}（${codes.map(shortcutKeyLabel).join('、')}）` : title
 }
 
 export function shortcutActionFor(bindings: ShortcutBindings, code: string): ShortcutAction | undefined {

@@ -1,10 +1,21 @@
-import { clampPlayableSeek, latestPlayableTime, readTimebase, seekReached } from './timebase'
+import { clampLiveUserSeek, clampPlayableSeek, latestPlayableTime, liveSyncTarget, readTimebase, seekReached } from './timebase'
 import { errorDetails, type ErrorDetails } from '../core/errorDetails'
 
 export { latestPlayableTime }
 
 export interface PlaybackSeekResult { ok: boolean; target: number | null; clamped: boolean; reason: 'unavailable' | 'cancelled' | 'timeout' | null; detail?: ErrorDetails }
 export interface NativePipResult { ok: boolean; active: boolean; reason: 'unsupported' | 'not-ready' | 'user-gesture-required' | 'failed' | null; detail?: ErrorDetails }
+
+function videoBufferedEnd(video: HTMLVideoElement): number | null {
+  const { buffered, currentTime } = video
+  if (!buffered || buffered.length === 0) return null
+  for (let index = 0; index < buffered.length; index += 1) {
+    if (currentTime >= buffered.start(index) - 0.25 && currentTime <= buffered.end(index)) {
+      return buffered.end(index)
+    }
+  }
+  return buffered.end(buffered.length - 1)
+}
 
 /** Headless media controls. Claude binds gestures/keys without owning or remounting video. */
 export class PlaybackControls {
@@ -18,15 +29,29 @@ export class PlaybackControls {
   }
   async returnToLive(): Promise<PlaybackSeekResult> {
     const timebase = readTimebase(this.video, this.isLive?.())
-    const target = timebase ? latestPlayableTime(timebase, this.livePosition()) : null
-    return target === null ? this.unavailable() : this.seekTo(target)
+    if (!timebase) return this.unavailable()
+    const bufferedEnd = videoBufferedEnd(this.video)
+    const src = this.video.currentSrc || this.video.getAttribute('src') || ''
+    const localBuffer = src.includes('/buffer/')
+    const target = bufferedEnd !== null || localBuffer
+      ? liveSyncTarget(timebase, { bufferedEnd, livePosition: this.livePosition(), currentTime: this.video.currentTime, localBuffer })
+      : latestPlayableTime(timebase, this.livePosition())
+    if (target === null) return this.unavailable()
+    if (target <= this.video.currentTime + 0.05) {
+      return { ok: true, target: this.video.currentTime, clamped: false, reason: null }
+    }
+    return this.seekTo(target)
   }
   seekTo(target: number): Promise<PlaybackSeekResult> {
     if (this.disposed || !Number.isFinite(target) || this.video.readyState < 1) return Promise.resolve(this.unavailable())
     const timebase = readTimebase(this.video, this.isLive?.())
     if (!timebase) return Promise.resolve(this.unavailable())
     this.cancelSeek?.()
-    const next = clampPlayableSeek(target, timebase, this.livePosition())
+    const bufferedEnd = videoBufferedEnd(this.video)
+    const src = this.video.currentSrc || this.video.getAttribute('src') || ''
+    const next = bufferedEnd !== null || src.includes('/buffer/')
+      ? clampLiveUserSeek(target, timebase, { bufferedEnd, livePosition: this.livePosition(), currentTime: this.video.currentTime, localBuffer: src.includes('/buffer/') })
+      : clampPlayableSeek(target, timebase, this.livePosition())
     if (!this.video.seeking && seekReached(this.video.currentTime, next.target)) return Promise.resolve({ ok: true, target: next.target, clamped: next.clamped, reason: null })
     return new Promise(resolve => {
       let done = false

@@ -173,7 +173,7 @@ test.describe('应用外壳', () => {
     await openPlayer(page)
     expect(await offsetReadout(page)).toEqual({ requested: 0, applied: 0 })
     await expect(page.getByRole('button', { name: '回退画面', exact: true })).toBeDisabled()
-    await expect(page.getByRole('button', { name: '快进画面', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: '回退解说', exact: true })).toBeDisabled()
     await expect(page.getByRole('button', { name: '准备中', exact: true })).toBeDisabled()
   })
 })

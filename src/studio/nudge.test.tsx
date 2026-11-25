@@ -30,21 +30,19 @@ async function mount(steps = { smallStepSeconds: 0.5, largeStepSeconds: 5 }) {
   }
   const apply = vi.spyOn(session, 'applyOffset').mockResolvedValue({} as Awaited<ReturnType<Session['applyOffset']>>)
   const view = render(<SessionProvider session={session}><div className="studio"><SyncCapsule /></div></SessionProvider>)
-  return { ...view, apply, back: screen.getByRole('button', { name: '回退画面' }), forward: screen.getByRole('button', { name: '快进画面' }) }
+  return { ...view, apply, back: screen.getByRole('button', { name: '回退画面' }), forward: screen.getByRole('button', { name: '回退解说' }) }
 }
 
 describe('manual alignment nudge controls', () => {
-  it('keeps the normal labels, describes fine adjustment in the tooltip and uses a large step for a click', async () => {
+  it('keeps both the plain-language labels and step badges visible and uses a large step for a click', async () => {
     const { back, forward, apply } = await mount()
     expect(back).toHaveClass('capsule-nudge')
     expect(back.querySelector('.capsule-nudge-label')).toHaveTextContent('回退画面')
-    expect(forward.querySelector('.capsule-nudge-label')).toHaveTextContent('快进画面')
-    for (const button of [back, forward]) {
-      expect(button.querySelector('.capsule-nudge-step .icon path')?.getAttribute('d'))
-        .toBe(button.querySelector('.capsule-nudge-label .icon path')?.getAttribute('d'))
-    }
-    expect(back).toHaveAttribute('title', '回退 5s（,、[）；按住 Shift 微调，长按连调')
-    expect(forward).toHaveAttribute('title', '快进 5s（.、]）；按住 Shift 微调，长按连调')
+    expect(forward.querySelector('.capsule-nudge-label')).toHaveTextContent('回退解说')
+    expect(back.querySelector('.capsule-nudge-step')).toHaveTextContent('5s')
+    expect(forward.querySelector('.capsule-nudge-step')).toHaveTextContent('5s')
+    expect(back).toHaveAttribute('title', '回退画面 5s（,、[）；按住 Shift 微调，长按连调')
+    expect(forward).toHaveAttribute('title', '回退解说 5s（.、]）；按住 Shift 微调，长按连调')
     expect(back).not.toHaveTextContent('按住 Shift 微调')
     expect(forward).not.toHaveTextContent('按住 Shift 微调')
     fireEvent.click(back)
@@ -55,26 +53,31 @@ describe('manual alignment nudge controls', () => {
     expect(apply).toHaveBeenLastCalledWith(-0.5)
   })
 
-  it('shows the current nudge keys and omits the key hint when unbound', async () => {
+  it('shows the current nudge keys and omits the key hint when unbound or disabled', async () => {
     const { back, forward } = await mount()
     await act(async () => session.updateSettings({
       shortcuts: { ...session.settings.shortcuts, nudgeBack: ['KeyJ', 'ArrowDown'], nudgeForward: [] },
     }))
-    expect(back).toHaveAttribute('title', '回退 5s（J、↓）；按住 Shift 微调，长按连调')
-    expect(forward).toHaveAttribute('title', '快进 5s；按住 Shift 微调，长按连调')
+    expect(back).toHaveAttribute('title', '回退画面 5s（J、↓）；按住 Shift 微调，长按连调')
+    expect(forward).toHaveAttribute('title', '回退解说 5s；按住 Shift 微调，长按连调')
+    await act(async () => session.updateSettings({ shortcutsEnabled: false }))
+    expect(back).toHaveAttribute('title', '回退画面 5s；按住 Shift 微调，长按连调')
   })
 
-  it('updates both displayed step values immediately when Shift changes while hovered', async () => {
+  it('updates both displayed step values and fine-mode state immediately when Shift changes while hovered', async () => {
     const { back, forward } = await mount()
     fireEvent.pointerEnter(forward)
     expect(back.querySelector('.capsule-nudge-step')).toHaveTextContent('5s')
     expect(forward.querySelector('.capsule-nudge-step')).toHaveTextContent('5s')
+    expect(forward.querySelector('.capsule-nudge-step')).not.toHaveAttribute('data-fine')
     fireEvent.keyDown(window, { key: 'Shift', code: 'ShiftLeft', shiftKey: true })
     expect(back.querySelector('.capsule-nudge-step')).toHaveTextContent('0.5s')
     expect(forward.querySelector('.capsule-nudge-step')).toHaveTextContent('0.5s')
+    expect(forward.querySelector('.capsule-nudge-step')).toHaveAttribute('data-fine', 'true')
     expect(forward.title).toContain('0.5s')
     fireEvent.keyUp(window, { key: 'Shift', code: 'ShiftLeft', shiftKey: false })
     expect(forward.querySelector('.capsule-nudge-step')).toHaveTextContent('5s')
+    expect(forward.querySelector('.capsule-nudge-step')).not.toHaveAttribute('data-fine')
     fireEvent.pointerEnter(back, { shiftKey: true })
     expect(back.querySelector('.capsule-nudge-step')).toHaveTextContent('0.5s')
     fireEvent.blur(window)

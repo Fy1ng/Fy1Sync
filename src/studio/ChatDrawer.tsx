@@ -158,7 +158,7 @@ export function ChatDrawer({ onClose, onOpenSettings, onOpenRecords, douyuLotter
             <Icon name="gear" />
           </button>
         </span>
-        <button type="button" className="icon-btn" onClick={onClose} aria-label="收起弹幕" title={shortcutTitle('收起', snapshot.settings.shortcuts.toggleSidebar)}>
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="收起弹幕" title={shortcutTitle('收起', snapshot.settings.shortcuts.toggleSidebar, snapshot.settings.shortcutsEnabled)}>
           <Icon name="close" />
         </button>
       </header>

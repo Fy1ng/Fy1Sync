@@ -148,9 +148,9 @@ test.describe('双路播放与手动同步', () => {
     const before = await mediaTimes(page)
     const alignment = page.getByRole('group', { name: '对齐', exact: true })
 
-    // Shift selects the fine step; 快进画面 rewinds commentary, increasing official minus commentary.
-    await alignment.getByRole('button', { name: '快进画面', exact: true }).click({ modifiers: ['Shift'] })
-    await alignment.getByRole('button', { name: '快进画面', exact: true }).click({ modifiers: ['Shift'] })
+    // Shift selects the fine step; 回退解说 rewinds commentary, increasing official minus commentary.
+    await alignment.getByRole('button', { name: '回退解说', exact: true }).click({ modifiers: ['Shift'] })
+    await alignment.getByRole('button', { name: '回退解说', exact: true }).click({ modifiers: ['Shift'] })
 
     await expect
       .poll(async () => (await offsetReadout(page)).requested, { timeout: 15_000 })
@@ -411,8 +411,23 @@ test.describe('片源画质和摄像头入口', () => {
 
   test('HLS 主画面的清晰度在底栏右下角切换', async ({ page }) => {
     test.skip(!hlsFixtureReady(), '缺少 HLS 测试源')
+    const multiHls = '/test-sources/commentary-hls/master.m3u8'
+    await page.route(`app://app${multiHls}`, async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/vnd.apple.mpegurl',
+        body: [
+          '#EXTM3U',
+          '#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1280x720,NAME="720p"',
+          'index.m3u8',
+          '#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=640x360,NAME="360p"',
+          'index.m3u8',
+          '',
+        ].join('\n'),
+      })
+    })
     await openPlayer(page)
-    await loadBothFixtures(page, FIXTURES.commentaryHls)
+    await loadBothFixtures(page, multiHls)
 
     // The ladder belongs to the HLS source, so make it the main picture — 画质 always drives
     // whatever is on stage.

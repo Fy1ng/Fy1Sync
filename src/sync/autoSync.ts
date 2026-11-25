@@ -479,9 +479,15 @@ export class AutoSyncController {
       // A confirmed clamped seek only proves that the reachable part was applied.
       // It must not pass verification against that shortened target as success.
       if (needsSeek && plan.limited) {
+        const clamped = plan.seeks.find((entry) => entry.clamped)
+        const who = clamped ? (clamped.role === 'official' ? '画面' : '解说') : ''
+        const missing = Math.abs(estimate.totalOffsetSeconds - offsetFromRewind(appliedValue))
+        const bufferMessage = missing >= 0.1
+          ? `${who}缓冲不足，还差 ${missing.toFixed(1)} 秒未调完，继续播放等一会儿再试（请勿刷新）`
+          : `${who}缓冲不足，未完全调整，继续播放等一会儿再试（请勿刷新）`
         return this.fail(startedAt, dryRun, {
           kind: plan.limitReason === 'buffer-limit' ? 'buffer-limit' : 'not-ready',
-          message: plan.limitReason === 'buffer-limit' ? '缓冲不足，未完全调整' : '片源未就绪，未完全调整',
+          message: plan.limitReason === 'buffer-limit' ? bufferMessage : '片源未就绪，未完全调整',
         }, { samples, jumps, estimate, plan, applied: true, appliedRewind: appliedValue })
       }
 

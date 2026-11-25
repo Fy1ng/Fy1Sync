@@ -17,7 +17,7 @@ import { SOURCE_ROLES, type MediaDescriptor, type PlatformId, type SourceRole } 
 import { lastSource, loadLastSources, saveLastSources, type LastSources } from '../app/lastSources'
 import type { LoginPlatform } from '../../electron/login'
 import { streamFailureHint } from '../../server/networkFailure'
-import { displayError, errorDetails, type ErrorDetails } from '../core/errorDetails'
+import { displayError, errorDetails, errorMessage, type ErrorDetails } from '../core/errorDetails'
 import { notifyLoginStateChanged, subscribeLoginStateChanged } from '../core/loginEvents'
 import { ErrorActionRow } from '../ui/ErrorDetails'
 import { refreshLoginStatus } from './login/status'
@@ -631,7 +631,7 @@ export function SourceIssue({ role, className }: { role: SourceRole; className?:
 
   const text = problem
     ? `${problem.message}${problem.hint ? `，${problem.hint}` : ''}`
-    : mediaError!.message
+    : (errorMessage(mediaError) || '播放异常')
   const rawError = problem ?? mediaError
   const actions = deriveProblemActions(problem, Boolean(mediaError), load)
   const busy = load.busy || load.loggingIn || load.updatingTool

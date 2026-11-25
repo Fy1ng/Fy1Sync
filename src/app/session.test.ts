@@ -98,17 +98,73 @@ describe('backend playback navigation and danmaku processing', () => {
     expect(h.session.flush().autoSync.authorized).toBe(false)
   })
 
-  it('returns a live source to a few segments behind its newest frame, not onto it', async () => {
+  it('syncs a live source to 0.5 s behind its buffered tail and never rewinds backwards', async () => {
     const h = await harness()
-    // A live stream reports an unbounded duration and a moving seekable end.
+    // A live stream reports an unbounded duration and a moving seekable/buffered end.
     primeMediaElement(h.engine.element('official'), { duration: Infinity, seekableStart: 40, seekableEnd: 220, currentTime: 150 })
     expect(await h.session.returnPlaybackToLive('official')).toBe(true)
-    // Without an hls.js sync point it stays three 2-second segments back.
-    expect(h.engine.element('official').currentTime).toBe(214)
-    // Stepping ahead past that point stops there too, instead of at the newest frame.
+    expect(h.engine.element('official').currentTime).toBe(219.5)
+    // Already past the 0.5 s margin: clicking again never snaps the playhead backwards.
+    primeMediaElement(h.engine.element('official'), { duration: Infinity, seekableStart: 40, seekableEnd: 220, currentTime: 219.8 })
+    expect(await h.session.returnPlaybackToLive('official')).toBe(false)
+    expect(h.engine.element('official').currentTime).toBe(219.8)
+    // Stepping ahead into buffered media reaches near the buffered tail without snapping 6 s back.
     primeMediaElement(h.engine.element('official'), { duration: Infinity, seekableStart: 40, seekableEnd: 220, currentTime: 210 })
     expect(await h.session.seekPlayback('official', 30)).toBe(true)
-    expect(h.engine.element('official').currentTime).toBe(214)
+    expect(h.engine.element('official').currentTime).toBe(219.75)
+  })
+
+  it('smoothly accelerates at 1.25x for <= 4 s gaps and restores 1x once caught up', async () => {
+    vi.useFakeTimers()
+    try {
+      const h = await harness()
+      const video = h.engine.element('official')
+      primeMediaElement(video, { duration: Infinity, seekableStart: 40, seekableEnd: 220, currentTime: 217 })
+      await h.session.setPlaying(true)
+      expect(await h.session.syncPlaybackToLive('official')).toBe(true)
+      expect(video.playbackRate).toBe(1.25)
+      expect(h.session.flush().liveCatchingUp).toBe(true)
+      // Simulate playback catching up to the 219.5 target.
+      primeMediaElement(video, { duration: Infinity, seekableStart: 40, seekableEnd: 220, currentTime: 219.45 })
+      await vi.advanceTimersByTimeAsync(100)
+      expect(video.playbackRate).toBe(1)
+      expect(h.session.flush().liveCatchingUp).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('moves both streams together on seekLinkedPlayback and syncPlaybackToLive while preserving alignment', async () => {
+    const h = await harness()
+    const official = h.engine.element('official')
+    const commentary = h.engine.element('commentary')
+    primeMediaElement(official, { duration: Infinity, seekableStart: 0, seekableEnd: 200, currentTime: 199.5 })
+    primeMediaElement(commentary, { duration: Infinity, seekableStart: 0, seekableEnd: 100, currentTime: 99.5 })
+    h.session.setAutoSyncEnabled(true)
+    // Hold official back 10 s to align with commentary.
+    await h.session.applyOffset(10, { fromAuto: true })
+    expect(official.currentTime).toBeCloseTo(189.5, 2)
+    expect(commentary.currentTime).toBeCloseTo(99.5, 2)
+    expect(h.session.flush().autoSync.authorized).toBe(true)
+
+    // At the aligned live edge (commentary at 99.5 / 100), syncPlaybackToLive is a no-op and does NOT break alignment!
+    expect(await h.session.syncPlaybackToLive('official')).toBe(false)
+    expect(official.currentTime).toBeCloseTo(189.5, 2)
+    expect(h.session.flush().offsetSeconds).toBeCloseTo(10, 2)
+
+    // Linked rewind (-15 s) moves BOTH streams back 15 s while keeping offset = 10 s and autoSync authorized.
+    expect(await h.session.seekLinkedPlayback(-15)).toBe(true)
+    expect(official.currentTime).toBeCloseTo(174.5, 2)
+    expect(commentary.currentTime).toBeCloseTo(84.5, 2)
+    expect(h.session.flush().offsetSeconds).toBeCloseTo(10, 2)
+    expect(h.session.flush().autoSync.authorized).toBe(true)
+
+    // Now shared lag is 15 s (> 4 s): syncPlaybackToLive jumps BOTH forward +15 s together, keeping offset = 10 s!
+    expect(await h.session.syncPlaybackToLive('official')).toBe(true)
+    expect(official.currentTime).toBeCloseTo(189.5, 2)
+    expect(commentary.currentTime).toBeCloseTo(99.5, 2)
+    expect(h.session.flush().offsetSeconds).toBeCloseTo(10, 2)
+    expect(h.session.flush().autoSync.authorized).toBe(true)
   })
 
   it('moves only the picked side to a time-line point and counts the move in the offset', async () => {

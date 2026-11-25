@@ -250,7 +250,8 @@ export async function connectDanmaku(page: Page, room = '288016'): Promise<void>
   await panel.getByRole('button', { name: '连接', exact: true }).click()
   const roomLabel = new RegExp(`房间 ${room}$`)
   const drawerTitle = page.getByRole('complementary', { name: '弹幕', exact: true }).locator('.drawer-title')
-  await expect.poll(async () => await panel.getByRole('status').filter({ hasText: roomLabel }).first().isVisible()
+  await expect.poll(async () => await panel.getByRole('button', { name: '断开', exact: true }).isVisible()
+    || await panel.getByRole('status').filter({ hasText: roomLabel }).first().isVisible()
     || await drawerTitle.filter({ hasText: roomLabel }).isVisible()).toBe(true)
   await page.keyboard.press('Escape')
   await expect(panel).toBeHidden()
@@ -392,9 +393,9 @@ export async function setPlaying(page: Page, playing: boolean): Promise<void> {
 export async function offsetReadout(page: Page): Promise<{ requested: number; applied: number }> {
   const label = await page.locator('.capsule-readout').getAttribute('aria-label') ?? ''
   const magnitude = Number.parseFloat(label.match(/[\d.]+/)?.[0] ?? '0')
-  const direction = label.startsWith('画面提前') ? -1 : 1
+  const direction = label.startsWith('解说延后') || label.startsWith('画面提前') ? -1 : 1
   const caption = await page.locator('.capsule-caption').innerText()
-  const shortfall = Number.parseFloat(caption.match(/相差 ([\d.]+)s/)?.[1] ?? '0')
+  const shortfall = Number.parseFloat(caption.match(/(?:还差|相差)\s*([\d.]+)/)?.[1] ?? '0')
   return { requested: direction * magnitude || 0, applied: direction * (magnitude - shortfall) || 0 }
 }
 

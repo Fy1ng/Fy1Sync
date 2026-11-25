@@ -51,6 +51,7 @@ export interface AppSettings {
   smallStepSeconds: number
   /** Step of the outer ◀◀ / ▶▶ buttons, seconds; never below the small step. */
   largeStepSeconds: number
+  shortcutsEnabled: boolean
   shortcuts: ShortcutBindings
   danmaku: DanmakuSettings
   autoSyncEnabled: boolean
@@ -80,6 +81,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   audioRole: 'commentary',
   smallStepSeconds: 0.5,
   largeStepSeconds: 5,
+  shortcutsEnabled: true,
   shortcuts: DEFAULT_SHORTCUTS,
   danmaku: {
     enabled: true,
@@ -178,6 +180,7 @@ export function mergeSettings(raw: unknown): AppSettings {
     },
     audioRole: stored.audioRole === 'official' ? 'official' : 'commentary',
     ...steps(stored),
+    shortcutsEnabled: boolean(stored.shortcutsEnabled, defaults.shortcutsEnabled),
     shortcuts: normalizeShortcuts(stored.shortcuts),
     danmaku: {
       enabled: boolean(danmaku.enabled, defaults.danmaku.enabled),

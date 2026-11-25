@@ -96,15 +96,26 @@ export function clampSeek(target: number, timebase: Timebase): ClampedSeek {
 }
 
 /**
- * Behind the newest segment when hls.js has no sync point to offer: three of the local
- * buffer's 2-second segments, about where hls.js itself rejoins.
+ * Behind the newest segment when hls.js has no sync point and no buffered range is known.
  */
 const LIVE_FALLBACK_BEHIND_SECONDS = 6
+/** Safety margin kept ahead of the playhead when syncing to the buffered live tail. */
+export const LIVE_SYNC_MARGIN_SECONDS = 0.5
+/** Gaps up to this threshold catch up smoothly via playbackRate instead of flushing the decoder. */
+export const LIVE_SMOOTH_CATCHUP_MAX_SECONDS = 4
+/** Playback rate used during smooth live catch-up. */
+export const LIVE_SMOOTH_CATCHUP_RATE = 1.25
+
+export interface LiveSyncTargetOptions {
+  bufferedEnd?: number | null
+  livePosition?: number | null
+  currentTime?: number | null
+  localBuffer?: boolean
+  marginSeconds?: number
+}
 
 /**
- * Where 回到直播 lands. Not the newest frame: right behind it nothing is buffered yet, so the
- * picture waits for the next segment to be written and fetched, a stall of up to a segment
- * every time. hls.js's sync point stays a few segments back, where it starts a live stream.
+ * Where conservative headless live playback rejoins when no buffered range is supplied.
  */
 export function latestPlayableTime(timebase: Timebase, livePosition: number | null = null): number | null {
   if (timebase.kind !== 'live') return null
@@ -114,9 +125,61 @@ export function latestPlayableTime(timebase: Timebase, livePosition: number | nu
 }
 
 /**
- * A seek the user asked for, kept no nearer the newest frame than 回到直播 lands: dragging the
- * time line to its end would otherwise stall the same way. Sync seeks keep `clampSeek`, so
- * the planner's own accounting of what each source can reach stays true.
+ * Target media time for DouyuEx-style "同步时间": lands near the real buffered tail
+ * (or the local buffer's sealed live edge) and never moves backwards behind `currentTime`.
+ */
+export function liveSyncTarget(timebase: Timebase, options: LiveSyncTargetOptions = {}): number | null {
+  if (timebase.kind !== 'live') return null
+  const margin = options.marginSeconds ?? LIVE_SYNC_MARGIN_SECONDS
+  const { seekableStart, seekableEnd } = timebase
+  const hasBuffered = options.bufferedEnd != null && Number.isFinite(options.bufferedEnd)
+    && options.bufferedEnd > seekableStart
+  const bufferedTarget = hasBuffered ? Math.min(seekableEnd, options.bufferedEnd! - margin) : null
+  const edgeTarget = seekableEnd - margin
+
+  let target: number
+  if (options.localBuffer) {
+    target = bufferedTarget !== null && seekableEnd - options.bufferedEnd! <= 4
+      ? bufferedTarget
+      : edgeTarget
+  } else if (bufferedTarget !== null
+    && (options.currentTime == null || !Number.isFinite(options.currentTime) || options.bufferedEnd! > options.currentTime + margin)) {
+    const fallback = latestPlayableTime(timebase, options.livePosition ?? null) ?? edgeTarget
+    target = seekableEnd - options.bufferedEnd! <= 4 ? bufferedTarget : Math.max(bufferedTarget, fallback)
+  } else {
+    target = options.livePosition != null && Number.isFinite(options.livePosition)
+      ? Math.min(options.livePosition, seekableEnd)
+      : edgeTarget
+  }
+
+  const bounded = Math.max(seekableStart, Math.min(seekableEnd, target))
+  if (options.currentTime != null && Number.isFinite(options.currentTime) && bounded < options.currentTime) {
+    return Math.min(seekableEnd, options.currentTime)
+  }
+  return bounded
+}
+
+/**
+ * Clamp an explicit user seek on the timeline. Unlike conservative startup sync, the user may
+ * seek freely into any already-buffered region on the right without being snapped backwards.
+ */
+export function clampLiveUserSeek(
+  target: number,
+  timebase: Timebase,
+  options: LiveSyncTargetOptions = {},
+): ClampedSeek {
+  const next = clampSeek(target, timebase)
+  if (timebase.kind !== 'live') return next
+  const syncCeiling = liveSyncTarget(timebase, { ...options, marginSeconds: Math.min(options.marginSeconds ?? 0.25, LIVE_SYNC_MARGIN_SECONDS) }) ?? timebase.seekableEnd
+  const ceiling = options.currentTime != null && Number.isFinite(options.currentTime)
+    ? Math.min(timebase.seekableEnd, Math.max(syncCeiling, options.currentTime))
+    : syncCeiling
+  if (next.target <= ceiling) return next
+  return { target: ceiling, clamped: true, shortfall: next.shortfall + next.target - ceiling }
+}
+
+/**
+ * Legacy helper kept for headless callers that do not pass buffered state.
  */
 export function clampPlayableSeek(target: number, timebase: Timebase, livePosition: number | null = null): ClampedSeek {
   const next = clampSeek(target, timebase)

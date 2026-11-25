@@ -46,8 +46,11 @@ self.onmessage = (event: MessageEvent<HashRequest>) => {
           { stepTolerance: 0.25, maxDetail: 0.075, minSpan: 1.5, temporalStep: 3 })
         if (found.status === 'ok') { result = found; coarse = true }
       }
+      const spanOf = (frames: Frame[]): number => frames.length >= 2 ? Math.max(0, frames.at(-1)!.pts - frames[0]!.pts) : 0
       send({ type: 'result', id: request.id, match: result,
-        counts: { official: a.length, commentary: b.length }, coarse })
+        counts: { official: a.length, commentary: b.length },
+        historySpan: { official: spanOf(history.official), commentary: spanOf(history.commentary) },
+        coarse })
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : '画面匹配失败'

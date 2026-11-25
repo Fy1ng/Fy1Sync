@@ -21,7 +21,7 @@ afterEach(() => session.dispose())
 describe('manual offset result feedback', () => {
   it.each([
     { offset: 2.5, caption: '画面延后', seconds: '2.5' },
-    { offset: -2.5, caption: '画面提前', seconds: '2.5' },
+    { offset: -2.5, caption: '解说延后', seconds: '2.5' },
     { offset: 0, caption: '未调整', seconds: '0.0' },
   ])('shows $caption in the visible and accessible readout for $offset', ({ offset, caption, seconds }) => {
     snapshot.requestedOffsetSeconds = snapshot.offsetSeconds = offset
@@ -34,7 +34,7 @@ describe('manual offset result feedback', () => {
 
   it.each([
     { label: '画面延后', offset: 2.5 },
-    { label: '画面提前', offset: -2.5 },
+    { label: '解说延后', offset: -2.5 },
   ])('applies $offset when entering an offset with $label selected', ({ label, offset }) => {
     snapshot.requestedOffsetSeconds = snapshot.offsetSeconds = 0
     const apply = vi.spyOn(session, 'applyOffset').mockResolvedValue(snapshot.lastPlan!)
@@ -42,9 +42,11 @@ describe('manual offset result feedback', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '未调整 0.0 秒，点击输入' }))
     const dialog = within(screen.getByRole('dialog', { name: '输入画面偏移' }))
+    expect(dialog.getByText('哪边快了就延后哪边')).toBeVisible()
     const direction = within(dialog.getByRole('radiogroup', { name: '画面偏移方向' }))
     fireEvent.click(direction.getByRole('radio', { name: label }))
-    fireEvent.change(dialog.getByRole('textbox', { name: '秒数' }), { target: { value: '2.5' } })
+    fireEvent.change(dialog.getByRole('textbox', { name: '秒数' }), { target: { value: '2' } })
+    fireEvent.click(dialog.getByRole('button', { name: '+0.5s' }))
     fireEvent.click(dialog.getByRole('button', { name: '应用' }))
 
     expect(apply).toHaveBeenCalledExactlyOnceWith(offset)

@@ -11,7 +11,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Session } from '../app/session'
 import { SessionProvider } from '../app/SessionContext'
-import type { RecognitionSampler } from '../recognition/sampler'
 import type { StreamSyncerBridge } from '../../electron/contracts'
 import type { EmbeddedLoginState } from '../../electron/embeddedLoginContracts'
 import { primeMediaElement } from '../test/setup'
@@ -155,10 +154,9 @@ describe('the studio', () => {
     try {
       let releaseSample!: () => void
       const session = new Session({
-        createSampler: () => ({
-          sample: () => new Promise<void>(resolve => { releaseSample = resolve }),
-          dispose: vi.fn(),
-        }) as unknown as RecognitionSampler,
+        measureFrames: () => new Promise(resolve => {
+          releaseSample = () => resolve({ samples: { official: 0, commentary: 0 }, message: '已取消' })
+        }),
       })
       sessions.push(session)
       for (const role of ['official', 'commentary'] as const) {
@@ -214,7 +212,6 @@ describe('the studio', () => {
 
   it('opens frame-matching settings directly from the alignment options menu', async () => {
     const session = makeSession()
-    session.setRecognitionMode('frame-hash')
     renderStudio(session)
     await flush()
     fireEvent.click(screen.getByRole('button', { name: '跳过' }))
@@ -448,7 +445,7 @@ describe('the studio', () => {
     expect(screen.queryByRole('dialog', { name: '添加直播间' })).toBeNull()
   })
 
-  it('快进画面 holds the voice back and 回退画面 holds the picture back', async () => {
+  it('回退解说 holds the voice back and 回退画面 holds the picture back', async () => {
     const session = makeSession()
     // Both sides present: an offset only means something between two sources.
     for (const role of ['official', 'commentary'] as const) {
@@ -458,7 +455,7 @@ describe('the studio', () => {
     renderStudio(session)
     await flush()
 
-    fireEvent.click(screen.getByRole('button', { name: '快进画面' }))
+    fireEvent.click(screen.getByRole('button', { name: '回退解说' }))
     await waitFor(() => expect(apply).toHaveBeenCalled())
     expect(apply.mock.calls.at(-1)![0]).toBeLessThan(0)
 
@@ -470,7 +467,7 @@ describe('the studio', () => {
     expect(apply.mock.calls.at(-1)![0]).toBeGreaterThan(apply.mock.calls[0]![0] as number)
   })
 
-  it('moves the main picture only on ←/→ and nudges the alignment on , and .', async () => {
+  it('seeks the main screen on ←/→, nudges the alignment on , and ., and respects the shortcuts toggle', async () => {
     const session = makeSession()
     for (const role of ['official', 'commentary'] as const) {
       void session.loadSource(role, { kind: 'test', url: `/test-sources/${role}.mp4`, input: role, label: role, loop: true, viaProxy: false, platform: 'test' })
@@ -484,7 +481,6 @@ describe('the studio', () => {
     expect(seek.mock.calls).toEqual([['official', -5]])
     fireEvent.keyDown(window, { code: 'ArrowRight', shiftKey: true })
     expect(seek).toHaveBeenLastCalledWith('official', 30)
-    // After a swap the keys follow the picture on the big screen.
     await act(async () => session.swapRoles())
     fireEvent.keyDown(window, { code: 'ArrowLeft' })
     expect(seek).toHaveBeenLastCalledWith('commentary', -5)
@@ -525,6 +521,13 @@ describe('the studio', () => {
     fireEvent.keyDown(window, { code: 'KeyK', shiftKey: true })
     await waitFor(() => expect(apply).toHaveBeenCalledTimes(5))
     expect(Number(apply.mock.calls.at(-1)![0]) - beforeFine).toBe(-0.25)
+
+    // Turning off shortcutsEnabled blocks shortcut dispatch until re-enabled.
+    await act(async () => session.updateSettings({ shortcutsEnabled: false }))
+    fireEvent.keyDown(window, { code: 'KeyJ', shiftKey: true })
+    fireEvent.keyDown(window, { code: 'KeyK', shiftKey: true })
+    expect(seek).toHaveBeenCalledTimes(4)
+    expect(apply).toHaveBeenCalledTimes(5)
   })
 
   it('consumes a recorded key before player dispatch and immediately uses the new binding and tooltip', async () => {

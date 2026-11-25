@@ -207,8 +207,8 @@ export async function attachMedia(
     liveSyncDurationCount: localBuffer ? 4 : 3,
     liveMaxLatencyDurationCount: Infinity,
     maxLiveSyncPlaybackRate: 1,
-    maxBufferLength: localBuffer ? 60 : 30,
-    maxMaxBufferLength: localBuffer ? 120 : 60,
+    maxBufferLength: localBuffer ? 90 : 45,
+    maxMaxBufferLength: localBuffer ? 180 : 90,
     enableWorker: true,
   })
   owner.cleanups.push(() => hls.destroy())

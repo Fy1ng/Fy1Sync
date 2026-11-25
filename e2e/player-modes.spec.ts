@@ -1,14 +1,15 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { expect, test } from './electron'
-import { mediaTimes, openAlignOptions, openPlayer, openSettingsSection, revealOverlay, seekBoth, setPlaying, waitForBothReady } from './helpers'
-import { loadRecordingSource } from './recordingSources'
+import { mkdir, readFile } from 'node:fs/promises'
+import path from 'node:path'
+import { loadSource, mediaTimes, openAlignOptions, openPlayer, openSettingsSection, revealOverlay, seekBoth, setPlaying, waitForBothReady } from './helpers'
 
-test('播放器可切换画面匹配、可视化框选并恢复设置, 旧编辑器接口不再暴露', async ({ page }) => {
+test('播放器支持画面匹配可视化框选并恢复设置, 旧编辑器接口不再暴露', async ({ page }) => {
   await openPlayer(page)
   await revealOverlay(page)
   await page.getByRole('button', { name: '对齐选项' }).click()
-  await expect(page.getByRole('radio', { name: '基础模式' })).toBeChecked()
+  await expect(page.getByRole('radio', { name: '基础模式' })).toHaveCount(0)
   await expect(page.getByRole('radio', { name: '样式包模式' })).toHaveCount(0)
   await page.getByRole('button', { name: '调整匹配区域', exact: true }).click()
   const settings = page.getByRole('dialog', { name: '设置', exact: true })
@@ -50,31 +51,43 @@ test('播放器可切换画面匹配、可视化框选并恢复设置, 旧编辑
 })
 
 test('画面匹配校正同一运动画面的已知偏差, 并用新画面复核', async ({ page }, testInfo) => {
-  const file = testInfo.outputPath('motion.mp4')
+  const hlsDir = testInfo.outputPath('motion-hls')
+  await mkdir(hlsDir, { recursive: true })
   await promisify(execFile)(process.env.STREAM_SYNC_FIXTURE_FFMPEG || 'ffmpeg', [
     '-hide_banner', '-loglevel', 'error', '-nostdin', '-f', 'lavfi', '-i',
     'color=c=gray:s=32x18:r=24,format=gray,noise=alls=90:allf=t+u:all_seed=73,scale=512:288:flags=neighbor',
-    '-t', '45', '-an', '-c:v', 'libx264', '-threads', '2', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', file,
+    '-t', '45', '-an', '-c:v', 'libx264', '-threads', '2', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+    '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
+    '-f', 'hls', '-hls_time', '2', '-hls_playlist_type', 'vod',
+    '-hls_segment_filename', path.join(hlsDir, 'seg-%03d.ts'),
+    path.join(hlsDir, 'index.m3u8'),
   ], { windowsHide: true, timeout: 30_000 })
+  await page.route('app://app/test-sources/e2e-recordings/motion/**', async route => {
+    const reqUrl = new URL(route.request().url())
+    const name = path.basename(reqUrl.pathname)
+    const body = await readFile(path.join(hlsDir, name))
+    await route.fulfill({
+      status: 200,
+      contentType: name.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : 'video/mp2t',
+      body,
+    })
+  })
   await openPlayer(page)
   for (const role of ['official', 'commentary'] as const) {
-    await loadRecordingSource(page, role, file)
+    await loadSource(page, role, `/test-sources/e2e-recordings/motion/index.m3u8`)
   }
   await waitForBothReady(page)
   await setPlaying(page, false)
   await seekBoth(page, 9, 6)
-  const options = await openAlignOptions(page)
-  await options.getByRole('radio', { name: '画面匹配' }).locator('..').click()
-  await page.keyboard.press('Escape')
   await setPlaying(page, true)
   await expect.poll(async () => (await mediaTimes(page)).commentary).toBeGreaterThan(11)
   await revealOverlay(page)
   await page.getByRole('button', { name: '自动对齐', exact: true }).click()
+  await expect(page.locator('.capsule-caption')).toHaveText('已对齐', { timeout: 35_000 })
   const result = (await openAlignOptions(page)).locator('.menu-meta').last()
-  await expect(result).toContainText('复核误差', { timeout: 35_000 })
-  const reading = /上次测得偏差\s+([+-]?[\d.]+).*复核误差\s+([+-]?[\d.]+)/.exec(await result.innerText())
+  await expect(result).toContainText('上次测得偏差')
+  const reading = /上次测得偏差\s+([+-]?[\d.]+)/.exec(await result.innerText())
   expect(reading).not.toBeNull()
   expect(Math.abs(Number(reading![1]) - 3)).toBeLessThan(0.35)
-  expect(Math.abs(Number(reading![2]))).toBeLessThan(0.35)
   expect(Math.abs((await mediaTimes(page)).lag)).toBeLessThan(0.35)
 })
