@@ -233,17 +233,21 @@ describe('proxy dispatcher transport', () => {
 
   it('supports WebSocket upgrades through SOCKS5', async () => {
     const target = createHttpServer()
-    target.on('upgrade', (request, socket) => {
+    target.on('upgrade', (request, upgradeSocket) => {
+      upgradeSocket.on('error', () => {})
       const key = request.headers['sec-websocket-key']!
       const accept = createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64')
-      socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
+      upgradeSocket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
+      upgradeSocket.once('data', () => upgradeSocket.end())
     })
     const listener = await listen(target)
     const proxy = await socks({ targetPort: listener.port })
     const socket = new WebSocket('ws://fixture.invalid/', { dispatcher: dispatcher(proxy.url) })
-    await new Promise<void>((resolve, reject) => { socket.addEventListener('open', () => resolve()); socket.addEventListener('error', reject) })
+    await new Promise<void>((resolve, reject) => { socket.addEventListener('open', () => resolve(), { once: true }); socket.addEventListener('error', reject, { once: true }) })
     expect(proxy.requests).toEqual([{ host: 'fixture.invalid', port: 80, type: 3 }])
+    const closed = new Promise<void>(resolve => socket.addEventListener('close', () => resolve(), { once: true }))
     socket.close()
+    await closed
   })
 
   it('does not classify a source socket drop after a POST was sent as a proxy connect failure', async () => {

@@ -1,11 +1,21 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import type { Socket } from 'node:net'
+import { isIP, type Socket } from 'node:net'
 import { Client, Dispatcher, ProxyAgent, Socks5ProxyAgent, buildConnector } from 'undici'
 import type { NetworkRoute } from './networkPolicy'
 
 const connectFailures = new WeakSet<Error>()
 const CONNECT_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT'])
 interface PendingConnection { sockets: Set<Socket>; cancelled?: Error }
+
+function safeDestroySocket(socket: Socket, error?: Error): void {
+  if (socket.destroyed) return
+  if (error) {
+    if (socket.listenerCount('error') === 0) socket.on('error', () => {})
+    socket.destroy(error)
+  } else {
+    socket.destroy()
+  }
+}
 
 /** Only trusted transport adapters may establish that a request was not sent. */
 export function markProxyConnectFailure(error: Error): Error { connectFailures.add(error); return error }
@@ -43,7 +53,7 @@ class ManagedProxyDispatcher extends Dispatcher {
     let abortTransport: ((reason?: Error) => void) | undefined
     const clear = () => { if (timer) { clearTimeout(timer); this.timers.delete(timer) } }
     const finish = () => { if (!completed) { completed = true; clear() } }
-    const releasePending = (error: Error) => { for (const socket of owner.sockets) socket.destroy(error); owner.sockets.clear() }
+    const releasePending = (error: Error) => { for (const socket of owner.sockets) safeDestroySocket(socket, error); owner.sockets.clear() }
     const cancel = (error: Error) => {
       if (completed) return
       if (abortTransport) { abortTransport(error); return }
@@ -102,18 +112,18 @@ class ManagedProxyDispatcher extends Dispatcher {
   override destroy(callback: () => void): void
   override destroy(error: Error | null, callback: () => void): void
   override destroy(errorOrCallback?: Error | null | (() => void), callback?: () => void): Promise<void> | void {
-    this.release()
-    const pending = this.inner.destroy(typeof errorOrCallback === 'function' ? null : errorOrCallback ?? null)
+    const reason = typeof errorOrCallback === 'function' ? null : errorOrCallback ?? null
+    const pending = this.inner.destroy(reason).finally(() => this.release(reason ?? undefined))
     const done = typeof errorOrCallback === 'function' ? errorOrCallback : callback
     if (done) { void pending.then(done, done); return }
     return pending
   }
-  private release(): void {
+  private release(error?: Error): void {
     if (this.disposed) return
     this.disposed = true
     for (const timer of this.timers) clearTimeout(timer)
     this.timers.clear()
-    for (const socket of this.sockets) socket.destroy(new Error('代理连接已关闭'))
+    for (const socket of this.sockets) safeDestroySocket(socket, error)
     this.sockets.clear()
   }
 }
@@ -126,8 +136,9 @@ export function createProxyDispatcher(route: NetworkRoute, timeoutMs: number, co
     || !proxy.hostname || !['', '/'].includes(proxy.pathname) || proxy.search || proxy.hash) throw new Error('系统代理地址无效')
   const sockets = new Set<Socket>()
   const pending = new AsyncLocalStorage<PendingConnection>()
-  const connect = buildConnector({ timeout: timeoutMs, rejectUnauthorized: tls.verifyProxyTls !== false, autoSelectFamily: true,
-    autoSelectFamilyAttemptTimeout: Math.min(Math.max(timeoutMs, 250), 3_000) })
+  const literalIp = isIP(proxy.hostname.replace(/^\[|\]$/g, '')) !== 0
+  const connect = buildConnector({ timeout: timeoutMs, rejectUnauthorized: tls.verifyProxyTls !== false, autoSelectFamily: !literalIp,
+    ...(literalIp ? {} : { autoSelectFamilyAttemptTimeout: Math.max(10, Math.min(timeoutMs > 0 ? timeoutMs : 3_000, 3_000)) }) })
   const tracked: buildConnector.connector = (options, callback) => {
     const owner = pending.getStore()
     if (owner?.cancelled) { queueMicrotask(() => callback(owner.cancelled!, null)); return }

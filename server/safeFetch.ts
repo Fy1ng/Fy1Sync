@@ -163,8 +163,9 @@ export function createPinnedDispatcher(hostname: string, addresses: readonly str
       else callback(null, selected[0]!.address, selected[0]!.family)
     })
   }
-  const connect = buildConnector({ lookup, timeout: timeoutMs, autoSelectFamily: true,
-    autoSelectFamilyAttemptTimeout: Math.min(Math.max(timeoutMs, 250), 3_000), rejectUnauthorized: verifyTls })
+  const multiAddress = records.length > 1
+  const connect = buildConnector({ lookup, timeout: timeoutMs, autoSelectFamily: multiAddress,
+    ...(multiAddress ? { autoSelectFamilyAttemptTimeout: Math.max(10, Math.min(timeoutMs > 0 ? timeoutMs : 3_000, 3_000)) } : {}), rejectUnauthorized: verifyTls })
   return new Agent({
     connections, maxOrigins: 1, headersTimeout: timeoutMs, bodyTimeout: 0,
     ...(maxHeaderSize === undefined ? {} : { maxHeaderSize }),
