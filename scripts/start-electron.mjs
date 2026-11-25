@@ -13,7 +13,8 @@ export function launchElectron(extraEnv = {}) {
   const electron = require('electron')
   const env = { ...process.env, ...extraEnv }
   delete env.ELECTRON_RUN_AS_NODE
-  return spawn(electron, [fileURLToPath(new URL('dist/electron/main.cjs', root))], { cwd: fileURLToPath(root), env, stdio: 'inherit', windowsHide: true })
+  const hiddenTestWindow = env.STREAM_SYNC_E2E === '1' && env.STREAM_SYNC_E2E_VISIBLE !== '1'
+  return spawn(electron, [fileURLToPath(new URL('dist/electron/main.cjs', root))], { cwd: fileURLToPath(root), env, stdio: 'inherit', windowsHide: hiddenTestWindow })
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const child = launchElectron()

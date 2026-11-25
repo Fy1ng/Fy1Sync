@@ -101,6 +101,7 @@ export class ApiClient {
   loginStatus() { return this.request('loginStatus', undefined) }
   listBrowserImportProfiles() { return this.request('listBrowserImportProfiles', undefined) }
   previewBrowserLogins(input: BrowserImportMethods['previewBrowserLogins']['args']) { return this.request('previewBrowserLogins', input) }
+  closeImportBrowser(input: BrowserImportMethods['closeImportBrowser']['args']) { return this.request('closeImportBrowser', input) }
   async importBrowserLogins(input: BrowserImportMethods['importBrowserLogins']['args']) {
     const result = await this.request('importBrowserLogins', input)
     if (typeof window !== 'undefined' && result.ok && result.value.outcomes.some(outcome => outcome.platform === 'douyin' && outcome.imported)) {

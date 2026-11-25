@@ -37,6 +37,10 @@ export interface BrowserImportOutcome {
   accountId?: string
   signingReady?: boolean
 }
+export interface BrowserImportCloseResult {
+  status: 'closed' | 'not-running'
+  browserName: string
+}
 export interface BrowserImportMethods {
   listBrowserImportProfiles: { args: undefined; result: BrowserImportSources }
   previewBrowserLogins: {
@@ -47,10 +51,14 @@ export interface BrowserImportMethods {
     args: { previewId: string; accountIds: string[]; douyuTarget?: DouyuImportTarget }
     result: { outcomes: BrowserImportOutcome[] }
   }
+  closeImportBrowser: {
+    args: { requestId: string; profileId: string }
+    result: BrowserImportCloseResult
+  }
   cancelBrowserImport: { args: { id: string }; result: { cancelled: boolean } }
 }
 export const BROWSER_IMPORT_METHODS = [
-  'listBrowserImportProfiles', 'previewBrowserLogins', 'importBrowserLogins', 'cancelBrowserImport',
+  'listBrowserImportProfiles', 'previewBrowserLogins', 'importBrowserLogins', 'closeImportBrowser', 'cancelBrowserImport',
 ] as const satisfies readonly (keyof BrowserImportMethods)[]
 
 export const IMPORT_PLATFORMS: readonly LoginPlatform[] = ['douyu', 'bilibili', 'huya', 'douyin', 'youtube']

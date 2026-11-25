@@ -363,7 +363,7 @@ async function start(): Promise<void> {
   }
   const browserImports = new BrowserLoginImport({
     supported: process.platform === 'win32' || !!browserImportFixtures,
-    ...(browserImportFixtures ? { discover: browserImportFixtures.discover } : {}),
+    ...(browserImportFixtures ? { discover: browserImportFixtures.discover, closeBrowser: browserImportFixtures.closeBrowser } : {}),
     read: browserImportFixtures?.read ?? browserCookieReader({ executable: app.isPackaged
       ? join(process.resourcesPath, 'native', 'browser-credentials.exe') : join(__dirname, '..', 'native', 'browser-credentials.exe') }),
     verify: browserImportFixtures?.verify ?? identityVerifier,

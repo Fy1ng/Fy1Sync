@@ -6,6 +6,9 @@
 .studio .browser-import-selectors select, .studio .browser-import-target select { width: 100%; min-width: 0; color: var(--chalk); }
 .studio .browser-import-toolbar, .studio .browser-import-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .studio .browser-import-toolbar { justify-content: space-between; }
+.studio .browser-import-toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.studio .browser-import-close-confirm p { font-size: 12px; line-height: 1.6; }
+.studio .browser-import-notice { font-size: 12px; color: var(--ash); line-height: 1.6; }
 .studio .browser-import-footer { padding-top: 16px; border-top: 1px solid var(--line); margin-top: auto; }
 .studio .browser-import-list { display: flex; flex-direction: column; gap: 8px; }
 .studio .browser-import-account { display: flex; align-items: center; gap: 12px; padding: 12px; min-height: 76px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }

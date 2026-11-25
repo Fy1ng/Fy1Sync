@@ -12,6 +12,7 @@ export function installBrowserImportIpc(ipc: Pick<IpcMain, 'handle' | 'removeHan
       if (method === 'listBrowserImportProfiles' && args === undefined) value = await imports.sources()
       else if (method === 'previewBrowserLogins') value = await imports.scan(args)
       else if (method === 'importBrowserLogins') value = await imports.apply(args)
+      else if (method === 'closeImportBrowser') value = await imports.closeBrowser(args)
       else if (method === 'cancelBrowserImport' && args && typeof args === 'object' && !Array.isArray(args)
         && Object.keys(args).length === 1 && Object.hasOwn(args, 'id')) value = imports.cancel((args as { id: unknown }).id)
       else throw new BrowserImportError('browser-import-invalid-request')

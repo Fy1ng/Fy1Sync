@@ -2,7 +2,7 @@ import { test, expect, launchApplication } from './electron'
 import { openSettings } from './helpers'
 
 async function enable(application: import('@playwright/test').ElectronApplication,
-  scenario: 'accounts' | 'mixed' | 'locked' | 'uac-cancelled' | 'no-profiles' = 'accounts') {
+  scenario: 'accounts' | 'mixed' | 'locked' | 'close-failed' | 'uac-cancelled' | 'no-profiles' = 'accounts') {
   await application.evaluate((_electron, value) => {
     ;(globalThis as typeof globalThis & { __streamSyncerTest: { setBrowserImportFixture(value: string): void } }).__streamSyncerTest.setBrowserImportFixture(value)
   }, scenario)
@@ -72,6 +72,43 @@ test('locked browser and cancelled Windows authorization retain the original log
   await dialog.getByRole('button', { name: '识别账号', exact: true }).click()
   await expect(dialog.getByRole('alert')).toContainText('授权已取消')
   await expect(dialog.getByRole('button', { name: '导入所选账号（0）', exact: true })).toBeDisabled()
+  await dialog.getByRole('button', { name: '取消', exact: true }).click()
+})
+
+test('one-click browser close requires secondary confirmation and unlocks a locked browser for retry', async ({ page, electronApp }) => {
+  await enable(electronApp, 'locked')
+  const settings = await accounts(page)
+  await settings.getByRole('button', { name: '批量导入账号', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '批量导入账号', exact: true })
+  await dialog.getByRole('button', { name: '识别账号', exact: true }).click()
+  await expect(dialog.getByRole('alert')).toContainText('正在使用中')
+
+  await dialog.getByRole('button', { name: '关闭浏览器', exact: true }).click()
+  const confirmBox = dialog.getByRole('alertdialog', { name: '确认关闭 Microsoft Edge', exact: true })
+  await expect(confirmBox).toBeVisible()
+  await confirmBox.getByRole('button', { name: '暂不关闭', exact: true }).click()
+  await expect(confirmBox).not.toBeVisible()
+
+  await dialog.getByRole('button', { name: '关闭浏览器', exact: true }).click()
+  await expect(confirmBox).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(confirmBox).not.toBeVisible()
+  await expect(dialog).toBeVisible()
+
+  await dialog.getByRole('button', { name: '关闭浏览器', exact: true }).click()
+  await confirmBox.getByRole('button', { name: '确认关闭', exact: true }).click()
+  await expect(dialog.getByText('已关闭 Microsoft Edge，现在可以点击「识别账号」继续', { exact: true })).toBeVisible()
+  await expect(dialog.getByRole('alert')).toHaveCount(0)
+
+  await dialog.getByRole('button', { name: '识别账号', exact: true }).click()
+  await expect(dialog.getByText('测试斗鱼账号', { exact: true })).toBeVisible()
+  await dialog.getByRole('button', { name: '取消', exact: true }).click()
+
+  await enable(electronApp, 'close-failed')
+  await settings.getByRole('button', { name: '批量导入账号', exact: true }).click()
+  await dialog.getByRole('button', { name: '关闭浏览器', exact: true }).click()
+  await dialog.getByRole('button', { name: '确认关闭', exact: true }).click()
+  await expect(dialog.getByRole('alert')).toContainText('未能完全关闭对应浏览器')
   await dialog.getByRole('button', { name: '取消', exact: true }).click()
 })
 

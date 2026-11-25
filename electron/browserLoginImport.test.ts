@@ -7,7 +7,7 @@ const id = '1'.repeat(32)
 function fixture() {
   const data = new BrowserImportFixtures(); data.enable('accounts')
   const write = vi.fn(async () => ({}))
-  const service = new BrowserLoginImport({ supported: true, discover: data.discover, read: data.read, verify: data.verify, write })
+  const service = new BrowserLoginImport({ supported: true, discover: data.discover, closeBrowser: data.closeBrowser, read: data.read, verify: data.verify, write })
   return { data, service, write, scan: () => service.scan({ requestId: id, profileId: 'e'.repeat(32), platforms: ['douyu', 'bilibili', 'huya', 'douyin', 'youtube'] }) }
 }
 describe('browser login import transactions', () => {
@@ -140,6 +140,42 @@ describe('browser login import transactions', () => {
     await expect(service.apply({ previewId: id, accountIds: [preview.accounts[0]!.id] }))
       .rejects.toMatchObject({ code: 'browser-import-preview-expired' })
     expect(f.write).not.toHaveBeenCalled()
+    service.dispose(); f.service.dispose()
+  })
+  it('closes the resolved browser profile, guards concurrent operations, and rejects forged requests', async () => {
+    const f = fixture()
+    f.data.enable('locked')
+    await expect(f.service.closeBrowser({ requestId: id, profileId: '../Edge' }))
+      .rejects.toMatchObject({ code: 'browser-import-invalid-request' })
+    await expect(f.service.closeBrowser({ requestId: id, profileId: 'a'.repeat(32) }))
+      .rejects.toMatchObject({ code: 'browser-import-profile-missing' })
+    expect(await f.service.closeBrowser({ requestId: id, profileId: 'e'.repeat(32) }))
+      .toEqual({ status: 'closed', browserName: 'Microsoft Edge' })
+    expect(f.data.closedBrowsers).toEqual(['Microsoft Edge'])
+    const preview = await f.scan()
+    expect(preview.accounts).toHaveLength(5)
+    f.service.dispose()
+  })
+  it('cancels an in-flight browser close operation', async () => {
+    const f = fixture()
+    let finish!: (value: { status: 'closed'; browserName: string }) => void
+    const service = new BrowserLoginImport({
+      supported: true,
+      discover: f.data.discover,
+      closeBrowser: (_profile, signal) => new Promise((resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new BrowserImportError('browser-import-cancelled')), { once: true })
+        finish = resolve
+      }),
+      read: f.data.read,
+      verify: f.data.verify,
+      write: f.write,
+    })
+    const pending = service.closeBrowser({ requestId: id, profileId: 'e'.repeat(32) })
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+    await expect(service.closeBrowser({ requestId: '2'.repeat(32), profileId: 'e'.repeat(32) }))
+      .rejects.toMatchObject({ code: 'browser-import-busy' })
+    expect(service.cancel(id)).toEqual({ cancelled: true })
+    await expect(pending).rejects.toMatchObject({ code: 'browser-import-cancelled' })
     service.dispose(); f.service.dispose()
   })
 })

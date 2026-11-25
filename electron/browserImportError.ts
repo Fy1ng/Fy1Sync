@@ -3,7 +3,7 @@ export type BrowserImportErrorCode =
   | 'browser-import-decryption-failed' | 'browser-import-helper-missing' | 'browser-import-helper-invalid'
   | 'browser-import-uac-cancelled' | 'browser-import-cancelled' | 'browser-import-timeout'
   | 'browser-import-invalid-request' | 'browser-import-busy' | 'browser-import-preview-expired'
-  | 'browser-import-verification-failed' | 'browser-import-storage-failed'
+  | 'browser-import-verification-failed' | 'browser-import-storage-failed' | 'browser-import-close-failed'
 
 const messages: Record<BrowserImportErrorCode, string> = {
   'browser-import-unsupported': '当前系统不支持导入浏览器账号',
@@ -20,6 +20,7 @@ const messages: Record<BrowserImportErrorCode, string> = {
   'browser-import-preview-expired': '账号预览已过期，请重新识别后导入',
   'browser-import-verification-failed': '暂时无法确认平台登录身份，原有账号未更改',
   'browser-import-storage-failed': '账号保存失败，请重试',
+  'browser-import-close-failed': '未能完全关闭对应浏览器，请先保存浏览内容，手动完全退出浏览器后重试。',
 }
 export class BrowserImportError extends Error {
   constructor(readonly code: BrowserImportErrorCode) { super(messages[code]) }

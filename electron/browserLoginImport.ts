@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { cookieDomainAllowed, hasAuthenticationCookies, type BrowserCookie, type LoginPlatform } from './cookies'
 import type { BrowserCookieReadFunction } from './browserCookieReader'
+import { browserCloser, type BrowserCloseFunction } from './browserCloser'
 import { discoverBrowserProfiles, publicBrowserProfile, type DiscoveredBrowserProfile } from './browserProfiles'
 import { BrowserImportError, importAbort } from './browserImportError'
 import type { BrowserIdentityVerifier, ImportedIdentity } from './browserImportIdentity'
-import { IMPORT_PLATFORMS, IMPORT_PLATFORM_NAMES, type BrowserImportPreview,
+import { IMPORT_PLATFORMS, IMPORT_PLATFORM_NAMES, type BrowserImportCloseResult, type BrowserImportPreview,
   type BrowserImportOutcome, type BrowserImportSources, type DouyuImportTarget } from './browserImportContracts'
 
 interface Candidate { id: string; platform: LoginPlatform; cookies: BrowserCookie[]; identity: ImportedIdentity }
@@ -12,6 +13,7 @@ interface Preview { public: BrowserImportPreview; candidates: Candidate[]; contr
 export interface BrowserLoginImportOptions {
   supported?: boolean
   discover?: () => Promise<DiscoveredBrowserProfile[]>
+  closeBrowser?: BrowserCloseFunction
   read: BrowserCookieReadFunction
   verify: BrowserIdentityVerifier
   write: (platform: LoginPlatform, cookies: BrowserCookie[], identity: ImportedIdentity,
@@ -150,6 +152,25 @@ export class BrowserLoginImport {
     } finally {
       erase(preview.candidates)
       if (this.preview === preview) this.preview = null
+      if (this.operation === operation) this.operation = null
+    }
+  }
+  async closeBrowser(value: unknown): Promise<BrowserImportCloseResult> {
+    this.available()
+    if (!exact(value, ['requestId', 'profileId']) || !validId(value.requestId) || !validId(value.profileId)) throw invalid()
+    if (this.operation) throw new BrowserImportError('browser-import-busy')
+    const controller = new AbortController()
+    const operation = { id: value.requestId, controller }
+    this.operation = operation
+    try {
+      const profile = (await this.profiles()).find(entry => entry.id === value.profileId)
+      importAbort(controller.signal)
+      if (!profile) throw new BrowserImportError('browser-import-profile-missing')
+      const close = this.options.closeBrowser ?? browserCloser()
+      const result = await close(profile, controller.signal)
+      importAbort(controller.signal)
+      return { status: result.status, browserName: profile.browserName }
+    } finally {
       if (this.operation === operation) this.operation = null
     }
   }

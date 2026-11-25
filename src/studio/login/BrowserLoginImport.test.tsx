@@ -6,10 +6,11 @@ import { BrowserImportButton, BrowserLoginImportProvider } from './BrowserLoginI
 
 vi.mock('../../app/apiClient', () => ({ apiClient: {
   listBrowserImportProfiles: vi.fn(), listDouyuAccounts: vi.fn(), previewBrowserLogins: vi.fn(),
-  importBrowserLogins: vi.fn(), cancelBrowserImport: vi.fn(), loginStatus: vi.fn(),
+  closeImportBrowser: vi.fn(), importBrowserLogins: vi.fn(), cancelBrowserImport: vi.fn(), loginStatus: vi.fn(),
 } }))
 
 const profile = { id: 'e'.repeat(32), browser: 'edge' as const, browserName: 'Microsoft Edge', name: '个人', isDefault: true }
+const chromeProfile = { id: 'c'.repeat(32), browser: 'chrome' as const, browserName: 'Google Chrome', name: '工作', isDefault: true }
 const accounts: BrowserImportPreview['accounts'] = [
   { id: 'd'.repeat(32), platform: 'douyu', state: 'ready', username: '测试斗鱼账号', cookieCount: 2 },
   { id: 'y'.repeat(32), platform: 'youtube', state: 'ready', username: '测试 YouTube 账号', cookieCount: 2 },
@@ -25,6 +26,7 @@ beforeEach(() => {
     return { ok: true, value: { id: previewId, profile, expiresAt: Date.now() + 300000, accounts } }
   })
   vi.mocked(apiClient.importBrowserLogins).mockImplementation(() => new Promise(resolve => { finish = resolve }))
+  vi.mocked(apiClient.closeImportBrowser).mockResolvedValue({ ok: true, value: { status: 'closed', browserName: 'Microsoft Edge' } })
   vi.mocked(apiClient.cancelBrowserImport).mockResolvedValue({ ok: true, value: { cancelled: true } })
   vi.mocked(apiClient.loginStatus).mockResolvedValue({ ok: false, code: 'fixture', message: '测试状态' })
 })
@@ -76,5 +78,85 @@ describe('browser import cancellation results', () => {
     await waitFor(() => expect(apiClient.cancelBrowserImport).toHaveBeenCalledTimes(2))
     await act(async () => finish({ ok: true, value: { outcomes: accounts.map(account => ({ platform: account.platform, imported: false, message: '已取消，未导入' })) } }))
     expect(within(dialog).getByRole('button', { name: '关闭' })).toBeInTheDocument()
+  })
+})
+
+describe('browser close confirmation in import dialog', () => {
+  it('requires secondary confirmation, supports cancel/Escape/browser switch, and closes the selected browser', async () => {
+    vi.mocked(apiClient.listBrowserImportProfiles).mockResolvedValue({
+      ok: true,
+      value: { supported: true, profiles: [profile, chromeProfile] },
+    })
+    vi.mocked(apiClient.previewBrowserLogins).mockResolvedValueOnce({
+      ok: false,
+      code: 'browser-import-browser-in-use',
+      message: '此浏览器用户正在使用中。请先保存浏览内容，完全退出浏览器后重试。',
+    })
+    render(<BrowserLoginImportProvider><BrowserImportButton batch /></BrowserLoginImportProvider>)
+    fireEvent.click(screen.getByRole('button', { name: '批量导入账号' }))
+    const dialog = await screen.findByRole('dialog', { name: '批量导入账号' })
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '识别账号' })).toBeEnabled())
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '识别账号' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('正在使用中')
+
+    const closeTrigger = within(dialog).getByRole('button', { name: '关闭浏览器' })
+    expect(closeTrigger).toHaveClass('is-danger')
+    fireEvent.click(closeTrigger)
+    expect(apiClient.closeImportBrowser).not.toHaveBeenCalled()
+
+    const confirmBox = within(dialog).getByRole('alertdialog', { name: '确认关闭 Microsoft Edge' })
+    expect(confirmBox).toHaveTextContent('Microsoft Edge')
+    expect(within(confirmBox).getByRole('button', { name: '暂不关闭' })).toHaveFocus()
+
+    // Escape dismisses only the secondary confirmation without closing the import dialog.
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+    expect(dialog).toBeInTheDocument()
+    expect(closeTrigger).toHaveFocus()
+
+    // Cancelling via button also aborts without invoking closeImportBrowser.
+    fireEvent.click(closeTrigger)
+    fireEvent.click(within(dialog).getByRole('button', { name: '暂不关闭' }))
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+    expect(apiClient.closeImportBrowser).not.toHaveBeenCalled()
+
+    // Switching browser dismisses the confirmation so the previous browser cannot be closed by mistake.
+    fireEvent.click(closeTrigger)
+    fireEvent.change(within(dialog).getByLabelText('浏览器'), { target: { value: 'Google Chrome' } })
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+
+    // Confirming closes the newly selected Chrome profile and shows status.
+    vi.mocked(apiClient.closeImportBrowser).mockResolvedValueOnce({
+      ok: true,
+      value: { status: 'closed', browserName: 'Google Chrome' },
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭浏览器' }))
+    const chromeConfirm = within(dialog).getByRole('alertdialog', { name: '确认关闭 Google Chrome' })
+    fireEvent.click(within(chromeConfirm).getByRole('button', { name: '确认关闭' }))
+    await waitFor(() => expect(apiClient.closeImportBrowser).toHaveBeenCalledWith({
+      requestId: expect.any(String),
+      profileId: chromeProfile.id,
+    }))
+    expect(await within(dialog).findByText('已关闭 Google Chrome，现在可以点击「识别账号」继续')).toBeInTheDocument()
+    expect(within(dialog).queryByRole('alert')).toBeNull()
+  })
+
+  it('reports not-running status and close failures cleanly', async () => {
+    vi.mocked(apiClient.closeImportBrowser)
+      .mockResolvedValueOnce({ ok: true, value: { status: 'not-running', browserName: 'Microsoft Edge' } })
+      .mockResolvedValueOnce({ ok: false, code: 'browser-import-close-failed', message: '未能完全关闭对应浏览器，请先保存浏览内容，手动完全退出浏览器后重试。' })
+    render(<BrowserLoginImportProvider><BrowserImportButton batch /></BrowserLoginImportProvider>)
+    fireEvent.click(screen.getByRole('button', { name: '批量导入账号' }))
+    const dialog = await screen.findByRole('dialog', { name: '批量导入账号' })
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '关闭浏览器' })).toBeEnabled())
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭浏览器' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: '确认关闭' }))
+    expect(await within(dialog).findByText('Microsoft Edge 当前未运行，可直接点击「识别账号」')).toBeInTheDocument()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭浏览器' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: '确认关闭' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('未能完全关闭对应浏览器')
   })
 })
