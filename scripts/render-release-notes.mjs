@@ -159,8 +159,6 @@ export function verifyReadmeDownloadLinks(readmeText, version) {
     `${GITHUB_REPO}/releases/download/v${version}/Fy1Sync-${version}-win-x64-portable.zip`,
     `${GITHUB_REPO}/releases/download/v${version}/Fy1Sync-${version}-mac-arm64.dmg`,
     `${GITHUB_REPO}/releases/download/v${version}/Fy1Sync-${version}-mac-x64.dmg`,
-    `${GITHUB_REPO}/releases/download/v${version}/Fy1Sync-${version}-linux-x64.deb`,
-    `${GITHUB_REPO}/releases/download/v${version}/Fy1Sync-${version}-linux-x64.AppImage`,
   ]
   for (const url of required) {
     if (!readmeText.includes(url)) {

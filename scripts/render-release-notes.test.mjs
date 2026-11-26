@@ -41,4 +41,5 @@ test('extractChangelogSections rejects blank notes', () => {
 test('README.md keeps direct download buttons aligned with package.json version', async () => {
   const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8')
   verifyReadmeDownloadLinks(readme, pkg.version)
+  assert.doesNotMatch(readme, /releases\/download\/[^\s"']*linux-/)
 })

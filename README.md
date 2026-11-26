@@ -13,8 +13,6 @@
   <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.6.0/Fy1Sync-0.6.0-win-x64-portable.zip"><img src="https://img.shields.io/badge/Windows%20%E5%85%8D%E5%AE%89%E8%A3%85-.zip%20%E4%BE%BF%E6%90%BA%E7%89%88-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 Windows 便携包 (.zip)"></a><br>
   <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.6.0/Fy1Sync-0.6.0-mac-arm64.dmg"><img src="https://img.shields.io/badge/macOS%20Apple%20%E8%8A%AF%E7%89%87-.dmg-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 macOS Apple 芯片安装包 (.dmg)"></a>
   <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.6.0/Fy1Sync-0.6.0-mac-x64.dmg"><img src="https://img.shields.io/badge/macOS%20Intel-.dmg-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 macOS Intel 安装包 (.dmg)"></a>
-  <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.6.0/Fy1Sync-0.6.0-linux-x64.deb"><img src="https://img.shields.io/badge/Linux%20x64-.deb-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 Linux x64 deb 安装包"></a>
-  <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.6.0/Fy1Sync-0.6.0-linux-x64.AppImage"><img src="https://img.shields.io/badge/Linux%20x64-.AppImage-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 Linux x64 AppImage"></a>
   <a href="https://gitcode.com/Fy1ng/Fy1Sync/releases"><img src="https://img.shields.io/badge/%E5%85%A8%E5%B9%B3%E5%8F%B0%E5%9B%BD%E5%86%85%E9%95%9C%E5%83%8F-GitCode%20%E5%8F%91%E5%B8%83%E9%A1%B5-f3f0ea?style=for-the-badge&labelColor=18181b" alt="前往 GitCode 国内镜像发布页"></a>
 </p>
 
