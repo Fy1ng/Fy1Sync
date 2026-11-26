@@ -15,6 +15,7 @@ describe('manual cookie parser', () => {
     ['huya', 'udb_uid=42; udb_biztoken=session'],
     ['douyin', 'sessionid=session'],
     ['youtube', 'LOGIN_INFO=login; SAPISID=session'],
+    ['twitch', 'auth-token=session0123456789abcdefghijklmn'],
   ] as const)('accepts synthetic authentication for %s', (platform, text) => {
     expect(parseManualCookies(text, platform).some(cookie => cookie.value.startsWith('session'))).toBe(true)
   })
