@@ -11,6 +11,41 @@ function fixture() {
   return { data, service, write, scan: () => service.scan({ requestId: id, profileId: 'e'.repeat(32), platforms: ['douyu', 'bilibili', 'huya', 'douyin', 'youtube'] }) }
 }
 describe('browser login import transactions', () => {
+  it('previews a manually supplied cookie without returning its value', async () => {
+    const verify = vi.fn(async () => ({ uid: '42', username: '手动账号' }))
+    const write = vi.fn(async (_platform: unknown, cookies: import('./cookies').BrowserCookie[]) => {
+      expect(cookies[0]?.value).toBe('session')
+      return { accountId: 'default' }
+    })
+    const service = new BrowserLoginImport({ supported: false, verify, write, read: async () => ({ cookies: [], skipped: 0 }) })
+    const preview = await service.scanManual({ requestId: id, platform: 'bilibili', text: 'SESSDATA=session; DedeUserID=42' })
+    expect(preview.accounts[0]).toMatchObject({ platform: 'bilibili', username: '手动账号' })
+    expect(JSON.stringify(preview)).not.toContain('session')
+    const result = await service.apply({ previewId: preview.id, accountIds: [preview.accounts[0]!.id] })
+    expect(result.outcomes[0]).toMatchObject({ imported: true })
+    expect(write).toHaveBeenCalledOnce()
+    service.dispose()
+  })
+  it('rejects expired manual login and clears cancelled pending verification', async () => {
+    const write = vi.fn(async () => ({}))
+    const verify = vi.fn().mockResolvedValueOnce(null)
+    const service = new BrowserLoginImport({ supported: false, verify, write, read: async () => ({ cookies: [], skipped: 0 }) })
+    const args = { requestId: id, platform: 'bilibili', text: 'SESSDATA=session; DedeUserID=42' }
+    await expect(service.scanManual(args)).rejects.toMatchObject({ code: 'manual-cookie-expired' })
+    let finish!: (value: { uid: string; username: string }) => void
+    let captured: import('./cookies').BrowserCookie[] = []
+    verify.mockImplementationOnce(async (_platform, cookies) => {
+      captured = cookies
+      return await new Promise(resolve => { finish = resolve })
+    })
+    const pending = service.scanManual(args)
+    service.cancel(id)
+    finish({ uid: '42', username: '测试账号' })
+    await expect(pending).rejects.toMatchObject({ code: 'browser-import-cancelled' })
+    expect(captured.every(cookie => cookie.value === '')).toBe(true)
+    expect(write).not.toHaveBeenCalled()
+    service.dispose()
+  })
   it('returns one cancelled outcome per selection when cancelled before the first write', async () => {
     const context = fixture()
     const preview = await context.scan()

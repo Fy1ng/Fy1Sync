@@ -1,4 +1,5 @@
 export type BrowserImportErrorCode =
+  | 'manual-cookie-invalid' | 'manual-cookie-incomplete' | 'manual-cookie-expired'
   | 'browser-import-unsupported' | 'browser-import-profile-missing' | 'browser-import-browser-in-use'
   | 'browser-import-decryption-failed' | 'browser-import-helper-missing' | 'browser-import-helper-invalid'
   | 'browser-import-uac-cancelled' | 'browser-import-cancelled' | 'browser-import-timeout'
@@ -6,6 +7,9 @@ export type BrowserImportErrorCode =
   | 'browser-import-verification-failed' | 'browser-import-storage-failed' | 'browser-import-close-failed'
 
 const messages: Record<BrowserImportErrorCode, string> = {
+  'manual-cookie-invalid': 'Cookie 格式无效，请使用 Cookie 请求头、JSON 或 Netscape cookies.txt（不超过 1 MB）',
+  'manual-cookie-incomplete': '未找到所选平台的完整登录凭据，请重新复制 Cookie',
+  'manual-cookie-expired': 'Cookie 登录已失效，请在浏览器重新登录后导入',
   'browser-import-unsupported': '当前系统不支持导入浏览器账号',
   'browser-import-profile-missing': '浏览器用户已不存在，请刷新浏览器列表后重试',
   'browser-import-browser-in-use': '此浏览器用户正在使用中。请先保存浏览内容，完全退出浏览器后重试。',

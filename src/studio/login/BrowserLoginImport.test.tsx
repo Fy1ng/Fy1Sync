@@ -7,7 +7,7 @@ import type { BrowserImportOutcome, BrowserImportPreview } from '../../../electr
 import { BrowserImportButton, BrowserLoginImportProvider } from './BrowserLoginImport'
 
 vi.mock('../../app/apiClient', () => ({ apiClient: {
-  listBrowserImportProfiles: vi.fn(), listDouyuAccounts: vi.fn(), previewBrowserLogins: vi.fn(),
+  listBrowserImportProfiles: vi.fn(), listDouyuAccounts: vi.fn(), previewBrowserLogins: vi.fn(), previewManualCookies: vi.fn(),
   closeImportBrowser: vi.fn(), importBrowserLogins: vi.fn(), cancelBrowserImport: vi.fn(), loginStatus: vi.fn(),
 } }))
 
@@ -47,6 +47,36 @@ async function begin(): Promise<HTMLElement> {
 }
 
 describe('browser import cancellation results', () => {
+  it.each(['douyu', 'bilibili', 'huya', 'douyin', 'youtube', 'twitch'] as const)('verifies and confirms a pasted Cookie for %s', async platform => {
+    vi.mocked(apiClient.previewManualCookies).mockImplementation(async args => ({ ok: true, value: {
+      id: args.requestId, profile, expiresAt: Date.now() + 300000,
+      accounts: [{ id: 'd'.repeat(32), platform, state: 'ready', username: '手动账号', cookieCount: 2 }],
+    } }))
+    vi.mocked(apiClient.importBrowserLogins).mockResolvedValue({ ok: true, value: { outcomes: [{ platform, imported: true, message: '已导入账号' }] } })
+    render(<BrowserLoginImportProvider><BrowserImportButton platform={platform} /></BrowserLoginImportProvider>)
+    fireEvent.click(screen.getByRole('button', { name: '导入 Cookie' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Cookie 文本' }), { target: { value: 'Cookie: secret=value' } })
+    fireEvent.click(screen.getByRole('button', { name: '验证账号' }))
+    await screen.findByText('手动账号')
+    expect(apiClient.previewManualCookies).toHaveBeenCalledWith(expect.objectContaining({ platform, text: 'Cookie: secret=value' }))
+    expect(apiClient.listBrowserImportProfiles).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '确认导入' }))
+    await screen.findByText('已导入账号', { exact: false })
+    expect(apiClient.loginStatus).toHaveBeenCalled()
+    expect(screen.queryByRole('textbox', { name: 'Cookie 文本' })).toBeNull()
+  })
+  it('loads a selected cookie file and keeps errors retryable', async () => {
+    vi.mocked(apiClient.previewManualCookies).mockResolvedValue({ ok: false, code: 'manual-cookie-invalid', message: 'Cookie 格式无效' })
+    render(<BrowserLoginImportProvider><BrowserImportButton platform="bilibili" /></BrowserLoginImportProvider>)
+    fireEvent.click(screen.getByRole('button', { name: '导入 Cookie' }))
+    const file = new File(['file-cookie'], 'cookies.txt', { type: 'text/plain' })
+    Object.defineProperty(file, 'text', { value: async () => 'file-cookie' })
+    fireEvent.change(screen.getByLabelText('选择 Cookie 文件'), { target: { files: [file] } })
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Cookie 文本' })).toHaveValue('file-cookie'))
+    fireEvent.click(screen.getByRole('button', { name: '验证账号' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Cookie 格式无效')
+    expect(screen.getByRole('button', { name: '验证账号' })).toBeEnabled()
+  })
   it.each(['取消', '关闭', 'Escape', 'native-cancel'])('keeps the dialog and partial results after %s during import', async trigger => {
     const dialog = await begin()
     if (trigger === 'Escape') fireEvent.keyDown(dialog, { key: 'Escape' })

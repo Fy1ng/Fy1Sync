@@ -17,6 +17,10 @@ describe('browser import IPC ownership', () => {
     const event = { sender: main, senderFrame: main.mainFrame }
     expect(await invoke({ ...event, senderFrame: { url: 'app://app/' } }, 'listBrowserImportProfiles', undefined)).toMatchObject({ ok: false, code: 'forbidden' })
     expect(await invoke({ ...event, senderFrame: { url: 'app://app/' } }, 'closeImportBrowser', { requestId: 'a'.repeat(32), profileId: 'e'.repeat(32) })).toMatchObject({ ok: false, code: 'forbidden' })
+    expect(await invoke({ ...event, senderFrame: { url: 'app://app/' } }, 'previewManualCookies', {})).toMatchObject({ ok: false, code: 'forbidden' })
+    const manualFailure = await invoke(event, 'previewManualCookies', { requestId: 'a'.repeat(32), platform: 'bilibili', text: 'PRIVATE_SECRET' })
+    expect(manualFailure).toMatchObject({ ok: false, code: 'manual-cookie-invalid' })
+    expect(JSON.stringify(manualFailure)).not.toContain('PRIVATE_SECRET')
     expect(await invoke(event, 'listBrowserImportProfiles', undefined)).toMatchObject({ ok: true })
     const failure = await invoke(event, 'previewBrowserLogins', { requestId: 'a'.repeat(32), profileId: 'e'.repeat(32), platforms: ['douyu'] })
     expect(failure).toMatchObject({ ok: false, code: 'browser-import-browser-in-use' })
