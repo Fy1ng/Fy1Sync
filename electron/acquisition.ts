@@ -164,7 +164,8 @@ export class Acquisition implements AcquisitionService {
       }
     }
     // Subscribe before start so a fast producer cannot race its first usable playlist.
-    const readiness = this.waitUntilPlayable(role, generation, Boolean(first.stream.adaptive), network.media?.startupTimeoutMs)
+    const minBufferSeconds = startupBufferSeconds(first.stream.platform, Boolean(first.stream.adaptive), network)
+    const readiness = this.waitUntilPlayable(role, generation, Boolean(first.stream.adaptive), network.media?.startupTimeoutMs, minBufferSeconds)
     diagnostic?.record({ stage: 'buffer', status: 'started', adaptive: Boolean(first.stream.adaptive) })
     try {
       readiness.activate()
@@ -300,7 +301,7 @@ export class Acquisition implements AcquisitionService {
     return result
   }
 
-  private waitUntilPlayable(role: StreamId, generation: number, adaptive = false, startupTimeoutMs?: number) {
+  private waitUntilPlayable(role: StreamId, generation: number, adaptive = false, startupTimeoutMs?: number, minBufferSeconds = 0) {
     let cancel = () => {}
     let active = false
     const promise = new Promise<void>((resolve, reject) => {
@@ -313,7 +314,7 @@ export class Acquisition implements AcquisitionService {
         if (generation !== this.generations.get(role) || this.disposed) { clearTimeout(timer); release(); reject(new Error('片源已替换')); return }
         if (state.state === 'failed') { clearTimeout(timer); release(); reject(new StreamFailureError(state.failure ?? { stage: 'playback-not-ready', code: state.reason ?? 'buffer-failed', message: '无法获取直播画面，请重试' })) }
         else if ((state.state === 'buffering' || state.state === 'ready') && state.hasVideo === true
-          && (state.completeSegments ?? 0) > 0 && state.seconds > 0) {
+          && (state.completeSegments ?? 0) > 0 && (minBufferSeconds > 0 ? state.seconds >= minBufferSeconds : state.seconds > 0)) {
           clearTimeout(timer); release(); resolve()
         }
       })
@@ -328,6 +329,13 @@ export class Acquisition implements AcquisitionService {
     this.pendingReady.set(role, cancelWait)
     return { promise, cancel: cancelWait, activate: () => { active = true } }
   }
+}
+
+/** Proxied overseas live sources need a small cushion before releasing the player. */
+function startupBufferSeconds(platform: PlatformKind, adaptive: boolean, network: NetworkContext): number {
+  if (adaptive) return 6
+  if (platform === 'youtube' || platform === 'twitch' || network.media?.routing === 'custom') return 4
+  return 0
 }
 
 function errorDiagnosticCode(error: unknown) {

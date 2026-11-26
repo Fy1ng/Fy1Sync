@@ -320,4 +320,216 @@ describe('adaptive sq acquisition', () => {
     h.controller.abort()
     await h.pending
   })
+
+  it('subtracts request and download latency from pacing so cadence does not drift slower than realtime', async () => {
+    vi.useFakeTimers()
+    const start = Date.now()
+    const startedAt: { sq: number; track: string; at: number }[] = []
+    const timedSource: AdaptiveSource = {
+      videoUrl: 'https://r1.example.googlevideo.com/videoplayback?token=PRIVATE_VIDEO&dur=2.000',
+      audioUrl: 'https://r1.example.googlevideo.com/videoplayback?token=PRIVATE_AUDIO&dur=2.000',
+      videoContainer: 'webm', height: 1440,
+    }
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input))
+      const sq = Number(url.searchParams.get('sq'))
+      const track = url.searchParams.get('token') === 'PRIVATE_VIDEO' ? 'v' : 'a'
+      startedAt.push({ sq, track, at: Date.now() - start })
+      // Simulate 1200ms download latency on sq=100 (head=100) so only 800ms should remain before sq=101.
+      if (sq === 100) await new Promise(resolve => setTimeout(resolve, 1200))
+      const head = 100 + Math.floor((Date.now() - start) / 2000)
+      return response(`${track}${sq}`, String(head))
+    }) as typeof fetch
+    const controller = new AbortController()
+    const video: string[] = [], audio: string[] = []
+    const pending = pullAdaptive(timedSource, {
+      video: sink(video), audio: sink(audio), signal: controller.signal,
+      resolve: publicDns, fetchImpl: fetcher,
+    }).catch((error: unknown) => error)
+    await flush()
+    // dur=2.000 starts 4 behind head (96..100 = 5 segments = 10s initial cushion).
+    expect(startedAt.filter(call => call.track === 'v').map(call => call.sq)).toEqual([0, 96, 97, 98, 99, 100])
+    await vi.advanceTimersByTimeAsync(1200)
+    expect(video).toEqual(['v96', 'v97', 'v98', 'v99', 'v100'])
+    await vi.advanceTimersByTimeAsync(799)
+    expect(startedAt.some(call => call.sq === 101)).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(startedAt.filter(call => call.sq === 101)).toEqual([
+      { sq: 101, track: 'v', at: 2000 },
+      { sq: 101, track: 'a', at: 2000 },
+    ])
+    controller.abort()
+    await pending
+  })
+
+  it('adapts initial behind-head cushion and cadence for 1s segments via URL dur', async () => {
+    vi.useFakeTimers()
+    const start = Date.now()
+    const calls: { sq: number; track: string; at: number }[] = []
+    const lowLatencySource: AdaptiveSource = {
+      videoUrl: 'https://r1.example.googlevideo.com/videoplayback?token=PRIVATE_VIDEO&dur=1.000',
+      audioUrl: 'https://r1.example.googlevideo.com/videoplayback?token=PRIVATE_AUDIO&dur=1.000',
+      videoContainer: 'webm', height: 1440,
+    }
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input))
+      const sq = Number(url.searchParams.get('sq'))
+      const track = url.searchParams.get('token') === 'PRIVATE_VIDEO' ? 'v' : 'a'
+      calls.push({ sq, track, at: Date.now() - start })
+      return response(`${track}${sq}`, String(100 + Math.floor((Date.now() - start) / 1000)))
+    }) as typeof fetch
+    const controller = new AbortController()
+    const video: string[] = [], audio: string[] = []
+    const pending = pullAdaptive(lowLatencySource, {
+      video: sink(video), audio: sink(audio), signal: controller.signal,
+      resolve: publicDns, fetchImpl: fetcher,
+    }).catch((error: unknown) => error)
+    await flush()
+    expect(video).toEqual(['v92', 'v93', 'v94', 'v95', 'v96', 'v97', 'v98', 'v99', 'v100'])
+    await vi.advanceTimersByTimeAsync(999)
+    expect(calls.some(call => call.sq === 101)).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(calls.filter(call => call.sq === 101)).toEqual([
+      { sq: 101, track: 'v', at: 1000 },
+      { sq: 101, track: 'a', at: 1000 },
+    ])
+    controller.abort()
+    await pending
+  })
+
+  it('estimates segment duration from x-head-time-millis headers (both initial ratio and advancing deltas)', async () => {
+    vi.useFakeTimers()
+    const start = Date.now()
+    const calls: { sq: number; at: number }[] = []
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const sq = Number(new URL(String(input)).searchParams.get('sq'))
+      const elapsed = Date.now() - start
+      calls.push({ sq, at: elapsed })
+      const head = 100 + Math.floor(elapsed / 2000)
+      return new Response(`seg-${sq}`, {
+        status: 200,
+        headers: { 'x-head-seqnum': String(head), 'x-head-time-millis': String(head * 2000) },
+      })
+    }) as typeof fetch
+    const h = harness(fetcher)
+    await flush()
+    // 200000 / 100 = 2000ms -> 4 segments behind head (96..100).
+    expect(h.video).toEqual(['seg-96', 'seg-97', 'seg-98', 'seg-99', 'seg-100'])
+    await vi.advanceTimersByTimeAsync(1999)
+    expect(calls.some(call => call.sq === 101)).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(h.video).toEqual(['seg-96', 'seg-97', 'seg-98', 'seg-99', 'seg-100', 'seg-101'])
+    h.controller.abort()
+    await h.pending
+  })
+
+  it('adapts segment duration from epoch-scale x-head-time-millis deltas when dur is absent', async () => {
+    vi.useFakeTimers()
+    const start = Date.now()
+    const epochBase = 1_700_000_000_000
+    const calls: { sq: number; at: number }[] = []
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const sq = Number(new URL(String(input)).searchParams.get('sq'))
+      const elapsed = Date.now() - start
+      calls.push({ sq, at: elapsed })
+      const head = 100 + Math.floor(elapsed / 2000)
+      return new Response(`seg-${sq}`, {
+        status: 200,
+        headers: { 'x-head-seqnum': String(head), 'x-head-time-millis': String(epochBase + head * 2000) },
+      })
+    }) as typeof fetch
+    const h = harness(fetcher)
+    await flush()
+    // Epoch ratio is out of bounds so initial cadence starts at 5000ms (98..100).
+    expect(h.video).toEqual(['seg-98', 'seg-99', 'seg-100'])
+    // After 5000ms, head has advanced to 102 with delta 4000ms / 2 = 2000ms.
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(h.video).toEqual(['seg-98', 'seg-99', 'seg-100', 'seg-101', 'seg-102'])
+    await vi.advanceTimersByTimeAsync(1999)
+    expect(calls.some(call => call.sq === 103)).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(h.video).toContain('seg-103')
+    h.controller.abort()
+    await h.pending
+  })
+
+  it('adapts segment duration from wall-clock x-head-seqnum increments when neither dur nor x-head-time-millis is present', async () => {
+    vi.useFakeTimers()
+    const start = Date.now()
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const sq = Number(new URL(String(input)).searchParams.get('sq'))
+      const elapsed = Date.now() - start
+      const head = 100 + Math.floor(elapsed / 2000)
+      return response(`seg-${sq}`, String(head))
+    }) as typeof fetch
+    const h = harness(fetcher)
+    await flush()
+    expect(h.video).toEqual(['seg-98', 'seg-99', 'seg-100'])
+    // After the initial 5000ms fallback wait, head jumped by 2 (100 -> 102) so estimate shrinks to 2500ms.
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(h.video).toEqual(['seg-98', 'seg-99', 'seg-100', 'seg-101', 'seg-102'])
+    // Next fetch happens at +2500ms (t=7500ms) instead of waiting another full 5000ms.
+    await vi.advanceTimersByTimeAsync(2500)
+    expect(h.video).toContain('seg-103')
+    h.controller.abort()
+    await h.pending
+  })
+
+  it('short-polls a not-yet-published 404 (sq > head) until available without terminating ffmpeg', async () => {
+    vi.useFakeTimers()
+    const start = Date.now()
+    let earlyHits = 0
+    const timedSource: AdaptiveSource = {
+      videoUrl: 'https://r1.example.googlevideo.com/videoplayback?token=PRIVATE_VIDEO&dur=2.000',
+      audioUrl: 'https://r1.example.googlevideo.com/videoplayback?token=PRIVATE_AUDIO&dur=2.000',
+      videoContainer: 'webm', height: 1440,
+    }
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const sq = Number(new URL(String(input)).searchParams.get('sq'))
+      const elapsed = Date.now() - start
+      // Delay sq=101 publication by 1500ms after the 2000ms mark (published at t=3500ms).
+      const head = elapsed < 3500 ? 100 : 101
+      if (sq > head) {
+        earlyHits++
+        return response('not published yet', String(head), 404)
+      }
+      return response(`seg-${sq}`, String(head), 200)
+    }) as typeof fetch
+    const controller = new AbortController()
+    const video: string[] = [], audio: string[] = []
+    const pending = pullAdaptive(timedSource, {
+      video: sink(video), audio: sink(audio), signal: controller.signal,
+      resolve: publicDns, fetchImpl: fetcher,
+    }).catch((error: unknown) => error)
+    await flush()
+    expect(video).toEqual(['seg-96', 'seg-97', 'seg-98', 'seg-99', 'seg-100'])
+    await vi.advanceTimersByTimeAsync(3600)
+    expect(earlyHits).toBeGreaterThanOrEqual(4)
+    expect(video).toEqual(['seg-96', 'seg-97', 'seg-98', 'seg-99', 'seg-100', 'seg-101'])
+    expect(audio).toEqual(['seg-96', 'seg-97', 'seg-98', 'seg-99', 'seg-100', 'seg-101'])
+    controller.abort()
+    expect(await pending).toMatchObject({ code: 'adaptive-aborted' })
+  })
+
+  it('bounds short-polling for a permanently stuck future segment (404 with sq > head)', async () => {
+    vi.useFakeTimers()
+    const timedSource: AdaptiveSource = {
+      videoUrl: 'https://r1.example.googlevideo.com/videoplayback?token=PRIVATE_VIDEO&dur=2.000',
+      audioUrl: 'https://r1.example.googlevideo.com/videoplayback?token=PRIVATE_AUDIO&dur=2.000',
+      videoContainer: 'webm', height: 1440,
+    }
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const sq = Number(new URL(String(input)).searchParams.get('sq'))
+      return sq > 100 ? response('still unavailable', '100', 404) : response(`seg-${sq}`, '100', 200)
+    }) as typeof fetch
+    const controller = new AbortController()
+    const video: string[] = [], audio: string[] = []
+    const pending = pullAdaptive(timedSource, {
+      video: sink(video), audio: sink(audio), signal: controller.signal,
+      resolve: publicDns, fetchImpl: fetcher,
+    }).catch((error: unknown) => error)
+    await flush()
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(await pending).toMatchObject({ code: 'adaptive-request-failed', status: 404 })
+  })
 })

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { resolveConfig } from './config'
 import { MediaRegistry, type MediaDeps } from './mediaProxy'
+import { StreamFailureError } from './networkFailure'
 
 const TARGET = 'https://video-weaver.ttvnw.net/live/index.m3u8'
 const PLAYLIST = '#EXTM3U\n#EXTINF:4,\nseg.ts\n'
@@ -286,5 +287,115 @@ describe('media fetch and HLS', () => {
     await response.body!.cancel()
     expect(signal!.aborted).toBe(true)
     expect(cancelled).toBe(true)
+  })
+
+  it('retries idempotent GET and HEAD on transient socket reset using a fresh non-pooled connection', async () => {
+    for (const method of ['GET', 'HEAD'] as const) {
+      const dispatchers: unknown[] = []
+      const upstream = vi.fn(async (_url, init: RequestInit = {}) => {
+        dispatchers.push((init as RequestInit & { dispatcher?: unknown }).dispatcher)
+        if (dispatchers.length === 1) {
+          throw Object.assign(new TypeError('fetch failed'), {
+            cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }),
+          })
+        }
+        return new Response(method === 'HEAD' ? null : 'clean-segment', {
+          status: 200,
+          headers: { 'content-type': 'video/mp2t' },
+        })
+      }) as typeof fetch
+      const f = fixture(PLAYLIST, { fetchImpl: upstream })
+      const response = await f.registry.handle(request(f.registry.register('https://video-weaver.ttvnw.net/seg.ts'), {}, method))
+      expect(response.status).toBe(200)
+      expect(await response.text()).toBe(method === 'HEAD' ? '' : 'clean-segment')
+      expect(dispatchers).toHaveLength(2)
+      // Retry must bypass the pooled dispatcher so a stale keep-alive socket is not reused.
+      expect(dispatchers[1]).not.toBe(dispatchers[0])
+      await f.registry.dispose()
+    }
+  })
+
+  it('retries transient 5xx responses on a fresh connection, cancels discarded bodies, and caps retries at two', async () => {
+    const cancelled: number[] = []
+    const dispatchers: unknown[] = []
+    let calls = 0
+    const upstream = vi.fn(async (_url, init: RequestInit = {}) => {
+      const n = ++calls
+      dispatchers.push((init as RequestInit & { dispatcher?: unknown }).dispatcher)
+      if (n <= 2) {
+        return new Response(new ReadableStream({ cancel() { cancelled.push(n) } }), { status: n === 1 ? 502 : 503 })
+      }
+      return new Response('recovered', { status: 200, headers: { 'content-type': 'video/mp2t' } })
+    }) as typeof fetch
+    const f = fixture(PLAYLIST, { fetchImpl: upstream })
+    const response = await f.registry.handle(request(f.registry.register('https://video-weaver.ttvnw.net/seg.ts')))
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe('recovered')
+    expect(calls).toBe(3)
+    expect(cancelled).toEqual([1, 2])
+    expect(dispatchers[1]).not.toBe(dispatchers[0])
+    expect(dispatchers[2]).not.toBe(dispatchers[0])
+    await f.registry.dispose()
+
+    let failedCalls = 0
+    const always504 = fixture(PLAYLIST, {
+      fetchImpl: (async () => { failedCalls++; return new Response('gateway timeout', { status: 504 }) }) as typeof fetch,
+    })
+    const failed = await always504.registry.handle(request(always504.registry.register('https://video-weaver.ttvnw.net/stuck.ts')))
+    expect(failed.status).toBe(504)
+    expect(failedCalls).toBe(3)
+    await always504.registry.dispose()
+  })
+
+  it('retries proxy-wrapped socket resets while refusing retries on 4xx, TLS, policy errors and client abort', async () => {
+    let proxyCalls = 0
+    const proxyReset = fixture(PLAYLIST, {
+      fetchImpl: (async () => {
+        if (++proxyCalls === 1) {
+          throw new StreamFailureError({
+            stage: 'proxy',
+            code: 'proxy-failed',
+            message: '代理不可达或拒绝连接',
+            detail: { name: 'TypeError', cause: { code: 'ECONNRESET', message: 'connection reset' } },
+          })
+        }
+        return new Response('ok-after-proxy-reset', { headers: { 'content-type': 'video/mp2t' } })
+      }) as typeof fetch,
+    })
+    const recovered = await proxyReset.registry.handle(request(proxyReset.registry.register('https://video-weaver.ttvnw.net/p.ts')))
+    expect(recovered.status).toBe(200)
+    expect(await recovered.text()).toBe('ok-after-proxy-reset')
+    expect(proxyCalls).toBe(2)
+    await proxyReset.registry.dispose()
+
+    for (const status of [403, 404, 429]) {
+      let count = 0
+      const f = fixture(PLAYLIST, { fetchImpl: (async () => { count++; return new Response('nope', { status }) }) as typeof fetch })
+      expect((await f.registry.handle(request(f.url))).status).toBe(status)
+      expect(count).toBe(1)
+      await f.registry.dispose()
+    }
+
+    let tlsCount = 0
+    const tlsFail = fixture(PLAYLIST, {
+      fetchImpl: (async () => { tlsCount++; throw Object.assign(new Error('cert expired'), { code: 'CERT_HAS_EXPIRED' }) }) as typeof fetch,
+    })
+    expect((await tlsFail.registry.handle(request(tlsFail.url))).status).toBe(502)
+    expect(tlsCount).toBe(1)
+    await tlsFail.registry.dispose()
+
+    let abortCalls = 0
+    const controller = new AbortController()
+    const aborting = fixture(PLAYLIST, {
+      fetchImpl: (async () => {
+        abortCalls++
+        queueMicrotask(() => controller.abort())
+        return new Response('busy', { status: 503 })
+      }) as typeof fetch,
+    })
+    const abortedResponse = await aborting.registry.handle(new Request(aborting.url, { signal: controller.signal }))
+    expect(abortedResponse.status).toBe(504)
+    expect(abortCalls).toBe(1)
+    await aborting.registry.dispose()
   })
 })

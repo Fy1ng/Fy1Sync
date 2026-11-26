@@ -6,6 +6,7 @@ import { resolveConfig } from '../server/config'
 import { createDesktopService } from '../server/api'
 import * as platformResolvers from '../server/platforms'
 import adaptiveFixture from '../server/platforms/fixtures/youtube-adaptive-live.json'
+import { DEFAULT_MEDIA_NETWORK } from '../server/mediaNetworkOptions'
 import type { LoginPlatform, LoginStatus } from './login'
 
 vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '8.8.8.8', family: 4 }]) }))
@@ -371,6 +372,92 @@ describe('main acquisition boundary', () => {
     expect(finished).toBe(false)
     h.emit({ role: 'official', state: 'buffering', hasVideo: true, completeSegments: 1, seconds: 2 })
     expect((await operation).ok).toBe(true)
+  })
+
+  it('requires a 4-second startup buffer cushion for YouTube HLS and Twitch before releasing playback', async () => {
+    const h = harness()
+    let started = false
+    h.buffer.start.mockImplementationOnce(async (_role, prepare) => {
+      await prepare(); started = true
+      h.emit({ role: 'official', state: 'buffering', hasVideo: true, completeSegments: 1, seconds: 2 })
+      return { url: 'app://app/buffer/youtube-hls/index.m3u8' }
+    })
+    let finished = false
+    const operation = h.acquisition.resolve('https://www.youtube.com/watch?v=abcdefghijk', 'youtube', 'official').then(value => { finished = true; return value })
+    await vi.waitFor(() => expect(started).toBe(true))
+    await new Promise<void>(resolve => setImmediate(resolve))
+    expect(finished).toBe(false)
+    h.emit({ role: 'official', state: 'ready', hasVideo: true, completeSegments: 2, seconds: 4 })
+    expect((await operation).ok).toBe(true)
+
+    let twitchStarted = false
+    const twitchFetch = vi.fn(async (input: string | URL | Request) => String(input) === 'https://gql.twitch.tv/gql'
+      ? Response.json({ data: { streamPlaybackAccessToken: { value: 'PRIVATE', signature: 'PRIVATE' } } })
+      : new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,FRAME-RATE=60\nhttps://video.ttvnw.net/live.m3u8'))
+    const twitch = harness({ fetchImpl: twitchFetch })
+    twitch.buffer.start.mockImplementationOnce(async (_role, prepare) => {
+      await prepare(); twitchStarted = true
+      twitch.emit({ role: 'official', state: 'buffering', hasVideo: true, completeSegments: 1, seconds: 2 })
+      return { url: 'app://app/buffer/twitch/index.m3u8' }
+    })
+    let twitchFinished = false
+    const twitchOp = twitch.acquisition.resolve('twitch.tv/pgl', 'twitch', 'official').then(value => { twitchFinished = true; return value })
+    await vi.waitFor(() => expect(twitchStarted).toBe(true))
+    await new Promise<void>(resolve => setImmediate(resolve))
+    expect(twitchFinished).toBe(false)
+    twitch.emit({ role: 'official', state: 'ready', hasVideo: true, completeSegments: 2, seconds: 4 })
+    expect((await twitchOp).ok).toBe(true)
+    h.acquisition.dispose()
+    twitch.acquisition.dispose()
+  })
+
+  it('requires a 6-second startup buffer cushion for YouTube adaptive and preserves fast cancellation while buffering', async () => {
+    const h = harness()
+    const metadata = await h.runYtDlp()
+    metadata.formats.push(
+      { format_id: '308', protocol: 'https', height: 1440, fps: 60, vcodec: 'vp9', acodec: 'none', ext: 'webm', url: 'https://rr1.googlevideo.com/videoplayback?itag=308' } as typeof metadata.formats[number],
+      { format_id: '140', protocol: 'https', height: 0, fps: 0, vcodec: 'none', acodec: 'mp4a.40.2', ext: 'm4a', url: 'https://rr1.googlevideo.com/videoplayback?itag=140' } as typeof metadata.formats[number],
+    )
+    h.runYtDlp.mockResolvedValue(metadata)
+    let started = false
+    h.buffer.start.mockImplementationOnce(async (_role, prepare) => {
+      await prepare(); started = true
+      return { url: 'app://app/buffer/youtube-adaptive/index.m3u8' }
+    })
+    let finished = false
+    const operation = h.acquisition.resolve('https://youtu.be/abcdefghijk', 'youtube', 'official', undefined, true).then(value => { finished = true; return value })
+    await vi.waitFor(() => expect(started).toBe(true))
+    for (const seconds of [2, 4]) {
+      h.emit({ role: 'official', state: seconds >= 4 ? 'ready' : 'buffering', hasVideo: true, completeSegments: seconds / 2, seconds })
+      await new Promise<void>(resolve => setImmediate(resolve))
+      expect(finished).toBe(false)
+    }
+    h.emit({ role: 'official', state: 'ready', hasVideo: true, completeSegments: 3, seconds: 6 })
+    expect((await operation).ok).toBe(true)
+
+    // Custom proxy direct stream waits for 4s cushion and cancels immediately on stop().
+    let customStarted = false
+    const custom = harness({
+      network: () => ({
+        route: async () => ({ kind: 'http', proxyUrl: 'http://127.0.0.1:7890/' }),
+        media: { ...DEFAULT_MEDIA_NETWORK, routing: 'custom', proxyUrl: 'http://127.0.0.1:7890' },
+      }),
+    })
+    custom.buffer.start.mockImplementationOnce(async (_role, prepare) => {
+      await prepare(); customStarted = true
+      custom.emit({ role: 'official', state: 'buffering', hasVideo: true, completeSegments: 1, seconds: 2 })
+      return { url: 'app://app/buffer/custom/index.m3u8' }
+    })
+    let customFinished = false
+    const pending = custom.acquisition.resolve('https://8.8.8.8/live.flv', 'direct', 'official').then(value => { customFinished = true; return value })
+    await vi.waitFor(() => expect(customStarted).toBe(true))
+    await new Promise<void>(resolve => setImmediate(resolve))
+    expect(customFinished).toBe(false)
+    await custom.acquisition.stop('official')
+    expect((await pending).ok).toBe(false)
+    expect(custom.buffer.stop).toHaveBeenCalledWith('official')
+    h.acquisition.dispose()
+    custom.acquisition.dispose()
   })
 
   it.each([true, false])('allows a previously offered adaptive option after automatic fallback, provider recovered=%s', async recovered => {

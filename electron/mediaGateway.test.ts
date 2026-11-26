@@ -1,8 +1,13 @@
-import { createServer, request, type RequestListener, type Server } from 'node:http'
+import { execFileSync, spawn } from 'node:child_process'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { Agent as HttpAgent, createServer, request, type RequestListener, type Server } from 'node:http'
 import { connect } from 'node:net'
+import os from 'node:os'
+import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveConfig } from '../server/config'
 import type { NetworkContext } from '../server/networkPolicy'
+import { buildFfmpegArgs, parseHlsSegments } from './bufferManager'
 import { MediaGateway } from './mediaGateway'
 import { DEFAULT_MEDIA_NETWORK } from '../server/mediaNetworkOptions'
 
@@ -362,4 +367,129 @@ describe('FFmpeg controlled media gateway', () => {
     await expect(service.register(target, undefined, context())).rejects.toThrow('已关闭')
     await expect(local(input.url)).rejects.toThrow()
   })
+
+  it('keeps local HTTP keep-alive connections open past 1 second for persistent FFmpeg HLS polling', async () => {
+    const upstream = vi.fn(async () => new Response('segment-bytes', { headers: { 'content-type': 'video/mp2t' } })) as typeof fetch
+    const input = await gateway(upstream).register('https://fixture.invalid/segment.ts', undefined, context())
+    const agent = new HttpAgent({ keepAlive: true, maxSockets: 1 })
+    const sockets = new Set<unknown>()
+    const send = () => new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = request(input.url, { agent }, response => {
+        sockets.add(response.socket)
+        const chunks: Buffer[] = []
+        response.on('data', chunk => chunks.push(Buffer.from(chunk)))
+        response.on('end', () => resolve({ status: response.statusCode!, body: Buffer.concat(chunks).toString() }))
+        response.on('error', reject)
+      })
+      req.on('error', reject)
+      req.end()
+    })
+    try {
+      expect(await send()).toEqual({ status: 200, body: 'segment-bytes' })
+      // Previously keepAliveTimeout=1000 closed the loopback socket here and triggered WSAECONNABORTED (-10053).
+      await new Promise(resolve => setTimeout(resolve, 1250))
+      expect(await send()).toEqual({ status: 200, body: 'segment-bytes' })
+      expect(sockets.size).toBe(1)
+    } finally { agent.destroy() }
+  })
+
+  it('recovers from a transient upstream 503 or socket reset without recording a fatal input failure', async () => {
+    let calls = 0
+    const upstream = vi.fn(async () => {
+      calls++
+      if (calls === 1) throw Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' })
+      if (calls === 2) return new Response('temporary outage', { status: 503 })
+      return new Response('recovered-segment', { headers: { 'content-type': 'video/mp2t' } })
+    }) as typeof fetch
+    const input = await gateway(upstream).register('https://fixture.invalid/segment.ts', undefined, context())
+    const response = await local(input.url)
+    expect(response.status).toBe(200)
+    expect(response.body).toBe('recovered-segment')
+    expect(calls).toBe(3)
+    expect(input.readFailure()).toBeUndefined()
+  })
+})
+
+describe('FFmpeg offline local HLS keep-alive regression', () => {
+  const ffmpeg = process.env.STREAM_SYNC_FFMPEG || 'ffmpeg'
+  const fixtureFfmpeg = process.env.STREAM_SYNC_FIXTURE_FFMPEG || 'ffmpeg'
+  const available = [fixtureFfmpeg, ffmpeg].every(tool => {
+    try { execFileSync(tool, ['-version'], { stdio: 'ignore', windowsHide: true, timeout: 10_000 }); return true }
+    catch { return false }
+  })
+
+  it.skipIf(!available)('reads a live local HLS stream past 1s segment intervals without keepalive -10053 errors', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'syncer-gateway-hls-'))
+    const srcDir = path.join(root, 'src')
+    const outDir = path.join(root, 'out')
+    await import('node:fs/promises').then(fs => Promise.all([fs.mkdir(srcDir), fs.mkdir(outDir)]))
+    try {
+      execFileSync(fixtureFfmpeg, [
+        '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=30',
+        '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
+        '-t', '6', '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
+        '-c:a', 'aac', '-f', 'hls', '-hls_time', '2', '-hls_list_size', '0',
+        '-hls_segment_filename', path.posix.join(srcDir.replace(/\\/g, '/'), 'seg_%d.ts'),
+        path.posix.join(srcDir.replace(/\\/g, '/'), 'source.m3u8'),
+      ], { windowsHide: true, timeout: 20_000, stdio: 'pipe' })
+
+      const segments = await Promise.all([0, 1, 2].map(index => readFile(path.join(srcDir, `seg_${index}.ts`))))
+      let published = 1
+      let injected503 = false
+      const origin = await actualUpstream((req, res) => {
+        if (req.url === '/live.m3u8') {
+          const lines = ['#EXTM3U', '#EXT-X-VERSION:3', '#EXT-X-TARGETDURATION:2', '#EXT-X-MEDIA-SEQUENCE:0']
+          for (let index = 0; index < published; index++) {
+            lines.push('#EXTINF:2.000000,', `seg_${index}.ts`)
+          }
+          if (published >= segments.length) lines.push('#EXT-X-ENDLIST')
+          res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' }).end(`${lines.join('\n')}\n`)
+          return
+        }
+        const match = /^\/seg_(\d+)\.ts$/.exec(req.url ?? '')
+        if (!match) { res.writeHead(404).end(); return }
+        const index = Number(match[1])
+        if (index === 2 && !injected503) {
+          injected503 = true
+          res.writeHead(503).end('transient upstream error')
+          return
+        }
+        res.writeHead(200, { 'content-type': 'video/mp2t' }).end(segments[index])
+      })
+
+      const timers = [
+        setTimeout(() => { published = 2 }, 1_500),
+        setTimeout(() => { published = 3 }, 3_200),
+      ]
+      try {
+        const service = new MediaGateway({ ...config, hosts: ['127.0.0.1'], allowNonStandardPorts: true })
+        active.push(service)
+        const input = await service.register(`${origin}/live.m3u8`, undefined, {
+          ...context(),
+          media: DEFAULT_MEDIA_NETWORK,
+        })
+        const args = buildFfmpegArgs({ url: input.url, gatewayHls: true, proxyUrl: '' }, outDir, 0)
+        // Enable verbose logging so any HTTP keep-alive failure or WSAECONNABORTED (-10053) is captured.
+        args[args.indexOf('-loglevel') + 1] = 'verbose'
+        let stderr = ''
+        const exitCode = await new Promise<number | null>((resolve, reject) => {
+          const child = spawn(ffmpeg, args, { shell: false, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
+          child.stderr.on('data', chunk => { stderr += String(chunk) })
+          child.once('error', reject)
+          child.once('close', code => resolve(code))
+        })
+        expect(exitCode).toBe(0)
+        expect(stderr).not.toMatch(/keepalive request failed|-10053|WSAECONNABORTED/i)
+        expect(injected503).toBe(true)
+        expect(input.readFailure()).toBeUndefined()
+        const output = parseHlsSegments(await readFile(path.join(outDir, 'raw_0.m3u8'), 'utf8'))
+        expect(output.segments.reduce((sum, segment) => sum + segment.duration, 0)).toBeGreaterThanOrEqual(5)
+      } finally {
+        for (const timer of timers) clearTimeout(timer)
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 30_000)
 })

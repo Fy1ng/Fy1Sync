@@ -520,13 +520,18 @@ describe('ffmpeg argument and manifest boundaries', () => {
   it.each(['ftp://example.com/a', 'http://user:password@example.com/a', 'https://example.com/a\n-bad'])('rejects an unsafe input: %s', url => {
     expect(() => buildFfmpegArgs({ url }, '/buffer', 0)).toThrow()
   })
-  it('relaxes segment extension checks only for an explicitly marked local HLS capability', () => {
+  it('relaxes segment extension checks and enables segment retries only for an explicitly marked local HLS capability', () => {
     const capability = 'http://127.0.0.1:12345/media/11111111-1111-4111-8111-111111111111'
     const args = buildFfmpegArgs({ url: capability, gatewayHls: true, proxyUrl: '' }, '/buffer', 0)
-    expect(args.slice(args.indexOf('-f'), args.indexOf('-i'))).toEqual(['-f', 'hls', '-extension_picky', '0'])
+    expect(args.slice(args.indexOf('-f'), args.indexOf('-i'))).toEqual(['-f', 'hls', '-extension_picky', '0', '-seg_max_retry', '3'])
     expect(args[args.indexOf('-protocol_whitelist') + 1]).not.toContain('file')
     expect(buildFfmpegArgs({ url: capability }, '/buffer', 0)).not.toContain('-extension_picky')
+    expect(buildFfmpegArgs({ url: capability }, '/buffer', 0)).not.toContain('-seg_max_retry')
     expect(buildFfmpegArgs({ url: 'https://cdn.example/live.m3u8' }, '/buffer', 0)).not.toContain('-extension_picky')
+    expect(buildFfmpegArgs({ url: 'https://cdn.example/live.m3u8' }, '/buffer', 0)).not.toContain('-seg_max_retry')
+    const huyaFlv = buildFfmpegArgs({ url: 'https://line.example/live.flv?wsSecret=PRIVATE', headers: { Referer: 'https://www.huya.com/' } }, '/buffer', 0)
+    expect(huyaFlv).not.toContain('-seg_max_retry')
+    expect(huyaFlv.some(arg => arg.startsWith('-reconnect'))).toBe(false)
   })
   it.each([
     'https://cdn.example/media/11111111-1111-4111-8111-111111111111',
@@ -546,6 +551,7 @@ describe('ffmpeg argument and manifest boundaries', () => {
     const args = buildFfmpegArgs({ url: video, audioUrl: audio, gatewayHls: true, proxyUrl: '' }, '/buffer', 2)
     expect(args.filter(arg => arg === '-i')).toHaveLength(2)
     expect(args.filter(arg => arg === '-extension_picky')).toHaveLength(2)
+    expect(args.filter(arg => arg === '-seg_max_retry')).toHaveLength(2)
     expect(args.filter(arg => arg === '-thread_queue_size')).toHaveLength(1)
     expect(args.indexOf('-thread_queue_size')).toBeGreaterThan(args.lastIndexOf('-i'))
     expect(args.filter(arg => arg === '-protocol_whitelist')).toHaveLength(2)

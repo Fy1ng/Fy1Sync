@@ -37,13 +37,99 @@ export interface AdaptivePullOptions {
   progress?: (event: { track: 'probe' | 'video' | 'audio'; phase: 'received' | 'written'; sq: number; head: number; bytes: number }) => void
 }
 
-const SEGMENT_MS = 5000
-const BEHIND_HEAD = 2
+const DEFAULT_SEGMENT_MS = 5000
+const MIN_SEGMENT_MS = 500
+const MAX_SEGMENT_MS = 15_000
+const MIN_BEHIND_HEAD = 2
+const MAX_BEHIND_HEAD = 10
+const TARGET_INITIAL_BUFFER_MS = 8_000
 const MAX_ATTEMPTS = 3
+const MIN_PENDING_POLL_MS = 150
+const MAX_PENDING_POLL_MS = 500
+const MIN_PENDING_WAIT_MS = 12_000
+const MAX_PENDING_POLLS = 60
 const DEFAULT_SEGMENT_TIMEOUT_MS = 15_000
 const policy: ProxyConfig = {
   enabled: true, hosts: ['*.googlevideo.com'], allowNonStandardPorts: false,
   maxRedirects: 3, requestTimeoutMs: DEFAULT_SEGMENT_TIMEOUT_MS,
+}
+
+function parseUrlDurationMs(raw: string): number | undefined {
+  let url: URL
+  try { url = new URL(raw) } catch { return undefined }
+  const param = url.searchParams.get('dur') ?? /\/dur\/(\d+(?:\.\d+)?)(?:\/|$)/i.exec(url.pathname)?.[1] ?? null
+  if (param === null || !/^\d+(?:\.\d+)?$/.test(param)) return undefined
+  const ms = Math.round(Number(param) * 1000)
+  return Number.isFinite(ms) && ms >= MIN_SEGMENT_MS && ms <= MAX_SEGMENT_MS ? ms : undefined
+}
+
+function parseHeadTimeMillis(headers: Headers): number | undefined {
+  const raw = headers.get('x-head-time-millis')
+  if (raw === null || !/^\d+(?:\.\d+)?$/.test(raw)) return undefined
+  const value = Number(raw)
+  return Number.isFinite(value) && value > 0 && value <= Number.MAX_SAFE_INTEGER ? value : undefined
+}
+
+function behindHeadFor(segmentMs: number): number {
+  return Math.min(MAX_BEHIND_HEAD, Math.max(MIN_BEHIND_HEAD, Math.ceil(TARGET_INITIAL_BUFFER_MS / segmentMs)))
+}
+
+function createDurationEstimator(initialUrlMs?: number) {
+  let currentMs = initialUrlMs ?? DEFAULT_SEGMENT_MS
+  let hasHeaderDelta = false
+  const hasUrlDuration = initialUrlMs !== undefined
+  let lastHeaderSample: { head: number; headTimeMs: number } | undefined
+  let initialWallSample: { head: number; at: number } | undefined
+  const wallSamples: Array<{ head: number; at: number }> = []
+
+  return {
+    observe(head: number, observedAt: number, headTimeMs?: number): void {
+      if (headTimeMs !== undefined) {
+        if (!lastHeaderSample) {
+          lastHeaderSample = { head, headTimeMs }
+          if (!hasUrlDuration && !hasHeaderDelta) {
+            const ratio = head > 0 ? headTimeMs / head : headTimeMs
+            if (ratio >= MIN_SEGMENT_MS && ratio <= MAX_SEGMENT_MS) currentMs = Math.round(ratio)
+          }
+        } else if (head > lastHeaderSample.head && headTimeMs > lastHeaderSample.headTimeMs) {
+          const delta = (headTimeMs - lastHeaderSample.headTimeMs) / (head - lastHeaderSample.head)
+          lastHeaderSample = { head, headTimeMs }
+          if (delta >= MIN_SEGMENT_MS && delta <= MAX_SEGMENT_MS) {
+            currentMs = Math.round(delta)
+            hasHeaderDelta = true
+          }
+        }
+      }
+      if (hasHeaderDelta || hasUrlDuration) return
+      if (!initialWallSample) {
+        initialWallSample = { head, at: observedAt }
+        return
+      }
+      const previousHead = wallSamples.length > 0 ? wallSamples.at(-1)!.head : initialWallSample.head
+      if (head <= previousHead) return
+      if (wallSamples.length === 0) {
+        if (head - initialWallSample.head >= 2) {
+          const elapsed = observedAt - initialWallSample.at
+          if (elapsed >= MIN_SEGMENT_MS) {
+            const candidate = elapsed / (head - initialWallSample.head)
+            if (candidate >= MIN_SEGMENT_MS && candidate <= MAX_SEGMENT_MS) currentMs = Math.round(candidate)
+          }
+        }
+        wallSamples.push({ head, at: observedAt })
+        return
+      }
+      wallSamples.push({ head, at: observedAt })
+      if (wallSamples.length > 6) wallSamples.shift()
+      const oldest = wallSamples[0]!
+      const elapsed = observedAt - oldest.at
+      const advanced = head - oldest.head
+      if (advanced > 0 && elapsed >= MIN_SEGMENT_MS) {
+        const candidate = elapsed / advanced
+        if (candidate >= MIN_SEGMENT_MS && candidate <= MAX_SEGMENT_MS) currentMs = Math.round(candidate)
+      }
+    },
+    durationMs(): number { return currentMs },
+  }
 }
 
 function requireMediaUrl(raw: string | URL | Request): URL {
@@ -159,21 +245,30 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
     return doFetch(requireMediaUrl(input), init)
   }
 
-  const segment = async (base: string, sq: number, probe = false): Promise<{ head: number; bytes: Buffer }> => {
+  const estimator = createDurationEstimator(parseUrlDurationMs(source.videoUrl) ?? parseUrlDurationMs(source.audioUrl))
+
+  const segment = async (base: string, sq: number, probe = false): Promise<{ head: number; bytes: Buffer; observedAt: number }> => {
     const url = requireMediaUrl(base)
     url.searchParams.set('sq', String(sq))
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let attempt = 0
+    let pendingStartedAt: number | undefined
+    let pendingPolls = 0
+    while (attempt < maxAttempts) {
       if (signal.aborted) throw abortError()
       const request = new AbortController()
       const requestSignal = AbortSignal.any([signal, request.signal])
       const timer = timeoutMs > 0 ? setTimeout(() => { request.abort() }, timeoutMs) : undefined
+      let notPublishedDelayMs: number | undefined
+      let pendingExhausted = false
       try {
         const operation = (async () => {
+          const startedAt = now()
           const { response } = await safeFetch(url.toString(), policy, {
             fetchImpl: checkedFetch, network: options.network, resolve: options.resolve, signal: requestSignal,
             headers: { Accept: '*/*' },
             ...(dispatcherPool && attempt === 0 ? { dispatcherPool, connectionScope: base } : {}),
           })
+          const headersAt = now()
           if (response.status === 403 || response.status === 410) {
             void response.body?.cancel().catch(() => {})
             throw new AdaptivePullError('adaptive-expired', response.status)
@@ -181,11 +276,30 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
           const rawHead = response.headers.get('x-head-seqnum')
           const head = Number(rawHead)
           const validHead = rawHead !== null && /^\d+$/.test(rawHead) && Number.isSafeInteger(head)
+          const headTimeMs = parseHeadTimeMillis(response.headers)
+          if (validHead) estimator.observe(head, headersAt, headTimeMs)
           // Discovery needs only headers, including when an old sq=0 was evicted.
           // Cancel the unused historical body rather than downloading a full segment.
           if (probe && (response.ok || response.status === 404) && validHead) {
             void response.body?.cancel().catch(() => {})
-            return { head, bytes: Buffer.alloc(0) }
+            return { head, bytes: Buffer.alloc(0), observedAt: startedAt }
+          }
+          // A 404 with sq > advertised head means the segment is not published yet.
+          // Poll briefly with a bounded budget instead of terminating ffmpeg immediately.
+          if (response.status === 404 && validHead && sq > head) {
+            void response.body?.cancel().catch(() => {})
+            pendingStartedAt ??= headersAt
+            const segmentMs = estimator.durationMs()
+            const maxPendingWaitMs = Math.max(MIN_PENDING_WAIT_MS, segmentMs * 3)
+            const pollMs = Math.min(MAX_PENDING_POLL_MS, Math.max(MIN_PENDING_POLL_MS, Math.round(segmentMs / 4)))
+            if (pendingPolls < MAX_PENDING_POLLS && headersAt - pendingStartedAt < maxPendingWaitMs) {
+              pendingPolls++
+              attempt = 0
+              notPublishedDelayMs = pollMs
+              return undefined
+            }
+            pendingExhausted = true
+            throw new AdaptivePullError('adaptive-request-failed', 404)
           }
           if (!response.ok) {
             void response.body?.cancel().catch(() => {})
@@ -195,19 +309,21 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
             void response.body?.cancel().catch(() => {})
             throw new AdaptivePullError('adaptive-invalid-head')
           }
-          return { head, bytes: await readBounded(response, maxBytes, requestSignal) }
+          return { head, bytes: await readBounded(response, maxBytes, requestSignal), observedAt: startedAt }
         })()
-        return await abortable(operation, requestSignal)
+        const result = await abortable(operation, requestSignal)
+        if (result) return result
       } catch (error) {
         if (error instanceof StreamFailureError && attempt === maxAttempts - 1) throw error
         if (signal.aborted) throw abortError()
         const safe = error instanceof AdaptivePullError ? error : new AdaptivePullError(
           error && typeof error === 'object' && 'reason' in error ? 'adaptive-unsafe-url' : 'adaptive-request-failed',
         )
-        if (safe.code !== 'adaptive-request-failed' && safe.code !== 'adaptive-aborted') throw safe
+        if (pendingExhausted || (safe.code !== 'adaptive-request-failed' && safe.code !== 'adaptive-aborted')) throw safe
         if (attempt === maxAttempts - 1) throw new AdaptivePullError('adaptive-request-failed', safe.status)
+        attempt++
       } finally { clearTimeout(timer) }
-      await wait(Math.min(attempt + 1, 6) * 350, signal)
+      await wait(notPublishedDelayMs ?? Math.min(attempt, 6) * 350, signal)
     }
     throw new AdaptivePullError('adaptive-request-failed')
   }
@@ -222,19 +338,19 @@ export async function pullAdaptive(source: AdaptiveSource, options: AdaptivePull
     production = (async () => {
       const first = await segment(source.videoUrl, 0, true)
       options.progress?.({ track: 'probe', phase: 'received', sq: 0, head: first.head, bytes: first.bytes.length })
-      const start = Math.max(0, first.head - BEHIND_HEAD)
+      const start = Math.max(0, first.head - behindHeadFor(estimator.durationMs()))
       const pull = async (base: string, output: Writable, track: 'video' | 'audio'): Promise<void> => {
         let sq = start
         while (!signal.aborted) {
           const item = await segment(base, sq)
           options.progress?.({ track, phase: 'received', sq, head: item.head, bytes: item.bytes.length })
-          const observedAt = now()
           await writeBytes(output, item.bytes, signal)
           options.progress?.({ track, phase: 'written', sq, head: item.head, bytes: item.bytes.length })
           sq++
           // Drain already advertised segments so the muxer can seal its first GOP and
-          // playback has a complete segment ahead. Pace only once the advertised head is reached.
-          const delay = Math.max(0, (sq - item.head) * SEGMENT_MS - (now() - observedAt))
+          // playback has a complete segment ahead. Pace only once the advertised head is reached,
+          // subtracting request, download and pipe-write elapsed time from the segment cadence.
+          const delay = Math.max(0, (sq - item.head) * estimator.durationMs() - (now() - item.observedAt))
           if (delay > 0) await wait(delay, signal)
         }
         throw abortError()

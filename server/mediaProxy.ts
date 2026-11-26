@@ -4,7 +4,7 @@ import { mediaRequestPolicy, type ProxyConfig } from './config'
 import { mediaChild, mediaEntry, type MediaAccess, type MediaAccessScope } from './mediaAccess'
 import { rewritePlaylist, shouldRewrite } from './hlsRewrite'
 import type { NetworkContext } from './networkPolicy'
-import { classifyNetworkFailure, type StreamFailure } from './networkFailure'
+import { classifyNetworkFailure, StreamFailureError, type StreamFailure } from './networkFailure'
 import { hasSensitiveHeaders, PinnedDispatcherPool, ProxyError, safeFetch, type Resolver } from './safeFetch'
 import { mediaUrlCredentials, withoutSourceCredentials } from './mediaCredentials'
 
@@ -12,6 +12,9 @@ export const MEDIA_ORIGIN = 'app://app'
 const MAX_PLAYLIST_BYTES = 4 * 1_048_576
 const MAX_RESOURCES = 8192
 const TTL_MS = 10 * 60_000
+const MAX_UPSTREAM_RETRIES = 2
+const TRANSIENT_UPSTREAM_STATUSES = new Set([500, 502, 503, 504])
+const TRANSIENT_SOCKET_CODES = new Set(['ECONNRESET', 'ECONNABORTED', 'EPIPE', 'UND_ERR_SOCKET', 'UND_ERR_CLOSED', 'ERR_SOCKET_CLOSED', 'ERR_STREAM_PREMATURE_CLOSE'])
 const RESPONSE_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag']
 class MediaCapacityError extends Error {}
 export interface MediaDeps {
@@ -175,11 +178,29 @@ export class MediaRegistry {
       if (request.method === 'GET' && shouldRewrite(resource.url, null)) delete headers.range
       const connectionScope = JSON.stringify([this.contextId(resource.network ?? this.deps.network),
         createHash('sha256').update(JSON.stringify(Object.entries(resource.headers ?? {}).sort(([a], [b]) => a.localeCompare(b)))).digest('hex')])
-      const fetchResource = () => safeFetch(resource.url, mediaRequestPolicy(this.deps.config), {
+      const fetchResource = (usePool: boolean) => safeFetch(resource.url, mediaRequestPolicy(this.deps.config), {
         method: request.method, headers, signal: controller.signal, resolve: this.deps.resolve, fetchImpl: this.deps.fetchImpl, network: resource.network ?? this.deps.network,
-        mediaAccess: resource.access, dispatcherPool: this.pool, connectionScope,
+        mediaAccess: resource.access, ...(usePool ? { dispatcherPool: this.pool, connectionScope } : {}),
       })
-      let result = await fetchResource()
+      const fetchWithRetry = async () => {
+        for (let attempt = 0; ; attempt++) {
+          try {
+            // Attempt 0 reuses the connection pool; retries bypass it to avoid stale sockets.
+            const fetched = await fetchResource(attempt === 0)
+            if (TRANSIENT_UPSTREAM_STATUSES.has(fetched.response.status)
+              && attempt < MAX_UPSTREAM_RETRIES && !controller.signal.aborted) {
+              await fetched.response.body?.cancel().catch(() => {})
+              await abortableDelay(150 * (attempt + 1), controller.signal)
+              continue
+            }
+            return fetched
+          } catch (error) {
+            if (attempt >= MAX_UPSTREAM_RETRIES || controller.signal.aborted || !isRetryableUpstreamError(error)) throw error
+            await abortableDelay(attempt === 0 ? 0 : 150 * attempt, controller.signal)
+          }
+        }
+      }
+      let result = await fetchWithRetry()
       upstream = result.response
       let upstreamBody: ReadableStream<Uint8Array> | null = upstream.body
       let playlist = false
@@ -189,7 +210,7 @@ export class MediaRegistry {
         if (sniffed.playlist && upstream.status === 206 && headers.range) {
           await upstreamBody.cancel().catch(() => {})
           delete headers.range
-          result = await fetchResource()
+          result = await fetchWithRetry()
           upstream = result.response
           if (upstream.body) {
             sniffed = await sniffPlaylist(upstream.body)
@@ -362,6 +383,48 @@ async function readBounded(body: ReadableStream<Uint8Array>, limit: number): Pro
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
   return bytes
 }
+function isRetryableUpstreamError(error: unknown): boolean {
+  if (error instanceof ProxyError) return false
+  if (error instanceof StreamFailureError) {
+    if (error.failure.stage === 'resolve' || error.failure.stage === 'http') return false
+    if (['tls-certificate', 'tls-failed', 'proxy-rejected', 'socks4-unsupported', 'proxy-type-unsupported', 'dns-failed', 'connection-timeout'].includes(error.failure.code)) {
+      return false
+    }
+  }
+  const pending: unknown[] = [error]
+  const seen = new Set<object>()
+  let retryable = false
+  while (pending.length && seen.size < 32) {
+    const value = pending.shift()
+    if (!value || typeof value !== 'object' || seen.has(value)) continue
+    seen.add(value)
+    const item = value as { name?: unknown; code?: unknown; message?: unknown; status?: unknown; statusCode?: unknown; cause?: unknown; errors?: unknown; failure?: { detail?: unknown } }
+    if (item.name === 'AbortError' || item.name === 'TimeoutError' || item.name === 'ProxyError') return false
+    const code = typeof item.code === 'string' ? item.code : ''
+    if (/CERT|TLS|SSL|AUTH|REJECT|SOCKS5_|PROXY_HANDSHAKE_TIMEOUT|ENOTFOUND|EAI_AGAIN|TIMEOUT|ETIMEDOUT/i.test(code)
+      || item.status !== undefined || item.statusCode !== undefined) return false
+    const message = typeof item.message === 'string' ? item.message : ''
+    if (TRANSIENT_SOCKET_CODES.has(code)
+      || /\b(?:ECONNRESET|ECONNABORTED|EPIPE|UND_ERR_SOCKET|UND_ERR_CLOSED)\b|other side closed|socket hang up|connection reset|connection aborted|broken pipe/i.test(message)) {
+      retryable = true
+    }
+    if (item.cause !== undefined) pending.push(item.cause)
+    if (item.failure?.detail !== undefined) pending.push(item.failure.detail)
+    if (Array.isArray(item.errors)) pending.push(...item.errors)
+  }
+  return retryable
+}
+
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0) return signal.aborted ? Promise.reject(signal.reason ?? new DOMException('Aborted', 'AbortError')) : Promise.resolve()
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) { reject(signal.reason ?? new DOMException('Aborted', 'AbortError')); return }
+    const onAbort = () => { clearTimeout(timer); reject(signal.reason ?? new DOMException('Aborted', 'AbortError')) }
+    const timer = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve() }, ms)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 function errorResponse(status: number, code: string, message: string): Response {
   return Response.json({ error: { code, message } }, { status })
 }

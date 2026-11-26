@@ -11,7 +11,7 @@ import { lookup } from 'node:dns/promises'
 import { isIP, type LookupFunction } from 'node:net'
 import { Agent, buildConnector, type Dispatcher } from 'undici'
 import { networkContext, routeCandidates, routeUsesRemoteDns, type NetworkContext, type NetworkRoute } from './networkPolicy'
-import { createProxyDispatcher, isProxyConnectFailure } from './proxyDispatcher'
+import { AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_PROXY_KEEP_ALIVE_TIMEOUT_MS, createProxyDispatcher, isProxyConnectFailure } from './proxyDispatcher'
 import { StreamFailureError, classifyNetworkFailure } from './networkFailure'
 import { hostAllowed, type RequestPolicy } from './config'
 import { mediaEntry, type MediaAccess } from './mediaAccess'
@@ -164,8 +164,9 @@ export function createPinnedDispatcher(hostname: string, addresses: readonly str
     })
   }
   const multiAddress = records.length > 1
-  const connect = buildConnector({ lookup, timeout: timeoutMs, autoSelectFamily: multiAddress,
-    ...(multiAddress ? { autoSelectFamilyAttemptTimeout: Math.max(10, Math.min(timeoutMs > 0 ? timeoutMs : 3_000, 3_000)) } : {}), rejectUnauthorized: verifyTls })
+  const connectTimeoutMs = timeoutMs > 0 ? timeoutMs : DEFAULT_CONNECT_TIMEOUT_MS
+  const connect = buildConnector({ lookup, timeout: connectTimeoutMs, autoSelectFamily: multiAddress,
+    ...(multiAddress ? { autoSelectFamilyAttemptTimeout: Math.max(10, Math.min(connectTimeoutMs, AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS)) } : {}), rejectUnauthorized: verifyTls })
   return new Agent({
     connections, maxOrigins: 1, headersTimeout: timeoutMs, bodyTimeout: 0,
     ...(maxHeaderSize === undefined ? {} : { maxHeaderSize }),
@@ -198,8 +199,9 @@ export class PinnedDispatcherPool {
         void retiring.close().catch(() => {}).finally(() => this.retiring.delete(retiring))
         this.agents.delete(first)
       }
-      agent = route && route.kind !== 'direct' ? createProxyDispatcher(route, timeoutMs, this.options.connections ?? 1, tls, maxHeaderSize)
-        : createPinnedDispatcher(url.hostname, addresses, timeoutMs, 60_000, this.options.connections ?? 1, tls.verifyTls, maxHeaderSize)
+      agent = route && route.kind !== 'direct'
+        ? createProxyDispatcher(route, timeoutMs, this.options.connections ?? 1, tls, maxHeaderSize, DEFAULT_PROXY_KEEP_ALIVE_TIMEOUT_MS)
+        : createPinnedDispatcher(url.hostname, addresses, timeoutMs, DEFAULT_PROXY_KEEP_ALIVE_TIMEOUT_MS, this.options.connections ?? 1, tls.verifyTls, maxHeaderSize)
       this.agents.set(key, agent)
     }
     return agent
@@ -298,7 +300,7 @@ export async function safeFetch(
       signal.throwIfAborted()
       const pooled = options.dispatcherPool !== undefined
       const dispatcher = options.dispatcherPool?.get(check.url, check.addresses, timeoutMs, route, options.connectionScope, tls, options.maxHeaderSize)
-        ?? (route.kind !== 'direct' ? createProxyDispatcher(route, timeoutMs, 1, tls, options.maxHeaderSize)
+        ?? (route.kind !== 'direct' ? createProxyDispatcher(route, timeoutMs, 1, tls, options.maxHeaderSize, 4_000)
           : createPinnedDispatcher(check.url.hostname, check.addresses, timeoutMs, 4000, 1, tls.verifyTls, options.maxHeaderSize))
       const abort = () => { void dispatcher.destroy().catch(() => {}) }
       if (!pooled) signal.addEventListener('abort', abort, { once: true })

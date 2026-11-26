@@ -91,9 +91,9 @@ export class MediaGateway {
       let listener: Listener
       const server = createServer((request, response) => { void this.handle(listener, request, response) })
       server.maxHeadersCount = 32
-      server.headersTimeout = 10_000
-      server.requestTimeout = 15_000
-      server.keepAliveTimeout = 1_000
+      server.keepAliveTimeout = 30_000
+      server.headersTimeout = 35_000
+      server.requestTimeout = 40_000
       const failed = () => { server.close(); reject(new Error('无法启动本地媒体转发服务')) }
       server.once('error', failed)
       server.listen(0, '127.0.0.1', () => {

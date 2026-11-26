@@ -4,7 +4,14 @@ import { createServer as createHttpsServer } from 'node:https'
 import { connect, createServer, type Server, type Socket } from 'node:net'
 import { fetch as undiciFetch, WebSocket, type Dispatcher } from 'undici'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createProxyDispatcher, isProxyConnectFailure, markProxyConnectFailure } from './proxyDispatcher'
+import {
+  AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS,
+  DEFAULT_CONNECT_TIMEOUT_MS,
+  DEFAULT_PROXY_KEEP_ALIVE_TIMEOUT_MS,
+  createProxyDispatcher,
+  isProxyConnectFailure,
+  markProxyConnectFailure,
+} from './proxyDispatcher'
 import { TEST_TLS_CERT, TEST_TLS_KEY } from './networkTls.testFixture'
 
 const cleanup: Array<() => Promise<void>> = []
@@ -269,5 +276,97 @@ describe('proxy dispatcher transport', () => {
       expect(isProxyConnectFailure(Object.assign(new Error('rejected', { cause: marked }), { code }))).toBe(false)
     }
     expect(isProxyConnectFailure(Object.assign(new Error('forbidden', { cause: marked }), { statusCode: 407 }))).toBe(false)
+  })
+
+  it('establishes concurrent HTTP CONNECT tunnels in parallel via a Pool instead of serializing behind one Client', async () => {
+    const target = await listen(createHttpServer((request, response) => response.end(`ok:${request.url}`)))
+    const pendingConnects: Array<() => void> = []
+    const upstreams = new Set<Socket>()
+    const server = createHttpServer()
+    server.on('connect', (_request, socket, head) => {
+      const complete = () => {
+        const upstream = connect(target.port, '127.0.0.1')
+        upstreams.add(upstream); upstream.on('close', () => upstreams.delete(upstream))
+        upstream.on('error', () => socket.destroy()); socket.on('close', () => upstream.destroy())
+        upstream.once('connect', () => {
+          socket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+          if (head.length) upstream.write(head)
+          socket.pipe(upstream); upstream.pipe(socket)
+        })
+      }
+      pendingConnects.push(complete)
+      // Only finish the first CONNECT once the second CONNECT arrives concurrently.
+      if (pendingConnects.length === 2) {
+        for (const release of pendingConnects.splice(0)) release()
+      }
+    })
+    const proxy = await listen(server)
+    cleanup.push(async () => { for (const socket of upstreams) socket.destroy() })
+    const route = createProxyDispatcher({ kind: 'http', proxyUrl: `http://127.0.0.1:${proxy.port}` }, 2_000, 2)
+    owned.push(route)
+    const results = await Promise.all([
+      undiciFetch('http://first.fixture.invalid/a', { dispatcher: route }).then(r => r.text()),
+      undiciFetch('http://second.fixture.invalid/b', { dispatcher: route }).then(r => r.text()),
+    ])
+    expect(results).toEqual(['ok:/a', 'ok:/b'])
+  })
+
+  it('keeps both HTTP and SOCKS5 proxy tunnels alive longer than Undici default 4s keep-alive timeout', async () => {
+    expect(DEFAULT_PROXY_KEEP_ALIVE_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000)
+    expect(AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS).toBeGreaterThanOrEqual(250)
+    expect(AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS).toBeLessThanOrEqual(500)
+    const targetServer = createHttpServer((_request, response) => response.end('kept-alive'))
+    // Disable Node's default 5s Keep-Alive header so Undici relies on the dispatcher's keepAliveTimeout.
+    targetServer.keepAliveTimeout = 0
+    const target = await listen(targetServer)
+    const httpConnects: string[] = []
+    const upstreams = new Set<Socket>()
+    const httpServer = createHttpServer()
+    httpServer.on('connect', (request, socket, head) => {
+      httpConnects.push(request.url!)
+      const upstream = connect(target.port, '127.0.0.1')
+      upstreams.add(upstream); upstream.on('close', () => upstreams.delete(upstream))
+      upstream.on('error', () => socket.destroy()); socket.on('close', () => upstream.destroy())
+      upstream.once('connect', () => {
+        socket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+        if (head.length) upstream.write(head)
+        socket.pipe(upstream); upstream.pipe(socket)
+      })
+    })
+    const httpProxy = await listen(httpServer)
+    cleanup.push(async () => { for (const socket of upstreams) socket.destroy() })
+    const socksProxy = await socks({ targetPort: target.port })
+    const httpRoute = createProxyDispatcher({ kind: 'http', proxyUrl: `http://127.0.0.1:${httpProxy.port}` }, 0, 2)
+    const socksRoute = createProxyDispatcher({ kind: 'socks5', proxyUrl: socksProxy.url }, 0, 2)
+    owned.push(httpRoute, socksRoute)
+    await Promise.all([
+      undiciFetch('http://fixture.invalid/1', { dispatcher: httpRoute }).then(r => r.text()),
+      undiciFetch('http://fixture.invalid/1', { dispatcher: socksRoute }).then(r => r.text()),
+    ])
+    // Wait past Undici's 4s default keepAliveTimeout; both HTTP and SOCKS5 tunnels must stay reused.
+    await new Promise(resolve => setTimeout(resolve, 4_200))
+    const second = await Promise.all([
+      undiciFetch('http://fixture.invalid/2', { dispatcher: httpRoute }).then(r => r.text()),
+      undiciFetch('http://fixture.invalid/2', { dispatcher: socksRoute }).then(r => r.text()),
+    ])
+    expect(second).toEqual(['kept-alive', 'kept-alive'])
+    expect(httpConnects).toHaveLength(1)
+    expect(socksProxy.requests).toHaveLength(1)
+  }, 12_000)
+
+  it('applies a bounded default connect/handshake deadline when requestTimeoutMs is 0 while allowing delayed response headers', async () => {
+    const delayedTarget = await listen(createHttpServer((_request, response) => {
+      setTimeout(() => response.end('slow-headers-ok'), 120)
+    }))
+    const socksProxy = await socks({ targetPort: delayedTarget.port })
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    try {
+      const route = createProxyDispatcher({ kind: 'socks5', proxyUrl: socksProxy.url }, 0, 1)
+      owned.push(route)
+      const text = await (await undiciFetch('http://fixture.invalid/slow', { dispatcher: route })).text()
+      expect(text).toBe('slow-headers-ok')
+      const delays = setTimeoutSpy.mock.calls.map(call => call[1])
+      expect(delays).toContain(DEFAULT_CONNECT_TIMEOUT_MS + 100)
+    } finally { setTimeoutSpy.mockRestore() }
   })
 })

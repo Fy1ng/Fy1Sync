@@ -145,6 +145,58 @@ describe('adaptive producer in the existing buffer state machine', () => {
     await f.advance(); await settle(() => f.children.length === 2)
     expect(f.current().notice).toEqual({ code: 'youtube-adaptive-fallback', fromHeight: 1440, toHeight: 720 })
   })
+
+  it('keeps the adaptive producer alive without reconnecting when pullAdaptive recovers from early 404s', async () => {
+    const { pullAdaptive } = await import('./adaptivePuller')
+    const root = await mkdtemp(path.join(os.tmpdir(), 'syncer-adaptive-404-'))
+    let pullsFor101 = 0
+    const children: Child[] = []
+    const states: BufferState[] = []
+    const manager = new BufferManager({
+      userDataDir: root, ffmpegPath: 'ffmpeg', pollIntervalMs: 25, deleteGraceMs: 0,
+      adaptiveTransport: async () => ({ audioInput: 'pipe:3', extraPipe: true, close: vi.fn() }),
+      spawn: () => { const child = new Child(); children.push(child); return child },
+      pullAdaptive: (adaptiveSource, options) => pullAdaptive(adaptiveSource, {
+        ...options,
+        resolve: async () => ['142.250.0.1'],
+        sleep: async () => {},
+        fetchImpl: (async (raw) => {
+          const sq = Number(new URL(String(raw)).searchParams.get('sq'))
+          if (sq === 101 && ++pullsFor101 <= 4) {
+            return new Response('pending', { status: 404, headers: { 'x-head-seqnum': '100' } })
+          }
+          if (sq <= 101) {
+            return new Response(`chunk-${sq}`, { status: 200, headers: { 'x-head-seqnum': sq >= 101 ? '101' : '100' } })
+          }
+          return await new Promise<Response>((_resolve, reject) => {
+            options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+          })
+        }) as typeof fetch,
+      }),
+      killTree: async child => { child.kill() },
+    })
+    manager.subscribe(state => states.push(state))
+    try {
+      await manager.start('official', async () => ({
+        url: input.url,
+        adaptive: {
+          ...source,
+          videoUrl: 'https://rr1.googlevideo.com/v?sig=PRIVATE_VIDEO&dur=2.000',
+          audioUrl: 'https://rr1.googlevideo.com/a?sig=PRIVATE_AUDIO&dur=2.000',
+        },
+      }))
+      const received: string[] = []
+      await settle(() => children.length === 1)
+      children[0]!.stdin.on('data', chunk => received.push(chunk.toString()))
+      await vi.waitFor(() => expect(received.join('')).toContain('chunk-101'), { timeout: 2000, interval: 10 })
+      expect(pullsFor101).toBeGreaterThanOrEqual(5)
+      expect(children).toHaveLength(1)
+      expect(states.some(state => state.state === 'reconnecting' || state.state === 'failed')).toBe(false)
+    } finally {
+      await manager.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('adaptive mux boundaries', () => {

@@ -11,6 +11,7 @@ import { fetch as undiciFetch } from 'undici'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProxyConfig } from './config'
 import { directNetwork, type NetworkContext } from './networkPolicy'
+import { DEFAULT_MEDIA_NETWORK } from './mediaNetworkOptions'
 import { classifyNetworkFailure } from './networkFailure'
 import { PinnedDispatcherPool, safeFetch } from './safeFetch'
 import { TEST_TLS_CERT, TEST_TLS_KEY } from './networkTls.testFixture'
@@ -269,5 +270,31 @@ describe('safeFetch trusted proxy branch', () => {
       `http://fixture.invalid:${relay.targetPort}/start`, `http://cdn.fixture.invalid:${destinationPort}/final`,
     ])
     expect(dns.mock.calls).toEqual([['cdn.fixture.invalid']])
+  })
+
+  it('allows delayed response headers through an HTTP CONNECT proxy under DEFAULT_MEDIA_NETWORK (requestTimeoutMs=0)', async () => {
+    const target = createServer((_request, response) => {
+      setTimeout(() => response.end('delayed-over-proxy'), 80)
+    })
+    const relay = await tunnel(target)
+    const result = await safeFetch(`http://fixture.invalid:${relay.targetPort}/slow`, { ...policy, allowNonStandardPorts: true, requestTimeoutMs: 10 }, {
+      network: { ...relay.network, media: DEFAULT_MEDIA_NETWORK },
+      resolve: async () => { throw new Error('local DNS must not run') },
+    })
+    expect(await result.response.text()).toBe('delayed-over-proxy')
+  })
+
+  it('fails over rapidly from an unavailable IPv6 candidate to IPv4 using the shortened attempt timeout', async () => {
+    const target = createServer((_request, response) => response.end('fast-ipv4-fallback'))
+    const port = await listen(target)
+    releases.push(() => new Promise<void>(resolve => { target.close(() => resolve()); target.closeAllConnections() }))
+    const started = Date.now()
+    const result = await safeFetch(`http://fixture.invalid:${port}/live`, { ...policy, allowNonStandardPorts: true }, {
+      network: directNetwork,
+      resolve: async () => ['::1', '127.0.0.1'],
+    })
+    const elapsed = Date.now() - started
+    expect(await result.response.text()).toBe('fast-ipv4-fallback')
+    expect(elapsed).toBeLessThan(1_500)
   })
 })

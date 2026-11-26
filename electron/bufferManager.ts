@@ -591,8 +591,9 @@ function buildInputArgs(rawUrl: string, input: BufferInput): string[] {
     if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.search || url.hash
       || !/^\/media\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(url.pathname)) throw new Error('invalid gateway HLS input')
     // Opaque segment capabilities have no extension. Only the guarded Node gateway
-    // may relax the HLS demuxer's filename heuristic; remote inputs retain it.
-    args.push('-f', 'hls', '-extension_picky', '0')
+    // may relax the HLS demuxer's filename heuristic and retry transient segment fetches;
+    // remote inputs (such as single-use signed Huya FLV URLs) retain strict defaults.
+    args.push('-f', 'hls', '-extension_picky', '0', '-seg_max_retry', '3')
   }
   args.push('-i', local ? fileURLToPath(url) : rawUrl)
   return args
