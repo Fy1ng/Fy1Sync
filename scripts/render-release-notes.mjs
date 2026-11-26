@@ -4,8 +4,14 @@ import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
-const GITHUB_REPO = 'https://github.com/Fy1ng/Fy1Sync'
-const GITCODE_REPO = 'https://gitcode.com/Fy1ng/Fy1Sync'
+export const GITHUB_REPO = 'https://github.com/Fy1ng/Fy1Sync'
+export const GITCODE_REPO = 'https://gitcode.com/Fy1ng/Fy1Sync'
+export const README_DIRECT_DOWNLOAD_SUFFIXES = [
+  'win-x64-nsis.exe',
+  'win-x64-portable.zip',
+  'mac-arm64.dmg',
+  'mac-x64.dmg',
+]
 
 export function validateReleaseVersion(version) {
   if (typeof version !== 'string' || !VERSION_PATTERN.test(version)) {
@@ -151,19 +157,24 @@ ${changelog}
 `
 }
 
-export function verifyReadmeDownloadLinks(readmeText, version) {
+export function verifyReadmeDownloadLinks(readmeText, version, { host = 'github' } = {}) {
   validateReleaseVersion(version)
-  const required = [
-    `${GITHUB_REPO}/releases/download/v${version}/Fy1Sync-${version}-win-x64-nsis.exe`,
-    `${GITCODE_REPO}/releases/download/v${version}/Fy1Sync-${version}-win-x64-nsis.exe`,
-    `${GITHUB_REPO}/releases/download/v${version}/Fy1Sync-${version}-win-x64-portable.zip`,
-    `${GITHUB_REPO}/releases/download/v${version}/Fy1Sync-${version}-mac-arm64.dmg`,
-    `${GITHUB_REPO}/releases/download/v${version}/Fy1Sync-${version}-mac-x64.dmg`,
-  ]
-  for (const url of required) {
+  if (host !== 'github' && host !== 'gitcode') {
+    throw new Error(`Unsupported README host: ${String(host)}`)
+  }
+  const repoBase = host === 'github' ? GITHUB_REPO : GITCODE_REPO
+  const otherRepoBase = host === 'github' ? GITCODE_REPO : GITHUB_REPO
+  for (const suffix of README_DIRECT_DOWNLOAD_SUFFIXES) {
+    const url = `${repoBase}/releases/download/v${version}/Fy1Sync-${version}-${suffix}`
     if (!readmeText.includes(url)) {
-      throw new Error(`README.md is missing current v${version} direct download link: ${url}`)
+      throw new Error(`README.md (${host}) is missing current v${version} direct download link: ${url}`)
     }
+  }
+  if (readmeText.includes(`${otherRepoBase}/releases/download/`)) {
+    throw new Error(`README.md (${host}) must not include ${otherRepoBase} direct download links`)
+  }
+  if (/releases\/download\/[^\s"']*linux-/.test(readmeText)) {
+    throw new Error(`README.md (${host}) must not include Linux direct download links`)
   }
 }
 

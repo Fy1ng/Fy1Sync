@@ -216,6 +216,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24.15.0'
@@ -248,7 +249,7 @@ jobs:
             *) printf '%s\n' "$GITCODE_TOKEN" ;;
           esac
           EOF
-            GIT_TERMINAL_PROMPT=0 GIT_ASKPASS="$askpass" git push https://gitcode.com/Fy1ng/Fy1Sync.git "HEAD:refs/heads/main" "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME" || GIT_TERMINAL_PROMPT=0 GIT_ASKPASS="$askpass" git push https://gitcode.com/Fy1ng/Fy1Sync.git "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+            GIT_TERMINAL_PROMPT=0 GIT_ASKPASS="$askpass" node scripts/sync-gitcode-readme.mjs --remote https://gitcode.com/Fy1ng/Fy1Sync.git --source HEAD --branch main --tag "$GITHUB_REF_NAME"
             rm -f "$askpass"
           fi
           node scripts/sync-gitcode-release.mjs --dir .release-final --notes-file .runtime-cache/RELEASE-NOTES.md --target-commitish "${GITHUB_SHA}" --if-configured

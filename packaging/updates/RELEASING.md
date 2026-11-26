@@ -124,5 +124,5 @@ node scripts/online-update-release.mjs prepare `
 
 GitHub Release 发布流程 (`.github/workflows/release.yml`) 在上传 12 个安装包与 `SHA256SUMS.txt` 前, 会运行 `node scripts/render-release-notes.mjs --out .runtime-cache/RELEASE-NOTES.md`, 基于 `packaging/releases/<版本>.md` 自动置顶各平台安装包下载按钮 (含 GitHub 与 GitCode 国内直链) 和三步上手说明. 更新 `package.json` 版本号时, 需同步更新 `README.md` 首屏下载按钮中的版本号 (`npm run test:packaging` 会自动校验两者一致).
 
-若仓库配置了 `GITCODE_TOKEN` Secret, 发布工作流会在 GitHub Release 发布后自动推送标签并调用 `node scripts/sync-gitcode-release.mjs` 将全部 13 个产物同步到 GitCode Releases; 本地补传可执行 `GITCODE_TOKEN=<令牌> npm run release:gitcode -- --dir .release --notes-file .runtime-cache/RELEASE-NOTES.md`.
+主线 (`main` / GitHub) 中的 `README.md` 仅保留 GitHub 下载直链, 推送到 GitCode 时使用 `npm run push:gitcode` (或同时推双端 `npm run push:all`), 脚本会自动在独立临时索引中生成并快进同步仅含 GitCode 下载直链的 `README.md` 到 `gitcode/main`, 不会污染本地工作区和 GitHub `main`. 若仓库配置了 `GITCODE_TOKEN` Secret, 发布工作流会在 GitHub Release 发布后自动调用 `scripts/sync-gitcode-readme.mjs` 同步分支与标签, 再调用 `node scripts/sync-gitcode-release.mjs` 将全部 13 个产物同步到 GitCode Releases; 本地补传可执行 `GITCODE_TOKEN=<令牌> npm run release:gitcode -- --dir .release --notes-file .runtime-cache/RELEASE-NOTES.md`.
 

@@ -40,6 +40,14 @@ test('extractChangelogSections rejects blank notes', () => {
 
 test('README.md keeps direct download buttons aligned with package.json version', async () => {
   const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8')
-  verifyReadmeDownloadLinks(readme, pkg.version)
+  verifyReadmeDownloadLinks(readme, pkg.version, { host: 'github' })
   assert.doesNotMatch(readme, /releases\/download\/[^\s"']*linux-/)
+  assert.throws(() => verifyReadmeDownloadLinks(readme, pkg.version, { host: 'gitcode' }))
+  assert.throws(() => verifyReadmeDownloadLinks(readme, pkg.version, { host: 'invalid' }))
+
+  const mixedWithGitcode = `${readme}\nhttps://gitcode.com/Fy1ng/Fy1Sync/releases/download/v${pkg.version}/Fy1Sync-${pkg.version}-win-x64-nsis.exe`
+  assert.throws(() => verifyReadmeDownloadLinks(mixedWithGitcode, pkg.version, { host: 'github' }))
+
+  const withLinux = `${readme}\nhttps://github.com/Fy1ng/Fy1Sync/releases/download/v${pkg.version}/Fy1Sync-${pkg.version}-linux-x64.deb`
+  assert.throws(() => verifyReadmeDownloadLinks(withLinux, pkg.version, { host: 'github' }))
 })

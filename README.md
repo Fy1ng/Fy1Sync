@@ -9,11 +9,9 @@
 
 <p align="center">
   <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.6.0/Fy1Sync-0.6.0-win-x64-nsis.exe"><img src="https://img.shields.io/badge/Windows%20%E5%AE%89%E8%A3%85%E7%89%88-.exe%20%E7%9B%B4%E9%93%BE%E4%B8%8B%E8%BD%BD-6fd3a8?style=for-the-badge&labelColor=18181b" alt="下载 Windows 安装包 (.exe)"></a>
-  <a href="https://gitcode.com/Fy1ng/Fy1Sync/releases/download/v0.6.0/Fy1Sync-0.6.0-win-x64-nsis.exe"><img src="https://img.shields.io/badge/Windows%20%E5%9B%BD%E5%86%85%E4%B8%8B%E8%BD%BD-GitCode%20%E9%95%9C%E5%83%8F-6fd3a8?style=for-the-badge&labelColor=18181b" alt="从 GitCode 国内镜像下载 Windows 安装包"></a>
   <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.6.0/Fy1Sync-0.6.0-win-x64-portable.zip"><img src="https://img.shields.io/badge/Windows%20%E5%85%8D%E5%AE%89%E8%A3%85-.zip%20%E4%BE%BF%E6%90%BA%E7%89%88-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 Windows 便携包 (.zip)"></a><br>
   <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.6.0/Fy1Sync-0.6.0-mac-arm64.dmg"><img src="https://img.shields.io/badge/macOS%20Apple%20%E8%8A%AF%E7%89%87-.dmg-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 macOS Apple 芯片安装包 (.dmg)"></a>
   <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.6.0/Fy1Sync-0.6.0-mac-x64.dmg"><img src="https://img.shields.io/badge/macOS%20Intel-.dmg-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 macOS Intel 安装包 (.dmg)"></a>
-  <a href="https://gitcode.com/Fy1ng/Fy1Sync/releases"><img src="https://img.shields.io/badge/%E5%85%A8%E5%B9%B3%E5%8F%B0%E5%9B%BD%E5%86%85%E9%95%9C%E5%83%8F-GitCode%20%E5%8F%91%E5%B8%83%E9%A1%B5-f3f0ea?style=for-the-badge&labelColor=18181b" alt="前往 GitCode 国内镜像发布页"></a>
 </p>
 
 <p align="center">
@@ -86,7 +84,7 @@ Fy1Sync 把这两路直播放进同一个播放器:
 | Linux x64 | `linux-x64.deb` | `linux-x64.AppImage`, `linux-x64.tar.gz` |
 | Linux arm64 | `linux-arm64.deb` | `linux-arm64.AppImage`, `linux-arm64.tar.gz` |
 
-播放要用到的 FFmpeg 和 yt-dlp 已经打在安装包里, 不用自己装. GitHub 发布页底部文件超过 10 个会默认折叠 Windows 安装包, 直接点页面顶部的下载按钮即可; 国内访问 GitHub 较慢时, 直接点上方的国内下载按钮或前往 [GitCode 镜像](https://gitcode.com/Fy1ng/Fy1Sync/releases).
+播放要用到的 FFmpeg 和 yt-dlp 已经打在安装包里, 不用自己装. GitHub 发布页底部文件超过 10 个会默认折叠 Windows 安装包, 直接点页面顶部的下载按钮即可; 国内访问 GitHub 较慢时可前往 [GitCode 镜像](https://gitcode.com/Fy1ng/Fy1Sync/releases).
 
 **第一次打开时系统可能会拦一下.** 安装包目前未配置付费证书签名与公证, 这是正常现象:
 
