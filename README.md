@@ -8,10 +8,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.6.0/Fy1Sync-0.6.0-win-x64-nsis.exe"><img src="https://img.shields.io/badge/Windows%20%E5%AE%89%E8%A3%85%E7%89%88-.exe%20%E7%9B%B4%E9%93%BE%E4%B8%8B%E8%BD%BD-6fd3a8?style=for-the-badge&labelColor=18181b" alt="下载 Windows 安装包 (.exe)"></a>
-  <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.6.0/Fy1Sync-0.6.0-win-x64-portable.zip"><img src="https://img.shields.io/badge/Windows%20%E5%85%8D%E5%AE%89%E8%A3%85-.zip%20%E4%BE%BF%E6%90%BA%E7%89%88-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 Windows 便携包 (.zip)"></a><br>
-  <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.6.0/Fy1Sync-0.6.0-mac-arm64.dmg"><img src="https://img.shields.io/badge/macOS%20Apple%20%E8%8A%AF%E7%89%87-.dmg-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 macOS Apple 芯片安装包 (.dmg)"></a>
-  <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.6.0/Fy1Sync-0.6.0-mac-x64.dmg"><img src="https://img.shields.io/badge/macOS%20Intel-.dmg-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 macOS Intel 安装包 (.dmg)"></a>
+  <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.6.1/Fy1Sync-0.6.1-win-x64-nsis.exe"><img src="https://img.shields.io/badge/Windows%20%E5%AE%89%E8%A3%85%E7%89%88-.exe%20%E7%9B%B4%E9%93%BE%E4%B8%8B%E8%BD%BD-6fd3a8?style=for-the-badge&labelColor=18181b" alt="下载 Windows 安装包 (.exe)"></a>
+  <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.6.1/Fy1Sync-0.6.1-win-x64-portable.zip"><img src="https://img.shields.io/badge/Windows%20%E5%85%8D%E5%AE%89%E8%A3%85-.zip%20%E4%BE%BF%E6%90%BA%E7%89%88-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 Windows 便携包 (.zip)"></a><br>
+  <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.6.1/Fy1Sync-0.6.1-mac-arm64.dmg"><img src="https://img.shields.io/badge/macOS%20Apple%20%E8%8A%AF%E7%89%87-.dmg-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 macOS Apple 芯片安装包 (.dmg)"></a>
+  <a href="https://github.com/Fy1ng/Fy1Sync/releases/download/v0.6.1/Fy1Sync-0.6.1-mac-x64.dmg"><img src="https://img.shields.io/badge/macOS%20Intel-.dmg-f3f0ea?style=for-the-badge&labelColor=18181b" alt="下载 macOS Intel 安装包 (.dmg)"></a>
 </p>
 
 <p align="center">
